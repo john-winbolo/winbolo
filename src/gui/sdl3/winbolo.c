@@ -2205,16 +2205,23 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
        * whatever has scrolled under a pointer left where it was. Not while
        * the pointer is over an ImGui overlay (the vote widget, alliance
        * requests) — dragging it out from under a click there loses the click
-       * — nor when the game isn't the window the player is using. */
+       * — nor when the game isn't the window the player is using.
+       *
+       * Once the square is carried off the view the pointer is pushed off
+       * after it, and the square stops being the target: a click with the
+       * pointer off the view builds nothing. */
       {
         SDL_Window *win = sdl3DrawGetWindow();
         bool allowWarp = win != NULL && !uiModeIsTablet() &&
                          !sdl3ImguiWantCaptureMouse() &&
                          SDL_GetMouseFocus() == win &&
                          (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0;
-        cursorFollowView(clientSimGetXOffset(cs), clientSimGetYOffset(cs),
-                         clientSimGetSubPosX(cs), clientSimGetSubPosY(cs),
-                         allowWarp);
+        BYTE lostX = 0, lostY = 0;
+        if (cursorFollowView(clientSimGetXOffset(cs), clientSimGetYOffset(cs),
+                             clientSimGetSubPosX(cs), clientSimGetSubPosY(cs),
+                             allowWarp, &lostX, &lostY)) {
+          buildCursorDropTarget(lostX, lostY);
+        }
       }
 
       /* Refresh cursor cell every frame: the autoscroll sub-tile offset
@@ -2227,8 +2234,8 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
        * as the build selection — that is the build cursor's latched map tile
        * (see buildCursorResolveReticle below), which only hand movement
        * moves. The follow above keeps them together while it can; they
-       * part company when it can't (the view jumped, or the selection
-       * scrolled off and the pointer is held at the edge). */
+       * part company when it can't (the view jumped, or the pointer was
+       * over an overlay as the view scrolled). */
       {
         BYTE cx = 0, cy = 0;
         if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {

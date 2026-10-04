@@ -120,10 +120,13 @@ void cursorAnchorToView(int xOffset, int yOffset, int subPosX, int subPosY);
 *  Called once a frame with the view being drawn. Moves
 *  the mouse pointer with the map as it scrolls so it
 *  stays on the square the player put it on. Does nothing
-*  when allowWarp is false or the view jumped.
+*  when allowWarp is false or the view jumped. Returns
+*  true when the square went off the view and the
+*  pointer was pushed off after it, with that square's
+*  map tile in lostMapX/Y.
 *********************************************************/
-void cursorFollowView(int xOffset, int yOffset, int subPosX, int subPosY,
-                      bool allowWarp);
+bool cursorFollowView(int xOffset, int yOffset, int subPosX, int subPosY,
+                      bool allowWarp, BYTE *lostMapX, BYTE *lostMapY);
 
 /*********************************************************
 *NAME:          cursorSetPos

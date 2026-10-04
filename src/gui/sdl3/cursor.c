@@ -60,6 +60,12 @@ static float gWarpWinY = 0.0f;
    view, centring on the tank) rather than scrolled; the pointer stays put. */
 #define CURSOR_FOLLOW_MAX_TILES 4
 
+/* How far past the view's edge (in unzoomed game pixels) the pointer is put
+   when its square is carried off. Keep it under the 10 px gap between the
+   view and the build-select buttons to its left, so a click there is a click
+   on nothing. */
+#define CURSOR_PUSH_OFF_PX 4
+
 /* 7×7 crosshair: data (XOR) and mask bits, same as the Linux version */
 static const Uint8 s_cd[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
 static const Uint8 s_cm[8] = { 56, 40, 238, 124, 238, 40, 56, 0 };
@@ -327,12 +333,17 @@ void cursorAnchorToView(int xOffset, int yOffset, int subPosX, int subPosY) {
 *  1.x did. The pointer is placed from its world anchor
 *  through the inverse of the event transform rather
 *  than nudged by a delta, so it cannot drift on a
-*  scaled window. It is held inside the view while its
-*  square is scrolled off, and left alone when the view
-*  jumps or allowWarp is false.
+*  scaled window. Left alone when the view jumps or
+*  allowWarp is false.
+*
+*  When the map carries the pointer's square past the
+*  edge of the view, the pointer is pushed just off the
+*  view and stops following. Returns true then, with
+*  the map tile it was on in lostMapX/Y, so the caller
+*  can drop that square as the build target.
 *********************************************************/
-void cursorFollowView(int xOffset, int yOffset, int subPosX, int subPosY,
-                      bool allowWarp) {
+bool cursorFollowView(int xOffset, int yOffset, int subPosX, int subPosY,
+                      bool allowWarp, BYTE *lostMapX, BYTE *lostMapY) {
   int vx, vy;
   int zf    = sdl3DrawGetZoomFactor();
   int tileW = zf * TILE_SIZE_X;
@@ -350,30 +361,46 @@ void cursorFollowView(int xOffset, int yOffset, int subPosX, int subPosY,
   if (jumped || !allowWarp || isInMenu || !cursorInMainView) {
     /* Nothing to follow until the hand next puts the pointer somewhere. */
     gAnchorValid = false;
-    return;
+    return false;
   }
   /* Only the view moving moves the pointer; between scrolls it is the
      hand's alone. */
-  if (!gAnchorValid || !scrolled) return;
+  if (!gAnchorValid || !scrolled) return false;
 
   int left = zf * MAIN_OFFSET_X;
   int top  = zf * MAIN_OFFSET_Y;
   int gx   = gAnchorX - vx + left;
   int gy   = gAnchorY - vy + top;
-  /* Hold it to pixels cursorPos accepts. That adds the sub-tile offset
-     before dividing, so the far edge of column/row 15 comes in by it. */
+  /* The pixels cursorPos accepts. It adds the sub-tile offset before
+     dividing, so the far edge of column/row 15 comes in by that offset. */
   int maxX = left + MAIN_SCREEN_SIZE_X * tileW - 1 - (vx - xOffset * tileW);
   int maxY = top  + MAIN_SCREEN_SIZE_Y * tileH - 1 - (vy - yOffset * tileH);
-  if (gx < left) gx = left;
-  if (gx > maxX) gx = maxX;
-  if (gy < top) gy = top;
-  if (gy > maxY) gy = maxY;
-  if (gx == (int)gCachedMouseX && gy == (int)gCachedMouseY) return;
+  bool offX = gx < left || gx > maxX;
+  bool offY = gy < top || gy > maxY;
+  if (offX || offY) {
+    /* Its square has gone off the view, so the pointer goes off with it,
+       clear of the view on the side it left by, and is no longer on the
+       map to be carried back when the view scrolls the other way. */
+    int push = zf * CURSOR_PUSH_OFF_PX;
+    if (gx < left) gx = left - push;
+    else if (gx > maxX) gx = left + MAIN_SCREEN_SIZE_X * tileW + push;
+    if (gy < top) gy = top - push;
+    else if (gy > maxY) gy = top + MAIN_SCREEN_SIZE_Y * tileH + push;
+    if (lostMapX) *lostMapX = (BYTE)(gAnchorX / tileW + 1);
+    if (lostMapY) *lostMapY = (BYTE)(gAnchorY / tileH + 1);
+    gAnchorValid = false;
+  }
+  if (gx == (int)gCachedMouseX && gy == (int)gCachedMouseY) return offX || offY;
 
   /* Aim at the middle of the game pixel, so the echo's trip back through
      windowToGameCoords truncates to this pixel and not the one before. */
   float wx, wy;
-  if (!sdl3DrawGameToWindowCoords((float)gx + 0.5f, (float)gy + 0.5f, &wx, &wy)) return;
+  if (!sdl3DrawGameToWindowCoords((float)gx + 0.5f, (float)gy + 0.5f, &wx, &wy)) {
+    return offX || offY;
+  }
+  /* Through cursorMove, so a push off the view swaps back to the system
+     cursor and leaves the view this frame rather than at the echo. */
+  cursorMove(gx, gy);
   gCachedMouseX = (float)gx + 0.5f;
   gCachedMouseY = (float)gy + 0.5f;
   gWarpWinX = wx;
@@ -381,6 +408,7 @@ void cursorFollowView(int xOffset, int yOffset, int subPosX, int subPosY,
   gWarpPending = true;
   SDL_WarpMouseInWindow(sdl3DrawGetWindow(), wx, wy);
   inputSourceNoteCursorWarp();
+  return offX || offY;
 }
 
 /*********************************************************
