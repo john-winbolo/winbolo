@@ -738,10 +738,13 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         break;
 
     case CTRL_LOBBY_SCRIPT_SETTING: {
-        /* One value the host chose, or the CLEAR a join sync starts with.
-           Either says the server takes CMD_SET_SCRIPT_SETTING. The strings
-           are terminated here as well as by the decoder, because the
-           in-process subscriber hands the struct over undecoded. */
+        /* One value the host chose, or the CLEAR a join sync starts with,
+           or a LOCK: a value the server's operator holds. Any of them says
+           the server takes CMD_SET_SCRIPT_SETTING. The strings are
+           terminated here as well as by the decoder, because the
+           in-process subscriber hands the struct over undecoded. An op
+           this build does not know is skipped, as an older build skips a
+           LOCK. */
         char    file[LOBBY_SCENARIO_FILE_LEN];
         char    id[SCN_SETTING_ID_LEN];
         int     i;
@@ -752,7 +755,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             cs->lobbyScriptSettingCount = 0;
             break;
         }
-        if (evt->u.lobbyScriptSetting.op != LOBBY_SCRIPT_SETTING_SET) break;
+        if (evt->u.lobbyScriptSetting.op != LOBBY_SCRIPT_SETTING_SET &&
+            evt->u.lobbyScriptSetting.op != LOBBY_SCRIPT_SETTING_LOCK) {
+            break;
+        }
         SDL_strlcpy(file, evt->u.lobbyScriptSetting.file, sizeof(file));
         SDL_strlcpy(id, evt->u.lobbyScriptSetting.id, sizeof(id));
         if (file[0] == '\0' || id[0] == '\0') break;
@@ -773,8 +779,15 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                         sizeof(cs->lobbyScriptSettings[at].file));
             SDL_strlcpy(cs->lobbyScriptSettings[at].id, id,
                         sizeof(cs->lobbyScriptSettings[at].id));
+            cs->lobbyScriptSettings[at].locked = false;
         }
         cs->lobbyScriptSettings[at].value = evt->u.lobbyScriptSetting.value;
+        /* A lock is the operator's for the server's whole run: a SET after
+           it (the value put back at a new lobby) leaves it held. Only the
+           CLEAR of the next join sync lets it go. */
+        if (evt->u.lobbyScriptSetting.op == LOBBY_SCRIPT_SETTING_LOCK) {
+            cs->lobbyScriptSettings[at].locked = true;
+        }
         break;
     }
 
