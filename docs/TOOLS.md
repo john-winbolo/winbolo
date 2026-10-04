@@ -117,8 +117,16 @@ and adds the `updated` line (and an `author` line, `--author`, default
    than a day in the future.
 2. A file that differs from HEAD must change its `updated` line in that
    same diff.
-3. Otherwise the last non-merge commit that touched the file must have
-   changed its `updated` line too.
+3. Otherwise the last commit of any kind that touched the file, a merge
+   included, must have changed its `updated` line against its first parent.
+   So an edit made while resolving a merge is checked too.
+
+Only the `scenario` table is read, from its opening line to the first bare
+`}` at column 0, and only the keys at the table's own field indent (the
+`api` line's). An `updated = "..."` in a nested table or in code after the
+table is neither read nor restamped.
+
+File arguments are matched without regard to case on Windows.
 
 So a commit that edits a shipped script without restamping it fails from
 then on, until a later commit restamps it. Outside a git checkout the check

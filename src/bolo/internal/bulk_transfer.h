@@ -139,7 +139,10 @@ enum {
  * [status 1][detailsLen 2 BE][details][settingsLen 2 BE][settings]
  * [identity blob (scenario_identity.h)]. A reader ignores any bytes after
  * the identity blob, so a later field can follow it. The settings length is
- * 0 when the request did not ask for them. Sent only to a client whose
+ * 0 when the request did not ask for them. The identity blob is left out
+ * when the server's identity lookup does not find the file (one past the
+ * listing's cap, say), and a reply that ends after the settings reads as
+ * identity not known. Sent only to a client whose
  * flags byte has BULK_SCN_DETAILS_WANT_IDENTITY set; a server from before it
  * ignores that bit and answers V2 or FOUND, which such a client reads as
  * identity not known. */

@@ -44,8 +44,17 @@
 #      form, and the time is not more than a day in the future.
 #   2. A file whose content differs from HEAD must change its updated line
 #      in that same difference (git diff HEAD -U0).
-#   3. Otherwise, the last commit that touched the file (merges left out)
-#      must have changed its updated line too (git show -U0).
+#   3. Otherwise, the last commit of any kind that touched the file, a
+#      merge included, must have changed its updated line against its
+#      first parent (git diff -U0 <commit>^ <commit>; git show for a root
+#      commit). So a hand-made edit inside a merge is held to the rule too.
+#
+# Only the scenario table is read: from its `scenario = {` line to the
+# first bare `}` at column 0, and only the author, updated and api keys at
+# the table's own field indent (the api line's). A nested table, or code
+# after the table, that says `updated = "..."` is neither read nor
+# restamped, and a diff line counts as a new updated time only at that
+# indent.
 #
 # So a commit that changes a shipped script without restamping it fails the
 # check from that commit on, until a later commit restamps it. A commit that
@@ -59,6 +68,7 @@
 
 import argparse
 import datetime as dt
+import os
 import re
 import subprocess
 import sys
@@ -67,12 +77,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-UPDATED_RE = re.compile(r'^(\s*updated\s*=\s*)"([^"]*)"', re.M)
-AUTHOR_RE = re.compile(r'^\s*author\s*=\s*"([^"]*)"', re.M)
-API_RE = re.compile(r'^(\s*)api(\s*)=', re.M)
+API_RE = re.compile(r'^([ \t]*)api([ \t]*)=', re.M)
 TABLE_RE = re.compile(r'^scenario\s*=\s*\{', re.M)
+TABLE_END_RE = re.compile(r'^\}[ \t]*(--[^\r\n]*)?\r?$', re.M)
+FIELD_RE = re.compile(r'^([ \t]+)[A-Za-z_]\w*[ \t]*=', re.M)
 FORM_RE = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$')
-DIFF_UPDATED_RE = re.compile(r'^[+-]\s*updated\s*=', re.M)
 
 
 def git(*args, check=True):
@@ -125,6 +134,54 @@ def table_start(text):
     return m.start() if m else -1
 
 
+class Table:
+    """The scenario table of a script: where it starts and ends in the text,
+    the indent its own fields are written at, and the regexes for its keys
+    at that indent and no other."""
+
+    def __init__(self, text):
+        self.start = table_start(text)
+        self.end = len(text)
+        self.indent = None
+        if self.start >= 0:
+            e = TABLE_END_RE.search(text, self.start)
+            if e:
+                self.end = e.start()
+            # The field indent is the api line's; with no api line, the
+            # first key's in the table.
+            m = (API_RE.search(text, self.start, self.end) or
+                 FIELD_RE.search(text, self.start, self.end))
+            if m:
+                self.indent = m.group(1)
+        ind = re.escape(self.indent) if self.indent is not None else r'[ \t]*'
+        self.updated_re = re.compile(
+            r'^(' + ind + r'updated[ \t]*=[ \t]*)"([^"\r\n]*)"', re.M)
+        self.author_re = re.compile(
+            r'^' + ind + r'author[ \t]*=[ \t]*"([^"\r\n]*)"', re.M)
+        self.api_re = re.compile(r'^(' + ind + r')api([ \t]*)=', re.M)
+        self.diff_updated_re = re.compile(
+            r'^[+-]' + ind + r'updated[ \t]*=', re.M)
+
+    def found(self):
+        return self.start >= 0
+
+    def _search(self, rx, text):
+        return rx.search(text, self.start, self.end) if self.found() else None
+
+    def updated(self, text):
+        return self._search(self.updated_re, text)
+
+    def author(self, text):
+        return self._search(self.author_re, text)
+
+    def api(self, text):
+        return self._search(self.api_re, text)
+
+    def diff_restamps(self, diff):
+        """Whether a -U0 diff of the file changes the table's updated line."""
+        return self.found() and self.diff_updated_re.search(diff) is not None
+
+
 def read(rel):
     # newline="" keeps the file's own line endings on the way back out.
     with open(REPO_ROOT / rel, encoding="utf-8", newline="") as f:
@@ -141,13 +198,13 @@ def set_fields(text, updated, author):
     updated line, and an author line when there is none, after the api
     line. None when the file has no scenario table or no api line to place
     them after."""
-    start = table_start(text)
-    if start < 0:
+    t = Table(text)
+    if not t.found():
         return None
-    m = UPDATED_RE.search(text, start)
+    m = t.updated(text)
     if m:
         return text[:m.start(2)] + updated + text[m.end(2):]
-    api = API_RE.search(text, start)
+    api = t.api(text)
     if api is None:
         return None
     eol = text.find("\n", api.end())
@@ -163,7 +220,7 @@ def set_fields(text, updated, author):
     else:
         pad = lambda key: key + " "
     lines = ""
-    if AUTHOR_RE.search(text, start) is None:
+    if t.author(text) is None:
         lines += '%s%s= "%s",%s' % (indent, pad("author"), author, nl)
     lines += '%s%s= "%s",%s' % (indent, pad("updated"), updated, nl)
     return text[:eol + 1] + lines + text[eol + 1:]
@@ -200,8 +257,7 @@ def init(files, author):
     n = 0
     for rel in files:
         text = read(rel)
-        start = table_start(text)
-        if start >= 0 and UPDATED_RE.search(text, start):
+        if Table(text).updated(text):
             continue
         iso = git("log", "-1", "--format=%cI", "--", rel).strip()
         when = to_utc_minute(iso) if iso else now_utc()
@@ -225,9 +281,9 @@ def check(files):
     bad = 0
     for rel in files:
         text = read(rel)
-        start = max(table_start(text), 0)
-        a = AUTHOR_RE.search(text, start)
-        u = UPDATED_RE.search(text, start)
+        t = Table(text)
+        a = t.author(text)
+        u = t.updated(text)
         if a is None or a.group(1).strip() == "":
             print("%s: FAIL: no author" % rel)
             bad += 1
@@ -243,17 +299,23 @@ def check(files):
             continue  # new: rule 1 is all there is to hold it to
         diff = git("diff", "-U0", "HEAD", "--", rel)
         if diff:
-            if not DIFF_UPDATED_RE.search(diff):
+            if not t.diff_restamps(diff):
                 print("%s: FAIL: changed since HEAD without a new updated "
                       "time; run tools/stamp_mod_updated.py" % rel)
                 bad += 1
             continue
-        last = git("log", "-1", "--no-merges", "--format=%H", "--",
-                   rel).strip()
+        # The last commit of any kind, a merge included, against its first
+        # parent; a root commit (or a shallow clone's first) has no parent,
+        # and git show gives the file added whole.
+        last = git("log", "-1", "--format=%H", "--", rel).strip()
         if not last:
             continue
-        shown = git("show", "--format=", "-U0", last, "--", rel)
-        if not DIFF_UPDATED_RE.search(shown):
+        if git("rev-parse", "--verify", "-q", last + "^",
+               check=False).strip():
+            shown = git("diff", "-U0", last + "^", last, "--", rel)
+        else:
+            shown = git("show", "--format=", "-U0", last, "--", rel)
+        if not t.diff_restamps(shown):
             print("%s: FAIL: commit %s changed it without a new updated time"
                   % (rel, last[:12]))
             bad += 1
@@ -280,16 +342,18 @@ def main():
 
     files = shipped_files()
     if args.files:
+        # Matched through os.path.normcase on both sides, so a path typed
+        # in another case than the checkout's names the file on Windows.
+        by_key = {os.path.normcase(str((REPO_ROOT / rel).resolve())): rel
+                  for rel in files}
         wanted = set()
         for f in args.files:
-            try:
-                wanted.add(Path(f).resolve().relative_to(REPO_ROOT).as_posix())
-            except ValueError:
+            rel = by_key.get(os.path.normcase(str(Path(f).resolve())))
+            if rel is None:
                 print("%s: not a shipped script; skipped" % f)
+            else:
+                wanted.add(rel)
         files = [f for f in files if f in wanted]
-        missing = wanted - set(files)
-        for f in sorted(missing):
-            print("%s: not a shipped script; skipped" % f)
 
     if args.check:
         return check(files)

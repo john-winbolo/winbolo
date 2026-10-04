@@ -275,9 +275,9 @@ void scnManifestTakeIdentity(ScenarioManifest *m,
                        "scenario: author is empty; unknown used");
         } else if (!same) {
             scnWarnAdd(sink, "author",
-                       "scenario: author held control characters, broken "
-                       "UTF-8, spaces at an end or more than %d bytes; '%s' "
-                       "used", SCN_AUTHOR_LEN - 1, m->author);
+                       "scenario: author held control or invisible format "
+                       "characters, broken UTF-8, spaces at an end or more "
+                       "than %d bytes; '%s' used", SCN_AUTHOR_LEN - 1, m->author);
         }
     }
 

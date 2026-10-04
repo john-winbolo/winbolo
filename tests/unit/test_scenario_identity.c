@@ -6,22 +6,31 @@
  * shipped script.
  *
  * run_scenario_identity_clean        — the author cleaner drops control
- *                                      characters and broken UTF-8, trims,
- *                                      and cuts at a character boundary;
- *                                      the updated check takes the one form
- *                                      and real dates only
+ *                                      characters, invisible format
+ *                                      characters (bidi controls,
+ *                                      separators, zero-width) and broken
+ *                                      UTF-8, trims, and cuts at a
+ *                                      character boundary; the updated
+ *                                      check takes the one form and real
+ *                                      dates only
  * run_scenario_identity_lua          — a script's table: both fields read,
  *                                      a missing one warns and reads as
  *                                      unknown, a bad time warns, a dirty
  *                                      or overlong author is cleaned and
- *                                      warns, and no warning is a problem
+ *                                      warns, one of only zero-width
+ *                                      characters reads as unknown, no
+ *                                      warning is a problem, and a .lua
+ *                                      named directly that is not there
+ *                                      reads nothing (-validate exits 1)
  * run_scenario_identity_json         — manifest.json the same way, a value
  *                                      of the wrong type warns, the writer
  *                                      writes the pair back and leaves an
  *                                      unstated one out, and a table that
  *                                      states a different pair disagrees
  * run_scenario_identity_blob         — the blob's writer and reader, and
- *                                      the bytes a reader refuses
+ *                                      the bytes a reader refuses, no bytes
+ *                                      at all among them (a V3 reply whose
+ *                                      server could not look the file up)
  * run_scenario_identity_list_wire    — a scenario-list chunk with the
  *                                      trailer, decoded back; the rows in
  *                                      front of the tag are the old wire,
@@ -34,7 +43,9 @@
  *                                      transport under loss, arrives with
  *                                      its author and updated time beside
  *                                      its details, and the listen host's
- *                                      own lookup answers the same
+ *                                      own lookup answers the same; a V2
+ *                                      answer after it (an older server)
+ *                                      leaves the identity not known
  * run_scenario_identity_shipped      — every shipped script, data/mods and
  *                                      the data/maps scenario scripts, says
  *                                      author "WinBolo" and a valid updated
@@ -149,6 +160,54 @@ int run_scenario_identity_clean(void) {
     UT_ASSERT_MSG(strcmp(out, "Jo  Bloggs") == 0, "trimmed to '%s'", out);
     /* Only control characters and spaces: nothing left. */
     UT_ASSERT(!scnIdentityCleanAuthor(out, sizeof(out), " \t ", 3));
+    UT_ASSERT(out[0] == '\0');
+
+    /* Invisible format characters out: a terminal applies the bidi ones,
+       which could reorder the rest of a DS log line. Each is put between
+       an 'a' and a 'b'. */
+    {
+        static const char *const fmt[] = {
+            "\xD8\x9C",                                   /* U+061C ALM */
+            "\xE2\x80\x8B", "\xE2\x80\x8C", "\xE2\x80\x8D", /* ZWSP..ZWJ */
+            "\xE2\x80\x8E", "\xE2\x80\x8F",                 /* LRM RLM */
+            "\xE2\x80\xA8", "\xE2\x80\xA9",                 /* LS PS */
+            "\xE2\x80\xAA", "\xE2\x80\xAB", "\xE2\x80\xAC", /* LRE RLE PDF */
+            "\xE2\x80\xAD", "\xE2\x80\xAE",                 /* LRO RLO */
+            "\xE2\x81\xA0",                               /* WJ */
+            "\xE2\x81\xA6", "\xE2\x81\xA7", "\xE2\x81\xA8", /* LRI RLI FSI */
+            "\xE2\x81\xA9",                               /* PDI */
+            "\xEF\xBB\xBF",                               /* BOM / ZWNBSP */
+        };
+        char   in[16];
+        size_t k;
+
+        for (k = 0; k < sizeof(fmt) / sizeof(fmt[0]); k++) {
+            snprintf(in, sizeof(in), "a%sb", fmt[k]);
+            UT_ASSERT_MSG(!scnIdentityCleanAuthor(out, sizeof(out), in,
+                                                  strlen(in)),
+                          "format character %u was not reported",
+                          (unsigned)k);
+            UT_ASSERT_MSG(strcmp(out, "ab") == 0,
+                          "format character %u kept: '%s'", (unsigned)k, out);
+        }
+    }
+    /* Their neighbours are text and stay: U+200A hair space, U+2010
+       hyphen, U+202F narrow no-break space, U+061B Arabic semicolon. */
+    UT_ASSERT(scnIdentityCleanAuthor(out, sizeof(out),
+                                     "a\xE2\x80\x8A" "b\xE2\x80\x90" "c"
+                                     "\xE2\x80\xAF" "d\xD8\x9B", 15));
+    UT_ASSERT(strcmp(out, "a\xE2\x80\x8A" "b\xE2\x80\x90" "c\xE2\x80\xAF"
+                          "d\xD8\x9B") == 0);
+    /* A reordered name: the override goes, the letters stay in file
+       order. */
+    UT_ASSERT(!scnIdentityCleanAuthor(out, sizeof(out),
+                                      "Jo\xE2\x80\xAE" "olleh.lua", 14));
+    UT_ASSERT_MSG(strcmp(out, "Joolleh.lua") == 0, "cleaned to '%s'", out);
+    /* Only zero-width characters: nothing left, so the author is
+       unknown rather than "by " and an empty name. */
+    UT_ASSERT(!scnIdentityCleanAuthor(out, sizeof(out),
+                                      "\xE2\x80\x8B\xEF\xBB\xBF\xE2\x81\xA0",
+                                      9));
     UT_ASSERT(out[0] == '\0');
 
     /* Too long: cut at the cap, and never inside a character. Seven bytes
@@ -292,6 +351,34 @@ int run_scenario_identity_lua(void) {
                   (unsigned)strlen(r->manifest.author));
     UT_ASSERT(siWarning(r, "author") != NULL);
     UT_ASSERT(!siIssueAboutIdentity(r));
+    free(r);
+
+    /* Only zero-width characters and a bidi override: empty once cleaned,
+       so unknown, with the empty-author warning, and still no problem. */
+    r = siValidate("scenario = { name = \"Ghost\", api = 1, kind = \"mod\",\n"
+                   "  bound = false,\n"
+                   "  author = \"\xE2\x80\x8B\xE2\x80\xAE\xEF\xBB\xBF\",\n"
+                   "  updated = \"" SI_UPDATED "\" }\n",
+                   "ghost.lua");
+    UT_ASSERT(r != NULL);
+    UT_ASSERT_MSG(r->manifest.author[0] == '\0',
+                  "an invisible author was kept as '%s'", r->manifest.author);
+    w = siWarning(r, "author");
+    UT_ASSERT_MSG(w != NULL && strstr(w->message, "empty") != NULL,
+                  "no empty-author warning: %s",
+                  w != NULL ? w->message : "(no warning)");
+    UT_ASSERT(!siIssueAboutIdentity(r));
+    free(r);
+
+    /* A .lua named directly that is not there: nothing read, no manifest
+       and no problem, which is what WinBoloDS -validate turns into exit 1
+       for a direct .lua (a typo in a path must not pass a check). */
+    r = (ScnValidateResult *)calloc(1, sizeof(*r));
+    UT_ASSERT(r != NULL);
+    (void)scenarioValidateScript(NULL, "wbtest_no_such_script_typo.lua", r);
+    UT_ASSERT_MSG(!r->haveManifest && r->count == 0,
+                  "a missing script read as manifest %d, %u problems",
+                  (int)r->haveManifest, (unsigned)r->count);
     free(r);
     return 0;
 }
@@ -456,6 +543,13 @@ int run_scenario_identity_blob(void) {
     took = scnIdentityBlobRead(blob, len, author, sizeof(author), updated,
                                sizeof(updated));
     UT_ASSERT(took == 2 && author[0] == '\0' && updated[0] == '\0');
+
+    /* No blob at all, a V3 reply whose server could not look the file up:
+       refused, which the client reads as identity not known. */
+    UT_ASSERT(scnIdentityBlobRead(blob, 0, author, sizeof(author), updated,
+                                  sizeof(updated)) < 0);
+    UT_ASSERT(scnIdentityBlobRead(blob, 1, author, sizeof(author), updated,
+                                  sizeof(updated)) < 0);
 
     /* The writer writes what a reader would keep: a bad time as none, and a
        dirty author cleaned. */
@@ -706,6 +800,7 @@ int run_scenario_identity_details_fetch(void) {
     char            dUpdated[SCN_UPDATED_LEN];
     bool            found;
     int             at;
+    uint8_t         v2[1] = { 0 };
 
     snprintf(siDir, sizeof(siDir), "%s", "wbtest_scenario_identity_fetch");
     siRemoveTree(siDir);
@@ -761,6 +856,20 @@ int run_scenario_identity_details_fetch(void) {
     UT_ASSERT(found);
     UT_ASSERT(strcmp(dAuthor, SI_AUTHOR) == 0);
     UT_ASSERT(strcmp(dUpdated, SI_UPDATED) == 0);
+
+    /* An older server ignores the identity bit and answers V2. The client's
+       V2 branch puts the details and then the settings, and nothing else;
+       those two calls, made here as it makes them, leave the identity not
+       known, even for a file whose identity an earlier V3 answer gave. */
+    clientSimLobbyScenarioDetailsPut(h.cs, "Identified.lua", true, v2, 0);
+    clientSimLobbyScenarioSettingsPut(h.cs, "Identified.lua", v2, 0);
+    UT_ASSERT(clientSimGetLobbyScenarioDetails(h.cs, "Identified.lua", NULL,
+                                               NULL) ==
+              CLIENT_SCN_DETAILS_FOUND);
+    UT_ASSERT_MSG(!clientSimGetLobbyScenarioIdentity(h.cs, "Identified.lua",
+                                                     &author, &updated),
+                  "a V2 answer left the identity known");
+    UT_ASSERT(author[0] == '\0' && updated[0] == '\0');
 
     UT_ASSERT(clientSimGetConnectState(h.cs) == CLIENT_CONNECT_CONNECTED);
     threadsWaitForMutex();
