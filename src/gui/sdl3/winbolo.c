@@ -91,6 +91,7 @@
 #include "../../scenario/scenario_host.h"
 #include "bg_game.h"
 #include "cursor.h"
+#include "ping_overlay.h"   /* pingOverlayIsMenuOpen */
 
 #include "dialog_backend.h"
 #include "dialogs/imgui_messagebox.h"
@@ -2205,7 +2206,10 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
        * whatever has scrolled under a pointer left where it was. Not while
        * the pointer is over an ImGui overlay (the vote widget, alliance
        * requests) — dragging it out from under a click there loses the click
-       * — nor when the game isn't the window the player is using.
+       * — nor when the game isn't the window the player is using, nor while
+       * the smart-ping pie is open: it takes the mouse's motion straight from
+       * SDL without raising ImGui's capture flag, and picks its wedge from
+       * where the pointer is, so carrying the pointer would change the ping.
        *
        * Once the square is carried off the view the pointer is pushed off
        * after it, and the square stops being the target: a click with the
@@ -2214,6 +2218,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
         SDL_Window *win = sdl3DrawGetWindow();
         bool allowWarp = win != NULL && !uiModeIsTablet() &&
                          !sdl3ImguiWantCaptureMouse() &&
+                         !pingOverlayIsMenuOpen() &&
                          SDL_GetMouseFocus() == win &&
                          (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0;
         BYTE lostX = 0, lostY = 0;

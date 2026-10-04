@@ -278,28 +278,19 @@ static void cursorViewOrigin(int xOffset, int yOffset, int subPosX, int subPosY,
 *PURPOSE:
 *  Returns whether a motion event at this window position
 *  is the echo of the last cursorFollowView warp rather
-*  than the player moving the mouse. A warp echoes at
-*  most twice, exactly and then at the whole pixel the
-*  OS pointer landed on, so the first motion that isn't
-*  the exact echo ends the wait.
+*  than the player moving the mouse. Warps go to a whole
+*  window pixel, so SDL's echo and the OS pointer's own
+*  report both land on it exactly, and any other
+*  position, a pixel's hand movement included, is the
+*  player and ends the wait.
 *********************************************************/
-static bool cursorIsWholePixelOf(float v, float target) {
-  return SDL_fabsf(v - SDL_roundf(target)) < 0.01f ||
-         SDL_fabsf(v - SDL_floorf(target)) < 0.01f;
-}
-
 bool cursorIsWarpEcho(float winX, float winY) {
   if (!gWarpPending) return false;
-  /* SDL's own echo reports the warp position exactly. */
   if (SDL_fabsf(winX - gWarpWinX) < 0.01f && SDL_fabsf(winY - gWarpWinY) < 0.01f) {
     return true;
   }
-  /* The OS pointer lands on a whole pixel (Windows rounds, X11 truncates) and
-     may report that once more. Nothing after it is the warp's, so the wait
-     ends here either way: a pixel or two of slow hand movement next to the
-     warp is the player, and must re-anchor rather than be dragged back. */
   gWarpPending = false;
-  return cursorIsWholePixelOf(winX, gWarpWinX) && cursorIsWholePixelOf(winY, gWarpWinY);
+  return false;
 }
 
 /*********************************************************
@@ -398,6 +389,18 @@ bool cursorFollowView(int xOffset, int yOffset, int subPosX, int subPosY,
   if (!sdl3DrawGameToWindowCoords((float)gx + 0.5f, (float)gy + 0.5f, &wx, &wy)) {
     return offX || offY;
   }
+  /* Onto a whole window pixel. Platforms put a fractional warp on a whole
+     pixel each their own way (Windows rounds, X11 truncates or keeps the
+     fraction), and the OS pointer's report of where it landed would then be
+     a pixel off the warp, indistinguishable from the hand moving one. A
+     whole pixel lands exactly everywhere. The nearest one to the middle of
+     the game pixel, ties going down, is inside it while a window pixel is
+     no bigger than a game pixel: at exactly 1x the middle is a half and
+     rounding up would be the next game pixel's first. On a window scaled
+     below 1x it can land a game pixel over, which only shifts the pointer —
+     the anchor stays exact. */
+  wx = SDL_ceilf(wx - 0.5f);
+  wy = SDL_ceilf(wy - 0.5f);
   /* Through cursorMove, so a push off the view swaps back to the system
      cursor and leaves the view this frame rather than at the echo. */
   cursorMove(gx, gy);
