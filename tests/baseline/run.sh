@@ -1370,12 +1370,10 @@ dispatch_scenario() {
     # driving onto a parked boat takes it at any speed and off any ground,
     # which the fast road run shows from the road and the grass run from
     # the grass. The tick budgets cover the last boat change in each run
-    # plus the stop after it; the slow runs never land, and the grass one
-    # is cut shortly after it settles against the bank, where it logs a
-    # line a tick because the client's prediction overshoots the hold and
-    # the server pulls it back. The slow road run settles against the
-    # bank square 124 at tick 155 and logs nothing more until its last
-    # tick.
+    # plus the stop after it; the slow runs never land. Both slow runs
+    # settle against the bank and log nothing more until their last tick:
+    # the road run settles against the bank square 124 at tick 155, and
+    # the grass run is cut shortly after it settles.
     # The fast road run is also recorded, and its .wbv is the source of the
     # committed tests/fixtures/wbv/boat_bank_road_fast.wbv: the summary's
     # terrain hash covers the boat moving from one map square to another,

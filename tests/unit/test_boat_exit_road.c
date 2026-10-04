@@ -127,61 +127,48 @@ static int assertLanded(ServerSim *sim, const char *label) {
     return 0;
 }
 
-/* One slow run and one full-speed run at the same bank of `land`. The lane
- * is long enough for a full-speed run to reach the boat's top speed, which
- * is also its exit speed, before the bank. */
-static int slowAndFast(BYTE land, const char *slowLabel, const char *fastLabel) {
+/* Drive a boat east at `cap` (0 = full speed) at a bank of `land`, then
+ * check the result with `check`. The lane is long enough for a full-speed
+ * run to reach the boat's top speed, which is also its exit speed, before
+ * the bank. */
+static int bankRun(BYTE land, SPEEDTYPE cap,
+                   int (*check)(ServerSim *, const char *), const char *label) {
     ServerSim *sim = ut_make_running_sim("Tester");
+    int rc;
     UT_ASSERT(sim != NULL && sim->sim.tanks[0] != NULL);
     UT_ASSERT_MSG(tankBoatExitSpeed(&sim->sim, sim->sim.tanks[0]) == MAP_SPEED_TBOAT,
                   "an unmodified tank leaves a boat at %d", MAP_SPEED_TBOAT);
-
     layLane(sim, 84, land, 112);
     placeTank(sim, 88, TRUE);
-    drive(sim, (SPEEDTYPE) SLOW_SPEED);
-    if (assertHeld(sim, slowLabel) != 0) {
-        serverSimDestroy(sim);
-        return 1;
-    }
-
-    layLane(sim, 84, land, 112);
-    placeTank(sim, 88, TRUE);
-    drive(sim, 0);
-    if (assertLanded(sim, fastLabel) != 0) {
-        serverSimDestroy(sim);
-        return 1;
-    }
-
+    drive(sim, cap);
+    rc = check(sim, label);
     serverSimDestroy(sim);
-    return 0;
+    return rc;
+}
+
+/* A half-speed boat is held off `land`. */
+static int slowHeld(BYTE land, const char *label) {
+    return bankRun(land, (SPEEDTYPE) SLOW_SPEED, assertHeld, label);
+}
+
+/* A full-speed boat lands on `land`. */
+static int fastLands(BYTE land, const char *label) {
+    return bankRun(land, 0, assertLanded, label);
 }
 
 int run_boat_exit_slow_onto_road_held(void) {
-    ServerSim *sim = ut_make_running_sim("Tester");
-    int rc;
-    UT_ASSERT(sim != NULL && sim->sim.tanks[0] != NULL);
-    layLane(sim, 84, ROAD, 112);
-    placeTank(sim, 88, TRUE);
-    drive(sim, (SPEEDTYPE) SLOW_SPEED);
-    rc = assertHeld(sim, "road, half speed");
-    serverSimDestroy(sim);
-    return rc;
+    return slowHeld(ROAD, "road, half speed");
 }
 
 int run_boat_exit_fast_onto_road_lands(void) {
-    ServerSim *sim = ut_make_running_sim("Tester");
-    int rc;
-    UT_ASSERT(sim != NULL && sim->sim.tanks[0] != NULL);
-    layLane(sim, 84, ROAD, 112);
-    placeTank(sim, 88, TRUE);
-    drive(sim, 0);
-    rc = assertLanded(sim, "road, full speed");
-    serverSimDestroy(sim);
-    return rc;
+    return fastLands(ROAD, "road, full speed");
 }
 
 int run_boat_exit_grass_unchanged(void) {
-    return slowAndFast(GRASS, "grass, half speed", "grass, full speed");
+    if (slowHeld(GRASS, "grass, half speed") != 0) {
+        return 1;
+    }
+    return fastLands(GRASS, "grass, full speed");
 }
 
 /* Driving onto a parked boat takes it at any speed: the tank on road at
@@ -263,6 +250,19 @@ int run_boat_exit_base_beside_water(void) {
     UT_ASSERT_MSG(bx - 14 > MAP_MINE_EDGE_LEFT && by - 1 > MAP_MINE_EDGE_TOP &&
                   by + 1 < MAP_MINE_EDGE_BOTTOM,
                   "base 1 at (%d,%d) sits too near the map border", (int) bx, (int) by);
+    /* The river strip below must hold no base or pill. A base makes
+     * mapIsLand answer TRUE on a river square, and a pill is a solid wall
+     * in the boat's path; either one would change the bank silently. */
+    for (py = by - 1; py <= by + 1; py++) {
+        for (px = bx - 14; px < bx; px++) {
+            UT_ASSERT_MSG(basesExistPos(&sim->sim.bs, (BYTE) px, (BYTE) py) == FALSE,
+                          "a base sits at (%d,%d) on the river strip west of base 1",
+                          px, py);
+            UT_ASSERT_MSG(pillsExistPos(&sim->sim.pb, (BYTE) px, (BYTE) py) == FALSE,
+                          "a pill sits at (%d,%d) on the river strip west of base 1",
+                          px, py);
+        }
+    }
 
     for (pass = 0; pass < 2; pass++) {
         WORLD x, y;
