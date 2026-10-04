@@ -2151,11 +2151,17 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
        * tankMoveOnBoat, WinBolo 1.17 and Mac Bolo. A base square reads
        * as ROAD here (map load forces ROAD under every base), so a
        * friendly base beside the water is held too, which is also what
-       * the original code did. Skipped for HALFBUILDING, which is a
-       * solid wall that the building nudge already stops the body at,
-       * and for BOAT (allows pickup of an adjacent parked boat).
-       * Skipped at the tank's own boat-exit speed so deliberate fast
-       * exits work. */
+       * the original code did. Skipped for BOAT (allows pickup of an
+       * adjacent parked boat) and at the tank's own boat-exit speed so
+       * deliberate fast exits work.
+       * BUILDING and HALFBUILDING are both solid walls (speed 0, and
+       * tankBuildingCollision stops the body at either), so the boat
+       * cannot get onto them whatever this clamp does. BUILDING is not
+       * skipped, so a slow boat stops the inset short of it. HALFBUILDING
+       * is skipped only because the clamp was first written with it on
+       * the same list as road; there is no wall-specific reason, and the
+       * collision stops the boat there instead. Neither choice lets a
+       * boat land on a wall. */
       if ((*value)->speed < tankBoatExitSpeed(sim, *value) &&
           mapIsLand(mp, pb, bs, newbmx, newbmy) == FALSE) {
         WORLD rMinX = ((WORLD)newbmx) << TANK_SHIFT_MAPSIZE;
