@@ -37,7 +37,9 @@
  *     past the end: the scripts are kept and the server text stays empty,
  *     except that a good name before a bad description is kept;
  *   - an empty [0][0] pair: accepted;
- *   - control characters in the bytes are cleaned on read.
+ *   - control characters in the bytes are cleaned on read;
+ *   - bad UTF-8 in the bytes (a name of 32 bytes of 0xFF, a lead byte
+ *     cut off at the end) is cleaned on read.
  */
 
 #include <stdio.h>
@@ -505,6 +507,27 @@ int run_server_text_tail_read(void) {
         UT_ASSERT_MSG(strcmp(s.serverName, "Den") == 0,
                       "the name read as '%s'", s.serverName);
         UT_ASSERT_MSG(strcmp(s.serverDescription, "H i") == 0,
+                      "the description read as '%s'", s.serverDescription);
+    }
+
+    /* Bad UTF-8 on the wire is cleaned on read too: a name of 32 bytes of
+     * 0xFF reads as none, and a description ending in a lead byte with no
+     * continuation keeps what came before it. */
+    {
+        uint8_t buf[4 + 1 + 32 + 1 + 3];
+        memset(buf, 0, sizeof(buf));
+        buf[4] = 32;                     /* name length */
+        memset(buf + 5, 0xFF, 32);       /* 5..36 */
+        buf[37] = 3;                     /* description length */
+        buf[38] = 'O';
+        buf[39] = 'k';
+        buf[40] = 0xC3;
+        memset(&s, 0xAB, sizeof(s));
+        UT_ASSERT(discoveryReadScriptTail(buf, sizeof(buf), &s));
+        UT_ASSERT(s.hasScriptInfo);
+        UT_ASSERT_MSG(s.serverName[0] == '\0',
+                      "the name read as '%s'", s.serverName);
+        UT_ASSERT_MSG(strcmp(s.serverDescription, "Ok") == 0,
                       "the description read as '%s'", s.serverDescription);
     }
     return 0;

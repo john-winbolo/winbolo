@@ -1740,8 +1740,18 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                 nMin.y + lineH);
                     if (ImGui::IsWindowHovered() &&
                         ImGui::IsMouseHoveringRect(nMin, nMax)) {
+                        /* The full address, as the detail pane gives it:
+                         * a resolved host name alone would hide it. */
+                        char addr[sizeof(e.hostName) + sizeof(e.address) + 16];
+                        if (e.hostName[0] != '\0') {
+                            SDL_snprintf(addr, sizeof(addr), "%s (%s:%u)",
+                                         e.hostName, e.address, e.port);
+                        } else {
+                            SDL_snprintf(addr, sizeof(addr), "%s:%u",
+                                         e.address, e.port);
+                        }
                         ImGui::BeginTooltip();
-                        ImGui::TextUnformatted(where);
+                        ImGui::TextUnformatted(addr);
                         if (e.serverDescription[0] != '\0') {
                             ImGui::PushTextWrapPos(
                                 ImGui::GetFontSize() * 28.0f);

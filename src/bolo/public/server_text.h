@@ -48,7 +48,10 @@ extern "C" {
  *     annotation characters and noncharacters are dropped, except that
  *     whitespace
  *     (tab, newline and the other C0 spaces, NEL, no-break space, and the
- *     line and paragraph separators) becomes a plain space;
+ *     line and paragraph separators) becomes a plain space. Emoji are
+ *     kept, but dropping the zero-width joiner (U+200D) splits a joined
+ *     emoji (a family, a profession) into the separate emoji it is made
+ *     of, which is safe;
  *   - runs of spaces become one space, and leading and trailing spaces go;
  *   - the text is NFC-normalised; a combining mark with no character
  *     before it (at the start or after a space) is dropped, and a character
