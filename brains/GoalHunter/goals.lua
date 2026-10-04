@@ -16543,6 +16543,38 @@ end
 -- No danger check anywhere: "if the user says it, that's it."
 -- Returns a goal table, or nil when the target cannot be located at all.
 -- =========================================================================
+-- =========================================================================
+-- M.order_usable — does this bot hold an order it can work on THIS think?
+-- The tests Override 3c (CHAT ORDER) applies before it hands the order to
+-- the pool's reject pass; pick_goal asks the same question so a held order
+-- is not held up by the warm-up gate or the circle-reinforce override.
+-- =========================================================================
+function M.order_usable(state, world, info)
+  if not C.BOT_COMMANDS_ENABLED or not state._order then return false end
+  local ordq = state._order
+  -- Target gone = nothing to do; orders.lua clears the slot on its own next
+  -- think, we just stop rejecting rows for it now.
+  if ordq.tkind == "pill" and ordq.tid and not world.pills[ordq.tid] then return false end
+  if ordq.tkind == "base" and ordq.tid and not world.bases[ordq.tid] then return false end
+  -- A DEFEND ORDER ON A PILL THAT IS NO LONGER OURS is finished: there is
+  -- nothing left to guard.  orders.lua clears the slot on its next think
+  -- and says so; this stops the reject pass a tick earlier, so the bot
+  -- cannot spend even one think with every strategic row rejected for a
+  -- pill the enemy now owns.  That idle tick is what Andrew watched turn
+  -- into a bot sitting beside a captured pill doing nothing.
+  if ordq.kind == "defend_pill" and ordq.tid then
+    local dp = world.pills[ordq.tid]
+    if not dp or dp.owner ~= "friendly" or (dp.health or 0) == 0
+       or dp.in_tank then
+      return false
+    end
+  end
+  -- Armour below the escape line PAUSES every order (a pause, not an exit:
+  -- orders.lua keeps the 60 s timer running).
+  if (info.armour or 0) <= C.ARMOUR_CRITICAL then return false end
+  return true
+end
+
 function M.order_goal(state, world, info, ord)
   local k = ord.kind
   if k == "defend_pill" then
@@ -17066,36 +17098,13 @@ local function goal_selection(state, world, info, quiet)
   -- tick and hand the pool pass what it needs.
   -- ════════════════════════════════════════════════════════════════════
   state._order_reject = nil
-  if C.BOT_COMMANDS_ENABLED and not result and state._order then
+  if not result and M.order_usable(state, world, info) then
     local ordq = state._order
-    local okq  = true
-    -- Target gone = nothing to do; orders.lua clears the slot on its own next
-    -- think, we just stop rejecting rows for it now.
-    if ordq.tkind == "pill" and ordq.tid and not world.pills[ordq.tid] then okq = false end
-    if ordq.tkind == "base" and ordq.tid and not world.bases[ordq.tid] then okq = false end
-    -- A DEFEND ORDER ON A PILL THAT IS NO LONGER OURS is finished: there is
-    -- nothing left to guard.  orders.lua clears the slot on its next think
-    -- and says so; this stops the reject pass a tick earlier, so the bot
-    -- cannot spend even one think with every strategic row rejected for a
-    -- pill the enemy now owns.  That idle tick is what Andrew watched turn
-    -- into a bot sitting beside a captured pill doing nothing.
-    if ordq.kind == "defend_pill" and ordq.tid then
-      local dp = world.pills[ordq.tid]
-      if not dp or dp.owner ~= "friendly" or (dp.health or 0) == 0
-         or dp.in_tank then
-        okq = false
-      end
-    end
-    -- Armour below the escape line PAUSES every order (a pause, not an exit:
-    -- orders.lua keeps the 60 s timer running).
-    if (info.armour or 0) <= C.ARMOUR_CRITICAL then okq = false end
-    if okq then
-      state._order_reject = ordq
-      if not quiet and BRAIN_DEBUG_MODE then
-        print2(string.format("ORDER_ACTIVE t=%d %s#%s from=%s left=%d",
-               state.tick or 0, ordq.kind, tostring(ordq.tid),
-               tostring(ordq.sender_name), (ordq.expiry or 0) - (state.tick or 0)))
-      end
+    state._order_reject = ordq
+    if not quiet and BRAIN_DEBUG_MODE then
+      print2(string.format("ORDER_ACTIVE t=%d %s#%s from=%s left=%d",
+             state.tick or 0, ordq.kind, tostring(ordq.tid),
+             tostring(ordq.sender_name), (ordq.expiry or 0) - (state.tick or 0)))
     end
   end
 
@@ -19275,7 +19284,16 @@ function M.pick_goal(state, world, info, quiet)
   -- unreachable for the rest of the game. The nearest-candidate eval has
   -- already priced it via the current slate (boat or land), so the cost is a
   -- real travel cost, not a guess.
-  if not M.warm_ready(state) then
+  --
+  -- A HELD ORDER SKIPS THE WARM-UP.  A person's order says what the goal is,
+  -- so there is no poor pick to lock onto: goal selection runs from the first
+  -- think the order is held, and its reject pass injects the ordered goal if
+  -- the half-warmed pools do not have it yet.  Before this, an order given at
+  -- the start of a game waited for warm-up (about 18 s on the release brain)
+  -- while the bot drove to a dead pill or explored.  With no order held,
+  -- warm-up is exactly as it was.
+  local order_live = M.order_usable(state, world, info)
+  if not M.warm_ready(state) and not order_live then
     local pce = state.pool_cache and state.pool_cache[4]
     if pce and pce.goal and pce.goal.kind == "capture_pill"
        and (pce.cost or math.huge) <= (C.WARMUP_CAPTURE_MAX_COST or 150) then
@@ -19288,11 +19306,14 @@ function M.pick_goal(state, world, info, quiet)
     end
   end
 
-  if M.warm_ready(state) then
+  if M.warm_ready(state) or order_live then
     -- R4 harasser mission + R3 circle reinforcement (flag-gated). Preempts
     -- routine goals but yields to refuel/attack_tank/kill_lgm (restricted set)
     -- and to command_goal above. No-op unless a flag is set.
-    do
+    -- It pulls UNCOMMITTED bots only, and a bot holding a person's order is
+    -- committed: with an order held it is skipped, or it would drive the bot
+    -- to the circle and the order would never run.
+    if not order_live then
       local ov = M.special_mode_goal(state, world, info)
       if ov then return ov end
     end

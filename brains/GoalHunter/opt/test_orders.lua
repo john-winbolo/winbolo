@@ -6666,5 +6666,51 @@ do
   _G.EVENT_PING, _G.PING_KIND_CAUTION, _G.PING_KIND_BOT_COMMAND = nil, nil, nil
 end
 
+-- =========================================================================
+-- "capture" ON A LIVE PILL THAT IS ALREADY OURS IS TURNED DOWN at parse
+-- time: no order, one "already ours" line from the speaking bot only.  A dead
+-- pill of ours is still a capture_pill (pick it up).  Fixture: pill 9 is
+-- friendly with 12 armour; pill 7 is dead.
+-- =========================================================================
+print("orders.lua — capture on our own live pill")
+do
+  local wq = W()
+  local k, ns, tid, err = ORD.goal_kind({ verb = "capture", target = { kind = "pill", id = 9 } }, wq, I())
+  check("capture on our live pill: no kind", k == nil, tostring(k))
+  check("capture on our live pill: the reply line",
+        err == "pill #9 is already ours", tostring(err))
+  wq.pills[9].health = 0
+  k, ns, tid, err = ORD.goal_kind({ verb = "capture", target = { kind = "pill", id = 9 } }, wq, I())
+  check("capture on our DEAD pill is still a pickup",
+        k == "capture_pill" and ns == false and tid == 9 and err == nil,
+        tostring(k) .. "/" .. tostring(ns) .. "/" .. tostring(err))
+  k, ns, tid, err = ORD.goal_kind({ verb = "capture", target = { kind = "pill", id = 5 } }, W(), I())
+  check("capture on an enemy live pill is unchanged",
+        k == "capture_pill" and ns == true and tid == 5 and err == nil,
+        tostring(k) .. "/" .. tostring(ns) .. "/" .. tostring(err))
+
+  -- The runtime path: the speaker (p1, lowest bot) says it; no auction, no
+  -- order held, nothing known.
+  local sq, iq = ST(), I()
+  iq.allies = 0x17
+  ORD.on_chat(sq, W(), iq, 0, "capture pill 9", 200, true, false)
+  ORD.update(sq, W(), iq, 210)
+  check("the speaker answers 'pill #9 is already ours'",
+        sq.orders.say[#sq.orders.say] == "pill #9 is already ours",
+        tostring(sq.orders.say[#sq.orders.say]))
+  check("and no auction starts and no order is held",
+        next(sq.orders.auctions) == nil and sq.orders.held == nil
+        and next(sq.orders.known) == nil, "?")
+  -- Another bot on the team (p2) hears the same line and says nothing.
+  local s2, i2 = ST(), I({ player_number = 2 })
+  s2.player_number = 2
+  i2.allies = 0x17
+  ORD.on_chat(s2, W(), i2, 0, "capture pill 9", 200, true, false)
+  check("a bot that is not the speaker stays quiet",
+        #(s2.orders.say or {}) == 0, tostring(#(s2.orders.say or {})))
+  check("and starts nothing either",
+        next(s2.orders.auctions) == nil and s2.orders.held == nil, "?")
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
