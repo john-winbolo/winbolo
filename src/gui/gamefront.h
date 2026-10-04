@@ -34,6 +34,7 @@
 #include "global.h"
 #include "client_enums.h"  /* aiType, gameType */
 #include "server_sim.h"
+#include "server_text.h"   /* SERVER_NAME_LEN / SERVER_DESC_LEN */
 #include "input.h"
 #include "winbolo.h"
 #include "visibility_presets.h"  /* VisibilitySettings / VisibilityPreset */
@@ -1160,16 +1161,16 @@ extern int            gameFrontHostingVoiceMode;       /* default ON (0) */
                                * clients send it. Holds a ServerVoiceMode.
                                * serverVoiceProximity is not implemented and
                                * forwards the same as serverVoiceOn. */
-extern char           gameFrontHostingServerName[33];
+extern char           gameFrontHostingServerName[SERVER_NAME_LEN];
                               /* What the game finder shows for a game hosted
                                * from here, in place of the host's address;
                                * "" = the address. Sanitised, at most 32
                                * bytes (SERVER_NAME_MAX). */
-extern char           gameFrontHostingServerDesc[201];
+extern char           gameFrontHostingServerDesc[SERVER_DESC_LEN];
                               /* The longer description shown beside it;
                                * "" = none. At most 200 bytes
                                * (SERVER_DESC_MAX). */
-extern char           gameFrontLobbyServerName[33];
+extern char           gameFrontLobbyServerName[SERVER_NAME_LEN];
                               /* The name of the server the lobby is for: the
                                * host's own name when hosting, else the name
                                * the server's reply to the join's pre-flight

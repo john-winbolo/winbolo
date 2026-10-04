@@ -631,12 +631,6 @@ void transportUdpServerDestroy(void);
 void transportUdpServerRecv(struct ServerSim *sim);
 void transportUdpServerSend(struct ServerSim *sim);
 
-/* How many bytes of the server's description the info-request reply has
- * room for beside the scripts the sim runs now and its server name, at most
- * INFO_SERVER_DESC_MAX (udp_server_query.c). The dedicated server prints a
- * note at startup when the description is longer than this. */
-size_t infoReplyServerDescRoom(struct ServerSim *sim);
-
 /* Drain the recv thread's packet queue (use when recv thread is active). */
 void transportUdpServerDrainRecvQueue(struct ServerSim *sim);
 

@@ -2247,7 +2247,7 @@ if(WIN32)
         src/gui/sdl3/lang.c
         src/res/winbolods.rc
     )
-    target_link_libraries(WinBoloDS PRIVATE ws2_32 winmm)
+    target_link_libraries(WinBoloDS PRIVATE ws2_32 winmm shell32)
     target_compile_options(WinBoloDS PRIVATE -fcommon)
     if(MSVC)
         target_link_options(WinBoloDS PRIVATE "/SUBSYSTEM:CONSOLE,10.0")

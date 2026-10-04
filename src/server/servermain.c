@@ -26,6 +26,7 @@
 
 #ifdef _WIN32
   #include <WinSock2.h>
+  #include <shellapi.h>   /* CommandLineToArgvW - -name / -desc as UTF-8 */
   #include <process.h>
   #define getpid _getpid
 #else
@@ -54,6 +55,7 @@
 #include "mapgen.h"
 #include "log.h"
 #include "transport_udp.h"
+#include "transport_udp_server_internal.h"  /* infoReplyServerDescRoom */
 #include "net_impair.h"   /* WB_ENABLE_NETIMPAIR master switch */
 #include "bot_manager.h"
 #include "brain_list.h"  /* BrainModes, brainListLoadModesForPath — -mode */
@@ -710,10 +712,12 @@ void printArgs() {
   fprintf(stderr, "                name and skips that file.\n");
   fprintf(stderr, "-desc <D>     - Longer server description the game finder shows beside the\n");
   fprintf(stderr, "                name: up to 200 bytes of UTF-8, less when a long scenario\n");
-  fprintf(stderr, "                and mods leave no room (a note says so at startup). Without\n");
-  fprintf(stderr, "                -desc, [HOSTING] \"Server Description\" in the same file;\n");
-  fprintf(stderr, "                -desc \"\" sets none and skips it. Control characters are\n");
-  fprintf(stderr, "                removed from both.\n");
+  fprintf(stderr, "                and many mods fill the reply. With -nolobby a note at\n");
+  fprintf(stderr, "                startup says so; scripts picked later in a lobby are not\n");
+  fprintf(stderr, "                checked. Without -desc, [HOSTING] \"Server Description\" in\n");
+  fprintf(stderr, "                the same file; -desc \"\" sets none and skips it. Control\n");
+  fprintf(stderr, "                characters are removed from both. On Windows both are read\n");
+  fprintf(stderr, "                from the Unicode command line, so any letters work.\n");
 
   fprintf(stderr, "\nLobby & host:\n");
   fprintf(stderr, "-nolobby      - Skip lobby, start game immediately (backward-compatible mode)\n");
@@ -1113,6 +1117,39 @@ int findArg(int numArgs, char **argv, const char *argname) {
   return returnValue;
 }
 
+
+#ifdef _WIN32
+/* argv on Windows is in the ANSI code page, so most letters outside it are
+ * lost (an accented letter arrives as one byte the sanitiser drops). -name
+ * and -desc read their value again from the Unicode command line as UTF-8.
+ * argNum is an argv index; the wide parse must give the same count, else
+ * the indices may not line up. The value is cut to outSize - 1 bytes,
+ * which the sanitiser later trims to a whole character. False when the
+ * wide value can't be had, and the caller keeps argv's. */
+static bool serverArgUtf8(int argc, int argNum, char *out, size_t outSize) {
+  int     wargc = 0;
+  LPWSTR *wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
+  bool    ok = false;
+
+  if (wargv == NULL) {
+    return false;
+  }
+  if (wargc == argc && argNum >= 0 && argNum < wargc && outSize > 0) {
+    int need = WideCharToMultiByte(CP_UTF8, 0, wargv[argNum], -1, NULL, 0,
+                                   NULL, NULL);
+    char *utf8 = need > 0 ? (char *)malloc((size_t)need) : NULL;
+    if (utf8 != NULL &&
+        WideCharToMultiByte(CP_UTF8, 0, wargv[argNum], -1, utf8, need,
+                            NULL, NULL) == need) {
+      snprintf(out, outSize, "%s", utf8);
+      ok = true;
+    }
+    free(utf8);
+  }
+  LocalFree(wargv);
+  return ok;
+}
+#endif
 
 bool argExist(int numArgs, char **argv, char *argname) {
   bool returnValue; /* Value to return */
@@ -2799,6 +2836,10 @@ int main(int argc, char **argv) {
       int nameNum = findArg(argc, argv, "name");
       int descNum = findArg(argc, argv, "desc");
       if (nameNum != ARG_NOT_FOUND) {
+#ifdef _WIN32
+        if (!serverArgUtf8(argc, nameNum, serverNameBuf,
+                           sizeof(serverNameBuf)))
+#endif
         snprintf(serverNameBuf, sizeof(serverNameBuf), "%s",
                  (char *)argv[nameNum]);
       } else {
@@ -2806,6 +2847,10 @@ int main(int argc, char **argv) {
                        sizeof(serverNameBuf));
       }
       if (descNum != ARG_NOT_FOUND) {
+#ifdef _WIN32
+        if (!serverArgUtf8(argc, descNum, serverDescBuf,
+                           sizeof(serverDescBuf)))
+#endif
         snprintf(serverDescBuf, sizeof(serverDescBuf), "%s",
                  (char *)argv[descNum]);
       } else {
@@ -2848,7 +2893,7 @@ int main(int argc, char **argv) {
        * the scripts this round starts with; a later pick can change it. */
       if (descLen > descRoom) {
         fprintf(stderr,
-                "Note: the game finder gets only the first %u of the "
+                "Note: the game finder gets at most the first %u of the "
                 "description's %u bytes; the scenario and mod names fill "
                 "the rest of the reply.\n",
                 (unsigned)descRoom, (unsigned)descLen);
