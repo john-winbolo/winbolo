@@ -80,6 +80,8 @@ scenario = {
     .. "as long as the host sets in the lobby. Hold your bases, grab the "
     .. "dead pillboxes, fort up in the forest.",
   api  = 1,
+  author  = "WinBolo",
+  updated = "2026-10-02T15:08Z",
   -- This file ends its own round, from on_tick, when the last wave is beaten
   -- or the defenders are wiped out, so it is a scenario rather than a mod.
   -- Written out rather than left to the default, because the default is what

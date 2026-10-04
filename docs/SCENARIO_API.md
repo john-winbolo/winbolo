@@ -852,6 +852,8 @@ scenario = {
   name         = "Wave Defense",
   description  = "Hold the four pillboxes at the centre of the map.",
   api          = 1,
+  author       = "Jo Bloggs",
+  updated      = "2026-10-03T20:47Z",
   kind         = "scenario",
   game         = "open",
   bound        = true,
@@ -880,7 +882,57 @@ scenario = {
 | `callbacks` | table | What each of the script's callbacks does, one sentence each for a player, keyed by the callback's name: `callbacks = { on_start = "Lines the teams up.", can_die = "Builders cannot be killed." }`. The lobby's details dialog shows them under the rules table, headed "What this mod implements:" or "What this scenario implements:", as a table of Method (the callback's name), Type and High-level overview (the sentence). Type is Event for a hook whose return the engine ignores, Query for a policy whose answer it uses, and Trigger for a hook only a trigger's `when` defines. A script with no block shows no such section. Optional, and it changes nothing about how the round plays. At most 40 rows, each sentence cut at 159 bytes (at a UTF-8 character boundary), and 2048 bytes for the whole block packed (a type byte and two length bytes per row plus the name and the sentence, and one count byte) — about twenty lines of eighty letters. The load warns, and never refuses the file, for each callback the script defines that the block does not describe, for each name that is no callback the engine calls, and for each name the script never defines; those last two rows are dropped. The warnings go to the server console and `-validate` prints them. The names are the ones in the hook and policy tables below; a trigger's `when` counts as defining its hook. |
 | `workshop_id` | string | The Steam Workshop item the file was published as, written as a string of decimal digits (`"3301234567"`), because a Lua number cannot hold every digit of a 64-bit id. The game writes it into the file's manifest when you publish it; it is not meant to be set by hand. A script that declares its own `scenario` table need not repeat it: it is compared with the manifest only when the table states it, and a table that states a different id is refused. Anything that is not a string of digits is reported and read as none. |
 | `workshop_author` | string | The SteamID64 of the account that published the file, a string of decimal digits like `workshop_id`, and written by the game at the same time. The same rules apply: not meant to be set by hand, need not be repeated, and refused only when the table states a different one. |
+| `author` | string | Who wrote the file, as the lobby and the server log show it: up to 47 bytes of UTF-8. See [`author` and `updated`](#author-and-updated). |
+| `updated` | string | When the file's content last changed, in UTC to the minute: `"YYYY-MM-DDTHH:MMZ"`. See [`author` and `updated`](#author-and-updated). |
 | `settings` | table | Choices the host makes in the lobby details dialog, one dropdown each, read by the script with `game.setting(id)`. See [`scenario.settings`](#scenariosettings). Optional; a script with none shows no Settings section. |
+
+### `author` and `updated`
+
+Two editions of a mod can share a name. The author and the time the file last
+changed are what tell them apart, so the lobby shows both: on each row of the
+script chooser as a tooltip, "by Jo Bloggs · updated 2026-10-03 20:47 UTC",
+and on the same line under the file name in the details dialog. The server
+prints them on the line it writes for each script a round loads:
+
+```
+scenario: Mac Bolo Rules by WinBolo, updated 2026-10-03 (MacBoloRules.scenario.lua) loaded
+```
+
+`updated` is written in one form only, an ISO 8601 time in UTC to the minute
+with a `Z`: `"2026-10-03T20:47Z"`. No seconds, no offset, no other separator.
+It is the time the content changed, stated in the file, and not the file's
+modified time on disk, which a copy or a download moves. The form is checked
+as a real date: `"2026-02-30T10:00Z"` is not one.
+
+`author` is free text, cleaned as it is read: control characters are dropped,
+and so are invisible format characters (bidi controls, line and paragraph
+separators, zero-width characters), spaces at either end are trimmed, and
+the text is cut at 47 bytes on a UTF-8 character boundary. Invalid UTF-8 is
+dropped byte by byte. An author that is empty once cleaned reads as unknown.
+The lobby draws it as plain text, never as a format string.
+
+Both are optional. A file that leaves one out, or states one that is not a
+string, or an `updated` that is not in the form, reads as "unknown" there,
+and the file still loads and plays. Each of those is a warning, not a
+problem: `-validate` prints it as `file: warning: key: message` and exits 0
+all the same, and the round loads without a word. A cleaned author is a
+warning too, naming the text that was used.
+
+A package's `manifest.json` carries the same two keys, `"author"` and
+`"updated"`, with the same rules. A script that declares its own `scenario`
+table need not repeat them; when it does, they must match the manifest's, as
+`workshop_id` must.
+
+A server from before these keys sends no identity, and a newer lobby then
+shows nothing rather than "unknown". An older lobby ignores what a newer
+server sends.
+
+The shipped scripts (`data/mods/*.lua` and `data/maps/*.scenario.lua`) say
+`author = "WinBolo"`. `tools/stamp_mod_updated.py` keeps their `updated`
+current: run it before committing a change to one, and it stamps every
+shipped file that differs from git HEAD with the current UTC time.
+`--check` fails a shipped file whose last change did not also change its
+`updated` line; see [TOOLS.md](TOOLS.md#toolsstamp_mod_updatedpy).
 
 ### `scenario.lobby`
 
@@ -2887,7 +2939,20 @@ maps/Wave Defense.scenario.lua:14: rules.tank_reload_ticks: tank_reload_ticks is
 ```
 
 on standard error, and the command exits 0 for a map that is playable and 1
-for one that is not. Problems the parse itself finds — a rule name that
+for one that is not. Warnings, such as a missing `author` or `updated`, are
+printed after the problems as `file: warning: key: message`, and do not change
+the exit code. A `.lua` file named directly, a mod say, is checked the same way
+with no map:
+
+```
+WinBoloDS -validate data/mods/MacBoloRules.scenario.lua
+```
+
+A `.lua` named directly that cannot be read, a misspelt path say, exits 1, so
+a script or a hook that checks a mod by name does not pass on a typo. A map
+with no script beside it still exits 0.
+
+Problems the parse itself finds — a rule name that
 spells nothing, a tag past what the map holds — are also written to standard
 output as the server would log them, so a run that captures one stream sees
 half the report. The map has to load before the script is looked at.

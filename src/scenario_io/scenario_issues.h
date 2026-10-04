@@ -29,6 +29,13 @@
 #include "scenario_manifest.h" /* ScenarioManifest */
 
 #define SCN_VALIDATE_ISSUES_MAX 64
+
+/* Room for the warnings. A warning is something an author should fix that
+ * stops nothing: a file with warnings and no issues is playable, uploads and
+ * packs. Today the only ones are a manifest with no author or no updated
+ * time, or one whose value had to be cleaned or dropped (scenario_identity.h),
+ * so a handful is room over. */
+#define SCN_VALIDATE_WARNINGS_MAX 8
 #define SCN_VALIDATE_KEY_LEN    64
 #define SCN_VALIDATE_MSG_LEN    512
 
@@ -48,6 +55,11 @@ typedef struct {
     uint16_t         count;
     uint16_t         dropped;        /* problems past SCN_VALIDATE_ISSUES_MAX */
     ScnValidateIssue issues[SCN_VALIDATE_ISSUES_MAX];
+    /* What should be fixed and stops nothing. Kept apart from issues so that
+       every caller reading count as "is this playable" goes on reading it
+       that way; -validate prints these after the issues. */
+    uint16_t         warnCount;
+    ScnValidateIssue warnings[SCN_VALIDATE_WARNINGS_MAX];
     ScenarioManifest manifest;       /* what the table parsed to; also what
                                       * a package is written from */
 } ScnValidateResult;
@@ -62,6 +74,18 @@ typedef struct {
  *********************************************************/
 void scnIssueAdd(ScnValidateResult *out, const char *key,
                  const char *fmt, ...);
+
+/*********************************************************
+ *NAME:          scnWarnAdd
+ *PURPOSE:
+ *  Appends one warning, the way scnIssueAdd appends a
+ *  problem, except that a key already warned about is not
+ *  warned about twice: a package is read through both its
+ *  forms and each would say the same thing. A full list
+ *  drops the rest. A NULL out is a no-op.
+ *********************************************************/
+void scnWarnAdd(ScnValidateResult *out, const char *key,
+                const char *fmt, ...);
 
 /* Where a problem the parse found is said: one line to the operator and a
  * copy in soft for whoever asked, and an issue on sink when a validator is

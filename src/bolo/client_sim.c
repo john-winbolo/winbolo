@@ -3096,6 +3096,20 @@ uint64_t clientSimGetLobbyScenarioListWorkshopId(const ClientSim *cs,
   if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return 0;
   return cs->lobbyScenarioListWorkshopId[idx];
 }
+bool clientSimGetLobbyScenarioListIdentityKnown(const ClientSim *cs,
+                                                int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return false;
+  return cs->lobbyScenarioListIdentityKnown[idx];
+}
+const char *clientSimGetLobbyScenarioListAuthor(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return "";
+  return cs->lobbyScenarioListAuthor[idx];
+}
+const char *clientSimGetLobbyScenarioListUpdated(const ClientSim *cs,
+                                                 int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return "";
+  return cs->lobbyScenarioListUpdated[idx];
+}
 /* The lobby's ordered script list: what the host has picked, in the order
  * the round will load it. Entry 0 is the script the round is decided by and
  * is the same file the attached-scenario accessors describe; the entries
@@ -3287,6 +3301,10 @@ void clientSimLobbyScenarioDetailsPut(ClientSim *cs, const char *file,
      one reads as a server that did not say. */
   cs->lobbyScnDetails[i].settingsKnown = false;
   cs->lobbyScnDetails[i].settingsLen   = 0;
+  /* And the identity likewise. */
+  cs->lobbyScnDetails[i].identityKnown = false;
+  cs->lobbyScnDetails[i].author[0]     = 0;
+  cs->lobbyScnDetails[i].updated[0]    = 0;
 }
 
 void clientSimLobbyScenarioDetailsForget(ClientSim *cs) {
@@ -3331,6 +3349,45 @@ bool clientSimGetLobbyScenarioSettings(const ClientSim *cs, const char *file,
   if (bytes != NULL && cs->lobbyScnDetails[i].settingsLen > 0) {
     *bytes = cs->lobbyScnDetails[i].settings;
   }
+  return true;
+}
+
+void clientSimLobbyScenarioIdentityPut(ClientSim *cs, const char *file,
+                                       const char *author,
+                                       const char *updated) {
+  int i;
+  if (cs == NULL || !clientSimScnDetailsNameOk(file)) return;
+  i = clientSimScnDetailsFind(cs, file);
+  if (i < 0 || cs->lobbyScnDetails[i].state != LOBBY_SCN_DETAILS_FOUND) {
+    return;
+  }
+  /* Cleaned and checked here as well as on the wire, so a caller in this
+     process that read a manifest some other way is held to the same. */
+  (void)scnIdentityCleanAuthor(cs->lobbyScnDetails[i].author,
+                               sizeof(cs->lobbyScnDetails[i].author), author,
+                               author != NULL ? strlen(author) : 0);
+  cs->lobbyScnDetails[i].updated[0] = 0;
+  if (scnIdentityUpdatedValid(updated)) {
+    SDL_strlcpy(cs->lobbyScnDetails[i].updated, updated,
+                sizeof(cs->lobbyScnDetails[i].updated));
+  }
+  cs->lobbyScnDetails[i].identityKnown = true;
+}
+
+bool clientSimGetLobbyScenarioIdentity(const ClientSim *cs, const char *file,
+                                       const char **author,
+                                       const char **updated) {
+  int i;
+  if (author != NULL) *author = "";
+  if (updated != NULL) *updated = "";
+  if (cs == NULL || file == NULL || file[0] == '\0') return false;
+  i = clientSimScnDetailsFind(cs, file);
+  if (i < 0 || cs->lobbyScnDetails[i].state != LOBBY_SCN_DETAILS_FOUND ||
+      !cs->lobbyScnDetails[i].identityKnown) {
+    return false;
+  }
+  if (author != NULL) *author = cs->lobbyScnDetails[i].author;
+  if (updated != NULL) *updated = cs->lobbyScnDetails[i].updated;
   return true;
 }
 

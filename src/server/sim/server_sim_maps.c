@@ -1333,6 +1333,9 @@ int serverSimEnumerateScenarioDir(ServerSim *sim,
         e->source     = dirRows[i].source;
         e->workshopId = dirRows[i].workshopId;
         e->workshopAuthor = dirRows[i].workshopAuthor;
+        e->identityKnown  = true;
+        SDL_strlcpy(e->author, dirRows[i].author, sizeof(e->author));
+        SDL_strlcpy(e->updated, dirRows[i].updated, sizeof(e->updated));
     }
     free(dirRows);
     return got;
@@ -1378,6 +1381,56 @@ int serverSimScenarioSettingsDecl(ServerSim *sim, const char *file,
     return sim->scenarioSettingsReader(sim->scenarioSettingsReaderCtx,
                                        serverSimGetScenarioDir(sim), file,
                                        out, cap);
+}
+
+/* How many directory rows serverSimScenarioIdentity reads through. */
+#define SERVER_SCENARIO_IDENTITY_ROWS 256
+
+bool serverSimScenarioIdentity(ServerSim *sim, const char *file,
+                               char *author, size_t authorCap,
+                               char *updated, size_t updatedCap) {
+    ScnDirEntry *rows;
+    int          got;
+    int          i;
+    bool         found = false;
+
+    if (author != NULL && authorCap > 0) author[0] = '\0';
+    if (updated != NULL && updatedCap > 0) updated[0] = '\0';
+    if (sim == NULL || file == NULL || file[0] == '\0') return false;
+    /* The map's own script first, for the reason serverSimScenarioDetails
+       looks there first. */
+    if (sim->scenarioMapScript.file[0] != '\0' &&
+        strcmp(sim->scenarioMapScript.file, file) == 0) {
+        if (author != NULL) {
+            SDL_strlcpy(author, sim->scenarioMapScript.author, authorCap);
+        }
+        if (updated != NULL) {
+            SDL_strlcpy(updated, sim->scenarioMapScript.updated, updatedCap);
+        }
+        return true;
+    }
+    /* Then the listing, to twice the cap the scenario-list packet sends
+       (128 rows), so any row a client was shown is a row this finds. The
+       lister caches what it read, so this costs a walk of the rows and not
+       a read of the files. On the heap for the reason
+       serverSimEnumerateScenarioDir is. */
+    rows = (ScnDirEntry *)calloc(SERVER_SCENARIO_IDENTITY_ROWS, sizeof(*rows));
+    if (rows == NULL) return false;
+    got = serverSimScenarioListDir(sim, rows, SERVER_SCENARIO_IDENTITY_ROWS);
+    for (i = 0; i < got; i++) {
+        if (strcmp(rows[i].file, file) == 0) {
+            if (author != NULL) {
+                SDL_strlcpy(author, rows[i].author, authorCap);
+            }
+            if (updated != NULL) {
+                SDL_strlcpy(updated, rows[i].updated, updatedCap);
+            }
+            found = true;
+            break;
+        }
+    }
+    free(rows);
+    return found;
 }
 
 /* Where file's value for id is kept, or -1. */

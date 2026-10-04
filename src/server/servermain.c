@@ -679,10 +679,12 @@ void printArgs() {
   fprintf(stderr, "                -scriptuploads off still refuses uploads. A script a player\n");
   fprintf(stderr, "                sends runs its top level the moment it lands, before any host\n");
   fprintf(stderr, "                picks it. Only for trusted content.\n");
-  fprintf(stderr, "-validate <File> - Check the scenario script beside a map and exit without\n");
-  fprintf(stderr, "                starting a server. Each problem is printed as\n");
-  fprintf(stderr, "                file:line: key: message. Exits 0 when the map is\n");
-  fprintf(stderr, "                playable, 1 when it is not.\n");
+  fprintf(stderr, "-validate <File> - Check the scenario script beside a map, or a .lua\n");
+  fprintf(stderr, "                script named directly, and exit without starting a\n");
+  fprintf(stderr, "                server. Each problem is printed as file:line: key:\n");
+  fprintf(stderr, "                message, and each warning (a missing author or updated\n");
+  fprintf(stderr, "                time, say) as file: warning: key: message. Exits 0 when\n");
+  fprintf(stderr, "                the script is playable, warnings or not, 1 when not.\n");
   fprintf(stderr, "-pack <File>  - Write the scenario script beside a map into the map file\n");
   fprintf(stderr, "                itself and exit without starting a server. The manifest\n");
   fprintf(stderr, "                comes from the script's own scenario table, and a\n");
@@ -1523,10 +1525,12 @@ static const char *overviewWindowArgWord(OverviewWindow window) {
    not. Nothing else in the server is running by the time this is called, and
    nothing it does starts anything. */
 static int validateMapAndReport(char *mapPath) {
-  ServerSim *sim;
+  ServerSim *sim = NULL;
   ScnValidateResult *result;
   char script[SCN_SCRIPT_PATH_MAX];
   bool ok;
+  bool direct;
+  size_t pathLen;
   uint16_t i;
 
 #ifdef USING_SDL
@@ -1540,16 +1544,26 @@ static int validateMapAndReport(char *mapPath) {
      it. */
   setWriteToDebugFileStream(-1);
 
+  /* A .lua is a script named directly, a mod out of a scripts directory
+     say, and is checked as that directory checks it: with no map, so the
+     one check that reads a map is left out. Anything else is a map. */
+  pathLen = strlen(mapPath);
+  direct = pathLen > 4 && SDL_strcasecmp(mapPath + pathLen - 4, ".lua") == 0;
+
   /* What the issues are printed against. A path with no room for a script
      name is reported against the map's own name. */
-  if (scnScriptPath(mapPath, script, sizeof(script)) == FALSE) {
+  if (direct) {
+    snprintf(script, sizeof(script), "%s", mapPath);
+  } else if (scnScriptPath(mapPath, script, sizeof(script)) == FALSE) {
     snprintf(script, sizeof(script), "%s", mapPath);
   }
 
-  sim = serverSimCreate(mapPath, gameOpen, FALSE, 0, -1);
-  if (sim == NULL) {
-    fprintf(stderr, "%s: the map could not be loaded\n", mapPath);
-    return 1;
+  if (!direct) {
+    sim = serverSimCreate(mapPath, gameOpen, FALSE, 0, -1);
+    if (sim == NULL) {
+      fprintf(stderr, "%s: the map could not be loaded\n", mapPath);
+      return 1;
+    }
   }
 
   /* On the heap rather than the stack: a result carries the whole manifest and
@@ -1557,11 +1571,12 @@ static int validateMapAndReport(char *mapPath) {
   result = (ScnValidateResult *)malloc(sizeof(*result));
   if (result == NULL) {
     fprintf(stderr, "%s: out of memory reading the script\n", mapPath);
-    serverSimDestroy(sim);
+    if (sim != NULL) serverSimDestroy(sim);
     return 1;
   }
 
-  ok = scenarioValidateMap(sim, mapPath, result);
+  ok = direct ? scenarioValidateScript(NULL, mapPath, result)
+              : scenarioValidateMap(sim, mapPath, result);
 
   for (i = 0; i < result->count; i++) {
     const ScnValidateIssue *issue = &result->issues[i];
@@ -1573,8 +1588,16 @@ static int validateMapAndReport(char *mapPath) {
     }
   }
 
+  /* After the problems and apart from them: a warning stops nothing, so it
+     moves neither the summary below nor the exit code. */
+  for (i = 0; i < result->warnCount; i++) {
+    fprintf(stderr, "%s: warning: %s: %s\n", script, result->warnings[i].key,
+            result->warnings[i].message);
+  }
+
   if (result->haveManifest == FALSE && result->count == 0) {
-    fprintf(stderr, "%s: no scenario script beside it\n", mapPath);
+    fprintf(stderr, direct ? "%s: no such script\n"
+                           : "%s: no scenario script beside it\n", mapPath);
   } else if (ok == TRUE) {
     fprintf(stderr, "%s: no problems\n", script);
   } else if (result->dropped > 0) {
@@ -1585,8 +1608,15 @@ static int validateMapAndReport(char *mapPath) {
             (result->count == 1) ? "" : "s");
   }
 
+  /* A script named directly and nothing read from it is a path that names
+     no script, a typo say, and a check of a mod by its path must not pass
+     on one. A map with no script beside it is still a plain map, and 0. */
+  if (direct && result->haveManifest == FALSE && result->count == 0) {
+    ok = false;
+  }
+
   free(result);
-  serverSimDestroy(sim);
+  if (sim != NULL) serverSimDestroy(sim);
   return (ok == TRUE) ? 0 : 1;
 }
 

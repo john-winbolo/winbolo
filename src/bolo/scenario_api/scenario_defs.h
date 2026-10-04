@@ -30,6 +30,7 @@
 #include "scenario_table.h" /* ScnTable — the init and hint payloads below */
 #include "sim_rules_names.h" /* SIM_RULE_LIST — the rule list SCN_RULE_LIST is */
 #include "scenario_panel.h" /* SCN_PANEL_MAX — the panel op's byte capacity */
+#include "scenario_identity.h" /* SCN_AUTHOR_LEN / SCN_UPDATED_LEN */
 
 /* Text capacity for every op that carries a line. The server-text
  * control event holds char text[PACKET_MAX_CHAT_MESSAGE + 1]
@@ -168,6 +169,11 @@ typedef struct {
     uint8_t  source;
     uint64_t workshopId;
     uint64_t workshopAuthor;
+    /* Who wrote it and when it last changed, as the manifest states them
+       (scenario_identity.h), "" for not stated. Sent: the scenario-list
+       packet carries them in a trailer an older client does not read. */
+    char     author[SCN_AUTHOR_LEN];
+    char     updated[SCN_UPDATED_LEN];
 } ScnDirEntry;
 
 /* ScnDirEntry.source. One byte on the wire, in the scenario-list packet and
