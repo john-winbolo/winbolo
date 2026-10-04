@@ -31,6 +31,12 @@ same field, three pills in a line so each bot can stand next to one job:
     pill #4 (128,110)      Y, "defend 3": B's job, then C's.
     The arena gives #2..#4 to the bots' team.
 
+The enemy-base field (order_capture_enemy_base, order_capture_live_pill) is
+the first with a second base:
+
+    base #2 (112,128)      the arena gives it to an enemy seat, full armour:
+                           "capture base 1".
+
 Usage:
     python tests/generate_order_bids_maps.py
 """
@@ -56,6 +62,14 @@ ARENAS = [
 ]
 
 CHAIN_ARENA = "order_handoff_chain"
+
+# The enemy-base field: base #2 is the target, base #1 the same filler the
+# other arenas give the bots' team.  The live-pill capture arena plays on it
+# too (it only needs pill #2).
+BASE_ARENAS = [
+    "order_capture_enemy_base",
+    "order_capture_live_pill",
+]
 
 PONDS = [(98, 98), (154, 154), (98, 154), (154, 126)]
 
@@ -94,6 +108,9 @@ def main():
         (128, 110, 0xFF, 15, 50),
     ]
     write_bmap(str(out / (CHAIN_ARENA + ".map")), terrain, chain_pills, bases, starts)
+    base_bases = bases + [(112, 128, 0xFF, 90, 90, 90)]
+    for name in BASE_ARENAS:
+        write_bmap(str(out / (name + ".map")), terrain, pills, base_bases, starts)
 
 
 if __name__ == "__main__":
