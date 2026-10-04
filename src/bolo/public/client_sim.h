@@ -1495,6 +1495,12 @@ bool clientSimGetLobbyScenarioSettings(const ClientSim *cs, const char *file,
 #define LOBBY_SCRIPT_SETTING_VALUES_MAX 48
 bool     clientSimGetLobbyScriptSetting(const ClientSim *cs, const char *file,
                                         const char *id, int32_t *out);
+/* Whether the server's operator holds file's setting id (a
+ * CTRL_LOBBY_SCRIPT_SETTING LOCK): the server refuses a change to it, and
+ * the dialog shows it read-only. False from a server too old to send one. */
+bool     clientSimGetLobbyScriptSettingLocked(const ClientSim *cs,
+                                              const char *file,
+                                              const char *id);
 bool     clientSimLobbyScriptSettingsSupported(const ClientSim *cs);
 
 /* Spectator feed drain — the session uses these to pull the captured seed and

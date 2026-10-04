@@ -2721,6 +2721,9 @@ STR_DLGLOBBY_DETAILS_SETTING_OFF=Off
 STR_DLGLOBBY_DETAILS_SETTING_ON_DEFAULT=On (default)
 STR_DLGLOBBY_DETAILS_SETTING_OFF_DEFAULT=Off (default)
 STR_DLGLOBBY_DETAILS_SETTING_CHOICE_DEFAULT={string1} (default)
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=The server sets this value. It cannot be changed.
 STR_MAPEDIT_SCENARIO_WORKSHOP=Workshop item #{string1}, published by {string2}
 
 # The Steam Workshop tab of Settings

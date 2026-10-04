@@ -996,6 +996,19 @@ struct ServerSim {
     uint8_t      operatorModStrength[LOBBY_SCRIPT_LIST_MAX];
     int          operatorModCount;
     bool         operatorModsLocked;
+    /* The values the operator's -setting gave the settings of those rows,
+       keyed like scriptSettingValues below and checked against the
+       declaration when recorded. Put back into scriptSettingValues with
+       the rows at every new lobby (serverSimRecordOperatorMods). Held
+       against the host only for a fixed row (serverSimOperatorModFixed):
+       a -mod row's value is a default the host may move for one game.
+       Written only by serverSimApplySettingArg. */
+    struct {
+        char    file[LOBBY_SCENARIO_FILE_LEN];
+        char    id[SCN_SETTING_ID_LEN];
+        int32_t value;
+    }            operatorSettings[SERVER_OPERATOR_SETTINGS_MAX];
+    int          operatorSettingCount;
     /* The values the host chose for scripts' settings this session, keyed by
        the script's file name and the setting's id. A value equal to the
        declared default is not kept: a missing value is the default. Kept

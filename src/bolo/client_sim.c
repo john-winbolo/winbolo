@@ -3352,6 +3352,19 @@ bool clientSimGetLobbyScriptSetting(const ClientSim *cs, const char *file,
   return false;
 }
 
+bool clientSimGetLobbyScriptSettingLocked(const ClientSim *cs,
+                                          const char *file, const char *id) {
+  int i;
+  if (cs == NULL || file == NULL || id == NULL) return false;
+  for (i = 0; i < cs->lobbyScriptSettingCount; i++) {
+    if (strcmp(cs->lobbyScriptSettings[i].file, file) == 0 &&
+        strcmp(cs->lobbyScriptSettings[i].id, id) == 0) {
+      return cs->lobbyScriptSettings[i].locked;
+    }
+  }
+  return false;
+}
+
 bool clientSimLobbyScriptSettingsSupported(const ClientSim *cs) {
   return cs != NULL && cs->lobbyScriptSettingsSupported;
 }

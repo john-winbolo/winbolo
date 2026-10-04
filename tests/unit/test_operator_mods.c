@@ -45,6 +45,23 @@
  *   operator_mods_map_yield — a plain -mod scenario gives way to a map's
  *       own scenario (not to a map's own mod) and keeps the map's own row
  *       on the list; a -mod-required one replaces both.
+ *   operator_mods_setting_short_name — -setting finds an operator's row by
+ *       its short name in any case and by its full name, a directory script
+ *       by its short name, and the map's own script for a bare id; each bad
+ *       argument is refused with the reason said.
+ *   operator_mods_setting_reapply — a -setting value on a -mod row is the
+ *       host's to change, and is back at the next return to the lobby and
+ *       at the empty-lobby reset; a value on a script that is not the
+ *       operator's keeps the host's pick.
+ *   operator_mods_setting_locked — on a -mod-required or -mod-locked row
+ *       the -setting value is refused to the host (CMD_REJECT_LOCKED), the
+ *       row's other settings are not, and the join sync sends a LOCK after
+ *       the SETs, with the value even when it is the default.
+ *   operator_mods_setting_wire — a LOCK is a SET's body with another op,
+ *       decoded with the same bounds; a client holds it until the next
+ *       CLEAR, a SET-only stream (an older server) holds nothing, and an
+ *       op a client does not know is skipped, as an older client skips a
+ *       LOCK.
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -61,6 +78,7 @@
 #include "control_event.h"
 #include "everard_map.h"
 #include "scenario_defs.h"         /* ScnDirEntry, SCN_DIR_SOURCE_* */
+#include "scenario_settings.h"     /* ScnSetting, scnSettingsBlobAppend */
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* sim->tick, SCENARIO_RELOAD_GAP_TICKS,
                                     * serverSimFillScriptListEvent */
@@ -854,5 +872,452 @@ int run_operator_mods_map_yield(void) {
     UT_ASSERT(wave != NULL);
     UT_ASSERT(!serverSimOperatorModYieldsToMap(sim, wave->file, true));
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 11. -setting on the operator's rows ──────────────────────────── */
+
+static ScnSetting omIntSetting(const char *id, int32_t min, int32_t max,
+                               int32_t step, int32_t def) {
+    ScnSetting s;
+
+    memset(&s, 0, sizeof(s));
+    snprintf(s.id, sizeof(s.id), "%s", id);
+    snprintf(s.label, sizeof(s.label), "%s", id);
+    s.type = SCN_SETTING_TYPE_INT;
+    s.min  = min;
+    s.max  = max;
+    s.step = step;
+    s.def  = def;
+    return s;
+}
+
+static ScnSetting omBoolSetting(const char *id, bool def) {
+    ScnSetting s = omIntSetting(id, 0, 1, 1, def ? 1 : 0);
+
+    s.type = SCN_SETTING_TYPE_BOOL;
+    return s;
+}
+
+/* The declarations of omLobby's files: MacRules.scenario.lua declares the
+ * bool pushback, default on, and armour 100..200 step 10 default 120;
+ * nolgm.lua the bool fog, default off; wave.scenario rounds 1..5 default 5.
+ * The rest declare nothing. */
+static int omSettingsReader(void *ctx, const char *dir, const char *file,
+                            uint8_t *out, size_t cap) {
+    ScnSetting push   = omBoolSetting("pushback", true);
+    ScnSetting armour = omIntSetting("armour", 100, 200, 10, 120);
+    ScnSetting fog    = omBoolSetting("fog", false);
+    ScnSetting rounds = omIntSetting("rounds", 1, 5, 1, 5);
+    size_t     len    = 0;
+
+    (void)ctx;
+    (void)dir;
+    if (strcmp(file, "MacRules.scenario.lua") == 0) {
+        if (!scnSettingsBlobAppend(out, cap, &len, &push) ||
+            !scnSettingsBlobAppend(out, cap, &len, &armour)) {
+            return -1;
+        }
+    } else if (strcmp(file, "nolgm.lua") == 0) {
+        if (!scnSettingsBlobAppend(out, cap, &len, &fog)) return -1;
+    } else if (strcmp(file, "wave.scenario") == 0) {
+        if (!scnSettingsBlobAppend(out, cap, &len, &rounds)) return -1;
+    } else {
+        return -1;
+    }
+    return (int)len;
+}
+
+static ServerSim *omSettingsLobby(OmDir *d) {
+    ServerSim *sim = omLobby(d);
+
+    if (sim != NULL) {
+        serverSimSetScenarioSettingsReader(sim, omSettingsReader, NULL);
+    }
+    return sim;
+}
+
+static CmdResult omSetSetting(ServerSim *sim, int slot, const char *file,
+                              const char *id, int32_t value) {
+    ClientCommand cmd;
+    CmdResult     r;
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type   = CMD_SET_SCRIPT_SETTING;
+    cmd.cmdSeq = 1;
+    snprintf(cmd.u.setScriptSetting.file,
+             sizeof(cmd.u.setScriptSetting.file), "%s", file);
+    snprintf(cmd.u.setScriptSetting.id, sizeof(cmd.u.setScriptSetting.id),
+             "%s", id);
+    cmd.u.setScriptSetting.value = value;
+    threadsWaitForMutex();
+    r = serverSimApplyCommand(sim, slot, &cmd);
+    threadsReleaseMutex();
+    return r;
+}
+
+/* file's value for id: the kept one, or def when none is kept. */
+static int32_t omSettingValue(const ServerSim *sim, const char *file,
+                              const char *id, int32_t def) {
+    int32_t v = def;
+
+    (void)serverSimGetScriptSetting(sim, file, id, &v);
+    return v;
+}
+
+int run_operator_mods_setting_short_name(void) {
+    ServerSim *sim;
+    OmDir      d;
+    OmSaid     said;
+
+    sim = omSettingsLobby(&d);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(omAdd(sim, "macrules", SERVER_MOD_DEFAULT));
+    UT_ASSERT(serverSimRecordOperatorMods(sim));
+
+    /* The short name, in another case, finds the operator's row. */
+    memset(&said, 0, sizeof(said));
+    UT_ASSERT_MSG(serverSimApplySettingArg(sim, "MACRULES:pushback=false",
+                                           "", omSay, &said),
+                  "a short name did not reach MacRules.scenario.lua: %s",
+                  said.lines[0]);
+    UT_ASSERT(omSettingValue(sim, "MacRules.scenario.lua", "pushback", 1) ==
+              0);
+    UT_ASSERT_MSG(omSaidHas(&said, "MacRules.scenario.lua:pushback = 0") &&
+                      omSaidHas(&said, "each new lobby"),
+                  "said: %s", said.lines[0]);
+    /* And the full name still works. */
+    UT_ASSERT(serverSimApplySettingArg(sim,
+                                       "MacRules.scenario.lua:armour=150", "",
+                                       NULL, NULL));
+    UT_ASSERT(omSettingValue(sim, "MacRules.scenario.lua", "armour", 120) ==
+              150);
+    UT_ASSERT(sim->operatorSettingCount == 2);
+
+    /* A script that is not the operator's: found by its short name in the
+       directory and set, but not kept for the next lobby. */
+    UT_ASSERT(serverSimApplySettingArg(sim, "wave:rounds=2", "", NULL, NULL));
+    UT_ASSERT(omSettingValue(sim, "wave.scenario", "rounds", 5) == 2);
+    UT_ASSERT(sim->operatorSettingCount == 2);
+    UT_ASSERT(!serverSimOperatorSettingLocked(sim, "wave.scenario",
+                                              "rounds"));
+
+    /* A bare id is the map's own script, and only that. */
+    UT_ASSERT(serverSimApplySettingArg(sim, "rounds=3", "wave.scenario", NULL,
+                                       NULL));
+    UT_ASSERT(omSettingValue(sim, "wave.scenario", "rounds", 5) == 3);
+    memset(&said, 0, sizeof(said));
+    UT_ASSERT(!serverSimApplySettingArg(sim, "pushback=false", "", omSay,
+                                        &said));
+    UT_ASSERT(omSaidHas(&said, "the map has no script"));
+
+    /* Each refusal says why and changes nothing. */
+    memset(&said, 0, sizeof(said));
+    UT_ASSERT(!serverSimApplySettingArg(sim, "missing:pushback=false", "",
+                                        omSay, &said));
+    UT_ASSERT(omSaidHas(&said, "declares no setting 'pushback'"));
+    memset(&said, 0, sizeof(said));
+    UT_ASSERT(!serverSimApplySettingArg(sim, "macrules:nope=1", "", omSay,
+                                        &said));
+    UT_ASSERT(omSaidHas(&said, "declares no setting 'nope'"));
+    memset(&said, 0, sizeof(said));
+    UT_ASSERT(!serverSimApplySettingArg(sim, "macrules:pushback=maybe", "",
+                                        omSay, &said));
+    UT_ASSERT(omSaidHas(&said, "is not a value of"));
+    memset(&said, 0, sizeof(said));
+    UT_ASSERT(!serverSimApplySettingArg(sim, "macrules", "", omSay, &said));
+    UT_ASSERT(omSaidHas(&said, "wanted [file:]id=value"));
+    memset(&said, 0, sizeof(said));
+    UT_ASSERT(!serverSimApplySettingArg(sim, ":pushback=1", "", omSay,
+                                        &said));
+    UT_ASSERT(omSaidHas(&said, "bad file name"));
+    UT_ASSERT(omSettingValue(sim, "MacRules.scenario.lua", "pushback", 1) ==
+              0);
+    UT_ASSERT(sim->operatorSettingCount == 2);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+int run_operator_mods_setting_reapply(void) {
+    ServerSim *sim;
+    OmDir      d;
+
+    sim = omSettingsLobby(&d);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(omAdd(sim, "macrules", SERVER_MOD_DEFAULT));
+    UT_ASSERT(serverSimRecordOperatorMods(sim));
+    UT_ASSERT(serverSimApplySettingArg(sim, "macrules:pushback=off", "", NULL,
+                                       NULL));
+    UT_ASSERT(serverSimApplySettingArg(sim, "macrules:armour=150", "", NULL,
+                                       NULL));
+    UT_ASSERT(serverSimApplySettingArg(sim, "wave:rounds=2", "", NULL, NULL));
+
+    /* On a -mod row the value is a default: the host may change it. */
+    UT_ASSERT(!serverSimOperatorSettingLocked(sim, "MacRules.scenario.lua",
+                                              "pushback"));
+    UT_ASSERT(omSetSetting(sim, 0, "MacRules.scenario.lua", "pushback", 1) ==
+              CMD_OK);
+    UT_ASSERT(omSetSetting(sim, 0, "MacRules.scenario.lua", "armour", 120) ==
+              CMD_OK);
+    UT_ASSERT(omSetSetting(sim, 0, "wave.scenario", "rounds", 4) == CMD_OK);
+    UT_ASSERT(omSettingValue(sim, "MacRules.scenario.lua", "pushback", 1) ==
+              1);
+    UT_ASSERT(!serverSimGetScriptSetting(sim, "MacRules.scenario.lua",
+                                         "armour", NULL));
+
+    /* The next lobby has the operator's values again. A script that is not
+       the operator's keeps the host's pick, as it always has. */
+    serverSimReturnToLobby(sim);
+    UT_ASSERT_MSG(omSettingValue(sim, "MacRules.scenario.lua", "pushback",
+                                 1) == 0,
+                  "the operator's pushback was not back at the next lobby");
+    UT_ASSERT(omSettingValue(sim, "MacRules.scenario.lua", "armour", 120) ==
+              150);
+    UT_ASSERT(omSettingValue(sim, "wave.scenario", "rounds", 5) == 4);
+
+    /* And at the empty-lobby reset. */
+    UT_ASSERT(omSetSetting(sim, 0, "MacRules.scenario.lua", "pushback", 1) ==
+              CMD_OK);
+    serverSimResetLobbyToDefaults(sim);
+    UT_ASSERT_MSG(omSettingValue(sim, "MacRules.scenario.lua", "pushback",
+                                 1) == 0,
+                  "the empty-lobby reset did not put the operator's value "
+                  "back");
+
+    /* A value already in force is not published again. */
+    {
+        int before = sim->scriptSettingValueCount;
+        UT_ASSERT(!serverSimRecordOperatorMods(sim));
+        UT_ASSERT(sim->scriptSettingValueCount == before);
+    }
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* What a join sync delivered, in order, for the asserts. */
+typedef struct {
+    int     n;
+    uint8_t op[16];
+    char    id[16][SCN_SETTING_ID_LEN];
+    int32_t value[16];
+} OmSettingSeen;
+
+static void omSettingWatch(void *ctx, const ControlEvent *evt) {
+    OmSettingSeen *s = (OmSettingSeen *)ctx;
+
+    if (evt->type != CTRL_LOBBY_SCRIPT_SETTING || s->n >= 16) return;
+    s->op[s->n] = evt->u.lobbyScriptSetting.op;
+    snprintf(s->id[s->n], sizeof(s->id[0]), "%s",
+             evt->u.lobbyScriptSetting.id);
+    s->value[s->n] = evt->u.lobbyScriptSetting.value;
+    s->n++;
+}
+
+/* Where id's event of kind op is in seen, or -1. */
+static int omSeenAt(const OmSettingSeen *s, uint8_t op, const char *id) {
+    int i;
+
+    for (i = 0; i < s->n; i++) {
+        if (s->op[i] == op && strcmp(s->id[i], id) == 0) return i;
+    }
+    return -1;
+}
+
+int run_operator_mods_setting_locked(void) {
+    ServerSim     *sim;
+    OmDir          d;
+    OmSaid         said;
+    OmSettingSeen  seen;
+    SubscriberHandle h;
+    int            lockAt;
+    int            setAt;
+
+    sim = omSettingsLobby(&d);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(omAdd(sim, "macrules", SERVER_MOD_REQUIRED));
+    UT_ASSERT(omAdd(sim, "nolgm", SERVER_MOD_DEFAULT));
+    UT_ASSERT(serverSimRecordOperatorMods(sim));
+    memset(&said, 0, sizeof(said));
+    UT_ASSERT(serverSimApplySettingArg(sim, "macrules:pushback=false", "",
+                                       omSay, &said));
+    UT_ASSERT_MSG(omSaidHas(&said, "the host cannot change it"),
+                  "said: %s", said.lines[0]);
+    UT_ASSERT(serverSimApplySettingArg(sim, "nolgm:fog=true", "", NULL,
+                                       NULL));
+
+    /* Only the -setting value on the required row is held. */
+    UT_ASSERT(serverSimOperatorSettingLocked(sim, "MacRules.scenario.lua",
+                                             "pushback"));
+    UT_ASSERT(!serverSimOperatorSettingLocked(sim, "MacRules.scenario.lua",
+                                              "armour"));
+    UT_ASSERT(!serverSimOperatorSettingLocked(sim, "nolgm.lua", "fog"));
+
+    /* The server refuses a change to it, the same value included, and
+       whoever sends it. */
+    UT_ASSERT_MSG(omSetSetting(sim, 0, "MacRules.scenario.lua", "pushback",
+                               1) == CMD_REJECT_LOCKED,
+                  "the host changed a locked setting");
+    UT_ASSERT(omSetSetting(sim, 0, "MacRules.scenario.lua", "pushback", 0) ==
+              CMD_REJECT_LOCKED);
+    UT_ASSERT(omSettingValue(sim, "MacRules.scenario.lua", "pushback", 1) ==
+              0);
+    /* The row's other setting and the -mod row's setting stay the host's. */
+    UT_ASSERT(omSetSetting(sim, 0, "MacRules.scenario.lua", "armour", 150) ==
+              CMD_OK);
+    UT_ASSERT(omSetSetting(sim, 0, "nolgm.lua", "fog", 0) == CMD_OK);
+
+    /* The join sync: the SETs, then a LOCK for the held value only. */
+    memset(&seen, 0, sizeof(seen));
+    h = serverSimRegisterSubscriber(sim, omSettingWatch, &seen);
+    (void)h;
+    UT_ASSERT(seen.n >= 1 && seen.op[0] == LOBBY_SCRIPT_SETTING_CLEAR);
+    lockAt = omSeenAt(&seen, LOBBY_SCRIPT_SETTING_LOCK, "pushback");
+    setAt  = omSeenAt(&seen, LOBBY_SCRIPT_SETTING_SET, "pushback");
+    UT_ASSERT_MSG(lockAt > 0, "the join sync sent no LOCK for pushback");
+    UT_ASSERT(seen.value[lockAt] == 0);
+    UT_ASSERT_MSG(setAt > 0 && setAt < lockAt,
+                  "the LOCK did not come after pushback's SET");
+    UT_ASSERT(omSeenAt(&seen, LOBBY_SCRIPT_SETTING_LOCK, "fog") < 0);
+    UT_ASSERT(omSeenAt(&seen, LOBBY_SCRIPT_SETTING_LOCK, "armour") < 0);
+    serverSimDestroy(sim);
+
+    /* -mod-locked: the same rule. A held value equal to its default has no
+       SET in the sync, so its LOCK carries the value. */
+    sim = omSettingsLobby(&d);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(omAdd(sim, "macrules", SERVER_MOD_LOCKED));
+    UT_ASSERT(serverSimRecordOperatorMods(sim));
+    UT_ASSERT(serverSimApplySettingArg(sim, "macrules:armour=120", "", NULL,
+                                       NULL));
+    UT_ASSERT(serverSimOperatorSettingLocked(sim, "MacRules.scenario.lua",
+                                             "armour"));
+    UT_ASSERT(omSetSetting(sim, 0, "MacRules.scenario.lua", "armour", 150) ==
+              CMD_REJECT_LOCKED);
+    UT_ASSERT(omSetSetting(sim, 0, "MacRules.scenario.lua", "pushback", 0) ==
+              CMD_OK);
+    memset(&seen, 0, sizeof(seen));
+    (void)serverSimRegisterSubscriber(sim, omSettingWatch, &seen);
+    UT_ASSERT(omSeenAt(&seen, LOBBY_SCRIPT_SETTING_SET, "armour") < 0);
+    lockAt = omSeenAt(&seen, LOBBY_SCRIPT_SETTING_LOCK, "armour");
+    UT_ASSERT(lockAt > 0 && seen.value[lockAt] == 120);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+int run_operator_mods_setting_wire(void) {
+    ControlEncodeBodyFn enc;
+    ControlDecodeBodyFn dec;
+    ControlEvent        evt;
+    ControlEvent        back;
+    uint8_t             setBuf[256];
+    uint8_t             lockBuf[256];
+    size_t              setLen  = 0;
+    size_t              lockLen = 0;
+    ClientSim          *cs;
+    int32_t             v = -1;
+
+    enc = transportControlCodecBodyEncoder(CTRL_LOBBY_SCRIPT_SETTING);
+    dec = transportControlCodecBodyDecoder(CTRL_LOBBY_SCRIPT_SETTING);
+    UT_ASSERT(enc != NULL && dec != NULL);
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_LOBBY_SCRIPT_SETTING;
+    evt.u.lobbyScriptSetting.op = LOBBY_SCRIPT_SETTING_SET;
+    snprintf(evt.u.lobbyScriptSetting.file,
+             sizeof(evt.u.lobbyScriptSetting.file), "%s",
+             "MacRules.scenario.lua");
+    snprintf(evt.u.lobbyScriptSetting.id, sizeof(evt.u.lobbyScriptSetting.id),
+             "%s", "pushback");
+    evt.u.lobbyScriptSetting.value = 0;
+    UT_ASSERT(enc(&evt, NULL, setBuf, sizeof(setBuf), &setLen) == ENCODE_OK);
+    evt.u.lobbyScriptSetting.op = LOBBY_SCRIPT_SETTING_LOCK;
+    UT_ASSERT(enc(&evt, NULL, lockBuf, sizeof(lockBuf), &lockLen) ==
+              ENCODE_OK);
+
+    /* A LOCK is a SET's body with another op byte: same length, so the
+       exact-length check an older decoder makes still passes, and that
+       decoder hands the op to a client that skips it. */
+    UT_ASSERT(lockLen == setLen);
+    UT_ASSERT(lockBuf[0] == LOBBY_SCRIPT_SETTING_LOCK);
+    UT_ASSERT(memcmp(lockBuf + 1, setBuf + 1, setLen - 1) == 0);
+    memset(&back, 0, sizeof(back));
+    UT_ASSERT(dec(lockBuf, lockLen, &back));
+    UT_ASSERT(back.u.lobbyScriptSetting.op == LOBBY_SCRIPT_SETTING_LOCK);
+    UT_ASSERT(strcmp(back.u.lobbyScriptSetting.file,
+                     "MacRules.scenario.lua") == 0);
+    UT_ASSERT(strcmp(back.u.lobbyScriptSetting.id, "pushback") == 0);
+    UT_ASSERT(back.u.lobbyScriptSetting.value == 0);
+    /* Bounded as before: a trailing byte or a cut body is refused. */
+    UT_ASSERT(!dec(lockBuf, lockLen - 1, &back));
+    lockBuf[lockLen] = 0;
+    UT_ASSERT(!dec(lockBuf, lockLen + 1, &back));
+
+    cs = clientSimAlloc();
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+
+    /* An older server: a CLEAR and a SET, and nothing is held. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_LOBBY_SCRIPT_SETTING;
+    evt.u.lobbyScriptSetting.op = LOBBY_SCRIPT_SETTING_CLEAR;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(dec(setBuf, setLen, &back));
+    back.type = CTRL_LOBBY_SCRIPT_SETTING;
+    clientSimApplyControl(cs, &back);
+    UT_ASSERT(clientSimGetLobbyScriptSetting(cs, "MacRules.scenario.lua",
+                                             "pushback", &v) && v == 0);
+    UT_ASSERT(!clientSimGetLobbyScriptSettingLocked(
+        cs, "MacRules.scenario.lua", "pushback"));
+
+    /* This server: the LOCK holds it, and a later SET (the value put back
+       at a new lobby) leaves it held. */
+    UT_ASSERT(dec(lockBuf, lockLen, &back));
+    back.type = CTRL_LOBBY_SCRIPT_SETTING;
+    clientSimApplyControl(cs, &back);
+    UT_ASSERT(clientSimGetLobbyScriptSettingLocked(
+        cs, "MacRules.scenario.lua", "pushback"));
+    UT_ASSERT(dec(setBuf, setLen, &back));
+    back.type = CTRL_LOBBY_SCRIPT_SETTING;
+    clientSimApplyControl(cs, &back);
+    UT_ASSERT(clientSimGetLobbyScriptSettingLocked(
+        cs, "MacRules.scenario.lua", "pushback"));
+    UT_ASSERT(!clientSimGetLobbyScriptSettingLocked(
+        cs, "MacRules.scenario.lua", "armour"));
+
+    /* A LOCK alone carries its value: a held default has no SET. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_LOBBY_SCRIPT_SETTING;
+    evt.u.lobbyScriptSetting.op = LOBBY_SCRIPT_SETTING_LOCK;
+    snprintf(evt.u.lobbyScriptSetting.file,
+             sizeof(evt.u.lobbyScriptSetting.file), "%s",
+             "MacRules.scenario.lua");
+    snprintf(evt.u.lobbyScriptSetting.id, sizeof(evt.u.lobbyScriptSetting.id),
+             "%s", "armour");
+    evt.u.lobbyScriptSetting.value = 120;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetLobbyScriptSetting(cs, "MacRules.scenario.lua",
+                                             "armour", &v) && v == 120);
+    UT_ASSERT(clientSimGetLobbyScriptSettingLocked(
+        cs, "MacRules.scenario.lua", "armour"));
+
+    /* An op a build does not know is skipped, which is what an older
+       client does with a LOCK. */
+    evt.u.lobbyScriptSetting.op = 7;
+    snprintf(evt.u.lobbyScriptSetting.id, sizeof(evt.u.lobbyScriptSetting.id),
+             "%s", "unknown");
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(!clientSimGetLobbyScriptSetting(cs, "MacRules.scenario.lua",
+                                              "unknown", NULL));
+
+    /* The next join sync's CLEAR lets every lock go. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_LOBBY_SCRIPT_SETTING;
+    evt.u.lobbyScriptSetting.op = LOBBY_SCRIPT_SETTING_CLEAR;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(!clientSimGetLobbyScriptSettingLocked(
+        cs, "MacRules.scenario.lua", "pushback"));
+    clientSimDestroy(cs);
     return 0;
 }

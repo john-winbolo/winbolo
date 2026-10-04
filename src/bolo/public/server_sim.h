@@ -1075,6 +1075,51 @@ ServerModArgsResult serverSimApplyOperatorModArgs(ServerSim *sim, int argc,
                                                   ServerModArgsSay say,
                                                   void *ctx);
 
+/* How many -setting values on the operator's own rows are held at once. */
+#define SERVER_OPERATOR_SETTINGS_MAX 32
+
+/*********************************************************
+ *NAME:          serverSimApplySettingArg
+ *PURPOSE:
+ *  The dedicated server's -setting "[file:]id=value": a
+ *  value for one of a script's own settings, chosen as the
+ *  lobby host's CMD_SET_SCRIPT_SETTING would choose it.
+ *  defaultFile is the map's own script, used when arg names
+ *  no file. The file may be named the way -mod names one:
+ *  as given or without .scenario.lua, .lua or .scenario,
+ *  case ignored. The operator's rows are tried first, then
+ *  defaultFile, then the scenarios directory; a name none of
+ *  them holds is used as given.
+ *
+ *  The value is read against the setting's declaration: a
+ *  number for any type, true or false (or on or off) for a
+ *  bool, one of the words for a choice.
+ *
+ *  When the file is one of the operator's rows (-mod,
+ *  -mod-required, -mod-locked), the value is also recorded,
+ *  so serverSimRecordOperatorMods puts it back at every new
+ *  lobby, and on a fixed row (serverSimOperatorModFixed) the
+ *  host cannot change it (serverSimOperatorSettingLocked).
+ *
+ *  Says on say what it did, or why it did nothing, one line;
+ *  say may be NULL. Answers whether the value was set.
+ *********************************************************/
+bool serverSimApplySettingArg(ServerSim *sim, const char *arg,
+                              const char *defaultFile,
+                              ServerModArgsSay say, void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimOperatorSettingLocked
+ *PURPOSE:
+ *  Whether file's setting id is held by the operator: it
+ *  has a -setting value and file is a row no host may take
+ *  off (-mod-required, or any row under -mod-locked). The
+ *  CMD_SET_SCRIPT_SETTING arm refuses a change to it. The
+ *  rows' other settings stay the host's.
+ *********************************************************/
+bool serverSimOperatorSettingLocked(const ServerSim *sim, const char *file,
+                                    const char *id);
+
 /*********************************************************
  *NAME:          serverSimSetQuitOnWin
  *PURPOSE:
@@ -2545,7 +2590,8 @@ bool serverSimSetScriptSetting(ServerSim *sim, const char *file,
                                int32_t *resolved);
 
 /* Every kept value, as one CTRL_LOBBY_SCRIPT_SETTING CLEAR and then one SET
- * per value, into deliver. The join sync is the caller. */
+ * per value, into deliver, and then one LOCK per value the operator holds
+ * (serverSimOperatorSettingLocked). The join sync is the caller. */
 void serverSimReplayScriptSettings(
     const ServerSim *sim, void (*deliver)(void *, const struct ControlEvent *),
     void *ctx);

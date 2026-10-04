@@ -529,6 +529,36 @@ ignores all three switches. With `-nolobby` or `-maprotate` the list is set
 once at startup and plays every round. The lobby chooser draws fixed rows
 with a lock and no drop arrow, and a locked list with no controls at all.
 
+**Settings of the operator's mods.** `-setting [<File>:]<id>=<value>` gives
+one of a script's own [settings](#scenariosettings) a value, as the host
+would pick it. File takes the name the way `-mod` does: with or without
+`.scenario.lua`, case ignored. The operator's mods are tried first, then the
+map's own script, then the mods directory. A bare `id=value` with no file
+names the map's own script. The value is a number, `true` or `false` (or `on`
+or `off`) for a `"bool"` setting, or one of the words of a `"choice"` setting.
+`-setting` may be given more than once.
+
+```
+WinBoloDS -mod-required MacBoloRules -setting MacBoloRules:pushback=false
+```
+
+On a mod from one of the three switches the value holds for every game, not
+only the first:
+
+- On a `-mod` mod the value is the default of every new lobby. The host may
+  change it for that game; the next lobby has the operator's value again.
+- On a `-mod-required` or `-mod-locked` mod the value is locked. The details
+  dialog shows it read-only with a lock, and the server refuses a change.
+
+Only the settings `-setting` names are held. The mod's other settings stay
+the host's to pick, under all three switches. On any other script `-setting`
+sets the value once at startup, and the host may change it. A file that
+declares no such setting, an unknown id, a value the setting does not take
+and a malformed argument are each a line on the console, and are skipped;
+the server still starts. The lock travels as a separate kind of setting
+message that a client from before it skips, so an older client still shows
+the value but leaves the dropdown on; the server refuses its change.
+
 ---
 
 ## Uploads
@@ -1085,7 +1115,9 @@ not declared.
 
 The server reads the declaration without running the script, the same way it
 reads `rules`. A value the host picks is held for the lobby session, per
-script file.
+script file. A dedicated server's operator can give a value with `-setting`,
+and lock it on a mod the server always runs; see
+[The script list](#the-script-list) (Settings of the operator's mods).
 
 ### `scenario.tags`
 

@@ -1225,6 +1225,12 @@ scriptListDone:
             !lobbyScenarioNameShapeOk(s->file)) {
             return CMD_REJECT_INVALID;
         }
+        /* A value the operator's -setting holds on a -mod-required or
+           -mod-locked row is not the host's, whatever the client's dialog
+           drew. Its other settings still are. */
+        if (serverSimOperatorSettingLocked(sim, s->file, s->id)) {
+            return CMD_REJECT_LOCKED;
+        }
         if (!serverSimSetScriptSetting(sim, s->file, s->id, s->value, NULL)) {
             return CMD_REJECT_INVALID;
         }

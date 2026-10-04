@@ -3275,6 +3275,8 @@
 #define STR_DLGLOBBY_DETAILS_SETTING_ON_DEFAULT  2709
 #define STR_DLGLOBBY_DETAILS_SETTING_OFF_DEFAULT 2710
 #define STR_DLGLOBBY_DETAILS_SETTING_CHOICE_DEFAULT 2759
+/* The tooltip on a setting the dedicated server's operator holds. */
+#define STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP  2773
 
 /* The map editor's metadata form: the read-only line naming the Steam
  * Workshop item a scenario was published as ({string1} = the item id) and

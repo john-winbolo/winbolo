@@ -5008,6 +5008,10 @@ set(_unit_test_names
     operator_mods_lock_mask
     operator_mods_mods_off
     operator_mods_map_yield
+    operator_mods_setting_short_name
+    operator_mods_setting_reapply
+    operator_mods_setting_locked
+    operator_mods_setting_wire
     fog_settings_defaults
     fog_settings_classic_mode_preset
     fog_settings_lock_implied

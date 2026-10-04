@@ -991,13 +991,15 @@ struct ClientSim {
      * CTRL_LOBBY_SCRIPT_SETTING, keyed like the server's store. Supported
      * is set by the first such event, which only a server that takes
      * CMD_SET_SCRIPT_SETTING sends; the dialog lets the host change a
-     * value only once it is set. */
+     * value only once it is set. locked is set by a LOCK: the server's
+     * operator holds the value and the dialog shows it read-only. */
     bool     lobbyScriptSettingsSupported;
     int      lobbyScriptSettingCount;
     struct {
         char    file[LOBBY_SCENARIO_FILE_LEN];
         char    id[SCN_SETTING_ID_LEN];
         int32_t value;
+        bool    locked;
     }        lobbyScriptSettings[LOBBY_SCRIPT_SETTING_VALUES_MAX];
     /* Set when a run of chunks is thrown away for overrunning the cap, and
      * held until that run's last chunk. Zeroing the pending count is not

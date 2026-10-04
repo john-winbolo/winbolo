@@ -1568,6 +1568,11 @@ static void lobbyScenarioSettingText(const ScnSetting *st, int32_t v,
  * server corrected shows as corrected. Everyone else sees the values as
  * text. A value the server has not reported is the declared default.
  *
+ * A value the server's operator holds (-setting on a -mod-required or
+ * -mod-locked mod) is drawn with the lock beside it and a tooltip saying
+ * the server sets it; the host's dropdown for it is disabled, and the
+ * server refuses a change to it in any case.
+ *
  * Nothing is drawn for a file that declares no setting, or while the
  * server's answer has not come. A server too old to send the declarations
  * sends none, so its scripts show no section. A server that sends them but
@@ -1619,11 +1624,15 @@ static void lobbyScenarioDetailsSettings(ClientSim *cs) {
         const ScnSetting *st = &rows[i];
         int32_t           chosen;
         bool              held;
+        bool              locked;
+        bool              hovered;
         int32_t           value;
         char              shown[64];
 
-        held  = clientSimGetLobbyScriptSetting(cs, s_detailsFile, st->id,
-                                               &chosen);
+        held   = clientSimGetLobbyScriptSetting(cs, s_detailsFile, st->id,
+                                                &chosen);
+        locked = clientSimGetLobbyScriptSettingLocked(cs, s_detailsFile,
+                                                      st->id);
         value = scnSettingResolve(st, held, held ? (int64_t)chosen : 0);
 
         ImGui::TableNextRow();
@@ -1634,9 +1643,37 @@ static void lobbyScenarioDetailsSettings(ClientSim *cs) {
         lobbyScenarioSettingText(st, value, shown, sizeof(shown));
         if (!(host && live)) {
             ImGui::TextUnformatted(shown);
+            hovered = ImGui::IsItemHovered();
+            if (locked) {
+                lobbyRenderLockBadge();
+                hovered = hovered || ImGui::IsItemHovered();
+                if (hovered) {
+                    ImGui::SetTooltip("%s", langGetText(
+                        STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP));
+                }
+            }
             continue;
         }
         ImGui::PushID(i);
+        if (locked) {
+            /* Room on the right for the lock, so the badge sits in the
+               cell rather than past its edge. */
+            ImGui::SetNextItemWidth(
+                -(ImGui::GetTextLineHeight() +
+                  ImGui::GetStyle().ItemSpacing.x));
+            ImGui::BeginDisabled();
+            if (ImGui::BeginCombo("##setting", shown)) ImGui::EndCombo();
+            ImGui::EndDisabled();
+            hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+            lobbyRenderLockBadge();
+            hovered = hovered || ImGui::IsItemHovered();
+            if (hovered) {
+                ImGui::SetTooltip("%s", langGetText(
+                    STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP));
+            }
+            ImGui::PopID();
+            continue;
+        }
         ImGui::SetNextItemWidth(-FLT_MIN);
         if (ImGui::BeginCombo("##setting", shown)) {
             int     choices = (int)scnSettingChoices(st);
