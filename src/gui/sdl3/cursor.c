@@ -272,18 +272,28 @@ static void cursorViewOrigin(int xOffset, int yOffset, int subPosX, int subPosY,
 *PURPOSE:
 *  Returns whether a motion event at this window position
 *  is the echo of the last cursorFollowView warp rather
-*  than the player moving the mouse. The first motion
-*  anywhere else ends the wait for the echo.
+*  than the player moving the mouse. A warp echoes at
+*  most twice, exactly and then at the whole pixel the
+*  OS pointer landed on, so the first motion that isn't
+*  the exact echo ends the wait.
 *********************************************************/
+static bool cursorIsWholePixelOf(float v, float target) {
+  return SDL_fabsf(v - SDL_roundf(target)) < 0.01f ||
+         SDL_fabsf(v - SDL_floorf(target)) < 0.01f;
+}
+
 bool cursorIsWarpEcho(float winX, float winY) {
   if (!gWarpPending) return false;
-  /* Within a pixel: SDL reports the warp exactly, but the OS pointer lands
-     on a whole pixel and can report that too. */
-  if (SDL_fabsf(winX - gWarpWinX) <= 1.0f && SDL_fabsf(winY - gWarpWinY) <= 1.0f) {
+  /* SDL's own echo reports the warp position exactly. */
+  if (SDL_fabsf(winX - gWarpWinX) < 0.01f && SDL_fabsf(winY - gWarpWinY) < 0.01f) {
     return true;
   }
+  /* The OS pointer lands on a whole pixel (Windows rounds, X11 truncates) and
+     may report that once more. Nothing after it is the warp's, so the wait
+     ends here either way: a pixel or two of slow hand movement next to the
+     warp is the player, and must re-anchor rather than be dragged back. */
   gWarpPending = false;
-  return false;
+  return cursorIsWholePixelOf(winX, gWarpWinX) && cursorIsWholePixelOf(winY, gWarpWinY);
 }
 
 /*********************************************************
@@ -331,6 +341,7 @@ void cursorFollowView(int xOffset, int yOffset, int subPosX, int subPosY,
   bool jumped = !gViewValid || zf != gViewZoom ||
                 abs(vx - gViewX) > CURSOR_FOLLOW_MAX_TILES * tileW ||
                 abs(vy - gViewY) > CURSOR_FOLLOW_MAX_TILES * tileH;
+  bool scrolled = vx != gViewX || vy != gViewY;
   gViewX = vx;
   gViewY = vy;
   gViewZoom = zf;
@@ -341,16 +352,22 @@ void cursorFollowView(int xOffset, int yOffset, int subPosX, int subPosY,
     gAnchorValid = false;
     return;
   }
-  if (!gAnchorValid) return;
+  /* Only the view moving moves the pointer; between scrolls it is the
+     hand's alone. */
+  if (!gAnchorValid || !scrolled) return;
 
   int left = zf * MAIN_OFFSET_X;
   int top  = zf * MAIN_OFFSET_Y;
   int gx   = gAnchorX - vx + left;
   int gy   = gAnchorY - vy + top;
+  /* Hold it to pixels cursorPos accepts. That adds the sub-tile offset
+     before dividing, so the far edge of column/row 15 comes in by it. */
+  int maxX = left + MAIN_SCREEN_SIZE_X * tileW - 1 - (vx - xOffset * tileW);
+  int maxY = top  + MAIN_SCREEN_SIZE_Y * tileH - 1 - (vy - yOffset * tileH);
   if (gx < left) gx = left;
-  if (gx > left + MAIN_SCREEN_SIZE_X * tileW - 1) gx = left + MAIN_SCREEN_SIZE_X * tileW - 1;
+  if (gx > maxX) gx = maxX;
   if (gy < top) gy = top;
-  if (gy > top + MAIN_SCREEN_SIZE_Y * tileH - 1) gy = top + MAIN_SCREEN_SIZE_Y * tileH - 1;
+  if (gy > maxY) gy = maxY;
   if (gx == (int)gCachedMouseX && gy == (int)gCachedMouseY) return;
 
   /* Aim at the middle of the game pixel, so the echo's trip back through
