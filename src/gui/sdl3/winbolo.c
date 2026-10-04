@@ -2205,8 +2205,11 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
        * and a click or a nudge of the mouse doesn't jump the selection to
        * whatever has scrolled under a pointer left where it was. Not while
        * the pointer is over an ImGui overlay (the vote widget, alliance
-       * requests) — dragging it out from under a click there loses the click
-       * — nor when the game isn't the window the player is using, nor while
+       * requests) — dragging it out from under a click there loses the click.
+       * WantCaptureMouse alone is a frame late for that (this runs before
+       * the ImGui frame), so the pointer's current position is hit-tested
+       * against the overlays on screen as well. Nor when the game isn't the
+       * window the player is using, nor while
        * the smart-ping pie is open: it takes the mouse's motion straight from
        * SDL without raising ImGui's capture flag, and picks its wedge from
        * where the pointer is, so carrying the pointer would change the ping.
@@ -2218,6 +2221,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
         SDL_Window *win = sdl3DrawGetWindow();
         bool allowWarp = win != NULL && !uiModeIsTablet() &&
                          !sdl3ImguiWantCaptureMouse() &&
+                         !sdl3ImguiMouseOverWindow() &&
                          !pingOverlayIsMenuOpen() &&
                          SDL_GetMouseFocus() == win &&
                          (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0;
