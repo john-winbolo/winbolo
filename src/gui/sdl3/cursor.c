@@ -315,6 +315,27 @@ void cursorAnchorToView(int xOffset, int yOffset, int subPosX, int subPosY) {
   gWarpPending = false;
 }
 
+/* Whether this video backend moves the visible pointer when asked, and
+   moves it where it was asked. The follow commits to the warp before it
+   happens — the cached position, a push off the view, dropping the target
+   — so a warp that quietly doesn't happen leaves the pointer in view and
+   the game believing it isn't. No SDL call says whether one will work:
+   SDL_WarpMouseInWindow returns nothing, and Wayland's fallback (lock,
+   hint, unlock, "hope for the best") reports the motion whether or not
+   the compositor honoured it. So follow only where warping is known to
+   be real. */
+static bool cursorCanWarp(void) {
+  static int known = -1;
+  if (known < 0) {
+    const char *driver = SDL_GetCurrentVideoDriver();
+    if (driver == NULL) return false;   /* video not up yet; ask again later */
+    known = SDL_strcmp(driver, "windows") == 0 ||
+            SDL_strcmp(driver, "x11") == 0 ||
+            SDL_strcmp(driver, "cocoa") == 0;
+  }
+  return known == 1;
+}
+
 /*********************************************************
 *NAME:          cursorDropAnchor
 *PURPOSE:
@@ -360,7 +381,7 @@ bool cursorFollowView(int xOffset, int yOffset, int subPosX, int subPosY,
   gViewZoom = zf;
   gViewValid = true;
 
-  if (jumped || !allowWarp || isInMenu || !cursorInMainView) {
+  if (jumped || !allowWarp || !cursorCanWarp() || isInMenu || !cursorInMainView) {
     /* Nothing to follow until the hand next puts the pointer somewhere. */
     gAnchorValid = false;
     return false;
