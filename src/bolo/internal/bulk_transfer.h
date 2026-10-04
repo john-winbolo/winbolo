@@ -48,6 +48,7 @@
 #include "channel_mux.h"   /* ChannelMux, CHANNEL_BULK, CHANNEL_STREAM_BUF */
 #include "scenario_details.h"  /* SCN_DETAILS_MAX */
 #include "scenario_settings.h" /* SCN_SETTINGS_BLOB_MAX */
+#include "scenario_identity.h" /* SCN_IDENTITY_BLOB_MAX */
 #include "brain_list.h"        /* BRAIN_DOCS_Z_MAX */
 
 /* Transfer kinds carried in the stream header's first byte: a map preview
@@ -134,13 +135,24 @@ enum {
  * byte after the status as details and would refuse the blob. An older
  * server ignores the flags byte and answers BULK_SCN_DETAILS_FOUND. */
 #define BULK_SCN_DETAILS_FOUND_V2  2
+/* Found, with the settings block and who wrote the file behind the details:
+ * [status 1][detailsLen 2 BE][details][settingsLen 2 BE][settings]
+ * [identity blob (scenario_identity.h)]. A reader ignores any bytes after
+ * the identity blob, so a later field can follow it. The settings length is
+ * 0 when the request did not ask for them. Sent only to a client whose
+ * flags byte has BULK_SCN_DETAILS_WANT_IDENTITY set; a server from before it
+ * ignores that bit and answers V2 or FOUND, which such a client reads as
+ * identity not known. */
+#define BULK_SCN_DETAILS_FOUND_V3  3
 
 /* The flags byte a request may end with, after the file name. */
 #define BULK_SCN_DETAILS_WANT_SETTINGS 0x01u
+#define BULK_SCN_DETAILS_WANT_IDENTITY 0x02u
 
-/* The largest BULK_KIND_SCENARIO_DETAILS blob. */
+/* The largest BULK_KIND_SCENARIO_DETAILS blob: the V3 shape, the longest. */
 #define BULK_SCN_DETAILS_BLOB_MAX \
-    (1 + 2 + SCN_DETAILS_MAX + SCN_SETTINGS_BLOB_MAX)
+    (1 + 2 + SCN_DETAILS_MAX + 2 + SCN_SETTINGS_BLOB_MAX + \
+     SCN_IDENTITY_BLOB_MAX)
 
 /* The status byte that opens a BULK_KIND_SCRIPT_PACKAGE blob. */
 #define BULK_SCRIPT_FOUND     0   /* the file's bytes follow               */

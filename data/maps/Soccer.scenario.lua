@@ -400,6 +400,8 @@ scenario = {
   description = "Two teams, one ball, no guns. Drive into the pillbox to " ..
                 "move it and put it in the other side's goal.",
   api         = 1,
+  author      = "WinBolo",
+  updated     = "2026-10-01T15:55Z",
   game        = "open",
 
   -- The squares below are this map's, so the script does not travel.

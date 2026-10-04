@@ -1307,6 +1307,36 @@ static uint64_t scnReadWorkshopId(lua_State *L, int tbl, const char *key,
     return v;
 }
 
+/* scenario.author and scenario.updated: the twin of mjDecodeIdentity in
+ * scenario_manifest_json.c, through the same scnManifestTakeIdentity, so a
+ * value one form cleans or drops the other does too. A Lua number is not a
+ * string here, which lua_type tells and lua_isstring would not. */
+static void scnReadIdentity(lua_State *L, int tbl, ScenarioManifest *m,
+                            ScnParseReport *rep) {
+    ScnIdentitySeen as     = scnIdentityAbsent;
+    ScnIdentitySeen us     = scnIdentityAbsent;
+    const char     *author = NULL;
+    const char     *upd    = NULL;
+    size_t          aLen   = 0;
+
+    scnRawField(L, tbl, "author");
+    scnRawField(L, tbl, "updated");
+    if (lua_type(L, -2) == LUA_TSTRING) {
+        as     = scnIdentityString;
+        author = lua_tolstring(L, -2, &aLen);
+    } else if (!lua_isnil(L, -2)) {
+        as = scnIdentityNotString;
+    }
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        us  = scnIdentityString;
+        upd = lua_tostring(L, -1);
+    } else if (!lua_isnil(L, -1)) {
+        us = scnIdentityNotString;
+    }
+    scnManifestTakeIdentity(m, as, author, aLen, us, upd, rep);
+    lua_pop(L, 2);
+}
+
 static void scnReadLobby(lua_State *L, int tbl, ScnManifestLobby *lob) {
     int lt;
 
@@ -2201,6 +2231,7 @@ bool scnReadManifest(lua_State *L, int envRef, ScenarioManifest *m,
     m->needsBots  = scnReadBool(L, tbl, "needs_bots", false);
     m->workshopId     = scnReadWorkshopId(L, tbl, "workshop_id", rep);
     m->workshopAuthor = scnReadWorkshopId(L, tbl, "workshop_author", rep);
+    scnReadIdentity(L, tbl, m, rep);
 
     scnReadLobby(L, tbl, &m->lobby);
     scnReadRules(L, tbl, m, rep);
@@ -2551,6 +2582,16 @@ void scnPushManifestGlobal(lua_State *L, int envRef,
                  (unsigned long long)m->workshopAuthor);
         lua_pushstring(L, digits);
         lua_setfield(L, t, "workshop_author");
+    }
+    /* The author and the updated time, left out when not stated for the
+       reason the ids are: absent is what a reader takes as not stated. */
+    if (m->author[0] != '\0') {
+        lua_pushstring(L, m->author);
+        lua_setfield(L, t, "author");
+    }
+    if (m->updated[0] != '\0') {
+        lua_pushstring(L, m->updated);
+        lua_setfield(L, t, "updated");
     }
 
     scnPushLobby(L, &m->lobby);
@@ -8010,6 +8051,9 @@ int scenarioHostListLocalScripts(ServerScenarioEntry *out, int max) {
                                        : SERVER_SCENARIO_SOURCE_SERVER;
             e->workshopId        = rows[i].workshopId;
             e->workshopAuthor    = rows[i].workshopAuthor;
+            e->identityKnown     = true;
+            SDL_strlcpy(e->author, rows[i].author, sizeof(e->author));
+            SDL_strlcpy(e->updated, rows[i].updated, sizeof(e->updated));
             n++;
         }
     }
@@ -8500,6 +8544,9 @@ bool scenarioHostMapPackageInfo(const char *mapPath, ServerScenarioEntry *out) {
         out->source            = SERVER_SCENARIO_SOURCE_SERVER;
         out->workshopId        = m->workshopId;
         out->workshopAuthor    = m->workshopAuthor;
+        out->identityKnown     = true;
+        SDL_strlcpy(out->author, m->author, sizeof(out->author));
+        SDL_strlcpy(out->updated, m->updated, sizeof(out->updated));
         ok = true;
     }
     free(m);
@@ -9584,6 +9631,37 @@ static void scnPublishMapScript(ServerSim *sim, const ScenarioHost *h,
     }
 }
 
+/* One console line per script the round loads, in load order: its name, who
+ * wrote it and the day it last changed, as its manifest states them, and the
+ * file it came from. Two editions of a mod share a name, and the author and
+ * the date are what tell an operator which one this server is running.
+ * Either one the manifest leaves out reads "unknown". The file is the leaf
+ * and not the path, which keeps the line short enough to read in a rotation;
+ * the directory is the server's own and the operator knows it. */
+static void scnSayLoadedScripts(const ScenarioHost *h) {
+    int i;
+
+    for (i = 0; i < h->count && i < SCN_SCRIPTS_MAX; i++) {
+        const ScenarioManifest *m = h->entry[i].manifest;
+        const char             *name;
+        char                    day[11];
+
+        if (h->entry[i].script[0] == '\0') continue;
+        name = (m != NULL && m->name[0] != '\0')
+                   ? m->name
+                   : scnFileNameOf(h->entry[i].script);
+        if (m != NULL && scnIdentityUpdatedValid(m->updated)) {
+            memcpy(day, m->updated, 10);
+            day[10] = '\0';
+        } else {
+            snprintf(day, sizeof(day), "%s", "unknown");
+        }
+        scnSay(NULL, 0, "scenario: %s by %s, updated %s (%s) loaded", name,
+               (m != NULL && m->author[0] != '\0') ? m->author : "unknown",
+               day, scnFileNameOf(h->entry[i].script));
+    }
+}
+
 /* Which scripts this lobby plays, decided in one place because more than one
  * thing changes the answer: a map commit and the host editing its list both
  * come through here.
@@ -9798,12 +9876,10 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
        an empty list sets neither and stays quiet, which is what keeps a
        rotation over plain maps as silent as it was. */
     if (*slot != NULL) {
-        scnSay(NULL, 0, "scenario: %s loaded from %s",
-               scenarioHostName(*slot), scenarioHostScriptPath(*slot));
-        /* And what is behind it, one line for the whole list rather than one
-           each: a host running three mods over a scenario wants to see that
-           it is three, and the line above already named what decides the
-           round. */
+        scnSayLoadedScripts(*slot);
+        /* And the count, one line for the whole list: a host running three
+           mods over a scenario wants to see that it is three without
+           counting the lines above. */
         if (scenarioHostScriptCount(*slot) > 1) {
             scnSay(NULL, 0, "scenario: %d scripts loaded in all",
                    scenarioHostScriptCount(*slot));

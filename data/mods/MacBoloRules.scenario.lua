@@ -73,6 +73,8 @@ scenario = {
                 "pillbox massage, base defence circle, builder walk and " ..
                 "spawn starts.",
   api = 1,
+  author = "WinBolo",
+  updated = "2026-10-03T00:40Z",
   kind = "mod",
   bound = false,
 

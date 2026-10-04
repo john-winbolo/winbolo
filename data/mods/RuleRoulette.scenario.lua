@@ -1102,6 +1102,8 @@ scenario = {
                 "Gun, Ice Rink, Hovercraft, Normal. Builder: Cleanup Crew, Hustle, " ..
                 "Lead Feet, Air Drop, Normal. Bases rebuild 50% faster.",
   api         = 1,
+  author      = "WinBolo",
+  updated     = "2026-10-02T10:09Z",
   kind        = "mod",
   bound       = false,
 

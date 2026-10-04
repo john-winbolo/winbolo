@@ -55,6 +55,8 @@ scenario = {
   description = "Automated test map: one open-mode bot in a pillbox death "
     .. "trap, asserting its loadout on every respawn.",
   api  = 1,
+  author  = "WinBolo",
+  updated = "2026-09-30T17:16Z",
   -- Humans play tournament here; the bot's open spawn loadout has to beat it
   -- on every life. No brain on the team: both probes fall back to the
   -- server's -brain argument, which the runner points at the probe brain.

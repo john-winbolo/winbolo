@@ -41,6 +41,7 @@
 #include "view_policy.h"       /* ViewPolicy / ViewCategory — view-policy accessors below */
 #include "server_voice_mode.h" /* ServerVoiceMode — voice-mode accessors below */
 #include "upload_policy.h"     /* ScriptUploadPolicy — script-upload accessors below */
+#include "scenario_identity.h" /* SCN_AUTHOR_LEN — a scenario row's author below */
 
 /* MapGenConfig is defined in src/bolo/public/mapgen.h.
  * Forward-declared here so the public server_sim header doesn't
@@ -2283,6 +2284,13 @@ typedef struct {
     uint64_t workshopAuthor;  /* the SteamID64 that published it, 0 for none.
                                  Filled by this computer's own listings and
                                  never by what a server sends. */
+    /* Who wrote it and when it last changed (scenario_identity.h), "" for
+       not stated. identityKnown is false for a row from a server too old to
+       send them, which a chooser shows as nothing rather than as unknown;
+       a listing this computer reads itself always knows. */
+    bool     identityKnown;
+    char     author[SCN_AUTHOR_LEN];
+    char     updated[SCN_UPDATED_LEN];
 } ServerScenarioEntry;
 
 int serverSimEnumerateScenarioDir(ServerSim *sim,
@@ -2339,6 +2347,16 @@ ServerScriptReadResult serverSimScriptFileRead(ServerSim *sim,
  * not fit cap). */
 int serverSimScenarioSettingsDecl(ServerSim *sim, const char *file,
                                   uint8_t *out, size_t cap);
+
+/* Who wrote one script file and when it last changed, as its manifest
+ * states them (scenario_identity.h), into author and updated, which hold
+ * authorCap and updatedCap bytes; each "" for not stated. Looked up the
+ * way serverSimScenarioDetails looks up the details: the committed map's
+ * own script first, then the scenarios directory's listing, read to the
+ * catalogue's cap. False, with both "", for a file neither place holds. */
+bool serverSimScenarioIdentity(ServerSim *sim, const char *file,
+                               char *author, size_t authorCap,
+                               char *updated, size_t updatedCap);
 
 /* How many values the server keeps for scripts' settings at once. A value
  * equal to its default is not kept, so this is values a host moved off the

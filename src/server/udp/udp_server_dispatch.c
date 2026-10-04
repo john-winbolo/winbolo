@@ -86,6 +86,8 @@
                                    * the scenarios this server offers, read
                                    * through the lister registered on the sim;
                                    * serverSimHasScriptUploadAccept */
+#include "scenario_identity.h"     /* the scenario-list trailer and the
+                                      identity the details reply carries */
 #include "scenario_details.h"     /* SCN_DETAILS_MAX — the largest details
                                    * blob a DETAILS_REQ answers with */
 #include "client_sim_internal.h"  /* LOBBY_MAP_LIST_MAX cap shared with the wire */
@@ -642,11 +644,13 @@ static int scnListPackStr(uint8_t *buf, int pos, const char *s) {
 int udpServerPackScenarioListChunk(uint8_t *buf, int bufLen,
                                    const ScnDirEntry *entries, int count,
                                    int first, int *next) {
-    int pos = PACKET_HEADER_SIZE;
-    int finalPos;
-    int countPos;
-    int written = 0;
-    int i;
+    int     pos = PACKET_HEADER_SIZE;
+    int     finalPos;
+    int     countPos;
+    int     written = 0;
+    int     idBytes = 0;
+    int     i;
+    uint8_t blob[SCN_IDENTITY_BLOB_MAX];
 
     if (buf == NULL || next == NULL || bufLen < PACKET_HEADER_SIZE + 2) {
         if (next != NULL) *next = first;
@@ -664,12 +668,18 @@ int udpServerPackScenarioListChunk(uint8_t *buf, int bufLen,
         size_t nameLen = strlen(e->name);
         size_t descLen = strlen(e->description);
         int    need;
+        int    idLen;
 
         if (fileLen > 255) fileLen = 255;
         if (nameLen > 255) nameLen = 255;
         if (descLen > 255) descLen = 255;
         need = 1 + (int)fileLen + 1 + (int)nameLen + 1 + (int)descLen + 4 + 9;
-        if (pos + need > bufLen) break;
+        /* Room for this row's identity in the trailer as well, and for the
+           trailer's tag byte, so a row is never sent without its pair. */
+        idLen = (int)scnIdentityBlobWrite(blob, sizeof(blob), e->author,
+                                          e->updated);
+        if (pos + need + idBytes + idLen + 1 > bufLen) break;
+        idBytes += idLen;
 
         pos = scnListPackStr(buf, pos, e->file);
         pos = scnListPackStr(buf, pos, e->name);
@@ -689,6 +699,23 @@ int udpServerPackScenarioListChunk(uint8_t *buf, int bufLen,
         packU32(buf + pos + 4, (uint32_t)(e->workshopId & 0xFFFFFFFFu));
         pos += 8;
         written++;
+    }
+
+    /* The identity trailer: a tag, then one scenario_identity.h blob per
+       row above, in the same order. It follows the last row because the
+       rows carry no length of their own: a client from before the trailer
+       reads its count of rows and stops, and the bytes after are never
+       looked at. A client that knows the trailer reads it when the tag is
+       there, and a server from before it sends none, which that client
+       takes as identity not known. */
+    if (written > 0) {
+        buf[pos++] = SCN_LIST_IDENTITY_TAG;
+        for (i = first; i < first + written; i++) {
+            pos += (int)scnIdentityBlobWrite(buf + pos, (size_t)(bufLen - pos),
+                                             entries[i].author,
+                                             entries[i].updated);
+        }
+        i = first + written;
     }
 
     buf[countPos] = (uint8_t)written;
@@ -1280,7 +1307,8 @@ static void handleLobbyMapPreviewReq(ServerSim *sim, uint8_t *buf, int len,
 static void handleLobbyScenarioDetailsReq(ServerSim *sim, uint8_t *buf,
                                           int len,
                                           struct sockaddr_in *fromAddr) {
-    /* [header 8] [fileLen 1] [file N]. One script file's details, for the
+    /* [header 8] [fileLen 1] [file N] [flags 1, optional:
+     * BULK_SCN_DETAILS_WANT_*]. One script file's details, for the
      * lobby's details dialog, streamed back over CHANNEL_BULK behind a
      * BULK_KIND_SCENARIO_DETAILS stream header: the committed map's own
      * script if the name is its, else the file of that name in the
@@ -1298,6 +1326,7 @@ static void handleLobbyScenarioDetailsReq(ServerSim *sim, uint8_t *buf,
     uint8_t    *blob;
     int         got;
     bool        wantSettings;
+    bool        wantIdentity;
     BulkStreamHeader sh;
     static uint32_t s_detailsSeq = 0;
 
@@ -1313,11 +1342,46 @@ static void handleLobbyScenarioDetailsReq(ServerSim *sim, uint8_t *buf,
        stops at the name, and is answered in the shape it can read. */
     wantSettings = (rpos + fileLen < len) &&
                    (buf[rpos + fileLen] & BULK_SCN_DETAILS_WANT_SETTINGS);
+    wantIdentity = (rpos + fileLen < len) &&
+                   (buf[rpos + fileLen] & BULK_SCN_DETAILS_WANT_IDENTITY);
     if (bulkSenderBusy(&udpServer.bulkSend[clientIdx])) return;
 
     blob = (uint8_t *)malloc(BULK_SCN_DETAILS_BLOB_MAX);
     if (blob == NULL) return;
-    if (wantSettings) {
+    if (wantIdentity) {
+        /* V3: the settings with a length of their own, so the identity can
+           follow them, and 0 of them when they were not asked for. */
+        int  sGot = 0;
+        int  at;
+        char author[SCN_AUTHOR_LEN];
+        char updated[SCN_UPDATED_LEN];
+
+        got = serverSimScenarioDetails(sim, file, blob + 3, SCN_DETAILS_MAX);
+        if (got >= 0) {
+            at = 3 + got;
+            if (wantSettings) {
+                sGot = serverSimScenarioSettingsDecl(
+                    sim, file, blob + at + 2, SCN_SETTINGS_BLOB_MAX);
+                if (sGot < 0) sGot = 0;
+            }
+            blob[0]      = BULK_SCN_DETAILS_FOUND_V3;
+            blob[1]      = (uint8_t)((unsigned)got >> 8);
+            blob[2]      = (uint8_t)((unsigned)got & 0xFFu);
+            blob[at]     = (uint8_t)((unsigned)sGot >> 8);
+            blob[at + 1] = (uint8_t)((unsigned)sGot & 0xFFu);
+            at += 2 + sGot;
+            (void)serverSimScenarioIdentity(sim, file, author, sizeof(author),
+                                            updated, sizeof(updated));
+            at += (int)scnIdentityBlobWrite(blob + at,
+                                            BULK_SCN_DETAILS_BLOB_MAX -
+                                                (size_t)at,
+                                            author, updated);
+            got = at - 1;
+        } else {
+            blob[0] = BULK_SCN_DETAILS_NOT_FOUND;
+            got     = 0;
+        }
+    } else if (wantSettings) {
         int sGot;
 
         got = serverSimScenarioDetails(sim, file, blob + 3, SCN_DETAILS_MAX);

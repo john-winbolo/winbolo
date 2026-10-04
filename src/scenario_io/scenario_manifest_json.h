@@ -99,6 +99,30 @@ void scnManifestSetWorkshop(ScnManifestDoc *d, uint64_t id, uint64_t author);
    value one of them refuses the other refuses too. */
 bool scnManifestParseId(const char *s, uint64_t *out);
 
+/* What a reader found under author or updated: nothing, a string, or a
+   value of some other type. */
+typedef enum {
+    scnIdentityAbsent,
+    scnIdentityString,
+    scnIdentityNotString
+} ScnIdentitySeen;
+
+/* author and updated into m, from what a reader found under the two keys.
+   Both readers come through here, so a file reads the same in either form
+   and warns the same way. The author is cleaned (scnIdentityCleanAuthor);
+   an updated not in the one form is read as "". A key that is missing, of
+   the wrong type, empty, cleaned or not in the form is a warning on
+   rep->sink and nothing else: not an issue, and not a line on the console
+   or in the soft buffer, because a script without them plays as it always
+   did and a load has nothing to say about it. authorLen is the bytes at
+   author, which may hold a NUL. */
+void scnManifestTakeIdentity(ScenarioManifest *m,
+                             ScnIdentitySeen authorSeen,
+                             const char *author, size_t authorLen,
+                             ScnIdentitySeen updatedSeen,
+                             const char *updated,
+                             ScnParseReport *rep);
+
 /* Do a package's manifest and the table its script declared agree? True
    when they do. On a conflict, false with the disagreeing key written to
    key (for example "lobby.teams[0].brain" or "rules.tank_reload_ticks")

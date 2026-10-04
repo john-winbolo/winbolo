@@ -3643,6 +3643,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # against committed golden bytes and decoded back.
     tests/unit/test_scenario_dir.c
     tests/unit/test_scenario_callbacks.c
+    # Who wrote a script and when it last changed: both manifest readers,
+    # the list trailer and the V3 details reply, and the shipped scripts.
+    tests/unit/test_scenario_identity.c
     # A copy of one of the server's scripts, fetched by name over the
     # loopback transport, and each answer the server gives.
     tests/unit/test_script_fetch.c
@@ -6600,6 +6603,13 @@ set(_unit_test_names
     scenario_details_fetch_give_up
     scenario_details_override_order
     scenario_details_reload_map_script
+    scenario_identity_clean
+    scenario_identity_lua
+    scenario_identity_json
+    scenario_identity_blob
+    scenario_identity_list_wire
+    scenario_identity_details_fetch
+    scenario_identity_shipped
     script_fetch_req_golden
     script_fetch_found_lua
     script_fetch_found_package

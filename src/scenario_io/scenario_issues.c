@@ -49,3 +49,30 @@ void scnIssueAdd(ScnValidateResult *out, const char *key,
     vsnprintf(issue->message, sizeof(issue->message), fmt, ap);
     va_end(ap);
 }
+
+void scnWarnAdd(ScnValidateResult *out, const char *key,
+                const char *fmt, ...) {
+    ScnValidateIssue *warn;
+    va_list           ap;
+    uint16_t          i;
+
+    if (out == NULL || out->warnCount >= SCN_VALIDATE_WARNINGS_MAX) {
+        return;
+    }
+    if (key == NULL) {
+        key = "";
+    }
+    for (i = 0; i < out->warnCount; i++) {
+        if (strcmp(out->warnings[i].key, key) == 0) {
+            return;
+        }
+    }
+
+    warn = &out->warnings[out->warnCount];
+    out->warnCount++;
+    memset(warn, 0, sizeof(*warn));
+    snprintf(warn->key, sizeof(warn->key), "%s", key);
+    va_start(ap, fmt);
+    vsnprintf(warn->message, sizeof(warn->message), fmt, ap);
+    va_end(ap);
+}

@@ -3741,6 +3741,19 @@ int run_scenario_details_fetch_give_up(void);
 int run_scenario_details_override_order(void);
 int run_scenario_details_reload_map_script(void);
 
+/* Who wrote a scenario script and when it last changed
+ * (test_scenario_identity.c): the cleaner and the one updated form, both
+ * manifest readers with their warnings, the blob, the scenario-list
+ * trailer against the old wire and an older server, the V3 details reply
+ * over the loopback transport, and every shipped script's pair. */
+int run_scenario_identity_clean(void);
+int run_scenario_identity_lua(void);
+int run_scenario_identity_json(void);
+int run_scenario_identity_blob(void);
+int run_scenario_identity_list_wire(void);
+int run_scenario_identity_details_fetch(void);
+int run_scenario_identity_shipped(void);
+
 /* A copy of one of the server's scripts (test_script_fetch.c): the request
  * body against committed hex, a .lua, a .scenario and a shipped mod fetched
  * whole over the loopback transport, each refusal the server answers, a
