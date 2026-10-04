@@ -2143,12 +2143,19 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
       }
 
       /* Lookahead bank clamp: hold tank center (WORLD) sim->rules.tank_boat_exit_inset inside
-       * the river tile when an adjacent tile is soft land. Without this,
-       * the body extends ~half a tile into the bank before the center
-       * crosses and triggers the per-axis revert below. Skipped for
-       * road/halfbuilding (slow exit onto road still works) and for
-       * BOAT (allows pickup of an adjacent parked boat). Skipped at
-       * the tank's own boat-exit speed so deliberate fast exits work. */
+       * the river tile when an adjacent tile is land the boat cannot
+       * drive onto yet. Without this, the body extends ~half a tile into
+       * the bank before the center crosses and triggers the per-axis
+       * revert below. Road is held like grass: a boat needs its exit
+       * speed to land on any ground, as in the original WinBolo
+       * tankMoveOnBoat, WinBolo 1.17 and Mac Bolo. A base square reads
+       * as ROAD here (map load forces ROAD under every base), so a
+       * friendly base beside the water is held too, which is also what
+       * the original code did. Skipped for HALFBUILDING, which is a
+       * solid wall that the building nudge already stops the body at,
+       * and for BOAT (allows pickup of an adjacent parked boat).
+       * Skipped at the tank's own boat-exit speed so deliberate fast
+       * exits work. */
       if ((*value)->speed < tankBoatExitSpeed(sim, *value) &&
           mapIsLand(mp, pb, bs, newbmx, newbmy) == FALSE) {
         WORLD rMinX = ((WORLD)newbmx) << TANK_SHIFT_MAPSIZE;
@@ -2158,25 +2165,25 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         BYTE adj;
         if (newbmx > 0 && mapIsLand(mp, pb, bs, newbmx - 1, newbmy)) {
           adj = mapGetPos(mp, newbmx - 1, newbmy);
-          if (adj != ROAD && adj != HALFBUILDING && adj != BOAT) {
+          if (adj != HALFBUILDING && adj != BOAT) {
             if ((*value)->x < rMinX + (WORLD) sim->rules.tank_boat_exit_inset) (*value)->x = rMinX + (WORLD) sim->rules.tank_boat_exit_inset;
           }
         }
         if (newbmx < 255 && mapIsLand(mp, pb, bs, newbmx + 1, newbmy)) {
           adj = mapGetPos(mp, newbmx + 1, newbmy);
-          if (adj != ROAD && adj != HALFBUILDING && adj != BOAT) {
+          if (adj != HALFBUILDING && adj != BOAT) {
             if ((*value)->x > rMaxX - (WORLD) sim->rules.tank_boat_exit_inset) (*value)->x = rMaxX - (WORLD) sim->rules.tank_boat_exit_inset;
           }
         }
         if (newbmy > 0 && mapIsLand(mp, pb, bs, newbmx, newbmy - 1)) {
           adj = mapGetPos(mp, newbmx, newbmy - 1);
-          if (adj != ROAD && adj != HALFBUILDING && adj != BOAT) {
+          if (adj != HALFBUILDING && adj != BOAT) {
             if ((*value)->y < rMinY + (WORLD) sim->rules.tank_boat_exit_inset) (*value)->y = rMinY + (WORLD) sim->rules.tank_boat_exit_inset;
           }
         }
         if (newbmy < 255 && mapIsLand(mp, pb, bs, newbmx, newbmy + 1)) {
           adj = mapGetPos(mp, newbmx, newbmy + 1);
-          if (adj != ROAD && adj != HALFBUILDING && adj != BOAT) {
+          if (adj != HALFBUILDING && adj != BOAT) {
             if ((*value)->y > rMaxY - (WORLD) sim->rules.tank_boat_exit_inset) (*value)->y = rMaxY - (WORLD) sim->rules.tank_boat_exit_inset;
           }
         }
@@ -2186,8 +2193,21 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
       if ((*value)->boatState == BoatState_InBoat &&
           mapIsLand(mp, pb, bs, newbmx, newbmy) == TRUE) {
         BYTE landTerrain = mapGetPos(mp, newbmx, newbmy);
-        if (landTerrain == ROAD || landTerrain == BUILDING || landTerrain == HALFBUILDING) {
-          /* Hard surface — instant exit, no grace zone.
+        /* Road is not on this list. Leaving a boat onto road needs the
+         * boat-exit speed like any other land, as it did in the original
+         * WinBolo tankMoveOnBoat (speed >= BOAT_EXIT_SPEED onto every
+         * land type), in WinBolo 1.17 and in Mac Bolo; an earlier port
+         * change let a boat land on road at any speed. A base square
+         * reads as ROAD (map load forces it), so bases follow road. A
+         * mined road square reads as a mine terrain, not ROAD, and so
+         * always went through the speed test below.
+         * BUILDING and HALFBUILDING stay: they are solid walls, so the
+         * building nudge keeps the tank centre off them and this branch
+         * only runs if a nudge could not push the tank clear. Landing
+         * the tank there and letting the nudge finish is the old
+         * behaviour and nothing a player can drive into. */
+        if (landTerrain == BUILDING || landTerrain == HALFBUILDING) {
+          /* Solid wall — instant exit, no grace zone.
            * Only drop boat if last river tile is adjacent (deep sea→land skip) */
           if (abs(newbmx - (*value)->lastBoatRiverX) + abs(newbmy - (*value)->lastBoatRiverY) <= 2) {
             if (mapGetPos(mp, (*value)->lastBoatRiverX, (*value)->lastBoatRiverY) == RIVER) {
@@ -2198,7 +2218,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
           (*value)->onBoat = FALSE;
           if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
         } else if ((*value)->speed >= tankBoatExitSpeed(sim, *value)) {
-          /* Fast approach on soft terrain — instant exit.
+          /* Fast approach onto land (road, base or soft ground) — instant exit.
            * Only drop boat if last river tile is adjacent (deep sea→land skip) */
           if (abs(newbmx - (*value)->lastBoatRiverX) + abs(newbmy - (*value)->lastBoatRiverY) <= 2) {
             if (mapGetPos(mp, (*value)->lastBoatRiverX, (*value)->lastBoatRiverY) == RIVER) {
@@ -2212,7 +2232,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
             minesExpAddItem(sim, &sim->minesExplosions, mp, newbmx, newbmy);
           }
         } else {
-          /* Soft terrain, slow approach — per-axis position revert.
+          /* Land (road included), slow approach — per-axis position revert.
            * Tank stays on the starting river tile until speed reaches
            * its boat-exit speed. Sliding along the bank works because
            * the parallel axis isn't blocked. Mirrors original WinBolo

@@ -2799,6 +2799,12 @@ int run_tank_mod_mine_damage_scales_with_layer(void);
 int run_mine_damage_fatal_reduction(void);
 int run_tank_mod_neutral_owner_deals_classic(void);
 int run_tank_mod_boat_exit_at_half_speed(void);
+/* test_boat_exit_road.c */
+int run_boat_exit_slow_onto_road_held(void);
+int run_boat_exit_fast_onto_road_lands(void);
+int run_boat_exit_grass_unchanged(void);
+int run_boat_exit_parked_boat_pickup(void);
+int run_boat_exit_base_beside_water(void);
 int run_tank_mod_pill_leads_half_speed_boat(void);
 int run_tank_mod_predicted_stop_matches_engine(void);
 

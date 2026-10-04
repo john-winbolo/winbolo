@@ -3908,6 +3908,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_tank_modifier_sites.c
     # A tank drawn on a diagonal stepping both axes in the same frame.
     tests/unit/test_tank_diagonal_step.c
+    # Leaving a boat needs the boat-exit speed on road and bases as on grass.
+    tests/unit/test_boat_exit_road.c
     tests/unit/test_visible_turn_taps.c
     tests/unit/test_md5.c
     tests/unit/test_rand_save_restore.c
@@ -5975,6 +5977,11 @@ set(_unit_test_names
     mine_damage_fatal_reduction
     tank_mod_neutral_owner_deals_classic
     tank_mod_boat_exit_at_half_speed
+    boat_exit_slow_onto_road_held
+    boat_exit_fast_onto_road_lands
+    boat_exit_grass_unchanged
+    boat_exit_parked_boat_pickup
+    boat_exit_base_beside_water
     tank_mod_pill_leads_half_speed_boat
     tank_mod_predicted_stop_matches_engine
     tank_modifiers_op_writes_set

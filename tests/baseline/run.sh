@@ -1362,17 +1362,20 @@ dispatch_scenario() {
       run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/drive_into_deep_sea.lua" open 560 "" ;;
 
     # Getting out of a boat and back into one, on the purpose-built Boat
-    # Bank. The exit rule the engine applies turns on the terrain the boat
-    # reaches and on the speed it reaches it at: road is a hard surface
-    # and lands the tank whatever its speed, grass is soft and only lands
-    # it at the boat's top speed, and below that speed the boat is held a
-    # quarter square short of the bank instead. Entry is neither: driving
-    # onto a parked boat takes it at any speed and off any ground, which
-    # the road runs show from the road and the grass run from the grass.
-    # The tick budgets cover the last boat change in each run plus the
-    # stop after it; the grass run that never lands is cut shortly after
-    # it settles against the bank, where it logs a line a tick because the
-    # client's prediction overshoots the hold and the server pulls it back.
+    # Bank. The exit rule the engine applies turns on the speed the boat
+    # reaches the land at, whatever the land is: road and grass alike only
+    # land the tank at the boat's top speed, and below that speed the boat
+    # is held a quarter square short of the bank instead, as in the
+    # original WinBolo, WinBolo 1.17 and Mac Bolo. Entry is different:
+    # driving onto a parked boat takes it at any speed and off any ground,
+    # which the fast road run shows from the road and the grass run from
+    # the grass. The tick budgets cover the last boat change in each run
+    # plus the stop after it; the slow runs never land, and the grass one
+    # is cut shortly after it settles against the bank, where it logs a
+    # line a tick because the client's prediction overshoots the hold and
+    # the server pulls it back. The slow road run settles against the
+    # bank square 124 at tick 155 and logs nothing more until its last
+    # tick.
     # The fast road run is also recorded, and its .wbv is the source of the
     # committed tests/fixtures/wbv/boat_bank_road_fast.wbv: the summary's
     # terrain hash covers the boat moving from one map square to another,
