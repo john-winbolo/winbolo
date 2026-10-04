@@ -742,7 +742,7 @@ static void handleLobbyScenarioListReq(ServerSim *sim, uint8_t *buf, int len,
     {
         /* Cap matches LOBBY_SCENARIO_LIST_MAX on the client so a directory's
          * full content survives end-to-end. Stack-resident; each ScnDirEntry
-         * is ~464 bytes → ~58 KB, in line with the map list's ~76 KB. */
+         * is ~530 bytes → ~68 KB, in line with the map list's ~76 KB. */
         ScnDirEntry entries[LOBBY_SCENARIO_LIST_MAX];
         uint8_t     rsp[UDP_MAX_PAYLOAD];
         int         got = serverSimScenarioListDir(sim, entries,
@@ -758,8 +758,8 @@ static void handleLobbyScenarioListReq(ServerSim *sim, uint8_t *buf, int len,
             if (rlen <= 0) break;
             srvSendTo(rsp, rlen, fromAddr);
             /* An entry that fits in no chunk would spin this loop. One cannot
-               — the widest is 461 bytes against UDP_MAX_PAYLOAD — so this is
-               the check that says so rather than a case that happens. */
+               — the widest is 527 bytes (row, tag and identity blob) against
+               UDP_MAX_PAYLOAD — so this is the check that says so rather than a case that happens. */
             if (nextIdx == i) break;
             i = nextIdx;
         } while (i < got);

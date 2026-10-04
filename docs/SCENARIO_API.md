@@ -895,7 +895,7 @@ and on the same line under the file name in the details dialog. The server
 prints them on the line it writes for each script a round loads:
 
 ```
-scenario: Mac Bolo Rules by WinBolo, updated 2026-10-03 (MacBoloRules.lua) loaded
+scenario: Mac Bolo Rules by WinBolo, updated 2026-10-03 (MacBoloRules.scenario.lua) loaded
 ```
 
 `updated` is written in one form only, an ISO 8601 time in UTC to the minute
@@ -2943,7 +2943,7 @@ the exit code. A `.lua` file named directly, a mod say, is checked the same way
 with no map:
 
 ```
-WinBoloDS -validate data/mods/MacBoloRules.lua
+WinBoloDS -validate data/mods/MacBoloRules.scenario.lua
 ```
 
 Problems the parse itself finds — a rule name that

@@ -280,8 +280,12 @@ def main():
 
     files = shipped_files()
     if args.files:
-        wanted = {Path(f).resolve().relative_to(REPO_ROOT).as_posix()
-                  for f in args.files}
+        wanted = set()
+        for f in args.files:
+            try:
+                wanted.add(Path(f).resolve().relative_to(REPO_ROOT).as_posix())
+            except ValueError:
+                print("%s: not a shipped script; skipped" % f)
         files = [f for f in files if f in wanted]
         missing = wanted - set(files)
         for f in sorted(missing):
