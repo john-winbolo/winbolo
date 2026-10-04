@@ -115,6 +115,14 @@ bool cursorIsWarpEcho(float winX, float winY);
 void cursorAnchorToView(int xOffset, int yOffset, int subPosX, int subPosY);
 
 /*********************************************************
+*NAME:          cursorDropAnchor
+*PURPOSE:
+*  The player has moved the mouse somewhere with no
+*  square under it: stop following the old anchor.
+*********************************************************/
+void cursorDropAnchor(void);
+
+/*********************************************************
 *NAME:          cursorFollowView
 *PURPOSE:
 *  Called once a frame with the view being drawn. Moves

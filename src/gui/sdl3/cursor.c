@@ -316,6 +316,17 @@ void cursorAnchorToView(int xOffset, int yOffset, int subPosX, int subPosY) {
 }
 
 /*********************************************************
+*NAME:          cursorDropAnchor
+*PURPOSE:
+*  The player has moved the mouse somewhere with no
+*  square under it. Stops cursorFollowView carrying the
+*  pointer back to the point it was anchored to.
+*********************************************************/
+void cursorDropAnchor(void) {
+  gAnchorValid = false;
+}
+
+/*********************************************************
 *NAME:          cursorFollowView
 *PURPOSE:
 *  Called once a frame with the view being drawn. Moves

@@ -1357,6 +1357,13 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
         if (cx > 16 || cy > 16) cx = 100;
         clientSimSetCursorPos(cs, cx, cy);
       } else {
+        /* The hand has put the pointer somewhere with no square under it —
+           off the view, or the partly drawn column/row past the 15th — so it
+           is no longer on the point it was anchored to, and the next scroll
+           must not carry it back there. */
+        if (!warpEcho && (ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f)) {
+          cursorDropAnchor();
+        }
         clientSimSetCursorPos(cs, 0, 0);
       }
       break;
