@@ -1608,6 +1608,13 @@ static int validateMapAndReport(char *mapPath) {
             (result->count == 1) ? "" : "s");
   }
 
+  /* A script named directly and nothing read from it is a path that names
+     no script, a typo say, and a check of a mod by its path must not pass
+     on one. A map with no script beside it is still a plain map, and 0. */
+  if (direct && result->haveManifest == FALSE && result->count == 0) {
+    ok = false;
+  }
+
   free(result);
   if (sim != NULL) serverSimDestroy(sim);
   return (ok == TRUE) ? 0 : 1;

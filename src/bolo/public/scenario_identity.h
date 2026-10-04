@@ -115,11 +115,35 @@ static inline size_t scnIdentityUtf8Len(const unsigned char *s, size_t n) {
     return need;
 }
 
+/* Whether the well-formed step-byte UTF-8 sequence at s is an invisible
+ * format character: a bidi control (U+061C, U+200E/U+200F, U+202A..U+202E,
+ * U+2066..U+2069), a line or paragraph separator (U+2028/U+2029) or a
+ * zero-width character (U+200B..U+200D, U+2060..U+2064, U+FEFF). A terminal
+ * applies the bidi ones, so an author holding them could reorder the rest
+ * of a DS log line; the others draw nothing, or break the line. */
+static inline bool scnIdentityFormatChar(const unsigned char *s, size_t step) {
+    uint32_t cp;
+
+    if (step == 2) {
+        cp = ((uint32_t)(s[0] & 0x1Fu) << 6) | (s[1] & 0x3Fu);
+        return cp == 0x061Cu;
+    }
+    if (step != 3) return false;
+    cp = ((uint32_t)(s[0] & 0x0Fu) << 12) | ((uint32_t)(s[1] & 0x3Fu) << 6) |
+         (s[2] & 0x3Fu);
+    return (cp >= 0x200Bu && cp <= 0x200Fu) ||
+           (cp >= 0x2028u && cp <= 0x202Eu) ||
+           (cp >= 0x2060u && cp <= 0x2064u) ||
+           (cp >= 0x2066u && cp <= 0x2069u) || cp == 0xFEFFu;
+}
+
 /* The author as it may be shown: the len bytes at src with every control
- * character (below space, DEL, and U+0080..U+009F) and every byte of broken
- * UTF-8 dropped, spaces trimmed off both ends, and cut to fit cap with its
- * terminator at a character boundary. out is always terminated when cap is
- * above 0. src may hold NULs, which are control characters like the rest.
+ * character (below space, DEL, and U+0080..U+009F), every invisible format
+ * character (scnIdentityFormatChar) and every byte of broken UTF-8 dropped,
+ * spaces trimmed off both ends, and cut to fit cap with its terminator at a
+ * character boundary. out is always terminated when cap is above 0. src may
+ * hold NULs, which are control characters like the rest. An author made only
+ * of what is dropped comes out empty, which a reader takes as unknown.
  *
  * Answers true when out holds exactly the bytes src did, and false when
  * anything was dropped, trimmed or cut, which is what a validator warns
@@ -144,7 +168,8 @@ static inline bool scnIdentityCleanAuthor(char *out, size_t cap,
             continue;
         }
         if ((step == 1 && (s[i] < 0x20u || s[i] == 0x7Fu)) ||
-            (step == 2 && s[i] == 0xC2u && s[i + 1] < 0xA0u)) {
+            (step == 2 && s[i] == 0xC2u && s[i + 1] < 0xA0u) ||
+            scnIdentityFormatChar(s + i, step)) {
             same = false;
             i += step;
             continue;

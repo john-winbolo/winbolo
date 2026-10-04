@@ -1370,12 +1370,17 @@ static void handleLobbyScenarioDetailsReq(ServerSim *sim, uint8_t *buf,
             blob[at]     = (uint8_t)((unsigned)sGot >> 8);
             blob[at + 1] = (uint8_t)((unsigned)sGot & 0xFFu);
             at += 2 + sGot;
-            (void)serverSimScenarioIdentity(sim, file, author, sizeof(author),
-                                            updated, sizeof(updated));
-            at += (int)scnIdentityBlobWrite(blob + at,
-                                            BULK_SCN_DETAILS_BLOB_MAX -
-                                                (size_t)at,
-                                            author, updated);
+            /* The identity only when the lookup found the file: a reply
+               that stops after the settings reads on the client as not
+               known, and draws no line, where an empty blob would draw
+               "unknown" for a file that may well state both. */
+            if (serverSimScenarioIdentity(sim, file, author, sizeof(author),
+                                          updated, sizeof(updated))) {
+                at += (int)scnIdentityBlobWrite(blob + at,
+                                                BULK_SCN_DETAILS_BLOB_MAX -
+                                                    (size_t)at,
+                                                author, updated);
+            }
             got = at - 1;
         } else {
             blob[0] = BULK_SCN_DETAILS_NOT_FOUND;

@@ -905,9 +905,11 @@ modified time on disk, which a copy or a download moves. The form is checked
 as a real date: `"2026-02-30T10:00Z"` is not one.
 
 `author` is free text, cleaned as it is read: control characters are dropped,
-spaces at either end are trimmed, and the text is cut at 47 bytes on a UTF-8
-character boundary. Invalid UTF-8 is dropped byte by byte. The lobby draws it
-as plain text, never as a format string.
+and so are invisible format characters (bidi controls, line and paragraph
+separators, zero-width characters), spaces at either end are trimmed, and
+the text is cut at 47 bytes on a UTF-8 character boundary. Invalid UTF-8 is
+dropped byte by byte. An author that is empty once cleaned reads as unknown.
+The lobby draws it as plain text, never as a format string.
 
 Both are optional. A file that leaves one out, or states one that is not a
 string, or an `updated` that is not in the form, reads as "unknown" there,
@@ -2945,6 +2947,10 @@ with no map:
 ```
 WinBoloDS -validate data/mods/MacBoloRules.scenario.lua
 ```
+
+A `.lua` named directly that cannot be read, a misspelt path say, exits 1, so
+a script or a hook that checks a mod by name does not pass on a typo. A map
+with no script beside it still exits 0.
 
 Problems the parse itself finds — a rule name that
 spells nothing, a tag past what the map holds — are also written to standard
