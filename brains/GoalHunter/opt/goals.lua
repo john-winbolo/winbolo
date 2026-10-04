@@ -15869,12 +15869,36 @@ function M.order_goal(state, world, info, ord)
   elseif k == "attack_pill" or k == "capture_pill" then
     local p = world.pills[ord.tid]
     if not p then return nil end
+    -- "capture pill N" on a LIVE enemy or neutral pill: capture_pill only
+    -- picks up a dead pill, and init.lua drops it the tick after it is
+    -- installed, so the order looped (capture_pill, none, re-inject) and the
+    -- bot never fired a shot.  A live pill is shot first: attack_pill, and
+    -- the kill hands over to capture_pill the usual way.
+    if k == "capture_pill" and (p.health or 0) > 0 and not p.in_tank
+       and p.owner ~= "friendly" then
+      k = "attack_pill"
+    end
     return { kind = k, mx = p.mx, my = p.my,
              wx = U.m2w(p.mx), wy = U.m2w(p.my), target_id = ord.tid,
              _ordered = true }
   elseif k == "capture_base" or k == "attack_base" then
     local b = world.bases[ord.tid]
     if not b then return nil end
+    -- ONE BASE, TWO GOAL KINDS.  A live hostile base is shot down
+    -- (attack_base); a neutral one, or a hostile one at zero armour, is
+    -- driven over (capture_base).  The goal-validity check in init.lua
+    -- switches between the two the tick after a goal is installed, so
+    -- injecting the order's own kind regardless made a loop: every replan
+    -- installed capture_base, the next tick switched it to attack_base and
+    -- cleared the path, and the bot re-planned its route every replan on
+    -- the way in.  Inject the kind that check would leave in place; the
+    -- replan then re-picks the goal the bot is already running.  Same two
+    -- conditions as init.lua's capture_base / attack_base validity.
+    if b.owner == "hostile" and (b.health or 0) > 0 then
+      k = "attack_base"
+    elseif b.owner == "neutral" or b.owner == "hostile" then
+      k = "capture_base"
+    end
     return { kind = k, mx = b.mx, my = b.my,
              wx = U.m2w(b.mx), wy = U.m2w(b.my), target_id = ord.tid,
              _ordered = true }
