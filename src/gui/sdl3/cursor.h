@@ -97,6 +97,35 @@ void cursorAcquireCursor(void);
 void cursorLeaveWindow(void);
 
 /*********************************************************
+*NAME:          cursorIsWarpEcho
+*PURPOSE:
+*  Returns whether a motion event at this window position
+*  is the echo of a cursorFollowView warp, not the player
+*  moving the mouse.
+*********************************************************/
+bool cursorIsWarpEcho(float winX, float winY);
+
+/*********************************************************
+*NAME:          cursorAnchorToView
+*PURPOSE:
+*  The player has moved the mouse: pins the pointer to the
+*  world point it is over in this view, for
+*  cursorFollowView to keep it on.
+*********************************************************/
+void cursorAnchorToView(int xOffset, int yOffset, int subPosX, int subPosY);
+
+/*********************************************************
+*NAME:          cursorFollowView
+*PURPOSE:
+*  Called once a frame with the view being drawn. Moves
+*  the mouse pointer with the map as it scrolls so it
+*  stays on the square the player put it on. Does nothing
+*  when allowWarp is false or the view jumped.
+*********************************************************/
+void cursorFollowView(int xOffset, int yOffset, int subPosX, int subPosY,
+                      bool allowWarp);
+
+/*********************************************************
 *NAME:          cursorSetPos
 *PURPOSE:
 *  Warps the cursor to the centre of the given map tile.

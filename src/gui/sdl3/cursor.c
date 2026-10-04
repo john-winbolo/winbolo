@@ -19,6 +19,7 @@
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "global.h"
 #include "viewport_types.h"   /* MAIN_SCREEN_SIZE_X/Y */
 #include "../tiles.h"             /* TILE_SIZE_X/Y */
@@ -37,6 +38,27 @@ static float gCachedMouseY = 0.0f;
 
 static SDL_Cursor *s_saveCursor = NULL;
 static SDL_Cursor *s_boloCursor = NULL;
+
+/* Scroll follow (cursorAnchorToView / cursorFollowView). The anchor is the
+   world point the player's hand last put the pointer on, in zoomed game
+   pixels from the map origin; the view origin is the same units, recorded
+   each frame so a view jump can be told from a scroll. */
+static bool  gAnchorValid = false;
+static int   gAnchorX = 0;
+static int   gAnchorY = 0;
+static bool  gViewValid = false;
+static int   gViewX = 0;
+static int   gViewY = 0;
+static int   gViewZoom = 0;
+/* Window position of the last follow warp, so its echo motion is not taken
+   for the player moving the mouse. */
+static bool  gWarpPending = false;
+static float gWarpWinX = 0.0f;
+static float gWarpWinY = 0.0f;
+
+/* A view that moves further than this between frames jumped (respawn, pill
+   view, centring on the tank) rather than scrolled; the pointer stays put. */
+#define CURSOR_FOLLOW_MAX_TILES 4
 
 /* 7×7 crosshair: data (XOR) and mask bits, same as the Linux version */
 static const Uint8 s_cd[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -217,6 +239,9 @@ void cursorAcquireCursor(void) {
   float mx, my;
   SDL_GetMouseState(&mx, &my);
   cursorMove((int)mx, (int)my);
+  /* That position is untransformed window pixels, so it is no place to
+     follow from; the next real motion re-anchors. */
+  gAnchorValid = false;
 }
 
 /*********************************************************
@@ -227,6 +252,118 @@ void cursorAcquireCursor(void) {
 void cursorLeaveWindow(void) {
   cursorSetCursor(true);
   cursorInMainView = false;
+  gAnchorValid = false;
+}
+
+/* The view origin in zoomed game pixels from the map origin. Uses the same
+   sub-tile rounding as cursorPos, so an anchor taken here resolves to the
+   tile cursorPos reported for the same pointer and view. */
+static void cursorViewOrigin(int xOffset, int yOffset, int subPosX, int subPosY,
+                             int *outX, int *outY) {
+  int zf    = sdl3DrawGetZoomFactor();
+  int tileW = zf * TILE_SIZE_X;
+  int tileH = zf * TILE_SIZE_Y;
+  *outX = xOffset * tileW + subPosX * tileW / 256;
+  *outY = yOffset * tileH + subPosY * tileH / 256;
+}
+
+/*********************************************************
+*NAME:          cursorIsWarpEcho
+*PURPOSE:
+*  Returns whether a motion event at this window position
+*  is the echo of the last cursorFollowView warp rather
+*  than the player moving the mouse. The first motion
+*  anywhere else ends the wait for the echo.
+*********************************************************/
+bool cursorIsWarpEcho(float winX, float winY) {
+  if (!gWarpPending) return false;
+  /* Within a pixel: SDL reports the warp exactly, but the OS pointer lands
+     on a whole pixel and can report that too. */
+  if (SDL_fabsf(winX - gWarpWinX) <= 1.0f && SDL_fabsf(winY - gWarpWinY) <= 1.0f) {
+    return true;
+  }
+  gWarpPending = false;
+  return false;
+}
+
+/*********************************************************
+*NAME:          cursorAnchorToView
+*PURPOSE:
+*  The player has moved the mouse. Pins the pointer to
+*  the world point it is now over, for cursorFollowView
+*  to keep it on as the view scrolls. Takes the view the
+*  pointer's tile was resolved against.
+*********************************************************/
+void cursorAnchorToView(int xOffset, int yOffset, int subPosX, int subPosY) {
+  int vx, vy;
+  if (!cursorInMainView) {
+    gAnchorValid = false;
+    return;
+  }
+  int zf = sdl3DrawGetZoomFactor();
+  cursorViewOrigin(xOffset, yOffset, subPosX, subPosY, &vx, &vy);
+  gAnchorX = vx + (int)gCachedMouseX - zf * MAIN_OFFSET_X;
+  gAnchorY = vy + (int)gCachedMouseY - zf * MAIN_OFFSET_Y;
+  gAnchorValid = true;
+  gWarpPending = false;
+}
+
+/*********************************************************
+*NAME:          cursorFollowView
+*PURPOSE:
+*  Called once a frame with the view being drawn. Moves
+*  the mouse pointer with the map as it scrolls, so it
+*  stays on the square the player put it on, as WinBolo
+*  1.x did. The pointer is placed from its world anchor
+*  through the inverse of the event transform rather
+*  than nudged by a delta, so it cannot drift on a
+*  scaled window. It is held inside the view while its
+*  square is scrolled off, and left alone when the view
+*  jumps or allowWarp is false.
+*********************************************************/
+void cursorFollowView(int xOffset, int yOffset, int subPosX, int subPosY,
+                      bool allowWarp) {
+  int vx, vy;
+  int zf    = sdl3DrawGetZoomFactor();
+  int tileW = zf * TILE_SIZE_X;
+  int tileH = zf * TILE_SIZE_Y;
+  cursorViewOrigin(xOffset, yOffset, subPosX, subPosY, &vx, &vy);
+  bool jumped = !gViewValid || zf != gViewZoom ||
+                abs(vx - gViewX) > CURSOR_FOLLOW_MAX_TILES * tileW ||
+                abs(vy - gViewY) > CURSOR_FOLLOW_MAX_TILES * tileH;
+  gViewX = vx;
+  gViewY = vy;
+  gViewZoom = zf;
+  gViewValid = true;
+
+  if (jumped || !allowWarp || isInMenu || !cursorInMainView) {
+    /* Nothing to follow until the hand next puts the pointer somewhere. */
+    gAnchorValid = false;
+    return;
+  }
+  if (!gAnchorValid) return;
+
+  int left = zf * MAIN_OFFSET_X;
+  int top  = zf * MAIN_OFFSET_Y;
+  int gx   = gAnchorX - vx + left;
+  int gy   = gAnchorY - vy + top;
+  if (gx < left) gx = left;
+  if (gx > left + MAIN_SCREEN_SIZE_X * tileW - 1) gx = left + MAIN_SCREEN_SIZE_X * tileW - 1;
+  if (gy < top) gy = top;
+  if (gy > top + MAIN_SCREEN_SIZE_Y * tileH - 1) gy = top + MAIN_SCREEN_SIZE_Y * tileH - 1;
+  if (gx == (int)gCachedMouseX && gy == (int)gCachedMouseY) return;
+
+  /* Aim at the middle of the game pixel, so the echo's trip back through
+     windowToGameCoords truncates to this pixel and not the one before. */
+  float wx, wy;
+  if (!sdl3DrawGameToWindowCoords((float)gx + 0.5f, (float)gy + 0.5f, &wx, &wy)) return;
+  gCachedMouseX = (float)gx + 0.5f;
+  gCachedMouseY = (float)gy + 0.5f;
+  gWarpWinX = wx;
+  gWarpWinY = wy;
+  gWarpPending = true;
+  SDL_WarpMouseInWindow(sdl3DrawGetWindow(), wx, wy);
+  inputSourceNoteCursorWarp();
 }
 
 /*********************************************************
