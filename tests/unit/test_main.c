@@ -843,6 +843,8 @@ static const UnitTestEntry s_tests[] = {
     { "mac_bolo_settings_numbers", run_mac_bolo_settings_numbers },
     { "mac_bolo_first_start_lobby_off_uses_mac_pick", run_mac_bolo_first_start_lobby_off_uses_mac_pick },
     { "mac_bolo_spawn_starts_off_engine_picks", run_mac_bolo_spawn_starts_off_engine_picks },
+    { "mac_bolo_setting_changed_after_attach", run_mac_bolo_setting_changed_after_attach },
+    { "mac_bolo_setting_changed_between_rounds", run_mac_bolo_setting_changed_between_rounds },
     { "input_redundancy",                        run_input_redundancy                        },
     { "edge_send_predicate",                     run_edge_send_predicate                     },
     { "bases_closest_for_player",                run_bases_closest_for_player                },

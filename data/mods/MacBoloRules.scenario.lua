@@ -47,12 +47,15 @@
 --
 -- Starts. By default the round's opening tanks go where the lobby put
 -- them: each player's start, picked by hand or by the team's side, stands.
--- Only a spawn after that is Mac Bolo's. A spawn start is picked in two
--- passes. Pass one looks for a start with nothing near it at all: no other
--- tank and no pillbox, whoever owns them. If every start has something near
--- it, pass two looks for a start with no enemy tank and no enemy pillbox
--- near it; friendly tanks and pills, and neutral pills, are allowed. If
--- both passes come up empty the engine picks as it always does.
+-- Only a spawn after that is Mac Bolo's. A seat with no lobby start (the
+-- lobby is off, or the seat has none) gets the engine's classic pick for
+-- its opening tank, not the Mac Bolo pick; turn first_start_lobby off to
+-- give it the Mac Bolo pick. A spawn start is picked in two passes. Pass
+-- one looks for a start with nothing near it at all: no other tank and no
+-- pillbox, whoever owns them. If every start has something near it, pass
+-- two looks for a start with no enemy tank and no enemy pillbox near it;
+-- friendly tanks and pills, and neutral pills, are allowed. If both passes
+-- come up empty the engine picks as it always does.
 --
 -- "Near" is the round's own start_tank_range and start_pill_range rules,
 -- measured the way the engine measures them: the larger of the two axis
@@ -86,8 +89,8 @@
 --   first_start_lobby   "Override first start to what was chosen in lobby".
 --                       On (the default): the opening tanks keep their
 --                       lobby starts, as above. Off: the Mac Bolo pick
---                       places the opening tanks too. Not read while
---                       spawn_starts is off.
+--                       places the opening tanks too. Has no effect
+--                       while spawn_starts is off.
 --
 -- A part that is off sets none of its rules: the round plays the classic
 -- table there, or the value another script on the list sets. Its numbers
@@ -125,7 +128,8 @@ scenario = {
     -- The push at full armour, in world units per 40 ms.
     { id = "push_step", label = "Pushback at full armour", type = "int",
       min = 0, max = 63, step = 1, default = 28 },
-    -- The extra push at zero armour, scaled by the armour missing.
+    -- The extra push at zero armour, scaled by the armour missing. The rule
+    -- allows 255; the max is capped by the dropdown's 100 entries.
     { id = "push_armour_bonus", label = "Pushback extra at zero armour",
       type = "int", min = 0, max = 96, step = 1, default = 32 },
     -- The slide's length: a push travels step * 2^shift in all.
@@ -136,6 +140,7 @@ scenario = {
     -- has this many pillbox shells coming.
     { id = "shell_cap", label = "Pillbox shell cap", type = "bool",
       default = true },
+    -- The rule allows 255; the max is capped by the dropdown's 100 entries.
     { id = "shell_cap_count", label = "Pillbox shells in the air at one tank",
       type = "int", min = 1, max = 100, step = 1, default = 12 },
 
@@ -162,7 +167,7 @@ scenario = {
     { id = "spawn_starts", label = "Mac Bolo spawn starts", type = "bool",
       default = true },
     -- On: the opening tanks keep their lobby starts. Off: the Mac Bolo pick
-    -- places them too. Not read while spawn_starts is off.
+    -- places them too. Has no effect while spawn_starts is off.
     { id = "first_start_lobby",
       label = "Override first start to what was chosen in lobby",
       type = "bool", default = true },
@@ -176,33 +181,21 @@ scenario = {
 
 -- ---- Settings ------------------------------------------------------------
 
--- The host's choice for one of the settings above. A read with no host
--- behind it (the lobby's script list and -validate run the file with a game
--- table that answers nothing) gets the setting's own default, so the rules
--- the details dialog shows are the ones the defaults play.
-local function setting(id)
-  local v = game.setting(id)
-  if v ~= nil then
-    return v
-  end
-  for _, row in ipairs(scenario.settings) do
-    if row.id == id then
-      return row.default
-    end
-  end
-  error("no setting is named '" .. id .. "'")
-end
+-- game.setting gives the host's choice for one of the settings above, or
+-- its declared default. With no host behind it (the lobby's script list and
+-- -validate) it gives the default, so the rules the details dialog shows
+-- are the ones the defaults play.
 
 -- Read once, when the file runs: the values are fixed for the round, and
 -- the rules below have to be known before the round boots.
-local PUSHBACK          = setting("pushback")
-local SHELL_CAP         = setting("shell_cap")
-local TANK_BOXES        = setting("tank_boxes")
-local PILL_AIM          = setting("pill_aim")
-local BASE_DEFENCE      = setting("base_defence")
-local BUILDER_WALK      = setting("builder_walk")
-local SPAWN_STARTS      = setting("spawn_starts")
-local FIRST_START_LOBBY = setting("first_start_lobby")
+local PUSHBACK          = game.setting("pushback")
+local SHELL_CAP         = game.setting("shell_cap")
+local TANK_BOXES        = game.setting("tank_boxes")
+local PILL_AIM          = game.setting("pill_aim")
+local BASE_DEFENCE      = game.setting("base_defence")
+local BUILDER_WALK      = game.setting("builder_walk")
+local SPAWN_STARTS      = game.setting("spawn_starts")
+local FIRST_START_LOBBY = game.setting("first_start_lobby")
 
 -- The round's rules, one block per part that is on. A part that is off
 -- writes nothing, so the rule stays at the classic table's value or at the
@@ -213,18 +206,18 @@ if PUSHBACK then
   -- Turn the Mac Bolo push on; the classic table plays with it off.
   rules.tank_slide_mac = 1
   -- The push at full armour, in world units per 40 ms (28 by default).
-  rules.tank_slide_step = setting("push_step")
+  rules.tank_slide_step = game.setting("push_step")
   -- 32 and 2 by default, the rules' own defaults, written here so the mod
   -- says what it plays with rather than relying on them.
-  rules.tank_slide_armour_bonus = setting("push_armour_bonus")
-  rules.tank_bump_decay_shift = setting("push_decay_shift")
+  rules.tank_slide_armour_bonus = game.setting("push_armour_bonus")
+  rules.tank_bump_decay_shift = game.setting("push_decay_shift")
 end
 
 if SHELL_CAP then
   -- Turn the cap on; the classic table plays with it off. Twelve by
   -- default, the rule's own default, written here for the same reason.
   rules.pill_shell_cap = 1
-  rules.pill_max_shells_at_tank = setting("shell_cap_count")
+  rules.pill_max_shells_at_tank = game.setting("shell_cap_count")
 end
 
 if TANK_BOXES then
@@ -241,7 +234,7 @@ if BASE_DEFENCE then
   -- 1 is a circle, 0 the classic square.
   rules.pill_base_defend_shape = 1
   -- A radius, with the edge left out (7 by default).
-  rules.pill_base_defend_range = setting("base_defence_radius")
+  rules.pill_base_defend_range = game.setting("base_defence_radius")
 end
 
 if BUILDER_WALK then

@@ -34,6 +34,14 @@
  *   run_mac_bolo_spawn_starts_off_engine_picks
  *       spawn_starts off: the opening tanks are on their lobby picks and the
  *       mod names no start for a spawn, so the engine picks.
+ *   run_mac_bolo_setting_changed_after_attach
+ *       the lobby's own order: the mod attached on its defaults, then the
+ *       host turns shell_cap off in the details dialog. The round plays the
+ *       classic shell cap rules, so the round reads the host's picks, not
+ *       the ones the mod was attached with.
+ *   run_mac_bolo_setting_changed_between_rounds
+ *       round 1 on the defaults, back to the lobby, shell_cap off and
+ *       push_step changed: round 2 plays the new picks.
  *
  * The mod is the shipped file, read from the data/mods directory the build
  * stages beside the test binary, attached through scenarioHostAttachMod as
@@ -523,8 +531,8 @@ int run_mac_bolo_first_start_lobby_off_uses_mac_pick(void) {
 }
 
 int run_mac_bolo_spawn_starts_off_engine_picks(void) {
-    /* first_start_lobby off as well: it is not read while spawn_starts is
-     * off, so the opening is still the lobby's. */
+    /* first_start_lobby off as well: it has no effect while spawn_starts
+     * is off, so the opening is still the lobby's. */
     static const MlsSetting set[] = {
         { "spawn_starts",      0 },
         { "first_start_lobby", 0 },
@@ -554,6 +562,92 @@ int run_mac_bolo_spawn_starts_off_engine_picks(void) {
     UT_ASSERT_MSG(!gameSimChooseStart(gs, 0, &named),
                   "with spawn_starts off the mod named start %u for a spawn",
                   (unsigned)named);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The shell cap rules in r are the classic table's, and the pushback rules
+ * are the mod's at push_step. */
+static int mlsShellCapOff(const SimRules *r, int32_t pushStep,
+                          const char *when) {
+    SimRules classic;
+
+    simRulesClassic(&classic);
+    UT_ASSERT_MSG(r->pill_shell_cap == classic.pill_shell_cap &&
+                      r->pill_max_shells_at_tank ==
+                          classic.pill_max_shells_at_tank,
+                  "%s: pill_shell_cap %d and pill_max_shells_at_tank %d, "
+                  "wanted the classic %d and %d", when,
+                  (int)r->pill_shell_cap, (int)r->pill_max_shells_at_tank,
+                  (int)classic.pill_shell_cap,
+                  (int)classic.pill_max_shells_at_tank);
+    UT_ASSERT_MSG(r->tank_slide_mac == 1 && r->tank_slide_step == pushStep,
+                  "%s: tank_slide_mac %d and tank_slide_step %d, wanted 1 "
+                  "and %d", when, (int)r->tank_slide_mac,
+                  (int)r->tank_slide_step, (int)pushStep);
+    return 0;
+}
+
+int run_mac_bolo_setting_changed_after_attach(void) {
+    static const MlsSetting set[] = { { "shell_cap", 0 } };
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+    BYTE          west = 0;
+    BYTE          east = 0;
+
+    /* The mod is attached with nothing chosen, as the lobby attaches it.
+     * Only then does the host open the details dialog and change a value. */
+    UT_ASSERT(mlsLobby(NULL, 0, &sim, &h, &west, &east) == 0);
+    UT_ASSERT(mlsChoose(sim, set, 1) == 0);
+
+    serverSimStartGame(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+    UT_ASSERT_MSG(scenarioHostLastError(h)[0] == '\0',
+                  "the round complained: %s", scenarioHostLastError(h));
+    UT_ASSERT(mlsShellCapOff(&serverSimGetGameSim(sim)->rules, 28,
+                             "shell_cap off after the attach") == 0);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+int run_mac_bolo_setting_changed_between_rounds(void) {
+    static const MlsSetting set[] = {
+        { "shell_cap", 0  },
+        { "push_step", 40 },
+    };
+    ServerSim      *sim = NULL;
+    ScenarioHost   *h   = NULL;
+    const SimRules *r;
+    BYTE            west = 0;
+    BYTE            east = 0;
+
+    UT_ASSERT(mlsLobby(NULL, 0, &sim, &h, &west, &east) == 0);
+
+    /* Round 1 plays the defaults. */
+    serverSimStartGame(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+    r = &serverSimGetGameSim(sim)->rules;
+    UT_ASSERT_MSG(r->pill_shell_cap == 1 && r->pill_max_shells_at_tank == 12,
+                  "round 1 on the defaults: pill_shell_cap %d and "
+                  "pill_max_shells_at_tank %d, wanted 1 and 12",
+                  (int)r->pill_shell_cap, (int)r->pill_max_shells_at_tank);
+    UT_ASSERT_MSG(r->tank_slide_step == 28,
+                  "round 1 on the defaults: tank_slide_step %d, wanted 28",
+                  (int)r->tank_slide_step);
+
+    /* Back in the lobby the host changes two values; round 2 plays them. */
+    serverSimReturnToLobby(sim);
+    UT_ASSERT(mlsChoose(sim, set, (int)(sizeof(set) / sizeof(set[0]))) == 0);
+    serverSimStartGame(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+    UT_ASSERT_MSG(scenarioHostLastError(h)[0] == '\0',
+                  "round 2 complained: %s", scenarioHostLastError(h));
+    UT_ASSERT(mlsShellCapOff(&serverSimGetGameSim(sim)->rules, 40,
+                             "round 2 after the lobby change") == 0);
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);

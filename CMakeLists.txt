@@ -5399,6 +5399,8 @@ set(_unit_test_names
     mac_bolo_settings_numbers
     mac_bolo_first_start_lobby_off_uses_mac_pick
     mac_bolo_spawn_starts_off_engine_picks
+    mac_bolo_setting_changed_after_attach
+    mac_bolo_setting_changed_between_rounds
     input_redundancy
     bases_closest_for_player
     base_stock_visibility
