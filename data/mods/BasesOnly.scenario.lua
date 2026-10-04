@@ -43,6 +43,8 @@ scenario = {
   api = 1,
   kind = "mod",
   bound = false,
+  author = "WinBolo",
+  updated = "2026-10-04T02:23Z",
 
   -- What each callback below does, in a line a player reads: the lobby's
   -- details dialog lists these under "What this mod implements:".
