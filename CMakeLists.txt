@@ -4796,6 +4796,7 @@ set(_unit_test_names
     sp_frame_queue_repairs_after_drop
     sp_frame_queue_resets_on_lobby
     sp_frame_queue_resets_on_map_change
+    sp_frame_queue_keeps_departed_player_gone
     prefs_document_roundtrip
     prefs_keys_roundtrip
     prefs_doc_roundtrip

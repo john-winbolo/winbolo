@@ -25,6 +25,9 @@
  *     lobby reset, and the next round still receives its frames.
  * sp_frame_queue_resets_on_map_change — old terrain events cannot alter
  *     a replacement map, even without a lobby-phase event.
+ * sp_frame_queue_keeps_departed_player_gone — a queued frame that still
+ *     carries a departed player's tank cannot put that player back on the
+ *     client's roster.
  *
  * Single threaded: the test plays the timer thread's part itself, calling
  * serverInstanceTick and then clientSimNetCaptureLocalFrame under the threads
@@ -44,6 +47,9 @@
 #include "game_sim.h"
 #include "bolo_map.h"
 #include "mines.h"
+#include "players.h"
+#include "tank.h"
+#include "server_sim_join.h"       /* serverSimLocalJoin */
 #include "client_sim.h"
 #include "client_sim_internal.h"   /* hasPredictedTank */
 #include "client_net.h"
@@ -361,6 +367,68 @@ int run_sp_frame_queue_resets_on_lobby(void) {
     fq_server_frame(sim, cs);
     clientSimNetTick(cs);
     UT_ASSERT(fq_client_tile(cs, fqX, fqY) == GRASS);
+
+    fq_teardown(sim, cs);
+    return 0;
+}
+
+int run_sp_frame_queue_keeps_departed_player_gone(void) {
+    ServerSim *sim = NULL;
+    ClientSim *cs = NULL;
+    GameSim *gs;
+    GameSim *cg;
+    BYTE slot;
+    BYTE guest = 0xFF;
+    WORLD wx = 0, wy = 0;
+    WORLD gx = 0, gy = 0;
+    int i;
+
+    UT_ASSERT(fq_setup(&sim, &cs));
+    fq_set_queue(cs, true);
+    gs = serverSimGetGameSim(sim);
+    cg = clientSimGetGameSim(cs);
+    slot = clientSimGetMyPlayerNum(cs);
+    UT_ASSERT(slot < MAX_TANKS);
+
+    threadsWaitForMutex();
+    UT_ASSERT(serverSimLocalJoin(sim, "Guest", "", CLIENT_TYPE_UNKNOWN, 0,
+                                 &guest) == LOCAL_JOIN_OK);
+    threadsReleaseMutex();
+    UT_ASSERT(guest < MAX_TANKS && guest != slot);
+    for (i = 0; i < 10; i++) {
+        fq_server_frame(sim, cs);
+        clientSimNetTick(cs);
+    }
+
+    /* Beside the viewer, so the guest's tank goes out in full rather than as
+     * a hidden stub, which registers nobody. */
+    threadsWaitForMutex();
+    UT_ASSERT(serverSimGetTankState(sim, slot, &wx, &wy));
+    UT_ASSERT(serverSimGetTankState(sim, guest, &gx, &gy));
+    tankSetWorld(gs, &gs->tanks[guest], wx, wy, 0, FALSE);
+    threadsReleaseMutex();
+    fq_server_frame(sim, cs);
+    clientSimNetTick(cs);
+    UT_ASSERT(playersIsInUse(&cg->plyrs, guest));
+
+    /* What the case guards against, shown first so it is known to bite: a
+     * frame's tank record registers a player the client does not hold. */
+    fq_server_frame(sim, cs);
+    playersLeaveGame(cs, cg, &cg->plyrs, slot, guest, FALSE, FALSE);
+    UT_ASSERT(!playersIsInUse(&cg->plyrs, guest));
+    clientSimNetTick(cs);
+    UT_ASSERT_MSG(playersIsInUse(&cg->plyrs, guest),
+                  "the guest's tank is not reaching the client in full");
+
+    /* The guest leaves with a frame carrying its tank still queued. */
+    fq_server_frame(sim, cs);
+    threadsWaitForMutex();
+    serverSimRemovePlayer(sim, guest);
+    threadsReleaseMutex();
+    UT_ASSERT(!playersIsInUse(&cg->plyrs, guest));
+    clientSimNetTick(cs);
+    UT_ASSERT_MSG(!playersIsInUse(&cg->plyrs, guest),
+                  "a queued frame put a departed player back on the roster");
 
     fq_teardown(sim, cs);
     return 0;

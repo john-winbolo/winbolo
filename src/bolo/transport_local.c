@@ -129,6 +129,32 @@ static void localFrameQueueControlObserver(void *ctx, const ControlEvent *evt) {
             lctx->sim->lastFullSyncTick[lctx->playerNum] = 0;
         }
         break;
+    case CTRL_PLAYER_LEAVE: {
+        /* The client takes the player off its roster on this event, ahead of
+         * the frames still queued, and a tank record for a player it does not
+         * hold registers one. A frame captured while the player was here
+         * would put it back for good, since nothing later removes it. The
+         * departed slot's records come out of the waiting frames; a frame
+         * captured from here on carries whoever holds the slot next. */
+        BYTE gone = evt->u.playerLeave.playerNum;
+        uint32_t n;
+        if (gone == lctx->playerNum) break;
+        for (n = 0; n < lctx->frameCount; n++) {
+            LocalFrame *f = &lctx->frames[(lctx->frameHead + n) %
+                                          LOCAL_FRAME_QUEUE_SIZE];
+            int kept = 0;
+            int i;
+            for (i = 0; i < (int)f->hdr.tankCount; i++) {
+                if ((f->tanks[i].playerNum &
+                     (uint8_t)~TANK_SNAPSHOT_HIDDEN_FLAG) == gone) {
+                    continue;
+                }
+                f->tanks[kept++] = f->tanks[i];
+            }
+            f->hdr.tankCount = (uint8_t)kept;
+        }
+        break;
+    }
     default:
         break;
     }

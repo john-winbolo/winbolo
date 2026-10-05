@@ -99,6 +99,7 @@ int run_sp_local_map_repair(void);
 int run_sp_frame_queue_repairs_after_drop(void);
 int run_sp_frame_queue_resets_on_lobby(void);
 int run_sp_frame_queue_resets_on_map_change(void);
+int run_sp_frame_queue_keeps_departed_player_gone(void);
 int run_prefs_document_roundtrip(void);
 int run_prefs_keys_roundtrip(void);
 int run_prefs_doc_roundtrip(void);
