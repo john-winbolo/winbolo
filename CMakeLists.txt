@@ -5401,6 +5401,12 @@ set(_unit_test_names
     mac_bolo_spawn_starts_off_engine_picks
     mac_bolo_setting_changed_after_attach
     mac_bolo_setting_changed_between_rounds
+    choose_start_lobby_arg_hand_picked
+    choose_start_lobby_arg_team_side
+    choose_start_lobby_arg_nil_without_reservation
+    choose_start_override_releases_reservation
+    choose_start_override_onto_other_reservation
+    choose_start_script_ignoring_lobby_unchanged
     input_redundancy
     bases_closest_for_player
     base_stock_visibility

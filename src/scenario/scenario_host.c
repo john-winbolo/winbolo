@@ -5694,14 +5694,29 @@ static bool scnCanAlly(void *ctx, BYTE player, BYTE other) {
  * out-parameter is the engine's own 0-based index, so the number goes out
  * through the read helper to be checked and the op helper to be handed over.
  * A number naming no live start is refused here rather than left for the
- * site's own fallback, so the operator is told which call named it. */
+ * site's own fallback, so the operator is told which call named it.
+ *
+ * The second argument is the lobby's answer to the same question, counted
+ * the same way, so a script that wants the lobby's start hands the number
+ * straight back and one that wants its own pick knows what it is
+ * overriding. */
 static bool scnChooseStart(void *ctx, BYTE player, BYTE *startIdx) {
     ScenarioHost *h     = (ScenarioHost *)ctx;
     bool          named = false;
+    BYTE          lobby = 0;    /* the reserved start, 1-based; 0 for none */
     int           i;
 
     if (h == NULL || startIdx == NULL) {
         return false;
+    }
+    /* What the engine would do with no script answering: put the tank on
+       the start the round's opening placement reserved for the seat, the
+       one the lobby's hand pick or team side chose. Read once, before any
+       script is asked, so every script on the list is told the same thing.
+       A script that names another start spends the reservation in
+       startsGetStart, so it is never left behind to block a later pick. */
+    if (!serverSimGetLobbyStart(h->sim, player, &lobby)) {
+        lobby = 0;
     }
     scnLockEnter(&h->lock);
     /* Scripts asked from the top down, and the first one to name a start
@@ -5716,8 +5731,16 @@ static bool scnChooseStart(void *ctx, BYTE player, BYTE *startIdx) {
             continue;
         }
         lua_pushinteger(h->L, (lua_Integer)player);
+        /* The read accessor's numbering is the script's, so the start goes
+           across as it is. nil when nothing is reserved: a script that
+           ignores the second argument is asked exactly as it always was. */
+        if (lobby != 0) {
+            lua_pushinteger(h->L, (lua_Integer)lobby);
+        } else {
+            lua_pushnil(h->L);
+        }
         if (scnPolicyAnswer(h, i, kScnPolicyNames[SCN_POLICY_ON_CHOOSE_START],
-                            1)) {
+                            2)) {
             ServerSimStartInfo info;
             long               n    = 0;
             BYTE               read = 0;

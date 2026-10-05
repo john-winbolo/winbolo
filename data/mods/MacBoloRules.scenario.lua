@@ -45,17 +45,21 @@
 -- walking speed, such as a river, a wall to repair or a live pillbox, keeps
 -- the refuelling base speed. The walk back to the tank is not changed.
 --
--- Starts. By default the round's opening tanks go where the lobby put
--- them: each player's start, picked by hand or by the team's side, stands.
--- Only a spawn after that is Mac Bolo's. A seat with no lobby start (the
--- lobby is off, or the seat has none) gets the engine's classic pick for
--- its opening tank, not the Mac Bolo pick; turn first_start_lobby off to
--- give it the Mac Bolo pick. A spawn start is picked in two passes. Pass
--- one looks for a start with nothing near it at all: no other tank and no
--- pillbox, whoever owns them. If every start has something near it, pass
--- two looks for a start with no enemy tank and no enemy pillbox near it;
--- friendly tanks and pills, and neutral pills, are allowed. If both passes
--- come up empty the engine picks as it always does.
+-- Starts. The engine tells on_choose_start which start the lobby put the
+-- seat on: the start its player picked by hand, else one on the team's
+-- side, else the engine's own spread of the field. That start is the
+-- seat's for its first tank of the round only, so a later spawn is told
+-- nothing. By default the mod hands the lobby's start straight back, so
+-- the round's opening tanks go where the lobby put them, and every spawn
+-- the lobby has no start for is Mac Bolo's. Turn first_start_lobby off
+-- to give the opening tanks the Mac Bolo pick too.
+--
+-- The Mac Bolo pick has two passes. Pass one looks for a start with
+-- nothing near it at all: no other tank and no pillbox, whoever owns them.
+-- If every start has something near it, pass two looks for a start with no
+-- enemy tank and no enemy pillbox near it; friendly tanks and pills, and
+-- neutral pills, are allowed. If both passes come up empty the engine
+-- picks as it always does.
 --
 -- "Near" is the round's own start_tank_range and start_pill_range rules,
 -- measured the way the engine measures them: the larger of the two axis
@@ -87,8 +91,8 @@
 --   builder_walk        builder walk (man_bless_tile_terrain_speed).
 --   spawn_starts        the Mac Bolo start pick for spawns.
 --   first_start_lobby   "Override first start to what was chosen in lobby".
---                       On (the default): the opening tanks keep their
---                       lobby starts, as above. Off: the Mac Bolo pick
+--                       On (the default): a tank the lobby has a start
+--                       for takes it, as above. Off: the Mac Bolo pick
 --                       places the opening tanks too. Has no effect
 --                       while spawn_starts is off.
 --
@@ -166,16 +170,15 @@ scenario = {
     -- Starts: the two-pass Mac Bolo pick for spawns.
     { id = "spawn_starts", label = "Mac Bolo spawn starts", type = "bool",
       default = true },
-    -- On: the opening tanks keep their lobby starts. Off: the Mac Bolo pick
-    -- places them too. Has no effect while spawn_starts is off.
+    -- On: a tank the lobby has a start for takes it. Off: the Mac Bolo pick
+    -- places the opening tanks too. Has no effect while spawn_starts is off.
     { id = "first_start_lobby",
       label = "Override first start to what was chosen in lobby",
       type = "bool", default = true },
   },
 
   callbacks = {
-    on_start = "Notes that the opening tanks are placed, so with the lobby's starts kept the Mac Bolo pick waits for the spawns after them.",
-    on_choose_start = "Picks a start with no tank or pill near, else one with no enemy tank or pill near; with spawn starts off, the engine picks.",
+    on_choose_start = "Keeps the lobby's start for an opening tank; else picks a start with no tank or pill near, else none of the enemy's. Spawn starts off: engine picks.",
   },
 }
 
@@ -302,27 +305,21 @@ local function usable(s)
          not game.is_mine(s.x, s.y)
 end
 
--- Whether the round's opening tanks have been placed. on_start runs once
--- they have; until then the lobby's starts stand, when first_start_lobby
--- is on.
-local started = false
-
-function on_start()
-  started = true
-end
-
-function on_choose_start(p)
+-- lobby is the start the lobby chose for this tank, counted as game.start
+-- counts, or nil when it chose none. The lobby chooses for each seat's
+-- first tank of the round and for no spawn after it.
+function on_choose_start(p, lobby)
   -- With the part off, every start is the engine's.
   if not SPAWN_STARTS then
     return nil
   end
 
   -- By default the opening placement is the lobby's: each player's start,
-  -- picked by hand or by the team's side, was reserved there and the engine
-  -- puts the tank on it. Only a spawn after that is Mac Bolo's. With
-  -- first_start_lobby off, the Mac Bolo pick places the opening tanks too.
-  if FIRST_START_LOBBY and not started then
-    return nil
+  -- picked by hand or by the team's side, is the one handed back. A spawn
+  -- the lobby chose nothing for is Mac Bolo's. With first_start_lobby off,
+  -- the Mac Bolo pick places the opening tanks too.
+  if FIRST_START_LOBBY and lobby ~= nil then
+    return lobby
   end
 
   local count = game.num_starts()

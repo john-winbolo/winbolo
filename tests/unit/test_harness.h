@@ -1165,6 +1165,12 @@ int run_mac_bolo_first_start_lobby_off_uses_mac_pick(void);
 int run_mac_bolo_spawn_starts_off_engine_picks(void);
 int run_mac_bolo_setting_changed_after_attach(void);
 int run_mac_bolo_setting_changed_between_rounds(void);
+int run_choose_start_lobby_arg_hand_picked(void);
+int run_choose_start_lobby_arg_team_side(void);
+int run_choose_start_lobby_arg_nil_without_reservation(void);
+int run_choose_start_override_releases_reservation(void);
+int run_choose_start_override_onto_other_reservation(void);
+int run_choose_start_script_ignoring_lobby_unchanged(void);
 
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
