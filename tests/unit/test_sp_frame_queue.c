@@ -14,10 +14,13 @@
  *     The same two frames with the queue off lose it, which is checked first
  *     so the case is known to reproduce the loss it guards against.
  * sp_local_map_repair — with the frame queue on, a client square that has
- *     drifted from the server's copy is put back at the next full sync; a
- *     mine the client knows of survives the repair where the server still
- *     has it and goes where the server does not, and a mine the client does
- *     not know of is not revealed by it.
+ *     drifted from the server's copy is put back at the next full sync,
+ *     its mine with it: a mine the server still has is kept or added, one it
+ *     no longer has goes. Under hidden mines the player's own mine is marked
+ *     visible and nobody else's is.
+ * sp_frame_queue_repairs_after_drop — a frame lost to a full queue brings
+ *     the repair on at the next poll without a checksum mismatch, which a
+ *     lost mine never causes.
  * sp_frame_queue_resets_on_lobby — an old tank snapshot cannot undo the
  *     lobby reset, and the next round still receives its frames.
  * sp_frame_queue_resets_on_map_change — old terrain events cannot alter
@@ -40,6 +43,7 @@
 #include "server_lifecycle.h"
 #include "game_sim.h"
 #include "bolo_map.h"
+#include "mines.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"   /* hasPredictedTank */
 #include "client_net.h"
@@ -217,13 +221,16 @@ int run_sp_local_map_repair(void) {
      * server's map and this slot's copy say grass, the client a tree. */
     (*gs->mp).mapItem[staleX][staleY] = GRASS;
     sim->clientKnownMapObj[slot].mapItem[staleX][staleY] = GRASS;
-    /* The same, under a mine the client knows of. */
+    /* The same, under a mine this player laid. */
     (*gs->mp).mapItem[minedX][minedY] = MINE_GRASS;
     sim->clientKnownMapObj[slot].mapItem[minedX][minedY] = MINE_GRASS;
+    minesSetOwner(&gs->mns, minedX, minedY, slot);
     (*cg->mp).mapItem[minedX][minedY] = MINE_FOREST;
-    /* A mine the client was never told of, on ground it has right. */
+    /* A mine nobody on this player's side laid, on ground the client has
+     * right: the byte is the client's to have, the sight of it is not. */
     (*gs->mp).mapItem[hiddenX][hiddenY] = MINE_FOREST;
     sim->clientKnownMapObj[slot].mapItem[hiddenX][hiddenY] = MINE_FOREST;
+    (*cg->mns).minesHiddenMines = TRUE;
     /* A mine the client knows of that blew up without the client hearing of
      * it: the server holds the crater and no mine. */
     (*gs->mp).mapItem[blownX][blownY] = CRATER;
@@ -243,10 +250,56 @@ int run_sp_local_map_repair(void) {
                   FQ_FULL_SYNC_FRAMES);
     UT_ASSERT_MSG(fq_client_tile(cs, minedX, minedY) == MINE_GRASS, "client holds %d",
                   (int)fq_client_tile(cs, minedX, minedY));
-    UT_ASSERT_MSG(fq_client_tile(cs, hiddenX, hiddenY) == FOREST, "client holds %d",
+    UT_ASSERT_MSG(fq_client_tile(cs, hiddenX, hiddenY) == MINE_FOREST, "client holds %d",
                   (int)fq_client_tile(cs, hiddenX, hiddenY));
+    UT_ASSERT_MSG((*cg->mns).pos[minedX][minedY],
+                  "the player's own mine was not marked visible");
+    UT_ASSERT_MSG(!(*cg->mns).pos[hiddenX][hiddenY],
+                  "a mine laid by nobody on the player's side was revealed");
     UT_ASSERT_MSG(fq_client_tile(cs, blownX, blownY) == CRATER, "client holds %d",
                   (int)fq_client_tile(cs, blownX, blownY));
+
+    fq_teardown(sim, cs);
+    return 0;
+}
+
+int run_sp_frame_queue_repairs_after_drop(void) {
+    ServerSim *sim = NULL;
+    ClientSim *cs = NULL;
+    GameSim *gs;
+    BYTE slot;
+    BYTE mx, my;
+    int i;
+
+    UT_ASSERT(fq_setup(&sim, &cs));
+    fq_set_queue(cs, true);
+    gs = serverSimGetGameSim(sim);
+    slot = clientSimGetMyPlayerNum(cs);
+    UT_ASSERT(slot < MAX_TANKS);
+    UT_ASSERT(fq_find_forest(sim, cs, 0, &mx, &my));
+
+    /* A mine laid in a frame the client never got: the terrain under it is
+     * the same on both sides, so no checksum will ever notice. */
+    threadsWaitForMutex();
+    (*gs->mp).mapItem[mx][my] = MINE_FOREST;
+    sim->clientKnownMapObj[slot].mapItem[mx][my] = MINE_FOREST;
+    threadsReleaseMutex();
+
+    /* Without a drop nothing repairs it, full sync or no. */
+    for (i = 0; i < FQ_FULL_SYNC_FRAMES; i++) {
+        fq_server_frame(sim, cs);
+        clientSimNetTick(cs);
+    }
+    UT_ASSERT_MSG(fq_client_tile(cs, mx, my) == FOREST, "client holds %d",
+                  (int)fq_client_tile(cs, mx, my));
+
+    /* More frames than the queue holds, unpolled, and then one poll. */
+    for (i = 0; i < 80; i++) {
+        fq_server_frame(sim, cs);
+    }
+    clientSimNetTick(cs);
+    UT_ASSERT_MSG(fq_client_tile(cs, mx, my) == MINE_FOREST, "client holds %d",
+                  (int)fq_client_tile(cs, mx, my));
 
     fq_teardown(sim, cs);
     return 0;

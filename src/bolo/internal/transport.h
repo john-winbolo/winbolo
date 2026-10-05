@@ -125,12 +125,13 @@ void transportLocalSetFrameQueue(Transport *t, bool on);
 bool transportLocalFrameQueueOn(Transport *t);
 void transportLocalCaptureFrame(Transport *t);
 
-/* With the frame queue on, writes every square of the client's map whose
- * terrain differs from the copy the server checksums this slot against, and
- * returns how many it wrote; 0 with the queue off. A mine the client knows of
- * is kept where the server still has one, and none are revealed. The
- * single-player answer to a map checksum
- * mismatch, which a UDP client answers with a resync. Caller holds the
+/* With the frame queue on, makes the client's map the copy the server
+ * checksums this slot against, mines included, and returns how many squares
+ * it put right; 0 with the queue off. Under hidden mines it also marks as
+ * visible the mines this player or an ally laid. The single-player answer to
+ * a map checksum mismatch, which a UDP client answers with a resync; the
+ * transport also runs it by itself at the first poll after the queue has
+ * dropped a frame, since the checksum does not see mines. Caller holds the
  * threads mutex. */
 struct GameSim;
 int transportLocalRepairMap(Transport *t, struct GameSim *clientGs);

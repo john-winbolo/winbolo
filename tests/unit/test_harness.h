@@ -96,6 +96,7 @@ int run_active_local_input_to_shot(void);
 int run_sp_shoot_through_timer(void);
 int run_sp_frame_queue_keeps_skipped_frame(void);
 int run_sp_local_map_repair(void);
+int run_sp_frame_queue_repairs_after_drop(void);
 int run_sp_frame_queue_resets_on_lobby(void);
 int run_sp_frame_queue_resets_on_map_change(void);
 int run_prefs_document_roundtrip(void);

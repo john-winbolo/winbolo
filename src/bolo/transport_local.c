@@ -40,6 +40,8 @@
 #include "control_event.h"
 #include "game_sim.h"    /* GameSim — the client map transportLocalRepairMap writes */
 #include "bolo_map.h"    /* mapSetPos */
+#include "mines.h"       /* the client's visible-mine list, the server's layer record */
+#include "players.h"     /* playersIsAllie */
 #include "../common/wb_log.h"
 /* The passive variant is driven from a different thread than the one that
  * ticks ServerSim, so it self-serialises on the server's threadsMutex. */
@@ -100,6 +102,10 @@ typedef struct {
     uint32_t    frameHead;      /* Index of the oldest captured frame */
     uint32_t    frameCount;     /* Frames captured and not yet applied */
     uint32_t    framesDropped;  /* Frames lost to a full queue, for the log */
+    /* A frame has been dropped since the last repair. The map checksum is
+     * blind to mines, so a lost mine would never bring a repair on by itself;
+     * the next poll runs one once it has applied what the queue still held. */
+    bool        repairOwed;
 } TransportLocalCtx;
 
 /* Control events apply synchronously, ahead of any captured snapshots the
@@ -139,6 +145,8 @@ static void localFrameDropSounds(LocalFrame *f) {
     }
     f->hdr.reliableEventCount = (uint8_t)kept;
 }
+
+static int localRepairMap(TransportLocalCtx *lctx, GameSim *clientGs);
 
 static void localSendInput(void *ctx, const InputPacket *input) {
     TransportLocalCtx *lctx = (TransportLocalCtx *)ctx;
@@ -246,6 +254,14 @@ static bool localTick(void *ctx) {
                                       lctx->playerNum);
             lctx->frameHead = (lctx->frameHead + 1) % LOCAL_FRAME_QUEUE_SIZE;
             lctx->frameCount--;
+        }
+        /* After the drain, so the client and the server's copy for this slot
+         * stand at the same frame and differ only by what was dropped. */
+        if (lctx->repairOwed) {
+            lctx->repairOwed = false;
+            if (localRepairMap(lctx, clientSimGetGameSim(lctx->cs)) > 0) {
+                clientSimRecalc(lctx->cs);
+            }
         }
     } else if (lctx->cs != NULL) {
         /* Pull and apply a snapshot every tick — the local transport now
@@ -361,6 +377,7 @@ void transportLocalSetFrameQueue(Transport *t, bool on) {
     }
     lctx->frameHead = 0;
     lctx->frameCount = 0;
+    lctx->repairOwed = false;
 }
 
 bool transportLocalFrameQueueOn(Transport *t) {
@@ -379,6 +396,7 @@ void transportLocalCaptureFrame(Transport *t) {
         lctx->frameHead = (lctx->frameHead + 1) % LOCAL_FRAME_QUEUE_SIZE;
         lctx->frameCount--;
         lctx->framesDropped++;
+        lctx->repairOwed = true;
         if (lctx->framesDropped == 1 || (lctx->framesDropped % 500) == 0) {
             WB_LOG_WARN(WB_LOG_CAT_CLIENT,
                         "local frame queue full: %u frame(s) dropped so far",
@@ -399,64 +417,77 @@ void transportLocalCaptureFrame(Transport *t) {
     lctx->frameCount++;
 }
 
-/* A terrain byte with any mine taken off it — the form mapCalcChecksum
- * compares in. */
-static BYTE localStripMine(BYTE t) {
-    return (t >= MINE_START && t <= MINE_END) ? (BYTE)(t - MINE_SUBTRACT) : t;
-}
-
-int transportLocalRepairMap(Transport *t, GameSim *clientGs) {
-    TransportLocalCtx *lctx;
+/* Makes the client's map the server's copy for this slot, square by square,
+ * and returns how many squares it wrote or marked. The mine on a square is
+ * part of the byte and is copied with it: a map change carries the byte to
+ * every client, so the copy shows this one nothing it was not sent. What hides
+ * a mine under hidden mines is the client's visible-mine list, and the only
+ * mines put on that are the ones the server's layer record says were laid by
+ * this player or an ally, which is who a builder's EVENT_MINE_VISIBLE goes
+ * to. An enemy tank's mine goes to everyone but the record does not tell it
+ * from an enemy builder's, so that one stays unmarked. */
+static int localRepairMap(TransportLocalCtx *lctx, GameSim *clientGs) {
+    GameSim *serverGs;
     map *known;
+    bool hidden;
     int repaired = 0;
     int x, y;
 
-    if (t == NULL || t->ctx == NULL || clientGs == NULL ||
-        clientGs->mp == NULL) {
-        return 0;
-    }
-    lctx = (TransportLocalCtx *)t->ctx;
-    /* Only behind the frame queue, which is to say desktop single player.
-     * Bots and the transports that tick the server themselves read every
-     * frame as it ends and have nothing to lose. */
-    if (lctx->frames == NULL || lctx->sim == NULL ||
+    if (clientGs == NULL || clientGs->mp == NULL || lctx->sim == NULL ||
         lctx->playerNum >= MAX_TANKS) {
         return 0;
     }
+    serverGs = &lctx->sim->sim;
     /* The copy the snapshot checksum is taken over, so a repaired map is one
      * the next full sync agrees with. */
     known = (lctx->sim->clientKnownMap[lctx->playerNum] != NULL)
                 ? &lctx->sim->clientKnownMap[lctx->playerNum]
-                : &lctx->sim->sim.mp;
+                : &serverGs->mp;
+    hidden = clientGs->mns != NULL && serverGs->mns != NULL &&
+             minesGetAllowHiddenMines(&clientGs->mns);
 
     for (x = 0; x < MAP_ARRAY_SIZE; x++) {
         for (y = 0; y < MAP_ARRAY_SIZE; y++) {
             BYTE held = (*clientGs->mp).mapItem[x][y];
-            BYTE raw = (*known)->mapItem[x][y];
-            BYTE truth = localStripMine(raw);
-            BYTE terrain = truth;
-            if (localStripMine(held) == truth) continue;
-            /* Mines are the client's own business: it keeps a mine it knows
-             * of while the server still has one on the square, and is never
-             * shown a mine it does not know of. A mine the server no longer
-             * has went with the change being repaired — it blew up and left
-             * the crater — so it is not carried onto the new ground. */
-            if (held >= MINE_START && held <= MINE_END &&
-                raw >= MINE_START && raw <= MINE_END) {
-                terrain = raw;
+            BYTE truth = (*known)->mapItem[x][y];
+            bool wrote = false;
+            if (held != truth) {
+                /* The path an EVENT_MAP_CHANGE takes on the client. */
+                mapSetPos(clientGs, &clientGs->mp, (BYTE)x, (BYTE)y, truth,
+                          FALSE, TRUE);
+                wrote = true;
             }
-            /* The path an EVENT_MAP_CHANGE takes on the client. */
-            mapSetPos(clientGs, &clientGs->mp, (BYTE)x, (BYTE)y, terrain,
-                      FALSE, TRUE);
-            repaired++;
+            if (hidden && truth >= MINE_START && truth <= MINE_END &&
+                !(*clientGs->mns).pos[x][y]) {
+                BYTE layer = minesGetOwner(&serverGs->mns, (BYTE)x, (BYTE)y);
+                if (layer == lctx->playerNum ||
+                    (layer < MAX_TANKS &&
+                     playersIsAllie(&serverGs->plyrs, lctx->playerNum, layer))) {
+                    minesAddItem(&clientGs->mns, (BYTE)x, (BYTE)y);
+                    wrote = true;
+                }
+            }
+            if (wrote) repaired++;
         }
     }
     if (repaired > 0) {
         WB_LOG_WARN(WB_LOG_CAT_CLIENT,
-                    "local map checksum mismatch: repaired %d square(s) from the server",
+                    "local map repair: %d square(s) put right from the server",
                     repaired);
     }
     return repaired;
+}
+
+int transportLocalRepairMap(Transport *t, GameSim *clientGs) {
+    TransportLocalCtx *lctx;
+
+    if (t == NULL || t->ctx == NULL) return 0;
+    lctx = (TransportLocalCtx *)t->ctx;
+    /* Only behind the frame queue, which is to say desktop single player.
+     * Bots and the transports that tick the server themselves read every
+     * frame as it ends and have nothing to lose. */
+    if (lctx->frames == NULL) return 0;
+    return localRepairMap(lctx, clientGs);
 }
 
 void transportLocalDestroy(Transport *t) {
