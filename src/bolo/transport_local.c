@@ -115,7 +115,9 @@ static void localFrameQueueControlObserver(void *ctx, const ControlEvent *evt) {
          * events must not be suppressed by the old same-tick dedup. */
         lctx->hasLastDelivered = false;
         /* A discarded frame may have consumed this slot's full sync. */
-        lctx->sim->lastFullSyncTick[lctx->playerNum] = 0;
+        if (lctx->sim != NULL && lctx->playerNum < MAX_TANKS) {
+            lctx->sim->lastFullSyncTick[lctx->playerNum] = 0;
+        }
         break;
     default:
         break;
