@@ -55,6 +55,10 @@
  * transportLocalRepairMap puts the terrain back. */
 #define LOCAL_FRAME_QUEUE_SIZE 64
 
+/* Frames at the new end of a drain that keep their sound events. A poll that
+ * is a frame late applies two frames and should sound like both. */
+#define LOCAL_FRAME_SOUND_KEEP 2
+
 /* One server frame's snapshot for this transport's slot, built at the end of
  * the frame by transportLocalCaptureFrame. */
 typedef struct {
@@ -122,6 +126,18 @@ static void localFrameQueueControlObserver(void *ctx, const ControlEvent *evt) {
     default:
         break;
     }
+}
+
+/* Takes the sound events out of a captured frame, keeping the order of the
+ * rest. */
+static void localFrameDropSounds(LocalFrame *f) {
+    int kept = 0;
+    int i;
+    for (i = 0; i < (int)f->hdr.reliableEventCount; i++) {
+        if (soundEventIsSound(f->events[i].type)) continue;
+        f->events[kept++] = f->events[i];
+    }
+    f->hdr.reliableEventCount = (uint8_t)kept;
 }
 
 static void localSendInput(void *ctx, const InputPacket *input) {
@@ -213,6 +229,13 @@ static bool localTick(void *ctx) {
     if (lctx->cs != NULL && lctx->frames != NULL) {
         while (lctx->frameCount > 0) {
             LocalFrame *f = &lctx->frames[lctx->frameHead];
+            /* A main thread that stalled drains a run of frames at once, and
+             * their sounds would all play on top of each other. Only the
+             * newest frames keep theirs; everything else in a frame still
+             * applies. */
+            if (lctx->frameCount > LOCAL_FRAME_SOUND_KEEP) {
+                localFrameDropSounds(f);
+            }
             clientSimSyncFromSnapshot(lctx->cs, &f->hdr,
                                       f->tanks, f->hdr.tankCount,
                                       f->shells, f->hdr.shellCount,
@@ -409,16 +432,18 @@ int transportLocalRepairMap(Transport *t, GameSim *clientGs) {
     for (x = 0; x < MAP_ARRAY_SIZE; x++) {
         for (y = 0; y < MAP_ARRAY_SIZE; y++) {
             BYTE held = (*clientGs->mp).mapItem[x][y];
-            BYTE truth = localStripMine((*known)->mapItem[x][y]);
+            BYTE raw = (*known)->mapItem[x][y];
+            BYTE truth = localStripMine(raw);
             BYTE terrain = truth;
             if (localStripMine(held) == truth) continue;
             /* Mines are the client's own business: it keeps a mine it knows
-             * of wherever the new ground can hold one, and is never shown a
-             * mine it does not know of. */
+             * of while the server still has one on the square, and is never
+             * shown a mine it does not know of. A mine the server no longer
+             * has went with the change being repaired — it blew up and left
+             * the crater — so it is not carried onto the new ground. */
             if (held >= MINE_START && held <= MINE_END &&
-                truth >= MINE_START - MINE_SUBTRACT &&
-                truth <= MINE_END - MINE_SUBTRACT) {
-                terrain = (BYTE)(truth + MINE_SUBTRACT);
+                raw >= MINE_START && raw <= MINE_END) {
+                terrain = raw;
             }
             /* The path an EVENT_MAP_CHANGE takes on the client. */
             mapSetPos(clientGs, &clientGs->mp, (BYTE)x, (BYTE)y, terrain,

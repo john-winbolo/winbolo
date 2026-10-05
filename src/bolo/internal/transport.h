@@ -127,8 +127,9 @@ void transportLocalCaptureFrame(Transport *t);
 
 /* With the frame queue on, writes every square of the client's map whose
  * terrain differs from the copy the server checksums this slot against, and
- * returns how many it wrote; 0 with the queue off. Mines the client knows of
- * are kept and none are revealed. The single-player answer to a map checksum
+ * returns how many it wrote; 0 with the queue off. A mine the client knows of
+ * is kept where the server still has one, and none are revealed. The
+ * single-player answer to a map checksum
  * mismatch, which a UDP client answers with a resync. Caller holds the
  * threads mutex. */
 struct GameSim;

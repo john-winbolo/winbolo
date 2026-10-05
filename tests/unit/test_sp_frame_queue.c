@@ -15,8 +15,9 @@
  *     so the case is known to reproduce the loss it guards against.
  * sp_local_map_repair — with the frame queue on, a client square that has
  *     drifted from the server's copy is put back at the next full sync; a
- *     mine the client knows of survives the repair and a mine it does not
- *     know of is not revealed by it.
+ *     mine the client knows of survives the repair where the server still
+ *     has it and goes where the server does not, and a mine the client does
+ *     not know of is not revealed by it.
  * sp_frame_queue_resets_on_lobby — an old tank snapshot cannot undo the
  *     lobby reset, and the next round still receives its frames.
  * sp_frame_queue_resets_on_map_change — old terrain events cannot alter
@@ -196,7 +197,7 @@ int run_sp_local_map_repair(void) {
     GameSim *gs;
     GameSim *cg;
     BYTE slot;
-    BYTE staleX, staleY, minedX, minedY, hiddenX, hiddenY;
+    BYTE staleX, staleY, minedX, minedY, hiddenX, hiddenY, blownX, blownY;
     int i;
 
     UT_ASSERT(fq_setup(&sim, &cs));
@@ -209,6 +210,7 @@ int run_sp_local_map_repair(void) {
     UT_ASSERT(fq_find_forest(sim, cs, 0, &staleX, &staleY));
     UT_ASSERT(fq_find_forest(sim, cs, 40, &minedX, &minedY));
     UT_ASSERT(fq_find_forest(sim, cs, 80, &hiddenX, &hiddenY));
+    UT_ASSERT(fq_find_forest(sim, cs, 120, &blownX, &blownY));
 
     threadsWaitForMutex();
     /* A tree the server cut down without the client hearing of it: the
@@ -222,6 +224,11 @@ int run_sp_local_map_repair(void) {
     /* A mine the client was never told of, on ground it has right. */
     (*gs->mp).mapItem[hiddenX][hiddenY] = MINE_FOREST;
     sim->clientKnownMapObj[slot].mapItem[hiddenX][hiddenY] = MINE_FOREST;
+    /* A mine the client knows of that blew up without the client hearing of
+     * it: the server holds the crater and no mine. */
+    (*gs->mp).mapItem[blownX][blownY] = CRATER;
+    sim->clientKnownMapObj[slot].mapItem[blownX][blownY] = CRATER;
+    (*cg->mp).mapItem[blownX][blownY] = MINE_FOREST;
     threadsReleaseMutex();
 
     for (i = 0; i < FQ_FULL_SYNC_FRAMES; i++) {
@@ -238,6 +245,8 @@ int run_sp_local_map_repair(void) {
                   (int)fq_client_tile(cs, minedX, minedY));
     UT_ASSERT_MSG(fq_client_tile(cs, hiddenX, hiddenY) == FOREST, "client holds %d",
                   (int)fq_client_tile(cs, hiddenX, hiddenY));
+    UT_ASSERT_MSG(fq_client_tile(cs, blownX, blownY) == CRATER, "client holds %d",
+                  (int)fq_client_tile(cs, blownX, blownY));
 
     fq_teardown(sim, cs);
     return 0;
