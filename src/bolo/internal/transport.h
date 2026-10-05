@@ -114,6 +114,26 @@ void transportLocalSetDelay(Transport *t, uint16_t delay_ms);
 /* Returns the currently configured latency in milliseconds. */
 uint16_t transportLocalGetDelay(Transport *t);
 
+/* The frame queue, for a passive transport whose server is ticked on another
+ * thread than the one that polls it (desktop single player). A snapshot
+ * carries only the events of the frame it was built in, so a poll that comes
+ * after two server frames loses the first one's events. With the queue on, the
+ * ticking thread calls transportLocalCaptureFrame after every server frame and
+ * tick() applies each captured frame in order. Off by default; turning it on
+ * or off empties it. Callers of all three hold the threads mutex. */
+void transportLocalSetFrameQueue(Transport *t, bool on);
+bool transportLocalFrameQueueOn(Transport *t);
+void transportLocalCaptureFrame(Transport *t);
+
+/* With the frame queue on, writes every square of the client's map whose
+ * terrain differs from the copy the server checksums this slot against, and
+ * returns how many it wrote; 0 with the queue off. Mines the client knows of
+ * are kept and none are revealed. The single-player answer to a map checksum
+ * mismatch, which a UDP client answers with a resync. Caller holds the
+ * threads mutex. */
+struct GameSim;
+int transportLocalRepairMap(Transport *t, struct GameSim *clientGs);
+
 /*********************************************************
  * transport_udp — multiplayer over UDP
  *

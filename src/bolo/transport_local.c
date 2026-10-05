@@ -37,12 +37,34 @@
 #include "server_sim.h"
 #include "server_sim_internal.h"  /* serverSimTakeArrivalBaseStock — local arrival push */
 #include "client_sim.h"  /* clientSimSyncFromSnapshot — per-tick snapshot apply */
+#include "game_sim.h"    /* GameSim — the client map transportLocalRepairMap writes */
+#include "bolo_map.h"    /* mapSetPos */
+#include "../common/wb_log.h"
 /* The passive variant is driven from a different thread than the one that
  * ticks ServerSim, so it self-serialises on the server's threadsMutex. */
 #include "../server/threads.h"
 
 /* Size of the delayed input queue — must be a power of 2 */
 #define INPUT_QUEUE_SIZE 256
+
+/* Frames the frame queue holds before it starts dropping the oldest: 64 server
+ * frames is 1.28 s of a main thread that has stopped polling (a window being
+ * dragged, a modal dialog). A frame dropped here loses its one-shot events the
+ * way an unqueued poll does; the full sync puts pills and bases back, and
+ * transportLocalRepairMap puts the terrain back. */
+#define LOCAL_FRAME_QUEUE_SIZE 64
+
+/* One server frame's snapshot for this transport's slot, built at the end of
+ * the frame by transportLocalCaptureFrame. */
+typedef struct {
+    SnapshotHeader      hdr;
+    TankSnapshot        tanks[MAX_TANKS];
+    ShellSnapshot       shells[MAX_SNAPSHOT_SHELLS];
+    TkExplosionSnapshot tkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
+    BaseSnapshot        bases[MAX_SNAPSHOT_BASES];
+    PillSnapshot        pills[MAX_SNAPSHOT_PILLS];
+    GameEvent           events[MAX_SNAPSHOT_EVENTS];
+} LocalFrame;
 
 typedef struct {
     ServerSim *sim;
@@ -62,6 +84,17 @@ typedef struct {
      * from CHANNEL_GAME's in-order, exactly-once delivery. */
     uint32_t lastDeliveredTick;
     bool     hasLastDelivered;
+    /* The frame queue, or NULL when it is off. A snapshot carries only the
+     * events of the frame it was built in, so a client that polls after the
+     * server has run two frames never sees the first frame's events — map
+     * changes included. Desktop single player ticks its server on a timer
+     * thread and polls from the main thread, which can fall a frame behind,
+     * so it turns this on and its timer captures every frame here; localTick
+     * then applies each captured frame in order instead of building one. */
+    LocalFrame *frames;
+    uint32_t    frameHead;      /* Index of the oldest captured frame */
+    uint32_t    frameCount;     /* Frames captured and not yet applied */
+    uint32_t    framesDropped;  /* Frames lost to a full queue, for the log */
 } TransportLocalCtx;
 
 static void localSendInput(void *ctx, const InputPacket *input) {
@@ -145,11 +178,30 @@ static bool localTick(void *ctx) {
         serverSimTick(lctx->sim);
     }
 
-    /* Pull and apply a snapshot every tick — the local transport now
-     * owns the client-side snapshot apply that frontends used to drive
-     * via per-frame clientSimNetSyncSnapshot calls.  Routed through
-     * localGetSnapshot so the per-tick event dedup applies here too. */
-    if (lctx->cs != NULL) {
+    /* With the frame queue on, apply every frame captured since the last
+     * poll, oldest first, and build nothing here: the capture already built
+     * each one, and building again would spend the full sync and the arrival
+     * stock push a second time. No captured frame means the server has not
+     * run since the last poll, and there is nothing new to apply. */
+    if (lctx->cs != NULL && lctx->frames != NULL) {
+        while (lctx->frameCount > 0) {
+            LocalFrame *f = &lctx->frames[lctx->frameHead];
+            clientSimSyncFromSnapshot(lctx->cs, &f->hdr,
+                                      f->tanks, f->hdr.tankCount,
+                                      f->shells, f->hdr.shellCount,
+                                      f->tkExplosions, f->hdr.tkExplosionCount,
+                                      f->bases, f->hdr.baseCount,
+                                      f->pills, f->hdr.pillCount,
+                                      f->events, f->hdr.reliableEventCount,
+                                      lctx->playerNum);
+            lctx->frameHead = (lctx->frameHead + 1) % LOCAL_FRAME_QUEUE_SIZE;
+            lctx->frameCount--;
+        }
+    } else if (lctx->cs != NULL) {
+        /* Pull and apply a snapshot every tick — the local transport now
+         * owns the client-side snapshot apply that frontends used to drive
+         * via per-frame clientSimNetSyncSnapshot calls.  Routed through
+         * localGetSnapshot so the per-tick event dedup applies here too. */
         SnapshotHeader snapHdr;
         TankSnapshot snapTanks[MAX_TANKS];
         ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
@@ -239,8 +291,119 @@ uint16_t transportLocalGetDelay(Transport *t) {
     return lctx->delay_ticks * 20;
 }
 
+void transportLocalSetFrameQueue(Transport *t, bool on) {
+    TransportLocalCtx *lctx;
+    if (t == NULL || t->ctx == NULL) return;
+    lctx = (TransportLocalCtx *)t->ctx;
+    /* Only a transport with a ClientSim to apply into polls the frames. */
+    if (on && lctx->frames == NULL && lctx->cs != NULL) {
+        lctx->frames = (LocalFrame *)calloc(LOCAL_FRAME_QUEUE_SIZE,
+                                            sizeof(LocalFrame));
+    } else if (!on && lctx->frames != NULL) {
+        free(lctx->frames);
+        lctx->frames = NULL;
+    }
+    lctx->frameHead = 0;
+    lctx->frameCount = 0;
+}
+
+bool transportLocalFrameQueueOn(Transport *t) {
+    return t != NULL && t->ctx != NULL &&
+           ((TransportLocalCtx *)t->ctx)->frames != NULL;
+}
+
+void transportLocalCaptureFrame(Transport *t) {
+    TransportLocalCtx *lctx;
+    LocalFrame *f;
+    if (t == NULL || t->ctx == NULL) return;
+    lctx = (TransportLocalCtx *)t->ctx;
+    if (lctx->frames == NULL) return;
+
+    if (lctx->frameCount == LOCAL_FRAME_QUEUE_SIZE) {
+        lctx->frameHead = (lctx->frameHead + 1) % LOCAL_FRAME_QUEUE_SIZE;
+        lctx->frameCount--;
+        lctx->framesDropped++;
+        if (lctx->framesDropped == 1 || (lctx->framesDropped % 500) == 0) {
+            WB_LOG_WARN(WB_LOG_CAT_CLIENT,
+                        "local frame queue full: %u frame(s) dropped so far",
+                        (unsigned)lctx->framesDropped);
+        }
+    }
+    f = &lctx->frames[(lctx->frameHead + lctx->frameCount) % LOCAL_FRAME_QUEUE_SIZE];
+    /* Through localGetSnapshot, so a capture carries the arrival stock push
+     * and the same-tick dedup the pull has always had: a lobby frame that
+     * did not move the tick delivers its events once. */
+    localGetSnapshot(lctx, lctx->playerNum, &f->hdr,
+                     f->tanks, MAX_TANKS,
+                     f->shells, MAX_SNAPSHOT_SHELLS,
+                     f->tkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
+                     f->bases, MAX_SNAPSHOT_BASES,
+                     f->pills, MAX_SNAPSHOT_PILLS,
+                     f->events, MAX_SNAPSHOT_EVENTS);
+    lctx->frameCount++;
+}
+
+/* A terrain byte with any mine taken off it — the form mapCalcChecksum
+ * compares in. */
+static BYTE localStripMine(BYTE t) {
+    return (t >= MINE_START && t <= MINE_END) ? (BYTE)(t - MINE_SUBTRACT) : t;
+}
+
+int transportLocalRepairMap(Transport *t, GameSim *clientGs) {
+    TransportLocalCtx *lctx;
+    map *known;
+    int repaired = 0;
+    int x, y;
+
+    if (t == NULL || t->ctx == NULL || clientGs == NULL ||
+        clientGs->mp == NULL) {
+        return 0;
+    }
+    lctx = (TransportLocalCtx *)t->ctx;
+    /* Only behind the frame queue, which is to say desktop single player.
+     * Bots and the transports that tick the server themselves read every
+     * frame as it ends and have nothing to lose. */
+    if (lctx->frames == NULL || lctx->sim == NULL ||
+        lctx->playerNum >= MAX_TANKS) {
+        return 0;
+    }
+    /* The copy the snapshot checksum is taken over, so a repaired map is one
+     * the next full sync agrees with. */
+    known = (lctx->sim->clientKnownMap[lctx->playerNum] != NULL)
+                ? &lctx->sim->clientKnownMap[lctx->playerNum]
+                : &lctx->sim->sim.mp;
+
+    for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+        for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+            BYTE held = (*clientGs->mp).mapItem[x][y];
+            BYTE truth = localStripMine((*known)->mapItem[x][y]);
+            BYTE terrain = truth;
+            if (localStripMine(held) == truth) continue;
+            /* Mines are the client's own business: it keeps a mine it knows
+             * of wherever the new ground can hold one, and is never shown a
+             * mine it does not know of. */
+            if (held >= MINE_START && held <= MINE_END &&
+                truth >= MINE_START - MINE_SUBTRACT &&
+                truth <= MINE_END - MINE_SUBTRACT) {
+                terrain = (BYTE)(truth + MINE_SUBTRACT);
+            }
+            /* The path an EVENT_MAP_CHANGE takes on the client. */
+            mapSetPos(clientGs, &clientGs->mp, (BYTE)x, (BYTE)y, terrain,
+                      FALSE, TRUE);
+            repaired++;
+        }
+    }
+    if (repaired > 0) {
+        WB_LOG_WARN(WB_LOG_CAT_CLIENT,
+                    "local map checksum mismatch: repaired %d square(s) from the server",
+                    repaired);
+    }
+    return repaired;
+}
+
 void transportLocalDestroy(Transport *t) {
     if (t->ctx != NULL) {
+        free(((TransportLocalCtx *)t->ctx)->frames);
         free(t->ctx);
         t->ctx = NULL;
     }
