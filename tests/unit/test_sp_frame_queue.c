@@ -17,6 +17,10 @@
  *     drifted from the server's copy is put back at the next full sync; a
  *     mine the client knows of survives the repair and a mine it does not
  *     know of is not revealed by it.
+ * sp_frame_queue_resets_on_lobby — an old tank snapshot cannot undo the
+ *     lobby reset, and the next round still receives its frames.
+ * sp_frame_queue_resets_on_map_change — old terrain events cannot alter
+ *     a replacement map, even without a lobby-phase event.
  *
  * Single threaded: the test plays the timer thread's part itself, calling
  * serverInstanceTick and then clientSimNetCaptureLocalFrame under the threads
@@ -31,10 +35,12 @@
 #include "global.h"
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* scenarioTick, clientKnownMapObj */
+#include "server_sim_lifecycle.h"
 #include "server_lifecycle.h"
 #include "game_sim.h"
 #include "bolo_map.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"   /* hasPredictedTank */
 #include "client_net.h"
 #include "threads.h"
 #include "test_harness.h"
@@ -232,6 +238,96 @@ int run_sp_local_map_repair(void) {
                   (int)fq_client_tile(cs, minedX, minedY));
     UT_ASSERT_MSG(fq_client_tile(cs, hiddenX, hiddenY) == FOREST, "client holds %d",
                   (int)fq_client_tile(cs, hiddenX, hiddenY));
+
+    fq_teardown(sim, cs);
+    return 0;
+}
+
+int run_sp_frame_queue_resets_on_lobby(void) {
+    ServerSim *sim = NULL;
+    ClientSim *cs = NULL;
+    ControlEvent evt;
+
+    UT_ASSERT(fq_setup(&sim, &cs));
+    fq_set_queue(cs, true);
+    UT_ASSERT(cs->clientState.hasPredictedTank);
+    /* Leave a tank-bearing frame waiting when the synchronous lobby
+     * control events reset the client. */
+    fq_server_frame(sim, cs);
+    threadsWaitForMutex();
+    /* Isolate the phase event so a preceding map-change invalidation
+     * cannot hide a missing invalidation on lobby entry itself. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_GAME_PHASE_LOBBY;
+    serverSimPublishControl(sim, &evt);
+    threadsReleaseMutex();
+    UT_ASSERT(clientSimIsInLobby(cs));
+    UT_ASSERT(!cs->clientState.hasPredictedTank);
+    clientSimNetTick(cs);
+    UT_ASSERT_MSG(!cs->clientState.hasPredictedTank,
+                  "a queued old-round tank undid the lobby reset");
+
+    /* Exercise the complete server transition too, including a lobby
+     * snapshot captured after the world was reset. */
+    fq_server_frame(sim, cs);
+    threadsWaitForMutex();
+    serverSimSetLobbyEnabled(sim, true);
+    serverSimReturnToLobby(sim);
+    serverSimLocalOnReturnToLobby(sim);
+    threadsReleaseMutex();
+    UT_ASSERT(clientSimIsInLobby(cs));
+    UT_ASSERT(!cs->clientState.hasPredictedTank);
+
+    fq_server_frame(sim, cs);
+    clientSimNetTick(cs);
+    UT_ASSERT_MSG(!cs->clientState.hasPredictedTank,
+                  "a queued old-round tank undid the lobby reset");
+
+    /* Starting again must still deliver the first tank and subsequent
+     * map events through the same queue. */
+    threadsWaitForMutex();
+    serverSimStartGame(sim);
+    serverSimLocalOnGameStart(sim);
+    threadsReleaseMutex();
+    UT_ASSERT(!clientSimIsInLobby(cs));
+    fq_server_frame(sim, cs);
+    clientSimNetTick(cs);
+    UT_ASSERT(cs->clientState.hasPredictedTank);
+    UT_ASSERT(fq_find_forest(sim, cs, 0, &fqX, &fqY));
+    fqArmed = true;
+    fq_server_frame(sim, cs);
+    fq_server_frame(sim, cs);
+    clientSimNetTick(cs);
+    UT_ASSERT(fq_client_tile(cs, fqX, fqY) == GRASS);
+
+    fq_teardown(sim, cs);
+    return 0;
+}
+
+int run_sp_frame_queue_resets_on_map_change(void) {
+    ServerSim *sim = NULL;
+    ClientSim *cs = NULL;
+    ControlEvent evt;
+
+    UT_ASSERT(fq_setup(&sim, &cs));
+    fq_set_queue(cs, true);
+    UT_ASSERT(fq_find_forest(sim, cs, 0, &fqX, &fqY));
+    fqArmed = true;
+    fq_server_frame(sim, cs);
+    UT_ASSERT((*serverSimGetGameSim(sim)->mp).mapItem[fqX][fqY] == GRASS);
+
+    /* Reinstall the pristine map without a lobby-phase event: map
+     * replacement must invalidate the queue in its own right. */
+    threadsWaitForMutex();
+    serverSimResetGameWorld(sim);
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_LOBBY_MAP_CHANGE;
+    serverSimPublishControl(sim, &evt);
+    threadsReleaseMutex();
+    UT_ASSERT(fq_client_tile(cs, fqX, fqY) == FOREST);
+    clientSimNetTick(cs);
+    UT_ASSERT_MSG(fq_client_tile(cs, fqX, fqY) == FOREST,
+                  "an old map event was applied to the replacement map");
 
     fq_teardown(sim, cs);
     return 0;

@@ -59,6 +59,8 @@ static const UnitTestEntry s_tests[] = {
     { "sp_shoot_through_timer",          run_sp_shoot_through_timer          },
     { "sp_frame_queue_keeps_skipped_frame", run_sp_frame_queue_keeps_skipped_frame },
     { "sp_local_map_repair",             run_sp_local_map_repair             },
+    { "sp_frame_queue_resets_on_lobby", run_sp_frame_queue_resets_on_lobby },
+    { "sp_frame_queue_resets_on_map_change", run_sp_frame_queue_resets_on_map_change },
     { "prefs_document_roundtrip",        run_prefs_document_roundtrip        },
     { "prefs_keys_roundtrip",            run_prefs_keys_roundtrip            },
     { "prefs_doc_roundtrip",             run_prefs_doc_roundtrip             },

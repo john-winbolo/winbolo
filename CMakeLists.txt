@@ -4793,6 +4793,8 @@ set(_unit_test_names
     sp_shoot_through_timer
     sp_frame_queue_keeps_skipped_frame
     sp_local_map_repair
+    sp_frame_queue_resets_on_lobby
+    sp_frame_queue_resets_on_map_change
     prefs_document_roundtrip
     prefs_keys_roundtrip
     prefs_doc_roundtrip

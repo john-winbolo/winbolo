@@ -37,6 +37,7 @@
 #include "server_sim.h"
 #include "server_sim_internal.h"  /* serverSimTakeArrivalBaseStock — local arrival push */
 #include "client_sim.h"  /* clientSimSyncFromSnapshot — per-tick snapshot apply */
+#include "control_event.h"
 #include "game_sim.h"    /* GameSim — the client map transportLocalRepairMap writes */
 #include "bolo_map.h"    /* mapSetPos */
 #include "../common/wb_log.h"
@@ -96,6 +97,30 @@ typedef struct {
     uint32_t    frameCount;     /* Frames captured and not yet applied */
     uint32_t    framesDropped;  /* Frames lost to a full queue, for the log */
 } TransportLocalCtx;
+
+/* Control events apply synchronously, ahead of any captured snapshots the
+ * main thread has not polled yet. A world boundary must discard those old
+ * snapshots before they can undo the reset or write into the replacement map.
+ * The subscriber invokes this observer under the same threads mutex as capture
+ * and polling. Only a transport with its frame queue on installs it. */
+static void localFrameQueueControlObserver(void *ctx, const ControlEvent *evt) {
+    TransportLocalCtx *lctx = (TransportLocalCtx *)ctx;
+    switch (evt->type) {
+    case CTRL_LOBBY_MAP_CHANGE:
+    case CTRL_GAME_PHASE_LOBBY:
+    case CTRL_GAME_PHASE_RUNNING:
+        lctx->frameHead = 0;
+        lctx->frameCount = 0;
+        /* A new world can reuse the previous world's tick number. Its
+         * events must not be suppressed by the old same-tick dedup. */
+        lctx->hasLastDelivered = false;
+        /* A discarded frame may have consumed this slot's full sync. */
+        lctx->sim->lastFullSyncTick[lctx->playerNum] = 0;
+        break;
+    default:
+        break;
+    }
+}
 
 static void localSendInput(void *ctx, const InputPacket *input) {
     TransportLocalCtx *lctx = (TransportLocalCtx *)ctx;
@@ -299,7 +324,13 @@ void transportLocalSetFrameQueue(Transport *t, bool on) {
     if (on && lctx->frames == NULL && lctx->cs != NULL) {
         lctx->frames = (LocalFrame *)calloc(LOCAL_FRAME_QUEUE_SIZE,
                                             sizeof(LocalFrame));
+        if (lctx->frames != NULL) {
+            clientSimSetTransportControlObserver(lctx->cs,
+                                                  localFrameQueueControlObserver,
+                                                  lctx);
+        }
     } else if (!on && lctx->frames != NULL) {
+        clientSimSetTransportControlObserver(lctx->cs, NULL, NULL);
         free(lctx->frames);
         lctx->frames = NULL;
     }
@@ -403,7 +434,11 @@ int transportLocalRepairMap(Transport *t, GameSim *clientGs) {
 
 void transportLocalDestroy(Transport *t) {
     if (t->ctx != NULL) {
-        free(((TransportLocalCtx *)t->ctx)->frames);
+        TransportLocalCtx *lctx = (TransportLocalCtx *)t->ctx;
+        if (lctx->frames != NULL) {
+            clientSimSetTransportControlObserver(lctx->cs, NULL, NULL);
+        }
+        free(lctx->frames);
         free(t->ctx);
         t->ctx = NULL;
     }
