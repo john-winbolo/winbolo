@@ -6,8 +6,8 @@
  * Mac Bolo Rules mod answers on_choose_start with a random clear start, and
  * the engine asks that policy ahead of the lobby's batch slot, so with the
  * mod on, the round's opening tanks ignored every lobby pick and every team
- * side. The opening placement is the lobby's; the mod's pick is for the
- * spawns after it.
+ * side. The engine now tells the policy the lobby's start and the mod hands
+ * it back for an opening tank; the mod's pick is for the spawns after it.
  *
  *   run_mod_lobby_starts_mac_bolo_keeps_opposite_sides
  *       two humans on teams 1 and 2, sides west and east, each holding a
@@ -42,6 +42,28 @@
  *   run_mac_bolo_setting_changed_between_rounds
  *       round 1 on the defaults, back to the lobby, shell_cap off and
  *       push_step changed: round 2 plays the new picks.
+ *
+ * on_choose_start(p, lobby): the engine hands each script the start the
+ * lobby reserved for the tank, and game.lobby_start / game.lobby_side read
+ * the lobby beside it. These use a small mod written for the case.
+ *
+ *   run_choose_start_lobby_arg_hand_picked
+ *       each seat is told its hand pick, game.lobby_start agrees and
+ *       game.lobby_side names the team's side; once the opening tanks are
+ *       built every seat reads nil, and a respawn is told nil.
+ *   run_choose_start_lobby_arg_team_side
+ *       no hand pick: each seat is told the start the lobby showed for it,
+ *       on its team's side.
+ *   run_choose_start_lobby_arg_nil_without_reservation
+ *       a seat joining a running round is told nil.
+ *   run_choose_start_override_releases_reservation
+ *       a script naming a third start wins; the seat's reservation is spent
+ *       and its respawn is told nil; the other seat keeps its own.
+ *   run_choose_start_override_onto_other_reservation
+ *       a script sending seat 0 to seat 1's reserved start: both tanks open
+ *       by it on squares of their own, and no reservation is left over.
+ *   run_choose_start_script_ignoring_lobby_unchanged
+ *       a one-parameter policy is answered as it always was.
  *
  * The mod is the shipped file, read from the data/mods directory the build
  * stages beside the test binary, attached through scenarioHostAttachMod as
@@ -651,5 +673,446 @@ int run_mac_bolo_setting_changed_between_rounds(void) {
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── on_choose_start's lobby argument ─────────────────────────────── */
+
+/* A small mod written for the case, and what it says it was told. The mod
+ * prints a marked line for each question; a scenario state's print goes to
+ * the server console, which the watcher below catches. */
+#define MLS_NOTE_MARK "note:"
+
+static char   mlsNote[8192];
+static size_t mlsNoteLen;
+static void (*mlsConsolePrev)(void *ctx, char *msg) = NULL;
+static char   mlsEchoDir[256];
+
+static void mlsNoteClear(void) {
+    mlsNote[0] = '\0';
+    mlsNoteLen = 0;
+}
+
+/* One console line, kept if the mod wrote it. print turns the newline a
+   note ends with into a space, so trailing spaces are dropped and the line
+   is ended with a newline here instead. */
+static void mlsConsoleCb(void *ctx, char *msg) {
+    size_t mark = strlen(MLS_NOTE_MARK);
+    size_t n;
+    if (mlsConsolePrev != NULL) {
+        mlsConsolePrev(ctx, msg);
+    }
+    if (msg == NULL || strncmp(msg, MLS_NOTE_MARK, mark) != 0) {
+        return;
+    }
+    n = strlen(msg + mark);
+    while (n > 0 && msg[mark + n - 1] == ' ') {
+        n--;
+    }
+    if (mlsNoteLen + n + 2 > sizeof(mlsNote)) {
+        return;
+    }
+    memcpy(mlsNote + mlsNoteLen, msg + mark, n);
+    mlsNoteLen += n;
+    mlsNote[mlsNoteLen++] = '\n';
+    mlsNote[mlsNoteLen]   = '\0';
+}
+
+/* The mod's file, with note() in front of body. */
+static bool mlsWriteEcho(const char *tag, const char *body) {
+    char  path[512];
+    FILE *f;
+
+    snprintf(mlsEchoDir, sizeof(mlsEchoDir), "wbtest_mls_%s", tag);
+    /* A directory left by a run that was killed is not a failure: the file
+       below is written over whatever is in it. */
+    (void)SDL_RemovePath(mlsEchoDir);
+    if (!SDL_CreateDirectory(mlsEchoDir)) return false;
+    snprintf(path, sizeof(path), "%s/echo.lua", mlsEchoDir);
+    f = fopen(path, "wb");
+    if (f == NULL) return false;
+    fprintf(f,
+            "scenario = { name = \"Lobby Echo\", api = 1, kind = \"mod\",\n"
+            "             bound = false }\n"
+            "local function note(s)\n"
+            "  print(\"" MLS_NOTE_MARK "\" .. tostring(s))\n"
+            "end\n"
+            "%s", body);
+    fclose(f);
+    mlsNoteClear();
+    return true;
+}
+
+static void mlsDropEcho(void) {
+    char path[512];
+    snprintf(path, sizeof(path), "%s/echo.lua", mlsEchoDir);
+    remove(path);
+    SDL_RemovePath(mlsEchoDir);
+}
+
+/* The notes most cases below share: what on_choose_start is handed, what
+   game.lobby_start and game.lobby_side read beside it, and what
+   game.lobby_start reads once the opening tanks are built (seat 5 is
+   empty). */
+#define MLS_ECHO_NOTES                                                       \
+    "local function said(p, lobby)\n"                                        \
+    "  note(\"choose \" .. p .. \" \" .. tostring(lobby) .. \" \" ..\n"      \
+    "       tostring(game.lobby_start(p)) .. \" \" ..\n"                     \
+    "       tostring(game.lobby_side(p)))\n"                                 \
+    "end\n"                                                                  \
+    "function on_start()\n"                                                  \
+    "  note(\"started \" .. tostring(game.lobby_start(0)) .. \" \" ..\n"     \
+    "       tostring(game.lobby_start(1)) .. \" \" ..\n"                     \
+    "       tostring(game.lobby_start(5)) .. \" \" ..\n"                     \
+    "       tostring(game.lobby_side(5)))\n"                                 \
+    "end\n"
+
+/* Two humans, team 1 west and team 2 east, the echo mod attached. With
+ * handPick each claims a start on their own side, in *west and *east;
+ * without, the lobby's own pick on each side stands and both are 0. */
+static int mlsEchoLobby(bool handPick, ServerSim **outSim,
+                        ScenarioHost **outHost, BYTE *west, BYTE *east) {
+    BYTE                 emap[6000] = E_MAP;
+    ServerInstanceConfig cfg;
+    ServerSim           *sim;
+    ScenarioHost        *h;
+    char                 err[512];
+
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
+                                    gameOpen, false, 0, -1);
+    UT_ASSERT(sim != NULL);
+    serverSimSetActive(sim);
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.botAiType = (BYTE)aiNone;
+    serverSimApplyInstanceConfig(sim, &cfg);
+    mlsConsolePrev = sim->sim.callbacks.consoleMessage;
+    sim->sim.callbacks.consoleMessage = mlsConsoleCb;
+
+    err[0] = '\0';
+    h = scenarioHostAttachMod(sim, mlsEchoDir, "echo.lua", err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the echo mod was refused: %s", err);
+
+    serverSimAddPlayer(sim, 0, "A", false);
+    serverSimAddPlayer(sim, 1, "B", false);
+    UT_ASSERT(mlsTeamSide(sim, 0, 1, START_SIDE_W) == CMD_OK);
+    UT_ASSERT(sim->teams[1].startSide == START_SIDE_W &&
+              sim->teams[2].startSide == START_SIDE_E);
+    *west = 0;
+    *east = 0;
+    if (handPick) {
+        *west = mlsStartOnSide(sim, START_SIDE_BIT_W);
+        *east = mlsStartOnSide(sim, START_SIDE_BIT_E);
+        UT_ASSERT(*west != 0 && *east != 0);
+        UT_ASSERT(mlsClaim(sim, 0, 0, *west) == CMD_OK);
+        UT_ASSERT(mlsClaim(sim, 1, 1, *east) == CMD_OK);
+    }
+    *outSim  = sim;
+    *outHost = h;
+    return 0;
+}
+
+static void mlsEchoEnd(ServerSim *sim, ScenarioHost *h) {
+    sim->sim.callbacks.consoleMessage = mlsConsolePrev;
+    mlsConsolePrev = NULL;
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    mlsDropEcho();
+}
+
+/* The number on_choose_start was handed in its first question about seat
+ * p, 0 for nil, or -1 when the mod was never asked about p. */
+static int mlsToldLobby(BYTE p) {
+    char        want[32];
+    const char *at;
+    int         n = 0;
+
+    snprintf(want, sizeof(want), "choose %u ", (unsigned)p);
+    at = strstr(mlsNote, want);
+    if (at == NULL) return -1;
+    at += strlen(want);
+    if (strncmp(at, "nil", 3) == 0) return 0;
+    if (sscanf(at, "%d", &n) != 1) return -1;
+    return n;
+}
+
+/* The map square slot's tank stands on, as one number; -1 with no tank. */
+static int mlsTankSquare(GameSim *gs, BYTE slot) {
+    WORLD wx;
+    WORLD wy;
+    if (gs->tanks[slot] == NULL) return -1;
+    tankGetWorld(&gs->tanks[slot], &wx, &wy);
+    return (int)(wy >> M_W_SHIFT_SIZE) * 256 + (int)(wx >> M_W_SHIFT_SIZE);
+}
+
+/* The policy every echo case but the override ones answers with: say what
+   it was told and leave the pick to the engine. */
+#define MLS_ECHO_NIL                                                         \
+    MLS_ECHO_NOTES                                                           \
+    "function on_choose_start(p, lobby)\n"                                   \
+    "  said(p, lobby)\n"                                                     \
+    "  return nil\n"                                                         \
+    "end\n"
+
+int run_choose_start_lobby_arg_hand_picked(void) {
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+    GameSim      *gs;
+    char          want[96];
+    BYTE          west;
+    BYTE          east;
+    BYTE          named;
+
+    UT_ASSERT(mlsWriteEcho("hand", MLS_ECHO_NIL));
+    UT_ASSERT(mlsEchoLobby(true, &sim, &h, &west, &east) == 0);
+    gs = &sim->sim;
+
+    serverSimStartGame(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+
+    /* Each seat is told its hand pick, game.lobby_start reads the same
+       number beside it, and game.lobby_side names the team's side. */
+    snprintf(want, sizeof(want), "choose 0 %u %u west\n", (unsigned)west,
+             (unsigned)west);
+    UT_ASSERT_MSG(strstr(mlsNote, want) != NULL,
+                  "wanted \"%s\" in what the mod was told:\n%s", want,
+                  mlsNote);
+    snprintf(want, sizeof(want), "choose 1 %u %u east\n", (unsigned)east,
+             (unsigned)east);
+    UT_ASSERT_MSG(strstr(mlsNote, want) != NULL,
+                  "wanted \"%s\" in what the mod was told:\n%s", want,
+                  mlsNote);
+
+    /* Answering nil leaves the engine its own pick, which is the lobby's. */
+    UT_ASSERT(mlsTankStart(gs, 0) == (int)west - 1);
+    UT_ASSERT(mlsTankStart(gs, 1) == (int)east - 1);
+
+    /* The opening tanks spent the reservations: on_start reads nil for both
+       seats, and nil for an empty seat's start and side. on_start runs on
+       the round's first tick. */
+    serverSimTick(sim);
+    UT_ASSERT_MSG(strstr(mlsNote, "started nil nil nil nil\n") != NULL,
+                  "on_start should read no lobby start for any seat:\n%s",
+                  mlsNote);
+
+    /* A later spawn is told nothing, and the side is still the team's. */
+    mlsNoteClear();
+    named = MAX_STARTS;
+    UT_ASSERT(!gameSimChooseStart(gs, 0, &named));
+    UT_ASSERT_MSG(strstr(mlsNote, "choose 0 nil nil west\n") != NULL,
+                  "a respawn should be told no lobby start:\n%s", mlsNote);
+
+    mlsEchoEnd(sim, h);
+    return 0;
+}
+
+int run_choose_start_lobby_arg_team_side(void) {
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+    GameSim      *gs;
+    BYTE          west;
+    BYTE          east;
+    int           a;
+    int           b;
+
+    UT_ASSERT(mlsWriteEcho("side", MLS_ECHO_NIL));
+    UT_ASSERT(mlsEchoLobby(false, &sim, &h, &west, &east) == 0);
+    gs = &sim->sim;
+
+    serverSimStartGame(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+
+    /* No hand pick: each seat is told a start its team's side holds, and
+       its tank stands there. */
+    a = mlsToldLobby(0);
+    b = mlsToldLobby(1);
+    UT_ASSERT_MSG(a > 0 && b > 0, "both seats should be told a start, "
+                  "were told %d and %d:\n%s", a, b, mlsNote);
+    UT_ASSERT_MSG((serverSimLobbyStartSideMask(sim, (BYTE)a) &
+                   START_SIDE_BIT_W) != 0,
+                  "seat 0 (west) was told start %d, which is not on the "
+                  "west", a);
+    UT_ASSERT_MSG((serverSimLobbyStartSideMask(sim, (BYTE)b) &
+                   START_SIDE_BIT_E) != 0,
+                  "seat 1 (east) was told start %d, which is not on the "
+                  "east", b);
+    /* The lobby shows each seat the start it would take, and that is the
+       one the seat is told. */
+    UT_ASSERT_MSG(sim->lobbyPlayers[0].startIdx == (BYTE)a &&
+                      sim->lobbyPlayers[1].startIdx == (BYTE)b,
+                  "the lobby showed starts %u and %u, the seats were told "
+                  "%d and %d", (unsigned)sim->lobbyPlayers[0].startIdx,
+                  (unsigned)sim->lobbyPlayers[1].startIdx, a, b);
+    UT_ASSERT(mlsTankStart(gs, 0) == a - 1);
+    UT_ASSERT(mlsTankStart(gs, 1) == b - 1);
+    UT_ASSERT(strstr(mlsNote, " west\n") != NULL &&
+              strstr(mlsNote, " east\n") != NULL);
+
+    mlsEchoEnd(sim, h);
+    return 0;
+}
+
+int run_choose_start_lobby_arg_nil_without_reservation(void) {
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+    BYTE          west;
+    BYTE          east;
+
+    UT_ASSERT(mlsWriteEcho("none", MLS_ECHO_NIL));
+    UT_ASSERT(mlsEchoLobby(true, &sim, &h, &west, &east) == 0);
+
+    serverSimStartGame(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+
+    /* A seat that joins once the round is running was not in the opening
+       placement, so it has no reservation. */
+    mlsNoteClear();
+    serverSimAddPlayer(sim, 2, "C", false);
+    UT_ASSERT_MSG(sim->sim.tanks[2] != NULL, "setup: seat 2 has no tank");
+    UT_ASSERT_MSG(mlsToldLobby(2) == 0,
+                  "a seat joining a running round was told start %d:\n%s",
+                  mlsToldLobby(2), mlsNote);
+
+    mlsEchoEnd(sim, h);
+    return 0;
+}
+
+int run_choose_start_override_releases_reservation(void) {
+    /* Seat 0 names a start that is no seat's reservation; seat 1 keeps the
+       one the lobby gave it. */
+    static const char kBody[] =
+        MLS_ECHO_NOTES
+        "function on_choose_start(p, lobby)\n"
+        "  said(p, lobby)\n"
+        "  if p ~= 0 or lobby == nil then return nil end\n"
+        "  for n = 1, game.num_starts() do\n"
+        "    local taken = false\n"
+        "    for q = 0, game.max_tanks() - 1 do\n"
+        "      if game.lobby_start(q) == n then taken = true end\n"
+        "    end\n"
+        "    if not taken and game.start(n) then\n"
+        "      note(\"override \" .. n)\n"
+        "      return n\n"
+        "    end\n"
+        "  end\n"
+        "  return nil\n"
+        "end\n";
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+    GameSim      *gs;
+    const char   *at;
+    BYTE          west;
+    BYTE          east;
+    BYTE          named;
+    int           other = 0;
+
+    UT_ASSERT(mlsWriteEcho("override", kBody));
+    UT_ASSERT(mlsEchoLobby(true, &sim, &h, &west, &east) == 0);
+    gs = &sim->sim;
+
+    serverSimStartGame(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+
+    at = strstr(mlsNote, "override ");
+    UT_ASSERT_MSG(at != NULL && sscanf(at + 9, "%d", &other) == 1 &&
+                      other > 0 && other != (int)west && other != (int)east,
+                  "setup: the mod should have named a third start:\n%s",
+                  mlsNote);
+
+    /* The script's start wins over the lobby's, the seat's own reservation
+       is spent rather than left for a later spawn, and the other seat still
+       opens on its own pick. */
+    UT_ASSERT_MSG(mlsTankStart(gs, 0) == other - 1,
+                  "seat 0 opened nearest start %d, the mod named %d",
+                  mlsTankStart(gs, 0) + 1, other);
+    UT_ASSERT(gs->pendingStartIdx[0] == MAX_STARTS);
+    UT_ASSERT(mlsTankStart(gs, 1) == (int)east - 1);
+    UT_ASSERT(gs->pendingStartIdx[1] == MAX_STARTS);
+
+    /* Its respawn is told nothing: no reservation was left behind. */
+    serverSimTick(sim);
+    mlsNoteClear();
+    named = MAX_STARTS;
+    UT_ASSERT(!gameSimChooseStart(gs, 0, &named));
+    UT_ASSERT_MSG(mlsToldLobby(0) == 0,
+                  "after an override the respawn was told start %d:\n%s",
+                  mlsToldLobby(0), mlsNote);
+
+    mlsEchoEnd(sim, h);
+    return 0;
+}
+
+int run_choose_start_override_onto_other_reservation(void) {
+    /* Seat 0 asks for seat 1's reserved start. Both tanks open by it, on
+       squares of their own, and neither reservation is left over. */
+    static const char kBody[] =
+        MLS_ECHO_NOTES
+        "function on_choose_start(p, lobby)\n"
+        "  said(p, lobby)\n"
+        "  if p == 0 and lobby ~= nil then return game.lobby_start(1) end\n"
+        "  return nil\n"
+        "end\n";
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+    GameSim      *gs;
+    BYTE          west;
+    BYTE          east;
+
+    UT_ASSERT(mlsWriteEcho("shared", kBody));
+    UT_ASSERT(mlsEchoLobby(true, &sim, &h, &west, &east) == 0);
+    gs = &sim->sim;
+
+    serverSimStartGame(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+
+    UT_ASSERT_MSG(mlsTankStart(gs, 0) == (int)east - 1 &&
+                      mlsTankStart(gs, 1) == (int)east - 1,
+                  "both tanks should open by start %u, opened by %d and %d",
+                  (unsigned)east, mlsTankStart(gs, 0) + 1,
+                  mlsTankStart(gs, 1) + 1);
+    UT_ASSERT_MSG(mlsTankSquare(gs, 0) != mlsTankSquare(gs, 1),
+                  "the two tanks were put on one square");
+    UT_ASSERT(gs->pendingStartIdx[0] == MAX_STARTS &&
+              gs->pendingStartIdx[1] == MAX_STARTS);
+
+    mlsEchoEnd(sim, h);
+    return 0;
+}
+
+int run_choose_start_script_ignoring_lobby_unchanged(void) {
+    /* A one-parameter policy, as every script before the argument was
+       written: its answer stands whatever the lobby chose, and a nil
+       answer leaves the lobby's start. */
+    static const char kBody[] =
+        "function on_choose_start(p)\n"
+        "  note(\"asked \" .. p)\n"
+        "  if p == 0 then return game.num_starts() end\n"
+        "  return nil\n"
+        "end\n";
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+    GameSim      *gs;
+    BYTE          west;
+    BYTE          east;
+    BYTE          last;
+
+    UT_ASSERT(mlsWriteEcho("ignore", kBody));
+    UT_ASSERT(mlsEchoLobby(true, &sim, &h, &west, &east) == 0);
+    gs = &sim->sim;
+    last = startsGetNumStarts(&gs->ss);
+    UT_ASSERT_MSG(last != west && last != east,
+                  "setup: the last start must be neither pick");
+
+    serverSimStartGame(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+    UT_ASSERT(strstr(mlsNote, "asked 0\n") != NULL &&
+              strstr(mlsNote, "asked 1\n") != NULL);
+    UT_ASSERT_MSG(mlsTankStart(gs, 0) == (int)last - 1,
+                  "seat 0 opened nearest start %d, the script named %u",
+                  mlsTankStart(gs, 0) + 1, (unsigned)last);
+    UT_ASSERT(mlsTankStart(gs, 1) == (int)east - 1);
+    UT_ASSERT_MSG(scenarioHostLastError(h)[0] == '\0',
+                  "the round complained: %s", scenarioHostLastError(h));
+
+    mlsEchoEnd(sim, h);
     return 0;
 }
