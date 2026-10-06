@@ -1335,6 +1335,28 @@ void lv_drawMarkRedraw(int mx, int my, int px, int py, int itemSize) {
     if (py > itemSize && my < 255) { lv_drawLast[mx][my+1] = 10000; if (mx < 255) lv_drawLast[mx+1][my+1] = 10000; }
 }
 
+/* Mark every square a w by h pixel sprite drawn px, py pixels into square
+ * mx, my covers. lv_drawMarkRedraw only reaches the next square over, which
+ * is one short for a tank: it is drawn two pixels further in than its offset,
+ * so at an offset of 15 it reaches one pixel into the square two along, and
+ * that pixel was left behind when the tank moved on. */
+static void lv_drawMarkRedrawRect(int mx, int my, int px, int py, int w, int h) {
+    int x0 = mx + px / TILE_SIZE_X;
+    int x1 = mx + (px + w - 1) / TILE_SIZE_X;
+    int y0 = my + py / TILE_SIZE_Y;
+    int y1 = my + (py + h - 1) / TILE_SIZE_Y;
+    int x, y;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > 255) x1 = 255;
+    if (y1 > 255) y1 = 255;
+    for (x = x0; x <= x1; x++) {
+        for (y = y0; y <= y1; y++) {
+            lv_drawLast[x][y] = 10000;
+        }
+    }
+}
+
 int lv_drawGetFrameRate(void) { return (int)g_dwFrameTotal; }
 
 void lv_drawShells(screenBullets *sBullets) {
@@ -1470,7 +1492,7 @@ void lv_drawTanks(screenTanks *tks) {
         } else {
             lvDrawRecordTankLabel(playerName, mx, my, px, py);
         }
-        lv_drawMarkRedraw(mx, my, px, py, 0);
+        lv_drawMarkRedrawRect(mx, my, px, py, TILE_SIZE_X, TILE_SIZE_Y);
     }
 
     if (simple) SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);

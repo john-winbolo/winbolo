@@ -492,6 +492,14 @@ void netRemovePlayer(BYTE playerNum) { (void)playerNum; }
 void netRequestStartPosition(void) {}
 void netErrorOccured(void) {}
 
+/* Test-controllable gamepad state for input_source.c, which the unit-test
+ * target links. Defaults match a run with no controller attached;
+ * test_input_source.c flips them to drive the auto-slowdown assist. */
+bool gamepadStubConnected = FALSE;
+bool gamepadStubActivity = FALSE;
+bool inputGamepadRealControllerConnected(void) { return gamepadStubConnected; }
+bool inputGamepadActivityDetected(void) { return gamepadStubActivity; }
+
 /* Test-controllable WBN state. Defaults match a WBN-off run so every
  * other test is unaffected; the session-rotation test flips
  * wbnStubRunning on and watches wbnStubLobbyUpdateCalls to prove the

@@ -1244,6 +1244,7 @@ static const UnitTestEntry s_tests[] = {
     { "ping_kick_clears_strikes_on_disconnect",  run_ping_kick_clears_strikes_on_disconnect  },
     { "tkexp_lgm_pairing",                       run_tkexp_lgm_pairing                       },
     { "input_gate_taxonomy",                     run_input_gate_taxonomy                     },
+    { "input_source_autoslow",                   run_input_source_autoslow                   },
     { "key_claims",                              run_key_claims                              },
     { "addrparse_host_only",                     run_addrparse_host_only                     },
     { "addrparse_host_port",                     run_addrparse_host_port                     },
