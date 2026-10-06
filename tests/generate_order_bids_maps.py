@@ -37,6 +37,16 @@ order_warmup_start) is the first with a second base:
     base #2 (112,128)      the arena gives it to an enemy seat, full armour:
                            "capture base 1".
 
+The human-decoy field (order_human_decoy) is the main field with a wall:
+
+    x=109..110, y=104..105 a 2x2 block of buildings between pill #2
+                           (106,106) and the stand-in human the arena parks
+                           at (112,104).  A shell from the pill to him stops
+                           in the wall, so decoy_getaway.block() says "wall".
+                           The block is small so it does not move the bot's
+                           own standoff choice: without the feature the bot
+                           parks at (113,105), beside the human.
+
 Usage:
     python tests/generate_order_bids_maps.py
 """
@@ -48,7 +58,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import generate_test_map as gtm  # noqa: E402
 import generate_take_cover_map as gtc  # noqa: E402
-from generate_test_map import GRASS, FOREST, DEEP_SEA, MAP_SIZE, write_bmap  # noqa: E402
+from generate_test_map import GRASS, FOREST, DEEP_SEA, BUILDING, MAP_SIZE, write_bmap  # noqa: E402
 
 # generate_test_map's encoder writes one run per row and cannot hold a
 # deep-sea square inside it; take_cover's splits a row at each one.
@@ -71,6 +81,8 @@ BASE_ARENAS = [
     "order_capture_live_pill",
     "order_warmup_start",
 ]
+
+DECOY_ARENA = "order_human_decoy"
 
 PONDS = [(98, 98), (154, 154), (98, 154), (154, 126)]
 
@@ -112,6 +124,11 @@ def main():
     base_bases = bases + [(112, 128, 0xFF, 90, 90, 90)]
     for name in BASE_ARENAS:
         write_bmap(str(out / (name + ".map")), terrain, pills, base_bases, starts)
+    decoy_terrain = make_map()
+    for y in range(104, 106):
+        for x in range(109, 111):
+            decoy_terrain[y][x] = BUILDING
+    write_bmap(str(out / (DECOY_ARENA + ".map")), decoy_terrain, pills, bases, starts)
 
 
 if __name__ == "__main__":
