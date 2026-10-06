@@ -41,6 +41,8 @@ typedef struct {
     bool hostResult;
     int  reloadCalls;
     bool reloadResult;
+    int  memCalls;
+    bool lastMemDeep;
 } ConsoleRec;
 
 static ConsoleRec g_rec;
@@ -90,11 +92,16 @@ static bool recReloadScenario(char *msg, size_t msgLen) {
     return g_rec.reloadResult;
 }
 
+static void recMemReport(bool deep) {
+    g_rec.memCalls++;
+    g_rec.lastMemDeep = deep;
+}
+
 /* Positional, like the server's own list, so a new entry goes last. */
 static const ServerConsoleOps kRecOps = {
     recSetLock, recInfo, recSaveMap, recSay,
     recLogSay,  recStatus, recKick,  recSetHost,
-    recReloadScenario
+    recReloadScenario, recMemReport
 };
 
 /* Fresh recorder; both "did it work" ops answer yes unless a test says
@@ -370,6 +377,36 @@ int run_console_read_reports_eof(void) {
     fclose(f);
     remove(path);
 #endif
+    return 0;
+}
+
+/* mem asks for the plain report and memdeep for the deep one; neither is
+ * mistaken for the other, and a server without the op answers instead of
+ * crashing. */
+int run_console_mem_report(void) {
+    recReset();
+    runLine("mem\n");
+    UT_ASSERT_MSG(g_rec.memCalls == 1 && !g_rec.lastMemDeep,
+                  "mem should ask for a plain report (calls=%d deep=%d)",
+                  g_rec.memCalls, (int)g_rec.lastMemDeep);
+
+    recReset();
+    runLine("MemDeep\n");
+    UT_ASSERT_MSG(g_rec.memCalls == 1 && g_rec.lastMemDeep,
+                  "memdeep should ask for a deep report (calls=%d deep=%d)",
+                  g_rec.memCalls, (int)g_rec.lastMemDeep);
+
+    {
+        ServerConsoleOps noMem = kRecOps;
+        char keyBuff[SERVER_CONSOLE_LINE] = "mem\n";
+        char saveBuff[SERVER_CONSOLE_LINE] = "mem\n";
+        recReset();
+        noMem.memReport = NULL;
+        serverConsoleDispatch(&noMem, keyBuff, saveBuff);
+        UT_ASSERT_MSG(g_rec.memCalls == 0,
+                  "a NULL memReport must not be called (calls=%d)",
+                  g_rec.memCalls);
+    }
     return 0;
 }
 

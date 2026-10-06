@@ -40,7 +40,7 @@ void strlower(char *s) {
 }
 
 void serverConsolePrintHelp(void) {
-  fprintf(stderr, "Help:\n Lock - Locks the server and stops new players from joining.\n Unlock - Unlocks the server and allows new players to join.\n savemap <map file> - Save the map file to path and file <map file>\n Say <text> - Sends this message to all players in the game unless they have turned off server messages.\n Quit - Exits the server.\n Info - Provide information about the current game\n Kick - Kicks a player. Case insensitive, prefix a * for WBN players.\n Host - Transfers the host role to a player. Case insensitive.\n Status - Returns list of players who aren't locked.\n Reload - Re-reads the scenario file beside the map. Takes effect at the next round.\n");
+  fprintf(stderr, "Help:\n Lock - Locks the server and stops new players from joining.\n Unlock - Unlocks the server and allows new players to join.\n savemap <map file> - Save the map file to path and file <map file>\n Say <text> - Sends this message to all players in the game unless they have turned off server messages.\n Quit - Exits the server.\n Info - Provide information about the current game\n Kick - Kicks a player. Case insensitive, prefix a * for WBN players.\n Host - Transfers the host role to a player. Case insensitive.\n Status - Returns list of players who aren't locked.\n Reload - Re-reads the scenario file beside the map. Takes effect at the next round.\n Mem - Writes a memory report line: process memory, each bot's Lua heap, world list sizes.\n MemDeep - Mem plus the biggest Lua tables of each bot. Pauses the game while it walks.\n");
 }
 
 /* savemap <file>: step over the command word and any whitespace, append
@@ -141,6 +141,15 @@ void serverConsoleDispatch(const ServerConsoleOps *ops, char *keyBuff,
         pstr[0] = (char)len;
         memcpy(pstr + 1, text, len);
         ops->logSay(pstr);
+    }
+  } else if (strncmp(keyBuff, "memdeep", 7) == 0 ||
+             strncmp(keyBuff, "mem", 3) == 0) {
+    /* memdeep is matched by the same test as mem, so tell them apart by
+     * the longer word. */
+    if (ops->memReport == NULL) {
+      fprintf(stderr, "The memory report is not available on this server\n");
+    } else {
+      ops->memReport(strncmp(keyBuff, "memdeep", 7) == 0);
     }
   } else if(strncmp(keyBuff, "status", 6) == 0){
     ops->status();
