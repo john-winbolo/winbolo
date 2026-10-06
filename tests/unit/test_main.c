@@ -1286,6 +1286,7 @@ static const UnitTestEntry s_tests[] = {
     { "pascal_string_viewer_copy_agrees",        run_pascal_string_viewer_copy_agrees        },
     { "pascal_string_roundtrip",                 run_pascal_string_roundtrip                 },
     { "console_lock_unlock",                     run_console_lock_unlock                     },
+    { "console_mem_report",                      run_console_mem_report                      },
     { "console_info_and_status",                 run_console_info_and_status                 },
     { "console_savemap_path",                    run_console_savemap_path                    },
     { "console_unknown_command_is_inert",        run_console_unknown_command_is_inert        },

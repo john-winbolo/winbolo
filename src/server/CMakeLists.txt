@@ -133,6 +133,7 @@ target_link_libraries(server_round_log_static PUBLIC server_sim_static)
 add_library(server_static STATIC EXCLUDE_FROM_ALL
     geolookup.c
     server_console.c
+    server_memreport.c
     server_lifecycle.c
     transport_udp_server.c
     udp/udp_server_admin.c

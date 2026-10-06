@@ -68,6 +68,7 @@
 #include "../common/prefs.h"
 #include "../headless/cmd_stdin.h"
 #include "server_console.h"
+#include "server_memreport.h"
 #include "wire_limits.h"
 #include "../scenario/scenario_host.h"
 #include "../scenario/scenario_pack.h"
@@ -297,6 +298,12 @@ static bool consoleOpReloadScenario(char *msg, size_t msgLen) {
   return true;
 }
 
+/* mem / memdeep: the report reads the bots' lua_States, which only the tick
+   thread may touch, so the console only asks and the next tick answers. */
+static void consoleOpMemReport(bool deep) {
+  serverMemReportRequest(deep);
+}
+
 /* Positional, and the struct's own comment says why the newest entry goes
    last rather than beside a relative. */
 static const ServerConsoleOps serverConsoleOps = {
@@ -308,7 +315,8 @@ static const ServerConsoleOps serverConsoleOps = {
   consoleOpStatus,
   consoleOpKick,
   consoleOpSetHost,
-  consoleOpReloadScenario
+  consoleOpReloadScenario,
+  consoleOpMemReport
 };
 
 
@@ -535,6 +543,7 @@ static bool serverTickStep(void *ctx) {
     return false;
   }
   serverInstanceTick(serverSim);
+  serverMemReportPoll(serverSim);
   return true;
 }
 
@@ -596,6 +605,7 @@ static int SDLCALL serverAsapLoop(void *unused) {
       break;
     }
     serverInstanceTick(serverSim);
+    serverMemReportPoll(serverSim);
     ticks++;
     SDL_UnlockMutex(g_serverTickLock);
     /* The command loops (processKeys / processCmdStdin) and the shutdown
@@ -898,6 +908,15 @@ void printArgs() {
   fprintf(stderr, "                for it, so their post-game recap plays. Omitted, the server\n");
   fprintf(stderr, "                serves unless it is registered with winbolo.net. Needs -log.\n");
   fprintf(stderr, "-statusFile   - Save list of unlocked players to a file.\n");
+  fprintf(stderr, "-memreport <M> - Write a memory report line every M minutes (default %d,\n", SERVER_MEMREPORT_DEFAULT_MINUTES);
+  fprintf(stderr, "                0 turns it off; decimals allowed). The line gives the\n");
+  fprintf(stderr, "                process's RSS / private / virtual memory, uptime, game\n");
+  fprintf(stderr, "                tick, rounds, each bot's Lua heap and its growth since the\n");
+  fprintf(stderr, "                last report, and the world's object list sizes. The\n");
+  fprintf(stderr, "                console commands mem and memdeep write one at once.\n");
+  fprintf(stderr, "-memreportdeep - Every timed memory report also walks each bot's Lua\n");
+  fprintf(stderr, "                tables and lists the biggest ones. Slow (it pauses the\n");
+  fprintf(stderr, "                game while it walks); for chasing a leak.\n");
   fprintf(stderr, "-seed <N>     - Seed the RNG with N (64-bit unsigned) for reproducible runs.\n");
   fprintf(stderr, "                Seeds the C sim stream only; see -brain-lua-seed for Lua.\n");
   fprintf(stderr, "-brain-tier <1..10> - Pin every brain's capacity tier instead of deriving it\n");
@@ -2184,6 +2203,17 @@ int main(int argc, char **argv) {
               "no snapshots will be written\n");
       optSnapJson[0] = '\0';
     }
+  }
+
+  /* Memory report: on by default every SERVER_MEMREPORT_DEFAULT_MINUTES. */
+  {
+    double memMins = (double)SERVER_MEMREPORT_DEFAULT_MINUTES;
+    int argNum = findArg(argc, argv, "memreport");
+    if (argNum != ARG_NOT_FOUND) {
+      memMins = strtod((char *)argv[argNum], NULL);
+    }
+    serverMemReportConfigure(memMins,
+                             argExist(argc, argv, "memreportdeep") == TRUE);
   }
 
   /* Empty reset configuration — on by default */
