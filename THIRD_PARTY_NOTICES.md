@@ -264,7 +264,7 @@ that can be combined with it, except the Steamworks SDK, which is covered by
   notice is kept at the top of the file. Re-apply on upgrade.
 
 ### ldump
-- Location: brains/GoalHunter_1.7/ldump.lua and brains/GoalHunter_1.7/opt/ldump.lua
+- Location: brains/GoalHunter/ldump.lua and brains/GoalHunter/opt/ldump.lua
 - Version: 1.4.0 (the library's init.lua)
 - License: MIT No Attribution (MIT-0)
 - https://github.com/girvel/ldump
@@ -329,6 +329,13 @@ that can be combined with it, except the Steamworks SDK, which is covered by
 - https://db-ip.com/db/download/ip-to-country-lite
 - Author: DB-IP (https://db-ip.com)
 - Used by the server (and the in-client game browser) for IP-to-country lookups via libmaxminddb. Rebuilt monthly; download the latest .mmdb and replace the file in place.
+
+### Codicons (GitHub icon)
+- Location: data/ui/github.svg, data/ui/github-outline.svg
+- License: Creative Commons Attribution 4.0 International (CC BY 4.0), https://creativecommons.org/licenses/by/4.0/. The Codicons repository licenses its icons under CC BY 4.0 and only its code under MIT.
+- https://github.com/microsoft/vscode-codicons
+- Author: Microsoft Corporation
+- github.svg is the icon as published (src/icons/github.svg), used for the repository link in the About box. github-outline.svg is a modified copy for the main menu: coordinates rounded and shifted on to a 24-unit grid, the cat stroked rather than filled, and the viewBox padded so the mark draws smaller.
 
 ### flag-icons
 - Location: data/flags/

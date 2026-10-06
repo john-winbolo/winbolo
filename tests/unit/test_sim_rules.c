@@ -124,6 +124,7 @@
 #include "starts.h"     /* START_* */
 #include "treegrow.h"
 #include "sim_rules.h"
+#include "util.h"       /* utilCalcAngle / utilCalcDistance */
 #include "client_sim.h"
 #include "client_net.h"            /* clientSimGetConnectState */
 #include "client_connect_state.h"  /* CLIENT_CONNECT_CONNECTED */
@@ -348,6 +349,12 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(tank_slide_armour_bonus, TANK_SLIDE_ARMOUR_BONUS);
     SR_EQ(pill_aim_mac, 0);
     SR_EQ(tank_collision_mac, 0);
+
+    /* Deep sea */
+    SR_EQ(tank_deep_sea_safe, 0);
+
+    /* Builder walk */
+    SR_EQ(man_bless_tile_terrain_speed, LGM_BLESS_TILE_TERRAIN_SPEED);
 
     return 0;
 }
@@ -1299,6 +1306,222 @@ int run_sim_rules_tank_collision_mac(void) {
     return 0;
 }
 
+/* man_bless_tile_terrain_speed: the builder's speed on the square he is
+ * going to build on (his blessed square). The test row is grass from
+ * square 85 to 110, the build square is 100 and the tank waits at 90. ltsStep
+ * puts the man at `startX` on the row, facing the centre of square 100, runs
+ * one step of the walk out (or of the walk back) and returns how far east he
+ * went. ltsExpect is the step utilCalcDistance makes at a speed, which is
+ * what each case is held to. */
+static int ltsStep(GameSim *gs, BYTE state, BYTE action, WORLD startX) {
+    lgm man = gs->lgmen[0];
+    man->x = startX;
+    man->y = (WORLD)(100 * 256 + 128);
+    man->destX = (WORLD)(100 * 256 + 128);
+    man->destY = man->y;
+    man->state = state;
+    man->waitTime = 0;
+    man->inTank = FALSE;
+    man->isDead = FALSE;
+    man->onTop = FALSE;
+    man->action = action;
+    man->blessX = 100;
+    man->blessY = 100;
+    if (state == LGM_STATE_GOING) {
+        lgmMoveAway(gs, &gs->lgmen[0], &gs->tanks[0]);
+    } else {
+        lgmReturn(gs, &gs->lgmen[0], &gs->tanks[0]);
+    }
+    return (int)man->x - (int)startX;
+}
+
+static int ltsExpect(TURNTYPE angle, int speed) {
+    int xAdd, yAdd;
+    utilCalcDistance(&xAdd, &yAdd, angle, speed);
+    return xAdd;
+}
+
+int run_sim_rules_man_bless_tile_terrain_speed(void) {
+    ServerSim *sim = ut_make_running_sim("Builder walk");
+    GameSim *gs;
+    tank t;
+    int x, y, i, moved;
+    const WORLD row = (WORLD)(100 * 256 + 128);
+    const WORLD onBless = (WORLD)(100 * 256 + 10);   /* west edge of 100 */
+    const WORLD offBless = (WORLD)(98 * 256 + 128);  /* two squares short */
+    TURNTYPE east, eastFar, west;
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    t = gs->tanks[0];
+    UT_ASSERT(t != NULL && gs->lgmen[0] != NULL);
+    for (x = 85; x <= 110; x++) for (y = 98; y <= 102; y++) {
+        mapSetPos(gs, &gs->mp, (BYTE)x, (BYTE)y, GRASS, FALSE, FALSE);
+        UT_ASSERT_MSG(!basesExistPos(&gs->bs, (BYTE)x, (BYTE)y),
+                      "a base at (%d,%d) is in the test row", x, y);
+    }
+    for (i = 0; i < (int)gs->pb->numPills; i++) gs->pb->active[i] = FALSE;
+    t->x = (WORLD)(90 * 256 + 128);
+    t->y = row;
+    t->onBoat = FALSE;
+    t->boatState = BoatState_NotOnBoat;
+    t->destroyed = FALSE;
+    t->deathWait = 0;
+    east = utilCalcAngle(onBless, row, (WORLD)(100 * 256 + 128), row);
+    eastFar = utilCalcAngle(offBless, row, (WORLD)(100 * 256 + 128), row);
+    west = utilCalcAngle(onBless, row, t->x, t->y);
+    UT_ASSERT(ltsExpect(east, 16) > 0 && ltsExpect(west, 16) < 0);
+
+    /* A wall going up on swamp. Classic: off, and on the swamp square he
+       is building on he walks at the refuelling base speed. */
+    mapSetPos(gs, &gs->mp, 100, 100, SWAMP, FALSE, FALSE);
+    UT_ASSERT(gs->rules.man_bless_tile_terrain_speed == 0);
+    moved = ltsStep(gs, LGM_STATE_GOING, LGM_BUILDING_REQUEST, onBless);
+    UT_ASSERT_MSG(moved == ltsExpect(east, gs->rules.man_speed_refuel_base),
+                  "off: on a swamp build square he moved %d, expected %d",
+                  moved, ltsExpect(east, gs->rules.man_speed_refuel_base));
+
+    /* On: the same step goes at swamp speed. */
+    gs->rules.man_bless_tile_terrain_speed = 1;
+    moved = ltsStep(gs, LGM_STATE_GOING, LGM_BUILDING_REQUEST, onBless);
+    UT_ASSERT_MSG(moved == ltsExpect(east, gs->rules.man_speed_swamp),
+                  "on: on a swamp build square he moved %d, expected %d",
+                  moved, ltsExpect(east, gs->rules.man_speed_swamp));
+    UT_ASSERT(moved < ltsExpect(east, gs->rules.man_speed_refuel_base));
+
+    /* The speed is the round's own man_speed_* rule. */
+    gs->rules.man_speed_swamp = 2;
+    moved = ltsStep(gs, LGM_STATE_GOING, LGM_BUILDING_REQUEST, onBless);
+    UT_ASSERT_MSG(moved == ltsExpect(east, 2),
+                  "on: man_speed_swamp 2 moved him %d, expected %d", moved,
+                  ltsExpect(east, 2));
+    gs->rules.man_speed_swamp = MAP_MANSPEED_TSWAMP;
+
+    /* Off the build square nothing changes: two squares short, on grass,
+       he walks at grass speed with the rule on or off. */
+    for (i = 0; i <= 1; i++) {
+        gs->rules.man_bless_tile_terrain_speed = i;
+        moved = ltsStep(gs, LGM_STATE_GOING, LGM_BUILDING_REQUEST, offBless);
+        UT_ASSERT_MSG(moved == ltsExpect(eastFar, gs->rules.man_speed_grass),
+                      "rule %d: on grass short of the square he moved %d, "
+                      "expected %d", i, moved,
+                      ltsExpect(eastFar, gs->rules.man_speed_grass));
+    }
+    gs->rules.man_bless_tile_terrain_speed = 1;
+
+    /* A build square with no walking speed keeps the refuelling base
+       speed, so he is never stopped dead: a half-built wall to repair, and
+       a river to put a boat on. */
+    gs->rules.man_speed_refuel_base = 12;
+    mapSetPos(gs, &gs->mp, 100, 100, HALFBUILDING, FALSE, FALSE);
+    moved = ltsStep(gs, LGM_STATE_GOING, LGM_BUILDING_REQUEST, onBless);
+    UT_ASSERT_MSG(moved == ltsExpect(east, 12),
+                  "on: on a half-built wall he moved %d, expected %d", moved,
+                  ltsExpect(east, 12));
+    mapSetPos(gs, &gs->mp, 100, 100, RIVER, FALSE, FALSE);
+    moved = ltsStep(gs, LGM_STATE_GOING, LGM_BOAT_REQUEST, onBless);
+    UT_ASSERT_MSG(moved == ltsExpect(east, 12),
+                  "on: on a river for a boat he moved %d, expected %d", moved,
+                  ltsExpect(east, 12));
+    gs->rules.man_speed_refuel_base = MAP_MANSPEED_TREFBASE;
+    mapSetPos(gs, &gs->mp, 100, 100, SWAMP, FALSE, FALSE);
+
+    /* A man stepping off a tank on a boat keeps the base speed. */
+    t->onBoat = TRUE;
+    t->x = (WORLD)(onBless - 64);
+    moved = ltsStep(gs, LGM_STATE_GOING, LGM_BUILDING_REQUEST, onBless);
+    UT_ASSERT_MSG(moved == ltsExpect(east, gs->rules.man_speed_refuel_base),
+                  "on: leaving a boat he moved %d, expected %d", moved,
+                  ltsExpect(east, gs->rules.man_speed_refuel_base));
+    t->onBoat = FALSE;
+    t->x = (WORLD)(90 * 256 + 128);
+
+    /* The walk back to the tank is not changed: leaving the swamp build
+       square he still goes at the refuelling base speed. */
+    moved = ltsStep(gs, LGM_STATE_RETURN, LGM_BUILDING_REQUEST, onBless);
+    UT_ASSERT_MSG(moved == ltsExpect(west, gs->rules.man_speed_refuel_base),
+                  "on: the walk back moved %d, expected %d", moved,
+                  ltsExpect(west, gs->rules.man_speed_refuel_base));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A tank with no boat on deep sea: classic drowns it on the tick it is
+ * there, tank_deep_sea_safe keeps it alive tick after tick, and turning the
+ * rule back off drowns it on the next tick. A tank on a boat keeps its boat
+ * either way, and a predicting sim never drowns anybody. */
+int run_sim_rules_tank_deep_sea_safe(void) {
+    ServerSim *sim = ut_make_running_sim("Deep sea safe");
+    GameSim *gs;
+    tank t;
+    struct tankObj initial;
+    int x, y, i;
+    const WORLD centre = (WORLD)(100 * 256 + 128);
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    t = gs->tanks[0];
+    UT_ASSERT(t != NULL);
+    for (x = 97; x <= 103; x++) for (y = 97; y <= 103; y++) {
+        mapSetPos(gs, &gs->mp, (BYTE)x, (BYTE)y, DEEP_SEA, FALSE, FALSE);
+    }
+    for (i = 0; i < (int)gs->pb->numPills; i++) gs->pb->active[i] = FALSE;
+    t->x = centre;
+    t->y = centre;
+    t->speed = 0;
+    t->autoSlowdown = FALSE;
+    t->destroyed = FALSE;
+    t->onBoat = FALSE;
+    t->boatState = BoatState_NotOnBoat;
+    t->deathWait = 0;
+    t->armour = (BYTE)gs->rules.tank_full_armour;
+    initial = *t;
+
+    /* Classic: the first tick on deep sea is the last. */
+    UT_ASSERT(gs->rules.tank_deep_sea_safe == 0);
+    gs->isPredicting = FALSE;
+    tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+    UT_ASSERT_MSG(t->destroyed, "a tank with no boat on deep sea lived on "
+                                "under the classic rules");
+
+    /* A predicting sim leaves drowning to the server. */
+    *t = initial;
+    gs->isPredicting = TRUE;
+    tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+    UT_ASSERT_MSG(!t->destroyed, "a predicting sim drowned a tank");
+    gs->isPredicting = FALSE;
+
+    /* Safe: many ticks out there, still alive and still with no boat. */
+    *t = initial;
+    gs->rules.tank_deep_sea_safe = 1;
+    for (i = 0; i < 50; i++) {
+        tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+        UT_ASSERT_MSG(!t->destroyed, "a tank drowned on tick %d with "
+                                     "tank_deep_sea_safe on", i);
+    }
+    UT_ASSERT(t->onBoat == FALSE);
+
+    /* The rule back off: the very next tick drowns it. */
+    gs->rules.tank_deep_sea_safe = 0;
+    tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+    UT_ASSERT_MSG(t->destroyed, "the tank lived a tick after "
+                                "tank_deep_sea_safe went back off");
+
+    /* A tank on a boat keeps it, with the rule on or off. */
+    for (i = 0; i <= 1; i++) {
+        *t = initial;
+        t->onBoat = TRUE;
+        t->boatState = BoatState_InBoat;
+        gs->rules.tank_deep_sea_safe = i;
+        tankUpdate(gs, &gs->tanks[0], 0, FALSE, FALSE);
+        UT_ASSERT(!t->destroyed);
+        UT_ASSERT_MSG(t->onBoat == TRUE, "the boat was lost on deep sea with "
+                                         "tank_deep_sea_safe %d", i);
+    }
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
 int run_sim_rules_pill_aim_mac(void) {
     /* Mac Bolo reference shell directions, with WinBolo speeds multiplied
      * by four. The first three rows cover moving, stopped and obstructed
@@ -2071,7 +2294,7 @@ int run_sim_rules_are_classic(void) {
 
     /* The last field, so the walk is not stopping short of the end. */
     simRulesClassic(&r);
-    r.tank_collision_mac = 1;
+    r.man_bless_tile_terrain_speed = 1;
     UT_ASSERT_MSG(!simRulesAreClassic(&r),
                   "a table with its last field moved is reported classic");
 

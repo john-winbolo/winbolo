@@ -2266,6 +2266,7 @@ STR_DLGLOBBY_SCENARIO_IN_ROUND=Already in this round
 STR_DLGLOBBY_SCENARIO_ROUND_NONE=Nothing added. The map plays as it is.
 STR_DLGLOBBY_SCENARIO_REPLACES=Replaces {string1}, because a round runs one scenario
 STR_DLGLOBBY_SCENARIO_ROUND_FULL=This round already holds as many scripts as it can.
+STR_DLGLOBBY_SCENARIO_MAP_UNLOAD=This scenario comes with the map. To unload it, choose a different map.
 STR_DLGLOBBY_SCENARIO_TAG_MOD=Mod
 STR_DLGLOBBY_SCENARIO_TAG_SCENARIO=Scenario
 STR_DLGLOBBY_SCENARIO_KIND_ALL=All
@@ -2625,6 +2626,8 @@ STR_RULE_DESC_tank_slide_armour_bonus=Extra push step at zero armour, added to t
 STR_RULE_DESC_tank_slide_mac=Whether a shell hit pushes a tank the Mac Bolo way. On, the push grows as armour falls, by tank_slide_armour_bonus, and tank_slide_step and tank_bump_decay_shift are read per 40 ms, in a slide that moves every tick. Off is the WinBolo push, the same at every armour level.
 STR_RULE_DESC_pill_aim_mac=Whether pillboxes use Mac Bolo aiming. Moving, unobstructed tanks within about one square make the pill aim far along their heading. Stopped or blocked tanks receive no lead. Overrides pill_massage_range, pill_massage_cosine and pill_aim_iterations.
 STR_RULE_DESC_tank_collision_mac=Whether tanks use Mac Bolo's direction-dependent sprite boxes and pixel nudges against walls, live pills and hostile bases. Allows closer passes beside a pill for pill massage.
+STR_RULE_DESC_tank_deep_sea_safe=Whether a tank with no boat can drive over deep sea without drowning. Off is the classic game: deep sea drowns a tank with no boat. A tank that is out on deep sea with no boat when this goes back off drowns on the next tick.
+STR_RULE_DESC_man_bless_tile_terrain_speed=Whether the builder crosses the square he is going to build on at that square's terrain speed, as in Mac Bolo. Off is the WinBolo walk: he walks up to the centre of that square at the refuelling base speed, whatever its terrain. A square with no walking speed, such as a river, a wall or a pillbox, keeps the refuelling base speed. The walk back to the tank does not change.
 
 # Rule range wording
 STR_RULE_RANGE_BETWEEN={string1} to {string2}
@@ -2714,6 +2717,7 @@ STR_DLGLOBBY_DETAILS_SETTING_ON=On
 STR_DLGLOBBY_DETAILS_SETTING_OFF=Off
 STR_DLGLOBBY_DETAILS_SETTING_ON_DEFAULT=On (default)
 STR_DLGLOBBY_DETAILS_SETTING_OFF_DEFAULT=Off (default)
+STR_DLGLOBBY_DETAILS_SETTING_CHOICE_DEFAULT={string1} (default)
 STR_MAPEDIT_SCENARIO_WORKSHOP=Workshop item #{string1}, published by {string2}
 
 # The Steam Workshop tab of Settings

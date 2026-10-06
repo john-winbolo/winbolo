@@ -34,7 +34,7 @@ from asap import asap_args, pacing_line, take_asap_flag  # noqa: E402
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 DEFAULT_BUILD = REPO / "build"
-BRAIN = REPO / "brains" / "GoalHunter_1.7" / "init.lua"
+BRAIN = REPO / "brains" / "GoalHunter" / "init.lua"
 MAP = HERE / "seek_trees.map"
 LABEL = "_seek_trees_test"
 PLACE_COST = 4                    # PILL_PLACE_TREE_COST

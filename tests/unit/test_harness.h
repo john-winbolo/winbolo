@@ -286,6 +286,7 @@ int run_round_stats_codec_worstcase(void);
 int run_round_stats_scenario_score_codec(void);
 int run_round_stats_build_summary(void);
 int run_round_stats_scenario_score_filled(void);
+int run_round_stats_group_rows(void);
 int run_round_stats_summary_highlights(void);
 int run_round_stats_client_ingest(void);
 int run_round_stats_track_records(void);
@@ -482,6 +483,11 @@ int run_scenario_settings_bool_manifest_lua(void);
 int run_scenario_settings_bool_manifest_json(void);
 int run_scenario_settings_bool_server(void);
 int run_scenario_settings_bool_game_setting(void);
+int run_scenario_settings_choice_blob(void);
+int run_scenario_settings_choice_manifest_lua(void);
+int run_scenario_settings_choice_manifest_json(void);
+int run_scenario_settings_choice_server(void);
+int run_scenario_settings_choice_game_setting(void);
 int run_script_list_client_apply(void);
 int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
@@ -2088,6 +2094,8 @@ int run_sim_rules_pill_angry_divisor_follows(void);
 int run_sim_rules_pill_massage_follows(void);
 int run_sim_rules_pill_aim_mac(void);
 int run_sim_rules_tank_collision_mac(void);
+int run_sim_rules_tank_deep_sea_safe(void);
+int run_sim_rules_man_bless_tile_terrain_speed(void);
 /* pill_shell_cap and pill_max_shells_at_tank through pillsUpdate
  * (test_pill_shell_cap.c). */
 int run_pill_shell_cap_off_is_no_limit(void);
@@ -2621,6 +2629,7 @@ int run_tkexp_lgm_pairing(void);
  * input, a focus-stealing modal, a popup/menu on the stack, a defocused
  * window) and never for the transient alliance/vote notifications. */
 int run_input_gate_taxonomy(void);
+int run_input_source_autoslow(void);
 
 /* Game-binding claims (test_key_claims.c). keyIsClaimedByGame() must report
  * every keyItems field as owned by the game, so a second window that drives
@@ -2775,6 +2784,7 @@ int run_tank_diagonal_steps_both_axes(void);
  * square so only the modifier is under test. */
 int run_tank_mod_speed_caps_on_road(void);
 int run_tank_mod_speed_river_still_moves(void);
+int run_tank_mod_speed_wide_on_river(void);
 int run_tank_mod_accel_doubles_ticks_to_cap(void);
 int run_tank_mod_accel_doubles_ticks_to_brake(void);
 int run_tank_mod_accel_halves_autoslow(void);
@@ -2795,6 +2805,7 @@ int run_tank_mod_predicted_stop_matches_engine(void);
 int run_tank_modifiers_op_writes_set(void);
 int run_tank_modifiers_op_refusals(void);
 int run_tank_modifiers_wire_roundtrip(void);
+int run_tank_modifiers_wide_speed(void);
 int run_tank_modifiers_survive_death(void);
 int run_tank_modifiers_cleared_at_create(void);
 
@@ -3446,6 +3457,7 @@ int run_scenario_lua_read_index_passes_through(void);
 int run_scenario_lua_op_index_subtracts_one(void);
 int run_scenario_lua_script_index_adds_one(void);
 int run_scenario_lua_absent_reads_are_nil(void);
+int run_scenario_lua_lobby_slot_team_pool(void);
 int run_scenario_lua_terrain_is_the_whole_map(void);
 int run_scenario_lua_shape_error_counts(void);
 int run_scenario_lua_rule_reads_the_table(void);
@@ -3463,6 +3475,7 @@ int run_scenario_lua_game_type_resolves_scripted(void);
 int run_scenario_lua_panel_builds_bytes(void);
 int run_scenario_lua_panel_words_and_numbers(void);
 int run_scenario_lua_panel_refusals(void);
+int run_scenario_lua_panel_large_size(void);
 int run_scenario_lua_presentation_targets(void);
 int run_scenario_lua_score_and_announce(void);
 int run_scenario_lua_announce_position(void);
@@ -3862,6 +3875,7 @@ int run_scenario_compose_drop_picked_scenarios(void);
 int run_scenario_compose_fallback_strict(void);
 int run_scenario_compose_needs_bots_any_mod(void);
 int run_scenario_compose_needs_bots_scenario_and_mod(void);
+int run_scenario_compose_on_tick_bottom_first(void);
 
 /* The panel's display list (test_scenario_panel.c): the byte layout
  * decoded from a hand-written list, the refusal each malformed list
@@ -3871,6 +3885,7 @@ int run_scenario_panel_parses_each_primitive(void);
 int run_scenario_panel_refuses_malformed(void);
 int run_scenario_panel_boundaries(void);
 int run_scenario_panel_roundtrip(void);
+int run_scenario_panel_large_size(void);
 /* And the timer primitive's text: the tick difference the drawer turns into
  * minutes and seconds, held to exact strings with no renderer behind it. */
 int run_scenario_panel_timer_text(void);

@@ -101,6 +101,24 @@ void clientStateDestroy(ClientState *cs);
 void clientStateRecordInput(ClientState *cs, const InputPacket *pkt);
 
 /*********************************************************
+ *NAME:          clientStateTankUpdate
+ *PURPOSE:
+ *  Runs tankUpdate (shoot=FALSE) on the predicted tank with
+ *  the auto-slowdown that pkt carries, as the server does,
+ *  then restores the tank's own auto-slowdown setting.
+ *  Every predicted or replayed game tick goes through here.
+ *
+ *ARGUMENTS:
+ *  sim           - Pointer to GameSim
+ *  predictedTank - Pointer to the predicted tank
+ *  tb            - The tank buttons for this tick
+ *  inBrain       - TRUE if a brain is running
+ *  pkt           - The InputPacket being applied
+ *********************************************************/
+void clientStateTankUpdate(struct GameSim *sim, tank *predictedTank, tankButton tb,
+                           bool inBrain, const InputPacket *pkt);
+
+/*********************************************************
  *NAME:          clientStatePredictTick
  *PURPOSE:
  *  Applies the current input to the predicted tank using

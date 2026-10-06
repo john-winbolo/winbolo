@@ -33,6 +33,7 @@
 
 #include "wire_limits.h"   /* LobbySettingType, LOBBY_LOCK_* for serverSimGetSettingLockBit */
 #include "server_sim_internal.h"
+#include "lobby_bot_pools.h"
 #include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange — the setters that clear ready state */
 
 /*********************************************************
@@ -307,6 +308,15 @@ bool serverSimGetRosterSlot(ServerSim *sim, BYTE i, ServerSimRosterSlot *out) {
     out->fielded = sim->lobbyPlayers[i].fielded;
     t = &sim->sim.tanks[i];
     out->alive = (*t != NULL && tankGetDeathWait(t) == 0);
+    {
+        BYTE team = sim->lobbyPlayers[i].teamNumber;
+        if (team > 0 && team < MAX_TANKS && sim->teams[team].in_use &&
+            (int)sim->teams[team].namingPool < lobbyBotPoolCount()) {
+            SDL_strlcpy(out->team_pool,
+                        lobbyBotPoolLabel(sim->teams[team].namingPool),
+                        sizeof(out->team_pool));
+        }
+    }
     return true;
 }
 

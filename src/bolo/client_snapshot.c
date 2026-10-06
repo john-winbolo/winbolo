@@ -1190,7 +1190,8 @@ void clientApplySnapshot(ClientSim *csPtr,
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
         {
           TankModifiers mods;
-          mods.speed = tanks[i].modSpeed;
+          mods.speed = tanks[i].modSpeedWide ? tanks[i].modSpeedWide
+                                             : tanks[i].modSpeed;
           mods.accel = tanks[i].modAccel;
           mods.turn = tanks[i].modTurn;
           mods.reload = tanks[i].modReload;
@@ -1310,7 +1311,7 @@ void clientApplySnapshot(ClientSim *csPtr,
                   BYTE bmy = tankGetMY(&MY_TANK(csPtr));
                   tankTurn(&csPtr->sim, &MY_TANK(csPtr), bmx, bmy, tb);
                 } else {
-                  tankUpdate(&csPtr->sim, &MY_TANK(csPtr), tb, FALSE, FALSE);
+                  clientStateTankUpdate(&csPtr->sim, &MY_TANK(csPtr), tb, FALSE, histPkt);
                   /* Simulate fire's effect on reload during replay.
                    * tankUpdate was called with shoot=FALSE to avoid creating
                    * shells, but we must still apply the reload reset so the
@@ -1404,7 +1405,8 @@ void clientApplySnapshot(ClientSim *csPtr,
              the position check above snapped and replayed, so this and the
              first-snapshot write cover the whole stream. */
           TankModifiers mods;
-          mods.speed = tanks[i].modSpeed;
+          mods.speed = tanks[i].modSpeedWide ? tanks[i].modSpeedWide
+                                             : tanks[i].modSpeed;
           mods.accel = tanks[i].modAccel;
           mods.turn = tanks[i].modTurn;
           mods.reload = tanks[i].modReload;
@@ -1804,8 +1806,8 @@ void clientApplyEntityChange(ClientSim *cs, const struct ControlEvent *evt) {
 
   /* The status panels are pushed, not polled: nothing else repaints the
    * entry for an item that has just left or arrived, so it is done here. A
-   * removed item reads as neutral, which is how a slot the map does not use
-   * is drawn. */
+   * removed pill reads as pillOffMap and a removed base as baseOffMap, and
+   * the place of either is drawn empty. */
   if (evt->u.entityChange.kind == ENTITY_KIND_PILL) {
     frontEndStatusPillbox(cs, num, pillsGetAllianceNum(&cs->sim, &cs->sim.pb, num));
   } else if (evt->u.entityChange.kind == ENTITY_KIND_BASE) {

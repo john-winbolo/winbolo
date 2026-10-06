@@ -36,7 +36,7 @@
 -- A scenario that spawns this brain hands it its `spawn_bot{ init = {...} }`
 -- table as the global BRAIN_INIT. This brain reads BRAIN_INIT_ARG, the
 -- "k=v;k=v" string, so flatten the table into that string before anything
--- parses it. Same rule as brains/GoalHunter_1.7/init.lua: keys sorted so the
+-- parses it. Same rule as brains/GoalHunter/init.lua: keys sorted so the
 -- string is the same every time, a value of "1" or true becoming the bare
 -- word, "0" or false dropped, everything else staying k=v. A string already
 -- in BRAIN_INIT_ARG -- the command-line path -- keeps its place.

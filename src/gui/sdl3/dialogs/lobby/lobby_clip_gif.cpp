@@ -139,6 +139,7 @@ static void lobbyClipGifBaseName(char *out, size_t outLen, const char *mapName,
 /* Put the reel back where the player had it, transport included: an export is
  * a detour, not a seek they asked for. */
 static void lobbyClipGifRestoreReel(void) {
+    lvEmbedSetTankLabelsInTexture(false);
     lvEmbedSeekToTime(s_clipGif.restoreMs);
     if (s_clipGif.restorePlaying) {
         lvEmbedPlay();
@@ -199,6 +200,10 @@ static void lobbyClipGifStart(uint32_t startMs, uint32_t durationMs,
     lvEmbedGetProgress(&s_clipGif.restoreMs, NULL);
     s_clipGif.restorePlaying = lvEmbedIsPlaying();
     lvEmbedPause();
+    /* The frames are read back off the texture, and the reel draws the tank
+     * names over its image rather than into the texture, so put them in for
+     * the export. lobbyClipGifRestoreReel takes them back out. */
+    lvEmbedSetTankLabelsInTexture(true);
     /* Same seek the caller's own control does, so the capture opens on the
      * moment it named. */
     if (centreOnCell) {

@@ -3,7 +3,7 @@
 --
 -- GATE: ticks=6200 bots=0 ai=yesfull gametype=open limit=20
 --
--- MEASURED 2026-09-15 on main's GoalHunter_1.7, at the driver's own seed,
+-- MEASURED 2026-09-15 on main's GoalHunter, at the driver's own seed,
 -- budget and pin.  A5 holds: the bot does go and fetch the free body rather
 -- than park on watch.  A4 does not: our pill still ends the run at 3 of 15,
 -- so leaving is no longer enough to keep it healthy on this ground.  The pin

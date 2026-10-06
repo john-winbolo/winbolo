@@ -102,7 +102,7 @@ scenario = {
     teams = {
       { id = 1, bots = 0,  max_bots = 6 },
       { id = 2, bots = 10, max_bots = 10, fielded = false,
-        brain = "GoalHunter_1.7",
+        brain = "GoalHunter",
         -- The horde's mode and difficulty. This is the half the LOBBY reads:
         -- without it a held seat carries whatever the lobby happened to give
         -- it, and every client's row says Easy because nothing ever told it
@@ -246,7 +246,7 @@ local T_MINE_START   = game.TERRAIN.mine_swamp   -- 10: the first mined code
 --
 -- 2. THE TOKENS. Everything else the old host told a wave bot still reaches
 --    it. spawn_bot's `init` table arrives in the brain as the BRAIN_INIT
---    global, and brains/GoalHunter_1.7 flattens that into the
+--    global, and brains/GoalHunter flattens that into the
 --    BRAIN_INIT_ARG string its own parser reads: keys sorted, a value of
 --    "1" becoming the bare flag word the parser matches, "0" dropped, and
 --    everything else staying `k=v`. So this table is written the way the

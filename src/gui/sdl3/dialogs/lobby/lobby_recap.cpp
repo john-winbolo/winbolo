@@ -689,9 +689,51 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
             }
         }
 
+        /* A scenario that scored teams as well as players gets its table
+         * grouped: each team's row with its score, then its members, each
+         * with their own. The order is the grouping's (team score, then own
+         * score), so a header click does not reorder a grouped table. The
+         * team a player is listed under is their lobby team.
+         *
+         * Known limit: that team is read from the lobby slot now, not from
+         * the round. RoundPlayerSummary carries no team, so a player who
+         * left before the recap (an empty slot) is listed under team 0,
+         * outside the team the scenario scored them for, and one who
+         * changed team since is listed under the new one. The name comes
+         * from the slot too, so such a row already reads as no player. */
+        const bool grouped = hasScn && roundStatsGroupsByTeam(st);
+        RoundStatsGroupRow groupRows[2 * MAX_TANKS];
+        int rowCount = n;
+        if (grouped) {
+            uint8_t teamOfSlot[MAX_TANKS];
+            for (int t = 0; t < MAX_TANKS; t++) {
+                const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)t);
+                teamOfSlot[t] = (ls != nullptr) ? ls->teamNumber : 0;
+            }
+            rowCount = roundStatsGroupRows(st, teamOfSlot, groupRows,
+                                           2 * MAX_TANKS);
+        }
+
         const BYTE mySlot = gameFrontGetPlayerNum();
-        for (int r = 0; r < n; r++) {
-            const RoundPlayerSummary *p = &st->players[order[r]];
+        for (int r = 0; r < rowCount; r++) {
+            if (grouped && groupRows[r].kind == ROUND_STATS_ROW_TEAM) {
+                const int team = groupRows[r].team;
+                MessageArgs args = {};
+                args.number = team;
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::PushStyleColor(ImGuiCol_Text,
+                                      lastRoundTeamTint(cs, (uint8_t)team));
+                ImGui::TextUnformatted(
+                    langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args));
+                ImGui::PopStyleColor();
+                ImGui::TableSetColumnIndex(9);
+                ImGui::Text("%d", (int)st->scenarioTeamScore[team]);
+                continue;
+            }
+            const bool member = grouped && groupRows[r].team != 0;
+            const RoundPlayerSummary *p =
+                &st->players[grouped ? groupRows[r].index : order[r]];
             ImGui::TableNextRow();
             /* Lift your own line off the alternating row background so it
              * is findable at a glance. Background only — the team tint has
@@ -725,6 +767,11 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
                 lobbyRecapRowJump(cs, (int)p->slot, p->isBot != 0);
             }
             ImGui::SameLine(0.0f, 0.0f);
+            if (member) {
+                /* Under its team's row. */
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                                     ImGui::GetStyle().IndentSpacing);
+            }
             lastRoundRenderName(cs, p->slot, p->isBot != 0);
             ImGui::TableSetColumnIndex(1); ImGui::Text("%u", (unsigned)p->kills);
             ImGui::TableSetColumnIndex(2); ImGui::Text("%u", (unsigned)p->deaths);
@@ -749,7 +796,8 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
      * the mask says which of them the scenario wrote — a team it put on zero
      * gets its line like any other, because zero is a score and the mask is
      * what says so. */
-    if (hasScn) {
+    /* A grouped table already shows every team's score on its own row. */
+    if (hasScn && !roundStatsGroupsByTeam(st)) {
         bool anyTeam = false;
         for (int team = 1; team < MAX_TANKS; team++) {
             if ((st->scenarioTeamScoreMask & (uint16_t)(1u << team)) == 0) {

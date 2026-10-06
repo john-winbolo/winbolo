@@ -142,7 +142,7 @@ void lobbySendReadyToggle(ClientSim *cs, bool ready) {
 static int lobbyDefaultBrainIdx(const BrainList *bl) {
     if (!bl || bl->count <= 0) return -1;
     for (int i = 0; i < bl->count; i++) {
-        if (SDL_strcasecmp(bl->entries[i].name, "GoalHunter_1.7") == 0) return i;
+        if (SDL_strcasecmp(bl->entries[i].name, "GoalHunter") == 0) return i;
     }
     return 0;  /* sorted newest-first → entry 0 is the newest GoalHunter */
 }
@@ -334,7 +334,7 @@ unsigned int lobbyBotDifficultyDescId(uint8_t difficulty) {
     }
 }
 
-/* The bot's brain name without its version suffix — "GoalHunter_1.7" reads
+/* The bot's brain name without its version suffix — "GoalHunter_1.6" reads
  * as "GoalHunter" on a lobby row, because the version is a build detail and
  * the row has no space for it. A slot still on the 0xFF "server default"
  * sentinel is shown as the catalogue's first (newest) entry, which is what
@@ -433,7 +433,7 @@ static void lobbySendAddBot(ClientSim *cs,
     /* Validate the sticky brain pick against the current catalogue:
      * an out-of-range sticky (e.g. catalogue shrunk between picks)
      * falls back to the server-default sentinel. */
-    /* First add: default to GoalHunter_1.7 (newest), not the server CLI default;
+    /* First add: default to GoalHunter (newest), not the server CLI default;
      * then stay sticky (the per-bot Bot Code dropdown updates
      * s_brains.lastChosenBrainIdx). */
     if (s_brains.lastChosenBrainIdx == 0xFF && cs) {

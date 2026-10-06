@@ -177,12 +177,13 @@ static void ensureLogoLoaded(SDL_Renderer *r) {
     }
 }
 
-/* Brand glyphs for the WBN social buttons (Reddit, Discord). Rasterised white
+/* Brand glyphs for the WBN social buttons (Reddit, Discord, GitHub). Rasterised white
  * — like the Forums shield — so they read on the button regardless of the
  * SVG's authored colour. Cached for the program lifetime; the source SVGs are
  * supersampled to 48px and downsampled by ImGui to the button glyph size. */
 static SDL_Texture *s_redditIcon  = nullptr;
 static SDL_Texture *s_discordIcon = nullptr;
+static SDL_Texture *s_githubIcon  = nullptr;
 
 static void ensureSocialIconsLoaded(SDL_Renderer *r) {
     static bool tried = false;
@@ -190,6 +191,7 @@ static void ensureSocialIconsLoaded(SDL_Renderer *r) {
     tried = true;
     s_redditIcon  = imguiLoadSvgIconWhiteFit(r, "data/ui/reddit.svg", 48);
     s_discordIcon = imguiLoadSvgIconWhiteFit(r, "data/ui/discord.svg", 48);
+    s_githubIcon  = imguiLoadSvgIconWhiteFit(r, "data/ui/github.svg", 48);
 }
 
 /* Leading pad on every icon button's label: reserves the icon slot and sets
@@ -522,7 +524,7 @@ static void renderAboutModalBody(void) {
     ImGui::TextLinkOpenURL("www.winbolo.net", "https://www.winbolo.net/");
     /* Licence / Third Party Notices / Authors open internal markdown popups,
      * so they're plain TextLinks (not URL links) — tucked under the web links
-     * to free the row below for the Forums / Reddit / Discord buttons. */
+     * to free the row below for the Forums / Reddit / Discord / GitHub buttons. */
     if (ImGui::TextLink(langGetText(STR_DLGABOUT_LICENCE))) {
         openMarkdownPopup("licence");
     }
@@ -559,7 +561,7 @@ static void renderAboutModalBody(void) {
     }
 
     ImGui::Spacing();
-    /* Forums / Reddit / Discord as one centred row with a slightly wider gap
+    /* Forums / Reddit / Discord / GitHub as one centred row with a slightly wider gap
      * between buttons. Widths are measured from the padded labels up front so
      * the whole row can be centred in the content region. */
     {
@@ -569,12 +571,13 @@ static void renderAboutModalBody(void) {
             return ImGui::CalcTextSize(l).x + st.FramePadding.x * 2.0f;
         };
         /* Forums label is localised, so its padded form is built at runtime
-         * (Reddit / Discord are brand names and stay verbatim via iconLeadingButton). */
+         * (Reddit / Discord / GitHub are brand names and stay verbatim via iconLeadingButton). */
         char forumsLabel[160];
         SDL_snprintf(forumsLabel, sizeof(forumsLabel), WB_BTN_PAD "%s",
                      langGetText(STR_DLGABOUT_FORUMS));
         float rowW = btnW(forumsLabel) + btnW(WB_BTN_PAD "Reddit") +
-                     btnW(WB_BTN_PAD "Discord") + gap * 2.0f;
+                     btnW(WB_BTN_PAD "Discord") + btnW(WB_BTN_PAD "GitHub") +
+                     gap * 3.0f;
         float avail = ImGui::GetContentRegionAvail().x;
         if (avail > rowW)
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - rowW) * 0.5f);
@@ -601,6 +604,11 @@ static void renderAboutModalBody(void) {
         ImGui::SameLine(0.0f, gap);
         if (iconLeadingButton("Discord", s_discordIcon)) {
             imguiOpenUrl("https://discord.gg/znGR3VMaqd");
+        }
+        imguiHandOnHover();
+        ImGui::SameLine(0.0f, gap);
+        if (iconLeadingButton("GitHub", s_githubIcon)) {
+            imguiOpenUrl("https://github.com/john-winbolo/winbolo");
         }
         imguiHandOnHover();
     }

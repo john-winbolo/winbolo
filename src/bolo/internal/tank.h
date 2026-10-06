@@ -111,7 +111,7 @@ struct GameSim;
  * branches on it.
  *
  * The radius is the brain's own near-shell notion: GoalHunter's
- * SWERVE_SHELL_NEAR_WU (brains/GoalHunter_1.7/constants.lua:724) is 400 world
+ * SWERVE_SHELL_NEAR_WU (brains/GoalHunter/constants.lua:724) is 400 world
  * units — 400/256 = 1.56 tiles, i.e. a bit over three tank hit radii
  * (TANK_HIT_RADIUS 112).  That is the distance at which the brain already
  * considers a shell close enough to swerve for, so a drowning with no shell
@@ -1575,8 +1575,16 @@ void tankSetModifiers(tank value, const TankModifiers *mods);
 *********************************************************/
 void tankGetModifiers(tank value, TankModifiers *out);
 
-/* 0 means classic, so an unmodified tank costs one branch and no maths. */
-static inline int tankModPct(uint8_t m) { return m == 0 ? 100 : (int)m; }
+/* 0 means classic, so an unmodified tank costs one branch and no maths.
+ * Takes the wide speed value as well as the byte-sized others. */
+static inline int tankModPct(unsigned m) { return m == 0 ? 100 : (int)m; }
+
+/* The fastest speed cap a speed modifier may give a tank, in world units a
+ * frame. The byte-sized modifier could reach the highest speed rule (63)
+ * at 255%, which is 160; the wider modifier is held to that same 160, so it
+ * opens no speed the engine has not already allowed. Every wire, replay and
+ * BYTE cast of a tank's speed holds it. */
+#define TANK_MOD_SPEED_CAP_MAX 160
 
 /*********************************************************
 *NAME:          tankReloadTicks

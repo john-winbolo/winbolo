@@ -641,6 +641,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_DLGLOBBY_DETAILS_SETTINGS", STR_DLGLOBBY_DETAILS_SETTINGS },
     { "STR_DLGLOBBY_DETAILS_SETTINGS_HOST", STR_DLGLOBBY_DETAILS_SETTINGS_HOST },
     { "STR_DLGLOBBY_DETAILS_SETTINGS_OLD", STR_DLGLOBBY_DETAILS_SETTINGS_OLD },
+    { "STR_DLGLOBBY_DETAILS_SETTING_CHOICE_DEFAULT", STR_DLGLOBBY_DETAILS_SETTING_CHOICE_DEFAULT },
     { "STR_DLGLOBBY_DETAILS_SETTING_DEFAULT", STR_DLGLOBBY_DETAILS_SETTING_DEFAULT },
     { "STR_DLGLOBBY_DETAILS_SETTING_OFF", STR_DLGLOBBY_DETAILS_SETTING_OFF },
     { "STR_DLGLOBBY_DETAILS_SETTING_OFF_DEFAULT", STR_DLGLOBBY_DETAILS_SETTING_OFF_DEFAULT },
@@ -797,6 +798,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_DLGLOBBY_SCENARIO_LATER", STR_DLGLOBBY_SCENARIO_LATER },
     { "STR_DLGLOBBY_SCENARIO_LBL", STR_DLGLOBBY_SCENARIO_LBL },
     { "STR_DLGLOBBY_SCENARIO_MAP_LOCK", STR_DLGLOBBY_SCENARIO_MAP_LOCK },
+    { "STR_DLGLOBBY_SCENARIO_MAP_UNLOAD", STR_DLGLOBBY_SCENARIO_MAP_UNLOAD },
     { "STR_DLGLOBBY_SCENARIO_MAXPLAYERS", STR_DLGLOBBY_SCENARIO_MAXPLAYERS },
     { "STR_DLGLOBBY_SCENARIO_NONE", STR_DLGLOBBY_SCENARIO_NONE },
     { "STR_DLGLOBBY_SCENARIO_NO_MATCH", STR_DLGLOBBY_SCENARIO_NO_MATCH },
@@ -2140,6 +2142,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_RULE_DESC_lgm_pill_drop_search", STR_RULE_DESC_lgm_pill_drop_search },
     { "STR_RULE_DESC_lgm_pill_repair_load", STR_RULE_DESC_lgm_pill_repair_load },
     { "STR_RULE_DESC_lgm_return_tolerance", STR_RULE_DESC_lgm_return_tolerance },
+    { "STR_RULE_DESC_man_bless_tile_terrain_speed", STR_RULE_DESC_man_bless_tile_terrain_speed },
     { "STR_RULE_DESC_man_speed_boat", STR_RULE_DESC_man_speed_boat },
     { "STR_RULE_DESC_man_speed_crater", STR_RULE_DESC_man_speed_crater },
     { "STR_RULE_DESC_man_speed_deep_sea", STR_RULE_DESC_man_speed_deep_sea },
@@ -2204,6 +2207,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_RULE_DESC_tank_collision_mac", STR_RULE_DESC_tank_collision_mac },
     { "STR_RULE_DESC_tank_death_ticks", STR_RULE_DESC_tank_death_ticks },
     { "STR_RULE_DESC_tank_decel_rate", STR_RULE_DESC_tank_decel_rate },
+    { "STR_RULE_DESC_tank_deep_sea_safe", STR_RULE_DESC_tank_deep_sea_safe },
     { "STR_RULE_DESC_tank_explosion_damage", STR_RULE_DESC_tank_explosion_damage },
     { "STR_RULE_DESC_tank_explosion_height", STR_RULE_DESC_tank_explosion_height },
     { "STR_RULE_DESC_tank_explosion_length", STR_RULE_DESC_tank_explosion_length },
@@ -2423,4 +2427,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2410
+#define K_LANG_NAME_TABLE_SIZE  2414

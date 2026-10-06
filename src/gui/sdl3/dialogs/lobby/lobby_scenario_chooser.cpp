@@ -1505,11 +1505,28 @@ static void lobbyScenarioDetailsCallbacks(ClientSim *cs) {
     imguiEndPanelSection();
 }
 
-/* How one value of setting st reads, into out: the number, or On or Off for
- * a bool setting, marked as the default when it is st's default. */
+/* How one value of setting st reads, into out: the number, On or Off for a
+ * bool setting, or the script's word for a choice setting, marked as the
+ * default when it is st's default. */
 static void lobbyScenarioSettingText(const ScnSetting *st, int32_t v,
                                      char *out, size_t outLen) {
     MessageArgs args = {};
+
+    if (st->type == SCN_SETTING_TYPE_CHOICE) {
+        const char *w = scnSettingChoiceText(st, v);
+
+        if (w == NULL) w = "";
+        if (v == st->def) {
+            SDL_strlcpy(args.string1, w, sizeof(args.string1));
+            SDL_snprintf(out, outLen, "%s",
+                         langGetTextFmt(
+                             STR_DLGLOBBY_DETAILS_SETTING_CHOICE_DEFAULT,
+                             &args));
+        } else {
+            SDL_snprintf(out, outLen, "%s", w);
+        }
+        return;
+    }
 
     if (st->type == SCN_SETTING_TYPE_BOOL) {
         langid id;
@@ -1536,7 +1553,8 @@ static void lobbyScenarioSettingText(const ScnSetting *st, int32_t v,
 
 /* The script's own settings (scenario_settings.h): one row per setting the
  * file declares, its label and its value. The host gets a dropdown of every
- * value the declaration allows, On and Off for a bool setting, and a pick is sent to the server at once;
+ * value the declaration allows, On and Off for a bool setting and the words
+ * for a choice setting, and a pick is sent to the server at once;
  * the value shown is always the one the server last reported, so a pick the
  * server corrected shows as corrected. Everyone else sees the values as
  * text. A value the server has not reported is the declared default.
@@ -2624,11 +2642,15 @@ static void lobbyScenarioChooserRound(ClientSim *cs, LobbyScenarioRow *rows,
             /* Disabled and not absent for the map's own row. The sentence is
                the whole of what a host is told, so it goes on the control a
                host presses to ask. */
-            /* No tooltip here either, for the reason the add arrow has
-               none. A bound row's arrow is greyed and the row's own tag says
-               it belongs to the map. */
+            /* Only the map's own row gets a hover: a greyed arrow there does
+               not say how the row goes away, and the answer is not on this
+               dialog. Any other row's arrow has none, for the reason the add
+               arrow has none. */
             if (lobbyScenarioArrow("##drop", ImGuiDir_Left,
-                                   lobbyRoundMayDrop(i), NULL)) {
+                                   lobbyRoundMayDrop(i),
+                                   r->bound ? langGetText(
+                                       STR_DLGLOBBY_SCENARIO_MAP_UNLOAD)
+                                            : NULL)) {
                 drop = i;
             }
             ImGui::SameLine(0.0f, inner);

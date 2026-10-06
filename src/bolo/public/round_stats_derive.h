@@ -137,4 +137,39 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
                        const TerritoryShift *shifts, int shiftCount,
                        HighlightWindow *out, int *outCount, int maxOut);
 
+/* ── The recap's scenario table, grouped by team ────────────────────────
+ *
+ * A scenario that scores both teams and players (game.score with {team=n}
+ * and with a seat) gets a recap table with a row for each team it scored and
+ * the team's members under it. A scenario that scored only one of the two
+ * keeps the plain table of players. */
+
+/* Whether the recap groups this summary by team: a scenario set at least one
+ * team score and at least one player score. */
+bool roundStatsGroupsByTeam(const RoundStatsSummary *summary);
+
+#define ROUND_STATS_ROW_TEAM   1
+#define ROUND_STATS_ROW_PLAYER 2
+
+typedef struct {
+    uint8_t kind;   /* ROUND_STATS_ROW_TEAM or ROUND_STATS_ROW_PLAYER */
+    uint8_t team;   /* the team number of a team row and of its members; 0 for
+                       a player row on no scored team */
+    uint8_t index;  /* a player row's index into summary->players[]; 0 for a
+                       team row */
+} RoundStatsGroupRow;
+
+/* The grouped table's rows, in order. Every team the scenario scored comes
+ * first, best team score first (a tie goes to the lower team number), each
+ * followed by its members; players on no scored team follow, as rows of
+ * their own. Players, in a team and among the rest, are ordered by their own
+ * scenario score, best first, with a player the scenario never scored below
+ * every scored one, and then by kills (more first), deaths (fewer first) and
+ * slot. teamOfSlot[s] is slot s's team (0 for no team). Writes at most outCap
+ * rows (2 * MAX_TANKS always fits) and returns how many it wrote. Pure and
+ * deterministic. */
+int roundStatsGroupRows(const RoundStatsSummary *summary,
+                        const uint8_t teamOfSlot[MAX_TANKS],
+                        RoundStatsGroupRow *out, int outCap);
+
 #endif /* ROUND_STATS_DERIVE_H */

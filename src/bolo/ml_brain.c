@@ -37,26 +37,39 @@
 #include "../common/wb_log.h"
 
 #include <onnxruntime_c_api.h>
+#include <SDL3/SDL_stdinc.h>
 
-/* Process-wide ORT environment (expensive to create, shared) */
+/* Process-wide ORT environment, shared by every instance. Created by the
+ * first mlBrainCreate and released when the last instance is destroyed,
+ * or when a create fails with none alive. It must not be left alive at
+ * exit(): ONNX Runtime's own static destructor then frees it after the
+ * mutex its logger holds is already gone, and the process aborts with
+ * "mutex lock failed: Invalid argument". */
 static const OrtApi    *g_ortApi = NULL;
 static OrtEnv          *g_ortEnv = NULL;
+static int              g_instances = 0;
 
-/* ── JSONL debug logger ── */
+/* ── JSONL debug logger ──
+ * Written only when WINBOLO_ML_LOG names the output file; winbolo-ml's
+ * scripts/view_ml_log.py reads it. Unset, nothing is opened or written:
+ * the log grows by about 0.5 KB a tick for as long as the brain runs. */
 static FILE *g_logFile = NULL;
 static int   g_logMapDumped = 0;
 
 static void mlLogOpen(void) {
     if (g_logFile) return;
-    g_logFile = fopen("ml_brain_log.jsonl", "w");
+    const char *path = SDL_getenv("WINBOLO_ML_LOG");
+    if (path == NULL || path[0] == '\0') return;
+    g_logFile = fopen(path, "w");
     if (g_logFile)
-        WB_LOG_INFO(WB_LOG_CAT_SIM, "[ML] Log opened: ml_brain_log.jsonl");
+        WB_LOG_INFO(WB_LOG_CAT_SIM, "[ML] Log opened: %s", path);
     else
-        WB_LOG_WARN(WB_LOG_CAT_SIM, "[ML] Failed to open log file");
+        WB_LOG_WARN(WB_LOG_CAT_SIM, "[ML] Failed to open log file %s", path);
 }
 
 static void mlLogClose(void) {
     if (g_logFile) { fclose(g_logFile); g_logFile = NULL; }
+    g_logMapDumped = 0;
 }
 
 /* Dump the full map once (bounding box of non-deep-sea terrain) */
@@ -210,7 +223,7 @@ struct MLBrainInstance {
 };
 
 static bool ensureOrtEnv(void) {
-    if (g_ortApi != NULL) return true;
+    if (g_ortEnv != NULL) return true;
 
     g_ortApi = OrtGetApiBase()->GetApi(ORT_API_VERSION);
     if (g_ortApi == NULL) return false;
@@ -218,10 +231,18 @@ static bool ensureOrtEnv(void) {
     OrtStatus *status = g_ortApi->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "WinBolo", &g_ortEnv);
     if (status != NULL) {
         g_ortApi->ReleaseStatus(status);
+        g_ortEnv = NULL;
         g_ortApi = NULL;
         return false;
     }
     return true;
+}
+
+/* Frees the environment once nothing uses it; see the note at its definition. */
+static void releaseOrtEnvIfIdle(void) {
+    if (g_instances > 0 || g_ortEnv == NULL) return;
+    g_ortApi->ReleaseEnv(g_ortEnv);
+    g_ortEnv = NULL;
 }
 
 #define ORT_CHECK(expr) do { \
@@ -267,6 +288,7 @@ MLBrainInstance *mlBrainCreate(const char *onnx_path) {
     /* Open JSONL logger */
     mlLogOpen();
 
+    g_instances++;
     return inst;
 
 cleanup:
@@ -274,6 +296,7 @@ cleanup:
     if (inst->sessionOpts) g_ortApi->ReleaseSessionOptions(inst->sessionOpts);
     if (inst->memInfo) g_ortApi->ReleaseMemoryInfo(inst->memInfo);
     free(inst);
+    releaseOrtEnvIfIdle();
     return NULL;
 }
 
@@ -467,6 +490,8 @@ void mlBrainDestroy(MLBrainInstance *inst) {
     if (inst->sessionOpts) g_ortApi->ReleaseSessionOptions(inst->sessionOpts);
     if (inst->memInfo) g_ortApi->ReleaseMemoryInfo(inst->memInfo);
     free(inst);
+    g_instances--;
+    releaseOrtEnvIfIdle();
 }
 
 #endif /* HAVE_ONNXRUNTIME && !__EMSCRIPTEN__ */

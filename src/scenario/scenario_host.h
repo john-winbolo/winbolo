@@ -664,6 +664,18 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
                                  char *err, size_t errLen);
 
 /*********************************************************
+ *NAME:          scenarioHostPublishMapScript
+ *PURPOSE:
+ *  Hands the sim the row, details and settings declaration of
+ *  the map's own script that h plays, as a map commit does. A
+ *  server that attached at start-up with scenarioHostAttach
+ *  calls this when it needs the declaration before any commit
+ *  (WinBoloDS -setting). h NULL, or a host with no map script,
+ *  clears the row.
+ *********************************************************/
+void scenarioHostPublishMapScript(ServerSim *sim, const ScenarioHost *h);
+
+/*********************************************************
  *NAME:          scenarioHostAttachMod
  *PURPOSE:
  *  The same attach, for a scenario the server offers on its

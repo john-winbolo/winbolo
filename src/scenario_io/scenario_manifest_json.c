@@ -1074,9 +1074,56 @@ static bool mjSettingStr(const cJSON *row, const char *field, char *dst,
     return true;
 }
 
+/* A choice row's "choices" and "default" into st, on the terms
+ * scnSettingsChoices reads a Lua row on. NULL when they read, else the
+ * reason for the report. */
+static const char *mjSettingChoices(const cJSON *row, ScnSetting *st) {
+    const cJSON *arr = cJSON_GetObjectItemCaseSensitive(row, "choices");
+    const cJSON *def = cJSON_GetObjectItemCaseSensitive(row, "default");
+    const cJSON *w;
+    int          total;
+    int          at;
+    int          i = 0;
+
+    if (!cJSON_IsArray(arr)) {
+        return "needs a list of words for choices";
+    }
+    total = cJSON_GetArraySize(arr);
+    if (total < SCN_SETTING_CHOICES_MIN ||
+        total > SCN_SETTING_CHOICES_WORDS_MAX) {
+        return "a choice setting needs 2 to 8 choices";
+    }
+    cJSON_ArrayForEach(w, arr) {
+        size_t n;
+
+        if (!cJSON_IsString(w) || w->valuestring == NULL) {
+            return "every choice must be a string";
+        }
+        n = strlen(w->valuestring);
+        if (n == 0 || n >= SCN_SETTING_CHOICE_LEN) {
+            return "each choice must be 1 to 31 characters";
+        }
+        memcpy(st->choices[i++], w->valuestring, n + 1);
+    }
+    st->numChoices = (uint8_t)total;
+    st->min        = 0;
+    st->max        = total - 1;
+    st->step       = 1;
+    if (!cJSON_IsString(def) || def->valuestring == NULL) {
+        return "needs one of its choices, as a string, for default";
+    }
+    at = scnSettingChoiceIndex(st, def->valuestring);
+    if (at < 0) {
+        return "default is not one of its choices";
+    }
+    st->def = at;
+    return NULL;
+}
+
 /* The settings array into the struct, on the terms scenarioLuaReadSettings
  * reads the Lua table on: the same fields, the same defaults (type "int",
  * step 1), a bool row with a true or false default and no min, max or step,
+ * a choice row with a list of words and one of them as its default,
  * the same scnSettingProblem check, duplicates and rows past
  * SCN_SETTINGS_MAX dropped. A dropped row is an issue, because the host
  * would otherwise be offered a dropdown the author did not mean. */
@@ -1131,7 +1178,22 @@ static void mjDecodeSettings(const cJSON *root, ScenarioManifest *m,
             snprintf(type, sizeof(type), "?");
         }
         st.type = SCN_SETTING_TYPE_INT;
-        if (strcmp(type, "bool") == 0) {
+        if (strcmp(type, "choice") == 0) {
+            const char *bad;
+
+            st.type = SCN_SETTING_TYPE_CHOICE;
+            if (cJSON_GetObjectItemCaseSensitive(row, "min") != NULL ||
+                cJSON_GetObjectItemCaseSensitive(row, "max") != NULL ||
+                cJSON_GetObjectItemCaseSensitive(row, "step") != NULL) {
+                bad = "is a choice setting and takes no min, max or step";
+            } else {
+                bad = mjSettingChoices(row, &st);
+            }
+            if (bad != NULL) {
+                mjReport(rep, key, "scenario: %s %s; dropped", key, bad);
+                continue;
+            }
+        } else if (strcmp(type, "bool") == 0) {
             const cJSON *def =
                 cJSON_GetObjectItemCaseSensitive(row, "default");
 
@@ -1156,8 +1218,8 @@ static void mjDecodeSettings(const cJSON *root, ScenarioManifest *m,
             st.def  = cJSON_IsTrue(def) ? 1 : 0;
         } else if (type[0] != '\0' && strcmp(type, "int") != 0) {
             mjReport(rep, key,
-                     "scenario: %s has type '%s'; only \"int\" and "
-                     "\"bool\" are supported; dropped", key, type);
+                     "scenario: %s has type '%s'; only \"int\", \"bool\" "
+                     "and \"choice\" are supported; dropped", key, type);
             continue;
         } else if (!mjSettingInt(row, "min", &st.min, &hadMin) ||
                    !mjSettingInt(row, "max", &st.max, &hadMax) ||
@@ -1726,6 +1788,20 @@ static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
             if (st->type == SCN_SETTING_TYPE_BOOL) {
                 mjPutString(row, "type", "bool");
                 mjPutBool(row, "default", st->def != 0);
+            } else if (st->type == SCN_SETTING_TYPE_CHOICE) {
+                cJSON      *words = cJSON_CreateArray();
+                const char *dw    = scnSettingChoiceText(st, st->def);
+                int         w;
+
+                mjPutString(row, "type", "choice");
+                if (words != NULL) {
+                    for (w = 0; w < (int)st->numChoices; w++) {
+                        cJSON_AddItemToArray(
+                            words, cJSON_CreateString(st->choices[w]));
+                    }
+                    cJSON_AddItemToObject(row, "choices", words);
+                }
+                mjPutString(row, "default", dw != NULL ? dw : "");
             } else {
                 mjPutString(row, "type", "int");
                 mjPutNumber(row, "min", (double)st->min);
@@ -2032,9 +2108,17 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
         const ScnSetting *a = &fromJson->settings[i];
         const ScnSetting *b = &fromLua->settings[i];
 
+        bool sameWords = a->numChoices == b->numChoices;
+        int  w;
+
+        for (w = 0; sameWords && w < (int)a->numChoices &&
+                    w < SCN_SETTING_CHOICES_WORDS_MAX;
+             w++) {
+            sameWords = strcmp(a->choices[w], b->choices[w]) == 0;
+        }
         if (strcmp(a->id, b->id) != 0 || strcmp(a->label, b->label) != 0 ||
             a->type != b->type || a->min != b->min || a->max != b->max ||
-            a->step != b->step || a->def != b->def) {
+            a->step != b->step || a->def != b->def || !sameWords) {
             snprintf(where, sizeof(where), "settings[%d]", i + 1);
             return mjDiffer(key, keyLen, err, errLen, where,
                             "scenario: the manifest and the script's table "

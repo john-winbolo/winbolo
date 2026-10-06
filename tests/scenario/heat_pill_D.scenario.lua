@@ -72,7 +72,7 @@
 -- GoalHunter has to come in with heat_pill_test.py's pins, and the runner
 -- fields its -bots N seats with no init at all -- so the only way the tokens
 -- reach the brain is for the arena to do the spawn itself.
-local OUR_BRAIN  = "../brains/GoalHunter_1.7/init.lua"
+local OUR_BRAIN  = "../brains/GoalHunter/init.lua"
 local OUR_SLOT   = 0
 local FOE_SLOT   = 1
 -- heat_pill_test.py TOKENS["D"], verbatim.
