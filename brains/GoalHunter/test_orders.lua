@@ -5466,6 +5466,8 @@ print("decoy_getaway.lua -- the decoy getaway")
   -- is empty and there is no chain.  THE BLOCKED WATCH sees the wall go and
   -- rescans at the next check; A HIT WITH NO CHAIN rescans at once and the
   -- chain it finds keeps that hit, so the bot steps in the same think.
+  -- THE SHIELDED CHAIN is off here (it would plan a chain behind the wall).
+  C.DECOY_GETAWAY_SHIELDED_CHAIN = false
   check("blocked watch + hit rescan knobs: on live, off in keel",
         C.DECOY_GETAWAY_WATCH_BLOCKED == true and C.PRESETS.keel.DECOY_GETAWAY_WATCH_BLOCKED == false
         and C.DECOY_GETAWAY_HIT_RESCAN == true and C.PRESETS.keel.DECOY_GETAWAY_HIT_RESCAN == false, "?")
@@ -5539,6 +5541,7 @@ print("decoy_getaway.lua -- the decoy getaway")
         pstr(hb.ga.path) == "22,25 22,26 22,27" and hb.ga.scan_tick == 210
         and hb.ga.viz.why == "watch" and hb.ga.phase == "wait" and hb.ga.hits == 0, tostring(hb.ga.phase))
   C.DECOY_GETAWAY_HIT_RESCAN = true
+  C.DECOY_GETAWAY_SHIELDED_CHAIN = true
   TMAP[WK] = nil
   S({})
   end)()
@@ -5550,6 +5553,7 @@ print("decoy_getaway.lua -- the decoy getaway")
   -- change.  Pill 5 (20,20) is blocked by a wall at (21,22); pill 6 (26,24)
   -- by a wall at (24,24) and keeps the hold.  Pill 5 dies and its wall goes
   -- on the same think.
+  C.DECOY_GETAWAY_SHIELDED_CHAIN = false   -- as in 9b
   check("dead pill knob: 40 live, 0 in keel",
         C.DECOY_GETAWAY_DEAD_PILL_TICKS == 40 and C.PRESETS.keel.DECOY_GETAWAY_DEAD_PILL_TICKS == 0, "?")
   local WK5, WK6 = 22 * 256 + 21, 24 * 256 + 24
@@ -5593,6 +5597,7 @@ print("decoy_getaway.lua -- the decoy getaway")
   check("DEAD_PILL_TICKS=0 (keel): the dead pill drops at once, P empty, no chain",
         hb.ga.path == nil and hb.ga.scan_tick == 205 and #hb.ga.viz.P == 0, pstr(hb.ga.path))
   C.DECOY_GETAWAY_DEAD_PILL_TICKS = 40
+  C.DECOY_GETAWAY_SHIELDED_CHAIN = true
   TMAP[WK5], TMAP[WK6] = nil, nil
   S({})
   end)()
@@ -5659,6 +5664,7 @@ print("decoy_getaway.lua -- the decoy getaway")
   -- DECOY_GETAWAY_BLOCKER_SHOTS (2) moves the tank on without a hit.  None:
   -- it moves.  The line tiles are the mock trace's own, so the blockers below
   -- sit on the line the code walks.
+  C.DECOY_GETAWAY_BLOCKER_STEP_FIRST = false   -- the first step by a hit (12c tests it on)
   check("blocker step knobs: on live, off in keel, step at <= 2 shots, wall life 4, pill damage 1",
         C.DECOY_GETAWAY_BLOCKER_STEP == true and C.PRESETS.keel.DECOY_GETAWAY_BLOCKER_STEP == false
         and C.DECOY_GETAWAY_BLOCKER_SHOTS == 2 and C.PRESETS.keel.DECOY_GETAWAY_BLOCKER_SHOTS == 2
@@ -5976,11 +5982,12 @@ print("decoy_getaway.lua -- the decoy getaway")
         tostring(hb.ga.phase))
   clear()
 
-  -- THE DECOY SQUARE: no blocker step there.  0 shots, no hit: it stays.
+  -- THE DECOY SQUARE with DECOY_GETAWAY_BLOCKER_STEP_FIRST off: no blocker
+  -- step there.  0 shots, no hit: it stays.
   b = dbot(); arrive(b, 700); lock(b, 701)
   hb = b.st.orders.held
   lock(b, 702); lock(b, 720); lock(b, 740)
-  check("on the decoy square 0 shots left does not move it (the first step waits for a hit)",
+  check("BLOCKER_STEP_FIRST=false: on the decoy square 0 shots left does not move it (the first step waits for a hit)",
         hb.ga.phase == "wait" and hb.ga.used == 0 and hb.ga.blk == nil
         and b.st.goal.my == 24, tostring(hb.ga.phase))
   b.inf.armour = b.inf.armour - 5; lock(b, 741)
@@ -6066,6 +6073,156 @@ print("decoy_getaway.lua -- the decoy getaway")
   C.DECOY_GETAWAY_DIAGONAL = true
   end)()
   C.DECOY_GETAWAY_PROX_WEIGHT = 0.5
+  C.DECOY_GETAWAY_BLOCKER_STEP_FIRST = true
+  end)()
+
+  ;(function() -- own function: the main chunk is at its 200-local limit
+  -- 12c. THE BLOCKER STEP ON THE DECOY SQUARE, THE SHIELDED CHAIN, STAY THE
+  -- CLOSEST (Andrew, Oct 6; recorded game 20261006_011834, bot0).  The
+  -- worked example: decoy square (126,112), pill 12 (neutral, health 9) at
+  -- (126,117), a wall at (126,113) on its line, a wall row y=113 x=120..125
+  -- that shields row 112 to the west, and a human team-mate (seat 0) at
+  -- (129,110).  The real block() and shell trace (no mock).
+  check("decoy-square blocker step, shielded chain, stay closest: on live, off in keel",
+        C.DECOY_GETAWAY_BLOCKER_STEP_FIRST == true and C.PRESETS.keel.DECOY_GETAWAY_BLOCKER_STEP_FIRST == false
+        and C.DECOY_GETAWAY_SHIELDED_CHAIN == true and C.PRESETS.keel.DECOY_GETAWAY_SHIELDED_CHAIN == false
+        and C.DECOY_GETAWAY_STAY_CLOSEST == true and C.PRESETS.keel.DECOY_GETAWAY_STAY_CLOSEST == false, "?")
+  GA.block = saved.block
+  EVENT_SOUND = EVENT_SOUND or 8
+  SND_SHOT_BUILDING_NEAR = SND_SHOT_BUILDING_NEAR or 4
+  local LW = 113 * 256 + 126
+  local function terrain(line_wall)
+    TMAP[LW] = line_wall
+    for x = 120, 125 do TMAP[113 * 256 + x] = C.T_BUILDING end
+  end
+  local function clear()
+    TMAP[LW] = nil
+    for x = 120, 125 do TMAP[113 * 256 + x] = nil end
+  end
+  local function human(b, mx, my, pn)
+    b.inf.objects[#b.inf.objects + 1] =
+      { type = 1, idnum = pn or 0, x = mx * 256 + 128, y = my * 256 + 128, info = 0 }
+  end
+  local function rig(line_wall, hx, hy, pn)
+    terrain(line_wall)
+    local b = dbot(126, 112)
+    b.w.pills[12] = { mx = 126, my = 117, owner = "neutral", health = 9 }
+    if hx then human(b, hx, hy, pn) end
+    arrive(b, 200, 126, 112); b.inf.direction = 64; b.inf.armour = 40; lock(b, 201)
+    return b, b.st.orders.held
+  end
+  local function sound(b, t)
+    b.inf.events = { { type = EVENT_SOUND, data = { SND_SHOT_BUILDING_NEAR, 126, 113, 0xFF } } }
+    lock(b, t)
+    b.inf.events = nil
+  end
+
+  -- THE SHIELDED CHAIN: P is empty (the wall stops the shell), Ps = [12],
+  -- and the chain runs west behind the wall row, (125,112) first.
+  local b, hb = rig(C.T_BUILDING, 129, 110)
+  check("worked example: a decoy hold", hb and hb.decoy == true and hb.ga ~= nil, "?")
+  local P0, bl0 = GA.pill_set(b.w, 126, 112)
+  check("worked example: P empty, pill 12 blocked at the wall (126,113)",
+        #P0 == 0 and #bl0 == 1 and bl0[1].id == 12 and bl0[1].sx == 126 and bl0[1].sy == 113,
+        tostring(#P0) .. " " .. tostring(bl0[1] and bl0[1].sx) .. "," .. tostring(bl0[1] and bl0[1].sy))
+  local Ps = GA.shielded_set(b.w, bl0)
+  check("shielded set: pill 12 (behind a wall)", #Ps == 1 and Ps[1].id == 12 and Ps[1].shielded == true, "?")
+  check("worked example: the shielded chain, (125,112) first",
+        hb.ga.viz.shielded == true and #hb.ga.viz.P == 1 and hb.ga.viz.P[1].id == 12
+        and hb.ga.path and hb.ga.path[1].mx == 125 and hb.ga.path[1].my == 112,
+        pstr(hb.ga.path))
+  check("worked example: (125,112) is shielded by the wall row (1.0 from (125,113))",
+        hb.ga.path and hb.ga.path[1].terms[1].b == 1.0 and hb.ga.path[1].terms[1].sx == 125
+        and hb.ga.path[1].terms[1].sy == 113, "?")
+  -- STAY THE CLOSEST: the human is 7.62 from the pill; (125,112) is 5.10.
+  local lim = GA.human_limits(hb.ga.viz.P, GA.humans(b.inf))
+  check("stay closest: the human at (129,110) is 7.62 from pill 12",
+        lim[12] and near(lim[12].d, math.sqrt(58)) and lim[12].pn == 0,
+        tostring(lim[12] and lim[12].d))
+  local all_closer = hb.ga.path ~= nil
+  for _, c in ipairs(hb.ga.path or {}) do
+    if math.sqrt((c.mx - 126) ^ 2 + (c.my - 117) ^ 2) >= math.sqrt(58) then all_closer = false end
+  end
+  check("stay closest: every chain square is closer to the pill than 7.62 ((125,112) 5.10 kept)",
+        all_closer, pstr(hb.ga.path))
+  -- THE BLOCKER STEP ON THE DECOY SQUARE: a full wall, 5 - 0 = 5 shots, it
+  -- holds; three wall hits heard, 5 - 3 = 2 <= 2: it steps to (125,112)
+  -- before the wall falls, with no hit.
+  check("decoy square, full wall: 5 shots, it holds",
+        hb.ga.phase == "wait" and hb.ga.used == 0 and hb.ga.blk and hb.ga.blk.shots == 5
+        and hb.ga.blk.id == 12 and hb.ga.blk.tx == 126 and hb.ga.blk.ty == 112,
+        tostring(hb.ga.blk and hb.ga.blk.shots))
+  sound(b, 202); sound(b, 203)
+  check("decoy square, two hits heard: 5 - 2 = 3 shots, it holds",
+        hb.ga.phase == "wait" and hb.ga.blk.shots == 3, tostring(hb.ga.blk and hb.ga.blk.shots))
+  sound(b, 204)
+  check("decoy square, three hits heard: 5 - 3 = 2 shots, it steps to (125,112), trigger blk",
+        hb.ga.phase == "move" and hb.ga.trigs[1] == "blk" and b.st.goal.mx == 125 and b.st.goal.my == 112
+        and b.inf.armour == 40, tostring(hb.ga.phase))
+  -- A damaged wall from the start: dmg = 1 shot, it steps at once.
+  b, hb = rig(C.T_HALFBUILD, 129, 110)
+  check("decoy square, damaged wall: 1 shot, it steps at once to (125,112)",
+        hb.ga.phase == "move" and hb.ga.trigs[1] == "blk" and hb.ga.path[1].mx == 125,
+        tostring(hb.ga.phase))
+  -- An open line on the decoy square (no wall at (126,113)): no blocker,
+  -- shots 0, but the decoy square still waits for the first hit.
+  b, hb = rig(nil, 129, 110)
+  check("decoy square, open line: a chain, no blocker, it waits for the first hit",
+        hb.ga.path ~= nil and hb.ga.phase == "wait" and hb.ga.blk and hb.ga.blk.why == "open"
+        and hb.ga.blk.shots == 0, tostring(hb.ga.phase) .. " " .. tostring(hb.ga.blk and hb.ga.blk.why))
+  b.inf.armour = 35; lock(b, 202)
+  check("decoy square, open line: a hit moves it", hb.ga.phase == "move"
+        and hb.ga.trigs[1] == "hit", tostring(hb.ga.phase))
+  -- BLOCKER_STEP_FIRST off: the chain is there but it waits for a hit.
+  C.DECOY_GETAWAY_BLOCKER_STEP_FIRST = false
+  b, hb = rig(C.T_HALFBUILD, 129, 110)
+  check("BLOCKER_STEP_FIRST=false: a chain, but it waits on the decoy square",
+        hb.ga.path ~= nil and hb.ga.phase == "wait" and hb.ga.blk == nil, tostring(hb.ga.phase))
+  b.inf.armour = 35; lock(b, 202)
+  check("BLOCKER_STEP_FIRST=false: a hit moves it", hb.ga.phase == "move"
+        and hb.ga.trigs[1] == "hit", tostring(hb.ga.phase))
+  C.DECOY_GETAWAY_BLOCKER_STEP_FIRST = true
+  -- SHIELDED_CHAIN off: P empty, no chain, nothing to step to.
+  C.DECOY_GETAWAY_SHIELDED_CHAIN = false
+  b, hb = rig(C.T_HALFBUILD, 129, 110)
+  check("SHIELDED_CHAIN=false: P empty, no chain, it stays",
+        hb.ga.path == nil and hb.ga.phase == "wait" and hb.ga.viz.shielded == false, tostring(hb.ga.phase))
+  C.DECOY_GETAWAY_SHIELDED_CHAIN = true
+  -- A pill whose shell runs out (no stop square) is not shielded P.
+  check("shielded set: a shell short (no stop square) is not shielded P",
+        #GA.shielded_set(b.w, { { id = 12 } }) == 0, "?")
+  -- STAY THE CLOSEST turns squares down: a human at (129,113), 5.00 from
+  -- the pill.  (125,112) is 5.10: not used.
+  b, hb = rig(C.T_BUILDING, 129, 113)
+  local first_ok = hb.ga.path and hb.ga.path[1].mx == 125 and hb.ga.path[1].my == 112
+  check("stay closest: a human 5.00 from the pill: (125,112) (5.10) is not used",
+        not first_ok, pstr(hb.ga.path))
+  local c1 = nil
+  for _, c in ipairs(hb.ga.viz.cells or {}) do if c.mx == 125 and c.my == 112 then c1 = c end end
+  check("stay closest: (125,112) is turned down as human_closer, 5.10 >= 5.00",
+        c1 and c1.ok == false and c1.why == "human_closer" and near(c1.hfail.hd, 5.0)
+        and near(c1.hfail.d, math.sqrt(26)), tostring(c1 and c1.why))
+  C.DECOY_GETAWAY_STAY_CLOSEST = false
+  b, hb = rig(C.T_BUILDING, 129, 113)
+  check("STAY_CLOSEST=false: humans are not looked at, (125,112) first",
+        hb.ga.path and hb.ga.path[1].mx == 125 and hb.ga.path[1].my == 112, pstr(hb.ga.path))
+  C.DECOY_GETAWAY_STAY_CLOSEST = true
+  -- A human more than PILL_FIRE_RANGE from the pill does not count.
+  b, hb = rig(C.T_BUILDING, 135, 112)
+  check("stay closest: a human 10.30 from the pill (out of range) does not count",
+        hb.ga.path and hb.ga.path[1].mx == 125 and next(GA.human_limits(hb.ga.viz.P, GA.humans(b.inf))) == nil,
+        pstr(hb.ga.path))
+  -- A bot team-mate is not a human; HUMAN_DECOY_TEST_HUMANS makes it one.
+  b, hb = rig(C.T_BUILDING, 129, 113, 4)
+  check("stay closest: a bot team-mate (seat 4) is not a human", #GA.humans(b.inf) == 0
+        and hb.ga.path and hb.ga.path[1].mx == 125, pstr(hb.ga.path))
+  C.HUMAN_DECOY_TEST_HUMANS = 0x10
+  b, hb = rig(C.T_BUILDING, 129, 113, 4)
+  check("stay closest: HUMAN_DECOY_TEST_HUMANS seat 4 counts as human, (125,112) not used",
+        #GA.humans(b.inf) == 1 and not (hb.ga.path and hb.ga.path[1].mx == 125 and hb.ga.path[1].my == 112),
+        pstr(hb.ga.path))
+  C.HUMAN_DECOY_TEST_HUMANS = 0
+  clear()
   end)()
 
   GA.block = saved.block

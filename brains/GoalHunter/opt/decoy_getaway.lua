@@ -11,7 +11,28 @@
 -- square) whose shell really ARRIVES on the decoy square.  Sorted by id.
 -- THE RECENTLY DEAD PILL (DECOY_GETAWAY_DEAD_PILL_TICKS): a pill that died
 -- that many ticks ago or less still counts here (its shells are in flight).
--- No pill in P = no getaway, and the hold is what it was before.
+-- No pill in P = no getaway, and the hold is what it was before -- unless
+-- THE SHIELDED CHAIN (below) has pills.
+--
+-- THE SHIELDED CHAIN (DECOY_GETAWAY_SHIELDED_CHAIN, Oct 6).  With P empty,
+-- the scan still builds a chain against "shielded P" (Ps): the counted
+-- pills whose shell to the decoy square stops on a BLOCKER (a full or
+-- damaged wall, or a live pill of ours or an ally's: what M.blockers
+-- counts), as if those pills could reach.  The chain is scored the same
+-- way (block() below), so it goes to squares those pills would still shoot
+-- at but that something else shields.  So a chain is ready before the
+-- blocker falls, and THE BLOCKER STEP has a next square to step to.  A pill
+-- whose shell runs out or stops on an enemy pill or a base is not in Ps.
+--
+-- STAY THE CLOSEST (DECOY_GETAWAY_STAY_CLOSEST, Oct 6).  A pill shoots the
+-- closest tank, so a decoy square must stay closer to the pill than any
+-- human team-mate.  Every chain square must be strictly closer (edist,
+-- square centres) to each pill of P (or Ps) than every visible human ally
+-- tank is to that pill; a human more than PILL_FIRE_RANGE from the pill
+-- does not count.  A square that fails is not used ("human_closer").  The
+-- humans are the ones orders.lua's human-decoy check reads: visible ally
+-- tanks whose seat is not a bot (HUMAN_DECOY_TEST_HUMANS = test seats that
+-- count as human).
 --
 -- BLOCK(p, t), how well square t is shielded from pill p:
 --   * t is out of p's range (goals.sea_cover_limit: 2048 wu to the tile
@@ -88,8 +109,11 @@
 --          after DECOY_GETAWAY_MOVE_TICKS (300): it parks on the square it
 --          is on and scans again from there (THE MOVE TIMEOUT, Sep 26).
 --          THE BLOCKER STEP (Andrew, Sep 24: move on when the blocker has
---          "2 or less shots left"): parked on a chain square (never the
---          decoy square: the first step still waits for a hit), every think
+--          "2 or less shots left"): parked on a chain square (and on the
+--          decoy square itself with DECOY_GETAWAY_BLOCKER_STEP_FIRST, Oct 6,
+--          but there only with a last blocker on the line: an open line on
+--          the decoy square still waits for the first hit; off, the first
+--          step waits for a hit), every think
 --          takes the CLOSEST counted pill to the PARK square (edist, ties
 --          to the lower id; the other pills are ignored for this check
 --          only, the scan does not change) and walks its shell line to the
@@ -237,6 +261,73 @@ local function live_pill_at(world, mx, my)
   return nil
 end
 
+-- THE SHIELDED CHAIN's pills (Ps): the entries of pill_set's blocked list
+-- whose shell stopped on a blocker (M.blockers' kinds: a full or damaged
+-- wall, a live pill of ours or an ally's).  Same entry shape as P, with
+-- shielded = true.  Sorted by id (blocked is).
+function M.shielded_set(world, blocked)
+  local out = {}
+  for _, b in ipairs(blocked or {}) do
+    local p = world.pills and world.pills[b.id]
+    if p and b.sx then
+      local tt = U.ttype(b.sx, b.sy)
+      local ok = (tt == C.T_BUILDING or tt == C.T_HALFBUILD)
+      if not ok then
+        local q = live_pill_at(world, b.sx, b.sy)
+        ok = q and (q.owner == "friendly" or q.owner == "allied") or false
+      end
+      if ok then
+        out[#out + 1] = { id = b.id, pill = p, dead = b.dead, shielded = true }
+      end
+    end
+  end
+  return out
+end
+
+-- STAY THE CLOSEST's humans: the visible human ally tanks, by the filter
+-- orders.lua's human_decoy_target uses (an ally tank object, not ours, not
+-- hostile, its seat not a bot; HUMAN_DECOY_TEST_HUMANS seats count as
+-- human).  { pn, mx, my } with the tank's square.
+function M.humans(info)
+  local out = {}
+  if not info then return out end
+  local OT = _G.OBJECT_TANK
+  local OH = _G.OBJECT_HOSTILE or 0
+  local allies, bots = info.allies or 0, info.player_bots or 0
+  bots = bit.band(bots, bit.bnot(C.HUMAN_DECOY_TEST_HUMANS or 0))
+  local me = info.player_number
+  for _, ob in ipairs(info.objects or {}) do
+    local pn = ob.idnum or -1
+    if ob.type == OT and pn >= 0 and pn ~= me
+       and bit.band(ob.info or 0, OH) == 0
+       and bit.band(allies, bit.lshift(1, pn)) ~= 0
+       and bit.band(bots, bit.lshift(1, pn)) == 0 then
+      out[#out + 1] = { pn = pn, mx = bit.rshift(ob.x or 0, 8), my = bit.rshift(ob.y or 0, 8) }
+    end
+  end
+  return out
+end
+
+-- STAY THE CLOSEST's limit for each pill of P: the closest human (edist,
+-- square centres) within PILL_FIRE_RANGE of the pill.  { [id] = { d, pn } };
+-- a pill with no such human has no entry (no limit).
+function M.human_limits(P, humans)
+  local lim = {}
+  local R = C.PILL_FIRE_RANGE or 8
+  for _, tp in ipairs(P or {}) do
+    for _, hu in ipairs(humans or {}) do
+      local d = U.edist(hu.mx, hu.my, tp.pill.mx, tp.pill.my)
+      if d <= R then
+        local e = lim[tp.id]
+        if not e or d < e.d - EPS or (d <= e.d + EPS and hu.pn < e.pn) then
+          lim[tp.id] = { d = d, pn = hu.pn }
+        end
+      end
+    end
+  end
+  return lim
+end
+
 -- block(p, t).  Returns the value, the reason, and the tile that stopped
 -- the shell (and that pill's health for a pill) when there is one.
 function M.block(world, p, mx, my)
@@ -292,8 +383,22 @@ local function cell_at(ctx, mx, my)
   local c = ctx.cells[k]
   if c then return c end
   c = { mx = mx, my = my, key = k, s = 0, v = 0 }
+  local hfail = nil
+  if ctx.hlim then
+    -- STAY THE CLOSEST: strictly closer to each pill than its closest human.
+    for _, tp in ipairs(ctx.P) do
+      local e = ctx.hlim[tp.id]
+      if e then
+        local d = U.edist(mx, my, tp.pill.mx, tp.pill.my)
+        if d >= e.d - EPS then hfail = { id = tp.id, d = d, hd = e.d, pn = e.pn }; break end
+      end
+    end
+  end
   if not M.passable(ctx.world, mx, my, ctx.in_boat) then
     c.ok, c.why = false, "no_drive"
+  elseif hfail then
+    c.ok, c.why, c.hfail = false, "human_closer", hfail
+    ctx.hrej = ctx.hrej + 1
   else
     local sum, any, terms = 0, false, {}
     for i, tp in ipairs(ctx.P) do
@@ -345,8 +450,10 @@ end
 -- chain (a list of cells, nil = none), its score, the scan context (cells
 -- for the overlay) and the number of edges it took (steps from a reached
 -- square onto a getaway square of the next ring).
-function M.search(world, P, sx, sy, steps, in_boat)
-  local ctx = { world = world, P = P, in_boat = in_boat,
+-- hlim (optional) is STAY THE CLOSEST's M.human_limits; ctx.hrej counts
+-- the squares it turned down.
+function M.search(world, P, sx, sy, steps, in_boat, hlim)
+  local ctx = { world = world, P = P, in_boat = in_boat, hlim = hlim, hrej = 0,
                 cells = {}, list = {}, pass = {}, traces = 0 }
   local LW   = C.DECOY_GETAWAY_LAST_WEIGHT or 2.0
   local DIRS = C.DIRS8
@@ -478,10 +585,23 @@ function M.rescan(world, info, h, sx, sy, steps, now, why)
   -- (pill in P, worked-out square) in range (str).  THE BLOCKED WATCH uses
   -- the stop squares of the P traces, so it adds none.
   local ptr = #P + #blocked
+  -- THE SHIELDED CHAIN: no pill in P, so the pills behind a blocker stand
+  -- in for it.  The traces are pill_set's, so it adds none.
+  local use, Ps = P, nil
+  if #P == 0 and C.DECOY_GETAWAY_SHIELDED_CHAIN then
+    Ps = M.shielded_set(world, blocked)
+    use = Ps
+  end
+  -- STAY THE CLOSEST: the closest human to each pill used.
+  local humans, hlim = nil, nil
+  if C.DECOY_GETAWAY_STAY_CLOSEST then
+    humans = M.humans(info)
+    hlim = M.human_limits(use, humans)
+  end
   local path, score, ctx, edges = nil, nil, nil, 0
-  if #P > 0 and steps > 0 then
+  if #use > 0 and steps > 0 then
     path, score, ctx, edges =
-      M.search(world, P, sx, sy, steps, info and info.inboat)
+      M.search(world, use, sx, sy, steps, info and info.inboat, hlim)
   end
   local str = ctx and ctx.traces or 0
   local us = t0 and (clock_us() - t0) or -1
@@ -518,12 +638,31 @@ function M.rescan(world, info, h, sx, sy, steps, now, why)
   ga.wsig, ga.wcheck = M.watch_signature(world, ga), now
   local pids = {}
   for i, tp in ipairs(P) do pids[i] = pid_txt(tp.id, tp.dead) end
-  ga.viz = { tick = now, sx = sx, sy = sy, P = P, path = path, score = score,
+  local spids = {}
+  for i, tp in ipairs(Ps or {}) do spids[i] = pid_txt(tp.id, tp.dead) end
+  -- STAY THE CLOSEST as text: off, or humans=N (visible human allies),
+  -- hd=[pill:distance@player] for each pill used that has a human in its
+  -- range (the closest), and human_rej=K squares turned down.
+  local htxt = "off"
+  if hlim then
+    local ht = {}
+    for _, tp in ipairs(use) do
+      local e = hlim[tp.id]
+      if e then ht[#ht + 1] = string.format("%s:%.2f@p%d", tostring(tp.id), e.d, e.pn) end
+    end
+    htxt = string.format("humans=%d hd=[%s] human_rej=%d", #humans, table.concat(ht, ","),
+                         ctx and ctx.hrej or 0)
+  end
+  ga.viz = { tick = now, sx = sx, sy = sy, P = use, shielded = Ps ~= nil,
+             path = path, score = score,
              cells = ctx and ctx.list or {}, edges = edges, us = us, why = why,
              traces = ptr + str,
              step0 = ga.used or 0, steps = steps }
   -- P=[N,N(dead A)]: the pills in P, a recently dead one with its dead age
   -- (THE RECENTLY DEAD PILL; dead<=L is DECOY_GETAWAY_DEAD_PILL_TICKS).
+  -- Ps=[N]: THE SHIELDED CHAIN's pills (the chain is against them; empty
+  -- when P is not empty or the knob is off).  closest=... is STAY THE
+  -- CLOSEST (htxt above).
   -- blocked=[pN@x,y:terrain:pill owner:pill health] is every counted pill
   -- not in P with its stop square; watch=on/off/W is
   -- DECOY_GETAWAY_WATCH_BLOCKED (off = the squares are listed but not
@@ -861,16 +1000,19 @@ function M.update(state, world, info, h, now)
         M.rescan(world, info, h, fx, fy, max_steps - ga.used, now, "changed")
       end
     end
-    -- THE BLOCKER STEP: on a chain square only (ga.used > 0), with a next
-    -- square to go to.  ga.blk is what the overlay shows.
+    -- THE BLOCKER STEP: on a chain square (ga.used > 0), or on the decoy
+    -- square too with DECOY_GETAWAY_BLOCKER_STEP_FIRST, with a next square
+    -- to go to.  ga.blk is what the overlay shows.
     ga.blk = nil
-    if C.DECOY_GETAWAY_BLOCKER_STEP and ga.used > 0 and ga.path and ga.path[ga.idx] then
+    if C.DECOY_GETAWAY_BLOCKER_STEP and (ga.used > 0 or C.DECOY_GETAWAY_BLOCKER_STEP_FIRST)
+       and ga.path and ga.path[ga.idx] then
       ga.led = ga.led or {}
       -- From the PARK square: a knock off it keeps the line, the last
       -- blocker and the ledger (see THE BLOCKER STEP above).  tx/ty on
       -- ga.blk is the park square (the end of the line); twx/twy is where
       -- the tank really is, for the overlay.
-      local kx, ky = ga.park_mx, ga.park_my
+      -- Before the first step the park square is the decoy square.
+      local kx, ky = ga.park_mx or h.mx, ga.park_my or h.my
       local pid, p = M.closest_pill(world, kx, ky, ga.alive, now)
       -- The last blocker first (no ledger yet), then its ledger entry, then
       -- the sounds of this think, then its count: a hit in the think the
@@ -894,8 +1036,12 @@ function M.update(state, world, info, h, now)
       end
     end
     local by_hit = ga.hits >= (C.DECOY_GETAWAY_HITS or 1)
+    -- On the decoy square (ga.used == 0) only a real last blocker counts:
+    -- an open line there (no blocker, shots 0) still waits for the first
+    -- hit, the decoy's job.  On a chain square 0 = no blocker left = step.
     local by_blk = (ga.blk and ga.blk.shots
-                    and ga.blk.shots <= (C.DECOY_GETAWAY_BLOCKER_SHOTS or 2)) and true or false
+                    and ga.blk.shots <= (C.DECOY_GETAWAY_BLOCKER_SHOTS or 2)
+                    and (ga.used > 0 or ga.blk.why == "last")) and true or false
     if ga.path and ga.path[ga.idx] and (by_hit or by_blk) then
       ga.phase = "move"
       -- For THE MOVE TIMEOUT: when the move began and the square it began on.
@@ -1054,6 +1200,10 @@ local function draw_cells(viz, v)
   for _, c in ipairs(v.cells or {}) do
     if c.ok then
     else
+      local w = tostring(c.why)
+      if c.hfail then
+        w = string.format("human %.2f>=%.2f", c.hfail.d, c.hfail.hd)
+      end
     end
   end
   local R = v.steps or 0
@@ -1194,6 +1344,9 @@ local function draw_blocker(viz, ga, v)
   if bk and bk.why == "last" then
     what = string.format("closest p%s (%d,%d) last blocker %s shots, step at <=%d",
                          tostring(bk.id), bk.mx, bk.my, M.blk_one(bk.list[1]), lim)
+  elseif bk and bk.why == "open" and (ga.used or 0) == 0 then
+    what = string.format("closest p%s (%d,%d) open line on the decoy square, waiting for a hit",
+                         tostring(bk.id), bk.mx, bk.my)
   elseif bk and bk.why == "open" then
     what = string.format("closest p%s (%d,%d) no blocker left, step",
                          tostring(bk.id), bk.mx, bk.my)

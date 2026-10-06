@@ -5006,6 +5006,28 @@ M.DECOY_GETAWAY_PROX_WEIGHT  = 0.5    -- keel 0
 -- summed.)  false = hits only.
 M.DECOY_GETAWAY_BLOCKER_STEP  = true  -- keel false
 M.DECOY_GETAWAY_BLOCKER_SHOTS = 2     -- keel 2 (not used: the step is off)
+-- 2026-10-06 (Andrew): THE BLOCKER STEP also runs while parked on the decoy
+-- square itself, before the first step, by the same rule (closest counted
+-- pill, its last blocker, shots left <= DECOY_GETAWAY_BLOCKER_SHOTS: step to
+-- the chain's first square).  A hit still moves it too.  Recorded game
+-- 20261006_011834 (bot0): the wall between pill 12 and the decoy square was
+-- damaged at t=5482 and the bot waited for a hit until t=5529.
+-- false = the first step waits for a hit.
+M.DECOY_GETAWAY_BLOCKER_STEP_FIRST = true  -- keel false
+-- 2026-10-06 (Andrew): THE SHIELDED CHAIN.  With no counted pill able to
+-- reach the decoy square (P empty), the scan still builds a chain against
+-- the counted pills blocked only by a blocker (a full or damaged wall, a
+-- live pill of ours or an ally's), as if they could reach, scored the same
+-- way.  So a chain is ready before the wall falls and the blocker step has
+-- a square to step to.  The SCAN line names them Ps=[..].  false = no
+-- chain while P is empty.
+M.DECOY_GETAWAY_SHIELDED_CHAIN = true  -- keel false
+-- 2026-10-06 (Andrew): STAY THE CLOSEST.  Every chain square must be
+-- strictly closer (edist, square centres) to each pill the chain is
+-- against than every visible human ally tank within PILL_FIRE_RANGE of
+-- that pill, so the pill keeps shooting the bot, not the human.  A square
+-- that fails is not used.  false = humans are not looked at.
+M.DECOY_GETAWAY_STAY_CLOSEST = true    -- keel false
 -- The engine rules the shots left are worked out from.  The brain cannot
 -- read them, so these are the engine defaults: building_life
 -- (BUILDING_LIFE, src/bolo/internal/building.h) and pill_shell_damage
@@ -5719,6 +5741,9 @@ M.PRESETS = {
     DECOY_GETAWAY_PROX_WEIGHT     = 0,
     DECOY_GETAWAY_BLOCKER_STEP    = false,
     DECOY_GETAWAY_BLOCKER_SHOTS   = 2,
+    DECOY_GETAWAY_BLOCKER_STEP_FIRST = false,
+    DECOY_GETAWAY_SHIELDED_CHAIN  = false,
+    DECOY_GETAWAY_STAY_CLOSEST    = false,
     DECOY_GETAWAY_WALL_LIFE       = 4,
     DECOY_GETAWAY_PILL_SHELL_DAMAGE = 1,
     DECOY_GETAWAY_DIAGONAL        = false,
