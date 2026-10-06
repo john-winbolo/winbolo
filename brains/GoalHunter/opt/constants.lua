@@ -4944,6 +4944,23 @@ M.DECOY_GETAWAY_MAX_STEPS    = 5      -- keel 5 (moot; master off)
 M.DECOY_GETAWAY_HITS         = 1      -- keel 1 (moot)
 M.DECOY_GETAWAY_LAST_WEIGHT  = 2.0    -- keel 2.0 (moot)
 M.DECOY_GETAWAY_RESCAN_TICKS = 50     -- keel 50 (moot)
+-- 2026-10-05: WATCH THE WALLS THAT BLOCK A COUNTED PILL.  A counted pill
+-- whose shell does not reach the decoy square is not in P, and the scan
+-- remembers the square that stopped its shell (a wall, or a pill of ours).
+-- The look-again check also watches those squares (their terrain, and the
+-- owner and health of a pill on them), so a wall shot away mid-hold starts
+-- a fresh scan.  Before this, a hold with no chain watched only the tank
+-- square and the counted pill ids: a pill whose wall fell kept shooting a
+-- bot that never looked again (recorded game 20261005_232149, bot4).
+-- false = only the chain's own shield squares are watched (as before).
+M.DECOY_GETAWAY_WATCH_BLOCKED = true  -- keel false
+-- 2026-10-05: A HIT WITH NO CHAIN LOOKS AGAIN AT ONCE.  Parked with no
+-- chain, an armour loss starts a fresh scan in the same think, without the
+-- DECOY_GETAWAY_RESCAN_TICKS wait.  If that scan finds a chain, the hit is
+-- kept as the hit that moves the bot, so it steps at once.  (A chain found
+-- by any other scan still waits for a fresh hit, as before.)  false = a hit
+-- with no chain does nothing until the next look-again check (as before).
+M.DECOY_GETAWAY_HIT_RESCAN    = true  -- keel false
 -- 2026-09-26: THE MOVE TIMEOUT.  A getaway move that has not reached its
 -- square after this many ticks (the square still drivable, but an enemy tank
 -- on it or a long pathfinder detour) parks on the square the tank is on and
@@ -5677,6 +5694,8 @@ M.PRESETS = {
     DECOY_GETAWAY_HITS            = 1,
     DECOY_GETAWAY_LAST_WEIGHT     = 2.0,
     DECOY_GETAWAY_RESCAN_TICKS    = 50,
+    DECOY_GETAWAY_WATCH_BLOCKED   = false,
+    DECOY_GETAWAY_HIT_RESCAN      = false,
     DECOY_GETAWAY_MOVE_TICKS      = 300,
     DECOY_GETAWAY_WALL_FULL       = 1.0,
     DECOY_GETAWAY_WALL_DAMAGED    = 0.5,

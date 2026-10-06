@@ -71,7 +71,11 @@
 --          it one square.  A fresh scan from the square it is on, with the
 --          steps that are left, at most every DECOY_GETAWAY_RESCAN_TICKS and
 --          only when something changed: the start square, the counted
---          pills, or a shield on the chain.
+--          pills, a shield on the chain, or (THE BLOCKED WATCH,
+--          DECOY_GETAWAY_WATCH_BLOCKED) the square that stopped the shell
+--          of a counted pill that is not in P.  With no chain, a hit starts
+--          a fresh scan at once (DECOY_GETAWAY_HIT_RESCAN); a chain found
+--          by that scan keeps the hit, so the bot steps in the same think.
 --   move   driving to the next square.  Hits on the way do not count.  It
 --          never leaves the chain to fight.  On that square (the tank's
 --          square is it) it parks: wait again, with a new baseline, facing
@@ -162,17 +166,24 @@ local function counted_ids(world, mx, my)
 end
 
 -- P: the counted pills whose shell arrives on (mx,my).  Sorted by id.
+-- The second result is the counted pills that are NOT in P, from the same
+-- traces (no extra trace): { id, sx, sy } with the square that stopped the
+-- shell, or no sx when the shell ran out (or the trace failed).  THE
+-- BLOCKED WATCH (M.signature) watches those squares.
 function M.pill_set(world, mx, my)
   local G = goals()
-  local out = {}
+  local out, blocked = {}, {}
   for _, pid in ipairs(counted_ids(world, mx, my)) do
     local p = world.pills[pid]
-    if G.sea_shot_reaches(world, U.m2w(p.mx), U.m2w(p.my), mx, my,
-                          cpf.SHOT_PILL, WALL_STOP) then
+    local reached, sx, sy = G.sea_shot_reaches(world, U.m2w(p.mx), U.m2w(p.my),
+                                               mx, my, cpf.SHOT_PILL, WALL_STOP)
+    if reached then
       out[#out + 1] = { id = pid, pill = p }
+    else
+      blocked[#blocked + 1] = { id = pid, sx = sx, sy = sy }
     end
   end
-  return out
+  return out, blocked
 end
 
 local function live_pill_at(world, mx, my)
@@ -376,9 +387,20 @@ local function path_str(path)
   return table.concat(t, " ")
 end
 
+-- One watched square as text: its terrain, and the owner and health of a
+-- live pill on it.
+local function watch_part(world, sx, sy)
+  local q = live_pill_at(world, sx, sy)
+  return string.format("%d,%d:%d:%s:%d", sx, sy, U.ttype(sx, sy),
+                       q and tostring(q.owner) or "-", q and (q.health or 0) or 0)
+end
+
 -- What M.update compares to decide on a fresh scan: the tank's square, the
 -- counted pills, and every shield square of the chain (its terrain and the
--- health of a pill on it).
+-- health of a pill on it).  THE BLOCKED WATCH (DECOY_GETAWAY_WATCH_BLOCKED):
+-- also the square that stopped the shell of each counted pill NOT in P, as
+-- the last scan saw it (ga.watch), so a wall shot away between a pill and
+-- the decoy square starts a fresh scan, with a chain or without one.
 function M.signature(world, h, ga, tx, ty)
   local parts = { tx .. "," .. ty }
   for _, pid in ipairs(counted_ids(world, h.mx, h.my)) do
@@ -386,12 +408,12 @@ function M.signature(world, h, ga, tx, ty)
   end
   for _, c in ipairs(ga.path or {}) do
     for _, tm in ipairs(c.terms or {}) do
-      if tm.sx then
-        local q = live_pill_at(world, tm.sx, tm.sy)
-        parts[#parts + 1] = string.format("%d,%d:%d:%s:%d", tm.sx, tm.sy,
-            U.ttype(tm.sx, tm.sy), q and tostring(q.owner) or "-",
-            q and (q.health or 0) or 0)
-      end
+      if tm.sx then parts[#parts + 1] = watch_part(world, tm.sx, tm.sy) end
+    end
+  end
+  if C.DECOY_GETAWAY_WATCH_BLOCKED then
+    for _, w in ipairs(ga.watch or {}) do
+      parts[#parts + 1] = "B" .. watch_part(world, w.sx, w.sy)
     end
   end
   return table.concat(parts, "|")
@@ -402,37 +424,64 @@ end
 function M.rescan(world, info, h, sx, sy, steps, now, why)
   local ga = h.ga
   local t0 = clock_us and clock_us() or nil
-  local P = M.pill_set(world, h.mx, h.my)
-  -- Shell traces this scan: one per counted pill for P, then one per
-  -- (pill in P, worked-out square) in range.
-  local ptr = #counted_ids(world, h.mx, h.my)
+  local P, blocked = M.pill_set(world, h.mx, h.my)
+  -- Shell traces this scan: one per counted pill for P (ptr), then one per
+  -- (pill in P, worked-out square) in range (str).  THE BLOCKED WATCH uses
+  -- the stop squares of the P traces, so it adds none.
+  local ptr = #P + #blocked
   local path, score, ctx, edges = nil, nil, nil, 0
   if #P > 0 and steps > 0 then
     path, score, ctx, edges =
       M.search(world, P, sx, sy, steps, info and info.inboat)
   end
+  local str = ctx and ctx.traces or 0
   local us = t0 and (clock_us() - t0) or -1
   -- No chain before, a chain now: the hits taken while there was no way
   -- out are spent.  A new armour baseline, so the first step waits for a
-  -- fresh hit.
+  -- fresh hit.  Not for a scan a hit started (why "hit",
+  -- DECOY_GETAWAY_HIT_RESCAN): that hit came through the shield that is
+  -- gone, so it is the hit that moves the bot.
+  local kept = false
   if path and not ga.path then
-    ga.hits, ga.hit_tick = 0, nil
-    ga.arm = (info and info.armour) or ga.arm
+    if why == "hit" then
+      kept = true
+    else
+      ga.hits, ga.hit_tick = 0, nil
+      ga.arm = (info and info.armour) or ga.arm
+    end
   end
   ga.path, ga.score, ga.idx = path, score, 1
   ga.scan_tick = now
   ga.check = now
+  -- THE BLOCKED WATCH: the stop squares of the counted pills not in P.  A
+  -- shell that ran out (no stop square) has nothing to watch.
+  local watch, wtxt = {}, {}
+  for _, b in ipairs(blocked) do
+    if b.sx then
+      watch[#watch + 1] = { id = b.id, sx = b.sx, sy = b.sy }
+      wtxt[#wtxt + 1] = string.format("p%s@%s", tostring(b.id), watch_part(world, b.sx, b.sy))
+    else
+      wtxt[#wtxt + 1] = string.format("p%s@short", tostring(b.id))
+    end
+  end
+  ga.watch = watch
   ga.sig = M.signature(world, h, ga, sx, sy)
   local pids = {}
   for i, tp in ipairs(P) do pids[i] = tostring(tp.id) end
   ga.viz = { tick = now, sx = sx, sy = sy, P = P, path = path, score = score,
              cells = ctx and ctx.list or {}, edges = edges, us = us, why = why,
-             traces = ptr + (ctx and ctx.traces or 0),
+             traces = ptr + str,
              step0 = ga.used or 0, steps = steps }
-  print2(string.format("DECOY_GETAWAY_SCAN t=%d oid=%d why=%s from=(%d,%d) steps=%d P=[%s] tiles=%d edges=%d traces=%d best=%s path=%s score=%s us=%d",
+  -- blocked=[pN@x,y:terrain:pill owner:pill health] is every counted pill
+  -- not in P with its stop square; watch=on/off is DECOY_GETAWAY_WATCH_BLOCKED
+  -- (off = the squares are listed but not watched).  traces=total(P ptr +
+  -- tiles str).  hits=n/need kept=yes when a hit scan kept its hit.
+  print2(string.format("DECOY_GETAWAY_SCAN t=%d oid=%d why=%s from=(%d,%d) steps=%d P=[%s] blocked=[%s] watch=%s tiles=%d edges=%d traces=%d(P %d + tiles %d) hits=%d/%d kept=%s best=%s path=%s score=%s us=%d",
          now or -1, h.oid or 0, tostring(why), sx, sy, steps,
-         table.concat(pids, ","), ctx and #ctx.list or 0, edges,
-         ptr + (ctx and ctx.traces or 0),
+         table.concat(pids, ","), table.concat(wtxt, ","),
+         C.DECOY_GETAWAY_WATCH_BLOCKED and "on" or "off",
+         ctx and #ctx.list or 0, edges, ptr + str, ptr, str,
+         ga.hits or 0, C.DECOY_GETAWAY_HITS or 1, kept and "yes" or "no",
          score and string.format("%.3f", score) or "none",
          path and path_str(path) or "-",
          path and score_terms(path) or "-", us))
@@ -719,7 +768,9 @@ function M.update(state, world, info, h, now)
   ga.tank_wx, ga.tank_wy, ga.now = info.tankx, info.tanky, now
   -- ARMOUR LOSS since the last think.  Counted only while parked (wait):
   -- the baseline is the armour on arrival at the square.
+  local new_hit = false
   if ga.phase == "wait" and arm < ga.arm then
+    new_hit = true
     ga.hits = ga.hits + 1
     if not ga.hit_tick then
       ga.hit_tick, ga.hit_before, ga.hit_after = now, ga.arm, arm
@@ -734,7 +785,12 @@ function M.update(state, world, info, h, now)
     -- from the tank's square (the decoy park allows one square of slack).
     local fx, fy = tx, ty
     if ga.used > 0 then fx, fy = ga.park_mx, ga.park_my end
-    if now - (ga.check or now) >= (C.DECOY_GETAWAY_RESCAN_TICKS or 50) then
+    if new_hit and not ga.path and C.DECOY_GETAWAY_HIT_RESCAN then
+      -- A HIT WITH NO CHAIN LOOKS AGAIN AT ONCE (DECOY_GETAWAY_HIT_RESCAN):
+      -- a shell got through, so a shield may be gone.  No wait for the
+      -- look-again check; a chain found now keeps this hit (M.rescan).
+      M.rescan(world, info, h, fx, fy, max_steps - ga.used, now, "hit")
+    elseif now - (ga.check or now) >= (C.DECOY_GETAWAY_RESCAN_TICKS or 50) then
       ga.check = now
       if M.signature(world, h, ga, fx, fy) ~= ga.sig then
         M.rescan(world, info, h, fx, fy, max_steps - ga.used, now, "changed")

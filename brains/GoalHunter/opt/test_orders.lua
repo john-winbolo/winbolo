@@ -5459,6 +5459,65 @@ print("decoy_getaway.lua -- the decoy getaway")
   d.w.pills[6] = nil
   S({})
 
+  ;(function() -- own function: the main chunk is at its 200-local limit
+  -- 9b. A WALL BETWEEN A COUNTED PILL AND THE DECOY SQUARE IS SHOT AWAY
+  -- (recorded game 20261005_232149, bot4).  A wall at (21,22) stops pill
+  -- 5's shell to (22,24) (the line crosses row 22 inside column 21), so P
+  -- is empty and there is no chain.  THE BLOCKED WATCH sees the wall go and
+  -- rescans at the next check; A HIT WITH NO CHAIN rescans at once and the
+  -- chain it finds keeps that hit, so the bot steps in the same think.
+  check("blocked watch + hit rescan knobs: on live, off in keel",
+        C.DECOY_GETAWAY_WATCH_BLOCKED == true and C.PRESETS.keel.DECOY_GETAWAY_WATCH_BLOCKED == false
+        and C.DECOY_GETAWAY_HIT_RESCAN == true and C.PRESETS.keel.DECOY_GETAWAY_HIT_RESCAN == false, "?")
+  local WK = 22 * 256 + 21
+  local function walled()
+    TMAP[WK] = C.T_BUILDING
+    S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 } })
+    local b = dbot(); arrive(b, 200); b.inf.direction = 64; b.inf.armour = 40; lock(b, 201)
+    return b, b.st.orders.held
+  end
+  local b, hb = walled()
+  local P0, bl0 = GA.pill_set(b.w, 22, 24)
+  check("the wall stops pill 5: P empty, pill 5 blocked at (21,22), no chain",
+        #P0 == 0 and #bl0 == 1 and bl0[1].id == 5 and bl0[1].sx == 21 and bl0[1].sy == 22
+        and hb.ga.path == nil, tostring(#P0) .. " " .. tostring(bl0[1] and bl0[1].sx))
+  check("the scan keeps the stop square to watch",
+        #hb.ga.watch == 1 and hb.ga.watch[1].sx == 21 and hb.ga.watch[1].sy == 22, "?")
+  TMAP[WK] = nil
+  lock(b, 250)
+  check("wall gone: no rescan before the check interval", hb.ga.path == nil, "?")
+  lock(b, 251)
+  check("wall gone: the blocked watch rescans at the check, chain found, waits for a fresh hit",
+        pstr(hb.ga.path) == "22,25 22,26 22,27" and hb.ga.scan_tick == 251
+        and hb.ga.phase == "wait" and hb.ga.hits == 0, pstr(hb.ga.path))
+  C.DECOY_GETAWAY_WATCH_BLOCKED = false
+  b, hb = walled()
+  TMAP[WK] = nil
+  lock(b, 251)
+  check("DECOY_GETAWAY_WATCH_BLOCKED=false: the wall going is not seen", hb.ga.path == nil, "?")
+  C.DECOY_GETAWAY_WATCH_BLOCKED = true
+  b, hb = walled()
+  TMAP[WK] = nil
+  b.inf.armour = 35; lock(b, 210)
+  check("a hit with no chain rescans at once: chain found, the hit kept, it moves",
+        pstr(hb.ga.path) == "22,25 22,26 22,27" and hb.ga.scan_tick == 210
+        and hb.ga.phase == "move" and b.st.goal.my == 25, tostring(hb.ga.phase))
+  b, hb = walled()
+  b.inf.armour = 35; lock(b, 210)
+  check("a hit with no chain and the wall still up: rescan, still no chain, parked",
+        hb.ga.path == nil and hb.ga.scan_tick == 210 and hb.ga.phase == "wait"
+        and b.st.goal.my == 24, tostring(hb.ga.phase))
+  C.DECOY_GETAWAY_HIT_RESCAN = false
+  b, hb = walled()
+  TMAP[WK] = nil
+  b.inf.armour = 35; lock(b, 210)
+  check("DECOY_GETAWAY_HIT_RESCAN=false: the hit does not rescan", hb.ga.path == nil
+        and hb.ga.scan_tick == 201, "?")
+  C.DECOY_GETAWAY_HIT_RESCAN = true
+  TMAP[WK] = nil
+  S({})
+  end)()
+
   -- 10. A RESCAN AFTER A PILL DIES.  Two pills: 5 (20,20) and 6 (26,24).
   -- North (22,23) is shielded from pill 5 only, south (22,25) from pill 6
   -- only: 0.5 each, a tie, north wins on the lower key.  Pill 5 dies: north
