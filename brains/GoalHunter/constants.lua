@@ -4878,6 +4878,49 @@ M.ORDER_HANDOFF_WAIT_TICKS = 100     -- keel 0
 -- FREE bots only.  A bot already in the chain (MASK) never bids on it.
 -- 0 or 1 = holders answer every relief "no" (single hop; keel).
 M.ORDER_HANDOFF_MAX_HOPS = 3         -- keel 0
+-- 2026-10-05 (Andrew): THE HUMAN IS DECOYING FOR US.  A pill shoots the
+-- CLOSEST tank in its range; a wall does not stop it picking that tank.  So
+-- a human team-mate standing behind a blocker (a wall, or one of our pills)
+-- that sits between him and an enemy pill draws that pill's fire into the
+-- blocker.  The bot attacking that pill reads it (orders.human_decoy_check,
+-- every think) when ALL of these hold:
+--   * its goal is attack_pill on that pill (its own pick or an order);
+--   * a visible human ally (util.human_ally_near's filter) is within
+--     PILL_FIRE_RANGE of the pill (Euclidean tiles);
+--   * that human is closer to the pill than our tank (he is its target).
+--     With several, the one closest to the pill;
+--   * decoy_getaway.block() at the human's square says "wall",
+--     "wall_damaged" or "pill" with a value >= HUMAN_DECOY_MIN_BLOCK.
+-- The flag stays HUMAN_DECOY_HOLD_TICKS (50 = 1 s) after the tests last
+-- held.  It drops at once when the goal is something else, the pill is
+-- dead / ours / carried, or the tank dies.  While it stands:
+--   * standoff choice (attack.human_decoy_cost): + HUMAN_DECOY_SPACING_COST
+--     per tile the spot is inside HUMAN_DECOY_MIN_TILES of the human, and
+--     + HUMAN_DECOY_BEHIND_COST per tile the spot is closer to the pill than
+--     (the human's distance + HUMAN_DECOY_BEHIND_MARGIN).  Costs, not rules:
+--     with every spot close, the bot still attacks;
+--   * the human walks to within HUMAN_DECOY_MIN_TILES of the chosen spot: a
+--     fresh spot, at most once per HUMAN_DECOY_REPICK_TICKS;
+--   * no human-near suicide run and no charge now (attack ping or human
+--     shooting); a running one ends.  The bot-command + attack ping pair is
+--     a person's direct order and still starts the run.
+-- Why: the bot rushing in, or parking beside the human, takes the pill's
+-- fire off the blocker and onto a tank.
+-- false = exactly the old behaviour (no new state is touched).
+M.HUMAN_DECOY_AWARE         = true   -- keel false
+M.HUMAN_DECOY_MIN_BLOCK     = 0.5    -- keel 0.5 (moot; master off)
+M.HUMAN_DECOY_HOLD_TICKS    = 150    -- keel 150 (moot)
+M.HUMAN_DECOY_MIN_TILES     = 5      -- keel 5 (moot)
+M.HUMAN_DECOY_SPACING_COST  = 10     -- keel 10 (moot)
+M.HUMAN_DECOY_BEHIND_COST   = 20     -- keel 20 (moot)
+M.HUMAN_DECOY_BEHIND_MARGIN = 0.5    -- keel 0.5 (moot)
+M.HUMAN_DECOY_REPICK_TICKS  = 50     -- keel 50 (moot)
+-- Test seam: a bitmask of seats the detection reads as human even though
+-- the engine flags them as bots.  The scenario gate has no human seat, so
+-- its arena (tests/scenario/order_human_decoy) sets this with bot_init.
+-- It touches the detection only (orders.human_decoy_check), never the
+-- human-near run or charge now.  0 = no seat.
+M.HUMAN_DECOY_TEST_HUMANS   = 0      -- keel 0
 -- DECOY GETAWAY (Andrew, 2026-09-24).  A decoy hold (ORDER_GOTO_DECOY) looks
 -- for a way out the moment it starts: a chain of up to
 -- DECOY_GETAWAY_MAX_STEPS squares, each one ring further out from the start
@@ -5676,6 +5719,17 @@ M.PRESETS = {
     ORDER_HANDOFF_PENALTY         = 0,
     ORDER_HANDOFF_WAIT_TICKS      = 0,
     ORDER_HANDOFF_MAX_HOPS        = 0,
+    --   2026-10-05: a human drawing a pill's fire into a blocker is read;
+    --   the bot keeps wide of him and does not rush.  KEEL: not read.
+    HUMAN_DECOY_AWARE             = false,
+    HUMAN_DECOY_MIN_BLOCK         = 0.5,
+    HUMAN_DECOY_HOLD_TICKS        = 150,
+    HUMAN_DECOY_MIN_TILES         = 5,
+    HUMAN_DECOY_SPACING_COST      = 10,
+    HUMAN_DECOY_BEHIND_COST       = 20,
+    HUMAN_DECOY_BEHIND_MARGIN     = 0.5,
+    HUMAN_DECOY_REPICK_TICKS      = 50,
+    HUMAN_DECOY_TEST_HUMANS       = 0,
     --   FOCUS_OTHER_COST_MULT is the one stage-2 knob that is NOT covered by
     --   the master switch: the focus multiplier sits inside the cost
     --   competition, so its keel value has to be the identity, 1.0, for the

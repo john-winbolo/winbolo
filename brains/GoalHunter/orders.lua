@@ -1541,6 +1541,7 @@ function M.on_death(state, info)
   -- A dead tank's suicide run is over: that is one of its two endings.
   if state and state._suicide then M.suicide_end(state, "tank died") end
   if state and state._charge_now then M.charge_now_end(state, "tank died") end
+  if state and state._human_decoy then M.human_decoy_off(state, "tank died", state.tick or 0) end
   local o = state and state.orders
   -- A HANDOFF this bot was waiting on (ORDER_HANDOFF): the new order was
   -- named to it but never taken, so it is offered on (obo) for a free bot.
@@ -1639,6 +1640,177 @@ function M.suicide_start(state, world, tid, sender, now, why)
   return true
 end
 
+-- =========================================================================
+-- THE HUMAN IS DECOYING FOR US (Andrew, 2026-10-05; C.HUMAN_DECOY_AWARE)
+--
+-- A pill shoots the CLOSEST tank in its range (pillbox.c); a wall does not
+-- stop it picking that tank.  A human team-mate behind a blocker (a wall or
+-- one of our pills) between him and the pill draws its fire into the
+-- blocker.  The bot attacking that pill must not spoil it: no rushing in,
+-- no parking beside the human, and no spot closer to the pill than his.
+--
+-- state._human_decoy = { tid, pmx, pmy, pn, hx, hy (the human's last seen
+-- world position), since, last (last think the tests held), b, why (the
+-- block), dh, dme (human / our distance to the pill, world units) }.
+-- init.lua calls M.human_decoy_check every think, before the human-near run
+-- and the charge-now rules read it.  attack.lua reads it for the standoff
+-- costs (attack.human_decoy_cost) and the re-pick.  With the master off it
+-- is never made, and nothing else changes.
+-- =========================================================================
+
+-- The block reasons that count: the shell stops on a wall or on our pill.
+local HUMAN_DECOY_BLOCKS = { wall = true, wall_damaged = true, pill = true }
+
+-- The pill's target among the human team-mates: a visible human ally
+-- (util.human_ally_near's filter) within PILL_FIRE_RANGE of pill p
+-- (Euclidean tiles, as decoy_getaway counts a pill) and closer to it than
+-- our tank.  The pill shoots the closest one, so that one is the answer
+-- (lowest player number on a tie).  Answers the object, its distance and
+-- ours to the pill centre in world units.
+local function human_decoy_target(info, p)
+  local OT = _G.OBJECT_TANK
+  local OH = _G.OBJECT_HOSTILE or 0
+  local allies, bots = info.allies or 0, info.player_bots or 0
+  -- The gate's stand-in humans (C.HUMAN_DECOY_TEST_HUMANS, 0 in play).
+  bots = bit.band(bots, bit.bnot(C.HUMAN_DECOY_TEST_HUMANS or 0))
+  local me = info.player_number
+  local R = C.PILL_FIRE_RANGE or 8
+  local pwx, pwy = U.m2w(p.mx), U.m2w(p.my)
+  local tdx, tdy = (info.tankx or 0) - pwx, (info.tanky or 0) - pwy
+  local d_me = math.sqrt(tdx * tdx + tdy * tdy)
+  local best, best_d
+  for _, ob in ipairs(info.objects or {}) do
+    local pn = ob.idnum or -1
+    if ob.type == OT and pn >= 0 and pn ~= me
+       and bit.band(ob.info or 0, OH) == 0
+       and bit.band(allies, bit.lshift(1, pn)) ~= 0
+       and bit.band(bots, bit.lshift(1, pn)) == 0
+       and U.edist(bit.rshift(ob.x or 0, 8), bit.rshift(ob.y or 0, 8), p.mx, p.my) <= R then
+      local dx, dy = (ob.x or 0) - pwx, (ob.y or 0) - pwy
+      local d = math.sqrt(dx * dx + dy * dy)
+      if d < d_me and (not best or d < best_d or (d == best_d and pn < best.idnum)) then
+        best, best_d = ob, d
+      end
+    end
+  end
+  return best, best_d, d_me
+end
+
+local function human_decoy_line(tag, f, now, extra)
+  return string.format("%s t=%d pill=%s p%s block=%s/%.2f d_human=%.2f d_me=%.2f%s",
+    tag, now or -1, tostring(f.tid), tostring(f.pn), tostring(f.why), f.b or 0,
+    (f.dh or 0) / 256, (f.dme or 0) / 256, extra or "")
+end
+
+function M.human_decoy_off(state, why, now)
+  local f = state and state._human_decoy
+  if not f then return false end
+  state._human_decoy = nil
+  print2(human_decoy_line("HUMAN_DECOY_OFF", f, now,
+    string.format(" why=%s held=%d", tostring(why), (now or 0) - (f.since or 0))))
+  return true
+end
+
+-- True while the flag stands on pill `tid`: a suicide run or a charge on it
+-- must not start.  One HUMAN_DECOY_NO_RUSH line per flag and kind.
+function M.human_decoy_blocks(state, tid, kind, now)
+  local f = state and state._human_decoy
+  if not (f and f.tid == tid) then return false end
+  f.logged = f.logged or {}
+  if not f.logged[kind] then
+    f.logged[kind] = true
+    print2(human_decoy_line("HUMAN_DECOY_NO_RUSH", f, now,
+      string.format(" refused=%s", tostring(kind))))
+  end
+  return true
+end
+
+-- A rush already running on the flagged pill ends the way a caution ping
+-- ends it: the record goes, and a goal already in the straight rush is
+-- dropped so goal selection plans it again the careful way.  Only a run the
+-- human-near rule started ends here; the bot-command + attack ping run is a
+-- person's order and stands.
+local function human_decoy_end_rush(state, f, now)
+  local r = state._suicide
+  if r and r.human_near and r.tid == f.tid then
+    print2(human_decoy_line("HUMAN_DECOY_NO_RUSH", f, now, " ended=suicide"))
+    M.suicide_end(state, "human decoy")
+    local g = state.goal
+    if g and g._ping_suicide then
+      require("attack").clear_attack_goal(state, "suicide run over: human decoy")
+    end
+  end
+  local c = state._charge_now
+  if c and c.tid == f.tid then
+    local g = state.goal
+    local rushing = g and g._charge_now and g.substate == "kill_hardline"
+    print2(human_decoy_line("HUMAN_DECOY_NO_RUSH", f, now, " ended=charge_now"))
+    M.charge_now_end(state, "human decoy")
+    if rushing then
+      require("attack").clear_attack_goal(state, "charge now: human decoy")
+    end
+  end
+end
+
+function M.human_decoy_check(state, world, info, now)
+  if not C.HUMAN_DECOY_AWARE then return end
+  local pills = world and world.pills
+  local g = state.goal
+  local tid = (g and g.kind == "attack_pill" and g.target_id) or nil
+  local f = state._human_decoy
+  -- Drop at once: the goal is something else, or the pill is dead, ours or
+  -- carried.  "none" is the gap between two goals (a cleared rush passes
+  -- through it on its way back to the same pill), not something else.
+  if f then
+    local why
+    if g and g.kind and g.kind ~= "none" and tid ~= f.tid then
+      why = "goal changed"
+    else
+      why = suicide_over(pills and pills[f.tid])
+    end
+    if why then M.human_decoy_off(state, why, now); f = nil end
+  end
+  local p = tid and pills and pills[tid]
+  local ob, dh, dme, b, bwhy
+  if p and not suicide_over(p) and p.mx then
+    ob, dh, dme = human_decoy_target(info, p)
+    if ob then
+      b, bwhy = GA.block(world, p, bit.rshift(ob.x or 0, 8), bit.rshift(ob.y or 0, 8))
+      if not (HUMAN_DECOY_BLOCKS[bwhy] and (b or 0) >= (C.HUMAN_DECOY_MIN_BLOCK or 0.5)) then
+        ob = nil
+      end
+    end
+  end
+  if ob then
+    local fresh = not f
+    if fresh then
+      f = { tid = tid, pmx = p.mx, pmy = p.my, since = now }
+      state._human_decoy = f
+    end
+    f.pn, f.hx, f.hy, f.last = ob.idnum, ob.x, ob.y, now
+    f.b, f.why, f.dh, f.dme = b, bwhy, dh, dme
+    if fresh then
+      print2(human_decoy_line("HUMAN_DECOY_ON", f, now, ""))
+      sayg(state, string.format("Staying wide of %s on pill #%s",
+                                player_name(info, f.pn), tostring(tid)))
+    end
+  elseif f then
+    -- The tests failed this think: keep the human's latest seen position,
+    -- and let the flag go once HUMAN_DECOY_HOLD_TICKS have passed.
+    for _, o2 in ipairs(info.objects or {}) do
+      if o2.type == _G.OBJECT_TANK and o2.idnum == f.pn then
+        f.hx, f.hy = o2.x, o2.y
+        break
+      end
+    end
+    if now - (f.last or now) > (C.HUMAN_DECOY_HOLD_TICKS or 150) then
+      M.human_decoy_off(state, "hold over", now)
+      f = nil
+    end
+  end
+  if f then human_decoy_end_rush(state, f, now) end
+end
+
 -- A HUMAN TEAM-MATE CLOSE BY STARTS THE SAME RUN.  An attack_pill goal the
 -- bot was ORDERED to do (o.held is an attack_pill order on the same pill),
 -- with a visible human ally within ORDER_HUMAN_NEAR_SUICIDE_TILES of the bot,
@@ -1674,9 +1846,16 @@ function M.human_near_suicide(state, world, info, now)
   local d, pn = U.human_ally_near(info, bit.rshift(info.tankx or 0, 8),
                                   bit.rshift(info.tanky or 0, 8), tiles, only)
   if not d then return false end
-  return M.suicide_start(state, world, g.target_id, pn, now,
-                         string.format(only and "human_ally_%d_away_shooting"
-                                       or "human_ally_%d_away", d))
+  -- A human drawing this pill's fire into a blocker (C.HUMAN_DECOY_AWARE):
+  -- the bot does not rush in and take that fire off him.
+  if M.human_decoy_blocks(state, g.target_id, "suicide", now) then return false end
+  local ok = M.suicide_start(state, world, g.target_id, pn, now,
+                             string.format(only and "human_ally_%d_away_shooting"
+                                           or "human_ally_%d_away", d))
+  -- Marked so the human-decoy rule can tell this run from a person's
+  -- bot-command + attack ping run, which it leaves alone.
+  if ok and C.HUMAN_DECOY_AWARE then state._suicide.human_near = true end
+  return ok
 end
 
 -- A HUMAN TEAM-MATE SHOOTING AT THE PILL (ORDER_HUMAN_NEAR_NEEDS_SHOOTING,
@@ -3708,6 +3887,11 @@ local function charge_now_begin(state, world, sender, now, why)
   if suicide_over(p) then return false end
   local r = state._charge_now
   if r and r.tid == g.target_id then return false end
+  -- A human drawing this pill's fire into a blocker (C.HUMAN_DECOY_AWARE):
+  -- no charge, from either start.
+  if M.human_decoy_blocks(state, g.target_id, "charge_" .. tostring(why), now) then
+    return false
+  end
   state._charge_now = { tid = g.target_id, since = now, sender = sender }
   sayg(state, string.format("Charging pill #%s", tostring(g.target_id)))
   print2(string.format("CHARGE_NOW_START t=%d pill=%s from p%s sub=%s why=%s",

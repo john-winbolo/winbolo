@@ -6188,8 +6188,12 @@ function Brain.think(info)
   -- gone (PING_ATTACK_CHARGE_NOW).  human_shooting_charge starts the same
   -- charge for a human seen shooting the pill (HUMAN_SHOOTING_CHARGE_NOW),
   -- after human_near_suicide so the suicide run wins.
+  -- human_decoy_check (HUMAN_DECOY_AWARE) reads a human drawing the goal
+  -- pill's fire into a blocker; while it stands the two rules after it do not
+  -- start a run or a charge, and a running human-near run or charge ends.
   ORD.decoy_lock(state, world, info, now)
   ORD.note_human_shooting(state, world, info, now)
+  ORD.human_decoy_check(state, world, info, now)
   if not state._suicide then ORD.human_near_suicide(state, world, info, now) end
   if state._suicide then ORD.suicide_lock(state, world, info, now) end
   ORD.human_shooting_charge(state, world, info, now)

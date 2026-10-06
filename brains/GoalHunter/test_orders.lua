@@ -6712,5 +6712,225 @@ do
         next(s2.orders.auctions) == nil and s2.orders.held == nil, "?")
 end
 
+-- THE HUMAN IS DECOYING FOR US (HUMAN_DECOY_AWARE, 2026-10-05).  Bot p1 at
+-- (10,10), 14.1 tiles from pill 5 at (20,20), on attack_pill 5.  Human p0 at
+-- (15,15): 7.1 tiles from the pill (in its range) and closer to it than the
+-- bot.  decoy_getaway.block is stubbed (its trace has its own tests below the
+-- getaway section); the stub answers HD_B, HD_WHY.
+print("orders.lua -- the human is decoying for us")
+do
+  local GA = require("decoy_getaway")
+  local saved_block = GA.block
+  local saved_ns, saved_aware = C.ORDER_HUMAN_NEAR_NEEDS_SHOOTING, C.HUMAN_DECOY_AWARE
+  local saved_hsc = C.HUMAN_SHOOTING_CHARGE_NOW
+  local saved_ev = { _G.EVENT_PING, _G.PING_KIND_CAUTION, _G.PING_KIND_BOT_COMMAND, _G.PING_KIND_ATTACK }
+  _G.EVENT_PING, _G.PING_KIND_CAUTION, _G.PING_KIND_BOT_COMMAND, _G.PING_KIND_ATTACK = 13, 1, 5, 3
+  local HD_B, HD_WHY = 1.0, "wall"
+  local block_calls = 0
+  GA.block = function() block_calls = block_calls + 1; return HD_B, HD_WHY end
+  local function dbot(hx, hy, bx, by)
+    local r = BOT(1, bx or 10, by or 10)
+    r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+    r.inf.player_bots = 0x02
+    r.inf.objects = { { type = 1, idnum = 0, x = (hx or 15) * 256 + 128,
+                        y = (hy or 15) * 256 + 128, info = 0 } }
+    return r
+  end
+  local function chk(r, t) r.st.tick = t; ORD.human_decoy_check(r.st, r.w, r.inf, t) end
+  local function flag(r) return r.st._human_decoy end
+
+  check("human-decoy is on live", C.HUMAN_DECOY_AWARE == true, "?")
+  check("keel turns human-decoy off", C.PRESETS.keel.HUMAN_DECOY_AWARE == false, "?")
+  check("keel lists every human-decoy knob at its value",
+        C.PRESETS.keel.HUMAN_DECOY_MIN_BLOCK == 0.5 and C.PRESETS.keel.HUMAN_DECOY_HOLD_TICKS == 150
+        and C.PRESETS.keel.HUMAN_DECOY_MIN_TILES == 5 and C.PRESETS.keel.HUMAN_DECOY_SPACING_COST == 10
+        and C.PRESETS.keel.HUMAN_DECOY_BEHIND_COST == 20 and C.PRESETS.keel.HUMAN_DECOY_BEHIND_MARGIN == 0.5
+        and C.PRESETS.keel.HUMAN_DECOY_REPICK_TICKS == 50, "?")
+
+  -- DETECTION
+  local r = dbot()
+  chk(r, 100)
+  check("detect: a human behind a wall, closer to the pill: the flag is set",
+        flag(r) ~= nil and flag(r).tid == 5 and flag(r).pn == 0 and flag(r).why == "wall", "?")
+  check("detect: it says so once (goal chat)", said(r, "^Staying wide of Andrew on pill #5$"),
+        table.concat(r.st.orders and r.st.orders.say or {}, " | "))
+  HD_B, HD_WHY = 0, "open"
+  r = dbot(); chk(r, 100)
+  check("detect: no blocker (open): no flag", flag(r) == nil, "?")
+  HD_B, HD_WHY = 1.0, "range"
+  r = dbot(); chk(r, 100)
+  check("detect: block reason range: no flag", flag(r) == nil, "?")
+  HD_B, HD_WHY = 1.0, "short"
+  r = dbot(); chk(r, 100)
+  check("detect: block reason short: no flag", flag(r) == nil, "?")
+  HD_B, HD_WHY = 0, "enemy_pill"
+  r = dbot(); chk(r, 100)
+  check("detect: an enemy pill in the way: no flag", flag(r) == nil, "?")
+  HD_B, HD_WHY = 0.5, "wall_damaged"
+  r = dbot(); chk(r, 100)
+  check("detect: a damaged wall at 0.5 (= MIN_BLOCK) counts", flag(r) ~= nil, "?")
+  HD_B, HD_WHY = 0.4, "pill"
+  r = dbot(); chk(r, 100)
+  check("detect: our pill at 0.4 (< MIN_BLOCK): no flag", flag(r) == nil, "?")
+  HD_B, HD_WHY = 0.8, "pill"
+  r = dbot(); chk(r, 100)
+  check("detect: our pill at 0.8 counts", flag(r) ~= nil and flag(r).why == "pill", "?")
+  HD_B, HD_WHY = 1.0, "wall"
+  r = dbot(15, 15, 17, 17); chk(r, 100)
+  check("detect: the human farther from the pill than us: no flag", flag(r) == nil, "?")
+  r = dbot(10, 11, 5, 5); chk(r, 100)
+  check("detect: the human out of the pill's range: no flag", flag(r) == nil, "?")
+  r = dbot(); r.st.goal = { kind = "defend_pill", target_id = 5, mx = 20, my = 20 }; chk(r, 100)
+  check("detect: the bot not on attack_pill: no flag", flag(r) == nil, "?")
+  r = dbot(); r.inf.player_bots = 0x03; chk(r, 100)
+  check("detect: the 'human' is an ally bot: no flag", flag(r) == nil, "?")
+  C.HUMAN_DECOY_TEST_HUMANS = 0x01
+  r = dbot(); r.inf.player_bots = 0x03; chk(r, 100)
+  check("detect: the gate's test seam reads seat 0 as human", flag(r) ~= nil and flag(r).pn == 0, "?")
+  C.HUMAN_DECOY_TEST_HUMANS = 0
+  r = dbot(); r.inf.objects[1].info = 0x80; chk(r, 100)
+  check("detect: an enemy tank there: no flag", flag(r) == nil, "?")
+  -- Two humans: the one closest to the pill is its target.
+  r = dbot(); r.inf.objects[2] = { type = 1, idnum = 4, x = 17 * 256 + 128, y = 17 * 256 + 128, info = 0 }
+  r.inf.player_bots = 0x02
+  chk(r, 100)
+  check("detect: two humans: the one closest to the pill is the one",
+        flag(r) ~= nil and flag(r).pn == 4, tostring(flag(r) and flag(r).pn))
+
+  -- HOLD AND CLEAR
+  r = dbot(); chk(r, 100)
+  HD_B, HD_WHY = 0, "open"
+  chk(r, 101)
+  check("hold: one think without the tests keeps the flag", flag(r) ~= nil, "?")
+  r.inf.objects[1].x = 16 * 256 + 128
+  chk(r, 120)
+  check("hold: the human's latest seen position is kept", flag(r) and flag(r).hx == 16 * 256 + 128,
+        tostring(flag(r) and flag(r).hx))
+  chk(r, 100 + C.HUMAN_DECOY_HOLD_TICKS)
+  check("hold: still set at exactly HOLD_TICKS", flag(r) ~= nil, "?")
+  chk(r, 101 + C.HUMAN_DECOY_HOLD_TICKS)
+  check("hold: gone after HOLD_TICKS", flag(r) == nil, "?")
+  HD_B, HD_WHY = 1.0, "wall"
+  r = dbot(); chk(r, 100)
+  r.st.goal = { kind = "refuel" }; chk(r, 101)
+  check("clear: another goal drops it at once", flag(r) == nil, "?")
+  r = dbot(); chk(r, 100)
+  r.st.goal = { kind = "none" }; HD_B, HD_WHY = 0, "open"; chk(r, 101)
+  check("clear: 'none' (the gap between goals) keeps it", flag(r) ~= nil, "?")
+  HD_B, HD_WHY = 1.0, "wall"
+  r = dbot(); chk(r, 100)
+  r.st.goal = { kind = "attack_pill", target_id = 9, mx = 60, my = 60 }; chk(r, 101)
+  check("clear: attack_pill on another pill drops it", flag(r) == nil or flag(r).tid ~= 5, "?")
+  r = dbot(); chk(r, 100)
+  r.w.pills[5].health = 0; chk(r, 101)
+  check("clear: the pill dies: dropped", flag(r) == nil, "?")
+  r = dbot(); chk(r, 100)
+  r.w.pills[5].owner = "friendly"; chk(r, 101)
+  check("clear: the pill is ours: dropped", flag(r) == nil, "?")
+  r = dbot(); chk(r, 100)
+  ORD.on_death(r.st, r.inf)
+  check("clear: the tank dies: dropped", flag(r) == nil, "?")
+
+  -- NO RUSH: the human-near suicide run.  The human at (15,15) is 5 tiles
+  -- from the bot (inside ORDER_HUMAN_NEAR_SUICIDE_TILES) and the bot holds
+  -- an attack order on pill 5.
+  C.ORDER_HUMAN_NEAR_NEEDS_SHOOTING = false
+  local function hnbot()
+    local b = dbot()
+    hold_attack(b)
+    return b
+  end
+  HD_B, HD_WHY = 0, "open"
+  r = hnbot(); chk(r, 100); ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("no rush: control -- no blocker, the human-near run starts",
+        r.st._suicide ~= nil and r.st._suicide.human_near == true, "?")
+  HD_B, HD_WHY = 1.0, "wall"
+  r = hnbot(); chk(r, 100); ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("no rush: flag set -- no human-near run", r.st._suicide == nil, "?")
+  -- A run that was already going ends when the flag sets.
+  HD_B, HD_WHY = 0, "open"
+  r = hnbot(); chk(r, 100); ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  ORD.suicide_lock(r.st, r.w, r.inf, 100)
+  HD_B, HD_WHY = 1.0, "wall"
+  r.st.goal.substate = "kill_hardline"
+  chk(r, 101)
+  check("no rush: a running human-near run ends when the flag sets",
+        r.st._suicide == nil and not (r.st.goal and r.st.goal._ping_suicide), "?")
+  check("no rush: the flag outlives the cleared goal ('none' gap)", flag(r) ~= nil, "?")
+  ORD.human_near_suicide(r.st, r.w, r.inf, 102)
+  r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+  chk(r, 103); ORD.human_near_suicide(r.st, r.w, r.inf, 103)
+  check("no rush: and it does not restart while the flag stands", r.st._suicide == nil, "?")
+
+  -- THE PERSON'S OWN ORDER: bot command + attack ping on the pill still
+  -- starts the run with the flag set, and the flag does not end it.
+  do
+    local b = sbot(); settle(b, 101, 115)
+    b.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+    b.inf.player_bots = 0x02
+    b.inf.objects = { { type = 1, idnum = 0, x = 15 * 256 + 128, y = 15 * 256 + 128, info = 0 } }
+    chk(b, 120)
+    check("person's order: setup -- the flag stands", flag(b) ~= nil, "?")
+    attack_ping(b, 125)
+    check("person's order: the double ping still starts the run", b.st._suicide ~= nil, "?")
+    chk(b, 126)
+    check("person's order: the flag does not end that run", b.st._suicide ~= nil, "?")
+  end
+
+  -- NO RUSH: charge now, from the attack ping and from a human shooting.
+  r = dbot(); chk(r, 100)
+  attack_ping(r, 101)
+  check("no rush: flag set -- an ATTACK ping starts no charge", r.st._charge_now == nil, "?")
+  C.HUMAN_SHOOTING_CHARGE_NOW = true
+  r = dbot(); chk(r, 100)
+  r.st._human_shot = { tid = 5, by = { [0] = 100 } }
+  ORD.human_shooting_charge(r.st, r.w, r.inf, 100)
+  check("no rush: flag set -- a human shooting starts no charge", r.st._charge_now == nil, "?")
+  HD_B, HD_WHY = 0, "open"
+  r = dbot(); chk(r, 100)
+  attack_ping(r, 101)
+  check("no rush: control -- no flag, the ATTACK ping charges", r.st._charge_now ~= nil, "?")
+  r.st.goal._charge_now = true
+  r.st.goal.substate = "kill_hardline"
+  HD_B, HD_WHY = 1.0, "wall"
+  chk(r, 102)
+  check("no rush: a running charge in the straight rush ends and the goal drops",
+        r.st._charge_now == nil and r.st.goal.kind ~= "attack_pill", tostring(r.st.goal.kind))
+
+  -- THE STANDOFF COSTS (attack.human_decoy_cost).  Human at tile float
+  -- (15.5,15.5) (object 15*256+128), pill centre (20.5,20.5).  Spot (16.5,15.5):
+  --   d_sh = 1, space = 10 * (5 - 1) = 40
+  --   d_sp = sqrt(4^2 + 5^2) = 6.403, d_hp = sqrt(5^2 + 5^2) = 7.071
+  --   behind = 20 * ((7.071 + 0.5) - 6.403) = 23.36
+  r = dbot(); chk(r, 100)
+  local hc, hs, hb = ATTACK.human_decoy_cost(r.st, 20, 20, 16.5, 15.5)
+  check("cost: space term", hs and math.abs(hs - 40) < 1e-6, tostring(hs))
+  check("cost: behind term", hb and math.abs(hb - 20 * (math.sqrt(50) + 0.5 - math.sqrt(41))) < 1e-6, tostring(hb))
+  check("cost: the sum", hc and math.abs(hc - hs - hb) < 1e-9, tostring(hc))
+  local fc, fs, fb = ATTACK.human_decoy_cost(r.st, 20, 20, 27.5, 27.5)
+  check("cost: a spot far from the human and farther from the pill: 0",
+        fc == 0 and fs == 0 and fb == 0, tostring(fc))
+  check("cost: another pill: nil", ATTACK.human_decoy_cost(r.st, 40, 40, 16.5, 15.5) == nil, "?")
+  check("cost: the breakdown text adds up",
+        ATTACK.human_decoy_txt(hc, hs, hb, 1, math.sqrt(41), math.sqrt(50)):match("^hd 63%.4 = space 40%.0 ") ~= nil,
+        ATTACK.human_decoy_txt(hc, hs, hb, 1, math.sqrt(41), math.sqrt(50)))
+
+  -- KEEL: master off, nothing is touched and nothing is read.
+  C.HUMAN_DECOY_AWARE = false
+  block_calls = 0
+  r = dbot(); chk(r, 100)
+  check("keel: no flag, no block trace", flag(r) == nil and block_calls == 0, tostring(block_calls))
+  r = hnbot(); chk(r, 100); ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("keel: the human-near run starts as before, unmarked",
+        r.st._suicide ~= nil and r.st._suicide.human_near == nil, "?")
+  check("keel: the cost is nil", ATTACK.human_decoy_cost(r.st, 20, 20, 16.5, 15.5) == nil, "?")
+
+  GA.block = saved_block
+  C.ORDER_HUMAN_NEAR_NEEDS_SHOOTING, C.HUMAN_DECOY_AWARE = saved_ns, saved_aware
+  C.HUMAN_SHOOTING_CHARGE_NOW = saved_hsc
+  _G.EVENT_PING, _G.PING_KIND_CAUTION, _G.PING_KIND_BOT_COMMAND, _G.PING_KIND_ATTACK =
+    saved_ev[1], saved_ev[2], saved_ev[3], saved_ev[4]
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
