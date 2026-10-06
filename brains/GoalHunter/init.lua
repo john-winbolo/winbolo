@@ -5384,8 +5384,10 @@ function Brain.think(info)
     -- better. What survives here is the part panic has no equivalent for: the
     -- tile search below, and the state facts (builder aboard, not in a boat)
     -- that should_panic_build checks for us.
+    -- CHARGE NOW IGNORES SAFETY: no low-armour pill drop during a charge.
     local _ed_panic = C.EMERGENCY_DROP_ENABLED
                       and state.goal.kind ~= "pill_place"
+                      and not (C.CHARGE_NOW_IGNORE_SAFETY and goals.charge_now_holds(state))
                       and danger.should_panic_build(state, info)
     if _ed_panic then
       -- The incoming-shell refusal used to sit here: skip the drop when a
@@ -5680,7 +5682,10 @@ function Brain.think(info)
               end
             end
           end
-          if not decoy_in_blitz then
+          -- CHARGE NOW IGNORES SAFETY: a charge-now take drives in with no
+          -- shells, like the suicide run (C.CHARGE_NOW_IGNORE_SAFETY).
+          if not decoy_in_blitz
+             and not (C.CHARGE_NOW_IGNORE_SAFETY and goals.charge_now_holds(state)) then
             goal_valid = false
             if state.pool_cache then state.pool_cache[6] = nil end
           end
@@ -7345,9 +7350,18 @@ function Brain.think(info)
   -- goal; only attack_tank / kill_lgm in gun range stay.  First, so an
   -- attack_pill it undoes cannot turn into a human-near suicide run below.
   -- Called through ORD: think() is at the 60-upvalue cap.
+  -- note_human_shooting stamps which humans were seen shooting at the goal's
+  -- pill (ORDER_HUMAN_NEAR_NEEDS_SHOOTING); human_near_suicide reads it.
+  -- charge_now_check ends an ATTACK-ping "charge now" whose goal or pill is
+  -- gone (PING_ATTACK_CHARGE_NOW).  human_shooting_charge starts the same
+  -- charge for a human seen shooting the pill (HUMAN_SHOOTING_CHARGE_NOW),
+  -- after human_near_suicide so the suicide run wins.
   ORD.decoy_lock(state, world, info, now)
+  ORD.note_human_shooting(state, world, info, now)
   if not state._suicide then ORD.human_near_suicide(state, world, info, now) end
   if state._suicide then ORD.suicide_lock(state, world, info, now) end
+  ORD.human_shooting_charge(state, world, info, now)
+  ORD.charge_now_check(state, world, info, now)
   attack.update_attack_substate(state.goal, state, world, info)
   local t_as1 = BRAIN_PROFILE and clock_us() or 0
   if BRAIN_PROFILE then

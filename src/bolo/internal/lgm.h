@@ -98,6 +98,11 @@ struct GameSim;
 /* 20 ticks to builds something */
 #define LGM_BUILD_TIME 20
 
+/* On the square he is going to build on (the blessed square), 0 walks the
+   man up to its centre at the base speed, the WinBolo walk. 1 walks him at
+   that square's own terrain speed, the Mac Bolo walk. */
+#define LGM_BLESS_TILE_TERRAIN_SPEED 0
+
 /* Min and Max distance away from thing to achieve goal */
 #define LGM_MIN_GOAL -16
 #define LGM_MAX_GOAL 16

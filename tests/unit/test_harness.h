@@ -2097,6 +2097,7 @@ int run_sim_rules_pill_massage_follows(void);
 int run_sim_rules_pill_aim_mac(void);
 int run_sim_rules_tank_collision_mac(void);
 int run_sim_rules_tank_deep_sea_safe(void);
+int run_sim_rules_man_bless_tile_terrain_speed(void);
 /* pill_shell_cap and pill_max_shells_at_tank through pillsUpdate
  * (test_pill_shell_cap.c). */
 int run_pill_shell_cap_off_is_no_limit(void);
@@ -2630,6 +2631,7 @@ int run_tkexp_lgm_pairing(void);
  * input, a focus-stealing modal, a popup/menu on the stack, a defocused
  * window) and never for the transient alliance/vote notifications. */
 int run_input_gate_taxonomy(void);
+int run_input_source_autoslow(void);
 
 /* Game-binding claims (test_key_claims.c). keyIsClaimedByGame() must report
  * every keyItems field as owned by the game, so a second window that drives

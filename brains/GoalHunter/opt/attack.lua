@@ -610,10 +610,13 @@ M.commit_soak_finish = commit_soak_finish
 -- build_walls / charge to abort attack_pill early instead of dying
 -- mid-charge.  The reason text feeds clear_attack_goal so the left-top
 -- "last attack cleared" overlay shows WHY we bailed.
-local function armour_unsafe_for_pill_take(info, pill_hp, blitz_2plus)
+local function armour_unsafe_for_pill_take(info, pill_hp, blitz_2plus, goal)
   -- On a true blitz with >= 2 tanks the ally shares the incoming fire, so don't
   -- abort the take on low armour — even armour 0 presses on, the partner helps.
   if blitz_2plus then return nil end
+  -- CHARGE NOW IGNORES SAFETY: a person said go in; armour is not a reason
+  -- to stop (C.CHARGE_NOW_IGNORE_SAFETY).
+  if goal and goal._charge_now and C.CHARGE_NOW_IGNORE_SAFETY then return nil end
   if not pill_hp or pill_hp < C.ATTACK_PILL_UNSAFE_HP_THRESHOLD then return nil end
   local arm = info and info.armour or 0
   if arm >= C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR then return nil end
@@ -4312,6 +4315,63 @@ local function update_attack_substate_body(goal, state, world, info)
     return
   end
 
+  -- ATTACK PING = "CHARGE NOW" (C.PING_ATTACK_CHARGE_NOW; orders.lua keeps
+  -- state._charge_now).  Decided once per goal, on the first think that sees
+  -- the record:
+  --   * no blocker standing in this take's wall slots (goal._wall_build_list:
+  --     a slot that is a building, half-built wall or pillbox, built this take
+  --     or already there): in to shell range, firing -- kill_hardline, which
+  --     aims at the pill with the suicide-run aim and paces like the suicide
+  --     run (steering.lua: SUICIDE_AIM_AT_PILL, SUICIDE_PACE_AHEAD_TILES,
+  --     SUICIDE_HOLD_MARGIN_TILES) but is NOT a suicide run (CHARGE_NOW_IGNORE_SAFETY waives armour, flee,
+  --     refuel and shell aborts; see constants.lua): the other goal rules still
+  --     apply.  A blitz commander also sends GO so its soldiers go in too.
+  --   * a blocker standing: the careful way with no waits and no more
+  --     blockers (the hooks test goal._charge_now and are marked CHARGE NOW
+  --     below: gather_trees, the approach build decision, blitz_wait,
+  --     build_walls and the aim anger gate).
+  -- When the straight rush finds no tile beside the pill (kill_hardline's
+  -- _hardline_abort) the goal is NOT dropped: it falls back to the careful
+  -- way (goal._charge_now_careful, which also keeps the 1-HP kill_hardline
+  -- shortcuts off so it does not go back into the same dead end).
+  do
+    local cn = state._charge_now
+    if cn and cn.tid == goal.target_id and not goal._charge_now then
+      goal._charge_now = true
+      local placed = false
+      for _, wp in ipairs(goal._wall_build_list or {}) do
+        local tt = U.ttype(wp.mx, wp.my)
+        if tt == C.T_BUILDING or tt == C.T_HALFBUILD or tt == C.T_PILLBOX then
+          placed = true; break
+        end
+      end
+      -- The straight rush already found no tile beside this pill a moment
+      -- ago (the kill_hardline abort below set state._charge_now_abort) and
+      -- the goal dropped and came back as a new table: go the careful way
+      -- at once, or the bot loops rush -> abort -> careful -> drop.
+      local ab = state._charge_now_abort
+      if not placed and ab and ab.tid == goal.target_id
+         and now - (ab.t or 0) < (C.CHARGE_NOW_ABORT_WAIVE_TICKS or 500) then
+        placed = true
+        goal._charge_now_careful = true
+      end
+      if not placed then
+        if goal._blitz and state.squad_role == "c" then
+          goal._blitz_go = true        -- init.lua broadcasts bgo from this
+          state.squad_blitz_go = true
+        end
+        goal.substate = "kill_hardline"
+        goal._kill_rush = true
+        goal._kill_rush_decided = true
+        goal._hardline_abort, goal._hardline_bad = nil, nil
+        goal._hardline_mx, goal._hardline_my = nil, nil
+        goal._aim_locked = nil
+        goal.wall_shield, goal.wall_mx, goal.wall_my = false, nil, nil
+        return
+      end
+    end
+  end
+
   -- CONTESTED TAKE, re-checked. The GO-time check only sees the enemies that
   -- were near the pill at GO; a defender that rolls up mid-charge should flip
   -- the party just the same. Commander only, only once GO has actually gone out
@@ -4475,7 +4535,10 @@ local function update_attack_substate_body(goal, state, world, info)
   if squad.blitz_only(state) then
     local _bo_sub = goal.substate or "plan_position"
     if not squad.BLITZ_CALL_OPEN_SUB[_bo_sub]
-       and not (goal._blitz and goal._blitz_committed and not goal._blitz_solo) then
+       and not (goal._blitz and goal._blitz_committed and not goal._blitz_solo)
+       -- CHARGE NOW: a person told this bot to go in; that is not a solo
+       -- take the blitz-only rule should drop.
+       and not goal._charge_now then
       clear_attack_goal(state, "blitz_only: " .. _bo_sub .. " outside a committed blitz")
       return
     end
@@ -4702,7 +4765,8 @@ local function update_attack_substate_body(goal, state, world, info)
       goal._kill_rush_decided = true
       local php    = pill and pill.health or 0
       local panger = pill and pill.anger  or 0
-      if php == 1
+      -- A charge-now that already fell back from kill_hardline stays careful.
+      if php == 1 and not goal._charge_now_careful
          and info.armour >= (C.ATTACK_RUSH_MIN_ARMOUR or 5)
          and panger <= (C.ATTACK_RUSH_MAX_ANGER or 0.34)
          -- Blitz-only: a 1-HP rush is a solo attack unless the blitz already
@@ -5256,7 +5320,9 @@ local function update_attack_substate_body(goal, state, world, info)
         local need_gather = false
         local trees_needed = 0
         local n_pots = 0
-        if goal._is_ppt and goal._shield_scan and goal._shield_scan.best then
+        -- CHARGE NOW: no tree gather.
+        if goal._is_ppt and goal._shield_scan and goal._shield_scan.best
+           and not goal._charge_now then
           local w = goal._shield_scan.best
           local pots = w.best_aim_idx and w.aims[w.best_aim_idx]
                        and w.aims[w.best_aim_idx].potential_blockers
@@ -5277,7 +5343,7 @@ local function update_attack_substate_body(goal, state, world, info)
           print(string.format(TAG .. " ATTACK: plan_position -> gather_trees (%d/%d trees for %d walls)",
                 info.trees or 0, trees_needed, n_pots))
         else
-          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
+          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus, goal)
           if unsafe then
             clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
             return
@@ -5368,8 +5434,9 @@ local function update_attack_substate_body(goal, state, world, info)
     -- A person's attack order also times out at HUMAN_ATTACK_GATHER_MAX_S.
     local timed_out = (now - (goal._gather_start or now)) > (C.PPT_GATHER_TIMEOUT or 1500)
                       or M.human_gather_cap_over(goal, state, now)
-    if trees_have >= trees_need then
-      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
+    -- CHARGE NOW: stop gathering and go.
+    if trees_have >= trees_need or goal._charge_now then
+      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus, goal)
       if unsafe then
         clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
         return
@@ -5387,7 +5454,7 @@ local function update_attack_substate_body(goal, state, world, info)
       -- frees init.lua's aim override to set aim_mx/aim_my from the
       -- pill-edge geometry instead of the corner the scan picked,
       -- which would otherwise be unprotected without walls.
-      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
+      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus, goal)
       if unsafe then
         clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
         return
@@ -5503,6 +5570,20 @@ local function update_attack_substate_body(goal, state, world, info)
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "kill_hardline" then
     if goal._hardline_abort then
+      -- CHARGE NOW: no tile beside the pill.  Do not drop the goal (the
+      -- same pill would be picked again and the charge would restart, over
+      -- and over); take the careful charge-now way from plan_position
+      -- (standoff, aim, fire, no waits, no new blockers).  orders.lua does
+      -- not restart a human-shooting charge on this pill for a while.
+      if goal._charge_now then
+        state._charge_now_abort = { tid = goal.target_id, t = now }
+        goal._charge_now_careful = true
+        goal._kill_rush, goal._kill_rush_decided = nil, nil
+        goal._hardline_abort, goal._hardline_bad = nil, nil
+        goal._hardline_mx, goal._hardline_my = nil, nil
+        reset_to_plan_position(state, goal)
+        return
+      end
       clear_attack_goal(state, "kill_hardline abort: " .. tostring(goal._hardline_abort))
       return
     end
@@ -5672,6 +5753,14 @@ local function update_attack_substate_body(goal, state, world, info)
       end
     end
 
+    -- CHARGE NOW (attack ping): no wait for the handshake.  A commander sends
+    -- GO so its soldiers go in with it; a soldier goes without the GO.
+    if goal._charge_now then
+      if state.squad_role == "c" then state.squad_blitz_go = true end
+      commit_fire()
+      return
+    end
+
     -- Pill softened below the blitz threshold while we waited: a coordinated
     -- overwhelm is overkill for a near-dead pill, so stop waiting for the GO
     -- handshake and just finish it (solo). commit_fire broadcasts GO so any
@@ -5705,7 +5794,11 @@ local function update_attack_substate_body(goal, state, world, info)
       -- up (BLITZ_ABANDON_SHORT); with it the wait is extended up to
       -- BLITZ_ONLY_EXTEND_MAX times first, then given up the same way
       -- (2026-09-26: before the cap it extended forever).
-      if total == 0 and not squad.blitz_only(state) then
+      -- HUMAN_NEAR_BLITZ_CAP: a human team-mate within
+      -- ORDER_HUMAN_NEAR_SUICIDE_TILES (goal._human_near) and no soldier at
+      -- all: go now, blitz-only or not.
+      local _hn_solo = C.HUMAN_NEAR_BLITZ_CAP and goal._human_near and total == 0
+      if total == 0 and (not squad.blitz_only(state) or _hn_solo) then
         -- Nobody (left) answering. If we SKIPPED walls for a joiner who is now
         -- gone (full-pill PPT, no shield built), degrade to a normal SOLO
         -- PROTECTED take: re-approach so the in-position decision builds the
@@ -5811,6 +5904,13 @@ local function update_attack_substate_body(goal, state, world, info)
       local bo_hold = squad.blitz_only(state) and C.BLITZ_ONLY_EXTEND_WAIT
       local verdict = M.blitz_cmdr_go_verdict(bo_hold, timed_out, ready, total, party, set_inwait, bmin,
                                               goal._blitz_only_ext_n or 0, C.BLITZ_ONLY_EXTEND_MAX or 3)
+      -- HUMAN_NEAR_BLITZ_CAP: with a human team-mate near (goal._human_near)
+      -- the commander waits at most HUMAN_ATTACK_BLITZ_WAIT_MAX_S at its spot.
+      if verdict ~= "go" and C.HUMAN_NEAR_BLITZ_CAP and goal._human_near
+         and (C.HUMAN_ATTACK_BLITZ_WAIT_MAX_S or 0) > 0
+         and (now - goal._blitz_ready_since) >= C.HUMAN_ATTACK_BLITZ_WAIT_MAX_S * 50 then
+        verdict = "go"
+      end
       -- A person's attack order past HUMAN_ATTACK_BLITZ_WAIT_MAX_S: GO now,
       -- whoever is parked. No more waiting, no blitz-only extension, and no
       -- short-handed abandon of the take the person asked for.
@@ -5903,6 +6003,13 @@ local function update_attack_substate_body(goal, state, world, info)
           go = "1"
         end
       end
+      -- HUMAN_NEAR_BLITZ_CAP: the same cap for a soldier with a human
+      -- team-mate near.
+      if go ~= "1" and C.HUMAN_NEAR_BLITZ_CAP and goal._human_near
+         and (C.HUMAN_ATTACK_BLITZ_WAIT_MAX_S or 0) > 0
+         and (now - goal._blitz_wait_since) >= C.HUMAN_ATTACK_BLITZ_WAIT_MAX_S * 50 then
+        go = "1"
+      end
       -- A person's attack order past HUMAN_ATTACK_BLITZ_WAIT_MAX_S: do not
       -- wait for the commander's GO any more; go in now.
       if go ~= "1" and goal._hcap_over then
@@ -5923,16 +6030,61 @@ local function update_attack_substate_body(goal, state, world, info)
     --     (SQUAD_COMMANDER_MIN_ARMOUR); don't risk the pill we're holding.
     --   * The pill-HP-relative unsafe floor (armour_unsafe_for_pill_take) still
     --     exempts a 2+ tank blitz, where the partner shares the incoming fire.
+    --   * CHARGE NOW IGNORES SAFETY waives both floors.
     if (info.carried_pills or 0) >= 1
-       and (info.armour or 0) < (C.SQUAD_COMMANDER_MIN_ARMOUR or 30) then
+       and (info.armour or 0) < (C.SQUAD_COMMANDER_MIN_ARMOUR or 30)
+       and not (goal._charge_now and C.CHARGE_NOW_IGNORE_SAFETY) then
       clear_attack_goal(state, string.format("approach abort: carrying pill, armour %d < %d",
         info.armour or 0, C.SQUAD_COMMANDER_MIN_ARMOUR or 30))
       return
     end
-    local _appr_unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
+    local _appr_unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus, goal)
     if _appr_unsafe then
       clear_attack_goal(state, "approach abort: " .. _appr_unsafe)
       return
+    end
+    -- C.BLITZ_SOLDIER_JOIN_CHARGE: the commander charged (bgo seen, or its own
+    -- broadcast shows a firing substate) while this soldier is still driving
+    -- to its setup point.
+    --   * At least as close to the pill (Euclidean, tank to pill centre) as
+    --     its setup point is: join the charge now.  blitz_wait's soldier
+    --     branch sees the GO on the same think and commits (commit_fire).
+    --   * Further out: drop the goal, so goal selection picks whatever fits.
+    --     state._blitz_charge_missed remembers the pill.  When goal selection
+    --     hands the SAME pill back while that charge still runs (a person's
+    --     order on the pill, or the blitz row again), the new goal joins the
+    --     charge at once instead of dropping again: no loop, and no wait at
+    --     a setup point the charge has already left behind.
+    if C.BLITZ_SOLDIER_JOIN_CHARGE and goal._blitz and not goal._blitz_committed
+       and state.squad_role == "s" and state.squad_cmdr then
+      local cslot = ally_state.get(state.squad_cmdr)
+      local ci = cslot and cslot.active and cslot.info
+      if ci and ci.goal == "attack_pill" and tonumber(ci.target or "") == goal.target_id then
+        local csub = ci.sub
+        local charged = ally_state.get_key(state.squad_cmdr, "bgo") == "1"
+          or csub == "charge" or csub == "shoot_pill" or csub == "engage"
+          or csub == "swerve"
+        if charged then
+          local pcx, pcy = pmx + 0.5, pmy + 0.5
+          local sx = goal.approach_fx or goal.standoff_fx
+          local sy = goal.approach_fy or goal.standoff_fy
+          local dt = math.sqrt((info.tankx / 256.0 - pcx) ^ 2 + (info.tanky / 256.0 - pcy) ^ 2)
+          local ds = sx and sy and math.sqrt((sx - pcx) ^ 2 + (sy - pcy) ^ 2) or nil
+          local miss = state._blitz_charge_missed
+          local rejoin = miss and miss.tid == goal.target_id
+                         and now - miss.tick <= (C.SQUAD_BLITZ_WAIT_TIMEOUT or 1500)
+          if rejoin or (ds and dt <= ds) then
+            state._blitz_charge_missed = nil
+            goal.substate = "blitz_wait"
+            state.squad_blitz_in_position = true
+            return
+          elseif ds then
+            state._blitz_charge_missed = { tid = goal.target_id, tick = now }
+            clear_attack_goal(state, "blitz soldier too far when the commander charged")
+            return
+          end
+        end
+      end
     end
     local _t_app0 = BRAIN_PROFILE and clock_us() or 0
     if not goal.standoff_mx then
@@ -6141,6 +6293,11 @@ local function update_attack_substate_body(goal, state, world, info)
             why_no_build = string.format("human ally %d away — going straight in", hn)
           end
         end
+        -- CHARGE NOW: no more blockers.
+        if needs_build and goal._charge_now then
+          needs_build = false
+          why_no_build = "charge now (attack ping) - no more blockers"
+        end
         local trees_needed = needs_build and (#pots * cost_per_wall) or 0
         if needs_build and (info.trees or 0) < trees_needed then
           needs_build = false
@@ -6158,7 +6315,7 @@ local function update_attack_substate_body(goal, state, world, info)
         end
         local decision_msg
         if needs_build then
-          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
+          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus, goal)
           if unsafe then
             clear_attack_goal(state, "abort@build_walls_entry — " .. unsafe)
             return
@@ -6565,7 +6722,9 @@ local function update_attack_substate_body(goal, state, world, info)
       end
     end
 
-    if idx > #list or stalled or built_enough or goal._last_wall_early or cover_enough then
+    -- CHARGE NOW: stop building; what stands is the shield.
+    if idx > #list or stalled or built_enough or goal._last_wall_early or cover_enough
+       or goal._charge_now then
       -- Debug-only: tally built / pre-existing / unbuilt for the on-screen
       -- decision banner. The brain itself doesn't act on these counts.
       goal.wall_shield = false
@@ -6726,7 +6885,9 @@ local function update_attack_substate_body(goal, state, world, info)
         -- finishing shells, so the team's combined fire can drop the pill even when
         -- OUR magazine alone can't. Only a solo (or lone-"blitz"-of-one) take needs
         -- enough shells on its own — there, bail and let refuel replan take over.
-        if avail_shots < total_needed and not blitz_2plus then
+        -- CHARGE NOW IGNORES SAFETY: no shell abort, it goes in anyway.
+        if avail_shots < total_needed and not blitz_2plus
+           and not (goal._charge_now and C.CHARGE_NOW_IGNORE_SAFETY) then
           print(string.format(TAG .. " CHARGE: not enough shells (%d obstacles + %d hp = %d needed, have %d + %d in-flight = %d) — aborting",
             obstacle_shots, pill_hp_live, total_needed, info.shells, in_flight, avail_shots))
           clear_attack_goal(state, "not enough shells to finish take")
@@ -6838,7 +6999,7 @@ local function update_attack_substate_body(goal, state, world, info)
       -- calm enough that we'd open a hardline rush (anger at/below the rush
       -- threshold), switch straight to the dedicated kill_hardline take
       -- instead of continuing the normal aim path.
-      if pill and (pill.health or 0) == 1
+      if pill and (pill.health or 0) == 1 and not goal._charge_now_careful
          and info.armour >= (C.ATTACK_RUSH_MIN_ARMOUR or 5)
          and anger <= (C.ATTACK_RUSH_MAX_ANGER or 0.34)
          and U.mdist(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8), pmx, pmy) <= (C.HARDLINE_ENGAGE_RANGE or 10) then
@@ -6847,7 +7008,8 @@ local function update_attack_substate_body(goal, state, world, info)
         goal._aim_locked = nil
         return
       end
-      if anger > 0.65 then
+      -- CHARGE NOW: no wait for the pill to cool.
+      if anger > 0.65 and not goal._charge_now then
         goal.aim_tick = now
       else
 
@@ -6884,7 +7046,7 @@ local function update_attack_substate_body(goal, state, world, info)
           goal._is_ppt = false
           print(TAG .. " ATTACK: PPT had no shield_scan at aim — demoting to non-PPT charge")
         end
-        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
+        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus, goal)
         if unsafe then
           clear_attack_goal(state, "abort@charge_entry — " .. unsafe)
           return
@@ -6922,7 +7084,7 @@ local function update_attack_substate_body(goal, state, world, info)
         print(string.format(TAG .. " ATTACK: PPT detree done (shots=%d/%d), moving into range",
               fired, needed))
       else
-        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
+        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus, goal)
         if unsafe then
           clear_attack_goal(state, "abort@charge_entry — " .. unsafe)
           return
@@ -7342,9 +7504,11 @@ local function update_attack_substate_body(goal, state, world, info)
         print(string.format(TAG .. " SHOOT_PILL: shot does not reach pill tile, aborting"))
         clear_attack_goal(state, "shot does not reach pill")
         return
-      elseif avail_shots < total_needed and not blitz_2plus then
+      elseif avail_shots < total_needed and not blitz_2plus
+             and not (goal._charge_now and C.CHARGE_NOW_IGNORE_SAFETY) then
         -- 2+ blitz exemption (same as charge): the ally(ies) supply finishing
         -- shells, so our own magazine running short isn't a reason to bail.
+        -- CHARGE NOW IGNORES SAFETY: no shell abort either.
         print(string.format(TAG .. " SHOOT_PILL: not enough shells (%d obstacles + %d hp = %d needed, have %d + %d in-flight = %d) — aborting",
           obstacle_shots, pill_hp, total_needed, info.shells, in_flight, avail_shots))
         clear_attack_goal(state, "not enough shells to finish take")
