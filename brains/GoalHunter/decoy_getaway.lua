@@ -9,6 +9,8 @@
 -- THE PILLS (P).  The pills the hold counts (orders.decoy_pills: not ours,
 -- not an ally's, not carried, alive, edist <= PILL_FIRE_RANGE of the decoy
 -- square) whose shell really ARRIVES on the decoy square.  Sorted by id.
+-- THE RECENTLY DEAD PILL (DECOY_GETAWAY_DEAD_PILL_TICKS): a pill that died
+-- that many ticks ago or less still counts here (its shells are in flight).
 -- No pill in P = no getaway, and the hold is what it was before.
 --
 -- BLOCK(p, t), how well square t is shielded from pill p:
@@ -71,9 +73,10 @@
 --          it one square.  A fresh scan from the square it is on, with the
 --          steps that are left, at most every DECOY_GETAWAY_RESCAN_TICKS and
 --          only when something changed: the start square, the counted
---          pills, a shield on the chain, or (THE BLOCKED WATCH,
---          DECOY_GETAWAY_WATCH_BLOCKED) the square that stopped the shell
---          of a counted pill that is not in P.  With no chain, a hit starts
+--          pills, or a shield on the chain.  THE BLOCKED WATCH
+--          (DECOY_GETAWAY_WATCH_BLOCKED): the square that stopped the shell
+--          of a counted pill that is not in P, checked on its own cadence,
+--          every DECOY_GETAWAY_WATCH_TICKS.  With no chain, a hit starts
 --          a fresh scan at once (DECOY_GETAWAY_HIT_RESCAN); a chain found
 --          by that scan keeps the hit, so the bot steps in the same think.
 --   move   driving to the next square.  Hits on the way do not count.  It
@@ -149,38 +152,76 @@ local EPS = 1e-9
 
 local function tile_of(w) return bit.rshift(w, 8) end
 
--- The hold's own pill rule (orders.decoy_pills).
-local function counted(p, mx, my)
+-- THE RECENTLY DEAD PILL (DECOY_GETAWAY_DEAD_PILL_TICKS, Oct 6).  A pill
+-- that has just died still has shells in flight, so for the getaway (the
+-- counted set, P, the chain search and THE BLOCKER STEP's closest pill) it
+-- still counts for DECOY_GETAWAY_DEAD_PILL_TICKS brain ticks after it was
+-- last seen alive.  alive = ga.alive, { [pill id] = the last tick M.update
+-- saw it alive (health > 0, not carried) }, kept from the start of the hold
+-- (a pill that died before the hold began has no record and does not
+-- count).  A dead pill does not stop a shell itself: sea_shot_reaches treats
+-- its square as rubble, as before.  The hold's own pill count
+-- (orders.decoy_pills) does not change: it counts live pills only.
+-- Returns the dead age (now - last seen alive) when dead pill p still
+-- counts, false when a dead pill does not count, nil when p is alive.
+local function dead_age(pid, p, alive, now)
+  if (p.health or 0) > 0 then return nil end
+  local lim = C.DECOY_GETAWAY_DEAD_PILL_TICKS or 0
+  local seen = alive and alive[pid]
+  if lim <= 0 or not seen or not now then return false end
+  local age = now - seen
+  if age <= lim then return age end
+  return false
+end
+M.dead_age = dead_age
+
+-- The hold's own pill rule (orders.decoy_pills), plus THE RECENTLY DEAD
+-- PILL: health > 0, or dead with a dead age (see dead_age).
+local function counted(p, mx, my, age)
   return p.owner ~= "friendly" and p.owner ~= "allied" and not p.in_tank
-         and (p.health or 0) > 0 and p.mx and p.my
+         and ((p.health or 0) > 0 or age) and p.mx and p.my
          and U.edist(mx, my, p.mx, p.my) <= (C.PILL_FIRE_RANGE or 8)
 end
 
-local function counted_ids(world, mx, my)
-  local ids = {}
+-- The counted pill ids, sorted, and { [id] = dead age } for the dead ones.
+local function counted_ids(world, mx, my, alive, now)
+  local ids, ages = {}, {}
   for pid, p in pairs((world and world.pills) or {}) do
-    if counted(p, mx, my) then ids[#ids + 1] = pid end
+    local age = dead_age(pid, p, alive, now)
+    if counted(p, mx, my, age) then
+      ids[#ids + 1] = pid
+      if age then ages[pid] = age end
+    end
   end
   table.sort(ids)
-  return ids
+  return ids, ages
+end
+
+-- A pill id as the log writes it: "4", or "4(dead 17)" for a dead one.
+local function pid_txt(id, dead)
+  if dead then return string.format("%s(dead %d)", tostring(id), dead) end
+  return tostring(id)
 end
 
 -- P: the counted pills whose shell arrives on (mx,my).  Sorted by id.
 -- The second result is the counted pills that are NOT in P, from the same
 -- traces (no extra trace): { id, sx, sy } with the square that stopped the
 -- shell, or no sx when the shell ran out (or the trace failed).  THE
--- BLOCKED WATCH (M.signature) watches those squares.
-function M.pill_set(world, mx, my)
+-- BLOCKED WATCH (M.watch_signature) watches those squares.  alive and now
+-- are for THE RECENTLY DEAD PILL (nil = live pills only); an entry of a
+-- dead pill that still counts has dead = its dead age.
+function M.pill_set(world, mx, my, alive, now)
   local G = goals()
   local out, blocked = {}, {}
-  for _, pid in ipairs(counted_ids(world, mx, my)) do
+  local ids, ages = counted_ids(world, mx, my, alive, now)
+  for _, pid in ipairs(ids) do
     local p = world.pills[pid]
     local reached, sx, sy = G.sea_shot_reaches(world, U.m2w(p.mx), U.m2w(p.my),
                                                mx, my, cpf.SHOT_PILL, WALL_STOP)
     if reached then
-      out[#out + 1] = { id = pid, pill = p }
+      out[#out + 1] = { id = pid, pill = p, dead = ages[pid] }
     else
-      blocked[#blocked + 1] = { id = pid, sx = sx, sy = sy }
+      blocked[#blocked + 1] = { id = pid, sx = sx, sy = sy, dead = ages[pid] }
     end
   end
   return out, blocked
@@ -395,15 +436,13 @@ local function watch_part(world, sx, sy)
                        q and tostring(q.owner) or "-", q and (q.health or 0) or 0)
 end
 
--- What M.update compares to decide on a fresh scan: the tank's square, the
--- counted pills, and every shield square of the chain (its terrain and the
--- health of a pill on it).  THE BLOCKED WATCH (DECOY_GETAWAY_WATCH_BLOCKED):
--- also the square that stopped the shell of each counted pill NOT in P, as
--- the last scan saw it (ga.watch), so a wall shot away between a pill and
--- the decoy square starts a fresh scan, with a chain or without one.
-function M.signature(world, h, ga, tx, ty)
+-- What M.update compares, every DECOY_GETAWAY_RESCAN_TICKS, to decide on a
+-- fresh scan: the tank's square, the counted pills (THE RECENTLY DEAD PILL
+-- included, at tick now), and every shield square of the chain (its terrain
+-- and the health of a pill on it).
+function M.signature(world, h, ga, tx, ty, now)
   local parts = { tx .. "," .. ty }
-  for _, pid in ipairs(counted_ids(world, h.mx, h.my)) do
+  for _, pid in ipairs((counted_ids(world, h.mx, h.my, ga.alive, now))) do
     parts[#parts + 1] = tostring(pid)
   end
   for _, c in ipairs(ga.path or {}) do
@@ -411,10 +450,20 @@ function M.signature(world, h, ga, tx, ty)
       if tm.sx then parts[#parts + 1] = watch_part(world, tm.sx, tm.sy) end
     end
   end
-  if C.DECOY_GETAWAY_WATCH_BLOCKED then
-    for _, w in ipairs(ga.watch or {}) do
-      parts[#parts + 1] = "B" .. watch_part(world, w.sx, w.sy)
-    end
+  return table.concat(parts, "|")
+end
+
+-- THE BLOCKED WATCH (DECOY_GETAWAY_WATCH_BLOCKED): the square that stopped
+-- the shell of each counted pill NOT in P, as the last scan saw it
+-- (ga.watch), so a wall shot away between a pill and the decoy square starts
+-- a fresh scan, with a chain or without one.  M.update compares it every
+-- DECOY_GETAWAY_WATCH_TICKS, apart from M.signature.  It reads the terrain
+-- and the pill table only: no shell trace.  "" with the watch off.
+function M.watch_signature(world, ga)
+  if not C.DECOY_GETAWAY_WATCH_BLOCKED then return "" end
+  local parts = {}
+  for _, w in ipairs(ga.watch or {}) do
+    parts[#parts + 1] = watch_part(world, w.sx, w.sy)
   end
   return table.concat(parts, "|")
 end
@@ -424,7 +473,7 @@ end
 function M.rescan(world, info, h, sx, sy, steps, now, why)
   local ga = h.ga
   local t0 = clock_us and clock_us() or nil
-  local P, blocked = M.pill_set(world, h.mx, h.my)
+  local P, blocked = M.pill_set(world, h.mx, h.my, ga.alive, now)
   -- Shell traces this scan: one per counted pill for P (ptr), then one per
   -- (pill in P, worked-out square) in range (str).  THE BLOCKED WATCH uses
   -- the stop squares of the P traces, so it adds none.
@@ -459,27 +508,33 @@ function M.rescan(world, info, h, sx, sy, steps, now, why)
   for _, b in ipairs(blocked) do
     if b.sx then
       watch[#watch + 1] = { id = b.id, sx = b.sx, sy = b.sy }
-      wtxt[#wtxt + 1] = string.format("p%s@%s", tostring(b.id), watch_part(world, b.sx, b.sy))
+      wtxt[#wtxt + 1] = string.format("p%s@%s", pid_txt(b.id, b.dead), watch_part(world, b.sx, b.sy))
     else
-      wtxt[#wtxt + 1] = string.format("p%s@short", tostring(b.id))
+      wtxt[#wtxt + 1] = string.format("p%s@short", pid_txt(b.id, b.dead))
     end
   end
   ga.watch = watch
-  ga.sig = M.signature(world, h, ga, sx, sy)
+  ga.sig = M.signature(world, h, ga, sx, sy, now)
+  ga.wsig, ga.wcheck = M.watch_signature(world, ga), now
   local pids = {}
-  for i, tp in ipairs(P) do pids[i] = tostring(tp.id) end
+  for i, tp in ipairs(P) do pids[i] = pid_txt(tp.id, tp.dead) end
   ga.viz = { tick = now, sx = sx, sy = sy, P = P, path = path, score = score,
              cells = ctx and ctx.list or {}, edges = edges, us = us, why = why,
              traces = ptr + str,
              step0 = ga.used or 0, steps = steps }
+  -- P=[N,N(dead A)]: the pills in P, a recently dead one with its dead age
+  -- (THE RECENTLY DEAD PILL; dead<=L is DECOY_GETAWAY_DEAD_PILL_TICKS).
   -- blocked=[pN@x,y:terrain:pill owner:pill health] is every counted pill
-  -- not in P with its stop square; watch=on/off is DECOY_GETAWAY_WATCH_BLOCKED
-  -- (off = the squares are listed but not watched).  traces=total(P ptr +
+  -- not in P with its stop square; watch=on/off/W is
+  -- DECOY_GETAWAY_WATCH_BLOCKED (off = the squares are listed but not
+  -- watched) and W is DECOY_GETAWAY_WATCH_TICKS.  traces=total(P ptr +
   -- tiles str).  hits=n/need kept=yes when a hit scan kept its hit.
-  print2(string.format("DECOY_GETAWAY_SCAN t=%d oid=%d why=%s from=(%d,%d) steps=%d P=[%s] blocked=[%s] watch=%s tiles=%d edges=%d traces=%d(P %d + tiles %d) hits=%d/%d kept=%s best=%s path=%s score=%s us=%d",
+  print2(string.format("DECOY_GETAWAY_SCAN t=%d oid=%d why=%s from=(%d,%d) steps=%d P=[%s] dead<=%d blocked=[%s] watch=%s/%d tiles=%d edges=%d traces=%d(P %d + tiles %d) hits=%d/%d kept=%s best=%s path=%s score=%s us=%d",
          now or -1, h.oid or 0, tostring(why), sx, sy, steps,
-         table.concat(pids, ","), table.concat(wtxt, ","),
+         table.concat(pids, ","), C.DECOY_GETAWAY_DEAD_PILL_TICKS or 0,
+         table.concat(wtxt, ","),
          C.DECOY_GETAWAY_WATCH_BLOCKED and "on" or "off",
+         C.DECOY_GETAWAY_WATCH_TICKS or 50,
          ctx and #ctx.list or 0, edges, ptr + str, ptr, str,
          ga.hits or 0, C.DECOY_GETAWAY_HITS or 1, kept and "yes" or "no",
          score and string.format("%.3f", score) or "none",
@@ -535,9 +590,9 @@ end
 
 -- THE BLOCKER STEP's pill: the closest counted pill to (mx,my), by edist,
 -- ties to the lower id.  Returns the id, the pill and the distance.
-function M.closest_pill(world, mx, my)
+function M.closest_pill(world, mx, my, alive, now)
   local bid, bp, bd = nil, nil, nil
-  for _, pid in ipairs(counted_ids(world, mx, my)) do
+  for _, pid in ipairs((counted_ids(world, mx, my, alive, now))) do
     local p = world.pills[pid]
     local d = U.edist(mx, my, p.mx, p.my)
     if not bd or d < bd - EPS then bid, bp, bd = pid, p, d end
@@ -759,8 +814,15 @@ function M.update(state, world, info, h, now)
   local arm = info.armour or 0
   local ga = h.ga
   local max_steps = C.DECOY_GETAWAY_MAX_STEPS or 5
+  -- THE RECENTLY DEAD PILL: the last tick each pill was seen alive, every
+  -- think of the hold, before any scan.
+  local alive = (ga and ga.alive) or {}
+  for pid, p in pairs(world.pills or {}) do
+    if (p.health or 0) > 0 and not p.in_tank then alive[pid] = now end
+  end
   if not ga then
-    ga = { phase = "wait", hits = 0, arm = arm, used = 0, idx = 1, trigs = {} }
+    ga = { phase = "wait", hits = 0, arm = arm, used = 0, idx = 1, trigs = {},
+           alive = alive }
     h.ga = ga
     M.rescan(world, info, h, tx, ty, max_steps, now, "arrival")
   end
@@ -785,14 +847,28 @@ function M.update(state, world, info, h, now)
     -- from the tank's square (the decoy park allows one square of slack).
     local fx, fy = tx, ty
     if ga.used > 0 then fx, fy = ga.park_mx, ga.park_my end
+    local scanned = false
     if new_hit and not ga.path and C.DECOY_GETAWAY_HIT_RESCAN then
       -- A HIT WITH NO CHAIN LOOKS AGAIN AT ONCE (DECOY_GETAWAY_HIT_RESCAN):
       -- a shell got through, so a shield may be gone.  No wait for the
       -- look-again check; a chain found now keeps this hit (M.rescan).
       M.rescan(world, info, h, fx, fy, max_steps - ga.used, now, "hit")
-    elseif now - (ga.check or now) >= (C.DECOY_GETAWAY_RESCAN_TICKS or 50) then
+      scanned = true
+    end
+    -- THE FAST BLOCKED WATCH (DECOY_GETAWAY_WATCH_TICKS): the watched stop
+    -- squares on their own cadence, a terrain and pill-table read only; a
+    -- scan only when one changed.
+    if not scanned and C.DECOY_GETAWAY_WATCH_BLOCKED and ga.watch and #ga.watch > 0
+       and now - (ga.wcheck or now) >= (C.DECOY_GETAWAY_WATCH_TICKS or 50) then
+      ga.wcheck = now
+      if M.watch_signature(world, ga) ~= ga.wsig then
+        M.rescan(world, info, h, fx, fy, max_steps - ga.used, now, "watch")
+        scanned = true
+      end
+    end
+    if not scanned and now - (ga.check or now) >= (C.DECOY_GETAWAY_RESCAN_TICKS or 50) then
       ga.check = now
-      if M.signature(world, h, ga, fx, fy) ~= ga.sig then
+      if M.signature(world, h, ga, fx, fy, now) ~= ga.sig then
         M.rescan(world, info, h, fx, fy, max_steps - ga.used, now, "changed")
       end
     end
@@ -806,7 +882,7 @@ function M.update(state, world, info, h, now)
       -- ga.blk is the park square (the end of the line); twx/twy is where
       -- the tank really is, for the overlay.
       local kx, ky = ga.park_mx, ga.park_my
-      local pid, p = M.closest_pill(world, kx, ky)
+      local pid, p = M.closest_pill(world, kx, ky, ga.alive, now)
       -- The last blocker first (no ledger yet), then its ledger entry, then
       -- the sounds of this think, then its count: a hit in the think the
       -- wall became the last blocker is not lost.
@@ -1073,7 +1149,7 @@ local function draw_lines(viz, v)
   local ID = VIZ_LINES
   for _, tp in ipairs(v.P or {}) do
     viz.circle(ID, tp.pill.mx + 0.5, tp.pill.my + 0.5, 0.6, 255, 60, 60, 230, false, false)
-    viz.text(ID, tp.pill.mx + 0.5, tp.pill.my - 0.5, "P p" .. tostring(tp.id),
+    viz.text(ID, tp.pill.mx + 0.5, tp.pill.my - 0.5, "P p" .. pid_txt(tp.id, tp.dead),
              "center", 255, 120, 120, 255)
   end
   for _, c in ipairs(v.path or {}) do
