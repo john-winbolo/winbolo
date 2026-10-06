@@ -5483,13 +5483,30 @@ print("decoy_getaway.lua -- the decoy getaway")
         and hb.ga.path == nil, tostring(#P0) .. " " .. tostring(bl0[1] and bl0[1].sx))
   check("the scan keeps the stop square to watch",
         #hb.ga.watch == 1 and hb.ga.watch[1].sx == 21 and hb.ga.watch[1].sy == 22, "?")
+  -- THE FAST BLOCKED WATCH (DECOY_GETAWAY_WATCH_TICKS 1, keel 50): the
+  -- watched square is read every think, so the scan comes on the first
+  -- think after the wall goes (bot4: wall down t=1956, scan t=1957).
+  check("fast blocked watch knob: 1 live, 50 in keel",
+        C.DECOY_GETAWAY_WATCH_TICKS == 1 and C.PRESETS.keel.DECOY_GETAWAY_WATCH_TICKS == 50, "?")
+  lock(b, 220)
+  check("wall up: the watch check does not rescan (no change, no trace)",
+        hb.ga.path == nil and hb.ga.scan_tick == 201 and hb.ga.wcheck == 220, "?")
+  TMAP[WK] = nil
+  lock(b, 221)
+  check("wall gone: the fast watch rescans on the next think, chain found, waits for a fresh hit",
+        pstr(hb.ga.path) == "22,25 22,26 22,27" and hb.ga.scan_tick == 221
+        and hb.ga.viz.why == "watch" and hb.ga.phase == "wait" and hb.ga.hits == 0,
+        pstr(hb.ga.path))
+  C.DECOY_GETAWAY_WATCH_TICKS = 50
+  b, hb = walled()
   TMAP[WK] = nil
   lock(b, 250)
-  check("wall gone: no rescan before the check interval", hb.ga.path == nil, "?")
+  check("WATCH_TICKS=50 (keel): wall gone, no rescan before the check interval", hb.ga.path == nil, "?")
   lock(b, 251)
-  check("wall gone: the blocked watch rescans at the check, chain found, waits for a fresh hit",
+  check("WATCH_TICKS=50 (keel): the blocked watch rescans at the check, chain found, waits for a fresh hit",
         pstr(hb.ga.path) == "22,25 22,26 22,27" and hb.ga.scan_tick == 251
         and hb.ga.phase == "wait" and hb.ga.hits == 0, pstr(hb.ga.path))
+  C.DECOY_GETAWAY_WATCH_TICKS = 1
   C.DECOY_GETAWAY_WATCH_BLOCKED = false
   b, hb = walled()
   TMAP[WK] = nil
@@ -5508,13 +5525,75 @@ print("decoy_getaway.lua -- the decoy getaway")
         hb.ga.path == nil and hb.ga.scan_tick == 210 and hb.ga.phase == "wait"
         and b.st.goal.my == 24, tostring(hb.ga.phase))
   C.DECOY_GETAWAY_HIT_RESCAN = false
+  C.DECOY_GETAWAY_WATCH_TICKS = 50
   b, hb = walled()
   TMAP[WK] = nil
   b.inf.armour = 35; lock(b, 210)
   check("DECOY_GETAWAY_HIT_RESCAN=false: the hit does not rescan", hb.ga.path == nil
         and hb.ga.scan_tick == 201, "?")
+  C.DECOY_GETAWAY_WATCH_TICKS = 1
+  b, hb = walled()
+  TMAP[WK] = nil
+  b.inf.armour = 35; lock(b, 210)
+  check("HIT_RESCAN=false, fast watch: the watch scan finds the chain, the hit is spent",
+        pstr(hb.ga.path) == "22,25 22,26 22,27" and hb.ga.scan_tick == 210
+        and hb.ga.viz.why == "watch" and hb.ga.phase == "wait" and hb.ga.hits == 0, tostring(hb.ga.phase))
   C.DECOY_GETAWAY_HIT_RESCAN = true
   TMAP[WK] = nil
+  S({})
+  end)()
+
+  ;(function() -- own function: the main chunk is at its 200-local limit
+  -- 9c. THE RECENTLY DEAD PILL (recorded game 20261006_002825, bot2).  A
+  -- pill that died DECOY_GETAWAY_DEAD_PILL_TICKS ago or less still counts
+  -- for the getaway (its shells are in flight); orders.decoy_pills does not
+  -- change.  Pill 5 (20,20) is blocked by a wall at (21,22); pill 6 (26,24)
+  -- by a wall at (24,24) and keeps the hold.  Pill 5 dies and its wall goes
+  -- on the same think.
+  check("dead pill knob: 40 live, 0 in keel",
+        C.DECOY_GETAWAY_DEAD_PILL_TICKS == 40 and C.PRESETS.keel.DECOY_GETAWAY_DEAD_PILL_TICKS == 0, "?")
+  local WK5, WK6 = 22 * 256 + 21, 24 * 256 + 24
+  local function setup()
+    TMAP[WK5], TMAP[WK6] = C.T_BUILDING, C.T_BUILDING
+    S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 } })
+    local b = dbot()
+    b.w.pills[6] = { mx = 26, my = 24, owner = "hostile", health = 5 }
+    arrive(b, 200); b.inf.direction = 64; b.inf.armour = 40; lock(b, 201)
+    lock(b, 204)
+    return b, b.st.orders.held
+  end
+  local b, hb = setup()
+  check("dead pill setup: both pills blocked, no chain, pill 5 last seen alive at 204",
+        hb.ga.path == nil and #hb.ga.watch == 2 and hb.ga.alive[5] == 204, "?")
+  b.w.pills[5].health = 0
+  TMAP[WK5] = nil
+  lock(b, 205)
+  check("pill 5 dead 1 tick: the watch scan keeps it in P (dead 1), chain found",
+        pstr(hb.ga.path) == "22,25 22,26 22,27" and hb.ga.scan_tick == 205
+        and #hb.ga.viz.P == 1 and hb.ga.viz.P[1].id == 5 and hb.ga.viz.P[1].dead == 1,
+        pstr(hb.ga.path))
+  check("orders.decoy_pills does not count the dead pill", ORD.decoy_pills(b.w, 22, 24) == 1, "?")
+  b.inf.armour = 35; lock(b, 210)
+  check("pill 5 dead: a hit from its shell in flight moves the bot",
+        hb.ga.phase == "move" and b.st.goal.my == 25, tostring(hb.ga.phase))
+  local P1 = GA.pill_set(b.w, 22, 24, hb.ga.alive, 244)
+  local P2 = GA.pill_set(b.w, 22, 24, hb.ga.alive, 245)
+  check("dead age 40 counts, dead age 41 does not",
+        #P1 == 1 and P1[1].dead == 40 and #P2 == 0, tostring(#P1) .. " " .. tostring(#P2))
+  check("no alive record (no now): a dead pill does not count", #GA.pill_set(b.w, 22, 24) == 0, "?")
+  check("dead_age: nil alive, false too old, the age when it counts",
+        GA.dead_age(6, b.w.pills[6], hb.ga.alive, 245) == nil
+        and GA.dead_age(5, b.w.pills[5], hb.ga.alive, 245) == false
+        and GA.dead_age(5, b.w.pills[5], hb.ga.alive, 221) == 17, "?")
+  C.DECOY_GETAWAY_DEAD_PILL_TICKS = 0
+  b, hb = setup()
+  b.w.pills[5].health = 0
+  TMAP[WK5] = nil
+  lock(b, 205)
+  check("DEAD_PILL_TICKS=0 (keel): the dead pill drops at once, P empty, no chain",
+        hb.ga.path == nil and hb.ga.scan_tick == 205 and #hb.ga.viz.P == 0, pstr(hb.ga.path))
+  C.DECOY_GETAWAY_DEAD_PILL_TICKS = 40
+  TMAP[WK5], TMAP[WK6] = nil, nil
   S({})
   end)()
 

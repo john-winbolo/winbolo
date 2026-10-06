@@ -4961,6 +4961,21 @@ M.DECOY_GETAWAY_WATCH_BLOCKED = true  -- keel false
 -- by any other scan still waits for a fresh hit, as before.)  false = a hit
 -- with no chain does nothing until the next look-again check (as before).
 M.DECOY_GETAWAY_HIT_RESCAN    = true  -- keel false
+-- 2026-10-06: THE FAST BLOCKED WATCH.  The blocked-pill squares above are
+-- checked every this many brain ticks, apart from the look-again check
+-- (DECOY_GETAWAY_RESCAN_TICKS, which keeps the tank square, the counted
+-- pills and the chain's shields).  The check reads terrain only; a scan runs
+-- only when a watched square changed.  Recorded game 20261005_232149: the
+-- wall fell at t=1956 and the next look came at t=1980.
+M.DECOY_GETAWAY_WATCH_TICKS   = 1     -- keel 50
+-- 2026-10-06: THE RECENTLY DEAD PILL.  A pill that died this many brain
+-- ticks ago or less still counts for the getaway (the counted pills, P,
+-- the chain search, the blocker step's closest pill): its shells are still
+-- in flight.  The hold's own pill count (orders.decoy_pills) is not
+-- changed.  Recorded game 20261006_002825 (bot2): pill 4 died at t=3152,
+-- the t=3169 scan dropped it and drove the chain down its line, and its
+-- shells in flight hit the bot three times.  0 = a dead pill never counts.
+M.DECOY_GETAWAY_DEAD_PILL_TICKS = 40  -- keel 0
 -- 2026-09-26: THE MOVE TIMEOUT.  A getaway move that has not reached its
 -- square after this many ticks (the square still drivable, but an enemy tank
 -- on it or a long pathfinder detour) parks on the square the tank is on and
@@ -5696,6 +5711,8 @@ M.PRESETS = {
     DECOY_GETAWAY_RESCAN_TICKS    = 50,
     DECOY_GETAWAY_WATCH_BLOCKED   = false,
     DECOY_GETAWAY_HIT_RESCAN      = false,
+    DECOY_GETAWAY_WATCH_TICKS     = 50,
+    DECOY_GETAWAY_DEAD_PILL_TICKS = 0,
     DECOY_GETAWAY_MOVE_TICKS      = 300,
     DECOY_GETAWAY_WALL_FULL       = 1.0,
     DECOY_GETAWAY_WALL_DAMAGED    = 0.5,
