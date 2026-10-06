@@ -115,7 +115,7 @@ log_SpectatorChat,   // format-reserved: opt1=sender spectator slot + message ps
 log_GameSettings,    // pascal-string blob of every lobby setting (layout in docs/replay-format.md)
 log_Ping,            // opt1=sender, opt2=kind, then worldX/worldY as two big-endian u16 (layout in docs/replay-format.md)
 log_TankSetStock,    // opt1=player, opt2=shells, opt3=mines, opt4=armour, short1=trees
-log_TankSetModifiers,// opt1=player, then a 6-byte pascal blob: speed, accel, turn, reload, dealt, taken
+log_TankSetModifiers,// opt1=player, then a 6-byte pascal blob: speed, accel, turn, reload, dealt, taken (8 bytes when speed > 255: the six with speed 255, then speed as BE u16)
 log_EntityChange,    // opt1=kind (LV_ENTITY_KIND_*), opt2=index (0 based), opt3=on the map, then the item's record as a pascal blob (layout in docs/replay-format.md)
 log_EntityMasks,     // which indices are on the map, as three big-endian u16: pills in opt1/opt2, bases in opt3/opt4, starts in short1. Follows every snapshot (layout in docs/replay-format.md)
 log_ServerText,      // a server line a scenario wrote: opt1=destTeam (0 = everyone), opt2=destPlayer (0xFF = everyone), then the text as a pascal string
@@ -127,7 +127,8 @@ log_ScnAnnounce,     // a big line a scenario put up across the game view: opt1=
 log_ScnMarker,       // a scenario map marker: opt1=id, opt2=kind, opt3=destTeam, opt4=destPlayer, then x, y, slot and colour as a four-byte pascal blob
 log_ScnHint,         // an order a scenario gave one bot: opt1=slot, then the hint's verb as a pascal string. The rest of the hint's pairs are the bot's brain's business and are not recorded
 log_ServerTick,      // the server's game tick at this entry, as a big-endian u32 across opt1..opt4. Written at the round's first entry, at every entry that carries a snapshot and every FULL_SYNC_INTERVAL ticks (layout in docs/replay-format.md)
-log_ScnStatus        // a scenario's status line at the top of the view: opt1=destTeam, opt2=destPlayer, then the countdown's end tick as a big-endian u32 (0xFFFFFFFF = no countdown) and the text as a pascal string. An empty text is the clear (layout in docs/replay-format.md)
+log_ScnStatus,       // a scenario's status line at the top of the view: opt1=destTeam, opt2=destPlayer, then the countdown's end tick as a big-endian u32 (0xFFFFFFFF = no countdown) and the text as a pascal string. An empty text is the clear (layout in docs/replay-format.md)
+log_VoiceEveryone    // whether a scenario sent the round's voice to every player rather than to allies alone: opt1=1 for everyone, 0 for allies only. Written when the value changes
 } logitem;
 
 /* Which list a log_EntityChange names. Mirrors ENTITY_KIND_* in

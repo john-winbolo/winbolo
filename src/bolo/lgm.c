@@ -785,12 +785,25 @@ void lgmMoveAway(GameSim *sim, lgm *lgman, tank *tnk) {
   conv >>= TANK_SHIFT_MAPSIZE;
   bmy = (BYTE) conv;
 
-  if ((bmx == (*lgman)->blessX && bmy == (*lgman)->blessY) || onBoat == TRUE) {
+  if (onBoat == TRUE) {
     speed = (BYTE) sim->rules.man_speed_refuel_base;
+  } else if (bmx == (*lgman)->blessX && bmy == (*lgman)->blessY) {
+    speed = (BYTE) sim->rules.man_speed_refuel_base;
+    if (sim->rules.man_bless_tile_terrain_speed) {
+      /* man_bless_tile_terrain_speed: on the square he is going to build
+         on he walks up to its centre at that square's own terrain speed,
+         as he does on every other square. A square that reads 0 (a river,
+         a wall, a live pillbox) keeps the base speed above, so he can
+         never be left standing still on it. */
+      BYTE blessSpeed = mapGetManSpeed(sim, mp, pb, bs, bmx, bmy, (*lgman)->playerNum);
+      if (blessSpeed > 0) {
+        speed = blessSpeed;
+      }
+    }
   } else {
     speed = mapGetManSpeed(sim, mp, pb, bs, bmx, bmy, (*lgman)->playerNum);
   }
-  
+
   utilCalcDistance(&xAdd, &yAdd, angle, speed);
   newmx = (WORLD) ((*lgman)->x + xAdd);
   newmy = (WORLD) ((*lgman)->y + yAdd);

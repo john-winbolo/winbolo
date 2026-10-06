@@ -171,6 +171,35 @@ void lv_drawLGMs(screenLgm *lgms);
 *********************************************************/
 void lv_drawTankLabel(char *str, int mx, int my, BYTE px, BYTE py);
 
+/*********************************************************
+*NAME:          lv_drawTankLabelCount / lv_drawTankLabelGet
+*PURPOSE:
+*  The tank names for the world in the render target, drawn
+*  over the blit instead of into the target so they are
+*  rasterized at the size they appear. Count rasterizes them
+*  for a target drawn at `scale` screen pixels per target
+*  pixel and returns how many there are. Get gives one: a
+*  white texture of the name (tint it for the fill and the
+*  shadow), its top-left in target pixels and its pixel size;
+*  an out pointer may be NULL. A name keeps its texture across
+*  Count calls until it leaves the screen or the size changes.
+*  Both read 0 / FALSE while the names go into the target.
+*********************************************************/
+struct SDL_Texture;
+int  lv_drawTankLabelCount(float scale);
+BYTE lv_drawTankLabelGet(int index, struct SDL_Texture **outTex, int *outX, int *outY,
+                         int *outW, int *outH);
+
+/*********************************************************
+*NAME:          lv_drawSetTankLabelsInTarget
+*PURPOSE:
+*  TRUE draws the tank names into the render target, for a
+*  caller that reads the target back (the GIF export).
+*  FALSE, the default, leaves them for the drawer of the
+*  blit. Changing it repaints the whole target.
+*********************************************************/
+void lv_drawSetTankLabelsInTarget(BYTE inTarget);
+
 void lv_drawDirtyScreen(void);
 
 /*********************************************************

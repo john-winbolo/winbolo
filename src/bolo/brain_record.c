@@ -37,11 +37,11 @@ static char     g_sessionDir[512] = {0};  /* resolved DEBUG_SESSION_DIR */
 static bool     g_skipViz[256] = {0};     /* overlay viz_idx values to drop (fallback set) */
 static bool     g_haveSkip = false;
 /* Per-slot skip sets. Every brain self-assigns its overlay viz_idx values
- * from ITS OWN sorted id list, so two different brains (GoalHunter 1.6 and
- * 1.7 in a 2v2) number the same category differently. One skip set taken
+ * from ITS OWN sorted id list, so two different brains (an older GoalHunter
+ * and the current one in a 2v2) number the same category differently. One skip set taken
  * from bot 0 therefore dropped the WRONG categories from every bot running
- * the other brain -- 1.7's pill_portfolio vanished from recordings while
- * 1.6's showed. Slots without their own set (bots created after the file
+ * the other brain -- the current brain's pill_portfolio vanished from recordings while
+ * the older one's showed. Slots without their own set (bots created after the file
  * was opened) fall back to g_skipViz. */
 static bool     g_skipVizSlot[MAX_TANKS][256];
 static bool     g_haveSkipSlot[MAX_TANKS];

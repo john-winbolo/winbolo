@@ -250,6 +250,12 @@ typedef struct SimRules {
     /* ---- Mac Bolo pill aiming ---- appended to preserve rule indices */
     int32_t pill_aim_mac;            /* Mac Bolo lead, including pill massage */
     int32_t tank_collision_mac;      /* Mac sprite boxes and solid-tile nudges */
+
+    /* ---- Deep sea ---- appended to preserve rule indices */
+    int32_t tank_deep_sea_safe;      /* a tank with no boat floats on deep sea */
+
+    /* ---- Builder walk ---- appended to preserve rule indices */
+    int32_t man_bless_tile_terrain_speed; /* terrain speed on the build square */
 } SimRules;
 
 /*********************************************************

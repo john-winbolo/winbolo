@@ -984,7 +984,7 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
 
     /* Legend: recorded viz_idx -> category name, remapped to BrainTest's own
      * registry index by name. PER SLOT: every brain self-assigns its indices
-     * from its own sorted id list, so a 1.6 bot and a 1.7 bot in the same
+     * from its own sorted id list, so bots running two different brains in the same
      * game number the same category differently. The blob is
      *   {"<idx>":"<name>",...[,"slots":{"<slot>":{"<idx>":"<name>",...},...}]}
      * -- the leading global map (older recordings have only that) seeds every
@@ -2355,7 +2355,7 @@ static void signalHandler(int sig) {
 /* Command-line parsing                                                */
 /* ------------------------------------------------------------------ */
 
-static char optBrain[512] = "brains/GoalHunter_1.7";
+static char optBrain[512] = "brains/GoalHunter";
 static char optBotInit[1024] = ""; /* -bot-init spec; per-bot brain paths + [arg] */
 static char optMap[512]   = "";
 static char optLoadSession[1024] = "";  /* -loadsession <dir>: replay a brainrec.btr */
@@ -6279,13 +6279,13 @@ int main(int argc, char *argv[]) {
             if (bl > 0 && (brainName[bl-1] == '/' || brainName[bl-1] == '\\'))
                 brainName[bl-1] = '\0';
         }
-        /* Strip a trailing version suffix ("GoalHunter_1.7" -> "GoalHunter")
+        /* Strip a trailing version suffix ("GoalHunter_1.6" -> "GoalHunter")
          * so panel-type namespacing ("<brain>:<type>") matches the renderers'
          * fixed "GoalHunter:" prefix across the versioned brain dirs from the
          * 1.0/1.5 split. Only strips when the chars after the last '_' are
          * version-like (start with a digit), so a brain whose real name
          * contains an underscore is left alone. Also keeps the namespaced type
-         * within PANEL_REG_TYPE_MAX, which was truncating "GoalHunter_1.7:
+         * within PANEL_REG_TYPE_MAX, which was truncating "GoalHunter_1.6:
          * pool_grid" to "...pool_gri". */
         {
             char *us = NULL;

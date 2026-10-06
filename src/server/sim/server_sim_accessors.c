@@ -33,6 +33,7 @@
 
 #include "wire_limits.h"   /* LobbySettingType, LOBBY_LOCK_* for serverSimGetSettingLockBit */
 #include "server_sim_internal.h"
+#include "lobby_bot_pools.h"
 #include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange — the setters that clear ready state */
 
 /*********************************************************
@@ -307,6 +308,15 @@ bool serverSimGetRosterSlot(ServerSim *sim, BYTE i, ServerSimRosterSlot *out) {
     out->fielded = sim->lobbyPlayers[i].fielded;
     t = &sim->sim.tanks[i];
     out->alive = (*t != NULL && tankGetDeathWait(t) == 0);
+    {
+        BYTE team = sim->lobbyPlayers[i].teamNumber;
+        if (team > 0 && team < MAX_TANKS && sim->teams[team].in_use &&
+            (int)sim->teams[team].namingPool < lobbyBotPoolCount()) {
+            SDL_strlcpy(out->team_pool,
+                        lobbyBotPoolLabel(sim->teams[team].namingPool),
+                        sizeof(out->team_pool));
+        }
+    }
     return true;
 }
 
@@ -957,6 +967,22 @@ void serverSimSetVoiceMode(ServerSim *sim, ServerVoiceMode mode) {
 
 ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim) {
     return sim ? sim->voiceMode : serverVoiceOn;
+}
+
+bool serverSimGetScenarioVoiceEveryone(const ServerSim *sim) {
+    if (sim == NULL || sim->voiceMode == serverVoiceOff) return false;
+    return sim->scenarioVoiceEveryone;
+}
+
+bool serverSimVoiceSidesAllow(const ServerSim *sim, BYTE to, BYTE talker) {
+    if (sim == NULL || to >= MAX_TANKS || talker >= MAX_TANKS) return false;
+    /* Outside a game everyone hears everyone: the lobby is where teams get
+     * argued out, and scoping voice by team there works against the room. */
+    if (sim->state != serverStateRunning) return true;
+    if (serverSimGetScenarioVoiceEveryone(sim)) return true;
+    /* In game, voice follows the live alliance, so a mid-game alliance
+     * change takes effect on the next frame. */
+    return playersIsAllie((players *)&sim->sim.plyrs, to, talker);
 }
 
 void serverSimSetScriptUploadPolicy(ServerSim *sim, ScriptUploadPolicy p) {

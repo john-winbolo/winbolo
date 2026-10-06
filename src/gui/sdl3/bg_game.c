@@ -51,12 +51,7 @@ BgGame *bgGameGetShared(void) { return sharedBg; }
 
 /* Bot player count range */
 #define BG_MIN_BOTS 2
-#ifdef __EMSCRIPTEN__
-/* The bots share the page's only thread with the menu. */
-#define BG_MAX_BOTS 4
-#else
 #define BG_MAX_BOTS 16
-#endif
 
 /* User zoom range, in whole zoom factors (16px tiles * zf). */
 #define BG_MIN_ZOOM 1
@@ -76,15 +71,15 @@ BgGame *bgGameGetShared(void) { return sharedBg; }
 #define BG_MAX_CATCHUP_TICKS 3    /* cap catch-up so a stall can't snowball */
 
 /* Brain script path */
-#define BG_BRAIN_PATH "Brains/GoalHunter_1.7/init.lua"
+#define BG_BRAIN_PATH "Brains/GoalHunter/init.lua"
 
 /* Find the brain script — try several paths.
  * Uses SDL_IOFromFile so it works with Android APK assets. */
 static bool findBrainPath(char *out, size_t outLen) {
     const char *candidates[] = {
-        "Brains/GoalHunter_1.7/init.lua",
-        "brains/GoalHunter_1.7/init.lua",
-        "data/Brains/GoalHunter_1.7/init.lua",
+        "Brains/GoalHunter/init.lua",
+        "brains/GoalHunter/init.lua",
+        "data/Brains/GoalHunter/init.lua",
     };
     for (int i = 0; i < (int)(sizeof(candidates)/sizeof(candidates[0])); i++) {
         SDL_IOStream *io = SDL_IOFromFile(candidates[i], "r");
@@ -295,7 +290,21 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
     char brainPath[512];
     if (findBrainPath(brainPath, sizeof(brainPath))) {
         WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Found brain: %s", brainPath);
+#ifdef __EMSCRIPTEN__
+        /* One bot per runner (pool workers plus the page's thread), so every
+         * bot thinks in parallel with the whole brain budget. */
+        int maxBots;
+        {
+            BotPoolStats poolStats;
+            serverSimGetBotPoolStats(bg->sim, &poolStats);
+            maxBots = poolStats.workerCount + 1;
+            if (maxBots > BG_MAX_BOTS) maxBots = BG_MAX_BOTS;
+            if (maxBots < BG_MIN_BOTS) maxBots = BG_MIN_BOTS;
+        }
+        int numBots = BG_MIN_BOTS + (int)bolo_rand_below((uint32_t)(maxBots - BG_MIN_BOTS + 1));
+#else
         int numBots = BG_MIN_BOTS + (int)bolo_rand_below((uint32_t)(BG_MAX_BOTS - BG_MIN_BOTS + 1));
+#endif
         for (BYTE i = 0; i < numBots; i++) {
             char name[32];
             SDL_snprintf(name, sizeof(name), "Bot %d", i + 1);

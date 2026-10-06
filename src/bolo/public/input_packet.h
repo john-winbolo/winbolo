@@ -120,6 +120,15 @@ typedef struct {
 #define TANK_PRESENT_FLAGS     0x40  /* clientFlags (1B) */
 #define TANK_PRESENT_HIDDEN    0x80  /* hiddenFlags (1B) */
 #define TANK_PRESENT_MODS    0x0100  /* modSpeed, modAccel, modTurn, modReload, modDealt, modTaken (6B) */
+/* modSpeedWide (2B): the whole speed modifier when it is past a byte, and then
+ * modSpeed holds 255. A speed that fits a byte leaves modSpeedWide 0, so the
+ * group is off the wire and the entry is the bytes it always was. A client
+ * built before the group ignores its bit, so on the snapshots that carry it
+ * (only those of a tank whose speed is past a byte, and only to that tank's
+ * owner) it reads the tank entries after that one two bytes out of step. The
+ * reads are bounds-checked, so it cannot crash; those entries are wrong for
+ * as long as the wide speed lasts. */
+#define TANK_PRESENT_MODS_WIDE 0x0200
 
 /* TankSnapshot.tankStatus bits. The low nibble carries the boat, the high
  * nibble the two death signals, which are not the same question:
@@ -171,12 +180,14 @@ typedef struct {
     uint16_t pingMs;       /* This player's ping in ms */
     uint8_t  clientFlags;  /* PLAYER_FLAG_* bits — see players.h */
     uint8_t  hiddenFlags;  /* TANK_HIDDEN_* bits — which fields are withheld */
-    uint8_t  modSpeed;     /* Per-tank percentages, 0 = classic; owning player only. */
+    uint8_t  modSpeed;     /* Per-tank percentages, 0 = classic; owning player only.
+                              255 when the speed is past a byte (see modSpeedWide). */
     uint8_t  modAccel;
     uint8_t  modTurn;
     uint8_t  modReload;
     uint8_t  modDealt;
     uint8_t  modTaken;
+    uint16_t modSpeedWide; /* The whole speed modifier when past 255, else 0 */
 } TankSnapshot;
 
 /* Per-shell data within a snapshot (wire format) */
@@ -316,6 +327,11 @@ typedef struct {
                                  * gameEventIsLocal. cause is a LAST_DEATH_BY_* value, amount the
                                  * armour the tank actually lost and pill the pill index whose
                                  * shell it was, DMG_NO_PILL otherwise. */
+
+/* The highest event type. Move it when adding one above: the unit tests walk
+ * every type up to it and fail on one that a reader keyed on the full list
+ * (obsEventIsRead, for the ML observation) has not been told about. */
+#define EVENT_LAST           EVENT_TANK_HIT
 
 /* EVENT_BUILT's action byte is the builder's own request code, which is the
  * same number BuilderJob uses in server_sim.h — the two are already pinned
@@ -460,7 +476,8 @@ static inline bool gameEventIsReliable(uint8_t type) {
  * recording build keeps it; every per-client build and the UDP drain drop it.
  * EVENT_TANK_HIT is local because nothing on a client reads it: a client
  * learns a tank's armour from its snapshot, and the event is there for the
- * scenario host's on_tank_hit.
+ * scenario host's on_tank_hit and the gym's hit rewards, both of which read
+ * it in the server's own process.
  *
  * A local-only event still needs a gameEventDataSize row: the recording packs
  * it, and the brain event table is sized from the same function. */

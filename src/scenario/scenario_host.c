@@ -2600,6 +2600,24 @@ void scnPushManifestGlobal(lua_State *L, int envRef,
                 lua_setfield(L, -2, "type");
                 lua_pushboolean(L, d->def != 0);
                 lua_setfield(L, -2, "default");
+            } else if (d->type == SCN_SETTING_TYPE_CHOICE) {
+                /* A choice row is written as its words and the default
+                   word, as the file declares it. */
+                const char *dw = scnSettingChoiceText(d, d->def);
+                int         w;
+
+                lua_pushstring(L, "choice");
+                lua_setfield(L, -2, "type");
+                lua_createtable(L, (int)d->numChoices, 0);
+                for (w = 0; w < (int)d->numChoices &&
+                            w < SCN_SETTING_CHOICES_WORDS_MAX;
+                     w++) {
+                    lua_pushstring(L, d->choices[w]);
+                    lua_rawseti(L, -2, w + 1);
+                }
+                lua_setfield(L, -2, "choices");
+                lua_pushstring(L, dw != NULL ? dw : "");
+                lua_setfield(L, -2, "default");
             } else {
                 lua_pushstring(L, "int");
                 lua_setfield(L, -2, "type");
@@ -3001,30 +3019,38 @@ static void scnDisagreed(char *out, size_t outLen, const char *why,
 
 /* ── Applying the rules ───────────────────────────────────────────── */
 
-/* One op per rule. Nothing is published here: the setup window the round
- * start opens across this call holds the set-rule handler's own publish,
- * and the start states the whole table once on the way out. */
+/* The table applied whole or not at all, in one call. A pair the table moves
+ * together is judged with both halves in: a table that raises pill_max_armour
+ * and pill_repair_amount above the old cap is taken whichever of the two is
+ * written first, where one rule at a time would refuse the repair amount
+ * against the cap it has not reached yet. And a table -validate and packing
+ * refuse does not half-apply here: one that fails the check sets none of its
+ * rules, the round keeps the classic table the start put it on, and the
+ * console says why in one line.
+ *
+ * The call is the host's own and counts against no tick's allowance, so a
+ * table of any length applies in full. Nothing is published here: the setup
+ * window the round start opens across this call holds the publish, and the
+ * start states the whole table once on the way out. */
 static void scnApplyRules(ScenarioHost *h) {
-    uint16_t i;
+    uint16_t    rules[SCN_MANIFEST_RULES_MAX];
+    double      values[SCN_MANIFEST_RULES_MAX];
+    char        why[SCN_ERR_LEN];
+    uint16_t    n = 0;
+    ScnOpResult r;
 
-    for (i = 0; i < h->manifest.numRules; i++) {
-        ScenarioOp  op;
-        ScnOpResult r;
+    while (n < h->manifest.numRules && n < SCN_MANIFEST_RULES_MAX) {
+        rules[n]  = h->manifest.rules[n].rule;
+        values[n] = h->manifest.rules[n].value;
+        n++;
+    }
 
-        memset(&op, 0, sizeof(op));
-        op.type            = SCN_OP_SET_RULE;
-        op.u.setRule.rule  = h->manifest.rules[i].rule;
-        op.u.setRule.value = h->manifest.rules[i].value;
-
-        /* The host's own op, not the script's: a table of more rules than
-           one tick's allowance still applies in full. */
-        r = serverSimApplyScenarioHostOp(h->sim, &op, NULL);
-        if (r != SCN_OP_OK) {
-            scnSay(h->lastError, sizeof(h->lastError),
-                   "scenario: rule '%s' refused: %s",
-                   simRulesRuleName((int)h->manifest.rules[i].rule),
-                   scnResultText(r));
-        }
+    r = serverSimApplyScenarioRules(h->sim, rules, values, n, why,
+                                    sizeof(why));
+    if (r != SCN_OP_OK) {
+        scnSay(h->lastError, sizeof(h->lastError),
+               "scenario: rules not applied: %s",
+               why[0] != '\0' ? why : scnResultText(r));
     }
 }
 
@@ -3474,7 +3500,8 @@ static bool scnHookBegin(ScenarioHost *h, ScnHookId id) {
     return false;
 }
 
-/* The hook down the list, in list order: number one first.
+/* The hook down the list, in list order: number one first. on_tick is the
+ * one exception and goes up the list; see the note at the top of the loop.
  *
  * The caller's nargs are sitting on the stack. Each script gets its own copy
  * of them — its function pushed, the arguments pushed again above it, the
@@ -3500,10 +3527,18 @@ static bool scnHookBegin(ScenarioHost *h, ScnHookId id) {
  * which bits that leaves. */
 static void scnHookCallTo(ScenarioHost *h, ScnHookId id, int nargs,
                           uint16_t to) {
-    int base = lua_gettop(h->L) - nargs;
-    int i;
+    int  base = lua_gettop(h->L) - nargs;
+    /* on_tick alone goes up the list, the last script first, so number one
+       writes last in the frame. game.set_modifiers and the other writes
+       replace what was there, so the last write is the one that stands, and
+       up the list makes that the top script's — the same script the lobby's
+       "the top of the list wins" gives a rule to. Every other hook keeps
+       list order. With one script the two orders are the same call. */
+    bool up = (id == SCN_HOOK_TICK);
+    int  n;
 
-    for (i = 0; i < h->count; i++) {
+    for (n = 0; n < h->count; n++) {
+        int                     i = up ? h->count - 1 - n : n;
         ScnSandboxCall          saved;
         ScnRunningSave          outer;
         int                     rc;
@@ -3515,7 +3550,8 @@ static void scnHookCallTo(ScenarioHost *h, ScnHookId id, int nargs,
         }
         /* A tick whose calls have spent SCN_BUDGET_TICK_INSTR between them
            makes no more: the rest of the drain, the region hooks and on_tick
-           are dropped for this tick. A dropped call is no call at all, so it
+           are dropped for this tick (for on_tick that is the scripts nearer
+           the top, which run last). A dropped call is no call at all, so it
            counts no error and clears none; the one that went over has already
            been counted. */
         if (scnSandboxTickSpent(h->L)) {
@@ -9781,6 +9817,22 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
  * arrives the same way because the question it asks is the same one. */
 static void scnMapChanged(void *ctx, ServerSim *sim, const char *mapPath) {
     scnDecideScenario(sim, (ScenarioHost **)ctx, mapPath);
+}
+
+void scenarioHostPublishMapScript(ServerSim *sim, const ScenarioHost *h) {
+    int which = -1;
+    int i;
+
+    if (sim == NULL) return;
+    if (h != NULL) {
+        for (i = 0; i < h->count; i++) {
+            if (h->entry[i].source == lobbyScenarioMap) {
+                which = i;
+                break;
+            }
+        }
+    }
+    scnPublishMapScript(sim, h, which);
 }
 
 void scenarioHostFollowMap(ServerSim *sim, ScenarioHost **slot) {

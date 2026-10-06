@@ -352,6 +352,25 @@ int run_lv_hostile_modifiers_length(void) {
                 "slot 3 modifiers = %d..%d (want 50..100)",
                 lv->tankMods[3].speed, lv->tankMods[3].taken);
 
+  /* An eight-byte blob is a speed past a byte: the six with 255 for speed,
+     then the whole speed as a big-endian u16. */
+  {
+    uint8_t wide[10];
+    wide[0] = 4;
+    wide[1] = 8;
+    wide[2] = 255; wide[3] = 61; wide[4] = 71; wide[5] = 81; wide[6] = 91;
+    wide[7] = 101;
+    wide[8] = 0x02; wide[9] = 0x15;   /* 533 */
+    pos = appendRecord(records, 0, (uint8_t) log_TankSetModifiers, wide, 10);
+    UT_ASSERT_MSG(lv_specRecordPump(false, records, pos) == TRUE,
+                  "record pump stopped playback on a wide modifiers record");
+    UT_ASSERT_MSG(lv->tankMods[4].speed == 533 && lv->tankMods[4].accel == 61 &&
+                  lv->tankMods[4].taken == 101,
+                  "slot 4 modifiers = %d/%d..%d (want 533/61..101)",
+                  lv->tankMods[4].speed, lv->tankMods[4].accel,
+                  lv->tankMods[4].taken);
+  }
+
   lv_specSeedControlClear();
   lv_decoderDestroy(lv);
   return 0;

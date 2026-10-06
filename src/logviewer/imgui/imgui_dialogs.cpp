@@ -24,9 +24,6 @@
 
 extern "C" {
     #include "logviewer.h"
-
-    /* Version info - from backend or resource */
-    extern const char* lv_g_version_string;
 }
 
 static LogViewerState *s_lv = nullptr;
@@ -71,11 +68,6 @@ static bool s_spec_leave_confirmed = false;
 /* Team Colours dialog state */
 static int s_team_colours[17] = {0};
 static bool s_team_colours_loaded = false;
-
-/* Version information */
-static const char* s_version = "1.0.0";
-static const char* s_copyright = "Copyright (c) 1998-2026 John Morrison";
-static const char* s_website = "https://github.com/winbolo/logviewer";
 
 /* Forward declarations */
 static void render_team_colours_dialog(void);
@@ -345,27 +337,29 @@ static void render_about_dialog(void) {
         /* Title */
         ImGui::TextUnformatted(langGetText(STR_LV_ABOUT_TITLE));
         {
+            /* The game's version, from cmake/bolo_version.cmake: the viewer
+               ships with it and has no version of its own. */
             MessageArgs args = {};
-            strncpy(args.string1, s_version, sizeof(args.string1) - 1);
+            strncpy(args.string1, WINBOLO_DISPLAY_VERSION, sizeof(args.string1) - 1);
             ImGui::TextUnformatted(langGetTextFmt(STR_LV_VERSION_FMT, &args));
         }
 
         ImGui::Separator();
 
         /* Copyright */
-        ImGui::TextWrapped("%s", s_copyright);
+        ImGui::Text("Copyright 1998-%s John Morrison", WINBOLO_BUILD_YEAR);
 
         ImGui::Separator();
 
-        /* License */
-        ImGui::TextWrapped("%s", langGetText(STR_LV_LICENSE));
+        /* Licence: the game's about box one-liner */
+        ImGui::TextWrapped("%s", langGetText(STR_DLGABOUT_LICENCE_NOTICE));
 
         ImGui::Separator();
 
         /* Website link */
         ImGui::TextUnformatted(langGetText(STR_LV_WEBSITE_LBL));
         ImGui::SameLine();
-        ImGui::TextLinkOpenURL(s_website);
+        ImGui::TextLinkOpenURL("www.winbolo.com", "https://www.winbolo.com/");
 
         ImGui::Separator();
 

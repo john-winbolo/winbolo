@@ -452,15 +452,28 @@ static ScnOpResult scenarioOpTankSetModifiers(ServerSim *sim,
 
     {
         /* [len][speed][accel][turn][reload][dealt][taken] — the six do not fit
-           logAddEvent's four opt bytes and its short. */
-        char blob[7];
+           logAddEvent's four opt bytes and its short. A speed past a byte
+           writes 255 in its byte and adds the whole speed as a big-endian
+           u16 after the six, which makes the blob eight bytes. A speed that
+           fits a byte writes the six-byte blob a recording always had, so
+           those recordings are unchanged, and a reader that only knows the
+           six skips the longer record whole (it applies a blob of six
+           only). */
+        TankModifiers stored;
+        char blob[9];
+        tankGetModifiers(sim->sim.tanks[p->slot], &stored);
         blob[0] = 6;
-        blob[1] = (char)p->mods.speed;
-        blob[2] = (char)p->mods.accel;
-        blob[3] = (char)p->mods.turn;
-        blob[4] = (char)p->mods.reload;
-        blob[5] = (char)p->mods.dealt;
-        blob[6] = (char)p->mods.taken;
+        blob[1] = (char)(stored.speed > 255 ? 255 : stored.speed);
+        blob[2] = (char)stored.accel;
+        blob[3] = (char)stored.turn;
+        blob[4] = (char)stored.reload;
+        blob[5] = (char)stored.dealt;
+        blob[6] = (char)stored.taken;
+        if (stored.speed > 255) {
+            blob[0] = 8;
+            blob[7] = (char)((stored.speed >> 8) & 0xFF);
+            blob[8] = (char)(stored.speed & 0xFF);
+        }
         logAddEvent(log_TankSetModifiers, p->slot, 0, 0, 0, 0, blob);
     }
     return SCN_OP_OK;
@@ -3128,6 +3141,40 @@ static ScnOpResult scenarioOpLog(ServerSim *sim, const ScnOpLog *p) {
     return SCN_OP_OK;
 }
 
+void serverSimSetScenarioVoiceEveryone(ServerSim *sim, bool on) {
+    ControlEvent evt;
+
+    if (sim->scenarioVoiceEveryone == on) {
+        return;   /* a script that sets it every tick sends nothing */
+    }
+    sim->scenarioVoiceEveryone = on;
+
+    logAddEvent(log_VoiceEveryone, on ? 1 : 0, 0, 0, 0, 0, NULL);
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type                = CTRL_VOICE_EVERYONE;
+    evt.u.voiceEveryone.on  = on;
+    serverSimPublishControl(sim, &evt);
+}
+
+/* Voice to everyone. The voice forward reads the flag through
+ * serverSimVoiceSidesAllow on every frame, so the change is heard on the next
+ * one, and the setter tells the clients so each player can be told in their
+ * own language. No state guard, for the same reason the presentation arms
+ * have none, but a round start clears the flag (serverSimResetGameWorld and
+ * serverSimStartGameInPlace), so one set in the lobby does not reach the
+ * round. A server with voice off forwards no voice at all, so turning the
+ * flag on there is refused rather than taken and ignored. Turning it off is
+ * always taken. */
+static ScnOpResult scenarioOpSetVoiceEveryone(ServerSim *sim,
+                                              const ScnOpSetVoiceEveryone *p) {
+    if (p->on && sim->voiceMode == serverVoiceOff) {
+        return SCN_OP_WRONG_STATE;
+    }
+    serverSimSetScenarioVoiceEveryone(sim, p->on);
+    return SCN_OP_OK;
+}
+
 /* ── Presentation ─────────────────────────────────────
  *
  * Four arms that show a player something without changing the world. None of
@@ -4274,6 +4321,80 @@ ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
     return scenarioCheckRulesAgainst(&copy, rules, values, count, why, whyLen);
 }
 
+/* The same question asked of the whole set, and the answer committed when it
+ * is yes. scenarioOpSetRule's commit, made once for the set rather than once
+ * per rule: the funnel's two refusals ahead of it, the copy checked with every
+ * value in, then the records, the clamp and the publish in the order that
+ * handler gives them and for the same reasons.
+ *
+ * Each rule's record carries what its field holds once the set is in, read
+ * back off the committed table. That is the value the handler records — the
+ * field read straight after the write — for every set that names a rule once,
+ * which is every set a script's table can make. A set that named one rule
+ * twice would record the value that stood rather than the one overwritten.
+ *
+ * One clamp, after every record: the clamp brings the world inside the table
+ * the set leaves, and a table halfway through the set is not one the round
+ * ever plays on. One publish at most, held by the setup window as the
+ * handler's is, and sent only when the set touched a rule clients read. */
+ScnOpResult serverSimApplyScenarioRules(ServerSim *sim,
+                                        const uint16_t *rules,
+                                        const double *values,
+                                        uint16_t count,
+                                        char *why, size_t whyLen) {
+    SimRules    copy;
+    ScnOpResult r;
+    bool        was;
+    bool        carried = false;
+    uint16_t    i;
+
+    if (why != NULL && whyLen > 0) {
+        why[0] = '\0';
+    }
+    if (sim == NULL) {
+        return SCN_OP_BAD_CALL;
+    }
+    if (count == 0) {
+        return SCN_OP_OK;
+    }
+
+    /* The funnel's prelude, less the roster exception, which no rule is. */
+    if (sim->inScenarioPolicy > 0) {
+        return SCN_OP_IN_POLICY;
+    }
+    if (sim->startInProgress && !sim->scenarioSetupWindow) {
+        return SCN_OP_WRONG_STATE;
+    }
+
+    copy = sim->sim.rules;
+    r    = scenarioCheckRulesAgainst(&copy, rules, values, count, why, whyLen);
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+
+    /* The mark the funnel's entry puts on, saved and put back for the same
+       reason: what the commit publishes is the scenario's doing. */
+    was                 = sim->scenarioActing;
+    sim->scenarioActing = true;
+
+    sim->sim.rules = copy;
+    for (i = 0; i < count; i++) {
+        double written = 0.0;
+        (void)serverSimGetScenarioRule(sim, rules[i], &written);
+        scenarioRecordRuleSet(rules[i], written);
+        if (scenarioRuleIsCarried(rules[i])) {
+            carried = true;
+        }
+    }
+    scenarioClampWorldToRules(sim);
+    if (carried && !sim->scenarioSetupWindow) {
+        serverSimPublishSimRules(sim);
+    }
+
+    sim->scenarioActing = was;
+    return SCN_OP_OK;
+}
+
 /* The same check with no round behind it. The classic table is what a rule's
  * bounds are stated against in the first place, so a value outside its row is
  * outside it whether or not a game is running.
@@ -4500,6 +4621,8 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpSound(sim, &op->u.sound);
         case SCN_OP_LOG:
             return scenarioOpLog(sim, &op->u.log);
+        case SCN_OP_SET_VOICE_EVERYONE:
+            return scenarioOpSetVoiceEveryone(sim, &op->u.setVoiceEveryone);
         case SCN_OP_PANEL:
             return scenarioOpPanel(sim, &op->u.panel);
         case SCN_OP_SCORE:
@@ -4898,6 +5021,10 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
         memset(sim->scenarioRules, 0, sizeof(sim->scenarioRules));
         sim->scenarioRulesCount = 0;
         serverSimScenarioResetPresentation(sim);
+        /* And voice goes back to allies only: the script that asked for
+           voice to everyone has gone. Told to the clients, since a detach
+           in a running round changes who hears a player from now on. */
+        serverSimSetScenarioVoiceEveryone(sim, false);
         return;
     }
     sim->scenarioIdentity.source            = source;

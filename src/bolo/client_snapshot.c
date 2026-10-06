@@ -120,6 +120,18 @@ static langid clientPingMessageId(uint8_t kind) {
   return kPingMessageIds[kind];
 }
 
+/* Does this received ping also post a newswire line? A person's ping does,
+ * every kind. A bot's ping does only when it is ON MY WAY: that one answers
+ * an order a person just gave, so the person is owed the line. Every other
+ * bot ping is a marker the bot placed for itself (GoalHunter marks each new
+ * attack goal), and a line for each of those filled the newswire with the
+ * bots' goals. The marker itself is still drawn either way. */
+static bool clientPingPostsNewswire(players *plrs, uint8_t sender,
+                                    uint8_t kind) {
+  if (!playersIsBot(plrs, sender)) return true;
+  return kind == PING_KIND_ON_MY_WAY;
+}
+
 /*********************************************************
 *NAME:          clientBuildInputPacket
 *PURPOSE:
@@ -979,15 +991,17 @@ static void clientApplyGameEventsInner(ClientSim *csPtr,
         }
         clientSimAddPing(csPtr, sender, kind, px, py, nowMs);
         if (isHuman) {
-          MessageArgs args;
-          memset(&args, 0, sizeof(args));
-          playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0],
-                               args.playerName, sizeof(args.playerName), FALSE);
-          args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[0]);
-          playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
-          csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx,
-                                          newsWireMessage, MESSAGE_NEWSWIRE,
-                                          clientPingMessageId(kind), &args);
+          if (clientPingPostsNewswire(&csPtr->sim.plyrs, sender, kind)) {
+            MessageArgs args;
+            memset(&args, 0, sizeof(args));
+            playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0],
+                                 args.playerName, sizeof(args.playerName), FALSE);
+            args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[0]);
+            playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
+            csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx,
+                                            newsWireMessage, MESSAGE_NEWSWIRE,
+                                            clientPingMessageId(kind), &args);
+          }
           /* And its sound, out through the same seam the lobby sounds use:
              the frontend owns every audio decision from here on, including
              whether this kind has a sound of its own or plays the default
@@ -1176,7 +1190,8 @@ void clientApplySnapshot(ClientSim *csPtr,
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
         {
           TankModifiers mods;
-          mods.speed = tanks[i].modSpeed;
+          mods.speed = tanks[i].modSpeedWide ? tanks[i].modSpeedWide
+                                             : tanks[i].modSpeed;
           mods.accel = tanks[i].modAccel;
           mods.turn = tanks[i].modTurn;
           mods.reload = tanks[i].modReload;
@@ -1296,7 +1311,7 @@ void clientApplySnapshot(ClientSim *csPtr,
                   BYTE bmy = tankGetMY(&MY_TANK(csPtr));
                   tankTurn(&csPtr->sim, &MY_TANK(csPtr), bmx, bmy, tb);
                 } else {
-                  tankUpdate(&csPtr->sim, &MY_TANK(csPtr), tb, FALSE, FALSE);
+                  clientStateTankUpdate(&csPtr->sim, &MY_TANK(csPtr), tb, FALSE, histPkt);
                   /* Simulate fire's effect on reload during replay.
                    * tankUpdate was called with shoot=FALSE to avoid creating
                    * shells, but we must still apply the reload reset so the
@@ -1390,7 +1405,8 @@ void clientApplySnapshot(ClientSim *csPtr,
              the position check above snapped and replayed, so this and the
              first-snapshot write cover the whole stream. */
           TankModifiers mods;
-          mods.speed = tanks[i].modSpeed;
+          mods.speed = tanks[i].modSpeedWide ? tanks[i].modSpeedWide
+                                             : tanks[i].modSpeed;
           mods.accel = tanks[i].modAccel;
           mods.turn = tanks[i].modTurn;
           mods.reload = tanks[i].modReload;
@@ -1790,8 +1806,8 @@ void clientApplyEntityChange(ClientSim *cs, const struct ControlEvent *evt) {
 
   /* The status panels are pushed, not polled: nothing else repaints the
    * entry for an item that has just left or arrived, so it is done here. A
-   * removed item reads as neutral, which is how a slot the map does not use
-   * is drawn. */
+   * removed pill reads as pillOffMap and a removed base as baseOffMap, and
+   * the place of either is drawn empty. */
   if (evt->u.entityChange.kind == ENTITY_KIND_PILL) {
     frontEndStatusPillbox(cs, num, pillsGetAllianceNum(&cs->sim, &cs->sim.pb, num));
   } else if (evt->u.entityChange.kind == ENTITY_KIND_BASE) {

@@ -1048,7 +1048,7 @@ static const char kScQuietBase[] =
     "  game = \"tournament\",\n"
     "}\n";
 
-/* data/mods/NoLgmDeaths.scenario.lua, which is the mod the composed round
+/* The No LGM Deaths mod, which is the mod the composed round
    has to ask: its whole behaviour is this one policy, and a policy-only mod
    that is loaded and never asked does nothing at all. */
 static const char kScNoLgmDeaths[] =
@@ -2909,6 +2909,98 @@ int run_scenario_compose_needs_bots_scenario_and_mod(void) {
                   (int)serverSimGetBotAiType(sim), (int)aiNone);
 
     scDestroy(sim);
+    scDropDir();
+    return 0;
+}
+
+/* ── on_tick runs up the list ─────────────────────────────────────── */
+
+/* Two mods that each, for their first two frames with a tank, say the speed
+   the tank has and then write their own. game.set_modifiers replaces the
+   whole set, so the last write in a frame is the one that stands. on_tick
+   runs up the list, the bottom script first, so the top script writes last
+   and its speed is the one the tank keeps — the same script "the top of the
+   list wins" gives a rule to. */
+#define SC_ORDER_MOD(NAME, TAG, SPEED)                                       \
+    "scenario = {\n"                                                         \
+    "  name = \"" NAME "\",\n"                                               \
+    "  api = 1,\n"                                                           \
+    "  kind = \"mod\",\n"                                                    \
+    "  bound = false,\n"                                                     \
+    "}\n"                                                                    \
+    "local n = 0\n"                                                          \
+    "function on_tick(tick)\n"                                               \
+    "  local t = game.tank(0)\n"                                             \
+    "  if t == nil or n >= 2 then return end\n"                              \
+    "  n = n + 1\n"                                                          \
+    "  print(\"note:" TAG "\" .. n .. \"=\" .. t.mods.speed .. \";\")\n"    \
+    "  game.set_modifiers(0, { speed = " SPEED " })\n"                       \
+    "end\n"
+
+static const char kScOrderFast[] = SC_ORDER_MOD("Order Fast", "fast", "300");
+static const char kScOrderSlow[] = SC_ORDER_MOD("Order Slow", "slow", "150");
+
+int run_scenario_compose_on_tick_bottom_first(void) {
+    ServerSim  *sim;
+    const char *fastOnTop[2] = { "orderfast.lua", "orderslow.lua" };
+    const char *slowOnTop[2] = { "orderslow.lua", "orderfast.lua" };
+    char        said[8192];
+    TankInfo    info;
+    int         i;
+
+    UT_ASSERT(scMakeDir("on_tick_bottom_first"));
+    UT_ASSERT(scWrite("orderfast.lua", kScOrderFast));
+    UT_ASSERT(scWrite("orderslow.lua", kScOrderSlow));
+    UT_ASSERT(scPutMapScript(kScQuietBase));
+
+    /* Fast on top. Slow, at the bottom, runs first in each frame: in the
+       second frame it sees what fast wrote last in the first, and fast sees
+       what slow wrote a moment before in the same frame. */
+    sim = scRunningSim(fastOnTop, 2);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(scenarioHostScriptCount(scSlot) == 3,
+                  "the round composed %d scripts, wanted the base and two "
+                  "mods", scenarioHostScriptCount(scSlot));
+    UT_ASSERT_MSG(scTickForTank(sim), "slot 0 never got a tank");
+    for (i = 0; i < 4; i++) {
+        serverSimTick(sim);
+    }
+    UT_ASSERT(serverSimGetTankInfo(sim, 0, &info) && info.has_tank);
+    scReadNote(said, sizeof(said));
+    UT_ASSERT_MSG(strstr(said, "slow1=") != NULL &&
+                  strstr(said, "fast1=") != NULL &&
+                  strstr(said, "slow1=") < strstr(said, "fast1="),
+                  "the bottom script's on_tick did not run first: %s", said);
+    UT_ASSERT_MSG(strstr(said, "fast1=150;") != NULL,
+                  "the top script did not see the bottom script's write from "
+                  "the same frame: %s", said);
+    UT_ASSERT_MSG(strstr(said, "slow2=300;") != NULL,
+                  "the frame did not end on the top script's speed: %s", said);
+    UT_ASSERT_MSG(strstr(said, "fast2=150;") != NULL,
+                  "the second frame did not run bottom first: %s", said);
+    scDestroy(sim);
+
+    /* The same two files the other way round give the other answer, so the
+       order read above is the list's and not the files'. */
+    sim = scRunningSim(slowOnTop, 2);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(scTickForTank(sim), "slot 0 never got a tank");
+    for (i = 0; i < 4; i++) {
+        serverSimTick(sim);
+    }
+    scReadNote(said, sizeof(said));
+    UT_ASSERT_MSG(strstr(said, "fast1=") != NULL &&
+                  strstr(said, "slow1=") != NULL &&
+                  strstr(said, "fast1=") < strstr(said, "slow1="),
+                  "with the list flipped the bottom script's on_tick did not "
+                  "run first: %s", said);
+    UT_ASSERT_MSG(strstr(said, "slow1=300;") != NULL &&
+                  strstr(said, "fast2=150;") != NULL,
+                  "with the list flipped the frame did not end on the top "
+                  "script's speed: %s", said);
+    scDestroy(sim);
+
+    scDropMapScript();
     scDropDir();
     return 0;
 }

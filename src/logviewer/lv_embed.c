@@ -135,6 +135,15 @@ Uint32 SDLCALL lv_windowTimer(void *userdata, SDL_TimerID timerID, Uint32 interv
     return 0;
 }
 
+/* Set by a host that steps the decoder from its own loop instead of the
+ * lv_windowTimer timer: the web viewer, where that timer is a setTimeout chain
+ * that runs late every tick and plays the log at about half speed. */
+static bool s_hostRunsTicks = false;
+
+void lv_windowSetHostRunsTicks(bool on) {
+    s_hostRunsTicks = on;
+}
+
 /* --------------------------------------------------------------------------
  * Playback control
  * -------------------------------------------------------------------------- */
@@ -148,7 +157,9 @@ void lv_windowPlay(void) {
         return;
     }
     if (g_lv->playIsPlaying == FALSE) {
-        g_lv->timerGameID  = SDL_AddTimer(20,  lv_windowTimer,      NULL);
+        if (!s_hostRunsTicks) {
+            g_lv->timerGameID = SDL_AddTimer(20, lv_windowTimer, NULL);
+        }
         g_lv->timerFrameID = SDL_AddTimer(50,  lv_windowFrameTimer, NULL);
     }
     g_lv->playIsPlaying = TRUE;
@@ -161,7 +172,9 @@ void lv_windowPause(void) {
     }
     lv_clientMutexWaitFor();
     if (g_lv->playIsPlaying == TRUE) {
-        SDL_RemoveTimer(g_lv->timerGameID);
+        if (g_lv->timerGameID != 0) {
+            SDL_RemoveTimer(g_lv->timerGameID);
+        }
         SDL_RemoveTimer(g_lv->timerFrameID);
         g_lv->timerGameID  = 0;
         g_lv->timerFrameID = 0;
@@ -501,18 +514,12 @@ void lvEmbedSetViewportSize(int viewW, int viewH) {
     }
 
     lv_clientMutexWaitFor();
+    /* The size setters keep the offset inside the map for the new grid. The
+     * sub-pixel pan is reset here because a resize carries no in-flight
+     * drag. */
     lv_screenSetSizeX((BYTE)newTilesX);
     lv_screenSetSizeY((BYTE)newTilesY);
-    /* Clamp the scroll offset so the viewport stays inside the 255x255 map,
-     * and reset the sub-pixel pan — a resize carries no in-flight drag. */
-    if (g_lv->isLoaded) {
-        BYTE ox, oy;
-        lv_screenGetOffsets(&ox, &oy);
-        if ((int)ox + newTilesX > 255) ox = (BYTE)(255 - newTilesX);
-        if ((int)oy + newTilesY > 255) oy = (BYTE)(255 - newTilesY);
-        lv_screenSetOffset(ox, oy);
-        lv_screenSetSubOffset(0, 0);
-    }
+    lv_screenSetSubOffset(0, 0);
     lv_drawResizeRenderTarget();
     lv_drawDirtyScreen();
     lv_clientMutexRelease();
@@ -601,6 +608,44 @@ float lvEmbedGetZoomLevel(void) {
     return (zoom > 0.0f) ? zoom : 1.0f;
 }
 
+/* The tank names for the texture the last lvEmbedFrameTexture reported: the
+ * names are not in it, so the host draws them over its image. Count rasterizes
+ * them at pxPerSourcePx host pixels per texture pixel and returns how many;
+ * each one is then a white texture to tint, its top-left in texture pixels (the
+ * space srcX/srcY are in) and its size in pixels. The list is rebuilt only when
+ * the texture is, so the two always match. */
+int lvEmbedTankLabelCount(float pxPerSourcePx) {
+    if (!s_embedActive || g_lv == NULL) {
+        return 0;
+    }
+    return lv_drawTankLabelCount(pxPerSourcePx);
+}
+
+bool lvEmbedTankLabel(int index, void **outTexture, int *outX, int *outY,
+                      int *outW, int *outH) {
+    SDL_Texture *tex = NULL;
+
+    if (!s_embedActive || g_lv == NULL ||
+        !lv_drawTankLabelGet(index, &tex, outX, outY, outW, outH)) {
+        return false;
+    }
+    *outTexture = tex;
+    return true;
+}
+
+/* True puts the names back into the texture, for a host that reads the
+ * texture's pixels (the GIF export); false, the default, leaves them to
+ * lvEmbedTankLabel. */
+void lvEmbedSetTankLabelsInTexture(bool inTexture) {
+    if (!s_embedActive || g_lv == NULL) {
+        return;
+    }
+    lv_clientMutexWaitFor();
+    lv_drawSetTankLabelsInTarget(inTexture ? TRUE : FALSE);
+    lv_clientMutexRelease();
+    g_lv->wantScreenUpdate = TRUE;
+}
+
 void lvEmbedPlay(void) {
     if (!s_embedActive || g_lv == NULL || g_lv->isLoaded == FALSE) {
         return;
@@ -660,7 +705,11 @@ void lvEmbedPanBegin(void) {
 
 /* Drag delta in host screen pixels, measured from where lvEmbedPanBegin
  * latched. Each on-screen pixel is 1/zoom native pixels, and dragging right
- * reveals more of the map's left, so the delta is subtracted. */
+ * reveals more of the map's left, so the delta is subtracted.
+ *
+ * A drag that moves turns off following the tank lvEmbedFocusPlayerByName
+ * picked; otherwise the next replay tick puts the camera back on it. A zero
+ * delta (a click that has not moved yet) leaves following on. */
 void lvEmbedPanDelta(float dxScreenPx, float dyScreenPx) {
     float zoom;
     int   totalPxX, totalPxY;
@@ -674,6 +723,9 @@ void lvEmbedPanDelta(float dxScreenPx, float dyScreenPx) {
     totalPxY = s_embedPanStartPxY - (int)(dyScreenPx / zoom);
 
     lv_clientMutexWaitFor();
+    if (dxScreenPx != 0.0f || dyScreenPx != 0.0f) {
+        g_lv->centredTank = FALSE;
+    }
     lv_drawDirtyScreen();
     lv_screenPanToTotalPixels(totalPxX, totalPxY);
     lv_clientMutexRelease();

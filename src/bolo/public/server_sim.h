@@ -2085,6 +2085,11 @@ typedef struct ServerSimRosterSlot {
                            False for a seat held in the roster with no bot,
                            no ClientSim and no tank behind it. */
     bool    alive;      /* Has a tank in the world and is not in death-wait */
+    /* Label of the bot naming pool the seat's team draws from (e.g. "Famous
+       Painters"), NUL-terminated; empty when the seat has no team (0) or the
+       team has no pool (metadata not in use, or an index outside the loaded
+       pools). The label comes from the server's own pool table. */
+    char    team_pool[49]; /* LOBBY_BOT_POOL_MAX_LABEL_BYTES + 1 */
 } ServerSimRosterSlot;
 
 /* Populate *out for seat i. Returns false (without touching *out) if
@@ -2357,7 +2362,8 @@ bool serverSimGetScriptSetting(const ServerSim *sim, const char *file,
  *
  * Returns the value now in effect, in *resolved when it is not NULL.
  * False, and nothing changed or published, for a file with no declaration,
- * an id it does not declare, a bool setting given anything but 0 or 1, or a
+ * an id it does not declare, a bool setting given anything but 0 or 1, a
+ * choice setting given anything but the index of one of its words, or a
  * store that is full. */
 bool serverSimSetScriptSetting(ServerSim *sim, const char *file,
                                const char *id, int32_t value,
@@ -2506,6 +2512,21 @@ bool        serverSimGetModsOff(const ServerSim *sim);
  * and the getter returns serverVoiceOn for a NULL sim. */
 void            serverSimSetVoiceMode(ServerSim *sim, ServerVoiceMode mode);
 ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim);
+
+/* Voice to everyone — the flag a scenario sets with
+ * game.set_voice_everyone. The getter answers false for a NULL sim and when
+ * the server's voice mode is serverVoiceOff, because then nobody hears
+ * anybody whatever the flag says. The flag goes back to false at every round
+ * start, at the return to the lobby and when a scenario is detached. */
+bool serverSimGetScenarioVoiceEveryone(const ServerSim *sim);
+
+/* Whether the server's voice forward lets player `to` hear player `talker`,
+ * as far as sides go. Outside a running round everyone hears everyone. In a
+ * running round only allies hear each other, unless a scenario has turned
+ * voice to everyone on. Mutes, the talker cap, the server's voice mode and
+ * spectators are the voice forward's own checks and are not looked at here.
+ * False for a NULL sim or a slot out of range. */
+bool serverSimVoiceSidesAllow(const ServerSim *sim, BYTE to, BYTE talker);
 
 /* Script upload policy — how the server treats scripts players send it:
  * OFF refuses them and does not run a script an uploaded map carries,

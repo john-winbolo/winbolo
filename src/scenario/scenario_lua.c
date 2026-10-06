@@ -771,6 +771,9 @@ static int scnLuaLobbySlot(lua_State *L) {
     scnSetBool(L, "ready", slot.ready);
     scnSetBool(L, "fielded", slot.fielded);
     scnSetBool(L, "alive", slot.alive);
+    if (slot.team_pool[0] != '\0') {
+        scnSetStr(L, "team_pool", slot.team_pool);
+    }
     return 1;
 }
 
@@ -814,6 +817,14 @@ static int scnLuaRule(lua_State *L) {
         return 1;
     }
     scnPushNumber(L, v);
+    return 1;
+}
+
+/* Whether voice is going to everyone rather than to allies alone: what
+   set_voice_everyone last set this round, and false on a server with voice
+   off, where nobody hears anybody. */
+static int scnLuaVoiceEveryone(lua_State *L) {
+    lua_pushboolean(L, serverSimGetScenarioVoiceEveryone(scnCtx(L)->sim));
     return 1;
 }
 
@@ -889,6 +900,67 @@ static bool scnSettingsBool(lua_State *L, int row, int32_t *out) {
     }
     lua_pop(L, 1);
     return ok;
+}
+
+/* A choice row's words and its default, into s: choices must be a list of
+ * strings and default one of them. NULL when they read, else the reason for
+ * the report. The count and the words are checked again, with the range, by
+ * scnSettingProblem. */
+static const char *scnSettingsChoices(lua_State *L, int row, ScnSetting *s) {
+    const char *why = NULL;
+    int         total;
+    int         i;
+
+    lua_pushstring(L, "choices");
+    lua_rawget(L, row);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return "needs a list of words for choices";
+    }
+    total = (int)lua_rawlen(L, -1);
+    if (total < SCN_SETTING_CHOICES_MIN ||
+        total > SCN_SETTING_CHOICES_WORDS_MAX) {
+        lua_pop(L, 1);
+        return "a choice setting needs 2 to 8 choices";
+    }
+    for (i = 1; i <= total && why == NULL; i++) {
+        lua_rawgeti(L, -1, i);
+        if (lua_type(L, -1) != LUA_TSTRING) {
+            why = "every choice must be a string";
+        } else {
+            size_t      n;
+            const char *w = lua_tolstring(L, -1, &n);
+            if (n == 0 || n >= SCN_SETTING_CHOICE_LEN || strlen(w) != n) {
+                why = "each choice must be 1 to 31 characters";
+            } else {
+                memcpy(s->choices[i - 1], w, n + 1);
+            }
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1); /* choices */
+    if (why != NULL) {
+        return why;
+    }
+    s->numChoices = (uint8_t)total;
+    s->min        = 0;
+    s->max        = total - 1;
+    s->step       = 1;
+
+    lua_pushstring(L, "default");
+    lua_rawget(L, row);
+    if (lua_type(L, -1) != LUA_TSTRING) {
+        why = "needs one of its choices, as a string, for default";
+    } else {
+        int at = scnSettingChoiceIndex(s, lua_tostring(L, -1));
+        if (at < 0) {
+            why = "default is not one of its choices";
+        } else {
+            s->def = at;
+        }
+    }
+    lua_pop(L, 1);
+    return why;
 }
 
 /* A string field of the row into dst. False for a value that is there but is
@@ -997,15 +1069,35 @@ int scenarioLuaReadSettings(lua_State *L, int tbl, ScnSetting *out, int max,
             s.type = SCN_SETTING_TYPE_INT;
         } else if (strcmp(type, "bool") == 0) {
             s.type = SCN_SETTING_TYPE_BOOL;
+        } else if (strcmp(type, "choice") == 0) {
+            s.type = SCN_SETTING_TYPE_CHOICE;
         } else {
             scnSettingsSay(report, ud, key,
-                           "scenario: %s: %s has type '%s'; only \"int\" and "
-                           "\"bool\" are supported; dropped", path, key,
-                           type);
+                           "scenario: %s: %s has type '%s'; only \"int\", "
+                           "\"bool\" and \"choice\" are supported; dropped",
+                           path, key, type);
             lua_pop(L, 1);
             continue;
         }
-        if (s.type == SCN_SETTING_TYPE_BOOL) {
+        if (s.type == SCN_SETTING_TYPE_CHOICE) {
+            /* The words are the range, so a min, max or step on a choice
+               row is a mistake in the row, as it is on a bool row. */
+            const char *bad = NULL;
+
+            if (scnSettingsHas(L, row, "min") ||
+                scnSettingsHas(L, row, "max") ||
+                scnSettingsHas(L, row, "step")) {
+                bad = "is a choice setting and takes no min, max or step";
+            } else {
+                bad = scnSettingsChoices(L, row, &s);
+            }
+            if (bad != NULL) {
+                scnSettingsSay(report, ud, key, "scenario: %s: %s %s; dropped",
+                               path, key, bad);
+                lua_pop(L, 1);
+                continue;
+            }
+        } else if (s.type == SCN_SETTING_TYPE_BOOL) {
             /* On or off has a fixed range, so a min, max or step on a
                bool row is a mistake in the row. */
             if (scnSettingsHas(L, row, "min") ||
@@ -1070,6 +1162,14 @@ int scenarioLuaReadSettings(lua_State *L, int tbl, ScnSetting *out, int max,
 void scenarioLuaPushSetting(lua_State *L, const ScnSetting *s, int32_t v) {
     if (s != NULL && s->type == SCN_SETTING_TYPE_BOOL) {
         lua_pushboolean(L, v != 0);
+    } else if (s != NULL && s->type == SCN_SETTING_TYPE_CHOICE) {
+        /* The word, never the index: the script compares against the words
+           it wrote. A value that names no word is the default word. */
+        const char *w = scnSettingChoiceText(s, v);
+        if (w == NULL) {
+            w = scnSettingChoiceText(s, s->def);
+        }
+        lua_pushstring(L, w != NULL ? w : "");
     } else {
         lua_pushinteger(L, (lua_Integer)v);
     }
@@ -1672,6 +1772,7 @@ static const ScnLuaWordSet kScnColours = {
 static const ScnLuaWord kScnSizeWords[] = {
     { "small",  (int)SCN_PANEL_SIZE_SMALL  },
     { "normal", (int)SCN_PANEL_SIZE_NORMAL },
+    { "large",  (int)SCN_PANEL_SIZE_LARGE  },
 };
 static const ScnLuaWordSet kScnSizes = {
     kScnSizeWords, sizeof(kScnSizeWords) / sizeof(kScnSizeWords[0]),
@@ -1726,7 +1827,7 @@ BOLO_STATIC_ASSERT(
     colour_words_are_the_whole_palette);
 BOLO_STATIC_ASSERT(
     (int)(sizeof(kScnSizeWords) / sizeof(kScnSizeWords[0])) ==
-        (int)SCN_PANEL_SIZE_NORMAL + 1,
+        (int)SCN_PANEL_SIZE_LARGE + 1,
     size_words_are_every_text_size);
 BOLO_STATIC_ASSERT(
     (int)(sizeof(kScnAlignWords) / sizeof(kScnAlignWords[0])) ==
@@ -2253,10 +2354,10 @@ static int scnLuaDropPill(lua_State *L) {
     return scnDone(L, &op, "player %d, pill %d", (int)p, (int)n);
 }
 
-/* One percentage out of a modifier table. Absent is the classic tank, which
- * the payload spells 0. */
-static bool scnModField(lua_State *L, int idx, const char *key, uint8_t *out,
-                        lua_Integer *bad) {
+/* One percentage out of a modifier table, 0..max. Absent is the classic
+ * tank, which the payload spells 0. */
+static bool scnModValue(lua_State *L, int idx, const char *key,
+                        lua_Integer max, lua_Integer *out, lua_Integer *bad) {
     lua_Integer v = 0;
 
     lua_getfield(L, idx, key);
@@ -2269,8 +2370,20 @@ static bool scnModField(lua_State *L, int idx, const char *key, uint8_t *out,
         v = scnWhole(lua_tonumber(L, -1));
     }
     lua_pop(L, 1);
-    if (!scnFitsByte(v)) {
+    if (v < 0 || v > max) {
         *bad = v;
+        return false;
+    }
+    *out = v;
+    return true;
+}
+
+/* A byte-sized percentage: every modifier but speed. */
+static bool scnModField(lua_State *L, int idx, const char *key, uint8_t *out,
+                        lua_Integer *bad) {
+    lua_Integer v = 0;
+
+    if (!scnModValue(L, idx, key, 255, &v, bad)) {
         return false;
     }
     *out = (uint8_t)v;
@@ -2294,8 +2407,14 @@ static int scnLuaSetModifiers(lua_State *L) {
     m = &op.u.tankSetModifiers.mods;
     /* The whole set is replaced, so a field the table leaves out goes back to
        the classic tank rather than keeping what it had. */
-    if (!scnModField(L, 2, "speed", &m->speed, &bad)) {
-        return scnRefused(L, SCN_OP_RANGE, "speed is %d", (int)bad);
+    {
+        /* Speed alone goes past a byte, up to TANK_MOD_SPEED_MAX. */
+        lua_Integer speed = 0;
+
+        if (!scnModValue(L, 2, "speed", TANK_MOD_SPEED_MAX, &speed, &bad)) {
+            return scnRefused(L, SCN_OP_RANGE, "speed is %d", (int)bad);
+        }
+        m->speed = (uint16_t)speed;
     }
     if (!scnModField(L, 2, "accel", &m->accel, &bad)) {
         return scnRefused(L, SCN_OP_RANGE, "accel is %d", (int)bad);
@@ -3091,7 +3210,7 @@ static int scnResolveOpBrain(lua_State *L, char *brain, size_t brainLen) {
         return scnRefused(L, SCN_OP_NOT_FOUND,
                           "brain '%s' is a path; a scenario names a brain, "
                           "which is the directory under the server's brains/ "
-                          "— 'GoalHunter_1.7', not a path to it", brain);
+                          "— 'GoalHunter', not a path to it", brain);
     }
     if (!brainListResolve(brain, path, sizeof(path))) {
         return scnRefused(L, SCN_OP_NOT_FOUND,
@@ -3572,6 +3691,21 @@ static int scnLuaLog(lua_State *L) {
     return scnDone(L, &op, "%d bytes", (int)len);
 }
 
+/* Voice to everyone, on or off. The sentence is only read on a refusal, and
+   the one refusal there is says why: turning it on where the server has
+   voice off. */
+static int scnLuaSetVoiceEveryone(lua_State *L) {
+    ScenarioOp op;
+    bool       on = scnArgBool(L, 1, "on");
+
+    memset(&op, 0, sizeof(op));
+    op.type                  = SCN_OP_SET_VOICE_EVERYONE;
+    op.u.setVoiceEveryone.on = on;
+    return scnDone(L, &op, "%s",
+                   on ? "voice to everyone on, and this server has voice off"
+                      : "voice to everyone off");
+}
+
 /* ── Presentation ─────────────────────────────────────────────────── */
 
 /* The player bit in a presentation op's target byte. The layout is written
@@ -3900,7 +4034,7 @@ static int scnPanelItem(lua_State *L, int listIdx, int n, ScnPanelItem *item) {
             case SCN_ARG_SIZE:
                 if (!scnPanelWord(L, entry, n, pos, name, &kScnSizes, &v[i])) {
                     return scnPanelRange(L, n, name, v[i], 0,
-                                         SCN_PANEL_SIZE_NORMAL);
+                                         SCN_PANEL_SIZE_LARGE);
                 }
                 break;
             case SCN_ARG_ALIGN:
@@ -3968,6 +4102,14 @@ static int scnPanelItem(lua_State *L, int listIdx, int n, ScnPanelItem *item) {
             item->u.rect.h      = (uint8_t)v[3];
             item->u.rect.colour = (uint8_t)v[4];
             item->u.rect.fill   = (uint8_t)v[5];
+            /* The one rect the parser turns down: on the wire it is the mark
+               that makes the item before it large. It draws nothing anyway. */
+            if (scnPanelIsSizeMark(item)) {
+                return scnRefused(L, SCN_OP_RANGE,
+                                  "list entry %d: a colourless empty rect at "
+                                  "x %d, y 0 is reserved", n,
+                                  (int)SCN_PANEL_SIZE_LARGE);
+            }
             break;
         case SCN_PANEL_OP_LINE:
             item->u.line.x0     = (uint8_t)v[0];
@@ -4053,6 +4195,14 @@ static int scnLuaPanel(lua_State *L) {
         if (refused != 0) {
             return refused;
         }
+    }
+    /* Each large item costs a second primitive on the wire, and the limit is
+       on those, since an older client counts them. */
+    if (scnPanelWireCount(&list) > SCN_PANEL_ITEMS_MAX) {
+        return scnRefused(L, SCN_OP_TOO_BIG,
+                          "the list comes to %d primitives with each large "
+                          "item counted twice, limit %d",
+                          (int)scnPanelWireCount(&list), SCN_PANEL_ITEMS_MAX);
     }
     op.type           = SCN_OP_PANEL;
     op.u.panel.target = target;
@@ -4979,6 +5129,7 @@ static const ScnLuaOpParam kScnOpArgs_allied[] = {
 static const ScnLuaOpParam kScnOpArgs_rule[] = {
     { "name", SCN_PARAM_WORD, false }, SCN_OP_ARG_END
 };
+static const ScnLuaOpParam kScnOpArgs_voice_everyone[] = { SCN_OP_ARG_END };
 /* An id is matched against the calling script's own settings block and an
    id that names none raises, so it is a word out of a fixed set. */
 static const ScnLuaOpParam kScnOpArgs_setting[] = {
@@ -5189,6 +5340,9 @@ static const ScnLuaOpParam kScnOpArgs_sound[] = {
 static const ScnLuaOpParam kScnOpArgs_log[] = {
     { "text", SCN_PARAM_STRING, false }, SCN_OP_ARG_END
 };
+static const ScnLuaOpParam kScnOpArgs_set_voice_everyone[] = {
+    { "on", SCN_PARAM_BOOL, false }, SCN_OP_ARG_END
+};
 static const ScnLuaOpParam kScnOpArgs_panel[] = {
     { "id", SCN_PARAM_NUMBER, false }, { "list", SCN_PARAM_TABLE, false },
     { "target", SCN_PARAM_TARGET, true }, SCN_OP_ARG_END
@@ -5338,11 +5492,15 @@ static const ScnLuaRow kScnLuaRows[] = {
       "rule(name) — what a gameplay rule is set to; a name that spells no "
       "rule raises.",
       SCN_OP_PARAMS(rule), SCN_OP_READS },
+    { "voice_everyone", scnLuaVoiceEveryone,
+      "voice_everyone() — whether voice in the round goes to every player "
+      "rather than to allies alone; false on a server with voice off.",
+      SCN_OP_PARAMS(voice_everyone), SCN_OP_READS },
     { "setting", scnLuaSetting,
       "setting(id) — the value the host chose in the lobby for one of "
-      "this script's own settings, or its declared default: a number, or "
-      "true or false for a bool setting; an id the script never declared "
-      "raises.",
+      "this script's own settings, or its declared default: a number, "
+      "true or false for a bool setting, or the chosen word for a choice "
+      "setting; an id the script never declared raises.",
       SCN_OP_PARAMS(setting), SCN_OP_READS },
     { "tags", scnLuaTags,
       "tags(kind, n) — the tags the scenario put on a \"pill\", \"base\" or "
@@ -5560,6 +5718,12 @@ static const ScnLuaRow kScnLuaRows[] = {
       "log(text) — write a line to the server's console; no player sees "
       "it.",
       SCN_OP_PARAMS(log), SCN_OP_ACTS },
+    { "set_voice_everyone", scnLuaSetVoiceEveryone,
+      "set_voice_everyone(on) — with true, voice in the running round goes "
+      "to every player rather than to allies alone; false puts it back. "
+      "Every round starts with it off, and a server with voice off refuses "
+      "true.",
+      SCN_OP_PARAMS(set_voice_everyone), SCN_OP_ACTS },
     { "panel", scnLuaPanel,
       "panel(id, list[, target]) — draw a panel from a list of primitives, "
       "each an array with its name first: { \"rect\", x, y, w, h, colour, "

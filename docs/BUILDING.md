@@ -312,11 +312,6 @@ emcmake cmake -B build-wasm-game -S src/wasm -DCMAKE_BUILD_TYPE=Release
 cmake --build build-wasm-game -j$(nproc)
 ```
 
-Or use the convenience script:
-```bash
-./src/wasm/build.sh
-```
-
 ### Build (log viewer)
 
 ```bash
@@ -324,21 +319,49 @@ emcmake cmake -B build-wasm-logviewer -S src/logviewer/wasm -DCMAKE_BUILD_TYPE=R
 cmake --build build-wasm-logviewer -j$(nproc)
 ```
 
+The web log viewer builds from the same sources as the desktop `LogViewer`,
+with these left out:
+
+- the WinBolo.net comments window and log browser — logs open by uploading a
+  file
+- the game view used for trailer capture
+- the Start-button menu for tablets and the Steam Deck
+- the round summary added to the events list when a log is loaded
+
 ### Testing locally
 
+The game uses threads, which the browser allows only on a page served with the
+`Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` headers, so
+serve it with `serve_isolated.py`, which sends both:
+
 ```bash
-python3 -m http.server -d build-wasm-game 8080
+python3 src/wasm/serve_isolated.py build-wasm-game 8080
 # Open http://localhost:8080/winbolo.html
 ```
 
+The log viewer does not use threads, so any static server works:
+
+```bash
+python3 -m http.server -d build-wasm-logviewer 8080
+# Open http://localhost:8080/logviewer.html
+```
+
+To open a log as the page loads, copy it into the build directory and open
+`http://localhost:8080/logviewer.html?url=<file>.wbv`. The WinBolo.net key
+addresses (`/gamelog/<key>`, `?key=<key>`) need the `/logdownload` proxy, which
+a plain static server does not have (see `docs/web-hosting.md`).
+
 ### Packaging for deployment
 
-The game build has a `wasm-dist` target that brotli- and gzip-precompresses the
-web assets (for a static server with `precompressed br gzip`) and packs them
-into `wasm-dist.zip`. It is not part of the normal build — run it explicitly:
+Both builds have a `wasm-dist` target that brotli- and gzip-precompresses the
+web assets (for a static server with `precompressed br gzip`) and packs them,
+with the licence files, into a zip in the build directory: `wasm-dist.zip` for
+the game, `wasm-logviewer-dist.zip` for the log viewer. It is not part of the
+normal build — run it explicitly:
 
 ```bash
 cmake --build build-wasm-game --target wasm-dist
+cmake --build build-wasm-logviewer --target wasm-dist
 ```
 
 Requires the `brotli` CLI (see Requirements). Everyday builds skip it, so they

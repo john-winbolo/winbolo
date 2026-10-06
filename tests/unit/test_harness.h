@@ -286,6 +286,7 @@ int run_round_stats_codec_worstcase(void);
 int run_round_stats_scenario_score_codec(void);
 int run_round_stats_build_summary(void);
 int run_round_stats_scenario_score_filled(void);
+int run_round_stats_group_rows(void);
 int run_round_stats_summary_highlights(void);
 int run_round_stats_client_ingest(void);
 int run_round_stats_track_records(void);
@@ -482,6 +483,11 @@ int run_scenario_settings_bool_manifest_lua(void);
 int run_scenario_settings_bool_manifest_json(void);
 int run_scenario_settings_bool_server(void);
 int run_scenario_settings_bool_game_setting(void);
+int run_scenario_settings_choice_blob(void);
+int run_scenario_settings_choice_manifest_lua(void);
+int run_scenario_settings_choice_manifest_json(void);
+int run_scenario_settings_choice_server(void);
+int run_scenario_settings_choice_game_setting(void);
 int run_script_list_client_apply(void);
 int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
@@ -1334,6 +1340,19 @@ int run_lv_logged_name_from_join_event(void);
 int run_lv_game_settings_from_walk(void);
 int run_lv_game_settings_absent(void);
 
+/* Replay camera range (test_lv_camera.c): the tile fetch casts the column to
+ * a BYTE, so a view whose left edge plus width passes 255 wraps and draws the
+ * map's two mined borders back to back mid-screen. Every writer of the
+ * offset ends in one clamp to [0, 255 - screenSize]: the load's 127,127
+ * default on a wide grid, a highlight jump to a cell, a grid that grew, the
+ * raw setter, the standalone viewer's centre-on-click and its arrow-key
+ * nudge. */
+int run_lv_camera_load_fits_wide_grid(void);
+int run_lv_camera_centre_on_cell_stays_on_map(void);
+int run_lv_camera_resize_and_set_offset_clamp(void);
+int run_lv_camera_mouse_centre_click_stays_on_map(void);
+int run_lv_camera_arrow_nudge_stays_on_map(void);
+
 /* Spectator ring-seed fixture generator (test_spectator_seed_capture.c):
  * dispatch-only. Captures a real ServerSim ring keyframe (no trailing data) and
  * writes it to <WB_WBV_FIXTURE_DIR>/spectator_seed.bin when the env var is set. */
@@ -1431,6 +1450,9 @@ int run_voice_flags_snapshot_masking(void);
  * the talking bitmap encodes/decodes through the body tables — empty, one
  * bit, several bits and MAX_TANKS - 1 — and a short body is rejected. */
 int run_voice_talking_codec(void);
+/* CTRL_VOICE_EVERYONE body-codec round-trip (test_voice_everyone_codec.c):
+ * on and off survive, any other byte and an empty body are refused. */
+int run_voice_everyone_codec(void);
 
 /* CTRL_SIM_RULES body codec (test_sim_rules_codec.c): every carried rule
  * round-trips through the body tables, compared field by field and
@@ -2072,6 +2094,8 @@ int run_sim_rules_pill_angry_divisor_follows(void);
 int run_sim_rules_pill_massage_follows(void);
 int run_sim_rules_pill_aim_mac(void);
 int run_sim_rules_tank_collision_mac(void);
+int run_sim_rules_tank_deep_sea_safe(void);
+int run_sim_rules_man_bless_tile_terrain_speed(void);
 /* pill_shell_cap and pill_max_shells_at_tank through pillsUpdate
  * (test_pill_shell_cap.c). */
 int run_pill_shell_cap_off_is_no_limit(void);
@@ -2090,6 +2114,15 @@ int run_sim_rules_builder_cost_follows(void);
  * build on a sim that is not running it (test_sim_rules.c). */
 int run_sim_rules_are_classic(void);
 int run_sim_rules_obs_refuses_non_classic(void);
+
+/* The event translator the gym and the in-game ML brain share
+ * (test_obs_events.c). */
+int run_obs_events_every_type_classified(void);
+int run_obs_events_kills(void);
+int run_obs_events_hits(void);
+int run_obs_events_builders(void);
+int run_obs_events_sound_ids(void);
+int run_obs_events_pill_killed(void);
 int run_sim_rules_shell_flight_follows(void);
 int run_sim_rules_brain_shot_follows(void);
 int run_sim_rules_worldsim_pill_follows(void);
@@ -2602,6 +2635,7 @@ int run_tkexp_lgm_pairing(void);
  * input, a focus-stealing modal, a popup/menu on the stack, a defocused
  * window) and never for the transient alliance/vote notifications. */
 int run_input_gate_taxonomy(void);
+int run_input_source_autoslow(void);
 
 /* Game-binding claims (test_key_claims.c). keyIsClaimedByGame() must report
  * every keyItems field as owned by the game, so a second window that drives
@@ -2756,6 +2790,7 @@ int run_tank_diagonal_steps_both_axes(void);
  * square so only the modifier is under test. */
 int run_tank_mod_speed_caps_on_road(void);
 int run_tank_mod_speed_river_still_moves(void);
+int run_tank_mod_speed_wide_on_river(void);
 int run_tank_mod_accel_doubles_ticks_to_cap(void);
 int run_tank_mod_accel_doubles_ticks_to_brake(void);
 int run_tank_mod_accel_halves_autoslow(void);
@@ -2776,6 +2811,7 @@ int run_tank_mod_predicted_stop_matches_engine(void);
 int run_tank_modifiers_op_writes_set(void);
 int run_tank_modifiers_op_refusals(void);
 int run_tank_modifiers_wire_roundtrip(void);
+int run_tank_modifiers_wide_speed(void);
 int run_tank_modifiers_survive_death(void);
 int run_tank_modifiers_cleared_at_create(void);
 
@@ -3141,7 +3177,9 @@ int run_scenario_flow_arm_records(void);
  * it indexes, a rule written and read back, a rate the op's double carries
  * and an int32 could not, the two refusals and the table each leaves
  * untouched, the record the write puts in a recording, the records a lowered
- * cap brings down to it, and what the clamp leaves in the replay. */
+ * cap brings down to it, and what the clamp leaves in the replay. Then a
+ * whole set: a pair one rule at a time refuses, taken together, and a set that
+ * breaks a pair leaving the table as it was. */
 int run_scenario_rule_index_matches_table(void);
 int run_scenario_rule_set(void);
 int run_scenario_rule_set_float(void);
@@ -3149,6 +3187,21 @@ int run_scenario_rule_refusals(void);
 int run_scenario_rule_arm_records(void);
 int run_scenario_rule_clamps_world(void);
 int run_scenario_rule_clamp_records(void);
+int run_scenario_rules_whole_set_pair(void);
+int run_scenario_rules_whole_set_refused(void);
+
+/* Voice to everyone (test_scenario_voice_everyone.c). Allies only in a round
+ * and everyone in the lobby with no script, the op turning voice to everyone
+ * on and off, the return to the lobby, a round start and a detach each
+ * turning it off, and a server with voice off refusing it. */
+int run_scenario_voice_everyone_default(void);
+int run_scenario_voice_everyone_on(void);
+int run_scenario_voice_everyone_resets(void);
+int run_scenario_voice_everyone_voice_off(void);
+int run_scenario_voice_everyone_publish(void);
+int run_scenario_voice_everyone_join(void);
+int run_scenario_voice_everyone_client(void);
+int run_scenario_voice_everyone_mic_bits(void);
 
 /* fill_to_caps (test_scenario_fill_caps.c). A mod that raises a cap and asks
  * for the map to start at it, for a base stock and for a pill's armour; the
@@ -3343,6 +3396,7 @@ int run_scenario_host_manifest_read_from_its_own_env(void);
 int run_scenario_host_manifest_reads_workshop(void);
 int run_scenario_host_errors_counted_per_script(void);
 int run_scenario_host_many_rules_all_applied(void);
+int run_scenario_host_rules_table_whole(void);
 
 /* What a file that declared scenario.kind = "mod" may not do
  * (test_scenario_host.c): the rows it is held back from at run time, the
@@ -3403,11 +3457,13 @@ int run_scenario_validate_needs_bots_declared(void);
  * as, the whole-map string, a shape error against the error limit, and
  * the rules, tags and regions a script declares read back. */
 int run_scenario_lua_every_row_answers(void);
+int run_scenario_lua_voice_everyone(void);
 int run_scenario_lua_op_arguments_match_the_doc(void);
 int run_scenario_lua_read_index_passes_through(void);
 int run_scenario_lua_op_index_subtracts_one(void);
 int run_scenario_lua_script_index_adds_one(void);
 int run_scenario_lua_absent_reads_are_nil(void);
+int run_scenario_lua_lobby_slot_team_pool(void);
 int run_scenario_lua_terrain_is_the_whole_map(void);
 int run_scenario_lua_shape_error_counts(void);
 int run_scenario_lua_rule_reads_the_table(void);
@@ -3425,6 +3481,7 @@ int run_scenario_lua_game_type_resolves_scripted(void);
 int run_scenario_lua_panel_builds_bytes(void);
 int run_scenario_lua_panel_words_and_numbers(void);
 int run_scenario_lua_panel_refusals(void);
+int run_scenario_lua_panel_large_size(void);
 int run_scenario_lua_presentation_targets(void);
 int run_scenario_lua_score_and_announce(void);
 int run_scenario_lua_announce_position(void);
@@ -3811,6 +3868,7 @@ int run_scenario_compose_off_then_on(void);
 int run_scenario_compose_off_full_list_hides_last(void);
 int run_scenario_compose_needs_bots_any_mod(void);
 int run_scenario_compose_needs_bots_scenario_and_mod(void);
+int run_scenario_compose_on_tick_bottom_first(void);
 
 /* The panel's display list (test_scenario_panel.c): the byte layout
  * decoded from a hand-written list, the refusal each malformed list
@@ -3820,6 +3878,7 @@ int run_scenario_panel_parses_each_primitive(void);
 int run_scenario_panel_refuses_malformed(void);
 int run_scenario_panel_boundaries(void);
 int run_scenario_panel_roundtrip(void);
+int run_scenario_panel_large_size(void);
 /* And the timer primitive's text: the tick difference the drawer turns into
  * minutes and seconds, held to exact strings with no renderer behind it. */
 int run_scenario_panel_timer_text(void);

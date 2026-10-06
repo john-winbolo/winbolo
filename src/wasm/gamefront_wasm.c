@@ -26,6 +26,7 @@
 #include "client_sim.h"
 #include "control_event.h"
 #include "global.h"
+#include "lobby_bot_pools.h"
 #include "platform_net.h"
 #include "client_net.h"
 #include "gui_message.h"
@@ -33,6 +34,7 @@
 #include "frontend.h"
 #include "server_sim.h"
 #include "../server/server_lifecycle.h"
+#include "../server/server_dedicated_log.h"
 #include "../scenario/scenario_host.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
@@ -63,12 +65,16 @@ extern void wbPrefsPumpUpload(uint64_t nowMs);  /* prefs_bridge_wasm.c */
  * Module.wbMintJoinCode (POST /api/join, cookie-authed) via ASYNCIFY — mirrors
  * prefs_bridge_wasm.c's fetch helpers. Writes the code into out (up to outSize)
  * on HTTP 200; on any other outcome writes a malloc'd reason string through
- * *errOut (caller frees) when the backend supplied one. Returns the HTTP
+ * *errOut (caller frees) when the backend supplied one. On a 401,
+ * navigateOn401 non-zero sends the page to the WinBolo.net login and back;
+ * zero marks the page signed out and leaves it where it is. Returns the HTTP
  * status, or -1 on a transport error. */
 EM_ASYNC_JS(int, wasmMintJoinCode,
-            (const char *gameKey, char *out, int outSize, char **errOut), {
+            (const char *gameKey, char *out, int outSize, char **errOut,
+             int navigateOn401), {
     try {
-        const r = await Module.wbMintJoinCode(UTF8ToString(gameKey));
+        const r = await Module.wbMintJoinCode(UTF8ToString(gameKey),
+                                              navigateOn401 !== 0);
         if (r && r.status === 200 && typeof r.code === 'string') {
             stringToUTF8(r.code, out, outSize);
         } else if (r && typeof r.error === 'string') {
@@ -439,12 +445,12 @@ static bool wasmPickBackgroundMap(char *out, size_t outLen) {
 
 /* Find the brain practice bots run, trying the same paths in the same order
  * as the desktop's single-player lookup (gamefront.c findBrainPath). The web
- * preloads /Brains/GoalHunter_1.7, which the first path finds. */
+ * preloads /Brains/GoalHunter, which the first path finds. */
 static bool wasmFindBrainPath(char *out, size_t outLen) {
   const char *candidates[] = {
-    "Brains/GoalHunter_1.7/init.lua",
-    "brains/GoalHunter_1.7/init.lua",
-    "data/Brains/GoalHunter_1.7/init.lua",
+    "Brains/GoalHunter/init.lua",
+    "brains/GoalHunter/init.lua",
+    "data/Brains/GoalHunter/init.lua",
   };
   int i;
   for (i = 0; i < 3; i++) {
@@ -493,6 +499,32 @@ static void wasmSeedPracticeBot(const char *brainPath, bool scriptSeats) {
   serverSimReapplyTeamAlliances(wasmServerSim);
 }
 
+/* The shared background game the menu and its dialogs draw behind them.
+ * Not fatal when it cannot be made: the menu is then drawn plain. */
+void wasmBackgroundGameCreate(void) {
+  char mapPath[512];
+  BgGame *bg = (BgGame *)SDL_calloc(1, sizeof(BgGame));
+  if (bg == NULL) {
+    printf("[WASM] background game: out of memory\n");
+    return;
+  }
+  if (wasmPickBackgroundMap(mapPath, sizeof(mapPath)) &&
+      bgGameCreate(bg, mapPath, sdl3DrawGetRenderer())) {
+    bgGameSetShared(bg);
+  } else {
+    printf("[WASM] background game: not created\n");
+    SDL_free(bg);
+  }
+}
+
+void wasmBackgroundGameDestroy(void) {
+  BgGame *bg = bgGameGetShared();
+  if (bg == NULL) return;
+  bgGameSetShared(NULL);
+  bgGameDestroy(bg);
+  SDL_free(bg);
+}
+
 /* -------------------------------------------------------
  * gameFrontWasmSetup — page-lifetime setup, run once per page
  * ------------------------------------------------------- */
@@ -539,23 +571,6 @@ bool gameFrontWasmSetup(keyItems *keys) {
     }
 
     brainsHandlerLoadBrains();
-
-    /* The shared background game the menu and its dialogs draw behind
-     * them, made once for the page. Not fatal when it fails: the menu is
-     * then drawn plain. main_wasm.c hides it while a game runs; the page
-     * never frees it. */
-    {
-      BgGame *bg = (BgGame *)SDL_calloc(1, sizeof(BgGame));
-      if (bg != NULL) {
-        char mapPath[512];
-        if (wasmPickBackgroundMap(mapPath, sizeof(mapPath)) &&
-            bgGameCreate(bg, mapPath, sdl3DrawGetRenderer())) {
-          bgGameSetShared(bg);
-        } else {
-          SDL_free(bg);
-        }
-      }
-    }
   }
 
   guiMessageSetHandler(sdl3MessageHandler);
@@ -690,8 +705,12 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
     char joinCode[128] = "";
     if (haveGameKey) {
       char *mintErr = NULL;
+      /* A page opened from a /join/ link goes to the login on a 401 and
+       * comes back to the same link. A join from the page's finder stays
+       * in the page: the error below says to sign in, and the finder then
+       * offers it. */
       int mintStatus = wasmMintJoinCode(gameKey, joinCode, sizeof(joinCode),
-                                        &mintErr);
+                                        &mintErr, launch->inPage ? 0 : 1);
       if (mintStatus != 200 || joinCode[0] == '\0') {
         const char *reason = (mintErr && mintErr[0] != '\0')
                            ? mintErr : gameFrontMintFailReason(mintStatus);
@@ -914,6 +933,28 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
       }
     }
 
+    /* Record practice rounds for the lobby's replay, as desktop single
+     * player does (gamefront.c, after gameFrontStartServerSim): the same two
+     * files under the prefs path, in the same order, before the connect. */
+    if (!wantTutorial) {
+      char spLogPath[FILENAME_MAX];
+      char spRoundPath[FILENAME_MAX];
+      const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+      if (prefDir != NULL) {
+        snprintf(spLogPath, sizeof(spLogPath),
+                 "%ssingleplayer-recording.wbv", prefDir);
+        snprintf(spRoundPath, sizeof(spRoundPath), "%ssingleplayer.wbv", prefDir);
+        SDL_free((void *)prefDir);
+      } else {
+        snprintf(spLogPath, sizeof(spLogPath), "singleplayer-recording.wbv");
+        snprintf(spRoundPath, sizeof(spRoundPath), "singleplayer.wbv");
+      }
+      serverSimSetWantLogging(wasmServerSim, true);
+      serverSimSetUserLogFileName(wasmServerSim, spLogPath);
+      serverDedicatedLogInstall(wasmServerSim, true);
+      serverDedicatedLogSetCompletedPath(spRoundPath);
+    }
+
     /* The local join below carries gameFrontName to the server. main_wasm.c
      * chose the single-player name (a validated ?name= or "Me") before this
      * start ran. */
@@ -932,6 +973,9 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
              clientSimGetConnectErrorReason(humanSim));
       scenarioHostDetach(wasmScenarioHost);
       wasmScenarioHost = NULL;
+      /* The round recorder goes with its server, as in gameFrontEnd. */
+      serverDedicatedLogStashCurrentRound();
+      serverDedicatedLogUninstall();
       serverSimDestroy(wasmServerSim);
       wasmServerSim = NULL;
       clientSimDestroy(humanSim);
@@ -996,11 +1040,22 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
        * practice game starts with no scenario. */
       scenarioHostDetach(wasmScenarioHost);
       wasmScenarioHost = NULL;
+      /* Close the round's log and let go of the recorder before the sim
+       * goes, as desktop's gameFrontShutdownServer does. Its WinBolo.net
+       * upload step is left out: a practice round is never uploaded. The
+       * uninstall is unconditional there too, so it covers the tutorial,
+       * which never installed. */
+      serverDedicatedLogStashCurrentRound();
+      serverDedicatedLogUninstall();
       serverSimDestroy(wasmServerSim);
       wasmServerSim = NULL;
     }
     wasmTransportActive = FALSE;
   }
+  /* Drop the bot-pool catalog a joined server sent, so a later practice
+   * lobby offers the stock bot names again. The web loads no catalog file
+   * of its own, so clearing it is all desktop's reload amounts to here. */
+  lobbyBotPoolsReset();
   frontEndSetActiveClientSim(NULL);
   clientSimDestroy(humanSim);  /* also tears down the embedded transport */
   humanSim = NULL;
@@ -1183,9 +1238,9 @@ void gameFrontReloadSkins(void)               { }
 void gameFrontShutdownServer(void)            { }
 bool gameFrontPreferencesExist(void)          { return FALSE; }
 bool gameFrontSetupServer(void)               { return FALSE; }
-/* The web build never owns a round log to offer back, so callers that gate
- * on a locally recorded round see nothing. */
-bool gameFrontHasLocalServer(void)            { return FALSE; }
+/* The page's own server: a practice game's (or the tutorial's), from its
+ * creation in gameFrontWasmStart to gameFrontEnd. */
+bool gameFrontHasLocalServer(void)            { return wasmServerSim != NULL; }
 
 /* Lobby/host helpers the in-game lobby pulls in now that it renders in the
  * web build (C6). Host-only / Steam / persistence features that are inert in
@@ -1341,8 +1396,8 @@ void gameFrontSetVisibilityCustom(const VisibilitySettings *v) {
   gameFrontVisibilityCustomSaved = TRUE;
 }
 
-/* The browser build never hosts (gameFrontHasLocalServer is FALSE), so
- * the lobby never records a pick here. */
+/* A practice lobby asks to remember these as desktop single player does,
+ * but nothing persists them in a browser tab, so they are dropped. */
 void gameFrontRememberGameType(gameType gt)     { (void)gt; }
 void gameFrontRememberAiPolicy(aiType ai)       { (void)ai; }
 void gameFrontRememberHiddenMines(bool hm)      { (void)hm; }

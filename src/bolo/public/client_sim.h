@@ -808,6 +808,22 @@ BYTE clientSimGetLobbyNumConnected(const ClientSim *cs);
  *********************************************************/
 PlayerBitMap clientSimGetVoiceTalkingMap(const ClientSim *cs);
 
+/*********************************************************
+ *NAME:          clientSimGetVoiceEveryone
+ *PURPOSE:
+ *  Whether the running round's voice goes to every player
+ *  because a scenario turned that on (CTRL_VOICE_EVERYONE),
+ *  rather than to the talker's allies alone.
+ *
+ *  False outside a running round: the lobby and the
+ *  countdown are all-talk whatever the flag says, so there
+ *  is nothing to show there.
+ *
+ *ARGUMENTS:
+ *  cs - The ClientSim to read
+ *********************************************************/
+bool clientSimGetVoiceEveryone(const ClientSim *cs);
+
 bool                   clientSimIsMapSkipVote(const ClientSim *cs, BYTE n);
 uint8_t                clientSimGetBalanceProposal(const ClientSim *cs, BYTE n);
 

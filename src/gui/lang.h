@@ -444,6 +444,10 @@
 /* Map overview pop-out */
 #define STR_OVERVIEW_FOLLOWING              1988
 #define STR_OVERVIEW_FREE                   1989
+/* The free-camera readout when a follow key is bound: a pan drops following
+ * without a key press, so this is where the player is told how to get it
+ * back. {string1} is the key's name. */
+#define STR_OVERVIEW_FREE_HINT              2756
 /* Settings panel additions (pre-game) */
 #define STR_DLGSETTINGS_TUTORIAL            590
 #define STR_DLGSETTINGS_PLAY_TUTORIAL       591
@@ -2561,6 +2565,7 @@
 #define STR_DLGLOBBY_SCENARIO_ROUND_NONE    2601
 #define STR_DLGLOBBY_SCENARIO_REPLACES      2602
 #define STR_DLGLOBBY_SCENARIO_ROUND_FULL    2603
+#define STR_DLGLOBBY_SCENARIO_MAP_UNLOAD    2761
 
 /* The one-word tag after a row's name, and in the details dialog beside the
  * name it describes. One word and not a sentence: it is read at a glance
@@ -2934,7 +2939,7 @@
  * rule's own name is not translated — it is what a manifest, a script and an
  * operator line all spell — so there is no id for it here.
  *
- * The numbers run in five stretches rather than one. The first eleven rules
+ * The numbers run in six stretches rather than one. The first eleven rules
  * had 2334 to 2344, which the fog style strings took as well; moving these
  * eleven to the end was the smaller change of the two. Fifty-three more are
  * the rules the table gained after the middle stretch was numbered, and the
@@ -2942,7 +2947,9 @@
  * editor's scenario strings because everything up to them was taken.
  * The pill shell cap pair, pill_base_defend_shape and then the Mac Bolo
  * shell push pair came after all of those and took the next free numbers,
- * at the end of the file. The
+ * at the end of the file, and tank_deep_sea_safe took the next free one
+ * after those, and man_bless_tile_terrain_speed the next free one after
+ * that. The
  * order of the block is SIM_RULE_LIST's throughout, which is the order that
  * matters, and a hole in the numbers costs nothing: langTable is searched by
  * id rather than indexed by it. */
@@ -3100,6 +3107,8 @@
 #define STR_RULE_DESC_tank_slide_mac             2703
 #define STR_RULE_DESC_pill_aim_mac               2711
 #define STR_RULE_DESC_tank_collision_mac         2712
+#define STR_RULE_DESC_tank_deep_sea_safe         2760
+#define STR_RULE_DESC_man_bless_tile_terrain_speed 2762
 
 /* Rule range wording */
 
@@ -3246,8 +3255,10 @@
  * line a player who is not the host sees under it, the line a host sees
  * on a server too old to take a change, and a dropdown entry for the
  * declared default ({number} = the value). A bool setting's dropdown offers
- * On and Off, with the declared one of them marked as the default. The
- * settings' own labels are the script's text, not strings here. */
+ * On and Off, with the declared one of them marked as the default. A choice
+ * setting's dropdown offers the script's own words, the default one marked
+ * ({string1} = the word). The settings' own labels are the script's text,
+ * not strings here. */
 #define STR_DLGLOBBY_DETAILS_SETTINGS            2663
 #define STR_DLGLOBBY_DETAILS_SETTINGS_HOST       2664
 #define STR_DLGLOBBY_DETAILS_SETTINGS_OLD        2665
@@ -3256,6 +3267,7 @@
 #define STR_DLGLOBBY_DETAILS_SETTING_OFF         2708
 #define STR_DLGLOBBY_DETAILS_SETTING_ON_DEFAULT  2709
 #define STR_DLGLOBBY_DETAILS_SETTING_OFF_DEFAULT 2710
+#define STR_DLGLOBBY_DETAILS_SETTING_CHOICE_DEFAULT 2759
 
 /* The map editor's metadata form: the read-only line naming the Steam
  * Workshop item a scenario was published as ({string1} = the item id) and
@@ -3301,6 +3313,10 @@
  * scenario row and the Scenario filter entry reuse STR_DLGGAMEINFO_SCRIPTED. */
 #define STR_DLGBROWSER_MODS                      2713
 #define STR_DLGBROWSER_MODS_MORE                 2714
+
+/* In-game newswire — a scenario changed who hears a player's voice */
+#define STR_VOICE_EVERYONE_ON                    2757
+#define STR_VOICE_EVERYONE_OFF                   2758
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

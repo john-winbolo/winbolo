@@ -6,20 +6,20 @@ then reports per-bot think-time distributions, the recorder's own phase
 costs, and (when the mode enables the Lua phase profiler) a per-section
 breakdown of where the brain's tick goes.
 
-MODES (all: DH-Oil Rig, 2v2 GoalHunter_1.7, -seed/-brain-lua-seed/-brain-tier
+MODES (all: DH-Oil Rig, 2v2 GoalHunter, -seed/-brain-lua-seed/-brain-tier
 pinned so every mode does identical work and only the debug output differs)
 
   prod            opt/ brain, BRAIN_DEBUG_MODE off, no Lua profiler.  This is
                   production.  Nothing in the build reports think time in this
                   configuration, so it needs the temporary [[GHPROBE]] snippet
                   (see "GROUND-TRUTH PROBE" below).
-  nomark          like prod, but against brains/GH17_nomark/ — a copy of the
+  nomark          like prod, but against brains/GH_nomark/ — a copy of the
                   opt/ tree with the unconditional `opt(string.format(...))`
                   phase markers stripped.  prod - nomark = what those markers
                   cost in production.  Build it with:
-                    cp -r brains/GoalHunter_1.7 brains/GH17_nomark
-                    rm brains/GH17_nomark/opt/*.lua
-                    build/Release/lua_strip.exe --strip "opt("                         brains/GH17_nomark/opt brains/GoalHunter_1.7/opt/*.lua
+                    cp -r brains/GoalHunter brains/GH_nomark
+                    rm brains/GH_nomark/opt/*.lua
+                    build/Release/lua_strip.exe --strip "opt("                         brains/GH_nomark/opt brains/GoalHunter/opt/*.lua
   prodprof        opt/ brain + -brain-profile-log: writes optimize.log and
                   performance.ticks.log (per-think phase sections, capacity
                   tier, alloc_n/alloc_kb).  The only per-phase breakdown the
@@ -43,7 +43,7 @@ GROUND-TRUTH PROBE (prod / nomark only)
   brain.lastThinkMs is published to Lua by the host every tick
   (luabrainshandler.c:1593, from bot_manager.c:909) and costs nothing to read.
   Insert this immediately after `function Brain.think(info)` in BOTH
-  brains/GoalHunter_1.7/init.lua and brains/GoalHunter_1.7/opt/init.lua, run,
+  brains/GoalHunter/init.lua and brains/GoalHunter/opt/init.lua, run,
   then `git checkout` both files:
 
     do local _p = _G._GHP
@@ -106,10 +106,10 @@ OUT = ROOT / "cpuprof_out"
 
 MAP = "data/maps/DH-Oil Rig.map"
 # WINBOLO_BRAIN_DIR lets a before/after comparison point the same harness at a
-# pristine copy of the brain (e.g. brains/GH17_base) without editing this file.
+# pristine copy of the brain (e.g. brains/GH_base) without editing this file.
 # WINBOLO_DS_EXE does the same for the server binary when the C side changed and
 # the build lives outside the shared build/ junction (e.g. build-wt).
-BRAIN_DIR = os.environ.get("WINBOLO_BRAIN_DIR", "brains/GoalHunter_1.7")
+BRAIN_DIR = os.environ.get("WINBOLO_BRAIN_DIR", "brains/GoalHunter")
 DS_EXE = os.environ.get("WINBOLO_DS_EXE", "build/WinBoloDS.exe")
 ROOT_BRAIN = BRAIN_DIR + "/init.lua"
 OPT_BRAIN = BRAIN_DIR + "/opt/init.lua"
@@ -163,12 +163,12 @@ MODES = {
                                     "-bd-nopool"]),
     # Ablation: opt/ brain with the ~112 unconditional `opt(string.format(..))`
     # phase-marker statements stripped out (build it with
-    #   build/Release/lua_strip.exe --strip "opt(" brains/GH17_nomark/opt \
-    #       brains/GoalHunter_1.7/opt/*.lua
-    # after copying brains/GoalHunter_1.7 -> brains/GH17_nomark).
+    #   build/Release/lua_strip.exe --strip "opt(" brains/GH_nomark/opt \
+    #       brains/GoalHunter/opt/*.lua
+    # after copying brains/GoalHunter -> brains/GH_nomark).
     # Measures what the profiler markers cost in PRODUCTION, where they format
     # their strings before optimize.lua's BRAIN_PROFILE check discards them.
-    "nomark":         ("brains/GH17_nomark/init.lua", []),
+    "nomark":         ("brains/GH_nomark/init.lua", []),
 }
 # -brain-profile-log rewrites the brain path to opt/ itself unless -brain-debug
 # also asks for the base path, so "prodprof" passes the root path on purpose.

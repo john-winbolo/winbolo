@@ -158,7 +158,7 @@ int run_brain_list_texts_read(void) {
     /* ── The brain this branch actually ships, if it is in the tree ── */
     {
         char shipped[512];
-        SDL_snprintf(shipped, sizeof(shipped), "brains%cGoalHunter_1.7", SEP);
+        SDL_snprintf(shipped, sizeof(shipped), "brains%cGoalHunter", SEP);
         if (brainListLoadTexts(shipped,
                                announce, (size_t)BRAIN_ANNOUNCE_MAX + 1,
                                docs, (size_t)BRAIN_DOCS_MAX + 1,

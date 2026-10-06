@@ -82,7 +82,7 @@ typedef struct {
  * log_TankSetModifiers records. 0 means classic, so a slot the recording says
  * nothing about reads as an unmodified tank. Stored but not drawn. */
 typedef struct {
-  BYTE speed;
+  uint16_t speed;  /* past a byte when the record's blob is eight long */
   BYTE accel;
   BYTE turn;
   BYTE reload;
@@ -261,9 +261,14 @@ void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *rend
  * lvEmbedFrameTexture updates the render target when the decode timers asked
  * for it and reports the texture plus the visible slice within it (src rect in
  * texture pixels), clearing and presenting nothing. Wheel coordinates are
- * image-local; pan deltas are host screen pixels measured from lvEmbedPanBegin.
- * lvEmbedGetZoomLevel reports the scale the slice is drawn at, so a host can
+ * image-local; pan deltas are host screen pixels measured from lvEmbedPanBegin,
+ * and a non-zero delta turns off following the tank lvEmbedFocusPlayerByName
+ * picked. lvEmbedGetZoomLevel reports the scale the slice is drawn at, so a host can
  * size its image at the slice times the zoom instead of stretching it to fill.
+ * The tank names are not in the texture: lvEmbedTankLabelCount and
+ * lvEmbedTankLabel give them for the host to draw over its image, and
+ * lvEmbedSetTankLabelsInTexture(true) puts them back in for a host that reads
+ * the texture's pixels.
  * lvEmbedGetProgress, lvEmbedSeekRatio, lvEmbedSeekToClip and lvEmbedSeekToTime
  * all speak in the presented window rather than the whole log: progress is
  * elapsed and total milliseconds within it (zeros while no embed is running), a
@@ -286,6 +291,10 @@ void lvEmbedSetViewportSize(int viewW, int viewH);
 bool lvEmbedFrameTexture(void **outTexture, int *outTexW, int *outTexH,
                          int *outSrcX, int *outSrcY, int *outSrcW, int *outSrcH);
 float lvEmbedGetZoomLevel(void);
+int  lvEmbedTankLabelCount(float pxPerSourcePx);
+bool lvEmbedTankLabel(int index, void **outTexture, int *outX, int *outY,
+                      int *outW, int *outH);
+void lvEmbedSetTankLabelsInTexture(bool inTexture);
 void lvEmbedPlay(void);
 void lvEmbedPause(void);
 bool lvEmbedIsPlaying(void);

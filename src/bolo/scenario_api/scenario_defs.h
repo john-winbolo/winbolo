@@ -54,7 +54,7 @@
  * directory, and two copies of the figure would drift. */
 
 /* Buffer for a brain: the name a scenario writes — a directory under the
- * server's own brains/, such as "GoalHunter_1.7" — and the path that name is
+ * server's own brains/, such as "GoalHunter" — and the path that name is
  * resolved to before the sim is handed it. */
 #define SCN_PATH_MAX 256
 
@@ -300,6 +300,7 @@ typedef enum {
     SCN_OP_MSG_SAY,
     SCN_OP_SOUND,
     SCN_OP_LOG,
+    SCN_OP_SET_VOICE_EVERYONE,
 
     /* Presentation */
     SCN_OP_PANEL,
@@ -600,6 +601,13 @@ typedef struct {
     char text[SCN_TEXT_MAX];
 } ScnOpLog;
 
+/* Voice to everyone. While on is set, voice in a running round goes to
+ * every player rather than to the talker's allies alone. It lasts until the
+ * script turns it off or the round ends. */
+typedef struct {
+    bool on;
+} ScnOpSetVoiceEveryone;
+
 /* ── Presentation ──────────────────────────────────────────────── */
 /* target: 0 = all, 1..15 = team, 0x80 | slot = one player. */
 
@@ -779,6 +787,7 @@ typedef struct {
         ScnOpMsgSay            msgSay;
         ScnOpSound             sound;
         ScnOpLog               log;
+        ScnOpSetVoiceEveryone  setVoiceEveryone;
         ScnOpPanel             panel;
         ScnOpScore             score;
         ScnOpAnnounce          announce;

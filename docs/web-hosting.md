@@ -38,6 +38,10 @@ This makes `<build-dir>/wasm-dist.zip`, which holds:
 Unzip it into the site root. The paths in the zip are the paths the site
 serves.
 
+To try a build before deploying it, serve the build directory with
+`python3 src/wasm/serve_isolated.py <build-dir>`, which sends the headers the
+game needs (see Cross-origin isolation).
+
 The data file is about **68 MB**. That figure needs Python `fonttools` at
 configure time (`pip install fonttools brotli`) for the CJK font subset;
 without it the build warns and preloads the full fonts, and the data file is
@@ -116,6 +120,12 @@ play.winbolo.net {
     # The unzipped wasm-dist: winbolo.*, js/ and img/
     root * /srv/play
 
+    # The game uses threads, and the browser allows them only on a cross-origin
+    # isolated page. No matcher, so every response carries these, including the
+    # proxied ones and winbolo.js, which the game's thread workers load.
+    header Cross-Origin-Opener-Policy "same-origin"
+    header Cross-Origin-Embedder-Policy "require-corp"
+
     # Revalidates by ETag, so a join's page reload does not download the data file again.
     header /winbolo* Cache-Control "no-cache"
 
@@ -156,6 +166,72 @@ Mount the site root into the Caddy container, e.g. in the Caddy
 
 > Volume changes need a recreate (`docker compose up -d`), not just a reload.
 
+## Log viewer (logviewer.winbolo.net)
+
+The web log viewer (`src/logviewer/wasm/`) opens a WinBolo.net round log from
+its key:
+
+| URL | Opens |
+|-----|-------|
+| `/gamelog/<key>` | the log with that key |
+| `/logviewer.html?key=<key>` | the same log |
+| `/logviewer.html?url=<url>` | the log at that address; a relative address is taken from the site root, and another site must allow it with CORS |
+
+The page fetches `/logdownload?key=<key>` from its own origin, so the server
+passes `/logdownload` on to the WinBolo.net backend, and `/gamelog/*` is an
+internal rewrite to `logviewer.html`. The page carries `<base href="/">`, so it
+must be served from the site root.
+
+Build the deploy zip with `cmake --build <build-dir> --target wasm-dist` in the
+log viewer build. It makes `<build-dir>/wasm-logviewer-dist.zip`; unzip it into
+the site root.
+
+```caddy
+logviewer.winbolo.net {
+    encode zstd gzip
+    root * /srv/logviewer
+
+    handle /logdownload* {
+        reverse_proxy host.docker.internal:8080
+    }
+
+    rewrite / /logviewer.html
+    rewrite /gamelog/* /logviewer.html
+
+    handle {
+        file_server {
+            precompressed br gzip
+            hide .*
+        }
+    }
+}
+```
+
+The log viewer does not use threads, so it needs no cross-origin isolation
+headers.
+
+## Cross-origin isolation
+
+The game runs threads, which need `SharedArrayBuffer`, and the browser gives
+that only to a page served with `Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Embedder-Policy: require-corp`. Without both headers the page
+shows a message that the browser can't run WinBolo and does not start the game.
+The headers also mean:
+
+- The relays must keep sending `Access-Control-Allow-Origin` on `/ping`. The
+  latency check fetches it cross-origin in CORS mode (see Relays). The
+  WebSocket to the relay is not affected.
+- Nothing may be loaded from another origin unless it sends CORS headers or
+  `Cross-Origin-Resource-Policy`. Everything else the page loads today is
+  same-origin; sign-in and News open as navigations or new tabs, which the
+  headers don't block.
+- The game only runs as a top-level page: inside another site's iframe it is
+  not cross-origin isolated, so it shows the message instead of starting.
+
+To test a build locally with both headers, serve it with
+`python3 src/wasm/serve_isolated.py <build-dir> [port]` (port 8000 by default).
+`python3 -m http.server` does not send them, so the game won't start under it.
+
 ## Deploy order
 
 Moving from the old static lobby to the game at `/` goes in this order:
@@ -169,3 +245,11 @@ Moving from the old static lobby to the game at `/` goes in this order:
    build, which starts single player instead of opening the menu.
 3. **Delete `play/` in the WinBolo.net repo.** Nothing is served from it once
    Caddy uses the single root, so it goes last.
+
+Moving to the threaded build goes in this order:
+
+1. **Add the two cross-origin isolation headers in Caddy** (the
+   `Cross-Origin-*` lines in the Caddyfile above) and reload. The current build
+   works under them, and the threaded build won't start without them, so they
+   go on first.
+2. **Deploy the threaded build to the site root**, as in Build and deploy.

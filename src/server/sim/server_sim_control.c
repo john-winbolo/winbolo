@@ -1197,6 +1197,18 @@ static void serverSimSyncSubscriber(
         }
     }
 
+    /* Voice to everyone, while a script has it on, so a client that joins
+     * mid-round knows who hears it. Off is a joiner's own starting value and
+     * needs no event. Only to a real joiner: a spectator hears nobody, and
+     * the delivery path would drop it for one anyway. Placed ahead of the
+     * player-join roster for the reason the rules are. */
+    if (fullReplay && serverSimGetScenarioVoiceEveryone(sim)) {
+        memset(&evt, 0, sizeof(evt));
+        evt.type               = CTRL_VOICE_EVERYONE;
+        evt.u.voiceEveryone.on = true;
+        deliver(ctx, &evt);
+    }
+
     for (i = 0; i < MAX_TANKS; i++) {
         if (playersIsInUse(&sim->sim.plyrs, i) == TRUE) {
             memset(&evt, 0, sizeof(evt));

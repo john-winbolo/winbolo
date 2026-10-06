@@ -1435,6 +1435,12 @@ bool serverSimSetScriptSetting(ServerSim *sim, const char *file,
     if (decl->type == SCN_SETTING_TYPE_BOOL && value != 0 && value != 1) {
         return false;
     }
+    /* Nor has a list of words: a choice takes the index of one of its
+       words and nothing else. */
+    if (decl->type == SCN_SETTING_TYPE_CHOICE &&
+        scnSettingChoiceText(decl, value) == NULL) {
+        return false;
+    }
 
     v  = scnSettingClamp(decl, value);
     at = scriptSettingAt(sim, file, id);

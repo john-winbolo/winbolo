@@ -1021,7 +1021,7 @@ set(IOS_MOBILE_SOURCES
 )
 
 # Lua brain scripts to bundle
-file(GLOB IOS_BRAIN_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7/*.lua")
+file(GLOB IOS_BRAIN_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/GoalHunter/*.lua")
 
 
 add_executable(WinBoloIOS MACOSX_BUNDLE
@@ -1074,7 +1074,7 @@ set_source_files_properties(${IOS_DATA_MAPS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/maps"
 )
 set_source_files_properties(${IOS_BRAIN_SCRIPTS} PROPERTIES
-    MACOSX_PACKAGE_LOCATION "Brains/GoalHunter_1.7"
+    MACOSX_PACKAGE_LOCATION "Brains/GoalHunter"
 )
 set_source_files_properties(${IOS_DATA_SOUNDS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/sounds"
@@ -1383,6 +1383,15 @@ if(ENABLE_ONNXRUNTIME AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         )
         FetchContent_MakeAvailable(onnxruntime_prebuilt)
 
+        # The prebuilt library bundles about thirty components under
+        # Apache, BSD and MIT licences, listed in its ThirdPartyNotices.txt.
+        # Those licences require the text to ship with the binary, so the
+        # file is copied beside THIRD_PARTY_NOTICES.md wherever the library
+        # itself is shipped. A system or vcpkg install carries its own copy.
+        if(EXISTS "${onnxruntime_prebuilt_SOURCE_DIR}/ThirdPartyNotices.txt")
+            set(ONNXRUNTIME_NOTICES "${onnxruntime_prebuilt_SOURCE_DIR}/ThirdPartyNotices.txt" CACHE INTERNAL "")
+        endif()
+
         # Find the shared library in the extracted directory
         if(WIN32)
             file(GLOB _ORT_DLL "${onnxruntime_prebuilt_SOURCE_DIR}/lib/onnxruntime.dll")
@@ -1419,6 +1428,39 @@ if(HAVE_ONNXRUNTIME)
 else()
     message(STATUS "ONNX Runtime not found — ML brain support disabled")
 endif()
+
+# Copies the ONNX Runtime shared library next to a target. bolo_static
+# PUBLIC-links onnxruntime, so every binary that links bolo_static, directly
+# or through server_sim_static, loads the library at startup and its $ORIGIN
+# / @executable_path RPATH expects it beside the executable. Call this for
+# each such target rather than relying on a sibling target's copy landing in
+# the same directory: a single-target build then still starts. Does nothing
+# when ONNX Runtime came from the system rather than FetchContent, and
+# nothing without ONNX Runtime at all.
+function(winbolo_stage_onnxruntime TARGET)
+    if(NOT HAVE_ONNXRUNTIME)
+        return()
+    endif()
+    if(WIN32 AND DEFINED ONNXRUNTIME_DLL)
+        add_custom_command(TARGET ${TARGET} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_DLL}" "$<TARGET_FILE_DIR:${TARGET}>"
+            COMMENT "Copying ONNX Runtime DLL to ${TARGET} output directory"
+        )
+    elseif(DEFINED ONNXRUNTIME_LIBDIR)
+        file(GLOB _ort_libs "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
+        foreach(_f ${_ort_libs})
+            # Skip .dSYM bundles: they are directories, so copy_if_different
+            # fails on them, and the debug symbols need not ship beside the
+            # binary.
+            if(_f MATCHES "\\.dSYM$")
+                continue()
+            endif()
+            add_custom_command(TARGET ${TARGET} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_f}" "$<TARGET_FILE_DIR:${TARGET}>"
+            )
+        endforeach()
+    endif()
+endfunction()
 
 # Sentry crash reporting — sentry-native for desktop.  The ENABLE_SENTRY /
 # SENTRY_DSN / HAVE_SENTRY* declarations, and the iOS sentry-cocoa download,
@@ -1515,15 +1557,18 @@ add_subdirectory(brains)
 
 # server_static and server_sim_static have a circular dependency that
 # GNU ld resolves with --start-group/--end-group ($<LINK_GROUP:RESCAN>).
+# server_round_log_static sits in the group too: the recorder calls the
+# transport and the lifecycle in server_static, and servermain.c calls the
+# recorder, so neither order resolves on one pass.
 # MSVC's link.exe does multi-pass static-lib resolution natively, and
 # Apple's ld doesn't support library groups at all -- both also reject
 # $<LINK_GROUP> for the CXX link language, so emit plain library names
-# there. Use this variable in target_link_libraries wherever both libs
+# there. Use this variable in target_link_libraries wherever these libs
 # are linked together.
 if(MSVC OR APPLE)
-    set(SERVER_LINK_GROUP server_static server_sim_static)
+    set(SERVER_LINK_GROUP server_static server_sim_static server_round_log_static)
 else()
-    set(SERVER_LINK_GROUP "$<LINK_GROUP:RESCAN,server_static,server_sim_static>")
+    set(SERVER_LINK_GROUP "$<LINK_GROUP:RESCAN,server_static,server_sim_static,server_round_log_static>")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -2038,12 +2083,12 @@ add_custom_command(TARGET WinBolo POST_BUILD
 )
 
 add_custom_command(TARGET WinBolo POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.7"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter"
     COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7
-        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.7
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter
+        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter
         -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
-    COMMENT "Copying brain scripts (GoalHunter_1.7) to output Brains/ directory (excludes *.md)"
+    COMMENT "Copying brain scripts (GoalHunter) to output Brains/ directory (excludes *.md)"
 )
 
 # Steam Input action manifest + per-controller binding files — Steam reads
@@ -2077,26 +2122,15 @@ add_custom_command(TARGET WinBolo POST_BUILD
     COMMENT "Copying SDL3 shared libraries to WinBolo output directory"
 )
 # Copy ONNX Runtime shared library if using FetchContent prebuilt
-if(HAVE_ONNXRUNTIME)
-    if(WIN32 AND DEFINED ONNXRUNTIME_DLL)
-        add_custom_command(TARGET WinBolo POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_DLL}" "$<TARGET_FILE_DIR:WinBolo>"
-            COMMENT "Copying ONNX Runtime DLL to WinBolo output directory"
-        )
-    elseif(DEFINED ONNXRUNTIME_LIBDIR)
-        file(GLOB _ORT_ALL_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
-        foreach(_f ${_ORT_ALL_SO})
-            # Skip .dSYM bundles — they are directories, not files, so
-            # copy_if_different fails on them. They are debug symbols that
-            # don't need to ship next to the binary.
-            if(_f MATCHES "\\.dSYM$")
-                continue()
-            endif()
-            add_custom_command(TARGET WinBolo POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_f}" "$<TARGET_FILE_DIR:WinBolo>"
-            )
-        endforeach()
-    endif()
+winbolo_stage_onnxruntime(WinBolo)
+if(HAVE_ONNXRUNTIME AND DEFINED ONNXRUNTIME_NOTICES)
+    # Its third-party notices go into data/ beside THIRD_PARTY_NOTICES.md,
+    # which points to them.
+    add_custom_command(TARGET WinBolo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_NOTICES}"
+            "${WINBOLO_DATA_DIR}/data/THIRD_PARTY_NOTICES-onnxruntime.txt"
+        COMMENT "Copying ONNX Runtime third-party notices to data/"
+    )
 endif()
 # Copy crashpad_handler next to WinBolo executable
 if(HAVE_SENTRY AND TARGET crashpad_handler)
@@ -2283,31 +2317,9 @@ add_custom_command(TARGET WinBoloDS POST_BUILD
 )
 
 # bolo_static PUBLIC-links onnxruntime, so WinBoloDS inherits the dylib
-# dependency. Mirror the WinBolo/MapEditor POST_BUILD copy step so the
-# dedicated server finds the dylib next to its executable — without this,
-# launching WinBoloDS fails at dyld load time with
+# dependency; without the copy, launching it fails at dyld load time with
 # "Library not loaded: @rpath/libonnxruntime.*.dylib".
-if(HAVE_ONNXRUNTIME)
-    if(WIN32 AND DEFINED ONNXRUNTIME_DLL)
-        add_custom_command(TARGET WinBoloDS POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_DLL}" "$<TARGET_FILE_DIR:WinBoloDS>"
-            COMMENT "Copying ONNX Runtime DLL to WinBoloDS output directory"
-        )
-    elseif(DEFINED ONNXRUNTIME_LIBDIR)
-        file(GLOB _ORT_ALL_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
-        foreach(_f ${_ORT_ALL_SO})
-            # Skip .dSYM bundles — they are directories, not files, so
-            # copy_if_different fails on them. They are debug symbols that
-            # don't need to ship next to the binary.
-            if(_f MATCHES "\\.dSYM$")
-                continue()
-            endif()
-            add_custom_command(TARGET WinBoloDS POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_f}" "$<TARGET_FILE_DIR:WinBoloDS>"
-            )
-        endforeach()
-    endif()
-endif()
+winbolo_stage_onnxruntime(WinBoloDS)
 
 add_custom_command(TARGET WinBoloDS POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -2342,8 +2354,8 @@ endif()
 add_custom_command(TARGET WinBoloDS POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloDS>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7"
-        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter_1.7"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
+        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter"
     COMMENT "Copying brain scripts to WinBoloDS output Brains/ directory"
 )
 
@@ -2675,11 +2687,12 @@ add_custom_command(TARGET WinBoloHeadless POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:WinBoloHeadless>"
     COMMENT "Copying SDL3 shared library to WinBoloHeadless output directory"
 )
+winbolo_stage_onnxruntime(WinBoloHeadless)
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7"
-        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter_1.7"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
+        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter"
     COMMENT "Copying brain scripts to WinBoloHeadless output directory"
 )
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
@@ -2777,16 +2790,27 @@ set_target_properties(winbolo_gym PROPERTIES
     PUBLIC_HEADER src/gym/winbolo_gym.h
 )
 
-# Copy SDL3 next to the gym library
+# Copy SDL3 and ONNX Runtime next to the gym library
 add_custom_command(TARGET winbolo_gym POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:winbolo_gym>"
     COMMENT "Copying SDL3 shared library to winbolo_gym output directory"
 )
+winbolo_stage_onnxruntime(winbolo_gym)
 add_custom_command(TARGET winbolo_gym POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data/lang" "$<TARGET_FILE_DIR:winbolo_gym>/data/lang"
     COMMENT "Copying winbolo_gym lang files to output directory"
 )
+
+# Plays the gym through its public API and checks that real game events reach
+# the observation (tests/gym/gym_events.c).
+add_executable(WinBoloGymEvents tests/gym/gym_events.c)
+target_include_directories(WinBoloGymEvents PRIVATE src/gym)
+target_link_libraries(WinBoloGymEvents PRIVATE winbolo_gym)
+add_test(NAME gym.events
+         COMMAND $<TARGET_FILE:WinBoloGymEvents> ${CMAKE_SOURCE_DIR}/tests/test_arena.map
+         WORKING_DIRECTORY $<TARGET_FILE_DIR:winbolo_gym>)
+set_tests_properties(gym.events PROPERTIES TIMEOUT 120)
 
 # ---------------------------------------------------------------------------
 # gym_batch_test (Phase 0 determinism baseline)
@@ -2920,11 +2944,12 @@ add_custom_command(TARGET BrainTest POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:BrainTest>"
     COMMENT "Copying SDL3 shared library to BrainTest output directory"
 )
+winbolo_stage_onnxruntime(BrainTest)
 add_custom_command(TARGET BrainTest POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BrainTest>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7"
-        "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter_1.7"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
+        "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:BrainTest>/data"
     COMMENT "Copying BrainTest data files to output directory"
@@ -3175,31 +3200,10 @@ add_custom_command(TARGET MapEditor POST_BUILD
 )
 
 # bot_brains_static pulls in onnxruntime, so MapEditor inherits the
-# dylib dependency. Mirror the WinBolo POST_BUILD copy step so the
-# .app bundle ships with the dylib next to the executable — without
-# this, launching the standalone MapEditor.app fails at dyld load
-# time with "Library not loaded: @rpath/libonnxruntime.*.dylib".
-if(HAVE_ONNXRUNTIME)
-    if(WIN32 AND DEFINED ONNXRUNTIME_DLL)
-        add_custom_command(TARGET MapEditor POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_DLL}" "$<TARGET_FILE_DIR:MapEditor>"
-            COMMENT "Copying ONNX Runtime DLL to MapEditor output directory"
-        )
-    elseif(DEFINED ONNXRUNTIME_LIBDIR)
-        file(GLOB _ORT_ALL_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
-        foreach(_f ${_ORT_ALL_SO})
-            # Skip .dSYM bundles — they are directories, not files, so
-            # copy_if_different fails on them. They are debug symbols that
-            # don't need to ship next to the binary.
-            if(_f MATCHES "\\.dSYM$")
-                continue()
-            endif()
-            add_custom_command(TARGET MapEditor POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_f}" "$<TARGET_FILE_DIR:MapEditor>"
-            )
-        endforeach()
-    endif()
-endif()
+# dylib dependency; the .app bundle ships with the dylib next to the
+# executable, or launching the standalone MapEditor.app fails at dyld
+# load time with "Library not loaded: @rpath/libonnxruntime.*.dylib".
+winbolo_stage_onnxruntime(MapEditor)
 if(APPLE)
     add_custom_command(TARGET MapEditor POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -3254,6 +3258,16 @@ set(DIST_CRASHPAD_HANDLER_CMD "")
 if(HAVE_SENTRY AND TARGET crashpad_handler)
     set(DIST_CRASHPAD_HANDLER_CMD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:crashpad_handler>" "${DIST_DIR}/")
+endif()
+
+# The prebuilt ONNX Runtime's own third-party notices travel with its
+# library: beside THIRD_PARTY_NOTICES.md in data/ for the About box, and at
+# the zip root where someone unpacking it will see them.
+set(DIST_ORT_NOTICES_CMD "")
+if(HAVE_ONNXRUNTIME AND DEFINED ONNXRUNTIME_NOTICES)
+    set(DIST_ORT_NOTICES_CMD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_NOTICES}" "${DIST_DIR}/data/THIRD_PARTY_NOTICES-onnxruntime.txt"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_NOTICES}" "${DIST_DIR}/THIRD_PARTY_NOTICES-onnxruntime.txt")
 endif()
 
 # Strip debug info from the staged Linux binaries before zipping.  Only Linux
@@ -3315,12 +3329,13 @@ add_custom_target(dist
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/LICENSE" "${DIST_DIR}/LICENSE"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/LICENSE-EXCEPTION.md" "${DIST_DIR}/LICENSE-EXCEPTION.md"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" "${DIST_DIR}/THIRD_PARTY_NOTICES.md"
+    ${DIST_ORT_NOTICES_CMD}
 
     # Brain scripts (excludes *.md plan/roadmap notes via copy_brains.cmake)
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.7"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter"
     COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.7
-        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter_1.7
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter
+        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter
         -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
 
     # Strip debug info from the staged Linux binaries (no-op on Win/macOS)
@@ -3804,6 +3819,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # puts in a recording — its bytes on disk and both of the viewer's
     # readers over them.
     tests/unit/test_scenario_rule_arms.c
+    # Voice to everyone: the op behind game.set_voice_everyone and the rule
+    # the voice forward asks, with the points that turn it off again and
+    # the refusal on a server with voice off.
+    tests/unit/test_scenario_voice_everyone.c
     # fill_to_caps: a mod that raises a cap and asks for the map's pills and
     # bases to start at it rather than at the numbers the map file holds — a
     # base stock, a pill's armour, the same mod with the key left out, and
@@ -4026,6 +4045,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_tank_status_wire.c
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
+    tests/unit/test_voice_everyone_codec.c
     tests/unit/test_voice_talking_set.c
     # The rules event's body codec: every carried rule round-trips field by
     # field, rates a fixed-point scale could not carry survive, and the
@@ -4075,6 +4095,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
     tests/unit/test_sim_rules.c
+    tests/unit/test_obs_events.c
     # The rule list a frontend reads: the names, the classic value behind
     # each one, and what a value does to a rule against that default. The
     # phrase file renders that answer through langGetText, which
@@ -4360,6 +4381,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # arrays, plus the small-explosion sweep's off-by-one.
     tests/unit/test_tkexp_lgm_pairing.c
     tests/unit/test_input_gate.c
+    tests/unit/test_input_source.c
+    src/gui/sdl3/input_source.c
     tests/unit/test_key_claims.c
     tests/unit/test_server_address_parse.c
     # The map chooser's "Scenarios only" row test, header-only.
@@ -4485,6 +4508,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # clip-time fit resolves base cells from the log's own snapshots
     # (test_lv_calibration.c).
     tests/unit/test_lv_calibration.c
+    # Replay camera range: the load's 127,127 default, a highlight jump, a
+    # grid that grew and the raw setter all keep the view's far edge at 255
+    # on a grid wider than half the map (test_lv_camera.c).
+    tests/unit/test_lv_camera.c
     # On-demand generator for the committed real ring-seed fixture
     # (spectator_seed.bin): captures a ServerSim ring keyframe with no trailing
     # data for test_spec_seed_load_real (test_spectator_seed_capture.c).
@@ -4694,6 +4721,10 @@ add_custom_command(TARGET WinBoloUnitTests POST_BUILD
         "$<TARGET_FILE_DIR:WinBoloUnitTests>/data/mods"
     COMMENT "Copying shipped mods to WinBoloUnitTests output directory"
 )
+# The test binary links bolo_static, so it loads ONNX Runtime at startup
+# like the game does. Stage the library here so a tests-only build runs,
+# rather than depending on WinBoloDS's copy of it into the same directory.
+winbolo_stage_onnxruntime(WinBoloUnitTests)
 
 target_include_directories(WinBoloUnitTests PRIVATE
     src/gui/sdl3
@@ -4915,6 +4946,7 @@ set(_unit_test_names
     round_stats_codec_rejects_bad_key
     round_stats_build_summary
     round_stats_scenario_score_filled
+    round_stats_group_rows
     round_stats_summary_highlights
     round_stats_client_ingest
     round_stats_track_records
@@ -5048,6 +5080,11 @@ set(_unit_test_names
     scenario_settings_bool_manifest_json
     scenario_settings_bool_server
     scenario_settings_bool_game_setting
+    scenario_settings_choice_blob
+    scenario_settings_choice_manifest_lua
+    scenario_settings_choice_manifest_json
+    scenario_settings_choice_server
+    scenario_settings_choice_game_setting
     script_list_client_apply
     lobby_map_search_chunked
     wbn_bearer_state
@@ -5206,6 +5243,11 @@ set(_unit_test_names
     lv_logged_name_from_join_event
     lv_game_settings_from_walk
     lv_game_settings_absent
+    lv_camera_load_fits_wide_grid
+    lv_camera_centre_on_cell_stays_on_map
+    lv_camera_resize_and_set_offset_clamp
+    lv_camera_mouse_centre_click_stays_on_map
+    lv_camera_arrow_nudge_stays_on_map
     blocks_stream
     stream_load
     stream_pump
@@ -5396,6 +5438,7 @@ set(_unit_test_names
     two_clients_full_sync_independent
     voice_flags_snapshot_masking
     voice_talking_codec
+    voice_everyone_codec
     sim_rules_codec_roundtrip
     sim_rules_codec_golden
     voice_talking_stops_in_countdown
@@ -5543,6 +5586,8 @@ set(_unit_test_names
     sim_rules_pill_massage_follows
     sim_rules_pill_aim_mac
     sim_rules_tank_collision_mac
+    sim_rules_tank_deep_sea_safe
+    sim_rules_man_bless_tile_terrain_speed
     pill_shell_cap_off_is_no_limit
     pill_shell_cap_retargets_next_nearest
     pill_shell_cap_holds_then_fires_when_freed
@@ -5556,6 +5601,12 @@ set(_unit_test_names
     sim_rules_builder_cost_follows
     sim_rules_are_classic
     sim_rules_obs_refuses_non_classic
+    obs_events_every_type_classified
+    obs_events_kills
+    obs_events_hits
+    obs_events_builders
+    obs_events_sound_ids
+    obs_events_pill_killed
     sim_rules_shell_flight_follows
     sim_rules_brain_shot_follows
     sim_rules_worldsim_pill_follows
@@ -5793,6 +5844,7 @@ set(_unit_test_names
     players_oob_index_safe
     control_oob_player_dropped
     input_gate_taxonomy
+    input_source_autoslow
     key_claims
     addrparse_host_only
     addrparse_host_port
@@ -5924,6 +5976,7 @@ set(_unit_test_names
     tank_diagonal_steps_both_axes
     tank_mod_speed_caps_on_road
     tank_mod_speed_river_still_moves
+    tank_mod_speed_wide_on_river
     tank_mod_accel_doubles_ticks_to_cap
     tank_mod_accel_doubles_ticks_to_brake
     tank_mod_accel_halves_autoslow
@@ -5943,6 +5996,7 @@ set(_unit_test_names
     tank_modifiers_op_writes_set
     tank_modifiers_op_refusals
     tank_modifiers_wire_roundtrip
+    tank_modifiers_wide_speed
     tank_modifiers_survive_death
     tank_modifiers_cleared_at_create
     scenario_op_unknown_type_unsupported
@@ -6190,6 +6244,16 @@ set(_unit_test_names
     scenario_rule_arm_records
     scenario_rule_clamps_world
     scenario_rule_clamp_records
+    scenario_rules_whole_set_pair
+    scenario_rules_whole_set_refused
+    scenario_voice_everyone_default
+    scenario_voice_everyone_on
+    scenario_voice_everyone_resets
+    scenario_voice_everyone_voice_off
+    scenario_voice_everyone_publish
+    scenario_voice_everyone_join
+    scenario_voice_everyone_client
+    scenario_voice_everyone_mic_bits
     scenario_fill_caps_raises_bases
     scenario_fill_caps_raises_pills
     scenario_fill_caps_off_changes_nothing
@@ -6312,6 +6376,7 @@ set(_unit_test_names
     scenario_host_manifest_reads_workshop
     scenario_host_errors_counted_per_script
     scenario_host_many_rules_all_applied
+    scenario_host_rules_table_whole
     scenario_host_disabled_refuses_script
     scenario_host_disabled_plain_map
     scenario_host_enabled_again
@@ -6356,11 +6421,13 @@ set(_unit_test_names
     scenario_validate_needs_bots_missing
     scenario_validate_needs_bots_declared
     scenario_lua_every_row_answers
+    scenario_lua_voice_everyone
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one
     scenario_lua_script_index_adds_one
     scenario_lua_absent_reads_are_nil
+    scenario_lua_lobby_slot_team_pool
     scenario_lua_terrain_is_the_whole_map
     scenario_lua_shape_error_counts
     scenario_lua_rule_reads_the_table
@@ -6378,6 +6445,7 @@ set(_unit_test_names
     scenario_lua_panel_builds_bytes
     scenario_lua_panel_words_and_numbers
     scenario_lua_panel_refusals
+    scenario_lua_panel_large_size
     scenario_lua_presentation_targets
     scenario_lua_score_and_announce
     scenario_lua_announce_position
@@ -6628,10 +6696,12 @@ set(_unit_test_names
     scenario_compose_off_full_list_hides_last
     scenario_compose_needs_bots_any_mod
     scenario_compose_needs_bots_scenario_and_mod
+    scenario_compose_on_tick_bottom_first
     scenario_panel_parses_each_primitive
     scenario_panel_refuses_malformed
     scenario_panel_boundaries
     scenario_panel_roundtrip
+    scenario_panel_large_size
     scenario_panel_timer_text
     scenario_announce_remaining
     scenario_announce_position
@@ -7285,8 +7355,8 @@ if(WB_FUZZ)
     # Stage the FetchContent-built shared libs next to the fuzz binaries so the
     # $ORIGIN RPATH resolves them at run time (these copies normally ride the
     # game/server targets, which a fuzz-only build doesn't produce). Mirrors
-    # the WinBolo POST_BUILD copy. Tier 1 needs only SDL3; tier 2 also pulls in
-    # onnxruntime via bot_brains_static.
+    # the WinBolo POST_BUILD copy. Every fuzz target links bolo_static, which
+    # PUBLIC-links onnxruntime, so each gets that library too.
     add_custom_command(TARGET fuzz_wire_codec POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_wire_codec>")
@@ -7308,26 +7378,12 @@ if(WB_FUZZ)
     add_custom_command(TARGET fuzz_replay POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_replay>")
-    if(HAVE_ONNXRUNTIME AND DEFINED ONNXRUNTIME_LIBDIR)
-        file(GLOB _FUZZ_ORT_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
-        foreach(_f ${_FUZZ_ORT_SO})
-            if(_f MATCHES "\\.dSYM$")
-                continue()
-            endif()
-            add_custom_command(TARGET fuzz_server_dispatch POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${_f}" "$<TARGET_FILE_DIR:fuzz_server_dispatch>")
-            add_custom_command(TARGET fuzz_client_snapshot POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${_f}" "$<TARGET_FILE_DIR:fuzz_client_snapshot>")
-            add_custom_command(TARGET fuzz_join_accept POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${_f}" "$<TARGET_FILE_DIR:fuzz_join_accept>")
-            add_custom_command(TARGET fuzz_replay POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${_f}" "$<TARGET_FILE_DIR:fuzz_replay>")
-        endforeach()
-    endif()
+    foreach(_fuzz_target
+            fuzz_wire_codec fuzz_map_load fuzz_map_fields fuzz_replay
+            fuzz_channel_frame fuzz_voice_segment fuzz_bulk_transfer
+            fuzz_server_dispatch fuzz_client_snapshot fuzz_join_accept)
+        winbolo_stage_onnxruntime(${_fuzz_target})
+    endforeach()
 endif()
 
 endif() # iOS vs Desktop

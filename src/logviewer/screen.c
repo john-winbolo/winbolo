@@ -126,6 +126,32 @@ BYTE lv_screenGetYOffset(void) { return g_lv->yOffset; }
 bool lv_screenGetFastForwarding(void) { return g_lv->fastForwarding; }
 uint32_t lv_screenGetTimeRunning(void) { return g_lv->timeRunning; }
 
+/* The one place the camera is brought back into range; every write to
+ * xOffset/yOffset that is not already clamped ends here.
+ *
+ * The tile fetch in lv_screenUpdateView casts column and row to a BYTE, so a
+ * view whose left edge plus width passes 255 wraps round and draws column 0
+ * beside column 255: the map's two mined borders appear back to back in the
+ * middle of the screen. The whole-tile offset is held in
+ * [0, 255 - screenSize], the same range the pan, follow and zoom paths clamp
+ * to, and the sub-pixel pan is zeroed on an edge that moved so nothing bleeds
+ * past the last rendered tile. A size of 0 (a decoder whose host has not
+ * sized it yet) leaves the full 0..255 range. */
+static void lv_screenClampOffsets(void) {
+  int maxOffX = 255 - lv_screenGetSizeX();
+  int maxOffY = 255 - lv_screenGetSizeY();
+  if (maxOffX < 0) maxOffX = 0;
+  if (maxOffY < 0) maxOffY = 0;
+  if (g_lv->xOffset > maxOffX) {
+    g_lv->xOffset = (BYTE)maxOffX;
+    g_lv->subPxX = 0;
+  }
+  if (g_lv->yOffset > maxOffY) {
+    g_lv->yOffset = (BYTE)maxOffY;
+    g_lv->subPxY = 0;
+  }
+}
+
 /* Decode a log_RuleSet payload from its two index bytes, its blob's length
  * byte and the blob. TRUE, with *index and *value set, only for a length of
  * eight, an index this build has a rule for and a finite value: the record
@@ -372,9 +398,9 @@ static void lv_screenSetTankStock(BYTE slot, BYTE shells, BYTE mines, BYTE armou
 
 /* Store a slot's modifier set. A log_TankSetModifiers record replaces the whole
  * set, as the op that wrote it did. Nothing draws these yet. */
-static void lv_screenSetTankModifiers(BYTE slot, const BYTE *mods) {
+static void lv_screenSetTankModifiers(BYTE slot, const BYTE *mods, uint16_t speed) {
   if (slot >= MAX_TANKS) return;
-  g_lv->tankMods[slot].speed  = mods[0];
+  g_lv->tankMods[slot].speed  = speed;
   g_lv->tankMods[slot].accel  = mods[1];
   g_lv->tankMods[slot].turn   = mods[2];
   g_lv->tankMods[slot].reload = mods[3];
@@ -595,15 +621,27 @@ void lv_screenUpdateView(updateType value) {
   }
 
   if (g_lv->centredTank == FALSE || value == redraw) {
+    /* The arrow-key nudge, in int and then clamped: a bare BYTE decrement at
+     * column 0 jumped the view to column 255, and an increment past the edge
+     * drew the wrapped borders like every other unclamped writer. */
+    int ox = g_lv->xOffset;
+    int oy = g_lv->yOffset;
     if (value == left) {
-      g_lv->xOffset--;
+      ox--;
     } else if (value == right) {
-      g_lv->xOffset++;
+      ox++;
     } else if (value == up) {
-      g_lv->yOffset--;
+      oy--;
     } else if (value == down) {
-      g_lv->yOffset++;
+      oy++;
     }
+    if (ox < 0) ox = 0;
+    if (oy < 0) oy = 0;
+    if (ox > 255) ox = 255;
+    if (oy > 255) oy = 255;
+    g_lv->xOffset = (BYTE)ox;
+    g_lv->yOffset = (BYTE)oy;
+    lv_screenClampOffsets();
   }
 
   /* Iterate sizeX+1 by sizeY+1 to populate one extra column and row
@@ -650,6 +688,11 @@ void lv_screenSetup() {
   g_lv->yOffset = 127;
   g_lv->subPxX  = 0;
   g_lv->subPxY  = 0;
+  /* Every load runs through here after the host has sized the tile grid, and
+   * the embedded reel's grid can be wider than half the map at 0.5x. Left at
+   * 127 the view would open past column 255 and wrap, so the default is
+   * pulled down to the widest the grid allows. */
+  lv_screenClampOffsets();
   lv_mapCreate(&g_lv->mp);
   lv_pillsCreate(&g_lv->pb);
   lv_startsCreate(&g_lv->ss);
@@ -2105,20 +2148,28 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_screenSetTankStock(opt1, opt2, opt3, opt4, opt5);
       break;
     case log_TankSetModifiers: {
-      /* player, then a length-prefixed blob of the six modifier bytes. */
+      /* player, then a length-prefixed blob of the six modifier bytes, or
+         eight when the speed is past a byte: the six, then the whole speed
+         as a big-endian u16. */
       BYTE modLen;
       BYTE mods[6];
       logReadBytes(&opt1, 1);
       logReadBytes(&modLen, 1);
       /* Consume the blob whatever its length byte says, so a record with the
          wrong length costs this one value and not the reader's alignment for
-         the rest of the file. Only a six-byte blob is a modifier set. */
+         the rest of the file. Only a six- or eight-byte blob is a modifier
+         set. */
       if (modLen > 0) {
         logReadBytes((BYTE *)mem, modLen);
       }
-      if (modLen == sizeof(mods)) {
+      if (modLen == sizeof(mods) || modLen == sizeof(mods) + 2) {
+        uint16_t speed;
         memcpy(mods, mem, sizeof(mods));
-        lv_screenSetTankModifiers(opt1, mods);
+        speed = mods[0];
+        if (modLen == sizeof(mods) + 2) {
+          speed = (uint16_t)((((BYTE *)mem)[6] << 8) | ((BYTE *)mem)[7]);
+        }
+        lv_screenSetTankModifiers(opt1, mods, speed);
       }
       break;
     }
@@ -2206,6 +2257,18 @@ void lv_screenProcessLog(unsigned short numEvents) {
                    (int)sizeof(args.string1) - 1, str);
         }
         lv_messageAdd(networkMessage, MESSAGE_NETSERVER, STR_LV_MSG_SERVER, &args);
+      }
+      break;
+    case log_VoiceEveryone:
+      /* A scenario changed who hears a player's voice. The players were each
+         told in their own language, so the viewer says it the same way, with
+         the same two lines the game prints. */
+      logReadBytes(&opt1, 1);
+      {
+        MessageArgs args = {0};
+        lv_messageAdd(networkMessage, MESSAGE_NETSERVER,
+                      opt1 ? STR_VOICE_EVERYONE_ON : STR_VOICE_EVERYONE_OFF,
+                      &args);
       }
       break;
     case log_GameTimeSet:
@@ -3266,7 +3329,9 @@ static int walkSkipEventBody(BYTE code) {
     case log_PlayerReady:
     case log_PlayerUnready:
     case log_MapSkipVote:
-      /* 1 byte */
+    case log_VoiceEveryone:
+      /* 1 byte. log_VoiceEveryone is only written to v2 and later logs; it
+         is listed for the reason log_Ping is, to keep the table full. */
       { BYTE b; if (logReadBytes(&b, 1) != 1) return -1; }
       return 1;
     case log_PillSetHealth:
@@ -3346,8 +3411,8 @@ static int walkSkipEventBody(BYTE code) {
       return 6 + lenByte;
     case log_ChangeName:
     case log_TankSetModifiers:
-      /* 1 opt byte + pascal string (the modifier record's blob is always six
-         bytes, but it is walked as a pascal string like any other) */
+      /* 1 opt byte + pascal string (the modifier record's blob is six or
+         eight bytes, but it is walked as a pascal string like any other) */
       { BYTE b; if (logReadBytes(&b, 1) != 1) return -1; }
       if (logReadBytes(&lenByte, 1) != 1) return -1;
       { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
@@ -5172,6 +5237,7 @@ bool lv_screenCloseLog() {
 void lv_screenSetOffset(BYTE x, BYTE y) {
   g_lv->xOffset = x;
   g_lv->yOffset = y;
+  lv_screenClampOffsets();
 }
 BYTE lv_screenGetOffsetX() {
   return g_lv->xOffset;
@@ -5350,6 +5416,8 @@ void lv_screenSetSizeX(BYTE x) {
       (*g_lv->mineView).mineItem = newItems;
     }
   }
+  /* A wider grid shrinks the range the offset may sit in. */
+  lv_screenClampOffsets();
   /* Resize the render target to match the new screen size.
    * This is critical for correct mouse coordinate mapping. */
   lv_drawResizeRenderTarget();
@@ -5371,6 +5439,8 @@ void lv_screenSetSizeY(BYTE y) {
       (*g_lv->mineView).mineItem = newItems;
     }
   }
+  /* A taller grid shrinks the range the offset may sit in. */
+  lv_screenClampOffsets();
   /* Resize the render target to match the new screen size.
    * This is critical for correct mouse coordinate mapping. */
   lv_drawResizeRenderTarget();
@@ -5504,6 +5574,7 @@ void lv_screenMouseCentreClick(int xPos, int yPos) {
   div_t dt;        /* Used for integer division */
   int xClick;
   int yClick;
+  int cx, cy;
 
   if (g_lv->logLoaded == FALSE) {
     return;
@@ -5512,14 +5583,26 @@ void lv_screenMouseCentreClick(int xPos, int yPos) {
   xClick = (int) (dt.quot);
   dt = div(yPos, (16)); //screenSizeY
   yClick = (int) (dt.quot);
-  g_lv->xOffset = (g_lv->xOffset + xClick) - (g_lv->screenSizeX / 2);
-  g_lv->yOffset = (g_lv->yOffset + yClick) - (g_lv->screenSizeY / 2);
+  /* In int, then clamped: the BYTE arithmetic this used to do wrapped a click
+   * near the top-left to the far side of the map, and a click near the
+   * bottom-right past column 255. */
+  cx = ((int)g_lv->xOffset + xClick) - (g_lv->screenSizeX / 2);
+  cy = ((int)g_lv->yOffset + yClick) - (g_lv->screenSizeY / 2);
+  if (cx < 0) cx = 0;
+  if (cy < 0) cy = 0;
+  if (cx > 255) cx = 255;
+  if (cy > 255) cy = 255;
+  g_lv->xOffset = (BYTE)cx;
+  g_lv->yOffset = (BYTE)cy;
+  lv_screenClampOffsets();
   /* Defer to the flag — see lv_screenPanToTotalPixels. */
   g_lv->wantScreenUpdate = TRUE;
 }
 
-/* Centre the game view on a map cell, clamped so the offset stays in range
- * (xOffset/yOffset are unsigned tile indices). */
+/* Centre the game view on a map cell, clamped so the view stays on the map
+ * (xOffset/yOffset are unsigned tile indices, and the right and bottom edges
+ * must not pass 255 or the view wraps). A jump to a cell is a whole-tile
+ * move, so a partial drag in flight is dropped, as the zoom does. */
 void lv_screenCentreOnCell(int mapX, int mapY) {
   int cx, cy;
   if (g_lv->logLoaded == FALSE) {
@@ -5533,6 +5616,9 @@ void lv_screenCentreOnCell(int mapX, int mapY) {
   if (cy > 255) cy = 255;
   g_lv->xOffset = (BYTE)cx;
   g_lv->yOffset = (BYTE)cy;
+  g_lv->subPxX = 0;
+  g_lv->subPxY = 0;
+  lv_screenClampOffsets();
   /* Defer to the flag — see lv_screenPanToTotalPixels. */
   g_lv->wantScreenUpdate = TRUE;
 }

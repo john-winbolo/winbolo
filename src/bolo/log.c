@@ -817,8 +817,9 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     off += wordsLen;
     break;
   case log_TankSetModifiers:
-    /* player + a length-prefixed blob of the six modifier bytes. The six do
-       not fit the four opt bytes and the short, so they travel as a binary
+    /* player + a length-prefixed blob of the six modifier bytes (eight when
+       the speed is past a byte; see docs/replay-format.md). The six do not
+       fit the four opt bytes and the short, so they travel as a binary
        pascal blob the way log_GameSettings carries its settings. */
     out[off++] = log_TankSetModifiers;
     out[off++] = opt1;
@@ -1002,6 +1003,13 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     out[off++] = opt2;
     out[off++] = opt3;
     out[off++] = opt4;
+    break;
+  case log_VoiceEveryone:
+    /* Who the round's voice goes to: 1 for every player, 0 for the talker's
+       allies alone. The clients are told by CTRL_VOICE_EVERYONE and say so
+       in their own language; this is how a replay says it too. */
+    out[off++] = log_VoiceEveryone;
+    out[off++] = opt1;
     break;
   default:
     return 0;

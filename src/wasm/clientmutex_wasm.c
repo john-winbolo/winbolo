@@ -4,7 +4,10 @@
  */
 
 /*
- * clientmutex_wasm.c - No-op mutex for single-threaded WASM build
+ * clientmutex_wasm.c - No-op client mutex for the WASM build
+ *
+ * Only the page's thread takes this mutex. Bot thinks run on worker threads
+ * but never take it, so it stays a no-op.
  */
 
 #include "global.h"

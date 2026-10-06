@@ -188,9 +188,9 @@ extern void sdl3MessageHandler(const char *message, const char *title);
 /* Find the brain script — try several paths */
 static bool findBrainPath(char *out, size_t outLen) {
     const char *candidates[] = {
-        "Brains/GoalHunter_1.7/init.lua",
-        "brains/GoalHunter_1.7/init.lua",
-        "data/Brains/GoalHunter_1.7/init.lua",
+        "Brains/GoalHunter/init.lua",
+        "brains/GoalHunter/init.lua",
+        "data/Brains/GoalHunter/init.lua",
     };
     for (int i = 0; i < 3; i++) {
         FILE *f = fopen(candidates[i], "r");
@@ -207,7 +207,7 @@ static bool findBrainPath(char *out, size_t outLen) {
  * auto-seeded SP bot gets: Hard only when the player is signed in to
  * WinBolo.net with more than 5 games on record, otherwise Easy (what
  * everyone not signed in gets). One brain plays every difficulty, so this
- * used to pick between brain directories (1.7 vs 1.0) and now picks the
+ * used to pick between two brain directories (current vs 1.0) and now picks the
  * per-bot difficulty instead — the same rule, a different knob. */
 uint8_t gameFrontSpBotDifficulty(void) {
     /* Gospel: if the player has ever explicitly picked a difficulty from the
@@ -4466,13 +4466,6 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   timeLen = (int32_t)atol(buff);
   prefsGetString("GAME OPTIONS", "Auto Slowdown", autoSlowDefault, buff, FILENAME_MAX);
   *pUseAutoslow = YESNO_TO_TRUEFALSE(buff[0]);
-  /* A connected controller forces auto-slowdown on, regardless of the
-     saved pref — analog-stick steering with no slowdown is unmanageable.
-     This overrides at apply time only; the stored pref is left untouched,
-     so it takes over again once the controller is disconnected. */
-  if (inputGamepadIsConnected()) {
-    *pUseAutoslow = TRUE;
-  }
   prefsGetString("GAME OPTIONS", "Auto Show-Hide Gunsight", autoHideDefault, buff, FILENAME_MAX);
   *pUseAutohide = YESNO_TO_TRUEFALSE(buff[0]);
 

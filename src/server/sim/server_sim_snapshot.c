@@ -1294,15 +1294,16 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         {
             uint8_t cf = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
             /* The mic bits are shown only to the players this one's voice
-             * could reach: everyone outside a running game (all-talk), the
-             * live alliance inside one. Same scope rule serverPumpVoice
-             * carries the frames themselves by, so a mic status can never
-             * appear for someone you cannot hear. Safe because a snapshot
-             * is built per recipient — never cache or share the result.
-             * Every other bit stays recipient-agnostic. */
+             * could reach: everyone outside a running game (all-talk),
+             * everyone while a scenario has voice to everyone on, the live
+             * alliance otherwise. serverSimVoiceSidesAllow is the rule
+             * serverPumpVoice carries the frames themselves by, so a mic
+             * status can never appear for someone you cannot hear, nor go
+             * missing for someone you can. Safe because a snapshot is built
+             * per recipient — never cache or share the result. Every other
+             * bit stays recipient-agnostic. */
             if (i != clientIdx &&
-                serverSimGetState(sim) == serverStateRunning &&
-                !playersIsAllie(&sim->sim.plyrs, (BYTE)i, clientIdx)) {
+                !serverSimVoiceSidesAllow(sim, clientIdx, (BYTE)i)) {
                 cf &= (uint8_t)~PLAYER_VOICE_FLAG_MASK;
             }
             ts->clientFlags = cf;
@@ -1329,7 +1330,10 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                  * unmodified tank, which keeps the group off the wire. */
                 TankModifiers mods;
                 tankGetModifiers(sim->sim.tanks[i], &mods);
-                ts->modSpeed = mods.speed;
+                /* A speed past a byte rides the wide group, which a speed
+                   that fits leaves off the wire. */
+                ts->modSpeed = (uint8_t)(mods.speed > 255 ? 255 : mods.speed);
+                ts->modSpeedWide = (uint16_t)(mods.speed > 255 ? mods.speed : 0);
                 ts->modAccel = mods.accel;
                 ts->modTurn = mods.turn;
                 ts->modReload = mods.reload;
@@ -1350,6 +1354,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             ts->modReload = 0;
             ts->modDealt = 0;
             ts->modTaken = 0;
+            ts->modSpeedWide = 0;
         }
 
         /* Tree-hidden tank, man still on screen: the entry is here for the man

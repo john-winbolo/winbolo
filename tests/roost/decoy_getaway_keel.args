@@ -1,1 +1,1 @@
--gametype tournament -ai yes -nolobby -notracker -nowinbolonet -dontsendlog -noinput -bots 3 -teams 2,1 -threads 12 -brain brains/GoalHunter_1.7/init.lua -seed 42 -brain-lua-seed 42 -brain-no-budget-kill -asap
+-gametype tournament -ai yes -nolobby -notracker -nowinbolonet -dontsendlog -noinput -bots 3 -teams 2,1 -threads 12 -brain brains/GoalHunter/init.lua -seed 42 -brain-lua-seed 42 -brain-no-budget-kill -asap
