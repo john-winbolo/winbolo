@@ -4031,6 +4031,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_team_side_dispatch.c
     tests/unit/test_lobby_default_sides.c
     tests/unit/test_starts_side_integration.c
+    tests/unit/test_mod_lobby_starts.c
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
@@ -5392,6 +5393,20 @@ set(_unit_test_names
     starts_side_unsided_kept_off_chosen_side
     starts_side_two_team_lobby_mirrors
     starts_side_team_change_repicks_stale
+    mod_lobby_starts_mac_bolo_keeps_opposite_sides
+    mac_bolo_settings_defaults_play_old_rules
+    mac_bolo_settings_each_part_off
+    mac_bolo_settings_numbers
+    mac_bolo_first_start_lobby_off_uses_mac_pick
+    mac_bolo_spawn_starts_off_engine_picks
+    mac_bolo_setting_changed_after_attach
+    mac_bolo_setting_changed_between_rounds
+    choose_start_lobby_arg_hand_picked
+    choose_start_lobby_arg_team_side
+    choose_start_lobby_arg_nil_without_reservation
+    choose_start_override_releases_reservation
+    choose_start_override_onto_other_reservation
+    choose_start_script_ignoring_lobby_unchanged
     input_redundancy
     bases_closest_for_player
     base_stock_visibility

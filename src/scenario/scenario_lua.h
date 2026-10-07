@@ -478,7 +478,7 @@ typedef struct {
       SCN_FN_ARGS2("p", SCN_PARAM_SLOT, "q", SCN_PARAM_SLOT),                \
       "false to refuse the alliance")                                        \
     X(ON_CHOOSE_START,   "on_choose_start",                                  \
-      SCN_FN_ARGS1("p", SCN_PARAM_SLOT),                                     \
+      SCN_FN_ARGS2("p", SCN_PARAM_SLOT, "lobby", SCN_PARAM_ITEM),            \
       "a start number, counted from 1 as game.start counts")                 \
     X(SPAWN_LOADOUT,     "spawn_loadout",                                    \
       SCN_FN_ARGS1("p", SCN_PARAM_SLOT),                                     \
