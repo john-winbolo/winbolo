@@ -5132,7 +5132,7 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
  * fresh one, so the lookup goes to whichever state is current. */
 
 /* How the answers of a list of scripts are read, now that every one of them
- * is asked. The thirteen sites below each hold the arbitration for their own
+ * is asked. The fourteen sites below each hold the arbitration for their own
  * row, because what the answers mean differs by row:
  *
  *   the eight predicates
@@ -5142,10 +5142,11 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
  *     the asking. A predicate is a veto — false takes something out of the
  *     round — so a script that says no is not something a later script may
  *     put back, and one that has already lost has nothing left to add.
- *   on_choose_start and spawn_loadout
+ *   on_choose_start, spawn_loadout and kill_credit
  *     scripts asked from the top down, and the first one to answer usably
  *     is the one taken; a usable answer stops the asking. There is one
- *     start and one loadout per spawning tank, so the answers cannot be
+ *     start and one loadout per spawning tank, and one killer per death,
+ *     so the answers cannot be
  *     added up and the list order is what settles it. The first and not the
  *     last, because the order is the thing a host sets deliberately: the
  *     chooser's buttons say "Load earlier" and "Load later" and its heading
@@ -5943,6 +5944,61 @@ static int scnPillDamageScale(void *ctx, BYTE attacker, BYTE index,
     }
     scnLockLeave(&h->lock);
     return pct;
+}
+
+/* Who a tank's death is credited to. The killer is the engine's own credit,
+ * which for a drowning is the victim itself; hit_by and hit_at are the last
+ * tank not allied with the victim that hit it this life and the tick it did,
+ * both nil when none has. A seat in play is the answer, and it takes the
+ * killer's place in the kill event and everything that reads it; nil, or a
+ * number naming no seat in play, leaves the engine's killer.
+ *
+ * Scripts asked from the top down and the first usable seat is the one
+ * taken, the way on_choose_start reads its own: one death has one killer, so
+ * there is nothing to add up. */
+static bool scnKillCredit(void *ctx, BYTE victim, BYTE killer, BYTE cause,
+                          BYTE hitBy, uint32_t hitAt, BYTE *credit) {
+    ScenarioHost *h     = (ScenarioHost *)ctx;
+    bool          named = false;
+    int           i;
+
+    if (h == NULL || credit == NULL) {
+        return false;
+    }
+    scnLockEnter(&h->lock);
+    for (i = 0; i < h->count && !named; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_KILL_CREDIT])) {
+            continue;
+        }
+        lua_pushinteger(h->L, (lua_Integer)victim);
+        lua_pushinteger(h->L, (lua_Integer)killer);
+        scnPushWord(h, scenarioLuaDeathCauseWord((int)cause));
+        if (hitBy < MAX_TANKS) {
+            lua_pushinteger(h->L, (lua_Integer)hitBy);
+            lua_pushinteger(h->L, (lua_Integer)hitAt);
+        } else {
+            lua_pushnil(h->L);
+            lua_pushnil(h->L);
+        }
+        if (scnPolicyAnswer(h, i, kScnPolicyNames[SCN_POLICY_KILL_CREDIT],
+                            5)) {
+            long n = 0;
+
+            if (!scnPolicyWhole(h->L, &n) || n < 0 || n >= MAX_TANKS ||
+                !serverSimIsPlayerConnected(h->sim, (BYTE)n)) {
+                scnPolicyBadAnswer(h, i,
+                                   kScnPolicyNames[SCN_POLICY_KILL_CREDIT],
+                                   "with no seat in play");
+            } else {
+                *credit = (BYTE)n;
+                named   = true;
+                scnErrorCleared(h, i);
+            }
+            lua_pop(h->L, 1);
+        }
+    }
+    scnLockLeave(&h->lock);
+    return named;
 }
 
 /* The scripts.json text this round's recording carries, built from the list
@@ -9021,6 +9077,7 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
     h->policy.canDie          = scnCanDie;
     h->policy.canHit          = scnCanHit;
     h->policy.pillDamageScale = scnPillDamageScale;
+    h->policy.killCredit      = scnKillCredit;
     h->policy.canAlly         = scnCanAlly;
     h->policy.chooseStart     = scnChooseStart;
     h->policy.spawnLoadout    = scnSpawnLoadout;

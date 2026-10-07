@@ -43,13 +43,15 @@ static const langid kSfdIds[] = {
 #define SFD_ID_COUNT (sizeof(kSfdIds) / sizeof(kSfdIds[0]))
 
 /* The ends of the block lang.h set aside for these, and the ids outside it:
-   can_ally's, and on_tank_hit's, can_hit's and pill_damage_scale's in a run of
-   their own, because the numbers after the block were already taken. */
+   can_ally's, on_tank_hit's, can_hit's and pill_damage_scale's in a run of
+   their own, and kill_credit's, because the numbers after the block were
+   already taken. */
 #define SFD_ID_FIRST 2435
 #define SFD_ID_LAST  2469
 #define SFD_ID_EXTRA 2697
 #define SFD_ID_LATER_FIRST 2704
 #define SFD_ID_LATER_LAST  2706
+#define SFD_ID_KILL_CREDIT 2763
 
 int run_scenario_fndesc_table(void) {
     size_t count = 0;
@@ -100,17 +102,22 @@ int run_scenario_fndesc_table(void) {
                   (int)STR_SCNFN_DESC_TANK_HIT,
                   (int)STR_SCNFN_DESC_PILL_DAMAGE_SCALE, SFD_ID_LATER_FIRST,
                   SFD_ID_LATER_LAST);
+    UT_ASSERT_MSG((int)STR_SCNFN_DESC_KILL_CREDIT == SFD_ID_KILL_CREDIT,
+                  "kill_credit's description is %d, expected %d",
+                  (int)STR_SCNFN_DESC_KILL_CREDIT, SFD_ID_KILL_CREDIT);
 
     for (i = 0; i < SFD_ID_COUNT; i++) {
         UT_ASSERT_MSG(((int)kSfdIds[i] >= SFD_ID_FIRST &&
                        (int)kSfdIds[i] <= SFD_ID_LAST) ||
                           (int)kSfdIds[i] == SFD_ID_EXTRA ||
                           ((int)kSfdIds[i] >= SFD_ID_LATER_FIRST &&
-                           (int)kSfdIds[i] <= SFD_ID_LATER_LAST),
-                      "the id at row %d is %d, outside %d to %d, not %d and "
-                      "outside %d to %d", (int)i, (int)kSfdIds[i],
+                           (int)kSfdIds[i] <= SFD_ID_LATER_LAST) ||
+                          (int)kSfdIds[i] == SFD_ID_KILL_CREDIT,
+                      "the id at row %d is %d, outside %d to %d, not %d, "
+                      "outside %d to %d and not %d", (int)i, (int)kSfdIds[i],
                       SFD_ID_FIRST, SFD_ID_LAST, SFD_ID_EXTRA,
-                      SFD_ID_LATER_FIRST, SFD_ID_LATER_LAST);
+                      SFD_ID_LATER_FIRST, SFD_ID_LATER_LAST,
+                      SFD_ID_KILL_CREDIT);
         for (j = 0; j < i; j++) {
             UT_ASSERT_MSG(kSfdIds[j] != kSfdIds[i],
                           "rows %d and %d both read id %d", (int)j, (int)i,

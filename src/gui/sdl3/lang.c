@@ -2702,6 +2702,7 @@ static const LangEntry langTable[] = {
     {2760, "Whether a tank with no boat can drive over deep sea without drowning. Off is the classic game: deep sea drowns a tank with no boat. A tank that is out on deep sea with no boat when this goes back off drowns on the next tick."},
     {2761, "This scenario comes with the map. To unload it, choose a different map."},
     {2762, "Whether the builder crosses the square he is going to build on at that square's terrain speed, as in Mac Bolo. Off is the WinBolo walk: he walks up to the centre of that square at the refuelling base speed, whatever its terrain. A square with no walking speed, such as a river, a wall or a pillbox, keeps the refuelling base speed. The walk back to the tank does not change."},
+    {2763, "Who a tank's death is credited to, asked at every death; a drowning names the victim unless a script names the tank that sank it."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

@@ -148,6 +148,16 @@ typedef struct {
     uint32_t armFireTick;
 } ShotOrderRing;
 
+/* The last hit a tank took this life from a tank it is not allied with,
+ * which the kill_credit question is handed. Observation only: nothing in
+ * the sim reads it, and a death credits nobody new unless a script answers.
+ * Zeroed with the three-shot log above, and for the victim at each death. */
+typedef struct {
+    bool     set;                     /* false: no such hit this life */
+    BYTE     by;                      /* the seat whose shell or mine it was */
+    uint32_t at;                      /* sim->tick of the hit */
+} KillCreditHit;
+
 /* One roster change waiting its turn. A spawn carries the whole payload
  * because the seat, the brain and the init table are all read when it
  * lands rather than when it was asked for; a removal needs only the slot;
@@ -334,6 +344,10 @@ struct ServerSim {
      * when a player leaves, so a slot never inherits the shots of whoever
      * sat in it before. */
     ShotOrderRing   shotOrder[MAX_TANKS];
+
+    /* Each seat's last hit from a tank not allied with it, for the
+     * kill_credit question. Cleared where shotOrder is and at each death. */
+    KillCreditHit   lastEnemyHit[MAX_TANKS];
 
     /* Per-bot brain selection as an index into brainList. 0xFF means
      * "use the global botBrainPath" (the CLI-configured default). The

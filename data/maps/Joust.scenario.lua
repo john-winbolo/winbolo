@@ -24,7 +24,10 @@
 -- What counts as a kill. A shell or a mine counts for the tank that fired it
 -- or laid it. A tank that drowns, or that dies to its own mine, counts for the
 -- last enemy tank that hit it in the last CREDIT_SECONDS, and for nobody when
--- no enemy did. Killing a tank on your own side scores nothing.
+-- no enemy did. Killing a tank on your own side scores nothing. The engine
+-- keeps the last enemy hit and asks kill_credit at the death itself, so the
+-- kill it reports, and the kills count on each player's HUD, name the same
+-- tank this script scores.
 --
 -- Where a tank starts. Joust.map has sixteen starts, evenly spaced on a ring
 -- four squares in from the water's edge, each facing the middle. The script
@@ -96,7 +99,6 @@ local target     = DEFAULT_TARGET
 local team_mode  = nil         -- true for "Use Lobby Teams"; read on first use
 local kills      = {}          -- side key -> kills
 local own_kills  = {}          -- seat -> the kills it made itself
-local last_hit   = {}          -- seat -> { by = seat, at = tick }
 local dirty      = true        -- the panel needs another frame
 local over       = false
 local drawn_at   = nil    -- the tick panel 0 was last sent
@@ -763,16 +765,27 @@ local function streak_word(n)
          ("UNSTOPPABLE" .. string.rep("!", math.min(n - 3, 10)))
 end
 
--- Who a death is credited to, or nil for nobody.
-local function credit_for(victim, killer, cause)
+-- Who the engine credits a death to, asked before the kill is reported. A
+-- tank's own shell or mine keeps its killer. A drowning, or a tank that
+-- killed itself, goes to the last enemy that hit it in the last
+-- CREDIT_SECONDS; hit_by is never a teammate, because the engine keeps no
+-- hit from a tank allied with the victim. nil keeps the engine's killer.
+function kill_credit(victim, killer, cause, hit_by, hit_at)
   if killer ~= nil and killer ~= victim and killer ~= game.NEUTRAL and
      cause ~= "deep_sea" then
-    return killer
+    return nil
   end
-  -- A drowning, or a tank that killed itself: the last enemy that hit it.
-  local hit = last_hit[victim]
-  if hit ~= nil and (game.tick() - hit.at) <= CREDIT_SECONDS * 100 then
-    return hit.by
+  if hit_by ~= nil and (game.tick() - hit_at) <= CREDIT_SECONDS * 100 then
+    return hit_by
+  end
+  return nil
+end
+
+-- Who a death is credited to, or nil for nobody. kill_credit has already
+-- put the right tank in the killer's place.
+local function credit_for(victim, killer)
+  if killer ~= nil and killer ~= victim and killer ~= game.NEUTRAL then
+    return killer
   end
   return nil
 end
@@ -808,25 +821,12 @@ local function kill_line(by, victim, key, cause, word)
   return killer .. mine .. lead .. how .. " " .. prey .. theirs
 end
 
-function on_tank_hit(victim, attacker, cause, amount, pill, scripted)
-  if attacker == nil or attacker == game.NEUTRAL or attacker == victim then
-    return
-  end
-  -- A teammate's hit is not kept: it would take the drowning from the enemy
-  -- who hit the tank first, and then score for nobody.
-  if side_of(attacker) == side_of(victim) then
-    return
-  end
-  last_hit[victim] = { by = attacker, at = game.tick() }
-end
-
 function on_tank_killed(victim, killer, cause, scripted)
   streak[victim] = nil        -- any death ends the tank's streak
   if over then
     return
   end
-  local by = credit_for(victim, killer, cause)
-  last_hit[victim] = nil
+  local by = credit_for(victim, killer)
   if by == nil or game.lobby_slot(by) == nil then
     return
   end
@@ -905,7 +905,6 @@ end
 function on_tank_spawned(p, mx, my, respawn, scripted)
   spawned[p] = true
   tune_bot(p)
-  last_hit[p] = nil
   -- A start a script op named skips on_choose_start, so start the shield
   -- here when that did not.
   if shield[p] == nil or shield[p] <= game.tick() then
@@ -983,7 +982,6 @@ function on_player_join(p, scripted)
 end
 
 function on_player_leave(p, scripted)
-  last_hit[p] = nil
   tuned[p] = nil              -- the seat's next bot has a brain of its own
   spawned[p] = nil
   shield[p] = nil
@@ -1113,7 +1111,7 @@ scenario = {
   callbacks = {
     on_start = "Reads the kill target and the Teams setting; in Free For All puts every tank on a team of its own; posts the scores and starts the shell refill.",
     on_choose_start = "Picks each tank's start: one for each place at the opening, then the start farthest from every enemy, on its own team's arc of the ring in a team round.",
-    on_tank_hit = "Remembers the last enemy tank that hit each tank.",
+    kill_credit = "Credits a drowning, or a tank that killed itself, to the last enemy that hit it in the last ten seconds, so every HUD counts the same kill.",
     on_tank_killed = "Credits the kill (a drowning to the last enemy hit), adds it to the side, flashes the scorer's line, calls out streaks, and ends the round at the target.",
     on_tank_spawned = "Makes sure a new tank is on its boat, starts its one-second shield, and gives a bot the Joust preset the first time it comes on.",
     can_hit = "Lets shells pass through a tank in its first second, so nobody is sunk as they arrive.",

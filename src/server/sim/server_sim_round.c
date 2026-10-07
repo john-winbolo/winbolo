@@ -1242,6 +1242,8 @@ void serverSimResetGameWorld(ServerSim *sim) {
      * with it: a shell from the last round must not pair with one from this
      * one. */
     memset(sim->shotOrder, 0, sizeof(sim->shotOrder));
+    /* And the last hits kill_credit is handed, which are timed the same way. */
+    memset(sim->lastEnemyHit, 0, sizeof(sim->lastEnemyHit));
     /* Re-arm the latch with it: the next round's log segment starts wherever
      * its first written tick lands, not where the last one did. */
     sim->roundLogStartTick = ROUND_LOG_START_UNSET;
