@@ -1321,9 +1321,16 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
       /* Transform window coords to game coords */
       float gameX, gameY;
       if (!windowToGameCoords(ev->motion.x, ev->motion.y, &gameX, &gameY)) {
+        /* Off the game area (letterbox) is out of the view as far as the
+           cursor is concerned, or the scroll follow would pull the pointer
+           back in from there. */
+        cursorLeaveWindow();
         clientSimSetCursorPos(cs, 0, 0);
         break;
       }
+      /* The pointer following the map (cursorFollowView) is not the player
+         moving it, and must not re-pick the square it was keeping on. */
+      bool warpEcho = cursorIsWarpEcho(ev->motion.x, ev->motion.y);
       cursorMove((int)gameX, (int)gameY);
       BYTE cx = 0, cy = 0;
       if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
@@ -1338,14 +1345,25 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
 
            This latch is the selection: it is what the reticle draws and what a
            click builds at, and hand movement is the only thing that moves it.
-           The view scrolling under a resting hand must not change it. */
-        if (ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f) {
+           The view scrolling under a resting hand must not change it, so the
+           pointer is pinned to the same world point and carried along with
+           the map, keeping it over the selection. */
+        if (!warpEcho && (ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f)) {
           buildCursorSetTile((BYTE)((int)clientSimGetXOffset(cs) + (int)cx),
                              (BYTE)((int)clientSimGetYOffset(cs) + (int)cy));
+          cursorAnchorToView(clientSimGetXOffset(cs), clientSimGetYOffset(cs),
+                             clientSimGetSubPosX(cs), clientSimGetSubPosY(cs));
         }
         if (cx > 16 || cy > 16) cx = 100;
         clientSimSetCursorPos(cs, cx, cy);
       } else {
+        /* The hand has put the pointer somewhere with no square under it —
+           off the view, or the partly drawn column/row past the 15th — so it
+           is no longer on the point it was anchored to, and the next scroll
+           must not carry it back there. */
+        if (!warpEcho && (ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f)) {
+          cursorDropAnchor();
+        }
         clientSimSetCursorPos(cs, 0, 0);
       }
       break;

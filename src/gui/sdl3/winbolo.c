@@ -91,6 +91,7 @@
 #include "../../scenario/scenario_host.h"
 #include "bg_game.h"
 #include "cursor.h"
+#include "ping_overlay.h"   /* pingOverlayIsMenuOpen */
 
 #include "dialog_backend.h"
 #include "dialogs/imgui_messagebox.h"
@@ -2199,6 +2200,39 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
      * and the overview drives the shared build cursor from absolute map
      * coordinates of its own. */
     if (!sdl3DrawIsOverviewInWindow()) {
+      /* Carry the mouse pointer along with the map as the view scrolls, so it
+       * stays over the square it was on (and so over the build selection)
+       * and a click or a nudge of the mouse doesn't jump the selection to
+       * whatever has scrolled under a pointer left where it was. Not while
+       * the pointer is over an ImGui overlay (the vote widget, alliance
+       * requests) — dragging it out from under a click there loses the click.
+       * WantCaptureMouse alone is a frame late for that (this runs before
+       * the ImGui frame), so the pointer's current position is hit-tested
+       * against the overlays on screen as well. Nor when the game isn't the
+       * window the player is using, nor while
+       * the smart-ping pie is open: it takes the mouse's motion straight from
+       * SDL without raising ImGui's capture flag, and picks its wedge from
+       * where the pointer is, so carrying the pointer would change the ping.
+       *
+       * Once the square is carried off the view the pointer is pushed off
+       * after it, and the square stops being the target: a click with the
+       * pointer off the view builds nothing. */
+      {
+        SDL_Window *win = sdl3DrawGetWindow();
+        bool allowWarp = win != NULL && !uiModeIsTablet() &&
+                         !sdl3ImguiWantCaptureMouse() &&
+                         !sdl3ImguiMouseOverWindow() &&
+                         !pingOverlayIsMenuOpen() &&
+                         SDL_GetMouseFocus() == win &&
+                         (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0;
+        BYTE lostX = 0, lostY = 0;
+        if (cursorFollowView(clientSimGetXOffset(cs), clientSimGetYOffset(cs),
+                             clientSimGetSubPosX(cs), clientSimGetSubPosY(cs),
+                             allowWarp, &lostX, &lostY)) {
+          buildCursorDropTarget(lostX, lostY);
+        }
+      }
+
       /* Refresh cursor cell every frame: the autoscroll sub-tile offset
        * changes per tick, so the visually-rendered tile under a stationary
        * mouse changes too. cursorPos re-derives the cell from the cached
@@ -2208,7 +2242,9 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
        * Note this tracks where the POINTER is, which is not the same thing
        * as the build selection — that is the build cursor's latched map tile
        * (see buildCursorResolveReticle below), which only hand movement
-       * moves. The two part company as soon as the view scrolls. */
+       * moves. The follow above keeps them together while it can; they
+       * part company when it can't (the view jumped, or the pointer was
+       * over an overlay as the view scrolled). */
       {
         BYTE cx = 0, cy = 0;
         if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
