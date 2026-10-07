@@ -2713,6 +2713,7 @@ static const LangEntry langTable[] = {
     {2771, "by {string1} · updated {string2}"},
     {2772, "unknown"},
     {2773, "The server sets this value. It cannot be changed."},
+    {2774, "Who a tank's death is credited to, asked at every death; a drowning names the victim unless a script names the tank that sank it."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

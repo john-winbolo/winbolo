@@ -35,6 +35,12 @@
  *       builder, and a death it is allowed still credits nobody
  *   run_scenario_on_tank_hit         — a shell and a mine each raise the event
  *       with the armour the tank actually lost
+ *   run_scenario_kill_credit         — a drowning is credited to the last enemy
+ *       that hit the tank when kill_credit names it, in the kill event the
+ *       clients count kills from; an ally's hit is not offered, a death
+ *       forgets the hit, and a seat not in play leaves the engine's killer
+ *   run_scenario_kill_credit_none    — with no kill_credit a drowning still
+ *       names the victim, as it always has
  *
  * Every case drives the engine's own site: the shell list stepped the way the
  * tick steps it, the pillbox update, the explosion update and the mine
@@ -64,6 +70,7 @@
 #include "mines.h"
 #include "minesexp.h"
 #include "pillbox.h"
+#include "players.h"
 #include "shells.h"
 #include "tank.h"
 #include "tankexp.h"
@@ -897,6 +904,181 @@ int run_scenario_on_tank_hit(void) {
     UT_ASSERT_MSG(sffLines(want) == 1,
                   "expected '%.*s' once; the record was:\n%s",
                   (int)strlen(want) - 1, want, sffNote);
+
+    sffEnd(sim, h, kMap);
+    return 0;
+}
+
+/* ================================================================
+ * 8. Who a death is credited to.
+ * ================================================================ */
+
+/* A dead tank stood back up, so the case can hit and kill it again without
+   waiting out its respawn. */
+static void sffRevive(tank *t) {
+    (*t)->destroyed = FALSE;
+    (*t)->armour    = 40;
+}
+
+/* The killer the tick's kill event names, or NEUTRAL for no event. */
+static BYTE sffKiller(ServerSim *sim) {
+    const GameEvent *e = sffEvent(sim, EVENT_TANK_KILLED);
+    return (e != NULL) ? e->data[0] : NEUTRAL;
+}
+
+int run_scenario_kill_credit(void) {
+    static const char *const kMap = "scnff_kill_credit.map";
+    static const char *const kBody =
+        "scenario = { name = \"Credit\", api = 1 }\n"
+        "function kill_credit(v, k, c, hb, ha)\n"
+        "  note(\"credit \" .. v .. \" \" .. k .. \" \" .. c .. \" \"\n"
+        "       .. tostring(hb) .. \" \" .. tostring(ha ~= nil and\n"
+        "       ha <= game.tick()))\n"
+        "  if c == \"mine\" then return 99 end\n"
+        "  return hb\n"
+        "end\n"
+        "function on_tank_killed(v, k, c, s)\n"
+        "  note(\"killed \" .. v .. \" \" .. k .. \" \" .. c)\n"
+        "end\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    GameSim      *gs;
+    tank         *target;
+    tank         *friend;
+    BYTE          lx = 0, ly = 0;
+    BYTE          killer;
+    WORLD         tx, ty;
+
+    UT_ASSERT(sffPut(kMap, kBody));
+    sim = sffSim(kMap, &h);
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+    serverSimAddPlayer(sim, SFF_NEAR, "Target", false);
+    serverSimAddPlayer(sim, SFF_FAR, "Friend", false);
+    UT_ASSERT(gs->tanks[SFF_NEAR] != NULL && gs->tanks[SFF_FAR] != NULL);
+    UT_ASSERT_MSG(sffLane(sim, &lx, &ly), "setup: the map has no clear lane");
+    sffPlace(sim, SFF_SELF, lx, ly);
+    sffPlace(sim, SFF_NEAR, (BYTE)(lx + SFF_AT_NEAR), ly);
+    sffPlace(sim, SFF_FAR, (BYTE)(lx + SFF_AT_FAR), ly);
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, SFF_NEAR, SFF_FAR, TRUE);
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, SFF_NEAR, SFF_FAR) &&
+                      !playersIsAllie(&gs->plyrs, SFF_SELF, SFF_NEAR),
+                  "setup: the target and its friend are not allied");
+    target = &gs->tanks[SFF_NEAR];
+    friend = &gs->tanks[SFF_FAR];
+    serverSimTick(sim);
+
+    /* An enemy's shell, then a drowning: the shooter is credited, in the
+       event the clients count their kills from. */
+    sffReset();
+    serverSimTick(sim);
+    tankGetWorld(target, &tx, &ty);
+    tankIsTankHit(gs, target, tx, ty, (TURNTYPE)0, SFF_SELF, DMG_NO_PILL);
+    tankKillNow(gs, target, SFF_NEAR, LAST_DEATH_BY_DEEPSEA);
+    killer = sffKiller(sim);
+    UT_ASSERT_MSG(killer == SFF_SELF,
+                  "the drowning was credited to %u, expected the shooter %u",
+                  (unsigned)killer, (unsigned)SFF_SELF);
+    serverSimTick(sim);
+    UT_ASSERT_MSG(sffLines("credit 1 1 deep_sea 0 true\n") == 1 &&
+                      sffLines("killed 1 0 deep_sea\n") == 1,
+                  "expected the policy asked with the shooter's hit and the "
+                  "hook told the shooter; the record was:\n%s", sffNote);
+
+    /* The death forgot the hit: drowning again with no new one names the
+       victim. */
+    sffReset();
+    sffRevive(target);
+    serverSimTick(sim);
+    tankKillNow(gs, target, SFF_NEAR, LAST_DEATH_BY_DEEPSEA);
+    killer = sffKiller(sim);
+    UT_ASSERT_MSG(killer == SFF_NEAR,
+                  "a drowning with no hit this life was credited to %u, "
+                  "expected the victim %u", (unsigned)killer,
+                  (unsigned)SFF_NEAR);
+    serverSimTick(sim);
+    UT_ASSERT_MSG(sffLines("credit 1 1 deep_sea nil false\n") == 1,
+                  "expected the policy asked with no hit; the record "
+                  "was:\n%s", sffNote);
+
+    /* An ally's hit is not offered. */
+    sffReset();
+    serverSimTick(sim);
+    tankGetWorld(friend, &tx, &ty);
+    tankIsTankHit(gs, friend, tx, ty, (TURNTYPE)0, SFF_NEAR, DMG_NO_PILL);
+    tankKillNow(gs, friend, SFF_FAR, LAST_DEATH_BY_DEEPSEA);
+    killer = sffKiller(sim);
+    UT_ASSERT_MSG(killer == SFF_FAR,
+                  "a drowning after an ally's hit was credited to %u, "
+                  "expected the victim %u", (unsigned)killer,
+                  (unsigned)SFF_FAR);
+    serverSimTick(sim);
+    UT_ASSERT_MSG(sffLines("credit 2 2 deep_sea nil false\n") == 1,
+                  "expected the ally's hit left out; the record was:\n%s",
+                  sffNote);
+
+    /* A seat not in play is no answer: the engine's killer stands. */
+    sffReset();
+    sffRevive(target);
+    serverSimTick(sim);
+    tankGetWorld(target, &tx, &ty);
+    tankIsTankHit(gs, target, tx, ty, (TURNTYPE)0, SFF_SELF, DMG_NO_PILL);
+    tankKillNow(gs, target, SFF_NEAR, LAST_DEATH_BY_MINES);
+    killer = sffKiller(sim);
+    UT_ASSERT_MSG(killer == SFF_NEAR,
+                  "an answer of seat 99 credited %u, expected the engine's "
+                  "killer %u", (unsigned)killer, (unsigned)SFF_NEAR);
+    serverSimTick(sim);
+    UT_ASSERT_MSG(sffLines("credit 1 1 mine 0 true\n") == 1 &&
+                      sffLines("killed 1 1 mine\n") == 1,
+                  "expected the bad answer ignored; the record was:\n%s",
+                  sffNote);
+
+    sffEnd(sim, h, kMap);
+    return 0;
+}
+
+int run_scenario_kill_credit_none(void) {
+    static const char *const kMap = "scnff_kill_credit_none.map";
+    static const char *const kBody =
+        "scenario = { name = \"No credit\", api = 1 }\n"
+        "function on_tank_killed(v, k, c, s)\n"
+        "  note(\"killed \" .. v .. \" \" .. k .. \" \" .. c)\n"
+        "end\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    GameSim      *gs;
+    tank         *target;
+    BYTE          lx = 0, ly = 0;
+    BYTE          killer;
+    WORLD         tx, ty;
+
+    UT_ASSERT(sffPut(kMap, kBody));
+    sim = sffSim(kMap, &h);
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+    serverSimAddPlayer(sim, SFF_NEAR, "Target", false);
+    UT_ASSERT(gs->tanks[SFF_NEAR] != NULL);
+    UT_ASSERT_MSG(sffLane(sim, &lx, &ly), "setup: the map has no clear lane");
+    sffPlace(sim, SFF_SELF, lx, ly);
+    sffPlace(sim, SFF_NEAR, (BYTE)(lx + SFF_AT_NEAR), ly);
+    target = &gs->tanks[SFF_NEAR];
+    serverSimTick(sim);
+
+    sffReset();
+    serverSimTick(sim);
+    tankGetWorld(target, &tx, &ty);
+    tankIsTankHit(gs, target, tx, ty, (TURNTYPE)0, SFF_SELF, DMG_NO_PILL);
+    tankKillNow(gs, target, SFF_NEAR, LAST_DEATH_BY_DEEPSEA);
+    killer = sffKiller(sim);
+    UT_ASSERT_MSG(killer == SFF_NEAR,
+                  "with no kill_credit a drowning was credited to %u, "
+                  "expected the victim %u", (unsigned)killer,
+                  (unsigned)SFF_NEAR);
+    serverSimTick(sim);
+    UT_ASSERT_MSG(sffLines("killed 1 1 deep_sea\n") == 1,
+                  "expected the hook told the victim; the record was:\n%s",
+                  sffNote);
 
     sffEnd(sim, h, kMap);
     return 0;

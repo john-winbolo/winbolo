@@ -37,6 +37,7 @@
 #include "../../common/wb_log.h"  /* WB_LOG_INFO — the three-shot order trace */
 #include "server_sim_internal.h"
 #include "log.h"                  /* logAddEvent — the kill/death log entries */
+#include "players.h"              /* playersIsAllie — the kill_credit hit record */
 #include "round_stats_derive.h"   /* roundStatsApplyRecord — the record callbacks' stats funnel */
 #include "../../winbolonet/winbolonet_core.h"   /* winbolonetAddEvent — WBN kill tracking */
 
@@ -547,9 +548,62 @@ void serverSimCbTkExplosion(void *ctx, WORLD x, WORLD y,
     serverSimAddEvent(sim, &ev);
 }
 
+void serverSimKillCreditForget(ServerSim *sim, BYTE playerNum) {
+    int i;
+
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    memset(&sim->lastEnemyHit[playerNum], 0, sizeof(sim->lastEnemyHit[playerNum]));
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->lastEnemyHit[i].set && sim->lastEnemyHit[i].by == playerNum) {
+            memset(&sim->lastEnemyHit[i], 0, sizeof(sim->lastEnemyHit[i]));
+        }
+    }
+}
+
+/* Who this death is credited to: the engine's own killer, unless a script's
+ * kill_credit names a seat in play. Asked here, where every tank death
+ * becomes the one event that tells it, so the kill event, both scoreboards,
+ * the stats and the logs all name the same seat. A drowning names the victim
+ * as its own killer, and classic Bolo credits it to nobody; this is how a
+ * scenario that counts a drowning for the tank that sank the boat gets the
+ * HUD's kill count to agree. Without a policy, or with no answer, nothing
+ * changes. */
+static BYTE serverSimKillCredit(ServerSim *sim, BYTE killer, BYTE killed,
+                                BYTE deathCause) {
+    BYTE     credit = killer;
+    BYTE     hitBy  = NEUTRAL;
+    uint32_t hitAt  = 0;
+    bool     named;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->killCredit == NULL || killed >= MAX_TANKS) {
+        return killer;
+    }
+    if (sim->lastEnemyHit[killed].set &&
+        sim->playerConnected[sim->lastEnemyHit[killed].by]) {
+        hitBy = sim->lastEnemyHit[killed].by;
+        hitAt = sim->lastEnemyHit[killed].at;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    named = sim->scenarioPolicy->killCredit(sim->scenarioPolicy->ctx, killed,
+                                            killer, deathCause, hitBy, hitAt,
+                                            &credit);
+    serverSimScenarioPolicyLeave(sim);
+    /* The host checks the seat; this keeps a bad one off the wire anyway. */
+    if (!named || credit >= MAX_TANKS || !sim->playerConnected[credit]) {
+        return killer;
+    }
+    return credit;
+}
+
 void serverSimCbTankKill(void *ctx, BYTE killer, BYTE killed, BYTE deathCause, BYTE carriedPills) {
     ServerSim *sim = (ServerSim *)ctx;
     GameEvent ev;
+    killer = serverSimKillCredit(sim, killer, killed, deathCause);
+    /* The life the hit belonged to is over. */
+    if (killed < MAX_TANKS) {
+        memset(&sim->lastEnemyHit[killed], 0, sizeof(sim->lastEnemyHit[killed]));
+    }
     ev.type = EVENT_TANK_KILLED;
     memset(ev.data, 0, sizeof(ev.data));
     ev.data[0] = killer;
@@ -835,6 +889,15 @@ void serverSimCbTankHit(void *ctx, BYTE victim, BYTE attacker, BYTE cause,
     ServerSim *sim = (ServerSim *)ctx;
     GameEvent ev;
 
+    /* Kept whoever is listening: kill_credit is asked at the death, which
+     * may come before any hook has heard of this hit. A tank's own shell
+     * and an ally's are not kept, so an enemy's hit outlives them. */
+    if (victim < MAX_TANKS && attacker < MAX_TANKS && attacker != victim &&
+        !playersIsAllie(&sim->sim.plyrs, victim, attacker)) {
+        sim->lastEnemyHit[victim].set = true;
+        sim->lastEnemyHit[victim].by  = attacker;
+        sim->lastEnemyHit[victim].at  = sim->tick;
+    }
     if (sim->numEventSubscribers == 0) {
         return;
     }
