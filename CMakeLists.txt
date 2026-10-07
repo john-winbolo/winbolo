@@ -3549,6 +3549,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_active_sim_lifetime.c
     tests/unit/test_active_local_input_to_shot.c
     tests/unit/test_sp_shoot_through_timer.c
+    tests/unit/test_sp_frame_queue.c
     tests/unit/test_prefs_roundtrip.c
     tests/unit/test_prefs_doc.c
     tests/unit/test_prefs_api.c
@@ -4790,6 +4791,12 @@ set(_unit_test_names
     sp_subscriber_delivery
     active_local_input_to_shot
     sp_shoot_through_timer
+    sp_frame_queue_keeps_skipped_frame
+    sp_local_map_repair
+    sp_frame_queue_repairs_after_drop
+    sp_frame_queue_resets_on_lobby
+    sp_frame_queue_resets_on_map_change
+    sp_frame_queue_keeps_departed_player_gone
     prefs_document_roundtrip
     prefs_keys_roundtrip
     prefs_doc_roundtrip
