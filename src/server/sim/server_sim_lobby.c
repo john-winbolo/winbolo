@@ -63,6 +63,8 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
   serverSimSetOpenHost(sim, cfg->openHost);
   serverSimSetServerLocks(sim, cfg->serverLocks);
   serverSimSetVoiceMode(sim, cfg->voiceMode);
+  serverSimSetServerName(sim, cfg->serverName);
+  serverSimSetServerDescription(sim, cfg->serverDescription);
 
   /* lobbyEnabled and skipLobby drive state transitions. If neither is
    * set, the sim stays in whatever state serverSimCreate* left it

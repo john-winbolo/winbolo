@@ -969,6 +969,26 @@ ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim) {
     return sim ? sim->voiceMode : serverVoiceOn;
 }
 
+void serverSimSetServerName(ServerSim *sim, const char *name) {
+    if (sim == NULL) return;
+    serverTextSanitize(name, sim->serverName, sizeof(sim->serverName),
+                       SERVER_NAME_MAX);
+}
+
+const char *serverSimGetServerName(const ServerSim *sim) {
+    return sim ? sim->serverName : "";
+}
+
+void serverSimSetServerDescription(ServerSim *sim, const char *desc) {
+    if (sim == NULL) return;
+    serverTextSanitize(desc, sim->serverDescription,
+                       sizeof(sim->serverDescription), SERVER_DESC_MAX);
+}
+
+const char *serverSimGetServerDescription(const ServerSim *sim) {
+    return sim ? sim->serverDescription : "";
+}
+
 bool serverSimGetScenarioVoiceEveryone(const ServerSim *sim) {
     if (sim == NULL || sim->voiceMode == serverVoiceOff) return false;
     return sim->scenarioVoiceEveryone;

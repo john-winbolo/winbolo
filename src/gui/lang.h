@@ -1837,6 +1837,10 @@
 #define STR_DLGSETTINGS_HOSTING_VOICE_OFF       2121
 #define STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY 2122
 #define STR_DLGSETTINGS_HOSTING_VOICE_TIP       2123
+#define STR_DLGSETTINGS_HOSTING_SERVERNAME      2763
+#define STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP  2764
+#define STR_DLGSETTINGS_HOSTING_SERVERDESC      2765
+#define STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP  2766
 
 /* Log viewer Options menu */
 #define STR_LV_HIDE_LOBBY                   1921
@@ -3313,6 +3317,7 @@
  * scenario row and the Scenario filter entry reuse STR_DLGGAMEINFO_SCRIPTED. */
 #define STR_DLGBROWSER_MODS                      2713
 #define STR_DLGBROWSER_MODS_MORE                 2714
+#define STR_DLGBROWSER_ADDRESS                   2767
 
 /* In-game newswire — a scenario changed who hears a player's voice */
 #define STR_VOICE_EVERYONE_ON                    2757

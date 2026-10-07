@@ -2247,7 +2247,7 @@ if(WIN32)
         src/gui/sdl3/lang.c
         src/res/winbolods.rc
     )
-    target_link_libraries(WinBoloDS PRIVATE ws2_32 winmm)
+    target_link_libraries(WinBoloDS PRIVATE ws2_32 winmm shell32)
     target_compile_options(WinBoloDS PRIVATE -fcommon)
     if(MSVC)
         target_link_options(WinBoloDS PRIVATE "/SUBSYSTEM:CONSOLE,10.0")
@@ -3786,6 +3786,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The script bytes the reply to an info request carries after the
     # INFO_PACKET: the writer and the reader, each against literal bytes.
     tests/unit/test_info_script_tail.c
+    # The host's server name and description: the sanitiser, the sim's
+    # setters, and the bytes after the scripts in the info reply.
+    tests/unit/test_server_text.c
     # The policy a server holds for scripts players send it: the word it is
     # set from, its byte on the lobby-settings event, and the sim's and the
     # client's copies.
@@ -6154,6 +6157,10 @@ set(_unit_test_names
     wbn_lobby_info_scenario
     info_script_tail_golden
     info_script_tail_read
+    server_text_sanitize
+    server_text_sim
+    server_text_tail_golden
+    server_text_tail_read
     script_upload_policy_resolve
     script_upload_policy_word
     script_upload_policy_codec
