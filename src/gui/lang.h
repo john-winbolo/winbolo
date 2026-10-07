@@ -3174,7 +3174,7 @@
 #define STR_SCNFN_DESC_TANK_HIT              2704
 #define STR_SCNFN_DESC_CAN_HIT               2705
 #define STR_SCNFN_DESC_PILL_DAMAGE_SCALE     2706
-#define STR_SCNFN_DESC_KILL_CREDIT           2763
+#define STR_SCNFN_DESC_KILL_CREDIT           2774
 
 /* The scenario panel's kind control: what the file being edited is allowed
  * to decide. Not the same question as "Built for this map", which is which

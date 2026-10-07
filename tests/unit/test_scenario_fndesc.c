@@ -51,7 +51,7 @@ static const langid kSfdIds[] = {
 #define SFD_ID_EXTRA 2697
 #define SFD_ID_LATER_FIRST 2704
 #define SFD_ID_LATER_LAST  2706
-#define SFD_ID_KILL_CREDIT 2763
+#define SFD_ID_KILL_CREDIT 2774
 
 int run_scenario_fndesc_table(void) {
     size_t count = 0;
