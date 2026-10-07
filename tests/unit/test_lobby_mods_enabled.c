@@ -4,8 +4,8 @@
  *
  * The setting decides whether the round composes the scripts on the
  * lobby's pick list, mods and picked scenarios alike; the lobby labels it
- * Mods/Scenario. It does not touch the list, and the map's own script plays
- * either way. scnDecideScenario
+ * Mods/Scenario. It does not touch the list; off, nothing composes, the map's
+ * own script included. scnDecideScenario
  * (src/scenario/scenario_host.c) is the one reader; what is pinned here is
  * everything under it, because a value that never reaches that function
  * correctly is a checkbox that does nothing.
