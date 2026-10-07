@@ -805,6 +805,18 @@ function M.draw_pill_eval_spots(spots, pmx, pmy, viz_id, mode, chosen_deg, alpha
           viz.detail_text(did, string.format("  E crossfire = %.0f", s.score_e or 0))
           viz.detail_text(did, string.format("dij_travel=%.0f  bucket=%s  LOS=clear",
             s._dij or 0, tostring(s.in_bucket or false)))
+          -- The human-decoy costs (C.HUMAN_DECOY_AWARE), when they touched
+          -- this spot: how adj_score and the travel rank were built.
+          if s._hd_cost then
+            viz.detail_text(did, "human decoy: " .. M.human_decoy_txt(s._hd_cost, s._hd_space,
+              s._hd_behind, s._hd_dsh, s._hd_dsp, s._hd_dhp))
+            viz.detail_text(did, string.format("  adj_score = total %.1f + infl %d + hd %.1f = %.1f  (green < 10)",
+              s.total_score or 0, s._infl_adj or 0, s._hd_cost, s._adj_score or 0))
+            if s._hd_dij then
+              viz.detail_text(did, string.format("  rank = dij %.1f + hd %.1f = %.1f  (lowest green wins)",
+                s._hd_dij, s._hd_cost, s._est or 0))
+            end
+          end
           if is_win then viz.detail_text(did, "WINNER: lowest total_score among clear-LOS, non-rejected spots") end
           n_detail = n_detail + 1
         end
@@ -1118,6 +1130,43 @@ local function standoff_clear_shot(world, cx, cy, pill)
     end
   end
   return false  -- trajectory ended without ever covering the pill tile
+end
+
+-- THE HUMAN IS DECOYING FOR US (C.HUMAN_DECOY_AWARE; orders.human_decoy_check
+-- keeps state._human_decoy).  The two standoff costs for a spot at float
+-- tile (sfx,sfy) on the pill at (pmx,pmy), or nil when no flag stands on
+-- that pill.  Euclidean tiles throughout; the human at his last seen spot.
+--   space  = HUMAN_DECOY_SPACING_COST * max(0, HUMAN_DECOY_MIN_TILES - d_sh)
+--   behind = HUMAN_DECOY_BEHIND_COST
+--            * max(0, (d_hp + HUMAN_DECOY_BEHIND_MARGIN) - d_sp)
+-- d_sh spot-human, d_sp spot-pill centre, d_hp human-pill centre.
+-- Answers cost, space, behind, d_sh, d_sp, d_hp.  Every picker that adds the
+-- cost prints these through M.human_decoy_txt.
+function M.human_decoy_cost(state, pmx, pmy, sfx, sfy)
+  local f = state and state._human_decoy
+  if not (f and f.pmx == pmx and f.pmy == pmy and f.hx and sfx) then return nil end
+  local hx, hy = f.hx / 256, f.hy / 256
+  local pcx, pcy = pmx + 0.5, pmy + 0.5
+  local ax, ay = sfx - hx, sfy - hy
+  local bx, by = sfx - pcx, sfy - pcy
+  local cx, cy = hx - pcx, hy - pcy
+  local d_sh = math.sqrt(ax * ax + ay * ay)
+  local d_sp = math.sqrt(bx * bx + by * by)
+  local d_hp = math.sqrt(cx * cx + cy * cy)
+  local space  = (C.HUMAN_DECOY_SPACING_COST or 0)
+                 * math.max(0, (C.HUMAN_DECOY_MIN_TILES or 0) - d_sh)
+  local behind = (C.HUMAN_DECOY_BEHIND_COST or 0)
+                 * math.max(0, (d_hp + (C.HUMAN_DECOY_BEHIND_MARGIN or 0)) - d_sp)
+  return space + behind, space, behind, d_sh, d_sp, d_hp
+end
+
+-- The two terms written out, so the sum can be worked by hand.
+function M.human_decoy_txt(cost, space, behind, d_sh, d_sp, d_hp)
+  return string.format(
+    "hd %.1f = space %.1f [%g*max(0,%g-%.2f)] + behind %.1f [%g*max(0,(%.2f+%g)-%.2f)]",
+    cost or 0, space or 0, C.HUMAN_DECOY_SPACING_COST or 0, C.HUMAN_DECOY_MIN_TILES or 0,
+    d_sh or 0, behind or 0, C.HUMAN_DECOY_BEHIND_COST or 0, d_hp or 0,
+    C.HUMAN_DECOY_BEHIND_MARGIN or 0, d_sp or 0)
 end
 
 local function score_standoff(world, cx, cy, pill, info, orbit_radius)
@@ -1434,6 +1483,16 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
         end
         local score = score_standoff(world, cx, cy, pill, info, orbit_radius)
         if score < math.huge then score = score + range_pen end
+        -- The human-decoy costs (C.HUMAN_DECOY_AWARE; nil with no flag on
+        -- this pill).
+        if score < math.huge and state and state._human_decoy then
+          local hc, hs, hb, d1, d2, d3 = M.human_decoy_cost(state, pill.mx, pill.my, cx + 0.5, cy + 0.5)
+          if hc then
+            print2(string.format("HUMAN_DECOY_CAND src=pick_standoff (%d,%d) R=%d score %.1f = base(score_standoff+range_pen) %.1f + %s",
+              cx, cy, R, score + hc, score, M.human_decoy_txt(hc, hs, hb, d1, d2, d3)))
+            score = score + hc
+          end
+        end
         local tt   = U.ttype(cx, cy)
         local trees_on_path = forest_tiles_on_path(cx, cy, pill.mx, pill.my)
         if C.LOG_STANDOFF_CANDIDATES then
@@ -2595,6 +2654,34 @@ local function reset_to_plan_position(state, goal)
   goal._reaim_tick_SHOOT_PILL   = nil
   goal._reaim_tick_BLITZ_GO     = nil
   goal._reaim_tick_SANITY       = nil
+end
+
+-- THE HUMAN WALKS ONTO OUR SPOT (C.HUMAN_DECOY_AWARE).  While a human-decoy
+-- flag stands on this goal's pill and the human's last seen spot comes within
+-- HUMAN_DECOY_MIN_TILES (Euclidean) of the chosen standoff, plan a fresh spot
+-- the usual way (reset_to_plan_position; it does not count as a spot tried),
+-- at most once per HUMAN_DECOY_REPICK_TICKS.  Only before the shooting
+-- starts: on the way (approach), waiting for a blitz GO, or aiming from the
+-- spot of a take that has no walls to waste (a PPT take's walls belong to its
+-- spot, so a PPT take re-picks only on the way).
+local HD_REPICK_SUBSTATES = { approach = true, blitz_wait = true, aim = true }
+local function human_decoy_repick(state, goal)
+  local f = state._human_decoy
+  if not (f and f.tid == goal.target_id and f.hx and goal.standoff_fx and goal.standoff_fy) then
+    return
+  end
+  if not HD_REPICK_SUBSTATES[goal.substate] or goal._ping_suicide then return end
+  if goal._is_ppt and goal.substate ~= "approach" then return end
+  local now = state.tick or 0
+  if now - (f.repick_t or -1e9) < (C.HUMAN_DECOY_REPICK_TICKS or 50) then return end
+  local dx, dy = goal.standoff_fx - f.hx / 256, goal.standoff_fy - f.hy / 256
+  local d = math.sqrt(dx * dx + dy * dy)
+  if d >= (C.HUMAN_DECOY_MIN_TILES or 5) then return end
+  f.repick_t = now
+  print2(string.format("HUMAN_DECOY_REPICK t=%d pill=%s p%s sub=%s standoff=(%.2f,%.2f) human=(%.2f,%.2f) d=%.2f < %g",
+    now, tostring(goal.target_id), tostring(f.pn), tostring(goal.substate),
+    goal.standoff_fx, goal.standoff_fy, f.hx / 256, f.hy / 256, d, C.HUMAN_DECOY_MIN_TILES or 5))
+  reset_to_plan_position(state, goal)
 end
 
 local function blocked_line_replan(state, goal, pmx, pmy, now)
@@ -4189,15 +4276,28 @@ local function blitz_pick_from_scan(spots, state, tmx, tmy, wallset, pmx, pmy, w
     end
     return nil
   end
+  -- The human-decoy costs (C.HUMAN_DECOY_AWARE): added to each eligible
+  -- spot's score for both passes when a flag stands on this pill.
+  if state._human_decoy then
+    for _, e in ipairs(elig) do
+      local hc, hs, hb, d1, d2, d3 = M.human_decoy_cost(state, pmx, pmy, e.sfx, e.sfy)
+      if hc then
+        e.hd = hc
+        print2(string.format("HUMAN_DECOY_CAND src=blitz_pick (%d,%d) score %.1f = total_score %.1f + %s",
+          e.s.mx, e.s.my, (e.s.total_score or 1e9) + hc, e.s.total_score or 1e9,
+          M.human_decoy_txt(hc, hs, hb, d1, d2, d3)))
+      end
+    end
+  end
   -- Pass 1: best (lowest) score among eligible. Pass 2: closest within the band.
   local best_s
-  for _, e in ipairs(elig) do local sc = e.s.total_score or 1e9; if not best_s or sc < best_s then best_s = sc end end
+  for _, e in ipairs(elig) do local sc = (e.s.total_score or 1e9) + (e.hd or 0); if not best_s or sc < best_s then best_s = sc end end
   local band = C.BLITZ_STANDOFF_SCORE_BUCKET or 50
   local lo = math.floor(best_s / band) * band
   local hi = lo + band
   local chosen, best_d
   for _, e in ipairs(elig) do
-    local sc = e.s.total_score or 1e9
+    local sc = (e.s.total_score or 1e9) + (e.hd or 0)
     if sc >= lo and sc < hi then
       local d = (tmx and tmy) and U.mdist(tmx, tmy, e.s.mx, e.s.my) or 0
       if not best_d or d < best_d then best_d = d; chosen = e end
@@ -4466,6 +4566,9 @@ local function update_attack_substate_body(goal, state, world, info)
   -- commander GO'd without actually waiting for it.
   state.squad_blitz_in_position = nil
   state.squad_blitz_aimed       = nil
+
+  -- A human drawing this pill's fire walked onto our spot: plan a fresh one.
+  if state._human_decoy then human_decoy_repick(state, goal) end
 
   state._attack_substate_name = goal.substate
   -- Tally on-target shots and bump bullets_needed for any misses.
@@ -5186,6 +5289,15 @@ local function update_attack_substate_body(goal, state, world, info)
           end
           s._infl_adj = infl_adj
           s._adj_score = (s.total_score or 999) + infl_adj
+          -- Step 1b: the human-decoy costs (C.HUMAN_DECOY_AWARE).  Set, or
+          -- cleared when the flag has gone (the spots are a shared cache),
+          -- and added to adj_score here and to the travel rank in step 4.
+          if state._human_decoy or s._hd_cost ~= nil then
+            s._hd_cost, s._hd_space, s._hd_behind, s._hd_dsh, s._hd_dsp, s._hd_dhp =
+              M.human_decoy_cost(state, pmx, pmy, s.cx, s.cy)
+            s._hd_dij = nil
+            if s._hd_cost then s._adj_score = s._adj_score + s._hd_cost end
+          end
         end
       end
       if BRAIN_DEBUG_MODE and state._plan_trace then state._plan_trace.passed_influence = true end
@@ -5260,9 +5372,28 @@ local function update_attack_substate_body(goal, state, world, info)
             dij = cpf.estimate_cost(tmx, tmy, s.mx, s.my, boat)
           end
           s._est = dij
+          -- The human-decoy costs ride the travel rank too (step 1b).
+          if s._hd_cost then
+            s._hd_dij = dij
+            s._est = dij + s._hd_cost
+          end
         end
         table.sort(greens, function(a, b) return (a._est or math.huge) < (b._est or math.huge) end)
         best = greens[1]
+        -- Every spot that the human-decoy costs touched, written out so the
+        -- winner can be worked by hand: adj_score decides green (< 10) or the
+        -- 25% band, then the lowest rank wins.
+        if state._human_decoy then
+          for gi, s in ipairs(greens) do
+            if s._hd_cost then
+              print2(string.format("HUMAN_DECOY_CAND src=plan_position%s (%d,%d) adj %.1f = total %.1f + infl %d + %s | rank %.1f = dij %.1f + hd %.1f",
+                gi == 1 and " WINNER" or "", s.mx, s.my, s._adj_score or 0, s.total_score or 0,
+                s._infl_adj or 0,
+                M.human_decoy_txt(s._hd_cost, s._hd_space, s._hd_behind, s._hd_dsh, s._hd_dsp, s._hd_dhp),
+                s._est or 0, s._hd_dij or 0, s._hd_cost))
+            end
+          end
+        end
       end
       if BRAIN_DEBUG_MODE and state._plan_trace then
         state._plan_trace.greens_n = #greens

@@ -4733,6 +4733,18 @@ M.ORDER_FOCUS_TICKS     = 3000   -- keel 3000 (moot; master off)
 -- whatever is left of a minute.  500 ticks = 10 s at 50 ticks/s.  The bot
 -- says the number when it arrives, so this knob is what it promises.
 M.ORDER_GOTO_HOLD_TICKS = 500    -- keel 500 (moot; master off)
+-- 2026-10-04: A GO-THERE ORDER REACHES THE SQUARE ITSELF.  The order counts
+-- as arrived (the hold starts) when the tank is within this many squares of
+-- the target, measured as the larger of the two axes.  0 = on the square.
+-- 1 = on it or on any of the eight round it (keel: the old arrival test).
+M.ORDER_GOTO_ARRIVE_TILES = 0    -- keel 1
+-- The way out when the square cannot be reached (a wall, a pill on it,
+-- another tank parked there): once the tank is within one square, a timer
+-- starts, and after this many ticks the order counts as arrived anyway.  The
+-- timer resets when the tank leaves the one-square ring.  A bot that arrives
+-- this way parks where it is, because the hold park (orders.hold_parked) and
+-- steering still use the one-square test.  0 = no fallback (keel).
+M.ORDER_GOTO_ARRIVE_FALLBACK_TICKS = 100   -- keel 0
 -- THE HOLD PHASE STILL FIGHTS.  While the hold runs the hard goto lock comes
 -- off and goal selection runs again, so attack_tank and kill_lgm can win --
 -- but the tank must not DRIVE anywhere: it was sent to that square.  These
@@ -4837,6 +4849,82 @@ M.ORDER_LAND_REPEAT_ADDS = false  -- keel true
 -- never to a bot that already holds that order.  false = nobody goes: one
 -- bot says "All bots busy" and the order waits for a bot to come free.
 M.ORDER_NO_FREE_TAKES_LOWEST = true  -- keel false
+-- 2026-10-04: THE BID PRICES IN A REFUEL STOP AND A FIGHT.  A bot that will
+-- stop at a base on the way (shells < SHELLS_LOW on an order that needs
+-- shells -- any order when ORDER_REFUEL_SKIP_NO_SHELLS is off -- or armour
+-- <= ARMOUR_LOW) bids path(bot -> nearest friendly base) + estimate(base ->
+-- target) + ORDER_BID_REFUEL_STOP_COST instead of its straight path.  A bot
+-- whose goal is attack_tank or kill_lgm adds ORDER_BID_ENGAGED_COST.  The
+-- terms add.  Every term is on the ORDER_BID and ORDER_TAKE debug lines.
+-- false = the bid is the travel cost alone (keel).
+M.ORDER_BID_STOP_AWARE = true        -- keel false
+M.ORDER_BID_REFUEL_STOP_COST = 30    -- keel 0
+M.ORDER_BID_ENGAGED_COST = 30        -- keel 0
+-- 2026-10-04: A BOT SHOOTING A PILL IS BUSY, AND A HOLDER CAN HAND OFF.
+-- Master switch.  With it on:
+--   * a bot on attack_pill in a shooting phase (see orders.SHOOTING_PILL)
+--     is busy for new orders ("Busy (taking pill)"), its own pick or an order;
+--   * a bot on a person's job (ORDER_HOLDER_KEEPS_JOB) that is not busy bids
+--     a NORMAL bid + ORDER_HANDOFF_PENALTY on a new auction.  If it wins, it
+--     keeps working its old job and asks the team to take that one (obq).  A
+--     free bot that claims the old job lets it go to the new one at once; with
+--     no claim in ORDER_HANDOFF_WAIT_TICKS it drops the old job and goes.
+-- false = holders bid "no" (or the ORDER_NO_FREE_TAKES_LOWEST switch cost),
+-- and shooting a pill is not busy (keel).
+M.ORDER_HANDOFF = true               -- keel false
+M.ORDER_HANDOFF_PENALTY = 15         -- keel 0
+M.ORDER_HANDOFF_WAIT_TICKS = 100     -- keel 0
+-- CHAINED HANDOFFS (2026-10-04).  The relief auction for a holder's old job
+-- is an order auction too, so another holder that is not shooting a pill may
+-- win it (with ORDER_HANDOFF_PENALTY) and ask for relief of ITS old job in
+-- turn: a 2-3 bot hop toward nearer jobs.  The hop count travels with the
+-- relief (obq OLD HOP MASK ROOT ASKER); a relief at hop >= this value takes
+-- FREE bots only.  A bot already in the chain (MASK) never bids on it.
+-- 0 or 1 = holders answer every relief "no" (single hop; keel).
+M.ORDER_HANDOFF_MAX_HOPS = 3         -- keel 0
+-- 2026-10-05 (Andrew): THE HUMAN IS DECOYING FOR US.  A pill shoots the
+-- CLOSEST tank in its range; a wall does not stop it picking that tank.  So
+-- a human team-mate standing behind a blocker (a wall, or one of our pills)
+-- that sits between him and an enemy pill draws that pill's fire into the
+-- blocker.  The bot attacking that pill reads it (orders.human_decoy_check,
+-- every think) when ALL of these hold:
+--   * its goal is attack_pill on that pill (its own pick or an order);
+--   * a visible human ally (util.human_ally_near's filter) is within
+--     PILL_FIRE_RANGE of the pill (Euclidean tiles);
+--   * that human is closer to the pill than our tank (he is its target).
+--     With several, the one closest to the pill;
+--   * decoy_getaway.block() at the human's square says "wall",
+--     "wall_damaged" or "pill" with a value >= HUMAN_DECOY_MIN_BLOCK.
+-- The flag stays HUMAN_DECOY_HOLD_TICKS (50 = 1 s) after the tests last
+-- held.  It drops at once when the goal is something else, the pill is
+-- dead / ours / carried, or the tank dies.  While it stands:
+--   * standoff choice (attack.human_decoy_cost): + HUMAN_DECOY_SPACING_COST
+--     per tile the spot is inside HUMAN_DECOY_MIN_TILES of the human, and
+--     + HUMAN_DECOY_BEHIND_COST per tile the spot is closer to the pill than
+--     (the human's distance + HUMAN_DECOY_BEHIND_MARGIN).  Costs, not rules:
+--     with every spot close, the bot still attacks;
+--   * the human walks to within HUMAN_DECOY_MIN_TILES of the chosen spot: a
+--     fresh spot, at most once per HUMAN_DECOY_REPICK_TICKS;
+--   * no human-near suicide run and no charge now (attack ping or human
+--     shooting); a running one ends.  The bot-command + attack ping pair is
+--     a person's direct order and still starts the run.
+-- Why: the bot rushing in, or parking beside the human, takes the pill's
+-- fire off the blocker and onto a tank.
+-- false = exactly the old behaviour (no new state is touched).
+M.HUMAN_DECOY_AWARE         = true   -- keel false
+M.HUMAN_DECOY_MIN_BLOCK     = 0.5    -- keel 0.5 (moot; master off)
+M.HUMAN_DECOY_HOLD_TICKS    = 150    -- keel 150 (moot)
+M.HUMAN_DECOY_MIN_TILES     = 5      -- keel 5 (moot)
+M.HUMAN_DECOY_SPACING_COST  = 10     -- keel 10 (moot)
+M.HUMAN_DECOY_BEHIND_COST   = 20     -- keel 20 (moot)
+M.HUMAN_DECOY_BEHIND_MARGIN = 0.5    -- keel 0.5 (moot)
+M.HUMAN_DECOY_REPICK_TICKS  = 50     -- keel 50 (moot)
+-- Test seam: a bitmask of seats the detection reads as human even though
+-- the engine flags them as bots.  The scenario gate has no human seat, so
+-- its arena (tests/scenario/order_human_decoy) sets this with bot_init.
+-- It touches the detection only (orders.human_decoy_check), never the
+-- human-near run or charge now.  0 = no seat.
+M.HUMAN_DECOY_TEST_HUMANS   = 0      -- keel 0
 -- DECOY GETAWAY (Andrew, 2026-09-24).  A decoy hold (ORDER_GOTO_DECOY) looks
 -- for a way out the moment it starts: a chain of up to
 -- DECOY_GETAWAY_MAX_STEPS squares, each one ring further out from the start
@@ -4860,6 +4948,38 @@ M.DECOY_GETAWAY_MAX_STEPS    = 5      -- keel 5 (moot; master off)
 M.DECOY_GETAWAY_HITS         = 1      -- keel 1 (moot)
 M.DECOY_GETAWAY_LAST_WEIGHT  = 2.0    -- keel 2.0 (moot)
 M.DECOY_GETAWAY_RESCAN_TICKS = 50     -- keel 50 (moot)
+-- 2026-10-05: WATCH THE WALLS THAT BLOCK A COUNTED PILL.  A counted pill
+-- whose shell does not reach the decoy square is not in P, and the scan
+-- remembers the square that stopped its shell (a wall, or a pill of ours).
+-- The look-again check also watches those squares (their terrain, and the
+-- owner and health of a pill on them), so a wall shot away mid-hold starts
+-- a fresh scan.  Before this, a hold with no chain watched only the tank
+-- square and the counted pill ids: a pill whose wall fell kept shooting a
+-- bot that never looked again (recorded game 20261005_232149, bot4).
+-- false = only the chain's own shield squares are watched (as before).
+M.DECOY_GETAWAY_WATCH_BLOCKED = true  -- keel false
+-- 2026-10-05: A HIT WITH NO CHAIN LOOKS AGAIN AT ONCE.  Parked with no
+-- chain, an armour loss starts a fresh scan in the same think, without the
+-- DECOY_GETAWAY_RESCAN_TICKS wait.  If that scan finds a chain, the hit is
+-- kept as the hit that moves the bot, so it steps at once.  (A chain found
+-- by any other scan still waits for a fresh hit, as before.)  false = a hit
+-- with no chain does nothing until the next look-again check (as before).
+M.DECOY_GETAWAY_HIT_RESCAN    = true  -- keel false
+-- 2026-10-06: THE FAST BLOCKED WATCH.  The blocked-pill squares above are
+-- checked every this many brain ticks, apart from the look-again check
+-- (DECOY_GETAWAY_RESCAN_TICKS, which keeps the tank square, the counted
+-- pills and the chain's shields).  The check reads terrain only; a scan runs
+-- only when a watched square changed.  Recorded game 20261005_232149: the
+-- wall fell at t=1956 and the next look came at t=1980.
+M.DECOY_GETAWAY_WATCH_TICKS   = 1     -- keel 50
+-- 2026-10-06: THE RECENTLY DEAD PILL.  A pill that died this many brain
+-- ticks ago or less still counts for the getaway (the counted pills, P,
+-- the chain search, the blocker step's closest pill): its shells are still
+-- in flight.  The hold's own pill count (orders.decoy_pills) is not
+-- changed.  Recorded game 20261006_002825 (bot2): pill 4 died at t=3152,
+-- the t=3169 scan dropped it and drove the chain down its line, and its
+-- shells in flight hit the bot three times.  0 = a dead pill never counts.
+M.DECOY_GETAWAY_DEAD_PILL_TICKS = 40  -- keel 0
 -- 2026-09-26: THE MOVE TIMEOUT.  A getaway move that has not reached its
 -- square after this many ticks (the square still drivable, but an enemy tank
 -- on it or a long pathfinder detour) parks on the square the tank is on and
@@ -4890,6 +5010,28 @@ M.DECOY_GETAWAY_PROX_WEIGHT  = 0.5    -- keel 0
 -- summed.)  false = hits only.
 M.DECOY_GETAWAY_BLOCKER_STEP  = true  -- keel false
 M.DECOY_GETAWAY_BLOCKER_SHOTS = 2     -- keel 2 (not used: the step is off)
+-- 2026-10-06 (Andrew): THE BLOCKER STEP also runs while parked on the decoy
+-- square itself, before the first step, by the same rule (closest counted
+-- pill, its last blocker, shots left <= DECOY_GETAWAY_BLOCKER_SHOTS: step to
+-- the chain's first square).  A hit still moves it too.  Recorded game
+-- 20261006_011834 (bot0): the wall between pill 12 and the decoy square was
+-- damaged at t=5482 and the bot waited for a hit until t=5529.
+-- false = the first step waits for a hit.
+M.DECOY_GETAWAY_BLOCKER_STEP_FIRST = true  -- keel false
+-- 2026-10-06 (Andrew): THE SHIELDED CHAIN.  With no counted pill able to
+-- reach the decoy square (P empty), the scan still builds a chain against
+-- the counted pills blocked only by a blocker (a full or damaged wall, a
+-- live pill of ours or an ally's), as if they could reach, scored the same
+-- way.  So a chain is ready before the wall falls and the blocker step has
+-- a square to step to.  The SCAN line names them Ps=[..].  false = no
+-- chain while P is empty.
+M.DECOY_GETAWAY_SHIELDED_CHAIN = true  -- keel false
+-- 2026-10-06 (Andrew): STAY THE CLOSEST.  Every chain square must be
+-- strictly closer (edist, square centres) to each pill the chain is
+-- against than every visible human ally tank within PILL_FIRE_RANGE of
+-- that pill, so the pill keeps shooting the bot, not the human.  A square
+-- that fails is not used.  false = humans are not looked at.
+M.DECOY_GETAWAY_STAY_CLOSEST = true    -- keel false
 -- The engine rules the shots left are worked out from.  The brain cannot
 -- read them, so these are the engine defaults: building_life
 -- (BUILDING_LIFE, src/bolo/internal/building.h) and pill_shell_damage
@@ -5596,12 +5738,19 @@ M.PRESETS = {
     DECOY_GETAWAY_HITS            = 1,
     DECOY_GETAWAY_LAST_WEIGHT     = 2.0,
     DECOY_GETAWAY_RESCAN_TICKS    = 50,
+    DECOY_GETAWAY_WATCH_BLOCKED   = false,
+    DECOY_GETAWAY_HIT_RESCAN      = false,
+    DECOY_GETAWAY_WATCH_TICKS     = 50,
+    DECOY_GETAWAY_DEAD_PILL_TICKS = 0,
     DECOY_GETAWAY_MOVE_TICKS      = 300,
     DECOY_GETAWAY_WALL_FULL       = 1.0,
     DECOY_GETAWAY_WALL_DAMAGED    = 0.5,
     DECOY_GETAWAY_PROX_WEIGHT     = 0,
     DECOY_GETAWAY_BLOCKER_STEP    = false,
     DECOY_GETAWAY_BLOCKER_SHOTS   = 2,
+    DECOY_GETAWAY_BLOCKER_STEP_FIRST = false,
+    DECOY_GETAWAY_SHIELDED_CHAIN  = false,
+    DECOY_GETAWAY_STAY_CLOSEST    = false,
     DECOY_GETAWAY_WALL_LIFE       = 4,
     DECOY_GETAWAY_PILL_SHELL_DAMAGE = 1,
     DECOY_GETAWAY_DIAGONAL        = false,
@@ -5623,6 +5772,32 @@ M.PRESETS = {
     --   2026-09-25: with no free bot, the cheapest bot on a person's job
     --   switched to the new order.  KEEL: holders never bid.
     ORDER_NO_FREE_TAKES_LOWEST    = false,
+    --   2026-10-04: a go-there order arrives on the square itself, with a
+    --   timer for a square it cannot reach.  KEEL: within one square, no timer.
+    ORDER_GOTO_ARRIVE_TILES       = 1,
+    ORDER_GOTO_ARRIVE_FALLBACK_TICKS = 0,
+    --   2026-10-04: the bid prices in a refuel stop and a fight.  KEEL: the
+    --   bid is the travel cost alone.
+    ORDER_BID_STOP_AWARE          = false,
+    ORDER_BID_REFUEL_STOP_COST    = 0,
+    ORDER_BID_ENGAGED_COST        = 0,
+    --   2026-10-04: shooting a pill is busy, and a holder may win a new
+    --   order and hand its old one off.  KEEL: holders bid "no".
+    ORDER_HANDOFF                 = false,
+    ORDER_HANDOFF_PENALTY         = 0,
+    ORDER_HANDOFF_WAIT_TICKS      = 0,
+    ORDER_HANDOFF_MAX_HOPS        = 0,
+    --   2026-10-05: a human drawing a pill's fire into a blocker is read;
+    --   the bot keeps wide of him and does not rush.  KEEL: not read.
+    HUMAN_DECOY_AWARE             = false,
+    HUMAN_DECOY_MIN_BLOCK         = 0.5,
+    HUMAN_DECOY_HOLD_TICKS        = 150,
+    HUMAN_DECOY_MIN_TILES         = 5,
+    HUMAN_DECOY_SPACING_COST      = 10,
+    HUMAN_DECOY_BEHIND_COST       = 20,
+    HUMAN_DECOY_BEHIND_MARGIN     = 0.5,
+    HUMAN_DECOY_REPICK_TICKS      = 50,
+    HUMAN_DECOY_TEST_HUMANS       = 0,
     --   FOCUS_OTHER_COST_MULT is the one stage-2 knob that is NOT covered by
     --   the master switch: the focus multiplier sits inside the cost
     --   competition, so its keel value has to be the identity, 1.0, for the

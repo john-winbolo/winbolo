@@ -3428,6 +3428,9 @@ do
   rtake(r, 100)
   check("setup: the bonus is on pill #9",
         r.st._repair_ping ~= nil and r.st._repair_ping.tid == 9, "?")
+  -- These cases are the holder rules with the handoff off: a holder bids
+  -- "no" or its switch cost (ORDER_HANDOFF has its own section below).
+  C.ORDER_HANDOFF = false
   rping(r, 200, 70, 70)
   check("a ping on another of our pills ends the old bonus at once",
         r.st._repair_ping == nil, tostring(r.st._repair_ping and r.st._repair_ping.tid))
@@ -3461,6 +3464,7 @@ do
         r.st._repair_ping ~= nil and r.st._repair_ping.tid == 11,
         tostring(r.st._repair_ping and r.st._repair_ping.tid))
   C.ORDER_HOLDER_KEEPS_JOB = true
+  C.ORDER_HANDOFF = true
   r = BOT(1, 10, 10)
   rtake(r, 100, 20, 20)
   check("an attack ping order on an ENEMY pill gives no bonus", r.st._repair_ping == nil, "?")
@@ -3828,6 +3832,9 @@ end
 print("orders.lua -- two decoys on one square")
 local DHOLD = C.ORDER_GOTO_HOLD_TICKS or 500
 local function decoy_pair()
+  -- B stops BESIDE the square (A is on it), so this rig runs on the old
+  -- one-square arrival (ORDER_GOTO_ARRIVE_TILES 1, keel).
+  C.ORDER_GOTO_ARRIVE_TILES = 1
   local a, b = BOT(1, 22, 30), BOT(2, 22, 34)
   local all = { a, b }
   for _, x in ipairs(all) do gping(x, 100, 22, 24) end
@@ -3844,6 +3851,7 @@ local function decoy_pair()
   upd({ b }, 220)
   pumpn(all, 220)
   for _, x in ipairs(all) do x.st.orders.out, x.st.orders.say = {}, {} end
+  C.ORDER_GOTO_ARRIVE_TILES = 0
   return a, b, all
 end
 do
@@ -4032,6 +4040,11 @@ end
 -- (ORDER_LAND_REPEAT_ADDS false); on a pill, base or tank it adds one.
 -- =========================================================================
 print("orders.lua -- a bot keeps the job a person gave it")
+-- This section and the next ("no free bot") are the holder rules as they
+-- stand with the HANDOFF off: a holder bids "no" (or its switch cost).  The
+-- handoff (ORDER_HANDOFF) has its own section further down.
+local LIVE_HANDOFF = C.ORDER_HANDOFF
+C.ORDER_HANDOFF = false
 check("holder knob is on live", C.ORDER_HOLDER_KEEPS_JOB == true,
       tostring(C.ORDER_HOLDER_KEEPS_JOB))
 check("keel: the auction winner switches",
@@ -4493,7 +4506,10 @@ do
   -- clock, not the 60 s travel focus.  The tank stands one square east of
   -- the square and the ping lands one square west, so it does not select
   -- the tank.
+  -- One square off the square: the old one-square arrival (keel 1).
+  C.ORDER_GOTO_ARRIVE_TILES = 1
   local d2 = dbot(); arrive(d2, 200, 23, 24)
+  C.ORDER_GOTO_ARRIVE_TILES = 0
   d2.inf.events = { ping(5, 0, 21, 24) }
   ORD.on_events(d2.st, d2.w, d2.inf, 300)
   d2.inf.events = {}
@@ -4738,6 +4754,8 @@ end
 _G.EVENT_PING = nil
 _G.PING_KIND_BOT_COMMAND = nil
 _G.PING_KIND_CAUTION = nil
+
+C.ORDER_HANDOFF = LIVE_HANDOFF
 
 -- THE MAN BEING OUT DOES NOT MAKE A BOT BUSY (ORDER_MAN_OUT_TAKES).
 print("orders.lua -- a bot with its man out still takes an order")
@@ -5494,6 +5512,149 @@ print("decoy_getaway.lua -- the decoy getaway")
   d.w.pills[6] = nil
   S({})
 
+  ;(function() -- own function: the main chunk is at its 200-local limit
+  -- 9b. A WALL BETWEEN A COUNTED PILL AND THE DECOY SQUARE IS SHOT AWAY
+  -- (recorded game 20261005_232149, bot4).  A wall at (21,22) stops pill
+  -- 5's shell to (22,24) (the line crosses row 22 inside column 21), so P
+  -- is empty and there is no chain.  THE BLOCKED WATCH sees the wall go and
+  -- rescans at the next check; A HIT WITH NO CHAIN rescans at once and the
+  -- chain it finds keeps that hit, so the bot steps in the same think.
+  -- THE SHIELDED CHAIN is off here (it would plan a chain behind the wall).
+  C.DECOY_GETAWAY_SHIELDED_CHAIN = false
+  check("blocked watch + hit rescan knobs: on live, off in keel",
+        C.DECOY_GETAWAY_WATCH_BLOCKED == true and C.PRESETS.keel.DECOY_GETAWAY_WATCH_BLOCKED == false
+        and C.DECOY_GETAWAY_HIT_RESCAN == true and C.PRESETS.keel.DECOY_GETAWAY_HIT_RESCAN == false, "?")
+  local WK = 22 * 256 + 21
+  local function walled()
+    TMAP[WK] = C.T_BUILDING
+    S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 } })
+    local b = dbot(); arrive(b, 200); b.inf.direction = 64; b.inf.armour = 40; lock(b, 201)
+    return b, b.st.orders.held
+  end
+  local b, hb = walled()
+  local P0, bl0 = GA.pill_set(b.w, 22, 24)
+  check("the wall stops pill 5: P empty, pill 5 blocked at (21,22), no chain",
+        #P0 == 0 and #bl0 == 1 and bl0[1].id == 5 and bl0[1].sx == 21 and bl0[1].sy == 22
+        and hb.ga.path == nil, tostring(#P0) .. " " .. tostring(bl0[1] and bl0[1].sx))
+  check("the scan keeps the stop square to watch",
+        #hb.ga.watch == 1 and hb.ga.watch[1].sx == 21 and hb.ga.watch[1].sy == 22, "?")
+  -- THE FAST BLOCKED WATCH (DECOY_GETAWAY_WATCH_TICKS 1, keel 50): the
+  -- watched square is read every think, so the scan comes on the first
+  -- think after the wall goes (bot4: wall down t=1956, scan t=1957).
+  check("fast blocked watch knob: 1 live, 50 in keel",
+        C.DECOY_GETAWAY_WATCH_TICKS == 1 and C.PRESETS.keel.DECOY_GETAWAY_WATCH_TICKS == 50, "?")
+  lock(b, 220)
+  check("wall up: the watch check does not rescan (no change, no trace)",
+        hb.ga.path == nil and hb.ga.scan_tick == 201 and hb.ga.wcheck == 220, "?")
+  TMAP[WK] = nil
+  lock(b, 221)
+  check("wall gone: the fast watch rescans on the next think, chain found, waits for a fresh hit",
+        pstr(hb.ga.path) == "22,25 22,26 22,27" and hb.ga.scan_tick == 221
+        and hb.ga.viz.why == "watch" and hb.ga.phase == "wait" and hb.ga.hits == 0,
+        pstr(hb.ga.path))
+  C.DECOY_GETAWAY_WATCH_TICKS = 50
+  b, hb = walled()
+  TMAP[WK] = nil
+  lock(b, 250)
+  check("WATCH_TICKS=50 (keel): wall gone, no rescan before the check interval", hb.ga.path == nil, "?")
+  lock(b, 251)
+  check("WATCH_TICKS=50 (keel): the blocked watch rescans at the check, chain found, waits for a fresh hit",
+        pstr(hb.ga.path) == "22,25 22,26 22,27" and hb.ga.scan_tick == 251
+        and hb.ga.phase == "wait" and hb.ga.hits == 0, pstr(hb.ga.path))
+  C.DECOY_GETAWAY_WATCH_TICKS = 1
+  C.DECOY_GETAWAY_WATCH_BLOCKED = false
+  b, hb = walled()
+  TMAP[WK] = nil
+  lock(b, 251)
+  check("DECOY_GETAWAY_WATCH_BLOCKED=false: the wall going is not seen", hb.ga.path == nil, "?")
+  C.DECOY_GETAWAY_WATCH_BLOCKED = true
+  b, hb = walled()
+  TMAP[WK] = nil
+  b.inf.armour = 35; lock(b, 210)
+  check("a hit with no chain rescans at once: chain found, the hit kept, it moves",
+        pstr(hb.ga.path) == "22,25 22,26 22,27" and hb.ga.scan_tick == 210
+        and hb.ga.phase == "move" and b.st.goal.my == 25, tostring(hb.ga.phase))
+  b, hb = walled()
+  b.inf.armour = 35; lock(b, 210)
+  check("a hit with no chain and the wall still up: rescan, still no chain, parked",
+        hb.ga.path == nil and hb.ga.scan_tick == 210 and hb.ga.phase == "wait"
+        and b.st.goal.my == 24, tostring(hb.ga.phase))
+  C.DECOY_GETAWAY_HIT_RESCAN = false
+  C.DECOY_GETAWAY_WATCH_TICKS = 50
+  b, hb = walled()
+  TMAP[WK] = nil
+  b.inf.armour = 35; lock(b, 210)
+  check("DECOY_GETAWAY_HIT_RESCAN=false: the hit does not rescan", hb.ga.path == nil
+        and hb.ga.scan_tick == 201, "?")
+  C.DECOY_GETAWAY_WATCH_TICKS = 1
+  b, hb = walled()
+  TMAP[WK] = nil
+  b.inf.armour = 35; lock(b, 210)
+  check("HIT_RESCAN=false, fast watch: the watch scan finds the chain, the hit is spent",
+        pstr(hb.ga.path) == "22,25 22,26 22,27" and hb.ga.scan_tick == 210
+        and hb.ga.viz.why == "watch" and hb.ga.phase == "wait" and hb.ga.hits == 0, tostring(hb.ga.phase))
+  C.DECOY_GETAWAY_HIT_RESCAN = true
+  C.DECOY_GETAWAY_SHIELDED_CHAIN = true
+  TMAP[WK] = nil
+  S({})
+  end)()
+
+  ;(function() -- own function: the main chunk is at its 200-local limit
+  -- 9c. THE RECENTLY DEAD PILL (recorded game 20261006_002825, bot2).  A
+  -- pill that died DECOY_GETAWAY_DEAD_PILL_TICKS ago or less still counts
+  -- for the getaway (its shells are in flight); orders.decoy_pills does not
+  -- change.  Pill 5 (20,20) is blocked by a wall at (21,22); pill 6 (26,24)
+  -- by a wall at (24,24) and keeps the hold.  Pill 5 dies and its wall goes
+  -- on the same think.
+  C.DECOY_GETAWAY_SHIELDED_CHAIN = false   -- as in 9b
+  check("dead pill knob: 40 live, 0 in keel",
+        C.DECOY_GETAWAY_DEAD_PILL_TICKS == 40 and C.PRESETS.keel.DECOY_GETAWAY_DEAD_PILL_TICKS == 0, "?")
+  local WK5, WK6 = 22 * 256 + 21, 24 * 256 + 24
+  local function setup()
+    TMAP[WK5], TMAP[WK6] = C.T_BUILDING, C.T_BUILDING
+    S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 } })
+    local b = dbot()
+    b.w.pills[6] = { mx = 26, my = 24, owner = "hostile", health = 5 }
+    arrive(b, 200); b.inf.direction = 64; b.inf.armour = 40; lock(b, 201)
+    lock(b, 204)
+    return b, b.st.orders.held
+  end
+  local b, hb = setup()
+  check("dead pill setup: both pills blocked, no chain, pill 5 last seen alive at 204",
+        hb.ga.path == nil and #hb.ga.watch == 2 and hb.ga.alive[5] == 204, "?")
+  b.w.pills[5].health = 0
+  TMAP[WK5] = nil
+  lock(b, 205)
+  check("pill 5 dead 1 tick: the watch scan keeps it in P (dead 1), chain found",
+        pstr(hb.ga.path) == "22,25 22,26 22,27" and hb.ga.scan_tick == 205
+        and #hb.ga.viz.P == 1 and hb.ga.viz.P[1].id == 5 and hb.ga.viz.P[1].dead == 1,
+        pstr(hb.ga.path))
+  check("orders.decoy_pills does not count the dead pill", ORD.decoy_pills(b.w, 22, 24) == 1, "?")
+  b.inf.armour = 35; lock(b, 210)
+  check("pill 5 dead: a hit from its shell in flight moves the bot",
+        hb.ga.phase == "move" and b.st.goal.my == 25, tostring(hb.ga.phase))
+  local P1 = GA.pill_set(b.w, 22, 24, hb.ga.alive, 244)
+  local P2 = GA.pill_set(b.w, 22, 24, hb.ga.alive, 245)
+  check("dead age 40 counts, dead age 41 does not",
+        #P1 == 1 and P1[1].dead == 40 and #P2 == 0, tostring(#P1) .. " " .. tostring(#P2))
+  check("no alive record (no now): a dead pill does not count", #GA.pill_set(b.w, 22, 24) == 0, "?")
+  check("dead_age: nil alive, false too old, the age when it counts",
+        GA.dead_age(6, b.w.pills[6], hb.ga.alive, 245) == nil
+        and GA.dead_age(5, b.w.pills[5], hb.ga.alive, 245) == false
+        and GA.dead_age(5, b.w.pills[5], hb.ga.alive, 221) == 17, "?")
+  C.DECOY_GETAWAY_DEAD_PILL_TICKS = 0
+  b, hb = setup()
+  b.w.pills[5].health = 0
+  TMAP[WK5] = nil
+  lock(b, 205)
+  check("DEAD_PILL_TICKS=0 (keel): the dead pill drops at once, P empty, no chain",
+        hb.ga.path == nil and hb.ga.scan_tick == 205 and #hb.ga.viz.P == 0, pstr(hb.ga.path))
+  C.DECOY_GETAWAY_DEAD_PILL_TICKS = 40
+  C.DECOY_GETAWAY_SHIELDED_CHAIN = true
+  TMAP[WK5], TMAP[WK6] = nil, nil
+  S({})
+  end)()
+
   -- 10. A RESCAN AFTER A PILL DIES.  Two pills: 5 (20,20) and 6 (26,24).
   -- North (22,23) is shielded from pill 5 only, south (22,25) from pill 6
   -- only: 0.5 each, a tie, north wins on the lower key.  Pill 5 dies: north
@@ -5556,6 +5717,7 @@ print("decoy_getaway.lua -- the decoy getaway")
   -- DECOY_GETAWAY_BLOCKER_SHOTS (2) moves the tank on without a hit.  None:
   -- it moves.  The line tiles are the mock trace's own, so the blockers below
   -- sit on the line the code walks.
+  C.DECOY_GETAWAY_BLOCKER_STEP_FIRST = false   -- the first step by a hit (12c tests it on)
   check("blocker step knobs: on live, off in keel, step at <= 2 shots, wall life 4, pill damage 1",
         C.DECOY_GETAWAY_BLOCKER_STEP == true and C.PRESETS.keel.DECOY_GETAWAY_BLOCKER_STEP == false
         and C.DECOY_GETAWAY_BLOCKER_SHOTS == 2 and C.PRESETS.keel.DECOY_GETAWAY_BLOCKER_SHOTS == 2
@@ -5873,11 +6035,12 @@ print("decoy_getaway.lua -- the decoy getaway")
         tostring(hb.ga.phase))
   clear()
 
-  -- THE DECOY SQUARE: no blocker step there.  0 shots, no hit: it stays.
+  -- THE DECOY SQUARE with DECOY_GETAWAY_BLOCKER_STEP_FIRST off: no blocker
+  -- step there.  0 shots, no hit: it stays.
   b = dbot(); arrive(b, 700); lock(b, 701)
   hb = b.st.orders.held
   lock(b, 702); lock(b, 720); lock(b, 740)
-  check("on the decoy square 0 shots left does not move it (the first step waits for a hit)",
+  check("BLOCKER_STEP_FIRST=false: on the decoy square 0 shots left does not move it (the first step waits for a hit)",
         hb.ga.phase == "wait" and hb.ga.used == 0 and hb.ga.blk == nil
         and b.st.goal.my == 24, tostring(hb.ga.phase))
   b.inf.armour = b.inf.armour - 5; lock(b, 741)
@@ -5963,6 +6126,156 @@ print("decoy_getaway.lua -- the decoy getaway")
   C.DECOY_GETAWAY_DIAGONAL = true
   end)()
   C.DECOY_GETAWAY_PROX_WEIGHT = 0.5
+  C.DECOY_GETAWAY_BLOCKER_STEP_FIRST = true
+  end)()
+
+  ;(function() -- own function: the main chunk is at its 200-local limit
+  -- 12c. THE BLOCKER STEP ON THE DECOY SQUARE, THE SHIELDED CHAIN, STAY THE
+  -- CLOSEST (Andrew, Oct 6; recorded game 20261006_011834, bot0).  The
+  -- worked example: decoy square (126,112), pill 12 (neutral, health 9) at
+  -- (126,117), a wall at (126,113) on its line, a wall row y=113 x=120..125
+  -- that shields row 112 to the west, and a human team-mate (seat 0) at
+  -- (129,110).  The real block() and shell trace (no mock).
+  check("decoy-square blocker step, shielded chain, stay closest: on live, off in keel",
+        C.DECOY_GETAWAY_BLOCKER_STEP_FIRST == true and C.PRESETS.keel.DECOY_GETAWAY_BLOCKER_STEP_FIRST == false
+        and C.DECOY_GETAWAY_SHIELDED_CHAIN == true and C.PRESETS.keel.DECOY_GETAWAY_SHIELDED_CHAIN == false
+        and C.DECOY_GETAWAY_STAY_CLOSEST == true and C.PRESETS.keel.DECOY_GETAWAY_STAY_CLOSEST == false, "?")
+  GA.block = saved.block
+  EVENT_SOUND = EVENT_SOUND or 8
+  SND_SHOT_BUILDING_NEAR = SND_SHOT_BUILDING_NEAR or 4
+  local LW = 113 * 256 + 126
+  local function terrain(line_wall)
+    TMAP[LW] = line_wall
+    for x = 120, 125 do TMAP[113 * 256 + x] = C.T_BUILDING end
+  end
+  local function clear()
+    TMAP[LW] = nil
+    for x = 120, 125 do TMAP[113 * 256 + x] = nil end
+  end
+  local function human(b, mx, my, pn)
+    b.inf.objects[#b.inf.objects + 1] =
+      { type = 1, idnum = pn or 0, x = mx * 256 + 128, y = my * 256 + 128, info = 0 }
+  end
+  local function rig(line_wall, hx, hy, pn)
+    terrain(line_wall)
+    local b = dbot(126, 112)
+    b.w.pills[12] = { mx = 126, my = 117, owner = "neutral", health = 9 }
+    if hx then human(b, hx, hy, pn) end
+    arrive(b, 200, 126, 112); b.inf.direction = 64; b.inf.armour = 40; lock(b, 201)
+    return b, b.st.orders.held
+  end
+  local function sound(b, t)
+    b.inf.events = { { type = EVENT_SOUND, data = { SND_SHOT_BUILDING_NEAR, 126, 113, 0xFF } } }
+    lock(b, t)
+    b.inf.events = nil
+  end
+
+  -- THE SHIELDED CHAIN: P is empty (the wall stops the shell), Ps = [12],
+  -- and the chain runs west behind the wall row, (125,112) first.
+  local b, hb = rig(C.T_BUILDING, 129, 110)
+  check("worked example: a decoy hold", hb and hb.decoy == true and hb.ga ~= nil, "?")
+  local P0, bl0 = GA.pill_set(b.w, 126, 112)
+  check("worked example: P empty, pill 12 blocked at the wall (126,113)",
+        #P0 == 0 and #bl0 == 1 and bl0[1].id == 12 and bl0[1].sx == 126 and bl0[1].sy == 113,
+        tostring(#P0) .. " " .. tostring(bl0[1] and bl0[1].sx) .. "," .. tostring(bl0[1] and bl0[1].sy))
+  local Ps = GA.shielded_set(b.w, bl0)
+  check("shielded set: pill 12 (behind a wall)", #Ps == 1 and Ps[1].id == 12 and Ps[1].shielded == true, "?")
+  check("worked example: the shielded chain, (125,112) first",
+        hb.ga.viz.shielded == true and #hb.ga.viz.P == 1 and hb.ga.viz.P[1].id == 12
+        and hb.ga.path and hb.ga.path[1].mx == 125 and hb.ga.path[1].my == 112,
+        pstr(hb.ga.path))
+  check("worked example: (125,112) is shielded by the wall row (1.0 from (125,113))",
+        hb.ga.path and hb.ga.path[1].terms[1].b == 1.0 and hb.ga.path[1].terms[1].sx == 125
+        and hb.ga.path[1].terms[1].sy == 113, "?")
+  -- STAY THE CLOSEST: the human is 7.62 from the pill; (125,112) is 5.10.
+  local lim = GA.human_limits(hb.ga.viz.P, GA.humans(b.inf))
+  check("stay closest: the human at (129,110) is 7.62 from pill 12",
+        lim[12] and near(lim[12].d, math.sqrt(58)) and lim[12].pn == 0,
+        tostring(lim[12] and lim[12].d))
+  local all_closer = hb.ga.path ~= nil
+  for _, c in ipairs(hb.ga.path or {}) do
+    if math.sqrt((c.mx - 126) ^ 2 + (c.my - 117) ^ 2) >= math.sqrt(58) then all_closer = false end
+  end
+  check("stay closest: every chain square is closer to the pill than 7.62 ((125,112) 5.10 kept)",
+        all_closer, pstr(hb.ga.path))
+  -- THE BLOCKER STEP ON THE DECOY SQUARE: a full wall, 5 - 0 = 5 shots, it
+  -- holds; three wall hits heard, 5 - 3 = 2 <= 2: it steps to (125,112)
+  -- before the wall falls, with no hit.
+  check("decoy square, full wall: 5 shots, it holds",
+        hb.ga.phase == "wait" and hb.ga.used == 0 and hb.ga.blk and hb.ga.blk.shots == 5
+        and hb.ga.blk.id == 12 and hb.ga.blk.tx == 126 and hb.ga.blk.ty == 112,
+        tostring(hb.ga.blk and hb.ga.blk.shots))
+  sound(b, 202); sound(b, 203)
+  check("decoy square, two hits heard: 5 - 2 = 3 shots, it holds",
+        hb.ga.phase == "wait" and hb.ga.blk.shots == 3, tostring(hb.ga.blk and hb.ga.blk.shots))
+  sound(b, 204)
+  check("decoy square, three hits heard: 5 - 3 = 2 shots, it steps to (125,112), trigger blk",
+        hb.ga.phase == "move" and hb.ga.trigs[1] == "blk" and b.st.goal.mx == 125 and b.st.goal.my == 112
+        and b.inf.armour == 40, tostring(hb.ga.phase))
+  -- A damaged wall from the start: dmg = 1 shot, it steps at once.
+  b, hb = rig(C.T_HALFBUILD, 129, 110)
+  check("decoy square, damaged wall: 1 shot, it steps at once to (125,112)",
+        hb.ga.phase == "move" and hb.ga.trigs[1] == "blk" and hb.ga.path[1].mx == 125,
+        tostring(hb.ga.phase))
+  -- An open line on the decoy square (no wall at (126,113)): no blocker,
+  -- shots 0, but the decoy square still waits for the first hit.
+  b, hb = rig(nil, 129, 110)
+  check("decoy square, open line: a chain, no blocker, it waits for the first hit",
+        hb.ga.path ~= nil and hb.ga.phase == "wait" and hb.ga.blk and hb.ga.blk.why == "open"
+        and hb.ga.blk.shots == 0, tostring(hb.ga.phase) .. " " .. tostring(hb.ga.blk and hb.ga.blk.why))
+  b.inf.armour = 35; lock(b, 202)
+  check("decoy square, open line: a hit moves it", hb.ga.phase == "move"
+        and hb.ga.trigs[1] == "hit", tostring(hb.ga.phase))
+  -- BLOCKER_STEP_FIRST off: the chain is there but it waits for a hit.
+  C.DECOY_GETAWAY_BLOCKER_STEP_FIRST = false
+  b, hb = rig(C.T_HALFBUILD, 129, 110)
+  check("BLOCKER_STEP_FIRST=false: a chain, but it waits on the decoy square",
+        hb.ga.path ~= nil and hb.ga.phase == "wait" and hb.ga.blk == nil, tostring(hb.ga.phase))
+  b.inf.armour = 35; lock(b, 202)
+  check("BLOCKER_STEP_FIRST=false: a hit moves it", hb.ga.phase == "move"
+        and hb.ga.trigs[1] == "hit", tostring(hb.ga.phase))
+  C.DECOY_GETAWAY_BLOCKER_STEP_FIRST = true
+  -- SHIELDED_CHAIN off: P empty, no chain, nothing to step to.
+  C.DECOY_GETAWAY_SHIELDED_CHAIN = false
+  b, hb = rig(C.T_HALFBUILD, 129, 110)
+  check("SHIELDED_CHAIN=false: P empty, no chain, it stays",
+        hb.ga.path == nil and hb.ga.phase == "wait" and hb.ga.viz.shielded == false, tostring(hb.ga.phase))
+  C.DECOY_GETAWAY_SHIELDED_CHAIN = true
+  -- A pill whose shell runs out (no stop square) is not shielded P.
+  check("shielded set: a shell short (no stop square) is not shielded P",
+        #GA.shielded_set(b.w, { { id = 12 } }) == 0, "?")
+  -- STAY THE CLOSEST turns squares down: a human at (129,113), 5.00 from
+  -- the pill.  (125,112) is 5.10: not used.
+  b, hb = rig(C.T_BUILDING, 129, 113)
+  local first_ok = hb.ga.path and hb.ga.path[1].mx == 125 and hb.ga.path[1].my == 112
+  check("stay closest: a human 5.00 from the pill: (125,112) (5.10) is not used",
+        not first_ok, pstr(hb.ga.path))
+  local c1 = nil
+  for _, c in ipairs(hb.ga.viz.cells or {}) do if c.mx == 125 and c.my == 112 then c1 = c end end
+  check("stay closest: (125,112) is turned down as human_closer, 5.10 >= 5.00",
+        c1 and c1.ok == false and c1.why == "human_closer" and near(c1.hfail.hd, 5.0)
+        and near(c1.hfail.d, math.sqrt(26)), tostring(c1 and c1.why))
+  C.DECOY_GETAWAY_STAY_CLOSEST = false
+  b, hb = rig(C.T_BUILDING, 129, 113)
+  check("STAY_CLOSEST=false: humans are not looked at, (125,112) first",
+        hb.ga.path and hb.ga.path[1].mx == 125 and hb.ga.path[1].my == 112, pstr(hb.ga.path))
+  C.DECOY_GETAWAY_STAY_CLOSEST = true
+  -- A human more than PILL_FIRE_RANGE from the pill does not count.
+  b, hb = rig(C.T_BUILDING, 135, 112)
+  check("stay closest: a human 10.30 from the pill (out of range) does not count",
+        hb.ga.path and hb.ga.path[1].mx == 125 and next(GA.human_limits(hb.ga.viz.P, GA.humans(b.inf))) == nil,
+        pstr(hb.ga.path))
+  -- A bot team-mate is not a human; HUMAN_DECOY_TEST_HUMANS makes it one.
+  b, hb = rig(C.T_BUILDING, 129, 113, 4)
+  check("stay closest: a bot team-mate (seat 4) is not a human", #GA.humans(b.inf) == 0
+        and hb.ga.path and hb.ga.path[1].mx == 125, pstr(hb.ga.path))
+  C.HUMAN_DECOY_TEST_HUMANS = 0x10
+  b, hb = rig(C.T_BUILDING, 129, 113, 4)
+  check("stay closest: HUMAN_DECOY_TEST_HUMANS seat 4 counts as human, (125,112) not used",
+        #GA.humans(b.inf) == 1 and not (hb.ga.path and hb.ga.path[1].mx == 125 and hb.ga.path[1].my == 112),
+        pstr(hb.ga.path))
+  C.HUMAN_DECOY_TEST_HUMANS = 0
+  clear()
   end)()
 
   GA.block = saved.block
@@ -5994,6 +6307,977 @@ do
   local keel = busy_lines(false)
   check("ORDER_HINT_BUSY_SILENT=false (keel): it says Busy", keel == 1, tostring(keel))
   C.ORDER_HINT_BUSY_SILENT = saved
+end
+
+-- =========================================================================
+-- BOT ORDER BIDS (2026-10-04, branch bot-order-bids).  Three changes:
+--   1. a go-there order arrives on the square itself (ORDER_GOTO_ARRIVE_*)
+--   2. the bid counts a refuel stop and an active fight (ORDER_BID_*)
+--   3. shooting a pill is busy, and a holder can hand its job off
+--      (ORDER_HANDOFF*)
+-- =========================================================================
+do
+  _G.EVENT_PING, _G.PING_KIND_CAUTION, _G.PING_KIND_BOT_COMMAND = 13, 1, 5
+  local K = C.PRESETS.keel
+
+  print("orders.lua -- bot order bids: the knobs")
+  local knobs = {
+    { "ORDER_GOTO_ARRIVE_TILES",          0,    1 },
+    { "ORDER_GOTO_ARRIVE_FALLBACK_TICKS", 100,  0 },
+    { "ORDER_BID_STOP_AWARE",             true, false },
+    { "ORDER_BID_REFUEL_STOP_COST",       30,   0 },
+    { "ORDER_BID_ENGAGED_COST",           30,   0 },
+    { "ORDER_HANDOFF",                    true, false },
+    { "ORDER_HANDOFF_PENALTY",            15,   0 },
+    { "ORDER_HANDOFF_WAIT_TICKS",         100,  0 },
+  }
+  for _, k in ipairs(knobs) do
+    check(k[1] .. " live = " .. tostring(k[2]), C[k[1]] == k[2], tostring(C[k[1]]))
+    check(k[1] .. " keel = " .. tostring(k[3]), K[k[1]] == k[3], tostring(K[k[1]]))
+  end
+
+  -- ── 1. ARRIVAL IS THE SQUARE ───────────────────────────────────────────
+  -- dbot's go-there is (22,24), in range of hostile pill 5, so arrival
+  -- starts the decoy hold (h.arrived, h.hold).
+  print("orders.lua -- bot order bids: a go-there order arrives on the square")
+  local function arrived(b) local h = b.st.orders.held return h and h.arrived ~= nil end
+  local b = dbot()
+  arrive(b, 200, 23, 24)
+  check("one square off: not arrived yet (ARRIVE_TILES 0)", not arrived(b), "arrived")
+  arrive(b, 299, 23, 24)
+  check("one square off for 99 ticks: still not arrived", not arrived(b), "arrived")
+  arrive(b, 300, 23, 24)
+  check("one square off for 100 ticks: the fallback arrives", arrived(b), "no")
+  check("and the hold starts as on any arrival",
+        b.st.orders.held.hold == true and said(b, "^decoying"),
+        table.concat(b.st.orders.say or {}, " | "))
+  b = dbot()
+  arrive(b, 200, 22, 24)
+  check("on the square: arrived at once", arrived(b), "no")
+  b = dbot()
+  arrive(b, 200, 23, 23)
+  arrive(b, 250, 26, 24)
+  check("leaving the one-square ring resets the timer",
+        b.st.orders.held.near_since == nil, tostring(b.st.orders.held.near_since))
+  arrive(b, 260, 23, 25)
+  arrive(b, 340, 23, 25)
+  check("back in the ring: the timer starts again (80 ticks, not arrived)",
+        not arrived(b), "arrived")
+  arrive(b, 360, 23, 25)
+  check("back in the ring: 100 ticks after re-entry it arrives", arrived(b), "no")
+  C.ORDER_GOTO_ARRIVE_FALLBACK_TICKS = 0
+  b = dbot()
+  arrive(b, 200, 23, 24); arrive(b, 400, 23, 24)
+  check("fallback 0: one square off never arrives", not arrived(b), "arrived")
+  C.ORDER_GOTO_ARRIVE_TILES, C.ORDER_GOTO_ARRIVE_FALLBACK_TICKS = 1, 0
+  b = dbot()
+  arrive(b, 200, 23, 24)
+  check("keel (1, 0): one square off arrives at once", arrived(b), "no")
+  C.ORDER_GOTO_ARRIVE_TILES, C.ORDER_GOTO_ARRIVE_FALLBACK_TICKS = 0, 100
+
+  -- ── 2. THE BID COUNTS A REFUEL STOP AND A FIGHT ─────────────────────────
+  -- Me at (10,10).  Friendly base #4 at (50,50).  Target (20,70).  The cost
+  -- functions fall back to Manhattan x 4 here (no slate, no terrain).
+  --   path      = (10+60)*4 = 280
+  --   to_base   = (40+40)*4 = 320
+  --   from_base = (30+20)*4 = 200
+  --   detour    = 320 + 200 - 280 = 240, fill 30: total = 550
+  print("orders.lua -- bot order bids: the bid counts a refuel stop and a fight")
+  local spec = { kind = "goto_tile", tkind = "here", mx = 20, my = 70, needs_shells = true }
+  local function bid(extra, goal, sp)
+    local st, w, inf = ST(), W(), I(extra)
+    st.goal = goal or {}
+    return ORD.bid_cost(st, w, inf, sp or spec)
+  end
+  local c, t = bid()
+  check("full tank: the bid is the path (280)", c == 280 and t.detour == 0
+        and t.fill == 0 and t.engaged == 0 and t.stop == nil, ORD.bid_terms_str(t))
+  c, t = bid({ shells = 5 })
+  check("low shells, order needs shells: a stop at base #4",
+        t.stop == "shells" and t.base == 4, ORD.bid_terms_str(t))
+  if t.est == "mdist" then
+    check("low shells: path 280 + detour 240 + fill 30 = 550",
+          c == 550 and t.to_base == 320 and t.from_base == 200 and t.detour == 240
+          and t.fill == 30, ORD.bid_terms_str(t))
+  end
+  check("total = path + detour + fill + engaged",
+        t.total == t.path + t.detour + t.fill + t.engaged and c == t.total, ORD.bid_terms_str(t))
+  check("detour = to_base + from_base - path",
+        t.detour == t.to_base + t.from_base - t.path, ORD.bid_terms_str(t))
+  local s = ORD.bid_terms_str(t)
+  check("the log terms show every term",
+        s:find("path=280", 1, true) and s:find("refuel=shells", 1, true)
+        and s:find("base#4", 1, true) and s:find("to_base=", 1, true)
+        and s:find("from_base=", 1, true) and s:find("detour=", 1, true)
+        and s:find("fill=30", 1, true) and s:find("total=" .. c, 1, true), s)
+  local nosh = { kind = "goto_tile", tkind = "here", mx = 20, my = 70 }
+  c, t = bid({ shells = 5 }, nil, nosh)
+  check("low shells, order needs none (ORDER_REFUEL_SKIP_NO_SHELLS): no stop",
+        c == 280 and t.stop == nil, ORD.bid_terms_str(t))
+  C.ORDER_REFUEL_SKIP_NO_SHELLS = false
+  c, t = bid({ shells = 5 }, nil, nosh)
+  check("SKIP_NO_SHELLS off: low shells always stop", t.stop == "shells", ORD.bid_terms_str(t))
+  C.ORDER_REFUEL_SKIP_NO_SHELLS = true
+  c, t = bid({ armour = C.ARMOUR_LOW }, nil, nosh)
+  check("armour at ARMOUR_LOW: a stop, even for an order that needs no shells",
+        t.stop == "armour" and t.base == 4 and c > 280, ORD.bid_terms_str(t))
+  c, t = bid({ armour = C.ARMOUR_LOW + 1 }, nil, nosh)
+  check("armour above ARMOUR_LOW: no stop", t.stop == nil and c == 280, ORD.bid_terms_str(t))
+  do
+    local st, w, inf = ST(), W(), I({ shells = 5 })
+    w.bases[4].owner = "neutral"
+    c, t = ORD.bid_cost(st, w, inf, spec)
+    check("no friendly base: the stop is marked, nothing added",
+          t.stop == "shells,nobase" and c == 280 and t.detour == 0 and t.fill == 0,
+          ORD.bid_terms_str(t))
+    w = W()
+    w.bases[4].obs_tick, w.bases[4].obs_shells, w.bases[4].obs_armour = 50, 0, 0
+    c, t = ORD.bid_cost(st, w, inf, spec)
+    check("a base seen empty is skipped", t.stop == "shells,nobase", ORD.bid_terms_str(t))
+  end
+  c, t = bid(nil, { kind = "attack_tank" })
+  check("fighting a tank: + 30", c == 310 and t.engaged == 30, ORD.bid_terms_str(t))
+  check("the log terms show engaged", ORD.bid_terms_str(t):find("engaged=30", 1, true), ORD.bid_terms_str(t))
+  c, t = bid(nil, { kind = "kill_lgm" })
+  check("hunting a builder: + 30", c == 310 and t.engaged == 30, ORD.bid_terms_str(t))
+  c, t = bid(nil, { kind = "attack_pill" })
+  check("a pill is not a fight with a tank: + 0", c == 280 and t.engaged == 0, ORD.bid_terms_str(t))
+  c, t = bid({ shells = 5 }, { kind = "attack_tank" })
+  check("both: path + detour + fill + engaged",
+        c == t.path + t.detour + 30 + 30 and t.engaged == 30 and t.fill == 30, ORD.bid_terms_str(t))
+  C.ORDER_BID_STOP_AWARE = false
+  c, t = bid({ shells = 5, armour = 1 }, { kind = "attack_tank" })
+  check("ORDER_BID_STOP_AWARE=false (keel): the bid is the path only",
+        c == 280 and t.stop == nil and t.engaged == 0, ORD.bid_terms_str(t))
+  C.ORDER_BID_STOP_AWARE = true
+  C.ORDER_BID_REFUEL_STOP_COST, C.ORDER_BID_ENGAGED_COST = 0, 0
+  c, t = bid({ shells = 5 }, { kind = "attack_tank" })
+  check("keel costs (0, 0): the detour stays, fill and engaged are 0",
+        t.fill == 0 and t.engaged == 0 and c == t.path + t.detour, ORD.bid_terms_str(t))
+  C.ORDER_BID_REFUEL_STOP_COST, C.ORDER_BID_ENGAGED_COST = 30, 30
+
+  -- The auction with it, on an order that needs shells: a ping on hostile
+  -- pill 5 at (20,20).  A at (15,15) is near but low on shells; B at (45,20)
+  -- is full.  A: path (5+5)*4 = 40, stop at base #4 (50,50): to_base
+  -- (35+35)*4 = 280 + from_base (30+30)*4 = 240 + fill 30 = 550.
+  -- B: path 25*4 = 100.  B wins; with the knob off A wins on 40.
+  local function stop_race()
+    local a, bb = BOT(1, 15, 15), BOT(2, 45, 20)
+    a.inf.shells = 5
+    local all = { a, bb }
+    for _, x in ipairs(all) do gping(x, 300, 20, 20) end
+    pumpn(all, 300)
+    for tt = 301, 315 do upd(all, tt); pumpn(all, tt) end
+    return a, bb
+  end
+  local ra, rb = stop_race()
+  check("setup: the ping is a pill attack (needs shells)",
+        rb.st.orders.held and rb.st.orders.held.needs_shells == true,
+        tostring(rb.st.orders.held and rb.st.orders.held.kind))
+  check("low-shells near bot vs full far bot: the full bot wins",
+        rb.st.orders.held ~= nil and ra.st.orders.held == nil,
+        tostring(ra.st.orders.held and ra.st.orders.held.oid))
+  C.ORDER_BID_STOP_AWARE = false
+  ra, rb = stop_race()
+  check("keel: the near bot wins on path alone",
+        ra.st.orders.held ~= nil and rb.st.orders.held == nil,
+        tostring(rb.st.orders.held and rb.st.orders.held.oid))
+  C.ORDER_BID_STOP_AWARE = true
+
+  -- ── 3a. SHOOTING A PILL IS BUSY ────────────────────────────────────────
+  print("orders.lua -- bot order bids: a bot shooting a pill is busy")
+  local SHOOT = { "kill_hardline", "charge", "engage", "swerve", "shoot_pill", "heat_pill" }
+  local SETUP = { "select_pill", "plan_position", "gather_trees", "approach",
+                  "build_walls", "blitz_wait", "aim", "detree", "in_range_creep",
+                  "loiter", "post_engage", "rush" }
+  local inf = I()
+  for _, sub in ipairs(SHOOT) do
+    local st = ST(); st.goal = { kind = "attack_pill", substate = sub }
+    local bz, why = ORD.busy(st, inf)
+    check("attack_pill/" .. sub .. ": Busy (taking pill)", bz and why == "taking pill", tostring(why))
+  end
+  for _, sub in ipairs(SETUP) do
+    local st = ST(); st.goal = { kind = "attack_pill", substate = sub }
+    local bz, why = ORD.busy(st, inf)
+    check("attack_pill/" .. sub .. ": not busy for a pill", why ~= "taking pill", tostring(why))
+  end
+  do
+    local st = ST(); st.goal = { kind = "attack_base", substate = "engage" }
+    local _, why = ORD.busy(st, inf)
+    check("engage on a base is not a pill take", why ~= "taking pill", tostring(why))
+    st.goal = { kind = "attack_pill", substate = "engage" }
+    _, why = ORD.busy(st, inf, true)
+    check("a caution retreat is never refused for a pill take", why ~= "taking pill", tostring(why))
+    C.ORDER_HANDOFF = false
+    _, why = ORD.busy(st, inf)
+    check("ORDER_HANDOFF=false (keel): shooting a pill is not busy", why ~= "taking pill", tostring(why))
+    C.ORDER_HANDOFF = true
+  end
+
+  -- ── 3b. THE HANDOFF ────────────────────────────────────────────────────
+  -- A at (32,32) holds a person's go-there X at (35,35).  B is free and far
+  -- at (90,90).  A new go-there Z comes at (30,40): A bids (2+8)*4 + 15 = 55,
+  -- B bids (60+50)*4 = 440.  A wins Z, asks for relief on X, B takes X.
+  print("orders.lua -- bot order bids: a holder hands its job off")
+  local function run(all, from, to)
+    for tt = from, to do upd(all, tt); pumpn(all, tt) end
+  end
+  local function held(x) return x.st.orders.held and x.st.orders.held.oid end
+  -- Copies of the no-free-bot section's helpers (they are local to it).
+  local function own_job(q, t0, mx, my)
+    gping(q, t0, mx, my)
+    settle(q, t0 + 1, t0 + 15)
+    q.st.orders.out, q.st.orders.say = {}, {}
+    return q.st.orders.held and q.st.orders.held.oid
+  end
+  local function ping_all(al, t0, mx, my)
+    for _, q in ipairs(al) do gping(q, t0, mx, my) end
+    local zz = nil
+    for _, q in ipairs(al) do for oid in pairs(q.st.orders.auctions) do zz = oid end end
+    pumpn(al, t0); upd(al, t0 + 1); pumpn(al, t0 + 1); upd(al, t0 + 2); pumpn(al, t0 + 2)
+    return zz
+  end
+  local function sayings(al)
+    local out = {}
+    for _, q in ipairs(al) do
+      out[#out + 1] = "p" .. q.pn .. ": " .. table.concat(q.st.orders.say or {}, " | ")
+    end
+    return table.concat(out, " / ")
+  end
+  -- The handoff lines only ("Leaving", "Going to", "Covering"): the acks
+  -- pick a random word.
+  local function leaves(al)
+    local out = {}
+    for _, q in ipairs(al) do
+      for _, l in ipairs(q.st.orders.say or {}) do
+        if l:find("Leaving", 1, true) or l:find("^Going to") or l:find("^Covering") then
+          out[#out + 1] = "p" .. q.pn .. ": " .. l
+        end
+      end
+    end
+    return table.concat(out, " / ")
+  end
+  local function rig(bx, by)
+    local a, bb = BOT(1, 32, 32), BOT(2, bx or 90, by or 90)
+    local all = { a, bb }
+    local x = ping_all(all, 100, 35, 35)
+    run(all, 103, 120)
+    for _, q in ipairs(all) do q.st.orders.say = {} end
+    return a, bb, all, x
+  end
+  local function new_ping(all, t, mx, my)
+    for _, q in ipairs(all) do gping(q, t, mx or 30, my or 40) end
+    local z = nil
+    for _, q in ipairs(all) do for oid in pairs(q.st.orders.auctions) do z = oid end end
+    pumpn(all, t)
+    return z
+  end
+  local a, bb, all, x = rig()
+  check("setup: A holds X, B is free", held(a) == x and held(bb) == nil, tostring(held(a)))
+  local z = new_ping(all, 300)
+  local abid = nil
+  for _, m in ipairs(all[1].st.orders.out or {}) do abid = abid or m end
+  run(all, 301, 301)
+  check("A bid a normal bid + 15 and won: it asks for relief on X",
+        a.st.orders.handoff ~= nil and a.st.orders.handoff.new_oid == z
+        and a.st.orders.handoff.old_oid == x, tostring(a.st.orders.handoff))
+  check("while it waits A still holds X", held(a) == x, tostring(held(a)))
+  check("B names A the winner of Z", bb.st.orders.claims[z] and bb.st.orders.claims[z].pn == 1,
+        tostring(bb.st.orders.claims[z] and bb.st.orders.claims[z].pn))
+  run(all, 302, 340)
+  check("B takes X (the relief)", held(bb) == x, tostring(held(bb)))
+  check("A takes Z once B claimed X", held(a) == z and a.st.orders.handoff == nil, tostring(held(a)))
+  check("A says 'Going to goto, need cover on goto' and nothing more",
+        said(a, "^Going to goto, need cover on goto$") and not said(a, "Leaving")
+        and #a.st.orders.say == 1, sayings(all))
+  check("B says 'Covering goto for <A>' and no ack",
+        said(bb, "^Covering goto for %S+$") and #bb.st.orders.say == 1, sayings(all))
+  check("every order has one holder: X = B, Z = A",
+        a.st.orders.claims[x] and a.st.orders.claims[x].pn == 2
+        and bb.st.orders.claims[z] and bb.st.orders.claims[z].pn == 1,
+        tostring(a.st.orders.claims[x] and a.st.orders.claims[x].pn))
+  check("nobody says All bots busy", said_n(all, "^All bots busy$") == 0, sayings(all))
+  run(all, 341, 400)
+  check("it stays settled", held(bb) == x and held(a) == z, tostring(held(bb)) .. "/" .. tostring(held(a)))
+
+  -- Determinism: the same rig twice gives the same lines.
+  local function trace()
+    local a2, b2, all2 = rig()
+    local z2 = new_ping(all2, 300)
+    run(all2, 301, 400)
+    return leaves(all2) .. "#" .. tostring(held(a2)) .. "#" .. tostring(held(b2)), z2
+  end
+  local t1 = trace()
+  local t2 = trace()
+  check("the handoff is the same on every run", t1 == t2, t1 .. " ~= " .. t2)
+
+  -- A long job: A's order on pill 5 is older than ORDER_FOCUS_TICKS, so B
+  -- forgot it (o.retired keeps it).  B never takes it on its own, but a
+  -- relief brings it back and B takes it.
+  do
+    local a6, b6 = BOT(1, 32, 32), BOT(2, 90, 90)
+    local al = { a6, b6 }
+    local xo = ping_all(al, 100, 20, 20)
+    run(al, 103, 120)
+    -- Age B's copy past ORDER_FOCUS_TICKS (an order's own clock would end it
+    -- first in this rig), then let the prune run.
+    local FOC = 0
+    b6.st.orders.known[xo].tick = 130 - (C.ORDER_FOCUS_TICKS or 3000) - 1
+    run(al, 131, 140)
+    check("old job: B has forgotten A's pill order, and keeps it retired",
+          held(a6) == xo and b6.st.orders.known[xo] == nil
+          and b6.st.orders.retired and b6.st.orders.retired[xo] ~= nil
+          and held(b6) == nil, tostring(b6.st.orders.known[xo]))
+    local zo = new_ping(al, 300 + FOC)
+    run(al, 301 + FOC, 340 + FOC)
+    check("old job: the relief brings it back, B takes it, A takes Z",
+          held(b6) == xo and held(a6) == zo, tostring(held(b6)) .. "/" .. tostring(held(a6)))
+    check("old job: the retired entry is gone",
+          not (b6.st.orders.retired and b6.st.orders.retired[xo]), "kept")
+  end
+  do
+    local K0 = C.ORDER_HANDOFF
+    C.ORDER_HANDOFF = false
+    local a6, b6 = BOT(1, 32, 32), BOT(2, 90, 90)
+    local al = { a6, b6 }
+    local xo = ping_all(al, 100, 20, 20)
+    run(al, 103, 120)
+    new_ping(al, 300)
+    run(al, 301, 320)
+    check("ORDER_HANDOFF=false (keel): nothing is retired",
+          b6.st.orders.retired == nil or b6.st.orders.retired[xo] == nil, "retired")
+    C.ORDER_HANDOFF = K0
+  end
+
+  -- Timeout: B is busy escaping, so nobody relieves A.
+  a, bb, all, x = rig()
+  bb.st.stuck_for = 10000
+  z = new_ping(all, 300)
+  run(all, 301, 395)
+  check("no relief yet: A still holds X and waits", held(a) == x and a.st.orders.handoff ~= nil,
+        tostring(held(a)))
+  check("no relief: nobody says All bots busy", said_n(all, "^All bots busy$") == 0, sayings(all))
+  run(all, 396, 420)
+  check("100 ticks with no relief: A takes Z", held(a) == z and a.st.orders.handoff == nil,
+        tostring(held(a)))
+  check("and says 'No cover. Leaving goto for goto', no ack",
+        said(a, "^No cover%. Leaving goto for goto$") and #a.st.orders.say == 2, sayings(all))
+  check("X is dropped everywhere", a.st.orders.known[x] == nil and bb.st.orders.known[x] == nil,
+        tostring(bb.st.orders.known[x]))
+
+  -- Z is cancelled while A waits: A keeps X and claims it again.
+  a, bb, all, x = rig(); bb.st.stuck_for = 10000
+  z = new_ping(all, 300); run(all, 301, 320)
+  check("setup: A is waiting on Z", a.st.orders.handoff ~= nil, "no handoff")
+  ORD.rx(0, "/info obx " .. z, 321, a.st); ORD.rx(0, "/info obx " .. z, 321, bb.st)
+  a.st.orders.out = {}
+  run(all, 322, 330)
+  check("Z cancelled: A keeps X, no handoff", held(a) == x and a.st.orders.handoff == nil,
+        tostring(held(a)))
+  check("B still names A the holder of X",
+        bb.st.orders.gclaims[x] and bb.st.orders.gclaims[x][1] ~= nil, "?")
+
+  -- X is cancelled while A waits: A takes Z at once.
+  a, bb, all, x = rig(); bb.st.stuck_for = 10000
+  z = new_ping(all, 300); run(all, 301, 320)
+  ORD.rx(0, "/info obx " .. x, 321, a.st); ORD.rx(0, "/info obx " .. x, 321, bb.st)
+  run(all, 322, 325)
+  check("X cancelled: A takes Z at once", held(a) == z and a.st.orders.handoff == nil,
+        tostring(held(a)))
+
+  -- Another bot claims Z while A waits: A keeps X.
+  a, bb, all, x = rig(); bb.st.stuck_for = 10000
+  z = new_ping(all, 300); run(all, 301, 320)
+  ORD.rx(3, "/info obc " .. z .. " 10", 321, a.st)
+  run(all, 322, 330)
+  check("another bot claimed Z: A keeps X", held(a) == x and a.st.orders.handoff == nil,
+        tostring(held(a)))
+
+  -- A dies while it waits: Z is offered on.
+  a, bb, all, x = rig(); bb.st.stuck_for = 10000
+  z = new_ping(all, 300); run(all, 301, 320)
+  a.st.orders.out = {}
+  ORD.on_death(a.st, a.inf)
+  local offered = false
+  for _, m in ipairs(a.st.orders.out) do if m == "/info obo " .. z then offered = true end end
+  check("A died while waiting: Z is offered on (obo)", offered and a.st.orders.handoff == nil,
+        table.concat(a.st.orders.out, " | "))
+
+  -- A is shooting a pill: it answers Busy and B takes Z.
+  a, bb, all, x = rig()
+  a.st.goal = { kind = "attack_pill", substate = "engage" }
+  z = new_ping(all, 300)
+  run(all, 301, 320)
+  check("A shooting a pill: B takes Z, A keeps X, no handoff",
+        held(bb) == z and held(a) == x and a.st.orders.handoff == nil, tostring(held(bb)))
+
+  -- A free bot at the same price beats a holder (the 15 penalty).
+  do
+    local h, f = BOT(1, 32, 32), BOT(2, 28, 44)       -- f: (2+4)*4 = 24 < 40+15
+    local al = { h, f }
+    f.st.stuck_for = 10000
+    local xo = ping_all(al, 100, 35, 35)
+    run(al, 103, 120)
+    f.st.stuck_for = 0
+    local zo = new_ping(al, 300)
+    run(al, 301, 330)
+    check("free bot at 24 beats the holder at 40 + 15", held(f) == zo and held(h) == xo,
+          tostring(held(f)))
+  end
+
+  -- A holder never answers a relief: C holds its own job, so X goes unrelieved.
+  -- (Single hop, ORDER_HANDOFF_MAX_HOPS 0: the chain is tested below.)
+  local HOPS0 = C.ORDER_HANDOFF_MAX_HOPS
+  C.ORDER_HANDOFF_MAX_HOPS = 0
+  do
+    local a3, c3 = BOT(1, 32, 32), BOT(2, 90, 90)
+    local al = { a3, c3 }
+    local xo = ping_all(al, 100, 35, 35)
+    run(al, 103, 120)
+    local yo = own_job(c3, 130, 88, 88)
+    run(al, 146, 160)
+    for _, q in ipairs(al) do q.st.orders.say = {} end
+    local zo = new_ping(al, 300)
+    run(al, 301, 330)
+    check("relief: the other holder (C) does not take X", held(c3) == yo, tostring(held(c3)))
+    run(al, 331, 420)
+    check("relief answered only by holders: A times out onto Z", held(a3) == zo
+          and said(a3, "^No cover%. Leaving") and held(c3) == yo, sayings(al))
+  end
+  C.ORDER_HANDOFF_MAX_HOPS = HOPS0
+
+  -- Two handoffs at once.  A (32,32) holds X, C (72,72) holds Y, B free far
+  -- at (10,90).  Z1 at (30,40) and Z2 at (70,80) come together.  B can take
+  -- only one relief; the other holder times out.  Every order ends with one
+  -- holder, and the run is the same each time.
+  local function two()
+    local a4, c4, b4 = BOT(1, 32, 32), BOT(2, 72, 72), BOT(3, 10, 90)
+    local al = { a4, c4, b4 }
+    b4.st.stuck_for = 10000
+    local xo = ping_all(al, 100, 35, 35); run(al, 103, 115)
+    local yo = ping_all(al, 120, 75, 75); run(al, 123, 140)
+    b4.st.stuck_for = 0
+    for _, q in ipairs(al) do q.st.orders.say = {} end
+    for _, q in ipairs(al) do gping(q, 300, 30, 40); gping(q, 300, 70, 80) end
+    local z1o, z2o = nil, nil
+    for oid, au in pairs(a4.st.orders.auctions) do
+      if au.spec.mx == 30 then z1o = oid else z2o = oid end
+    end
+    pumpn(al, 300)
+    run(al, 301, 450)
+    return a4, c4, b4, al, xo, yo, z1o, z2o
+  end
+  local a4, c4, b4, al4, xo, yo, z1, z2 = two()
+  check("two handoffs: setup gave A X and C Y", xo and yo and xo ~= yo, "?")
+  check("two handoffs: A ends on Z1, C on Z2", held(a4) == z1 and held(c4) == z2,
+        tostring(held(a4)) .. "/" .. tostring(held(c4)))
+  check("two handoffs: B ends on exactly one of X, Y", held(b4) == xo or held(b4) == yo,
+        tostring(held(b4)))
+  check("two handoffs: exactly one 'No cover'", said_n(al4, "^No cover") == 1, sayings(al4))
+  local function holders(oid)
+    local n = 0
+    for _, q in ipairs(al4) do if held(q) == oid then n = n + 1 end end
+    return n
+  end
+  check("two handoffs: Z1 and Z2 have one holder each", holders(z1) == 1 and holders(z2) == 1, "?")
+  local s1 = leaves(al4) .. "#" .. tostring(held(b4))
+  local _, _, b5, al5 = two()
+  local s2 = leaves(al5) .. "#" .. tostring(held(b5))
+  check("two handoffs: the same on every run", s1 == s2, s1 .. " ~= " .. s2)
+
+  ;(function()   -- own function: the main chunk is at its 200-local cap
+  -- ── 3c. CHAINED HANDOFFS (ORDER_HANDOFF_MAX_HOPS) ──────────────────────
+  -- A (30,30) holds X at (62,32), next to B.  B (60,30) holds Y at (92,32),
+  -- next to C.  C (90,30) is free.  A new go-there Z comes at (28,32), next
+  -- to A.  A wins Z (4*4 + 15), asks cover on X (hop 1).  B wins X with a
+  -- handoff bid (4*4 + 15 against C's 30*4), promises X, asks cover on Y
+  -- (hop 2, mask A|B).  C wins Y (16).  A goes on B's promise, B goes on
+  -- C's claim.  Each bot that takes a job sends its "on my way" marker.
+  print("orders.lua -- bot order bids: chained handoffs")
+  check("ORDER_HANDOFF_MAX_HOPS live 3", C.ORDER_HANDOFF_MAX_HOPS == 3,
+        tostring(C.ORDER_HANDOFF_MAX_HOPS))
+  check("ORDER_HANDOFF_MAX_HOPS keel 0", C.PRESETS.keel.ORDER_HANDOFF_MAX_HOPS == 0,
+        tostring(C.PRESETS.keel.ORDER_HANDOFF_MAX_HOPS))
+  local AS = require("ally_state")
+  if not AS.slots[2] then AS.init() end
+  local marks = {}
+  local real_ping = ORD.ping
+  ORD.ping = function(st, kind, mx, my)
+    marks[#marks + 1] = string.format("p%d:%d@%d,%d", st.player_number, kind, mx, my)
+    return real_ping(st, kind, mx, my)
+  end
+  local function chain_rig()
+    local ca, cb, cc = BOT(1, 30, 30), BOT(2, 60, 30), BOT(3, 90, 30)
+    local al = { ca, cb, cc }
+    cb.st.stuck_for, cc.st.stuck_for = 10000, 10000
+    local xo = ping_all(al, 100, 62, 32); run(al, 103, 115)
+    cb.st.stuck_for = 0
+    local yo = ping_all(al, 120, 92, 32); run(al, 123, 140)
+    cc.st.stuck_for = 0
+    for _, q in ipairs(al) do q.st.orders.say = {}; q.st.orders.out = {} end
+    -- All three are active allies from here on, so an auction waits for
+    -- every answer (the harness has no allies: it would settle each bot on
+    -- its own bid, and two bots would both win the same relief).
+    for pn = 1, 3 do AS.set_info(pn, 299, {}) end
+    return ca, cb, cc, al, xo, yo
+  end
+  local ca, cb, cc, cal, cxo, cyo = chain_rig()
+  check("chain: setup A holds X, B holds Y, C free",
+        held(ca) == cxo and held(cb) == cyo and held(cc) == nil,
+        tostring(held(ca)) .. "/" .. tostring(held(cb)) .. "/" .. tostring(held(cc)))
+  marks = {}
+  local czo = new_ping(cal, 300, 28, 32)
+  upd(cal, 301)
+  local saw_q = false
+  for _, m in ipairs(ca.st.orders.out or {}) do
+    if m == string.format("/info obq %d 1 2 %d 1", cxo, czo) then saw_q = true end
+  end
+  pumpn(cal, 301)
+  check("chain: A won Z and asks cover on X (hop 1, mask A)",
+        ca.st.orders.handoff and ca.st.orders.handoff.new_oid == czo
+        and ca.st.orders.handoff.hop == 1 and ca.st.orders.handoff.mask == 2,
+        tostring(ca.st.orders.handoff and ca.st.orders.handoff.mask))
+  local saw_b = false
+  for tt = 302, 320 do
+    upd(cal, tt); pumpn(cal, tt)
+    local hf = cb.st.orders.handoff
+    if hf and not saw_b then
+      saw_b = hf.new_oid == cxo and hf.old_oid == cyo and hf.hop == 2
+              and hf.mask == 6 and hf.asker == 1
+    end
+  end
+  check("chain: B promised X and asked cover on Y (hop 2, mask A|B, asker A)", saw_b, "?")
+  run(cal, 321, 360)
+  check("chain: A on Z, B on X, C on Y",
+        held(ca) == czo and held(cb) == cxo and held(cc) == cyo,
+        tostring(held(ca)) .. "/" .. tostring(held(cb)) .. "/" .. tostring(held(cc)))
+  check("chain: no handoff left waiting",
+        not ca.st.orders.handoff and not cb.st.orders.handoff and not cc.st.orders.handoff, "?")
+  check("chain: A said 'Going to goto, need cover on goto' only",
+        said(ca, "^Going to goto, need cover on goto$") and #ca.st.orders.say == 1,
+        sayings(cal))
+  check("chain: B said 'Covering goto for <A>, need cover on goto' only",
+        said(cb, "^Covering goto for %S+, need cover on goto$") and #cb.st.orders.say == 1,
+        sayings(cal))
+  check("chain: C said 'Covering goto for <B>' only",
+        said(cc, "^Covering goto for %S+$") and #cc.st.orders.say == 1, sayings(cal))
+  local function marked(pn, mx, my)
+    for _, m in ipairs(marks) do
+      if m == string.format("p%d:%d@%d,%d", pn, _G.PING_KIND_ON_MY_WAY or 4, mx, my) then
+        return true
+      end
+    end
+    return false
+  end
+  check("chain: each bot marked its new job (A Z, B X, C Y)",
+        marked(1, 28, 32) and marked(2, 62, 32) and marked(3, 92, 32), table.concat(marks, " "))
+  check("chain: nobody says All bots busy or No cover",
+        said_n(cal, "^All bots busy$") == 0 and said_n(cal, "No cover") == 0, sayings(cal))
+  check("chain: every order has exactly one holder", (function()
+          for _, oid in ipairs({ czo, cxo, cyo }) do
+            local n = 0
+            for _, q in ipairs(cal) do if held(q) == oid then n = n + 1 end end
+            if n ~= 1 then return false end
+          end
+          return true
+        end)(), "?")
+  run(cal, 361, 500)
+  check("chain: it stays settled",
+        held(ca) == czo and held(cb) == cxo and held(cc) == cyo, "moved")
+  local function chain_trace()
+    local ta, tb, tc, tal = chain_rig()
+    new_ping(tal, 300, 28, 32)
+    run(tal, 301, 400)
+    return leaves(tal) .. "#" .. tostring(held(ta)) .. tostring(held(tb)) .. tostring(held(tc))
+  end
+  local ct1, ct2 = chain_trace(), chain_trace()
+  check("chain: the same on every run", ct1 == ct2, ct1 .. " ~= " .. ct2)
+
+  -- Nobody covers B's job: B waits ORDER_HANDOFF_WAIT_TICKS, then drops Y
+  -- and goes to X anyway.  A already left on the promise.
+  ca, cb, cc, cal, cxo, cyo = chain_rig()
+  cc.st.stuck_for = 10000
+  czo = new_ping(cal, 300, 28, 32)
+  run(cal, 301, 330)
+  check("chain, no cover: A left on B's promise", held(ca) == czo, tostring(held(ca)))
+  check("chain, no cover: B still on Y, waiting", held(cb) == cyo and cb.st.orders.handoff ~= nil,
+        tostring(held(cb)))
+  run(cal, 331, 450)
+  check("chain, no cover: B goes to X and drops Y",
+        held(cb) == cxo and cb.st.orders.handoff == nil
+        and ca.st.orders.known[cyo] == nil and cc.st.orders.known[cyo] == nil,
+        tostring(held(cb)))
+  check("chain, no cover: B said 'No cover. Leaving goto for goto'",
+        said(cb, "^No cover%. Leaving goto for goto$"), sayings(cal))
+
+  -- B dies while it waits: X is offered on (obo X).
+  ca, cb, cc, cal, cxo, cyo = chain_rig()
+  cc.st.stuck_for = 10000
+  czo = new_ping(cal, 300, 28, 32)
+  run(cal, 301, 330)
+  cb.st.orders.out = {}
+  ORD.on_death(cb.st, cb.inf)
+  local cof = false
+  for _, m in ipairs(cb.st.orders.out) do if m == "/info obo " .. cxo then cof = true end end
+  check("chain: B died while waiting, X is offered on", cof and cb.st.orders.handoff == nil,
+        table.concat(cb.st.orders.out, " | "))
+
+  -- X cancelled while B waits on its own relief: B keeps Y and claims it again.
+  ca, cb, cc, cal, cxo, cyo = chain_rig()
+  cc.st.stuck_for = 10000
+  czo = new_ping(cal, 300, 28, 32)
+  run(cal, 301, 330)
+  for _, q in ipairs(cal) do ORD.rx(0, "/info obx " .. cxo, 331, q.st) end
+  run(cal, 332, 340)
+  check("chain: X cancelled, B keeps Y, A stays on Z",
+        held(cb) == cyo and cb.st.orders.handoff == nil and held(ca) == czo,
+        tostring(held(cb)) .. "/" .. tostring(held(ca)))
+
+  -- THE LOOP GUARD and THE HOP LIMIT, on the wire.  B holds Y and knows X.
+  -- A relief on X is answered by B with a handoff bid only when B is not in
+  -- the mask and the hop count is below the limit.
+  local function relief_answer(hop, mask, free)
+    local la, lb, lc, lal, lxo = chain_rig()
+    if free then
+      ORD.rx(0, "/info obx " .. held(lb), 150, lb.st)
+      run({ lb }, 151, 160)
+    end
+    lb.st.orders.out = {}
+    ORD.rx(1, string.format("/info obq %d %d %d %d 1", lxo, hop, mask, lxo), 300, lb.st)
+    upd({ lb }, 300)
+    for _, m in ipairs(lb.st.orders.out) do
+      local o2, b2 = m:match("^/info obd (%d+) (%-?%d+)$")
+      if o2 and tonumber(o2) == lxo then return tonumber(b2) end
+    end
+    return nil
+  end
+  local bb1 = relief_answer(1, 2)
+  check("loop guard: holder B not in the chain, hop 1: a handoff bid",
+        bb1 and bb1 > 0, tostring(bb1))
+  local bb2 = relief_answer(1, 2 + 4)
+  check("loop guard: B already in the chain answers no", bb2 == ORD.BID_BUSY, tostring(bb2))
+  local bb3 = relief_answer(1, 2 + 4, true)
+  check("loop guard: B free but in the chain still answers no", bb3 == ORD.BID_BUSY,
+        tostring(bb3))
+  local bb4 = relief_answer(2, 2 + 8)
+  check("hop limit: hop 2 < 3, holder B bids", bb4 and bb4 > 0, tostring(bb4))
+  local bb5 = relief_answer(3, 2 + 8)
+  check("hop limit: hop 3 = max, holder B answers no", bb5 == ORD.BID_BUSY, tostring(bb5))
+  local bb6 = relief_answer(3, 2 + 8, true)
+  check("hop limit: hop 3 = max, a FREE bot still bids", bb6 and bb6 > 0, tostring(bb6))
+  C.ORDER_HANDOFF_MAX_HOPS = 0
+  local bb7 = relief_answer(1, 2)
+  check("ORDER_HANDOFF_MAX_HOPS=0 (keel): a holder answers every relief no",
+        bb7 == ORD.BID_BUSY, tostring(bb7))
+  -- Keel: the chain rig runs single hop, B keeps Y and A times out.
+  ca, cb, cc, cal, cxo, cyo = chain_rig()
+  czo = new_ping(cal, 300, 28, 32)
+  local keel_q = false
+  for tt = 301, 450 do
+    upd(cal, tt)
+    for _, q in ipairs(cal) do
+      for _, l in ipairs(q.st.orders.out or {}) do
+        if l:find("^/info obq %d+ ") then keel_q = true end
+      end
+    end
+    pumpn(cal, tt)
+  end
+  check("ORDER_HANDOFF_MAX_HOPS=0 (keel): B keeps Y, C covers X, A on Z",
+        held(cb) == cyo and held(cc) == cxo and held(ca) == czo,
+        tostring(held(ca)) .. "/" .. tostring(held(cb)) .. "/" .. tostring(held(cc)))
+  check("ORDER_HANDOFF_MAX_HOPS=0 (keel): the relief is the bare 'obq OLD'", not keel_q, "long form")
+  C.ORDER_HANDOFF_MAX_HOPS = 3
+  ORD.ping = real_ping
+  check("chain: A sent 'obq X 1 2 Z 1'", saw_q, "?")
+  for pn = 1, 3 do AS.clear(pn) end
+  end)()
+
+  -- Keel: the holder bids the switch marker, and the far free bot takes Z.
+  C.ORDER_HANDOFF = false
+  a, bb, all, x = rig()
+  z = new_ping(all, 300)
+  run(all, 301, 330)
+  check("ORDER_HANDOFF=false (keel): the free bot takes Z, A keeps X",
+        held(bb) == z and held(a) == x and a.st.orders.handoff == nil, tostring(held(bb)))
+  C.ORDER_HANDOFF = true
+  C.ORDER_HANDOFF_PENALTY = 0
+  do
+    local st = BOT(1, 32, 32)
+    local al = { st }
+    local xo = own_job(st, 100, 35, 35)
+    local c0, t0 = ORD.handoff_bid(st.st, st.w, st.inf,
+                                   { kind = "goto_tile", tkind = "here", mx = 30, my = 40 })
+    check("penalty 0: the handoff bid is the plain bid", c0 == 40 and t0.hand == 0, tostring(c0))
+  end
+  C.ORDER_HANDOFF_PENALTY = 15
+
+  _G.EVENT_PING, _G.PING_KIND_CAUTION, _G.PING_KIND_BOT_COMMAND = nil, nil, nil
+end
+
+-- =========================================================================
+-- "capture" ON A LIVE PILL THAT IS ALREADY OURS IS TURNED DOWN at parse
+-- time: no order, one "already ours" line from the speaking bot only.  A dead
+-- pill of ours is still a capture_pill (pick it up).  Fixture: pill 9 is
+-- friendly with 12 armour; pill 7 is dead.
+-- =========================================================================
+print("orders.lua — capture on our own live pill")
+do
+  local wq = W()
+  local k, ns, tid, err = ORD.goal_kind({ verb = "capture", target = { kind = "pill", id = 9 } }, wq, I())
+  check("capture on our live pill: no kind", k == nil, tostring(k))
+  check("capture on our live pill: the reply line",
+        err == "pill #9 is already ours", tostring(err))
+  wq.pills[9].health = 0
+  k, ns, tid, err = ORD.goal_kind({ verb = "capture", target = { kind = "pill", id = 9 } }, wq, I())
+  check("capture on our DEAD pill is still a pickup",
+        k == "capture_pill" and ns == false and tid == 9 and err == nil,
+        tostring(k) .. "/" .. tostring(ns) .. "/" .. tostring(err))
+  k, ns, tid, err = ORD.goal_kind({ verb = "capture", target = { kind = "pill", id = 5 } }, W(), I())
+  check("capture on an enemy live pill is unchanged",
+        k == "capture_pill" and ns == true and tid == 5 and err == nil,
+        tostring(k) .. "/" .. tostring(ns) .. "/" .. tostring(err))
+
+  -- The runtime path: the speaker (p1, lowest bot) says it; no auction, no
+  -- order held, nothing known.
+  local sq, iq = ST(), I()
+  iq.allies = 0x17
+  ORD.on_chat(sq, W(), iq, 0, "capture pill 9", 200, true, false)
+  ORD.update(sq, W(), iq, 210)
+  check("the speaker answers 'pill #9 is already ours'",
+        sq.orders.say[#sq.orders.say] == "pill #9 is already ours",
+        tostring(sq.orders.say[#sq.orders.say]))
+  check("and no auction starts and no order is held",
+        next(sq.orders.auctions) == nil and sq.orders.held == nil
+        and next(sq.orders.known) == nil, "?")
+  -- Another bot on the team (p2) hears the same line and says nothing.
+  local s2, i2 = ST(), I({ player_number = 2 })
+  s2.player_number = 2
+  i2.allies = 0x17
+  ORD.on_chat(s2, W(), i2, 0, "capture pill 9", 200, true, false)
+  check("a bot that is not the speaker stays quiet",
+        #(s2.orders.say or {}) == 0, tostring(#(s2.orders.say or {})))
+  check("and starts nothing either",
+        next(s2.orders.auctions) == nil and s2.orders.held == nil, "?")
+end
+
+-- THE HUMAN IS DECOYING FOR US (HUMAN_DECOY_AWARE, 2026-10-05).  Bot p1 at
+-- (10,10), 14.1 tiles from pill 5 at (20,20), on attack_pill 5.  Human p0 at
+-- (15,15): 7.1 tiles from the pill (in its range) and closer to it than the
+-- bot.  decoy_getaway.block is stubbed (its trace has its own tests below the
+-- getaway section); the stub answers HD_B, HD_WHY.
+print("orders.lua -- the human is decoying for us")
+do
+  local GA = require("decoy_getaway")
+  local saved_block = GA.block
+  local saved_ns, saved_aware = C.ORDER_HUMAN_NEAR_NEEDS_SHOOTING, C.HUMAN_DECOY_AWARE
+  local saved_hsc = C.HUMAN_SHOOTING_CHARGE_NOW
+  local saved_ev = { _G.EVENT_PING, _G.PING_KIND_CAUTION, _G.PING_KIND_BOT_COMMAND, _G.PING_KIND_ATTACK }
+  _G.EVENT_PING, _G.PING_KIND_CAUTION, _G.PING_KIND_BOT_COMMAND, _G.PING_KIND_ATTACK = 13, 1, 5, 3
+  local HD_B, HD_WHY = 1.0, "wall"
+  local block_calls = 0
+  GA.block = function() block_calls = block_calls + 1; return HD_B, HD_WHY end
+  local function dbot(hx, hy, bx, by)
+    local r = BOT(1, bx or 10, by or 10)
+    r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+    r.inf.player_bots = 0x02
+    r.inf.objects = { { type = 1, idnum = 0, x = (hx or 15) * 256 + 128,
+                        y = (hy or 15) * 256 + 128, info = 0 } }
+    return r
+  end
+  local function chk(r, t) r.st.tick = t; ORD.human_decoy_check(r.st, r.w, r.inf, t) end
+  local function flag(r) return r.st._human_decoy end
+
+  check("human-decoy is on live", C.HUMAN_DECOY_AWARE == true, "?")
+  check("keel turns human-decoy off", C.PRESETS.keel.HUMAN_DECOY_AWARE == false, "?")
+  check("keel lists every human-decoy knob at its value",
+        C.PRESETS.keel.HUMAN_DECOY_MIN_BLOCK == 0.5 and C.PRESETS.keel.HUMAN_DECOY_HOLD_TICKS == 150
+        and C.PRESETS.keel.HUMAN_DECOY_MIN_TILES == 5 and C.PRESETS.keel.HUMAN_DECOY_SPACING_COST == 10
+        and C.PRESETS.keel.HUMAN_DECOY_BEHIND_COST == 20 and C.PRESETS.keel.HUMAN_DECOY_BEHIND_MARGIN == 0.5
+        and C.PRESETS.keel.HUMAN_DECOY_REPICK_TICKS == 50, "?")
+
+  -- DETECTION
+  local r = dbot()
+  chk(r, 100)
+  check("detect: a human behind a wall, closer to the pill: the flag is set",
+        flag(r) ~= nil and flag(r).tid == 5 and flag(r).pn == 0 and flag(r).why == "wall", "?")
+  check("detect: it says so once (goal chat)", said(r, "^Staying wide of Andrew on pill #5$"),
+        table.concat(r.st.orders and r.st.orders.say or {}, " | "))
+  HD_B, HD_WHY = 0, "open"
+  r = dbot(); chk(r, 100)
+  check("detect: no blocker (open): no flag", flag(r) == nil, "?")
+  HD_B, HD_WHY = 1.0, "range"
+  r = dbot(); chk(r, 100)
+  check("detect: block reason range: no flag", flag(r) == nil, "?")
+  HD_B, HD_WHY = 1.0, "short"
+  r = dbot(); chk(r, 100)
+  check("detect: block reason short: no flag", flag(r) == nil, "?")
+  HD_B, HD_WHY = 0, "enemy_pill"
+  r = dbot(); chk(r, 100)
+  check("detect: an enemy pill in the way: no flag", flag(r) == nil, "?")
+  HD_B, HD_WHY = 0.5, "wall_damaged"
+  r = dbot(); chk(r, 100)
+  check("detect: a damaged wall at 0.5 (= MIN_BLOCK) counts", flag(r) ~= nil, "?")
+  HD_B, HD_WHY = 0.4, "pill"
+  r = dbot(); chk(r, 100)
+  check("detect: our pill at 0.4 (< MIN_BLOCK): no flag", flag(r) == nil, "?")
+  HD_B, HD_WHY = 0.8, "pill"
+  r = dbot(); chk(r, 100)
+  check("detect: our pill at 0.8 counts", flag(r) ~= nil and flag(r).why == "pill", "?")
+  HD_B, HD_WHY = 1.0, "wall"
+  r = dbot(15, 15, 17, 17); chk(r, 100)
+  check("detect: the human farther from the pill than us: no flag", flag(r) == nil, "?")
+  r = dbot(10, 11, 5, 5); chk(r, 100)
+  check("detect: the human out of the pill's range: no flag", flag(r) == nil, "?")
+  r = dbot(); r.st.goal = { kind = "defend_pill", target_id = 5, mx = 20, my = 20 }; chk(r, 100)
+  check("detect: the bot not on attack_pill: no flag", flag(r) == nil, "?")
+  r = dbot(); r.inf.player_bots = 0x03; chk(r, 100)
+  check("detect: the 'human' is an ally bot: no flag", flag(r) == nil, "?")
+  C.HUMAN_DECOY_TEST_HUMANS = 0x01
+  r = dbot(); r.inf.player_bots = 0x03; chk(r, 100)
+  check("detect: the gate's test seam reads seat 0 as human", flag(r) ~= nil and flag(r).pn == 0, "?")
+  C.HUMAN_DECOY_TEST_HUMANS = 0
+  r = dbot(); r.inf.objects[1].info = 0x80; chk(r, 100)
+  check("detect: an enemy tank there: no flag", flag(r) == nil, "?")
+  -- Two humans: the one closest to the pill is its target.
+  r = dbot(); r.inf.objects[2] = { type = 1, idnum = 4, x = 17 * 256 + 128, y = 17 * 256 + 128, info = 0 }
+  r.inf.player_bots = 0x02
+  chk(r, 100)
+  check("detect: two humans: the one closest to the pill is the one",
+        flag(r) ~= nil and flag(r).pn == 4, tostring(flag(r) and flag(r).pn))
+
+  -- HOLD AND CLEAR
+  r = dbot(); chk(r, 100)
+  HD_B, HD_WHY = 0, "open"
+  chk(r, 101)
+  check("hold: one think without the tests keeps the flag", flag(r) ~= nil, "?")
+  r.inf.objects[1].x = 16 * 256 + 128
+  chk(r, 120)
+  check("hold: the human's latest seen position is kept", flag(r) and flag(r).hx == 16 * 256 + 128,
+        tostring(flag(r) and flag(r).hx))
+  chk(r, 100 + C.HUMAN_DECOY_HOLD_TICKS)
+  check("hold: still set at exactly HOLD_TICKS", flag(r) ~= nil, "?")
+  chk(r, 101 + C.HUMAN_DECOY_HOLD_TICKS)
+  check("hold: gone after HOLD_TICKS", flag(r) == nil, "?")
+  HD_B, HD_WHY = 1.0, "wall"
+  r = dbot(); chk(r, 100)
+  r.st.goal = { kind = "refuel" }; chk(r, 101)
+  check("clear: another goal drops it at once", flag(r) == nil, "?")
+  r = dbot(); chk(r, 100)
+  r.st.goal = { kind = "none" }; HD_B, HD_WHY = 0, "open"; chk(r, 101)
+  check("clear: 'none' (the gap between goals) keeps it", flag(r) ~= nil, "?")
+  HD_B, HD_WHY = 1.0, "wall"
+  r = dbot(); chk(r, 100)
+  r.st.goal = { kind = "attack_pill", target_id = 9, mx = 60, my = 60 }; chk(r, 101)
+  check("clear: attack_pill on another pill drops it", flag(r) == nil or flag(r).tid ~= 5, "?")
+  r = dbot(); chk(r, 100)
+  r.w.pills[5].health = 0; chk(r, 101)
+  check("clear: the pill dies: dropped", flag(r) == nil, "?")
+  r = dbot(); chk(r, 100)
+  r.w.pills[5].owner = "friendly"; chk(r, 101)
+  check("clear: the pill is ours: dropped", flag(r) == nil, "?")
+  r = dbot(); chk(r, 100)
+  ORD.on_death(r.st, r.inf)
+  check("clear: the tank dies: dropped", flag(r) == nil, "?")
+
+  -- NO RUSH: the human-near suicide run.  The human at (15,15) is 5 tiles
+  -- from the bot (inside ORDER_HUMAN_NEAR_SUICIDE_TILES) and the bot holds
+  -- an attack order on pill 5.
+  C.ORDER_HUMAN_NEAR_NEEDS_SHOOTING = false
+  local function hnbot()
+    local b = dbot()
+    hold_attack(b)
+    return b
+  end
+  HD_B, HD_WHY = 0, "open"
+  r = hnbot(); chk(r, 100); ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("no rush: control -- no blocker, the human-near run starts",
+        r.st._suicide ~= nil and r.st._suicide.human_near == true, "?")
+  HD_B, HD_WHY = 1.0, "wall"
+  r = hnbot(); chk(r, 100); ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("no rush: flag set -- no human-near run", r.st._suicide == nil, "?")
+  -- A run that was already going ends when the flag sets.
+  HD_B, HD_WHY = 0, "open"
+  r = hnbot(); chk(r, 100); ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  ORD.suicide_lock(r.st, r.w, r.inf, 100)
+  HD_B, HD_WHY = 1.0, "wall"
+  r.st.goal.substate = "kill_hardline"
+  chk(r, 101)
+  check("no rush: a running human-near run ends when the flag sets",
+        r.st._suicide == nil and not (r.st.goal and r.st.goal._ping_suicide), "?")
+  check("no rush: the flag outlives the cleared goal ('none' gap)", flag(r) ~= nil, "?")
+  ORD.human_near_suicide(r.st, r.w, r.inf, 102)
+  r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+  chk(r, 103); ORD.human_near_suicide(r.st, r.w, r.inf, 103)
+  check("no rush: and it does not restart while the flag stands", r.st._suicide == nil, "?")
+
+  -- THE PERSON'S OWN ORDER: bot command + attack ping on the pill still
+  -- starts the run with the flag set, and the flag does not end it.
+  do
+    local b = sbot(); settle(b, 101, 115)
+    b.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+    b.inf.player_bots = 0x02
+    b.inf.objects = { { type = 1, idnum = 0, x = 15 * 256 + 128, y = 15 * 256 + 128, info = 0 } }
+    chk(b, 120)
+    check("person's order: setup -- the flag stands", flag(b) ~= nil, "?")
+    attack_ping(b, 125)
+    check("person's order: the double ping still starts the run", b.st._suicide ~= nil, "?")
+    chk(b, 126)
+    check("person's order: the flag does not end that run", b.st._suicide ~= nil, "?")
+  end
+
+  -- NO RUSH: charge now, from the attack ping and from a human shooting.
+  r = dbot(); chk(r, 100)
+  attack_ping(r, 101)
+  check("no rush: flag set -- an ATTACK ping starts no charge", r.st._charge_now == nil, "?")
+  C.HUMAN_SHOOTING_CHARGE_NOW = true
+  r = dbot(); chk(r, 100)
+  r.st._human_shot = { tid = 5, by = { [0] = 100 } }
+  ORD.human_shooting_charge(r.st, r.w, r.inf, 100)
+  check("no rush: flag set -- a human shooting starts no charge", r.st._charge_now == nil, "?")
+  HD_B, HD_WHY = 0, "open"
+  r = dbot(); chk(r, 100)
+  attack_ping(r, 101)
+  check("no rush: control -- no flag, the ATTACK ping charges", r.st._charge_now ~= nil, "?")
+  r.st.goal._charge_now = true
+  r.st.goal.substate = "kill_hardline"
+  HD_B, HD_WHY = 1.0, "wall"
+  chk(r, 102)
+  check("no rush: a running charge in the straight rush ends and the goal drops",
+        r.st._charge_now == nil and r.st.goal.kind ~= "attack_pill", tostring(r.st.goal.kind))
+
+  -- THE STANDOFF COSTS (attack.human_decoy_cost).  Human at tile float
+  -- (15.5,15.5) (object 15*256+128), pill centre (20.5,20.5).  Spot (16.5,15.5):
+  --   d_sh = 1, space = 10 * (5 - 1) = 40
+  --   d_sp = sqrt(4^2 + 5^2) = 6.403, d_hp = sqrt(5^2 + 5^2) = 7.071
+  --   behind = 20 * ((7.071 + 0.5) - 6.403) = 23.36
+  r = dbot(); chk(r, 100)
+  local hc, hs, hb = ATTACK.human_decoy_cost(r.st, 20, 20, 16.5, 15.5)
+  check("cost: space term", hs and math.abs(hs - 40) < 1e-6, tostring(hs))
+  check("cost: behind term", hb and math.abs(hb - 20 * (math.sqrt(50) + 0.5 - math.sqrt(41))) < 1e-6, tostring(hb))
+  check("cost: the sum", hc and math.abs(hc - hs - hb) < 1e-9, tostring(hc))
+  local fc, fs, fb = ATTACK.human_decoy_cost(r.st, 20, 20, 27.5, 27.5)
+  check("cost: a spot far from the human and farther from the pill: 0",
+        fc == 0 and fs == 0 and fb == 0, tostring(fc))
+  check("cost: another pill: nil", ATTACK.human_decoy_cost(r.st, 40, 40, 16.5, 15.5) == nil, "?")
+  check("cost: the breakdown text adds up",
+        ATTACK.human_decoy_txt(hc, hs, hb, 1, math.sqrt(41), math.sqrt(50)):match("^hd 63%.4 = space 40%.0 ") ~= nil,
+        ATTACK.human_decoy_txt(hc, hs, hb, 1, math.sqrt(41), math.sqrt(50)))
+
+  -- KEEL: master off, nothing is touched and nothing is read.
+  C.HUMAN_DECOY_AWARE = false
+  block_calls = 0
+  r = dbot(); chk(r, 100)
+  check("keel: no flag, no block trace", flag(r) == nil and block_calls == 0, tostring(block_calls))
+  r = hnbot(); chk(r, 100); ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("keel: the human-near run starts as before, unmarked",
+        r.st._suicide ~= nil and r.st._suicide.human_near == nil, "?")
+  check("keel: the cost is nil", ATTACK.human_decoy_cost(r.st, 20, 20, 16.5, 15.5) == nil, "?")
+
+  GA.block = saved_block
+  C.ORDER_HUMAN_NEAR_NEEDS_SHOOTING, C.HUMAN_DECOY_AWARE = saved_ns, saved_aware
+  C.HUMAN_SHOOTING_CHARGE_NOW = saved_hsc
+  _G.EVENT_PING, _G.PING_KIND_CAUTION, _G.PING_KIND_BOT_COMMAND, _G.PING_KIND_ATTACK =
+    saved_ev[1], saved_ev[2], saved_ev[3], saved_ev[4]
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
