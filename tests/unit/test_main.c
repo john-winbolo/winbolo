@@ -457,6 +457,8 @@ static const UnitTestEntry s_tests[] = {
     { "pf_tail_never_overwrites_a_stamp",        run_pf_tail_never_overwrites_a_stamp        },
     { "pf_tail_deep_margin_keeps_off_the_shore", run_pf_tail_deep_margin_keeps_off_the_shore },
     { "pf_tail_contact_makes_a_front_line",      run_pf_tail_contact_makes_a_front_line      },
+    { "pf_own_dist_matches_brute_force",         run_pf_own_dist_matches_brute_force         },
+    { "pf_own_dist_cap_empty_and_edges",         run_pf_own_dist_cap_empty_and_edges         },
     { "loadbrowser_segment_walks_parts",         run_loadbrowser_segment_walks_parts         },
     { "loadbrowser_segment_crosses_blocks",      run_loadbrowser_segment_crosses_blocks      },
     { "loadbrowser_segment_no_neighbour",        run_loadbrowser_segment_no_neighbour        },

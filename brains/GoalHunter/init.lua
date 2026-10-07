@@ -4059,7 +4059,10 @@ function Brain.think(info)
   -- stamped set or the neutral-pill set changes (or every EXPAND_REFRESH_TICKS
   -- as a backstop); merged into influence_grid every tick, since the stamp
   -- loop above wipes it. Must run BEFORE anything reads influence this tick.
-  if C.EXPAND_ENABLED then
+  -- goals.influence_tail_on(): EXPAND_ENABLED, and not a Turtle2 mode bot
+  -- (mode=turtle2) with TURTLE_NO_INFLUENCE_TAIL (Turtle2 bots hold only
+  -- stamped ground).
+  if goals.influence_tail_on() then
     local _tsig = _inf_sig + _nsig
     if state._tail_sig ~= _tsig
        or (now - (state._tail_tick or -1e9)) >= (C.EXPAND_REFRESH_TICKS or 250) then
@@ -4128,6 +4131,13 @@ function Brain.think(info)
         end
       end
     end
+  elseif state._tail_sig ~= nil then
+    -- The tail was built earlier and is now off (turtle nest mode came on, or
+    -- EXPAND_ENABLED went false): radius 0 zeroes expand_grid in C, so the
+    -- tail viz and influence_tail_at read nothing stale. No merge runs, so
+    -- influence_grid is the stamps alone. A later re-enable rebuilds at once.
+    cpf.rebuild_influence_tail(1, 0, 0, 1, 1, 0, true)
+    state._tail_sig, state._tail_tick = nil, nil
   end
   -- KWDIAG (temporary): per-object allegiance + last_seen so allied bots can be
   -- diffed to find residual divergence and its cause (lag vs missed broadcast).

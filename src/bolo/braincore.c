@@ -1663,6 +1663,23 @@ static int l_cpf_influence_at(lua_State *L) {
   return 1;
 }
 
+/* cpf_build_own_dist(cap) -> number of tiles with influence > 0. Fills the
+ * per-brain own-ground distance grid (brainPathfinderBuildOwnDist). */
+static int l_cpf_build_own_dist(lua_State *L) {
+  CPF_GET(L);
+  lua_pushinteger(L, brainPathfinderBuildOwnDist(pf, (int)luaL_checkinteger(L, 1)));
+  return 1;
+}
+
+/* cpf_own_dist_at(x, y) -> Chebyshev tiles to our ground as of the last
+ * build, clamped to its cap; 255 off the map. */
+static int l_cpf_own_dist_at(lua_State *L) {
+  CPF_GET(L);
+  lua_pushinteger(L, brainPathfinderOwnDistAt(pf, (int)luaL_checkinteger(L, 1),
+                                              (int)luaL_checkinteger(L, 2)));
+  return 1;
+}
+
 static int l_cpf_clear_neutral_zones(lua_State *L) {
   CPF_GET(L);
   brainPathfinderClearNeutralZones(pf);
@@ -2654,6 +2671,8 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_clear_influence",   l_cpf_clear_influence },
     { "cpf_stamp_influence",   l_cpf_stamp_influence },
     { "cpf_influence_at",      l_cpf_influence_at },
+    { "cpf_build_own_dist",    l_cpf_build_own_dist },
+    { "cpf_own_dist_at",       l_cpf_own_dist_at },
     { "cpf_clear_neutral_zones",    l_cpf_clear_neutral_zones },
     { "cpf_stamp_neutral_zone",     l_cpf_stamp_neutral_zone },
     { "cpf_rebuild_influence_tail", l_cpf_rebuild_influence_tail },
