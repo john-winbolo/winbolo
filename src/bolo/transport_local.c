@@ -406,11 +406,6 @@ void transportLocalSetFrameQueue(Transport *t, bool on) {
     lctx->repairOwed = false;
 }
 
-bool transportLocalFrameQueueOn(Transport *t) {
-    return t != NULL && t->ctx != NULL &&
-           ((TransportLocalCtx *)t->ctx)->frames != NULL;
-}
-
 void transportLocalCaptureFrame(Transport *t) {
     TransportLocalCtx *lctx;
     LocalFrame *f;

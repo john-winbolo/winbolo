@@ -120,9 +120,8 @@ uint16_t transportLocalGetDelay(Transport *t);
  * after two server frames loses the first one's events. With the queue on, the
  * ticking thread calls transportLocalCaptureFrame after every server frame and
  * tick() applies each captured frame in order. Off by default; turning it on
- * or off empties it. Callers of all three hold the threads mutex. */
+ * or off empties it. Callers of both hold the threads mutex. */
 void transportLocalSetFrameQueue(Transport *t, bool on);
-bool transportLocalFrameQueueOn(Transport *t);
 void transportLocalCaptureFrame(Transport *t);
 
 /* With the frame queue on, makes the client's map the copy the server
