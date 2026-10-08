@@ -1588,7 +1588,6 @@ void serverSimFillScenarioRulesEvent(const ServerSim *sim, uint8_t seq,
  * too. */
 void serverSimSetScriptList(ServerSim *sim, const ScnDirEntry *entries,
                             int count);
-
 void serverSimPublishScriptList(ServerSim *sim);
 uint8_t serverSimScriptListChunkCount(const ServerSim *sim);
 void serverSimFillScriptListEvent(const ServerSim *sim, uint8_t chunk,

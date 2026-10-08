@@ -40,7 +40,7 @@
 #include "bolo_rand.h"              /* bolo_rand_below — the rotation's random pick */
 #include "bolo_map_validate.h"      /* boloMapBodyLength — where the preview's read stops */
 #include "client_sim.h"             /* clientSimGetGameSim — the in-process client map reload */
-#include "client_sim_internal.h"    /* LOBBY_SCENARIO_LIST_MAX — the directory listing an operator -mod name is looked up in */
+#include "client_sim_internal.h"    /* LOBBY_SCENARIO_LIST_MAX — the listing a -mod name is found in */
 #include "../../common/md5.h"       /* the compressed-map hash the preview paths compare */
 #include "../../common/mp_diag_log.h"
 #include "../../common/wb_log.h"
@@ -626,6 +626,7 @@ bool serverSimRecordOperatorMods(ServerSim *sim) {
         for (i = 0; i < sim->operatorModCount; i++) {
             const ScnDirEntry *op = &sim->operatorMods[i];
             bool               held = false;
+            bool               keepMapRow;
 
             for (j = 0; j < n; j++) {
                 if (!rows[j].bound && strcmp(rows[j].file, op->file) == 0) {
@@ -634,6 +635,7 @@ bool serverSimRecordOperatorMods(ServerSim *sim) {
                 }
             }
             if (held) continue;
+            keepMapRow = sim->operatorModStrength[i] == SERVER_MOD_DEFAULT;
             /* A round runs one scenario, and the operator's is the one that
                stays: whatever scenario the host picked goes. The map's own
                row goes too for a -mod-required one, since that row and a
@@ -643,9 +645,6 @@ bool serverSimRecordOperatorMods(ServerSim *sim) {
                is a scenario, and composes beside it when that script is a
                mod (serverSimOperatorModYieldsToMap). */
             if (!op->keepsWinCondition) {
-                bool keepMapRow =
-                    sim->operatorModStrength[i] == SERVER_MOD_DEFAULT;
-
                 for (j = n - 1; j >= 0; j--) {
                     if (!rows[j].keepsWinCondition &&
                         operatorModRowIsHosts(sim, &rows[j]) &&
@@ -656,10 +655,13 @@ bool serverSimRecordOperatorMods(ServerSim *sim) {
             }
             /* And a full list loses the last thing the host put on it. There
                is always one: the operator's rows are at most
-               LOBBY_SCRIPT_LIST_MAX, and this one is not on yet. */
+               LOBBY_SCRIPT_LIST_MAX, and this one is not on yet. Not the
+               map's own row where the scenario pass above kept it: that pass
+               and this one keep the same row. */
             if (n >= LOBBY_SCRIPT_LIST_MAX) {
                 for (j = n - 1; j >= 0; j--) {
-                    if (operatorModRowIsHosts(sim, &rows[j])) {
+                    if (operatorModRowIsHosts(sim, &rows[j]) &&
+                        !(rows[j].bound && keepMapRow)) {
                         operatorModListRemove(rows, &n, j);
                         break;
                     }
@@ -846,7 +848,19 @@ static void operatorSettingsRestore(ServerSim *sim) {
             if (n > 0) decl = scnSettingFind(rows, n, id);
             if (decl != NULL && decl->def == want) continue;
         }
-        (void)serverSimSetScriptSetting(sim, file, id, want, NULL);
+        if (!serverSimSetScriptSetting(sim, file, id, want, NULL)) {
+            /* Most likely the store is full with the host's values, so the
+               operator's is not back for this game. Said, because on a
+               fixed row the join sync still sends its LOCK. */
+            char msg[LOBBY_SCENARIO_FILE_LEN + SCN_SETTING_ID_LEN + 96];
+
+            SDL_snprintf(msg, sizeof(msg),
+                         "Note: -setting %s:%s=%d was not put back: the "
+                         "settings store refused it", file, id, (int)want);
+            if (sim->sim.callbacks.consoleMessage != NULL) {
+                sim->sim.callbacks.consoleMessage(sim->sim.callbacks.ctx, msg);
+            }
+        }
     }
 }
 
