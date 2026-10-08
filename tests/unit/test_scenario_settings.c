@@ -961,13 +961,19 @@ int run_scenario_settings_survival_decl(void) {
     len = serverSimScenarioSettingsDecl(sim, file, blob, sizeof(blob));
     UT_ASSERT_MSG(len > 0, "%s declares no settings", file);
     n = scnSettingsBlobRead(blob, (size_t)len, rows, SCN_SETTINGS_MAX);
-    UT_ASSERT_MSG(n == 2, "%s declares %d settings, wanted 2", file, n);
+    UT_ASSERT_MSG(n == 4, "%s declares %d settings, wanted 4", file, n);
     {
         ScnSetting mins   = ssRow("round_minutes", "Round length (minutes)", 1,
                                   10, 1, 4);
         ScnSetting rounds = ssRow("rounds", "Rounds", 1, 5, 1, 5);
+        ScnSetting deaths = ssRow("camp_deaths", "Start camp deaths", 0, 5,
+                                  1, 3);
+        ScnSetting window = ssRow("camp_window_s", "Start camp window (s)", 5,
+                                  60, 1, 18);
         UT_ASSERT(ssSame(&rows[0], &mins));
         UT_ASSERT(ssSame(&rows[1], &rounds));
+        UT_ASSERT(ssSame(&rows[2], &deaths));
+        UT_ASSERT(ssSame(&rows[3], &window));
     }
 
     scenarioHostDetach(host);

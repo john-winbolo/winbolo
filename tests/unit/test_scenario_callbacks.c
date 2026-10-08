@@ -35,7 +35,7 @@
  *                                         directory, is found by the file
  *                                         name the lobby names it by, and
  *                                         arrives with every row of its
- *                                         callbacks block (Survival 8,
+ *                                         callbacks block (Survival 11,
  *                                         Soccer 10); same for Soccer
  * run_scenario_details_fetch_not_found  — a file the server does not know is
  *                                         answered, on the first request,
@@ -700,7 +700,7 @@ static int scFetchMapScript(const char *tag, const char *map, int wantRows,
 }
 
 int run_scenario_details_fetch_survival(void) {
-    return scFetchMapScript("fetch_survival", "Survival", 9, "on_tick/E=");
+    return scFetchMapScript("fetch_survival", "Survival", 11, "on_tick/E=");
 }
 
 int run_scenario_details_fetch_soccer(void) {
