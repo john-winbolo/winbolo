@@ -22,6 +22,13 @@
 -- FAIL: the shot through the walls is turned on first, or no such hit comes
 -- in the 60 s after the build.
 
+-- Played as a Free For All (TEAMS.vs_it = false, as the "Teams" setting
+-- would), the round this arena was written for. Seat 0 stands in for a
+-- person, so the script hands its brain no table and it plays the ordinary
+-- game. In Everyone vs It the three hunters are allies, that brain counts
+-- itself outnumbered, and it drops the prize at once (the brain's
+-- emergency drop), long before the arena's build.
+TEAMS.vs_it = false
 ARENA = { given = false, hits = {}, lines = {}, arrived = {}, cx = 126, cy = 126, gap = true }
 scenario.callbacks.pill_damage_scale = "Arena: counts the hunters' hits on the prize."
 

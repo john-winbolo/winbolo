@@ -72,38 +72,50 @@
 -- and a dead one lying on the ground is repaired by nobody.
 --
 -- Who plays with whom. The host picks it in the lobby with the "Teams"
--- setting. In "Free For All", the default, every tank is on a team of its
--- own from the round start, whatever the lobby teams were, so nobody is
--- allied with anybody and nobody can ally: the holder is against everybody,
--- and a built prize fires at everybody but him. The lobby teams are put
--- back when this script ends the round on its own clock (the engine's time
--- limit is set five seconds later, so the script gets there first). A round
--- ended any other way, by the host or the server, keeps the Free For All
--- teams: a roster write is refused once the round has stopped, so on_end
--- cannot put them back. In "Use Lobby Teams" the lobby teams play as
--- teams: teammates are allied, every second the holder carries the prize
--- scores for his team as well as for him, a built prize spares his
--- teammates, and the team with the most seconds wins. The bots on the
--- holder's team are not sent after him.
+-- setting. In "Everyone vs It", the default, every tank but the holder is on
+-- one team, the hunters' team, and the holder is alone on a team of his own.
+-- The hunters are allied with each other and nobody is allied with him, so
+-- a built prize fires at every hunter. Each time the prize changes hands the
+-- teams change with it: the new holder leaves the hunters' team and the old
+-- one joins it. While nobody holds the prize (it is lying dead on the
+-- ground), everybody is a hunter. Nobody can make any other alliance. The
+-- points are each player's own, as in a Free For All. Note: an allied shell
+-- still hurts an ally (the engine has no rule that spares one), so hunters
+-- who shoot through each other at the holder hurt each other.
+--
+-- In "Free For All" every tank is on a team of its own from the round
+-- start, whatever the lobby teams were, so nobody is allied with anybody and
+-- nobody can ally: the holder is against everybody, and a built prize fires
+-- at everybody but him. In both of those the lobby teams are put back when
+-- this script ends the round on its own clock (the engine's time limit is
+-- set five seconds later, so the script gets there first). A round ended any
+-- other way, by the host or the server, keeps the round's teams: a roster
+-- write is refused once the round has stopped, so on_end cannot put them
+-- back. In "Use Lobby Teams" the lobby teams play as teams: teammates are
+-- allied, every second the holder carries the prize scores for his team as
+-- well as for him, a built prize spares his teammates, and the team with
+-- the most seconds wins. The bots on the holder's team are not sent after
+-- him.
 --
 -- Voice chat. In a round the server sends a player's voice only to his
--- allies, so in a Free For All nobody would hear anybody. The host picks who
--- hears whom with the "Voice chat to everyone" setting. "Only in Free For
--- All", the default, sends every voice to everybody in a Free For All and
--- leaves a team round with voice to teammates. "Yes" sends every voice to
--- everybody in both, and "No" keeps voice to allies in both. A server that
--- is older than the setting keeps voice to allies, and a server with voice
--- off has no voice at all.
+-- allies, so in a Free For All nobody would hear anybody, and in Everyone vs
+-- It nobody would hear the holder. The host picks who hears whom with the
+-- "Voice chat to everyone" setting. "Only in Free For All", the default,
+-- sends every voice to everybody in a Free For All and in Everyone vs It,
+-- and leaves a Lobby Teams round with voice to teammates. "Yes" sends every
+-- voice to everybody in all three, and "No" keeps voice to allies in all
+-- three. A server that is older than the setting keeps voice to allies, and
+-- a server with voice off has no voice at all.
 --
--- The scores under the compass: in Free For All one row a tank; in a team
--- round a row for each team with its total and, under it, a row for each
--- member with the seconds they carried. When that is more rows than there
--- is room for, every team's row stays and the player's own row goes under
--- their team. A team of bots only is named after the pool its bots take
+-- The scores under the compass: in Free For All and Everyone vs It one row a
+-- tank; in a team round a row for each team with its total and, under it, a
+-- row for each member with the seconds they carried. When that is more rows
+-- than there is room for, every team's row stays and the player's own row goes
+-- under their team. A team of bots only is named after the pool its bots take
 -- their names from, as the lobby names them. The holder's row (in a team
--- round, his team's row and his own) is drawn in yellow, the panel's gold,
--- and is never cut off: when it would fall below the last row there is room
--- for, it takes that last row's place.
+-- round, his team's row and his own) is drawn in yellow, the panel's gold, and
+-- is never cut off: when it would fall below the last row there is room for,
+-- it takes that last row's place.
 --
 -- The compass is the panel. A script cannot draw on the edge of the game view,
 -- so the square over the view is a compass rose instead: the needle points at
@@ -115,7 +127,10 @@
 -- is sent after the prize, and every bot is tuned for the part it has. The
 -- holder runs and never puts the prize down; the others hunt. A built prize is
 -- the only live pillbox on the map, so it is the brain's own pillbox fight
--- that goes after it.
+-- that goes after it. While it stands, the hunters rush it: they go in to
+-- RUSH.STANDOFF squares, weigh its fire much less, and are less keen on a
+-- fight with the holder's tank (see RUSH). In Everyone vs It every hunter
+-- still races for a dead prize, though the others are its allies.
 --
 -- Deep sea. Nobody can drive out to a holder on deep sea, so the holder may
 -- carry the prize there for ten seconds by default before his tank is
@@ -239,9 +254,38 @@ local WALL_FALLBACK_SECONDS = 30 -- a standing prize that has lost no armour
                                 -- squares with a line to it turns on the
                                 -- hunters' shot through the walls
 
--- The two words of the "Teams" setting, as scenario.settings declares them.
-local FREE_FOR_ALL      = "Free For All"
-local LOBBY_TEAMS       = "Use Lobby Teams"
+-- A hunter's part while the prize stands built (see RUSH in init_table): he
+-- goes in close and shoots it down, and does not keep the usual distance
+-- from a pillbox's fire. Start values; Andrew may change them. The brain
+-- reads its pill danger (PILL_DANGER_BASE, PILL_DANGER_ANGER) into its C
+-- danger map once, at its first look at the map, so a later table cannot
+-- change it. DANGER is put on the three knobs it does read every time:
+-- TAKE_COVER_W_EXPO (how much the prize's fire on a square makes a hunter
+-- look for cover) and ANGER_COST_PER_TICK (what waiting for an angry
+-- pillbox to calm costs) are multiplied by it, and ENGAGE_MAX_INCOMING_TICKS
+-- (how long a hunter takes hits before it backs off) is divided by it.
+local RUSH = {
+  DANGER    = 0.25,             -- the prize's fire, as the hunter weighs it,
+                                -- times the ordinary weight
+  STANDOFF  = 3,                -- squares from the prize a hunter shoots it
+                                -- from (the brain's ATTACK_PILL_STANDOFF,
+                                -- ordinarily 7.4)
+  TANK_COST = 60,               -- TANK_COMBAT_BASE_COST (a hunter's is 10):
+                                -- a fight with the holder's tank costs more
+                                -- than the prize, so the prize comes first
+}
+
+-- The three words of the "Teams" setting, as scenario.settings declares them,
+-- and the two teams of an Everyone vs It round. vs_it is whether the round
+-- is one, read on first use (see vs_it_on).
+local TEAMS = {
+  FREE_FOR_ALL = "Free For All",
+  LOBBY_TEAMS  = "Use Lobby Teams",
+  VS_IT        = "Everyone vs It",
+  HUNTERS      = 1,             -- every tank but the holder
+  IT           = 2,             -- the holder, alone
+  vs_it        = nil,
+}
 local LABEL_MAX         = 22    -- the longest team name a score row shows
 
 -- How much of each ground's speed the holder loses, as a percentage of the
@@ -453,9 +497,18 @@ end
 -- same reason read_settings is not run at the top of the file.
 local function teams_on()
   if team_mode == nil then
-    team_mode = (game.setting("teams") == LOBBY_TEAMS)
+    team_mode = (game.setting("teams") == TEAMS.LOBBY_TEAMS)
   end
   return team_mode
+end
+
+-- Whether the round is Everyone vs It. A round of lobby teams is not, which
+-- lets an arena that sets team_mode get a team round without a word more.
+function TEAMS.vs_it_on()
+  if TEAMS.vs_it == nil then
+    TEAMS.vs_it = not teams_on() and game.setting("teams") == TEAMS.VS_IT
+  end
+  return TEAMS.vs_it
 end
 
 -- The seat's lobby team: the one kept for it once the round has started,
@@ -1057,15 +1110,17 @@ end
 -- read off the brain's constants.lua.
 --
 -- The ordinary value is the Hard one. The brain's level bundles
--- (MODE_LEVELS in constants.lua) move three of the knobs below for a Medium
+-- (MODE_LEVELS in constants.lua) move four of the knobs below for a Medium
 -- or Easy bot: TANK_COMBAT_BASE_COST (Medium 40, Easy 60),
--- DEFEND_ALARM_BASE_COST (Medium 140, Easy 220) and CAPTURE_LGM_HUNT (Easy
--- false). A script cannot see a seat's level, and the brain takes no level
--- word after its first think, so once a part has set one of the three and
--- the bot takes another part, that knob comes back as the Hard value here:
--- a former hunter bids for a fight as Hard does, a former guard answers a
--- fort alarm as Hard does, and an Easy bot that has held the prize goes
--- after a builder on a pillbox as Hard does.
+-- DEFEND_ALARM_BASE_COST (Medium 140, Easy 220), CAPTURE_LGM_HUNT (Easy
+-- false) and ENGAGE_MAX_INCOMING_TICKS (Medium 40, Easy 25). A script cannot
+-- see a seat's level, and the brain takes no level word after its first
+-- think, so once a part has set one of the four and the bot takes another
+-- part, that knob comes back as the Hard value here: a former hunter bids
+-- for a fight as Hard does, a former guard answers a fort alarm as Hard
+-- does, an Easy bot that has held the prize goes after a builder on a
+-- pillbox as Hard does, and a hunter that has rushed a built prize takes
+-- fire as long as Hard does before it backs off.
 local DEFAULTS = {
   TANK_COMBAT_ENABLED                  = true,
   TANK_COMBAT_BASE_COST                = 30,
@@ -1097,6 +1152,11 @@ local DEFAULTS = {
   CAPTURE_BASE_EXTRA_COST              = 0,
   CAPTURE_BASE_EXTRA_FREE_DIST         = 0,
   ATTACK_PILL_WALL_FALLBACK            = false,
+  ATTACK_PILL_STANDOFF                 = 7.4,
+  ATTACK_PILL_TANK_PRESENT_PENALTY     = 30,
+  TAKE_COVER_W_EXPO                    = 0.15,
+  ANGER_COST_PER_TICK                  = 0.3,
+  ENGAGE_MAX_INCOMING_TICKS            = 45,
 }
 
 -- The flag words a brain keeps until it is told the opposite. GoalHunter puts
@@ -1336,11 +1396,27 @@ local function init_table(role_name, p)
   for k, v in pairs(role.cfg) do
     want[k] = v
   end
+  local hunting = (role_name == "hunter" or role_name == "manhunt")
   -- A hunter after a walled-in prize may shoot through the walls once the
   -- watch says so (see walled.update). It goes off with the watch.
-  if walled.watch ~= nil and walled.watch.fallback and
-     (role_name == "hunter" or role_name == "manhunt") then
+  if walled.watch ~= nil and walled.watch.fallback and hunting then
     want.ATTACK_PILL_WALL_FALLBACK = true
+  end
+  -- While the prize stands built, a hunter rushes it (see RUSH): it shoots
+  -- from RUSH.STANDOFF squares, its fire counts for RUSH.DANGER of the
+  -- ordinary weight, the holder's tank is no reason to leave the prize be,
+  -- and a fight with that tank costs at least RUSH.TANK_COST. All of it
+  -- comes off with the next table after the prize is down or picked up.
+  if hunting and pill ~= nil and standing(game.pill(pill)) then
+    local d = math.max(RUSH.DANGER, 0.01)
+    want.ATTACK_PILL_STANDOFF             = RUSH.STANDOFF
+    want.TAKE_COVER_W_EXPO                = DEFAULTS.TAKE_COVER_W_EXPO * d
+    want.ANGER_COST_PER_TICK              = DEFAULTS.ANGER_COST_PER_TICK * d
+    want.ENGAGE_MAX_INCOMING_TICKS        =
+      math.floor(DEFAULTS.ENGAGE_MAX_INCOMING_TICKS / d + 0.5)
+    want.ATTACK_PILL_TANK_PRESENT_PENALTY = 0
+    want.TANK_COMBAT_BASE_COST = math.max(want.TANK_COMBAT_BASE_COST,
+                                          RUSH.TANK_COST)
   end
 
   local t, pairs_n = {}, 1
@@ -1349,6 +1425,16 @@ local function init_table(role_name, p)
   for _, f in ipairs(role.flags) do
     flags[f] = true
     t[f] = "1"
+    pairs_n = pairs_n + 1
+  end
+  -- In Everyone vs It the hunters are allies, and a brain leaves a dead
+  -- pillbox an ally has claimed to that ally. The prize is the one pillbox
+  -- of the round, so every hunter would wait on the one that claimed it.
+  -- "noclaimdead" has each of them go for it anyway, as in a Free For All,
+  -- where no hunter has an ally. GoalHunter puts it back itself on every
+  -- new table, so a table without it takes it off.
+  if hunting and TEAMS.vs_it_on() then
+    t.noclaimdead = "1"
     pairs_n = pairs_n + 1
   end
   for f, undo in pairs(FLAG_UNDO) do
@@ -1681,7 +1767,10 @@ end
 -- from each other inside the box, and whether that ground runs out to the
 -- edge of the box. A hunter outside the box can reach the ground that runs to
 -- the edge.
-walled.STANDOFF  = 7.4          -- the brain's ATTACK_PILL_STANDOFF
+walled.STANDOFF  = RUSH.STANDOFF -- the brain's ATTACK_PILL_STANDOFF, which
+                                -- is RUSH.STANDOFF whenever a watch is on:
+                                -- there is only a watch while the prize
+                                -- stands
 walled.AIM_INSET = 16 / 256     -- the brain's AIM_INSET_FIRE: how far inside
                                 -- the pillbox's square a corner aim is
 walled.AIM_POINTS = {
@@ -2055,7 +2144,8 @@ local function free_team(p)
 end
 
 -- The team seat p belongs on for the round: its lobby team in a team round,
--- and a team of its own in a Free For All, whoever holds the prize. The
+-- a team of its own in a Free For All, whoever holds the prize, and in
+-- Everyone vs It the holder's team alone or else the hunters' team. The
 -- lobby team is kept first, to score for and to be put back at the end. A
 -- seat is only moved when it is not already there, because each move sends
 -- every client the whole alliance table again.
@@ -2070,6 +2160,8 @@ local function sort_team(p)
   local want
   if teams_on() then
     want = lobby_team[p]
+  elseif TEAMS.vs_it_on() then
+    want = (p == holder) and TEAMS.IT or TEAMS.HUNTERS
   else
     want = team_of[p] or free_team(p)
   end
@@ -2078,9 +2170,10 @@ local function sort_team(p)
   end
 end
 
--- Free For All: every seat back on the lobby team it came with, so the next
--- lobby shows the teams the host set up. A roster write needs a running
--- round, so this is done just before the round is ended, not in on_end.
+-- Free For All and Everyone vs It: every seat back on the lobby team it came
+-- with, so the next lobby shows the teams the host set up. A roster write
+-- needs a running round, so this is done just before the round is ended, not
+-- in on_end.
 local function restore_teams()
   if teams_on() then
     return
@@ -2731,9 +2824,11 @@ function on_start()
   end
 
   -- Every seat's lobby team is kept now. In a Free For All every seat then
-  -- goes on a team of its own, whatever the lobby put people on; in a team
-  -- round the lobby teams stay. Roster writes are refused during the setup
-  -- that opens a round, which is why this is here and not in on_setup.
+  -- goes on a team of its own, whatever the lobby put people on; in
+  -- Everyone vs It every seat goes on the hunters' team (nobody holds the
+  -- prize yet); in a team round the lobby teams stay. Roster writes are
+  -- refused during the setup that opens a round, which is why this is here
+  -- and not in on_setup.
   for p = 0, game.max_tanks() - 1 do
     local slot = game.lobby_slot(p)
     if slot ~= nil then
@@ -2742,13 +2837,16 @@ function on_start()
   end
   sort_teams()
   post_team_scores()
-  game.log("Pillbox Tag: " .. (teams_on() and "lobby teams" or "free for all"))
+  game.log("Pillbox Tag: " .. (teams_on() and "lobby teams" or
+           TEAMS.vs_it_on() and "everyone vs it" or "free for all"))
 
   -- Who hears whose voice, by the "Voice chat to everyone" setting: "Yes" is
   -- everybody, "No" is allies only, and "Only in Free For All" is everybody
-  -- in a Free For All and teammates in a team round. The engine clears it at
-  -- every round start, so it is set here each round. An engine without the
-  -- call keeps voice to allies.
+  -- in a Free For All or Everyone vs It (the hunters' team changes with
+  -- every take, so team voice would cut in and out) and teammates in a team
+  -- round. The word stays "Free For All" so saved settings still match. The
+  -- engine clears it at every round start, so it is set here each round. An
+  -- engine without the call keeps voice to allies.
   if game.set_voice_everyone then
     local voice = game.setting("voice_everyone")
     game.set_voice_everyone(voice == "Yes" or
@@ -3142,7 +3240,7 @@ end
 
 local function take_the_prize(p)
   if holder ~= nil and holder ~= p then
-    lose_the_prize(holder)
+    lose_the_prize(holder, true)
   end
   end_plan()
   forfeit = nil
@@ -3162,8 +3260,10 @@ local function take_the_prize(p)
       invuln_seat = nil
     end
   end
-  -- The teams do not change with the prize: in a Free For All the holder is
-  -- already on a team of his own, and in a team round he stays on his.
+  -- In Everyone vs It the holder goes onto a team alone (and the last one,
+  -- through lose_the_prize, back to the hunters). In a Free For All the
+  -- holder is already on a team of his own, and in a team round he stays on
+  -- his.
   sort_team(p)
   carry_start()
   local t = game.tank(p)
@@ -3182,7 +3282,7 @@ local function take_the_prize(p)
   aim_everybody()
 end
 
-lose_the_prize = function(p)
+lose_the_prize = function(p, taking)
   end_plan()
   holder = nil
   boost_from = nil
@@ -3191,8 +3291,14 @@ lose_the_prize = function(p)
     wet_time.secs[p] = nil
     carry.seen, carry.last = nil, nil
     game.set_modifiers(p, {})
-    tune(p)
     sort_team(p)
+  end
+  -- Every bot is retuned with the teams (and the rush comes off), unless a
+  -- take follows at once and retunes them itself.
+  if taking then
+    tune(p)
+  else
+    tune_everybody()
   end
 end
 
@@ -3226,7 +3332,7 @@ function on_pill_placed(n, p, armour, scripted)
     hold_down_the_prize()
     if p ~= holder then
       if holder ~= nil then
-        lose_the_prize(holder)
+        lose_the_prize(holder, true)
       end
       take_the_prize(p)
     end
@@ -3243,8 +3349,9 @@ function on_pill_placed(n, p, armour, scripted)
           game.set_stocks(p, { shells = want })
         end
       end
-      tune(p)
     end
+    -- The hunters rush a standing prize (see RUSH).
+    tune_everybody()
     aim_everybody()
     return
   end
@@ -3271,6 +3378,7 @@ function on_pill_killed(n, by, scripted)
   end
   if plan ~= nil and plan.built and holder ~= nil and by == holder then
     plan.dead_at = game.tick()
+    tune_everybody()
     aim_everybody()
     return
   end
@@ -3530,8 +3638,13 @@ function allow_base_win()
 end
 
 -- In a Free For All every player chases the prize for themselves, so
--- players cannot make alliances. In a team round only lobby teammates ally.
+-- players cannot make alliances. In Everyone vs It two hunters may ally (the
+-- script puts them together anyway) but nobody allies with the holder. In a
+-- team round only lobby teammates ally.
 function can_ally(p, q)
+  if TEAMS.vs_it_on() then
+    return p ~= holder and q ~= holder
+  end
   if not teams_on() then
     return false
   end
@@ -3685,11 +3798,12 @@ scenario = {
       type = "int", min = 0, max = 100, step = 5,
       default = wet_time.decay },
     { id = "teams", label = "Teams", type = "choice",
-      choices = { FREE_FOR_ALL, LOBBY_TEAMS }, default = FREE_FOR_ALL },
+      choices = { TEAMS.VS_IT, TEAMS.FREE_FOR_ALL, TEAMS.LOBBY_TEAMS },
+      default = TEAMS.VS_IT },
     { id = "voice_everyone", label = "Voice chat to everyone",
       type = "choice",
-      choices = { "Only in " .. FREE_FOR_ALL, "Yes", "No" },
-      default = "Only in " .. FREE_FOR_ALL },
+      choices = { "Only in " .. TEAMS.FREE_FOR_ALL, "Yes", "No" },
+      default = "Only in " .. TEAMS.FREE_FOR_ALL },
   },
 
   -- What each callback below does, in a line a player reads: the lobby's
@@ -3697,8 +3811,8 @@ scenario = {
   callbacks = {
     on_setup = "One pillbox is the prize, the rest go; bases start " ..
                "neutral.",
-    on_start = "Clock, compass, sea timer; Free For All: own teams; " ..
-               "voice to all by setting.",
+    on_start = "Clock, compass, sea timer; Everyone vs It: one hunters' " ..
+               "team; Free For All: own teams; voice to all by setting.",
     on_end = "Logs how long the round ran.",
     on_tick = "Holder speed by terrain, plus boost; man out: gun fills.",
     on_player_join = "A joiner hunts, on 0 points.",
@@ -3716,9 +3830,11 @@ scenario = {
     on_pill_captured = "Only the holder may own a built prize.",
     on_built = "A repair stops at 3 armour.",
     can_build = "Only the holder may repair it; bots build where told.",
-    on_team_changed = "Teams are fixed for the round.",
+    on_team_changed = "Teams are fixed, but Everyone vs It moves the " ..
+                      "holder to a team alone.",
     allow_base_win = "Holding every base does not win.",
-    can_ally = "No alliances in Free For All; teammates in a team round.",
+    can_ally = "Everyone vs It: hunters only; none in Free For All; " ..
+               "teammates in a team round.",
     announce = "Base captures are not announced.",
     spawn_loadout = "Full shells, no mines; carriers get none.",
     damage_scale = "New holder takes no damage at first.",

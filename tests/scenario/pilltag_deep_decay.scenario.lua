@@ -24,6 +24,11 @@
 --
 -- PASS: every time read and every kill falls where it should.
 
+-- Played as a Free For All (TEAMS.vs_it = false, as the "Teams" setting
+-- would). The deep sea clock is the same in every "Teams" choice, and the
+-- arena's timing is the seeded Free For All run's: in Everyone vs It the
+-- bot holder's path differs and once ran onto the map's real deep sea.
+TEAMS.vs_it = false
 ARENA = { step = 1, next_at = 300 }
 
 -- give = seat to give the prize to; wet = seat to put on deep sea, for
