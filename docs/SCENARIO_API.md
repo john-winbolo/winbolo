@@ -519,8 +519,10 @@ At most ten scripts and one scenario. An operator scenario replaces a
 scenario the host picked. Against a map that brings its own script the rule
 depends on the switch and on the map's script. A `-mod` scenario gives way
 to a map's own scenario, which plays instead; the console says so once per
-map. Beside a map's own mod, a `-mod` scenario plays with it. A
-`-mod-required` or `-mod-locked` scenario replaces the map's own script.
+map. The `-mod` row stays on the script list while it gives way, and it plays
+again on the next map that has no scenario of its own. Beside a map's own
+mod, a `-mod` scenario plays with it. A `-mod-required` or `-mod-locked`
+scenario replaces the map's own script.
 
 A name that does not resolve, a script tied to a map and a player upload are
 each a warning on stderr and are skipped, as are blank names in the list, a

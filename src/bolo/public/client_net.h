@@ -542,7 +542,9 @@ void     clientSimGetUdpNetStats(ClientSim *cs, int *ppsRecv, int *ppsSent,
 /* Cumulative successful map resyncs (desync recovery) this session. */
 int      clientSimGetMapResyncCount(ClientSim *cs);
 /* Feed the per-full-sync map-checksum compare result to the transport's
- * resync state machine (request on mismatch / clear backoff on match). */
+ * resync state machine (request on mismatch / clear backoff on match).
+ * A local transport with its frame queue on answers a mismatch by
+ * copying the differing terrain straight from the server instead. */
 void     clientSimNetReportMapChecksum(ClientSim *cs, bool matched);
 /* renderOffsetPx (out, may be NULL): current render-only error-offset
  * magnitude in pixels — the live correction being smoothed out, distinct
@@ -564,5 +566,15 @@ void clientSimGetTimingStats(ClientSim *cs, int *clockOffsetTicks,
 /* === Local-transport tuning === */
 void     clientSimNetSetLocalDelay(ClientSim *cs, uint16_t delay_ms);
 uint16_t clientSimNetGetLocalDelay(const ClientSim *cs);
+
+/* Desktop single player: the server is ticked on a timer thread and the
+ * client polls from the main thread, so a poll can come after two server
+ * frames and miss the first one's events. Turning the frame queue on has the
+ * ticking thread capture each frame with clientSimNetCaptureLocalFrame, right
+ * after the server tick, and the client's tick apply every captured frame in
+ * order. A no-op on any transport but a passive local one. Callers of both
+ * hold the threads mutex. */
+void     clientSimNetSetLocalFrameQueue(ClientSim *cs, bool on);
+void     clientSimNetCaptureLocalFrame(ClientSim *cs);
 
 #endif /* CLIENT_NET_H */

@@ -1109,7 +1109,16 @@ int clientSimGetMapResyncCount(ClientSim *cs) {
 }
 
 void clientSimNetReportMapChecksum(ClientSim *cs, bool matched) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  if (cs == NULL || !cs->hasTransport) return;
+  if (!cs->isUdpTransport) {
+    /* The server is in this process, so there is nothing to download:
+     * copy the squares that differ. Only single player's frame queue does
+     * this — see transportLocalRepairMap. */
+    if (!matched && transportLocalRepairMap(&cs->transport, &cs->sim) > 0) {
+      clientSimRecalc(cs);
+    }
+    return;
+  }
   transportUdpClientReportMapChecksum(&cs->transport, matched);
 }
 
@@ -1152,4 +1161,17 @@ void clientSimNetSetLocalDelay(ClientSim *cs, uint16_t delay_ms) {
 uint16_t clientSimNetGetLocalDelay(const ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport || cs->isUdpTransport) return 0;
   return transportLocalGetDelay((Transport *)&cs->transport);
+}
+
+void clientSimNetSetLocalFrameQueue(ClientSim *cs, bool on) {
+  if (cs == NULL || !cs->hasTransport || cs->isUdpTransport ||
+      cs->transportTicksServer) {
+    return;
+  }
+  transportLocalSetFrameQueue(&cs->transport, on);
+}
+
+void clientSimNetCaptureLocalFrame(ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || cs->isUdpTransport) return;
+  transportLocalCaptureFrame(&cs->transport);
 }

@@ -2207,6 +2207,9 @@ set(SERVER_SOURCES
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/server/servermain.c
+    # The -mod flags and -setting off the command line. Public headers
+    # only, so it takes no grant below; the unit tests compile it too.
+    src/server/server_args.c
     src/server/server_frontend_stubs.c
     src/gui/sdl3/luabrainshandler.c
     src/headless/cmd_stdin.c
@@ -3549,6 +3552,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_active_sim_lifetime.c
     tests/unit/test_active_local_input_to_shot.c
     tests/unit/test_sp_shoot_through_timer.c
+    tests/unit/test_sp_frame_queue.c
     tests/unit/test_prefs_roundtrip.c
     tests/unit/test_prefs_doc.c
     tests/unit/test_prefs_api.c
@@ -3935,6 +3939,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # matching, the CMD_SET_SCRIPT_LIST refusals, the re-apply at each new
     # lobby, and the required flag on the wire.
     tests/unit/test_operator_mods.c
+    src/server/server_args.c
     tests/unit/test_fog_settings.c
     # The named visibility sets the lobby offers, and the match that reads
     # a live set of settings back as one of them.
@@ -4815,6 +4820,12 @@ set(_unit_test_names
     sp_subscriber_delivery
     active_local_input_to_shot
     sp_shoot_through_timer
+    sp_frame_queue_keeps_skipped_frame
+    sp_local_map_repair
+    sp_frame_queue_repairs_after_drop
+    sp_frame_queue_resets_on_lobby
+    sp_frame_queue_resets_on_map_change
+    sp_frame_queue_keeps_departed_player_gone
     prefs_document_roundtrip
     prefs_keys_roundtrip
     prefs_doc_roundtrip
@@ -6776,6 +6787,9 @@ set(_unit_test_names
     scenario_compose_rotation_keeps_picks
     scenario_compose_round_start_closes_preview
     scenario_compose_drop_picked_scenarios
+    scenario_compose_commit_map_keeps_operator_mod
+    scenario_compose_commit_map_fixed_operator_mod
+    scenario_compose_map_kind_cached
     scenario_compose_fallback_strict
     scenario_compose_needs_bots_any_mod
     scenario_compose_needs_bots_scenario_and_mod

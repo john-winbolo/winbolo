@@ -183,6 +183,12 @@ bool buildCursorGetTargetTile(BYTE *mapX, BYTE *mapY) {
   return true;
 }
 
+void buildCursorDropTarget(BYTE mapX, BYTE mapY) {
+  if (s_active || !s_positioned || s_mapX != mapX || s_mapY != mapY) return;
+  bcLog("[bc] DROP-TARGET (%u,%u)", (unsigned)mapX, (unsigned)mapY);
+  s_positioned = false;
+}
+
 void buildCursorClampToView(struct ClientSim *cs) {
   /* Only while cursor mode is ON: the cursor must never sit outside the
      visible edge.  As the tank drives and the view scrolls, this drags the

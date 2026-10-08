@@ -19,6 +19,7 @@
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "global.h"
 #include "viewport_types.h"   /* MAIN_SCREEN_SIZE_X/Y */
 #include "../tiles.h"             /* TILE_SIZE_X/Y */
@@ -37,6 +38,33 @@ static float gCachedMouseY = 0.0f;
 
 static SDL_Cursor *s_saveCursor = NULL;
 static SDL_Cursor *s_boloCursor = NULL;
+
+/* Scroll follow (cursorAnchorToView / cursorFollowView). The anchor is the
+   world point the player's hand last put the pointer on, in zoomed game
+   pixels from the map origin; the view origin is the same units, recorded
+   each frame so a view jump can be told from a scroll. */
+static bool  gAnchorValid = false;
+static int   gAnchorX = 0;
+static int   gAnchorY = 0;
+static bool  gViewValid = false;
+static int   gViewX = 0;
+static int   gViewY = 0;
+static int   gViewZoom = 0;
+/* Window position of the last follow warp, so its echo motion is not taken
+   for the player moving the mouse. */
+static bool  gWarpPending = false;
+static float gWarpWinX = 0.0f;
+static float gWarpWinY = 0.0f;
+
+/* A view that moves further than this between frames jumped (respawn, pill
+   view, centring on the tank) rather than scrolled; the pointer stays put. */
+#define CURSOR_FOLLOW_MAX_TILES 4
+
+/* How far past the view's edge (in unzoomed game pixels) the pointer is put
+   when its square is carried off. Keep it under the 10 px gap between the
+   view and the build-select buttons to its left, so a click there is a click
+   on nothing. */
+#define CURSOR_PUSH_OFF_PX 4
 
 /* 7×7 crosshair: data (XOR) and mask bits, same as the Linux version */
 static const Uint8 s_cd[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -166,6 +194,19 @@ static void cursorLog(const char *fmt, ...) {
   gCursorLogEntries++;
 }
 
+/* How far the drawn map is shifted past the whole-tile view, in zoomed
+   pixels: the engine's sub-tile autoscroll plus the renderer's drag offset,
+   which carries the part-tile of a smooth keyboard or gamepad scroll (and
+   is negative going left or up). sdl3DrawMainScreen shifts the map by
+   exactly this, so the tile under a screen pixel is resolved with it. */
+static void cursorEdgePx(int subPosX, int subPosY, int *outX, int *outY) {
+  int zf = sdl3DrawGetZoomFactor();
+  int dragX = 0, dragY = 0;
+  sdl3DrawGetDragOffset(&dragX, &dragY);
+  *outX = subPosX * (zf * TILE_SIZE_X) / 256 + dragX;
+  *outY = subPosY * (zf * TILE_SIZE_Y) / 256 + dragY;
+}
+
 bool cursorPos(RECT *rcWindow, BYTE *xValue, BYTE *yValue,
                int subPosX, int subPosY) {
   (void)rcWindow; /* SDL3 uses window-relative coords from SDL_GetMouseState */
@@ -178,10 +219,17 @@ bool cursorPos(RECT *rcWindow, BYTE *xValue, BYTE *yValue,
     int tileH = zf * TILE_SIZE_Y;
     int xPos  = (int)mx - (zf * MAIN_OFFSET_X);
     int yPos  = (int)my - (zf * MAIN_OFFSET_Y);
-    int edgePxX = subPosX * tileW / 256;
-    int edgePxY = subPosY * tileH / 256;
+    int edgePxX, edgePxY;
+    cursorEdgePx(subPosX, subPosY, &edgePxX, &edgePxY);
     xPos += edgePxX;
     yPos += edgePxY;
+    /* A smooth scroll left or up draws part of the column/row before the
+       first; div truncates toward zero, so that would read as column 1. */
+    if (xPos < 0 || yPos < 0) {
+      *xValue = 0;
+      *yValue = 0;
+      return false;
+    }
     div_t dx = div(xPos, tileW);
     div_t dy = div(yPos, tileH);
     *xValue = (BYTE)(dx.quot + 1);
@@ -217,6 +265,9 @@ void cursorAcquireCursor(void) {
   float mx, my;
   SDL_GetMouseState(&mx, &my);
   cursorMove((int)mx, (int)my);
+  /* That position is untransformed window pixels, so it is no place to
+     follow from; the next real motion re-anchors. */
+  gAnchorValid = false;
 }
 
 /*********************************************************
@@ -227,6 +278,197 @@ void cursorAcquireCursor(void) {
 void cursorLeaveWindow(void) {
   cursorSetCursor(true);
   cursorInMainView = false;
+  gAnchorValid = false;
+}
+
+/* The drawn view's origin in zoomed game pixels from the map origin. Uses
+   the same edge as cursorPos, so an anchor taken here resolves to the tile
+   cursorPos reported for the same pointer and view. */
+static void cursorViewOrigin(int xOffset, int yOffset, int subPosX, int subPosY,
+                             int *outX, int *outY) {
+  int zf = sdl3DrawGetZoomFactor();
+  int edgeX, edgeY;
+  cursorEdgePx(subPosX, subPosY, &edgeX, &edgeY);
+  *outX = xOffset * zf * TILE_SIZE_X + edgeX;
+  *outY = yOffset * zf * TILE_SIZE_Y + edgeY;
+}
+
+/*********************************************************
+*NAME:          cursorIsWarpEcho
+*PURPOSE:
+*  Returns whether a motion event at this window position
+*  is the echo of the last cursorFollowView warp rather
+*  than the player moving the mouse. Warps go to a whole
+*  window pixel, so SDL's echo and the OS pointer's own
+*  report both land on it exactly, and any other
+*  position, a pixel's hand movement included, is the
+*  player and ends the wait.
+*********************************************************/
+bool cursorIsWarpEcho(float winX, float winY) {
+  if (!gWarpPending) return false;
+  if (SDL_fabsf(winX - gWarpWinX) < 0.01f && SDL_fabsf(winY - gWarpWinY) < 0.01f) {
+    return true;
+  }
+  gWarpPending = false;
+  return false;
+}
+
+/*********************************************************
+*NAME:          cursorAnchorToView
+*PURPOSE:
+*  The player has moved the mouse. Pins the pointer to
+*  the world point it is now over, for cursorFollowView
+*  to keep it on as the view scrolls. Takes the view the
+*  pointer's tile was resolved against.
+*********************************************************/
+void cursorAnchorToView(int xOffset, int yOffset, int subPosX, int subPosY) {
+  int vx, vy;
+  if (!cursorInMainView) {
+    gAnchorValid = false;
+    return;
+  }
+  int zf = sdl3DrawGetZoomFactor();
+  cursorViewOrigin(xOffset, yOffset, subPosX, subPosY, &vx, &vy);
+  gAnchorX = vx + (int)gCachedMouseX - zf * MAIN_OFFSET_X;
+  gAnchorY = vy + (int)gCachedMouseY - zf * MAIN_OFFSET_Y;
+  gAnchorValid = true;
+  gWarpPending = false;
+}
+
+/* Whether this video backend moves the visible pointer when asked, and
+   moves it where it was asked. The follow commits to the warp before it
+   happens — the cached position, a push off the view, dropping the target
+   — so a warp that quietly doesn't happen leaves the pointer in view and
+   the game believing it isn't. No SDL call says whether one will work:
+   SDL_WarpMouseInWindow returns nothing, and Wayland's fallback (lock,
+   hint, unlock, "hope for the best") reports the motion whether or not
+   the compositor honoured it. So follow only where warping is known to
+   be real. */
+static bool cursorCanWarp(void) {
+  static int known = -1;
+  if (known < 0) {
+    const char *driver = SDL_GetCurrentVideoDriver();
+    if (driver == NULL) return false;   /* video not up yet; ask again later */
+    known = SDL_strcmp(driver, "windows") == 0 ||
+            SDL_strcmp(driver, "x11") == 0 ||
+            SDL_strcmp(driver, "cocoa") == 0;
+  }
+  return known == 1;
+}
+
+/*********************************************************
+*NAME:          cursorDropAnchor
+*PURPOSE:
+*  The player has moved the mouse somewhere with no
+*  square under it. Stops cursorFollowView carrying the
+*  pointer back to the point it was anchored to.
+*********************************************************/
+void cursorDropAnchor(void) {
+  gAnchorValid = false;
+}
+
+/*********************************************************
+*NAME:          cursorFollowView
+*PURPOSE:
+*  Called once a frame with the view being drawn. Moves
+*  the mouse pointer with the map as it scrolls, so it
+*  stays on the square the player put it on, as WinBolo
+*  1.x did. The pointer is placed from its world anchor
+*  through the inverse of the event transform rather
+*  than nudged by a delta, so it cannot drift on a
+*  scaled window. Left alone when the view jumps or
+*  allowWarp is false.
+*
+*  When the map carries the pointer's square past the
+*  edge of the view, the pointer is pushed just off the
+*  view and stops following. Returns true then, with
+*  the map tile it was on in lostMapX/Y, so the caller
+*  can drop that square as the build target.
+*********************************************************/
+bool cursorFollowView(int xOffset, int yOffset, int subPosX, int subPosY,
+                      bool allowWarp, BYTE *lostMapX, BYTE *lostMapY) {
+  int vx, vy;
+  int zf    = sdl3DrawGetZoomFactor();
+  int tileW = zf * TILE_SIZE_X;
+  int tileH = zf * TILE_SIZE_Y;
+  cursorViewOrigin(xOffset, yOffset, subPosX, subPosY, &vx, &vy);
+  bool jumped = !gViewValid || zf != gViewZoom ||
+                abs(vx - gViewX) > CURSOR_FOLLOW_MAX_TILES * tileW ||
+                abs(vy - gViewY) > CURSOR_FOLLOW_MAX_TILES * tileH;
+  bool scrolled = vx != gViewX || vy != gViewY;
+  gViewX = vx;
+  gViewY = vy;
+  gViewZoom = zf;
+  gViewValid = true;
+
+  if (jumped || !allowWarp || !cursorCanWarp() || isInMenu || !cursorInMainView) {
+    /* Nothing to follow until the hand next puts the pointer somewhere. */
+    gAnchorValid = false;
+    return false;
+  }
+  /* Only the view moving moves the pointer; between scrolls it is the
+     hand's alone. */
+  if (!gAnchorValid || !scrolled) return false;
+
+  int left = zf * MAIN_OFFSET_X;
+  int top  = zf * MAIN_OFFSET_Y;
+  int gx   = gAnchorX - vx + left;
+  int gy   = gAnchorY - vy + top;
+  /* The pixels cursorPos accepts: inside the view, and with the edge added,
+     inside columns/rows 1 to 15. A positive edge brings the far side in by
+     it, a negative one (smooth scrolling left or up) the near side. */
+  int edgeX = vx - xOffset * tileW;
+  int edgeY = vy - yOffset * tileH;
+  int minX = edgeX < 0 ? left - edgeX : left;
+  int minY = edgeY < 0 ? top - edgeY : top;
+  int maxX = left + MAIN_SCREEN_SIZE_X * tileW - 1 - (edgeX > 0 ? edgeX : 0);
+  int maxY = top  + MAIN_SCREEN_SIZE_Y * tileH - 1 - (edgeY > 0 ? edgeY : 0);
+  bool offX = gx < minX || gx > maxX;
+  bool offY = gy < minY || gy > maxY;
+  if (offX || offY) {
+    /* Its square has gone off the view, so the pointer goes off with it,
+       clear of the view on the side it left by, and is no longer on the
+       map to be carried back when the view scrolls the other way. */
+    int push = zf * CURSOR_PUSH_OFF_PX;
+    if (gx < minX) gx = left - push;
+    else if (gx > maxX) gx = left + MAIN_SCREEN_SIZE_X * tileW + push;
+    if (gy < minY) gy = top - push;
+    else if (gy > maxY) gy = top + MAIN_SCREEN_SIZE_Y * tileH + push;
+    if (lostMapX) *lostMapX = (BYTE)(gAnchorX / tileW + 1);
+    if (lostMapY) *lostMapY = (BYTE)(gAnchorY / tileH + 1);
+    gAnchorValid = false;
+  }
+  if (gx == (int)gCachedMouseX && gy == (int)gCachedMouseY) return offX || offY;
+
+  /* Aim at the middle of the game pixel, so the echo's trip back through
+     windowToGameCoords truncates to this pixel and not the one before. */
+  float wx, wy;
+  if (!sdl3DrawGameToWindowCoords((float)gx + 0.5f, (float)gy + 0.5f, &wx, &wy)) {
+    return offX || offY;
+  }
+  /* Onto a whole window pixel. Platforms put a fractional warp on a whole
+     pixel each their own way (Windows rounds, X11 truncates or keeps the
+     fraction), and the OS pointer's report of where it landed would then be
+     a pixel off the warp, indistinguishable from the hand moving one. A
+     whole pixel lands exactly everywhere. The nearest one to the middle of
+     the game pixel, ties going down, is inside it while a window pixel is
+     no bigger than a game pixel: at exactly 1x the middle is a half and
+     rounding up would be the next game pixel's first. On a window scaled
+     below 1x it can land a game pixel over, which only shifts the pointer —
+     the anchor stays exact. */
+  wx = SDL_ceilf(wx - 0.5f);
+  wy = SDL_ceilf(wy - 0.5f);
+  /* Through cursorMove, so a push off the view swaps back to the system
+     cursor and leaves the view this frame rather than at the echo. */
+  cursorMove(gx, gy);
+  gCachedMouseX = (float)gx + 0.5f;
+  gCachedMouseY = (float)gy + 0.5f;
+  gWarpWinX = wx;
+  gWarpWinY = wy;
+  gWarpPending = true;
+  SDL_WarpMouseInWindow(sdl3DrawGetWindow(), wx, wy);
+  inputSourceNoteCursorWarp();
+  return offX || offY;
 }
 
 /*********************************************************

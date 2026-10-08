@@ -617,13 +617,16 @@ static void lobbyServerMapsPumpPreview(ClientSim *cs, SDL_Renderer *renderer) {
      * mapChooserSetSelectedMapBytes takes the same raw .map image the WBN
      * tab feeds it and needs no file at all. It does stamp a synthetic
      * "wbnmem:" marker over selectedPath for that tab's loading-spinner
-     * check, so preserve the row path the click already put there. */
+     * check and clears selectedIdx, so preserve the clicked row's path
+     * and selection when updating only its preview. */
     char keepPath[FILENAME_MAX];
+    int keepIdx = s_chooserTabs.server.selectedIdx;
     SDL_strlcpy(keepPath, s_chooserTabs.server.selectedPath, sizeof(keepPath));
     mapChooserSetSelectedMapBytes(&s_chooserTabs.server, renderer,
                                   bytes, (int)blen, disp);
     SDL_strlcpy(s_chooserTabs.server.selectedPath, keepPath,
                 sizeof(s_chooserTabs.server.selectedPath));
+    s_chooserTabs.server.selectedIdx = keepIdx;
     clientSimClearLobbyMapPreview(cs);
 }
 

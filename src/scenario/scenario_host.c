@@ -616,6 +616,12 @@ struct ScenarioHost {
      * the list was found beside it. */
     char             mapPath[SCN_SCRIPT_PATH_MAX];
 
+    /* The last "gives way" line said for this lobby (scnSayYield), as map
+     * path and file. The decision carries it from the host it replaces to
+     * the one it attaches, so a lobby that decides again and again on one
+     * map says it once, and two sims in one process each say their own. */
+    char             yieldSaid[SCN_SCRIPT_PATH_MAX + SCN_DIR_FILE_LEN + 2];
+
     char             lastError[SCN_ERR_LEN];
     bool             active;
 
@@ -6583,6 +6589,12 @@ static bool scnScriptExists(const char *path) {
  * cache's lock below, and read through scenarioHostMapScriptOpens. */
 static unsigned long scnMapScriptOpens;
 
+/* How many times a scripted map's own script has been read for its kind
+ * (scnMapOwnKind), for the case that holds a second decision on the same map
+ * to reading none. Written under the cache's lock below, and read through
+ * scenarioHostMapKindReads. */
+static unsigned long scnMapKindReads;
+
 /* A copy of a string on the heap, which the cache below owns. Written out
  * rather than calling strdup, which is not C99. */
 static char *scnStrDup(const char *src) {
@@ -6694,13 +6706,27 @@ static bool scnMapHasScriptUncached(const char *mapPath) {
  * reason: the render thread and the tick thread both ask. */
 #define SCN_MAP_SCRIPT_CACHE_MAX 256
 
+/* What a scripted map's own script is, for the plain -mod scenario that gives
+ * way to a map's own scenario and plays beside a map's own mod
+ * (scnMapOwnKind). Kept in the map's row once read, because reading it can
+ * mean running the script's top level. The row's key is the key here too, so
+ * a map or a loose script that changed is read again. */
+typedef enum {
+    SCN_MAP_OWN_NONE = 0,
+    SCN_MAP_OWN_SCENARIO,
+    SCN_MAP_OWN_MOD
+} ScnMapOwnKind;
+
 typedef struct {
     char    *path;          /* owned; NULL for a row nothing is in */
     SDL_Time modified;      /* the map file's */
     Uint64   size;          /* the map file's */
     bool     looseSeen;     /* is an X.scenario.lua beside it */
     SDL_Time looseModified; /* and when it was last written; 0 for none */
+    Uint64   looseSize;     /* and its length; 0 for none */
     bool     scripted;
+    uint8_t  ownKind;       /* ScnMapOwnKind once scnMapOwnKind has read
+                               it; SCN_MAP_OWN_NONE until then */
 } ScnMapScriptRow;
 
 typedef struct {
@@ -6722,65 +6748,98 @@ bool scenarioHostMapHasScript(const char *mapPath) {
     return scenarioHostMapCarriesScript(mapPath);
 }
 
-bool scenarioHostMapCarriesScript(const char *mapPath) {
-    char         script[SCN_SCRIPT_PATH_MAX];
+/* What a row is keyed on, for one map: the map file's stat and the loose
+   script's. The loose script's length is in it as well as its time, because
+   a modify time can be as coarse as a second, and the kind kept in the row
+   (scnMapOwnKind) is a fact about the script's text. */
+typedef struct {
     SDL_PathInfo info;
-    SDL_PathInfo looseInfo;
     bool         looseSeen;
-    SDL_Time     looseModified = 0;
-    int          i;
-    bool         answer;
+    SDL_Time     looseModified;
+    Uint64       looseSize;
+} ScnMapScriptKey;
+
+/* The key for mapPath into *key, or false where there is nothing to key a
+   row on or nowhere to keep it: no cache lock, or no regular file there.
+   The loose script is stated here as well, so a script dropped next to a map
+   the cache has already seen gives a new key rather than the old row. */
+static bool scnMapScriptKeyOf(const char *mapPath, ScnMapScriptKey *key) {
+    char         script[SCN_SCRIPT_PATH_MAX];
+    SDL_PathInfo looseInfo;
+
+    if (scnMapScriptCache.lock.m == NULL ||
+        !SDL_GetPathInfo(mapPath, &key->info) ||
+        key->info.type != SDL_PATHTYPE_FILE) {
+        return false;
+    }
+    key->looseSeen = scnScriptPath(mapPath, script, sizeof(script)) &&
+                     SDL_GetPathInfo(script, &looseInfo) &&
+                     looseInfo.type == SDL_PATHTYPE_FILE;
+    key->looseModified = key->looseSeen ? looseInfo.modify_time : 0;
+    key->looseSize     = key->looseSeen ? looseInfo.size : 0;
+    return true;
+}
+
+/* The row for mapPath under key, or NULL. The caller holds the lock. */
+static ScnMapScriptRow *scnMapScriptRowFind(const char *mapPath,
+                                            const ScnMapScriptKey *key) {
+    int i;
+
+    for (i = 0; i < SCN_MAP_SCRIPT_CACHE_MAX; i++) {
+        ScnMapScriptRow *row = &scnMapScriptCache.rows[i];
+        if (row->path != NULL && row->modified == key->info.modify_time &&
+            row->size == key->info.size && row->looseSeen == key->looseSeen &&
+            row->looseModified == key->looseModified &&
+            row->looseSize == key->looseSize &&
+            strcmp(row->path, mapPath) == 0) {
+            return row;
+        }
+    }
+    return NULL;
+}
+
+bool scenarioHostMapCarriesScript(const char *mapPath) {
+    ScnMapScriptKey  key;
+    ScnMapScriptRow *row;
+    bool             answer;
 
     if (mapPath == NULL || mapPath[0] == '\0') {
         return false;
     }
     /* Nothing to key a row on, or nowhere to keep it: the question is
-       answered, just not remembered. */
-    if (scnMapScriptCache.lock.m == NULL ||
-        !SDL_GetPathInfo(mapPath, &info) ||
-        info.type != SDL_PATHTYPE_FILE) {
+       answered, just not remembered. The key is the first half of the
+       answer as well: a loose script beside the map outranks anything packed
+       into it, and it is a stat either way. */
+    if (!scnMapScriptKeyOf(mapPath, &key)) {
         return scnMapHasScriptUncached(mapPath);
-    }
-    /* The other half of the key, and the first half of the answer: a loose
-       script beside the map outranks anything packed into it, and it is a
-       stat either way. Taken before the row is looked for, so a script
-       dropped next to a map the cache has already seen misses the row rather
-       than being answered from it. */
-    looseSeen = scnScriptPath(mapPath, script, sizeof(script)) &&
-                SDL_GetPathInfo(script, &looseInfo) &&
-                looseInfo.type == SDL_PATHTYPE_FILE;
-    if (looseSeen) {
-        looseModified = looseInfo.modify_time;
     }
 
     scnLockEnter(&scnMapScriptCache.lock);
-    for (i = 0; i < SCN_MAP_SCRIPT_CACHE_MAX; i++) {
-        ScnMapScriptRow *row = &scnMapScriptCache.rows[i];
-        if (row->path != NULL && row->modified == info.modify_time &&
-            row->size == info.size && row->looseSeen == looseSeen &&
-            row->looseModified == looseModified &&
-            strcmp(row->path, mapPath) == 0) {
-            answer = row->scripted;
-            scnLockLeave(&scnMapScriptCache.lock);
-            return answer;
-        }
+    row = scnMapScriptRowFind(mapPath, &key);
+    if (row != NULL) {
+        answer = row->scripted;
+        scnLockLeave(&scnMapScriptCache.lock);
+        return answer;
     }
     /* Worked out under the lock, so the open this counts is counted once and
        two threads asking about the same new map do not both read it. The
        loose script has already been stated, so a map that has one is answered
        without the map file being opened at all. */
-    answer = looseSeen ? true : scnMapHasChunk(mapPath);
+    answer = key.looseSeen ? true : scnMapHasChunk(mapPath);
     {
-        ScnMapScriptRow *row = &scnMapScriptCache.rows[scnMapScriptCache.next];
-        char            *copy = scnStrDup(mapPath);
+        char *copy = scnStrDup(mapPath);
+
+        row = &scnMapScriptCache.rows[scnMapScriptCache.next];
         if (copy != NULL) {
             free(row->path);
             row->path          = copy;
-            row->modified      = info.modify_time;
-            row->size          = info.size;
-            row->looseSeen     = looseSeen;
-            row->looseModified = looseModified;
+            row->modified      = key.info.modify_time;
+            row->size          = key.info.size;
+            row->looseSeen     = key.looseSeen;
+            row->looseModified = key.looseModified;
+            row->looseSize     = key.looseSize;
             row->scripted      = answer;
+            row->ownKind       = SCN_MAP_OWN_NONE;
             scnMapScriptCache.next =
                 (scnMapScriptCache.next + 1) % SCN_MAP_SCRIPT_CACHE_MAX;
         }
@@ -6797,6 +6856,18 @@ unsigned long scenarioHostMapScriptOpens(void) {
     }
     scnLockEnter(&scnMapScriptCache.lock);
     n = scnMapScriptOpens;
+    scnLockLeave(&scnMapScriptCache.lock);
+    return n;
+}
+
+unsigned long scenarioHostMapKindReads(void) {
+    unsigned long n;
+
+    if (scnMapScriptCache.lock.m == NULL) {
+        return scnMapKindReads;
+    }
+    scnLockEnter(&scnMapScriptCache.lock);
+    n = scnMapKindReads;
     scnLockLeave(&scnMapScriptCache.lock);
     return n;
 }
@@ -9720,23 +9791,43 @@ static void scnPublishMapScript(ServerSim *sim, const ScenarioHost *h,
  * run. A package's kind comes from the manifest found with it; a loose
  * script's table is run to read its kind, as the scenario lister does, and
  * a script that declares no table is taken for a scenario, which is what it
- * would load as. Quiet: the compose reads the script again and says
+ * would load as.
+ *
+ * Running the table means booting a Lua state on the tick thread, so the
+ * answer is kept in the map's row of the map-script cache, under the key that
+ * row already has: the next decision on the same map reads nothing, and a map
+ * or a loose script that changed is read again. A process with no cache lock
+ * reads it every time. Quiet: the compose reads the script again and says
  * whatever is worth saying. */
-typedef enum {
-    SCN_MAP_OWN_NONE = 0,
-    SCN_MAP_OWN_SCENARIO,
-    SCN_MAP_OWN_MOD
-} ScnMapOwnKind;
-
 static ScnMapOwnKind scnMapOwnKind(ServerSim *sim, const char *mapPath) {
-    ScnScriptSource own;
-    char            ownErr[256];
-    bool            mod = false;
+    ScnScriptSource  own;
+    ScnMapScriptKey  key;
+    ScnMapScriptRow *row;
+    char             ownErr[256];
+    bool             keyed;
+    bool             mod  = false;
+    ScnMapOwnKind    kind = SCN_MAP_OWN_NONE;
 
     if (!scnEnabled || mapPath == NULL || mapPath[0] == '\0' ||
-        !serverSimScenarioMapIsScripted(sim, mapPath)) {
+        !serverSimMapIsScripted(sim, mapPath)) {
         return SCN_MAP_OWN_NONE;
     }
+    /* The row the kind is kept in is the one the carries question makes, so
+       it is asked first: a map the cache has not seen yet gets its row. */
+    keyed = scenarioHostMapCarriesScript(mapPath) &&
+            scnMapScriptKeyOf(mapPath, &key);
+    if (keyed) {
+        scnLockEnter(&scnMapScriptCache.lock);
+        row = scnMapScriptRowFind(mapPath, &key);
+        if (row != NULL) {
+            kind = (ScnMapOwnKind)row->ownKind;
+        }
+        scnLockLeave(&scnMapScriptCache.lock);
+        if (kind != SCN_MAP_OWN_NONE) {
+            return kind;
+        }
+    }
+
     memset(&own, 0, sizeof(own));
     if (!scnFindScript(mapPath, &own, ownErr, sizeof(ownErr))) {
         return SCN_MAP_OWN_NONE;
@@ -9754,21 +9845,57 @@ static ScnMapOwnKind scnMapOwnKind(ServerSim *sim, const char *mapPath) {
         }
     }
     scnSourceDrop(&own);
-    return mod ? SCN_MAP_OWN_MOD : SCN_MAP_OWN_SCENARIO;
+    kind = mod ? SCN_MAP_OWN_MOD : SCN_MAP_OWN_SCENARIO;
+
+    /* Kept under the key taken before the read. A file changed during the
+       read gives a new key, so the next decision misses this row and reads
+       it again. */
+    if (keyed) {
+        scnLockEnter(&scnMapScriptCache.lock);
+        row = scnMapScriptRowFind(mapPath, &key);
+        if (row != NULL) {
+            row->ownKind = (uint8_t)kind;
+        }
+        scnMapKindReads++;
+        scnLockLeave(&scnMapScriptCache.lock);
+    } else if (scnMapScriptCache.lock.m != NULL) {
+        scnLockEnter(&scnMapScriptCache.lock);
+        scnMapKindReads++;
+        scnLockLeave(&scnMapScriptCache.lock);
+    } else {
+        scnMapKindReads++;
+    }
+    return kind;
 }
 
-/* The last "gives way" line said, as map path and file, so a lobby that
- * decides again and again on one map says it once rather than at every
- * pick, and a rotation still says it at each map it applies to. Written
- * only under the tick lock, where every decision runs. */
-static char scnYieldSaid[SCN_SCRIPT_PATH_MAX + SCN_DIR_FILE_LEN + 2];
+/* Whether the list holds a plain -mod scenario, the one row that asks what
+ * kind the map's own script is. */
+static bool scnListHasYieldingRow(const ServerSim *sim) {
+    int picks = serverSimGetScriptCount(sim);
+    int i;
 
-static void scnSayYield(const char *mapPath, const char *file) {
-    char key[sizeof(scnYieldSaid)];
+    for (i = 0; i < picks; i++) {
+        const ScnDirEntry *row = serverSimGetScript(sim, i);
+        if (row != NULL && !row->bound &&
+            serverSimOperatorModYieldsToMap(sim, row->file, true)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* The "gives way" line, said once per map and file. said is the lobby's
+ * record of the last one (ScenarioHost.yieldSaid, carried by the decision),
+ * so a lobby that decides again and again on one map says it once rather
+ * than at every pick, and a rotation still says it at each map it applies
+ * to. */
+static void scnSayYield(char *said, size_t saidLen, const char *mapPath,
+                        const char *file) {
+    char key[SCN_SCRIPT_PATH_MAX + SCN_DIR_FILE_LEN + 2];
 
     snprintf(key, sizeof(key), "%s|%s", mapPath != NULL ? mapPath : "", file);
-    if (strcmp(key, scnYieldSaid) == 0) return;
-    snprintf(scnYieldSaid, sizeof(scnYieldSaid), "%s", key);
+    if (strcmp(key, said) == 0) return;
+    snprintf(said, saidLen, "%s", key);
     scnSay(NULL, 0, "scenario: %s (-mod) gives way to this map's own scenario",
            file);
 }
@@ -9780,10 +9907,21 @@ static void scnSayYield(const char *mapPath, const char *file) {
  * skipPicked composes the list as though every picked scenario were off it,
  * mods and the map's own row kept. That is the question a map commit asks
  * when the map is the newer choice: what plays if the map's own script takes
- * the picks' place. The list itself is not touched here. */
+ * the picks' place. The operator's rows are not picks and stay
+ * (serverSimIsOperatorMod). The list itself is not touched here.
+ *
+ * mapOwn is what the map's own script is (scnMapOwnKind), read by the caller
+ * only when a plain -mod scenario is on the list; SCN_MAP_OWN_NONE
+ * otherwise. Against a map's own scenario that row gives way: it is left out
+ * of the compose and the map's own goes where it would if the row were not
+ * listed. Against a map's own mod it composes beside it, and it does not
+ * make picked true, so the map's mod still goes at the front. The row stays
+ * on the host's list either way. yieldSaid is the lobby's record of the
+ * "gives way" line (scnSayYield). */
 static ScenarioHost *scnComposeList(ServerSim *sim, const char *mapPath,
-                                    bool skipPicked, int *mapAtOut,
-                                    char *err, size_t errLen) {
+                                    bool skipPicked, ScnMapOwnKind mapOwn,
+                                    char *yieldSaid, size_t yieldSaidLen,
+                                    int *mapAtOut, char *err, size_t errLen) {
     ScnScriptSource src[SCN_SCRIPTS_MAX];
     ScenarioHost   *h       = NULL;
     int             n       = 0;
@@ -9794,25 +9932,10 @@ static ScenarioHost *scnComposeList(ServerSim *sim, const char *mapPath,
     bool            picked  = false;
     bool            listed  = false;
     bool            modsOff;
-    ScnMapOwnKind   mapOwn  = SCN_MAP_OWN_NONE;
 
     *mapAtOut = -1;
     memset(src, 0, sizeof(src));
     modsOff = serverSimGetModsOff(sim);
-
-    /* Whether a plain -mod scenario on the list meets a map that brings a
-       script of its own, and of which kind: it gives way to a scenario and
-       plays beside a mod. Read before the rows are asked anything, and only
-       when there is such a row. */
-    picks = serverSimGetScriptCount(sim);
-    for (i = 0; i < picks; i++) {
-        const ScnDirEntry *row = serverSimGetScript(sim, i);
-        if (row != NULL && !row->bound &&
-            serverSimOperatorModYieldsToMap(sim, row->file, true)) {
-            mapOwn = scnMapOwnKind(sim, mapPath);
-            break;
-        }
-    }
 
     /* Two questions of the rows the lobby recorded, asked before any file is
        read: whether one of the picks decides the round, and whether the
@@ -9838,29 +9961,26 @@ static ScenarioHost *scnComposeList(ServerSim *sim, const char *mapPath,
         }
         if (row->bound) {
             listed = true;
-        } else if (!row->keepsWinCondition) {
+        } else if (row->keepsWinCondition || modsOff) {
+            /* A mod never makes picked true, and with the box off nothing
+               composes, so nothing gives way either. */
+        } else if (serverSimOperatorModYieldsToMap(
+                       sim, row->file, mapOwn == SCN_MAP_OWN_SCENARIO)) {
             /* A scenario the operator put on with a plain -mod, on a map
-               that brings a scenario of its own, gives way to the map's
-               (serverSimOperatorModYieldsToMap): it is skipped below and the
-               map's own composes as if it were not listed. Said once per map
-               and file (scnSayYield), and not with Mods/Scenario off, where
-               nothing composes at all.
-
-               On a map whose own script is a mod, the same row plays beside
-               it instead: the map's mod does not decide the round, so there
-               is nothing for the row to replace, and picked stays false so
-               the map's own still goes at the front. */
-            if (serverSimOperatorModYieldsToMap(
-                    sim, row->file, mapOwn == SCN_MAP_OWN_SCENARIO)) {
-                if (!modsOff) {
-                    scnSayYield(mapPath, row->file);
-                }
-            } else if (!skipPicked &&
-                       (mapOwn != SCN_MAP_OWN_MOD ||
-                        !serverSimOperatorModYieldsToMap(sim, row->file,
-                                                         true))) {
-                picked = true;
-            }
+               that brings a scenario of its own: the row gives way to the
+               map's (serverSimOperatorModYieldsToMap), so it is skipped below
+               and the map's own composes as if it were not listed. */
+            scnSayYield(yieldSaid, yieldSaidLen, mapPath, row->file);
+        } else if (skipPicked && !serverSimIsOperatorMod(sim, row->file)) {
+            /* A host's pick, left out of this compose. */
+        } else if (mapOwn != SCN_MAP_OWN_MOD ||
+                   !serverSimOperatorModYieldsToMap(sim, row->file, true)) {
+            /* On a map whose own script is a mod, a plain -mod scenario
+               plays beside it instead: the map's mod is not a script that
+               decides the round, so there is nothing for the row to
+               replace, and picked stays false so the map's own still goes
+               at the front. */
+            picked = true;
         }
     }
 
@@ -9931,7 +10051,8 @@ static ScenarioHost *scnComposeList(ServerSim *sim, const char *mapPath,
         /* A compose for a map that is the newer choice, which leaves the
            picked scenarios out to see whether the map's own script takes
            their place. */
-        if (!own && skipPicked && !row->keepsWinCondition) {
+        if (!own && skipPicked && !row->keepsWinCondition &&
+            !serverSimIsOperatorMod(sim, row->file)) {
             continue;
         }
         /* The plain -mod scenario the first loop already let go. */
@@ -10003,32 +10124,41 @@ static ScenarioHost *scnComposeList(ServerSim *sim, const char *mapPath,
 }
 
 /* Whether the host's list holds a picked scenario: a row that is not the
- * map's own and does not keep the win condition.
- *
- * The operator's scenario rows are not picks for this purpose. A plain -mod
- * scenario gives way to the map's own scenario by itself at the compose, so
- * it has no need to come off the list. A -mod-required or -mod-locked one
- * stays on the list and decides the round over the map's own, so a list
- * that holds one answers false: a map commit takes nothing off it. */
+ * map's own, does not keep the win condition and is not the operator's. A
+ * -mod, -mod-required or -mod-locked scenario is the operator's and not a
+ * pick: a fixed one stays and plays, and a plain -mod one stays listed and
+ * gives way at the compose (scnComposeList). */
 static bool scnListHasPickedScenario(const ServerSim *sim) {
-    int  picks = serverSimGetScriptCount(sim);
-    int  i;
-    bool found = false;
+    int picks = serverSimGetScriptCount(sim);
+    int i;
 
     for (i = 0; i < picks; i++) {
         const ScnDirEntry *row = serverSimGetScript(sim, i);
-        if (row == NULL || row->file[0] == '\0' || row->bound ||
-            row->keepsWinCondition) {
-            continue;
-        }
-        if (serverSimOperatorModFixed(sim, row->file)) {
-            return false;
-        }
-        if (!serverSimOperatorModYieldsToMap(sim, row->file, true)) {
-            found = true;
+        if (row != NULL && row->file[0] != '\0' && !row->bound &&
+            !row->keepsWinCondition &&
+            !serverSimIsOperatorMod(sim, row->file)) {
+            return true;
         }
     }
-    return found;
+    return false;
+}
+
+/* Whether the list holds a scenario no host may take off: one named by
+ * -mod-required or -mod-locked. A map commit is not the newer choice over
+ * it, because it is the operator's and not the host's. */
+static bool scnListHasFixedOperatorScenario(const ServerSim *sim) {
+    int picks = serverSimGetScriptCount(sim);
+    int i;
+
+    for (i = 0; i < picks; i++) {
+        const ScnDirEntry *row = serverSimGetScript(sim, i);
+        if (row != NULL && row->file[0] != '\0' && !row->bound &&
+            !row->keepsWinCondition &&
+            serverSimOperatorModFixed(sim, row->file)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /* One console line per script the round loads, in load order: its name, who
@@ -10136,15 +10266,31 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
                               const char *mapPath) {
     char            err[512];
     char            saidErr[512];
+    char            yieldSaid[SCN_SCRIPT_PATH_MAX + SCN_DIR_FILE_LEN + 2];
     int             mapAt   = -1;
+    ScnMapOwnKind   mapOwn  = SCN_MAP_OWN_NONE;
 
     if (slot == NULL) return;
+    /* The lobby's record of the "gives way" line, taken off the host this
+       replaces and handed to the one it attaches below. */
+    yieldSaid[0] = '\0';
+    if (*slot != NULL) {
+        SDL_strlcpy(yieldSaid, (*slot)->yieldSaid, sizeof(yieldSaid));
+    }
     scenarioHostDetach(*slot);
     *slot = NULL;
     if (sim == NULL) return;
 
     err[0]     = '\0';
     saidErr[0] = '\0';
+
+    /* Whether a plain -mod scenario on the list meets a map that brings a
+       script of its own, and of which kind: it gives way to a scenario and
+       plays beside a mod. Read once for both composes below, and only when
+       there is such a row and anything composes at all. */
+    if (!serverSimGetModsOff(sim) && scnListHasYieldingRow(sim)) {
+        mapOwn = scnMapOwnKind(sim, mapPath);
+    }
 
     /* A map commit in a lobby, with a scenario picked before the map: the
        map is the newer choice, so its own scenario plays if it has one and
@@ -10159,12 +10305,22 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
        Not with Mods/Scenario off: nothing composes then, so nothing says
        what the map's own script is, and the picks stay. Nor for a map with
        no script of its own, which has nothing to take the picks' place:
-       the first compose would only attach the mods once more for nothing. */
+       the first compose would only attach the mods once more for nothing.
+
+       Nor where the operator's -mod-required or -mod-locked scenario is
+       listed. That row is not the host's to replace, the command bus will
+       not let it off the list, and it replaces the map's own as a pick does,
+       so the list is composed as it is. The operator's rows are never the
+       picks this takes off (scnListHasPickedScenario,
+       serverSimDropPickedScenarios): a plain -mod scenario stays listed and
+       gives way at the compose instead. */
     if (serverSimScenarioMapIsNewer(sim) && !serverSimGetModsOff(sim) &&
         scnListHasPickedScenario(sim) &&
+        !scnListHasFixedOperatorScenario(sim) &&
         scenarioHostMapCarriesScript(mapPath)) {
-        ScenarioHost *h = scnComposeList(sim, mapPath, true, &mapAt, err,
-                                         sizeof(err));
+        ScenarioHost *h = scnComposeList(sim, mapPath, true, mapOwn,
+                                         yieldSaid, sizeof(yieldSaid),
+                                         &mapAt, err, sizeof(err));
 
         if (h != NULL && mapAt >= 0 && mapAt < h->count &&
             h->entry[mapAt].manifest != NULL &&
@@ -10189,7 +10345,12 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
         }
     }
     if (*slot == NULL) {
-        *slot = scnComposeList(sim, mapPath, false, &mapAt, err, sizeof(err));
+        *slot = scnComposeList(sim, mapPath, false, mapOwn, yieldSaid,
+                               sizeof(yieldSaid), &mapAt, err, sizeof(err));
+    }
+    if (*slot != NULL) {
+        SDL_strlcpy((*slot)->yieldSaid, yieldSaid,
+                    sizeof((*slot)->yieldSaid));
     }
 
     /* And the row the lobby draws for the map's own script, which is a row
