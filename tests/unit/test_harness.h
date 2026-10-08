@@ -3893,6 +3893,8 @@ int run_scenario_compose_off_shortened_keeps_map_own(void);
 int run_scenario_compose_rotation_keeps_picks(void);
 int run_scenario_compose_round_start_closes_preview(void);
 int run_scenario_compose_drop_picked_scenarios(void);
+int run_scenario_compose_commit_map_keeps_operator_mod(void);
+int run_scenario_compose_commit_map_fixed_operator_mod(void);
 int run_scenario_compose_fallback_strict(void);
 int run_scenario_compose_needs_bots_any_mod(void);
 int run_scenario_compose_needs_bots_scenario_and_mod(void);

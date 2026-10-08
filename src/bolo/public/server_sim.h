@@ -973,6 +973,16 @@ bool              serverSimGetOperatorModsLocked(const ServerSim *sim);
 bool serverSimOperatorModFixed(const ServerSim *sim, const char *file);
 
 /*********************************************************
+ *NAME:          serverSimIsOperatorMod
+ *PURPOSE:
+ *  Whether file is one of the operator's rows at all: named
+ *  by -mod, -mod-required or -mod-locked. Such a row is the
+ *  operator's and not a host's pick, so a map commit never
+ *  takes it off the list as one (serverSimDropPickedScenarios).
+ *********************************************************/
+bool serverSimIsOperatorMod(const ServerSim *sim, const char *file);
+
+/*********************************************************
  *NAME:          serverSimOperatorModLocks
  *PURPOSE:
  *  The lobby lock bits the recorded rows call for, for the

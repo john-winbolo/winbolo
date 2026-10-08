@@ -9669,7 +9669,8 @@ static void scnSayYield(const char *mapPath, const char *file) {
  * skipPicked composes the list as though every picked scenario were off it,
  * mods and the map's own row kept. That is the question a map commit asks
  * when the map is the newer choice: what plays if the map's own script takes
- * the picks' place. The list itself is not touched here.
+ * the picks' place. The operator's rows are not picks and stay
+ * (serverSimIsOperatorMod). The list itself is not touched here.
  *
  * mapOwn is what the map's own script is (scnMapOwnKind), read by the caller
  * only when a plain -mod scenario is on the list; SCN_MAP_OWN_NONE
@@ -9730,7 +9731,7 @@ static ScenarioHost *scnComposeList(ServerSim *sim, const char *mapPath,
                map's (serverSimOperatorModYieldsToMap), so it is skipped below
                and the map's own composes as if it were not listed. */
             scnSayYield(mapPath, row->file);
-        } else if (skipPicked) {
+        } else if (skipPicked && !serverSimIsOperatorMod(sim, row->file)) {
             /* A host's pick, left out of this compose. */
         } else if (mapOwn != SCN_MAP_OWN_MOD ||
                    !serverSimOperatorModYieldsToMap(sim, row->file, true)) {
@@ -9810,7 +9811,8 @@ static ScenarioHost *scnComposeList(ServerSim *sim, const char *mapPath,
         /* A compose for a map that is the newer choice, which leaves the
            picked scenarios out to see whether the map's own script takes
            their place. */
-        if (!own && skipPicked && !row->keepsWinCondition) {
+        if (!own && skipPicked && !row->keepsWinCondition &&
+            !serverSimIsOperatorMod(sim, row->file)) {
             continue;
         }
         /* The plain -mod scenario the first loop already let go. */
@@ -9882,7 +9884,10 @@ static ScenarioHost *scnComposeList(ServerSim *sim, const char *mapPath,
 }
 
 /* Whether the host's list holds a picked scenario: a row that is not the
- * map's own and does not keep the win condition. */
+ * map's own, does not keep the win condition and is not the operator's. A
+ * -mod, -mod-required or -mod-locked scenario is the operator's and not a
+ * pick: a fixed one stays and plays, and a plain -mod one stays listed and
+ * gives way at the compose (scnComposeList). */
 static bool scnListHasPickedScenario(const ServerSim *sim) {
     int picks = serverSimGetScriptCount(sim);
     int i;
@@ -9890,7 +9895,26 @@ static bool scnListHasPickedScenario(const ServerSim *sim) {
     for (i = 0; i < picks; i++) {
         const ScnDirEntry *row = serverSimGetScript(sim, i);
         if (row != NULL && row->file[0] != '\0' && !row->bound &&
-            !row->keepsWinCondition) {
+            !row->keepsWinCondition &&
+            !serverSimIsOperatorMod(sim, row->file)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Whether the list holds a scenario no host may take off: one named by
+ * -mod-required or -mod-locked. A map commit is not the newer choice over
+ * it, because it is the operator's and not the host's. */
+static bool scnListHasFixedOperatorScenario(const ServerSim *sim) {
+    int picks = serverSimGetScriptCount(sim);
+    int i;
+
+    for (i = 0; i < picks; i++) {
+        const ScnDirEntry *row = serverSimGetScript(sim, i);
+        if (row != NULL && row->file[0] != '\0' && !row->bound &&
+            !row->keepsWinCondition &&
+            serverSimOperatorModFixed(sim, row->file)) {
             return true;
         }
     }
@@ -10003,9 +10027,18 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
        Not with Mods/Scenario off: nothing composes then, so nothing says
        what the map's own script is, and the picks stay. Nor for a map with
        no script of its own, which has nothing to take the picks' place:
-       the first compose would only attach the mods once more for nothing. */
+       the first compose would only attach the mods once more for nothing.
+
+       Nor where the operator's -mod-required or -mod-locked scenario is
+       listed. That row is not the host's to replace, the command bus will
+       not let it off the list, and it replaces the map's own as a pick does,
+       so the list is composed as it is. The operator's rows are never the
+       picks this takes off (scnListHasPickedScenario,
+       serverSimDropPickedScenarios): a plain -mod scenario stays listed and
+       gives way at the compose instead. */
     if (serverSimScenarioMapIsNewer(sim) && !serverSimGetModsOff(sim) &&
         scnListHasPickedScenario(sim) &&
+        !scnListHasFixedOperatorScenario(sim) &&
         scenarioHostMapCarriesScript(mapPath)) {
         ScenarioHost *h = scnComposeList(sim, mapPath, true, mapOwn, &mapAt,
                                          err, sizeof(err));

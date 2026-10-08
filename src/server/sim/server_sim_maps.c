@@ -557,6 +557,11 @@ bool serverSimOperatorModFixed(const ServerSim *sim, const char *file) {
            sim->operatorModStrength[at] >= SERVER_MOD_REQUIRED;
 }
 
+bool serverSimIsOperatorMod(const ServerSim *sim, const char *file) {
+    if (sim == NULL || file == NULL) return false;
+    return operatorModIndexOf(sim, file) >= 0;
+}
+
 uint32_t serverSimOperatorModLocks(const ServerSim *sim) {
     uint32_t locks = 0;
     int      i;
