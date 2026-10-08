@@ -37,6 +37,11 @@
 --     a tick, two ops an attacker, so the whole wave is ashore inside half a
 --     second. They leave one a second, because a departure still tears a
 --     brain down where an arrival only resumes one.
+--   * A defender the horde keeps killing in the spawn puddle is pushed out:
+--     CAMP.deaths deaths on a boat in the puddle inside CAMP.window and that
+--     seat's next respawn is at an outer sea start clear of the horde, so
+--     it drives back in instead of dying on arrival again. Once a spike;
+--     the count starts over after that respawn. See START CAMP.
 --   * Wave bots respawn like ordinary play. A wave is WAVE_LIMIT_S of
 --     constant pressure (4 minutes unless the lobby says otherwise), ended
 --     only by the clock. Survive the last of the WAVES waves and the
@@ -123,6 +128,12 @@ scenario = {
       min = 1, max = 10, step = 1, default = 4 },
     { id = "rounds", label = "Rounds", type = "int",
       min = 1, max = 5, step = 1, default = 5 },
+    -- The start-camp push-out (see START CAMP below). 0 deaths turns it off
+    -- and the defenders respawn in the puddle every time, as they always did.
+    { id = "camp_deaths", label = "Start camp deaths", type = "int",
+      min = 0, max = 5, step = 1, default = 3 },
+    { id = "camp_window_s", label = "Start camp window (s)", type = "int",
+      min = 5, max = 60, step = 1, default = 18 },
   },
 
   -- What each callback below does, in a line a player reads: the lobby's
@@ -133,7 +144,9 @@ scenario = {
     allow_extra_teams = "Keeps the round to two teams: the defenders and the horde.",
     can_ally = "Players cannot ally.",
     announce = "Silences the newswire for a few seconds while each wave arrives and leaves.",
-    on_choose_start = "Defenders start in the centre puddle; each attacker starts out at sea on its own spoke.",
+    on_choose_start = "Defenders start in the centre puddle, attackers at sea on their own spokes; a defender the horde camps in the puddle starts once at sea, clear of the horde.",
+    on_tank_killed = "Counts each defender's deaths on a boat in the centre puddle; \"Start camp deaths\" of them within \"Start camp window\" send the next start outside.",
+    on_tank_spawned = "Tells a defender who was sent outside why they start there.",
     on_setup = "Gives the defenders the centre bases and pillboxes, builds the island's shallow rim and tree ring, and digs in defender bots.",
     on_start = "Posts the opening \"dig in\" message and notes which seats the horde will use.",
     on_tick = "Sends N waves of 10 attackers, M minutes each with 30 s breaks, N and M set in the lobby; lose all 6 centre bases and you lose, outlast the last wave to win.",
@@ -228,6 +241,38 @@ local T_HALFBUILDING = game.TERRAIN.half_building
 local T_BOAT         = game.TERRAIN.boat
 local T_DEEP_SEA     = game.TERRAIN.deep_sea
 local T_MINE_START   = game.TERRAIN.mine_swamp   -- 10: the first mined code
+
+-- ---------------------------------------------------------------------
+-- START CAMP. The horde can sit on the spawn puddle and kill a defender
+-- the moment each respawn lands, which is a loop the defender cannot get
+-- out of. So a defender who dies CAMP.deaths times on a boat in the puddle
+-- within CAMP.window respawns once at an outer sea start (7..16) instead,
+-- the one clear of the horde, and drives back in.
+--
+-- Why 3 in 18 s by default: the respawn wait is tank_death_ticks, 255
+-- frames or about 5.1 s, so three deaths take at least two waits, about
+-- 11 s. Three inside 18 s means "respawned in the puddle and died again
+-- at once, twice running".
+--
+-- One table rather than a row of locals: the chunk is close to Lua's
+-- limit on locals in one function.
+local CAMP = {
+  deaths  = game.setting("camp_deaths"),            -- 0 = off
+  window  = secs(game.setting("camp_window_s")),
+  -- An outer start is clear when no horde tank is within this many
+  -- squares of it, counted the long way (Chebyshev: the larger of dx, dy).
+  clear_r = 10,
+  -- How old the saved state may be and still judge a death. on_tank_killed
+  -- runs off the event queue, a frame or so after the death, by when the
+  -- killing hit has already taken the boat. 0.1 s is five frames.
+  fresh   = secs(0.1),
+  hole    = {},      -- x * 256 + y -> true: the deep sea joined to starts 1..6
+  hole_n  = 0,
+  last    = {},      -- seat -> { at, in_hole, boat_at }: the last tick seen alive
+  dead_at = {},      -- seat -> ticks of its counted deaths, oldest first
+  pending = {},      -- seat -> true: its next start is outside
+  sent    = {},      -- seat -> the outer start it was sent to, until told
+}
 
 -- ---------------------------------------------------------------------
 -- THE HORDE IS FED RATHER THAN PRICED, AND THEN TOLD HOW TO FIGHT.
@@ -482,6 +527,133 @@ local function set_newswire_mute(on)
   newswire_muted = on
 end
 
+-- ---------------------------------------------------------------------
+-- Start camp (CAMP, above).
+
+-- The hole: every deep sea square joined to the puddle starts 1..6, side by
+-- side (4 neighbours; a diagonal touch does not join). Read off the map as
+-- the round has it, so the recentring the map load does is already in it.
+--
+-- The puddle is closed by the island, so the fill stays small. If a map
+-- edit ever opened a channel to the outer ocean the fill would reach an
+-- outer start; that is reported and the rule stays off for the round
+-- rather than count deaths all over the sea.
+local function camp_build_hole()
+  if CAMP.deaths <= 0 then return end
+  local ter = game.terrain()
+  if ter == nil then return end
+  local outer = {}
+  for n = 7, math.min(16, game.num_starts()) do
+    local s = game.start(n)
+    if s ~= nil then outer[s.x * 256 + s.y] = n end
+  end
+  local hole, n, todo = {}, 0, {}
+  for k = 1, 6 do
+    local s = game.start(k)
+    if s ~= nil and string.byte(ter, s.y * 256 + s.x + 1) == T_DEEP_SEA then
+      todo[#todo + 1] = s.x * 256 + s.y
+    end
+  end
+  while #todo > 0 do
+    local key = table.remove(todo)
+    if not hole[key] then
+      if outer[key] then
+        game.log(string.format(
+          "Survival: [camp] the puddle's deep sea reaches outer start %d -- push-out off",
+          outer[key]))
+        return
+      end
+      hole[key] = true
+      n = n + 1
+      local x, y = math.floor(key / 256), key % 256
+      local near = { { x - 1, y }, { x + 1, y }, { x, y - 1 }, { x, y + 1 } }
+      for _, q in ipairs(near) do
+        local qx, qy = q[1], q[2]
+        if qx >= 0 and qx <= 255 and qy >= 0 and qy <= 255 then
+          local qk = qx * 256 + qy
+          if not hole[qk]
+             and string.byte(ter, qy * 256 + qx + 1) == T_DEEP_SEA then
+            todo[#todo + 1] = qk
+          end
+        end
+      end
+    end
+  end
+  CAMP.hole, CAMP.hole_n = hole, n
+  game.log(string.format("Survival: [camp] hole is %d deep sea square(s)", n))
+end
+
+-- Every frame: where each living defender is. on_tank_killed reads this
+-- rather than the tank, because by the time it runs the tank is dead and
+-- the killing hit has taken its boat. A dead tank is skipped, so its last
+-- living state is what stays.
+local function camp_watch(tick)
+  if CAMP.hole_n == 0 then return end
+  for _, p in ipairs(seats_on(DEF_TEAM)) do
+    local t = game.tank(p)
+    if t ~= nil and not t.dead then
+      local s = CAMP.last[p]
+      if s == nil then s = {}; CAMP.last[p] = s end
+      s.at = tick
+      s.in_hole = CAMP.hole[t.mx * 256 + t.my] == true
+      if s.in_hole and t.boat then s.boat_at = tick end
+    end
+  end
+end
+
+-- A defender died. It counts when its last living state is fresh, in the
+-- hole, and on a boat within CAMP.fresh of the death: the boat test has the
+-- margin so a tank shot off its boat that drowns a frame later still counts.
+local function camp_death(p)
+  if CAMP.hole_n == 0 or not is_defender(p) then return end
+  local now = game.tick()
+  local s = CAMP.last[p]
+  local age  = s and (now - s.at) or -1
+  local bage = (s and s.boat_at) and (now - s.boat_at) or -1
+  local counts = s ~= nil and age <= CAMP.fresh and s.in_hole
+                 and bage >= 0 and bage <= CAMP.fresh
+  local list = CAMP.dead_at[p] or {}
+  if counts then
+    list[#list + 1] = now
+  end
+  -- Only the deaths still inside the window are kept.
+  while #list > 0 and now - list[1] > CAMP.window do
+    table.remove(list, 1)
+  end
+  CAMP.dead_at[p] = list
+  if counts and #list >= CAMP.deaths then CAMP.pending[p] = true end
+  game.log(string.format(
+    "Survival: [camp] seat %d died at tick %d: state age %d, boat age %d, "
+    .. "hole %s -> %s, %d in window%s", p, now, age, bage,
+    tostring(s ~= nil and s.in_hole), counts and "counts" or "no",
+    #list, CAMP.pending[p] and ", pushed out" or ""))
+end
+
+-- The outer start for a pushed-out defender: the lowest numbered of 7..16
+-- with no horde tank within CAMP.clear_r squares, else the one whose
+-- nearest horde tank is farthest away (the lower number on a tie).
+local function camp_outer_start()
+  local horde = {}
+  for _, q in ipairs(seats_on(WAVE_TEAM)) do
+    local t = game.tank(q)
+    if t ~= nil and not t.dead then horde[#horde + 1] = t end
+  end
+  local best, best_d
+  for n = 7, math.min(16, game.num_starts()) do
+    local s = game.start(n)
+    if s ~= nil then
+      local d = math.huge
+      for _, t in ipairs(horde) do
+        local c = math.max(math.abs(t.mx - s.x), math.abs(t.my - s.y))
+        if c < d then d = c end
+      end
+      if d > CAMP.clear_r then return n end
+      if best_d == nil or d > best_d then best, best_d = n, d end
+    end
+  end
+  return best
+end
+
 -- Deterministic spawn pinning. Fires for every placement — first spawn and
 -- respawn alike. Map-file start order: 1..6 the centre-puddle defender
 -- starts, 7..16 the outer ocean.
@@ -507,6 +679,18 @@ function on_choose_start(p)
     -- ashore aimed at their own and the rest fight in. A seat with no team
     -- has no rank; its slot still lands in 7..16, which is ocean.
     return 7 + ((rank or p) % 10)
+  end
+  -- A defender the horde has been camping (camp_death): this one respawn is
+  -- outside, and the count starts over. Nothing is written here -- a policy
+  -- may not write -- so on_tank_spawned says why.
+  if CAMP.pending[p] then
+    local n = camp_outer_start()
+    if n ~= nil then
+      CAMP.pending[p] = nil
+      CAMP.dead_at[p] = nil
+      CAMP.sent[p] = n
+      return n
+    end
   end
   -- Defenders: the puddle, one position per rank on their own side.
   return 1 + ((rank or p) % 6)
@@ -1852,6 +2036,7 @@ end
 -- the field.
 function on_setup()
   dealt = arrange_defence()
+  camp_build_hole()          -- before the rim, though the rim spares the puddle
   build_tree_ring()
   build_shallow_rim()        -- collects; on_tick drains it
 end
@@ -1878,8 +2063,31 @@ function on_start()
                          #seats, GRACE_S))
 end
 
+-- The start-camp count (camp_death). Every defender death is judged; only
+-- one on a boat in the puddle counts.
+function on_tank_killed(victim, killer, cause)
+  camp_death(victim)
+end
+
+-- A defender on_choose_start sent outside is told why, once, on the respawn
+-- it was sent on. The engine puts every respawn on a boat, so the outer sea
+-- start needs no help there.
+function on_tank_spawned(p, mx, my, respawn)
+  local n = CAMP.sent[p]
+  if n == nil then return end
+  CAMP.sent[p] = nil
+  game.message("*** The horde holds the start. You start outside. ***", p)
+  game.log(string.format(
+    "Survival: [camp] seat %d pushed out to start %d at (%d,%d) tick %d",
+    p, n, mx, my, game.tick()))
+end
+
 function on_tick(tick)
   if ended then return end
+
+  -- Where every living defender is, for the start-camp count. Ahead of
+  -- every early return below, so the saved state is never a frame behind.
+  camp_watch(tick)
 
   -- Late deal for a lobby-less harness, which joins players after ticking
   -- starts. The pre-build rides with it: it is the half of the arrangement
