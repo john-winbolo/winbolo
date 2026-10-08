@@ -40,6 +40,11 @@ Anything it leaves out takes the default below. An arena marked
 is reported as SKIP, or as an expected failure that does not turn the gate
 red. Both are debts; keep the reason short and say what would repay it.
 
+TEAMS AND SETTINGS. allybots=N passes -allybots N, so the -bots are seated
+on team N rather than on no team. setting=id=value passes -setting id=value
+for one of the script's own lobby settings; two or more are separated by
+commas.
+
 A SHIPPED SCRIPT UNDER TEST. An arena that tests a mod rather than a bot
 names the file on its GATE line, from the repository root:
 
@@ -86,6 +91,8 @@ DEFAULTS = {
     "seed": "42",
     "script": None,
     "include": None,
+    "allybots": None,
+    "setting": None,
 }
 
 # The verdict helper a script= arena gets in place of the compat prelude. It
@@ -355,6 +362,15 @@ class Job(object):
             cmd += ["-limit", str(o["limit"])]
         if o.get("mines") is not None:
             cmd += ["-mines", str(o["mines"])]
+        # -nolobby seats every -bots bot on no team; allybots=N puts them
+        # all on team N, which a script that tests a team needs.
+        if o.get("allybots") is not None:
+            cmd += ["-allybots", str(o["allybots"])]
+        # setting=id=value[,id=value] picks a value for one of the script's
+        # own lobby settings, as -setting does.
+        for st in (o.get("setting") or "").split(","):
+            if st.strip():
+                cmd += ["-setting", st.strip()]
         return cmd
 
     def start(self, ds, build_dir):
