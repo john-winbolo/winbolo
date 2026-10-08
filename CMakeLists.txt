@@ -6718,6 +6718,7 @@ set(_unit_test_names
     scenario_compose_drop_picked_scenarios
     scenario_compose_commit_map_keeps_operator_mod
     scenario_compose_commit_map_fixed_operator_mod
+    scenario_compose_map_kind_cached
     scenario_compose_fallback_strict
     scenario_compose_needs_bots_any_mod
     scenario_compose_needs_bots_scenario_and_mod

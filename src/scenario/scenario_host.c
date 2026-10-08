@@ -6463,6 +6463,12 @@ static bool scnScriptExists(const char *path) {
  * cache's lock below, and read through scenarioHostMapScriptOpens. */
 static unsigned long scnMapScriptOpens;
 
+/* How many times a scripted map's own script has been read for its kind
+ * (scnMapOwnKind), for the case that holds a second decision on the same map
+ * to reading none. Written under the cache's lock below, and read through
+ * scenarioHostMapKindReads. */
+static unsigned long scnMapKindReads;
+
 /* A copy of a string on the heap, which the cache below owns. Written out
  * rather than calling strdup, which is not C99. */
 static char *scnStrDup(const char *src) {
@@ -6574,13 +6580,27 @@ static bool scnMapHasScriptUncached(const char *mapPath) {
  * reason: the render thread and the tick thread both ask. */
 #define SCN_MAP_SCRIPT_CACHE_MAX 256
 
+/* What a scripted map's own script is, for the plain -mod scenario that gives
+ * way to a map's own scenario and plays beside a map's own mod
+ * (scnMapOwnKind). Kept in the map's row once read, because reading it can
+ * mean running the script's top level. The row's key is the key here too, so
+ * a map or a loose script that changed is read again. */
+typedef enum {
+    SCN_MAP_OWN_NONE = 0,
+    SCN_MAP_OWN_SCENARIO,
+    SCN_MAP_OWN_MOD
+} ScnMapOwnKind;
+
 typedef struct {
     char    *path;          /* owned; NULL for a row nothing is in */
     SDL_Time modified;      /* the map file's */
     Uint64   size;          /* the map file's */
     bool     looseSeen;     /* is an X.scenario.lua beside it */
     SDL_Time looseModified; /* and when it was last written; 0 for none */
+    Uint64   looseSize;     /* and its length; 0 for none */
     bool     scripted;
+    uint8_t  ownKind;       /* ScnMapOwnKind once scnMapOwnKind has read
+                               it; SCN_MAP_OWN_NONE until then */
 } ScnMapScriptRow;
 
 typedef struct {
@@ -6602,65 +6622,98 @@ bool scenarioHostMapHasScript(const char *mapPath) {
     return scenarioHostMapCarriesScript(mapPath);
 }
 
-bool scenarioHostMapCarriesScript(const char *mapPath) {
-    char         script[SCN_SCRIPT_PATH_MAX];
+/* What a row is keyed on, for one map: the map file's stat and the loose
+   script's. The loose script's length is in it as well as its time, because
+   a modify time can be as coarse as a second, and the kind kept in the row
+   (scnMapOwnKind) is a fact about the script's text. */
+typedef struct {
     SDL_PathInfo info;
-    SDL_PathInfo looseInfo;
     bool         looseSeen;
-    SDL_Time     looseModified = 0;
-    int          i;
-    bool         answer;
+    SDL_Time     looseModified;
+    Uint64       looseSize;
+} ScnMapScriptKey;
+
+/* The key for mapPath into *key, or false where there is nothing to key a
+   row on or nowhere to keep it: no cache lock, or no regular file there.
+   The loose script is stated here as well, so a script dropped next to a map
+   the cache has already seen gives a new key rather than the old row. */
+static bool scnMapScriptKeyOf(const char *mapPath, ScnMapScriptKey *key) {
+    char         script[SCN_SCRIPT_PATH_MAX];
+    SDL_PathInfo looseInfo;
+
+    if (scnMapScriptCache.lock.m == NULL ||
+        !SDL_GetPathInfo(mapPath, &key->info) ||
+        key->info.type != SDL_PATHTYPE_FILE) {
+        return false;
+    }
+    key->looseSeen = scnScriptPath(mapPath, script, sizeof(script)) &&
+                     SDL_GetPathInfo(script, &looseInfo) &&
+                     looseInfo.type == SDL_PATHTYPE_FILE;
+    key->looseModified = key->looseSeen ? looseInfo.modify_time : 0;
+    key->looseSize     = key->looseSeen ? looseInfo.size : 0;
+    return true;
+}
+
+/* The row for mapPath under key, or NULL. The caller holds the lock. */
+static ScnMapScriptRow *scnMapScriptRowFind(const char *mapPath,
+                                            const ScnMapScriptKey *key) {
+    int i;
+
+    for (i = 0; i < SCN_MAP_SCRIPT_CACHE_MAX; i++) {
+        ScnMapScriptRow *row = &scnMapScriptCache.rows[i];
+        if (row->path != NULL && row->modified == key->info.modify_time &&
+            row->size == key->info.size && row->looseSeen == key->looseSeen &&
+            row->looseModified == key->looseModified &&
+            row->looseSize == key->looseSize &&
+            strcmp(row->path, mapPath) == 0) {
+            return row;
+        }
+    }
+    return NULL;
+}
+
+bool scenarioHostMapCarriesScript(const char *mapPath) {
+    ScnMapScriptKey  key;
+    ScnMapScriptRow *row;
+    bool             answer;
 
     if (mapPath == NULL || mapPath[0] == '\0') {
         return false;
     }
     /* Nothing to key a row on, or nowhere to keep it: the question is
-       answered, just not remembered. */
-    if (scnMapScriptCache.lock.m == NULL ||
-        !SDL_GetPathInfo(mapPath, &info) ||
-        info.type != SDL_PATHTYPE_FILE) {
+       answered, just not remembered. The key is the first half of the
+       answer as well: a loose script beside the map outranks anything packed
+       into it, and it is a stat either way. */
+    if (!scnMapScriptKeyOf(mapPath, &key)) {
         return scnMapHasScriptUncached(mapPath);
-    }
-    /* The other half of the key, and the first half of the answer: a loose
-       script beside the map outranks anything packed into it, and it is a
-       stat either way. Taken before the row is looked for, so a script
-       dropped next to a map the cache has already seen misses the row rather
-       than being answered from it. */
-    looseSeen = scnScriptPath(mapPath, script, sizeof(script)) &&
-                SDL_GetPathInfo(script, &looseInfo) &&
-                looseInfo.type == SDL_PATHTYPE_FILE;
-    if (looseSeen) {
-        looseModified = looseInfo.modify_time;
     }
 
     scnLockEnter(&scnMapScriptCache.lock);
-    for (i = 0; i < SCN_MAP_SCRIPT_CACHE_MAX; i++) {
-        ScnMapScriptRow *row = &scnMapScriptCache.rows[i];
-        if (row->path != NULL && row->modified == info.modify_time &&
-            row->size == info.size && row->looseSeen == looseSeen &&
-            row->looseModified == looseModified &&
-            strcmp(row->path, mapPath) == 0) {
-            answer = row->scripted;
-            scnLockLeave(&scnMapScriptCache.lock);
-            return answer;
-        }
+    row = scnMapScriptRowFind(mapPath, &key);
+    if (row != NULL) {
+        answer = row->scripted;
+        scnLockLeave(&scnMapScriptCache.lock);
+        return answer;
     }
     /* Worked out under the lock, so the open this counts is counted once and
        two threads asking about the same new map do not both read it. The
        loose script has already been stated, so a map that has one is answered
        without the map file being opened at all. */
-    answer = looseSeen ? true : scnMapHasChunk(mapPath);
+    answer = key.looseSeen ? true : scnMapHasChunk(mapPath);
     {
-        ScnMapScriptRow *row = &scnMapScriptCache.rows[scnMapScriptCache.next];
-        char            *copy = scnStrDup(mapPath);
+        char *copy = scnStrDup(mapPath);
+
+        row = &scnMapScriptCache.rows[scnMapScriptCache.next];
         if (copy != NULL) {
             free(row->path);
             row->path          = copy;
-            row->modified      = info.modify_time;
-            row->size          = info.size;
-            row->looseSeen     = looseSeen;
-            row->looseModified = looseModified;
+            row->modified      = key.info.modify_time;
+            row->size          = key.info.size;
+            row->looseSeen     = key.looseSeen;
+            row->looseModified = key.looseModified;
+            row->looseSize     = key.looseSize;
             row->scripted      = answer;
+            row->ownKind       = SCN_MAP_OWN_NONE;
             scnMapScriptCache.next =
                 (scnMapScriptCache.next + 1) % SCN_MAP_SCRIPT_CACHE_MAX;
         }
@@ -6677,6 +6730,18 @@ unsigned long scenarioHostMapScriptOpens(void) {
     }
     scnLockEnter(&scnMapScriptCache.lock);
     n = scnMapScriptOpens;
+    scnLockLeave(&scnMapScriptCache.lock);
+    return n;
+}
+
+unsigned long scenarioHostMapKindReads(void) {
+    unsigned long n;
+
+    if (scnMapScriptCache.lock.m == NULL) {
+        return scnMapKindReads;
+    }
+    scnLockEnter(&scnMapScriptCache.lock);
+    n = scnMapKindReads;
     scnLockLeave(&scnMapScriptCache.lock);
     return n;
 }
@@ -9593,23 +9658,43 @@ static void scnPublishMapScript(ServerSim *sim, const ScenarioHost *h,
  * run. A package's kind comes from the manifest found with it; a loose
  * script's table is run to read its kind, as the scenario lister does, and
  * a script that declares no table is taken for a scenario, which is what it
- * would load as. Quiet: the compose reads the script again and says
+ * would load as.
+ *
+ * Running the table means booting a Lua state on the tick thread, so the
+ * answer is kept in the map's row of the map-script cache, under the key that
+ * row already has: the next decision on the same map reads nothing, and a map
+ * or a loose script that changed is read again. A process with no cache lock
+ * reads it every time. Quiet: the compose reads the script again and says
  * whatever is worth saying. */
-typedef enum {
-    SCN_MAP_OWN_NONE = 0,
-    SCN_MAP_OWN_SCENARIO,
-    SCN_MAP_OWN_MOD
-} ScnMapOwnKind;
-
 static ScnMapOwnKind scnMapOwnKind(ServerSim *sim, const char *mapPath) {
-    ScnScriptSource own;
-    char            ownErr[256];
-    bool            mod = false;
+    ScnScriptSource  own;
+    ScnMapScriptKey  key;
+    ScnMapScriptRow *row;
+    char             ownErr[256];
+    bool             keyed;
+    bool             mod  = false;
+    ScnMapOwnKind    kind = SCN_MAP_OWN_NONE;
 
     if (!scnEnabled || mapPath == NULL || mapPath[0] == '\0' ||
         !serverSimMapIsScripted(sim, mapPath)) {
         return SCN_MAP_OWN_NONE;
     }
+    /* The row the kind is kept in is the one the carries question makes, so
+       it is asked first: a map the cache has not seen yet gets its row. */
+    keyed = scenarioHostMapCarriesScript(mapPath) &&
+            scnMapScriptKeyOf(mapPath, &key);
+    if (keyed) {
+        scnLockEnter(&scnMapScriptCache.lock);
+        row = scnMapScriptRowFind(mapPath, &key);
+        if (row != NULL) {
+            kind = (ScnMapOwnKind)row->ownKind;
+        }
+        scnLockLeave(&scnMapScriptCache.lock);
+        if (kind != SCN_MAP_OWN_NONE) {
+            return kind;
+        }
+    }
+
     memset(&own, 0, sizeof(own));
     if (!scnFindScript(mapPath, &own, ownErr, sizeof(ownErr))) {
         return SCN_MAP_OWN_NONE;
@@ -9627,7 +9712,27 @@ static ScnMapOwnKind scnMapOwnKind(ServerSim *sim, const char *mapPath) {
         }
     }
     scnSourceDrop(&own);
-    return mod ? SCN_MAP_OWN_MOD : SCN_MAP_OWN_SCENARIO;
+    kind = mod ? SCN_MAP_OWN_MOD : SCN_MAP_OWN_SCENARIO;
+
+    /* Kept under the key taken before the read. A file changed during the
+       read gives a new key, so the next decision misses this row and reads
+       it again. */
+    if (keyed) {
+        scnLockEnter(&scnMapScriptCache.lock);
+        row = scnMapScriptRowFind(mapPath, &key);
+        if (row != NULL) {
+            row->ownKind = (uint8_t)kind;
+        }
+        scnMapKindReads++;
+        scnLockLeave(&scnMapScriptCache.lock);
+    } else if (scnMapScriptCache.lock.m != NULL) {
+        scnLockEnter(&scnMapScriptCache.lock);
+        scnMapKindReads++;
+        scnLockLeave(&scnMapScriptCache.lock);
+    } else {
+        scnMapKindReads++;
+    }
+    return kind;
 }
 
 /* Whether the list holds a plain -mod scenario, the one row that asks what

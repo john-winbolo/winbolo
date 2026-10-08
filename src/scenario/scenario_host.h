@@ -419,6 +419,20 @@ bool scenarioHostMapCarriesScript(const char *mapPath);
 unsigned long scenarioHostMapScriptOpens(void);
 
 /*********************************************************
+ *NAME:          scenarioHostMapKindReads
+ *PURPOSE:
+ *  How many times a scripted map's own script has been read
+ *  to learn whether it is a scenario or a mod, which a plain
+ *  -mod scenario on the list asks at each decision. The
+ *  answer is kept beside the map's row of the cache above,
+ *  under the same key, so a second decision on an unchanged
+ *  map reads nothing; this is how a test says so.
+ *
+ *  Only ever rises.
+ *********************************************************/
+unsigned long scenarioHostMapKindReads(void);
+
+/*********************************************************
  *NAME:          scenarioHostRegisterMapScripted
  *PURPOSE:
  *  Hands the sim's map lister the question above, so every

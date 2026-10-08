@@ -160,6 +160,9 @@
  *   scenario_compose_commit_map_fixed_operator_mod
  *       — the same under -mod-required and -mod-locked: the fixed row stays
  *       and plays in place of the map's own scenario.
+ *   scenario_compose_map_kind_cached
+ *       — the kind of the map's own script is read once per map and script,
+ *       and again when the script changes.
  *   scenario_compose_fallback_strict
  *       — a scripted lobby with no earlier type falls back to strict
  *       tournament.
@@ -3765,6 +3768,61 @@ int run_scenario_compose_commit_map_fixed_operator_mod(void) {
         scDestroy(sim);
     }
 
+    scDropMapScript();
+    scDropMapFiles();
+    scDropDir();
+    return 0;
+}
+
+/* What kind the map's own script is, read once per map and script: a second
+   decision on the same map reads nothing, and the script rewritten (a mod
+   now, so a different length) is read again. The answer the second read
+   gives is the one that plays: the -mod scenario beside the map's mod. */
+int run_scenario_compose_map_kind_cached(void) {
+    ServerSim    *sim;
+    const char   *duelOnly[1] = { "duel.lua" };
+    unsigned long before;
+    unsigned long afterSet;
+    unsigned long afterPick;
+    unsigned long afterEdit;
+
+    UT_ASSERT(scMakeDir("map_kind_cached"));
+    UT_ASSERT(scWrite("duel.lua", kScOtherScenario));
+    UT_ASSERT(scWriteMapFiles());
+    UT_ASSERT(scPutMapScript(kScMapScenario));
+    sim = scOperatorSim(SERVER_MOD_DEFAULT);
+    UT_ASSERT_MSG(sim != NULL, "the -mod row was refused");
+
+    before = scenarioHostMapKindReads();
+    UT_ASSERT(scSetMap(sim, scMapPath()));
+    UT_ASSERT(strcmp(sim->scenarioIdentity.name, "Survival") == 0);
+    afterSet = scenarioHostMapKindReads();
+    UT_ASSERT_MSG(afterSet - before == 1,
+                  "the preview and the commit read the map's script %lu "
+                  "times, wanted once", afterSet - before);
+
+    UT_ASSERT(scPick(sim, duelOnly, 1) == CMD_OK);
+    UT_ASSERT(strcmp(sim->scenarioIdentity.name, "Survival") == 0);
+    afterPick = scenarioHostMapKindReads();
+    UT_ASSERT_MSG(afterPick == afterSet,
+                  "a pick on the same map read its script %lu more times",
+                  afterPick - afterSet);
+
+    UT_ASSERT(scPutMapScript(kScModOne));
+    UT_ASSERT(scPick(sim, duelOnly, 1) == CMD_OK);
+    afterEdit = scenarioHostMapKindReads();
+    UT_ASSERT_MSG(afterEdit - afterPick == 1,
+                  "a rewritten script was read %lu times, wanted once",
+                  afterEdit - afterPick);
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
+                  "with the map's script a mod the round is \"%s\", wanted "
+                  "the -mod scenario", sim->scenarioIdentity.name);
+    UT_ASSERT_MSG(scSlot != NULL && scenarioHostScriptCount(scSlot) == 2,
+                  "%d scripts composed, wanted the map's mod and the -mod "
+                  "scenario",
+                  scSlot != NULL ? scenarioHostScriptCount(scSlot) : -1);
+
+    scDestroy(sim);
     scDropMapScript();
     scDropMapFiles();
     scDropDir();
