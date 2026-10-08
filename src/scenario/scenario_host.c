@@ -9607,7 +9607,7 @@ static ScnMapOwnKind scnMapOwnKind(ServerSim *sim, const char *mapPath) {
     bool            mod = false;
 
     if (!scnEnabled || mapPath == NULL || mapPath[0] == '\0' ||
-        !serverSimScenarioMapIsScripted(sim, mapPath)) {
+        !serverSimMapIsScripted(sim, mapPath)) {
         return SCN_MAP_OWN_NONE;
     }
     memset(&own, 0, sizeof(own));

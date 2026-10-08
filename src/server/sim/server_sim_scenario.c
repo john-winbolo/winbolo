@@ -4892,6 +4892,12 @@ bool serverSimScenarioMapIsScripted(const ServerSim *sim, const char *mapPath) {
     return sim->scenarioMapScripted(sim->scenarioMapScriptedCtx, mapPath);
 }
 
+/* The same question on server_sim.h, for the scenario runtime, which sees
+   that header and not this one's. */
+bool serverSimMapIsScripted(const ServerSim *sim, const char *mapPath) {
+    return serverSimScenarioMapIsScripted(sim, mapPath);
+}
+
 void serverSimSetScenarioLister(ServerSim *sim,
                                 int (*list)(void *ctx, const char *dir,
                                             ScnDirEntry *out, int max),

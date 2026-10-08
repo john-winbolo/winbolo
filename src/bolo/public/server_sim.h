@@ -900,6 +900,17 @@ const char *serverSimGetWorkshopMapDir(const ServerSim *sim);
  *********************************************************/
 const char *serverSimGetSelectedScenario(const ServerSim *sim);
 
+/*********************************************************
+ *NAME:          serverSimMapIsScripted
+ *PURPOSE:
+ *  Whether the map at mapPath brings a script this server
+ *  would run, asked through whatever the process registered
+ *  with serverSimSetScenarioMapScripted. False with nothing
+ *  registered. The scenario runtime's question, which it
+ *  asks here because it sees only this header.
+ *********************************************************/
+bool serverSimMapIsScripted(const ServerSim *sim, const char *mapPath);
+
 /* How firmly an operator's -mod flag holds a script on the lobby's list.
  * The values are ordered: a file named under two flags keeps the stronger. */
 typedef enum {
