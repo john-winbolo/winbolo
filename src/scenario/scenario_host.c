@@ -616,6 +616,12 @@ struct ScenarioHost {
      * the list was found beside it. */
     char             mapPath[SCN_SCRIPT_PATH_MAX];
 
+    /* The last "gives way" line said for this lobby (scnSayYield), as map
+     * path and file. The decision carries it from the host it replaces to
+     * the one it attaches, so a lobby that decides again and again on one
+     * map says it once, and two sims in one process each say their own. */
+    char             yieldSaid[SCN_SCRIPT_PATH_MAX + SCN_DIR_FILE_LEN + 2];
+
     char             lastError[SCN_ERR_LEN];
     bool             active;
 
@@ -9751,18 +9757,18 @@ static bool scnListHasYieldingRow(const ServerSim *sim) {
     return false;
 }
 
-/* The last "gives way" line said, as map path and file, so a lobby that
- * decides again and again on one map says it once rather than at every
- * pick, and a rotation still says it at each map it applies to. Written
- * only under the tick lock, where every decision runs. */
-static char scnYieldSaid[SCN_SCRIPT_PATH_MAX + SCN_DIR_FILE_LEN + 2];
-
-static void scnSayYield(const char *mapPath, const char *file) {
-    char key[sizeof(scnYieldSaid)];
+/* The "gives way" line, said once per map and file. said is the lobby's
+ * record of the last one (ScenarioHost.yieldSaid, carried by the decision),
+ * so a lobby that decides again and again on one map says it once rather
+ * than at every pick, and a rotation still says it at each map it applies
+ * to. */
+static void scnSayYield(char *said, size_t saidLen, const char *mapPath,
+                        const char *file) {
+    char key[SCN_SCRIPT_PATH_MAX + SCN_DIR_FILE_LEN + 2];
 
     snprintf(key, sizeof(key), "%s|%s", mapPath != NULL ? mapPath : "", file);
-    if (strcmp(key, scnYieldSaid) == 0) return;
-    snprintf(scnYieldSaid, sizeof(scnYieldSaid), "%s", key);
+    if (strcmp(key, said) == 0) return;
+    snprintf(said, saidLen, "%s", key);
     scnSay(NULL, 0, "scenario: %s (-mod) gives way to this map's own scenario",
            file);
 }
@@ -9783,9 +9789,11 @@ static void scnSayYield(const char *mapPath, const char *file) {
  * of the compose and the map's own goes where it would if the row were not
  * listed. Against a map's own mod it composes beside it, and it does not
  * make picked true, so the map's mod still goes at the front. The row stays
- * on the host's list either way. */
+ * on the host's list either way. yieldSaid is the lobby's record of the
+ * "gives way" line (scnSayYield). */
 static ScenarioHost *scnComposeList(ServerSim *sim, const char *mapPath,
                                     bool skipPicked, ScnMapOwnKind mapOwn,
+                                    char *yieldSaid, size_t yieldSaidLen,
                                     int *mapAtOut, char *err, size_t errLen) {
     ScnScriptSource src[SCN_SCRIPTS_MAX];
     ScenarioHost   *h       = NULL;
@@ -9835,7 +9843,7 @@ static ScenarioHost *scnComposeList(ServerSim *sim, const char *mapPath,
                that brings a scenario of its own: the row gives way to the
                map's (serverSimOperatorModYieldsToMap), so it is skipped below
                and the map's own composes as if it were not listed. */
-            scnSayYield(mapPath, row->file);
+            scnSayYield(yieldSaid, yieldSaidLen, mapPath, row->file);
         } else if (skipPicked && !serverSimIsOperatorMod(sim, row->file)) {
             /* A host's pick, left out of this compose. */
         } else if (mapOwn != SCN_MAP_OWN_MOD ||
@@ -10100,10 +10108,17 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
                               const char *mapPath) {
     char            err[512];
     char            saidErr[512];
+    char            yieldSaid[SCN_SCRIPT_PATH_MAX + SCN_DIR_FILE_LEN + 2];
     int             mapAt   = -1;
     ScnMapOwnKind   mapOwn  = SCN_MAP_OWN_NONE;
 
     if (slot == NULL) return;
+    /* The lobby's record of the "gives way" line, taken off the host this
+       replaces and handed to the one it attaches below. */
+    yieldSaid[0] = '\0';
+    if (*slot != NULL) {
+        SDL_strlcpy(yieldSaid, (*slot)->yieldSaid, sizeof(yieldSaid));
+    }
     scenarioHostDetach(*slot);
     *slot = NULL;
     if (sim == NULL) return;
@@ -10145,8 +10160,9 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
         scnListHasPickedScenario(sim) &&
         !scnListHasFixedOperatorScenario(sim) &&
         scenarioHostMapCarriesScript(mapPath)) {
-        ScenarioHost *h = scnComposeList(sim, mapPath, true, mapOwn, &mapAt,
-                                         err, sizeof(err));
+        ScenarioHost *h = scnComposeList(sim, mapPath, true, mapOwn,
+                                         yieldSaid, sizeof(yieldSaid),
+                                         &mapAt, err, sizeof(err));
 
         if (h != NULL && mapAt >= 0 && mapAt < h->count &&
             h->entry[mapAt].manifest != NULL &&
@@ -10171,8 +10187,12 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
         }
     }
     if (*slot == NULL) {
-        *slot = scnComposeList(sim, mapPath, false, mapOwn, &mapAt, err,
-                               sizeof(err));
+        *slot = scnComposeList(sim, mapPath, false, mapOwn, yieldSaid,
+                               sizeof(yieldSaid), &mapAt, err, sizeof(err));
+    }
+    if (*slot != NULL) {
+        SDL_strlcpy((*slot)->yieldSaid, yieldSaid,
+                    sizeof((*slot)->yieldSaid));
     }
 
     /* And the row the lobby draws for the map's own script, which is a row
