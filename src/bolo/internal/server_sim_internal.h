@@ -470,8 +470,8 @@ struct ServerSim {
                                     * this one did. */
     bool     modsOff;              /* the round composes none of the scripts
                                     * on the pick list, mods and picked
-                                    * scenarios alike; the map's own script
-                                    * still plays. Stored in the negative
+                                    * scenarios alike, and not the map's own
+                                    * script either. Stored in the negative
                                     * sense for the same reason as
                                     * smartPingsOff above. The pick list is
                                     * left alone, so this is what a host turns
@@ -583,6 +583,20 @@ struct ServerSim {
      * that is what a map with no scenario template leaves. */
     bool         previousSeatsValid;
     BYTE         previousSeats[MAX_TANKS];
+
+    /* The host's script list as it stood when the preview started, and the
+     * place it was holding for the map's own row (scenarioMapScriptHeld
+     * below). A preview of a map with a scenario of its own takes the picked
+     * scenarios off the live list, because that is what Set Map would do and
+     * the preview shows what Set Map would give. Every preview decides from
+     * this list rather than from the one the last preview left, so browsing
+     * past a scripted map to a plain one gives the picks back, and Cancel
+     * puts this list back before the old map is decided again. Written with
+     * the map above and forgotten with it. */
+    ScnDirEntry  previousScripts[LOBBY_SCRIPT_LIST_MAX];
+    int          previousScriptCount;
+    bool         previousMapScriptHeld;
+    int          previousMapScriptHeldAt;
 
     /* The file the live map was read from, kept because a scenario is
      * discovered beside its .map and the display name is not enough to find
@@ -963,6 +977,19 @@ struct ServerSim {
        that knows whether the file was there and whether it loaded. An empty
        file name means the committed map brought nothing. */
     ScnDirEntry  scenarioMapScript;
+    /* Where the host's list had the map's own row when Mods/Scenario off
+       took it off, so the row goes back to that place when the box is on
+       again. The row is not on the list while the box is off, because the
+       script is not playing and the lobby draws no row for it; but the map
+       still brings it, and the place is the host's. Set by
+       serverSimHoldMapScript, used and forgotten by the next
+       serverSimSetMapScript. */
+    bool         scenarioMapScriptHeld;
+    int          scenarioMapScriptHeldAt;
+    /* True only while a lobby map commit is being decided, so the decision
+       knows the map is the host's newest choice. Set and cleared by
+       serverSimScenarioOnMapCommitted. */
+    bool         scenarioMapIsNewer;
     /* That script's details (scenario_details.h), which the lobby's details
        dialog asks for by the row's file name. Kept beside the row rather than
        in it: every other ScnDirEntry is a directory row, and the directory's

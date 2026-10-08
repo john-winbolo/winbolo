@@ -47,7 +47,7 @@
 
 /* Every server-side map mutator calls this at the end of its success
  * path; defined below, after the reload and preview paths that call it. */
-static void serverSimApplyMapChange(ServerSim *sim);
+static void serverSimApplyMapChange(ServerSim *sim, bool mapIsNewer);
 
 bool serverSimRandomMapRegenerate(ServerSim *sim) {
     BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
@@ -133,7 +133,9 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
     /* Generated, not read — nothing to look beside. */
     sim->mapFilePath[0] = '\0';
 
-    serverSimApplyMapChange(sim);
+    /* The round-end regenerate and the map-skip vote, never a host's pick:
+       the chooser's random maps come through serverSimReloadRandomMap. */
+    serverSimApplyMapChange(sim, false);
     return TRUE;
 }
 
@@ -349,6 +351,14 @@ void serverSimSetScriptList(ServerSim *sim, const ScnDirEntry *entries,
         sim->scenarioScripts[i] = entries[i];
     }
     sim->scenarioScriptCount = count;
+    /* A list the host writes while a preview is up is the host's list from
+       now on, whichever map ends up committed, so it is what a Cancel or the
+       next preview starts from too. */
+    if (sim->previousMapData != NULL) {
+        memcpy(sim->previousScripts, sim->scenarioScripts,
+               sizeof(sim->previousScripts));
+        sim->previousScriptCount = sim->scenarioScriptCount;
+    }
 }
 
 int serverSimGetScriptCount(const ServerSim *sim) {
@@ -1152,6 +1162,9 @@ void serverSimSetMapScript(ServerSim *sim, const ScnDirEntry *entry) {
     sim->scenarioMapScriptSettingsLen = 0;
     if (entry == NULL || entry->file[0] == '\0') {
         memset(&sim->scenarioMapScript, 0, sizeof(sim->scenarioMapScript));
+        /* No script, or one that is not playing for a reason other than the
+           box, so any place a hold kept goes with it. */
+        sim->scenarioMapScriptHeld = false;
         /* And the place the host kept for it, which now names a script no
            map brings. A row that stayed would draw the last map's scenario
            in the lobby list and would be handed to the compose again at the
@@ -1183,9 +1196,51 @@ void serverSimSetMapScript(ServerSim *sim, const ScnDirEntry *entry) {
        drawing the old map's name at that position, and the next pick would
        hand the compose a row naming a file that is no longer anybody's. The
        place is the host's and stays; only what sits in it is replaced. */
+    if (at < 0 && sim->scenarioMapScriptHeld &&
+        sim->scenarioScriptCount < LOBBY_SCRIPT_LIST_MAX) {
+        /* The place a hold kept while Mods/Scenario was off: the row goes
+           back where the host had it, and the rows from there on move down
+           one. A list the host shortened in the meantime gets it at the
+           end. */
+        int i;
+
+        at = sim->scenarioMapScriptHeldAt;
+        if (at > sim->scenarioScriptCount) at = sim->scenarioScriptCount;
+        for (i = sim->scenarioScriptCount; i > at; i--) {
+            sim->scenarioScripts[i] = sim->scenarioScripts[i - 1];
+        }
+        sim->scenarioScriptCount++;
+    }
+    sim->scenarioMapScriptHeld = false;
     if (at >= 0) {
         sim->scenarioScripts[at] = sim->scenarioMapScript;
     }
+}
+
+void serverSimHoldMapScript(ServerSim *sim) {
+    int at;
+
+    if (sim == NULL) return;
+    at = scriptListMapOwnAt(sim);
+    /* Read before the clear below, which forgets any older hold. A hold that
+       finds no row keeps the older one: a list the host edits while the box
+       is off is decided again, and that must not lose the place. */
+    if (at < 0 && sim->scenarioMapScriptHeld) {
+        at = sim->scenarioMapScriptHeldAt;
+        /* But no further than the end of the list the host has now: a place
+           past it names no row, and the end is where the row goes back. */
+        if (at > sim->scenarioScriptCount) at = sim->scenarioScriptCount;
+    }
+    serverSimSetMapScript(sim, NULL);
+    if (at >= 0) {
+        sim->scenarioMapScriptHeld   = true;
+        sim->scenarioMapScriptHeldAt = at;
+    }
+}
+
+int serverSimGetMapScriptHeldAt(const ServerSim *sim) {
+    if (sim == NULL || !sim->scenarioMapScriptHeld) return -1;
+    return sim->scenarioMapScriptHeldAt;
 }
 
 const ScnDirEntry *serverSimGetMapScript(const ServerSim *sim) {
@@ -1329,7 +1384,10 @@ bool serverSimMapDirPickRandom(ServerSim *sim) {
 
     snprintf(msg, sizeof(msg), "Map rotation: loaded '%s'", sim->mapName);
     serverSimConsoleMessage(msg);
-    serverSimApplyMapChange(sim);
+    /* Not the newer choice: a rotation, an empty server's reset or a map-skip
+       vote picks this map, not a host, so the operator's list stays as it is
+       and a picked scenario still replaces the map's own. */
+    serverSimApplyMapChange(sim, false);
     return TRUE;
 }
 
@@ -1431,7 +1489,9 @@ static bool serverSimApplyRandomMapConfig(ServerSim *sim,
  * changed nothing is re-seated and the counts put back are the ones there.
  * previousSeatsValid comes from serverSimScenarioSeatCounts, which answers
  * false when no template is attached — that is what keeps "no template" apart
- * from a team the host emptied on purpose.
+ * from a team the host emptied on purpose. And the host's script list, with
+ * the place held for the map's own row, because a preview of a map with a
+ * scenario of its own takes the picked scenarios off it.
  *
  * Every field is written only once the bytes are held, so a failed malloc
  * leaves no preview to cancel rather than half a snapshot. Every preview
@@ -1448,6 +1508,25 @@ static void stashCommittedMap(ServerSim *sim) {
            sizeof(sim->previousMapPath));
     sim->previousSeatsValid =
         serverSimScenarioSeatCounts(sim, sim->previousSeats);
+    memcpy(sim->previousScripts, sim->scenarioScripts,
+           sizeof(sim->previousScripts));
+    sim->previousScriptCount     = sim->scenarioScriptCount;
+    sim->previousMapScriptHeld   = sim->scenarioMapScriptHeld;
+    sim->previousMapScriptHeldAt = sim->scenarioMapScriptHeldAt;
+}
+
+/* The host's list as it stood when the preview started, put back. A preview
+   of a map with its own scenario takes the picked scenarios off the live
+   list, and the map's own row may have moved or gone with the map; none of
+   that is the host's doing, so each preview and the Cancel decide from the
+   list the host had. The decision that follows matches the map's own row to
+   the map again. */
+static void restorePreviewScripts(ServerSim *sim) {
+    memcpy(sim->scenarioScripts, sim->previousScripts,
+           sizeof(sim->scenarioScripts));
+    sim->scenarioScriptCount     = sim->previousScriptCount;
+    sim->scenarioMapScriptHeld   = sim->previousMapScriptHeld;
+    sim->scenarioMapScriptHeldAt = sim->previousMapScriptHeldAt;
 }
 
 bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
@@ -1570,7 +1649,7 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
        name cannot find the file again. */
     SDL_strlcpy(sim->mapFilePath, mapFileName, sizeof(sim->mapFilePath));
 
-    serverSimApplyMapChange(sim);
+    serverSimApplyMapChange(sim, true);
     return TRUE;
 }
 
@@ -1711,7 +1790,7 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
     /* Bytes, not a file — nothing to look beside. */
     sim->mapFilePath[0] = '\0';
 
-    serverSimApplyMapChange(sim);
+    serverSimApplyMapChange(sim, true);
     return TRUE;
 }
 
@@ -1769,7 +1848,7 @@ bool serverSimReloadRandomMap(ServerSim *sim, const MapGenConfig *cfg) {
             "serverSimReloadRandomMap: now '%s' (%d compressed bytes)",
             sim->mapName, sim->cachedMapDataLen);
     }
-    serverSimApplyMapChange(sim);
+    serverSimApplyMapChange(sim, true);
     return TRUE;
 }
 
@@ -1829,6 +1908,8 @@ bool serverSimRevertPreview(ServerSim *sim) {
        that map came from bytes, which is the same answer as before. */
     SDL_strlcpy(sim->mapFilePath, sim->previousMapPath,
                 sizeof(sim->mapFilePath));
+    /* And the list the host had with it. */
+    restorePreviewScripts(sim);
 
     free(sim->previousMapData);
     sim->previousMapData = NULL;
@@ -1838,7 +1919,10 @@ bool serverSimRevertPreview(ServerSim *sim) {
 
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
-    serverSimApplyMapChange(sim);
+    /* Not a new choice: the host backed out of one. The old map is decided
+       again from the list it had, which is back in place above, and nothing
+       on it is taken off for the map's own script. */
+    serverSimApplyMapChange(sim, false);
 
     /* Where the previewed map brought a different template, the map change
        above seated this one from scratch, which is what a map the host
@@ -2402,8 +2486,14 @@ int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
  * fields in CTRL_LOBBY_SETTINGS reflect the new map, and clear
  * humans' ready state — which aborts any in-flight countdown via
  * lobbyAutoUnreadyOnChange. Called from every map-mutator at the
- * end of its success path. */
-static void serverSimApplyMapChange(ServerSim *sim) {
+ * end of its success path.
+ *
+ * mapIsNewer is true only for a map a host chose — the map list, an
+ * upload, the chooser's random map — so that a scenario the map brings
+ * may take the place of one picked before it. A rotation, a vote, the
+ * round-end regenerate and a Cancel pass false and leave the list as it
+ * is. */
+static void serverSimApplyMapChange(ServerSim *sim, bool mapIsNewer) {
     mpDiagLog("[srv] applyMapChange map='%.32s' cachedLen=%d random=%d",
               sim->mapName, sim->cachedMapDataLen,
               (int)sim->randomMapEnabled);
@@ -2471,13 +2561,25 @@ static void serverSimApplyMapChange(ServerSim *sim) {
        point a seat can be given one on the new map. Whoever owns the
        scenario is told about the file first and the seating reads whatever
        template they leave; the settings publish below then carries a lobby
-       that is already the new map's. */
-    serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
+       that is already the new map's.
+
+       A preview decides from the list the host had when it started, not the
+       one the last preview left (restorePreviewScripts above). Each preview
+       is decided as a commit, so it shows what Set Map would give; a Cancel
+       puts the list back, and Set Map keeps what the preview did. */
+    if (sim->previousMapData != NULL) {
+        restorePreviewScripts(sim);
+    }
+    if (mapIsNewer) {
+        serverSimScenarioOnMapCommitted(sim, sim->mapFilePath);
+    } else {
+        serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
+    }
     /* And the list the lobby draws, because the map commit has just changed
        it: the row for the map's own script is the committed map's, and the
-       decision above is what set or cleared it. The picks are untouched by a
-       commit, so until the list carried the map's own row there was nothing
-       here for a commit to publish. */
+       decision above is what set or cleared it. The picks can change too: a
+       map whose own scenario loads takes the picked scenarios off, and a
+       preview or a Cancel puts the host's list back. */
     serverSimPublishScriptList(sim);
 
     /* Whoever owns the scenario has just attached the new map's or let the

@@ -40,6 +40,14 @@ void serverSimScenarioClearSeats(ServerSim *sim);
 void serverSimScenarioReconcileLobby(ServerSim *sim);
 void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath);
 
+/* A map commit: OnMapChanged, told that in a lobby the map is the host's
+ * newest choice (serverSimScenarioMapIsNewer). Where the new map's own
+ * script is a scenario and it loads, it plays in place of any scenario
+ * picked before it, and those picks come off the list; mods stay. A
+ * cancelled preview goes through OnMapChanged instead, because putting the
+ * old map back is not a new choice. */
+void serverSimScenarioOnMapCommitted(ServerSim *sim, const char *mapPath);
+
 /* Whether the map at mapPath has a script beside it, asked through whatever
  * the process registered with serverSimSetScenarioMapScripted. False with
  * nothing registered, which is what a build carrying no scenario library

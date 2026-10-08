@@ -509,7 +509,11 @@ static bool lobbyRoundBoundShadowed(int idx) {
  * arrives when the host has one pick fewer and nothing is hidden, and the
  * lobby is not told which of the two it is, so both are treated as the one
  * that loses a pick. Checking the box back on takes the map's row off the
- * list and shows every pick, and the host can edit freely there. */
+ * list and shows every pick, and the host can edit freely there.
+ *
+ * A server with this build composes nothing with the box off, the map's own
+ * script included, and so publishes no map row then; the case is left for an
+ * older server that still does. */
 static bool lobbyRoundLiveMayBeCut(void) {
     int i;
 
@@ -1346,9 +1350,9 @@ static void lobbyScenarioDetailsRuleRow(int rule, double value,
  * picked scenario alike, so it neither wins a rule over another script nor
  * has its own rules play, and a note under its table says so rather than the
  * table going missing. A pick that sets no rule has no table and still gets
- * the note, because it does not load either way. The map's own script is not
- * a pick: it loads with the box off, and gets neither the skip nor the
- * note. */
+ * the note, because it does not load either way. The map's own script does
+ * not load with the box off either, so it gets the skip and the note with the
+ * rest. */
 static void lobbyScenarioDetailsRules(ClientSim *cs) {
     LobbyRoundRow  order[LOBBY_ROUND_MAX];
     const uint8_t *blobs[LOBBY_ROUND_MAX];
@@ -1374,7 +1378,7 @@ static void lobbyScenarioDetailsRules(ClientSim *cs) {
     for (i = 0; i < n; i++) {
         blobs[i] = NULL;
         lens[i]  = 0;
-        if (!order[i].bound && !modsOn) continue;
+        if (!modsOn) continue;
         if (lobbyScenarioDetailsOfFile(cs, order[i].file, &blobs[i],
                                        &lens[i]) ==
                 CLIENT_SCN_DETAILS_WAITING &&
@@ -1410,7 +1414,7 @@ static void lobbyScenarioDetailsRules(ClientSim *cs) {
     /* Shown whether or not the table is: a pick on a server with
        Mods/Scenario off loads nothing, rules or not, and that does not wait
        on any answer. */
-    if (!modsOn && !s_detailsBound) {
+    if (!modsOn) {
         lobbyScenarioRowNote(langGetText(STR_DLGLOBBY_DETAILS_MODS_OFF));
     }
 }

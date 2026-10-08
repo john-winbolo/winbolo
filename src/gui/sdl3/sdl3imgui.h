@@ -80,6 +80,9 @@ void sdl3ImguiClearNavFocus(void);
 void sdl3ImguiNewGame(struct ClientSim *cs);
 void sdl3ImguiForwardEvent(const void *event);
 bool sdl3ImguiWantCaptureMouse(void);
+/* Whether the pointer, where it is now, is over an ImGui window on screen —
+   what WantCaptureMouse will say once the next NewFrame has seen it. */
+bool sdl3ImguiMouseOverWindow(void);
 bool sdl3ImguiIsDialogOpen(void);
 
 /*********************************************************
