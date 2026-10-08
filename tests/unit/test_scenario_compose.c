@@ -471,7 +471,11 @@ static int scBaseWinSkipped;
    map commit took off, counted for the same reason. */
 #define SC_GIVES_WAY "(-mod) gives way"
 #define SC_TAKEN_OFF "taken off the list"
-#define SC_DUEL_LOADED "Duel loaded from"
+/* The load line, "scenario: Duel loaded from <path>". Matched by its start
+   and its verb only, so a line that also names the author and the date
+   between them still counts. */
+#define SC_DUEL_LOADED "scenario: Duel "
+#define SC_LOADED      " loaded"
 
 static int scGivesWay;
 static int scTakenOff;
@@ -523,7 +527,8 @@ static void scConsoleCb(void *ctx, char *msg) {
     if (msg != NULL && strstr(msg, SC_TAKEN_OFF) != NULL) {
         scTakenOff++;
     }
-    if (msg != NULL && strstr(msg, SC_DUEL_LOADED) != NULL) {
+    if (msg != NULL && strstr(msg, SC_DUEL_LOADED) != NULL &&
+        strstr(msg, SC_LOADED) != NULL) {
         scDuelLoads++;
     }
     scNoteLine(msg);
