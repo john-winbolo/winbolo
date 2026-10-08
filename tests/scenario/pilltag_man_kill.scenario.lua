@@ -25,7 +25,8 @@ ARENA = { given = false }
 function on_lgm_died(p, killer, mx, my, scripted)
   local A = ARENA
   if p == 0 and A.out_at ~= nil and A.died == nil then
-    A.died = { killer = killer, t = game.tick(), part = tuned[1] }
+    A.died = { killer = killer, t = game.tick(),
+               part = A.dropped and A.dropped.part or tuned[1] }
     game.log(string.format("ARENA man died killer=%s t=%d part=%s",
                            tostring(killer), game.tick(), tostring(tuned[1])))
   end
@@ -33,12 +34,16 @@ end
 
 local arena_real_placed = on_pill_placed
 function on_pill_placed(n, p, armour, scripted)
+  -- The part seat 1 had when the man died is read before the script hears of
+  -- the drop: the script retunes every bot when the holder loses the prize,
+  -- and the engine reports the drop before the death.
+  local part = tuned[1]
   arena_real_placed(n, p, armour, scripted)
   local A = ARENA
   -- The engine puts the prize down before it reports the death, so the drop
   -- is kept from the moment the man is out.
   if A.out_at ~= nil and A.died == nil and n == pill then
-    A.dropped = { armour = armour, holder = holder, t = game.tick() }
+    A.dropped = { armour = armour, holder = holder, t = game.tick(), part = part }
     game.log(string.format("ARENA dropped armour=%d holder=%s t=%d", armour,
                            tostring(holder), game.tick()))
   end

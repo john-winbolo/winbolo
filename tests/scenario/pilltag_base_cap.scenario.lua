@@ -298,6 +298,15 @@ function on_tick(tick)
       game.teleport(1, A.cx + 2, A.cy, 64)
     end
     if c.take and tick >= A.first + c.take then
+      -- give_pill refuses a pillbox that is in a tank, so a prize seat 0
+      -- has back aboard (his hop picked up again) is put down beside him
+      -- first; seat 1's take is then from the ground, as it is when the hop
+      -- is still lying there.
+      local pb, h = game.pill(pill), holder and game.tank(holder)
+      if pb.in_tank and holder ~= nil and holder ~= 1 and h ~= nil then
+        local x, y = standable_near(h.mx + 2, h.my)
+        game.drop_pill(holder, pill, x, y)
+      end
       game.give_pill(1, pill)
       A.step = "take"
       A.take_wait = tick

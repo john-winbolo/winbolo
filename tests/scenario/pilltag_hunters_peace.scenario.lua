@@ -32,6 +32,11 @@
 -- to the end of the 5 s that follow. The 2 s are for shells still in the air
 -- and the brain's look at its armour, which comes a think after the hit.
 
+-- Played as a Free For All (TEAMS.vs_it = false, as the "Teams" setting
+-- would). The peace list is what keeps hunters off each other there; in
+-- Everyone vs It the hunters are allies, and an ally is never a target, so
+-- phase 2's fight between two hunters cannot happen.
+TEAMS.vs_it = false
 ARENA = { given = false, hits = {}, lines = {} }
 scenario.callbacks.on_tank_hit = "Arena: counts the tank hits between the seats."
 scenario.callbacks.pill_damage_scale = "Arena: counts the hunters' hits on the prize."
