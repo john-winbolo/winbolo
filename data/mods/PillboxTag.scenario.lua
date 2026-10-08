@@ -72,7 +72,7 @@
 -- and a dead one lying on the ground is repaired by nobody.
 --
 -- Who plays with whom. The host picks it in the lobby with the "Teams"
--- setting. In "Everyone vs It", the default, every tank but the holder is on
+-- setting. In "Everyone vs It" every tank but the holder is on
 -- one team, the hunters' team, and the holder is alone on a team of his own.
 -- The hunters are allied with each other and nobody is allied with him, so
 -- a built prize fires at every hunter. Each time the prize changes hands the
@@ -83,10 +83,11 @@
 -- still hurts an ally (the engine has no rule that spares one), so hunters
 -- who shoot through each other at the holder hurt each other.
 --
--- In "Free For All" every tank is on a team of its own from the round
--- start, whatever the lobby teams were, so nobody is allied with anybody and
--- nobody can ally: the holder is against everybody, and a built prize fires
--- at everybody but him. In both of those the lobby teams are put back when
+-- In "Free For All", the default, every tank is on a team of its own from
+-- the round start, whatever the lobby teams were, so nobody is allied with
+-- anybody and nobody can ally: the holder is against everybody, and a
+-- built prize fires at everybody but him. Each hunter rushes a built prize
+-- on his own (see RUSH). In both of those the lobby teams are put back when
 -- this script ends the round on its own clock (the engine's time limit is
 -- set five seconds later, so the script gets there first). A round ended any
 -- other way, by the host or the server, keeps the round's teams: a roster
@@ -3799,7 +3800,7 @@ scenario = {
       default = wet_time.decay },
     { id = "teams", label = "Teams", type = "choice",
       choices = { TEAMS.VS_IT, TEAMS.FREE_FOR_ALL, TEAMS.LOBBY_TEAMS },
-      default = TEAMS.VS_IT },
+      default = TEAMS.FREE_FOR_ALL },
     { id = "voice_everyone", label = "Voice chat to everyone",
       type = "choice",
       choices = { "Only in " .. TEAMS.FREE_FOR_ALL, "Yes", "No" },
