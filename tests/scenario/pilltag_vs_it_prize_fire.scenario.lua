@@ -14,6 +14,7 @@
 -- PASS: in the 8 s after the fort goes up, the fort hits seat 1 at least
 -- once and never hits seat 0.
 
+TEAMS.vs_it = true
 ARENA = { given = false, on = { [0] = 0, [1] = 0 } }
 scenario.callbacks.on_tank_hit = "Arena: counts the prize's hits on each seat."
 

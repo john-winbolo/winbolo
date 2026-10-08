@@ -1,6 +1,7 @@
 -- GATE: ticks=2000 bots=3 script=data/mods/PillboxTag.scenario.lua
 --
--- Pillbox Tag, Everyone vs It (the default "Teams" setting): the teams follow
+-- Pillbox Tag, Everyone vs It (TEAMS.vs_it = true, as the "Teams" setting
+-- would pick it): the teams follow
 -- the prize.
 --
 -- Step 1, tick 200: nobody holds the prize, so every seat is a hunter, all
@@ -24,6 +25,7 @@
 --
 -- PASS: every check at every step holds.
 
+TEAMS.vs_it = true
 ARENA = { step = 0 }
 
 function ARENA.allies(a, b)
