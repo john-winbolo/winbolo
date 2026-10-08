@@ -1029,7 +1029,7 @@ struct ServerSim {
        the rows at every new lobby (serverSimRecordOperatorMods). Held
        against the host only for a fixed row (serverSimOperatorModFixed):
        a -mod row's value is a default the host may move for one game.
-       Written only by serverSimApplySettingArg. */
+       Written only by serverSimRecordOperatorSetting. */
     struct {
         char    file[LOBBY_SCENARIO_FILE_LEN];
         char    id[SCN_SETTING_ID_LEN];

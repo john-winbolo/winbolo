@@ -68,6 +68,7 @@
 #include "../common/prefs.h"
 #include "../headless/cmd_stdin.h"
 #include "server_console.h"
+#include "server_args.h"        /* the -mod flags and -setting */
 #include "wire_limits.h"
 #include "../scenario/scenario_host.h"
 #include "../scenario/scenario_pack.h"
@@ -973,19 +974,19 @@ void processTrackerArg(char *argItem, char *trackerAddr, unsigned short *tracker
 
 #define ARG_NOT_FOUND -1
 
-/* Where serverSimApplySettingArg sends what it did: the console, as the
+/* Where serverArgsApplySetting sends what it did: the console, as the
    rest of startup says what it loaded. */
 static void serverSettingArgSay(void *ctx, const char *line) {
   serverMessageConsoleMessage((ServerSim *)ctx, (char *)line);
 }
 
-/* One -setting argument, "[file:]id=value" (serverSimApplySettingArg).
+/* One -setting argument, "[file:]id=value" (serverArgsApplySetting).
  * defaultFile is the map's own script, used when the argument names no
  * file. Says on the console what it did, or why it did nothing. */
 static void serverApplySettingArg(ServerSim *sim, const char *arg,
                                   const char *defaultFile) {
-  (void)serverSimApplySettingArg(sim, arg, defaultFile, serverSettingArgSay,
-                                 sim);
+  (void)serverArgsApplySetting(sim, arg, defaultFile, serverSettingArgSay,
+                               sim);
 }
 
 /* Whether arg is the flag "-<name>", with argExist's rule: case does not
@@ -1005,7 +1006,7 @@ static bool argIsFlag(const char *arg, const char *name) {
   return (*arg == '\0' && *name == '\0') ? TRUE : FALSE;
 }
 
-/* Where serverSimApplyOperatorModArgs sends its warnings and notes: stderr,
+/* Where serverArgsApplyMods sends its warnings and notes: stderr,
    the way an unknown -lock name is warned about. */
 static void serverModArgsSay(void *ctx, const char *line) {
   (void)ctx;
@@ -1736,7 +1737,7 @@ int main(int argc, char **argv) {
      so there is nothing to close. Not under -noscenarios, which ignores all
      three flags and says so further down. */
   if (argExist(argc, argv, "noscenarios") != TRUE &&
-      serverSimOperatorModArgsConflict(argc, (const char *const *)argv)) {
+      serverArgsModConflict(argc, (const char *const *)argv)) {
     fprintf(stderr, "%s\n", SERVER_MOD_ARGS_CONFLICT_TEXT);
     exit(1);
   }
@@ -2055,15 +2056,14 @@ int main(int argc, char **argv) {
      beside it would only fail to load at every game, so it is said once
      here instead. */
   bool operatorModsDecided = FALSE;
-  if (serverSimOperatorModArgsGiven(argc, (const char *const *)argv)) {
+  if (serverArgsModGiven(argc, (const char *const *)argv)) {
     if (argExist(argc, argv, "noscenarios") == TRUE) {
       fprintf(stderr,
               "Warning: -noscenarios turns scripts off; -mod, -mod-required "
               "and -mod-locked are ignored\n");
     } else {
-      (void)serverSimApplyOperatorModArgs(serverSim, argc,
-                                          (const char *const *)argv,
-                                          serverModArgsSay, NULL);
+      (void)serverArgsApplyMods(serverSim, argc, (const char *const *)argv,
+                                serverModArgsSay, NULL);
       serverSayOperatorMods(serverSim);
       if (serverSimRecordOperatorMods(serverSim)) {
         scenarioHostDecide(serverSim, &scenarioHost, scenarioMapPath);

@@ -6,9 +6,10 @@
 /*
  * The dedicated server's -mod, -mod-required and -mod-locked: scripts the
  * operator puts on every game's script list, held there with three
- * strengths. serverSimApplyOperatorModArgs parses the flags into
- * serverSimAddOperatorMod (servermain.c prints what it says); the sim holds the rows apart from the list, puts them back on it at every new
- * lobby (serverSimRecordOperatorMods), and the CMD_SET_SCRIPT_LIST arm in
+ * strengths. serverArgsApplyMods (server_args.c) parses the flags into
+ * serverSimAddOperatorMod, and servermain.c prints what it says. The sim
+ * holds the rows apart from the list and puts them back on it at every new
+ * lobby (serverSimRecordOperatorMods). The CMD_SET_SCRIPT_LIST arm in
  * server_command_dispatch.c holds the host to them.
  *
  *   operator_mods_resolve  — a name finds its file as given, without its
@@ -85,6 +86,7 @@
 #include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled,
                                     * serverSimReturnToLobby */
 #include "server_sim_scenario.h"   /* serverSimSetScenarioLister */
+#include "server_args.h"           /* serverArgsApplyMods, serverArgsApplySetting */
 #include "server_lifecycle.h"      /* ServerInstanceConfig */
 #include "server/sim/server_sim_shared.h" /* serverSimResetLobbyToDefaults */
 #include "threads.h"
@@ -511,7 +513,7 @@ int run_operator_mods_wire(void) {
 
 /* ── 6. The command line ──────────────────────────────────────────── */
 
-/* What serverSimApplyOperatorModArgs said, kept for the asserts. */
+/* What serverArgsApplyMods said, kept for the asserts. */
 typedef struct {
     int  n;
     char lines[8][700];
@@ -552,11 +554,11 @@ int run_operator_mods_args(void) {
 
         sim = omLobby(&d);
         UT_ASSERT(sim != NULL);
-        UT_ASSERT(serverSimOperatorModArgsGiven(argc, argv));
-        UT_ASSERT(!serverSimOperatorModArgsConflict(argc, argv));
+        UT_ASSERT(serverArgsModGiven(argc, argv));
+        UT_ASSERT(!serverArgsModConflict(argc, argv));
         memset(&said, 0, sizeof(said));
-        UT_ASSERT(serverSimApplyOperatorModArgs(sim, argc, argv, omSay,
-                                                &said) == SERVER_MOD_ARGS_OK);
+        UT_ASSERT(serverArgsApplyMods(sim, argc, argv, omSay,
+                                      &said) == SERVER_MOD_ARGS_OK);
         UT_ASSERT_MSG(serverSimGetOperatorModCount(sim) == 2,
                       "%d rows, wanted nolgm and fastreload",
                       serverSimGetOperatorModCount(sim));
@@ -585,8 +587,8 @@ int run_operator_mods_args(void) {
         sim = omLobby(&d);
         UT_ASSERT(sim != NULL);
         memset(&said, 0, sizeof(said));
-        UT_ASSERT(serverSimApplyOperatorModArgs(sim, argc, argv, omSay,
-                                                &said) == SERVER_MOD_ARGS_OK);
+        UT_ASSERT(serverArgsApplyMods(sim, argc, argv, omSay,
+                                      &said) == SERVER_MOD_ARGS_OK);
         UT_ASSERT(serverSimGetOperatorModCount(sim) == 0);
         UT_ASSERT(said.n == 2);
         UT_ASSERT(omSaidHas(&said, "-mod needs a mod name"));
@@ -607,8 +609,8 @@ int run_operator_mods_args(void) {
         sim = omLobby(&d);
         UT_ASSERT(sim != NULL);
         memset(&said, 0, sizeof(said));
-        UT_ASSERT(serverSimApplyOperatorModArgs(sim, argc, argv, omSay,
-                                                &said) == SERVER_MOD_ARGS_OK);
+        UT_ASSERT(serverArgsApplyMods(sim, argc, argv, omSay,
+                                      &said) == SERVER_MOD_ARGS_OK);
         UT_ASSERT_MSG(serverSimGetOperatorModCount(sim) == 0,
                       "an over-long value was cut and read");
         UT_ASSERT(said.n == 1);
@@ -624,8 +626,8 @@ int run_operator_mods_args(void) {
         sim = omLobby(&d);
         UT_ASSERT(sim != NULL);
         memset(&said, 0, sizeof(said));
-        UT_ASSERT(serverSimApplyOperatorModArgs(sim, argc, argv, omSay,
-                                                &said) == SERVER_MOD_ARGS_OK);
+        UT_ASSERT(serverArgsApplyMods(sim, argc, argv, omSay,
+                                      &said) == SERVER_MOD_ARGS_OK);
         UT_ASSERT(serverSimGetOperatorModsLocked(sim));
         UT_ASSERT(serverSimGetOperatorModCount(sim) == 0);
         UT_ASSERT(omSaidHas(&said, "-mod-locked missing"));
@@ -643,28 +645,28 @@ int run_operator_mods_args(void) {
         const char *twoLocked[] = { "WinBoloDS", "-mod-locked", "wave",
                                     "-mod-locked", "nolgm" };
 
-        UT_ASSERT(serverSimOperatorModArgsConflict(5, withMod));
-        UT_ASSERT(serverSimOperatorModArgsConflict(5, withReq));
-        UT_ASSERT(!serverSimOperatorModArgsConflict(5, twoLocked));
+        UT_ASSERT(serverArgsModConflict(5, withMod));
+        UT_ASSERT(serverArgsModConflict(5, withReq));
+        UT_ASSERT(!serverArgsModConflict(5, twoLocked));
 
         sim = omLobby(&d);
         UT_ASSERT(sim != NULL);
         memset(&said, 0, sizeof(said));
-        UT_ASSERT(serverSimApplyOperatorModArgs(sim, 5, withMod, omSay,
-                                                &said) ==
+        UT_ASSERT(serverArgsApplyMods(sim, 5, withMod, omSay,
+                                      &said) ==
                   SERVER_MOD_ARGS_CONFLICT);
         UT_ASSERT(said.n == 1);
         UT_ASSERT(strcmp(said.lines[0], SERVER_MOD_ARGS_CONFLICT_TEXT) == 0);
         UT_ASSERT(serverSimGetOperatorModCount(sim) == 0);
         UT_ASSERT_MSG(!serverSimGetOperatorModsLocked(sim),
                       "a refused command line still locked the list");
-        UT_ASSERT(serverSimApplyOperatorModArgs(sim, 5, withReq, NULL, NULL) ==
+        UT_ASSERT(serverArgsApplyMods(sim, 5, withReq, NULL, NULL) ==
                   SERVER_MOD_ARGS_CONFLICT);
         UT_ASSERT(serverSimGetOperatorModCount(sim) == 0);
 
         /* Two -mod-lockeds are one locked list. */
-        UT_ASSERT(serverSimApplyOperatorModArgs(sim, 5, twoLocked, NULL,
-                                                NULL) == SERVER_MOD_ARGS_OK);
+        UT_ASSERT(serverArgsApplyMods(sim, 5, twoLocked, NULL,
+                                      NULL) == SERVER_MOD_ARGS_OK);
         UT_ASSERT(serverSimGetOperatorModsLocked(sim));
         UT_ASSERT(serverSimGetOperatorModCount(sim) == 2);
         serverSimDestroy(sim);
@@ -675,8 +677,8 @@ int run_operator_mods_args(void) {
         const char *argv[] = { "WinBoloDS", "-modx", "a", "-moddir", "b",
                                "-nolobby" };
 
-        UT_ASSERT(!serverSimOperatorModArgsGiven(6, argv));
-        UT_ASSERT(!serverSimOperatorModArgsConflict(6, argv));
+        UT_ASSERT(!serverArgsModGiven(6, argv));
+        UT_ASSERT(!serverArgsModConflict(6, argv));
     }
     return 0;
 }
@@ -977,8 +979,8 @@ int run_operator_mods_setting_short_name(void) {
 
     /* The short name, in another case, finds the operator's row. */
     memset(&said, 0, sizeof(said));
-    UT_ASSERT_MSG(serverSimApplySettingArg(sim, "MACRULES:pushback=false",
-                                           "", omSay, &said),
+    UT_ASSERT_MSG(serverArgsApplySetting(sim, "MACRULES:pushback=false",
+                                         "", omSay, &said),
                   "a short name did not reach MacRules.scenario.lua: %s",
                   said.lines[0]);
     UT_ASSERT(omSettingValue(sim, "MacRules.scenario.lua", "pushback", 1) ==
@@ -987,49 +989,49 @@ int run_operator_mods_setting_short_name(void) {
                       omSaidHas(&said, "each new lobby"),
                   "said: %s", said.lines[0]);
     /* And the full name still works. */
-    UT_ASSERT(serverSimApplySettingArg(sim,
-                                       "MacRules.scenario.lua:armour=150", "",
-                                       NULL, NULL));
+    UT_ASSERT(serverArgsApplySetting(sim,
+                                     "MacRules.scenario.lua:armour=150", "",
+                                     NULL, NULL));
     UT_ASSERT(omSettingValue(sim, "MacRules.scenario.lua", "armour", 120) ==
               150);
     UT_ASSERT(sim->operatorSettingCount == 2);
 
     /* A script that is not the operator's: found by its short name in the
        directory and set, but not kept for the next lobby. */
-    UT_ASSERT(serverSimApplySettingArg(sim, "wave:rounds=2", "", NULL, NULL));
+    UT_ASSERT(serverArgsApplySetting(sim, "wave:rounds=2", "", NULL, NULL));
     UT_ASSERT(omSettingValue(sim, "wave.scenario", "rounds", 5) == 2);
     UT_ASSERT(sim->operatorSettingCount == 2);
     UT_ASSERT(!serverSimOperatorSettingLocked(sim, "wave.scenario",
                                               "rounds"));
 
     /* A bare id is the map's own script, and only that. */
-    UT_ASSERT(serverSimApplySettingArg(sim, "rounds=3", "wave.scenario", NULL,
-                                       NULL));
+    UT_ASSERT(serverArgsApplySetting(sim, "rounds=3", "wave.scenario", NULL,
+                                     NULL));
     UT_ASSERT(omSettingValue(sim, "wave.scenario", "rounds", 5) == 3);
     memset(&said, 0, sizeof(said));
-    UT_ASSERT(!serverSimApplySettingArg(sim, "pushback=false", "", omSay,
-                                        &said));
+    UT_ASSERT(!serverArgsApplySetting(sim, "pushback=false", "", omSay,
+                                      &said));
     UT_ASSERT(omSaidHas(&said, "the map has no script"));
 
     /* Each refusal says why and changes nothing. */
     memset(&said, 0, sizeof(said));
-    UT_ASSERT(!serverSimApplySettingArg(sim, "missing:pushback=false", "",
-                                        omSay, &said));
+    UT_ASSERT(!serverArgsApplySetting(sim, "missing:pushback=false", "",
+                                      omSay, &said));
     UT_ASSERT(omSaidHas(&said, "declares no setting 'pushback'"));
     memset(&said, 0, sizeof(said));
-    UT_ASSERT(!serverSimApplySettingArg(sim, "macrules:nope=1", "", omSay,
-                                        &said));
+    UT_ASSERT(!serverArgsApplySetting(sim, "macrules:nope=1", "", omSay,
+                                      &said));
     UT_ASSERT(omSaidHas(&said, "declares no setting 'nope'"));
     memset(&said, 0, sizeof(said));
-    UT_ASSERT(!serverSimApplySettingArg(sim, "macrules:pushback=maybe", "",
-                                        omSay, &said));
+    UT_ASSERT(!serverArgsApplySetting(sim, "macrules:pushback=maybe", "",
+                                      omSay, &said));
     UT_ASSERT(omSaidHas(&said, "is not a value of"));
     memset(&said, 0, sizeof(said));
-    UT_ASSERT(!serverSimApplySettingArg(sim, "macrules", "", omSay, &said));
+    UT_ASSERT(!serverArgsApplySetting(sim, "macrules", "", omSay, &said));
     UT_ASSERT(omSaidHas(&said, "wanted [file:]id=value"));
     memset(&said, 0, sizeof(said));
-    UT_ASSERT(!serverSimApplySettingArg(sim, ":pushback=1", "", omSay,
-                                        &said));
+    UT_ASSERT(!serverArgsApplySetting(sim, ":pushback=1", "", omSay,
+                                      &said));
     UT_ASSERT(omSaidHas(&said, "bad file name"));
     UT_ASSERT(omSettingValue(sim, "MacRules.scenario.lua", "pushback", 1) ==
               0);
@@ -1047,11 +1049,11 @@ int run_operator_mods_setting_reapply(void) {
     UT_ASSERT(sim != NULL);
     UT_ASSERT(omAdd(sim, "macrules", SERVER_MOD_DEFAULT));
     UT_ASSERT(serverSimRecordOperatorMods(sim));
-    UT_ASSERT(serverSimApplySettingArg(sim, "macrules:pushback=off", "", NULL,
-                                       NULL));
-    UT_ASSERT(serverSimApplySettingArg(sim, "macrules:armour=150", "", NULL,
-                                       NULL));
-    UT_ASSERT(serverSimApplySettingArg(sim, "wave:rounds=2", "", NULL, NULL));
+    UT_ASSERT(serverArgsApplySetting(sim, "macrules:pushback=off", "", NULL,
+                                     NULL));
+    UT_ASSERT(serverArgsApplySetting(sim, "macrules:armour=150", "", NULL,
+                                     NULL));
+    UT_ASSERT(serverArgsApplySetting(sim, "wave:rounds=2", "", NULL, NULL));
 
     /* On a -mod row the value is a default: the host may change it. */
     UT_ASSERT(!serverSimOperatorSettingLocked(sim, "MacRules.scenario.lua",
@@ -1140,12 +1142,12 @@ int run_operator_mods_setting_locked(void) {
     UT_ASSERT(omAdd(sim, "nolgm", SERVER_MOD_DEFAULT));
     UT_ASSERT(serverSimRecordOperatorMods(sim));
     memset(&said, 0, sizeof(said));
-    UT_ASSERT(serverSimApplySettingArg(sim, "macrules:pushback=false", "",
-                                       omSay, &said));
+    UT_ASSERT(serverArgsApplySetting(sim, "macrules:pushback=false", "",
+                                     omSay, &said));
     UT_ASSERT_MSG(omSaidHas(&said, "the host cannot change it"),
                   "said: %s", said.lines[0]);
-    UT_ASSERT(serverSimApplySettingArg(sim, "nolgm:fog=true", "", NULL,
-                                       NULL));
+    UT_ASSERT(serverArgsApplySetting(sim, "nolgm:fog=true", "", NULL,
+                                     NULL));
 
     /* Only the -setting value on the required row is held. */
     UT_ASSERT(serverSimOperatorSettingLocked(sim, "MacRules.scenario.lua",
@@ -1190,8 +1192,8 @@ int run_operator_mods_setting_locked(void) {
     UT_ASSERT(sim != NULL);
     UT_ASSERT(omAdd(sim, "macrules", SERVER_MOD_LOCKED));
     UT_ASSERT(serverSimRecordOperatorMods(sim));
-    UT_ASSERT(serverSimApplySettingArg(sim, "macrules:armour=120", "", NULL,
-                                       NULL));
+    UT_ASSERT(serverArgsApplySetting(sim, "macrules:armour=120", "", NULL,
+                                     NULL));
     UT_ASSERT(serverSimOperatorSettingLocked(sim, "MacRules.scenario.lua",
                                              "armour"));
     UT_ASSERT(omSetSetting(sim, 0, "MacRules.scenario.lua", "armour", 150) ==

@@ -2207,6 +2207,9 @@ set(SERVER_SOURCES
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/server/servermain.c
+    # The -mod flags and -setting off the command line. Public headers
+    # only, so it takes no grant below; the unit tests compile it too.
+    src/server/server_args.c
     src/server/server_frontend_stubs.c
     src/gui/sdl3/luabrainshandler.c
     src/headless/cmd_stdin.c
@@ -3928,6 +3931,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # matching, the CMD_SET_SCRIPT_LIST refusals, the re-apply at each new
     # lobby, and the required flag on the wire.
     tests/unit/test_operator_mods.c
+    src/server/server_args.c
     tests/unit/test_fog_settings.c
     # The named visibility sets the lobby offers, and the match that reads
     # a live set of settings back as one of them.

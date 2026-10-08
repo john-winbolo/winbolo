@@ -716,180 +716,26 @@ bool serverSimOperatorModYieldsToMap(const ServerSim *sim,
     return mapOwnIsScenario;
 }
 
-/* ── The three flags, read off the command line ───────────────────
- * Here rather than in servermain.c so the unit tests reach it: the comma
- * split, the blank and missing values and the -mod-locked exclusivity are
- * all decided by this code, and servermain.c only prints what it says. */
+/* ── -setting values on the operator's rows ───────────────────────
+ * What the dedicated server's -setting keeps for the operator. The text of
+ * the argument is read in src/server/server_args.c; what is here is the
+ * sim's half: the name lookup against the operator's rows and the
+ * directory, and the values kept for those rows. */
 
-static const struct {
-    const char       *flag;
-    ServerModStrength strength;
-} kOperatorModFlags[] = {
-    { "mod",          SERVER_MOD_DEFAULT  },
-    { "mod-required", SERVER_MOD_REQUIRED },
-    { "mod-locked",   SERVER_MOD_LOCKED   },
-};
-
-/* Which of the three flags arg is, or -1: "-<flag>" with case ignored, the
-   rule argExist uses for every other flag. */
-static int operatorModFlagOf(const char *arg) {
-    int f;
-
-    if (arg == NULL || arg[0] != '-') return -1;
-    for (f = 0; f < (int)SDL_arraysize(kOperatorModFlags); f++) {
-        if (SDL_strcasecmp(arg + 1, kOperatorModFlags[f].flag) == 0) return f;
-    }
-    return -1;
-}
-
-static void operatorModSay(ServerModArgsSay say, void *ctx,
-                           SDL_PRINTF_FORMAT_STRING const char *fmt, ...)
-    SDL_PRINTF_VARARG_FUNC(3);
-
-static void operatorModSay(ServerModArgsSay say, void *ctx,
-                           const char *fmt, ...) {
-    char    line[SCN_DIR_FILE_LEN + 640];
-    va_list ap;
-
-    if (say == NULL) return;
-    va_start(ap, fmt);
-    SDL_vsnprintf(line, sizeof(line), fmt, ap);
-    va_end(ap);
-    say(ctx, line);
-}
-
-bool serverSimOperatorModArgsGiven(int argc, const char *const *argv) {
-    int i;
-
-    for (i = 1; i < argc; i++) {
-        if (operatorModFlagOf(argv[i]) >= 0) return true;
-    }
-    return false;
-}
-
-bool serverSimOperatorModArgsConflict(int argc, const char *const *argv) {
-    bool locked = false;
-    bool loose  = false;
-    int  i;
-
-    for (i = 1; i < argc; i++) {
-        int f = operatorModFlagOf(argv[i]);
-
-        if (f < 0) continue;
-        if (kOperatorModFlags[f].strength == SERVER_MOD_LOCKED) {
-            locked = true;
-        } else {
-            loose = true;
-        }
-    }
-    return locked && loose;
-}
-
-ServerModArgsResult serverSimApplyOperatorModArgs(ServerSim *sim, int argc,
-                                                  const char *const *argv,
-                                                  ServerModArgsSay say,
-                                                  void *ctx) {
-    int i;
-
-    if (serverSimOperatorModArgsConflict(argc, argv)) {
-        /* Refused whole rather than merged: a locked list is a list nobody
-           edits, and a -mod or -mod-required beside it asks for one that a
-           host does edit. Which the operator meant is theirs to say. */
-        operatorModSay(say, ctx, "%s", SERVER_MOD_ARGS_CONFLICT_TEXT);
-        return SERVER_MOD_ARGS_CONFLICT;
-    }
-    if (sim == NULL) return SERVER_MOD_ARGS_OK;
-
-    for (i = 1; i < argc; i++) {
-        int               f = operatorModFlagOf(argv[i]);
-        const char       *flag;
-        ServerModStrength strength;
-        char              tmp[1024];
-        char             *tok;
-        char             *next;
-
-        if (f < 0) continue;
-        flag     = kOperatorModFlags[f].flag;
-        strength = kOperatorModFlags[f].strength;
-        /* Even with nothing usable named, -mod-locked says the list is the
-           operator's, and an operator who wrote it meant that much; the
-           empty name records exactly that (serverSimAddOperatorMod). */
-        if (i + 1 >= argc || argv[i + 1][0] == '-') {
-            operatorModSay(say, ctx, "Warning: -%s needs a mod name; ignored",
-                           flag);
-            if (strength == SERVER_MOD_LOCKED) {
-                serverSimAddOperatorMod(sim, "", strength, NULL, 0);
-            }
-            continue;
-        }
-        /* Said and skipped rather than cut: a cut list ends in part of a
-           name, which would resolve to the wrong file or to none. Ten names
-           of a file name's length fit with room to spare. */
-        if (strlen(argv[i + 1]) >= sizeof(tmp)) {
-            operatorModSay(say, ctx,
-                           "Warning: -%s list is longer than %d characters; "
-                           "ignored", flag, (int)sizeof(tmp) - 1);
-            if (strength == SERVER_MOD_LOCKED) {
-                serverSimAddOperatorMod(sim, "", strength, NULL, 0);
-            }
-            continue;
-        }
-        SDL_snprintf(tmp, sizeof(tmp), "%s", argv[i + 1]);
-        /* Split by hand rather than with strtok, which holds its place in a
-           static that the -lock parse in servermain.c also uses. */
-        for (tok = tmp; tok != NULL; tok = next) {
-            char  err[512];
-            char *end;
-
-            next = strchr(tok, ',');
-            if (next != NULL) *next++ = '\0';
-            while (*tok == ' ' || *tok == '\t') tok++;
-            end = tok + strlen(tok);
-            while (end > tok && (end[-1] == ' ' || end[-1] == '\t')) {
-                *--end = '\0';
-            }
-            if (tok[0] == '\0') {
-                /* "a,,b" or a trailing comma: nothing named, nothing said —
-                   except under -mod-locked, for the reason above. */
-                if (strength == SERVER_MOD_LOCKED) {
-                    serverSimAddOperatorMod(sim, "", strength, NULL, 0);
-                }
-                continue;
-            }
-            if (!serverSimAddOperatorMod(sim, tok, strength, err,
-                                         sizeof(err))) {
-                operatorModSay(say, ctx, "Warning: -%s %s: %s; skipped", flag,
-                               tok, err);
-            }
-        }
-    }
-
-    if (sim->operatorModsLocked && sim->operatorModCount == 0) {
-        operatorModSay(say, ctx,
-                       "Note: -mod-locked named nothing that loads; the "
-                       "script list is locked empty.");
-    }
-    return SERVER_MOD_ARGS_OK;
-}
-
-/* ── -setting, and its values on the operator's rows ──────────────
- * A value for one of a script's own settings, given on the dedicated
- * server's command line. Here rather than in servermain.c for the reason
- * the three flags are: the unit tests reach the name lookup, the value
- * read and what is kept for the operator's rows. */
-
-/* The file a -setting names, into out: the name as -mod matches it, tried
-   against the operator's rows, then the map's own script, then the
-   scenarios directory. A name none of them holds is copied as given, so a
-   full name the directory does not list still reaches the declaration
-   lookup, which says it is not there. */
-static void settingFileResolve(ServerSim *sim, const char *name,
-                               const char *mapScript, char *out,
-                               size_t outLen) {
+/* A name none of the three holds is copied as given, so a full name the
+   directory does not list still reaches the declaration lookup, which says
+   it is not there. */
+void serverSimResolveScriptName(ServerSim *sim, const char *name,
+                                const char *mapScript, char *out,
+                                size_t outLen) {
     ScnDirEntry row;
     bool        oom;
     int         s;
     int         i;
+
+    if (out == NULL || outLen == 0) return;
+    out[0] = '\0';
+    if (sim == NULL || name == NULL) return;
 
     for (s = 0; s < (int)SDL_arraysize(kOperatorModSuffixes); s++) {
         for (i = 0; i < sim->operatorModCount; i++) {
@@ -1004,139 +850,35 @@ static void operatorSettingsRestore(ServerSim *sim) {
     }
 }
 
-bool serverSimApplySettingArg(ServerSim *sim, const char *arg,
-                              const char *defaultFile,
-                              ServerModArgsSay say, void *ctx) {
-    char              name[LOBBY_SCENARIO_FILE_LEN];
-    char              file[LOBBY_SCENARIO_FILE_LEN];
-    char              id[SCN_SETTING_ID_LEN];
-    char              shown[128];
-    const char       *whole = arg;
-    const char       *eq;
-    const char       *colon;
-    const char       *word;
-    const char       *how = "";
-    uint8_t           blob[SCN_SETTINGS_BLOB_MAX];
-    ScnSetting        rows[SCN_SETTINGS_MAX];
-    const ScnSetting *decl = NULL;
-    int               len;
-    int               n = 0;
-    int               at;
-    int32_t           value = 0;
-    int32_t           got = 0;
-    char             *end = NULL;
-    long              num;
-    size_t            idLen;
+ServerOperatorSettingHold serverSimRecordOperatorSetting(ServerSim *sim,
+                                                         const char *file,
+                                                         const char *id,
+                                                         int32_t value) {
+    int at;
 
-    if (sim == NULL || arg == NULL) return false;
-    eq = strchr(arg, '=');
-    if (eq == NULL) {
-        operatorModSay(say, ctx, "-setting %s: wanted [file:]id=value", whole);
-        return false;
+    if (sim == NULL || file == NULL || id == NULL ||
+        operatorModIndexOf(sim, file) < 0) {
+        return SERVER_OPERATOR_SETTING_NOT_OPERATOR;
     }
-    colon = memchr(arg, ':', (size_t)(eq - arg));
-    if (colon != NULL) {
-        size_t fl = (size_t)(colon - arg);
-        if (fl == 0 || fl >= sizeof(name)) {
-            operatorModSay(say, ctx, "-setting %s: bad file name", whole);
-            return false;
-        }
-        memcpy(name, arg, fl);
-        name[fl] = '\0';
-        settingFileResolve(sim, name, defaultFile, file, sizeof(file));
-        arg = colon + 1;
-    } else {
-        if (defaultFile == NULL || defaultFile[0] == '\0') {
-            operatorModSay(say, ctx,
-                           "-setting %s: the map has no script, so name the "
-                           "file", whole);
-            return false;
-        }
-        SDL_strlcpy(file, defaultFile, sizeof(file));
+    /* Given twice, the later one counts, as it does in the store. */
+    at = operatorSettingAt(sim, file, id);
+    if (at < 0 && sim->operatorSettingCount < SERVER_OPERATOR_SETTINGS_MAX) {
+        at = sim->operatorSettingCount++;
+        SDL_strlcpy(sim->operatorSettings[at].file, file,
+                    sizeof(sim->operatorSettings[at].file));
+        SDL_strlcpy(sim->operatorSettings[at].id, id,
+                    sizeof(sim->operatorSettings[at].id));
     }
-    idLen = (size_t)(eq - arg);
-    if (idLen == 0 || idLen >= sizeof(id)) {
-        operatorModSay(say, ctx, "-setting %s: bad setting id", whole);
-        return false;
-    }
-    memcpy(id, arg, idLen);
-    id[idLen] = '\0';
-    word = eq + 1;
+    if (at < 0) return SERVER_OPERATOR_SETTING_FULL;
+    sim->operatorSettings[at].value = value;
+    if (serverSimOperatorModFixed(sim, file)) {
+        ControlEvent evt;
 
-    len = serverSimScenarioSettingsDecl(sim, file, blob, sizeof(blob));
-    if (len > 0) {
-        n = scnSettingsBlobRead(blob, (size_t)len, rows, SCN_SETTINGS_MAX);
+        operatorSettingLockEvent(sim, at, &evt);
+        serverSimPublishControl(sim, &evt);
+        return SERVER_OPERATOR_SETTING_HELD;
     }
-    if (n > 0) {
-        decl = scnSettingFind(rows, n, id);
-    }
-    if (decl == NULL) {
-        operatorModSay(say, ctx, "-setting: %s declares no setting '%s'",
-                       file, id);
-        return false;
-    }
-    /* A choice's own words come first, so a choice whose words are numerals
-       is set by word, not read as an index. */
-    num = strtol(word, &end, 10);
-    if (decl->type == SCN_SETTING_TYPE_CHOICE &&
-        scnSettingChoiceIndex(decl, word) >= 0) {
-        value = scnSettingChoiceIndex(decl, word);
-    } else if (word[0] != '\0' && end != NULL && *end == '\0') {
-        value = (int32_t)num;
-    } else if (decl->type == SCN_SETTING_TYPE_BOOL &&
-               (strcmp(word, "true") == 0 || strcmp(word, "on") == 0)) {
-        value = 1;
-    } else if (decl->type == SCN_SETTING_TYPE_BOOL &&
-               (strcmp(word, "false") == 0 || strcmp(word, "off") == 0)) {
-        value = 0;
-    } else {
-        operatorModSay(say, ctx, "-setting: '%s' is not a value of %s:%s",
-                       word, file, id);
-        return false;
-    }
-    if (!serverSimSetScriptSetting(sim, file, id, value, &got)) {
-        operatorModSay(say, ctx, "-setting: %s:%s refused %d", file, id,
-                       (int)value);
-        return false;
-    }
-
-    /* On one of the operator's rows the value is the operator's too, kept
-       for every lobby after this one. Given twice, the later one counts, as
-       it does in the store. */
-    if (operatorModIndexOf(sim, file) >= 0) {
-        at = operatorSettingAt(sim, file, id);
-        if (at < 0 &&
-            sim->operatorSettingCount < SERVER_OPERATOR_SETTINGS_MAX) {
-            at = sim->operatorSettingCount++;
-            SDL_strlcpy(sim->operatorSettings[at].file, file,
-                        sizeof(sim->operatorSettings[at].file));
-            SDL_strlcpy(sim->operatorSettings[at].id, id,
-                        sizeof(sim->operatorSettings[at].id));
-        }
-        if (at < 0) {
-            how = " (this game only, and the host may change it: too many "
-                  "-setting values on mods)";
-        } else {
-            sim->operatorSettings[at].value = got;
-            if (serverSimOperatorModFixed(sim, file)) {
-                ControlEvent evt;
-
-                how = " (every game; the host cannot change it)";
-                operatorSettingLockEvent(sim, at, &evt);
-                serverSimPublishControl(sim, &evt);
-            } else {
-                how = " (each new lobby; the host may change it)";
-            }
-        }
-    }
-    if (decl->type == SCN_SETTING_TYPE_CHOICE &&
-        scnSettingChoiceText(decl, got) != NULL) {
-        SDL_strlcpy(shown, scnSettingChoiceText(decl, got), sizeof(shown));
-    } else {
-        SDL_snprintf(shown, sizeof(shown), "%d", (int)got);
-    }
-    operatorModSay(say, ctx, "Setting %s:%s = %s%s", file, id, shown, how);
-    return true;
+    return SERVER_OPERATOR_SETTING_DEFAULT;
 }
 
 /* Where the picks hold the map's own row, or -1 for a list that does not.
