@@ -1476,6 +1476,8 @@ int run_scenario_popup_client_queue(void);
 int run_scenario_popup_round_over(void);
 int run_tutorial_tokens_quick_build(void);
 int run_scenario_status_tokens_expand(void);
+int run_tutorial_tokens_long_key_names(void);
+int run_scenario_announce_waits_for_popup(void);
 
 /* CTRL_SIM_RULES body codec (test_sim_rules_codec.c): every carried rule
  * round-trips through the body tables, compared field by field and

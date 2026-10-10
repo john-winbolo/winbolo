@@ -312,13 +312,15 @@ a, b = STATIONS[5]
 fill(GAP[0], a, GAP[1], b, ROAD)
 
 
-def take_layout(prefix, tx, ty, park=None):
-    """T at (tx, ty), its blocker on the square south of it. `park`, when
-    given, is the (dx, dy) of the tank's parking square from T."""
+def take_layout(prefix, tx, ty, park=None, blocker=(0, 1)):
+    """T at (tx, ty), its blocker at (dx, dy) `blocker` from it (default the
+    square south of it). `park`, when given, is the (dx, dy) of the tank's
+    parking square from T."""
+    bx, by = tx + blocker[0], ty + blocker[1]
     pill(prefix + "_target", tx, ty, NEUTRAL)
-    pill(prefix + "_blocker", tx, ty + 1, NEUTRAL, 0)
+    pill(prefix + "_blocker", bx, by, NEUTRAL, 0)
     points[prefix + "_target"] = (tx, ty)
-    points[prefix + "_blocker"] = (tx, ty + 1)
+    points[prefix + "_blocker"] = (bx, by)
     if park is not None:
         px, py = tx + park[0], ty + park[1]
         put(px, py, ROAD)
@@ -372,24 +374,43 @@ put(139, 117, BUILDING)                     # the pocket's west wall
 put(140, 117, SEA)                          # the demo bot's start pocket
 start("bot5a", 140, 117, 4)
 region("island5a", 135, 104, 140, 117)
+# The two wall rings and the moat between them, square by square, for the
+# script to put back on each 5A demo reset (LAYOUT.walls5a, LAYOUT.moat5a).
+walls5a, moat5a = [], []
+for y in range(101, 121):
+    for x in range(132, 144):
+        if 135 <= x <= 140 and 104 <= y <= 117:
+            continue                        # the island itself
+        if grid[y][x] == BUILDING:
+            walls5a.append((x, y))
+        elif grid[y][x] is SEA:
+            moat5a.append((x, y))
 
 # 5B: the target nine squares from the road, so a tank driving up the road
 # is out of its range. The player is handed its blocker pill in the tank and
-# builds it on the square south of the target. The parking square is a road
-# square seven squares straight south of the target, the farthest a tank
-# shell still reaches it (7.125 squares from the tank's centre; the target's
-# near edge is at 6.5). A road spur along that row joins it to the main road.
-# The target's shots at the parked tank fly straight down the column and hit
-# the blocker. The tank's shots fly the same column the other way; the
-# script lets them pass the player's own blocker (can_hit), which a real game
-# would not. See docs/TUTORIAL_DECISIONS.md, "5B parking square".
-take_layout("t5b", 117, 101, park=(0, 7))
-fill(118, 108, GAP[0] - 1, 108, ROAD)
+# builds it on the square south-east of the target. The parking square
+# (121,107) is 4 east and 6 south of the target (Andrew's play-test: "4
+# tiles right ... and one tile more north" of the old 117,108). From the
+# tank's centre the target's centre is 7.21 squares away and its near corner
+# 6.52; a tank shell flies 7.125, so a shot aimed at the target's centre
+# ends inside its square. A road spur along row 107 joins the parking square
+# to the main road. The line between the two centres crosses the blocker's
+# square (118,102) for 0.9 of a square, so the target's shots at the parked
+# tank hit the blocker; the tank's shots cross it the other way, and the
+# script lets them pass the player's own blocker (can_hit), which a real
+# game would not. See docs/TUTORIAL_DECISIONS.md, "5B parking square".
+take_layout("t5b", 117, 101, park=(4, 6), blocker=(1, 1))
+fill(122, 107, GAP[0] - 1, 107, ROAD)
 # The arrow sits two squares further west than walled_reset's default, at
 # x 117..120, so it clears the checkpoint pool's west wall at x 121.
 walls5b = walled_reset("reset5b", 106, 112, GAP[0], arrow_dx=3)
-# A friendly base on the road's centre column at the north end.
-base("b5", (GAP[0] + GAP[1]) // 2, a + 2)  # given to the player at the start
+# A friendly base on the road's centre column, just north of the RESET
+# letters: row 110, with row 111 (the letters' road strip) clear between it
+# and the letters' top row 112 (Andrew: by the RESET T, not at the north
+# end). The park spur (row 107) and the checkpoint pool are clear of it.
+B5 = ((GAP[0] + GAP[1]) // 2, 110)
+assert B5[1] <= 112 - 2, "b5 must leave a clear road square above RESET"
+base("b5", B5[0], B5[1])  # given to the player at the start
 dock("cp5", b)
 # x up to 122 and rows 95..122 only: the checkpoint pool (122..124 x
 # 123..125) and its exit road (x 123..125, rows 121..122) lie outside, so a
@@ -633,7 +654,8 @@ def lua_layout():
     for n in sorted(regions):
         lines.append("    %s = { x = %d, y = %d, w = %d, h = %d }," % ((n,) + regions[n]))
     lines.append("  },")
-    for nm, ws in (("walls5b", walls5b), ("walls7", walls7)):
+    for nm, ws in (("walls5a", walls5a), ("moat5a", moat5a),
+                   ("walls5b", walls5b), ("walls7", walls7)):
         lines.append("  %s = { %s }," % (nm, ", ".join("{%d,%d}" % w for w in ws)))
     for nm in sorted(arrows):
         lines.append("  arrow_%s = { %s }," % (nm, ", ".join("{%d,%d}" % w for w in arrows[nm])))

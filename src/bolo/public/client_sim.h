@@ -793,6 +793,19 @@ void clientSimScnAnnouncePush(ClientSim *cs, const char *text, uint16_t ticks,
                               uint32_t nowTick, bool hasPos, uint8_t posX,
                               uint8_t posY);
 
+/* Holds the announcements while a popup is open, so the player never has
+ * white text and a popup on screen at once. The frontend calls it every
+ * frame, before it draws the lines, with hold true while its popup overlay
+ * is open. While held the frontend draws no line and no status line, and
+ * every line's clock stands still: a line that was up when the hold began
+ * keeps the time it had left, and a line that arrived during the hold gets
+ * its whole time from the moment the hold ends. A line whose time had run
+ * out before the hold stays out. nowTick is clientSimGetLastServerTick. */
+void clientSimScnAnnounceHold(ClientSim *cs, bool hold, uint32_t nowTick);
+
+/* True while clientSimScnAnnounceHold holds the lines. */
+bool clientSimScnAnnounceIsHeld(const ClientSim *cs);
+
 /* The newest announcement held, or NULL when there is none. outTicks gets
  * how long it was asked to stay up and outArrivedTick the server tick
  * it landed at — both on clientSimGetLastServerTick's clock, which is

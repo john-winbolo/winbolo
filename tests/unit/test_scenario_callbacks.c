@@ -37,7 +37,7 @@
  *                                         arrives with every row of its
  *                                         callbacks block (Survival 8,
  *                                         Soccer 10); same for Soccer
- * run_scenario_details_fetch_tutorial   — and for the Tutorial, whose 21
+ * run_scenario_details_fetch_tutorial   — and for the Tutorial, whose 20
  *                                         rows are the most a shipped
  *                                         script carries
  * run_scenario_details_fetch_not_found  — a file the server does not know is
@@ -711,7 +711,7 @@ int run_scenario_details_fetch_soccer(void) {
 }
 
 int run_scenario_details_fetch_tutorial(void) {
-    return scFetchMapScript("fetch_tutorial", "Tutorial", 21,
+    return scFetchMapScript("fetch_tutorial", "Tutorial", 20,
                             "on_choose_start/");
 }
 

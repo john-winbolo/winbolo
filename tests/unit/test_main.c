@@ -885,6 +885,8 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_popup_round_over",               run_scenario_popup_round_over               },
     { "tutorial_tokens_quick_build",             run_tutorial_tokens_quick_build             },
     { "scenario_status_tokens_expand",           run_scenario_status_tokens_expand           },
+    { "tutorial_tokens_long_key_names",          run_tutorial_tokens_long_key_names          },
+    { "scenario_announce_waits_for_popup",       run_scenario_announce_waits_for_popup       },
     { "sim_rules_codec_roundtrip",               run_sim_rules_codec_roundtrip               },
     { "sim_rules_codec_golden",                  run_sim_rules_codec_golden                  },
     { "voice_talking_stops_in_countdown",        run_voice_talking_stops_in_countdown        },

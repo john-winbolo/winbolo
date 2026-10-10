@@ -5564,6 +5564,16 @@ static void renderScenarioAnnounce(ClientSim *cs) {
 
     const uint32_t now = clientSimGetLastServerTick(cs);
 
+    /* Never white text and a popup at once. While the popup overlay is open
+       (a scenario's game.popup or a tutorial message) the status line and
+       the announcements are not drawn, and the announcements' clocks stand
+       still: a line sent in the same tick as a popup, or while it is open,
+       gets its whole time after the popup closes. Called after
+       tutorialOverlayRender, so a popup closed this frame lets the lines
+       back this frame. */
+    clientSimScnAnnounceHold(cs, tutorialOverlayIsOpen(), now);
+    if (clientSimScnAnnounceIsHeld(cs)) return;
+
     /* The status line, with its countdown worked out on this client's own
        clock. */
     /* Both lines may carry the popup's key tokens ({ACCEL}, {QUICK_ROAD}

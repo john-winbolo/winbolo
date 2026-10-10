@@ -4,7 +4,7 @@
 --
 -- The same set-up as tutorial_park5b: a scripted shooter as the tutorial's
 -- player, its 5B blocker built by its man, then the tank on the parking
--- square firing north. Here the arena makes the target's first shell on the
+-- square firing at the target. Here the arena makes the target's first shell on the
 -- blocker kill it outright (pill_damage_scale 10000 for that one blow).
 --
 -- PASS: the blocker died; 2 to 3 seconds later it is back on its square,
@@ -34,13 +34,13 @@ function on_pill_killed(n, by, scripted)
   end
 end
 
-local arena_real_scale = pill_damage_scale
+scenario.callbacks.pill_damage_scale =
+  "Arena: the target's first shell on the 5B blocker kills it."
 function pill_damage_scale(attacker, n, cause, pill)
-  local r = arena_real_scale(attacker, n, cause, pill)
   if n == P.t5b_blocker.n and ARENA.phase >= 3 and ARENA.died_at == nil then
     return 10000
   end
-  return r
+  return nil
 end
 
 local arena_real_tick = on_tick

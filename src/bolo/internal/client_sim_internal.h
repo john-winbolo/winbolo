@@ -1171,6 +1171,11 @@ struct ClientSim {
      * takes them all away (see clientSimScnAnnouncePush). */
     ClientScnAnnounce scnAnnounces[SCN_ANNOUNCE_STACK_MAX];
     uint8_t      scnAnnounceCount;
+    /* True while a popup is open (clientSimScnAnnounceHold): the lines and
+     * the status line are not drawn and the lines' clocks stand still.
+     * scnAnnounceHoldStart is the server tick the hold began at. */
+    bool         scnAnnounceHeld;
+    uint32_t     scnAnnounceHoldStart;
 
     /* The status line on screen; text[0] == '\0' is none. It stays until
      * the scenario replaces or clears it. scnStatusEndsAt is the server

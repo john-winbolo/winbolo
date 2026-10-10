@@ -78,6 +78,19 @@ typedef const char *(*TutorialTokenNameFn)(TutorialTokenId id, void *ctx);
 size_t tutorialTokensExpand(const char *src, char *out, size_t cap,
                             TutorialTokenNameFn name, void *ctx);
 
+/* A key's name as the tutorial writes it, from the name SDL gives it
+ * (SDL_GetScancodeName). A keypad key's "Keypad " becomes "Num ", so
+ * "Keypad ." is written "Num ." and "Keypad Enter" "Num Enter"; any other
+ * name is answered as it is. The short name is written into buf (cap
+ * bytes) when it differs; the answer is buf or name. NULL or an empty name
+ * answers "?". */
+const char *tutorialShortKeyName(const char *name, char *buf, size_t cap);
+
+/* The width of a drawn key cap `capH` high whose label is `labelW` wide:
+ * the label with a margin each side, and never narrower than the cap is
+ * high (a one-letter cap stays square). */
+float tutorialKeycapWidth(float capH, float labelW);
+
 #ifdef __cplusplus
 }
 #endif

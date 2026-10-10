@@ -59,7 +59,7 @@ local LAYOUT = {
     t5a_target = { n = 3, x = 137, y = 105, armour = 15 },
     t5a_blocker = { n = 4, x = 137, y = 106, armour = 0 },
     t5b_target = { n = 5, x = 117, y = 101, armour = 15 },
-    t5b_blocker = { n = 6, x = 117, y = 102, armour = 0 },
+    t5b_blocker = { n = 6, x = 118, y = 102, armour = 0 },
     p7_nw1 = { n = 7, x = 122, y = 39, armour = 15 },
     p7_nw2 = { n = 8, x = 120, y = 41, armour = 15 },
     p7_se1 = { n = 9, x = 134, y = 55, armour = 15 },
@@ -73,7 +73,7 @@ local LAYOUT = {
     b2c = { n = 3, x = 123, y = 185 },
     b3 = { n = 4, x = 127, y = 163 },
     b4c = { n = 5, x = 127, y = 132 },
-    b5 = { n = 6, x = 127, y = 97 },
+    b5 = { n = 6, x = 127, y = 110 },
     b6 = { n = 7, x = 127, y = 84 },
     b7_ne1 = { n = 8, x = 132, y = 35 },
     b7_ne2 = { n = 9, x = 140, y = 43 },
@@ -103,8 +103,8 @@ local LAYOUT = {
     t5a_blocker = { 137, 106 },
     t5a_home = { 136, 115 },
     t5a_target = { 137, 105 },
-    t5b_blocker = { 117, 102 },
-    t5b_park = { 117, 108 },
+    t5b_blocker = { 118, 102 },
+    t5b_park = { 121, 107 },
     t5b_target = { 117, 101 },
     tree6 = { 115, 80 },
     wall3 = { 133, 168 },
@@ -132,9 +132,11 @@ local LAYOUT = {
     s5b = { x = 97, y = 95, w = 26, h = 28 },
     s6 = { x = 97, y = 72, w = 59, h = 20 },
     s7 = { x = 97, y = 25, w = 59, h = 47 },
-    t5b_park = { x = 117, y = 108, w = 1, h = 1 },
+    t5b_park = { x = 121, y = 107, w = 1, h = 1 },
     watch5a = { x = 129, y = 111, w = 3, h = 1 },
   },
+  walls5a = { {132,101}, {133,101}, {134,101}, {135,101}, {136,101}, {137,101}, {138,101}, {139,101}, {140,101}, {141,101}, {142,101}, {143,101}, {132,102}, {143,102}, {132,103}, {134,103}, {135,103}, {136,103}, {137,103}, {138,103}, {139,103}, {140,103}, {141,103}, {143,103}, {132,104}, {134,104}, {141,104}, {143,104}, {132,105}, {134,105}, {141,105}, {143,105}, {132,106}, {134,106}, {141,106}, {143,106}, {132,107}, {134,107}, {141,107}, {143,107}, {132,108}, {134,108}, {141,108}, {143,108}, {132,109}, {134,109}, {141,109}, {143,109}, {132,110}, {134,110}, {141,110}, {143,110}, {132,111}, {134,111}, {141,111}, {143,111}, {132,112}, {134,112}, {141,112}, {143,112}, {132,113}, {134,113}, {141,113}, {143,113}, {132,114}, {134,114}, {141,114}, {143,114}, {132,115}, {134,115}, {141,115}, {143,115}, {132,116}, {134,116}, {141,116}, {143,116}, {132,117}, {134,117}, {141,117}, {143,117}, {132,118}, {134,118}, {135,118}, {136,118}, {137,118}, {138,118}, {139,118}, {140,118}, {141,118}, {143,118}, {132,119}, {143,119}, {132,120}, {133,120}, {134,120}, {135,120}, {136,120}, {137,120}, {138,120}, {139,120}, {140,120}, {141,120}, {142,120}, {143,120} },
+  moat5a = { {133,102}, {134,102}, {135,102}, {136,102}, {137,102}, {138,102}, {139,102}, {140,102}, {141,102}, {142,102}, {133,103}, {142,103}, {133,104}, {142,104}, {133,105}, {142,105}, {133,106}, {142,106}, {133,107}, {142,107}, {133,108}, {142,108}, {133,109}, {142,109}, {133,110}, {142,110}, {133,111}, {142,111}, {133,112}, {142,112}, {133,113}, {142,113}, {133,114}, {142,114}, {133,115}, {142,115}, {133,116}, {142,116}, {133,117}, {142,117}, {133,118}, {142,118}, {133,119}, {134,119}, {135,119}, {136,119}, {137,119}, {138,119}, {139,119}, {140,119}, {141,119}, {142,119} },
   walls5b = { {106,112}, {107,112}, {106,113}, {108,113}, {106,114}, {107,114}, {106,115}, {108,115}, {106,116}, {108,116}, {110,112}, {111,112}, {112,112}, {110,113}, {110,114}, {111,114}, {110,115}, {110,116}, {111,116}, {112,116}, {115,112}, {116,112}, {114,113}, {115,114}, {116,115}, {114,116}, {115,116}, {118,112}, {119,112}, {120,112}, {118,113}, {118,114}, {119,114}, {118,115}, {118,116}, {119,116}, {120,116}, {122,112}, {123,112}, {124,112}, {123,113}, {123,114}, {123,115}, {123,116}, {113,118}, {114,118}, {115,118}, {116,118}, {117,118}, {113,119}, {113,120}, {113,121}, {114,121}, {115,121}, {116,121}, {117,121} },
   walls7 = { {108,55}, {109,55}, {108,56}, {110,56}, {108,57}, {109,57}, {108,58}, {110,58}, {108,59}, {110,59}, {112,55}, {113,55}, {114,55}, {112,56}, {112,57}, {113,57}, {112,58}, {112,59}, {113,59}, {114,59}, {117,55}, {118,55}, {116,56}, {117,57}, {118,58}, {116,59}, {117,59}, {120,55}, {121,55}, {122,55}, {120,56}, {120,57}, {121,57}, {120,58}, {120,59}, {121,59}, {122,59}, {124,55}, {125,55}, {126,55}, {125,56}, {125,57}, {125,58}, {125,59}, {115,61}, {116,61}, {117,61}, {118,61}, {119,61}, {115,62}, {115,63}, {115,64}, {116,64}, {117,64}, {118,64}, {119,64} },
   arrow_reset5b = { {117,123}, {118,122}, {118,124}, {119,123}, {120,123} },
@@ -187,7 +189,6 @@ scenario = {
     on_base_captured = "Ticks off taking bases, and finishes the tutorial when you own every base in Station 7.",
     can_build = "Keeps each bot's builder inside its own station, and stops boats in Station 5.",
     can_capture = "The 5A bot takes only its own two pillboxes; the Station 7 bot leaves your two dead ones.",
-    pill_damage_scale = "Only one in five of the enemy 5B pillbox's shells damages your 5B pillbox.",
     can_hit = "Tank shells pass between you and the demo bots; yours pass your 5B pillbox; the 5A pillboxes' pass you.",
     can_die = "The parked Station 6 tank cannot be destroyed, and the Station 4 pillbox cannot be killed before you have hidden.",
     on_choose_start = "You respawn at the furthest station you have reached.",
@@ -217,6 +218,7 @@ local S = {
   last_pos = nil,     -- world position at the last poll
   moving   = false,
   on_2a    = false,   -- Station 2: the tank has been on the 2A base
+  near5a_at = nil,    -- Station 5A: frame the tank first came near watch5a
   hide     = 0,       -- Station 4: seconds hidden in the forest in range
   told_hide = -100,   -- Station 4: the second "hide first" was last said
   men      = 0,       -- Station 6: men killed
@@ -322,7 +324,7 @@ local POP = {
   s6 = "Kill an enemy man and his tank cannot build until a new man "
     .. "arrives. You cannot run a man over: only shells, mines and "
     .. "explosions kill him.\n\n"
-    .. "A shell bursts at your crosshair and kills a man within half a "
+    .. "A shell explodes at your crosshair and kills a man within half a "
     .. "square. {GUN_DOWN} brings the crosshair in, {GUN_UP} moves it out. "
     .. "For this tutorial, a bot has been programmed to send the man out "
     .. "across the craters. Put your crosshair there and keep firing as he "
@@ -382,6 +384,12 @@ local LIST = {
 
 -- Station 1 is done after this many of its five terrains.
 local TERRAINS_NEEDED = 3
+
+-- Station 5A: a tank that has come within WATCH_NEAR squares (the larger of
+-- the x and y distances) of the watch spot ticks "Watch the bot take one"
+-- WATCH_NEAR_FRAMES on_tick calls (10 seconds) later, on the spot or not.
+local WATCH_NEAR = 5
+local WATCH_NEAR_FRAMES = 500
 
 -- The status line for each goal: what to do next. A function is called for
 -- a line with a live number in it. A line too wide for the game view at a
@@ -1154,9 +1162,55 @@ local function home_bot5a()
   end
 end
 
+-- Whether a tank, a man out of his tank, or a pillbox on the map stands on
+-- square (x, y): a square the 5A ring rebuild must leave alone.
+local function square_taken(x, y)
+  for _, p in ipairs({ S.player, S.bot5a }) do
+    local t = live_tank(p)
+    if t ~= nil and t.mx == x and t.my == y then return true end
+    local b = p ~= nil and game.builder(p) or nil
+    if b ~= nil and b.state ~= "in_tank" and b.state ~= "dead" and
+       b.mx == x and b.my == y then
+      return true
+    end
+  end
+  for _, L in pairs(P) do
+    local pb = game.pill(L.n)
+    if pb ~= nil and not pb.in_tank and pb.x == x and pb.y == y then
+      return true
+    end
+  end
+  return false
+end
+
+-- Put the 5A island's two wall rings and its moat back to the map's
+-- squares (LAYOUT.walls5a, LAYOUT.moat5a, written by the map tool): a wall
+-- shot down or damaged is a full wall again, and a moat square the man
+-- filled is deep water again. A square with a tank, a man or a pillbox on
+-- it is left alone. 156 squares at most, inside one frame's 256.
+local function rebuild_5a_rings()
+  local wall, sea = game.TERRAIN.building, game.TERRAIN.deep_sea
+  for _, w in ipairs(LAYOUT.walls5a) do
+    local x, y = w[1], w[2]
+    local left = game.wall_shots(x, y)
+    if (game.map_tile(x, y) ~= wall or
+        (left ~= nil and left < rule("building_life") + 1)) and
+       not square_taken(x, y) then
+      game.set_tile(x, y, wall)
+    end
+  end
+  for _, w in ipairs(LAYOUT.moat5a) do
+    local x, y = w[1], w[2]
+    if game.map_tile(x, y) ~= sea and not square_taken(x, y) then
+      game.set_tile(x, y, sea)
+    end
+  end
+end
+
 -- Start the 5A demo take again: the target back, the blocker back in the
--- bot's tank, the bot home.
+-- bot's tank, the bot home, the island's walls and moat back.
 local function reset_5a()
+  rebuild_5a_rings()
   reset_pill("t5a_target")
   if live_tank(S.bot5a) ~= nil then
     hand_pill(S.bot5a, P.t5a_blocker.n)
@@ -1439,6 +1493,7 @@ function on_tank_spawned(p, mx, my, respawn, scripted)
   elseif p == S.bot5a and S.fielded.bot5a then
     game.set_stocks(p, full_stock())
     hand_pill(p, P.t5a_blocker.n)
+    rebuild_5a_rings()
     S.t5a_reset_at = S.sec
   elseif p == S.bot7 and S.fielded.bot7 then
     if not respawn then
@@ -1657,23 +1712,10 @@ end
 -- rules more: the player's shells pass the player's own 5B blocker, and the
 -- 5A pillboxes' shells pass the player. Every other pillbox shoots as it
 -- always does, so the Station 6 bot's pillbox in Station 5B is a real enemy
--- pillbox.
--- 5B: only one in five of the target's shells takes armour off the
--- player's blocker. At the full rate the angry target kills a full blocker
--- in about 3 seconds, before a tank parked on the parking square has killed
--- the target (about 5 seconds of steady fire); this way the blocker lasts
--- about 16 seconds. A shell takes 1 armour and the engine rounds the scaled
--- amount, so a percent such as 20 would round to 0 on every shell: the rule
--- counts the shells instead. See docs/TUTORIAL_DECISIONS.md, "5B parking
--- square".
-function pill_damage_scale(attacker, n, cause, pill)
-  if n == P.t5b_blocker.n and pill == P.t5b_target.n then
-    S.b5b_soaked = (S.b5b_soaked or 0) + 1
-    if S.b5b_soaked % 5 == 0 then return 100 end
-    return 0
-  end
-  return nil
-end
+-- pillbox. The target's shells take their full armour off the player's 5B
+-- blocker: there is no damage rule, so the blocker wears down and dies as
+-- in a real game, and the announced rebuild is the only thing that puts
+-- armour back (docs/TUTORIAL_DECISIONS.md, "5B blocker takes full damage").
 
 function can_hit(attacker, kind, n, pill)
   if S.player == nil then return nil end
@@ -1833,6 +1875,21 @@ local function poll()
       end
     end
   elseif n == 5 then
+    -- 5A is told, not forced: the take seen from the watch spot ticks it
+    -- (on_pill_picked_up), and so does WATCH_NEAR_FRAMES after the tank
+    -- first came within WATCH_NEAR squares of the spot, wherever it is
+    -- then. The timer is not reset by leaving.
+    if not S.done[5].a_watch then
+      local w = PT.watch5a
+      if math.max(math.abs(t.mx - w[1]), math.abs(t.my - w[2])) <=
+         WATCH_NEAR then
+        S.near5a_at = S.near5a_at or S.frames
+      end
+      if S.near5a_at ~= nil and S.frames - S.near5a_at >= WATCH_NEAR_FRAMES
+         then
+        mark(5, "a_watch")
+      end
+    end
     if t.mx == PT.t5b_park[1] and t.my == PT.t5b_park[2] then
       mark(5, "b_park")
     end

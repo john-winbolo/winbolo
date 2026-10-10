@@ -2113,12 +2113,16 @@ limit, or a return to the lobby) the client closes a popup that is still up
 and drops the ones waiting, so a script that wants its last popup read must
 not end the round until the player has had time to close it.
 
-The text is laid out the way the tutorial's is: a single `
-` is read as a
-space, so a script can break long lines in its source, and a blank line
-(`
+Announcements and the status line wait behind a popup. While a popup is
+open the client draws no `game.announce` line and no status line, and the
+lines' clocks stand still: a line sent in the same tick as a popup, or while
+it is open, is shown for its whole time once the popup is closed, and a line
+that was already up keeps the time it had left. The player never has white
+text and a popup on screen at once. A script need not space them out.
 
-`) starts a new paragraph. It may be up to 511 bytes.
+The text is laid out the way the tutorial's is: a single `\n` is read as a
+space, so a script can break long lines in its source, and a blank line
+(`\n\n`) starts a new paragraph. It may be up to 511 bytes.
 
 Key tokens in the text show as the keys the player has bound, or as the
 control a controller or touch screen uses:
@@ -2131,9 +2135,7 @@ keys `{QUICK_TREE}`, `{QUICK_ROAD}`, `{QUICK_WALL}`, `{QUICK_PILL}` and
 `{GUN_DOWN}` (shorter).
 
 ```lua
-game.popup("{ACCEL} forward, {BRAKE} slow down.
-
-"
+game.popup("{ACCEL} forward, {BRAKE} slow down.\n\n"
   .. "Build a road with {QUICK_ROAD}.", p)
 ```
 
