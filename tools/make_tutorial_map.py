@@ -8,13 +8,13 @@ and the map always name the same squares.
 
 The map is seven stations stacked up a column, Station 1 at the south
 (bottom) and Station 7 at the north (top), joined by one road up the
-middle. Each station's checkpoint start sits in its own small pool of deep
-water on that road, at the station's south entrance (dock() below): walls
-close the pool on the west, south and east, so a tank that respawns on its
-boat can only drive out north onto the road, and no boat can reach another
-station. A player driving north from the station below meets the dock's
-south wall and goes round it on a short road to the east. Station 7 is an
-island; its checkpoint is a pocket of water in the island's forest.
+middle. The main road stays clear the whole way up. Each station's
+checkpoint start is a one-square pocket of deep water just west of the main
+road, at the station's south entrance (dock() below): walls close the pocket
+on the west, north and south, so a tank that respawns on its boat can only
+drive out east, onto a short road of its own that merges into the main road
+heading north. No boat can reach another station. Station 7 is an island;
+its checkpoint is a pocket of water in the island's forest.
 
 Coordinates are written so the terrain's bounding box is centred on square
 126 both ways. mapRead (bolo_map.c mapCenter) moves a map whose box is not
@@ -110,19 +110,24 @@ def start(name, x, y, d):
 
 
 def dock(name, south):
-    """A station's checkpoint: a 3x2 pool of deep water on the main road,
-    its south edge two rows above the station's south row `south`. Walls
-    close it on the west, south and east, so the only way out is north onto
-    the road. Below the south wall, a junction row takes the road from the
-    band gap east to a bypass that rejoins the main road north of the pool.
-    The start faces north."""
-    g0, g1 = GAP
-    fill(g0 - 1, south - 3, g1 + 1, south - 1, BUILDING)
-    fill(g0, south - 3, g1, south - 2, SEA)
-    fill(g1 + 2, south - 4, g1 + 4, south, ROAD)      # bypass
-    fill(g0, south, g1 + 4, south, ROAD)              # junction
-    fill(g0, south - 4, g1 + 4, south - 4, ROAD)      # back onto the road
-    start(name, (g0 + g1) // 2, south - 2, 4)
+    """A station's checkpoint, off the main road: a one-square pocket of deep
+    water three squares west of the road's west column, one row above the
+    station's south row `south`. Walls close the pocket on the west, north
+    and south, so the only way out is east. The pocket's own road runs two
+    squares east to the main road, with one more road square north-east of
+    its end, so the merge bends north the way the main road goes. The start
+    faces east, along that road. The main road is left as it is.
+
+    One square, not a pool: the boat a tank leaves behind sits on the only
+    water square, so a tank that drives back in from the road boards it and
+    does not drown."""
+    g0 = GAP[0]
+    px, py = g0 - 3, south - 1
+    fill(px - 1, py - 1, px + 1, py + 1, BUILDING)
+    put(px, py, SEA)
+    fill(px + 1, py, g0 - 1, py, ROAD)                # the merge road
+    put(g0 - 1, py - 1, ROAD)                         # bending north
+    start(name, px, py, 0)
 
 
 # 3x5 letters for the walled RESET pads.
@@ -368,7 +373,9 @@ walls5b = walled_reset("reset5b", 106, 112, GAP[0])
 # A friendly base on the road's centre column at the north end.
 base("b5", (GAP[0] + GAP[1]) // 2, a + 2)  # given to the player at the start
 dock("cp5", b)
-region("s5b", LAND_X0, 95, 124, 126)
+# Rows 95..122 only: the checkpoint pocket (123,125) and its road sit below,
+# and a respawn there must not count as driving into 5B.
+region("s5b", LAND_X0, 95, 124, 122)
 
 # --------------------------------------------------------------------------
 # Station 6: kill the man. A bot's tank is parked just east of the road; its

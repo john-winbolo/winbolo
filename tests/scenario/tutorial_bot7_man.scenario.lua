@@ -153,6 +153,9 @@ function on_tick(tick)
     -- carries them. Left on the road, they draw the bot off its island.
     hand_pill(0, P.p7_sw1.n)
     hand_pill(0, P.p7_sw2.n)
+    -- A player who reaches Station 7 has built the 5B blocker. Left dead
+    -- on its square, it draws the bot down the main road to take it.
+    pill_home("t5b_blocker", 0, rule("pill_max_armour"))
     A.phase, A.t = 1, tick
     return
   end

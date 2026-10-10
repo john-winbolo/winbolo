@@ -23,8 +23,10 @@
 --
 -- CHECKPOINTS. The furthest station the player has driven into is the
 -- checkpoint: on_choose_start puts every respawn there, and spawn_loadout
--- gives the tank that station's loadout. Each checkpoint is a deep-water
--- dock on the main road: the tank respawns on its boat and drives north.
+-- gives the tank that station's loadout. Each checkpoint is a one-square
+-- deep-water pocket just west of the main road: the tank respawns on its
+-- boat facing east and drives out on a short road that merges into the
+-- main road heading north.
 --
 -- RE-ARMING. Nothing has to be reset by hand: once a second the station
 -- the player is in puts back whatever a goal still needs while that goal
@@ -82,14 +84,14 @@ local LAYOUT = {
     b7_sw2 = { n = 15, x = 118, y = 51 },
   },
   start = {
-    cp1 = { n = 1, x = 127, y = 225 },
-    cp2 = { n = 2, x = 127, y = 199 },
-    cp3 = { n = 3, x = 127, y = 176 },
-    cp4 = { n = 4, x = 127, y = 155 },
+    cp1 = { n = 1, x = 123, y = 226 },
+    cp2 = { n = 2, x = 123, y = 200 },
+    cp3 = { n = 3, x = 123, y = 177 },
+    cp4 = { n = 4, x = 123, y = 156 },
     bot5a = { n = 5, x = 140, y = 117 },
-    cp5 = { n = 6, x = 127, y = 124 },
+    cp5 = { n = 6, x = 123, y = 125 },
     bot6 = { n = 7, x = 134, y = 80 },
-    cp6 = { n = 8, x = 127, y = 89 },
+    cp6 = { n = 8, x = 123, y = 90 },
     bot7 = { n = 9, x = 142, y = 32 },
     cp7 = { n = 10, x = 112, y = 52 },
   },
@@ -126,7 +128,7 @@ local LAYOUT = {
     s3 = { x = 97, y = 161, w = 59, h = 18 },
     s4 = { x = 97, y = 130, w = 59, h = 28 },
     s5 = { x = 97, y = 95, w = 59, h = 32 },
-    s5b = { x = 97, y = 95, w = 28, h = 32 },
+    s5b = { x = 97, y = 95, w = 28, h = 28 },
     s6 = { x = 97, y = 72, w = 59, h = 20 },
     s7 = { x = 97, y = 25, w = 59, h = 47 },
     t5b_park = { x = 117, y = 108, w = 1, h = 1 },

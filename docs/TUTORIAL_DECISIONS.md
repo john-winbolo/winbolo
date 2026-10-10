@@ -113,13 +113,31 @@ and how to undo it.
   band between each pair.
   **Why:** one long road is easy to follow; the bands keep each station's
   view to itself.
-- **What:** there is no deep-water trench. Each checkpoint start is a small
-  dock of deep water on the main road at the station's south entrance,
-  walled on three sides; a tank respawns on its boat and drives north out
-  of it. A player coming up the road goes round the dock on a short road to
-  the east.
-  **Why:** a start must be on deep sea and every spawn comes on a boat. The
-  trench was a long detour west and took the player off the road. Station
+- **What (changed 2026-10-10, item 18):** there is no deep-water trench,
+  and the main road (x 126..128) runs straight and clear up the centre of
+  the map. Each checkpoint start of Stations 1 to 6 is a one-square pocket
+  of deep water three squares west of the main road, one row above the
+  station's south edge: x 123, y 226 / 200 / 177 / 156 / 125 / 90 (cp1 to
+  cp6). Walls close it on the west, north and south. The start faces east,
+  and the pocket has its own road: two squares east to the main road
+  (x 124..125), and one road square north-east of its end (x 125, one row
+  up), so the merge bends north the way the main road goes. Before, each
+  start was a 3x2 pool on the main road itself (x 127), and a player coming
+  up the road had to go round it on a bypass to the east; the bypass is
+  gone. The Station 7 start (cp7, 112,52) is unchanged: it was already off
+  the main road, in a forest pocket on the island next to the island's road.
+  **Why one square:** the boat a tank leaves behind stays on the only water
+  square, so a tank that drives back in from the road boards it and does
+  not drown. **Why one row above the south edge:** in Station 5 the RESET
+  pen's road arrow reaches (122,123); a pocket one row higher would wall it
+  over. No base, pen, crater row or goal region is within 3 squares of a
+  pocket. The 5B popup region `s5b` now ends at row 122 (was 126), so a
+  respawn at cp5 does not count as driving into 5B. The only pill within
+  range of a pocket is the dead 4A pill (122,149), 7 squares from cp4; it
+  never fires (it is dead at home, or in the tank).
+  **Why a start at all:** a start must be on deep sea and every spawn
+  comes on a boat. The trench was a long detour west and took the player
+  off the road. Station
   1's popup still warns about deep water ("Deep water sinks tanks. If you
   die anywhere here, you come back at your last checkpoint.").
 - **What:** everything the player uses is on or right beside the road.
@@ -429,6 +447,20 @@ and how to undo it.
     gave 6.3%; 224 wu behind at 10% gave 9.5% but 3.1 to 17.3% per seed.
     The arena passes when 5 to 15 percent of at least 40 shots at the man
     kill him and `can_die` refuses no death of the man.
+  - **Arena set-up (2026-10-10, with item 18):** the arena now also puts
+    the 5B blocker on its square, live and the player's, as a player who
+    reaches Station 7 has built it. Left dead there, it drew the bot down
+    the main road (`capture_pill` on 117,102 for most of the run; the script
+    sends the bot back each time it leaves the island), and with the item 18
+    map the seed-42 run had only 31 shots at the man. After the change:
+    seed 42 7/74, seed 1 5/44, seed 2 6/60, seed 3 5/68.
+  - **Open (for Andrew):** the Station 7 bot still picks goals off its
+    island when they are cheap enough: the dead 4A pill (122,149), the
+    neutral 2B base, the 5B pills. The script sends it back the moment it
+    leaves, so it never gets there, but it loses time trying. In a real
+    run the player has taken these by Station 7, so they are the player's
+    and are attack goals, further away than the player's Station 7 pills.
+    A GoalHunter "stay in region" knob would end it; not built.
 - **The Station 7 bot cannot pick up the two dead SW pills** (`can_capture`,
   2026-10-10). Before, it drove out of its corner to take them off the
   road before the player got there.
