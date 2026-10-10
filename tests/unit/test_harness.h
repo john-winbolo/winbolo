@@ -3754,6 +3754,7 @@ int run_scenario_details_blob(void);
 int run_scenario_details_fetch_dir_mod(void);
 int run_scenario_details_fetch_survival(void);
 int run_scenario_details_fetch_soccer(void);
+int run_scenario_details_fetch_tutorial(void);
 int run_scenario_details_fetch_not_found(void);
 int run_scenario_details_fetch_retry(void);
 int run_scenario_details_fetch_give_up(void);

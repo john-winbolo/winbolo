@@ -2114,6 +2114,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_details_fetch_dir_mod",                  run_scenario_details_fetch_dir_mod                  },
     { "scenario_details_fetch_survival",                 run_scenario_details_fetch_survival                 },
     { "scenario_details_fetch_soccer",                   run_scenario_details_fetch_soccer                   },
+    { "scenario_details_fetch_tutorial",                 run_scenario_details_fetch_tutorial                 },
     { "scenario_details_fetch_not_found",                run_scenario_details_fetch_not_found                },
     { "scenario_details_fetch_retry",                    run_scenario_details_fetch_retry                    },
     { "scenario_details_fetch_give_up",                  run_scenario_details_fetch_give_up                  },

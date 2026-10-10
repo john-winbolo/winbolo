@@ -4,7 +4,10 @@ A hundred and forty-one small maps, each with a scenario script beside it.
 Most are built to make one bot decision happen on purpose and then say whether
 the bot made it. Thirty-four check a shipped mod instead: the twenty-three
 `pilltag_*` arenas, the seven `rule_roulette_*` arenas and the four `virus_*`
-arenas. `deep_sea_safe_rule` checks one gameplay rule.
+arenas. `deep_sea_safe_rule` checks one gameplay rule. The four `tutorial_*`
+arenas check the shipped Tutorial map's script: the checkpoint respawn, the
+station resets, the Station 5A demo take and the Station 7 bot keeping to
+its island.
 
 They came from the branch `survival-scenario-bot-improvements-merged`, where
 they ran on a server-side scenario host that no longer exists. They run here

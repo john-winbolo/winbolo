@@ -6613,6 +6613,7 @@ set(_unit_test_names
     scenario_details_fetch_dir_mod
     scenario_details_fetch_survival
     scenario_details_fetch_soccer
+    scenario_details_fetch_tutorial
     scenario_details_fetch_not_found
     scenario_details_fetch_retry
     scenario_details_fetch_give_up

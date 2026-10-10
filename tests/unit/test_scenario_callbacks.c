@@ -37,6 +37,9 @@
  *                                         arrives with every row of its
  *                                         callbacks block (Survival 8,
  *                                         Soccer 10); same for Soccer
+ * run_scenario_details_fetch_tutorial   — and for the Tutorial, whose 19
+ *                                         rows are the most a shipped
+ *                                         script carries
  * run_scenario_details_fetch_not_found  — a file the server does not know is
  *                                         answered, on the first request,
  *                                         with a not-found the client stops
@@ -705,6 +708,11 @@ int run_scenario_details_fetch_survival(void) {
 
 int run_scenario_details_fetch_soccer(void) {
     return scFetchMapScript("fetch_soccer", "Soccer", 11, "can_capture/Q=");
+}
+
+int run_scenario_details_fetch_tutorial(void) {
+    return scFetchMapScript("fetch_tutorial", "Tutorial", 19,
+                            "on_choose_start/");
 }
 
 int run_scenario_details_fetch_not_found(void) {
