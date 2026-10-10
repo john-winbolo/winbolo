@@ -264,8 +264,8 @@ local POP = {
     .. "holds the island.",
   s1 = "{ACCEL} forward, {BRAKE} slow down, {LEFT} and {RIGHT} turn.\n\n"
     .. "The patches beside the road are forest, swamp, rubble, craters and "
-    .. "a shallow river. Each slows you down by a different amount. Drive "
-    .. "onto three of them.\n\n"
+    .. "a shallow river. Each slows you down by a different amount. Try "
+    .. "driving on a few of them.\n\n"
     .. "Deep water sinks tanks. If you die anywhere here, you come back "
     .. "at your last checkpoint.",
   s2a = "Bases refill your shells, mines and armour, and your tank is low.\n\n"
@@ -959,12 +959,7 @@ local function status_text(t)
   end
   if n == 1 then
     if station_done(1) then return STEP_DONE end
-    local c = 0
-    for _, item in ipairs(LIST[1]) do
-      if S.done[1][item[1]] then c = c + 1 end
-    end
-    return string.format("Drive onto the patches beside the road:\n%d of %d "
-      .. "so far.", c, TERRAINS_NEEDED)
+    return ""
   end
   local g = current_goal(n)
   if g == nil then
