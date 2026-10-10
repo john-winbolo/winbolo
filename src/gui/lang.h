@@ -256,7 +256,7 @@
 #define STR_TUTORIAL21_CTRL                 1841
 #define STR_TUTORIAL_START04_CTRL           1842
 #define STR_TUTORIAL_RESPAWN1               1843
-#define STR_TUTORIAL_QUICK_BUILD_TOUCH      2763
+#define STR_TUTORIAL_QUICK_BUILD_TOUCH      2775
 
 /* LGM (little green man) messages */
 #define LGM_MAN_DEAD                        414

@@ -35,7 +35,7 @@ and how to undo it.
 - **What:** new tokens `{QUICK_TREE}`, `{QUICK_ROAD}`, `{QUICK_WALL}`,
   `{QUICK_PILL}`, `{QUICK_MINE}` read the `kiQuick*` key bindings.
   A controller shows the build-tool glyph; a touch screen shows the words
-  "the build buttons" (new string `STR_TUTORIAL_QUICK_BUILD_TOUCH`, 2763).
+  "the build buttons" (new string `STR_TUTORIAL_QUICK_BUILD_TOUCH`, 2775; 2763-2774 are taken by the open server-name and mod-meta branches).
   **Why:** neither a controller nor a touch screen has a quick-build key.
 - **What:** the token table moved to `src/gui/sdl3/tutorial_tokens.c`, a file
   with no SDL glyph code.
