@@ -25,6 +25,7 @@
  *  enumeration and search.
  *********************************************************/
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,6 +40,7 @@
 #include "bolo_rand.h"              /* bolo_rand_below — the rotation's random pick */
 #include "bolo_map_validate.h"      /* boloMapBodyLength — where the preview's read stops */
 #include "client_sim.h"             /* clientSimGetGameSim — the in-process client map reload */
+#include "client_sim_internal.h"    /* LOBBY_SCENARIO_LIST_MAX — the listing a -mod name is found in */
 #include "../../common/md5.h"       /* the compressed-map hash the preview paths compare */
 #include "../../common/mp_diag_log.h"
 #include "../../common/wb_log.h"
@@ -367,6 +369,530 @@ int serverSimGetScriptCount(const ServerSim *sim) {
 const ScnDirEntry *serverSimGetScript(const ServerSim *sim, int i) {
     if (sim == NULL || i < 0 || i >= sim->scenarioScriptCount) return NULL;
     return &sim->scenarioScripts[i];
+}
+
+/* ── The operator's -mod rows ─────────────────────────────────────
+ * What the dedicated server's -mod, -mod-required and -mod-locked name,
+ * held apart from the list and put back on it at every new lobby. The list
+ * is the host's; these are the operator's, and the CMD_SET_SCRIPT_LIST arm
+ * is where the host is held to them. */
+
+/* Whether the directory's file is the one the operator named: the name as
+   given or with one of the three endings a mod file carries, ignoring case
+   the way the file system the operator typed it for may. .scenario.lua is
+   tried before .lua so "Foo" finds Foo.scenario.lua ahead of Foo.lua only
+   when both are there. */
+static bool operatorModNameMatches(const char *file, const char *name,
+                                   const char *suffix) {
+    char want[SCN_DIR_FILE_LEN];
+
+    if (SDL_snprintf(want, sizeof(want), "%s%s", name, suffix) >=
+        (int)sizeof(want)) {
+        return false;
+    }
+    return SDL_strcasecmp(file, want) == 0;
+}
+
+static int operatorModIndexOf(const ServerSim *sim, const char *file) {
+    int i;
+
+    for (i = 0; i < sim->operatorModCount; i++) {
+        if (strcmp(sim->operatorMods[i].file, file) == 0) return i;
+    }
+    return -1;
+}
+
+/* The endings a mod file's name may be given without, in the order they
+   are tried. */
+static const char *const kOperatorModSuffixes[] = {
+    "", ".scenario.lua", ".lua", ".scenario"
+};
+
+/* The directory's row for name, as -mod matches it (operatorModNameMatches),
+   into *out. Each ending across the whole listing before the next ending, so
+   an exact name always beats a longer one that merely starts with it. A
+   player's upload is never what the operator meant: it lives in the session
+   directory, which the empty-lobby reset clears, so a row taken from it
+   would name a file that is gone by the next lobby. *oom is set when the
+   listing could not be read for want of memory. */
+static bool operatorModFindInDir(ServerSim *sim, const char *name,
+                                 ScnDirEntry *out, bool *oom) {
+    ScnDirEntry *dirRows;
+    int          dirCount;
+    int          s;
+    int          i;
+    bool         found = false;
+
+    *oom = false;
+    /* The listing the lobby's chooser offers, on the heap for the reason the
+       CMD_SET_SCRIPT_LIST arm reads it there. Read once per name, at
+       startup, which is the only time this is called. */
+    dirRows = (ScnDirEntry *)calloc((size_t)LOBBY_SCENARIO_LIST_MAX,
+                                    sizeof(*dirRows));
+    if (dirRows == NULL) {
+        *oom = true;
+        return false;
+    }
+    dirCount = serverSimScenarioListDir(sim, dirRows, LOBBY_SCENARIO_LIST_MAX);
+    for (s = 0; s < (int)SDL_arraysize(kOperatorModSuffixes) && !found; s++) {
+        for (i = 0; i < dirCount; i++) {
+            if (dirRows[i].source == SCN_DIR_SOURCE_UPLOAD) continue;
+            if (operatorModNameMatches(dirRows[i].file, name,
+                                       kOperatorModSuffixes[s])) {
+                *out  = dirRows[i];
+                found = true;
+                break;
+            }
+        }
+    }
+    free(dirRows);
+    return found;
+}
+
+bool serverSimAddOperatorMod(ServerSim *sim, const char *name,
+                             ServerModStrength strength,
+                             char *err, size_t errLen) {
+    ScnDirEntry row;
+    int         at;
+    int         i;
+    bool        oom = false;
+    char        errScratch[1];
+
+    /* A caller with no use for the reason passes NULL; every write below
+       then lands here instead, so none of them needs its own check. */
+    if (err == NULL || errLen == 0) {
+        err    = errScratch;
+        errLen = sizeof(errScratch);
+    }
+    err[0] = '\0';
+    if (sim == NULL || name == NULL) return false;
+    /* Before the name is even looked at: see operatorModsLocked. */
+    if (strength == SERVER_MOD_LOCKED) sim->operatorModsLocked = true;
+    if (name[0] == '\0') {
+        SDL_snprintf(err, errLen, "an empty mod name");
+        return false;
+    }
+
+    if (!operatorModFindInDir(sim, name, &row, &oom)) {
+        if (oom) {
+            SDL_snprintf(err, errLen,
+                         "out of memory reading the mod directory");
+            return false;
+        }
+        SDL_snprintf(err, errLen,
+                     "no mod or scenario called '%s' in %s or the mods that "
+                     "ship with the server",
+                     name, serverSimGetScenarioDir(sim));
+        return false;
+    }
+    /* The same refusal the command bus gives a host: a script written for
+       one map names that map's tags and regions. */
+    if (row.bound) {
+        SDL_snprintf(err, errLen,
+                     "%s is tied to one map and cannot be loaded on its own",
+                     row.file);
+        return false;
+    }
+    at = operatorModIndexOf(sim, row.file);
+    if (at >= 0) {
+        /* Named twice, by the same flag or two different ones. One row, held
+           as firmly as the firmer of the two. */
+        if ((int)strength > (int)sim->operatorModStrength[at]) {
+            sim->operatorModStrength[at] = (uint8_t)strength;
+        }
+        return true;
+    }
+    if (!row.keepsWinCondition) {
+        for (i = 0; i < sim->operatorModCount; i++) {
+            if (!sim->operatorMods[i].keepsWinCondition) {
+                SDL_snprintf(err, errLen,
+                             "%s is a scenario and %s is already one; a "
+                             "round runs one scenario",
+                             row.file, sim->operatorMods[i].file);
+                return false;
+            }
+        }
+    }
+    if (sim->operatorModCount >= LOBBY_SCRIPT_LIST_MAX) {
+        SDL_snprintf(err, errLen, "a round holds at most %d scripts",
+                     (int)LOBBY_SCRIPT_LIST_MAX);
+        return false;
+    }
+    sim->operatorMods[sim->operatorModCount]        = row;
+    sim->operatorModStrength[sim->operatorModCount] = (uint8_t)strength;
+    sim->operatorModCount++;
+    return true;
+}
+
+int serverSimGetOperatorModCount(const ServerSim *sim) {
+    return sim != NULL ? sim->operatorModCount : 0;
+}
+
+const char *serverSimGetOperatorModFile(const ServerSim *sim, int i) {
+    if (sim == NULL || i < 0 || i >= sim->operatorModCount) return "";
+    return sim->operatorMods[i].file;
+}
+
+ServerModStrength serverSimGetOperatorModStrength(const ServerSim *sim,
+                                                  int i) {
+    if (sim == NULL || i < 0 || i >= sim->operatorModCount) {
+        return (ServerModStrength)0;
+    }
+    return (ServerModStrength)sim->operatorModStrength[i];
+}
+
+bool serverSimGetOperatorModsLocked(const ServerSim *sim) {
+    return sim != NULL && sim->operatorModsLocked;
+}
+
+bool serverSimOperatorModFixed(const ServerSim *sim, const char *file) {
+    int at;
+
+    if (sim == NULL || file == NULL) return false;
+    at = operatorModIndexOf(sim, file);
+    if (at < 0) return false;
+    /* Every row of a locked list is fixed, whatever flag named it: a -mod
+       row beside -mod-locked is on a list nobody edits. */
+    return sim->operatorModsLocked ||
+           sim->operatorModStrength[at] >= SERVER_MOD_REQUIRED;
+}
+
+bool serverSimIsOperatorMod(const ServerSim *sim, const char *file) {
+    if (sim == NULL || file == NULL) return false;
+    return operatorModIndexOf(sim, file) >= 0;
+}
+
+uint32_t serverSimOperatorModLocks(const ServerSim *sim) {
+    uint32_t locks = 0;
+    int      i;
+
+    if (sim == NULL) return 0;
+    if (sim->operatorModsLocked) {
+        return LOBBY_LOCK_SCRIPT_LIST | LOBBY_LOCK_MODS;
+    }
+    for (i = 0; i < sim->operatorModCount; i++) {
+        if (sim->operatorModStrength[i] >= SERVER_MOD_REQUIRED) {
+            locks |= LOBBY_LOCK_MODS;
+        }
+    }
+    return locks;
+}
+
+/* Whether rows[i] may be taken off to make room for an operator row: any row
+   the operator did not name. The map's own row is one of those — it is on
+   the list because a host placed it. */
+static bool operatorModRowIsHosts(const ServerSim *sim,
+                                  const ScnDirEntry *row) {
+    return row->bound || operatorModIndexOf(sim, row->file) < 0;
+}
+
+static void operatorModListRemove(ScnDirEntry *rows, int *n, int at) {
+    int i;
+
+    for (i = at; i + 1 < *n; i++) rows[i] = rows[i + 1];
+    (*n)--;
+}
+
+static void operatorSettingsRestore(ServerSim *sim);
+
+bool serverSimRecordOperatorMods(ServerSim *sim) {
+    ScnDirEntry rows[LOBBY_SCRIPT_LIST_MAX];
+    int         n = 0;
+    int         i;
+    int         j;
+    bool        modsBackOn = false;
+
+    if (sim == NULL) return false;
+    if (!sim->operatorModsLocked && sim->operatorModCount == 0) return false;
+
+    /* The operator's -setting values on these rows go back with them. Each
+       one that changes publishes itself, as a host's pick does, so it is
+       not counted as a change of the list. */
+    operatorSettingsRestore(sim);
+
+    if (sim->operatorModsLocked) {
+        /* Exactly the operator's rows, in the order they were named. The
+           map's own row is not among them, so a scripted map's scenario is
+           composed at the front where a list that does not name it puts it
+           — unless one of these is a scenario, which replaces it as a picked
+           one does. */
+        for (i = 0; i < sim->operatorModCount; i++) {
+            rows[n++] = sim->operatorMods[i];
+        }
+    } else {
+        for (i = 0; i < sim->scenarioScriptCount; i++) {
+            rows[n++] = sim->scenarioScripts[i];
+        }
+        for (i = 0; i < sim->operatorModCount; i++) {
+            const ScnDirEntry *op = &sim->operatorMods[i];
+            bool               held = false;
+            bool               keepMapRow;
+
+            for (j = 0; j < n; j++) {
+                if (!rows[j].bound && strcmp(rows[j].file, op->file) == 0) {
+                    held = true;
+                    break;
+                }
+            }
+            if (held) continue;
+            keepMapRow = sim->operatorModStrength[i] == SERVER_MOD_DEFAULT;
+            /* A round runs one scenario, and the operator's is the one that
+               stays: whatever scenario the host picked goes. The map's own
+               row goes too for a -mod-required one, since that row and a
+               picked scenario are two, which the compose refuses. A plain
+               -mod scenario leaves the map's own row where it is: it gives
+               way to the map's own script at the compose when that script
+               is a scenario, and composes beside it when that script is a
+               mod (serverSimOperatorModYieldsToMap). */
+            if (!op->keepsWinCondition) {
+                for (j = n - 1; j >= 0; j--) {
+                    if (!rows[j].keepsWinCondition &&
+                        operatorModRowIsHosts(sim, &rows[j]) &&
+                        !(rows[j].bound && keepMapRow)) {
+                        operatorModListRemove(rows, &n, j);
+                    }
+                }
+            }
+            /* And a full list loses the last thing the host put on it. There
+               is always one: the operator's rows are at most
+               LOBBY_SCRIPT_LIST_MAX, and this one is not on yet. Not the
+               map's own row where the scenario pass above kept it: that pass
+               and this one keep the same row. */
+            if (n >= LOBBY_SCRIPT_LIST_MAX) {
+                for (j = n - 1; j >= 0; j--) {
+                    if (operatorModRowIsHosts(sim, &rows[j]) &&
+                        !(rows[j].bound && keepMapRow)) {
+                        operatorModListRemove(rows, &n, j);
+                        break;
+                    }
+                }
+                if (n >= LOBBY_SCRIPT_LIST_MAX) continue;
+            }
+            rows[n++] = *op;
+        }
+    }
+
+    /* The Mods/Scenario setting back on whenever there is an operator row to
+       play. A host who switched it off switched off every pick, the -mod
+       rows with them, and a row put back on a list nobody composes would be
+       listed and silent. The setting is the host's again from here, as the
+       -mod row is: switching it off for this lobby still works, unless a
+       -mod-required row has the MODS lock on it. */
+    if (sim->operatorModCount > 0 && sim->modsOff) {
+        sim->modsOff = false;
+        modsBackOn   = true;
+    }
+
+    /* Nothing to say when the list is already what it would be: the caller
+       would otherwise re-attach the scripts and unready the lobby for no
+       change at all. */
+    if (n == sim->scenarioScriptCount) {
+        for (i = 0; i < n; i++) {
+            if (strcmp(rows[i].file, sim->scenarioScripts[i].file) != 0 ||
+                rows[i].bound != sim->scenarioScripts[i].bound) {
+                break;
+            }
+        }
+        if (i == n) return modsBackOn;
+    }
+    serverSimSetScriptList(sim, rows, n);
+    return true;
+}
+
+bool serverSimOperatorModYieldsToMap(const ServerSim *sim,
+                                     const char *file,
+                                     bool mapOwnIsScenario) {
+    int at;
+
+    if (sim == NULL || file == NULL || sim->operatorModsLocked) return false;
+    /* The operator's own row says what kind it is: a mod never yields, as
+       it never takes the map's own script off in the first place. */
+    at = operatorModIndexOf(sim, file);
+    if (at < 0 || sim->operatorMods[at].keepsWinCondition ||
+        sim->operatorModStrength[at] != SERVER_MOD_DEFAULT) {
+        return false;
+    }
+    /* Only against a map whose own script decides the round. A map whose
+       own script is a mod leaves the win condition alone, so the -mod
+       scenario composes beside it as a host's pick would. */
+    return mapOwnIsScenario;
+}
+
+/* ── -setting values on the operator's rows ───────────────────────
+ * What the dedicated server's -setting keeps for the operator. The text of
+ * the argument is read in src/server/server_args.c; what is here is the
+ * sim's half: the name lookup against the operator's rows and the
+ * directory, and the values kept for those rows. */
+
+/* A name none of the three holds is copied as given, so a full name the
+   directory does not list still reaches the declaration lookup, which says
+   it is not there. */
+void serverSimResolveScriptName(ServerSim *sim, const char *name,
+                                const char *mapScript, char *out,
+                                size_t outLen) {
+    ScnDirEntry row;
+    bool        oom;
+    int         s;
+    int         i;
+
+    if (out == NULL || outLen == 0) return;
+    out[0] = '\0';
+    if (sim == NULL || name == NULL) return;
+
+    for (s = 0; s < (int)SDL_arraysize(kOperatorModSuffixes); s++) {
+        for (i = 0; i < sim->operatorModCount; i++) {
+            if (operatorModNameMatches(sim->operatorMods[i].file, name,
+                                       kOperatorModSuffixes[s])) {
+                SDL_strlcpy(out, sim->operatorMods[i].file, outLen);
+                return;
+            }
+        }
+    }
+    if (mapScript != NULL && mapScript[0] != '\0') {
+        for (s = 0; s < (int)SDL_arraysize(kOperatorModSuffixes); s++) {
+            if (operatorModNameMatches(mapScript, name,
+                                       kOperatorModSuffixes[s])) {
+                SDL_strlcpy(out, mapScript, outLen);
+                return;
+            }
+        }
+    }
+    if (operatorModFindInDir(sim, name, &row, &oom)) {
+        SDL_strlcpy(out, row.file, outLen);
+        return;
+    }
+    SDL_strlcpy(out, name, outLen);
+}
+
+/* Where the operator's value for file's setting id is kept, or -1. */
+static int operatorSettingAt(const ServerSim *sim, const char *file,
+                             const char *id) {
+    int i;
+
+    for (i = 0; i < sim->operatorSettingCount; i++) {
+        if (strcmp(sim->operatorSettings[i].file, file) == 0 &&
+            strcmp(sim->operatorSettings[i].id, id) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* The CTRL_LOBBY_SCRIPT_SETTING LOCK for the operator's value at, into
+   *evt. */
+static void operatorSettingLockEvent(const ServerSim *sim, int at,
+                                     ControlEvent *evt) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_LOBBY_SCRIPT_SETTING;
+    evt->u.lobbyScriptSetting.op = LOBBY_SCRIPT_SETTING_LOCK;
+    SDL_strlcpy(evt->u.lobbyScriptSetting.file,
+                sim->operatorSettings[at].file,
+                sizeof(evt->u.lobbyScriptSetting.file));
+    SDL_strlcpy(evt->u.lobbyScriptSetting.id, sim->operatorSettings[at].id,
+                sizeof(evt->u.lobbyScriptSetting.id));
+    evt->u.lobbyScriptSetting.value = sim->operatorSettings[at].value;
+}
+
+bool serverSimOperatorSettingLocked(const ServerSim *sim, const char *file,
+                                    const char *id) {
+    if (sim == NULL || file == NULL || id == NULL) return false;
+    return operatorSettingAt(sim, file, id) >= 0 &&
+           serverSimOperatorModFixed(sim, file);
+}
+
+/* One LOCK per value the operator holds, into deliver, after the SETs of
+   the join sync (serverSimReplayScriptSettings). */
+static void operatorSettingLocksReplay(
+    const ServerSim *sim, void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx) {
+    ControlEvent evt;
+    int          i;
+
+    if (sim == NULL || deliver == NULL) return;
+    for (i = 0; i < sim->operatorSettingCount; i++) {
+        if (!serverSimOperatorModFixed(sim, sim->operatorSettings[i].file)) {
+            continue;
+        }
+        operatorSettingLockEvent(sim, i, &evt);
+        deliver(ctx, &evt);
+    }
+}
+
+/* Each of the operator's values back in the store, the way the rows go back
+   on the list: a value the host moved on a -mod row last game is the
+   operator's again for this one. A value already in force is left alone,
+   so nothing is published for it. */
+static void operatorSettingsRestore(ServerSim *sim) {
+    int i;
+
+    for (i = 0; i < sim->operatorSettingCount; i++) {
+        const char       *file = sim->operatorSettings[i].file;
+        const char       *id   = sim->operatorSettings[i].id;
+        int32_t           want = sim->operatorSettings[i].value;
+        int32_t           have = 0;
+        uint8_t           blob[SCN_SETTINGS_BLOB_MAX];
+        ScnSetting        rows[SCN_SETTINGS_MAX];
+        const ScnSetting *decl = NULL;
+        int               len;
+        int               n = 0;
+
+        if (serverSimGetScriptSetting(sim, file, id, &have)) {
+            if (have == want) continue;
+        } else {
+            /* Nothing kept is the declared default. */
+            len = serverSimScenarioSettingsDecl(sim, file, blob, sizeof(blob));
+            if (len > 0) {
+                n = scnSettingsBlobRead(blob, (size_t)len, rows,
+                                        SCN_SETTINGS_MAX);
+            }
+            if (n > 0) decl = scnSettingFind(rows, n, id);
+            if (decl != NULL && decl->def == want) continue;
+        }
+        if (!serverSimSetScriptSetting(sim, file, id, want, NULL)) {
+            /* Most likely the store is full with the host's values, so the
+               operator's is not back for this game. Said, because on a
+               fixed row the join sync still sends its LOCK. */
+            char msg[LOBBY_SCENARIO_FILE_LEN + SCN_SETTING_ID_LEN + 96];
+
+            SDL_snprintf(msg, sizeof(msg),
+                         "Note: -setting %s:%s=%d was not put back: the "
+                         "settings store refused it", file, id, (int)want);
+            if (sim->sim.callbacks.consoleMessage != NULL) {
+                sim->sim.callbacks.consoleMessage(sim->sim.callbacks.ctx, msg);
+            }
+        }
+    }
+}
+
+ServerOperatorSettingHold serverSimRecordOperatorSetting(ServerSim *sim,
+                                                         const char *file,
+                                                         const char *id,
+                                                         int32_t value) {
+    int at;
+
+    if (sim == NULL || file == NULL || id == NULL ||
+        operatorModIndexOf(sim, file) < 0) {
+        return SERVER_OPERATOR_SETTING_NOT_OPERATOR;
+    }
+    /* Given twice, the later one counts, as it does in the store. */
+    at = operatorSettingAt(sim, file, id);
+    if (at < 0 && sim->operatorSettingCount < SERVER_OPERATOR_SETTINGS_MAX) {
+        at = sim->operatorSettingCount++;
+        SDL_strlcpy(sim->operatorSettings[at].file, file,
+                    sizeof(sim->operatorSettings[at].file));
+        SDL_strlcpy(sim->operatorSettings[at].id, id,
+                    sizeof(sim->operatorSettings[at].id));
+    }
+    if (at < 0) return SERVER_OPERATOR_SETTING_FULL;
+    sim->operatorSettings[at].value = value;
+    if (serverSimOperatorModFixed(sim, file)) {
+        ControlEvent evt;
+
+        operatorSettingLockEvent(sim, at, &evt);
+        serverSimPublishControl(sim, &evt);
+        return SERVER_OPERATOR_SETTING_HELD;
+    }
+    return SERVER_OPERATOR_SETTING_DEFAULT;
 }
 
 /* Where the picks hold the map's own row, or -1 for a list that does not.
@@ -1587,6 +2113,9 @@ void serverSimReplayScriptSettings(
         evt.u.lobbyScriptSetting.value = sim->scriptSettingValues[i].value;
         deliver(ctx, &evt);
     }
+    /* Then which of them the operator holds. After the SETs, so a client
+       too old to know a LOCK has every value already; it skips the LOCKs. */
+    operatorSettingLocksReplay(sim, deliver, ctx);
 }
 
 static void searchDirRecursive(const ServerSim *sim,

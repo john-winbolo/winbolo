@@ -302,7 +302,13 @@ typedef enum {
      *
      * op LOBBY_SCRIPT_SETTING_CLEAR comes first in every join sync, even
      * when no value is held, and is followed by one
-     * LOBBY_SCRIPT_SETTING_SET per value. A live change is one SET. A
+     * LOBBY_SCRIPT_SETTING_SET per value, and then one
+     * LOBBY_SCRIPT_SETTING_LOCK per value the dedicated server's operator
+     * holds (-setting on a -mod-required or -mod-locked row), which the
+     * host cannot change. A LOCK carries the value too, because a value
+     * equal to its default has no SET. An older client skips any op but
+     * CLEAR and SET, so it still has every value, and an older server
+     * never sends a LOCK, so nothing is held. A live change is one SET. A
      * client reads any event of this type as proof that the server takes
      * CMD_SET_SCRIPT_SETTING: an older server never sends one, and a client
      * that sent it that command anyway would stall its command stream on a
@@ -538,6 +544,9 @@ typedef enum {
 /* What a CTRL_LOBBY_SCRIPT_SETTING says. */
 #define LOBBY_SCRIPT_SETTING_CLEAR 0 /* forget every value held */
 #define LOBBY_SCRIPT_SETTING_SET   1 /* file's setting id is now value */
+#define LOBBY_SCRIPT_SETTING_LOCK  2 /* file's setting id is value, held by
+                                        the server's operator: the host
+                                        cannot change it */
 
 /* One script on the list, as CTRL_LOBBY_SCRIPT_LIST carries it and as a
  * client holds it afterwards.
@@ -565,6 +574,14 @@ typedef struct LobbyScriptEntry {
      * name a file the listing no longer holds, and a row that cannot say
      * whether it is removable is worse than one row of wire. */
     bool bound;
+    /* Whether the dedicated server's operator fixed this script on the list
+     * (-mod-required, or any row of a -mod-locked list): the server refuses
+     * a list without it, and a chooser draws it with no drop arrow. A
+     * default-on -mod row reads false, because the host may take it off.
+     * Wire bit 2 of the entry's flags byte, which a decoder built before it
+     * never read, so an old client shows the row as removable and the
+     * server refuses the list that leaves it off. */
+    bool required;
     /* Where the server got the file: SCN_DIR_SOURCE_SERVER, _UPLOAD or
      * _WORKSHOP (scenario_defs.h; SERVER_SCENARIO_SOURCE_* in server_sim.h
      * for a gui reader). The map's own script reads SERVER. */

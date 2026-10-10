@@ -858,6 +858,12 @@ uint32_t serverSimAddImpliedLocks(uint32_t locks) {
                  LOBBY_LOCK_POSITIONAL_SOUND)) {
         locks |= LOBBY_LOCK_CLASSIC_MODE;
     }
+    /* A list nobody may edit is a list nobody may switch off: the
+     * Mods/Scenario checkbox would otherwise take every fixed script out of
+     * the round with one click. */
+    if (locks & LOBBY_LOCK_SCRIPT_LIST) {
+        locks |= LOBBY_LOCK_MODS;
+    }
     return locks;
 }
 

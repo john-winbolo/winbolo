@@ -2566,6 +2566,13 @@
 #define STR_DLGLOBBY_SCENARIO_REPLACES      2602
 #define STR_DLGLOBBY_SCENARIO_ROUND_FULL    2603
 #define STR_DLGLOBBY_SCENARIO_MAP_UNLOAD    2761
+/* The server's operator fixed rows on the list (WinBoloDS -mod-required and
+ * -mod-locked): the drop arrow's hover on a fixed row, the reason a fixed
+ * scenario cannot be swapped out, and the note under the round heading when
+ * the whole list is read-only. */
+#define STR_DLGLOBBY_SCENARIO_REQUIRED      2768
+#define STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP 2769
+#define STR_DLGLOBBY_SCENARIO_LIST_LOCKED   2770
 
 /* The one-word tag after a row's name, and in the details dialog beside the
  * name it describes. One word and not a sentence: it is read at a glance
@@ -3268,6 +3275,8 @@
 #define STR_DLGLOBBY_DETAILS_SETTING_ON_DEFAULT  2709
 #define STR_DLGLOBBY_DETAILS_SETTING_OFF_DEFAULT 2710
 #define STR_DLGLOBBY_DETAILS_SETTING_CHOICE_DEFAULT 2759
+/* The tooltip on a setting the dedicated server's operator holds. */
+#define STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP  2773
 
 /* The map editor's metadata form: the read-only line naming the Steam
  * Workshop item a scenario was published as ({string1} = the item id) and

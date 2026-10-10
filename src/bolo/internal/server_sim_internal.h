@@ -1003,6 +1003,39 @@ struct ServerSim {
        forgotten by serverSimSetMapScript. */
     uint8_t      scenarioMapScriptSettings[SCN_SETTINGS_BLOB_MAX];
     uint16_t     scenarioMapScriptSettingsLen;
+
+    /* The scripts the operator named on the dedicated server's command line
+       (-mod, -mod-required, -mod-locked), in the order they were named, each
+       with the strength of the strongest flag that named it
+       (ServerModStrength). Rows out of the scenarios directory, resolved
+       once at startup, so putting them back on the list never reads the
+       directory again.
+
+       Not the list. scenarioScripts above is what the round plays; these
+       are what serverSimRecordOperatorMods puts back on it at every new
+       lobby, and what the CMD_SET_SCRIPT_LIST arm will not let a host take
+       off. Written only by serverSimAddOperatorMod.
+
+       operatorModsLocked is set by any -mod-locked, whether or not its name
+       resolved: the operator asked for a list nobody edits, and a typo in
+       one name is not a reason to open the list to every host. */
+    ScnDirEntry  operatorMods[LOBBY_SCRIPT_LIST_MAX];
+    uint8_t      operatorModStrength[LOBBY_SCRIPT_LIST_MAX];
+    int          operatorModCount;
+    bool         operatorModsLocked;
+    /* The values the operator's -setting gave the settings of those rows,
+       keyed like scriptSettingValues below and checked against the
+       declaration when recorded. Put back into scriptSettingValues with
+       the rows at every new lobby (serverSimRecordOperatorMods). Held
+       against the host only for a fixed row (serverSimOperatorModFixed):
+       a -mod row's value is a default the host may move for one game.
+       Written only by serverSimRecordOperatorSetting. */
+    struct {
+        char    file[LOBBY_SCENARIO_FILE_LEN];
+        char    id[SCN_SETTING_ID_LEN];
+        int32_t value;
+    }            operatorSettings[SERVER_OPERATOR_SETTINGS_MAX];
+    int          operatorSettingCount;
     /* The values the host chose for scripts' settings this session, keyed by
        the script's file name and the setting's id. A value equal to the
        declared default is not kept: a missing value is the default. Kept

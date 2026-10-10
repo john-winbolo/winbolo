@@ -491,6 +491,76 @@ host wrote it, so turning the box back on brings the same scripts back in the
 same order, and the lobby marks each pick that is switched off. An operator
 locks the box with `-lock mods` on the dedicated server.
 
+**Mods the operator puts on every game.** Three dedicated-server switches put
+scripts on the list for every game. Each takes a comma-separated list of file
+names, with or without `.scenario.lua` (case does not matter), and each may be
+given more than once.
+
+- `-mod <Names>` puts them on at every new lobby, and switches the
+  Mods/Scenario box back on, so a row that is back also plays. The host may
+  take one off, or switch the box off, for that game; the next lobby has them
+  back. The host's own picks stay.
+- `-mod-required <Names>` keeps them on. The server refuses any list without
+  them, the empty one included. The host may add, move and take off anything
+  else. It also locks the Mods/Scenario box on.
+- `-mod-locked <Names>` makes the list exactly these, read-only: `-lock mods`
+  plus the list. Every list is refused.
+
+A script from any of the three keeps the server out of ranked, which allows
+no scripts; with `-ranked` the server prints a warning at startup.
+
+`-mod-locked` cannot be combined with `-mod` or `-mod-required`. Given
+together, the server prints `Error: -mod-locked cannot be combined with -mod
+or -mod-required` and exits with status 1. `-mod` and `-mod-required` do
+combine: a name given to both keeps `-mod-required`. Under `-noscenarios`
+the conflict is not checked, because all three switches are ignored there.
+
+At most ten scripts and one scenario. An operator scenario replaces a
+scenario the host picked. Against a map that brings its own script the rule
+depends on the switch and on the map's script. A `-mod` scenario gives way
+to a map's own scenario, which plays instead; the console says so once per
+map. The `-mod` row stays on the script list while it gives way, and it plays
+again on the next map that has no scenario of its own. Beside a map's own
+mod, a `-mod` scenario plays with it. A `-mod-required` or `-mod-locked`
+scenario replaces the map's own script.
+
+A name that does not resolve, a script tied to a map and a player upload are
+each a warning on stderr and are skipped, as are blank names in the list, a
+switch with no value and a value longer than 1023 characters. `-noscenarios`
+ignores all three switches. With `-nolobby` or `-maprotate` the list is set
+once at startup and plays every round. The lobby chooser draws fixed rows
+with a lock and no drop arrow, and a locked list with no controls at all.
+
+**Settings of the operator's mods.** `-setting [<File>:]<id>=<value>` gives
+one of a script's own [settings](#scenariosettings) a value, as the host
+would pick it. File takes the name the way `-mod` does: with or without
+`.scenario.lua`, case ignored. The operator's mods are tried first, then the
+map's own script, then the mods directory. A bare `id=value` with no file
+names the map's own script. The value is a number, `true` or `false` (or `on`
+or `off`) for a `"bool"` setting, or one of the words of a `"choice"` setting.
+`-setting` may be given more than once.
+
+```
+WinBoloDS -mod-required MacBoloRules -setting MacBoloRules:pushback=false
+```
+
+On a mod from one of the three switches the value holds for every game, not
+only the first:
+
+- On a `-mod` mod the value is the default of every new lobby. The host may
+  change it for that game; the next lobby has the operator's value again.
+- On a `-mod-required` or `-mod-locked` mod the value is locked. The details
+  dialog shows it read-only with a lock, and the server refuses a change.
+
+Only the settings `-setting` names are held. The mod's other settings stay
+the host's to pick, under all three switches. On any other script `-setting`
+sets the value once at startup, and the host may change it. A file that
+declares no such setting, an unknown id, a value the setting does not take
+and a malformed argument are each a line on the console, and are skipped;
+the server still starts. The lock travels as a separate kind of setting
+message that a client from before it skips, so an older client still shows
+the value but leaves the dropdown on; the server refuses its change.
+
 ---
 
 ## Uploads
@@ -1047,7 +1117,9 @@ not declared.
 
 The server reads the declaration without running the script, the same way it
 reads `rules`. A value the host picks is held for the lobby session, per
-script file.
+script file. A dedicated server's operator can give a value with `-setting`,
+and lock it on a mod the server always runs; see
+[The script list](#the-script-list) (Settings of the operator's mods).
 
 ### `scenario.tags`
 

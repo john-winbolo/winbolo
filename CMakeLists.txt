@@ -2207,6 +2207,9 @@ set(SERVER_SOURCES
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/server/servermain.c
+    # The -mod flags and -setting off the command line. Public headers
+    # only, so it takes no grant below; the unit tests compile it too.
+    src/server/server_args.c
     src/server/server_frontend_stubs.c
     src/gui/sdl3/luabrainshandler.c
     src/headless/cmd_stdin.c
@@ -3924,6 +3927,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # lobby-settings byte.
     tests/unit/test_positional_sound_settings.c
     tests/unit/test_lobby_mods_enabled.c
+    # The dedicated server's -mod, -mod-required and -mod-locked: name
+    # matching, the CMD_SET_SCRIPT_LIST refusals, the re-apply at each new
+    # lobby, and the required flag on the wire.
+    tests/unit/test_operator_mods.c
+    src/server/server_args.c
     tests/unit/test_fog_settings.c
     # The named visibility sets the lobby offers, and the match that reads
     # a live set of settings back as one of them.
@@ -5001,6 +5009,20 @@ set(_unit_test_names
     lobby_mods_enabled_defaults
     lobby_mods_enabled_dispatch
     lobby_mods_enabled_codec
+    operator_mods_resolve
+    operator_mods_required
+    operator_mods_locked
+    operator_mods_reapply
+    operator_mods_wire
+    operator_mods_args
+    operator_mods_evict
+    operator_mods_lock_mask
+    operator_mods_mods_off
+    operator_mods_map_yield
+    operator_mods_setting_short_name
+    operator_mods_setting_reapply
+    operator_mods_setting_locked
+    operator_mods_setting_wire
     fog_settings_defaults
     fog_settings_classic_mode_preset
     fog_settings_lock_implied
@@ -6658,6 +6680,7 @@ set(_unit_test_names
     scenario_precedence_reload_refuses_bound
     scenario_compose_map_and_mods
     scenario_compose_keeps_map_scenario
+    scenario_compose_operator_mod_yields
     scenario_compose_mod_rules_load
     scenario_compose_region_clash_loads
     scenario_compose_reload_list
@@ -6697,6 +6720,9 @@ set(_unit_test_names
     scenario_compose_rotation_keeps_picks
     scenario_compose_round_start_closes_preview
     scenario_compose_drop_picked_scenarios
+    scenario_compose_commit_map_keeps_operator_mod
+    scenario_compose_commit_map_fixed_operator_mod
+    scenario_compose_map_kind_cached
     scenario_compose_fallback_strict
     scenario_compose_needs_bots_any_mod
     scenario_compose_needs_bots_scenario_and_mod
