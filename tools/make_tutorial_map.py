@@ -7,10 +7,14 @@ and the map always name the same squares.
     C:\\Python310\\python.exe tools/make_tutorial_map.py
 
 The map is seven stations stacked up a column, Station 1 at the south
-(bottom) and Station 7 at the north (top), with a deep-water trench down
-the west side. Each station's checkpoint start sits in its own stretch of
-the trench: forest dams cut the trench into one pool per station, so a tank
-that respawns on its boat cannot sail into another station.
+(bottom) and Station 7 at the north (top), joined by one road up the
+middle. Each station's checkpoint start sits in its own small pool of deep
+water on that road, at the station's south entrance (dock() below): walls
+close the pool on the west, south and east, so a tank that respawns on its
+boat can only drive out north onto the road, and no boat can reach another
+station. A player driving north from the station below meets the dock's
+south wall and goes round it on a short road to the east. Station 7 is an
+island; its checkpoint is a pocket of water in the island's forest.
 
 Coordinates are written so the terrain's bounding box is centred on square
 126 both ways. mapRead (bolo_map.c mapCenter) moves a map whose box is not
@@ -51,8 +55,7 @@ BASE_FULL = 90     # base armour, shells and mines when full
 # x 96..156 (centre 126) and y 24..228 (centre 126).
 X0, X1 = 96, 156
 Y0, Y1 = 24, 228
-TRENCH = (97, 100)          # deep-water trench, west side
-LAND_X0, LAND_X1 = 101, 155
+LAND_X0, LAND_X1 = 97, 155
 
 # Station rows, north edge first in each pair. Station 1 is at the south.
 STATIONS = {
@@ -86,6 +89,9 @@ def put(x, y, t):
     grid[y][x] = t
 
 
+arrows = {}  # RESET pen name -> the road squares of its arrow
+
+
 def region(name, x0, y0, x1, y1):
     regions[name] = (x0, y0, x1 - x0 + 1, y1 - y0 + 1)
 
@@ -103,12 +109,20 @@ def start(name, x, y, d):
     starts.append((name, x, y, d))
 
 
-def plain_pad(name, x, y):
-    """A plain reset pad: a 2x2 road square in a ring of rubble. The region
-    is the road square."""
-    fill(x - 1, y - 1, x + 2, y + 2, RUBBLE)
-    fill(x, y, x + 1, y + 1, ROAD)
-    region(name, x, y, x + 1, y + 1)
+def dock(name, south):
+    """A station's checkpoint: a 3x2 pool of deep water on the main road,
+    its south edge two rows above the station's south row `south`. Walls
+    close it on the west, south and east, so the only way out is north onto
+    the road. Below the south wall, a junction row takes the road from the
+    band gap east to a bypass that rejoins the main road north of the pool.
+    The start faces north."""
+    g0, g1 = GAP
+    fill(g0 - 1, south - 3, g1 + 1, south - 1, BUILDING)
+    fill(g0, south - 3, g1, south - 2, SEA)
+    fill(g1 + 2, south - 4, g1 + 4, south, ROAD)      # bypass
+    fill(g0, south, g1 + 4, south, ROAD)              # junction
+    fill(g0, south - 4, g1 + 4, south - 4, ROAD)      # back onto the road
+    start(name, (g0 + g1) // 2, south - 2, 4)
 
 
 # 3x5 letters for the walled RESET pads.
@@ -132,70 +146,84 @@ def word_walls(text, x, y):
     return out
 
 
-def walled_reset(name, x, y):
-    """RESET spelled in walls with its top-left at (x, y), on a road strip,
-    and a 3x2 road pad centred under it. Returns the wall squares, which the
-    script rebuilds on each reset."""
+def walled_reset(name, x, y, road_x):
+    """A RESET pad: the word RESET in walls with its top-left at (x, y), on a
+    road strip so it reads; below it a small walled pen with a 3x2 road pad
+    inside and a two-square gap in its east wall; a road from the gap east
+    to the main road at column `road_x`; and an arrow of road squares under that
+    road pointing along it at the gap. The region is the pad. Returns every
+    wall square (letters and pen), which the script rebuilds on each
+    reset; the arrow's squares go to the layout as arrow_<name>."""
     fill(x - 1, y - 1, x + 19, y + 5, ROAD)
     walls = word_walls("RESET", x, y)
+    px = x + 8
+    pen = []
+    for wy in range(y + 6, y + 10):
+        for wx in range(px - 1, px + 4):
+            edge = wy in (y + 6, y + 9) or wx in (px - 1, px + 3)
+            gap = wx == px + 3 and wy in (y + 7, y + 8)
+            if edge and not gap:
+                pen.append((wx, wy))
+    fill(px, y + 7, road_x - 1, y + 8, ROAD)     # pad, gap and road east
+    region(name, px, y + 7, px + 2, y + 8)
+    walls = walls + pen
     for (wx, wy) in walls:
         put(wx, wy, BUILDING)
-    px = x + 8
-    fill(px - 1, y + 6, px + 3, y + 9, RUBBLE)
-    fill(px, y + 7, px + 2, y + 8, ROAD)
-    region(name, px, y + 7, px + 2, y + 8)
+    ax = px + 5
+    arrow = [(ax, y + 11), (ax + 1, y + 10), (ax + 1, y + 12),
+             (ax + 2, y + 11), (ax + 3, y + 11)]
+    for (wx, wy) in arrow:
+        put(wx, wy, ROAD)
+    arrows[name] = arrow
     return walls
 
 
 # --------------------------------------------------------------------------
-# Frame, trench, bands
+# Frame, bands
 # --------------------------------------------------------------------------
 fill(X0, Y0, X1, Y1, GRASS)
 fill(X0, Y0, X1, Y0, BUILDING)
 fill(X0, Y1, X1, Y1, BUILDING)
 fill(X0, Y0, X0, Y1, BUILDING)
 fill(X1, Y0, X1, Y1, BUILDING)
-fill(TRENCH[0], Y0 + 1, TRENCH[1], Y1 - 1, SEA)
 for (a, b) in BANDS:
-    fill(TRENCH[0], a, LAND_X1, b, FOREST)
+    fill(LAND_X0, a, LAND_X1, b, FOREST)
     fill(GAP[0], a, GAP[1], b, ROAD)
 
 for n, (a, b) in STATIONS.items():
-    region("s%d" % n, TRENCH[0], a, LAND_X1, b)
+    region("s%d" % n, LAND_X0, a, LAND_X1, b)
 
 # --------------------------------------------------------------------------
-# Station 1: terrain. Grass, a road up the middle, a patch of each other
-# terrain beside it. The trench to the west is the deep water.
+# Station 1: terrain. Grass, a road up the middle, and a 3x3 patch of each
+# other terrain one square beside it. The checkpoint pool is the deep water.
 # --------------------------------------------------------------------------
 a, b = STATIONS[1]
 fill(GAP[0], a, GAP[1], b, ROAD)
-fill(LAND_X0, 222, GAP[0] - 1, 224, ROAD)        # from the trench to the path
-fill(106, 207, 114, 211, FOREST)
-fill(106, 214, 114, 218, SWAMP)
-fill(140, 207, 148, 211, RUBBLE)
-fill(140, 214, 148, 218, CRATER)
-fill(140, 221, 148, 225, RIVER)
-start("cp1", 98, 223, 0)
-plain_pad("pad1", 117, 209)
-points["s1_shore"] = (102, 223)
+W1, E1 = (GAP[0] - 4, GAP[0] - 2), (GAP[1] + 2, GAP[1] + 4)
+fill(W1[0], 216, W1[1], 218, FOREST)
+fill(E1[0], 216, E1[1], 218, SWAMP)
+fill(W1[0], 211, W1[1], 213, RUBBLE)
+fill(E1[0], 211, E1[1], 213, CRATER)
+fill(W1[0], 206, W1[1], 208, RIVER)
+dock("cp1", b)
 
 # --------------------------------------------------------------------------
 # Station 2: bases. 2A your base, 2B a neutral base, 2C an enemy base.
 # --------------------------------------------------------------------------
 a, b = STATIONS[2]
 fill(GAP[0], a, GAP[1], b, ROAD)
-fill(LAND_X0, 198, GAP[0] - 1, 199, ROAD)
-fill(118, 194, 124, 197, ROAD)
-base("b2a", 121, 195)                     # given to the player at the start
-fill(134, 188, 140, 191, ROAD)
-base("b2b", 137, 189)                     # neutral
-fill(116, 184, 124, 187, ROAD)
-base("b2c", 120, 185)                     # given to the enemy at the start
-region("b2a_area", 118, 194, 124, 197)
-region("b2b_area", 134, 188, 140, 191)
-region("b2c_area", 116, 184, 124, 187)
-start("cp2", 98, 199, 0)
-plain_pad("pad2", 146, 197)
+# Each base on a road patch that touches the main road, in the order the
+# station asks for them going north: 2A west, 2B east, 2C west.
+fill(121, 193, 125, 195, ROAD)
+base("b2a", 123, 194)                     # given to the player at the start
+fill(129, 188, 133, 190, ROAD)
+base("b2b", 131, 189)                     # neutral
+fill(121, 184, 125, 186, ROAD)
+base("b2c", 123, 185)                     # given to the enemy at the start
+region("b2a_area", 121, 193, 125, 195)
+region("b2b_area", 129, 188, 133, 190)
+region("b2c_area", 121, 184, 125, 186)
+dock("cp2", b)
 
 # --------------------------------------------------------------------------
 # Station 3: building. A grove to harvest, open grass to build on, and a
@@ -203,72 +231,89 @@ plain_pad("pad2", 146, 197)
 # --------------------------------------------------------------------------
 a, b = STATIONS[3]
 fill(GAP[0], a, GAP[1], b, ROAD)
-fill(LAND_X0, 175, GAP[0] - 1, 176, ROAD)
-fill(104, 163, 118, 172, FOREST)
-GROVE3 = (104, 163, 118, 172)
+# The grove one square west of the road; the target wall four squares east
+# of it, with open grass round it to build on.
+GROVE3 = (118, 164, 124, 172)
+fill(*GROVE3, FOREST)
 region("grove3", *GROVE3)
-fill(136, 166, 146, 172, GRASS)
-WALL3 = (148, 168)
+WALL3 = (133, 168)
 put(WALL3[0], WALL3[1], BUILDING)
-fill(147, 170, 149, 170, ROAD)            # a step to stand on, below it
+fill(132, 170, 134, 170, ROAD)            # a step to stand on, below it
 points["wall3"] = WALL3
-start("cp3", 98, 176, 0)
-plain_pad("pad3", 146, 175)
+# A friendly base on the road's centre column at the north end, to refill
+# shells after the wall.
+base("b3", (GAP[0] + GAP[1]) // 2, a + 2)  # given to the player at the start
+dock("cp3", b)
 
 # --------------------------------------------------------------------------
 # Station 4: pillboxes. 4A a dead neutral pill; 4B/4C one live neutral pill
-# with forest over the west half of its range circle and grass over the
-# east half, and a friendly base just outside the circle.
+# in a full ring of forest, with a clearing round the pill itself; and a
+# friendly base on the main road at the station's north end.
 # --------------------------------------------------------------------------
 a, b = STATIONS[4]
 fill(GAP[0], a, GAP[1], b, ROAD)
-fill(LAND_X0, 154, GAP[0] - 1, 155, ROAD)
-pill("p4a", 112, 148, NEUTRAL, 0)          # dead
-fill(110, 146, 114, 150, ROAD)
-region("p4a_area", 108, 144, 116, 152)
-P4 = (141, 141)
+# The dead pill on a road patch touching the main road, west.
+pill("p4a", 122, 149, NEUTRAL, 0)          # dead
+fill(120, 147, 125, 151, ROAD)
+region("p4a_area", 119, 146, 125, 152)
+# The live pill east. Forest covers every square within RANGE + 1.5 of it
+# except a 5x5 clearing round the pill, so every way in is through forest:
+# a tank wholly in the ring and 3 or more squares out (the classic
+# tree_hide_distance) is hidden; in the clearing it is seen. The ring's west
+# edge touches the road's east edge, and the road (x <= GAP[1]) is ten
+# squares from the pill, out of its range.
+P4 = (138, 141)
 pill("p4", P4[0], P4[1])
 RANGE = 8
-for y in range(P4[1] - RANGE, P4[1] + RANGE + 1):
-    for x in range(P4[0] - RANGE, P4[0] + RANGE + 1):
+for y in range(P4[1] - RANGE - 2, P4[1] + RANGE + 3):
+    for x in range(P4[0] - RANGE - 2, P4[0] + RANGE + 3):
         d = math.hypot(x - P4[0], y - P4[1])
-        if d <= RANGE + 0.5 and x <= P4[0] - 3:
+        near = max(abs(x - P4[0]), abs(y - P4[1]))
+        if d <= RANGE + 1.5 and near >= 3 and x > GAP[1]:
             grid[y][x] = FOREST
-region("p4_forest", P4[0] - RANGE, P4[1] - RANGE, P4[0] - 3, P4[1] + RANGE)
-region("p4_open", P4[0] + 1, P4[1] - RANGE, P4[0] + RANGE, P4[1] + RANGE)
+region("p4_clearing", P4[0] - 2, P4[1] - 2, P4[0] + 2, P4[1] + 2)
 points["p4"] = P4
-fill(147, 146, 151, 150, ROAD)
-base("b4c", 149, 148)                      # given to the player at the start
-start("cp4", 98, 155, 0)
-plain_pad("pad4", 116, 136)
+# The base on the road's centre column at the north end, so the tank drives
+# over it on the way on; 14 squares from the pill, out of its range.
+base("b4c", (GAP[0] + GAP[1]) // 2, a + 2)   # given to the player at the start
+dock("cp4", b)
 
 # --------------------------------------------------------------------------
 # Station 5: the pill take. 5A (east) is an island in a moat where a demo bot
-# takes a pill; the player watches from the west shore, out of range of
-# both pills. 5B (west) is the same layout for the player.
+# takes a pill; the player watches from the road, out of range of it. 5B
+# (west) is the same target for the player.
 #
-# The layout, both times: target pill T; a friendly pill one square east
-# and four south of it (in T's line of fire at a tank parked on the patch);
-# a 3x3 road patch six to eight squares south of T, inside T's range.
+# The take, both times: the target pill T, and a blocker pill built on the
+# square right beside it (south, the side the tank comes from). The blocker
+# soaks up T's shells while the tank shoots T. A tank shell hits any live
+# pill in its way, its own side's too, so the tank cannot shoot along the
+# line T-blocker-tank: it parks two squares east and three south of T,
+# diagonal to the blocker, where T's shots at it cross the blocker's square
+# and its own shots at T's east side pass the blocker by.
 # --------------------------------------------------------------------------
 a, b = STATIONS[5]
 fill(GAP[0], a, GAP[1], b, ROAD)
-fill(LAND_X0, 123, GAP[0] - 1, 124, ROAD)
 
 
-def take_layout(prefix, tx, ty, target_owner, friend_owner):
-    pill(prefix + "_target", tx, ty, target_owner)
-    pill(prefix + "_friend", tx + 1, ty + 4, friend_owner)
-    fill(tx - 1, ty + 6, tx + 1, ty + 8, ROAD)
-    region(prefix + "_patch", tx - 1, ty + 6, tx + 1, ty + 8)
+def take_layout(prefix, tx, ty, park=True):
+    pill(prefix + "_target", tx, ty, NEUTRAL)
+    pill(prefix + "_blocker", tx, ty + 1, NEUTRAL, 0)
     points[prefix + "_target"] = (tx, ty)
-    points[prefix + "_friend"] = (tx + 1, ty + 4)
+    points[prefix + "_blocker"] = (tx, ty + 1)
+    if park:
+        put(tx + 2, ty + 3, ROAD)
+        region(prefix + "_park", tx + 2, ty + 3, tx + 2, ty + 3)
+        points[prefix + "_park"] = (tx + 2, ty + 3)
 
 
-# 5A island: moat x 135..155, y 96..120; island x 140..153, y 99..117.
+# 5A island: moat x 135..155, y 96..120; island x 140..153, y 99..117. The
+# demo bot carries its blocker and builds it itself each time round, on a
+# square of its own choosing next to the target (GoalHunter mostly picks the
+# diagonal, 148,102); the map puts the pill on the in-line square, dead, for
+# the script to hand it. See docs/TUTORIAL_DECISIONS.md, "The blocker take".
 fill(135, 96, LAND_X1, 120, SEA)
 fill(140, 99, 153, 117, GRASS)
-take_layout("t5a", 147, 101, NEUTRAL, NEUTRAL)
+take_layout("t5a", 147, 101, park=False)
 points["t5a_home"] = (147, 114)
 fill(146, 113, 148, 115, ROAD)
 put(152, 116, SEA)                          # the demo bot's start pocket
@@ -276,56 +321,70 @@ start("bot5a", 152, 116, 4)
 region("watch5a", 129, 98, 134, 118)
 region("island5a", 140, 99, 153, 117)
 
-# 5B: same layout to the west, and a walled RESET outside T's range.
-take_layout("t5b", 112, 100, NEUTRAL, NEUTRAL)
-walls5b = walled_reset("reset5b", 103, 112)
-start("cp5", 98, 123, 0)
-region("s5b", TRENCH[0], 95, 125, 126)
+# 5B: the target nine squares from the road, so a tank driving up the road
+# is out of its range. The player is handed its blocker pill in the tank.
+take_layout("t5b", 117, 101)
+walls5b = walled_reset("reset5b", 106, 112, GAP[0])
+# A friendly base on the road's centre column at the north end.
+base("b5", (GAP[0] + GAP[1]) // 2, a + 2)  # given to the player at the start
+dock("cp5", b)
+region("s5b", LAND_X0, 95, 124, 126)
 
 # --------------------------------------------------------------------------
-# Station 6: kill the man. A bot's tank is parked in the east; its builder
-# harvests the grove on a loop. A gate in the north-west carries the player
-# across the moat to Station 7.
+# Station 6: kill the man. A bot's tank is parked just east of the road; its
+# man walks west along one row to a single tree west of the road, crossing
+# the road and a short span of craters, and back, over and over. A friendly
+# base on the road a few squares south of the craters.
 # --------------------------------------------------------------------------
 a, b = STATIONS[6]
 fill(GAP[0], a, GAP[1], b, ROAD)
-fill(LAND_X0, 88, GAP[0] - 1, 89, ROAD)
-fill(134, 76, 146, 87, FOREST)
-region("grove6", 134, 76, 146, 87)
-fill(149, 79, 153, 83, ROAD)
-points["bot6_park"] = (151, 81)
-put(154, 81, SEA)
-start("bot6", 154, 81, 8)
-fill(104, 73, 110, 76, ROAD)
-region("gate6", 105, 73, 109, 75)
-start("cp6", 98, 89, 0)
-plain_pad("pad6", 116, 84)
+ROW6 = 80
+PARK6 = (GAP[1] + 3, ROW6)                  # 131: the parked tank
+TREE6 = (GAP[0] - 5, ROW6)                  # 121: the one tree
+CRATERS6 = (GAP[0] - 3, GAP[0] - 2)         # 123..124: the aiming spot
+fill(TREE6[0] + 1, ROW6, PARK6[0], ROW6, ROAD)
+fill(CRATERS6[0], ROW6, CRATERS6[1], ROW6, CRATER)
+put(TREE6[0], TREE6[1], FOREST)
+points["bot6_park"] = PARK6
+points["tree6"] = TREE6
+region("craters6", CRATERS6[0], ROW6, CRATERS6[1], ROW6)
+region("path6", TREE6[0] + 1, ROW6, PARK6[0], ROW6)
+put(PARK6[0] + 3, ROW6, SEA)                # the bot's start pocket
+start("bot6", PARK6[0] + 3, ROW6, 8)
+base("b6", (GAP[0] + GAP[1]) // 2, ROW6 + 4)  # given to the player
+dock("cp6", b)
 
 # --------------------------------------------------------------------------
-# Station 7: the final round, a small Chew Toy on an island in a moat. The
-# player holds three quarters (SW, NW, SE); one bot holds NE.
+# Station 7: the final round, a small Chew Toy island. The main road runs
+# straight in from the south. A wall round the island keeps the bot and its
+# man in; the road is the one gap in it, and the script sends the bot back
+# if it drives out through it. The player holds three quarters (SW, NW,
+# SE), each with two pills and two bases; the bot holds NE, two bases and
+# no pills.
 # --------------------------------------------------------------------------
 a, b = STATIONS[7]
-fill(TRENCH[0], a, LAND_X1, b, SEA)
+fill(LAND_X0, a, LAND_X1, b, GRASS)
 IX0, IY0, IX1, IY1 = 107, 27, 149, 67
 CX, CY = 128, 47
 fill(IX0, IY0, IX1, IY1, FOREST)
 fill(IX0 + 3, IY0 + 3, IX1 - 3, IY1 - 3, ROAD)
-# Round the corners off, the way Chew Toy's forest disc is round.
+# Round the corners off, the way the Chew Toy forest disc is round.
+outside = set()
 for y in range(IY0, IY1 + 1):
     for x in range(IX0, IX1 + 1):
         dx = max(0, abs(x - CX) - 14)
         dy = max(0, abs(y - CY) - 13)
         if dx * dx + dy * dy > 49:
-            grid[y][x] = SEA
+            grid[y][x] = GRASS
+            outside.add((x, y))
 # The grass cross through the middle, and walls on the axes in the forest.
 fill(CX, IY0 + 3, CX, IY1 - 3, GRASS)
 fill(IX0 + 3, CY, IX1 - 3, CY, GRASS)
 for x in list(range(IX0, IX0 + 3)) + list(range(IX1 - 2, IX1 + 1)):
-    if grid[CY][x] is not SEA:
+    if (x, CY) not in outside:
         grid[CY][x] = BUILDING
 for y in list(range(IY0, IY0 + 3)):
-    if grid[y][CX] is not SEA:
+    if (CX, y) not in outside:
         grid[y][CX] = BUILDING
 # Short diagonal wall bits in each quarter, as Chew Toy has.
 for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
@@ -339,13 +398,28 @@ for y in range(IY0 + 3, IY1 - 2):
                 if grid[y + ddy][x + ddx] == FOREST:
                     grid[y][x] = GRASS
                     break
+# The wall: every square outside the island that touches it.
+inside = set((x, y) for y in range(IY0, IY1 + 1) for x in range(IX0, IX1 + 1)
+             if (x, y) not in outside)
+for y in range(IY0 - 1, IY1 + 2):
+    for x in range(IX0 - 1, IX1 + 2):
+        if (x, y) in inside:
+            continue
+        if any((x + ddx, y + ddy) in inside
+               for ddx in (-1, 0, 1) for ddy in (-1, 0, 1)):
+            grid[y][x] = BUILDING
+# The road in: from the station's south edge north through the wall and the
+# forest rim to the island's road.
+fill(GAP[0], IY1 - 3, GAP[1], b, ROAD)
+region("island7", IX0, IY0, IX1, IY1)
+points["s7_arrive"] = ((GAP[0] + GAP[1]) // 2, IY1 - 4)
 
-# Bot quarter (NE).
+# Bot quarter (NE): its start pocket, a pool in a forest clump, and two
+# bases. No pills: a pill there would be one more thing the bot defends,
+# and the lesson is taking bases with the player's pills.
 fill(141, 31, 143, 33, FOREST)
 put(142, 32, SEA)
 start("bot7", 142, 32, 10)
-pill("p7_ne1", CX + 6, CY - 8)
-pill("p7_ne2", CX + 8, CY - 6)
 base("b7_ne1", CX + 4, CY - 12)
 base("b7_ne2", CX + 12, CY - 4)
 # Player quarters: NW, SE live pills; SW two dead pills by the start.
@@ -364,17 +438,10 @@ fill(112, 52, 112, 53, SEA)
 start("cp7", 112, 52, 0)
 pill("p7_sw1", 116, 51, NEUTRAL, 0)
 pill("p7_sw2", 116, 54, NEUTRAL, 0)
-base("b7_sw1", CX - 4, CY + 8)
+base("b7_sw1", CX - 4, CY + 4)
 base("b7_sw2", CX - 10, CY + 4)
-walls7 = walled_reset("reset7", 109, 56)
-points["s7_arrive"] = (114, 52)
+walls7 = walled_reset("reset7", 108, 55, GAP[0])
 region("quarter_ne", CX + 1, IY0, IX1, CY - 1)
-region("island7", IX0, IY0, IX1, IY1)
-
-# The dams between the trench pools sit in the bands. Station 6's pool is cut
-# off from Station 7's moat by one more dam on Station 6's top row, so a tank
-# that respawns at Station 6 cannot sail round to the island.
-fill(TRENCH[0], 72, TRENCH[1], 72, FOREST)
 
 # --------------------------------------------------------------------------
 # Checks and output
@@ -495,6 +562,8 @@ def lua_layout():
     lines.append("  },")
     for nm, ws in (("walls5b", walls5b), ("walls7", walls7)):
         lines.append("  %s = { %s }," % (nm, ", ".join("{%d,%d}" % w for w in ws)))
+    for nm in sorted(arrows):
+        lines.append("  arrow_%s = { %s }," % (nm, ", ".join("{%d,%d}" % w for w in arrows[nm])))
     gx0, gy0, gx1, gy1 = GROVE3
     lines.append("  grove3 = { %d, %d, %d, %d }," % (gx0, gy0, gx1, gy1))
     lines.append("}")

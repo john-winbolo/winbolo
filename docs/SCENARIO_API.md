@@ -1496,7 +1496,7 @@ starts comes due after about twice the seconds it asked for.
 
 | Call | Answers |
 |---|---|
-| `game.tank(p)` | `{ mx, my, wx, wy, dir, armour, shells, mines, trees, pills, boat, dead, name, bot, kills, deaths, mods }`, or `nil` when the seat is empty or has no tank. `mx, my` are map squares and `wx, wy` world coordinates; `dir` is the full 0-255 facing, which is what `teleport` takes back. `mods` is `{ speed, accel, turn, reload, dealt, taken }`. |
+| `game.tank(p)` | `{ mx, my, wx, wy, dir, armour, shells, mines, trees, pills, sight, boat, dead, name, bot, kills, deaths, mods }`, or `nil` when the seat is empty or has no tank. `mx, my` are map squares and `wx, wy` world coordinates; `dir` is the full 0-255 facing, which is what `teleport` takes back. `sight` is the gun sight, the range a shell flies before it bursts, in half squares from the rule `gunsight_min` to `gunsight_max` (2 to 14 classic); a bot's or a human's alike. `mods` is `{ speed, accel, turn, reload, dealt, taken }`. |
 | `game.builder(p)` | `{ state, mx, my, wx, wy, job, trees, mines }`, or `nil` when the seat has none. `state` is `"in_tank"`, `"going"`, `"returning"`, `"parachuting"` or `"dead"`; `job` is an action word, or absent when he is on none. The square is tracked while he is out of the tank — in the tank he is wherever his tank is, which is why the state comes first. |
 | `game.lobby_slot(p)` | `{ connected, bot, team, name, ready, fielded, alive, team_pool }`, or `nil` for an empty seat. **`fielded` is the field that tells a held seat from one on the field.** `team_pool` is the label of the bot naming pool the seat's team draws bot names from, such as `"Famous Painters"`: the name the lobby shows in that team's pool dropdown. It is absent when the seat is on no team (0) or the team has no pool. A team has a pool once it is set up in the lobby; teams 1 and 2 start with the first pool, and a team the host never set up has none, so its seats read `nil` even when they hold bots. A dedicated server's `-bots` names its bots from one random pool without setting any team's pool, so there `team_pool` is the first pool's label, not the pool the bot names came from. The label comes from the server's own pools, so every client reads the same word. A script can label a team of bots only by it (see below). |
 | `game.allied(a, b)` | Whether seats `a` and `b` are on the same side in the game: `true` or `false`, `true` for a seat and itself, and `nil` when either seat is empty. This is the alliance table every game rule reads — who a pillbox fires at, which bases refuel whom — including alliances players made and left in play. **It can differ from `game.lobby_slot(p).team`:** two teammates where one has left the alliance share a team but are not allied, and players on different teams who allied share a side but not a team. |
@@ -1605,7 +1605,7 @@ refused with `SCN_OP_BAD_SQUARE`, the same answer as a square off the map.
 | `game.builder_order(p, action, x, y)` | Sends a builder out to do one of `"trees"`, `"road"`, `"building"`, `"pill"`, `"mine"` or `"boat"` on a square. The engine repairs rather than builds where the square already holds one. |
 | `game.builder_recall(p)` | Calls a builder back to the tank. |
 | `game.kill_lgm(p[, killer])` | Kills a builder. `killer` is a seat. |
-| `game.builder_parachute(p[, x, y])` | Drops a dead builder back in, on a square or at the tank. |
+| `game.builder_parachute(p[, x, y[, from]])` | Drops a dead builder back in, on a square or at the tank. A death starts his flight on a random start, which can be most of a minute away; this moves the start to the nearest map edge on the line in. `from` (0 to 32, default 0) starts him only that many squares short of the landing square on the same line instead, unless the edge is nearer; call it from `on_lgm_died` to land a new man beside his tank within a few seconds (at the classic `lgm_helicopter_speed` of 3, about 85 ticks a square). |
 | `game.set_builder_carried(p[, trees[, mines]])` | What a builder is carrying. A count left out is left alone. |
 
 ### Pillboxes and bases
@@ -2054,6 +2054,15 @@ players around it see. A replay shows it too. A `countdown_to` below 0 or
 past 4294967294, or a seat or team outside the game, is refused with
 `SCN_OP_RANGE`.
 
+**Key tokens.** A status line or an announcement may carry the popup key
+tokens: `{ACCEL}`, `{BRAKE}`, `{LEFT}`, `{RIGHT}`, `{FIRE}`, `{MINE}`,
+`{SCROLL_UP}`, `{SCROLL_DOWN}`, `{SCROLL_LEFT}`, `{SCROLL_RIGHT}`, `{DISMISS}`,
+`{BUILD_MODE}`, `{BUILD_PLACE}`, `{BUILD_TOOL}`, `{QUICK_TREE}`, `{QUICK_ROAD}`,
+`{QUICK_WALL}`, `{QUICK_PILL}`, `{QUICK_MINE}`, `{GUN_UP}` and `{GUN_DOWN}`. The
+client writes each one out as the name of the bound key on a keyboard, a word
+for the control on a controller, or the touch wording on a touch screen. The
+128-byte cap (125 with a position) applies to the text as sent, tokens and all.
+
 ```lua
 game.status(string.format("Wave %d/%d", wave, waves), wave_ends_at)
 game.announce("Wave 3 - they come from the north", 5, nil, "center")
@@ -2088,6 +2097,11 @@ is for a sentence or two the player has to read before going on, where
 next when one is closed. A popup is not kept: a player who joins after it
 was sent does not see it.
 
+A popup belongs to its round. When the round ends (`game.end_round`, the time
+limit, or a return to the lobby) the client closes a popup that is still up
+and drops the ones waiting, so a script that wants its last popup read must
+not end the round until the player has had time to close it.
+
 The text is laid out the way the tutorial's is: a single `
 ` is read as a
 space, so a script can break long lines in its source, and a blank line
@@ -2102,7 +2116,8 @@ control a controller or touch screen uses:
 `{SCROLL_DOWN}`, `{SCROLL_LEFT}`, `{SCROLL_RIGHT}`, `{DISMISS}`,
 `{BUILD_MODE}`, `{BUILD_PLACE}`, `{BUILD_TOOL}`, and the five quick-build
 keys `{QUICK_TREE}`, `{QUICK_ROAD}`, `{QUICK_WALL}`, `{QUICK_PILL}` and
-`{QUICK_MINE}`.
+`{QUICK_MINE}`, and the two gunsight range keys `{GUN_UP}` (longer) and
+`{GUN_DOWN}` (shorter).
 
 ```lua
 game.popup("{ACCEL} forward, {BRAKE} slow down.

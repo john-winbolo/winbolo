@@ -643,8 +643,23 @@ static ScnOpResult scenarioOpLgmParachute(ServerSim *sim,
         ey = (BYTE)MAP_MINE_EDGE_TOP;
     }
     if (toBottom < nearest) {
+        nearest = toBottom;
         ex = mx;
         ey = (BYTE)MAP_MINE_EDGE_BOTTOM;
+    }
+    /* A short drop: the same line in from the same edge, but only `from`
+       squares of it, so a scenario can land a man beside his tank in a
+       couple of seconds wherever the map's edges are. */
+    if (p->from > 0 && p->from < nearest) {
+        if (ex == (BYTE)MAP_MINE_EDGE_LEFT) {
+            ex = (BYTE)(mx - p->from);
+        } else if (ex == (BYTE)MAP_MINE_EDGE_RIGHT) {
+            ex = (BYTE)(mx + p->from);
+        } else if (ey == (BYTE)MAP_MINE_EDGE_TOP) {
+            ey = (BYTE)(my - p->from);
+        } else {
+            ey = (BYTE)(my + p->from);
+        }
     }
 
     (*l)->x = (WORLD)(((WORLD)ex << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);

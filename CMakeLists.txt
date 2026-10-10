@@ -5443,7 +5443,9 @@ set(_unit_test_names
     voice_everyone_codec
     scenario_popup_codec
     scenario_popup_client_queue
+    scenario_popup_round_over
     tutorial_tokens_quick_build
+    scenario_status_tokens_expand
     sim_rules_codec_roundtrip
     sim_rules_codec_golden
     voice_talking_stops_in_countdown

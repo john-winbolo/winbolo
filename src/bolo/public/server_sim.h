@@ -2962,6 +2962,10 @@ typedef struct TankInfo {
     BYTE  armour;
     BYTE  trees;
     BYTE  pills;     /* How many pills the tank is carrying */
+    BYTE  sight;     /* Gun sight range in half squares, from the rules
+                        gunsight_min to gunsight_max. The server's copy:
+                        it follows the owner's crosshair once their
+                        input reaches the server. */
     bool  is_bot;
     TankModifiers mods; /* Per-tank percentages; a zeroed set is classic */
 } TankInfo;

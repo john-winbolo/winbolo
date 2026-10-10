@@ -398,7 +398,13 @@ typedef struct {
 typedef struct {
     BYTE slot;
     BYTE x, y;      /* 0xFF, 0xFF = to the tank */
+    BYTE from;      /* 0 = from the nearest map edge (the classic arm);
+                       1..SCN_PARACHUTE_FROM_MAX = start this many squares
+                       short of the landing square, on the line to that
+                       edge */
 } ScnOpLgmParachute;
+
+#define SCN_PARACHUTE_FROM_MAX 32
 
 typedef struct {
     BYTE slot;

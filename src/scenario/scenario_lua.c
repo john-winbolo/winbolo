@@ -720,6 +720,8 @@ static int scnLuaTank(lua_State *L) {
     scnSetInt(L, "mines", info.mines);
     scnSetInt(L, "trees", info.trees);
     scnSetInt(L, "pills", info.pills);
+    /* Gun sight range in half squares (rules gunsight_min..gunsight_max). */
+    scnSetInt(L, "sight", info.sight);
     /* The full 0-255 facing, which is the one a teleport takes back. */
     scnSetInt(L, "dir", info.dir256);
     scnSetBool(L, "boat", info.on_boat);
@@ -2515,6 +2517,7 @@ static int scnLuaBuilderParachute(lua_State *L) {
     lua_Integer p = scnArgInt(L, 1, "p");
     lua_Integer x = scnOptInt(L, 2, "x", SCN_NONE);
     lua_Integer y = scnOptInt(L, 3, "y", SCN_NONE);
+    lua_Integer from = scnOptInt(L, 4, "from", 0);
 
     if (!scnFitsByte(p)) {
         return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
@@ -2524,11 +2527,16 @@ static int scnLuaBuilderParachute(lua_State *L) {
         return scnRefused(L, SCN_OP_BAD_SQUARE, "square (%d, %d) is off the map",
                           (int)x, (int)y);
     }
+    if (from < 0 || from > SCN_PARACHUTE_FROM_MAX) {
+        return scnRefused(L, SCN_OP_RANGE, "from %d is not 0 to %d squares",
+                          (int)from, SCN_PARACHUTE_FROM_MAX);
+    }
     memset(&op, 0, sizeof(op));
     op.type                 = SCN_OP_LGM_PARACHUTE;
     op.u.lgmParachute.slot  = (BYTE)p;
     op.u.lgmParachute.x     = (BYTE)x;
     op.u.lgmParachute.y     = (BYTE)y;
+    op.u.lgmParachute.from  = (BYTE)from;
     return scnDone(L, &op, "player %d", (int)p);
 }
 
@@ -5265,7 +5273,8 @@ static const ScnLuaOpParam kScnOpArgs_kill_lgm[] = {
 };
 static const ScnLuaOpParam kScnOpArgs_builder_parachute[] = {
     { "p", SCN_PARAM_SLOT, false }, { "x", SCN_PARAM_SQUARE_X, true },
-    { "y", SCN_PARAM_SQUARE_Y, true }, SCN_OP_ARG_END
+    { "y", SCN_PARAM_SQUARE_Y, true }, { "from", SCN_PARAM_NUMBER, true },
+    SCN_OP_ARG_END
 };
 static const ScnLuaOpParam kScnOpArgs_set_builder_carried[] = {
     { "p", SCN_PARAM_SLOT, false }, { "trees", SCN_PARAM_NUMBER, true },
@@ -5528,7 +5537,8 @@ static const ScnLuaRow kScnLuaRows[] = {
       SCN_OP_PARAMS(start), SCN_OP_READS },
     { "tank", scnLuaTank,
       "tank(p) — player p's tank as { mx, my, wx, wy, dir, armour, shells, "
-      "mines, trees, pills, boat, dead, name, bot, kills, deaths, mods }, "
+      "mines, trees, pills, sight, boat, dead, name, bot, kills, deaths, "
+      "mods }, "
       "or nil when the seat is empty or has no tank.",
       SCN_OP_PARAMS(tank), SCN_OP_READS },
     { "builder", scnLuaBuilder,
@@ -5650,8 +5660,8 @@ static const ScnLuaRow kScnLuaRows[] = {
       "kill_lgm(p[, killer]) — kill player p's builder; killer is a seat.",
       SCN_OP_PARAMS(kill_lgm), SCN_OP_ACTS },
     { "builder_parachute", scnLuaBuilderParachute,
-      "builder_parachute(p[, x, y]) — drop a dead builder back in, on a "
-      "square or at the tank.",
+      "builder_parachute(p[, x, y[, from]]) — drop a dead builder back in, "
+      "on a square or at the tank; from = start that many squares out.",
       SCN_OP_PARAMS(builder_parachute), SCN_OP_ACTS },
     { "set_builder_carried", scnLuaSetBuilderCarried,
       "set_builder_carried(p[, trees[, mines]]) — what player p's builder "

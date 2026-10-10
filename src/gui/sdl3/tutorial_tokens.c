@@ -37,6 +37,8 @@ static const char *const kTokenText[TT_COUNT] = {
   "{QUICK_WALL}",
   "{QUICK_PILL}",
   "{QUICK_MINE}",
+  "{GUN_UP}",
+  "{GUN_DOWN}",
 };
 
 const char *tutorialTokenText(TutorialTokenId id) {
@@ -76,6 +78,8 @@ int tutorialTokenScancode(TutorialTokenId id, const keyItems *k) {
     case TT_QUICK_WALL:   return k->kiQuickWall;
     case TT_QUICK_PILL:   return k->kiQuickPillbox;
     case TT_QUICK_MINE:   return k->kiQuickMine;
+    case TT_GUN_UP:       return k->kiGunIncrease;
+    case TT_GUN_DOWN:     return k->kiGunDecrease;
     case TT_BUILD_MODE:
     case TT_BUILD_PLACE:
     case TT_BUILD_TOOL:
@@ -89,4 +93,33 @@ bool tutorialTokenIsQuickBuild(TutorialTokenId id) {
   return id == TT_QUICK_TREE || id == TT_QUICK_ROAD ||
          id == TT_QUICK_WALL || id == TT_QUICK_PILL ||
          id == TT_QUICK_MINE;
+}
+
+size_t tutorialTokensExpand(const char *src, char *out, size_t cap,
+                            TutorialTokenNameFn name, void *ctx) {
+  size_t n = 0;
+  if (out == NULL || cap == 0) return 0;
+  out[0] = '\0';
+  if (src == NULL) return 0;
+  while (*src != '\0') {
+    size_t          tlen = 0;
+    TutorialTokenId id   = tutorialTokenMatch(src, &tlen);
+    const char     *put  = NULL;
+    size_t          plen;
+    if (id != TT_COUNT) {
+      put = (name != NULL) ? name(id, ctx) : NULL;
+      if (put == NULL) put = kTokenText[id];
+      plen = strlen(put);
+    } else {
+      put  = src;
+      plen = 1;
+      tlen = 1;
+    }
+    if (n + plen >= cap) break;
+    memcpy(out + n, put, plen);
+    n += plen;
+    src += tlen;
+  }
+  out[n] = '\0';
+  return n;
 }

@@ -115,6 +115,7 @@ extern "C" {
 #include "dialogs/imgui_dialog_utils.h"
 #include "dialogs/imgui_deck_pause.h"
 #include "dialogs/imgui_tutorial_overlay.h"
+#include "tutorial_text.h"   /* tutorialExpandTextPlain */
 #include "dialogs/imgui_keyboard.h"
 #include "dialogs/imgui_quickchat.h"
 #include "dialogs/imgui_controller_prompt.h"
@@ -230,6 +231,10 @@ extern "C" void windowResumeForeground(struct ClientSim *cs);
 extern "C" void windowControllerLostPause(struct ClientSim *cs, bool active);
 extern "C" void windowDeckPause(struct ClientSim *cs, bool active);
 extern "C" void windowTutorialPause(struct ClientSim *cs, bool active);
+/* The tutorial overlay's open state as windowTutorialPause last heard it:
+   the render path's edge-detect, and the round-end close, which lifts the
+   pause itself. */
+static bool s_lastTutorialPause = false;
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
@@ -5539,16 +5544,30 @@ static void renderScenarioAnnounce(ClientSim *cs) {
 
     /* The status line, with its countdown worked out on this client's own
        clock. */
+    /* Both lines may carry the popup's key tokens ({ACCEL}, {QUICK_ROAD}
+       and the rest), written out here as the key or control in words. A
+       name is longer than its token, so the buffers have room past the
+       128 bytes a line may be. */
     uint32_t    statusEndsAt = SCN_STATUS_NO_COUNTDOWN;
-    const char *statusRaw    = clientSimGetScnStatus(cs, &statusEndsAt);
-    char        status[SCN_STATUS_LINE_MAX];
+    const char *statusWire   = clientSimGetScnStatus(cs, &statusEndsAt);
+    char        statusRaw[256];
+    if (statusWire != nullptr) {
+        tutorialExpandTextPlain(statusWire, statusRaw, sizeof(statusRaw));
+    }
+    char        status[SCN_STATUS_LINE_MAX + 128];
     const bool  haveStatus =
-        scnStatusLineText(statusRaw, statusEndsAt, now, status,
-                          sizeof(status));
+        scnStatusLineText(statusWire != nullptr ? statusRaw : nullptr,
+                          statusEndsAt, now, status, sizeof(status));
 
     uint16_t    ticks       = 0;
     uint32_t    arrivedTick = 0;
-    const char *text        = clientSimGetScnAnnounce(cs, &ticks, &arrivedTick);
+    const char *wireText    = clientSimGetScnAnnounce(cs, &ticks, &arrivedTick);
+    char        announce[256];
+    const char *text        = nullptr;
+    if (wireText != nullptr) {
+        tutorialExpandTextPlain(wireText, announce, sizeof(announce));
+        text = announce;
+    }
     uint32_t    left        = 0;
     const bool  haveAnnounce =
         scnAnnounceRemaining(text, arrivedTick, ticks, now, &left);
@@ -8996,6 +9015,22 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
        Input controller input does not, so poll it here. */
     inputSourceTick();
 
+    /* The round has ended (the game-over hold, the lobby or the countdown):
+       close a tutorial message or scenario popup still showing. The
+       round-end screen and the lobby take the window over and never draw
+       it, so left open it would sit frozen under them where the player can
+       neither read nor dismiss it, and its solo pause would hold. Done
+       ahead of the lobby seam below, which returns before the overlay's
+       own render, and the pause is lifted here for the same reason. */
+    if (cs && clientSimIsRoundOver(cs) && tutorialOverlayIsOpen()) {
+        tutorialOverlayClose();
+        tutorialOverlayRender(cs);   /* takes the popup off ImGui's stack */
+        if (s_lastTutorialPause) {
+            windowTutorialPause(cs, false);
+            s_lastTutorialPause = false;
+        }
+    }
+
     /* In-game lobby (non-blocking host, e.g. the WASM client).
      *
      * On desktop the lobby is a separate BLOCKING modal (imguiLobbyShow)
@@ -9279,8 +9314,10 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
            A scenario's popup (game.popup) waits in the client sim's queue
            until the overlay is free, then takes the overlay like a tutorial
            message does, so one popup shows at a time and pauses a solo
-           game the same way. */
-        if (cs != NULL && !tutorialOverlayIsOpen()) {
+           game the same way. None is taken once the round is over: the
+           close above would only shut it again. */
+        if (cs != NULL && !tutorialOverlayIsOpen() &&
+            !clientSimIsRoundOver(cs)) {
             static char s_popupText[SCN_POPUP_TEXT_MAX + 1];
             if (clientSimTakeScnPopup(cs, s_popupText, sizeof(s_popupText))) {
                 tutorialOverlayShowText(s_popupText);
@@ -9288,7 +9325,6 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         }
         tutorialOverlayRender(cs);
         {
-            static bool s_lastTutorialPause = false;
             bool nowTutorialPause = tutorialOverlayIsOpen();
             if (nowTutorialPause != s_lastTutorialPause) {
                 windowTutorialPause(cs, nowTutorialPause);

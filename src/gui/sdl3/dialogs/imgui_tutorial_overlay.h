@@ -55,6 +55,16 @@ void tutorialOverlayRender(struct ClientSim *cs);
  * the next tutorial starts with the overlay closed. */
 void tutorialOverlayReset(void);
 
+/* Close whatever the overlay is showing, without running its completion
+ * callback, because the round it belongs to has ended. tutorialOverlayIsOpen()
+ * is false from this call on; the ImGui popup itself is closed by the next
+ * tutorialOverlayRender, before it would draw. The round-end screen and the
+ * lobby take the window over and never draw this popup, so one left open
+ * would sit frozen under them, unreadable and impossible to dismiss, and keep
+ * a solo game paused. Closing it is the choice made here rather than keeping
+ * it on top: what it said belongs to the round that has ended. */
+void tutorialOverlayClose(void);
+
 #ifdef __cplusplus
 }
 #endif

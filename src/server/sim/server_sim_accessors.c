@@ -648,6 +648,7 @@ bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out) {
     out->alive   = (tankGetDeathWait(t) == 0);
     tankGetStats(t, &out->shells, &out->mines, &out->armour, &out->trees);
     out->pills   = tankGetNumCarriedPills(t);
+    out->sight   = tankGetGunsightLength(t);
     tankGetModifiers(*t, &out->mods);
     tankGetKillsDeaths(t, &out->kills, &out->deaths);
     return true;

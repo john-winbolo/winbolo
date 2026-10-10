@@ -1465,10 +1465,17 @@ int run_voice_everyone_codec(void);
  * refused and a NUL ends the text; the client queues popups addressed to
  * it, in order, drops the fifth while four wait and clears them at the
  * lobby; and the tutorial tokens find {QUICK_*} and name the quick-build
- * keys from the key bindings. */
+ * keys from the key bindings; and tutorialTokensExpand writes the tokens
+ * of a status line or announcement as names, keeps one with no name, never
+ * writes half a name and always ends with a NUL. */
 int run_scenario_popup_codec(void);
 int run_scenario_popup_client_queue(void);
+/* clientSimIsRoundOver, which closes a popup left up as the round ends:
+ * false for a new client and while running, true from the game-over hold
+ * through the lobby and the countdown. */
+int run_scenario_popup_round_over(void);
 int run_tutorial_tokens_quick_build(void);
+int run_scenario_status_tokens_expand(void);
 
 /* CTRL_SIM_RULES body codec (test_sim_rules_codec.c): every carried rule
  * round-trips through the body tables, compared field by field and
