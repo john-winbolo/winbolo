@@ -25,6 +25,7 @@
 #include "bases.h"                 /* the list a setup deals out */
 #include "pillbox.h"               /* pillsExistPos — a square a pill owns */
 #include "bolo_map.h"              /* mapGetPos / mapSetPos */
+#include "building.h"              /* buildingAddItem — a shell on a wall */
 #include "client_enums.h"          /* sndEffects — a sound the op takes */
 #include "input_packet.h"          /* SnapshotHeader, EVENT_BASE_CAPTURED */
 #include "everard_map.h"
@@ -1827,6 +1828,37 @@ int run_scenario_funnel_set_tile_spends_tile_budget(void) {
     UT_ASSERT_MSG(mapGetPos(&sim->sim.mp, rx, ry) == CRATER,
                   "the square reads %u after the set_tile applied",
                   (unsigned)mapGetPos(&sim->sim.mp, rx, ry));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A wall the script writes is a new wall. A hit wall keeps its shells left in
+   the building list, so set_tile has to drop that record: a rebuilt wall that
+   kept the old record would fall to the shells the old one had left. */
+int run_scenario_funnel_set_tile_resets_wall_damage(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+    BYTE       rx = 0, ry = 0;
+    int        fresh, hit;
+
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(faFindRect(sim, 1, 1, &rx, &ry), "map has no free square");
+    mapSetPos(&sim->sim, &sim->sim.mp, rx, ry, BUILDING, FALSE, FALSE);
+    fresh = serverSimWallShotsLeft(sim, rx, ry);
+    UT_ASSERT_MSG(fresh > 2, "a new wall takes %d shots", fresh);
+
+    buildingAddItem(&sim->sim, &sim->sim.blds, rx, ry);
+    buildingAddItem(&sim->sim, &sim->sim.blds, rx, ry);
+    hit = serverSimWallShotsLeft(sim, rx, ry);
+    UT_ASSERT_MSG(hit == fresh - 2,
+                  "two shells left the wall at %d shots, expected %d", hit,
+                  fresh - 2);
+
+    UT_ASSERT_MSG(faSetTile(sim, rx, ry, BUILDING) == SCN_OP_OK,
+                  "set_tile of a wall was refused");
+    UT_ASSERT_MSG(serverSimWallShotsLeft(sim, rx, ry) == fresh,
+                  "the rewritten wall takes %d shots, expected a new wall's %d",
+                  serverSimWallShotsLeft(sim, rx, ry), fresh);
 
     serverSimDestroy(sim);
     return 0;

@@ -53,6 +53,18 @@ and how to undo it.
   **Undo:** remove the row in `scenario_lua.c`, `serverSimWallShotsLeft`, and
   the test; Station 3 would then show only "intact / damaged / down".
 
+## Engine: `set_tile` drops wall damage
+
+- **What:** `scenarioWriteTile` (every scripted `set_tile` and fill) now
+  removes the square's building list record, as it already removed a mine.
+  **Why:** the record holds the shells a hit wall has left. Without this
+  change, a wall the script rebuilds (the RESET walls in Stations 5B and 7,
+  the Station 3 target wall) keeps the old count and falls early. A record
+  for a square the script turned into something else would also follow the
+  next wall built there.
+  **Undo:** remove the `buildingRemovePos` line and the unit test
+  `scenario_funnel_set_tile_resets_wall_damage`.
+
 ## Verified numbers (read in the code)
 
 - **Wall:** 5 shells. The first hit turns a wall into a damaged wall with

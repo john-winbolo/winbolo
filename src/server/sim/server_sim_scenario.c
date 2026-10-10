@@ -55,6 +55,7 @@
 #include "pillbox.h"       /* the pill arms read and write through these */
 #include "bases.h"         /* the base arms mutate through these */
 #include "mines.h"         /* the mine list the map arms add to and clear */
+#include "building.h"      /* buildingRemovePos — a written square starts undamaged */
 #include "starts.h"        /* startsGetStart — the teleport arm's start mode */
 #include "gametype.h"      /* TANK_FULL_* — the stock caps */
 #include "sim_rules.h"     /* the table the rule arm writes, and its check */
@@ -895,11 +896,15 @@ static bool scenarioTerrainIsLegal(BYTE terrain) {
 
 /* Write one square. Any mine under it goes first: the terrain byte being
  * written carries no mine, so a visible-mine record left behind would mark a
- * square nothing can clear and nothing would set off. mapSetPos does the rest —
- * its registered callback queues the map event and its own logAddEvent is the
- * record, so neither is repeated here. */
+ * square nothing can clear and nothing would set off. Any wall damage goes
+ * too: the building list keeps the shells a hit wall has left, and a wall the
+ * script writes is a new wall, not the old one with its old count — nor is a
+ * wall built later on a square the script wrote something else to. mapSetPos
+ * does the rest — its registered callback queues the map event and its own
+ * logAddEvent is the record, so neither is repeated here. */
 static void scenarioWriteTile(ServerSim *sim, BYTE x, BYTE y, BYTE terrain) {
     minesRemoveItem(&sim->sim.mns, x, y);
+    buildingRemovePos(&sim->sim.blds, x, y);
     mapSetPos(&sim->sim, &sim->sim.mp, x, y, terrain, TRUE, FALSE);
 }
 

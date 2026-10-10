@@ -2852,6 +2852,7 @@ int run_scenario_funnel_msgs_per_tick(void);
 int run_scenario_funnel_host_ops_uncounted(void);
 int run_scenario_funnel_prelude_refusal_uncounted(void);
 int run_scenario_funnel_set_tile_spends_tile_budget(void);
+int run_scenario_funnel_set_tile_resets_wall_damage(void);
 
 int run_scenario_read_roster_slot(void);
 int run_scenario_read_pill_info(void);
