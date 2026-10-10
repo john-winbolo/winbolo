@@ -1492,6 +1492,16 @@ int run_voice_talking_codec(void);
  * on and off survive, any other byte and an empty body are refused. */
 int run_voice_everyone_codec(void);
 
+/* game.popup's delivery (test_scenario_popup.c): CTRL_SCN_POPUP's body
+ * round-trips through the body tables, an empty or over-long body is
+ * refused and a NUL ends the text; the client queues popups addressed to
+ * it, in order, drops the fifth while four wait and clears them at the
+ * lobby; and the tutorial tokens find {QUICK_*} and name the quick-build
+ * keys from the key bindings. */
+int run_scenario_popup_codec(void);
+int run_scenario_popup_client_queue(void);
+int run_tutorial_tokens_quick_build(void);
+
 /* CTRL_SIM_RULES body codec (test_sim_rules_codec.c): every carried rule
  * round-trips through the body tables, compared field by field and
  * including rates a fixed-point scale could not carry; and the body's bytes
@@ -2896,6 +2906,7 @@ int run_scenario_funnel_msgs_per_tick(void);
 int run_scenario_funnel_host_ops_uncounted(void);
 int run_scenario_funnel_prelude_refusal_uncounted(void);
 int run_scenario_funnel_set_tile_spends_tile_budget(void);
+int run_scenario_funnel_set_tile_resets_wall_damage(void);
 
 int run_scenario_read_roster_slot(void);
 int run_scenario_read_pill_info(void);
@@ -3549,6 +3560,8 @@ int run_scenario_lua_panel_large_size(void);
 int run_scenario_lua_presentation_targets(void);
 int run_scenario_lua_score_and_announce(void);
 int run_scenario_lua_announce_position(void);
+int run_scenario_lua_popup(void);
+int run_scenario_lua_wall_shots(void);
 int run_scenario_lua_acting_rows_refuse_a_check(void);
 
 /* The state a scenario runs in (test_scenario_sandbox.c): the names the
@@ -3805,6 +3818,7 @@ int run_scenario_details_blob(void);
 int run_scenario_details_fetch_dir_mod(void);
 int run_scenario_details_fetch_survival(void);
 int run_scenario_details_fetch_soccer(void);
+int run_scenario_details_fetch_tutorial(void);
 int run_scenario_details_fetch_not_found(void);
 int run_scenario_details_fetch_retry(void);
 int run_scenario_details_fetch_give_up(void);

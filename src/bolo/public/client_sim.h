@@ -772,6 +772,12 @@ bool clientSimGetScnAnnouncePos(const ClientSim *cs, uint8_t *outX,
  * NULL. */
 const char *clientSimGetScnStatus(const ClientSim *cs, uint32_t *outEndsAt);
 
+/* Take the oldest popup a scenario sent (game.popup) off the client's
+ * queue and copy it into out, NUL-terminated and cut to outCap. Returns
+ * false, leaving out alone, when nothing is waiting. The frontend calls it
+ * when its popup overlay is free, so popups show one after another. */
+bool clientSimTakeScnPopup(ClientSim *cs, char *out, size_t outCap);
+
 /* Marker `id`; out-of-range id returns NULL. */
 const ClientScnMarker *clientSimGetScnMarker(const ClientSim *cs, uint8_t id);
 

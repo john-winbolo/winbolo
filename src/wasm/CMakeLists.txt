@@ -295,6 +295,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/ring_band.c
     ${SRC_ROOT}/gui/sdl3/build_cursor.c
     ${SRC_ROOT}/gui/sdl3/tutorial_text.c
+    ${SRC_ROOT}/gui/sdl3/tutorial_tokens.c
     ${SRC_ROOT}/gui/sdl3/lang.c
     # The words the lobby's rules popup describes a rule's value in.
     ${SRC_ROOT}/gui/sdl3/sim_rules_phrase.c

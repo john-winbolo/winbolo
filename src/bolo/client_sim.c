@@ -2266,6 +2266,16 @@ const char *clientSimGetScnStatus(const ClientSim *cs, uint32_t *outEndsAt) {
   return cs->scnStatusText;
 }
 
+bool clientSimTakeScnPopup(ClientSim *cs, char *out, size_t outCap) {
+  if (cs == NULL || out == NULL || outCap == 0) return false;
+  if (cs->scnPopupCount == 0) return false;
+  SDL_strlcpy(out, cs->scnPopups[cs->scnPopupHead], outCap);
+  cs->scnPopups[cs->scnPopupHead][0] = '\0';
+  cs->scnPopupHead = (uint8_t)((cs->scnPopupHead + 1u) % SCN_POPUP_QUEUE_MAX);
+  cs->scnPopupCount--;
+  return true;
+}
+
 const ClientScnMarker *clientSimGetScnMarker(const ClientSim *cs, uint8_t id) {
   if (cs == NULL || id >= SCN_MARKERS_MAX) return NULL;
   return &cs->scnMarkers[id];

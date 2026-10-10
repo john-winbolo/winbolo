@@ -209,6 +209,7 @@ STR_TUTORIAL19_CTRL=After farming some trees, press {BUILD_TOOL} to select\nthe 
 STR_TUTORIAL21_CTRL=To cross this river you will have to build a boat. Boats\ntake five trees, so aim at five trees and press\n{BUILD_PLACE} on each to farm them. Then press\n{BUILD_TOOL} to select the wall/boat tool (the third\nbutton from the top) and place it on the water.\n\nIf you place on land you will build a wall instead, and\nyou will have to farm more trees to build a boat. Drive\nonto the boat and cross the river to the other side.
 STR_TUTORIAL_START04_CTRL=You are in control of a tank, which is currently on a\nboat at sea. Push the left stick forward to make the\ntank (and boat) go forwards, and pull it back to make\nit slow down and stop.\n\nThe further you push the left stick, the faster the\ntank goes. Push the left stick forward now to drive\nthe boat towards the land.\n(Press {DISMISS} first to dismiss the window)
 STR_TUTORIAL_RESPAWN1=Your tank was destroyed - but you don't have to start\nthe tutorial over. You've been given a fresh tank just\nacross the water, where you came ashore. Get back into\nthe fight and finish your escape.
+STR_TUTORIAL_QUICK_BUILD_TOUCH=the build buttons
 
 # LGM (little green man) messages
 LGM_MAN_DEAD=You cannot build until your new man parachutes in
