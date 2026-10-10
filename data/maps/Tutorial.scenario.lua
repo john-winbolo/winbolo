@@ -185,7 +185,7 @@ scenario = {
     can_build = "Keeps each bot's builder inside its own station, and stops boats in Station 5.",
     can_capture = "The Station 5A bot takes only its own two pillboxes.",
     can_hit = "Tank shells pass between you and the demo bots; yours pass your 5B pillbox; the 5A pillboxes' pass you.",
-    can_die = "The parked Station 6 tank cannot be destroyed, the Station 4 pillbox cannot be killed before you have hidden, and the Station 7 bot cannot kill your man.",
+    can_die = "The parked Station 6 tank cannot be destroyed, and the Station 4 pillbox cannot be killed before you have hidden.",
     on_choose_start = "You respawn at the furthest station you have reached.",
     spawn_loadout = "You respawn with the tank that station starts you with.",
     allow_base_win = "Owning every base does not end the round; Station 7 has its own win.",
@@ -1062,10 +1062,16 @@ local function bot_init(role)
     -- The Station 6 bot never fights: its man is the target.
     return { peace = tostring(S.player or "") }
   elseif role == "bot7" then
-    -- GoalHunter has no switch that stops it shooting men; this turns off
-    -- its hunt for a man building near a pillbox it wants. can_die is what
-    -- keeps the player's man alive.
-    return { cfg = "CAPTURE_LGM_HUNT=false" }
+    -- The Station 7 bot shoots at the player's man and usually misses.
+    -- LGM_MISS_WU / LGM_HIT_PCT: one aim in ten is true; the rest burst one
+    -- square off him (behind him when he walks), so he sees the shots land
+    -- around him. The man can die: about one shot in ten at him kills him
+    -- (tests/scenario/tutorial_bot7_man). CAPTURE_LGM_HUNT stays off (as
+    -- Easy has it): that hunt fires on its own line, which the miss knobs
+    -- do not reach. Several cfg values share one init value, "A=1;cfg=B=2",
+    -- at most 63 bytes.
+    return { cfg = "LGM_MISS_WU=256;cfg=LGM_HIT_PCT=10"
+                   .. ";cfg=CAPTURE_LGM_HUNT=false" }
   end
   return nil
 end
@@ -1659,11 +1665,6 @@ function can_die(kind, n, killer, cause, pill)
       S.told_hide = S.sec
       game.announce("Hide in the forest first, then kill it.", 3, S.player)
     end
-    return false
-  end
-  if kind == "builder" and n == S.player and S.bot7 ~= nil and
-     killer == S.bot7 then
-    -- The Easy bot in Station 7 never kills the player's man.
     return false
   end
   return nil

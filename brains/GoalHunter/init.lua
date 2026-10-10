@@ -8091,6 +8091,11 @@ function Brain.think(info)
         -- for the primary LGM. No-op at 0 (moving-target miss on Easy/Medium).
         aim_wx, aim_wy = U.aim_error_point(state, C.AIM_ERROR_BRADS,
                                            info.tankx, info.tanky, aim_wx, aim_wy, elm.idnum)
+        -- LGM_MISS_WU / LGM_HIT_PCT: most shots at a man aim a little off him
+        -- (same block + idnum draw as the crosshair search below). No-op at 0.
+        aim_wx, aim_wy = U.lgm_miss_point(state, C.LGM_MISS_WU, C.LGM_HIT_PCT,
+                                          aim_wx, aim_wy, elm.idnum,
+                                          elm.v_ema_x, elm.v_ema_y)
         local target_sl = elm.target_sightLen
         local aim_dir = U.aim_at(info.tankx, info.tanky, aim_wx, aim_wy)
         local aim_corr = U.adiff(info.direction, aim_dir)
@@ -8270,6 +8275,9 @@ function Brain.think(info)
     -- drives to the deflected point and the gate fires on it. No-op at 0.
     lgm_wx, lgm_wy = U.aim_error_point(state, C.AIM_ERROR_BRADS,
                                        tank_wx, tank_wy, lgm_wx, lgm_wy, _primary_lgm.idnum)
+    lgm_wx, lgm_wy = U.lgm_miss_point(state, C.LGM_MISS_WU, C.LGM_HIT_PCT,
+                                      lgm_wx, lgm_wy, _primary_lgm.idnum,
+                                      _primary_lgm.v_ema_x, _primary_lgm.v_ema_y)
     -- Build the turn/speed/gun descriptor tables ONCE (cached on state)
     -- rather than reallocating 9 records every tick the goal is kill_lgm.
     -- Built lazily here, not at module scope, because the KEY_* globals
