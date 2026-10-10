@@ -1535,8 +1535,10 @@ So `tank_death_ticks = 1500` keeps a dead tank waiting half a minute, and
 seconds.
 
 **The game clock is the exception.** `set_game_time` and `add_game_time` are
-counted in `game.tick()`'s own units, 100 a second, because the round's time
-limit comes down on every half-step. A minute is 6000, not 3000.
+counted in `game.tick()`'s own units, 100 a second. A minute is 6000, not
+3000. The round's time limit itself is kept in frames, 50 a second, the unit
+the lobby sets it in, so the server halves the number and rounds an odd one up
+to the next frame.
 
 **Before the round runs, the clock is slower.** In the lobby the counter
 moves once a frame rather than twice, and timers are measured against it, so
@@ -1958,7 +1960,7 @@ to escort a person stays where it is.
 | `game.set_voice_everyone(on)` | With `true`, voice in the running round goes to every player rather than to the talker's allies alone. `false` puts it back. |
 | `game.voice_everyone()` | Whether voice is going to everyone: what `set_voice_everyone` last set this round, and `false` on a server with voice off. |
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
-| `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
+| `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. The clock runs in frames of two ticks, so an odd number rounds up by one tick. |
 | `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
 
 `message` and `say` are two different voices, and the difference decides

@@ -241,6 +241,10 @@ struct ServerSim {
      * ROUND_LOG_START_UNSET until that first write, and reset to it whenever
      * tick is. */
     uint32_t     roundLogStartTick;
+    /* Both in 20 ms frames, 50 a second (GAME_NUMGAMETICKS_SEC), not in
+     * half-steps: the running state takes one off each on the world
+     * half-step only, once a frame. gameLength is UNLIMITED_GAME_TIME for a
+     * round with no time limit. */
     int32_t      startDelay;
     int32_t      gameLength;
     int32_t      tickLimit;          /* 0 = unlimited; counts running game-ticks */
@@ -522,7 +526,7 @@ struct ServerSim {
     uint16_t timeMinutes;          /* user-facing minutes (display + edit) */
 
     int32_t      countdownTicks;     /* Countdown timer (in ticks) */
-    int32_t      originalGameLength; /* Cached for reset between rounds */
+    int32_t      originalGameLength; /* Cached for reset between rounds; frames, 50/s */
 
     /* Operator-configured lobby settings captured once at startup (end of
      * serverSimApplyInstanceConfig). Restored by serverSimResetLobbyToDefaults
@@ -566,7 +570,7 @@ struct ServerSim {
     char         pendingWinMessage[512]; /* Win message to send after returning to lobby */
     bool         emptyResetEnabled;  /* Reset to lobby when empty for emptyResetMinutes */
     int          emptyResetMinutes;  /* Minutes before empty reset (default 5) */
-    int32_t      emptyResetTicks;    /* Countdown ticks remaining (-1 = not counting) */
+    int32_t      emptyResetTicks;    /* Countdown remaining in 20 ms frames, 50/s: serverSimCheckEmptyReset runs once a frame (-1 = not counting) */
 
     /* Map reload — cached compressed map for between-round resets */
     BYTE        *cachedMapData;      /* Compressed map buffer (malloc'd) */

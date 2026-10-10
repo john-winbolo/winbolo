@@ -568,13 +568,13 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->serverVoiceMode = evt->u.lobbySettings.voiceMode;
         /* Adopt the server's authoritative game-timing settings. The
          * server's lobbyTimeLimit field carries its current remaining
-         * gameLength (it decrements every running tick), so applying it
-         * mid-game refreshes the client's local view rather than
-         * clobbering it. The previous inLobby && !netRunning gate
-         * prevented mid-game sync-replay arrivals from ever delivering
-         * gmeLength to a late joiner; their default zero then fired
-         * the gmeLength==0 game-over branch in clientUiOnTick the
-         * first display tick after the snapshot landed. */
+         * gameLength (it decrements once every running frame, 50 a
+         * second), so applying it mid-game refreshes the client's local
+         * view rather than clobbering it. The previous inLobby &&
+         * !netRunning gate prevented mid-game sync-replay arrivals from
+         * ever delivering gmeLength to a late joiner; their default zero
+         * then fired the gmeLength==0 game-over branch in clientUiOnTick
+         * the first display tick after the snapshot landed. */
         clientSimSetGameType(cs,       evt->u.lobbySettings.lobbyGameType);
         clientSimSetHiddenMines(cs,    evt->u.lobbySettings.lobbyHiddenMines);
         clientSimSetAiType(cs,         (aiType)evt->u.lobbySettings.lobbyAiType);

@@ -3187,6 +3187,13 @@ int run_scenario_flow_set_game_time(void);
 int run_scenario_flow_set_game_time_refusals(void);
 int run_scenario_flow_arm_records(void);
 
+/* The round's clocks against real time (test_game_time_limit.c): the time
+ * limit and the start delay each lose one a 20 ms frame, so a round set in
+ * minutes lasts that many minutes. */
+int run_game_time_limit_counts_frames(void);
+int run_game_time_start_delay_counts_frames(void);
+int run_game_time_lobby_minutes(void);
+
 /* The rules op (test_scenario_rule_arms.c). The index list against the table
  * it indexes, a rule written and read back, a rate the op's double carries
  * and an int32 could not, the two refusals and the table each leaves

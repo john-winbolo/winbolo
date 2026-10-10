@@ -668,7 +668,8 @@ typedef struct {
 } ScnOpEndRound;
 
 typedef struct {
-    int32_t ticks;
+    int32_t ticks;      /* game.tick() units: half-steps, 100 a second. The
+                         * server halves it into gameLength's frames. */
     bool    relative;
 } ScnOpSetGameTime;
 

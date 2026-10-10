@@ -3816,6 +3816,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # not do — and the game-time change, the four lengths it refuses, and the
     # new length on the sim, at a subscriber and in a recording.
     tests/unit/test_scenario_flow_arms.c
+    # The round's time limit and start delay against real time: each loses
+    # one a 20 ms frame, so a round set in minutes lasts that many minutes.
+    tests/unit/test_game_time_limit.c
     # The rules op: the index list against the table it indexes, a rule
     # written and read back, a rate the op's double carries and an int32
     # could not, the value outside a row and the value that breaks a pair
@@ -6250,6 +6253,9 @@ set(_unit_test_names
     scenario_flow_set_game_time
     scenario_flow_set_game_time_refusals
     scenario_flow_arm_records
+    game_time_limit_counts_frames
+    game_time_start_delay_counts_frames
+    game_time_lobby_minutes
     scenario_rule_index_matches_table
     scenario_rule_set
     scenario_rule_set_float

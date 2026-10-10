@@ -990,6 +990,17 @@ static bool lobbySettingScenarioFixes(const ServerSim *sim, uint8_t lst,
     }
 }
 
+/* The round length the lobby settles on, in 20 ms frames (50 a second), or
+ * UNLIMITED_GAME_TIME. Written to originalGameLength as well as gameLength:
+ * serverSimStartGame and the return to the lobby put gameLength back to
+ * originalGameLength, so a length written to gameLength alone lasted only
+ * until the round started, and the round ran on the length the server was
+ * started with. */
+static void lobbySetRoundLength(ServerSim *sim, int32_t frames) {
+    serverSimSetGameLength(sim, frames);
+    sim->originalGameLength = frames;
+}
+
 /* Shared apply path for the LST_* setting cluster carried in
  * PACKET_LOBBY_SET_SETTING and its SP-host local-transport
  * equivalent. The caller is responsible for upstream lock-bit /
@@ -1050,10 +1061,10 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             if (tl) {
                 uint16_t mins = serverSimGetTimeMinutes(sim) > 0
                     ? serverSimGetTimeMinutes(sim) : 30;
-                serverSimSetGameLength(sim,
+                lobbySetRoundLength(sim,
                     (int32_t)mins * 60 * GAME_NUMGAMETICKS_SEC);
             } else {
-                serverSimSetGameLength(sim, UNLIMITED_GAME_TIME);
+                lobbySetRoundLength(sim, UNLIMITED_GAME_TIME);
             }
             return true;
         }
@@ -1063,7 +1074,7 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             if (!lobbyTimeMinutesIsValid(mins)) return false;
             serverSimSetTimeMinutes(sim, mins);
             if (serverSimGetTimeLimit(sim)) {
-                serverSimSetGameLength(sim,
+                lobbySetRoundLength(sim,
                     (int32_t)mins * 60 * GAME_NUMGAMETICKS_SEC);
             }
             return true;
