@@ -2272,10 +2272,11 @@ void lv_screenProcessLog(unsigned short numEvents) {
       }
       break;
     case log_GameTimeSet:
-      /* The round's game time, as a big-endian int32 of ticks. The viewer
-         counts gmeLength down a tick at a time the way the server does, so
-         adopting the recorded value keeps a replay's clock on the round's own
-         remaining time instead of the length the round opened with. */
+      /* The round's game time, as a big-endian int32 of 20 ms frames. The
+         viewer counts gmeLength down a frame at a time, one per log entry,
+         the way the server does, so adopting the recorded value keeps a
+         replay's clock on the round's own remaining time instead of the
+         length the round opened with. */
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);

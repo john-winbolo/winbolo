@@ -167,10 +167,10 @@ static void serverSimLogTick(ServerSim *sim) {
     /* First entry of the running round is where the round's log segment — and
      * so every clip time measured against it — begins. Latched here rather than
      * derived from startDelay: the hold at the top of simRunHalfStep advances
-     * the sim without writing anything, and its counter is in half-steps while
-     * the value it was given is in the legacy 20 ms units, so no arithmetic on
-     * it gives the right answer. Whichever tick actually wrote first is the
-     * answer by definition. */
+     * the sim without writing anything, and how many half-steps it takes
+     * depends on the parity of the tick it started on, so no arithmetic on
+     * startDelay gives the right answer. Whichever tick actually wrote first
+     * is the answer by definition. */
     if (sim->roundLogStartTick == ROUND_LOG_START_UNSET &&
         sim->state == serverStateRunning) {
         sim->roundLogStartTick = sim->tick;
@@ -596,8 +596,17 @@ static void simRunHalfStep(ServerSim *sim) {
     /* Install map change callback to emit EVENT_MAP_CHANGE during tick */
     mapSetChangeCallback(simMapChangeCallback);
 
+    /* startDelay and gameLength are counted in 20 ms frames, 50 a second:
+     * the lobby, -delay and -limit all set them as seconds or minutes times
+     * GAME_NUMGAMETICKS_SEC, and every reader turns them back the same way.
+     * A running frame is two half-steps, so each comes down on the world
+     * half-step only (sim->tick % 2 == 0, the half-step the world systems
+     * run on), once a frame. Taking one off on every half-step ran both out
+     * at twice the rate they were set for: a 30-minute round ended after 15. */
     if (sim->startDelay > 0) {
-        sim->startDelay--;
+        if ((sim->tick % 2) == 0) {
+            sim->startDelay--;
+        }
         sim->tick++;
         mapSetChangeCallback(NULL);
         return;
@@ -615,7 +624,7 @@ static void simRunHalfStep(ServerSim *sim) {
         }
     }
 
-    if (sim->gameLength > 0) {
+    if (sim->gameLength > 0 && (sim->tick % 2) == 0) {
         sim->gameLength--;
         if (sim->gameLength == 0) {
             mapSetChangeCallback(NULL);

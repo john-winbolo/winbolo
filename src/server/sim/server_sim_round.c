@@ -132,6 +132,8 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
         sim->timeLimit           = sim->originalLobbySettings.timeLimit;
         sim->timeMinutes         = sim->originalLobbySettings.timeMinutes;
         sim->gameLength          = sim->originalLobbySettings.gameLength;
+        /* The length the next round starts on, as the lobby setters keep it. */
+        sim->originalGameLength  = sim->originalLobbySettings.gameLength;
         sim->openHost            = sim->originalLobbySettings.openHost;
         sim->autoLockOnGameStart = sim->originalLobbySettings.autoLockOnGameStart;
         sim->ranked              = sim->originalLobbySettings.ranked;
