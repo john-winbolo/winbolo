@@ -6809,6 +6809,7 @@ typedef struct {
     ScnDirStamp *stamps;
     int          stampCount;
     Uint64       stampTicks; /* SDL_GetTicks() when stamps were walked */
+    uint64_t     used;       /* scnDirCacheUseCount when last looked up */
 } ScnDirCache;
 
 #define SCN_DIR_CACHE_SLOTS (SCN_MOD_DIRS_MAX + 1)
@@ -6816,6 +6817,9 @@ typedef struct {
 static ScnVmLock   scnDirCacheLock;   /* m is NULL until the lister is
                                          registered; guards every slot */
 static ScnDirCache scnDirCache[SCN_DIR_CACHE_SLOTS];
+/* Counts slot lookups, so a full table gives up the slot used longest ago
+   (scnDirCacheSlot). Guarded by scnDirCacheLock. */
+static uint64_t    scnDirCacheUseCount;
 
 static void scnDirCacheDrop(ScnDirCache *c) {
     free(c->rows);
@@ -6953,12 +6957,22 @@ static int scnDirCacheCopyRows(const ScnDirCache *c, ScnDirEntry *out,
 }
 
 /* Which slot this directory is kept in: its own if it has one, otherwise an
-   empty slot, otherwise slot 0. Called with the lock held. */
+   empty slot, otherwise the slot looked up longest ago. Not always slot 0:
+   once every slot holds some other directory (a host whose mod directories
+   changed, or a process that has listed many), the directories of one
+   listing would each take slot 0 from the one before and none would stay
+   kept. A slot is marked used when it is found for its own directory and
+   when it is filled, not when it is only picked to be filled: a lookup that
+   is answered without filling the slot leaves it the oldest, so the next
+   lookup picks that same slot rather than another directory's. Called with
+   the lock held. */
 static ScnDirCache *scnDirCacheSlot(const char *dir) {
-    int i;
+    ScnDirCache *c;
+    int          i;
 
     for (i = 0; i < SCN_DIR_CACHE_SLOTS; i++) {
         if (scnDirCache[i].valid && strcmp(scnDirCache[i].dir, dir) == 0) {
+            scnDirCache[i].used = ++scnDirCacheUseCount;
             return &scnDirCache[i];
         }
     }
@@ -6967,7 +6981,13 @@ static ScnDirCache *scnDirCacheSlot(const char *dir) {
             return &scnDirCache[i];
         }
     }
-    return &scnDirCache[0];
+    c = &scnDirCache[0];
+    for (i = 1; i < SCN_DIR_CACHE_SLOTS; i++) {
+        if (scnDirCache[i].used < c->used) {
+            c = &scnDirCache[i];
+        }
+    }
+    return c;
 }
 
 /* scnDirList, with the last answer kept under the rule above. details, when
@@ -7063,6 +7083,7 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
             c->stampCount = stampCount;
             c->stampTicks = now;
             stamps        = NULL;
+            c->used       = ++scnDirCacheUseCount;
             c->valid      = true;
         }
     }

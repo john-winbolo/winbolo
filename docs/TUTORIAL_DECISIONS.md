@@ -229,3 +229,15 @@ and how to undo it.
   The Station 2 steal is not covered by an arena: a teleport onto an enemy
   base square did not take the base in a probe, and a held-still tank
   cannot drive onto it.
+- **The Station 5A and Station 6 demo bots play at Hard**, which they take
+  from the lobby template (`difficulty = "hard"` on team 2), not Easy as the
+  original note said. Only the final-round bot (Station 7) is spawned at
+  Easy. *Why:* these two bots are demonstrations, not opponents. Easy adds
+  aim error, a fire hold and a reaction delay (`MODE_LEVELS.default.easy` in
+  GoalHunter's `constants.lua`), so the 5A bot would show its moves late and
+  miss more, and the player would watch a less clean example of what the
+  popup describes. The Station 6 bot is held still by `set_modifiers`, so
+  its level changes little there. *Undo:* set `difficulty = "easy"` in the
+  team 2 entry of the `lobby` template in `Tutorial.scenario.lua`, or pass
+  `difficulty = "easy"` in the `extra` table of the `field_bot` calls for
+  the 5A and 6 bots (as `field_bot7` does).
