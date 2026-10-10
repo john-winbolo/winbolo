@@ -296,9 +296,9 @@ local POP = {
   s4b = "East of the road, a damaged pillbox sits in a ring of forest. It "
     .. "still fires, and a pillbox you hit gets angry and fires faster. The "
     .. "red markers show its range.\n\n"
-    .. "A pillbox cannot see a tank deep in forest, with forest all round "
-    .. "it, 3 or more squares away. Drive into the forest inside the "
-    .. "markers and sit still. Firing reveals your position.",
+    .. "Forests hide tanks from both other tanks and pillboxes. Drive into "
+    .. "the forest inside the markers and sit still. Firing reveals your "
+    .. "position.",
   s4c = "This pillbox is already badly damaged: one more shot kills it.\n\n"
     .. "Your tank is full. Kill it, then drive over it to pick it up.",
   s5a = "Watch the friendly bot on the island take a pillbox. It builds its "
