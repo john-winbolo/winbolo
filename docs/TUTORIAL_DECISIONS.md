@@ -128,7 +128,7 @@ and how to undo it.
   **Why:** the player should never have to look for where to go next.
 - **What:** there are no reset pads. Stations 5 and 7 each have a walled
   RESET pen: the word RESET in walls, a pen with a road entrance and a
-  pad, and a road arrow pointing at it; a cyan marker sits on the pad.
+  pad, and a road arrow pointing at it. There is no marker on the pad.
   Entering the pen resets the station and rebuilds the pen's walls and
   arrow. Every other station re-arms by itself (see the script section).
   **Why:** small pads were easy to drive onto by mistake; most stations
@@ -151,18 +151,35 @@ and how to undo it.
   through the ring would be a way in that is not forest. The friendly base
   4C (`b4c`, 127,132) is on the road at the station's north end, 14 squares
   from the pillbox, out of range.
-- **What:** Station 5A is an island (the moat stays) with the demo bot's
-  start on it; the player watches from the road strip `watch5a`, out of
-  range of both pills. Station 5B is west of the road.
+- **What (2026-10-10):** Station 5A is a grass island east of the main
+  road, x 135..140, y 104..117, inside a wall ring, a one-square moat of
+  deep water and a second wall ring. The target T is at (137,105). The
+  player watches from `watch5a` (131,111), the end of a short road spur
+  off the main road beside the outer west wall: 8.5 squares from T, out
+  of its range, with the take on screen. Station 5B is west of the road.
+  **Why the moat:** with walls only, GoalHunter's route finder counts a
+  wall as a few shots' work, so every goal off the island was in reach.
+  Probe runs: the bot shot its way out after the dead pills in Station 7
+  (127,70)/(127,68), the 4A pill (122,149), and to drop its blocker in 5B
+  (`place_pill_strategic`), and never took T. Deep water without a boat is
+  no route, so with the moat nothing off the island is a goal. The inner
+  walls keep the bot off the moat's edge, so it cannot drown; the outer
+  walls keep the player's tank off it.
 - **What:** Station 6 is a parked bot east of the road; its man walks one
-  row (`path6`) west across the road and a short span of craters
-  (`craters6`, beside the main road) to one tree (`tree6`, 121,80) west of
-  the road, and back.
+  row (`path6`, y 80) west across the road and a span of craters
+  (`craters6`, x 121..124) to one tree (`tree6`, 115,80), and back.
+  **Changed 2026-10-10:** the tree moved 6 squares west (was 121,80), so
+  the craters lie between the road and the tree. The man crosses the same
+  craters going out and coming back; there is no other way along the row.
+  The craters are 2 to 5 squares west of the road's west edge, so a
+  crosshair at its longest range reaches them from the road.
 - **What:** Station 7 is a small Chew Toy-like island with no moat and no
   gate: the main road runs straight in from the south through a gap in a
   wall round the island. The player holds three corners (two live pills and
-  two bases each in NW and SE; two dead pills and two bases in SW); the bot
-  holds the north-east corner: two bases and no pills.
+  two bases each in NW and SE; two bases in SW); the bot holds the
+  north-east corner: two bases and no pills. The two dead pills
+  (`p7_sw1`, `p7_sw2`) lie on the centre of the main road in, two squares
+  apart (changed 2026-10-10; they were beside the road in the SW corner).
   **Why:** the gate (a teleport) and the moat are gone at the brief's
   request. No enemy pills: the lesson is taking bases with the player's
   pillboxes, and a pill in the bot's corner is one more thing the Easy bot
@@ -220,13 +237,23 @@ and how to undo it.
   pillbox is built.
 - **One marker at a time:** the map shows one marker, on the goal the
   player is on. A marker is removed the moment its goal is ticked. 4B shows
-  the ring of red range markers; Stations 5 and 7 also show the cyan pen
-  marker.
+  the ring of red range markers. The RESET pens in Stations 5 and 7 have
+  no marker (removed 2026-10-10 at Andrew's request); the word RESET in
+  walls and the road arrow show them.
 - **Status line:** a white line says the next step in one short sentence,
   with key tokens (`{FIRE}`, `{QUICK_PILL}`, ...) so it reads right on
   keyboard, controller and touch. The wording says "click", the desktop
   word. Live numbers: shots left on the 2C base, seconds hidden in 4B, bases
   owned in Station 7.
+- **Status line width (2026-10-10):** a status line that was wider than
+  about half the game view is now two rows, split with `"\n"`. The client
+  draws each row centred in one box (see SCENARIO_API.md, "Line breaks").
+  The 5B, 6 and 7 lines are split this way.
+- **Announcements stack (2026-10-10):** a second `game.announce` no longer
+  replaces one still up. The client holds up to four, each with its own
+  countdown, and draws the newest lowest. An empty line clears them all.
+  *Why:* the tutorial puts a "done" line and a follow-up line close
+  together; before, the second wiped the first.
 - **Pillbox build wording** is the brief's text with `{QUICK_PILL}`: the 4A
   popup carries all of it; the 4A, 5B and 7 status lines carry "Press the
   pillbox build button or {QUICK_PILL}, then click ...".
@@ -280,8 +307,8 @@ and how to undo it.
   the 2C base the Station 6 bot's; the Station 3 target wall and grove; the
   4A dead pillbox home and dead (and picked up again if the tank died
   carrying it); the 4B/4C pillbox home at 2 armour (a hit taken in 4C stays); the 5B target home and
-  the 5B blocker in the player's tank, or rebuilt 10 seconds after it died
-  once built. The friendly road bases (2A, 3, 4C, 5, 6) are set back to the
+  the 5B blocker in the player's tank, or rebuilt after it died once
+  built (2 seconds, see "5B blocker rebuilt"). The friendly road bases (2A, 3, 4C, 5, 6) are set back to the
   player's and full whenever they are not.
   **Why:** the reset pads are gone; a player who loses a goal's object
   must never be stuck.
@@ -306,30 +333,44 @@ and how to undo it.
   checks all of this.
 - **"bot3" in the brief** is the Station 6 bot.
 - **The 5A demo bot** is on team 1, the player's ally. `can_hit` stops tank
-  shells between it and the player both ways. `can_build` keeps its man on
-  `island5a`, and `can_capture` lets it pick up only the two 5A pills.
-  After each take the script puts the target back, gives the bot its
-  blocker pillbox again and sends it home; a watchdog restarts a take that
-  has stalled for 150 seconds. It plays at Hard, as a demonstration.
-- **The blocker take (5A), and a conflict with the brief.** The brief asked
-  for the blocker orthogonally next to the target, in line, with the tank
-  shooting past it. In this engine a tank shell hits any live pillbox on
-  its square, its own side's too. Probe runs of `tutorial_take5a` with the
-  script moving the bot's blocker to the square in line (147,102): the bot
-  parked at (151,106) and its own shells killed the blocker (15 to 0) while
-  the target lost 2 armour; then the bot died beside the target. Left to
-  itself, GoalHunter builds its blocker next to the target, mostly
-  diagonal at (148,102) and sometimes in line at (147,102), parks at
-  (150,108), and kills the target in about 4 seconds while the blocker
-  soaks up the target's fire (15 to 0); the first take came 21.9 seconds
-  after fielding. **Decision:** the demo bot builds its blocker itself, on
-  a square of its own choosing next to the target; the script no longer
-  moves it. The arena logs where it was built, every hit on the target
-  with the bot's square, and passes when the bot built its blocker next to
-  the target, the blocker took fire, and the take came within 150 seconds.
-  The 5B player's blocker stays in line at (117,102), with the park square
-  (119,104) diagonal to it, where the player's shots at the target's side
-  pass the blocker by.
+  shells between it and the player both ways, and the two 5A pills' shells
+  at the player. `can_build` keeps its man on `island5a`, and
+  `can_capture` lets it pick up only the two 5A pills. After each take the
+  script puts the target back, gives the bot its blocker pillbox again and
+  sends it home; a watchdog restarts a take that has stalled for 150
+  seconds. It plays at Hard, as a demonstration.
+- **"Bot 2" is the 5A demo bot (item 17, 2026-10-10).** It is on the field
+  only while the player's tank is in Station 5. The script fields it when
+  the tank is in Station 5 and removes it (`game.remove_bot`, which also
+  frees the lobby seat's tank) after about a second outside; the two 5A pills
+  go home first. It has `BOT_PINGS_DEFAULT=false`, so it sends no ally
+  pings. *Why:* Andrew found its pings annoying when he was elsewhere.
+  The `tutorial_station5_entry` arena checks it on entry, on leaving and on
+  re-entry.
+- **The 5A demo bot's knobs (items 3 and 4, 2026-10-10).** Its init table
+  sets `cfg=BLOCKER_ORTHOGONAL_ONLY=true`, `cfg=BOT_PINGS_DEFAULT=false`
+  and, under a second key `cfg2` (an init value is at most 63 bytes),
+  `cfg=STRATEGIC_PLACE_ENABLED=false`.
+  - `BLOCKER_ORTHOGONAL_ONLY` is a new GoalHunter knob (default false, and
+    false in `PRESETS.keel`). On, the bot builds its blocker only on a
+    square orthogonally next to the target (Manhattan distance 1), never
+    diagonal. The brief asked for this.
+  - `STRATEGIC_PLACE_ENABLED=false` stops the bot dropping its carried
+    pill on a square of its own choosing between takes. Without it, soak
+    runs saw blockers off the target's side and one death.
+  - Once a second the script tops the bot up to a full tank when its
+    armour is under 30 or its shells under 10. GoalHunter will not start
+    an attack carrying a pill with armour under 30 ("approach abort:
+    carrying pill, armour 15 < 30"), so without the top-up it stalled.
+  - **Measured:** `tutorial_take5a_soak` runs the demo for 9 minutes: 18
+    takes, every blocker orthogonal, 0 bot deaths, 0 ticks off the island.
+    `tutorial_take5a` and 7 runs with other start ticks all passed.
+- **The blocker take (5A).** The bot builds its blocker itself, on the
+  square orthogonally next to the target that it chooses
+  (`BLOCKER_ORTHOGONAL_ONLY`), then parks behind it and kills the target
+  while the blocker soaks up the target's fire. The script does not move
+  the blocker. (The first build let the bot pick a diagonal square too;
+  the brief asks for orthogonal, so the knob was added.)
 - **The Station 6 bot** has `peace=<player seat>` so it does not fight.
   It is parked: teleported to `bot6_park` with `set_modifiers{speed = 1,
   accel = 1, turn = 1}`, and every frame put back on the square's centre if
@@ -388,16 +429,55 @@ and how to undo it.
     gave 6.3%; 224 wu behind at 10% gave 9.5% but 3.1 to 17.3% per seed.
     The arena passes when 5 to 15 percent of at least 40 shots at the man
     kill him and `can_die` refuses no death of the man.
+- **The Station 7 bot cannot pick up the two dead SW pills** (`can_capture`,
+  2026-10-10). Before, it drove out of its corner to take them off the
+  road before the player got there.
 - **New man close by:** `on_lgm_died` calls `builder_parachute(p, nil,
   nil, 2)` for every seat (see the engine entry).
 
 ### Other
 
-- **5A "watch"** ticks when a take happens while the player is in
-  Station 5.
-- **5B:** 3 seconds after the player picks up the enemy pillbox it is put
-  back, owned by the Station 6 bot's seat, at full armour, with an
-  announcement.
+- **5A "watch" (item 2, 2026-10-10)** ticks when the demo bot takes the
+  target while the player's tank is on the green square `watch5a` in
+  Station 5. The status line and popup say to stop there. There is no
+  call to move a player's view (`game.view`), so the watch spot is chosen
+  so the island is on screen from it: T is 6 squares east and 6 north.
+  *Decision for Andrew:* a `game.view` call to centre the view is
+  possible engine work; not done.
+- **5B blocker in the tank at once (item 8, 2026-10-10).** The 5B blocker
+  is put in the player's tank (`hand_5b`) the moment 5A is ticked, on
+  every entry to Station 5 and on every respawn there, while "build" is
+  not ticked. Before, it came with the next once-a-second re-arm. The
+  `tutorial_park5b` and `tutorial_station5_entry` arenas check it.
+- **5B parking square (item 9, 2026-10-10).** The parking square
+  (`t5b_park`, 117,108) is a road square seven squares due south of the
+  target, joined to the main road by a road spur. A tank shell reaches
+  7.125 squares, and the target's near edge is 6.5 squares away, so the
+  target is in reach; the blocker (117,102) is on the same column between
+  them. Two script rules make it work:
+  - `can_hit` lets the player's own shells pass the player's blocker. In
+    a real game they would hit it. *Note:* the firing client still draws
+    the shell stopping at the blocker; the server lets it through.
+  - `pill_damage_scale` lets only every fifth target shell at the blocker
+    count. Without it the blocker died in 3.2 s at the park and the target
+    then hit the tank.
+  - **Measured** (`tutorial_park5b`, a scripted shooter firing north from
+    the park): target dead after 4.6 s, blocker never died (lowest armour
+    10), tank never hit.
+  - *Decision for Andrew:* the pass-through and the one-in-five soak teach
+    a shot that a real game does not allow in a straight line.
+- **5B blocker rebuilt (item 10, 2026-10-10).** When the built 5B blocker
+  dies before the target is picked up, the script rebuilds it on its
+  square at full armour 2 seconds later and announces "To help you out,
+  your friendly blocking pillbox has been automatically rebuilt." The
+  once-a-second re-arm rebuilds it after 3 seconds as a fallback. The
+  `tutorial_rebuild5b` arena measured 2.00 s.
+- **5B target back (item 11, 2026-10-10):** 5 seconds after the player
+  picks up the enemy pillbox it is put back, owned by the Station 6 bot's
+  seat, at full armour, with "The enemy pillbox is back. Take it again, or
+  go north." *Why 5, not 3:* picking it up usually finishes Station 5, and
+  the "Station 5 done" line is up for 4 seconds. With 3 the two lines came
+  together. Announcements now stack too, so they never replace each other.
 - **4B hiding** mimics the engine's rule: the tank's square and the squares
   it overlaps all forest, and 3 or more squares from the pillbox on x or
   y; 5 seconds hidden in range ticks the item. Firing is not tracked: the
@@ -412,12 +492,18 @@ and how to undo it.
   with; once all bases are taken, tanks respawn without shells". *Why:*
   `gameTypeGetItems` gives 2 x 40 x (neutral bases / bases) shells, so the
   drop is gradual. *Undo:* cut the first clause in `POP.s2d`.
+- **Border reminder (item 15, 2026-10-10):** the Station 7 popup and the
+  "build" status line say to build the pillboxes near the border between
+  the player's land and the bot's (north-east), to take control.
 - **"Pick up both dead pills"** counts each Station 7 dead pillbox once it
   has been picked up, so building the first before picking up the second
   still ticks the item.
 - **Gate arenas** hold the player's seat (a GoalHunter in the gate) still
-  with `set_modifiers{speed = 1, turn = 1}` and teleport it about. Eight
+  with `set_modifiers{speed = 1, turn = 1}` and teleport it about. Twelve
   arenas: `tutorial_checkpoint`, `tutorial_reset`, `tutorial_take5a`,
-  `tutorial_late_bots`, `tutorial_station6`, `tutorial_bot7_region`,
-  `tutorial_bot7_man`, `tutorial_new_man`. The Station 2 steal is not
+  `tutorial_take5a_soak`, `tutorial_park5b`, `tutorial_rebuild5b`,
+  `tutorial_station5_entry`, `tutorial_late_bots`, `tutorial_station6`,
+  `tutorial_bot7_region`, `tutorial_bot7_man`, `tutorial_new_man`. The
+  5B arenas play the player with a scripted brain,
+  `tests/brains/tutorial_shoot_north.lua`. The Station 2 steal is not
   covered: a held-still tank cannot drive onto a base.

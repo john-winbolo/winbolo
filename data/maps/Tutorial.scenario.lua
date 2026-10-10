@@ -183,7 +183,8 @@ scenario = {
     on_pill_killed = "Rebuilds your Station 5B blocking pillbox 2 seconds after it dies.",
     on_base_captured = "Ticks off taking bases, and finishes the tutorial when you own every base in Station 7.",
     can_build = "Keeps each bot's builder inside its own station, and stops boats in Station 5.",
-    can_capture = "The Station 5A bot takes only its own two pillboxes.",
+    can_capture = "The 5A bot takes only its own two pillboxes; the Station 7 bot leaves your two dead ones.",
+    pill_damage_scale = "Only one in five of the enemy 5B pillbox's shells damages your 5B pillbox.",
     can_hit = "Tank shells pass between you and the demo bots; yours pass your 5B pillbox; the 5A pillboxes' pass you.",
     can_die = "The parked Station 6 tank cannot be destroyed, and the Station 4 pillbox cannot be killed before you have hidden.",
     on_choose_start = "You respawn at the furthest station you have reached.",
@@ -1056,8 +1057,13 @@ local function bot_init(role)
     -- to the target, the take the player is taught in 5B. It is the
     -- player's ally, so its ATTACK markers (bot pings) would reach the
     -- player; they are off. (Its spoken goal lines, BOT_CHAT_DEFAULT, are
-    -- off by default.) A value is at most 63 bytes.
-    return { cfg = "BLOCKER_ORTHOGONAL_ONLY=true;cfg=BOT_PINGS_DEFAULT=false" }
+    -- off by default.) It never drops its pillbox anywhere else
+    -- (STRATEGIC_PLACE_ENABLED off): a pillbox dropped on the island away
+    -- from the target leaves the bot with no blocker, and the target kills
+    -- it. A value is at most 63 bytes, so the second goes under cfg2; its
+    -- own token, "cfg2=0", means nothing to the brain.
+    return { cfg = "BLOCKER_ORTHOGONAL_ONLY=true;cfg=BOT_PINGS_DEFAULT=false",
+             cfg2 = "0;cfg=STRATEGIC_PLACE_ENABLED=false" }
   elseif role == "bot6" then
     -- The Station 6 bot never fights: its man is the target.
     return { peace = tostring(S.player or "") }
@@ -1282,10 +1288,10 @@ local function rearm(n)
     elseif bl ~= nil and not d.b_pick then
       -- Built: it is rebuilt 2 seconds after it dies. on_pill_killed starts
       -- the 2 seconds on the tick it dies; this catches any other way it
-      -- goes (picked up by another tank), a second late at most.
-      if blocker_5b_gone() then
+      -- goes (picked up by another tank), 2 to 3 seconds after.
+      if blocker_5b_gone() and not S.b5b_timer then
         S.b5b_dead_at = S.b5b_dead_at or S.sec
-        if S.sec - S.b5b_dead_at >= 2 then rebuild_5b() end
+        if S.sec - S.b5b_dead_at >= 3 then rebuild_5b() end
       else
         S.b5b_dead_at = nil
       end
@@ -1570,8 +1576,12 @@ function on_pill_killed(n, by, scripted)
   if n ~= P.t5b_blocker.n or S.player == nil then return end
   local d = S.done[5]
   if not d.b_build or d.b_pick then return end
-  S.b5b_dead_at = S.sec
-  game.timer(2, rebuild_5b)
+  S.b5b_dead_at = nil
+  S.b5b_timer = true
+  game.timer(2, function()
+    S.b5b_timer = false
+    rebuild_5b()
+  end)
 end
 
 local function check_win()
@@ -1618,9 +1628,20 @@ function can_build(p, action, x, y, n)
 end
 
 -- The 5A bot is the player's ally: without this it would pick up the
--- player's dead pillboxes and take the 5B pillbox.
+-- player's dead pillboxes and take the 5B pillbox. The Station 7 bot may
+-- drive at the two dead pillboxes on the road in (its route finder does not
+-- know this rule), but it cannot take them; the player drives over them on
+-- the way in, long before the bot gets there.
 function can_capture(kind, n, p)
-  if p == nil or p ~= S.bot5a then return nil end
+  if p == nil then return nil end
+  if p == S.bot7 then
+    -- The two dead pillboxes on the Station 7 road in are the player's.
+    if kind == "pill" and (n == P.p7_sw1.n or n == P.p7_sw2.n) then
+      return false
+    end
+    return nil
+  end
+  if p ~= S.bot5a then return nil end
   return kind == "pill" and (n == P.t5a_target.n or n == P.t5a_blocker.n)
 end
 
@@ -1630,6 +1651,23 @@ end
 -- 5A pillboxes' shells pass the player. Every other pillbox shoots as it
 -- always does, so the Station 6 bot's pillbox in Station 5B is a real enemy
 -- pillbox.
+-- 5B: only one in five of the target's shells takes armour off the
+-- player's blocker. At the full rate the angry target kills a full blocker
+-- in about 3 seconds, before a tank parked on the parking square has killed
+-- the target (about 5 seconds of steady fire); this way the blocker lasts
+-- about 16 seconds. A shell takes 1 armour and the engine rounds the scaled
+-- amount, so a percent such as 20 would round to 0 on every shell: the rule
+-- counts the shells instead. See docs/TUTORIAL_DECISIONS.md, "5B parking
+-- square".
+function pill_damage_scale(attacker, n, cause, pill)
+  if n == P.t5b_blocker.n and pill == P.t5b_target.n then
+    S.b5b_soaked = (S.b5b_soaked or 0) + 1
+    if S.b5b_soaked % 5 == 0 then return 100 end
+    return 0
+  end
+  return nil
+end
+
 function can_hit(attacker, kind, n, pill)
   if S.player == nil then return nil end
   if kind == "pill" then
@@ -1806,6 +1844,13 @@ local function every_second()
   if t5 ~= nil then
     if not region_has("island5a", t5.mx, t5.my) then home_bot5a() end
     if S.sec - S.t5a_reset_at >= 150 then reset_5a() end
+    -- The island has no base. GoalHunter will not drive at a pillbox with
+    -- under 30 armour while it carries one, so a bot worn down by the
+    -- target's shells would sit until the 150-second reset, and the target
+    -- kills it in the end. Its stocks are topped up instead.
+    if (t5.armour or 0) < 30 or (t5.shells or 0) < 10 then
+      game.set_stocks(S.bot5a, full_stock())
+    end
   end
 end
 

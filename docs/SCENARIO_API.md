@@ -2054,6 +2054,19 @@ players around it see. A replay shows it too. A `countdown_to` below 0 or
 past 4294967294, or a seat or team outside the game, is refused with
 `SCN_OP_RANGE`.
 
+**Two lines at once.** An announcement does not take the place of one that
+is still up. Each line keeps its own countdown, and a client holds up to four:
+a fifth pushes the oldest out. A new line with the same text as one still up
+replaces that one and starts its time again. An empty line takes them all
+away. Lines are drawn in the order they arrived, and a line that would overlap
+one already drawn drops to just below it, so the newest is lowest.
+
+**Line breaks.** A status line or an announcement may hold `"
+"`. Each part
+is drawn on its own row, centred in one box, and the countdown of a status
+line goes after the last row. The byte limits count the `"
+"` as one byte.
+
 **Key tokens.** A status line or an announcement may carry the popup key
 tokens: `{ACCEL}`, `{BRAKE}`, `{LEFT}`, `{RIGHT}`, `{FIRE}`, `{MINE}`,
 `{SCROLL_UP}`, `{SCROLL_DOWN}`, `{SCROLL_LEFT}`, `{SCROLL_RIGHT}`, `{DISMISS}`,

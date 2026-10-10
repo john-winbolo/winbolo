@@ -106,8 +106,8 @@ function on_tick(tick)
     return
   end
   -- Seat 0 is a bot held at 1 percent speed, so it creeps: put it back on
-  -- the watching square every half second.
-  if A.phase == 1 and tick % 50 == 0 then
+  -- the watching square every tenth of a second.
+  if A.phase == 1 and tick % 10 == 0 then
     local w = LAYOUT.point.watch5a
     local me = game.tank(0)
     if me ~= nil and not me.dead and (me.mx ~= w[1] or me.my ~= w[2]) then

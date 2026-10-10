@@ -6725,8 +6725,10 @@ set(_unit_test_names
     scenario_announce_remaining
     scenario_announce_position
     scenario_status_line
+    scenario_announce_stack
     scn_status_codec_and_client
     scn_announce_position_codec
+    scn_announce_stack_client
     scn_arm_status_and_position
     scn_arm_status_overlap
     scenario_panel_slot_rect

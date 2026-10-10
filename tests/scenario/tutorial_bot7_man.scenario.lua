@@ -149,6 +149,10 @@ function on_tick(tick)
   if A.phase == 0 and tick >= 300 then
     local a = LAYOUT.point.s7_arrive
     game.teleport(0, a[1], a[2], 0)
+    -- A player drives over the two dead pillboxes on the road in, and so
+    -- carries them. Left on the road, they draw the bot off its island.
+    hand_pill(0, P.p7_sw1.n)
+    hand_pill(0, P.p7_sw2.n)
     A.phase, A.t = 1, tick
     return
   end
