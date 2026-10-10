@@ -84,6 +84,92 @@ function M.in_map(mx, my)
   return mx >= 0 and mx <= 255 and my >= 0 and my <= 255
 end
 
+-- -------------------------------------------------------------------------
+-- STAY_AREA (constants.lua): the bot keeps every goal target and every
+-- planned route inside a set of map-square rectangles. C.STAY_AREA is the
+-- string "x1:y1:x2:y2[/x1:y1:x2:y2...]" (inclusive). Empty = off (keel).
+-- The parse is cached on the string, so a cfg change takes effect at once.
+-- -------------------------------------------------------------------------
+local _stay = { src = nil, rects = nil, ring = nil }
+
+local function _stay_parse()
+  local s = C.STAY_AREA
+  if s == _stay.src then return _stay.rects end
+  _stay.src, _stay.rects, _stay.ring = s, nil, nil
+  if type(s) ~= "string" or s == "" then return nil end
+  local rects = {}
+  for part in string.gmatch(s, "[^/]+") do
+    local a, b, c, d = string.match(part, "^%s*(%d+):(%d+):(%d+):(%d+)%s*$")
+    if a then
+      a, b, c, d = tonumber(a), tonumber(b), tonumber(c), tonumber(d)
+      rects[#rects + 1] = { math.min(a, c), math.min(b, d),
+                            math.max(a, c), math.max(b, d) }
+    end
+  end
+  if #rects == 0 then return nil end
+  _stay.rects = rects
+  return rects
+end
+
+-- True when a STAY_AREA is set.
+function M.stay_on()
+  return _stay_parse() ~= nil
+end
+
+-- True when (mx,my) is inside the STAY_AREA, or when no STAY_AREA is set.
+-- A nil square counts as inside (nothing to test).
+function M.stay_in(mx, my)
+  local rects = _stay_parse()
+  if not rects or not mx or not my then return true end
+  for i = 1, #rects do
+    local r = rects[i]
+    if mx >= r[1] and mx <= r[3] and my >= r[2] and my <= r[4] then return true end
+  end
+  return false
+end
+
+-- Squares outside the STAY_AREA that touch it (8-neighbour): the fence the
+-- bot's own path planner treats as impassable. Array of {mx, my}; nil = off.
+function M.stay_ring()
+  local rects = _stay_parse()
+  if not rects then return nil end
+  if _stay.ring then return _stay.ring end
+  local ring, seen = {}, {}
+  for i = 1, #rects do
+    local r = rects[i]
+    for x = r[1] - 1, r[3] + 1 do
+      for y = r[2] - 1, r[4] + 1 do
+        if (x < r[1] or x > r[3] or y < r[2] or y > r[4])
+           and M.in_map(x, y) and not M.stay_in(x, y) then
+          local k = y * 256 + x
+          if not seen[k] then
+            seen[k] = true
+            ring[#ring + 1] = { x, y }
+          end
+        end
+      end
+    end
+  end
+  _stay.ring = ring
+  return ring
+end
+
+-- The STAY_AREA square nearest to (mx,my); (mx,my) itself when inside or
+-- when no STAY_AREA is set.
+function M.stay_clamp(mx, my)
+  local rects = _stay_parse()
+  if not rects or M.stay_in(mx, my) then return mx, my end
+  local bx, by, bd = mx, my, math.huge
+  for i = 1, #rects do
+    local r = rects[i]
+    local cx = math.max(r[1], math.min(r[3], mx))
+    local cy = math.max(r[2], math.min(r[4], my))
+    local d = (cx - mx) * (cx - mx) + (cy - my) * (cy - my)
+    if d < bd then bx, by, bd = cx, cy, d end
+  end
+  return bx, by
+end
+
 function M.mkey(mx, my)
   if my == nil or mx == nil then
     error(string.format("mkey: nil argument (mx=%s, my=%s)\n%s",

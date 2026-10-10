@@ -481,6 +481,25 @@ local function stuck_recovery(state, info, goal)
     end
   end
 
+  -- STAY_AREA (C.STAY_AREA): the one-square ring outside the area is a wall
+  -- for this bot's own path planner (A* and the Dijkstra slates read the
+  -- overlay). Stamped last so no writer above leaves a ring cell open.
+  -- Engine terrain never changes. Off = no ring.
+  -- While the tank is OUTSIDE the area the fence is off (else it could not
+  -- get back in); the overlay is rebuilt without it on the next tick.
+  do
+    local ring = U.stay_ring()
+    if ring then
+      local fence = U.stay_in(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8))
+      if fence then
+        for i = 1, #ring do cpf.set_overlay(ring[i][1], ring[i][2], 32767) end
+      elseif U._stay_fence ~= false then
+        threat.overlay_dirty = true
+      end
+      U._stay_fence = fence
+    end
+  end
+
   -- state._lgm_paced: the LGM pacing throttle capped the tank last tick —
   -- the crawl is intentional, so don't count it as "no progress".
   if state.wall_clearing or state._lgm_paced
