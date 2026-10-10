@@ -133,3 +133,80 @@ and how to undo it.
 - **Deep sea:** a tank with no boat drowns the tick it reaches deep sea
   (`tank_deep_sea_safe` 0).
 - **Tank:** full armour 40, full shells 40 (`tank_full_*`).
+
+## Script: `data/maps/Tutorial.scenario.lua`
+
+- **The player** is the first human seat, or the seat named in the global
+  `TUTORIAL_PLAYER` (set only by the gate arenas). A player who joins late
+  is adopted in `on_player_join`. A player seated on team 2 is moved to
+  team 1. *Undo:* drop `TUTORIAL_PLAYER` from `is_player_seat`.
+- **Bots** are three held seats on team 2, fielded with `game.spawn_bot`
+  in this order: the Station 5A demo bot and the Station 6 bot at the
+  start, the Station 7 bot the first time the player drives into Station 7.
+  Where the lobby held no seats, a free seat is used. A seat just handed to
+  a role is skipped by name, because `spawn_bot` fields it a tick later and
+  until then it still reads as held. Any other bot on the field at the
+  start is removed so it cannot wander through the stations.
+  *Undo:* the `lobby` table and `field_bot`.
+- **Demo bots and the player cannot hurt each other** (`can_hit`, both
+  ways, the player's own pillboxes included), and the demo bots get
+  GoalHunter's `peace=<player seat>` init token so they do not chase the
+  player. The Station 7 bot is a normal Easy bot with no peace.
+- **Builders are kept in their stations** with `can_build`: the Station 6
+  bot may only harvest inside `grove6`; the 5A bot may build only on its
+  island and never a boat; the Station 7 bot only inside `island7` and
+  never a boat; the player may not build a boat in Station 5, which keeps
+  the 5A island cut off. No brain knob was needed.
+- **The Station 6 bot is parked** with `set_modifiers{speed = 1, turn = 1}`
+  and re-teleported when it creeps a square away. A modifier of 0 is read
+  by the engine as the classic 100 percent (`tankModPct`), so 0 does not
+  stop a tank; 1 percent rounds every speed cap to 0 or near it. Its tank
+  cannot die (`can_die`). Every 3 seconds, while the man is in the tank,
+  the script sends him to the nearest forest square of `grove6` and empties
+  the tank's trees so he can always harvest again. The grove is refilled
+  with `fill_rect` once fewer than 40 forest squares are left.
+- **Station 6 kills** count a death of the Station 6 man by the player, or
+  any death of that man while the player is in Station 6.
+- **The 5A loop:** when the demo bot picks up the target, the script puts
+  the target back (neutral, 15 armour), puts the bot's own pillbox back,
+  teleports the bot to `t5a_home` and refills it. If the bot picks up its
+  own pillbox (GoalHunter moves pillboxes), that pillbox is put back at
+  once. A watchdog restarts the loop after 150 seconds with no take. The
+  gate measured the first take at 19.6 s and then one about every 28 s.
+- **5A "watch"** ticks when a take happens while the player is in
+  Station 5 (any part of it), not only in the `watch5a` strip.
+- **5B:** 3 seconds after the player picks up the enemy pillbox it is put
+  back, owned by the Station 6 bot, at full armour, with an announcement.
+  The friendly pillbox is rebuilt every 10 seconds when it is dead, carried
+  by someone other than the player, or off its square.
+- **Checkpoint** is the furthest station driven into (`S.reached`).
+  Driving back south does not lower it.
+- **Loadouts:** Stations 1 to 3 carry no trees, so Station 3's harvest is
+  needed; Station 2 starts low (5 shells, 0 mines, 15 armour) until the
+  base refill is done; Stations 4 to 7 are full with 40 trees.
+  Entering Station 4C (after the 4B items) fills the tank once.
+- **Reset pads** put back their station's pills, bases and walls, clear its
+  checklist and give the station's start loadout. On Station 2 that is the
+  low loadout again, because the refill item is cleared too. On Station 5
+  the "watch" item is kept once it was done. Terrain the player changed
+  (roads, walls, craters) is not put back, except the RESET walls and the
+  Station 3 target wall.
+- **Station 7 reset** also sends the bot to its start with a full tank.
+  A death in Station 7 respawns at its checkpoint without a reset.
+- **The Station 6 to 7 gate** (`gate6`) teleports the player to Station 7
+  whether or not Station 6 is done. *Why:* every checklist is advice, not
+  a lock; a player who already knows the man can move on.
+- **A pillbox taken out of its station** is sent home when the player
+  enters another station carrying it, and one put down outside its station
+  is sent home at once. *Why:* stations must not affect each other.
+- **The win** is the player owning all eight Station 7 bases. The script
+  shows the congratulations popup and ends the round 30 seconds later.
+  `allow_base_win` is false, so owning every base on the map is not a win
+  by itself (Station 2 and 4 bases are the player's from the start).
+- **Popups** are shown once each, in order, and a part already done is
+  skipped. The Station 2 game-type popup comes only after the enemy base
+  is taken. The Station 4B popup states the real hiding rule (all in
+  forest, 3 or more squares away, firing shows you for about 2 seconds).
+- **Station 1's live line** shows the terrain under the tank and its speed
+  rule; "Try 3 terrains" counts three of the five patch terrains (forest,
+  swamp, rubble, crater, river).
