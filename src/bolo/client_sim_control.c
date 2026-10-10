@@ -86,6 +86,9 @@ static void clientSimScnClearPresentation(ClientSim *cs) {
     cs->scnAnnouncePosY = 0;
     cs->scnStatusText[0] = '\0';
     cs->scnStatusEndsAt = SCN_STATUS_NO_COUNTDOWN;
+    memset(cs->scnPopups, 0, sizeof(cs->scnPopups));
+    cs->scnPopupHead = 0;
+    cs->scnPopupCount = 0;
     memset(cs->scnMarkers, 0, sizeof(cs->scnMarkers));
     memset(cs->scnPlayerScores, 0, sizeof(cs->scnPlayerScores));
     memset(cs->scnTeamScores, 0, sizeof(cs->scnTeamScores));
@@ -1594,6 +1597,24 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                                   ? evt->u.scnStatus.endsAt
                                   : SCN_STATUS_NO_COUNTDOWN;
         break;
+
+    case CTRL_SCN_POPUP: {
+        /* Queued rather than shown: the frontend takes one at a time when
+           its overlay is free. A full queue drops the newcomer. */
+        uint8_t slot;
+        if (!clientSimScnAddressedToMe(cs, evt->u.scnPopup.destTeam,
+                                       evt->u.scnPopup.destPlayer)) {
+            break;
+        }
+        if (evt->u.scnPopup.text[0] == '\0') break;
+        if (cs->scnPopupCount >= SCN_POPUP_QUEUE_MAX) break;
+        slot = (uint8_t)((cs->scnPopupHead + cs->scnPopupCount) %
+                         SCN_POPUP_QUEUE_MAX);
+        SDL_strlcpy(cs->scnPopups[slot], evt->u.scnPopup.text,
+                    sizeof(cs->scnPopups[slot]));
+        cs->scnPopupCount++;
+        break;
+    }
 
     case CTRL_SCN_MARKER: {
         ClientScnMarker *m;

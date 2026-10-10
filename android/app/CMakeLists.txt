@@ -287,6 +287,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/ring_band.c
     ${PROJ_ROOT}/src/gui/sdl3/build_cursor.c
     ${PROJ_ROOT}/src/gui/sdl3/tutorial_text.c
+    ${PROJ_ROOT}/src/gui/sdl3/tutorial_tokens.c
     ${PROJ_ROOT}/src/gui/sdl3/lang.c
     ${PROJ_ROOT}/src/gui/sdl3/sim_rules_phrase.c
     ${PROJ_ROOT}/src/gui/sdl3/sound.c

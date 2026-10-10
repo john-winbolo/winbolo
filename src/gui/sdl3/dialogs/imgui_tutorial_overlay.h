@@ -36,6 +36,13 @@ struct ClientSim;
 void tutorialOverlayShow(const uint16_t *ids, int count,
                          void (*onComplete)(void));
 
+/* Show one message from a text rather than a string id: a scenario's
+ * popup (game.popup). Tokens such as {ACCEL} or {QUICK_TREE} are expanded
+ * as in a tutorial string. Ignored if the overlay is already showing, so
+ * the caller holds the text back until tutorialOverlayIsOpen() is false.
+ * Copies `text`. */
+void tutorialOverlayShowText(const char *text);
+
 /* True while the overlay is open or pending-open this frame.  Fed into
  * the input gate and the solo-pause edge-detect. */
 bool tutorialOverlayIsOpen(void);

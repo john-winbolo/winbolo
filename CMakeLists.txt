@@ -963,6 +963,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/build_cursor.c
     src/gui/sdl3/input_source.c
     src/gui/sdl3/tutorial_text.c
+    src/gui/sdl3/tutorial_tokens.c
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
     src/gui/scn_panel_prefs.c
@@ -1683,6 +1684,7 @@ set(CLIENT_SOURCES
     # spectator_input_stub.c instead.
     src/gui/sdl3/spectator_input.c
     src/gui/sdl3/tutorial_text.c
+    src/gui/sdl3/tutorial_tokens.c
     src/gui/sdl3/lang.c src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/sound.c src/gui/sdl3/sound_variants.c
     src/gui/sdl3/sound_mix.c
@@ -4047,6 +4049,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
     tests/unit/test_voice_everyone_codec.c
+    # game.popup: the body codec, the client's queue and the {QUICK_*}
+    # tokens the popup text may carry.
+    tests/unit/test_scenario_popup.c
+    src/gui/sdl3/tutorial_tokens.c
     tests/unit/test_voice_talking_set.c
     # The rules event's body codec: every carried rule round-trips field by
     # field, rates a fixed-point scale could not carry survive, and the
@@ -5435,6 +5441,9 @@ set(_unit_test_names
     voice_flags_snapshot_masking
     voice_talking_codec
     voice_everyone_codec
+    scenario_popup_codec
+    scenario_popup_client_queue
+    tutorial_tokens_quick_build
     sim_rules_codec_roundtrip
     sim_rules_codec_golden
     voice_talking_stops_in_countdown
@@ -6440,6 +6449,8 @@ set(_unit_test_names
     scenario_lua_presentation_targets
     scenario_lua_score_and_announce
     scenario_lua_announce_position
+    scenario_lua_popup
+    scenario_lua_wall_shots
     scenario_lua_acting_rows_refuse_a_check
     scenario_sandbox_removed_names_are_nil
     scenario_sandbox_bytecode_chunk_refused

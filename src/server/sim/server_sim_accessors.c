@@ -403,6 +403,28 @@ BYTE serverSimGetMapTerrain(const ServerSim *sim, BYTE x, BYTE y) {
     return mapGetPos(&((ServerSim *)sim)->sim.mp, x, y);
 }
 
+/* Shots a wall square still takes before it is rubble, or 0 for a square
+ * that is not a wall. A wall the shells have not touched has no entry in
+ * the building list: its first hit makes the entry with building_life left,
+ * so it takes one shot more than that. A damaged wall's entry holds what is
+ * left, and so does an intact one a builder repaired after it was hit, which
+ * keeps its old entry (buildingAddItem in building.c). */
+int serverSimWallShotsLeft(const ServerSim *sim, BYTE x, BYTE y) {
+    const GameSim *gs = &sim->sim;
+    BYTE           terrain = mapGetPos(&((ServerSim *)sim)->sim.mp, x, y);
+    building       b;
+
+    if (terrain != BUILDING && terrain != HALFBUILDING) {
+        return 0;
+    }
+    for (b = gs->blds; b != NULL; b = b->next) {
+        if (b->x == x && b->y == y) {
+            return (int)b->life;
+        }
+    }
+    return (int)gs->rules.building_life + 1;
+}
+
 bool serverSimMapIsMine(const ServerSim *sim, BYTE x, BYTE y) {
     return mapIsMine(&((ServerSim *)sim)->sim.mp, x, y);
 }

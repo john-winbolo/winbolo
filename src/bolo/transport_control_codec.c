@@ -3434,6 +3434,49 @@ static bool decodeScnStatusBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_SCN_POPUP body: [text, the whole body].
+ *
+ * The text carries no terminator and is 1 to SCN_POPUP_TEXT_MAX bytes; an
+ * empty body is not a popup and is refused. A 0x00 in the body ends the
+ * text: whatever follows it is room for a later build to add fields, and
+ * this one skips it, as the status line's decoder does. */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeScnPopupBody(const ControlEvent *evt,
+                                       const struct UdpServerClient *recipient,
+                                       uint8_t *buf, size_t bufCap,
+                                       size_t *outLen) {
+    size_t textLen;
+    (void)recipient;
+    textLen = strnlen(evt->u.scnPopup.text, sizeof(evt->u.scnPopup.text));
+    if (textLen == 0) return ENCODE_SKIP;   /* nothing to show */
+    if (textLen > SCN_POPUP_TEXT_MAX) return ENCODE_OVERFLOW;
+    if (bufCap < textLen) return ENCODE_OVERFLOW;
+    memcpy(buf, evt->u.scnPopup.text, textLen);
+    *outLen = textLen;
+    return ENCODE_OK;
+}
+
+static bool decodeScnPopupBody(const uint8_t *buf, size_t len,
+                               ControlEvent *outEvt) {
+    size_t         textLen;
+    const uint8_t *nul;
+    if (buf == NULL || outEvt == NULL) return false;
+    textLen = len;
+    nul = (textLen > 0) ? (const uint8_t *)memchr(buf, 0, textLen) : NULL;
+    if (nul != NULL) {
+        textLen = (size_t)(nul - buf);
+    }
+    if (textLen == 0) return false;
+    if (textLen >= sizeof(outEvt->u.scnPopup.text)) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SCN_POPUP;
+    outEvt->u.scnPopup.destPlayer = 0xFF;
+    memcpy(outEvt->u.scnPopup.text, buf, textLen);
+    outEvt->u.scnPopup.text[textLen] = '\0';
+    return true;
+}
+
 /* CTRL_SCN_MARKER body: [id 1][kind 1][x 1][y 1][slot 1][colour 1]. */
 #define SCN_MARKER_BODY_LEN 6
 
@@ -3941,6 +3984,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SCN_MARKER]            = encodeScnMarkerBody,
     [CTRL_SCN_STATUS]            = encodeScnStatusBody,
     [CTRL_VOICE_EVERYONE]        = encodeVoiceEveryoneBody,
+    [CTRL_SCN_POPUP]             = encodeScnPopupBody,
     [CTRL_SCENARIO_RULES]        = encodeScenarioRulesBody,
     [CTRL_LOBBY_SCRIPT_LIST]     = encodeLobbyScriptListBody,
     [CTRL_LOBBY_SCRIPT_SETTING]  = encodeLobbyScriptSettingBody,
@@ -3998,6 +4042,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SCN_MARKER]            = decodeScnMarkerBody,
     [CTRL_SCN_STATUS]            = decodeScnStatusBody,
     [CTRL_VOICE_EVERYONE]        = decodeVoiceEveryoneBody,
+    [CTRL_SCN_POPUP]             = decodeScnPopupBody,
     [CTRL_SCENARIO_RULES]        = decodeScenarioRulesBody,
     [CTRL_LOBBY_SCRIPT_LIST]     = decodeLobbyScriptListBody,
     [CTRL_LOBBY_SCRIPT_SETTING]  = decodeLobbyScriptSettingBody,

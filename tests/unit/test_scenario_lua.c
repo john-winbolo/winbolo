@@ -141,6 +141,8 @@
 #include "lobby_bot_pools.h"
 #include "start_sides.h"
 #include "test_harness.h"
+#include "bolo_map.h"                /* mapSetPos, for game.wall_shots */
+#include "building.h"               /* buildingAddItem: one shell on a wall */
 
 /* ── A state with the table on it ─────────────────────────────────── */
 
@@ -473,6 +475,7 @@ static const char *const kSlEveryRowCalls =
     "  map_name    = function() return game.map_name() end,\n"
     "  map_tile    = function() return game.map_tile(10, 10) end,\n"
     "  is_mine     = function() return game.is_mine(10, 10) end,\n"
+    "  wall_shots  = function() return game.wall_shots(10, 10) end,\n"
     "  terrain     = function() return game.terrain() end,\n"
     "  num_pills   = function() return game.num_pills() end,\n"
     "  pill        = function() return game.pill(1) end,\n"
@@ -559,6 +562,7 @@ static const char *const kSlEveryRowCalls =
     "  score       = function() return game.score(0, 1, \"pts\") end,\n"
     "  announce    = function() return game.announce(\"hello\", 1) end,\n"
     "  status      = function() return game.status(\"hello\", 100) end,\n"
+    "  popup       = function() return game.popup(\"hello {ACCEL}\") end,\n"
     "  marker      = function() return game.marker(0, 100, 100) end,\n"
     "  marker_follow = function() return game.marker_follow(1, 0) end,\n"
     "  clear_marker = function() return game.clear_marker(0) end,\n"
@@ -604,6 +608,7 @@ static const struct {
     { "map_name", "string" },
     { "terrain",  "string" },
     { "is_mine",  "boolean" },
+    { "wall_shots", "number" },
     { "pill",     "table"  },
     { "regions",  "table"  },
 };
@@ -2296,11 +2301,13 @@ typedef struct {
     int          announces;
     int          markers;
     int          statuses;
+    int          popups;
     ControlEvent panel;
     ControlEvent score;
     ControlEvent announce;
     ControlEvent marker;
     ControlEvent status;
+    ControlEvent popup;
 } SlCapture;
 
 static void slCaptureCb(void *ctx, const ControlEvent *evt) {
@@ -2312,6 +2319,7 @@ static void slCaptureCb(void *ctx, const ControlEvent *evt) {
         case CTRL_SCN_ANNOUNCE: c->announces++; c->announce = *evt; break;
         case CTRL_SCN_MARKER:   c->markers++;   c->marker = *evt;   break;
         case CTRL_SCN_STATUS:   c->statuses++;  c->status = *evt;   break;
+        case CTRL_SCN_POPUP:    c->popups++;    c->popup = *evt;    break;
         default: break;
     }
 }
@@ -2980,6 +2988,152 @@ int run_scenario_lua_score_and_announce(void) {
  * nearest position byte, the shapes that are the call written wrong and
  * raise, the shares past the view's edge that are refused, and the shorter
  * text limit a positioned line keeps for older clients. */
+/* game.popup: the text reaches the event whole, tokens and all, and the
+ * target packs the way every presentation row's does; an empty text and a
+ * text past SCN_POPUP_TEXT_MAX are refused by name, and the longest text
+ * that fits is taken. */
+int run_scenario_lua_popup(void) {
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    SlCapture        cap;
+    char             err[512];
+    char             code[64];
+    char             chunk[128];
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+    slWatch(sim, &cap);
+
+    UT_ASSERT_MSG(slRun(L, "ok = game.popup(\"Drive with {ACCEL}. Build a "
+                           "tree with {QUICK_TREE}.\")\n", err, sizeof(err)),
+                  "the popup would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"), "a popup was not taken");
+    UT_ASSERT_MSG(cap.popups == 1, "the arm published %d popups, expected 1",
+                  cap.popups);
+    UT_ASSERT_MSG(strcmp(cap.popup.u.scnPopup.text,
+                         "Drive with {ACCEL}. Build a tree with "
+                         "{QUICK_TREE}.") == 0,
+                  "the popup reached the event as '%s'",
+                  cap.popup.u.scnPopup.text);
+    UT_ASSERT_MSG(cap.popup.u.scnPopup.destTeam == 0 &&
+                      cap.popup.u.scnPopup.destPlayer == 0xFF,
+                  "a popup with no target went to team %u player %u",
+                  (unsigned)cap.popup.u.scnPopup.destTeam,
+                  (unsigned)cap.popup.u.scnPopup.destPlayer);
+
+    /* One seat, then one team. */
+    UT_ASSERT(slRun(L, "ok = game.popup(\"seat\", 0)\n", err, sizeof(err)));
+    UT_ASSERT(slGlobalBool(L, "ok"));
+    UT_ASSERT_MSG(cap.popup.u.scnPopup.destTeam == 0 &&
+                      cap.popup.u.scnPopup.destPlayer == 0,
+                  "a popup to seat 0 went to team %u player %u",
+                  (unsigned)cap.popup.u.scnPopup.destTeam,
+                  (unsigned)cap.popup.u.scnPopup.destPlayer);
+    UT_ASSERT(slRun(L, "ok = game.popup(\"team\", { team = 2 })\n", err,
+                    sizeof(err)));
+    UT_ASSERT(slGlobalBool(L, "ok"));
+    UT_ASSERT_MSG(cap.popup.u.scnPopup.destTeam == 2 &&
+                      cap.popup.u.scnPopup.destPlayer == 0xFF,
+                  "a popup to team 2 went to team %u player %u",
+                  (unsigned)cap.popup.u.scnPopup.destTeam,
+                  (unsigned)cap.popup.u.scnPopup.destPlayer);
+    UT_ASSERT(cap.popups == 3);
+
+    /* The longest text that fits, and one byte more. */
+    snprintf(chunk, sizeof(chunk),
+             "ok = game.popup(string.rep(\"x\", %d))\n", SCN_POPUP_TEXT_MAX);
+    UT_ASSERT(slRun(L, chunk, err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"), "a %d-byte popup was not taken",
+                  SCN_POPUP_TEXT_MAX);
+    UT_ASSERT_MSG(strlen(cap.popup.u.scnPopup.text) == SCN_POPUP_TEXT_MAX,
+                  "the longest popup arrived as %u bytes",
+                  (unsigned)strlen(cap.popup.u.scnPopup.text));
+    snprintf(chunk, sizeof(chunk),
+             "res, code = game.popup(string.rep(\"x\", %d))\n",
+             SCN_POPUP_TEXT_MAX + 1);
+    UT_ASSERT(slRun(L, chunk, err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalIsNil(L, "res"), "a popup past the limit was taken");
+    slGlobalStr(L, "code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_TOO_BIG)) == 0,
+                  "a popup past the limit answered '%s'", code);
+
+    UT_ASSERT(slRun(L, "res, code = game.popup(\"\")\n", err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalIsNil(L, "res"), "an empty popup was taken");
+    slGlobalStr(L, "code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_RANGE)) == 0,
+                  "an empty popup answered '%s'", code);
+    UT_ASSERT_MSG(cap.popups == 4, "the arm published %d popups, expected 4",
+                  cap.popups);
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* game.wall_shots: an untouched wall takes building_life + 1 shells, each
+ * hit after the first takes one off what is left, and a square that is not
+ * a wall answers 0. The hits are made the way shells.c makes them. */
+int run_scenario_lua_wall_shots(void) {
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    char             err[512];
+    BYTE             t;
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+
+    mapSetPos(&sim->sim, &sim->sim.mp, 30, 30, BUILDING, false, false);
+    mapSetPos(&sim->sim, &sim->sim.mp, 31, 30, GRASS, false, false);
+    UT_ASSERT(slRun(L, "n = game.wall_shots(30, 30)\n"
+                       "g = game.wall_shots(31, 30)\n"
+                       "o = game.wall_shots(-1, 30)\n", err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalInt(L, "n") == sim->sim.rules.building_life + 1,
+                  "an untouched wall answered %ld", slGlobalInt(L, "n"));
+    UT_ASSERT_MSG(slGlobalInt(L, "n") == 5,
+                  "the classic wall takes %ld shells, not 5",
+                  slGlobalInt(L, "n"));
+    UT_ASSERT_MSG(slGlobalInt(L, "g") == 0, "grass answered %ld",
+                  slGlobalInt(L, "g"));
+    UT_ASSERT_MSG(slGlobalInt(L, "o") == 0, "off the map answered %ld",
+                  slGlobalInt(L, "o"));
+
+    /* Shell one: the wall is damaged with building_life left. */
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30);
+    UT_ASSERT(t == HALFBUILDING);
+    mapSetPos(&sim->sim, &sim->sim.mp, 30, 30, t, false, false);
+    UT_ASSERT(slRun(L, "n = game.wall_shots(30, 30)\n", err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalInt(L, "n") == 4,
+                  "after one shell the wall answered %ld", slGlobalInt(L, "n"));
+
+    /* Shells two to four leave one; shell five is rubble. */
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30);
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30);
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30);
+    UT_ASSERT(t == HALFBUILDING);
+    UT_ASSERT(slRun(L, "n = game.wall_shots(30, 30)\n", err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalInt(L, "n") == 1,
+                  "after four shells the wall answered %ld",
+                  slGlobalInt(L, "n"));
+    t = buildingAddItem(&sim->sim, &sim->sim.blds, 30, 30);
+    UT_ASSERT(t == RUBBLE);
+    mapSetPos(&sim->sim, &sim->sim.mp, 30, 30, t, false, false);
+    UT_ASSERT(slRun(L, "n = game.wall_shots(30, 30)\n", err, sizeof(err)));
+    UT_ASSERT_MSG(slGlobalInt(L, "n") == 0, "rubble answered %ld",
+                  slGlobalInt(L, "n"));
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
 int run_scenario_lua_announce_position(void) {
     static const struct {
         const char *call;

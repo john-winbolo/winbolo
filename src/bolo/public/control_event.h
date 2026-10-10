@@ -397,6 +397,22 @@ typedef enum {
      * Appended at the END, like every type above it: the tables in
      * transport_control_codec.c are indexed by this enum. */
     CTRL_VOICE_EVERYONE,
+    /* CTRL_SCN_POPUP — a scenario's popup (game.popup): a message box the
+     * player closes, drawn through the tutorial overlay, which pauses a
+     * local game while it is up. The text is up to SCN_POPUP_TEXT_MAX bytes
+     * and may carry the tutorial's key tokens, which the client expands.
+     *
+     * Body-only on CHANNEL_CONTROL and addressed like the presentation
+     * events: destTeam/destPlayer never travel, and the delivery path
+     * filters on them. Shown once and never replayed into a joiner's sync.
+     * Not on the spectator allowlist: a viewer has nothing to close it for.
+     *
+     * An older client has no decoder for the type and skips it, so it shows
+     * nothing and nothing else changes.
+     *
+     * Appended at the END, like every type above it: the tables in
+     * transport_control_codec.c are indexed by this enum. */
+    CTRL_SCN_POPUP,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -1259,6 +1275,13 @@ typedef struct ControlEvent {
             uint8_t  destTeam;
             uint8_t  destPlayer;
         } scnStatus;
+
+        /* CTRL_SCN_POPUP — a message box the player closes. */
+        struct {
+            char     text[SCN_POPUP_TEXT_MAX + 1];
+            uint8_t  destTeam;
+            uint8_t  destPlayer;
+        } scnPopup;
 
         /* CTRL_SCN_MARKER — a mark on the map, kept by id. */
         struct {

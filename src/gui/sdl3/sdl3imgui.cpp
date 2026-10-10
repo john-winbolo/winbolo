@@ -9274,7 +9274,18 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         /* Tutorial message overlay — same in-loop pattern as the pause
            menu, so the input gate suspends play and the solo-pause path
            freezes the sim while a message is up.  Edge-detect open/close
-           to toggle the freeze exactly once each way. */
+           to toggle the freeze exactly once each way.
+
+           A scenario's popup (game.popup) waits in the client sim's queue
+           until the overlay is free, then takes the overlay like a tutorial
+           message does, so one popup shows at a time and pauses a solo
+           game the same way. */
+        if (cs != NULL && !tutorialOverlayIsOpen()) {
+            static char s_popupText[SCN_POPUP_TEXT_MAX + 1];
+            if (clientSimTakeScnPopup(cs, s_popupText, sizeof(s_popupText))) {
+                tutorialOverlayShowText(s_popupText);
+            }
+        }
         tutorialOverlayRender(cs);
         {
             static bool s_lastTutorialPause = false;

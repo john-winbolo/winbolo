@@ -1185,6 +1185,14 @@ struct ClientSim {
     char         scnStatusText[PACKET_MAX_CHAT_MESSAGE + 1];
     uint32_t     scnStatusEndsAt;
 
+    /* Popups waiting to be shown, oldest first: scnPopupCount of them from
+     * scnPopupHead round the ring. The frontend takes one off the front
+     * when its overlay is free (clientSimTakeScnPopup). A popup that
+     * arrives with the ring full is dropped. */
+    char         scnPopups[SCN_POPUP_QUEUE_MAX][SCN_POPUP_TEXT_MAX + 1];
+    uint8_t      scnPopupHead;
+    uint8_t      scnPopupCount;
+
     /* Markers by id. SCN_MARKER_KIND_CLEAR turns one off rather than
      * storing a third kind, so a stored marker is always drawable. */
     ClientScnMarker scnMarkers[SCN_MARKERS_MAX];

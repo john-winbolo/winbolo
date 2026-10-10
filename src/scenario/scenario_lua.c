@@ -574,6 +574,22 @@ static int scnLuaIsMine(lua_State *L) {
     return 1;
 }
 
+/* A square off the map holds no wall, so it answers 0 like any other square
+ * that is not a wall. */
+static int scnLuaWallShots(lua_State *L) {
+    const ScnLuaCtx *c = scnCtx(L);
+    lua_Integer      x = scnArgInt(L, 1, "x");
+    lua_Integer      y = scnArgInt(L, 2, "y");
+
+    if (x < 0 || x > 255 || y < 0 || y > 255) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+    lua_pushinteger(L, (lua_Integer)serverSimWallShotsLeft(c->sim, (BYTE)x,
+                                                           (BYTE)y));
+    return 1;
+}
+
 /* Every square in one string, for a script that reads the whole map at setup
  * rather than making 65,536 calls. The buffer is Lua's own, so the string
  * push cannot leave it behind. */
@@ -4510,6 +4526,34 @@ static int scnLuaStatus(lua_State *L) {
                    (unsigned)op.u.status.endsAt);
 }
 
+/* A message box the player closes. The text is longer than a chat line
+ * (SCN_POPUP_TEXT_MAX) and may carry the tutorial's key tokens, which the
+ * client expands. An empty text is a call with nothing to show, and is
+ * refused rather than drawing an empty box. */
+static int scnLuaPopup(lua_State *L) {
+    ScenarioOp  op;
+    size_t      len    = 0;
+    const char *text   = scnArgText(L, 1, "text", &len);
+    lua_Integer asked  = 0;
+    BYTE        target = 0;
+
+    if (len == 0) {
+        return scnRefused(L, SCN_OP_RANGE, "text is empty");
+    }
+    if (len > SCN_POPUP_TEXT_MAX) {
+        return scnRefused(L, SCN_OP_TOO_BIG, "text is %d bytes, limit %d",
+                          (int)len, (int)SCN_POPUP_TEXT_MAX);
+    }
+    if (!scnPresentationTarget(L, 2, &target, &asked)) {
+        return scnRefused(L, SCN_OP_RANGE, "target is %d", (int)asked);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type           = SCN_OP_POPUP;
+    op.u.popup.target = target;
+    memcpy(op.u.popup.text, text, len + 1);
+    return scnDone(L, &op, "%d bytes", (int)len);
+}
+
 /* The three marker rows are one op with the kind changed, so they are one
  * function: the id, the colour and the target are read the same way for all
  * three, and what a kind does not use is left as the memset put it. The
@@ -5095,6 +5139,10 @@ static const ScnLuaOpParam kScnOpArgs_is_mine[] = {
     { "x", SCN_PARAM_SQUARE_X, false }, { "y", SCN_PARAM_SQUARE_Y, false },
     SCN_OP_ARG_END
 };
+static const ScnLuaOpParam kScnOpArgs_wall_shots[] = {
+    { "x", SCN_PARAM_SQUARE_X, false }, { "y", SCN_PARAM_SQUARE_Y, false },
+    SCN_OP_ARG_END
+};
 static const ScnLuaOpParam kScnOpArgs_terrain[]    = { SCN_OP_ARG_END };
 static const ScnLuaOpParam kScnOpArgs_num_pills[]  = { SCN_OP_ARG_END };
 static const ScnLuaOpParam kScnOpArgs_pill[] = {
@@ -5368,6 +5416,10 @@ static const ScnLuaOpParam kScnOpArgs_status[] = {
     { "countdown_to", SCN_PARAM_NUMBER, true },
     { "target", SCN_PARAM_TARGET, true }, SCN_OP_ARG_END
 };
+static const ScnLuaOpParam kScnOpArgs_popup[] = {
+    { "text", SCN_PARAM_STRING, false },
+    { "target", SCN_PARAM_TARGET, true }, SCN_OP_ARG_END
+};
 /* A colour is the palette's word or the number behind it, which is what
    SCN_PARAM_COLOUR says and what scnArgColour reads. Not SCN_PARAM_WORD:
    that one is a word and nothing else, and a colour written as its number
@@ -5444,6 +5496,11 @@ static const ScnLuaRow kScnLuaRows[] = {
     { "is_mine", scnLuaIsMine,
       "is_mine(x, y) — whether a square holds a mine.",
       SCN_OP_PARAMS(is_mine), SCN_OP_READS },
+    { "wall_shots", scnLuaWallShots,
+      "wall_shots(x, y) — the shells a wall square still takes before it is "
+      "rubble: one more than building_life for a wall no shell has touched, "
+      "what is left for a damaged one, 0 for a square that is not a wall.",
+      SCN_OP_PARAMS(wall_shots), SCN_OP_READS },
     { "terrain", scnLuaTerrain,
       "terrain() — every square as one 65,536-byte string, the square at "
       "(x, y) at byte y * 256 + x + 1.",
@@ -5748,6 +5805,12 @@ static const ScnLuaRow kScnLuaRows[] = {
       "the very top of the view; countdown_to is a game.tick() the client "
       "counts down to beside the text; empty text takes the line away.",
       SCN_OP_PARAMS(status), SCN_OP_ACTS },
+    { "popup", scnLuaPopup,
+      "popup(text[, target]) — a message box the player closes, drawn the "
+      "way the tutorial's are; it pauses a local game while it is up. Key "
+      "tokens such as {ACCEL} or {QUICK_TREE} show as the player's own keys. "
+      "Up to 511 bytes; a popup is not replayed to a player who joins later.",
+      SCN_OP_PARAMS(popup), SCN_OP_ACTS },
     { "marker", scnLuaMarker,
       "marker(id, x, y[, colour[, target]]) — put mark id on a map square; "
       "a second marker on the same id replaces the first.",

@@ -3639,6 +3639,41 @@ static ScnOpResult scenarioOpStatus(ServerSim *sim, const ScnOpStatus *p) {
     return SCN_OP_OK;
 }
 
+/* Put a message box in front of a player, which the player closes. The
+ * line is published once and kept nowhere: a client that joins later never
+ * sees it, the way a chat line it missed is not replayed. Nothing is
+ * written to the recording either, because a popup can be longer than
+ * the one length byte a recorded line carries. */
+static ScnOpResult scenarioOpPopup(ServerSim *sim, const ScnOpPopup *p) {
+    ControlEvent evt;
+    BYTE         destTeam, destPlayer;
+    size_t       len;
+    ScnOpResult  r;
+
+    r = scenarioTargetUnpack(p->target, &destTeam, &destPlayer);
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (!scenarioTextTerminated(p->text, sizeof(p->text))) {
+        return SCN_OP_TOO_BIG;
+    }
+    len = strlen(p->text);
+    if (len == 0) {
+        return SCN_OP_RANGE;
+    }
+    if (len >= sizeof(evt.u.scnPopup.text)) {
+        return SCN_OP_TOO_BIG;
+    }
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_POPUP;
+    SDL_strlcpy(evt.u.scnPopup.text, p->text, sizeof(evt.u.scnPopup.text));
+    evt.u.scnPopup.destTeam   = destTeam;
+    evt.u.scnPopup.destPlayer = destPlayer;
+    serverSimPublishControl(sim, &evt);
+    return SCN_OP_OK;
+}
+
 /* Fill the event one marker publishes as. Shared by the arm and the join
  * replay so a late joiner is given the same event the round saw. */
 static void scenarioFillMarkerEvent(ControlEvent *evt, BYTE id, BYTE kind,
@@ -4533,12 +4568,13 @@ static bool scenarioOpIsRoster(ScenarioOpType t) {
 }
 
 /* The ops SCN_MSGS_PER_TICK counts: the four that put a line in front of a
- * player and the one that plays them a sound. */
+ * player, the popup, and the one that plays them a sound. */
 static bool scenarioOpIsMessage(ScenarioOpType t) {
     return t == SCN_OP_MSG_ALL ||
            t == SCN_OP_MSG_TEAM ||
            t == SCN_OP_MSG_PLAYER ||
            t == SCN_OP_MSG_SAY ||
+           t == SCN_OP_POPUP ||
            t == SCN_OP_SOUND;
 }
 
@@ -4695,6 +4731,8 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpMarker(sim, &op->u.marker);
         case SCN_OP_STATUS:
             return scenarioOpStatus(sim, &op->u.status);
+        case SCN_OP_POPUP:
+            return scenarioOpPopup(sim, &op->u.popup);
         case SCN_OP_END_ROUND:
             return scenarioOpEndRound(sim, &op->u.endRound);
         case SCN_OP_SET_GAME_TIME:

@@ -2819,6 +2819,8 @@ void serverSimSetPaused(ServerSim *sim, bool paused);
 
 BYTE         serverSimGetMapTerrain(const ServerSim *sim, BYTE x, BYTE y);
 bool         serverSimMapIsMine(const ServerSim *sim, BYTE x, BYTE y);
+/* Shots a wall square still takes before it is rubble; 0 for a non-wall. */
+int          serverSimWallShotsLeft(const ServerSim *sim, BYTE x, BYTE y);
 bool         serverSimPillExistsAt(const ServerSim *sim, BYTE x, BYTE y);
 BYTE         serverSimPillGetScreenHealthAt(ServerSim *sim, BYTE x, BYTE y, BYTE viewPlayer);
 bool         serverSimBaseExistsAt(const ServerSim *sim, BYTE x, BYTE y);

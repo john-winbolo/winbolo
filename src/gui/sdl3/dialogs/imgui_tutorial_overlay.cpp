@@ -14,6 +14,7 @@
  *********************************************************/
 
 #include <cfloat>
+#include <cstring>
 
 #include "imgui.h"
 #include "imgui_tutorial_overlay.h"
@@ -36,6 +37,10 @@ static bool     s_open        = false;
 static bool     s_pendingOpen = false;
 static bool     s_focusFirst  = false;
 static void   (*s_onComplete)(void) = nullptr;
+/* A text message (tutorialOverlayShowText) in place of the id sequence:
+   s_isText says which one is up. Sized past SCN_POPUP_TEXT_MAX with room. */
+static char     s_text[1024];
+static bool     s_isText      = false;
 
 void tutorialOverlayShow(const uint16_t *ids, int count,
                          void (*onComplete)(void)) {
@@ -46,6 +51,21 @@ void tutorialOverlayShow(const uint16_t *ids, int count,
     s_count       = count;
     s_idx         = 0;
     s_onComplete  = onComplete;
+    s_isText      = false;
+    s_pendingOpen = true;
+}
+
+void tutorialOverlayShowText(const char *text) {
+    if (s_open || s_pendingOpen) return;   /* already showing — ignore */
+    if (!text || !*text) return;
+    size_t len = strlen(text);
+    if (len >= sizeof(s_text)) len = sizeof(s_text) - 1;
+    memcpy(s_text, text, len);
+    s_text[len]   = '\0';
+    s_count       = 1;
+    s_idx         = 0;
+    s_onComplete  = nullptr;
+    s_isText      = true;
     s_pendingOpen = true;
 }
 
@@ -61,6 +81,8 @@ void tutorialOverlayReset(void) {
     s_pendingOpen = false;
     s_focusFirst  = false;
     s_onComplete  = nullptr;
+    s_isText      = false;
+    s_text[0]     = '\0';
 }
 
 void tutorialOverlayRender(struct ClientSim *cs) {
@@ -78,9 +100,12 @@ void tutorialOverlayRender(struct ClientSim *cs) {
        in a static buffer reused on the next call, so resolve-then-render in
        one shot and never re-resolve before drawing. */
     TutorialSeg segs[TUTORIAL_SEG_MAX];
-    int nSegs = (s_idx < s_count)
-                    ? tutorialResolveSegments(s_ids[s_idx], segs, TUTORIAL_SEG_MAX)
-                    : 0;
+    int nSegs = 0;
+    if (s_idx < s_count) {
+        nSegs = s_isText
+                    ? tutorialResolveText(s_text, segs, TUTORIAL_SEG_MAX)
+                    : tutorialResolveSegments(s_ids[s_idx], segs, TUTORIAL_SEG_MAX);
+    }
 
     /* The body reflows now (single '\n' is a space, blank lines are paragraph
        breaks), so width is a free readability choice rather than something we

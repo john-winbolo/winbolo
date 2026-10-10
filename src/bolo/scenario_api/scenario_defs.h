@@ -308,6 +308,7 @@ typedef enum {
     SCN_OP_ANNOUNCE,
     SCN_OP_MARKER,
     SCN_OP_STATUS,
+    SCN_OP_POPUP,
 
     /* Flow */
     SCN_OP_END_ROUND,
@@ -651,6 +652,16 @@ typedef struct {
     char     text[SCN_TEXT_MAX];
 } ScnOpStatus;
 
+/* A popup: a message box the player has to close, drawn through the
+ * client's tutorial overlay, which pauses a local game while it is up.
+ * The text may carry the tutorial's key tokens ({ACCEL}, {QUICK_TREE} and
+ * so on), which each client turns into its own keys. A popup is shown
+ * once and is not replayed to a client that joins later. */
+typedef struct {
+    BYTE target;
+    char text[SCN_POPUP_TEXT_MAX + 1];
+} ScnOpPopup;
+
 typedef struct {
     BYTE target;
     BYTE id;
@@ -793,6 +804,7 @@ typedef struct {
         ScnOpAnnounce          announce;
         ScnOpMarker            marker;
         ScnOpStatus            status;
+        ScnOpPopup             popup;
         ScnOpEndRound          endRound;
         ScnOpSetGameTime       setGameTime;
         ScnOpSetRule           setRule;
