@@ -845,6 +845,86 @@ int run_scn_announce_position_codec(void) {
     return 0;
 }
 
+/* The client holds up to SCN_ANNOUNCE_STACK_MAX announcements at once,
+ * oldest first, each with its own arrival tick, so a second line does not
+ * cover the first. A repeated line replaces its twin and becomes the
+ * newest; a line whose time ran out is dropped when the next one lands; a
+ * full stack drops its oldest; an empty line takes them all down; the
+ * return to the lobby drops them all. */
+int run_scn_announce_stack_client(void) {
+    ClientSim               *cs;
+    ControlEvent             evt;
+    const ClientScnAnnounce *a;
+
+    cs = scnClientOnTeam(2, 1);
+    UT_ASSERT(cs != NULL);
+    UT_ASSERT(clientSimGetScnAnnounceCount(cs) == 0);
+    UT_ASSERT(clientSimGetScnAnnounceAt(cs, 0) == NULL);
+
+    /* Two lines that land together are both held, oldest first. */
+    clientSimScnAnnouncePush(cs, "First", 400, 1000, false, 0, 0);
+    clientSimScnAnnouncePush(cs, "Second", 300, 1000, true, 10, 20);
+    UT_ASSERT(clientSimGetScnAnnounceCount(cs) == 2);
+    a = clientSimGetScnAnnounceAt(cs, 0);
+    UT_ASSERT(a != NULL && strcmp(a->text, "First") == 0);
+    UT_ASSERT(a->ticks == 400 && a->arrivedTick == 1000 && a->hasPos == 0);
+    a = clientSimGetScnAnnounceAt(cs, 1);
+    UT_ASSERT(a != NULL && strcmp(a->text, "Second") == 0);
+    UT_ASSERT(a->hasPos == 1 && a->posX == 10 && a->posY == 20);
+    UT_ASSERT(clientSimGetScnAnnounceAt(cs, 2) == NULL);
+    UT_ASSERT(clientSimGetScnAnnounceAt(cs, -1) == NULL);
+    /* The one-line getters answer for the newest. */
+    UT_ASSERT(strcmp(clientSimGetScnAnnounce(cs, NULL, NULL), "Second") == 0);
+    UT_ASSERT(clientSimGetScnAnnouncePos(cs, NULL, NULL));
+
+    /* The same text again replaces its twin and moves to the end. */
+    clientSimScnAnnouncePush(cs, "First", 500, 1100, false, 0, 0);
+    UT_ASSERT(clientSimGetScnAnnounceCount(cs) == 2);
+    UT_ASSERT(strcmp(clientSimGetScnAnnounceAt(cs, 0)->text, "Second") == 0);
+    a = clientSimGetScnAnnounceAt(cs, 1);
+    UT_ASSERT(strcmp(a->text, "First") == 0);
+    UT_ASSERT(a->ticks == 500 && a->arrivedTick == 1100);
+
+    /* "Second" ran out at 1300; a line landing at 1300 drops it. */
+    clientSimScnAnnouncePush(cs, "Third", 100, 1300, false, 0, 0);
+    UT_ASSERT(clientSimGetScnAnnounceCount(cs) == 2);
+    UT_ASSERT(strcmp(clientSimGetScnAnnounceAt(cs, 0)->text, "First") == 0);
+    UT_ASSERT(strcmp(clientSimGetScnAnnounceAt(cs, 1)->text, "Third") == 0);
+
+    /* A full stack drops its oldest. */
+    clientSimScnAnnouncePush(cs, "Fourth", 1000, 1350, false, 0, 0);
+    clientSimScnAnnouncePush(cs, "Fifth", 1000, 1350, false, 0, 0);
+    UT_ASSERT(clientSimGetScnAnnounceCount(cs) == SCN_ANNOUNCE_STACK_MAX);
+    clientSimScnAnnouncePush(cs, "Sixth", 1000, 1350, false, 0, 0);
+    UT_ASSERT(clientSimGetScnAnnounceCount(cs) == SCN_ANNOUNCE_STACK_MAX);
+    UT_ASSERT(strcmp(clientSimGetScnAnnounceAt(cs, 0)->text, "Third") == 0);
+    UT_ASSERT(strcmp(clientSimGetScnAnnounceAt(cs, 3)->text, "Sixth") == 0);
+
+    /* An empty line takes every line down. */
+    clientSimScnAnnouncePush(cs, "", 0, 1400, false, 0, 0);
+    UT_ASSERT(clientSimGetScnAnnounceCount(cs) == 0);
+    UT_ASSERT(clientSimGetScnAnnounce(cs, NULL, NULL) == NULL);
+
+    /* Through the control arm: two lines addressed to this client stack,
+       and the return to the lobby drops them. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_ANNOUNCE;
+    evt.u.scnAnnounce.ticks = 400;
+    evt.u.scnAnnounce.destPlayer = 0xFF;
+    memcpy(evt.u.scnAnnounce.text, "One", 4);
+    clientSimApplyControl(cs, &evt);
+    memcpy(evt.u.scnAnnounce.text, "Two", 4);
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnAnnounceCount(cs) == 2);
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_GAME_PHASE_LOBBY;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnAnnounceCount(cs) == 0);
+
+    clientSimDestroy(cs);
+    return 0;
+}
+
 /* The client keeps one panel list per script. The panel byte on the wire
  * holds the panel id in the low four bits and the sending script's list
  * position in the high four. clientSimGetScnPanel answers the lowest

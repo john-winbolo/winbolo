@@ -421,6 +421,49 @@ static inline void scnAnnounceAt(ScnAnnounceRect view, float boxW,
 }
 
 /*********************************************************
+ *NAME:          scnAnnounceStackBelow
+ *PURPOSE:
+ *  Where the next of several announcements goes down the
+ *  view when more than one is up at once. The caller
+ *  places each line where it would go alone, oldest first,
+ *  then asks this for its top edge: a box that comes within
+ *  one gap of a line already placed drops to one gap below
+ *  that line, and the search runs again until the box is
+ *  clear of all of them. So the newest line sits lowest and
+ *  no two lines share a row. It does not move a box up.
+ *
+ *ARGUMENTS:
+ *  x/y     - the box's top-left corner where it goes alone
+ *  w/h     - the box's size, outline included
+ *  placed  - the lines already drawn; may be NULL
+ *  count   - how many there are
+ *  gap     - the space kept between two lines
+ *********************************************************/
+static inline float scnAnnounceStackBelow(float x, float y, float w, float h,
+                                          const ScnAnnounceRect *placed,
+                                          int count, float gap) {
+    int pass;
+
+    if (placed == NULL) return y;
+    /* Each pass drops below one more line or finishes, so one pass more
+     * than there are lines always finishes. */
+    for (pass = 0; pass <= count; pass++) {
+        bool moved = false;
+        int  i;
+        for (i = 0; i < count; i++) {
+            const ScnAnnounceRect *p = &placed[i];
+            if (x < p->x1 + gap && x + w > p->x0 - gap &&
+                y < p->y1 + gap && y + h > p->y0 - gap) {
+                y     = p->y1 + gap;
+                moved = true;
+            }
+        }
+        if (!moved) break;
+    }
+    return y;
+}
+
+/*********************************************************
  *NAME:          scnPanelColourRGBA
  *PURPOSE:
  *  The palette entry an index names, as RGBA bytes.

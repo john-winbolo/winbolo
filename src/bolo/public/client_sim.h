@@ -736,6 +736,24 @@ typedef struct {
     uint8_t colour;
 } ClientScnMarker;
 
+/* The most announcements a client keeps on screen at once. A line that
+ * arrives with this many up pushes the oldest out. */
+#define SCN_ANNOUNCE_STACK_MAX 4
+
+/* One scenario announcement as the client keeps it. arrivedTick is
+ * lastServerTick as it stood when the line landed, so a drawer works out
+ * what is left of ticks against the same clock the scenario counted in
+ * rather than against wall time. hasPos 0 is the usual place, else posX and
+ * posY are the centre of the line as position bytes across and down the
+ * view (SCN_ANNOUNCE_POS_MAX is the far edge). */
+typedef struct {
+    char     text[PACKET_MAX_CHAT_MESSAGE + 1];
+    uint16_t ticks;
+    uint32_t arrivedTick;
+    uint8_t  hasPos;
+    uint8_t  posX, posY;
+} ClientScnAnnounce;
+
 /* The decoded display list panel `id` holds, or NULL for an out-of-range
  * id or a panel nothing has sent a list to. A list that arrived empty
  * reads back as a non-NULL list of count 0 — that is a panel cleared on
@@ -757,14 +775,32 @@ const ScnPanelList *clientSimGetScnPanelOf(const ClientSim *cs, uint8_t id,
  * therefore dropped instead of drawing. */
 uint32_t clientSimGetScnPanelRejectCount(const ClientSim *cs);
 
-/* The announcement on screen, or NULL when there is none. outTicks gets
+/* How many announcements this client holds, oldest first, and the one at
+ * index i of them (0 is the oldest), or NULL past the end. A held line may
+ * have run out on the clock already: the drawer tells with
+ * scnAnnounceRemaining. */
+int clientSimGetScnAnnounceCount(const ClientSim *cs);
+const ClientScnAnnounce *clientSimGetScnAnnounceAt(const ClientSim *cs,
+                                                   int i);
+
+/* Puts a scenario announcement up: the arm CTRL_SCN_ANNOUNCE calls for a
+ * line addressed to this client. Empty text takes every line down. A line
+ * with the same text as one already held replaces that one and becomes the
+ * newest, so a repeated line does not stack on itself. Lines whose time ran
+ * out by nowTick are dropped first, then the oldest if the stack is still
+ * full. */
+void clientSimScnAnnouncePush(ClientSim *cs, const char *text, uint16_t ticks,
+                              uint32_t nowTick, bool hasPos, uint8_t posX,
+                              uint8_t posY);
+
+/* The newest announcement held, or NULL when there is none. outTicks gets
  * how long it was asked to stay up and outArrivedTick the server tick
  * it landed at — both on clientSimGetLastServerTick's clock, which is
  * the clock the scenario counted in. Either out pointer may be NULL. */
 const char *clientSimGetScnAnnounce(const ClientSim *cs, uint16_t *outTicks,
                                     uint32_t *outArrivedTick);
 
-/* Where the announcement on screen goes. True, with *outX and *outY the
+/* Where the newest announcement held goes. True, with *outX and *outY the
  * centre of the line as position bytes across and down the view (0 to
  * SCN_ANNOUNCE_POS_MAX), when the script gave it a position; false, with
  * both left alone, when it goes in the usual place or there is no line.
