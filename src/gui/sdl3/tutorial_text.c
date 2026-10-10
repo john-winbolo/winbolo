@@ -126,12 +126,14 @@ static uint16_t pickStringId(uint16_t mid) {
   return mid;
 }
 
+/* A key's name as the tutorial writes it, in a key cap or in a plain
+ * line: SDL's name, with "Keypad " cut to "Num " (tutorialShortKeyName).
+ * The answer is good until the next call; both callers copy it at once. */
 static const char *scancodeName(int scancode) {
-  const char *name;
+  static char shortName[64];
   if (scancode <= 0) return "?";
-  name = SDL_GetScancodeName((SDL_Scancode)scancode);
-  if (!name || !*name) return "?";
-  return name;
+  return tutorialShortKeyName(SDL_GetScancodeName((SDL_Scancode)scancode),
+                              shortName, sizeof(shortName));
 }
 
 /* Append `s` (NUL-terminated) into tutorialBuf at *pos, NUL-terminating

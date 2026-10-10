@@ -329,6 +329,10 @@ static const ScancodeMap kKbMap[] = {
   { SDL_SCANCODE_KP_9, "9_Key_Light.png" },
   { SDL_SCANCODE_KP_PLUS,  "Plus_Key_Light.png"   },
   { SDL_SCANCODE_KP_MINUS, "Minus_Key_Light.png"  },
+  { SDL_SCANCODE_KP_MULTIPLY, "Asterisk_Key_Light.png" },
+  { SDL_SCANCODE_KP_DIVIDE,   "Slash_Key_Light.png"    },
+  /* No cap in the pack for the keypad's "." or ",": those fall back to a
+     procedural cap that reads "Num ." (tutorialShortKeyName). */
 };
 static const int kKbMapCount = (int)(sizeof(kKbMap) / sizeof(kKbMap[0]));
 

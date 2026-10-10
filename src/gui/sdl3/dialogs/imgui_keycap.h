@@ -23,4 +23,14 @@
  * not advance any layout cursor. */
 void drawProceduralKeycapAt(ImVec2 pos, float h, const char *label);
 
+/* The width drawProceduralKeycapWideAt gives a cap `h` high for `label`
+ * at the current font: wide enough for the whole label, never narrower
+ * than h. */
+float proceduralKeycapWidth(float h, const char *label);
+
+/* A key cap `h` high and proceduralKeycapWidth(h, label) wide, with the
+ * whole label inside. For text that names the key only by its cap (the
+ * tutorial's rich message box): "Num ." must not be drawn as "N". */
+void drawProceduralKeycapWideAt(ImVec2 pos, float h, const char *label);
+
 #endif /* IMGUI_KEYCAP_H */

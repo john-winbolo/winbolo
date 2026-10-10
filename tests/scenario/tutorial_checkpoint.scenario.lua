@@ -6,7 +6,9 @@
 -- it on the road in Station 3, which makes Station 3 the checkpoint, then
 -- kills it.
 --
--- PASS: the tank comes back on Station 3's checkpoint start with Station 3's
+-- PASS: the tank comes back on Station 3's checkpoint start, facing north
+-- (game.start dir 0 and tank dir 0: the engine counts clockwise from north;
+-- the map file writes north as 4, anticlockwise from east), with Station 3's
 -- loadout (full shells and armour, no trees), and the checkpoint is still
 -- Station 3.
 
@@ -19,7 +21,8 @@ function on_tank_spawned(p, mx, my, respawn, scripted)
   if p == 0 then game.set_modifiers(0, { speed = 1, turn = 1 }) end
   if p == 0 and respawn and ARENA.phase == 2 then
     ARENA.phase = 3
-    ARENA.at = { mx = mx, my = my, t = game.tick() }
+    local t = game.tank(0)
+    ARENA.at = { mx = mx, my = my, t = game.tick(), dir = t and t.dir }
   end
 end
 
@@ -40,12 +43,16 @@ function on_tick(tick)
   elseif A.phase == 3 and tick >= A.at.t + 100 then
     local t = game.tank(0)
     local cp = LAYOUT.start.cp3
+    local north = game.start(cp.n)
     local ok = A.at.mx == cp.x and A.at.my == cp.y and S.reached == 3 and
+               north ~= nil and north.dir == 0 and A.at.dir == 0 and
                t ~= nil and t.trees == 0 and
                t.shells == game.rule("tank_full_shells") and
                t.armour == game.rule("tank_full_armour")
-    verdict(ok, string.format("respawn at %d,%d (cp3 %d,%d) reached=%d "
-      .. "shells=%s armour=%s trees=%s", A.at.mx, A.at.my, cp.x, cp.y,
+    verdict(ok, string.format("respawn at %d,%d (cp3 %d,%d) dir=%s "
+      .. "(start dir %s) reached=%d shells=%s armour=%s trees=%s",
+      A.at.mx, A.at.my, cp.x, cp.y, tostring(A.at.dir),
+      tostring(north and north.dir),
       S.reached, tostring(t and t.shells), tostring(t and t.armour),
       tostring(t and t.trees)))
   elseif A.phase == 2 and tick >= A.t + 3000 then

@@ -2307,11 +2307,15 @@ void clientSimScnAnnouncePush(ClientSim *cs, const char *text, uint16_t ticks,
     return;
   }
   /* Lines whose time is up, and a held line with the same text, go first.
-     Walked from the top so a removal does not skip the next line. */
+     Walked from the top so a removal does not skip the next line. While a
+     popup holds the lines their clocks stopped when the hold began. */
   for (i = (int)cs->scnAnnounceCount - 1; i >= 0; i--) {
     const ClientScnAnnounce *h = &cs->scnAnnounces[i];
+    const uint32_t clock =
+        (cs->scnAnnounceHeld && nowTick > cs->scnAnnounceHoldStart)
+            ? cs->scnAnnounceHoldStart : nowTick;
     const uint32_t elapsed =
-        (nowTick > h->arrivedTick) ? (nowTick - h->arrivedTick) : 0u;
+        (clock > h->arrivedTick) ? (clock - h->arrivedTick) : 0u;
     if (elapsed >= (uint32_t)h->ticks || strcmp(h->text, text) == 0) {
       clientSimScnAnnounceRemove(cs, i);
     }
@@ -2328,6 +2332,35 @@ void clientSimScnAnnouncePush(ClientSim *cs, const char *text, uint16_t ticks,
   a->posX        = posX;
   a->posY        = posY;
   cs->scnAnnounceCount++;
+}
+
+void clientSimScnAnnounceHold(ClientSim *cs, bool hold, uint32_t nowTick) {
+  int i;
+  if (cs == NULL || hold == cs->scnAnnounceHeld) return;
+  if (hold) {
+    cs->scnAnnounceHeld      = true;
+    cs->scnAnnounceHoldStart = nowTick;
+    return;
+  }
+  /* The hold ends: each line still up at the start of the hold moves on by
+     the time the hold took, so it keeps what it had left; a line that came
+     in during the hold starts now. A line already out stays out. */
+  for (i = 0; i < (int)cs->scnAnnounceCount; i++) {
+    ClientScnAnnounce *a     = &cs->scnAnnounces[i];
+    const uint32_t     start = cs->scnAnnounceHoldStart;
+    if (a->arrivedTick >= start) {
+      a->arrivedTick = nowTick;
+    } else if (start - a->arrivedTick < (uint32_t)a->ticks &&
+               nowTick > start) {
+      a->arrivedTick += nowTick - start;
+    }
+  }
+  cs->scnAnnounceHeld      = false;
+  cs->scnAnnounceHoldStart = 0;
+}
+
+bool clientSimScnAnnounceIsHeld(const ClientSim *cs) {
+  return cs != NULL && cs->scnAnnounceHeld;
 }
 
 const char *clientSimGetScnStatus(const ClientSim *cs, uint32_t *outEndsAt) {

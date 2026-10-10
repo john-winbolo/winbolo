@@ -123,3 +123,24 @@ size_t tutorialTokensExpand(const char *src, char *out, size_t cap,
   out[n] = '\0';
   return n;
 }
+
+const char *tutorialShortKeyName(const char *name, char *buf, size_t cap) {
+  static const char kLong[]  = "Keypad ";
+  static const char kShort[] = "Num ";
+  size_t longLen = sizeof(kLong) - 1;
+  size_t restLen;
+  if (name == NULL || *name == '\0') return "?";
+  if (strncmp(name, kLong, longLen) != 0 || name[longLen] == '\0') return name;
+  restLen = strlen(name + longLen);
+  if (buf == NULL || cap < sizeof(kShort) + restLen) return name;
+  memcpy(buf, kShort, sizeof(kShort) - 1);
+  memcpy(buf + sizeof(kShort) - 1, name + longLen, restLen + 1);
+  return buf;
+}
+
+float tutorialKeycapWidth(float capH, float labelW) {
+  /* A margin of a third of the cap's height each side keeps the label
+     clear of the rounded corners. */
+  float w = labelW + capH * 0.66f;
+  return (w > capH) ? w : capH;
+}

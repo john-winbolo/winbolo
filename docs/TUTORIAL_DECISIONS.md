@@ -113,6 +113,55 @@ and how to undo it.
   band between each pair.
   **Why:** one long road is easy to follow; the bands keep each station's
   view to itself.
+- **What (changed 2026-10-10, item 20, from Andrew's play-test; replaces
+  the one-square pockets of item 18 below):** every checkpoint start is the
+  centre of a 3x3 pool of deep water, and the tank faces north there
+  (map-file dir 4; the engine turns that into its own 0, north, so
+  `game.start(n).dir` and the respawned tank's `dir` both read 0). Walls
+  close the pool on the west, east and south, one square out. On the north
+  the pool's middle column opens onto one road square, with a wall on each
+  side of it, and that road runs north into the main road. The tool's
+  `pool()` makes the pool; `dock()` places one for Stations 2 to 6.
+  - cp1 (127,226): directly south of the main road's south end, in line
+    with it. The pool takes rows 225..227 and its walls rows 224..228 (228
+    is the frame), so the main road stops at row 223 and the pool's road
+    square (127,224) runs straight into it.
+  - cp2 to cp6: x 123, y 199 / 176 / 155 / 124 / 89, three squares west
+    of the main road's west column; the south wall is on the station's
+    south row. The road goes north two squares from the pool (rows y-2 and
+    y-3), then east along row y-3 into the main road (x 123..125).
+    Footprint x 121..125, rows y-3..y+2.
+  - cp7 (112,51): the same pool in the island's SW quarter, replacing the
+    1x2 water pocket in a forest clump; its road square (112,49) opens onto
+    the island's road.
+  **Why the road goes north two squares before it turns:** the road square
+  next to the pool must be the only way in. A road turning east on the
+  first row would run along the top of the pool's east column, and a tank
+  could drive into the pool there, away from its boat.
+  **No drowning:** the tank respawns on its boat. It can only leave through
+  the pool's middle north square, so the boat stays there, on the square a
+  tank coming back drives in on; it boards the boat and does not drown.
+  **Neighbours checked:**
+  - Station 2: cp2's road row 196 touches the 2A base patch (rows 193..195),
+    so a respawned tank can drive straight onto its own base. It is
+    outside `b2a_area`.
+  - Station 3: cp3's road row 173 touches the grove's south edge (row 172);
+    the grove is not cut.
+  - Station 4: cp4's road row 152 is inside `p4a_area` (its south ring
+    row), which the script declares but never reads. The dead 4A pill
+    (122,149) is 6 squares from cp4; it never fires (dead at home, or in
+    the tank).
+  - Station 5: the pool's west wall (x 121) would cut the 5B RESET arrow,
+    so `walled_reset` takes an `arrow_dx` and 5B's arrow moves two squares
+    west to x 117..120 (still under the pen's road, still pointing at the
+    gap). cp5's road (x 123..125, row 121) joins the RESET pen's road (rows
+    119..120). The 5B popup region `s5b` now ends at x 122 (was 124) and
+    row 122, so the pool and its road lie outside it and a respawn at cp5
+    does not count as driving into 5B. The 7 RESET arrow is unchanged.
+  - Station 6: nothing within 4 squares; the craters and the man's path
+    are on row 80, the base b6 on the main road at row 84.
+  - Station 7: the pool's walls (x 110..114, rows 49..53) sit between the
+    forest rim and the 2 bases; the RESET strip starts at row 54.
 - **What (changed 2026-10-10, item 18):** there is no deep-water trench,
   and the main road (x 126..128) runs straight and clear up the centre of
   the map. Each checkpoint start of Stations 1 to 6 is a one-square pocket
@@ -203,7 +252,11 @@ and how to undo it.
   pillboxes, and a pill in the bot's corner is one more thing the Easy bot
   defends.
 - **What:** friendly bases sit on the road's centre column where the
-  player shoots a lot: 2A, 3, 4C, 5 and 6. The status line says "Low on
+  player shoots a lot: 2A, 3, 4C, 5 and 6.
+  The Station 5 base (`b5`) is at (127,110), just north of the 5B RESET
+  letters: their top row is 112, and row 111 is a clear road square
+  between them (item 34, 2026-10-10; was 127,97 at the north end). The
+  park spur (row 107) and the checkpoint pool are clear of it. The status line says "Low on
   shells? Stop on the base by the road to refill." when the tank is low.
 
 ## Verified numbers (read in the code)
@@ -263,10 +316,52 @@ and how to undo it.
   keyboard, controller and touch. The wording says "click", the desktop
   word. Live numbers: shots left on the 2C base, seconds hidden in 4B, bases
   owned in Station 7.
+- **3 wall status line (2026-10-10, item 27):** "Build a wall: Click on the
+  wall button\nor press {QUICK_WALL}, then click a grass square." On a
+  keyboard the two rows are 38 and 37 characters. With a controller
+  ("the next tool button") the second row is 57 and on touch ("the build
+  buttons") 54; the longest controller row before was 52 (3 harvest). Kept
+  as Andrew asked, since the keyboard is the case he balanced; the box
+  sizes to the text, and a 57-character row is still well inside the game
+  view.
+- **3 shoot-the-wall marker is green (2026-10-10, item 28):** the target
+  wall's marker is the same green square as 2A and the 5B blocker spot.
+  It shows exactly while "Shoot down the wall" is the station's first
+  unticked row, which is also when the status line names it: both come
+  from `current_goal(3)`, so out of order play cannot split them. (The
+  low-shells line, when it shows, takes the status line's place.)
 - **Status line width (2026-10-10):** a status line that was wider than
   about half the game view is now two rows, split with `"\n"`. The client
   draws each row centred in one box (see SCENARIO_API.md, "Line breaks").
   The 5B, 6 and 7 lines are split this way.
+- **Never white text and a popup at once (item 26, 2026-10-10).** The
+  client holds the announcements while its popup overlay is open (a
+  `game.popup` or a tutorial message): no announcement and no status line
+  is drawn, and the announcements' clocks stand still. A line sent in the
+  same tick as a popup, or while it is open, is shown for its whole time
+  after the popup closes; a line already up keeps what it had left; a line
+  already out stays out. A round-end popup's line waits the same way: the
+  round end closes the popup, and the line then shows. The script does
+  send pairs in one tick: `mark` shows a waiting popup at once and then
+  says "Station N done" (`tutorial_popup_announce` proves it). Engine:
+  `clientSimScnAnnounceHold` (client_sim.c), called by
+  `renderScenarioAnnounce` (sdl3imgui.cpp) every frame. The gate runs the
+  server only, so the hold is proven in the unit suite
+  (`scenario_announce_waits_for_popup`).
+- **Long key names in popups (item 36, 2026-10-10).** Andrew: "Now press
+  k until your range is extended" named the wrong key. His range keys are
+  Keypad . and Keypad Enter. A key with no picture in the key pack is drawn
+  as a cap with its name, and that cap drew only the first letter. Now:
+  - the cap in a popup grows to fit its whole name
+    (`drawProceduralKeycapWideAt`), and the line wraps on its real width;
+  - a keypad key is written "Num ." / "Num Enter" / "Num +", in a popup
+    cap and in a status or announcement line alike
+    (`tutorialShortKeyName`); other names stay as SDL gives them;
+  - keypad * and / use the pack's Asterisk and Slash pictures. The pack
+    has no picture for the keypad's "." or ",". Keypad Enter already used
+    the Enter picture.
+  The Configure Keys dialog keeps its square cap: it writes the full name
+  beside it. Unit test: `tutorial_tokens_long_key_names`.
 - **Announcements stack (2026-10-10):** a second `game.announce` no longer
   replaces one still up. The client holds up to four, each with its own
   countdown, and draws the newest lowest. An empty line clears them all.
@@ -277,14 +372,15 @@ and how to undo it.
   pillbox build button or {QUICK_PILL}, then click ...".
 - **Station 4B popup** ends exactly "Firing reveals your position."
 - **Station 4C popup:** "This pillbox is already badly damaged: two more
-  shots kill it, and it shoots back." Two shots (`P4_ARMOUR`), not one, so
-  the player feels being shot at. The "Station 4 done" line adds "Shoot
-  trees to clear the trees quickly." The repair item is gone. The 15-shot fact is in the 4A
-  popup.
+  shots kill it." (2026-10-10, item 29: "and it shoots back" dropped.) Two
+  shots (`P4_ARMOUR`), not one, so the player feels being shot at. The
+  "Station 4 done" line adds "Shoot trees to clear the trees quickly." The
+  repair item is gone. The 15-shot fact is in the 4A popup.
 - **Station 6 popup** says a man cannot be run over (the engine has no
   run-over: a man dies only from shells, mines and blasts), how the
   crosshair works with `{GUN_DOWN}` and `{GUN_UP}`, and to aim at the
-  craters. The status line: "Put your crosshair on the craters, then fire
+  craters. "A shell explodes at your crosshair" (item 35, 2026-10-10; was
+  "bursts"). The status line: "Put your crosshair on the craters, then fire
   as the man crosses them."
 - **Gun-range reminder:** after the Station 6 kill, if the player's gun
   sight is short of `gunsight_max`, a popup and the status line ask for
@@ -306,17 +402,51 @@ and how to undo it.
   no trees (so Station 3's harvest is needed) and Station 2 starts low (5
   shells, 0 mines, 15 armour) until its refill is done. Respawns get the
   same loadout.
-- **2A ticks on a full tank:** the moment the tank reaches the 2A base,
-  the `s2stay` popup says to stay on it while the stocks flow in. "Refill
-  at your base" ticks only when the tank is full on that base (about 6 to
-  10 seconds from the low start), so the 2B popup does not pull the player
-  off the base half way. The popup and
-  status line say to STOP on the base and wait; the panel says "STOP on the
-  base: wait" while the tank moves on a friendly base, then "Refilling:
-  wait here", then "Full".
+- **2A refill is not enforced (changed 2026-10-10, item 21, Andrew: "I
+  want to tell them to do it, but don't want it enforced"):** the telling
+  stays: the `s2a` popup, the `s2stay` popup the moment the tank reaches
+  the 2A base, the 2A status line ("Drive onto the green-marked base, then
+  STOP on it and wait while it refills.") and the green marker on 2A.
+  "Refill at your base" ticks on the first of: the tank is full on the 2A
+  base; the tank drives off the 2A base after being on it (`S.on_2a`); any
+  later Station 2 goal ticks (2B taken, 2C shot or taken). So nothing waits
+  on a full tank: the player may stop half way, or skip the base and take
+  2B first, and the station goes on. The 2B popup, the 2B marker and
+  status line, the 2C goals and "Station 2 done" follow from the tick as
+  before.
+  **Why this shape and not a "suggested" row:** the status line and marker
+  name the first unticked row. A row that never has to tick would keep the
+  status line on "STOP and wait" while the player took 2B. Ticking on
+  leaving the base keeps the telling while the tank is there and moves on
+  the moment the player does.
+  The panel still says "STOP on the base: wait" while the tank moves on a
+  friendly base, then "Refilling: wait here", then "Full". The 5-shell
+  start (see "First-entry fill") ends when 2A ticks, so a later respawn in
+  Station 2 is full. The low-shells status line ("Low on shells") still
+  waits until 2A is ticked, so it does not cover the 2A line.
 - **2C shot count** comes from the rules: `base_shots(armour)` is the
   shells to bring the base down to `base_capture_armour`; 17 from full
   classic. The status line counts the shots left.
+- **"Enemy base: N shots left" waits for 2B (2026-10-10, item 23):** the
+  panel's yellow info line for the 2C base shows only once "Take the
+  neutral base" is ticked (`S.done[2].b_take`), and not after 2C is shot
+  empty. Before 2B the line is not drawn at all. *Why:* Andrew: it should
+  "only appear once you've taken the neutral base"; before that the enemy
+  base is not the goal.
+- **Neutral, not grey (2026-10-10, item 22):** player text calls the 2B
+  base neutral. The `s2b` popup is exactly "Neutral bases don't have red or
+  green and can be claimed by driving over them."; the row is "Take the
+  neutral base"; the 2B status line is "Drive onto the neutral base to make
+  it yours." The marker colour on 2B is still the "grey" draw colour.
+- **No "the panel" in player text (2026-10-10, item 24):** Andrew: the
+  panel is self-evident and naming it is odd. Gone: "The panel says Full
+  when your tank is full." (`s2stay`) and "The panel counts the shots
+  left." (`s2c`). No other popup, status or announce line names the panel.
+- **`s2d` wording (2026-10-10, item 25):** it opens "What your tank spawns
+  with depends on game type." and ends "Tournament modes have a clear win
+  condition: Once one team owns all the bases, they win, because the enemy
+  team can't get any ammo." The Open / Tournament / Strict lines between
+  are unchanged.
 
 ### Re-arming
 
@@ -522,35 +652,76 @@ and how to undo it.
 
 ### Other
 
-- **5A "watch" (item 2, 2026-10-10)** ticks when the demo bot takes the
-  target while the player's tank is on the green square `watch5a` in
-  Station 5. The status line and popup say to stop there. There is no
-  call to move a player's view (`game.view`), so the watch spot is chosen
-  so the island is on screen from it: T is 6 squares east and 6 north.
-  *Decision for Andrew:* a `game.view` call to centre the view is
-  possible engine work; not done.
+- **5A "watch" is told, not forced (item 30, 2026-10-10).** Andrew:
+  "Don't force them to watch from the exact spot." "Watch the bot take one"
+  ticks 10 seconds after the player's tank first comes within 5 squares of
+  the green square `watch5a` (131,111), counted as the larger of the x and
+  y distances (`WATCH_NEAR` = 5, `WATCH_NEAR_FRAMES` = 500 on_tick calls).
+  The tank need not stay there: the timer runs on once started. The status
+  line and the popup still name the green square. The `tutorial_watch5a`
+  arena holds the tank 7 squares off for 15 seconds (no tick, no timer),
+  then 4 squares off (ticks after 10.20 s). There is no call to move a
+  player's view (`game.view`), so the watch spot is chosen so the island
+  is on screen from it: T is 6 squares east and 6 north.
+- **5A rings and moat put back on each demo reset (item 31, 2026-10-10).**
+  Every time the 5A demo is reset (`reset_5a`, and when the demo bot
+  spawns), `rebuild_5a_rings` puts back each square of both wall rings
+  (`LAYOUT.walls5a`, 104 squares) and the moat (`LAYOUT.moat5a`, 52
+  squares). A wall is rewritten when it is not a full wall (not building,
+  or damaged); a moat square when it is not deep sea. The map tool works
+  both lists out from the grid. *Why:* the demo bot and the player shoot
+  the rings; a gap lets the bot off its island. `tutorial_watch5a` breaks 9
+  squares (rubble, crater, grass, road) and checks all of them come back.
 - **5B blocker in the tank at once (item 8, 2026-10-10).** The 5B blocker
   is put in the player's tank (`hand_5b`) the moment 5A is ticked, on
   every entry to Station 5 and on every respawn there, while "build" is
   not ticked. Before, it came with the next once-a-second re-arm. The
   `tutorial_park5b` and `tutorial_station5_entry` arenas check it.
-- **5B parking square (item 9, 2026-10-10).** The parking square
-  (`t5b_park`, 117,108) is a road square seven squares due south of the
-  target, joined to the main road by a road spur. A tank shell reaches
-  7.125 squares, and the target's near edge is 6.5 squares away, so the
-  target is in reach; the blocker (117,102) is on the same column between
-  them. Two script rules make it work:
-  - `can_hit` lets the player's own shells pass the player's blocker. In
-    a real game they would hit it. *Note:* the firing client still draws
-    the shell stopping at the blocker; the server lets it through.
-  - `pill_damage_scale` lets only every fifth target shell at the blocker
-    count. Without it the blocker died in 3.2 s at the park and the target
-    then hit the tank.
-  - **Measured** (`tutorial_park5b`, a scripted shooter firing north from
-    the park): target dead after 4.6 s, blocker never died (lowest armour
-    10), tank never hit.
-  - *Decision for Andrew:* the pass-through and the one-in-five soak teach
-    a shot that a real game does not allow in a straight line.
+- **5B parking square (item 32, 2026-10-10; was item 9).** Andrew: "4
+  tiles right ... and one tile more north" of the old square (117,108),
+  corrected to (121,107). The target stays at (117,101). The parking
+  square (`t5b_park`, 121,107) is 4 east and 6 south of it, joined to the
+  main road by a road spur along row 107. From the tank's centre the
+  target's centre is 7.21 squares away and its near corner 6.52; a tank
+  shell flies 7.125 squares, so a shot aimed at the target's centre ends
+  inside its square. *Choice:* the blocker moves from (117,102) to
+  (118,102), the square south-east of the target, because the line
+  between the two centres now runs on the diagonal: it crosses (118,102)
+  for 0.9 of a square, and does not cross (117,102). So the target's shots
+  at the parked tank hit the blocker. The scripted shooter
+  (`tests/brains/tutorial_shoot_north.lua`) aims at 232 (0 = north,
+  clockwise). `can_hit` lets the player's own shells pass the player's
+  blocker; in a real game they would hit it. *Note:* the firing client
+  still draws the shell stopping at the blocker; the server lets it
+  through.
+- **5B blocker takes full damage (item 33, 2026-10-10).** Andrew: the
+  blocker "repairs silently and is too strong". The sources found:
+  - `pill_damage_scale` let only every fifth target shell at the blocker
+    count: four of five hits did nothing. This was the cause. **Removed**,
+    with its tooltip row (the script now has 20 callback rows).
+  - `on_pill_placed` sets a blocker placed with armour 0 to full armour.
+    This happens only when the player's man builds it, so it is the build,
+    not a repair.
+  - The once-a-second re-arm's 3-second fallback rebuild goes through
+    `rebuild_5b`, which announces itself.
+  - The engine has no pillbox self-heal; a repair is a builder action.
+  - `can_hit` makes only the 5A pills miss the player; the 5B target hits.
+  **Measured** (`tutorial_park5b`, scripted shooter on the parking
+  square):
+  - Watch, 60 s with no shells (the target is calm): the blocker loses 1
+    armour every 2 seconds, 15 to 0 in 32 s, dies once, comes back once
+    with the announcement, and starts down again. Silent rises: 0. The
+    tank is not hit: the blocker takes every shell.
+  - Take (from the end of the watch, blocker at 1 armour, the worst
+    case): the target dies after 5.2 s. The angry target kills the
+    blocker twice: at 0.06 s (it had 1 armour), and again 1.6 s after its
+    rebuild (a full blocker against an angry target). The tank takes 8
+    hits, 40 armour (all of a full tank's), and lives on 0.
+  - *Decision for Andrew:* the take is possible but close. Once the
+    target is angry a full blocker lasts about 1.6 s, and the take needs
+    about 5 s of steady fire, so the tank is shot for the rest of it.
+    A softer option, not built: a damage scale on the blocker only while
+    the target is angry (one shell in two, say), with an announcement.
 - **5B blocker rebuilt (item 10, 2026-10-10).** When the built 5B blocker
   dies before the target is picked up, the script rebuilds it on its
   square at full armour 2 seconds later and announces "To help you out,
@@ -584,12 +755,13 @@ and how to undo it.
   has been picked up, so building the first before picking up the second
   still ticks the item.
 - **Gate arenas** hold the player's seat (a GoalHunter in the gate) still
-  with `set_modifiers{speed = 1, turn = 1}` and teleport it about. Thirteen
+  with `set_modifiers{speed = 1, turn = 1}` and teleport it about. Sixteen
   arenas: `tutorial_checkpoint`, `tutorial_reset`, `tutorial_take5a`,
   `tutorial_take5a_soak`, `tutorial_park5b`, `tutorial_rebuild5b`,
   `tutorial_station5_entry`, `tutorial_late_bots`, `tutorial_station6`,
   `tutorial_bot7_region`, `tutorial_bot7_stay`, `tutorial_bot7_man`,
-  `tutorial_new_man`. The
+  `tutorial_new_man`, `tutorial_station2`, `tutorial_watch5a`,
+  `tutorial_popup_announce`. The
   5B arenas play the player with a scripted brain,
   `tests/brains/tutorial_shoot_north.lua`. The Station 2 steal is not
   covered: a held-still tank cannot drive onto a base.

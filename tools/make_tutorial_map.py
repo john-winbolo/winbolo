@@ -9,12 +9,14 @@ and the map always name the same squares.
 The map is seven stations stacked up a column, Station 1 at the south
 (bottom) and Station 7 at the north (top), joined by one road up the
 middle. The main road stays clear the whole way up. Each station's
-checkpoint start is a one-square pocket of deep water just west of the main
-road, at the station's south entrance (dock() below): walls close the pocket
-on the west, north and south, so a tank that respawns on its boat can only
-drive out east, onto a short road of its own that merges into the main road
-heading north. No boat can reach another station. Station 7 is an island;
-its checkpoint is a pocket of water in the island's forest.
+checkpoint start is the centre of a 3x3 pool of deep water (pool() below),
+walled on the west, east and south, facing north. One road square leaves
+the middle of the pool's north edge; the tank that respawns there on its
+boat drives out north and the road merges into the main road. Station 1's
+pool sits at the main road's south end, in line with it; Stations 2 to 6
+have theirs just west of the main road at the station's south edge
+(dock()). No boat can reach another station. Station 7 is an island; its
+pool opens onto the island's road.
 
 Coordinates are written so the terrain's bounding box is centred on square
 126 both ways. mapRead (bolo_map.c mapCenter) moves a map whose box is not
@@ -109,25 +111,35 @@ def start(name, x, y, d):
     starts.append((name, x, y, d))
 
 
-def dock(name, south):
-    """A station's checkpoint, off the main road: a one-square pocket of deep
-    water three squares west of the road's west column, one row above the
-    station's south row `south`. Walls close the pocket on the west, north
-    and south, so the only way out is east. The pocket's own road runs two
-    squares east to the main road, with one more road square north-east of
-    its end, so the merge bends north the way the main road goes. The start
-    faces east, along that road. The main road is left as it is.
+def pool(name, px, py):
+    """A checkpoint start: a 3x3 pool of deep water centred on (px, py), the
+    start square. Walls close it on the west, east and south, one square out.
+    On the north the pool's middle column opens onto one road square at
+    (px, py - 2), with a wall on each side of it, so that road square is the
+    only way in or out. The start faces north, out along that road.
 
-    One square, not a pool: the boat a tank leaves behind sits on the only
-    water square, so a tank that drives back in from the road boards it and
-    does not drown."""
+    No drowning: the tank respawns on a boat. It leaves the boat on the pool
+    square it drives off from, and the one way out is through (px, py - 1),
+    so the boat always sits on the square a tank drives back in on. A tank
+    that comes back boards it and does not drown."""
+    fill(px - 2, py - 1, px + 2, py + 2, BUILDING)
+    fill(px - 1, py - 1, px + 1, py + 1, SEA)
+    put(px - 1, py - 2, BUILDING)
+    put(px + 1, py - 2, BUILDING)
+    put(px, py - 2, ROAD)
+    start(name, px, py, 4)
+
+
+def dock(name, south):
+    """A station's checkpoint, west of the main road at the station's south
+    edge: a pool() whose centre is three squares west of the road's west
+    column, its south wall on the station's south row `south`. The exit road
+    runs north two squares from the pool, then east along that row into the
+    main road. Footprint: x GAP[0]-5 .. GAP[0]-1, rows south-5 .. south."""
     g0 = GAP[0]
-    px, py = g0 - 3, south - 1
-    fill(px - 1, py - 1, px + 1, py + 1, BUILDING)
-    put(px, py, SEA)
-    fill(px + 1, py, g0 - 1, py, ROAD)                # the merge road
-    put(g0 - 1, py - 1, ROAD)                         # bending north
-    start(name, px, py, 0)
+    px, py = g0 - 3, south - 2
+    pool(name, px, py)
+    fill(px, py - 3, g0 - 1, py - 3, ROAD)      # north, then east to the road
 
 
 # 3x5 letters for the walled RESET pads.
@@ -151,7 +163,7 @@ def word_walls(text, x, y):
     return out
 
 
-def walled_reset(name, x, y, road_x):
+def walled_reset(name, x, y, road_x, arrow_dx=5):
     """A RESET pad: the word RESET in walls with its top-left at (x, y), on a
     road strip so it reads; below it a small walled pen with a 3x2 road pad
     inside and a two-square gap in its east wall; a road from the gap east
@@ -174,7 +186,7 @@ def walled_reset(name, x, y, road_x):
     walls = walls + pen
     for (wx, wy) in walls:
         put(wx, wy, BUILDING)
-    ax = px + 5
+    ax = px + arrow_dx
     arrow = [(ax, y + 11), (ax + 1, y + 10), (ax + 1, y + 12),
              (ax + 2, y + 11), (ax + 3, y + 11)]
     for (wx, wy) in arrow:
@@ -200,7 +212,8 @@ for n, (a, b) in STATIONS.items():
 
 # --------------------------------------------------------------------------
 # Station 1: terrain. Grass, a road up the middle, and a 3x3 patch of each
-# other terrain one square beside it. The checkpoint pool is the deep water.
+# other terrain one square beside it. The checkpoint pool is the deep water,
+# at the south end of the road.
 # --------------------------------------------------------------------------
 a, b = STATIONS[1]
 fill(GAP[0], a, GAP[1], b, ROAD)
@@ -210,7 +223,10 @@ fill(E1[0], 216, E1[1], 218, SWAMP)
 fill(W1[0], 211, W1[1], 213, RUBBLE)
 fill(E1[0], 211, E1[1], 213, CRATER)
 fill(W1[0], 206, W1[1], 208, RIVER)
-dock("cp1", b)
+# The checkpoint pool at the main road's south end, in line with it: the
+# pool's walls take rows 224..228 (228 is the frame), so the main road stops
+# at row 223 and the pool's one road square (MID, 224) runs straight into it.
+pool("cp1", (GAP[0] + GAP[1]) // 2, b - 1)
 
 # --------------------------------------------------------------------------
 # Station 2: bases. 2A your base, 2B a neutral base, 2C an enemy base.
@@ -296,13 +312,15 @@ a, b = STATIONS[5]
 fill(GAP[0], a, GAP[1], b, ROAD)
 
 
-def take_layout(prefix, tx, ty, park=None):
-    """T at (tx, ty), its blocker on the square south of it. `park`, when
-    given, is the (dx, dy) of the tank's parking square from T."""
+def take_layout(prefix, tx, ty, park=None, blocker=(0, 1)):
+    """T at (tx, ty), its blocker at (dx, dy) `blocker` from it (default the
+    square south of it). `park`, when given, is the (dx, dy) of the tank's
+    parking square from T."""
+    bx, by = tx + blocker[0], ty + blocker[1]
     pill(prefix + "_target", tx, ty, NEUTRAL)
-    pill(prefix + "_blocker", tx, ty + 1, NEUTRAL, 0)
+    pill(prefix + "_blocker", bx, by, NEUTRAL, 0)
     points[prefix + "_target"] = (tx, ty)
-    points[prefix + "_blocker"] = (tx, ty + 1)
+    points[prefix + "_blocker"] = (bx, by)
     if park is not None:
         px, py = tx + park[0], ty + park[1]
         put(px, py, ROAD)
@@ -356,26 +374,48 @@ put(139, 117, BUILDING)                     # the pocket's west wall
 put(140, 117, SEA)                          # the demo bot's start pocket
 start("bot5a", 140, 117, 4)
 region("island5a", 135, 104, 140, 117)
+# The two wall rings and the moat between them, square by square, for the
+# script to put back on each 5A demo reset (LAYOUT.walls5a, LAYOUT.moat5a).
+walls5a, moat5a = [], []
+for y in range(101, 121):
+    for x in range(132, 144):
+        if 135 <= x <= 140 and 104 <= y <= 117:
+            continue                        # the island itself
+        if grid[y][x] == BUILDING:
+            walls5a.append((x, y))
+        elif grid[y][x] is SEA:
+            moat5a.append((x, y))
 
 # 5B: the target nine squares from the road, so a tank driving up the road
 # is out of its range. The player is handed its blocker pill in the tank and
-# builds it on the square south of the target. The parking square is a road
-# square seven squares straight south of the target, the farthest a tank
-# shell still reaches it (7.125 squares from the tank's centre; the target's
-# near edge is at 6.5). A road spur along that row joins it to the main road.
-# The target's shots at the parked tank fly straight down the column and hit
-# the blocker. The tank's shots fly the same column the other way; the
-# script lets them pass the player's own blocker (can_hit), which a real game
-# would not. See docs/TUTORIAL_DECISIONS.md, "5B parking square".
-take_layout("t5b", 117, 101, park=(0, 7))
-fill(118, 108, GAP[0] - 1, 108, ROAD)
-walls5b = walled_reset("reset5b", 106, 112, GAP[0])
-# A friendly base on the road's centre column at the north end.
-base("b5", (GAP[0] + GAP[1]) // 2, a + 2)  # given to the player at the start
+# builds it on the square south-east of the target. The parking square
+# (121,107) is 4 east and 6 south of the target (Andrew's play-test: "4
+# tiles right ... and one tile more north" of the old 117,108). From the
+# tank's centre the target's centre is 7.21 squares away and its near corner
+# 6.52; a tank shell flies 7.125, so a shot aimed at the target's centre
+# ends inside its square. A road spur along row 107 joins the parking square
+# to the main road. The line between the two centres crosses the blocker's
+# square (118,102) for 0.9 of a square, so the target's shots at the parked
+# tank hit the blocker; the tank's shots cross it the other way, and the
+# script lets them pass the player's own blocker (can_hit), which a real
+# game would not. See docs/TUTORIAL_DECISIONS.md, "5B parking square".
+take_layout("t5b", 117, 101, park=(4, 6), blocker=(1, 1))
+fill(122, 107, GAP[0] - 1, 107, ROAD)
+# The arrow sits two squares further west than walled_reset's default, at
+# x 117..120, so it clears the checkpoint pool's west wall at x 121.
+walls5b = walled_reset("reset5b", 106, 112, GAP[0], arrow_dx=3)
+# A friendly base on the road's centre column, just north of the RESET
+# letters: row 110, with row 111 (the letters' road strip) clear between it
+# and the letters' top row 112 (Andrew: by the RESET T, not at the north
+# end). The park spur (row 107) and the checkpoint pool are clear of it.
+B5 = ((GAP[0] + GAP[1]) // 2, 110)
+assert B5[1] <= 112 - 2, "b5 must leave a clear road square above RESET"
+base("b5", B5[0], B5[1])  # given to the player at the start
 dock("cp5", b)
-# Rows 95..122 only: the checkpoint pocket (123,125) and its road sit below,
-# and a respawn there must not count as driving into 5B.
-region("s5b", LAND_X0, 95, 124, 122)
+# x up to 122 and rows 95..122 only: the checkpoint pool (122..124 x
+# 123..125) and its exit road (x 123..125, rows 121..122) lie outside, so a
+# respawn there does not count as driving into 5B.
+region("s5b", LAND_X0, 95, 122, 122)
 
 # --------------------------------------------------------------------------
 # Station 6: kill the man. A bot's tank is parked just east of the road; its
@@ -482,14 +522,13 @@ pill("p7_se1", CX + 6, CY + 8)
 pill("p7_se2", CX + 8, CY + 6)
 base("b7_se1", CX + 4, CY + 12)
 base("b7_se2", CX + 12, CY + 4)
-# SW: the start pocket faces east, two bases, and the walled RESET along the
-# south. The two dead pills the player starts the round with lie on the
-# centre of the road in, one behind the other, between the island's wall and
+# SW: the checkpoint pool, two bases, and the walled RESET along the south.
+# The pool's exit road square (112, 49) opens onto the island's road. The
+# two dead pills the player starts the round with lie on the centre of the
+# road in, one behind the other, between the island's wall and
 # the station's south edge: driving straight in picks up both. They are
 # inside Station 7 and outside the island, which the bot never leaves.
-fill(111, 51, 113, 54, FOREST)
-fill(112, 52, 112, 53, SEA)
-start("cp7", 112, 52, 0)
+pool("cp7", 112, 51)
 MID = (GAP[0] + GAP[1]) // 2
 pill("p7_sw1", MID, b - 1, NEUTRAL, 0)
 pill("p7_sw2", MID, b - 3, NEUTRAL, 0)
@@ -615,7 +654,8 @@ def lua_layout():
     for n in sorted(regions):
         lines.append("    %s = { x = %d, y = %d, w = %d, h = %d }," % ((n,) + regions[n]))
     lines.append("  },")
-    for nm, ws in (("walls5b", walls5b), ("walls7", walls7)):
+    for nm, ws in (("walls5a", walls5a), ("moat5a", moat5a),
+                   ("walls5b", walls5b), ("walls7", walls7)):
         lines.append("  %s = { %s }," % (nm, ", ".join("{%d,%d}" % w for w in ws)))
     for nm in sorted(arrows):
         lines.append("  arrow_%s = { %s }," % (nm, ", ".join("{%d,%d}" % w for w in arrows[nm])))

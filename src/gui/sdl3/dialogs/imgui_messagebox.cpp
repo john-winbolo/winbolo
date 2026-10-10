@@ -211,7 +211,9 @@ static int flattenSegments(const TutorialSeg *segments, int segCount,
         } else if (seg->kind == TUTORIAL_SEG_GLYPH_KEYCAP) {
             out[n].kind = RICH_GLYPH_KEYCAP;
             out[n].keycapLabel = seg->keycapLabel ? seg->keycapLabel : "?";
-            out[n].w = glyphSize;
+            /* The cap grows to its whole label, so the row wraps on the
+               width actually drawn. */
+            out[n].w = proceduralKeycapWidth(glyphSize, out[n].keycapLabel);
             out[n].h = glyphSize;
             n++;
         }
@@ -298,7 +300,7 @@ static int renderRichMessageBoxContent(const TutorialSeg *segments, int segCount
                                  ImVec2(p.x + e->w, p.y + e->h));
                     break;
                 case RICH_GLYPH_KEYCAP:
-                    drawProceduralKeycapAt(p, e->h, e->keycapLabel);
+                    drawProceduralKeycapWideAt(p, e->h, e->keycapLabel);
                     break;
                 case RICH_HARD_BREAK:
                     break;

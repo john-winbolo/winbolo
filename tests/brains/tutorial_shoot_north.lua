@@ -2,10 +2,11 @@
 -- square (tests/scenario/tutorial_park5b).
 --
 -- A player who does what the 5B status line says: stops on the parking
--- square and aims at the enemy pillbox, seven squares due north. The brain
--- never accelerates. It turns to face due north and raises the gun sight to
--- its longest range wherever it is, but it fires only while the tank is on
--- the parking square, PARK below. The arena keeps the tank off that square
+-- square and aims at the enemy pillbox, 4 squares west and 6 north of it
+-- (the name is from when it was due north). The brain never accelerates. It
+-- turns to face the target, AIM below, and raises the gun sight to its
+-- longest range wherever it is, but it fires only while the tank is on the
+-- parking square, PARK below. The arena keeps the tank off that square
 -- until the player's blocker is built, then puts it there.
 --
 -- Bolo angle convention: 0 = North, 64 = East, 128 = South, 192 = West;
@@ -13,16 +14,18 @@
 
 local brain = {}
 
-local NORTH = 0
+-- From the parking square's centre to the target's: (-4, -6) squares,
+-- atan2(-4, 6) = -33.7 degrees from north, 232 of 256.
+local AIM = 232
 local TOL = 1                  -- bradians
 local MAX_SIGHT = 14           -- half squares: the classic gunsight_max
-local PARK = { 117, 108 }      -- LAYOUT.point.t5b_park in Tutorial.map
+local PARK = { 121, 107 }      -- LAYOUT.point.t5b_park in Tutorial.map
 
 function brain.open(info)
 end
 
 function brain.think(info)
-  local diff = (info.direction - NORTH) % 256
+  local diff = (info.direction - AIM) % 256
   if diff > 128 then diff = diff - 256 end
   if diff > TOL then
     return { holdkeys = KEY_TURNLEFT, tapkeys = 0 }

@@ -23,6 +23,13 @@
  *                  callback gives, keeps a token the callback has no name
  *                  for, cuts a long text before a name it cannot fit whole,
  *                  always ends with a NUL and answers the length.
+ *   long names   — a keypad key is written "Num ." not "Keypad .", other
+ *                  names stay as SDL gives them, and a key cap grows to
+ *                  fit its label.
+ *   announce hold — a line sent in the same tick as a popup, or while it is
+ *                  open, gets its whole time after the popup closes; a line
+ *                  up before keeps what it had left; a line already out
+ *                  stays out.
  */
 
 #include <stdbool.h>
@@ -402,5 +409,141 @@ int run_scenario_status_tokens_expand(void) {
     n = tutorialTokensExpand("abc", out, 0, expandName, NULL);
     UT_ASSERT(n == 0 && out[0] == 'X');
     UT_ASSERT(tutorialTokensExpand("abc", NULL, 8, expandName, NULL) == 0);
+    return 0;
+}
+
+/* ── long key names ────────────────────────────────────────────────── */
+
+/* Names a token the way tutorial_text.c's plain path does: SDL's name for
+   the bound scancode, made short by tutorialShortKeyName. */
+static const char *keypadName(TutorialTokenId id, void *ctx) {
+    static char buf[64];
+    const keyItems *k = (const keyItems *)ctx;
+    int sc = tutorialTokenScancode(id, k);
+    if (sc <= 0) return "?";
+    return tutorialShortKeyName(SDL_GetScancodeName((SDL_Scancode)sc),
+                                buf, sizeof(buf));
+}
+
+int run_tutorial_tokens_long_key_names(void) {
+    keyItems keys;
+    char     out[64];
+    char     buf[16];
+
+    /* Andrew's range keys: Keypad . and Keypad Enter. */
+    memset(&keys, 0, sizeof(keys));
+    keys.kiGunIncrease = SDL_SCANCODE_KP_PERIOD;
+    keys.kiGunDecrease = SDL_SCANCODE_KP_ENTER;
+    keys.kiForward     = SDL_SCANCODE_W;
+    tutorialTokensExpand("Press {GUN_UP} until", out, sizeof(out),
+                         keypadName, &keys);
+    UT_ASSERT_MSG(strcmp(out, "Press Num . until") == 0, "got '%s'", out);
+    tutorialTokensExpand("{GUN_DOWN}/{ACCEL}", out, sizeof(out),
+                         keypadName, &keys);
+    UT_ASSERT_MSG(strcmp(out, "Num Enter/W") == 0, "got '%s'", out);
+
+    /* Only the "Keypad " prefix changes; other names are answered as
+       they are, and a buffer too small keeps the long name. */
+    UT_ASSERT(strcmp(tutorialShortKeyName("Keypad +", buf, sizeof(buf)),
+                     "Num +") == 0);
+    UT_ASSERT(strcmp(tutorialShortKeyName("Left Shift", buf, sizeof(buf)),
+                     "Left Shift") == 0);
+    UT_ASSERT(strcmp(tutorialShortKeyName("Keypad", buf, sizeof(buf)),
+                     "Keypad") == 0);
+    UT_ASSERT(strcmp(tutorialShortKeyName("Keypad Enter", buf, 6),
+                     "Keypad Enter") == 0);
+    UT_ASSERT(strcmp(tutorialShortKeyName("Keypad Enter", buf, 10),
+                     "Num Enter") == 0);
+    UT_ASSERT(strcmp(tutorialShortKeyName(NULL, buf, sizeof(buf)), "?") == 0);
+    UT_ASSERT(strcmp(tutorialShortKeyName("", buf, sizeof(buf)), "?") == 0);
+
+    /* A key cap grows to its label: a five-letter label (40 px wide in a
+       32 px cap) is wider than the cap is high; a one-letter one stays
+       square. */
+    UT_ASSERT(tutorialKeycapWidth(32.0f, 40.0f) > 40.0f);
+    UT_ASSERT(tutorialKeycapWidth(32.0f, 8.0f) == 32.0f);
+    UT_ASSERT(tutorialKeycapWidth(32.0f, 0.0f) == 32.0f);
+    return 0;
+}
+
+/* ── announcements wait behind a popup ─────────────────────────────── */
+
+static const ClientScnAnnounce *announceNamed(const ClientSim *cs,
+                                              const char *text) {
+    int i;
+    for (i = 0; i < clientSimGetScnAnnounceCount(cs); i++) {
+        const ClientScnAnnounce *a = clientSimGetScnAnnounceAt(cs, i);
+        if (a != NULL && strcmp(a->text, text) == 0) return a;
+    }
+    return NULL;
+}
+
+int run_scenario_announce_waits_for_popup(void) {
+    ClientSim *cs = clientSimAlloc();
+    char       got[SCN_POPUP_TEXT_MAX + 1];
+    const ClientScnAnnounce *a;
+
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    clientSimSetPlayerNum(cs, 2);
+    UT_ASSERT(!clientSimScnAnnounceIsHeld(cs));
+
+    /* Before the popup: one line long gone (500 + 100), one with 200 of
+       its 300 ticks left at 1000. */
+    clientSimScnAnnouncePush(cs, "gone", 100, 500, false, 0, 0);
+    clientSimScnAnnouncePush(cs, "older", 300, 900, false, 0, 0);
+
+    /* A popup and a line in the same tick, 1000. The frontend takes the
+       popup into its overlay and holds the lines in that frame, before it
+       draws them. */
+    popupApply(cs, "popup", 0xFF);
+    clientSimScnAnnouncePush(cs, "same tick", 300, 1000, false, 0, 0);
+    UT_ASSERT(clientSimTakeScnPopup(cs, got, sizeof(got)));
+    clientSimScnAnnounceHold(cs, true, 1000);
+    UT_ASSERT(clientSimScnAnnounceIsHeld(cs));
+
+    /* The popup stays open 500 ticks. A line comes in during it; a push at
+       1400 must not drop "older", whose clock stopped with 200 left. */
+    clientSimScnAnnouncePush(cs, "during", 100, 1200, false, 0, 0);
+    clientSimScnAnnouncePush(cs, "late", 100, 1400, false, 0, 0);
+    UT_ASSERT_MSG(announceNamed(cs, "older") != NULL,
+                  "a line held behind the popup ran out under it");
+    /* A second hold call changes nothing. */
+    clientSimScnAnnounceHold(cs, true, 1450);
+
+    /* The popup closes at 1500. */
+    clientSimScnAnnounceHold(cs, false, 1500);
+    UT_ASSERT(!clientSimScnAnnounceIsHeld(cs));
+    a = announceNamed(cs, "same tick");
+    UT_ASSERT_MSG(a != NULL && a->arrivedTick == 1500,
+                  "the same-tick line starts at %u, expected 1500",
+                  a ? (unsigned)a->arrivedTick : 0u);
+    a = announceNamed(cs, "during");
+    UT_ASSERT_MSG(a != NULL && a->arrivedTick == 1500,
+                  "the line sent during the popup starts at %u",
+                  a ? (unsigned)a->arrivedTick : 0u);
+    a = announceNamed(cs, "older");
+    UT_ASSERT_MSG(a != NULL && a->arrivedTick == 1400,
+                  "the older line moved to %u, expected 1400 (200 left)",
+                  a ? (unsigned)a->arrivedTick : 0u);
+    /* "gone" was dropped by the first push after its time ran out, and is
+       not brought back. */
+    UT_ASSERT(announceNamed(cs, "gone") == NULL);
+
+    /* With no popup a line keeps the tick it came in at. */
+    clientSimScnAnnouncePush(cs, "free", 100, 1600, false, 0, 0);
+    clientSimScnAnnounceHold(cs, false, 1650);
+    a = announceNamed(cs, "free");
+    UT_ASSERT(a != NULL && a->arrivedTick == 1600);
+
+    /* A line already out when the hold begins is not given time back. */
+    clientSimScnAnnounceHold(cs, true, 1800);         /* "free" ran out */
+    clientSimScnAnnounceHold(cs, false, 2000);
+    a = announceNamed(cs, "free");
+    UT_ASSERT_MSG(a == NULL || a->arrivedTick == 1600,
+                  "a line out before the popup came back at %u",
+                  a ? (unsigned)a->arrivedTick : 0u);
+
+    clientSimDestroy(cs);
     return 0;
 }
