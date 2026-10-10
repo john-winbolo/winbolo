@@ -231,8 +231,10 @@ and how to undo it.
   popup carries all of it; the 4A, 5B and 7 status lines carry "Press the
   pillbox build button or {QUICK_PILL}, then click ...".
 - **Station 4B popup** ends exactly "Firing reveals your position."
-- **Station 4C popup:** "This pillbox is already badly damaged: one more
-  shot kills it." The repair item is gone. The 15-shot fact is in the 4A
+- **Station 4C popup:** "This pillbox is already badly damaged: two more
+  shots kill it, and it shoots back." Two shots (`P4_ARMOUR`), not one, so
+  the player feels being shot at. The "Station 4 done" line adds "Shoot
+  trees to clear the trees quickly." The repair item is gone. The 15-shot fact is in the 4A
   popup.
 - **Station 6 popup** says a man cannot be run over (the engine has no
   run-over: a man dies only from shells, mines and blasts), how the
@@ -277,7 +279,7 @@ and how to undo it.
   a goal still needs while that goal is not ticked: the 2B base neutral and
   the 2C base the Station 6 bot's; the Station 3 target wall and grove; the
   4A dead pillbox home and dead (and picked up again if the tank died
-  carrying it); the 4B/4C pillbox home at 1 armour; the 5B target home and
+  carrying it); the 4B/4C pillbox home at 2 armour (a hit taken in 4C stays); the 5B target home and
   the 5B blocker in the player's tank, or rebuilt 10 seconds after it died
   once built. The friendly road bases (2A, 3, 4C, 5, 6) are set back to the
   player's and full whenever they are not.
@@ -370,7 +372,7 @@ and how to undo it.
   it overlaps all forest, and 3 or more squares from the pillbox on x or
   y; 5 seconds hidden in range ticks the item. Firing is not tracked: the
   popup says firing reveals the tank, and the pillbox then shoots it. The pillbox starts at
-  1 armour, and `can_die` refuses its death until "Sit hidden in range" is
+  2 armour, and `can_die` refuses its death until "Sit hidden in range" is
   ticked ("Hide in the forest first, then kill it.").
 - **A pillbox taken out of its station** is sent home when the player
   enters another station carrying it, and one put down outside its station

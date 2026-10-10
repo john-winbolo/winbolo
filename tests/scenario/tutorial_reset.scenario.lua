@@ -70,7 +70,7 @@ function arena_check4()
   end
   L = LAYOUT.pill.p4
   local b = game.pill(L.n)
-  if b == nil or b.in_tank or b.x ~= L.x or b.y ~= L.y or b.armour ~= 1 or
+  if b == nil or b.in_tank or b.x ~= L.x or b.y ~= L.y or b.armour ~= 2 or
      b.owner ~= game.NEUTRAL then
     bad[#bad + 1] = "damaged pill not home at 1 armour"
   end
