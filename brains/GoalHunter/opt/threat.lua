@@ -707,6 +707,14 @@ end
 -- -------------------------------------------------------------------------
 function M.rebuild_overlay(world)
   cpf.clear_overlay()
+  -- STAY_AREA (C.STAY_AREA): fence the area for this bot's own path planner.
+  -- steering.stuck_recovery re-stamps it every tick as well, and sets
+  -- U._stay_fence false while the tank is outside (so the fence never traps
+  -- it out; the goal guard then sends it back in).
+  local ring = U._stay_fence ~= false and U.stay_ring()
+  if ring then
+    for i = 1, #ring do cpf.set_overlay(ring[i][1], ring[i][2], 32767) end
+  end
   for _, pm in pairs(world.pills) do
     if pm.health > 0 then
       cpf.set_overlay(pm.mx, pm.my, 32767)

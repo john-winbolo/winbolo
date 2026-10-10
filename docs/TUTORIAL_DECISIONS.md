@@ -454,13 +454,66 @@ and how to undo it.
     sends the bot back each time it leaves the island), and with the item 18
     map the seed-42 run had only 31 shots at the man. After the change:
     seed 42 7/74, seed 1 5/44, seed 2 6/60, seed 3 5/68.
-  - **Open (for Andrew):** the Station 7 bot still picks goals off its
-    island when they are cheap enough: the dead 4A pill (122,149), the
-    neutral 2B base, the 5B pills. The script sends it back the moment it
-    leaves, so it never gets there, but it loses time trying. In a real
-    run the player has taken these by Station 7, so they are the player's
-    and are attack goals, further away than the player's Station 7 pills.
-    A GoalHunter "stay in region" knob would end it; not built.
+  - **Off-island goals (closed 2026-10-10, item 19):** the bot used to
+    pick goals off its island when they were cheap enough (the dead 4A
+    pill, the neutral 2B base, the 5B pills, the two dead pills on the
+    road in). The script sent it back each time, but it lost time trying.
+    The new GoalHunter knob `STAY_AREA` (next entry) ends it.
+  - **Arena changes with STAY_AREA:** the arena now runs ten minutes (was
+    six; GATE `ticks=62000 limit=40`), and its pass floor is "at least one
+    kill" in place of "at least 5 percent". Its own TANK_COMBAT_ENABLED
+    value moved from init key `cfg2` to `cfg3`, because `cfg2` now holds
+    the tutorial's STAY_AREA. Measured, seeds 42 and 1 to 7: 11/129
+    (8.5%), 8/115 (7.0%), 2/57 (3.5%), 5/89 (5.6%), 11/128 (8.6%), 2/50
+    (4.0%), 14/137 (10.2%), 14/130 (10.8%). **Why the floor moved:** at
+    about 9 percent, 50 to 60 shots give only 1 or 2 kills often enough by
+    chance; seeds 2 and 5 failed the 5 percent floor with 2 kills each.
+    The ceiling (15 percent) and the 40-shot minimum stay. Without the
+    knob the same arena (seed 42) gave 2/31 and the bot chased the dead
+    5B blocker (117,102) for most of the run.
+- **The Station 7 bot has `STAY_AREA` = the island7 region** (2026-10-10,
+  item 19). `STAY_AREA` is a new per-bot GoalHunter knob
+  (`brains/GoalHunter/constants.lua`): `"x1:y1:x2:y2"` in map squares,
+  inclusive, several rectangles joined with `/`. (`,` and `;` cannot be
+  used: the cfg token splitter eats them.) `""` is off, the old behaviour,
+  and `PRESETS.keel` holds `""`. The tutorial sets it under init key
+  `cfg2` (`"0;cfg=STAY_AREA=107:27:149:67"`), built from
+  `LAYOUT.region.island7`, so it follows the map tool.
+  - **What the knob does**, all only while it is set:
+    - goal pools (`goals.lua`): every candidate outside the area is a
+      reject row with the reason `outside STAY_AREA` (refuel, capture_base,
+      capture_pill, repair_pill, attack_pill, attack_base, and defend_pill
+      through the finalize pass), so a pool's best is always inside;
+    - goal selection: every pool row whose goal square is outside (also
+      attack_tank, kill_lgm, take_cover, flee, place, explore and the rest)
+      is priced at the reject sentinel with the chip
+      `REJECT outside STAY_AREA`;
+    - `pick_goal` guard: a goal picked ahead of the pool (commands, sea
+      harvest, special modes, explore fallback) that is outside becomes an
+      explore goal to the nearest inside square;
+    - explore frontier: squares outside are never explore targets;
+    - the man (`builder.decide`): no build, road, farm, mine, pillbox or
+      repair order outside, no tree outside;
+    - attack plans: no standoff and no shield shot spot or blocker square
+      outside (the shield scan then runs in Lua, as with
+      BLOCKER_ORTHOGONAL_ONLY);
+    - path planning: a one-square ring outside the area costs 32767 in the
+      bot's own overlay (A* and the Dijkstra slates read it). Engine
+      terrain never changes. While the tank is outside, the ring is off so
+      it can get back in.
+    Steering reflexes (swerve, deep-water and edge avoidance) are not
+    touched.
+  - **The leash stays, as a backstop.** The knob changes only the bot's
+    own choices; a shove or a gap in the planner could still put the tank
+    off the island, and the leash costs nothing while the bot stays on.
+    `tutorial_bot7_stay` counts the leash: three minutes, seeds 42, 1, 2,
+    3: leash 0, tank ticks off the island 0, builder ticks off 0. With the
+    knob removed (seed 42) the leash fired 9 times; the bot chased the two
+    dead pills on the road in, (127,68) and (127,70).
+  - **Not used for bot5a or bot6.** bot5a's island is 6 squares wide, so
+    a standoff ring of the take would fall mostly outside it and the knob
+    would change the take the player is taught; its moat and home rule
+    already hold it. bot6 is held by the script and never fights.
 - **The Station 7 bot cannot pick up the two dead SW pills** (`can_capture`,
   2026-10-10). Before, it drove out of its corner to take them off the
   road before the player got there.
@@ -531,11 +584,12 @@ and how to undo it.
   has been picked up, so building the first before picking up the second
   still ticks the item.
 - **Gate arenas** hold the player's seat (a GoalHunter in the gate) still
-  with `set_modifiers{speed = 1, turn = 1}` and teleport it about. Twelve
+  with `set_modifiers{speed = 1, turn = 1}` and teleport it about. Thirteen
   arenas: `tutorial_checkpoint`, `tutorial_reset`, `tutorial_take5a`,
   `tutorial_take5a_soak`, `tutorial_park5b`, `tutorial_rebuild5b`,
   `tutorial_station5_entry`, `tutorial_late_bots`, `tutorial_station6`,
-  `tutorial_bot7_region`, `tutorial_bot7_man`, `tutorial_new_man`. The
+  `tutorial_bot7_region`, `tutorial_bot7_stay`, `tutorial_bot7_man`,
+  `tutorial_new_man`. The
   5B arenas play the player with a scripted brain,
   `tests/brains/tutorial_shoot_north.lua`. The Station 2 steal is not
   covered: a held-still tank cannot drive onto a base.

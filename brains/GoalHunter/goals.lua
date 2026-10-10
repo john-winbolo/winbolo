@@ -10960,6 +10960,16 @@ function M.rescore_nearby_bases(state, world, info, radius)
   if BRAIN_DEBUG_MODE then print2(string.format("BASE_RESCORE t=%d rescored=%d bases within %d tiles (strict A* over dij-only INF)", now, rescored, radius)) end
 end
 
+-- STAY_AREA reject for one candidate object (has .mx/.my): the reject
+-- record when its square is outside C.STAY_AREA, else nil. Always nil when
+-- C.STAY_AREA is off.
+function M.stay_reject(obj)
+  if obj and obj.mx and obj.my and not U.stay_in(obj.mx, obj.my) then
+    return { reason = "outside STAY_AREA", stay = true }
+  end
+  return nil
+end
+
 function M.build_eval_queue(state, world, info)
   -- Fresh queue → not swept yet (warm_ready's sparse-map escape requires a full
   -- sweep of the CURRENT queue). Harmless once _warm_ready has latched.
@@ -11064,7 +11074,7 @@ function M.build_eval_queue(state, world, info)
   -- base we're refuelling at instead of going blank mid-top-off.
   if needs_refuel or (state.goal and state.goal.kind == "refuel_at_base") then
     for id, obj in pairs(world.bases) do
-      local reject = filter_refuel(obj, state, info)
+      local reject = M.stay_reject(obj) or filter_refuel(obj, state, info)
       if not reject or reject.reason ~= "hostile" then
         queue[#queue + 1] = { pool = 1, id = id, obj = obj, reject = reject }
         _diag_log_first_pool_add(1, "refuel", id, obj)
@@ -11115,7 +11125,7 @@ function M.build_eval_queue(state, world, info)
   -- Hard reject only "alive" (that's attack_pill's territory).
   if not state.cost_cache then state.cost_cache = {} end
   for id, obj in pairs(world.pills) do
-    local reject = filter_capture_pill(obj, state)
+    local reject = M.stay_reject(obj) or filter_capture_pill(obj, state)
     -- state.blocked is a DRIVING cooldown: "we failed to reach this tile on
     -- foot recently". For a pill in deep sea that is not news — we were never
     -- going to walk there, which is the whole point of the harvest. Letting it
@@ -11168,7 +11178,8 @@ function M.build_eval_queue(state, world, info)
     if not reject or reject.reason ~= "alive" then
       queue[#queue + 1] = { pool = 4, id = id, obj = obj, reject = reject }
       local ck = "4:" .. id
-      if not state.cost_cache[ck] or (state.cost_cache[ck]._reject ~= nil) ~= (reject ~= nil) then
+      if not state.cost_cache[ck] or (state.cost_cache[ck]._reject ~= nil) ~= (reject ~= nil)
+         or (reject and reject.stay and state.cost_cache[ck]._reject ~= reject.reason) then
         if reject then
           -- Skip the cost compute — entry just exists so the row shows.
           state.cost_cache[ck] = {
@@ -11311,6 +11322,30 @@ function M.build_eval_queue(state, world, info)
                          and info.shells > (C.SHELL_RESERVE or 0)
         if has_shells or is_current or closeout then
           queue[#queue + 1] = { pool = 7, id = id, obj = obj }
+        end
+      end
+    end
+  end
+
+  -- STAY_AREA (C.STAY_AREA): every remaining candidate whose target square is
+  -- outside the area rides along as a reject row ("outside STAY_AREA"), so the
+  -- step never scores it and the pool panel shows why. Pools 1 and 4 did it
+  -- inline above (their own reject path). Off = no change.
+  if U.stay_on() then
+    for _, item in ipairs(queue) do
+      if not item.reject then
+        local rj = M.stay_reject(item.obj)
+        if rj then
+          item.reject = rj
+          local ck = item.pool .. ":" .. item.id
+          local ce = state.cost_cache[ck]
+          if not ce or ce._reject ~= rj.reason then
+            state.cost_cache[ck] = {
+              cost = 1e30, raw = 1e30, tick = now, _p = item.pool, _id = item.id,
+              _mx = item.obj.mx, _my = item.obj.my,
+              _reject = rj.reason, _reject_remaining = 0,
+            }
+          end
         end
       end
     end
@@ -14877,6 +14912,24 @@ end
 -- Re-derive pool_partial best_cost/id/obj after sync_ally_claimed_rejects
 -- so finalize_pools doesn't pick a candidate that just got REJECT-flagged
 -- by the sync sweep.  Cheap: O(candidates per pool).
+-- STAY_AREA (C.STAY_AREA): tag every cached pool row whose square is outside
+-- the area. Runs after the sync/blitz passes (which can clear _reject) and
+-- before rederive_pool_partial_best, so a pool's best is always an inside
+-- candidate. Off = returns at once.
+function M.stay_area_rejects(state)
+  if not U.stay_on() then return end
+  local cache = state.cost_cache
+  if not cache then return end
+  for _, e in pairs(cache) do
+    if type(e) == "table" and e._p and e._p >= 1 and e._p <= 7
+       and e._mx and e._my and not U.stay_in(e._mx, e._my) then
+      e._reject = "outside STAY_AREA"
+      e._reject_remaining = 0
+      e.cost = 1e30
+    end
+  end
+end
+
 local function rederive_pool_partial_best(state)
   local partial = state.pool_partial
   local cache = state.cost_cache
@@ -15263,6 +15316,7 @@ function M.finalize_pools(state, world, info)
   apply_blitz_join_discount(state, info, world)
   apply_blitz_capture_defer(state, info)
   apply_blitz_only_gate(state, info, world)
+  M.stay_area_rejects(state)
   rederive_pool_partial_best(state)
   local _t_apply = clock_us()
   if BRAIN_PROFILE then
@@ -17698,6 +17752,29 @@ local function goal_selection(state, world, info, quiet)
       end
     end
 
+    -- ── STAY_AREA reject pass (C.STAY_AREA) ─────────────────────────────
+    -- A bot given a STAY_AREA never takes a goal whose target square is
+    -- outside it. Same shape as the ORDER pass above: the row stays in the
+    -- pool at the reject sentinel with the chip "outside STAY_AREA", so the
+    -- pool panel shows it and why. Off (C.STAY_AREA "") = no row changes.
+    if U.stay_on() then
+      for _, c in ipairs(pool) do
+        local g = c.goal
+        if g and g.mx and g.my and not U.stay_in(g.mx, g.my) then
+          c.cost = C.POOL_REJECT_COST or 1e30
+          c._stay_reject = true
+          c.desc = (c.desc or "") .. " REJECT outside STAY_AREA"
+          local ce = (state.cost_cache and c._pool_idx and g.target_id)
+                     and state.cost_cache[c._pool_idx .. ":" .. g.target_id]
+          if ce then
+            ce._reject           = "outside STAY_AREA"
+            ce._reject_remaining = 0
+            ce.formula           = nil
+          end
+        end
+      end
+    end
+
     -- ── Pin REJECT sentinels ──
     -- A rejected row's cost is a DISPLAY sentinel (1e30), not a score. Running
     -- it through the influence x2, the suicider multiplier, the phase weight
@@ -19033,7 +19110,37 @@ function M.charge_now_holds(state)
   return (r and g and g.kind == "attack_pill" and g.target_id == r.tid) and true or false
 end
 
+
+
+-- Main goal picker entry point. STAY_AREA guard (C.STAY_AREA): the pool
+-- already rejects rows outside the area, but the goals picked ahead of the
+-- pool (commands, sea harvest, special modes, the explore fallback) do not go
+-- through it. A goal whose target square is outside is replaced here by an
+-- explore goal to the nearest inside square (the tank's own square when the
+-- tank is inside). Off = the inner picker's goal, unchanged.
 function M.pick_goal(state, world, info, quiet)
+  local g = M._pick_goal_inner(state, world, info, quiet)
+  if g and g.mx and g.my and g.kind ~= "none" and U.stay_on()
+     and not U.stay_in(g.mx, g.my) then
+    local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
+    local cx, cy
+    if U.stay_in(tmx, tmy) then
+      cx, cy = U.stay_clamp(g.mx, g.my)
+    else
+      cx, cy = U.stay_clamp(tmx, tmy)
+    end
+    if not quiet then
+      print2(string.format("STAY_AREA reject t=%d goal=%s#%s @(%d,%d) outside STAY_AREA -> explore (%d,%d)",
+        state.tick or 0, tostring(g.kind), tostring(g.target_id), g.mx, g.my, cx, cy))
+    end
+    state._stay_rejected = { kind = g.kind, mx = g.mx, my = g.my, tick = state.tick or 0 }
+    g = { kind = "explore", mx = cx, my = cy, wx = U.m2w(cx), wy = U.m2w(cy),
+          _stay_fallback = true }
+  end
+  return g
+end
+
+M._pick_goal_inner = function(state, world, info, quiet)
   -- Cache the few info fields the breakdown viz needs (pool_breakdown has
   -- only `state` in scope).
   state._last_info = {
@@ -19300,7 +19407,10 @@ function M.pick_goal(state, world, info, quiet)
 
   -- Pop frontier entries that are too close
   local fx, fy = expl.best_frontier(state)
-  while fx and U.mdist(tmx, tmy, fx, fy) < C.MIN_EXPLORE_DIST do
+  -- STAY_AREA: a frontier square outside the area is popped like a too-close
+  -- one (never explored). U.stay_in is always true when STAY_AREA is off.
+  while fx and (U.mdist(tmx, tmy, fx, fy) < C.MIN_EXPLORE_DIST
+                or not U.stay_in(fx, fy)) do
     local nk = U.mkey(fx, fy)
     state.visited[nk]      = true
     state.frontier_set[nk] = nil
@@ -19327,7 +19437,7 @@ function M.pick_goal(state, world, info, quiet)
       for dx = -dr, dr do
         if math.abs(dx) == dr or math.abs(dy) == dr then
           local cx, cy = tmx + dx, tmy + dy
-          if U.in_map(cx, cy) then
+          if U.in_map(cx, cy) and U.stay_in(cx, cy) then
             local ck = U.mkey(cx, cy)
             if not state.visited[ck] then
               local tt = U.ttype(cx, cy)

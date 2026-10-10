@@ -1366,7 +1366,9 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
       local cx = U.mclamp(math.floor(pill.mx + math.sin(angle) * R + 0.5))
       local cy = U.mclamp(math.floor(pill.my - math.cos(angle) * R + 0.5))
       local ck = U.mkey(cx, cy)
-      if not seen[ck] and not (state and state._blitz_reject and state._blitz_reject[ck]) then
+      -- STAY_AREA (C.STAY_AREA): no standoff outside the area (off = always in).
+      if not seen[ck] and not (state and state._blitz_reject and state._blitz_reject[ck])
+         and U.stay_in(cx, cy) then
         seen[ck] = true
         -- Always track closest as fallback
         local d = U.mdist(tmx, tmy, cx, cy)

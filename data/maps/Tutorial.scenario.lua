@@ -1078,8 +1078,14 @@ local function bot_init(role)
     -- Easy has it): that hunt fires on its own line, which the miss knobs
     -- do not reach. Several cfg values share one init value, "A=1;cfg=B=2",
     -- at most 63 bytes.
+    -- STAY_AREA (cfg2) keeps every goal, build order and route of the bot
+    -- on its island: "x1:y1:x2:y2", inclusive squares, from island7.
+    -- The leash in on_tick stays as a backstop.
+    local r = LAYOUT.region.island7
     return { cfg = "LGM_MISS_WU=256;cfg=LGM_HIT_PCT=10"
-                   .. ";cfg=CAPTURE_LGM_HUNT=false" }
+                   .. ";cfg=CAPTURE_LGM_HUNT=false",
+             cfg2 = string.format("0;cfg=STAY_AREA=%d:%d:%d:%d",
+                                  r.x, r.y, r.x + r.w - 1, r.y + r.h - 1) }
   end
   return nil
 end

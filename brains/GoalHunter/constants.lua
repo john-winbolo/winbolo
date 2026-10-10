@@ -776,6 +776,15 @@ M.PPT_PILL_BLOCKERS_MAX = 2    -- cap on how many carried pillboxes the shield p
 -- turns it on for its Station 5A demo bot, so the take it shows matches the
 -- one the player is taught. false = the old free choice (PRESETS.keel).
 M.BLOCKER_ORTHOGONAL_ONLY = false  -- keel false
+-- STAY_AREA: the bot stays inside a set of map-square rectangles. Every goal
+-- whose target square is outside is rejected ("outside STAY_AREA"), the man
+-- gets no build order outside, the shield planner skips outside squares, and
+-- the bot's own path planner fences the area (one-square ring at cost 32767;
+-- engine terrain never changes). Format "x1:y1:x2:y2", inclusive; several
+-- rectangles joined with '/'. ',' and ';' cannot be used: the cfg= token
+-- splitter eats them. Per-bot: the Tutorial sets it on its Station 7 bot.
+-- "" = off, the old behaviour (PRESETS.keel).
+M.STAY_AREA = ""  -- keel ""
 M.SHIELD_SCAN_BLACKLIST_TRIES = 2    -- a shield.scan that starts but never completes (per-tick budget kill unwinds the whole think) leaves its attempt marker behind; after this many incomplete attempts on the SAME scan key, skip the scan and attack with the no-shield plan instead of livelocking on a scan that can't fit the budget
 M.SHIELD_SCAN_BLACKLIST_TICKS = 250  -- blacklist expiry (~5 s): after this long the marker is dropped and the scan may be retried (the key changing ??? pill hp, our armour, standoff ??? also resets it immediately)
 M.WALL_SHIELD_LGM_STUCK_TICKS = 150  -- same-tile timeout for LGM simulation (~3 seconds)
@@ -5561,6 +5570,7 @@ M.PRESETS = {
     ORDER_HINT_BUSY_SILENT        = false,
     --   2026-10-10: shield blockers on orthogonal squares only (Tutorial).
     BLOCKER_ORTHOGONAL_ONLY       = false,
+    STAY_AREA                     = "",
     --   2026-09-17: a bot attacking a pill with a HUMAN team-mate within 7
     --   tiles now skips the wall shield and goes straight in (the lobby docs
     --   promise it). KEEL never looked at where the humans were: 0 = off, so

@@ -783,7 +783,8 @@ local function nearest_forest_near(cx, cy, radius)
   for dy = -radius, radius do
     for dx = -radius, radius do
       local fx, fy = cx + dx, cy + dy
-      if U.in_map(fx, fy) and U.ttype(fx, fy) == C.T_FOREST then
+      if U.in_map(fx, fy) and U.ttype(fx, fy) == C.T_FOREST
+         and U.stay_in(fx, fy) then   -- STAY_AREA: no tree outside (off = always true)
         local d = U.mdist(cx, cy, fx, fy)
         if d < best_d then
           best_d = d; best_x = fx; best_y = fy
@@ -802,7 +803,8 @@ local function nearby_forests(cx, cy, radius, max_n)
   for dy = -radius, radius do
     for dx = -radius, radius do
       local fx, fy = cx + dx, cy + dy
-      if U.in_map(fx, fy) and U.ttype(fx, fy) == C.T_FOREST then
+      if U.in_map(fx, fy) and U.ttype(fx, fy) == C.T_FOREST
+         and U.stay_in(fx, fy) then   -- STAY_AREA: no tree outside (off = always true)
         out[#out + 1] = { mx = fx, my = fy, d = U.mdist(cx, cy, fx, fy) }
       end
     end
@@ -986,7 +988,23 @@ end
 -- decide: returns a build table {x, y, action} or nil
 -- Call once per tick from init.lua after set_mode().
 -- -------------------------------------------------------------------------
+
+
+-- STAY_AREA guard (C.STAY_AREA): the man gets no order on a square outside
+-- the area (build, road, farm, mine, pillbox, repair). The bail reason
+-- "outside STAY_AREA" lands in state._builder_no_dispatch like every other
+-- decline. Off = the inner decision, unchanged.
 function M.decide(state, world, info, now)
+  local cmd = M._decide_inner(state, world, info, now)
+  if cmd and cmd.x and cmd.y and not U.stay_in(cmd.x, cmd.y) then
+    state._builder_no_dispatch = { tick = now, why = "outside STAY_AREA",
+                                   mode = state.builder and state.builder.mode }
+    return nil
+  end
+  return cmd
+end
+
+M._decide_inner = function(state, world, info, now)
   local b = state.builder
 
   -- Observability: every silent `return nil` below leaves no trace, which is
