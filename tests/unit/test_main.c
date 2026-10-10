@@ -1717,6 +1717,8 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_blast_names_tank",               run_scenario_blast_names_tank               },
     { "scenario_mine_names_layer",               run_scenario_mine_names_layer               },
     { "scenario_on_tank_hit",                    run_scenario_on_tank_hit                    },
+    { "scenario_kill_credit",                    run_scenario_kill_credit                    },
+    { "scenario_kill_credit_none",               run_scenario_kill_credit_none               },
     { "game_event_channel_base_captured",        run_game_event_channel_base_captured        },
     { "game_event_channel_pill_captured",        run_game_event_channel_pill_captured        },
     { "game_event_channel_lgm_lost",             run_game_event_channel_lgm_lost             },

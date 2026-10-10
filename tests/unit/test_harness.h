@@ -3303,6 +3303,8 @@ int run_scenario_pill_damage_scale(void);
 int run_scenario_blast_names_tank(void);
 int run_scenario_mine_names_layer(void);
 int run_scenario_on_tank_hit(void);
+int run_scenario_kill_credit(void);
+int run_scenario_kill_credit_none(void);
 
 /* The in-process game-event channel (test_game_event_channel.c): a subscriber
  * that asks for it hears the captures and the builder death on it rather than

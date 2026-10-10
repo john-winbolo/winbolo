@@ -257,6 +257,11 @@ void serverSimShotOrderTick(ServerSim *sim);
  * starts. */
 void serverSimShotOrderClear(ServerSim *sim, BYTE playerNum);
 
+/* Forget the last hit this seat took, and every last hit it dealt, for the
+ * kill_credit question. Called where serverSimShotOrderClear is, for a seat
+ * that is arriving or leaving. */
+void serverSimKillCreditForget(ServerSim *sim, BYTE playerNum);
+
 /* Defined in server_sim_lobby.c — the body of serverSimResolveBotConfigKeys,
  * taking the brain's modes already loaded instead of a path to read them
  * from. The public path form is the wrapper around this one and answers
