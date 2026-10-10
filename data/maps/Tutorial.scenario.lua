@@ -320,7 +320,9 @@ local POP = {
     .. "green square, right next to theirs. Then stop at the road tile "
     .. "highlighted and aim at the enemy pillbox: fire until it dies. Your "
     .. "pillbox takes its shots, and is rebuilt if it dies. Drive into the "
-    .. "RESET pen to start over.",
+    .. "RESET pen to start over.\n\n"
+    .. "Start with full armour. Once your pillbox falls, the enemy pillbox "
+    .. "shoots you, so expect to take damage before it dies.",
   s6 = "Kill an enemy man and his tank cannot build until a new man "
     .. "arrives. You cannot run a man over: only shells, mines and "
     .. "explosions kill him.\n\n"
