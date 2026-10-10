@@ -6026,6 +6026,7 @@ set(_unit_test_names
     scenario_funnel_host_ops_uncounted
     scenario_funnel_prelude_refusal_uncounted
     scenario_funnel_set_tile_spends_tile_budget
+    scenario_funnel_set_tile_resets_wall_damage
     scenario_read_roster_slot
     scenario_read_pill_info
     scenario_read_base_info
