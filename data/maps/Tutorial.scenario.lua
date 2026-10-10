@@ -299,7 +299,8 @@ local POP = {
     .. "Forests hide tanks from both other tanks and pillboxes. Drive into "
     .. "the forest inside the markers and sit still. Firing reveals your "
     .. "position.",
-  s4c = "This pillbox is already badly damaged: one more shot kills it.\n\n"
+  s4c = "This pillbox is already badly damaged: two more shots kill it, "
+    .. "and it shoots back.\n\n"
     .. "Your tank is full. Kill it, then drive over it to pick it up.",
   s5a = "Watch the friendly bot on the island take a pillbox. It builds its "
     .. "own pillbox right next to the enemy one and parks behind it, so the "
@@ -406,7 +407,7 @@ local STEP = {
       return string.format("Sit still deep in the forest, in range. Hidden: "
         .. "%d of 5 seconds.", math.floor(S.hide))
     end,
-    c_kill = "Shoot the pillbox once with {FIRE}.",
+    c_kill = "Shoot the pillbox twice with {FIRE}.",
     c_pick = "Drive over the dead pillbox to pick it up.",
   },
   [5] = {
@@ -573,15 +574,19 @@ local function rebuild_road(list)
   end
 end
 
+-- The 4B/4C pillbox's armour: two shots kill it, so the player is shot at
+-- while killing it in 4C.
+local P4_ARMOUR = 2
+
 -- The owner and armour each pill starts with.
 local function pill_start(name)
   if name == "p4a" or name == "p7_sw1" or name == "p7_sw2" or
      name == "t5a_blocker" or name == "t5b_blocker" then
     return nil, 0
   elseif name == "p4" then
-    -- Damaged from the start: one shot kills it in 4C, and can_die keeps it
-    -- alive until the player has hidden from it in 4B.
-    return nil, 1
+    -- Damaged from the start: two shots kill it in 4C, and can_die keeps
+    -- it alive until the player has hidden from it in 4B.
+    return nil, P4_ARMOUR
   elseif name == "t5a_target" then
     return nil, rule("pill_max_armour")
   elseif name == "t5b_target" then
@@ -968,8 +973,9 @@ local function mark(n, key)
   -- A popup still waiting is shown now: the player has moved on.
   flush_popups(true)
   if not was_done and station_done(n) and n < 7 then
-    game.announce(string.format("Station %d done. Follow the road north.", n),
-                  4, S.player)
+    local text = string.format("Station %d done. Follow the road north.", n)
+    if n == 4 then text = text .. " Shoot trees to clear the trees quickly." end
+    game.announce(text, 4, S.player)
   end
   if S.at == n then
     local id = next_popup(n)
@@ -1173,7 +1179,11 @@ local function rearm(n)
     end
     local pb = game.pill(P.p4.n)
     if not d.c_kill and pb ~= nil then
-      if pb.in_tank or pb.x ~= P.p4.x or pb.y ~= P.p4.y or pb.armour ~= 1 then
+      -- Shots taken before the 4B hide are put back; once 4C is on, a hit
+      -- stays so the second shot kills it.
+      if pb.in_tank or pb.x ~= P.p4.x or pb.y ~= P.p4.y or
+         (pb.armour ~= P4_ARMOUR and
+          (not d.b_hide or pb.armour > P4_ARMOUR)) then
         reset_pill("p4")
       end
     elseif d.c_kill and not d.c_pick and pb ~= nil and pb.in_tank and
