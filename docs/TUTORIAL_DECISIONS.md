@@ -113,6 +113,55 @@ and how to undo it.
   band between each pair.
   **Why:** one long road is easy to follow; the bands keep each station's
   view to itself.
+- **What (changed 2026-10-10, item 20, from Andrew's play-test; replaces
+  the one-square pockets of item 18 below):** every checkpoint start is the
+  centre of a 3x3 pool of deep water, and the tank faces north there
+  (map-file dir 4; the engine turns that into its own 0, north, so
+  `game.start(n).dir` and the respawned tank's `dir` both read 0). Walls
+  close the pool on the west, east and south, one square out. On the north
+  the pool's middle column opens onto one road square, with a wall on each
+  side of it, and that road runs north into the main road. The tool's
+  `pool()` makes the pool; `dock()` places one for Stations 2 to 6.
+  - cp1 (127,226): directly south of the main road's south end, in line
+    with it. The pool takes rows 225..227 and its walls rows 224..228 (228
+    is the frame), so the main road stops at row 223 and the pool's road
+    square (127,224) runs straight into it.
+  - cp2 to cp6: x 123, y 199 / 176 / 155 / 124 / 89, three squares west
+    of the main road's west column; the south wall is on the station's
+    south row. The road goes north two squares from the pool (rows y-2 and
+    y-3), then east along row y-3 into the main road (x 123..125).
+    Footprint x 121..125, rows y-3..y+2.
+  - cp7 (112,51): the same pool in the island's SW quarter, replacing the
+    1x2 water pocket in a forest clump; its road square (112,49) opens onto
+    the island's road.
+  **Why the road goes north two squares before it turns:** the road square
+  next to the pool must be the only way in. A road turning east on the
+  first row would run along the top of the pool's east column, and a tank
+  could drive into the pool there, away from its boat.
+  **No drowning:** the tank respawns on its boat. It can only leave through
+  the pool's middle north square, so the boat stays there, on the square a
+  tank coming back drives in on; it boards the boat and does not drown.
+  **Neighbours checked:**
+  - Station 2: cp2's road row 196 touches the 2A base patch (rows 193..195),
+    so a respawned tank can drive straight onto its own base. It is
+    outside `b2a_area`.
+  - Station 3: cp3's road row 173 touches the grove's south edge (row 172);
+    the grove is not cut.
+  - Station 4: cp4's road row 152 is inside `p4a_area` (its south ring
+    row), which the script declares but never reads. The dead 4A pill
+    (122,149) is 6 squares from cp4; it never fires (dead at home, or in
+    the tank).
+  - Station 5: the pool's west wall (x 121) would cut the 5B RESET arrow,
+    so `walled_reset` takes an `arrow_dx` and 5B's arrow moves two squares
+    west to x 117..120 (still under the pen's road, still pointing at the
+    gap). cp5's road (x 123..125, row 121) joins the RESET pen's road (rows
+    119..120). The 5B popup region `s5b` now ends at x 122 (was 124) and
+    row 122, so the pool and its road lie outside it and a respawn at cp5
+    does not count as driving into 5B. The 7 RESET arrow is unchanged.
+  - Station 6: nothing within 4 squares; the craters and the man's path
+    are on row 80, the base b6 on the main road at row 84.
+  - Station 7: the pool's walls (x 110..114, rows 49..53) sit between the
+    forest rim and the 2 bases; the RESET strip starts at row 54.
 - **What (changed 2026-10-10, item 18):** there is no deep-water trench,
   and the main road (x 126..128) runs straight and clear up the centre of
   the map. Each checkpoint start of Stations 1 to 6 is a one-square pocket
@@ -263,6 +312,20 @@ and how to undo it.
   keyboard, controller and touch. The wording says "click", the desktop
   word. Live numbers: shots left on the 2C base, seconds hidden in 4B, bases
   owned in Station 7.
+- **3 wall status line (2026-10-10, item 27):** "Build a wall: Click on the
+  wall button\nor press {QUICK_WALL}, then click a grass square." On a
+  keyboard the two rows are 38 and 37 characters. With a controller
+  ("the next tool button") the second row is 57 and on touch ("the build
+  buttons") 54; the longest controller row before was 52 (3 harvest). Kept
+  as Andrew asked, since the keyboard is the case he balanced; the box
+  sizes to the text, and a 57-character row is still well inside the game
+  view.
+- **3 shoot-the-wall marker is green (2026-10-10, item 28):** the target
+  wall's marker is the same green square as 2A and the 5B blocker spot.
+  It shows exactly while "Shoot down the wall" is the station's first
+  unticked row, which is also when the status line names it: both come
+  from `current_goal(3)`, so out of order play cannot split them. (The
+  low-shells line, when it shows, takes the status line's place.)
 - **Status line width (2026-10-10):** a status line that was wider than
   about half the game view is now two rows, split with `"\n"`. The client
   draws each row centred in one box (see SCENARIO_API.md, "Line breaks").
@@ -277,10 +340,10 @@ and how to undo it.
   pillbox build button or {QUICK_PILL}, then click ...".
 - **Station 4B popup** ends exactly "Firing reveals your position."
 - **Station 4C popup:** "This pillbox is already badly damaged: two more
-  shots kill it, and it shoots back." Two shots (`P4_ARMOUR`), not one, so
-  the player feels being shot at. The "Station 4 done" line adds "Shoot
-  trees to clear the trees quickly." The repair item is gone. The 15-shot fact is in the 4A
-  popup.
+  shots kill it." (2026-10-10, item 29: "and it shoots back" dropped.) Two
+  shots (`P4_ARMOUR`), not one, so the player feels being shot at. The
+  "Station 4 done" line adds "Shoot trees to clear the trees quickly." The
+  repair item is gone. The 15-shot fact is in the 4A popup.
 - **Station 6 popup** says a man cannot be run over (the engine has no
   run-over: a man dies only from shells, mines and blasts), how the
   crosshair works with `{GUN_DOWN}` and `{GUN_UP}`, and to aim at the
@@ -306,17 +369,51 @@ and how to undo it.
   no trees (so Station 3's harvest is needed) and Station 2 starts low (5
   shells, 0 mines, 15 armour) until its refill is done. Respawns get the
   same loadout.
-- **2A ticks on a full tank:** the moment the tank reaches the 2A base,
-  the `s2stay` popup says to stay on it while the stocks flow in. "Refill
-  at your base" ticks only when the tank is full on that base (about 6 to
-  10 seconds from the low start), so the 2B popup does not pull the player
-  off the base half way. The popup and
-  status line say to STOP on the base and wait; the panel says "STOP on the
-  base: wait" while the tank moves on a friendly base, then "Refilling:
-  wait here", then "Full".
+- **2A refill is not enforced (changed 2026-10-10, item 21, Andrew: "I
+  want to tell them to do it, but don't want it enforced"):** the telling
+  stays: the `s2a` popup, the `s2stay` popup the moment the tank reaches
+  the 2A base, the 2A status line ("Drive onto the green-marked base, then
+  STOP on it and wait while it refills.") and the green marker on 2A.
+  "Refill at your base" ticks on the first of: the tank is full on the 2A
+  base; the tank drives off the 2A base after being on it (`S.on_2a`); any
+  later Station 2 goal ticks (2B taken, 2C shot or taken). So nothing waits
+  on a full tank: the player may stop half way, or skip the base and take
+  2B first, and the station goes on. The 2B popup, the 2B marker and
+  status line, the 2C goals and "Station 2 done" follow from the tick as
+  before.
+  **Why this shape and not a "suggested" row:** the status line and marker
+  name the first unticked row. A row that never has to tick would keep the
+  status line on "STOP and wait" while the player took 2B. Ticking on
+  leaving the base keeps the telling while the tank is there and moves on
+  the moment the player does.
+  The panel still says "STOP on the base: wait" while the tank moves on a
+  friendly base, then "Refilling: wait here", then "Full". The 5-shell
+  start (see "First-entry fill") ends when 2A ticks, so a later respawn in
+  Station 2 is full. The low-shells status line ("Low on shells") still
+  waits until 2A is ticked, so it does not cover the 2A line.
 - **2C shot count** comes from the rules: `base_shots(armour)` is the
   shells to bring the base down to `base_capture_armour`; 17 from full
   classic. The status line counts the shots left.
+- **"Enemy base: N shots left" waits for 2B (2026-10-10, item 23):** the
+  panel's yellow info line for the 2C base shows only once "Take the
+  neutral base" is ticked (`S.done[2].b_take`), and not after 2C is shot
+  empty. Before 2B the line is not drawn at all. *Why:* Andrew: it should
+  "only appear once you've taken the neutral base"; before that the enemy
+  base is not the goal.
+- **Neutral, not grey (2026-10-10, item 22):** player text calls the 2B
+  base neutral. The `s2b` popup is exactly "Neutral bases don't have red or
+  green and can be claimed by driving over them."; the row is "Take the
+  neutral base"; the 2B status line is "Drive onto the neutral base to make
+  it yours." The marker colour on 2B is still the "grey" draw colour.
+- **No "the panel" in player text (2026-10-10, item 24):** Andrew: the
+  panel is self-evident and naming it is odd. Gone: "The panel says Full
+  when your tank is full." (`s2stay`) and "The panel counts the shots
+  left." (`s2c`). No other popup, status or announce line names the panel.
+- **`s2d` wording (2026-10-10, item 25):** it opens "What your tank spawns
+  with depends on game type." and ends "Tournament modes have a clear win
+  condition: Once one team owns all the bases, they win, because the enemy
+  team can't get any ammo." The Open / Tournament / Strict lines between
+  are unchanged.
 
 ### Re-arming
 

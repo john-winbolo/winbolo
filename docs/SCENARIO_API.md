@@ -2061,11 +2061,9 @@ replaces that one and starts its time again. An empty line takes them all
 away. Lines are drawn in the order they arrived, and a line that would overlap
 one already drawn drops to just below it, so the newest is lowest.
 
-**Line breaks.** A status line or an announcement may hold `"
-"`. Each part
+**Line breaks.** A status line or an announcement may hold `"\n"`. Each part
 is drawn on its own row, centred in one box, and the countdown of a status
-line goes after the last row. The byte limits count the `"
-"` as one byte.
+line goes after the last row. The byte limits count the `"\n"` as one byte.
 
 **Key tokens.** A status line or an announcement may carry the popup key
 tokens: `{ACCEL}`, `{BRAKE}`, `{LEFT}`, `{RIGHT}`, `{FIRE}`, `{MINE}`,

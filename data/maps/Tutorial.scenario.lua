@@ -8,7 +8,7 @@
 --
 --   1  Driving      terrain patches beside the road and their speeds;
 --                   done after three of the five
---   2  Bases        2A your base (stop and refill), 2B a grey base (take
+--   2  Bases        2A your base (stop and refill), 2B a neutral base (take
 --                   it), 2C an enemy base (shoot it empty, take it); then
 --                   the game types
 --   3  Building     harvest, road, wall, mine, shoot down a wall
@@ -23,10 +23,11 @@
 --
 -- CHECKPOINTS. The furthest station the player has driven into is the
 -- checkpoint: on_choose_start puts every respawn there, and spawn_loadout
--- gives the tank that station's loadout. Each checkpoint is a one-square
--- deep-water pocket just west of the main road: the tank respawns on its
--- boat facing east and drives out on a short road that merges into the
--- main road heading north.
+-- gives the tank that station's loadout. Each checkpoint is the centre of
+-- a walled 3x3 deep-water pool: the tank respawns on its boat facing north
+-- and drives out on a road from the pool's north edge that merges into the
+-- main road. Station 1's pool is at the main road's south end; Stations 2
+-- to 6 have theirs just west of the main road.
 --
 -- RE-ARMING. Nothing has to be reset by hand: once a second the station
 -- the player is in puts back whatever a goal still needs while that goal
@@ -84,16 +85,16 @@ local LAYOUT = {
     b7_sw2 = { n = 15, x = 118, y = 51 },
   },
   start = {
-    cp1 = { n = 1, x = 123, y = 226 },
-    cp2 = { n = 2, x = 123, y = 200 },
-    cp3 = { n = 3, x = 123, y = 177 },
-    cp4 = { n = 4, x = 123, y = 156 },
+    cp1 = { n = 1, x = 127, y = 226 },
+    cp2 = { n = 2, x = 123, y = 199 },
+    cp3 = { n = 3, x = 123, y = 176 },
+    cp4 = { n = 4, x = 123, y = 155 },
     bot5a = { n = 5, x = 140, y = 117 },
-    cp5 = { n = 6, x = 123, y = 125 },
+    cp5 = { n = 6, x = 123, y = 124 },
     bot6 = { n = 7, x = 134, y = 80 },
-    cp6 = { n = 8, x = 123, y = 90 },
+    cp6 = { n = 8, x = 123, y = 89 },
     bot7 = { n = 9, x = 142, y = 32 },
-    cp7 = { n = 10, x = 112, y = 52 },
+    cp7 = { n = 10, x = 112, y = 51 },
   },
   point = {
     bot6_park = { 131, 80 },
@@ -128,7 +129,7 @@ local LAYOUT = {
     s3 = { x = 97, y = 161, w = 59, h = 18 },
     s4 = { x = 97, y = 130, w = 59, h = 28 },
     s5 = { x = 97, y = 95, w = 59, h = 32 },
-    s5b = { x = 97, y = 95, w = 28, h = 28 },
+    s5b = { x = 97, y = 95, w = 26, h = 28 },
     s6 = { x = 97, y = 72, w = 59, h = 20 },
     s7 = { x = 97, y = 25, w = 59, h = 47 },
     t5b_park = { x = 117, y = 108, w = 1, h = 1 },
@@ -136,7 +137,7 @@ local LAYOUT = {
   },
   walls5b = { {106,112}, {107,112}, {106,113}, {108,113}, {106,114}, {107,114}, {106,115}, {108,115}, {106,116}, {108,116}, {110,112}, {111,112}, {112,112}, {110,113}, {110,114}, {111,114}, {110,115}, {110,116}, {111,116}, {112,116}, {115,112}, {116,112}, {114,113}, {115,114}, {116,115}, {114,116}, {115,116}, {118,112}, {119,112}, {120,112}, {118,113}, {118,114}, {119,114}, {118,115}, {118,116}, {119,116}, {120,116}, {122,112}, {123,112}, {124,112}, {123,113}, {123,114}, {123,115}, {123,116}, {113,118}, {114,118}, {115,118}, {116,118}, {117,118}, {113,119}, {113,120}, {113,121}, {114,121}, {115,121}, {116,121}, {117,121} },
   walls7 = { {108,55}, {109,55}, {108,56}, {110,56}, {108,57}, {109,57}, {108,58}, {110,58}, {108,59}, {110,59}, {112,55}, {113,55}, {114,55}, {112,56}, {112,57}, {113,57}, {112,58}, {112,59}, {113,59}, {114,59}, {117,55}, {118,55}, {116,56}, {117,57}, {118,58}, {116,59}, {117,59}, {120,55}, {121,55}, {122,55}, {120,56}, {120,57}, {121,57}, {120,58}, {120,59}, {121,59}, {122,59}, {124,55}, {125,55}, {126,55}, {125,56}, {125,57}, {125,58}, {125,59}, {115,61}, {116,61}, {117,61}, {118,61}, {119,61}, {115,62}, {115,63}, {115,64}, {116,64}, {117,64}, {118,64}, {119,64} },
-  arrow_reset5b = { {119,123}, {120,122}, {120,124}, {121,123}, {122,123} },
+  arrow_reset5b = { {117,123}, {118,122}, {118,124}, {119,123}, {120,123} },
   arrow_reset7 = { {121,66}, {122,65}, {122,67}, {123,66}, {124,66} },
   grove3 = { 118, 164, 124, 172 },
 }
@@ -215,6 +216,7 @@ local S = {
   sec      = 0,       -- whole seconds since the start
   last_pos = nil,     -- world position at the last poll
   moving   = false,
+  on_2a    = false,   -- Station 2: the tank has been on the 2A base
   hide     = 0,       -- Station 4: seconds hidden in the forest in range
   told_hide = -100,   -- Station 4: the second "hide first" was last said
   men      = 0,       -- Station 6: men killed
@@ -272,23 +274,23 @@ local POP = {
     .. "Drive onto your base at the green marker. Then STOP on the base and "
     .. "wait while it refills.",
   s2stay = "This is your base. Stay on it and do not move: your shells, "
-    .. "mines and armour flow in a little at a time.\n\n"
-    .. "The panel says Full when your tank is full.",
-  s2b = "Grey bases belong to nobody. Drive onto one to make it yours.",
+    .. "mines and armour flow in a little at a time.",
+  s2b = "Neutral bases don't have red or green and can be claimed by "
+    .. "driving over them.",
   s2c = function()
     return string.format("Enemy bases must be shot empty first. A full one "
-      .. "takes %d shots: aim at it and fire with {FIRE}. The panel counts "
-      .. "the shots left. Then drive over it to make it yours.",
+      .. "takes %d shots: aim at it and fire with {FIRE}. Then drive over "
+      .. "it to make it yours.",
       base_shots(rule("base_full_armour")))
   end,
-  s2d = "Bases are your supply line, and what you respawn with depends on "
-    .. "the game type.\n\n"
+  s2d = "What your tank spawns with depends on game type.\n\n"
     .. "Open: tanks always respawn fully loaded.\n\n"
     .. "Tournament: the more bases are taken, the fewer shells a tank "
     .. "respawns with; once all bases are taken, tanks respawn without "
     .. "shells.\n\n"
     .. "Strict tournament: tanks never respawn with shells.\n\n"
-    .. "A team that takes every base wins, because the enemy can't refuel.",
+    .. "Tournament modes have a clear win condition: Once one team owns all "
+    .. "the bases, they win, because the enemy team can't get any ammo.",
   s3 = "Your man harvests trees, then uses them to build roads, walls, "
     .. "mines and pillboxes. Click a build button, or press its key: "
     .. "{QUICK_TREE} trees, {QUICK_ROAD} road, {QUICK_WALL} wall, "
@@ -305,8 +307,7 @@ local POP = {
     .. "Forests hide tanks from both other tanks and pillboxes. Drive into "
     .. "the forest inside the markers and sit still. Firing reveals your "
     .. "position.",
-  s4c = "This pillbox is already badly damaged: two more shots kill it, "
-    .. "and it shoots back.\n\n"
+  s4c = "This pillbox is already badly damaged: two more shots kill it.\n\n"
     .. "Your tank is full. Kill it, then drive over it to pick it up.",
   s5a = "Stop on the green square at the end of the short road east of "
     .. "the main road, and watch the friendly bot on the walled island take "
@@ -353,7 +354,7 @@ local LIST = {
     { "crater", "Craters" },
     { "river", "Shallow river" } },
   { { "a_refill", "Refill at your base" },
-    { "b_take", "Take the grey base" },
+    { "b_take", "Take the neutral base" },
     { "c_shoot", "Shoot enemy base empty" },
     { "c_take", "Drive over it" } },
   { { "harvest", "Harvest a tree" },
@@ -392,7 +393,7 @@ local STEP = {
   [2] = {
     a_refill = "Drive onto the green-marked base, then STOP\non it and wait "
       .. "while it refills.",
-    b_take = "Drive onto the grey base to make it yours.",
+    b_take = "Drive onto the neutral base to make it yours.",
     c_shoot = function()
       local b = game.base(B.b2c.n)
       local left = b and base_shots(b.armour) or 0
@@ -406,8 +407,8 @@ local STEP = {
       .. "forest square in the marked grove.",
     road = "Click the road button or press {QUICK_ROAD},\nthen click a grass "
       .. "square.",
-    wall = "Click the wall button or press {QUICK_WALL},\nthen click a grass "
-      .. "square.",
+    wall = "Build a wall: Click on the wall button\nor press {QUICK_WALL}, "
+      .. "then click a grass square.",
     mine = "Click the mine button or press {QUICK_MINE},\nthen click a "
       .. "square to lay a mine.",
     shoot = "Shoot the marked wall with {FIRE}\nuntil it falls.",
@@ -767,7 +768,10 @@ local function station_info(n, t)
     return string.format("On %s: speed %d", word, rule(r))
   elseif n == 2 then
     local b = game.base(B.b2c.n)
-    if b ~= nil and b.owner ~= S.player and not S.done[2].c_shoot then
+    -- Only once the neutral base is taken: until then the enemy base is
+    -- not the goal yet.
+    if b ~= nil and b.owner ~= S.player and S.done[2].b_take and
+       not S.done[2].c_shoot then
       return string.format("Enemy base: %d shots left", base_shots(b.armour))
     end
   elseif n == 3 then
@@ -897,7 +901,7 @@ local function goal_markers(n)
       m = { { math.floor((gr[1] + gr[3]) / 2), math.floor((gr[2] + gr[4]) / 2),
               "green" } }
     elseif g == "shoot" then
-      m = { { PT.wall3[1], PT.wall3[2], "yellow" } }
+      m = { { PT.wall3[1], PT.wall3[2], "green" } }
     end
   elseif n == 4 then
     if g == "a_pick" then m = { { P.p4a.x, P.p4a.y, "yellow" } }
@@ -1785,10 +1789,20 @@ local function poll()
     local item = TERRAIN_ITEM[word or ""]
     if item ~= nil and not t.boat then mark(1, item) end
   elseif n == 2 then
-    -- Arriving on the base says to stay there; a full tank on it ticks 2A.
-    if t.mx == B.b2a.x and t.my == B.b2a.y and not S.done[2].a_refill then
-      show("s2stay")
-      if tank_full(t) then mark(2, "a_refill") end
+    -- Arriving on the base says to stay there. 2A is told, not enforced:
+    -- it ticks when the tank is full on the base, when the tank drives off
+    -- the base, or when any later Station 2 goal ticks, so it never holds
+    -- anything up. See docs/TUTORIAL_DECISIONS.md, "2A refill is not
+    -- enforced".
+    if not S.done[2].a_refill then
+      local d = S.done[2]
+      if t.mx == B.b2a.x and t.my == B.b2a.y then
+        show("s2stay")
+        S.on_2a = true
+        if tank_full(t) then mark(2, "a_refill") end
+      elseif S.on_2a or d.b_take or d.c_shoot or d.c_take then
+        mark(2, "a_refill")
+      end
     end
     local b = game.base(B.b2c.n)
     if b ~= nil and b.owner ~= S.player and
