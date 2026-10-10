@@ -174,7 +174,7 @@ scenario = {
     on_pill_captured = "Ticks off taking an enemy pillbox in Station 7.",
     on_base_captured = "Ticks off taking bases, and wins the tutorial when you own every base in Station 7.",
     can_build = "Keeps each bot's builder inside its own station, and stops boats in Station 5.",
-    can_hit = "Shells pass between you and the two demo bots.",
+    can_hit = "Tank shells pass between you and the two demo bots.",
     can_die = "The parked Station 6 tank cannot be destroyed.",
     on_choose_start = "You respawn at the furthest station you have reached.",
     spawn_loadout = "You respawn with the tank that station starts you with.",
@@ -203,6 +203,7 @@ local S = {
   men      = 0,       -- Station 6: men killed
   t5a_reset_at = 0,   -- Station 5A: the second of the last reset
   t5b_restore = false,  -- Station 5B: a restore of E is waiting
+  sw       = {},      -- Station 7: dead pillboxes picked up
   won      = false,
   panel_key = nil,
   markers  = 0,       -- how many marker ids are in use
@@ -228,8 +229,7 @@ local POP = {
     .. "A team that takes every base wins, because the enemy can't refuel.",
   s3 = "Your man harvests trees, then uses them to build roads, walls, "
     .. "mines and pillboxes. Quick keys: {QUICK_TREE} trees, {QUICK_ROAD} "
-    .. "road, {QUICK_WALL} wall, {QUICK_MINE} mine. Pillboxes come later.\n\n"
-    .. "The wall to the east takes 5 shots to knock down.",
+    .. "road, {QUICK_WALL} wall, {QUICK_MINE} mine. Pillboxes come later.",
   s4a = "Games start with neutral pillboxes, and each takes 15 shots to "
     .. "kill.\n\n"
     .. "Drive over the dead pillbox here to pick it up, then build it "
@@ -247,7 +247,7 @@ local POP = {
     .. "the bot. Drive into RESET to start over.",
   s6 = "Shoot or run over an enemy man to kill him. Then his tank can't "
     .. "build until a new man arrives.\n\n"
-    .. "The road square in the north-west takes you to the last station.",
+    .. "The cyan mark in the north-west takes you to the last station.",
   s7 = "Use your pillboxes to take the enemy's land, and steal their bases "
     .. "like in Station 2. You win when you own every base. Drive into "
     .. "RESET to start over.\n\n"
@@ -662,6 +662,7 @@ local function reset_station(n)
     for _, k in ipairs(PILLS7) do reset_pill(k) end
     for _, k in ipairs(BASES7) do reset_base(k) end
     rebuild_walls(LAYOUT.walls7)
+    S.sw = {}
     if S.bot7 ~= nil then
       local t = game.tank(S.bot7)
       if t ~= nil and not t.dead then
@@ -984,11 +985,10 @@ function on_pill_picked_up(n, p, scripted)
       end)
     end
   elseif name == "p7_sw1" or name == "p7_sw2" then
-    local a = game.pill(P.p7_sw1.n)
-    local b = game.pill(P.p7_sw2.n)
-    if a ~= nil and b ~= nil and a.in_tank and b.in_tank then
-      mark(7, "dead")
-    end
+    -- Each counts once picked up, so building the first before picking up
+    -- the second still ticks the item.
+    S.sw[name] = true
+    if S.sw.p7_sw1 and S.sw.p7_sw2 then mark(7, "dead") end
   end
 end
 
@@ -1060,19 +1060,12 @@ function can_build(p, action, x, y, n)
   return nil
 end
 
-local function shell_side(attacker, pill)
-  if pill ~= nil then
-    local pb = game.pill(pill)
-    return pb and pb.owner or game.NEUTRAL
-  end
-  return attacker
-end
-
+-- Only tank shells are filtered. A pillbox shoots as it always does, so the
+-- Station 6 bot's pillbox in Station 5B is a real enemy pillbox.
 function can_hit(attacker, kind, n, pill)
-  if kind ~= "tank" or S.player == nil then return nil end
-  local from = shell_side(attacker, pill)
-  if (from == S.player and is_demo_bot(n)) or
-     (n == S.player and is_demo_bot(from)) then
+  if kind ~= "tank" or pill ~= nil or S.player == nil then return nil end
+  if (attacker == S.player and is_demo_bot(n)) or
+     (n == S.player and is_demo_bot(attacker)) then
     return false
   end
   return nil

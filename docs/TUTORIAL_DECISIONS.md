@@ -148,8 +148,9 @@ and how to undo it.
   until then it still reads as held. Any other bot on the field at the
   start is removed so it cannot wander through the stations.
   *Undo:* the `lobby` table and `field_bot`.
-- **Demo bots and the player cannot hurt each other** (`can_hit`, both
-  ways, the player's own pillboxes included), and the demo bots get
+- **Demo bots and the player cannot hurt each other with tank shells**
+  (`can_hit`, both ways). Pillbox shells are not filtered, so the Station 6
+  bot's pillbox in Station 5B is a real enemy pillbox. The demo bots get
   GoalHunter's `peace=<player seat>` init token so they do not chase the
   player. The Station 7 bot is a normal Easy bot with no peace.
 - **Builders are kept in their stations** with `can_build`: the Station 6
@@ -210,3 +211,21 @@ and how to undo it.
 - **Station 1's live line** shows the terrain under the tank and its speed
   rule; "Try 3 terrains" counts three of the five patch terrains (forest,
   swamp, rubble, crater, river).
+- **The Station 2 game-type popup** says a little more than the brief for
+  Tournament: "the more bases are taken, the fewer shells a tank respawns
+  with; once all bases are taken, tanks respawn without shells". *Why:*
+  `gameTypeGetItems` gives 2 x 40 x (neutral bases / bases) shells, so the
+  drop is gradual, and the short form alone reads as all or nothing.
+  *Undo:* cut the first clause in `POP.s2d`.
+- **Entry popups** are kept short. Station 3, 4A and 4B carry more than two
+  lines because the brief asks for that content; the Station 3 wall count
+  is on the panel, not in the popup. The Station 6 popup adds one line
+  pointing at the cyan mark on the gate to Station 7.
+- **"Pick up both dead pills"** counts each Station 7 dead pillbox once it
+  has been picked up, so building the first one before picking up the
+  second still ticks the item.
+- **Gate arenas use `set_modifiers{speed = 1, turn = 1}`** to hold the
+  player's seat (a GoalHunter in the gate) still, and teleport it about.
+  The Station 2 steal is not covered by an arena: a teleport onto an enemy
+  base square did not take the base in a probe, and a held-still tank
+  cannot drive onto it.
