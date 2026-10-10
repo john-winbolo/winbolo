@@ -53,16 +53,16 @@ local LAYOUT = {
   pill = {
     p4a = { n = 1, x = 122, y = 149, armour = 0 },
     p4 = { n = 2, x = 138, y = 141, armour = 15 },
-    t5a_target = { n = 3, x = 147, y = 101, armour = 15 },
-    t5a_blocker = { n = 4, x = 147, y = 102, armour = 0 },
+    t5a_target = { n = 3, x = 137, y = 105, armour = 15 },
+    t5a_blocker = { n = 4, x = 137, y = 106, armour = 0 },
     t5b_target = { n = 5, x = 117, y = 101, armour = 15 },
     t5b_blocker = { n = 6, x = 117, y = 102, armour = 0 },
     p7_nw1 = { n = 7, x = 122, y = 39, armour = 15 },
     p7_nw2 = { n = 8, x = 120, y = 41, armour = 15 },
     p7_se1 = { n = 9, x = 134, y = 55, armour = 15 },
     p7_se2 = { n = 10, x = 136, y = 53, armour = 15 },
-    p7_sw1 = { n = 11, x = 116, y = 51, armour = 0 },
-    p7_sw2 = { n = 12, x = 116, y = 54, armour = 0 },
+    p7_sw1 = { n = 11, x = 127, y = 70, armour = 0 },
+    p7_sw2 = { n = 12, x = 127, y = 68, armour = 0 },
   },
   base = {
     b2a = { n = 1, x = 123, y = 194 },
@@ -86,7 +86,7 @@ local LAYOUT = {
     cp2 = { n = 2, x = 127, y = 199 },
     cp3 = { n = 3, x = 127, y = 176 },
     cp4 = { n = 4, x = 127, y = 155 },
-    bot5a = { n = 5, x = 152, y = 116 },
+    bot5a = { n = 5, x = 140, y = 117 },
     cp5 = { n = 6, x = 127, y = 124 },
     bot6 = { n = 7, x = 134, y = 80 },
     cp6 = { n = 8, x = 127, y = 89 },
@@ -97,26 +97,27 @@ local LAYOUT = {
     bot6_park = { 131, 80 },
     p4 = { 138, 141 },
     s7_arrive = { 127, 63 },
-    t5a_blocker = { 147, 102 },
-    t5a_home = { 147, 114 },
-    t5a_target = { 147, 101 },
+    t5a_blocker = { 137, 106 },
+    t5a_home = { 136, 115 },
+    t5a_target = { 137, 105 },
     t5b_blocker = { 117, 102 },
-    t5b_park = { 119, 104 },
+    t5b_park = { 117, 108 },
     t5b_target = { 117, 101 },
-    tree6 = { 121, 80 },
+    tree6 = { 115, 80 },
     wall3 = { 133, 168 },
+    watch5a = { 131, 111 },
   },
   region = {
     b2a_area = { x = 121, y = 193, w = 5, h = 3 },
     b2b_area = { x = 129, y = 188, w = 5, h = 3 },
     b2c_area = { x = 121, y = 184, w = 5, h = 3 },
-    craters6 = { x = 123, y = 80, w = 2, h = 1 },
+    craters6 = { x = 121, y = 80, w = 4, h = 1 },
     grove3 = { x = 118, y = 164, w = 7, h = 9 },
-    island5a = { x = 140, y = 99, w = 14, h = 19 },
+    island5a = { x = 135, y = 104, w = 6, h = 14 },
     island7 = { x = 107, y = 27, w = 43, h = 41 },
     p4_clearing = { x = 136, y = 139, w = 5, h = 5 },
     p4a_area = { x = 119, y = 146, w = 7, h = 7 },
-    path6 = { x = 122, y = 80, w = 10, h = 1 },
+    path6 = { x = 116, y = 80, w = 16, h = 1 },
     quarter_ne = { x = 129, y = 27, w = 21, h = 20 },
     reset5b = { x = 114, y = 119, w = 3, h = 2 },
     reset7 = { x = 116, y = 62, w = 3, h = 2 },
@@ -128,8 +129,8 @@ local LAYOUT = {
     s5b = { x = 97, y = 95, w = 28, h = 32 },
     s6 = { x = 97, y = 72, w = 59, h = 20 },
     s7 = { x = 97, y = 25, w = 59, h = 47 },
-    t5b_park = { x = 119, y = 104, w = 1, h = 1 },
-    watch5a = { x = 129, y = 98, w = 6, h = 21 },
+    t5b_park = { x = 117, y = 108, w = 1, h = 1 },
+    watch5a = { x = 129, y = 111, w = 3, h = 1 },
   },
   walls5b = { {106,112}, {107,112}, {106,113}, {108,113}, {106,114}, {107,114}, {106,115}, {108,115}, {106,116}, {108,116}, {110,112}, {111,112}, {112,112}, {110,113}, {110,114}, {111,114}, {110,115}, {110,116}, {111,116}, {112,116}, {115,112}, {116,112}, {114,113}, {115,114}, {116,115}, {114,116}, {115,116}, {118,112}, {119,112}, {120,112}, {118,113}, {118,114}, {119,114}, {118,115}, {118,116}, {119,116}, {120,116}, {122,112}, {123,112}, {124,112}, {123,113}, {123,114}, {123,115}, {123,116}, {113,118}, {114,118}, {115,118}, {116,118}, {117,118}, {113,119}, {113,120}, {113,121}, {114,121}, {115,121}, {116,121}, {117,121} },
   walls7 = { {108,55}, {109,55}, {108,56}, {110,56}, {108,57}, {109,57}, {108,58}, {110,58}, {108,59}, {110,59}, {112,55}, {113,55}, {114,55}, {112,56}, {112,57}, {113,57}, {112,58}, {112,59}, {113,59}, {114,59}, {117,55}, {118,55}, {116,56}, {117,57}, {118,58}, {116,59}, {117,59}, {120,55}, {121,55}, {122,55}, {120,56}, {120,57}, {121,57}, {120,58}, {120,59}, {121,59}, {122,59}, {124,55}, {125,55}, {126,55}, {125,56}, {125,57}, {125,58}, {125,59}, {115,61}, {116,61}, {117,61}, {118,61}, {119,61}, {115,62}, {115,63}, {115,64}, {116,64}, {117,64}, {118,64}, {119,64} },
@@ -170,23 +171,24 @@ scenario = {
   callbacks = {
     on_start = "Hands out the bases and pillboxes and picks the bots' seats.",
     on_player_join = "Sets the tutorial up for a player who joins after the round has started.",
-    on_tick = "Ticks off the checklist, draws the panel, markers and status line, puts back what a goal needs, and runs the bots' loops.",
-    on_enter_region = "Shows each station's popup, fields its bot the first time you arrive, moves your checkpoint, and runs the RESET pens.",
-    on_tank_spawned = "Parks the Station 6 bot and gives each bot what it carries.",
+    on_tick = "Ticks off goals, draws the panel, markers and status line, puts back what a goal needs, and runs the bots.",
+    on_enter_region = "Shows each station's popup, fields its bot, moves your checkpoint, and runs the RESET pens.",
+    on_tank_spawned = "Parks the Station 6 bot, arms each bot, and hands you your 5B pillbox.",
     on_tank_hit = "Notices when the Station 4 pillbox shoots you while you hide.",
     on_built = "Ticks off harvesting, roads and walls in Station 3.",
     on_mine_laid = "Ticks off laying a mine in Station 3.",
-    on_lgm_died = "Counts the men you kill in Station 6, and lands every new man a couple of squares from his tank.",
+    on_lgm_died = "Counts the men you kill in Station 6 and lands each new man near his tank.",
     on_pill_picked_up = "Ticks off pillbox pick-ups and starts the Station 5 takes again.",
-    on_pill_placed = "Ticks off building a pillbox, puts a Station 5 blocker on its square, and sends a pillbox taken out of its station back home.",
+    on_pill_placed = "Ticks off building a pillbox, moves a Station 5 blocker to its square, and sends a stray pillbox home.",
+    on_pill_killed = "Rebuilds your Station 5B blocking pillbox 2 seconds after it dies.",
     on_base_captured = "Ticks off taking bases, and finishes the tutorial when you own every base in Station 7.",
     can_build = "Keeps each bot's builder inside its own station, and stops boats in Station 5.",
     can_capture = "The Station 5A bot takes only its own two pillboxes.",
-    can_hit = "Tank shells pass between you and the two demo bots.",
+    can_hit = "Tank shells pass between you and the demo bots; yours pass your 5B pillbox; the 5A pillboxes' pass you.",
     can_die = "The parked Station 6 tank cannot be destroyed, the Station 4 pillbox cannot be killed before you have hidden, and the Station 7 bot cannot kill your man.",
     on_choose_start = "You respawn at the furthest station you have reached.",
     spawn_loadout = "You respawn with the tank that station starts you with.",
-    allow_base_win = "Owning every base on the map does not end the round; Station 7 has its own win, and the round goes on after it.",
+    allow_base_win = "Owning every base does not end the round; Station 7 has its own win.",
   },
 }
 
@@ -217,6 +219,7 @@ local S = {
   t5a_reset_at = 0,   -- Station 5A: the second of the last reset
   t5b_restore = false,  -- Station 5B: a restore of the target is waiting
   b5b_dead_at = nil,  -- Station 5B: the second the player's blocker died
+  out5     = 0,       -- polls in a row the player's tank was outside Station 5
   sw       = {},      -- Station 7: dead pillboxes picked up
   won      = false,
   panel_key = nil,
@@ -302,21 +305,24 @@ local POP = {
   s4c = "This pillbox is already badly damaged: two more shots kill it, "
     .. "and it shoots back.\n\n"
     .. "Your tank is full. Kill it, then drive over it to pick it up.",
-  s5a = "Watch the friendly bot on the island take a pillbox. It builds its "
-    .. "own pillbox right next to the enemy one and parks behind it, so the "
-    .. "enemy's shots hit its pillbox, not its tank. Then it shoots the "
-    .. "enemy pillbox dead and drives over it.",
-  s5b = "Your turn: you carry a pillbox. Build your pillbox right next to "
-    .. "theirs, on the green marker, then shoot from behind yours: park on "
-    .. "the next green marker and fire. Your pillbox rebuilds itself if it "
-    .. "dies. Drive into the RESET pen to start over.",
+  s5a = "Stop on the green square at the end of the short road east of "
+    .. "the main road, and watch the friendly bot on the walled island take "
+    .. "a pillbox. It builds its own pillbox right next to the enemy one and "
+    .. "parks behind it, so the enemy's shots hit its pillbox, not its tank. "
+    .. "Then it shoots the enemy pillbox dead and drives over it.",
+  s5b = "Your turn: you carry a pillbox. Build your pillbox at the marked "
+    .. "green square, right next to theirs. Then stop at the road tile "
+    .. "highlighted and aim at the enemy pillbox: fire until it dies. Your "
+    .. "pillbox takes its shots, and is rebuilt if it dies. Drive into the "
+    .. "RESET pen to start over.",
   s6 = "Kill an enemy man and his tank cannot build until a new man "
     .. "arrives. You cannot run a man over: only shells, mines and "
     .. "explosions kill him.\n\n"
     .. "A shell bursts at your crosshair and kills a man within half a "
     .. "square. {GUN_DOWN} brings the crosshair in, {GUN_UP} moves it out. "
-    .. "He always crosses the craters: put your crosshair there and keep "
-    .. "firing as he crosses.",
+    .. "For this tutorial, a bot has been programmed to send the man out "
+    .. "across the craters. Put your crosshair there and keep firing as he "
+    .. "crosses.",
   s6gun = "Got him! Now press {GUN_UP} until your crosshair is back at its "
     .. "longest range, ready for the next station.",
   s7 = "The final round, against an Easy bot. You hold three corners of "
@@ -324,8 +330,9 @@ local POP = {
     .. "your pillboxes, then steal its bases as you did in Station 2. You "
     .. "win when you own every base. Drive into the RESET pen to start "
     .. "over.\n\n"
-    .. "First, drive over the dead pillboxes by your start to put them in "
-    .. "your tank.",
+    .. "First, drive over the two dead pillboxes on the road in to put them "
+    .. "in your tank. Build your pillboxes near the border between your "
+    .. "land and theirs to take control.",
   win = "Well done: you own every base, and the tutorial is complete.\n\n"
     .. "Drive about as long as you like. Leave from the menu when you are "
     .. "ready, then try a game against Easy bots.",
@@ -358,8 +365,8 @@ local LIST = {
     { "c_kill", "Kill the pillbox" },
     { "c_pick", "Pick the pillbox up" } },
   { { "a_watch", "Watch the bot take one" },
-    { "b_build", "Build yours beside theirs" },
-    { "b_park", "Park behind yours" },
+    { "b_build", "Build on the green square" },
+    { "b_park", "Park on the road square" },
     { "b_kill", "Kill the enemy pill" },
     { "b_pick", "Pick it up" } },
   { { "kill", "Shoot the man" } },
@@ -372,59 +379,67 @@ local LIST = {
 -- Station 1 is done after this many of its five terrains.
 local TERRAINS_NEEDED = 3
 
--- The status line for each goal: what to do next, in one short line. A
--- function is called for a line with a live number in it.
-local PILL_BUILD = "Press the pillbox build button or {QUICK_PILL}, then "
+-- The status line for each goal: what to do next. A function is called for
+-- a line with a live number in it. A line too wide for the game view at a
+-- 1280-wide window (about 390 of the client's layout units, with the longest
+-- controller button words in) is split in two with "\n"; the client draws
+-- each row centred. See docs/TUTORIAL_DECISIONS.md, "Status line width".
+local PILL_BUILD = "Press the pillbox button or {QUICK_PILL},\nthen "
 local STEP = {
   [2] = {
-    a_refill = "Drive onto the green-marked base, then STOP on it and wait "
+    a_refill = "Drive onto the green-marked base, then STOP\non it and wait "
       .. "while it refills.",
     b_take = "Drive onto the grey base to make it yours.",
     c_shoot = function()
       local b = game.base(B.b2c.n)
       local left = b and base_shots(b.armour) or 0
-      return string.format("Shoot the red-marked base with {FIRE}: %d shot%s "
-        .. "left.", left, left == 1 and "" or "s")
+      return string.format("Shoot the red-marked base with {FIRE}:\n%d "
+        .. "shot%s left.", left, left == 1 and "" or "s")
     end,
     c_take = "The base is empty. Drive onto it to make it yours.",
   },
   [3] = {
-    harvest = "Click the tree button or press {QUICK_TREE}, then click a "
+    harvest = "Click the tree button or press {QUICK_TREE},\nthen click a "
       .. "forest square in the marked grove.",
-    road = "Click the road button or press {QUICK_ROAD}, then click a grass "
+    road = "Click the road button or press {QUICK_ROAD},\nthen click a grass "
       .. "square.",
-    wall = "Click the wall button or press {QUICK_WALL}, then click a grass "
+    wall = "Click the wall button or press {QUICK_WALL},\nthen click a grass "
       .. "square.",
-    mine = "Click the mine button or press {QUICK_MINE}, then click a "
+    mine = "Click the mine button or press {QUICK_MINE},\nthen click a "
       .. "square to lay a mine.",
-    shoot = "Shoot the marked wall with {FIRE} until it falls.",
+    shoot = "Shoot the marked wall with {FIRE}\nuntil it falls.",
   },
   [4] = {
     a_pick = "Drive over the dead pillbox to put it in your tank.",
     a_build = PILL_BUILD .. "click on the map to build it.",
     b_in = "Drive into the forest inside the red markers.",
     b_hide = function()
-      return string.format("Sit still deep in the forest, in range. Hidden: "
+      return string.format("Sit still deep in the forest, in range.\nHidden: "
         .. "%d of 5 seconds.", math.floor(S.hide))
     end,
     c_kill = "Shoot the pillbox twice with {FIRE}.",
     c_pick = "Drive over the dead pillbox to pick it up.",
   },
   [5] = {
-    a_watch = "Watch the bot on the island take the pillbox.",
-    b_build = PILL_BUILD .. "click the green square beside their pillbox.",
-    b_park = "Park on the green square behind your pillbox.",
-    b_kill = "Shoot the enemy pillbox with {FIRE} until it dies.",
+    a_watch = "Stop on the green square east of the road\nand watch the bot "
+      .. "take the pillbox.",
+    b_build = "Build your pillbox at the marked green square.\n"
+      .. "Press the pillbox button or {QUICK_PILL},\nthen click the green "
+      .. "square.",
+    b_park = "Stop at the road tile highlighted\nand aim at the enemy "
+      .. "pillbox.",
+    b_kill = "Shoot the enemy pillbox with {FIRE}\nuntil it dies.",
     b_pick = "Drive over the dead pillbox to pick it up.",
   },
   [6] = {
-    kill = "Put your crosshair on the craters, then fire as the man crosses "
-      .. "them.",
+    kill = "Put your crosshair on the craters, then\nfire as the man "
+      .. "crosses them.",
   },
   [7] = {
-    dead = "Drive over both dead pillboxes by your start.",
-    build = PILL_BUILD .. "click in the bot's corner (north-east).",
-    base = "Shoot an enemy base empty with {FIRE}, then drive onto it.",
+    dead = "Drive over both dead pillboxes on the road in.",
+    build = "Build your pillboxes near the border, in the\nbot's land "
+      .. "(north-east), to take control.",
+    base = "Shoot an enemy base empty with {FIRE},\nthen drive onto it.",
     all = function()
       local mine = 0
       for _, k in ipairs({ "b7_ne1", "b7_ne2", "b7_nw1", "b7_nw2", "b7_se1",
@@ -436,10 +451,10 @@ local STEP = {
     end,
   },
 }
-local STEP_GUN = "Press {GUN_UP} until your crosshair is at its longest range."
-local STEP_SHELLS = "Low on shells? Stop on the base by the road to refill."
+local STEP_GUN = "Press {GUN_UP} until your crosshair\nis at its longest range."
+local STEP_SHELLS = "Low on shells? Stop on the base\nby the road to refill."
 local STEP_DONE = "Station done. Follow the road north."
-local STEP_WIN = "Tutorial complete. Leave from the menu when you are ready."
+local STEP_WIN = "Tutorial complete. Leave from the\nmenu when you are ready."
 
 local PILLS7 = { "p7_nw1", "p7_nw2", "p7_se1", "p7_se2", "p7_sw1", "p7_sw2" }
 local BASES7 = { "b7_ne1", "b7_ne2", "b7_nw1", "b7_nw2", "b7_se1", "b7_se2",
@@ -619,6 +634,19 @@ local function hand_pill(p, n)
     return true
   end
   return false
+end
+
+-- Station 5B: until the player has built it, the blocker pillbox is in the
+-- player's tank. Called the moment 5B becomes the goal, on every entry to
+-- Station 5 and on every spawn there, as well as by the once-a-second
+-- re-arm. A blocker already carried, or already built, is left alone.
+local function hand_5b()
+  if S.player == nil or S.done[5].b_build then return end
+  local n = P.t5b_blocker.n
+  local bl = game.pill(n)
+  if bl == nil then return end
+  if bl.in_tank and S.carrier[n] == S.player then return end
+  hand_pill(S.player, n)
 end
 
 -- ---------------------------------------------------------------------
@@ -849,8 +877,8 @@ local function range_ring()
 end
 
 -- The marker for the goal the player is on: one at a time, gone the moment
--- the goal ticks. Station 4B shows the pillbox's range as a ring. Stations
--- 5 and 7 also mark their RESET pen's pad.
+-- the goal ticks. Station 4B shows the pillbox's range as a ring. The RESET
+-- pens carry no marker: the pen, its walls and its arrow show it.
 local function goal_markers(n)
   local g = current_goal(n)
   local m = {}
@@ -877,7 +905,9 @@ local function goal_markers(n)
       m = { { P.p4.x, P.p4.y, "red" } }
     end
   elseif n == 5 then
-    if g == "a_watch" then m = { { P.t5a_target.x, P.t5a_target.y, "yellow" } }
+    if g == "a_watch" then
+      m = { { PT.watch5a[1], PT.watch5a[2], "green" },
+            { P.t5a_target.x, P.t5a_target.y, "yellow" } }
     elseif g == "b_build" then
       m = { { PT.t5b_blocker[1], PT.t5b_blocker[2], "green" } }
     elseif g == "b_park" then m = { { PT.t5b_park[1], PT.t5b_park[2], "green" } }
@@ -898,11 +928,6 @@ local function goal_markers(n)
         end
       end
     end
-  end
-  local pen = (n == 5 and "reset5b") or (n == 7 and "reset7") or nil
-  if pen ~= nil and #m < 16 then
-    local r = LAYOUT.region[pen]
-    m[#m + 1] = { r.x + 1, r.y, "cyan" }
   end
   return m
 end
@@ -935,7 +960,7 @@ local function status_text(t)
     for _, item in ipairs(LIST[1]) do
       if S.done[1][item[1]] then c = c + 1 end
     end
-    return string.format("Drive onto the patches beside the road: %d of %d "
+    return string.format("Drive onto the patches beside the road:\n%d of %d "
       .. "so far.", c, TERRAINS_NEEDED)
   end
   local g = current_goal(n)
@@ -970,11 +995,12 @@ local function mark(n, key)
   local was_done = station_done(n)
   S.done[n][key] = true
   game.sound("lobby_ready")
+  if n == 5 and key == "a_watch" then hand_5b() end
   -- A popup still waiting is shown now: the player has moved on.
   flush_popups(true)
   if not was_done and station_done(n) and n < 7 then
     local text = string.format("Station %d done. Follow the road north.", n)
-    if n == 4 then text = text .. " Shoot trees to clear the trees quickly." end
+    if n == 4 then text = text .. "\nShoot trees to clear the trees quickly." end
     game.announce(text, 4, S.player)
   end
   if S.at == n then
@@ -1025,7 +1051,14 @@ local function reserve_seats()
 end
 
 local function bot_init(role)
-  if role == "bot6" then
+  if role == "bot5a" then
+    -- The 5A demo bot builds its blocker only on a square orthogonally next
+    -- to the target, the take the player is taught in 5B. It is the
+    -- player's ally, so its ATTACK markers (bot pings) would reach the
+    -- player; they are off. (Its spoken goal lines, BOT_CHAT_DEFAULT, are
+    -- off by default.) A value is at most 63 bytes.
+    return { cfg = "BLOCKER_ORTHOGONAL_ONLY=true;cfg=BOT_PINGS_DEFAULT=false" }
+  elseif role == "bot6" then
     -- The Station 6 bot never fights: its man is the target.
     return { peace = tostring(S.player or "") }
   elseif role == "bot7" then
@@ -1055,6 +1088,24 @@ local function field(role)
   if type(q) ~= "number" then
     game.log("Tutorial: spawn of the " .. role .. " bot refused: "
              .. tostring(code))
+  end
+end
+
+-- The 5A demo bot is on the field only while the player's tank is in
+-- Station 5. Leaving the station either way, or coming back to life outside
+-- it, takes the bot off: its two pillboxes go home first, so nothing it
+-- carries is dropped where it stood. The next poll inside Station 5 fields it
+-- again.
+local function unfield_bot5a()
+  if not S.fielded.bot5a then return end
+  S.fielded.bot5a = nil
+  reset_pill("t5a_target")
+  reset_pill("t5a_blocker")
+  if S.bot5a ~= nil then
+    local ok, code = game.remove_bot(S.bot5a)
+    if not ok then
+      game.log("Tutorial: removing the 5A bot refused: " .. tostring(code))
+    end
   end
 end
 
@@ -1138,6 +1189,27 @@ local function supply_bases()
   end
 end
 
+-- Station 5B: is the player's built blocker dead or gone from its square?
+local function blocker_5b_gone()
+  local L = P.t5b_blocker
+  local bl = game.pill(L.n)
+  if bl == nil then return false end
+  local gone = bl.in_tank or bl.armour == 0 or bl.x ~= L.x or bl.y ~= L.y
+  return gone and S.carrier[L.n] ~= S.player
+end
+
+-- Station 5B: rebuild the player's blocker on its square at full armour,
+-- and tell the player. Only while it is built and the take is not done.
+local function rebuild_5b()
+  S.b5b_dead_at = nil
+  local d = S.done[5]
+  if not d.b_build or d.b_pick or not blocker_5b_gone() then return end
+  if pill_home("t5b_blocker", S.player, rule("pill_max_armour")) then
+    game.announce("To help you out, your friendly blocking\npillbox has been "
+                  .. "automatically rebuilt.", 4, S.player)
+  end
+end
+
 local function rearm(n)
   local d = S.done[n]
   if n == 2 then
@@ -1200,19 +1272,14 @@ local function rearm(n)
     local bl = game.pill(P.t5b_blocker.n)
     if bl ~= nil and not d.b_build then
       -- Not built yet: the player carries it.
-      if not (bl.in_tank and S.carrier[P.t5b_blocker.n] == S.player) then
-        hand_pill(S.player, P.t5b_blocker.n)
-      end
+      hand_5b()
     elseif bl ~= nil and not d.b_pick then
-      -- Built: it rebuilds itself 10 seconds after it dies.
-      local L = P.t5b_blocker
-      local gone = bl.in_tank or bl.armour == 0 or bl.x ~= L.x or bl.y ~= L.y
-      if gone and S.carrier[L.n] ~= S.player then
+      -- Built: it is rebuilt 2 seconds after it dies. on_pill_killed starts
+      -- the 2 seconds on the tick it dies; this catches any other way it
+      -- goes (picked up by another tank), a second late at most.
+      if blocker_5b_gone() then
         S.b5b_dead_at = S.b5b_dead_at or S.sec
-        if S.sec - S.b5b_dead_at >= 10 then
-          S.b5b_dead_at = nil
-          pill_home("t5b_blocker", S.player, rule("pill_max_armour"))
-        end
+        if S.sec - S.b5b_dead_at >= 2 then rebuild_5b() end
       else
         S.b5b_dead_at = nil
       end
@@ -1228,7 +1295,7 @@ local function reset_station(n)
   if n == 5 then
     reset_pill("t5b_target")
     reset_pill("t5b_blocker")
-    hand_pill(S.player, P.t5b_blocker.n)
+    hand_5b()
     rebuild_walls(LAYOUT.walls5b)
     rebuild_road(LAYOUT.arrow_reset5b)
     S.b5b_dead_at = nil
@@ -1281,15 +1348,15 @@ local function enter_station(n)
     if player_tank() ~= nil then
       game.set_stocks(S.player, station_loadout(n))
     end
-    if n == 5 then
-      field("bot5a")
-      hand_pill(S.player, P.t5b_blocker.n)
-    elseif n == 6 then
+    if n == 6 then
       field("bot6")
     elseif n == 7 then
       field("bot7")
     end
   end
+  -- Every entry to Station 5: the 5B blocker in the tank, if not built.
+  -- (The 5A demo bot is fielded by the poll, which sees the tank inside.)
+  if n == 5 then hand_5b() end
   -- A pill the player carries out of its station goes home.
   for name, home in pairs(PILL_HOME) do
     if home ~= n then
@@ -1361,6 +1428,7 @@ function on_tank_spawned(p, mx, my, respawn, scripted)
   elseif p == S.player then
     S.last_pos = nil
     S.hide = 0
+    if station_of(mx, my) == 5 then hand_5b() end
   end
 end
 
@@ -1422,8 +1490,13 @@ function on_pill_picked_up(n, p, scripted)
   local name = PILL_NAME[n]
   if p == S.bot5a then
     if name == "t5a_target" then
-      -- The demo take is done: put the island back and go again.
-      if S.player ~= nil and S.at == 5 then mark(5, "a_watch") end
+      -- The demo take is done: put the island back and go again. It counts
+      -- as watched only when the player's tank is on the watching spur,
+      -- where the whole island is on screen.
+      local t = player_tank()
+      if t ~= nil and S.at == 5 and region_has("watch5a", t.mx, t.my) then
+        mark(5, "a_watch")
+      end
       reset_5a()
     end
     return
@@ -1437,10 +1510,13 @@ function on_pill_picked_up(n, p, scripted)
     mark(5, "b_pick")
     if not S.t5b_restore then
       S.t5b_restore = true
-      game.timer(3, function()
+      -- 5 seconds, not 3: picking it up usually finishes Station 5, and the
+      -- "Station 5 done" line is up for 4 seconds. This line comes after
+      -- it, not on top of it.
+      game.timer(5, function()
         S.t5b_restore = false
         if reset_pill("t5b_target") then
-          game.announce("The enemy pillbox is back. Take it again, or go north.",
+          game.announce("The enemy pillbox is back.\nTake it again, or go north.",
                         4, S.player)
         end
       end)
@@ -1472,7 +1548,7 @@ function on_pill_placed(n, p, armour, scripted)
       if pb.x ~= L.x or pb.y ~= L.y then
         game.move_pill(n, L.x, L.y)
         if p == S.player then
-          game.announce("Moved to the green square beside theirs.", 3, S.player)
+          game.announce("Moved to the green square.", 3, S.player)
         end
       end
       if armour == 0 then game.set_pill_armour(n, rule("pill_max_armour")) end
@@ -1482,6 +1558,14 @@ function on_pill_placed(n, p, armour, scripted)
   if name == "p4a" then mark(4, "a_build") end
   if name == "t5b_blocker" then mark(5, "b_build") end
   if region_has("quarter_ne", pb.x, pb.y) then mark(7, "build") end
+end
+
+function on_pill_killed(n, by, scripted)
+  if n ~= P.t5b_blocker.n or S.player == nil then return end
+  local d = S.done[5]
+  if not d.b_build or d.b_pick then return end
+  S.b5b_dead_at = S.sec
+  game.timer(2, rebuild_5b)
 end
 
 local function check_win()
@@ -1534,11 +1618,32 @@ function can_capture(kind, n, p)
   return kind == "pill" and (n == P.t5a_target.n or n == P.t5a_blocker.n)
 end
 
--- Only tank shells are filtered. A pillbox shoots as it always does, so the
--- Station 6 bot's pillbox in Station 5B is a real enemy pillbox. Shells hit
--- allied tanks too, so the allied 5A bot is in the list.
+-- Tank shells pass between the player and the two demo bots (shells hit
+-- allied tanks too, so the allied 5A bot is in the list). Two Station 5
+-- rules more: the player's shells pass the player's own 5B blocker, and the
+-- 5A pillboxes' shells pass the player. Every other pillbox shoots as it
+-- always does, so the Station 6 bot's pillbox in Station 5B is a real enemy
+-- pillbox.
 function can_hit(attacker, kind, n, pill)
-  if kind ~= "tank" or pill ~= nil or S.player == nil then return nil end
+  if S.player == nil then return nil end
+  if kind == "pill" then
+    -- 5B: the player's shells pass the player's own blocker, so a tank
+    -- parked straight behind it can hit the target. A real game has no such
+    -- rule. See docs/TUTORIAL_DECISIONS.md, "5B parking square".
+    if pill == nil and attacker == S.player and n == P.t5b_blocker.n then
+      return false
+    end
+    return nil
+  end
+  if kind ~= "tank" then return nil end
+  if pill ~= nil then
+    -- 5A: the demo's pillboxes never hurt the player, who watches from
+    -- just outside their range and may wander closer.
+    if n == S.player and (pill == P.t5a_target.n or pill == P.t5a_blocker.n) then
+      return false
+    end
+    return nil
+  end
   if (attacker == S.player and is_demo_bot(n)) or
      (n == S.player and is_demo_bot(attacker)) then
     return false
@@ -1616,6 +1721,16 @@ local function poll()
     return
   end
   local n = S.at
+  -- The 5A demo bot: on the field only while the tank is in Station 5. A
+  -- second outside (5 polls) takes it off, so a tank on the line does not
+  -- field and remove it over and over.
+  if station_of(t.mx, t.my) == 5 then
+    S.out5 = 0
+    if not S.fielded.bot5a then field("bot5a") end
+  elseif S.fielded.bot5a then
+    S.out5 = S.out5 + 1
+    if S.out5 >= 5 then unfield_bot5a() end
+  end
   if S.last_pos ~= nil then
     S.moving = t.wx ~= S.last_pos[1] or t.wy ~= S.last_pos[2]
   end
@@ -1684,8 +1799,8 @@ local function every_second()
   end
   if S.fielded.bot6 then bot6_loop() end
   -- 5A: the bot stays on its island, and a take that stalls starts again.
-  -- The bot builds its blocker itself, on a square of its own choosing next
-  -- to the target.
+  -- The bot builds its blocker itself, on a square orthogonally next to the
+  -- target (BLOCKER_ORTHOGONAL_ONLY, set in bot_init).
   local t5 = live_tank(S.bot5a)
   if t5 ~= nil then
     if not region_has("island5a", t5.mx, t5.my) then home_bot5a() end

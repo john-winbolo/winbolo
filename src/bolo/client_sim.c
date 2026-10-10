@@ -2246,21 +2246,88 @@ uint32_t clientSimGetScnPanelRejectCount(const ClientSim *cs) {
   return cs ? cs->scnPanelRejects : 0;
 }
 
+/* The newest line held, or NULL for none. */
+static const ClientScnAnnounce *clientSimScnAnnounceNewest(
+    const ClientSim *cs) {
+  if (cs == NULL || cs->scnAnnounceCount == 0) return NULL;
+  return &cs->scnAnnounces[cs->scnAnnounceCount - 1];
+}
+
 const char *clientSimGetScnAnnounce(const ClientSim *cs, uint16_t *outTicks,
                                     uint32_t *outArrivedTick) {
-  if (cs == NULL || cs->scnAnnounceText[0] == '\0') return NULL;
-  if (outTicks != NULL) *outTicks = cs->scnAnnounceTicks;
-  if (outArrivedTick != NULL) *outArrivedTick = cs->scnAnnounceArrivedTick;
-  return cs->scnAnnounceText;
+  const ClientScnAnnounce *a = clientSimScnAnnounceNewest(cs);
+  if (a == NULL) return NULL;
+  if (outTicks != NULL) *outTicks = a->ticks;
+  if (outArrivedTick != NULL) *outArrivedTick = a->arrivedTick;
+  return a->text;
 }
 
 bool clientSimGetScnAnnouncePos(const ClientSim *cs, uint8_t *outX,
                                 uint8_t *outY) {
-  if (cs == NULL || cs->scnAnnounceText[0] == '\0') return false;
-  if (cs->scnAnnounceHasPos == 0) return false;
-  if (outX != NULL) *outX = cs->scnAnnouncePosX;
-  if (outY != NULL) *outY = cs->scnAnnouncePosY;
+  const ClientScnAnnounce *a = clientSimScnAnnounceNewest(cs);
+  if (a == NULL || a->hasPos == 0) return false;
+  if (outX != NULL) *outX = a->posX;
+  if (outY != NULL) *outY = a->posY;
   return true;
+}
+
+int clientSimGetScnAnnounceCount(const ClientSim *cs) {
+  return (cs != NULL) ? (int)cs->scnAnnounceCount : 0;
+}
+
+const ClientScnAnnounce *clientSimGetScnAnnounceAt(const ClientSim *cs,
+                                                   int i) {
+  if (cs == NULL || i < 0 || i >= (int)cs->scnAnnounceCount) return NULL;
+  return &cs->scnAnnounces[i];
+}
+
+/* Takes line i out of the stack, closing the gap so the rest keep their
+   order. */
+static void clientSimScnAnnounceRemove(ClientSim *cs, int i) {
+  int n = (int)cs->scnAnnounceCount;
+  if (i < 0 || i >= n) return;
+  if (i < n - 1) {
+    memmove(&cs->scnAnnounces[i], &cs->scnAnnounces[i + 1],
+            (size_t)(n - 1 - i) * sizeof(cs->scnAnnounces[0]));
+  }
+  memset(&cs->scnAnnounces[n - 1], 0, sizeof(cs->scnAnnounces[0]));
+  cs->scnAnnounceCount = (uint8_t)(n - 1);
+}
+
+void clientSimScnAnnouncePush(ClientSim *cs, const char *text, uint16_t ticks,
+                              uint32_t nowTick, bool hasPos, uint8_t posX,
+                              uint8_t posY) {
+  ClientScnAnnounce *a;
+  int                i;
+
+  if (cs == NULL) return;
+  if (text == NULL || text[0] == '\0') {
+    memset(cs->scnAnnounces, 0, sizeof(cs->scnAnnounces));
+    cs->scnAnnounceCount = 0;
+    return;
+  }
+  /* Lines whose time is up, and a held line with the same text, go first.
+     Walked from the top so a removal does not skip the next line. */
+  for (i = (int)cs->scnAnnounceCount - 1; i >= 0; i--) {
+    const ClientScnAnnounce *h = &cs->scnAnnounces[i];
+    const uint32_t elapsed =
+        (nowTick > h->arrivedTick) ? (nowTick - h->arrivedTick) : 0u;
+    if (elapsed >= (uint32_t)h->ticks || strcmp(h->text, text) == 0) {
+      clientSimScnAnnounceRemove(cs, i);
+    }
+  }
+  if (cs->scnAnnounceCount >= SCN_ANNOUNCE_STACK_MAX) {
+    clientSimScnAnnounceRemove(cs, 0);
+  }
+  a = &cs->scnAnnounces[cs->scnAnnounceCount];
+  memset(a, 0, sizeof(*a));
+  SDL_strlcpy(a->text, text, sizeof(a->text));
+  a->ticks       = ticks;
+  a->arrivedTick = nowTick;
+  a->hasPos      = hasPos ? 1u : 0u;
+  a->posX        = posX;
+  a->posY        = posY;
+  cs->scnAnnounceCount++;
 }
 
 const char *clientSimGetScnStatus(const ClientSim *cs, uint32_t *outEndsAt) {

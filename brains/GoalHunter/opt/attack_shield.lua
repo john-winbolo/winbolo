@@ -294,6 +294,11 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
       local idx = tmy * 256 + tmx
       if tmx == pmx and tmy == pmy then
         dbgadd(tmx, tmy, "skip", "pill tile")
+      elseif C.BLOCKER_ORTHOGONAL_ONLY and
+             math.abs(tmx - pmx) + math.abs(tmy - pmy) ~= 1 then
+        -- Per-bot knob (constants.lua): a blocker only on one of the four
+        -- squares orthogonally next to the pill.
+        dbgadd(tmx, tmy, "skip", "not orthogonal to the pill (BLOCKER_ORTHOGONAL_ONLY)")
       elseif tmx == origin_mx and tmy == origin_my then
         dbgadd(tmx, tmy, "skip", "origin/standoff tile")
       elseif outgoing_set[idx] then
@@ -633,8 +638,10 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   -- own gh_attack fast path, and for the same reason. Bans are rare and
   -- short-lived (a few per take, ~9000 ticks), so the slow path is not hot.
   local _ban_live = any_ban_live(banned, ban_now or 0)
+  -- The C scan picks its own blocker squares, so BLOCKER_ORTHOGONAL_ONLY
+  -- takes the Lua path, where score_aim filters them.
   if gh_shield and gh_shield.scan_c and _pill_hit and not _want_full_scan_viz
-     and not _ban_live then
+     and not _ban_live and not C.BLOCKER_ORTHOGONAL_ONLY then
     local pill_hp = pill.health or 0
     -- HP-dependent neighbor bonus params (passed to scan_c as args 13..19).
     local n_fav, fs1, fb1, fs2, fb2 = 0, 0, 0.0, 0, 0.0

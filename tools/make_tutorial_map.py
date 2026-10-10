@@ -279,51 +279,91 @@ base("b4c", (GAP[0] + GAP[1]) // 2, a + 2)   # given to the player at the start
 dock("cp4", b)
 
 # --------------------------------------------------------------------------
-# Station 5: the pill take. 5A (east) is an island in a moat where a demo bot
-# takes a pill; the player watches from the road, out of range of it. 5B
-# (west) is the same target for the player.
+# Station 5: the pill take. 5A (east) is a walled island beside the road
+# where a demo bot takes a pill; the player watches from a short road spur,
+# out of range of it. 5B (west) is the same target for the player.
 #
-# The take, both times: the target pill T, and a blocker pill built on the
-# square right beside it (south, the side the tank comes from). The blocker
-# soaks up T's shells while the tank shoots T. A tank shell hits any live
-# pill in its way, its own side's too, so the tank cannot shoot along the
-# line T-blocker-tank: it parks two squares east and three south of T,
-# diagonal to the blocker, where T's shots at it cross the blocker's square
-# and its own shots at T's east side pass the blocker by.
+# The take, both times: the target pill T, and a blocker pill built on a
+# square orthogonally next to it. The blocker soaks up T's shells while the
+# tank shoots T.
 # --------------------------------------------------------------------------
 a, b = STATIONS[5]
 fill(GAP[0], a, GAP[1], b, ROAD)
 
 
-def take_layout(prefix, tx, ty, park=True):
+def take_layout(prefix, tx, ty, park=None):
+    """T at (tx, ty), its blocker on the square south of it. `park`, when
+    given, is the (dx, dy) of the tank's parking square from T."""
     pill(prefix + "_target", tx, ty, NEUTRAL)
     pill(prefix + "_blocker", tx, ty + 1, NEUTRAL, 0)
     points[prefix + "_target"] = (tx, ty)
     points[prefix + "_blocker"] = (tx, ty + 1)
-    if park:
-        put(tx + 2, ty + 3, ROAD)
-        region(prefix + "_park", tx + 2, ty + 3, tx + 2, ty + 3)
-        points[prefix + "_park"] = (tx + 2, ty + 3)
+    if park is not None:
+        px, py = tx + park[0], ty + park[1]
+        put(px, py, ROAD)
+        region(prefix + "_park", px, py, px, py)
+        points[prefix + "_park"] = (px, py)
 
 
-# 5A island: moat x 135..155, y 96..120; island x 140..153, y 99..117. The
-# demo bot carries its blocker and builds it itself each time round, on a
-# square of its own choosing next to the target (GoalHunter mostly picks the
-# diagonal, 148,102); the map puts the pill on the in-line square, dead, for
-# the script to hand it. See docs/TUTORIAL_DECISIONS.md, "The blocker take".
-fill(135, 96, LAND_X1, 120, SEA)
-fill(140, 99, 153, 117, GRASS)
-take_layout("t5a", 147, 101, park=False)
-points["t5a_home"] = (147, 114)
-fill(146, 113, 148, 115, ROAD)
-put(152, 116, SEA)                          # the demo bot's start pocket
-start("bot5a", 152, 116, 4)
-region("watch5a", 129, 98, 134, 118)
-region("island5a", 140, 99, 153, 117)
+# 5A: an island of grass, x 135..140, y 104..117, closed in by a wall ring,
+# a one-square deep-water moat, and a second wall ring outside the moat:
+#
+#   x 132 and 143, y 101 and 120: the outer walls
+#   x 133 and 142, y 102 and 119: the moat
+#   x 134 and 141, y 103 and 118: the inner walls
+#
+# The moat is what keeps the demo bot on its island. With walls alone the
+# bot's route finder counts a wall as a few shots' work, so every pillbox
+# and square off the island was in reach: the bot shot its way out after
+# the dead pills in Stations 4 and 7 and to drop its blocker in 5B, and
+# never took T. Deep water without a boat is no route at all, so with the
+# moat nothing off the island is a goal. The inner walls keep the bot off
+# the moat's edge, so it cannot drown; the outer walls keep the player's
+# tank off it.
+#
+# The player watches from the end of a short road spur off the main road,
+# the green square at WATCH5A, beside the outer west wall. T is six squares
+# east and six north of it (8.5 squares), out of T's range of 8; the main
+# road is 9 or more squares from T. From the spur the take is on screen.
+#
+# The demo bot carries its blocker and builds it itself each time round, on
+# a square orthogonally next to the target (GoalHunter's
+# BLOCKER_ORTHOGONAL_ONLY, turned on for this bot only); the map puts the
+# pill on the square south of T, dead, for the script to hand it. See
+# docs/TUTORIAL_DECISIONS.md, "The blocker take".
+#
+# A start must be on deep water, so the bot's start is a one-square pocket
+# in the island's south-east corner, walled on the south, east and west and
+# open to the north, 12 squares from T and well away from where the bot
+# fights. It does not touch the moat.
+WATCH5A = (131, 111)
+fill(GAP[1] + 1, WATCH5A[1], WATCH5A[0], WATCH5A[1], ROAD)
+points["watch5a"] = WATCH5A
+region("watch5a", GAP[1] + 1, WATCH5A[1], WATCH5A[0], WATCH5A[1])
+fill(132, 101, 143, 120, BUILDING)
+fill(133, 102, 142, 119, SEA)
+fill(134, 103, 141, 118, BUILDING)
+fill(135, 104, 140, 117, GRASS)
+take_layout("t5a", 137, 105)
+points["t5a_home"] = (136, 115)
+fill(135, 114, 137, 116, ROAD)
+put(139, 117, BUILDING)                     # the pocket's west wall
+put(140, 117, SEA)                          # the demo bot's start pocket
+start("bot5a", 140, 117, 4)
+region("island5a", 135, 104, 140, 117)
 
 # 5B: the target nine squares from the road, so a tank driving up the road
-# is out of its range. The player is handed its blocker pill in the tank.
-take_layout("t5b", 117, 101)
+# is out of its range. The player is handed its blocker pill in the tank and
+# builds it on the square south of the target. The parking square is a road
+# square seven squares straight south of the target, the farthest a tank
+# shell still reaches it (7.125 squares from the tank's centre; the target's
+# near edge is at 6.5). A road spur along that row joins it to the main road.
+# The target's shots at the parked tank fly straight down the column and hit
+# the blocker. The tank's shots fly the same column the other way; the
+# script lets them pass the player's own blocker (can_hit), which a real game
+# would not. See docs/TUTORIAL_DECISIONS.md, "5B parking square".
+take_layout("t5b", 117, 101, park=(0, 7))
+fill(118, 108, GAP[0] - 1, 108, ROAD)
 walls5b = walled_reset("reset5b", 106, 112, GAP[0])
 # A friendly base on the road's centre column at the north end.
 base("b5", (GAP[0] + GAP[1]) // 2, a + 2)  # given to the player at the start
@@ -340,8 +380,12 @@ a, b = STATIONS[6]
 fill(GAP[0], a, GAP[1], b, ROAD)
 ROW6 = 80
 PARK6 = (GAP[1] + 3, ROW6)                  # 131: the parked tank
-TREE6 = (GAP[0] - 5, ROW6)                  # 121: the one tree
-CRATERS6 = (GAP[0] - 3, GAP[0] - 2)         # 123..124: the aiming spot
+TREE6 = (GAP[0] - 11, ROW6)                 # 115: the one tree
+# 121..124: the aiming spot, 2 to 5 squares west of the road's west edge, so
+# a crosshair at its longest range (7) from anywhere on the road reaches it.
+# The man walks the row both ways, so he crosses the same craters going out
+# to the tree and coming back.
+CRATERS6 = (GAP[0] - 5, GAP[0] - 2)
 fill(TREE6[0] + 1, ROW6, PARK6[0], ROW6, ROAD)
 fill(CRATERS6[0], ROW6, CRATERS6[1], ROW6, CRATER)
 put(TREE6[0], TREE6[1], FOREST)
@@ -431,13 +475,17 @@ pill("p7_se1", CX + 6, CY + 8)
 pill("p7_se2", CX + 8, CY + 6)
 base("b7_se1", CX + 4, CY + 12)
 base("b7_se2", CX + 12, CY + 4)
-# SW: the start pocket faces east, two dead pills just in front of it, two
-# bases, and the walled RESET along the south.
+# SW: the start pocket faces east, two bases, and the walled RESET along the
+# south. The two dead pills the player starts the round with lie on the
+# centre of the road in, one behind the other, between the island's wall and
+# the station's south edge: driving straight in picks up both. They are
+# inside Station 7 and outside the island, which the bot never leaves.
 fill(111, 51, 113, 54, FOREST)
 fill(112, 52, 112, 53, SEA)
 start("cp7", 112, 52, 0)
-pill("p7_sw1", 116, 51, NEUTRAL, 0)
-pill("p7_sw2", 116, 54, NEUTRAL, 0)
+MID = (GAP[0] + GAP[1]) // 2
+pill("p7_sw1", MID, b - 1, NEUTRAL, 0)
+pill("p7_sw2", MID, b - 3, NEUTRAL, 0)
 base("b7_sw1", CX - 4, CY + 4)
 base("b7_sw2", CX - 10, CY + 4)
 walls7 = walled_reset("reset7", 108, 55, GAP[0])

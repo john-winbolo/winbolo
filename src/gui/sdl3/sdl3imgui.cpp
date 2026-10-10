@@ -5518,20 +5518,42 @@ static void scnAnnounceAddHudRect(float mapX, float mapY, float x, float y,
 /* Draws one outlined line at (px, py): the line in near-black one stroke out
    in each of the eight directions, so the letters keep an edge whichever way
    the terrain under them happens to run, then the line in white. */
-static void scnDrawOutlinedLine(ImDrawList *dl, ImFont *font, float height,
-                                float px, float py, float o, int alpha,
-                                const char *text) {
+static void scnDrawOutlinedRow(ImDrawList *dl, ImFont *font, float height,
+                               float px, float py, float o, int alpha,
+                               const char *text, const char *textEnd) {
     const ImU32 edge = IM_COL32(0, 0, 0, alpha);
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             if (dx == 0 && dy == 0) continue;
             dl->AddText(font, height,
                         ImVec2(px + (float)dx * o, py + (float)dy * o),
-                        edge, text);
+                        edge, text, textEnd);
         }
     }
     dl->AddText(font, height, ImVec2(px, py),
-                IM_COL32(255, 255, 255, alpha), text);
+                IM_COL32(255, 255, 255, alpha), text, textEnd);
+}
+
+/* Draws an outlined line that may hold newlines: each row centred across
+   innerW, the width of the widest row, with its left edge at px. A script
+   splits a line too wide for the view with "\n". */
+static void scnDrawOutlinedLine(ImDrawList *dl, ImFont *font, float height,
+                                float px, float py, float innerW, float o,
+                                int alpha, const char *text) {
+    const char *row = text;
+    float       y   = py;
+    for (;;) {
+        const char *end = strchr(row, '\n');
+        if (end == nullptr) end = row + strlen(row);
+        const ImVec2 rowSize =
+            font->CalcTextSizeA(height, FLT_MAX, 0.0f, row, end);
+        scnDrawOutlinedRow(dl, font, height,
+                           px + (innerW - rowSize.x) * 0.5f, y, o, alpha,
+                           row, end);
+        if (*end == '\0') break;
+        row = end + 1;
+        y  += height;
+    }
 }
 
 /* The status line and the announcement share a view, a scale, a font and the
@@ -5559,18 +5581,20 @@ static void renderScenarioAnnounce(ClientSim *cs) {
         scnStatusLineText(statusWire != nullptr ? statusRaw : nullptr,
                           statusEndsAt, now, status, sizeof(status));
 
-    uint16_t    ticks       = 0;
-    uint32_t    arrivedTick = 0;
-    const char *wireText    = clientSimGetScnAnnounce(cs, &ticks, &arrivedTick);
-    char        announce[256];
-    const char *text        = nullptr;
-    if (wireText != nullptr) {
-        tutorialExpandTextPlain(wireText, announce, sizeof(announce));
-        text = announce;
+    /* Every announcement still up, oldest first. A scenario may put a
+       second line up while the first is showing; both are drawn, each with
+       its own countdown, the newest lowest. */
+    const int heldCount = clientSimGetScnAnnounceCount(cs);
+    bool      haveAnnounce = false;
+    for (int i = 0; i < heldCount; i++) {
+        const ClientScnAnnounce *a = clientSimGetScnAnnounceAt(cs, i);
+        if (a != nullptr &&
+            scnAnnounceRemaining(a->text, a->arrivedTick, a->ticks, now,
+                                 nullptr)) {
+            haveAnnounce = true;
+            break;
+        }
     }
-    uint32_t    left        = 0;
-    const bool  haveAnnounce =
-        scnAnnounceRemaining(text, arrivedTick, ticks, now, &left);
     if (!haveStatus && !haveAnnounce) return;
 
     /* The same zoom the panel window scales by, so the two agree about what
@@ -5677,8 +5701,8 @@ static void renderScenarioAnnounce(ClientSim *cs) {
         float boxX = 0.0f, boxY = 0.0f;
         scnStatusPlace(view, boxW, boxH, SCN_STATUS_INSET_UNITS * scale,
                        inset, floorY, obstacles, count, &boxX, &boxY);
-        scnDrawOutlinedLine(dl, font, height, boxX + o, boxY + o, o, 255,
-                            status);
+        scnDrawOutlinedLine(dl, font, height, boxX + o, boxY + o, measured.x,
+                            o, 255, status);
         statusBand.x0 = view.x0;
         statusBand.y0 = boxY;
         statusBand.x1 = view.x1;
@@ -5688,31 +5712,58 @@ static void renderScenarioAnnounce(ClientSim *cs) {
 
     if (!haveAnnounce) return;
 
-    const ImVec2 measured = font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
-    const float  boxW     = measured.x + 2.0f * o;
-    const float  boxH     = measured.y + 2.0f * o;
-    float   boxX = 0.0f, boxY = 0.0f;
-    uint8_t posX = 0, posY = 0;
-    if (clientSimGetScnAnnouncePos(cs, &posX, &posY)) {
-        /* Where the script said, kept inside the view by the status line's
-           inset and below the status line. */
-        scnAnnounceAt(view, boxW, boxH, posX, posY,
-                      SCN_STATUS_INSET_UNITS * scale,
-                      haveBand ? &statusBand : nullptr, inset, &boxX, &boxY);
-    } else {
-        /* Where announcements have always gone. */
-        scnAnnounceDefaultPlace(view, boxW, o, &boxX, &boxY);
-    }
+    /* The lines drawn so far, and the status line's band first, so no
+       announcement sits on the status line either. */
+    ScnAnnounceRect placed[SCN_ANNOUNCE_STACK_MAX + 1];
+    int             placedCount = 0;
+    if (haveBand) placed[placedCount++] = statusBand;
+    for (int i = 0; i < heldCount; i++) {
+        const ClientScnAnnounce *a = clientSimGetScnAnnounceAt(cs, i);
+        if (a == nullptr) continue;
+        uint32_t left = 0;
+        char     text[256];
+        tutorialExpandTextPlain(a->text, text, sizeof(text));
+        if (!scnAnnounceRemaining(text, a->arrivedTick, a->ticks, now,
+                                  &left)) {
+            continue;
+        }
 
-    /* Full strength until the last stretch, then out. */
-    float fade = 1.0f;
-    if (left < SCN_ANNOUNCE_FADE_TICKS) {
-        fade = (float)left / (float)SCN_ANNOUNCE_FADE_TICKS;
-    }
-    const int alpha = (int)(255.0f * fade);
-    if (alpha <= 0) return;
+        const ImVec2 measured =
+            font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
+        const float  boxW = measured.x + 2.0f * o;
+        const float  boxH = measured.y + 2.0f * o;
+        float boxX = 0.0f, boxY = 0.0f;
+        if (a->hasPos != 0) {
+            /* Where the script said, kept inside the view by the status
+               line's inset and below the status line. */
+            scnAnnounceAt(view, boxW, boxH, a->posX, a->posY,
+                          SCN_STATUS_INSET_UNITS * scale,
+                          haveBand ? &statusBand : nullptr, inset, &boxX,
+                          &boxY);
+        } else {
+            /* Where announcements have always gone. */
+            scnAnnounceDefaultPlace(view, boxW, o, &boxX, &boxY);
+        }
+        /* Below any line already drawn that it would overlap, so two lines
+           up at once are both read. */
+        boxY = scnAnnounceStackBelow(boxX, boxY, boxW, boxH, placed,
+                                     placedCount, inset);
+        placed[placedCount].x0 = boxX;
+        placed[placedCount].y0 = boxY;
+        placed[placedCount].x1 = boxX + boxW;
+        placed[placedCount].y1 = boxY + boxH;
+        placedCount++;
 
-    scnDrawOutlinedLine(dl, font, height, boxX + o, boxY + o, o, alpha, text);
+        /* Full strength until the last stretch, then out. */
+        float fade = 1.0f;
+        if (left < SCN_ANNOUNCE_FADE_TICKS) {
+            fade = (float)left / (float)SCN_ANNOUNCE_FADE_TICKS;
+        }
+        const int alpha = (int)(255.0f * fade);
+        if (alpha <= 0) continue;
+        scnDrawOutlinedLine(dl, font, height, boxX + o, boxY + o, measured.x,
+                            o, alpha, text);
+    }
 }
 
 /* About modal + linked markdown popups live in dialogs/imgui_about.cpp so

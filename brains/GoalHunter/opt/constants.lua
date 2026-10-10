@@ -769,6 +769,13 @@ M.BLOCKED_AIM_RETRY_TICKS = 10     -- blocked-line ladder: minimum ticks between
 M.PPT_COVER_TARGET_SHOTS = 15  -- build phase ends once shield cover reaches this many shots-to-break (friendly pill = PILLS_MAX_HEALTH 15, wall = WALL_HP_FULL 5). 15 = one pill OR three walls. Independent of the blitz gate.
 M.PPT_PILL_WALL_EQUIV = 3.0    -- a dropped/standing friendly pillbox blocker is worth this many WALLS of shield cover (PILLS_MAX_HEALTH 15 / WALL_HP_FULL 5 = 3). The C combo scorer (gh_shield_stamp) weights a pill-filled slot accordingly, so one carried pill stands in for a 3-wall shield.
 M.PPT_PILL_BLOCKERS_MAX = 2    -- cap on how many carried pillboxes the shield planner assumes it can drop onto buildable slots (matches builder.lua's PILLBOX_BLOCKERS_MAX). num_pill_blockers passed to the scorer = min(carried_pills, this).
+-- BLOCKER_ORTHOGONAL_ONLY: a shield blocker (a wall or a dropped pillbox) only
+-- on one of the four squares orthogonally next to the target pill, never a
+-- diagonal one or one further out. The shield scan then always runs in Lua
+-- (attack_shield.lua score_aim filters the squares). Per-bot: the Tutorial
+-- turns it on for its Station 5A demo bot, so the take it shows matches the
+-- one the player is taught. false = the old free choice (PRESETS.keel).
+M.BLOCKER_ORTHOGONAL_ONLY = false  -- keel false
 M.SHIELD_SCAN_BLACKLIST_TRIES = 2    -- a shield.scan that starts but never completes (per-tick budget kill unwinds the whole think) leaves its attempt marker behind; after this many incomplete attempts on the SAME scan key, skip the scan and attack with the no-shield plan instead of livelocking on a scan that can't fit the budget
 M.SHIELD_SCAN_BLACKLIST_TICKS = 250  -- blacklist expiry (~5 s): after this long the marker is dropped and the scan may be retried (the key changing ??? pill hp, our armour, standoff ??? also resets it immediately)
 M.WALL_SHIELD_LGM_STUCK_TICKS = 150  -- same-tile timeout for LGM simulation (~3 seconds)
@@ -5540,6 +5547,8 @@ M.PRESETS = {
     BOT_CHAT_DEFAULT              = true,
     BOT_INIT_LINE_TO_HUMANS       = true,
     ORDER_HINT_BUSY_SILENT        = false,
+    --   2026-10-10: shield blockers on orthogonal squares only (Tutorial).
+    BLOCKER_ORTHOGONAL_ONLY       = false,
     --   2026-09-17: a bot attacking a pill with a HUMAN team-mate within 7
     --   tiles now skips the wall shield and goes straight in (the lobby docs
     --   promise it). KEEL never looked at where the humans were: 0 = off, so

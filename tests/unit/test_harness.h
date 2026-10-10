@@ -3922,6 +3922,7 @@ int run_scenario_panel_timer_text(void);
 int run_scenario_announce_remaining(void);
 int run_scenario_announce_position(void);
 int run_scenario_status_line(void);
+int run_scenario_announce_stack(void);
 /* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
  * quarter of the screen's shorter side in the game view's top-right, on a
  * phone, a tablet, and views too small for the full side. */
@@ -4017,6 +4018,7 @@ int run_scn_presentation_decoder_sets_broadcast(void);
 int run_scn_presentation_client_filters(void);
 int run_scn_status_codec_and_client(void);
 int run_scn_announce_position_codec(void);
+int run_scn_announce_stack_client(void);
 
 /* The four presentation ops (test_scenario_presentation_arms.c): the panel
  * list published, recorded, replayed to a joiner and pared back to the
