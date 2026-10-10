@@ -255,7 +255,7 @@ end
 -- ---------------------------------------------------------------------
 -- Texts.
 local POP = {
-  welcome = "Welcome to WinBolo! Bolo is a tank game Stuart Cheshire first "
+  welcome = "Welcome to WinBolo! Bolo is a multiplayer tank game Stuart Cheshire first "
     .. "wrote in 1987, and WinBolo carries it on today. You drive a tank "
     .. "round an island of pillboxes, gun towers that shoot at enemy tanks, "
     .. "and bases, which refill your shells, mines and armour. A small man "
