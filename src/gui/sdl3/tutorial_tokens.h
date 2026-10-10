@@ -47,6 +47,8 @@ typedef enum {
   TT_QUICK_WALL,
   TT_QUICK_PILL,
   TT_QUICK_MINE,
+  TT_GUN_UP,      /* the gunsight longer */
+  TT_GUN_DOWN,    /* the gunsight shorter */
   TT_COUNT        /* how many there are, and no token */
 } TutorialTokenId;
 
@@ -64,6 +66,17 @@ int tutorialTokenScancode(TutorialTokenId id, const keyItems *k);
 /* True for the five quick-build keys. A touch screen has no key for them,
  * so the resolver writes them as words there. */
 bool tutorialTokenIsQuickBuild(TutorialTokenId id);
+
+/* What a token is written as in plain text, for a line drawn as text alone
+ * (a scenario's status line or announcement). NULL leaves the token as it
+ * is written. */
+typedef const char *(*TutorialTokenNameFn)(TutorialTokenId id, void *ctx);
+
+/* src into out with every token replaced by name(id, ctx). out is always
+ * ended with a NUL; a text too long for it is cut, never a name half
+ * written. Answers the length written. */
+size_t tutorialTokensExpand(const char *src, char *out, size_t cap,
+                            TutorialTokenNameFn name, void *ctx);
 
 #ifdef __cplusplus
 }

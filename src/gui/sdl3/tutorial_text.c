@@ -64,7 +64,23 @@ static const TokenEntry kTokens[TT_COUNT] = {
   [TT_QUICK_WALL]   = { NULL,                  SI_ACTION_BUILD_NEXT,          GP_ACT_BUILD_NEXT },
   [TT_QUICK_PILL]   = { NULL,                  SI_ACTION_BUILD_NEXT,          GP_ACT_BUILD_NEXT },
   [TT_QUICK_MINE]   = { NULL,                  SI_ACTION_BUILD_NEXT,          GP_ACT_BUILD_NEXT },
+  [TT_GUN_UP]       = { NULL,                  SI_ACTION_GUNSIGHT_INC,        GP_ACT_GUNSIGHT_INC },
+  [TT_GUN_DOWN]     = { NULL,                  SI_ACTION_GUNSIGHT_DEC,        GP_ACT_GUNSIGHT_DEC },
 };
+
+/* What a token is on a touch screen, in words; NULL when the touch screen
+   has nothing of its own for it and the keyboard key is named. A quick-build
+   tool has no key and no button there: the player taps the build buttons.
+   The gunsight range has its own two round buttons, drawn "+" and "-". */
+static const char *touchTokenWords(TutorialTokenId id) {
+  if (tutorialTokenIsQuickBuild(id)) {
+    const char *words = langGetText(STR_TUTORIAL_QUICK_BUILD_TOUCH);
+    return words ? words : "";
+  }
+  if (id == TT_GUN_UP)   return "the + button";
+  if (id == TT_GUN_DOWN) return "the - button";
+  return NULL;
+}
 
 /* Desktop -> input-variant lookup. Strings whose desktop wording
  * references hardware controls (keys, mouse, keypad) get touch and/or
@@ -152,13 +168,13 @@ static int emitGlyphForToken(TutorialSeg *out, int idx, int max,
                              int *bufPos, TutorialTokenId id) {
   const TokenEntry *t = &kTokens[id];
   if (idx >= max) return idx;
-  /* A touch screen has no key for a quick-build tool and no pad button
-     either: the player taps the build buttons, so say that in words. */
-  if (!uiShouldUseControllerMode() && uiModeIsTablet() &&
-      tutorialTokenIsQuickBuild(id)) {
-    const char *words = langGetText(STR_TUTORIAL_QUICK_BUILD_TOUCH);
-    if (!words) words = "";
-    return emitText(out, idx, max, bufPos, words, (int)strlen(words));
+  /* A touch screen has no key for a quick-build tool or the gunsight
+     range: say in words what the player taps there. */
+  if (!uiShouldUseControllerMode() && uiModeIsTablet()) {
+    const char *words = touchTokenWords(id);
+    if (words) {
+      return emitText(out, idx, max, bufPos, words, (int)strlen(words));
+    }
   }
   if (uiShouldUseControllerMode()) {
     SDL_Texture *g = NULL;
@@ -245,6 +261,48 @@ int tutorialResolveText(const char *src, TutorialSeg *out, int max) {
     idx = emitText(out, idx, max, &bufPos, runStart, (int)(src - runStart));
   }
   return idx;
+}
+
+/* A token in words, for a controller: a plain line has no room for a
+   glyph. The quick-build keys are picked with the build tool's button.
+   The gunsight buttons are named by what they do: a player may rebind them,
+   and the Steam and SDL defaults put them on opposite shoulders. */
+static const char *const kTokenWordsPad[TT_COUNT] = {
+  [TT_ACCEL]        = "forward",
+  [TT_BRAKE]        = "back",
+  [TT_LEFT]         = "left",
+  [TT_RIGHT]        = "right",
+  [TT_FIRE]         = "fire",
+  [TT_MINE]         = "mine",
+  [TT_SCROLL_UP]    = "scroll up",
+  [TT_SCROLL_DOWN]  = "scroll down",
+  [TT_SCROLL_LEFT]  = "scroll left",
+  [TT_SCROLL_RIGHT] = "scroll right",
+  [TT_DISMISS]      = "accept",
+  [TT_BUILD_MODE]   = "build cursor",
+  [TT_BUILD_PLACE]  = "build",
+  [TT_BUILD_TOOL]   = "next tool",
+  [TT_QUICK_TREE]   = "next tool",
+  [TT_QUICK_ROAD]   = "next tool",
+  [TT_QUICK_WALL]   = "next tool",
+  [TT_QUICK_PILL]   = "next tool",
+  [TT_QUICK_MINE]   = "next tool",
+  [TT_GUN_UP]       = "range up",
+  [TT_GUN_DOWN]     = "range down",
+};
+
+static const char *plainTokenName(TutorialTokenId id, void *ctx) {
+  (void)ctx;
+  if (uiShouldUseControllerMode()) return kTokenWordsPad[id];
+  if (uiModeIsTablet()) {
+    const char *words = touchTokenWords(id);
+    if (words) return words;
+  }
+  return scancodeName(tutorialTokenScancode(id, &keys));
+}
+
+void tutorialExpandTextPlain(const char *src, char *out, size_t cap) {
+  tutorialTokensExpand(src, out, cap, plainTokenName, NULL);
 }
 
 int tutorialResolveSegments(uint16_t mid, TutorialSeg *out, int max) {

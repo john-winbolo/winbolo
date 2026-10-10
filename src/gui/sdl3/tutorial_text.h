@@ -78,6 +78,12 @@ int tutorialResolveSegments(uint16_t mid, TutorialSeg *out, int max);
  * segments.  Same buffer rules as tutorialResolveSegments(). */
 int tutorialResolveText(const char *src, TutorialSeg *out, int max);
 
+/* The same tokens written as words, for a line drawn as plain text (a
+ * scenario's status line and announcement): the bound key's name on a
+ * keyboard, the touch wording for a quick-build or gunsight key on a touch
+ * screen, and a word for the control on a controller. out always ends with a NUL. */
+void tutorialExpandTextPlain(const char *src, char *out, size_t cap);
+
 #ifdef __cplusplus
 }
 #endif

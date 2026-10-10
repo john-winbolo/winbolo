@@ -591,6 +591,12 @@ uint8_t      clientSimGetViewKind(const ClientSim *cs);
 BYTE         clientSimGetViewTarget(const ClientSim *cs);
 bool         clientSimIsNeedScreenReCalc(const ClientSim *cs);
 bool         clientSimIsInLobby(const ClientSim *cs);
+/* True once the round this client was playing has ended: the game-over
+ * hold after the server ends the round (netLobby with inLobby still false),
+ * the lobby itself, and a countdown to the next round. False for a new
+ * client and all through a running round. The in-game overlays that belong
+ * to a round (a scenario's popup) are closed on this, not left on screen. */
+bool         clientSimIsRoundOver(const ClientSim *cs);
 bool         clientSimIsMapDownloadComplete(const ClientSim *cs);
 
 /* Monotonic count of installed maps this client has discarded because a

@@ -2124,6 +2124,10 @@ uint8_t clientSimGetViewKind(const ClientSim *cs)         { return cs->viewport.
 BYTE clientSimGetViewTarget(const ClientSim *cs)          { return cs->viewport.viewTarget; }
 bool clientSimIsNeedScreenReCalc(const ClientSim *cs)     { return cs->viewport.needRecalc; }
 bool clientSimIsInLobby(const ClientSim *cs)              { return cs->inLobby; }
+bool clientSimIsRoundOver(const ClientSim *cs) {
+  return cs->inLobby || cs->netStat == netLobby ||
+         cs->netStat == netLobbyCountdown;
+}
 bool clientSimIsMapDownloadComplete(const ClientSim *cs)  { return cs->mapDownloadComplete; }
 
 uint8_t clientSimGetMapDownloadPercent(const ClientSim *cs) {

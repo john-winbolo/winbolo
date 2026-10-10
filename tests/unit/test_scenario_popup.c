@@ -10,9 +10,19 @@
  *                  order they came, holds at most SCN_POPUP_QUEUE_MAX,
  *                  ignores one addressed to another seat, and drops them
  *                  all when the game goes back to the lobby.
+ *   round over   — clientSimIsRoundOver, which closes a popup still on
+ *                  screen, is false for a new client and in a running round
+ *                  and true from the game-over hold on, through the lobby
+ *                  and the next countdown.
  *   quick tokens — {QUICK_TREE} to {QUICK_MINE} are found in a text and
  *                  named by the five quick-build bindings, not by any other
  *                  key; the old tokens still resolve as before.
+ *   gun tokens   — {GUN_UP} and {GUN_DOWN} are found and named by the
+ *                  gunsight increase and decrease bindings.
+ *   expand       — tutorialTokensExpand writes each token as the name a
+ *                  callback gives, keeps a token the callback has no name
+ *                  for, cuts a long text before a name it cannot fit whole,
+ *                  always ends with a NUL and answers the length.
  */
 
 #include <stdbool.h>
@@ -186,6 +196,44 @@ int run_scenario_popup_client_queue(void) {
     return 0;
 }
 
+/* ── round over ────────────────────────────────────────────────────── */
+
+static void phaseApply(ClientSim *cs, ControlEventType type) {
+    ControlEvent evt;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = type;
+    clientSimApplyControl(cs, &evt);
+}
+
+int run_scenario_popup_round_over(void) {
+    ClientSim *cs = clientSimAlloc();
+
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    UT_ASSERT_MSG(!clientSimIsRoundOver(cs), "a new client's round was over");
+
+    phaseApply(cs, CTRL_GAME_PHASE_RUNNING);
+    UT_ASSERT_MSG(!clientSimIsRoundOver(cs), "a running round was over");
+
+    /* game.end_round: the hold before the lobby, with inLobby still false. */
+    phaseApply(cs, CTRL_GAME_PHASE_GAME_OVER);
+    UT_ASSERT_MSG(!clientSimIsInLobby(cs), "the hold put the client in the lobby");
+    UT_ASSERT_MSG(clientSimIsRoundOver(cs), "the game-over hold was not over");
+
+    phaseApply(cs, CTRL_GAME_PHASE_LOBBY);
+    UT_ASSERT_MSG(clientSimIsRoundOver(cs), "the lobby was not over");
+
+    phaseApply(cs, CTRL_GAME_PHASE_COUNTDOWN);
+    UT_ASSERT_MSG(clientSimIsRoundOver(cs), "the countdown was not over");
+
+    /* The next round runs again. */
+    phaseApply(cs, CTRL_GAME_PHASE_RUNNING);
+    UT_ASSERT_MSG(!clientSimIsRoundOver(cs), "the next round was over");
+
+    clientSimDestroy(cs);
+    return 0;
+}
+
 /* ── quick-build tokens ────────────────────────────────────────────── */
 
 int run_tutorial_tokens_quick_build(void) {
@@ -213,6 +261,8 @@ int run_tutorial_tokens_quick_build(void) {
     keys.kiQuickWall    = 32;
     keys.kiQuickPillbox = 33;
     keys.kiQuickMine    = 34;
+    keys.kiGunIncrease  = 40;
+    keys.kiGunDecrease  = 41;
 
     for (i = 0; i < sizeof(kQuick) / sizeof(kQuick[0]); i++) {
         char text[64];
@@ -241,9 +291,116 @@ int run_tutorial_tokens_quick_build(void) {
     UT_ASSERT(tutorialTokenScancode(TT_BUILD_TOOL, &keys) == 0);
     UT_ASSERT(tutorialTokenMatch("{DISMISS}", &len) == TT_DISMISS);
 
+    /* The gunsight range tokens: named by the gunsight bindings, and not
+       quick-build ones. */
+    UT_ASSERT(tutorialTokenMatch("{GUN_UP} more", &len) == TT_GUN_UP &&
+              len == strlen("{GUN_UP}"));
+    UT_ASSERT(tutorialTokenMatch("{GUN_DOWN} more", &len) == TT_GUN_DOWN &&
+              len == strlen("{GUN_DOWN}"));
+    UT_ASSERT(strcmp(tutorialTokenText(TT_GUN_UP), "{GUN_UP}") == 0);
+    UT_ASSERT(strcmp(tutorialTokenText(TT_GUN_DOWN), "{GUN_DOWN}") == 0);
+    UT_ASSERT_MSG(tutorialTokenScancode(TT_GUN_UP, &keys) == 40,
+                  "{GUN_UP} named key %d, expected 40",
+                  tutorialTokenScancode(TT_GUN_UP, &keys));
+    UT_ASSERT_MSG(tutorialTokenScancode(TT_GUN_DOWN, &keys) == 41,
+                  "{GUN_DOWN} named key %d, expected 41",
+                  tutorialTokenScancode(TT_GUN_DOWN, &keys));
+    UT_ASSERT(!tutorialTokenIsQuickBuild(TT_GUN_UP));
+    UT_ASSERT(!tutorialTokenIsQuickBuild(TT_GUN_DOWN));
+    UT_ASSERT(tutorialTokenMatch("{GUN}", &len) == TT_COUNT);
+
+    /* Every token has its text, and that text is found as that token. */
+    for (i = 0; i < (size_t)TT_COUNT; i++) {
+        const char *t = tutorialTokenText((TutorialTokenId)i);
+        UT_ASSERT_MSG(t != NULL, "token %u has no text", (unsigned)i);
+        UT_ASSERT_MSG(tutorialTokenMatch(t, &len) == (TutorialTokenId)i &&
+                          len == strlen(t),
+                      "%s is not found as itself", t);
+    }
+
     /* Not a token: a brace with an unknown word, a word with no brace. */
     UT_ASSERT(tutorialTokenMatch("{QUICK_BOAT}", &len) == TT_COUNT);
     UT_ASSERT(tutorialTokenMatch("QUICK_TREE}", &len) == TT_COUNT);
     UT_ASSERT(tutorialTokenText(TT_COUNT) == NULL);
+    return 0;
+}
+
+/* ── tokens written out in plain text ──────────────────────────────── */
+
+/* Names three tokens, has none for {MINE}, and counts its calls. */
+static const char *expandName(TutorialTokenId id, void *ctx) {
+    int *calls = (int *)ctx;
+    if (calls != NULL) (*calls)++;
+    switch (id) {
+        case TT_ACCEL:  return "W";
+        case TT_FIRE:   return "Space";
+        case TT_GUN_UP: return "range up";
+        default:        return NULL;
+    }
+}
+
+/* out filled with 'X' first, so a byte written past the NUL shows up. */
+static size_t expandInto(const char *src, char *out, size_t cap,
+                         size_t fill) {
+    memset(out, 'X', fill);
+    return tutorialTokensExpand(src, out, cap, expandName, NULL);
+}
+
+int run_scenario_status_tokens_expand(void) {
+    char   out[64];
+    size_t n;
+    int    calls = 0;
+
+    /* Tokens become the callback's names; the rest is copied as it is. */
+    n = tutorialTokensExpand("Press {ACCEL}, then {FIRE}.", out, sizeof(out),
+                             expandName, &calls);
+    UT_ASSERT_MSG(strcmp(out, "Press W, then Space.") == 0, "got '%s'", out);
+    UT_ASSERT(n == strlen("Press W, then Space."));
+    UT_ASSERT_MSG(calls == 2, "the callback was called %d times", calls);
+
+    /* No name for {MINE}: it stays as written. An unknown word in braces
+       is plain text. */
+    n = expandInto("{MINE} and {BOAT} {GUN_UP}", out, sizeof(out),
+                   sizeof(out));
+    UT_ASSERT_MSG(strcmp(out, "{MINE} and {BOAT} range up") == 0,
+                  "got '%s'", out);
+    UT_ASSERT(n == strlen(out));
+
+    /* No callback at all: every token stays as written. */
+    n = tutorialTokensExpand("{ACCEL}{FIRE}", out, sizeof(out), NULL, NULL);
+    UT_ASSERT_MSG(strcmp(out, "{ACCEL}{FIRE}") == 0, "got '%s'", out);
+    UT_ASSERT(n == 13);
+
+    /* Out of room before a name: the name is left out whole, never cut.
+       "ab" fits in 6 bytes, "ab" + "range up" does not. */
+    n = expandInto("ab{GUN_UP}cd", out, 6, sizeof(out));
+    UT_ASSERT_MSG(n == 2 && strcmp(out, "ab") == 0,
+                  "got '%s' (%u)", out, (unsigned)n);
+    UT_ASSERT_MSG(out[3] == 'X', "a byte was written past the NUL");
+
+    /* Plain text is cut at the last byte that leaves room for the NUL. */
+    n = expandInto("abcdef", out, 4, sizeof(out));
+    UT_ASSERT_MSG(n == 3 && strcmp(out, "abc") == 0,
+                  "got '%s' (%u)", out, (unsigned)n);
+    UT_ASSERT(out[4] == 'X');
+    n = expandInto("abc", out, 4, sizeof(out));
+    UT_ASSERT(n == 3 && strcmp(out, "abc") == 0);
+
+    /* A name that fits exactly with its NUL is written. */
+    n = expandInto("{FIRE}", out, 6, sizeof(out));
+    UT_ASSERT_MSG(n == 5 && strcmp(out, "Space") == 0,
+                  "got '%s' (%u)", out, (unsigned)n);
+
+    /* One byte holds only the NUL; a NULL text is an empty one. */
+    n = expandInto("{ACCEL}", out, 1, sizeof(out));
+    UT_ASSERT(n == 0 && out[0] == 0 && out[1] == 'X');
+    n = expandInto(NULL, out, sizeof(out), sizeof(out));
+    UT_ASSERT(n == 0 && out[0] == 0);
+
+    /* No room at all: nothing is written. */
+    memset(out, 'X', sizeof(out));
+    n = tutorialTokensExpand("abc", out, 0, expandName, NULL);
+    UT_ASSERT(n == 0 && out[0] == 'X');
+    UT_ASSERT(tutorialTokensExpand("abc", NULL, 8, expandName, NULL) == 0);
     return 0;
 }
