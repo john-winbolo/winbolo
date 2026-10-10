@@ -208,7 +208,6 @@ local S = {
   fielded  = {},      -- role -> true once spawn_bot was asked
   frames   = 0,       -- on_tick calls (50 a second)
   sec      = 0,       -- whole seconds since the start
-  last_stock = nil,   -- stocks at the last poll, for the refill tick
   last_pos = nil,     -- world position at the last poll
   moving   = false,
   hide     = 0,       -- Station 4: seconds hidden in the forest in range
@@ -266,6 +265,9 @@ local POP = {
   s2a = "Bases refill your shells, mines and armour, and your tank is low.\n\n"
     .. "Drive onto your base at the green marker. Then STOP on the base and "
     .. "wait while it refills.",
+  s2stay = "This is your base. Stay on it and do not move: your shells, "
+    .. "mines and armour flow in a little at a time.\n\n"
+    .. "The panel says Full when your tank is full.",
   s2b = "Grey bases belong to nobody. Drive onto one to make it yours.",
   s2c = function()
     return string.format("Enemy bases must be shot empty first. A full one "
@@ -284,8 +286,7 @@ local POP = {
   s3 = "Your man harvests trees, then uses them to build roads, walls, "
     .. "mines and pillboxes. Click a build button, or press its key: "
     .. "{QUICK_TREE} trees, {QUICK_ROAD} road, {QUICK_WALL} wall, "
-    .. "{QUICK_MINE} mine. Then click on the map to send your man there. "
-    .. "Pillboxes come later.",
+    .. "{QUICK_MINE} mine. Then click on the map to send your man there.",
   s4a = "Games start with neutral pillboxes, and a full one takes 15 shots "
     .. "to kill.\n\n"
     .. "First, drive over the dead pillbox to put it in your tank. Then "
@@ -758,15 +759,18 @@ local function station_info(n, t)
   return nil
 end
 
+local function tank_full(t)
+  return t.shells >= rule("tank_full_shells") and
+         t.armour >= rule("tank_full_armour") and
+         t.mines >= rule("tank_full_mines")
+end
+
 local function panel_hint(n, t)
   if t ~= nil then
     local b = on_friendly_base(t)
     if b ~= nil then
       if S.moving then return "STOP on the base: wait", "yellow" end
-      local full = t.shells >= rule("tank_full_shells") and
-                   t.armour >= rule("tank_full_armour") and
-                   t.mines >= rule("tank_full_mines")
-      if full then return "Full", "green" end
+      if tank_full(t) then return "Full", "green" end
       return "Refilling: wait here", "yellow"
     end
     if t.shells < 5 and n >= 2 and n <= 6 then
@@ -1345,7 +1349,6 @@ function on_tank_spawned(p, mx, my, respawn, scripted)
       reset_base("b7_ne1"); reset_base("b7_ne2")
     end
   elseif p == S.player then
-    S.last_stock = nil
     S.last_pos = nil
     S.hide = 0
   end
@@ -1603,7 +1606,6 @@ local function poll()
     return
   end
   local n = S.at
-  local last = S.last_stock
   if S.last_pos ~= nil then
     S.moving = t.wx ~= S.last_pos[1] or t.wy ~= S.last_pos[2]
   end
@@ -1616,11 +1618,10 @@ local function poll()
     local item = TERRAIN_ITEM[word or ""]
     if item ~= nil and not t.boat then mark(1, item) end
   elseif n == 2 then
-    -- The first step of a refill on the base ticks 2A.
-    if last ~= nil and t.mx == B.b2a.x and t.my == B.b2a.y and
-       (t.shells > last.shells or t.armour > last.armour or
-        t.mines > last.mines) then
-      mark(2, "a_refill")
+    -- Arriving on the base says to stay there; a full tank on it ticks 2A.
+    if t.mx == B.b2a.x and t.my == B.b2a.y and not S.done[2].a_refill then
+      show("s2stay")
+      if tank_full(t) then mark(2, "a_refill") end
     end
     local b = game.base(B.b2c.n)
     if b ~= nil and b.owner ~= S.player and
@@ -1661,7 +1662,6 @@ local function poll()
   elseif n == 7 then
     check_win()
   end
-  S.last_stock = { shells = t.shells, armour = t.armour, mines = t.mines }
   redraw(false)
 end
 

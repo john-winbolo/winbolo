@@ -71,12 +71,14 @@ static const TokenEntry kTokens[TT_COUNT] = {
 /* What a token is on a touch screen, in words; NULL when the touch screen
    has nothing of its own for it and the keyboard key is named. A quick-build
    tool has no key and no button there: the player taps the build buttons.
-   The gunsight range has its own two round buttons, drawn "+" and "-". */
+   The gunsight range has its own two round buttons, drawn "+" and "-",
+   and firing has its own button. */
 static const char *touchTokenWords(TutorialTokenId id) {
   if (tutorialTokenIsQuickBuild(id)) {
     const char *words = langGetText(STR_TUTORIAL_QUICK_BUILD_TOUCH);
     return words ? words : "";
   }
+  if (id == TT_FIRE)     return "the fire button";
   if (id == TT_GUN_UP)   return "the + button";
   if (id == TT_GUN_DOWN) return "the - button";
   return NULL;
@@ -264,31 +266,32 @@ int tutorialResolveText(const char *src, TutorialSeg *out, int max) {
 }
 
 /* A token in words, for a controller: a plain line has no room for a
-   glyph. The quick-build keys are picked with the build tool's button.
+   glyph, so it names the button ("Shoot ... with the fire button").
+   The quick-build keys are picked with the build tool's button.
    The gunsight buttons are named by what they do: a player may rebind them,
    and the Steam and SDL defaults put them on opposite shoulders. */
 static const char *const kTokenWordsPad[TT_COUNT] = {
-  [TT_ACCEL]        = "forward",
-  [TT_BRAKE]        = "back",
-  [TT_LEFT]         = "left",
-  [TT_RIGHT]        = "right",
-  [TT_FIRE]         = "fire",
-  [TT_MINE]         = "mine",
-  [TT_SCROLL_UP]    = "scroll up",
-  [TT_SCROLL_DOWN]  = "scroll down",
-  [TT_SCROLL_LEFT]  = "scroll left",
-  [TT_SCROLL_RIGHT] = "scroll right",
-  [TT_DISMISS]      = "accept",
-  [TT_BUILD_MODE]   = "build cursor",
-  [TT_BUILD_PLACE]  = "build",
-  [TT_BUILD_TOOL]   = "next tool",
-  [TT_QUICK_TREE]   = "next tool",
-  [TT_QUICK_ROAD]   = "next tool",
-  [TT_QUICK_WALL]   = "next tool",
-  [TT_QUICK_PILL]   = "next tool",
-  [TT_QUICK_MINE]   = "next tool",
-  [TT_GUN_UP]       = "range up",
-  [TT_GUN_DOWN]     = "range down",
+  [TT_ACCEL]        = "the forward button",
+  [TT_BRAKE]        = "the back button",
+  [TT_LEFT]         = "the left button",
+  [TT_RIGHT]        = "the right button",
+  [TT_FIRE]         = "the fire button",
+  [TT_MINE]         = "the mine button",
+  [TT_SCROLL_UP]    = "the scroll up button",
+  [TT_SCROLL_DOWN]  = "the scroll down button",
+  [TT_SCROLL_LEFT]  = "the scroll left button",
+  [TT_SCROLL_RIGHT] = "the scroll right button",
+  [TT_DISMISS]      = "the accept button",
+  [TT_BUILD_MODE]   = "the build cursor button",
+  [TT_BUILD_PLACE]  = "the build button",
+  [TT_BUILD_TOOL]   = "the next tool button",
+  [TT_QUICK_TREE]   = "the next tool button",
+  [TT_QUICK_ROAD]   = "the next tool button",
+  [TT_QUICK_WALL]   = "the next tool button",
+  [TT_QUICK_PILL]   = "the next tool button",
+  [TT_QUICK_MINE]   = "the next tool button",
+  [TT_GUN_UP]       = "the range up button",
+  [TT_GUN_DOWN]     = "the range down button",
 };
 
 static const char *plainTokenName(TutorialTokenId id, void *ctx) {

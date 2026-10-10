@@ -259,8 +259,11 @@ and how to undo it.
   no trees (so Station 3's harvest is needed) and Station 2 starts low (5
   shells, 0 mines, 15 armour) until its refill is done. Respawns get the
   same loadout.
-- **2A ticks on the first refill step:** the base giving the tank one
-  step of shells or armour ticks "Refill at your base". The popup and
+- **2A ticks on a full tank:** the moment the tank reaches the 2A base,
+  the `s2stay` popup says to stay on it while the stocks flow in. "Refill
+  at your base" ticks only when the tank is full on that base (about 6 to
+  10 seconds from the low start), so the 2B popup does not pull the player
+  off the base half way. The popup and
   status line say to STOP on the base and wait; the panel says "STOP on the
   base: wait" while the tank moves on a friendly base, then "Refilling:
   wait here", then "Full".
