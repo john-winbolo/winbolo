@@ -585,6 +585,38 @@ function M.aim_error_point(state, err_brads, tankx, tanky, tx, ty, tid)
   return tankx + dx * c - dy * s, tanky + dx * s + dy * c
 end
 
+-- LGM_MISS_WU / LGM_HIT_PCT: a man-only aim handicap. Shots at a man (the
+-- kill_lgm aim point, both the fire gate and the crosshair search) aim at
+-- him only LGM_HIT_PCT percent of the time; otherwise the aim POINT moves
+-- LGM_MISS_WU world units from him, so the shell bursts near him (a man dies
+-- inside 128 wu of a burst) and the tank still turns toward him and fires.
+-- A walking man (vx, vy: his velocity) is missed BEHIND him, within 45
+-- degrees either side: a late shot, which he walks away from. A man
+-- standing still is missed in one of 16 directions. Drawn per
+-- (LGM_MISS_PERIOD-think block + target id + per-bot replan_offset) with the
+-- same hash as aim_error_point, so both call sites in one think move by the
+-- same amount and a seed replays exactly. No math.random. No-op (nothing
+-- computed) at miss_wu <= 0, the default.
+local LGM_MISS_PERIOD = 12
+function M.lgm_miss_point(state, miss_wu, hit_pct, tx, ty, tid, vx, vy)
+  if not miss_wu or miss_wu <= 0 then return tx, ty end   -- no-op
+  local nid = (type(tid) == "number") and tid or 0
+  local blk = math.floor((state.tick or 0) / LGM_MISS_PERIOD)
+  local seed = blk + nid * 7 + (state.replan_offset or 0)
+  local h    = (seed * 2654435761) % 65536
+  if (h % 100) < (hit_pct or 0) then return tx, ty end    -- this block aims true
+  local k = math.floor(h / 4096)                           -- 0..15
+  local ang
+  vx, vy = vx or 0, vy or 0
+  if vx * vx + vy * vy > 1 then
+    -- behind him: the bearing of -v, plus -2..2 steps of 22.5 degrees
+    ang = math.atan(-vx, vy) + ((k % 5) - 2) * (math.pi * 2 / 16)
+  else
+    ang = k * (math.pi * 2 / 16)
+  end
+  return tx + math.sin(ang) * miss_wu, ty - math.cos(ang) * miss_wu
+end
+
 -- FIRE_HOLD_TICKS: brain-side reload gate. Returns true when a shot must be
 -- SUPPRESSED this tick (a recent shot is still inside the hold window); else
 -- stamps state._last_fire_tick and returns false so the caller fires. No-op

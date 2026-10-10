@@ -350,14 +350,44 @@ and how to undo it.
   to its start the frame its tank leaves `island7` (checked every frame;
   once a second let it get out through the road gap). The
   `tutorial_bot7_region` arena watches it for two minutes.
-- **The Station 7 bot never kills the player's man.** GoalHunter has no
-  knob that stops it shooting men only: `peace=` spares the tank and the
-  man together, which would leave no opponent. So the bot gets
-  `cfg=CAPTURE_LGM_HUNT=false` (no hunt for a man building near a pill it
-  wants), and `can_die("builder")` refuses any death of the player's man
-  with the Station 7 bot as the killer. The `tutorial_bot7_man` arena kept
-  the player's man working beside the bot for three minutes: 29 deaths
-  refused, 0 by the bot.
+- **The Station 7 bot shoots at the player's man and mostly misses
+  (corrected 2026-10-10).** The first build made the man invulnerable to
+  this bot: `can_die("builder")` refused any death of the player's man with
+  the Station 7 bot as the killer. That was wrong. Andrew wants the bot to
+  look like it is trying to kill the man but is not very good at it. The
+  `can_die` refusal is gone, and the man can die to this bot.
+  - **What replaced it:** two new per-bot GoalHunter knobs, set for this
+    bot only through its init table: `cfg=LGM_MISS_WU=256`,
+    `cfg=LGM_HIT_PCT=10`, `cfg=CAPTURE_LGM_HUNT=false`. They act only on
+    the kill_lgm aim point (shots at a man). In 10 percent of aim blocks
+    (12 thinks each) the bot aims true. In the rest the aim point moves
+    256 world units (one square) off the man: behind him, within 45
+    degrees, when he walks (a late shot), and any of 16 directions when he
+    stands. The bot still turns to him and fires; the shell bursts about a
+    square from him. A man dies within 128 wu of a burst. The draw is a
+    hash of the tick block, the target and the bot (no `math.random`), so
+    a seed replays exactly. The defaults, `LGM_MISS_WU = 0` and
+    `LGM_HIT_PCT = 100`, are the old aim, and `PRESETS.keel` holds them.
+    Easy's own handicaps still apply (`AIM_ERROR_BRADS = 4`,
+    `FIRE_HOLD_TICKS = 16`, `REACTION_DELAY_TICKS = 20`).
+  - **Why new knobs:** Easy's `AIM_ERROR_BRADS = 4` turns the aim by up to
+    about 5.6 degrees, about 100 wu at four squares, which is inside the
+    128 wu kill radius. With only that, Easy killed the man with 20 and 29
+    percent of its shots at him (seeds 42 and 7).
+  - **CAPTURE_LGM_HUNT stays off** (Easy already has it off). That hunt
+    fires on its own line, which the miss knobs do not reach, so turning it
+    on would give the bot accurate shots at a man near a pill.
+  - **Measured** (`tutorial_bot7_man`, six minutes of the man walking out
+    to build road two and three squares from his tank, the bot told not to
+    fight tanks and its shells passing through the player's tank so only
+    shots at the man count): hits / shots at the man, seed 42: 8/72
+    (11.1%); seed 1: 10/71 (14.1%); 2: 5/100 (5.0%); 3: 7/68 (10.3%);
+    4: 6/76 (7.9%); 5: 9/90 (10.0%); 6: 4/70 (5.7%); 7: 8/80 (10.0%);
+    8: 3/59 (5.1%). All nine seeds: 60/686, **8.7 percent**. Other values
+    tried: 192 wu any direction at 10% gave about 19%; 256 wu behind at 5%
+    gave 6.3%; 224 wu behind at 10% gave 9.5% but 3.1 to 17.3% per seed.
+    The arena passes when 5 to 15 percent of at least 40 shots at the man
+    kill him and `can_die` refuses no death of the man.
 - **New man close by:** `on_lgm_died` calls `builder_parachute(p, nil,
   nil, 2)` for every seat (see the engine entry).
 

@@ -3458,6 +3458,15 @@ M.REACTION_DELAY_TICKS = 0 -- >0 => queue the URGENT goal re-decision this many
                            -- fires (bot reacts slower). Never delays safety
                            -- (cliff/swerve/drain-disengage/flee). 0 = no delay.
                            -- Easy = 20, Medium = 8.
+M.LGM_MISS_WU = 0          -- >0 => shots at a MAN only (kill_lgm aim point):
+                           -- outside the LGM_HIT_PCT draw the aim point moves
+                           -- this many world units off him (behind a walking
+                           -- man, any of 16 directions for a still one), so
+                           -- the shell bursts near him and misses (a man dies
+                           -- inside 128 wu of a burst).
+                           -- See util.lgm_miss_point. 0 = no offset. KEEL 0.
+M.LGM_HIT_PCT = 100        -- with LGM_MISS_WU > 0: the percent of aim blocks
+                           -- that aim true at the man. KEEL 100.
 -- Outbound /info batching: several internal-channel messages are packed into the
 -- one BrainInfo.sendmessage buffer per tick (joined by comms.MSG_SEP), capped here
 -- so the packed string stays under PACKET_MAX_CHAT_MESSAGE (128; bot_manager.c
@@ -5182,6 +5191,9 @@ M.ORDER_HINT_ESCORT_TILES = 3
 -- not match the constant it replaces.
 M.PRESETS = {
   keel = {
+    -- 2026-10-10: man-only aim handicap (the Tutorial's Station 7 bot);
+    -- 0 / 100 aim straight at the man as before.
+    LGM_MISS_WU = 0, LGM_HIT_PCT = 100,
     -- 2026-10-01: flat capture_base cost for game modes; 0 is no such term.
     CAPTURE_BASE_EXTRA_COST = 0,
     -- 2026-10-01: a base this many tiles away skips that cost; 0 is no waiver.
