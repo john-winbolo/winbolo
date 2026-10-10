@@ -38,6 +38,7 @@ bug worth reporting.
   - [Hints: telling one bot what to do](#hints-telling-one-bot-what-to-do)
 - [Talking to players, and ending the round](#talking-to-players-and-ending-the-round)
 - [Showing things on a client](#showing-things-on-a-client)
+  - [Popups](#popups)
   - [The panel](#the-panel)
 - [Settings](#settings)
 - [Rules](#rules)
@@ -1477,6 +1478,7 @@ starts comes due after about twice the seconds it asked for.
 | `game.map_name()` | What the map is called. |
 | `game.map_tile(x, y)` | The terrain code at a square, or `nil` for a square off the map. |
 | `game.is_mine(x, y)` | Whether a square holds a mine. |
+| `game.wall_shots(x, y)` | The shells a wall square still takes before it falls to rubble: one more than `building_life` for a wall no shell has touched (5 on the classic table), what is left for a damaged one, and 0 for a square that is not a wall or is off the map. |
 | `game.terrain()` | Every square as one 65,536-byte string, the square at `(x, y)` at byte `y * 256 + x + 1`. One call instead of 65,536 — and a fresh 64 KiB string each time, so read it where you need the whole map, not from `on_tick`. |
 
 ### Entities
@@ -1594,7 +1596,7 @@ refused with `SCN_OP_BAD_SQUARE`, the same answer as a square off the map.
 | `game.set_boat(p, on)` | Puts a tank on a boat or takes it off one. The square under it has to be water. |
 | `game.give_pill(p, n)` | Puts a pillbox into a tank, however armoured and whoever held it. |
 | `game.drop_pill(p, n[, x, y])` | Puts a carried pillbox back on the map, on a square or under the tank. |
-| `game.set_modifiers(p, t)` | Replaces a tank's `speed`, `accel`, `turn`, `reload`, `dealt` and `taken` percentages. A field the table leaves out goes back to the classic tank: the whole set is replaced, not merged. `speed` goes from 0 to 2000 and the others from 0 to 255; past that the call is refused with `SCN_OP_RANGE`. `speed` scales the ground's speed cap, so 534 puts a river's 3 at a road's 16. However high it is set, the engine holds the tank's scaled cap to 160 world units a frame, the most the byte-sized modifier could give on the fastest speed rule. |
+| `game.set_modifiers(p, t)` | Replaces a tank's `speed`, `accel`, `turn`, `reload`, `dealt` and `taken` percentages. A field the table leaves out goes back to the classic tank: the whole set is replaced, not merged. `speed` goes from 0 to 2000 and the others from 0 to 255; past that the call is refused with `SCN_OP_RANGE`. **0 is read as the classic 100**, not as nothing, so 0 does not stop a tank; 1 is the smallest a modifier goes, and a `speed` of 1 holds a tank nearly still. `speed` scales the ground's speed cap, so 534 puts a river's 3 at a road's 16. However high it is set, the engine holds the tank's scaled cap to 160 world units a frame, the most the byte-sized modifier could give on the fastest speed rule. |
 
 ### The builder
 
@@ -1643,7 +1645,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 
 | Call | What it does |
 |---|---|
-| `game.set_tile(x, y, t)` | Writes one square's terrain, by a `game.TERRAIN` code. `set_tile` and `fill_rect` share 256 changed squares a frame; a `set_tile` past that answers `nil, "SCN_OP_RATE"` and writes nothing. |
+| `game.set_tile(x, y, t)` | Writes one square's terrain, by a `game.TERRAIN` code. `set_tile` and `fill_rect` share 256 changed squares a frame; a `set_tile` past that answers `nil, "SCN_OP_RATE"` and writes nothing. A square written this way loses any damage a wall stood on it had, so a wall a script puts back takes its full count of shells again (`game.wall_shots`). |
 | `game.fill_rect(x0, y0, x1, y1, t)` | Writes a rectangle of terrain. One too big for a frame's budget answers `true, "queued"` and finishes over the frames after it. Only one fill may be in progress: a second asked for while one is still landing is refused with `SCN_OP_RATE`, not queued behind it, so test the answer when you write several. |
 | `game.place_mine(x, y[, owner[, visible]])` | Lays a mine on a square. `visible` shows it to everyone rather than to its owner's side. |
 | `game.remove_mine(x, y)` | Takes a mine off a square without setting it off. |
@@ -1965,6 +1967,7 @@ exist.
 | `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
 | `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. A round that scores both teams and seats gets a grouped recap table: a row for each scored team, best team score first, with its members (by lobby team) under it, best own score first; seats on no scored team follow. A round that scores only one of the two keeps the plain table of players. |
 | `game.announce(text[, seconds[, target[, position]]])` | A big line across the game view for that many seconds. Left out, `position` puts the line where it has always gone, centred in the upper third of the view. Give `"top"`, `"center"` or `{ x = , y = }` to put the centre of the line somewhere else. Empty text takes the line away. |
+| `game.popup(text[, target])` | A message box the player reads and closes, drawn the way the built-in tutorial's are. While it is up a local game is paused, as the tutorial pauses it. See [Popups](#popups). |
 | `game.status(text[, countdown_to[, target]])` | The status line: one line at the very top of the game view, centred, that stays until it is changed or cleared. `countdown_to` is a tick on `game.tick()`'s clock; the client shows the time left to it after the text. Empty text takes the line away. |
 | `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
 | `game.marker_follow(id, p[, colour[, target]])` | Puts mark `id` on seat `p`, where it rides the tank rather than the ground. |
@@ -2076,6 +2079,37 @@ whole list, so a second update to the same panel for the same audience in the
 same tick is refused with `SCN_OP_RATE` rather than queued — the one it would
 have replaced was never going to be seen. Giving each of sixteen players their
 own copy of panel 0 in one tick is fine: the audience is part of the key.
+
+### Popups
+
+`game.popup` puts up a box of text that stays until the player closes it. It
+is for a sentence or two the player has to read before going on, where
+`announce` would be gone too soon. A client queues up to four, and shows the
+next when one is closed. A popup is not kept: a player who joins after it
+was sent does not see it.
+
+The text is laid out the way the tutorial's is: a single `
+` is read as a
+space, so a script can break long lines in its source, and a blank line
+(`
+
+`) starts a new paragraph. It may be up to 511 bytes.
+
+Key tokens in the text show as the keys the player has bound, or as the
+control a controller or touch screen uses:
+
+`{ACCEL}`, `{BRAKE}`, `{LEFT}`, `{RIGHT}`, `{FIRE}`, `{MINE}`, `{SCROLL_UP}`,
+`{SCROLL_DOWN}`, `{SCROLL_LEFT}`, `{SCROLL_RIGHT}`, `{DISMISS}`,
+`{BUILD_MODE}`, `{BUILD_PLACE}`, `{BUILD_TOOL}`, and the five quick-build
+keys `{QUICK_TREE}`, `{QUICK_ROAD}`, `{QUICK_WALL}`, `{QUICK_PILL}` and
+`{QUICK_MINE}`.
+
+```lua
+game.popup("{ACCEL} forward, {BRAKE} slow down.
+
+"
+  .. "Build a road with {QUICK_ROAD}.", p)
+```
 
 ### The panel
 
@@ -2839,6 +2873,7 @@ The `code` a refused write answers, as a string.
 | Regions | 64, declared and defined together; names 31 bytes |
 | Timers waiting at once | 64 |
 | A line of text | 128 bytes |
+| A popup's text | 511 bytes |
 | Primitives in one panel list | 128 |
 | Bytes in one panel list | 1017 |
 | A panel text primitive | 48 bytes |
