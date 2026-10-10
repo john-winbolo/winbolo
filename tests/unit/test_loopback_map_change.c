@@ -40,6 +40,8 @@
  */
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
+#include <SDL3/SDL.h>
 
 #include "global.h"
 #include "client_sim.h"
@@ -62,6 +64,11 @@
 static bool pred_connected(LoopbackHarness *h, void *user) {
     (void)user;
     return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED;
+}
+
+static bool pred_map_list_ready(LoopbackHarness *h, void *user) {
+    (void)user;
+    return clientSimGetLobbyMapListReady(h->cs);
 }
 
 /* Latches once the map change has discarded the installed map. u points at
@@ -120,10 +127,13 @@ static int mc_change_and_reconverge(LoopbackHarness *h, const char *tag) {
     return 0;
 }
 
-/* Case 1: clean-path mid-lobby map change re-downloads and reconverges. */
+/* Case 1: clean-path mid-lobby map change re-downloads and reconverges
+ * without dropping the chooser's cached rows (which resets its scroll). */
 int run_loopback_map_change_clean(void) {
     LoopbackHarness h;
     int connectedAt;
+    int mapCount;
+    char firstMap[256], lastMap[256];
 
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "MapChg", /*lobbyMode*/ true,
                                        /*impairSpec*/ NULL, /*seed*/ 0xC1EA9u),
@@ -134,9 +144,35 @@ int run_loopback_map_change_clean(void) {
         loopbackHarnessStop(&h);
         UT_FAIL("initial join never completed within %d pumps", MC_CONNECT_MAX);
     }
+    clientSimNetSendLobbyMapListRequest(h.cs, "");
+    if (loopbackHarnessPumpUntil(&h, MC_CONNECT_MAX,
+                                 pred_map_list_ready, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("initial map listing never arrived");
+    }
+    mapCount = clientSimGetLobbyMapListCount(h.cs);
+    if (mapCount < 2) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("expected multiple maps in data/maps for the chooser listing");
+    }
+    SDL_strlcpy(firstMap, clientSimGetLobbyMapListName(h.cs, 0),
+                sizeof(firstMap));
+    SDL_strlcpy(lastMap, clientSimGetLobbyMapListName(h.cs, mapCount - 1),
+                sizeof(lastMap));
     if (mc_change_and_reconverge(&h, "clean") != 0) {
         loopbackHarnessStop(&h);
         UT_FAIL("clean map-change cycle failed (see lines above)");
+    }
+    /* Check before requesting anything else: even a temporary cache miss
+     * makes the chooser render only its synthetic row and lose its place. */
+    if (!clientSimGetLobbyMapListReady(h.cs) ||
+        clientSimGetLobbyMapListInFlight(h.cs) ||
+        clientSimGetLobbyMapListCount(h.cs) != mapCount ||
+        strcmp(clientSimGetLobbyMapListPath(h.cs), "") != 0 ||
+        strcmp(clientSimGetLobbyMapListName(h.cs, 0), firstMap) != 0 ||
+        strcmp(clientSimGetLobbyMapListName(h.cs, mapCount - 1), lastMap) != 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("map change discarded the chooser's cached listing");
     }
     loopbackHarnessStop(&h);
     return 0;

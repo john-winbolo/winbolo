@@ -3646,9 +3646,13 @@ BOLO_STATIC_ASSERT(
         sizeof(((ControlEvent *)0)->u.roundStats),
     lobby_script_list_does_not_widen_the_control_event_union);
 
-/* Bit 0 keeps the win condition, bit 1 is bound to a map. */
+/* Bit 0 keeps the win condition, bit 1 is bound to a map, bit 2 is fixed
+   on the list by the operator (LobbyScriptEntry.required). A decoder built
+   before bit 2 masks the bits it knows and never sees it; the rest stay
+   free on the same terms. */
 #define LOBBY_SCRIPT_FLAG_KEEPS_WIN 0x01u
 #define LOBBY_SCRIPT_FLAG_BOUND     0x02u
+#define LOBBY_SCRIPT_FLAG_REQUIRED  0x04u
 
 /* A Workshop id, most significant byte first, as two of the 32-bit halves
    every other field in this file is written with. */
@@ -3692,6 +3696,7 @@ static EncodeResult encodeLobbyScriptListBody(const ControlEvent *evt,
         }
         if (e->keepsWinCondition) flags |= LOBBY_SCRIPT_FLAG_KEEPS_WIN;
         if (e->bound)             flags |= LOBBY_SCRIPT_FLAG_BOUND;
+        if (e->required)          flags |= LOBBY_SCRIPT_FLAG_REQUIRED;
         buf[pos++] = flags;
         buf[pos++] = (uint8_t)fileLen;
         if (fileLen > 0) {
@@ -3741,6 +3746,8 @@ static bool decodeLobbyScriptListBody(const uint8_t *buf, size_t len,
         e->keepsWinCondition =
             (buf[pos] & LOBBY_SCRIPT_FLAG_KEEPS_WIN) ? true : false;
         e->bound = (buf[pos] & LOBBY_SCRIPT_FLAG_BOUND) ? true : false;
+        e->required =
+            (buf[pos] & LOBBY_SCRIPT_FLAG_REQUIRED) ? true : false;
         pos++;
         fileLen = buf[pos++];
         if (fileLen > LOBBY_SCENARIO_FILE_LEN - 1) return false;

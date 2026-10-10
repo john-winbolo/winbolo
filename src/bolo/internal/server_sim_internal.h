@@ -484,8 +484,8 @@ struct ServerSim {
                                     * this one did. */
     bool     modsOff;              /* the round composes none of the scripts
                                     * on the pick list, mods and picked
-                                    * scenarios alike; the map's own script
-                                    * still plays. Stored in the negative
+                                    * scenarios alike, and not the map's own
+                                    * script either. Stored in the negative
                                     * sense for the same reason as
                                     * smartPingsOff above. The pick list is
                                     * left alone, so this is what a host turns
@@ -597,6 +597,20 @@ struct ServerSim {
      * that is what a map with no scenario template leaves. */
     bool         previousSeatsValid;
     BYTE         previousSeats[MAX_TANKS];
+
+    /* The host's script list as it stood when the preview started, and the
+     * place it was holding for the map's own row (scenarioMapScriptHeld
+     * below). A preview of a map with a scenario of its own takes the picked
+     * scenarios off the live list, because that is what Set Map would do and
+     * the preview shows what Set Map would give. Every preview decides from
+     * this list rather than from the one the last preview left, so browsing
+     * past a scripted map to a plain one gives the picks back, and Cancel
+     * puts this list back before the old map is decided again. Written with
+     * the map above and forgotten with it. */
+    ScnDirEntry  previousScripts[LOBBY_SCRIPT_LIST_MAX];
+    int          previousScriptCount;
+    bool         previousMapScriptHeld;
+    int          previousMapScriptHeldAt;
 
     /* The file the live map was read from, kept because a scenario is
      * discovered beside its .map and the display name is not enough to find
@@ -977,6 +991,19 @@ struct ServerSim {
        that knows whether the file was there and whether it loaded. An empty
        file name means the committed map brought nothing. */
     ScnDirEntry  scenarioMapScript;
+    /* Where the host's list had the map's own row when Mods/Scenario off
+       took it off, so the row goes back to that place when the box is on
+       again. The row is not on the list while the box is off, because the
+       script is not playing and the lobby draws no row for it; but the map
+       still brings it, and the place is the host's. Set by
+       serverSimHoldMapScript, used and forgotten by the next
+       serverSimSetMapScript. */
+    bool         scenarioMapScriptHeld;
+    int          scenarioMapScriptHeldAt;
+    /* True only while a lobby map commit is being decided, so the decision
+       knows the map is the host's newest choice. Set and cleared by
+       serverSimScenarioOnMapCommitted. */
+    bool         scenarioMapIsNewer;
     /* That script's details (scenario_details.h), which the lobby's details
        dialog asks for by the row's file name. Kept beside the row rather than
        in it: every other ScnDirEntry is a directory row, and the directory's
@@ -990,6 +1017,39 @@ struct ServerSim {
        forgotten by serverSimSetMapScript. */
     uint8_t      scenarioMapScriptSettings[SCN_SETTINGS_BLOB_MAX];
     uint16_t     scenarioMapScriptSettingsLen;
+
+    /* The scripts the operator named on the dedicated server's command line
+       (-mod, -mod-required, -mod-locked), in the order they were named, each
+       with the strength of the strongest flag that named it
+       (ServerModStrength). Rows out of the scenarios directory, resolved
+       once at startup, so putting them back on the list never reads the
+       directory again.
+
+       Not the list. scenarioScripts above is what the round plays; these
+       are what serverSimRecordOperatorMods puts back on it at every new
+       lobby, and what the CMD_SET_SCRIPT_LIST arm will not let a host take
+       off. Written only by serverSimAddOperatorMod.
+
+       operatorModsLocked is set by any -mod-locked, whether or not its name
+       resolved: the operator asked for a list nobody edits, and a typo in
+       one name is not a reason to open the list to every host. */
+    ScnDirEntry  operatorMods[LOBBY_SCRIPT_LIST_MAX];
+    uint8_t      operatorModStrength[LOBBY_SCRIPT_LIST_MAX];
+    int          operatorModCount;
+    bool         operatorModsLocked;
+    /* The values the operator's -setting gave the settings of those rows,
+       keyed like scriptSettingValues below and checked against the
+       declaration when recorded. Put back into scriptSettingValues with
+       the rows at every new lobby (serverSimRecordOperatorMods). Held
+       against the host only for a fixed row (serverSimOperatorModFixed):
+       a -mod row's value is a default the host may move for one game.
+       Written only by serverSimRecordOperatorSetting. */
+    struct {
+        char    file[LOBBY_SCENARIO_FILE_LEN];
+        char    id[SCN_SETTING_ID_LEN];
+        int32_t value;
+    }            operatorSettings[SERVER_OPERATOR_SETTINGS_MAX];
+    int          operatorSettingCount;
     /* The values the host chose for scripts' settings this session, keyed by
        the script's file name and the setting's id. A value equal to the
        declared default is not kept: a missing value is the default. Kept

@@ -3175,6 +3175,10 @@ M.ORDER_HUMAN_NEAR_NEEDS_SHOOTING   = true  -- keel false (near is enough)
 M.ORDER_HUMAN_SHOOTING_WINDOW_TICKS = 150   -- keel 150 (moot; NEEDS_SHOOTING off)
 M.ORDER_HUMAN_SHOT_NEAR_TILES       = 1.5   -- keel 1.5 (moot)
 M.ORDER_HUMAN_SHOT_LINE_TILES       = 1.0   -- keel 1.0 (moot)
+-- 2026-10-02: a line reading does not count when an enemy tank in view sits
+-- on the shell's line (within ORDER_HUMAN_SHOT_LINE_TILES) before the pill:
+-- the human is shooting at the tank.  Near readings are not filtered.
+M.ORDER_HUMAN_SHOT_SKIP_TANK_ON_LINE = true -- keel false
 -- 2026-10-02 (Andrew): a human team-mate within ORDER_HUMAN_NEAR_SUICIDE_TILES
 -- (the wall-skip case, goal._human_near) and the take is a blitz: the bot
 -- waits at most HUMAN_ATTACK_BLITZ_WAIT_MAX_S seconds at its spot, commander
@@ -5573,6 +5577,9 @@ M.PRESETS = {
     ORDER_HUMAN_SHOOTING_WINDOW_TICKS = 150,
     ORDER_HUMAN_SHOT_NEAR_TILES       = 1.5,
     ORDER_HUMAN_SHOT_LINE_TILES       = 1.0,
+    --   2026-10-02: an enemy tank on the shell's line before the pill
+    --   cancels a line reading. KEEL counted the line reading anyway.
+    ORDER_HUMAN_SHOT_SKIP_TANK_ON_LINE = false,
     --   2026-10-02: human near = blitz wait capped at
     --   HUMAN_ATTACK_BLITZ_WAIT_MAX_S; a late soldier joins the charge or
     --   drops the goal. KEEL: no cap, and the soldier drove on to its spot.

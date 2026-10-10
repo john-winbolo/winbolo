@@ -95,6 +95,7 @@ static int serverSimDropSessionScripts(ServerSim *sim) {
 void serverSimResetLobbyToDefaults(ServerSim *sim) {
     BYTE i;
     int  droppedScripts;
+    bool operatorModsChanged;
     if (sim == NULL) return;
 
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
@@ -204,8 +205,15 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
 
        A list that lost uploaded picks above is decided again first, the way
        a pick is: what is attached still holds those scripts, and their files
-       are gone. The decision seats the lobby itself. */
-    if (droppedScripts > 0) {
+       are gone. The decision seats the lobby itself.
+
+       So is a list the operator's -mod rows had to be put back on: a -mod
+       the last occupants took off comes back for the next ones, the same
+       as the settings above, and the Mods/Scenario setting is on again so
+       it plays. Only put back — the host's own picks that
+       survived the upload sweep stay, as they always have. */
+    operatorModsChanged = serverSimRecordOperatorMods(sim);
+    if (droppedScripts > 0 || operatorModsChanged) {
         serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
     } else {
         serverSimScenarioSeatLobby(sim);
@@ -1012,6 +1020,28 @@ void serverSimReturnToLobby(ServerSim *sim) {
         serverSimRandomMapRegenerate(sim);
     }
 
+    /* Every lobby opens with the operator's -mod rows on its list, whoever
+       stayed: a default-on mod the host took off last lobby is on again for
+       this one, and the host may take it off again. The Mods/Scenario
+       setting comes back on with it, so the row is not listed and silent.
+       The empty-lobby reset
+       above has already done this when it ran, and then there is nothing
+       left to change here. A change is decided the way a pick is, and the
+       lobby the decision seats is told the way the CMD_SET_SCRIPT_LIST arm
+       tells it. Nothing to unready: everyone came back from a round
+       unready. */
+    if (serverSimRecordOperatorMods(sim)) {
+        serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
+        serverSimScenarioApplyLobbyRules(sim);
+        serverSimPublishLobbySettings(sim);
+        serverSimPublishScriptList(sim);
+        /* And the tracker's scenario and mod names, as the pick path does:
+           nothing else on the way back to the lobby updates the listing.
+           The session-rotation window opened above holds it as dirty until
+           the new round's key is in, so it never renames the old game. */
+        serverSimWbnLobbyUpdate(sim, FALSE);
+    }
+
     serverSimConsoleMessage("Returned to lobby.");
     /* Lobby state fan-out happens via the control-event bus — the
      * caller publishes CTRL_LOBBY_SLOT + CTRL_LOBBY_SETTINGS. */
@@ -1548,6 +1578,9 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * to boot — which would otherwise play by the last script's numbers. */
     simRulesClassic(&sim->sim.rules);
     serverSimResetScenarioSeats(sim);
+    /* A preview still open is the map the round plays, as in
+       serverSimStartGame. */
+    serverSimCommitPreview(sim);
     /* Voice to allies only, as serverSimResetGameWorld leaves it for the
        full-reset start, which this path does not go through. */
     serverSimSetScenarioVoiceEveryone(sim, false);
@@ -1705,6 +1738,13 @@ void serverSimStartGame(ServerSim *sim) {
      * capped by that round's rules and not by the previous round's. */
     simRulesClassic(&sim->sim.rules);
     serverSimResetScenarioSeats(sim);
+
+    /* A round that starts while the host is still browsing maps plays the
+       previewed map, so the preview is kept here as Use This Map would keep
+       it. Left open, its stash would outlive the round: the next map change
+       would put the pre-round script list back from it and a Cancel would
+       go back to the map from before this round. */
+    serverSimCommitPreview(sim);
 
     /* Held for the whole start, as in serverSimStartGameInPlace. */
     sim->startInProgress = true;
