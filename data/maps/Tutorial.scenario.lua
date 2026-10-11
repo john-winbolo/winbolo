@@ -1035,7 +1035,10 @@ local function draw_status()
   -- the player sees the line change (Andrew: "I didn't notice it had
   -- changed").
   if S.status_gap_until ~= nil and S.frames < S.status_gap_until then return end
-  if text ~= "" and S.status ~= nil and S.status ~= "" then
+  -- Not when only a number in the line changed ("5 shots left" to "4 shots
+  -- left"): that is the same line counting, and it stays up.
+  if text ~= "" and S.status ~= nil and S.status ~= "" and
+     (text:gsub("%d+", "#")) ~= (S.status:gsub("%d+", "#")) then
     S.status = ""
     S.status_gap_until = S.frames + STATUS_GAP_FRAMES
     game.status("", nil, S.player)
