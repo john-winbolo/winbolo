@@ -741,10 +741,10 @@ end
 --
 -- Each table also names the blitz party size (blitz = "MIN/MAX", tanks with
 -- the commander). The horde blitzes in parties of up to eight. A survivor
--- gets the brain's default, 2/4, by name: the brain does not reset a party
--- size on a new table, so a bot that ended the last round on the horde would
--- otherwise keep the horde's 2/8 as a survivor.
-local BLITZ_FOR = { horde = "2/8", survivor = "2/4" }
+-- gets "default", the size the bot's own level gives it: the brain does not
+-- reset a party size on a new table, so a bot that ended the last round on
+-- the horde would otherwise keep the horde's 2/8 as a survivor.
+local BLITZ_FOR = { horde = "2/8", survivor = "default" }
 
 local function word_for(p)
   if side[p] == INFECTED then

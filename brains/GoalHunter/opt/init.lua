@@ -1406,6 +1406,11 @@ function Brain.apply_init_tokens(state, a)
             PP.set_targets(b / sum, f / sum, ag / sum, u / sum, "init_arg")
           end
         end
+      elseif tok == "blitz=default" then
+        -- The party size this bot's level gives it, after a scenario handed
+        -- it another one (Virus: a seat back on the survivors after a round
+        -- on the horde).
+        squad.reset_blitz_size("init_arg_default")
       elseif tok:sub(1, 6) == "blitz=" then
         -- Party size in tanks INCLUDING the commander: MIN or MIN/MAX.
         -- Complaints latch into state._cfg_warn for the same reason as above.
