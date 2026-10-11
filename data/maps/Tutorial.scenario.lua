@@ -725,7 +725,10 @@ local function release_says()
   S.says = {}
   -- "top": every white line sits at the top edge of the view, under the
   -- status line (Andrew, Oct 11).
-  for _, a in ipairs(says) do game.announce(a[1], a[2], S.player, "top") end
+  for _, a in ipairs(says) do
+    S.say_until = math.max(S.say_until or 0, S.frames + a[2] * 50)
+    game.announce(a[1], a[2], S.player, "top")
+  end
 end
 
 local function say(text, secs)
@@ -734,6 +737,9 @@ local function say(text, secs)
     S.says[#S.says + 1] = { text, secs }
     return
   end
+  -- S.say_until: the frame the last white line comes down. The status
+  -- line's "Station done" waits for it, so the two never say it together.
+  S.say_until = math.max(S.say_until or 0, S.frames + secs * 50)
   game.announce(text, secs, S.player, "top")
 end
 
@@ -1001,14 +1007,16 @@ local function status_text(t)
      then
     return STEP_SHELLS
   end
+  -- "Station done" only once the white "Station N done" line is down.
+  local done_line = (S.frames < (S.say_until or 0)) and "" or STEP_DONE
   if n == 1 then
-    if station_done(1) then return STEP_DONE end
+    if station_done(1) then return done_line end
     return ""
   end
   local g = current_goal(n)
   if g == nil then
     if n == 7 then return STEP_WIN end
-    return STEP_DONE
+    return done_line
   end
   local s = STEP[n] and STEP[n][g]
   if type(s) == "function" then s = s() end
