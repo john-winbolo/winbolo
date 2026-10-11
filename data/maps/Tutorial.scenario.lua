@@ -315,9 +315,9 @@ local POP = {
     .. "position.",
   s4c = "This pillbox is already badly damaged: two more shots kill it.\n\n"
     .. "Your tank is full. Kill it, then drive over it to pick it up.",
-  s5a = "Stop on the green square at the end of the short road east of "
-    .. "the main road, and watch the friendly bot on the walled island take "
-    .. "a pillbox. It builds its own pillbox right next to the enemy one and "
+  s5a = "Stop on the green square ahead. Watch the friendly bot on the "
+    .. "walled island take a pillbox. It builds its own pillbox right next "
+    .. "to the enemy one and "
     .. "parks behind it, so the enemy's shots hit its pillbox, not its tank. "
     .. "Then it shoots the enemy pillbox dead and drives over it.",
   s5b = "Your turn: you carry a pillbox. Build your pillbox at the marked "
@@ -440,7 +440,7 @@ local STEP = {
     c_pick = "Drive over the dead pillbox to pick it up.",
   },
   [5] = {
-    a_watch = "Stop on the green square east of the road\nand watch the bot "
+    a_watch = "Stop on the green square ahead\nand watch the bot "
       .. "take the pillbox.",
     b_build = "Build your pillbox at the marked green square.\n"
       .. "Press the pillbox button or {QUICK_PILL},\nthen click the green "
@@ -723,7 +723,9 @@ local function release_says()
   if #S.queue > 0 or #S.says == 0 then return end
   local says = S.says
   S.says = {}
-  for _, a in ipairs(says) do game.announce(a[1], a[2], S.player) end
+  -- "top": every white line sits at the top edge of the view, under the
+  -- status line (Andrew, Oct 11).
+  for _, a in ipairs(says) do game.announce(a[1], a[2], S.player, "top") end
 end
 
 local function say(text, secs)
@@ -732,7 +734,7 @@ local function say(text, secs)
     S.says[#S.says + 1] = { text, secs }
     return
   end
-  game.announce(text, secs, S.player)
+  game.announce(text, secs, S.player, "top")
 end
 
 local function popup_later(id)
@@ -1013,12 +1015,24 @@ local function status_text(t)
   return s or ""
 end
 
+local STATUS_GAP_FRAMES = 50   -- 1 s at 50 frames a second
+
 local function draw_status()
   if S.player == nil then return end
   local text = status_text(player_tank())
   -- Its popup first: blank while a popup waits to be shown.
   if #S.queue > 0 then text = "" end
   if text == S.status then return end
+  -- One line straight to another: blank for STATUS_GAP_FRAMES first, so
+  -- the player sees the line change (Andrew: "I didn't notice it had
+  -- changed").
+  if S.status_gap_until ~= nil and S.frames < S.status_gap_until then return end
+  if text ~= "" and S.status ~= nil and S.status ~= "" then
+    S.status = ""
+    S.status_gap_until = S.frames + STATUS_GAP_FRAMES
+    game.status("", nil, S.player)
+    return
+  end
   S.status = text
   game.status(text, nil, S.player)
 end
