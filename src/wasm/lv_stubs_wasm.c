@@ -88,8 +88,8 @@ void lv_updateItem(BYTE itemType, BYTE itemNumber, BYTE owner, BYTE x, BYTE y,
     (void)armour; (void)shells; (void)mines; (void)inTank;
 }
 
-void lv_windowAddEvent(int eventType, char *msg) {
-    (void)eventType; (void)msg;
+void lv_windowAddEvent(int eventType, int kind, int mapX, int mapY, char *msg) {
+    (void)eventType; (void)kind; (void)mapX; (void)mapY; (void)msg;
 }
 
 void lv_windowRemoveEventsAfter(uint32_t timeMs) {
@@ -119,4 +119,10 @@ void lv_imgui_context_shutdown(void) {
  * menu bar would report. */
 float lv_imgui_get_menu_bar_height(void) {
     return 0.0f;
+}
+
+/* draw.c keeps the map clear of the standalone viewer's right-side dock. The
+ * browser build has no dock, so nothing is ever reserved for one. */
+int lv_imgui_dock_reserved_width(void) {
+    return 0;
 }

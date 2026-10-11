@@ -56,6 +56,8 @@
 #include "imgui/imgui_dialogs.h"
 #include "imgui/imgui_game_viewport.h"
 #include "imgui/imgui_scenario_panel.h"
+#include "imgui/imgui_dock.h"
+#include "lv_dock_fit.h"
 #include "imgui/imgui_game_view.h"
 #include "imgui/imgui_logviewer_menu.h"
 #include "game_view.h"
@@ -178,8 +180,8 @@ void lv_frontEndSetGameInformation(bool clear, BYTE versionMajor, BYTE versionMi
 /* --------------------------------------------------------------------------
  * Events
  * -------------------------------------------------------------------------- */
-void lv_windowAddEvent(int eventType, char *msg) {
-    lv_imgui_events_add(eventType, msg);
+void lv_windowAddEvent(int eventType, int kind, int mapX, int mapY, char *msg) {
+    lv_imgui_events_add(eventType, kind, mapX, mapY, msg);
 }
 
 void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY) {
@@ -197,6 +199,22 @@ void lv_windowRemoveEventsAfter(uint32_t timeMs) {
 
 void lv_windowRemoveEvents(void) {
     lv_imgui_events_clear();
+}
+
+/* Fill the events panel with every event of the file just loaded, so it
+ * lists the whole log from the first frame and playback only moves a "now"
+ * line through it. Called once per file load, after the load-time summary
+ * lines are in. The decoder plays the log through once (lv_screenEventScanRun)
+ * and the panel collects the lines as it always has; the panel is then told
+ * the list is complete, which makes it ignore the adds and removes of every
+ * later playback and seek, the restore that follows included. A live feed has
+ * no end to read ahead to: the scan refuses it and the panel goes on
+ * collecting line by line as before. */
+void lv_windowCollectAllEvents(void) {
+    if (lv_screenEventScanRun()) {
+        lv_imgui_events_set_complete();
+        lv_screenEventScanRestore();
+    }
 }
 
 /* --------------------------------------------------------------------------
@@ -221,6 +239,13 @@ void lv_controlsEnable(int state) {
  * Without that, a click during playback lands lv_shellsAddItem and
  * lv_shellsDestroy on the same list from two threads and corrupts the heap. */
 void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
+    lv_windowSeekToEvent(ms, 1, mapX, mapY);
+}
+
+/* The same jump for any events panel line. A line about a place on the map
+ * (hasCell) centres the view on it; any other line moves only the playhead
+ * and leaves the view where the user put it. */
+void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY) {
     unsigned char wasPlaying = g_lv->playIsPlaying;
     if (wasPlaying) {
         lv_windowPause();
@@ -228,7 +253,9 @@ void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
     lv_clientMutexWaitFor();
     lv_drawDirtyScreen();
     lv_screenSeekToTimeMs(ms);
-    lv_screenCentreOnCell(mapX, mapY);
+    if (hasCell) {
+        lv_screenCentreOnCell(mapX, mapY);
+    }
     lv_drawDirtyScreen();
     lv_clientMutexRelease();
     lv_imgui_game_view_init_camera(g_lv);
@@ -321,6 +348,7 @@ void lv_windowOpenFile(char *cmdLine) {
             g_lv->isLoaded = TRUE;
             lv_imgui_events_clear();
             lvStatsEmitRoundSummary();
+            lv_windowCollectAllEvents();
             lv_windowNeedRedraw();
         }
     }
@@ -438,7 +466,7 @@ static void loadPreferences(void) {
     lv_platform_config_get_string("LOGVIEWER", "Playback Speed", "1", val, sizeof(val));
     {
         BYTE spd = (BYTE)atoi(val);
-        if (spd < 1 || spd > 9) spd = 1;
+        if (spd < 1 || spd > LV_SPEED_MAX) spd = 1;
         lv_updateSpeed(spd, 0);
     }
 }
@@ -462,8 +490,22 @@ static void savePreferences(void) {
     /* Use Team Colours */
     lv_platform_config_set_string("LOGVIEWER", "Use Team Colours", g_lv->useTeamColours ? "Yes" : "No");
 
-    /* Screen Size */
-    snprintf(line, sizeof(line), "%d", lv_screenGetSizeX());
+    /* Screen Size. The next launch makes its window this many squares wide,
+     * so while the dock takes part of the window the number saved is the
+     * whole window's, not the map's: saving the map's would make the window
+     * narrower by the dock's width at every launch. */
+    {
+        int sizeX = lv_screenGetSizeX();
+        int reserved = lv_imgui_dock_reserved_width();
+        if (reserved > 0) {
+            int winW = 0, winH = 0;
+            float zoom = lv_drawGetZoomLevel();
+            if (zoom <= 0.0f) zoom = 1.0f;
+            SDL_GetWindowSize(g_lv->window, &winW, &winH);
+            if (winW > 0) sizeX = lvFitTilesNearest(winW, (float)TILE_SIZE_X * zoom);
+        }
+        snprintf(line, sizeof(line), "%d", sizeX);
+    }
     lv_platform_config_set_string("LOGVIEWER", "ScreenSizeX", line);
     snprintf(line, sizeof(line), "%d", lv_screenGetSizeY());
     lv_platform_config_set_string("LOGVIEWER", "ScreenSizeY", line);
@@ -486,6 +528,10 @@ static void savePreferences(void) {
     lv_platform_config_set_string("LOGVIEWER", "PreferencesSaved", "Yes");
     lv_platform_config_save();
 }
+
+/* The width the dock had the last time the map's tile count was fitted beside
+ * it. lvHostDockSync refits when the dock's answer differs from this. */
+static int s_lvDockReservedApplied = 0;
 
 /* --------------------------------------------------------------------------
  * lvHostSetup -- Shared host bring-up for the log viewer and the spectator.
@@ -510,6 +556,7 @@ static int lvHostSetup(SDL_Window *window, SDL_Renderer *renderer,
         return FALSE;
     }
     lv_imgui_main_menu_init(g_lv);
+    s_lvDockReservedApplied = 0;
 #ifdef __APPLE__
     /* Install the native NSMenu after ImGui + window are up. The shim's
      * save-on-install / restore-on-uninstall stack swaps WinBolo's menu
@@ -581,7 +628,7 @@ static void lvHostTeardown(void) {
 
 /* --------------------------------------------------------------------------
  * lvHostHandleGameViewKey -- Shared game-view input: grave-key game-view
- * toggle, Tab camera cycle, 1-4 zoom, arrow-key pan, ,-. time seek. Returns
+ * toggle, Tab camera cycle, 1-4 zoom, arrow-key pan, ,-. time step. Returns
  * TRUE if the event was consumed (the caller should skip its other handlers).
  * allowToggle gates the grave-key on/off toggle and allowSeek gates the ,-.
  * seek; the spectator host (always game-view, live feed) suppresses both.
@@ -703,45 +750,49 @@ static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
         }
     }
 
-    /* ',' / '<' jump back, '.' / '>' jump forward, 10s each.
-     * SDL3 reports key.key as the unmodified keycode by default,
-     * so Shift+',' arrives as SDLK_COMMA — match both physical
-     * keys regardless of shift state. Re-centres the camera
-     * after the seek because a 10s jump can leave the followed
-     * tank far outside the viewport, and the dead-zone tracker
+    /* ',' steps one tick back and '.' one tick forward; with Shift ('<' and
+     * '>') they jump 10 s. A tick is 20 ms of log, the smallest step the
+     * decoder takes. A step leaves playback paused, so the moment stepped to
+     * stays on the screen; a jump carries on playing if it was.
+     *
+     * SDL3 reports key.key as the unmodified keycode by default, so
+     * Shift+',' arrives as SDLK_COMMA with the shift modifier set; a layout
+     * that sends SDLK_LESS itself is taken as shifted too. A text box that
+     * has the keyboard keeps the key.
+     *
+     * In game view a jump re-centres the camera, because 10 s can leave the
+     * followed tank far outside the viewport and the dead-zone tracker
      * would otherwise scroll one tile per frame to catch up.
      * Suppressed (allowSeek=FALSE) on the live spectator feed. */
-    if (allowSeek && g_lv->gameView && sdlEvent.type == SDL_EVENT_KEY_DOWN &&
-        g_lv->isLoaded &&
+    if (allowSeek && sdlEvent.type == SDL_EVENT_KEY_DOWN &&
+        g_lv->isLoaded && !lv_imgui_want_text_input() &&
+        (sdlEvent.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
         (sdlEvent.key.key == SDLK_COMMA  || sdlEvent.key.key == SDLK_LESS ||
          sdlEvent.key.key == SDLK_PERIOD || sdlEvent.key.key == SDLK_GREATER)) {
-        size_t curPos, totSize;
-        uint32_t curTime, totTime;
-        lv_screenGetLogProgress(&curPos, &totSize, &curTime, &totTime);
-        if (totTime > 0) {
-            const uint32_t kStepMs = 10000;
-            bool back = (sdlEvent.key.key == SDLK_COMMA ||
-                         sdlEvent.key.key == SDLK_LESS);
-            uint32_t targetMs;
-            if (back) {
-                targetMs = (curTime > kStepMs) ? curTime - kStepMs : 0;
-            } else {
-                targetMs = curTime + kStepMs;
-                if (targetMs > totTime) targetMs = totTime;
-            }
-            float ratio = (float)targetMs / (float)totTime;
-            unsigned char wasPlaying = g_lv->playIsPlaying;
-            if (wasPlaying) lv_windowPause();
-            lv_clientMutexWaitFor();
-            lv_drawDirtyScreen();
-            lv_screenSeekToPosition(ratio);
-            lv_drawDirtyScreen();
-            lv_clientMutexRelease();
-            lv_imgui_game_view_init_camera(g_lv);
-            lv_windowNeedRedraw();
-            if (wasPlaying) lv_windowPlay();
-            g_lv->wantScreenUpdate = TRUE;
-        }
+        const uint32_t kTickMs = 20;
+        const uint32_t kJumpMs = 10000;
+        bool back = (sdlEvent.key.key == SDLK_COMMA ||
+                     sdlEvent.key.key == SDLK_LESS);
+        bool jump = ((sdlEvent.key.mod & SDL_KMOD_SHIFT) != 0 ||
+                     sdlEvent.key.key == SDLK_LESS ||
+                     sdlEvent.key.key == SDLK_GREATER);
+        uint32_t stepMs = jump ? kJumpMs : kTickMs;
+        /* Absolute log time: a 20 ms step is too fine to send through the
+         * slider's 0..1 ratio. lv_screenSeekToTimeMs clamps to the log. */
+        uint32_t nowMs = lv_screenGetTimeRunning();
+        uint32_t targetMs = back ? ((nowMs > stepMs) ? nowMs - stepMs : 0)
+                                 : nowMs + stepMs;
+        unsigned char wasPlaying = g_lv->playIsPlaying;
+        if (wasPlaying) lv_windowPause();
+        lv_clientMutexWaitFor();
+        lv_drawDirtyScreen();
+        lv_screenSeekToTimeMs(targetMs);
+        lv_drawDirtyScreen();
+        lv_clientMutexRelease();
+        if (jump && g_lv->gameView) lv_imgui_game_view_init_camera(g_lv);
+        lv_windowNeedRedraw();
+        if (wasPlaying && jump) lv_windowPlay();
+        g_lv->wantScreenUpdate = TRUE;
         return TRUE;
     }
 
@@ -772,11 +823,13 @@ static void lvHostHandleResize(const SDL_Event *e) {
      * window cleanly at the current zoom. */
     float tilePxX = (float)TILE_SIZE_X * zoom;
     float tilePxY = (float)TILE_SIZE_Y * zoom;
-    int newTilesX = (int)(((float)w + tilePxX * 0.5f) / tilePxX);
+    /* The dock, when it shows, takes the right of the window; the map is
+     * fitted to what is left. Zero in the live spectator and whenever the
+     * dock is off, which leaves every sum below as it was. */
+    int reserved = lv_imgui_dock_reserved_width();
+    int newTilesX = lvFitTilesNearest(w - reserved, tilePxX);
     int newTilesY = (int)((((float)(h - menuH)) + tilePxY * 0.5f) / tilePxY);
-    if (newTilesX < 1) newTilesX = 1;
     if (newTilesY < 1) newTilesY = 1;
-    if (newTilesX > 255) newTilesX = 255;
     if (newTilesY > 255) newTilesY = 255;
 
     /* A maximized or fullscreen window can't be resized: SDL_SetWindowSize is
@@ -792,8 +845,15 @@ static void lvHostHandleResize(const SDL_Event *e) {
     if (!(wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN))) {
         int snappedW = (int)(newTilesX * tilePxX + 0.5f);
         int snappedH = (int)(newTilesY * tilePxY + 0.5f);
-        SDL_SetWindowSize(g_lv->window, snappedW, snappedH + menuH);
+        SDL_SetWindowSize(g_lv->window, snappedW + reserved, snappedH + menuH);
+    } else if (reserved > 0) {
+        /* The window stays as it is, so the map cannot be snapped to end at
+         * the dock. Rounding to the nearest square could stop it short and
+         * leave a black strip beside the dock; cover the gap instead, with
+         * the last square running a little way under the dock's edge. */
+        newTilesX = lvFitTilesCover(w - reserved, tilePxX);
     }
+    s_lvDockReservedApplied = reserved;
     lv_screenSetSizeX((BYTE)newTilesX);
     lv_screenSetSizeY((BYTE)newTilesY);
     /* The size setters keep the offset inside the map for the new grid. The
@@ -802,6 +862,52 @@ static void lvHostHandleResize(const SDL_Event *e) {
     lv_screenSetSubOffset(0, 0);
     lv_drawResizeRenderTarget();
     lv_drawDirtyScreen();
+    g_lv->wantScreenUpdate = TRUE;
+}
+
+/* --------------------------------------------------------------------------
+ * lvHostDockSync -- Keep the map's width in step with the right-side dock.
+ *
+ * Runs first thing each frame, before the map is drawn. It lets the dock come
+ * in or go out for the frame, then, when the width the dock takes has changed
+ * (turned on or off, or its edge dragged), refits the number of map squares
+ * across to the rest of the window. Everything that places the map -- the
+ * centring, the pan limits, centre-on-click, the mouse-to-square sum -- works
+ * from that number, so nothing of the map is lost behind the dock.
+ *
+ * The window itself is left alone here (the user did not resize it), so the
+ * fit rounds up: the last square may run under the dock's edge by less than
+ * a square. The live spectator never has a dock and so never gets past the
+ * comparison. Game view sets its own fixed size and puts the overview's back
+ * when it ends; it is left alone, and the comparison catches up afterwards.
+ * -------------------------------------------------------------------------- */
+static void lvHostDockSync(void) {
+    int reserved, winW = 0, winH = 0, newTilesX;
+    float zoom;
+
+    lv_imgui_dock_pre_frame();
+    if (g_lv->gameView) {
+        return;
+    }
+    reserved = lv_imgui_dock_reserved_width();
+    if (reserved == s_lvDockReservedApplied) {
+        return;
+    }
+    s_lvDockReservedApplied = reserved;
+
+    SDL_GetWindowSize(g_lv->window, &winW, &winH);
+    if (winW <= 0) {
+        return;
+    }
+    zoom = lv_drawGetZoomLevel();
+    if (zoom <= 0.0f) zoom = 1.0f;
+    newTilesX = lvFitTilesBesideDock(winW, reserved, (float)TILE_SIZE_X * zoom);
+    if ((BYTE)newTilesX != lv_screenGetSizeX()) {
+        lv_screenSetSizeX((BYTE)newTilesX);
+        lv_screenSetSubOffset(0, 0);
+        lv_drawResizeRenderTarget();
+        lv_drawDirtyScreen();
+    }
     g_lv->wantScreenUpdate = TRUE;
 }
 
@@ -826,6 +932,8 @@ static void lvHostHandleResize(const SDL_Event *e) {
  * the comments panel needs a finished log's WBN key. The viewer is never in
  * live mode, so its behaviour is unchanged. */
 static void lvHostRenderFrame(const char *overlay) {
+    lvHostDockSync();
+
     /* Clear the frame */
     SDL_SetRenderDrawColor(g_lv->renderer, 0, 0, 0, 255);
     SDL_RenderClear(g_lv->renderer);
@@ -910,6 +1018,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.showItemInfo     = lv_g_show_item_info_window;
         lvms.showComments     = lv_g_show_comments_window;
         lvms.showScenarioPanel = lv_g_show_scenario_panel_window;
+        lvms.dockEnabled      = lv_imgui_dock_get_enabled() ? true : false;
         lvms.zoomStepIndex    = lv_drawGetZoomStepIndex();
         lvms.zoomStepCount    = lv_drawGetZoomStepCount();
         lvms.fromMainMenu     = g_lv->fromMainMenu ? true : false;
@@ -1008,6 +1117,9 @@ static void lvHostRenderFrame(const char *overlay) {
         } else {
             lv_imgui_main_menu_bar();
             lv_imgui_cache_menu_bar_height();
+            /* Before the panels: a panel docked in it has to find the dock
+             * space already submitted this frame, or ImGui undocks it. */
+            lv_imgui_dock_host();
             lv_imgui_controls_window();
             lv_imgui_game_info_window();
             lv_imgui_events_window();
@@ -1064,6 +1176,9 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     if (lvHostSetup(window, renderer, fromMainMenu) == FALSE) {
         return;
     }
+    /* Only this host has the dock; the spectator shares the setup above and
+     * leaves the answer at no. */
+    lv_imgui_dock_set_standalone(1);
 
     /* Open file from command line / caller if provided */
     if (logPath != NULL && strlen(logPath) > 0) {
@@ -1079,6 +1194,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
             g_lv->isLoaded = TRUE;
             lv_imgui_events_clear();
             lvStatsEmitRoundSummary();
+            lv_windowCollectAllEvents();
             lv_windowNeedRedraw();
         }
         s_pendingZipData = NULL;

@@ -12,6 +12,7 @@ extern "C" {
 #include "../draw.h"
 #include "../dns.h"
 #include "../imgui/imgui_main_menu.h"
+#include "../imgui/imgui_dock.h"
 #include "../imgui/imgui_dialogs.h"
 void lv_windowOpenFile(char *cmdLine);
 void lv_windowSaveMap(void);
@@ -61,6 +62,8 @@ static NSMenuItem *s_lv_winGameInfoItem    = nil;
 static NSMenuItem *s_lv_winItemInfoItem    = nil;
 static NSMenuItem *s_lv_winCommentsItem    = nil;
 static NSMenuItem *s_lv_winScnPanelItem    = nil;
+static NSMenuItem *s_lv_dockEnabledItem    = nil;
+static NSMenuItem *s_lv_resetIntoDockItem  = nil;
 
 static int s_lv_zoomStepsBuilt = -1;   /* Zoom submenu's per-step items rebuilt on count change. */
 
@@ -102,7 +105,9 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleItemInfo:(id)sender;
 - (void)onToggleComments:(id)sender;
 - (void)onToggleScenarioPanel:(id)sender;
+- (void)onToggleDockEnabled:(id)sender;
 - (void)onResetWindows:(id)sender;
+- (void)onResetWindowsIntoDock:(id)sender;
 - (void)onHelp:(id)sender;
 @end
 
@@ -182,7 +187,9 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleItemInfo:(id)sender { (void)sender; lv_g_show_item_info_window = !lv_g_show_item_info_window; }
 - (void)onToggleComments:(id)sender { (void)sender; lv_g_show_comments_window = !lv_g_show_comments_window; }
 - (void)onToggleScenarioPanel:(id)sender { (void)sender; lv_g_show_scenario_panel_window = !lv_g_show_scenario_panel_window; }
+- (void)onToggleDockEnabled:(id)sender { (void)sender; lv_imgui_dock_set_enabled(!lv_imgui_dock_get_enabled()); }
 - (void)onResetWindows:(id)sender { (void)sender; lv_g_reset_window_positions = true; }
+- (void)onResetWindowsIntoDock:(id)sender { (void)sender; lv_imgui_dock_request_layout(); }
 - (void)onHelp:(id)sender { (void)sender; /* Phase 3 — Help is a placeholder */ }
 @end
 
@@ -571,12 +578,30 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
 
     [winMenu addItem:[NSMenuItem separatorItem]];
 
+    /* The right-side dock, as in the in-window menu: the option, the reset
+     * that floats every panel, and the reset that stacks them in the dock. */
+    NSMenuItem *dockEnabled = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_DOCK_ENABLED)
+        action:@selector(onToggleDockEnabled:)
+        keyEquivalent:@""];
+    [dockEnabled setTarget:s_lv_bridge];
+    [winMenu addItem:dockEnabled];
+    s_lv_dockEnabledItem = dockEnabled;
+
     NSMenuItem *resetWindows = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_LV_RESET_WINDOWS)
         action:@selector(onResetWindows:)
         keyEquivalent:@""];
     [resetWindows setTarget:s_lv_bridge];
     [winMenu addItem:resetWindows];
+
+    NSMenuItem *resetIntoDock = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_RESET_WINDOWS_DOCK)
+        action:@selector(onResetWindowsIntoDock:)
+        keyEquivalent:@""];
+    [resetIntoDock setTarget:s_lv_bridge];
+    [winMenu addItem:resetIntoDock];
+    s_lv_resetIntoDockItem = resetIntoDock;
 
     /* Help menu — kept symmetric with the in-window ImGui menu so the
      * Win/Linux/Web rendering of this menu doesn't diverge. About is
@@ -656,6 +681,8 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_winItemInfoItem = nil;
     s_lv_winCommentsItem = nil;
     s_lv_winScnPanelItem = nil;
+    s_lv_dockEnabledItem = nil;
+    s_lv_resetIntoDockItem = nil;
     s_lv_zoomStepsBuilt = -1;
 }
 
@@ -699,6 +726,8 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (s_lv_winItemInfoItem) [s_lv_winItemInfoItem setState:(s->showItemInfo ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winCommentsItem) [s_lv_winCommentsItem setState:(s->showComments ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winScnPanelItem) [s_lv_winScnPanelItem setState:(s->showScenarioPanel ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_dockEnabledItem) [s_lv_dockEnabledItem setState:(s->dockEnabled ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_resetIntoDockItem) [s_lv_resetIntoDockItem setEnabled:(s->dockEnabled ? YES : NO)];
 
     /* Zoom submenu — rebuild per-step items when the step count changes,
      * then mirror checkmarks every frame so wheel-zoom updates land. */

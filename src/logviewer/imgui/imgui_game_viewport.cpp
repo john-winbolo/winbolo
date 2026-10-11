@@ -10,6 +10,7 @@
 
 #include "imgui_game_viewport.h"
 #include "imgui_main_menu.h"
+#include "imgui_dock.h"
 #include "imgui.h"
 
 #include <cstdio>
@@ -105,6 +106,13 @@ static int screen_to_game_coords(float screen_x, float screen_y,
 
     *game_x = (int)(screen_x / zoom) + subPxX;
     *game_y = (int)((screen_y - menu_bar_height) / zoom) + subPxY;
+
+    /* The dock's part of the window is not map, even where the map's last
+     * square runs a little way under the dock's edge. */
+    int dock_w = lv_imgui_dock_reserved_width();
+    if (dock_w > 0 && screen_x >= ImGui::GetIO().DisplaySize.x - (float)dock_w) {
+        return 0;
+    }
 
     /* Check if coordinates are within game texture bounds */
     if (*game_x < 0 || *game_y < 0) {

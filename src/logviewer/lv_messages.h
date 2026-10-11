@@ -33,6 +33,7 @@
 
 #include "lv_global.h"
 #include "../gui/lang.h"
+#include "lv_event_kind.h"
 
 #define IsEmpty(list) ((list) ==NULL)
 #define NonEmpty(list) (!IsEmpty(list))
@@ -166,6 +167,9 @@ void serverMessageAdd(messageType msgType, char *top, char *bottom);
 *  rendered body to the events panel via lv_windowAddEvent.
 *
 *ARGUMENTS:
+*  kind    - What the line reports (lv_event_kind.h). The call
+*            site states it, so the events panel can filter
+*            by kind without reading the rendered text.
 *  msgType - The type of the message (newswire, assistant, ...)
 *  topId   - Lang ID for the "channel" header (currently unused
 *            by the events panel; reserved for parity with
@@ -173,8 +177,32 @@ void serverMessageAdd(messageType msgType, char *top, char *bottom);
 *  bodyId  - Lang ID for the message body
 *  args    - Substitution args, or NULL
 *********************************************************/
-void lv_messageAdd(messageType msgType, langid topId, langid bodyId,
-                   const MessageArgs *args);
+void lv_messageAdd(lvEventKind kind, messageType msgType, langid topId,
+                   langid bodyId, const MessageArgs *args);
+
+/*********************************************************
+*NAME:          lv_messageAddAt
+*PURPOSE:
+*  lv_messageAdd for a line about something at a known place
+*  on the map (a pillbox, a base, the tank that died). The
+*  events panel keeps the cell and centres the view on it
+*  when the line is clicked.
+*
+*ARGUMENTS:
+*  kind    - What the line reports (lv_event_kind.h)
+*  mapX    - Map cell X of the event
+*  mapY    - Map cell Y of the event. Cell (0,0) is where the
+*            decoder parks things that are off the map (a
+*            pillbox being carried, a tank not yet placed),
+*            so it is taken as "no place".
+*  msgType - The type of the message (newswire, assistant, ...)
+*  topId   - Lang ID for the "channel" header
+*  bodyId  - Lang ID for the message body
+*  args    - Substitution args, or NULL
+*********************************************************/
+void lv_messageAddAt(lvEventKind kind, int mapX, int mapY,
+                     messageType msgType, langid topId, langid bodyId,
+                     const MessageArgs *args);
 
 /*********************************************************
 *NAME:          lv_messageAddItem

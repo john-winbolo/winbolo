@@ -1167,6 +1167,108 @@ int run_lv_presentation_slot_team(void) {
     return 0;
 }
 
+/* ── 7b. The event scan ────────────────────────────────────────────── */
+
+/* The standalone viewer lists a whole log's events at load: it decodes the
+ * log once (lv_screenEventScanRun) and returns to the start
+ * (lv_screenEventScanRestore). On the log_TeamSet log above: the scan posts
+ * the lines playback posts, the team's and the end-of-log's, once each; the
+ * restore posts none and leaves the clock at 0, playback ready to run and
+ * slot 1 on no team; playing from there posts the same lines again, so the
+ * world the scan left is the one the loader left; and a live feed, which has
+ * no end to read ahead to, is refused untouched. */
+int run_lv_event_scan_returns_to_start(void) {
+    const char     *path = "lv_event_scan.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    int             before;
+    int             linesScan, linesRestore, linesPlay, linesAgain;
+    bool            ran, ranLive, playingAtEnd, playingAfter, ffAfter;
+    bool            reachedEnd;
+    uint32_t        timeAtEnd, timeAfter, timeAgain, timeLive;
+    int             teamAtEnd, teamAfter;
+    uint16_t        killsAfter;
+
+    lvpPutOpening(&b);
+    lvpPut(&b, kLvpTeamStream, sizeof(kLvpTeamStream));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    /* A tally the decoder only ever adds to: the restore must clear it. */
+    lv->kills[1] = 7;
+
+    before       = g_lvStubEventsAdded;
+    ran          = lv_screenEventScanRun();
+    linesScan    = g_lvStubEventsAdded - before;
+    timeAtEnd    = lv_screenGetTimeRunning();
+    teamAtEnd    = lvpSlot1Team();
+    playingAtEnd = lv_screenIsPlaying() == TRUE;
+
+    before       = g_lvStubEventsAdded;
+    lv_screenEventScanRestore();
+    linesRestore = g_lvStubEventsAdded - before;
+    timeAfter    = lv_screenGetTimeRunning();
+    teamAfter    = lvpSlot1Team();
+    playingAfter = lv_screenIsPlaying() == TRUE;
+    ffAfter      = lv->fastForwarding == TRUE;
+    killsAfter   = lv->kills[1];
+
+    /* Playback from the restored start. */
+    before     = g_lvStubEventsAdded;
+    reachedEnd = lvpPlayToEnd();
+    linesPlay  = g_lvStubEventsAdded - before;
+
+    /* A restore with no scan before it does nothing. */
+    before     = g_lvStubEventsAdded;
+    lv_screenEventScanRestore();
+    linesAgain = g_lvStubEventsAdded - before;
+    timeAgain  = lv_screenGetTimeRunning();
+
+    /* A live feed is refused, and not moved. */
+    lv_screenSeekToTimeMs(20);
+    lv_screenSpecSetLiveMode(true);
+    ranLive  = lv_screenEventScanRun();
+    timeLive = lv_screenGetTimeRunning();
+    lv_screenSpecSetLiveMode(false);
+
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(ran, "the scan refused a loaded file");
+    UT_ASSERT_MSG(linesScan == 2, "the scan posted %d lines (want the "
+                  "log_TeamSet's and the end-of-log's)", linesScan);
+    UT_ASSERT_MSG(timeAtEnd == 140, "the scan stopped at %u ms (want the "
+                  "end, 140)", (unsigned)timeAtEnd);
+    UT_ASSERT_MSG(teamAtEnd == 2, "after the scan slot 1's team is %d (want "
+                  "2: it read the whole log)", teamAtEnd);
+    UT_ASSERT_MSG(!playingAtEnd, "the scan ended with playback still running");
+    UT_ASSERT_MSG(linesRestore == 0, "the restore posted %d lines",
+                  linesRestore);
+    UT_ASSERT_MSG(timeAfter == 0, "the restore left the clock at %u ms",
+                  (unsigned)timeAfter);
+    UT_ASSERT_MSG(playingAfter, "after the restore playback cannot run");
+    UT_ASSERT_MSG(!ffAfter, "after the restore the decoder is still "
+                  "fast-forwarding, so playback would be silent");
+    UT_ASSERT_MSG(teamAfter == -1, "after the restore slot 1's team is %d "
+                  "(want unknown, as at load)", teamAfter);
+    UT_ASSERT_MSG(killsAfter == 0, "the restore left a kill tally of %u",
+                  (unsigned)killsAfter);
+    UT_ASSERT_MSG(reachedEnd, "playback after the restore did not reach "
+                  "end-of-log");
+    UT_ASSERT_MSG(linesPlay == linesScan, "playback after the restore posted "
+                  "%d lines, the scan %d", linesPlay, linesScan);
+    UT_ASSERT_MSG(linesAgain == 0 && timeAgain == 140, "a restore with no "
+                  "scan moved playback (%d lines, clock %u ms)", linesAgain,
+                  (unsigned)timeAgain);
+    UT_ASSERT_MSG(!ranLive, "the scan ran on a live feed");
+    UT_ASSERT_MSG(timeLive == 20, "the refused scan moved the clock to %u ms",
+                  (unsigned)timeLive);
+    return 0;
+}
+
 /* ── 8. Announcements on the newswire ──────────────────────────────── */
 
 /* After the opening:

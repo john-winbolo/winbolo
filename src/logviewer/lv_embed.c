@@ -90,6 +90,11 @@ void lv_updateSpeed(BYTE spd, int updateSlider) {
     case 7: ts =  8; break;
     case 8: ts =  6; break;
     case 9: ts =  1; break;
+    /* Slower than real time. These sit after the fast values so a speed
+     * saved by an older viewer still means what it did. */
+    case LV_SPEED_HALF:    ts =  40; break;
+    case LV_SPEED_QUARTER: ts =  80; break;
+    case LV_SPEED_TENTH:   ts = 200; break;
     default:
         ts = 20;
         spd = 1;

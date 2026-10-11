@@ -10,6 +10,7 @@
 
 #include "imgui_controls.h"
 #include "imgui_main_menu.h"
+#include "imgui_dock.h"
 #include "imgui_context.h"
 #include "imgui.h"
 #include "platform_config.h"
@@ -46,9 +47,26 @@ extern "C" {
 static LogViewerState *s_lv = nullptr;
 
 /* Speed labels for display */
+/* The speed slider's stops from slowest to fastest: the speed value each one
+ * sets, and its label. The slow values are numbered after the fast ones (see
+ * logviewer.h), so the slider goes by this table, not by the value. */
+static const unsigned char speed_stops[] = {
+    LV_SPEED_TENTH, LV_SPEED_QUARTER, LV_SPEED_HALF, 1, 2, 3, 4, 5, 6, 7, 8, 9
+};
 static const char* speed_labels[] = {
+    "0.1x", "0.25x", "0.5x",
     "1x", "1.2x", "1.4x", "1.6x", "1.8x", "2x", "2.2x", "2.4x", "Fast"
 };
+#define SPEED_STOP_COUNT ((int)(sizeof(speed_stops) / sizeof(speed_stops[0])))
+#define SPEED_STOP_NORMAL 3
+
+/* The slider stop that sets the given speed value; 1x when there is none. */
+static int speed_stop_for(int speed) {
+    for (int i = 0; i < SPEED_STOP_COUNT; i++) {
+        if (speed_stops[i] == speed) return i;
+    }
+    return SPEED_STOP_NORMAL;
+}
 
 /* Current time string buffer */
 static char s_current_time[32] = "00:00";
@@ -95,7 +113,7 @@ void lv_imgui_controls_init(struct LogViewerState *lv) {
     char val[256];
     lv_platform_config_get_string("LOGVIEWER", "Playback Speed", "1", val, sizeof(val));
     int spd = atoi(val);
-    if (spd < 1 || spd > 9) {
+    if (spd < 1 || spd > LV_SPEED_MAX) {
         spd = 1;
     }
     lv_updateSpeed((unsigned char)spd, 0);
@@ -105,10 +123,10 @@ void lv_imgui_controls_update_speed(void) {
     /* Called when speed changes externally */
 }
 
-static void update_speed_from_slider(int new_speed) {
-    if (new_speed < 1) new_speed = 1;
-    if (new_speed > 9) new_speed = 9;
-    lv_updateSpeed((unsigned char)new_speed, 0);
+static void update_speed_from_slider(int stop) {
+    if (stop < 0) stop = 0;
+    if (stop >= SPEED_STOP_COUNT) stop = SPEED_STOP_COUNT - 1;
+    lv_updateSpeed(speed_stops[stop], 0);
 }
 
 void lv_imgui_controls_window(void) {
@@ -117,7 +135,11 @@ void lv_imgui_controls_window(void) {
     }
 
     {
-        ImGuiCond cond = lv_g_reset_window_positions ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+        /* A panel that sat in the dock when the dock was turned off goes
+         * back to its default place, the same as a reset. */
+        bool to_default = lv_g_reset_window_positions ||
+                          lv_imgui_dock_take_float_reset("###controls");
+        ImGuiCond cond = to_default ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
         ImVec2 vp = ImGui::GetMainViewport()->Size;
         ImGui::SetNextWindowSize(ImVec2(420, 120), cond);
         ImGui::SetNextWindowPos(ImVec2((vp.x - 420) * 0.5f, vp.y - 120 - 10), cond);
@@ -126,28 +148,32 @@ void lv_imgui_controls_window(void) {
     char ctrl_title[128];
     snprintf(ctrl_title, sizeof(ctrl_title), "%s###controls", langGetText(STR_LV_WIN_CONTROLS));
     if (ImGui::Begin(ctrl_title, &lv_g_show_controls_window, ImGuiWindowFlags_NoCollapse)) {
-        /* Reposition window relative to right/bottom edge when viewport is resized */
-        float dx, dy;
-        if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
-            ImVec2 pos = ImGui::GetWindowPos();
-            ImVec2 vp_old = ImGui::GetMainViewport()->Size;
-            float old_vp_x = vp_old.x - dx;
-            float old_vp_y = vp_old.y - dy;
-            ImVec2 size = ImGui::GetWindowSize();
-            if (pos.x + size.x * 0.5f > old_vp_x * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x + dx, pos.y + dy));
-            else if (pos.y + size.y * 0.5f > old_vp_y * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x, pos.y + dy));
-        }
-        /* Always clamp to keep fully on screen */
-        {
-            ImVec2 pos = ImGui::GetWindowPos();
-            ImVec2 size = ImGui::GetWindowSize();
-            ImVec2 vp = ImGui::GetMainViewport()->Size;
-            ImVec2 new_pos = pos;
-            if (new_pos.x + size.x > vp.x) new_pos.x = vp.x - size.x;
-            if (new_pos.y + size.y > vp.y) new_pos.y = vp.y - size.y;
-            if (new_pos.x < 0) new_pos.x = 0;
-            if (new_pos.y < 0) new_pos.y = 0;
-            if (new_pos.x != pos.x || new_pos.y != pos.y) ImGui::SetWindowPos(new_pos);
+        /* In the dock the dock places the window; moving it here would pull
+         * it straight back out. */
+        if (!ImGui::IsWindowDocked()) {
+            /* Reposition window relative to right/bottom edge when viewport is resized */
+            float dx, dy;
+            if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
+                ImVec2 pos = ImGui::GetWindowPos();
+                ImVec2 vp_old = ImGui::GetMainViewport()->Size;
+                float old_vp_x = vp_old.x - dx;
+                float old_vp_y = vp_old.y - dy;
+                ImVec2 size = ImGui::GetWindowSize();
+                if (pos.x + size.x * 0.5f > old_vp_x * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x + dx, pos.y + dy));
+                else if (pos.y + size.y * 0.5f > old_vp_y * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x, pos.y + dy));
+            }
+            /* Always clamp to keep fully on screen */
+            {
+                ImVec2 pos = ImGui::GetWindowPos();
+                ImVec2 size = ImGui::GetWindowSize();
+                ImVec2 vp = ImGui::GetMainViewport()->Size;
+                ImVec2 new_pos = pos;
+                if (new_pos.x + size.x > vp.x) new_pos.x = vp.x - size.x;
+                if (new_pos.y + size.y > vp.y) new_pos.y = vp.y - size.y;
+                if (new_pos.x < 0) new_pos.x = 0;
+                if (new_pos.y < 0) new_pos.y = 0;
+                if (new_pos.x != pos.x || new_pos.y != pos.y) ImGui::SetWindowPos(new_pos);
+            }
         }
 
         /* Playback buttons row */
@@ -199,16 +225,28 @@ void lv_imgui_controls_window(void) {
 
         /* Speed slider - same line as buttons */
         ImGui::SameLine(0, 15);
+        /* In the dock the panel is as narrow as the dock is. The slider gives
+         * up width first, down to half; under that the speed row goes below
+         * the buttons instead of being cut off at the edge. */
+        float speedW = 100.0f;
+        if (ImGui::IsWindowDocked()) {
+            float labelW = ImGui::CalcTextSize(langGetText(STR_LV_SPEED_LBL)).x +
+                           ImGui::GetStyle().ItemSpacing.x;
+            float room = ImGui::GetContentRegionAvail().x - labelW;
+            if (room < 50.0f) {
+                ImGui::NewLine();
+                room = ImGui::GetContentRegionAvail().x - labelW;
+            }
+            if (room < speedW) speedW = (room > 50.0f) ? room : 50.0f;
+        }
         ImGui::TextUnformatted(langGetText(STR_LV_SPEED_LBL));
         ImGui::SameLine();
 
-        int spd = (int)s_lv->speed;
-        if (spd < 1) spd = 1;
-        if (spd > 9) spd = 9;
+        int stop = speed_stop_for((int)s_lv->speed);
 
-        ImGui::PushItemWidth(100);
-        if (ImGui::SliderInt("##speed", &spd, 1, 9, speed_labels[spd - 1])) {
-            update_speed_from_slider(spd);
+        ImGui::PushItemWidth(speedW);
+        if (ImGui::SliderInt("##speed", &stop, 0, SPEED_STOP_COUNT - 1, speed_labels[stop])) {
+            update_speed_from_slider(stop);
         }
         ImGui::PopItemWidth();
 

@@ -514,6 +514,8 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
   char ownerName[FILENAME_MAX];
   char oldOwner[FILENAME_MAX];
   BYTE returnValue; /* Value to return */
+  int pillX = 0;    /* Map cell of the pillbox; (0,0) when it has none */
+  int pillY = 0;
 
   ownerName[0] = '\0';
   oldOwner[0] = '\0';
@@ -524,13 +526,19 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
   }
   returnValue = (*value)->item[pillNum].owner;
   (*value)->item[pillNum].owner = owner;
+  /* Where the pillbox stands, for the events panel's click-to-jump. One
+     that is being carried has no place on the map. */
+  if ((*value)->item[pillNum].inTank == FALSE) {
+    pillX = (*value)->item[pillNum].x;
+    pillY = (*value)->item[pillNum].y;
+  }
   /* Make the message if required */
   if (returnValue == NEUTRAL && migrate == FALSE) {
     /* Neutral pill — normalized to MESSAGE_CAPTURE_PILL ("Neutral Pillbox"). */
     MessageArgs args = {0};
     lv_playersMakeMessageName(owner, ownerName);
     snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, ownerName);
-    lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
+    lv_messageAddAt(LV_EVK_PILL_CAPTURED, pillX, pillY, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
   } else if (owner == NEUTRAL) {
     /* Do nothing */
   } else if (lv_playersIsAllie(returnValue, owner) == FALSE && migrate == FALSE) {
@@ -540,7 +548,7 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
     snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, ownerName);
     lv_playersGetPlayerName(returnValue, oldOwner, sizeof(oldOwner));
     snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, oldOwner);
-    lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
+    lv_messageAddAt(LV_EVK_PILL_STOLEN, pillX, pillY, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
   }
   (*value)->item[pillNum].owner = owner;
 //    frontEndStatusPillbox(pillNum, (pillsGetAllianceNum(value, pillNum)));

@@ -39,6 +39,7 @@ struct LvMenuState {
     bool showItemInfo;
     bool showComments;
     bool showScenarioPanel;
+    bool dockEnabled;          /* Windows > Dock enabled */
     int  zoomStepIndex;       /* current zoom step */
     int  zoomStepCount;        /* total zoom steps; >0 */
     bool fromMainMenu;         /* embedded — affects File menu's last item */

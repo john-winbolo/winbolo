@@ -162,6 +162,12 @@ int lv_imgui_want_capture_mouse(void) {
     return ImGui::GetIO().WantCaptureMouse ? 1 : 0;
 }
 
+int lv_imgui_want_text_input(void) {
+    if (!g_context) return 0;
+    ImGui::SetCurrentContext(g_context);
+    return ImGui::GetIO().WantTextInput ? 1 : 0;
+}
+
 void lv_imgui_set_gamepad_nav(int enabled) {
     if (!g_context) return;
     ImGui::SetCurrentContext(g_context);

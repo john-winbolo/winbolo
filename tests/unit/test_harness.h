@@ -4097,6 +4097,17 @@ int run_lv_server_tick_live_feed(void);
 /* Where the log viewer draws a declared region (test_lv_region_rect.c): at the
  * overview's edges, off it, and on the game view at 2x with a pan. */
 int run_lv_region_rect_placement(void);
+/* How the log viewer's window is shared between the map and the right-side
+ * dock (test_lv_dock_fit.c): squares across with and without the dock, and
+ * the limits on the dock's width. */
+int run_lv_dock_fit_sums(void);
+/* The log viewer's events panel (test_lv_event_kind.c): the saved name of
+ * each event kind, and where the "now" divider falls among the lines. */
+int run_lv_event_kind_sums(void);
+/* The decode pass that lists a whole log's events at load
+ * (test_lv_presentation.c): it posts each line once, stores no snapshot, and
+ * leaves the world at the start as the loader did. */
+int run_lv_event_scan_returns_to_start(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or
