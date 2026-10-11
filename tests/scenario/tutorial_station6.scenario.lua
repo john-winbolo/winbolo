@@ -4,7 +4,10 @@
 --
 -- Seat 0 plays the tutorial's player, held still. At tick 300 the arena puts
 -- it on the road in Station 6, which fields the Station 6 bot. The arena
--- then watches the bot for two and a half minutes without shooting.
+-- then watches the bot for two and a half minutes without shooting: the
+-- seat is a GoalHunter bot, so the arena keeps its shells at 0 (after the
+-- 5B blocker moved back to 117,102, the seat drove north and shot the
+-- Station 6 man once, which broke the "same trips" check).
 --
 -- Each tick it reads how far the bot's tank is from the centre of its
 -- parking square, both before the tutorial's own tick (what one engine
@@ -68,6 +71,10 @@ function on_tick(tick)
     if d ~= nil and d > A.pre then A.pre = d end
   end
   arena_real_tick(tick)
+  local me = game.tank(0)
+  if me ~= nil and not me.dead and me.shells > 0 then
+    game.set_stocks(0, { shells = 0 })
+  end
   if A.phase == 0 and tick >= 300 then
     game.teleport(0, 126, 86, 0)           -- Station 6, on the road
     A.phase, A.t = 1, tick
@@ -99,7 +106,8 @@ function on_tick(tick)
       end
     end
   end
-  if tick >= A.t + 15000 then
+  if tick >= A.t + 15000 and not A.done then
+    A.done = true
     local same, craters = true, true
     local first = A.trips[1] and trip_text(A.trips[1])
     for _, trip in ipairs(A.trips) do

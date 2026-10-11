@@ -386,18 +386,18 @@ for y in range(101, 121):
 
 # 5B: the target nine squares from the road, so a tank driving up the road
 # is out of its range. The player is handed its blocker pill in the tank and
-# builds it on the square south-east of the target. The parking square
-# (121,107) is 4 east and 6 south of the target (Andrew's play-test: "4
-# tiles right ... and one tile more north" of the old 117,108). From the
+# builds it on the square directly south of the target, (117,102) (Andrew,
+# item 38: "keep it one tile directly south of the pillbox"). The parking
+# square (121,107) is 4 east and 6 south of the target (Andrew's play-test:
+# "4 tiles right ... and one tile more north" of the old 117,108). From the
 # tank's centre the target's centre is 7.21 squares away and its near corner
 # 6.52; a tank shell flies 7.125, so a shot aimed at the target's centre
 # ends inside its square. A road spur along row 107 joins the parking square
-# to the main road. The line between the two centres crosses the blocker's
-# square (118,102) for 0.9 of a square, so the target's shots at the parked
-# tank hit the blocker; the tank's shots cross it the other way, and the
-# script lets them pass the player's own blocker (can_hit), which a real
-# game would not. See docs/TUTORIAL_DECISIONS.md, "5B parking square".
-take_layout("t5b", 117, 101, park=(4, 6), blocker=(1, 1))
+# to the main road. The line between the two centres clips the blocker's
+# square's north-east corner for about 0.3 of a square. The script lets the
+# tank's shells pass the player's own blocker (can_hit), which a real game
+# would not. See docs/TUTORIAL_DECISIONS.md, "5B parking square".
+take_layout("t5b", 117, 101, park=(4, 6))
 fill(122, 107, GAP[0] - 1, 107, ROAD)
 # The arrow sits two squares further west than walled_reset's default, at
 # x 117..120, so it clears the checkpoint pool's west wall at x 121.

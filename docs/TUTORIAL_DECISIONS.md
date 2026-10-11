@@ -334,6 +334,29 @@ and how to undo it.
   about half the game view is now two rows, split with `"\n"`. The client
   draws each row centred in one box (see SCENARIO_API.md, "Line breaks").
   The 5B, 6 and 7 lines are split this way.
+- **The popup first, its white text after (item 37, 2026-10-10).**
+  Andrew: "popup needs to come first" - the popup explains, the white text
+  keeps the player on track. Before, a goal ticked, the status line moved
+  to the next goal at once, and the next goal's popup came 3 seconds
+  later (`POPUP_DELAY`); the "Station N done" line also went out before
+  the popup queued with it. Now, while a popup waits in the script's queue
+  (`S.queue`):
+  - the status line is blank (`draw_status`);
+  - every announcement waits with it (`say`, `S.says`), and goes out in
+    the tick the queue empties, after the popup;
+  - `mark` queues the next popup before it says "Station N done", so the
+    line waits for that popup.
+  All the script's announcements go through `say`: "Station N done",
+  "Station N reset", the 5B rebuild line, "The enemy pillbox is back",
+  "Moved to the green square", "Hide in the forest first". A popup shown
+  at once (station entry, s2stay, s5b) goes out before the status line in
+  the same tick. *Popup close:* the server cannot see a popup close, and
+  no new call was needed: the client draws no white text while a popup is
+  open and starts a line's time when it closes (item 26). The
+  `tutorial_popup_first` arena checks the server's order through Station
+  2 (entry, s2stay, s2b, s2c, s2d and "Station 2 done"): no non-blank
+  status line or announcement goes out while a popup waits. It fails on
+  the old script.
 - **Never white text and a popup at once (item 26, 2026-10-10).** The
   client holds the announcements while its popup overlay is open (a
   `game.popup` or a tutorial message): no announcement and no status line
@@ -484,9 +507,36 @@ and how to undo it.
   shells between it and the player both ways, and the two 5A pills' shells
   at the player. `can_build` keeps its man on `island5a`, and
   `can_capture` lets it pick up only the two 5A pills. After each take the
-  script puts the target back, gives the bot its blocker pillbox again and
-  sends it home; a watchdog restarts a take that has stalled for 150
-  seconds. It plays at Hard, as a demonstration.
+  script puts the target back and fields the bot again with its blocker
+  pillbox (item 39, below); a watchdog restarts a take that has stalled for
+  150 seconds. It plays at Hard, as a demonstration.
+- **Each 5A take starts with a fresh bot (item 39, 2026-10-10).** Andrew:
+  the demo bot often skipped its blocker on a later take. *Cause:* the
+  script's reset (`reset_5a`) put the pills back and teleported the bot
+  home, but GoalHunter keeps its attack goal across a teleport. A reset in
+  the middle of a take (the 150-second watchdog) left the goal past its
+  build step, so the bot drove out and shot the target with the blocker
+  still in its tank. A reset after a take was safe: the take had ended the
+  goal. *Choice:* every reset takes the bot off (`unfield_bot5a`, which
+  puts both pills home) and the poll fields it again on the next frame;
+  `on_tank_spawned` hands it the blocker. A bot taken off drops its goal,
+  as a death does. No brain change. The bot now comes back at its start
+  square (140,117), not at (136,115). `field` tries again on the next poll
+  when `spawn_bot` says `SCN_OP_ALREADY`, because a `remove_bot` lands a
+  frame or more after it is asked for. The `tutorial_take5a_blocker`
+  arena breaks into the demo every other take: it kills the bot before it
+  builds and after, calls `reset_5a` 4 seconds after the bot built, and
+  takes the player out of Station 5 for 8 seconds. It fails when the
+  target loses armour before the bot built its blocker in that take. Old
+  script: 3 of 3 middle-of-take resets shot bare. New script: seeds 42,
+  7, 99 and 1234 each gave 16 takes, 16 windows with a shot, 0 bare; kills
+  8, resets 4, player out 4. A fresh bot builds 6.1 s after the reset and
+  takes the target about 22.8 s after it; with no break-ins the old
+  script took 26 to 111 s from take to take.
+  *Arena note:* the gate's player seat is a GoalHunter bot. It joined the
+  demo bot's blitz, and the demo bot then built a wall, not its pillbox,
+  on the square on the seat's line to the target. The arena sends the
+  seat `noblitz`; a human player never joins a blitz.
 - **"Bot 2" is the 5A demo bot (item 17, 2026-10-10).** It is on the field
   only while the player's tank is in Station 5. The script fields it when
   the tank is in Station 5 and removes it (`game.remove_bot`, which also
@@ -531,7 +581,10 @@ and how to undo it.
   and orders him to that tree; every second it also rebuilds his row
   (road, and the crater span beside the main road). The arena logged 13
   trips in 2.5 minutes, all over the same squares in the same order, all
-  across the craters, none off the row.
+  across the craters, none off the row. The arena's player seat is a
+  GoalHunter bot, so the arena keeps its shells at 0: after the 5B blocker
+  moved back to (117,102) (item 38) that bot drove north and shot the man
+  once, and the trips stopped matching. The tutorial was not at fault.
 - **Station 6 kills** count a death of the Station 6 man with the player
   as the killer.
 - **The Station 7 bot** is an Easy GoalHunter on team 2. It may build only
@@ -684,11 +737,17 @@ and how to undo it.
   main road by a road spur along row 107. From the tank's centre the
   target's centre is 7.21 squares away and its near corner 6.52; a tank
   shell flies 7.125 squares, so a shot aimed at the target's centre ends
-  inside its square. *Choice:* the blocker moves from (117,102) to
-  (118,102), the square south-east of the target, because the line
-  between the two centres now runs on the diagonal: it crosses (118,102)
-  for 0.9 of a square, and does not cross (117,102). So the target's shots
-  at the parked tank hit the blocker. The scripted shooter
+  inside its square. The blocker square stays directly south of the
+  target, (117,102) (item 38, Andrew: "keep it one tile directly south of
+  the pillbox"; for a while it was moved to 118,102 without asking, and
+  that is undone). The line between the two centres clips the north-east
+  corner of (117,102) for about 0.3 of a square, and that is enough:
+  `tutorial_park5b` with seeds 42, 7, 99 and 1234 gives the same numbers
+  each time (the fire has no random part). In the 60 s watch the blocker
+  takes every shell (tank hits 0) and dies once; in the take (blocker at
+  1 armour) the target dies after 5.3 s, the blocker dies twice, and the
+  tank takes 8 hits, 40 armour, and lives. So the blocker still shields
+  the parked tank. The scripted shooter
   (`tests/brains/tutorial_shoot_north.lua`) aims at 232 (0 = north,
   clockwise). `can_hit` lets the player's own shells pass the player's
   blocker; in a real game they would hit it. *Note:* the firing client
@@ -713,7 +772,7 @@ and how to undo it.
     with the announcement, and starts down again. Silent rises: 0. The
     tank is not hit: the blocker takes every shell.
   - Take (from the end of the watch, blocker at 1 armour, the worst
-    case): the target dies after 5.2 s. The angry target kills the
+    case): the target dies after 5.2 s (5.3 s with the blocker back on 117,102). The angry target kills the
     blocker twice: at 0.06 s (it had 1 armour), and again 1.6 s after its
     rebuild (a full blocker against an angry target). The tank takes 8
     hits, 40 armour (all of a full tank's), and lives on 0.
@@ -755,13 +814,13 @@ and how to undo it.
   has been picked up, so building the first before picking up the second
   still ticks the item.
 - **Gate arenas** hold the player's seat (a GoalHunter in the gate) still
-  with `set_modifiers{speed = 1, turn = 1}` and teleport it about. Sixteen
+  with `set_modifiers{speed = 1, turn = 1}` and teleport it about. Eighteen
   arenas: `tutorial_checkpoint`, `tutorial_reset`, `tutorial_take5a`,
-  `tutorial_take5a_soak`, `tutorial_park5b`, `tutorial_rebuild5b`,
+  `tutorial_take5a_soak`, `tutorial_take5a_blocker`, `tutorial_park5b`, `tutorial_rebuild5b`,
   `tutorial_station5_entry`, `tutorial_late_bots`, `tutorial_station6`,
   `tutorial_bot7_region`, `tutorial_bot7_stay`, `tutorial_bot7_man`,
   `tutorial_new_man`, `tutorial_station2`, `tutorial_watch5a`,
-  `tutorial_popup_announce`. The
+  `tutorial_popup_announce`, `tutorial_popup_first`. The
   5B arenas play the player with a scripted brain,
   `tests/brains/tutorial_shoot_north.lua`. The Station 2 steal is not
   covered: a held-still tank cannot drive onto a base.
