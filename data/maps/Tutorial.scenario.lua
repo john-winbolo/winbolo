@@ -221,7 +221,6 @@ local S = {
   on_2a    = false,   -- Station 2: the tank has been on the 2A base
   near5a_at = nil,    -- Station 5A: frame the tank first came near watch5a
   hide     = 0,       -- Station 4: seconds hidden in the forest in range
-  told_hide = -100,   -- Station 4: the second "hide first" was last said
   men      = 0,       -- Station 6: men killed
   gun_remind = false, -- Station 6: the gun-range reminder is up
   t5a_reset_at = 0,   -- Station 5A: the second of the last reset
@@ -772,6 +771,8 @@ local function next_popup(n)
     return "s2a"
   elseif n == 3 then return "s3"
   elseif n == 4 then
+    -- s4c says how to kill the pillbox: not for one already dead.
+    if d.c_kill then return nil end
     if d.b_hide then return "s4c" end
     if d.a_build then return "s4b" end
     return "s4a"
@@ -1395,11 +1396,9 @@ local function rearm(n)
     end
     local pb = game.pill(P.p4.n)
     if not d.c_kill and pb ~= nil then
-      -- Shots taken before the 4B hide are put back; once 4C is on, a hit
-      -- stays so the second shot kills it.
-      if pb.in_tank or pb.x ~= P.p4.x or pb.y ~= P.p4.y or
-         (pb.armour ~= P4_ARMOUR and
-          (not d.b_hide or pb.armour > P4_ARMOUR)) then
+      -- Never repaired: every hit stays, hidden first or not (Andrew,
+      -- Oct 11). Only a pillbox that left its square is put back.
+      if pb.in_tank or pb.x ~= P.p4.x or pb.y ~= P.p4.y then
         reset_pill("p4")
       end
     elseif d.c_kill and not d.c_pick and pb ~= nil and pb.in_tank and
@@ -1816,14 +1815,6 @@ end
 
 function can_die(kind, n, killer, cause, pill)
   if kind == "tank" and n == S.bot6 and S.bot6 ~= nil then return false end
-  if kind == "pill" and n == P.p4.n and not S.done[4].b_hide then
-    -- 4B: the pillbox stays at one armour until the player has hidden.
-    if S.player ~= nil and S.sec - S.told_hide >= 3 then
-      S.told_hide = S.sec
-      say("Hide in the forest first, then kill it.", 3)
-    end
-    return false
-  end
   return nil
 end
 
@@ -1940,7 +1931,12 @@ local function poll()
         else
           S.hide = 0
         end
-      elseif S.done[4].b_hide then
+      else
+        -- Dead. Killed before the hide too: the hide goals are ticked with
+        -- it and the station goes on (Andrew, Oct 11: "let it die and
+        -- complete that goal").
+        S.done[4].b_in = true
+        S.done[4].b_hide = true
         mark(4, "c_kill")
       end
     end
