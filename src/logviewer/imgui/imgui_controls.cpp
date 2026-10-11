@@ -47,9 +47,26 @@ extern "C" {
 static LogViewerState *s_lv = nullptr;
 
 /* Speed labels for display */
+/* The speed slider's stops from slowest to fastest: the speed value each one
+ * sets, and its label. The slow values are numbered after the fast ones (see
+ * logviewer.h), so the slider goes by this table, not by the value. */
+static const unsigned char speed_stops[] = {
+    LV_SPEED_TENTH, LV_SPEED_QUARTER, LV_SPEED_HALF, 1, 2, 3, 4, 5, 6, 7, 8, 9
+};
 static const char* speed_labels[] = {
+    "0.1x", "0.25x", "0.5x",
     "1x", "1.2x", "1.4x", "1.6x", "1.8x", "2x", "2.2x", "2.4x", "Fast"
 };
+#define SPEED_STOP_COUNT ((int)(sizeof(speed_stops) / sizeof(speed_stops[0])))
+#define SPEED_STOP_NORMAL 3
+
+/* The slider stop that sets the given speed value; 1x when there is none. */
+static int speed_stop_for(int speed) {
+    for (int i = 0; i < SPEED_STOP_COUNT; i++) {
+        if (speed_stops[i] == speed) return i;
+    }
+    return SPEED_STOP_NORMAL;
+}
 
 /* Current time string buffer */
 static char s_current_time[32] = "00:00";
@@ -96,7 +113,7 @@ void lv_imgui_controls_init(struct LogViewerState *lv) {
     char val[256];
     lv_platform_config_get_string("LOGVIEWER", "Playback Speed", "1", val, sizeof(val));
     int spd = atoi(val);
-    if (spd < 1 || spd > 9) {
+    if (spd < 1 || spd > LV_SPEED_MAX) {
         spd = 1;
     }
     lv_updateSpeed((unsigned char)spd, 0);
@@ -106,10 +123,10 @@ void lv_imgui_controls_update_speed(void) {
     /* Called when speed changes externally */
 }
 
-static void update_speed_from_slider(int new_speed) {
-    if (new_speed < 1) new_speed = 1;
-    if (new_speed > 9) new_speed = 9;
-    lv_updateSpeed((unsigned char)new_speed, 0);
+static void update_speed_from_slider(int stop) {
+    if (stop < 0) stop = 0;
+    if (stop >= SPEED_STOP_COUNT) stop = SPEED_STOP_COUNT - 1;
+    lv_updateSpeed(speed_stops[stop], 0);
 }
 
 void lv_imgui_controls_window(void) {
@@ -225,13 +242,11 @@ void lv_imgui_controls_window(void) {
         ImGui::TextUnformatted(langGetText(STR_LV_SPEED_LBL));
         ImGui::SameLine();
 
-        int spd = (int)s_lv->speed;
-        if (spd < 1) spd = 1;
-        if (spd > 9) spd = 9;
+        int stop = speed_stop_for((int)s_lv->speed);
 
         ImGui::PushItemWidth(speedW);
-        if (ImGui::SliderInt("##speed", &spd, 1, 9, speed_labels[spd - 1])) {
-            update_speed_from_slider(spd);
+        if (ImGui::SliderInt("##speed", &stop, 0, SPEED_STOP_COUNT - 1, speed_labels[stop])) {
+            update_speed_from_slider(stop);
         }
         ImGui::PopItemWidth();
 

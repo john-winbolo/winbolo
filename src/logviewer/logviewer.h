@@ -113,6 +113,13 @@ typedef struct {
   int  pillMaxArmour;
 } LvRules;
 
+/* Speed values. 1 is real time and 2 to 9 are faster, up to as fast as the
+ * decoder runs. The three below are slower than real time. */
+#define LV_SPEED_HALF    10  /* 0.5x  */
+#define LV_SPEED_QUARTER 11  /* 0.25x */
+#define LV_SPEED_TENTH   12  /* 0.1x  */
+#define LV_SPEED_MAX     12
+
 typedef struct LogViewerState {
   /* The rules this recording is drawn against. */
   LvRules      rules;

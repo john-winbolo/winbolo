@@ -440,7 +440,7 @@ static void loadPreferences(void) {
     lv_platform_config_get_string("LOGVIEWER", "Playback Speed", "1", val, sizeof(val));
     {
         BYTE spd = (BYTE)atoi(val);
-        if (spd < 1 || spd > 9) spd = 1;
+        if (spd < 1 || spd > LV_SPEED_MAX) spd = 1;
         lv_updateSpeed(spd, 0);
     }
 }
@@ -602,7 +602,7 @@ static void lvHostTeardown(void) {
 
 /* --------------------------------------------------------------------------
  * lvHostHandleGameViewKey -- Shared game-view input: grave-key game-view
- * toggle, Tab camera cycle, 1-4 zoom, arrow-key pan, ,-. time seek. Returns
+ * toggle, Tab camera cycle, 1-4 zoom, arrow-key pan, ,-. time step. Returns
  * TRUE if the event was consumed (the caller should skip its other handlers).
  * allowToggle gates the grave-key on/off toggle and allowSeek gates the ,-.
  * seek; the spectator host (always game-view, live feed) suppresses both.
@@ -724,45 +724,49 @@ static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
         }
     }
 
-    /* ',' / '<' jump back, '.' / '>' jump forward, 10s each.
-     * SDL3 reports key.key as the unmodified keycode by default,
-     * so Shift+',' arrives as SDLK_COMMA — match both physical
-     * keys regardless of shift state. Re-centres the camera
-     * after the seek because a 10s jump can leave the followed
-     * tank far outside the viewport, and the dead-zone tracker
+    /* ',' steps one tick back and '.' one tick forward; with Shift ('<' and
+     * '>') they jump 10 s. A tick is 20 ms of log, the smallest step the
+     * decoder takes. A step leaves playback paused, so the moment stepped to
+     * stays on the screen; a jump carries on playing if it was.
+     *
+     * SDL3 reports key.key as the unmodified keycode by default, so
+     * Shift+',' arrives as SDLK_COMMA with the shift modifier set; a layout
+     * that sends SDLK_LESS itself is taken as shifted too. A text box that
+     * has the keyboard keeps the key.
+     *
+     * In game view a jump re-centres the camera, because 10 s can leave the
+     * followed tank far outside the viewport and the dead-zone tracker
      * would otherwise scroll one tile per frame to catch up.
      * Suppressed (allowSeek=FALSE) on the live spectator feed. */
-    if (allowSeek && g_lv->gameView && sdlEvent.type == SDL_EVENT_KEY_DOWN &&
-        g_lv->isLoaded &&
+    if (allowSeek && sdlEvent.type == SDL_EVENT_KEY_DOWN &&
+        g_lv->isLoaded && !lv_imgui_want_text_input() &&
+        (sdlEvent.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
         (sdlEvent.key.key == SDLK_COMMA  || sdlEvent.key.key == SDLK_LESS ||
          sdlEvent.key.key == SDLK_PERIOD || sdlEvent.key.key == SDLK_GREATER)) {
-        size_t curPos, totSize;
-        uint32_t curTime, totTime;
-        lv_screenGetLogProgress(&curPos, &totSize, &curTime, &totTime);
-        if (totTime > 0) {
-            const uint32_t kStepMs = 10000;
-            bool back = (sdlEvent.key.key == SDLK_COMMA ||
-                         sdlEvent.key.key == SDLK_LESS);
-            uint32_t targetMs;
-            if (back) {
-                targetMs = (curTime > kStepMs) ? curTime - kStepMs : 0;
-            } else {
-                targetMs = curTime + kStepMs;
-                if (targetMs > totTime) targetMs = totTime;
-            }
-            float ratio = (float)targetMs / (float)totTime;
-            unsigned char wasPlaying = g_lv->playIsPlaying;
-            if (wasPlaying) lv_windowPause();
-            lv_clientMutexWaitFor();
-            lv_drawDirtyScreen();
-            lv_screenSeekToPosition(ratio);
-            lv_drawDirtyScreen();
-            lv_clientMutexRelease();
-            lv_imgui_game_view_init_camera(g_lv);
-            lv_windowNeedRedraw();
-            if (wasPlaying) lv_windowPlay();
-            g_lv->wantScreenUpdate = TRUE;
-        }
+        const uint32_t kTickMs = 20;
+        const uint32_t kJumpMs = 10000;
+        bool back = (sdlEvent.key.key == SDLK_COMMA ||
+                     sdlEvent.key.key == SDLK_LESS);
+        bool jump = ((sdlEvent.key.mod & SDL_KMOD_SHIFT) != 0 ||
+                     sdlEvent.key.key == SDLK_LESS ||
+                     sdlEvent.key.key == SDLK_GREATER);
+        uint32_t stepMs = jump ? kJumpMs : kTickMs;
+        /* Absolute log time: a 20 ms step is too fine to send through the
+         * slider's 0..1 ratio. lv_screenSeekToTimeMs clamps to the log. */
+        uint32_t nowMs = lv_screenGetTimeRunning();
+        uint32_t targetMs = back ? ((nowMs > stepMs) ? nowMs - stepMs : 0)
+                                 : nowMs + stepMs;
+        unsigned char wasPlaying = g_lv->playIsPlaying;
+        if (wasPlaying) lv_windowPause();
+        lv_clientMutexWaitFor();
+        lv_drawDirtyScreen();
+        lv_screenSeekToTimeMs(targetMs);
+        lv_drawDirtyScreen();
+        lv_clientMutexRelease();
+        if (jump && g_lv->gameView) lv_imgui_game_view_init_camera(g_lv);
+        lv_windowNeedRedraw();
+        if (wasPlaying && jump) lv_windowPlay();
+        g_lv->wantScreenUpdate = TRUE;
         return TRUE;
     }
 
