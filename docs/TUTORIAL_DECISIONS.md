@@ -334,6 +334,29 @@ and how to undo it.
   about half the game view is now two rows, split with `"\n"`. The client
   draws each row centred in one box (see SCENARIO_API.md, "Line breaks").
   The 5B, 6 and 7 lines are split this way.
+- **The popup first, its white text after (item 37, 2026-10-10).**
+  Andrew: "popup needs to come first" - the popup explains, the white text
+  keeps the player on track. Before, a goal ticked, the status line moved
+  to the next goal at once, and the next goal's popup came 3 seconds
+  later (`POPUP_DELAY`); the "Station N done" line also went out before
+  the popup queued with it. Now, while a popup waits in the script's queue
+  (`S.queue`):
+  - the status line is blank (`draw_status`);
+  - every announcement waits with it (`say`, `S.says`), and goes out in
+    the tick the queue empties, after the popup;
+  - `mark` queues the next popup before it says "Station N done", so the
+    line waits for that popup.
+  All the script's announcements go through `say`: "Station N done",
+  "Station N reset", the 5B rebuild line, "The enemy pillbox is back",
+  "Moved to the green square", "Hide in the forest first". A popup shown
+  at once (station entry, s2stay, s5b) goes out before the status line in
+  the same tick. *Popup close:* the server cannot see a popup close, and
+  no new call was needed: the client draws no white text while a popup is
+  open and starts a line's time when it closes (item 26). The
+  `tutorial_popup_first` arena checks the server's order through Station
+  2 (entry, s2stay, s2b, s2c, s2d and "Station 2 done"): no non-blank
+  status line or announcement goes out while a popup waits. It fails on
+  the old script.
 - **Never white text and a popup at once (item 26, 2026-10-10).** The
   client holds the announcements while its popup overlay is open (a
   `game.popup` or a tutorial message): no announcement and no status line
@@ -755,13 +778,13 @@ and how to undo it.
   has been picked up, so building the first before picking up the second
   still ticks the item.
 - **Gate arenas** hold the player's seat (a GoalHunter in the gate) still
-  with `set_modifiers{speed = 1, turn = 1}` and teleport it about. Sixteen
+  with `set_modifiers{speed = 1, turn = 1}` and teleport it about. Seventeen
   arenas: `tutorial_checkpoint`, `tutorial_reset`, `tutorial_take5a`,
   `tutorial_take5a_soak`, `tutorial_park5b`, `tutorial_rebuild5b`,
   `tutorial_station5_entry`, `tutorial_late_bots`, `tutorial_station6`,
   `tutorial_bot7_region`, `tutorial_bot7_stay`, `tutorial_bot7_man`,
   `tutorial_new_man`, `tutorial_station2`, `tutorial_watch5a`,
-  `tutorial_popup_announce`. The
+  `tutorial_popup_announce`, `tutorial_popup_first`. The
   5B arenas play the player with a scripted brain,
   `tests/brains/tutorial_shoot_north.lua`. The Station 2 steal is not
   covered: a held-still tank cannot drive onto a base.

@@ -208,6 +208,7 @@ local S = {
   done     = { {}, {}, {}, {}, {}, {}, {} },  -- checklist, by station
   popped   = {},      -- popup id -> true once shown
   queue    = {},      -- popups waiting for their delay: { id, due }
+  says     = {},      -- announcements waiting for a popup: { text, secs }
   carrier  = {},      -- pill n -> seat carrying it
   -- The bots' seats, picked as the round starts; nil where none was free.
   bot5a = nil, bot6 = nil, bot7 = nil,
@@ -712,6 +713,28 @@ local function show(id)
   end
 end
 
+-- White text after its popup (item 37, Andrew: "popup needs to come
+-- first"). While a popup is waiting in S.queue, an announcement waits in
+-- S.says and the status line is blank (draw_status); both go out once the
+-- queue is empty, so they follow the popup. In the same tick as the popup
+-- is fine: the client draws no white text while a popup is open
+-- (clientSimScnAnnounceHold) and starts the line's time when it closes.
+local function release_says()
+  if #S.queue > 0 or #S.says == 0 then return end
+  local says = S.says
+  S.says = {}
+  for _, a in ipairs(says) do game.announce(a[1], a[2], S.player) end
+end
+
+local function say(text, secs)
+  if S.player == nil then return end
+  if #S.queue > 0 then
+    S.says[#S.says + 1] = { text, secs }
+    return
+  end
+  game.announce(text, secs, S.player)
+end
+
 local function popup_later(id)
   if S.popped[id] then return end
   for _, q in ipairs(S.queue) do
@@ -727,6 +750,7 @@ local function flush_popups(all)
     if all or S.frames >= q.due then show(q.id) else keep[#keep + 1] = q end
   end
   S.queue = keep
+  release_says()
 end
 
 -- The popup station n needs next, for what the player has done there.
@@ -992,6 +1016,8 @@ end
 local function draw_status()
   if S.player == nil then return end
   local text = status_text(player_tank())
+  -- Its popup first: blank while a popup waits to be shown.
+  if #S.queue > 0 then text = "" end
   if text == S.status then return end
   S.status = text
   game.status(text, nil, S.player)
@@ -1014,14 +1040,16 @@ local function mark(n, key)
   if n == 5 and key == "a_watch" then hand_5b() end
   -- A popup still waiting is shown now: the player has moved on.
   flush_popups(true)
-  if not was_done and station_done(n) and n < 7 then
-    local text = string.format("Station %d done. Follow the road north.", n)
-    if n == 4 then text = text .. "\nShoot trees to clear the trees quickly." end
-    game.announce(text, 4, S.player)
-  end
+  -- The next popup is queued before the "done" line, so the line waits for
+  -- it (say).
   if S.at == n then
     local id = next_popup(n)
     if id ~= nil then popup_later(id) end
+  end
+  if not was_done and station_done(n) and n < 7 then
+    local text = string.format("Station %d done. Follow the road north.", n)
+    if n == 4 then text = text .. "\nShoot trees to clear the trees quickly." end
+    say(text, 4)
   end
   redraw(false)
 end
@@ -1284,8 +1312,8 @@ local function rebuild_5b()
   local d = S.done[5]
   if not d.b_build or d.b_pick or not blocker_5b_gone() then return end
   if pill_home("t5b_blocker", S.player, rule("pill_max_armour")) then
-    game.announce("To help you out, your friendly blocking\npillbox has been "
-                  .. "automatically rebuilt.", 4, S.player)
+    say("To help you out, your friendly blocking\npillbox has been "
+        .. "automatically rebuilt.", 4)
   end
 end
 
@@ -1395,7 +1423,7 @@ local function reset_station(n)
   if player_tank() ~= nil then
     game.set_stocks(S.player, station_loadout(n))
   end
-  game.announce(string.format("Station %d reset", n), 2, S.player)
+  say(string.format("Station %d reset", n), 2)
   redraw(true)
 end
 
@@ -1596,8 +1624,7 @@ function on_pill_picked_up(n, p, scripted)
       game.timer(5, function()
         S.t5b_restore = false
         if reset_pill("t5b_target") then
-          game.announce("The enemy pillbox is back.\nTake it again, or go north.",
-                        4, S.player)
+          say("The enemy pillbox is back.\nTake it again, or go north.", 4)
         end
       end)
     end
@@ -1628,7 +1655,7 @@ function on_pill_placed(n, p, armour, scripted)
       if pb.x ~= L.x or pb.y ~= L.y then
         game.move_pill(n, L.x, L.y)
         if p == S.player then
-          game.announce("Moved to the green square.", 3, S.player)
+          say("Moved to the green square.", 3)
         end
       end
       if armour == 0 then game.set_pill_armour(n, rule("pill_max_armour")) end
@@ -1756,7 +1783,7 @@ function can_die(kind, n, killer, cause, pill)
     -- 4B: the pillbox stays at one armour until the player has hidden.
     if S.player ~= nil and S.sec - S.told_hide >= 3 then
       S.told_hide = S.sec
-      game.announce("Hide in the forest first, then kill it.", 3, S.player)
+      say("Hide in the forest first, then kill it.", 3)
     end
     return false
   end
