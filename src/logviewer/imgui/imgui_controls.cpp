@@ -56,6 +56,27 @@ static char s_current_time[32] = "00:00";
 /* Seek slider state */
 static float s_seek_ratio = 0.0f;
 static bool s_is_seeking = false;
+/* Live scrub: the ratio the world was last moved to, when that was, and
+ * whether playback has to resume once the handle is dropped. */
+static float s_seek_applied = 0.0f;
+static double s_seek_applied_at = 0.0;
+static bool s_seek_was_playing = false;
+
+/* Least time between two backward seeks while the handle is dragged. Same
+ * value as the recap reel's RECAP_SCRUB_BACK_MS. */
+#define LV_SCRUB_BACK_SECS 0.090
+
+/* Move the world to a slider ratio. Playback must already be paused: the
+ * seek walks the log on this thread while lv_windowTimer ticks it on the
+ * timer thread. */
+static void seek_to_ratio(float ratio) {
+    lv_clientMutexWaitFor();
+    lv_drawDirtyScreen();
+    lv_screenSeekToPosition(ratio);
+    lv_drawDirtyScreen();
+    lv_clientMutexRelease();
+    lv_windowNeedRedraw();
+}
 
 /* Forward declaration for speed update helper */
 static void update_speed_from_slider(int new_speed);
@@ -210,6 +231,9 @@ void lv_imgui_controls_window(void) {
             /* Only update slider position when not actively seeking */
             if (!s_is_seeking) {
                 s_seek_ratio = displayRatio;
+                /* Idle: the applied value is wherever the log actually is,
+                 * so the next drag measures its first step from the truth. */
+                s_seek_applied = displayRatio;
             }
 
             /* Current time */
@@ -242,25 +266,53 @@ void lv_imgui_controls_window(void) {
              * slider (and every seek) to the start of the log. */
             if (ImGui::SliderFloat("##seek", &s_seek_ratio, 0.0f, 1.0f, seek_fmt,
                                    ImGuiSliderFlags_NoRoundToFormat)) {
-                s_is_seeking = true;
+                if (!s_is_seeking) {
+                    /* Freeze playback for the whole scrub rather than
+                     * pausing and resuming around every applied seek: that
+                     * removes and re-adds the SDL playback timers. */
+                    s_is_seeking = true;
+                    s_seek_was_playing = s_lv->playIsPlaying != 0;
+                    if (s_seek_was_playing) {
+                        lv_windowPause();
+                    }
+                    s_seek_applied_at = 0.0;
+                }
             }
 
-            /* When user releases the slider, perform the seek */
-            if (s_is_seeking && ImGui::IsItemDeactivatedAfterEdit()) {
-                s_is_seeking = false;
-                unsigned char wasPlaying = s_lv->playIsPlaying;
-                if (wasPlaying) {
-                    lv_windowPause();
+            /* Live scrub: the world follows the handle as it is dragged, not
+             * only when it is dropped. A forward seek continues the decode
+             * from where it stands, so it costs only the ticks the handle
+             * crossed and runs every frame. A backward seek has to restore a
+             * snapshot and decode forward again, so those are throttled and
+             * only the newest one in a burst is paid for. */
+            if (s_is_seeking && ImGui::IsItemActive()) {
+                double now = ImGui::GetTime();
+                bool apply = false;
+                if (s_seek_ratio > s_seek_applied) {
+                    apply = true;
+                } else if (s_seek_ratio < s_seek_applied) {
+                    apply = (now - s_seek_applied_at >= LV_SCRUB_BACK_SECS);
                 }
-                lv_clientMutexWaitFor();
-                lv_drawDirtyScreen();
-                lv_screenSeekToPosition(s_seek_ratio);
-                lv_drawDirtyScreen();
-                lv_clientMutexRelease();
-                lv_windowNeedRedraw();
-                if (wasPlaying) {
+                if (apply) {
+                    seek_to_ratio(s_seek_ratio);
+                    s_seek_applied = s_seek_ratio;
+                    s_seek_applied_at = now;
+                }
+            }
+
+            /* IsItemDeactivated, not ...AfterEdit: this also has to resume
+             * playback, and a release ImGui does not count as an edit would
+             * otherwise leave the log paused. The seek lands exactly on the
+             * dropped value; it decodes nothing when the last live apply
+             * already got there. */
+            if (s_is_seeking && ImGui::IsItemDeactivated()) {
+                s_is_seeking = false;
+                seek_to_ratio(s_seek_ratio);
+                s_seek_applied = s_seek_ratio;
+                if (s_seek_was_playing) {
                     lv_windowPlay();
                 }
+                s_seek_was_playing = false;
             }
 
             ImGui::PopItemWidth();
