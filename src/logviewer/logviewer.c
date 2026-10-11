@@ -180,8 +180,8 @@ void lv_frontEndSetGameInformation(bool clear, BYTE versionMajor, BYTE versionMi
 /* --------------------------------------------------------------------------
  * Events
  * -------------------------------------------------------------------------- */
-void lv_windowAddEvent(int eventType, char *msg) {
-    lv_imgui_events_add(eventType, msg);
+void lv_windowAddEvent(int eventType, int kind, int mapX, int mapY, char *msg) {
+    lv_imgui_events_add(eventType, kind, mapX, mapY, msg);
 }
 
 void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY) {
@@ -199,6 +199,22 @@ void lv_windowRemoveEventsAfter(uint32_t timeMs) {
 
 void lv_windowRemoveEvents(void) {
     lv_imgui_events_clear();
+}
+
+/* Fill the events panel with every event of the file just loaded, so it
+ * lists the whole log from the first frame and playback only moves a "now"
+ * line through it. Called once per file load, after the load-time summary
+ * lines are in. The decoder plays the log through once (lv_screenEventScanRun)
+ * and the panel collects the lines as it always has; the panel is then told
+ * the list is complete, which makes it ignore the adds and removes of every
+ * later playback and seek, the restore that follows included. A live feed has
+ * no end to read ahead to: the scan refuses it and the panel goes on
+ * collecting line by line as before. */
+void lv_windowCollectAllEvents(void) {
+    if (lv_screenEventScanRun()) {
+        lv_imgui_events_set_complete();
+        lv_screenEventScanRestore();
+    }
 }
 
 /* --------------------------------------------------------------------------
@@ -223,6 +239,13 @@ void lv_controlsEnable(int state) {
  * Without that, a click during playback lands lv_shellsAddItem and
  * lv_shellsDestroy on the same list from two threads and corrupts the heap. */
 void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
+    lv_windowSeekToEvent(ms, 1, mapX, mapY);
+}
+
+/* The same jump for any events panel line. A line about a place on the map
+ * (hasCell) centres the view on it; any other line moves only the playhead
+ * and leaves the view where the user put it. */
+void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY) {
     unsigned char wasPlaying = g_lv->playIsPlaying;
     if (wasPlaying) {
         lv_windowPause();
@@ -230,7 +253,9 @@ void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
     lv_clientMutexWaitFor();
     lv_drawDirtyScreen();
     lv_screenSeekToTimeMs(ms);
-    lv_screenCentreOnCell(mapX, mapY);
+    if (hasCell) {
+        lv_screenCentreOnCell(mapX, mapY);
+    }
     lv_drawDirtyScreen();
     lv_clientMutexRelease();
     lv_imgui_game_view_init_camera(g_lv);
@@ -323,6 +348,7 @@ void lv_windowOpenFile(char *cmdLine) {
             g_lv->isLoaded = TRUE;
             lv_imgui_events_clear();
             lvStatsEmitRoundSummary();
+            lv_windowCollectAllEvents();
             lv_windowNeedRedraw();
         }
     }
@@ -1168,6 +1194,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
             g_lv->isLoaded = TRUE;
             lv_imgui_events_clear();
             lvStatsEmitRoundSummary();
+            lv_windowCollectAllEvents();
             lv_windowNeedRedraw();
         }
         s_pendingZipData = NULL;

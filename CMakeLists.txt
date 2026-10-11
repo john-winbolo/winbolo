@@ -4569,6 +4569,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # How the viewer's window is shared between the map and the right-side
     # dock (lv_dock_fit.h, header only).
     tests/unit/test_lv_dock_fit.c
+    # The events panel's kind names and the search that places its "now"
+    # divider (lv_event_kind.h, header only).
+    tests/unit/test_lv_event_kind.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -6794,6 +6797,8 @@ set(_unit_test_names
     lv_server_tick_live_feed
     lv_region_rect_placement
     lv_dock_fit_sums
+    lv_event_kind_sums
+    lv_event_scan_returns_to_start
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast

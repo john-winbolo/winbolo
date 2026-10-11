@@ -859,7 +859,7 @@ BYTE lv_screenGetPos(screen *value,BYTE xValue, BYTE yValue) {
 }
 
 #include "lv_log.h"
-void lv_windowAddEvent(int eventType, char *msg);
+void lv_windowAddEvent(int eventType, int kind, int mapX, int mapY, char *msg);
 
 /* --- Scenario presentation --------------------------------------------
  * The panels, scores, announcement, markers and status lines a scenario put
@@ -1345,7 +1345,7 @@ static void lv_presPostAnnounce(const LvPresPayload *p) {
              langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &teamArgs));
     body = STR_LV_SCN_ANNOUNCE_TO;
   }
-  lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, body, &args);
+  lv_messageAdd(LV_EVK_GAME, newsWireMessage, MESSAGE_NEWSWIRE, body, &args);
 }
 
 /* Store the team a log_TeamSet playback has already read, as at time ms, if
@@ -1922,11 +1922,19 @@ bool lv_screenHasServerTick(void) {
   return s_tickAnchorCount > 0;
 }
 
+/* TRUE while lv_screenEventScanRun decodes the whole log to fill the events
+ * panel. The decoder runs as it does for a fast-forward, with four things
+ * held back that the scan's restore could not undo, or that would only be
+ * thrown away: the snapshot store (the seek index must come out as a fresh
+ * load leaves it), the corrupt-log stop, the end-of-log callback to the host,
+ * and the marquee queue. */
+static bool s_eventScan = FALSE;
 
 void lv_screenProcessLog(unsigned short numEvents) {
   unsigned short count = 0;
   BYTE code;
   BYTE opt1, opt2, opt3, opt4, opt5, px, py, frame, onBoat;
+  BYTE killX = 0, killY = 0; /* where a killed tank stood */
   char mem[4096 + 1024]; /* Extra space for snprintf format overhead with names */
   char str[4096];
   char name[256];
@@ -1987,7 +1995,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_JOINED, &args);
+        lv_messageAdd(LV_EVK_PLAYER, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_JOINED, &args);
       }
       if (opt1 < MAX_TANKS) {
         g_lv->gameViewHud[opt1].alive = true;
@@ -2001,7 +2009,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
+        lv_messageAdd(LV_EVK_PLAYER, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
       }
       if (opt1 < MAX_TANKS) {
         g_lv->gameViewHud[opt1].alive = false;
@@ -2028,12 +2036,16 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_LostMan:
       logReadBytes(&opt1, 1);
-      lv_playersSetLgmDead(opt1);
-      lv_playersGetPlayerName(opt1, str, sizeof(str));
       {
+        /* Where the man stood, read before the death clears it, so a click
+           on the events panel line can show the place. */
+        BYTE lgmX = 0, lgmY = 0, lgmPx = 0, lgmPy = 0, lgmFrame = 0;
         MessageArgs args = {0};
+        lv_playersGetLgmDetails(opt1, &lgmX, &lgmY, &lgmPx, &lgmPy, &lgmFrame);
+        lv_playersSetLgmDead(opt1);
+        lv_playersGetPlayerName(opt1, str, sizeof(str));
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);
+        lv_messageAddAt(LV_EVK_BUILDER_LOST, lgmX, lgmY, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);
       }
       break;
     case log_MapChange:
@@ -2058,7 +2070,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, mem);
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_REQUEST, &args);
+        lv_messageAdd(LV_EVK_PLAYER, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_REQUEST, &args);
       }
       break;
     case log_AllyAccept:
@@ -2071,7 +2083,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, mem);
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_ACCEPT, &args);
+        lv_messageAdd(LV_EVK_PLAYER, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_ACCEPT, &args);
       }
       break;
     case log_AllyLeave:
@@ -2081,7 +2093,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_LEAVE, &args);
+        lv_messageAdd(LV_EVK_PLAYER, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_LEAVE, &args);
       }
       break;
     case log_SoundBuild:
@@ -2200,7 +2212,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
         snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_ALL, &args);
+        lv_messageAdd(LV_EVK_CHAT, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_ALL, &args);
       }
       break;
     case log_MessagePlayers:
@@ -2216,7 +2228,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
         snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, name2);
         snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_PLAYERS, &args);
+        lv_messageAdd(LV_EVK_CHAT, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_PLAYERS, &args);
       }
       break;
     case log_MessageServer:
@@ -2226,7 +2238,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       {
         MessageArgs args = {0};
         snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
-        lv_messageAdd(networkMessage, MESSAGE_NETSERVER, STR_LV_MSG_SERVER, &args);
+        lv_messageAdd(LV_EVK_GAME, networkMessage, MESSAGE_NETSERVER, STR_LV_MSG_SERVER, &args);
       }
       break;
     case log_ServerText:
@@ -2256,7 +2268,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
           snprintf(args.string1, sizeof(args.string1), "%.*s",
                    (int)sizeof(args.string1) - 1, str);
         }
-        lv_messageAdd(networkMessage, MESSAGE_NETSERVER, STR_LV_MSG_SERVER, &args);
+        lv_messageAdd(LV_EVK_GAME, networkMessage, MESSAGE_NETSERVER, STR_LV_MSG_SERVER, &args);
       }
       break;
     case log_VoiceEveryone:
@@ -2266,7 +2278,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);
       {
         MessageArgs args = {0};
-        lv_messageAdd(networkMessage, MESSAGE_NETSERVER,
+        lv_messageAdd(LV_EVK_GAME, networkMessage, MESSAGE_NETSERVER,
                       opt1 ? STR_VOICE_EVERYONE_ON : STR_VOICE_EVERYONE_OFF,
                       &args);
       }
@@ -2545,16 +2557,23 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       lv_playersGetPlayerName(opt1, mem, sizeof(mem));
+      /* Where the tank died, read before the death below takes it off the
+         map, so a click on the events panel line can show the place. */
+      {
+        BYTE tkPx = 0, tkPy = 0, tkFrame = 0;
+        bool tkBoat = FALSE;
+        lv_playersGetTankDetails(opt1, &killX, &killY, &tkPx, &tkPy, &tkFrame, &tkBoat);
+      }
       if (opt1 == opt2 || opt2 == NEUTRAL) {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, mem);
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_DIED, &args);
+        lv_messageAddAt(LV_EVK_TANK_KILLED, killX, killY, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_DIED, &args);
       } else {
         MessageArgs args = {0};
         lv_playersGetPlayerName(opt2, str, sizeof(str));
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, mem);
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_KILLED, &args);
+        lv_messageAddAt(LV_EVK_TANK_KILLED, killX, killY, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_KILLED, &args);
       }
       if (opt1 < MAX_TANKS) g_lv->deaths[opt1]++;
       if (opt2 != opt1 && opt2 != NEUTRAL && opt2 < MAX_TANKS) {
@@ -2572,7 +2591,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_REJOINED, &args);
+        lv_messageAdd(LV_EVK_PLAYER, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_REJOINED, &args);
       }
       if (opt1 < MAX_TANKS) {
         g_lv->gameViewHud[opt1].alive = true;
@@ -2585,7 +2604,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_LEAVING, &args);
+        lv_messageAdd(LV_EVK_PLAYER, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_LEAVING, &args);
       }
       if (opt1 < MAX_TANKS) {
         g_lv->gameViewHud[opt1].alive = false;
@@ -2622,10 +2641,10 @@ void lv_screenProcessLog(unsigned short numEvents) {
       /* No-op — marker event with no visual effect on replay */
       break;
     case log_LobbyEnter:
-      lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_LOBBY_OPENED, NULL);
+      lv_messageAdd(LV_EVK_GAME, networkStatus, MESSAGE_NETSERVER, STR_LV_LOBBY_OPENED, NULL);
       break;
     case log_LobbyExit:
-      lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_GAME_STARTED, NULL);
+      lv_messageAdd(LV_EVK_GAME, networkStatus, MESSAGE_NETSERVER, STR_LV_GAME_STARTED, NULL);
       break;
     case log_PlayerReady:
       logReadBytes(&opt1, 1);
@@ -2633,7 +2652,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
-        lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_READY, &args);
+        lv_messageAdd(LV_EVK_GAME, networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_READY, &args);
       }
       break;
     case log_PlayerUnready:
@@ -2642,7 +2661,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
-        lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_UNREADY, &args);
+        lv_messageAdd(LV_EVK_GAME, networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_UNREADY, &args);
       }
       break;
     case log_TeamSet:
@@ -2653,10 +2672,10 @@ void lv_screenProcessLog(unsigned short numEvents) {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         if (opt2 == 0) {
-          lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_LEFT_TEAM, &args);
+          lv_messageAdd(LV_EVK_PLAYER, networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_LEFT_TEAM, &args);
         } else {
           args.number = opt2;
-          lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_JOINED_TEAM, &args);
+          lv_messageAdd(LV_EVK_PLAYER, networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_JOINED_TEAM, &args);
         }
       }
       /* The slot's team, for the team panels. The line above is playback's
@@ -2671,10 +2690,10 @@ void lv_screenProcessLog(unsigned short numEvents) {
       }
       break;
     case log_CountdownStart:
-      lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_COUNTDOWN_START, NULL);
+      lv_messageAdd(LV_EVK_GAME, networkStatus, MESSAGE_NETSERVER, STR_LV_COUNTDOWN_START, NULL);
       break;
     case log_CountdownCancel:
-      lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_COUNTDOWN_CANCEL, NULL);
+      lv_messageAdd(LV_EVK_GAME, networkStatus, MESSAGE_NETSERVER, STR_LV_COUNTDOWN_CANCEL, NULL);
       break;
     case log_MapSkipVote:
       logReadBytes(&opt1, 1);
@@ -2682,7 +2701,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MAP_SKIP_VOTE, &args);
+        lv_messageAdd(LV_EVK_GAME, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MAP_SKIP_VOTE, &args);
       }
       break;
     case log_MapSkipApplied:
@@ -2692,7 +2711,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       {
         MessageArgs args = {0};
         snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
-        lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_MAP_SKIPPED, &args);
+        lv_messageAdd(LV_EVK_GAME, networkStatus, MESSAGE_NETSERVER, STR_LV_MAP_SKIPPED, &args);
       }
       break;
     case log_GameSettings:
@@ -2703,7 +2722,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_screenPlaybackGameSettings((BYTE *)(mem+1), (unsigned char)mem[0]);
       break;
     case log_BalanceApplied:
-      lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_TEAM_BALANCE, NULL);
+      lv_messageAdd(LV_EVK_GAME, networkStatus, MESSAGE_NETSERVER, STR_LV_TEAM_BALANCE, NULL);
       break;
     case log_GameVoteStart:
       logReadBytes(&opt1, 1);  /* kind */
@@ -2713,7 +2732,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE,
+        lv_messageAdd(LV_EVK_GAME, newsWireMessage, MESSAGE_NEWSWIRE,
                       opt1 == GAME_VOTE_KIND_SURRENDER
                           ? STR_LV_VOTE_START_SURRENDER
                           : STR_LV_VOTE_START_LOBBY,
@@ -2728,7 +2747,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE,
+        lv_messageAdd(LV_EVK_GAME, newsWireMessage, MESSAGE_NEWSWIRE,
                       opt3 ? STR_LV_VOTE_CAST_YES : STR_LV_VOTE_CAST_NO,
                       &args);
       }
@@ -2736,7 +2755,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_GameVoteEnd:
       logReadBytes(&opt1, 1);  /* kind */
       logReadBytes(&opt2, 1);  /* result */
-      lv_messageAdd(networkStatus, MESSAGE_NETSERVER,
+      lv_messageAdd(LV_EVK_GAME, networkStatus, MESSAGE_NETSERVER,
                     opt2 ? STR_LV_VOTE_PASSED : STR_LV_VOTE_FAILED, NULL);
       break;
     case log_Ping:
@@ -2758,8 +2777,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
           MessageArgs args = {0};
           snprintf(args.playerName, sizeof(args.playerName), "%.*s",
                    (int)sizeof(args.playerName) - 1, str);
-          lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE,
-                        pingKindMessageId(opt2), &args);
+          /* A ping names a place: its world coordinate is 256 to the cell. */
+          lv_messageAddAt(LV_EVK_CHAT, wx >> 8, wy >> 8, newsWireMessage,
+                          MESSAGE_NEWSWIRE, pingKindMessageId(opt2), &args);
         }
       }
       break;
@@ -2782,7 +2802,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
         } else {
           snprintf(args.playerName, sizeof(args.playerName), "%s", name);
         }
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_SPEC_JOINED, &args);
+        lv_messageAdd(LV_EVK_PLAYER, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_SPEC_JOINED, &args);
       }
       break;
     case log_SpectatorLeft:
@@ -2793,7 +2813,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%s", name);
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_SPEC_LEFT, &args);
+        lv_messageAdd(LV_EVK_PLAYER, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_SPEC_LEFT, &args);
       }
       break;
     case log_SpectatorChat:
@@ -2807,7 +2827,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
         MessageArgs args = {0};
         args.number = opt1;
         snprintf(args.string1, sizeof(args.string1), "%s", str);
-        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_SPEC_CHAT, &args);
+        lv_messageAdd(LV_EVK_CHAT, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_SPEC_CHAT, &args);
       }
       break;
     default:
@@ -2816,6 +2836,12 @@ void lv_screenProcessLog(unsigned short numEvents) {
            going. evLen is a full u16 so it can exceed the v1 per-type
            maximum; advance the read cursor directly. */
         lv_logSetPosition(lv_logGetCurrentPosition() + evLen);
+      } else if (s_eventScan) {
+        /* The scan only reads ahead for the events panel. It ends here and
+           leaves the report, and the closing of the log, to the playback
+           that reaches this byte for real. */
+        g_lv->isPlaying = FALSE;
+        count = numEvents;
       } else {
         lv_windowStop(TRUE);
         count = numEvents;
@@ -2890,8 +2916,10 @@ bool lv_screenLogTick() {
            switch on a byte it never read on every tick from now on. */
         if (lv_screenSpecIsLiveMode() == FALSE) {
           g_lv->isPlaying = FALSE;
-          lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_END_OF_LOG, NULL);
-          lv_finished();
+          lv_messageAdd(LV_EVK_GAME, networkStatus, MESSAGE_NETSERVER, STR_LV_END_OF_LOG, NULL);
+          if (s_eventScan == FALSE) {
+            lv_finished();
+          }
           returnValue = TRUE;
         } else {
           s_logTickAtLiveHead = TRUE;
@@ -2901,8 +2929,12 @@ bool lv_screenLogTick() {
       switch (code) {
       case LOG_QUIT:
         g_lv->isPlaying = FALSE;
-        lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_END_OF_LOG, NULL);
-        lv_finished();
+        lv_messageAdd(LV_EVK_GAME, networkStatus, MESSAGE_NETSERVER, STR_LV_END_OF_LOG, NULL);
+        /* The event scan reads to the end without playback having got
+           there, so the host is not told it finished. */
+        if (s_eventScan == FALSE) {
+          lv_finished();
+        }
         returnValue = TRUE;
         break;
       case LOG_SNAPSHOT:
@@ -3290,7 +3322,12 @@ bool lv_processSnapshot() {
      safe to run on whatever did load. Callers draw regardless of the return. */
   lv_playersRebuildTeams(!(s_firstWorldSnapKnown && snapPos == s_firstWorldSnapPos));
   lv_playersCopyPTeams(data);
-  lv_snapshotAdd(&g_lv->snap, snapPos, snapTime, snapKey, data);
+  /* The event scan passes every snapshot in the file but stores none, so
+     the seek index after it is the one a load without the scan leaves:
+     filled only by the snapshots playback has really reached. */
+  if (s_eventScan == FALSE) {
+    lv_snapshotAdd(&g_lv->snap, snapPos, snapTime, snapKey, data);
+  }
   return returnValue;
 }
 
@@ -5521,8 +5558,14 @@ void lv_screenPanToTotalPixels(int totalPxX, int totalPxY) {
   }
 }
 
-void lv_messageAdd(messageType msgType, langid topId, langid bodyId,
-                   const MessageArgs *args) {
+void lv_messageAdd(lvEventKind kind, messageType msgType, langid topId,
+                   langid bodyId, const MessageArgs *args) {
+  lv_messageAddAt(kind, 0, 0, msgType, topId, bodyId, args);
+}
+
+void lv_messageAddAt(lvEventKind kind, int mapX, int mapY,
+                     messageType msgType, langid topId, langid bodyId,
+                     const MessageArgs *args) {
   /* The events panel renders a single line per message — the channel
    * header (topId) is not displayed. Render the body via the lang
    * runtime so each viewer sees its own language; switching languages
@@ -5534,7 +5577,20 @@ void lv_messageAdd(messageType msgType, langid topId, langid bodyId,
   if (rendered) {
     snprintf(body, sizeof(body), "%s", rendered);
   }
-  lv_windowAddEvent(0, body);
+  /* Cell (0,0) is the decoder's "not on the map", never a real place. */
+  if (mapX <= 0 && mapY <= 0) {
+    mapX = -1;
+    mapY = -1;
+  }
+  lv_windowAddEvent(0, (int)kind, mapX, mapY, body);
+
+  /* The event scan decodes the whole log once to fill the events panel and
+   * nothing else. The marquee queue is walked to its tail on every append,
+   * so feeding it a whole round here would cost the square of its length,
+   * for text the scan's restore throws away. */
+  if (s_eventScan) {
+    return;
+  }
 
   /* Feed the scrolling-marquee queue used by the trailer game view.
    * Mirror the live game's clientMessageAdd: the channel header
@@ -5632,6 +5688,127 @@ void lv_screenSeekToTimeMs(uint32_t ms) {
   if (ms < start) ms = start;
   if (ms > start + len) ms = start + len;
   lv_screenSeekToAbsoluteMs(ms);
+}
+
+/* --- Event scan ---------------------------------------------------------
+ * The standalone viewer lists every event of a log as soon as it is loaded,
+ * not only those playback has passed. The text of a line depends on decoder
+ * state (who owns the pillbox, what the player is called now), so the only
+ * way to have the lines is to decode the log: the load-time walks skip event
+ * bodies and could not render one. lv_screenEventScanRun therefore plays the
+ * whole log through once as a fast-forward, with s_eventScan holding back
+ * the few side effects a fast-forward has, and lv_screenEventScanRestore puts
+ * the world back at the start as the loader left it.
+ *
+ * They are two calls so the host can tell the events panel the list is
+ * complete in between: the restore is a seek back to the start, and a seek
+ * back would otherwise take every line off the panel again. */
+
+/* What the scan disturbs that the seek back to the start does not rebuild. */
+static struct {
+  bool     valid;
+  BYTE     xOffset;
+  BYTE     yOffset;
+  int      subPxX;
+  int      subPxY;
+  BYTE     cameraSlot;
+  BYTE     selectedItem;
+  BYTE     selectedItemType;
+  TankMods tankMods[MAX_TANKS];
+} s_scanSaved;
+
+/* Decode the loaded log from its start to its end so every event line is
+ * posted to the host once, each at its own time. Returns FALSE, having done
+ * nothing, when there is no file to scan: no log, or a live feed, whose end
+ * is not known yet. On TRUE the world is at the end of the log and
+ * lv_screenEventScanRestore must follow. */
+bool lv_screenEventScanRun(void) {
+  uint32_t limit;
+
+  s_scanSaved.valid = FALSE;
+  if (g_lv == NULL || g_lv->logLoaded == FALSE || g_lv->totalTimeMs == 0) {
+    return FALSE;
+  }
+  if (lv_screenSpecIsLiveMode()) {
+    return FALSE;
+  }
+  /* The view the loader chose. The decoder moves the camera slot when the
+     followed player leaves, and the scan must not choose the opening view. */
+  s_scanSaved.xOffset          = g_lv->xOffset;
+  s_scanSaved.yOffset          = g_lv->yOffset;
+  s_scanSaved.subPxX           = g_lv->subPxX;
+  s_scanSaved.subPxY           = g_lv->subPxY;
+  s_scanSaved.cameraSlot       = g_lv->cameraSlot;
+  s_scanSaved.selectedItem     = g_lv->selectedItem;
+  s_scanSaved.selectedItemType = g_lv->selectedItemType;
+  memcpy(s_scanSaved.tankMods, g_lv->tankMods, sizeof(s_scanSaved.tankMods));
+  s_scanSaved.valid = TRUE;
+
+  /* The loader can have parked at game start, past the lobby's lines. Back
+     to the first byte, so the scan posts those too. */
+  lv_screenSeekToAbsoluteMs(0);
+
+  /* The walk that measured the log decides how long the scan may run. A
+     file ends with isPlaying dropped; the bound is only there so a log the
+     decoder cannot finish ends the scan instead of hanging the load. */
+  limit = g_lv->totalTimeMs + 60000u;
+  s_eventScan = TRUE;
+  g_lv->fastForwarding = TRUE; /* no sounds, no item panel updates */
+  g_lv->isPlaying = TRUE;
+  while (g_lv->isPlaying == TRUE && g_lv->timeRunning < limit) {
+    lv_screenLogTick();
+  }
+  g_lv->fastForwarding = FALSE;
+  s_eventScan = FALSE;
+  return TRUE;
+}
+
+/* Put the world back at the start of the log after lv_screenEventScanRun, as
+ * the loader left it. The return is the ordinary seek to the start: the
+ * opening snapshot is restored, and with it the players, team colours, rules,
+ * presentation state and an empty marquee. What that seek does not rebuild,
+ * because no seek ever has to, is cleared here the way a load clears it. */
+void lv_screenEventScanRestore(void) {
+  if (s_scanSaved.valid == FALSE) {
+    return;
+  }
+  s_scanSaved.valid = FALSE;
+
+  /* Tallies and stocks the decoder only ever adds to (lv_logLoadCommon). */
+  memset(g_lv->kills,       0, sizeof(g_lv->kills));
+  memset(g_lv->deaths,      0, sizeof(g_lv->deaths));
+  memset(g_lv->gameViewHud, 0, sizeof(g_lv->gameViewHud));
+  memset(g_lv->tankInv,     0, sizeof(g_lv->tankInv));
+  memcpy(g_lv->tankMods, s_scanSaved.tankMods, sizeof(g_lv->tankMods));
+  /* Pings are kept by time, so the scan's would show again as playback
+     reached them, on top of the ones playback itself posts. */
+  lv_pingReset();
+  /* A lobby snapshot carries no map, and a snapshot leaves the on-map flags
+     of pillboxes, bases and starts to the event stream. The loader read the
+     opening snapshot into empty ones (lv_screenSetup), so the restore does
+     too; otherwise the lobby would open on the finished round's map. */
+  lv_mapDestroy(&g_lv->mp);
+  lv_mapCreate(&g_lv->mp);
+  lv_pillsDestroy(&g_lv->pb);
+  lv_pillsCreate(&g_lv->pb);
+  lv_startsDestroy(&g_lv->ss);
+  lv_startsCreate(&g_lv->ss);
+  lv_basesDestroy(&g_lv->bs);
+  lv_basesCreate(&g_lv->bs);
+
+  lv_screenSeekToAbsoluteMs(0);
+
+  g_lv->xOffset          = s_scanSaved.xOffset;
+  g_lv->yOffset          = s_scanSaved.yOffset;
+  g_lv->subPxX           = s_scanSaved.subPxX;
+  g_lv->subPxY           = s_scanSaved.subPxY;
+  g_lv->cameraSlot       = s_scanSaved.cameraSlot;
+  g_lv->selectedItem     = s_scanSaved.selectedItem;
+  g_lv->selectedItemType = s_scanSaved.selectedItemType;
+
+  /* Then on to where the loader parks, exactly as it did. */
+  lv_screenParkAtWindowStart();
+  g_lv->wantScreenUpdate = TRUE;
 }
 
 void lv_screenMouseInformationClick(int xPos, int yPos) {

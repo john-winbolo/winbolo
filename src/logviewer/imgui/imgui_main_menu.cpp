@@ -78,6 +78,8 @@ static void open_wbn_browser_modal(void) {
         if (lv_screenLoadMapFromMemory(res.memoryData, res.memorySize)) {
             s_lv->isLoaded = TRUE;
             lv_imgui_events_clear();
+            /* A downloaded log is a whole file too: list all its events. */
+            lv_windowCollectAllEvents();
             lv_windowNeedRedraw();
         }
         /* memoryData ownership transferred — don't free */

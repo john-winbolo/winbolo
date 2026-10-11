@@ -88,8 +88,8 @@ void lv_updateItem(BYTE itemType, BYTE itemNumber, BYTE owner, BYTE x, BYTE y,
     (void)armour; (void)shells; (void)mines; (void)inTank;
 }
 
-void lv_windowAddEvent(int eventType, char *msg) {
-    (void)eventType; (void)msg;
+void lv_windowAddEvent(int eventType, int kind, int mapX, int mapY, char *msg) {
+    (void)eventType; (void)kind; (void)mapX; (void)mapY; (void)msg;
 }
 
 void lv_windowRemoveEventsAfter(uint32_t timeMs) {

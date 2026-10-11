@@ -149,7 +149,7 @@ bool lv_playersSetPlayerName(BYTE playerNum, char *playerName) {
     lv_labelMakeMessage(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location);
     snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, label);
     snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, playerName);
-    lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CHANGENAME, &args);
+    lv_messageAdd(LV_EVK_PLAYER, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CHANGENAME, &args);
   }
 
   /* Update the name */
@@ -261,7 +261,7 @@ void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE 
       snprintf(args.string1, sizeof(args.string1), "%.31s@%.31s",
                plrs.item[playerNum].playerName, plrs.item[playerNum].location);
     }
-    lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_HAS_JOINED, &args);
+    lv_messageAdd(LV_EVK_PLAYER, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_HAS_JOINED, &args);
   }
 
 //  frontEndSetPlayer((playerNumbers) playerNum, str);
@@ -723,7 +723,7 @@ void lv_playersLeaveGame(BYTE playerNum, bool announce) {
       lv_playersMakeMessageName(playerNum, name);
       MessageArgs args = {0};
       snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
-      lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
+      lv_messageAdd(LV_EVK_PLAYER, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
     }
   }
 }

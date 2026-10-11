@@ -1025,6 +1025,18 @@ static const LangEntry langTable[] = {
     {1127, "Reset Window Positions"},
     {2775, "Dock enabled"},
     {2776, "Reset Window Positions into Dock"},
+    {2777, "All events"},
+    {2778, "Pillbox captured"},
+    {2779, "Pillbox stolen"},
+    {2780, "Base captured"},
+    {2781, "Base stolen"},
+    {2782, "Builder lost"},
+    {2783, "Tank killed"},
+    {2784, "Players and teams"},
+    {2785, "Chat and pings"},
+    {2786, "Game and server"},
+    {2787, "Highlights"},
+    {2788, "Now"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

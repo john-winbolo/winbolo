@@ -1211,6 +1211,18 @@ STR_LV_WIN_ITEMINFO=Item Information
 STR_LV_RESET_WINDOWS=Reset Window Positions
 STR_LV_DOCK_ENABLED=Dock enabled
 STR_LV_RESET_WINDOWS_DOCK=Reset Window Positions into Dock
+STR_LV_EVT_FILTER_ALL=All events
+STR_LV_EVT_KIND_PILL_CAPTURED=Pillbox captured
+STR_LV_EVT_KIND_PILL_STOLEN=Pillbox stolen
+STR_LV_EVT_KIND_BASE_CAPTURED=Base captured
+STR_LV_EVT_KIND_BASE_STOLEN=Base stolen
+STR_LV_EVT_KIND_BUILDER_LOST=Builder lost
+STR_LV_EVT_KIND_TANK_KILLED=Tank killed
+STR_LV_EVT_KIND_PLAYER=Players and teams
+STR_LV_EVT_KIND_CHAT=Chat and pings
+STR_LV_EVT_KIND_GAME=Game and server
+STR_LV_EVT_KIND_HIGHLIGHT=Highlights
+STR_LV_EVT_NOW=Now
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:

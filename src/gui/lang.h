@@ -1280,6 +1280,18 @@
 #define STR_LV_RESET_WINDOWS                1127
 #define STR_LV_DOCK_ENABLED                 2775
 #define STR_LV_RESET_WINDOWS_DOCK           2776
+#define STR_LV_EVT_FILTER_ALL               2777
+#define STR_LV_EVT_KIND_PILL_CAPTURED       2778
+#define STR_LV_EVT_KIND_PILL_STOLEN         2779
+#define STR_LV_EVT_KIND_BASE_CAPTURED       2780
+#define STR_LV_EVT_KIND_BASE_STOLEN         2781
+#define STR_LV_EVT_KIND_BUILDER_LOST        2782
+#define STR_LV_EVT_KIND_TANK_KILLED         2783
+#define STR_LV_EVT_KIND_PLAYER              2784
+#define STR_LV_EVT_KIND_CHAT                2785
+#define STR_LV_EVT_KIND_GAME                2786
+#define STR_LV_EVT_KIND_HIGHLIGHT           2787
+#define STR_LV_EVT_NOW                      2788
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

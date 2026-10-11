@@ -85,8 +85,8 @@ int g_lvStubEventsAdded = 0;
 
 /* Declared in backend.h (already included). */
 void lv_finished(void) {}
-void lv_windowAddEvent(int eventType, char *msg) {
-  (void)eventType; (void)msg;
+void lv_windowAddEvent(int eventType, int kind, int mapX, int mapY, char *msg) {
+  (void)eventType; (void)kind; (void)mapX; (void)mapY; (void)msg;
   g_lvStubEventsAdded++;
 }
 void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY) {

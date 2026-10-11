@@ -99,8 +99,8 @@ void lv_frontEndSetGameInformation(bool clear, BYTE versionMajor, BYTE versionMi
 /* --------------------------------------------------------------------------
  * Events
  * -------------------------------------------------------------------------- */
-void lv_windowAddEvent(int eventType, char *msg) {
-    lv_imgui_events_add(eventType, msg);
+void lv_windowAddEvent(int eventType, int kind, int mapX, int mapY, char *msg) {
+    lv_imgui_events_add(eventType, kind, mapX, mapY, msg);
 }
 
 void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY) {
@@ -136,13 +136,21 @@ void lv_controlsEnable(int state) {
 /* Jump the scrubber to a highlight moment and centre the view on its cell.
  * Playback stops across the seek, as it does on the desktop. */
 void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
+    lv_windowSeekToEvent(ms, 1, mapX, mapY);
+}
+
+/* The same jump for any events panel line; only a line about a place on the
+ * map (hasCell) moves the view. */
+void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY) {
     bool wasPlaying = g_lv->playIsPlaying;
     if (wasPlaying) {
         lv_windowPause();
     }
     lv_drawDirtyScreen();
     lv_screenSeekToTimeMs(ms);
-    lv_screenCentreOnCell(mapX, mapY);
+    if (hasCell) {
+        lv_screenCentreOnCell(mapX, mapY);
+    }
     lv_drawDirtyScreen();
     lv_windowNeedRedraw();
     if (wasPlaying) {

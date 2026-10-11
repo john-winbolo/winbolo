@@ -582,13 +582,23 @@ void lv_screenSetSubOffset(int x, int y);
  * bounds, and triggers a redraw if the whole-tile component changed. */
 void lv_screenPanToTotalPixels(int totalPxX, int totalPxY);
 
-void lv_windowAddEvent(int eventType, char *msg);
+/* kind is an lvEventKind (lv_event_kind.h). mapX/mapY name the map cell the
+ * line is about, or are both -1 when it is about no one place. */
+void lv_windowAddEvent(int eventType, int kind, int mapX, int mapY, char *msg);
 /* Add a clickable highlight line: clicking it in the events panel seeks a few
  * seconds before seekMs and centres the game view on the (mapX,mapY) cell. */
 void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY);
 /* Add a load-time round-summary line: no stamp of its own, pinned above the
  * timeline feed so the presentation window never hides it. */
 void lv_windowAddSummary(char *msg);
+/* Events panel clicks. Both stop playback across the seek and hold the client
+ * lock, as the scrubber does. SeekToHighlight always centres the view on the
+ * cell; SeekToEvent only when hasCell is non-zero. */
+void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY);
+void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY);
+/* Standalone viewer only: list every event of the file just loaded in the
+ * events panel (one decode pass, then back to the start). */
+void lv_windowCollectAllEvents(void);
 void lv_windowStop(int corruptLog);
 void lv_finished();
 
@@ -657,6 +667,14 @@ void lv_screenSeekToTimeMs(uint32_t ms);
 
 /* Centre the game view on a map cell (mapX,mapY). */
 void lv_screenCentreOnCell(int mapX, int mapY);
+
+/* Event scan: decode the whole of a loaded file once so the host is posted
+ * every event line (lv_windowAddEvent), then return to the start as the
+ * loader left it. Run returns FALSE and does nothing for a live feed or when
+ * no log is loaded; after a TRUE the host tells its events panel the list is
+ * complete and then calls Restore. See screen.c. */
+bool lv_screenEventScanRun(void);
+void lv_screenEventScanRestore(void);
 
 /* Spectator live-DVR (driven by spectatorRun). While live mode is on,
  * lv_screenStreamPump only appends the arriving bytes and never auto-advances to
