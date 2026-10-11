@@ -98,6 +98,17 @@ function M.set_blitz_size(mn, mx, source)
   M.blitz_size_source = source or "init_arg"
 end
 
+-- Back to the default party size, worked out from the constants as they are
+-- now (a difficulty bundle may have set SQUAD_MAX_SIZE since load). The
+-- "blitz=default" token: a scenario that handed this bot another size can
+-- hand it back without knowing the bot's level.
+function M.reset_blitz_size(source)
+  BLITZ_MIN = math.max(C.SQUAD_BLITZ_GO_EARLY_READY or 2,
+                       C.BLITZ_MIN_READY_TO_CHARGE or 2)
+  BLITZ_MAX = math.max(BLITZ_MIN, (C.SQUAD_MAX_SIZE or 1) + 1)
+  M.blitz_size_source = source or "default"
+end
+
 -- One canonical string for every place that DISPLAYS the party size (print2 /
 -- DECISION lines, the blitz_wait timeout HUD, the joinable-calls HUD).
 function M.blitz_size_label()

@@ -19,6 +19,16 @@ local M = {}
 function M.w2m(w)   return bit.rshift(w, 8)          end
 function M.m2w(m)   return bit.bor((bit.lshift(m, 8)), 0x80) end
 
+-- The SHELLS_LOW line where it gates or prices an ATTACK: SHELLS_LOW, capped
+-- at SIDE_SHELLS_LOW_CAP when that is > 0 (the horde side). Read live, so a
+-- side word handed mid-round lands on the next call. The refuel watermarks
+-- read C.SHELLS_LOW directly and are not capped.
+function M.attack_shells_low()
+  local cap = C.SIDE_SHELLS_LOW_CAP or 0
+  if cap > 0 and cap < C.SHELLS_LOW then return cap end
+  return C.SHELLS_LOW
+end
+
 -- Terrain cache: detect changes and notify pathfinder via changes.terrain.
 -- Exposed as M.terrain_prev for consumers that need "what terrain have we
 -- seen at tile X" (fog-of-war lookup). Mutated in place on reset so the
