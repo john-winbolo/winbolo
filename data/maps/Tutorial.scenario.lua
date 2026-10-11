@@ -1147,6 +1147,12 @@ local function field(role)
   end
   local q, code = game.spawn_bot(t)
   if type(q) ~= "number" then
+    if code == "SCN_OP_ALREADY" then
+      -- The seat is still on the field: a remove_bot (unfield_bot5a) lands
+      -- a frame or more after it is asked for. Try again on the next poll.
+      S.fielded[role] = nil
+      return
+    end
     game.log("Tutorial: spawn of the " .. role .. " bot refused: "
              .. tostring(code))
   end
@@ -1242,16 +1248,22 @@ local function rebuild_5a_rings()
 end
 
 -- Start the 5A demo take again: the target back, the blocker back in the
--- bot's tank, the bot home, the island's walls and moat back.
+-- bot's tank, the island's walls and moat back, and a bot with a fresh goal.
+-- The bot is taken off and fielded again (item 39): its brain keeps its
+-- attack goal across a teleport, so a bot sent home in the middle of a take
+-- went on from the step it had reached, past building its blocker, and shot
+-- the target with the blocker still in its tank. A bot taken off drops its
+-- goal, the way a death does. unfield_bot5a puts both pillboxes home; the
+-- poll fields the bot again on the next frame while the player is in
+-- Station 5, and on_tank_spawned hands it the blocker.
 local function reset_5a()
   rebuild_5a_rings()
-  reset_pill("t5a_target")
-  if live_tank(S.bot5a) ~= nil then
-    hand_pill(S.bot5a, P.t5a_blocker.n)
+  if S.fielded.bot5a then
+    unfield_bot5a()
   else
+    reset_pill("t5a_target")
     reset_pill("t5a_blocker")
   end
-  home_bot5a()
   S.t5a_reset_at = S.sec
 end
 

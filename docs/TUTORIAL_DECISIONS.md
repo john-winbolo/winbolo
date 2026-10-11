@@ -507,9 +507,36 @@ and how to undo it.
   shells between it and the player both ways, and the two 5A pills' shells
   at the player. `can_build` keeps its man on `island5a`, and
   `can_capture` lets it pick up only the two 5A pills. After each take the
-  script puts the target back, gives the bot its blocker pillbox again and
-  sends it home; a watchdog restarts a take that has stalled for 150
-  seconds. It plays at Hard, as a demonstration.
+  script puts the target back and fields the bot again with its blocker
+  pillbox (item 39, below); a watchdog restarts a take that has stalled for
+  150 seconds. It plays at Hard, as a demonstration.
+- **Each 5A take starts with a fresh bot (item 39, 2026-10-10).** Andrew:
+  the demo bot often skipped its blocker on a later take. *Cause:* the
+  script's reset (`reset_5a`) put the pills back and teleported the bot
+  home, but GoalHunter keeps its attack goal across a teleport. A reset in
+  the middle of a take (the 150-second watchdog) left the goal past its
+  build step, so the bot drove out and shot the target with the blocker
+  still in its tank. A reset after a take was safe: the take had ended the
+  goal. *Choice:* every reset takes the bot off (`unfield_bot5a`, which
+  puts both pills home) and the poll fields it again on the next frame;
+  `on_tank_spawned` hands it the blocker. A bot taken off drops its goal,
+  as a death does. No brain change. The bot now comes back at its start
+  square (140,117), not at (136,115). `field` tries again on the next poll
+  when `spawn_bot` says `SCN_OP_ALREADY`, because a `remove_bot` lands a
+  frame or more after it is asked for. The `tutorial_take5a_blocker`
+  arena breaks into the demo every other take: it kills the bot before it
+  builds and after, calls `reset_5a` 4 seconds after the bot built, and
+  takes the player out of Station 5 for 8 seconds. It fails when the
+  target loses armour before the bot built its blocker in that take. Old
+  script: 3 of 3 middle-of-take resets shot bare. New script: seeds 42,
+  7, 99 and 1234 each gave 16 takes, 16 windows with a shot, 0 bare; kills
+  8, resets 4, player out 4. A fresh bot builds 6.1 s after the reset and
+  takes the target about 22.8 s after it; with no break-ins the old
+  script took 26 to 111 s from take to take.
+  *Arena note:* the gate's player seat is a GoalHunter bot. It joined the
+  demo bot's blitz, and the demo bot then built a wall, not its pillbox,
+  on the square on the seat's line to the target. The arena sends the
+  seat `noblitz`; a human player never joins a blitz.
 - **"Bot 2" is the 5A demo bot (item 17, 2026-10-10).** It is on the field
   only while the player's tank is in Station 5. The script fields it when
   the tank is in Station 5 and removes it (`game.remove_bot`, which also
@@ -787,9 +814,9 @@ and how to undo it.
   has been picked up, so building the first before picking up the second
   still ticks the item.
 - **Gate arenas** hold the player's seat (a GoalHunter in the gate) still
-  with `set_modifiers{speed = 1, turn = 1}` and teleport it about. Seventeen
+  with `set_modifiers{speed = 1, turn = 1}` and teleport it about. Eighteen
   arenas: `tutorial_checkpoint`, `tutorial_reset`, `tutorial_take5a`,
-  `tutorial_take5a_soak`, `tutorial_park5b`, `tutorial_rebuild5b`,
+  `tutorial_take5a_soak`, `tutorial_take5a_blocker`, `tutorial_park5b`, `tutorial_rebuild5b`,
   `tutorial_station5_entry`, `tutorial_late_bots`, `tutorial_station6`,
   `tutorial_bot7_region`, `tutorial_bot7_stay`, `tutorial_bot7_man`,
   `tutorial_new_man`, `tutorial_station2`, `tutorial_watch5a`,
