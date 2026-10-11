@@ -1209,6 +1209,8 @@ STR_LV_WIN_EVENTS=Events
 STR_LV_WIN_GAMEINFO=Game Information
 STR_LV_WIN_ITEMINFO=Item Information
 STR_LV_RESET_WINDOWS=Reset Window Positions
+STR_LV_DOCK_ENABLED=Dock enabled
+STR_LV_RESET_WINDOWS_DOCK=Reset Window Positions into Dock
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:

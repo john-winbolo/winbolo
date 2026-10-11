@@ -42,6 +42,8 @@
 #include "lv_region_rect.h"
 #include "game_view.h"
 #include "imgui/imgui_main_menu.h"
+#include "imgui/imgui_dock.h"
+#include "lv_dock_fit.h"
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/sdl3/sprite_positions.h"
 #include "../gui/sdl3/tileloader.h"
@@ -564,6 +566,13 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     newEffective = (float)(zf * TILE_SIZE_X) * newZoom;
     if (newEffective <= 0.0f) newEffective = (float)TILE_SIZE_X;
     newTilesX = (int)(((float)gameW + newEffective * 0.5f) / newEffective);
+    /* The standalone viewer's dock takes the right of the window; the map
+     * fills what is left, as it does when the dock comes in or is resized
+     * (lvHostDockSync). The embedded reel has no dock. */
+    if (!g_embedded && lv_imgui_dock_reserved_width() > 0) {
+        gameW = windowW - lv_imgui_dock_reserved_width();
+        newTilesX = lvFitTilesCover(gameW, newEffective);
+    }
     newTilesY = (int)(((float)gameH + newEffective * 0.5f) / newEffective);
     if (newTilesX < 1) newTilesX = 1;
     if (newTilesY < 1) newTilesY = 1;
@@ -952,6 +961,9 @@ void lv_drawSplashForImGui(void) {
      * window on a Retina display. */
     float pxScale = lvDrawPixelScale();
     SDL_GetRenderOutputSize(sdlRenderer, &windowWidth, &windowHeight);
+    /* Centre in the part of the window the dock leaves, not behind it. */
+    windowWidth -= (int)((float)lv_imgui_dock_reserved_width() * pxScale);
+    if (windowWidth < 0) windowWidth = 0;
     int splashW = (int)(splashWidth * pxScale);
     int splashH = (int)(splashHeight * pxScale);
 

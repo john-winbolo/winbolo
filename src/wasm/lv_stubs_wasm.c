@@ -120,3 +120,9 @@ void lv_imgui_context_shutdown(void) {
 float lv_imgui_get_menu_bar_height(void) {
     return 0.0f;
 }
+
+/* draw.c keeps the map clear of the standalone viewer's right-side dock. The
+ * browser build has no dock, so nothing is ever reserved for one. */
+int lv_imgui_dock_reserved_width(void) {
+    return 0;
+}

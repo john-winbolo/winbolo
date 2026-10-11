@@ -1767,6 +1767,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_dialogs.cpp
     src/logviewer/imgui/imgui_game_viewport.cpp
     src/logviewer/imgui/imgui_scenario_panel.cpp
+    src/logviewer/imgui/imgui_dock.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
@@ -2403,6 +2404,7 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_dialogs.cpp
     src/logviewer/imgui/imgui_game_viewport.cpp
     src/logviewer/imgui/imgui_scenario_panel.cpp
+    src/logviewer/imgui/imgui_dock.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
@@ -4564,6 +4566,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Where the viewer draws a declared region on the overview and the game
     # view (lv_region_rect.h, header only).
     tests/unit/test_lv_region_rect.c
+    # How the viewer's window is shared between the map and the right-side
+    # dock (lv_dock_fit.h, header only).
+    tests/unit/test_lv_dock_fit.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -6788,6 +6793,7 @@ set(_unit_test_names
     lv_server_tick_alternating
     lv_server_tick_live_feed
     lv_region_rect_placement
+    lv_dock_fit_sums
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast

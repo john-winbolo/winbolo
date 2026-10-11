@@ -10,6 +10,7 @@
 
 #include "imgui_main_menu.h"
 #include "imgui_scenario_panel.h"
+#include "imgui_dock.h"
 #include "imgui_dialogs.h"
 #include "imgui.h"
 #include "platform_config.h"
@@ -115,6 +116,9 @@ static void show_about_dialog(void);
 
 void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     s_lv = lv;
+    /* The dock keeps its own preferences; it loads and saves with the menu's
+     * so the hosts have one call each to make. */
+    lv_imgui_dock_init(lv);
     /* Load preferences from config */
     char val[256];
     
@@ -166,6 +170,7 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
 }
 
 void lv_imgui_main_menu_save(void) {
+    lv_imgui_dock_save();
     lv_platform_config_set_string("LOGVIEWER", "Tank Centred", s_tank_centred ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Hide Lobby",
                                   lv_screenGetHideLobby() ? "Yes" : "No");
@@ -188,7 +193,8 @@ void lv_imgui_main_menu_save(void) {
 static void zoom_at_center(int stepIndex) {
     int w = 0, h = 0;
     if (s_lv && s_lv->window) SDL_GetWindowSize(s_lv->window, &w, &h);
-    lv_drawSetZoomStep(stepIndex, w / 2, h / 2);
+    /* The middle of the map's part of the window, which stops at the dock. */
+    lv_drawSetZoomStep(stepIndex, (w - lv_imgui_dock_reserved_width()) / 2, h / 2);
 }
 
 void lv_imgui_zoom_at_center(int stepIndex) { zoom_at_center(stepIndex); }
@@ -509,8 +515,24 @@ int lv_imgui_main_menu_bar(void) {
                 clicked = 1;
             }
             ImGui::Separator();
+            /* The dock is a strip down the right of the window that the
+             * panels can be dragged into. Turning it on for the first time
+             * puts every panel in it; after that it comes back as it was
+             * left. */
+            if (ImGui::MenuItem(langGetText(STR_LV_DOCK_ENABLED), NULL, lv_imgui_dock_get_enabled() != 0)) {
+                lv_imgui_dock_set_enabled(!lv_imgui_dock_get_enabled());
+                clicked = 1;
+            }
+            /* Floats every panel at its default place. A docked panel leaves
+             * the dock: the panels set their position unconditionally on a
+             * reset, and ImGui undocks a window that is told where to be. */
             if (ImGui::MenuItem(langGetText(STR_LV_RESET_WINDOWS))) {
                 lv_g_reset_window_positions = true;
+                clicked = 1;
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_RESET_WINDOWS_DOCK), NULL, false,
+                                lv_imgui_dock_get_enabled() != 0)) {
+                lv_imgui_dock_request_layout();
                 clicked = 1;
             }
             ImGui::EndMenu();

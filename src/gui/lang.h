@@ -1278,6 +1278,8 @@
 #define STR_LV_WIN_GAMEINFO                 1125
 #define STR_LV_WIN_ITEMINFO                 1126
 #define STR_LV_RESET_WINDOWS                1127
+#define STR_LV_DOCK_ENABLED                 2775
+#define STR_LV_RESET_WINDOWS_DOCK           2776
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

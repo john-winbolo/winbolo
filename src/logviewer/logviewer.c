@@ -56,6 +56,8 @@
 #include "imgui/imgui_dialogs.h"
 #include "imgui/imgui_game_viewport.h"
 #include "imgui/imgui_scenario_panel.h"
+#include "imgui/imgui_dock.h"
+#include "lv_dock_fit.h"
 #include "imgui/imgui_game_view.h"
 #include "imgui/imgui_logviewer_menu.h"
 #include "game_view.h"
@@ -462,8 +464,22 @@ static void savePreferences(void) {
     /* Use Team Colours */
     lv_platform_config_set_string("LOGVIEWER", "Use Team Colours", g_lv->useTeamColours ? "Yes" : "No");
 
-    /* Screen Size */
-    snprintf(line, sizeof(line), "%d", lv_screenGetSizeX());
+    /* Screen Size. The next launch makes its window this many squares wide,
+     * so while the dock takes part of the window the number saved is the
+     * whole window's, not the map's: saving the map's would make the window
+     * narrower by the dock's width at every launch. */
+    {
+        int sizeX = lv_screenGetSizeX();
+        int reserved = lv_imgui_dock_reserved_width();
+        if (reserved > 0) {
+            int winW = 0, winH = 0;
+            float zoom = lv_drawGetZoomLevel();
+            if (zoom <= 0.0f) zoom = 1.0f;
+            SDL_GetWindowSize(g_lv->window, &winW, &winH);
+            if (winW > 0) sizeX = lvFitTilesNearest(winW, (float)TILE_SIZE_X * zoom);
+        }
+        snprintf(line, sizeof(line), "%d", sizeX);
+    }
     lv_platform_config_set_string("LOGVIEWER", "ScreenSizeX", line);
     snprintf(line, sizeof(line), "%d", lv_screenGetSizeY());
     lv_platform_config_set_string("LOGVIEWER", "ScreenSizeY", line);
@@ -486,6 +502,10 @@ static void savePreferences(void) {
     lv_platform_config_set_string("LOGVIEWER", "PreferencesSaved", "Yes");
     lv_platform_config_save();
 }
+
+/* The width the dock had the last time the map's tile count was fitted beside
+ * it. lvHostDockSync refits when the dock's answer differs from this. */
+static int s_lvDockReservedApplied = 0;
 
 /* --------------------------------------------------------------------------
  * lvHostSetup -- Shared host bring-up for the log viewer and the spectator.
@@ -510,6 +530,7 @@ static int lvHostSetup(SDL_Window *window, SDL_Renderer *renderer,
         return FALSE;
     }
     lv_imgui_main_menu_init(g_lv);
+    s_lvDockReservedApplied = 0;
 #ifdef __APPLE__
     /* Install the native NSMenu after ImGui + window are up. The shim's
      * save-on-install / restore-on-uninstall stack swaps WinBolo's menu
@@ -772,11 +793,13 @@ static void lvHostHandleResize(const SDL_Event *e) {
      * window cleanly at the current zoom. */
     float tilePxX = (float)TILE_SIZE_X * zoom;
     float tilePxY = (float)TILE_SIZE_Y * zoom;
-    int newTilesX = (int)(((float)w + tilePxX * 0.5f) / tilePxX);
+    /* The dock, when it shows, takes the right of the window; the map is
+     * fitted to what is left. Zero in the live spectator and whenever the
+     * dock is off, which leaves every sum below as it was. */
+    int reserved = lv_imgui_dock_reserved_width();
+    int newTilesX = lvFitTilesNearest(w - reserved, tilePxX);
     int newTilesY = (int)((((float)(h - menuH)) + tilePxY * 0.5f) / tilePxY);
-    if (newTilesX < 1) newTilesX = 1;
     if (newTilesY < 1) newTilesY = 1;
-    if (newTilesX > 255) newTilesX = 255;
     if (newTilesY > 255) newTilesY = 255;
 
     /* A maximized or fullscreen window can't be resized: SDL_SetWindowSize is
@@ -792,8 +815,15 @@ static void lvHostHandleResize(const SDL_Event *e) {
     if (!(wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN))) {
         int snappedW = (int)(newTilesX * tilePxX + 0.5f);
         int snappedH = (int)(newTilesY * tilePxY + 0.5f);
-        SDL_SetWindowSize(g_lv->window, snappedW, snappedH + menuH);
+        SDL_SetWindowSize(g_lv->window, snappedW + reserved, snappedH + menuH);
+    } else if (reserved > 0) {
+        /* The window stays as it is, so the map cannot be snapped to end at
+         * the dock. Rounding to the nearest square could stop it short and
+         * leave a black strip beside the dock; cover the gap instead, with
+         * the last square running a little way under the dock's edge. */
+        newTilesX = lvFitTilesCover(w - reserved, tilePxX);
     }
+    s_lvDockReservedApplied = reserved;
     lv_screenSetSizeX((BYTE)newTilesX);
     lv_screenSetSizeY((BYTE)newTilesY);
     /* The size setters keep the offset inside the map for the new grid. The
@@ -802,6 +832,52 @@ static void lvHostHandleResize(const SDL_Event *e) {
     lv_screenSetSubOffset(0, 0);
     lv_drawResizeRenderTarget();
     lv_drawDirtyScreen();
+    g_lv->wantScreenUpdate = TRUE;
+}
+
+/* --------------------------------------------------------------------------
+ * lvHostDockSync -- Keep the map's width in step with the right-side dock.
+ *
+ * Runs first thing each frame, before the map is drawn. It lets the dock come
+ * in or go out for the frame, then, when the width the dock takes has changed
+ * (turned on or off, or its edge dragged), refits the number of map squares
+ * across to the rest of the window. Everything that places the map -- the
+ * centring, the pan limits, centre-on-click, the mouse-to-square sum -- works
+ * from that number, so nothing of the map is lost behind the dock.
+ *
+ * The window itself is left alone here (the user did not resize it), so the
+ * fit rounds up: the last square may run under the dock's edge by less than
+ * a square. The live spectator never has a dock and so never gets past the
+ * comparison. Game view sets its own fixed size and puts the overview's back
+ * when it ends; it is left alone, and the comparison catches up afterwards.
+ * -------------------------------------------------------------------------- */
+static void lvHostDockSync(void) {
+    int reserved, winW = 0, winH = 0, newTilesX;
+    float zoom;
+
+    lv_imgui_dock_pre_frame();
+    if (g_lv->gameView) {
+        return;
+    }
+    reserved = lv_imgui_dock_reserved_width();
+    if (reserved == s_lvDockReservedApplied) {
+        return;
+    }
+    s_lvDockReservedApplied = reserved;
+
+    SDL_GetWindowSize(g_lv->window, &winW, &winH);
+    if (winW <= 0) {
+        return;
+    }
+    zoom = lv_drawGetZoomLevel();
+    if (zoom <= 0.0f) zoom = 1.0f;
+    newTilesX = lvFitTilesBesideDock(winW, reserved, (float)TILE_SIZE_X * zoom);
+    if ((BYTE)newTilesX != lv_screenGetSizeX()) {
+        lv_screenSetSizeX((BYTE)newTilesX);
+        lv_screenSetSubOffset(0, 0);
+        lv_drawResizeRenderTarget();
+        lv_drawDirtyScreen();
+    }
     g_lv->wantScreenUpdate = TRUE;
 }
 
@@ -826,6 +902,8 @@ static void lvHostHandleResize(const SDL_Event *e) {
  * the comments panel needs a finished log's WBN key. The viewer is never in
  * live mode, so its behaviour is unchanged. */
 static void lvHostRenderFrame(const char *overlay) {
+    lvHostDockSync();
+
     /* Clear the frame */
     SDL_SetRenderDrawColor(g_lv->renderer, 0, 0, 0, 255);
     SDL_RenderClear(g_lv->renderer);
@@ -910,6 +988,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.showItemInfo     = lv_g_show_item_info_window;
         lvms.showComments     = lv_g_show_comments_window;
         lvms.showScenarioPanel = lv_g_show_scenario_panel_window;
+        lvms.dockEnabled      = lv_imgui_dock_get_enabled() ? true : false;
         lvms.zoomStepIndex    = lv_drawGetZoomStepIndex();
         lvms.zoomStepCount    = lv_drawGetZoomStepCount();
         lvms.fromMainMenu     = g_lv->fromMainMenu ? true : false;
@@ -1008,6 +1087,9 @@ static void lvHostRenderFrame(const char *overlay) {
         } else {
             lv_imgui_main_menu_bar();
             lv_imgui_cache_menu_bar_height();
+            /* Before the panels: a panel docked in it has to find the dock
+             * space already submitted this frame, or ImGui undocks it. */
+            lv_imgui_dock_host();
             lv_imgui_controls_window();
             lv_imgui_game_info_window();
             lv_imgui_events_window();
@@ -1064,6 +1146,9 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     if (lvHostSetup(window, renderer, fromMainMenu) == FALSE) {
         return;
     }
+    /* Only this host has the dock; the spectator shares the setup above and
+     * leaves the answer at no. */
+    lv_imgui_dock_set_standalone(1);
 
     /* Open file from command line / caller if provided */
     if (logPath != NULL && strlen(logPath) > 0) {

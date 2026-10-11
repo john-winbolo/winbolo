@@ -1023,6 +1023,8 @@ static const LangEntry langTable[] = {
     {1125, "Game Information"},
     {1126, "Item Information"},
     {1127, "Reset Window Positions"},
+    {2775, "Dock enabled"},
+    {2776, "Reset Window Positions into Dock"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

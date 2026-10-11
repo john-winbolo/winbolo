@@ -4005,6 +4005,10 @@ int run_lv_server_tick_live_feed(void);
 /* Where the log viewer draws a declared region (test_lv_region_rect.c): at the
  * overview's edges, off it, and on the game view at 2x with a pan. */
 int run_lv_region_rect_placement(void);
+/* How the log viewer's window is shared between the map and the right-side
+ * dock (test_lv_dock_fit.c): squares across with and without the dock, and
+ * the limits on the dock's width. */
+int run_lv_dock_fit_sums(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

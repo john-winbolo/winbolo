@@ -2282,6 +2282,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_server_tick_alternating",                      run_lv_server_tick_alternating                      },
     { "lv_server_tick_live_feed",                        run_lv_server_tick_live_feed                        },
     { "lv_region_rect_placement",                        run_lv_region_rect_placement                        },
+    { "lv_dock_fit_sums",                                run_lv_dock_fit_sums                                },
     { "scn_presentation_codec_bodies",                   run_scn_presentation_codec_bodies                   },
     { "scn_presentation_codec_refuses_short",            run_scn_presentation_codec_refuses_short            },
     { "scn_presentation_decoder_sets_broadcast",         run_scn_presentation_decoder_sets_broadcast         },
