@@ -296,7 +296,10 @@ local POP = {
   s3 = "Your man harvests trees, then uses them to build roads, walls, "
     .. "mines and pillboxes. Click a build button, or press its key: "
     .. "{QUICK_TREE} trees, {QUICK_ROAD} road, {QUICK_WALL} wall, "
-    .. "{QUICK_MINE} mine. Then click on the map to send your man there.",
+    .. "{QUICK_MINE} mine. Then click on the map to send your man there.\n\n"
+    .. "Tip: with the road, wall or pillbox tool picked, click a tree and "
+    .. "your man harvests it. You do not have to switch to the tree tool "
+    .. "each time.",
   s4a = "Games start with neutral pillboxes, and a full one takes 15 shots "
     .. "to kill.\n\n"
     .. "First, drive over the dead pillbox to put it in your tank. Then "

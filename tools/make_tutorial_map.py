@@ -115,8 +115,8 @@ def pool(name, px, py):
     """A checkpoint start: a 3x3 pool of deep water centred on (px, py), the
     start square. Walls close it on the west, east and south, one square out.
     On the north the pool's middle column opens onto one road square at
-    (px, py - 2), with a wall on each side of it, so that road square is the
-    only way in or out. The start faces north, out along that road.
+    (px, py - 2), with no wall beside it (Andrew, Oct 10). The start faces
+    north, out along that road.
 
     No drowning: the tank respawns on a boat. It leaves the boat on the pool
     square it drives off from, and the one way out is through (px, py - 1),
@@ -124,8 +124,6 @@ def pool(name, px, py):
     that comes back boards it and does not drown."""
     fill(px - 2, py - 1, px + 2, py + 2, BUILDING)
     fill(px - 1, py - 1, px + 1, py + 1, SEA)
-    put(px - 1, py - 2, BUILDING)
-    put(px + 1, py - 2, BUILDING)
     put(px, py - 2, ROAD)
     start(name, px, py, 4)
 
