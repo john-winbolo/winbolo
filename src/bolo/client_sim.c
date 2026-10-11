@@ -25,6 +25,7 @@
  *  simulation separation.
  *********************************************************/
 
+#include <ctype.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2294,11 +2295,35 @@ static void clientSimScnAnnounceRemove(ClientSim *cs, int i) {
   cs->scnAnnounceCount = (uint8_t)(n - 1);
 }
 
+/* True when a and b read the same once each run of digits (with any '.'
+   inside it) is taken as one number, whatever its value: "dying in 8.3 s"
+   and "dying in 10.0 s" are the same line, counted down. */
+static bool clientSimScnAnnounceSameShape(const char *a, const char *b) {
+  while (*a != '\0' && *b != '\0') {
+    if (isdigit((unsigned char)*a) && isdigit((unsigned char)*b)) {
+      while (isdigit((unsigned char)*a) ||
+             (*a == '.' && isdigit((unsigned char)a[1]))) {
+        a++;
+      }
+      while (isdigit((unsigned char)*b) ||
+             (*b == '.' && isdigit((unsigned char)b[1]))) {
+        b++;
+      }
+      continue;
+    }
+    if (*a != *b) return false;
+    a++;
+    b++;
+  }
+  return *a == *b;
+}
+
 void clientSimScnAnnouncePush(ClientSim *cs, const char *text, uint16_t ticks,
                               uint32_t nowTick, bool hasPos, uint8_t posX,
                               uint8_t posY) {
   ClientScnAnnounce *a;
   int                i;
+  int                same = -1;
 
   if (cs == NULL) return;
   if (text == NULL || text[0] == '\0') {
@@ -2306,9 +2331,9 @@ void clientSimScnAnnouncePush(ClientSim *cs, const char *text, uint16_t ticks,
     cs->scnAnnounceCount = 0;
     return;
   }
-  /* Lines whose time is up, and a held line with the same text, go first.
-     Walked from the top so a removal does not skip the next line. While a
-     popup holds the lines their clocks stopped when the hold began. */
+  /* Lines whose time is up go first. Walked from the top so a removal does
+     not skip the next line. While a popup holds the lines their clocks
+     stopped when the hold began. */
   for (i = (int)cs->scnAnnounceCount - 1; i >= 0; i--) {
     const ClientScnAnnounce *h = &cs->scnAnnounces[i];
     const uint32_t clock =
@@ -2316,9 +2341,29 @@ void clientSimScnAnnouncePush(ClientSim *cs, const char *text, uint16_t ticks,
             ? cs->scnAnnounceHoldStart : nowTick;
     const uint32_t elapsed =
         (clock > h->arrivedTick) ? (clock - h->arrivedTick) : 0u;
-    if (elapsed >= (uint32_t)h->ticks || strcmp(h->text, text) == 0) {
+    if (elapsed >= (uint32_t)h->ticks) {
       clientSimScnAnnounceRemove(cs, i);
     }
+  }
+  /* A line already held with the same text, or the same text with other
+     numbers in it (a countdown sent every frame), is written over where it
+     stands rather than stacked again. */
+  for (i = 0; i < (int)cs->scnAnnounceCount; i++) {
+    if (clientSimScnAnnounceSameShape(cs->scnAnnounces[i].text, text)) {
+      same = i;
+      break;
+    }
+  }
+  if (same >= 0) {
+    a = &cs->scnAnnounces[same];
+    memset(a, 0, sizeof(*a));
+    SDL_strlcpy(a->text, text, sizeof(a->text));
+    a->ticks       = ticks;
+    a->arrivedTick = nowTick;
+    a->hasPos      = hasPos ? 1u : 0u;
+    a->posX        = posX;
+    a->posY        = posY;
+    return;
   }
   if (cs->scnAnnounceCount >= SCN_ANNOUNCE_STACK_MAX) {
     clientSimScnAnnounceRemove(cs, 0);

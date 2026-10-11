@@ -877,13 +877,13 @@ int run_scn_announce_stack_client(void) {
     UT_ASSERT(strcmp(clientSimGetScnAnnounce(cs, NULL, NULL), "Second") == 0);
     UT_ASSERT(clientSimGetScnAnnouncePos(cs, NULL, NULL));
 
-    /* The same text again replaces its twin and moves to the end. */
+    /* The same text again is written over its twin where it stands. */
     clientSimScnAnnouncePush(cs, "First", 500, 1100, false, 0, 0);
     UT_ASSERT(clientSimGetScnAnnounceCount(cs) == 2);
-    UT_ASSERT(strcmp(clientSimGetScnAnnounceAt(cs, 0)->text, "Second") == 0);
-    a = clientSimGetScnAnnounceAt(cs, 1);
+    a = clientSimGetScnAnnounceAt(cs, 0);
     UT_ASSERT(strcmp(a->text, "First") == 0);
     UT_ASSERT(a->ticks == 500 && a->arrivedTick == 1100);
+    UT_ASSERT(strcmp(clientSimGetScnAnnounceAt(cs, 1)->text, "Second") == 0);
 
     /* "Second" ran out at 1300; a line landing at 1300 drops it. */
     clientSimScnAnnouncePush(cs, "Third", 100, 1300, false, 0, 0);
@@ -903,6 +903,20 @@ int run_scn_announce_stack_client(void) {
     /* An empty line takes every line down. */
     clientSimScnAnnouncePush(cs, "", 0, 1400, false, 0, 0);
     UT_ASSERT(clientSimGetScnAnnounceCount(cs) == 0);
+
+    /* A countdown sent every frame stays one line: only its numbers
+       change. Other words make a new line. */
+    clientSimScnAnnouncePush(cs, "Above", 1000, 1500, false, 0, 0);
+    clientSimScnAnnouncePush(cs, "Deep water: 10.0 s", 100, 1500, false, 0, 0);
+    clientSimScnAnnouncePush(cs, "Deep water: 9.8 s", 100, 1510, false, 0, 0);
+    clientSimScnAnnouncePush(cs, "Deep water: 8 s", 100, 1520, false, 0, 0);
+    UT_ASSERT(clientSimGetScnAnnounceCount(cs) == 2);
+    a = clientSimGetScnAnnounceAt(cs, 1);
+    UT_ASSERT(strcmp(a->text, "Deep water: 8 s") == 0);
+    UT_ASSERT(a->arrivedTick == 1520);
+    clientSimScnAnnouncePush(cs, "Deep sea: 7 s", 100, 1530, false, 0, 0);
+    UT_ASSERT(clientSimGetScnAnnounceCount(cs) == 3);
+    clientSimScnAnnouncePush(cs, "", 0, 1540, false, 0, 0);
     UT_ASSERT(clientSimGetScnAnnounce(cs, NULL, NULL) == NULL);
 
     /* Through the control arm: two lines addressed to this client stack,
