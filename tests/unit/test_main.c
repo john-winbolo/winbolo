@@ -1090,6 +1090,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_lobby_running_loss",             run_loopback_lobby_running_loss             },
     { "loopback_quiet_lobby_control_loss",       run_loopback_quiet_lobby_control_loss       },
     { "loopback_command_liveness",               run_loopback_command_liveness               },
+    { "loopback_command_queued_behind_map_change", run_loopback_command_queued_behind_map_change },
     { "loopback_channel",                        run_loopback_channel                        },
     { "loopback_hitch_recovers",                 run_loopback_hitch_recovers                 },
     { "loopback_quit_keeps_peer",                run_loopback_quit_keeps_peer                },
