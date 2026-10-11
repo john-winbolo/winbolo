@@ -346,6 +346,15 @@ M.SHELLS_LOW       = 19   -- seek resupply (~15 to kill a pill/base). 2026-09-06
                           -- (Andrew): a tank at exactly 20 shells is "plenty good to stay out
                           -- fighting", so 20 is no longer low -- no refuel candidate, no deficit
                           -- bonus, no urgency discount. KEEL value 20 lives in PRESETS.keel.
+-- 2026-10-11 (Andrew; Virus horde): a cap on SHELLS_LOW where it gates or
+-- prices an ATTACK (U.attack_shells_low): the pool-7 attack_base shells gate,
+-- the pool-6 ammo penalty, and their eval_attack_* twins. Those read
+-- min(SHELLS_LOW, this) when this is > 0. The refuel watermarks keep
+-- SHELLS_LOW. 0 = off (today). The horde side sets 10: a horde tank never
+-- refuels and lives on Virus's trickle of shells, so the 19 line (22 on
+-- Medium) kept it off bases most of the time. SHELLS_LOW itself is left
+-- alone: the difficulty bundles set it.
+M.SIDE_SHELLS_LOW_CAP = 0
 
 -- Ammo-deprivation: if a tank sits below AMMO_DEPRIVED_SHELLS for this long
 -- during normal (non-opening) play it's flagged state.ammo_deprived ??? a lost
@@ -620,6 +629,13 @@ M.WOUNDED_COMMIT_DISCOUNT      = 0.5
 -- chosen wall-shielded angle is preserved instead of overshooting it.
 M.PPT_HEALTH_THRESHOLD = 8     -- only PPT if pill HP >= this
 M.PPT_ANGER_THRESHOLD  = 0.34  -- ...OR force PPT when pill anger > this (~>1 hit): an angry pill reloads fast, don't charge it bare
+-- 2026-10-11 (Andrew; Virus horde): true = never a protected take. The plan
+-- turns PPT off the way it does for a pill_suicider (attack.lua, the PPT_SKIP
+-- block): no shield scan, no gather_trees, no wall building, straight to the
+-- plain standoff/charge take. For a bot that cannot get trees (the horde has
+-- none and cannot farm), which otherwise stalls ~250 ticks in gather_trees
+-- before it charges. false = today.
+M.PPT_NEVER = false
 M.SWERVE_SKIP_ARMOUR_PER_HP = 5  -- skip the kill/curve swerve while pill.health*this <= armour (we can tank finishing it, so buck in)
 M.TANK_FINISH_MAX_HP    = 3    -- tank the finish only when remaining pill HP <= this
 M.TANK_FINISH_MAX_ANGER = 0.25 -- ...AND the pill is currently CALM (anger <= this). An angrier pill reloads fast, so don't soak its last HP ??? swerve instead.
@@ -930,6 +946,13 @@ M.ALLY_CLAIMED_STEAL_FRAC      = 0.10
 -- bot grabs it, the other re-routes for free. 0.01 = ">=1% cheaper steals".
 -- (The killer-priority window and reposition guards still trump this.)
 M.ALLY_CLAIMED_STEAL_FRAC_CAPTURE = 0.01
+-- 2026-10-11 (Andrew; Virus horde): true = an ally's claim on an attack_pill
+-- (pool 6) or attack_base (pool 7) target never rejects ours, so any number
+-- of bots may pick the same pill or base (goals.lua sync_ally_claimed_rejects,
+-- the same keep as "noclaimdead" gives pool 4). No steal request is sent and
+-- nobody yields. The blitz_full reject on an open blitz still applies.
+-- false = today: one bot (or one blitz) per target.
+M.ATTACK_CLAIM_SHARE = false
 -- ?????? attack_pill steal NEGOTIATION (stq / sta / str verbs) ??????????????????????????????????????????
 -- A cheaper challenger no longer silently takes over an ally's pre-commit
 -- attack_pill (the loser stayed committed as a zombie co-attacker ???
@@ -1294,6 +1317,13 @@ M.BOAT_ALIGN_BRAD  = 16  -- heading within this of move_dir (~22??) counts as al
 M.ATTACK_BASE_COMMIT_TICKS        = 500   -- ~10 s @ 50 Hz since the last shot landed
 M.ATTACK_BASE_PREEMPT_SHOOT_TILES = 8     -- tank/LGM must be within this (??? shooting distance) to break the base commit
 M.GOAL_CROSSFIRE_PENALTY   = 100   -- goal cost per nearby hostile pill that can crossfire at standoff
+-- 2026-10-11 (Andrew; Virus horde): multiplies the attack_pill crossfire term
+-- above (GOAL_CROSSFIRE_PENALTY x proximity per other live pill in range), in
+-- the pool-6 cost and its attack_pill_adjustments twin. 1.0 = today. The
+-- horde side sets 0.25: survivors build their pills as one cluster
+-- (PILL_PLACE_TURTLE), so each pill there carries the term once per
+-- neighbour.
+M.CROSSFIRE_MULT = 1.0
 M.GOAL_CROSSFIRE_NEW_PILL_BASE = 40  -- attack_tank/kill_lgm: cost for the 1st pill whose fire-range covers the engage spot but NOT our current tile (NEW exposure only)
 M.GOAL_CROSSFIRE_NEW_PILL_STEP = 10  -- ...and +this for each additional new-exposure pill (so 40, 90, 150, 230, ...)
 M.BASE_PILL_COVER_PEN      = 3     -- capture_base/attack_base: flat cost per enemy pill whose fire-range covers the base tile (clear LOS) but does NOT already cover our current tile. Small per-base nudge toward safer bases; affects which base wins.
@@ -5124,6 +5154,14 @@ M.PING_ATTACK_CHARGE_NOW      = true  -- keel false
 -- refuel, flee and armour checks stay.
 M.CHARGE_NOW_IGNORE_SAFETY    = true  -- keel false
 
+-- 2026-10-11 (Andrew; Virus horde): false = a solo take (not a 2+ blitz)
+-- does not abort in charge or shoot_pill when its shells (plus on-target
+-- shells in flight) are fewer than the wall shots plus the pill's HP. The
+-- horde's shells come back on their own, so it keeps firing instead of
+-- dropping the take. The 200-tick no-progress timeout still ends a take that
+-- lands nothing. true = today.
+M.SOLO_SHELL_ABORT = true
+
 -- A HUMAN SHOOTING THE PILL = CHARGE NOW (2026-10-02, Andrew).  A bot with
 -- an attack_pill goal (ordered or its own) that sees a human team-mate
 -- shooting at that pill (orders.note_human_shooting: a shell that human
@@ -5730,14 +5768,38 @@ M.PRESETS = {
 -- an explicit cfg= in the same init table still beats the side word.
 -- With no side word nothing here is applied, so every other game plays as
 -- before.
+--
+-- The brain code tests the knobs, never the side: a side is only the name of
+-- a list of values. A side table must not name a knob a difficulty bundle
+-- sets (SHELLS_LOW, GOAL_CROSSFIRE_PENALTY, SQUAD_MAX_SIZE, ...): the side
+-- would write it back to the Hard value over the lobby's level. Use a knob of
+-- its own that changes how the bundle's value is used (SIDE_SHELLS_LOW_CAP,
+-- CROSSFIRE_MULT).
+--
+-- 2026-10-11 (Andrew): the horde attacks survivor pills. Thirteen horde bots
+-- took almost no pills: each pill and base went to one bot (or one blitz),
+-- the shell watermarks were set for a 40-shell tank, every other pill near
+-- the target added crossfire cost, and a full-HP pill sent the bot to gather
+-- trees it cannot have. The five attack knobs below (ATTACK_CLAIM_SHARE ..
+-- CROSSFIRE_MULT) turn those off for the horde.
 M.SIDE_SETTINGS = {
   survivor = {
     ATTACK_TANK_PILL_HEAT_ONLY = true,
     PILL_PLACE_TURTLE          = true,
+    ATTACK_CLAIM_SHARE         = false,
+    SIDE_SHELLS_LOW_CAP        = 0,
+    SOLO_SHELL_ABORT           = true,
+    PPT_NEVER                  = false,
+    CROSSFIRE_MULT             = 1.0,
   },
   horde = {
     ATTACK_TANK_PILL_HEAT_ONLY = false,
     PILL_PLACE_TURTLE          = false,
+    ATTACK_CLAIM_SHARE         = true,
+    SIDE_SHELLS_LOW_CAP        = 10,
+    SOLO_SHELL_ABORT           = false,
+    PPT_NEVER                  = true,
+    CROSSFIRE_MULT             = 0.25,
   },
 }
 

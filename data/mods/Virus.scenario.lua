@@ -74,7 +74,7 @@ local HEAD_START      = 10    -- before the first one turns
 local WARNING_SECONDS = 3     -- what the first one is told, and nobody else
 local HELP_EVERY      = 60    -- seconds with no infected kill before another turns
 local FEED_EVERY      = 2     -- seconds between points of armour for the infected
-local SHELL_EVERY     = 0.5   -- seconds between shells for the infected
+local SHELL_EVERY     = 0.25  -- seconds between shells for the infected
 local REFRESH_SECONDS = 0.2   -- how often the deep sea clock and compass run
 local SPAWN_GRACE     = 20    -- seconds a respawned survivor has to reach land
                               -- before the deep sea clock counts them
@@ -94,9 +94,9 @@ local ZERO_HUMAN         = "No" -- who turns first, the lobby's choice:
                                 -- seat, person or bot.
 
 -- What an infected tank comes back with, and the most the trickle feeds it
--- to: half a full tank of shells.
+-- to: a full tank of shells.
 local function infected_shells()
-  return math.floor(game.rule("tank_full_shells") / 2)
+  return game.rule("tank_full_shells")
 end
 
 -- What the first one to turn is handed, and nobody else. Percentages of the
@@ -677,9 +677,11 @@ end
 -- "horde": the bot never picks a base to refuel at. A base refuels nobody on
 -- the horde, and a brain that was not told so would drive to one and sit on
 -- it. The horde is not out of shells: Virus feeds each infected tank a
--- shell every SHELL_EVERY seconds up to half a full tank, and a point of
--- armour every FEED_EVERY seconds up to a full tank. The word also turns off
--- the two survivor settings below.
+-- shell every SHELL_EVERY seconds up to a full tank, and a point of armour
+-- every FEED_EVERY seconds up to a full tank. The word also turns off the two
+-- survivor settings below, and turns on the brain's attack settings that send
+-- the whole horde at the survivors' pillboxes and bases (any number of bots on
+-- one target, lower shell lines, no tree gathering for a wall shield).
 --
 -- "survivor": the bot refuels at its bases as normal, and two GoalHunter
 -- settings go on. ATTACK_TANK_PILL_HEAT_ONLY: the bot never fights a tank
@@ -694,6 +696,14 @@ end
 -- so a bot that ended the last round infected would start this one on the
 -- horde. A seat never goes from the horde back to the survivors inside a
 -- round, so this is the only thing a survivor is ever handed.
+--
+-- Each table also names the blitz party size (blitz = "MIN/MAX", tanks with
+-- the commander). The horde blitzes in parties of up to eight. A survivor
+-- gets the brain's default, 2/4, by name: the brain does not reset a party
+-- size on a new table, so a bot that ended the last round on the horde would
+-- otherwise keep the horde's 2/8 as a survivor.
+local BLITZ_FOR = { horde = "2/8", survivor = "2/4" }
+
 local function word_for(p)
   if side[p] == INFECTED then
     return "horde"
@@ -714,7 +724,7 @@ local function hand_word(p)
   if handed[p] == word then
     return
   end
-  if game.bot_init(p, { [word] = "1" }) then
+  if game.bot_init(p, { [word] = "1", blitz = BLITZ_FOR[word] }) then
     handed[p] = word
   end
 end
@@ -741,10 +751,10 @@ local function infect(p, by)
   post_score(p)
   -- Everybody but the first turns by dying, and comes back on the loadout the
   -- policy below hands the horde. The first turns where they stand, with a
-  -- survivor's forty shells and forty mines still in the tank, so their kit
-  -- is brought down to the horde's here rather than at their first death, and
-  -- their armour is filled, so one turned mid-fight starts their new life
-  -- whole. So is one the help or deep sea turns where they stand.
+  -- survivor's kit still in the tank, so it is set to the horde's here (a
+  -- full tank of shells, no mines, no trees) rather than at their first
+  -- death, and their armour is filled, so one turned mid-fight starts their
+  -- new life whole. So is one the help or deep sea turns where they stand.
   local t = game.tank(p)
   if t ~= nil and not t.dead then
     game.set_stocks(p, { shells = infected_shells(), mines = 0, trees = 0,
@@ -882,7 +892,7 @@ local function feed_the_horde()
   end
 end
 
--- And a shell every half second, to half a full tank of shells. On its own
+-- And a shell every quarter second, to a full tank of shells. On its own
 -- timer rather than the second's, which is too slow for it.
 local function feed_shells()
   if over then
@@ -1265,7 +1275,7 @@ function can_ally(p, q)
   return false
 end
 
--- A survivor comes back with everything; an infected one with half a tank
+-- A survivor comes back with everything; an infected one with a full tank
 -- of shells, nothing to build with, and a full tank of armour. Asked on every
 -- respawn, and by then the seat has changed sides, so a survivor's last death
 -- is what fuels their first life on the other side.
@@ -1396,7 +1406,7 @@ scenario = {
     can_build = "The infected cannot build.",
     can_capture = "The infected cannot take bases or pillboxes.",
     on_tick = "Removes bases and dead pillboxes the infected drive over.",
-    spawn_loadout = "Infected respawn with half shells and full armour.",
+    spawn_loadout = "Infected respawn with full shells and full armour.",
     damage_scale = "No friendly fire.",
   },
 
