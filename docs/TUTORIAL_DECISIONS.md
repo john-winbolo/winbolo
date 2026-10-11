@@ -824,3 +824,12 @@ and how to undo it.
   5B arenas play the player with a scripted brain,
   `tests/brains/tutorial_shoot_north.lua`. The Station 2 steal is not
   covered: a held-still tank cannot drive onto a base.
+
+## Oct 11: the 4B pillbox is never repaired
+
+Andrew shot the 4B pillbox before hiding and it would not die. The script no
+longer refuses its death or puts its armour back ("Hide in the forest first,
+then kill it." is gone). A pillbox killed before the hide ticks "Enter its
+range in forest" and "Sit hidden in range" along with "Kill the pillbox", and
+the s4c popup is skipped. This replaces the earlier rule that held the
+pillbox at its armour until the hide was ticked.
