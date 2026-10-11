@@ -554,7 +554,10 @@ and how to undo it.
   and orders him to that tree; every second it also rebuilds his row
   (road, and the crater span beside the main road). The arena logged 13
   trips in 2.5 minutes, all over the same squares in the same order, all
-  across the craters, none off the row.
+  across the craters, none off the row. The arena's player seat is a
+  GoalHunter bot, so the arena keeps its shells at 0: after the 5B blocker
+  moved back to (117,102) (item 38) that bot drove north and shot the man
+  once, and the trips stopped matching. The tutorial was not at fault.
 - **Station 6 kills** count a death of the Station 6 man with the player
   as the killer.
 - **The Station 7 bot** is an Easy GoalHunter on team 2. It may build only
@@ -707,11 +710,17 @@ and how to undo it.
   main road by a road spur along row 107. From the tank's centre the
   target's centre is 7.21 squares away and its near corner 6.52; a tank
   shell flies 7.125 squares, so a shot aimed at the target's centre ends
-  inside its square. *Choice:* the blocker moves from (117,102) to
-  (118,102), the square south-east of the target, because the line
-  between the two centres now runs on the diagonal: it crosses (118,102)
-  for 0.9 of a square, and does not cross (117,102). So the target's shots
-  at the parked tank hit the blocker. The scripted shooter
+  inside its square. The blocker square stays directly south of the
+  target, (117,102) (item 38, Andrew: "keep it one tile directly south of
+  the pillbox"; for a while it was moved to 118,102 without asking, and
+  that is undone). The line between the two centres clips the north-east
+  corner of (117,102) for about 0.3 of a square, and that is enough:
+  `tutorial_park5b` with seeds 42, 7, 99 and 1234 gives the same numbers
+  each time (the fire has no random part). In the 60 s watch the blocker
+  takes every shell (tank hits 0) and dies once; in the take (blocker at
+  1 armour) the target dies after 5.3 s, the blocker dies twice, and the
+  tank takes 8 hits, 40 armour, and lives. So the blocker still shields
+  the parked tank. The scripted shooter
   (`tests/brains/tutorial_shoot_north.lua`) aims at 232 (0 = north,
   clockwise). `can_hit` lets the player's own shells pass the player's
   blocker; in a real game they would hit it. *Note:* the firing client
@@ -736,7 +745,7 @@ and how to undo it.
     with the announcement, and starts down again. Silent rises: 0. The
     tank is not hit: the blocker takes every shell.
   - Take (from the end of the watch, blocker at 1 armour, the worst
-    case): the target dies after 5.2 s. The angry target kills the
+    case): the target dies after 5.2 s (5.3 s with the blocker back on 117,102). The angry target kills the
     blocker twice: at 0.06 s (it had 1 armour), and again 1.6 s after its
     rebuild (a full blocker against an angry target). The tank takes 8
     hits, 40 armour (all of a full tank's), and lives on 0.
