@@ -305,14 +305,19 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   }
 }
 
-/* A player's shell rewinds its targets to the view that player fired at,
- * which for other tanks and other builders is the second-newest snapshot
- * his client holds, the one it is drawing. His own builder is drawn from
- * the newest one instead, a snapshot (one game tick) later, so against him
- * the rewind is this much shorter. Taken off only a rewind longer than one
- * tick: a rewind of one is the single player and no-view-yet estimate, which
- * was not measured from a snapshot. */
-#define SHELL_OWN_LGM_REWIND_LESS 1
+/* A player's shell rewinds its targets to the view that player fired at.
+ * The rewind is measured from the second-newest snapshot his client has
+ * applied, which is the one it draws tanks at. Builders are not drawn at
+ * that one: his client draws every builder, his own and other players',
+ * from the newest snapshot it has applied, which is a snapshot (one game
+ * tick) later. So against any builder the rewind is this much shorter. The
+ * tank test in shellsCalcCollision keeps the full rewind. Taken off only a
+ * rewind longer than one tick: a rewind of one is the single player and
+ * no-view-yet estimate, which was not measured from a snapshot.
+ *
+ * A pill's shell is not rewound at all. It carries no rewind (owner NEUTRAL,
+ * compensationTicks 0) and tests tanks and builders where they are now. */
+#define SHELL_LGM_REWIND_LESS 1
 
 /*********************************************************
 *NAME:          shellsUpdate
@@ -472,14 +477,14 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 
 						if (position->compensationTicks > 0) {
 							rewindTicks = position->compensationTicks;
-							/* The shooter's own builder: his client draws him from the newest
-							 * snapshot, one newer than the view the rewind was measured for. */
-							if (position->owner == lgmOwner && rewindTicks > SHELL_OWN_LGM_REWIND_LESS) {
-								rewindTicks -= SHELL_OWN_LGM_REWIND_LESS;
+							/* Any builder: the shooter's client draws builders from the newest
+							 * snapshot, one newer than the one the rewind was measured from. */
+							if (rewindTicks > SHELL_LGM_REWIND_LESS) {
+								rewindTicks -= SHELL_LGM_REWIND_LESS;
 							}
-						} else if (sim->isServer && position->owner == NEUTRAL) {
-							rewindTicks = 0; /* a pill's shell tests the builder where he is now */
 						} else {
+							/* A pill's shell (owner NEUTRAL, compensationTicks 0) tests the
+							 * builder where he is now. */
 							rewindTicks = 0;
 						}
 
@@ -564,14 +569,14 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 
 					if (position->compensationTicks > 0) {
 						rewindTicks = position->compensationTicks;
-						/* The shooter's own builder: his client draws him from the newest
-						 * snapshot, one newer than the view the rewind was measured for. */
-						if (position->owner == lgmOwner && rewindTicks > SHELL_OWN_LGM_REWIND_LESS) {
-							rewindTicks -= SHELL_OWN_LGM_REWIND_LESS;
+						/* Any builder: the shooter's client draws builders from the newest
+						 * snapshot, one newer than the one the rewind was measured from. */
+						if (rewindTicks > SHELL_LGM_REWIND_LESS) {
+							rewindTicks -= SHELL_LGM_REWIND_LESS;
 						}
-					} else if (sim->isServer && position->owner == NEUTRAL) {
-						rewindTicks = 0; /* a pill's shell tests the builder where he is now */
 					} else {
+						/* A pill's shell (owner NEUTRAL, compensationTicks 0) tests the
+						 * builder where he is now. */
 						rewindTicks = 0;
 					}
 
@@ -816,10 +821,9 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 				if (compensationTicks > 0) {
 					/* Player shell: rewind target by shooter's delay */
 					rewindTicks = compensationTicks;
-				} else if (sim->isServer && owner == NEUTRAL) {
-					/* Pill shell: tests the tank where it is now */
-					rewindTicks = 0;
 				} else {
+					/* A pill's shell (owner NEUTRAL, compensationTicks 0) tests
+					 * the tank where it is now. */
 					rewindTicks = 0;
 				}
 
