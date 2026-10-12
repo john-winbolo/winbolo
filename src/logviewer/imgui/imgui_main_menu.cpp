@@ -30,6 +30,10 @@ extern "C" {
     #include "../../winbolonet/http.h"
     void lv_windowOpenFile(char *cmdLine);
     void lv_windowSaveMap(void);
+    bool lv_windowCanSaveLog(void);
+    void lv_windowSaveLog(void);
+    bool lv_windowCanOpenSinglePlayer(void);
+    void lv_windowOpenSinglePlayer(void);
     void lv_windowPlay(void);
     void lv_windowPause(void);
     void lv_windowStop(int corruptLog);
@@ -347,6 +351,27 @@ int lv_imgui_main_menu_bar(void) {
             if (ImGui::MenuItem(langGetText(STR_MENU_SAVE_MAP), NULL, false, s_lv->isLoaded != 0)) {
                 lv_windowSaveMap();
                 clicked = 1;
+            }
+            /* A copy of the open log's own file. Off for a log with no whole
+               file behind it (a live feed). */
+            if (ImGui::MenuItem(langGetText(STR_LV_MENU_SAVE_LOG), NULL, false,
+                                lv_windowCanSaveLog())) {
+                lv_windowSaveLog();
+                clicked = 1;
+            }
+            /* The world at the playhead as a single-player game. Only the
+               Log Viewer run as its own program can start the game. */
+            if (ImGui::MenuItem(langGetText(STR_LV_MENU_OPEN_SP), NULL, false,
+                                lv_windowCanOpenSinglePlayer())) {
+                lv_windowOpenSinglePlayer();
+                clicked = 1;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+                ImGui::TextUnformatted(langGetText(STR_LV_MENU_OPEN_SP_TIP));
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
             }
             ImGui::Separator();
             if (s_lv->fromMainMenu) {

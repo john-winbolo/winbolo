@@ -4104,6 +4104,13 @@ int run_lv_dock_fit_sums(void);
 /* The log viewer's HUD panel (test_lv_hud.c): the icon of a base, pillbox and
  * tank slot, the layout of the three grids, and the grey and colour sums. */
 int run_lv_hud_sums(void);
+/* The log viewer's text dump (test_lv_dump.c): a recorded round dumped
+ * around one tick, a tick the round does not hold, and the event list. */
+int run_lv_dump_recorded_round(void);
+/* The map the log viewer writes for a single-player game (test_lv_spmap.c):
+ * the owner rules, and a recorded round read back with mapRead. */
+int run_lv_spmap_owner_table(void);
+int run_lv_spmap_reads_back(void);
 /* The log viewer's events panel (test_lv_event_kind.c): the saved name of
  * each event kind, and where the "now" divider falls among the lines. */
 int run_lv_event_kind_sums(void);

@@ -19,6 +19,12 @@
  * watches every team at once, so an owned thing is drawn as the solid shape
  * of its kind in the colour of the team that owns it. Neutral, dead and
  * empty slots are the game's, untouched.
+ *
+ * A click on a tank picks that player as the perspective. The grids then are
+ * the game's in colour too: every icon is the one that player's game draws,
+ * straight out of the atlas (lv_hud.h has the rules). The map follows
+ * (draw.c). A click on the same tank, or the "All teams" button in the line
+ * above the grids, goes back.
  */
 
 #include "imgui_hud.h"
@@ -49,7 +55,9 @@ extern "C" {
     void lv_screenHudSnapshot(LvHudSnapshot *out);
     void lv_screenSelectItem(unsigned char itemType, unsigned char itemNum);
     void lv_screenGetPlayerName(char *buffer, unsigned char player, size_t destSize);
-    void lv_playersSetSelf(unsigned char playerNum);
+    void lv_screenTogglePerspective(unsigned char playerNum);
+    void lv_screenClearPerspective(void);
+    bool lv_screenCheckPerspective(void);
     void lv_drawDirtyScreen(void);
     SDL_Texture *lv_drawGetTilesTexture(void);
     SDL_Texture *lv_drawGetHudShapesTexture(void);
@@ -82,6 +90,12 @@ static int hud_label_h(void) {
 static int hud_gap(void) {
     return (int)ImGui::GetStyle().ItemSpacing.x;
 }
+/* The room the line above the grids takes: the one that says whose view the
+ * grids show. It is kept in both views, so the grids do not move, or change
+ * size, when a tank is clicked on. */
+static int hud_header_h(void) {
+    return (int)ceilf(ImGui::GetTextLineHeightWithSpacing());
+}
 
 float lv_imgui_hud_dock_height(float dockWidth) {
     const ImGuiStyle &style = ImGui::GetStyle();
@@ -91,9 +105,9 @@ float lv_imgui_hud_dock_height(float dockWidth) {
      * the question here is what height to give, not what fits in one. */
     LvHudFit fit = lvHudFit(availW, 0, HUD_PANEL_W, HUD_PANEL_H, hud_label_h(), hud_gap());
     lvHudContentSize(fit.columns, 1, HUD_PANEL_W, HUD_PANEL_H, hud_label_h(), hud_gap(), &w, &h);
-    /* The content, the padding above and below it, and the tab a docked
-     * window has for a title. */
-    return (float)h + style.WindowPadding.y * 2.0f + ImGui::GetFrameHeight();
+    /* The content with the line above it, the padding above and below, and
+     * the tab a docked window has for a title. */
+    return (float)(h + hud_header_h()) + style.WindowPadding.y * 2.0f + ImGui::GetFrameHeight();
 }
 
 /* Draw one cell of a texture over the rectangle p0..p1. The source is in
@@ -108,20 +122,61 @@ static void hud_image(ImDrawList *dl, SDL_Texture *tex, float sx, float sy,
                  ImVec2(sx / tw, sy / th), ImVec2((sx + sw) / tw, (sy + sh) / th), tint);
 }
 
-/* The colour an owned slot is drawn in: its team's, lifted where it would be
- * too dark to see on the black panel. */
+/* The colour an owned slot is drawn in with all teams shown: its team's,
+ * lifted where it would be too dark to see on the black panel. A red team is
+ * drawn orange: red is what the game's HUD keeps for hostile. */
 static ImU32 hud_team_colour(const LvHudSlot &slot) {
     SDL_FColor c = mapColourTeam(slot.colour);
-    lvHudReadableColour(&c.r, &c.g, &c.b);
+    if (!lvHudRedToOrange(&c.r, &c.g, &c.b)) {
+        lvHudReadableColour(&c.r, &c.g, &c.b);
+    }
     return ImGui::ColorConvertFloat4ToU32(ImVec4(c.r, c.g, c.b, 1.0f));
 }
 
-/* The icon of one slot, over p0..p1. */
+/* Where one of the game's status icons is in the tile atlas. False for the
+ * one that draws nothing. */
+static bool hud_game_icon_pos(LvHudGameIcon icon, float *sx, float *sy) {
+    switch (icon) {
+    case LV_HUD_GAME_DEAD:              *sx = STATUS_ITEM_DEAD_X;          *sy = STATUS_ITEM_DEAD_Y;          return true;
+    case LV_HUD_GAME_TANK_SELF:         *sx = STATUS_TANK_SELF_X;          *sy = STATUS_TANK_SELF_Y;          return true;
+    case LV_HUD_GAME_TANK_ALLIED:       *sx = STATUS_TANK_GOOD_X;          *sy = STATUS_TANK_GOOD_Y;          return true;
+    case LV_HUD_GAME_TANK_HOSTILE:      *sx = STATUS_TANK_EVIL_X;          *sy = STATUS_TANK_EVIL_Y;          return true;
+    case LV_HUD_GAME_PILL_NEUTRAL:      *sx = STATUS_PILLBOX_NEUTRAL_X;    *sy = STATUS_PILLBOX_NEUTRAL_Y;    return true;
+    case LV_HUD_GAME_PILL_OWN:          *sx = STATUS_PILLBOX_GOOD_X;       *sy = STATUS_PILLBOX_GOOD_Y;       return true;
+    case LV_HUD_GAME_PILL_ALLIED:       *sx = STATUS_PILLBOX_ALLIEGOOD_X;  *sy = STATUS_PILLBOX_ALLIEGOOD_Y;  return true;
+    case LV_HUD_GAME_PILL_HOSTILE:      *sx = STATUS_PILLBOX_EVIL_X;       *sy = STATUS_PILLBOX_EVIL_Y;       return true;
+    case LV_HUD_GAME_PILL_TANK_OWN:     *sx = STATUS_PILLBOX_TANKGOOD_X;   *sy = STATUS_PILLBOX_TANKGOOD_Y;   return true;
+    case LV_HUD_GAME_PILL_TANK_ALLIED:  *sx = STATUS_PILLBOX_TANKALLIE_X;  *sy = STATUS_PILLBOX_TANKALLIE_Y;  return true;
+    case LV_HUD_GAME_PILL_TANK_HOSTILE: *sx = STATUS_PILLBOX_TANKEVIL_X;   *sy = STATUS_PILLBOX_TANKEVIL_Y;   return true;
+    case LV_HUD_GAME_BASE_NEUTRAL:      *sx = STATUS_BASE_NEUTRAL_X;       *sy = STATUS_BASE_NEUTRAL_Y;       return true;
+    case LV_HUD_GAME_BASE_OWN:          *sx = STATUS_BASE_GOOD_X;          *sy = STATUS_BASE_GOOD_Y;          return true;
+    case LV_HUD_GAME_BASE_ALLIED:       *sx = STATUS_BASE_ALLIEGOOD_X;     *sy = STATUS_BASE_ALLIEGOOD_Y;     return true;
+    case LV_HUD_GAME_BASE_HOSTILE:      *sx = STATUS_BASE_EVIL_X;          *sy = STATUS_BASE_EVIL_Y;          return true;
+    default:
+        return false;
+    }
+}
+
+/* The icon of one slot, over p0..p1. With a perspective on it is the game's
+ * own icon for that player, as it is in the atlas. */
 static void hud_slot_icon(ImDrawList *dl, int grid, const LvHudSlot &slot,
-                          ImVec2 p0, ImVec2 p1) {
+                          bool perspective, ImVec2 p0, ImVec2 p1) {
     const float iw = (float)STATUS_ITEM_SIZE_X;
     const float ih = (float)STATUS_ITEM_SIZE_Y;
     SDL_Texture *atlas = lv_drawGetTilesTexture();
+
+    if (perspective) {
+        LvHudIcon icon = (LvHudIcon)slot.icon;
+        LvHudRelation rel = (LvHudRelation)slot.relation;
+        LvHudGameIcon game = (grid == HUD_GRID_TANKS) ? lvHudGameTankIcon(icon, rel) :
+                             (grid == HUD_GRID_PILLS) ? lvHudGamePillIcon(icon, rel) :
+                                                        lvHudGameBaseIcon(icon, rel);
+        float sx, sy;
+        if (hud_game_icon_pos(game, &sx, &sy)) {
+            hud_image(dl, atlas, sx, sy, iw, ih, p0, p1, IM_COL32_WHITE);
+        }
+        return;
+    }
 
     switch (slot.icon) {
     case LV_HUD_ICON_DEAD:
@@ -194,6 +249,7 @@ static void hud_owner_text(const LvHudSlot &slot, char *out, size_t outSize) {
  * from 0, as the Item Information panel and the owner numbers do. */
 static void hud_slot_tooltip(int grid, int index, const LvHudSlot &slot) {
     char item[64];
+    char tip[LANG_MSGARG_STRING_LEN];
     char who[LANG_MSGARG_STRING_LEN];
     MessageArgs args = {};
 
@@ -217,18 +273,31 @@ static void hud_slot_tooltip(int grid, int index, const LvHudSlot &slot) {
     args = {};
     snprintf(args.string1, sizeof(args.string1), "%s", item);
     snprintf(args.string2, sizeof(args.string2), "%s", who);
-    ImGui::SetTooltip("%s", langGetTextFmt(fmt, &args));
+    snprintf(tip, sizeof(tip), "%s", langGetTextFmt(fmt, &args));
+
+    /* With a perspective on, what the thing is to that player. */
+    if (slot.relation != LV_HUD_REL_NONE && slot.icon != LV_HUD_ICON_DEAD &&
+        slot.icon != LV_HUD_ICON_NEUTRAL) {
+        args = {};
+        snprintf(args.string1, sizeof(args.string1), "%s", tip);
+        snprintf(args.string2, sizeof(args.string2), "%s",
+                 langGetText(slot.relation == LV_HUD_REL_OWN    ? STR_LV_HUD_REL_OWN :
+                             slot.relation == LV_HUD_REL_ALLIED ? STR_LV_HUD_REL_ALLIED :
+                                                                  STR_LV_HUD_REL_HOSTILE));
+        snprintf(tip, sizeof(tip), "%s", langGetTextFmt(STR_LV_HUD_TIP_REL, &args));
+    }
+    ImGui::SetTooltip("%s", tip);
 }
 
 /* A click on a slot. A pillbox or a base is selected, as an information
- * click on it on the map selects it. A tank does what a click on the tank on
- * the map does: in Select Team mode the view takes that tank's side, and in
- * Information mode nothing. */
+ * click on it on the map selects it. A tank picks its player as the
+ * perspective, in either mode, and the tank that has it already gives it up.
+ * The view takes that tank's side, as a Select Team click on the tank on the
+ * map does. */
 static void hud_slot_click(int grid, int index) {
     if (grid == HUD_GRID_TANKS) {
-        if (lv_imgui_get_mode_information()) return;
         lv_clientMutexWaitFor();
-        lv_playersSetSelf((unsigned char)index);
+        lv_screenTogglePerspective((unsigned char)index);
         lv_clientMutexRelease();
         lv_drawDirtyScreen();
         return;
@@ -240,7 +309,8 @@ static void hud_slot_click(int grid, int index) {
 
 /* One grid: its name, the black panel, the tile in the middle and the 16
  * slots. origin is the top left of the name; scale is whole. */
-static void hud_grid(int grid, const LvHudSlot *slots, ImVec2 origin, int scale) {
+static void hud_grid(int grid, const LvHudSlot *slots, bool perspective,
+                     ImVec2 origin, int scale) {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const float s = (float)scale;
     const char *label = langGetText(grid == HUD_GRID_TANKS ? STR_TABLET_TANKS :
@@ -283,7 +353,7 @@ static void hud_grid(int grid, const LvHudSlot *slots, ImVec2 origin, int scale)
         sdl3StatusItemPos(n + 1, grid, &x, &y);
         ImVec2 q0(p0.x + s * x, p0.y + s * y);
         ImVec2 q1(q0.x + s * STATUS_ITEM_SIZE_X, q0.y + s * STATUS_ITEM_SIZE_Y);
-        hud_slot_icon(dl, grid, slot, q0, q1);
+        hud_slot_icon(dl, grid, slot, perspective, q0, q1);
 
         /* The slot is an item of the window, so the hover and the click go
          * through ImGui: a popup or another window over the grid hides it. */
@@ -292,10 +362,7 @@ static void hud_grid(int grid, const LvHudSlot *slots, ImVec2 origin, int scale)
         if (ImGui::InvisibleButton("##slot", ImVec2(q1.x - q0.x, q1.y - q0.y))) {
             hud_slot_click(grid, n);
         }
-        /* The hand only where a click does something. */
-        if (grid != HUD_GRID_TANKS || !lv_imgui_get_mode_information()) {
-            imguiHandOnHover();
-        }
+        imguiHandOnHover();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
             hud_slot_tooltip(grid, n, slot);
         }
@@ -323,7 +390,8 @@ void lv_imgui_hud_window(void) {
         lvHudContentSize(1, HUD_DEFAULT_SCALE, HUD_PANEL_W, HUD_PANEL_H,
                          hud_label_h(), hud_gap(), &w, &h);
         ImGui::SetNextWindowSize(ImVec2((float)w + style.WindowPadding.x * 2.0f,
-                                        (float)h + style.WindowPadding.y * 2.0f +
+                                        (float)(h + hud_header_h()) +
+                                            style.WindowPadding.y * 2.0f +
                                             ImGui::GetFrameHeight()), cond);
         ImGui::SetNextWindowPos(ImVec2(10, 30), cond);
     }
@@ -366,9 +434,36 @@ void lv_imgui_hud_window(void) {
          * timer, so what is drawn is copied out under its lock, every frame:
          * the copy is then right while playing, scrubbing and stepping. */
         LvHudSnapshot snap;
+        bool lost;
         lv_clientMutexWaitFor();
+        /* The perspective's player may have left since the last frame. */
+        lost = lv_screenCheckPerspective();
         lv_screenHudSnapshot(&snap);
         lv_clientMutexRelease();
+        if (lost) lv_drawDirtyScreen();
+
+        /* The line above the grids: whose view they show. With a perspective
+         * on, the button that goes back to all teams comes first, so a long
+         * name cannot push it out of the window. */
+        {
+            ImVec2 top = ImGui::GetCursorScreenPos();
+            if (snap.perspective) {
+                MessageArgs args = {};
+                snprintf(args.string1, sizeof(args.string1), "%s", snap.viewerName);
+                if (ImGui::SmallButton(langGetText(STR_LV_HUD_ALL_TEAMS))) {
+                    lv_clientMutexWaitFor();
+                    lv_screenClearPerspective();
+                    lv_clientMutexRelease();
+                    lv_drawDirtyScreen();
+                }
+                imguiHandOnHover();
+                ImGui::SameLine();
+                ImGui::TextUnformatted(langGetTextFmt(STR_LV_HUD_VIEW_AS, &args));
+            } else {
+                ImGui::TextDisabled("%s", langGetText(STR_LV_HUD_ALL_TEAMS));
+            }
+            ImGui::SetCursorScreenPos(ImVec2(top.x, top.y + (float)hud_header_h()));
+        }
 
         ImVec2 avail = ImGui::GetContentRegionAvail();
         /* On whole pixels: an icon that starts part way through a pixel is
@@ -389,7 +484,7 @@ void lv_imgui_hud_window(void) {
             } else {
                 at.y += (float)(i * (hud_label_h() + fit.scale * HUD_PANEL_H + hud_gap()));
             }
-            hud_grid(grid, slots, at, fit.scale);
+            hud_grid(grid, slots, snap.perspective != 0, at, fit.scale);
         }
 
         /* The slots moved the cursor about; leave it under the whole block. */

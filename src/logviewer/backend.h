@@ -602,6 +602,26 @@ void lv_windowCollectAllEvents(void);
 void lv_windowStop(int corruptLog);
 void lv_finished();
 
+/* A listener on the decoder, for the text dump (lv_dump.c). record is called
+ * for every log record before the decoder applies it, so the world it reads
+ * is still the one before the record. bytes holds the first len bytes of the
+ * record's payload and frameLen is the payload's whole length; an older file
+ * that does not frame its records gives bytes NULL and both lengths -1. event
+ * is called for every line that would go to the events panel. Either may be
+ * NULL.
+ *
+ * While a listener is set the decoder calls nothing in the host: no events
+ * panel line, no marquee, no end-of-log or corrupt-log callback, and no
+ * snapshot is kept for seeking. Set it before the load and clear it (NULL)
+ * before the decoder is used for anything else. */
+#define LV_OBSERVE_PAYLOAD_MAX 512
+typedef struct {
+  void (*record)(void *ctx, BYTE code, const BYTE *bytes, int len, int frameLen);
+  void (*event)(void *ctx, int kind, int mapX, int mapY, const char *text);
+  void *ctx;
+} LvDecodeObserver;
+void lv_screenSetObserver(const LvDecodeObserver *observer);
+
 bool lv_screenCloseLog();
 void lv_screenFastForward();
 void lv_screenRewind();
@@ -636,6 +656,15 @@ void lv_screenSelectItem(BYTE itemType, BYTE itemNum);
 /* Copy out what the HUD panel draws (lv_hud.h). Hold the client mutex. */
 struct LvHudSnapshot;
 void lv_screenHudSnapshot(struct LvHudSnapshot *out);
+
+/* The perspective: show the game as one player sees it. Toggle turns it on
+ * for the player in a slot, or off when that player has it already; Clear
+ * goes back to all teams; Check turns it off when its player is gone and
+ * returns TRUE when it did. Hold the client mutex, and mark the map for a
+ * redraw (lv_drawDirtyScreen) after a change. */
+void lv_screenTogglePerspective(BYTE playerNum);
+void lv_screenClearPerspective(void);
+bool lv_screenCheckPerspective(void);
 
 void lv_screenCentreOnSelectedItem();
 

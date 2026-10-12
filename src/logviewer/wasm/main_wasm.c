@@ -226,6 +226,13 @@ void lv_windowSaveMap(void) {
     lv_platform_dialog_message("WinBolo Log Viewer", "Save Map is not yet available in the web version.");
 }
 
+/* The two desktop items of the File menu. The web version has no file to
+ * save a copy of and no game to start, so both stay disabled. */
+bool lv_windowCanSaveLog(void) { return FALSE; }
+void lv_windowSaveLog(void) {}
+bool lv_windowCanOpenSinglePlayer(void) { return FALSE; }
+void lv_windowOpenSinglePlayer(void) {}
+
 /* --------------------------------------------------------------------------
  * Called from JavaScript when user uploads a .wbv file
  * -------------------------------------------------------------------------- */

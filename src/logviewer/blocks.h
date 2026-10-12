@@ -40,6 +40,15 @@ void lv_blocksBeginStream(void);
 bool lv_blocksAppendBytes(const uint8_t *data, size_t len);
 void lv_blocksSetStreamEOF(void);
 
+/* Where the open log's whole file is, for File > Save log file to disk.
+ * FILE sets *path, MEMORY sets *data and *len (the .wbv zip a memory load
+ * handed over, ours until the log is closed); NONE is a live stream or no
+ * log. */
+#define LV_LOG_SOURCE_NONE   0
+#define LV_LOG_SOURCE_FILE   1
+#define LV_LOG_SOURCE_MEMORY 2
+int lv_blocksGetSource(const char **path, const uint8_t **data, size_t *len);
+
 void lv_blocksDestroy();
 int lv_blocksReadBytes(BYTE *buff, int len);
 bool lv_blocksIsEOF();

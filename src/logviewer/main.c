@@ -32,6 +32,7 @@
 #include <stdlib.h>
 #include <SDL3/SDL.h>
 #include "logviewer.h"
+#include "lv_dump.h"
 #include "../common/wb_log.h"
 #include "../common/prefs.h"
 #include "../winbolonet/http.h"
@@ -67,6 +68,12 @@ int main(int argc, char *argv[]) {
             SDL_snprintf(prefsJsonPath, sizeof(prefsJsonPath), "%s", "WinBolo.json");
         }
         prefsInit(prefsJsonPath);
+    }
+
+    /* "-dump <log> ..." writes the recording out as text and ends: no window,
+       no renderer and no network (lv_dump.h). */
+    if (lvDumpWanted(argc, argv)) {
+        return lvDumpMain(argc, argv);
     }
 
     httpCreate();

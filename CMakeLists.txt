@@ -1760,6 +1760,9 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/labels.c
     src/logviewer/messages.c
     src/logviewer/game_settings_blob.c
+    # The map File > Open map at this time in single player writes
+    # (logviewer.c calls it).
+    src/logviewer/lv_spmap.c
     src/logviewer/imgui/imgui_context.cpp
     src/logviewer/imgui/imgui_main_menu.cpp
     src/logviewer/imgui/imgui_controls.cpp
@@ -4594,6 +4597,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Which icon a slot of the viewer's HUD panel shows, how its three grids
     # are laid out, and its colour sums (lv_hud.h, header only).
     tests/unit/test_lv_hud.c
+    # The viewer's text dump of a recording around one tick (lv_dump.c): a
+    # recorded round dumped with the production decoder.
+    tests/unit/test_lv_dump.c
+    # The map the viewer writes for a single-player game (lv_spmap.c): the
+    # owner rules, and a recorded round read back with mapRead.
+    tests/unit/test_lv_spmap.c
     # The events panel's kind names and the search that places its "now"
     # divider (lv_event_kind.h, header only).
     tests/unit/test_lv_event_kind.c
@@ -4669,6 +4678,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # split out of imgui_game_info.cpp so test_game_settings_blob.c drives
     # the code the Game Information panel runs rather than a copy of it.
     src/logviewer/game_settings_blob.c
+    # The text dump "Log Viewer.exe -dump" writes, for test_lv_dump.c.
+    src/logviewer/lv_dump.c
+    src/logviewer/lv_spmap.c
 )
 
 if(WB_NETDEBUG)
@@ -6893,6 +6905,9 @@ set(_unit_test_names
     lv_region_rect_placement
     lv_dock_fit_sums
     lv_hud_sums
+    lv_dump_recorded_round
+    lv_spmap_owner_table
+    lv_spmap_reads_back
     lv_event_kind_sums
     lv_event_scan_returns_to_start
     scn_presentation_codec_bodies
