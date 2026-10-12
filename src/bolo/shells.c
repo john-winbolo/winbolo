@@ -305,6 +305,14 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   }
 }
 
+/* A player's shell rewinds its targets to the view that player fired at,
+ * which for other tanks and other builders is the second-newest snapshot
+ * his client holds, the one it is drawing. His own builder is drawn from
+ * the newest one instead, a snapshot (one game tick) later, so against him
+ * the rewind is this much shorter. compensationTicks is at least 1 where
+ * this is taken off. */
+#define SHELL_OWN_LGM_REWIND_LESS 1
+
 /*********************************************************
 *NAME:          shellsUpdate
 *AUTHOR:        John Morrison
@@ -463,6 +471,11 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 
 						if (position->compensationTicks > 0) {
 							rewindTicks = position->compensationTicks;
+							/* The shooter's own builder: his client draws him from the newest
+							 * snapshot, one newer than the view the rewind was measured for. */
+							if (position->owner == lgmOwner) {
+								rewindTicks -= SHELL_OWN_LGM_REWIND_LESS;
+							}
 						} else if (sim->isServer && position->owner == NEUTRAL) {
 							rewindTicks = 0; /* pill and base shells test the builder where he is now */
 						} else {
@@ -550,6 +563,11 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 
 					if (position->compensationTicks > 0) {
 						rewindTicks = position->compensationTicks;
+						/* The shooter's own builder: his client draws him from the newest
+						 * snapshot, one newer than the view the rewind was measured for. */
+						if (position->owner == lgmOwner) {
+							rewindTicks -= SHELL_OWN_LGM_REWIND_LESS;
+						}
 					} else if (sim->isServer && position->owner == NEUTRAL) {
 						rewindTicks = 0; /* pill and base shells test the builder where he is now */
 					} else {
