@@ -138,6 +138,11 @@ int run_lgm_start_offset(void) {
      * tank's own square is made grass whatever the map has there. */
     mapSetPos(gs, &gs->mp, cx, cy, GRASS, FALSE, FALSE);
 
+    /* A tank starts the game on a boat, and a builder off a boat gets the
+     * offset whatever the squares are. The tank is taken off it here so the
+     * squares decide, and put back on for the two boat cases at the end. */
+    tankSetOnBoat(&gs->tanks[LSO_SLOT], FALSE);
+
     /* Straight along an axis: the whole 16, the other axis untouched. */
     if (rc == 0) rc = lso_case(sim, "east", midX, midY, (BYTE)(cx + LSO_FAR), cy, 16, 0);
     if (rc == 0) rc = lso_case(sim, "west", midX, midY, (BYTE)(cx - LSO_FAR), cy, -16, 0);
