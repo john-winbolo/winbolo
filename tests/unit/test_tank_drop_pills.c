@@ -24,6 +24,9 @@
  *                                    to the far side
  * run_tank_drop_pills_hostile_map  — a map of buildings with one free square
  *                                    as far from the tank as it can be
+ * run_tank_drop_pills_no_room      — a map of boats with no free square at
+ *                                    all: the search ends, and the pills stay
+ *                                    in the tank
  *
  * Every case lays the map out itself: all grass, the map's bases taken off it,
  * and exactly the pills the case carries.
@@ -269,6 +272,42 @@ int run_tank_drop_pills_hostile_map(void) {
 
     UT_ASSERT(tankGetNumCarriedPills(t) == 0);
     UT_ASSERT(tdp_assert_at(sim, 1, MAP_MINE_EDGE_RIGHT - 1, MAP_MINE_EDGE_TOP + 1) == 0);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A map with no square anywhere that will hold a pill. The search used to go
+ * round forever looking for one and hang the server; now it gives up after
+ * the last ring, and the pills stay in the tank. */
+int run_tank_drop_pills_no_room(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+    tank *t;
+    pillbox p;
+    BYTE n;
+    int x, y;
+
+    UT_ASSERT(sim != NULL);
+    t = &sim->sim.tanks[TDP_SLOT];
+    UT_ASSERT(tdp_setup(sim, 128, 128, 2) == 0);
+    for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+        for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+            tdp_set_terrain(sim, x, y, BOAT);
+        }
+    }
+
+    tankDropPills(&sim->sim, t);
+
+    UT_ASSERT_MSG(tankGetNumCarriedPills(t) == 2,
+                  "%u pills still carried, wanted both",
+                  (unsigned) tankGetNumCarriedPills(t));
+    for (n = 1; n <= 2; n++) {
+        UT_ASSERT(tankIsCarryingPill(t, n));
+        memset(&p, 0, sizeof(p));
+        pillsGetPill(&sim->sim.pb, &p, n);
+        UT_ASSERT_MSG(p.inTank == TRUE, "pill %u is off the tank but has "
+                      "nowhere to be", (unsigned) n);
+    }
 
     serverSimDestroy(sim);
     return 0;

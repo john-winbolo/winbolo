@@ -1395,6 +1395,7 @@ static const UnitTestEntry s_tests[] = {
     { "tank_drop_pills_blocked",                 run_tank_drop_pills_blocked                 },
     { "tank_drop_pills_map_edge",                run_tank_drop_pills_map_edge                },
     { "tank_drop_pills_hostile_map",             run_tank_drop_pills_hostile_map             },
+    { "tank_drop_pills_no_room",                 run_tank_drop_pills_no_room                 },
     { "scenario_lgm_dispatch",                   run_scenario_lgm_dispatch                   },
     { "scenario_lgm_recall",                     run_scenario_lgm_recall                     },
     { "scenario_lgm_kill",                       run_scenario_lgm_kill                       },

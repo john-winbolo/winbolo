@@ -6062,6 +6062,7 @@ set(_unit_test_names
     tank_drop_pills_blocked
     tank_drop_pills_map_edge
     tank_drop_pills_hostile_map
+    tank_drop_pills_no_room
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill

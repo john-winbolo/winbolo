@@ -2879,6 +2879,7 @@ int run_tank_drop_pills_spiral_order(void);
 int run_tank_drop_pills_blocked(void);
 int run_tank_drop_pills_map_edge(void);
 int run_tank_drop_pills_hostile_map(void);
+int run_tank_drop_pills_no_room(void);
 
 int run_scenario_lgm_dispatch(void);
 int run_scenario_lgm_recall(void);
