@@ -631,7 +631,7 @@ static int luf_run(const LufConfig *cfg) {
     }
 
     pingMs    = h.sim->playerPing[slot];
-    compTicks = gs->perPlayerCompTicks[slot];
+    compTicks = 0 /* a pill shell no longer rewinds */;
     fprintf(stderr, "  after settle: server ping=%ums  lag-comp rewind=%u "
             "frames (%d world units of man walk)\n",
             (unsigned)pingMs, (unsigned)compTicks,
@@ -743,7 +743,7 @@ static int luf_run(const LufConfig *cfg) {
     pillSpeed     = gs->pb->item[0].speed;
     pillArmour    = gs->pb->item[0].armour;
     pingMs        = h.sim->playerPing[slot];
-    compTicks     = gs->perPlayerCompTicks[slot];
+    compTicks     = 0 /* a pill shell no longer rewinds */;
 
     shellsDebugHitLogClear();
     luf_send_frame(&h, slot, &inTick, INPUT_BTN_ACCEL, 0,

@@ -1291,8 +1291,8 @@ int run_lgm_kill_rewind_pill_owner_lag(void) {
                     "pings: owner %ums (pill rewind %u), target %ums (pill "
                     "rewind %u)\n",
             (unsigned)t1x, (unsigned)t1y, (unsigned)destX, (unsigned)destY,
-            (unsigned)pingOwner, (unsigned)r.gs->perPlayerCompTicks[r.s1],
-            (unsigned)pingTarget, (unsigned)r.gs->perPlayerCompTicks[r.s2]);
+            (unsigned)pingOwner, (unsigned)0 /* a pill shell no longer rewinds */,
+            (unsigned)pingTarget, (unsigned)0 /* a pill shell no longer rewinds */);
 
     {
         LkrOrder road;
@@ -1313,7 +1313,7 @@ int run_lgm_kill_rewind_pill_owner_lag(void) {
         int k;
         if (next < 2 && !(*man)->inTank && !(*man)->isDead &&
             (*man)->state == LGM_STATE_GOING) {
-            uint8_t comp = r.gs->perPlayerCompTicks[r.s1];
+            uint8_t comp = 0 /* a pill shell no longer rewinds */;
             int  mx  = (int)(*man)->x;
             int  cy  = (int)(*man)->y + LKR_MAN_SPEED * (flight + 1);
             int  ry  = cy - LKR_MAN_SPEED * (int)comp;
@@ -1345,7 +1345,7 @@ int run_lgm_kill_rewind_pill_owner_lag(void) {
             if (!watch.s[k].landed) break;
             shots[k].landed = true;
             shots[k].shell  = watch.s[k];
-            lkr_man_at(&r, r.s1, r.gs->perPlayerCompTicks[r.s1],
+            lkr_man_at(&r, r.s1, 0 /* a pill shell no longer rewinds */,
                        (int)watch.s[k].x, (int)watch.s[k].y, &shots[k].at);
             shots[k].diedHere = (*man)->isDead;
             landedCount = k + 1;
@@ -1363,7 +1363,7 @@ int run_lgm_kill_rewind_pill_owner_lag(void) {
                     "for the owner %u frames\n",
             (unsigned)r.h.sim->playerPing[r.s1],
             (unsigned)r.h.sim->playerPing[r.s2],
-            (unsigned)r.gs->perPlayerCompTicks[r.s1]);
+            (unsigned)0 /* a pill shell no longer rewinds */);
     for (i = 0; i < 2; i++) {
         LkrPillShot *s = &shots[i];
         if (!s->released) {
@@ -1384,7 +1384,7 @@ int run_lgm_kill_rewind_pill_owner_lag(void) {
         }
     }
 
-    endComp = r.gs->perPlayerCompTicks[r.s1];
+    endComp = 0 /* a pill shell no longer rewinds */;
     LKR_STOP();   /* r.gs is gone from here on */
 
     for (i = 0; i < 2; i++) {
