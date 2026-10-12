@@ -1931,6 +1931,44 @@ bool lv_screenHasServerTick(void) {
  * and the marquee queue. */
 static bool s_eventScan = FALSE;
 
+/* The text dump's listener (lv_dump.c), NULL in every ordinary run. While it
+ * is set the decoder runs as the event scan does, so nothing reaches the
+ * host: the listener is given each record before it is applied and each
+ * event line in place of the events panel. */
+static const LvDecodeObserver *s_observer = NULL;
+
+void lv_screenSetObserver(const LvDecodeObserver *observer) {
+  s_observer  = observer;
+  s_eventScan = (observer != NULL) ? TRUE : FALSE;
+}
+
+/* Hand the listener one record. A framed record's bytes are read and the
+ * cursor put back, so the case below reads them again. An older file has no
+ * frame, so its bytes cannot be taken without decoding them: len is -1. */
+static void lv_observeRecord(BYTE code, bool framed, unsigned short evLen) {
+  BYTE   bytes[LV_OBSERVE_PAYLOAD_MAX];
+  size_t at;
+  int    got = 0;
+
+  if (s_observer == NULL || s_observer->record == NULL) {
+    return;
+  }
+  if (framed == FALSE) {
+    s_observer->record(s_observer->ctx, code, NULL, -1, -1);
+    return;
+  }
+  at = lv_logGetCurrentPosition();
+  if (evLen > 0) {
+    int want = evLen < LV_OBSERVE_PAYLOAD_MAX ? evLen : LV_OBSERVE_PAYLOAD_MAX;
+    got = logReadBytes(bytes, want);
+    if (got < 0) {
+      got = 0;
+    }
+  }
+  lv_logSetPosition(at);
+  s_observer->record(s_observer->ctx, code, bytes, got, (int)evLen);
+}
+
 void lv_screenProcessLog(unsigned short numEvents) {
   unsigned short count = 0;
   BYTE code;
@@ -1965,6 +2003,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
       }
       evLen = (unsigned short)((lenBytes[0] << 8) | lenBytes[1]);
       payloadStart = lv_logGetCurrentPosition();
+    }
+    if (s_observer != NULL) {
+      lv_observeRecord(code, isV2, evLen);
     }
 
     switch (code) {
@@ -5582,6 +5623,13 @@ void lv_messageAddAt(lvEventKind kind, int mapX, int mapY,
   if (mapX <= 0 && mapY <= 0) {
     mapX = -1;
     mapY = -1;
+  }
+  /* The text dump takes the line and the host sees none of it. */
+  if (s_observer != NULL) {
+    if (s_observer->event != NULL) {
+      s_observer->event(s_observer->ctx, (int)kind, mapX, mapY, body);
+    }
+    return;
   }
   lv_windowAddEvent(0, (int)kind, mapX, mapY, body);
 
