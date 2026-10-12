@@ -37,6 +37,9 @@ extern "C" {
     void lv_updateSpeed(unsigned char speed, int updateSlider);
     void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime, uint32_t *totalTime);
     void lv_screenSeekToPosition(float ratio);
+    uint32_t lv_screenGetTimeRunning(void);
+    uint32_t lv_screenServerTickAt(uint32_t ms);
+    bool lv_screenHasServerTick(void);
     bool lv_screenSpecIsLiveMode(void);
     void lv_screenSpecJumpToLive(void);
     void lv_clientMutexWaitFor(void);
@@ -368,6 +371,18 @@ void lv_imgui_controls_window(void) {
                 MessageArgs args2 = {};
                 strncpy(args2.string1, remaining_str, sizeof(args2.string1) - 1);
                 ImGui::TextDisabled("%s", langGetTextFmt(STR_LV_TIME_REMAINING, &args2));
+                /* The tick playback is on. The server's own game tick when
+                 * the recording states it (lv_screenServerTickAt), so the
+                 * number is the one the server and the bots count by. An
+                 * older recording has none: then 20 ms steps from the start
+                 * of the log, the step of the , and . keys. */
+                {
+                    uint32_t ms = lv_screenGetTimeRunning();
+                    uint32_t tick = lv_screenHasServerTick() ? lv_screenServerTickAt(ms)
+                                                             : ms / 20u;
+                    ImGui::SameLine(0, 15);
+                    ImGui::Text("%s %u", langGetText(STR_DLGSYSINFO_TICK), (unsigned)tick);
+                }
             }
         } else {
             ImGui::TextUnformatted(langGetText(STR_LV_NO_LOG_LOADED));
