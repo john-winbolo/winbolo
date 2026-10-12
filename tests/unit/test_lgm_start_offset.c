@@ -22,7 +22,8 @@
  *                        and the same with grass there moves him the full 16
  *                        across the edge; with the tank's own square turned
  *                        to river or deep sea he stays on the tank though
- *                        the square across the edge is grass.
+ *                        the square across the edge is grass; with the tank
+ *                        on a boat he moves the full 16 whatever is there.
  *
  * Every case sends him to harvest a forest square. A harvest costs nothing
  * and is allowed on the tank's own square, which is the only way a square
@@ -179,6 +180,15 @@ int run_lgm_start_offset(void) {
     if (rc == 0) rc = lso_case(sim, "tank in a river, grass across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 0, 0);
     mapSetPos(gs, &gs->mp, cx, cy, DEEP_SEA, FALSE, FALSE);
     if (rc == 0) rc = lso_case(sim, "tank in deep sea, grass across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 0, 0);
+
+    /* The same deep sea square with the tank on a boat. A builder near his
+     * boat walks over any square, so he gets the full 16, onto the grass
+     * and onto deep sea alike. */
+    tankSetOnBoat(&gs->tanks[LSO_SLOT], TRUE);
+    if (rc == 0) rc = lso_case(sim, "tank on a boat, grass across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 16, 0);
+    mapSetPos(gs, &gs->mp, (BYTE)(cx + 1), cy, DEEP_SEA, FALSE, FALSE);
+    if (rc == 0) rc = lso_case(sim, "tank on a boat, deep sea across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 16, 0);
+    tankSetOnBoat(&gs->tanks[LSO_SLOT], FALSE);
 
     serverSimDestroy(sim);
     return rc;
