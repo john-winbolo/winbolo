@@ -311,9 +311,19 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
  * that one: his client draws every builder, his own and other players',
  * from the newest snapshot it has applied, which is a snapshot (one game
  * tick) later. So against any builder the rewind is this much shorter. The
- * tank test in shellsCalcCollision keeps the full rewind. Taken off only a
- * rewind longer than one tick: a rewind of one is the single player and
- * no-view-yet estimate, which was not measured from a snapshot.
+ * tank test in shellsCalcCollision keeps the full rewind.
+ *
+ * It is taken off only a rewind longer than one tick, so it never takes a
+ * rewind down to nothing. Single player sends no view tick and has no ping,
+ * so its rewind is always one and single player is unchanged. A rewind
+ * measured as exactly one, a client on a LAN, also keeps its one against
+ * builders.
+ *
+ * Known small gap: a networked client that has not yet applied two snapshots
+ * sends no view tick, and the server falls back to its ping estimate
+ * (serverSimComputeLagCompTicks), which is two or more from 60 ms of ping.
+ * The tick is taken off that estimate too, though it was not measured from
+ * a snapshot. This lasts one snapshot after the first, once per connection.
  *
  * A pill's shell is not rewound at all. It carries no rewind (owner NEUTRAL,
  * compensationTicks 0) and tests tanks and builders where they are now. */
