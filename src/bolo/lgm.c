@@ -619,10 +619,17 @@ static void lgmApplyStartOffset(lgm *lgman) {
   int32_t dx = (int32_t) (*lgman)->destX - (int32_t) (*lgman)->x;
   int32_t dy = (int32_t) (*lgman)->destY - (int32_t) (*lgman)->y;
   uint64_t distSquared = (uint64_t) ((int64_t) dx * dx) + (uint64_t) ((int64_t) dy * dy);
-  uint64_t dist = 0;
+  uint32_t dist = 0; /* whole part of the square root of distSquared */
+  uint32_t bit;
 
-  while ((dist + 1) * (dist + 1) <= distSquared) {
-    dist++;
+  /* Built one bit at a time from the top, keeping each bit that does not
+   * take the square past distSquared. Both ends are WORLD values, so the
+   * distance is under 2^17 and seventeen bits cover it. */
+  for (bit = (uint32_t) 1 << 16; bit != 0; bit >>= 1) {
+    uint64_t trial = (uint64_t) (dist | bit);
+    if (trial * trial <= distSquared) {
+      dist |= bit;
+    }
   }
   if (dist > LGM_START_OFFSET) {
     (*lgman)->x = (WORLD) ((int32_t) (*lgman)->x + dx * LGM_START_OFFSET / (int32_t) dist);

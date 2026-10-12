@@ -16,14 +16,16 @@ Mechanics the brain relies on (src/bolo/lgm.c, tank.c):
 
   * The man walks 16 wu/tick.  Sent (own_x - 1, FOREST_ROW) from two rows
     south of the wall the step is (xAdd, yAdd) = (-2, -16), so he pins at
-    world-y = BOUNDARY + (start_y mod 16), where BOUNDARY = (WALL_ROW+1)*256
-    is the wall's south edge.  He then slides west along the wall at 2 wu/tick
+    world-y = BOUNDARY + (man_start_y mod 16), where BOUNDARY = (WALL_ROW+1)*256
+    is the wall's south edge and man_start_y is the y he starts walking from
+    (below).  He then slides west along the wall at 2 wu/tick
     at that SAME y until he is straight south of his target and gives up
     (lgmMoveAway: y blocked + xAdd == 0 -> LGM_STATE_RETURN).  A man sent
     straight north (K=0) gives up the very tick he touches the wall -- no
     window -- which is why K=1.
   * While pinned, his death square is ((x-1)>>8, (y-2)>>8): the WALL square
-    whenever start_y mod 16 is 0 or 1.  The tank fires straight north the whole
+    whenever the pin residue (pin y - BOUNDARY) is 0 or 1.  The tank fires
+    straight north the whole
     time; every shell explodes on the wall square and runs the same-square man
     check.  The wall takes 5 shells to rubble (and a shot wall is still solid),
     so the builder REPAIRS it every REBUILD_EVERY (4) shells with the in-game
@@ -31,17 +33,35 @@ Mechanics the brain relies on (src/bolo/lgm.c, tank.c):
   * The tank's own residual-speed mover (tank.c Step 2) advances 6 wu the
     first tick the residual reaches TANK_MIN_MOVE_SPEED, so a 2-frame throttle
     tap from rest is exactly one 6 wu creep north.  Creeping 6 wu per trial
-    walks start_y through every residue of the tank's starting parity within
-    8 trials -- and {0,1} contains one residue of each parity, so the lethal
-    band is always reached.
+    walks the tank's y, and with it the pin residue, through every residue of
+    one parity within 8 trials -- and {0,1} contains one residue of each
+    parity, so the lethal band is always reached.  (A fixed start offset
+    shifts every residue by the same amount, so this still holds.)
   * info.speed is a stale snapshot for a stopped bot (it never returns to 0),
     so "stopped" is detected from the tank's world position, never from speed.
   * info.man_x/man_y are the wire snapshot of the man, quantized to 16 wu, so
     the brain cannot observe the pin residue directly (a pinned man always
     reads y == BOUNDARY).  The tank's own info.tankx/tanky are raw, and the
-    man is spawned at exactly the tank's world position (lgmNewPrimaryRequest
-    -> tankGetWorld), so the residue is start_y mod 16 and every trial is
-    keyed by that.  The PIN line only confirms he really pinned at the wall.
+    man's start is worked out from them, so every trial is keyed by a residue
+    computed from the tank's y at dispatch (start_y in the report).  The PIN
+    line only confirms he really pinned at the wall.
+  * WHERE HE STARTS.  lgmNewPrimaryRequest puts him on the tank's world
+    position (tankGetWorld) and lgmApplyStartOffset then moves him
+    LGM_START_OFFSET (16 wu) towards the centre of his target square, in
+    whole numbers: each axis is d * 16 / dist with the fraction dropped,
+    dist being the whole part of the distance.  Here the target centre is
+    about 2600 wu north and 128-383 wu west of the tank (the tank is on its
+    own column, the target one column west), so dist is always more than
+    |dy| and never as much as |dy| * 16 / 15: the y part is always -15 and
+    the x part is 0 to 2 wu west.  He starts walking from start_y - 15, so
+        pin residue = (start_y - START_DY) mod 16,   START_DY = 15.
+    An engine from before the start offset puts him exactly on the tank;
+    for one of those pass --start-dy 0 (residue = start_y mod 16), which is
+    what an unpatched --expect-death engine normally is.
+    NOT RE-RUN since the start offset went in: the 15 is worked out from
+    lgmApplyStartOffset by hand, not measured.  The check is the MAN lines of
+    one report: his quantized y steps down 16 a tick, and a trial whose res
+    is 0 must show the pinned man in the wall row (y == BOUNDARY - 16).
     Because that wire position also carries the display mapping's -2, in
     exactly the lethal case the brain (and BrainTest) see the pinned man
     standing IN the wall row -- the DEATH line's sq=(126,122) -- which is
@@ -55,7 +75,7 @@ event so the verdict is hand-checkable:
                               trees left)
   PIN                         the man reached the wall row (quantized man pos)
   MAN                         every man position change (raw info.man_x/y)
-  DEATH / HOME                trial outcome, keyed by the start residue, with
+  DEATH / HOME                trial outcome, keyed by the pin residue, with
                               the tank's shell count (a pin only counts as
                               exercised if the tank had ammo)
   STATUS                      heartbeat every 250 frames
@@ -72,7 +92,7 @@ Verdict:
 Usage:
     python3 tests/generate_lgm_wallshot_map.py
     python3 tests/lgm_wallshot_test.py --repeat 8 [--exe-root D:/Development/winbolo2]
-    python3 tests/lgm_wallshot_test.py --repeat 8 --expect-death --exe-root <unpatched>
+    python3 tests/lgm_wallshot_test.py --repeat 8 --expect-death --start-dy 0 --exe-root <unpatched>
 """
 
 import argparse
@@ -93,6 +113,8 @@ REPORT = "lgm_wallshot_report.txt"
 TICKS = 12000             # engine ticks (2 per brain frame): park + 12 trials plus repairs
 TRIALS_PER_GAME = 12      # the 6 wu creep visits all 8 residues of the start
                           # parity in 8 trials; ~1 shell a trial from 40
+START_DY = 15             # how far north of the tank the man starts walking:
+                          # the y part of the 16 wu start offset (see header)
 K = 1                     # harvest target one tile WEST: the man slides
 LETHAL = {0, 1}           # pin residues (man_y - BOUNDARY) the old check kills
 
@@ -100,7 +122,7 @@ BRAIN_TEMPLATE = r'''
 -- GENERATED by tests/lgm_wallshot_test.py -- do not edit.
 --
 -- Shoot-north wall-shot brain.  Park two rows south of the wall, then per
--- trial: creep the tank 6 wu north (a fresh start_y residue), send the man to
+-- trial: creep the tank 6 wu north (a fresh pin residue), send the man to
 -- harvest one tile west beyond the wall, and hold fire on the wall square
 -- dead ahead while he is out near the wall.  Log everything to
 -- lgm_wallshot_report.txt.  Frames (think calls) are the time unit; the
@@ -110,6 +132,7 @@ local WALL_ROW   = __WALL_ROW__
 local FOREST_ROW = __FOREST_ROW__
 local STOP_ROW   = __STOP_ROW__
 local TRIALS     = __TRIALS__
+local START_DY   = __START_DY__           -- the man starts this far north of the tank (see header)
 local BOUNDARY   = (WALL_ROW + 1) * 256   -- wall's south edge (row 123 top)
 
 -- The wall the tank fires at takes BUILDING_LIFE+1 = 5 shells to go from a
@@ -146,7 +169,7 @@ local function report(line)
   else io.stderr:write("lgm_wallshot: report open failed: " .. tostring(err) .. "\n") end
 end
 
-local function res_of() return start_y % 16 end   -- pin residue = start_y mod 16 (see header)
+local function res_of() return (start_y - START_DY) % 16 end   -- pin residue (see header)
 
 local function start_creep(ty)
   phase, sub, sub_t, creep_y = "creep", "accel", 0, ty
@@ -243,7 +266,7 @@ function brain.think(info)
       shot_this_trial = false
       last_mx, last_my = -1, -1
       report(string.format("DISPATCH t=%d trial=%d start_y=%d res=%d txy=(%d,%d) target=(%d,%d) shells=%d trees=%d",
-                           tick, trials, ty, ty % 16, tx, ty, mx - K, FOREST_ROW, info.shells or -1, info.trees or -1))
+                           tick, trials, ty, res_of(), tx, ty, mx - K, FOREST_ROW, info.shells or -1, info.trees or -1))
     end
 
   elseif phase == "dispatched" then
@@ -338,14 +361,15 @@ return brain
 '''
 
 
-def write_brain(dirpath: Path, k: int) -> Path:
+def write_brain(dirpath: Path, k: int, start_dy: int) -> Path:
     dirpath.mkdir(parents=True, exist_ok=True)
     lua = (BRAIN_TEMPLATE
            .replace("__K__", str(k))
            .replace("__WALL_ROW__", str(WALL_ROW))
            .replace("__FOREST_ROW__", str(FOREST_ROW))
            .replace("__STOP_ROW__", str(STOP_ROW))
-           .replace("__TRIALS__", str(TRIALS_PER_GAME)))
+           .replace("__TRIALS__", str(TRIALS_PER_GAME))
+           .replace("__START_DY__", str(start_dy)))
     p = dirpath / "init.lua"
     p.write_text(lua, encoding="utf-8", newline="\n")
     return p
@@ -385,12 +409,12 @@ def run_game(exe_root: Path, brain_path: Path, label: str, ticks: int, port: int
 
 
 def summarize(lines):
-    """Per trial: the start residue (DISPATCH), whether it pinned, whether it died."""
+    """Per trial: the pin residue (DISPATCH), whether it pinned, whether it died."""
     import re
-    dispatched = {}  # trial -> start residue
+    dispatched = {}  # trial -> pin residue
     shells = {}      # trial -> shells in the tank at dispatch
-    pins = {}        # trial -> start residue, only trials that reached the wall
-    dead = {}        # trial -> start residue
+    pins = {}        # trial -> pin residue, only trials that reached the wall
+    dead = {}        # trial -> pin residue
     for l in lines:
         m = re.search(r"trial=(\d+)", l)
         if not m:
@@ -417,6 +441,10 @@ def main():
                          "died and no other pin did")
     ap.add_argument("--exe-root", default=str(REPO))
     ap.add_argument("--ticks", type=int, default=TICKS)
+    ap.add_argument("--start-dy", type=int, default=START_DY,
+                    help="how far north of the tank the man starts walking "
+                         f"(default {START_DY}: the 16 wu start offset); pass 0 "
+                         "for an engine from before the start offset")
     ap.add_argument("--exe", default=None,
                     help="WinBoloDS.exe to run instead of <exe-root>/build/WinBoloDS.exe "
                          "(e.g. a side copy built from the unpatched lgm.c); the game "
@@ -427,7 +455,7 @@ def main():
     assert (exe_root / "build" / "WinBoloDS.exe").exists(), exe_root
     assert MAP_PATH.exists(), "run tests/generate_lgm_wallshot_map.py first"
     brains_dir = Path(os.environ.get("TEMP", str(HERE))) / "lgm_wallshot_brains" / f"K{K}"
-    bp = write_brain(brains_dir, K)
+    bp = write_brain(brains_dir, K, args.start_dy)
 
     ok = True
     for i in range(args.repeat):
