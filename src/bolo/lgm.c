@@ -599,6 +599,36 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
   return why;
 }
 
+/* How far from the tank's centre a builder starts, towards the square he
+ * was sent to. A shell that hits the tank explodes just inside the hull on
+ * the side it came from, and the builder dies within MAP_SQUARE_MIDDLE of
+ * that. The hull a shell has to reach was a square of half side
+ * MAP_SQUARE_MIDDLE and is now a circle of TANK_HIT_RADIUS, 16 less, which
+ * let the explosion land 16 nearer the builder. This gives him the 16 back
+ * on the side he walks out of. */
+#define LGM_START_OFFSET 16
+
+/* Moves a builder who has just been put on his tank's centre
+ * LGM_START_OFFSET towards his destination, or onto it when it is nearer
+ * than that. Whole numbers only so every build walks him the same way. */
+static void lgmApplyStartOffset(lgm *lgman) {
+  int32_t dx = (int32_t) (*lgman)->destX - (int32_t) (*lgman)->x;
+  int32_t dy = (int32_t) (*lgman)->destY - (int32_t) (*lgman)->y;
+  uint64_t distSquared = (uint64_t) ((int64_t) dx * dx) + (uint64_t) ((int64_t) dy * dy);
+  uint64_t dist = 0;
+
+  while ((dist + 1) * (dist + 1) <= distSquared) {
+    dist++;
+  }
+  if (dist <= LGM_START_OFFSET) {
+    (*lgman)->x = (*lgman)->destX;
+    (*lgman)->y = (*lgman)->destY;
+  } else {
+    (*lgman)->x = (WORLD) ((int32_t) (*lgman)->x + dx * LGM_START_OFFSET / (int32_t) dist);
+    (*lgman)->y = (WORLD) ((int32_t) (*lgman)->y + dy * LGM_START_OFFSET / (int32_t) dist);
+  }
+}
+
 /*********************************************************
 *NAME:          lgmNewPrimaryRequest
 *AUTHOR:        John Morrison
@@ -643,6 +673,7 @@ void lgmNewPrimaryRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE m
       (*lgman)->destX += MAP_SQUARE_MIDDLE;
       (*lgman)->destY += MAP_SQUARE_MIDDLE;
       tankGetWorld(tnk, &((*lgman)->x), &((*lgman)->y));
+      lgmApplyStartOffset(lgman);
       (*lgman)->state = LGM_STATE_GOING;
       (*lgman)->action = action;
       (*lgman)->inTank = FALSE;
