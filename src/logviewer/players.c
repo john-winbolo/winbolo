@@ -48,8 +48,67 @@ static BYTE myPlayerNum = 0; /* Your own player number */
 
 static char testP[256];
 
+/* The perspective: whether the viewer is showing the game as the "self"
+ * player saw it (the HUD panel's game icons, the map's friendly and hostile
+ * sprites) and not every team at once. The player is myPlayerNum, the same
+ * "self" Select Team mode sets; this only says whether it is shown. The name
+ * is the one the player had when chosen, so a slot that a different player
+ * later sits in is not taken for the one that was picked. */
+static bool perspectiveOn = FALSE;
+static char perspectiveName[PLAYER_NAME_LEN];
+
 void lv_playersSetSelf(BYTE pn) {
   myPlayerNum = pn;
+}
+
+/* Show the game as playerNum saw it. A slot with no player in it changes
+ * nothing. */
+void lv_playersSetPerspective(BYTE playerNum) {
+  if (playerNum >= MAX_TANKS || plrs.item[playerNum].inUse == FALSE) {
+    return;
+  }
+  myPlayerNum = playerNum;
+  perspectiveOn = TRUE;
+  snprintf(perspectiveName, sizeof(perspectiveName), "%s", plrs.item[playerNum].playerName);
+}
+
+/* Back to every team at once. "Self" stays where it is. */
+void lv_playersClearPerspective(void) {
+  perspectiveOn = FALSE;
+  perspectiveName[0] = '\0';
+}
+
+bool lv_playersHasPerspective(void) {
+  return perspectiveOn;
+}
+
+/* "Self" was moved by something other than lv_playersSetPerspective (a Select
+ * Team click on the map). A perspective that is on goes with it. */
+void lv_playersPerspectiveFollowSelf(void) {
+  if (perspectiveOn == TRUE) {
+    if (myPlayerNum < MAX_TANKS && plrs.item[myPlayerNum].inUse == TRUE) {
+      snprintf(perspectiveName, sizeof(perspectiveName), "%s", plrs.item[myPlayerNum].playerName);
+    } else {
+      lv_playersClearPerspective();
+    }
+  }
+}
+
+/* Drop the perspective when its player is no longer the one in the slot: the
+ * player left, the playhead is where the player had not joined yet, or the
+ * slot now holds somebody of another name. Returns TRUE when it was dropped.
+ * Called between decoder steps, not from inside them: a seek empties and
+ * refills slots on its way and that must not count. */
+bool lv_playersCheckPerspective(void) {
+  if (perspectiveOn == FALSE) {
+    return FALSE;
+  }
+  if (myPlayerNum < MAX_TANKS && plrs.item[myPlayerNum].inUse == TRUE &&
+      strcmp(plrs.item[myPlayerNum].playerName, perspectiveName) == 0) {
+    return FALSE;
+  }
+  lv_playersClearPerspective();
+  return TRUE;
 }
 
 /*********************************************************
@@ -67,6 +126,7 @@ void lv_playersCreate() {
   BYTE count; /* Looping variable */
 
   myPlayerNum = NEUTRAL; /* Not set yet */
+  lv_playersClearPerspective(); /* a new log has new players */
   for (count = 0;count<MAX_TANKS;count++) {
     plrs.item[count].inUse = FALSE;
     plrs.item[count].needUpdate = FALSE;

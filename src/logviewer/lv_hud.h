@@ -19,6 +19,11 @@
  *  an owned thing by the team that owns it and keeps the
  *  game's own icons for neutral, dead and off the map.
  *
+ *  When a tank is clicked on, the viewer does have a player:
+ *  the perspective. The panel then draws the game's own icons,
+ *  picked by the game's rules (lvHudGameTankIcon and the two
+ *  beside it).
+ *
  *  Header only, with no includes but the C library's, so the
  *  viewer (C and C++) and the unit tests use the same sums.
  *********************************************************/
@@ -52,6 +57,36 @@ typedef enum LvHudIcon {
 #define LV_HUD_SHAPE_COUNT        3
 #define LV_HUD_SHAPE_PAD          1
 
+/* What an owned thing is to the perspective player. */
+typedef enum LvHudRelation {
+    LV_HUD_REL_NONE = 0,  /* no perspective, or the thing has no owner */
+    LV_HUD_REL_OWN,       /* the player's own */
+    LV_HUD_REL_ALLIED,    /* an ally's */
+    LV_HUD_REL_HOSTILE    /* anybody else's */
+} LvHudRelation;
+
+/* The game's own status icons, as the perspective view draws them. The panel
+ * turns each into its place in the tile atlas (the STATUS_* numbers of
+ * gui/tiles.h). */
+typedef enum LvHudGameIcon {
+    LV_HUD_GAME_NONE = 0,          /* nothing drawn */
+    LV_HUD_GAME_DEAD,              /* STATUS_ITEM_DEAD */
+    LV_HUD_GAME_TANK_SELF,         /* STATUS_TANK_SELF */
+    LV_HUD_GAME_TANK_ALLIED,       /* STATUS_TANK_GOOD */
+    LV_HUD_GAME_TANK_HOSTILE,      /* STATUS_TANK_EVIL */
+    LV_HUD_GAME_PILL_NEUTRAL,      /* STATUS_PILLBOX_NEUTRAL */
+    LV_HUD_GAME_PILL_OWN,          /* STATUS_PILLBOX_GOOD */
+    LV_HUD_GAME_PILL_ALLIED,       /* STATUS_PILLBOX_ALLIEGOOD */
+    LV_HUD_GAME_PILL_HOSTILE,      /* STATUS_PILLBOX_EVIL */
+    LV_HUD_GAME_PILL_TANK_OWN,     /* STATUS_PILLBOX_TANKGOOD */
+    LV_HUD_GAME_PILL_TANK_ALLIED,  /* STATUS_PILLBOX_TANKALLIE */
+    LV_HUD_GAME_PILL_TANK_HOSTILE, /* STATUS_PILLBOX_TANKEVIL */
+    LV_HUD_GAME_BASE_NEUTRAL,      /* STATUS_BASE_NEUTRAL */
+    LV_HUD_GAME_BASE_OWN,          /* STATUS_BASE_GOOD */
+    LV_HUD_GAME_BASE_ALLIED,       /* STATUS_BASE_ALLIEGOOD */
+    LV_HUD_GAME_BASE_HOSTILE       /* STATUS_BASE_EVIL */
+} LvHudGameIcon;
+
 /* One slot of one grid, copied out of the decoder. */
 typedef struct LvHudSlot {
     unsigned char icon;    /* LvHudIcon */
@@ -59,13 +94,21 @@ typedef struct LvHudSlot {
     unsigned char team;    /* the owner's team, NEUTRAL_TEAM when it has none */
     unsigned char hasTeam; /* 0 when the owner is in no team */
     unsigned char colour;  /* the palette entry the team is drawn in (tc[team]) */
+    unsigned char relation; /* LvHudRelation; NONE when no perspective is on */
 } LvHudSlot;
+
+/* The longest player name the snapshot carries, with its NUL. A longer name
+ * is cut. */
+#define LV_HUD_NAME_LEN 64
 
 /* Everything the panel draws in one frame. */
 typedef struct LvHudSnapshot {
     LvHudSlot tanks[LV_HUD_SLOTS];
     LvHudSlot pills[LV_HUD_SLOTS];
     LvHudSlot bases[LV_HUD_SLOTS];
+    unsigned char perspective;         /* 1 while one player's view is shown */
+    unsigned char viewer;              /* that player's slot */
+    char viewerName[LV_HUD_NAME_LEN];  /* and name */
 } LvHudSnapshot;
 
 /* The icon for a base slot. The order is the game's (lv_basesGetAlliancePos):
@@ -94,6 +137,53 @@ static inline LvHudIcon lvHudTankIcon(bool inUse) {
     return inUse ? LV_HUD_ICON_OWNED : LV_HUD_ICON_EMPTY;
 }
 
+/* What a thing owned by a player is to the perspective player. The order is
+ * the game's, the same for tanks, pillboxes and bases: the player's own
+ * first, then an ally's, and everybody else's is hostile. A thing with no
+ * owner has no relation. */
+static inline LvHudRelation lvHudRelation(bool hasOwner, bool ownerIsViewer,
+                                          bool ownerIsAlly) {
+    if (!hasOwner) return LV_HUD_REL_NONE;
+    if (ownerIsViewer) return LV_HUD_REL_OWN;
+    if (ownerIsAlly) return LV_HUD_REL_ALLIED;
+    return LV_HUD_REL_HOSTILE;
+}
+
+/* The game's icon for a tank slot (playersScreenAllience, drawn by
+ * sdl3DrawStatusTank): the player's own tank, an ally's, a hostile one, and
+ * nothing for a slot with no player. */
+static inline LvHudGameIcon lvHudGameTankIcon(LvHudIcon icon, LvHudRelation rel) {
+    if (icon != LV_HUD_ICON_OWNED) return LV_HUD_GAME_NONE;
+    if (rel == LV_HUD_REL_OWN) return LV_HUD_GAME_TANK_SELF;
+    if (rel == LV_HUD_REL_ALLIED) return LV_HUD_GAME_TANK_ALLIED;
+    return LV_HUD_GAME_TANK_HOSTILE;
+}
+
+/* The game's icon for a pillbox slot (pillsGetAllianceNum, drawn by
+ * sdl3DrawStatusPillbox). Dead and neutral look the same to every player. An
+ * owned pillbox has one icon on the map and another when a tank carries it,
+ * each in own, allied and hostile. */
+static inline LvHudGameIcon lvHudGamePillIcon(LvHudIcon icon, LvHudRelation rel) {
+    bool inTank = (icon == LV_HUD_ICON_OWNED_IN_TANK);
+    if (icon == LV_HUD_ICON_EMPTY) return LV_HUD_GAME_NONE;
+    if (icon == LV_HUD_ICON_DEAD) return LV_HUD_GAME_DEAD;
+    if (icon == LV_HUD_ICON_NEUTRAL || rel == LV_HUD_REL_NONE) return LV_HUD_GAME_PILL_NEUTRAL;
+    if (rel == LV_HUD_REL_OWN) return inTank ? LV_HUD_GAME_PILL_TANK_OWN : LV_HUD_GAME_PILL_OWN;
+    if (rel == LV_HUD_REL_ALLIED) return inTank ? LV_HUD_GAME_PILL_TANK_ALLIED : LV_HUD_GAME_PILL_ALLIED;
+    return inTank ? LV_HUD_GAME_PILL_TANK_HOSTILE : LV_HUD_GAME_PILL_HOSTILE;
+}
+
+/* The game's icon for a base slot (basesGetStatusNum, drawn by
+ * sdl3DrawStatusBase). */
+static inline LvHudGameIcon lvHudGameBaseIcon(LvHudIcon icon, LvHudRelation rel) {
+    if (icon == LV_HUD_ICON_EMPTY) return LV_HUD_GAME_NONE;
+    if (icon == LV_HUD_ICON_DEAD) return LV_HUD_GAME_DEAD;
+    if (icon == LV_HUD_ICON_NEUTRAL || rel == LV_HUD_REL_NONE) return LV_HUD_GAME_BASE_NEUTRAL;
+    if (rel == LV_HUD_REL_OWN) return LV_HUD_GAME_BASE_OWN;
+    if (rel == LV_HUD_REL_ALLIED) return LV_HUD_GAME_BASE_ALLIED;
+    return LV_HUD_GAME_BASE_HOSTILE;
+}
+
 /* One pixel of a status icon as a grey level. The icons are pure green or
  * pure red on black, and a colour multiplied into green gives black for a
  * blue team, so the shape is kept as its brightest channel and stretched so
@@ -119,6 +209,27 @@ static inline void lvHudReadableColour(float *r, float *g, float *b) {
     *r += (1.0f - *r) * t;
     *g += (1.0f - *g) * t;
     *b += (1.0f - *b) * t;
+}
+
+/* In the game's HUD red means hostile, and the perspective view draws the
+ * game's red icons. So in the all-teams view a red team is drawn orange, or
+ * it would read as "the enemy". A colour is red when its red is at least
+ * half way up and its green and blue are each no more than 35% of its red.
+ * The palette's red (191,0,0) is; its orange (255,206,0), brown, pink and
+ * purple are not. Returns true when the colour was changed. Channels are
+ * 0..1. */
+#define LV_HUD_RED_MIN_R     0.5f
+#define LV_HUD_RED_MAX_OTHER 0.35f
+#define LV_HUD_ORANGE_R 1.0f
+#define LV_HUD_ORANGE_G (140.0f / 255.0f)
+#define LV_HUD_ORANGE_B 0.0f
+static inline bool lvHudRedToOrange(float *r, float *g, float *b) {
+    if (*r < LV_HUD_RED_MIN_R) return false;
+    if (*g > *r * LV_HUD_RED_MAX_OTHER || *b > *r * LV_HUD_RED_MAX_OTHER) return false;
+    *r = LV_HUD_ORANGE_R;
+    *g = LV_HUD_ORANGE_G;
+    *b = LV_HUD_ORANGE_B;
+    return true;
 }
 
 /* The largest scale lvHudFit tries. */

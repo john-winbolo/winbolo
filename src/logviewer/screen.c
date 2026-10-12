@@ -5887,12 +5887,68 @@ void lv_screenSelectItem(BYTE itemType, BYTE itemNum) {
   screenShowSelectedItem();
 }
 
+/* Show the game as one player sees it: the HUD panel draws the game's own
+   icons for that player and the map its own / allied / hostile colours. The
+   perspective is the viewer's "self" player (lv_players.h) with a mark that
+   says it was picked on purpose. A second pick of the same player turns it
+   off. A slot with no player in it changes nothing. The caller holds the
+   client mutex and marks the map for a redraw (lv_drawDirtyScreen). */
+void lv_screenTogglePerspective(BYTE playerNum) {
+  if (g_lv == NULL || g_lv->logLoaded == FALSE ||
+      lv_playersIsInUse(playerNum) == FALSE) {
+    return;
+  }
+  if (lv_playersHasPerspective() == TRUE && lv_playersGetSelf() == playerNum) {
+    lv_playersClearPerspective();
+  } else {
+    lv_playersSetPerspective(playerNum);
+  }
+  g_lv->wantScreenUpdate = TRUE;
+}
+
+/* Back to all teams. The caller holds the client mutex and marks the map for
+   a redraw. */
+void lv_screenClearPerspective(void) {
+  if (g_lv == NULL || lv_playersHasPerspective() == FALSE) {
+    return;
+  }
+  lv_playersClearPerspective();
+  g_lv->wantScreenUpdate = TRUE;
+}
+
+/* Turn the perspective off when its player is gone: the player left, or
+   another one has the slot now. Returns TRUE when it did, and the map then
+   needs a redraw. This is asked once a frame and not as the decoder runs: a
+   seek and the scan at load play through times when the player is not there
+   yet. The caller holds the client mutex. */
+bool lv_screenCheckPerspective(void) {
+  if (g_lv == NULL || lv_playersCheckPerspective() == FALSE) {
+    return FALSE;
+  }
+  g_lv->wantScreenUpdate = TRUE;
+  return TRUE;
+}
+
+/* What a thing owned by player `owner` is to the perspective player. */
+static LvHudRelation screenHudRelation(bool perspective, BYTE viewer,
+                                       bool hasOwner, BYTE owner) {
+  if (perspective == FALSE) {
+    return LV_HUD_REL_NONE;
+  }
+  return lvHudRelation(hasOwner != FALSE, owner == viewer,
+                       hasOwner != FALSE && owner != viewer &&
+                           lv_playersIsAllie(owner, viewer) == TRUE);
+}
+
 /* Copy out what the HUD panel draws: for each tank, pillbox and base slot
-   the icon it shows, who owns it and the colour of the owner's team. With no
-   log loaded every slot is empty. The caller holds the client mutex. */
+   the icon it shows, who owns it and the colour of the owner's team, and
+   with a perspective on what it is to that player. With no log loaded every
+   slot is empty. The caller holds the client mutex. */
 void lv_screenHudSnapshot(LvHudSnapshot *out) {
   BYTE count;
   BYTE total;
+  bool perspective;
+  BYTE viewer;
 
   if (out == NULL) {
     return;
@@ -5902,6 +5958,14 @@ void lv_screenHudSnapshot(LvHudSnapshot *out) {
     return;
   }
 
+  perspective = lv_playersHasPerspective();
+  viewer = lv_playersGetSelf();
+  if (perspective == TRUE) {
+    out->perspective = 1;
+    out->viewer = viewer;
+    lv_screenGetPlayerName(out->viewerName, viewer, sizeof(out->viewerName));
+  }
+
   for (count = 0; count < MAX_TANKS && count < LV_HUD_SLOTS; count++) {
     LvHudSlot *slot = &out->tanks[count];
     slot->icon = (unsigned char) lvHudTankIcon(lv_playersIsInUse(count) == TRUE);
@@ -5909,6 +5973,8 @@ void lv_screenHudSnapshot(LvHudSnapshot *out) {
     slot->team = lv_playersGetTeamForOwner(count);
     slot->hasTeam = (slot->team != NEUTRAL_TEAM);
     slot->colour = g_lv->tc[slot->team];
+    slot->relation = (unsigned char) screenHudRelation(perspective, viewer,
+        slot->icon != LV_HUD_ICON_EMPTY, count);
   }
 
   total = (g_lv->pb != NULL) ? lv_pillsGetNumPills(&g_lv->pb) : 0;
@@ -5922,6 +5988,8 @@ void lv_screenHudSnapshot(LvHudSnapshot *out) {
     slot->team = lv_playersGetTeamForOwner(p->owner);
     slot->hasTeam = (slot->team != NEUTRAL_TEAM);
     slot->colour = g_lv->tc[slot->team];
+    slot->relation = (unsigned char) screenHudRelation(perspective, viewer,
+        p->owner != NEUTRAL, p->owner);
   }
 
   total = (g_lv->bs != NULL) ? lv_basesGetNumBases(&g_lv->bs) : 0;
@@ -5935,6 +6003,8 @@ void lv_screenHudSnapshot(LvHudSnapshot *out) {
     slot->team = lv_playersGetTeamForOwner(b->owner);
     slot->hasTeam = (slot->team != NEUTRAL_TEAM);
     slot->colour = g_lv->tc[slot->team];
+    slot->relation = (unsigned char) screenHudRelation(perspective, viewer,
+        b->owner != NEUTRAL, b->owner);
   }
 }
 
@@ -5957,6 +6027,8 @@ void lv_screenMouseClick(int xPos, int yPos) {
   } else if (lv_basesChooseView(&g_lv->bs, g_lv->xOffset + xClick, g_lv->yOffset + yClick) == TRUE) {
   } else {
   }
+  /* A perspective that is on goes with the view to the new player. */
+  lv_playersPerspectiveFollowSelf();
 }
 
 /* Play on to the next snapshot or the end of the log. A live feed that

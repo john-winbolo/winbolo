@@ -1295,12 +1295,21 @@
 /* The Log Viewer's HUD panel: its name in the Windows menu and on its title
    bar, and the tooltip of one icon. string1 of the two tips is the item
    ("Pillbox #4"); string2 is its owner, or "Neutral" or "Dead". NAME_TEAM
-   joins a player's name to the colour of the player's team. */
+   joins a player's name to the colour of the player's team. VIEW_AS is the
+   line that names the player whose view the panel shows (string1), and
+   ALL_TEAMS the button beside it that goes back. TIP_REL adds what the item
+   is to that player (string2: own, allied or hostile) to a tip (string1). */
 #define STR_LV_WIN_HUD                      2790
 #define STR_LV_HUD_TIP_OWNER                2791
 #define STR_LV_HUD_TIP_STATE                2792
 #define STR_LV_HUD_NAME_TEAM                2793
 #define STR_LV_HUD_DEAD                     2794
+#define STR_LV_HUD_VIEW_AS                  2795
+#define STR_LV_HUD_ALL_TEAMS                2796
+#define STR_LV_HUD_REL_OWN                  2797
+#define STR_LV_HUD_REL_ALLIED               2798
+#define STR_LV_HUD_REL_HOSTILE              2799
+#define STR_LV_HUD_TIP_REL                  2800
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

@@ -637,6 +637,15 @@ void lv_screenSelectItem(BYTE itemType, BYTE itemNum);
 struct LvHudSnapshot;
 void lv_screenHudSnapshot(struct LvHudSnapshot *out);
 
+/* The perspective: show the game as one player sees it. Toggle turns it on
+ * for the player in a slot, or off when that player has it already; Clear
+ * goes back to all teams; Check turns it off when its player is gone and
+ * returns TRUE when it did. Hold the client mutex, and mark the map for a
+ * redraw (lv_drawDirtyScreen) after a change. */
+void lv_screenTogglePerspective(BYTE playerNum);
+void lv_screenClearPerspective(void);
+bool lv_screenCheckPerspective(void);
+
 void lv_screenCentreOnSelectedItem();
 
 /* Move the camera onto the followed tank at native-pixel precision (tile

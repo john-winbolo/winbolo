@@ -953,6 +953,15 @@ static void lvHostRenderFrame(const char *overlay) {
          * fallback would just blit a stale logviewer frame on top of
          * a freshly-rendered game-view frame. Force the full update
          * path while game view is active. */
+        /* A perspective whose player has left the game goes back to all
+         * teams. Asked here, before the game view below borrows "self". */
+        if (lv_playersHasPerspective() == TRUE) {
+            lv_clientMutexWaitFor();
+            if (lv_screenCheckPerspective() == TRUE) {
+                lv_drawDirtyScreen();
+            }
+            lv_clientMutexRelease();
+        }
         if (g_lv->wantScreenUpdate == TRUE || g_lv->gameView) {
             BYTE savedSelf = 0;
             bool didSetSelf = FALSE;

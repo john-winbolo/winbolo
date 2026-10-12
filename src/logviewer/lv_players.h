@@ -141,7 +141,15 @@ void lv_playersDestroy();
 BYTE lv_playersGetSelf();
 
 void lv_playersSetSelf(BYTE pn);
-  
+
+/* The perspective: the viewer shows the game as the "self" player saw it,
+ * not every team at once. See players.c. */
+void lv_playersSetPerspective(BYTE playerNum);
+void lv_playersClearPerspective(void);
+bool lv_playersHasPerspective(void);
+void lv_playersPerspectiveFollowSelf(void);
+bool lv_playersCheckPerspective(void);
+
 
 /*********************************************************
 *NAME:          lv_playersSetPlayerName

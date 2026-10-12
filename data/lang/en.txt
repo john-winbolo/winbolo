@@ -1228,6 +1228,12 @@ STR_LV_HUD_TIP_OWNER={string1} - owner: {string2}
 STR_LV_HUD_TIP_STATE={string1} - {string2}
 STR_LV_HUD_NAME_TEAM={string1} ({string2})
 STR_LV_HUD_DEAD=Dead
+STR_LV_HUD_VIEW_AS=View of {string1}
+STR_LV_HUD_ALL_TEAMS=All teams
+STR_LV_HUD_REL_OWN=own
+STR_LV_HUD_REL_ALLIED=allied
+STR_LV_HUD_REL_HOSTILE=hostile
+STR_LV_HUD_TIP_REL={string1} [{string2}]
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:

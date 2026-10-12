@@ -1232,6 +1232,13 @@ static void lvDrawRegions(BYTE zoomFactor) {
     }
 }
 
+/* Whether tanks, pillboxes and bases are drawn in their team's colour. With
+   a perspective on they are not, whatever the setting says: the map then
+   shows them as that player's game does, own and allied against hostile. */
+static bool lvDrawTeamColours(const LogViewerState *lv) {
+    return lv->useTeamColours && lv_playersHasPerspective() == FALSE;
+}
+
 void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms, BYTE showPillLabels, BYTE showBaseLabels, int32_t srtDelay, BYTE isPillView, int edgeX, int edgeY, BYTE useCursor, BYTE cursorLeft, BYTE cursorTop) {
     bool done, isPill, isBase, shouldDraw;
     /* x/y must be wider than BYTE: the loop runs to lv_screenGetSizeX()/Y(),
@@ -1258,6 +1265,7 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     }
 
     zoomFactor = lv_windowGetZoomFactor();
+    bool teamColours = lvDrawTeamColours(lv);
 
     /* The simplified view. Tiles are drawn at their native 16 px into the
        target and the blit downscales the lot, so below 1x a square lands on
@@ -1335,7 +1343,7 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                     /* Team colours name the owner, which is what a recording
                        is watched for; without them the tile itself says which
                        side holds it, the way the game's markers do. */
-                    if (lv->useTeamColours) {
+                    if (teamColours) {
                         itc = isBase ? lv_screenGetBaseTeam(x, y)
                                      : lv_screenGetPillTeam(x, y, &pillHealth);
                         itemHits[itemHitCount].colour = mapColourTeam(lv->tc[itc]);
@@ -1352,11 +1360,11 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                     }
                     itemHitCount++;
                 }
-            } else if (isPill && lv->useTeamColours) {
+            } else if (isPill && teamColours) {
                 itc = lv_screenGetPillTeam(x, y, &pillHealth);
                 drawRenderTexture(textureItems, pillHealth * zoomFactor * TILE_SIZE_X, lv->tc[itc] * zoomFactor * TILE_SIZE_Y,
                     zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
-            } else if (isBase && lv->useTeamColours) {
+            } else if (isBase && teamColours) {
                 itc = lv_screenGetBaseTeam(x, y);
                 drawRenderTexture(textureItems, 16 * zoomFactor * TILE_SIZE_X, lv->tc[itc] * zoomFactor * TILE_SIZE_Y,
                     zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
@@ -1535,7 +1543,7 @@ void lv_drawTanks(screenTanks *tks) {
        switched off both want the game's own self / ally / enemy sides; only
        the team palette says which player is which, which is the one thing
        that reading cannot. */
-    allyRead = lv->allyColours || !lv->useTeamColours;
+    allyRead = lv->allyColours || !lvDrawTeamColours(lv);
 
     for (count = 1; count <= total; count++) {
         lv_screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &team, &dir, &onBoat, playerName);

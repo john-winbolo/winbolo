@@ -11,7 +11,10 @@
  *       never dead); how the three grids are laid out in the room the window
  *       has (the larger icons win, a tie goes to the row, and a window too
  *       small for either still gets scale 1); and how a status icon becomes
- *       a grey shape and a dark team colour becomes one that shows on black.
+ *       a grey shape and a dark team colour becomes one that shows on black;
+ *       that a red team is drawn orange and no other colour is; and, with a
+ *       player's perspective on, which of the game's own icons each slot
+ *       shows (own, allied, hostile, neutral, dead).
  */
 
 #include <stdbool.h>
@@ -128,5 +131,90 @@ int run_lv_hud_sums(void) {
     r = g = b = 0.0f;
     lvHudReadableColour(&r, &g, &b);
     UT_ASSERT_MSG(r == g && g == b && r > 0.3f && r < 0.4f, "black lifted to %f", (double)r);
+
+    /* All teams shown: the palette's red (191,0,0) is drawn orange
+       (255,140,0), and so is a pure red. */
+    r = 191.0f / 255.0f; g = 0.0f; b = 0.0f;
+    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == true, "palette red not changed");
+    UT_ASSERT_MSG(r == 1.0f && g == 140.0f / 255.0f && b == 0.0f, "red became %f %f %f",
+                  (double)r, (double)g, (double)b);
+    r = 1.0f; g = 0.0f; b = 0.0f;
+    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == true && g == 140.0f / 255.0f, "pure red");
+    /* The other colours of the palette are left as they are: its orange
+       (255,206,0), brown (128,128,0), light pink (255,192,192), pink
+       (253,119,255), purple (96,18,122) and blue (0,0,189). */
+    r = 1.0f; g = 206.0f / 255.0f; b = 0.0f;
+    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == false && g == 206.0f / 255.0f, "orange changed");
+    r = 128.0f / 255.0f; g = 128.0f / 255.0f; b = 0.0f;
+    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == false, "brown changed");
+    r = 1.0f; g = 192.0f / 255.0f; b = 192.0f / 255.0f;
+    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == false, "light pink changed");
+    r = 253.0f / 255.0f; g = 119.0f / 255.0f; b = 1.0f;
+    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == false, "pink changed");
+    r = 96.0f / 255.0f; g = 18.0f / 255.0f; b = 122.0f / 255.0f;
+    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == false, "purple changed");
+    r = 0.0f; g = 0.0f; b = 189.0f / 255.0f;
+    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == false && b == 189.0f / 255.0f, "blue changed");
+    /* A red too dark to be called red, and one with too much green in it. */
+    r = 0.4f; g = 0.0f; b = 0.0f;
+    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == false, "dark red changed");
+    r = 1.0f; g = 0.4f; b = 0.0f;
+    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == false, "red-orange changed");
+
+    /* What a thing is to the perspective player: own before allied, and
+       everybody else's hostile. A thing with no owner is none of them. */
+    UT_ASSERT_MSG(lvHudRelation(false, false, false) == LV_HUD_REL_NONE, "no owner");
+    UT_ASSERT_MSG(lvHudRelation(false, true, true) == LV_HUD_REL_NONE, "no owner wins");
+    UT_ASSERT_MSG(lvHudRelation(true, true, false) == LV_HUD_REL_OWN, "own");
+    UT_ASSERT_MSG(lvHudRelation(true, true, true) == LV_HUD_REL_OWN, "own before allied");
+    UT_ASSERT_MSG(lvHudRelation(true, false, true) == LV_HUD_REL_ALLIED, "allied");
+    UT_ASSERT_MSG(lvHudRelation(true, false, false) == LV_HUD_REL_HOSTILE, "hostile");
+
+    /* The game's tank icons: the player's own, an ally's, a hostile one, and
+       nothing for an empty slot. */
+    UT_ASSERT_MSG(lvHudGameTankIcon(LV_HUD_ICON_EMPTY, LV_HUD_REL_NONE) == LV_HUD_GAME_NONE,
+                  "empty tank slot");
+    UT_ASSERT_MSG(lvHudGameTankIcon(LV_HUD_ICON_OWNED, LV_HUD_REL_OWN) == LV_HUD_GAME_TANK_SELF,
+                  "own tank");
+    UT_ASSERT_MSG(lvHudGameTankIcon(LV_HUD_ICON_OWNED, LV_HUD_REL_ALLIED) ==
+                      LV_HUD_GAME_TANK_ALLIED, "allied tank");
+    UT_ASSERT_MSG(lvHudGameTankIcon(LV_HUD_ICON_OWNED, LV_HUD_REL_HOSTILE) ==
+                      LV_HUD_GAME_TANK_HOSTILE, "hostile tank");
+
+    /* The game's pillbox icons. Dead and neutral do not look at the player. */
+    UT_ASSERT_MSG(lvHudGamePillIcon(LV_HUD_ICON_EMPTY, LV_HUD_REL_OWN) == LV_HUD_GAME_NONE,
+                  "pill off map");
+    UT_ASSERT_MSG(lvHudGamePillIcon(LV_HUD_ICON_DEAD, LV_HUD_REL_OWN) == LV_HUD_GAME_DEAD,
+                  "own dead pill");
+    UT_ASSERT_MSG(lvHudGamePillIcon(LV_HUD_ICON_DEAD, LV_HUD_REL_HOSTILE) == LV_HUD_GAME_DEAD,
+                  "hostile dead pill");
+    UT_ASSERT_MSG(lvHudGamePillIcon(LV_HUD_ICON_NEUTRAL, LV_HUD_REL_NONE) ==
+                      LV_HUD_GAME_PILL_NEUTRAL, "neutral pill");
+    UT_ASSERT_MSG(lvHudGamePillIcon(LV_HUD_ICON_OWNED, LV_HUD_REL_OWN) == LV_HUD_GAME_PILL_OWN,
+                  "own pill");
+    UT_ASSERT_MSG(lvHudGamePillIcon(LV_HUD_ICON_OWNED, LV_HUD_REL_ALLIED) ==
+                      LV_HUD_GAME_PILL_ALLIED, "allied pill");
+    UT_ASSERT_MSG(lvHudGamePillIcon(LV_HUD_ICON_OWNED, LV_HUD_REL_HOSTILE) ==
+                      LV_HUD_GAME_PILL_HOSTILE, "hostile pill");
+    UT_ASSERT_MSG(lvHudGamePillIcon(LV_HUD_ICON_OWNED_IN_TANK, LV_HUD_REL_OWN) ==
+                      LV_HUD_GAME_PILL_TANK_OWN, "own carried pill");
+    UT_ASSERT_MSG(lvHudGamePillIcon(LV_HUD_ICON_OWNED_IN_TANK, LV_HUD_REL_ALLIED) ==
+                      LV_HUD_GAME_PILL_TANK_ALLIED, "allied carried pill");
+    UT_ASSERT_MSG(lvHudGamePillIcon(LV_HUD_ICON_OWNED_IN_TANK, LV_HUD_REL_HOSTILE) ==
+                      LV_HUD_GAME_PILL_TANK_HOSTILE, "hostile carried pill");
+
+    /* The game's base icons. */
+    UT_ASSERT_MSG(lvHudGameBaseIcon(LV_HUD_ICON_EMPTY, LV_HUD_REL_OWN) == LV_HUD_GAME_NONE,
+                  "base off map");
+    UT_ASSERT_MSG(lvHudGameBaseIcon(LV_HUD_ICON_DEAD, LV_HUD_REL_ALLIED) == LV_HUD_GAME_DEAD,
+                  "allied dead base");
+    UT_ASSERT_MSG(lvHudGameBaseIcon(LV_HUD_ICON_NEUTRAL, LV_HUD_REL_NONE) ==
+                      LV_HUD_GAME_BASE_NEUTRAL, "neutral base");
+    UT_ASSERT_MSG(lvHudGameBaseIcon(LV_HUD_ICON_OWNED, LV_HUD_REL_OWN) == LV_HUD_GAME_BASE_OWN,
+                  "own base");
+    UT_ASSERT_MSG(lvHudGameBaseIcon(LV_HUD_ICON_OWNED, LV_HUD_REL_ALLIED) ==
+                      LV_HUD_GAME_BASE_ALLIED, "allied base");
+    UT_ASSERT_MSG(lvHudGameBaseIcon(LV_HUD_ICON_OWNED, LV_HUD_REL_HOSTILE) ==
+                      LV_HUD_GAME_BASE_HOSTILE, "hostile base");
     return 0;
 }
