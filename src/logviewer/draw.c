@@ -44,6 +44,7 @@
 #include "imgui/imgui_main_menu.h"
 #include "imgui/imgui_dock.h"
 #include "lv_dock_fit.h"
+#include "lv_hud.h"
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/sdl3/sprite_positions.h"
 #include "../gui/sdl3/tileloader.h"
@@ -69,6 +70,8 @@ static bool ownsWindow = TRUE;  /* TRUE in standalone, FALSE when embedded */
 
 /* Sprite Textures (loaded once at startup) */
 static SDL_Texture *textureTiles = NULL;
+/* The grey status shapes the HUD panel colours by team; see buildHudShapes. */
+static SDL_Texture *textureHudShapes = NULL;
 static SDL_Texture *textureTanks = NULL;
 static SDL_Texture *textureBoats = NULL;
 static SDL_Texture *textureItems = NULL;
@@ -651,6 +654,70 @@ void lv_drawSetZoomStepIndexRaw(int index) {
     g_zoomLevel = g_zoomSteps[index];
 }
 
+/* Build the strip of grey shapes the HUD panel colours by team (lv_hud.h).
+ *
+ * The status icons in the sheet are pure green or pure red on black, so a
+ * team colour cannot be multiplied into them: blue times green is black.
+ * Each shape is copied out as grey levels instead, white where the icon is
+ * brightest, and the panel multiplies the team colour into that. The cells
+ * keep the icons' black background, as the game's panels are black too.
+ *
+ * Read with SDL_ReadSurfacePixel so the sheet's pixel format does not
+ * matter. The sheet is built at scale 1 (see buildTileAtlas). */
+static void buildHudShapes(SDL_Renderer *renderer, SDL_Surface *sheet) {
+    /* Where each shape is in the sheet, in the order of LV_HUD_SHAPE_*. The
+       "hostile" icons are the solid ones; the "own" icons are hollow rings. */
+    static const int src[LV_HUD_SHAPE_COUNT][2] = {
+        { STATUS_BASE_ALLIEGOOD_X,   STATUS_BASE_ALLIEGOOD_Y   },
+        { STATUS_PILLBOX_EVIL_X,     STATUS_PILLBOX_EVIL_Y     },
+        { STATUS_PILLBOX_TANKEVIL_X, STATUS_PILLBOX_TANKEVIL_Y },
+    };
+    const int cellW = STATUS_ITEM_SIZE_X + 2 * LV_HUD_SHAPE_PAD;
+    const int cellH = STATUS_ITEM_SIZE_Y + 2 * LV_HUD_SHAPE_PAD;
+
+    if (textureHudShapes) {
+        SDL_DestroyTexture(textureHudShapes);
+        textureHudShapes = NULL;
+    }
+    SDL_Surface *strip = SDL_CreateSurface(cellW * LV_HUD_SHAPE_COUNT, cellH,
+                                           SDL_PIXELFORMAT_RGBA32);
+    if (!strip) return;
+    SDL_FillSurfaceRect(strip, NULL, SDL_MapSurfaceRGBA(strip, 0, 0, 0, 255));
+
+    for (int n = 0; n < LV_HUD_SHAPE_COUNT; n++) {
+        Uint8 r, g, b, a;
+        int cellMax = 0;
+        /* First the brightest pixel of the icon, then the icon against it. */
+        for (int pass = 0; pass < 2; pass++) {
+            for (int y = 0; y < STATUS_ITEM_SIZE_Y; y++) {
+                for (int x = 0; x < STATUS_ITEM_SIZE_X; x++) {
+                    if (!SDL_ReadSurfacePixel(sheet, src[n][0] + x, src[n][1] + y,
+                                              &r, &g, &b, &a)) {
+                        continue;
+                    }
+                    if (pass == 0) {
+                        int v = r > g ? r : g;
+                        if (b > v) v = b;
+                        if (v > cellMax) cellMax = v;
+                    } else {
+                        Uint8 v = lvHudGreyValue(r, g, b, cellMax);
+                        SDL_WriteSurfacePixel(strip,
+                                              n * cellW + LV_HUD_SHAPE_PAD + x,
+                                              LV_HUD_SHAPE_PAD + y, v, v, v, 255);
+                    }
+                }
+            }
+        }
+    }
+
+    textureHudShapes = SDL_CreateTextureFromSurface(renderer, strip);
+    SDL_DestroySurface(strip);
+    if (textureHudShapes) {
+        SDL_SetTextureBlendMode(textureHudShapes, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(textureHudShapes, SDL_SCALEMODE_NEAREST);
+    }
+}
+
 /* Build the unified tile atlas (SVG/PNG/BMP combined sheet) at scale 1.
  * Returns NULL on failure. The log viewer always uses scale 1 — the
  * blit-time scaling is in the texture target, not the source atlas. */
@@ -658,6 +725,10 @@ static SDL_Texture *buildTileAtlas(SDL_Renderer *renderer) {
     SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X);
     if (!sheet) return NULL;
     SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, sheet);
+    /* While the sheet's pixels are still in hand. Without the strip the HUD
+       panel draws its grids with no owned icons, so a failure here is not a
+       failure of the setup. */
+    buildHudShapes(renderer, sheet);
     SDL_DestroySurface(sheet);
     if (!tex) return NULL;
     SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
@@ -873,6 +944,7 @@ void lv_drawCleanup(void) {
        leave the next session drawing its names into the target. */
     s_tankLabelsInTarget = FALSE;
     if (textureTiles) { SDL_DestroyTexture(textureTiles); textureTiles = NULL; }
+    if (textureHudShapes) { SDL_DestroyTexture(textureHudShapes); textureHudShapes = NULL; }
     if (textureTanks) { SDL_DestroyTexture(textureTanks); textureTanks = NULL; }
     if (textureBoats) { SDL_DestroyTexture(textureBoats); textureBoats = NULL; }
     if (textureItems) { SDL_DestroyTexture(textureItems); textureItems = NULL; }
@@ -1782,6 +1854,12 @@ SDL_Texture* lv_drawGetGameTexture(void) {
  * mapview.c's MapViewCtx. */
 SDL_Texture* lv_drawGetTilesTexture(void) {
     return textureTiles;
+}
+
+/* The strip of grey status shapes built beside the atlas (buildHudShapes).
+ * NULL until the setup has run and when the strip could not be made. */
+SDL_Texture* lv_drawGetHudShapesTexture(void) {
+    return textureHudShapes;
 }
 
 /* Atlas is always built at scale 1 (see buildTileAtlas()) — the blit-time

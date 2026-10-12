@@ -296,6 +296,17 @@ struct SDL_Texture* lv_drawGetTilesTexture(void);
 int lv_drawGetSheetScale(void);
 
 /*********************************************************
+*NAME:          lv_drawGetHudShapesTexture
+*PURPOSE:
+*  The strip of grey status shapes the HUD panel multiplies
+*  a team colour into: LV_HUD_SHAPE_COUNT cells in a row, in
+*  the order and with the padding lv_hud.h gives. Built from
+*  the tile atlas's status icons whenever the atlas is, and
+*  destroyed with it. NULL when there is none.
+*********************************************************/
+struct SDL_Texture* lv_drawGetHudShapesTexture(void);
+
+/*********************************************************
 *NAME:          lv_drawScnMarker
 *PURPOSE:
 *  Draws one scenario map marker the way the game does: the

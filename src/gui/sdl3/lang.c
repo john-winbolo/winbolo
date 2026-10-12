@@ -1037,6 +1037,11 @@ static const LangEntry langTable[] = {
     {2787, "Game and server"},
     {2788, "Highlights"},
     {2789, "Now"},
+    {2790, "HUD"},
+    {2791, "{string1} - owner: {string2}"},
+    {2792, "{string1} - {string2}"},
+    {2793, "{string1} ({string2})"},
+    {2794, "Dead"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

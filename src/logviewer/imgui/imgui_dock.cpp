@@ -11,6 +11,7 @@
 #include "imgui_dock.h"
 #include "imgui_context.h"
 #include "imgui_main_menu.h"
+#include "imgui_hud.h"
 #include "imgui.h"
 #include "imgui_internal.h"  /* DockBuilder*, FindWindowByName */
 #include "platform_config.h"
@@ -36,7 +37,7 @@ extern "C" {
  * row, the seek bar and the time row, the same as its floating window. */
 #define LV_DOCK_CONTROLS_H 125.0f
 
-/* The most layout text read back from the preferences. A layout of the six
+/* The most layout text read back from the preferences. A layout of the seven
  * panels is under 2 KB; one that does not fit is not this viewer's. */
 #define LV_DOCK_LAYOUT_MAX 32768
 
@@ -46,23 +47,31 @@ extern "C" {
  * has to match the title the panel passes to Begin.
  *
  * A panel with fixedH takes that many points; the others share what is left
- * by weight. The anchor is the panel left in the dock space's central node,
- * the one that takes up the slack when the window changes height. */
+ * by weight. A panel with heightFor has a fixed height too, but one that
+ * depends on how wide the dock is, so it is asked for when the layout is
+ * built. The anchor is the panel left in the dock space's central node, the
+ * one that takes up the slack when the window changes height. */
 struct LvDockPanel {
     const char *id;
     bool       *show;
     float       fixedH;
     float       weight;
     bool        anchor;
+    float     (*heightFor)(float dockWidth);
 };
 
+/* The HUD is second, under the controls: its grids are a fixed size, so it
+ * gets just the height they need (one row of three in a wide dock, three
+ * rows in a narrow one) and the lists below it share the rest. A weight
+ * would hand it room it can only fill by drawing its icons larger. */
 static const LvDockPanel k_panels[] = {
-    { "###controls",   &lv_g_show_controls_window,       LV_DOCK_CONTROLS_H, 0.0f, false },
-    { "###gameinfo",   &lv_g_show_game_info_window,      0.0f,               3.0f, false },
-    { "###lvscnpanel", &lv_g_show_scenario_panel_window, 0.0f,               3.0f, false },
-    { "###iteminfo",   &lv_g_show_item_info_window,      0.0f,               2.0f, false },
-    { "###events",     &lv_g_show_events_window,         0.0f,               5.0f, true  },
-    { "###comments",   &lv_g_show_comments_window,       0.0f,               3.0f, false },
+    { "###controls",   &lv_g_show_controls_window,       LV_DOCK_CONTROLS_H, 0.0f, false, nullptr },
+    { "###hud",        &lv_g_show_hud_window,            0.0f,               0.0f, false, lv_imgui_hud_dock_height },
+    { "###gameinfo",   &lv_g_show_game_info_window,      0.0f,               3.0f, false, nullptr },
+    { "###lvscnpanel", &lv_g_show_scenario_panel_window, 0.0f,               3.0f, false, nullptr },
+    { "###iteminfo",   &lv_g_show_item_info_window,      0.0f,               2.0f, false, nullptr },
+    { "###events",     &lv_g_show_events_window,         0.0f,               5.0f, true,  nullptr },
+    { "###comments",   &lv_g_show_comments_window,       0.0f,               3.0f, false, nullptr },
 };
 #define LV_DOCK_PANEL_COUNT ((int)(sizeof(k_panels) / sizeof(k_panels[0])))
 
@@ -272,6 +281,7 @@ bool lv_imgui_dock_window_is_docked(const char *window_id) {
 static void build_layout(ImGuiID dockId, ImVec2 size) {
     int   shown[LV_DOCK_PANEL_COUNT];
     float height[LV_DOCK_PANEL_COUNT];
+    float fixed[LV_DOCK_PANEL_COUNT];
     int   count = 0;
     int   anchor = -1;
     float fixedSum = 0.0f, weightSum = 0.0f;
@@ -282,7 +292,9 @@ static void build_layout(ImGuiID dockId, ImVec2 size) {
     for (int i = 0; i < LV_DOCK_PANEL_COUNT; i++) {
         if (!*k_panels[i].show) continue;
         if (k_panels[i].anchor) anchor = count;
-        fixedSum += k_panels[i].fixedH;
+        fixed[count] = k_panels[i].heightFor ? k_panels[i].heightFor(size.x)
+                                             : k_panels[i].fixedH;
+        fixedSum += fixed[count];
         weightSum += k_panels[i].weight;
         shown[count++] = i;
     }
@@ -297,8 +309,8 @@ static void build_layout(ImGuiID dockId, ImVec2 size) {
     float spare = size.y - fixedSum;
     for (int n = 0; n < count; n++) {
         const LvDockPanel &p = k_panels[shown[n]];
-        if (spare > 0.0f && p.fixedH > 0.0f) {
-            height[n] = p.fixedH;
+        if (spare > 0.0f && fixed[n] > 0.0f) {
+            height[n] = fixed[n];
         } else if (spare > 0.0f && weightSum > 0.0f) {
             height[n] = spare * p.weight / weightSum;
         } else {

@@ -48,6 +48,13 @@ void lv_imgui_dialogs_save(void);
 void lv_imgui_show_team_colours_dialog(void);
 
 /**
+ * The name of a team colour ("Blue") in the current language, by its number
+ * in the Team Colours dialog's list, which is the number tc[] holds.
+ * An empty string for a number that is not a colour.
+ */
+const char *lv_imgui_team_colour_name(int colour);
+
+/**
  * Show the About dialog.
  * Displays version and copyright information.
  */

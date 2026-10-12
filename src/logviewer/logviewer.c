@@ -52,6 +52,7 @@
 #include "imgui/imgui_game_info.h"
 #include "imgui/imgui_events.h"
 #include "imgui/imgui_item_info.h"
+#include "imgui/imgui_hud.h"
 #include "imgui/imgui_comments.h"
 #include "imgui/imgui_dialogs.h"
 #include "imgui/imgui_game_viewport.h"
@@ -1018,6 +1019,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.showItemInfo     = lv_g_show_item_info_window;
         lvms.showComments     = lv_g_show_comments_window;
         lvms.showScenarioPanel = lv_g_show_scenario_panel_window;
+        lvms.showHud          = lv_g_show_hud_window;
         lvms.dockEnabled      = lv_imgui_dock_get_enabled() ? true : false;
         lvms.zoomStepIndex    = lv_drawGetZoomStepIndex();
         lvms.zoomStepCount    = lv_drawGetZoomStepCount();
@@ -1121,6 +1123,9 @@ static void lvHostRenderFrame(const char *overlay) {
              * space already submitted this frame, or ImGui undocks it. */
             lv_imgui_dock_host();
             lv_imgui_controls_window();
+            /* Desktop layout only: the game view has the game's own status
+             * grids, and the compact layout has no room for another panel. */
+            lv_imgui_hud_window();
             lv_imgui_game_info_window();
             lv_imgui_events_window();
             lv_imgui_item_info_window();
