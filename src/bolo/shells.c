@@ -320,10 +320,12 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
  * builders.
  *
  * Known small gap: a networked client that has not yet applied two snapshots
- * sends no view tick, and the server falls back to its ping estimate
- * (serverSimComputeLagCompTicks), which is two or more from 60 ms of ping.
- * The tick is taken off that estimate too, though it was not measured from
- * a snapshot. This lasts one snapshot after the first, once per connection.
+ * sends no view tick the server can use, and the server falls back to its
+ * ping estimate (serverSimComputeLagCompTicks), which is two or more from
+ * 40 ms of ping. The tick is taken off that estimate too, though it was not
+ * measured from a snapshot. This happens when a client joins and again at
+ * the start of each round, because a new round starts the server's tick
+ * count from zero. It lasts until the client has applied two snapshots.
  *
  * A pill's shell is not rewound at all. It carries no rewind (owner NEUTRAL,
  * compensationTicks 0) and tests tanks and builders where they are now. */

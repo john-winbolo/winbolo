@@ -604,10 +604,13 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
  * the side it came from, and the builder dies within MAP_SQUARE_MIDDLE of
  * that. The hull a shell has to reach was a square of half side
  * MAP_SQUARE_MIDDLE and is now a circle of TANK_HIT_RADIUS, 16 less, which
- * let the explosion land 16 nearer the builder. This is one walking step of
- * head start towards his square. It does not on its own put him clear of a
- * hit on the tick he leaves. He is given it only where he could have walked
- * it: see lgmApplyStartOffset. */
+ * let the explosion land 16 nearer the builder. This gives him those 16
+ * back as a head start towards his square. With the default speeds it is
+ * one walking step where a builder walks 16 a tick (grass, road, a boat, a
+ * base he can use), two on forest and four on swamp, crater and rubble. It
+ * does not on its own put him clear of a hit on the tick he leaves. He is
+ * given it only when he can walk on the tank's own square and on each
+ * square the move enters: see lgmApplyStartOffset. */
 #define LGM_START_OFFSET 16
 
 /* Moves a builder who has just been put on his tank's centre
@@ -625,7 +628,14 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
  * he does what he always did: his step into that square is refused and he
  * slides along its edge. The squares asked about are the two lgmMoveAway
  * asks about for one step, in its order: the one the y part enters, then
- * the one the x part enters from there. */
+ * the one the x part enters from there.
+ *
+ * Nor is it made when he cannot walk on the tank's own square, which is a
+ * tank in a river or on a boat. Off a tank in a river with no boat he has
+ * no speed and turns back the same tick, and the move could lift him over
+ * the bank onto land he could not have reached. Off a boat he walks at
+ * base speed while he is near it and needs no help off the square. Both
+ * start on the tank's centre, as they did before there was an offset. */
 static void lgmApplyStartOffset(GameSim *sim, lgm *lgman) {
   int32_t dx = (int32_t) (*lgman)->destX - (int32_t) (*lgman)->x;
   int32_t dy = (int32_t) (*lgman)->destY - (int32_t) (*lgman)->y;
@@ -651,6 +661,9 @@ static void lgmApplyStartOffset(GameSim *sim, lgm *lgman) {
     BYTE newbmy = (BYTE) (newY >> TANK_SHIFT_MAPSIZE);
     bool canWalk = TRUE;
 
+    if (mapGetManSpeed(sim, &sim->mp, &sim->pb, &sim->bs, bmx, bmy, (*lgman)->playerNum) == 0) {
+      canWalk = FALSE;
+    }
     if (newbmy != bmy && mapGetManSpeed(sim, &sim->mp, &sim->pb, &sim->bs, bmx, newbmy, (*lgman)->playerNum) == 0) {
       canWalk = FALSE;
     }

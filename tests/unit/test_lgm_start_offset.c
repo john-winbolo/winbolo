@@ -20,12 +20,15 @@
  *                        him the full 16; a tank 5 from the edge of a deep
  *                        sea square, sent beyond it, leaves him on the tank,
  *                        and the same with grass there moves him the full 16
- *                        across the edge.
+ *                        across the edge; with the tank's own square turned
+ *                        to river or deep sea he stays on the tank though
+ *                        the square across the edge is grass.
  *
  * Every case sends him to harvest a forest square. A harvest costs nothing
  * and is allowed on the tank's own square, which is the only way a square
  * centre can be within 16 of the tank. The squares are turned to forest
- * here, so the case does not depend on what the map has there. Calls
+ * here, and the tank's own square to grass, so the case does not depend on
+ * what the map has there. Calls
  * lgmNewPrimaryRequest directly on ut_make_running_sim (slot 0): it places
  * him afresh from the tank on every call, so no tick has to run between
  * cases.
@@ -130,6 +133,10 @@ int run_lgm_start_offset(void) {
     midX = (WORLD)(((WORLD)cx << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
     midY = (WORLD)(((WORLD)cy << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
 
+    /* The offset is given only off a square a builder can walk on, so the
+     * tank's own square is made grass whatever the map has there. */
+    mapSetPos(gs, &gs->mp, cx, cy, GRASS, FALSE, FALSE);
+
     /* Straight along an axis: the whole 16, the other axis untouched. */
     if (rc == 0) rc = lso_case(sim, "east", midX, midY, (BYTE)(cx + LSO_FAR), cy, 16, 0);
     if (rc == 0) rc = lso_case(sim, "west", midX, midY, (BYTE)(cx - LSO_FAR), cy, -16, 0);
@@ -163,6 +170,15 @@ int run_lgm_start_offset(void) {
     if (rc == 0) rc = lso_case(sim, "deep sea across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 0, 0);
     mapSetPos(gs, &gs->mp, (BYTE)(cx + 1), cy, GRASS, FALSE, FALSE);
     if (rc == 0) rc = lso_case(sim, "grass across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 16, 0);
+
+    /* The same place and the same grass across the edge, but the tank's own
+     * square is one a builder cannot walk on. He has no speed there and
+     * turns back at once, so he is not lifted over the edge onto the grass:
+     * he stays on the tank. */
+    mapSetPos(gs, &gs->mp, cx, cy, RIVER, FALSE, FALSE);
+    if (rc == 0) rc = lso_case(sim, "tank in a river, grass across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 0, 0);
+    mapSetPos(gs, &gs->mp, cx, cy, DEEP_SEA, FALSE, FALSE);
+    if (rc == 0) rc = lso_case(sim, "tank in deep sea, grass across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 0, 0);
 
     serverSimDestroy(sim);
     return rc;
