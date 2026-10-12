@@ -345,6 +345,7 @@ int main(int argc, char *argv[]) {
   char connectArg[FILENAME_MAX];
   bool joinedViaSteam = FALSE;
   ClientSim *cs = NULL;
+  bool spMapStart = FALSE;
 #if defined(WB_VOICEDEBUG)
   const char *voiceRecordDir = NULL;
   const char *voiceInjectPath = NULL;
@@ -410,6 +411,21 @@ int main(int argc, char *argv[]) {
               "in uploaded maps, now run with the full Lua library and no "
               "memory or time limits. Only run a server this way with content "
               "you trust.\n");
+      continue;
+    }
+    /* "-spmap <file>": open single player on this map file, past the welcome
+     * screen. The Log Viewer's "Open map at this time in single player"
+     * starts the game this way. The file is the launch argument a bare map
+     * name already is; the switch adds only the step past the welcome
+     * screen, which is posted once the front end exists (below). */
+    if (strcmp(argv[i], "-spmap") == 0 || strcmp(argv[i], "--spmap") == 0) {
+      if (i + 1 >= argc) {
+        fprintf(stderr, "-spmap needs a map file\n");
+        continue;
+      }
+      cmdLine = argv[i + 1];
+      spMapStart = TRUE;
+      i++;
       continue;
     }
     /* The voice capture-chain recorder. Both switches take a value, and both
@@ -554,6 +570,13 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "Voice recorder: injection did not start\n");
   }
 #endif
+
+  /* -spmap: the welcome screen takes a posted transition at the top of its
+   * first frame, the way it takes one from the macOS Dock menu, and goes on
+   * to single player as if that button was clicked. */
+  if (spMapStart) {
+    gameFrontRequestTransition(openSetup);
+  }
 
   if (gameFrontStart(cmdLine, &keys, FALSE, &cs) == FALSE) {
     clientMutexDestroy();

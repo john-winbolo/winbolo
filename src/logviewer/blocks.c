@@ -49,6 +49,9 @@
 static size_t logMaxSize = LOG_MAX_SIZE;
 
 static uint8_t *ownedZipData = NULL;  /* Zip buffer owned by us (from memory load) */
+static size_t   ownedZipLen  = 0;     /* Its length */
+/* The file the open log was read from; empty when it did not come from one. */
+static char     sourcePath[FILENAME_MAX] = "";
 
 static uint8_t *logData     = NULL;  /* Decompressed log data */
 static size_t   logSize     = 0;     /* Bytes decompressed so far */
@@ -214,6 +217,8 @@ bool lv_blocksCreate(char *fileName, int size) {
   logFile     = NULL;
   free(ownedZipData);
   ownedZipData = NULL;
+  ownedZipLen  = 0;
+  sourcePath[0] = 0;
   lv_blocksDropScriptsJson();
 
   logFile = unzOpen(fileName);
@@ -244,7 +249,26 @@ bool lv_blocksCreate(char *fileName, int size) {
     return FALSE;
   }
 
+  snprintf(sourcePath, sizeof(sourcePath), "%s", fileName);
   return TRUE;
+}
+
+/* Where the open log's whole file is: its path on disk, or the zip bytes a
+ * memory load handed over. A live stream has neither. */
+int lv_blocksGetSource(const char **path, const uint8_t **data, size_t *len) {
+  if (path != NULL) *path = NULL;
+  if (data != NULL) *data = NULL;
+  if (len != NULL)  *len  = 0;
+  if (sourcePath[0] != 0) {
+    if (path != NULL) *path = sourcePath;
+    return LV_LOG_SOURCE_FILE;
+  }
+  if (ownedZipData != NULL && ownedZipLen > 0) {
+    if (data != NULL) *data = ownedZipData;
+    if (len != NULL)  *len  = ownedZipLen;
+    return LV_LOG_SOURCE_MEMORY;
+  }
+  return LV_LOG_SOURCE_NONE;
 }
 
 /* ---- In-memory zip I/O callbacks for minizip ---- */
@@ -327,6 +351,8 @@ bool lv_blocksCreateFromMemory(uint8_t *zipData, size_t zipLen) {
 
   /* Take ownership of the buffer */
   ownedZipData = zipData;
+  ownedZipLen  = zipLen;
+  sourcePath[0] = 0;
 
   /* Set up memory I/O for minizip */
   s_memReader.data = zipData;
@@ -396,6 +422,8 @@ void lv_blocksBeginStream(void) {
   logData     = NULL;
   free(ownedZipData);
   ownedZipData = NULL;
+  ownedZipLen  = 0;
+  sourcePath[0] = 0;
   logSize     = 0;
   logCapacity = 0;
   logPosition = 0;
@@ -439,6 +467,8 @@ void lv_blocksDestroy() {
   logEOF      = FALSE;
   free(ownedZipData);
   ownedZipData = NULL;
+  ownedZipLen  = 0;
+  sourcePath[0] = 0;
   lv_blocksDropScriptsJson();
 }
 

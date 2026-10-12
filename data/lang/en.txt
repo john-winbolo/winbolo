@@ -1234,6 +1234,9 @@ STR_LV_HUD_REL_OWN=own
 STR_LV_HUD_REL_ALLIED=allied
 STR_LV_HUD_REL_HOSTILE=hostile
 STR_LV_HUD_TIP_REL={string1} [{string2}]
+STR_LV_MENU_OPEN_SP=Open map at this time in single player
+STR_LV_MENU_OPEN_SP_TIP=Starts a single-player game on the map as it is at this time. You take the selected player's side: that player's and the allies' pillboxes and bases become yours, and your tank starts where that player's tank is. With no player selected, nothing is yours.
+STR_LV_MENU_SAVE_LOG=Save log file to disk...
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:

@@ -1048,6 +1048,9 @@ static const LangEntry langTable[] = {
     {2798, "allied"},
     {2799, "hostile"},
     {2800, "{string1} [{string2}]"},
+    {2801, "Open map at this time in single player"},
+    {2802, "Starts a single-player game on the map as it is at this time. You take the selected player's side: that player's and the allies' pillboxes and bases become yours, and your tank starts where that player's tank is. With no player selected, nothing is yours."},
+    {2803, "Save log file to disk..."},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

@@ -1470,7 +1470,10 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_LV_MAP_SKIP_VOTE", STR_LV_MAP_SKIP_VOTE },
     { "STR_LV_MENU_ACTION", STR_LV_MENU_ACTION },
     { "STR_LV_MENU_OPEN", STR_LV_MENU_OPEN },
+    { "STR_LV_MENU_OPEN_SP", STR_LV_MENU_OPEN_SP },
+    { "STR_LV_MENU_OPEN_SP_TIP", STR_LV_MENU_OPEN_SP_TIP },
     { "STR_LV_MENU_OPEN_WBN", STR_LV_MENU_OPEN_WBN },
+    { "STR_LV_MENU_SAVE_LOG", STR_LV_MENU_SAVE_LOG },
     { "STR_LV_MENU_WINDOWS", STR_LV_MENU_WINDOWS },
     { "STR_LV_MINES_FMT", STR_LV_MINES_FMT },
     { "STR_LV_MODE", STR_LV_MODE },
@@ -2457,4 +2460,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2444
+#define K_LANG_NAME_TABLE_SIZE  2447

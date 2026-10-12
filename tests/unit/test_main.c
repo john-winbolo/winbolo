@@ -2285,6 +2285,8 @@ static const UnitTestEntry s_tests[] = {
     { "lv_dock_fit_sums",                                run_lv_dock_fit_sums                                },
     { "lv_hud_sums",                                     run_lv_hud_sums                                     },
     { "lv_dump_recorded_round",                          run_lv_dump_recorded_round                          },
+    { "lv_spmap_owner_table",                            run_lv_spmap_owner_table                            },
+    { "lv_spmap_reads_back",                             run_lv_spmap_reads_back                             },
     { "lv_event_kind_sums",                              run_lv_event_kind_sums                              },
     { "lv_event_scan_returns_to_start",                  run_lv_event_scan_returns_to_start                  },
     { "scn_presentation_codec_bodies",                   run_scn_presentation_codec_bodies                   },

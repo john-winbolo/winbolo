@@ -41,6 +41,9 @@
 #include "logviewer.h"
 #include "lv_host.h"
 #include "lv_stats.h"
+#include "blocks.h"       /* lv_blocksGetSource: the open log's own file */
+#include "lv_players.h"   /* the selected player, for the single-player map */
+#include "lv_spmap.h"
 #include "../gui/sdl3/gfx_settings.h"  /* the simplified view setting */
 
 #include <SDL3/SDL.h>
@@ -395,6 +398,225 @@ void lv_windowSaveMap(void) {
         if (lv_screenSaveMap(fileName, FALSE) == FALSE) {
             lv_platform_dialog_error(DIALOG_BOX_TITLE, "Error Saving Map File");
         }
+    }
+}
+
+/* --------------------------------------------------------------------------
+ * File > Open map at this time in single player
+ *
+ * Writes the world at the playhead as a map file and starts the WinBolo game
+ * beside this executable on it. The viewer stays open, paused.
+ * -------------------------------------------------------------------------- */
+
+/* Only the Log Viewer run as its own program offers it. The viewer opened
+ * from the game's menu is inside the game, and a live spectator has no
+ * whole world to hand over. */
+bool lv_windowCanOpenSinglePlayer(void) {
+    return (g_lv != NULL && g_lv->isLoaded && !g_lv->fromMainMenu &&
+            !lv_screenSpecIsLiveMode()) ? TRUE : FALSE;
+}
+
+void lv_windowOpenSinglePlayer(void) {
+    char         mapPath[FILENAME_MAX];
+    char         exePath[FILENAME_MAX];
+    char         mapName[FILENAME_MAX];
+    char         currentTime[FILENAME_MAX];
+    char        *prefDir;
+    const char  *baseDir;
+    const char  *args[4];
+    SDL_Process *game;
+    LvSpmapInfo  info;
+    int          self;
+    int          wrote;
+    size_t       i;
+
+    if (lv_windowCanOpenSinglePlayer() == FALSE) {
+        return;
+    }
+    lv_windowPause();
+
+    /* The map goes with the game's own files (where it keeps its logs and
+       preferences), in a folder of its own, never in data/maps. The name is
+       the map's and the time, so the game's lobby says what it is. */
+    prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir == NULL) {
+        lv_platform_dialog_error(DIALOG_BOX_TITLE, "Error Saving Map File");
+        return;
+    }
+    snprintf(mapPath, sizeof(mapPath), "%slogviewer-maps", prefDir);
+    SDL_CreateDirectory(mapPath);
+
+    mapName[0]     = '\0';
+    currentTime[0] = '\0';
+    lv_clientMutexWaitFor();
+    lv_screenGetMapName(mapName);
+    lv_screenGetTime(currentTime);
+    lv_clientMutexRelease();
+    strncat(mapName, " - ", sizeof(mapName) - strlen(mapName) - 1);
+    strncat(mapName, currentTime, sizeof(mapName) - strlen(mapName) - 1);
+    /* Nothing a file name cannot hold (the time has ':' in it). */
+    for (i = 0; mapName[i] != '\0'; i++) {
+        if (strchr("\\/:*?\"<>|", mapName[i]) != NULL) {
+            mapName[i] = '.';
+        }
+    }
+    snprintf(mapPath, sizeof(mapPath), "%slogviewer-maps/%.200s.map", prefDir, mapName);
+    SDL_free(prefDir);
+
+    /* The selected player (the perspective the HUD or Select Team set) is
+       the side the user takes. With none, nothing is the user's. */
+    lv_clientMutexWaitFor();
+    self  = lv_playersHasPerspective() ? (int)lv_playersGetSelf() : -1;
+    wrote = lvSpmapWrite(mapPath, self, &info);
+    lv_clientMutexRelease();
+    if (!wrote) {
+        lv_platform_dialog_error(DIALOG_BOX_TITLE, "Error Saving Map File");
+        return;
+    }
+
+    baseDir = SDL_GetBasePath();
+#ifdef _WIN32
+    snprintf(exePath, sizeof(exePath), "%sWinBolo.exe", baseDir != NULL ? baseDir : "");
+#else
+    snprintf(exePath, sizeof(exePath), "%sWinBolo", baseDir != NULL ? baseDir : "");
+#endif
+    if (!SDL_GetPathInfo(exePath, NULL)) {
+        lv_platform_dialog_error(DIALOG_BOX_TITLE,
+                                 "Could not find the WinBolo game beside the Log Viewer");
+        return;
+    }
+    args[0] = exePath;
+    args[1] = "-spmap";
+    args[2] = mapPath;
+    args[3] = NULL;
+    game = SDL_CreateProcess(args, false);
+    if (game == NULL) {
+        lv_platform_dialog_error(DIALOG_BOX_TITLE, "Could not start the WinBolo game");
+        return;
+    }
+    /* Lets go of our handle on it; the game runs on. */
+    SDL_DestroyProcess(game);
+}
+
+/* --------------------------------------------------------------------------
+ * File > Save log file to disk
+ *
+ * Saves a copy of the open log's own file: the .wbv it was opened from, or
+ * the .wbv bytes a download handed over.
+ * -------------------------------------------------------------------------- */
+
+/* Whether two paths spell the same file: slashes either way, and no case on
+ * Windows. A file reached by two different spellings is not caught here; the
+ * save reads the whole source before it writes, so that still copies right. */
+static bool lvSamePath(const char *a, const char *b) {
+    while (*a != '\0' && *b != '\0') {
+        char ca = (*a == '\\') ? '/' : *a;
+        char cb = (*b == '\\') ? '/' : *b;
+#ifdef _WIN32
+        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
+        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
+#endif
+        if (ca != cb) {
+            return FALSE;
+        }
+        a++;
+        b++;
+    }
+    return (*a == '\0' && *b == '\0') ? TRUE : FALSE;
+}
+
+bool lv_windowCanSaveLog(void) {
+    if (g_lv == NULL || !g_lv->isLoaded || lv_screenSpecIsLiveMode()) {
+        return FALSE;
+    }
+    return (lv_blocksGetSource(NULL, NULL, NULL) != LV_LOG_SOURCE_NONE) ? TRUE : FALSE;
+}
+
+void lv_windowSaveLog(void) {
+    char           srcPath[FILENAME_MAX];
+    char           fileName[FILENAME_MAX];
+    const char    *path = NULL;
+    const uint8_t *data = NULL;
+    uint8_t       *copy = NULL;
+    size_t         len  = 0;
+    char          *prefDir;
+    FILE          *fp;
+    int            source;
+    int            dlgResult;
+    bool           ok;
+
+    if (lv_windowCanSaveLog() == FALSE) {
+        return;
+    }
+    lv_windowPause();
+
+    srcPath[0]  = '\0';
+    fileName[0] = '\0';
+    lv_clientMutexWaitFor();
+    source = lv_blocksGetSource(&path, &data, &len);
+    if (source == LV_LOG_SOURCE_FILE) {
+        /* The log's own name. */
+        const char *base = path;
+        const char *p;
+        snprintf(srcPath, sizeof(srcPath), "%s", path);
+        for (p = path; *p != '\0'; p++) {
+            if (*p == '/' || *p == '\\') base = p + 1;
+        }
+        snprintf(fileName, sizeof(fileName), "%s", base);
+    } else {
+        /* A downloaded log has no name: the map's. */
+        lv_screenGetMapName(fileName);
+        strncat(fileName, ".wbv", sizeof(fileName) - strlen(fileName) - 1);
+    }
+    lv_clientMutexRelease();
+
+    /* Opens on the folder the game keeps its logs in. */
+    prefDir   = SDL_GetPrefPath("WinBolo", "WinBolo");
+    dlgResult = lv_platform_dialog_save_file(
+        "Save Log File...", "WinBolo Log Files", "*.wbv", "wbv",
+        fileName, fileName, sizeof(fileName), prefDir);
+    SDL_free(prefDir);
+    if (dlgResult != PLATFORM_DIALOG_OK) {
+        return;
+    }
+    if (source == LV_LOG_SOURCE_FILE && lvSamePath(srcPath, fileName)) {
+        return;   /* it is already there */
+    }
+
+    ok = TRUE;
+    if (source == LV_LOG_SOURCE_FILE) {
+        /* All of the source first, then the write: right even if the two
+           names turn out to be one file. */
+        long size = 0;
+        fp = fopen(srcPath, "rb");
+        ok = (fp != NULL);
+        if (ok) {
+            ok = fseek(fp, 0, SEEK_END) == 0 && (size = ftell(fp)) > 0 &&
+                 fseek(fp, 0, SEEK_SET) == 0;
+        }
+        if (ok) {
+            len  = (size_t)size;
+            copy = (uint8_t *)malloc(len);
+            ok   = (copy != NULL) && fread(copy, 1, len, fp) == len;
+        }
+        if (fp != NULL) {
+            fclose(fp);
+        }
+        data = copy;
+    }
+    if (ok) {
+        fp = fopen(fileName, "wb");
+        ok = (fp != NULL);
+        if (ok) {
+            ok = fwrite(data, 1, len, fp) == len;
+            if (fclose(fp) != 0) {
+                ok = FALSE;
+            }
+        }
+    }
+    free(copy);
+    if (!ok) {
+        lv_platform_dialog_error(DIALOG_BOX_TITLE, "Error Saving Log File");
     }
 }
 

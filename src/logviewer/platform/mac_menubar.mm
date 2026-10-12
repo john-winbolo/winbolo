@@ -16,6 +16,10 @@ extern "C" {
 #include "../imgui/imgui_dialogs.h"
 void lv_windowOpenFile(char *cmdLine);
 void lv_windowSaveMap(void);
+bool lv_windowCanSaveLog(void);
+void lv_windowSaveLog(void);
+bool lv_windowCanOpenSinglePlayer(void);
+void lv_windowOpenSinglePlayer(void);
 void lv_windowPlay(void);
 void lv_windowPause(void);
 void lv_windowStop(int corruptLog);
@@ -38,6 +42,8 @@ static NSMenu             *s_lv_hostAppSubmenu  = nil;
 /* Cached references walked by lv_mac_menubar_refresh(). Submenus cache
  * the NSMenu so refresh can iterate items by tag. */
 static NSMenuItem *s_lv_saveMapItem    = nil;
+static NSMenuItem *s_lv_saveLogItem    = nil;
+static NSMenuItem *s_lv_openSpItem     = nil;
 static NSMenuItem *s_lv_returnItem     = nil;   /* embedded only: File > Return to Main Menu */
 static NSMenuItem *s_lv_playItem       = nil;
 static NSMenuItem *s_lv_pauseItem      = nil;
@@ -81,6 +87,8 @@ static void lv_push_sdl_quit(void) {
 - (void)onOpenWbn:(id)sender;
 - (void)onOpenFile:(id)sender;
 - (void)onSaveMap:(id)sender;
+- (void)onSaveLog:(id)sender;
+- (void)onOpenSinglePlayer:(id)sender;
 - (void)onReturn:(id)sender;
 - (void)onPlay:(id)sender;
 - (void)onPause:(id)sender;
@@ -122,6 +130,8 @@ static void lv_push_sdl_quit(void) {
     (void)sender;
     if (s_lv_state && s_lv_state->isLoaded) lv_windowSaveMap();
 }
+- (void)onSaveLog:(id)sender { (void)sender; lv_windowSaveLog(); }
+- (void)onOpenSinglePlayer:(id)sender { (void)sender; lv_windowOpenSinglePlayer(); }
 - (void)onReturn:(id)sender { (void)sender; lv_push_sdl_quit(); }
 - (void)onPlay:(id)sender {
     (void)sender;
@@ -323,6 +333,25 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [saveMapItem setTarget:s_lv_bridge];
     [fileMenu addItem:saveMapItem];
     s_lv_saveMapItem = saveMapItem;
+
+    /* The two items the in-window File menu has below Save Map. Each
+     * handler checks for itself whether it may run. */
+    NSMenuItem *saveLogItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_MENU_SAVE_LOG)
+        action:@selector(onSaveLog:)
+        keyEquivalent:@""];
+    [saveLogItem setTarget:s_lv_bridge];
+    [fileMenu addItem:saveLogItem];
+    s_lv_saveLogItem = saveLogItem;
+
+    NSMenuItem *openSpItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_MENU_OPEN_SP)
+        action:@selector(onOpenSinglePlayer:)
+        keyEquivalent:@""];
+    [openSpItem setTarget:s_lv_bridge];
+    [openSpItem setToolTip:LANG_STR(STR_LV_MENU_OPEN_SP_TIP)];
+    [fileMenu addItem:openSpItem];
+    s_lv_openSpItem = openSpItem;
 
     /* Embedded gets a "Return to Main Menu" entry in the File menu;
      * standalone gets no File-menu quit (Quit lives in the app menu). */
@@ -668,6 +697,8 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_savedMainMenu = nil;
     s_lv_state = NULL;
     s_lv_saveMapItem = nil;
+    s_lv_saveLogItem = nil;
+    s_lv_openSpItem  = nil;
     s_lv_returnItem = nil;
     s_lv_playItem = nil;
     s_lv_pauseItem = nil;
@@ -702,6 +733,8 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (!s) return;
 
     if (s_lv_saveMapItem) [s_lv_saveMapItem setEnabled:(s->isLoaded ? YES : NO)];
+    if (s_lv_saveLogItem) [s_lv_saveLogItem setEnabled:(lv_windowCanSaveLog() ? YES : NO)];
+    if (s_lv_openSpItem)  [s_lv_openSpItem  setEnabled:(lv_windowCanOpenSinglePlayer() ? YES : NO)];
 
     if (s_lv_playItem)        [s_lv_playItem        setEnabled:((s->isLoaded && !s->playIsPlaying) ? YES : NO)];
     if (s_lv_pauseItem)       [s_lv_pauseItem       setEnabled:((s->isLoaded &&  s->playIsPlaying) ? YES : NO)];

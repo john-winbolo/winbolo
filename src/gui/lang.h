@@ -1310,6 +1310,9 @@
 #define STR_LV_HUD_REL_ALLIED               2798
 #define STR_LV_HUD_REL_HOSTILE              2799
 #define STR_LV_HUD_TIP_REL                  2800
+#define STR_LV_MENU_OPEN_SP                 2801
+#define STR_LV_MENU_OPEN_SP_TIP             2802
+#define STR_LV_MENU_SAVE_LOG                2803
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128
