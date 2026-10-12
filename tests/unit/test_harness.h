@@ -4009,6 +4009,9 @@ int run_lv_region_rect_placement(void);
  * dock (test_lv_dock_fit.c): squares across with and without the dock, and
  * the limits on the dock's width. */
 int run_lv_dock_fit_sums(void);
+/* The log viewer's HUD panel (test_lv_hud.c): the icon of a base, pillbox and
+ * tank slot, the layout of the three grids, and the grey and colour sums. */
+int run_lv_hud_sums(void);
 /* The log viewer's events panel (test_lv_event_kind.c): the saved name of
  * each event kind, and where the "now" divider falls among the lines. */
 int run_lv_event_kind_sums(void);

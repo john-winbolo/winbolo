@@ -1292,6 +1292,15 @@
 #define STR_LV_EVT_KIND_GAME                2787
 #define STR_LV_EVT_KIND_HIGHLIGHT           2788
 #define STR_LV_EVT_NOW                      2789
+/* The Log Viewer's HUD panel: its name in the Windows menu and on its title
+   bar, and the tooltip of one icon. string1 of the two tips is the item
+   ("Pillbox #4"); string2 is its owner, or "Neutral" or "Dead". NAME_TEAM
+   joins a player's name to the colour of the player's team. */
+#define STR_LV_WIN_HUD                      2790
+#define STR_LV_HUD_TIP_OWNER                2791
+#define STR_LV_HUD_TIP_STATE                2792
+#define STR_LV_HUD_NAME_TEAM                2793
+#define STR_LV_HUD_DEAD                     2794
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

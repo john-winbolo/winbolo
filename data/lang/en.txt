@@ -1223,6 +1223,11 @@ STR_LV_EVT_KIND_CHAT=Chat and pings
 STR_LV_EVT_KIND_GAME=Game and server
 STR_LV_EVT_KIND_HIGHLIGHT=Highlights
 STR_LV_EVT_NOW=Now
+STR_LV_WIN_HUD=HUD
+STR_LV_HUD_TIP_OWNER={string1} - owner: {string2}
+STR_LV_HUD_TIP_STATE={string1} - {string2}
+STR_LV_HUD_NAME_TEAM={string1} ({string2})
+STR_LV_HUD_DEAD=Dead
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:

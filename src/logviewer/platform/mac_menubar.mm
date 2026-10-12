@@ -61,6 +61,7 @@ static NSMenuItem *s_lv_winEventsItem      = nil;
 static NSMenuItem *s_lv_winGameInfoItem    = nil;
 static NSMenuItem *s_lv_winItemInfoItem    = nil;
 static NSMenuItem *s_lv_winCommentsItem    = nil;
+static NSMenuItem *s_lv_winHudItem         = nil;
 static NSMenuItem *s_lv_winScnPanelItem    = nil;
 static NSMenuItem *s_lv_dockEnabledItem    = nil;
 static NSMenuItem *s_lv_resetIntoDockItem  = nil;
@@ -104,6 +105,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleGameInfo:(id)sender;
 - (void)onToggleItemInfo:(id)sender;
 - (void)onToggleComments:(id)sender;
+- (void)onToggleHud:(id)sender;
 - (void)onToggleScenarioPanel:(id)sender;
 - (void)onToggleDockEnabled:(id)sender;
 - (void)onResetWindows:(id)sender;
@@ -186,6 +188,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleGameInfo:(id)sender { (void)sender; lv_g_show_game_info_window = !lv_g_show_game_info_window; }
 - (void)onToggleItemInfo:(id)sender { (void)sender; lv_g_show_item_info_window = !lv_g_show_item_info_window; }
 - (void)onToggleComments:(id)sender { (void)sender; lv_g_show_comments_window = !lv_g_show_comments_window; }
+- (void)onToggleHud:(id)sender { (void)sender; lv_g_show_hud_window = !lv_g_show_hud_window; }
 - (void)onToggleScenarioPanel:(id)sender { (void)sender; lv_g_show_scenario_panel_window = !lv_g_show_scenario_panel_window; }
 - (void)onToggleDockEnabled:(id)sender { (void)sender; lv_imgui_dock_set_enabled(!lv_imgui_dock_get_enabled()); }
 - (void)onResetWindows:(id)sender { (void)sender; lv_g_reset_window_positions = true; }
@@ -568,6 +571,14 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [winMenu addItem:winComments];
     s_lv_winCommentsItem = winComments;
 
+    NSMenuItem *winHud = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_WIN_HUD)
+        action:@selector(onToggleHud:)
+        keyEquivalent:@"6"];
+    [winHud setTarget:s_lv_bridge];
+    [winMenu addItem:winHud];
+    s_lv_winHudItem = winHud;
+
     NSMenuItem *winScnPanel = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_SCNPANEL_SETTINGS_TITLE)
         action:@selector(onToggleScenarioPanel:)
@@ -680,6 +691,7 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_winGameInfoItem = nil;
     s_lv_winItemInfoItem = nil;
     s_lv_winCommentsItem = nil;
+    s_lv_winHudItem = nil;
     s_lv_winScnPanelItem = nil;
     s_lv_dockEnabledItem = nil;
     s_lv_resetIntoDockItem = nil;
@@ -725,6 +737,7 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (s_lv_winGameInfoItem) [s_lv_winGameInfoItem setState:(s->showGameInfo ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winItemInfoItem) [s_lv_winItemInfoItem setState:(s->showItemInfo ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winCommentsItem) [s_lv_winCommentsItem setState:(s->showComments ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_winHudItem) [s_lv_winHudItem setState:(s->showHud ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winScnPanelItem) [s_lv_winScnPanelItem setState:(s->showScenarioPanel ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_dockEnabledItem) [s_lv_dockEnabledItem setState:(s->dockEnabled ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_resetIntoDockItem) [s_lv_resetIntoDockItem setEnabled:(s->dockEnabled ? YES : NO)];

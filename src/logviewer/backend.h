@@ -629,6 +629,14 @@ uint32_t lv_screenWindowStartMs(void);
 void lv_screenMouseCentreClick(int xPos, int yPos);
 void lv_screenMouseClick(int xPos, int yPos);
 
+/* Select a base (itemType 1) or a pillbox (itemType 2) by its number from 0,
+ * as an information click on it on the map does. Hold the client mutex. */
+void lv_screenSelectItem(BYTE itemType, BYTE itemNum);
+
+/* Copy out what the HUD panel draws (lv_hud.h). Hold the client mutex. */
+struct LvHudSnapshot;
+void lv_screenHudSnapshot(struct LvHudSnapshot *out);
+
 void lv_screenCentreOnSelectedItem();
 
 /* Move the camera onto the followed tank at native-pixel precision (tile

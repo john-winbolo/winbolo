@@ -56,6 +56,14 @@ static const langid colour_name_ids[] = {
 
 #define NUM_COLOURS 17
 
+/* The name of a team colour, for the panels that say which team a thing
+ * belongs to. The teams have no names of their own in a log; the colour a
+ * team is drawn in is what the user knows it by. */
+const char *lv_imgui_team_colour_name(int colour) {
+    if (colour < 0 || colour >= NUM_COLOURS) return "";
+    return langGetText(colour_name_ids[colour]);
+}
+
 /* Dialog state */
 static bool s_show_team_colours = false;
 static bool s_show_about = false;

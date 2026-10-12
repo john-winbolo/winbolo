@@ -56,6 +56,7 @@
 #include "blocks.h"
 #include "dns.h"
 #include "logviewer.h"
+#include "lv_hud.h"
 #include "lv_messages.h"
 #include "../gui/lang.h"
 #include "../gui/ping_kinds.h"   /* PING_DISPLAY_MS, pingKindMessageId */
@@ -5811,6 +5812,21 @@ void lv_screenEventScanRestore(void) {
   g_lv->wantScreenUpdate = TRUE;
 }
 
+/* Send the selected item's details to the Item Information panel. Not while
+   fast forwarding: the panel is not kept up to date then, and the next
+   ordinary step fills it in. */
+static void screenShowSelectedItem(void) {
+  if (g_lv->fastForwarding == FALSE) {
+    if (g_lv->selectedItemType == 0) {
+      lv_updateItem(0, 0, 0, 0, 0, 0, 0, 0, 0);
+    } else if (g_lv->selectedItemType == 1) {
+      lv_updateItem(1, g_lv->selectedItem, g_lv->bs->item[g_lv->selectedItem].owner, g_lv->bs->item[g_lv->selectedItem].x, g_lv->bs->item[g_lv->selectedItem].y, g_lv->bs->item[g_lv->selectedItem].armour, g_lv->bs->item[g_lv->selectedItem].shells, g_lv->bs->item[g_lv->selectedItem].mines, FALSE);
+    } else {
+      lv_updateItem(2, g_lv->selectedItem, g_lv->pb->item[g_lv->selectedItem].owner, g_lv->pb->item[g_lv->selectedItem].x, g_lv->pb->item[g_lv->selectedItem].y, g_lv->pb->item[g_lv->selectedItem].armour, 0, 0, g_lv->pb->item[g_lv->selectedItem].inTank);
+    }
+  }
+}
+
 void lv_screenMouseInformationClick(int xPos, int yPos) {
   div_t dt;        /* Used for integer division */
   int xClick;
@@ -5840,16 +5856,86 @@ void lv_screenMouseInformationClick(int xPos, int yPos) {
   }
 
 
-  if (g_lv->fastForwarding == FALSE) {
-    if (g_lv->selectedItemType == 0) {
-      lv_updateItem(0, 0, 0, 0, 0, 0, 0, 0, 0);
-    } else if (g_lv->selectedItemType == 1) {
-      lv_updateItem(1, g_lv->selectedItem, g_lv->bs->item[g_lv->selectedItem].owner, g_lv->bs->item[g_lv->selectedItem].x, g_lv->bs->item[g_lv->selectedItem].y, g_lv->bs->item[g_lv->selectedItem].armour, g_lv->bs->item[g_lv->selectedItem].shells, g_lv->bs->item[g_lv->selectedItem].mines, FALSE);
-    } else {
-      lv_updateItem(2, g_lv->selectedItem, g_lv->pb->item[g_lv->selectedItem].owner, g_lv->pb->item[g_lv->selectedItem].x, g_lv->pb->item[g_lv->selectedItem].y, g_lv->pb->item[g_lv->selectedItem].armour, 0, 0, g_lv->pb->item[g_lv->selectedItem].inTank);
+  screenShowSelectedItem();
+}
+
+/* Select a pillbox or a base by its number, as a click on it on the map does.
+   For the HUD panel, where the icon clicked on names the item outright.
+   itemType is 1 for a base and 2 for a pillbox; itemNum counts from 0. An
+   item the log does not have, or one it has taken off the map, changes
+   nothing. The caller holds the client mutex: the decoder writes the same
+   stores. */
+void lv_screenSelectItem(BYTE itemType, BYTE itemNum) {
+  if (g_lv->logLoaded == FALSE) {
+    return;
+  }
+  if (itemType == 1) {
+    if (g_lv->bs == NULL || itemNum >= lv_basesGetNumBases(&g_lv->bs) ||
+        lv_basesIsActive(&g_lv->bs, (BYTE) (itemNum + 1)) == FALSE) {
+      return;
     }
+  } else if (itemType == 2) {
+    if (g_lv->pb == NULL || itemNum >= lv_pillsGetNumPills(&g_lv->pb) ||
+        lv_pillsIsActive(&g_lv->pb, (BYTE) (itemNum + 1)) == FALSE) {
+      return;
+    }
+  } else {
+    return;
+  }
+  g_lv->selectedItem = itemNum;
+  g_lv->selectedItemType = itemType;
+  screenShowSelectedItem();
+}
+
+/* Copy out what the HUD panel draws: for each tank, pillbox and base slot
+   the icon it shows, who owns it and the colour of the owner's team. With no
+   log loaded every slot is empty. The caller holds the client mutex. */
+void lv_screenHudSnapshot(LvHudSnapshot *out) {
+  BYTE count;
+  BYTE total;
+
+  if (out == NULL) {
+    return;
+  }
+  memset(out, 0, sizeof(*out));
+  if (g_lv == NULL || g_lv->logLoaded == FALSE) {
+    return;
   }
 
+  for (count = 0; count < MAX_TANKS && count < LV_HUD_SLOTS; count++) {
+    LvHudSlot *slot = &out->tanks[count];
+    slot->icon = (unsigned char) lvHudTankIcon(lv_playersIsInUse(count) == TRUE);
+    slot->owner = count;
+    slot->team = lv_playersGetTeamForOwner(count);
+    slot->hasTeam = (slot->team != NEUTRAL_TEAM);
+    slot->colour = g_lv->tc[slot->team];
+  }
+
+  total = (g_lv->pb != NULL) ? lv_pillsGetNumPills(&g_lv->pb) : 0;
+  for (count = 0; count < total && count < LV_HUD_SLOTS; count++) {
+    LvHudSlot *slot = &out->pills[count];
+    const pillbox *p = &g_lv->pb->item[count];
+    slot->icon = (unsigned char) lvHudPillIcon(
+        lv_pillsIsActive(&g_lv->pb, (BYTE) (count + 1)) != FALSE,
+        p->owner == NEUTRAL, p->armour, p->inTank != FALSE);
+    slot->owner = p->owner;
+    slot->team = lv_playersGetTeamForOwner(p->owner);
+    slot->hasTeam = (slot->team != NEUTRAL_TEAM);
+    slot->colour = g_lv->tc[slot->team];
+  }
+
+  total = (g_lv->bs != NULL) ? lv_basesGetNumBases(&g_lv->bs) : 0;
+  for (count = 0; count < total && count < LV_HUD_SLOTS; count++) {
+    LvHudSlot *slot = &out->bases[count];
+    const base *b = &g_lv->bs->item[count];
+    slot->icon = (unsigned char) lvHudBaseIcon(
+        lv_basesIsActive(&g_lv->bs, (BYTE) (count + 1)) != FALSE,
+        b->owner == NEUTRAL, b->armour);
+    slot->owner = b->owner;
+    slot->team = lv_playersGetTeamForOwner(b->owner);
+    slot->hasTeam = (slot->team != NEUTRAL_TEAM);
+    slot->colour = g_lv->tc[slot->team];
+  }
 }
 
 void lv_screenMouseClick(int xPos, int yPos) {

@@ -38,6 +38,7 @@ struct LvMenuState {
     bool showGameInfo;
     bool showItemInfo;
     bool showComments;
+    bool showHud;
     bool showScenarioPanel;
     bool dockEnabled;          /* Windows > Dock enabled */
     int  zoomStepIndex;       /* current zoom step */

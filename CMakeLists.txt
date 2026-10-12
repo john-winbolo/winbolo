@@ -1768,6 +1768,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_game_viewport.cpp
     src/logviewer/imgui/imgui_scenario_panel.cpp
     src/logviewer/imgui/imgui_dock.cpp
+    src/logviewer/imgui/imgui_hud.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
@@ -2405,6 +2406,7 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_game_viewport.cpp
     src/logviewer/imgui/imgui_scenario_panel.cpp
     src/logviewer/imgui/imgui_dock.cpp
+    src/logviewer/imgui/imgui_hud.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
@@ -4569,6 +4571,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # How the viewer's window is shared between the map and the right-side
     # dock (lv_dock_fit.h, header only).
     tests/unit/test_lv_dock_fit.c
+    # Which icon a slot of the viewer's HUD panel shows, how its three grids
+    # are laid out, and its colour sums (lv_hud.h, header only).
+    tests/unit/test_lv_hud.c
     # The events panel's kind names and the search that places its "now"
     # divider (lv_event_kind.h, header only).
     tests/unit/test_lv_event_kind.c
@@ -6797,6 +6802,7 @@ set(_unit_test_names
     lv_server_tick_live_feed
     lv_region_rect_placement
     lv_dock_fit_sums
+    lv_hud_sums
     lv_event_kind_sums
     lv_event_scan_returns_to_start
     scn_presentation_codec_bodies
