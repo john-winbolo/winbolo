@@ -464,7 +464,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 						if (position->compensationTicks > 0) {
 							rewindTicks = position->compensationTicks;
 						} else if (sim->isServer && position->owner == NEUTRAL) {
-							rewindTicks = sim->perPlayerCompTicks[lgmOwner];
+							rewindTicks = 0; /* pill and base shells test the builder where he is now */
 						} else {
 							rewindTicks = 0;
 						}
@@ -551,7 +551,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 					if (position->compensationTicks > 0) {
 						rewindTicks = position->compensationTicks;
 					} else if (sim->isServer && position->owner == NEUTRAL) {
-						rewindTicks = sim->perPlayerCompTicks[lgmOwner];
+						rewindTicks = 0; /* pill and base shells test the builder where he is now */
 					} else {
 						rewindTicks = 0;
 					}
@@ -798,8 +798,8 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 					/* Player shell: rewind target by shooter's delay */
 					rewindTicks = compensationTicks;
 				} else if (sim->isServer && owner == NEUTRAL) {
-					/* Pill shell: rewind target by the target's own delay */
-					rewindTicks = sim->perPlayerCompTicks[targetPlayer];
+					/* Pill shell: tests the tank where it is now */
+					rewindTicks = 0;
 				} else {
 					rewindTicks = 0;
 				}
