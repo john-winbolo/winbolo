@@ -4101,6 +4101,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_build_harvest_stale.c
     tests/unit/test_lgm_request_valid.c
     tests/unit/test_lgm_quit_pill.c
+    tests/unit/test_lgm_start_offset.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
     tests/unit/test_sim_rules.c

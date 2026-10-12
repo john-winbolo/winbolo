@@ -1025,6 +1025,7 @@ static const UnitTestEntry s_tests[] = {
     { "lgm_request_quiet",                       run_lgm_request_quiet                       },
     { "lgm_quit_drops_carried_pill",             run_lgm_quit_drops_carried_pill             },
     { "lgm_unfield_drops_carried_pill",          run_lgm_unfield_drops_carried_pill          },
+    { "lgm_start_offset",                        run_lgm_start_offset                        },
     { "jitter_buffer_grow",                      run_jitter_buffer_grow                      },
     { "shell_projection",                        run_shell_projection                        },
     { "screen_bullets_build",                    run_screen_bullets_build                    },
