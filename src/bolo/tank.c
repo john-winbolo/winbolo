@@ -2636,20 +2636,11 @@ void tankTakePill(GameSim *sim, tank *value, BYTE pillNum) {
 *  my      - Y map square to drop it on
 *********************************************************/
 bool tankDropPillAt(GameSim *sim, tank *value, BYTE pillNum, BYTE mx, BYTE my) {
-  map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
-  bases *bs = &sim->bs;
   bool isServer = sim->isServer;
   pillbox item;   /* Item to add to the pillbox */
-  BYTE pos;       /* The Map position */
 
-  if (mx <= MAP_MINE_EDGE_LEFT || mx >= MAP_MINE_EDGE_RIGHT ||
-      my <= MAP_MINE_EDGE_TOP || my >= MAP_MINE_EDGE_BOTTOM) {
-    return FALSE;
-  }
-  pos = mapGetPos(mp, mx, my);
-  if (pillsExistPos(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE ||
-      pos == BUILDING || pos == HALFBUILDING || pos == BOAT) {
+  if (!pillsDropCanLand(sim, mx, my)) {
     return FALSE;
   }
 
@@ -2684,31 +2675,6 @@ bool tankDropPillAt(GameSim *sim, tank *value, BYTE pillNum, BYTE mx, BYTE my) {
 }
 
 /*********************************************************
-*NAME:          tankDropPillsTry
-*PURPOSE:
-* One square of the drop spiral: offers it the pill at the
-* head of the carry list. The square is taken as an int so
-* a ring running off the edge of the map is refused here,
-* before it can wrap round to the far side as a BYTE.
-*
-*ARGUMENTS:
-*  sim   - The game the tank belongs to
-*  value - Pointer to the tank structure
-*  mx    - X map square, possibly off the map
-*  my    - Y map square, possibly off the map
-*********************************************************/
-static void tankDropPillsTry(GameSim *sim, tank *value, int mx, int my) {
-  if (IsEmpty((*value)->carryPills)) {
-    return;
-  }
-  if (mx <= MAP_MINE_EDGE_LEFT || mx >= MAP_MINE_EDGE_RIGHT ||
-      my <= MAP_MINE_EDGE_TOP || my >= MAP_MINE_EDGE_BOTTOM) {
-    return;
-  }
-  tankDropPillAt(sim, value, (*value)->carryPills->pillNum, (BYTE) mx, (BYTE) my);
-}
-
-/*********************************************************
 *NAME:          tankDropPills
 *AUTHOR:        John Morrison
 *CREATION DATE: 16/1/99
@@ -2717,38 +2683,26 @@ static void tankDropPillsTry(GameSim *sim, tank *value, int mx, int my) {
 * Drops all the pillboxes around the tank's current
 * location. Called when tank dies.
 *
-* The squares are searched the way Mac Bolo searches them:
-* the tank's own square, then square rings of growing
-* radius, each one starting on the square straight north
-* of the tank and going clockwise. Each square gets one
-* offer of the pill at the head of the carry list (the
-* last one picked up); a square that takes it is then
-* occupied, so the walk just moves on. Squares a pill may
-* not sit on, and squares off the minable area, are
-* passed over, and the search stops at the first ring
-* lying wholly outside the minable area.
+* The squares are searched the way Mac Bolo searches them
+* (pillsDropSpiralFind): the tank's own square, then
+* square rings of growing radius, each one starting on the
+* square straight north of the tank and going clockwise.
+* The pill at the head of the carry list (the last one
+* picked up) goes on the first square that will hold it,
+* the next pill on the next, and so on. A pill the search
+* finds no room for stays on the tank.
 *
 *ARGUMENTS:
 *  sim    - The game the tank belongs to
 *  value  - Pointer to the tank structure
 *********************************************************/
 void tankDropPills(GameSim *sim, tank *value) {
-  /* The sides of a ring after its first square, walking
-     clockwise from due north: east along the top half, south
-     down the right side, west along the bottom, north up the
-     left side, then east back to the square before the start. */
-  static const int sideX[] = { 1, 0, -1,  0, 1 };
-  static const int sideY[] = { 0, 1,  0, -1, 0 };
-  WORLD conv;     /* Used for conversion */
-  int tx;         /* Square the tank is on */
-  int ty;
-  int maxRing;    /* Last ring holding any minable square */
-  int ring;       /* Radius of the ring being walked */
-  int side;       /* Side of the ring being walked */
-  int steps;      /* Squares along this side */
-  int step;
-  int mx;         /* Square being offered */
-  int my;
+  WORLD conv;           /* Used for conversion */
+  BYTE tx;              /* Square the tank is on */
+  BYTE ty;
+  pillsDropSpiral spiral;
+  BYTE mx;              /* Square the next pill goes on */
+  BYTE my;
 
   if (IsEmpty((*value)->carryPills) || !sim->isServer) {
     return;
@@ -2762,39 +2716,13 @@ void tankDropPills(GameSim *sim, tank *value) {
   conv >>= TANK_SHIFT_MAPSIZE;
   ty = (BYTE) conv;
 
-  /* The farthest the minable area reaches from the tank along
-     either axis. Every ring beyond it is off the area entirely. */
-  maxRing = tx - (MAP_MINE_EDGE_LEFT + 1);
-  if ((MAP_MINE_EDGE_RIGHT - 1) - tx > maxRing) {
-    maxRing = (MAP_MINE_EDGE_RIGHT - 1) - tx;
-  }
-  if (ty - (MAP_MINE_EDGE_TOP + 1) > maxRing) {
-    maxRing = ty - (MAP_MINE_EDGE_TOP + 1);
-  }
-  if ((MAP_MINE_EDGE_BOTTOM - 1) - ty > maxRing) {
-    maxRing = (MAP_MINE_EDGE_BOTTOM - 1) - ty;
-  }
-
-  for (ring = 0; ring <= maxRing && NonEmpty((*value)->carryPills); ring++) {
-    mx = tx;
-    my = ty - ring;
-    tankDropPillsTry(sim, value, mx, my);
-    if (ring == 0) {
-      continue;
-    }
-    for (side = 0; side < 5; side++) {
-      if (side == 0) {
-        steps = ring;
-      } else if (side == 4) {
-        steps = ring - 1;
-      } else {
-        steps = 2 * ring;
-      }
-      for (step = 0; step < steps; step++) {
-        mx += sideX[side];
-        my += sideY[side];
-        tankDropPillsTry(sim, value, mx, my);
-      }
+  pillsDropSpiralStart(&spiral, tx, ty);
+  while (NonEmpty((*value)->carryPills) &&
+         pillsDropSpiralFind(sim, &spiral, &mx, &my)) {
+    /* The search and the drop make the same square test, so this only
+       fails if they stop agreeing; stop rather than offer it again. */
+    if (!tankDropPillAt(sim, value, (*value)->carryPills->pillNum, mx, my)) {
+      break;
     }
   }
 }

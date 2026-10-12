@@ -4,7 +4,8 @@
  */
 
 /*
- * Where tankDropPills puts a dead tank's pillboxes.
+ * Where tankDropPills puts a dead tank's pillboxes, and lgmDropCarriedPill the
+ * one a dead or departing builder was holding.
  *
  * The search is Mac Bolo's: the tank's own square, then square rings of
  * growing radius, each starting on the square straight north of the tank and
@@ -27,6 +28,10 @@
  * run_tank_drop_pills_no_room      — a map of boats with no free square at
  *                                    all: the search ends, and the pills stay
  *                                    in the tank
+ * run_lgm_drop_pill_spiral         — the builder's pill goes down on the same
+ *                                    spiral round his square
+ * run_lgm_drop_pill_no_room        — and on a map with no room at all, the
+ *                                    search ends and the pill stays carried
  *
  * Every case lays the map out itself: all grass, the map's bases taken off it,
  * and exactly the pills the case carries.
@@ -46,6 +51,7 @@
 #include "pillbox.h"               /* pillsInstallItem, pillsGetPill */
 #include "bases.h"                 /* basesSetActive, basesInstallItem */
 #include "tank.h"                  /* tankDropPills, tankTakePill */
+#include "lgm.h"                   /* lgmDropCarriedPill, struct lgmObj */
 #include "test_harness.h"
 
 #define TDP_SLOT 0
@@ -308,6 +314,77 @@ int run_tank_drop_pills_no_room(void) {
         UT_ASSERT_MSG(p.inTank == TRUE, "pill %u is off the tank but has "
                       "nowhere to be", (unsigned) n);
     }
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── The builder's pill ──────────────────────────────────────────── */
+
+/* The slot's man out on (mx, my) holding pill 1, the way a build order leaves
+ * him: the pill marked carried and on no tank's list. */
+static int tdp_man_holding_pill(ServerSim *sim, int mx, int my) {
+    GameSim *gs = &sim->sim;
+    lgm *man = &gs->lgmen[TDP_SLOT];
+    pillbox item;
+
+    UT_ASSERT(*man != NULL);
+    UT_ASSERT(tdp_setup(sim, 30, 30, 0) == 0);
+    memset(&item, 0, sizeof(item));
+    item.owner = TDP_SLOT;
+    item.inTank = TRUE;
+    UT_ASSERT(pillsInstallItem(&gs->pb, &item, 1));
+    (*man)->x = (WORLD) ((mx << 8) + MAP_SQUARE_MIDDLE);
+    (*man)->y = (WORLD) ((my << 8) + MAP_SQUARE_MIDDLE);
+    (*man)->inTank = FALSE;
+    (*man)->numPills = 1;
+    return 0;
+}
+
+int run_lgm_drop_pill_spiral(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+    lgm *man;
+    int mx = 140, my = 90;
+
+    UT_ASSERT(sim != NULL);
+    man = &sim->sim.lgmen[TDP_SLOT];
+    UT_ASSERT(tdp_man_holding_pill(sim, mx, my) == 0);
+    /* His own square and the one due north of it are taken, so the pill
+       goes on the next in the spiral: the north-east corner of ring one. */
+    tdp_set_terrain(sim, mx, my, HALFBUILDING);
+    tdp_set_terrain(sim, mx, my - 1, BUILDING);
+
+    lgmDropCarriedPill(&sim->sim, man);
+
+    UT_ASSERT((*man)->numPills == LGM_NO_PILL);
+    UT_ASSERT(tdp_assert_at(sim, 1, mx + 1, my - 1) == 0);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+int run_lgm_drop_pill_no_room(void) {
+    ServerSim *sim = ut_make_running_sim("Tester");
+    lgm *man;
+    pillbox p;
+    int x, y;
+
+    UT_ASSERT(sim != NULL);
+    man = &sim->sim.lgmen[TDP_SLOT];
+    UT_ASSERT(tdp_man_holding_pill(sim, 128, 128) == 0);
+    for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+        for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+            tdp_set_terrain(sim, x, y, BUILDING);
+        }
+    }
+
+    lgmDropCarriedPill(&sim->sim, man);
+
+    UT_ASSERT((*man)->numPills == LGM_NO_PILL);
+    memset(&p, 0, sizeof(p));
+    pillsGetPill(&sim->sim.pb, &p, 1);
+    UT_ASSERT_MSG(p.inTank == TRUE, "the pill is off the man but has nowhere "
+                  "to be");
 
     serverSimDestroy(sim);
     return 0;

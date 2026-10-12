@@ -1561,9 +1561,11 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
 *LAST MODIFIED: 16/09/26
 *PURPOSE:
 *  Puts the pillbox the man is carrying down on the map and
-*  leaves him carrying nothing. It lands on the first square
-*  at or below his feet that will hold one, dead, owned by
-*  him. Does nothing if he is carrying no pillbox.
+*  leaves him carrying nothing. It lands dead, owned by him,
+*  on the first square that will hold one in the spiral
+*  round his feet that a dead tank's pills are put down
+*  with (pillsDropSpiralFind). Does nothing if he is
+*  carrying no pillbox.
 *
 *  Dying does this — lgmKill calls it — and so must his
 *  player leaving while he is out on the errand. A pillbox in
@@ -1578,17 +1580,11 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
 *  lgman  - Pointer to the lgm pointer
 *********************************************************/
 void lgmDropCarriedPill(GameSim *sim, lgm *lgman) {
-  map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
-  bases *bs = &sim->bs;
   pillbox item;           /* Item to write back into the pillbox list */
   BYTE lgmMapX;           /* The square he is standing on */
   BYTE lgmMapY;
-  BYTE pos;
-  bool finishedPillPlace; /* Used to place pills properly */
-  BYTE pillPlaceX;
-  BYTE pillPlaceY;
-  BYTE count;
+  pillsDropSpiral spiral; /* The search for somewhere to put it */
   WORLD conv;
 
   if (*lgman == NULL || (*lgman)->numPills == LGM_NO_PILL) {
@@ -1600,28 +1596,13 @@ void lgmDropCarriedPill(GameSim *sim, lgm *lgman) {
   lgmMapX = (BYTE) conv;
   lgmMapY = (BYTE) ((unsigned int) ((*lgman)->y) >> 8);
 
-  if (sim->isServer == TRUE) {
-    finishedPillPlace = FALSE;
-    count = 0;
-    pillPlaceX = lgmMapX;
-    pillPlaceY = lgmMapY;
-    while (finishedPillPlace == FALSE) {
-      item.x = pillPlaceX;
-      item.y = pillPlaceY+count;
-      if (item.x > MAP_MINE_EDGE_LEFT && item.x < MAP_MINE_EDGE_RIGHT && item.y > MAP_MINE_EDGE_TOP && item.y < MAP_MINE_EDGE_BOTTOM) {
-        pos = mapGetPos(mp, item.x, item.y);
-        if (pillsExistPos(pb, item.x, item.y) == FALSE && basesExistPos(bs, item.x, item.y) == FALSE && pos != BUILDING && pos != HALFBUILDING && pos != BOAT) {
-          finishedPillPlace = TRUE;
-        }
-      }
-      count++;
-      if (count == sim->rules.lgm_pill_drop_search &&
-          finishedPillPlace == FALSE) {
-        count = 0;
-        item.y = pillPlaceY;
-        pillPlaceX++;
-      }
-    }
+  /* The same search a dead tank's pills are put down with, round the
+     square he is on, as Mac Bolo's qman_drop_pill does. A map with nowhere
+     at all to put it leaves the pill marked carried for the rest of the
+     round, rather than searching for ever. */
+  pillsDropSpiralStart(&spiral, lgmMapX, lgmMapY);
+  if (sim->isServer == TRUE &&
+      pillsDropSpiralFind(sim, &spiral, &item.x, &item.y)) {
     item.armour = 0;
     item.owner = (*lgman)->playerNum;
     item.speed = (BYTE) sim->rules.pill_attack_ticks;
