@@ -309,8 +309,9 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
  * which for other tanks and other builders is the second-newest snapshot
  * his client holds, the one it is drawing. His own builder is drawn from
  * the newest one instead, a snapshot (one game tick) later, so against him
- * the rewind is this much shorter. compensationTicks is at least 1 where
- * this is taken off. */
+ * the rewind is this much shorter. Taken off only a rewind longer than one
+ * tick: a rewind of one is the single player and no-view-yet estimate, which
+ * was not measured from a snapshot. */
 #define SHELL_OWN_LGM_REWIND_LESS 1
 
 /*********************************************************
@@ -473,11 +474,11 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 							rewindTicks = position->compensationTicks;
 							/* The shooter's own builder: his client draws him from the newest
 							 * snapshot, one newer than the view the rewind was measured for. */
-							if (position->owner == lgmOwner) {
+							if (position->owner == lgmOwner && rewindTicks > SHELL_OWN_LGM_REWIND_LESS) {
 								rewindTicks -= SHELL_OWN_LGM_REWIND_LESS;
 							}
 						} else if (sim->isServer && position->owner == NEUTRAL) {
-							rewindTicks = 0; /* pill and base shells test the builder where he is now */
+							rewindTicks = 0; /* a pill's shell tests the builder where he is now */
 						} else {
 							rewindTicks = 0;
 						}
@@ -565,11 +566,11 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 						rewindTicks = position->compensationTicks;
 						/* The shooter's own builder: his client draws him from the newest
 						 * snapshot, one newer than the view the rewind was measured for. */
-						if (position->owner == lgmOwner) {
+						if (position->owner == lgmOwner && rewindTicks > SHELL_OWN_LGM_REWIND_LESS) {
 							rewindTicks -= SHELL_OWN_LGM_REWIND_LESS;
 						}
 					} else if (sim->isServer && position->owner == NEUTRAL) {
-						rewindTicks = 0; /* pill and base shells test the builder where he is now */
+						rewindTicks = 0; /* a pill's shell tests the builder where he is now */
 					} else {
 						rewindTicks = 0;
 					}
