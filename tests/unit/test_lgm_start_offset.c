@@ -17,7 +17,10 @@
  *                        along the axis; the four diagonals give (11,11) with
  *                        the signs of the direction; a square centre 16 or
  *                        less away leaves him on the tank; one 17 away moves
- *                        him the full 16.
+ *                        him the full 16; a tank 5 from the edge of a deep
+ *                        sea square, sent beyond it, leaves him on the tank,
+ *                        and the same with grass there moves him the full 16
+ *                        across the edge.
  *
  * Every case sends him to harvest a forest square. A harvest costs nothing
  * and is allowed on the tank's own square, which is the only way a square
@@ -57,8 +60,9 @@ static bool lso_square_free(GameSim *gs, int x, int y) {
            !minesExistPos(&gs->mns, &gs->mp, (BYTE)x, (BYTE)y);
 }
 
-/* Find a square for the tank whose own square and the eight squares LSO_FAR
- * away along the axes and the diagonals are all free. */
+/* Find a square for the tank whose own square, the eight squares LSO_FAR
+ * away along the axes and the diagonals, and the square next to it on the
+ * east are all free. */
 static bool lso_find_centre(GameSim *gs, BYTE *ox, BYTE *oy) {
     int x, y, dx, dy;
     for (y = 40; y <= 200; y++) {
@@ -69,7 +73,7 @@ static bool lso_find_centre(GameSim *gs, BYTE *ox, BYTE *oy) {
                     ok = lso_square_free(gs, x + dx * LSO_FAR, y + dy * LSO_FAR);
                 }
             }
-            if (ok) {
+            if (ok && lso_square_free(gs, x + 1, y)) {
                 *ox = (BYTE)x;
                 *oy = (BYTE)y;
                 return true;
@@ -112,14 +116,14 @@ int run_lgm_start_offset(void) {
 
     GameSim *gs = &sim->sim;
     BYTE cx = 0, cy = 0;
-    WORLD midX, midY;
+    WORLD midX, midY, edgeX;
     int rc = 0;
 
     UT_ASSERT_MSG(gs->tanks[LSO_SLOT] != NULL && gs->lgmen[LSO_SLOT] != NULL,
                   "slot %d joined without a tank or a man", LSO_SLOT);
     UT_ASSERT_MSG(lso_find_centre(gs, &cx, &cy),
-                  "no square found with its far squares free of bases, "
-                  "pillboxes and mines");
+                  "no square found with its far squares and its east "
+                  "neighbour free of bases, pillboxes and mines");
 
     /* The centre of the tank's square, the same way lgmNewPrimaryRequest
      * works out the centre of a destination square. */
@@ -149,6 +153,16 @@ int run_lgm_start_offset(void) {
     /* One past that: he moves the full 16, which leaves him 1 short. */
     if (rc == 0) rc = lso_case(sim, "own square, 17 east of centre", (WORLD)(midX + 17), midY, cx, cy, -16, 0);
     if (rc == 0) rc = lso_case(sim, "own square, 17 north of centre", midX, (WORLD)(midY - 17), cx, cy, 0, 16);
+
+    /* The tank 5 short of its square's east edge, sent far east: the 16
+     * would put him 11 into the next square. A builder cannot walk on deep
+     * sea, so he stays on the tank, where his first step is refused the way
+     * it always was. With grass there he can, and gets the full 16. */
+    edgeX = (WORLD)((((WORLD)cx + 1) << TANK_SHIFT_MAPSIZE) - 5);
+    mapSetPos(gs, &gs->mp, (BYTE)(cx + 1), cy, DEEP_SEA, FALSE, FALSE);
+    if (rc == 0) rc = lso_case(sim, "deep sea across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 0, 0);
+    mapSetPos(gs, &gs->mp, (BYTE)(cx + 1), cy, GRASS, FALSE, FALSE);
+    if (rc == 0) rc = lso_case(sim, "grass across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 16, 0);
 
     serverSimDestroy(sim);
     return rc;
