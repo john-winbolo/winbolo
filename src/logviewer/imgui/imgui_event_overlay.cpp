@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 extern "C" {
@@ -54,10 +55,6 @@ static const char *const k_pref = "Controls.OverlayEvents";
 
 /* How much of its colour a marker playback has passed keeps. */
 #define OVERLAY_PAST_ALPHA 0.45f
-
-/* The lines of a marker's tooltip when the marker stands for several
- * events; the rest are counted in a last line. */
-#define OVERLAY_TIP_LINES 5
 
 /* The gap between the lane and the slider under it. */
 #define OVERLAY_LANE_GAP 1.0f
@@ -458,9 +455,74 @@ static void overlay_format_when(uint32_t ms, char *out, size_t outSize) {
     snprintf(out, outSize, "%s  %s %u", stamp, langGetText(STR_DLGSYSINFO_TICK), (unsigned)tick);
 }
 
-/* What the mouse over a marker says. Brief: one event is its time, its
- * tick and its kind, then its line of the Events panel; several are their
- * number, then the first few lines with their times. */
+/* The side of an event's picture in a line of the tooltip: what the Events
+ * panel uses for the picture of a line. It does not follow the size of the
+ * markers of the lane. */
+static float overlay_tip_icon_side(void) {
+    return floorf(ImGui::GetFontSize());
+}
+
+/* The lines of a marker that stands for several events: each event's own
+ * picture (the marker of the lane and of the Events panel, by the same
+ * call), its time and its line of the Events panel. Every event has a line.
+ * When they are more than the window is high they go in columns. */
+static void overlay_tooltip_lines(const OverlayMarker &m) {
+    const ImGuiStyle &style = ImGui::GetStyle();
+    const ImGuiViewport *vp = ImGui::GetMainViewport();
+    const float iconSide = overlay_tip_icon_side();
+    const float iconCol = iconSide + style.ItemInnerSpacing.x;
+    const float textH = ImGui::GetTextLineHeight();
+    const float lineH = ((textH > iconSide) ? textH : iconSide) + style.ItemSpacing.y;
+    const float colGap = style.ItemSpacing.x * 2.0f;
+    std::vector<std::string> lines;
+    std::vector<LvEventInfo> infos;
+    float textW = 0.0f;
+    LvEventInfo info;
+
+    lines.reserve((size_t)m.count);
+    infos.reserve((size_t)m.count);
+    for (int k = 0; k < m.count; k++) {
+        char stamp[24];
+        if (!lv_imgui_events_get_info(s_items[m.first + k], &info)) continue;
+        lv_screenFormatTime(info.timeMs, stamp, sizeof(stamp));
+        lines.push_back(std::string(stamp) + "  " + info.text);
+        infos.push_back(info);
+        const float w = ImGui::CalcTextSize(lines.back().c_str()).x;
+        if (w > textW) textW = w;
+    }
+    const int n = (int)lines.size();
+    if (n == 0) return;
+
+    /* The room: the window, less the tooltip's own edges and the line that
+     * says how many events there are (it is drawn already). */
+    const float colW = iconCol + textW + colGap;
+    const float availW = vp->WorkSize.x - style.DisplaySafeAreaPadding.x * 2.0f -
+                         style.WindowPadding.x * 2.0f + colGap;
+    const float availH = vp->WorkSize.y - style.DisplaySafeAreaPadding.y * 2.0f -
+                         style.WindowPadding.y * 2.0f - ImGui::GetTextLineHeightWithSpacing();
+    const LvOverlayTipColumns grid = lvOverlayTipColumns(n, lineH, availH, colW, availW);
+
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
+    for (int k = 0; k < n; k++) {
+        int col = 0, row = 0;
+        lvOverlayTipCell(k, grid.rows, &col, &row);
+        const float x = floorf(origin.x + (float)col * colW);
+        const float y = floorf(origin.y + (float)row * lineH);
+        const float iconY = floorf(y + (textH - iconSide) * 0.5f);
+        lv_event_marker_draw(dl, infos[k].kind, infos[k].team, infos[k].ping, ImVec2(x, iconY),
+                             ImVec2(x + iconSide, iconY + iconSide), 1.0f);
+        dl->AddText(ImVec2(x + iconCol, y), textCol, lines[k].c_str());
+    }
+    /* The room the lines took: the tooltip is made this big. */
+    ImGui::Dummy(ImVec2((float)grid.cols * colW - colGap,
+                        (float)grid.rows * lineH - style.ItemSpacing.y));
+}
+
+/* What the mouse over a marker says. One event is its time, its tick and
+ * its kind, then its line of the Events panel; several are their number,
+ * then a line for each of them (overlay_tooltip_lines). */
 static void overlay_tooltip(const OverlayMarker &m) {
     char when[96];
     LvEventInfo info;
@@ -479,18 +541,7 @@ static void overlay_tooltip(const OverlayMarker &m) {
         MessageArgs args = {};
         snprintf(args.string1, sizeof(args.string1), "%d", m.count);
         ImGui::TextDisabled("%s", langGetTextFmt(STR_LV_OVERLAY_COUNT, &args));
-        const int lines = (m.count < OVERLAY_TIP_LINES) ? m.count : OVERLAY_TIP_LINES;
-        for (int k = 0; k < lines; k++) {
-            char stamp[24];
-            if (!lv_imgui_events_get_info(s_items[m.first + k], &info)) continue;
-            lv_screenFormatTime(info.timeMs, stamp, sizeof(stamp));
-            ImGui::Text("%s  %s", stamp, info.text);
-        }
-        if (m.count > lines) {
-            MessageArgs more = {};
-            snprintf(more.string1, sizeof(more.string1), "%d", m.count - lines);
-            ImGui::TextDisabled("%s", langGetTextFmt(STR_LV_OVERLAY_MORE, &more));
-        }
+        overlay_tooltip_lines(m);
     }
     ImGui::EndTooltip();
 }

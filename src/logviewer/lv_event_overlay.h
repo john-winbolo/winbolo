@@ -109,6 +109,60 @@ static inline int lvOverlayClusters(const float *xs, int n, float minGap,
   return made;
 }
 
+/* How the lines of a marker's tooltip are set out when the marker stands for
+ * several events. Every event has a line: none is left out. The lines go
+ * down a column until the room is used, then start the next column. */
+typedef struct LvOverlayTipColumns {
+  int cols; /* how many columns */
+  int rows; /* how many lines the longest column has */
+  bool fits; /* false: the lines need more room than there is */
+} LvOverlayTipColumns;
+
+/* n lines, each lineH high, in columns each colW wide, in a room availW by
+ * availH. A column takes as many lines as go in availH (at least one).
+ * When the columns that makes are wider than availW there are only as many
+ * columns as go in availW (at least one), and each takes more lines than
+ * the room is high: the lines are all still there, and `fits` is false. */
+static inline LvOverlayTipColumns lvOverlayTipColumns(int n, float lineH, float availH,
+                                                      float colW, float availW) {
+  LvOverlayTipColumns out;
+  int rowsFit, maxCols;
+  out.cols = 0;
+  out.rows = 0;
+  out.fits = true;
+  if (n <= 0) return out;
+  if (lineH <= 0.0f) lineH = 1.0f;
+  if (colW <= 0.0f) colW = 1.0f;
+  rowsFit = (int)(availH / lineH);
+  maxCols = (int)(availW / colW);
+  if (rowsFit < 1) {
+    rowsFit = 1;
+    out.fits = false;
+  }
+  if (maxCols < 1) {
+    maxCols = 1;
+    out.fits = false;
+  }
+  out.cols = (n + rowsFit - 1) / rowsFit;
+  if (out.cols <= maxCols) {
+    out.rows = (n < rowsFit) ? n : rowsFit;
+    return out;
+  }
+  out.cols = maxCols;
+  out.rows = (n + maxCols - 1) / maxCols;
+  out.fits = false;
+  return out;
+}
+
+/* The column and the line of the k-th event (from 0) in columns of `rows`
+ * lines: down the first column, then down the next. */
+static inline void lvOverlayTipCell(int k, int rows, int *col, int *row) {
+  if (rows < 1) rows = 1;
+  if (k < 0) k = 0;
+  if (col != NULL) *col = k / rows;
+  if (row != NULL) *row = k % rows;
+}
+
 /* The marker the point x is on: the nearest one within halfWidth, or -1. */
 static inline int lvOverlayHit(const LvOverlayCluster *clusters, int count,
                                float x, float halfWidth) {

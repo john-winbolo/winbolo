@@ -4073,6 +4073,7 @@ int run_lv_event_click_pick(void);
  * become one, and the saved list of chosen kinds. */
 int run_lv_event_overlay_slider(void);
 int run_lv_event_overlay_clusters(void);
+int run_lv_event_overlay_tip_columns(void);
 int run_lv_event_overlay_choice(void);
 int run_lv_event_overlay_picture(void);
 /* The one list of ticked kinds of the Controls and Events panels, and the

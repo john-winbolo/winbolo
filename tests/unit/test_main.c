@@ -2315,6 +2315,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_event_click_pick",                             run_lv_event_click_pick                             },
     { "lv_event_overlay_slider",                         run_lv_event_overlay_slider                         },
     { "lv_event_overlay_clusters",                       run_lv_event_overlay_clusters                       },
+    { "lv_event_overlay_tip_columns",                    run_lv_event_overlay_tip_columns                    },
     { "lv_event_overlay_choice",                         run_lv_event_overlay_choice                         },
     { "lv_event_overlay_picture",                        run_lv_event_overlay_picture                        },
     { "lv_event_kinds_filter",                           run_lv_event_kinds_filter                           },

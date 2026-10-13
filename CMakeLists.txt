@@ -6907,6 +6907,7 @@ set(_unit_test_names
     lv_event_click_pick
     lv_event_overlay_slider
     lv_event_overlay_clusters
+    lv_event_overlay_tip_columns
     lv_event_overlay_choice
     lv_event_overlay_picture
     lv_event_kinds_filter

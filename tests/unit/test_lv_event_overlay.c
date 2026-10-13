@@ -176,6 +176,68 @@ int run_lv_event_overlay_clusters(void) {
     return 0;
 }
 
+/* The lines of the tooltip of a marker that stands for several events: one
+   line an event, none left out, in columns when they are too many for the
+   height. */
+int run_lv_event_overlay_tip_columns(void) {
+    LvOverlayTipColumns g;
+    int col, row, k;
+
+    /* Lines 17 high in a room 170 high: 10 to a column. */
+    g = lvOverlayTipColumns(3, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 3 && g.fits, "3 lines: one column of 3");
+    g = lvOverlayTipColumns(6, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 6 && g.fits, "6 lines: over the old 5, all shown");
+    g = lvOverlayTipColumns(10, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 10 && g.fits, "10 lines: the column is full");
+    g = lvOverlayTipColumns(11, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 2 && g.rows == 10 && g.fits, "11 lines: a second column");
+    g = lvOverlayTipColumns(50, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 5 && g.rows == 10 && g.fits, "50 lines: 5 columns fill the width");
+    /* A room a little under a whole line more: still 10 to a column. */
+    g = lvOverlayTipColumns(11, 17.0f, 186.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 2 && g.rows == 10, "186 high is 10 lines");
+
+    /* More than the room holds: as many columns as go in the width, and
+       every line is still there. The columns are then higher than the room. */
+    g = lvOverlayTipColumns(51, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 5 && g.rows == 11 && !g.fits, "51 lines: 5 columns of 11");
+    UT_ASSERT_MSG(g.cols * g.rows >= 51, "no line is left out");
+    g = lvOverlayTipColumns(300, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 5 && g.rows == 60 && !g.fits, "300 lines: 5 columns of 60");
+
+    /* A room smaller than one line or one column: one of each at least. */
+    g = lvOverlayTipColumns(4, 17.0f, 5.0f, 200.0f, 50.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 4 && !g.fits, "no room: one column, all lines");
+    g = lvOverlayTipColumns(1, 17.0f, 5.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 1 && !g.fits, "a line higher than the room");
+
+    /* Nothing to show, and sizes that are not sizes. */
+    g = lvOverlayTipColumns(0, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 0 && g.rows == 0 && g.fits, "no lines");
+    g = lvOverlayTipColumns(3, 0.0f, 170.0f, 0.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 3, "no line height given");
+
+    /* Down the first column, then the next. */
+    lvOverlayTipCell(0, 10, &col, &row);
+    UT_ASSERT(col == 0 && row == 0);
+    lvOverlayTipCell(9, 10, &col, &row);
+    UT_ASSERT(col == 0 && row == 9);
+    lvOverlayTipCell(10, 10, &col, &row);
+    UT_ASSERT(col == 1 && row == 0);
+    lvOverlayTipCell(25, 10, &col, &row);
+    UT_ASSERT(col == 2 && row == 5);
+    /* Every event of a full grid has a cell inside it. */
+    g = lvOverlayTipColumns(47, 17.0f, 170.0f, 200.0f, 1000.0f);
+    for (k = 0; k < 47; k++) {
+        lvOverlayTipCell(k, g.rows, &col, &row);
+        UT_ASSERT_MSG(col >= 0 && col < g.cols && row >= 0 && row < g.rows, "event %d", k);
+    }
+    lvOverlayTipCell(3, 0, &col, &row);
+    UT_ASSERT(col == 3 && row == 0);
+    return 0;
+}
+
 int run_lv_event_overlay_choice(void) {
     char text[256];
     int kind;

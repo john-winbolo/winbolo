@@ -1799,6 +1799,28 @@ The sum is `lvControlsWheelStep` in `src/logviewer/lv_controls_layout.h`;
 `seek_wheel_step` in `imgui_controls.cpp` uses it. Test:
 `lv_controls_wheel_step`.
 
+### The hover of a marker for several events shows them all (Oct 13)
+
+A marker over the seek bar that stands for several events showed the first
+5 of them in its hover and then "+N more", with no way to see the rest.
+
+- **Every event has a line.** The cut at 5 lines and the "+N more" line are
+  gone. The text `STR_LV_OVERLAY_MORE` stays in the language files and is
+  not used.
+- **Each line starts with the event's picture.** It is drawn by
+  `lv_event_marker_draw`, the call the lane and the Events panel use, at
+  the size the Events panel uses (the height of a line of text). Then the
+  time and the event's line of the Events panel, with the "(M:SS)" of a
+  lost builder.
+- **Columns.** When the lines are more than the window is high they go
+  down a column and then start the next (`lvOverlayTipColumns`). All
+  columns are as wide as the longest line.
+- **More than the window holds.** With more columns than the window is
+  wide, there are as many columns as go in the width and each takes more
+  lines. No event is left out and no "+N more" line is made, but the
+  bottom of the hover is then cut off by the window's edge.
+- **One event.** The hover of a marker for one event is as it was.
+
 ### A 150% zoom step (Oct 13)
 
 The zoom went from 100% straight to 200%. The table in `draw.c` now has
