@@ -480,6 +480,8 @@ void lv_windowOpenSinglePlayer(void) {
     LvSpmapInfo  info;
     int          self;
     int          wrote;
+    int          n;
+    int          attempt;
     size_t       i;
 
     if (lv_windowCanOpenSinglePlayer() == FALSE) {
@@ -503,8 +505,14 @@ void lv_windowOpenSinglePlayer(void) {
         lv_platform_dialog_error(DIALOG_BOX_TITLE, "Error Saving Map File");
         return;
     }
-    snprintf(mapPath, sizeof(mapPath), "%slogviewer-maps", prefDir);
-    SDL_CreateDirectory(mapPath);
+    n = snprintf(mapPath, sizeof(mapPath), "%slogviewer-maps", prefDir);
+    /* SDL_CreateDirectory is true for a folder that is already there. */
+    if (n <= 0 || (size_t)n >= sizeof(mapPath) || !SDL_CreateDirectory(mapPath)) {
+        SDL_free(prefDir);
+        lv_platform_dialog_error(DIALOG_BOX_TITLE,
+                                 "Could not make the folder for the map file");
+        return;
+    }
 
     mapName[0]     = '\0';
     currentTime[0] = '\0';
@@ -520,8 +528,31 @@ void lv_windowOpenSinglePlayer(void) {
             mapName[i] = '.';
         }
     }
-    snprintf(mapPath, sizeof(mapPath), "%slogviewer-maps/%.200s.map", prefDir, mapName);
+    /* A name no file has yet. The map name and the playback time are the
+       same for two logs of one map, and for a second try at the same time;
+       the game that was started on the first file may still have it open.
+       So a file is never written over: the second gets " (2)", and so on. */
+    for (attempt = 1; attempt <= 9999; attempt++) {
+        if (attempt == 1) {
+            n = snprintf(mapPath, sizeof(mapPath), "%slogviewer-maps/%.200s.map",
+                         prefDir, mapName);
+        } else {
+            n = snprintf(mapPath, sizeof(mapPath), "%slogviewer-maps/%.200s (%d).map",
+                         prefDir, mapName, attempt);
+        }
+        if (n <= 0 || (size_t)n >= sizeof(mapPath)) {
+            attempt = 10000;
+            break;
+        }
+        if (!SDL_GetPathInfo(mapPath, NULL)) {
+            break;
+        }
+    }
     SDL_free(prefDir);
+    if (attempt > 9999) {
+        lv_platform_dialog_error(DIALOG_BOX_TITLE, "Error Saving Map File");
+        return;
+    }
 
     /* The selected player (the perspective the HUD or Select Team set) is
        the side the user takes. With none, nothing is the user's. */
