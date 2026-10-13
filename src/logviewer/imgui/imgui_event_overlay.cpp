@@ -369,18 +369,13 @@ void lv_event_marker_draw(ImDrawList *dl, int eventKind, int eventTeam, int even
             lv_icon_draw(dl, LV_ICON_PERSON, ImVec2(i0.x + 1.0f, i0.y + 1.0f),
                          ImVec2(i1.x - 1.0f, i1.y - 1.0f), overlay_u32(text, alpha));
         }
-        /* The X: two thin red lines from corner to corner, each on a
-         * darker one so it shows on the green of the builder. Thin, so
-         * most of him still shows. */
-        const float thick = (room >= 14.0f) ? 2.0f : 1.2f;
-        const ImU32 edge = overlay_u32(ImVec4(0.0f, 0.0f, 0.0f, 0.6f), alpha);
+        /* The X: two red lines from corner to corner, one pixel wide and
+         * with no darker line under them, so the builder still shows. */
         const ImU32 red = overlay_u32(ImVec4(1.0f, 0.22f, 0.22f, 1.0f), alpha);
         const ImVec2 a0(i0.x + 0.5f, i0.y + 0.5f), a1(i1.x - 0.5f, i1.y - 0.5f);
         const ImVec2 c0(i1.x - 0.5f, i0.y + 0.5f), c1(i0.x + 0.5f, i1.y - 0.5f);
-        dl->AddLine(a0, a1, edge, thick + 1.2f);
-        dl->AddLine(c0, c1, edge, thick + 1.2f);
-        dl->AddLine(a0, a1, red, thick);
-        dl->AddLine(c0, c1, red, thick);
+        dl->AddLine(a0, a1, red, 1.0f);
+        dl->AddLine(c0, c1, red, 1.0f);
     } else if (marker.drawing == LV_MARKER_PING) {
         /* A map ping: the game's icon for its kind. It has the room inside
          * the line, a point more than a drawn icon, as the game's icon
