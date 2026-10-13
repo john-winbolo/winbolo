@@ -104,8 +104,8 @@ Numbers are the reviewer's finding numbers.
   `[WINBOLO.NET]` are both kept on the device only (`kDeviceLocalSections` in
   `src/common/prefs.c`), so no viewer save sets it. An earlier version of
   this file said the viewer wrote it. That was wrong.
-- If the file is missing or cannot be read, the viewer writes its whole copy,
-  as before.
+- If the file cannot be read, the viewer writes its whole copy, as before.
+  A missing file was handled the same way; round 2, item 4 changed that.
 - Left for the owner: the game client was not changed. The game still writes
   its whole in-memory document (about 15 seconds after a change), so the game
   can still overwrite a layout that the viewer saved while the game ran. One
@@ -243,6 +243,93 @@ Numbers are the reviewer's finding numbers.
 
 - Some unit tests write their files into the working directory. This is the
   pattern the older tests use.
+
+## Oct 13 review round 2
+
+Five small items. No blockers.
+
+### 1. A key set again to its old value did not reach the file - fixed
+
+- Case: the game changes a viewer key in the file. The viewer then sets that
+  key to the value the viewer still holds. The set was dropped as "no
+  change", because the compare was with the viewer's copy, not with the file.
+- In merge mode every set is now applied and its key is noted. With merge
+  mode off the code path is the same as before.
+- Still one file write for each save. A save that finds every noted key
+  already in the file with the same value writes nothing; it only takes the
+  file's content as the viewer's copy.
+- Checked: the viewer sets keys only on a user action or inside its save
+  routine, not each frame. So an idle viewer does not read or write the file.
+- A set of the value already held does not set `[DEVICE] SyncDirty`.
+- Tests: `prefs_merge_reset_wins`, `prefs_merge_idle_no_write`.
+
+### 2. This file said the viewer writes `[DEVICE] SyncDirty` - corrected
+
+- See round 1, item 1. The viewer writes `[LOGVIEWER]` keys and two
+  `[WINBOLO.NET]` keys. It does not write `SyncDirty`.
+
+### 3. Two programs shared one temporary file - fixed in the shared code
+
+- The temporary file was `WinBolo.json.tmp` for every program. It is now
+  `WinBolo.json.<process id>.tmp`, so two programs that save at the same
+  moment do not write into one file.
+- This is shared code: the game, the server tools and the viewer all use it.
+  The change is one name. The process id comes from `_getpid` on Windows and
+  `getpid` elsewhere, as other files in the tree do it.
+- Left-over files: a failed write removes its temporary file, as before. A
+  program that is killed in the middle of a write leaves one small file. A
+  later run with the same process id writes over it. A left-over with another
+  process id stays until someone deletes it by hand. No program removes it,
+  because a program cannot tell it from a file that another running program
+  is writing at that moment.
+- An old `WinBolo.json.tmp` from before this change, if one exists, also
+  stays. Nothing reads it.
+- The Windows build was tested. The other platforms' path was changed the
+  same way and was not built here.
+
+### 4. A file missing for a moment made the viewer write its whole copy - fixed
+
+- The other program removes the old file just before it renames its new file
+  into place. A viewer save in that moment found no file and wrote its whole
+  copy, with old values for the game's keys.
+- In merge mode the first save that finds no file now writes nothing and
+  reports "not saved". The viewer tries again at the end of the next frame.
+  If the file is back, the save is a normal merge. If the file is still
+  missing, the viewer writes its whole copy.
+- At exit there is no next frame. The viewer tries twice, one directly after
+  the other. If the file is still missing on the second try, the viewer
+  writes its whole copy. Decision: at exit it is better to keep the viewer's
+  settings than to lose them, and a file that is missing two times is most
+  probably really gone.
+- Note: the two tries at exit are only microseconds apart. If the game is
+  inside its remove-and-rename at that exact time, the viewer's whole copy
+  can still land first; the game's rename then replaces it, and the viewer's
+  last change is lost. This is much less probable than before.
+- Test: `prefs_merge_missing_retry`. `prefs_merge_fallback` was updated.
+
+### 5. Death static played from the wrong time after a backward seek - fixed
+
+- A snapshot says only that a tank is destroyed, not when it died. A seek
+  back to such a snapshot, from a time when the tank was alive, stamped the
+  snapshot's time as the time of death.
+- Each stored snapshot now keeps the time each tank last died, as playback
+  had it when it first reached the snapshot. This is stored beside the kill
+  and death counts. A seek puts the time back for the tanks that are
+  destroyed in the snapshot.
+- Test: `lv_death_time_seek_back` (fails without the fix: 260 ms, not 40 ms).
+
+### Standing note for the owner: the game still writes its whole document
+
+- The GAME client was not changed. It saves its whole in-memory document
+  about 15 seconds after a change (the debounce). While the game and the
+  viewer both run, the game can put a stale Log Viewer layout back over one
+  that the viewer saved.
+- The reviewer's judgement: to turn merge mode on in the game should work. It
+  is one line, `prefsSetMergeOnSave(true)`, after `prefsInit` in
+  `src/gui/sdl3/gamefront.c` (near line 782).
+- It is NOT done here. It is not tested together with the debounce. It
+  belongs in a separate pull request, after a unit test of debounce and merge
+  together.
 
 ## Not tested on screen
 
