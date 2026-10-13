@@ -232,6 +232,7 @@ local S = {
   t5b_restore = false,  -- Station 5B: a restore of the target is waiting
   b5b_dead_at = nil,  -- Station 5B: the second the player's blocker died
   out5     = 0,       -- polls in a row the player's tank was outside Station 5
+  rings5a_again = false,  -- Station 5A: a ring rebuild is not finished
   sw       = {},      -- Station 7: dead pillboxes picked up
   won      = false,
   panel_key = nil,
@@ -1263,22 +1264,38 @@ end
 -- squares (LAYOUT.walls5a, LAYOUT.moat5a, written by the map tool): a wall
 -- shot down or damaged is a full wall again, and a moat square the man
 -- filled is deep water again. A square with a tank, a man or a pillbox on
--- it is left alone. 156 squares at most, inside one frame's 256.
+-- it is left alone.
+--
+-- 104 wall squares and 52 moat squares, 156 at most, and only a square that
+-- changed is written. A frame allows 256 writes, and that count is shared
+-- with everything else this file and any mod write in the frame. A write
+-- refused for the count (SCN_OP_RATE) stops the pass and sets
+-- S.rings5a_again; on_tick runs the pass again on the next frame, and the
+-- squares already put back are skipped, so it goes on from where it stopped.
 local function rebuild_5a_rings()
   local wall, sea = game.TERRAIN.building, game.TERRAIN.deep_sea
+  S.rings5a_again = false
   for _, w in ipairs(LAYOUT.walls5a) do
     local x, y = w[1], w[2]
     local left = game.wall_shots(x, y)
     if (game.map_tile(x, y) ~= wall or
         (left ~= nil and left < rule("building_life") + 1)) and
        not square_taken(x, y) then
-      game.set_tile(x, y, wall)
+      local ok, code = game.set_tile(x, y, wall)
+      if not ok and code == "SCN_OP_RATE" then
+        S.rings5a_again = true
+        return
+      end
     end
   end
   for _, w in ipairs(LAYOUT.moat5a) do
     local x, y = w[1], w[2]
     if game.map_tile(x, y) ~= sea and not square_taken(x, y) then
-      game.set_tile(x, y, sea)
+      local ok, code = game.set_tile(x, y, sea)
+      if not ok and code == "SCN_OP_RATE" then
+        S.rings5a_again = true
+        return
+      end
     end
   end
 end
@@ -2039,6 +2056,8 @@ end
 
 function on_tick(tick)
   S.frames = S.frames + 1
+  -- A 5A ring rebuild the frame's write count cut short goes on first.
+  if S.rings5a_again then rebuild_5a_rings() end
   if S.fielded.bot6 then hold_bot6() end
   -- 7: the bot stays on its island. Checked every frame: the island has no
   -- moat or gate, and a bot on the road is out within a few frames.
