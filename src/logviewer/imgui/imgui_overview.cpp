@@ -66,9 +66,21 @@ extern "C" {
 /* The colour of things nobody owns, in the stripe and in the share bars. */
 #define OVERVIEW_NEUTRAL_COLOUR IM_COL32(120, 120, 120, 255)
 
-/* How many teams the table had the last time it was drawn: the dock asks for
- * a height before the window is drawn in it. Two until a log says. */
-static int s_last_rows = 2;
+/* How many team rows the dock gives room for when no log says: before the
+ * first log, and at the start of a log, before its first player is in. */
+#define OVERVIEW_DEFAULT_ROWS 2
+
+/* How many teams the log has now, read under the decoder's lock. The dock
+ * asks for a height before the window is drawn in it, so the count is read
+ * for the dock too, and not kept from the last drawing: a count that was
+ * kept was the last log's for one frame after another log was loaded. */
+static int overview_rows_now(void) {
+    LvOverview ov;
+    lv_clientMutexWaitFor();
+    lv_screenOverviewSnapshot(&ov);
+    lv_clientMutexRelease();
+    return (ov.rowCount > 0) ? ov.rowCount : OVERVIEW_DEFAULT_ROWS;
+}
 
 /* The colour a team is drawn in: the HUD panel's (imgui_hud.cpp). A red team
  * is orange, and a colour too dark to see on a dark panel is lifted. */
@@ -142,7 +154,7 @@ static float overview_table_h(int teams) {
 float lv_imgui_overview_dock_height(float dockWidth) {
     const ImGuiStyle &style = ImGui::GetStyle();
     float availW = dockWidth - style.WindowPadding.x * 2.0f;
-    float h = overview_table_h(s_last_rows);
+    float h = overview_table_h(overview_rows_now());
     /* In a narrow dock the bars are under the table. */
     if (availW < OVERVIEW_TABLE_MAX_W + OVERVIEW_BARS_MIN_W) {
         h += overview_bars_h() + style.ItemSpacing.y;
@@ -334,7 +346,6 @@ void lv_imgui_overview_window(void) {
     lv_clientMutexWaitFor();
     lv_screenOverviewSnapshot(&ov);
     lv_clientMutexRelease();
-    if (ov.rowCount > 0) s_last_rows = ov.rowCount;
 
     {
         /* A panel that sat in the dock when the dock was turned off goes
