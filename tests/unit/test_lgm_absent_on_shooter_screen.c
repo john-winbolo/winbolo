@@ -285,6 +285,19 @@ static void las_history(LasFix *f, int absent, int atOld, int atNow) {
     }
 }
 
+/* What the shell-death callback was told on the last update. */
+static int     las_deaths;
+static uint8_t las_death_outcome;
+
+static void las_death_cb(void *ctx, uint32_t fireTick, uint32_t serverFireTick,
+                         BYTE owner, WORLD impactWX, WORLD impactWY,
+                         uint8_t outcome) {
+    (void)ctx; (void)fireTick; (void)serverFireTick; (void)owner;
+    (void)impactWX; (void)impactWY;
+    las_deaths++;
+    las_death_outcome = outcome;
+}
+
 /* Explode one shell and say through *died whether the builder is dead.
  * comp is the rewind the shell carries: 0 with owner NEUTRAL is a pill's
  * shell. At LAS_SITE_EXPIRY the blast is at (bx, by). At LAS_SITE_COLLISION
@@ -330,13 +343,35 @@ static int las_explode(LasFix *f, LasSite site, WORLD bx, WORLD by,
         q->length = 20;
     }
 
-    shellsUpdate(gs, tanksArray, numTanks, lgmPtrs, &gs->ss);
+    {
+        void (*prev)(void *, uint32_t, uint32_t, BYTE, WORLD, WORLD, uint8_t) =
+            gs->callbacks.shellDeath;
 
-    /* Not vacuous: the shell must have exploded on this update. The server
-     * marks it dead here and takes it off the list on the next update. */
-    UT_ASSERT_MSG(gs->shs == q && q->shellDead == TRUE,
-                  "the shell did not explode on this update (%s)",
+        las_deaths = 0;
+        las_death_outcome = 0;
+        gs->callbacks.shellDeath = las_death_cb;
+        shellsUpdate(gs, tanksArray, numTanks, lgmPtrs, &gs->ss);
+        gs->callbacks.shellDeath = prev;
+    }
+
+    /* Not vacuous: the shell must have exploded on this update, and in the
+     * way the case asks for. The server takes a shell that ran out of life
+     * off the list on the same update, and one that hit something on the
+     * next, so the list does not say; the shell-death callback does. */
+    UT_ASSERT_MSG(las_deaths == 1,
+                  "%d shells exploded on this update, expected 1 (%s)",
+                  las_deaths,
                   site == LAS_SITE_EXPIRY ? "end of life" : "collision");
+    if (site == LAS_SITE_EXPIRY) {
+        UT_ASSERT_MSG(las_death_outcome == SHELL_OUTCOME_EXPIRED,
+                      "the shell did not run out of life (outcome %u)",
+                      (unsigned)las_death_outcome);
+    } else {
+        UT_ASSERT_MSG(las_death_outcome == SHELL_OUTCOME_TANK_HIT ||
+                          las_death_outcome == SHELL_OUTCOME_TANK_KILL,
+                      "the shell did not hit the tank (outcome %u)",
+                      (unsigned)las_death_outcome);
+    }
 
     *died = (gs->lgmen[LAS_BUILDER]->isDead == TRUE);
     return 0;
