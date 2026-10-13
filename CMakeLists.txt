@@ -4102,6 +4102,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lgm_request_valid.c
     tests/unit/test_lgm_quit_pill.c
     tests/unit/test_lgm_start_offset.c
+    tests/unit/test_lgm_absent_on_shooter_screen.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
     tests/unit/test_sim_rules.c
@@ -5589,6 +5590,11 @@ set(_unit_test_names
     lgm_request_quiet
     lgm_quit_drops_carried_pill
     lgm_unfield_drops_carried_pill
+    position_history_lookup
+    lgm_kill_absent_on_shooter_screen
+    lgm_kill_rewound_position
+    lgm_kill_pill_shell_present
+    lgm_kill_short_history
     jitter_buffer_grow
     shell_projection
     sim_rules_classic_defaults

@@ -2061,6 +2061,17 @@ int run_lgm_unfield_drops_carried_pill(void);
  * centre is no further off than that. */
 int run_lgm_start_offset(void);
 
+/* A player's shell against a builder, where the shooter's screen decides
+ * (test_lgm_absent_on_shooter_screen.c): the three answers of
+ * posHistoryLookup; no kill when the frame the shooter saw has the builder
+ * in his tank; the rewound position when he was out on it; a pill's shell
+ * and a history too short for the rewind test him where he is now. */
+int run_position_history_lookup(void);
+int run_lgm_kill_absent_on_shooter_screen(void);
+int run_lgm_kill_rewound_position(void);
+int run_lgm_kill_pill_shell_present(void);
+int run_lgm_kill_short_history(void);
+
 /* Adaptive jitter buffer (test_jitter_buffer_grow.c): queue drains under
  * jitter deepen jitterTarget toward MAX, a steadily full queue shrinks it
  * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */

@@ -331,6 +331,62 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
  * compensationTicks 0) and tests tanks and builders where they are now. */
 #define SHELL_LGM_REWIND_LESS 1
 
+/* Tests one builder against a shell that has just exploded at (wx, wy), and
+ * kills him if the blast caught him. Both places a shell explodes in
+ * shellsUpdate, a collision and the end of its life, come through here.
+ *
+ * A pill's shell tests the builder where he is now.
+ *
+ * A player's shell tests him where he was on the shooter's screen, which the
+ * builder position history holds. The shooter's screen decides:
+ *   - the record of that frame has a position: he is tested there;
+ *   - the record of that frame says he was not out (inside his tank, or
+ *     dead): the shooter's screen showed no builder, so this blast does not
+ *     kill him, even if he has left the tank since;
+ *   - there is no record that old yet (the start of a round, a player who
+ *     has just joined): he is tested where he is now. */
+static void shellsBlastTestBuilder(GameSim *sim, shells shell, lgm *lgman, tank *tnk, WORLD wx, WORLD wy) {
+	BYTE lgmOwner = (*lgman)->playerNum;
+	uint8_t rewindTicks;
+	WORLD lgmHitX = 0, lgmHitY = 0;
+	PosHistoryLookup seen = POS_HISTORY_NO_RECORD;
+
+	if (shell->compensationTicks > 0) {
+		rewindTicks = shell->compensationTicks;
+		/* Any builder: the shooter's client draws builders from the newest
+		 * snapshot, one newer than the one the rewind was measured from. */
+		if (rewindTicks > SHELL_LGM_REWIND_LESS) {
+			rewindTicks -= SHELL_LGM_REWIND_LESS;
+		}
+	} else {
+		/* A pill's shell (owner NEUTRAL, compensationTicks 0) tests the
+		 * builder where he is now. */
+		rewindTicks = 0;
+	}
+
+	if (rewindTicks > 0 && sim->lgmPosHistoryPtr != NULL &&
+	    lgmOwner != NEUTRAL) {
+		seen = posHistoryLookup(&sim->lgmPosHistoryPtr[lgmOwner],
+		                        rewindTicks, &lgmHitX, &lgmHitY);
+	}
+
+	if (seen == POS_HISTORY_PRESENT) {
+		lgmDeathCheckAtPosition(sim, lgman,
+		                        lgmHitX, lgmHitY,
+		                        wx, wy,
+		                        shell->owner, shell->owner,
+		                        DMG_SRC_SHELL, shell->pill,
+		                        tnk);
+	} else if (seen == POS_HISTORY_ABSENT) {
+		/* The shooter's screen showed no builder: no test, no kill. */
+	} else {
+		lgmDeathCheck(sim, lgman,
+		              wx, wy,
+		              shell->owner, shell->owner,
+		              DMG_SRC_SHELL, shell->pill, tnk);
+	}
+}
+
 /*********************************************************
 *NAME:          shellsUpdate
 *AUTHOR:        John Morrison
@@ -479,47 +535,11 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 					/* lgms[count] is the ADDRESS of an lgmen[] slot, so it is never
 					 * NULL — what can go away is the slot's CONTENTS, when a player is
 					 * removed after the caller snapshotted this array. lgmDeathCheck
-					 * guards *lgman itself, but the lag-comp lookup below reads
+					 * guards *lgman itself, but shellsBlastTestBuilder reads
 					 * playerNum first and lgmDeathCheckAtPosition has no guard at all. */
 					if (lgms && lgms[count] != NULL && *lgms[count] != NULL) {
-						BYTE lgmOwner = (*lgms[count])->playerNum;
-						uint8_t rewindTicks;
-						WORLD lgmHitX = 0, lgmHitY = 0;
-						bool useRewound = FALSE;
-
-						if (position->compensationTicks > 0) {
-							rewindTicks = position->compensationTicks;
-							/* Any builder: the shooter's client draws builders from the newest
-							 * snapshot, one newer than the one the rewind was measured from. */
-							if (rewindTicks > SHELL_LGM_REWIND_LESS) {
-								rewindTicks -= SHELL_LGM_REWIND_LESS;
-							}
-						} else {
-							/* A pill's shell (owner NEUTRAL, compensationTicks 0) tests the
-							 * builder where he is now. */
-							rewindTicks = 0;
-						}
-
-						if (rewindTicks > 0 && sim->lgmPosHistoryPtr != NULL &&
-						    lgmOwner != NEUTRAL &&
-						    posHistoryGet(&sim->lgmPosHistoryPtr[lgmOwner],
-						                  rewindTicks, &lgmHitX, &lgmHitY)) {
-							useRewound = TRUE;
-						}
-
-						if (useRewound) {
-							lgmDeathCheckAtPosition(sim, lgms[count],
-							                        lgmHitX, lgmHitY,
-							                        newX, newY,
-							                        position->owner, position->owner,
-							                        DMG_SRC_SHELL, position->pill,
-							                        &tk[count]);
-						} else {
-							lgmDeathCheck(sim, lgms[count],
-							              newX, newY,
-							              position->owner, position->owner,
-							              DMG_SRC_SHELL, position->pill, &tk[count]);
-						}
+						shellsBlastTestBuilder(sim, position, lgms[count],
+						                       &tk[count], newX, newY);
 					}
 					count++;
 				}
@@ -571,47 +591,11 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				/* lgms[count] is the ADDRESS of an lgmen[] slot, so it is never
 				 * NULL — what can go away is the slot's CONTENTS, when a player is
 				 * removed after the caller snapshotted this array. lgmDeathCheck
-				 * guards *lgman itself, but the lag-comp lookup below reads
+				 * guards *lgman itself, but shellsBlastTestBuilder reads
 				 * playerNum first and lgmDeathCheckAtPosition has no guard at all. */
 				if (lgms && lgms[count] != NULL && *lgms[count] != NULL) {
-					BYTE lgmOwner = (*lgms[count])->playerNum;
-					uint8_t rewindTicks;
-					WORLD lgmHitX = 0, lgmHitY = 0;
-					bool useRewound = FALSE;
-
-					if (position->compensationTicks > 0) {
-						rewindTicks = position->compensationTicks;
-						/* Any builder: the shooter's client draws builders from the newest
-						 * snapshot, one newer than the one the rewind was measured from. */
-						if (rewindTicks > SHELL_LGM_REWIND_LESS) {
-							rewindTicks -= SHELL_LGM_REWIND_LESS;
-						}
-					} else {
-						/* A pill's shell (owner NEUTRAL, compensationTicks 0) tests the
-						 * builder where he is now. */
-						rewindTicks = 0;
-					}
-
-					if (rewindTicks > 0 && sim->lgmPosHistoryPtr != NULL &&
-					    lgmOwner != NEUTRAL &&
-					    posHistoryGet(&sim->lgmPosHistoryPtr[lgmOwner],
-					                  rewindTicks, &lgmHitX, &lgmHitY)) {
-						useRewound = TRUE;
-					}
-
-					if (useRewound) {
-						lgmDeathCheckAtPosition(sim, lgms[count],
-						                        lgmHitX, lgmHitY,
-						                        position->x, position->y,
-						                        position->owner, position->owner,
-						                        DMG_SRC_SHELL, position->pill,
-						                        &tk[count]);
-					} else {
-						lgmDeathCheck(sim, lgms[count],
-						              position->x, position->y,
-						              position->owner, position->owner,
-						              DMG_SRC_SHELL, position->pill, &tk[count]);
-					}
+					shellsBlastTestBuilder(sim, position, lgms[count],
+					                       &tk[count], position->x, position->y);
 				}
 				count++;
 			}
