@@ -1252,6 +1252,8 @@ STR_LV_TANK_BUILDER_OUT=Builder: out
 STR_LV_TANK_BUILDER_DEAD=Builder: dead
 STR_LV_TANK_PILLS=Pillboxes carried: {number}
 STR_LV_TANK_NO_STOCK=This recording does not hold tank resources
+STR_LV_TANK_BARS=Tank Armour and Shells Bars
+STR_LV_TANK_BARS_TIP=Two small bars over each tank: armour on top, shells under it
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:

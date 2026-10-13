@@ -4588,6 +4588,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The viewer's Tank panel: which tank it shows and how tall a gauge is
     # drawn (lv_tank_status.h, header only).
     tests/unit/test_lv_tank_status.c
+    # The bars the viewer draws over each tank: where they go, how full
+    # they are and their colours (lv_tank_bars.h, header only).
+    tests/unit/test_lv_tank_bars.c
     # The viewer's text dump of a recording around one tick (lv_dump.c): a
     # recorded round dumped with the production decoder.
     tests/unit/test_lv_dump.c
@@ -6832,6 +6835,7 @@ set(_unit_test_names
     lv_team_sprite_sums
     lv_overview_sums
     lv_tank_status_sums
+    lv_tank_bars_sums
     lv_dump_recorded_round
     lv_spmap_owner_table
     lv_spmap_reads_back

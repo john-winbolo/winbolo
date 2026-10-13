@@ -1066,6 +1066,8 @@ static const LangEntry langTable[] = {
     {2828, "Builder: dead"},
     {2829, "Pillboxes carried: {number}"},
     {2830, "This recording does not hold tank resources"},
+    {2831, "Tank Armour and Shells Bars"},
+    {2832, "Two small bars over each tank: armour on top, shells under it"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

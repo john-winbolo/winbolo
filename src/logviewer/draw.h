@@ -202,6 +202,13 @@ void lv_drawSetTankLabelsInTarget(BYTE inTarget);
 
 void lv_drawDirtyScreen(void);
 
+/* The two small bars over each live tank on the map: its armour, and under
+ * that its shells (lv_tank_bars.h). Off until set. Drawn over the map in the
+ * viewer's own window only: not in the game view, not when the viewer is
+ * embedded, and not in an exported picture. */
+void lv_drawSetTankBars(BYTE on);
+BYTE lv_drawGetTankBars(void);
+
 /*********************************************************
 *NAME:          lv_drawSplashForImGui
 *PURPOSE:

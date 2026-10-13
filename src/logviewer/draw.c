@@ -46,6 +46,7 @@
 #include "lv_dock_fit.h"
 #include "lv_hud.h"
 #include "lv_team_sprite.h"
+#include "lv_tank_bars.h"
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/sdl3/sprite_positions.h"
 #include "../gui/sdl3/tileloader.h"
@@ -119,6 +120,17 @@ static LvTankLabelTex s_tankLabelTex[MAX_TANKS];
 static TTF_Font      *s_tankLabelFont = NULL;
 static int            s_tankLabelFontPx = 0;
 static bool           s_tankLabelsInTarget = FALSE;
+
+/* The bars over the tanks (lv_tank_bars.h). Like the names they are drawn
+ * over the blit, at the screen's own resolution, from where lv_drawTanks put
+ * each tank's picture in the target. */
+typedef struct {
+    int  x, y;                     /* the picture's top-left, in render-target pixels */
+    BYTE slot;                     /* the player's slot */
+} LvTankBarPos;
+static LvTankBarPos s_tankBarPos[MAX_TANKS];
+static int          s_tankBarCount = 0;
+static bool         s_tankBars = FALSE;
 
 /* Used for storing time */
 static uint32_t g_dwFrameTotal = 0;
@@ -436,6 +448,7 @@ static float lvDrawPixelScale(void) {
 }
 
 static void lvDrawTankLabelsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 
 /* Paint the world render target into the viewer's own window.
  *
@@ -496,6 +509,8 @@ static void lvDrawBlitTargetToWindow(void) {
                                                : SDL_SCALEMODE_LINEAR);
     SDL_RenderTexture(sdlRenderer, textureTarget, &srcRect, &dstRect);
     if (!lv->gameView) {
+        /* The bars first, so a name is never under one. */
+        lvDrawTankBarsOverBlit(&srcRect, &dstRect);
         lvDrawTankLabelsOverBlit(&srcRect, &dstRect);
     }
 }
@@ -1653,6 +1668,7 @@ void lv_drawTanks(screenTanks *tks) {
     total = lv_screenTanksGetNumEntries(tks);
     zoomFactor = lv_windowGetZoomFactor();
     s_tankLabelCount = 0;
+    s_tankBarCount = 0;
 
     /* The same answer the ground pass used this frame, so the tanks and the
        squares under them cannot end up in different styles. */
@@ -1673,6 +1689,13 @@ void lv_drawTanks(screenTanks *tks) {
         px += 2; py += 2;
         x = mx * (zoomFactor * TILE_SIZE_X) + (zoomFactor * px);
         y = my * (zoomFactor * TILE_SIZE_Y) + (zoomFactor * py);
+        if (s_tankBarCount < MAX_TANKS) {
+            /* Where the picture goes, for the bars over it. */
+            s_tankBarPos[s_tankBarCount].x = x;
+            s_tankBarPos[s_tankBarCount].y = y;
+            s_tankBarPos[s_tankBarCount].slot = lv_screenTanksGetSlot(tks, count);
+            s_tankBarCount++;
+        }
 
         if (simple) {
             /* A triangle pointing the way it faces, in whichever reading the
@@ -1935,6 +1958,97 @@ static void lvDrawTankLabelsOverBlit(const SDL_FRect *src, const SDL_FRect *dst)
         SDL_RenderTexture(sdlRenderer, tex, NULL, &d);
     }
 
+    SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+void lv_drawSetTankBars(BYTE on) {
+    s_tankBars = on ? TRUE : FALSE;
+}
+
+BYTE lv_drawGetTankBars(void) {
+    return s_tankBars ? TRUE : FALSE;
+}
+
+/* One bar: the filled part in its colour, the rest in the track's. */
+static void lvDrawOneTankBar(const LvTankBarRect *bar, int value, int full,
+                             Uint8 r, Uint8 g, Uint8 b) {
+    const Uint8 alpha = (Uint8)(LV_TANK_BARS_ALPHA * 255.0f + 0.5f);
+    float fillW = lvTankBarFillWidth(bar->w, value, full);
+    SDL_FRect part;
+
+    part.y = bar->y;
+    part.h = bar->h;
+    if (fillW > 0.0f) {
+        part.x = bar->x;
+        part.w = fillW;
+        SDL_SetRenderDrawColor(sdlRenderer, r, g, b, alpha);
+        SDL_RenderFillRect(sdlRenderer, &part);
+    }
+    if (fillW < bar->w) {
+        part.x = bar->x + fillW;
+        part.w = bar->w - fillW;
+        SDL_SetRenderDrawColor(sdlRenderer, LV_TANK_BARS_TRACK_R, LV_TANK_BARS_TRACK_G,
+                               LV_TANK_BARS_TRACK_B, alpha);
+        SDL_RenderFillRect(sdlRenderer, &part);
+    }
+}
+
+/* The armour and shells bars over each live tank the blit just drew: src is
+   the slice of the target it took, dst where it went. The places are worked
+   out as the blit works out the tanks' own, so the bars stay on their tanks
+   through a scroll, a zoom and a sidebar. What a tank holds is read now, not
+   when the target was painted, so a bar moves when its tank is hit without
+   the map having to be repainted. */
+static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    LogViewerState *lv = lv_screenGetState();
+    float scale, tilePx;
+    int i;
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    Uint8 oldR, oldG, oldB, oldA;
+
+    if (!s_tankBars || s_tankBarCount == 0 || lv == NULL) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    scale = dst->w / src->w;
+    tilePx = (float)TILE_SIZE_X * scale;
+    if (tilePx < LV_TANK_BARS_MIN_TILE) return;
+
+    hadClip = SDL_RenderClipEnabled(sdlRenderer);
+    SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+    clip.x = (int)dst->x;
+    clip.y = (int)dst->y;
+    clip.w = (int)dst->w;
+    clip.h = (int)dst->h;
+    SDL_SetRenderClipRect(sdlRenderer, &clip);
+    SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+    SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+
+    for (i = 0; i < s_tankBarCount; i++) {
+        BYTE slot = s_tankBarPos[i].slot;
+        LvTankBarsLayout bars;
+        Uint8 r, g, b;
+        int armour, shells;
+
+        /* No bars for a tank that is dead: the picture left in the target
+           until the next repaint is not a tank that holds anything. */
+        if (slot >= MAX_TANKS || !lv->gameViewHud[slot].alive) continue;
+        bars = lvTankBarsLayout(dst->x + ((float)s_tankBarPos[i].x - src->x) * scale,
+                                dst->y + ((float)s_tankBarPos[i].y - src->y) * scale,
+                                tilePx);
+        if (!bars.visible) continue;
+
+        armour = lv->tankInv[slot].armour;
+        shells = lv->tankInv[slot].shells;
+        lvTankBarArmourColour(lvTankBarFraction(armour, lv->rules.tankFullArmour), &r, &g, &b);
+        lvDrawOneTankBar(&bars.armour, armour, lv->rules.tankFullArmour, r, g, b);
+        lvDrawOneTankBar(&bars.shells, shells, lv->rules.tankFullShells,
+                         LV_TANK_BARS_SHELLS_R, LV_TANK_BARS_SHELLS_G, LV_TANK_BARS_SHELLS_B);
+    }
+
+    SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
     SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
 }
 

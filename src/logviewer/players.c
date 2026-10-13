@@ -669,7 +669,8 @@ void lv_playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, 
            values scaled back up to world units and to 0-255. */
         lv_screenTanksAddItem(value,(BYTE) (mx - leftPos), (BYTE) (my - top), px, py, frame, plrs.item[count].team, plrs.item[count].frame, plrs.item[count].onBoat, playerName,
                               (BYTE) (px << TANK_SHIFT_RIGHT2), (BYTE) (py << TANK_SHIFT_RIGHT2),
-                              (BYTE) (plrs.item[count].frame << 4)); 
+                              (BYTE) (plrs.item[count].frame << 4));
+        lv_screenTanksSetLastSlot(value, count);
       } else if (count == 0) {
 /*        sprintf(playerName, "NIF: mx=%d, my=%d, l=%d, r=%d, t=%d, b=%d", mx, my, leftPos, rightPos, top, bottom);
             if (strcmp(playerName, testP) != 0) {

@@ -1336,6 +1336,10 @@
 #define STR_LV_TANK_BUILDER_DEAD            2828
 #define STR_LV_TANK_PILLS                   2829
 #define STR_LV_TANK_NO_STOCK                2830
+/* The viewer's Options menu: the two bars over each tank, and the item's
+   tooltip. */
+#define STR_LV_TANK_BARS                    2831
+#define STR_LV_TANK_BARS_TIP                2832
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

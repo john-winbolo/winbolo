@@ -186,6 +186,10 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
 
     lv_platform_config_get_string("LOGVIEWER", "Show Regions", "No", val, sizeof(val));
     lv_g_show_regions = (val[0] == 'Y' || val[0] == 'y');
+
+    /* Off until asked for: the bars sit over the map. */
+    lv_platform_config_get_string("LOGVIEWER", "Tank Bars", "No", val, sizeof(val));
+    lv_drawSetTankBars((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
 }
 
 void lv_imgui_main_menu_save(void) {
@@ -210,6 +214,7 @@ void lv_imgui_main_menu_save(void) {
         lv_platform_config_set_string("LOGVIEWER", "Window.ScenarioPanel.Size", side);
     }
     lv_platform_config_set_string("LOGVIEWER", "Show Regions", lv_g_show_regions ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Tank Bars", lv_drawGetTankBars() ? "Yes" : "No");
 }
 
 static void zoom_at_center(int stepIndex) {
@@ -510,6 +515,17 @@ int lv_imgui_main_menu_bar(void) {
             }
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                 ImGui::SetTooltip("%s", langGetText(STR_LV_REGIONS_TIP));
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_TANK_BARS), NULL, lv_drawGetTankBars() != 0)) {
+                /* Drawn over the map each time it is put on the screen, so
+                 * the frame is asked for now rather than at the next tick of
+                 * a paused replay. */
+                lv_drawSetTankBars(lv_drawGetTankBars() ? 0 : 1);
+                lv_windowNeedRedraw();
+                clicked = 1;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", langGetText(STR_LV_TANK_BARS_TIP));
             }
             if (ImGui::MenuItem(langGetText(STR_MENU_SOUND_EFFECTS), NULL, s_lv->isSoundsPlaying != 0)) {
                 s_lv->isSoundsPlaying = s_lv->isSoundsPlaying ? 0 : 1;
