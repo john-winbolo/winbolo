@@ -2108,6 +2108,17 @@ int run_lgm_unfield_drops_carried_pill(void);
  * centre is no further off than that. */
 int run_lgm_start_offset(void);
 
+/* A player's shell against a builder, where the shooter's screen decides
+ * (test_lgm_absent_on_shooter_screen.c): the three answers of
+ * posHistoryLookup; no kill when the frame the shooter saw has the builder
+ * in his tank; the rewound position when he was out on it; a pill's shell
+ * and a history too short for the rewind test him where he is now. */
+int run_position_history_lookup(void);
+int run_lgm_kill_absent_on_shooter_screen(void);
+int run_lgm_kill_rewound_position(void);
+int run_lgm_kill_pill_shell_present(void);
+int run_lgm_kill_short_history(void);
+
 /* Adaptive jitter buffer (test_jitter_buffer_grow.c): queue drains under
  * jitter deepen jitterTarget toward MAX, a steadily full queue shrinks it
  * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */
@@ -2710,6 +2721,16 @@ int run_ping_kick_clears_strikes_on_disconnect(void);
  * arrays, and its small-explosion sweep must cover every index
  * (test_tkexp_lgm_pairing.c). */
 int run_tkexp_lgm_pairing(void);
+
+/* A shell that hits a tank blows up at the hit tank's present centre, not at
+ * the shell, which a lag-compensated test leaves behind the tank
+ * (test_tank_blast_at_tank.c). */
+int run_tank_blast_rewound_hit_at_present_tank(void);
+int run_tank_blast_kill_starts_at_present_tank(void);
+int run_tank_blast_zero_rewind_unchanged(void);
+int run_tank_blast_hit_decision_unchanged(void);
+int run_tank_blast_builder_at_present_tank(void);
+int run_tank_blast_absent_builder_lives(void);
 
 /* In-game input gate taxonomy (test_input_gate.c). gameInputSuspended()
  * suspends the polled in-game readers only for blocking surfaces (text

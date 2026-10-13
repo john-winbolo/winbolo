@@ -40,16 +40,20 @@ void posHistoryRecord(PosHistory *h, WORLD x, WORLD y, bool alive) {
     }
 }
 
-bool posHistoryGet(const PosHistory *h, uint8_t ticksAgo, WORLD *outX, WORLD *outY) {
+PosHistoryLookup posHistoryLookup(const PosHistory *h, uint8_t ticksAgo, WORLD *outX, WORLD *outY) {
     uint8_t idx;
     if (ticksAgo >= h->count) {
-        return FALSE;
+        return POS_HISTORY_NO_RECORD;
     }
     idx = (h->head - 1 - ticksAgo + POSITION_HISTORY_SIZE) % POSITION_HISTORY_SIZE;
     if (!h->entries[idx].alive) {
-        return FALSE;
+        return POS_HISTORY_ABSENT;
     }
     *outX = h->entries[idx].x;
     *outY = h->entries[idx].y;
-    return TRUE;
+    return POS_HISTORY_PRESENT;
+}
+
+bool posHistoryGet(const PosHistory *h, uint8_t ticksAgo, WORLD *outX, WORLD *outY) {
+    return posHistoryLookup(h, ticksAgo, outX, outY) == POS_HISTORY_PRESENT;
 }
