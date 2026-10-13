@@ -20,6 +20,9 @@
  * with one set of names.
  *
  * The Controls panel calls the two draw functions; nothing else does.
+ *
+ * The list of kinds itself (lv_event_kinds_combo) is also the filter of the
+ * Events panel: one function draws both, each with its own choice.
  */
 
 #ifndef LV_IMGUI_EVENT_OVERLAY_H
@@ -36,6 +39,18 @@ void lv_event_overlay_combo(bool full);
 /* The width lv_event_overlay_combo(true) takes, and that of
  * lv_event_overlay_combo(false). */
 float lv_event_overlay_combo_width(bool full);
+
+/* The list of the ten kinds of event with a check box each: the one control
+ * for "tick some kinds" in the viewer. It is a combo, as wide as the item
+ * width set for it (ImGui::SetNextItemWidth). preview is the text on it
+ * while it is closed, NULL for the arrow alone. Open, it has an "All" and a
+ * "None" button and then a row a kind, in the order of lvEventKind: the
+ * marker the kind has in the "Overlay events" lane, its name, and how many
+ * events of it the log has (counts, LV_EVK_COUNT entries). The list stays
+ * open while kinds are ticked. tip is the tooltip of the closed combo (NULL
+ * for none). mask has one bit a kind; returns true when it was changed. */
+bool lv_event_kinds_combo(const char *id, const char *preview, const char *tip,
+                          unsigned *mask, const int *counts);
 
 /* The lane of markers. Call it just before the seek slider, with the item
  * width of the slider already pushed: the lane takes that width, so its

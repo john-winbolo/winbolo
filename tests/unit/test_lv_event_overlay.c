@@ -295,3 +295,105 @@ int run_lv_event_overlay_picture(void) {
                   "any other size: blended");
     return 0;
 }
+
+/* The one list of ticked kinds the Controls panel ("Overlay events") and
+   the Events panel (its filter) both use: which events a choice shows. */
+int run_lv_event_kinds_filter(void) {
+    int counts[LV_EVK_COUNT];
+    int kind;
+    unsigned mask;
+
+    /* One bit a kind, in the order of the list. */
+    for (kind = 0; kind < LV_EVK_COUNT; kind++) {
+        UT_ASSERT_MSG(lvEventKindTicked(LV_OVERLAY_ALL_MASK, kind), "all: kind %d is shown", kind);
+        UT_ASSERT_MSG(!lvEventKindTicked(0u, kind), "none: kind %d is not", kind);
+        UT_ASSERT_MSG(lvEventKindTicked(1u << kind, kind), "its own bit: kind %d", kind);
+        UT_ASSERT_MSG(!lvEventKindTicked(LV_OVERLAY_ALL_MASK & ~(1u << kind), kind),
+                      "every kind but %d", kind);
+    }
+    UT_ASSERT_MSG(LV_EVK_COUNT == 10, "ten kinds (%d)", (int)LV_EVK_COUNT);
+    /* A kind out of range is never shown, whatever the bits say. */
+    UT_ASSERT_MSG(!lvEventKindTicked(0xFFFFFFFFu, -1), "kind -1");
+    UT_ASSERT_MSG(!lvEventKindTicked(0xFFFFFFFFu, LV_EVK_COUNT), "one past the last kind");
+    UT_ASSERT_MSG(!lvEventKindTicked(0xFFFFFFFFu, 40), "past the bits of the mask");
+
+    /* A list of events through a choice: the rows of the Events panel, the
+       markers of the lane. */
+    {
+        const int events[8] = { LV_EVK_GAME, LV_EVK_TANK_KILLED, LV_EVK_CHAT, LV_EVK_TANK_KILLED,
+                                LV_EVK_PILL_CAPTURED, LV_EVK_CHAT, LV_EVK_HIGHLIGHT, LV_EVK_TANK_KILLED };
+        int shown[8];
+        int n = 0, i;
+        mask = (1u << LV_EVK_TANK_KILLED) | (1u << LV_EVK_PILL_CAPTURED);
+        for (i = 0; i < 8; i++) {
+            if (lvEventKindTicked(mask, events[i])) shown[n++] = i;
+        }
+        UT_ASSERT_MSG(n == 4 && shown[0] == 1 && shown[1] == 3 && shown[2] == 4 && shown[3] == 7,
+                      "tank kills and pillboxes, in the order of the list (%d)", n);
+        memset(counts, 0, sizeof(counts));
+        for (i = 0; i < 8; i++) counts[events[i]]++;
+        UT_ASSERT_MSG(lvEventKindsTickedCount(mask, counts) == 4, "the number on the closed list");
+        UT_ASSERT_MSG(lvEventKindsTickedCount(LV_OVERLAY_ALL_MASK, counts) == 8, "all of them");
+        UT_ASSERT_MSG(lvEventKindsTickedCount(0u, counts) == 0, "none ticked");
+        UT_ASSERT_MSG(lvEventKindsTickedCount(1u << LV_EVK_PLAYER, counts) == 0,
+                      "a kind the log has no event of: an empty list");
+        UT_ASSERT_MSG(lvEventKindsTickedCount(mask, NULL) == 0, "no counts");
+    }
+
+    /* What the closed filter says in the room it has: a combo adds 8 of
+       padding and an arrow of 19 to its text. "All events (412)" is 112
+       wide, "(412)" 35. */
+    UT_ASSERT_MSG(lvEventsLabelPick(139.0f, 112.0f, 35.0f, 27.0f) == LV_EVENTS_LABEL_FULL, "exact fit");
+    UT_ASSERT_MSG(lvEventsLabelPick(138.0f, 112.0f, 35.0f, 27.0f) == LV_EVENTS_LABEL_COUNT, "one short");
+    UT_ASSERT_MSG(lvEventsLabelPick(94.0f, 112.0f, 35.0f, 27.0f) == LV_EVENTS_LABEL_COUNT,
+                  "the narrowest sidebar (110 less its padding)");
+    UT_ASSERT_MSG(lvEventsLabelPick(62.0f, 112.0f, 35.0f, 27.0f) == LV_EVENTS_LABEL_COUNT, "the number, exact");
+    UT_ASSERT_MSG(lvEventsLabelPick(61.0f, 112.0f, 35.0f, 27.0f) == LV_EVENTS_LABEL_ARROW, "the arrow alone");
+    UT_ASSERT_MSG(lvEventsLabelPick(0.0f, 112.0f, 35.0f, 27.0f) == LV_EVENTS_LABEL_ARROW, "no room");
+    return 0;
+}
+
+/* The Events panel's own choice in the preferences ("Events.Kinds"), and the
+   old one-kind filter ("Events.Filter") taken over when no list was saved. */
+int run_lv_event_kinds_prefs(void) {
+    char text[256];
+    unsigned mask;
+    int kind;
+
+    /* Written and read back: every choice of one kind, all, none, a mix. */
+    for (kind = 0; kind < LV_EVK_COUNT; kind++) {
+        lvOverlayMaskToText(1u << kind, text, sizeof(text));
+        UT_ASSERT_MSG(lvEventsMaskFromPrefs(text, "all") == (1u << kind), "kind %d alone (%s)", kind, text);
+    }
+    lvOverlayMaskToText(LV_OVERLAY_ALL_MASK, text, sizeof(text));
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs(text, "chat") == LV_OVERLAY_ALL_MASK, "all, read back");
+    mask = (1u << LV_EVK_TANK_KILLED) | (1u << LV_EVK_CHAT) | (1u << LV_EVK_HIGHLIGHT);
+    lvOverlayMaskToText(mask, text, sizeof(text));
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs(text, "all") == mask, "a mix, read back (%s)", text);
+    /* None is a choice too, and is kept: it is not "nothing saved". */
+    lvOverlayMaskToText(0u, text, sizeof(text));
+    UT_ASSERT_MSG(strcmp(text, "none") == 0, "none is written as a word");
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs(text, "all") == 0u, "none, read back");
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs(text, lvEventKindKey(LV_EVK_CHAT)) == 0u,
+                  "a saved list wins over the old filter");
+
+    /* Nothing saved: every kind, the default. */
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs("", "all") == LV_OVERLAY_ALL_MASK, "a new install");
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs(NULL, NULL) == LV_OVERLAY_ALL_MASK, "no text at all");
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs("", "") == LV_OVERLAY_ALL_MASK, "an empty old filter");
+    /* Nothing saved but the old filter: its one kind alone. */
+    for (kind = 0; kind < LV_EVK_COUNT; kind++) {
+        UT_ASSERT_MSG(lvEventsMaskFromPrefs("", lvEventKindKey(kind)) == (1u << kind),
+                      "the old filter of kind %d", kind);
+        UT_ASSERT_MSG(lvEventsMaskFromPrefs(NULL, lvEventKindKey(kind)) == (1u << kind),
+                      "the old filter of kind %d, no list", kind);
+    }
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs("", "a_newer_kind") == LV_OVERLAY_ALL_MASK,
+                  "an old filter this build does not know: all");
+
+    /* The panel's choice and the one of "Overlay events" are two texts: one
+       does not read as the other's default. */
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs("", "all") != LV_OVERLAY_DEFAULT_MASK,
+                  "the panel's default is all, not the lane's six");
+    return 0;
+}

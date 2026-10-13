@@ -1246,7 +1246,7 @@ STR_LV_WIN_OVERVIEW=Overview
 STR_LV_OVERVIEW_TOTAL=Total
 STR_LV_OVERVIEW_MORE={string1} +{number}
 STR_LV_WIN_TANK=Tank
-STR_LV_TANK_HINT=Click a tank on the map or in the HUD panel to select it
+STR_LV_TANK_HINT=Click a tank on the map or in the HUD panel to select it. Double-click a tank on the map to see the game as its player sees it
 STR_LV_TANK_STOCK_FMT={string1}: {number} / {number2}
 STR_LV_TANK_BUILDER_IN=Builder: in tank
 STR_LV_TANK_BUILDER_OUT=Builder: out
@@ -1264,8 +1264,7 @@ STR_LV_TIP_LIVE=Jump to live
 STR_LV_TIP_DESELECT=Deselect tank
 STR_LV_TIP_ALL_TEAMS=Back to all teams
 
-# Log viewer: the gear of a panel and its options
-STR_LV_TIP_DOCK_OPTIONS=Sidebar options
+# Log viewer: the option of a sidebar, in the Windows menu
 STR_LV_DOCK_TRANSPARENT=Make unused sidebar portions transparent
 
 # Log viewer: the event markers over the seek bar of the Controls panel
@@ -1276,6 +1275,11 @@ STR_LV_OVERLAY_MORE=+{string1} more
 STR_LV_BUILDER_STATUS=Tank Builder Status
 STR_LV_BUILDER_STATUS_TIP=Over each tank on the map: an arrow toward its builder when he is out of the tank, and a parachute with the time until the new builder is in the tank when he is dead
 STR_LV_TANK_BUILDER_BACK=Builder: dead, back in {string1}
+
+# Log viewer: the filter of the Events panel, a list of ticked kinds
+STR_LV_EVT_FILTER_SOME={string1} of {string2} events
+STR_LV_EVT_FILTER_EMPTY=No events of the selected kinds
+STR_LV_EVT_FILTER_TIP=Show only the events of the ticked kinds
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:

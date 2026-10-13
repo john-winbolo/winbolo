@@ -173,4 +173,14 @@ static inline bool lvItemPictureSharp(float sidePx) {
     return whole >= LV_ITEM_PICTURE_PX && (whole % LV_ITEM_PICTURE_PX) == 0;
 }
 
+/* The same rule for a picture of any size (the builder is 4 pixels high):
+ * sharp at a whole number of times srcPx, 1 time or more. */
+static inline bool lvPictureSharp(float sidePx, int srcPx) {
+    int whole = (int)(sidePx + 0.5f);
+    float d = sidePx - (float)whole;
+    if (d < 0.0f) d = -d;
+    if (d > 0.01f || srcPx <= 0) return false;
+    return whole >= srcPx && (whole % srcPx) == 0;
+}
+
 #endif /* LV_TEAM_SPRITE_H */

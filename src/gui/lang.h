@@ -1349,8 +1349,9 @@
 /* Log viewer: the X at the end of a panel's name line */
 #define STR_LV_TIP_DESELECT                 2837
 #define STR_LV_TIP_ALL_TEAMS                2838
-/* Log viewer: the gear of a panel and its options */
-#define STR_LV_TIP_DOCK_OPTIONS             2839
+/* 2839 was the tooltip of the gear each sidebar had ("Sidebar options"); the
+ * gear is gone and the number is not used again. */
+/* Log viewer: the option of a sidebar, in the Windows menu */
 #define STR_LV_DOCK_TRANSPARENT             2840
 /* Log viewer: the event markers over the seek bar of the Controls panel */
 #define STR_LV_OVERLAY_EVENTS               2841
@@ -1361,6 +1362,10 @@
 #define STR_LV_BUILDER_STATUS               2845
 #define STR_LV_BUILDER_STATUS_TIP           2846
 #define STR_LV_TANK_BUILDER_BACK            2847
+/* Log viewer: the filter of the Events panel, a list of ticked kinds */
+#define STR_LV_EVT_FILTER_SOME              2848
+#define STR_LV_EVT_FILTER_EMPTY             2849
+#define STR_LV_EVT_FILTER_TIP               2850
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

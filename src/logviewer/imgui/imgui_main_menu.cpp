@@ -636,8 +636,9 @@ int lv_imgui_main_menu_bar(void) {
                         clicked = 1;
                     }
                 }
-                /* The same option the gear of each sidebar has: the part of
-                 * the sidebar past its panels is clear and shows the map. */
+                /* The option of each sidebar, set here and nowhere else: the
+                 * part of the sidebar past its panels is clear and shows the
+                 * map. */
                 if (ImGui::BeginMenu(langGetText(STR_LV_DOCK_TRANSPARENT))) {
                     for (const auto &sb : k_sidebars) {
                         bool on = lv_imgui_dock_get_side_clear(sb.side) != 0;

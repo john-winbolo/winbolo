@@ -385,15 +385,35 @@ The art:
 - Pillboxes carried: the game's 12 by 12 neutral pillbox status picture from
   the tiles, the same one the Overview panel uses. The line becomes
   `<picture>: 2`. The tooltip is the full line in words.
-- Builder: no picture. The game's builder is 3 by 4 pixels and does not read
-  as an icon. The line stays `Builder: in tank` in both forms.
+- Builder (Oct 13; before that the line kept its word): the map's own
+  picture of a builder in place of the word. The line is
+  `<builder>: in tank`, `: out`, `: dead` or `: dead, back in 0:07`, as the
+  line in words has it. It is the first builder frame of the tiles, 3 by 4
+  pixels, in the game's own colours (`lv_drawBuilderPicture` in `draw.c`,
+  the cell `lv_drawLGMs` draws; `lv_builder_picture` in
+  `imgui_lv_icons.cpp` is the shared helper). It is drawn at a whole number
+  of times its size, so it stays sharp: 9 by 12 on a 13 point line. While
+  the builder is dead the picture is the parachute tile of the map (16 by
+  16, a square as high as the line, blended). The picture is in the middle of the column
+  the other pictures have, and its colon is under their colons. The tooltip
+  of the picture is the word "Builder", taken from the line before its
+  colon. With no tiles loaded a drawn figure stands in. The form in words
+  still reads `Builder: in tank`; the gauges-only form is unchanged.
 
 Notes for the owner:
 
-- The builder line is the widest line of the picture form (about 112 pixels
-  in the default font). A panel narrower than that shows gauges only. A
-  short word or a drawn icon for the builder would let the picture form go
-  narrower. That needs a new string or new art, so it was not done.
+- The first builder frame was taken as the standing one. It was not seen on
+  a screen. If it is a walking frame, the cell is one number in
+  `lv_drawBuilderPicture`.
+- The builder line was the widest line of the picture form (about 112
+  pixels in the default font). With the picture it is about 72 at its
+  widest state ("dead"), and the choice of form counts it at that width. So
+  the picture form now shows in narrower panels: in the try-out a panel 110
+  wide and 300 or more high now has the pictures (gauges only before), and
+  a panel 180 wide has them beside the gauges (under them before).
+- The pillbox line was left as it is: it already has the game's own
+  pillbox picture, not a word and not a drawn shape.
+- A language whose builder lines have no colon keeps the line in words.
 - No new strings. The numbers are taken from the existing lines: the part
   after the colon. A translation with no colon keeps its line in words.
 
@@ -450,7 +470,6 @@ drawn icons of the viewer are now in one file, `imgui_lv_icons.cpp`:
 | `LV_ICON_FAST_FORWARD` | two triangles to the right | Controls |
 | `LV_ICON_TO_END` | a triangle against a bar | Controls, "Jump to live" (live feed only) |
 | `LV_ICON_EYE` | an eye | HUD panel (moved here from `imgui_hud.cpp`) |
-| `LV_ICON_GEAR` | a toothed wheel | sidebar options |
 
 No picture file and no icon font were added. A button whose action has
 nothing to act on is dimmed: Rewind at the start, Play at the end or while
@@ -534,6 +553,43 @@ round its cell.
 - The hint of the Tank panel now reads "Click a tank on the map or in the
   HUD panel to select it".
 
+**A double click on a tank shows that player's view (Oct 13).** A double
+click on a tank on the map selects it and turns on the view of its player:
+the state the eye and the name in the HUD panel stand for. The X of the HUD
+panel goes back to all teams, as before.
+
+- Before this a double click had no meaning of its own. It was two single
+  clicks: the tank was selected twice (Information mode) or picked twice
+  (Select Team mode), with no other effect. The map had no way to turn a
+  player's view on; only a click on a tank in the HUD panel did that. (In
+  Select Team mode a view that was already on moved with the picked tank,
+  and still does.)
+- The call is the one the HUD panel makes for a click on a tank there
+  (`lv_screenTogglePerspective`). That call turns the view off when it is
+  on for the same player, so the map makes it only when the view is not on
+  for that tank yet (`lvMapClickViewsTank` in `lv_tank_pick.h`, asked with
+  `lv_screenPerspectivePlayer`). So a double click on the tank whose view
+  is on leaves it on, and a third click does nothing more.
+- Each click of the double click still does all a single click does. The
+  first selects the tank. The second selects the same tank again, which
+  changes nothing, and then turns the view on. The view changes once.
+- Both clicks must be on the same tank. ImGui counts the clicks (its double
+  click time and distance: 0.3 s, 6 points).
+- A double click on the map, a pillbox or a base does what it did before:
+  two single clicks.
+- Select Team mode: the first click picks the tank's team as before ("self"
+  is that player). The second click then turns that player's view on. If a
+  view was on already, the first click moved it to this tank, and the
+  second click changes nothing.
+- The viewer has one map and one place where a click on it is read
+  (`imgui_game_viewport.cpp`), so this is the same in every view of the map,
+  on a file log and on a live feed. The embedded viewer in the game has no
+  click on a tank and has none now.
+- The hint of the Tank panel now ends "Double-click a tank on the map to
+  see the game as its player sees it".
+- Unit test: `lv_map_double_click`. The click itself was not tried: the
+  headless try-out has no map.
+
 
 ### The name line: team stripe in the HUD panel, and an X to deselect
 
@@ -582,24 +638,21 @@ not the background of a panel.
 preference `Window.<Panel>.Transparent` are gone. The gear had no other
 item. An old `Window.<Panel>.Transparent` key in a preferences file is not
 read and is not moved to the new option. A floating panel has no such option
-now. The two strings keep their numbers (2839, 2840) with new names and
-words: `STR_LV_TIP_DOCK_OPTIONS` "Sidebar options", `STR_LV_DOCK_TRANSPARENT`
-"Make unused sidebar portions transparent".
+now. String 2840 keeps its number with a new name and new words:
+`STR_LV_DOCK_TRANSPARENT` "Make unused sidebar portions transparent".
 
 **The option.** One a sidebar (left, right, top, bottom), off by default.
-It is in two places:
+It is in one place: the Windows menu, under the four sidebar items, a
+submenu "Make unused sidebar portions transparent" with the four sidebars as
+check items.
 
-- Windows menu, under the four sidebar items: a submenu "Make unused sidebar
-  portions transparent" with the four sidebars as check items.
-- A gear for each sidebar that shows. It is NOT on the sidebar, where it
-  would be over a panel's controls. It is on the map, in the corner at the
-  end of the sidebar's inner edge going clockwise: the left sidebar's gear
-  at the map's top left, the top one's at the top right, the right one's at
-  the bottom right, the bottom one's at the bottom left. So two gears are
-  never in one corner. It is one button the height of a text line, dim (45%)
-  until the mouse is on it, tooltip "<sidebar>: Sidebar options". It covers
-  that small square of the map. It is not drawn when the map area is less
-  than three such buttons wide or high.
+**No gear (Oct 13).** For a short time each sidebar also had a gear on a
+corner of the map, with this one item in its menu. The owner had it taken
+out: the menu bar is enough. The gear, its menu, its place on the map, the
+drawn gear icon (`LV_ICON_GEAR`, which nothing else used) and its tooltip
+string are gone. Number 2839 (`STR_LV_TIP_DOCK_OPTIONS`, "Sidebar options")
+is not used and is not to be given to a new string; `lang.h` says so. The
+map has no button on it now.
 
 **Option off.** The sidebar is as it was: a solid strip, the panels share
 all of its length, the map stops at its edge.
@@ -692,11 +745,11 @@ of the window" rule is unchanged.
   Comments as a tab) option off, then on; packing and the 4 point grips; the
   clear part has no window under the mouse and is map; a drag of the last
   grip and of the first grip; a double click; a window too short and far too
-  short, and back; the inner edge dragged beside the clear part; the gear
-  opened and its item clicked; option off again; Tank beside Controls across
+  short, and back; the inner edge dragged beside the clear part; no gear
+  window and no popup; option off again; Tank beside Controls across
   the sidebar; the saved lines. No check failed and no ImGui assert.
 - NOT tested: the map drawn under the sidebar (the try-out has no renderer),
-  the look of the grips and the gear, and the wiring in `screen.c`,
+  the look of the grips, and the wiring in `screen.c`,
   `draw.c` and `logviewer.c` beyond the sums above. Those need a look on a
   screen.
 
@@ -768,10 +821,50 @@ pillbox stolen, base captured, base stolen, tank killed, builder killed.
 Player, chat, game and highlight are off.
 
 **Saved.** One key of the LOGVIEWER preferences, `Controls.OverlayEvents`:
-the saved names of the ticked kinds with commas between them, as the
-`Events.Filter` key names one kind. "none" is an empty choice (an empty text
-would read as "never saved"). A name from a newer build is ignored. It is
-written at each tick.
+the saved names of the ticked kinds with commas between them. "none" is an
+empty choice (an empty text would read as "never saved"). A name from a
+newer build is ignored. It is written at each tick.
+
+**The same list is the filter of the Events panel (Oct 13).** The Events
+panel had a filter of one kind or all. It now has the list above: the same
+function draws both (`lv_event_kinds_combo` in `imgui_event_overlay.cpp`),
+so the ten kinds, their order, their markers, the counts and the "All" and
+"None" buttons are the same. Each has its own choice.
+
+- The panel's choice is saved under `Events.Kinds`, in the same form as
+  `Controls.OverlayEvents`. The default is every kind. With no `Events.Kinds`
+  saved, an old `Events.Filter` of one kind is taken over as that kind alone
+  and written under the new key (`lvEventsMaskFromPrefs`). The old key is
+  left in the file and not read again once the new one is there.
+- The list shows only the lines of the ticked kinds. One test decides it for
+  the panel's lines and for the lane's markers: `lvEventKindTicked`.
+- **A change from before:** the old filter fell back to "all" when the log
+  had no line of the chosen kind, and did not offer such a kind. The list
+  now offers all ten kinds (a kind with no line reads "(0)") and shows what
+  is ticked. With lines in the log and none of a ticked kind, the panel
+  reads "No events of the selected kinds".
+- Closed, the filter reads "All events (412)" with every kind ticked,
+  "Tank killed (37)" with one kind, "37 of 412 events" with any other
+  choice. In a narrow panel it reads only "(37)", and in a narrower one it
+  is the arrow alone (`lvEventsLabelPick`); what is left out is then in the
+  tooltip.
+- The selected line stays selected when the filter changes and its kind is
+  still ticked, and the list is moved so that it is in the middle. A
+  selected line the filter now hides is not selected any more.
+- The panel has no text filter and no player filter, and no "next event" or
+  "previous event" keys; none was there before and none was added. A click
+  on a line goes to that event, as before, and can only be on a shown line.
+- Unit tests: `lv_event_kinds_filter`, `lv_event_kinds_prefs`. A headless
+  try-out ran the real Events panel (400 made-up lines; nothing saved, one
+  kind, three kinds, none, a kind with no line) at ten widths from 400 down
+  to 40: no ImGui assert and no scroll bar across. A click opened the list
+  at 300, 110 and 60 wide; "None", one row and "All" each saved the right
+  text and left the list open. Not checked there: what text the closed
+  filter shows (only the sum that picks it is tested), and the place of the
+  selected line after a change.
+- Note: under about 116 points wide the "Auto Scroll" check box of the panel
+  is wider than the panel. That was so before; the filter itself fits down
+  to its arrow.
 
 **The lane.** It is as wide as the seek bar and one line of text high, plus
 3 points, with 1 point between it and the bar. The x of a marker is the sum
@@ -1073,7 +1166,9 @@ tick has events, so this showed only in quiet moments.
   builder who was not killed, and the table dropped by a new load).
 - The marker is SDL drawing and was not run in the headless try-out. The
   Tank panel's line was: three states, nine sizes, no assert, no size
-  clipped that was not clipped before.
+  clipped that was not clipped before. It was run again with the builder's
+  picture (20 sizes, four passes, and the three dead states at nine sizes):
+  the same sizes clip as before (60 by 60 and 20 by 20), no new one.
 
 
 ## Not tested on screen
@@ -1091,7 +1186,7 @@ Please look at, at least:
 - Sidebars on all four sides, and the layout after a restart.
 - "Make unused sidebar portions transparent" on each of the four sidebars:
   the map under the clear part, a click and a drag there, the panel grips,
-  the gear in its corner, a jump to an event with the option on (the place
+  a jump to an event with the option on (the place
   goes to the middle of the map that shows), and the option turned on and
   off (the map does not move).
 - Seek slider: drag, release, and hiding the Controls panel during a drag.

@@ -4171,6 +4171,8 @@ int run_lv_tank_bars_sums(void);
 /* A click on a tank on the log viewer's map (test_lv_tank_pick.c): which
  * tank a point is on, and where the mark round the selected one goes. */
 int run_lv_tank_pick_sums(void);
+/* A double click on a tank on the map: when it turns that tank's view on. */
+int run_lv_map_double_click(void);
 int run_lv_name_header_sums(void);
 /* A sidebar of the log viewer whose unused part is clear
  * (test_lv_dock_clear.c): the panels packed along it both ways, their
@@ -4198,6 +4200,10 @@ int run_lv_event_overlay_slider(void);
 int run_lv_event_overlay_clusters(void);
 int run_lv_event_overlay_choice(void);
 int run_lv_event_overlay_picture(void);
+/* The one list of ticked kinds of the Controls and Events panels, and the
+ * Events panel's saved choice. */
+int run_lv_event_kinds_filter(void);
+int run_lv_event_kinds_prefs(void);
 /* The log viewer's playback times as text and the ring flashed round an
  * event's place (test_lv_time_fmt.c); and a jump to an event stopping on the
  * event's own tick (test_lv_presentation.c). */

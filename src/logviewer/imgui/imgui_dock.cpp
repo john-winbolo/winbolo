@@ -135,9 +135,6 @@ static LvDockRect s_used[LV_DOCK_SIDES];
 static bool  s_slot_drag[LV_DOCK_SIDES] = { false, false, false, false };
 static float s_slot_grab = 0.0f;
 
-/* The mouse was on the sidebar's gear the last time it drew. */
-static bool s_gear_hot[LV_DOCK_SIDES] = { false, false, false, false };
-
 /* Whether this host may show sidebars at all. Only the standalone viewer
  * says yes; the spectator host shares this code and the same preferences and
  * must stay as it was. */
@@ -242,7 +239,6 @@ void lv_imgui_dock_init(struct LogViewerState *lv) {
         s_side[i].gripHeld = false;
         s_side[i].tree.clear();
         s_slot_drag[i] = false;
-        s_gear_hot[i] = false;
         s_used[i].x = s_used[i].y = s_used[i].w = s_used[i].h = 0;
     }
 
@@ -1283,58 +1279,6 @@ static void draw_side(int side, ImVec2 pos, ImVec2 size, int other, int extent) 
     }
 }
 
-/* The gear of a sidebar: a small button that opens the sidebar's options.
- * It is not on the sidebar, where it would be over a panel, but on the map
- * in the corner that is at the end of the sidebar's inner edge going round
- * the map clockwise: the left sidebar's at the map's top left, the top
- * one's at the top right, the right one's at the bottom right and the
- * bottom one's at the bottom left. So no two are in one corner. It is dim
- * until the mouse is on it. (x0, y0) to (x1, y1) is the part of the window
- * no sidebar is on. */
-static void draw_gear(int side, float x0, float y0, float x1, float y1) {
-    const float box = ImGui::GetFrameHeight();
-    const float in = 3.0f;
-    ImVec2      at;
-    char        name[64];
-
-    if (x1 - x0 < box * 3.0f || y1 - y0 < box * 3.0f) return;
-    switch (side) {
-        case LV_DOCK_LEFT:  at = ImVec2(x0 + in, y0 + in); break;
-        case LV_DOCK_TOP:   at = ImVec2(x1 - in - box, y0 + in); break;
-        case LV_DOCK_RIGHT: at = ImVec2(x1 - in - box, y1 - in - box); break;
-        default:            at = ImVec2(x0 + in, y1 - in - box); break;
-    }
-    snprintf(name, sizeof(name), "%s_gear", s_side[side].hostName);
-    ImGui::SetNextWindowPos(at, ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(box, box), ImGuiCond_Always);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(1, 1));
-    ImGui::Begin(name, nullptr, k_bare_flags | ImGuiWindowFlags_NoBackground |
-                                    ImGuiWindowFlags_NoFocusOnAppearing);
-    ImGui::PopStyleVar(3);
-
-    bool open = ImGui::IsPopupOpen("##lv_dock_opts");
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
-                        ImGui::GetStyle().Alpha * ((s_gear_hot[side] || open) ? 1.0f : 0.45f));
-    if (lv_icon_button("##lv_dock_gear", LV_ICON_GEAR, box)) {
-        ImGui::OpenPopup("##lv_dock_opts");
-    }
-    ImGui::PopStyleVar();
-    s_gear_hot[side] = ImGui::IsItemHovered();
-    if (s_gear_hot[side] && !open) {
-        static const int k_label[LV_DOCK_SIDES] = { STR_LV_DOCK_ENABLED, STR_LV_DOCK_LEFT,
-                                                    STR_LV_DOCK_TOP, STR_LV_DOCK_BOTTOM };
-        ImGui::SetTooltip("%s: %s", langGetText(k_label[side]),
-                          langGetText(STR_LV_TIP_DOCK_OPTIONS));
-    }
-    if (ImGui::BeginPopup("##lv_dock_opts")) {
-        ImGui::MenuItem(langGetText(STR_LV_DOCK_TRANSPARENT), nullptr, &s_clear[side]);
-        ImGui::EndPopup();
-    }
-    ImGui::End();
-}
-
 void lv_imgui_dock_host(void) {
     if (!any_active()) return;
 
@@ -1366,11 +1310,5 @@ void lv_imgui_dock_host(void) {
     if (s_side[LV_DOCK_BOTTOM].active) {
         draw_side(LV_DOCK_BOTTOM, ImVec2(x0 + (float)m.left, y1 - (float)m.bottom),
                   ImVec2(midW, (float)m.bottom), m.top, areaH);
-    }
-    for (int i = 0; i < LV_DOCK_SIDES; i++) {
-        if (s_side[i].active) {
-            draw_gear(i, x0 + (float)m.left, y0 + (float)m.top, x1 - (float)m.right,
-                      y1 - (float)m.bottom);
-        }
     }
 }

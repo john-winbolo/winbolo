@@ -1059,7 +1059,7 @@ static const LangEntry langTable[] = {
     {2821, "Total"},
     {2822, "{string1} +{number}"},
     {2823, "Tank"},
-    {2824, "Click a tank on the map or in the HUD panel to select it"},
+    {2824, "Click a tank on the map or in the HUD panel to select it. Double-click a tank on the map to see the game as its player sees it"},
     {2825, "{string1}: {number} / {number2}"},
     {2826, "Builder: in tank"},
     {2827, "Builder: out"},
@@ -1076,8 +1076,7 @@ static const LangEntry langTable[] = {
     /* Log viewer: the X at the end of a panel's name line */
     {2837, "Deselect tank"},
     {2838, "Back to all teams"},
-    /* Log viewer: the gear of a sidebar and its option */
-    {2839, "Sidebar options"},
+    /* Log viewer: the option of a sidebar (2839 is not used) */
     {2840, "Make unused sidebar portions transparent"},
     /* Log viewer: the event markers over the seek bar of the Controls panel */
     {2841, "Overlay events"},
@@ -1088,6 +1087,10 @@ static const LangEntry langTable[] = {
     {2845, "Tank Builder Status"},
     {2846, "Over each tank on the map: an arrow toward its builder when he is out of the tank, and a parachute with the time until the new builder is in the tank when he is dead"},
     {2847, "Builder: dead, back in {string1}"},
+    /* Log viewer: the filter of the Events panel, a list of ticked kinds */
+    {2848, "{string1} of {string2} events"},
+    {2849, "No events of the selected kinds"},
+    {2850, "Show only the events of the ticked kinds"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

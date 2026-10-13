@@ -338,6 +338,13 @@ int lv_drawGetSheetScale(void);
 bool lv_drawItemPicture(int isBase, int team, struct SDL_Texture **tex, float *sx, float *sy,
                         float *sw, float *sh);
 
+/* The map's own picture of a builder, for a panel: the sheet and the place
+ * in it. parachute 0 is the standing builder (3 by 4), 1 the tile of the
+ * builder who flies in after one died (16 by 16). FALSE when the sheet is
+ * not there. */
+bool lv_drawBuilderPicture(int parachute, struct SDL_Texture **tex, float *sx, float *sy,
+                           float *sw, float *sh);
+
 /*********************************************************
 *NAME:          lv_drawGetHudShapesTexture
 *PURPOSE:

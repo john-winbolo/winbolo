@@ -734,6 +734,7 @@ int lv_screenHasTankStock(void);
  * returns TRUE when it did. Hold the client mutex, and mark the map for a
  * redraw (lv_drawDirtyScreen) after a change. */
 void lv_screenTogglePerspective(BYTE playerNum);
+int  lv_screenPerspectivePlayer(void);
 void lv_screenClearPerspective(void);
 bool lv_screenCheckPerspective(void);
 

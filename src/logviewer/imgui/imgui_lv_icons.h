@@ -10,9 +10,9 @@
 
 /*
  * Every icon the viewer draws for itself is here: the buttons of the
- * Controls panel, the eye of the HUD panel, the gear of a panel's options
- * and the event markers of the seek slider. None of them ships with the game as a picture, and a font for a
- * few glyphs is a lot to load, so they are drawn with the draw list: filled
+ * Controls panel, the eye of the HUD panel and the event markers of the
+ * seek slider. None of them ships with the game as a picture, and a font for
+ * a few glyphs is a lot to load, so they are drawn with the draw list: filled
  * shapes in one colour, sized from the box they are given, so they follow
  * the size of the font and the density of the display.
  */
@@ -29,7 +29,6 @@ enum LvIcon {
     LV_ICON_FAST_FORWARD,   /* two triangles to the right */
     LV_ICON_TO_END,         /* a triangle to the right against a bar */
     LV_ICON_EYE,            /* the outline of an eye and its pupil */
-    LV_ICON_GEAR,           /* a toothed wheel */
     LV_ICON_CLOSE,          /* an X */
     LV_ICON_SQUARE,         /* a filled square: a pillbox, as in the HUD panel */
     LV_ICON_DISC,           /* a filled circle: a base, as in the HUD panel */
@@ -75,6 +74,15 @@ float lv_icon_text_width(int icon);
  * caller then draws its own plain shape. */
 bool lv_item_picture(ImDrawList *dl, bool isBase, int team, ImVec2 p0, ImVec2 p1,
                      float alpha = 1.0f);
+
+/* The map's own picture of a builder over the box p0..p1, in the game's own
+ * colours as the map has him: the standing builder (3 pixels by 4; the box
+ * has that shape), or with parachute the tile of the builder who flies in
+ * after one died (16 by 16; a square box). Sharp at a whole number of times
+ * its own height, blended at any other size. Returns false, and draws
+ * nothing, when the game's sheet is not there. */
+bool lv_builder_picture(ImDrawList *dl, bool parachute, ImVec2 p0, ImVec2 p1,
+                        float alpha = 1.0f);
 
 /* The line that names a player at the top of a panel (the Tank panel, the
  * HUD panel): a stripe in the colour of the player's team, an icon when

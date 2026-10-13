@@ -23,10 +23,13 @@
 extern "C" {
     #include "logviewer.h"
     #include "../lv_dock_fit.h"
+    #include "../lv_tank_pick.h"
     void lv_screenMouseInformationClick(int xPos, int yPos);
     void lv_screenMouseClick(int xPos, int yPos);
     void lv_screenSelectTank(int slot);
     void lv_screenChooseTank(int slot);
+    void lv_screenTogglePerspective(unsigned char playerNum);
+    int lv_screenPerspectivePlayer(void);
     int lv_drawTankAtPoint(float xPoints, float yPoints);
     void lv_clientMutexWaitFor(void);
     void lv_clientMutexRelease(void);
@@ -56,6 +59,9 @@ static LogViewerState *s_lv = nullptr;
  * so the drag handler can pan smoothly at sub-tile granularity instead of
  * snapping to whole tiles. */
 static bool s_is_dragging = false;
+/* The tank the last click on the map was on, -1 for none: the second click
+ * of a double click must be on the same tank. */
+static int s_last_click_tank = -1;
 static bool s_is_mouse_down = false;
 static float s_drag_start_x = 0.0f;
 static float s_drag_start_y = 0.0f;
@@ -237,6 +243,11 @@ int lv_imgui_game_viewport_process_input(void) {
                      * information. In Select Team mode the tank is also the
                      * team picked, as a click on its square was before. */
                     int tank = lv_drawTankAtPoint(io.MousePos.x, io.MousePos.y);
+                    /* Which click in a row this is (ImGui counts them by
+                     * its double click time and distance). */
+                    const int clicks = (int)io.MouseClickedLastCount[ImGuiMouseButton_Left];
+                    const int prevTank = (clicks >= 2) ? s_last_click_tank : -1;
+                    s_last_click_tank = tank;
                     if (lv_imgui_get_mode_information()) {
                         if (tank >= 0) {
                             lv_clientMutexWaitFor();
@@ -251,6 +262,21 @@ int lv_imgui_game_viewport_process_input(void) {
                         lv_drawDirtyScreen();
                     } else {
                         lv_screenMouseClick(game_x, game_y);
+                    }
+                    /* A double click on a tank also shows the game as its
+                     * player sees it, in either mode. It is the HUD panel's
+                     * own call for a click on that tank there, made only
+                     * when that view is not on yet: so it never turns the
+                     * view off. The click itself did all a single click
+                     * does, just above. */
+                    if (tank >= 0) {
+                        lv_clientMutexWaitFor();
+                        if (lvMapClickViewsTank(clicks, tank, prevTank,
+                                                lv_screenPerspectivePlayer())) {
+                            lv_screenTogglePerspective((unsigned char)tank);
+                            lv_drawDirtyScreen();
+                        }
+                        lv_clientMutexRelease();
                     }
                     input_processed = 1;
                 }
