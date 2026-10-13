@@ -410,10 +410,61 @@ void lv_windowSaveMap(void) {
  * beside this executable on it. The viewer stays open, paused.
  * -------------------------------------------------------------------------- */
 
+/* The path of the WinBolo game that goes with this Log Viewer, or FALSE
+ * when there is none.
+ *
+ * Windows and Linux: the game is the file beside this executable.
+ *
+ * macOS: both programs are application bundles, and they sit side by side
+ * (the build folder, the disk image and the Applications folder all hold
+ * them so). SDL_GetBasePath answers "Log Viewer.app/Contents/Resources/"
+ * for a bundle, so the game is three folders up and then down into
+ * "WinBolo.app/Contents/MacOS/WinBolo". A Log Viewer built without a bundle
+ * has the game beside it as on Linux, so that place is tried second. */
+static bool lvFindGameExe(char *out, size_t outSize) {
+    const char *baseDir = SDL_GetBasePath();
+    int         n;
+
+    if (baseDir == NULL) {
+        baseDir = "";
+    }
+#ifdef __APPLE__
+    n = snprintf(out, outSize, "%s../../../WinBolo.app/Contents/MacOS/WinBolo", baseDir);
+    if (n > 0 && (size_t)n < outSize && SDL_GetPathInfo(out, NULL)) {
+        return TRUE;
+    }
+#endif
+#ifdef _WIN32
+    n = snprintf(out, outSize, "%sWinBolo.exe", baseDir);
+#else
+    n = snprintf(out, outSize, "%sWinBolo", baseDir);
+#endif
+    if (n > 0 && (size_t)n < outSize && SDL_GetPathInfo(out, NULL)) {
+        return TRUE;
+    }
+    return FALSE;
+}
+
 /* Only the Log Viewer run as its own program offers it. The viewer opened
  * from the game's menu is inside the game, and a live spectator has no
- * whole world to hand over. */
+ * whole world to hand over.
+ *
+ * On macOS the menu item is also off when the game is not found. The place
+ * the game is looked for there has not been tried on a Mac, and macOS can
+ * run a downloaded bundle from a private copy with nothing beside it, so a
+ * greyed item is better than an item that always ends in an error. The
+ * look-up is done once: the menu asks every frame. */
 bool lv_windowCanOpenSinglePlayer(void) {
+#ifdef __APPLE__
+    static int s_gameFound = -1;
+    if (s_gameFound < 0) {
+        char exePath[FILENAME_MAX];
+        s_gameFound = lvFindGameExe(exePath, sizeof(exePath)) ? 1 : 0;
+    }
+    if (s_gameFound == 0) {
+        return FALSE;
+    }
+#endif
     return (g_lv != NULL && g_lv->isLoaded && !g_lv->fromMainMenu &&
             !lv_screenSpecIsLiveMode()) ? TRUE : FALSE;
 }
@@ -424,7 +475,6 @@ void lv_windowOpenSinglePlayer(void) {
     char         mapName[FILENAME_MAX];
     char         currentTime[FILENAME_MAX];
     char        *prefDir;
-    const char  *baseDir;
     const char  *args[4];
     SDL_Process *game;
     LvSpmapInfo  info;
@@ -436,6 +486,14 @@ void lv_windowOpenSinglePlayer(void) {
         return;
     }
     lv_windowPause();
+
+    /* The game first: with no game to start there is no reason to write a
+       map file. */
+    if (!lvFindGameExe(exePath, sizeof(exePath))) {
+        lv_platform_dialog_error(DIALOG_BOX_TITLE,
+                                 "Could not find the WinBolo game beside the Log Viewer");
+        return;
+    }
 
     /* The map goes with the game's own files (where it keeps its logs and
        preferences), in a folder of its own, never in data/maps. The name is
@@ -476,17 +534,6 @@ void lv_windowOpenSinglePlayer(void) {
         return;
     }
 
-    baseDir = SDL_GetBasePath();
-#ifdef _WIN32
-    snprintf(exePath, sizeof(exePath), "%sWinBolo.exe", baseDir != NULL ? baseDir : "");
-#else
-    snprintf(exePath, sizeof(exePath), "%sWinBolo", baseDir != NULL ? baseDir : "");
-#endif
-    if (!SDL_GetPathInfo(exePath, NULL)) {
-        lv_platform_dialog_error(DIALOG_BOX_TITLE,
-                                 "Could not find the WinBolo game beside the Log Viewer");
-        return;
-    }
     args[0] = exePath;
     args[1] = "-spmap";
     args[2] = mapPath;
