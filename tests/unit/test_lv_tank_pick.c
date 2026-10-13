@@ -128,3 +128,53 @@ int run_lv_name_header_sums(void) {
     UT_ASSERT_MSG(!h.nameCut && h.nameW == 0.0f, "an empty name");
     return 0;
 }
+
+/* A double click on a tank on the map: when the click turns that tank's
+   view on (the eye of the HUD panel). */
+int run_lv_map_double_click(void) {
+    /* One click selects and no more. */
+    UT_ASSERT_MSG(!lvMapClickViewsTank(1, 3, -1, -1), "a single click on a tank");
+    UT_ASSERT_MSG(!lvMapClickViewsTank(1, 3, 3, -1), "a slow second click is a single click");
+    UT_ASSERT_MSG(!lvMapClickViewsTank(0, 3, 3, -1), "no click counted");
+
+    /* The second click of a double click on a tank: its view. */
+    UT_ASSERT_MSG(lvMapClickViewsTank(2, 3, 3, -1), "a double click, all teams shown");
+    UT_ASSERT_MSG(lvMapClickViewsTank(2, 0, 0, -1), "slot 0 is a tank");
+    UT_ASSERT_MSG(lvMapClickViewsTank(2, 3, 3, 5), "from the view of another player");
+    UT_ASSERT_MSG(lvMapClickViewsTank(2, 15, 15, 0), "the last slot");
+
+    /* The tank whose view is on stays in it: no second call, no toggle. */
+    UT_ASSERT_MSG(!lvMapClickViewsTank(2, 3, 3, 3), "a double click on the viewed tank");
+    UT_ASSERT_MSG(!lvMapClickViewsTank(3, 3, 3, 3), "a third click after the view came on");
+    UT_ASSERT_MSG(!lvMapClickViewsTank(4, 3, 3, 3), "a fourth");
+    /* ...and a third click that still finds the view off turns it on. */
+    UT_ASSERT_MSG(lvMapClickViewsTank(3, 3, 3, -1), "a third click, view not on");
+
+    /* Not on a tank: the map, a pillbox, a base. Nothing new. */
+    UT_ASSERT_MSG(!lvMapClickViewsTank(2, -1, -1, -1), "a double click on the map");
+    UT_ASSERT_MSG(!lvMapClickViewsTank(2, -1, -1, 3), "on the map, a view on: it stays");
+    UT_ASSERT_MSG(!lvMapClickViewsTank(2, -1, 3, -1), "tank, then the map");
+
+    /* Both clicks on the same tank. */
+    UT_ASSERT_MSG(!lvMapClickViewsTank(2, 3, -1, -1), "the map, then a tank that drove under");
+    UT_ASSERT_MSG(!lvMapClickViewsTank(2, 3, 4, -1), "one tank, then another");
+    UT_ASSERT_MSG(!lvMapClickViewsTank(2, 3, 4, 4), "one tank, then another, the first one viewed");
+
+    /* The whole double click as the viewer runs it: the first click, then
+       the second with what the first one left. */
+    {
+        int view = -1;
+        int prev = -1;
+        int calls = 0;
+        int click;
+        for (click = 1; click <= 3; click++) {
+            if (lvMapClickViewsTank(click, 7, (click >= 2) ? prev : -1, view)) {
+                view = 7; /* what the HUD panel's call does with no view on this tank */
+                calls++;
+            }
+            prev = 7;
+        }
+        UT_ASSERT_MSG(view == 7 && calls == 1, "one call for three clicks (%d)", calls);
+    }
+    return 0;
+}

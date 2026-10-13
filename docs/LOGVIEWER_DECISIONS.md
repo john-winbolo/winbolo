@@ -553,6 +553,43 @@ round its cell.
 - The hint of the Tank panel now reads "Click a tank on the map or in the
   HUD panel to select it".
 
+**A double click on a tank shows that player's view (Oct 13).** A double
+click on a tank on the map selects it and turns on the view of its player:
+the state the eye and the name in the HUD panel stand for. The X of the HUD
+panel goes back to all teams, as before.
+
+- Before this a double click had no meaning of its own. It was two single
+  clicks: the tank was selected twice (Information mode) or picked twice
+  (Select Team mode), with no other effect. The map had no way to turn a
+  player's view on; only a click on a tank in the HUD panel did that. (In
+  Select Team mode a view that was already on moved with the picked tank,
+  and still does.)
+- The call is the one the HUD panel makes for a click on a tank there
+  (`lv_screenTogglePerspective`). That call turns the view off when it is
+  on for the same player, so the map makes it only when the view is not on
+  for that tank yet (`lvMapClickViewsTank` in `lv_tank_pick.h`, asked with
+  `lv_screenPerspectivePlayer`). So a double click on the tank whose view
+  is on leaves it on, and a third click does nothing more.
+- Each click of the double click still does all a single click does. The
+  first selects the tank. The second selects the same tank again, which
+  changes nothing, and then turns the view on. The view changes once.
+- Both clicks must be on the same tank. ImGui counts the clicks (its double
+  click time and distance: 0.3 s, 6 points).
+- A double click on the map, a pillbox or a base does what it did before:
+  two single clicks.
+- Select Team mode: the first click picks the tank's team as before ("self"
+  is that player). The second click then turns that player's view on. If a
+  view was on already, the first click moved it to this tank, and the
+  second click changes nothing.
+- The viewer has one map and one place where a click on it is read
+  (`imgui_game_viewport.cpp`), so this is the same in every view of the map,
+  on a file log and on a live feed. The embedded viewer in the game has no
+  click on a tank and has none now.
+- The hint of the Tank panel now ends "Double-click a tank on the map to
+  see the game as its player sees it".
+- Unit test: `lv_map_double_click`. The click itself was not tried: the
+  headless try-out has no map.
+
 
 ### The name line: team stripe in the HUD panel, and an X to deselect
 

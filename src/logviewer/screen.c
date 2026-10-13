@@ -6324,6 +6324,16 @@ void lv_screenTogglePerspective(BYTE playerNum) {
   g_lv->wantScreenUpdate = TRUE;
 }
 
+/* The slot of the player whose view is shown, or -1 for the view of all
+   teams. The caller holds the client mutex. */
+int lv_screenPerspectivePlayer(void) {
+  if (g_lv == NULL || g_lv->logLoaded == FALSE ||
+      lv_playersHasPerspective() == FALSE) {
+    return -1;
+  }
+  return (int) lv_playersGetSelf();
+}
+
 /* Back to all teams. The caller holds the client mutex and marks the map for
    a redraw. */
 void lv_screenClearPerspective(void) {

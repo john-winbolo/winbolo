@@ -2299,6 +2299,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_tank_status_sums",                             run_lv_tank_status_sums                             },
     { "lv_tank_bars_sums",                               run_lv_tank_bars_sums                               },
     { "lv_tank_pick_sums",                               run_lv_tank_pick_sums                               },
+    { "lv_map_double_click",                             run_lv_map_double_click                             },
     { "lv_name_header_sums",                             run_lv_name_header_sums                             },
     { "lv_dock_clear_layout",                            run_lv_dock_clear_layout                            },
     { "lv_dock_clear_rects",                             run_lv_dock_clear_rects                             },
