@@ -1546,7 +1546,9 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_LV_TEAM_COLOURS", STR_LV_TEAM_COLOURS },
     { "STR_LV_TIME_FMT", STR_LV_TIME_FMT },
     { "STR_LV_TIME_REMAINING", STR_LV_TIME_REMAINING },
+    { "STR_LV_TIP_ALL_TEAMS", STR_LV_TIP_ALL_TEAMS },
     { "STR_LV_TIP_BACK_SECS", STR_LV_TIP_BACK_SECS },
+    { "STR_LV_TIP_DESELECT", STR_LV_TIP_DESELECT },
     { "STR_LV_TIP_FWD_SECS", STR_LV_TIP_FWD_SECS },
     { "STR_LV_TIP_KEY_FMT", STR_LV_TIP_KEY_FMT },
     { "STR_LV_TIP_LIVE", STR_LV_TIP_LIVE },
@@ -2481,4 +2483,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2468
+#define K_LANG_NAME_TABLE_SIZE  2470

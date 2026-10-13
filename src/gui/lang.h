@@ -1345,6 +1345,9 @@
 #define STR_LV_TIP_FWD_SECS                 2834
 #define STR_LV_TIP_KEY_FMT                  2835
 #define STR_LV_TIP_LIVE                     2836
+/* Log viewer: the X at the end of a panel's name line */
+#define STR_LV_TIP_DESELECT                 2837
+#define STR_LV_TIP_ALL_TEAMS                2838
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

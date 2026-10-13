@@ -14,12 +14,20 @@
  *       one with the nearer middle wins; that a tank that cannot be picked
  *       (dead) is passed over, also when it lies over a live one; and where
  *       the mark round the selected tank goes.
+ *
+ *   lv_name_header_sums — the line that names a player at the top of the
+ *       Tank and HUD panels (lv_name_header.h): that the X button is at the
+ *       right end; that a name that goes in is whole and one that does not
+ *       is cut to the room left, never under the button; and that in a line
+ *       too narrow for anything the button still has its place after the
+ *       stripe.
  */
 
 #include <stdbool.h>
 #include <stddef.h>
 
 #include "lv_tank_pick.h"
+#include "lv_name_header.h"
 #include "test_harness.h"
 
 int run_lv_tank_pick_sums(void) {
@@ -83,5 +91,40 @@ int run_lv_tank_pick_sums(void) {
                   (double)m.side);
     m = lvTankMarkLayout(10.0f, 10.0f, 12.0f, 1.0f);
     UT_ASSERT_MSG(m.arm == 6.0f && m.arm * 2.0f <= m.side, "the corners do not meet");
+    return 0;
+}
+
+int run_lv_name_header_sums(void) {
+    LvNameHeader h;
+
+    /* A line of 200: lead 8, a name of 60, a button of 13, a gap of 4. */
+    h = lvNameHeaderLayout(200.0f, 8.0f, 60.0f, 13.0f, 4.0f);
+    UT_ASSERT_MSG(h.nameX == 8.0f, "the name starts after the lead");
+    UT_ASSERT_MSG(h.closeX == 187.0f, "the button ends at the right end");
+    UT_ASSERT_MSG(!h.nameCut && h.nameW == 60.0f, "a name that goes in is whole");
+
+    /* The name has exactly the room: lead 8 + 175 + gap 4 + 13 = 200. */
+    h = lvNameHeaderLayout(200.0f, 8.0f, 175.0f, 13.0f, 4.0f);
+    UT_ASSERT_MSG(!h.nameCut && h.nameW == 175.0f, "an exact fit is whole");
+    h = lvNameHeaderLayout(200.0f, 8.0f, 176.0f, 13.0f, 4.0f);
+    UT_ASSERT_MSG(h.nameCut && h.nameW == 175.0f, "one over is cut to the room");
+    UT_ASSERT_MSG(h.nameX + h.nameW + 4.0f <= h.closeX, "the name ends a gap before the button");
+
+    /* A narrow line: the name gives way, the button does not. */
+    h = lvNameHeaderLayout(94.0f, 30.0f, 300.0f, 13.0f, 4.0f);
+    UT_ASSERT_MSG(h.closeX == 81.0f && h.nameCut && h.nameW == 47.0f,
+                  "94 wide (%g, %g)", (double)h.closeX, (double)h.nameW);
+    UT_ASSERT_MSG(h.nameX + h.nameW <= h.closeX, "no overlap at 94");
+
+    /* Too narrow for the lead and the button: the button straight after the
+       lead, the name with no room. */
+    h = lvNameHeaderLayout(20.0f, 30.0f, 300.0f, 13.0f, 4.0f);
+    UT_ASSERT_MSG(h.closeX == 30.0f && h.nameW == 0.0f && h.nameCut, "20 wide");
+    h = lvNameHeaderLayout(-5.0f, 8.0f, 10.0f, 13.0f, 4.0f);
+    UT_ASSERT_MSG(h.closeX == 8.0f && h.nameW == 0.0f, "no width at all");
+
+    /* An empty name is not "cut". */
+    h = lvNameHeaderLayout(200.0f, 8.0f, 0.0f, 13.0f, 4.0f);
+    UT_ASSERT_MSG(!h.nameCut && h.nameW == 0.0f, "an empty name");
     return 0;
 }

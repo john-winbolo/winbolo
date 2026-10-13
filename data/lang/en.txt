@@ -1259,6 +1259,10 @@ STR_LV_TIP_FWD_SECS=Forward {string1} seconds
 STR_LV_TIP_KEY_FMT={string1} ({string2})
 STR_LV_TIP_LIVE=Jump to live
 
+# Log viewer: the X at the end of a panel's name line
+STR_LV_TIP_DESELECT=Deselect tank
+STR_LV_TIP_ALL_TEAMS=Back to all teams
+
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:
 STR_LV_PLAYER_LBL=Player {number}:

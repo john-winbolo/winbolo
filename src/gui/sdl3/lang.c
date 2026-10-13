@@ -1073,6 +1073,9 @@ static const LangEntry langTable[] = {
     {2834, "Forward {string1} seconds"},
     {2835, "{string1} ({string2})"},
     {2836, "Jump to live"},
+    /* Log viewer: the X at the end of a panel's name line */
+    {2837, "Deselect tank"},
+    {2838, "Back to all teams"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

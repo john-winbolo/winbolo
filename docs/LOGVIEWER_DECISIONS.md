@@ -522,6 +522,36 @@ round its cell.
   HUD panel to select it".
 
 
+### The name line: team stripe in the HUD panel, and an X to deselect
+
+The Tank panel's name has a stripe in the colour of the tank's team at its
+left. The line of the HUD panel that names the player of the one-player view
+now has the same stripe. Both panels draw the line with one helper
+(`lv_name_header` in `imgui_lv_icons.cpp`): stripe, an icon when there is one
+(the eye in the HUD panel), the name, and a small X at the right end.
+
+- **Tank panel X** ("Deselect tank"): no tank is selected. The panel shows
+  its hint and the map has no mark. It does not leave a one-player view,
+  also when that view is of the same player: the X of each panel does one
+  thing.
+- **HUD panel X** ("Back to all teams"): leaves the one-player view and
+  clears the selection.
+- The text button "All teams" that stood before the name in the HUD panel is
+  gone; the X does its work and the line is shorter. With no one-player view
+  the line still reads "All teams" in grey, as before.
+- "No tank selected" is a real state (`lv_playersGetSelected` is -1).
+  Nothing puts a tank back but the user: a click on a tank on the map or in
+  the HUD panel. Only the load of a log selects the first player. Escape
+  does nothing new.
+- **Narrow panel**: the X stays at the right end and the name is cut to the
+  room left, with "..." (`lvNameHeaderLayout`, unit test
+  `lv_name_header_sums`). The whole name is the tooltip of a cut name. In
+  the headless try-out, with a 41-letter name, the line was never wider than
+  the panel from 400 down to 50 wide, and a click on each X did its work.
+- The X is drawn by the shared icon helper (`LV_ICON_CLOSE`); it has no
+  frame until the mouse is over it.
+
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the

@@ -4041,6 +4041,7 @@ int run_lv_tank_bars_sums(void);
 /* A click on a tank on the log viewer's map (test_lv_tank_pick.c): which
  * tank a point is on, and where the mark round the selected one goes. */
 int run_lv_tank_pick_sums(void);
+int run_lv_name_header_sums(void);
 /* The log viewer's text dump (test_lv_dump.c): a recorded round dumped
  * around one tick, a tick the round does not hold, and the event list. */
 int run_lv_dump_recorded_round(void);
