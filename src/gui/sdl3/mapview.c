@@ -420,10 +420,10 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
         srcX=LGM_HELICOPTER_X; srcY=LGM_HELICOPTER_Y; srcW=TILE_SIZE_X; srcH=TILE_SIZE_Y; break;
     }
 
-    /* On-foot frames are centred on the middle of the game pixel the server
-       sent and snapped to a whole game pixel from the scroll origin in every
-       mode but Smooth; the helicopter draws from its own top-left.
-       spritePositionLgm has the reasoning. */
+    /* On-foot frames are centred on their hit pixel and snapped to a whole
+       game pixel from the scroll origin in every mode but Smooth; the
+       helicopter draws from its own top-left. spritePositionLgm has the
+       reasoning. */
     float sx = 0.0f, sy = 0.0f;
     spritePositionLgm(originX - tileW - edgeX, originY - tileH - edgeY,
                       mode, ctx->scale, ctx->sheetScale,
