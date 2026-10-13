@@ -1209,7 +1209,7 @@ STR_LV_WIN_EVENTS=Events
 STR_LV_WIN_GAMEINFO=Game Information
 STR_LV_WIN_ITEMINFO=Item Information
 STR_LV_RESET_WINDOWS=Reset Window Positions
-STR_LV_DOCK_ENABLED=Dock enabled
+STR_LV_DOCK_ENABLED=Right sidebar
 STR_LV_RESET_WINDOWS_DOCK=Reset Window Positions into Dock
 STR_LV_EVT_FILTER_ALL=All events
 STR_LV_EVT_KIND_PILL_CAPTURED=Pillbox captured
@@ -1237,6 +1237,10 @@ STR_LV_HUD_TIP_REL={string1} [{string2}]
 STR_LV_MENU_OPEN_SP=Open map at this time in single player
 STR_LV_MENU_OPEN_SP_TIP=Starts a single-player game on the map as it is at this time. You take the selected player's side: that player's and the allies' pillboxes and bases become yours, and your tank starts where that player's tank is. With no player selected, nothing is yours.
 STR_LV_MENU_SAVE_LOG=Save log file to disk...
+STR_LV_DOCK_LEFT=Left sidebar
+STR_LV_DOCK_TOP=Top sidebar
+STR_LV_DOCK_BOTTOM=Bottom sidebar
+STR_LV_DOCK_EMPTY_HINT=Drag a panel here
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:

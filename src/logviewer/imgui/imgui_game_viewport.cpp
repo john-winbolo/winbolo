@@ -22,6 +22,7 @@
  * pulls in bolo headers with conflicting type definitions. */
 extern "C" {
     #include "logviewer.h"
+    #include "../lv_dock_fit.h"
     void lv_screenMouseInformationClick(int xPos, int yPos);
     void lv_screenMouseClick(int xPos, int yPos);
     void lv_drawDirtyScreen(void);
@@ -104,15 +105,22 @@ static int screen_to_game_coords(float screen_x, float screen_y,
     int subPxX = 0, subPxY = 0;
     lv_screenGetSubOffset(&subPxX, &subPxY);
 
-    *game_x = (int)(screen_x / zoom) + subPxX;
-    *game_y = (int)((screen_y - menu_bar_height) / zoom) + subPxY;
+    /* The map starts under the menu bar, past the left and top sidebars. */
+    LvDockMargins dock = { 0, 0, 0, 0 };
+    lv_imgui_dock_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
 
-    /* The dock's part of the window is not map, even where the map's last
-     * square runs a little way under the dock's edge. */
-    int dock_w = lv_imgui_dock_reserved_width();
-    if (dock_w > 0 && screen_x >= ImGui::GetIO().DisplaySize.x - (float)dock_w) {
+    /* A sidebar's part of the window is not map, even where the map's last
+     * square runs a little way under the sidebar's edge. */
+    if (dock.left + dock.top + dock.right + dock.bottom > 0 &&
+        !lvDockPointOnMap(&dock, (int)ImGui::GetIO().DisplaySize.x,
+                          (int)ImGui::GetIO().DisplaySize.y,
+                          (int)menu_bar_height, screen_x, screen_y)) {
+        *game_x = *game_y = 0;
         return 0;
     }
+
+    *game_x = (int)((screen_x - (float)dock.left) / zoom) + subPxX;
+    *game_y = (int)((screen_y - menu_bar_height - (float)dock.top) / zoom) + subPxY;
 
     /* Check if coordinates are within game texture bounds */
     if (*game_x < 0 || *game_y < 0) {

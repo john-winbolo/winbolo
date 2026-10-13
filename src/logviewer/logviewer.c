@@ -713,25 +713,64 @@ static void savePreferences(void) {
     /* Use Team Colours */
     lv_platform_config_set_string("LOGVIEWER", "Use Team Colours", g_lv->useTeamColours ? "Yes" : "No");
 
-    /* Screen Size. The next launch makes its window this many squares wide,
-     * so while the dock takes part of the window the number saved is the
-     * whole window's, not the map's: saving the map's would make the window
-     * narrower by the dock's width at every launch. */
+    /* Screen Size. The next launch makes its window this many squares wide
+     * and high, so while a sidebar takes part of the window the number saved
+     * is the whole window's, not the map's: saving the map's would make the
+     * window smaller by the sidebar's size at every launch.
+     *
+     * A maximized or fullscreen window is not a size to start the next run
+     * at: the sizes saved before it was maximized stay as they are, so the
+     * window that is maximized again at the next start (Window.Maximized)
+     * has its own size to go back to. */
     {
-        int sizeX = lv_screenGetSizeX();
-        int reserved = lv_imgui_dock_reserved_width();
-        if (reserved > 0) {
-            int winW = 0, winH = 0;
-            float zoom = lv_drawGetZoomLevel();
-            if (zoom <= 0.0f) zoom = 1.0f;
-            SDL_GetWindowSize(g_lv->window, &winW, &winH);
-            if (winW > 0) sizeX = lvFitTilesNearest(winW, (float)TILE_SIZE_X * zoom);
+        SDL_WindowFlags wflags = SDL_GetWindowFlags(g_lv->window);
+        bool big = (wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) != 0;
+        bool placed = g_lv->ownsWindow && !big && !(wflags & SDL_WINDOW_MINIMIZED);
+
+        if (!(g_lv->ownsWindow && big)) {
+            int sizeX = lv_screenGetSizeX();
+            int sizeY = lv_screenGetSizeY();
+            int dockL = 0, dockT = 0, dockR = 0, dockB = 0;
+            lv_imgui_dock_margins(&dockL, &dockT, &dockR, &dockB);
+            if (dockL + dockT + dockR + dockB > 0) {
+                int winW = 0, winH = 0;
+                int menuH = (int)lv_imgui_get_menu_bar_height();
+                float zoom = lv_drawGetZoomLevel();
+                if (zoom <= 0.0f) zoom = 1.0f;
+                SDL_GetWindowSize(g_lv->window, &winW, &winH);
+                if (winW > 0 && dockL + dockR > 0) {
+                    sizeX = lvFitTilesNearest(winW, (float)TILE_SIZE_X * zoom);
+                }
+                if (winH > menuH && dockT + dockB > 0) {
+                    sizeY = lvFitTilesNearest(winH - menuH, (float)TILE_SIZE_Y * zoom);
+                }
+            }
+            snprintf(line, sizeof(line), "%d", sizeX);
+            lv_platform_config_set_string("LOGVIEWER", "ScreenSizeX", line);
+            snprintf(line, sizeof(line), "%d", sizeY);
+            lv_platform_config_set_string("LOGVIEWER", "ScreenSizeY", line);
         }
-        snprintf(line, sizeof(line), "%d", sizeX);
+
+        /* Where the viewer's own window is, and its exact size: the squares
+         * above are whole squares, which is not exact enough to bring a
+         * layout back as it was. Not written for WinBolo's window, which the
+         * viewer only borrows. */
+        if (g_lv->ownsWindow) {
+            lv_platform_config_set_string("LOGVIEWER", "Window.Maximized",
+                                          (wflags & SDL_WINDOW_MAXIMIZED) ? "Yes" : "No");
+        }
+        if (placed) {
+            int x = 0, y = 0, w = 0, h = 0;
+            SDL_GetWindowPosition(g_lv->window, &x, &y);
+            SDL_GetWindowSize(g_lv->window, &w, &h);
+            if (w > 0 && h > 0) {
+                lv_platform_config_set_int("LOGVIEWER", "Window.X", x);
+                lv_platform_config_set_int("LOGVIEWER", "Window.Y", y);
+                lv_platform_config_set_int("LOGVIEWER", "Window.W", w);
+                lv_platform_config_set_int("LOGVIEWER", "Window.H", h);
+            }
+        }
     }
-    lv_platform_config_set_string("LOGVIEWER", "ScreenSizeX", line);
-    snprintf(line, sizeof(line), "%d", lv_screenGetSizeY());
-    lv_platform_config_set_string("LOGVIEWER", "ScreenSizeY", line);
 
     /* Team colours */
     count = 0;
@@ -752,9 +791,67 @@ static void savePreferences(void) {
     lv_platform_config_save();
 }
 
-/* The width the dock had the last time the map's tile count was fitted beside
- * it. lvHostDockSync refits when the dock's answer differs from this. */
-static int s_lvDockReservedApplied = 0;
+/* What the sidebars took the last time the map's tile counts were fitted
+ * beside them. lvHostDockSync refits when their answer differs from this. */
+static LvDockMargins s_lvDockApplied = { 0, 0, 0, 0 };
+
+/* Stands for "no value saved": no window is ever placed here. */
+#define LV_WINDOW_PLACE_NONE (-1000000)
+
+/* --------------------------------------------------------------------------
+ * lvHostRestoreWindowPlace -- Put the viewer's own window back where it was.
+ *
+ * Size, position and the maximized state from the last run. Called once the
+ * window exists and before the first frame is drawn. What was saved is not
+ * trusted: a size is kept inside the display it lands on, and a position is
+ * used only when the top of the window is on a display that is connected
+ * now, so a window last left on a screen that has since been unplugged
+ * opens where SDL would have put it.
+ * -------------------------------------------------------------------------- */
+static void lvHostRestoreWindowPlace(void) {
+    char val[16];
+    int x, y, w, h;
+    bool placed = FALSE;
+
+    if (g_lv == NULL || !g_lv->ownsWindow || g_lv->window == NULL) {
+        return;
+    }
+    x = lv_platform_config_get_int("LOGVIEWER", "Window.X", LV_WINDOW_PLACE_NONE);
+    y = lv_platform_config_get_int("LOGVIEWER", "Window.Y", LV_WINDOW_PLACE_NONE);
+    w = lv_platform_config_get_int("LOGVIEWER", "Window.W", 0);
+    h = lv_platform_config_get_int("LOGVIEWER", "Window.H", 0);
+
+    if (x != LV_WINDOW_PLACE_NONE && y != LV_WINDOW_PLACE_NONE && w > 0 && h > 0) {
+        int count = 0, i;
+        SDL_DisplayID *displays = SDL_GetDisplays(&count);
+        for (i = 0; displays != NULL && i < count && !placed; i++) {
+            SDL_Rect bounds, top, overlap;
+            if (!SDL_GetDisplayUsableBounds(displays[i], &bounds)) {
+                continue;
+            }
+            /* The strip a title bar would be dragged by. */
+            top.x = x; top.y = y; top.w = w; top.h = 32;
+            if (SDL_GetRectIntersection(&top, &bounds, &overlap) &&
+                overlap.w >= 100 && overlap.h >= 16) {
+                if (w > bounds.w) w = bounds.w;
+                if (h > bounds.h) h = bounds.h;
+                if (w >= 200 && h >= 150) {
+                    SDL_SetWindowSize(g_lv->window, w, h);
+                    SDL_SetWindowPosition(g_lv->window, x, y);
+                    placed = TRUE;
+                }
+            }
+        }
+        SDL_free(displays);
+    }
+
+    lv_platform_config_get_string("LOGVIEWER", "Window.Maximized", "No", val, sizeof(val));
+    if (val[0] == 'Y' || val[0] == 'y') {
+        SDL_MaximizeWindow(g_lv->window);
+    }
+    /* The resize this causes reaches the event loop before the first frame,
+     * where lvHostHandleResize fits the map to the window. */
+}
 
 /* --------------------------------------------------------------------------
  * lvHostSetup -- Shared host bring-up for the log viewer and the spectator.
@@ -779,7 +876,7 @@ static int lvHostSetup(SDL_Window *window, SDL_Renderer *renderer,
         return FALSE;
     }
     lv_imgui_main_menu_init(g_lv);
-    s_lvDockReservedApplied = 0;
+    memset(&s_lvDockApplied, 0, sizeof(s_lvDockApplied));
 #ifdef __APPLE__
     /* Install the native NSMenu after ImGui + window are up. The shim's
      * save-on-install / restore-on-uninstall stack swaps WinBolo's menu
@@ -1046,12 +1143,15 @@ static void lvHostHandleResize(const SDL_Event *e) {
      * window cleanly at the current zoom. */
     float tilePxX = (float)TILE_SIZE_X * zoom;
     float tilePxY = (float)TILE_SIZE_Y * zoom;
-    /* The dock, when it shows, takes the right of the window; the map is
-     * fitted to what is left. Zero in the live spectator and whenever the
-     * dock is off, which leaves every sum below as it was. */
-    int reserved = lv_imgui_dock_reserved_width();
-    int newTilesX = lvFitTilesNearest(w - reserved, tilePxX);
-    int newTilesY = (int)((((float)(h - menuH)) + tilePxY * 0.5f) / tilePxY);
+    /* The sidebars that show take the edges of the window; the map is
+     * fitted to what is left. All zero in the live spectator and whenever
+     * every sidebar is off, which leaves every sum below as it was. */
+    LvDockMargins dock = { 0, 0, 0, 0 };
+    lv_imgui_dock_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
+    int reservedX = dock.left + dock.right;
+    int reservedY = dock.top + dock.bottom;
+    int newTilesX = lvFitTilesNearest(w - reservedX, tilePxX);
+    int newTilesY = (int)((((float)(h - menuH - reservedY)) + tilePxY * 0.5f) / tilePxY);
     if (newTilesY < 1) newTilesY = 1;
     if (newTilesY > 255) newTilesY = 255;
 
@@ -1068,15 +1168,17 @@ static void lvHostHandleResize(const SDL_Event *e) {
     if (!(wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN))) {
         int snappedW = (int)(newTilesX * tilePxX + 0.5f);
         int snappedH = (int)(newTilesY * tilePxY + 0.5f);
-        SDL_SetWindowSize(g_lv->window, snappedW + reserved, snappedH + menuH);
-    } else if (reserved > 0) {
+        SDL_SetWindowSize(g_lv->window, snappedW + reservedX,
+                          snappedH + menuH + reservedY);
+    } else {
         /* The window stays as it is, so the map cannot be snapped to end at
-         * the dock. Rounding to the nearest square could stop it short and
-         * leave a black strip beside the dock; cover the gap instead, with
-         * the last square running a little way under the dock's edge. */
-        newTilesX = lvFitTilesCover(w - reserved, tilePxX);
+         * a sidebar. Rounding to the nearest square could stop it short and
+         * leave a black strip beside the sidebar; cover the gap instead, with
+         * the last square running a little way under the sidebar's edge. */
+        if (reservedX > 0) newTilesX = lvFitTilesCover(w - reservedX, tilePxX);
+        if (reservedY > 0) newTilesY = lvFitTilesCover(h - menuH - reservedY, tilePxY);
     }
-    s_lvDockReservedApplied = reserved;
+    s_lvDockApplied = dock;
     lv_screenSetSizeX((BYTE)newTilesX);
     lv_screenSetSizeY((BYTE)newTilesY);
     /* The size setters keep the offset inside the map for the new grid. The
@@ -1089,48 +1191,76 @@ static void lvHostHandleResize(const SDL_Event *e) {
 }
 
 /* --------------------------------------------------------------------------
- * lvHostDockSync -- Keep the map's width in step with the right-side dock.
+ * lvHostDockSync -- Keep the map's size in step with the sidebars.
  *
- * Runs first thing each frame, before the map is drawn. It lets the dock come
- * in or go out for the frame, then, when the width the dock takes has changed
- * (turned on or off, or its edge dragged), refits the number of map squares
- * across to the rest of the window. Everything that places the map -- the
- * centring, the pan limits, centre-on-click, the mouse-to-square sum -- works
- * from that number, so nothing of the map is lost behind the dock.
+ * Runs first thing each frame, before the map is drawn. It lets each sidebar
+ * come in or go out for the frame, then, when what the sidebars take has
+ * changed (one turned on or off, or its edge dragged), refits the number of
+ * map squares across and down to the rest of the window. Everything that
+ * places the map -- the centring, the pan limits, centre-on-click, the
+ * mouse-to-square sum -- works from those numbers, so nothing of the map is
+ * lost behind a sidebar.
  *
  * The window itself is left alone here (the user did not resize it), so the
- * fit rounds up: the last square may run under the dock's edge by less than
- * a square. The live spectator never has a dock and so never gets past the
- * comparison. Game view sets its own fixed size and puts the overview's back
- * when it ends; it is left alone, and the comparison catches up afterwards.
+ * fit rounds up: the last square may run under a sidebar's edge by less than
+ * a square. The live spectator never has a sidebar and so never gets past
+ * the comparison. Game view sets its own fixed size and puts the overview's
+ * back when it ends; it is left alone, and the comparison catches up
+ * afterwards.
  * -------------------------------------------------------------------------- */
 static void lvHostDockSync(void) {
-    int reserved, winW = 0, winH = 0, newTilesX;
+    LvDockMargins dock = { 0, 0, 0, 0 };
+    int winW = 0, winH = 0, menuH;
+    bool acrossChanged, downChanged, resized = FALSE;
     float zoom;
 
     lv_imgui_dock_pre_frame();
     if (g_lv->gameView) {
         return;
     }
-    reserved = lv_imgui_dock_reserved_width();
-    if (reserved == s_lvDockReservedApplied) {
+    lv_imgui_dock_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
+    if (dock.left == s_lvDockApplied.left && dock.top == s_lvDockApplied.top &&
+        dock.right == s_lvDockApplied.right && dock.bottom == s_lvDockApplied.bottom) {
         return;
     }
-    s_lvDockReservedApplied = reserved;
+    /* Each way is refitted only when its own sidebars changed, so a viewer
+     * with none is never touched here, as it never was. */
+    acrossChanged = (dock.left + dock.right) !=
+                    (s_lvDockApplied.left + s_lvDockApplied.right);
+    downChanged = (dock.top + dock.bottom) !=
+                  (s_lvDockApplied.top + s_lvDockApplied.bottom);
+    s_lvDockApplied = dock;
 
     SDL_GetWindowSize(g_lv->window, &winW, &winH);
-    if (winW <= 0) {
+    if (winW <= 0 || winH <= 0) {
         return;
     }
+    menuH = (int)lv_imgui_get_menu_bar_height();
     zoom = lv_drawGetZoomLevel();
     if (zoom <= 0.0f) zoom = 1.0f;
-    newTilesX = lvFitTilesBesideDock(winW, reserved, (float)TILE_SIZE_X * zoom);
-    if ((BYTE)newTilesX != lv_screenGetSizeX()) {
-        lv_screenSetSizeX((BYTE)newTilesX);
+    if (acrossChanged) {
+        int newTilesX = lvFitTilesBesideDock(winW, dock.left + dock.right,
+                                             (float)TILE_SIZE_X * zoom);
+        if ((BYTE)newTilesX != lv_screenGetSizeX()) {
+            lv_screenSetSizeX((BYTE)newTilesX);
+            resized = TRUE;
+        }
+    }
+    if (downChanged) {
+        int newTilesY = lvFitTilesBesideDock(winH - menuH, dock.top + dock.bottom,
+                                             (float)TILE_SIZE_Y * zoom);
+        if ((BYTE)newTilesY != lv_screenGetSizeY()) {
+            lv_screenSetSizeY((BYTE)newTilesY);
+            resized = TRUE;
+        }
+    }
+    if (resized) {
         lv_screenSetSubOffset(0, 0);
         lv_drawResizeRenderTarget();
-        lv_drawDirtyScreen();
     }
+    /* A sidebar that only moved the map (the left one growing as the right
+     * one shrinks) still needs the whole window drawn again. */
+    lv_drawDirtyScreen();
     g_lv->wantScreenUpdate = TRUE;
 }
 
@@ -1384,6 +1514,54 @@ static void lvHostRenderFrame(const char *overlay) {
  * Takes ownership of the event loop until the user exits.
  * Window and renderer are borrowed, not owned.
  * -------------------------------------------------------------------------- */
+/* --------------------------------------------------------------------------
+ * lvHostAutosave -- Write the preferences soon after the layout changes.
+ *
+ * Called once a frame by the standalone viewer. The layout (sidebars, panels,
+ * the window's own place) is written when the viewer closes, but a viewer
+ * that is killed never gets there, so it is also written a moment after any
+ * change to it: the most that can be lost is the last second or two.
+ * Unchanged values cost nothing; the preferences store only writes its file
+ * when a value differs.
+ *
+ * Not in game view: it runs at a fixed size of its own, which must not be
+ * saved as the viewer's.
+ * -------------------------------------------------------------------------- */
+static void lvHostAutosave(void) {
+    static int    seen[5] = { 0, 0, 0, 0, 0 };
+    static bool   haveSeen = FALSE;
+    static bool   pending = FALSE;
+    static Uint64 pendingAt = 0;
+    int now[5] = { 0, 0, 0, 0, 0 };
+    bool due;
+
+    if (g_lv == NULL || g_lv->gameView) {
+        return;
+    }
+    due = lv_imgui_dock_autosave_due() != 0;
+
+    if (g_lv->ownsWindow) {
+        SDL_GetWindowPosition(g_lv->window, &now[0], &now[1]);
+        SDL_GetWindowSize(g_lv->window, &now[2], &now[3]);
+        now[4] = (SDL_GetWindowFlags(g_lv->window) & SDL_WINDOW_MAXIMIZED) ? 1 : 0;
+        if (!haveSeen) {
+            memcpy(seen, now, sizeof(seen));
+            haveSeen = TRUE;
+        } else if (memcmp(seen, now, sizeof(seen)) != 0) {
+            /* Still moving: wait until it has been still for a second. */
+            memcpy(seen, now, sizeof(seen));
+            pending = TRUE;
+            pendingAt = SDL_GetTicks();
+        } else if (pending && SDL_GetTicks() - pendingAt >= 1000) {
+            pending = FALSE;
+            due = TRUE;
+        }
+    }
+    if (due) {
+        savePreferences();
+    }
+}
+
 /* The viewer ends its loop on SDL_EVENT_QUIT, and both "Return to main menu"
  * and Quit raise one — the first means go back to WinBolo, the second means
  * the application is finished.  Quit says so here on its way past, and the
@@ -1412,9 +1590,10 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     if (lvHostSetup(window, renderer, fromMainMenu) == FALSE) {
         return;
     }
-    /* Only this host has the dock; the spectator shares the setup above and
-     * leaves the answer at no. */
+    /* Only this host has the sidebars; the spectator shares the setup above
+     * and leaves the answer at no. */
     lv_imgui_dock_set_standalone(1);
+    lvHostRestoreWindowPlace();
 
     /* Open file from command line / caller if provided */
     if (logPath != NULL && strlen(logPath) > 0) {
@@ -1519,6 +1698,9 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
 
         /* Render the current mode (block-grid / game view) and present. */
         lvHostRenderFrame(NULL);
+
+        /* Keep the saved layout no more than a moment behind the screen. */
+        lvHostAutosave();
     }
 
     /* -----------------------------------------------------------------------

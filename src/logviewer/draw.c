@@ -473,6 +473,16 @@ static void lvDrawBlitTargetToWindow(void) {
      * (1x) tile resolution. */
     dstRect.x = 0.0f;
     dstRect.y = SDL_floorf(lvDrawMenuBarOffset() * pxScale);
+    if (!g_embedded) {
+        /* The standalone viewer's left and top sidebars push the map in from
+         * the window's corner; the right and bottom ones only bound it. Each
+         * offset is floored on its own so the map's corner is the pixel the
+         * sidebar's edge is drawn at. */
+        int dockL = 0, dockT = 0;
+        lv_imgui_dock_margins(&dockL, &dockT, NULL, NULL);
+        dstRect.x += SDL_floorf((float)dockL * pxScale);
+        dstRect.y += SDL_floorf((float)dockT * pxScale);
+    }
     dstRect.w = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * blitZoom;
     dstRect.h = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * blitZoom;
 
@@ -505,6 +515,7 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     float maxGx, maxGy;
     int   curTexW, curTexH;
     int   gameW;
+    int   dockL = 0, dockT = 0, dockR = 0, dockB = 0;
 
     if (newStepIndex < 0) newStepIndex = 0;
     if (newStepIndex >= ZOOM_STEP_COUNT) newStepIndex = ZOOM_STEP_COUNT - 1;
@@ -524,7 +535,11 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     if (windowW < 1) windowW = TILE_SIZE_X;
     if (windowH < 1) windowH = TILE_SIZE_Y;
     menuH = (int)lvDrawMenuBarOffset();
-    gameH = windowH - menuH;
+    /* The standalone viewer's sidebars take the edges of the window; the map
+     * is what they leave, as it is when a sidebar comes in or is resized
+     * (lvHostDockSync). The embedded reel has none. */
+    if (!g_embedded) lv_imgui_dock_margins(&dockL, &dockT, &dockR, &dockB);
+    gameH = windowH - menuH - dockT - dockB;
     if (gameH < 1) gameH = 1;
 
     /* Compute map tile under cursor at the OLD zoom. The blit width is
@@ -542,8 +557,8 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     oldEffective = (float)(zf * TILE_SIZE_X) * oldZoom;
     if (oldEffective <= 0.0f) oldEffective = (float)TILE_SIZE_X;
 
-    gx = (float)mouseScreenX;
-    gy = (float)mouseScreenY - (float)menuH;
+    gx = (float)(mouseScreenX - dockL);
+    gy = (float)(mouseScreenY - dockT) - (float)menuH;
     if (gx < 0.0f) gx = 0.0f;
     if (gy < 0.0f) gy = 0.0f;
 
@@ -569,14 +584,14 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     newEffective = (float)(zf * TILE_SIZE_X) * newZoom;
     if (newEffective <= 0.0f) newEffective = (float)TILE_SIZE_X;
     newTilesX = (int)(((float)gameW + newEffective * 0.5f) / newEffective);
-    /* The standalone viewer's dock takes the right of the window; the map
-     * fills what is left, as it does when the dock comes in or is resized
-     * (lvHostDockSync). The embedded reel has no dock. */
-    if (!g_embedded && lv_imgui_dock_reserved_width() > 0) {
-        gameW = windowW - lv_imgui_dock_reserved_width();
+    /* Beside a sidebar the map runs up to the sidebar's edge: the last
+     * square may go a little way under it rather than stop short. */
+    if (dockL + dockR > 0) {
+        gameW = windowW - dockL - dockR;
         newTilesX = lvFitTilesCover(gameW, newEffective);
     }
     newTilesY = (int)(((float)gameH + newEffective * 0.5f) / newEffective);
+    if (dockT + dockB > 0) newTilesY = lvFitTilesCover(gameH, newEffective);
     if (newTilesX < 1) newTilesX = 1;
     if (newTilesY < 1) newTilesY = 1;
     if (newTilesX > 255) newTilesX = 255;
@@ -1033,9 +1048,15 @@ void lv_drawSplashForImGui(void) {
      * window on a Retina display. */
     float pxScale = lvDrawPixelScale();
     SDL_GetRenderOutputSize(sdlRenderer, &windowWidth, &windowHeight);
-    /* Centre in the part of the window the dock leaves, not behind it. */
-    windowWidth -= (int)((float)lv_imgui_dock_reserved_width() * pxScale);
+    /* Centre in the part of the window the sidebars leave, not behind them. */
+    int dockL = 0, dockT = 0, dockR = 0, dockB = 0;
+    lv_imgui_dock_margins(&dockL, &dockT, &dockR, &dockB);
+    int splashX0 = (int)((float)dockL * pxScale);
+    int splashY0 = (int)((float)dockT * pxScale);
+    windowWidth -= (int)((float)(dockL + dockR) * pxScale);
+    windowHeight -= (int)((float)(dockT + dockB) * pxScale);
     if (windowWidth < 0) windowWidth = 0;
+    if (windowHeight < 0) windowHeight = 0;
     int splashW = (int)(splashWidth * pxScale);
     int splashH = (int)(splashHeight * pxScale);
 
@@ -1057,8 +1078,8 @@ void lv_drawSplashForImGui(void) {
         if (windowWidth > splashW) x = (windowWidth - splashW) / 2;
         if (windowHeight > splashH) y = (windowHeight - splashH) / 2;
 
-        dstRect.x = (float)x;
-        dstRect.y = (float)y;
+        dstRect.x = (float)(splashX0 + x);
+        dstRect.y = (float)(splashY0 + y);
         dstRect.w = (float)splashW;
         dstRect.h = (float)splashH;
         SDL_RenderTexture(sdlRenderer, textureSplash, NULL, &dstRect);

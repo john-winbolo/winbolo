@@ -264,10 +264,13 @@ void lv_imgui_scenario_status(bool logLoaded) {
        is where the top of the game view starts. */
     const float  height = ImGui::GetFontSize() * 1.5f;
     const ImVec2 size   = font->CalcTextSizeA(height, FLT_MAX, 0.0f, line);
-    /* Centred over the map, which stops where the right-side dock starts. */
-    const float  mapW   = vp->Size.x - (float)lv_imgui_dock_reserved_width();
-    const float  px     = vp->Pos.x + (mapW - size.x) * 0.5f;
-    const float  py     = vp->Pos.y + ImGui::GetFrameHeight() + 4.0f;
+    /* Centred over the map, which is what the sidebars leave of the window,
+       and under the top sidebar when there is one. */
+    int dockL = 0, dockT = 0, dockR = 0;
+    lv_imgui_dock_margins(&dockL, &dockT, &dockR, nullptr);
+    const float  mapW   = vp->Size.x - (float)(dockL + dockR);
+    const float  px     = vp->Pos.x + (float)dockL + (mapW - size.x) * 0.5f;
+    const float  py     = vp->Pos.y + ImGui::GetFrameHeight() + (float)dockT + 4.0f;
     const ImU32  edge   = IM_COL32(0, 0, 0, 255);
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {

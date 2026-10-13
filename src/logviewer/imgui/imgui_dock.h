@@ -1,5 +1,5 @@
 /*
- * imgui_dock.h - the Log Viewer's right-side dock for its panels
+ * imgui_dock.h - the Log Viewer's sidebars: the docks its panels go in
  *
  * Copyright (c) 1998-2026 John Morrison.
  * This program is free software; you can redistribute it and/or modify
@@ -19,55 +19,81 @@ struct LogViewerState;
 extern "C" {
 #endif
 
-/* The dock is a strip down the right of the window, under the menu bar, that
+/* A sidebar is a strip along one edge of the window, under the menu bar, that
  * the panels (Controls, Game Information, ...) can be dragged into and out
- * of. It is a Windows menu option, off until asked for, and it only ever
- * shows in the standalone viewer's desktop layout: the live spectator host,
- * the game view and the tablet / Steam Deck layout never draw it. While it
- * shows, the map keeps to the rest of the window (lv_imgui_dock_reserved_width). */
+ * of. There are four, one an edge, each a Windows menu option that is off
+ * until asked for. The left and right ones run the full height under the menu
+ * bar; the top and bottom ones sit between them. They only ever show in the
+ * standalone viewer's desktop layout: the live spectator host, the game view
+ * and the tablet / Steam Deck layout never draw them. While any shows, the
+ * map keeps to the rest of the window (lv_imgui_dock_margins).
+ *
+ * A side is one of LV_DOCK_RIGHT, LV_DOCK_LEFT, LV_DOCK_TOP, LV_DOCK_BOTTOM
+ * (lv_dock_fit.h).
+ *
+ * The whole layout is kept in the preferences, section LOGVIEWER:
+ *   Dock.Sides        which sidebars are on and how big each is
+ *   Dock.Ini          ImGui's settings text: every floating panel's place and
+ *                     size, and the arrangement of each sidebar that shows
+ *   Dock.Tree.<Side>  the arrangement of a sidebar that is off, for when it
+ *                     comes back
+ *   Dock.Enabled, Dock.Width   the right sidebar, under the names it had when
+ *                     it was the only one
+ * Dock.Layout, which the right-side dock used to write, is read when there
+ * is no Dock.Sides and is not written any more. */
 
-/* Load the option, the width and the saved layout from the preferences. Call
+/* Load the options, the sizes and the saved layout from the preferences. Call
  * once the ImGui context exists. */
 void lv_imgui_dock_init(struct LogViewerState *lv);
 
-/* Write the option, the width and the layout back to the preferences. Call
+/* Write the options, the sizes and the layout back to the preferences. Call
  * while the ImGui context still exists. */
 void lv_imgui_dock_save(void);
 
 /* Say whether this host is the standalone viewer. lv_imgui_dock_init sets it
  * to no, so a host that says nothing (the spectator, which shares the
- * viewer's code and preferences) never shows the dock and never writes its
+ * viewer's code and preferences) never shows a sidebar and never writes the
  * settings. */
 void lv_imgui_dock_set_standalone(int standalone);
 
-/* The menu option, whether or not the dock can show right now. */
+/* A sidebar's menu option, whether or not sidebars can show right now. */
+int  lv_imgui_dock_get_side_enabled(int side);
+void lv_imgui_dock_set_side_enabled(int side, int enabled);
+
+/* The right sidebar's option, for the callers from when it was the only one. */
 int  lv_imgui_dock_get_enabled(void);
 void lv_imgui_dock_set_enabled(int enabled);
 
-/* Ask for every panel that is showing to be put in the dock, one above the
- * other, the next time the dock draws. Does nothing while the option is off. */
+/* Ask for every panel that is showing to be put in the right sidebar, one
+ * above the other, the next time it draws. Turns the right sidebar on. */
 void lv_imgui_dock_request_layout(void);
 
-/* Bring the dock in or take it out to match the option and the mode the
+/* Bring each sidebar in or take it out to match its option and the mode the
  * viewer is in. Call once a frame BEFORE the ImGui frame starts and before
- * the map is drawn: it may load a layout into the context, and the answer of
- * lv_imgui_dock_reserved_width changes here and nowhere else in the frame
- * except while the user drags the dock's edge. */
+ * the map is drawn: the first call puts the saved layout into the context,
+ * and the answer of lv_imgui_dock_margins changes here and nowhere else in
+ * the frame except while the user drags a sidebar's edge. */
 void lv_imgui_dock_pre_frame(void);
 
-/* How many window points down the right of the window the dock takes, or 0
- * while it is not showing. The map, the mouse hit test and the things centred
- * on the map all leave this much alone. */
-int  lv_imgui_dock_reserved_width(void);
+/* How many window points each sidebar takes along its edge, 0 for one that
+ * is not showing. top is measured from under the menu bar. The map, the
+ * mouse hit test and the things centred on the map all leave these alone.
+ * Any pointer may be NULL. */
+void lv_imgui_dock_margins(int *left, int *top, int *right, int *bottom);
 
-/* Draw the dock's strip and its dock space. Call inside the ImGui frame,
- * after the menu bar and BEFORE the panels, so a panel docked here finds its
- * place already submitted. Draws nothing while the dock is not showing. */
+/* True when the layout has changed and has then been left alone for a
+ * moment, so now is the time to write the preferences. Answers true once a
+ * change. Call once a frame, after the ImGui frame. */
+int  lv_imgui_dock_autosave_due(void);
+
+/* Draw each sidebar's strip and its dock space. Call inside the ImGui frame,
+ * after the menu bar and BEFORE the panels, so a panel docked in one finds
+ * its place already submitted. Draws nothing while no sidebar is showing. */
 void lv_imgui_dock_host(void);
 
-/* True once, for a panel that sat in the dock when the dock was taken away:
- * the panel then goes back to its default floating place instead of floating
- * where its slot in the dock was. window_id is the panel's "###id" name. */
+/* True once, for a panel that sat in a sidebar when the sidebar was taken
+ * away: the panel then goes back to its default floating place instead of
+ * floating where its slot was. window_id is the panel's "###id" name. */
 bool lv_imgui_dock_take_float_reset(const char *window_id);
 
 /* True when the named window was docked the last time it drew. For the code

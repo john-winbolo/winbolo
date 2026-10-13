@@ -4005,10 +4005,15 @@ int run_lv_server_tick_live_feed(void);
 /* Where the log viewer draws a declared region (test_lv_region_rect.c): at the
  * overview's edges, off it, and on the game view at 2x with a pan. */
 int run_lv_region_rect_placement(void);
-/* How the log viewer's window is shared between the map and the right-side
- * dock (test_lv_dock_fit.c): squares across with and without the dock, and
- * the limits on the dock's width. */
+/* How the log viewer's window is shared between the map and the sidebars
+ * (test_lv_dock_fit.c): squares across with and without a sidebar, the limits
+ * on a sidebar's size, the four margins and the map's part of the window;
+ * and the viewer's own text for the sidebar options and for the arrangement
+ * of a sidebar that is off, read back as written and safe on damaged text. */
 int run_lv_dock_fit_sums(void);
+int run_lv_dock_fit_margins(void);
+int run_lv_dock_layout_sides(void);
+int run_lv_dock_layout_tree(void);
 /* The log viewer's HUD panel (test_lv_hud.c): the icon of a base, pillbox and
  * tank slot, the layout of the three grids, and the grey and colour sums. */
 int run_lv_hud_sums(void);

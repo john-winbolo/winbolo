@@ -1313,6 +1313,10 @@
 #define STR_LV_MENU_OPEN_SP                 2801
 #define STR_LV_MENU_OPEN_SP_TIP             2802
 #define STR_LV_MENU_SAVE_LOG                2803
+#define STR_LV_DOCK_LEFT                    2804
+#define STR_LV_DOCK_TOP                     2805
+#define STR_LV_DOCK_BOTTOM                  2806
+#define STR_LV_DOCK_EMPTY_HINT              2807
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

@@ -27,6 +27,7 @@ extern "C" {
     #include "logviewer.h"
     #include "../backend.h"
     #include "../draw.h"
+    #include "../lv_dock_fit.h"
     #include "../../winbolonet/http.h"
     void lv_windowOpenFile(char *cmdLine);
     void lv_windowSaveMap(void);
@@ -123,8 +124,8 @@ static void show_about_dialog(void);
 
 void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     s_lv = lv;
-    /* The dock keeps its own preferences; it loads and saves with the menu's
-     * so the hosts have one call each to make. */
+    /* The sidebars keep their own preferences; they load and save with the
+     * menu's so the hosts have one call each to make. */
     lv_imgui_dock_init(lv);
     /* Load preferences from config */
     char val[256];
@@ -204,8 +205,14 @@ void lv_imgui_main_menu_save(void) {
 static void zoom_at_center(int stepIndex) {
     int w = 0, h = 0;
     if (s_lv && s_lv->window) SDL_GetWindowSize(s_lv->window, &w, &h);
-    /* The middle of the map's part of the window, which stops at the dock. */
-    lv_drawSetZoomStep(stepIndex, (w - lv_imgui_dock_reserved_width()) / 2, h / 2);
+    /* The middle of the map's part of the window: what the sidebars and the
+     * menu bar leave. */
+    int dockL = 0, dockT = 0, dockR = 0, dockB = 0;
+    int menuH = (int)lv_imgui_get_menu_bar_height();
+    lv_imgui_dock_margins(&dockL, &dockT, &dockR, &dockB);
+    if (dockL + dockT + dockR + dockB == 0) menuH = 0;  /* as it always was */
+    lv_drawSetZoomStep(stepIndex, (dockL + (w - dockR)) / 2,
+                       (menuH + dockT + (h - dockB)) / 2);
 }
 
 void lv_imgui_zoom_at_center(int stepIndex) { zoom_at_center(stepIndex); }
@@ -555,14 +562,26 @@ int lv_imgui_main_menu_bar(void) {
                 clicked = 1;
             }
             ImGui::Separator();
-            /* The dock is a strip down the right of the window that the
-             * panels can be dragged into. Turning it on for the first time
-             * puts every panel in it; after that it comes back as it was
-             * left. */
-            if (ImGui::MenuItem(langGetText(STR_LV_DOCK_ENABLED), NULL, lv_imgui_dock_get_enabled() != 0)) {
-                lv_imgui_dock_set_enabled(!lv_imgui_dock_get_enabled());
-                clicked = 1;
+            /* A sidebar is a strip along one edge of the window that the
+             * panels can be dragged into. Turning the right one on for the
+             * first time puts every panel in it; the others start empty.
+             * After that each comes back as it was left. */
+            {
+                static const struct { int side; int label; } k_sidebars[] = {
+                    { LV_DOCK_RIGHT,  STR_LV_DOCK_ENABLED },
+                    { LV_DOCK_LEFT,   STR_LV_DOCK_LEFT },
+                    { LV_DOCK_TOP,    STR_LV_DOCK_TOP },
+                    { LV_DOCK_BOTTOM, STR_LV_DOCK_BOTTOM },
+                };
+                for (const auto &sb : k_sidebars) {
+                    bool on = lv_imgui_dock_get_side_enabled(sb.side) != 0;
+                    if (ImGui::MenuItem(langGetText(sb.label), NULL, on)) {
+                        lv_imgui_dock_set_side_enabled(sb.side, !on);
+                        clicked = 1;
+                    }
+                }
             }
+            ImGui::Separator();
             /* Floats every panel at its default place. A docked panel leaves
              * the dock: the panels set their position unconditionally on a
              * reset, and ImGui undocks a window that is told where to be. */
@@ -570,8 +589,8 @@ int lv_imgui_main_menu_bar(void) {
                 lv_g_reset_window_positions = true;
                 clicked = 1;
             }
-            if (ImGui::MenuItem(langGetText(STR_LV_RESET_WINDOWS_DOCK), NULL, false,
-                                lv_imgui_dock_get_enabled() != 0)) {
+            /* Stacks every panel in the right sidebar, which this turns on. */
+            if (ImGui::MenuItem(langGetText(STR_LV_RESET_WINDOWS_DOCK))) {
                 lv_imgui_dock_request_layout();
                 clicked = 1;
             }
