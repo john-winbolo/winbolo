@@ -4394,6 +4394,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # at the shell, which a lag-compensated test leaves behind the tank.
     tests/unit/test_tank_blast_at_tank.c
     tests/unit/test_teleport_clears_rewind.c
+    tests/unit/test_shell_rewind_rules.c
     tests/unit/test_input_gate.c
     tests/unit/test_input_source.c
     src/gui/sdl3/input_source.c
@@ -5673,6 +5674,9 @@ set(_unit_test_names
     teleport_shell_hits_new_place
     teleport_rewind_refills
     teleport_builder_rewind_record
+    shell_rewind_pill_shell_tank_present
+    shell_rewind_tank_full_comp
+    shell_rewind_builder_one_less
     loopback_join
     loopback_join_loss
     loopback_password

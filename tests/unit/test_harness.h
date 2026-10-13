@@ -2674,6 +2674,9 @@ int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
 int run_teleport_rewind_refills(void);
 int run_teleport_builder_rewind_record(void);
+int run_shell_rewind_pill_shell_tank_present(void);
+int run_shell_rewind_tank_full_comp(void);
+int run_shell_rewind_builder_one_less(void);
 
 /* In-game input gate taxonomy (test_input_gate.c). gameInputSuspended()
  * suspends the polled in-game readers only for blocking surfaces (text
