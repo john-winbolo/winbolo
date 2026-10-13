@@ -11,6 +11,12 @@
 #include "imgui_lv_icons.h"
 
 #include <cmath>
+#include <cstdio>
+#include <cstring>
+
+extern "C" {
+    #include "../lv_name_header.h"
+}
 
 /* A triangle that points right (dir > 0) or left, in the box x0..x1 by
  * y0..y1. */
@@ -98,6 +104,12 @@ void lv_icon_draw(ImDrawList *dl, int icon, ImVec2 p0, ImVec2 p1, ImU32 col) {
         }
         break;
     }
+    case LV_ICON_CLOSE: {
+        const float thick = (h >= 12.0f) ? 2.0f : 1.5f;
+        dl->AddLine(ImVec2(x0, y0), ImVec2(x1, y1), col, thick);
+        dl->AddLine(ImVec2(x0, y1), ImVec2(x1, y0), col, thick);
+        break;
+    }
     default:
         break;
     }
@@ -142,4 +154,88 @@ void lv_icon_text(int icon) {
     lv_icon_draw(ImGui::GetWindowDrawList(), icon, p, ImVec2(p.x + w, p.y + h),
                  ImGui::GetColorU32(ImGuiCol_Text));
     ImGui::Dummy(ImVec2(w, h));
+}
+
+/* name cut to at most maxW wide, with "..." for what is gone. Whole UTF-8
+ * characters are taken off the end. */
+static void icon_cut_name(const char *name, float maxW, char *out, size_t outSize) {
+    snprintf(out, outSize, "%s", name);
+    if (ImGui::CalcTextSize(out).x <= maxW) {
+        return;
+    }
+    size_t len = strlen(out);
+    char tried[256];
+    while (len > 0) {
+        len--;
+        /* Not in the middle of a character. */
+        while (len > 0 && ((unsigned char)out[len] & 0xC0) == 0x80) {
+            len--;
+        }
+        out[len] = '\0';
+        snprintf(tried, sizeof(tried), "%s...", out);
+        if (ImGui::CalcTextSize(tried).x <= maxW) {
+            snprintf(out, outSize, "%s", tried);
+            return;
+        }
+    }
+    /* Not even "..." goes in: nothing. */
+    out[0] = '\0';
+}
+
+bool lv_name_header(const char *id, bool hasStripe, ImU32 stripe, int leadIcon,
+                    const char *name, const char *nameTip, const char *closeTip) {
+    const ImGuiStyle &style = ImGui::GetStyle();
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const ImVec2 top = ImGui::GetCursorScreenPos();
+    const float lh = ImGui::GetTextLineHeight();
+    const float gap = style.ItemInnerSpacing.x;
+    const float closeW = floorf(lh);
+    float lead = LV_NAME_HEADER_STRIPE_W + gap;
+    if (leadIcon >= 0) {
+        lead += lv_icon_text_width(leadIcon) + gap;
+    }
+    if (name == nullptr) name = "";
+    const LvNameHeader lay = lvNameHeaderLayout(ImGui::GetContentRegionAvail().x, lead,
+                                                ImGui::CalcTextSize(name).x, closeW, gap);
+
+    if (hasStripe) {
+        dl->AddRectFilled(ImVec2(top.x, top.y + 1.0f),
+                          ImVec2(top.x + LV_NAME_HEADER_STRIPE_W, top.y + lh - 1.0f), stripe, 1.0f);
+    }
+    ImGui::BeginGroup();
+    if (leadIcon >= 0) {
+        ImGui::SetCursorScreenPos(ImVec2(top.x + LV_NAME_HEADER_STRIPE_W + gap, top.y));
+        lv_icon_text(leadIcon);
+    }
+    char shown[256];
+    if (lay.nameCut) {
+        icon_cut_name(name, lay.nameW, shown, sizeof(shown));
+    } else {
+        snprintf(shown, sizeof(shown), "%s", name);
+    }
+    ImGui::SetCursorScreenPos(ImVec2(top.x + lay.nameX, top.y));
+    ImGui::TextUnformatted(shown);
+    ImGui::EndGroup();
+    if (nameTip == nullptr && lay.nameCut) nameTip = name;
+    if (nameTip != nullptr && nameTip[0] != '\0' &&
+        ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+        ImGui::SetTooltip("%s", nameTip);
+    }
+
+    /* The X: a button with no frame until the mouse is over it, so the line
+     * reads as a name and not as a row of controls. */
+    ImGui::SetCursorScreenPos(ImVec2(top.x + lay.closeX, top.y));
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(0, 0, 0, 0));
+    const bool pressed = lv_icon_button(id, LV_ICON_CLOSE, closeW);
+    ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+    if (closeTip != nullptr && closeTip[0] != '\0' &&
+        ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+        ImGui::SetTooltip("%s", closeTip);
+    }
+
+    ImGui::SetCursorScreenPos(ImVec2(top.x, top.y + ceilf(ImGui::GetTextLineHeightWithSpacing())));
+    return pressed;
 }

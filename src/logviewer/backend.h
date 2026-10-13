@@ -671,6 +671,17 @@ void lv_screenOverviewSnapshot(struct LvOverview *out);
  * pillboxes it carries, at the playback time. Hold the client mutex. */
 struct LvTankStatus;
 void lv_screenTankStatusSnapshot(struct LvTankStatus *out);
+
+/* The selected tank: the one the Tank panel shows and the map marks. Select
+ * picks the tank in a slot and changes nothing else (not whose view the map
+ * shows); Deselect leaves none; Selected is its slot, or -1 for none or for
+ * a player who is not in the game at the playback time. Choose is a Select
+ * Team click on a tank's picture: "self" and the selection both go to it.
+ * Hold the client mutex. */
+void lv_screenSelectTank(int slot);
+void lv_screenDeselectTank(void);
+int lv_screenSelectedTank(void);
+void lv_screenChooseTank(int slot);
 /* 1 when the loaded recording holds tank stocks (a snapshot's player block
    or a log_TankSetStock record gave some), 0 for a recording written before
    they were recorded. The stocks of every slot read zero in that case, and

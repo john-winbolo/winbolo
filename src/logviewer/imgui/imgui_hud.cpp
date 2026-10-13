@@ -23,8 +23,8 @@
  * A click on a tank picks that player as the perspective. The grids then are
  * the game's in colour too: every icon is the one that player's game draws,
  * straight out of the atlas (lv_hud.h has the rules). The map follows
- * (draw.c). A click on the same tank, or the "All teams" button in the line
- * above the grids, goes back.
+ * (draw.c). A click on the same tank, or the X at the end of the line above
+ * the grids, goes back.
  */
 
 #include "imgui_hud.h"
@@ -58,6 +58,7 @@ extern "C" {
     void lv_screenGetPlayerName(char *buffer, unsigned char player, size_t destSize);
     void lv_screenTogglePerspective(unsigned char playerNum);
     void lv_screenClearPerspective(void);
+    void lv_screenDeselectTank(void);
     bool lv_screenCheckPerspective(void);
     void lv_drawDirtyScreen(void);
     SDL_Texture *lv_drawGetTilesTexture(void);
@@ -311,7 +312,7 @@ static void hud_slot_click(int grid, int index) {
 /* One grid: its name, the black panel, the tile in the middle and the 16
  * slots. origin is the top left of the name; scale is whole. */
 static void hud_grid(int grid, const LvHudSlot *slots, bool perspective,
-                     ImVec2 origin, int scale) {
+                     ImVec2 origin, int scale, int selected) {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const float s = (float)scale;
     const char *label = langGetText(grid == HUD_GRID_TANKS ? STR_TABLET_TANKS :
@@ -355,6 +356,12 @@ static void hud_grid(int grid, const LvHudSlot *slots, bool perspective,
         ImVec2 q0(p0.x + s * x, p0.y + s * y);
         ImVec2 q1(q0.x + s * STATUS_ITEM_SIZE_X, q0.y + s * STATUS_ITEM_SIZE_Y);
         hud_slot_icon(dl, grid, slot, perspective, q0, q1);
+        if (n == selected) {
+            /* The selected tank: a thin white edge round its cell, as the
+             * map has white corners round the tank. */
+            dl->AddRect(ImVec2(q0.x - 1.0f, q0.y - 1.0f), ImVec2(q1.x + 1.0f, q1.y + 1.0f),
+                        IM_COL32(255, 255, 255, 190));
+        }
 
         /* The slot is an item of the window, so the hover and the click go
          * through ImGui: a popup or another window over the grid hides it. */
@@ -364,21 +371,17 @@ static void hud_grid(int grid, const LvHudSlot *slots, bool perspective,
             hud_slot_click(grid, n);
         }
         imguiHandOnHover();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+        /* At once, with no wait and no need for the mouse to stand still:
+         * the cells are small and close, and the name is what the mouse is
+         * moved over them for. It goes from cell to cell with the mouse.
+         * Only these cells; every other tooltip keeps ImGui's delay. */
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNone)) {
             hud_slot_tooltip(grid, n, slot);
         }
         ImGui::PopID();
     }
 
     imguiPopNearestSamplingOn(dl);
-}
-
-/* A small eye, the height of a line of text and in the colour of the text.
- * It stands for the words "View of" in the line above the grids. It is one
- * of the viewer's drawn icons (imgui_lv_icons.cpp). It takes its room as an
- * item of the window, so the name follows it with SameLine. */
-static void hud_eye_icon(void) {
-    lv_icon_text(LV_ICON_EYE);
 }
 
 void lv_imgui_hud_window(void) {
@@ -457,25 +460,23 @@ void lv_imgui_hud_window(void) {
         {
             ImVec2 top = ImGui::GetCursorScreenPos();
             if (snap.perspective) {
+                /* The stripe of the player's team, an eye, the name, and at
+                 * the right the X that goes back to all teams: the same
+                 * line the Tank panel has for its tank. The eye stands for
+                 * "the view of"; the words are the tooltip of the name. */
                 MessageArgs args = {};
                 snprintf(args.string1, sizeof(args.string1), "%s", snap.viewerName);
-                if (ImGui::SmallButton(langGetText(STR_LV_HUD_ALL_TEAMS))) {
+                char viewAs[LANG_MSGARG_STRING_LEN];
+                snprintf(viewAs, sizeof(viewAs), "%s", langGetTextFmt(STR_LV_HUD_VIEW_AS, &args));
+                const LvHudSlot &who = snap.tanks[snap.viewer < LV_HUD_SLOTS ? snap.viewer : 0];
+                if (lv_name_header("allteams", who.hasTeam != 0, hud_team_colour(who), LV_ICON_EYE,
+                                   snap.viewerName, viewAs, langGetText(STR_LV_TIP_ALL_TEAMS))) {
+                    /* Out of the one-player view, and no tank selected. */
                     lv_clientMutexWaitFor();
                     lv_screenClearPerspective();
+                    lv_screenDeselectTank();
                     lv_clientMutexRelease();
                     lv_drawDirtyScreen();
-                }
-                imguiHandOnHover();
-                ImGui::SameLine();
-                /* An eye, then the name: "the view of this player". The
-                 * words are kept for the tooltip. */
-                ImGui::BeginGroup();
-                hud_eye_icon();
-                ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-                ImGui::TextUnformatted(snap.viewerName);
-                ImGui::EndGroup();
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
-                    ImGui::SetTooltip("%s", langGetTextFmt(STR_LV_HUD_VIEW_AS, &args));
                 }
             } else {
                 ImGui::TextDisabled("%s", langGetText(STR_LV_HUD_ALL_TEAMS));
@@ -502,7 +503,8 @@ void lv_imgui_hud_window(void) {
             } else {
                 at.y += (float)(i * (hud_label_h() + fit.scale * HUD_PANEL_H + hud_gap()));
             }
-            hud_grid(grid, slots, snap.perspective != 0, at, fit.scale);
+            hud_grid(grid, slots, snap.perspective != 0, at, fit.scale,
+                     (grid == HUD_GRID_TANKS && snap.hasSelected) ? (int)snap.selected : -1);
         }
 
         /* The slots moved the cursor about; leave it under the whole block. */

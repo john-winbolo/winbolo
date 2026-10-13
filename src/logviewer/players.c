@@ -57,6 +57,22 @@ static char testP[256];
 static bool perspectiveOn = FALSE;
 static char perspectiveName[PLAYER_NAME_LEN];
 
+/* The selected tank: the one the Tank panel shows and the map marks. It is
+ * a slot of its own, apart from "self": a click on a tank on the map selects
+ * it and changes nothing about whose view the map shows. -1 is no tank. A
+ * selected slot with no player in it (the playhead is where the player had
+ * not joined yet) stays selected and shows as no tank until the player is
+ * there again. */
+static int selectedTank = -1;
+
+void lv_playersSetSelected(int slot) {
+  selectedTank = (slot >= 0 && slot < MAX_TANKS) ? slot : -1;
+}
+
+int lv_playersGetSelected(void) {
+  return selectedTank;
+}
+
 void lv_playersSetSelf(BYTE pn) {
   myPlayerNum = pn;
 }
@@ -68,6 +84,7 @@ void lv_playersSetPerspective(BYTE playerNum) {
     return;
   }
   myPlayerNum = playerNum;
+  selectedTank = playerNum; /* the player whose view it is, is the one selected */
   perspectiveOn = TRUE;
   snprintf(perspectiveName, sizeof(perspectiveName), "%s", plrs.item[playerNum].playerName);
 }
@@ -126,6 +143,7 @@ void lv_playersCreate() {
   BYTE count; /* Looping variable */
 
   myPlayerNum = NEUTRAL; /* Not set yet */
+  selectedTank = -1;
   lv_playersClearPerspective(); /* a new log has new players */
   for (count = 0;count<MAX_TANKS;count++) {
     plrs.item[count].inUse = FALSE;

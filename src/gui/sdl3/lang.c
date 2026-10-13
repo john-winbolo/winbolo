@@ -1059,7 +1059,7 @@ static const LangEntry langTable[] = {
     {2821, "Total"},
     {2822, "{string1} +{number}"},
     {2823, "Tank"},
-    {2824, "Click a tank in the HUD panel to select it"},
+    {2824, "Click a tank on the map or in the HUD panel to select it"},
     {2825, "{string1}: {number} / {number2}"},
     {2826, "Builder: in tank"},
     {2827, "Builder: out"},
@@ -1073,6 +1073,9 @@ static const LangEntry langTable[] = {
     {2834, "Forward {string1} seconds"},
     {2835, "{string1} ({string2})"},
     {2836, "Jump to live"},
+    /* Log viewer: the X at the end of a panel's name line */
+    {2837, "Deselect tank"},
+    {2838, "Back to all teams"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

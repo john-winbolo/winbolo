@@ -25,6 +25,11 @@ extern "C" {
     #include "../lv_dock_fit.h"
     void lv_screenMouseInformationClick(int xPos, int yPos);
     void lv_screenMouseClick(int xPos, int yPos);
+    void lv_screenSelectTank(int slot);
+    void lv_screenChooseTank(int slot);
+    int lv_drawTankAtPoint(float xPoints, float yPoints);
+    void lv_clientMutexWaitFor(void);
+    void lv_clientMutexRelease(void);
     void lv_drawDirtyScreen(void);
     struct SDL_Texture *lv_drawGetGameTexture(void);
     void lv_drawZoomIn(int mouseScreenX, int mouseScreenY);
@@ -222,9 +227,25 @@ int lv_imgui_game_viewport_process_input(void) {
                 /* Click without drag - handle as selection */
                 int game_x, game_y;
                 if (screen_to_game_coords(io.MousePos.x, io.MousePos.y, &game_x, &game_y)) {
-                    /* Check mode to determine which click function to use */
+                    /* A click on a tank's picture selects that tank: the
+                     * Tank panel shows it and the map marks it. In
+                     * Information mode that is all it does to the players,
+                     * and the square under the click still gets its
+                     * information. In Select Team mode the tank is also the
+                     * team picked, as a click on its square was before. */
+                    int tank = lv_drawTankAtPoint(io.MousePos.x, io.MousePos.y);
                     if (lv_imgui_get_mode_information()) {
+                        if (tank >= 0) {
+                            lv_clientMutexWaitFor();
+                            lv_screenSelectTank(tank);
+                            lv_clientMutexRelease();
+                        }
                         lv_screenMouseInformationClick(game_x, game_y);
+                    } else if (tank >= 0) {
+                        lv_clientMutexWaitFor();
+                        lv_screenChooseTank(tank);
+                        lv_clientMutexRelease();
+                        lv_drawDirtyScreen();
                     } else {
                         lv_screenMouseClick(game_x, game_y);
                     }

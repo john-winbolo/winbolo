@@ -109,6 +109,8 @@ typedef struct LvHudSnapshot {
     unsigned char perspective;         /* 1 while one player's view is shown */
     unsigned char viewer;              /* that player's slot */
     char viewerName[LV_HUD_NAME_LEN];  /* and name */
+    unsigned char hasSelected;         /* 1 while a tank is selected */
+    unsigned char selected;            /* its slot */
 } LvHudSnapshot;
 
 /* The icon for a base slot. The order is the game's (lv_basesGetAlliancePos):

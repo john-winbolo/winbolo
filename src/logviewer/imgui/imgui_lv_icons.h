@@ -30,6 +30,7 @@ enum LvIcon {
     LV_ICON_TO_END,         /* a triangle to the right against a bar */
     LV_ICON_EYE,            /* the outline of an eye and its pupil */
     LV_ICON_GEAR,           /* a toothed wheel */
+    LV_ICON_CLOSE,          /* an X */
     LV_ICON_COUNT
 };
 
@@ -54,5 +55,21 @@ void lv_icon_text(int icon);
 
 /* The width lv_icon_text takes for this icon. */
 float lv_icon_text_width(int icon);
+
+/* The line that names a player at the top of a panel (the Tank panel, the
+ * HUD panel): a stripe in the colour of the player's team, an icon when
+ * leadIcon is one (-1 for none), the name, and at the right end a small X
+ * button. A name too long for the line is cut and ends in "..."; the button
+ * is never cut and never under the name (lv_name_header.h has the sums).
+ * The stripe keeps its room when the player is in no team, so the name
+ * starts at the same place. nameTip is the tooltip of the name (NULL: the
+ * whole name, when it was cut); closeTip that of the button. The line takes
+ * the height of a line of text with its spacing. Returns true when the
+ * button was pressed. */
+bool lv_name_header(const char *id, bool hasStripe, ImU32 stripe, int leadIcon,
+                    const char *name, const char *nameTip, const char *closeTip);
+
+/* The width of the stripe of lv_name_header. */
+#define LV_NAME_HEADER_STRIPE_W 4.0f
 
 #endif /* LV_IMGUI_LV_ICONS_H */

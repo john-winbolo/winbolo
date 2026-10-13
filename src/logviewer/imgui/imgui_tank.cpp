@@ -27,10 +27,9 @@
  * none of it, only the gauges (lvTankLayoutPick has the rule). Nothing is
  * ever cut off, so the panel does not scroll.
  *
- * The selected tank is the viewer's "self" player: the one a click on a
- * tank in the HUD panel picks, the one a Select Team click on a tank on the
- * map picks, and the one Tank Centred follows. Everything is read off the
- * game's state every frame, so it follows a seek in either direction.
+ * The selected tank is the one a click on a tank on the map picks, or a
+ * click on a tank in the HUD panel. Everything is read off the game's state
+ * every frame, so it follows a seek in either direction.
  */
 
 #include "imgui_tank.h"
@@ -38,6 +37,7 @@
 #include "imgui_dialogs.h"
 #include "imgui_dock.h"
 #include "imgui_context.h"
+#include "imgui_lv_icons.h"
 #include "imgui.h"
 #include "../../gui/lang.h"
 #include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
@@ -60,6 +60,7 @@ extern "C" {
     void lv_clientMutexWaitFor(void);
     void lv_clientMutexRelease(void);
     void lv_screenTankStatusSnapshot(LvTankStatus *out);
+    void lv_screenDeselectTank(void);
     SDL_Texture *lv_drawGetStatusBackgroundTexture(void);
     SDL_Texture *lv_drawGetTilesTexture(void);
 }
@@ -92,9 +93,6 @@ extern "C" {
 
 /* The thin edge round the well, as the HUD panel has round its grids. */
 #define TANK_EDGE_COLOUR IM_COL32(110, 110, 110, 255)
-
-/* The stripe in the team's colour at the start of the name. */
-#define TANK_STRIPE_W 4.0f
 
 /* Where each gauge starts across the well, in the game's pixels from the
  * first one, and the name of what it measures. */
@@ -601,19 +599,11 @@ void lv_imgui_tank_window(void) {
         } else {
             const ImGuiStyle &style = ImGui::GetStyle();
 
-            /* The name, after a stripe in the colour of the tank's team. A
-             * dead tank says so: its gauges are then empty, as the game's
-             * are. */
+            /* The name, after a stripe in the colour of the tank's team,
+             * and at the right the X that deselects the tank. A dead tank
+             * says so: its gauges are then empty, as the game's are. */
             {
-                ImDrawList *dl = ImGui::GetWindowDrawList();
-                ImVec2 top = ImGui::GetCursorScreenPos();
-                const float lh = ImGui::GetTextLineHeight();
                 char name[LANG_MSGARG_STRING_LEN];
-                if (st.hasTeam) {
-                    dl->AddRectFilled(ImVec2(top.x, top.y + 1.0f),
-                                      ImVec2(top.x + TANK_STRIPE_W, top.y + lh - 1.0f),
-                                      tank_team_colour(st.colour), 1.0f);
-                }
                 if (st.alive) {
                     snprintf(name, sizeof(name), "%s", st.name);
                 } else {
@@ -624,10 +614,15 @@ void lv_imgui_tank_window(void) {
                     snprintf(name, sizeof(name), "%s",
                              langGetTextFmt(STR_LV_HUD_NAME_TEAM, &args));
                 }
-                ImGui::SetCursorScreenPos(ImVec2(top.x + TANK_STRIPE_W + style.ItemInnerSpacing.x,
-                                                 top.y));
-                ImGui::TextUnformatted(name);
-                ImGui::SetCursorScreenPos(ImVec2(top.x, top.y + tank_header_h()));
+                if (lv_name_header("deselect", st.hasTeam != 0, tank_team_colour(st.colour), -1,
+                                   name, nullptr, langGetText(STR_LV_TIP_DESELECT))) {
+                    /* No tank is selected: the panel shows its hint and the
+                     * map has no mark. A one-player view that is on stays
+                     * on; the X of the HUD panel is the one that leaves it. */
+                    lv_clientMutexWaitFor();
+                    lv_screenDeselectTank();
+                    lv_clientMutexRelease();
+                }
             }
 
             /* What the room under the name has space for: the text with
