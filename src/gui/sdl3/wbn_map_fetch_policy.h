@@ -56,7 +56,7 @@ static inline bool wbnMapsFetchDue(bool sameAsLast, uint64_t nowMs,
 /* Length of the parent of the folder path held in path[0..len): the
  * text before its last separator, or 0 (the catalogue root) when it has
  * none. Used to walk a path the cache cannot resolve up to the deepest
- * folder it can. */
+ * folder it can, and for the chooser's "[..]" row. */
 static inline size_t wbnMapsParentLen(const char *path, size_t len) {
     while (len > 0) {
         len--;

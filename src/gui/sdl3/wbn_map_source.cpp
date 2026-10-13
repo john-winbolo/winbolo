@@ -41,7 +41,7 @@
  *********************************************************/
 
 #include "wbn_map_source.h"
-#include "wbn_map_fetch_policy.h"  /* wbnMapsFetchDue / wbnMapsParentLen — when to ask again, and which folder to ask for */
+#include "wbn_map_fetch_policy.h"  /* fetch retry and folder walk rules */
 
 #include <cstdlib>  /* free — the JSON and map bytes the WBN HTTP API hands back */
 #include <cstring>  /* memset / memcpy — chooser row init and the decoded preview copy */
@@ -679,10 +679,12 @@ void wbnMapsListProvider(MapChooserState *state,
         std::string query;
         std::vector<WbnMapsEntry> results;
         bool hasResults  = false;
-        bool srchInFlight = s_wbnMaps.searchFetching.load();
+        bool srchInFlight = false;
         std::string srchErr;
         {
             std::lock_guard<std::mutex> lk(s_wbnMaps.mutex);
+            /* Read under the lock, as in the folder branch below. */
+            srchInFlight = s_wbnMaps.searchFetching.load();
             query       = s_wbnMaps.searchQuery;
             results     = s_wbnMaps.searchResults;
             hasResults  = s_wbnMaps.searchHasData;
@@ -777,9 +779,16 @@ void wbnMapsListProvider(MapChooserState *state,
     std::vector<WbnMapsFolder> subs;
     std::vector<WbnMapsEntry>  entries;
     bool hasData = false;
+    bool inFlight = false;
     std::string errMsg;
     {
         std::lock_guard<std::mutex> lk(s_wbnMaps.mutex);
+        /* Read under the lock: the worker writes the cache under it and
+         * clears the flag afterwards, so "not in flight" here means its
+         * answer is already in this snapshot. Read outside, the flag
+         * could clear after an old snapshot was taken and the same
+         * folder would be asked for a second time. */
+        inFlight = s_wbnMaps.fetching.load();
         /* The table only knows folders some listing has named, and a
          * starred folder can be opened before its parent was ever
          * listed. Walk up to the deepest ancestor the table does
@@ -810,7 +819,6 @@ void wbnMapsListProvider(MapChooserState *state,
     static int    s_wbnMapsLastRequested = -2;
     static Uint64 s_wbnMapsLastKickMs    = 0;
     bool cacheMatches = hasData && (cachedPath == relPath);
-    bool inFlight = s_wbnMaps.fetching.load();
     /* The cache already holds the folder this path resolves to, under
      * another path: the folder the chooser asked for is gone or was
      * renamed, and the walk above could get no closer than this.
@@ -867,18 +875,10 @@ void wbnMapsListProvider(MapChooserState *state,
         MapChooserEntry *e = &state->maps[state->numMaps++];
         memset(e, 0, sizeof(*e));
         SDL_strlcpy(e->name, "[..]", sizeof(e->name));
-        const char *lastSep = nullptr;
-        for (const char *p = relPath; *p; p++) {
-            if (*p == '/' || *p == '\\') lastSep = p;
-        }
-        if (lastSep) {
-            size_t plen = (size_t)(lastSep - relPath);
-            if (plen >= sizeof(e->path)) plen = sizeof(e->path) - 1;
-            memcpy(e->path, relPath, plen);
-            e->path[plen] = '\0';
-        } else {
-            e->path[0] = '\0';
-        }
+        size_t plen = wbnMapsParentLen(relPath, SDL_strlen(relPath));
+        if (plen >= sizeof(e->path)) plen = sizeof(e->path) - 1;
+        memcpy(e->path, relPath, plen);
+        e->path[plen] = '\0';
         e->isFolder   = true;
         e->isParentUp = true;
     }
