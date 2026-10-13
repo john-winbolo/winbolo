@@ -1055,6 +1055,9 @@ static const LangEntry langTable[] = {
     {2805, "Top sidebar"},
     {2806, "Bottom sidebar"},
     {2807, "Drag a panel here"},
+    {2820, "Overview"},
+    {2821, "Total"},
+    {2822, "{string1} +{number}"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

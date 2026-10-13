@@ -1488,6 +1488,8 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_LV_NEUTRAL_LBL", STR_LV_NEUTRAL_LBL },
     { "STR_LV_NO_ITEM_SELECTED", STR_LV_NO_ITEM_SELECTED },
     { "STR_LV_NO_LOG_LOADED", STR_LV_NO_LOG_LOADED },
+    { "STR_LV_OVERVIEW_MORE", STR_LV_OVERVIEW_MORE },
+    { "STR_LV_OVERVIEW_TOTAL", STR_LV_OVERVIEW_TOTAL },
     { "STR_LV_OWNER_FMT", STR_LV_OWNER_FMT },
     { "STR_LV_OWNER_LBL", STR_LV_OWNER_LBL },
     { "STR_LV_PAUSE", STR_LV_PAUSE },
@@ -1550,6 +1552,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_LV_WIN_GAMEINFO", STR_LV_WIN_GAMEINFO },
     { "STR_LV_WIN_HUD", STR_LV_WIN_HUD },
     { "STR_LV_WIN_ITEMINFO", STR_LV_WIN_ITEMINFO },
+    { "STR_LV_WIN_OVERVIEW", STR_LV_WIN_OVERVIEW },
     { "STR_LV_ZOOM", STR_LV_ZOOM },
     { "STR_LV_ZOOM_IN", STR_LV_ZOOM_IN },
     { "STR_LV_ZOOM_OUT", STR_LV_ZOOM_OUT },
@@ -2464,4 +2467,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2451
+#define K_LANG_NAME_TABLE_SIZE  2454

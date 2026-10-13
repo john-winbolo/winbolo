@@ -163,7 +163,7 @@ static inline int lvDockSidesFormat(const LvDockSides *s, char *out, size_t size
  * size (ImGui's central node); it may be empty, "L*[]". */
 
 #define LV_DOCK_TREE_NODES 31
-#define LV_DOCK_TREE_WINS  8
+#define LV_DOCK_TREE_WINS  12
 #define LV_DOCK_TREE_NAME  32
 #define LV_DOCK_TREE_DEPTH 12
 #define LV_DOCK_TREE_TEXT_MAX 2048

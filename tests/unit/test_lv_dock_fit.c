@@ -346,7 +346,7 @@ int run_lv_dock_layout_tree(void) {
         "Q[###a]",
         "L[###a]junk",
         "L[a b]",
-        "L[a,b,c,d,e,f,g,h,i]",         /* more tabs than a part holds */
+        "L[a,b,c,d,e,f,g,h,i,j,k,l,m]", /* more tabs than a part holds (12) */
         "L[abcdefghijklmnopqrstuvwxyz0123456]", /* a name too long */
     };
 

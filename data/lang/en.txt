@@ -1241,6 +1241,9 @@ STR_LV_DOCK_LEFT=Left sidebar
 STR_LV_DOCK_TOP=Top sidebar
 STR_LV_DOCK_BOTTOM=Bottom sidebar
 STR_LV_DOCK_EMPTY_HINT=Drag a panel here
+STR_LV_WIN_OVERVIEW=Overview
+STR_LV_OVERVIEW_TOTAL=Total
+STR_LV_OVERVIEW_MORE={string1} +{number}
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:

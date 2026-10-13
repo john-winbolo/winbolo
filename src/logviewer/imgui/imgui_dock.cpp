@@ -12,6 +12,7 @@
 #include "imgui_context.h"
 #include "imgui_main_menu.h"
 #include "imgui_hud.h"
+#include "imgui_overview.h"
 #include "imgui.h"
 #include "imgui_internal.h"  /* DockBuilder*, FindWindowByName */
 #include "platform_config.h"
@@ -40,7 +41,7 @@ extern "C" {
 #define LV_DOCK_CONTROLS_H 125.0f
 
 /* The most ImGui settings text read back from the preferences. The settings
- * of the seven panels and four sidebars are a few KB; text that does not fit
+ * of the panels and four sidebars are a few KB; text that does not fit
  * is not this viewer's. */
 #define LV_DOCK_LAYOUT_MAX 32768
 
@@ -66,10 +67,13 @@ struct LvDockPanel {
 /* The HUD is second, under the controls: its grids are a fixed size, so it
  * gets just the height they need (one row of three in a wide dock, three
  * rows in a narrow one) and the lists below it share the rest. A weight
- * would hand it room it can only fill by drawing its icons larger. */
+ * would hand it room it can only fill by drawing its icons larger. The
+ * Overview panel under it is a table of a few rows, and gets the height of
+ * its rows the same way. */
 static const LvDockPanel k_panels[] = {
     { "###controls",   &lv_g_show_controls_window,       LV_DOCK_CONTROLS_H, 0.0f, false, nullptr },
     { "###hud",        &lv_g_show_hud_window,            0.0f,               0.0f, false, lv_imgui_hud_dock_height },
+    { "###overview",   &lv_g_show_overview_window,       0.0f,               0.0f, false, lv_imgui_overview_dock_height },
     { "###gameinfo",   &lv_g_show_game_info_window,      0.0f,               3.0f, false, nullptr },
     { "###lvscnpanel", &lv_g_show_scenario_panel_window, 0.0f,               3.0f, false, nullptr },
     { "###iteminfo",   &lv_g_show_item_info_window,      0.0f,               2.0f, false, nullptr },

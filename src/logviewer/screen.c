@@ -57,6 +57,7 @@
 #include "dns.h"
 #include "logviewer.h"
 #include "lv_hud.h"
+#include "lv_overview.h"
 #include "lv_messages.h"
 #include "../gui/lang.h"
 #include "../gui/ping_kinds.h"   /* PING_DISPLAY_MS, pingKindMessageId */
@@ -6053,6 +6054,59 @@ void lv_screenHudSnapshot(LvHudSnapshot *out) {
     slot->colour = g_lv->tc[slot->team];
     slot->relation = (unsigned char) screenHudRelation(perspective, viewer,
         b->owner != NEUTRAL, b->owner);
+  }
+}
+
+/* Copy out what the Overview panel shows: for each team in the game the
+   pillboxes and bases it owns now, with the ones nobody owns and the totals.
+   It is read off the pillboxes and bases as they are at the playback time,
+   so it is right after a seek either way. A pillbox carried in a tank is its
+   owner's; one whose owner has left the game is counted as neutral. With no
+   log loaded the table is empty. The caller holds the client mutex. */
+void lv_screenOverviewSnapshot(LvOverview *out) {
+  BYTE count;
+  BYTE total;
+
+  if (out == NULL) {
+    return;
+  }
+  lvOverviewInit(out);
+  if (g_lv == NULL || g_lv->logLoaded == FALSE) {
+    return;
+  }
+
+  for (count = 0; count < MAX_TANKS; count++) {
+    char name[PLAYER_NAME_LEN] = "";
+    BYTE team;
+    if (lv_playersIsInUse(count) == FALSE) {
+      continue;
+    }
+    team = lv_playersGetTeamForOwner(count);
+    if (team == NEUTRAL_TEAM) {
+      continue;
+    }
+    lv_screenGetPlayerName(name, count, sizeof(name));
+    lvOverviewAddPlayer(out, team, g_lv->tc[team], name);
+  }
+
+  total = (g_lv->pb != NULL) ? lv_pillsGetNumPills(&g_lv->pb) : 0;
+  for (count = 0; count < total; count++) {
+    const pillbox *p = &g_lv->pb->item[count];
+    if (lv_pillsIsActive(&g_lv->pb, (BYTE) (count + 1)) == FALSE) {
+      continue;
+    }
+    lvOverviewCount(out, false, p->owner != NEUTRAL,
+                    lv_playersGetTeamForOwner(p->owner));
+  }
+
+  total = (g_lv->bs != NULL) ? lv_basesGetNumBases(&g_lv->bs) : 0;
+  for (count = 0; count < total; count++) {
+    const base *b = &g_lv->bs->item[count];
+    if (lv_basesIsActive(&g_lv->bs, (BYTE) (count + 1)) == FALSE) {
+      continue;
+    }
+    lvOverviewCount(out, true, b->owner != NEUTRAL,
+                    lv_playersGetTeamForOwner(b->owner));
   }
 }
 

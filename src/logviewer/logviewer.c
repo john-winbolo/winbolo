@@ -56,6 +56,7 @@
 #include "imgui/imgui_events.h"
 #include "imgui/imgui_item_info.h"
 #include "imgui/imgui_hud.h"
+#include "imgui/imgui_overview.h"
 #include "imgui/imgui_comments.h"
 #include "imgui/imgui_dialogs.h"
 #include "imgui/imgui_game_viewport.h"
@@ -1487,6 +1488,7 @@ static void lvHostRenderFrame(const char *overlay) {
             /* Desktop layout only: the game view has the game's own status
              * grids, and the compact layout has no room for another panel. */
             lv_imgui_hud_window();
+            lv_imgui_overview_window();
             lv_imgui_game_info_window();
             lv_imgui_events_window();
             lv_imgui_item_info_window();

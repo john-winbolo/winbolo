@@ -1317,6 +1317,13 @@
 #define STR_LV_DOCK_TOP                     2805
 #define STR_LV_DOCK_BOTTOM                  2806
 #define STR_LV_DOCK_EMPTY_HINT              2807
+/* The viewer's Overview panel: its name in the Windows menu and its title
+   bar, the name of the row of totals, and the label of a team with more
+   players than there is room to name: the first one (string1) and how many
+   more there are (number). */
+#define STR_LV_WIN_OVERVIEW                 2820
+#define STR_LV_OVERVIEW_TOTAL               2821
+#define STR_LV_OVERVIEW_MORE                2822
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

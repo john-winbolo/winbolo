@@ -657,6 +657,11 @@ void lv_screenSelectItem(BYTE itemType, BYTE itemNum);
 struct LvHudSnapshot;
 void lv_screenHudSnapshot(struct LvHudSnapshot *out);
 
+/* Copy out what the Overview panel shows (lv_overview.h): the pillboxes and
+ * bases each team owns at the playback time. Hold the client mutex. */
+struct LvOverview;
+void lv_screenOverviewSnapshot(struct LvOverview *out);
+
 /* The perspective: show the game as one player sees it. Toggle turns it on
  * for the player in a slot, or off when that player has it already; Clear
  * goes back to all teams; Check turns it off when its player is gone and
