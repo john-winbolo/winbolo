@@ -67,6 +67,7 @@
 #include "cJSON.h"               /* scripts.json, read into g_lv->scripts */
 #include "../common/wb_log.h"      /* the warnings a full index or list gives */
 #include "sim_rules_names.h"     /* simRulesRuleIndex — a rule's name to its index */
+#include "lv_builder_status.h"   /* the times each builder was away */
 
 /* File-scope pointer to the central LogViewerState */
 static LogViewerState *g_lv = NULL;
@@ -269,6 +270,9 @@ double lv_screenRuleValueAt(int index, uint32_t ms) {
   }
   return simRulesClassicValue(index);
 }
+
+/* The table of the times each builder was away, further down. */
+static void lv_builderTripsReset(void);
 
 /* A rule's value as a whole number in [lo, hi]. The comparison is written so
  * a NaN lands on lo. */
@@ -699,6 +703,7 @@ void lv_screenSetup() {
   lv_screenStoreGameSettings(NULL, 0);
   s_gameSettingsWalked = FALSE;
   lv_pingReset();
+  lv_builderTripsReset();
   g_lv->gmeStartDelay = 0;
   g_lv->gmeLength = UNLIMITED_GAME_TIME;
   g_lv->isPlaying = FALSE;
@@ -1945,6 +1950,118 @@ bool lv_screenHasServerTick(void) {
   return s_tickAnchorCount > 0;
 }
 
+/* --- The times each builder was away -----------------------------------
+ * The marker over a tank (Options > Tank Builder Status) and the Tank panel
+ * count down to the tick a new builder is in the tank. The game has no fixed
+ * time for that: the new builder flies in from a start square and then walks
+ * to the tank, so the only exact answer is in the log, later than the death.
+ * The event scan decodes the whole log once at load, and fills this table on
+ * the way: for each player, each stretch from a builder's death to the tick
+ * the log stops naming a place for the new one (he is in the tank). A seek
+ * does not touch it; it is by time. With no table (a live feed, a viewer
+ * that does not scan) the time is estimated instead. */
+static struct {
+  LvBuilderTrip *item;
+  int            count;
+  int            cap;
+  LvBuilderTrack track;
+} s_builderTrips[MAX_TANKS];
+static bool s_builderTripsKnown = FALSE;
+
+static void lv_builderTripsReset(void) {
+  int i;
+  for (i = 0; i < MAX_TANKS; i++) {
+    free(s_builderTrips[i].item);
+    memset(&s_builderTrips[i], 0, sizeof(s_builderTrips[i]));
+  }
+  s_builderTripsKnown = FALSE;
+}
+
+static void lv_builderTripsAdd(int slot, const LvBuilderTrip *trip) {
+  if (s_builderTrips[slot].count == s_builderTrips[slot].cap) {
+    int            cap  = (s_builderTrips[slot].cap > 0) ? s_builderTrips[slot].cap * 2 : 16;
+    LvBuilderTrip *item = (LvBuilderTrip *) realloc(s_builderTrips[slot].item,
+                                                    (size_t) cap * sizeof(LvBuilderTrip));
+    if (item == NULL) {
+      return;
+    }
+    s_builderTrips[slot].item = item;
+    s_builderTrips[slot].cap  = cap;
+  }
+  s_builderTrips[slot].item[s_builderTrips[slot].count++] = *trip;
+}
+
+/* One tick of the event scan: every builder's state as the tick left it. */
+static void lv_builderTripsScanTick(void) {
+  int i;
+  for (i = 0; i < MAX_TANKS; i++) {
+    bool          isOut = FALSE, isDead = FALSE;
+    LvBuilderTrip done;
+    lv_playersGetLgmStatus((BYTE) i, &isOut, &isDead);
+    if (lvBuilderTrackTick(&s_builderTrips[i].track, g_lv->timeRunning,
+                           isOut != FALSE, isDead != FALSE, &done)) {
+      lv_builderTripsAdd(i, &done);
+    }
+  }
+}
+
+/* The end of the scan: a builder still away has a trip with no end. */
+static void lv_builderTripsScanEnd(void) {
+  int i;
+  for (i = 0; i < MAX_TANKS; i++) {
+    LvBuilderTrip done;
+    if (lvBuilderTrackEnd(&s_builderTrips[i].track, &done)) {
+      lv_builderTripsAdd(i, &done);
+    }
+  }
+  s_builderTripsKnown = TRUE;
+}
+
+int lv_screenBuilderTripsKnown(void) {
+  return s_builderTripsKnown ? 1 : 0;
+}
+
+int lv_screenBuilderReturn(int slot, long *remainMs, int *approx) {
+  bool isOut = FALSE, isDead = FALSE;
+  long remain = 0;
+
+  if (g_lv == NULL || g_lv->logLoaded == FALSE || slot < 0 || slot >= MAX_TANKS) {
+    return 0;
+  }
+  lv_playersGetLgmStatus((BYTE) slot, &isOut, &isDead);
+  if (isOut == FALSE && isDead == FALSE) {
+    return 0;
+  }
+  if (s_builderTripsKnown &&
+      lvBuilderTripRemaining(s_builderTrips[slot].item, s_builderTrips[slot].count,
+                             g_lv->timeRunning, &remain)) {
+    if (remainMs != NULL) *remainMs = remain;
+    if (approx != NULL) *approx = 0;
+    return 1;
+  }
+  if (isDead != FALSE && isOut != FALSE) {
+    /* No table, or the log ends before he is back: the game's own rule for
+       the flight. He flies straight to where the tank was when the builder
+       died, which the log does not say; where the tank is now stands in. */
+    BYTE lx = 0, ly = 0, lpx = 0, lpy = 0, lframe = 0;
+    BYTE tx = 0, ty = 0, tpx = 0, tpy = 0, tframe = 0;
+    bool onBoat = FALSE;
+    lv_playersGetLgmDetails((BYTE) slot, &lx, &ly, &lpx, &lpy, &lframe);
+    lv_playersGetTankDetails((BYTE) slot, &tx, &ty, &tpx, &tpy, &tframe, &onBoat);
+    remain = lvBuilderFlightMs(
+        (long) lvBuilderWorld(tx, tpx) - (long) lvBuilderWorld(lx, lpx),
+        (long) lvBuilderWorld(ty, tpy) - (long) lvBuilderWorld(ly, lpy),
+        lv_rulesClampInt(lv_screenRuleValueAt(SIM_RULE_lgm_helicopter_speed,
+                                              g_lv->timeRunning), 1, 4096),
+        lv_rulesClampInt(lv_screenRuleValueAt(SIM_RULE_lgm_arrive_tolerance,
+                                              g_lv->timeRunning), 0, 4096));
+    if (remainMs != NULL) *remainMs = remain;
+    if (approx != NULL) *approx = 1;
+    return 1;
+  }
+  return 0;
+}
+
 /* TRUE while lv_screenEventScanRun decodes the whole log to fill the events
  * panel. The decoder runs as it does for a fast-forward, with four things
  * held back that the scan's restore could not undo, or that would only be
@@ -2957,6 +3074,17 @@ void lv_screenRequestUpdate() {
    every tick. */
 static bool s_logTickAtLiveHead = FALSE;
 
+/* The first tick of a run the log holds no events for. The server names a
+   builder's place in every tick he is out of his tank, so in a tick with no
+   events every builder is in his tank: without this the last place named
+   stayed until the next tick that had events. */
+static void lv_screenQuietTick(void) {
+  lv_playersLgmZero();
+  if (s_eventScan) {
+    lv_builderTripsScanTick();
+  }
+}
+
 /* Returns TRUE on log end or snapshot */
 bool lv_screenLogTick() {
   bool returnValue = FALSE;
@@ -3029,6 +3157,7 @@ bool lv_screenLogTick() {
         if (g_lv->waitLen == 0) {
           g_lv->waitLen = 1;
         }
+        lv_screenQuietTick();
         if (lv_wtLiveCounts()) {
           lv_wtCountWait(g_lv->timeRunning, (uint32_t)g_lv->waitLen);
         }
@@ -3044,6 +3173,7 @@ bool lv_screenLogTick() {
         if (g_lv->waitLen == 0) {
           g_lv->waitLen = 1;
         }
+        lv_screenQuietTick();
         if (lv_wtLiveCounts()) {
           lv_wtCountWait(g_lv->timeRunning, (uint32_t)g_lv->waitLen);
         }
@@ -3079,6 +3209,9 @@ bool lv_screenLogTick() {
     if (process == TRUE) {
       lv_playersLgmZero();
       lv_screenProcessLog(len);
+      if (s_eventScan) {
+        lv_builderTripsScanTick();
+      }
       if (g_lv->centredTank == TRUE) {
         lv_screenFollowCentredTank();
       }
@@ -5979,6 +6112,7 @@ bool lv_screenEventScanRun(void) {
      file ends with isPlaying dropped; the bound is only there so a log the
      decoder cannot finish ends the scan instead of hanging the load. */
   limit = g_lv->totalTimeMs + 60000u;
+  lv_builderTripsReset();
   s_eventScan = TRUE;
   g_lv->fastForwarding = TRUE; /* no sounds, no item panel updates */
   g_lv->isPlaying = TRUE;
@@ -5987,6 +6121,7 @@ bool lv_screenEventScanRun(void) {
   }
   g_lv->fastForwarding = FALSE;
   s_eventScan = FALSE;
+  lv_builderTripsScanEnd();
   return TRUE;
 }
 
@@ -6342,6 +6477,15 @@ void lv_screenTankStatusSnapshot(LvTankStatus *out) {
   lv_playersGetLgmStatus((BYTE) slot, &isOut, &isDead);
   out->builderOut = isOut ? 1 : 0;
   out->builderDead = isDead ? 1 : 0;
+  {
+    long remain = 0;
+    int  approx = 0;
+    if (isDead && lv_screenBuilderReturn(slot, &remain, &approx)) {
+      out->builderBack = 1;
+      out->builderBackApprox = approx ? 1 : 0;
+      out->builderBackMs = remain;
+    }
+  }
 
   total = (g_lv->pb != NULL) ? lv_pillsGetNumPills(&g_lv->pb) : 0;
   for (count = 0; count < total; count++) {

@@ -1272,6 +1272,9 @@ STR_LV_OVERLAY_EVENTS=Overlay events
 STR_LV_OVERLAY_TIP=Show a marker over the seek bar for each event of the ticked kinds
 STR_LV_OVERLAY_COUNT={string1} events
 STR_LV_OVERLAY_MORE=+{string1} more
+STR_LV_BUILDER_STATUS=Tank Builder Status
+STR_LV_BUILDER_STATUS_TIP=Over each tank on the map: an arrow toward its builder when he is out of the tank, and a parachute with the time until the new builder is in the tank when he is dead
+STR_LV_TANK_BUILDER_BACK=Builder: dead, back in {string1}
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:

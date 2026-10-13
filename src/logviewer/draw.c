@@ -49,6 +49,7 @@
 #include "lv_tank_bars.h"
 #include "lv_tank_pick.h"
 #include "lv_event_flash.h"
+#include "lv_builder_status.h"
 #include "clientmutex.h"
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/sdl3/sprite_positions.h"
@@ -134,6 +135,9 @@ typedef struct {
 static LvTankBarPos s_tankBarPos[MAX_TANKS];
 static int          s_tankBarCount = 0;
 static bool         s_tankBars = FALSE;
+/* The builder markers over the tanks (lv_builder_status.h), at the same
+   places. */
+static bool         s_builderStatus = FALSE;
 /* The last blit of the map into the window: the slice of the target it took
  * and where it went, in framebuffer pixels. A click on the map is matched
  * against the tanks with these (lv_drawTankAtPoint). */
@@ -458,6 +462,7 @@ static float lvDrawPixelScale(void) {
 static void lvDrawTankLabelsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawTankMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawEventFlashOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 
 /* Paint the world render target into the viewer's own window.
@@ -525,6 +530,7 @@ static void lvDrawBlitTargetToWindow(void) {
         lvDrawTankMarkOverBlit(&srcRect, &dstRect);
         /* The bars first, so a name is never under one. */
         lvDrawTankBarsOverBlit(&srcRect, &dstRect);
+        lvDrawBuilderStatusOverBlit(&srcRect, &dstRect);
         lvDrawTankLabelsOverBlit(&srcRect, &dstRect);
         /* Last, so nothing on the map hides it. */
         lvDrawEventFlashOverBlit(&srcRect, &dstRect);
@@ -2094,6 +2100,235 @@ static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
         lvDrawOneTankBar(&bars.armour, armour, fullArmour, r, g, b);
         lvDrawOneTankBar(&bars.shells, shells, fullShells,
                          LV_TANK_BARS_SHELLS_R, LV_TANK_BARS_SHELLS_G, LV_TANK_BARS_SHELLS_B);
+    }
+
+    SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+    SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+void lv_drawSetBuilderStatus(BYTE on) {
+    s_builderStatus = on ? TRUE : FALSE;
+}
+
+BYTE lv_drawGetBuilderStatus(void) {
+    return s_builderStatus ? TRUE : FALSE;
+}
+
+/* The cells of one small picture, with its top left at x, y: each cell a
+   square of `cell` pixels, grown by `grow` pixels on every side (the dark
+   pass under the coloured one uses that for the edge). The colour is the
+   renderer's. */
+static void lvDrawBuilderGlyph(const LvBuilderGlyph *g, float x, float y,
+                               float cell, float grow) {
+    int row, col;
+
+    if (g == NULL) return;
+    for (row = 0; row < g->height; row++) {
+        for (col = 0; col < g->width; col++) {
+            SDL_FRect r;
+            if (!lvBuilderGlyphCell(g, col, row)) continue;
+            r.x = x + (float)col * cell - grow;
+            r.y = y + (float)row * cell - grow;
+            r.w = cell + grow * 2.0f;
+            r.h = cell + grow * 2.0f;
+            SDL_RenderFillRect(sdlRenderer, &r);
+        }
+    }
+}
+
+/* The countdown's characters from x, with their tops at y. */
+static void lvDrawBuilderText(const char *text, float x, float y, float cell,
+                              float grow) {
+    for (; *text != '\0'; text++) {
+        const LvBuilderGlyph *g = lvBuilderChar(*text);
+        if (g == NULL) continue;
+        lvDrawBuilderGlyph(g, x, y, cell, grow);
+        x += (float)(g->width + 1) * cell;
+    }
+}
+
+/* The arrow: a dart with its middle at cx, cy and its point `radius` pixels
+   out along the direction. */
+static void lvDrawBuilderArrow(float cx, float cy, float radius, int direction,
+                               SDL_FColor colour) {
+    SDL_Vertex v[4];
+    static const int k_index[6] = { 0, 1, 3, 0, 3, 2 };
+    float fx = 0.0f, fy = -1.0f;
+    float sx, sy;
+    int i;
+
+    lvBuilderDirectionStep(direction, &fx, &fy);
+    sx = -fy;   /* a quarter turn from the direction: the dart's width */
+    sy = fx;
+    /* The point, the two back corners, and the notch between them. */
+    v[0].position.x = cx + fx * radius;
+    v[0].position.y = cy + fy * radius;
+    v[1].position.x = cx - fx * radius + sx * radius * 0.8f;
+    v[1].position.y = cy - fy * radius + sy * radius * 0.8f;
+    v[2].position.x = cx - fx * radius - sx * radius * 0.8f;
+    v[2].position.y = cy - fy * radius - sy * radius * 0.8f;
+    v[3].position.x = cx - fx * radius * 0.35f;
+    v[3].position.y = cy - fy * radius * 0.35f;
+    for (i = 0; i < 4; i++) {
+        v[i].color = colour;
+        v[i].tex_coord.x = 0.0f;
+        v[i].tex_coord.y = 0.0f;
+    }
+    SDL_RenderGeometry(sdlRenderer, NULL, v, 4, k_index, 6);
+}
+
+/* The builder marker over each live tank the blit just drew, where the bars
+   are drawn and by the bars' rules: none for a dead tank, none for a tank
+   the view does not draw, none when the squares are too small. The state is
+   the one at the playback time, copied out under the client mutex as the
+   bars' is. */
+static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    LogViewerState *lv = lv_screenGetState();
+    float scale, tilePx, pxScale, edge;
+    int i;
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+    bool barsOn;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    Uint8 oldR, oldG, oldB, oldA;
+    const float alpha = LV_BUILDER_ALPHA;
+    struct {
+        bool alive;
+        LvBuilderState state;
+        int direction;      /* -1: at the tank's own place */
+        bool sameSquare;
+        bool hasTime;
+        bool approx;
+        long remainMs;
+        unsigned char colour;
+        bool hasTeam;
+    } b[MAX_TANKS];
+
+    if (!s_builderStatus || s_tankBarCount == 0 || lv == NULL) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    scale = dst->w / src->w;
+    tilePx = (float)TILE_SIZE_X * scale;
+    pxScale = lvDrawPixelScale();
+    if (!lvTankBarsVisible(tilePx, pxScale)) return;
+
+    lv_clientMutexWaitFor();
+    /* The bars are drawn only for a recording that holds tank stocks; the
+       marker stands on the tank when they are not. */
+    barsOn = s_tankBars && lv_screenHasTankStock() != 0;
+    for (i = 0; i < MAX_TANKS; i++) {
+        bool isOut = FALSE, isDead = FALSE;
+        BYTE team;
+
+        b[i].alive = lv->gameViewHud[i].alive;
+        lv_playersGetLgmStatus((BYTE)i, &isOut, &isDead);
+        b[i].state = lvBuilderState(isOut != FALSE, isDead != FALSE);
+        b[i].direction = -1;
+        b[i].sameSquare = TRUE;
+        b[i].hasTime = FALSE;
+        b[i].approx = FALSE;
+        b[i].remainMs = 0;
+        if (!b[i].alive || b[i].state == LV_BUILDER_IN) continue;
+        if (b[i].state == LV_BUILDER_OUT) {
+            BYTE lx = 0, ly = 0, lpx = 0, lpy = 0, lframe = 0;
+            BYTE tx = 0, ty = 0, tpx = 0, tpy = 0, tframe = 0;
+            bool onBoat = FALSE;
+            lv_playersGetLgmDetails((BYTE)i, &lx, &ly, &lpx, &lpy, &lframe);
+            lv_playersGetTankDetails((BYTE)i, &tx, &ty, &tpx, &tpy, &tframe, &onBoat);
+            b[i].sameSquare = (lx == tx && ly == ty);
+            b[i].direction = lvBuilderDirection(
+                (float)(lvBuilderWorld(lx, lpx) - lvBuilderWorld(tx, tpx)),
+                (float)(lvBuilderWorld(ly, lpy) - lvBuilderWorld(ty, tpy)));
+        }
+        {
+            long remain = 0;
+            int approx = 0;
+            if (lv_screenBuilderReturn(i, &remain, &approx)) {
+                b[i].hasTime = TRUE;
+                b[i].approx = approx != 0;
+                b[i].remainMs = remain;
+            }
+        }
+        team = lv_playersGetTeamForOwner((BYTE)i);
+        b[i].hasTeam = (team != NEUTRAL_TEAM);
+        b[i].colour = lv->tc[team];
+    }
+    lv_clientMutexRelease();
+
+    hadClip = SDL_RenderClipEnabled(sdlRenderer);
+    SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+    clip.x = (int)dst->x;
+    clip.y = (int)dst->y;
+    clip.w = (int)dst->w;
+    clip.h = (int)dst->h;
+    SDL_SetRenderClipRect(sdlRenderer, &clip);
+    SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+    SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+    /* The dark edge round every part: one point. */
+    edge = lvTankBarPointsToPixels(1.0f, pxScale);
+
+    for (i = 0; i < s_tankBarCount; i++) {
+        BYTE slot = s_tankBarPos[i].slot;
+        LvBuilderMarkLayout m;
+        SDL_FColor team, dark;
+        char text[LV_BUILDER_TEXT_MAX];
+        float x, y, rowW, textY;
+        int pass;
+
+        if (slot >= MAX_TANKS || !b[slot].alive || b[slot].state == LV_BUILDER_IN) continue;
+        m = lvBuilderMarkLayout(dst->x + ((float)s_tankBarPos[i].x - src->x) * scale,
+                                dst->y + ((float)s_tankBarPos[i].y - src->y) * scale,
+                                tilePx, pxScale, barsOn);
+        if (!m.visible) continue;
+
+        text[0] = '\0';
+        if (b[slot].hasTime) {
+            lvBuilderCountdownText(b[slot].remainMs, b[slot].approx, text, sizeof(text));
+        }
+        rowW = (float)lvBuilderRowCells(text) * m.cell;
+        x = SDL_floorf(m.centreX - rowW * 0.5f);
+        y = m.top;
+        /* The digits are 5 cells high in a row of 7: one cell down. */
+        textY = y + m.cell;
+
+        /* The team's colour, as the HUD panel gives it; white with none. */
+        team.r = 1.0f; team.g = 1.0f; team.b = 1.0f;
+        if (b[slot].hasTeam) {
+            team = mapColourTeam(b[slot].colour);
+            if (!lvHudRedToOrange(&team.r, &team.g, &team.b)) {
+                lvHudReadableColour(&team.r, &team.g, &team.b);
+            }
+        }
+        team.a = alpha;
+        dark.r = 0.0f; dark.g = 0.0f; dark.b = 0.0f; dark.a = alpha;
+
+        /* The dark edge first, then the colour over it. */
+        for (pass = 0; pass < 2; pass++) {
+            float grow = (pass == 0) ? edge : 0.0f;
+            SDL_FColor c = (pass == 0) ? dark : team;
+
+            SDL_SetRenderDrawColorFloat(sdlRenderer, c.r, c.g, c.b, c.a);
+            if (b[slot].state == LV_BUILDER_FLYING) {
+                lvDrawBuilderGlyph(lvBuilderParachute(), x, y, m.cell, grow);
+            } else if (b[slot].direction < 0 || b[slot].sameSquare) {
+                /* On the tank's own square: a dot in the middle of the box. */
+                lvDrawBuilderGlyph(lvBuilderDot(), x + m.cell * 2.0f, y + m.cell * 2.0f,
+                                   m.cell, grow);
+            } else {
+                float half = m.height * 0.5f;
+                lvDrawBuilderArrow(x + half, y + half, half + grow * 1.5f,
+                                   b[slot].direction, c);
+            }
+            if (text[0] != '\0') {
+                /* The time is white, so it reads the same for every team. */
+                if (pass == 1) {
+                    SDL_SetRenderDrawColorFloat(sdlRenderer, 1.0f, 1.0f, 1.0f, alpha);
+                }
+                lvDrawBuilderText(text, x + (float)(LV_BUILDER_CELLS + 1) * m.cell, textY,
+                                  m.cell, grow);
+            }
+        }
     }
 
     SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);

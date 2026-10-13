@@ -1084,6 +1084,10 @@ static const LangEntry langTable[] = {
     {2842, "Show a marker over the seek bar for each event of the ticked kinds"},
     {2843, "{string1} events"},
     {2844, "+{string1} more"},
+    /* Log viewer: the builder marker over each tank (Options), and the time left on the Tank panel's builder line */
+    {2845, "Tank Builder Status"},
+    {2846, "Over each tank on the map: an arrow toward its builder when he is out of the tank, and a parachute with the time until the new builder is in the tank when he is dead"},
+    {2847, "Builder: dead, back in {string1}"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

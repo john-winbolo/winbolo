@@ -62,6 +62,7 @@ static NSMenuItem *s_lv_tankCentredItem    = nil;
 static NSMenuItem *s_lv_hideLobbyItem      = nil;
 static NSMenuItem *s_lv_regionsItem        = nil;
 static NSMenuItem *s_lv_tankBarsItem       = nil;
+static NSMenuItem *s_lv_builderStatusItem  = nil;
 static NSMenuItem *s_lv_soundEffectsItem   = nil;
 static NSMenu     *s_lv_volumeMenu         = nil;
 static NSMenuItem *s_lv_dnsLookupsItem     = nil;
@@ -113,6 +114,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleHideLobby:(id)sender;
 - (void)onToggleRegions:(id)sender;
 - (void)onToggleTankBars:(id)sender;
+- (void)onToggleBuilderStatus:(id)sender;
 - (void)onToggleSoundEffects:(id)sender;
 - (void)onSetSoundVolume:(id)sender;
 - (void)onToggleDnsLookups:(id)sender;
@@ -198,6 +200,11 @@ static void lv_push_sdl_quit(void) {
     /* As the in-window menu does: the bars are drawn over the map each time
      * it is put on the screen, so the frame is asked for now. */
     lv_drawSetTankBars(lv_drawGetTankBars() ? 0 : 1);
+    lv_windowNeedRedraw();
+}
+- (void)onToggleBuilderStatus:(id)sender {
+    (void)sender;
+    lv_drawSetBuilderStatus(lv_drawGetBuilderStatus() ? 0 : 1);
     lv_windowNeedRedraw();
 }
 - (void)onToggleSoundEffects:(id)sender {
@@ -540,6 +547,15 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [optionsMenu addItem:tankBars];
     s_lv_tankBarsItem = tankBars;
 
+    NSMenuItem *builderStatus = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_BUILDER_STATUS)
+        action:@selector(onToggleBuilderStatus:)
+        keyEquivalent:@""];
+    [builderStatus setTarget:s_lv_bridge];
+    [builderStatus setToolTip:LANG_STR(STR_LV_BUILDER_STATUS_TIP)];
+    [optionsMenu addItem:builderStatus];
+    s_lv_builderStatusItem = builderStatus;
+
     NSMenuItem *soundEffects = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_SOUND_EFFECTS)
         action:@selector(onToggleSoundEffects:)
@@ -793,6 +809,7 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_hideLobbyItem = nil;
     s_lv_regionsItem = nil;
     s_lv_tankBarsItem = nil;
+    s_lv_builderStatusItem = nil;
     s_lv_soundEffectsItem = nil;
     s_lv_volumeMenu = nil;
     s_lv_dnsLookupsItem = nil;
@@ -842,6 +859,7 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
         [s_lv_regionsItem setEnabled:(s->hasRegions ? YES : NO)];
     }
     if (s_lv_tankBarsItem) [s_lv_tankBarsItem setState:(s->tankBars ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_builderStatusItem) [s_lv_builderStatusItem setState:(s->builderStatus ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_soundEffectsItem) [s_lv_soundEffectsItem setState:(s->soundEffects ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_volumeMenu) {
         for (NSMenuItem *item in [s_lv_volumeMenu itemArray]) {

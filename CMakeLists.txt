@@ -4625,6 +4625,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # the ring flashed on the map round an event's place (lv_time_fmt.h,
     # lv_event_flash.h, header only).
     tests/unit/test_lv_time_fmt.c
+    # The builder marker over each tank on the viewer's map: where it goes,
+    # the arrow's direction, the countdown and the table of the times a
+    # builder was away (lv_builder_status.h, header only).
+    tests/unit/test_lv_builder_status.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).

@@ -4072,6 +4072,13 @@ int run_lv_time_fmt_sums(void);
 int run_lv_time_parse_sums(void);
 int run_lv_event_flash_sums(void);
 int run_lv_event_seek_exact(void);
+/* The builder marker over each tank on the log viewer's map
+ * (test_lv_builder_status.c), and the table of the times a builder was away
+ * as the event scan fills it (test_lv_presentation.c). */
+int run_lv_builder_status_sums(void);
+int run_lv_builder_countdown(void);
+int run_lv_builder_trips(void);
+int run_lv_builder_trips_scan(void);
 /* The decode pass that lists a whole log's events at load
  * (test_lv_presentation.c): it posts each line once, stores no snapshot, and
  * leaves the world at the start as the loader did. */
