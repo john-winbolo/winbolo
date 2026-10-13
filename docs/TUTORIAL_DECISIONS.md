@@ -1162,3 +1162,69 @@ name, and for what the 5A bot was given.
 - The four lang files and `tests/unit/test_scenario_fndesc.c` were joined: main's ids and strings are kept as main has them (2768 to 2770, 2773, 2774), and this branch's keep theirs (2775, 2810). No id clashed, so none moved.
 - `lang_names.inc` was written again by `tools/dump_lang_en.py` (2421 names). The catalogue now has 26 hooks and 15 policies, `kill_credit` and `can_target` both; the comments that gave the count say so.
 - `SCN_CALLBACKS_MAX` stays at this branch's 48 (main has 40, which 41 functions would not fit). The arena README counts 162 maps with main's `joust_drown_credit`.
+
+## Oct 13 review round 3
+
+Three small items, none blocking, and the build and test run the review
+said was missing.
+
+### 1. A moved Station 7 seat left the Station 6 bot's peace list stale
+
+The list leaves out the Station 6 bot's seat and the Station 7 bot's. It was
+built once, when the Station 6 bot was fielded. If a person then joined on
+the empty seat put by for the Station 7 bot, `move_bot_seat` gave that bot
+another seat, but the live Station 6 bot still left the old seat off its
+list and treated the person as an enemy.
+
+*Done:* `move_bot_seat` hands the Station 6 bot its list again
+(`game.bot_init`) when the Station 6 or Station 7 seat moved and the Station
+6 bot has been fielded. A move of the 5A bot's seat changes nothing in the
+list, so it sends nothing. The call is not held back for a dead tank: a
+fielded seat takes a new table whether it is on the field or not.
+
+*Arena:* `tutorial_bot_seat`. The gate's lobby holds the three bot seats, and
+a held seat cannot be taken by a person, so the arena first takes the held
+seats out; the script then picks empty seats. A first player fields the
+Station 6 bot and leaves, and a second is spawned on the Station 7 bot's
+seat. It passes when the bot moved to another empty seat and one `bot_init`
+went to the Station 6 bot with a list that names the new player. With the
+new call switched off the arena fails ("0 bot_init"). The arena also counts
+the Station 6 man's trips after the join, but that count was 2 with and
+without the fix, so it does not prove the fix; the token check does.
+
+### 2. The callbacks guard covered three of the shipped scripts
+
+*Done:* `scenario_details_fetch_joust` (13 rows) and
+`scenario_details_fetch_respawn_loadout` (4 rows) cover the other two map
+scripts. `scenario_details_fetch_mods` covers the six shipped mods in
+`data/mods`: each is copied into the test's scenarios directory, asked for
+over the wire, and has to arrive with every row its file declares. A script
+that cannot be opened, or has no callbacks block, now fails with a message
+that names the file, in place of "declares -1 callback rows".
+
+The review counted 14 rows for Joust; the block has 13, and 13 arrive.
+
+### 3. `S.owned` could be a second old when the player left
+
+*Not done as written.* The review said to call `note_owned()` at the top of
+`on_player_leave`. That was tried: when the callback runs the seat is
+already empty and the server has passed on everything the player owned, so
+the note comes back with 0 pillboxes and 0 bases and `tutorial_rejoin`
+fails.
+
+*Done instead:* `note_owned` also runs when the player takes a base
+(`on_base_captured`) or picks up a pillbox (`on_pill_picked_up`), which are
+the two ways he comes to own something, so the note no longer waits for the
+next whole second. `note_owned` does nothing once the player's seat is
+empty, so no caller can replace the last good note with an empty one.
+No arena drives this: the arenas change owners through the script's own
+calls, which the two callbacks ignore (`scripted`).
+
+### Build and tests of the merged tree
+
+`build-tut` (its own build directory): `ZERO_CHECK`, `WinBoloDS` and
+`WinBoloUnitTests` built in Release with no error. Unit tests, each run by
+name: the ten `scenario_details_fetch_*` tests, `scenario_can_target`,
+`scenario_fndesc_table` and `unit_test_names_match_cmake` pass, and
+`tools/dump_lang_en.py --check` reads 2421 = 2421 = 2421. The gate ran the
+21 `tutorial_*` arenas: all pass.
