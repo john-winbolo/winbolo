@@ -6,9 +6,12 @@
 --
 -- Station 4 (re-arming, no pen): the arena puts the player in Station 4,
 -- moves the dead pillbox off its square and gives it to the player's side,
--- knocks the damaged pillbox up to 3 armour and gives the friendly base
--- away. Within two seconds the station must put each of them back by
--- itself, while none of those goals is ticked.
+-- knocks the 4B pillbox down to 1 armour and gives the friendly base away.
+-- Within two seconds the station must put the dead pillbox and the base
+-- back by itself, while none of those goals is ticked. The 4B pillbox is
+-- never repaired while it stands on its own square: it must still have 1
+-- armour. Then the arena moves the 4B pillbox off its square, and within
+-- two seconds it must be home again, with the armour it starts with.
 --
 -- Station 5 (the 5B RESET pen): the arena puts the player in Station 5,
 -- knocks down a RESET wall, breaks the arrow road, damages the 5B target,
@@ -20,7 +23,7 @@
 -- gives one of the player's pillboxes to the bot and one of the bot's bases
 -- to the player, and ticks a goal. Then it puts the player in the pen.
 --
--- PASS: Station 4 re-arms in full; after each pen everything in that
+-- PASS: Station 4 re-arms as above; after each pen everything in that
 -- station is back as it started: the walls standing, the arrow road whole,
 -- the pillboxes and bases with their first owners, the checklist empty (but
 -- for 5A, which is not undone), and for Station 5 the blocker back in the
@@ -28,6 +31,9 @@
 
 TUTORIAL_PLAYER = 0
 ARENA = { phase = 0 }
+-- The 4B pillbox starts at P4_ARMOUR (2). 1 is damaged, alive, and not the
+-- armour a repair or a trip home would give it.
+ARENA_P4_DAMAGED = 1
 
 local arena_real_spawned = on_tank_spawned
 function on_tank_spawned(p, mx, my, respawn, scripted)
@@ -60,7 +66,9 @@ local function done_keys(n)
   return table.concat(k, " ")
 end
 
-function arena_check4()
+-- `armour` is what the 4B pillbox must have: its damage while it has not
+-- left its square, the armour it starts with after it was sent home.
+function arena_check4(armour)
   local bad = {}
   local L = LAYOUT.pill.p4a
   local a = game.pill(L.n)
@@ -70,9 +78,11 @@ function arena_check4()
   end
   L = LAYOUT.pill.p4
   local b = game.pill(L.n)
-  if b == nil or b.in_tank or b.x ~= L.x or b.y ~= L.y or b.armour ~= 2 or
-     b.owner ~= game.NEUTRAL then
-    bad[#bad + 1] = "damaged pill not home at 1 armour"
+  if b == nil or b.in_tank or b.x ~= L.x or b.y ~= L.y or
+     b.armour ~= armour or b.owner ~= game.NEUTRAL then
+    bad[#bad + 1] = string.format(
+      "4B pill not home and neutral at %d armour (armour %s)", armour,
+      tostring(b and b.armour))
   end
   local base = game.base(LAYOUT.base.b4c.n)
   if base == nil or base.owner ~= 0 or
@@ -131,13 +141,30 @@ function on_tick(tick)
   elseif A.phase == 1 and tick >= A.t + 100 then
     game.move_pill(LAYOUT.pill.p4a.n, 121, 150)
     game.set_pill_owner(LAYOUT.pill.p4a.n, 0)
-    game.set_pill_armour(LAYOUT.pill.p4.n, 3)
+    game.set_pill_armour(LAYOUT.pill.p4.n, ARENA_P4_DAMAGED)
     game.set_base_owner(LAYOUT.base.b4c.n)
     A.phase, A.t = 2, tick
   elseif A.phase == 2 and tick >= A.t + 150 then
-    local bad = arena_check4()
+    -- On its square: the damage stays.
+    local bad = arena_check4(ARENA_P4_DAMAGED)
     if #bad > 0 then
       verdict(false, "Station 4: " .. table.concat(bad, ", "))
+      return
+    end
+    -- Off its square: it is sent home, and that gives it its first armour.
+    local L = LAYOUT.pill.p4
+    game.move_pill(L.n, 121, 150)
+    local b = game.pill(L.n)
+    if b == nil or (b.x == L.x and b.y == L.y) then
+      verdict(false, "Station 4: the arena could not move the 4B pill off its square")
+      return
+    end
+    A.phase, A.t = 2.5, tick
+  elseif A.phase == 2.5 and tick >= A.t + 150 then
+    local bad = arena_check4(P4_ARMOUR)
+    if #bad > 0 then
+      verdict(false, "Station 4, 4B pill moved off its square: "
+              .. table.concat(bad, ", "))
       return
     end
     game.log("ARENA Station 4 re-armed")
