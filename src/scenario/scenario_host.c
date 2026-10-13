@@ -5132,12 +5132,13 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
  * fresh one, so the lookup goes to whichever state is current. */
 
 /* How the answers of a list of scripts are read, now that every one of them
- * is asked. The thirteen sites below each hold the arbitration for their own
+ * is asked. The fourteen sites below each hold the arbitration for their own
  * row, because what the answers mean differs by row:
  *
- *   the eight predicates
+ *   the nine predicates
  *     allow_extra_teams, can_respawn, can_build, can_capture, announce,
- *     can_hit, can_die and can_ally. Asked in list order, any false wins, and
+ *     can_target, can_hit, can_die and can_ally. Asked in list order, any
+ *     false wins, and
  *     the first no stops
  *     the asking. A predicate is a veto — false takes something out of the
  *     round — so a script that says no is not something a later script may
@@ -5656,6 +5657,31 @@ static bool scnCanHit(void *ctx, BYTE attacker, BYTE kind, BYTE index,
         }
         scnPushItemIndex(h, pill, MAX_PILLS);
         may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_HIT], 4,
+                            true);
+    }
+    scnLockLeave(&h->lock);
+    return may;
+}
+
+/* May this pillbox pick this seat's tank as its target? Asked by the pillbox
+ * update of a tank it would otherwise take, and of no other. A no has the
+ * pillbox pass over the tank as if it were not there. */
+static bool scnCanTarget(void *ctx, BYTE pill, BYTE player) {
+    ScenarioHost *h   = (ScenarioHost *)ctx;
+    bool          may = true;
+    int           i;
+
+    if (h == NULL) {
+        return true;
+    }
+    scnLockEnter(&h->lock);
+    for (i = 0; i < h->count && may; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_CAN_TARGET])) {
+            continue;
+        }
+        scnPushItemIndex(h, pill, MAX_PILLS);
+        lua_pushinteger(h->L, (lua_Integer)player);
+        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_TARGET], 2,
                             true);
     }
     scnLockLeave(&h->lock);
@@ -9041,6 +9067,7 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
     h->policy.announce        = scnAnnounce;
     h->policy.canDie          = scnCanDie;
     h->policy.canHit          = scnCanHit;
+    h->policy.canTarget       = scnCanTarget;
     h->policy.pillDamageScale = scnPillDamageScale;
     h->policy.canAlly         = scnCanAlly;
     h->policy.chooseStart     = scnChooseStart;

@@ -3304,6 +3304,7 @@ int run_scenario_allied_read(void);
  * can_die — and the on_tank_hit event (test_scenario_friendly_fire.c). */
 int run_scenario_can_hit_tank(void);
 int run_scenario_can_hit_pill(void);
+int run_scenario_can_target(void);
 int run_scenario_pill_shell_names_pill(void);
 int run_scenario_pill_damage_scale(void);
 int run_scenario_blast_names_tank(void);

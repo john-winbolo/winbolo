@@ -1707,6 +1707,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_allied_read",                    run_scenario_allied_read                    },
     { "scenario_can_hit_tank",                   run_scenario_can_hit_tank                   },
     { "scenario_can_hit_pill",                   run_scenario_can_hit_pill                   },
+    { "scenario_can_target",                     run_scenario_can_target                     },
     { "scenario_pill_shell_names_pill",          run_scenario_pill_shell_names_pill          },
     { "scenario_pill_damage_scale",              run_scenario_pill_damage_scale              },
     { "scenario_blast_names_tank",               run_scenario_blast_names_tank               },

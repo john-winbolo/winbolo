@@ -926,6 +926,11 @@ typedef struct ScenarioPolicy {
                         * reached? kind is a HIT_KIND_*. NULL = always.
                         * false lets the shell fly on as if the target
                         * were not there */
+    bool (*canTarget)(void *ctx, BYTE pill, BYTE player);
+                       /* may pillbox pill pick this seat's tank as its
+                        * target? pill is the pill index. NULL = always.
+                        * false has the pillbox pass over the tank as if
+                        * it were not there, and take the next nearest */
     int  (*pillDamageScale)(void *ctx, BYTE attacker, BYTE index, BYTE cause,
                             BYTE pill);
                        /* percent of the armour a blow takes off pill

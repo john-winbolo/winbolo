@@ -2658,6 +2658,7 @@ STR_SCNFN_DESC_CAN_ALLY=あるプレイヤーが別のプレイヤーと同盟�
 STR_SCNFN_DESC_TANK_HIT=戦車が砲弾または地雷を受けました。実際に失った装甲の量が渡されます。
 STR_SCNFN_DESC_CAN_HIT=砲弾が到達した戦車またはピルボックスに命中してよいかどうか。
 STR_SCNFN_DESC_PILL_DAMAGE_SCALE=ピルボックスへの一撃の重さ。受ける砲弾と爆発のたびに問い合わせます。
+STR_SCNFN_DESC_CAN_TARGET=ピルボックスが戦車を標的に選んでよいかどうか。
 STR_MAPEDIT_SCENARIO_KIND=決定してよい内容
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=シナリオ — ラウンドを終了させ、勝者を決めることができます
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — ゲームの進行を変えるだけで、勝敗には関与しません

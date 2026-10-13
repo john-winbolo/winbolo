@@ -22,6 +22,11 @@
  *       the two overlap, and hits the tank behind it
  *   run_scenario_can_hit_pill        — the same for a pillbox: no armour lost,
  *       no anger, and the tank behind it is hit
+ *   run_scenario_can_target          — a pillbox passes over the tank the
+ *       script refuses and fires at the next nearest, stands idle when the
+ *       refused tank is the only one in range, and is asked nothing about a
+ *       tank it would not have taken; with no function it fires at the
+ *       nearest as it always has
  *   run_scenario_pill_shell_names_pill — a shell a pillbox fires carries that
  *       pillbox's number into can_hit and damage_scale, beside the NEUTRAL
  *       attacker every pillbox shell has always had
@@ -504,6 +509,197 @@ int run_scenario_can_hit_pill(void) {
                   "expected '%.*s' once; the record was:\n%s",
                   (int)strlen(want) - 1, want, sffNote);
 
+    sffEnd(sim, h, kMap);
+    return 0;
+}
+
+/* ================================================================
+ * 2b. A tank a pillbox is told to pass over.
+ * ================================================================ */
+
+#define SCT_ALLOWED 1   /* the seat the script lets the pillbox shoot */
+#define SCT_REFUSED 2   /* the seat it has the pillbox pass over */
+
+/* A square well outside any range of the lane. */
+static BYTE sctAwayY(BYTE ly) {
+    return (BYTE)((ly < 128) ? ly + 40 : ly - 40);
+}
+
+/* The one pillbox left able to fire: slot 0's, at the head of the lane,
+   loaded and having already seen its target, so the next update fires if it
+   has one. Every other pillbox is dead, so no shell and no question in the
+   case is another's. Slot 0's own tank is stood off the lane; the pillbox
+   never fires at its owner. */
+static int sctSetup(ServerSim *sim, BYTE lx, BYTE ly) {
+    GameSim *gs  = &sim->sim;
+    int      idx = sffFirstPill(sim);
+    BYTE     n   = pillsGetNumPills(&gs->pb);
+    BYTE     i;
+
+    if (idx < 0) {
+        return -1;
+    }
+    for (i = 0; i < n; i++) {
+        if ((int)i != idx) {
+            (*gs->pb).item[i].armour = 0;
+        }
+    }
+    sffMovePill(sim, idx, (BYTE)(lx + SFF_AT_SHOOTER), ly,
+                (BYTE)gs->rules.pill_max_armour);
+    (*gs->pb).item[idx].owner = SFF_SELF;
+    sffPlace(sim, SFF_SELF, (BYTE)(lx + SFF_AT_FAR), (BYTE)(ly + 1));
+    return idx;
+}
+
+/* Load the pillbox and have it already seen someone. */
+static void sctLoad(ServerSim *sim, int idx) {
+    (*sim->sim.pb).item[idx].reload   = (*sim->sim.pb).item[idx].speed;
+    (*sim->sim.pb).item[idx].justSeen = TRUE;
+}
+
+/* Drop every shell in flight without letting it land. */
+static void sctClearShells(ServerSim *sim) {
+    shellsDestroy(&sim->sim.shs);
+    sim->sim.shs = shellsCreate();
+}
+
+int run_scenario_can_target(void) {
+    static const char *const kMap = "scnff_target.map";
+    static const char *const kBody =
+        "scenario = { name = \"Decoy\", api = 1 }\n"
+        "function can_target(pill, p)\n"
+        "  note(\"target \" .. pill .. \" \" .. p)\n"
+        "  if p == 2 then return false end\n"
+        "  return nil\n"
+        "end\n";
+    static const char *const kPlain =
+        "scenario = { name = \"Plain\", api = 1 }\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    GameSim      *gs;
+    BYTE          lx = 0, ly = 0;
+    BYTE          speedBefore;
+    int           idx;
+    int           i;
+    char          allowed[64];
+    char          refused[64];
+
+    /* ── The script refuses seat 2. ── */
+    UT_ASSERT(sffPut(kMap, kBody));
+    sim = sffSim(kMap, &h);
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+    serverSimAddPlayer(sim, SCT_ALLOWED, "Target", false);
+    serverSimAddPlayer(sim, SCT_REFUSED, "Refused", false);
+    UT_ASSERT(gs->tanks[SCT_ALLOWED] != NULL &&
+              gs->tanks[SCT_REFUSED] != NULL);
+    UT_ASSERT_MSG(sffLane(sim, &lx, &ly), "setup: the map has no clear lane");
+    idx = sctSetup(sim, lx, ly);
+    UT_ASSERT_MSG(idx >= 0, "setup: the map must carry a pillbox");
+    snprintf(allowed, sizeof(allowed), "target %d %d\n", idx + 1,
+             SCT_ALLOWED);
+    snprintf(refused, sizeof(refused), "target %d %d\n", idx + 1,
+             SCT_REFUSED);
+
+    /* The refused tank is the nearer of the two. Each is the nearest so far
+       when the pillbox reaches it, so each is asked about once, and the
+       shell goes to the one behind. */
+    sffPlace(sim, SCT_REFUSED, (BYTE)(lx + SFF_AT_NEAR), ly);
+    sffPlace(sim, SCT_ALLOWED, (BYTE)(lx + SFF_AT_FAR), ly);
+    sctClearShells(sim);
+    sctLoad(sim, idx);
+    sffReset();
+    pillsUpdate(gs, gs->tanks, sim->playerConnected, MAX_TANKS);
+    UT_ASSERT_MSG(gs->shs != NULL,
+                  "the pillbox had a second tank in range and did not fire");
+    UT_ASSERT_MSG(gs->shs->target == SCT_ALLOWED,
+                  "the pillbox fired at seat %u, expected the tank the "
+                  "script allows, seat %d", (unsigned)gs->shs->target,
+                  SCT_ALLOWED);
+    UT_ASSERT_MSG(gs->shs->next == NULL, "the pillbox fired more than once");
+    UT_ASSERT_MSG(sffLines(allowed) == 1 && sffLines(refused) == 1,
+                  "each tank should be asked about once; the record "
+                  "was:\n%s", sffNote);
+
+    /* The pillbox has just fired, so it is reloading and asks nothing. */
+    sctClearShells(sim);
+    sffReset();
+    pillsUpdate(gs, gs->tanks, sim->playerConnected, MAX_TANKS);
+    UT_ASSERT_MSG(gs->shs == NULL, "a reloading pillbox fired");
+    UT_ASSERT_MSG(sffNote[0] == '\0',
+                  "a reloading pillbox asked about a target; the record "
+                  "was:\n%s", sffNote);
+
+    /* The allowed tank nearer than the refused one: the refused tank would
+       not have been taken, so it is not asked about at all. */
+    sffPlace(sim, SCT_ALLOWED, (BYTE)(lx + SFF_AT_NEAR), ly);
+    sffPlace(sim, SCT_REFUSED, (BYTE)(lx + SFF_AT_FAR), ly);
+    sctLoad(sim, idx);
+    sffReset();
+    pillsUpdate(gs, gs->tanks, sim->playerConnected, MAX_TANKS);
+    UT_ASSERT_MSG(gs->shs != NULL && gs->shs->target == SCT_ALLOWED,
+                  "the pillbox did not fire at the allowed tank when it was "
+                  "the nearer one");
+    UT_ASSERT_MSG(sffLines(allowed) == 1 && sffLines(refused) == 0,
+                  "only the nearer tank should be asked about; the record "
+                  "was:\n%s", sffNote);
+
+    /* Only the refused tank in range: no target, no shell, and the pillbox
+       forgets it had seen anyone, as it does for an empty field. It stays
+       that way however long the tank sits there, and its fire rate is not
+       touched. */
+    sffPlace(sim, SCT_REFUSED, (BYTE)(lx + SFF_AT_NEAR), ly);
+    sffPlace(sim, SCT_ALLOWED, lx, sctAwayY(ly));
+    sctClearShells(sim);
+    sctLoad(sim, idx);
+    speedBefore = (*gs->pb).item[idx].speed;
+    sffReset();
+    for (i = 0; i < 200; i++) {
+        pillsUpdate(gs, gs->tanks, sim->playerConnected, MAX_TANKS);
+        UT_ASSERT_MSG(gs->shs == NULL,
+                      "the pillbox fired at the only tank in range, which "
+                      "the script refused, on update %d", i);
+    }
+    UT_ASSERT_MSG((*gs->pb).item[idx].justSeen == FALSE,
+                  "the pillbox still counts the refused tank as seen");
+    UT_ASSERT_MSG((*gs->pb).item[idx].speed == speedBefore,
+                  "the refused tank changed the pillbox's fire rate, %u to "
+                  "%u", (unsigned)speedBefore,
+                  (unsigned)(*gs->pb).item[idx].speed);
+    UT_ASSERT_MSG(sffLines(refused) >= 1 && sffLines(allowed) == 0,
+                  "the refused tank alone in range should be the only one "
+                  "asked about; the record was:\n%.400s", sffNote);
+    sffEnd(sim, h, kMap);
+
+    /* ── No can_target: the nearest tank is fired at, as always. ── */
+    UT_ASSERT(sffPut(kMap, kPlain));
+    sim = sffSim(kMap, &h);
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+    serverSimAddPlayer(sim, SCT_ALLOWED, "Far", false);
+    serverSimAddPlayer(sim, SCT_REFUSED, "Near", false);
+    UT_ASSERT(gs->tanks[SCT_ALLOWED] != NULL &&
+              gs->tanks[SCT_REFUSED] != NULL);
+    UT_ASSERT_MSG(sffLane(sim, &lx, &ly), "setup: the map has no clear lane");
+    idx = sctSetup(sim, lx, ly);
+    UT_ASSERT_MSG(idx >= 0, "setup: the map must carry a pillbox");
+    sffPlace(sim, SCT_REFUSED, (BYTE)(lx + SFF_AT_NEAR), ly);
+    sffPlace(sim, SCT_ALLOWED, (BYTE)(lx + SFF_AT_FAR), ly);
+    sctClearShells(sim);
+    sctLoad(sim, idx);
+    pillsUpdate(gs, gs->tanks, sim->playerConnected, MAX_TANKS);
+    UT_ASSERT_MSG(gs->shs != NULL && gs->shs->target == SCT_REFUSED,
+                  "with no can_target the pillbox must fire at the nearest "
+                  "tank, seat %d", SCT_REFUSED);
+
+    /* And at the only tank in range. */
+    sffPlace(sim, SCT_ALLOWED, lx, sctAwayY(ly));
+    sctClearShells(sim);
+    sctLoad(sim, idx);
+    pillsUpdate(gs, gs->tanks, sim->playerConnected, MAX_TANKS);
+    UT_ASSERT_MSG(gs->shs != NULL && gs->shs->target == SCT_REFUSED,
+                  "with no can_target the pillbox must fire at the only "
+                  "tank in range");
     sffEnd(sim, h, kMap);
     return 0;
 }

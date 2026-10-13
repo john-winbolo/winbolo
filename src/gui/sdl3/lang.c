@@ -2703,6 +2703,7 @@ static const LangEntry langTable[] = {
     {2761, "This scenario comes with the map. To unload it, choose a different map."},
     {2762, "Whether the builder crosses the square he is going to build on at that square's terrain speed, as in Mac Bolo. Off is the WinBolo walk: he walks up to the centre of that square at the refuelling base speed, whatever its terrain. A square with no walking speed, such as a river, a wall or a pillbox, keeps the refuelling base speed. The walk back to the tank does not change."},
     {2775, "the build buttons"},
+    {2810, "Whether a pillbox may pick a tank as its target."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

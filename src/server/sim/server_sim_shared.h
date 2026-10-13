@@ -105,6 +105,7 @@ bool serverSimCbCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
                        BYTE cause, BYTE pill);
 bool serverSimCbCanHit(void *ctx, BYTE attacker, BYTE kind, BYTE index,
                        BYTE pill);
+bool serverSimCbCanTarget(void *ctx, BYTE pill, BYTE player);
 int  serverSimCbPillDamageScale(void *ctx, BYTE attacker, BYTE index,
                                 BYTE cause, BYTE pill);
 

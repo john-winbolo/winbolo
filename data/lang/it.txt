@@ -2660,6 +2660,7 @@ STR_SCNFN_DESC_CAN_ALLY=Se un giocatore può allearsi con un altro.
 STR_SCNFN_DESC_TANK_HIT=Un carro ha subito un proiettile o una mina, con la corazza effettivamente persa.
 STR_SCNFN_DESC_CAN_HIT=Se un proiettile può colpire il carro o il fortino che ha raggiunto.
 STR_SCNFN_DESC_PILL_DAMAGE_SCALE=Quanto vale un colpo su un fortino, chiesto a ogni proiettile ed esplosione che subisce.
+STR_SCNFN_DESC_CAN_TARGET=Se un fortino può scegliere un carro come bersaglio.
 STR_MAPEDIT_SCENARIO_KIND=Cosa può decidere
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Scenario — può terminare il round e dire chi ha vinto
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — cambia il modo in cui si gioca la partita e non interferisce con la vittoria

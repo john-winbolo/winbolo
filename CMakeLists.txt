@@ -6304,6 +6304,7 @@ set(_unit_test_names
     scenario_allied_read
     scenario_can_hit_tank
     scenario_can_hit_pill
+    scenario_can_target
     scenario_pill_shell_names_pill
     scenario_pill_damage_scale
     scenario_blast_names_tank
