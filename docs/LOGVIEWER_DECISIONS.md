@@ -1799,6 +1799,37 @@ The sum is `lvControlsWheelStep` in `src/logviewer/lv_controls_layout.h`;
 `seek_wheel_step` in `imgui_controls.cpp` uses it. Test:
 `lv_controls_wheel_step`.
 
+### Smaller markers over the seek bar (Oct 13)
+
+The markers of the lane over the seek bar are 80% of what they were, so
+more of them go in before they are put together.
+
+- **The size.** A marker was the height of a line of text: 18 points with
+  the viewer's text. It is now 0.8 of that cut to a whole point: 14 points
+  (77.8%; 15 would be 83%, over the 80% asked for). One sum,
+  `lvOverlayMarkerSide`, gives it. A display with more pixels to a point
+  draws it with more pixels, as before.
+- **The distance for putting events together follows it.** It is the
+  marker's side (`lvOverlayMergeGap`), so it went from 18 to 14 with the
+  marker and two markers still never overlap.
+- **What is in a marker.** The builder of "builder lost" is 2 times his 3
+  by 4 pixels (6 by 8); he was 3 times. He is still whole pixels. The
+  marker is never under 8 points, where he would be cut. The pillbox and
+  base pictures (16 pixels), the "dead" picture (12 pixels) and the ping
+  pictures were already scaled with blending at 18, as 18 is not a whole
+  number of times their size; they still are. The line of the team's
+  colour (1 point) and the red circle and line (1.5 points) keep their
+  widths.
+- **The number on a marker for several events** is as high as the box at
+  most; it was as high as a line of text, which the box no longer is.
+- **The mouse.** A marker takes the mouse over its drawn width and the
+  whole height of the lane, as before.
+- **The lane** is 4 points lower (17, was 21), and the Controls panel with
+  it.
+- **Not smaller:** the pictures of the lines of the Events panel, of the
+  hover for several events and of the list of kinds. They stay the height
+  of a line of text.
+
 ### The hover of a marker for several events shows them all (Oct 13)
 
 A marker over the seek bar that stands for several events showed the first

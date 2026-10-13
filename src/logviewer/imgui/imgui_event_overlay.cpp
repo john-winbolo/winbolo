@@ -114,16 +114,15 @@ void lv_event_overlay_init(void) {
     overlay_load();
 }
 
-/* The side of a marker: the height of a line of text. */
+/* The side of a marker of the lane (lvOverlayMarkerSide). */
 static float overlay_side(void) {
-    return floorf(ImGui::GetFontSize());
+    return lvOverlayMarkerSide(ImGui::GetFontSize());
 }
 
 float lv_event_overlay_lane_height(void) {
     overlay_load();
     if (s_mask == 0) return 0.0f;
-    /* The marker, then two points for the tick of a second team. */
-    return overlay_side() + 3.0f + OVERLAY_LANE_GAP;
+    return lvOverlayLaneHeight(overlay_side()) + OVERLAY_LANE_GAP;
 }
 
 /* The drawn icon of a kind. */
@@ -413,7 +412,8 @@ static void overlay_draw_count(ImDrawList *dl, const OverlayMarker &m, ImVec2 p0
     if (m.picture != LV_OVERLAY_PIC_NONE &&
         lv_item_picture(dl, m.picture == LV_OVERLAY_PIC_BASE, m.team, p0, p1, alpha)) {
         ImFont *font = ImGui::GetFont();
-        float size = floorf(ImGui::GetFontSize() * 0.7f);
+        /* The number is 0.7 of the marker high. */
+        float size = floorf((p1.y - p0.y) * 0.7f);
         ImVec2 ts = font->CalcTextSizeA(size, FLT_MAX, 0.0f, num);
         const float room = (p1.x - p0.x) - 1.0f;
         if (ts.x > room && ts.x > 0.0f) {
@@ -429,10 +429,12 @@ static void overlay_draw_count(ImDrawList *dl, const OverlayMarker &m, ImVec2 p0
         return;
     }
     dl->AddRectFilled(p0, p1, overlay_u32(fill, alpha), 3.0f);
-    /* The number as large as fits in the box. */
+    /* The number as large as fits in the box: as high as the box at most
+     * (the box is smaller than a line of text), and as wide. */
     ImFont *font = ImGui::GetFont();
     float size = ImGui::GetFontSize();
-    ImVec2 ts = ImGui::CalcTextSize(num);
+    if (size > p1.y - p0.y) size = p1.y - p0.y;
+    ImVec2 ts = font->CalcTextSizeA(size, FLT_MAX, 0.0f, num);
     const float room = (p1.x - p0.x) - 2.0f;
     if (ts.x > room && ts.x > 0.0f) {
         const float scale = room / ts.x;
@@ -455,9 +457,9 @@ static void overlay_format_when(uint32_t ms, char *out, size_t outSize) {
     snprintf(out, outSize, "%s  %s %u", stamp, langGetText(STR_DLGSYSINFO_TICK), (unsigned)tick);
 }
 
-/* The side of an event's picture in a line of the tooltip: what the Events
- * panel uses for the picture of a line. It does not follow the size of the
- * markers of the lane. */
+/* The side of an event's picture in a line of text (a line of the tooltip,
+ * a line of the list of kinds): what the Events panel uses for the picture
+ * of a line. It does not follow the size of the markers of the lane. */
 static float overlay_tip_icon_side(void) {
     return floorf(ImGui::GetFontSize());
 }
@@ -552,7 +554,7 @@ void lv_event_overlay_lane(void) {
 
     const ImGuiStyle &style = ImGui::GetStyle();
     const float side = overlay_side();
-    const float laneH = side + 3.0f;
+    const float laneH = lvOverlayLaneHeight(side);
     /* The width the slider under the lane gets: the same call it makes. */
     const float width = ImGui::CalcItemWidth();
     if (width < 1.0f) return;
@@ -565,12 +567,12 @@ void lv_event_overlay_lane(void) {
     const bool hovered = ImGui::IsItemHovered();
     const ImVec2 lane0 = ImGui::GetItemRectMin();
 
-    overlay_refresh(width, style.GrabMinSize, side);
+    overlay_refresh(width, style.GrabMinSize, lvOverlayMergeGap(side));
     if (s_markers.empty()) return;
 
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const uint32_t nowMs = lv_screenGetTimeRunning();
-    const float half = side * 0.5f;
+    const float half = lvOverlayHitHalf(side);
     int hot = -1;
     if (hovered) {
         hot = lvOverlayHit(s_clusters.data(), (int)s_markers.size(),
@@ -671,9 +673,10 @@ bool lv_event_kinds_combo(const char *id, const char *preview, const char *tip,
         char label[160];
         bool on = (mask & (1u << kind)) != 0;
         /* The marker of the kind, so the list is also the key to the lane.
-         * It is as tall as the text, in the middle of the check box's row. */
+         * It is as tall as the text, in the middle of the check box's row:
+         * it does not get smaller with the markers of the lane. */
         {
-            const float side = overlay_side();
+            const float side = overlay_tip_icon_side();
             const float rowH = ImGui::GetFrameHeight();
             const ImVec2 at = ImGui::GetCursorScreenPos();
             const float top = floorf(at.y + (rowH - side) * 0.5f);
