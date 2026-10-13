@@ -614,24 +614,34 @@ bool lv_windowCanSaveLog(void) {
 
 void lv_windowSaveLog(void) {
     char           srcPath[FILENAME_MAX];
+    char           defaultName[FILENAME_MAX];
     char           fileName[FILENAME_MAX];
     const char    *path = NULL;
     const uint8_t *data = NULL;
     uint8_t       *copy = NULL;
     size_t         len  = 0;
+    size_t         i;
     char          *prefDir;
     FILE          *fp;
     int            source;
     int            dlgResult;
     bool           ok;
+    const char    *failed = "Error Saving Log File";
 
     if (lv_windowCanSaveLog() == FALSE) {
         return;
     }
     lv_windowPause();
 
-    srcPath[0]  = '\0';
-    fileName[0] = '\0';
+    /* Everything the save needs from the decoder is taken here, under the
+       mutex, and nothing of the decoder's is touched after it is released:
+       the dialog below can stay open for minutes, and the bytes of a
+       downloaded log belong to the decoder, which frees them when another
+       log is loaded. */
+    srcPath[0]     = '\0';
+    defaultName[0] = '\0';
+    fileName[0]    = '\0';
+    ok = TRUE;
     lv_clientMutexWaitFor();
     source = lv_blocksGetSource(&path, &data, &len);
     if (source == LV_LOG_SOURCE_FILE) {
@@ -642,28 +652,57 @@ void lv_windowSaveLog(void) {
         for (p = path; *p != '\0'; p++) {
             if (*p == '/' || *p == '\\') base = p + 1;
         }
-        snprintf(fileName, sizeof(fileName), "%s", base);
+        snprintf(defaultName, sizeof(defaultName), "%s", base);
+    } else if (source == LV_LOG_SOURCE_MEMORY) {
+        /* A downloaded log has no name: the map's. Its bytes are copied now. */
+        lv_screenGetMapName(defaultName);
+        copy = (uint8_t *)malloc(len);
+        if (copy != NULL) {
+            memcpy(copy, data, len);
+        } else {
+            ok = FALSE;
+        }
     } else {
-        /* A downloaded log has no name: the map's. */
-        lv_screenGetMapName(fileName);
-        strncat(fileName, ".wbv", sizeof(fileName) - strlen(fileName) - 1);
+        ok = FALSE;
     }
     lv_clientMutexRelease();
+    data = NULL;
+    path = NULL;
+    if (!ok) {
+        free(copy);
+        lv_platform_dialog_error(DIALOG_BOX_TITLE, failed);
+        return;
+    }
+    if (source == LV_LOG_SOURCE_MEMORY) {
+        /* Nothing a file name cannot hold: a map name is free text. */
+        for (i = 0; defaultName[i] != '\0'; i++) {
+            if (strchr("\\/:*?\"<>|", defaultName[i]) != NULL ||
+                (unsigned char)defaultName[i] < 0x20) {
+                defaultName[i] = '.';
+            }
+        }
+        if (defaultName[0] == '\0') {
+            snprintf(defaultName, sizeof(defaultName), "log");
+        }
+        strncat(defaultName, ".wbv", sizeof(defaultName) - strlen(defaultName) - 1);
+    }
 
-    /* Opens on the folder the game keeps its logs in. */
+    /* Opens on the folder the game keeps its logs in. The name offered and
+       the path that comes back are two buffers: the dialog copies the one
+       into the other. */
     prefDir   = SDL_GetPrefPath("WinBolo", "WinBolo");
     dlgResult = lv_platform_dialog_save_file(
         "Save Log File...", "WinBolo Log Files", "*.wbv", "wbv",
-        fileName, fileName, sizeof(fileName), prefDir);
+        defaultName, fileName, sizeof(fileName), prefDir);
     SDL_free(prefDir);
     if (dlgResult != PLATFORM_DIALOG_OK) {
+        free(copy);
         return;
     }
     if (source == LV_LOG_SOURCE_FILE && lvSamePath(srcPath, fileName)) {
         return;   /* it is already there */
     }
 
-    ok = TRUE;
     if (source == LV_LOG_SOURCE_FILE) {
         /* All of the source first, then the write: right even if the two
            names turn out to be one file. */
@@ -682,13 +721,16 @@ void lv_windowSaveLog(void) {
         if (fp != NULL) {
             fclose(fp);
         }
-        data = copy;
+        if (!ok) {
+            failed = "The log's own file could not be read. "
+                     "It may have been moved or deleted since it was opened.";
+        }
     }
     if (ok) {
         fp = fopen(fileName, "wb");
         ok = (fp != NULL);
         if (ok) {
-            ok = fwrite(data, 1, len, fp) == len;
+            ok = fwrite(copy, 1, len, fp) == len;
             if (fclose(fp) != 0) {
                 ok = FALSE;
             }
@@ -696,7 +738,7 @@ void lv_windowSaveLog(void) {
     }
     free(copy);
     if (!ok) {
-        lv_platform_dialog_error(DIALOG_BOX_TITLE, "Error Saving Log File");
+        lv_platform_dialog_error(DIALOG_BOX_TITLE, failed);
     }
 }
 
