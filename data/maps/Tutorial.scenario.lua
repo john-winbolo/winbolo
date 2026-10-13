@@ -205,7 +205,7 @@ scenario = {
 local S = {
   player   = nil,     -- the tutorial's player seat; nil again once he leaves
   adopted  = false,   -- a player has been set up once: the round is handed out
-  -- The pillboxes and bases the player owned at the last whole second, by
+  -- The pillboxes and bases the player owned when last noted (note_owned), by
   -- number. The server gives a leaving player's away before on_player_leave
   -- runs, so this is what the next player gets back.
   owned    = { pills = {}, bases = {} },
@@ -1563,12 +1563,17 @@ local function enter_station(n)
   redraw(true)
 end
 
--- Note what the player owns, once a second (see S.owned). The pillboxes of
--- the stations' own set-up are left out, so give_back never hands them to
--- the next player: the two 5A demo pillboxes always, and the 5B target
--- until the player has picked it up. The pillboxes a goal has the player
--- take or build (4A, 4B, the 5B blocker, Station 7's) are noted.
+-- Note what the player owns, once a second and each time he takes a base or
+-- picks up a pillbox (see S.owned). The pillboxes of the stations' own
+-- set-up are left out, so give_back never hands them to the next player:
+-- the two 5A demo pillboxes always, and the 5B target until the player has
+-- picked it up. The pillboxes a goal has the player take or build (4A, 4B,
+-- the 5B blocker, Station 7's) are noted.
+-- Nothing is noted once his seat is empty: by then the server has passed on
+-- everything he owned. on_player_leave runs after that too, so a note taken
+-- there would be an empty one; the last good one is kept.
 local function note_owned()
+  if S.player == nil or game.lobby_slot(S.player) == nil then return end
   local o = { pills = {}, bases = {} }
   for name, L in pairs(P) do
     local setup = name == "t5a_target" or name == "t5a_blocker" or
@@ -1844,6 +1849,8 @@ function on_pill_picked_up(n, p, scripted)
     if S.sw.p7_sw1 and S.sw.p7_sw2 then mark(7, "dead") end
     redraw(false)
   end
+  -- Noted now, not at the next whole second: he may leave before it.
+  note_owned()
 end
 
 function on_pill_placed(n, p, armour, scripted)
@@ -1912,6 +1919,7 @@ function on_base_captured(n, old, new, scripted)
     mark(7, "base")
   end
   check_win()
+  note_owned()     -- as in on_pill_picked_up
 end
 
 -- ---------------------------------------------------------------------
