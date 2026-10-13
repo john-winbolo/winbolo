@@ -886,10 +886,13 @@ not the browser build, not a saved picture).
 **Sizes and colours.** The marker is made of square cells: the arrow and the
 parachute are 7 cells high and wide, a digit is 3 cells wide and 5 high. A
 cell is 1 point, and 2 points from 32 points to a map square. So the marker
-is 7 points high at the usual zooms and 14 at the large ones. The arrow, the
-dot and the parachute are in the team's colour (the HUD panel's; white for a
-player in no team). The time is white, so it reads the same for every team.
-Every part has a dark edge of 1 point and is drawn 75% solid, like the bars.
+is 7 points high at the usual zooms and 14 at the large ones. Every part is
+white, for every team and for no team: the arrow, the dot, the parachute and
+the time (`lvBuilderMarkColour`). Every part has a black edge of 1 point and
+is drawn fully solid. (Until Oct 13 the arrow, the dot and the parachute were
+in the team's colour and all of it was 75% solid, like the bars. The owner
+found that too hard to see. The marker stands over the tank, not on it, so a
+solid marker hides no tank; it can hide a little of the map above the tank.)
 The digits are drawn by the viewer as cells; no font is loaded for them.
 
 **Where the time comes from.** The game has no fixed time for a new builder.

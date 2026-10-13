@@ -2192,7 +2192,6 @@ static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *d
     bool barsOn;
     SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
     Uint8 oldR, oldG, oldB, oldA;
-    const float alpha = LV_BUILDER_ALPHA;
     struct {
         bool alive;
         LvBuilderState state;
@@ -2266,12 +2265,12 @@ static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *d
     SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
     SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
     /* The dark edge round every part: one point. */
-    edge = lvTankBarPointsToPixels(1.0f, pxScale);
+    edge = lvTankBarPointsToPixels(LV_BUILDER_EDGE_POINTS, pxScale);
 
     for (i = 0; i < s_tankBarCount; i++) {
         BYTE slot = s_tankBarPos[i].slot;
         LvBuilderMarkLayout m;
-        SDL_FColor team, dark;
+        SDL_FColor mark, dark;
         char text[LV_BUILDER_TEXT_MAX];
         float x, y, rowW, textY;
         int pass;
@@ -2292,21 +2291,18 @@ static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *d
         /* The digits are 5 cells high in a row of 7: one cell down. */
         textY = y + m.cell;
 
-        /* The team's colour, as the HUD panel gives it; white with none. */
-        team.r = 1.0f; team.g = 1.0f; team.b = 1.0f;
-        if (b[slot].hasTeam) {
-            team = mapColourTeam(b[slot].colour);
-            if (!lvHudRedToOrange(&team.r, &team.g, &team.b)) {
-                lvHudReadableColour(&team.r, &team.g, &team.b);
-            }
+        /* White for every team, with a black edge (lvBuilderMarkColour). */
+        {
+            LvBuilderColour w = lvBuilderMarkColour(b[slot].hasTeam, b[slot].colour);
+            LvBuilderColour e = lvBuilderEdgeColour();
+            mark.r = w.r; mark.g = w.g; mark.b = w.b; mark.a = w.a;
+            dark.r = e.r; dark.g = e.g; dark.b = e.b; dark.a = e.a;
         }
-        team.a = alpha;
-        dark.r = 0.0f; dark.g = 0.0f; dark.b = 0.0f; dark.a = alpha;
 
-        /* The dark edge first, then the colour over it. */
+        /* The dark edge first, then the white over it. */
         for (pass = 0; pass < 2; pass++) {
             float grow = (pass == 0) ? edge : 0.0f;
-            SDL_FColor c = (pass == 0) ? dark : team;
+            SDL_FColor c = (pass == 0) ? dark : mark;
 
             SDL_SetRenderDrawColorFloat(sdlRenderer, c.r, c.g, c.b, c.a);
             if (b[slot].state == LV_BUILDER_FLYING) {
@@ -2321,10 +2317,6 @@ static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *d
                                    b[slot].direction, c);
             }
             if (text[0] != '\0') {
-                /* The time is white, so it reads the same for every team. */
-                if (pass == 1) {
-                    SDL_SetRenderDrawColorFloat(sdlRenderer, 1.0f, 1.0f, 1.0f, alpha);
-                }
                 lvDrawBuilderText(text, x + (float)(LV_BUILDER_CELLS + 1) * m.cell, textY,
                                   m.cell, grow);
             }
