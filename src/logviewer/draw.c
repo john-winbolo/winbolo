@@ -692,6 +692,8 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
      * request a full redraw so the texture target gets repopulated. */
     g_zoomStepIndex = newStepIndex;
     g_zoomLevel = newZoom;
+    /* A zoom places the view: the first view of the log is over. */
+    lv_screenFirstViewCancel();
 
     if (newTilesX != curTilesX) lv_screenSetSizeX((BYTE)newTilesX);
     if (newTilesY != curTilesY) lv_screenSetSizeY((BYTE)newTilesY);
@@ -2360,10 +2362,8 @@ static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *d
                                 tilePx, pxScale, barsOn);
         if (!m.visible) continue;
 
-        text[0] = '\0';
-        if (b[slot].hasTime) {
-            lvBuilderCountdownText(b[slot].remainMs, b[slot].approx, text, sizeof(text));
-        }
+        lvBuilderDeadText(b[slot].hasTime, b[slot].remainMs, b[slot].approx, text,
+                          sizeof(text));
         rowW = (float)lvBuilderRowCells(text) * m.cell;
         x = SDL_floorf(m.centreX - rowW * 0.5f);
         y = m.top;

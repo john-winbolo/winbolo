@@ -4165,6 +4165,10 @@ int run_lv_team_sprite_sums(void);
  * rows of the teams, which row a pillbox or a base is counted in, and the
  * share a count is of the whole. */
 int run_lv_overview_sums(void);
+/* The chip of a bot in the log viewer's panels (test_lv_overview.c,
+ * lv_bot_chip.h): which chip a player has, and where each name of a team's
+ * row starts, so the chip goes in front of the bot's name. */
+int run_lv_overview_bots(void);
 /* The log viewer's Tank panel (test_lv_tank_status.c): which tank is the
  * selected one, and the height of a gauge against its cap. */
 int run_lv_tank_status_sums(void);
@@ -4222,6 +4226,10 @@ int run_lv_time_parse_sums(void);
 int run_lv_event_flash_sums(void);
 int run_lv_event_flash_arrow(void);
 int run_lv_event_centre_scroll(void);
+int run_lv_view_centre_scroll(void);
+int run_lv_first_view_box(void);
+int run_lv_first_view_zoom(void);
+int run_lv_first_view_place(void);
 int run_lv_event_jump_keeps_place_in_view(void);
 int run_lv_event_seek_exact(void);
 /* The builder marker over each tank on the log viewer's map
@@ -4229,6 +4237,7 @@ int run_lv_event_seek_exact(void);
  * as the event scan fills it (test_lv_presentation.c). */
 int run_lv_builder_status_sums(void);
 int run_lv_builder_countdown(void);
+int run_lv_builder_dead_text(void);
 int run_lv_builder_trips(void);
 int run_lv_builder_trips_scan(void);
 /* Where the items of the log viewer's Controls panel go
@@ -4242,12 +4251,22 @@ int run_lv_fullscreen_key(void);
  * (test_lv_presentation.c): it posts each line once, stores no snapshot, and
  * leaves the world at the start as the loader did. */
 int run_lv_event_scan_returns_to_start(void);
+/* The file name the viewer's Save Log File offers (test_lv_save_name.c), and
+ * what the event scan keeps for it: the players of the whole log and the map
+ * the lobby chose (test_lv_presentation.c). */
+int run_lv_save_name_parts(void);
+int run_lv_save_name_limits(void);
+int run_lv_save_name_roster(void);
+int run_lv_save_name_scan(void);
 /* The kill and death tallies go back with a seek (test_lv_presentation.c). */
 int run_lv_kill_tally_seek_back(void);
 /* Whether a tank is alive goes back with a seek (test_lv_presentation.c). */
 int run_lv_alive_seek_back(void);
 int run_lv_death_time_seek_back(void);
 int run_lv_jump_targets(void);
+int run_lv_jump_anim_lands(void);
+int run_lv_jump_anim_steps(void);
+int run_lv_jump_anim_time(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

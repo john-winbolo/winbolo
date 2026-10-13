@@ -36,6 +36,7 @@
 #include "lv_screenbullet.h"
 #include "lv_pillbox.h"
 #include "lv_screentank.h"
+#include "lv_save_name.h"   /* LvRosterRow */
 
 /* Defines */
 
@@ -606,6 +607,11 @@ void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY);
 /* team: the team the event names, for the colour of the ring flashed round
  * its place; -1 for none. */
 void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
+/* A double click on the same line or marker. The same jump, and the place
+ * goes to the middle of the map that shows whatever held the view: "Tank
+ * Centred" is turned off first. With no place (hasCell 0) it is
+ * lv_windowSeekToEvent. */
+void lv_windowCentreOnEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
 /* Standalone viewer only: list every event of the file just loaded in the
  * events panel (one decode pass, then back to the start). */
 void lv_windowCollectAllEvents(void);
@@ -639,6 +645,9 @@ void lv_screenRewind();
  * when it would not move (screen.c). */
 bool lv_screenFastForwardTargetMs(uint32_t *ms);
 bool lv_screenRewindTargetMs(uint32_t *ms);
+/* The last move of an animated rewind: to the place lv_screenRewindTargetMs
+   gave before the animation moved playback. */
+void lv_screenRewindToMs(uint32_t ms);
 /* The playback time to the second, for a file name. dest: 16 characters or
  * more. */
 void lv_screenGetTime(char *dest);
@@ -791,6 +800,23 @@ void lv_screenCentreOnCell(int mapX, int mapY);
 /* The same only when the cell is outside the view or near its edge, and not
  * at all with "Tank Centred" on. Returns 1 when the map moved. */
 int lv_screenShowCell(int mapX, int mapY, float viewPtsW, float viewPtsH, float zoom);
+/* Put a map pixel, or the middle of a cell, in the middle of a part of the
+ * view, with "Tank Centred" on or off. The part is given in points from the
+ * view's own start. Returns 1 when the view was placed (never in the game
+ * view). */
+int lv_screenCentrePxIn(float mapPxX, float mapPxY, float startPtX, float startPtY,
+                        float lenPtX, float lenPtY, float zoom);
+int lv_screenCentreCellIn(int mapX, int mapY, float startPtX, float startPtY,
+                          float lenPtX, float lenPtY, float zoom);
+/* The first view of a log (lv_first_view.h). Each load asks for one. Due
+ * says 1 when the host is to place it: not in the first frame it asks in,
+ * and not once the view has been placed by the host or moved by anything
+ * else (Cancel, which every pan, zoom and jump to a place calls).
+ * lv_screenLandBox gives the box round all that is not deep sea, in squares;
+ * 0 when there is nothing (the lobby, or a map of sea alone). */
+int  lv_screenFirstViewDue(void);
+void lv_screenFirstViewCancel(void);
+int  lv_screenLandBox(int *x0, int *y0, int *x1, int *y1);
 /* Counts every request to move playback other than by playing. */
 uint32_t lv_screenSeekSerial(void);
 
@@ -801,6 +827,17 @@ uint32_t lv_screenSeekSerial(void);
  * complete and then calls Restore. See screen.c. */
 bool lv_screenEventScanRun(void);
 void lv_screenEventScanRestore(void);
+
+/* For the name Save Log File offers (lv_save_name.h). The roster is every
+ * player the loaded log has had, in the order they came, with the last team
+ * each was on; the event scan fills it. Returns how many rows it wrote. The
+ * create time is the header's: the time the server that wrote the log was
+ * started, in seconds since 1970, or 0. */
+int     lv_screenGetRoster(LvRosterRow *rows, int max);
+/* The LvBotChip (lv_bot_chip.h) the panels draw in front of the name of the
+   player in a slot; 0 for a person. The caller holds the client mutex. */
+int     lv_screenBotChip(BYTE slot);
+int32_t lv_screenGetCreateTime(void);
 
 /* Spectator live-DVR (driven by spectatorRun). While live mode is on,
  * lv_screenStreamPump only appends the arriving bytes and never auto-advances to

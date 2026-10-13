@@ -288,6 +288,16 @@ static void hud_slot_tooltip(int grid, int index, const LvHudSlot &slot) {
                                                                   STR_LV_HUD_REL_HOSTILE));
         snprintf(tip, sizeof(tip), "%s", langGetTextFmt(STR_LV_HUD_TIP_REL, &args));
     }
+    /* A tank that a bot drives has the game's chip in front of the line. */
+    if (grid == HUD_GRID_TANKS && lv_bot_chip_width(slot.chip) > 0.0f) {
+        if (ImGui::BeginTooltip()) {
+            lv_bot_chip_text(slot.chip);
+            ImGui::SameLine(0.0f, lv_bot_chip_gap());
+            ImGui::TextUnformatted(tip);
+            ImGui::EndTooltip();
+        }
+        return;
+    }
     ImGui::SetTooltip("%s", tip);
 }
 
@@ -470,7 +480,8 @@ void lv_imgui_hud_window(void) {
                 snprintf(viewAs, sizeof(viewAs), "%s", langGetTextFmt(STR_LV_HUD_VIEW_AS, &args));
                 const LvHudSlot &who = snap.tanks[snap.viewer < LV_HUD_SLOTS ? snap.viewer : 0];
                 if (lv_name_header("allteams", who.hasTeam != 0, hud_team_colour(who), LV_ICON_EYE,
-                                   snap.viewerName, viewAs, langGetText(STR_LV_TIP_ALL_TEAMS))) {
+                                   snap.viewerChip, snap.viewerName, viewAs,
+                                   langGetText(STR_LV_TIP_ALL_TEAMS))) {
                     /* Out of the one-player view, and no tank selected. */
                     lv_clientMutexWaitFor();
                     lv_screenClearPerspective();

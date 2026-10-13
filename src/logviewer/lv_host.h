@@ -54,5 +54,8 @@ void lv_windowPause(void);
 /* true: lv_windowPlay starts no decoder timer, and the host steps the
  * decoder itself (the web viewer, from its main loop). */
 void lv_windowSetHostRunsTicks(bool on);
+/* true: the playback timer plays nothing until this is false again. The
+ * caller holds the client mutex. lv_windowStop ends it. */
+void lv_windowSetTickHold(bool on);
 
 #endif /* LV_HOST_H */

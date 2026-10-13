@@ -181,6 +181,16 @@ void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team
     }
 }
 
+/* A double click on the same line. The browser build centres on the square
+ * with every click; here "Tank Centred" is turned off first, so the view
+ * stays on the place. */
+void lv_windowCentreOnEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team) {
+    if (hasCell) {
+        lv_imgui_set_tank_centred(0);
+    }
+    lv_windowSeekToEvent(ms, hasCell, mapX, mapY, team);
+}
+
 /* File > Quit. A browser tab has no application to end. */
 void logViewerRequestAppQuit(void) {
 }

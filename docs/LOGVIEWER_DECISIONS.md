@@ -1431,6 +1431,400 @@ ping, where its age is 0 and the animation starts.
 To show more, the log writer must also write, at the time the ping is sent:
 the players the ping went to, the object it was on, and the mutes.
 
+### Save Log File: the name offered is the date, the map and the players (Oct 13)
+
+The name offered was the log's own file name, which is often a key of
+letters and numbers, or the map name for a downloaded log. It is now made
+from the log, for both sources:
+
+`2026-10-13 14.05 Oil Rig - Canuck, Eryan vs rooklift, Bot1.wbv`
+
+The code is `lvSaveNameBuild` in `src/logviewer/lv_save_name.h` (no SDL, no
+decoder). `lvSaveLogDefaultName` in `logviewer.c` collects the inputs under
+the decoder mutex. The copy and the "already there" check did not change.
+
+Calls made:
+
+- **Shape.** Date, time, map, then ` - ` and the players. A part the log
+  does not have is left out, with its separator.
+- **Time of day** is `HH.MM` (a colon cannot be in a file name).
+- **Date source**, in this order:
+  1. The stamp at the start of the source file's name, when the server named
+     the file (`<YYYYMMDD>t<HHMMSS>_<map>`, `serverDedicatedLogMakeAutoName`).
+     It is the time that round's log was opened.
+  2. The create time in the log header (`g_lv->gmeCreateTime`). The server
+     writes `serverSimGetTimeCreated`, which is set one time, when the
+     server is created (`src/server/server_sim.c:287`). So it is the time
+     the server was started, not the round. It is right for a game that is
+     hosted and played at once. It is early for a server that stays up.
+     This is the reason the file stamp is first.
+  3. For a file source, the time the file was last written.
+  4. A downloaded log with no create time has no date in its name.
+  The times are shown in the local time of the computer.
+- **Players.** Every player the log has had, not only those in the game at
+  the end. The event scan that runs at load fills the list (`LvRoster`), so
+  there is no second pass over the log. A player who left and came back is
+  one row. A player who took a slot that another left is a new row.
+- **Teams.** From `log_TeamSet` only. The last team a player was on is kept.
+  The names are grouped with ` vs ` only when every listed player has a team
+  and there are two teams or more. Otherwise the names are one comma list.
+  Alliances are not used, so an old log with no team records gets one list.
+- **Limits.** Six names at most, then ` +N`. By team, the six are taken one
+  from each team in turn. The name without `.wbv` is 120 bytes at most. A cut
+  is never inside a UTF-8 character, and a cut removes a separator, a ` vs`
+  or a count left at the end.
+- **Characters.** `\ / : * ? " < > |` and control characters become `.`, as
+  before. Dots and spaces at the end are removed. An empty name is
+  `log.wbv`.
+- Bots are named as other players. There is no bot mark in the file name.
+
+Tests: `lv_save_name_parts`, `lv_save_name_limits`, `lv_save_name_roster`,
+`lv_save_name_scan`.
+
+### The map name of a log that opens in a lobby (Oct 13)
+
+Report: the viewer shows the wrong map for some logs.
+
+Cause, on the writer side. The server opens the next log when the lobby
+opens (`handleLobbyEnter`, `src/server/server_dedicated_log.c:367`).
+`logStart` writes the map name into the header at that time
+(`src/bolo/log.c:1511`). The map then is the map of the round that just
+ended. When the host chooses another map, the header is not written again.
+The server knows this: it renames the file after the round
+(`serverDedicatedLogRenameForMap`), but the name inside the file stays.
+
+The viewer read the header only (`lv_logLoadCommon` in `screen.c`).
+
+The writer is not changed on this branch. The log does hold the right name
+in two later records, and the viewer now uses them:
+
+- `log_MessageServer` with the text `Map changed to <name>`
+  (`handleLobbyMapChange`, `server_dedicated_log.c:429`);
+- `log_MapSkipApplied`, which carries the name of the map a skip vote went
+  to (`src/server/sim/server_sim_vote.c:89`).
+
+The event scan keeps the last such name between `log_LobbyEnter` and
+`log_LobbyExit`. A name after `log_LobbyExit` is ignored: it can be the next
+round's map. After the scan, that name replaces the header's name
+(`lv_screenEventScanRun`), and the Game Information panel gets it. A log
+with no lobby is not changed.
+
+Limits:
+
+- The text is the server's fixed English text. If the server changes that
+  text, the viewer falls back to the header name.
+- A live feed has no scan, so it keeps the header name.
+- The text dump (`lv_dump.c`) still prints the header name.
+- A smaller fix on the writer side is possible and is better: write a record
+  with the map name at the round start (for example in `handleGameStart`,
+  next to the `log_GameSettings` record). That needs a new record or a new
+  field, so it belongs on its own branch.
+
+Test: `lv_save_name_scan` (a hand-built log with two lobby map changes and
+one after the round start).
+
+### Tank panel: a dead builder is a parachute and a countdown (Oct 13)
+
+The builder's line said "dead", with the time added only when there was
+room. No line says "dead" now.
+
+- **Pictures state:** the parachute in the picture column (as before), then
+  `:` and the time: `<parachute>: 0:07`.
+- **Words state:** `Builder:`, the parachute at the height of the line, and
+  the time: `Builder: <parachute> 0:07`. `Builder:` is the word of the
+  "Builder: in tank" line. A language with no colon in that line gets the
+  parachute and the time only.
+- **Gauges-only state:** the panel shows no builder line, as before.
+- **Time not known:** the parachute alone. In the pictures state the colon
+  is not drawn either.
+- An estimate has `~` in front, as on the map.
+
+One source. The map marker (`lvDrawBuilderStatusOverBlit` in `draw.c`) and the
+panel (`lv_screenTankStatusSnapshot` in `screen.c`) both take the time from
+`lv_screenBuilderReturn`. That was already so; no second copy existed. Both
+now make the text with `lvBuilderDeadText` (`lv_builder_status.h`), which
+gives the countdown or nothing. The time follows log time, so it is right
+when paused, at each speed and after a seek.
+
+Width. The line is measured with `~0:00` (`LV_BUILDER_COUNTDOWN_WIDEST`), so
+the choice between words and pictures does not move as the time runs. The
+words line is a little wider than "Builder: in tank" was at most fonts, so
+the panel can go to pictures a few pixels sooner than before. A time of ten
+minutes or more would be one digit wider than measured; a builder is never
+that long on its way.
+
+The strings `STR_LV_TANK_BUILDER_DEAD` and `STR_LV_TANK_BUILDER_BACK` are not
+used now. Their ids stay in the four lang files.
+
+Test: `lv_builder_dead_text`.
+
+### A bot has the game's chip in front of its name (Oct 13)
+
+The panels did not mark a bot. They now draw the chip the game draws for a
+computer player in its players panel and on its tank labels: the two
+pictures `data/ui/bot-cpu-red.svg` and `data/ui/bot-cpu-green.svg`, in their
+own colours, as high as a line of text. No new picture was made.
+
+Where a player's name is shown, and what changed:
+
+| Place | Before | Now |
+| --- | --- | --- |
+| Tank panel, the name line | no mark | chip before the name |
+| HUD panel, the name line of the one-player view | no mark | chip after the eye, before the name |
+| HUD panel, tooltip of a tank slot | no mark | chip at the start of the line |
+| Overview panel, a team's row and its tooltip | no mark | chip before each bot's name |
+| Game Information, the scores table | no mark | chip before the name |
+| HUD panel, tooltip of a pillbox or a base (the owner) | no mark | not changed |
+| Item Information, the owner line | no mark | not changed |
+| Events panel | names are inside the text of a line; no player column | not changed |
+| Chat and newswire lines on the map | names are inside the text | not changed |
+| Tank labels on the map | the text `[AI] ` before the name | not changed |
+| Statistics text (`lv_stats.c`) | the text ` (bot)` | not changed |
+| Save Log File name | no mark | no mark, on purpose |
+
+Calls made:
+
+- **Which chip.** The game draws the green chip for a bot on the player's
+  side and the red chip for any other bot. The viewer has a player only
+  while the view of one player is on. Then that player (when it is a bot)
+  and its allies have the green chip, and each other bot has the red one.
+  With no one-player view, each bot has the red chip. That is the chip the
+  game draws when it does not know the sides. The rule is `lvBotChipFor` in
+  `src/logviewer/lv_bot_chip.h`; `lv_screenBotChip` in `screen.c` gives the
+  answer for a slot.
+- **No room for a person.** A person has no chip and no gap. The one
+  exception is the scores table: when one row has a chip, each player's row
+  keeps the room, so the names are in one column.
+- **Picture not there.** When the two files cannot be read, the width of the
+  chip is 0 and each place draws what it drew before. There is no gap and
+  no other mark.
+- **Loading.** The viewer reads the two files itself (`bot_chip_texture` in
+  `imgui_lv_icons.cpp`), with the game's own SVG loader
+  (`imguiLoadSvgIcon`), at the game's size of 64 pixels. The game's copy of
+  the textures is in `sdl3imgui.cpp`, which the standalone viewer does not
+  link.
+- **Tank panel sums.** The chip is part of what comes before the name
+  (`lead` of `lvNameHeaderLayout`), so the name is cut sooner and the X
+  button keeps its place. The room under the name line did not change.
+- **Overview rows.** The check "do all the names go in the row" counts the
+  chips. A row with a bot can go to "A +2" a little sooner than before.
+- The chip has no tooltip of its own. The game's chip says "AI" on hover.
+- The tank labels on the map keep `[AI] `. The label drawer the viewer
+  shares with the game can draw the chip, but the viewer answers its
+  questions with "not a bot" (`bolo_shim.c`). To change that is a change to
+  the map and not to a list, so it was left.
+
+Tests: `lv_overview_bots` (the rule, and where each name of a team's row
+starts).
+
+### A double click on an event puts its place in the middle of the map (Oct 13)
+
+One click on a line of the Events panel, or on a marker over the seek bar,
+goes to the event's time and tries to show its place. It does not always
+end with the place in the middle of the map that shows:
+
+- **"Tank Centred" is on.** The view is not moved at all. The view follows
+  the tank, and an arrow at the edge of the view points to the place.
+- **The place is near the edge of the world.** The view stops at the map's
+  edge, so the place is off the middle. A view as big as the world (a large
+  window, zoomed out) does not move.
+- **A sidebar has "Make unused sidebar portions transparent" on.** The
+  middle is the middle of the part no sidebar is on, though the map also
+  shows under the clear part of that sidebar. That was a decision of the
+  option: it does not move the map.
+- **The event has no place.** Only the time changes.
+- **A highlight line.** The time is 5 seconds before the moment; the place
+  is put in the middle.
+- **A panel that floats over the map** is not counted.
+- **The browser build and the reel in the game** put the square in the
+  middle in whole squares, not to the pixel, and have no ring.
+
+The zoom is never changed by a click.
+
+A double click now does more. The first click does what one click does, at
+once: there is no wait to see if a second click comes. The second click
+goes to the same time, shows the ring, and puts the event's square in the
+exact middle of the map that shows. Only the edge of the world can hold it
+off the middle.
+
+Calls made:
+
+- **What a double click turns off.** "Tank Centred" is the one thing that
+  holds the overview's view. A double click turns it off, as the menu item
+  does, and it stays off: the view does not go back to the tank. The tick
+  in the menu and the saved preference change with it. The view of one
+  player (the eye in the HUD panel) does not move the map, so it stays on.
+  One click still leaves "Tank Centred" on and shows the arrow.
+- **The game view** (one player's own screen) has no Events panel and no
+  seek bar, so a double click cannot be made there. If it could, the camera
+  would stay on the followed tank.
+- **The map that shows.** It is the window less the menu bar and the solid
+  sidebars. A sidebar whose unused part is clear counts as map. When the
+  middle of that is under a panel of a clear sidebar, the middle of the
+  part no sidebar is on is used. So with a clear sidebar a double click and
+  one click put the place at two different points of the window. One click
+  was left as it was.
+- **A marker that stands for more than one event** goes to the first of
+  them, as one click does.
+- **An event with no place** only seeks, and "Tank Centred" is left as it
+  is.
+- **The second click is for the line the first one chose.** The first
+  click's jump can move the rows of the list (the "now" line, auto scroll).
+  The row under the mouse at the second click is not asked.
+- Ctrl and a double click is two Ctrl clicks, as before.
+- No text in the viewer tells the user what a click on an event does, so
+  no text was changed.
+
+The sum is `lvViewCentreScrollPx` in `src/logviewer/lv_event_flash.h`
+(`lvViewCentreScroll` for the middle of a square). It takes the visible part
+of the view as a start and a length, in points from the view's own start,
+and the zoom. `lv_screenCentrePxIn` in `screen.c` moves the view with it.
+`lvHostVisibleMap` in `logviewer.c` gives the visible part, and
+`lvDockClearOpenMargins` in `lv_dock_clear.h` what the solid sidebars take.
+`lv_windowCentreOnEvent` is the double click.
+
+Tests: `lv_view_centre_scroll` (each square of the map at seven zooms and
+five visible parts: the place is in the middle to a map pixel, or held by
+the map's edge on the right side of the middle), `lv_dock_clear_map` (what
+the solid sidebars take).
+
+### The first view of a log is on the land (Oct 13)
+
+Before: a load put the view's top left corner at square 127,127
+(`lv_screenSetup` in `screen.c`). That square is the middle of the world,
+and the server moves a map so its middle is at square 126,126. So the first
+view showed only the lower right quarter of the land, and sea. The zoom was
+1x at the start of a run (`g_zoomStepIndex` in `draw.c`); a second log in
+the same run kept the zoom the user had. The zoom is not saved.
+
+Now: once for each load, the log viewer puts the view on the land.
+
+- **The box.** Every square that is not deep sea, each pillbox that no tank
+  carries, each base and each start. `lv_screenLandBox` in `screen.c` makes
+  it from the map the log holds when the first view is placed.
+- **The place.** The middle of the box goes to the middle of the map that
+  shows: the window less the menu bar and the solid sidebars. It is the
+  sum a double click on an event uses (`lvViewCentreScrollPx`).
+- **The zoom.** It is kept when the whole box goes in. If not, the viewer
+  zooms out to the largest of its steps at which the box and one square of
+  room on each side go in. If there is none, it goes to the smallest step.
+  It never zooms in, and no new step was made.
+- **A map that is all sea with nothing on it** has no box. The view stays
+  where the load put it.
+
+Calls made:
+
+- **Only the log viewer's own window does this.** The game's camera, the
+  reel in the game, the live spectator and the browser build are as they
+  were.
+- **Only the first view.** The view is placed on the second frame after
+  the load, so the sidebars are in place. Anything that moves the view
+  before then ends it: an arrow key, a drag, a zoom, a click on an event, a
+  jump to an item. A seek, a new window size and a sidebar change never
+  place the view again.
+- **A log that opens in the lobby** has no map until the round starts. The
+  view is placed when the map first shows, if the user has not moved the
+  view before then.
+- **The box is not made again** when the map changes later in the same log
+  (a second round on another map).
+- **"Tank Centred" on:** the zoom is left alone, and the view goes back to
+  the tank on the next tick. The game view (one player's own screen) is
+  never placed.
+
+The sums are in `src/logviewer/lv_first_view.h` (`lvLandBoxAddTerrain`,
+`lvLandBoxAdd`, `lvLandBoxMidPx`, `lvFirstViewZoomStep`). `lvHostFirstView`
+in `logviewer.c` places the view.
+
+Tests: `lv_first_view_box` (all sea, an island in a corner, pillboxes
+outside the land, the edges of the map), `lv_first_view_zoom` (kept when
+the box goes in, the step chosen when not, a box bigger than the view),
+`lv_first_view_place` (the box's middle is the middle of what shows).
+
+### Rewind and Fast Forward are a short animation (Oct 13)
+
+How a seek worked, and still works:
+
+- The decoder only goes forward, one tick of 20 ms of log time at a call
+  (`lv_screenLogTick`). A forward seek plays the ticks between
+  (`lv_screenSeekToAbsoluteMs` in `screen.c`).
+- A backward seek restores the last snapshot at or before the time and
+  plays on from it. The viewer keeps the place of each snapshot playback
+  has reached (`snapshot.c`).
+- The server writes a snapshot every `FULL_SYNC_INTERVAL` ticks
+  (`src/server/sim/server_sim_tick.c`). In a recording made for this work
+  (four bots, DH-Oil Rig, 457 seconds of log) there were 181: one each
+  2.54 seconds.
+- Rewind goes to the snapshot before the playhead (`lv_screenRewind`), and
+  Fast Forward plays on to the next one or to the end
+  (`lv_screenFastForward`). So a press is a jump of about 2.5 seconds.
+
+Measured on that recording with the unit build's decoder (no drawing):
+
+| Move | Time |
+|---|---|
+| One tick | 0.0005 ms |
+| The whole log played forward (22870 ticks) | 10.9 ms |
+| Rewind to a snapshot | 0.01 ms |
+| Fast Forward to the next snapshot | 0.03 to 0.05 ms |
+| A seek back to any time (a snapshot and under 127 ticks) | 0.04 to 0.08 ms |
+
+So a moment between the playhead and the target costs under a tenth of a
+millisecond in either direction, and the animation shows real moments of
+the game both ways. Nothing is slid or made up.
+
+What a press does now:
+
+- For `LV_JUMP_ANIM_MS` (250 ms) the map shows up to `LV_JUMP_ANIM_STEPS`
+  (12) moments between the time playback is at and the target, the same
+  length of log time apart, in order: forward for Fast Forward, back for
+  Rewind. They come fast at first and slow near the target. Then the jump
+  itself is made.
+- A step is a seek to its moment, made on a frame of the window. The last
+  move is `lv_screenFastForward`, or `lv_screenRewindToMs` with the target
+  that was asked for before the first step. So playback ends on the tick,
+  and in the state, a press with no animation gives.
+- The seek bar, the time and the event markers show the moment playback is
+  at, so they move with it.
+- The button, its key and its menu item are one call, so all three are
+  animated.
+
+Calls made:
+
+- **Play and Pause are not touched.** While the animation runs the playback
+  timer plays nothing (`lv_windowSetTickHold` in `lv_embed.c`). Play or
+  Pause pressed in that time works, and takes effect when it ends.
+- **A second press** ends the first animation on its target at once and
+  starts the next from there. Five quick presses are five jumps.
+- **Any other seek wins.** Each step is the animation's own seek, and it
+  keeps the seek count of its last one. When the count has moved on by the
+  next frame (the seek bar, a click on an event, a step key, a new log) the
+  animation is dropped where it is. Stop ends it.
+- **Events, messages, sounds, pings.** A step is a seek, so each is as after
+  any seek: the lists hold what is before the moment, once; no sound is
+  played; a ping shows only while playback is inside its time.
+- **A log with its snapshots far apart.** A step back is then a long
+  decode. A step that takes more than `LV_JUMP_ANIM_STEP_MAX_MS` (8 ms)
+  ends the animation: the rest of the jump is made at once. No log of that
+  kind was at hand to try.
+- **A jump with no tick between its ends** (under 40 ms) is made at once. A
+  jump of fewer than 12 ticks has one step for each tick.
+- **A live feed** has no animation: the two buttons do what they did.
+- **The browser build** jumps as before, and its Options menu does not have
+  the item.
+- **Options > Animate Rewind and Fast Forward**, on at first, saved as
+  `Animate Jumps`. Off, a press jumps as before. The macOS menu bar does
+  not have the item.
+
+The schedule is in `src/logviewer/lv_jump_anim.h` (`lvJumpAnimSteps`,
+`lvJumpAnimStepMs`, `lvJumpAnimStepAt`). `lvJumpAnimStart`,
+`lvJumpAnimFrame` and `lvJumpAnimFinish` in `logviewer.c` run it.
+
+Tests: `lv_jump_anim_steps` (the moments of jumps of 40 ms to 30 minutes,
+forward and back: whole ticks, in order, never the target's tick before the
+last, held inside the log), `lv_jump_anim_time` (which step is due when),
+`lv_jump_anim_lands` (on a log with two snapshots, each animated jump done
+step by step ends on the tick the plain jump ends on).
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the

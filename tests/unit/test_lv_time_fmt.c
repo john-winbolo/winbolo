@@ -300,6 +300,95 @@ int run_lv_event_centre_scroll(void) {
     return 0;
 }
 
+/* Where the view goes to put a place in the middle of a part of the view
+   (a double click on an event, and the first view of a log). The window is
+   1280 by 800 points with a 20 point menu bar and a square is 16 map
+   pixels. */
+int run_lv_view_centre_scroll(void) {
+    static const float zooms[] = { 0.5f, 0.6f, 0.75f, 1.0f, 2.0f, 3.0f, 4.0f };
+    /* The visible part, from the view's start: where it starts and how long
+       it is. */
+    static const struct { float start, len; } parts[] = {
+        { 0.0f, 1280.0f },  /* all of the view */
+        { 0.0f, 980.0f },   /* a solid sidebar after the view */
+        { 300.0f, 980.0f }, /* the view starts under a solid sidebar */
+        { 120.0f, 560.0f }, /* one at each end */
+        { 0.0f, 37.0f }     /* next to nothing shows */
+    };
+    size_t p, z;
+    int cell;
+
+    for (p = 0; p < sizeof(parts) / sizeof(parts[0]); p++) {
+        for (z = 0; z < sizeof(zooms) / sizeof(zooms[0]); z++) {
+            float zoom = zooms[z];
+            /* The view shows the part, what is before it, and no more. */
+            int shown = (int)((parts[p].start + parts[p].len) / (16.0f * zoom)) + 1;
+            int maxPx = (255 - shown) * 16;
+            if (maxPx < 0) maxPx = 0;
+            for (cell = 0; cell <= 255; cell++) {
+                int s = lvViewCentreScroll(cell, parts[p].start, parts[p].len, zoom, 16, maxPx);
+                /* Where the middle of the square is on the screen, in points
+                   from the view's start. */
+                float at = (((float)cell + 0.5f) * 16.0f - (float)s) * zoom;
+                float mid = parts[p].start + parts[p].len * 0.5f;
+                UT_ASSERT_MSG(s >= 0 && s <= maxPx, "part %d zoom %.2f square %d: scroll %d is off the map",
+                              (int)p, (double)zoom, cell, s);
+                if (s > 0 && s < maxPx) {
+                    /* Not held by an edge of the map: the middle of the
+                       part, to within a map pixel. */
+                    UT_ASSERT_MSG(at > mid - zoom && at < mid + zoom,
+                                  "part %d zoom %.2f square %d: at %.1f, the middle is %.1f",
+                                  (int)p, (double)zoom, cell, (double)at, (double)mid);
+                } else if (s == 0) {
+                    /* Held at the map's start: the place is before the middle. */
+                    UT_ASSERT_MSG(at < mid + zoom, "part %d zoom %.2f square %d: held at 0 but past the middle",
+                                  (int)p, (double)zoom, cell);
+                } else {
+                    UT_ASSERT_MSG(at > mid - zoom, "part %d zoom %.2f square %d: held at the end but before the middle",
+                                  (int)p, (double)zoom, cell);
+                }
+            }
+            /* With nothing before the part it is the sum a single click
+               does (lvFlashCentreScroll), to a map pixel. */
+            if (parts[p].start == 0.0f) {
+                for (cell = 0; cell <= 255; cell += 5) {
+                    int a = lvViewCentreScroll(cell, 0.0f, parts[p].len, zoom, 16, maxPx);
+                    int b = lvFlashCentreScroll(cell, parts[p].len / zoom, 16, maxPx);
+                    UT_ASSERT_MSG(a - b >= -1 && a - b <= 1, "part %d zoom %.2f square %d: %d and %d",
+                                  (int)p, (double)zoom, cell, a, b);
+                }
+            }
+        }
+    }
+
+    /* By hand. Square 128 has its middle at map pixel 2056. */
+    /* All 1280 points show, 1x: 2056 - 640. */
+    UT_ASSERT(lvViewCentreScroll(128, 0.0f, 1280.0f, 1.0f, 16, 4000) == 1416);
+    /* A solid sidebar takes the last 300 points: 2056 - 490. */
+    UT_ASSERT(lvViewCentreScroll(128, 0.0f, 980.0f, 1.0f, 16, 4000) == 1566);
+    /* The view starts under a solid top sidebar 120 points deep and 660
+       points show under it. Square 120 has its middle at 1928; the middle of
+       what shows is 120 + 330 points down the view: 1928 - 450. */
+    UT_ASSERT(lvViewCentreScroll(120, 120.0f, 660.0f, 1.0f, 16, 4000) == 1478);
+    /* At 2x a point is half a map pixel: 1928 - 225. At 0.5x it is two:
+       1928 - 900. */
+    UT_ASSERT(lvViewCentreScroll(120, 120.0f, 660.0f, 2.0f, 16, 4000) == 1703);
+    UT_ASSERT(lvViewCentreScroll(120, 120.0f, 660.0f, 0.5f, 16, 4000) == 1028);
+    /* The edges of the map hold it. */
+    UT_ASSERT(lvViewCentreScroll(0, 0.0f, 1280.0f, 1.0f, 16, 4000) == 0);
+    UT_ASSERT(lvViewCentreScroll(255, 0.0f, 1280.0f, 1.0f, 16, 2800) == 2800);
+    UT_ASSERT(lvViewCentreScroll(128, 0.0f, 1280.0f, 1.0f, 16, -5) == 0);
+    /* A view as big as the map cannot move: the furthest it may go is 0. */
+    UT_ASSERT(lvViewCentreScroll(200, 0.0f, 1280.0f, 0.5f, 16, 0) == 0);
+    /* A zoom that is not one counts as 1x. */
+    UT_ASSERT(lvViewCentreScroll(128, 0.0f, 1280.0f, 0.0f, 16, 4000) == 1416);
+    /* A map pixel that is not the middle of a square (the middle of an area
+       an odd number of squares wide): 1000 - 200 points at 0.5x. */
+    UT_ASSERT(lvViewCentreScrollPx(1000.0f, 0.0f, 400.0f, 0.5f, 4000) == 600);
+    UT_ASSERT(lvViewCentreScrollPx(1000.0f, 100.0f, 400.0f, 1.0f, 4000) == 700);
+    return 0;
+}
+
 /* The arrow for a place the view does not show, and whose the view is after
    a jump. The view is the box 100,50 to 500,350. */
 int run_lv_event_flash_arrow(void) {

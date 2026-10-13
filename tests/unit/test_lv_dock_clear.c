@@ -217,6 +217,9 @@ int run_lv_dock_clear_map(void) {
     memset(used, 0, sizeof(used));
 
     /* Option off everywhere: the map is bounded as it always was. */
+    map = lvDockClearOpenMargins(&m, clear);
+    UT_ASSERT_MSG(map.left == 280 && map.top == 0 && map.right == 300 && map.bottom == 180,
+                  "open: with no clear sidebar, every margin");
     map = lvDockClearMapMargins(&m, clear);
     UT_ASSERT_MSG(map.left == 280 && map.right == 300 && map.bottom == 180, "solid sidebars bound the map");
     UT_ASSERT_MSG(lvDockClearPointOnMap(&m, clear, used, 1200, 720, 20, 600.0f, 300.0f) == 1, "the middle is map");
@@ -239,6 +242,19 @@ int run_lv_dock_clear_map(void) {
         onlyTop[LV_DOCK_TOP] = 1;
         map = lvDockClearMapMargins(&mm, onlyTop);
         UT_ASSERT_MSG(map.left == 280 && map.top == 0 && map.right == 300 && map.bottom == 180, "a clear top sidebar frees only the top");
+    }
+    {
+        /* What the solid sidebars take: the clear left one takes nothing,
+           and the solid bottom one keeps its margin though the map is drawn
+           under it. */
+        LvDockMargins open = lvDockClearOpenMargins(&m, clear);
+        UT_ASSERT_MSG(open.left == 0 && open.top == 0 && open.right == 300 && open.bottom == 180,
+                      "open: only the clear sidebar gives its strip up");
+        /* The middle of the window less these is on the map. */
+        UT_ASSERT_MSG(lvDockClearPointOnMap(&m, clear, used, 1200, 720, 20,
+                                            (float)open.left + (float)(1200 - open.left - open.right) * 0.5f,
+                                            (float)(20 + open.top) + (float)(720 - 20 - open.top - open.bottom) * 0.5f) == 1,
+                      "open: its middle shows");
     }
     UT_ASSERT_MSG(lvDockClearPointOnMap(&m, clear, used, 1200, 720, 20, 100.0f, 600.0f) == 1, "the clear part is map");
     UT_ASSERT_MSG(lvDockClearPointOnMap(&m, clear, used, 1200, 720, 20, 100.0f, 100.0f) == 0, "a panel is not");

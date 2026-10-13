@@ -67,6 +67,9 @@
 #include "lv_dock_fit.h"
 #include "lv_dock_clear.h"
 #include "lv_fullscreen_key.h"
+#include "lv_save_name.h"   /* the file name Save Log File offers */
+#include "lv_first_view.h"  /* where the map is when a log is first shown */
+#include "lv_jump_anim.h"   /* the animation of Rewind and Fast Forward */
 #include "lv_fullscreen_game.h"
 #include "imgui/imgui_game_view.h"
 #include "imgui/imgui_logviewer_menu.h"
@@ -265,7 +268,42 @@ void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
  * show the place, the ring is an arrow at the view's edge.
  * Any other line moves only the playhead and leaves the view where the user
  * put it. */
-void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team) {
+/* The part of the map's view no solid sidebar hides, each way: where it
+ * starts, in points from the view's own start on the screen, and how long
+ * it is. It is the window less the menu bar and the solid sidebars; a
+ * sidebar whose unused part is clear counts as map. When the middle of that
+ * is under a panel of a clear sidebar, the answer is the part no sidebar is
+ * on at all, clear or solid. */
+static void lvHostVisibleMap(float *startX, float *startY, float *lenX, float *lenY) {
+    LvDockMargins open = { 0, 0, 0, 0 };
+    LvDockMargins view = { 0, 0, 0, 0 };
+    int winW = 0, winH = 0;
+    int menuH = (int)lv_imgui_get_menu_bar_height();
+
+    SDL_GetWindowSize(g_lv->window, &winW, &winH);
+    /* Where the view starts on the screen. */
+    lv_imgui_dock_map_margins(&view.left, &view.top, &view.right, &view.bottom);
+    lv_imgui_dock_open_margins(&open.left, &open.top, &open.right, &open.bottom);
+    if (!lv_imgui_dock_point_on_map(
+            (float)open.left + (float)(winW - open.left - open.right) * 0.5f,
+            (float)(menuH + open.top) + (float)(winH - menuH - open.top - open.bottom) * 0.5f)) {
+        lv_imgui_dock_margins(&open.left, &open.top, &open.right, &open.bottom);
+    }
+    *startX = (float)(open.left - view.left);
+    *startY = (float)(open.top - view.top);
+    *lenX = (float)(winW - open.left - open.right);
+    *lenY = (float)(winH - menuH - open.top - open.bottom);
+    if (*startX < 0.0f) *startX = 0.0f;
+    if (*startY < 0.0f) *startY = 0.0f;
+    if (*lenX < 1.0f) *lenX = 1.0f;
+    if (*lenY < 1.0f) *lenY = 1.0f;
+}
+
+/* The jump of lv_windowSeekToEvent and of lv_windowCentreOnEvent. centre is
+ * the second one's: the place goes to the middle of the map that shows, and
+ * "Tank Centred" is not asked about (the caller has turned it off). */
+static void lvWindowJumpToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team,
+                                int centre) {
     unsigned char wasPlaying = g_lv->playIsPlaying;
     if (wasPlaying) {
         lv_windowPause();
@@ -273,7 +311,13 @@ void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team
     lv_clientMutexWaitFor();
     lv_drawDirtyScreen();
     lv_screenSeekToTimeMs(ms);
-    if (hasCell) {
+    if (hasCell && centre) {
+        float startX, startY, lenX, lenY;
+        lvHostVisibleMap(&startX, &startY, &lenX, &lenY);
+        lv_screenCentreCellIn(mapX, mapY, startX, startY, lenX, lenY, lv_drawGetZoomLevel());
+        /* After the seek: the ring is tied to the seek count as it is now. */
+        lv_drawEventFlashStart(mapX, mapY, team);
+    } else if (hasCell) {
         /* The part of the window the map shows in: the window less the menu
          * bar and the sidebars. The place goes to the middle of that, not of
          * the window. */
@@ -307,7 +351,34 @@ void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team
     g_lv->wantScreenUpdate = TRUE;
 }
 
-void lv_windowFastForward(void) {
+void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team) {
+    lvWindowJumpToEvent(ms, hasCell, mapX, mapY, team, 0);
+}
+
+/* A double click on a line of the Events panel or on a marker over the seek
+ * bar: the same jump, and the place goes to the middle of the map that shows
+ * (lvHostVisibleMap) whatever held the view. "Tank Centred" is the one thing
+ * that holds the overview, so it is turned off, as from the menu, and it
+ * stays off: nothing then takes the view back to the tank. The view of one
+ * player (the eye of the HUD panel) does not move the map and is left on.
+ *
+ * A line with no place only seeks, and in the game view the camera is the
+ * followed tank's: both are lv_windowSeekToEvent, with nothing turned off. */
+void lv_windowCentreOnEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team) {
+    if (!hasCell || lvFlashCameraFollowsTank(g_lv->gameView ? 1 : 0)) {
+        lv_windowSeekToEvent(ms, hasCell, mapX, mapY, team);
+        return;
+    }
+    if (lv_imgui_get_tank_centred()) {
+        lv_imgui_set_tank_centred(0);
+    }
+    /* A host that turned the flag on by another road. */
+    lv_screenTankCentred(0);
+    lvWindowJumpToEvent(ms, hasCell, mapX, mapY, team, 1);
+}
+
+/* Fast Forward with no animation: on to the next snapshot, or the end. */
+static void lvWindowFastForwardNow(void) {
     lv_clientMutexWaitFor();
     lv_drawDirtyScreen();
     lv_screenFastForward();
@@ -320,13 +391,19 @@ void lv_windowFastForward(void) {
     lv_clientMutexRelease();
 }
 
-void lv_windowRewind(void) {
+/* Rewind with no animation: back to the snapshot lv_screenRewind picks, or,
+ * at the end of an animation, to the one picked when it started (toKnown). */
+static void lvWindowRewindNow(int toKnown, uint32_t toMs) {
     char line[64];
     lv_clientMutexWaitFor();
     lv_drawDirtyScreen();
-    lv_screenRewind();
+    if (toKnown) {
+        lv_screenRewindToMs(toMs);
+    } else {
+        lv_screenRewind();
+    }
     lv_drawDirtyScreen();
-    /* Defer to the flag — see lv_windowFastForward. */
+    /* Defer to the flag — see lvWindowFastForwardNow. */
     g_lv->wantScreenUpdate = TRUE;
     lv_screenGetTime(line);
     lv_clientMutexRelease();
@@ -335,6 +412,175 @@ void lv_windowRewind(void) {
     } else {
         g_lv->wantScreenUpdate = TRUE;
     }
+}
+
+/* --------------------------------------------------------------------------
+ * The animation of Rewind and Fast Forward (lv_jump_anim.h)
+ *
+ * A press does not jump. For LV_JUMP_ANIM_MS the host seeks, one step on
+ * each frame that has a new step due, through moments between the time
+ * playback is at and the target, and then makes the jump itself: the last
+ * move is lv_screenFastForward or lv_screenRewindToMs, so playback ends on
+ * the tick, and in the state, a press with no animation gives. Each step is
+ * a seek, so the lists of events and messages, the sounds and the pings are
+ * as after any seek, and the seek bar, the time and the event markers go
+ * with it.
+ *
+ * While it runs the playback timer plays nothing (lv_windowSetTickHold), so
+ * Play and Pause are not touched and are as they were when it ends.
+ *
+ * The steps are the animation's own seeks: it keeps the seek count
+ * (lv_screenSeekSerial) of its last one. A count that has moved on by the
+ * next frame is some other seek (the seek bar, a click on an event, a step
+ * key, a new log): that seek wins and the animation is dropped where it is.
+ * A second press ends the first animation on its target and starts from
+ * there, so five quick presses are five jumps.
+ * -------------------------------------------------------------------------- */
+static struct {
+    bool     active;
+    bool     back;
+    uint32_t fromMs, toMs;
+    int      steps;   /* lvJumpAnimSteps */
+    int      shown;   /* the last step that was sought to */
+    Uint64   startNs;
+    uint32_t serial;  /* the seek count after the animation's last seek */
+} s_lvJump;
+
+/* TRUE in a host whose loop calls lvHostRenderFrame, which is what moves an
+ * animation on. Without it a press jumps. */
+static bool s_lvJumpHost = FALSE;
+
+/* Let go of an animation without a move: another seek has the playback. */
+static void lvJumpAnimDrop(void) {
+    if (!s_lvJump.active) {
+        return;
+    }
+    s_lvJump.active = FALSE;
+    lv_clientMutexWaitFor();
+    lv_windowSetTickHold(false);
+    lv_clientMutexRelease();
+}
+
+/* End an animation now, on its target. */
+static void lvJumpAnimFinish(void) {
+    bool stale;
+    if (!s_lvJump.active) {
+        return;
+    }
+    s_lvJump.active = FALSE;
+    lv_clientMutexWaitFor();
+    lv_windowSetTickHold(false);
+    stale = (g_lv->isLoaded == FALSE || lv_screenSeekSerial() != s_lvJump.serial);
+    lv_clientMutexRelease();
+    if (stale) {
+        return;
+    }
+    if (s_lvJump.back) {
+        lvWindowRewindNow(1, s_lvJump.toMs);
+    } else {
+        lvWindowFastForwardNow();
+    }
+}
+
+/* Start one for a press of Rewind (back) or Fast Forward. FALSE when the
+ * press is to jump: the option is off, a live feed, nowhere to go, or a
+ * jump with no tick between its ends. */
+static bool lvJumpAnimStart(bool back) {
+    uint32_t nowMs, toMs = 0;
+    bool known;
+    int steps;
+
+    if (!s_lvJumpHost || !lv_imgui_get_jump_anim() || g_lv->isLoaded == FALSE ||
+        lv_screenSpecIsLiveMode()) {
+        return FALSE;
+    }
+    lv_clientMutexWaitFor();
+    nowMs = lv_screenGetTimeRunning();
+    known = back ? (lv_screenRewindTargetMs(&toMs) == TRUE && toMs < nowMs)
+                 : (lv_screenFastForwardTargetMs(&toMs) == TRUE && toMs > nowMs);
+    steps = known ? lvJumpAnimSteps(nowMs, toMs, LV_JUMP_ANIM_STEPS) : 1;
+    if (steps < 2) {
+        lv_clientMutexRelease();
+        return FALSE;
+    }
+    s_lvJump.active = TRUE;
+    s_lvJump.back = back;
+    s_lvJump.fromMs = nowMs;
+    s_lvJump.toMs = toMs;
+    s_lvJump.steps = steps;
+    s_lvJump.shown = 0;
+    s_lvJump.startNs = SDL_GetTicksNS();
+    s_lvJump.serial = lv_screenSeekSerial();
+    lv_windowSetTickHold(true);
+    lv_clientMutexRelease();
+    return TRUE;
+}
+
+/* One frame of the animation: seek to the step that is due, if it is a new
+ * one. Called by lvHostRenderFrame before the frame is drawn. */
+static void lvJumpAnimFrame(void) {
+    uint32_t elapsedMs;
+    int k;
+    bool slow = FALSE;
+
+    if (!s_lvJump.active) {
+        return;
+    }
+    if (g_lv->isLoaded == FALSE) {
+        lvJumpAnimDrop();
+        return;
+    }
+    lv_clientMutexWaitFor();
+    if (lv_screenSeekSerial() != s_lvJump.serial) {
+        lv_clientMutexRelease();
+        lvJumpAnimDrop();
+        return;
+    }
+    elapsedMs = (uint32_t)((SDL_GetTicksNS() - s_lvJump.startNs) / 1000000u);
+    k = lvJumpAnimStepAt(elapsedMs, LV_JUMP_ANIM_MS, s_lvJump.steps);
+    if (k >= s_lvJump.steps) {
+        lv_clientMutexRelease();
+        lvJumpAnimFinish();
+        return;
+    }
+    if (k > s_lvJump.shown) {
+        uint32_t nowMs = lv_screenGetTimeRunning();
+        uint32_t stepMs = lvJumpAnimStepMs(s_lvJump.fromMs, s_lvJump.toMs, k, s_lvJump.steps,
+                                           0, UINT32_MAX);
+        s_lvJump.shown = k;
+        if (s_lvJump.back ? (stepMs < nowMs) : (stepMs > nowMs)) {
+            Uint64 t0 = SDL_GetTicksNS();
+            lv_drawDirtyScreen();
+            lv_screenSeekToTimeMs(stepMs);
+            lv_drawDirtyScreen();
+            s_lvJump.serial = lv_screenSeekSerial();
+            g_lv->wantScreenUpdate = TRUE;
+            slow = (SDL_GetTicksNS() - t0) > (Uint64)LV_JUMP_ANIM_STEP_MAX_MS * 1000000u;
+        }
+    }
+    lv_clientMutexRelease();
+    lv_windowNeedRedraw();
+    /* A log with its snapshots far apart: a step is a long decode. The rest
+     * of the jump is made now, as with no animation. */
+    if (slow) {
+        lvJumpAnimFinish();
+    }
+}
+
+void lv_windowFastForward(void) {
+    lvJumpAnimFinish();
+    if (lvJumpAnimStart(FALSE)) {
+        return;
+    }
+    lvWindowFastForwardNow();
+}
+
+void lv_windowRewind(void) {
+    lvJumpAnimFinish();
+    if (lvJumpAnimStart(TRUE)) {
+        return;
+    }
+    lvWindowRewindNow(0, 0);
 }
 
 void lv_windowResize(void) {
@@ -366,6 +612,8 @@ void lv_windowOpenFile(char *cmdLine) {
         return;
     }
 
+    /* The new log wins over an animation of Rewind or Fast Forward. */
+    lvJumpAnimDrop();
     lv_windowStop(FALSE);
     fileName[0] = '\0';
 
@@ -661,6 +909,70 @@ bool lv_windowCanSaveLog(void) {
     return (lv_blocksGetSource(NULL, NULL, NULL) != LV_LOG_SOURCE_NONE) ? TRUE : FALSE;
 }
 
+/* The name offered for the saved copy: the game's date, its map and its
+ * players (lv_save_name.h), not the log's own file name, which is often a
+ * key of letters and numbers. Everything is read here, so the caller holds
+ * the decoder's mutex. srcPath is the log's own file, or "" for a download.
+ *
+ * The date is the best one there is, in this order:
+ *   1. the stamp at the start of the file's own name, when the server named
+ *      the file: the time that round's log was opened;
+ *   2. the create time in the log's header. It is the time the server was
+ *      started, not the round: right for a game hosted and played at once,
+ *      early for a server that has been up for days;
+ *   3. for a file, the time it was last written.
+ * A download with none of them has no date in its name. */
+static void lvSaveLogDefaultName(const char *srcPath, char *out, size_t outSize) {
+    static LvRosterRow rows[LV_ROSTER_MAX]; /* main thread only */
+    const char        *names[LV_ROSTER_MAX];
+    unsigned char      teams[LV_ROSTER_MAX];
+    char               mapName[FILENAME_MAX];
+    const char        *base = srcPath;
+    const char        *p;
+    int                year = 0, month = 0, day = 0, hour = -1, minute = 0;
+    int                count, i;
+    int32_t            created;
+
+    for (p = srcPath; *p != '\0'; p++) {
+        if (*p == '/' || *p == '\\') base = p + 1;
+    }
+    created = lv_screenGetCreateTime();
+    if (lvSaveNameStamp(base, &year, &month, &day, &hour, &minute)) {
+        /* 1: the parts are set */
+    } else if (created > 0) {
+        time_t     t  = (time_t)created;
+        struct tm *tm = localtime(&t);
+        if (tm != NULL) {
+            year   = tm->tm_year + 1900;
+            month  = tm->tm_mon + 1;
+            day    = tm->tm_mday;
+            hour   = tm->tm_hour;
+            minute = tm->tm_min;
+        }
+    } else if (srcPath[0] != '\0') {
+        SDL_PathInfo info;
+        SDL_DateTime dt;
+        if (SDL_GetPathInfo(srcPath, &info) &&
+            SDL_TimeToDateTime(info.modify_time, &dt, true)) {
+            year   = dt.year;
+            month  = dt.month;
+            day    = dt.day;
+            hour   = dt.hour;
+            minute = dt.minute;
+        }
+    }
+
+    mapName[0] = '\0';
+    lv_screenGetMapName(mapName);
+    count = lv_screenGetRoster(rows, LV_ROSTER_MAX);
+    for (i = 0; i < count; i++) {
+        names[i] = rows[i].name;
+        teams[i] = rows[i].team;
+    }
+    lvSaveNameBuild(out, outSize, year, month, day, hour, minute, mapName,
+                    names, teams, count);
+}
+
 void lv_windowSaveLog(void) {
     char           srcPath[FILENAME_MAX];
     char           defaultName[FILENAME_MAX];
@@ -669,7 +981,6 @@ void lv_windowSaveLog(void) {
     const uint8_t *data = NULL;
     uint8_t       *copy = NULL;
     size_t         len  = 0;
-    size_t         i;
     char          *prefDir;
     FILE          *fp;
     int            source;
@@ -694,17 +1005,9 @@ void lv_windowSaveLog(void) {
     lv_clientMutexWaitFor();
     source = lv_blocksGetSource(&path, &data, &len);
     if (source == LV_LOG_SOURCE_FILE) {
-        /* The log's own name. */
-        const char *base = path;
-        const char *p;
         snprintf(srcPath, sizeof(srcPath), "%s", path);
-        for (p = path; *p != '\0'; p++) {
-            if (*p == '/' || *p == '\\') base = p + 1;
-        }
-        snprintf(defaultName, sizeof(defaultName), "%s", base);
     } else if (source == LV_LOG_SOURCE_MEMORY) {
-        /* A downloaded log has no name: the map's. Its bytes are copied now. */
-        lv_screenGetMapName(defaultName);
+        /* A downloaded log has no file. Its bytes are copied now. */
         copy = (uint8_t *)malloc(len);
         if (copy != NULL) {
             memcpy(copy, data, len);
@@ -714,6 +1017,9 @@ void lv_windowSaveLog(void) {
     } else {
         ok = FALSE;
     }
+    if (ok) {
+        lvSaveLogDefaultName(srcPath, defaultName, sizeof(defaultName));
+    }
     lv_clientMutexRelease();
     data = NULL;
     path = NULL;
@@ -721,19 +1027,6 @@ void lv_windowSaveLog(void) {
         free(copy);
         lv_platform_dialog_error(DIALOG_BOX_TITLE, failed);
         return;
-    }
-    if (source == LV_LOG_SOURCE_MEMORY) {
-        /* Nothing a file name cannot hold: a map name is free text. */
-        for (i = 0; defaultName[i] != '\0'; i++) {
-            if (strchr("\\/:*?\"<>|", defaultName[i]) != NULL ||
-                (unsigned char)defaultName[i] < 0x20) {
-                defaultName[i] = '.';
-            }
-        }
-        if (defaultName[0] == '\0') {
-            snprintf(defaultName, sizeof(defaultName), "log");
-        }
-        strncat(defaultName, ".wbv", sizeof(defaultName) - strlen(defaultName) - 1);
     }
 
     /* Opens on the folder the game keeps its logs in. The name offered and
@@ -1622,6 +1915,78 @@ static void lvHostDockSync(void) {
     g_lv->wantScreenUpdate = TRUE;
 }
 
+/* TRUE in the log viewer's own run (logViewerRun), which is the one host that
+ * places the first view of a log. The live spectator and the reel in the
+ * game keep the view the load gave them. */
+static bool s_lvFirstViewHost = FALSE;
+
+/* --------------------------------------------------------------------------
+ * lvHostFirstView -- Put the map where the first look at a log is worth it.
+ *
+ * A load opens the view with its corner at square 127,127, which is the
+ * middle of the world: the land of a map is round that square, so three
+ * quarters of it were off the view. Once for each load this puts the middle
+ * of the box round everything that is not deep sea (lv_screenLandBox) in the
+ * middle of the map that shows (lvHostVisibleMap), and zooms out when the
+ * box does not go in at the zoom the viewer has (lvFirstViewZoomStep).
+ *
+ * It waits for a frame, so the sidebars are in place, and for a map: a log
+ * that opens in the lobby has none until the round starts. Anything that
+ * moves the view before then ends the wait (lv_screenFirstViewCancel), so
+ * the view is never taken from the user. With "Tank Centred" on the zoom is
+ * left alone and the view goes back to the tank on the next tick.
+ * -------------------------------------------------------------------------- */
+static void lvHostFirstView(void) {
+    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    int has;
+    float startX, startY, lenX, lenY;
+
+    if (!s_lvFirstViewHost || g_lv->isLoaded == FALSE) {
+        return;
+    }
+    if (g_lv->gameView || lv_screenSpecIsLiveMode()) {
+        lv_screenFirstViewCancel();
+        return;
+    }
+    if (!lv_screenFirstViewDue()) {
+        return;
+    }
+    lv_clientMutexWaitFor();
+    has = lv_screenLandBox(&x0, &y0, &x1, &y1);
+    lv_clientMutexRelease();
+    if (!has) {
+        return;
+    }
+    lv_screenFirstViewCancel();
+    lvHostVisibleMap(&startX, &startY, &lenX, &lenY);
+    if (g_lv->centredTank == FALSE) {
+        float steps[32];
+        int count = lv_drawGetZoomStepCount();
+        int current = lv_drawGetZoomStepIndex();
+        int i, step;
+        if (count > (int)(sizeof(steps) / sizeof(steps[0]))) {
+            count = (int)(sizeof(steps) / sizeof(steps[0]));
+        }
+        for (i = 0; i < count; i++) {
+            steps[i] = lv_drawGetZoomStepValue(i);
+        }
+        step = lvFirstViewZoomStep(steps, count, current, x1 - x0 + 1, y1 - y0 + 1,
+                                   lenX, lenY, TILE_SIZE_X);
+        if (step != current) {
+            int winW = 0, winH = 0;
+            SDL_GetWindowSize(g_lv->window, &winW, &winH);
+            lv_drawSetZoomStep(step, winW / 2, winH / 2);
+        }
+    }
+    lv_clientMutexWaitFor();
+    lv_drawDirtyScreen();
+    lv_screenCentrePxIn(lvLandBoxMidPx(x0, x1, TILE_SIZE_X), lvLandBoxMidPx(y0, y1, TILE_SIZE_Y),
+                        startX, startY, lenX, lenY, lv_drawGetZoomLevel());
+    lv_clientMutexRelease();
+    lv_windowNeedRedraw();
+    g_lv->wantScreenUpdate = TRUE;
+}
+
 /* --------------------------------------------------------------------------
  * lvHostRenderFrame -- Shared per-frame scene + ImGui render dispatch.
  *
@@ -1644,6 +2009,8 @@ static void lvHostDockSync(void) {
  * live mode, so its behaviour is unchanged. */
 static void lvHostRenderFrame(const char *overlay) {
     lvHostDockSync();
+    lvHostFirstView();
+    lvJumpAnimFrame();
 
     /* Clear the frame */
     SDL_SetRenderDrawColor(g_lv->renderer, 0, 0, 0, 255);
@@ -1966,6 +2333,9 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     /* Only this host has the sidebars; the spectator shares the setup above
      * and leaves the answer at no. */
     lv_imgui_dock_set_standalone(1);
+    s_lvFirstViewHost = TRUE;
+    s_lvJump.active = FALSE;
+    s_lvJumpHost = TRUE;
     lvHostRestoreWindowPlace();
 
     /* Open file from command line / caller if provided */
@@ -2219,6 +2589,10 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
     if (lvHostSetup(window, renderer, /* fromMainMenu */ TRUE) == FALSE) {
         return false;
     }
+    s_lvFirstViewHost = FALSE;
+    /* A live feed has no animation of Rewind and Fast Forward. */
+    s_lvJump.active = FALSE;
+    s_lvJumpHost = FALSE;
 
     /* Stalled-feed watchdog. A spectator sends no input, so the transport's
      * normal liveness timeout never fires — the host times the wait itself.

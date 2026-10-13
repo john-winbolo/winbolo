@@ -1092,6 +1092,7 @@ static const LangEntry langTable[] = {
     {2849, "No events of the selected kinds"},
     {2850, "Show only the events of the ticked kinds"},
     {2851, "Map zoom. 100% is the game's own size. Change it with + and -, the mouse wheel, or Options > Zoom"},
+    {2852, "Animate Rewind and Fast Forward"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

@@ -186,18 +186,76 @@ static void overview_label_cell(ImU32 stripe, const char *label, bool dim) {
     }
 }
 
+/* The room the chip of the row's player number index takes in front of the
+ * name, with its gap: 0 for a person, and for a bot when the game's picture
+ * is not there. */
+static float overview_chip_room(const LvOverviewRow &row, int index) {
+    if (index < 0 || index >= LV_OVERVIEW_MAX_TEAMS) return 0.0f;
+    const float w = lv_bot_chip_width(row.chip[index]);
+    return (w > 0.0f) ? w + lv_bot_chip_gap() : 0.0f;
+}
+
+/* The names of all the row's players on one line, "A, B, C", with the chip
+ * in front of each bot. With dl NULL nothing is drawn. Returns the width. */
+static float overview_names_run(ImDrawList *dl, ImVec2 at, ImU32 col,
+                                const LvOverviewRow &row) {
+    /* No bot in the team: the list as one piece of text, as it always was. */
+    if (row.bots == 0) {
+        if (dl != nullptr) dl->AddText(at, col, row.names);
+        return ImGui::CalcTextSize(row.names).x;
+    }
+    float x = at.x;
+    for (int i = 0; i < row.players && i < LV_OVERVIEW_MAX_TEAMS; i++) {
+        size_t len = 0;
+        const char *name = lvOverviewName(&row, i, &len);
+        if (name == nullptr) break;
+        if (i > 0) {
+            if (dl != nullptr) dl->AddText(ImVec2(x, at.y), col, LV_OVERVIEW_NAME_SEP);
+            x += ImGui::CalcTextSize(LV_OVERVIEW_NAME_SEP).x;
+        }
+        const float chip = overview_chip_room(row, i);
+        if (chip > 0.0f) {
+            if (dl != nullptr) lv_bot_chip_draw(dl, row.chip[i], ImVec2(x, at.y));
+            x += chip;
+        }
+        if (dl != nullptr) dl->AddText(ImVec2(x, at.y), col, name, name + len);
+        x += ImGui::CalcTextSize(name, name + len).x;
+    }
+    return x - at.x;
+}
+
 /* The label of a team's row: the names of its players when they fit in the
- * room there is, else the first of them and how many more there are. */
-static void overview_team_label(const LvOverviewRow &row, float room,
-                                char *out, size_t outSize) {
-    if (row.players <= 1 || ImGui::CalcTextSize(row.names).x <= room) {
-        snprintf(out, outSize, "%s", row.names);
-        return;
+ * room there is, else the first of them and how many more there are. The
+ * chip of a bot is in front of its name in both. Drawn at `at`; returns the
+ * width. */
+static float overview_team_label(ImDrawList *dl, ImVec2 at, ImU32 col,
+                                 const LvOverviewRow &row, float room) {
+    if (row.players <= 1 || overview_names_run(nullptr, at, col, row) <= room) {
+        return overview_names_run(dl, at, col, row);
     }
     MessageArgs args = {};
     snprintf(args.string1, sizeof(args.string1), "%s", row.firstName);
     args.number = row.players - 1;
-    snprintf(out, outSize, "%s", langGetTextFmt(STR_LV_OVERVIEW_MORE, &args));
+    const char *label = langGetTextFmt(STR_LV_OVERVIEW_MORE, &args);
+    const float chip = overview_chip_room(row, 0);
+    if (chip > 0.0f) lv_bot_chip_draw(dl, row.chip[0], at);
+    dl->AddText(ImVec2(at.x + chip, at.y), col, label);
+    return chip + ImGui::CalcTextSize(label).x;
+}
+
+/* The first cell of a team's row: a stripe in the team's colour, then the
+ * names of its players. The cell is one item, so the tooltip of the row is
+ * asked of it. */
+static void overview_team_cell(ImU32 stripe, const LvOverviewRow &row, float room) {
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float h = ImGui::GetTextLineHeight();
+    const float lead = OVERVIEW_STRIPE_W + ImGui::GetStyle().ItemInnerSpacing.x;
+    dl->AddRectFilled(ImVec2(p.x, p.y + 1.0f),
+                      ImVec2(p.x + OVERVIEW_STRIPE_W, p.y + h - 1.0f), stripe, 1.0f);
+    const float w = overview_team_label(dl, ImVec2(p.x + lead, p.y),
+                                        ImGui::GetColorU32(ImGuiCol_Text), row, room);
+    ImGui::Dummy(ImVec2(lead + w, h));
 }
 
 /* The table, width wide. */
@@ -240,16 +298,20 @@ static void overview_table(const LvOverview &ov, float width) {
 
     for (int i = 0; i < ov.rowCount; i++) {
         const LvOverviewRow &row = ov.rows[i];
-        char label[LV_OVERVIEW_NAMES_LEN];
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
         float room = ImGui::GetContentRegionAvail().x - OVERVIEW_STRIPE_W -
                      style.ItemInnerSpacing.x;
-        overview_team_label(row, room, label, sizeof(label));
-        overview_label_cell(overview_team_colour(row.colour), label, false);
+        overview_team_cell(overview_team_colour(row.colour), row, room);
         /* The whole team, for a row that had no room for it. */
         if (row.players > 1 && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
-            ImGui::SetTooltip("%s", row.names);
+            if (ImGui::BeginTooltip()) {
+                const ImVec2 at = ImGui::GetCursorScreenPos();
+                const float w = overview_names_run(ImGui::GetWindowDrawList(), at,
+                                                   ImGui::GetColorU32(ImGuiCol_Text), row);
+                ImGui::Dummy(ImVec2(w, ImGui::GetTextLineHeight()));
+                ImGui::EndTooltip();
+            }
         }
         ImGui::TableSetColumnIndex(1);
         overview_count_cell(row.pills, false);

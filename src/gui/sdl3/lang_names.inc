@@ -1480,6 +1480,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_LV_INFO_TIME_LIMIT", STR_LV_INFO_TIME_LIMIT },
     { "STR_LV_INFO_WBN_KEY", STR_LV_INFO_WBN_KEY },
     { "STR_LV_IN_TANK_FMT", STR_LV_IN_TANK_FMT },
+    { "STR_LV_JUMP_ANIM", STR_LV_JUMP_ANIM },
     { "STR_LV_LICENSE", STR_LV_LICENSE },
     { "STR_LV_LOBBY_OPENED", STR_LV_LOBBY_OPENED },
     { "STR_LV_LOCATION_FMT", STR_LV_LOCATION_FMT },
@@ -2504,4 +2505,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2491
+#define K_LANG_NAME_TABLE_SIZE  2492

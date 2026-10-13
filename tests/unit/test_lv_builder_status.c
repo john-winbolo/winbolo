@@ -320,3 +320,40 @@ int run_lv_builder_trips(void) {
     UT_ASSERT_MSG(!lvBuilderTripRemaining(NULL, 0, 150, &remain), "no table");
     return 0;
 }
+
+/* What goes beside the parachute of a dead builder, on the map and in the
+ * Tank panel: the countdown when the time is known, "~" in front of an
+ * estimate, and nothing at all when the time is not known. */
+int run_lv_builder_dead_text(void) {
+    char text[16];
+    int  n;
+
+    n = lvBuilderDeadText(true, 7000, false, text, sizeof(text));
+    UT_ASSERT_MSG(n == 4 && strcmp(text, "0:07") == 0, "7 s: \"%s\"", text);
+    n = lvBuilderDeadText(true, 83000, false, text, sizeof(text));
+    UT_ASSERT_MSG(n == 4 && strcmp(text, "1:23") == 0, "83 s: \"%s\"", text);
+    /* Part of a second is a whole one: "0:00" only with no time left. */
+    lvBuilderDeadText(true, 6001, false, text, sizeof(text));
+    UT_ASSERT_MSG(strcmp(text, "0:07") == 0, "6001 ms: \"%s\"", text);
+    lvBuilderDeadText(true, 0, false, text, sizeof(text));
+    UT_ASSERT_MSG(strcmp(text, "0:00") == 0, "0 ms: \"%s\"", text);
+    /* An estimate. */
+    n = lvBuilderDeadText(true, 7000, true, text, sizeof(text));
+    UT_ASSERT_MSG(n == 5 && strcmp(text, "~0:07") == 0, "estimate: \"%s\"", text);
+    /* Not known: nothing, whatever the other two say. */
+    strcpy(text, "left");
+    n = lvBuilderDeadText(false, 7000, true, text, sizeof(text));
+    UT_ASSERT_MSG(n == 0 && text[0] == '\0', "not known: \"%s\"", text);
+    n = lvBuilderDeadText(false, 0, false, text, sizeof(text));
+    UT_ASSERT_MSG(n == 0 && text[0] == '\0', "not known, 0: \"%s\"", text);
+    /* No room, no buffer. */
+    UT_ASSERT(lvBuilderDeadText(true, 7000, false, NULL, 8) == 0);
+    UT_ASSERT(lvBuilderDeadText(true, 7000, false, text, 0) == 0);
+    /* The text a line is measured with is as long as any time under ten
+       minutes, estimate mark and all. */
+    n = lvBuilderDeadText(true, 599000, true, text, sizeof(text));
+    UT_ASSERT_MSG((size_t)n == strlen(LV_BUILDER_COUNTDOWN_WIDEST),
+                  "9:59 is \"%s\", measured as \"%s\"", text,
+                  LV_BUILDER_COUNTDOWN_WIDEST);
+    return 0;
+}
