@@ -645,6 +645,9 @@ void lv_screenRewind();
  * when it would not move (screen.c). */
 bool lv_screenFastForwardTargetMs(uint32_t *ms);
 bool lv_screenRewindTargetMs(uint32_t *ms);
+/* The last move of an animated rewind: to the place lv_screenRewindTargetMs
+   gave before the animation moved playback. */
+void lv_screenRewindToMs(uint32_t ms);
 /* The playback time to the second, for a file name. dest: 16 characters or
  * more. */
 void lv_screenGetTime(char *dest);

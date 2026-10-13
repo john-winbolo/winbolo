@@ -6987,6 +6987,29 @@ bool lv_screenRewindTargetMs(uint32_t *ms) {
   return TRUE;
 }
 
+/* Put playback on a snapshot: what a rewind does once it knows which. */
+static void lv_rewindApply(size_t wantedPos, uint32_t snapTime, BYTE key, BYTE *pTeams) {
+  g_lv->timeRunning = snapTime;
+  lv_logSetPosition(wantedPos);
+  lv_blocksSetKey(key);
+  lv_playersSetTeams(pTeams);
+  /* Playback counts the kills after this snapshot again from here. */
+  lv_snapshotGetTallies(&g_lv->snap, snapTime, g_lv->kills, g_lv->deaths);
+  lv_processSnapshot();
+  lv_snapshotRestoreDeathTimes(snapTime);
+  /* The snapshot carries no rules: read them again at its time. */
+  lv_rulesRefresh();
+  lv_presRebuild(g_lv->timeRunning);
+  lv_windowRemoveEventsAfter(g_lv->timeRunning);
+  g_lv->isPlaying = TRUE;
+  g_lv->state = lv_lr_start;
+  /* Rewinding parks the live-DVR view in the past (consumed next frame). */
+  s_specSeekPark = true;
+  if (wantedPos == 0) {
+    lv_startOfLog();
+  }
+}
+
 void lv_screenRewind() {
   uint32_t currentTime = g_lv->timeRunning;
   size_t wantedPos;
@@ -7002,26 +7025,33 @@ void lv_screenRewind() {
       lv_screenSeekToAbsoluteMs(lv_windowStartMs());
       return;
     }
-    g_lv->timeRunning = currentTime;
-    lv_logSetPosition(wantedPos);
-    lv_blocksSetKey(key);
-    lv_playersSetTeams(pTeams);
-    /* Playback counts the kills after this snapshot again from here. */
-    lv_snapshotGetTallies(&g_lv->snap, currentTime, g_lv->kills, g_lv->deaths);
-    lv_processSnapshot();
-    lv_snapshotRestoreDeathTimes(currentTime);
-    /* The snapshot carries no rules: read them again at its time. */
-    lv_rulesRefresh();
-    lv_presRebuild(g_lv->timeRunning);
-    lv_windowRemoveEventsAfter(g_lv->timeRunning);
-    g_lv->isPlaying = TRUE;
-    g_lv->state = lv_lr_start;
-    /* Rewinding parks the live-DVR view in the past (consumed next frame). */
-    s_specSeekPark = true;
-    if (wantedPos == 0) {
-      lv_startOfLog();
-    }
+    lv_rewindApply(wantedPos, currentTime, key, pTeams);
   }
+}
+
+/* The end of an animated rewind (lv_jump_anim.h). ms is the place
+   lv_screenRewindTargetMs gave when the button was pressed; playback has
+   since been moved to moments between, so lv_screenRewind would now pick
+   another snapshot. This goes to that place the way lv_screenRewind went
+   there: onto the snapshot at ms, or, when ms is the start of the game with
+   the lobby hidden and no snapshot is at it, by the seek that parks there.
+   Nothing is done when playback is not after ms. */
+void lv_screenRewindToMs(uint32_t ms) {
+  size_t snapPos;
+  uint32_t snapTime;
+  BYTE key;
+  BYTE *pTeams = NULL;
+
+  if (g_lv == NULL || g_lv->logLoaded == FALSE || ms >= g_lv->timeRunning) {
+    return;
+  }
+  if (lv_snapshotFindByTime(&g_lv->snap, ms, &snapPos, &snapTime, &key, &pTeams) == TRUE &&
+      snapTime == ms && ms >= lv_windowStartMs()) {
+    s_seekSerial++;
+    lv_rewindApply(snapPos, snapTime, key, pTeams);
+    return;
+  }
+  lv_screenSeekToAbsoluteMs(ms);
 }
 
 void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime, uint32_t *totalTime) {

@@ -4131,6 +4131,9 @@ int run_lv_kill_tally_seek_back(void);
 int run_lv_alive_seek_back(void);
 int run_lv_death_time_seek_back(void);
 int run_lv_jump_targets(void);
+int run_lv_jump_anim_lands(void);
+int run_lv_jump_anim_steps(void);
+int run_lv_jump_anim_time(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

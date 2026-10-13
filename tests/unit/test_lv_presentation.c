@@ -31,6 +31,7 @@
 #include "zip.h"
 #include "replay_harness.h"
 #include "lv_scripts_fixture.h"
+#include "lv_jump_anim.h"
 #include "test_harness.h"
 
 /* ── Building a log.dat ────────────────────────────────────────────── */
@@ -1933,6 +1934,142 @@ int run_lv_jump_targets(void) {
                   (unsigned)lastWant, (unsigned)lastGot);
     UT_ASSERT_MSG(!atStartKnown || lastGot > 0,
                   "a rewind target back at the start (clock %u ms)", (unsigned)lastGot);
+    return 0;
+}
+
+/* The animation of Rewind and Fast Forward ends where the button's jump
+ * ends.
+ *
+ * The animation (lv_jump_anim.h) seeks to moments between the time playback
+ * is at and the target, then makes the jump: lv_screenFastForward, or
+ * lv_screenRewindToMs with the target asked for before the first seek. On
+ * the log of lv_jump_targets (snapshots at 2020 and 4040 ms, the end at 5060)
+ * each animated jump is done step by step, as the host does it, and has to
+ * end on the tick the plain jump ends on. */
+static bool lvpAnimatedJump(bool back, uint32_t *target, int *stepsOut, bool *between) {
+    uint32_t from = lv_screenGetTimeRunning();
+    uint32_t to = 0;
+    int      steps, k;
+
+    *between = true;
+    if ((back ? lv_screenRewindTargetMs(&to) : lv_screenFastForwardTargetMs(&to)) != TRUE) {
+        return false;
+    }
+    steps = lvJumpAnimSteps(from, to, LV_JUMP_ANIM_STEPS);
+    for (k = 1; k < steps; k++) {
+        uint32_t want = lvJumpAnimStepMs(from, to, k, steps, 0, UINT32_MAX);
+        uint32_t got;
+        lv_screenSeekToTimeMs(want);
+        got = lv_screenGetTimeRunning();
+        /* Each moment is the one asked for, and short of the target. */
+        if (got != want || (back ? got <= to : got >= to)) *between = false;
+    }
+    if (back) {
+        lv_screenRewindToMs(to);
+    } else {
+        lv_screenFastForward();
+    }
+    *target = to;
+    *stepsOut = steps;
+    return true;
+}
+
+int run_lv_jump_anim_lands(void) {
+    const char     *path = "lv_jump_anim.wbv";
+    static LvpLog   b;
+    static const uint8_t wait99[] = {0x01, 0x63};
+    static const uint8_t tail[]   = {0x01, 0x31, 0x00};
+    LogViewerState *lv;
+    uint32_t        plainFwd[3] = {0, 0, 0}, plainBack[3] = {0, 0, 0};
+    uint32_t        animFwd[3] = {0, 0, 0}, animBack[3] = {0, 0, 0};
+    uint32_t        wantFwd[3] = {0, 0, 0}, wantBack[3] = {0, 0, 0};
+    bool            okFwd[3], okBack[3], betweenFwd[3], betweenBack[3];
+    bool            playingAfterBack = false, endedAfterFwd, noneAtEnd;
+    int             stepsFwd[3] = {0, 0, 0}, stepsBack[3] = {0, 0, 0};
+    uint32_t        unused = 0, serial0, serial1, same, midGot, midBack;
+    int             i;
+
+    lvpPutOpening(&b);
+    lvpPut(&b, wait99, sizeof(wait99));
+    lvpPutSnapshotEmpty(&b);
+    lvpPut(&b, wait99, sizeof(wait99));
+    lvpPutSnapshotEmpty(&b);
+    lvpPut(&b, tail, sizeof(tail));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    /* The plain jumps: forward to the end, back to the start. */
+    for (i = 0; i < 3; i++) {
+        lv_screenFastForward();
+        plainFwd[i] = lv_screenGetTimeRunning();
+    }
+    for (i = 0; i < 3; i++) {
+        lv_screenRewind();
+        plainBack[i] = lv_screenGetTimeRunning();
+    }
+
+    /* The same six, animated. */
+    for (i = 0; i < 3; i++) {
+        okFwd[i] = lvpAnimatedJump(false, &wantFwd[i], &stepsFwd[i], &betweenFwd[i]);
+        animFwd[i] = lv_screenGetTimeRunning();
+    }
+    endedAfterFwd = lv_screenIsPlaying() != TRUE;
+    noneAtEnd = lv_screenFastForwardTargetMs(&unused) != TRUE;
+    for (i = 0; i < 3; i++) {
+        okBack[i] = lvpAnimatedJump(true, &wantBack[i], &stepsBack[i], &betweenBack[i]);
+        animBack[i] = lv_screenGetTimeRunning();
+        if (i == 0) playingAfterBack = lv_screenIsPlaying() == TRUE;
+    }
+
+    /* lv_screenRewindToMs: a time playback is not after does nothing, and a
+       time with no snapshot at it is a seek to that time. */
+    lv_screenSeekToTimeMs(4500);
+    serial0 = lv_screenSeekSerial();
+    lv_screenRewindToMs(4500);
+    lv_screenRewindToMs(4800);
+    serial1 = lv_screenSeekSerial();
+    same = lv_screenGetTimeRunning();
+    lv_screenRewindToMs(3000);
+    midGot = lv_screenGetTimeRunning();
+    /* From 3000 the snapshot at 2020 is under a second back, so a plain
+       rewind would pick the one before it: the animated one still ends on
+       2020. */
+    lv_screenRewindToMs(2020);
+    midBack = lv_screenGetTimeRunning();
+
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(plainFwd[0] == 2020 && plainFwd[1] == 4040 && plainFwd[2] == 5060,
+                  "plain fast forward: %u %u %u", (unsigned)plainFwd[0], (unsigned)plainFwd[1],
+                  (unsigned)plainFwd[2]);
+    UT_ASSERT_MSG(plainBack[0] == 4040 && plainBack[1] == 2020,
+                  "plain rewind: %u %u %u", (unsigned)plainBack[0], (unsigned)plainBack[1],
+                  (unsigned)plainBack[2]);
+    for (i = 0; i < 3; i++) {
+        UT_ASSERT_MSG(okFwd[i] && wantFwd[i] == plainFwd[i] && animFwd[i] == plainFwd[i],
+                      "animated fast forward %d: target %u, ended at %u (the plain jump: %u)", i,
+                      (unsigned)wantFwd[i], (unsigned)animFwd[i], (unsigned)plainFwd[i]);
+        UT_ASSERT_MSG(betweenFwd[i], "animated fast forward %d: a step was not its moment", i);
+        UT_ASSERT_MSG(stepsFwd[i] == LV_JUMP_ANIM_STEPS, "animated fast forward %d: %d steps", i,
+                      stepsFwd[i]);
+        UT_ASSERT_MSG(okBack[i] && wantBack[i] == plainBack[i] && animBack[i] == plainBack[i],
+                      "animated rewind %d: target %u, ended at %u (the plain jump: %u)", i,
+                      (unsigned)wantBack[i], (unsigned)animBack[i], (unsigned)plainBack[i]);
+        UT_ASSERT_MSG(betweenBack[i], "animated rewind %d: a step was not its moment", i);
+        UT_ASSERT_MSG(stepsBack[i] == LV_JUMP_ANIM_STEPS, "animated rewind %d: %d steps", i,
+                      stepsBack[i]);
+    }
+    UT_ASSERT_MSG(endedAfterFwd && noneAtEnd, "after the animated jump to the end the log plays on");
+    UT_ASSERT_MSG(playingAfterBack, "after the animated rewind from the end nothing plays");
+    UT_ASSERT_MSG(serial1 == serial0 && same == 4500,
+                  "a rewind to a time playback is not after moved it (%u ms)", (unsigned)same);
+    UT_ASSERT_MSG(midGot == 3000, "a rewind to 3000, where no snapshot is: %u ms", (unsigned)midGot);
+    UT_ASSERT_MSG(midBack == 2020, "a rewind to the snapshot at 2020 from 3000: %u ms",
+                  (unsigned)midBack);
     return 0;
 }
 

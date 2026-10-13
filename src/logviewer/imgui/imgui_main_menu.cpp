@@ -120,6 +120,8 @@ bool lv_g_show_regions = false;
 
 /* Options state */
 static bool s_tank_centred = false;
+/* Options > Animate Rewind and Fast Forward (lv_jump_anim.h). */
+static bool s_jump_anim = true;
 static bool s_dns_lookups = false;
 static bool s_mode_information = true;  /* true = Information, false = Select Team */
 
@@ -195,6 +197,9 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     lv_drawSetTankBars((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
     lv_platform_config_get_string("LOGVIEWER", "Tank Builder Status", "No", val, sizeof(val));
     lv_drawSetBuilderStatus((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
+    /* On until turned off. */
+    lv_platform_config_get_string("LOGVIEWER", "Animate Jumps", "Yes", val, sizeof(val));
+    s_jump_anim = !(val[0] == 'N' || val[0] == 'n');
 }
 
 void lv_imgui_main_menu_save(void) {
@@ -222,6 +227,7 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Tank Bars", lv_drawGetTankBars() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Tank Builder Status",
                                   lv_drawGetBuilderStatus() ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Animate Jumps", s_jump_anim ? "Yes" : "No");
 }
 
 static void zoom_at_center(int stepIndex) {
@@ -301,6 +307,8 @@ void lv_imgui_toggle_tank_centred(void) {
     s_tank_centred = !s_tank_centred;
     lv_screenTankCentred(s_tank_centred ? 1 : 0);
 }
+
+int lv_imgui_get_jump_anim(void) { return s_jump_anim ? 1 : 0; }
 
 /* Sets it, so the menu's tick and the screen's flag stay the same thing. */
 void lv_imgui_set_tank_centred(int on) {
@@ -609,6 +617,14 @@ int lv_imgui_main_menu_bar(void) {
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", langGetText(STR_LV_BUILDER_STATUS_TIP));
             }
+#ifndef __EMSCRIPTEN__
+            /* The browser build's Rewind and Fast Forward jump: it has no
+             * animation to turn off. */
+            if (ImGui::MenuItem(langGetText(STR_LV_JUMP_ANIM), NULL, s_jump_anim)) {
+                s_jump_anim = !s_jump_anim;
+                clicked = 1;
+            }
+#endif
             if (ImGui::MenuItem(langGetText(STR_MENU_SOUND_EFFECTS), NULL, s_lv->isSoundsPlaying != 0)) {
                 s_lv->isSoundsPlaying = s_lv->isSoundsPlaying ? 0 : 1;
                 clicked = 1;

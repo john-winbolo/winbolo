@@ -4633,6 +4633,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # everything that is not deep sea, and the zoom it is shown at
     # (lv_first_view.h, header only).
     tests/unit/test_lv_first_view.c
+    # The schedule of the animation of the viewer's Rewind and Fast Forward:
+    # how many steps, the log time of each and which is due when
+    # (lv_jump_anim.h, header only).
+    tests/unit/test_lv_jump_anim.c
     # The builder marker over each tank on the viewer's map: where it goes,
     # the arrow's direction, the countdown and the table of the times a
     # builder was away (lv_builder_status.h, header only).
@@ -6940,6 +6944,9 @@ set(_unit_test_names
     lv_alive_seek_back
     lv_death_time_seek_back
     lv_jump_targets
+    lv_jump_anim_lands
+    lv_jump_anim_steps
+    lv_jump_anim_time
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast

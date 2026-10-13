@@ -1740,6 +1740,91 @@ outside the land, the edges of the map), `lv_first_view_zoom` (kept when
 the box goes in, the step chosen when not, a box bigger than the view),
 `lv_first_view_place` (the box's middle is the middle of what shows).
 
+### Rewind and Fast Forward are a short animation (Oct 13)
+
+How a seek worked, and still works:
+
+- The decoder only goes forward, one tick of 20 ms of log time at a call
+  (`lv_screenLogTick`). A forward seek plays the ticks between
+  (`lv_screenSeekToAbsoluteMs` in `screen.c`).
+- A backward seek restores the last snapshot at or before the time and
+  plays on from it. The viewer keeps the place of each snapshot playback
+  has reached (`snapshot.c`).
+- The server writes a snapshot every `FULL_SYNC_INTERVAL` ticks
+  (`src/server/sim/server_sim_tick.c`). In a recording made for this work
+  (four bots, DH-Oil Rig, 457 seconds of log) there were 181: one each
+  2.54 seconds.
+- Rewind goes to the snapshot before the playhead (`lv_screenRewind`), and
+  Fast Forward plays on to the next one or to the end
+  (`lv_screenFastForward`). So a press is a jump of about 2.5 seconds.
+
+Measured on that recording with the unit build's decoder (no drawing):
+
+| Move | Time |
+|---|---|
+| One tick | 0.0005 ms |
+| The whole log played forward (22870 ticks) | 10.9 ms |
+| Rewind to a snapshot | 0.01 ms |
+| Fast Forward to the next snapshot | 0.03 to 0.05 ms |
+| A seek back to any time (a snapshot and under 127 ticks) | 0.04 to 0.08 ms |
+
+So a moment between the playhead and the target costs under a tenth of a
+millisecond in either direction, and the animation shows real moments of
+the game both ways. Nothing is slid or made up.
+
+What a press does now:
+
+- For `LV_JUMP_ANIM_MS` (250 ms) the map shows up to `LV_JUMP_ANIM_STEPS`
+  (12) moments between the time playback is at and the target, the same
+  length of log time apart, in order: forward for Fast Forward, back for
+  Rewind. They come fast at first and slow near the target. Then the jump
+  itself is made.
+- A step is a seek to its moment, made on a frame of the window. The last
+  move is `lv_screenFastForward`, or `lv_screenRewindToMs` with the target
+  that was asked for before the first step. So playback ends on the tick,
+  and in the state, a press with no animation gives.
+- The seek bar, the time and the event markers show the moment playback is
+  at, so they move with it.
+- The button, its key and its menu item are one call, so all three are
+  animated.
+
+Calls made:
+
+- **Play and Pause are not touched.** While the animation runs the playback
+  timer plays nothing (`lv_windowSetTickHold` in `lv_embed.c`). Play or
+  Pause pressed in that time works, and takes effect when it ends.
+- **A second press** ends the first animation on its target at once and
+  starts the next from there. Five quick presses are five jumps.
+- **Any other seek wins.** Each step is the animation's own seek, and it
+  keeps the seek count of its last one. When the count has moved on by the
+  next frame (the seek bar, a click on an event, a step key, a new log) the
+  animation is dropped where it is. Stop ends it.
+- **Events, messages, sounds, pings.** A step is a seek, so each is as after
+  any seek: the lists hold what is before the moment, once; no sound is
+  played; a ping shows only while playback is inside its time.
+- **A log with its snapshots far apart.** A step back is then a long
+  decode. A step that takes more than `LV_JUMP_ANIM_STEP_MAX_MS` (8 ms)
+  ends the animation: the rest of the jump is made at once. No log of that
+  kind was at hand to try.
+- **A jump with no tick between its ends** (under 40 ms) is made at once. A
+  jump of fewer than 12 ticks has one step for each tick.
+- **A live feed** has no animation: the two buttons do what they did.
+- **The browser build** jumps as before, and its Options menu does not have
+  the item.
+- **Options > Animate Rewind and Fast Forward**, on at first, saved as
+  `Animate Jumps`. Off, a press jumps as before. The macOS menu bar does
+  not have the item.
+
+The schedule is in `src/logviewer/lv_jump_anim.h` (`lvJumpAnimSteps`,
+`lvJumpAnimStepMs`, `lvJumpAnimStepAt`). `lvJumpAnimStart`,
+`lvJumpAnimFrame` and `lvJumpAnimFinish` in `logviewer.c` run it.
+
+Tests: `lv_jump_anim_steps` (the moments of jumps of 40 ms to 30 minutes,
+forward and back: whole ticks, in order, never the target's tick before the
+last, held inside the log), `lv_jump_anim_time` (which step is due when),
+`lv_jump_anim_lands` (on a log with two snapshots, each animated jump done
+step by step ends on the tick the plain jump ends on).
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the

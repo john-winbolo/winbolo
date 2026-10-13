@@ -69,6 +69,7 @@
 #include "lv_fullscreen_key.h"
 #include "lv_save_name.h"   /* the file name Save Log File offers */
 #include "lv_first_view.h"  /* where the map is when a log is first shown */
+#include "lv_jump_anim.h"   /* the animation of Rewind and Fast Forward */
 #include "lv_fullscreen_game.h"
 #include "imgui/imgui_game_view.h"
 #include "imgui/imgui_logviewer_menu.h"
@@ -376,7 +377,8 @@ void lv_windowCentreOnEvent(uint32_t ms, int hasCell, int mapX, int mapY, int te
     lvWindowJumpToEvent(ms, hasCell, mapX, mapY, team, 1);
 }
 
-void lv_windowFastForward(void) {
+/* Fast Forward with no animation: on to the next snapshot, or the end. */
+static void lvWindowFastForwardNow(void) {
     lv_clientMutexWaitFor();
     lv_drawDirtyScreen();
     lv_screenFastForward();
@@ -389,13 +391,19 @@ void lv_windowFastForward(void) {
     lv_clientMutexRelease();
 }
 
-void lv_windowRewind(void) {
+/* Rewind with no animation: back to the snapshot lv_screenRewind picks, or,
+ * at the end of an animation, to the one picked when it started (toKnown). */
+static void lvWindowRewindNow(int toKnown, uint32_t toMs) {
     char line[64];
     lv_clientMutexWaitFor();
     lv_drawDirtyScreen();
-    lv_screenRewind();
+    if (toKnown) {
+        lv_screenRewindToMs(toMs);
+    } else {
+        lv_screenRewind();
+    }
     lv_drawDirtyScreen();
-    /* Defer to the flag — see lv_windowFastForward. */
+    /* Defer to the flag — see lvWindowFastForwardNow. */
     g_lv->wantScreenUpdate = TRUE;
     lv_screenGetTime(line);
     lv_clientMutexRelease();
@@ -404,6 +412,175 @@ void lv_windowRewind(void) {
     } else {
         g_lv->wantScreenUpdate = TRUE;
     }
+}
+
+/* --------------------------------------------------------------------------
+ * The animation of Rewind and Fast Forward (lv_jump_anim.h)
+ *
+ * A press does not jump. For LV_JUMP_ANIM_MS the host seeks, one step on
+ * each frame that has a new step due, through moments between the time
+ * playback is at and the target, and then makes the jump itself: the last
+ * move is lv_screenFastForward or lv_screenRewindToMs, so playback ends on
+ * the tick, and in the state, a press with no animation gives. Each step is
+ * a seek, so the lists of events and messages, the sounds and the pings are
+ * as after any seek, and the seek bar, the time and the event markers go
+ * with it.
+ *
+ * While it runs the playback timer plays nothing (lv_windowSetTickHold), so
+ * Play and Pause are not touched and are as they were when it ends.
+ *
+ * The steps are the animation's own seeks: it keeps the seek count
+ * (lv_screenSeekSerial) of its last one. A count that has moved on by the
+ * next frame is some other seek (the seek bar, a click on an event, a step
+ * key, a new log): that seek wins and the animation is dropped where it is.
+ * A second press ends the first animation on its target and starts from
+ * there, so five quick presses are five jumps.
+ * -------------------------------------------------------------------------- */
+static struct {
+    bool     active;
+    bool     back;
+    uint32_t fromMs, toMs;
+    int      steps;   /* lvJumpAnimSteps */
+    int      shown;   /* the last step that was sought to */
+    Uint64   startNs;
+    uint32_t serial;  /* the seek count after the animation's last seek */
+} s_lvJump;
+
+/* TRUE in a host whose loop calls lvHostRenderFrame, which is what moves an
+ * animation on. Without it a press jumps. */
+static bool s_lvJumpHost = FALSE;
+
+/* Let go of an animation without a move: another seek has the playback. */
+static void lvJumpAnimDrop(void) {
+    if (!s_lvJump.active) {
+        return;
+    }
+    s_lvJump.active = FALSE;
+    lv_clientMutexWaitFor();
+    lv_windowSetTickHold(false);
+    lv_clientMutexRelease();
+}
+
+/* End an animation now, on its target. */
+static void lvJumpAnimFinish(void) {
+    bool stale;
+    if (!s_lvJump.active) {
+        return;
+    }
+    s_lvJump.active = FALSE;
+    lv_clientMutexWaitFor();
+    lv_windowSetTickHold(false);
+    stale = (g_lv->isLoaded == FALSE || lv_screenSeekSerial() != s_lvJump.serial);
+    lv_clientMutexRelease();
+    if (stale) {
+        return;
+    }
+    if (s_lvJump.back) {
+        lvWindowRewindNow(1, s_lvJump.toMs);
+    } else {
+        lvWindowFastForwardNow();
+    }
+}
+
+/* Start one for a press of Rewind (back) or Fast Forward. FALSE when the
+ * press is to jump: the option is off, a live feed, nowhere to go, or a
+ * jump with no tick between its ends. */
+static bool lvJumpAnimStart(bool back) {
+    uint32_t nowMs, toMs = 0;
+    bool known;
+    int steps;
+
+    if (!s_lvJumpHost || !lv_imgui_get_jump_anim() || g_lv->isLoaded == FALSE ||
+        lv_screenSpecIsLiveMode()) {
+        return FALSE;
+    }
+    lv_clientMutexWaitFor();
+    nowMs = lv_screenGetTimeRunning();
+    known = back ? (lv_screenRewindTargetMs(&toMs) == TRUE && toMs < nowMs)
+                 : (lv_screenFastForwardTargetMs(&toMs) == TRUE && toMs > nowMs);
+    steps = known ? lvJumpAnimSteps(nowMs, toMs, LV_JUMP_ANIM_STEPS) : 1;
+    if (steps < 2) {
+        lv_clientMutexRelease();
+        return FALSE;
+    }
+    s_lvJump.active = TRUE;
+    s_lvJump.back = back;
+    s_lvJump.fromMs = nowMs;
+    s_lvJump.toMs = toMs;
+    s_lvJump.steps = steps;
+    s_lvJump.shown = 0;
+    s_lvJump.startNs = SDL_GetTicksNS();
+    s_lvJump.serial = lv_screenSeekSerial();
+    lv_windowSetTickHold(true);
+    lv_clientMutexRelease();
+    return TRUE;
+}
+
+/* One frame of the animation: seek to the step that is due, if it is a new
+ * one. Called by lvHostRenderFrame before the frame is drawn. */
+static void lvJumpAnimFrame(void) {
+    uint32_t elapsedMs;
+    int k;
+    bool slow = FALSE;
+
+    if (!s_lvJump.active) {
+        return;
+    }
+    if (g_lv->isLoaded == FALSE) {
+        lvJumpAnimDrop();
+        return;
+    }
+    lv_clientMutexWaitFor();
+    if (lv_screenSeekSerial() != s_lvJump.serial) {
+        lv_clientMutexRelease();
+        lvJumpAnimDrop();
+        return;
+    }
+    elapsedMs = (uint32_t)((SDL_GetTicksNS() - s_lvJump.startNs) / 1000000u);
+    k = lvJumpAnimStepAt(elapsedMs, LV_JUMP_ANIM_MS, s_lvJump.steps);
+    if (k >= s_lvJump.steps) {
+        lv_clientMutexRelease();
+        lvJumpAnimFinish();
+        return;
+    }
+    if (k > s_lvJump.shown) {
+        uint32_t nowMs = lv_screenGetTimeRunning();
+        uint32_t stepMs = lvJumpAnimStepMs(s_lvJump.fromMs, s_lvJump.toMs, k, s_lvJump.steps,
+                                           0, UINT32_MAX);
+        s_lvJump.shown = k;
+        if (s_lvJump.back ? (stepMs < nowMs) : (stepMs > nowMs)) {
+            Uint64 t0 = SDL_GetTicksNS();
+            lv_drawDirtyScreen();
+            lv_screenSeekToTimeMs(stepMs);
+            lv_drawDirtyScreen();
+            s_lvJump.serial = lv_screenSeekSerial();
+            g_lv->wantScreenUpdate = TRUE;
+            slow = (SDL_GetTicksNS() - t0) > (Uint64)LV_JUMP_ANIM_STEP_MAX_MS * 1000000u;
+        }
+    }
+    lv_clientMutexRelease();
+    lv_windowNeedRedraw();
+    /* A log with its snapshots far apart: a step is a long decode. The rest
+     * of the jump is made now, as with no animation. */
+    if (slow) {
+        lvJumpAnimFinish();
+    }
+}
+
+void lv_windowFastForward(void) {
+    lvJumpAnimFinish();
+    if (lvJumpAnimStart(FALSE)) {
+        return;
+    }
+    lvWindowFastForwardNow();
+}
+
+void lv_windowRewind(void) {
+    lvJumpAnimFinish();
+    if (lvJumpAnimStart(TRUE)) {
+        return;
+    }
+    lvWindowRewindNow(0, 0);
 }
 
 void lv_windowResize(void) {
@@ -435,6 +612,8 @@ void lv_windowOpenFile(char *cmdLine) {
         return;
     }
 
+    /* The new log wins over an animation of Rewind or Fast Forward. */
+    lvJumpAnimDrop();
     lv_windowStop(FALSE);
     fileName[0] = '\0';
 
@@ -1831,6 +2010,7 @@ static void lvHostFirstView(void) {
 static void lvHostRenderFrame(const char *overlay) {
     lvHostDockSync();
     lvHostFirstView();
+    lvJumpAnimFrame();
 
     /* Clear the frame */
     SDL_SetRenderDrawColor(g_lv->renderer, 0, 0, 0, 255);
@@ -2154,6 +2334,8 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
      * and leaves the answer at no. */
     lv_imgui_dock_set_standalone(1);
     s_lvFirstViewHost = TRUE;
+    s_lvJump.active = FALSE;
+    s_lvJumpHost = TRUE;
     lvHostRestoreWindowPlace();
 
     /* Open file from command line / caller if provided */
@@ -2408,6 +2590,9 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
         return false;
     }
     s_lvFirstViewHost = FALSE;
+    /* A live feed has no animation of Rewind and Fast Forward. */
+    s_lvJump.active = FALSE;
+    s_lvJumpHost = FALSE;
 
     /* Stalled-feed watchdog. A spectator sends no input, so the transport's
      * normal liveness timeout never fires — the host times the wait itself.
