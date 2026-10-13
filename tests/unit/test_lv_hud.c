@@ -15,12 +15,19 @@
  *       that a red team is drawn orange and no other colour is; and, with a
  *       player's perspective on, which of the game's own icons each slot
  *       shows (own, allied, hostile, neutral, dead).
+ *
+ *   lv_team_sprite_sums — which picture a pillbox and a base on the map are
+ *       drawn with when every team is shown in its colour (lv_team_sprite.h):
+ *       a neutral pillbox is the game's hostile pillbox tile at each armour
+ *       level, a neutral base the game's neutral base tile, and an owned one
+ *       its team's cell of the items sheet.
  */
 
 #include <stdbool.h>
 #include <stddef.h>
 
 #include "lv_hud.h"
+#include "lv_team_sprite.h"
 #include "test_harness.h"
 
 /* One grid of the game's panels, the name above it and the gap between two,
@@ -216,5 +223,52 @@ int run_lv_hud_sums(void) {
                       LV_HUD_GAME_BASE_ALLIED, "allied base");
     UT_ASSERT_MSG(lvHudGameBaseIcon(LV_HUD_ICON_OWNED, LV_HUD_REL_HOSTILE) ==
                       LV_HUD_GAME_BASE_HOSTILE, "hostile base");
+    return 0;
+}
+
+int run_lv_team_sprite_sums(void) {
+    LvMapItemSprite s;
+    int armour;
+
+    /* The game's hostile pillbox tiles: PILL_EVIL_15 is 48, PILL_EVIL_14 is
+       123 and the rest run up to PILL_EVIL_0 at 137 (tilenum.h). */
+    UT_ASSERT_MSG(lvGameHostilePillTile(15) == 48, "armour 15");
+    UT_ASSERT_MSG(lvGameHostilePillTile(14) == 123, "armour 14");
+    UT_ASSERT_MSG(lvGameHostilePillTile(1) == 136, "armour 1");
+    UT_ASSERT_MSG(lvGameHostilePillTile(0) == 137, "armour 0");
+    UT_ASSERT_MSG(lvGameHostilePillTile(-3) == 137, "armour under 0");
+    UT_ASSERT_MSG(lvGameHostilePillTile(200) == 48, "armour over 15");
+
+    /* A neutral pillbox is that tile out of the atlas at every armour level,
+       dead included, whatever colour is asked for: never a team's row. */
+    for (armour = 0; armour <= 15; armour++) {
+        s = lvMapPillSprite(true, armour, 10);
+        UT_ASSERT_MSG(s.fromAtlas == 1 && s.tile == lvGameHostilePillTile(armour),
+                      "neutral pill armour %d: atlas %d tile %d", armour, s.fromAtlas, s.tile);
+    }
+    s = lvMapPillSprite(true, 15, 2);
+    UT_ASSERT_MSG(s.fromAtlas == 1 && s.tile == 48, "neutral pill, another colour");
+
+    /* An owned pillbox: the column of its armour, the row of its team's
+       colour. A dead one keeps the colour. */
+    s = lvMapPillSprite(false, 15, 2);
+    UT_ASSERT_MSG(s.fromAtlas == 0 && s.col == 15 && s.row == 2, "owned pill");
+    s = lvMapPillSprite(false, 0, 12);
+    UT_ASSERT_MSG(s.fromAtlas == 0 && s.col == 0 && s.row == 12, "owned dead pill");
+    s = lvMapPillSprite(false, 99, 12);
+    UT_ASSERT_MSG(s.fromAtlas == 0 && s.col == 15, "armour over 15 is 15");
+
+    /* A neutral base is the game's neutral base tile (BASE_NEUTRAL, 122); an
+       owned one is the base column in its team's row. */
+    s = lvMapBaseSprite(true, 10);
+    UT_ASSERT_MSG(s.fromAtlas == 1 && s.tile == 122, "neutral base");
+    s = lvMapBaseSprite(false, 4);
+    UT_ASSERT_MSG(s.fromAtlas == 0 && s.col == LV_ITEMS_COL_BASE && s.row == 4, "owned base");
+
+    /* A colour the sheet has no row for cannot read past the sheet. */
+    s = lvMapBaseSprite(false, 200);
+    UT_ASSERT_MSG(s.row == 0, "palette entry out of range");
+    s = lvMapPillSprite(false, 15, -1);
+    UT_ASSERT_MSG(s.row == 0, "palette entry under 0");
     return 0;
 }

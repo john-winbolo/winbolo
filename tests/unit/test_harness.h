@@ -4017,6 +4017,10 @@ int run_lv_dock_layout_tree(void);
 /* The log viewer's HUD panel (test_lv_hud.c): the icon of a base, pillbox and
  * tank slot, the layout of the three grids, and the grey and colour sums. */
 int run_lv_hud_sums(void);
+/* The pictures of the pillboxes and bases on the log viewer's map
+ * (test_lv_hud.c, lv_team_sprite.h): the game's own tile for a thing nobody
+ * owns, a team's cell of the items sheet for one that is owned. */
+int run_lv_team_sprite_sums(void);
 /* The log viewer's text dump (test_lv_dump.c): a recorded round dumped
  * around one tick, a tick the round does not hold, and the event list. */
 int run_lv_dump_recorded_round(void);

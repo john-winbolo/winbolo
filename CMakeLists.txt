@@ -6819,6 +6819,7 @@ set(_unit_test_names
     lv_dock_layout_sides
     lv_dock_layout_tree
     lv_hud_sums
+    lv_team_sprite_sums
     lv_dump_recorded_round
     lv_spmap_owner_table
     lv_spmap_reads_back

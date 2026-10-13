@@ -45,6 +45,7 @@
 #include "imgui/imgui_dock.h"
 #include "lv_dock_fit.h"
 #include "lv_hud.h"
+#include "lv_team_sprite.h"
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/sdl3/sprite_positions.h"
 #include "../gui/sdl3/tileloader.h"
@@ -1253,6 +1254,28 @@ static void lvDrawRegions(BYTE zoomFactor) {
     }
 }
 
+/* lv_team_sprite.h names the game's tiles by number, so it needs no other
+   header. This fails to compile if a number there stops being the tile. */
+typedef char lvTeamSpriteTileCheck[(LV_TILE_PILL_EVIL_15 == PILL_EVIL_15 &&
+                                    LV_TILE_PILL_EVIL_14 == PILL_EVIL_14 &&
+                                    LV_TILE_PILL_EVIL_0 == PILL_EVIL_0 &&
+                                    PILL_EVIL_0 - PILL_EVIL_14 == 14 &&
+                                    LV_TILE_BASE_NEUTRAL == BASE_NEUTRAL) ? 1 : -1];
+
+/* Draw a pillbox or a base in map square x,y from the sheet lv_team_sprite.h
+   picked: one of the game's own tiles, or a team's cell of items.bmp. */
+static void lvDrawMapItem(LvMapItemSprite s, int x, int y, BYTE zoomFactor) {
+    if (s.fromAtlas) {
+        drawRenderTexture(textureTiles, mapViewPosX[s.tile], mapViewPosY[s.tile],
+            zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y,
+            zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
+    } else {
+        drawRenderTexture(textureItems, s.col * zoomFactor * TILE_SIZE_X, s.row * zoomFactor * TILE_SIZE_Y,
+            zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y,
+            zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
+    }
+}
+
 /* Whether tanks, pillboxes and bases are drawn in their team's colour. With
    a perspective on they are not, whatever the setting says: the map then
    shows them as that player's game does, own and allied against hostile. */
@@ -1363,11 +1386,20 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                     itemHits[itemHitCount].isBase = (isBase != FALSE);
                     /* Team colours name the owner, which is what a recording
                        is watched for; without them the tile itself says which
-                       side holds it, the way the game's markers do. */
+                       side holds it, the way the game's markers do. A thing
+                       nobody owns has no team: it takes the game's marker, a
+                       neutral base's for a base and a hostile pillbox's for a
+                       pillbox, as its sprite is the game's too. */
+                    itc = NEUTRAL_TEAM;
                     if (teamColours) {
                         itc = isBase ? lv_screenGetBaseTeam(x, y)
                                      : lv_screenGetPillTeam(x, y, &pillHealth);
+                    }
+                    if (teamColours && itc != NEUTRAL_TEAM) {
                         itemHits[itemHitCount].colour = mapColourTeam(lv->tc[itc]);
+                    } else if (teamColours) {
+                        itemHits[itemHitCount].colour = isBase ? mapColourMarkerNeutral()
+                                                               : mapColourMarkerEvil();
                     } else {
                         MapColourItem kind = mapColourItemKind(pos);
                         if (kind == MAP_COLOUR_ITEM_PILL_GOOD ||
@@ -1382,13 +1414,15 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                     itemHitCount++;
                 }
             } else if (isPill && teamColours) {
+                /* In its team's colour; a neutral one as the game draws it
+                   (lv_team_sprite.h). */
                 itc = lv_screenGetPillTeam(x, y, &pillHealth);
-                drawRenderTexture(textureItems, pillHealth * zoomFactor * TILE_SIZE_X, lv->tc[itc] * zoomFactor * TILE_SIZE_Y,
-                    zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
+                lvDrawMapItem(lvMapPillSprite(itc == NEUTRAL_TEAM, pillHealth, lv->tc[itc]),
+                              x, y, zoomFactor);
             } else if (isBase && teamColours) {
                 itc = lv_screenGetBaseTeam(x, y);
-                drawRenderTexture(textureItems, 16 * zoomFactor * TILE_SIZE_X, lv->tc[itc] * zoomFactor * TILE_SIZE_Y,
-                    zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
+                lvDrawMapItem(lvMapBaseSprite(itc == NEUTRAL_TEAM, lv->tc[itc]),
+                              x, y, zoomFactor);
             } else {
                 outputX = mapViewPosX[pos];
                 outputY = mapViewPosY[pos];
