@@ -66,6 +66,7 @@
  * permits it.
  */
 
+#include <ctype.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -631,6 +632,40 @@ int run_scenario_details_fetch_dir_mod(void) {
     return 0;
 }
 
+/* How many rows the callbacks block of a shipped map's script declares, read
+ * from the file's text: the lines `name = "..."` between `callbacks = {` and
+ * the line that closes it. -1 when the file or the block is not found. The
+ * shipped scripts write one row to a line, which is all this reads. */
+static int scDeclaredCallbacks(const char *map) {
+    char  path[512];
+    char  line[2048];
+    FILE *f;
+    int   rows  = -1;
+    bool  inside = false;
+
+    snprintf(path, sizeof(path), "%s/%s.scenario.lua", WB_DATA_MAPS_DIR, map);
+    f = fopen(path, "r");
+    if (f == NULL) return -1;
+    while (fgets(line, sizeof(line), f) != NULL) {
+        const char *p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (!inside) {
+            if (strncmp(p, "callbacks = {", 13) == 0) {
+                inside = true;
+                rows   = 0;
+            }
+            continue;
+        }
+        if (*p == '}') break;
+        if (isalpha((unsigned char)*p) || *p == '_') {
+            while (isalnum((unsigned char)*p) || *p == '_') p++;
+            if (strncmp(p, " = \"", 4) == 0) rows++;
+        }
+    }
+    fclose(f);
+    return rows;
+}
+
 /* The committed map's own script, through the whole path the dialog takes:
  * the server resolves the map's script by the name the lobby gives it, the
  * answer crosses the wire, and the client's lookup by that name finds it. */
@@ -690,6 +725,15 @@ static int scFetchMapScript(const char *tag, const char *map, int wantRows,
                   count, wantRows, rows);
     UT_ASSERT_MSG(strstr(rows, wantMethod) != NULL,
                   "%s arrived without its %s row: %s", file, wantMethod, rows);
+    /* No row was dropped on the way: a block past SCN_CALLBACKS_BLOB_MAX
+       loses its last rows with only a console line, and the Tutorial's is
+       close to it. Every row the file declares has to arrive. */
+    UT_ASSERT_MSG(scDeclaredCallbacks(map) == count,
+                  "%s declares %d callback rows and %d arrived: rows were "
+                  "dropped (SCN_CALLBACKS_BLOB_MAX is %d bytes), or the "
+                  "block names a function the script does not define",
+                  file, scDeclaredCallbacks(map), count,
+                  SCN_CALLBACKS_BLOB_MAX);
 
     /* The listen host reads the same bytes straight off the sim. */
     directLen = scDirect(&h, file, direct, sizeof(direct));
