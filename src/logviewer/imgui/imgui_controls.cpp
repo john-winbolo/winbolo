@@ -348,8 +348,15 @@ void lv_imgui_controls_window(void) {
              * already got there. */
             if (s_is_seeking && ImGui::IsItemDeactivated()) {
                 s_is_seeking = false;
-                seek_to_ratio(s_seek_ratio);
-                s_seek_applied = s_seek_ratio;
+                /* Only when the handle was dropped somewhere the last live
+                 * apply did not reach (a backward step inside the throttle
+                 * time). A seek to where the world already is would be a
+                 * backward one to the decoder, a snapshot restore and a
+                 * decode of the whole round up to here, for no change. */
+                if (s_seek_ratio != s_seek_applied) {
+                    seek_to_ratio(s_seek_ratio);
+                    s_seek_applied = s_seek_ratio;
+                }
                 if (s_seek_was_playing) {
                     lv_windowPlay();
                 }

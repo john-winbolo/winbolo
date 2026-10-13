@@ -6353,6 +6353,16 @@ static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
   BYTE key;
   BYTE *pTeams = NULL;
 
+  /* A target inside the tick playback is on. A forward seek to a time that
+     is not a whole tick stops on the first tick at or past it, so a second
+     seek to the same time (the seek slider's release after its last live
+     apply) names a time just behind the playhead. The restore below would
+     decode the whole round again to stop on this same tick. */
+  if (g_lv->logLoaded == TRUE && targetTime < g_lv->timeRunning &&
+      g_lv->timeRunning - targetTime < 20) {
+    return;
+  }
+
   if (targetTime >= g_lv->timeRunning && g_lv->logLoaded == TRUE) {
     /* Already there: nothing to decode, and no state to disturb. */
     if (targetTime == g_lv->timeRunning) {
