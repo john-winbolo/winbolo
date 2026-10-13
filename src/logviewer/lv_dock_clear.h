@@ -300,6 +300,21 @@ static inline LvDockMargins lvDockClearMapMargins(const LvDockMargins *m, const 
     return out;
 }
 
+/* What the solid sidebars take of the window: the margins, with nothing for
+ * a sidebar whose unused part is clear. Unlike lvDockClearMapMargins a solid
+ * top or bottom sidebar keeps its margin beside a clear left or right one:
+ * the map is drawn under it but does not show there. The window less these
+ * is the largest rectangle of map no solid sidebar hides; the panels of a
+ * clear sidebar can still be over part of it. */
+static inline LvDockMargins lvDockClearOpenMargins(const LvDockMargins *m, const int *clear) {
+    LvDockMargins out = *m;
+    if (clear[LV_DOCK_RIGHT])  out.right = 0;
+    if (clear[LV_DOCK_LEFT])   out.left = 0;
+    if (clear[LV_DOCK_TOP])    out.top = 0;
+    if (clear[LV_DOCK_BOTTOM]) out.bottom = 0;
+    return out;
+}
+
 /* True when the window point is on the map: not on the menu bar, not on a
  * solid sidebar, and not on the panels of a sidebar whose unused part is
  * clear. used[side] is the part of that sidebar its panels take (all of the

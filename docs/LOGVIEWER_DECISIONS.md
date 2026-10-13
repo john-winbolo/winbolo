@@ -1617,6 +1617,77 @@ Calls made:
 Tests: `lv_overview_bots` (the rule, and where each name of a team's row
 starts).
 
+### A double click on an event puts its place in the middle of the map (Oct 13)
+
+One click on a line of the Events panel, or on a marker over the seek bar,
+goes to the event's time and tries to show its place. It does not always
+end with the place in the middle of the map that shows:
+
+- **"Tank Centred" is on.** The view is not moved at all. The view follows
+  the tank, and an arrow at the edge of the view points to the place.
+- **The place is near the edge of the world.** The view stops at the map's
+  edge, so the place is off the middle. A view as big as the world (a large
+  window, zoomed out) does not move.
+- **A sidebar has "Make unused sidebar portions transparent" on.** The
+  middle is the middle of the part no sidebar is on, though the map also
+  shows under the clear part of that sidebar. That was a decision of the
+  option: it does not move the map.
+- **The event has no place.** Only the time changes.
+- **A highlight line.** The time is 5 seconds before the moment; the place
+  is put in the middle.
+- **A panel that floats over the map** is not counted.
+- **The browser build and the reel in the game** put the square in the
+  middle in whole squares, not to the pixel, and have no ring.
+
+The zoom is never changed by a click.
+
+A double click now does more. The first click does what one click does, at
+once: there is no wait to see if a second click comes. The second click
+goes to the same time, shows the ring, and puts the event's square in the
+exact middle of the map that shows. Only the edge of the world can hold it
+off the middle.
+
+Calls made:
+
+- **What a double click turns off.** "Tank Centred" is the one thing that
+  holds the overview's view. A double click turns it off, as the menu item
+  does, and it stays off: the view does not go back to the tank. The tick
+  in the menu and the saved preference change with it. The view of one
+  player (the eye in the HUD panel) does not move the map, so it stays on.
+  One click still leaves "Tank Centred" on and shows the arrow.
+- **The game view** (one player's own screen) has no Events panel and no
+  seek bar, so a double click cannot be made there. If it could, the camera
+  would stay on the followed tank.
+- **The map that shows.** It is the window less the menu bar and the solid
+  sidebars. A sidebar whose unused part is clear counts as map. When the
+  middle of that is under a panel of a clear sidebar, the middle of the
+  part no sidebar is on is used. So with a clear sidebar a double click and
+  one click put the place at two different points of the window. One click
+  was left as it was.
+- **A marker that stands for more than one event** goes to the first of
+  them, as one click does.
+- **An event with no place** only seeks, and "Tank Centred" is left as it
+  is.
+- **The second click is for the line the first one chose.** The first
+  click's jump can move the rows of the list (the "now" line, auto scroll).
+  The row under the mouse at the second click is not asked.
+- Ctrl and a double click is two Ctrl clicks, as before.
+- No text in the viewer tells the user what a click on an event does, so
+  no text was changed.
+
+The sum is `lvViewCentreScrollPx` in `src/logviewer/lv_event_flash.h`
+(`lvViewCentreScroll` for the middle of a square). It takes the visible part
+of the view as a start and a length, in points from the view's own start,
+and the zoom. `lv_screenCentrePxIn` in `screen.c` moves the view with it.
+`lvHostVisibleMap` in `logviewer.c` gives the visible part, and
+`lvDockClearOpenMargins` in `lv_dock_clear.h` what the solid sidebars take.
+`lv_windowCentreOnEvent` is the double click.
+
+Tests: `lv_view_centre_scroll` (each square of the map at seven zooms and
+five visible parts: the place is in the middle to a map pixel, or held by
+the map's edge on the right side of the middle), `lv_dock_clear_map` (what
+the solid sidebars take).
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the

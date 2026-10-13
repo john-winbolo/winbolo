@@ -266,7 +266,42 @@ void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
  * show the place, the ring is an arrow at the view's edge.
  * Any other line moves only the playhead and leaves the view where the user
  * put it. */
-void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team) {
+/* The part of the map's view no solid sidebar hides, each way: where it
+ * starts, in points from the view's own start on the screen, and how long
+ * it is. It is the window less the menu bar and the solid sidebars; a
+ * sidebar whose unused part is clear counts as map. When the middle of that
+ * is under a panel of a clear sidebar, the answer is the part no sidebar is
+ * on at all, clear or solid. */
+static void lvHostVisibleMap(float *startX, float *startY, float *lenX, float *lenY) {
+    LvDockMargins open = { 0, 0, 0, 0 };
+    LvDockMargins view = { 0, 0, 0, 0 };
+    int winW = 0, winH = 0;
+    int menuH = (int)lv_imgui_get_menu_bar_height();
+
+    SDL_GetWindowSize(g_lv->window, &winW, &winH);
+    /* Where the view starts on the screen. */
+    lv_imgui_dock_map_margins(&view.left, &view.top, &view.right, &view.bottom);
+    lv_imgui_dock_open_margins(&open.left, &open.top, &open.right, &open.bottom);
+    if (!lv_imgui_dock_point_on_map(
+            (float)open.left + (float)(winW - open.left - open.right) * 0.5f,
+            (float)(menuH + open.top) + (float)(winH - menuH - open.top - open.bottom) * 0.5f)) {
+        lv_imgui_dock_margins(&open.left, &open.top, &open.right, &open.bottom);
+    }
+    *startX = (float)(open.left - view.left);
+    *startY = (float)(open.top - view.top);
+    *lenX = (float)(winW - open.left - open.right);
+    *lenY = (float)(winH - menuH - open.top - open.bottom);
+    if (*startX < 0.0f) *startX = 0.0f;
+    if (*startY < 0.0f) *startY = 0.0f;
+    if (*lenX < 1.0f) *lenX = 1.0f;
+    if (*lenY < 1.0f) *lenY = 1.0f;
+}
+
+/* The jump of lv_windowSeekToEvent and of lv_windowCentreOnEvent. centre is
+ * the second one's: the place goes to the middle of the map that shows, and
+ * "Tank Centred" is not asked about (the caller has turned it off). */
+static void lvWindowJumpToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team,
+                                int centre) {
     unsigned char wasPlaying = g_lv->playIsPlaying;
     if (wasPlaying) {
         lv_windowPause();
@@ -274,7 +309,13 @@ void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team
     lv_clientMutexWaitFor();
     lv_drawDirtyScreen();
     lv_screenSeekToTimeMs(ms);
-    if (hasCell) {
+    if (hasCell && centre) {
+        float startX, startY, lenX, lenY;
+        lvHostVisibleMap(&startX, &startY, &lenX, &lenY);
+        lv_screenCentreCellIn(mapX, mapY, startX, startY, lenX, lenY, lv_drawGetZoomLevel());
+        /* After the seek: the ring is tied to the seek count as it is now. */
+        lv_drawEventFlashStart(mapX, mapY, team);
+    } else if (hasCell) {
         /* The part of the window the map shows in: the window less the menu
          * bar and the sidebars. The place goes to the middle of that, not of
          * the window. */
@@ -306,6 +347,32 @@ void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team
         lv_windowPlay();
     }
     g_lv->wantScreenUpdate = TRUE;
+}
+
+void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team) {
+    lvWindowJumpToEvent(ms, hasCell, mapX, mapY, team, 0);
+}
+
+/* A double click on a line of the Events panel or on a marker over the seek
+ * bar: the same jump, and the place goes to the middle of the map that shows
+ * (lvHostVisibleMap) whatever held the view. "Tank Centred" is the one thing
+ * that holds the overview, so it is turned off, as from the menu, and it
+ * stays off: nothing then takes the view back to the tank. The view of one
+ * player (the eye of the HUD panel) does not move the map and is left on.
+ *
+ * A line with no place only seeks, and in the game view the camera is the
+ * followed tank's: both are lv_windowSeekToEvent, with nothing turned off. */
+void lv_windowCentreOnEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team) {
+    if (!hasCell || lvFlashCameraFollowsTank(g_lv->gameView ? 1 : 0)) {
+        lv_windowSeekToEvent(ms, hasCell, mapX, mapY, team);
+        return;
+    }
+    if (lv_imgui_get_tank_centred()) {
+        lv_imgui_set_tank_centred(0);
+    }
+    /* A host that turned the flag on by another road. */
+    lv_screenTankCentred(0);
+    lvWindowJumpToEvent(ms, hasCell, mapX, mapY, team, 1);
 }
 
 void lv_windowFastForward(void) {

@@ -302,6 +302,12 @@ void lv_imgui_toggle_tank_centred(void) {
     lv_screenTankCentred(s_tank_centred ? 1 : 0);
 }
 
+/* Sets it, so the menu's tick and the screen's flag stay the same thing. */
+void lv_imgui_set_tank_centred(int on) {
+    s_tank_centred = on ? true : false;
+    lv_screenTankCentred(s_tank_centred ? 1 : 0);
+}
+
 /* No cached copy: screen.c holds the flag, and enabling it can move the
  * playhead, so the menu always reads the live value back. */
 void lv_imgui_toggle_hide_lobby(void) {

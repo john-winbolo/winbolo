@@ -63,6 +63,7 @@ int lv_imgui_get_mode_information(void);
 void lv_imgui_set_mode_information(int isInformation);
 int  lv_imgui_get_tank_centred(void);
 void lv_imgui_toggle_tank_centred(void);
+void lv_imgui_set_tank_centred(int on);
 void lv_imgui_toggle_hide_lobby(void);
 /* Whether the loaded recording declares any region, which is when the
    Regions item is enabled; and the item's flip, which repaints the map. */

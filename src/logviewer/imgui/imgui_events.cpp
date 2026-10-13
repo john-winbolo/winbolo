@@ -37,6 +37,7 @@ extern "C" {
     bool lv_screenSpecIsLiveMode(void);
     void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY);
     void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
+    void lv_windowCentreOnEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
     void lv_screenEventTeams(int *team, int *otherTeam);
     int lv_screenEventPing(void);
 }
@@ -87,6 +88,11 @@ static unsigned s_version = 1;
 
 /* Selection state for copy functionality */
 static int s_selected_index = -1;
+/* The line the last plain click jumped to, -1 for none. The second click of
+ * a double click is for this line: the first click's jump can move the rows
+ * of the list (the "now" line, auto scroll), so the row under the mouse at
+ * the second click need not be the one the user chose. */
+static int s_clicked_index = -1;
 static bool s_select_all = false;
 
 /* The kinds the filter shows, one bit a kind: the panel's own choice, apart
@@ -135,6 +141,7 @@ void lv_imgui_events_init(void) {
     s_auto_scroll = true;
     s_scroll_to_bottom = false;
     s_selected_index = -1;
+    s_clicked_index = -1;
     s_select_all = false;
     s_last_divider_row = -1;
     s_scroll_to_selected = false;
@@ -216,6 +223,7 @@ void lv_imgui_events_clear(void) {
     s_complete = false;
     s_version++;
     s_selected_index = -1;
+    s_clicked_index = -1;
     s_select_all = false;
     s_last_divider_row = -1;
 }
@@ -233,6 +241,7 @@ void lv_imgui_events_remove_after(unsigned int timeMs) {
     }
     if (s_selected_index >= (int)s_events.size()) {
         s_selected_index = -1;
+        s_clicked_index = -1;
         s_select_all = false;
     }
 }
@@ -251,6 +260,7 @@ void lv_imgui_events_set_complete(void) {
     s_complete = true;
     s_version++;
     s_selected_index = -1;
+    s_clicked_index = -1;
     s_select_all = false;
     s_scroll_to_bottom = false;
     s_last_divider_row = -1;
@@ -443,6 +453,7 @@ static void draw_filter_combo(void) {
             s_scroll_to_selected = true;
         } else {
             s_selected_index = -1;
+            s_clicked_index = -1;
         }
     }
 }
@@ -546,6 +557,7 @@ void lv_imgui_events_window(void) {
          * posts them again, under the loop that is drawing them. */
         bool     jump          = false;
         bool     jumpHighlight = false;
+        bool     jumpCentre    = false; /* the second click of a double click */
         bool     jumpHasCell   = false;
         uint32_t jumpMs        = 0;
         int      jumpX         = 0;
@@ -682,27 +694,40 @@ void lv_imgui_events_window(void) {
                         } else {
                             s_selected_index = i;
                         }
+                        s_clicked_index = -1;
                     } else {
-                        s_selected_index = i;
+                        /* The second click of a double click is for the line
+                         * the first one chose, and puts its place in the
+                         * middle of the map that shows. The first click has
+                         * done the plain jump already: there is no wait. */
+                        const bool twice =
+                            ImGui::GetIO().MouseClickedLastCount[ImGuiMouseButton_Left] >= 2 &&
+                            s_clicked_index >= 0 && s_clicked_index < (int)s_events.size();
+                        const int target = twice ? s_clicked_index : i;
+                        const LogEvent &tev = s_events[target];
+                        s_selected_index = target;
+                        s_clicked_index = target;
                         s_select_all = false;
-                        if (ev.seekable) {
+                        if (tev.seekable) {
                             /* A plain click on a highlight clip jumps the
                              * scrubber to a few seconds before the moment and
                              * centres the map on it. */
                             jump          = true;
                             jumpHighlight = true;
-                            jumpMs        = ev.seekMs > 5000u ? ev.seekMs - 5000u : 0u;
-                            jumpX         = ev.mapX;
-                            jumpY         = ev.mapY;
-                        } else if (ev.showTime && linesSeek) {
+                            jumpCentre    = twice;
+                            jumpMs        = tev.seekMs > 5000u ? tev.seekMs - 5000u : 0u;
+                            jumpX         = tev.mapX;
+                            jumpY         = tev.mapY;
+                        } else if (tev.showTime && linesSeek) {
                             /* Any other timed line jumps to its own moment,
                              * and to its place when it has one. */
                             jump        = true;
-                            jumpMs      = ev.timeMs;
-                            jumpHasCell = ev.hasCell;
-                            jumpX       = ev.mapX;
-                            jumpY       = ev.mapY;
-                            jumpTeam    = ev.team;
+                            jumpCentre  = twice;
+                            jumpMs      = tev.timeMs;
+                            jumpHasCell = tev.hasCell;
+                            jumpX       = tev.mapX;
+                            jumpY       = tev.mapY;
+                            jumpTeam    = tev.team;
                         }
                     }
                 }
@@ -776,7 +801,11 @@ void lv_imgui_events_window(void) {
         }
 
         if (jump) {
-            if (jumpHighlight) {
+            if (jumpCentre) {
+                /* A highlight always has a place and names no team. */
+                lv_windowCentreOnEvent(jumpMs, (jumpHighlight || jumpHasCell) ? 1 : 0, jumpX,
+                                       jumpY, jumpHighlight ? -1 : jumpTeam);
+            } else if (jumpHighlight) {
                 lv_windowSeekToHighlight(jumpMs, jumpX, jumpY);
             } else {
                 lv_windowSeekToEvent(jumpMs, jumpHasCell ? 1 : 0, jumpX, jumpY, jumpTeam);

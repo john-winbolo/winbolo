@@ -2328,6 +2328,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_event_flash_sums",                             run_lv_event_flash_sums                             },
     { "lv_event_flash_arrow",                            run_lv_event_flash_arrow                            },
     { "lv_event_centre_scroll",                          run_lv_event_centre_scroll                          },
+    { "lv_view_centre_scroll",                           run_lv_view_centre_scroll                           },
     { "lv_event_jump_keeps_place_in_view",               run_lv_event_jump_keeps_place_in_view               },
     { "lv_event_seek_exact",                             run_lv_event_seek_exact                             },
     { "lv_builder_status_sums",                          run_lv_builder_status_sums                          },

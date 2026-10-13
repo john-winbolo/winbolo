@@ -668,6 +668,22 @@ void lv_imgui_dock_map_margins(int *left, int *top, int *right, int *bottom) {
     if (bottom) *bottom = m.bottom;
 }
 
+void lv_imgui_dock_open_margins(int *left, int *top, int *right, int *bottom) {
+    LvDockMargins m = { 0, 0, 0, 0 };
+    if (any_active()) {
+        int clear[LV_DOCK_SIDES];
+        for (int i = 0; i < LV_DOCK_SIDES; i++) {
+            clear[i] = (s_side[i].active && s_clear[i]) ? 1 : 0;
+        }
+        m = current_margins(nullptr, nullptr);
+        m = lvDockClearOpenMargins(&m, clear);
+    }
+    if (left)   *left = m.left;
+    if (top)    *top = m.top;
+    if (right)  *right = m.right;
+    if (bottom) *bottom = m.bottom;
+}
+
 int lv_imgui_dock_point_on_map(float px, float py) {
     int w = 0, areaH = 0, h = 0;
     int clear[LV_DOCK_SIDES];

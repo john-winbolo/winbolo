@@ -6181,6 +6181,44 @@ int lv_screenShowCell(int mapX, int mapY, float viewPtsW, float viewPtsH, float 
   return 1;
 }
 
+/* Put a map pixel (zoom 1, TILE_SIZE to a square) in the middle of a part of
+ * the view, to the pixel (lvViewCentreScrollPx). The part is given from the
+ * view's own start, in points: where it starts and how long it is, each way.
+ * zoom is the map's zoom. Near an edge of the map the place goes as near the
+ * middle as the map allows.
+ *
+ * Unlike lv_screenShowCell this does not ask about "Tank Centred": the caller
+ * has turned it off, or the view is about to follow the tank again. In the
+ * game view the camera is the followed tank's and nothing moves. Returns 1
+ * when the view was placed. */
+int lv_screenCentrePxIn(float mapPxX, float mapPxY, float startPtX, float startPtY,
+                        float lenPtX, float lenPtY, float zoom) {
+  int maxOffX, maxOffY;
+
+  if (g_lv == NULL || g_lv->logLoaded == FALSE) {
+    return 0;
+  }
+  if (lvFlashCameraFollowsTank(g_lv->gameView ? 1 : 0)) {
+    return 0;
+  }
+  /* The same limits lv_screenPanToTotalPixels keeps. */
+  maxOffX = 255 - lv_screenGetSizeX(); if (maxOffX < 0) maxOffX = 0;
+  maxOffY = 255 - lv_screenGetSizeY(); if (maxOffY < 0) maxOffY = 0;
+  lv_screenPanToTotalPixels(
+      lvViewCentreScrollPx(mapPxX, startPtX, lenPtX, zoom, maxOffX * TILE_SIZE_X),
+      lvViewCentreScrollPx(mapPxY, startPtY, lenPtY, zoom, maxOffY * TILE_SIZE_Y));
+  g_lv->wantScreenUpdate = TRUE;
+  return 1;
+}
+
+/* The same for the middle of a map cell. */
+int lv_screenCentreCellIn(int mapX, int mapY, float startPtX, float startPtY,
+                          float lenPtX, float lenPtY, float zoom) {
+  return lv_screenCentrePxIn(((float)mapX + 0.5f) * (float)TILE_SIZE_X,
+                             ((float)mapY + 0.5f) * (float)TILE_SIZE_Y,
+                             startPtX, startPtY, lenPtX, lenPtY, zoom);
+}
+
 /* Counts the seeks: every request to move playback other than by playing.
  * What is tied to one jump (the ring round an event's place) keeps the count
  * it started at and ends when the count has moved on. */

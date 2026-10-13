@@ -96,6 +96,12 @@ void lv_imgui_dock_margins(int *left, int *top, int *right, int *bottom);
  * VISIBLE map still uses lv_imgui_dock_margins. Any pointer may be NULL. */
 void lv_imgui_dock_map_margins(int *left, int *top, int *right, int *bottom);
 
+/* What the solid sidebars take: the same as lv_imgui_dock_margins but with 0
+ * for a sidebar whose unused part is clear. The window less these is the
+ * map a double click on an event, and the first view of a log, put a place
+ * in the middle of. Any pointer may be NULL. */
+void lv_imgui_dock_open_margins(int *left, int *top, int *right, int *bottom);
+
 /* True when the window point is on the map: not on the menu bar, not on a
  * solid sidebar and not on the panels of a clear one. The clear part of a
  * sidebar is map. */

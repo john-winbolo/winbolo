@@ -166,6 +166,40 @@ static inline int lvFlashCentreScroll(int cell, float viewMapPx, int tilePx, int
     return px;
 }
 
+/* The same for any part of the view, and for a map pixel that need not be the
+   middle of a square. The view is the rectangle of map the viewer draws; it
+   starts at a point of the window, and part of it can be under a solid
+   sidebar. The answer is the map pixel at the view's left or top edge that
+   puts mapPx in the middle of the visible part.
+
+   mapPx: the place, in map pixels at zoom 1. visStartPt: where the visible
+   part starts, in points from the view's own start (0 when nothing covers
+   the view's start). visLenPt: the length of the visible part, in points.
+   zoom: the map's zoom, points to a map pixel. maxPx: the furthest the view
+   may go; the answer is held to 0..maxPx, so near an edge of the map the
+   place is as near the middle as the map allows. */
+static inline int lvViewCentreScrollPx(float mapPx, float visStartPt, float visLenPt,
+                                       float zoom, int maxPx) {
+    float want;
+    int px;
+    if (zoom <= 0.0f) zoom = 1.0f;
+    if (visStartPt < 0.0f) visStartPt = 0.0f;
+    if (visLenPt < 0.0f) visLenPt = 0.0f;
+    if (maxPx < 0) maxPx = 0;
+    want = mapPx - (visStartPt + visLenPt * 0.5f) / zoom;
+    if (want <= 0.0f) return 0;
+    px = (int)(want + 0.5f);
+    if (px > maxPx) px = maxPx;
+    return px;
+}
+
+/* The same for the middle of a map square. */
+static inline int lvViewCentreScroll(int cell, float visStartPt, float visLenPt,
+                                     float zoom, int tilePx, int maxPx) {
+    return lvViewCentreScrollPx(((float)cell + 0.5f) * (float)tilePx, visStartPt, visLenPt,
+                                zoom, maxPx);
+}
+
 #ifdef __cplusplus
 }
 #endif
