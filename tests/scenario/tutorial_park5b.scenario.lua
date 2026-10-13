@@ -55,16 +55,16 @@ function on_pill_killed(n, by, scripted)
   end
 end
 
--- The rebuild announcement: the only time the blocker may gain armour.
-local real_announce = game.announce
-game.announce = function(text, ...)
+-- The rebuild's log line: the only time the blocker may gain armour.
+local real_log = game.log
+game.log = function(text, ...)
   local A = ARENA
   if A.phase >= 3 and type(text) == "string" and
      string.find(text, "automatically rebuilt", 1, true) then
     A.rebuilds[A.phase] = A.rebuilds[A.phase] + 1
     A.rebuilt_tick = game.tick()
   end
-  return real_announce(text, ...)
+  return real_log(text, ...)
 end
 
 local function hold_on_park()

@@ -787,6 +787,9 @@ and how to undo it.
   your friendly blocking pillbox has been automatically rebuilt." The
   once-a-second re-arm rebuilds it after 3 seconds as a fallback. The
   `tutorial_rebuild5b` arena measured 2.00 s.
+  **Oct 13:** the announcement is gone (Andrew: "let's just get rid of
+  that part"). The rebuild itself stays and is silent; the script writes a
+  log line that `tutorial_park5b` counts.
 - **5B target back (item 11, 2026-10-10):** 5 seconds after the player
   picks up the enemy pillbox it is put back, owned by the Station 6 bot's
   seat, at full armour, with "The enemy pillbox is back. Take it again, or
