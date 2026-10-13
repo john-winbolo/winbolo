@@ -372,6 +372,36 @@ static void hud_grid(int grid, const LvHudSlot *slots, bool perspective,
     imguiPopNearestSamplingOn(dl);
 }
 
+/* A small eye, the height of a line of text and in the colour of the text:
+ * the outline of an eye (two arcs that meet in a point at each side) and a
+ * filled pupil. It stands for the words "View of" in the line above the
+ * grids. No icon of an eye ships with the game, and a font for one glyph is
+ * a lot to load, so it is drawn. It takes its room as an item of the window,
+ * so the name follows it with SameLine. */
+static void hud_eye_icon(void) {
+    const float h = ImGui::GetTextLineHeight();
+    const float w = floorf(h * 1.35f);
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+    const float cx = p.x + w * 0.5f;
+    const float cy = p.y + h * 0.5f;
+    const float half = w * 0.5f - 1.0f;      /* half the width of the eye */
+    const float lift = h * 0.50f;            /* how far the lids bow out  */
+    const float thick = (h >= 18.0f) ? 1.5f : 1.0f;
+
+    /* Each lid is one curve from corner to corner; with the control points
+     * this far out the lid is about a third of the line high at the middle. */
+    ImVec2 left(cx - half, cy), right(cx + half, cy);
+    dl->AddBezierCubic(left, ImVec2(cx - half * 0.45f, cy - lift),
+                       ImVec2(cx + half * 0.45f, cy - lift), right, col, thick);
+    dl->AddBezierCubic(left, ImVec2(cx - half * 0.45f, cy + lift),
+                       ImVec2(cx + half * 0.45f, cy + lift), right, col, thick);
+    dl->AddCircleFilled(ImVec2(cx, cy), h * 0.17f, col);
+
+    ImGui::Dummy(ImVec2(w, h));
+}
+
 void lv_imgui_hud_window(void) {
     if (!lv_g_show_hud_window) {
         return;
@@ -458,7 +488,16 @@ void lv_imgui_hud_window(void) {
                 }
                 imguiHandOnHover();
                 ImGui::SameLine();
-                ImGui::TextUnformatted(langGetTextFmt(STR_LV_HUD_VIEW_AS, &args));
+                /* An eye, then the name: "the view of this player". The
+                 * words are kept for the tooltip. */
+                ImGui::BeginGroup();
+                hud_eye_icon();
+                ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+                ImGui::TextUnformatted(snap.viewerName);
+                ImGui::EndGroup();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+                    ImGui::SetTooltip("%s", langGetTextFmt(STR_LV_HUD_VIEW_AS, &args));
+                }
             } else {
                 ImGui::TextDisabled("%s", langGetText(STR_LV_HUD_ALL_TEAMS));
             }
