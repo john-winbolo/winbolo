@@ -891,3 +891,202 @@ so their fire is for the demo bot alone. With only the player in range the
 - Pillboxes aim at tanks only, never at a builder, so the rule needs no
   builder half.
 - Test: `tests/scenario/tutorial_5a_no_target.scenario.lua`.
+
+## Oct 13 review round 1
+
+A code review of the branch gave seven findings and asked for a read of the
+arena tests. Andrew was away, so each call below was made without him. What
+is left for him to decide is at the end of each item.
+
+### 1. The reset arena tested a rule that is gone
+
+`tests/scenario/tutorial_reset.scenario.lua` knocked the 4B pillbox to 3
+armour and expected the script to put it back to 2. The script has not
+repaired that pillbox since Oct 11, so the arena was red ("damaged pill not
+home at 1 armour").
+
+*Done:* the arena now sets the pillbox to 1 armour on its own square and
+expects 1 armour after the re-arm. Then it moves the pillbox off its square
+and expects it home at the armour it starts with (2). Both halves can fail:
+a script that repairs fails the first, a script that does not send the
+pillbox home fails the second. The script was not changed.
+
+### 2. `SCN_CALLBACKS_MAX` was exactly full
+
+The catalogue has 26 hooks and 14 policies, 40 in all, and the array held 40.
+
+*Done:* `SCN_CALLBACKS_MAX` is 48 (`src/scenario_io/scenario_manifest.h`),
+the value the integration checkout already has. Nothing else was changed.
+No test and no static assert pins 40; the one static assert
+(`scenario_host.c`) only asks that the catalogue fits.
+
+*Note:* the count was never the real limit. A block is cut by its packed
+size, `SCN_CALLBACKS_BLOB_MAX`, 2048 bytes
+(`src/bolo/public/scenario_callbacks.h`). A row costs 3 bytes plus its name
+and its sentence, so 48 rows of about 80 letters come to more than 4000
+bytes and do not fit. That case is handled as it was: the rows past 2048
+bytes are dropped and the console says how many, from which name on. The
+tutorial's own block is 22 rows and 1936 bytes.
+
+*For Andrew:* if a script is ever meant to describe all 40 or more
+functions, the 2048 has to go up, and that is a wire size. Not changed here.
+
+### 3. The 5A ring rebuild ignored a refused write
+
+The review said `LAYOUT.walls5a` has 278 squares and `moat5a` 174, more than
+a frame's 256 writes. That count was of numbers, not of squares: each square
+is a pair. The rings are 104 wall squares and 52 moat squares, 156 in all,
+so the comment ("156 squares at most") was right. The most this file writes
+in the frame of a rebuild is 234.
+
+The other half of the finding is right: `rebuild_5a_rings` did not look at
+what `game.set_tile` answered. The 256 is shared with every other write in
+the frame, a mod's too, and a refused square stayed broken until the next 5A
+reset, 150 seconds later.
+
+*Done:* the pass stops at the first write refused for the count
+(`SCN_OP_RATE`) and sets `S.rings5a_again`. `on_tick` runs the pass again at
+the start of the next frame, before anything else writes. Squares already
+back are skipped, so it goes on from where it stopped. The comment now says
+where 156 comes from. Other refusals (a square off the map) are not tried
+again, so a bad square cannot keep the pass running for ever.
+
+*Test:* `tutorial_watch5a` breaks all 156 squares, spends 200 of the next
+frame's writes, runs the rebuild, and checks that it was cut short and that
+every square is back three frames later. With the `on_tick` line taken out
+the arena fails.
+
+### 4. A second player was never set up
+
+`S.player` was set once and never cleared. The scenario allows one person,
+so a second person can only join after the first has left; that person got
+no popups, no checklist and no checkpoints.
+
+*Done:* the script now has `on_player_leave`. When the player's seat leaves:
+
+- the seat is forgotten, so the next person to join is adopted;
+- what was kept for that screen and tank is dropped: popups shown and
+  waiting, white lines waiting, the panel, markers and status line last
+  sent, the carrier notes for his seat, the hide timer;
+- the 5A demo bot comes off the field until a player is in Station 5 again.
+
+*What the next player starts with (decided here):* he takes the round as it
+stands. The furthest station reached, the stations entered and every goal
+ticked are kept, because the map was not put back and a goal that is done on
+the map cannot be done again. He comes to life at the checkpoint of the
+furthest station reached, with that station's tank. The popups start again
+from nothing, so he is shown the one for the station he is in and the goal
+it is at. He is not shown the earlier stations' popups. *Undo:* to start a
+new player from Station 1, clear `S.reached`, `S.entered`, `S.done` and
+`S.passed` in `on_player_leave` and call `hand_out()` for every adoption;
+the walls, roads and trees of the stations would also need putting back,
+which nothing does today.
+
+*Bases and pillboxes:* the server gives a leaving player's bases and
+pillboxes to an ally on the field (only the 5A demo bot can be one) or to
+nobody, and it does so before `on_player_leave` runs. So the script notes
+once a second what the player owns (`S.owned`), and the next player is given
+each of those that nobody, or the 5A bot, holds now. One taken in the last
+second before leaving can be missed; the once-a-second re-arm puts back what
+the current goal needs anyway.
+
+*The demo bots are never adopted:* `is_player_seat` refuses a bot seat, as
+before.
+
+*The Station 6 bot's token:* its `peace` token named the player's seat and
+is fixed when the bot is fielded. It now lists every seat that is not one of
+the three tutorial bots, so the bot also spares a player on a new seat. The
+seats it adds are empty in a normal game, so nothing else changes.
+
+*The callbacks block:* a line for `on_player_leave` was added. The `can_die`
+line still said the Station 4 pillbox cannot be killed before the hide; that
+rule went on Oct 11, so the line now says only what `can_die` does. A stale
+comment in `pill_start` that said the same was corrected. The unit test
+`scenario_details_fetch_tutorial` pins the block's row count; it is 22 now.
+
+*Test:* `tutorial_rejoin` (new). A first player reaches Station 4 and ticks
+a goal; it is taken out; a second player joins on another seat. The arena
+checks that the second seat is the player, that the checkpoint and the tick
+are kept, that his tank comes to life in Station 4, that he owns what the
+first owned, and that a popup and the panel went to him and nothing to the
+empty seat. It fails with the hand-back taken out and with the hook taken
+out.
+
+*Not tested:* `move_bot_seat`. When the lobby holds no bot seats the script
+puts empty seats by for its bots, and a person who joins later could be
+given one of them. The bot is then moved to another empty seat. The gate's
+lobby always holds the bot seats, so no arena reaches this.
+
+*For Andrew:* (a) keep progress, or start a new player from Station 1?
+(b) the same person joining again on his old seat is treated as a new
+player: the popup for his station shows again.
+
+### 5. `can_target` costs a lookup with any scenario attached
+
+Read, not changed. `can_target` is built exactly as `can_hit`, `can_die` and
+every other policy: take the lock, then for each script look the function up
+by name (`scnPolicyBegin`). There is no table or mask that says which script
+defines which policy, and `scenario_lua.h` says why: "A policy is looked up
+by name at each call rather than resolved once", because a script may define
+a function after it has loaded. A table taken when the scenario attaches
+would be wrong for such a script. The brief said not to invent a mechanism
+if `can_hit` has none, so none was added.
+
+The cost is also smaller than the finding says. The pillbox update asks
+`can_target` only for a tank that is connected, not allied, alive, seen, in
+the pillbox's range, and nearer than the best found so far (or held back by
+the shell cap). It does not ask for every tank and every pillbox each tick.
+
+*For Andrew:* if this ever shows up in a profile, the fix is one mechanism
+for all policies (for example a per-script table refreshed when a global is
+set), not a special case for `can_target`.
+
+### 6 and 7. Engine changes that reach every scenario
+
+Not changed. Both were read and checked against the shipped scripts; the
+wording for the pull request is in the hand-over report.
+
+- **6, a scripted tile write clears wall damage.** No shipped script depends
+  on the old behaviour. Only the tutorial reads `game.wall_shots`. Survival
+  is the only other shipped script that writes squares, and it writes
+  forest, river and road, never a wall. Joust, Soccer and the six mods write
+  no squares.
+- **7, announcements stack.** On main every new line replaced the one
+  before it, so no shipped line is lost that was shown before. What changes:
+  Joust's kill lines and Virus's "is infected" lines now stay up for their
+  own time when another follows, up to four lines. Two lines that differ
+  only in numbers still replace each other; that is right for the countdowns
+  (Virus, Pillbox Tag, Rule Roulette) and the Soccer score. It also holds
+  for two players whose names differ only in a number ("Bot 1", "Bot 2"):
+  their lines replace each other as they did on main and do not stack.
+  `game.announce("")` still clears every line on that screen, another
+  script's too.
+
+*For Andrew:* whether names that differ only in a number should stack. It
+would need the script, not the client, to say which lines are one counter.
+
+### The arena scripts
+
+All twenty `tutorial_*` arenas and `tools/make_tutorial_map.py` were read
+against the current script.
+
+- Fixed: `tutorial_reset` (item 1). `tests/scenario/README.md` said eight
+  tutorial arenas and 149 maps; there are twenty and 161.
+- `tutorial_popup_announce` passes for the right reason (the popup and
+  "Station 2 done" go out in one tick). One clause in it,
+  `type(POP.s2b) == "function"`, can never be true; it is harmless and was
+  left. The arena does not reach the case where the white line waits behind
+  a popup queued by the same goal; `tutorial_popup_first` covers that.
+- `tutorial_bot7_region` and `tutorial_bot7_stay` have a "never fielded"
+  message that cannot fire as written (it tests the seat, which is set at
+  the start). The arenas still fail when the bot is not seen, on their last
+  check.
+- `tutorial_take5a_soak` replaces `on_tank_killed` without calling the
+  script's; the script has none today. If it gets one, the arena must call
+  it.
+- Several arenas give no verdict when a step never happens; the gate then
+  fails them at the tick limit, so they can still fail.
+- `tools/make_tutorial_map.py` writes the map and the LAYOUT block and has
+  no tests of its own. It does not copy the map into `tests/scenario/maps`;
+  the twenty copies there are the same file as `data/maps/Tutorial.map`
+  today and must be copied again by hand after the map changes.
