@@ -42,6 +42,7 @@ extern "C" {
     bool lv_screenHasServerTick(void);
     bool lv_screenSpecIsLiveMode(void);
     unsigned char lv_screenTeamColour(int team);
+    void lv_drawTeamPanelColour(int palette, float *r, float *g, float *b);
     void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY);
     void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
     void lv_windowCentreOnEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
@@ -149,14 +150,12 @@ static bool overlay_kind_is_owned_shape(int kind) {
            kind == LV_EVK_BASE_CAPTURED || kind == LV_EVK_BASE_STOLEN;
 }
 
-/* The colour of a team, as the HUD panel draws it: lifted where it would be
- * too dark to see on the panel, and a red team orange. */
+/* The colour of a team, as every panel draws it: the one the Team Colours
+ * dialog has for it, lifted where it would be too dark to see on the panel. */
 static ImVec4 overlay_team_colour(int team) {
-    SDL_FColor c = mapColourTeam(lv_screenTeamColour(team));
-    if (!lvHudRedToOrange(&c.r, &c.g, &c.b)) {
-        lvHudReadableColour(&c.r, &c.g, &c.b);
-    }
-    return ImVec4(c.r, c.g, c.b, 1.0f);
+    float r = 0.0f, g = 0.0f, b = 0.0f;
+    lv_drawTeamPanelColour(lv_screenTeamColour(team), &r, &g, &b);
+    return ImVec4(r, g, b, 1.0f);
 }
 
 static ImU32 overlay_u32(ImVec4 c, float alpha) {

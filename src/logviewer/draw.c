@@ -46,6 +46,7 @@
 #include "lv_dock_fit.h"
 #include "lv_hud.h"
 #include "lv_team_sprite.h"
+#include "lv_team_colour.h"
 #include "lv_tank_bars.h"
 #include "lv_tank_pick.h"
 #include "lv_event_flash.h"
@@ -815,95 +816,44 @@ static void buildHudShapes(SDL_Renderer *renderer, SDL_Surface *sheet) {
     }
 }
 
-/* The three team sheets all have the orange row (lv_team_sprite.h). */
-static bool s_teamOrangeRow = false;
-
-/* Load a team sheet (tanks.bmp, boats.bmp, items.bmp) with one row more than
- * the file has: the red row again in orange, for a team whose colour is the
- * red (lv_team_sprite.h says why). The rows of a sheet differ in one flat
- * colour, so changing that colour in a copy of a row is all it takes; the
- * pixels the key made transparent go through the same change, because the
- * edge bleed has put the red of the pixels beside them into them.
- *
- * If the taller sheet cannot be made the file's own rows are used, and
- * *hasOrange says so. Returns NULL only when the file itself did not load. */
-static SDL_Texture *lvLoadTeamSheet(SDL_Renderer *renderer, const char *path,
-                                    bool *hasOrange) {
-    SDL_Surface *sheet = sdlLoadBmpSheetSurface(path, TILE_SIZE_X, TILE_SIZE_Y);
-    SDL_Surface *tall = NULL;
-    SDL_Texture *texture;
-
-    *hasOrange = false;
-    if (!sheet) return NULL;
-
-    if (sheet->format == SDL_PIXELFORMAT_RGBA32 &&
-        sheet->h >= LV_TEAM_SHEET_ROWS * TILE_SIZE_Y) {
-        tall = SDL_CreateSurface(sheet->w, (LV_TEAM_SHEET_ROWS + 1) * TILE_SIZE_Y,
-                                 SDL_PIXELFORMAT_RGBA32);
-    }
-    if (tall) {
-        const size_t rowBytes = (size_t)sheet->w * 4;
-        for (int y = 0; y < tall->h; y++) {
-            /* The rows of the file as they are, then the red row once more. */
-            int from = (y < LV_TEAM_SHEET_ROWS * TILE_SIZE_Y)
-                           ? y
-                           : LV_TEAM_PALETTE_RED * TILE_SIZE_Y +
-                                 (y - LV_TEAM_SHEET_ROW_ORANGE * TILE_SIZE_Y);
-            unsigned char *dst = (unsigned char *)tall->pixels + (size_t)y * (size_t)tall->pitch;
-            memcpy(dst, (const unsigned char *)sheet->pixels + (size_t)from * (size_t)sheet->pitch,
-                   rowBytes);
-            if (from != y) {
-                for (int x = 0; x < tall->w; x++) {
-                    lvTeamRedPixelToOrange(&dst[x * 4], &dst[x * 4 + 1], &dst[x * 4 + 2]);
-                }
-            }
-        }
-        *hasOrange = true;
-    }
-
-    texture = SDL_CreateTextureFromSurface(renderer, tall ? tall : sheet);
-    if (tall) SDL_DestroySurface(tall);
-    SDL_DestroySurface(sheet);
-    if (!texture) {
-        *hasOrange = false;
-        return NULL;
-    }
-    /* As sdlLoadBmpSheetAsTexture leaves a sheet. */
-    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
-    return texture;
-}
-
-/* Load tanks.bmp, boats.bmp and items.bmp out of the data directory. */
+/* Load tanks.bmp, boats.bmp and items.bmp out of the data directory: the
+   sheets with a row for each entry of the team palette. */
 static void lvLoadTeamSheets(SDL_Renderer *renderer) {
     const char *basePath = SDL_GetBasePath();
     char bmpPath[1024];
-    bool tanks = false, boats = false, items = false;
 
     if (!basePath) basePath = "./";
     SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tanks.bmp", basePath);
-    textureTanks = lvLoadTeamSheet(renderer, bmpPath, &tanks);
+    textureTanks = sdlLoadBmpSheetAsTexture(renderer, bmpPath, TILE_SIZE_X, TILE_SIZE_Y);
     SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/boats.bmp", basePath);
-    textureBoats = lvLoadTeamSheet(renderer, bmpPath, &boats);
+    textureBoats = sdlLoadBmpSheetAsTexture(renderer, bmpPath, TILE_SIZE_X, TILE_SIZE_Y);
     SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/items.bmp", basePath);
-    textureItems = lvLoadTeamSheet(renderer, bmpPath, &items);
-    /* All three or none, so a team's tank and its pillboxes cannot end up in
-       two different oranges. */
-    s_teamOrangeRow = tanks && boats && items;
+    textureItems = sdlLoadBmpSheetAsTexture(renderer, bmpPath, TILE_SIZE_X, TILE_SIZE_Y);
 }
 
-/* The row of a team sheet a team with this palette entry is drawn from. */
-static int lvDrawTeamRow(int palette) {
-    return lvTeamSheetRowHave(lvTeamSheetRow(palette), s_teamOrangeRow);
+/* The row of a team sheet a team is drawn from: the row of the colour the
+   Team Colours dialog has for the team (lv_screenTeamColour). */
+static int lvDrawTeamRow(int team) {
+    return lvTeamSheetRow(lv_screenTeamColour(team));
 }
 
-/* The flat colour of a team with this palette entry, for the shapes of the
-   simplified view: the palette's, and orange for a red one, as its sprites
-   are. */
-static SDL_FColor lvDrawTeamColour(int palette) {
+/* The flat colour of a team, for the shapes of the simplified view: the
+   colour its sprites are in. */
+static SDL_FColor lvDrawTeamColour(int team) {
+    return mapColourTeam(lv_screenTeamColour(team));
+}
+
+/* The colour a panel draws a team in. palette is the team's entry
+   (lv_screenTeamColour, or the colour field of a panel's snapshot). It is the
+   colour of the map, made lighter where it would be too dark to see on a
+   dark panel (lvHudReadableColour); the hue stays. The HUD, Overview and
+   Tank panels, the event markers and the ring of an event all use it. */
+void lv_drawTeamPanelColour(int palette, float *r, float *g, float *b) {
     SDL_FColor c = mapColourTeam(palette);
-    lvHudRedToOrange(&c.r, &c.g, &c.b);
-    return c;
+    lvHudReadableColour(&c.r, &c.g, &c.b);
+    *r = c.r;
+    *g = c.g;
+    *b = c.b;
 }
 
 /* Build the unified tile atlas (SVG/PNG/BMP combined sheet) at scale 1.
@@ -954,8 +904,8 @@ BYTE lv_drawSetupWithHandles(SDL_Window *window, SDL_Renderer *renderer) {
     /* Tile background uses the unified atlas (SVG/PNG with skin.bmp
      * fallback) shared with the game and map editor. Tank, boat, and
      * pill/base sprites stay on their own BMPs because they use the
-     * 17-row team-colour palette indexed via lv->tc[], which the
-     * unified atlas does not provide (lvLoadTeamSheets adds a row). */
+     * 17-row team-colour palette (lv_team_colour.h), which the unified
+     * atlas does not provide. */
     textureTiles = buildTileAtlas(sdlRenderer);
     lvLoadTeamSheets(sdlRenderer);
 
@@ -1414,8 +1364,7 @@ static void lvDrawMapItem(LvMapItemSprite s, int x, int y, BYTE zoomFactor) {
             zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y,
             zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
     } else {
-        int row = lvTeamSheetRowHave(s.row, s_teamOrangeRow);
-        drawRenderTexture(textureItems, s.col * zoomFactor * TILE_SIZE_X, row * zoomFactor * TILE_SIZE_Y,
+        drawRenderTexture(textureItems, s.col * zoomFactor * TILE_SIZE_X, s.row * zoomFactor * TILE_SIZE_Y,
             zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y,
             zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
     }
@@ -1433,7 +1382,7 @@ bool lv_drawItemPicture(int isBase, int team, SDL_Texture **tex, float *sx, floa
                         float *sw, float *sh) {
     LogViewerState *lv = lv_screenGetState();
     bool hasTeam = (lv != NULL && team >= 0 && team < NEUTRAL_TEAM);
-    LvMapItemSprite s = lvPanelItemSprite(isBase != 0, hasTeam, hasTeam ? lv->tc[team] : 0);
+    LvMapItemSprite s = lvPanelItemSprite(isBase != 0, hasTeam, hasTeam ? lv_screenTeamColour(team) : 0);
 
     *sw = (float)TILE_SIZE_X;
     *sh = (float)TILE_SIZE_Y;
@@ -1444,7 +1393,7 @@ bool lv_drawItemPicture(int isBase, int team, SDL_Texture **tex, float *sx, floa
     } else {
         *tex = textureItems;
         *sx = (float)(s.col * TILE_SIZE_X);
-        *sy = (float)(lvTeamSheetRowHave(s.row, s_teamOrangeRow) * TILE_SIZE_Y);
+        *sy = (float)(s.row * TILE_SIZE_Y);
     }
     return *tex != NULL;
 }
@@ -1590,7 +1539,7 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                                      : lv_screenGetPillTeam(x, y, &pillHealth);
                     }
                     if (teamColours && itc != NEUTRAL_TEAM) {
-                        itemHits[itemHitCount].colour = lvDrawTeamColour(lv->tc[itc]);
+                        itemHits[itemHitCount].colour = lvDrawTeamColour(itc);
                     } else if (teamColours) {
                         itemHits[itemHitCount].colour = isBase ? mapColourMarkerNeutral()
                                                                : mapColourMarkerEvil();
@@ -1611,11 +1560,11 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                 /* In its team's colour; a neutral one as the game draws it
                    (lv_team_sprite.h). */
                 itc = lv_screenGetPillTeam(x, y, &pillHealth);
-                lvDrawMapItem(lvMapPillSprite(itc == NEUTRAL_TEAM, pillHealth, lv->tc[itc]),
+                lvDrawMapItem(lvMapPillSprite(itc == NEUTRAL_TEAM, pillHealth, lv_screenTeamColour(itc)),
                               x, y, zoomFactor);
             } else if (isBase && teamColours) {
                 itc = lv_screenGetBaseTeam(x, y);
-                lvDrawMapItem(lvMapBaseSprite(itc == NEUTRAL_TEAM, lv->tc[itc]),
+                lvDrawMapItem(lvMapBaseSprite(itc == NEUTRAL_TEAM, lv_screenTeamColour(itc)),
                               x, y, zoomFactor);
             } else {
                 outputX = mapViewPosX[pos];
@@ -1748,9 +1697,9 @@ void lv_drawShells(screenBullets *sBullets) {
 /* Rows of tanks.bmp / boats.bmp the ally colouring draws from. The sheets carry
    17 rows of team colours; row 2 is the same green and row 11 the same red the
    game's own good and evil tank sprites use, and row 0 is the uncoloured tank
-   an unloaded tc[] already lands every team on. Row 11 is drawn only here, as
-   "hostile": with team colours a team whose colour is the red gets the orange
-   row instead (lvDrawTeamRow). */
+   an unloaded tc[] already lands every team on. With team colours a team is
+   drawn from the row of its own colour (lvDrawTeamRow), row 11 for a team
+   the Team Colours dialog has red for. */
 #define TANK_ROW_SELF 0
 #define TANK_ROW_GOOD 2
 #define TANK_ROW_EVIL 11
@@ -1821,7 +1770,7 @@ void lv_drawTanks(screenTanks *tks) {
                        : (row == TANK_ROW_GOOD) ? mapColourMarkerGood()
                                                 : mapColourMarkerEvil();
             } else {
-                colour = lvDrawTeamColour(lv->tc[team]);
+                colour = lvDrawTeamColour(team);
             }
             {
                 float side = (float)(zoomFactor * TILE_SIZE_X);
@@ -1835,7 +1784,7 @@ void lv_drawTanks(screenTanks *tks) {
             drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
         } else {
             srcX = zoomFactor * TILE_SIZE_X * dir;
-            srcY = zoomFactor * TILE_SIZE_Y * lvDrawTeamRow(lv->tc[team]);
+            srcY = zoomFactor * TILE_SIZE_Y * lvDrawTeamRow(team);
             drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
         }
         if (s_tankLabelsInTarget) {
@@ -2336,7 +2285,7 @@ static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *d
         }
         team = lv_playersGetTeamForOwner((BYTE)i);
         b[i].hasTeam = (team != NEUTRAL_TEAM);
-        b[i].colour = lv->tc[team];
+        b[i].colour = lv_screenTeamColour(team);
     }
     lv_clientMutexRelease();
 
@@ -2612,11 +2561,9 @@ void lv_drawEventFlashAt(float cx, float cy, float tilePx, const SDL_Rect *view)
     hasTeam = s_eventFlash.team >= 0;
     team = white;
     if (hasTeam) {
-        /* The colour is the one the HUD panel gives the team. */
-        team = mapColourTeam(lv_screenTeamColour(s_eventFlash.team));
-        if (!lvHudRedToOrange(&team.r, &team.g, &team.b)) {
-            lvHudReadableColour(&team.r, &team.g, &team.b);
-        }
+        /* The colour is the one the panels give the team. */
+        lv_drawTeamPanelColour(lv_screenTeamColour(s_eventFlash.team),
+                               &team.r, &team.g, &team.b);
         team.a = alpha;
     }
 

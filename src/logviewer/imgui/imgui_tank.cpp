@@ -65,6 +65,7 @@ extern "C" {
     void lv_screenTankStatusSnapshot(LvTankStatus *out);
     void lv_screenDeselectTank(void);
     SDL_Texture *lv_drawGetStatusBackgroundTexture(void);
+    void lv_drawTeamPanelColour(int palette, float *r, float *g, float *b);
     SDL_Texture *lv_drawGetTilesTexture(void);
 }
 
@@ -213,13 +214,12 @@ float lv_imgui_tank_dock_height(float dockWidth) {
     return ceilf(h) + 1.0f + style.WindowPadding.y * 2.0f + ImGui::GetFrameHeight();
 }
 
-/* The colour of the tank's team: the HUD panel's (imgui_hud.cpp). */
+/* The colour of the tank's team: the one every panel draws the team in
+ * (lv_drawTeamPanelColour). */
 static ImU32 tank_team_colour(int colour) {
-    SDL_FColor c = mapColourTeam(colour);
-    if (!lvHudRedToOrange(&c.r, &c.g, &c.b)) {
-        lvHudReadableColour(&c.r, &c.g, &c.b);
-    }
-    return ImGui::ColorConvertFloat4ToU32(ImVec4(c.r, c.g, c.b, 1.0f));
+    float r = 0.0f, g = 0.0f, b = 0.0f;
+    lv_drawTeamPanelColour(colour, &r, &g, &b);
+    return ImGui::ColorConvertFloat4ToU32(ImVec4(r, g, b, 1.0f));
 }
 
 /* "Shells: 12 / 40" for one gauge. */

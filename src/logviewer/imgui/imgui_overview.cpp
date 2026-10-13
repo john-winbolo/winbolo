@@ -18,8 +18,9 @@
  * numbers as shares: one for the pillboxes and one for the bases, each cut
  * into the teams' colours.
  *
- * The colours are the ones the map and the HUD panel use, so a red team is
- * orange here too.
+ * The colours are the ones the Team Colours dialog has: a team's own, and
+ * the dialog's Neutral colour for the stripe and the bar part of the things
+ * nobody owns.
  *
  * The numbers are read off the game's state every frame
  * (lv_screenOverviewSnapshot), so they follow a seek in either direction.
@@ -52,7 +53,9 @@ extern "C" {
     void lv_clientMutexWaitFor(void);
     void lv_clientMutexRelease(void);
     void lv_screenOverviewSnapshot(LvOverview *out);
+    unsigned char lv_screenTeamColour(int team);
     SDL_Texture *lv_drawGetTilesTexture(void);
+    void lv_drawTeamPanelColour(int palette, float *r, float *g, float *b);
 }
 
 /* The floating window's default width, and the widest the table is drawn:
@@ -65,9 +68,6 @@ extern "C" {
 /* The colour stripe at the start of a team's row, and a share bar. */
 #define OVERVIEW_STRIPE_W 4.0f
 #define OVERVIEW_BAR_H    6.0f
-
-/* The colour of things nobody owns, in the stripe and in the share bars. */
-#define OVERVIEW_NEUTRAL_COLOUR IM_COL32(120, 120, 120, 255)
 
 /* How many team rows the dock gives room for when no log says: before the
  * first log, and at the start of a log, before its first player is in. */
@@ -85,14 +85,19 @@ static int overview_rows_now(void) {
     return (ov.rowCount > 0) ? ov.rowCount : OVERVIEW_DEFAULT_ROWS;
 }
 
-/* The colour a team is drawn in: the HUD panel's (imgui_hud.cpp). A red team
- * is orange, and a colour too dark to see on a dark panel is lifted. */
+/* The colour a team is drawn in: the one every panel draws the team in
+ * (lv_drawTeamPanelColour). colour is the team's palette entry. */
 static ImU32 overview_team_colour(int colour) {
-    SDL_FColor c = mapColourTeam(colour);
-    if (!lvHudRedToOrange(&c.r, &c.g, &c.b)) {
-        lvHudReadableColour(&c.r, &c.g, &c.b);
-    }
-    return ImGui::ColorConvertFloat4ToU32(ImVec4(c.r, c.g, c.b, 1.0f));
+    float r = 0.0f, g = 0.0f, b = 0.0f;
+    lv_drawTeamPanelColour(colour, &r, &g, &b);
+    return ImGui::ColorConvertFloat4ToU32(ImVec4(r, g, b, 1.0f));
+}
+
+/* The colour of things nobody owns, in the stripe and in the share bars:
+ * the Neutral entry of the Team Colours dialog. The pictures of a neutral
+ * pillbox and base are the game's own and do not take it. */
+static ImU32 overview_neutral_colour(void) {
+    return overview_team_colour(lv_screenTeamColour(-1));
 }
 
 /* The side of the picture of a pillbox or a base: the size the game's 12x12
@@ -375,7 +380,7 @@ static void overview_table(const LvOverview &ov, float width) {
      * base. */
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
-    overview_label_cell(OVERVIEW_NEUTRAL_COLOUR, langGetText(STR_MAPEDIT_OWNER_NEUTRAL), true);
+    overview_label_cell(overview_neutral_colour(), langGetText(STR_MAPEDIT_OWNER_NEUTRAL), true);
     ImGui::TableSetColumnIndex(1);
     overview_count_cell(ov.neutralPills, true, OVERVIEW_PIC_PILL, false, -1, plain);
     ImGui::TableSetColumnIndex(2);
@@ -432,7 +437,7 @@ static void overview_share_bar(const LvOverview &ov, bool isBase, float width) {
             float to = floorf(x0 + (x1 - x0) * lvOverviewShare(run, total));
             if (to > from) {
                 dl->AddRectFilled(ImVec2(from, y0), ImVec2(to, y1),
-                                  neutral ? OVERVIEW_NEUTRAL_COLOUR
+                                  neutral ? overview_neutral_colour()
                                           : overview_team_colour(ov.rows[i].colour));
             }
             from = to;

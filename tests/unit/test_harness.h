@@ -4028,6 +4028,10 @@ int run_lv_hud_sums(void);
  * (test_lv_hud.c, lv_team_sprite.h): the game's own tile for a thing nobody
  * owns, a team's cell of the items sheet for one that is owned. */
 int run_lv_team_sprite_sums(void);
+/* Which palette entry the log viewer draws a team in (test_lv_hud.c,
+ * lv_team_colour.h): the default, the one the Team Colours dialog has, the
+ * Neutral entry for a number that is not a team. */
+int run_lv_team_colour_lookup(void);
 /* The table of the log viewer's Overview panel (test_lv_overview.c): the
  * rows of the teams, which row a pillbox or a base is counted in, and the
  * share a count is of the whole. */

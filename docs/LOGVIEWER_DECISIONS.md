@@ -16,8 +16,8 @@ call can be changed; the file says where.
 - A text dump of a recording around one tick (`-dump`).
 - File > "Open in single player" (the map at this time) and "Save Log".
 - The server tick in the Controls panel.
-- Neutral pillboxes and bases drawn with the game's own tiles. A red team is
-  drawn orange.
+- Neutral pillboxes and bases drawn with the game's own tiles. Each team is
+  drawn in the colour the Team Colours dialog has for it.
 - An eye icon in the HUD panel in place of the words "View of".
 - An Overview panel: pillboxes and bases for each team.
 - A Tank panel: the four gauges of the selected tank.
@@ -92,11 +92,12 @@ call can be changed; the file says where.
 
 ### Colours (earlier commits)
 
-- A team whose colour is the game's red is drawn orange. Only that team
-  changes.
+- A team whose colour is the game's red was drawn orange. **Taken back on
+  Oct 13**: see "Team Colours are drawn as chosen". A red team is red.
 - Neutral pillboxes and bases use the game's red (hostile) tiles.
-- The "Neutral Colour" setting no longer changes the map. It is still in the
-  Team Colours dialog. The owner can remove it or give it a new use.
+- The "Neutral Colour" setting does not change the map. It is still in the
+  Team Colours dialog. Since Oct 13 it is the colour of the neutral stripe
+  and the neutral part of the share bars in the Overview panel.
 
 ## Oct 13 review round 1
 
@@ -960,7 +961,7 @@ while the lane shows.
   13; before that a filled square and a filled disc). It is the same sheet
   and the same cell the map draws (`lv_drawItemPicture` in `draw.c`, by
   `lvPanelItemSprite` in `lv_team_sprite.h`): a team's cell of
-  `data/items.bmp`, a red team in orange, the pillbox at full armour. With
+  `data/items.bmp`, the pillbox at full armour. With
   no team it is the game's own tile: the red pillbox, the neutral base
   (black with white dots). The picture carries the team's colour, so these
   markers have no dark box, no fill and no line in the team's colour. The
@@ -1799,6 +1800,78 @@ Calls made:
 The sum is `lvControlsWheelStep` in `src/logviewer/lv_controls_layout.h`;
 `seek_wheel_step` in `imgui_controls.cpp` uses it. Test:
 `lv_controls_wheel_step`.
+
+### Team Colours are drawn as chosen (Oct 13)
+
+The owner: "I just noticed the Team Colors widget. we seemed to have just
+deviated and ignored that. can we make it actually honor the team colors
+chosen".
+
+What the dialog is: Options > Team Colours. Sixteen team rows and a Neutral
+row; each picks one of the seventeen named palette colours. OK applies and
+saves; Cancel drops the changes. The values are `LogViewerState.tc[17]`.
+
+What was wrong:
+
+- A team with the palette's red (entry 11, the default of Team 2) was drawn
+  orange (255,140,0) on the map and in every panel. That was a call made
+  without the owner. It is taken back: a team is drawn in the colour the
+  dialog has for it, red too.
+- The pillboxes and bases of the map are kept from frame to frame. After OK
+  they kept the old colour until the map was scrolled or zoomed. OK now
+  marks the map for a redraw, so they change on the next frame.
+- The dialog showed colour names only, and one unused table of defaults in
+  it was not the viewer's table.
+- The Neutral entry changed nothing.
+
+What was built:
+
+- One source: `lv_team_colour.h` (the defaults, the lookup) and
+  `lv_screenTeamColour(team)` in `screen.c`, the one call that reads `tc[]`
+  for drawing. The map (tanks, boats, pillboxes, bases), the simplified
+  view, the HUD, Overview and Tank panels, the event markers and the ring of
+  an event all ask it.
+- One panel colour: `lv_drawTeamPanelColour` in `draw.c`. It is the map's
+  colour, made lighter when it is too dark to see on a dark panel (the
+  palette's blue, purple and red are). The hue stays. This lift was there
+  before and is kept.
+- The extra orange row of the team sheets, `lvHudRedToOrange` and
+  `lvTeamRedPixelToOrange` are removed.
+- The dialog shows a square of each colour: beside each combo box and
+  beside each name in the list. No new string.
+- The Neutral entry is the colour of the neutral stripe and the neutral
+  part of the share bars in the Overview panel (it was a fixed grey,
+  120,120,120). To change: `overview_neutral_colour` in
+  `imgui_overview.cpp`.
+- A preference value that is not a palette entry now gives the team's
+  default (it gave the team's number, or purple for neutral).
+
+Not changed:
+
+- A neutral pillbox is the game's red pillbox and a neutral base is the
+  game's neutral base, on the map and in the panels. The marks of neutral
+  things in the simplified view are the game's marker colours.
+- Builder marks on the map are white. The lost-builder mark is the builder
+  with a red circle and one line.
+- With "Use Team Colours" off, in the one-player view, and in the embedded
+  reel the game's own reading is drawn (own, allied, hostile). The dialog
+  does not apply there, as before.
+- No "own player" colour exists in the dialog. The orange that was seen was
+  the red team's orange.
+
+What looks different with untouched preferences:
+
+- Team 2 (red by default) is red, not orange: tank, boat, pillboxes, bases,
+  simplified-view marks, HUD icons, Overview stripe, pictures and bar, Tank
+  panel stripe, event markers and the event ring.
+- **Note:** a red team's pillboxes are now close to the neutral pillbox
+  (the game's red pillbox). To tell them apart, give that team another
+  colour in the dialog (the palette has an orange).
+- Overview: the neutral stripe and bar part are the palette's light grey
+  (165,165,165), not 120,120,120.
+
+Tests: `lv_team_colour_lookup` (new), `lv_team_sprite_sums`, `lv_hud_sums`,
+`lv_event_overlay_picture`.
 
 ### Overview rows: names, then a number and a picture for each count (Oct 13)
 

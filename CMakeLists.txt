@@ -6887,6 +6887,7 @@ set(_unit_test_names
     lv_dock_layout_tree
     lv_hud_sums
     lv_team_sprite_sums
+    lv_team_colour_lookup
     lv_overview_sums
     lv_overview_bots
     lv_overview_row_layout

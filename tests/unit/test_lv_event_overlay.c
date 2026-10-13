@@ -388,7 +388,7 @@ int run_lv_event_overlay_picture(void) {
 
     /* A team's pillbox: its row of items.bmp, the column of full armour. */
     for (palette = 0; palette < LV_TEAM_SHEET_ROWS; palette++) {
-        int row = (palette == LV_TEAM_PALETTE_RED) ? LV_TEAM_SHEET_ROW_ORANGE : palette;
+        int row = palette;
         s = eo_marker(LV_EVK_PILL_CAPTURED, true, palette);
         UT_ASSERT_MSG(!s.fromAtlas && s.col == 15 && s.row == row, "a team's pillbox, whole");
         s = eo_marker(LV_EVK_PILL_STOLEN, true, palette);
@@ -400,9 +400,9 @@ int run_lv_event_overlay_picture(void) {
         /* The same cell the map draws for that team. */
         UT_ASSERT_MSG(s.row == lvMapBaseSprite(false, palette).row, "the map's own row");
     }
-    /* A red team is orange here as on the map. */
+    /* A red team is red here as on the map. */
     s = eo_marker(LV_EVK_PILL_CAPTURED, true, LV_TEAM_PALETTE_RED);
-    UT_ASSERT_MSG(s.row == LV_TEAM_SHEET_ROW_ORANGE, "no team is drawn in the red row");
+    UT_ASSERT_MSG(s.row == LV_TEAM_PALETTE_RED, "a red team is not in the red row");
 
     /* No team: the game's own tiles. The red pillbox, the neutral base. */
     s = eo_marker(LV_EVK_PILL_CAPTURED, false, 3);

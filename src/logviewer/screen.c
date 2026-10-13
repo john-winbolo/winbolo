@@ -57,6 +57,7 @@
 #include "dns.h"
 #include "logviewer.h"
 #include "lv_hud.h"
+#include "lv_team_colour.h"
 #include "lv_bot_chip.h"         /* which chip a bot has in the panels */
 #include "lv_overview.h"
 #include "lv_tank_status.h"
@@ -6096,10 +6097,20 @@ void lv_screenEventTeams(int *team, int *otherTeam) {
   if (otherTeam != NULL) *otherTeam = s_eventOtherTeam;
 }
 
+/* lv_team_colour.h counts the teams and the places of tc[] by number. */
+typedef char lvTeamColourCountCheck[(LV_TEAM_COLOUR_TEAMS == MAX_TANKS &&
+                                     LV_TEAM_COLOUR_NEUTRAL == NEUTRAL_TEAM &&
+                                     sizeof(((LogViewerState *) 0)->tc) ==
+                                         LV_TEAM_COLOUR_SLOTS) ? 1 : -1];
+
+/* The palette entry a team is drawn in: the one the Team Colours dialog has
+   for it (lv_team_colour.h). A number that is not a team gives the dialog's
+   Neutral entry. This is the one place that reads tc[] for drawing; the map,
+   the simplified view and every panel get a team's colour from here, so a
+   change in the dialog shows everywhere on the next frame. */
 unsigned char lv_screenTeamColour(int team) {
   if (g_lv == NULL) return 0;
-  if (team < 0 || team >= NEUTRAL_TEAM) team = NEUTRAL_TEAM;
-  return g_lv->tc[team];
+  return lvTeamColourEntry(g_lv->tc, team);
 }
 
 void lv_messageAdd(lvEventKind kind, messageType msgType, langid topId,
@@ -6686,7 +6697,7 @@ void lv_screenHudSnapshot(LvHudSnapshot *out) {
     slot->owner = count;
     slot->team = lv_playersGetTeamForOwner(count);
     slot->hasTeam = (slot->team != NEUTRAL_TEAM);
-    slot->colour = g_lv->tc[slot->team];
+    slot->colour = lv_screenTeamColour(slot->team);
     slot->relation = (unsigned char) screenHudRelation(perspective, viewer,
         slot->icon != LV_HUD_ICON_EMPTY, count);
     slot->chip = (unsigned char) lv_screenBotChip(count);
@@ -6702,7 +6713,7 @@ void lv_screenHudSnapshot(LvHudSnapshot *out) {
     slot->owner = p->owner;
     slot->team = lv_playersGetTeamForOwner(p->owner);
     slot->hasTeam = (slot->team != NEUTRAL_TEAM);
-    slot->colour = g_lv->tc[slot->team];
+    slot->colour = lv_screenTeamColour(slot->team);
     slot->relation = (unsigned char) screenHudRelation(perspective, viewer,
         p->owner != NEUTRAL, p->owner);
   }
@@ -6717,7 +6728,7 @@ void lv_screenHudSnapshot(LvHudSnapshot *out) {
     slot->owner = b->owner;
     slot->team = lv_playersGetTeamForOwner(b->owner);
     slot->hasTeam = (slot->team != NEUTRAL_TEAM);
-    slot->colour = g_lv->tc[slot->team];
+    slot->colour = lv_screenTeamColour(slot->team);
     slot->relation = (unsigned char) screenHudRelation(perspective, viewer,
         b->owner != NEUTRAL, b->owner);
   }
@@ -6752,7 +6763,7 @@ void lv_screenOverviewSnapshot(LvOverview *out) {
       continue;
     }
     lv_screenGetPlayerName(name, count, sizeof(name));
-    lvOverviewAddPlayerChip(out, team, g_lv->tc[team], name, lv_screenBotChip(count));
+    lvOverviewAddPlayerChip(out, team, lv_screenTeamColour(team), name, lv_screenBotChip(count));
   }
 
   total = (g_lv->pb != NULL) ? lv_pillsGetNumPills(&g_lv->pb) : 0;
@@ -6811,7 +6822,7 @@ void lv_screenTankStatusSnapshot(LvTankStatus *out) {
   out->chip = (unsigned char) lv_screenBotChip((BYTE) slot);
   team = lv_playersGetTeamForOwner((BYTE) slot);
   out->hasTeam = (team != NEUTRAL_TEAM);
-  out->colour = g_lv->tc[team];
+  out->colour = lv_screenTeamColour(team);
   out->alive = g_lv->gameViewHud[slot].alive ? 1 : 0;
   out->hasStock = lvTankStockSeen ? 1 : 0;
   out->value[LV_TANK_GAUGE_SHELLS] = g_lv->tankInv[slot].shells;
