@@ -10,8 +10,8 @@
 
 /*
  * Every icon the viewer draws for itself is here: the buttons of the
- * Controls panel, the eye of the HUD panel and the gear of a panel's
- * options. None of them ships with the game as a picture, and a font for a
+ * Controls panel, the eye of the HUD panel, the gear of a panel's options
+ * and the event markers of the seek slider. None of them ships with the game as a picture, and a font for a
  * few glyphs is a lot to load, so they are drawn with the draw list: filled
  * shapes in one colour, sized from the box they are given, so they follow
  * the size of the font and the density of the display.
@@ -31,6 +31,13 @@ enum LvIcon {
     LV_ICON_EYE,            /* the outline of an eye and its pupil */
     LV_ICON_GEAR,           /* a toothed wheel */
     LV_ICON_CLOSE,          /* an X */
+    LV_ICON_SQUARE,         /* a filled square: a pillbox, as in the HUD panel */
+    LV_ICON_DISC,           /* a filled circle: a base, as in the HUD panel */
+    LV_ICON_PERSON,         /* a head and shoulders: a builder */
+    LV_ICON_RING,           /* the outline of a circle: a player comes or goes */
+    LV_ICON_BUBBLE,         /* a speech bubble: chat */
+    LV_ICON_DIAMOND,        /* a square on its corner: the game itself */
+    LV_ICON_STAR,           /* a star of five points: a highlight */
     LV_ICON_COUNT
 };
 

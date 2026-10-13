@@ -484,12 +484,14 @@ BYTE lv_basesSetOwner(bases *value, BYTE baseNum, BYTE owner, BYTE migrate) {
     if (returnValue != NEUTRAL) {
       lv_playersGetPlayerName(returnValue, oldOwner, sizeof(oldOwner));
       snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, oldOwner);
+      lv_messageTagPlayers(owner, returnValue);
       lv_messageAddAt(LV_EVK_BASE_STOLEN, (*value)->item[baseNum].x,
                       (*value)->item[baseNum].y, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_BASE, &args);
     } else {
       /* Wording normalizes to bolo's MESSAGE_CAPTURE_BASE
        * ("Neutral Base"); the legacy lower-case "neutral base"
        * variant is gone. */
+      lv_messageTagPlayers(owner, -1);
       lv_messageAddAt(LV_EVK_BASE_CAPTURED, (*value)->item[baseNum].x,
                       (*value)->item[baseNum].y, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_BASE, &args);
     }

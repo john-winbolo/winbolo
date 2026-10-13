@@ -634,6 +634,121 @@ difference to see is small there. The option is for floating panels.
   run there.
 
 
+### Controls panel: "Overlay events", markers over the seek bar
+
+The Controls panel has a list, "Overlay events". The user ticks kinds of
+event in it. Each event of a ticked kind then has a small marker in a lane
+just above the seek bar, at the place the handle of the bar has when
+playback is at that event. The mouse over a marker says what happened. A
+click goes there. The code is `imgui_event_overlay.cpp`; the sums are in
+`lv_event_overlay.h`.
+
+**One list of events.** The markers show the lines of the Events panel. They
+keep no list of their own and the log is not read a second time. The kinds
+and their names are the ones of the filter of the Events panel
+(`lv_event_kind.h`): pillbox captured, pillbox stolen, base captured, base
+stolen, builder killed, tank killed, player, chat, game, highlight.
+
+**There is no "pillbox picked up" or "pillbox placed" kind.** The request
+named them. The viewer does not post a line for either today, so there is
+nothing to mark. A new kind of line is a change to the Events panel too, so
+it was not added here. The saved list ignores a name it does not know, so
+such a kind can be added later with no change to the preferences.
+
+**The list.** It is a combo on the line of the buttons, after the speed. It
+stays open while kinds are ticked. "All" and "None" are at its top. Each row
+has the marker of its kind, the name of the kind and how many events of that
+kind the log has (with the lobby hidden: without those of the lobby). With
+little room the combo is only its arrow, and its name is in its tooltip; the
+speed slider gives up width (down to its 50 points) to keep that arrow on
+the line. With no room on the line it goes on a line of its own.
+
+**Default.** A new install shows what changes the score: pillbox captured,
+pillbox stolen, base captured, base stolen, tank killed, builder killed.
+Player, chat, game and highlight are off.
+
+**Saved.** One key of the LOGVIEWER preferences, `Controls.OverlayEvents`:
+the saved names of the ticked kinds with commas between them, as the
+`Events.Filter` key names one kind. "none" is an empty choice (an empty text
+would read as "never saved"). A name from a newer build is ignored. It is
+written at each tick.
+
+**The lane.** It is as wide as the seek bar and one line of text high, plus
+3 points, with 1 point between it and the bar. The x of a marker is the sum
+ImGui does for the middle of the handle (`lvOverlaySliderX`: 2 points of
+padding and half the handle at each end). The headless try-out found the
+lane and the slider at the same x extent, and a click on the slider at the
+x of a marker gave the value of that marker's time within one pixel. With
+no kind ticked there is no lane and the panel is that much lower. The
+default height of the panel, floating and in a sidebar, is 17 points more
+while the lane shows.
+
+**The markers.**
+
+- A pillbox or a base changed hands: the shape the HUD panel has for an
+  owned one (a square for a pillbox, a disc for a base), filled **in the
+  colour of the team that now owns it**. The colour is the HUD panel's:
+  the team's palette colour, lifted when too dark, and orange for a red
+  team.
+- Any other kind: a plain icon in the colour of the text on a dark square,
+  with a **1 point line in the team's colour round it**. A tank kill has
+  the game's own "dead" picture of the status panels and the colour of the
+  killer's team (the team of the tank that died, when it died with no
+  killer). A builder is a head and shoulders, in the colour of the team
+  that lost it (the log does not say who shot it). Chat is a speech bubble
+  in the colour of the sender's team. Player is a ring, game a diamond and
+  highlight a star; these have no team.
+- A second team (the old owner of a stolen pillbox or base, the tank that
+  was killed) is a short tick under the marker in that team's colour.
+- The team is the one the player was in when the event happened. The
+  decoder now says which players a line is about (`lv_messageTagPlayers`),
+  and the Events panel keeps the two teams with the line.
+- The markers playback has passed are dimmer (45%).
+- All of them are drawn with the draw list (`imgui_lv_icons.cpp` has the
+  new shapes), except the "dead" picture, which is from the tile sheet. With
+  no tile sheet it is a drawn X.
+
+**Markers too close to each other.** Markers nearer than one marker width
+become one: a box with the number of events in it ("99+" over 99), in the
+colour of the team most of its events name (grey when none names a team).
+A marker takes in every event less than one width after its first event, so
+two markers never overlap. It is at the place of its first event.
+
+**The mouse over a marker** (at once, no delay): for one event its time,
+its tick and its kind, then its line of the Events panel. For several:
+their number, the first 5 lines with their times, and "+N more".
+
+**A click** goes to the event as a click on its line of the Events panel
+does (`lv_windowSeekToEvent`: the playhead goes to the event's time and the
+map is centred on its place). On a marker of several it goes to the first.
+A highlight goes to 5 seconds before it, as its line does. On a live feed a
+click does nothing, as in the Events panel. A press in the lane where no
+marker is does nothing. The lane is an item of its own above the slider, so
+it takes no press that is meant for the slider and a press in it does not
+drag the panel.
+
+**Cost.** What the lane draws is worked out from the list once and kept. It
+is worked out again only when the list changes (its version counter), the
+ticked kinds change, the shown stretch of the log changes (lobby shown or
+hidden; on a live feed it grows all the time) or the width of the bar
+changes. The headless try-out with 20,000 events: 0.4 ms for the frame that
+works it out, then 0.05 ms a frame for the whole Controls panel with no
+read of the list.
+
+**Other notes.**
+
+- The embedded viewer and the browser build have the same Controls panel,
+  so they have the list and the lane. In the browser build the Events list
+  holds only what playback has passed, so the markers are only behind the
+  playhead there.
+- Unit tests: `lv_event_overlay_slider`, `lv_event_overlay_clusters`,
+  `lv_event_overlay_choice`.
+- Headless try-out: a log with no events, 5 events, a highlight, the lobby
+  hidden, a live feed, 20,000 events, the list (All, None, one check box,
+  a click outside), the panel floating at 9 sizes down to 32 x 32 and as a
+  tab at 4 sizes: no assert.
+
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the

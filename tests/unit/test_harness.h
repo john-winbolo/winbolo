@@ -4059,6 +4059,12 @@ int run_lv_spmap_carried_pill_left_out(void);
 /* The log viewer's events panel (test_lv_event_kind.c): the saved name of
  * each event kind, and where the "now" divider falls among the lines. */
 int run_lv_event_kind_sums(void);
+/* The event markers of the log viewer's seek slider
+ * (test_lv_event_overlay.c): where a time is on the slider, which markers
+ * become one, and the saved list of chosen kinds. */
+int run_lv_event_overlay_slider(void);
+int run_lv_event_overlay_clusters(void);
+int run_lv_event_overlay_choice(void);
 /* The decode pass that lists a whole log's events at load
  * (test_lv_presentation.c): it posts each line once, stores no snapshot, and
  * leaves the world at the start as the loader did. */

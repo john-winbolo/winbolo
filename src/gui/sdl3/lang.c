@@ -1079,6 +1079,11 @@ static const LangEntry langTable[] = {
     /* Log viewer: the gear of a panel and its options */
     {2839, "Panel options"},
     {2840, "Make unused panel portions transparent"},
+    /* Log viewer: the event markers over the seek bar of the Controls panel */
+    {2841, "Overlay events"},
+    {2842, "Show a marker over the seek bar for each event of the ticked kinds"},
+    {2843, "{string1} events"},
+    {2844, "+{string1} more"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

@@ -649,6 +649,17 @@ int  lv_screenGetHideLobby(void);
 /* Start of the presented window in absolute log ms; 0 when the window is the
  * whole file. Event lines below it belong to the hidden lobby. */
 uint32_t lv_screenWindowStartMs(void);
+/* Its length in ms; 0 when nothing is loaded. The seek slider goes from the
+ * start to the start plus this. */
+uint32_t lv_screenWindowLenMs(void);
+
+/* The teams of the players the line now being added is about
+ * (lv_messageTagPlayers), each 0..15, or -1 for none. For a host's
+ * lv_windowAddEvent to ask while it takes the line. */
+void lv_screenEventTeams(int *team, int *otherTeam);
+/* The palette colour a team is drawn in (the tc[] row of the Team Colours
+ * dialog); the neutral colour for a number that is not a team. */
+unsigned char lv_screenTeamColour(int team);
 
 void lv_screenMouseCentreClick(int xPos, int yPos);
 void lv_screenMouseClick(int xPos, int yPos);

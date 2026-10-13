@@ -1766,6 +1766,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_controls.cpp
     src/logviewer/imgui/imgui_game_info.cpp
     src/logviewer/imgui/imgui_events.cpp
+    src/logviewer/imgui/imgui_event_overlay.cpp
     src/logviewer/imgui/imgui_item_info.cpp
     src/logviewer/imgui/imgui_dialogs.cpp
     src/logviewer/imgui/imgui_game_viewport.cpp
@@ -2408,6 +2409,7 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_controls.cpp
     src/logviewer/imgui/imgui_game_info.cpp
     src/logviewer/imgui/imgui_events.cpp
+    src/logviewer/imgui/imgui_event_overlay.cpp
     src/logviewer/imgui/imgui_item_info.cpp
     src/logviewer/imgui/imgui_dialogs.cpp
     src/logviewer/imgui/imgui_game_viewport.cpp
@@ -4615,6 +4617,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The events panel's kind names and the search that places its "now"
     # divider (lv_event_kind.h, header only).
     tests/unit/test_lv_event_kind.c
+    # The event markers of the viewer's seek slider: where a time is on the
+    # slider, which markers become one, and the saved list of chosen kinds
+    # (lv_event_overlay.h, header only).
+    tests/unit/test_lv_event_overlay.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).

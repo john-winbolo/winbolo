@@ -14,6 +14,7 @@
 #include "imgui_context.h"
 #include "imgui_lv_icons.h"
 #include "imgui_lv_panel.h"
+#include "imgui_event_overlay.h"
 #include "imgui.h"
 #include "platform_config.h"
 #include "../../gui/lang.h"
@@ -124,6 +125,16 @@ void lv_imgui_controls_init(struct LogViewerState *lv) {
         spd = 1;
     }
     lv_updateSpeed((unsigned char)spd, 0);
+    lv_event_overlay_init();
+}
+
+/* The height the panel gets in the dock's built layout: its tab, the button
+ * row, the seek bar and the time row, and the lane of event markers over
+ * the seek bar when there is one. */
+#define LV_CONTROLS_BASE_H 125.0f
+float lv_imgui_controls_dock_height(float dockWidth) {
+    (void)dockWidth;
+    return LV_CONTROLS_BASE_H + lv_event_overlay_lane_height();
 }
 
 void lv_imgui_controls_update_speed(void) {
@@ -233,8 +244,10 @@ void lv_imgui_controls_window(void) {
                           lv_imgui_dock_take_float_reset("###controls");
         ImGuiCond cond = to_default ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
         ImVec2 vp = ImGui::GetMainViewport()->Size;
-        ImGui::SetNextWindowSize(ImVec2(420, 120), cond);
-        ImGui::SetNextWindowPos(ImVec2((vp.x - 420) * 0.5f, vp.y - 120 - 10), cond);
+        /* Room for the lane of event markers over the seek bar. */
+        const float h = 120.0f + lv_event_overlay_lane_height();
+        ImGui::SetNextWindowSize(ImVec2(420, h), cond);
+        ImGui::SetNextWindowPos(ImVec2((vp.x - 420) * 0.5f, vp.y - h - 10), cond);
     }
 
     char ctrl_title[128];
@@ -353,10 +366,14 @@ void lv_imgui_controls_window(void) {
          * that the two go on a line of their own, and in a panel too narrow
          * for both the label goes and the slider keeps the line; the label
          * is then the slider's tooltip. */
+        const float overlayGap = 15.0f;
         {
             const char *speedLbl = langGetText(STR_LV_SPEED_LBL);
             const float labelW = ImGui::CalcTextSize(speedLbl).x + style.ItemSpacing.x;
             const float speedMax = 100.0f, speedMin = 50.0f;
+            /* The arrow of the "Overlay events" list goes after the slider
+             * when the slider can spare it the room. */
+            const float spare = overlayGap + lv_event_overlay_combo_width(false);
             bool label = true;
             float room = controls_room_after(15.0f) - labelW;
             if (room >= speedMin) {
@@ -367,6 +384,9 @@ void lv_imgui_controls_window(void) {
                     label = false;
                     room = ImGui::GetContentRegionAvail().x;
                 }
+            }
+            if (room - spare >= speedMin) {
+                room -= spare;
             }
             float speedW = (room < speedMax) ? room : speedMax;
             if (speedW < 16.0f) speedW = 16.0f;
@@ -385,6 +405,25 @@ void lv_imgui_controls_window(void) {
             ImGui::PopItemWidth();
             if (!label) {
                 controls_tooltip(speedLbl, true);
+            }
+        }
+
+        /* "Overlay events": which kinds of event have a marker over the
+         * seek bar. After the speed where it has room with its name on it;
+         * with less room only its arrow, which says its name in a tooltip;
+         * and on a line of its own when not even that goes on the line. */
+        {
+            const float gap = overlayGap;
+            const float room = controls_room_after(gap);
+            if (room >= lv_event_overlay_combo_width(true)) {
+                ImGui::SameLine(0, gap);
+                lv_event_overlay_combo(true);
+            } else if (room >= lv_event_overlay_combo_width(false)) {
+                ImGui::SameLine(0, gap);
+                lv_event_overlay_combo(false);
+            } else {
+                lv_event_overlay_combo(ImGui::GetContentRegionAvail().x >=
+                                       lv_event_overlay_combo_width(true));
             }
         }
 
@@ -440,6 +479,11 @@ void lv_imgui_controls_window(void) {
              * Without this flag ImGui rounds the dragged value by round-tripping
              * it through seek_fmt -- which parses back to 0 -- pinning the
              * slider (and every seek) to the start of the log. */
+            /* The event markers, in a lane just over the slider and as wide
+             * as it. The lane is an item of its own: it takes no press that
+             * is meant for the slider. */
+            lv_event_overlay_lane();
+
             seek_slider_drawn = true;
             if (ImGui::SliderFloat("##seek", &s_seek_ratio, 0.0f, 1.0f, seek_fmt,
                                    ImGuiSliderFlags_NoRoundToFormat)) {

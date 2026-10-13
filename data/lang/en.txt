@@ -1267,6 +1267,12 @@ STR_LV_TIP_ALL_TEAMS=Back to all teams
 STR_LV_TIP_PANEL_OPTIONS=Panel options
 STR_LV_PANEL_TRANSPARENT=Make unused panel portions transparent
 
+# Log viewer: the event markers over the seek bar of the Controls panel
+STR_LV_OVERLAY_EVENTS=Overlay events
+STR_LV_OVERLAY_TIP=Show a marker over the seek bar for each event of the ticked kinds
+STR_LV_OVERLAY_COUNT={string1} events
+STR_LV_OVERLAY_MORE=+{string1} more
+
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:
 STR_LV_PLAYER_LBL=Player {number}:

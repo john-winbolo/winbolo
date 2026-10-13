@@ -2107,6 +2107,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
         lv_playersSetLgmDead(opt1);
         lv_playersGetPlayerName(opt1, str, sizeof(str));
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
+        /* The log does not say who shot the man: the line is about the
+           player that lost him. */
+        lv_messageTagPlayers(opt1, -1);
         lv_messageAddAt(LV_EVK_BUILDER_LOST, lgmX, lgmY, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);
       }
       break;
@@ -2274,6 +2277,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
         snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
+        lv_messageTagPlayers(opt1, -1);
         lv_messageAdd(LV_EVK_CHAT, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_ALL, &args);
       }
       break;
@@ -2290,6 +2294,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
         snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, name2);
         snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
+        lv_messageTagPlayers(opt1, -1);
         lv_messageAdd(LV_EVK_CHAT, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_PLAYERS, &args);
       }
       break;
@@ -2629,12 +2634,14 @@ void lv_screenProcessLog(unsigned short numEvents) {
       if (opt1 == opt2 || opt2 == NEUTRAL) {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, mem);
+        lv_messageTagPlayers(opt1, -1);
         lv_messageAddAt(LV_EVK_TANK_KILLED, killX, killY, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_DIED, &args);
       } else {
         MessageArgs args = {0};
         lv_playersGetPlayerName(opt2, str, sizeof(str));
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, mem);
+        lv_messageTagPlayers(opt2, opt1);
         lv_messageAddAt(LV_EVK_TANK_KILLED, killX, killY, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_KILLED, &args);
       }
       if (opt1 < MAX_TANKS) g_lv->deaths[opt1]++;
@@ -2840,6 +2847,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
           snprintf(args.playerName, sizeof(args.playerName), "%.*s",
                    (int)sizeof(args.playerName) - 1, str);
           /* A ping names a place: its world coordinate is 256 to the cell. */
+          lv_messageTagPlayers(opt1, -1);
           lv_messageAddAt(LV_EVK_CHAT, wx >> 8, wy >> 8, newsWireMessage,
                           MESSAGE_NEWSWIRE, pingKindMessageId(opt2), &args);
         }
@@ -5697,6 +5705,37 @@ void lv_screenPanToTotalPixels(int totalPxX, int totalPxY) {
   }
 }
 
+/* The teams of the players the next line is about (lv_messageTagPlayers),
+ * -1 for none. lv_messageAddAt clears them once the line is added. */
+static int s_eventTeam = -1;
+static int s_eventOtherTeam = -1;
+
+/* The team a player is in as the line is added, 0..15, or -1. The team is
+ * kept, not the player: the player can change team later in the log, and
+ * the line is about the team it was in then. */
+static int lv_screenEventTeamOf(int player) {
+  BYTE team;
+  if (player < 0 || player >= MAX_TANKS) return -1;
+  team = lv_playersGetTeamForOwner((BYTE) player);
+  return (team < NEUTRAL_TEAM) ? (int) team : -1;
+}
+
+void lv_messageTagPlayers(int actor, int other) {
+  s_eventTeam = lv_screenEventTeamOf(actor);
+  s_eventOtherTeam = lv_screenEventTeamOf(other);
+}
+
+void lv_screenEventTeams(int *team, int *otherTeam) {
+  if (team != NULL) *team = s_eventTeam;
+  if (otherTeam != NULL) *otherTeam = s_eventOtherTeam;
+}
+
+unsigned char lv_screenTeamColour(int team) {
+  if (g_lv == NULL) return 0;
+  if (team < 0 || team >= NEUTRAL_TEAM) team = NEUTRAL_TEAM;
+  return g_lv->tc[team];
+}
+
 void lv_messageAdd(lvEventKind kind, messageType msgType, langid topId,
                    langid bodyId, const MessageArgs *args) {
   lv_messageAddAt(kind, 0, 0, msgType, topId, bodyId, args);
@@ -5726,9 +5765,14 @@ void lv_messageAddAt(lvEventKind kind, int mapX, int mapY,
     if (s_observer->event != NULL) {
       s_observer->event(s_observer->ctx, (int)kind, mapX, mapY, body);
     }
+    s_eventTeam = -1;
+    s_eventOtherTeam = -1;
     return;
   }
   lv_windowAddEvent(0, (int)kind, mapX, mapY, body);
+  /* The host has taken the tag with the line (lv_screenEventTeams). */
+  s_eventTeam = -1;
+  s_eventOtherTeam = -1;
 
   /* The event scan decodes the whole log once to fill the events panel and
    * nothing else. The marquee queue is walked to its tail on every append,
@@ -6403,6 +6447,7 @@ void lv_screenSetHideLobby(int enabled) {
 int lv_screenGetHideLobby(void) { return s_hideLobby ? 1 : 0; }
 
 uint32_t lv_screenWindowStartMs(void) { return lv_windowStartMs(); }
+uint32_t lv_screenWindowLenMs(void) { return lv_windowLenMs(); }
 
 /* The snapshot Rewind goes back to from here: the last one before the
    playhead, and the one before that when the last is under a second back

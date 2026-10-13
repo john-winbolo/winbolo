@@ -11,6 +11,7 @@
 #include "imgui_dock.h"
 #include "imgui_context.h"
 #include "imgui_main_menu.h"
+#include "imgui_controls.h"
 #include "imgui_hud.h"
 #include "imgui_overview.h"
 #include "imgui_tank.h"
@@ -37,10 +38,6 @@ extern "C" {
 /* How thick the strip on a sidebar's inner edge is that the user drags to
  * make the sidebar bigger or smaller. */
 #define LV_DOCK_GRIP_W 6.0f
-
-/* The height the Controls panel gets in the built layout: its tab, the button
- * row, the seek bar and the time row, the same as its floating window. */
-#define LV_DOCK_CONTROLS_H 125.0f
 
 /* The most ImGui settings text read back from the preferences. The settings
  * of the panels and four sidebars are a few KB; text that does not fit
@@ -74,7 +71,7 @@ struct LvDockPanel {
  * its rows the same way, as does the Tank panel with its
  * four gauges. */
 static const LvDockPanel k_panels[] = {
-    { "###controls",   &lv_g_show_controls_window,       LV_DOCK_CONTROLS_H, 0.0f, false, nullptr },
+    { "###controls",   &lv_g_show_controls_window,       0.0f,               0.0f, false, lv_imgui_controls_dock_height },
     { "###hud",        &lv_g_show_hud_window,            0.0f,               0.0f, false, lv_imgui_hud_dock_height },
     { "###overview",   &lv_g_show_overview_window,       0.0f,               0.0f, false, lv_imgui_overview_dock_height },
     { "###tank",       &lv_g_show_tank_window,           0.0f,               0.0f, false, lv_imgui_tank_dock_height },

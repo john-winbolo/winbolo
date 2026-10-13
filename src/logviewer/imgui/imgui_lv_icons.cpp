@@ -110,6 +110,52 @@ void lv_icon_draw(ImDrawList *dl, int icon, ImVec2 p0, ImVec2 p1, ImU32 col) {
         dl->AddLine(ImVec2(x0, y1), ImVec2(x1, y0), col, thick);
         break;
     }
+    case LV_ICON_SQUARE:
+        dl->AddRectFilled(ImVec2(x0 + 1.0f, y0 + 1.0f), ImVec2(x1 - 1.0f, y1 - 1.0f), col);
+        break;
+    case LV_ICON_DISC:
+        dl->AddCircleFilled(ImVec2(cx, cy), ((w < h) ? w : h) * 0.5f - 0.5f, col);
+        break;
+    case LV_ICON_PERSON: {
+        /* The head, and under it the shoulders: a box with a round top. */
+        const float head = h * 0.21f;
+        dl->AddCircleFilled(ImVec2(cx, y0 + head + 0.5f), head, col);
+        dl->AddRectFilled(ImVec2(cx - w * 0.36f, y0 + h * 0.52f), ImVec2(cx + w * 0.36f, y1),
+                          col, w * 0.28f, ImDrawFlags_RoundCornersTop);
+        break;
+    }
+    case LV_ICON_RING: {
+        const float r = ((w < h) ? w : h) * 0.5f - 1.5f;
+        dl->AddCircle(ImVec2(cx, cy), (r > 1.0f) ? r : 1.0f, col, 0, (h >= 12.0f) ? 2.0f : 1.5f);
+        break;
+    }
+    case LV_ICON_BUBBLE: {
+        /* A box with round corners and a tail at the bottom left. */
+        const float base = floorf(y1 - h * 0.28f);
+        dl->AddRectFilled(ImVec2(x0, y0 + 1.0f), ImVec2(x1, base), col, 2.0f);
+        dl->AddTriangleFilled(ImVec2(x0 + w * 0.18f, base - 1.0f), ImVec2(x0 + w * 0.55f, base - 1.0f),
+                              ImVec2(x0 + w * 0.18f, y1), col);
+        break;
+    }
+    case LV_ICON_DIAMOND:
+        dl->AddQuadFilled(ImVec2(cx, y0), ImVec2(x1, cy), ImVec2(cx, y1), ImVec2(x0, cy), col);
+        break;
+    case LV_ICON_STAR: {
+        /* Ten corners, out and in by turns, as ten triangles from the
+         * middle. */
+        const float outer = ((w < h) ? w : h) * 0.5f;
+        const float inner = outer * 0.42f;
+        ImVec2 p[10];
+        for (int i = 0; i < 10; i++) {
+            const float a = -3.14159265f * 0.5f + (float)i * (3.14159265f / 5.0f);
+            const float r = (i % 2 == 0) ? outer : inner;
+            p[i] = ImVec2(cx + cosf(a) * r, cy + 0.5f + sinf(a) * r);
+        }
+        for (int i = 0; i < 10; i++) {
+            dl->AddTriangleFilled(ImVec2(cx, cy + 0.5f), p[i], p[(i + 1) % 10], col);
+        }
+        break;
+    }
     default:
         break;
     }

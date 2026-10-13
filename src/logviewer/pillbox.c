@@ -541,6 +541,7 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
     MessageArgs args = {0};
     lv_playersMakeMessageName(owner, ownerName);
     snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, ownerName);
+    lv_messageTagPlayers(owner, -1);
     lv_messageAddAt(LV_EVK_PILL_CAPTURED, pillX, pillY, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
   } else if (owner == NEUTRAL) {
     /* Do nothing */
@@ -551,6 +552,7 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
     snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, ownerName);
     lv_playersGetPlayerName(returnValue, oldOwner, sizeof(oldOwner));
     snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, oldOwner);
+    lv_messageTagPlayers(owner, returnValue);
     lv_messageAddAt(LV_EVK_PILL_STOLEN, pillX, pillY, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
   }
   (*value)->item[pillNum].owner = owner;

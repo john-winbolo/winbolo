@@ -1351,6 +1351,11 @@
 /* Log viewer: the gear of a panel and its options */
 #define STR_LV_TIP_PANEL_OPTIONS            2839
 #define STR_LV_PANEL_TRANSPARENT            2840
+/* Log viewer: the event markers over the seek bar of the Controls panel */
+#define STR_LV_OVERLAY_EVENTS               2841
+#define STR_LV_OVERLAY_TIP                  2842
+#define STR_LV_OVERLAY_COUNT                2843
+#define STR_LV_OVERLAY_MORE                 2844
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

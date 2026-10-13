@@ -1,0 +1,225 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/*
+ * The sums behind the event markers of the log viewer's seek slider
+ * (lv_event_overlay.h).
+ *
+ *   lv_event_overlay_slider — a time is put where the slider's handle is
+ *       when playback is at that time: at both ends, in the middle, with
+ *       the lobby hidden, and in a slider too narrow for its handle.
+ *   lv_event_overlay_clusters — markers nearer than one marker width become
+ *       one; the one a point is on; the team most of a marker's events name.
+ *   lv_event_overlay_choice — the chosen kinds go to the preferences text
+ *       and back; a name no build knows is ignored; an empty choice stays
+ *       empty.
+ */
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+#include "lv_event_overlay.h"
+#include "test_harness.h"
+
+static bool ovl_near(float a, float b) {
+    float d = a - b;
+    if (d < 0.0f) d = -d;
+    return d < 0.001f;
+}
+
+int run_lv_event_overlay_slider(void) {
+    /* A slider frame from 100 to 500 with ImGui's default 12 px handle: the
+       middle of the handle moves from 100 + 2 + 6 to 500 - 2 - 6. */
+    const float x0 = 100.0f, x1 = 500.0f, grab = 12.0f;
+
+    UT_ASSERT_MSG(ovl_near(lvOverlayGrabSize(x0, x1, grab), 12.0f), "handle width");
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(x0, x1, grab, 0.0f), 108.0f),
+                  "start: %f", lvOverlaySliderX(x0, x1, grab, 0.0f));
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(x0, x1, grab, 1.0f), 492.0f),
+                  "end: %f", lvOverlaySliderX(x0, x1, grab, 1.0f));
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(x0, x1, grab, 0.5f), 300.0f),
+                  "middle: %f", lvOverlaySliderX(x0, x1, grab, 0.5f));
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(x0, x1, grab, 0.25f), 204.0f),
+                  "quarter: %f", lvOverlaySliderX(x0, x1, grab, 0.25f));
+    /* A value off the slider is held at its end. */
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(x0, x1, grab, -2.0f), 108.0f), "under 0");
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(x0, x1, grab, 7.0f), 492.0f), "over 1");
+
+    /* A frame with no room for the handle: the handle is what fits, and
+       every time is in the middle of the frame. */
+    UT_ASSERT_MSG(ovl_near(lvOverlayGrabSize(0.0f, 10.0f, grab), 6.0f), "cut handle");
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(0.0f, 10.0f, grab, 0.0f), 5.0f), "narrow, start");
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(0.0f, 10.0f, grab, 1.0f), 5.0f), "narrow, end");
+    UT_ASSERT_MSG(ovl_near(lvOverlayGrabSize(0.0f, 3.0f, grab), 0.0f), "no room at all");
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(0.0f, 3.0f, grab, 0.5f), 1.5f), "3 px frame");
+
+    /* The value of a time: the whole file. */
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(0, 0, 60000), 0.0f), "first ms");
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(60000, 0, 60000), 1.0f), "last ms");
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(30000, 0, 60000), 0.5f), "half way");
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(90000, 0, 60000), 1.0f), "past the end");
+    /* With the lobby hidden the shown stretch starts at the game start. */
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(20000, 20000, 40000), 0.0f), "game start");
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(5000, 20000, 40000), 0.0f), "in the lobby");
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(40000, 20000, 40000), 0.5f), "half the game");
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(60000, 20000, 40000), 1.0f), "end of the game");
+    /* Nothing loaded. */
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(500, 0, 0), 0.0f), "no length");
+    /* A log of more than 24 days still gives a value in 0..1. */
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(0xFFFFFFFFu, 0, 0xFFFFFFFFu), 1.0f), "longest log");
+
+    /* The two together: an event half way through is under the handle at
+       half way. */
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(x0, x1, grab, lvOverlayRatio(40000, 20000, 40000)),
+                       300.0f), "time to x");
+    return 0;
+}
+
+int run_lv_event_overlay_clusters(void) {
+    LvOverlayCluster c[8];
+    int n;
+
+    /* No events. */
+    UT_ASSERT_MSG(lvOverlayClusters(NULL, 0, 13.0f, c, 8) == 0, "no list");
+    {
+        static const float none[1] = {0.0f};
+        UT_ASSERT_MSG(lvOverlayClusters(none, 0, 13.0f, c, 8) == 0, "empty list");
+    }
+
+    /* Far apart: one marker each. */
+    {
+        static const float xs[] = {10.0f, 40.0f, 80.0f};
+        n = lvOverlayClusters(xs, 3, 13.0f, c, 8);
+        UT_ASSERT_MSG(n == 3, "apart: %d", n);
+        UT_ASSERT_MSG(c[1].first == 1 && c[1].count == 1 && ovl_near(c[1].x, 40.0f), "apart, second");
+    }
+
+    /* Three in one marker width, then one exactly a width from the first
+       (not nearer than a width: its own marker), then two together. */
+    {
+        static const float xs[] = {10.0f, 10.0f, 22.9f, 23.0f, 100.0f, 104.0f};
+        n = lvOverlayClusters(xs, 6, 13.0f, c, 8);
+        UT_ASSERT_MSG(n == 3, "mixed: %d", n);
+        UT_ASSERT_MSG(c[0].first == 0 && c[0].count == 3 && ovl_near(c[0].x, 10.0f), "first marker");
+        UT_ASSERT_MSG(c[1].first == 3 && c[1].count == 1 && ovl_near(c[1].x, 23.0f), "second marker");
+        UT_ASSERT_MSG(c[2].first == 4 && c[2].count == 2 && ovl_near(c[2].x, 100.0f), "third marker");
+        /* No two markers are nearer than a width. */
+        UT_ASSERT_MSG(c[1].x - c[0].x >= 13.0f && c[2].x - c[1].x >= 13.0f, "markers overlap");
+    }
+
+    /* A chain of events 5 apart is not one long marker: each marker takes
+       a width's worth. */
+    {
+        float xs[20];
+        int i, total = 0;
+        for (i = 0; i < 20; i++) xs[i] = 5.0f * (float)i;
+        n = lvOverlayClusters(xs, 20, 13.0f, c, 8);
+        UT_ASSERT_MSG(n == 7, "chain: %d", n);
+        for (i = 0; i < n; i++) total += c[i].count;
+        UT_ASSERT_MSG(total == 20, "chain holds %d events", total);
+        UT_ASSERT_MSG(c[0].count == 3 && c[6].count == 2, "chain sizes");
+        /* No room for all the markers: the first ones are kept. */
+        n = lvOverlayClusters(xs, 20, 13.0f, c, 2);
+        UT_ASSERT_MSG(n == 2 && c[1].first == 3, "cut list: %d", n);
+    }
+
+    /* Everything at one place (a slider with no room). */
+    {
+        static const float xs[] = {5.0f, 5.0f, 5.0f, 5.0f};
+        n = lvOverlayClusters(xs, 4, 13.0f, c, 8);
+        UT_ASSERT_MSG(n == 1 && c[0].count == 4, "one place: %d", n);
+    }
+
+    /* The marker a point is on. */
+    {
+        static const LvOverlayCluster m[] = {{10.0f, 0, 1}, {23.0f, 1, 2}, {100.0f, 3, 1}};
+        UT_ASSERT_MSG(lvOverlayHit(m, 3, 10.0f, 6.5f) == 0, "on the first");
+        UT_ASSERT_MSG(lvOverlayHit(m, 3, 3.5f, 6.5f) == 0, "its left edge");
+        UT_ASSERT_MSG(lvOverlayHit(m, 3, 3.0f, 6.5f) == -1, "left of it");
+        /* Between two that touch: the nearer one. */
+        UT_ASSERT_MSG(lvOverlayHit(m, 3, 16.0f, 6.5f) == 0, "nearer the first");
+        UT_ASSERT_MSG(lvOverlayHit(m, 3, 17.0f, 6.5f) == 1, "nearer the second");
+        UT_ASSERT_MSG(lvOverlayHit(m, 3, 60.0f, 6.5f) == -1, "in a gap");
+        UT_ASSERT_MSG(lvOverlayHit(m, 3, 106.0f, 6.5f) == 2, "on the last");
+        UT_ASSERT_MSG(lvOverlayHit(m, 0, 10.0f, 6.5f) == -1, "no markers");
+        UT_ASSERT_MSG(lvOverlayHit(NULL, 3, 10.0f, 6.5f) == -1, "no list");
+    }
+
+    /* The team of a marker. */
+    {
+        int counts[LV_OVERLAY_TEAMS];
+        memset(counts, 0, sizeof(counts));
+        UT_ASSERT_MSG(lvOverlayMajorityTeam(counts) == -1, "no events");
+        counts[LV_OVERLAY_TEAMS - 1] = 9;
+        UT_ASSERT_MSG(lvOverlayMajorityTeam(counts) == -1, "only events with no team");
+        counts[4] = 1;
+        UT_ASSERT_MSG(lvOverlayMajorityTeam(counts) == 4, "one team");
+        counts[2] = 3;
+        UT_ASSERT_MSG(lvOverlayMajorityTeam(counts) == 2, "the larger team");
+        counts[4] = 3;
+        UT_ASSERT_MSG(lvOverlayMajorityTeam(counts) == 2, "level: the lower number");
+        UT_ASSERT_MSG(lvOverlayMajorityTeam(NULL) == -1, "no counts");
+    }
+    return 0;
+}
+
+int run_lv_event_overlay_choice(void) {
+    char text[256];
+    int kind;
+
+    /* Each kind alone, and every set of kinds, comes back as it went. */
+    for (kind = 0; kind < LV_EVK_COUNT; kind++) {
+        lvOverlayMaskToText(1u << kind, text, sizeof(text));
+        UT_ASSERT_MSG(strcmp(text, lvEventKindKey(kind)) == 0, "kind %d is \"%s\"", kind, text);
+        UT_ASSERT_MSG(lvOverlayMaskFromText(text) == (1u << kind), "kind %d reads back", kind);
+    }
+    {
+        unsigned mask;
+        for (mask = 0; mask <= LV_OVERLAY_ALL_MASK; mask++) {
+            lvOverlayMaskToText(mask, text, sizeof(text));
+            UT_ASSERT_MSG(lvOverlayMaskFromText(text) == mask, "set %u is \"%s\"", mask, text);
+        }
+    }
+
+    /* The default: what changes the score. */
+    lvOverlayMaskToText(LV_OVERLAY_DEFAULT_MASK, text, sizeof(text));
+    UT_ASSERT_MSG(strcmp(text, "pill_captured,pill_stolen,base_captured,base_stolen,"
+                               "builder_lost,tank_killed") == 0, "default is \"%s\"", text);
+
+    /* An empty choice has a name of its own and stays empty. */
+    lvOverlayMaskToText(0, text, sizeof(text));
+    UT_ASSERT_MSG(strcmp(text, LV_OVERLAY_KEY_NONE) == 0, "empty is \"%s\"", text);
+    UT_ASSERT_MSG(lvOverlayMaskFromText(LV_OVERLAY_KEY_NONE) == 0, "none reads as a kind");
+    UT_ASSERT_MSG(lvOverlayMaskFromText("") == 0, "empty text");
+    UT_ASSERT_MSG(lvOverlayMaskFromText(NULL) == 0, "no text");
+
+    /* Names from a newer build are ignored; the ones known are kept. */
+    UT_ASSERT_MSG(lvOverlayMaskFromText("chat,pill_placed,tank_killed") ==
+                  ((1u << LV_EVK_CHAT) | (1u << LV_EVK_TANK_KILLED)), "unknown name");
+    UT_ASSERT_MSG(lvOverlayMaskFromText("pill_placed") == 0, "only an unknown name");
+    /* "all" is the Events panel's filter, not a kind. */
+    UT_ASSERT_MSG(lvOverlayMaskFromText("all") == 0, "all reads as a kind");
+    /* Spaces, empty parts and a name twice. */
+    UT_ASSERT_MSG(lvOverlayMaskFromText(" chat , ,game,,chat,") ==
+                  ((1u << LV_EVK_CHAT) | (1u << LV_EVK_GAME)), "untidy text");
+    /* A part of a name is not the name. */
+    UT_ASSERT_MSG(lvOverlayMaskFromText("cha,tank") == 0, "half a name");
+    /* A name longer than any kind's. */
+    UT_ASSERT_MSG(lvOverlayMaskFromText("a_very_long_name_that_no_kind_of_event_has_at_all,chat") ==
+                  (1u << LV_EVK_CHAT), "long name");
+
+    /* A buffer too small holds whole names only. */
+    {
+        char small[14];
+        lvOverlayMaskToText((1u << LV_EVK_CHAT) | (1u << LV_EVK_GAME) | (1u << LV_EVK_PLAYER),
+                            small, sizeof(small));
+        UT_ASSERT_MSG(strcmp(small, "player,chat") == 0, "small buffer: \"%s\"", small);
+        lvOverlayMaskToText(1u << LV_EVK_PILL_CAPTURED, small, 4);
+        UT_ASSERT_MSG(strcmp(small, "non") == 0 || small[0] == '\0', "tiny buffer: \"%s\"", small);
+    }
+    return 0;
+}
