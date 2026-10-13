@@ -4074,6 +4074,9 @@ int run_lv_event_overlay_picture(void);
  * Events panel's saved choice. */
 int run_lv_event_kinds_filter(void);
 int run_lv_event_kinds_prefs(void);
+/* What the marker of one event is, for the lane, the list of kinds and the
+ * lines of the Events panel. */
+int run_lv_event_marker(void);
 /* The log viewer's playback times as text and the ring flashed round an
  * event's place (test_lv_time_fmt.c); and a jump to an event stopping on the
  * event's own tick (test_lv_presentation.c). */

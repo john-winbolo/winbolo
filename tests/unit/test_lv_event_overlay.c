@@ -18,6 +18,9 @@
  *   lv_event_overlay_picture — a pillbox event and a base event have the
  *       map's own picture, by kind and team: which sheet, which cell; the
  *       picture of a marker of several events; when it is drawn sharp.
+ *   lv_event_marker — what the marker of one event is (picture or icon, and
+ *       the team whose colour it has): the one answer the lane, the list of
+ *       kinds and each line of the Events panel draw from.
  */
 
 #include <stdbool.h>
@@ -395,5 +398,96 @@ int run_lv_event_kinds_prefs(void) {
        does not read as the other's default. */
     UT_ASSERT_MSG(lvEventsMaskFromPrefs("", "all") != LV_OVERLAY_DEFAULT_MASK,
                   "the panel's default is all, not the lane's six");
+    return 0;
+}
+
+/* The sheet and the cell the marker of an event is drawn from, as the draw
+   function gets to it: the marker first, then the picture of that marker. */
+static LvMapItemSprite eo_row_sprite(int kind, int team, int palette) {
+    LvEventMarker m = lvEventMarker(kind, team);
+    return lvPanelItemSprite(m.picture == LV_OVERLAY_PIC_BASE, m.team >= 0, palette);
+}
+
+int run_lv_event_marker(void) {
+    LvEventMarker m;
+    LvMapItemSprite a, b;
+    int kind, team;
+
+    /* A line of the Events panel: a pillbox captured by team 3. The picture
+       is the pillbox, in the colour of team 3, the new owner. */
+    m = lvEventMarker(LV_EVK_PILL_CAPTURED, 3);
+    UT_ASSERT_MSG(m.picture == LV_OVERLAY_PIC_PILL, "pill captured: the pillbox");
+    UT_ASSERT(m.kind == LV_EVK_PILL_CAPTURED);
+    UT_ASSERT(m.team == 3);
+    m = lvEventMarker(LV_EVK_PILL_STOLEN, 0);
+    UT_ASSERT_MSG(m.picture == LV_OVERLAY_PIC_PILL, "pill stolen: the pillbox");
+    UT_ASSERT(m.team == 0);
+
+    /* A pillbox event that names no team: the game's red pillbox. */
+    m = lvEventMarker(LV_EVK_PILL_CAPTURED, -1);
+    UT_ASSERT_MSG(m.picture == LV_OVERLAY_PIC_PILL, "no team: still the pillbox");
+    UT_ASSERT(m.team == -1);
+
+    /* A base: the base of the new owner, or the neutral base. */
+    m = lvEventMarker(LV_EVK_BASE_CAPTURED, 15);
+    UT_ASSERT_MSG(m.picture == LV_OVERLAY_PIC_BASE, "base captured: the base");
+    UT_ASSERT(m.team == 15);
+    m = lvEventMarker(LV_EVK_BASE_STOLEN, -1);
+    UT_ASSERT_MSG(m.picture == LV_OVERLAY_PIC_BASE, "base stolen: the base");
+    UT_ASSERT(m.team == -1);
+
+    /* Every other kind: its own icon, with the team for the line round it. */
+    for (kind = LV_EVK_BUILDER_LOST; kind < LV_EVK_COUNT; kind++) {
+        m = lvEventMarker(kind, 5);
+        UT_ASSERT_MSG(m.picture == LV_OVERLAY_PIC_NONE, "kind %d: an icon", kind);
+        UT_ASSERT(m.kind == kind);
+        UT_ASSERT(m.team == 5);
+        m = lvEventMarker(kind, -1);
+        UT_ASSERT(m.kind == kind);
+        UT_ASSERT(m.team == -1);
+    }
+
+    /* Two lines of one kind with two teams are two markers; the list of
+       kinds asks with no team, and the answer has the same picture. */
+    for (kind = 0; kind < LV_EVK_COUNT; kind++) {
+        LvEventMarker row1 = lvEventMarker(kind, 1);
+        LvEventMarker row2 = lvEventMarker(kind, 2);
+        LvEventMarker key = lvEventMarker(kind, -1);
+        UT_ASSERT_MSG(row1.team != row2.team, "kind %d: the team is the line's own", kind);
+        UT_ASSERT_MSG(row1.picture == key.picture && row2.picture == key.picture &&
+                      row1.kind == key.kind && row2.kind == key.kind,
+                      "kind %d: line, lane and list of kinds agree", kind);
+    }
+
+    /* A kind no build knows is a game event, as the Events panel files it;
+       a team that is not one of the 16 is no team. */
+    m = lvEventMarker(-1, 2);
+    UT_ASSERT(m.kind == LV_EVK_GAME);
+    UT_ASSERT_MSG(m.picture == LV_OVERLAY_PIC_NONE, "unknown kind: an icon");
+    UT_ASSERT(m.team == 2);
+    m = lvEventMarker(LV_EVK_COUNT, 2);
+    UT_ASSERT(m.kind == LV_EVK_GAME);
+    for (team = 16; team < 20; team++) {
+        m = lvEventMarker(LV_EVK_PILL_CAPTURED, team);
+        UT_ASSERT(m.team == -1);
+    }
+    m = lvEventMarker(LV_EVK_CHAT, -7);
+    UT_ASSERT(m.team == -1);
+
+    /* Down to the cell of the sheet: a pillbox taken by a team is not the
+       red pillbox, a base taken by a team is not the neutral base, and a
+       pillbox is never a base. */
+    a = eo_row_sprite(LV_EVK_PILL_CAPTURED, 3, 3);
+    b = eo_row_sprite(LV_EVK_PILL_CAPTURED, -1, 0);
+    UT_ASSERT_MSG(a.fromAtlas != b.fromAtlas || a.tile != b.tile || a.col != b.col || a.row != b.row,
+                  "an owned pillbox is not the red one");
+    a = eo_row_sprite(LV_EVK_BASE_STOLEN, 3, 3);
+    b = eo_row_sprite(LV_EVK_BASE_STOLEN, -1, 0);
+    UT_ASSERT_MSG(a.fromAtlas != b.fromAtlas || a.tile != b.tile || a.col != b.col || a.row != b.row,
+                  "an owned base is not the neutral one");
+    a = eo_row_sprite(LV_EVK_PILL_STOLEN, 3, 3);
+    b = eo_row_sprite(LV_EVK_BASE_STOLEN, 3, 3);
+    UT_ASSERT_MSG(a.fromAtlas != b.fromAtlas || a.tile != b.tile || a.col != b.col || a.row != b.row,
+                  "a pillbox is not a base");
     return 0;
 }

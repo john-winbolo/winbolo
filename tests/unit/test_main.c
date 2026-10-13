@@ -2317,6 +2317,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_event_overlay_picture",                        run_lv_event_overlay_picture                        },
     { "lv_event_kinds_filter",                           run_lv_event_kinds_filter                           },
     { "lv_event_kinds_prefs",                            run_lv_event_kinds_prefs                            },
+    { "lv_event_marker",                                 run_lv_event_marker                                 },
     { "lv_time_fmt_sums",                                run_lv_time_fmt_sums                                },
     { "lv_time_parse_sums",                              run_lv_time_parse_sums                              },
     { "lv_event_flash_sums",                             run_lv_event_flash_sums                             },

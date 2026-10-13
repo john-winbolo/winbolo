@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -593,6 +594,14 @@ void lv_imgui_events_window(void) {
             }
         }
 
+        /* The column of the markers: a marker is a square as high as the
+         * text of a line, and the text starts a little after it. */
+        const float rowTextH = ImGui::GetTextLineHeight();
+        const float iconSide = floorf(ImGui::GetFontSize());
+        const float iconCol  = iconSide + ImGui::GetStyle().ItemInnerSpacing.x;
+        const float listLeft = ImGui::GetWindowPos().x + ImGui::GetStyle().WindowPadding.x;
+        const bool  scrolledAcross = ImGui::GetScrollX() > 0.0f;
+
         ImGuiListClipper clipper;
         clipper.Begin(rows, ImGui::GetTextLineHeightWithSpacing());
         while (clipper.Step()) {
@@ -611,15 +620,46 @@ void lv_imgui_events_window(void) {
                 /* Check if this item is selected */
                 bool is_selected = (s_select_all) || (s_selected_index == i);
 
-                /* Selectable item */
-                char selectId[544];
-                snprintf(selectId, sizeof(selectId), "%s##evt%d", event_text, i);
-                if (isFuture) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, futureCol);
-                }
-                bool clicked = ImGui::Selectable(selectId, is_selected);
-                if (isFuture) {
-                    ImGui::PopStyleColor();
+                /* The line: the marker of the event in a column of its own
+                 * at the left, then the time and the text. The whole row is
+                 * one item, the marker's column too, so a click anywhere on
+                 * it does the same thing. The row is as wide as the list, or
+                 * as its text when that is longer (the list then scrolls
+                 * sideways, as it always did), and as high as a line of
+                 * text: the marker adds nothing to it. */
+                char selectId[32];
+                snprintf(selectId, sizeof(selectId), "##evt%d", i);
+                const ImVec2 rowPos = ImGui::GetCursorScreenPos();
+                const float  rowW   = (std::max)(iconCol + ImGui::CalcTextSize(event_text).x,
+                                               ImGui::GetContentRegionAvail().x);
+                bool clicked = ImGui::Selectable(selectId, is_selected, 0, ImVec2(rowW, 0.0f));
+                const bool rowHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip);
+                {
+                    ImDrawList *dl = ImGui::GetWindowDrawList();
+                    /* The marker keeps its place at the left of the list
+                     * when the list is scrolled sideways; the text goes
+                     * under it and is cut off at the column's edge. */
+                    const float iconX = floorf(listLeft);
+                    const float iconY = floorf(rowPos.y + (rowTextH - iconSide) * 0.5f);
+                    /* A line still to come is dim, and so is its marker. */
+                    lv_event_marker_draw(dl, ev.kind, ev.team, ImVec2(iconX, iconY),
+                                         ImVec2(iconX + iconSide, iconY + iconSide),
+                                         isFuture ? 0.45f : 1.0f);
+                    if (scrolledAcross) {
+                        dl->PushClipRect(ImVec2(listLeft + iconCol, rowPos.y),
+                                         ImVec2(dl->GetClipRectMax().x, rowPos.y + rowTextH), true);
+                    }
+                    dl->AddText(ImVec2(rowPos.x + iconCol, rowPos.y),
+                                ImGui::GetColorU32(isFuture ? futureCol
+                                                            : ImGui::GetStyleColorVec4(ImGuiCol_Text)),
+                                event_text);
+                    if (scrolledAcross) {
+                        dl->PopClipRect();
+                    }
+                    /* The marker says what kind of event the line is. */
+                    if (rowHovered && ImGui::GetIO().MousePos.x < listLeft + iconCol) {
+                        ImGui::SetTooltip("%s", lv_imgui_events_kind_label(ev.kind));
+                    }
                 }
                 /* A line that jumps when clicked shows the hand. */
                 if (ev.seekable || (ev.showTime && linesSeek)) {

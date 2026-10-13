@@ -44,8 +44,9 @@ call can be changed; the file says where.
 - Not changed, because the map's picture does not go in with no change to
   the layout: the HUD panel (its grids are the game's own 12 by 12 status
   slots) and the Tank panel's line of carried pillboxes (the game's status
-  picture, in the game's status layout). The Events panel has no column of
-  icons.
+  picture, in the game's status layout). The Events panel had no column of
+  icons then; it has one now (see "Each line of the Events panel starts with
+  its marker").
 - Each team row has a stripe in the team's colour. Below the teams there is a
   Neutral row and a Total row.
 - Two share bars (pillboxes, bases), each 6 pixels high.
@@ -862,6 +863,46 @@ so the ten kinds, their order, their markers, the counts and the "All" and
   text and left the list open. Not checked there: what text the closed
   filter shows (only the sum that picks it is tested), and the place of the
   selected line after a change.
+**Each line of the Events panel starts with its marker (Oct 13).** The
+owner: "now that we have an icon for each event let's put those on the
+events actual list".
+
+- Every line of the list has, at its left, the marker its event has in the
+  lane over the seek bar: the map's picture of a pillbox or a base in the
+  colour of the team the line names (the new owner; no team: the game's red
+  pillbox, the game's neutral base), or the kind's icon on the dark square
+  with a line in the team's colour round it.
+- One function says what the marker of an event is (`lvEventMarker` in
+  `lv_event_overlay.h`: picture or icon, and the team) and one function
+  draws it (`lv_event_marker_draw` in `imgui_event_overlay.cpp`). The lane,
+  the list of kinds and the lines of the Events panel all call it, so the
+  three cannot differ. Because of that the list of kinds changed a little:
+  an icon there now has the dark square behind it, and "Tank killed" has
+  the game's "dead" picture, as in the lane.
+- The marker is a square as high as the text (13 points at the usual font),
+  in the middle of the line. The line is not higher than before. The
+  picture is made smaller with the rule of the lane (blended at 13 pixels,
+  sharp at 16, 32, 48).
+- The marker of a line still to come is dim, as its text is.
+- The whole line is one item, so a click on the marker does what a click on
+  the text does. The mouse at rest on the marker shows the name of the kind.
+- The text of a line is not changed. "Copy" still copies the text only.
+- A line names two teams at most; the marker has the colour of the first.
+  The lane shows the second team as a tick under the marker; a line of the
+  list has no room for it under the marker, so it is not shown there.
+- Narrow panel: the list scrolled sideways when a line was longer than the
+  list, before this change, and it still does. The marker does not scroll:
+  it stays at the left of the list and the text goes under its column and
+  is cut off there. The text is not shortened with "...".
+- Only the lines in view are drawn (the list clipper is kept), and no
+  texture is made: the pictures come from the game's sheets, already loaded.
+- Unit test: `lv_event_marker`. The headless try-out of the real Events
+  panel, with and without a stand-in for the game's sheets, at ten widths
+  from 400 down to 40: no ImGui assert, no scroll bar across the panel;
+  about 13 lines drawn of 400; a click on a marker and a click on a text
+  both seek; the tooltip shows on the marker and not on the text. Not run
+  there: the list scrolled sideways.
+
 - Note: under about 116 points wide the "Auto Scroll" check box of the panel
   is wider than the panel. That was so before; the filter itself fits down
   to its arrow.
@@ -899,8 +940,10 @@ while the lane shows.
   in the colour of the team most of them name, with the number on a small
   dark plate in its lower right corner. Any other mix is the box with the
   number, as before.
-- In the "Overlay events" list the four pillbox and base kinds have the
-  picture of one no team holds.
+- In the "Overlay events" list each kind has the marker of an event of
+  that kind that names no team: the four pillbox and base kinds have the
+  picture of one no team holds, the other kinds their icon on the dark
+  square with no line of a team round it.
 - One helper draws the picture for every panel (`lv_item_picture` in
   `imgui_lv_icons.cpp`). When the game's sheets are not there the old plain
   shape is drawn. Unit test: `lv_event_overlay_picture`.

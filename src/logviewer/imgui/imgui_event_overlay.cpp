@@ -288,13 +288,16 @@ static bool overlay_dead_picture(ImDrawList *dl, ImVec2 p0, ImVec2 p1, float alp
     return true;
 }
 
-/* The marker of one kind of event in the box p0..p1 (a square). team is
- * the team that did it, or -1. */
-static void overlay_draw_kind(ImDrawList *dl, int kind, int team, ImVec2 p0, ImVec2 p1,
-                              float alpha) {
+void lv_event_marker_draw(ImDrawList *dl, int eventKind, int eventTeam, ImVec2 p0, ImVec2 p1,
+                          float alpha) {
     const ImVec4 text = ImGui::GetStyleColorVec4(ImGuiCol_Text);
     const ImU32 dark = overlay_u32(ImVec4(0.0f, 0.0f, 0.0f, 0.8f), alpha);
-    const LvOverlayPicture picture = lvOverlayKindPicture(kind);
+    /* What the marker is: the one answer for the lane, the list of kinds
+     * and the lines of the Events panel. */
+    const LvEventMarker marker = lvEventMarker(eventKind, eventTeam);
+    const LvOverlayPicture picture = marker.picture;
+    const int kind = marker.kind;
+    const int team = marker.team;
     if (picture != LV_OVERLAY_PIC_NONE &&
         lv_item_picture(dl, picture == LV_OVERLAY_PIC_BASE, team, p0, p1, alpha)) {
         /* A pillbox or a base: the map's own picture, in the colour of its
@@ -461,7 +464,7 @@ void lv_event_overlay_lane(void) {
          * always at full strength. */
         const float alpha = (i == hot || m.timeMs > nowMs) ? 1.0f : OVERLAY_PAST_ALPHA;
         if (m.count == 1) {
-            overlay_draw_kind(dl, m.kind, m.team, p0, p1, alpha);
+            lv_event_marker_draw(dl, m.kind, m.team, p0, p1, alpha);
             /* The team it was done to: a short tick under the marker. */
             if (m.otherTeam >= 0) {
                 dl->AddRectFilled(ImVec2(p0.x + 2.0f, p1.y + 1.0f), ImVec2(p1.x - 2.0f, p1.y + 3.0f),
@@ -540,16 +543,11 @@ bool lv_event_kinds_combo(const char *id, const char *preview, const char *tip,
             const float rowH = ImGui::GetFrameHeight();
             const ImVec2 at = ImGui::GetCursorScreenPos();
             const float top = floorf(at.y + (rowH - side) * 0.5f);
-            const LvOverlayPicture picture = lvOverlayKindPicture(kind);
-            /* A pillbox or a base as the lane has it, held by no team. */
-            if (picture == LV_OVERLAY_PIC_NONE ||
-                !lv_item_picture(ImGui::GetWindowDrawList(), picture == LV_OVERLAY_PIC_BASE, -1,
-                                 ImVec2(at.x, top), ImVec2(at.x + side, top + side))) {
-                lv_icon_draw(ImGui::GetWindowDrawList(), overlay_kind_icon(kind),
-                             ImVec2(at.x + 1.0f, top + 1.0f),
-                             ImVec2(at.x + side - 1.0f, top + side - 1.0f),
-                             ImGui::GetColorU32(ImGuiCol_Text));
-            }
+            /* The marker of an event of the kind that names no team: a
+             * pillbox or a base held by no team, an icon with no line of a
+             * team round it. */
+            lv_event_marker_draw(ImGui::GetWindowDrawList(), kind, -1, ImVec2(at.x, top),
+                                 ImVec2(at.x + side, top + side), 1.0f);
             ImGui::Dummy(ImVec2(side, rowH));
             ImGui::SameLine();
         }

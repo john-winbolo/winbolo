@@ -291,4 +291,36 @@ static inline LvOverlayPicture lvOverlayClusterPicture(const int *kinds, int cou
   return pic;
 }
 
+/* ---- One marker for an event, three users ---------------------------------
+ * The lane over the seek slider, the list of kinds and each line of the
+ * Events panel show the same marker for an event. All three ask this
+ * function what the marker is and one function draws it
+ * (lv_event_marker_draw), so they cannot differ. */
+
+/* What the marker of one event is:
+ *   picture  the map's picture of a pillbox or a base, or none (a drawn icon)
+ *   kind     the kind the drawn icon is of (lvEventKind)
+ *   team     the team whose colour the marker has: the colour of the picture
+ *            (-1: the game's red pillbox, the game's neutral base), or of
+ *            the line round the icon (-1: no line) */
+typedef struct {
+  LvOverlayPicture picture;
+  int kind;
+  int team;
+} LvEventMarker;
+
+/* The marker of an event of this kind that names this team (the new owner of
+ * a pillbox or a base, the killer of a tank, the sender of a chat line; -1
+ * when the event names no team). A kind out of range is a game event, as
+ * the Events panel files it; a team that is not one of the 16 is no team. */
+static inline LvEventMarker lvEventMarker(int kind, int team) {
+  LvEventMarker m;
+  if (kind < 0 || kind >= LV_EVK_COUNT) kind = LV_EVK_GAME;
+  if (team < 0 || team >= LV_OVERLAY_TEAMS - 1) team = -1;
+  m.picture = lvOverlayKindPicture(kind);
+  m.kind = kind;
+  m.team = team;
+  return m;
+}
+
 #endif /* LV_EVENT_OVERLAY_H */
