@@ -1064,6 +1064,22 @@ bool serverSimCbCanHit(void *ctx, BYTE attacker, BYTE kind, BYTE index,
     return may;
 }
 
+/* Whether a pillbox may pick this tank as its target. */
+bool serverSimCbCanTarget(void *ctx, BYTE pill, BYTE player) {
+    ServerSim *sim = (ServerSim *)ctx;
+    bool may;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->canTarget == NULL) {
+        return TRUE;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    may = sim->scenarioPolicy->canTarget(sim->scenarioPolicy->ctx, pill,
+                                         player);
+    serverSimScenarioPolicyLeave(sim);
+    return may;
+}
+
 /* Whether a build order may go ahead. */
 bool serverSimCbCanBuild(void *ctx, BYTE player, BYTE action, BYTE mapX,
                          BYTE mapY, BYTE pillIdx) {

@@ -465,6 +465,9 @@ typedef struct {
       SCN_FN_ARGS3("kind", SCN_PARAM_WORD, "subject", SCN_PARAM_ITEM,        \
                    "actor", SCN_PARAM_OWNER),                                \
       "false to keep the line off every newswire")                           \
+    X(CAN_TARGET,        "can_target",                                       \
+      SCN_FN_ARGS2("pill", SCN_PARAM_PILL, "p", SCN_PARAM_SLOT),             \
+      "false to have the pillbox pass over the tank as if it were not there")\
     X(CAN_HIT,           "can_hit",                                          \
       SCN_FN_ARGS4("attacker", SCN_PARAM_OWNER, "kind", SCN_PARAM_WORD,      \
                    "n", SCN_PARAM_ITEM, "pill", SCN_PARAM_PILL),             \

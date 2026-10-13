@@ -190,6 +190,7 @@ scenario = {
     can_build = "Keeps each bot's builder inside its own station, and stops boats in Station 5.",
     can_capture = "The 5A bot takes only its own two pillboxes; the Station 7 bot leaves your two dead ones.",
     can_hit = "Tank shells pass between you and the demo bots; yours pass your 5B pillbox; the 5A pillboxes' pass you.",
+    can_target = "The two Station 5A pillboxes never aim or fire at you; they shoot only at the demo bot.",
     can_die = "The parked Station 6 tank cannot be destroyed, and the Station 4 pillbox cannot be killed before you have hidden.",
     on_choose_start = "You respawn at the furthest station you have reached.",
     spawn_loadout = "You respawn with the tank that station starts you with.",
@@ -1834,6 +1835,20 @@ function can_hit(attacker, kind, n, pill)
   end
   if (attacker == S.player and is_demo_bot(n)) or
      (n == S.player and is_demo_bot(attacker)) then
+    return false
+  end
+  return nil
+end
+
+-- 5A: the demo's two pillboxes never pick the player as their target, so
+-- they do not turn to him, fire at him or wait for him; their fire is for
+-- the demo bot alone. can_hit above stays as the second guard, for a shell
+-- aimed at the bot that reaches the player. The 5B target is not in the
+-- list: there the player is meant to be shot at.
+
+function can_target(pill, p)
+  if p == S.player and S.player ~= nil and
+     (pill == P.t5a_target.n or pill == P.t5a_blocker.n) then
     return false
   end
   return nil

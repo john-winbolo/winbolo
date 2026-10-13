@@ -339,7 +339,7 @@ typedef struct {
  * most once and a name the catalogue lacks is not kept at all. What bounds a
  * block is its packed size, SCN_CALLBACKS_BLOB_MAX in scenario_callbacks.h,
  * because that is what has to fit the lobby's wire. */
-#define SCN_CALLBACKS_MAX 40
+#define SCN_CALLBACKS_MAX 48
 
 typedef struct {
     char name[SCN_CALLBACK_NAME_LEN];   /* the catalogue's, e.g. "on_start" */

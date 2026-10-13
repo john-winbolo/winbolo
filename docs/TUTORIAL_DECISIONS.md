@@ -866,3 +866,28 @@ The status line and the white line are drawn 13 units high in the classic
 high, and the two lines took a fifth of it, which also pushed the white line
 well down from the top. The full screen map and tablet mode keep 20. This is
 an engine change and holds for every scenario's lines in the classic view.
+
+## 2026-10-13: the 5A pillboxes never target the player
+
+In Station 5A the hostile pillbox sometimes turned to the watching player
+and fired at him, not at the demo bot. `can_hit` already made those shells
+pass him, so he took no damage, but the pillbox wasted its fire on him and
+the demo looked wrong.
+
+The engine has a new policy, `can_target(pill, p)`: the pillbox update asks
+it of a tank the pillbox would otherwise take as its target, and `false`
+has the pillbox pass over that tank as if it were not there and take the
+next nearest (docs/SCENARIO_API.md, Policies). The tutorial answers `false`
+for the player and the two 5A pillboxes (`P.t5a_target`, `P.t5a_blocker`),
+so their fire is for the demo bot alone. With only the player in range the
+5A target stands idle.
+
+- The `can_hit` rule for the 5A pillboxes stays, as the second guard for a
+  shell aimed at the bot that reaches the player.
+- The Station 5B target is not in the list. The player is meant to be shot
+  at there.
+- A pillbox the player shoots still turns angry (that is real damage he
+  does); it then fires faster, at the bot only.
+- Pillboxes aim at tanks only, never at a builder, so the rule needs no
+  builder half.
+- Test: `tests/scenario/tutorial_5a_no_target.scenario.lua`.

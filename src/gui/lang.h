@@ -3180,7 +3180,8 @@
 /* One line per function a scenario author writes, for the list the editor
  * shows them in: the 26 hooks, then the 14 policies. The block runs in the
  * order SCN_HOOK_LIST and SCN_POLICY_LIST hold them, except can_ally's,
- * on_tank_hit's, can_hit's, pill_damage_scale's and kill_credit's: the
+ * on_tank_hit's, can_hit's, pill_damage_scale's, kill_credit's and
+ * can_target's: the
  * numbers after the block are taken, so their ids sit outside it.
  *
  * The tail of each symbol is the catalogue's own id column rather than the
@@ -3230,6 +3231,7 @@
 #define STR_SCNFN_DESC_CAN_HIT               2705
 #define STR_SCNFN_DESC_PILL_DAMAGE_SCALE     2706
 #define STR_SCNFN_DESC_KILL_CREDIT           2774
+#define STR_SCNFN_DESC_CAN_TARGET            2810
 
 /* The scenario panel's kind control: what the file being edited is allowed
  * to decide. Not the same question as "Built for this map", which is which

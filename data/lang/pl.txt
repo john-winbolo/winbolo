@@ -2654,6 +2654,7 @@ STR_SCNFN_DESC_CAN_ALLY=Czy jeden gracz może zawrzeć sojusz z innym.
 STR_SCNFN_DESC_TANK_HIT=Czołg dostał pociskiem lub miną, wraz z pancerzem, który faktycznie stracił.
 STR_SCNFN_DESC_CAN_HIT=Czy pocisk może trafić czołg lub bunkier, do którego doleciał.
 STR_SCNFN_DESC_PILL_DAMAGE_SCALE=Ile wart jest trafienie w bunkier, pytane przy każdym pocisku i wybuchu, który go dosięga.
+STR_SCNFN_DESC_CAN_TARGET=Czy bunkier może obrać czołg za cel.
 STR_MAPEDIT_SCENARIO_KIND=Co może decydować
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Scenariusz — może zakończyć rundę i wskazać zwycięzcę
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — zmienia przebieg gry i nie ingeruje w zwycięstwo
