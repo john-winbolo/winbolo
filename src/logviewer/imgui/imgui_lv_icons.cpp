@@ -16,13 +16,99 @@
 
 #include <SDL3/SDL.h>
 
+#include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"   /* imguiLoadSvgIcon */
+
 extern "C" {
+    #include "../lv_bot_chip.h"
     #include "../lv_name_header.h"
     #include "../lv_team_sprite.h"
     bool lv_drawItemPicture(int isBase, int team, struct SDL_Texture **tex, float *sx, float *sy,
                             float *sw, float *sh);
     bool lv_drawBuilderPicture(int parachute, struct SDL_Texture **tex, float *sx, float *sy,
                                float *sw, float *sh);
+    SDL_Renderer *lv_drawGetSDLRenderer(void);
+}
+
+/* The size the two chips are made at: the size the game makes them at for
+ * its players panel (WBN_ICON_RASTER_PX in gui/sdl3/sdl3imgui.cpp), more
+ * than a line of text is high on any display, so a chip is only made
+ * smaller when it is drawn. */
+#define BOT_CHIP_RASTER_PX 64
+
+/* The red chip and the green one, and the renderer they were made for. A
+ * new renderer gets new ones; those of the old renderer went with it. */
+static SDL_Renderer *s_chipRenderer = nullptr;
+static SDL_Texture *s_chipTex[2] = { nullptr, nullptr };
+
+/* One of the game's chip pictures, in its own colours. NULL when the file
+ * is not there. */
+static SDL_Texture *bot_chip_load(SDL_Renderer *r, const char *file) {
+    char path[1024];
+    SDL_snprintf(path, sizeof(path), "data/ui/%s", file);
+    SDL_Texture *tex = imguiLoadSvgIcon(r, path, BOT_CHIP_RASTER_PX);
+    if (tex == nullptr) {
+        /* An installed build finds data/ from where the program is, not
+         * from the working directory, as the ping pictures do. */
+        const char *base = SDL_GetBasePath();
+        if (base != nullptr) {
+            SDL_snprintf(path, sizeof(path), "%sdata/ui/%s", base, file);
+            tex = imguiLoadSvgIcon(r, path, BOT_CHIP_RASTER_PX);
+        }
+    }
+    return tex;
+}
+
+/* The picture of a chip, NULL for no chip and when it is not there. */
+static SDL_Texture *bot_chip_texture(int chip) {
+    if (chip != LV_BOT_CHIP_RED && chip != LV_BOT_CHIP_GREEN) {
+        return nullptr;
+    }
+    SDL_Renderer *r = lv_drawGetSDLRenderer();
+    if (r == nullptr) {
+        return nullptr;
+    }
+    if (r != s_chipRenderer) {
+        s_chipRenderer = r;
+        s_chipTex[0] = bot_chip_load(r, "bot-cpu-red.svg");
+        s_chipTex[1] = bot_chip_load(r, "bot-cpu-green.svg");
+    }
+    return s_chipTex[(chip == LV_BOT_CHIP_GREEN) ? 1 : 0];
+}
+
+float lv_bot_chip_width(int chip) {
+    if (bot_chip_texture(chip) == nullptr) {
+        return 0.0f;
+    }
+    return floorf(ImGui::GetTextLineHeight());
+}
+
+float lv_bot_chip_gap(void) {
+    return floorf(ImGui::GetStyle().ItemInnerSpacing.x);
+}
+
+bool lv_bot_chip_draw(ImDrawList *dl, int chip, ImVec2 p, float alpha) {
+    SDL_Texture *tex = bot_chip_texture(chip);
+    if (dl == nullptr || tex == nullptr) {
+        return false;
+    }
+    const float side = floorf(ImGui::GetTextLineHeight());
+    const float x = floorf(p.x), y = floorf(p.y);
+    /* In its own colours: the two chips are two pictures, not one shape in
+     * two colours. Only alpha dims it. */
+    dl->AddImage((ImTextureID)(size_t)tex, ImVec2(x, y), ImVec2(x + side, y + side),
+                 ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f),
+                 ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, alpha)));
+    return true;
+}
+
+bool lv_bot_chip_text(int chip) {
+    const float w = lv_bot_chip_width(chip);
+    if (w <= 0.0f) {
+        return false;
+    }
+    lv_bot_chip_draw(ImGui::GetWindowDrawList(), chip, ImGui::GetCursorScreenPos());
+    ImGui::Dummy(ImVec2(w, ImGui::GetTextLineHeight()));
+    return true;
 }
 
 /* A triangle that points right (dir > 0) or left, in the box x0..x1 by
@@ -278,7 +364,8 @@ static void icon_cut_name(const char *name, float maxW, char *out, size_t outSiz
 }
 
 bool lv_name_header(const char *id, bool hasStripe, ImU32 stripe, int leadIcon,
-                    const char *name, const char *nameTip, const char *closeTip) {
+                    int botChip, const char *name, const char *nameTip,
+                    const char *closeTip) {
     const ImGuiStyle &style = ImGui::GetStyle();
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const ImVec2 top = ImGui::GetCursorScreenPos();
@@ -288,6 +375,13 @@ bool lv_name_header(const char *id, bool hasStripe, ImU32 stripe, int leadIcon,
     float lead = LV_NAME_HEADER_STRIPE_W + gap;
     if (leadIcon >= 0) {
         lead += lv_icon_text_width(leadIcon) + gap;
+    }
+    /* The chip of a bot is part of what comes before the name, so the name
+     * is cut for it and the button keeps its place. A person, and a bot when
+     * the picture is not there, has no room kept. */
+    const float chipW = lv_bot_chip_width(botChip);
+    if (chipW > 0.0f) {
+        lead += chipW + lv_bot_chip_gap();
     }
     if (name == nullptr) name = "";
     const LvNameHeader lay = lvNameHeaderLayout(ImGui::GetContentRegionAvail().x, lead,
@@ -301,6 +395,10 @@ bool lv_name_header(const char *id, bool hasStripe, ImU32 stripe, int leadIcon,
     if (leadIcon >= 0) {
         ImGui::SetCursorScreenPos(ImVec2(top.x + LV_NAME_HEADER_STRIPE_W + gap, top.y));
         lv_icon_text(leadIcon);
+    }
+    if (chipW > 0.0f) {
+        ImGui::SetCursorScreenPos(ImVec2(top.x + lay.nameX - chipW - lv_bot_chip_gap(), top.y));
+        lv_bot_chip_text(botChip);
     }
     char shown[256];
     if (lay.nameCut) {

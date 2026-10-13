@@ -57,6 +57,7 @@
 #include "dns.h"
 #include "logviewer.h"
 #include "lv_hud.h"
+#include "lv_bot_chip.h"         /* which chip a bot has in the panels */
 #include "lv_overview.h"
 #include "lv_tank_status.h"
 #include "lv_time_fmt.h"
@@ -6473,6 +6474,25 @@ static LvHudRelation screenHudRelation(bool perspective, BYTE viewer,
                            lv_playersIsAllie(owner, viewer) == TRUE);
 }
 
+/* The chip the panels draw in front of the name of the player in a slot
+   (LvBotChip): none for a person and for a slot nobody is in. The green chip
+   is for the perspective player and its allies, as the game draws a bot on
+   the player's side; any other bot has the red chip. The caller holds the
+   client mutex. */
+int lv_screenBotChip(BYTE slot) {
+  bool perspective;
+  BYTE viewer;
+
+  if (g_lv == NULL || slot >= MAX_TANKS || lv_playersIsInUse(slot) == FALSE) {
+    return LV_BOT_CHIP_NONE;
+  }
+  perspective = lv_playersHasPerspective();
+  viewer = lv_playersGetSelf();
+  return (int) lvBotChipFor(lv_playersIsBot(slot) != FALSE, perspective != FALSE,
+      slot == viewer,
+      perspective != FALSE && slot != viewer && lv_playersIsAllie(slot, viewer) == TRUE);
+}
+
 /* Copy out what the HUD panel draws: for each tank, pillbox and base slot
    the icon it shows, who owns it and the colour of the owner's team, and
    with a perspective on what it is to that player. With no log loaded every
@@ -6504,6 +6524,7 @@ void lv_screenHudSnapshot(LvHudSnapshot *out) {
     out->perspective = 1;
     out->viewer = viewer;
     lv_screenGetPlayerName(out->viewerName, viewer, sizeof(out->viewerName));
+    out->viewerChip = (unsigned char) lv_screenBotChip(viewer);
   }
 
   for (count = 0; count < MAX_TANKS && count < LV_HUD_SLOTS; count++) {
@@ -6515,6 +6536,7 @@ void lv_screenHudSnapshot(LvHudSnapshot *out) {
     slot->colour = g_lv->tc[slot->team];
     slot->relation = (unsigned char) screenHudRelation(perspective, viewer,
         slot->icon != LV_HUD_ICON_EMPTY, count);
+    slot->chip = (unsigned char) lv_screenBotChip(count);
   }
 
   total = (g_lv->pb != NULL) ? lv_pillsGetNumPills(&g_lv->pb) : 0;
@@ -6577,7 +6599,7 @@ void lv_screenOverviewSnapshot(LvOverview *out) {
       continue;
     }
     lv_screenGetPlayerName(name, count, sizeof(name));
-    lvOverviewAddPlayer(out, team, g_lv->tc[team], name);
+    lvOverviewAddPlayerChip(out, team, g_lv->tc[team], name, lv_screenBotChip(count));
   }
 
   total = (g_lv->pb != NULL) ? lv_pillsGetNumPills(&g_lv->pb) : 0;
@@ -6633,6 +6655,7 @@ void lv_screenTankStatusSnapshot(LvTankStatus *out) {
   out->slot = (unsigned char) slot;
   lv_screenGetPlayerName(name, (BYTE) slot, sizeof(name));
   snprintf(out->name, sizeof(out->name), "%s", name);
+  out->chip = (unsigned char) lv_screenBotChip((BYTE) slot);
   team = lv_playersGetTeamForOwner((BYTE) slot);
   out->hasTeam = (team != NEUTRAL_TEAM);
   out->colour = g_lv->tc[team];

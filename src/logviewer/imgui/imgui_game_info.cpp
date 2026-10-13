@@ -14,6 +14,7 @@
 #include "imgui_context.h"
 #include "imgui_comments.h"
 #include "imgui.h"
+#include "imgui_lv_icons.h"
 #include "../../gui/lang.h"
 /* Plain C, no bolo headers — see the note at the top of that header. */
 #include "../game_settings_blob.h"
@@ -39,6 +40,7 @@ extern "C" {
     int lv_screenGetGameSettings(unsigned char *out, int maxLen);
     bool lv_playersIsInUse(unsigned char playerNumber);
     bool lv_screenGetLoggedPlayerName(unsigned char slot, char *dest, size_t destSize);
+    int  lv_screenBotChip(unsigned char slot);
 }
 
 /* Game info state */
@@ -570,6 +572,16 @@ static void game_info_draw_scores(void) {
     ImGui::TableSetupColumn("##score", ImGuiTableColumnFlags_WidthFixed,
                             ImGui::CalcTextSize("-00000000").x);
 
+    /* A bot's row has the game's chip in front of the name. When one row
+     * has it, every player's row keeps the room, so the names line up; with
+     * no bot, and when the picture is not there, no room is kept. */
+    float chipRoom = 0.0f;
+    for (int i = 0; i < MAX_TANKS && chipRoom <= 0.0f; i++) {
+        const LvPresScore *s = lv_screenGetScore(SCN_SCORE_KIND_PLAYER, (BYTE)i);
+        if (s == NULL || !s->valid) continue;
+        chipRoom = lv_bot_chip_width(lv_screenBotChip((unsigned char)i));
+    }
+
     for (int i = 0; i < MAX_TANKS; i++) {
         const LvPresScore *s = lv_screenGetScore(SCN_SCORE_KIND_PLAYER, (BYTE)i);
         if (s == NULL || !s->valid) continue;
@@ -591,6 +603,12 @@ static void game_info_draw_scores(void) {
 
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
+        if (chipRoom > 0.0f) {
+            if (!lv_bot_chip_text(lv_screenBotChip((unsigned char)i))) {
+                ImGui::Dummy(ImVec2(chipRoom, ImGui::GetTextLineHeight()));
+            }
+            ImGui::SameLine(0.0f, lv_bot_chip_gap());
+        }
         ImGui::TextUnformatted(name);
         ImGui::TableSetColumnIndex(1);
         ImGui::TextUnformatted(s->label);

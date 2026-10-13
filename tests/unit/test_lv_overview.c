@@ -20,6 +20,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "lv_bot_chip.h"
 #include "lv_overview.h"
 #include "test_harness.h"
 
@@ -106,6 +107,83 @@ int run_lv_overview_sums(void) {
         UT_ASSERT_MSG(o.rows[4].players == 17, "every player counted");
         UT_ASSERT_MSG(o.rows[5].team == 5 && strcmp(o.rows[5].names, "P") == 0,
                       "the next row is not written into");
+    }
+
+    return 0;
+}
+
+/* The chip of a bot: which one a player has, and where the names of a row
+   start, so the panel can put the chip in front of the right name. */
+int run_lv_overview_bots(void) {
+    LvOverview o;
+    const LvOverviewRow *row;
+    const char *name;
+    size_t len;
+    int i;
+
+    /* A person has no chip, whatever the view. With no perspective a bot is
+       red; with one, the viewed player and its allies are green. */
+    UT_ASSERT_MSG(lvBotChipFor(false, false, false, false) == LV_BOT_CHIP_NONE, "a person");
+    UT_ASSERT_MSG(lvBotChipFor(false, true, true, true) == LV_BOT_CHIP_NONE, "a person viewed");
+    UT_ASSERT_MSG(lvBotChipFor(true, false, false, false) == LV_BOT_CHIP_RED, "no perspective");
+    UT_ASSERT_MSG(lvBotChipFor(true, false, true, true) == LV_BOT_CHIP_RED,
+                  "no perspective: own and allied mean nothing");
+    UT_ASSERT_MSG(lvBotChipFor(true, true, true, false) == LV_BOT_CHIP_GREEN, "the viewed bot");
+    UT_ASSERT_MSG(lvBotChipFor(true, true, false, true) == LV_BOT_CHIP_GREEN, "an allied bot");
+    UT_ASSERT_MSG(lvBotChipFor(true, true, false, false) == LV_BOT_CHIP_RED, "a hostile bot");
+
+    /* A team of a person, a bot and a person: the names come back apart. */
+    lvOverviewInit(&o);
+    UT_ASSERT_MSG(lvOverviewAddPlayer(&o, 2, 5, "Alice"), "a person");
+    UT_ASSERT_MSG(lvOverviewAddPlayerChip(&o, 2, 5, "Bot, the 1st", LV_BOT_CHIP_RED), "a bot");
+    UT_ASSERT_MSG(lvOverviewAddPlayerChip(&o, 2, 5, "Carol", LV_BOT_CHIP_NONE), "a person");
+    UT_ASSERT_MSG(lvOverviewAddPlayerChip(&o, 7, 1, "Lone", LV_BOT_CHIP_GREEN), "a bot alone");
+    row = &o.rows[0];
+    UT_ASSERT_MSG(strcmp(row->names, "Alice, Bot, the 1st, Carol") == 0, "the list is as before");
+    UT_ASSERT_MSG(row->players == 3 && row->bots == 1, "one bot of three");
+    UT_ASSERT_MSG(row->chip[0] == LV_BOT_CHIP_NONE && row->chip[1] == LV_BOT_CHIP_RED &&
+                  row->chip[2] == LV_BOT_CHIP_NONE, "the chip of each");
+    name = lvOverviewName(row, 0, &len);
+    UT_ASSERT_MSG(name != NULL && len == 5 && memcmp(name, "Alice", 5) == 0, "first name");
+    /* A name with the separator in it is still one name. */
+    name = lvOverviewName(row, 1, &len);
+    UT_ASSERT_MSG(name != NULL && len == 12 && memcmp(name, "Bot, the 1st", 12) == 0,
+                  "second name");
+    name = lvOverviewName(row, 2, &len);
+    UT_ASSERT_MSG(name != NULL && len == 5 && memcmp(name, "Carol", 5) == 0, "last name");
+    UT_ASSERT_MSG(lvOverviewName(row, 3, &len) == NULL && len == 0, "no fourth player");
+    UT_ASSERT_MSG(lvOverviewName(row, -1, &len) == NULL, "no player before the first");
+    row = &o.rows[1];
+    UT_ASSERT_MSG(row->bots == 1 && row->chip[0] == LV_BOT_CHIP_GREEN, "the green chip is kept");
+    name = lvOverviewName(row, 0, &len);
+    UT_ASSERT_MSG(name != NULL && len == 4 && memcmp(name, "Lone", 4) == 0, "a team of one");
+
+    /* A list too long to hold: the names that are cut have a length that
+       stays inside the list, and those with no room have none. */
+    lvOverviewInit(&o);
+    {
+        char longName[64];
+        size_t total = 0;
+        memset(longName, 'n', sizeof(longName) - 1);
+        longName[sizeof(longName) - 1] = '\0';
+        for (i = 0; i < 6; i++) {
+            UT_ASSERT_MSG(lvOverviewAddPlayerChip(&o, 4, 4, longName, LV_BOT_CHIP_RED), "long");
+        }
+        row = &o.rows[0];
+        UT_ASSERT_MSG(row->bots == 6, "six bots");
+        for (i = 0; i < 6; i++) {
+            name = lvOverviewName(row, i, &len);
+            UT_ASSERT_MSG(name != NULL, "each has a place");
+            UT_ASSERT_MSG(name >= row->names &&
+                          name + len <= row->names + LV_OVERVIEW_NAMES_LEN - 1,
+                          "inside the list");
+            total += len;
+        }
+        name = lvOverviewName(row, 0, &len);
+        UT_ASSERT_MSG(len == 63, "the first is whole");
+        name = lvOverviewName(row, 5, &len);
+        UT_ASSERT_MSG(len == 0, "the last had no room");
+        UT_ASSERT_MSG(total <= LV_OVERVIEW_NAMES_LEN - 1, "never more than the list holds");
     }
 
     return 0;

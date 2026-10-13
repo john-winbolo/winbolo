@@ -84,10 +84,28 @@ bool lv_item_picture(ImDrawList *dl, bool isBase, int team, ImVec2 p0, ImVec2 p1
 bool lv_builder_picture(ImDrawList *dl, bool parachute, ImVec2 p0, ImVec2 p1,
                         float alpha = 1.0f);
 
+/* The chip the game marks a computer player with (data/ui/bot-cpu-red.svg
+ * and bot-cpu-green.svg, the two pictures of the game's players panel and of
+ * its tank labels), for the front of a bot's name. chip is an LvBotChip
+ * (lv_bot_chip.h): the red chip or the green one, drawn in their own colours.
+ *
+ * lv_bot_chip_width is the side of the chip in a line of text; it is 0 for
+ * LV_BOT_CHIP_NONE and when the pictures are not there, so a caller that
+ * adds the width and its gap only when it is not 0 leaves no empty room.
+ * lv_bot_chip_draw draws the chip with that side at p. lv_bot_chip_text is
+ * the chip as an item in a line of text; SameLine follows it. Both return
+ * false, and draw nothing, when the width is 0. */
+float lv_bot_chip_width(int chip);
+bool lv_bot_chip_draw(ImDrawList *dl, int chip, ImVec2 p, float alpha = 1.0f);
+bool lv_bot_chip_text(int chip);
+
+/* The gap between a chip and the name after it. */
+float lv_bot_chip_gap(void);
+
 /* The line that names a player at the top of a panel (the Tank panel, the
  * HUD panel): a stripe in the colour of the player's team, an icon when
- * leadIcon is one (-1 for none), the name, and at the right end a small X
- * button. A name too long for the line is cut and ends in "..."; the button
+ * leadIcon is one (-1 for none), the chip of a bot (botChip, an LvBotChip),
+ * the name, and at the right end a small X button. A name too long for the line is cut and ends in "..."; the button
  * is never cut and never under the name (lv_name_header.h has the sums).
  * The stripe keeps its room when the player is in no team, so the name
  * starts at the same place. nameTip is the tooltip of the name (NULL: the
@@ -95,7 +113,8 @@ bool lv_builder_picture(ImDrawList *dl, bool parachute, ImVec2 p0, ImVec2 p1,
  * the height of a line of text with its spacing. Returns true when the
  * button was pressed. */
 bool lv_name_header(const char *id, bool hasStripe, ImU32 stripe, int leadIcon,
-                    const char *name, const char *nameTip, const char *closeTip);
+                    int botChip, const char *name, const char *nameTip,
+                    const char *closeTip);
 
 /* The width of the stripe of lv_name_header. */
 #define LV_NAME_HEADER_STRIPE_W 4.0f

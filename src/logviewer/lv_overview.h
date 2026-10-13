@@ -47,6 +47,13 @@ typedef struct LvOverviewRow {
     int bases;              /* bases it owns */
     char firstName[LV_OVERVIEW_NAMES_LEN]; /* its first player, by slot */
     char names[LV_OVERVIEW_NAMES_LEN];     /* all its players, "A, B, C" */
+    /* Where each player's name starts in names, and the chip the player has
+     * (LvBotChip of lv_bot_chip.h; 0 for a person), so the panel can put the
+     * chip in front of a bot's name. For the first LV_OVERVIEW_MAX_TEAMS
+     * players of the team, which is every player a game can have. */
+    unsigned char nameAt[LV_OVERVIEW_MAX_TEAMS];
+    unsigned char chip[LV_OVERVIEW_MAX_TEAMS];
+    unsigned char bots;     /* how many of them have a chip */
 } LvOverviewRow;
 
 /* The whole table. The rows are in team order. */
@@ -83,10 +90,11 @@ static inline void lvOverviewAppend(char *dst, const char *src) {
 
 /* A player is in the game: put the player in the team's row, and make the
  * row if this is the team's first player. A new row goes in where it keeps
- * the rows in team order, whatever order the players come in. Returns false
- * when the team number is not one a player can have. */
-static inline bool lvOverviewAddPlayer(LvOverview *o, int team, int colour,
-                                       const char *name) {
+ * the rows in team order, whatever order the players come in. chip is the
+ * player's LvBotChip, 0 for a person. Returns false when the team number is
+ * not one a player can have. */
+static inline bool lvOverviewAddPlayerChip(LvOverview *o, int team, int colour,
+                                           const char *name, int chip) {
     LvOverviewRow *row;
     if (team < 0 || team >= LV_OVERVIEW_MAX_TEAMS) return false;
     if (name == NULL) name = "";
@@ -107,9 +115,42 @@ static inline bool lvOverviewAddPlayer(LvOverview *o, int team, int colour,
     } else {
         lvOverviewAppend(row->names, LV_OVERVIEW_NAME_SEP);
     }
+    if (row->players < LV_OVERVIEW_MAX_TEAMS) {
+        row->nameAt[row->players] = (unsigned char)strlen(row->names);
+        row->chip[row->players] = (unsigned char)chip;
+        if (chip != 0) row->bots++;
+    }
     lvOverviewAppend(row->names, name);
     row->players++;
     return true;
+}
+
+/* The same for a person: no chip. */
+static inline bool lvOverviewAddPlayer(LvOverview *o, int team, int colour,
+                                       const char *name) {
+    return lvOverviewAddPlayerChip(o, team, colour, name, 0);
+}
+
+/* The name of the row's player number index (0 is the first), as a part of
+ * row->names: where it starts, and in *len how long it is. A name the list
+ * had no room for has the length 0. NULL when the row has no such player. */
+static inline const char *lvOverviewName(const LvOverviewRow *row, int index, size_t *len) {
+    size_t start, end;
+    if (index < 0 || index >= row->players || index >= LV_OVERVIEW_MAX_TEAMS) {
+        *len = 0;
+        return NULL;
+    }
+    start = row->nameAt[index];
+    end = strlen(row->names);
+    if (index + 1 < row->players && index + 1 < LV_OVERVIEW_MAX_TEAMS) {
+        /* The next name starts after the separator. */
+        size_t next = row->nameAt[index + 1];
+        size_t sep = strlen(LV_OVERVIEW_NAME_SEP);
+        if (next < end) end = (next >= sep) ? next - sep : 0;
+    }
+    if (end < start) end = start;
+    *len = end - start;
+    return row->names + start;
 }
 
 /* Count one pillbox (isBase false) or base that is on the map or in a tank.

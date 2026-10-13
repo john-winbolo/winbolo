@@ -95,6 +95,7 @@ typedef struct LvHudSlot {
     unsigned char hasTeam; /* 0 when the owner is in no team */
     unsigned char colour;  /* the palette entry the team is drawn in (tc[team]) */
     unsigned char relation; /* LvHudRelation; NONE when no perspective is on */
+    unsigned char chip;    /* LvBotChip of the tank's player; NONE for a pillbox or a base */
 } LvHudSlot;
 
 /* The longest player name the snapshot carries, with its NUL. A longer name
@@ -109,6 +110,7 @@ typedef struct LvHudSnapshot {
     unsigned char perspective;         /* 1 while one player's view is shown */
     unsigned char viewer;              /* that player's slot */
     char viewerName[LV_HUD_NAME_LEN];  /* and name */
+    unsigned char viewerChip;          /* and LvBotChip */
     unsigned char hasSelected;         /* 1 while a tank is selected */
     unsigned char selected;            /* its slot */
 } LvHudSnapshot;

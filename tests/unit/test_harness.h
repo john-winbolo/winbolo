@@ -4032,6 +4032,10 @@ int run_lv_team_sprite_sums(void);
  * rows of the teams, which row a pillbox or a base is counted in, and the
  * share a count is of the whole. */
 int run_lv_overview_sums(void);
+/* The chip of a bot in the log viewer's panels (test_lv_overview.c,
+ * lv_bot_chip.h): which chip a player has, and where each name of a team's
+ * row starts, so the chip goes in front of the bot's name. */
+int run_lv_overview_bots(void);
 /* The log viewer's Tank panel (test_lv_tank_status.c): which tank is the
  * selected one, and the height of a gauge against its cap. */
 int run_lv_tank_status_sums(void);

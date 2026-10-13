@@ -1539,7 +1539,7 @@ room. No line says "dead" now.
   is not drawn either.
 - An estimate has `~` in front, as on the map.
 
-One source. The map marker (`lvDrawBuilderMarkers` in `draw.c`) and the
+One source. The map marker (`lvDrawBuilderStatusOverBlit` in `draw.c`) and the
 panel (`lv_screenTankStatusSnapshot` in `screen.c`) both take the time from
 `lv_screenBuilderReturn`. That was already so; no second copy existed. Both
 now make the text with `lvBuilderDeadText` (`lv_builder_status.h`), which
@@ -1557,6 +1557,65 @@ The strings `STR_LV_TANK_BUILDER_DEAD` and `STR_LV_TANK_BUILDER_BACK` are not
 used now. Their ids stay in the four lang files.
 
 Test: `lv_builder_dead_text`.
+
+### A bot has the game's chip in front of its name (Oct 13)
+
+The panels did not mark a bot. They now draw the chip the game draws for a
+computer player in its players panel and on its tank labels: the two
+pictures `data/ui/bot-cpu-red.svg` and `data/ui/bot-cpu-green.svg`, in their
+own colours, as high as a line of text. No new picture was made.
+
+Where a player's name is shown, and what changed:
+
+| Place | Before | Now |
+| --- | --- | --- |
+| Tank panel, the name line | no mark | chip before the name |
+| HUD panel, the name line of the one-player view | no mark | chip after the eye, before the name |
+| HUD panel, tooltip of a tank slot | no mark | chip at the start of the line |
+| Overview panel, a team's row and its tooltip | no mark | chip before each bot's name |
+| Game Information, the scores table | no mark | chip before the name |
+| HUD panel, tooltip of a pillbox or a base (the owner) | no mark | not changed |
+| Item Information, the owner line | no mark | not changed |
+| Events panel | names are inside the text of a line; no player column | not changed |
+| Chat and newswire lines on the map | names are inside the text | not changed |
+| Tank labels on the map | the text `[AI] ` before the name | not changed |
+| Statistics text (`lv_stats.c`) | the text ` (bot)` | not changed |
+| Save Log File name | no mark | no mark, on purpose |
+
+Calls made:
+
+- **Which chip.** The game draws the green chip for a bot on the player's
+  side and the red chip for any other bot. The viewer has a player only
+  while the view of one player is on. Then that player (when it is a bot)
+  and its allies have the green chip, and each other bot has the red one.
+  With no one-player view, each bot has the red chip. That is the chip the
+  game draws when it does not know the sides. The rule is `lvBotChipFor` in
+  `src/logviewer/lv_bot_chip.h`; `lv_screenBotChip` in `screen.c` gives the
+  answer for a slot.
+- **No room for a person.** A person has no chip and no gap. The one
+  exception is the scores table: when one row has a chip, each player's row
+  keeps the room, so the names are in one column.
+- **Picture not there.** When the two files cannot be read, the width of the
+  chip is 0 and each place draws what it drew before. There is no gap and
+  no other mark.
+- **Loading.** The viewer reads the two files itself (`bot_chip_texture` in
+  `imgui_lv_icons.cpp`), with the game's own SVG loader
+  (`imguiLoadSvgIcon`), at the game's size of 64 pixels. The game's copy of
+  the textures is in `sdl3imgui.cpp`, which the standalone viewer does not
+  link.
+- **Tank panel sums.** The chip is part of what comes before the name
+  (`lead` of `lvNameHeaderLayout`), so the name is cut sooner and the X
+  button keeps its place. The room under the name line did not change.
+- **Overview rows.** The check "do all the names go in the row" counts the
+  chips. A row with a bot can go to "A +2" a little sooner than before.
+- The chip has no tooltip of its own. The game's chip says "AI" on hover.
+- The tank labels on the map keep `[AI] `. The label drawer the viewer
+  shares with the game can draw the chip, but the viewer answers its
+  questions with "not a bot" (`bolo_shim.c`). To change that is a change to
+  the map and not to a list, so it was left.
+
+Tests: `lv_overview_bots` (the rule, and where each name of a team's row
+starts).
 
 ## Not tested on screen
 

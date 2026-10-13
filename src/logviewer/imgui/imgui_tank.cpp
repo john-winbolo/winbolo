@@ -799,7 +799,7 @@ void lv_imgui_tank_window(void) {
                              langGetTextFmt(STR_LV_HUD_NAME_TEAM, &args));
                 }
                 if (lv_name_header("deselect", st.hasTeam != 0, tank_team_colour(st.colour), -1,
-                                   name, nullptr, langGetText(STR_LV_TIP_DESELECT))) {
+                                   st.chip, name, nullptr, langGetText(STR_LV_TIP_DESELECT))) {
                     /* No tank is selected: the panel shows its hint and the
                      * map has no mark. A one-player view that is on stays
                      * on; the X of the HUD panel is the one that leaves it. */

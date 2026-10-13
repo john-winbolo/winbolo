@@ -809,6 +809,9 @@ void lv_screenEventScanRestore(void);
  * create time is the header's: the time the server that wrote the log was
  * started, in seconds since 1970, or 0. */
 int     lv_screenGetRoster(LvRosterRow *rows, int max);
+/* The LvBotChip (lv_bot_chip.h) the panels draw in front of the name of the
+   player in a slot; 0 for a person. The caller holds the client mutex. */
+int     lv_screenBotChip(BYTE slot);
 int32_t lv_screenGetCreateTime(void);
 
 /* Spectator live-DVR (driven by spectatorRun). While live mode is on,
