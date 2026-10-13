@@ -667,6 +667,11 @@ void lv_screenOverviewSnapshot(struct LvOverview *out);
  * pillboxes it carries, at the playback time. Hold the client mutex. */
 struct LvTankStatus;
 void lv_screenTankStatusSnapshot(struct LvTankStatus *out);
+/* 1 when the loaded recording holds tank stocks (a snapshot's player block
+   or a log_TankSetStock record gave some), 0 for a recording written before
+   they were recorded. The stocks of every slot read zero in that case, and
+   that is "not known", not "empty". */
+int lv_screenHasTankStock(void);
 
 /* The perspective: show the game as one player sees it. Toggle turns it on
  * for the player in a slot, or off when that player has it already; Clear

@@ -411,6 +411,8 @@ static void lv_screenSetTankStock(BYTE slot, BYTE shells, BYTE mines, BYTE armou
   g_lv->tankInv[slot].trees  = trees;
 }
 
+int lv_screenHasTankStock(void) { return lvTankStockSeen ? 1 : 0; }
+
 /* Store a slot's modifier set. A log_TankSetModifiers record replaces the whole
  * set, as the op that wrote it did. Nothing draws these yet. */
 static void lv_screenSetTankModifiers(BYTE slot, const BYTE *mods, uint16_t speed) {

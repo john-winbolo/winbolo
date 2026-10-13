@@ -2009,6 +2009,11 @@ static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     Uint8 oldR, oldG, oldB, oldA;
 
     if (!s_tankBars || s_tankBarCount == 0 || lv == NULL) return;
+    /* A recording written before tank stocks were recorded reads zero for
+       every tank. Two empty bars over each one would say "no armour, no
+       shells", which is not known: draw none, as the Tank panel shows no
+       gauges for such a recording. */
+    if (!lv_screenHasTankStock()) return;
     if (src->w <= 0.0f || src->h <= 0.0f) return;
     scale = dst->w / src->w;
     tilePx = (float)TILE_SIZE_X * scale;
