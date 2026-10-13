@@ -3968,6 +3968,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_prefs_sync.c
     tests/unit/test_wbn_serverlist.c
     tests/unit/test_wbn_map.c
+    tests/unit/test_wbn_map_fetch_policy.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
@@ -5120,6 +5121,7 @@ set(_unit_test_names
     wbn_serverlist_malformed
     wbn_serverlist_scripts
     wbn_map_parse
+    wbn_map_fetch_policy
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_msgh_budget_kill_no_traceback
