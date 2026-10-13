@@ -143,5 +143,26 @@ int run_lv_dump_recorded_round(void) {
                   "the events dump holds steps");
     UT_ASSERT_MSG(strstr(events, "\nend ms=") != NULL, "the events dump has no end line");
     free(events);
+
+    /* A number that does not fit 32 bits is refused, not cut down to some
+       other tick; and a path too long for its buffer is refused, not cut
+       short to name some other file. Both stop before any log is opened. */
+    {
+        static char   longPath[FILENAME_MAX + 64];
+        char         *tooBig[]   = { "viewer", "-dump", "none.wbv", "-tick", "4294967297" };
+        char         *bigRound[] = { "viewer", "-dump", "none.wbv", "-round", "2147483648" };
+        LvDumpOptions longOpts;
+
+        UT_ASSERT_MSG(lvDumpMain(5, tooBig) == LV_DUMP_ERR_ARGS,
+                      "a tick over 32 bits was taken");
+        UT_ASSERT_MSG(lvDumpMain(5, bigRound) == LV_DUMP_ERR_ARGS,
+                      "a round over 31 bits was taken");
+        memset(longPath, 'a', sizeof(longPath) - 1);
+        longPath[sizeof(longPath) - 1] = '\0';
+        memset(&longOpts, 0, sizeof(longOpts));
+        longOpts.logPath = longPath;
+        UT_ASSERT_MSG(lvDumpRun(&longOpts) == LV_DUMP_ERR_ARGS,
+                      "a log path too long for its buffer was taken");
+    }
     return 0;
 }

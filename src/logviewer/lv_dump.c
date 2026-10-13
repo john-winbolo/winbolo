@@ -434,6 +434,23 @@ static int dumpPlayerBody(char *dest, size_t size, BYTE slot) {
                   lv_playersGetTeamId(slot));
 }
 
+/* End a text that holds an open "[" with "]". When the text filled its
+   buffer the "]" takes the place of the last character, so a line that was
+   cut short still reads as a closed list. */
+static void dumpCloseList(char *dest, size_t size) {
+  size_t len;
+
+  if (size < 2) return;
+  len = strlen(dest);
+  if (len + 1 < size) {
+    dest[len]     = ']';
+    dest[len + 1] = '\0';
+  } else {
+    dest[size - 2] = ']';
+    dest[size - 1] = '\0';
+  }
+}
+
 static void dumpTankBody(DumpCtx *c, BYTE slot, char *dest, size_t size) {
   BYTE mx = 0, my = 0, px = 0, py = 0, frame = 0;
   bool boat = FALSE;
@@ -460,7 +477,12 @@ static void dumpTankBody(DumpCtx *c, BYTE slot, char *dest, size_t size) {
                 c->lv->tankInv[slot].armour, c->lv->tankInv[slot].shells,
                 c->lv->tankInv[slot].mines, c->lv->tankInv[slot].trees,
                 (unsigned)c->lv->kills[slot], (unsigned)c->lv->deaths[slot]);
-  if (n < 0 || (size_t)n >= size) return;
+  if (n < 0) return;
+  if ((size_t)n >= size) {
+    /* Cut short inside or just before the list: close it all the same. */
+    dumpCloseList(dest, size);
+    return;
+  }
   /* The pillboxes this tank carries. */
   total = lv_pillsGetNumPills(&c->lv->pb);
   for (i = 1; i <= total && i <= MAX_PILLS; i++) {
@@ -472,9 +494,7 @@ static void dumpTankBody(DumpCtx *c, BYTE slot, char *dest, size_t size) {
       first = FALSE;
     }
   }
-  if ((size_t)n + 2 < size) {
-    snprintf(dest + n, size - (size_t)n, "]");
-  }
+  dumpCloseList(dest, size);
 }
 
 static void dumpLgmBody(BYTE slot, char *dest, size_t size) {
@@ -734,15 +754,24 @@ int lvDumpRun(const LvDumpOptions *o) {
   uint32_t endMs;
   uint32_t span;
   int    i;
+  int    n;
 
   if (o == NULL || o->logPath == NULL || o->logPath[0] == '\0') {
     return LV_DUMP_ERR_ARGS;
   }
-  snprintf(logPath, sizeof(logPath), "%s", o->logPath);
+  /* A path too long for its buffer is refused. Cut short it would name
+     some other file, and the dump would read or write that one. */
+  n = snprintf(logPath, sizeof(logPath), "%s", o->logPath);
+  if (n < 0 || (size_t)n >= sizeof(logPath)) {
+    return LV_DUMP_ERR_ARGS;
+  }
   if (o->outPath != NULL && o->outPath[0] != '\0') {
-    snprintf(outPath, sizeof(outPath), "%s", o->outPath);
+    n = snprintf(outPath, sizeof(outPath), "%s", o->outPath);
   } else {
-    snprintf(outPath, sizeof(outPath), "%s.dump.txt", o->logPath);
+    n = snprintf(outPath, sizeof(outPath), "%s.dump.txt", o->logPath);
+  }
+  if (n < 0 || (size_t)n >= sizeof(outPath)) {
+    return LV_DUMP_ERR_ARGS;
   }
   window = (o->haveTick || o->haveMs) ? TRUE : FALSE;
   span   = o->span;
@@ -922,14 +951,21 @@ int lvDumpWanted(int argc, char **argv) {
 
 /* A whole unsigned number, and nothing else in the text. */
 static bool dumpParseU32(const char *text, uint32_t *out) {
-  char         *end = NULL;
-  unsigned long v;
+  char              *end = NULL;
+  unsigned long long v;
 
   if (text == NULL || text[0] < '0' || text[0] > '9') {
     return FALSE;
   }
-  v = strtoul(text, &end, 10);
+  v = strtoull(text, &end, 10);
   if (end == NULL || *end != '\0') {
+    return FALSE;
+  }
+  /* A number too large for the 32 bits it goes into is refused, not cut
+     down to some other number: "-tick 4294967297" must not dump tick 1.
+     strtoull stops at its own largest value for a longer text, and that is
+     over the limit too. */
+  if (v > 0xFFFFFFFFull) {
     return FALSE;
   }
   *out = (uint32_t)v;
@@ -964,7 +1000,8 @@ int lvDumpMain(int argc, char **argv) {
       o.ms     = value;
     } else if (strcmp(arg, "-span") == 0 && dumpParseU32(next, &value)) {
       o.span = value;
-    } else if (strcmp(arg, "-round") == 0 && dumpParseU32(next, &value)) {
+    } else if (strcmp(arg, "-round") == 0 && dumpParseU32(next, &value) &&
+               value <= 0x7FFFFFFFu) {
       o.round = (int)value;
     } else {
       fprintf(stderr, "-dump: \"%s\" was not understood\n", arg);
