@@ -2777,6 +2777,8 @@ static const LangEntry langTable[] = {
     {2770, "The server sets this list. It cannot be changed."},
     {2773, "The server sets this value. It cannot be changed."},
     {2774, "Who a tank's death is credited to, asked at every death; a drowning names the victim unless a script names the tank that sank it."},
+    {2860, "+ {number} others"},
+    {2861, "+ 1 other"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
