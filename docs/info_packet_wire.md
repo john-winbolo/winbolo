@@ -52,18 +52,18 @@ request then adds the script bytes below; the tracker update does not.
 | 7 | 1 | u8 | type | `14` = INFO_RESPONSE |
 | 8 | 36 | char[36] | mapname | Pascal string (byte 0 = length, then chars) |
 | 44 | 4 | in_addr | gameid.serveraddress | network order; `0` ⇒ use UDP source address. Filled with the configured public IP (`inet_addr`) when a public address is set, else `0` |
-| 48 | 2 | u16 | gameid.serverport | host order (written raw, no `htons`) |
+| 48 | 2 | u16 | gameid.serverport | little-endian |
 | 50 | 2 | u16 | gameid._padding | explicit padding, `0` |
 | 52 | 4 | u32 | gameid.start_time | big-endian (`htonl`) — the one byte-swapped field |
 | 56 | 1 | u8 | gametype | 1/2/3 = open / tournament / strict |
 | 57 | 1 | u8 | allow_mines | bit `0x80` = mines on (`0x80` hidden, `0xC0` all visible) |
 | 58 | 1 | u8 | allow_AI | legacy; currently always `0` |
 | 59 | 1 | u8 | flags | bitfield, see below (was `spare1`) |
-| 60 | 4 | i32 | start_delay | host order; 50ths-of-a-second until game start |
-| 64 | 4 | i32 | time_limit | host order; game length in 50ths-of-a-second ticks |
-| 68 | 2 | u16 | num_players | host order; total connected (humans + bots) |
-| 70 | 2 | u16 | free_pills | host order; neutral pillboxes |
-| 72 | 2 | u16 | free_bases | host order; neutral bases |
+| 60 | 4 | i32 | start_delay | little-endian; 50ths-of-a-second until game start |
+| 64 | 4 | i32 | time_limit | little-endian; game length in 50ths-of-a-second ticks |
+| 68 | 2 | u16 | num_players | little-endian; total connected (humans + bots) |
+| 70 | 2 | u16 | free_pills | little-endian; neutral pillboxes |
+| 72 | 2 | u16 | free_bases | little-endian; neutral bases |
 | 74 | 1 | u8 | has_password | non-zero = password set |
 | 75 | 1 | u8 | spectator_count | `0` for now — spectators are future work (was `spare2`) |
 | 76 | 1 | u8 | num_humans | human players among `num_players` |
@@ -204,9 +204,13 @@ reply. Bytes after the last mod are ignored, so a later field can go on the end.
 
 ## Endianness
 
-The packet is predominantly host byte order (little-endian in practice on the
-servers that produce it) for the multi-byte numerics: `serverport`, `start_delay`,
-`time_limit`, `num_players`, `free_pills`, `free_bases`. The exceptions are
+The multi-byte numerics `serverport`, `start_delay`, `time_limit`,
+`num_players`, `free_pills` and `free_bases` are little-endian: they were once
+written in host byte order, and every server that produced the packet was
+little-endian, so that is what the tracker and every client expect. A sender
+writes them with `infoPacketEncode` and a reader takes them with
+`INFO_PACKET_GET16` / `INFO_PACKET_GET32` (`src/bolo/internal/netpacks.h`), so a
+big-endian host sends and reads the same bytes. The exceptions are
 `start_time` (big-endian, `htonl`) and `serveraddress` (network order, from
 `inet_addr`). Every field at offset 59 and beyond that this format adds is either a
 single byte or a char array, so none of the new fields need byte-swapping.

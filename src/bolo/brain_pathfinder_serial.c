@@ -24,6 +24,7 @@
 #include <zlib.h>
 
 #include "brain_pathfinder.h"
+#include "byte_order.h"
 
 #define SERIAL_MAGIC   0x53465042  /* "BPFS" */
 #define SERIAL_VERSION 1
@@ -61,8 +62,31 @@ static int bufAppend(Buf *b, const void *src, size_t n) {
     return 1;
 }
 
-static int bufAppendU32(Buf *b, uint32_t v) { return bufAppend(b, &v, 4); }
-static int bufAppendFloat(Buf *b, float v)  { return bufAppend(b, &v, 4); }
+static int bufAppendU32(Buf *b, uint32_t v) {
+    unsigned char le[4];
+    byteOrderPutLe32(le, v);
+    return bufAppend(b, le, 4);
+}
+static int bufAppendFloat(Buf *b, float v) {
+    unsigned char le[4];
+    byteOrderPutLeFloat(le, v);
+    return bufAppend(b, le, 4);
+}
+
+/* Arrays as little-endian bytes and back. The decoders may work in place,
+ * dst and src the same memory: each value is read before it is written. */
+static void putLe16Array(unsigned char *dst, const uint16_t *src, size_t n) {
+    for (size_t i = 0; i < n; i++) byteOrderPutLe16(dst + 2 * i, src[i]);
+}
+static void getLe16Array(uint16_t *dst, const unsigned char *src, size_t n) {
+    for (size_t i = 0; i < n; i++) { uint16_t v = byteOrderGetLe16(src + 2 * i); dst[i] = v; }
+}
+static void putLeFloatArray(unsigned char *dst, const float *src, size_t n) {
+    for (size_t i = 0; i < n; i++) byteOrderPutLeFloat(dst + 4 * i, src[i]);
+}
+static void getLeFloatArray(float *dst, const unsigned char *src, size_t n) {
+    for (size_t i = 0; i < n; i++) { float v = byteOrderGetLeFloat(src + 4 * i); dst[i] = v; }
+}
 
 /* Compress src into buf. Writes: compressed_size(4) + compressed_data. */
 static int bufAppendCompressed(Buf *b, const void *src, size_t srcLen) {
@@ -73,7 +97,7 @@ static int bufAppendCompressed(Buf *b, const void *src, size_t srcLen) {
                   (const Bytef *)src, (uLong)srcLen, 1) != Z_OK)
         return 0;
     uint32_t clen = (uint32_t)destLen;
-    memcpy(b->data + b->size, &clen, 4);
+    byteOrderPutLe32(b->data + b->size, clen);
     b->size += 4 + clen;
     return 1;
 }
@@ -93,8 +117,24 @@ static int curRead(Cursor *c, void *dst, size_t n) {
     return 1;
 }
 
-static int curReadU32(Cursor *c, uint32_t *v) { return curRead(c, v, 4); }
-static int curReadFloat(Cursor *c, float *v)  { return curRead(c, v, 4); }
+static int curReadU32(Cursor *c, uint32_t *v) {
+    unsigned char le[4];
+    if (!curRead(c, le, 4)) return 0;
+    *v = byteOrderGetLe32(le);
+    return 1;
+}
+static int curReadFloat(Cursor *c, float *v) {
+    unsigned char le[4];
+    if (!curRead(c, le, 4)) return 0;
+    *v = byteOrderGetLeFloat(le);
+    return 1;
+}
+static int curReadI32(Cursor *c, int32_t *v) {
+    uint32_t u;
+    if (!curReadU32(c, &u)) return 0;
+    *v = (int32_t)u;
+    return 1;
+}
 
 /* Decompress: reads compressed_size(4) + data, inflates into dst of dstLen. */
 static int curReadDecompress(Cursor *c, void *dst, size_t dstLen) {
@@ -154,9 +194,9 @@ unsigned char *brainPathfinderSerialize(BrainPathfinder *pf, size_t *out_size) {
     bufAppendFloat(&b, pf->min_armour);
 
     /* Terrain tables (3 × 16 floats) */
-    bufAppend(&b, pf->terrain_cost_table,      sizeof(pf->terrain_cost_table));
-    bufAppend(&b, pf->terrain_cost_boat_table,  sizeof(pf->terrain_cost_boat_table));
-    bufAppend(&b, pf->terrain_speed_table,      sizeof(pf->terrain_speed_table));
+    for (int i = 0; i < 16; i++) bufAppendFloat(&b, pf->terrain_cost_table[i]);
+    for (int i = 0; i < 16; i++) bufAppendFloat(&b, pf->terrain_cost_boat_table[i]);
+    for (int i = 0; i < 16; i++) bufAppendFloat(&b, pf->terrain_speed_table[i]);
 
     /* Grids (compressed together) */
     {
@@ -165,9 +205,9 @@ unsigned char *brainPathfinderSerialize(BrainPathfinder *pf, size_t *out_size) {
         unsigned char *tmp = (unsigned char *)malloc(gridSize);
         if (!tmp) { bufFree(&b); return NULL; }
         size_t off = 0;
-        memcpy(tmp + off, pf->danger_grid, sizeof(pf->danger_grid));     off += sizeof(pf->danger_grid);
-        memcpy(tmp + off, pf->influence_grid, sizeof(pf->influence_grid)); off += sizeof(pf->influence_grid);
-        memcpy(tmp + off, pf->overlay_grid, sizeof(pf->overlay_grid));
+        putLe16Array(tmp + off, pf->danger_grid, GRID_SIZE);                       off += sizeof(pf->danger_grid);
+        putLe16Array(tmp + off, (const uint16_t *)pf->influence_grid, GRID_SIZE); off += sizeof(pf->influence_grid);
+        putLe16Array(tmp + off, (const uint16_t *)pf->overlay_grid, GRID_SIZE);
         if (!bufAppendCompressed(&b, tmp, gridSize)) { free(tmp); bufFree(&b); return NULL; }
         free(tmp);
     }
@@ -193,35 +233,55 @@ unsigned char *brainPathfinderSerialize(BrainPathfinder *pf, size_t *out_size) {
         sh.started_tick = sl->started_tick;
         sh.completed_tick = sl->completed_tick;
         sh.open_count = sl->open_count;
-        bufAppend(&b, &sh, sizeof(sh));
+        bufAppendU32(&b, (uint32_t)sh.active);
+        bufAppendU32(&b, (uint32_t)sh.done);
+        bufAppendU32(&b, (uint32_t)sh.exact);
+        bufAppendU32(&b, (uint32_t)sh.kind);
+        bufAppendU32(&b, (uint32_t)sh.src_x);
+        bufAppendU32(&b, (uint32_t)sh.src_y);
+        bufAppendU32(&b, (uint32_t)sh.in_boat);
+        bufAppendU32(&b, (uint32_t)sh.src_shells);
+        bufAppendU32(&b, (uint32_t)sh.expanded);
+        bufAppendU32(&b, (uint32_t)sh.peak_open);
+        bufAppendFloat(&b, sh.max_cost);
+        bufAppendFloat(&b, sh.danger_scale);
+        bufAppendU32(&b, sh.version);
+        bufAppendU32(&b, sh.started_tick);
+        bufAppendU32(&b, sh.completed_tick);
+        bufAppendU32(&b, (uint32_t)sh.open_count);
 
         /* Only serialize arrays if the slate has been allocated and used */
         int hasData = sl->g_cost != NULL;
         bufAppendU32(&b, hasData ? 1 : 0);
 
         if (hasData) {
-            /* g_cost: float[NODE_COUNT] */
-            if (!bufAppendCompressed(&b, sl->g_cost, NODE_COUNT * sizeof(float)))
-                { bufFree(&b); return NULL; }
+            /* g_cost: float[NODE_COUNT], encoded into a scratch buffer
+             * that shells_at reuses below */
+            unsigned char *le = (unsigned char *)malloc(NODE_COUNT * sizeof(float));
+            if (!le) { bufFree(&b); return NULL; }
+            putLeFloatArray(le, sl->g_cost, NODE_COUNT);
+            if (!bufAppendCompressed(&b, le, NODE_COUNT * sizeof(float)))
+                { free(le); bufFree(&b); return NULL; }
             /* closed: uint8_t[NODE_COUNT/8] */
             if (!bufAppendCompressed(&b, sl->closed, NODE_COUNT / 8))
-                { bufFree(&b); return NULL; }
+                { free(le); bufFree(&b); return NULL; }
             /* dir_at: uint8_t[NODE_COUNT] */
             if (!bufAppendCompressed(&b, sl->dir_at, NODE_COUNT))
-                { bufFree(&b); return NULL; }
+                { free(le); bufFree(&b); return NULL; }
             /* shells_at: int16_t[NODE_COUNT] (only if exact mode) */
             bufAppendU32(&b, sl->exact && sl->shells_at ? 1 : 0);
             if (sl->exact && sl->shells_at) {
-                if (!bufAppendCompressed(&b, sl->shells_at, NODE_COUNT * sizeof(int16_t)))
-                    { bufFree(&b); return NULL; }
+                putLe16Array(le, (const uint16_t *)sl->shells_at, NODE_COUNT);
+                if (!bufAppendCompressed(&b, le, NODE_COUNT * sizeof(int16_t)))
+                    { free(le); bufFree(&b); return NULL; }
             }
+            free(le);
         }
     }
 
     /* Patch total size in header */
     {
-        uint32_t totalSize = (uint32_t)b.size;
-        memcpy(b.data + 8, &totalSize, 4);
+        byteOrderPutLe32(b.data + 8, (uint32_t)b.size);
     }
 
     *out_size = b.size;
@@ -264,9 +324,9 @@ int brainPathfinderDeserialize(BrainPathfinder *pf,
     curReadFloat(&c, &pf->min_armour);
 
     /* Terrain tables */
-    curRead(&c, pf->terrain_cost_table,      sizeof(pf->terrain_cost_table));
-    curRead(&c, pf->terrain_cost_boat_table,  sizeof(pf->terrain_cost_boat_table));
-    curRead(&c, pf->terrain_speed_table,      sizeof(pf->terrain_speed_table));
+    for (int i = 0; i < 16; i++) curReadFloat(&c, &pf->terrain_cost_table[i]);
+    for (int i = 0; i < 16; i++) curReadFloat(&c, &pf->terrain_cost_boat_table[i]);
+    for (int i = 0; i < 16; i++) curReadFloat(&c, &pf->terrain_speed_table[i]);
 
     /* Grids */
     {
@@ -276,9 +336,9 @@ int brainPathfinderDeserialize(BrainPathfinder *pf,
         if (!tmp) return 0;
         if (!curReadDecompress(&c, tmp, gridSize)) { free(tmp); return 0; }
         size_t off = 0;
-        memcpy(pf->danger_grid, tmp + off, sizeof(pf->danger_grid));     off += sizeof(pf->danger_grid);
-        memcpy(pf->influence_grid, tmp + off, sizeof(pf->influence_grid)); off += sizeof(pf->influence_grid);
-        memcpy(pf->overlay_grid, tmp + off, sizeof(pf->overlay_grid));
+        getLe16Array(pf->danger_grid, tmp + off, GRID_SIZE);                 off += sizeof(pf->danger_grid);
+        getLe16Array((uint16_t *)pf->influence_grid, tmp + off, GRID_SIZE); off += sizeof(pf->influence_grid);
+        getLe16Array((uint16_t *)pf->overlay_grid, tmp + off, GRID_SIZE);
         free(tmp);
     }
 
@@ -290,7 +350,14 @@ int brainPathfinderDeserialize(BrainPathfinder *pf,
     for (uint32_t s = 0; s < numSlates; s++) {
         DijkstraSlate *sl = &pf->dij_slates[s];
         SlateHeader sh;
-        if (!curRead(&c, &sh, sizeof(sh))) return 0;
+        if (!curReadI32(&c, &sh.active) || !curReadI32(&c, &sh.done) ||
+            !curReadI32(&c, &sh.exact) || !curReadI32(&c, &sh.kind) ||
+            !curReadI32(&c, &sh.src_x) || !curReadI32(&c, &sh.src_y) ||
+            !curReadI32(&c, &sh.in_boat) || !curReadI32(&c, &sh.src_shells) ||
+            !curReadI32(&c, &sh.expanded) || !curReadI32(&c, &sh.peak_open) ||
+            !curReadFloat(&c, &sh.max_cost) || !curReadFloat(&c, &sh.danger_scale) ||
+            !curReadU32(&c, &sh.version) || !curReadU32(&c, &sh.started_tick) ||
+            !curReadU32(&c, &sh.completed_tick) || !curReadI32(&c, &sh.open_count)) return 0;
 
         /* sh.active is kept in wire format for compatibility but ignored —
          * has_data is determined by whether g_cost gets allocated below. */
@@ -325,6 +392,7 @@ int brainPathfinderDeserialize(BrainPathfinder *pf,
             if (!sl->g_cost || !sl->closed || !sl->dir_at) return 0;
 
             if (!curReadDecompress(&c, sl->g_cost, NODE_COUNT * sizeof(float))) return 0;
+            getLeFloatArray(sl->g_cost, (const unsigned char *)sl->g_cost, NODE_COUNT);
             if (!curReadDecompress(&c, sl->closed, NODE_COUNT / 8)) return 0;
             if (!curReadDecompress(&c, sl->dir_at, NODE_COUNT)) return 0;
 
@@ -336,6 +404,7 @@ int brainPathfinderDeserialize(BrainPathfinder *pf,
                 }
                 if (!sl->shells_at) return 0;
                 if (!curReadDecompress(&c, sl->shells_at, NODE_COUNT * sizeof(int16_t))) return 0;
+                getLe16Array((uint16_t *)sl->shells_at, (const unsigned char *)sl->shells_at, NODE_COUNT);
             }
 
             /* Heap is not serialized — mark slate as done (no stepping needed).

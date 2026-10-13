@@ -313,6 +313,11 @@ BOLO_STATIC_ASSERT(sizeof(pillbox) == 9, pillbox_must_be_9_bytes);
  * fields must sit strictly past that boundary. */
 BOLO_STATIC_ASSERT(offsetof(struct basesObj, stealDebounce) == SIZEOF_BASES,
                    bases_steal_debounce_after_wire_format);
+/* Where base i's baseTime sits in that wire format: the one multi-byte field
+ * in it, written little-endian (byteOrderPutLe32) rather than as the host
+ * holds it. */
+#define BASE_WIRE_TIME_OFFSET(i) \
+  (offsetof(struct basesObj, item) + (size_t) (i) * sizeof(base) + offsetof(base, baseTime))
 /* Same rule for pillsObj: the position-current flags sit strictly past the
  * SIZEOF_PILLS bytes pillsSetPillCompressData copies in. pillbox holds only
  * BYTE and bool, so item[] and numPills pack to exactly 145 with no pad member
