@@ -432,14 +432,14 @@ int run_lv_hide_lobby_window_mapping(void) {
                 lv_screenGetTimeRunning());
 
   lv_screenFormatTime(182060, buf, sizeof buf);
-  UT_ASSERT_MSG(strcmp(buf, "01:02") == 0,
-                "end of window formats \"%s\" (want 01:02)", buf);
+  UT_ASSERT_MSG(strcmp(buf, "01:02.04") == 0,
+                "end of window formats \"%s\" (want 01:02.04)", buf);
   lv_screenFormatTime(122040, buf, sizeof buf);
-  UT_ASSERT_MSG(strcmp(buf, "00:02") == 0,
-                "mid-game formats \"%s\" (want 00:02)", buf);
+  UT_ASSERT_MSG(strcmp(buf, "00:02.02") == 0,
+                "mid-game formats \"%s\" (want 00:02.02)", buf);
   lv_screenFormatTime(1000, buf, sizeof buf);
-  UT_ASSERT_MSG(strcmp(buf, "00:00") == 0,
-                "lobby time formats \"%s\" (want 00:00)", buf);
+  UT_ASSERT_MSG(strcmp(buf, "00:00.00") == 0,
+                "lobby time formats \"%s\" (want 00:00.00)", buf);
 
   /* Un-tick: the whole-file numbers are back, the same instant reads three
    * minutes later (the window start), and the playhead has not moved. */
@@ -454,8 +454,8 @@ int run_lv_hide_lobby_window_mapping(void) {
                 "un-tick moved the playhead to %u (want 120020)",
                 lv_screenGetTimeRunning());
   lv_screenFormatTime(182060, buf, sizeof buf);
-  UT_ASSERT_MSG(strcmp(buf, "03:02") == 0,
-                "whole-file end formats \"%s\" (want 03:02)", buf);
+  UT_ASSERT_MSG(strcmp(buf, "03:02.06") == 0,
+                "whole-file end formats \"%s\" (want 03:02.06)", buf);
 
   lv_decoderDestroy(lv);
   lv_screenSetHideLobby(savedHide);

@@ -688,6 +688,22 @@ void lv_screenOverviewSnapshot(struct LvOverview *out);
 struct LvTankStatus;
 void lv_screenTankStatusSnapshot(struct LvTankStatus *out);
 
+/* The time left, at the playback time, until the builder of a player's tank
+ * is in the tank again after his death (lv_builder_status.h). Returns 1 with
+ * the time in remainMs when there is one to show:
+ *   - exact (approx 0), out of the table the load-time event scan fills:
+ *     from the builder's death until the tick the new builder is in the
+ *     tank, his walk from where he landed included;
+ *   - estimated (approx 1) when there is no table (a live feed, a viewer
+ *     that does not scan) or the log ends first: only while the new builder
+ *     flies, by the game's rule (his distance to the tank over
+ *     lgm_helicopter_speed), and only to his landing.
+ * Returns 0 for a builder in the tank, and for one out of it who was not
+ * killed. Hold the client mutex. */
+int lv_screenBuilderReturn(int slot, long *remainMs, int *approx);
+/* 1 when the table is filled for the loaded log. */
+int lv_screenBuilderTripsKnown(void);
+
 /* The selected tank: the one the Tank panel shows and the map marks. Select
  * picks the tank in a slot and changes nothing else (not whose view the map
  * shows); Deselect leaves none; Selected is its slot, or -1 for none or for

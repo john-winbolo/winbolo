@@ -209,6 +209,14 @@ void lv_drawDirtyScreen(void);
 void lv_drawSetTankBars(BYTE on);
 BYTE lv_drawGetTankBars(void);
 
+/* The small marker over each live tank for its builder
+ * (lv_builder_status.h): nothing while he is in the tank, an arrow toward
+ * him while he is out, a parachute and the time until the new one is in the
+ * tank while he is dead. It sits above the bars when they are on. Off until
+ * set. Drawn where the bars are drawn, and only there. */
+void lv_drawSetBuilderStatus(BYTE on);
+BYTE lv_drawGetBuilderStatus(void);
+
 /* The slot of the live tank drawn at a point of the window (in points, as
  * the mouse is), or -1 for none. The box tested is the tank's picture, and
  * never under 12 points a side; with two tanks under the point the nearer

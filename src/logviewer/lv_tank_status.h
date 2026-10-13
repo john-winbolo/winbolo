@@ -49,6 +49,9 @@ typedef struct LvTankStatus {
     unsigned char full[LV_TANK_GAUGE_COUNT];  /* the most it can hold */
     unsigned char builderOut;  /* the builder is out of the tank */
     unsigned char builderDead; /* the builder is dead (a new one is on its way) */
+    unsigned char builderBack; /* builderBackMs is set (only with builderDead) */
+    unsigned char builderBackApprox; /* it is an estimate: written with "~" */
+    long builderBackMs;        /* the time until the new builder is in the tank */
     unsigned char carriedPills; /* pillboxes the tank carries */
     char name[LV_TANK_STATUS_NAME_LEN];
 } LvTankStatus;
