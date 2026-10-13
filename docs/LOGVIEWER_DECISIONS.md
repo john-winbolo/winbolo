@@ -468,6 +468,16 @@ panel, no assert. At ImGui's smallest window (32 wide) one button is 3 pixels
 wider than the room.
 
 
+### HUD panel: the name tooltip of a cell shows at once
+
+The tooltip of a tank cell of the HUD panel (the name and team) showed after
+ImGui's tooltip delay, and only when the mouse stood still. It now shows in
+the first frame the mouse is over the cell and goes from cell to cell with
+the mouse (`ImGuiHoveredFlags_DelayNone` on that one hover test). The pillbox
+and base cells use the same code, so they do the same. The tooltip delay of
+the rest of the viewer is not changed.
+
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the

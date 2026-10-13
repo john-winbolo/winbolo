@@ -364,7 +364,11 @@ static void hud_grid(int grid, const LvHudSlot *slots, bool perspective,
             hud_slot_click(grid, n);
         }
         imguiHandOnHover();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+        /* At once, with no wait and no need for the mouse to stand still:
+         * the cells are small and close, and the name is what the mouse is
+         * moved over them for. It goes from cell to cell with the mouse.
+         * Only these cells; every other tooltip keeps ImGui's delay. */
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNone)) {
             hud_slot_tooltip(grid, n, slot);
         }
         ImGui::PopID();
