@@ -43,7 +43,7 @@
 #include "wbn_map_source.h"
 #include "wbn_map_fetch_policy.h"  /* wbnMapsFetchDue / wbnMapsParentLen — when to ask again, and which folder to ask for */
 
-#include <cstdlib> /* free — the JSON and map bytes the WBN HTTP API hands back */
+#include <cstdlib>  /* free — the JSON and map bytes the WBN HTTP API hands back */
 #include <cstring>  /* memset / memcpy — chooser row init and the decoded preview copy */
 #include <atomic>   /* std::atomic — the in-flight flags and the supersede sequence numbers */
 #include <mutex>    /* std::mutex / std::lock_guard — the caches the workers write under */
