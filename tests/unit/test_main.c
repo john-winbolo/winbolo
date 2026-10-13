@@ -2289,6 +2289,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_hud_sums",                                     run_lv_hud_sums                                     },
     { "lv_team_sprite_sums",                             run_lv_team_sprite_sums                             },
     { "lv_overview_sums",                                run_lv_overview_sums                                },
+    { "lv_tank_status_sums",                             run_lv_tank_status_sums                             },
     { "lv_dump_recorded_round",                          run_lv_dump_recorded_round                          },
     { "lv_spmap_owner_table",                            run_lv_spmap_owner_table                            },
     { "lv_spmap_reads_back",                             run_lv_spmap_reads_back                             },

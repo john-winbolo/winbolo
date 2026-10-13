@@ -306,6 +306,11 @@ int lv_drawGetSheetScale(void);
 *********************************************************/
 struct SDL_Texture* lv_drawGetHudShapesTexture(void);
 
+/* The game's background picture (data/background.bmp), which holds the well
+ * the game's four tank gauges stand in. Loaded on the first call; NULL when
+ * the renderer is not up yet or the file is missing. */
+struct SDL_Texture* lv_drawGetStatusBackgroundTexture(void);
+
 /*********************************************************
 *NAME:          lv_drawScnMarker
 *PURPOSE:

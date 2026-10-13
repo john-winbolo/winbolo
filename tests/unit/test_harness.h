@@ -4025,6 +4025,9 @@ int run_lv_team_sprite_sums(void);
  * rows of the teams, which row a pillbox or a base is counted in, and the
  * share a count is of the whole. */
 int run_lv_overview_sums(void);
+/* The log viewer's Tank panel (test_lv_tank_status.c): which tank is the
+ * selected one, and the height of a gauge against its cap. */
+int run_lv_tank_status_sums(void);
 /* The log viewer's text dump (test_lv_dump.c): a recorded round dumped
  * around one tick, a tick the round does not hold, and the event list. */
 int run_lv_dump_recorded_round(void);

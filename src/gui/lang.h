@@ -1324,6 +1324,18 @@
 #define STR_LV_WIN_OVERVIEW                 2820
 #define STR_LV_OVERVIEW_TOTAL               2821
 #define STR_LV_OVERVIEW_MORE                2822
+/* The viewer's Tank panel: its name, the hint with no tank selected, a
+   gauge as numbers (string1 its name, number what the tank holds, number2
+   the most it can hold), the three states of the builder, the pillboxes the
+   tank carries (number), and the line for a recording with no stocks. */
+#define STR_LV_WIN_TANK                     2823
+#define STR_LV_TANK_HINT                    2824
+#define STR_LV_TANK_STOCK_FMT               2825
+#define STR_LV_TANK_BUILDER_IN              2826
+#define STR_LV_TANK_BUILDER_OUT             2827
+#define STR_LV_TANK_BUILDER_DEAD            2828
+#define STR_LV_TANK_PILLS                   2829
+#define STR_LV_TANK_NO_STOCK                2830
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

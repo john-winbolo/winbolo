@@ -13,6 +13,7 @@
 #include "imgui_main_menu.h"
 #include "imgui_hud.h"
 #include "imgui_overview.h"
+#include "imgui_tank.h"
 #include "imgui.h"
 #include "imgui_internal.h"  /* DockBuilder*, FindWindowByName */
 #include "platform_config.h"
@@ -69,11 +70,13 @@ struct LvDockPanel {
  * rows in a narrow one) and the lists below it share the rest. A weight
  * would hand it room it can only fill by drawing its icons larger. The
  * Overview panel under it is a table of a few rows, and gets the height of
- * its rows the same way. */
+ * its rows the same way, as does the Tank panel with its
+ * four gauges. */
 static const LvDockPanel k_panels[] = {
     { "###controls",   &lv_g_show_controls_window,       LV_DOCK_CONTROLS_H, 0.0f, false, nullptr },
     { "###hud",        &lv_g_show_hud_window,            0.0f,               0.0f, false, lv_imgui_hud_dock_height },
     { "###overview",   &lv_g_show_overview_window,       0.0f,               0.0f, false, lv_imgui_overview_dock_height },
+    { "###tank",       &lv_g_show_tank_window,           0.0f,               0.0f, false, lv_imgui_tank_dock_height },
     { "###gameinfo",   &lv_g_show_game_info_window,      0.0f,               3.0f, false, nullptr },
     { "###lvscnpanel", &lv_g_show_scenario_panel_window, 0.0f,               3.0f, false, nullptr },
     { "###iteminfo",   &lv_g_show_item_info_window,      0.0f,               2.0f, false, nullptr },

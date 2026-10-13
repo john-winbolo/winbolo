@@ -58,6 +58,7 @@
 #include "logviewer.h"
 #include "lv_hud.h"
 #include "lv_overview.h"
+#include "lv_tank_status.h"
 #include "lv_messages.h"
 #include "../gui/lang.h"
 #include "../gui/ping_kinds.h"   /* PING_DISPLAY_MS, pingKindMessageId */
@@ -390,8 +391,20 @@ int lv_screenGetPingCapacity(void) { return LV_MAX_PINGS; }
  * carries neither — a file written before the stocks were recorded, or a slot
  * not in use — and the status panel then draws empty bars rather than a
  * guessed number. */
+static bool lvTankStockSeen = FALSE;
+
+/* A slot the recording gives no stocks for: all zeros, and it does not count
+ * as the recording holding stocks. */
+static void lv_screenClearTankStock(BYTE slot) {
+  if (slot >= MAX_TANKS) return;
+  memset(&g_lv->tankInv[slot], 0, sizeof(g_lv->tankInv[slot]));
+}
+
 static void lv_screenSetTankStock(BYTE slot, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
   if (slot >= MAX_TANKS) return;
+  /* The recording holds tank stocks: the Tank panel says so when it does
+   * not, rather than show four empty gauges with no reason. */
+  lvTankStockSeen = TRUE;
   g_lv->tankInv[slot].shells = shells;
   g_lv->tankInv[slot].mines  = mines;
   g_lv->tankInv[slot].armour = armour;
@@ -701,6 +714,7 @@ void lv_screenSetup() {
   lv_basesCreate(&g_lv->bs);
   lv_playersCreate();
   lv_playersSetSelf(0);
+  lvTankStockSeen = FALSE;
   g_lv->shs = lv_shellsCreate();
   if (g_lv->view != NULL) {
     free((*g_lv->view).screenItem);
@@ -3263,7 +3277,7 @@ bool lv_processSnapshot() {
       lv_playersLeaveGame(count, FALSE);
       // Process the dummy data
       len = logReadBytes(data, 2);
-      lv_screenSetTankStock(count, 0, 0, 0, 0);
+      lv_screenClearTankStock(count);
 
     } else if (dataLen > sizeof(data)) {
       returnValue = FALSE;
@@ -3329,7 +3343,7 @@ bool lv_processSnapshot() {
                 lv_screenSetTankStock(count, data[pos], data[pos+1],
                                       data[pos+2], data[pos+3]);
               } else {
-                lv_screenSetTankStock(count, 0, 0, 0, 0);
+                lv_screenClearTankStock(count);
               }
               /* mx != 0 means the tank is on the map (alive) — the same sentinel
                  the forward log_PlayerLocation path uses. Mark the slot alive so
@@ -6107,6 +6121,67 @@ void lv_screenOverviewSnapshot(LvOverview *out) {
     }
     lvOverviewCount(out, true, b->owner != NEUTRAL,
                     lv_playersGetTeamForOwner(b->owner));
+  }
+}
+
+/* Copy out what the Tank panel shows (lv_tank_status.h): the selected tank's
+   stocks against their caps, its builder and the pillboxes it carries. The
+   selected tank is the viewer's "self" player. All of it is the state at the
+   playback time, so it is right after a seek either way. The caller holds
+   the client mutex. */
+void lv_screenTankStatusSnapshot(LvTankStatus *out) {
+  int slot;
+  BYTE team;
+  BYTE count;
+  BYTE total;
+  bool isOut = FALSE;
+  bool isDead = FALSE;
+  char name[PLAYER_NAME_LEN] = "";
+
+  if (out == NULL) {
+    return;
+  }
+  memset(out, 0, sizeof(*out));
+  if (g_lv == NULL || g_lv->logLoaded == FALSE) {
+    return;
+  }
+  slot = lv_playersGetSelf();
+  slot = lvTankStatusSelected(slot, MAX_TANKS,
+      (slot >= 0 && slot < MAX_TANKS) ? (lv_playersIsInUse((BYTE) slot) != FALSE) : false);
+  if (slot < 0) {
+    return;
+  }
+
+  out->selected = 1;
+  out->slot = (unsigned char) slot;
+  lv_screenGetPlayerName(name, (BYTE) slot, sizeof(name));
+  snprintf(out->name, sizeof(out->name), "%s", name);
+  team = lv_playersGetTeamForOwner((BYTE) slot);
+  out->hasTeam = (team != NEUTRAL_TEAM);
+  out->colour = g_lv->tc[team];
+  out->alive = g_lv->gameViewHud[slot].alive ? 1 : 0;
+  out->hasStock = lvTankStockSeen ? 1 : 0;
+  out->value[LV_TANK_GAUGE_SHELLS] = g_lv->tankInv[slot].shells;
+  out->value[LV_TANK_GAUGE_MINES]  = g_lv->tankInv[slot].mines;
+  out->value[LV_TANK_GAUGE_ARMOUR] = g_lv->tankInv[slot].armour;
+  out->value[LV_TANK_GAUGE_TREES]  = g_lv->tankInv[slot].trees;
+  out->full[LV_TANK_GAUGE_SHELLS] = g_lv->rules.tankFullShells;
+  out->full[LV_TANK_GAUGE_MINES]  = g_lv->rules.tankFullMines;
+  out->full[LV_TANK_GAUGE_ARMOUR] = g_lv->rules.tankFullArmour;
+  out->full[LV_TANK_GAUGE_TREES]  = g_lv->rules.tankFullTrees;
+  lv_playersGetLgmStatus((BYTE) slot, &isOut, &isDead);
+  out->builderOut = isOut ? 1 : 0;
+  out->builderDead = isDead ? 1 : 0;
+
+  total = (g_lv->pb != NULL) ? lv_pillsGetNumPills(&g_lv->pb) : 0;
+  for (count = 0; count < total; count++) {
+    const pillbox *p = &g_lv->pb->item[count];
+    if (lv_pillsIsActive(&g_lv->pb, (BYTE) (count + 1)) == FALSE) {
+      continue;
+    }
+    if (p->inTank != FALSE && p->owner == (BYTE) slot) {
+      out->carriedPills++;
+    }
   }
 }
 

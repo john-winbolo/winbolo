@@ -73,6 +73,10 @@ static bool ownsWindow = TRUE;  /* TRUE in standalone, FALSE when embedded */
 static SDL_Texture *textureTiles = NULL;
 /* The grey status shapes the HUD panel colours by team; see buildHudShapes. */
 static SDL_Texture *textureHudShapes = NULL;
+/* The game's background picture (data/background.bmp), for the Tank panel's
+ * gauges. Loaded the first time it is asked for; tried once. */
+static SDL_Texture *textureStatusBackground = NULL;
+static bool statusBackgroundTried = false;
 static SDL_Texture *textureTanks = NULL;
 static SDL_Texture *textureBoats = NULL;
 static SDL_Texture *textureItems = NULL;
@@ -1020,6 +1024,8 @@ void lv_drawCleanup(void) {
     s_tankLabelsInTarget = FALSE;
     if (textureTiles) { SDL_DestroyTexture(textureTiles); textureTiles = NULL; }
     if (textureHudShapes) { SDL_DestroyTexture(textureHudShapes); textureHudShapes = NULL; }
+    if (textureStatusBackground) { SDL_DestroyTexture(textureStatusBackground); textureStatusBackground = NULL; }
+    statusBackgroundTried = false;
     if (textureTanks) { SDL_DestroyTexture(textureTanks); textureTanks = NULL; }
     if (textureBoats) { SDL_DestroyTexture(textureBoats); textureBoats = NULL; }
     if (textureItems) { SDL_DestroyTexture(textureItems); textureItems = NULL; }
@@ -1985,6 +1991,29 @@ SDL_Texture* lv_drawGetTilesTexture(void) {
  * NULL until the setup has run and when the strip could not be made. */
 SDL_Texture* lv_drawGetHudShapesTexture(void) {
     return textureHudShapes;
+}
+
+/* The game's background picture, the one the game client draws its status
+ * column from. Loaded from data/background.bmp beside the program the first
+ * time it is asked for. NULL before the renderer exists and when the file
+ * is not there; the load is tried once. */
+SDL_Texture* lv_drawGetStatusBackgroundTexture(void) {
+    if (textureStatusBackground == NULL && !statusBackgroundTried && sdlRenderer != NULL) {
+        const char *basePath = SDL_GetBasePath();
+        char path[1024];
+        statusBackgroundTried = true;
+        if (basePath != NULL) {
+            SDL_snprintf(path, sizeof(path), "%sdata/background.bmp", basePath);
+            textureStatusBackground = sdlLoadBmpAsTexture(sdlRenderer, path);
+        }
+        if (textureStatusBackground == NULL) {
+            textureStatusBackground = sdlLoadBmpAsTexture(sdlRenderer, "data/background.bmp");
+        }
+        if (textureStatusBackground != NULL) {
+            SDL_SetTextureScaleMode(textureStatusBackground, SDL_SCALEMODE_NEAREST);
+        }
+    }
+    return textureStatusBackground;
 }
 
 /* Atlas is always built at scale 1 (see buildTileAtlas()) — the blit-time

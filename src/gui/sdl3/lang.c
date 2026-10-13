@@ -1058,6 +1058,14 @@ static const LangEntry langTable[] = {
     {2820, "Overview"},
     {2821, "Total"},
     {2822, "{string1} +{number}"},
+    {2823, "Tank"},
+    {2824, "Click a tank in the HUD panel to select it"},
+    {2825, "{string1}: {number} / {number2}"},
+    {2826, "Builder: in tank"},
+    {2827, "Builder: out"},
+    {2828, "Builder: dead"},
+    {2829, "Pillboxes carried: {number}"},
+    {2830, "This recording does not hold tank resources"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

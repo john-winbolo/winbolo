@@ -57,6 +57,7 @@
 #include "imgui/imgui_item_info.h"
 #include "imgui/imgui_hud.h"
 #include "imgui/imgui_overview.h"
+#include "imgui/imgui_tank.h"
 #include "imgui/imgui_comments.h"
 #include "imgui/imgui_dialogs.h"
 #include "imgui/imgui_game_viewport.h"
@@ -1489,6 +1490,7 @@ static void lvHostRenderFrame(const char *overlay) {
              * grids, and the compact layout has no room for another panel. */
             lv_imgui_hud_window();
             lv_imgui_overview_window();
+            lv_imgui_tank_window();
             lv_imgui_game_info_window();
             lv_imgui_events_window();
             lv_imgui_item_info_window();
