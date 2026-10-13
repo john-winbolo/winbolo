@@ -1023,7 +1023,7 @@ static const LangEntry langTable[] = {
     {1125, "Game Information"},
     {1126, "Item Information"},
     {1127, "Reset Window Positions"},
-    {2776, "Dock enabled"},
+    {2776, "Right sidebar"},
     {2777, "Reset Window Positions into Dock"},
     {2778, "All events"},
     {2779, "Pillbox captured"},
@@ -1051,6 +1051,10 @@ static const LangEntry langTable[] = {
     {2801, "Open map at this time in single player"},
     {2802, "Starts a single-player game on the map as it is at this time. You take the selected player's side: that player's and the allies' pillboxes and bases become yours, and your tank starts where that player's tank is. With no player selected, nothing is yours."},
     {2803, "Save log file to disk..."},
+    {2804, "Left sidebar"},
+    {2805, "Top sidebar"},
+    {2806, "Bottom sidebar"},
+    {2807, "Drag a panel here"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},
