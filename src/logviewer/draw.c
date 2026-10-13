@@ -2360,10 +2360,8 @@ static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *d
                                 tilePx, pxScale, barsOn);
         if (!m.visible) continue;
 
-        text[0] = '\0';
-        if (b[slot].hasTime) {
-            lvBuilderCountdownText(b[slot].remainMs, b[slot].approx, text, sizeof(text));
-        }
+        lvBuilderDeadText(b[slot].hasTime, b[slot].remainMs, b[slot].approx, text,
+                          sizeof(text));
         rowW = (float)lvBuilderRowCells(text) * m.cell;
         x = SDL_floorf(m.centreX - rowW * 0.5f);
         y = m.top;

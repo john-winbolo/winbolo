@@ -2331,6 +2331,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_event_seek_exact",                             run_lv_event_seek_exact                             },
     { "lv_builder_status_sums",                          run_lv_builder_status_sums                          },
     { "lv_builder_countdown",                            run_lv_builder_countdown                            },
+    { "lv_builder_dead_text",                            run_lv_builder_dead_text                            },
     { "lv_builder_trips",                                run_lv_builder_trips                                },
     { "lv_builder_trips_scan",                           run_lv_builder_trips_scan                           },
     { "lv_controls_top_row",                             run_lv_controls_top_row                             },

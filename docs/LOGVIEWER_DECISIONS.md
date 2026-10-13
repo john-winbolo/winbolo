@@ -1523,6 +1523,41 @@ Limits:
 Test: `lv_save_name_scan` (a hand-built log with two lobby map changes and
 one after the round start).
 
+### Tank panel: a dead builder is a parachute and a countdown (Oct 13)
+
+The builder's line said "dead", with the time added only when there was
+room. No line says "dead" now.
+
+- **Pictures state:** the parachute in the picture column (as before), then
+  `:` and the time: `<parachute>: 0:07`.
+- **Words state:** `Builder:`, the parachute at the height of the line, and
+  the time: `Builder: <parachute> 0:07`. `Builder:` is the word of the
+  "Builder: in tank" line. A language with no colon in that line gets the
+  parachute and the time only.
+- **Gauges-only state:** the panel shows no builder line, as before.
+- **Time not known:** the parachute alone. In the pictures state the colon
+  is not drawn either.
+- An estimate has `~` in front, as on the map.
+
+One source. The map marker (`lvDrawBuilderMarkers` in `draw.c`) and the
+panel (`lv_screenTankStatusSnapshot` in `screen.c`) both take the time from
+`lv_screenBuilderReturn`. That was already so; no second copy existed. Both
+now make the text with `lvBuilderDeadText` (`lv_builder_status.h`), which
+gives the countdown or nothing. The time follows log time, so it is right
+when paused, at each speed and after a seek.
+
+Width. The line is measured with `~0:00` (`LV_BUILDER_COUNTDOWN_WIDEST`), so
+the choice between words and pictures does not move as the time runs. The
+words line is a little wider than "Builder: in tank" was at most fonts, so
+the panel can go to pictures a few pixels sooner than before. A time of ten
+minutes or more would be one digit wider than measured; a builder is never
+that long on its way.
+
+The strings `STR_LV_TANK_BUILDER_DEAD` and `STR_LV_TANK_BUILDER_BACK` are not
+used now. Their ids stay in the four lang files.
+
+Test: `lv_builder_dead_text`.
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the

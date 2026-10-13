@@ -4096,6 +4096,7 @@ int run_lv_event_seek_exact(void);
  * as the event scan fills it (test_lv_presentation.c). */
 int run_lv_builder_status_sums(void);
 int run_lv_builder_countdown(void);
+int run_lv_builder_dead_text(void);
 int run_lv_builder_trips(void);
 int run_lv_builder_trips_scan(void);
 /* Where the items of the log viewer's Controls panel go

@@ -198,6 +198,25 @@ static inline int lvBuilderCountdownText(long remainMs, bool approx, char *dest,
     return n;
 }
 
+/* What is written beside the parachute of a dead builder, on the map and in
+ * the Tank panel: the countdown, or nothing when the time until the new
+ * builder is in the tank is not known. The parachute then stands alone.
+ * Returns the length. */
+static inline int lvBuilderDeadText(bool known, long remainMs, bool approx,
+                                    char *dest, size_t size) {
+    if (dest == NULL || size == 0) return 0;
+    if (!known) {
+        dest[0] = '\0';
+        return 0;
+    }
+    return lvBuilderCountdownText(remainMs, approx, dest, size);
+}
+
+/* The countdown a line is measured with, so its width does not move as the
+ * time runs: an estimate of under ten minutes. A new builder is never that
+ * long on its way. */
+#define LV_BUILDER_COUNTDOWN_WIDEST "~0:00"
+
 /* How long a new builder still flies, estimated by the game's rule: he
  * moves in a straight line toward his goal at speed world units a tick and
  * has landed when he is within tolerance of it. dx, dy: from him to the

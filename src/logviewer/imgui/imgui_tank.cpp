@@ -22,8 +22,10 @@
  * pillboxes the tank carries. In a small panel each of the four lines starts
  * with the game's small picture for what it counts in place of the word,
  * and the line for the pillboxes with the game's status picture of a
- * pillbox, and the builder's line with the game's picture of a builder (the
- * parachute while he is dead). A panel with no room for all of the text shows
+ * pillbox, and the builder's line with the game's picture of a builder. While
+ * the builder is dead his line has the parachute the new one flies in on and
+ * the time until he is in the tank, in words and in pictures alike; no line
+ * says "dead". A panel with no room for all of the text shows
  * none of it, only the gauges (lvTankLayoutPick has the rule). Nothing is
  * ever cut off, so the panel does not scroll.
  *
@@ -116,40 +118,55 @@ static float tank_header_h(void) {
  * them is measured with it, so its width does not move. */
 #define TANK_PILLS_MOST 16
 
-/* The builder's line: in the tank, out of it, or dead. While he is dead and
- * the time until the new builder is in the tank is known, the line has that
- * time too, as the marker over the tank on the map has
- * (lv_builder_status.h) -- when there is room for it. The longer line is
- * not part of the width the panel's layout is chosen by (tank_builder_w), so
- * the time never costs the panel its words: in less room than the longer
- * line needs, the line says "dead" alone. */
-static const char *tank_builder_text(const LvTankStatus &st, float roomW,
-                                     bool afterPicture = false) {
-    if (st.builderDead && st.builderBack) {
-        MessageArgs args = {};
-        const char *text;
-        bool colon = true;
-        lvBuilderCountdownText(st.builderBackMs, st.builderBackApprox != 0,
-                               args.string1, sizeof(args.string1));
-        text = langGetTextFmt(STR_LV_TANK_BUILDER_BACK, &args);
-        /* After the picture only what follows the colon is written, and
-         * roomW is the room after the picture. A line with no colon cannot
-         * go after the picture: the short one is used. */
-        const char *shown = afterPicture ? lvTankAfterColon(text, &colon) : text;
-        if (colon && ImGui::CalcTextSize(shown).x <= roomW + 0.5f) return text;
+/* The builder's line while he is alive: in the tank or out of it. */
+static const char *tank_builder_text(const LvTankStatus &st) {
+    return langGetText(st.builderOut ? STR_LV_TANK_BUILDER_OUT : STR_LV_TANK_BUILDER_IN);
+}
+
+/* What a dead builder's line says after the parachute: the time until the
+ * new builder is in the tank, as the marker over the tank on the map has it
+ * (lvBuilderDeadText; both take the time from lv_screenBuilderReturn). With
+ * the time not known it is nothing, and the parachute stands alone. */
+static void tank_builder_dead_time(const LvTankStatus &st, char *out, size_t outSize) {
+    lvBuilderDeadText(st.builderBack != 0, st.builderBackMs, st.builderBackApprox != 0,
+                      out, outSize);
+}
+
+/* The start of a dead builder's line in words: "Builder:", the word of the
+ * line for a builder in his tank with its colon. A language whose line has
+ * no colon gets nothing, and the line is the parachute and the time. */
+static void tank_builder_word(char *out, size_t outSize) {
+    bool colon = false;
+    out[0] = '\0';
+    lvTankAfterColon(langGetText(STR_LV_TANK_BUILDER_IN), &colon);
+    if (colon && outSize > 2) {
+        lvTankBeforeColon(langGetText(STR_LV_TANK_BUILDER_IN), out, outSize - 1);
+        strcat(out, ":");
     }
-    return langGetText(st.builderDead ? STR_LV_TANK_BUILDER_DEAD :
-                       st.builderOut  ? STR_LV_TANK_BUILDER_OUT :
-                                        STR_LV_TANK_BUILDER_IN);
+}
+
+/* The side of the parachute's square in a line of words: a line of text
+ * high, to a whole pixel. */
+static float tank_chute_side(void) {
+    return floorf(ImGui::GetTextLineHeight());
+}
+
+/* A dead builder's line in words is "Builder:", the parachute and the time.
+ * Its width at its widest: the time is measured as the longest it is. */
+static float tank_builder_dead_w(void) {
+    const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
+    char word[LANG_MSGARG_STRING_LEN];
+    tank_builder_word(word, sizeof(word));
+    float w = tank_chute_side() + gap + ImGui::CalcTextSize(LV_BUILDER_COUNTDOWN_WIDEST).x;
+    if (word[0] != '\0') w += ImGui::CalcTextSize(word).x + gap;
+    return w;
 }
 
 /* The width the builder's line needs, whatever it says at the moment: the
  * widest of the builder's three states. */
 static float tank_builder_w(void) {
-    static const langid k_builder[] = {
-        STR_LV_TANK_BUILDER_IN, STR_LV_TANK_BUILDER_OUT, STR_LV_TANK_BUILDER_DEAD
-    };
-    float w = 0.0f;
+    static const langid k_builder[] = { STR_LV_TANK_BUILDER_IN, STR_LV_TANK_BUILDER_OUT };
+    float w = tank_builder_dead_w();
     for (langid id : k_builder) {
         float builder = ImGui::CalcTextSize(langGetText(id)).x;
         if (builder > w) w = builder;
@@ -256,14 +273,13 @@ struct TankIconMetrics {
     float builderLineW; /* his line after the picture, at its widest state */
 };
 
-/* The builder's line goes after his picture when each of its three states
- * has its state after a colon ("Builder: in tank"), as in English. Returns
- * the width of the widest state, or under 0 when one has no colon. */
+/* The builder's line goes after his picture when each of its states in
+ * words has its state after a colon ("Builder: in tank"), as in English.
+ * Returns the width of the widest state, the time after a dead builder's
+ * parachute among them, or under 0 when one has no colon. */
 static float tank_builder_state_w(void) {
-    static const langid k_builder[] = {
-        STR_LV_TANK_BUILDER_IN, STR_LV_TANK_BUILDER_OUT, STR_LV_TANK_BUILDER_DEAD
-    };
-    float w = 0.0f;
+    static const langid k_builder[] = { STR_LV_TANK_BUILDER_IN, STR_LV_TANK_BUILDER_OUT };
+    float w = ImGui::CalcTextSize(LV_BUILDER_COUNTDOWN_WIDEST).x;
     for (langid id : k_builder) {
         bool colon = false;
         float state = ImGui::CalcTextSize(lvTankAfterColon(langGetText(id), &colon)).x;
@@ -522,12 +538,14 @@ static void tank_pill_icon_line(const LvTankStatus &st, const TankIconMetrics &m
 }
 
 /* The builder's line after the game's picture of a builder in place of the
- * word: "<builder>: in tank", ": out", ": dead" or ": dead, back in 0:07" as
- * the line in words has it. He is the standing builder of the map, in the
- * game's own colours, at a whole number of times his 3 by 4 pixels; while he
- * is dead the picture is the parachute the new one flies in on. The colon is
- * under the colons of the lines over it. The word ("Builder") is the
- * picture's tooltip. With no tiles loaded a drawn figure stands in. */
+ * word: "<builder>: in tank" or ": out" as the line in words has it. He is
+ * the standing builder of the map, in the game's own colours, at a whole
+ * number of times his 3 by 4 pixels. While he is dead the picture is the
+ * parachute the new one flies in on, and after the colon is the time until
+ * he is in the tank: "<parachute>: 0:07". With that time not known the
+ * parachute is all there is, with no colon. The colon is under the colons
+ * of the lines over it. The word ("Builder") is the picture's tooltip. With
+ * no tiles loaded a drawn figure stands in. */
 static void tank_builder_icon_line(const LvTankStatus &st, const TankIconMetrics &m) {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const float lineH = ImGui::GetTextLineHeight();
@@ -536,10 +554,14 @@ static void tank_builder_icon_line(const LvTankStatus &st, const TankIconMetrics
     const float textX = m.iconW + colonW + m.gap;
     char line[LANG_MSGARG_STRING_LEN];
     char word[LANG_MSGARG_STRING_LEN];
-    snprintf(line, sizeof(line), "%s",
-             tank_builder_text(st, ImGui::GetContentRegionAvail().x - textX, true));
+    char back[32];
+    snprintf(line, sizeof(line), "%s", tank_builder_text(st));
     const char *state = lvTankAfterColon(line, nullptr);
     lvTankBeforeColon(line, word, sizeof(word));
+    if (st.builderDead) {
+        tank_builder_dead_time(st, back, sizeof(back));
+        state = back;
+    }
     float lineW = textX + ImGui::CalcTextSize(state).x;
     if (lineW < m.builderLineW) lineW = m.builderLineW;
     ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -564,8 +586,47 @@ static void tank_builder_icon_line(const LvTankStatus &st, const TankIconMetrics
                         p0.y + lvTankIconCentre(lineH, side));
         lv_icon_draw(dl, LV_ICON_PERSON, f0, ImVec2(f0.x + side, f0.y + side), col);
     }
-    dl->AddText(ImVec2(p0.x + m.iconW, p0.y), col, ":");
-    dl->AddText(ImVec2(p0.x + textX, p0.y), col, state);
+    if (state[0] != '\0') {
+        dl->AddText(ImVec2(p0.x + m.iconW, p0.y), col, ":");
+        dl->AddText(ImVec2(p0.x + textX, p0.y), col, state);
+    }
+}
+
+/* The builder's line in words. Alive it is the words alone. Dead it is
+ * "Builder:", the parachute at the height of the line, and the time until
+ * the new builder is in the tank; with that time not known, "Builder:" and
+ * the parachute. */
+static void tank_builder_words_line(const LvTankStatus &st) {
+    if (!st.builderDead) {
+        ImGui::TextUnformatted(tank_builder_text(st));
+        return;
+    }
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const float lineH = ImGui::GetTextLineHeight();
+    const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
+    const float side = tank_chute_side();
+    const ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+    char word[LANG_MSGARG_STRING_LEN];
+    char back[32];
+    tank_builder_word(word, sizeof(word));
+    tank_builder_dead_time(st, back, sizeof(back));
+    const float wordW = (word[0] != '\0') ? ImGui::CalcTextSize(word).x + gap : 0.0f;
+    float lineW = wordW + side;
+    if (back[0] != '\0') lineW += gap + ImGui::CalcTextSize(back).x;
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImVec2 p0(floorf(pos.x), floorf(pos.y));
+
+    ImGui::Dummy(ImVec2(lineW, lineH));
+    if (word[0] != '\0') {
+        dl->AddText(p0, col, word);
+    }
+    const ImVec2 i0(p0.x + wordW, p0.y + lvTankIconCentre(lineH, side));
+    if (!lv_builder_picture(dl, true, i0, ImVec2(i0.x + side, i0.y + side))) {
+        lv_icon_draw(dl, LV_ICON_PERSON, i0, ImVec2(i0.x + side, i0.y + side), col);
+    }
+    if (back[0] != '\0') {
+        dl->AddText(ImVec2(p0.x + wordW + side + gap, p0.y), col, back);
+    }
 }
 
 /* The lines of text: the four values, the builder, the pillboxes. With
@@ -597,7 +658,7 @@ static void tank_text(const LvTankStatus &st, bool icons) {
     if (m.builderH > 0.0f) {
         tank_builder_icon_line(st, m);
     } else {
-        ImGui::TextUnformatted(tank_builder_text(st, ImGui::GetContentRegionAvail().x));
+        tank_builder_words_line(st);
     }
     if (pillIcon) {
         tank_pill_icon_line(st, m);
