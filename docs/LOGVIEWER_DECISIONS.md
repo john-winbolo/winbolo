@@ -1431,6 +1431,98 @@ ping, where its age is 0 and the animation starts.
 To show more, the log writer must also write, at the time the ping is sent:
 the players the ping went to, the object it was on, and the mutes.
 
+### Save Log File: the name offered is the date, the map and the players (Oct 13)
+
+The name offered was the log's own file name, which is often a key of
+letters and numbers, or the map name for a downloaded log. It is now made
+from the log, for both sources:
+
+`2026-10-13 14.05 Oil Rig - Canuck, Eryan vs rooklift, Bot1.wbv`
+
+The code is `lvSaveNameBuild` in `src/logviewer/lv_save_name.h` (no SDL, no
+decoder). `lvSaveLogDefaultName` in `logviewer.c` collects the inputs under
+the decoder mutex. The copy and the "already there" check did not change.
+
+Calls made:
+
+- **Shape.** Date, time, map, then ` - ` and the players. A part the log
+  does not have is left out, with its separator.
+- **Time of day** is `HH.MM` (a colon cannot be in a file name).
+- **Date source**, in this order:
+  1. The stamp at the start of the source file's name, when the server named
+     the file (`<YYYYMMDD>t<HHMMSS>_<map>`, `serverDedicatedLogMakeAutoName`).
+     It is the time that round's log was opened.
+  2. The create time in the log header (`g_lv->gmeCreateTime`). The server
+     writes `serverSimGetTimeCreated`, which is set one time, when the
+     server is created (`src/server/server_sim.c:287`). So it is the time
+     the server was started, not the round. It is right for a game that is
+     hosted and played at once. It is early for a server that stays up.
+     This is the reason the file stamp is first.
+  3. For a file source, the time the file was last written.
+  4. A downloaded log with no create time has no date in its name.
+  The times are shown in the local time of the computer.
+- **Players.** Every player the log has had, not only those in the game at
+  the end. The event scan that runs at load fills the list (`LvRoster`), so
+  there is no second pass over the log. A player who left and came back is
+  one row. A player who took a slot that another left is a new row.
+- **Teams.** From `log_TeamSet` only. The last team a player was on is kept.
+  The names are grouped with ` vs ` only when every listed player has a team
+  and there are two teams or more. Otherwise the names are one comma list.
+  Alliances are not used, so an old log with no team records gets one list.
+- **Limits.** Six names at most, then ` +N`. By team, the six are taken one
+  from each team in turn. The name without `.wbv` is 120 bytes at most. A cut
+  is never inside a UTF-8 character, and a cut removes a separator, a ` vs`
+  or a count left at the end.
+- **Characters.** `\ / : * ? " < > |` and control characters become `.`, as
+  before. Dots and spaces at the end are removed. An empty name is
+  `log.wbv`.
+- Bots are named as other players. There is no bot mark in the file name.
+
+Tests: `lv_save_name_parts`, `lv_save_name_limits`, `lv_save_name_roster`,
+`lv_save_name_scan`.
+
+### The map name of a log that opens in a lobby (Oct 13)
+
+Report: the viewer shows the wrong map for some logs.
+
+Cause, on the writer side. The server opens the next log when the lobby
+opens (`handleLobbyEnter`, `src/server/server_dedicated_log.c:367`).
+`logStart` writes the map name into the header at that time
+(`src/bolo/log.c:1511`). The map then is the map of the round that just
+ended. When the host chooses another map, the header is not written again.
+The server knows this: it renames the file after the round
+(`serverDedicatedLogRenameForMap`), but the name inside the file stays.
+
+The viewer read the header only (`lv_logLoadCommon` in `screen.c`).
+
+The writer is not changed on this branch. The log does hold the right name
+in two later records, and the viewer now uses them:
+
+- `log_MessageServer` with the text `Map changed to <name>`
+  (`handleLobbyMapChange`, `server_dedicated_log.c:429`);
+- `log_MapSkipApplied`, which carries the name of the map a skip vote went
+  to (`src/server/sim/server_sim_vote.c:89`).
+
+The event scan keeps the last such name between `log_LobbyEnter` and
+`log_LobbyExit`. A name after `log_LobbyExit` is ignored: it can be the next
+round's map. After the scan, that name replaces the header's name
+(`lv_screenEventScanRun`), and the Game Information panel gets it. A log
+with no lobby is not changed.
+
+Limits:
+
+- The text is the server's fixed English text. If the server changes that
+  text, the viewer falls back to the header name.
+- A live feed has no scan, so it keeps the header name.
+- The text dump (`lv_dump.c`) still prints the header name.
+- A smaller fix on the writer side is possible and is better: write a record
+  with the map name at the round start (for example in `handleGameStart`,
+  next to the `log_GameSettings` record). That needs a new record or a new
+  field, so it belongs on its own branch.
+
+Test: `lv_save_name_scan` (a hand-built log with two lobby map changes and
+one after the round start).
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the

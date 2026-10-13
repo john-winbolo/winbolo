@@ -4109,6 +4109,13 @@ int run_lv_fullscreen_key(void);
  * (test_lv_presentation.c): it posts each line once, stores no snapshot, and
  * leaves the world at the start as the loader did. */
 int run_lv_event_scan_returns_to_start(void);
+/* The file name the viewer's Save Log File offers (test_lv_save_name.c), and
+ * what the event scan keeps for it: the players of the whole log and the map
+ * the lobby chose (test_lv_presentation.c). */
+int run_lv_save_name_parts(void);
+int run_lv_save_name_limits(void);
+int run_lv_save_name_roster(void);
+int run_lv_save_name_scan(void);
 /* The kill and death tallies go back with a seek (test_lv_presentation.c). */
 int run_lv_kill_tally_seek_back(void);
 /* Whether a tank is alive goes back with a seek (test_lv_presentation.c). */

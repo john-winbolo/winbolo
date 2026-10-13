@@ -67,6 +67,7 @@
 #include "lv_dock_fit.h"
 #include "lv_dock_clear.h"
 #include "lv_fullscreen_key.h"
+#include "lv_save_name.h"   /* the file name Save Log File offers */
 #include "lv_fullscreen_game.h"
 #include "imgui/imgui_game_view.h"
 #include "imgui/imgui_logviewer_menu.h"
@@ -661,6 +662,70 @@ bool lv_windowCanSaveLog(void) {
     return (lv_blocksGetSource(NULL, NULL, NULL) != LV_LOG_SOURCE_NONE) ? TRUE : FALSE;
 }
 
+/* The name offered for the saved copy: the game's date, its map and its
+ * players (lv_save_name.h), not the log's own file name, which is often a
+ * key of letters and numbers. Everything is read here, so the caller holds
+ * the decoder's mutex. srcPath is the log's own file, or "" for a download.
+ *
+ * The date is the best one there is, in this order:
+ *   1. the stamp at the start of the file's own name, when the server named
+ *      the file: the time that round's log was opened;
+ *   2. the create time in the log's header. It is the time the server was
+ *      started, not the round: right for a game hosted and played at once,
+ *      early for a server that has been up for days;
+ *   3. for a file, the time it was last written.
+ * A download with none of them has no date in its name. */
+static void lvSaveLogDefaultName(const char *srcPath, char *out, size_t outSize) {
+    static LvRosterRow rows[LV_ROSTER_MAX]; /* main thread only */
+    const char        *names[LV_ROSTER_MAX];
+    unsigned char      teams[LV_ROSTER_MAX];
+    char               mapName[FILENAME_MAX];
+    const char        *base = srcPath;
+    const char        *p;
+    int                year = 0, month = 0, day = 0, hour = -1, minute = 0;
+    int                count, i;
+    int32_t            created;
+
+    for (p = srcPath; *p != '\0'; p++) {
+        if (*p == '/' || *p == '\\') base = p + 1;
+    }
+    created = lv_screenGetCreateTime();
+    if (lvSaveNameStamp(base, &year, &month, &day, &hour, &minute)) {
+        /* 1: the parts are set */
+    } else if (created > 0) {
+        time_t     t  = (time_t)created;
+        struct tm *tm = localtime(&t);
+        if (tm != NULL) {
+            year   = tm->tm_year + 1900;
+            month  = tm->tm_mon + 1;
+            day    = tm->tm_mday;
+            hour   = tm->tm_hour;
+            minute = tm->tm_min;
+        }
+    } else if (srcPath[0] != '\0') {
+        SDL_PathInfo info;
+        SDL_DateTime dt;
+        if (SDL_GetPathInfo(srcPath, &info) &&
+            SDL_TimeToDateTime(info.modify_time, &dt, true)) {
+            year   = dt.year;
+            month  = dt.month;
+            day    = dt.day;
+            hour   = dt.hour;
+            minute = dt.minute;
+        }
+    }
+
+    mapName[0] = '\0';
+    lv_screenGetMapName(mapName);
+    count = lv_screenGetRoster(rows, LV_ROSTER_MAX);
+    for (i = 0; i < count; i++) {
+        names[i] = rows[i].name;
+        teams[i] = rows[i].team;
+    }
+    lvSaveNameBuild(out, outSize, year, month, day, hour, minute, mapName,
+                    names, teams, count);
+}
+
 void lv_windowSaveLog(void) {
     char           srcPath[FILENAME_MAX];
     char           defaultName[FILENAME_MAX];
@@ -669,7 +734,6 @@ void lv_windowSaveLog(void) {
     const uint8_t *data = NULL;
     uint8_t       *copy = NULL;
     size_t         len  = 0;
-    size_t         i;
     char          *prefDir;
     FILE          *fp;
     int            source;
@@ -694,17 +758,9 @@ void lv_windowSaveLog(void) {
     lv_clientMutexWaitFor();
     source = lv_blocksGetSource(&path, &data, &len);
     if (source == LV_LOG_SOURCE_FILE) {
-        /* The log's own name. */
-        const char *base = path;
-        const char *p;
         snprintf(srcPath, sizeof(srcPath), "%s", path);
-        for (p = path; *p != '\0'; p++) {
-            if (*p == '/' || *p == '\\') base = p + 1;
-        }
-        snprintf(defaultName, sizeof(defaultName), "%s", base);
     } else if (source == LV_LOG_SOURCE_MEMORY) {
-        /* A downloaded log has no name: the map's. Its bytes are copied now. */
-        lv_screenGetMapName(defaultName);
+        /* A downloaded log has no file. Its bytes are copied now. */
         copy = (uint8_t *)malloc(len);
         if (copy != NULL) {
             memcpy(copy, data, len);
@@ -714,6 +770,9 @@ void lv_windowSaveLog(void) {
     } else {
         ok = FALSE;
     }
+    if (ok) {
+        lvSaveLogDefaultName(srcPath, defaultName, sizeof(defaultName));
+    }
     lv_clientMutexRelease();
     data = NULL;
     path = NULL;
@@ -721,19 +780,6 @@ void lv_windowSaveLog(void) {
         free(copy);
         lv_platform_dialog_error(DIALOG_BOX_TITLE, failed);
         return;
-    }
-    if (source == LV_LOG_SOURCE_MEMORY) {
-        /* Nothing a file name cannot hold: a map name is free text. */
-        for (i = 0; defaultName[i] != '\0'; i++) {
-            if (strchr("\\/:*?\"<>|", defaultName[i]) != NULL ||
-                (unsigned char)defaultName[i] < 0x20) {
-                defaultName[i] = '.';
-            }
-        }
-        if (defaultName[0] == '\0') {
-            snprintf(defaultName, sizeof(defaultName), "log");
-        }
-        strncat(defaultName, ".wbv", sizeof(defaultName) - strlen(defaultName) - 1);
     }
 
     /* Opens on the folder the game keeps its logs in. The name offered and

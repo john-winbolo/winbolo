@@ -2404,3 +2404,114 @@ int run_lv_presentation_live_fast_forward(void) {
                   (unsigned)before, (unsigned)after);
     return 0;
 }
+
+/* ── 7c. What the event scan keeps for the saved log's name ────────── */
+
+static void lvpPutText(LvpLog *b, uint8_t code, const char *text) {
+    uint8_t payload[256];
+    size_t  n = strlen(text);
+
+    payload[0] = (uint8_t)n;
+    memcpy(payload + 1, text, n);
+    lvpPutEvent(b, code, payload, n + 1);
+}
+
+static void lvpPutJoin(LvpLog *b, uint8_t slot, const char *name) {
+    uint8_t payload[262];
+    size_t  n = strlen(name);
+
+    payload[0] = slot;
+    payload[1] = 'X';
+    payload[2] = 'X';
+    payload[3] = 0;
+    payload[4] = 0;
+    payload[5] = (uint8_t)n;
+    memcpy(payload + 6, name, n);
+    lvpPutEvent(b, log_PlayerJoined, payload, n + 6);
+}
+
+static void lvpPutTeam(LvpLog *b, uint8_t slot, uint8_t team) {
+    const uint8_t payload[2] = {slot, team};
+    lvpPutEvent(b, log_TeamSet, payload, 2);
+}
+
+/* A log that opens in a lobby has the lobby's opening map in its header. The
+ * host then chooses another, twice; the round is played; the server names
+ * its next map before the log ends; a player leaves and a bot takes the
+ * slot. After the scan the log's map is the last one the lobby chose, and
+ * the roster has all three players with their teams. The header here says
+ * "Test". */
+int run_lv_save_name_scan(void) {
+    const char     *path = "lv_save_name_scan.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    LvRosterRow     rows[LV_ROSTER_MAX];
+    const char     *names[LV_ROSTER_MAX];
+    unsigned char   teams[LV_ROSTER_MAX];
+    char            mapBefore[64], mapAfter[64], mapReload[64];
+    char            fileName[200];
+    const uint8_t   slot1[1] = {1};
+    static const uint8_t tail[] = {0x01, 0x03, 0x00};
+    int             count, countReload, i;
+    bool            ran;
+
+    lvpPutOpening(&b);
+    lvpPutEvent(&b, log_LobbyEnter, NULL, 0);
+    lvpPutJoin(&b, 0, "Canuck");
+    lvpPutJoin(&b, 1, "rooklift");
+    lvpPutTeam(&b, 0, 1);
+    lvpPutTeam(&b, 1, 2);
+    lvpPutText(&b, log_MessageServer, "Map changed to First Choice");
+    lvpPutText(&b, log_MessageServer, "Welcome");
+    lvpPutText(&b, log_MessageServer, "Map changed to Oil Rig");
+    lvpPutEvent(&b, log_LobbyExit, NULL, 0);
+    lvpPutText(&b, log_MessageServer, "Map changed to Next Round");
+    lvpPutEvent(&b, log_PlayerQuit, slot1, 1);
+    lvpPutJoin(&b, 1, "Bot1");
+    lvpPutTeam(&b, 1, 2);
+    lvpPut(&b, tail, sizeof(tail));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    lv_screenGetMapName(mapBefore);
+    ran = lv_screenEventScanRun();
+    lv_screenEventScanRestore();
+    lv_screenGetMapName(mapAfter);
+    count = lv_screenGetRoster(rows, LV_ROSTER_MAX);
+    for (i = 0; i < count; i++) {
+        names[i] = rows[i].name;
+        teams[i] = rows[i].team;
+    }
+    lvSaveNameBuild(fileName, sizeof(fileName), 2026, 10, 13, 14, 5, mapAfter,
+                    names, teams, count);
+
+    /* A second load starts again from the header and an empty roster. */
+    lv_decoderDestroy(lv);
+    lv = lvpOpen(&b, path);
+    mapReload[0] = '\0';
+    countReload  = -1;
+    if (lv != NULL) {
+        lv_screenGetMapName(mapReload);
+        countReload = lv_screenGetRoster(rows, LV_ROSTER_MAX);
+        lv_decoderDestroy(lv);
+    }
+    remove(path);
+
+    UT_ASSERT_MSG(ran, "the scan refused a loaded file");
+    UT_ASSERT_MSG(strcmp(mapBefore, "Test") == 0, "the header's map is \"%s\"",
+                  mapBefore);
+    UT_ASSERT_MSG(strcmp(mapAfter, "Oil Rig") == 0,
+                  "the map after the scan is \"%s\", not the lobby's last",
+                  mapAfter);
+    UT_ASSERT_MSG(count == 3, "the roster has %d players", count);
+    UT_ASSERT_MSG(strcmp(fileName, "2026-10-13 14.05 Oil Rig - Canuck vs "
+                                   "rooklift, Bot1.wbv") == 0,
+                  "the name is \"%s\"", fileName);
+    UT_ASSERT_MSG(strcmp(mapReload, "Test") == 0 && countReload == 0,
+                  "a reload kept the last scan: map \"%s\", %d players",
+                  mapReload, countReload);
+    return 0;
+}

@@ -70,6 +70,7 @@
 #include "sim_rules_names.h"     /* simRulesRuleIndex — a rule's name to its index */
 #include "lv_builder_status.h"   /* the times each builder was away */
 #include "lv_ping_view.h"        /* the pings of the log, kept by time */
+#include "lv_save_name.h"        /* the players of the whole log, the lobby's map */
 
 /* The middle of the visible map from the start of the view (defined with
  * lv_screenSetViewInset). */
@@ -2095,6 +2096,34 @@ int lv_screenBuilderReturn(int slot, long *remainMs, int *approx) {
  * and the marquee queue. */
 static bool s_eventScan = FALSE;
 
+/* What the event scan learns of the whole log on its way through, for the
+ * name Save Log File offers: every player the log has had with the team each
+ * was on, and the map the lobby chose after the header was written. Filled
+ * only while s_scanGathers is set, which is the scan of a loaded file and
+ * not the text dump's. */
+static bool       s_scanGathers = FALSE;
+static LvRoster   s_roster;
+static LvLobbyMap s_lobbyMap;
+
+/* The players in the slots now, with their teams: those a snapshot brought,
+ * for whom the log has no join. */
+static void lv_rosterTakePlayers(void) {
+  BYTE slot, team;
+  char name[PLAYER_NAME_LEN];
+  for (slot = 0; slot < MAX_TANKS; slot++) {
+    if (!lv_playersIsInUse(slot)) {
+      continue;
+    }
+    lv_playersGetPlayerName(slot, name, sizeof(name));
+    if (s_roster.slotRow[slot] < 0) {
+      lvRosterJoin(&s_roster, slot, name);
+    }
+    if (lv_screenGetSlotTeam(slot, &team)) {
+      lvRosterTeam(&s_roster, slot, team);
+    }
+  }
+}
+
 /* The text dump's listener (lv_dump.c), NULL in every ordinary run. While it
  * is set the decoder runs as the event scan does, so nothing reaches the
  * host: the listener is given each record before it is applied and each
@@ -2198,6 +2227,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
         }
         lv_playersSetPlayer(opt1, name, mem, 0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE, FALSE, accountFlags);
       }
+      if (s_scanGathers) {
+        lvRosterJoin(&s_roster, opt1, name);
+      }
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
@@ -2212,6 +2244,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);
       lv_playersGetPlayerName(opt1, str, sizeof(str));
       lv_playersLeaveGame(opt1, TRUE);
+      if (s_scanGathers) {
+        lvRosterQuit(&s_roster, opt1);
+      }
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -2269,6 +2304,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)mem+1, (unsigned char)mem[0]);
       lv_utilPtoCString(mem, str);
       lv_playersSetPlayerName(opt1, str);
+      if (s_scanGathers) {
+        lvRosterRename(&s_roster, opt1, str);
+      }
       break;
     case log_AllyRequest:
       logReadBytes(&opt1, 1);
@@ -2446,6 +2484,10 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
       lv_utilPtoCString(mem, str);
+      if (s_scanGathers) {
+        /* The server's line about a map the host chose in the lobby. */
+        lvLobbyMapNamed(&s_lobbyMap, lvMapChangeName(str));
+      }
       {
         MessageArgs args = {0};
         snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
@@ -2854,9 +2896,15 @@ void lv_screenProcessLog(unsigned short numEvents) {
       /* No-op — marker event with no visual effect on replay */
       break;
     case log_LobbyEnter:
+      if (s_scanGathers) {
+        lvLobbyMapEnter(&s_lobbyMap);
+      }
       lv_messageAdd(LV_EVK_GAME, networkStatus, MESSAGE_NETSERVER, STR_LV_LOBBY_OPENED, NULL);
       break;
     case log_LobbyExit:
+      if (s_scanGathers) {
+        lvLobbyMapExit(&s_lobbyMap);
+      }
       lv_messageAdd(LV_EVK_GAME, networkStatus, MESSAGE_NETSERVER, STR_LV_GAME_STARTED, NULL);
       break;
     case log_PlayerReady:
@@ -2896,6 +2944,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
          since it has no walk to. */
       {
         int teamKey = lv_presStoreTeam(opt1, opt2, g_lv->timeRunning);
+        if (s_scanGathers) {
+          lvRosterTeam(&s_roster, opt1, opt2);
+        }
         if (isV2) {
           lv_presLiveIndex(g_lv->timeRunning, code, teamKey, payloadStart,
                            evLen);
@@ -2921,6 +2972,10 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
       lv_utilPtoCString(mem, str);
+      if (s_scanGathers) {
+        /* The map a skip vote went to. */
+        lvLobbyMapNamed(&s_lobbyMap, str);
+      }
       {
         MessageArgs args = {0};
         snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
@@ -5091,6 +5146,8 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
   lv_ruleChangesClear();
   lv_serverTickReset();
   lv_presReset();
+  lvRosterClear(&s_roster);
+  lvLobbyMapClear(&s_lobbyMap);
   memset(g_lv->kills,        0, sizeof(g_lv->kills));
   memset(g_lv->deaths,       0, sizeof(g_lv->deaths));
   memset(g_lv->gameViewHud,  0, sizeof(g_lv->gameViewHud));
@@ -5253,6 +5310,8 @@ static bool lv_logLoadCommon(void) {
   lv_ruleChangesClear();
   lv_serverTickReset();
   lv_presReset();
+  lvRosterClear(&s_roster);
+  lvLobbyMapClear(&s_lobbyMap);
   memset(g_lv->kills,        0, sizeof(g_lv->kills));
   memset(g_lv->deaths,       0, sizeof(g_lv->deaths));
   memset(g_lv->gameViewHud,  0, sizeof(g_lv->gameViewHud));
@@ -6202,6 +6261,10 @@ bool lv_screenEventScanRun(void) {
      decoder cannot finish ends the scan instead of hanging the load. */
   limit = g_lv->totalTimeMs + 60000u;
   lv_builderTripsReset();
+  lvRosterClear(&s_roster);
+  lvLobbyMapClear(&s_lobbyMap);
+  lv_rosterTakePlayers();
+  s_scanGathers = TRUE;
   s_eventScan = TRUE;
   g_lv->fastForwarding = TRUE; /* no sounds, no item panel updates */
   g_lv->isPlaying = TRUE;
@@ -6210,7 +6273,17 @@ bool lv_screenEventScanRun(void) {
   }
   g_lv->fastForwarding = FALSE;
   s_eventScan = FALSE;
+  s_scanGathers = FALSE;
+  lv_rosterTakePlayers();
   lv_builderTripsScanEnd();
+  /* The header of a log that opens in a lobby names the map the lobby
+     opened with, which is the map of the round before when the host then
+     chose another. The lobby's own records name the map that was played,
+     and that is the log's map from here on. */
+  if (s_lobbyMap.known && strcmp(g_lv->mapName, s_lobbyMap.name) != 0) {
+    snprintf(g_lv->mapName, sizeof(g_lv->mapName), "%s", s_lobbyMap.name);
+    lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
+  }
   return TRUE;
 }
 
@@ -7118,6 +7191,26 @@ bool lv_screenGetLoggedPlayerName(BYTE slot, char *dest, size_t destSize) {
 void lv_screenGetMapName(char *dest) {
   strncpy(dest, g_lv->mapName, sizeof(g_lv->mapName) - 1);
   dest[sizeof(g_lv->mapName) - 1] = '\0';
+}
+
+int lv_screenGetRoster(LvRosterRow *rows, int max) {
+  int i, n;
+  if (g_lv == NULL || rows == NULL) {
+    return 0;
+  }
+  if (s_roster.count == 0) {
+    /* No scan has run (it refuses a log with no length): the players now. */
+    lv_rosterTakePlayers();
+  }
+  n = (s_roster.count < max) ? s_roster.count : max;
+  for (i = 0; i < n; i++) {
+    rows[i] = s_roster.row[i];
+  }
+  return n;
+}
+
+int32_t lv_screenGetCreateTime(void) {
+  return (g_lv != NULL) ? g_lv->gmeCreateTime : 0;
 }
 
 /*********************************************************

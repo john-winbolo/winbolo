@@ -36,6 +36,7 @@
 #include "lv_screenbullet.h"
 #include "lv_pillbox.h"
 #include "lv_screentank.h"
+#include "lv_save_name.h"   /* LvRosterRow */
 
 /* Defines */
 
@@ -801,6 +802,14 @@ uint32_t lv_screenSeekSerial(void);
  * complete and then calls Restore. See screen.c. */
 bool lv_screenEventScanRun(void);
 void lv_screenEventScanRestore(void);
+
+/* For the name Save Log File offers (lv_save_name.h). The roster is every
+ * player the loaded log has had, in the order they came, with the last team
+ * each was on; the event scan fills it. Returns how many rows it wrote. The
+ * create time is the header's: the time the server that wrote the log was
+ * started, in seconds since 1970, or 0. */
+int     lv_screenGetRoster(LvRosterRow *rows, int max);
+int32_t lv_screenGetCreateTime(void);
 
 /* Spectator live-DVR (driven by spectatorRun). While live mode is on,
  * lv_screenStreamPump only appends the arriving bytes and never auto-advances to
