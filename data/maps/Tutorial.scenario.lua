@@ -1152,12 +1152,17 @@ local function bot_init(role)
              cfg2 = "0;cfg=STRATEGIC_PLACE_ENABLED=false" }
   elseif role == "bot6" then
     -- The Station 6 bot never fights: its man is the target.
-    -- It spares every seat that is not one of the three bots, not only the
-    -- player's: a player who leaves may come back on another seat, and the
-    -- token cannot be changed once the bot is fielded.
+    -- It spares every seat but its own and the Station 7 bot's, not only
+    -- the player's: a player who leaves may come back on another seat, and
+    -- a list that names them all needs no new token (game.bot_init) when
+    -- that happens. The 5A demo bot's seat is on the list too, so the list
+    -- does not depend on where that bot sits (move_bot_seat can move it);
+    -- that bot is held on its island, 24 squares from the parked Station 6
+    -- tank, so the two never meet. 14 seats of 16 come to 33 bytes, inside
+    -- the 63 a value may have.
     local seats = {}
     for p = 0, game.max_tanks() - 1 do
-      if p ~= S.bot5a and p ~= S.bot6 and p ~= S.bot7 then
+      if p ~= S.bot6 and p ~= S.bot7 then
         seats[#seats + 1] = tostring(p)
       end
     end
