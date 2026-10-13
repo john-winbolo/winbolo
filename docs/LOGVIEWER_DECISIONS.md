@@ -795,28 +795,49 @@ event has not happened; the `,` key steps back to it.
 **The ring.** After such a click a ring flashes on the map round the place of
 the event (`draw.c`, sums in `lv_event_flash.h`).
 
-- It starts 1.5 squares out from the middle of the event's square, grows to
-  2 squares and fades, in 1.2 seconds of real time. It is full strength for
-  the first 0.3 seconds. It runs the same with playback stopped.
+- It closes in on the place. It starts 3 squares out from the middle of the
+  event's square and shrinks to 1 square, twice over, one second each time:
+  2 seconds of real time. Each pulse is full strength for its first half
+  second; the first then fades to 45% and the second to nothing. It runs the
+  same with playback stopped. (The first ring was 1.5 to 2 squares in 1.2
+  seconds, once: too small and too short.)
 - With a team: a white band 2 points wide with a band in the team's colour,
-  2 points wide, inside it. With no team: white alone, 3 points. A thin dark
-  line each side keeps it readable on pale ground. The team is the one the
+  2 points wide, inside it. With no team: white alone, 3 points. A dark line
+  1 point wide, 85% solid, each side keeps it readable on pale ground. The team is the one the
   marker over the seek bar has: the new owner of a pillbox or base, the
   killer of a tank (the tank's own team when it died with no killer), the
   team that lost the builder. The colour is the HUD panel's.
-- **The map moves only when it has to.** Before, a click always put the
-  place in the middle of the map. Now the map goes there only when the place
-  is outside the view or nearer than 2 squares to its edge; a place already
-  well in view stays where it is and the ring shows it. With "Tank Centred"
-  on the view belongs to the followed tank and is not moved at all; the ring
-  is drawn when the place is in view.
+- **The place goes to the middle of the visible map area, every time.** The
+  visible map area is the window less the menu bar and the sidebars: where
+  the map shows. The middle of the event's square goes to the middle of that
+  area, to the pixel (`lvFlashCentreScroll`; the view scrolls in pixels).
+  Near an edge of the map the place goes as near the middle as the map
+  allows, and the ring still marks it. A panel that floats over the map is
+  not counted: only sidebars are.
+- **The view that cannot move: an arrow at its edge.** With "Tank Centred"
+  on, and in the game view (one player's own screen), the view belongs to
+  the followed tank and the click does not move it. The ring is drawn when
+  the place is in view. When it is not, an arrow at the edge of the view
+  points to it and pulses as the ring does: white on a dark arrow, with the
+  team's colour inside it. The game view draws the ring too now.
+- **The fault the owner found (Oct 13): no ring, and poor centring.** After
+  every jump the window called `lv_imgui_game_view_init_camera`, which puts
+  the view on the camera slot's tank. That is right in the game view and
+  wrong in the overview: the map left the event's place on each click, so
+  the place was not in the middle and the ring was drawn where the view no
+  longer was. The call was there before this branch (it also undid the
+  centring of a highlight line). It is now made only in the game view
+  (`lvFlashCameraFollowsTank`). Two smaller causes of poor centring went
+  with it: the view was placed in whole squares, up to a square to one side,
+  and the first ring's rule moved the map only for a place outside the view
+  or within 2 squares of its edge. That rule is gone.
+- A second click on the same line starts the ring again.
 - One ring at a time. A new click starts it again at the new place. It ends
   at once when playback is moved by anything else: the seek bar, Rewind,
   Fast Forward, a step key. Playing on does not end it.
 - It is drawn after the map and before the panels, so a panel over the map
-  hides it. It is only in the viewer's own window: not in the game view, not
-  in the viewer inside the game's lobby, not in the browser build, not in a
-  saved picture.
+  hides it. It is only in the viewer's own window: not in the viewer inside
+  the game's lobby, not in the browser build, not in a saved picture.
 - The viewer draws a frame every time round its loop, so the ring needs no
   redraw request of its own and costs nothing when none is running.
 
@@ -830,8 +851,12 @@ died, a ping, a highlight.
 
 - A click on a live feed still does nothing, so there is no ring there.
 - Unit tests: `lv_time_fmt_sums`, `lv_time_parse_sums`,
-  `lv_event_flash_sums`, `lv_event_seek_exact`.
-- The ring itself is SDL drawing and was not run in the headless try-out.
+  `lv_event_flash_sums`, `lv_event_flash_arrow`, `lv_event_centre_scroll`,
+  `lv_event_jump_keeps_place_in_view`, `lv_event_seek_exact`.
+- The ring and the arrow are SDL drawing and were not run in the headless
+  try-out. The faulty call was in the window's own file, which the unit
+  tests do not link: `lv_event_jump_keeps_place_in_view` runs the window's
+  steps by hand, the old way and the new.
 
 
 ### "Tank Builder Status": a marker over each tank for its builder

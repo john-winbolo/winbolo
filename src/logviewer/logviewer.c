@@ -33,6 +33,7 @@
 #include "spectator_input.h"   /* dep-free seam: read the controller for pan/zoom */
 #include "lv_global.h"
 #include "clientmutex.h"
+#include "lv_event_flash.h"
 #include "draw.h"
 #include "sound.h"
 #include "dns.h"
@@ -253,10 +254,12 @@ void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
  * tick: playback then stands on the tick the event happened in, with the
  * event done.
  *
- * A line about a place on the map (hasCell) brings that place into view
- * (lv_screenShowCell: the map moves only when the place is outside the view
- * or near its edge, and never with "Tank Centred" on) and flashes a ring
- * round it, in the colour of the team the event names (team; -1 for none).
+ * A line about a place on the map (hasCell) puts that place in the middle of
+ * the visible map area (lv_screenShowCell; never with "Tank Centred" on or
+ * in the game view) and flashes a ring round it, in the colour of the team
+ * the event names (team; -1 for none).
+ * Where the view cannot move ("Tank Centred", the game view) and does not
+ * show the place, the ring is an arrow at the view's edge.
  * Any other line moves only the playhead and leaves the view where the user
  * put it. */
 void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team) {
@@ -268,7 +271,18 @@ void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team
     lv_drawDirtyScreen();
     lv_screenSeekToTimeMs(ms);
     if (hasCell) {
-        lv_screenShowCell(mapX, mapY);
+        /* The part of the window the map shows in: the window less the menu
+         * bar and the sidebars. The place goes to the middle of that, not of
+         * the window. */
+        LvDockMargins dock = { 0, 0, 0, 0 };
+        int winW = 0, winH = 0;
+        SDL_GetWindowSize(g_lv->window, &winW, &winH);
+        lv_imgui_dock_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
+        lv_screenShowCell(mapX, mapY,
+                          (float)(winW - dock.left - dock.right),
+                          (float)(winH - (int)lv_imgui_get_menu_bar_height() -
+                                  dock.top - dock.bottom),
+                          lv_drawGetZoomLevel());
         /* After the seek: the ring is tied to the seek count as it is now. */
         lv_drawEventFlashStart(mapX, mapY, team);
     } else {
@@ -276,7 +290,13 @@ void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team
     }
     lv_drawDirtyScreen();
     lv_clientMutexRelease();
-    lv_imgui_game_view_init_camera(g_lv);
+    /* Only the game view puts its camera back on the followed tank. In the
+     * overview the view is the user's: taking it to the camera slot's tank
+     * here moved the map away from the event's place on every jump, so the
+     * ring was drawn where the view no longer was. */
+    if (lvFlashCameraFollowsTank(g_lv->gameView ? 1 : 0)) {
+        lv_imgui_game_view_init_camera(g_lv);
+    }
     lv_windowNeedRedraw();
     if (wasPlaying) {
         lv_windowPlay();

@@ -4071,6 +4071,9 @@ int run_lv_event_overlay_choice(void);
 int run_lv_time_fmt_sums(void);
 int run_lv_time_parse_sums(void);
 int run_lv_event_flash_sums(void);
+int run_lv_event_flash_arrow(void);
+int run_lv_event_centre_scroll(void);
+int run_lv_event_jump_keeps_place_in_view(void);
 int run_lv_event_seek_exact(void);
 /* The builder marker over each tank on the log viewer's map
  * (test_lv_builder_status.c), and the table of the times a builder was away

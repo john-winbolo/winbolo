@@ -769,7 +769,7 @@ void lv_screenSeekToTimeMs(uint32_t ms);
 void lv_screenCentreOnCell(int mapX, int mapY);
 /* The same only when the cell is outside the view or near its edge, and not
  * at all with "Tank Centred" on. Returns 1 when the map moved. */
-int lv_screenShowCell(int mapX, int mapY);
+int lv_screenShowCell(int mapX, int mapY, float viewPtsW, float viewPtsH, float zoom);
 /* Counts every request to move playback other than by playing. */
 uint32_t lv_screenSeekSerial(void);
 

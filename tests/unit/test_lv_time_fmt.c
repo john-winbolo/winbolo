@@ -12,8 +12,13 @@
  *       and every 10 ms step has a text of its own.
  *   lv_time_parse_sums — the text is read back to the same time; what is not
  *       a time is refused.
- *   lv_event_flash_sums — how solid and how wide the ring is at its start,
- *       its middle and its end; when the map has to move to show a square.
+ *   lv_event_flash_sums — how solid and how wide the ring is through its
+ *       two pulses.
+ *   lv_event_centre_scroll — where the view goes to put a square in the
+ *       middle of the visible map area: each sidebar layout, several zooms,
+ *       the map's edges.
+ *   lv_event_flash_arrow — the arrow at the view's edge for a place the view
+ *       does not show; whose the view is after a jump.
  */
 
 #include <stdbool.h>
@@ -150,64 +155,199 @@ int run_lv_time_parse_sums(void) {
 }
 
 int run_lv_event_flash_sums(void) {
-    uint32_t t;
-    float lastAlpha = 2.0f, lastRadius = 0.0f;
+    uint32_t t, p;
+    float lastAlpha, lastRadius;
+
+    /* Two pulses of one second: long enough and large enough to be seen. */
+    UT_ASSERT(LV_FLASH_PULSES == 2u);
+    UT_ASSERT(LV_FLASH_MS == 2000u);
+    UT_ASSERT(LV_FLASH_RADIUS_TILES >= 3.0f);
+    UT_ASSERT(LV_FLASH_RING_PT >= 2.0f && LV_FLASH_RING_PT <= 3.0f);
 
     /* The start: full strength, at the starting radius. */
     UT_ASSERT(lvFlashActive(0u) == 1);
+    UT_ASSERT(lvFlashPulse(0u) == 0u);
     UT_ASSERT_MSG(tf_near(lvFlashAlpha(0u), 1.0f), "alpha at the start");
     UT_ASSERT_MSG(tf_near(lvFlashRadiusTiles(0u), LV_FLASH_RADIUS_TILES), "radius at the start");
 
-    /* The end of the hold: still full strength. */
-    UT_ASSERT_MSG(tf_near(lvFlashAlpha(300u), 1.0f), "alpha at the end of the hold");
+    /* The end of the hold, half a pulse in: still full strength, and three
+       quarters of the way in (1 - 0.5 * 0.5). */
+    UT_ASSERT_MSG(tf_near(lvFlashAlpha(500u), 1.0f), "alpha at the end of the hold");
+    UT_ASSERT_MSG(tf_near(lvFlashRadiusTiles(500u),
+                          LV_FLASH_RADIUS_TILES -
+                              (LV_FLASH_RADIUS_TILES - LV_FLASH_END_TILES) * 0.75f),
+                  "radius half a pulse in is %f", (double)lvFlashRadiusTiles(500u));
 
-    /* The middle: a third of the fade is done (0.5 is 1/3 of the way from
-       0.25 to 1), and three quarters of the growth (1 - 0.5 * 0.5). */
-    UT_ASSERT(lvFlashActive(600u) == 1);
-    UT_ASSERT_MSG(tf_near(lvFlashAlpha(600u), 2.0f / 3.0f), "alpha in the middle is %f",
-                  (double)lvFlashAlpha(600u));
-    UT_ASSERT_MSG(tf_near(lvFlashRadiusTiles(600u),
-                          LV_FLASH_RADIUS_TILES + LV_FLASH_GROW_TILES * 0.75f),
-                  "radius in the middle is %f", (double)lvFlashRadiusTiles(600u));
+    /* Three quarters through the first pulse: half its fade is done, and it
+       fades only to the floor. */
+    UT_ASSERT_MSG(tf_near(lvFlashAlpha(750u), 1.0f - (1.0f - LV_FLASH_FLOOR) * 0.5f),
+                  "alpha at 750 ms is %f", (double)lvFlashAlpha(750u));
+    UT_ASSERT_MSG(lvFlashAlpha(999u) >= LV_FLASH_FLOOR - 0.0001f,
+                  "the first pulse faded under its floor: %f", (double)lvFlashAlpha(999u));
 
-    /* The end: gone, at the full radius; and it stays so. */
+    /* The second pulse starts again: full strength, out at the start. */
+    UT_ASSERT(lvFlashPulse(1000u) == 1u);
+    UT_ASSERT_MSG(tf_near(lvFlashAlpha(1000u), 1.0f), "alpha at the second pulse");
+    UT_ASSERT_MSG(tf_near(lvFlashRadiusTiles(1000u), LV_FLASH_RADIUS_TILES),
+                  "radius at the second pulse");
+    /* Three quarters through it: half the way to nothing. */
+    UT_ASSERT_MSG(tf_near(lvFlashAlpha(1750u), 0.5f), "alpha at 1750 ms is %f",
+                  (double)lvFlashAlpha(1750u));
+
+    /* The end: gone, closed in on the place; and it stays so. */
     UT_ASSERT(lvFlashActive(LV_FLASH_MS - 1u) == 1);
     UT_ASSERT(lvFlashActive(LV_FLASH_MS) == 0);
+    UT_ASSERT(lvFlashPulse(LV_FLASH_MS) == LV_FLASH_PULSES);
+    UT_ASSERT_MSG(lvFlashAlpha(LV_FLASH_MS - 1u) < 0.01f, "alpha just before the end");
     UT_ASSERT_MSG(tf_near(lvFlashAlpha(LV_FLASH_MS), 0.0f), "alpha at the end");
-    UT_ASSERT_MSG(tf_near(lvFlashRadiusTiles(LV_FLASH_MS),
-                          LV_FLASH_RADIUS_TILES + LV_FLASH_GROW_TILES), "radius at the end");
+    UT_ASSERT_MSG(tf_near(lvFlashRadiusTiles(LV_FLASH_MS), LV_FLASH_END_TILES),
+                  "radius at the end");
     UT_ASSERT_MSG(tf_near(lvFlashAlpha(900000u), 0.0f), "alpha long after the end");
     UT_ASSERT(lvFlashActive(0xFFFFFFFFu) == 0);
 
-    /* It never gets more solid or smaller on the way. */
-    for (t = 0u; t <= LV_FLASH_MS; t += 10u) {
-        float a = lvFlashAlpha(t), r = lvFlashRadiusTiles(t);
-        UT_ASSERT_MSG(a <= lastAlpha + 0.0001f && a >= 0.0f && a <= 1.0f,
-                      "alpha went up at %u ms", (unsigned)t);
-        UT_ASSERT_MSG(r >= lastRadius - 0.0001f, "the ring shrank at %u ms", (unsigned)t);
-        lastAlpha = a;
-        lastRadius = r;
+    /* Inside a pulse it never gets more solid or larger on the way. */
+    for (p = 0u; p < LV_FLASH_PULSES; p++) {
+        lastAlpha = 2.0f;
+        lastRadius = 1000.0f;
+        for (t = 0u; t < LV_FLASH_PULSE_MS; t += 10u) {
+            uint32_t at = p * LV_FLASH_PULSE_MS + t;
+            float a = lvFlashAlpha(at), r = lvFlashRadiusTiles(at);
+            UT_ASSERT_MSG(a <= lastAlpha + 0.0001f && a >= 0.0f && a <= 1.0f,
+                          "alpha went up at %u ms", (unsigned)at);
+            UT_ASSERT_MSG(r <= lastRadius + 0.0001f && r >= LV_FLASH_END_TILES - 0.0001f,
+                          "the ring grew at %u ms", (unsigned)at);
+            lastAlpha = a;
+            lastRadius = r;
+        }
     }
 
-    /* A view of 20 squares from square 100: squares 100 to 119. With 2
-       squares of edge, 102 to 117 need no move. */
-    UT_ASSERT(lvFlashAxisNeedsCentre(110, 100, 20, 2) == 0);
-    UT_ASSERT(lvFlashAxisNeedsCentre(102, 100, 20, 2) == 0);
-    UT_ASSERT(lvFlashAxisNeedsCentre(117, 100, 20, 2) == 0);
-    UT_ASSERT(lvFlashAxisNeedsCentre(101, 100, 20, 2) == 1);
-    UT_ASSERT(lvFlashAxisNeedsCentre(118, 100, 20, 2) == 1);
-    UT_ASSERT(lvFlashAxisNeedsCentre(99, 100, 20, 2) == 1);
-    UT_ASSERT(lvFlashAxisNeedsCentre(120, 100, 20, 2) == 1);
-    UT_ASSERT(lvFlashAxisNeedsCentre(0, 100, 20, 2) == 1);
-    UT_ASSERT(lvFlashAxisNeedsCentre(255, 100, 20, 2) == 1);
-    /* A view with no size (not yet sized by its host) is not moved. */
-    UT_ASSERT(lvFlashAxisNeedsCentre(5, 0, 0, 2) == 0);
-    /* A view too small to have a middle clear of both edges always moves. */
-    UT_ASSERT(lvFlashAxisNeedsCentre(101, 100, 4, 2) == 1);
+    return 0;
+}
 
-    /* Both axes: either one is enough. */
-    UT_ASSERT(lvFlashNeedsCentre(110, 60, 100, 50, 20, 20, 2) == 0);
-    UT_ASSERT(lvFlashNeedsCentre(130, 60, 100, 50, 20, 20, 2) == 1);
-    UT_ASSERT(lvFlashNeedsCentre(110, 69, 100, 50, 20, 20, 2) == 1);
+/* Where the view goes to put a square in the middle of the visible map
+   area. The window is 1280 by 800 points with a 20 point menu bar; a square
+   is 16 map pixels; the map is 256 squares and the grid here shows up to the
+   map's edge, so the furthest the view goes is (255 - squares shown) * 16. */
+int run_lv_event_centre_scroll(void) {
+    static const struct { int l, t, r, b; } docks[] = {
+        { 0, 0, 0, 0 },        /* none */
+        { 300, 0, 0, 0 },      /* left */
+        { 0, 0, 300, 0 },      /* right */
+        { 0, 120, 0, 0 },      /* top */
+        { 0, 0, 0, 120 },      /* bottom */
+        { 300, 120, 220, 100 } /* all four */
+    };
+    static const float zooms[] = { 0.5f, 0.75f, 1.0f, 2.0f, 3.0f };
+    size_t d, z;
+
+    for (d = 0; d < sizeof(docks) / sizeof(docks[0]); d++) {
+        for (z = 0; z < sizeof(zooms) / sizeof(zooms[0]); z++) {
+            float zoom = zooms[z];
+            float areaW = (float)(1280 - docks[d].l - docks[d].r);
+            float areaH = (float)(800 - 20 - docks[d].t - docks[d].b);
+            int shownX = (int)(areaW / (16.0f * zoom)) + 1;
+            int shownY = (int)(areaH / (16.0f * zoom)) + 1;
+            int maxX = (255 - shownX) * 16, maxY = (255 - shownY) * 16;
+            int sx, sy;
+            float midX, midY;
+            if (maxX < 0) maxX = 0;
+            if (maxY < 0) maxY = 0;
+
+            /* A square in the middle of the map: its middle comes to the
+               middle of the area, to within a point. The place on screen, in
+               points from the area's corner, is (map pixel - scroll) * zoom. */
+            sx = lvFlashCentreScroll(128, areaW / zoom, 16, maxX);
+            sy = lvFlashCentreScroll(120, areaH / zoom, 16, maxY);
+            midX = ((128.0f + 0.5f) * 16.0f - (float)sx) * zoom;
+            midY = ((120.0f + 0.5f) * 16.0f - (float)sy) * zoom;
+            if (sx > 0 && sx < maxX) {
+                UT_ASSERT_MSG(midX > areaW * 0.5f - zoom && midX < areaW * 0.5f + zoom,
+                              "dock %d zoom %.2f: the place is at %.1f of %.1f points across",
+                              (int)d, (double)zoom, (double)midX, (double)areaW);
+            }
+            if (sy > 0 && sy < maxY) {
+                UT_ASSERT_MSG(midY > areaH * 0.5f - zoom && midY < areaH * 0.5f + zoom,
+                              "dock %d zoom %.2f: the place is at %.1f of %.1f points down",
+                              (int)d, (double)zoom, (double)midY, (double)areaH);
+            }
+            /* At 1x and over, the middle of the map is never held by an edge. */
+            if (zoom >= 1.0f) {
+                UT_ASSERT_MSG(sx > 0 && sx < maxX && sy > 0 && sy < maxY,
+                              "dock %d zoom %.2f: the middle of the map was held at an edge",
+                              (int)d, (double)zoom);
+            }
+
+            /* The corners of the map: held at the map's edge, never past it. */
+            UT_ASSERT(lvFlashCentreScroll(0, areaW / zoom, 16, maxX) == 0);
+            UT_ASSERT(lvFlashCentreScroll(2, areaH / zoom, 16, maxY) == 0);
+            UT_ASSERT(lvFlashCentreScroll(255, areaW / zoom, 16, maxX) == maxX);
+            UT_ASSERT(lvFlashCentreScroll(254, areaH / zoom, 16, maxY) == maxY);
+        }
+    }
+
+    /* By hand, 1x, no sidebars: 1280 points show 1280 map pixels. Square 128
+       has its middle at pixel 2056; less half of 1280 is 1416. With a 300
+       point sidebar the area is 980: 2056 - 490 = 1566. The old whole-square
+       sum (square - squares shown / 2, 80 and 61 squares) gave 1408 and 1568:
+       8 and 2 pixels off, and to one side. */
+    UT_ASSERT(lvFlashCentreScroll(128, 1280.0f, 16, 4000) == 1416);
+    UT_ASSERT(lvFlashCentreScroll(128, 980.0f, 16, 4000) == 1566);
+    UT_ASSERT((128 - 80 / 2) * 16 != 1416);
+    /* At 2x the same 1280 points show 640 map pixels: 2056 - 320. */
+    UT_ASSERT(lvFlashCentreScroll(128, 1280.0f / 2.0f, 16, 4000) == 1736);
+    /* A limit under 0 is 0. */
+    UT_ASSERT(lvFlashCentreScroll(128, 640.0f, 16, -5) == 0);
+    return 0;
+}
+
+/* The arrow for a place the view does not show, and whose the view is after
+   a jump. The view is the box 100,50 to 500,350. */
+int run_lv_event_flash_arrow(void) {
+    float ex = -1.0f, ey = -1.0f, dx = 0.0f, dy = 0.0f;
+
+    /* A place in the view: no arrow, the ring is there. */
+    UT_ASSERT(lvFlashEdgeArrow(300.0f, 200.0f, 100.0f, 50.0f, 500.0f, 350.0f, 6.0f,
+                               &ex, &ey, &dx, &dy) == 0);
+    UT_ASSERT(lvFlashEdgeArrow(100.0f, 50.0f, 100.0f, 50.0f, 500.0f, 350.0f, 6.0f,
+                               &ex, &ey, &dx, &dy) == 0);
+    /* Its right and bottom edges are outside it. */
+    UT_ASSERT(lvFlashEdgeArrow(500.0f, 200.0f, 100.0f, 50.0f, 500.0f, 350.0f, 6.0f,
+                               &ex, &ey, &dx, &dy) == 1);
+
+    /* Straight to the right: the point is 6 in from the right edge, at the
+       place's own height, and points right. */
+    UT_ASSERT(lvFlashEdgeArrow(900.0f, 200.0f, 100.0f, 50.0f, 500.0f, 350.0f, 6.0f,
+                               &ex, &ey, &dx, &dy) == 1);
+    UT_ASSERT_MSG(tf_near(ex, 494.0f) && tf_near(ey, 200.0f), "point at %f,%f",
+                  (double)ex, (double)ey);
+    UT_ASSERT_MSG(tf_near(dx, 1.0f) && tf_near(dy, 0.0f), "points %f,%f",
+                  (double)dx, (double)dy);
+
+    /* Straight up. */
+    UT_ASSERT(lvFlashEdgeArrow(300.0f, -400.0f, 100.0f, 50.0f, 500.0f, 350.0f, 6.0f,
+                               &ex, &ey, &dx, &dy) == 1);
+    UT_ASSERT_MSG(tf_near(ex, 300.0f) && tf_near(ey, 56.0f), "point at %f,%f",
+                  (double)ex, (double)ey);
+    UT_ASSERT_MSG(tf_near(dx, 0.0f) && tf_near(dy, -1.0f), "points %f,%f",
+                  (double)dx, (double)dy);
+
+    /* Off the bottom left corner, 300 left and 400 down of the corner's
+       point: a 3-4-5 triangle. */
+    UT_ASSERT(lvFlashEdgeArrow(106.0f - 300.0f, 344.0f + 400.0f, 100.0f, 50.0f, 500.0f,
+                               350.0f, 6.0f, &ex, &ey, &dx, &dy) == 1);
+    UT_ASSERT_MSG(tf_near(ex, 106.0f) && tf_near(ey, 344.0f), "point at %f,%f",
+                  (double)ex, (double)ey);
+    UT_ASSERT_MSG(tf_near(dx, -0.6f) && tf_near(dy, 0.8f), "points %f,%f",
+                  (double)dx, (double)dy);
+
+    /* A view with no size has no arrow; a null out pointer is passed over. */
+    UT_ASSERT(lvFlashEdgeArrow(900.0f, 200.0f, 100.0f, 50.0f, 100.0f, 350.0f, 6.0f,
+                               &ex, &ey, &dx, &dy) == 0);
+    UT_ASSERT(lvFlashEdgeArrow(900.0f, 200.0f, 100.0f, 50.0f, 500.0f, 350.0f, 6.0f,
+                               0, 0, 0, 0) == 1);
+
+    /* Only the game view's camera goes back to the followed tank. */
+    UT_ASSERT(lvFlashCameraFollowsTank(0) == 0);
+    UT_ASSERT(lvFlashCameraFollowsTank(1) == 1);
     return 0;
 }

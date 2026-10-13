@@ -230,6 +230,11 @@ int lv_drawTankAtPoint(float xPoints, float yPoints);
 void lv_drawEventFlashStart(int mapX, int mapY, int team);
 void lv_drawEventFlashCancel(void);
 int lv_drawEventFlashActive(void);
+/* For a host that draws a view of the map itself (the game view): the
+   ring's map square, and the ring or its edge arrow at a place on screen. */
+int lv_drawEventFlashCell(int *mapX, int *mapY);
+struct SDL_Rect;
+void lv_drawEventFlashAt(float cx, float cy, float tilePx, const struct SDL_Rect *view);
 
 /*********************************************************
 *NAME:          lv_drawSplashForImGui

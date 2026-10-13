@@ -6010,25 +6010,45 @@ void lv_screenCentreOnCell(int mapX, int mapY) {
   g_lv->wantScreenUpdate = TRUE;
 }
 
-/* Bring a map cell into the view for a jump to an event there. The map moves
- * (the cell goes to the middle) only when it has to: the cell is outside the
- * view or nearer than LV_FLASH_EDGE_TILES squares to an edge of it. A cell
- * that is already well in view stays where it is, so the eye does not lose
- * the map. With "Tank Centred" on the view belongs to the followed tank and
- * is not moved at all. Returns 1 when the map moved. */
-int lv_screenShowCell(int mapX, int mapY) {
+/* Put a map cell in the middle of the visible map area, for a jump to an
+ * event there. viewPtsW and viewPtsH are the size of that area in points:
+ * the window less the menu bar and the sidebars, which is where the map
+ * shows; zoom is the map's zoom. A size of 0 or less stands for the whole
+ * grid (a host with no sidebars). The middle of the cell goes to the middle
+ * of the area, to the pixel (lvFlashCentreScroll); near an edge of the map
+ * it goes as near as the map allows.
+ *
+ * With "Tank Centred" on, and in the game view, the view belongs to the
+ * followed tank and is not moved at all: the ring's host then points to a
+ * place the view does not show with an arrow at its edge. Returns 1 when the
+ * view is the user's and was placed. */
+int lv_screenShowCell(int mapX, int mapY, float viewPtsW, float viewPtsH, float zoom) {
+  int sizeX, sizeY, maxOffX, maxOffY;
+  float mapPxW, mapPxH;
+
   if (g_lv == NULL || g_lv->logLoaded == FALSE) {
     return 0;
   }
   if (g_lv->centredTank == TRUE) {
     return 0;
   }
-  if (!lvFlashNeedsCentre(mapX, mapY, (int)g_lv->xOffset, (int)g_lv->yOffset,
-                          lv_screenGetSizeX(), lv_screenGetSizeY(),
-                          LV_FLASH_EDGE_TILES)) {
+  /* The game view's camera is the followed tank's (lvFlashCameraFollowsTank):
+     the host puts it back on that tank after the jump. */
+  if (lvFlashCameraFollowsTank(g_lv->gameView ? 1 : 0)) {
     return 0;
   }
-  lv_screenCentreOnCell(mapX, mapY);
+  sizeX = lv_screenGetSizeX();
+  sizeY = lv_screenGetSizeY();
+  if (zoom <= 0.0f) zoom = 1.0f;
+  mapPxW = (viewPtsW > 0.0f) ? viewPtsW / zoom : (float)(sizeX * TILE_SIZE_X);
+  mapPxH = (viewPtsH > 0.0f) ? viewPtsH / zoom : (float)(sizeY * TILE_SIZE_Y);
+  /* The same limits lv_screenPanToTotalPixels keeps. */
+  maxOffX = 255 - sizeX; if (maxOffX < 0) maxOffX = 0;
+  maxOffY = 255 - sizeY; if (maxOffY < 0) maxOffY = 0;
+  lv_screenPanToTotalPixels(
+      lvFlashCentreScroll(mapX, mapPxW, TILE_SIZE_X, maxOffX * TILE_SIZE_X),
+      lvFlashCentreScroll(mapY, mapPxH, TILE_SIZE_Y, maxOffY * TILE_SIZE_Y));
+  g_lv->wantScreenUpdate = TRUE;
   return 1;
 }
 
