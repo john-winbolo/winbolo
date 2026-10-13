@@ -1276,6 +1276,11 @@ STR_LV_BUILDER_STATUS=Tank Builder Status
 STR_LV_BUILDER_STATUS_TIP=Over each tank on the map: an arrow toward its builder when he is out of the tank, and a parachute with the time until the new builder is in the tank when he is dead
 STR_LV_TANK_BUILDER_BACK=Builder: dead, back in {string1}
 
+# Log viewer: the filter of the Events panel, a list of ticked kinds
+STR_LV_EVT_FILTER_SOME={string1} of {string2} events
+STR_LV_EVT_FILTER_EMPTY=No events of the selected kinds
+STR_LV_EVT_FILTER_TIP=Show only the events of the ticked kinds
+
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:
 STR_LV_PLAYER_LBL=Player {number}:

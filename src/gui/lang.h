@@ -1360,6 +1360,10 @@
 #define STR_LV_BUILDER_STATUS               2845
 #define STR_LV_BUILDER_STATUS_TIP           2846
 #define STR_LV_TANK_BUILDER_BACK            2847
+/* Log viewer: the filter of the Events panel, a list of ticked kinds */
+#define STR_LV_EVT_FILTER_SOME              2848
+#define STR_LV_EVT_FILTER_EMPTY             2849
+#define STR_LV_EVT_FILTER_TIP               2850
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

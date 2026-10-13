@@ -788,10 +788,50 @@ pillbox stolen, base captured, base stolen, tank killed, builder killed.
 Player, chat, game and highlight are off.
 
 **Saved.** One key of the LOGVIEWER preferences, `Controls.OverlayEvents`:
-the saved names of the ticked kinds with commas between them, as the
-`Events.Filter` key names one kind. "none" is an empty choice (an empty text
-would read as "never saved"). A name from a newer build is ignored. It is
-written at each tick.
+the saved names of the ticked kinds with commas between them. "none" is an
+empty choice (an empty text would read as "never saved"). A name from a
+newer build is ignored. It is written at each tick.
+
+**The same list is the filter of the Events panel (Oct 13).** The Events
+panel had a filter of one kind or all. It now has the list above: the same
+function draws both (`lv_event_kinds_combo` in `imgui_event_overlay.cpp`),
+so the ten kinds, their order, their markers, the counts and the "All" and
+"None" buttons are the same. Each has its own choice.
+
+- The panel's choice is saved under `Events.Kinds`, in the same form as
+  `Controls.OverlayEvents`. The default is every kind. With no `Events.Kinds`
+  saved, an old `Events.Filter` of one kind is taken over as that kind alone
+  and written under the new key (`lvEventsMaskFromPrefs`). The old key is
+  left in the file and not read again once the new one is there.
+- The list shows only the lines of the ticked kinds. One test decides it for
+  the panel's lines and for the lane's markers: `lvEventKindTicked`.
+- **A change from before:** the old filter fell back to "all" when the log
+  had no line of the chosen kind, and did not offer such a kind. The list
+  now offers all ten kinds (a kind with no line reads "(0)") and shows what
+  is ticked. With lines in the log and none of a ticked kind, the panel
+  reads "No events of the selected kinds".
+- Closed, the filter reads "All events (412)" with every kind ticked,
+  "Tank killed (37)" with one kind, "37 of 412 events" with any other
+  choice. In a narrow panel it reads only "(37)", and in a narrower one it
+  is the arrow alone (`lvEventsLabelPick`); what is left out is then in the
+  tooltip.
+- The selected line stays selected when the filter changes and its kind is
+  still ticked, and the list is moved so that it is in the middle. A
+  selected line the filter now hides is not selected any more.
+- The panel has no text filter and no player filter, and no "next event" or
+  "previous event" keys; none was there before and none was added. A click
+  on a line goes to that event, as before, and can only be on a shown line.
+- Unit tests: `lv_event_kinds_filter`, `lv_event_kinds_prefs`. A headless
+  try-out ran the real Events panel (400 made-up lines; nothing saved, one
+  kind, three kinds, none, a kind with no line) at ten widths from 400 down
+  to 40: no ImGui assert and no scroll bar across. A click opened the list
+  at 300, 110 and 60 wide; "None", one row and "All" each saved the right
+  text and left the list open. Not checked there: what text the closed
+  filter shows (only the sum that picks it is tested), and the place of the
+  selected line after a change.
+- Note: under about 116 points wide the "Auto Scroll" check box of the panel
+  is wider than the panel. That was so before; the filter itself fits down
+  to its arrow.
 
 **The lane.** It is as wide as the seek bar and one line of text high, plus
 3 points, with 1 point between it and the bar. The x of a marker is the sum

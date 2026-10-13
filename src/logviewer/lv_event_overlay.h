@@ -18,6 +18,7 @@
 #ifndef LV_EVENT_OVERLAY_H
 #define LV_EVENT_OVERLAY_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -194,6 +195,63 @@ static inline void lvOverlayMaskToText(unsigned mask, char *dest,
   if (used == 0) {
     snprintf(dest, destSize, "%s", LV_OVERLAY_KEY_NONE);
   }
+}
+
+/* ---- One list of ticked kinds, two users ---------------------------------
+ * The "Overlay events" list of the Controls panel and the filter of the
+ * Events panel are the same control (lv_event_kinds_combo), each with its
+ * own choice. Both ask the same question of each event: */
+
+/* True when an event of this kind is one of the ticked kinds. A kind out of
+ * range is never ticked. */
+static inline bool lvEventKindTicked(unsigned mask, int kind) {
+  if (kind < 0 || kind >= LV_EVK_COUNT) return false;
+  return (mask & (1u << kind)) != 0;
+}
+
+/* How many events the ticked kinds have between them; counts has
+ * LV_EVK_COUNT entries. */
+static inline int lvEventKindsTickedCount(unsigned mask, const int *counts) {
+  int kind, total = 0;
+  if (counts == NULL) return 0;
+  for (kind = 0; kind < LV_EVK_COUNT; kind++) {
+    if (lvEventKindTicked(mask, kind)) total += counts[kind];
+  }
+  return total;
+}
+
+/* The Events panel's choice as the preferences give it. kindsText is the
+ * saved list ("Events.Kinds"), empty when none was ever saved. The panel
+ * used to show one kind or all, saved as one name ("Events.Filter"): with
+ * no list saved that old choice is taken over, one kind as that kind alone
+ * and "all" (or nothing, or a name this build does not know) as every kind.
+ * A saved list always wins, also "none". */
+static inline unsigned lvEventsMaskFromPrefs(const char *kindsText,
+                                             const char *oldFilterText) {
+  int kind;
+  if (kindsText != NULL && kindsText[0] != '\0') {
+    return lvOverlayMaskFromText(kindsText);
+  }
+  kind = lvEventKindFromKey(oldFilterText);
+  if (kind >= 0) return 1u << kind;
+  return LV_OVERLAY_ALL_MASK;
+}
+
+/* What the closed filter of the Events panel has on it, in the room it has:
+ * its whole text ("All events (412)"), only the number ("(412)"), or no
+ * text, the arrow alone. frameW is what a combo adds to its text: the
+ * padding and the arrow. */
+typedef enum {
+  LV_EVENTS_LABEL_FULL = 0,
+  LV_EVENTS_LABEL_COUNT,
+  LV_EVENTS_LABEL_ARROW
+} LvEventsLabel;
+
+static inline LvEventsLabel lvEventsLabelPick(float availW, float fullW,
+                                              float countW, float frameW) {
+  if (fullW + frameW <= availW) return LV_EVENTS_LABEL_FULL;
+  if (countW + frameW <= availW) return LV_EVENTS_LABEL_COUNT;
+  return LV_EVENTS_LABEL_ARROW;
 }
 
 /* The marker of a pillbox event or a base event is the map's picture of a

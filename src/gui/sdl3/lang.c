@@ -1088,6 +1088,10 @@ static const LangEntry langTable[] = {
     {2845, "Tank Builder Status"},
     {2846, "Over each tank on the map: an arrow toward its builder when he is out of the tank, and a parachute with the time until the new builder is in the tank when he is dead"},
     {2847, "Builder: dead, back in {string1}"},
+    /* Log viewer: the filter of the Events panel, a list of ticked kinds */
+    {2848, "{string1} of {string2} events"},
+    {2849, "No events of the selected kinds"},
+    {2850, "Show only the events of the ticked kinds"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

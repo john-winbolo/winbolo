@@ -200,7 +200,7 @@ static void overlay_refresh(float width, float grabMin, float minGap) {
         if (info.timeMs < start) continue;
         if (info.kind < 0 || info.kind >= LV_EVK_COUNT) continue;
         s_kind_count[info.kind]++;
-        if ((s_mask & (1u << info.kind)) == 0) continue;
+        if (!lvEventKindTicked(s_mask, info.kind)) continue;
         if (info.timeMs < last) ordered = false;
         last = info.timeMs;
         s_items.push_back(i);
@@ -506,30 +506,20 @@ float lv_event_overlay_combo_width(bool full) {
            arrow;
 }
 
-void lv_event_overlay_combo(bool full) {
-    overlay_load();
-    const char *name = langGetText(STR_LV_OVERLAY_EVENTS);
-    ImGui::SetNextItemWidth(lv_event_overlay_combo_width(full));
-    const bool open = ImGui::BeginCombo("##evoverlay", name,
+bool lv_event_kinds_combo(const char *id, const char *preview, const char *tip,
+                          unsigned *maskInOut, const int *counts) {
+    if (maskInOut == nullptr) return false;
+    const bool open = ImGui::BeginCombo(id, (preview != nullptr) ? preview : "",
                                         ImGuiComboFlags_HeightLargest |
-                                        (full ? 0 : ImGuiComboFlags_NoPreview));
+                                        ((preview != nullptr) ? 0 : ImGuiComboFlags_NoPreview));
     if (!open) {
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
-            /* The short one has no name on it. */
-            if (full) {
-                ImGui::SetTooltip("%s", langGetText(STR_LV_OVERLAY_TIP));
-            } else {
-                ImGui::SetTooltip("%s\n%s", name, langGetText(STR_LV_OVERLAY_TIP));
-            }
+        if (tip != nullptr && tip[0] != '\0' &&
+            ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+            ImGui::SetTooltip("%s", tip);
         }
-        return;
+        return false;
     }
-    /* The counts are those of the log as the lane last saw it; with no
-     * kind ticked the lane does not look, so look here. */
-    if (s_mask == 0 || !s_built) {
-        overlay_refresh(s_built_width, s_built_grab, (s_built_gap > 0.0f) ? s_built_gap : 13.0f);
-    }
-    unsigned mask = s_mask;
+    unsigned mask = *maskInOut;
     /* Buttons and check boxes leave the list open, so several kinds can be
      * ticked in one go. */
     if (ImGui::SmallButton(langGetText(STR_DLGPLAYERS_ALL))) {
@@ -564,14 +554,34 @@ void lv_event_overlay_combo(bool full) {
             ImGui::SameLine();
         }
         snprintf(label, sizeof(label), "%s (%d)###evk%d", lv_imgui_events_kind_label(kind),
-                 s_kind_count[kind], kind);
+                 (counts != nullptr) ? counts[kind] : 0, kind);
         if (ImGui::Checkbox(label, &on)) {
             mask = on ? (mask | (1u << kind)) : (mask & ~(1u << kind));
         }
     }
     ImGui::EndCombo();
-    if (mask != s_mask) {
-        s_mask = mask;
+    if (mask == *maskInOut) return false;
+    *maskInOut = mask;
+    return true;
+}
+
+void lv_event_overlay_combo(bool full) {
+    overlay_load();
+    const char *name = langGetText(STR_LV_OVERLAY_EVENTS);
+    char tip[512];
+    /* The short one has no name on it: the name goes in front of the tip. */
+    if (full) {
+        snprintf(tip, sizeof(tip), "%s", langGetText(STR_LV_OVERLAY_TIP));
+    } else {
+        snprintf(tip, sizeof(tip), "%s\n%s", name, langGetText(STR_LV_OVERLAY_TIP));
+    }
+    /* The counts are those of the log as the lane last saw it; with no
+     * kind ticked the lane does not look, so look here. */
+    if (s_mask == 0 || !s_built) {
+        overlay_refresh(s_built_width, s_built_grab, (s_built_gap > 0.0f) ? s_built_gap : 13.0f);
+    }
+    ImGui::SetNextItemWidth(lv_event_overlay_combo_width(full));
+    if (lv_event_kinds_combo("##evoverlay", full ? name : nullptr, tip, &s_mask, s_kind_count)) {
         overlay_save();
     }
 }

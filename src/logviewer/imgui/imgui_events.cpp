@@ -9,12 +9,14 @@
  */
 
 #include "imgui_events.h"
+#include "imgui_event_overlay.h"
 #include "imgui_main_menu.h"
 #include "imgui_dock.h"
 #include "imgui_context.h"
 #include "imgui.h"
 #include "platform_config.h"
 #include "../lv_event_kind.h"
+#include "../lv_event_overlay.h"
 #include "../../gui/lang.h"
 #include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
 
@@ -82,10 +84,13 @@ static unsigned s_version = 1;
 static int s_selected_index = -1;
 static bool s_select_all = false;
 
-/* The one kind the filter shows, or -1 for all of them. This is the user's
- * choice as saved; a log with no line of that kind shows all (see
- * effective_filter) without forgetting the choice. */
-static int s_filter = -1;
+/* The kinds the filter shows, one bit a kind: the panel's own choice, apart
+ * from the one of the "Overlay events" list of the Controls panel. */
+static unsigned s_filter = LV_OVERLAY_ALL_MASK;
+
+/* The selected line is to be brought into view: the filter changed and the
+ * line is still shown. */
+static bool s_scroll_to_selected = false;
 
 /* The lines the panel shows, after the lobby hiding and the filter: indexes
  * into s_events in display order, and each line's time for the binary search
@@ -97,16 +102,28 @@ static int      s_kind_count[LV_EVK_COUNT];  /* per kind, lobby hiding applied *
 static int      s_total_count = 0;           /* every kind, lobby hiding applied */
 static unsigned s_view_version = 0;          /* s_version the cache was built at */
 static uint32_t s_view_window_start = 0;
-static int      s_view_filter = -1;
+static unsigned s_view_filter = LV_OVERLAY_ALL_MASK;
 
 /* Row the "now" divider was last scrolled to, so auto scroll moves the list
  * only when the divider does and leaves hand scrolling alone in between. */
 static int s_last_divider_row = -1;
 
-static const char *const k_filter_pref = "Events.Filter";
+/* The LOGVIEWER preference that keeps the ticked kinds: their saved names
+ * with commas between them, or "none" (lvOverlayMaskToText). The panel used
+ * to show one kind or all, saved under k_old_filter_pref; that choice is
+ * taken over once (lvEventsMaskFromPrefs) and its key is left as it is. */
+static const char *const k_kinds_pref = "Events.Kinds";
+static const char *const k_old_filter_pref = "Events.Filter";
+
+static void save_filter(void) {
+    char val[256];
+    lvOverlayMaskToText(s_filter, val, sizeof(val));
+    lv_platform_config_set_string("LOGVIEWER", k_kinds_pref, val);
+}
 
 void lv_imgui_events_init(void) {
-    char val[32];
+    char val[256];
+    char old[32];
     s_events.clear();
     s_complete = false;
     s_version++;
@@ -115,9 +132,15 @@ void lv_imgui_events_init(void) {
     s_selected_index = -1;
     s_select_all = false;
     s_last_divider_row = -1;
-    lv_platform_config_get_string("LOGVIEWER", k_filter_pref, LV_EVK_KEY_ALL,
-                                  val, sizeof(val));
-    s_filter = lvEventKindFromKey(val);
+    s_scroll_to_selected = false;
+    lv_platform_config_get_string("LOGVIEWER", k_kinds_pref, "", val, sizeof(val));
+    lv_platform_config_get_string("LOGVIEWER", k_old_filter_pref, LV_EVK_KEY_ALL,
+                                  old, sizeof(old));
+    s_filter = lvEventsMaskFromPrefs(val, old);
+    if (val[0] == '\0' && s_filter != LV_OVERLAY_ALL_MASK) {
+        /* The old choice was taken over: keep it under the new key. */
+        save_filter();
+    }
 }
 
 void lv_imgui_events_add(int eventType, int kind, int mapX, int mapY,
@@ -311,8 +334,8 @@ const char *lv_imgui_events_kind_label(int kind) {
     return langGetText(kind_label_id(kind));
 }
 
-/* Count the lines of each kind the lobby hiding leaves. The counts decide
- * which kinds the filter offers, so they are taken before the filter. */
+/* Count the lines of each kind the lobby hiding leaves. The counts are the
+ * numbers in the filter's list, so they are taken before the filter. */
 static void count_kinds(uint32_t windowStart) {
     memset(s_kind_count, 0, sizeof(s_kind_count));
     s_total_count = 0;
@@ -323,16 +346,6 @@ static void count_kinds(uint32_t windowStart) {
     }
 }
 
-/* The filter in force: the saved choice when this log has a line of that
- * kind, otherwise all. The choice itself is kept, so it comes back with the
- * next log that has such lines. */
-static int effective_filter(void) {
-    if (s_filter >= 0 && s_filter < LV_EVK_COUNT && s_kind_count[s_filter] > 0) {
-        return s_filter;
-    }
-    return -1;
-}
-
 /* Bring the shown-lines cache up to date. Cheap to call every frame: it
  * rebuilds only when the list, the presentation window or the filter has
  * changed since the last build. */
@@ -340,16 +353,16 @@ static void refresh_view(void) {
     uint32_t windowStart = lv_screenWindowStartMs();
     if (s_view_version != s_version || s_view_window_start != windowStart) {
         count_kinds(windowStart);
-    } else if (s_view_filter == effective_filter()) {
+    } else if (s_view_filter == s_filter) {
         return;
     }
-    int filter = effective_filter();
+    const unsigned filter = s_filter;
     s_view.clear();
     s_view_time.clear();
     for (int i = 0; i < (int)s_events.size(); i++) {
         const LogEvent &e = s_events[i];
         if (event_is_hidden(e, windowStart)) continue;
-        if (filter >= 0 && e.kind != filter) continue;
+        if (!lvEventKindTicked(filter, e.kind)) continue;
         s_view.push_back(i);
         s_view_time.push_back(e.pinned ? 0u : e.timeMs);
     }
@@ -369,47 +382,61 @@ static std::string shown_lines_text(void) {
     return all_events;
 }
 
-/* "<label> (<count>)" for a filter entry; kind -1 is the All entry. */
-static void filter_entry_label(int kind, char *dest, size_t destSize) {
-    if (kind < 0) {
-        snprintf(dest, destSize, "%s (%d)", langGetText(STR_LV_EVT_FILTER_ALL),
-                 s_total_count);
-    } else {
-        snprintf(dest, destSize, "%s (%d)", langGetText(kind_label_id(kind)),
-                 s_kind_count[kind]);
-    }
-}
-
-/* The filter: one kind at a time, All first. A kind this log has no line of
- * is not offered. */
+/* The filter: the list of kinds with a check box each, the same control as
+ * the "Overlay events" list of the Controls panel (lv_event_kinds_combo),
+ * with the panel's own choice. Closed, it says what the list shows: "All
+ * events (412)" with every kind ticked, "Tank killed (37)" with one, and
+ * "37 of 412 events" with any other choice. In a narrow panel it says only
+ * the number, "(37)", and in a narrower one it is the arrow alone. */
 static void draw_filter_combo(void) {
-    char label[160];
-    int current = effective_filter();
-    filter_entry_label(current, label, sizeof(label));
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    if (ImGui::BeginCombo("##evtfilter", label)) {
-        int chosen = current;
-        filter_entry_label(-1, label, sizeof(label));
-        if (ImGui::Selectable(label, current < 0)) {
-            chosen = -1;
-        }
-        for (int kind = 0; kind < LV_EVK_COUNT; kind++) {
-            if (s_kind_count[kind] <= 0) continue;
-            filter_entry_label(kind, label, sizeof(label));
-            if (ImGui::Selectable(label, current == kind)) {
-                chosen = kind;
-            }
-        }
-        if (chosen != current) {
-            s_filter = chosen;
-            lv_platform_config_set_string("LOGVIEWER", k_filter_pref,
-                                          lvEventKindKey(s_filter));
-            /* A selection is an index into the full list and may now be a
-             * line the filter hides. */
+    const ImGuiStyle &style = ImGui::GetStyle();
+    char full[200];
+    char count[32];
+    const int shown = lvEventKindsTickedCount(s_filter, s_kind_count);
+    int only = -1;
+    for (int kind = 0; kind < LV_EVK_COUNT; kind++) {
+        if (s_filter == (1u << kind)) only = kind;
+    }
+    if (s_filter == LV_OVERLAY_ALL_MASK) {
+        snprintf(full, sizeof(full), "%s (%d)", langGetText(STR_LV_EVT_FILTER_ALL), shown);
+    } else if (only >= 0) {
+        snprintf(full, sizeof(full), "%s (%d)", langGetText(kind_label_id(only)), shown);
+    } else {
+        MessageArgs args = {};
+        snprintf(args.string1, sizeof(args.string1), "%d", shown);
+        snprintf(args.string2, sizeof(args.string2), "%d", s_total_count);
+        snprintf(full, sizeof(full), "%s", langGetTextFmt(STR_LV_EVT_FILTER_SOME, &args));
+    }
+    snprintf(count, sizeof(count), "(%d)", shown);
+
+    const float availW = ImGui::GetContentRegionAvail().x;
+    const float arrowW = ImGui::GetFrameHeight();
+    const LvEventsLabel pick = lvEventsLabelPick(availW, ImGui::CalcTextSize(full).x,
+                                                 ImGui::CalcTextSize(count).x,
+                                                 style.FramePadding.x * 2.0f + arrowW);
+    char tip[512];
+    if (pick == LV_EVENTS_LABEL_FULL) {
+        snprintf(tip, sizeof(tip), "%s", langGetText(STR_LV_EVT_FILTER_TIP));
+    } else {
+        /* What the closed list has no room to say goes in front of the tip. */
+        snprintf(tip, sizeof(tip), "%s\n%s", full, langGetText(STR_LV_EVT_FILTER_TIP));
+    }
+    ImGui::SetNextItemWidth((pick == LV_EVENTS_LABEL_ARROW) ? arrowW : -FLT_MIN);
+    if (lv_event_kinds_combo("##evtfilter",
+                             (pick == LV_EVENTS_LABEL_FULL) ? full :
+                             (pick == LV_EVENTS_LABEL_COUNT) ? count : nullptr,
+                             tip, &s_filter, s_kind_count)) {
+        save_filter();
+        /* The selected line stays selected, and is brought into view, when
+         * its kind is still ticked. A line the filter now hides cannot stay
+         * selected: nothing would show it. Select All covers the lines that
+         * are shown, so it stays as it is. */
+        if (s_selected_index >= 0 && s_selected_index < (int)s_events.size() &&
+            lvEventKindTicked(s_filter, s_events[s_selected_index].kind)) {
+            s_scroll_to_selected = true;
+        } else {
             s_selected_index = -1;
-            s_select_all = false;
         }
-        ImGui::EndCombo();
     }
 }
 
@@ -498,10 +525,12 @@ void lv_imgui_events_window(void) {
 
         refresh_view();
 
-        /* The filter, then the in-panel Auto Scroll toggle — always visible,
-         * mirrors the right-click menu item below.  Reachable from
-         * controller/touch where right-click is unavailable. */
+        /* The filter (drawn from the counts of the frame; a change to it is
+         * taken in before the list is drawn), then the in-panel Auto Scroll
+         * toggle — always visible, mirrors the right-click menu item below.
+         * Reachable from controller/touch where right-click is unavailable. */
         draw_filter_combo();
+        refresh_view();
         ImGui::Checkbox(langGetText(STR_LV_AUTO_SCROLL), &s_auto_scroll);
         ImGui::Separator();
 
@@ -537,6 +566,32 @@ void lv_imgui_events_window(void) {
         /* Same hue as a past line, most of the way to transparent. */
         ImVec4 futureCol = ImGui::GetStyleColorVec4(ImGuiCol_Text);
         futureCol.w *= 0.45f;
+
+        /* Nothing to list though the log has lines: the filter hides them
+         * all. The panel says so, so an empty list is not taken for an empty
+         * log. */
+        if (shown == 0 && s_total_count > 0) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", langGetText(STR_LV_EVT_FILTER_EMPTY));
+            ImGui::PopTextWrapPos();
+        }
+
+        /* The selected line into the middle of the list, once, after a
+         * change of the filter moved the rows. It is found by its place in
+         * the shown lines, which are in the order of the list. */
+        bool selectedScrolled = false;
+        if (s_scroll_to_selected) {
+            s_scroll_to_selected = false;
+            const auto it = std::lower_bound(s_view.begin(), s_view.end(), s_selected_index);
+            if (it != s_view.end() && *it == s_selected_index) {
+                const int viewIdx = (int)(it - s_view.begin());
+                const int row = viewIdx + ((divider && viewIdx >= past) ? 1 : 0);
+                const float rowH = ImGui::GetTextLineHeightWithSpacing();
+                const float target = ((float)row + 0.5f) * rowH - ImGui::GetWindowHeight() * 0.5f;
+                ImGui::SetScrollY(target > 0.0f ? target : 0.0f);
+                selectedScrolled = true;
+            }
+        }
 
         ImGuiListClipper clipper;
         clipper.Begin(rows, ImGui::GetTextLineHeightWithSpacing());
@@ -625,7 +680,7 @@ void lv_imgui_events_window(void) {
              * up from the bottom so the lines about to happen show under it.
              * It moves the list only when the divider changes row, so the
              * list can be scrolled by hand between events. */
-            if (s_auto_scroll && past != s_last_divider_row) {
+            if (s_auto_scroll && past != s_last_divider_row && !selectedScrolled) {
                 float rowH = ImGui::GetTextLineHeightWithSpacing();
                 float target = ((float)past + 0.5f) * rowH
                                - ImGui::GetWindowHeight() * (2.0f / 3.0f);
@@ -635,7 +690,7 @@ void lv_imgui_events_window(void) {
             s_scroll_to_bottom = false;
         } else if (s_scroll_to_bottom && s_auto_scroll) {
             /* Auto-scroll to bottom if new event was added */
-            ImGui::SetScrollHereY(1.0f);
+            if (!selectedScrolled) ImGui::SetScrollHereY(1.0f);
             s_scroll_to_bottom = false;
         }
 
