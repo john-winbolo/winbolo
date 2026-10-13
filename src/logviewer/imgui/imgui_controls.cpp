@@ -12,6 +12,7 @@
 #include "imgui_main_menu.h"
 #include "imgui_dock.h"
 #include "imgui_context.h"
+#include "imgui_lv_icons.h"
 #include "imgui.h"
 #include "platform_config.h"
 #include "../../gui/lang.h"
@@ -37,6 +38,8 @@ extern "C" {
     void lv_updateSpeed(unsigned char speed, int updateSlider);
     void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime, uint32_t *totalTime);
     void lv_screenSeekToPosition(float ratio);
+    bool lv_screenRewindTargetMs(uint32_t *ms);
+    bool lv_screenFastForwardTargetMs(uint32_t *ms);
     uint32_t lv_screenGetTimeRunning(void);
     uint32_t lv_screenServerTickAt(uint32_t ms);
     bool lv_screenHasServerTick(void);
@@ -148,6 +151,72 @@ static void controls_drop_scrub(void) {
     s_seek_was_playing = false;
 }
 
+/* The room left on the line of the last item, after a gap. It is asked
+ * before SameLine: a SameLine that is then taken back with NewLine leaves
+ * the content of the window wider than what is drawn in it. */
+static float controls_room_after(float gap) {
+    /* The cursor is at the start of the next line, whose room is the whole
+     * width of the content. */
+    const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    return right - (ImGui::GetItemRectMax().x + gap);
+}
+
+/* The next item goes on the same line when it has room there (it is w
+ * wide), and starts a new line when it has not. */
+static void controls_same_line(float w, float gap) {
+    if (controls_room_after(gap) >= w) {
+        ImGui::SameLine(0.0f, gap);
+    }
+}
+
+/* The tooltip of the last item, also while it is disabled: a dimmed button
+ * still says what it is. */
+static void controls_tooltip(const char *text, bool enabled) {
+    if (enabled) {
+        imguiHandOnHover();
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip |
+                             ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("%s", text);
+    }
+}
+
+/* "Play (Ctrl+P, Space)": what a button does, then its key. */
+static void controls_key_tip(const char *name, const char *key, char *out, size_t outSize) {
+    MessageArgs args = {};
+    snprintf(args.string1, sizeof(args.string1), "%s", name);
+    snprintf(args.string2, sizeof(args.string2), "%s", key);
+    snprintf(out, outSize, "%s", langGetTextFmt(STR_LV_TIP_KEY_FMT, &args));
+}
+
+/* The seconds a jump of ms moves the playhead, as the tooltips say it: one
+ * decimal under ten seconds, whole seconds from there. */
+static void controls_format_jump(uint32_t ms, char *out, size_t outSize) {
+    if (ms < 10000u) {
+        snprintf(out, outSize, "%u.%u", (unsigned)(ms / 1000u), (unsigned)((ms % 1000u) / 100u));
+    } else {
+        snprintf(out, outSize, "%u", (unsigned)((ms + 500u) / 1000u));
+    }
+}
+
+/* The tooltip of Rewind or Fast Forward. Each goes to a snapshot of the
+ * log, so how far that is changes as playback moves: "Back 12 seconds
+ * (Ctrl+R)", with the seconds worked out this frame from the place the
+ * button would really go to (lv_screenRewindTargetMs,
+ * lv_screenFastForwardTargetMs). With nowhere to go it is the plain name. */
+static void controls_jump_tip(bool known, langid fmt, langid plain, uint32_t ms,
+                              const char *key, char *out, size_t outSize) {
+    char name[LANG_MSGARG_STRING_LEN];
+    if (known) {
+        MessageArgs args = {};
+        controls_format_jump(ms, args.string1, sizeof(args.string1));
+        snprintf(name, sizeof(name), "%s", langGetTextFmt(fmt, &args));
+    } else {
+        snprintf(name, sizeof(name), "%s", langGetText(plain));
+    }
+    controls_key_tip(name, key, out, outSize);
+}
+
 void lv_imgui_controls_window(void) {
     bool seek_slider_drawn = false;
 
@@ -198,79 +267,125 @@ void lv_imgui_controls_window(void) {
             }
         }
 
-        /* Playback buttons row */
-        bool controlsDisabled = !s_lv->isLoaded;
-        if (controlsDisabled) ImGui::BeginDisabled();
+        /* The playback buttons: back to the last snapshot, play, pause,
+         * on to the next snapshot, and on a live feed back to the live
+         * head. Each is a square with a drawn icon (imgui_lv_icons.cpp) and
+         * says what it does, with its key, in its tooltip. A button whose
+         * action has nothing to act on is dimmed. A button that does not go
+         * on the line starts the next one, so none is cut off in a narrow
+         * panel. */
+        const ImGuiStyle &style = ImGui::GetStyle();
+        const float btn = lv_icon_button_side();
+        const float btnGap = style.ItemInnerSpacing.x;
+        const bool loaded = s_lv->isLoaded != 0;
+        const bool live = lv_screenSpecIsLiveMode();
+        const bool playing = loaded && s_lv->playIsPlaying != 0;
+        /* The decoder has read the last record: nothing is left to play. */
+        const bool atEnd = loaded && !live && s_lv->isPlaying == 0;
+        uint32_t nowMs = 0, backMs = 0, fwdMs = 0;
+        bool backKnown = false, fwdKnown = false;
+        if (loaded) {
+            /* The snapshot index is written on the playback timer. */
+            lv_clientMutexWaitFor();
+            nowMs = lv_screenGetTimeRunning();
+            backKnown = lv_screenRewindTargetMs(&backMs) && backMs < nowMs;
+            fwdKnown = lv_screenFastForwardTargetMs(&fwdMs) && fwdMs > nowMs;
+            lv_clientMutexRelease();
+        }
+        char tip[LANG_MSGARG_STRING_LEN * 2 + 16];
 
-        if (ImGui::Button(langGetText(STR_LV_REW_BTN), ImVec2(60, 0))) {
+        ImGui::BeginDisabled(!backKnown);
+        if (lv_icon_button("rewind", LV_ICON_REWIND)) {
             lv_windowRewind();
         }
-        imguiHandOnHover();
-        ImGui::SameLine();
+        ImGui::EndDisabled();
+        controls_jump_tip(backKnown, STR_LV_TIP_BACK_SECS, STR_LV_REWIND, nowMs - backMs,
+                          "Ctrl+R", tip, sizeof(tip));
+        controls_tooltip(tip, backKnown);
 
-        /* Play/Pause toggle button */
-        if (s_lv->playIsPlaying) {
-            if (ImGui::Button(langGetText(STR_LV_PAUSE), ImVec2(50, 0))) {
-                lv_windowPause();
-            }
-            imguiHandOnHover();
-        } else {
-            if (ImGui::Button(langGetText(STR_LV_PLAY_BTN), ImVec2(50, 0))) {
-                lv_windowPlay();
-            }
-            imguiHandOnHover();
+        controls_same_line(btn, btnGap);
+        ImGui::BeginDisabled(!loaded || playing || atEnd);
+        if (lv_icon_button("play", LV_ICON_PLAY)) {
+            lv_windowPlay();
         }
+        ImGui::EndDisabled();
+        controls_key_tip(langGetText(STR_LV_PLAY), "Ctrl+P, Space", tip, sizeof(tip));
+        controls_tooltip(tip, loaded && !playing && !atEnd);
 
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_LV_STOP), ImVec2(50, 0))) {
-            lv_windowStop(0);
+        /* Pause holds playback where it is; nothing moves the playhead and
+         * the log stays open. (The Stop this button replaced closed the
+         * log; Action > Stop still does.) */
+        controls_same_line(btn, btnGap);
+        ImGui::BeginDisabled(!playing);
+        if (lv_icon_button("pause", LV_ICON_PAUSE)) {
+            lv_windowPause();
         }
-        imguiHandOnHover();
+        ImGui::EndDisabled();
+        controls_key_tip(langGetText(STR_LV_PAUSE), "Ctrl+U, Space", tip, sizeof(tip));
+        controls_tooltip(tip, playing);
 
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_LV_FWD_BTN), ImVec2(60, 0))) {
+        controls_same_line(btn, btnGap);
+        /* A live feed has no snapshot ahead to name; the button still plays
+         * on to the head. */
+        const bool fwdOn = fwdKnown || (loaded && live);
+        ImGui::BeginDisabled(!fwdOn);
+        if (lv_icon_button("forward", LV_ICON_FAST_FORWARD)) {
             lv_windowFastForward();
         }
-        imguiHandOnHover();
-
-        if (controlsDisabled) ImGui::EndDisabled();
+        ImGui::EndDisabled();
+        controls_jump_tip(fwdKnown, STR_LV_TIP_FWD_SECS, STR_LV_FAST_FORWARD, fwdMs - nowMs,
+                          "Ctrl+F", tip, sizeof(tip));
+        controls_tooltip(tip, fwdOn);
 
         /* Spectator live-DVR: jump back to the live head and resume following it.
          * Shown only on the live spectator feed, not for standalone .wbv playback. */
-        if (lv_screenSpecIsLiveMode()) {
-            ImGui::SameLine();
-            if (ImGui::Button("Live", ImVec2(50, 0))) {
+        if (live) {
+            controls_same_line(btn, btnGap);
+            if (lv_icon_button("live", LV_ICON_TO_END)) {
                 lv_screenSpecJumpToLive();
             }
-            imguiHandOnHover();
+            controls_tooltip(langGetText(STR_LV_TIP_LIVE), true);
         }
 
-        /* Speed slider - same line as buttons */
-        ImGui::SameLine(0, 15);
-        /* In the dock the panel is as narrow as the dock is. The slider gives
-         * up width first, down to half; under that the speed row goes below
-         * the buttons instead of being cut off at the edge. */
-        float speedW = 100.0f;
-        if (ImGui::IsWindowDocked()) {
-            float labelW = ImGui::CalcTextSize(langGetText(STR_LV_SPEED_LBL)).x +
-                           ImGui::GetStyle().ItemSpacing.x;
-            float room = ImGui::GetContentRegionAvail().x - labelW;
-            if (room < 50.0f) {
-                ImGui::NewLine();
+        /* The speed: its label and a slider, after the buttons where there
+         * is room. The slider gives up width first, down to half. Under
+         * that the two go on a line of their own, and in a panel too narrow
+         * for both the label goes and the slider keeps the line; the label
+         * is then the slider's tooltip. */
+        {
+            const char *speedLbl = langGetText(STR_LV_SPEED_LBL);
+            const float labelW = ImGui::CalcTextSize(speedLbl).x + style.ItemSpacing.x;
+            const float speedMax = 100.0f, speedMin = 50.0f;
+            bool label = true;
+            float room = controls_room_after(15.0f) - labelW;
+            if (room >= speedMin) {
+                ImGui::SameLine(0, 15);
+            } else {
                 room = ImGui::GetContentRegionAvail().x - labelW;
+                if (room < speedMin) {
+                    label = false;
+                    room = ImGui::GetContentRegionAvail().x;
+                }
             }
-            if (room < speedW) speedW = (room > 50.0f) ? room : 50.0f;
-        }
-        ImGui::TextUnformatted(langGetText(STR_LV_SPEED_LBL));
-        ImGui::SameLine();
+            float speedW = (room < speedMax) ? room : speedMax;
+            if (speedW < 16.0f) speedW = 16.0f;
+            if (label) {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(speedLbl);
+                ImGui::SameLine();
+            }
 
-        int stop = speed_stop_for((int)s_lv->speed);
+            int stop = speed_stop_for((int)s_lv->speed);
 
-        ImGui::PushItemWidth(speedW);
-        if (ImGui::SliderInt("##speed", &stop, 0, SPEED_STOP_COUNT - 1, speed_labels[stop])) {
-            update_speed_from_slider(stop);
+            ImGui::PushItemWidth(speedW);
+            if (ImGui::SliderInt("##speed", &stop, 0, SPEED_STOP_COUNT - 1, speed_labels[stop])) {
+                update_speed_from_slider(stop);
+            }
+            ImGui::PopItemWidth();
+            if (!label) {
+                controls_tooltip(speedLbl, true);
+            }
         }
-        ImGui::PopItemWidth();
 
         /* Seek slider row */
         if (s_lv->isLoaded) {
@@ -393,11 +508,17 @@ void lv_imgui_controls_window(void) {
                 MessageArgs args = {};
                 strncpy(args.string1, s_current_time, sizeof(args.string1) - 1);
                 strncpy(args.string2, total_time_str, sizeof(args.string2) - 1);
+                /* A text wider than the panel goes on to a second line. */
+                ImGui::PushTextWrapPos(0.0f);
                 ImGui::TextUnformatted(langGetTextFmt(STR_LV_TIME_FMT, &args));
-                ImGui::SameLine(0, 15);
                 MessageArgs args2 = {};
                 strncpy(args2.string1, remaining_str, sizeof(args2.string1) - 1);
-                ImGui::TextDisabled("%s", langGetTextFmt(STR_LV_TIME_REMAINING, &args2));
+                /* Each part goes on the line while it has room there. */
+                char remaining[LANG_MSGARG_STRING_LEN];
+                snprintf(remaining, sizeof(remaining), "%s",
+                         langGetTextFmt(STR_LV_TIME_REMAINING, &args2));
+                controls_same_line(ImGui::CalcTextSize(remaining).x, 15.0f);
+                ImGui::TextDisabled("%s", remaining);
                 /* The tick playback is on. The server's own game tick when
                  * the recording states it (lv_screenServerTickAt), so the
                  * number is the one the server and the bots count by. An
@@ -407,12 +528,16 @@ void lv_imgui_controls_window(void) {
                     uint32_t ms = lv_screenGetTimeRunning();
                     uint32_t tick = lv_screenHasServerTick() ? lv_screenServerTickAt(ms)
                                                              : ms / 20u;
-                    ImGui::SameLine(0, 15);
-                    ImGui::Text("%s %u", langGetText(STR_DLGSYSINFO_TICK), (unsigned)tick);
+                    char tickText[64];
+                    snprintf(tickText, sizeof(tickText), "%s %u",
+                             langGetText(STR_DLGSYSINFO_TICK), (unsigned)tick);
+                    controls_same_line(ImGui::CalcTextSize(tickText).x, 15.0f);
+                    ImGui::TextUnformatted(tickText);
                 }
+                ImGui::PopTextWrapPos();
             }
         } else {
-            ImGui::TextUnformatted(langGetText(STR_LV_NO_LOG_LOADED));
+            ImGui::TextWrapped("%s", langGetText(STR_LV_NO_LOG_LOADED));
         }
     }
     ImGui::End();

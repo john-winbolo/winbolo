@@ -32,6 +32,7 @@
 #include "imgui_dialogs.h"
 #include "imgui_dock.h"
 #include "imgui_context.h"
+#include "imgui_lv_icons.h"
 #include "imgui.h"
 #include "../../gui/lang.h"
 #include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
@@ -372,34 +373,12 @@ static void hud_grid(int grid, const LvHudSlot *slots, bool perspective,
     imguiPopNearestSamplingOn(dl);
 }
 
-/* A small eye, the height of a line of text and in the colour of the text:
- * the outline of an eye (two arcs that meet in a point at each side) and a
- * filled pupil. It stands for the words "View of" in the line above the
- * grids. No icon of an eye ships with the game, and a font for one glyph is
- * a lot to load, so it is drawn. It takes its room as an item of the window,
- * so the name follows it with SameLine. */
+/* A small eye, the height of a line of text and in the colour of the text.
+ * It stands for the words "View of" in the line above the grids. It is one
+ * of the viewer's drawn icons (imgui_lv_icons.cpp). It takes its room as an
+ * item of the window, so the name follows it with SameLine. */
 static void hud_eye_icon(void) {
-    const float h = ImGui::GetTextLineHeight();
-    const float w = floorf(h * 1.35f);
-    ImVec2 p = ImGui::GetCursorScreenPos();
-    ImDrawList *dl = ImGui::GetWindowDrawList();
-    const ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
-    const float cx = p.x + w * 0.5f;
-    const float cy = p.y + h * 0.5f;
-    const float half = w * 0.5f - 1.0f;      /* half the width of the eye */
-    const float lift = h * 0.50f;            /* how far the lids bow out  */
-    const float thick = (h >= 18.0f) ? 1.5f : 1.0f;
-
-    /* Each lid is one curve from corner to corner; with the control points
-     * this far out the lid is about a third of the line high at the middle. */
-    ImVec2 left(cx - half, cy), right(cx + half, cy);
-    dl->AddBezierCubic(left, ImVec2(cx - half * 0.45f, cy - lift),
-                       ImVec2(cx + half * 0.45f, cy - lift), right, col, thick);
-    dl->AddBezierCubic(left, ImVec2(cx - half * 0.45f, cy + lift),
-                       ImVec2(cx + half * 0.45f, cy + lift), right, col, thick);
-    dl->AddCircleFilled(ImVec2(cx, cy), h * 0.17f, col);
-
-    ImGui::Dummy(ImVec2(w, h));
+    lv_icon_text(LV_ICON_EYE);
 }
 
 void lv_imgui_hud_window(void) {

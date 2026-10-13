@@ -625,6 +625,10 @@ void lv_screenSetObserver(const LvDecodeObserver *observer);
 bool lv_screenCloseLog();
 void lv_screenFastForward();
 void lv_screenRewind();
+/* Where each of the two would take playback, in the log's own time; FALSE
+ * when it would not move (screen.c). */
+bool lv_screenFastForwardTargetMs(uint32_t *ms);
+bool lv_screenRewindTargetMs(uint32_t *ms);
 void lv_screenGetTime(char *dest);
 /* Format an absolute log time as the displayed (window-relative) mm:ss. */
 void lv_screenFormatTime(uint32_t absMs, char *dest, size_t destSize);

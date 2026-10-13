@@ -1068,6 +1068,11 @@ static const LangEntry langTable[] = {
     {2830, "This recording does not hold tank resources"},
     {2831, "Tank Armour and Shells Bars"},
     {2832, "Two small bars over each tank: armour on top, shells under it"},
+    /* Log viewer Controls panel: what each button does, for its tooltip. {string1} of the two jumps is a number of seconds ("2.5", "12"); KEY_FMT puts a button's shortcut key after its name. */
+    {2833, "Back {string1} seconds"},
+    {2834, "Forward {string1} seconds"},
+    {2835, "{string1} ({string2})"},
+    {2836, "Jump to live"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},
