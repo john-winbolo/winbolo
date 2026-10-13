@@ -3278,6 +3278,9 @@ bool lv_processSnapshot() {
       // Process the dummy data
       len = logReadBytes(data, 2);
       lv_screenClearTankStock(count);
+      /* No player, no living tank: a seek back to before the player joined
+         must not leave the slot alive from the later time. */
+      g_lv->gameViewHud[count].alive = false;
 
     } else if (dataLen > sizeof(data)) {
       returnValue = FALSE;
@@ -3346,12 +3349,22 @@ bool lv_processSnapshot() {
                 lv_screenClearTankStock(count);
               }
               /* mx != 0 means the tank is on the map (alive) — the same sentinel
-                 the forward log_PlayerLocation path uses. Mark the slot alive so
-                 a mid-game seed clears the death-static overlay for living tanks;
-                 a dead/off-map tank (mx == 0) stays not-alive. */
+                 the forward log_PlayerLocation path uses. The recorder writes
+                 tankGetMX here, which is 0 for a destroyed tank and for
+                 nothing else: column 0 is outside the mined border, no tank
+                 gets there. Mark the slot alive so a mid-game seed clears the
+                 death-static overlay for living tanks. Mark it dead too when
+                 mx == 0: a seek back restores this snapshot over whatever the
+                 slot was at the later time, and a tank that was dead here must
+                 not stay alive because it was alive there. */
               if (mx != 0) {
                 g_lv->gameViewHud[count].alive = true;
                 g_lv->gameViewHud[count].respawnTimeMs = g_lv->timeRunning;
+              } else {
+                if (g_lv->gameViewHud[count].alive) {
+                  g_lv->gameViewHud[count].deathTimeMs = g_lv->timeRunning;
+                }
+                g_lv->gameViewHud[count].alive = false;
               }
               /* A snapshot carries (0,0) lgm coords for a man who is aboard/idle
                  (the server's idle sentinel). Only mark him out for a real

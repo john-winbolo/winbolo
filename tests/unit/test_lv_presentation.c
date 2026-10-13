@@ -1364,6 +1364,83 @@ int run_lv_kill_tally_seek_back(void) {
     return 0;
 }
 
+/* Whether a tank is alive, across a seek.
+ *
+ * The opening snapshot here has slot 1 in use with its tank destroyed (map
+ * column 0, which is what the recorder writes for a destroyed tank), and
+ * the stream after it:
+ *   tick 0    log_PlayerLocation: slot 1 at 50,50                 20 ms
+ *   ticks 1-4 NOEVENTS 3
+ *   tick 5    LOG_QUIT                                           120 ms
+ *
+ * A seek back restores the snapshot. The slot was dead there, so it has to
+ * read dead again, and a slot the snapshot holds no player for has to read
+ * dead whatever it was later. */
+static const uint8_t kLvpDeadPlayer[] = {
+    0x0F,
+    0x01, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+    0x01, 0x41,
+    0x00,
+    0x00,
+};
+static const uint8_t kLvpAliveStream[] = {
+    0x03, 0x01, 0x03, 0x00, 0x05,
+        0x01, 0x32, 0x32, 0x00, 0x00,
+    0x01, 0x03,
+    0x00,
+};
+
+int run_lv_alive_seek_back(void) {
+    const char     *path = "lv_alive_seek.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    bool            atLoad, at60, back, backEmpty, again60;
+    int             i;
+
+    b.len = 0;
+    lvpPut(&b, kLvpHeader, sizeof(kLvpHeader));
+    lvpPut(&b, kLvpSnapshot, sizeof(kLvpSnapshot));
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (i == 1) {
+            lvpPut(&b, kLvpDeadPlayer, sizeof(kLvpDeadPlayer));
+        } else {
+            lvpPut(&b, kLvpEmptyPlayer, sizeof(kLvpEmptyPlayer));
+        }
+    }
+    lvpPut(&b, kLvpAliveStream, sizeof(kLvpAliveStream));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    atLoad = lv->gameViewHud[1].alive;
+    lv_screenSeekToTimeMs(60);
+    at60 = lv->gameViewHud[1].alive;
+    /* A slot with no player in the snapshot, alive at the later time. */
+    lv->gameViewHud[3].alive = true;
+    lv_screenSeekToTimeMs(0);
+    back      = lv->gameViewHud[1].alive;
+    backEmpty = lv->gameViewHud[3].alive;
+    lv_screenSeekToTimeMs(60);
+    again60 = lv->gameViewHud[1].alive;
+
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(!atLoad, "a tank the opening snapshot holds destroyed reads "
+                  "alive at load");
+    UT_ASSERT_MSG(at60, "the tank reads dead after its first place on the map");
+    UT_ASSERT_MSG(!back, "after a seek back to the snapshot the destroyed tank "
+                  "still reads alive");
+    UT_ASSERT_MSG(!backEmpty, "after a seek back a slot with no player still "
+                  "reads alive");
+    UT_ASSERT_MSG(again60, "the tank reads dead after playing forward again");
+    return 0;
+}
+
 /* ── 8. Announcements on the newswire ──────────────────────────────── */
 
 /* After the opening:

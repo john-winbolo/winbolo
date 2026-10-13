@@ -6852,6 +6852,7 @@ set(_unit_test_names
     lv_event_kind_sums
     lv_event_scan_returns_to_start
     lv_kill_tally_seek_back
+    lv_alive_seek_back
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast
