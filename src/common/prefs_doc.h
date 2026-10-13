@@ -78,6 +78,13 @@ unsigned long prefsDocGetString(const PrefsDoc *doc, const char *section,
 int prefsDocSetString(PrefsDoc *doc, const char *section,
                       const char *key, const char *value);
 
+/* Set dst's [section]/key to the string src holds there, whatever its
+ * length; marks dst dirty. 1 ok / 0 when src has no such string or on
+ * OOM (dst is then unchanged). Used to put one program's changes onto a
+ * copy of the file another program has written since. */
+int prefsDocCopyKey(PrefsDoc *dst, const PrefsDoc *src,
+                    const char *section, const char *key);
+
 /* True when [section]/key already exists as a string holding exactly
  * value (NULL compared as ""). Lets callers skip a no-op SetString so an
  * unchanged write does not mark the document dirty. */

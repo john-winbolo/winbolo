@@ -117,6 +117,10 @@ int run_prefs_api_sync_dirty(void);
 int run_prefs_api_device_identity(void);
 int run_prefs_api_adopt_server(void);
 int run_prefs_api_mark_synced(void);
+int run_prefs_merge_game_then_viewer(void);
+int run_prefs_merge_viewer_then_game(void);
+int run_prefs_merge_fallback(void);
+int run_prefs_merge_one_write(void);
 int run_join_running_phase_not_lobby(void);
 int run_lobby_settings_codec_and_apply(void);
 /* The scenario the settings event names, onto the ClientSim and back out

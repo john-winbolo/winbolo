@@ -3567,6 +3567,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_prefs_roundtrip.c
     tests/unit/test_prefs_doc.c
     tests/unit/test_prefs_api.c
+    tests/unit/test_prefs_merge.c
     src/common/prefs_doc.c
     src/common/prefs.c
     tests/unit/test_join_running_phase.c
@@ -4861,6 +4862,10 @@ set(_unit_test_names
     prefs_api_device_identity
     prefs_api_adopt_server
     prefs_api_mark_synced
+    prefs_merge_game_then_viewer
+    prefs_merge_viewer_then_game
+    prefs_merge_fallback
+    prefs_merge_one_write
     join_running_phase_not_lobby
     lobby_settings_codec_and_apply
     lobby_settings_scenario_apply

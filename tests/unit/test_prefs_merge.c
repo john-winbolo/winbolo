@@ -1,0 +1,285 @@
+/*
+ * Tests for merge-on-save in src/common/prefs.c: the mode the standalone
+ * log viewer turns on because the game may be running beside it and keeps
+ * the same WinBolo.json.
+ *
+ * "The game" here is a second, separate document loaded from the same
+ * file, changed and saved whole, which is what the game client does.
+ *
+ *   - prefs_merge_game_then_viewer: the game writes after the viewer
+ *                                   loaded; the viewer's save keeps the
+ *                                   game's change and lands its own, and
+ *                                   the viewer then reads the game's value
+ *   - prefs_merge_viewer_then_game: the reverse order, then a second
+ *                                   viewer save; nothing is lost
+ *   - prefs_merge_fallback:         file gone, or no longer JSON: the
+ *                                   document in memory is written whole
+ *   - prefs_merge_one_write:        sets do not write; one flush writes
+ *                                   them all; with the mode off a set
+ *                                   writes at once, as before
+ *
+ * Portable on purpose (stdio only): these run on Windows too.
+ */
+
+#include "test_harness.h"
+
+#include <stdio.h>
+#include <string.h>
+
+#include "common/prefs.h"
+#include "common/prefs_doc.h"
+
+/* Read [section]/key straight from the file. */
+static void diskGet(const char *path, const char *section, const char *key,
+                    char *out, size_t outSize) {
+    PrefsDoc *doc = prefsDocLoad(path);
+    out[0] = '\0';
+    if (doc) {
+        prefsDocGetString(doc, section, key, "<absent>", out, outSize);
+        prefsDocFree(doc);
+    } else {
+        snprintf(out, outSize, "%s", "<unreadable>");
+    }
+}
+
+/* The other program: load the file, change one key, write it all back. */
+static int gameSet(const char *path, const char *section, const char *key,
+                   const char *value) {
+    PrefsDoc *doc = prefsDocLoad(path);
+    int ok;
+    if (!doc) return 0;
+    ok = prefsDocSetString(doc, section, key, value) &&
+         prefsDocSave(doc, path);
+    prefsDocFree(doc);
+    return ok;
+}
+
+/* A file both programs start from. */
+static int seedFile(const char *path) {
+    PrefsDoc *doc = prefsDocNew();
+    int ok;
+    if (!doc) return 0;
+    ok = prefsDocSetString(doc, "SETTINGS", "Player Name", "Before") &&
+         prefsDocSetString(doc, "LOGVIEWER", "Window.X", "10") &&
+         prefsDocSetString(doc, "LOGVIEWER", "Dock.Ini", "old layout") &&
+         prefsDocSave(doc, path);
+    prefsDocFree(doc);
+    return ok;
+}
+
+static void endTest(const char *path) {
+    char corrupt[1100];
+    prefsShutdown();
+    prefsSetMergeOnSave(false);
+    remove(path);
+    snprintf(corrupt, sizeof(corrupt), "%s.corrupt", path);
+    remove(corrupt);
+}
+
+int run_prefs_merge_game_then_viewer(void) {
+    char path[1024];
+    char got[256];
+
+    UT_ASSERT(utScratchPath(path, sizeof(path), "WinBolo.json"));
+    remove(path);
+    UT_ASSERT(seedFile(path));
+
+    prefsInit(path);
+    prefsSetMergeOnSave(true);
+
+    /* The game changes its own key and one viewer key the viewer does
+     * not change afterwards. */
+    UT_ASSERT(gameSet(path, "SETTINGS", "Player Name", "Game"));
+    UT_ASSERT(gameSet(path, "KEYS", "Forward", "W"));
+
+    /* The viewer still holds what it loaded. */
+    prefsGetString("SETTINGS", "Player Name", "", got, sizeof(got));
+    UT_ASSERT(strcmp(got, "Before") == 0);
+
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "250") == 1);
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Dock.Ini", "new layout") == 1);
+    UT_ASSERT(prefsFlush() == 1);
+    UT_ASSERT(!prefsIsDirty());
+
+    diskGet(path, "SETTINGS", "Player Name", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "Game") == 0, "game's change lost: %s", got);
+    diskGet(path, "KEYS", "Forward", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "W") == 0, "game's new section lost: %s", got);
+    diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "250") == 0, "viewer's change lost: %s", got);
+    diskGet(path, "LOGVIEWER", "Dock.Ini", got, sizeof(got));
+    UT_ASSERT(strcmp(got, "new layout") == 0);
+
+    /* After the save the viewer reads what the game wrote. */
+    prefsGetString("SETTINGS", "Player Name", "", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "Game") == 0, "viewer copy stale: %s", got);
+    prefsGetString("LOGVIEWER", "Window.X", "", got, sizeof(got));
+    UT_ASSERT(strcmp(got, "250") == 0);
+
+    endTest(path);
+    return 0;
+}
+
+int run_prefs_merge_viewer_then_game(void) {
+    char path[1024];
+    char got[256];
+
+    UT_ASSERT(utScratchPath(path, sizeof(path), "WinBolo.json"));
+    remove(path);
+    UT_ASSERT(seedFile(path));
+
+    prefsInit(path);
+    prefsSetMergeOnSave(true);
+
+    /* Viewer first. */
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "250") == 1);
+    UT_ASSERT(prefsFlush() == 1);
+
+    /* Then the game, which read the file after the viewer's write. It
+     * also changes a viewer key (the viewer inside the game does this). */
+    UT_ASSERT(gameSet(path, "SETTINGS", "Player Name", "Game"));
+    UT_ASSERT(gameSet(path, "LOGVIEWER", "Speed", "7"));
+
+    diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "250") == 0, "viewer's change lost: %s", got);
+    diskGet(path, "SETTINGS", "Player Name", got, sizeof(got));
+    UT_ASSERT(strcmp(got, "Game") == 0);
+
+    /* A second viewer save, of another key, loses nothing: not the game's
+     * keys, not the viewer key the game changed, not its own first key. */
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Dock.Ini", "new layout") == 1);
+    UT_ASSERT(prefsFlush() == 1);
+
+    diskGet(path, "SETTINGS", "Player Name", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "Game") == 0, "game's change lost: %s", got);
+    diskGet(path, "LOGVIEWER", "Speed", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "7") == 0, "untouched viewer key lost: %s", got);
+    diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
+    UT_ASSERT(strcmp(got, "250") == 0);
+    diskGet(path, "LOGVIEWER", "Dock.Ini", got, sizeof(got));
+    UT_ASSERT(strcmp(got, "new layout") == 0);
+
+    /* A key outside the viewer's section that the viewer does set (the
+     * shared network code writes [WINBOLO.NET]) is carried the same way. */
+    UT_ASSERT(gameSet(path, "SETTINGS", "Player Name", "Game2"));
+    UT_ASSERT(prefsSetString("WINBOLO.NET", "Host", "wbn.example") == 1);
+    UT_ASSERT(prefsFlush() == 1);
+    diskGet(path, "WINBOLO.NET", "Host", got, sizeof(got));
+    UT_ASSERT(strcmp(got, "wbn.example") == 0);
+    diskGet(path, "SETTINGS", "Player Name", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "Game2") == 0, "game's change lost: %s", got);
+
+    endTest(path);
+    return 0;
+}
+
+int run_prefs_merge_fallback(void) {
+    char path[1024];
+    char got[256];
+    FILE *fp;
+
+    UT_ASSERT(utScratchPath(path, sizeof(path), "WinBolo.json"));
+    remove(path);
+    UT_ASSERT(seedFile(path));
+
+    prefsInit(path);
+    prefsSetMergeOnSave(true);
+
+    /* The file is gone: the whole document in memory is written. */
+    UT_ASSERT(remove(path) == 0);
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "250") == 1);
+    UT_ASSERT(prefsFlush() == 1);
+    diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "250") == 0, "after missing file: %s", got);
+    diskGet(path, "SETTINGS", "Player Name", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "Before") == 0, "after missing file: %s", got);
+
+    /* The file is no longer JSON: the same. */
+    fp = fopen(path, "wb");
+    UT_ASSERT(fp != NULL);
+    fputs("{ this is not json", fp);
+    fclose(fp);
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "300") == 1);
+    UT_ASSERT(prefsFlush() == 1);
+    diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "300") == 0, "after corrupt file: %s", got);
+    diskGet(path, "SETTINGS", "Player Name", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "Before") == 0, "after corrupt file: %s", got);
+
+    /* And the merge works again on the next save. */
+    UT_ASSERT(gameSet(path, "SETTINGS", "Player Name", "Game"));
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "350") == 1);
+    UT_ASSERT(prefsFlush() == 1);
+    diskGet(path, "SETTINGS", "Player Name", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "Game") == 0, "merge after fallback: %s", got);
+
+    endTest(path);
+    return 0;
+}
+
+int run_prefs_merge_one_write(void) {
+    char path[1024];
+    char got[256];
+
+    UT_ASSERT(utScratchPath(path, sizeof(path), "WinBolo.json"));
+    remove(path);
+    UT_ASSERT(seedFile(path));
+
+    prefsInit(path);
+    UT_ASSERT(!prefsMergeOnSave());
+    prefsSetMergeOnSave(true);
+    UT_ASSERT(prefsMergeOnSave());
+
+    /* Sets do not reach the file ... */
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "1") == 1);
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.Y", "2") == 1);
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.W", "3") == 1);
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.H", "4") == 1);
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Dock.Ini", "five") == 1);
+    UT_ASSERT(prefsIsDirty());
+    diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "10") == 0, "a set wrote the file: %s", got);
+    diskGet(path, "LOGVIEWER", "Window.H", got, sizeof(got));
+    UT_ASSERT(strcmp(got, "<absent>") == 0);
+
+    /* ... until the one flush, which carries all of them. */
+    UT_ASSERT(prefsFlush() == 1);
+    UT_ASSERT(!prefsIsDirty());
+    diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
+    UT_ASSERT(strcmp(got, "1") == 0);
+    diskGet(path, "LOGVIEWER", "Window.Y", got, sizeof(got));
+    UT_ASSERT(strcmp(got, "2") == 0);
+    diskGet(path, "LOGVIEWER", "Window.W", got, sizeof(got));
+    UT_ASSERT(strcmp(got, "3") == 0);
+    diskGet(path, "LOGVIEWER", "Window.H", got, sizeof(got));
+    UT_ASSERT(strcmp(got, "4") == 0);
+    diskGet(path, "LOGVIEWER", "Dock.Ini", got, sizeof(got));
+    UT_ASSERT(strcmp(got, "five") == 0);
+
+    /* A flush with nothing changed does not write: the game's later
+     * change is still there afterwards. */
+    UT_ASSERT(gameSet(path, "LOGVIEWER", "Window.X", "77"));
+    UT_ASSERT(prefsFlush() == 1);
+    diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "77") == 0, "idle flush wrote: %s", got);
+
+    /* Shutdown writes what is still pending. */
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.Y", "88") == 1);
+    prefsShutdown();
+    diskGet(path, "LOGVIEWER", "Window.Y", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "88") == 0, "shutdown did not write: %s", got);
+    diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "77") == 0, "shutdown lost a key: %s", got);
+
+    /* Mode off (every other program): a set writes at once, whole
+     * document, as it always did. */
+    prefsSetMergeOnSave(false);
+    prefsInit(path);
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "5") == 1);
+    UT_ASSERT(!prefsIsDirty());
+    diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "5") == 0, "immediate mode changed: %s", got);
+
+    endTest(path);
+    return 0;
+}

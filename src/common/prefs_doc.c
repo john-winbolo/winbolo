@@ -245,6 +245,16 @@ int prefsDocSetString(PrefsDoc *doc, const char *section,
     return 1;
 }
 
+int prefsDocCopyKey(PrefsDoc *dst, const PrefsDoc *src,
+                    const char *section, const char *key) {
+    if (!dst || !src || !section || !key) return 0;
+    cJSON *sec = cJSON_GetObjectItemCaseSensitive(src->root, section);
+    if (!cJSON_IsObject(sec)) return 0;
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(sec, key);
+    if (!cJSON_IsString(item) || item->valuestring == NULL) return 0;
+    return prefsDocSetString(dst, section, key, item->valuestring);
+}
+
 bool prefsDocStringEquals(const PrefsDoc *doc, const char *section,
                           const char *key, const char *value) {
     if (!doc || !section || !key) return false;

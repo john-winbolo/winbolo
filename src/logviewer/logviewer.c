@@ -1705,6 +1705,13 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
 
         /* Keep the saved layout no more than a moment behind the screen. */
         lvHostAutosave();
+
+        /* The standalone viewer's preference sets only mark the document
+         * (merge-on-save, main.c). Whatever was set this frame by code that
+         * does not save for itself (the Events filter, the shared network
+         * code) goes to the file here, in one write. Nothing was set: no
+         * write. Inside the game this does nothing. */
+        lv_platform_config_save();
     }
 
     /* -----------------------------------------------------------------------
