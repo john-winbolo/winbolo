@@ -1774,6 +1774,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_hud.cpp
     src/logviewer/imgui/imgui_overview.cpp
     src/logviewer/imgui/imgui_tank.cpp
+    src/logviewer/imgui/imgui_lv_icons.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
@@ -2414,6 +2415,7 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_hud.cpp
     src/logviewer/imgui/imgui_overview.cpp
     src/logviewer/imgui/imgui_tank.cpp
+    src/logviewer/imgui/imgui_lv_icons.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp

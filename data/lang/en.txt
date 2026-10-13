@@ -1254,6 +1254,10 @@ STR_LV_TANK_PILLS=Pillboxes carried: {number}
 STR_LV_TANK_NO_STOCK=This recording does not hold tank resources
 STR_LV_TANK_BARS=Tank Armour and Shells Bars
 STR_LV_TANK_BARS_TIP=Two small bars over each tank: armour on top, shells under it
+STR_LV_TIP_BACK_SECS=Back {string1} seconds
+STR_LV_TIP_FWD_SECS=Forward {string1} seconds
+STR_LV_TIP_KEY_FMT={string1} ({string2})
+STR_LV_TIP_LIVE=Jump to live
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:

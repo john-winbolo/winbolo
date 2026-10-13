@@ -1544,6 +1544,110 @@ int run_lv_death_time_seek_back(void) {
     return 0;
 }
 
+/* Where Rewind and Fast Forward go, asked before they go there.
+ *
+ * The Controls panel states the jump of each button in its tooltip. The
+ * answer has to be the place the button really takes playback to.
+ *
+ *   ticks 0-99    NOEVENTS 99
+ *   tick 100      a snapshot                                    2020 ms
+ *   ticks 101-200 NOEVENTS 99
+ *   tick 201      a snapshot                                    4040 ms
+ *   ticks 202-251 NOEVENTS 49
+ *   tick 252      LOG_QUIT                                      5060 ms */
+static void lvpPutSnapshotEmpty(LvpLog *b) {
+    int i;
+
+    lvpPut(b, kLvpSnapshot, sizeof(kLvpSnapshot));
+    for (i = 0; i < MAX_TANKS; i++) {
+        lvpPut(b, kLvpEmptyPlayer, sizeof(kLvpEmptyPlayer));
+    }
+}
+
+int run_lv_jump_targets(void) {
+    const char     *path = "lv_jump_targets.wbv";
+    static LvpLog   b;
+    static const uint8_t wait99[] = {0x01, 0x63};
+    static const uint8_t tail[]   = {0x01, 0x31, 0x00};
+    LogViewerState *lv;
+    uint32_t        want[3] = {0, 0, 0}, got[3] = {0, 0, 0};
+    bool            known[3] = {false, false, false};
+    bool            atEndKnown, startKnown, atStartKnown;
+    uint32_t        unused = 0, backWant = 0, backGot = 0;
+    uint32_t        nearWant = 0, nearGot = 0, nearFrom = 0;
+    uint32_t        lastWant = 0, lastGot = 0;
+    bool            backKnown, nearKnown, lastKnown;
+    int             i;
+
+    lvpPutOpening(&b);
+    lvpPut(&b, wait99, sizeof(wait99));
+    lvpPutSnapshotEmpty(&b);
+    lvpPut(&b, wait99, sizeof(wait99));
+    lvpPutSnapshotEmpty(&b);
+    lvpPut(&b, tail, sizeof(tail));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    /* At the start there is nothing to rewind to. */
+    startKnown = lv_screenRewindTargetMs(&unused) == TRUE;
+
+    /* Forward three times: two snapshots, then the end of the log. */
+    for (i = 0; i < 3; i++) {
+        known[i] = lv_screenFastForwardTargetMs(&want[i]) == TRUE;
+        lv_screenFastForward();
+        got[i] = lv_screenGetTimeRunning();
+    }
+    atEndKnown = lv_screenFastForwardTargetMs(&unused) == TRUE;
+
+    /* Back from the end: the last snapshot, a second and more behind. */
+    backKnown = lv_screenRewindTargetMs(&backWant) == TRUE;
+    lv_screenRewind();
+    backGot = lv_screenGetTimeRunning();
+
+    /* Under a second after a snapshot Rewind goes to the one before it. */
+    lv_screenSeekToTimeMs(4500);
+    nearFrom  = lv_screenGetTimeRunning();
+    nearKnown = lv_screenRewindTargetMs(&nearWant) == TRUE;
+    lv_screenRewind();
+    nearGot = lv_screenGetTimeRunning();
+
+    /* And from the first snapshot to the start. */
+    lastKnown = lv_screenRewindTargetMs(&lastWant) == TRUE;
+    lv_screenRewind();
+    lastGot = lv_screenGetTimeRunning();
+    atStartKnown = lv_screenRewindTargetMs(&unused) == TRUE;
+
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(!startKnown, "a rewind target at the start of the log");
+    for (i = 0; i < 3; i++) {
+        UT_ASSERT_MSG(known[i], "fast forward %d: no target", i);
+        UT_ASSERT_MSG(want[i] == got[i], "fast forward %d: said %u ms, went to %u ms",
+                      i, (unsigned)want[i], (unsigned)got[i]);
+    }
+    UT_ASSERT_MSG(want[0] == 2020 && want[1] == 4040 && want[2] == 5060,
+                  "fast forward targets %u %u %u (want 2020 4040 5060)",
+                  (unsigned)want[0], (unsigned)want[1], (unsigned)want[2]);
+    UT_ASSERT_MSG(!atEndKnown, "a fast forward target at the end of the log");
+    UT_ASSERT_MSG(backKnown && backWant == backGot && backGot == 4040,
+                  "rewind from the end: said %u ms, went to %u ms (want 4040)",
+                  (unsigned)backWant, (unsigned)backGot);
+    UT_ASSERT_MSG(nearFrom == 4500, "the seek landed at %u ms (want 4500)", (unsigned)nearFrom);
+    UT_ASSERT_MSG(nearKnown && nearWant == nearGot && nearGot == 2020,
+                  "rewind from 4500: said %u ms, went to %u ms (want 2020)",
+                  (unsigned)nearWant, (unsigned)nearGot);
+    UT_ASSERT_MSG(lastKnown && lastWant == lastGot,
+                  "rewind from the first snapshot: said %u ms, went to %u ms",
+                  (unsigned)lastWant, (unsigned)lastGot);
+    UT_ASSERT_MSG(!atStartKnown || lastGot > 0,
+                  "a rewind target back at the start (clock %u ms)", (unsigned)lastGot);
+    return 0;
+}
+
 /* ── 8. Announcements on the newswire ──────────────────────────────── */
 
 /* After the opening:

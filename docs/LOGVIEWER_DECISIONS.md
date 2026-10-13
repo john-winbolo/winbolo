@@ -405,6 +405,69 @@ old limit is inside the new one, so a saved layout loads as before.
 
 At 110 wide the Tank panel shows its gauges only.
 
+### Controls panel: Pause in place of Stop, drawn icon buttons, jump tooltips
+
+**Pause replaces Stop.** The Stop button of the panel did not hold the
+playhead: it paused, waited half a second and closed the log
+(`lv_windowStop`). The panel now has a Pause button in that slot. Pause holds
+playback where it is; nothing moves the playhead and the log stays open.
+
+- The panel has two buttons, Play and Pause, not one button that changes.
+  Play is on when playback is paused and the log is not at its end. Pause is
+  on while playback runs. The old text button that toggled Play / Pause is
+  gone; with it the row would have had two Pause buttons.
+- Space still toggles play and pause. Ctrl+P and Ctrl+U are unchanged.
+- **Action > Stop (Ctrl+S) is kept** in the main menu and in the Mac menu.
+  That menu already has a Pause item, and Stop there means "close the log".
+  `lv_windowStop` is also what the open-file and browser paths call. If the
+  owner wants the menu item gone or renamed, it is one line in
+  `imgui_main_menu.cpp` and one in `mac_menubar.mm`.
+- The wasm page has no Stop button of its own; it draws this same panel.
+
+**Icon buttons.** Each button is a square as high as a slider, with an icon
+drawn by the draw list in the colour of the text. The frame, the hovered,
+held and disabled looks and the keyboard are those of an ImGui button. All
+drawn icons of the viewer are now in one file, `imgui_lv_icons.cpp`:
+
+| Icon | Shape | Used by |
+|---|---|---|
+| `LV_ICON_REWIND` | two triangles to the left | Controls |
+| `LV_ICON_PLAY` | a triangle to the right | Controls |
+| `LV_ICON_PAUSE` | two upright bars | Controls |
+| `LV_ICON_FAST_FORWARD` | two triangles to the right | Controls |
+| `LV_ICON_TO_END` | a triangle against a bar | Controls, "Jump to live" (live feed only) |
+| `LV_ICON_EYE` | an eye | HUD panel (moved here from `imgui_hud.cpp`) |
+| `LV_ICON_GEAR` | a toothed wheel | panel options |
+
+No picture file and no icon font were added. A button whose action has
+nothing to act on is dimmed: Rewind at the start, Play at the end or while
+playing, Pause while paused, Fast Forward at the end. A dimmed button still
+shows its tooltip. The speed stays a slider. There are no tick-step buttons;
+the one-tick step is on the `,` and `.` keys only, as before.
+
+**What Rewind and Fast Forward do.** They are not fixed skips. Rewind goes
+back to the last snapshot of the log before the playhead; when that snapshot
+is less than one second back it goes to the one before it, and it never goes
+before the start of the game while the lobby is hidden. Fast Forward plays on
+to the next snapshot, or to the end of the log when there is none. The
+tooltip states the real distance at this moment: "Back 3.4 seconds (Ctrl+R)",
+"Forward 12 seconds (Ctrl+F)". One decimal under ten seconds, whole seconds
+from there. The number comes from `lv_screenRewindTargetMs` and
+`lv_screenFastForwardTargetMs`, and the rewind one shares its pick with the
+action (`lv_rewindPick`). The unit test `lv_jump_targets` asks for each
+target and then presses the button: the two agree. With no target (and on a
+live feed, which has no snapshot ahead) the tooltip is the plain name and key.
+
+**Narrow panel.** A button that has no room on the line starts the next
+line. The speed slider gives up width first (100 down to 50); under that the
+label and slider take a line of their own; in a panel too narrow for both the
+label goes and becomes the tooltip of the slider. The time texts wrap. The
+headless try-out ran 6 states (no log, paused at start, playing, at end, live,
+paused) at 12 sizes from 700 down to 60 wide: nothing is wider than the
+panel, no assert. At ImGui's smallest window (32 wide) one button is 3 pixels
+wider than the room.
+
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the

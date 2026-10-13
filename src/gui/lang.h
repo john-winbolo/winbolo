@@ -1340,6 +1340,11 @@
    tooltip. */
 #define STR_LV_TANK_BARS                    2831
 #define STR_LV_TANK_BARS_TIP                2832
+/* Log viewer Controls panel: what each button does, for its tooltip. {string1} of the two jumps is a number of seconds ("2.5", "12"); KEY_FMT puts a button's shortcut key after its name. */
+#define STR_LV_TIP_BACK_SECS                2833
+#define STR_LV_TIP_FWD_SECS                 2834
+#define STR_LV_TIP_KEY_FMT                  2835
+#define STR_LV_TIP_LIVE                     2836
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

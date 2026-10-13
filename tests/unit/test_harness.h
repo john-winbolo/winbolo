@@ -4059,6 +4059,7 @@ int run_lv_kill_tally_seek_back(void);
 /* Whether a tank is alive goes back with a seek (test_lv_presentation.c). */
 int run_lv_alive_seek_back(void);
 int run_lv_death_time_seek_back(void);
+int run_lv_jump_targets(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

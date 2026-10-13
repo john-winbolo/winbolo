@@ -163,6 +163,8 @@ set(LV_IMGUI_SOURCES
     ${LV_ROOT}/imgui/imgui_hud.cpp
     ${LV_ROOT}/imgui/imgui_overview.cpp
     ${LV_ROOT}/imgui/imgui_tank.cpp
+    # The icons the panels draw (the Controls panel's buttons).
+    ${LV_ROOT}/imgui/imgui_lv_icons.cpp
 )
 
 # WASM replacement files

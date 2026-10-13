@@ -3778,6 +3778,25 @@ static bool walkSkipSnapshot(void) {
   return walkSkipSnapshotBases(NULL, NULL, NULL, NULL);
 }
 
+/* The playback time of every snapshot in the log after the opening one, in
+ * the order they come, filled by lv_walkComputeTotalTimeMs. The seek index
+ * (g_lv->snap) only holds the snapshots playback has reached; this list is
+ * what tells where Fast Forward goes before it has gone there. */
+static uint32_t *s_walkSnapMs    = NULL;
+static size_t    s_walkSnapCount = 0;
+static size_t    s_walkSnapRoom  = 0;
+
+static void lv_walkSnapAdd(uint32_t ms) {
+  if (s_walkSnapCount == s_walkSnapRoom) {
+    size_t    room = (s_walkSnapRoom == 0) ? 64 : s_walkSnapRoom * 2;
+    uint32_t *grown = (uint32_t *)realloc(s_walkSnapMs, room * sizeof(uint32_t));
+    if (grown == NULL) return;
+    s_walkSnapMs = grown;
+    s_walkSnapRoom = room;
+  }
+  s_walkSnapMs[s_walkSnapCount++] = ms;
+}
+
 /* Walk the log buffer from the current position to LOG_QUIT/EOF, counting
  * 20ms ticks. Saves and restores logPosition + XOR key. */
 static uint32_t lv_walkComputeTotalTimeMs(void) {
@@ -3790,6 +3809,7 @@ static uint32_t lv_walkComputeTotalTimeMs(void) {
   unsigned short waitLen, numEvents;
   uint16_t us;
 
+  s_walkSnapCount = 0;
   while (!done && !lv_blocksIsEOF()) {
     if (logReadBytes(&code, 1) != 1) break;
     switch (code) {
@@ -3800,6 +3820,8 @@ static uint32_t lv_walkComputeTotalTimeMs(void) {
       case LOG_SNAPSHOT:
         if (!walkSkipSnapshot()) { done = TRUE; break; }
         ticks++;
+        /* The tick that reads a snapshot has added its 20 ms first. */
+        lv_walkSnapAdd((uint32_t)(ticks * 20));
         break;
       case LOG_NOEVENTS:
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
@@ -6265,6 +6287,29 @@ void lv_screenMouseClick(int xPos, int yPos) {
   lv_playersPerspectiveFollowSelf();
 }
 
+/* Where Fast Forward would take playback from here, in the log's own time:
+   the next snapshot, or the end of the log when there is none ahead. FALSE
+   when it would not move: nothing loaded, playback at the end, or a live
+   feed, whose next snapshot has not been written yet. The Controls panel
+   states the jump with it; lv_screenFastForward itself plays on until the
+   decoder meets that snapshot. */
+bool lv_screenFastForwardTargetMs(uint32_t *ms) {
+  size_t i;
+  if (g_lv == NULL || g_lv->logLoaded == FALSE || g_lv->isPlaying == FALSE ||
+      lv_screenSpecIsLiveMode() == TRUE) {
+    return FALSE;
+  }
+  for (i = 0; i < s_walkSnapCount; i++) {
+    if (s_walkSnapMs[i] > g_lv->timeRunning) {
+      *ms = s_walkSnapMs[i];
+      return TRUE;
+    }
+  }
+  if (g_lv->totalTimeMs <= g_lv->timeRunning) return FALSE;
+  *ms = g_lv->totalTimeMs;
+  return TRUE;
+}
+
 /* Play on to the next snapshot or the end of the log. A live feed that
    reaches its head first stops there: the head stays where it is until the
    host appends more, and it cannot while this holds the client mutex. */
@@ -6305,23 +6350,54 @@ int lv_screenGetHideLobby(void) { return s_hideLobby ? 1 : 0; }
 
 uint32_t lv_screenWindowStartMs(void) { return lv_windowStartMs(); }
 
+/* The snapshot Rewind goes back to from here: the last one before the
+   playhead, and the one before that when the last is under a second back
+   (or a second press would never get past it). FALSE when there is none.
+   lv_screenRewind acts on it and lv_screenRewindTargetMs reports it, so the
+   two cannot disagree. */
+static bool lv_rewindPick(size_t *wantedPos, uint32_t *toTime, BYTE *key, BYTE **pTeams) {
+  uint32_t currentTime = g_lv->timeRunning;
+  uint32_t firstTime;
+
+  if (lv_snapshotBackwards(&g_lv->snap, wantedPos, &currentTime, key, pTeams) == FALSE) {
+    return FALSE;
+  }
+  if (currentTime > 1000 && (g_lv->timeRunning - currentTime) < 1000) {
+    firstTime = currentTime;
+    currentTime -= 1000;
+    if (lv_snapshotBackwards(&g_lv->snap, wantedPos, &currentTime, key, pTeams) == FALSE) {
+      currentTime = firstTime;
+    }
+  }
+  *toTime = currentTime;
+  return TRUE;
+}
+
+/* Where Rewind would take playback from here, in the log's own time. FALSE
+   when there is nothing to go back to. With the lobby hidden it is never
+   before the start of the game, where lv_screenRewind parks. */
+bool lv_screenRewindTargetMs(uint32_t *ms) {
+  size_t wantedPos;
+  uint32_t toTime;
+  BYTE key;
+  BYTE *pTeams = NULL;
+
+  if (g_lv == NULL || g_lv->logLoaded == FALSE) return FALSE;
+  if (lv_rewindPick(&wantedPos, &toTime, &key, &pTeams) == FALSE) return FALSE;
+  if (toTime < lv_windowStartMs()) toTime = lv_windowStartMs();
+  *ms = toTime;
+  return TRUE;
+}
+
 void lv_screenRewind() {
   uint32_t currentTime = g_lv->timeRunning;
   size_t wantedPos;
-  uint32_t firstTime;
   bool available;
   BYTE key;
   BYTE *pTeams = NULL;
 
-  available = lv_snapshotBackwards(&g_lv->snap, &wantedPos, &currentTime, &key, &pTeams);
+  available = lv_rewindPick(&wantedPos, &currentTime, &key, &pTeams);
   if (available == TRUE) {
-    if (currentTime > 1000 && (g_lv->timeRunning - currentTime) < 1000) {
-      firstTime = currentTime;
-      currentTime -= 1000;
-      if (lv_snapshotBackwards(&g_lv->snap, &wantedPos, &currentTime, &key, &pTeams) == FALSE) {
-        currentTime = firstTime;
-      }
-    }
     /* A rewind never steps back into the hidden lobby; it parks at game start. */
     if (currentTime < lv_windowStartMs()) {
       lv_screenSeekToAbsoluteMs(lv_windowStartMs());
