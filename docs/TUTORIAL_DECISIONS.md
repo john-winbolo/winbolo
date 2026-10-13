@@ -833,3 +833,17 @@ then kill it." is gone). A pillbox killed before the hide ticks "Enter its
 range in forest" and "Sit hidden in range" along with "Kill the pillbox", and
 the s4c popup is skipped. This replaces the earlier rule that held the
 pillbox at its armour until the hide was ticked.
+
+## Oct 12: a 4B pillbox killed first passes the hide over, it does not tick it
+
+Andrew killed the 4B pillbox without hiding and "Sit hidden in range" went
+green though he had not done it. The two hide goals are no longer ticked by
+the kill. They are passed over (`S.passed`): the checklist shows them not
+ticked, the status line and the markers go on to the next goal, and
+`station_done` no longer waits for them, so "Station 4 done" still comes.
+
+They stay there to do. The hide is now measured from the pillbox's own
+square (`P.p4`) and not from the pillbox, so it can be done after the
+pillbox is dead or picked up; doing it ticks the goals as usual. A RESET
+clears a station's passed goals with its ticks. `S.passed` is general, but
+only Station 4 uses it.
