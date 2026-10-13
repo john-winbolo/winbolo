@@ -358,7 +358,7 @@ void lv_event_marker_draw(ImDrawList *dl, int eventKind, int eventTeam, int even
     dl->AddRectFilled(p0, p1, dark, 2.0f);
     if (marker.drawing == LV_MARKER_BUILDER_LOST) {
         /* A builder lost: the map's own builder, in the game's colours, a
-         * whole number of times his 3 by 4 pixels, with an X over him. The
+         * whole number of times his 3 by 4 pixels, with a "no" sign over him. The
          * game has no picture of a crossed-out builder, so it is put
          * together here. With no tile sheet the drawn person takes his
          * place. */
@@ -370,21 +370,16 @@ void lv_event_marker_draw(ImDrawList *dl, int eventKind, int eventTeam, int even
             lv_icon_draw(dl, LV_ICON_PERSON, ImVec2(i0.x + 1.0f, i0.y + 1.0f),
                          ImVec2(i1.x - 1.0f, i1.y - 1.0f), overlay_u32(text, alpha));
         }
-        /* The X: the small one of the game's "dead" picture, which a
-         * killed tank has, at the same place and size. That picture is
-         * nine white pixels on black (a 5 by 5 X in the middle of its 12
-         * by 12), and the black would hide the builder, so only the nine
-         * pixels are drawn, in red so the X shows on the builder. */
+        /* Over him, the "no" sign: a red circle with one line across it,
+         * top left to bottom right. The lines are thin so the builder still
+         * shows through. */
         const ImU32 red = overlay_u32(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), alpha);
-        const float px = room / (float)STATUS_ITEM_SIZE_X;
-        const float py = (i1.y - i0.y) / (float)STATUS_ITEM_SIZE_Y;
-        for (int k = 0; k < 5; k++) {
-            const float y = i0.y + (float)(4 + k) * py;
-            const float xa = i0.x + (float)(4 + k) * px;
-            const float xb = i0.x + (float)(8 - k) * px;
-            dl->AddRectFilled(ImVec2(xa, y), ImVec2(xa + px, y + py), red);
-            if (k != 2) dl->AddRectFilled(ImVec2(xb, y), ImVec2(xb + px, y + py), red);
-        }
+        const ImVec2 mid((i0.x + i1.x) * 0.5f, (i0.y + i1.y) * 0.5f);
+        const float half = (room < (i1.y - i0.y) ? room : (i1.y - i0.y)) * 0.5f;
+        const float r = half - 0.5f;
+        const float d = r * 0.70710678f;
+        dl->AddCircle(mid, r, red, 0, 1.5f);
+        dl->AddLine(ImVec2(mid.x - d, mid.y - d), ImVec2(mid.x + d, mid.y + d), red, 1.5f);
     } else if (marker.drawing == LV_MARKER_PING) {
         /* A map ping: the game's icon for its kind. It has the room inside
          * the line, a point more than a drawn icon, as the game's icon
