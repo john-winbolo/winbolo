@@ -95,22 +95,6 @@ void lv_icon_draw(ImDrawList *dl, int icon, ImVec2 p0, ImVec2 p1, ImU32 col) {
         dl->AddCircleFilled(ImVec2(cx, cy), h * 0.17f, col);
         break;
     }
-    case LV_ICON_GEAR: {
-        /* A ring with eight teeth and a hole: the teeth are short thick
-         * strokes out from the ring. */
-        const float r = ((w < h) ? w : h) * 0.5f;
-        const float ring = r * 0.56f;
-        float thick = r * 0.34f;
-        if (thick < 1.5f) thick = 1.5f;
-        dl->AddCircle(ImVec2(cx, cy), ring, col, 0, thick);
-        for (int i = 0; i < 8; i++) {
-            const float a = (float)i * (3.14159265f / 4.0f);
-            const float dx = cosf(a), dy = sinf(a);
-            dl->AddLine(ImVec2(cx + dx * ring, cy + dy * ring),
-                        ImVec2(cx + dx * r, cy + dy * r), col, thick);
-        }
-        break;
-    }
     case LV_ICON_CLOSE: {
         const float thick = (h >= 12.0f) ? 2.0f : 1.5f;
         dl->AddLine(ImVec2(x0, y0), ImVec2(x1, y1), col, thick);

@@ -470,7 +470,6 @@ drawn icons of the viewer are now in one file, `imgui_lv_icons.cpp`:
 | `LV_ICON_FAST_FORWARD` | two triangles to the right | Controls |
 | `LV_ICON_TO_END` | a triangle against a bar | Controls, "Jump to live" (live feed only) |
 | `LV_ICON_EYE` | an eye | HUD panel (moved here from `imgui_hud.cpp`) |
-| `LV_ICON_GEAR` | a toothed wheel | sidebar options |
 
 No picture file and no icon font were added. A button whose action has
 nothing to act on is dimmed: Rewind at the start, Play at the end or while
@@ -602,24 +601,21 @@ not the background of a panel.
 preference `Window.<Panel>.Transparent` are gone. The gear had no other
 item. An old `Window.<Panel>.Transparent` key in a preferences file is not
 read and is not moved to the new option. A floating panel has no such option
-now. The two strings keep their numbers (2839, 2840) with new names and
-words: `STR_LV_TIP_DOCK_OPTIONS` "Sidebar options", `STR_LV_DOCK_TRANSPARENT`
-"Make unused sidebar portions transparent".
+now. String 2840 keeps its number with a new name and new words:
+`STR_LV_DOCK_TRANSPARENT` "Make unused sidebar portions transparent".
 
 **The option.** One a sidebar (left, right, top, bottom), off by default.
-It is in two places:
+It is in one place: the Windows menu, under the four sidebar items, a
+submenu "Make unused sidebar portions transparent" with the four sidebars as
+check items.
 
-- Windows menu, under the four sidebar items: a submenu "Make unused sidebar
-  portions transparent" with the four sidebars as check items.
-- A gear for each sidebar that shows. It is NOT on the sidebar, where it
-  would be over a panel's controls. It is on the map, in the corner at the
-  end of the sidebar's inner edge going clockwise: the left sidebar's gear
-  at the map's top left, the top one's at the top right, the right one's at
-  the bottom right, the bottom one's at the bottom left. So two gears are
-  never in one corner. It is one button the height of a text line, dim (45%)
-  until the mouse is on it, tooltip "<sidebar>: Sidebar options". It covers
-  that small square of the map. It is not drawn when the map area is less
-  than three such buttons wide or high.
+**No gear (Oct 13).** For a short time each sidebar also had a gear on a
+corner of the map, with this one item in its menu. The owner had it taken
+out: the menu bar is enough. The gear, its menu, its place on the map, the
+drawn gear icon (`LV_ICON_GEAR`, which nothing else used) and its tooltip
+string are gone. Number 2839 (`STR_LV_TIP_DOCK_OPTIONS`, "Sidebar options")
+is not used and is not to be given to a new string; `lang.h` says so. The
+map has no button on it now.
 
 **Option off.** The sidebar is as it was: a solid strip, the panels share
 all of its length, the map stops at its edge.
@@ -712,11 +708,11 @@ of the window" rule is unchanged.
   Comments as a tab) option off, then on; packing and the 4 point grips; the
   clear part has no window under the mouse and is map; a drag of the last
   grip and of the first grip; a double click; a window too short and far too
-  short, and back; the inner edge dragged beside the clear part; the gear
-  opened and its item clicked; option off again; Tank beside Controls across
+  short, and back; the inner edge dragged beside the clear part; no gear
+  window and no popup; option off again; Tank beside Controls across
   the sidebar; the saved lines. No check failed and no ImGui assert.
 - NOT tested: the map drawn under the sidebar (the try-out has no renderer),
-  the look of the grips and the gear, and the wiring in `screen.c`,
+  the look of the grips, and the wiring in `screen.c`,
   `draw.c` and `logviewer.c` beyond the sums above. Those need a look on a
   screen.
 
@@ -1153,7 +1149,7 @@ Please look at, at least:
 - Sidebars on all four sides, and the layout after a restart.
 - "Make unused sidebar portions transparent" on each of the four sidebars:
   the map under the clear part, a click and a drag there, the panel grips,
-  the gear in its corner, a jump to an event with the option on (the place
+  a jump to an event with the option on (the place
   goes to the middle of the map that shows), and the option turned on and
   off (the map does not move).
 - Seek slider: drag, release, and hiding the Controls panel during a drag.

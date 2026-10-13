@@ -1263,8 +1263,7 @@ STR_LV_TIP_LIVE=Jump to live
 STR_LV_TIP_DESELECT=Deselect tank
 STR_LV_TIP_ALL_TEAMS=Back to all teams
 
-# Log viewer: the gear of a panel and its options
-STR_LV_TIP_DOCK_OPTIONS=Sidebar options
+# Log viewer: the option of a sidebar, in the Windows menu
 STR_LV_DOCK_TRANSPARENT=Make unused sidebar portions transparent
 
 # Log viewer: the event markers over the seek bar of the Controls panel
