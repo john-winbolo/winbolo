@@ -5977,6 +5977,7 @@ set(_unit_test_names
     pascal_string_viewer_copy_agrees
     pascal_string_roundtrip
     console_lock_unlock
+    console_mem_report
     console_info_and_status
     console_savemap_path
     console_unknown_command_is_inert
