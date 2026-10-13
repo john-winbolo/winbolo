@@ -476,7 +476,8 @@ void lv_windowOpenSinglePlayer(void) {
     char         currentTime[FILENAME_MAX];
     char        *prefDir;
     const char  *args[4];
-    SDL_Process *game;
+    SDL_Process *game = NULL;
+    SDL_PropertiesID props;
     LvSpmapInfo  info;
     int          self;
     int          wrote;
@@ -569,7 +570,20 @@ void lv_windowOpenSinglePlayer(void) {
     args[1] = "-spmap";
     args[2] = mapPath;
     args[3] = NULL;
-    game = SDL_CreateProcess(args, false);
+    /* Started as a background process: the viewer never waits for the game.
+       On macOS and Linux a child that is not waited for stays in the process
+       table as a zombie after it ends, until the viewer itself ends. SDL
+       starts a background process through a middle process that ends at
+       once, so the game is nobody's child and leaves nothing behind. On
+       Windows there is no such thing and this changes nothing but the
+       game's standard input and output, which go nowhere. */
+    props = SDL_CreateProperties();
+    if (props != 0) {
+        SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, (void *)args);
+        SDL_SetBooleanProperty(props, SDL_PROP_PROCESS_CREATE_BACKGROUND_BOOLEAN, true);
+        game = SDL_CreateProcessWithProperties(props);
+        SDL_DestroyProperties(props);
+    }
     if (game == NULL) {
         lv_platform_dialog_error(DIALOG_BOX_TITLE, "Could not start the WinBolo game");
         return;
