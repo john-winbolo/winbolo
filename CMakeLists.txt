@@ -5740,6 +5740,7 @@ set(_unit_test_names
     lgm_kill_short_history
     lgm_draw_own_matches_wire
     lgm_draw_centre_error_bounds
+    lgm_start_offset
     jitter_buffer_grow
     shell_projection
     sim_rules_classic_defaults
