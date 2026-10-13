@@ -632,18 +632,17 @@ int run_scenario_details_fetch_dir_mod(void) {
     return 0;
 }
 
-/* How many rows the callbacks block of a shipped map's script declares, read
- * from the file's text: the lines `name = "..."` between `callbacks = {` and
- * the line that closes it. -1 when the file or the block is not found. The
- * shipped scripts write one row to a line, which is all this reads. */
-static int scDeclaredCallbacks(const char *map) {
-    char  path[512];
+/* How many rows the callbacks block of a shipped script declares, read from
+ * the file's text: the lines `name = "..."` between `callbacks = {` and the
+ * line that closes it. -1 when the file cannot be opened, -2 when it has no
+ * callbacks block. The shipped scripts start one row to a line, which is all
+ * this reads. */
+static int scDeclaredCallbacks(const char *path) {
     char  line[2048];
     FILE *f;
-    int   rows  = -1;
+    int   rows  = -2;
     bool  inside = false;
 
-    snprintf(path, sizeof(path), "%s/%s.scenario.lua", WB_DATA_MAPS_DIR, map);
     f = fopen(path, "r");
     if (f == NULL) return -1;
     while (fgets(line, sizeof(line), f) != NULL) {
@@ -674,6 +673,7 @@ static int scFetchMapScript(const char *tag, const char *map, int wantRows,
     LoopbackHarness    h;
     ScenarioHost      *slot;
     char               mapPath[512];
+    char               luaPath[512];
     char               file[SCN_DIR_FILE_LEN];
     const ScnDirEntry *row;
     uint8_t            direct[SCN_DETAILS_MAX];
@@ -685,7 +685,17 @@ static int scFetchMapScript(const char *tag, const char *map, int wantRows,
     int                directLen;
     int                at;
     int                count;
+    int                declared;
     bool               committed;
+
+    /* What the file itself declares, before anything is started: a script
+       that is not there, or has no callbacks block, is said by name. */
+    snprintf(luaPath, sizeof(luaPath), "%s/%s.scenario.lua", WB_DATA_MAPS_DIR,
+             map);
+    declared = scDeclaredCallbacks(luaPath);
+    UT_ASSERT_MSG(declared != -1, "the shipped script %s could not be opened",
+                  luaPath);
+    UT_ASSERT_MSG(declared >= 0, "no callbacks block was found in %s", luaPath);
 
     UT_ASSERT(scMakeDir(tag));   /* an empty scenarios directory */
     UT_ASSERT_MSG(scNetStart(&h, &slot, "loss=5,burst=2", 0x5C0CC3Au),
@@ -728,12 +738,11 @@ static int scFetchMapScript(const char *tag, const char *map, int wantRows,
     /* No row was dropped on the way: a block past SCN_CALLBACKS_BLOB_MAX
        loses its last rows with only a console line, and the Tutorial's is
        close to it. Every row the file declares has to arrive. */
-    UT_ASSERT_MSG(scDeclaredCallbacks(map) == count,
+    UT_ASSERT_MSG(declared == count,
                   "%s declares %d callback rows and %d arrived: rows were "
                   "dropped (SCN_CALLBACKS_BLOB_MAX is %d bytes), or the "
                   "block names a function the script does not define",
-                  file, scDeclaredCallbacks(map), count,
-                  SCN_CALLBACKS_BLOB_MAX);
+                  file, declared, count, SCN_CALLBACKS_BLOB_MAX);
 
     /* The listen host reads the same bytes straight off the sim. */
     directLen = scDirect(&h, file, direct, sizeof(direct));
@@ -757,6 +766,94 @@ int run_scenario_details_fetch_soccer(void) {
 int run_scenario_details_fetch_tutorial(void) {
     return scFetchMapScript("fetch_tutorial", "Tutorial", 22,
                             "on_choose_start/");
+}
+
+int run_scenario_details_fetch_joust(void) {
+    return scFetchMapScript("fetch_joust", "Joust", 13, "kill_credit/");
+}
+
+int run_scenario_details_fetch_respawn_loadout(void) {
+    return scFetchMapScript("fetch_respawn_loadout", "RespawnLoadoutTest", 4,
+                            "allow_base_win/");
+}
+
+/* The shipped mods (data/mods), which no map brings: each is copied into the
+ * server's scenarios directory and asked for by its file name, as the dialog
+ * asks for a mod on the list. Every row its file declares has to arrive. */
+int run_scenario_details_fetch_mods(void) {
+    static const char *const kMods[] = {
+        "BaseRestockingRate", "FasterTreeGrowth", "MacBoloRules",
+        "PillboxTag",         "RuleRoulette",     "Virus",
+    };
+    enum { MODS = (int)(sizeof(kMods) / sizeof(kMods[0])) };
+    LoopbackHarness h;
+    ScenarioHost   *slot;
+    char            file[MODS][SCN_DIR_FILE_LEN];
+    int             declared[MODS];
+    int             i;
+
+    UT_ASSERT(scMakeDir("fetch_mods"));
+    for (i = 0; i < MODS; i++) {
+        char  path[512];
+        FILE *f;
+        char *text;
+        long  size;
+        bool  copied;
+
+        snprintf(file[i], sizeof(file[i]), "%s.scenario.lua", kMods[i]);
+        snprintf(path, sizeof(path), "%s/../mods/%s", WB_DATA_MAPS_DIR,
+                 file[i]);
+        declared[i] = scDeclaredCallbacks(path);
+        UT_ASSERT_MSG(declared[i] != -1,
+                      "the shipped mod %s could not be opened", path);
+        UT_ASSERT_MSG(declared[i] > 0, "no callbacks row was found in %s",
+                      path);
+
+        f = fopen(path, "rb");
+        UT_ASSERT_MSG(f != NULL, "the shipped mod %s could not be opened",
+                      path);
+        fseek(f, 0, SEEK_END);
+        size = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        text = (char *)malloc(size > 0 ? (size_t)size : 1);
+        copied = text != NULL && size > 0 &&
+                 fread(text, 1, (size_t)size, f) == (size_t)size &&
+                 scWrite(file[i], text, (size_t)size);
+        free(text);
+        fclose(f);
+        UT_ASSERT_MSG(copied, "%s could not be copied into %s", path, scDir);
+    }
+
+    UT_ASSERT_MSG(scNetStart(&h, &slot, "loss=5,burst=2", 0x30D5u),
+                  "the harness did not come up");
+    for (i = 0; i < MODS; i++) {
+        const uint8_t *got;
+        size_t         gotLen;
+        char           rows[4096];
+        int            at;
+        int            count;
+
+        at = scFetch(&h, file[i], SC_FETCH_MAX);
+        fprintf(stderr, "  details fetch (%s, loss=5): settled@%d tries=%d\n",
+                file[i], at, scTries(h.cs, file[i]));
+        UT_ASSERT_MSG(at >= 0, "no answer for %s within %d pumps", file[i],
+                      SC_FETCH_MAX);
+        UT_ASSERT_MSG(clientSimGetLobbyScenarioDetails(h.cs, file[i], &got,
+                                                       &gotLen) ==
+                          CLIENT_SCN_DETAILS_FOUND,
+                      "the shipped mod %s was answered as not found", file[i]);
+        count = scCallbacks(got, gotLen, rows, sizeof(rows));
+        UT_ASSERT_MSG(declared[i] == count,
+                      "%s declares %d callback rows and %d arrived: rows were "
+                      "dropped (SCN_CALLBACKS_BLOB_MAX is %d bytes), or the "
+                      "block names a function the script does not define",
+                      file[i], declared[i], count, SCN_CALLBACKS_BLOB_MAX);
+    }
+
+    UT_ASSERT(clientSimGetConnectState(h.cs) == CLIENT_CONNECT_CONNECTED);
+    scNetStop(&h, &slot);
+    scRemoveTree(scDir);
+    return 0;
 }
 
 int run_scenario_details_fetch_not_found(void) {
