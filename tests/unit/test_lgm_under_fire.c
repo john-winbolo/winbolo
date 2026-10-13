@@ -52,9 +52,8 @@
  * tank's centre, clear of the man walking away west.
  *
  * The bug this test found: shells.c tested a pill shell against each tank at
- * the position it held perPlayerCompTicks frames ago (server_sim_tick.c fills
- * that in from the player's ping), and a tank driving east was further west
- * then. Under lag the shells went through the real hull and exploded on the
+ * the position it held a ping's worth of frames ago, and a tank driving east
+ * was further west then. Under lag the shells went through the real hull and exploded on the
  * man's side of it, and lgmDeathCheckAtPosition rewound the man the same
  * way. A pill has no lag to make up for, so its shells are no longer rewound,
  * against the tank or against the man, and the lagged run now matches the
@@ -634,7 +633,7 @@ static int luf_run(const LufConfig *cfg) {
     }
 
     pingMs    = h.sim->playerPing[slot];
-    compTicks = gs->perPlayerCompTicks[slot];
+    compTicks = 0; /* a pill shell is not rewound */
     fprintf(stderr, "  after settle: server ping=%ums  lag-comp rewind=%u "
             "frames (%d world units of man walk)\n",
             (unsigned)pingMs, (unsigned)compTicks,
@@ -746,7 +745,7 @@ static int luf_run(const LufConfig *cfg) {
     pillSpeed     = gs->pb->item[0].speed;
     pillArmour    = gs->pb->item[0].armour;
     pingMs        = h.sim->playerPing[slot];
-    compTicks     = gs->perPlayerCompTicks[slot];
+    compTicks     = 0; /* a pill shell is not rewound */
 
     shellsDebugHitLogClear();
     luf_send_frame(&h, slot, &inTick, INPUT_BTN_ACCEL, 0,
