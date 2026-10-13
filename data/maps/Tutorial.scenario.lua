@@ -1582,7 +1582,23 @@ function on_tank_spawned(p, mx, my, respawn, scripted)
   elseif p == S.player then
     S.last_pos = nil
     S.hide = 0
-    if station_of(mx, my) == 5 then hand_5b() end
+    -- A tank that has just spawned carries nothing. The pillboxes its last
+    -- tank carried were dropped where it died, with no callback, so the
+    -- carrier notes are cleared here; a stale one kept the 5B blocker from
+    -- being handed over or rebuilt.
+    for n, c in pairs(S.carrier) do
+      if c == p then S.carrier[n] = nil end
+    end
+    if station_of(mx, my) == 5 then
+      -- Every spawn in Station 5 has the blocker in the tank, built before
+      -- or not (Andrew, Oct 12), unless it stands alive on its own square.
+      local L = P.t5b_blocker
+      local bl = game.pill(L.n)
+      if bl ~= nil and (bl.in_tank or bl.armour == 0 or bl.x ~= L.x or
+                        bl.y ~= L.y) then
+        hand_pill(p, L.n)
+      end
+    end
   end
 end
 

@@ -5461,6 +5461,9 @@ static void renderScnPanelMenuItems(bool afterBrains) {
 /* The line's height in panel units, so it scales with the game's zoom the
    same way the panel's own text does. */
 #define SCN_ANNOUNCE_UNITS 20.0f
+/* The same in the classic 15 by 15 view, which is far smaller than the full
+   screen map. */
+#define SCN_ANNOUNCE_CLASSIC_UNITS 13.0f
 
 /* The space the status line keeps from anything it has to move clear of, and
    the space an announcement with a position keeps below the status line, in
@@ -5681,7 +5684,11 @@ static void renderScenarioAnnounce(ClientSim *cs) {
     ImDrawList *dl = ImGui::GetForegroundDrawList();
     if (dl == nullptr) return;
 
-    float height = SCN_ANNOUNCE_UNITS * scale;
+    /* The classic 15 by 15 view is the small one: 240 units high, where a
+       20-unit line and its status line take a fifth of the view between
+       them. Both lines are drawn smaller there. */
+    float height = ((tankView && !tablet) ? SCN_ANNOUNCE_CLASSIC_UNITS
+                                           : SCN_ANNOUNCE_UNITS) * scale;
     if (height < 8.0f) height = 8.0f;
 
     /* The outline reaches one stroke past the letters on every side, so the

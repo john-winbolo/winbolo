@@ -847,3 +847,19 @@ square (`P.p4`) and not from the pillbox, so it can be done after the
 pillbox is dead or picked up; doing it ticks the goals as usual. A RESET
 clears a station's passed goals with its ticks. `S.passed` is general, but
 only Station 4 uses it.
+
+## Oct 12: every spawn in Station 5 carries the blocker; smaller lines in the classic view
+
+Andrew died in Station 5 with a pillbox in his tank and came back with none.
+A dying tank drops its pillboxes where it dies and no callback tells the
+script, so `S.carrier` still named the player and the blocker was neither
+handed over nor rebuilt. `on_tank_spawned` now clears the player's carrier
+notes, and a spawn in Station 5 puts the 5B blocker in the tank whether it
+was built before or not. Only a blocker standing alive on its own square is
+left where it is.
+
+The status line and the white line are drawn 13 units high in the classic
+15 by 15 view (`SCN_ANNOUNCE_CLASSIC_UNITS`), not 20. That view is 240 units
+high, and the two lines took a fifth of it, which also pushed the white line
+well down from the top. The full screen map and tablet mode keep 20. This is
+an engine change and holds for every scenario's lines in the classic view.
