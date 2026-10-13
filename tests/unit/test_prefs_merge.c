@@ -283,3 +283,113 @@ int run_prefs_merge_one_write(void) {
     endTest(path);
     return 0;
 }
+
+/* The size of the file, or -1. A write through prefsDocSave puts the
+ * document back in its own form, so bytes added by hand after the JSON
+ * are gone after any write: the size tells a write from no write. */
+static long diskSize(const char *path) {
+    FILE *fp = fopen(path, "rb");
+    long size = -1;
+    if (fp) {
+        if (fseek(fp, 0, SEEK_END) == 0) size = ftell(fp);
+        fclose(fp);
+    }
+    return size;
+}
+
+/* Add white space after the JSON: still the same document to a reader. */
+static int diskMark(const char *path) {
+    FILE *fp = fopen(path, "ab");
+    if (!fp) return 0;
+    fputs("\n\n\n\n", fp);
+    return fclose(fp) == 0;
+}
+
+/* The game changes a viewer key in the file. The viewer then sets that key
+ * to the value its own copy still holds. The viewer's value must reach the
+ * file: the set is not dropped as "nothing changed". */
+int run_prefs_merge_reset_wins(void) {
+    char path[1024];
+    char got[256];
+
+    UT_ASSERT(utScratchPath(path, sizeof(path), "WinBolo.json"));
+    remove(path);
+    UT_ASSERT(seedFile(path));
+
+    prefsInit(path);
+    prefsSetMergeOnSave(true);
+
+    UT_ASSERT(gameSet(path, "LOGVIEWER", "Window.X", "999"));
+    UT_ASSERT(gameSet(path, "SETTINGS", "Player Name", "Game"));
+
+    /* "10" is what the viewer loaded and still holds. */
+    prefsGetString("LOGVIEWER", "Window.X", "", got, sizeof(got));
+    UT_ASSERT(strcmp(got, "10") == 0);
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "10") == 1);
+    UT_ASSERT(prefsIsDirty());
+    UT_ASSERT(prefsFlush() == 1);
+    UT_ASSERT(!prefsIsDirty());
+
+    diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "10") == 0, "the viewer's set was dropped: %s", got);
+    diskGet(path, "SETTINGS", "Player Name", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "Game") == 0, "game's change lost: %s", got);
+
+    /* A set of the value already held in a section that syncs is no change
+     * for the cloud copy. */
+    UT_ASSERT(!prefsSyncDirty());
+    prefsGetString("SETTINGS", "Player Name", "", got, sizeof(got));
+    UT_ASSERT(strcmp(got, "Game") == 0);
+    UT_ASSERT(prefsSetString("SETTINGS", "Player Name", "Game") == 1);
+    UT_ASSERT(!prefsSyncDirty());
+    UT_ASSERT(prefsFlush() == 1);
+
+    endTest(path);
+    return 0;
+}
+
+/* A viewer that changes nothing writes nothing: not on a flush with no set,
+ * and not on a save that sets every key again to the value it has. */
+int run_prefs_merge_idle_no_write(void) {
+    char path[1024];
+    char got[256];
+    long marked;
+
+    UT_ASSERT(utScratchPath(path, sizeof(path), "WinBolo.json"));
+    remove(path);
+    UT_ASSERT(seedFile(path));
+
+    prefsInit(path);
+    prefsSetMergeOnSave(true);
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "250") == 1);
+    UT_ASSERT(prefsFlush() == 1);
+
+    UT_ASSERT(diskMark(path));
+    marked = diskSize(path);
+    UT_ASSERT(marked > 0);
+
+    /* Flushes with no set, as the viewer does at the end of every frame. */
+    UT_ASSERT(prefsFlush() == 1);
+    UT_ASSERT(prefsFlush() == 1);
+    UT_ASSERT_MSG(diskSize(path) == marked, "an idle flush wrote the file");
+
+    /* The save routine: every key again, nothing moved. */
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "250") == 1);
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Dock.Ini", "old layout") == 1);
+    UT_ASSERT(prefsFlush() == 1);
+    UT_ASSERT(!prefsIsDirty());
+    UT_ASSERT_MSG(diskSize(path) == marked, "a save that changed nothing wrote the file");
+    UT_ASSERT(prefsFlush() == 1);
+    UT_ASSERT_MSG(diskSize(path) == marked, "the flush after it wrote the file");
+
+    /* One key really moved: one write, and the mark is gone. */
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "250") == 1);
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Dock.Ini", "new layout") == 1);
+    UT_ASSERT(prefsFlush() == 1);
+    UT_ASSERT_MSG(diskSize(path) != marked, "a real change was not written");
+    diskGet(path, "LOGVIEWER", "Dock.Ini", got, sizeof(got));
+    UT_ASSERT(strcmp(got, "new layout") == 0);
+
+    endTest(path);
+    return 0;
+}

@@ -4869,6 +4869,8 @@ set(_unit_test_names
     prefs_merge_viewer_then_game
     prefs_merge_fallback
     prefs_merge_one_write
+    prefs_merge_reset_wins
+    prefs_merge_idle_no_write
     join_running_phase_not_lobby
     lobby_settings_codec_and_apply
     lobby_settings_scenario_apply

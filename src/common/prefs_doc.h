@@ -79,8 +79,8 @@ int prefsDocSetString(PrefsDoc *doc, const char *section,
                       const char *key, const char *value);
 
 /* Set dst's [section]/key to the string src holds there, whatever its
- * length; marks dst dirty. 1 ok / 0 when src has no such string or on
- * OOM (dst is then unchanged). Used to put one program's changes onto a
+ * length; marks dst dirty, unless dst holds that string already. 1 ok / 0
+ * when src has no such string or on OOM (dst is then unchanged). Used to put one program's changes onto a
  * copy of the file another program has written since. */
 int prefsDocCopyKey(PrefsDoc *dst, const PrefsDoc *src,
                     const char *section, const char *key);

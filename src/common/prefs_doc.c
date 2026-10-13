@@ -252,6 +252,9 @@ int prefsDocCopyKey(PrefsDoc *dst, const PrefsDoc *src,
     if (!cJSON_IsObject(sec)) return 0;
     cJSON *item = cJSON_GetObjectItemCaseSensitive(sec, key);
     if (!cJSON_IsString(item) || item->valuestring == NULL) return 0;
+    /* dst already holds that string: nothing to put, and dst is not marked
+     * dirty, so a caller can tell a copy that changed nothing. */
+    if (prefsDocStringEquals(dst, section, key, item->valuestring)) return 1;
     return prefsDocSetString(dst, section, key, item->valuestring);
 }
 

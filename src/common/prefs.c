@@ -147,6 +147,16 @@ static int prefsWrite(void) {
                 grafted = false;
             }
         }
+        if (grafted && !prefsDocIsDirty(disk)) {
+            /* The file already holds every value this program set (a
+             * save that sets all its keys again, with nothing moved): no
+             * write. What was read is still taken, so later reads here
+             * see the other programs' changes. */
+            prefsDocFree(g_doc);
+            g_doc = disk;
+            prefsChangedClear();
+            return 1;
+        }
         if (grafted) {
             if (!prefsDocSave(disk, g_path)) {
                 /* Not written: keep the document and the list as they
@@ -257,7 +267,14 @@ int prefsSetString(const char *section, const char *key,
      * already holds must not dirty the document or flag a cloud re-upload.
      * This lets callers flush a whole batch of settings (e.g. closing the
      * Settings dialog) without uploading when nothing actually changed. */
-    if (prefsDocStringEquals(g_doc, section, key, value)) return 1;
+    bool same = prefsDocStringEquals(g_doc, section, key, value);
+    /* Merge-on-save is the exception. The document in memory is this
+     * program's copy, and another program may have changed the key in the
+     * file since. A set of the value the copy already holds is then still
+     * this program saying what the key must be: it is set and noted, so
+     * the next write puts it onto the file. That write costs nothing when
+     * the file holds the value already (prefsWrite). */
+    if (same && !s_merge) return 1;
     if (!prefsDocSetString(g_doc, section, key, value)) return 0;
     prefsChangedNote(section, key);
 
@@ -265,8 +282,9 @@ int prefsSetString(const char *section, const char *key,
      * re-upload. Changes to device-local sections (auth, device identity
      * and sync bookkeeping) never sync, so they must not set sync-dirty.
      * Write the flag straight to the document so this set is not itself
-     * treated as an upload-eligible change. */
-    if (!prefsSectionIsDeviceLocal(section) && !prefsSyncDirty()) {
+     * treated as an upload-eligible change. A set of the value already held
+     * (merge-on-save only) is no change and flags nothing. */
+    if (!same && !prefsSectionIsDeviceLocal(section) && !prefsSyncDirty()) {
         prefsDocSetString(g_doc, kSecDevice, kKeySyncDirty, "Yes");
         prefsChangedNote(kSecDevice, kKeySyncDirty);
     }
