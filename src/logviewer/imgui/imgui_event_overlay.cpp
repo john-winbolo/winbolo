@@ -30,6 +30,8 @@ extern "C" {
     #include "../lv_hud.h"
     #include "../../gui/tiles.h"
     #include "../../gui/sdl3/map_colours.h"  /* mapColourTeam */
+    #include "../../gui/ping_kinds.h"        /* the colour and the name of a kind of ping */
+    #include "../../gui/sdl3/ping_icons.h"   /* the game's icon for a kind of ping */
 
     void lv_screenFormatTime(uint32_t absMs, char *dest, size_t destSize);
     uint32_t lv_screenGetTimeRunning(void);
@@ -42,6 +44,7 @@ extern "C" {
     void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY);
     void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
     SDL_Texture *lv_drawGetTilesTexture(void);
+    SDL_Renderer *lv_drawGetSDLRenderer(void);
 }
 
 /* The LOGVIEWER preference that keeps the ticked kinds: their saved names
@@ -74,6 +77,7 @@ struct OverlayMarker {
     int      picture;  /* LvOverlayPicture: all pillbox events, all base events, or none */
     int      team;     /* the team most of them name, or -1 */
     int      otherTeam;/* a lone event's second team, or -1 */
+    int      ping;     /* a lone event's kind of ping, or -1 */
     uint32_t timeMs;   /* the time of its first event */
 };
 static std::vector<int>              s_items;       /* event indexes, in time order */
@@ -245,6 +249,7 @@ static void overlay_refresh(float width, float grabMin, float minGap) {
         out.kind = -1;
         out.picture = LV_OVERLAY_PIC_NONE;
         out.otherTeam = -1;
+        out.ping = -1;
         out.timeMs = s_item_time[c.first];
         for (int k = 0; k < c.count; k++) {
             LvEventInfo info;
@@ -255,6 +260,7 @@ static void overlay_refresh(float width, float grabMin, float minGap) {
             if (k == 0) {
                 out.kind = info.kind;
                 out.otherTeam = info.otherTeam;
+                out.ping = info.ping;
                 out.picture = lvOverlayKindPicture(info.kind);
             } else {
                 /* lvOverlayClusterPicture's rule, one event at a time. */
@@ -268,7 +274,10 @@ static void overlay_refresh(float width, float grabMin, float minGap) {
                                                                        : LV_OVERLAY_TEAMS - 1]++;
         }
         out.team = lvOverlayMajorityTeam(teams);
-        if (c.count > 1) out.otherTeam = -1;
+        if (c.count > 1) {
+            out.otherTeam = -1;
+            out.ping = -1;
+        }
     }
 }
 
@@ -288,13 +297,41 @@ static bool overlay_dead_picture(ImDrawList *dl, ImVec2 p0, ImVec2 p1, float alp
     return true;
 }
 
-void lv_event_marker_draw(ImDrawList *dl, int eventKind, int eventTeam, ImVec2 p0, ImVec2 p1,
-                          float alpha) {
+const char *lv_event_ping_name(int ping) {
+    return langGetText(pingKindNameId((unsigned char)lvEventMarkerFor(LV_EVK_CHAT, -1, ping).ping));
+}
+
+/* The game's icon for a kind of ping over p0..p1, in the game's colour for
+ * the kind. The icons are the game's files (data/ui/ping), white, and are
+ * tinted as the game tints them. With no icon (the file is not there) a dot
+ * in that colour, which is what the game's marker falls back to. */
+static void overlay_ping_icon(ImDrawList *dl, int ping, ImVec2 p0, ImVec2 p1, float alpha) {
+    const PingKindStyle *style = pingKindStyle((unsigned char)ping);
+    const ImVec4 colour((float)style->r / 255.0f, (float)style->g / 255.0f,
+                        (float)style->b / 255.0f, 1.0f);
+    SDL_Renderer *renderer = lv_drawGetSDLRenderer();
+    SDL_Texture *tex = nullptr;
+    if (renderer != nullptr) {
+        /* It loads once for a renderer; after that the call does nothing. */
+        pingIconsInit(renderer);
+        tex = pingIconTexture((unsigned char)ping);
+    }
+    if (tex != nullptr) {
+        dl->AddImage((ImTextureID)(size_t)tex, p0, p1, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f),
+                     overlay_u32(colour, alpha));
+        return;
+    }
+    dl->AddCircleFilled(ImVec2((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f),
+                        (p1.x - p0.x) * 0.32f, overlay_u32(colour, alpha));
+}
+
+void lv_event_marker_draw(ImDrawList *dl, int eventKind, int eventTeam, int eventPing, ImVec2 p0,
+                          ImVec2 p1, float alpha) {
     const ImVec4 text = ImGui::GetStyleColorVec4(ImGuiCol_Text);
     const ImU32 dark = overlay_u32(ImVec4(0.0f, 0.0f, 0.0f, 0.8f), alpha);
     /* What the marker is: the one answer for the lane, the list of kinds
      * and the lines of the Events panel. */
-    const LvEventMarker marker = lvEventMarker(eventKind, eventTeam);
+    const LvEventMarker marker = lvEventMarkerFor(eventKind, eventTeam, eventPing);
     const LvOverlayPicture picture = marker.picture;
     const int kind = marker.kind;
     const int team = marker.team;
@@ -344,6 +381,12 @@ void lv_event_marker_draw(ImDrawList *dl, int eventKind, int eventTeam, ImVec2 p
         dl->AddLine(c0, c1, edge, thick + 1.2f);
         dl->AddLine(a0, a1, red, thick);
         dl->AddLine(c0, c1, red, thick);
+    } else if (marker.drawing == LV_MARKER_PING) {
+        /* A map ping: the game's icon for its kind. It has the room inside
+         * the line, a point more than a drawn icon, as the game's icon
+         * files keep an edge of their own. */
+        overlay_ping_icon(dl, marker.ping, ImVec2(p0.x + 1.0f, p0.y + 1.0f),
+                          ImVec2(p1.x - 1.0f, p1.y - 1.0f), alpha);
     } else if (kind != LV_EVK_TANK_KILLED || !overlay_dead_picture(dl, i0, i1, alpha)) {
         lv_icon_draw(dl, overlay_kind_icon(kind), ImVec2(i0.x + 1.0f, i0.y + 1.0f),
                      ImVec2(i1.x - 1.0f, i1.y - 1.0f), overlay_u32(text, alpha));
@@ -426,7 +469,11 @@ static void overlay_tooltip(const OverlayMarker &m) {
     if (m.count == 1) {
         if (lv_imgui_events_get_info(s_items[m.first], &info)) {
             overlay_format_when(info.timeMs, when, sizeof(when));
-            ImGui::TextDisabled("%s  %s", when, lv_imgui_events_kind_label(info.kind));
+            /* A ping says which kind of ping it is. */
+            ImGui::TextDisabled("%s  %s", when,
+                                (info.kind == LV_EVK_CHAT && info.ping >= 0)
+                                    ? lv_event_ping_name(info.ping)
+                                    : lv_imgui_events_kind_label(info.kind));
             ImGui::TextUnformatted(info.text);
         }
     } else {
@@ -490,7 +537,7 @@ void lv_event_overlay_lane(void) {
          * always at full strength. */
         const float alpha = (i == hot || m.timeMs > nowMs) ? 1.0f : OVERLAY_PAST_ALPHA;
         if (m.count == 1) {
-            lv_event_marker_draw(dl, m.kind, m.team, p0, p1, alpha);
+            lv_event_marker_draw(dl, m.kind, m.team, m.ping, p0, p1, alpha);
             /* The team it was done to: a short tick under the marker. */
             if (m.otherTeam >= 0) {
                 dl->AddRectFilled(ImVec2(p0.x + 2.0f, p1.y + 1.0f), ImVec2(p1.x - 2.0f, p1.y + 3.0f),
@@ -572,7 +619,7 @@ bool lv_event_kinds_combo(const char *id, const char *preview, const char *tip,
             /* The marker of an event of the kind that names no team: a
              * pillbox or a base held by no team, an icon with no line of a
              * team round it. */
-            lv_event_marker_draw(ImGui::GetWindowDrawList(), kind, -1, ImVec2(at.x, top),
+            lv_event_marker_draw(ImGui::GetWindowDrawList(), kind, -1, -1, ImVec2(at.x, top),
                                  ImVec2(at.x + side, top + side), 1.0f);
             ImGui::Dummy(ImVec2(side, rowH));
             ImGui::SameLine();

@@ -1367,6 +1367,70 @@ nothing reads.)
 
 - Unit test: `lv_fullscreen_key`.
 
+### Pings show their kind and the game's marker (Oct 13)
+
+The owner: "For chat and pings, can we put the type of ping it is and its
+animation just like how the game does it?"
+
+**What the log holds.** One `log_Ping` record for each ping (`log.h`,
+written in `server_command_dispatch.c`): the sender's slot, the kind, and
+the place in world units (256 for each map square). The time is the tick of
+the record. The log does not hold who the ping was sent to, the object the
+ping was on (a pill, a base, a tank), or which players had pings muted. It
+does hold the lobby teams (`log_TeamSet`) and the alliances, so the viewer
+works out who was sent a ping with the game's own rule
+(`serverSimPingReachesClient`): the sender, the sender's allies, and the
+players in the sender's lobby team.
+
+**The kind.** A ping is still an event of the Chat kind, with the game's own
+line as its text ("{player}: Attack!"). A kind of its own would drop pings
+from the list of every user who has a saved choice of kinds. The marker at
+the start of the Events row, and the marker on the timeline's event lane, is
+now the game's icon for that kind of ping, in the game's colour for the
+kind, with a line in the sender's team colour round it. The tooltip of the
+marker is the game's name for the kind. A chat line keeps the speech bubble.
+The icons and the colours are the game's (`ping_kinds.h`, `ping_icons.c`),
+so a new kind of ping in the game needs no work here; a compile-time check
+in `screen.c` fails if the count of kinds changes.
+
+**The animation.** The game draws a ping with `pingMarkerDraw`
+(`ping_marker.c`), which works out the blink and the fade from the age of
+the ping and nothing else. The viewer calls the same function with the age
+in game time: the time of the log now, minus the time of the ping. So the
+marker is the game's at each speed, stands still while the log is paused,
+and is right after a seek. A click on a ping's row goes to the tick of the
+ping, where its age is 0 and the animation starts.
+
+- The viewer kept the last 16 pings that the decoder passed. After a seek
+  back, those were pings from later in the log. It now keeps the pings of
+  the whole log (`lv_ping_view.h`, up to 4096, sorted by time; the scan of
+  the log fills it) and shows those whose time is in the last
+  `PING_DISPLAY_MS` before now. On a live feed it has the pings decoded so
+  far.
+- The game view drew pings already. The Overview map now draws them too
+  (`lvDrawPingsOverBlit` in `draw.c`), with the sender's name as the game's
+  full-screen map does.
+- With the view of one player (the eye), only the pings that player was
+  sent are drawn. With all teams, all pings are drawn. The Events list
+  shows all pings in both views, as it shows all chat.
+
+**Not done, and why.**
+
+- No object for the ping: the log has none. The marker is at the place the
+  sender clicked.
+- A player who had pings muted still has the ping drawn in that player's
+  view: the log does not hold mutes.
+- On the Overview map the marker is drawn over the finished picture, so it
+  is over the tanks. The game draws it under them.
+- The Overview map of the viewer inside WinBolo (Watch a Log) is drawn by
+  another path and has no ping markers yet. Its game view has them.
+- No sound: the viewer plays no ping sound, and none was added.
+- No setting to turn the markers off.
+- More than 16 pings on screen at one time: the newest 16 are drawn.
+
+To show more, the log writer must also write, at the time the ping is sent:
+the players the ping went to, the object it was on, and the mutes.
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the

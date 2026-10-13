@@ -86,6 +86,8 @@ typedef struct {
     int         mapY;
     int         team;       /* the team that did it, 0..15, or -1 */
     int         otherTeam;  /* the team it was done to, or -1 */
+    int         ping;       /* the kind of ping the line is (PING_KIND_*), or
+                             * -1 for a line that is not a map ping */
     const char *text;       /* the line, without its time; valid until the
                              * list changes */
 } LvEventInfo;

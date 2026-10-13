@@ -64,9 +64,20 @@ bool lv_event_kinds_combo(const char *id, const char *preview, const char *tip,
  * that team (no team: the game's red pillbox, the game's neutral base). Any
  * other kind is its icon on a dark square, with a line in the team's colour
  * round it when there is a team. The picture is made larger or smaller as
- * lv_item_picture does it. alpha dims the marker. It creates no texture. */
-void lv_event_marker_draw(ImDrawList *dl, int kind, int team, ImVec2 p0, ImVec2 p1,
+ * lv_item_picture does it. alpha dims the marker.
+ *
+ * ping is the kind of ping the event is (PING_KIND_*), -1 for an event that
+ * is not a map ping. A ping has the game's own icon for its kind, in the
+ * game's colour for the kind, in place of the speech bubble; the line round
+ * it is still the colour of the sender's team. The game's icons are loaded
+ * the first time one is asked for (pingIconsInit); nothing else creates a
+ * texture. */
+void lv_event_marker_draw(ImDrawList *dl, int kind, int team, int ping, ImVec2 p0, ImVec2 p1,
                           float alpha);
+
+/* The game's name for a kind of ping ("Attack", "On My Way"), in the
+ * language in use. */
+const char *lv_event_ping_name(int ping);
 
 /* The lane of markers. Call it just before the seek slider, with the item
  * width of the slider already pushed: the lane takes that width, so its

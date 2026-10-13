@@ -69,6 +69,7 @@
 #include "../common/wb_log.h"      /* the warnings a full index or list gives */
 #include "sim_rules_names.h"     /* simRulesRuleIndex — a rule's name to its index */
 #include "lv_builder_status.h"   /* the times each builder was away */
+#include "lv_ping_view.h"        /* the pings of the log, kept by time */
 
 /* The middle of the visible map from the start of the view (defined with
  * lv_screenSetViewInset). */
@@ -332,67 +333,85 @@ const LvScripts *lv_screenGetScripts(void) {
 }
 
 /* --- Smart pings ----------------------------------------------------
- * Every log_Ping the playback has walked past that is still inside its
- * PING_DISPLAY_MS. Aged on g_lv->timeRunning, the playback clock, so a ping
- * lasts the same five seconds of game time however fast the round is being
- * played back — and a rewind, which winds that clock backwards, leaves every
- * stored ping in the future and so drops them all with no explicit reset.
+ * Every log_Ping the decoder has read, kept by its time on the playback
+ * clock (lv_ping_view.h). What is on the map is the pings sent in the
+ * PING_DISPLAY_MS before the clock's time now, so a ping lasts the same five
+ * seconds of game time however fast the round is played back, a rewind takes
+ * the later ones off the map without a reset, and a jump into the middle of
+ * one shows it at the age it has there.
  *
- * The viewer shows every team's pings: a replay is watched from outside, so
- * there is no team to filter to. */
+ * The decoder reads the same record again after every seek, and the pass
+ * that lists the whole log's events reads them all once at the load. The
+ * store keeps a ping once (LV_PING_SAME_MS), so after that pass it holds
+ * every ping of a log file and a seek to any time has the pings of that
+ * time. A live feed has the pings it has decoded so far.
+ *
+ * With the view of all teams every team's pings show. With one player's
+ * view, the pings that player was sent (lvPingSeen). */
 #define LV_MAX_PINGS 16
 
-typedef struct {
-  BYTE     sender;
-  BYTE     kind;
-  uint16_t worldX;
-  uint16_t worldY;
-  uint32_t timeMs;   /* playback clock at the ping, +1 so 0 means "empty" */
-} lvPing;
+/* The kinds lv_ping_view.h counts are the game's. */
+typedef char lv_ping_kinds_match[(LV_PING_KINDS == PING_KIND_COUNT) ? 1 : -1];
 
-static lvPing s_pings[LV_MAX_PINGS];
-static int    s_pingWrite = 0;
+static LvPingStore s_pingStore;
 
 /* Drop every stored ping. A new log restarts the playback clock at zero, so
-   the previous log's pings all read as "in the future" and are hidden — until
-   playback runs past the time they were stored at, when they would come back
-   over a replay they were never part of. Called from lv_screenSetup, which
-   every load path runs through. */
+   the previous log's pings would come back over a replay they were never
+   part of. Called from lv_screenSetup, which every load path runs through,
+   and when a live feed starts a new round. */
 static void lv_pingReset(void) {
-  memset(s_pings, 0, sizeof(s_pings));
-  s_pingWrite = 0;
+  lvPingStoreClear(&s_pingStore);
 }
 
 static void lv_pingAdd(BYTE sender, BYTE kind, uint16_t wx, uint16_t wy) {
-  s_pings[s_pingWrite].sender = sender;
-  s_pings[s_pingWrite].kind   = kind;
-  s_pings[s_pingWrite].worldX = wx;
-  s_pings[s_pingWrite].worldY = wy;
-  s_pings[s_pingWrite].timeMs = g_lv->timeRunning + 1;
-  s_pingWrite = (s_pingWrite + 1) % LV_MAX_PINGS;
+  (void) lvPingStoreAdd(&s_pingStore, g_lv->timeRunning, sender, kind, wx, wy);
 }
 
-/* Read out one live ping. `index` walks 0..LV_MAX_PINGS-1 from the oldest
- * slot, so drawing in order puts the newest on top; a slot that is empty,
- * expired or (after a rewind) still in the future returns false and the
- * caller moves on. ageMs is measured on the playback clock. `sender` is the
- * slot that sent it, which is how the drawer names the marker. */
+/* Is a stored ping one the view shows: any, for the view of all teams; for
+   one player's view, a ping the game sent that player. The alliances and
+   lobby teams are the ones of the playback's time now, which is within five
+   seconds of the ping. */
+static bool lv_pingInView(const LvPingRec *p) {
+  BYTE viewer;
+  BYTE senderTeam = 0, viewerTeam = 0;
+  if (lv_playersHasPerspective() == FALSE) return TRUE;
+  viewer = lv_playersGetSelf();
+  if (!lv_screenGetSlotTeam(p->sender, &senderTeam)) senderTeam = 0;
+  if (!lv_screenGetSlotTeam(viewer, &viewerTeam)) viewerTeam = 0;
+  return lvPingSeen(true, (int) p->sender, (int) viewer,
+                    lv_playersIsAllie(p->sender, viewer) == TRUE,
+                    (int) senderTeam, (int) viewerTeam)
+             ? TRUE : FALSE;
+}
+
+/* Read out one ping that is on the map now. `index` walks 0..LV_MAX_PINGS-1
+ * from the oldest, so drawing in order puts the newest on top; an index past
+ * the last returns false and the caller moves on. When more than
+ * LV_MAX_PINGS are on the map at once the newest are the ones given. ageMs
+ * is measured on the playback clock. `sender` is the slot that sent it,
+ * which is how the drawer names the marker. */
 bool lv_screenGetPing(int index, BYTE *sender, BYTE *kind, uint16_t *worldX,
                       uint16_t *worldY, uint32_t *ageMs) {
-  const lvPing *p;
-  uint32_t at;
+  int first = 0, n, i, inView = 0, want;
   if (index < 0 || index >= LV_MAX_PINGS) return FALSE;
-  p = &s_pings[(s_pingWrite + index) % LV_MAX_PINGS];
-  if (p->timeMs == 0) return FALSE;
-  at = p->timeMs - 1;
-  if (g_lv->timeRunning < at) return FALSE;
-  if (g_lv->timeRunning - at >= (uint32_t)PING_DISPLAY_MS) return FALSE;
-  if (sender) *sender = p->sender;
-  if (kind)   *kind   = p->kind;
-  if (worldX) *worldX = p->worldX;
-  if (worldY) *worldY = p->worldY;
-  if (ageMs)  *ageMs  = g_lv->timeRunning - at;
-  return TRUE;
+  n = lvPingStoreShown(&s_pingStore, g_lv->timeRunning, (uint32_t)PING_DISPLAY_MS, &first);
+  for (i = 0; i < n; i++) {
+    if (lv_pingInView(&s_pingStore.rec[first + i])) inView++;
+  }
+  want = index + ((inView > LV_MAX_PINGS) ? inView - LV_MAX_PINGS : 0);
+  if (want >= inView) return FALSE;
+  for (i = 0; i < n; i++) {
+    const LvPingRec *p = &s_pingStore.rec[first + i];
+    if (!lv_pingInView(p)) continue;
+    if (want-- > 0) continue;
+    if (sender) *sender = p->sender;
+    if (kind)   *kind   = p->kind;
+    if (worldX) *worldX = p->worldX;
+    if (worldY) *worldY = p->worldY;
+    if (ageMs)  *ageMs  = g_lv->timeRunning - p->timeMs;
+    return TRUE;
+  }
+  return FALSE;
 }
 
 int lv_screenGetPingCapacity(void) { return LV_MAX_PINGS; }
@@ -2973,6 +2992,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
                    (int)sizeof(args.playerName) - 1, str);
           /* A ping names a place: its world coordinate is 256 to the cell. */
           lv_messageTagPlayers(opt1, -1);
+          lv_messageTagPing(opt2);
           lv_messageAddAt(LV_EVK_CHAT, wx >> 8, wy >> 8, newsWireMessage,
                           MESSAGE_NEWSWIRE, pingKindMessageId(opt2), &args);
         }
@@ -5877,6 +5897,9 @@ void lv_screenPanToTotalPixels(int totalPxX, int totalPxY) {
  * -1 for none. lv_messageAddAt clears them once the line is added. */
 static int s_eventTeam = -1;
 static int s_eventOtherTeam = -1;
+/* The kind of ping the next line is (lv_messageTagPing), -1 for a line that
+ * is not a ping. Cleared with the teams. */
+static int s_eventPing = -1;
 
 /* The team a player is in as the line is added, 0..15, or -1. The team is
  * kept, not the player: the player can change team later in the log, and
@@ -5892,6 +5915,12 @@ void lv_messageTagPlayers(int actor, int other) {
   s_eventTeam = lv_screenEventTeamOf(actor);
   s_eventOtherTeam = lv_screenEventTeamOf(other);
 }
+
+void lv_messageTagPing(int pingKind) {
+  s_eventPing = (pingKind >= 0) ? pingKind : -1;
+}
+
+int lv_screenEventPing(void) { return s_eventPing; }
 
 void lv_screenEventTeams(int *team, int *otherTeam) {
   if (team != NULL) *team = s_eventTeam;
@@ -5935,12 +5964,15 @@ void lv_messageAddAt(lvEventKind kind, int mapX, int mapY,
     }
     s_eventTeam = -1;
     s_eventOtherTeam = -1;
+    s_eventPing = -1;
     return;
   }
   lv_windowAddEvent(0, (int)kind, mapX, mapY, body);
-  /* The host has taken the tag with the line (lv_screenEventTeams). */
+  /* The host has taken the tag with the line (lv_screenEventTeams,
+     lv_screenEventPing). */
   s_eventTeam = -1;
   s_eventOtherTeam = -1;
+  s_eventPing = -1;
 
   /* The event scan decodes the whole log once to fill the events panel and
    * nothing else. The marquee queue is walked to its tail on every append,
@@ -6199,9 +6231,9 @@ void lv_screenEventScanRestore(void) {
   memset(g_lv->gameViewHud, 0, sizeof(g_lv->gameViewHud));
   memset(g_lv->tankInv,     0, sizeof(g_lv->tankInv));
   memcpy(g_lv->tankMods, s_scanSaved.tankMods, sizeof(g_lv->tankMods));
-  /* Pings are kept by time, so the scan's would show again as playback
-     reached them, on top of the ones playback itself posts. */
-  lv_pingReset();
+  /* The pings the scan read stay: they are kept by time, playback does not
+     add one a second time, and with them a seek to any time has the pings
+     of that time. */
   /* A lobby snapshot carries no map, and a snapshot leaves the on-map flags
      of pillboxes, bases and starts to the event stream. The loader read the
      opening snapshot into empty ones (lv_screenSetup), so the restore does
@@ -6984,6 +7016,8 @@ void lv_screenSpecResetSegment(void) {
   }
   lv_snapshotDestroy(&g_lv->snap);
   g_lv->snap        = lv_snapshotCreate();
+  /* The old round's pings are not the new round's. */
+  lv_pingReset();
   s_firstWorldSnapKnown = FALSE;
   s_specFollowLive  = true;
   s_specSeekPark    = false;

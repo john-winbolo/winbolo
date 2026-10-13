@@ -755,6 +755,34 @@ static void gv_drawPings(SDL_Renderer *renderer,
   }
 }
 
+/* The names under the overview map's ping markers: a cache of their own,
+ * as the game view's (s_pingNameCache), since the two are drawn in different
+ * fonts and the cache is keyed on the player slot. */
+static TankLabelCache s_overviewPingNames;
+
+void lv_drawOverviewPing(float cx, float cy, float tilePx, unsigned char kind,
+                         unsigned char sender, const char *name,
+                         unsigned int ageMs, void *font) {
+  SDL_Renderer *renderer = lv_drawGetSDLRenderer();
+  PingMarkerLabel label;
+
+  if (renderer == NULL) return;
+  /* Expiry only, as gv_drawPings: pingMarkerDraw does the flashes. */
+  if (pingDisplayAlpha((int)ageMs) <= 0.0f) return;
+  /* It loads once for a renderer; after that the call does nothing. */
+  pingIconsInit(renderer);
+  label.cache = &s_overviewPingNames;
+  label.font  = (TTF_Font *)font;
+  label.name  = (name != NULL) ? name : "";
+  label.slot  = sender;
+  label.scale = 1.0f;
+  pingMarkerDraw(renderer, kind, cx, cy, tilePx, tilePx, ageMs, &label);
+}
+
+void lv_drawOverviewPingsFlush(void) {
+  tankLabelCacheFlush(&s_overviewPingNames);
+}
+
 /* --- Scenario map markers -----------------------------------------
  * The markers the camera tank's player would see, on the same squares the
  * pings use and with the same arithmetic. The view is redrawn every frame,

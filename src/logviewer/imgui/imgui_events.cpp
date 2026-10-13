@@ -38,6 +38,7 @@ extern "C" {
     void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY);
     void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
     void lv_screenEventTeams(int *team, int *otherTeam);
+    int lv_screenEventPing(void);
 }
 
 /* Event with associated playback timestamp, held in absolute log ms so the
@@ -60,6 +61,9 @@ struct LogEvent {
      * happened (lv_messageTagPlayers), -1 for none. */
     int      team = -1;
     int      otherTeam = -1;
+    /* The kind of ping the line is (lv_messageTagPing), -1 for a line that
+     * is not a map ping. */
+    int      ping = -1;
 };
 
 /* Event list storage */
@@ -160,6 +164,7 @@ void lv_imgui_events_add(int eventType, int kind, int mapX, int mapY,
     e.mapX     = mapX;
     e.mapY     = mapY;
     lv_screenEventTeams(&e.team, &e.otherTeam);
+    e.ping     = lv_screenEventPing();
     s_events.push_back(e);
     s_version++;
 
@@ -283,6 +288,7 @@ bool lv_imgui_events_get_info(int i, LvEventInfo *out) {
     out->mapY      = e.mapY;
     out->team      = e.team;
     out->otherTeam = e.otherTeam;
+    out->ping      = e.ping;
     out->text      = e.text.c_str();
     return true;
 }
@@ -642,7 +648,7 @@ void lv_imgui_events_window(void) {
                     const float iconX = floorf(listLeft);
                     const float iconY = floorf(rowPos.y + (rowTextH - iconSide) * 0.5f);
                     /* A line still to come is dim, and so is its marker. */
-                    lv_event_marker_draw(dl, ev.kind, ev.team, ImVec2(iconX, iconY),
+                    lv_event_marker_draw(dl, ev.kind, ev.team, ev.ping, ImVec2(iconX, iconY),
                                          ImVec2(iconX + iconSide, iconY + iconSide),
                                          isFuture ? 0.45f : 1.0f);
                     if (scrolledAcross) {
@@ -658,7 +664,10 @@ void lv_imgui_events_window(void) {
                     }
                     /* The marker says what kind of event the line is. */
                     if (rowHovered && ImGui::GetIO().MousePos.x < listLeft + iconCol) {
-                        ImGui::SetTooltip("%s", lv_imgui_events_kind_label(ev.kind));
+                        /* A ping says which kind of ping it is. */
+                        ImGui::SetTooltip("%s", (ev.kind == LV_EVK_CHAT && ev.ping >= 0)
+                                                    ? lv_event_ping_name(ev.ping)
+                                                    : lv_imgui_events_kind_label(ev.kind));
                     }
                 }
                 /* A line that jumps when clicked shows the hand. */
