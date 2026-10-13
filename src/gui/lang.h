@@ -1349,8 +1349,8 @@
 #define STR_LV_TIP_DESELECT                 2837
 #define STR_LV_TIP_ALL_TEAMS                2838
 /* Log viewer: the gear of a panel and its options */
-#define STR_LV_TIP_PANEL_OPTIONS            2839
-#define STR_LV_PANEL_TRANSPARENT            2840
+#define STR_LV_TIP_DOCK_OPTIONS             2839
+#define STR_LV_DOCK_TRANSPARENT             2840
 /* Log viewer: the event markers over the seek bar of the Controls panel */
 #define STR_LV_OVERLAY_EVENTS               2841
 #define STR_LV_OVERLAY_TIP                  2842

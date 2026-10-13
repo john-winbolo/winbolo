@@ -129,3 +129,15 @@ void lv_imgui_dock_margins(int *left, int *top, int *right, int *bottom) {
     if (right != NULL) *right = 0;
     if (bottom != NULL) *bottom = 0;
 }
+
+/* The same for what bounds the map as it is drawn, and every point is on
+ * the map. */
+void lv_imgui_dock_map_margins(int *left, int *top, int *right, int *bottom) {
+    lv_imgui_dock_margins(left, top, right, bottom);
+}
+
+int lv_imgui_dock_point_on_map(float px, float py) {
+    (void)px;
+    (void)py;
+    return 1;
+}

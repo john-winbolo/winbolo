@@ -61,6 +61,7 @@
 #include "lv_tank_status.h"
 #include "lv_time_fmt.h"
 #include "lv_event_flash.h"
+#include "lv_dock_clear.h"       /* the middle of the view beside a clear sidebar */
 #include "lv_messages.h"
 #include "../gui/lang.h"
 #include "../gui/ping_kinds.h"   /* PING_DISPLAY_MS, pingKindMessageId */
@@ -68,6 +69,11 @@
 #include "../common/wb_log.h"      /* the warnings a full index or list gives */
 #include "sim_rules_names.h"     /* simRulesRuleIndex — a rule's name to its index */
 #include "lv_builder_status.h"   /* the times each builder was away */
+
+/* The middle of the visible map from the start of the view (defined with
+ * lv_screenSetViewInset). */
+static int lvViewCentrePxX(void);
+static int lvViewCentrePxY(void);
 
 /* File-scope pointer to the central LogViewerState */
 static LogViewerState *g_lv = NULL;
@@ -3261,8 +3267,8 @@ void lv_screenFollowCentredTank(void) {
   sizeX = lv_screenGetSizeX();
   sizeY = lv_screenGetSizeY();
   /* Centre the viewport on the tank, in pixels. */
-  camPxX = px - (sizeX * TILE_SIZE_X) / 2;
-  camPxY = py - (sizeY * TILE_SIZE_Y) / 2;
+  camPxX = px - lvViewCentrePxX();
+  camPxY = py - lvViewCentrePxY();
 
   maxOffX = 255 - sizeX; if (maxOffX < 0) maxOffX = 0;
   maxOffY = 255 - sizeY; if (maxOffY < 0) maxOffY = 0;
@@ -3310,8 +3316,8 @@ void lv_screenCentreOnSelectedItem() {
       x = b.x;
       y = b.y;
     }
-    int cx = (int)x - (int)(g_lv->screenSizeX / 2);
-    int cy = (int)y - (int)(g_lv->screenSizeY / 2);
+    int cx = (int)x - lvViewCentrePxX() / TILE_SIZE_X;
+    int cy = (int)y - lvViewCentrePxY() / TILE_SIZE_Y;
     if (cx < 0) cx = 0;
     if (cy < 0) cy = 0;
     if (cx + g_lv->screenSizeX > 255) cx = 255 - g_lv->screenSizeX;
@@ -5774,6 +5780,33 @@ void lv_screenGetOffsets(BYTE *x, BYTE *y) {
   }
 }
 
+/* The part of the view under a clear sidebar at each edge (backend.h). */
+static int s_viewInsetL = 0, s_viewInsetT = 0, s_viewInsetR = 0, s_viewInsetB = 0;
+
+void lv_screenSetViewInset(int left, int top, int right, int bottom) {
+  s_viewInsetL = (left > 0) ? left : 0;
+  s_viewInsetT = (top > 0) ? top : 0;
+  s_viewInsetR = (right > 0) ? right : 0;
+  s_viewInsetB = (bottom > 0) ? bottom : 0;
+}
+
+void lv_screenGetViewInset(int *left, int *top, int *right, int *bottom) {
+  if (left != NULL) *left = s_viewInsetL;
+  if (top != NULL) *top = s_viewInsetT;
+  if (right != NULL) *right = s_viewInsetR;
+  if (bottom != NULL) *bottom = s_viewInsetB;
+}
+
+/* The middle of the visible map from the start of the view, in pixels and
+ * in whole squares. Half the view when no sidebar is clear. */
+static int lvViewCentrePxX(void) {
+  return lvDockClearViewCentre(lv_screenGetSizeX() * TILE_SIZE_X, s_viewInsetL, s_viewInsetR);
+}
+
+static int lvViewCentrePxY(void) {
+  return lvDockClearViewCentre(lv_screenGetSizeY() * TILE_SIZE_Y, s_viewInsetT, s_viewInsetB);
+}
+
 void lv_screenGetSubOffset(int *x, int *y) {
   if (x != NULL) *x = g_lv->subPxX;
   if (y != NULL) *y = g_lv->subPxY;
@@ -5973,8 +6006,8 @@ void lv_screenMouseCentreClick(int xPos, int yPos) {
   /* In int, then clamped: the BYTE arithmetic this used to do wrapped a click
    * near the top-left to the far side of the map, and a click near the
    * bottom-right past column 255. */
-  cx = ((int)g_lv->xOffset + xClick) - (g_lv->screenSizeX / 2);
-  cy = ((int)g_lv->yOffset + yClick) - (g_lv->screenSizeY / 2);
+  cx = ((int)g_lv->xOffset + xClick) - lvViewCentrePxX() / TILE_SIZE_X;
+  cy = ((int)g_lv->yOffset + yClick) - lvViewCentrePxY() / TILE_SIZE_Y;
   if (cx < 0) cx = 0;
   if (cy < 0) cy = 0;
   if (cx > 255) cx = 255;
@@ -5995,8 +6028,8 @@ void lv_screenCentreOnCell(int mapX, int mapY) {
   if (g_lv->logLoaded == FALSE) {
     return;
   }
-  cx = mapX - (g_lv->screenSizeX / 2);
-  cy = mapY - (g_lv->screenSizeY / 2);
+  cx = mapX - lvViewCentrePxX() / TILE_SIZE_X;
+  cy = mapY - lvViewCentrePxY() / TILE_SIZE_Y;
   if (cx < 0) cx = 0;
   if (cy < 0) cy = 0;
   if (cx > 255) cx = 255;
@@ -6042,6 +6075,10 @@ int lv_screenShowCell(int mapX, int mapY, float viewPtsW, float viewPtsH, float 
   if (zoom <= 0.0f) zoom = 1.0f;
   mapPxW = (viewPtsW > 0.0f) ? viewPtsW / zoom : (float)(sizeX * TILE_SIZE_X);
   mapPxH = (viewPtsH > 0.0f) ? viewPtsH / zoom : (float)(sizeY * TILE_SIZE_Y);
+  /* The view starts under a clear left or top sidebar, and the visible area
+     after it: its middle is that much further from the view's start. */
+  mapPxW += 2.0f * (float)s_viewInsetL;
+  mapPxH += 2.0f * (float)s_viewInsetT;
   /* The same limits lv_screenPanToTotalPixels keeps. */
   maxOffX = 255 - sizeX; if (maxOffX < 0) maxOffX = 0;
   maxOffY = 255 - sizeY; if (maxOffY < 0) maxOffY = 0;

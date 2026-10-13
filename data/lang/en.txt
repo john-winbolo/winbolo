@@ -1264,8 +1264,8 @@ STR_LV_TIP_DESELECT=Deselect tank
 STR_LV_TIP_ALL_TEAMS=Back to all teams
 
 # Log viewer: the gear of a panel and its options
-STR_LV_TIP_PANEL_OPTIONS=Panel options
-STR_LV_PANEL_TRANSPARENT=Make unused panel portions transparent
+STR_LV_TIP_DOCK_OPTIONS=Sidebar options
+STR_LV_DOCK_TRANSPARENT=Make unused sidebar portions transparent
 
 # Log viewer: the event markers over the seek bar of the Controls panel
 STR_LV_OVERLAY_EVENTS=Overlay events

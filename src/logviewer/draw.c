@@ -512,7 +512,9 @@ static void lvDrawBlitTargetToWindow(void) {
          * offset is floored on its own so the map's corner is the pixel the
          * sidebar's edge is drawn at. */
         int dockL = 0, dockT = 0;
-        lv_imgui_dock_margins(&dockL, &dockT, NULL, NULL);
+        /* A sidebar whose unused part is clear takes nothing: the map goes
+         * under it. */
+        lv_imgui_dock_map_margins(&dockL, &dockT, NULL, NULL);
         dstRect.x += SDL_floorf((float)dockL * pxScale);
         dstRect.y += SDL_floorf((float)dockT * pxScale);
     }
@@ -582,7 +584,7 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     /* The standalone viewer's sidebars take the edges of the window; the map
      * is what they leave, as it is when a sidebar comes in or is resized
      * (lvHostDockSync). The embedded reel has none. */
-    if (!g_embedded) lv_imgui_dock_margins(&dockL, &dockT, &dockR, &dockB);
+    if (!g_embedded) lv_imgui_dock_map_margins(&dockL, &dockT, &dockR, &dockB);
     dock.left = dockL;
     dock.top = dockT;
     dock.right = dockR;
@@ -2646,6 +2648,26 @@ static void lvDrawEventFlashOverBlit(const SDL_FRect *src, const SDL_FRect *dst)
     view.y = (int)dst->y;
     view.w = (int)dst->w;
     view.h = (int)dst->h;
+    if (!g_embedded) {
+        /* The arrow for a place off the view goes at the edge of the map
+           that shows, not under a sidebar whose unused part is clear. */
+        int fullL = 0, fullT = 0, fullR = 0, fullB = 0;
+        int mapL = 0, mapT = 0, mapR = 0, mapB = 0;
+        float pxScale = lvDrawPixelScale();
+        int inL, inT, inR, inB;
+        lv_imgui_dock_margins(&fullL, &fullT, &fullR, &fullB);
+        lv_imgui_dock_map_margins(&mapL, &mapT, &mapR, &mapB);
+        inL = (int)((float)(fullL - mapL) * pxScale);
+        inT = (int)((float)(fullT - mapT) * pxScale);
+        inR = (int)((float)(fullR - mapR) * pxScale);
+        inB = (int)((float)(fullB - mapB) * pxScale);
+        if (inL + inR < view.w && inT + inB < view.h) {
+            view.x += inL;
+            view.y += inT;
+            view.w -= inL + inR;
+            view.h -= inT + inB;
+        }
+    }
     lv_drawEventFlashAt(cx, cy, (float)(zoomFactor * TILE_SIZE_X) * scale, &view);
 }
 

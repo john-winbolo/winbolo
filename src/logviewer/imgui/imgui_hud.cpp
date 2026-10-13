@@ -33,7 +33,6 @@
 #include "imgui_dock.h"
 #include "imgui_context.h"
 #include "imgui_lv_icons.h"
-#include "imgui_lv_panel.h"
 #include "imgui.h"
 #include "../../gui/lang.h"
 #include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
@@ -413,7 +412,7 @@ void lv_imgui_hud_window(void) {
     snprintf(hud_title, sizeof(hud_title), "%s###hud", langGetText(STR_LV_WIN_HUD));
     /* No scroll bar: the grids are sized to the window, and a bar that came
      * and went with them would change the room they are sized to. */
-    if (lv_panel_begin("###hud", hud_title, &lv_g_show_hud_window,
+    if (ImGui::Begin(hud_title, &lv_g_show_hud_window,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoScrollWithMouse)) {
         /* In the dock the dock places the window; moving it here would pull
@@ -517,5 +516,5 @@ void lv_imgui_hud_window(void) {
             ImGui::Dummy(ImVec2((float)w, (float)h));
         }
     }
-    lv_panel_end();
+    ImGui::End();
 }

@@ -450,7 +450,7 @@ drawn icons of the viewer are now in one file, `imgui_lv_icons.cpp`:
 | `LV_ICON_FAST_FORWARD` | two triangles to the right | Controls |
 | `LV_ICON_TO_END` | a triangle against a bar | Controls, "Jump to live" (live feed only) |
 | `LV_ICON_EYE` | an eye | HUD panel (moved here from `imgui_hud.cpp`) |
-| `LV_ICON_GEAR` | a toothed wheel | panel options |
+| `LV_ICON_GEAR` | a toothed wheel | sidebar options |
 
 No picture file and no icon font were added. A button whose action has
 nothing to act on is dimmed: Rewind at the start, Play at the end or while
@@ -565,86 +565,140 @@ now has the same stripe. Both panels draw the line with one helper
   frame until the mouse is over it.
 
 
-### A gear on every panel, and "Make unused panel portions transparent"
+### "Make unused sidebar portions transparent": an option of a sidebar
 
-Every panel (Controls, HUD, Overview, Tank, Game Information, the scenario
-panel, Item Information, Events, Comments) has a small gear. A click opens
-the panel's options: one check item, "Make unused panel portions
-transparent". One helper does it for all nine: a panel opens its window with
-`lv_panel_begin` and closes it with `lv_panel_end` (`imgui_lv_panel.cpp`).
+**What was there before, and why it did nothing.** The option was one a
+panel ("Make unused panel portions transparent", a gear on every panel). In
+a sidebar it showed no change: a docked panel made clear showed the
+sidebar's own strip, which is a window in the same colour (`ImGui::Begin` of
+the strip in `draw_side`, `imgui_dock.cpp`), and the map stopped at the
+sidebar's edge (`lvDrawBlitTargetToWindow`, `draw.c`), so nothing was behind a
+docked panel to see. The owner then said what was wanted: the option belongs
+to a sidebar, and "unused" means the part of the sidebar under its panels,
+not the background of a panel.
 
-**Where the gear is.**
+**The per-panel option is removed.** The gear on every panel, the helper
+(`imgui_lv_panel.cpp`, `lv_panel_opts.h`), the backing boxes and the
+preference `Window.<Panel>.Transparent` are gone. The gear had no other
+item. An old `Window.<Panel>.Transparent` key in a preferences file is not
+read and is not moved to the new option. A floating panel has no such option
+now. The two strings keep their numbers (2839, 2840) with new names and
+words: `STR_LV_TIP_DOCK_OPTIONS` "Sidebar options", `STR_LV_DOCK_TRANSPARENT`
+"Make unused sidebar portions transparent".
 
-- A floating panel: in the title bar, left of the close button, the same
-  size as the close button. It takes no room from what the panel shows.
-- A panel that is a tab in a sidebar (or tabbed with another panel) has no
-  title bar of its own. Its gear is in the same place in the bar of tabs. It
-  belongs to the tab that shows, as the close button of that bar does.
-- With no bar at all (the bar of tabs of a dock node can be hidden): the
-  bottom right corner of the panel, drawn over what the panel shows. Not the
-  top right corner: that is where the Tank and HUD panels have the X of
-  their name line.
-- The gear is drawn with the draw list (the shared icon helper), as tall as
-  the text, in the colour of the text, dim until the mouse is over it. Its
-  tooltip is "Panel options". A patch in the bar's colour is drawn under it,
-  so a long title or a tab does not show through it.
-- A click on the gear does not start a drag of the window, and does not pull
-  a tab out of its sidebar.
+**The option.** One a sidebar (left, right, top, bottom), off by default.
+It is in two places:
 
-**What the option does.** The option is one a panel, off by default, kept in
-the LOGVIEWER preferences as `Window.<Panel>.Transparent` (Yes/No) with the
-same panel names the `Window.<Panel>.Visible` keys have, and saved by the
-same "once it has been still for a second" save as the rest of the layout.
+- Windows menu, under the four sidebar items: a submenu "Make unused sidebar
+  portions transparent" with the four sidebars as check items.
+- A gear for each sidebar that shows. It is NOT on the sidebar, where it
+  would be over a panel's controls. It is on the map, in the corner at the
+  end of the sidebar's inner edge going clockwise: the left sidebar's gear
+  at the map's top left, the top one's at the top right, the right one's at
+  the bottom right, the bottom one's at the bottom left. So two gears are
+  never in one corner. It is one button the height of a text line, dim (45%)
+  until the mouse is on it, tooltip "<sidebar>: Sidebar options". It covers
+  that small square of the map. It is not drawn when the map area is less
+  than three such buttons wide or high.
 
-With it on:
+**Option off.** The sidebar is as it was: a solid strip, the panels share
+all of its length, the map stops at its edge.
 
-- The background of the panel is not drawn: not the window's, not that of a
-  list inside it, not the striped rows of a table, not the lines of a
-  table.
-- What the panel shows stays: text, pictures, gauges, buttons, sliders,
-  scroll bars. The title bar (or the tab) stays as it is.
-- **To keep text readable over the map, each block of what the panel shows
-  has a backing**: a rounded box in the colour of the panel's background at
-  75% of its opacity, 3 points larger than the block on every side. This
-  was chosen over a dark outline round the letters: a backing keeps small
-  text readable over the brightest squares of the map, and pictures and
-  gauges get it too. The blocks are found from what the panel drew in the
-  frame: rows that have something in them and are no more than 6 points
-  apart are one block, as wide as its widest row (`lvBackingBlocks` in
-  `lv_panel_opts.h`, unit test `lv_panel_backing_sums`). So lines of text
-  under each other are one box, and the empty part of the panel under and
-  beside them is see-through. A list with three rows in a tall panel has a
-  box round the three rows only.
-- The border shows only while the mouse is over the panel or the panel is
-  being moved or resized.
-- The option does not change the size of anything in the panel (measured in
-  the headless try-out).
+**Option on.** (`lv_dock_clear.h` has the sums, `draw_side` uses them.)
 
-**Open question for the owner: clicks.** A click on the see-through part of
-a panel still belongs to the panel. It does not go through to the map. That
-is the simple and safe choice (the panel can still be moved and resized by
-its empty part), but it can surprise: the map shows there and does not
-answer. Making that part click-through is possible later.
+- The panels are packed from the start of the sidebar with nothing between
+  them but a grip: from the top down in the left and right sidebars, from
+  the left across in the top and bottom ones. The same function does both;
+  only the axis differs.
+- Each panel has its own length there (a height in the left and right
+  sidebars, a width in the top and bottom ones). It does not stretch.
+- A grip 4 points thick is on the far edge of each panel (its bottom edge,
+  or its right edge in the top and bottom sidebars). The cursor changes on
+  it. A drag changes the length of that panel and of no other; the panels
+  after it move. A double click gives the panel the length of what it shows.
+  ImGui's own splitters along the sidebar are off while the option is on
+  (a drag of one takes from one panel what it gives the next).
+- A panel is fully solid inside its rectangle. Nothing in a panel is
+  see-through.
+- After the last grip the sidebar is clear to its end. There is no window
+  there at all: the map shows, and **a click, a drag or the wheel there goes
+  to the map**.
+- The first length of a panel, the first time it is in a sidebar with the
+  option on: the Controls, HUD, Overview and Tank panels show a fixed amount
+  and get the length of their content (shorter or longer than they were). A
+  list (Game Information, the scenario panel, Item Information, Events,
+  Comments) gets the smaller of the length it had and the length of its
+  content, so a long list does not take the whole sidebar. Never less than
+  the least length: 48 points down, 110 points across.
+- **When the panels do not fit** (a short window): the last panel gives up
+  length first, down to its least length, then the one before it, and so
+  on. The first panels keep their size. When even the least lengths do not
+  fit, every panel gets its share of the room. Nothing goes past the end of
+  the sidebar, and a panel too short for what it shows scrolls inside, as
+  any panel does. The saved lengths are not changed by this: in a taller
+  window each panel has its own length again.
+- Panels side by side across the sidebar (a split the other way) count as
+  one part with one length and one grip. Panels as tabs of one node are one
+  part too. The length saved for such a part is under its first panel.
+- A sidebar with no panel in it and the option on is the whole strip with
+  no backdrop and the hint text on a small plate. That strip still takes the
+  mouse, so a panel can be dropped in it.
+- The grip on the sidebar's inner edge (the one that makes the sidebar
+  bigger) works along the whole length. Beside the clear part it is drawn
+  only while the mouse is on it or holds it.
+- To add a panel to a sidebar with the option on, drop it on a panel that is
+  there (the drop targets of that panel). The clear part is map, not a drop
+  target.
+- Option turned off again: the panels fill the strip again, in the
+  proportions the lengths left them.
 
-**In a sidebar.** The map is not drawn under a sidebar, and that is not
-changed. The option still applies to a docked panel: its own background is
-not drawn, and the backdrop of the sidebar shows in the unused part. The
-difference to see is small there. The option is for floating panels.
+**The map under the sidebar.** With the option on the map is drawn under
+that sidebar (`lv_imgui_dock_map_margins`: the margins with 0 for a clear
+sidebar). The left and right sidebars run the full height, so when one of
+them is clear the map also reaches the top and the bottom of the window, and
+goes under the top and bottom sidebars, solid or not; a solid one hides that
+part.
 
-**Other notes.**
+**The visible map area does not change.** What counts as the visible map,
+for the middle of the view, is still the part of the window no sidebar is
+on, option on or off. The screen is told how much of the view is under a
+clear sidebar at each edge (`lv_screenSetViewInset`), and "Tank Centred",
+centre-on-click, the jump to an item and the jump to an event all take it
+off first. When the option is turned on or off the map's corner moves on the
+screen; the scroll position is moved by as much the other way, so the map
+stays where it was (at the edge of the world it can only go as far as the
+map allows). The ring's arrow for a place off the view goes at the edge of
+the visible area, not under a sidebar. The "sidebars take at most two thirds
+of the window" rule is unchanged.
 
-- The embedded viewer and the browser build draw the same panels with the
-  same helper, so they have the gear too.
-- The Mac menu needs nothing: the option is in the panel, not in a menu.
-- Unit tests: `lv_panel_opts_sums` (key names, the place of the gear),
-  `lv_panel_backing_sums` (the blocks).
-- Headless try-out (Overview, Tank, Controls and HUD panels): option off and
-  on, floating at 6 sizes down to 32 x 32, docked as tabs in a dock space at
-  5 sizes down to 40 x 40: no assert. A click on the gear of a floating
-  panel and on the gear in a bar of tabs opened the options; a click on the
-  item changed that panel only; the floating window did not move and the
-  tab stayed docked. The other five panels use the same helper but were not
-  run there.
+**Preferences** (section LOGVIEWER), saved with the rest of the layout:
+
+- `Dock.Clear`: one line, `v1 R=0 L=1 T=0 B=0`.
+- `Dock.Len.Right`, `.Left`, `.Top`, `.Bottom`: the lengths of that
+  sidebar's panels, `v1 Controls=142 Overview=394 Events=267`. A panel with
+  no length yet is left out.
+
+**Tests.**
+
+- Unit: `lv_dock_clear_layout` (packing, overflow, drag limits, first and
+  snap lengths), `lv_dock_clear_rects` (panel, grip, used and clear
+  rectangles, both axes), `lv_dock_clear_map` (map margins, which points are
+  map, the middle of the visible map, the scroll shift), `lv_dock_clear_prefs`
+  (both preference lines out and back, damaged text).
+- Headless try-out with the real `imgui_dock.cpp` and the real Controls,
+  HUD, Overview and Tank panels (the other five are stand-ins with rows of
+  text), a hidden SDL window, a made-up mouse. For each of the four sides:
+  empty with the option on; three parts (Controls, Overview, Events with
+  Comments as a tab) option off, then on; packing and the 4 point grips; the
+  clear part has no window under the mouse and is map; a drag of the last
+  grip and of the first grip; a double click; a window too short and far too
+  short, and back; the inner edge dragged beside the clear part; the gear
+  opened and its item clicked; option off again; Tank beside Controls across
+  the sidebar; the saved lines. No check failed and no ImGui assert.
+- NOT tested: the map drawn under the sidebar (the try-out has no renderer),
+  the look of the grips and the gear, and the wiring in `screen.c`,
+  `draw.c` and `logviewer.c` beyond the sums above. Those need a look on a
+  screen.
 
 
 ### Controls panel: rows in the middle, wider playback buttons (Oct 13)
@@ -1035,6 +1089,11 @@ Please look at, at least:
 - The builder markers over the tanks, with the bars on and off: the arrow,
   the parachute and its time, on a file log and on a live feed.
 - Sidebars on all four sides, and the layout after a restart.
+- "Make unused sidebar portions transparent" on each of the four sidebars:
+  the map under the clear part, a click and a drag there, the panel grips,
+  the gear in its corner, a jump to an event with the option on (the place
+  goes to the middle of the map that shows), and the option turned on and
+  off (the map does not move).
 - Seek slider: drag, release, and hiding the Controls panel during a drag.
 - Step back and forward across a kill: counts and the dead tank.
 - Play at the end of a log: the clock stays.

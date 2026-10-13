@@ -13,7 +13,6 @@
 #include "imgui_dock.h"
 #include "imgui_context.h"
 #include "imgui_comments.h"
-#include "imgui_lv_panel.h"
 #include "imgui.h"
 #include "../../gui/lang.h"
 /* Plain C, no bolo headers — see the note at the top of that header. */
@@ -635,7 +634,7 @@ void lv_imgui_game_info_window(void) {
 
     char gi_title[128];
     snprintf(gi_title, sizeof(gi_title), "%s###gameinfo", langGetText(STR_LV_WIN_GAMEINFO));
-    if (lv_panel_begin("###gameinfo", gi_title, &lv_g_show_game_info_window, ImGuiWindowFlags_NoCollapse)) {
+    if (ImGui::Begin(gi_title, &lv_g_show_game_info_window, ImGuiWindowFlags_NoCollapse)) {
         /* In the dock the dock places the window; moving it here would pull
          * it straight back out. */
         if (!ImGui::IsWindowDocked()) {
@@ -802,5 +801,5 @@ void lv_imgui_game_info_window(void) {
                         langGetText(s_ranked ? STR_YES : STR_NO));
         }
     }
-    lv_panel_end();
+    ImGui::End();
 }

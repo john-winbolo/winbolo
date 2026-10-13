@@ -111,15 +111,18 @@ static int screen_to_game_coords(float screen_x, float screen_y,
     lv_screenGetSubOffset(&subPxX, &subPxY);
 
     /* The map starts under the menu bar, past the left and top sidebars. */
+    LvDockMargins full = { 0, 0, 0, 0 };
     LvDockMargins dock = { 0, 0, 0, 0 };
-    lv_imgui_dock_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
+    lv_imgui_dock_margins(&full.left, &full.top, &full.right, &full.bottom);
+    /* The map goes under a sidebar whose unused part is clear, so it starts
+     * at the window's edge there. */
+    lv_imgui_dock_map_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
 
     /* A sidebar's part of the window is not map, even where the map's last
-     * square runs a little way under the sidebar's edge. */
-    if (dock.left + dock.top + dock.right + dock.bottom > 0 &&
-        !lvDockPointOnMap(&dock, (int)ImGui::GetIO().DisplaySize.x,
-                          (int)ImGui::GetIO().DisplaySize.y,
-                          (int)menu_bar_height, screen_x, screen_y)) {
+     * square runs a little way under the sidebar's edge. The clear part of a
+     * sidebar is map; its panels are not. */
+    if (full.left + full.top + full.right + full.bottom > 0 &&
+        !lv_imgui_dock_point_on_map(screen_x, screen_y)) {
         *game_x = *game_y = 0;
         return 0;
     }

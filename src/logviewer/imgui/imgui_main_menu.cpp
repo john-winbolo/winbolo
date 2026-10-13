@@ -11,7 +11,6 @@
 #include "imgui_main_menu.h"
 #include "imgui_scenario_panel.h"
 #include "imgui_dock.h"
-#include "imgui_lv_panel.h"
 #include "imgui_dialogs.h"
 #include "imgui.h"
 #include "platform_config.h"
@@ -197,7 +196,6 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
 
 void lv_imgui_main_menu_save(void) {
     lv_imgui_dock_save();
-    lv_panel_options_save();
     lv_platform_config_set_string("LOGVIEWER", "Tank Centred", s_tank_centred ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Hide Lobby",
                                   lv_screenGetHideLobby() ? "Yes" : "No");
@@ -637,6 +635,18 @@ int lv_imgui_main_menu_bar(void) {
                         lv_imgui_dock_set_side_enabled(sb.side, !on);
                         clicked = 1;
                     }
+                }
+                /* The same option the gear of each sidebar has: the part of
+                 * the sidebar past its panels is clear and shows the map. */
+                if (ImGui::BeginMenu(langGetText(STR_LV_DOCK_TRANSPARENT))) {
+                    for (const auto &sb : k_sidebars) {
+                        bool on = lv_imgui_dock_get_side_clear(sb.side) != 0;
+                        if (ImGui::MenuItem(langGetText(sb.label), NULL, on)) {
+                            lv_imgui_dock_set_side_clear(sb.side, !on);
+                            clicked = 1;
+                        }
+                    }
+                    ImGui::EndMenu();
                 }
             }
             ImGui::Separator();

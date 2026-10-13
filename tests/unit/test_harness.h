@@ -4042,11 +4042,13 @@ int run_lv_tank_bars_sums(void);
  * tank a point is on, and where the mark round the selected one goes. */
 int run_lv_tank_pick_sums(void);
 int run_lv_name_header_sums(void);
-/* The options every panel of the log viewer has (test_lv_panel_opts.c): the
- * names in the preferences and the place of the gear; and which parts of a
- * transparent panel get a backing. */
-int run_lv_panel_opts_sums(void);
-int run_lv_panel_backing_sums(void);
+/* A sidebar of the log viewer whose unused part is clear
+ * (test_lv_dock_clear.c): the panels packed along it both ways, their
+ * rectangles and the clear one, the map under it, the preference text. */
+int run_lv_dock_clear_layout(void);
+int run_lv_dock_clear_rects(void);
+int run_lv_dock_clear_map(void);
+int run_lv_dock_clear_prefs(void);
 /* The log viewer's text dump (test_lv_dump.c): a recorded round dumped
  * around one tick, a tick the round does not hold, and the event list. */
 int run_lv_dump_recorded_round(void);

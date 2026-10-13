@@ -1076,9 +1076,9 @@ static const LangEntry langTable[] = {
     /* Log viewer: the X at the end of a panel's name line */
     {2837, "Deselect tank"},
     {2838, "Back to all teams"},
-    /* Log viewer: the gear of a panel and its options */
-    {2839, "Panel options"},
-    {2840, "Make unused panel portions transparent"},
+    /* Log viewer: the gear of a sidebar and its option */
+    {2839, "Sidebar options"},
+    {2840, "Make unused sidebar portions transparent"},
     /* Log viewer: the event markers over the seek bar of the Controls panel */
     {2841, "Overlay events"},
     {2842, "Show a marker over the seek bar for each event of the ticked kinds"},

@@ -65,6 +65,7 @@
 #include "imgui/imgui_scenario_panel.h"
 #include "imgui/imgui_dock.h"
 #include "lv_dock_fit.h"
+#include "lv_dock_clear.h"
 #include "imgui/imgui_game_view.h"
 #include "imgui/imgui_logviewer_menu.h"
 #include "game_view.h"
@@ -962,6 +963,10 @@ static void savePreferences(void) {
 /* What the sidebars took the last time the map's tile counts were fitted
  * beside them. lvHostDockSync refits when their answer differs from this. */
 static LvDockMargins s_lvDockApplied = { 0, 0, 0, 0 };
+/* What the sidebars took of the window when the map was last fitted, clear
+ * ones too. The same now with s_lvDockApplied different says a sidebar's
+ * option "Make unused sidebar portions transparent" was turned on or off. */
+static LvDockMargins s_lvDockFull = { 0, 0, 0, 0 };
 
 /* Stands for "no value saved": no window is ever placed here. */
 #define LV_WINDOW_PLACE_NONE (-1000000)
@@ -1045,6 +1050,7 @@ static int lvHostSetup(SDL_Window *window, SDL_Renderer *renderer,
     }
     lv_imgui_main_menu_init(g_lv);
     memset(&s_lvDockApplied, 0, sizeof(s_lvDockApplied));
+    memset(&s_lvDockFull, 0, sizeof(s_lvDockFull));
 #ifdef __APPLE__
     /* Install the native NSMenu after ImGui + window are up. The shim's
      * save-on-install / restore-on-uninstall stack swaps WinBolo's menu
@@ -1314,8 +1320,9 @@ static void lvHostHandleResize(const SDL_Event *e) {
     /* The sidebars that show take the edges of the window; the map is
      * fitted to what is left. All zero in the live spectator and whenever
      * every sidebar is off, which leaves every sum below as it was. */
+    /* A sidebar whose unused part is clear takes nothing from the map. */
     LvDockMargins dock = { 0, 0, 0, 0 };
-    lv_imgui_dock_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
+    lv_imgui_dock_map_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
     int reservedX = dock.left + dock.right;
     int reservedY = dock.top + dock.bottom;
     int newTilesX = lvFitTilesNearest(w - reservedX, tilePxX);
@@ -1347,6 +1354,8 @@ static void lvHostHandleResize(const SDL_Event *e) {
         if (reservedY > 0) newTilesY = lvFitTilesCover(h - menuH - reservedY, tilePxY);
     }
     s_lvDockApplied = dock;
+    lv_imgui_dock_margins(&s_lvDockFull.left, &s_lvDockFull.top, &s_lvDockFull.right,
+                          &s_lvDockFull.bottom);
     lv_screenSetSizeX((BYTE)newTilesX);
     lv_screenSetSizeY((BYTE)newTilesY);
     /* The size setters keep the offset inside the map for the new grid. The
@@ -1372,24 +1381,54 @@ static void lvHostHandleResize(const SDL_Event *e) {
  * The window itself is left alone here (the user did not resize it), so the
  * fit rounds up: the last square may run under a sidebar's edge by less than
  * a square. The live spectator never has a sidebar and so never gets past
- * the comparison. Game view sets its own fixed size and puts the overview's
+ * the comparison.
+ *
+ * A sidebar whose unused part is clear takes nothing from the map: the map
+ * is fitted as if that sidebar were not there and is drawn under it. How
+ * much of the view is under one is told to the screen each frame
+ * (lv_screenSetViewInset), so the middle of the view stays the middle of
+ * the map that shows. When the option is turned on or off the map's corner
+ * moves on the screen; the scroll position is moved the other way by as
+ * much, so the map itself stays where it is.
+ *
+ * Game view sets its own fixed size and puts the overview's
  * back when it ends; it is left alone, and the comparison catches up
  * afterwards.
  * -------------------------------------------------------------------------- */
 static void lvHostDockSync(void) {
     LvDockMargins dock = { 0, 0, 0, 0 };
+    LvDockMargins full = { 0, 0, 0, 0 };
+    LvDockMargins was;
     int winW = 0, winH = 0, menuH;
-    bool acrossChanged, downChanged, resized = FALSE;
+    bool acrossChanged, downChanged, resized = FALSE, optionOnly;
+    BYTE oldOffX = 0, oldOffY = 0;
+    int oldSubX = 0, oldSubY = 0;
     float zoom;
 
     lv_imgui_dock_pre_frame();
     if (g_lv->gameView) {
+        lv_screenSetViewInset(0, 0, 0, 0);
         return;
     }
-    lv_imgui_dock_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
+    lv_imgui_dock_margins(&full.left, &full.top, &full.right, &full.bottom);
+    lv_imgui_dock_map_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
+    zoom = lv_drawGetZoomLevel();
+    if (zoom <= 0.0f) zoom = 1.0f;
+    lv_screenSetViewInset((int)((float)(full.left - dock.left) / zoom + 0.5f),
+                          (int)((float)(full.top - dock.top) / zoom + 0.5f),
+                          (int)((float)(full.right - dock.right) / zoom + 0.5f),
+                          (int)((float)(full.bottom - dock.bottom) / zoom + 0.5f));
+    optionOnly = full.left == s_lvDockFull.left && full.top == s_lvDockFull.top &&
+                 full.right == s_lvDockFull.right && full.bottom == s_lvDockFull.bottom;
+    s_lvDockFull = full;
     if (dock.left == s_lvDockApplied.left && dock.top == s_lvDockApplied.top &&
         dock.right == s_lvDockApplied.right && dock.bottom == s_lvDockApplied.bottom) {
         return;
+    }
+    was = s_lvDockApplied;
+    if (g_lv->logLoaded) {
+        lv_screenGetOffsets(&oldOffX, &oldOffY);
+        lv_screenGetSubOffset(&oldSubX, &oldSubY);
     }
     /* Each way is refitted only when its own sidebars changed, so a viewer
      * with none is never touched here, as it never was. */
@@ -1404,8 +1443,6 @@ static void lvHostDockSync(void) {
         return;
     }
     menuH = (int)lv_imgui_get_menu_bar_height();
-    zoom = lv_drawGetZoomLevel();
-    if (zoom <= 0.0f) zoom = 1.0f;
     if (acrossChanged) {
         int newTilesX = lvFitTilesBesideDock(winW, dock.left + dock.right,
                                              (float)TILE_SIZE_X * zoom);
@@ -1425,6 +1462,15 @@ static void lvHostDockSync(void) {
     if (resized) {
         lv_screenSetSubOffset(0, 0);
         lv_drawResizeRenderTarget();
+    }
+    if (optionOnly && g_lv->logLoaded) {
+        /* Only the option changed: the map's corner moved on the screen, so
+         * the scroll position goes the other way and the map stays put. */
+        lv_screenPanToTotalPixels(
+            (int)oldOffX * TILE_SIZE_X + oldSubX +
+                lvDockClearScrollShift(was.left, dock.left, zoom),
+            (int)oldOffY * TILE_SIZE_Y + oldSubY +
+                lvDockClearScrollShift(was.top, dock.top, zoom));
     }
     /* A sidebar that only moved the map (the left one growing as the right
      * one shrinks) still needs the whole window drawn again. */

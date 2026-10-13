@@ -577,6 +577,14 @@ void lv_screenSetOffset(BYTE x, BYTE y);
 void lv_screenGetSubOffset(int *x, int *y);
 void lv_screenSetSubOffset(int x, int y);
 
+/* How much of the view is under a sidebar whose unused part is clear, at
+ * each edge, in zoom-1 native pixels. The map is drawn there, but the middle
+ * of the VISIBLE map is the middle of the rest: everything that centres the
+ * view (the followed tank, centre-on-click, a jump to an event or an item)
+ * takes these off first. All 0 unless the host says otherwise. */
+void lv_screenSetViewInset(int left, int top, int right, int bottom);
+void lv_screenGetViewInset(int *left, int *top, int *right, int *bottom);
+
 /* Pan to an absolute view position measured in zoom-1 native pixels.
  * Decomposes into (xOffset,yOffset)+(subPxX,subPxY), clamps to the map
  * bounds, and triggers a redraw if the whole-tile component changed. */
