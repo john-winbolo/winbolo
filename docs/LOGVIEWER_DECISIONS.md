@@ -1762,6 +1762,43 @@ Tests: `lv_builder_away_text` (the table and the text), `lv_builder_away_scan`
 (two hand-built logs: 100 ms away, the same at each place of playback; and a
 player who leaves, no time).
 
+### Shift and the wheel over the seek bar step one tick (Oct 13)
+
+With the mouse over the seek bar of the Controls panel, or over the lane of
+event markers on it, Shift and one notch of the wheel move playback one
+tick of the log (20 ms). Several notches in a frame are that many ticks.
+
+Before this the wheel did nothing over the seek bar. The viewer's own wheel
+code zooms the map, and only when the mouse is not over a panel. Over the
+Controls panel the wheel went to ImGui, which scrolls a panel that has more
+than it shows. The plain wheel is left like that.
+
+Calls made:
+
+- **Wheel up is back in time, wheel down is forward.** No rule of the
+  viewer said which. The list of the Events panel goes to earlier lines
+  with wheel up, so the seek bar does the same.
+- **Play and Pause stay as they are.** The step key `,` pauses; this does
+  not. A step during play is one tick and play then goes on.
+- **An exact seek.** It is `lv_screenSeekToTimeMs`, the seek of the `,` and
+  `.` keys, to a whole tick. It is held to the start and the end of the log
+  that shows (the round, when the lobby is hidden).
+- **Rewind and Fast Forward.** The step is a seek like any other. It starts
+  no animation, and a running one is dropped at the next frame (the seek
+  count has moved on).
+- **The panel does not scroll too.** While Shift is held over the bar the
+  wheel is the bar's (ImGui key owner), both ways of the wheel: ImGui turns
+  Shift and the wheel into a sideways scroll, and some systems send the
+  sideways wheel themselves. The notch is read from whichever moved.
+- **A wheel that gives parts of a notch** (a touchpad) adds up to whole
+  notches. The sum is dropped when Shift is let go or the mouse leaves.
+- **Not on a live feed, and not while the bar is dragged.**
+- No text was added: no string of the viewer says what the wheel does.
+
+The sum is `lvControlsWheelStep` in `src/logviewer/lv_controls_layout.h`;
+`seek_wheel_step` in `imgui_controls.cpp` uses it. Test:
+`lv_controls_wheel_step`.
+
 ### The first view of a log is on the land (Oct 13)
 
 Before: a load put the view's top left corner at square 127,127

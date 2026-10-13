@@ -15,6 +15,7 @@
 #include "imgui_lv_icons.h"
 #include "imgui_event_overlay.h"
 #include "imgui.h"
+#include "imgui_internal.h"  /* SetKeyOwner: the wheel over the seek bar */
 #include "platform_config.h"
 #include "../../gui/lang.h"
 #include "../../gui/ui_mode.h"
@@ -43,6 +44,9 @@ extern "C" {
     void lv_updateSpeed(unsigned char speed, int updateSlider);
     void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime, uint32_t *totalTime);
     void lv_screenSeekToPosition(float ratio);
+    void lv_screenSeekToTimeMs(uint32_t ms);
+    uint32_t lv_screenWindowStartMs(void);
+    uint32_t lv_screenWindowLenMs(void);
     bool lv_screenRewindTargetMs(uint32_t *ms);
     bool lv_screenFastForwardTargetMs(uint32_t *ms);
     uint32_t lv_screenGetTimeRunning(void);
@@ -105,6 +109,61 @@ static void seek_to_ratio(float ratio) {
     lv_drawDirtyScreen();
     lv_clientMutexRelease();
     lv_windowNeedRedraw();
+}
+
+/* Shift and the wheel over the seek bar, or over the lane of event markers
+ * on it: one tick of the log for each notch, wheel up back in time
+ * (lvControlsWheelStep). a, b: the corners of the bar and the lane. The
+ * plain wheel is left to ImGui, as before.
+ *
+ * The seek is to an exact time, as the , and . keys make it. It is a seek
+ * like any other, so it wins over a running Rewind or Fast Forward
+ * animation and starts none. Play and Pause stay as they are. */
+static float s_wheel_carry = 0.0f;
+
+static void seek_wheel_step(const ImVec2 &a, const ImVec2 &b) {
+    const ImGuiIO &io = ImGui::GetIO();
+    if (!io.KeyShift || s_is_seeking || lv_screenSpecIsLiveMode() ||
+        !ImGui::IsWindowHovered() || !ImGui::IsMouseHoveringRect(a, b)) {
+        s_wheel_carry = 0.0f;
+        return;
+    }
+    /* The wheel is the seek bar's while Shift is held over it: the panel
+     * does not scroll too. ImGui scrolls sideways with Shift, so both ways
+     * of the wheel are taken. */
+    const ImGuiID owner = ImGui::GetID("##seekwheel");
+    ImGui::SetKeyOwner(ImGuiKey_MouseWheelX, owner);
+    ImGui::SetKeyOwner(ImGuiKey_MouseWheelY, owner);
+    /* Some systems turn Shift and the wheel into the sideways wheel
+     * themselves: the notch is in whichever of the two moved. */
+    const float wheel = (io.MouseWheel != 0.0f) ? io.MouseWheel : io.MouseWheelH;
+    if (wheel == 0.0f) {
+        return;
+    }
+    const uint32_t startMs = lv_screenWindowStartMs();
+    const uint32_t lenMs = lv_screenWindowLenMs();
+    if (lenMs == 0) {
+        return;
+    }
+    const LvWheelStep step = lvControlsWheelStep(wheel, &s_wheel_carry,
+                                                 lv_screenGetTimeRunning(), startMs,
+                                                 startMs + lenMs, 20u);
+    if (!step.moved) {
+        return;
+    }
+    const bool wasPlaying = s_lv != nullptr && s_lv->playIsPlaying != 0;
+    if (wasPlaying) {
+        lv_windowPause();
+    }
+    lv_clientMutexWaitFor();
+    lv_drawDirtyScreen();
+    lv_screenSeekToTimeMs(step.targetMs);
+    lv_drawDirtyScreen();
+    lv_clientMutexRelease();
+    lv_windowNeedRedraw();
+    if (wasPlaying) {
+        lv_windowPlay();
+    }
 }
 
 /* Forward declaration for speed update helper */
@@ -460,6 +519,7 @@ void lv_imgui_controls_window(void) {
             /* The event markers, in a lane just over the slider and as wide
              * as it. The lane is an item of its own: it takes no press that
              * is meant for the slider. */
+            const ImVec2 seek_top = ImGui::GetCursorScreenPos();
             lv_event_overlay_lane();
 
             seek_slider_drawn = true;
@@ -520,6 +580,7 @@ void lv_imgui_controls_window(void) {
                 }
                 s_seek_was_playing = false;
             }
+            seek_wheel_step(seek_top, ImGui::GetItemRectMax());
 
             ImGui::PopItemWidth();
 

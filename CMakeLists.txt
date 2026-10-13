@@ -6936,6 +6936,7 @@ set(_unit_test_names
     lv_builder_trips_scan
     lv_controls_top_row
     lv_controls_bottom_row
+    lv_controls_wheel_step
     lv_zoom_percent
     lv_fullscreen_key
     lv_event_scan_returns_to_start

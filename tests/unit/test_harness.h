@@ -4114,6 +4114,7 @@ int run_lv_builder_trips_scan(void);
  * (test_lv_controls_layout.c). */
 int run_lv_controls_top_row(void);
 int run_lv_controls_bottom_row(void);
+int run_lv_controls_wheel_step(void);
 /* The zoom of the log viewer's map as a percentage. */
 int run_lv_zoom_percent(void);
 int run_lv_fullscreen_key(void);
