@@ -257,6 +257,71 @@ static inline float lvTankPillIconSize(float lineH, int itemSize) {
     return (float)(scale * itemSize);
 }
 
+/* ---- The builder's line after his picture -------------------------------
+ * With the pictures the builder's line starts with the game's own picture
+ * of a builder in place of the word: "Builder: in tank" becomes
+ * "<builder>: in tank". The game's builder is 3 pixels by 4
+ * (LGM_WIDTH by LGM_HEIGHT). */
+#define LV_TANK_BUILDER_PX_W 3
+#define LV_TANK_BUILDER_PX_H 4
+
+/* The height the builder is drawn at: the largest whole number of times his
+ * 4 pixels that is not taller than a line of text, never under 1 time. Each
+ * of his pixels is then a whole block, so he stays sharp. */
+static inline float lvTankBuilderIconH(float lineH) {
+    int scale = (int)(lineH / (float)LV_TANK_BUILDER_PX_H);
+    if (scale < 1) scale = 1;
+    return (float)(scale * LV_TANK_BUILDER_PX_H);
+}
+
+/* His width at that height. */
+static inline float lvTankBuilderIconW(float lineH) {
+    return lvTankBuilderIconH(lineH) * (float)LV_TANK_BUILDER_PX_W /
+           (float)LV_TANK_BUILDER_PX_H;
+}
+
+/* The side of the square the parachute (a dead builder's picture, a 16 by
+ * 16 tile) is drawn in: as tall as a line of text to a whole pixel, and not
+ * wider than the column the pictures stand in, so it does not move the
+ * colons. Never under 1. */
+static inline float lvTankChuteIconSide(float lineH, float iconW) {
+    int side = (int)lineH;
+    if ((float)side > iconW) side = (int)iconW;
+    return (float)(side < 1 ? 1 : side);
+}
+
+/* Where a picture narrower than its column starts, so that it stands in the
+ * column's middle, to a whole pixel. */
+static inline float lvTankIconCentre(float columnW, float picW) {
+    int d = (int)((columnW - picW) * 0.5f);
+    return (float)(d < 0 ? 0 : d);
+}
+
+/* The width of the builder's line after his picture: the column of the
+ * pictures, the colon, the gap and the widest of the states it can say
+ * ("in tank", "out", "dead"). It is the width the panel's layout counts the
+ * line with. */
+static inline float lvTankBuilderLineW(float iconW, float colonW, float gap, float stateW) {
+    return iconW + colonW + gap + stateW;
+}
+
+/* The word of a line with a word and a value: what is before its first
+ * colon ("Builder" of "Builder: in tank"), with no spaces at its end. It is
+ * the tooltip of the picture that stands for the word. A line with no colon
+ * gives the whole line. */
+static inline void lvTankBeforeColon(const char *line, char *out, size_t outSize) {
+    size_t n = 0;
+    if (!out || outSize == 0) return;
+    if (line) {
+        while (line[n] != '\0' && line[n] != ':' && n + 1 < outSize) {
+            out[n] = line[n];
+            n++;
+        }
+    }
+    while (n > 0 && out[n - 1] == ' ') n--;
+    out[n] = '\0';
+}
+
 /* Where a line's numbers start across, from the left of the picture: after
  * the picture, the colon and a gap, and then far enough in that the end of
  * the numbers (numW wide) meets the end of the column (columnW, the widest

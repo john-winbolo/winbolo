@@ -76,6 +76,15 @@ float lv_icon_text_width(int icon);
 bool lv_item_picture(ImDrawList *dl, bool isBase, int team, ImVec2 p0, ImVec2 p1,
                      float alpha = 1.0f);
 
+/* The map's own picture of a builder over the box p0..p1, in the game's own
+ * colours as the map has him: the standing builder (3 pixels by 4; the box
+ * has that shape), or with parachute the tile of the builder who flies in
+ * after one died (16 by 16; a square box). Sharp at a whole number of times
+ * its own height, blended at any other size. Returns false, and draws
+ * nothing, when the game's sheet is not there. */
+bool lv_builder_picture(ImDrawList *dl, bool parachute, ImVec2 p0, ImVec2 p1,
+                        float alpha = 1.0f);
+
 /* The line that names a player at the top of a panel (the Tank panel, the
  * HUD panel): a stripe in the colour of the player's team, an icon when
  * leadIcon is one (-1 for none), the name, and at the right end a small X

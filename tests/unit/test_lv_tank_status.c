@@ -21,6 +21,7 @@
 #include <string.h>
 
 #include "lv_tank_status.h"
+#include "lv_team_sprite.h"
 #include "test_harness.h"
 
 /* The game's numbers, from the header the panel itself reads: a full gauge,
@@ -238,6 +239,88 @@ int run_lv_tank_status_sums(void) {
     UT_ASSERT_MSG(lvTankPillIconSize(13.0f, 12) == 12.0f, "a 13 pixel line");
     UT_ASSERT_MSG(lvTankPillIconSize(24.0f, 12) == 24.0f, "a 24 pixel line");
     UT_ASSERT_MSG(lvTankPillIconSize(8.0f, 12) == 12.0f, "never under its own size");
+
+    /* The builder's picture: whole multiples of his 3 by 4 pixels, not
+       taller than the line. */
+    UT_ASSERT_MSG(lvTankBuilderIconH(13.0f) == 12.0f && lvTankBuilderIconW(13.0f) == 9.0f,
+                  "a 13 pixel line: 3 times, 9 by 12");
+    UT_ASSERT_MSG(lvTankBuilderIconH(16.0f) == 16.0f && lvTankBuilderIconW(16.0f) == 12.0f,
+                  "a 16 pixel line: 4 times");
+    UT_ASSERT_MSG(lvTankBuilderIconH(26.0f) == 24.0f && lvTankBuilderIconW(26.0f) == 18.0f,
+                  "a 26 pixel line: 6 times");
+    UT_ASSERT_MSG(lvTankBuilderIconH(3.0f) == 4.0f && lvTankBuilderIconW(3.0f) == 3.0f,
+                  "never under his own size");
+    /* He is never wider than a gauge's picture, so the column, and with it
+       the colons, stays where it was. */
+    {
+        float lineH;
+        for (lineH = 8.0f; lineH <= 40.0f; lineH += 1.0f) {
+            UT_ASSERT_MSG(lvTankBuilderIconW(lineH) <= lvTankIconWidth(lineH),
+                          "the builder is wider than the column at a line of %g", (double)lineH);
+            UT_ASSERT_MSG(lvTankBuilderIconH(lineH) <= lineH, "taller than a line of %g",
+                          (double)lineH);
+        }
+    }
+    /* The parachute: a square as tall as the line, held to the column. */
+    UT_ASSERT_MSG(lvTankChuteIconSide(13.0f, 12.0f) == 12.0f, "held to a column of 12");
+    UT_ASSERT_MSG(lvTankChuteIconSide(13.7f, 20.0f) == 13.0f, "a whole pixel of the line");
+    UT_ASSERT_MSG(lvTankChuteIconSide(0.0f, 0.0f) == 1.0f, "never under one pixel");
+    /* A narrow picture stands in the middle of its column. */
+    UT_ASSERT_MSG(lvTankIconCentre(12.0f, 9.0f) == 1.0f, "9 in 12: 1.5 to 1");
+    UT_ASSERT_MSG(lvTankIconCentre(13.0f, 12.0f) == 0.0f, "12 in 13");
+    UT_ASSERT_MSG(lvTankIconCentre(9.0f, 12.0f) == 0.0f, "wider than the column: at its start");
+    /* The width the layout counts the builder's line with. In the default
+       font (7 a letter, a line of 13): the picture's column 12, the colon 7,
+       a gap of 4 and "in tank" 49 are 72, where "Builder: in tank" was 112;
+       the same as the four lines of numbers ("40 / 40"). */
+    UT_ASSERT_MSG(lvTankBuilderLineW(12.0f, 7.0f, 4.0f, 49.0f) == 72.0f, "the line after the picture");
+    UT_ASSERT_MSG(lvTankBuilderLineW(12.0f, 7.0f, 4.0f, 49.0f) ==
+                  lvTankIconNumberX(12.0f, 7.0f, 4.0f, 49.0f, 49.0f) + 49.0f,
+                  "the builder's state starts where the widest numbers start");
+    /* With the shorter line the pictures go into a room the words did not:
+       the well 57 at scale 1, 16 between, the block 72 or 112 wide. */
+    {
+        LvTankRoom r;
+        LvTankLayout l;
+        r.availW = 145.0f; r.availH = 109.0f;
+        r.wellW = 55; r.wellH = 107; r.wellEdge = 2.0f;
+        r.maxScale = 4; r.wordsMinScale = 2;
+        r.gapBeside = 16.0f; r.gapUnder = 4.0f;
+        r.wordsW = 140.0f; r.wordsH = 100.0f;
+        r.iconsW = 72.0f;  r.iconsH = 100.0f;
+        l = lvTankLayoutPick(&r);
+        UT_ASSERT_MSG(l.text == LV_TANK_TEXT_ICONS && l.beside && l.scale == 1.0f,
+                      "145 wide, the builder after his picture: text %d", l.text);
+        r.iconsW = 112.0f;
+        l = lvTankLayoutPick(&r);
+        UT_ASSERT_MSG(l.text == LV_TANK_TEXT_NONE, "145 wide, the builder in words: text %d", l.text);
+        r.iconsW = 72.0f; r.availW = 144.0f;
+        l = lvTankLayoutPick(&r);
+        UT_ASSERT_MSG(l.text == LV_TANK_TEXT_NONE, "one short of the line after the picture");
+    }
+    /* The word the picture stands for: its tooltip. */
+    {
+        char word[16];
+        lvTankBeforeColon("Builder: in tank", word, sizeof(word));
+        UT_ASSERT_MSG(strcmp(word, "Builder") == 0, "the English line (%s)", word);
+        lvTankBeforeColon("Builder : dead, back in 0:07", word, sizeof(word));
+        UT_ASSERT_MSG(strcmp(word, "Builder") == 0, "a space before the colon; the first colon (%s)", word);
+        lvTankBeforeColon("no colon", word, sizeof(word));
+        UT_ASSERT_MSG(strcmp(word, "no colon") == 0, "no colon: the whole line");
+        lvTankBeforeColon("a very long word here: x", word, 5);
+        UT_ASSERT_MSG(strcmp(word, "a ve") == 0, "cut to the room (%s)", word);
+        lvTankBeforeColon(NULL, word, sizeof(word));
+        UT_ASSERT_MSG(word[0] == '\0', "no line");
+        lvTankBeforeColon(": x", word, sizeof(word));
+        UT_ASSERT_MSG(word[0] == '\0', "nothing before the colon");
+    }
+    /* Sharp at whole multiples of the picture's own height only. */
+    UT_ASSERT_MSG(lvPictureSharp(12.0f, 4) && lvPictureSharp(4.0f, 4) && lvPictureSharp(24.0f, 4),
+                  "the builder at 3, 1 and 6 times");
+    UT_ASSERT_MSG(!lvPictureSharp(13.0f, 4) && !lvPictureSharp(2.0f, 4) && !lvPictureSharp(12.5f, 4),
+                  "any other height is blended");
+    UT_ASSERT_MSG(!lvPictureSharp(12.0f, 16) && lvPictureSharp(16.0f, 16) && !lvPictureSharp(8.0f, 0),
+                  "the parachute's 16");
 
     /* The numbers end under each other: start + width is the same for a
        short line and for the widest. */

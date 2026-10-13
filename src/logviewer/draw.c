@@ -1414,6 +1414,27 @@ bool lv_drawItemPicture(int isBase, int team, SDL_Texture **tex, float *sx, floa
     return *tex != NULL;
 }
 
+/* The map's picture of a builder, for a panel: the cell of the tile atlas
+   lv_drawLGMs draws him from. The standing frame (LGM0), 3 by 4, or, for
+   parachute, the 16 by 16 tile of the builder who flies in (the frame of a
+   dead builder's replacement). FALSE when the atlas is not there. */
+bool lv_drawBuilderPicture(int parachute, SDL_Texture **tex, float *sx, float *sy,
+                           float *sw, float *sh) {
+    *tex = textureTiles;
+    if (parachute) {
+        *sx = (float)LGM_HELICOPTER_X;
+        *sy = (float)LGM_HELICOPTER_Y;
+        *sw = (float)TILE_SIZE_X;
+        *sh = (float)TILE_SIZE_Y;
+    } else {
+        *sx = (float)LGM0_X;
+        *sy = (float)LGM0_Y;
+        *sw = (float)LGM_WIDTH;
+        *sh = (float)LGM_HEIGHT;
+    }
+    return *tex != NULL;
+}
+
 /* Whether tanks, pillboxes and bases are drawn in their team's colour. With
    a perspective on they are not, whatever the setting says: the map then
    shows them as that player's game does, own and allied against hostile. */

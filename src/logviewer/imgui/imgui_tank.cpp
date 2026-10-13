@@ -22,8 +22,8 @@
  * pillboxes the tank carries. In a small panel each of the four lines starts
  * with the game's small picture for what it counts in place of the word,
  * and the line for the pillboxes with the game's status picture of a
- * pillbox; the builder's line has no picture (the game's builder is 3 pixels
- * by 4) and keeps its words. A panel with no room for all of the text shows
+ * pillbox, and the builder's line with the game's picture of a builder (the
+ * parachute while he is dead). A panel with no room for all of the text shows
  * none of it, only the gauges (lvTankLayoutPick has the rule). Nothing is
  * ever cut off, so the panel does not scroll.
  *
@@ -123,14 +123,20 @@ static float tank_header_h(void) {
  * not part of the width the panel's layout is chosen by (tank_builder_w), so
  * the time never costs the panel its words: in less room than the longer
  * line needs, the line says "dead" alone. */
-static const char *tank_builder_text(const LvTankStatus &st, float roomW) {
+static const char *tank_builder_text(const LvTankStatus &st, float roomW,
+                                     bool afterPicture = false) {
     if (st.builderDead && st.builderBack) {
         MessageArgs args = {};
         const char *text;
+        bool colon = true;
         lvBuilderCountdownText(st.builderBackMs, st.builderBackApprox != 0,
                                args.string1, sizeof(args.string1));
         text = langGetTextFmt(STR_LV_TANK_BUILDER_BACK, &args);
-        if (ImGui::CalcTextSize(text).x <= roomW + 0.5f) return text;
+        /* After the picture only what follows the colon is written, and
+         * roomW is the room after the picture. A line with no colon cannot
+         * go after the picture: the short one is used. */
+        const char *shown = afterPicture ? lvTankAfterColon(text, &colon) : text;
+        if (colon && ImGui::CalcTextSize(shown).x <= roomW + 0.5f) return text;
     }
     return langGetText(st.builderDead ? STR_LV_TANK_BUILDER_DEAD :
                        st.builderOut  ? STR_LV_TANK_BUILDER_OUT :
@@ -244,7 +250,28 @@ struct TankIconMetrics {
     float gap;
     float columnW;
     float lineW;    /* all of it */
+    float builderH; /* the builder's picture; 0: his line keeps its words */
+    float builderW;
+    float chuteSide;    /* the parachute's square */
+    float builderLineW; /* his line after the picture, at its widest state */
 };
+
+/* The builder's line goes after his picture when each of its three states
+ * has its state after a colon ("Builder: in tank"), as in English. Returns
+ * the width of the widest state, or under 0 when one has no colon. */
+static float tank_builder_state_w(void) {
+    static const langid k_builder[] = {
+        STR_LV_TANK_BUILDER_IN, STR_LV_TANK_BUILDER_OUT, STR_LV_TANK_BUILDER_DEAD
+    };
+    float w = 0.0f;
+    for (langid id : k_builder) {
+        bool colon = false;
+        float state = ImGui::CalcTextSize(lvTankAfterColon(langGetText(id), &colon)).x;
+        if (!colon) return -1.0f;
+        if (state > w) w = state;
+    }
+    return w;
+}
 
 /* The tiles when they are loaded and hold the pillbox's status picture. */
 static SDL_Texture *tank_tiles(float *tw, float *th) {
@@ -294,6 +321,26 @@ static TankIconMetrics tank_icon_metrics(const LvTankStatus &st) {
     }
     m.colonW = anyColon ? ImGui::CalcTextSize(":").x : 0.0f;
     m.lineW = lvTankIconNumberX(m.iconW, m.colonW, m.gap, m.columnW, m.columnW) + m.columnW;
+    {
+        /* The builder: his picture stands in the middle of the column the
+         * others have, which is the wider one at every size of the font. */
+        const float lineH = ImGui::GetTextLineHeight();
+        const float stateW = tank_builder_state_w();
+        m.builderH = 0.0f;
+        m.builderW = 0.0f;
+        m.chuteSide = 0.0f;
+        m.builderLineW = 0.0f;
+        if (stateW >= 0.0f) {
+            m.builderH = lvTankBuilderIconH(lineH);
+            m.builderW = lvTankBuilderIconW(lineH);
+            if (m.builderW > m.iconW) m.iconW = m.builderW;
+            m.chuteSide = lvTankChuteIconSide(lineH, m.iconW);
+            m.lineW = lvTankIconNumberX(m.iconW, m.colonW, m.gap, m.columnW, m.columnW) +
+                      m.columnW;
+            m.builderLineW = lvTankBuilderLineW(m.iconW, ImGui::CalcTextSize(":").x, m.gap,
+                                                stateW);
+        }
+    }
     return m;
 }
 
@@ -474,9 +521,57 @@ static void tank_pill_icon_line(const LvTankStatus &st, const TankIconMetrics &m
     dl->AddText(ImVec2(p0.x + numX, p0.y), col, number);
 }
 
+/* The builder's line after the game's picture of a builder in place of the
+ * word: "<builder>: in tank", ": out", ": dead" or ": dead, back in 0:07" as
+ * the line in words has it. He is the standing builder of the map, in the
+ * game's own colours, at a whole number of times his 3 by 4 pixels; while he
+ * is dead the picture is the parachute the new one flies in on. The colon is
+ * under the colons of the lines over it. The word ("Builder") is the
+ * picture's tooltip. With no tiles loaded a drawn figure stands in. */
+static void tank_builder_icon_line(const LvTankStatus &st, const TankIconMetrics &m) {
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const float lineH = ImGui::GetTextLineHeight();
+    const ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+    const float colonW = ImGui::CalcTextSize(":").x;
+    const float textX = m.iconW + colonW + m.gap;
+    char line[LANG_MSGARG_STRING_LEN];
+    char word[LANG_MSGARG_STRING_LEN];
+    snprintf(line, sizeof(line), "%s",
+             tank_builder_text(st, ImGui::GetContentRegionAvail().x - textX, true));
+    const char *state = lvTankAfterColon(line, nullptr);
+    lvTankBeforeColon(line, word, sizeof(word));
+    float lineW = textX + ImGui::CalcTextSize(state).x;
+    if (lineW < m.builderLineW) lineW = m.builderLineW;
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImVec2 p0(floorf(pos.x), floorf(pos.y));
+
+    ImGui::PushID("builder");
+    ImGui::Dummy(ImVec2(m.iconW, lineH));
+    if (word[0] != '\0' && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+        ImGui::SetTooltip("%s", word);
+    }
+    ImGui::SameLine(0.0f, 0.0f);
+    ImGui::Dummy(ImVec2(lineW - m.iconW, lineH));
+    ImGui::PopID();
+
+    const bool chute = (st.builderDead != 0);
+    const float w = chute ? m.chuteSide : m.builderW;
+    const float h = chute ? m.chuteSide : m.builderH;
+    const ImVec2 i0(p0.x + lvTankIconCentre(m.iconW, w), p0.y + lvTankIconCentre(lineH, h));
+    if (!lv_builder_picture(dl, chute, i0, ImVec2(i0.x + w, i0.y + h))) {
+        const float side = lvTankChuteIconSide(lineH, m.iconW);
+        const ImVec2 f0(p0.x + lvTankIconCentre(m.iconW, side),
+                        p0.y + lvTankIconCentre(lineH, side));
+        lv_icon_draw(dl, LV_ICON_PERSON, f0, ImVec2(f0.x + side, f0.y + side), col);
+    }
+    dl->AddText(ImVec2(p0.x + m.iconW, p0.y), col, ":");
+    dl->AddText(ImVec2(p0.x + textX, p0.y), col, state);
+}
+
 /* The lines of text: the four values, the builder, the pillboxes. With
  * icons the four values are written after the game's small pictures (with
- * no background picture loaded they keep their words). */
+ * no background picture loaded they keep their words), and so are the
+ * builder and the pillboxes. */
 static void tank_text(const LvTankStatus &st, bool icons) {
     float tw = 0.0f, th = 0.0f;
     SDL_Texture *bg = icons ? tank_background(&tw, &th) : nullptr;
@@ -499,7 +594,11 @@ static void tank_text(const LvTankStatus &st, bool icons) {
         ImGui::TextDisabled("%s", langGetText(STR_LV_TANK_NO_STOCK));
         ImGui::PopTextWrapPos();
     }
-    ImGui::TextUnformatted(tank_builder_text(st, ImGui::GetContentRegionAvail().x));
+    if (m.builderH > 0.0f) {
+        tank_builder_icon_line(st, m);
+    } else {
+        ImGui::TextUnformatted(tank_builder_text(st, ImGui::GetContentRegionAvail().x));
+    }
     if (pillIcon) {
         tank_pill_icon_line(st, m);
     } else {
@@ -538,9 +637,13 @@ static LvTankRoom tank_room(const LvTankStatus &st, ImVec2 avail) {
         r.wordsH = tank_text_h();
         if (tank_background(&tw, &th) != nullptr) {
             /* With its picture the line for the pillboxes is one of the
-             * short ones; only the builder's line is still in words. */
+             * short ones, and the builder's line is counted with his
+             * picture in place of the word. A line that keeps its words (a
+             * language with no colon in it) is counted in words. */
             const TankIconMetrics m = tank_icon_metrics(st);
-            const float other = (m.pillSize > 0.0f) ? tank_builder_w() : otherW;
+            const float builder = (m.builderH > 0.0f) ? m.builderLineW : tank_builder_w();
+            float other = builder;
+            if (m.pillSize <= 0.0f && otherW > other) other = otherW;
             r.iconsW = (m.lineW > other) ? m.lineW : other;
             r.iconsH = tank_text_h();
         }

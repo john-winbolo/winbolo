@@ -21,6 +21,8 @@ extern "C" {
     #include "../lv_team_sprite.h"
     bool lv_drawItemPicture(int isBase, int team, struct SDL_Texture **tex, float *sx, float *sy,
                             float *sw, float *sh);
+    bool lv_drawBuilderPicture(int parachute, struct SDL_Texture **tex, float *sx, float *sy,
+                               float *sw, float *sh);
 }
 
 /* A triangle that points right (dir > 0) or left, in the box x0..x1 by
@@ -214,6 +216,32 @@ bool lv_item_picture(ImDrawList *dl, bool isBase, int team, ImVec2 p0, ImVec2 p1
     const ImDrawCallback toSharp = sharp ? pio.DrawCallback_SetSamplerNearest
                                          : pio.DrawCallback_SetSamplerLinear;
     /* The renderer's own setting comes back after the picture. */
+    if (toSharp != nullptr) dl->AddCallback(toSharp, nullptr);
+    dl->AddImage((ImTextureID)(size_t)tex, p0, p1, ImVec2(sx / tw, sy / th),
+                 ImVec2((sx + sw) / tw, (sy + sh) / th),
+                 ImGui::ColorConvertFloat4ToU32(ImVec4(1.0f, 1.0f, 1.0f, alpha)));
+    if (toSharp != nullptr && pio.DrawCallback_SetSamplerLinear != nullptr) {
+        dl->AddCallback(pio.DrawCallback_SetSamplerLinear, nullptr);
+    }
+    return true;
+}
+
+bool lv_builder_picture(ImDrawList *dl, bool parachute, ImVec2 p0, ImVec2 p1, float alpha) {
+    SDL_Texture *tex = nullptr;
+    float sx = 0.0f, sy = 0.0f, sw = 0.0f, sh = 0.0f, tw = 0.0f, th = 0.0f;
+    if (!lv_drawBuilderPicture(parachute ? 1 : 0, &tex, &sx, &sy, &sw, &sh) || tex == nullptr ||
+        !SDL_GetTextureSize(tex, &tw, &th) || tw < sx + sw || th < sy + sh) {
+        return false;
+    }
+    p0.x = floorf(p0.x);
+    p0.y = floorf(p0.y);
+    p1.x = floorf(p1.x);
+    p1.y = floorf(p1.y);
+    const float highPx = (p1.y - p0.y) * ImGui::GetIO().DisplayFramebufferScale.y;
+    const bool sharp = lvPictureSharp(highPx, (int)sh);
+    const ImGuiPlatformIO &pio = ImGui::GetPlatformIO();
+    const ImDrawCallback toSharp = sharp ? pio.DrawCallback_SetSamplerNearest
+                                         : pio.DrawCallback_SetSamplerLinear;
     if (toSharp != nullptr) dl->AddCallback(toSharp, nullptr);
     dl->AddImage((ImTextureID)(size_t)tex, p0, p1, ImVec2(sx / tw, sy / th),
                  ImVec2((sx + sw) / tw, (sy + sh) / th),

@@ -385,15 +385,35 @@ The art:
 - Pillboxes carried: the game's 12 by 12 neutral pillbox status picture from
   the tiles, the same one the Overview panel uses. The line becomes
   `<picture>: 2`. The tooltip is the full line in words.
-- Builder: no picture. The game's builder is 3 by 4 pixels and does not read
-  as an icon. The line stays `Builder: in tank` in both forms.
+- Builder (Oct 13; before that the line kept its word): the map's own
+  picture of a builder in place of the word. The line is
+  `<builder>: in tank`, `: out`, `: dead` or `: dead, back in 0:07`, as the
+  line in words has it. It is the first builder frame of the tiles, 3 by 4
+  pixels, in the game's own colours (`lv_drawBuilderPicture` in `draw.c`,
+  the cell `lv_drawLGMs` draws; `lv_builder_picture` in
+  `imgui_lv_icons.cpp` is the shared helper). It is drawn at a whole number
+  of times its size, so it stays sharp: 9 by 12 on a 13 point line. While
+  the builder is dead the picture is the parachute tile of the map (16 by
+  16, a square as high as the line, blended). The picture is in the middle of the column
+  the other pictures have, and its colon is under their colons. The tooltip
+  of the picture is the word "Builder", taken from the line before its
+  colon. With no tiles loaded a drawn figure stands in. The form in words
+  still reads `Builder: in tank`; the gauges-only form is unchanged.
 
 Notes for the owner:
 
-- The builder line is the widest line of the picture form (about 112 pixels
-  in the default font). A panel narrower than that shows gauges only. A
-  short word or a drawn icon for the builder would let the picture form go
-  narrower. That needs a new string or new art, so it was not done.
+- The first builder frame was taken as the standing one. It was not seen on
+  a screen. If it is a walking frame, the cell is one number in
+  `lv_drawBuilderPicture`.
+- The builder line was the widest line of the picture form (about 112
+  pixels in the default font). With the picture it is about 72 at its
+  widest state ("dead"), and the choice of form counts it at that width. So
+  the picture form now shows in narrower panels: in the try-out a panel 110
+  wide and 300 or more high now has the pictures (gauges only before), and
+  a panel 180 wide has them beside the gauges (under them before).
+- The pillbox line was left as it is: it already has the game's own
+  pillbox picture, not a word and not a drawn shape.
+- A language whose builder lines have no colon keeps the line in words.
 - No new strings. The numbers are taken from the existing lines: the part
   after the colon. A translation with no colon keeps its line in words.
 
@@ -1073,7 +1093,9 @@ tick has events, so this showed only in quiet moments.
   builder who was not killed, and the table dropped by a new load).
 - The marker is SDL drawing and was not run in the headless try-out. The
   Tank panel's line was: three states, nine sizes, no assert, no size
-  clipped that was not clipped before.
+  clipped that was not clipped before. It was run again with the builder's
+  picture (20 sizes, four passes, and the three dead states at nine sizes):
+  the same sizes clip as before (60 by 60 and 20 by 20), no new one.
 
 
 ## Not tested on screen
