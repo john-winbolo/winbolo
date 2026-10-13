@@ -2332,8 +2332,15 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
 }
 
 /* Takes every picked scenario off the host's list and keeps the rest — the
-   mods, and the map's own row where the host gave it a place — in the order
-   the host wrote them. Answers how many rows went. */
+   mods, the map's own row where the host gave it a place, and every row the
+   operator named with -mod, -mod-required or -mod-locked — in the order the
+   host wrote them. Answers how many rows went.
+
+   The operator's rows are not picks. A fixed one is a row no host may take
+   off, and the command bus refuses a list without it; taking it off here
+   would go round that refusal. A plain -mod scenario stays too: it gives
+   way to the map's own scenario at the compose and is back in play on the
+   next map that has none (serverSimOperatorModYieldsToMap). */
 int serverSimDropPickedScenarios(ServerSim *sim) {
     int kept = 0;
     int i;
@@ -2342,7 +2349,8 @@ int serverSimDropPickedScenarios(ServerSim *sim) {
     for (i = 0; i < sim->scenarioScriptCount; i++) {
         const ScnDirEntry *row = &sim->scenarioScripts[i];
 
-        if (row->file[0] != '\0' && !row->bound && !row->keepsWinCondition) {
+        if (row->file[0] != '\0' && !row->bound && !row->keepsWinCondition &&
+            !serverSimIsOperatorMod(sim, row->file)) {
             continue;
         }
         if (kept != i) {
@@ -4948,6 +4956,12 @@ bool serverSimScenarioMapIsScripted(const ServerSim *sim, const char *mapPath) {
         return false;
     }
     return sim->scenarioMapScripted(sim->scenarioMapScriptedCtx, mapPath);
+}
+
+/* The same question on server_sim.h, for the scenario runtime, which sees
+   that header and not this one's. */
+bool serverSimMapIsScripted(const ServerSim *sim, const char *mapPath) {
+    return serverSimScenarioMapIsScripted(sim, mapPath);
 }
 
 void serverSimSetScenarioLister(ServerSim *sim,

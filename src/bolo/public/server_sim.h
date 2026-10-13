@@ -901,6 +901,214 @@ const char *serverSimGetWorkshopMapDir(const ServerSim *sim);
 const char *serverSimGetSelectedScenario(const ServerSim *sim);
 
 /*********************************************************
+ *NAME:          serverSimMapIsScripted
+ *PURPOSE:
+ *  Whether the map at mapPath brings a script this server
+ *  would run, asked through whatever the process registered
+ *  with serverSimSetScenarioMapScripted. False with nothing
+ *  registered. The scenario runtime's question, which it
+ *  asks here because it sees only this header.
+ *********************************************************/
+bool serverSimMapIsScripted(const ServerSim *sim, const char *mapPath);
+
+/* How firmly an operator's -mod flag holds a script on the lobby's list.
+ * The values are ordered: a file named under two flags keeps the stronger. */
+typedef enum {
+    SERVER_MOD_DEFAULT  = 1, /* -mod: back on the list at every new lobby;
+                                a host may take it off until then */
+    SERVER_MOD_REQUIRED = 2, /* -mod-required: always on; a host may add,
+                                remove and reorder the rest of the list */
+    SERVER_MOD_LOCKED   = 3  /* -mod-locked: the list is exactly the
+                                operator's and nobody edits it */
+} ServerModStrength;
+
+/*********************************************************
+ *NAME:          serverSimAddOperatorMod
+ *PURPOSE:
+ *  Names one script the operator wants on every game's
+ *  list, as the dedicated server's -mod, -mod-required and
+ *  -mod-locked do. The name is matched against the files
+ *  the scenarios directory lists (serverSimScenarioListDir),
+ *  ignoring case, as given or with .scenario.lua, .lua or
+ *  .scenario added — so "MacBoloRules" and
+ *  "MacBoloRules.scenario.lua" are the same mod.
+ *
+ *  Records only; serverSimRecordOperatorMods puts the rows
+ *  on the list. Answers false with a reason in err for a
+ *  name the directory does not hold, a script tied to a map,
+ *  a second scenario (a round runs one) and a list already
+ *  at LOBBY_SCRIPT_LIST_MAX. A name already added keeps the
+ *  stronger of its two strengths.
+ *
+ *  SERVER_MOD_LOCKED locks the list even when the name is
+ *  refused, so a typo does not open it to every host.
+ *********************************************************/
+bool serverSimAddOperatorMod(ServerSim *sim, const char *name,
+                             ServerModStrength strength,
+                             char *err, size_t errLen);
+
+/*********************************************************
+ *NAME:          serverSimGetOperatorModCount /
+ *               serverSimGetOperatorModFile /
+ *               serverSimGetOperatorModStrength /
+ *               serverSimGetOperatorModsLocked
+ *PURPOSE:
+ *  What serverSimAddOperatorMod recorded, in the order it
+ *  was named. File answers "" and strength 0 outside the
+ *  count. Locked is whether any -mod-locked was given.
+ *********************************************************/
+int               serverSimGetOperatorModCount(const ServerSim *sim);
+const char       *serverSimGetOperatorModFile(const ServerSim *sim, int i);
+ServerModStrength serverSimGetOperatorModStrength(const ServerSim *sim,
+                                                  int i);
+bool              serverSimGetOperatorModsLocked(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimOperatorModFixed
+ *PURPOSE:
+ *  Whether file is an operator row no host may take off:
+ *  one named by -mod-required or -mod-locked. A -mod row
+ *  answers false, because the host may remove it.
+ *********************************************************/
+bool serverSimOperatorModFixed(const ServerSim *sim, const char *file);
+
+/*********************************************************
+ *NAME:          serverSimIsOperatorMod
+ *PURPOSE:
+ *  Whether file is one of the operator's rows at all: named
+ *  by -mod, -mod-required or -mod-locked. Such a row is the
+ *  operator's and not a host's pick, so a map commit never
+ *  takes it off the list as one (serverSimDropPickedScenarios).
+ *********************************************************/
+bool serverSimIsOperatorMod(const ServerSim *sim, const char *file);
+
+/*********************************************************
+ *NAME:          serverSimOperatorModLocks
+ *PURPOSE:
+ *  The lobby lock bits the recorded rows call for, for the
+ *  operator's own lock mask: LOBBY_LOCK_MODS when any row
+ *  is required or locked, so the Mods/Scenario checkbox
+ *  cannot switch them off, and LOBBY_LOCK_SCRIPT_LIST as
+ *  well under -mod-locked.
+ *********************************************************/
+uint32_t serverSimOperatorModLocks(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimRecordOperatorMods
+ *PURPOSE:
+ *  Puts the recorded rows back on the lobby's script list,
+ *  recording only, as serverSimSetScriptList records.
+ *  Answers whether the list changed; a caller that gets true
+ *  asks for the decision again (serverSimScenarioOnMapChanged,
+ *  or scenarioHostDecide at startup) and publishes it.
+ *
+ *  Under -mod-locked the list becomes exactly the operator's
+ *  rows, in the order they were named. Otherwise the host's
+ *  list stays as it is and each operator row it lacks is put
+ *  on the end of it. Room is made by taking off what the
+ *  host picked, never an operator row: the last pick when
+ *  the list is full, and the host's picked scenario when the
+ *  row going on is a scenario, because a round runs one. The
+ *  map's own row goes too for a -mod-required scenario, but
+ *  not for a plain -mod one, which gives way to the map's
+ *  own scenario or composes beside the map's own mod
+ *  (serverSimOperatorModYieldsToMap).
+ *
+ *  With any operator row recorded, the Mods/Scenario setting
+ *  is switched back on as well: a -mod row on a list whose
+ *  scripts are all switched off would be listed and never
+ *  play. That counts as a change.
+ *
+ *  The sim calls this itself at every return to the lobby
+ *  and at the empty-lobby reset, so a default-on -mod the
+ *  host took off is back for the next game. The dedicated
+ *  server calls it once at startup.
+ *********************************************************/
+bool serverSimRecordOperatorMods(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimOperatorModYieldsToMap
+ *PURPOSE:
+ *  Whether the round about to be composed leaves the list's
+ *  row for file out because the map brings a scenario of
+ *  its own: file is a scenario named by a plain -mod (never
+ *  the map's own row), and mapOwnIsScenario says the
+ *  committed map's own script is a scenario rather than a
+ *  mod. Against a mod map script, or a plain map, the -mod
+ *  scenario composes as usual. A -mod-required or
+ *  -mod-locked scenario never yields; it replaces the map's
+ *  own, as a host's pick does. Asked by the scenario
+ *  decision (scnDecideScenario), which is what reads the
+ *  map's script and knows its kind.
+ *********************************************************/
+bool serverSimOperatorModYieldsToMap(const ServerSim *sim,
+                                     const char *file,
+                                     bool mapOwnIsScenario);
+
+/* How many -setting values on the operator's own rows are held at once: as
+ * many as the settings store holds (SERVER_SCRIPT_SETTING_VALUES_MAX, below),
+ * so a value the store took always has a place here and a fixed row's value
+ * is always locked. */
+#define SERVER_OPERATOR_SETTINGS_MAX SERVER_SCRIPT_SETTING_VALUES_MAX
+
+/*********************************************************
+ *NAME:          serverSimResolveScriptName
+ *PURPOSE:
+ *  The file a dedicated server's -setting names, into out:
+ *  name matched the way -mod matches one (as given or
+ *  without .scenario.lua, .lua or .scenario, case ignored)
+ *  against the operator's rows, then mapScript (the map's
+ *  own script, may be NULL or ""), then the scenarios
+ *  directory. A name none of them holds is copied as given.
+ *********************************************************/
+void serverSimResolveScriptName(ServerSim *sim, const char *name,
+                                const char *mapScript, char *out,
+                                size_t outLen);
+
+/* What serverSimRecordOperatorSetting did with a value. */
+typedef enum {
+    SERVER_OPERATOR_SETTING_NOT_OPERATOR = 0, /* file is no operator row;
+                                                 nothing kept */
+    SERVER_OPERATOR_SETTING_FULL         = 1, /* no room left; this game
+                                                 only */
+    SERVER_OPERATOR_SETTING_DEFAULT      = 2, /* kept for each new lobby;
+                                                 the host may change it */
+    SERVER_OPERATOR_SETTING_HELD         = 3  /* kept, and on a fixed row:
+                                                 the host cannot change it */
+} ServerOperatorSettingHold;
+
+/*********************************************************
+ *NAME:          serverSimRecordOperatorSetting
+ *PURPOSE:
+ *  Records value as the operator's own for file's setting
+ *  id, when file is one of the operator's rows (-mod,
+ *  -mod-required, -mod-locked): serverSimRecordOperatorMods
+ *  puts it back at every new lobby, and on a fixed row
+ *  (serverSimOperatorModFixed) the host cannot change it
+ *  (serverSimOperatorSettingLocked); a LOCK for it is
+ *  published then. Given twice, the later value counts.
+ *  Does not set the value in the store; the caller sets it
+ *  first (serverSimSetScriptSetting) and passes what the
+ *  store resolved. Answers what it did.
+ *********************************************************/
+ServerOperatorSettingHold serverSimRecordOperatorSetting(ServerSim *sim,
+                                                         const char *file,
+                                                         const char *id,
+                                                         int32_t value);
+
+/*********************************************************
+ *NAME:          serverSimOperatorSettingLocked
+ *PURPOSE:
+ *  Whether file's setting id is held by the operator: it
+ *  has a -setting value and file is a row no host may take
+ *  off (-mod-required, or any row under -mod-locked). The
+ *  CMD_SET_SCRIPT_SETTING arm refuses a change to it. The
+ *  rows' other settings stay the host's.
+ *********************************************************/
+bool serverSimOperatorSettingLocked(const ServerSim *sim, const char *file,
+                                    const char *id);
+
+/*********************************************************
  *NAME:          serverSimSetQuitOnWin
  *PURPOSE:
  *  Configures whether the server should quit after
@@ -2370,7 +2578,8 @@ bool serverSimSetScriptSetting(ServerSim *sim, const char *file,
                                int32_t *resolved);
 
 /* Every kept value, as one CTRL_LOBBY_SCRIPT_SETTING CLEAR and then one SET
- * per value, into deliver. The join sync is the caller. */
+ * per value, into deliver, and then one LOCK per value the operator holds
+ * (serverSimOperatorSettingLocked). The join sync is the caller. */
 void serverSimReplayScriptSettings(
     const ServerSim *sim, void (*deliver)(void *, const struct ControlEvent *),
     void *ctx);

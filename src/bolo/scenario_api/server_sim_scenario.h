@@ -767,8 +767,9 @@ bool serverSimScenarioMapIsNewer(const ServerSim *sim);
  *NAME:          serverSimDropPickedScenarios
  *PURPOSE:
  *  Takes every picked scenario off the host's list and
- *  keeps the rest, the mods and the map's own row, in the
- *  host's order. Answers how many rows went. Called by
+ *  keeps the rest, the mods, the map's own row and the
+ *  operator's rows (serverSimIsOperatorMod), in the host's
+ *  order. Answers how many rows went. Called by
  *  whoever owns the scenario once the map's own scenario
  *  has loaded in their place.
  *********************************************************/

@@ -492,6 +492,76 @@ host wrote it, so turning the box back on brings the same scripts back in the
 same order, and the lobby marks each pick that is switched off. An operator
 locks the box with `-lock mods` on the dedicated server.
 
+**Mods the operator puts on every game.** Three dedicated-server switches put
+scripts on the list for every game. Each takes a comma-separated list of file
+names, with or without `.scenario.lua` (case does not matter), and each may be
+given more than once.
+
+- `-mod <Names>` puts them on at every new lobby, and switches the
+  Mods/Scenario box back on, so a row that is back also plays. The host may
+  take one off, or switch the box off, for that game; the next lobby has them
+  back. The host's own picks stay.
+- `-mod-required <Names>` keeps them on. The server refuses any list without
+  them, the empty one included. The host may add, move and take off anything
+  else. It also locks the Mods/Scenario box on.
+- `-mod-locked <Names>` makes the list exactly these, read-only: `-lock mods`
+  plus the list. Every list is refused.
+
+A script from any of the three keeps the server out of ranked, which allows
+no scripts; with `-ranked` the server prints a warning at startup.
+
+`-mod-locked` cannot be combined with `-mod` or `-mod-required`. Given
+together, the server prints `Error: -mod-locked cannot be combined with -mod
+or -mod-required` and exits with status 1. `-mod` and `-mod-required` do
+combine: a name given to both keeps `-mod-required`. Under `-noscenarios`
+the conflict is not checked, because all three switches are ignored there.
+
+At most ten scripts and one scenario. An operator scenario replaces a
+scenario the host picked. Against a map that brings its own script the rule
+depends on the switch and on the map's script. A `-mod` scenario gives way
+to a map's own scenario, which plays instead; the console says so once per
+map. The `-mod` row stays on the script list while it gives way, and it plays
+again on the next map that has no scenario of its own. Beside a map's own
+mod, a `-mod` scenario plays with it. A `-mod-required` or `-mod-locked`
+scenario replaces the map's own script.
+
+A name that does not resolve, a script tied to a map and a player upload are
+each a warning on stderr and are skipped, as are blank names in the list, a
+switch with no value and a value longer than 1023 characters. `-noscenarios`
+ignores all three switches. With `-nolobby` or `-maprotate` the list is set
+once at startup and plays every round. The lobby chooser draws fixed rows
+with a lock and no drop arrow, and a locked list with no controls at all.
+
+**Settings of the operator's mods.** `-setting [<File>:]<id>=<value>` gives
+one of a script's own [settings](#scenariosettings) a value, as the host
+would pick it. File takes the name the way `-mod` does: with or without
+`.scenario.lua`, case ignored. The operator's mods are tried first, then the
+map's own script, then the mods directory. A bare `id=value` with no file
+names the map's own script. The value is a number, `true` or `false` (or `on`
+or `off`) for a `"bool"` setting, or one of the words of a `"choice"` setting.
+`-setting` may be given more than once.
+
+```
+WinBoloDS -mod-required MacBoloRules -setting MacBoloRules:pushback=false
+```
+
+On a mod from one of the three switches the value holds for every game, not
+only the first:
+
+- On a `-mod` mod the value is the default of every new lobby. The host may
+  change it for that game; the next lobby has the operator's value again.
+- On a `-mod-required` or `-mod-locked` mod the value is locked. The details
+  dialog shows it read-only with a lock, and the server refuses a change.
+
+Only the settings `-setting` names are held. The mod's other settings stay
+the host's to pick, under all three switches. On any other script `-setting`
+sets the value once at startup, and the host may change it. A file that
+declares no such setting, an unknown id, a value the setting does not take
+and a malformed argument are each a line on the console, and are skipped;
+the server still starts. The lock travels as a separate kind of setting
+message that a client from before it skips, so an older client still shows
+the value but leaves the dropdown on; the server refuses its change.
+
 ---
 
 ## Uploads
@@ -1048,7 +1118,9 @@ not declared.
 
 The server reads the declaration without running the script, the same way it
 reads `rules`. A value the host picks is held for the lobby session, per
-script file.
+script file. A dedicated server's operator can give a value with `-setting`,
+and lock it on a mod the server always runs; see
+[The script list](#the-script-list) (Settings of the operator's mods).
 
 ### `scenario.tags`
 
@@ -1187,7 +1259,7 @@ names the reason, as `-validate` does.
 | Hook | Arguments |
 |---|---|
 | `on_tank_spawned(p, mx, my, respawn, scripted)` | `respawn` is false the first time a seat takes the field. |
-| `on_tank_killed(victim, killer, cause, scripted)` | The victim comes first: it is the subject, and the killer is what happened to it. `cause` is `"shell"`, `"mine"`, `"deep_sea"` or `"script"`. |
+| `on_tank_killed(victim, killer, cause, scripted)` | The victim comes first: it is the subject, and the killer is what happened to it. `cause` is `"shell"`, `"mine"`, `"deep_sea"` or `"script"`. `killer` is the credited one: where a `kill_credit` policy named a seat, it is that seat. |
 | `on_tank_hit(victim, attacker, cause, amount, pill, scripted)` | Every shell and every mine a tank takes, after the damage is worked out. `attacker` is the seat that fired the shell or laid the mine, or `game.NEUTRAL` for a pillbox's shell and a mine nobody owns. `cause` is `"shell"` or `"mine"`. `amount` is the armour the tank actually lost, which can be `0` — a hit `damage_scale` priced at nothing, or one landing on a tank already at zero. `pill` is the pillbox number that fired the shell, and `nil` for anything else. A shell `can_hit` let through never hit, so it is not reported here. A hit that kills raises this and then `on_tank_killed`. |
 | `on_lgm_died(p, killer, mx, my, scripted)` | The square is where the man died, captured before the respawn moves him. |
 | `on_lgm_landed(p, mx, my, scripted)` | The builder `on_lgm_died` reported has finished his flight back and touched down. `mx`, `my` are the square he reached — where his tank stood when he died, unless `builder_parachute` aimed him somewhere else — and he walks to the tank from there rather than arriving in it. |
@@ -1277,6 +1349,7 @@ rather than left to misbehave quietly.
 | `spawn_loadout(p)` | When seat `p`'s tank is created, unless the op that spawned it named a `loadout` of its own. A named one outranks the policy and is taken as it is read, so the policy is not asked for that tank and the named amounts are spent on it rather than held for the seat's next life. | `"open"`, `"tournament"` or `"strict"` for that game type's loadout, or a table of all four amounts, `{ shells = , mines = , armour = , trees = }`, each 0 to 255. A table short of one is reported and the ordinary loadout stands. |
 | `damage_scale(attacker, victim, cause, pill)` | On every hit a tank takes, with `cause` as `can_die` spells it for a tank. `attacker` is `game.NEUTRAL` for a pillbox's shell, and `pill` is that pillbox's number, `nil` for anything else. | A percent, 0 to 10000. 100 is the ordinary amount and 0 is a hit that costs nothing. Out of range is reported and 100 stands. |
 | `pill_damage_scale(attacker, n, cause, pill)` | On every blow pillbox `n` takes: a shell, with `cause` `"shell"`, and a dying tank's blast, with `cause` `"explosion"`. `attacker` is the seat that fired the shell (`game.NEUTRAL` for a pillbox's) or the seat whose tank blew up, and `pill` is the pillbox that fired the shell, `nil` for anything else. | A percent, 0 to 10000, of the armour the pillbox loses. 100 is the ordinary amount and 0 costs it nothing. Only the armour is scaled: the shell still stops there and the pillbox still turns angry. Out of range is reported and 100 stands. |
+| `kill_credit(victim, killer, cause, hit_by, hit_at)` | At every tank death, before it is reported to anyone. `killer` is the engine's own credit, and for a drowning that is the victim itself. `cause` is as `can_die` spells it for a tank. `hit_by` is the last seat not allied with the victim whose shell or mine hit it during this life, and `hit_at` is the `game.tick()` of that hit; both are `nil` when no such hit has landed. Scripts are asked from the top down and the first usable seat is taken. | A seat in play, who then takes the killer's place everywhere the death is reported: the kill event every client counts kills from (the HUD's kills), `on_tank_killed`, the game log and WinBolo.net. A number that names no seat in play is reported and the engine's killer stands. `nil` keeps the engine's killer. |
 
 `scenario.lobby.max_players` is the one decision that is a number rather than
 a function; it is applied by the lobby without asking.

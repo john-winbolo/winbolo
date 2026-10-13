@@ -18,6 +18,10 @@
  *       published list says so: the map's row first with bound set, the
  *       host's pick behind it. Picking a scenario does take it off, which is
  *       the half of the older rule that stays.
+ *   scenario_compose_operator_mod_yields
+ *       — a plain -mod scenario gives way to a map's own scenario, plays
+ *       beside a map's own mod, and plays alone on a plain map, where the
+ *       host reports no map script for a bare -setting to name.
  *   scenario_compose_mod_rules_load
  *       — a mod that declares a rules block plays. It used to be refused,
  *       because two scripts setting one rule came down to which was read
@@ -148,7 +152,17 @@
  *       — a round started with a preview up keeps the previewed map, so the
  *       next map change and a Cancel do not reach back past the round.
  *   scenario_compose_drop_picked_scenarios
- *       — the removal on its own.
+ *       — the removal on its own; the operator's -mod scenario is not a
+ *       pick and stays.
+ *   scenario_compose_commit_map_keeps_operator_mod
+ *       — a scenario map committed over a plain -mod scenario: the row
+ *       stays listed and gives way, said once; nothing comes off the list.
+ *   scenario_compose_commit_map_fixed_operator_mod
+ *       — the same under -mod-required and -mod-locked: the fixed row stays
+ *       and plays in place of the map's own scenario.
+ *   scenario_compose_map_kind_cached
+ *       — the kind of the map's own script is read once per map and script,
+ *       and again when the script changes.
  *   scenario_compose_fallback_strict
  *       — a scripted lobby with no earlier type falls back to strict
  *       tournament.
@@ -453,10 +467,27 @@ static size_t scNoteLen;
 
 static int scBaseWinSkipped;
 
+/* The host's own lines about the operator's -mod scenario and about picks a
+   map commit took off, counted for the same reason. */
+#define SC_GIVES_WAY "(-mod) gives way"
+#define SC_TAKEN_OFF "taken off the list"
+/* The load line, "scenario: Duel loaded from <path>". Matched by its start
+   and its verb only, so a line that also names the author and the date
+   between them still counts. */
+#define SC_DUEL_LOADED "scenario: Duel "
+#define SC_LOADED      " loaded"
+
+static int scGivesWay;
+static int scTakenOff;
+static int scDuelLoads;
+
 static void scNoteReset(void) {
     scNote[0] = '\0';
     scNoteLen = 0;
     scBaseWinSkipped = 0;
+    scGivesWay = 0;
+    scTakenOff = 0;
+    scDuelLoads = 0;
 }
 
 /* One console line, kept if a script wrote it. A record past the buffer is
@@ -489,6 +520,16 @@ static void scConsoleCb(void *ctx, char *msg) {
     }
     if (msg != NULL && strstr(msg, SC_BASE_WIN_SKIPPED) != NULL) {
         scBaseWinSkipped++;
+    }
+    if (msg != NULL && strstr(msg, SC_GIVES_WAY) != NULL) {
+        scGivesWay++;
+    }
+    if (msg != NULL && strstr(msg, SC_TAKEN_OFF) != NULL) {
+        scTakenOff++;
+    }
+    if (msg != NULL && strstr(msg, SC_DUEL_LOADED) != NULL &&
+        strstr(msg, SC_LOADED) != NULL) {
+        scDuelLoads++;
     }
     scNoteLine(msg);
 }
@@ -802,6 +843,97 @@ int run_scenario_compose_keeps_map_scenario(void) {
 
     scDestroy(sim);
     scDropMapScript();
+    scDropDir();
+    return 0;
+}
+
+/* ── 2b. A plain -mod scenario and the map's own script ───────────── */
+
+/* Every map these cases commit has its script written beside it, so the
+   scripted question answers yes without the map-script cache, which keys on
+   paths that the cases rewrite. */
+static bool scAlwaysScripted(void *ctx, const char *mapPath) {
+    (void)ctx;
+    (void)mapPath;
+    return true;
+}
+
+/* The sim, with Duel put on by the operator as a plain -mod row and the map
+   committed after it, as servermain does at startup. */
+static ServerSim *scOperatorDuelSim(void) {
+    ServerSim *sim = scSim();
+    char       err[256];
+
+    if (sim == NULL) return NULL;
+    serverSimSetScenarioMapScripted(sim, scAlwaysScripted, NULL);
+    err[0] = '\0';
+    if (!serverSimAddOperatorMod(sim, "duel", SERVER_MOD_DEFAULT, err,
+                                 sizeof(err))) {
+        scDestroy(sim);
+        return NULL;
+    }
+    (void)serverSimRecordOperatorMods(sim);
+    scCommit(sim);
+    return sim;
+}
+
+int run_scenario_compose_operator_mod_yields(void) {
+    ServerSim *sim;
+    char       mapScript[512];
+
+    UT_ASSERT(scMakeDir("operator_yield"));
+    UT_ASSERT(scWrite("duel.lua", kScOtherScenario));
+    scScriptFor(scMapPath(), mapScript, sizeof(mapScript));
+
+    /* The map's own script is a scenario: the -mod scenario gives way. */
+    UT_ASSERT(scPutMapScript(kScMapScenario));
+    sim = scOperatorDuelSim();
+    UT_ASSERT_MSG(sim != NULL, "the -mod row was refused");
+    UT_ASSERT_MSG(scSlot != NULL, "nothing attached");
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Survival") == 0,
+                  "the round is \"%s\", wanted the map's own scenario",
+                  sim->scenarioIdentity.name);
+    UT_ASSERT_MSG(scenarioHostScriptCount(scSlot) == 1,
+                  "%d scripts loaded, wanted the map's own alone",
+                  scenarioHostScriptCount(scSlot));
+    UT_ASSERT_MSG(strcmp(scenarioHostMapScriptPath(scSlot), mapScript) == 0,
+                  "the map's own script reads as \"%s\"",
+                  scenarioHostMapScriptPath(scSlot));
+    scDestroy(sim);
+
+    /* The map's own script is a mod: the -mod scenario plays beside it. */
+    UT_ASSERT(scPutMapScript(kScModOne));
+    sim = scOperatorDuelSim();
+    UT_ASSERT_MSG(sim != NULL, "the -mod row was refused");
+    UT_ASSERT_MSG(scSlot != NULL, "nothing attached");
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
+                  "the round is \"%s\", wanted the -mod scenario",
+                  sim->scenarioIdentity.name);
+    UT_ASSERT_MSG(scenarioHostScriptCount(scSlot) == 2,
+                  "%d scripts loaded, wanted the map's mod and the -mod "
+                  "scenario", scenarioHostScriptCount(scSlot));
+    UT_ASSERT_MSG(scHasRegion(scenarioHostManifest(scSlot), "south"),
+                  "the map's own mod did not compose");
+    UT_ASSERT_MSG(strcmp(scenarioHostMapScriptPath(scSlot), mapScript) == 0,
+                  "the map's own script reads as \"%s\"",
+                  scenarioHostMapScriptPath(scSlot));
+    scDestroy(sim);
+
+    /* A plain map: the -mod scenario plays, and there is no map script for
+       a bare -setting to name. */
+    scDropMapScript();
+    sim = scOperatorDuelSim();
+    UT_ASSERT_MSG(sim != NULL, "the -mod row was refused");
+    UT_ASSERT_MSG(scSlot != NULL, "nothing attached");
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
+                  "the round is \"%s\", wanted the -mod scenario",
+                  sim->scenarioIdentity.name);
+    UT_ASSERT_MSG(scenarioHostMapScriptPath(scSlot)[0] == '\0',
+                  "a plain map reports \"%s\" as its own script",
+                  scenarioHostMapScriptPath(scSlot));
+    UT_ASSERT(scenarioHostScriptPath(scSlot)[0] != '\0');
+    scDestroy(sim);
+
     scDropDir();
     return 0;
 }
@@ -3455,11 +3587,19 @@ int run_scenario_compose_round_start_closes_preview(void) {
    condition goes, and the order of what stays is kept. */
 int run_scenario_compose_drop_picked_scenarios(void) {
     ServerSim  *sim;
-    ScnDirEntry rows[5];
+    ScnDirEntry rows[6];
+    char        err[256];
     int         i;
 
+    UT_ASSERT(scMakeDir("drop_picked"));
+    UT_ASSERT(scWrite("e_scn.lua", kScOtherScenario));
     sim = scSim();
     UT_ASSERT(sim != NULL);
+    /* The operator's plain -mod scenario is not a pick: it stays listed. */
+    err[0] = '\0';
+    UT_ASSERT_MSG(serverSimAddOperatorMod(sim, "e_scn", SERVER_MOD_DEFAULT,
+                                          err, sizeof(err)),
+                  "the -mod row was refused: %s", err);
     memset(rows, 0, sizeof(rows));
     SDL_strlcpy(rows[0].file, "a_scn.lua", sizeof(rows[0].file));
     SDL_strlcpy(rows[1].file, "b_mod.lua", sizeof(rows[1].file));
@@ -3469,24 +3609,228 @@ int run_scenario_compose_drop_picked_scenarios(void) {
     SDL_strlcpy(rows[3].file, "c_scn.lua", sizeof(rows[3].file));
     SDL_strlcpy(rows[4].file, "d_mod.lua", sizeof(rows[4].file));
     rows[4].keepsWinCondition = true;
-    serverSimSetScriptList(sim, rows, 5);
+    SDL_strlcpy(rows[5].file, "e_scn.lua", sizeof(rows[5].file));
+    serverSimSetScriptList(sim, rows, 6);
 
     UT_ASSERT_MSG(serverSimDropPickedScenarios(sim) == 2,
                   "the removal did not report two scenarios");
-    UT_ASSERT(serverSimGetScriptCount(sim) == 3);
+    UT_ASSERT(serverSimGetScriptCount(sim) == 4);
     UT_ASSERT(strcmp(serverSimGetScript(sim, 0)->file, "b_mod.lua") == 0);
     UT_ASSERT(strcmp(serverSimGetScript(sim, 1)->file, "own.lua") == 0);
     UT_ASSERT(serverSimGetScript(sim, 1)->bound);
     UT_ASSERT(strcmp(serverSimGetScript(sim, 2)->file, "d_mod.lua") == 0);
-    UT_ASSERT(serverSimGetScript(sim, 3) == NULL);
+    UT_ASSERT_MSG(strcmp(serverSimGetScript(sim, 3)->file, "e_scn.lua") == 0,
+                  "the operator's -mod scenario was taken off as a pick");
+    UT_ASSERT(serverSimGetScript(sim, 4) == NULL);
     UT_ASSERT_MSG(serverSimDropPickedScenarios(sim) == 0,
                   "a second removal found more to take off");
     UT_ASSERT(serverSimDropPickedScenarios(NULL) == 0);
-    for (i = 3; i < LOBBY_SCRIPT_LIST_MAX; i++) {
+    for (i = 4; i < LOBBY_SCRIPT_LIST_MAX; i++) {
         UT_ASSERT(sim->scenarioScripts[i].file[0] == '\0');
     }
 
     scDestroy(sim);
+    scDropDir();
+    return 0;
+}
+
+/* The sim for the cases below, with the real scripted question and so the
+   map-script cache on, and the operator's Duel at strength. The plain map is
+   committed after the rows are recorded, as servermain does at startup. */
+static ServerSim *scOperatorSim(ServerModStrength strength) {
+    ServerSim *sim = scSim();
+    char       err[256];
+
+    if (sim == NULL) return NULL;
+    scenarioHostRegisterMapScripted(sim);
+    err[0] = '\0';
+    if (!serverSimAddOperatorMod(sim, "duel", strength, err, sizeof(err))) {
+        scDestroy(sim);
+        return NULL;
+    }
+    (void)serverSimRecordOperatorMods(sim);
+    if (!scSetMap(sim, scPlainPath())) {
+        scDestroy(sim);
+        return NULL;
+    }
+    return sim;
+}
+
+/* A plain -mod scenario and a picked mod on a plain map, then the map with
+   its own scenario committed. The -mod row is not a pick, so the map is not
+   the newer choice over it and nothing comes off the list: the row stays
+   listed and gives way at the compose, the map's own scenario plays with
+   the mod, and the console says so once. Back on the plain map, the -mod
+   scenario plays again from the same list. */
+int run_scenario_compose_commit_map_keeps_operator_mod(void) {
+    ServerSim  *sim;
+    const char *picks[2] = { "duel.lua", "modone.lua" };
+
+    UT_ASSERT(scMakeDir("commit_keeps_operator"));
+    UT_ASSERT(scWrite("duel.lua", kScOtherScenario));
+    UT_ASSERT(scWrite("modone.lua", kScModOne));
+    UT_ASSERT(scWriteMapFiles());
+    UT_ASSERT(scPutMapScript(kScMapScenario));
+    sim = scOperatorSim(SERVER_MOD_DEFAULT);
+    UT_ASSERT_MSG(sim != NULL, "the -mod row was refused");
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
+                  "setup: the plain map played \"%s\", wanted the -mod "
+                  "scenario", sim->scenarioIdentity.name);
+    UT_ASSERT_MSG(scPick(sim, picks, 2) == CMD_OK,
+                  "the -mod scenario and the mod were refused");
+
+    UT_ASSERT(scSetMap(sim, scMapPath()));
+    UT_ASSERT_MSG(sim->scenarioIdentity.source == lobbyScenarioMap &&
+                  strcmp(sim->scenarioIdentity.name, "Survival") == 0,
+                  "the map's own scenario did not play: source %d, round "
+                  "\"%s\"", (int)sim->scenarioIdentity.source,
+                  sim->scenarioIdentity.name);
+    UT_ASSERT_MSG(scSlot != NULL && scenarioHostScriptCount(scSlot) == 2,
+                  "%d scripts composed, wanted the map's own and the mod",
+                  scSlot != NULL ? scenarioHostScriptCount(scSlot) : -1);
+    UT_ASSERT_MSG(scListIs(sim, picks, 2),
+                  "the host's list holds %d rows after Set Map, wanted the "
+                  "-mod scenario and the mod", serverSimGetScriptCount(sim));
+    UT_ASSERT_MSG(scTakenOff == 0,
+                  "the commit said it took %d picks off", scTakenOff);
+    UT_ASSERT_MSG(scGivesWay == 1,
+                  "the \"gives way\" line was said %d times over the preview "
+                  "and the commit, wanted once", scGivesWay);
+    UT_ASSERT_MSG(serverSimDropPickedScenarios(sim) == 0,
+                  "the -mod scenario counts as a picked scenario");
+    UT_ASSERT(scListIs(sim, picks, 2));
+
+    /* A pick on the same map decides again, and says nothing new. */
+    UT_ASSERT(scPick(sim, picks, 2) == CMD_OK);
+    UT_ASSERT(strcmp(sim->scenarioIdentity.name, "Survival") == 0);
+    UT_ASSERT_MSG(scGivesWay == 1,
+                  "a pick on the same map said \"gives way\" again (%d)",
+                  scGivesWay);
+
+    /* The plain map: the row that gave way plays. */
+    UT_ASSERT(scSetMap(sim, scPlainPath()));
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
+                  "back on the plain map the round is \"%s\", wanted the "
+                  "-mod scenario", sim->scenarioIdentity.name);
+    UT_ASSERT(scListIs(sim, picks, 2));
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropMapFiles();
+    scDropDir();
+    return 0;
+}
+
+/* The same commit with Duel fixed by -mod-required, then by -mod-locked.
+   A fixed row never gives way: it replaces the map's own scenario as a pick
+   does. The map is not the newer choice over it, so the newer-map compose
+   is not tried (Duel attaches once for the new map, not twice) and nothing
+   comes off the list. */
+int run_scenario_compose_commit_map_fixed_operator_mod(void) {
+    static const ServerModStrength strengths[2] = {
+        SERVER_MOD_REQUIRED, SERVER_MOD_LOCKED
+    };
+    const char *duelOnly[1] = { "duel.lua" };
+    const char *picks[2]    = { "duel.lua", "modone.lua" };
+    int         s;
+
+    UT_ASSERT(scMakeDir("commit_fixed_operator"));
+    UT_ASSERT(scWrite("duel.lua", kScOtherScenario));
+    UT_ASSERT(scWrite("modone.lua", kScModOne));
+    UT_ASSERT(scWriteMapFiles());
+    UT_ASSERT(scPutMapScript(kScMapScenario));
+    for (s = 0; s < 2; s++) {
+        bool               locked = strengths[s] == SERVER_MOD_LOCKED;
+        const char *const *want   = locked ? duelOnly : picks;
+        int                wantN  = locked ? 1 : 2;
+        ServerSim         *sim    = scOperatorSim(strengths[s]);
+
+        UT_ASSERT_MSG(sim != NULL, "the fixed row was refused (%d)", s);
+        if (!locked) {
+            UT_ASSERT_MSG(scPick(sim, picks, 2) == CMD_OK,
+                          "the required scenario and a mod were refused");
+        }
+        UT_ASSERT(strcmp(sim->scenarioIdentity.name, "Duel") == 0);
+
+        scDuelLoads = 0;
+        UT_ASSERT(scSetMap(sim, scMapPath()));
+        UT_ASSERT_MSG(scDuelLoads == 1,
+                      "Duel attached %d times for the scripted map, wanted "
+                      "once: a compose without it was tried", scDuelLoads);
+        UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
+                      "with %s the scripted map played \"%s\", wanted the "
+                      "operator's scenario",
+                      locked ? "-mod-locked" : "-mod-required",
+                      sim->scenarioIdentity.name);
+        UT_ASSERT_MSG(serverSimGetMapScript(sim) == NULL,
+                      "the map's own row is shown beside the fixed scenario");
+        UT_ASSERT_MSG(scListIs(sim, want, wantN),
+                      "the list holds %d rows after Set Map, wanted %d",
+                      serverSimGetScriptCount(sim), wantN);
+        UT_ASSERT_MSG(scTakenOff == 0 && scGivesWay == 0,
+                      "the commit said a pick came off (%d) or the row gave "
+                      "way (%d)", scTakenOff, scGivesWay);
+        scDestroy(sim);
+    }
+
+    scDropMapScript();
+    scDropMapFiles();
+    scDropDir();
+    return 0;
+}
+
+/* What kind the map's own script is, read once per map and script: a second
+   decision on the same map reads nothing, and the script rewritten (a mod
+   now, so a different length) is read again. The answer the second read
+   gives is the one that plays: the -mod scenario beside the map's mod. */
+int run_scenario_compose_map_kind_cached(void) {
+    ServerSim    *sim;
+    const char   *duelOnly[1] = { "duel.lua" };
+    unsigned long before;
+    unsigned long afterSet;
+    unsigned long afterPick;
+    unsigned long afterEdit;
+
+    UT_ASSERT(scMakeDir("map_kind_cached"));
+    UT_ASSERT(scWrite("duel.lua", kScOtherScenario));
+    UT_ASSERT(scWriteMapFiles());
+    UT_ASSERT(scPutMapScript(kScMapScenario));
+    sim = scOperatorSim(SERVER_MOD_DEFAULT);
+    UT_ASSERT_MSG(sim != NULL, "the -mod row was refused");
+
+    before = scenarioHostMapKindReads();
+    UT_ASSERT(scSetMap(sim, scMapPath()));
+    UT_ASSERT(strcmp(sim->scenarioIdentity.name, "Survival") == 0);
+    afterSet = scenarioHostMapKindReads();
+    UT_ASSERT_MSG(afterSet - before == 1,
+                  "the preview and the commit read the map's script %lu "
+                  "times, wanted once", afterSet - before);
+
+    UT_ASSERT(scPick(sim, duelOnly, 1) == CMD_OK);
+    UT_ASSERT(strcmp(sim->scenarioIdentity.name, "Survival") == 0);
+    afterPick = scenarioHostMapKindReads();
+    UT_ASSERT_MSG(afterPick == afterSet,
+                  "a pick on the same map read its script %lu more times",
+                  afterPick - afterSet);
+
+    UT_ASSERT(scPutMapScript(kScModOne));
+    UT_ASSERT(scPick(sim, duelOnly, 1) == CMD_OK);
+    afterEdit = scenarioHostMapKindReads();
+    UT_ASSERT_MSG(afterEdit - afterPick == 1,
+                  "a rewritten script was read %lu times, wanted once",
+                  afterEdit - afterPick);
+    UT_ASSERT_MSG(strcmp(sim->scenarioIdentity.name, "Duel") == 0,
+                  "with the map's script a mod the round is \"%s\", wanted "
+                  "the -mod scenario", sim->scenarioIdentity.name);
+    UT_ASSERT_MSG(scSlot != NULL && scenarioHostScriptCount(scSlot) == 2,
+                  "%d scripts composed, wanted the map's mod and the -mod "
+                  "scenario",
+                  scSlot != NULL ? scenarioHostScriptCount(scSlot) : -1);
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropMapFiles();
+    scDropDir();
     return 0;
 }
 

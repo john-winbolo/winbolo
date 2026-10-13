@@ -1156,3 +1156,9 @@ bases that is still neutral. That does not fight `give_back`: both only take
 what nobody holds, so whichever runs first, the other finds nothing left to
 do for that item. `give_back` is still needed for a player with another
 name, and for what the 5A bot was given.
+
+### Merge of origin/main (the -mod switches #504, the Joust kills counter #513)
+
+- The four lang files and `tests/unit/test_scenario_fndesc.c` were joined: main's ids and strings are kept as main has them (2768 to 2770, 2773, 2774), and this branch's keep theirs (2775, 2810). No id clashed, so none moved.
+- `lang_names.inc` was written again by `tools/dump_lang_en.py` (2421 names). The catalogue now has 26 hooks and 15 policies, `kill_credit` and `can_target` both; the comments that gave the count say so.
+- `SCN_CALLBACKS_MAX` stays at this branch's 48 (main has 40, which 41 functions would not fit). The arena README counts 162 maps with main's `joust_drown_credit`.
