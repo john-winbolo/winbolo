@@ -1503,7 +1503,13 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.showComments     = lv_g_show_comments_window;
         lvms.showScenarioPanel = lv_g_show_scenario_panel_window;
         lvms.showHud          = lv_g_show_hud_window;
+        lvms.showOverview     = lv_g_show_overview_window;
+        lvms.showTank         = lv_g_show_tank_window;
+        lvms.tankBars         = lv_drawGetTankBars() ? true : false;
         lvms.dockEnabled      = lv_imgui_dock_get_enabled() ? true : false;
+        lvms.dockLeft         = lv_imgui_dock_get_side_enabled(LV_DOCK_LEFT) ? true : false;
+        lvms.dockTop          = lv_imgui_dock_get_side_enabled(LV_DOCK_TOP) ? true : false;
+        lvms.dockBottom       = lv_imgui_dock_get_side_enabled(LV_DOCK_BOTTOM) ? true : false;
         lvms.zoomStepIndex    = lv_drawGetZoomStepIndex();
         lvms.zoomStepCount    = lv_drawGetZoomStepCount();
         lvms.fromMainMenu     = g_lv->fromMainMenu ? true : false;

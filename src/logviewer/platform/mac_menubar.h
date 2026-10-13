@@ -39,8 +39,14 @@ struct LvMenuState {
     bool showItemInfo;
     bool showComments;
     bool showHud;
+    bool showOverview;
+    bool showTank;
     bool showScenarioPanel;
-    bool dockEnabled;          /* Windows > Dock enabled */
+    bool tankBars;             /* Options > Tank Bars checkmark */
+    bool dockEnabled;          /* Windows > the right sidebar */
+    bool dockLeft;             /* Windows > the left sidebar */
+    bool dockTop;              /* Windows > the top sidebar */
+    bool dockBottom;           /* Windows > the bottom sidebar */
     int  zoomStepIndex;       /* current zoom step */
     int  zoomStepCount;        /* total zoom steps; >0 */
     bool fromMainMenu;         /* embedded — affects File menu's last item */
