@@ -4512,6 +4512,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # file holds the on-demand capture that rewrites those summaries.
     tests/unit/test_wbv_fixture_summaries.c
     tests/unit/test_attribution_reader.c
+    # The formats' little-endian fields (byte_order.h), pinned through their
+    # writers and readers.
+    tests/unit/test_byte_order.c
     # Calibration anchor walk: synthetic v2 logs prove the highlight
     # clip-time fit resolves base cells from the log's own snapshots
     # (test_lv_calibration.c).
@@ -5251,6 +5254,14 @@ set(_unit_test_names
     attribution_reader_rejects_bad
     attribution_reader_old_wbv
     attribution_reader_clamps_slotcount
+    byte_order_helpers
+    byte_order_log_long_counts
+    byte_order_log_long_counts_viewer
+    byte_order_snapshot_base_time
+    byte_order_compressed_map_base_time
+    byte_order_attribution_member
+    byte_order_info_packet
+    byte_order_pathfinder_blob
     lv_walk_base_anchor_lobby_log
     lv_walk_base_anchor_opening_snapshot
     lv_walk_base_anchor_ordinal
