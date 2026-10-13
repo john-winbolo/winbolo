@@ -1626,6 +1626,7 @@ static void lvHostRenderFrame(const char *overlay) {
         if (overlay != NULL) {
             lv_imgui_center_message(overlay);
         }
+        lv_imgui_zoom_label();
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
     } else if (lv_screenSpecIsLiveMode()) {
@@ -1646,6 +1647,7 @@ static void lvHostRenderFrame(const char *overlay) {
         if (overlay != NULL) {
             lv_imgui_center_message(overlay);
         }
+        lv_imgui_zoom_label();
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
 
@@ -1722,6 +1724,7 @@ static void lvHostRenderFrame(const char *overlay) {
         if (compact) {
             lvMenuRender(g_lv);
         }
+        lv_imgui_zoom_label();
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
 

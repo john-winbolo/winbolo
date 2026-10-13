@@ -28,6 +28,8 @@
 #ifndef LV_IMGUI_EVENT_OVERLAY_H
 #define LV_IMGUI_EVENT_OVERLAY_H
 
+#include "imgui.h"
+
 /* Read the chosen kinds from the preferences. Call once at start-up. */
 void lv_event_overlay_init(void);
 
@@ -51,6 +53,20 @@ float lv_event_overlay_combo_width(bool full);
  * for none). mask has one bit a kind; returns true when it was changed. */
 bool lv_event_kinds_combo(const char *id, const char *preview, const char *tip,
                           unsigned *mask, const int *counts);
+
+/* The marker of one event, in the square p0..p1: the one function that
+ * draws it, for the lane, for the list of kinds and for the lines of the
+ * Events panel, so the three always show the same thing. kind is the
+ * event's kind (lvEventKind) and team the team the event names (the new
+ * owner of a pillbox or a base, the killer of a tank, the sender of a chat
+ * line), -1 for none; lvEventMarker says what that makes the marker. A
+ * pillbox event or a base event is the map's own picture in the colour of
+ * that team (no team: the game's red pillbox, the game's neutral base). Any
+ * other kind is its icon on a dark square, with a line in the team's colour
+ * round it when there is a team. The picture is made larger or smaller as
+ * lv_item_picture does it. alpha dims the marker. It creates no texture. */
+void lv_event_marker_draw(ImDrawList *dl, int kind, int team, ImVec2 p0, ImVec2 p1,
+                          float alpha);
 
 /* The lane of markers. Call it just before the seek slider, with the item
  * width of the slider already pushed: the lane takes that width, so its

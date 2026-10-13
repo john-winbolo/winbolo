@@ -77,6 +77,9 @@ void lv_imgui_toggle_dns_lookups(void);
  * reused by the compact-mode popup menu so it shares the desktop File
  * menu flow. */
 void lv_imgui_zoom_at_center(int stepIndex);
+/* The zoom of the map as a percentage, written on the map for a moment
+ * after it changes. Call it once a frame, before the frame is rendered. */
+void lv_imgui_zoom_label(void);
 void lv_imgui_open_wbn_browser(void);
 
 #ifdef __cplusplus

@@ -131,50 +131,104 @@ int run_lv_name_header_sums(void) {
 
 /* A double click on a tank on the map: when the click turns that tank's
    view on (the eye of the HUD panel). */
+/* One click as the viewer runs it. mode 1 is Select Team mode, where a
+   single click on a tank moves a view that is on to that tank; in mode 0
+   (Information) a single click leaves the view alone. */
+static void tp_click(int mode, int count, int tank, int *view, int *prev, int *before,
+                     int *changes) {
+    int was = *view;
+    LvMapClickView v;
+    int prevTank = (count >= 2) ? *prev : -1;
+    *prev = tank;
+    if ((count % 2) != 0) *before = *view;
+    if (mode == 1 && tank >= 0 && *view >= 0) *view = tank;
+    v = lvMapClickViewsTank(count, tank, prevTank, *before);
+    if (v == LV_MAP_VIEW_OFF) *view = -1;
+    if (v == LV_MAP_VIEW_ON) *view = tank;
+    if (*view != was) (*changes)++;
+}
+
 int run_lv_map_double_click(void) {
+    int mode;
+
     /* One click selects and no more. */
-    UT_ASSERT_MSG(!lvMapClickViewsTank(1, 3, -1, -1), "a single click on a tank");
-    UT_ASSERT_MSG(!lvMapClickViewsTank(1, 3, 3, -1), "a slow second click is a single click");
-    UT_ASSERT_MSG(!lvMapClickViewsTank(0, 3, 3, -1), "no click counted");
+    UT_ASSERT_MSG(lvMapClickViewsTank(1, 3, -1, -1) == LV_MAP_VIEW_KEEP, "a single click on a tank");
+    UT_ASSERT_MSG(lvMapClickViewsTank(1, 3, 3, -1) == LV_MAP_VIEW_KEEP,
+                  "a slow second click is a single click");
+    UT_ASSERT_MSG(lvMapClickViewsTank(1, 3, 3, 3) == LV_MAP_VIEW_KEEP,
+                  "a single click on the viewed tank");
+    UT_ASSERT_MSG(lvMapClickViewsTank(0, 3, 3, -1) == LV_MAP_VIEW_KEEP, "no click counted");
 
-    /* The second click of a double click on a tank: its view. */
-    UT_ASSERT_MSG(lvMapClickViewsTank(2, 3, 3, -1), "a double click, all teams shown");
-    UT_ASSERT_MSG(lvMapClickViewsTank(2, 0, 0, -1), "slot 0 is a tank");
-    UT_ASSERT_MSG(lvMapClickViewsTank(2, 3, 3, 5), "from the view of another player");
-    UT_ASSERT_MSG(lvMapClickViewsTank(2, 15, 15, 0), "the last slot");
+    /* Case 1: a double click on a tank with no view on: its view comes on. */
+    UT_ASSERT_MSG(lvMapClickViewsTank(2, 3, 3, -1) == LV_MAP_VIEW_ON, "a double click, all teams shown");
+    UT_ASSERT_MSG(lvMapClickViewsTank(2, 0, 0, -1) == LV_MAP_VIEW_ON, "slot 0 is a tank");
+    /* Case 2: on another tank while a view is on: the view goes to it. */
+    UT_ASSERT_MSG(lvMapClickViewsTank(2, 3, 3, 5) == LV_MAP_VIEW_ON, "from the view of another player");
+    UT_ASSERT_MSG(lvMapClickViewsTank(2, 15, 15, 0) == LV_MAP_VIEW_ON, "the last slot");
+    /* Case 3: on the tank whose view is on: off, back to all teams. */
+    UT_ASSERT_MSG(lvMapClickViewsTank(2, 3, 3, 3) == LV_MAP_VIEW_OFF, "a double click on the viewed tank");
+    UT_ASSERT_MSG(lvMapClickViewsTank(2, 0, 0, 0) == LV_MAP_VIEW_OFF, "slot 0, viewed");
 
-    /* The tank whose view is on stays in it: no second call, no toggle. */
-    UT_ASSERT_MSG(!lvMapClickViewsTank(2, 3, 3, 3), "a double click on the viewed tank");
-    UT_ASSERT_MSG(!lvMapClickViewsTank(3, 3, 3, 3), "a third click after the view came on");
-    UT_ASSERT_MSG(!lvMapClickViewsTank(4, 3, 3, 3), "a fourth");
-    /* ...and a third click that still finds the view off turns it on. */
-    UT_ASSERT_MSG(lvMapClickViewsTank(3, 3, 3, -1), "a third click, view not on");
+    /* A third click is the first of a new pair: nothing. A fourth is the
+       second of that pair. */
+    UT_ASSERT_MSG(lvMapClickViewsTank(3, 3, 3, 3) == LV_MAP_VIEW_KEEP, "a third click, view on");
+    UT_ASSERT_MSG(lvMapClickViewsTank(3, 3, 3, -1) == LV_MAP_VIEW_KEEP, "a third click, view off");
+    UT_ASSERT_MSG(lvMapClickViewsTank(4, 3, 3, 3) == LV_MAP_VIEW_OFF, "a fourth, view on before the third");
+    UT_ASSERT_MSG(lvMapClickViewsTank(4, 3, 3, -1) == LV_MAP_VIEW_ON, "a fourth, view off before the third");
 
     /* Not on a tank: the map, a pillbox, a base. Nothing new. */
-    UT_ASSERT_MSG(!lvMapClickViewsTank(2, -1, -1, -1), "a double click on the map");
-    UT_ASSERT_MSG(!lvMapClickViewsTank(2, -1, -1, 3), "on the map, a view on: it stays");
-    UT_ASSERT_MSG(!lvMapClickViewsTank(2, -1, 3, -1), "tank, then the map");
+    UT_ASSERT_MSG(lvMapClickViewsTank(2, -1, -1, -1) == LV_MAP_VIEW_KEEP, "a double click on the map");
+    UT_ASSERT_MSG(lvMapClickViewsTank(2, -1, -1, 3) == LV_MAP_VIEW_KEEP, "on the map, a view on: it stays");
+    UT_ASSERT_MSG(lvMapClickViewsTank(2, -1, 3, -1) == LV_MAP_VIEW_KEEP, "tank, then the map");
 
     /* Both clicks on the same tank. */
-    UT_ASSERT_MSG(!lvMapClickViewsTank(2, 3, -1, -1), "the map, then a tank that drove under");
-    UT_ASSERT_MSG(!lvMapClickViewsTank(2, 3, 4, -1), "one tank, then another");
-    UT_ASSERT_MSG(!lvMapClickViewsTank(2, 3, 4, 4), "one tank, then another, the first one viewed");
+    UT_ASSERT_MSG(lvMapClickViewsTank(2, 3, -1, -1) == LV_MAP_VIEW_KEEP,
+                  "the map, then a tank that drove under");
+    UT_ASSERT_MSG(lvMapClickViewsTank(2, 3, 4, -1) == LV_MAP_VIEW_KEEP, "one tank, then another");
+    UT_ASSERT_MSG(lvMapClickViewsTank(2, 3, 4, 4) == LV_MAP_VIEW_KEEP,
+                  "one tank, then another, the first one viewed");
+    UT_ASSERT_MSG(lvMapClickViewsTank(2, 3, 4, 3) == LV_MAP_VIEW_KEEP,
+                  "one tank, then the viewed one");
 
-    /* The whole double click as the viewer runs it: the first click, then
-       the second with what the first one left. */
-    {
-        int view = -1;
-        int prev = -1;
-        int calls = 0;
-        int click;
-        for (click = 1; click <= 3; click++) {
-            if (lvMapClickViewsTank(click, 7, (click >= 2) ? prev : -1, view)) {
-                view = 7; /* what the HUD panel's call does with no view on this tank */
-                calls++;
-            }
-            prev = 7;
-        }
-        UT_ASSERT_MSG(view == 7 && calls == 1, "one call for three clicks (%d)", calls);
+    /* The whole double click as the viewer runs it, in both modes: where
+       the view ends, and that the second click is the one that decides. */
+    for (mode = 0; mode <= 1; mode++) {
+        int view, prev, before, changes;
+
+        /* No view on: on for the tank, changed once. */
+        view = -1; prev = -1; before = -1; changes = 0;
+        tp_click(mode, 1, 7, &view, &prev, &before, &changes);
+        UT_ASSERT_MSG(view == -1, "mode %d: the first click alone leaves all teams", mode);
+        tp_click(mode, 2, 7, &view, &prev, &before, &changes);
+        UT_ASSERT_MSG(view == 7 && changes == 1, "mode %d: off, double click: on (%d, %d)", mode, view, changes);
+
+        /* The view of this tank on: off, changed once, and not by the
+           first click. */
+        view = 7; prev = -1; before = -1; changes = 0;
+        tp_click(mode, 1, 7, &view, &prev, &before, &changes);
+        UT_ASSERT_MSG(view == 7 && changes == 0, "mode %d: the first click alone keeps the view", mode);
+        tp_click(mode, 2, 7, &view, &prev, &before, &changes);
+        UT_ASSERT_MSG(view == -1 && changes == 1, "mode %d: on, double click: off (%d, %d)", mode, view, changes);
+
+        /* The view of another tank on: it ends on this tank. In Select Team
+           mode the first click has moved it there already; the second must
+           not take that for "its view was on" and turn it off. */
+        view = 2; prev = -1; before = -1; changes = 0;
+        tp_click(mode, 1, 7, &view, &prev, &before, &changes);
+        UT_ASSERT_MSG(view == (mode == 1 ? 7 : 2), "mode %d: the first click (%d)", mode, view);
+        tp_click(mode, 2, 7, &view, &prev, &before, &changes);
+        UT_ASSERT_MSG(view == 7 && changes == 1, "mode %d: other view, double click: this tank (%d, %d)",
+                      mode, view, changes);
+
+        /* A triple click is a double click and one click more. */
+        view = -1; prev = -1; before = -1; changes = 0;
+        tp_click(mode, 1, 7, &view, &prev, &before, &changes);
+        tp_click(mode, 2, 7, &view, &prev, &before, &changes);
+        tp_click(mode, 3, 7, &view, &prev, &before, &changes);
+        UT_ASSERT_MSG(view == 7 && changes == 1, "mode %d: three clicks (%d, %d)", mode, view, changes);
+        /* Two double clicks in one row: on, then off again. */
+        tp_click(mode, 4, 7, &view, &prev, &before, &changes);
+        UT_ASSERT_MSG(view == -1 && changes == 2, "mode %d: four clicks (%d, %d)", mode, view, changes);
     }
     return 0;
 }

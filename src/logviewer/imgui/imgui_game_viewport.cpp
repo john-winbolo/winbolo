@@ -30,6 +30,7 @@ extern "C" {
     void lv_screenChooseTank(int slot);
     void lv_screenTogglePerspective(unsigned char playerNum);
     int lv_screenPerspectivePlayer(void);
+    void lv_screenClearPerspective(void);
     int lv_drawTankAtPoint(float xPoints, float yPoints);
     void lv_clientMutexWaitFor(void);
     void lv_clientMutexRelease(void);
@@ -62,6 +63,9 @@ static bool s_is_dragging = false;
 /* The tank the last click on the map was on, -1 for none: the second click
  * of a double click must be on the same tank. */
 static int s_last_click_tank = -1;
+/* The player whose view was shown before the first click of a pair did
+ * anything, -1 for all teams: what the second click of the pair decides on. */
+static int s_view_before_pair = -1;
 static bool s_is_mouse_down = false;
 static float s_drag_start_x = 0.0f;
 static float s_drag_start_y = 0.0f;
@@ -248,6 +252,13 @@ int lv_imgui_game_viewport_process_input(void) {
                     const int clicks = (int)io.MouseClickedLastCount[ImGuiMouseButton_Left];
                     const int prevTank = (clicks >= 2) ? s_last_click_tank : -1;
                     s_last_click_tank = tank;
+                    /* The view as it is before the first click of a pair
+                     * (the 1st, the 3rd... click of a row) does anything. */
+                    if ((clicks % 2) != 0) {
+                        lv_clientMutexWaitFor();
+                        s_view_before_pair = lv_screenPerspectivePlayer();
+                        lv_clientMutexRelease();
+                    }
                     if (lv_imgui_get_mode_information()) {
                         if (tank >= 0) {
                             lv_clientMutexWaitFor();
@@ -263,20 +274,31 @@ int lv_imgui_game_viewport_process_input(void) {
                     } else {
                         lv_screenMouseClick(game_x, game_y);
                     }
-                    /* A double click on a tank also shows the game as its
-                     * player sees it, in either mode. It is the HUD panel's
-                     * own call for a click on that tank there, made only
-                     * when that view is not on yet: so it never turns the
-                     * view off. The click itself did all a single click
-                     * does, just above. */
+                    /* A double click on a tank also changes whose view is
+                     * shown, in either mode: the view of that tank's player
+                     * comes on, or goes off again when it was on before the
+                     * double click. The click itself did all a single click
+                     * does, just above; in Select Team mode that can have
+                     * moved a view that was on to this tank, so the state to
+                     * end in is set here, whatever the first click did. */
                     if (tank >= 0) {
-                        lv_clientMutexWaitFor();
-                        if (lvMapClickViewsTank(clicks, tank, prevTank,
-                                                lv_screenPerspectivePlayer())) {
-                            lv_screenTogglePerspective((unsigned char)tank);
-                            lv_drawDirtyScreen();
+                        const LvMapClickView view =
+                            lvMapClickViewsTank(clicks, tank, prevTank, s_view_before_pair);
+                        if (view != LV_MAP_VIEW_KEEP) {
+                            lv_clientMutexWaitFor();
+                            const int now = lv_screenPerspectivePlayer();
+                            if (view == LV_MAP_VIEW_OFF && now >= 0) {
+                                /* The HUD panel's X. The tank stays selected. */
+                                lv_screenClearPerspective();
+                                lv_drawDirtyScreen();
+                            } else if (view == LV_MAP_VIEW_ON && now != tank) {
+                                /* The HUD panel's call for a click on a tank
+                                 * whose view is not on. */
+                                lv_screenTogglePerspective((unsigned char)tank);
+                                lv_drawDirtyScreen();
+                            }
+                            lv_clientMutexRelease();
                         }
-                        lv_clientMutexRelease();
                     }
                     input_processed = 1;
                 }

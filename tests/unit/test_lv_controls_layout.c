@@ -14,12 +14,19 @@
  *       every width.
  *   lv_controls_bottom_row — the pieces of text flow onto lines and each
  *       line is in the middle.
+ *   lv_zoom_percent — the zoom of the map as a percentage and as text
+ *       (lv_zoom_text.h), on an ordinary and on a dense display; how long
+ *       the label on the map shows; and when the zoom on the bottom row is
+ *       whole, only its number, or left out.
  */
 
 #include <stdbool.h>
 #include <stddef.h>
 
+#include <string.h>
+
 #include "lv_controls_layout.h"
+#include "lv_zoom_text.h"
 #include "test_harness.h"
 
 static LvControlsTopIn cl_in(float w, int buttons) {
@@ -210,6 +217,133 @@ int run_lv_controls_bottom_row(void) {
             }
             if (i > 0 && line[i] == line[i - 1]) {
                 UT_ASSERT_MSG(x[i] == x[i - 1] + w[i - 1] + 15.0f, "the gap between two");
+            }
+        }
+    }
+    return 0;
+}
+
+static int zp_text_is(float squarePx, float scale, const char *want) {
+    char buf[24];
+    lvZoomPercentText(lvZoomPercent(squarePx, scale), buf, sizeof(buf));
+    return strcmp(buf, want) == 0;
+}
+
+int run_lv_zoom_percent(void) {
+    char buf[24];
+    static const float steps[] = { 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 2.0f, 3.0f, 4.0f };
+    static const char *const stepText[] = { "50%", "60%", "70%", "80%", "90%",
+                                            "100%", "200%", "300%", "400%" };
+    int i;
+
+    /* 100% is one square on 16 points: 16 pixels of an ordinary display,
+       32 of one with two pixels a point, 24 at one and a half. */
+    UT_ASSERT_MSG(lvZoomPercent(16.0f, 1.0f) == 100.0f, "16 px at 1x");
+    UT_ASSERT_MSG(lvZoomPercent(32.0f, 2.0f) == 100.0f, "32 px at 2x is still 100");
+    UT_ASSERT_MSG(lvZoomPercent(24.0f, 1.5f) == 100.0f, "24 px at 1.5x");
+    UT_ASSERT_MSG(lvZoomPercent(32.0f, 1.0f) == 200.0f, "32 px at 1x is 200");
+    UT_ASSERT_MSG(lvZoomPercent(8.0f, 1.0f) == 50.0f, "8 px at 1x is 50");
+    UT_ASSERT_MSG(lvZoomPercent(16.0f, 2.0f) == 50.0f, "16 px at 2x is 50");
+    UT_ASSERT_MSG(lvZoomPercent(0.0f, 1.0f) == 0.0f, "no square");
+    UT_ASSERT_MSG(lvZoomPercent(16.0f, 0.0f) == 100.0f, "no scale given: 1");
+
+    /* Each step of the viewer, on three displays: the same text. */
+    for (i = 0; i < 9; i++) {
+        UT_ASSERT_MSG(zp_text_is(16.0f * steps[i], 1.0f, stepText[i]), "step %d at 1x", i);
+        UT_ASSERT_MSG(zp_text_is(16.0f * steps[i] * 2.0f, 2.0f, stepText[i]), "step %d at 2x", i);
+        UT_ASSERT_MSG(zp_text_is(16.0f * steps[i] * 1.25f, 1.25f, stepText[i]), "step %d at 1.25x", i);
+    }
+
+    /* The game view: a whole number of times, on a display of 1.5 drawn at
+       2 pixels a pixel of the art: 2 * 2 * 16 px over 16 * 1.5. */
+    UT_ASSERT_MSG(zp_text_is(64.0f, 1.5f, "267%"), "game view 2x on a 1.5 display");
+    UT_ASSERT_MSG(zp_text_is(48.0f, 1.0f, "300%"), "game view 3x");
+
+    /* The text: whole, but for a value under 100 that is not whole. */
+    lvZoomPercentText(150.0f, buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "150%") == 0, "150: \"%s\"", buf);
+    lvZoomPercentText(62.5f, buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "62.5%") == 0, "62.5: \"%s\"", buf);
+    lvZoomPercentText(62.0f, buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "62%") == 0, "62: \"%s\"", buf);
+    lvZoomPercentText(133.3f, buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "133%") == 0, "133.3 over 100 is whole: \"%s\"", buf);
+    lvZoomPercentText(187.5f, buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "188%") == 0, "187.5: \"%s\"", buf);
+    lvZoomPercentText(99.96f, buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "100%") == 0, "99.96 is 100: \"%s\"", buf);
+    lvZoomPercentText(99.94f, buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "99.9%") == 0, "99.94: \"%s\"", buf);
+    lvZoomPercentText(66.666f, buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "66.7%") == 0, "two thirds: \"%s\"", buf);
+    lvZoomPercentText(0.0f, buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "0%") == 0, "nothing: \"%s\"", buf);
+    lvZoomPercentText(-5.0f, buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "0%") == 0, "under nothing: \"%s\"", buf);
+    buf[0] = 'x';
+    lvZoomPercentText(50.0f, buf, 0);
+    UT_ASSERT_MSG(buf[0] == 'x', "no room: not written");
+
+    /* The label on the map: whole for a second, gone at a second and a
+       half, and not there before the zoom was ever changed. */
+    UT_ASSERT_MSG(lvZoomLabelAlpha(0.0f) == 1.0f, "at the change");
+    UT_ASSERT_MSG(lvZoomLabelAlpha(1.0f) == 1.0f, "after a second");
+    UT_ASSERT_MSG(lvZoomLabelAlpha(1.25f) == 0.5f, "half way out");
+    UT_ASSERT_MSG(lvZoomLabelAlpha(1.5f) == 0.0f, "gone");
+    UT_ASSERT_MSG(lvZoomLabelAlpha(1000.0f) == 0.0f, "long after");
+    UT_ASSERT_MSG(lvZoomLabelAlpha(-1.0f) == 0.0f, "before");
+
+    /* The bottom row: three pieces of 100, 80 and 60 with gaps of 15 are
+       270 wide. The zoom is 70 whole and 30 as a number. */
+    {
+        static const float w[3] = { 100.0f, 80.0f, 60.0f };
+        int width;
+        UT_ASSERT_MSG(lvControlsZoomForm(w, 3, 70.0f, 30.0f, 15.0f, 400.0f) == LV_ZOOM_FORM_FULL,
+                      "room for all of it");
+        UT_ASSERT_MSG(lvControlsZoomForm(w, 3, 70.0f, 30.0f, 15.0f, 355.0f) == LV_ZOOM_FORM_FULL,
+                      "exactly: 270 + 15 + 70");
+        UT_ASSERT_MSG(lvControlsZoomForm(w, 3, 70.0f, 30.0f, 15.0f, 354.0f) == LV_ZOOM_FORM_SHORT,
+                      "one less: the number alone");
+        UT_ASSERT_MSG(lvControlsZoomForm(w, 3, 70.0f, 30.0f, 15.0f, 315.0f) == LV_ZOOM_FORM_SHORT,
+                      "exactly: 270 + 15 + 30");
+        UT_ASSERT_MSG(lvControlsZoomForm(w, 3, 70.0f, 30.0f, 15.0f, 314.0f) == LV_ZOOM_FORM_NONE,
+                      "one less: left out");
+        /* Two lines already (100 + 80, then 60): the zoom goes after the 60
+           while that adds no third line. */
+        UT_ASSERT_MSG(lvControlsZoomForm(w, 3, 70.0f, 30.0f, 15.0f, 220.0f) == LV_ZOOM_FORM_FULL,
+                      "on the last of two lines");
+        /* Each piece alone on its line at 130: 60 + 15 + 30 goes in. */
+        UT_ASSERT_MSG(lvControlsZoomForm(w, 3, 70.0f, 30.0f, 15.0f, 130.0f) == LV_ZOOM_FORM_SHORT,
+                      "three lines, the number after the last piece");
+        UT_ASSERT_MSG(lvControlsZoomForm(w, 3, 70.0f, 30.0f, 15.0f, 100.0f) == LV_ZOOM_FORM_NONE,
+                      "no room after the last piece");
+        UT_ASSERT_MSG(lvControlsZoomForm(w, 0, 70.0f, 30.0f, 15.0f, 100.0f) == LV_ZOOM_FORM_FULL,
+                      "alone on the row");
+        UT_ASSERT_MSG(lvControlsZoomForm(w, 0, 70.0f, 30.0f, 15.0f, 20.0f) == LV_ZOOM_FORM_NONE,
+                      "alone, wider than the panel");
+
+        /* Every width: the zoom never adds a line, is never past the edge,
+           and gives way in order as the panel gets narrower. */
+        {
+            LvZoomForm prev = LV_ZOOM_FORM_FULL;
+            for (width = 600; width >= 10; width--) {
+                float all[4], x[4];
+                int line[4];
+                const int lines3 = lvControlsFlow(w, 3, 15.0f, (float)width, line, x);
+                const LvZoomForm f = lvControlsZoomForm(w, 3, 70.0f, 30.0f, 15.0f, (float)width);
+                if (f != LV_ZOOM_FORM_NONE) {
+                    all[0] = w[0]; all[1] = w[1]; all[2] = w[2];
+                    all[3] = (f == LV_ZOOM_FORM_FULL) ? 70.0f : 30.0f;
+                    UT_ASSERT_MSG(lvControlsFlow(all, 4, 15.0f, (float)width, line, x) == lines3,
+                                  "width %d: no line more", width);
+                    UT_ASSERT_MSG(x[3] >= 0.0f && x[3] + all[3] <= (float)width,
+                                  "width %d: inside the panel", width);
+                    UT_ASSERT_MSG(line[3] == line[2], "width %d: after the last piece", width);
+                }
+                if (lines3 == 1) {
+                    UT_ASSERT_MSG(f >= prev, "width %d: gives way in order", width);
+                    prev = f;
+                }
             }
         }
     }

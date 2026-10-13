@@ -31,6 +31,8 @@ extern "C" {
     #include "logviewer.h"
     #include "../lv_time_fmt.h"
     #include "../lv_controls_layout.h"
+    #include "../lv_zoom_text.h"
+    float lv_drawZoomPercent(void);
     void lv_windowPlay(void);
     void lv_windowPause(void);
     void lv_windowStop(int corruptLog);
@@ -526,12 +528,15 @@ void lv_imgui_controls_window(void) {
              * elapsed/total/percent, so suppress this row to avoid
              * double-display. */
             if (!(uiModeIsTablet() || uiModeIsSteamDeck())) {
-                /* The bottom row: the time, the time left and the tick.
-                 * Each goes on the line while it has room there, and each
-                 * line is in the middle of the panel (lvControlsFlow). */
-                char part[3][LANG_MSGARG_STRING_LEN * 2];
-                float partW[3], partX[3];
-                int partLine[3];
+                /* The bottom row: the time, the time left, the tick and
+                 * the zoom of the map. Each goes on the line while it has
+                 * room there, and each line is in the middle of the panel
+                 * (lvControlsFlow). The zoom is the first to give way: its
+                 * number alone, then nothing (lvControlsZoomForm). */
+                char part[4][LANG_MSGARG_STRING_LEN * 2];
+                float partW[4], partX[4];
+                int partLine[4];
+                int parts = 3;
                 MessageArgs args = {};
                 strncpy(args.string1, s_current_time, sizeof(args.string1) - 1);
                 strncpy(args.string2, total_time_str, sizeof(args.string2) - 1);
@@ -555,17 +560,40 @@ void lv_imgui_controls_window(void) {
                 for (int i = 0; i < 3; i++) {
                     partW[i] = ImGui::CalcTextSize(part[i]).x;
                 }
-                lvControlsFlow(partW, 3, 15.0f, ImGui::GetContentRegionAvail().x, partLine, partX);
+                {
+                    char pct[24];
+                    lvZoomPercentText(lv_drawZoomPercent(), pct, sizeof(pct));
+                    snprintf(part[3], sizeof(part[3]), "%s %s", langGetText(STR_LV_ZOOM), pct);
+                    const float fullW = ImGui::CalcTextSize(part[3]).x;
+                    const float shortW = ImGui::CalcTextSize(pct).x;
+                    const LvZoomForm form = lvControlsZoomForm(partW, 3, fullW, shortW, 15.0f,
+                                                               ImGui::GetContentRegionAvail().x);
+                    if (form == LV_ZOOM_FORM_SHORT) {
+                        snprintf(part[3], sizeof(part[3]), "%s", pct);
+                    }
+                    if (form != LV_ZOOM_FORM_NONE) {
+                        partW[3] = (form == LV_ZOOM_FORM_FULL) ? fullW : shortW;
+                        parts = 4;
+                    }
+                }
+                lvControlsFlow(partW, parts, 15.0f, ImGui::GetContentRegionAvail().x, partLine,
+                               partX);
                 const float rowX = ImGui::GetCursorPosX();
                 int rowLine = -1;
                 /* A text wider than the panel goes on to a second line. */
                 ImGui::PushTextWrapPos(0.0f);
-                for (int i = 0; i < 3; i++) {
+                for (int i = 0; i < parts; i++) {
                     controls_place(rowX, &rowLine, partLine[i], partX[i]);
                     if (i == 1) {
                         ImGui::TextDisabled("%s", part[i]);
                     } else {
                         ImGui::TextUnformatted(part[i]);
+                    }
+                    /* The zoom: what the number is and what changes it. A
+                     * click does nothing; the viewer has no "back to 100%"
+                     * of its own (the Zoom menu has the 1x step). */
+                    if (i == 3 && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+                        ImGui::SetTooltip("%s", langGetText(STR_LV_ZOOM_TIP));
                     }
                 }
                 ImGui::PopTextWrapPos();

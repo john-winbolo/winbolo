@@ -230,4 +230,39 @@ static inline int lvControlsFlow(const float *w, int n, float gap, float content
     return line + 1;
 }
 
+/* The zoom of the map is the last piece of the bottom row. It gives way
+ * first: it has its whole text ("Zoom 150%") while that adds no line to the
+ * row, then only the number ("150%"), then it is left out. So it never
+ * makes the panel higher and never pushes another piece off its line. */
+typedef enum {
+    LV_ZOOM_FORM_FULL = 0,
+    LV_ZOOM_FORM_SHORT,
+    LV_ZOOM_FORM_NONE
+} LvZoomForm;
+
+/* The most pieces the row has before the zoom. */
+#define LV_CONTROLS_ROW_MAX 7
+
+/* w are the n pieces in front of it (n at most LV_CONTROLS_ROW_MAX); fullW
+ * and shortW the widths of its two forms. */
+static inline LvZoomForm lvControlsZoomForm(const float *w, int n, float fullW, float shortW,
+                                            float gap, float contentW) {
+    float all[LV_CONTROLS_ROW_MAX + 1], x[LV_CONTROLS_ROW_MAX + 1];
+    int line[LV_CONTROLS_ROW_MAX + 1];
+    int i, lines;
+    if (n < 0) n = 0;
+    if (n > LV_CONTROLS_ROW_MAX) n = LV_CONTROLS_ROW_MAX;
+    for (i = 0; i < n; i++) all[i] = w[i];
+    lines = (n > 0) ? lvControlsFlow(all, n, gap, contentW, line, x) : 1;
+    all[n] = fullW;
+    if (fullW <= contentW && lvControlsFlow(all, n + 1, gap, contentW, line, x) == lines) {
+        return LV_ZOOM_FORM_FULL;
+    }
+    all[n] = shortW;
+    if (shortW <= contentW && lvControlsFlow(all, n + 1, gap, contentW, line, x) == lines) {
+        return LV_ZOOM_FORM_SHORT;
+    }
+    return LV_ZOOM_FORM_NONE;
+}
+
 #endif /* LV_CONTROLS_LAYOUT_H */

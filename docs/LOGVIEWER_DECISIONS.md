@@ -44,8 +44,9 @@ call can be changed; the file says where.
 - Not changed, because the map's picture does not go in with no change to
   the layout: the HUD panel (its grids are the game's own 12 by 12 status
   slots) and the Tank panel's line of carried pillboxes (the game's status
-  picture, in the game's status layout). The Events panel has no column of
-  icons.
+  picture, in the game's status layout). The Events panel had no column of
+  icons then; it has one now (see "Each line of the Events panel starts with
+  its marker").
 - Each team row has a stripe in the team's colour. Below the teams there is a
   Neutral row and a Total row.
 - Two share bars (pillboxes, bases), each 6 pixels high.
@@ -553,8 +554,8 @@ round its cell.
 - The hint of the Tank panel now reads "Click a tank on the map or in the
   HUD panel to select it".
 
-**A double click on a tank shows that player's view (Oct 13).** A double
-click on a tank on the map selects it and turns on the view of its player:
+**A double click on a tank shows that player's view, or turns it off (Oct 13).**
+A double click on a tank on the map selects it and turns on the view of its player:
 the state the eye and the name in the HUD panel stand for. The X of the HUD
 panel goes back to all teams, as before.
 
@@ -564,23 +565,40 @@ panel goes back to all teams, as before.
   player's view on; only a click on a tank in the HUD panel did that. (In
   Select Team mode a view that was already on moved with the picked tank,
   and still does.)
-- The call is the one the HUD panel makes for a click on a tank there
-  (`lv_screenTogglePerspective`). That call turns the view off when it is
-  on for the same player, so the map makes it only when the view is not on
-  for that tank yet (`lvMapClickViewsTank` in `lv_tank_pick.h`, asked with
-  `lv_screenPerspectivePlayer`). So a double click on the tank whose view
-  is on leaves it on, and a third click does nothing more.
+- A double click on the tank whose view is on turns the view off: back to
+  all teams, as the X of the HUD panel does. The tank stays selected. (The
+  first build of this left the view on; the owner then asked: "let's make
+  double clicking when it's on also turn it off if it's the same tank".)
+- A double click on another tank while a view is on moves the view to that
+  tank. A double click on a tank with no view on turns its view on.
+- The rule is `lvMapClickViewsTank` in `lv_tank_pick.h`. It answers "on",
+  "off" or "no change" for a click, from which click of the row it is, the
+  tank, the tank of the click before, and the view **as it was before the
+  first click of the pair** (kept by the map when that first click comes
+  in). The map then puts the view in that state: the HUD panel's own calls
+  (`lv_screenTogglePerspective` to turn it on, `lv_screenClearPerspective`
+  to turn it off), each made only when the view is not in that state yet.
 - Each click of the double click still does all a single click does. The
-  first selects the tank. The second selects the same tank again, which
-  changes nothing, and then turns the view on. The view changes once.
+  first selects the tank and does not change the view in Information mode.
+  Only the second click of a pair changes the view, so it changes once for
+  a double click. A third fast click is the first of a new pair and changes
+  nothing; a fourth is a second double click.
 - Both clicks must be on the same tank. ImGui counts the clicks (its double
   click time and distance: 0.3 s, 6 points).
 - A double click on the map, a pillbox or a base does what it did before:
   two single clicks.
 - Select Team mode: the first click picks the tank's team as before ("self"
-  is that player). The second click then turns that player's view on. If a
-  view was on already, the first click moved it to this tank, and the
-  second click changes nothing.
+  is that player), and, as before, moves a view that is on to the picked
+  tank. That is why the rule uses the view from before the first click:
+  - view on tank A, double click on tank B: the first click moves the view
+    to B, the second finds "the view was on A, not B" and keeps it on B;
+  - view on tank A, double click on A: the first click changes nothing, the
+    second turns the view off. "Self" stays A;
+  - no view on: the first click picks the tank, the second turns its view
+    on.
+  So both modes end in the same state for the same double click. In Select
+  Team mode with a view on another tank the view changes on the first click
+  and not on the second.
 - The viewer has one map and one place where a click on it is read
   (`imgui_game_viewport.cpp`), so this is the same in every view of the map,
   on a file log and on a live feed. The embedded viewer in the game has no
@@ -862,6 +880,64 @@ so the ten kinds, their order, their markers, the counts and the "All" and
   text and left the list open. Not checked there: what text the closed
   filter shows (only the sum that picks it is tested), and the place of the
   selected line after a change.
+**Each line of the Events panel starts with its marker (Oct 13).** The
+owner: "now that we have an icon for each event let's put those on the
+events actual list".
+
+- Every line of the list has, at its left, the marker its event has in the
+  lane over the seek bar: the map's picture of a pillbox or a base in the
+  colour of the team the line names (the new owner; no team: the game's red
+  pillbox, the game's neutral base), or the kind's icon on the dark square
+  with a line in the team's colour round it.
+- One function says what the marker of an event is (`lvEventMarker` in
+  `lv_event_overlay.h`: picture or icon, and the team) and one function
+  draws it (`lv_event_marker_draw` in `imgui_event_overlay.cpp`). The lane,
+  the list of kinds and the lines of the Events panel all call it, so the
+  three cannot differ. Because of that the list of kinds changed a little:
+  an icon there now has the dark square behind it, and "Tank killed" has
+  the game's "dead" picture, as in the lane.
+- The marker is a square as high as the text (13 points at the usual font),
+  in the middle of the line. The line is not higher than before. The
+  picture is made smaller with the rule of the lane (blended at 13 pixels,
+  sharp at 16, 32, 48).
+- The marker of a line still to come is dim, as its text is.
+- The whole line is one item, so a click on the marker does what a click on
+  the text does. The mouse at rest on the marker shows the name of the kind.
+- The text of a line is not changed. "Copy" still copies the text only.
+- A line names two teams at most; the marker has the colour of the first.
+  The lane shows the second team as a tick under the marker; a line of the
+  list has no room for it under the marker, so it is not shown there.
+- Narrow panel: the list scrolled sideways when a line was longer than the
+  list, before this change, and it still does. The marker does not scroll:
+  it stays at the left of the list and the text goes under its column and
+  is cut off there. The text is not shortened with "...".
+- **"Builder lost" is a builder with an X over him (Oct 13).** The owner:
+  "'Builder lost' should be an LGM with X over it, I think we have that
+  icon somewhere?" The game has no such picture. What it has: the builder
+  of the map (`data/tile.bmp`, three frames of 3 by 4 pixels at x 428, 431
+  and 434, y 90: `LGM0_X`... in `src/gui/tiles.h`), the parachute tile of
+  his replacement, the "dead" picture of the status panels (a white X on
+  black, 12 by 12 at 440, 60: `STATUS_ITEM_DEAD_X`), and, for a dead
+  builder in the game's own HUD, the builder circle filled red
+  (`sdl3DrawSetManStatus` in `src/gui/sdl3/sdl3draw.c`). `data/items.bmp`
+  and `data/background.bmp` have no builder. So the marker is put together:
+  the map's builder (the standing frame, through `lv_builder_picture`), in
+  the game's own green with the red head, the most whole times his size
+  that go in the marker (2 times at 13 points: 6 by 8), and two thin red
+  lines from corner to corner over him, each on a darker line. It is on the
+  dark square with the line in the team's colour round it, as the other
+  icons are. With no tile sheet the drawn head and shoulders takes the
+  builder's place under the X. `lvEventMarker` says "builder lost" is drawn
+  so, for the lane, the list of kinds and the lines of the Events panel.
+- Only the lines in view are drawn (the list clipper is kept), and no
+  texture is made: the pictures come from the game's sheets, already loaded.
+- Unit test: `lv_event_marker`. The headless try-out of the real Events
+  panel, with and without a stand-in for the game's sheets, at ten widths
+  from 400 down to 40: no ImGui assert, no scroll bar across the panel;
+  about 13 lines drawn of 400; a click on a marker and a click on a text
+  both seek; the tooltip shows on the marker and not on the text. Not run
+  there: the list scrolled sideways.
+
 - Note: under about 116 points wide the "Auto Scroll" check box of the panel
   is wider than the panel. That was so before; the filter itself fits down
   to its arrow.
@@ -899,8 +975,10 @@ while the lane shows.
   in the colour of the team most of them name, with the number on a small
   dark plate in its lower right corner. Any other mix is the box with the
   number, as before.
-- In the "Overlay events" list the four pillbox and base kinds have the
-  picture of one no team holds.
+- In the "Overlay events" list each kind has the marker of an event of
+  that kind that names no team: the four pillbox and base kinds have the
+  picture of one no team holds, the other kinds their icon on the dark
+  square with no line of a team round it.
 - One helper draws the picture for every panel (`lv_item_picture` in
   `imgui_lv_icons.cpp`). When the game's sheets are not there the old plain
   shape is drawn. Unit test: `lv_event_overlay_picture`.
@@ -908,8 +986,9 @@ while the lane shows.
   with a **1 point line in the team's colour round it**. A tank kill has
   the game's own "dead" picture of the status panels and the colour of the
   killer's team (the team of the tank that died, when it died with no
-  killer). A builder is a head and shoulders, in the colour of the team
-  that lost it (the log does not say who shot it). Chat is a speech bubble
+  killer). A builder lost is the map's builder with an X over him (see
+  below), with the line in the colour of the team that lost it (the log
+  does not say who shot it). Chat is a speech bubble
   in the colour of the sender's team. Player is a ring, game a diamond and
   highlight a star; these have no team.
 - A second team (the old owner of a stolen pillbox or base, the tank that
@@ -1170,6 +1249,67 @@ tick has events, so this showed only in quiet moments.
   picture (20 sizes, four passes, and the three dead states at nine sizes):
   the same sizes clip as before (60 by 60 and 20 by 20), no new one.
 
+
+### The zoom of the map as a percentage (Oct 13)
+
+The owner: "Can you put the zoom % printed somewhere visible".
+
+**What zoom is in the code.** The overview has nine steps
+(`g_zoomSteps` in `draw.c`): 0.5, 0.6, 0.7, 0.8, 0.9, 1, 2, 3 and 4. A step
+is how many points of the window one pixel of the game's art takes. The
+wheel, a pinch, the + and - keys, a controller and the Zoom menu all move
+one step or pick one. Nothing fits the overview to the window, so its zoom
+is always one of the nine. The game view has its own zoom, a whole number
+of times from 1 to 4, cut to what the window has room for when the window
+is full screen or maximized.
+
+**100% is the game's own size:** one map square (16 pixels of art) on 16
+points of the window. A point is one pixel of an ordinary display and more
+of a dense one, so 100% is 16 pixels there and 32 on a display with two
+pixels a point: the same size to the eye. The number comes from the size a
+square is really drawn at, in pixels of the display, over 16 times the
+display's pixels a point (`lvZoomPercent` in `lv_zoom_text.h`, fed by
+`lv_drawZoomPercent` in `draw.c`). For the overview that is the step times
+100 on every display. For the game view it is the pixels a pixel of art
+takes over the true density, which can be a number such as 267% on a
+display of 1.5 (the game view draws at a whole number of pixels).
+
+**The text** is a whole number ("150%"). A value under 100 that is not
+whole has one decimal ("62.5%"). The nine steps are all whole.
+
+**Where it shows.**
+
+1. The Controls panel, as the last piece of the bottom row, after the time,
+   the time left and the tick: "Zoom 150%". The row stays in the middle.
+   The zoom gives way first when the panel gets narrow: it never adds a
+   line to the row. It is whole while it goes on the last line, then only
+   the number ("150%"), then it is left out (`lvControlsZoomForm` in
+   `lv_controls_layout.h`). The tooltip says what the number is and what
+   changes it. A click does nothing: the viewer has no "back to 100%" of
+   its own (the Zoom menu has the 1x step). In the tablet and Steam Deck
+   layout the panel has no bottom row, so nothing shows there.
+2. On the map: "Zoom 150%" in the bottom left corner of the map's part of
+   the window (inside the sidebars, so it moves with them), for 1.5 s after
+   the zoom changes, the last 0.5 s fading out. White with a dark edge, as
+   the scenario's status line is. It is behind the panels, so a floating
+   panel in that corner is over it. The other corners: the scenario's
+   status line is top centre and the spectator badge top right. Nothing
+   shows for the zoom the viewer starts with. It is drawn in the overview,
+   on a live feed and in the game view.
+3. The Zoom menu (Options): the percentage is its first line, greyed, a
+   line to read.
+
+- New string 2851 (the tooltip). The word "Zoom" is string 1229, the name
+  of the menu.
+- The embedded viewer inside the game has the same Controls panel, so it
+  has the piece on the bottom row. It does not call the label on the map.
+  The browser build does not call it either.
+- Unit test: `lv_zoom_percent` (the percentage on three densities, the
+  text, the fade, and the form on the bottom row at every width from 600
+  down to 10). The headless try-out of the Controls panel at all its sizes:
+  the size of the content is the same as before at every size, and the
+  count of lines that were too wide before (20, none of them this row) did
+  not change.
 
 ## Not tested on screen
 

@@ -1246,7 +1246,7 @@ STR_LV_WIN_OVERVIEW=Overview
 STR_LV_OVERVIEW_TOTAL=Total
 STR_LV_OVERVIEW_MORE={string1} +{number}
 STR_LV_WIN_TANK=Tank
-STR_LV_TANK_HINT=Click a tank on the map or in the HUD panel to select it. Double-click a tank on the map to see the game as its player sees it
+STR_LV_TANK_HINT=Click a tank on the map or in the HUD panel to select it. Double-click a tank on the map to see the game as its player sees it; double-click it again to go back to all teams
 STR_LV_TANK_STOCK_FMT={string1}: {number} / {number2}
 STR_LV_TANK_BUILDER_IN=Builder: in tank
 STR_LV_TANK_BUILDER_OUT=Builder: out
@@ -1280,6 +1280,9 @@ STR_LV_TANK_BUILDER_BACK=Builder: dead, back in {string1}
 STR_LV_EVT_FILTER_SOME={string1} of {string2} events
 STR_LV_EVT_FILTER_EMPTY=No events of the selected kinds
 STR_LV_EVT_FILTER_TIP=Show only the events of the ticked kinds
+
+# Log viewer: the zoom of the map as a percentage
+STR_LV_ZOOM_TIP=Map zoom. 100% is the game's own size. Change it with + and -, the mouse wheel, or Options > Zoom
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:
