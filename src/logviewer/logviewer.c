@@ -67,6 +67,7 @@
 #include "lv_dock_fit.h"
 #include "lv_dock_clear.h"
 #include "lv_fullscreen_key.h"
+#include "lv_fullscreen_game.h"
 #include "imgui/imgui_game_view.h"
 #include "imgui/imgui_logviewer_menu.h"
 #include "game_view.h"
@@ -1153,10 +1154,16 @@ static void lvHostTeardown(void) {
  * WinBolo's window (Watch a Log, a live game watched from the game): the
  * window and its full screen setting are the game's, and the game is not
  * reading the keyboard while the viewer runs. So the viewer asks the game to
- * do it, through the handler the game gave (windowFullScreenChoose, which is
- * what Alt+Enter does on the game's own screens outside a game). The game's
- * setting and the window then agree when the viewer hands the window back,
- * and the game saves the setting itself.
+ * do it (lvGameFullScreenChoose in lv_fullscreen_game.c, which calls
+ * windowFullScreenChoose, what Alt+Enter does on the game's own screens
+ * outside a game). The game's setting and the window then agree when the
+ * viewer hands the window back, and the game saves the setting itself. The
+ * game's front end has no code for this.
+ *
+ * One keystroke is one change. The viewer takes the event off SDL's queue
+ * and gives it to nothing else, and the game reads no events while the
+ * viewer runs, so the game cannot act on the same keystroke. As a second
+ * guard the viewer does not ask twice within LV_FULLSCREEN_GUARD_MS.
  *
  * Not on a Steam Deck or a tablet: the window there is full screen from the
  * start and has no other size to go back to. The game has the same rule.
@@ -1166,13 +1173,11 @@ SDL_COMPILE_TIME_ASSERT(lv_fskey_kp_enter, LV_FSKEY_SCANCODE_KP_ENTER == SDL_SCA
 SDL_COMPILE_TIME_ASSERT(lv_fskey_lalt, LV_FSKEY_MOD_LALT == SDL_KMOD_LALT);
 SDL_COMPILE_TIME_ASSERT(lv_fskey_ralt, LV_FSKEY_MOD_RALT == SDL_KMOD_RALT);
 
-static void (*s_fullScreenHost)(bool on) = NULL;
-
-/* The embedding game says how its window goes full screen. Scalars only:
- * the game hand-declares this, as it does logViewerRun. */
-void logViewerSetFullScreenHandler(void (*fn)(bool on)) {
-    s_fullScreenHost = fn;
-}
+/* The shortest time between two changes of full screen. No hand is this
+ * fast; a second request inside it is the same keystroke come round again. */
+#define LV_FULLSCREEN_GUARD_MS 150u
+static Uint64 s_fullScreenLastMs = 0;
+static bool   s_fullScreenAny = FALSE;
 
 bool lv_windowCanFullScreen(void) {
     if (g_lv == NULL || g_lv->window == NULL) {
@@ -1196,10 +1201,18 @@ void lv_windowToggleFullScreen(void) {
     if (!lv_windowCanFullScreen()) {
         return;
     }
+    {
+        Uint64 now = SDL_GetTicks();
+        if (s_fullScreenAny && now - s_fullScreenLastMs < LV_FULLSCREEN_GUARD_MS) {
+            return;
+        }
+        s_fullScreenAny = TRUE;
+        s_fullScreenLastMs = now;
+    }
     on = !lv_windowIsFullScreen();
-    if (!g_lv->ownsWindow && s_fullScreenHost != NULL) {
-        s_fullScreenHost(on);
-    } else {
+    /* The game's window: the game does it, so its own setting stays right.
+     * The viewer's own window, or no game to ask: the same SDL call here. */
+    if (g_lv->ownsWindow || !lvGameFullScreenChoose(on)) {
         SDL_SetWindowFullscreen(g_lv->window, on);
         /* The change is not immediate on Wayland and X11, and the frame that
          * follows reads the size of the window. */

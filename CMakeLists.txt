@@ -1727,6 +1727,9 @@ endif()
 set(LOGVIEWER_LIB_SOURCES
     src/logviewer/logviewer.c
     src/logviewer/lv_embed.c
+    # Alt+Enter in the viewer while it has the game's window: asks the game
+    # for full screen. Client only; the standalone's body is in main.c.
+    src/logviewer/lv_fullscreen_game.c
     src/logviewer/screen.c
     src/logviewer/draw.c
     src/logviewer/sound.c
@@ -2392,6 +2395,9 @@ list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/game_view_stubs\\.c$")
 # game-view render island's screenTanksGetItem to lv_screenTanksGetItem.
 # The standalone uses bolo_shim.c for that, so drop the adapter from the glob.
 list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/render_island_screentank_adapter\\.c$")
+# lv_fullscreen_game.c is client-only: it calls the game's full screen
+# command. The standalone has no game; its body of the function is in main.c.
+list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/lv_fullscreen_game\\.c$")
 # spectator_drain_stub.c is added explicitly to the LogViewer target below;
 # drop it from the glob so it is listed once. It stubs the spectator_drain.h
 # seam for the standalone (which carries spectatorRun but links no bolo sim).

@@ -38,8 +38,16 @@
 #include "../winbolonet/http.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "platform/platform_config.h"
+#include "lv_fullscreen_game.h"
 
 int main(int argc, char *argv[]);
+
+/* There is no game in this program: the viewer changes its own window. The
+ * body for WinBolo is in lv_fullscreen_game.c. */
+bool lvGameFullScreenChoose(bool on) {
+    (void)on;
+    return false;
+}
 
 #ifdef _WIN32
 int __stdcall WinMain(void *hInst, void *hPrev, char *lpCmd, int nShow) {

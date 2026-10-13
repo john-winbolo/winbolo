@@ -256,11 +256,6 @@ bool lv_windowCanFullScreen(void);
 bool lv_windowIsFullScreen(void);
 void lv_windowToggleFullScreen(void);
 
-/* For the game that embeds the viewer: how its window is put into and taken
- * out of full screen. The viewer calls it for Alt+Enter while it has the
- * game's window, so the game's own setting stays right. */
-void logViewerSetFullScreenHandler(void (*fn)(bool on));
-
 /* Entry point for loading from an in-memory zip buffer (mobile).
  * Takes ownership of zipData. */
 void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *renderer,

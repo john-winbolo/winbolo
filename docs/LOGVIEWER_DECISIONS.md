@@ -1353,9 +1353,10 @@ nothing reads.)
   goes back to.
 - WinBolo's window (Watch a Log, or a live game watched from the game): the
   game is not reading the keyboard while the viewer runs, so nothing would
-  happen, and nothing is done twice. The viewer asks the game: the game
-  hands it `windowFullScreenChoose` (`logViewerSetFullScreenHandler`, set
-  in `gamefront.c` before each run), so the game's own setting changes with
+  happen, and nothing is done twice. The viewer asks the game: it
+  calls `lvGameFullScreenChoose` (`lv_fullscreen_game.c`, built into WinBolo
+  only), which calls the game's `windowFullScreenChoose`. The game's front
+  end has no code for this. So the game's own setting changes with
   the window and is saved by the game.
 - The sidebars and panels stay as they are: to them it is a change of the
   window's size, the same as maximizing. The zoom of the overview does not
