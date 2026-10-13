@@ -2300,6 +2300,8 @@ static const UnitTestEntry s_tests[] = {
     { "lv_tank_bars_sums",                               run_lv_tank_bars_sums                               },
     { "lv_tank_pick_sums",                               run_lv_tank_pick_sums                               },
     { "lv_name_header_sums",                             run_lv_name_header_sums                             },
+    { "lv_panel_opts_sums",                              run_lv_panel_opts_sums                              },
+    { "lv_panel_backing_sums",                           run_lv_panel_backing_sums                           },
     { "lv_dump_recorded_round",                          run_lv_dump_recorded_round                          },
     { "lv_spmap_owner_table",                            run_lv_spmap_owner_table                            },
     { "lv_spmap_reads_back",                             run_lv_spmap_reads_back                             },

@@ -1348,6 +1348,9 @@
 /* Log viewer: the X at the end of a panel's name line */
 #define STR_LV_TIP_DESELECT                 2837
 #define STR_LV_TIP_ALL_TEAMS                2838
+/* Log viewer: the gear of a panel and its options */
+#define STR_LV_TIP_PANEL_OPTIONS            2839
+#define STR_LV_PANEL_TRANSPARENT            2840
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

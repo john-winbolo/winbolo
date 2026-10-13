@@ -11,6 +11,7 @@
 #include "imgui_main_menu.h"
 #include "imgui_scenario_panel.h"
 #include "imgui_dock.h"
+#include "imgui_lv_panel.h"
 #include "imgui_dialogs.h"
 #include "imgui.h"
 #include "platform_config.h"
@@ -194,6 +195,7 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
 
 void lv_imgui_main_menu_save(void) {
     lv_imgui_dock_save();
+    lv_panel_options_save();
     lv_platform_config_set_string("LOGVIEWER", "Tank Centred", s_tank_centred ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Hide Lobby",
                                   lv_screenGetHideLobby() ? "Yes" : "No");

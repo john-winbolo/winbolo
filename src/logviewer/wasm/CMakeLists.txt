@@ -165,6 +165,8 @@ set(LV_IMGUI_SOURCES
     ${LV_ROOT}/imgui/imgui_tank.cpp
     # The icons the panels draw (the Controls panel's buttons).
     ${LV_ROOT}/imgui/imgui_lv_icons.cpp
+    # What every panel has: the gear and its options.
+    ${LV_ROOT}/imgui/imgui_lv_panel.cpp
 )
 
 # WASM replacement files

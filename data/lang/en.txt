@@ -1263,6 +1263,10 @@ STR_LV_TIP_LIVE=Jump to live
 STR_LV_TIP_DESELECT=Deselect tank
 STR_LV_TIP_ALL_TEAMS=Back to all teams
 
+# Log viewer: the gear of a panel and its options
+STR_LV_TIP_PANEL_OPTIONS=Panel options
+STR_LV_PANEL_TRANSPARENT=Make unused panel portions transparent
+
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:
 STR_LV_PLAYER_LBL=Player {number}:

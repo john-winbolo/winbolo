@@ -38,6 +38,7 @@
 #include "imgui_dock.h"
 #include "imgui_context.h"
 #include "imgui_lv_icons.h"
+#include "imgui_lv_panel.h"
 #include "imgui.h"
 #include "../../gui/lang.h"
 #include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
@@ -555,7 +556,7 @@ void lv_imgui_tank_window(void) {
     snprintf(title, sizeof(title), "%s###tank", langGetText(STR_LV_WIN_TANK));
     /* No scroll bar: what does not go into the window is not drawn at all
      * (lvTankLayoutPick), so there is nothing to scroll to. */
-    if (ImGui::Begin(title, &lv_g_show_tank_window,
+    if (lv_panel_begin("###tank", title, &lv_g_show_tank_window,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoScrollWithMouse)) {
         /* In the dock the dock places the window; moving it here would pull
@@ -647,5 +648,5 @@ void lv_imgui_tank_window(void) {
             }
         }
     }
-    ImGui::End();
+    lv_panel_end();
 }

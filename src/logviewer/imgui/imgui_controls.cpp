@@ -13,6 +13,7 @@
 #include "imgui_dock.h"
 #include "imgui_context.h"
 #include "imgui_lv_icons.h"
+#include "imgui_lv_panel.h"
 #include "imgui.h"
 #include "platform_config.h"
 #include "../../gui/lang.h"
@@ -238,7 +239,7 @@ void lv_imgui_controls_window(void) {
 
     char ctrl_title[128];
     snprintf(ctrl_title, sizeof(ctrl_title), "%s###controls", langGetText(STR_LV_WIN_CONTROLS));
-    if (ImGui::Begin(ctrl_title, &lv_g_show_controls_window, ImGuiWindowFlags_NoCollapse)) {
+    if (lv_panel_begin("###controls", ctrl_title, &lv_g_show_controls_window, ImGuiWindowFlags_NoCollapse)) {
         /* In the dock the dock places the window; moving it here would pull
          * it straight back out. */
         if (!ImGui::IsWindowDocked()) {
@@ -540,7 +541,7 @@ void lv_imgui_controls_window(void) {
             ImGui::TextWrapped("%s", langGetText(STR_LV_NO_LOG_LOADED));
         }
     }
-    ImGui::End();
+    lv_panel_end();
     if (!seek_slider_drawn) {
         controls_drop_scrub();
     }

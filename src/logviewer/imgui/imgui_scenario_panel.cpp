@@ -22,6 +22,7 @@
 #include "imgui_scenario_panel.h"
 #include "imgui_main_menu.h"
 #include "imgui_dock.h"
+#include "imgui_lv_panel.h"
 #include "imgui.h"
 #include "../../gui/lang.h"
 /* Plain C, with nothing but the public scenario_panel.h behind it. */
@@ -183,7 +184,7 @@ void lv_imgui_scenario_panel_window(bool logLoaded) {
     char title[128];
     snprintf(title, sizeof(title), "%s###lvscnpanel",
              langGetText(STR_SCNPANEL_SETTINGS_TITLE));
-    if (ImGui::Begin(title, &lv_g_show_scenario_panel_window,
+    if (lv_panel_begin("###lvscnpanel", title, &lv_g_show_scenario_panel_window,
                      ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoScrollWithMouse)) {
@@ -229,7 +230,7 @@ void lv_imgui_scenario_panel_window(bool logLoaded) {
             }
         }
     }
-    ImGui::End();
+    lv_panel_end();
 }
 
 void lv_imgui_scenario_status(bool logLoaded) {
