@@ -1352,15 +1352,15 @@ local function blocker_5b_gone()
   return gone and S.carrier[L.n] ~= S.player
 end
 
--- Station 5B: rebuild the player's blocker on its square at full armour,
--- and tell the player. Only while it is built and the take is not done.
+-- Station 5B: rebuild the player's blocker on its square at full armour.
+-- Nothing is said to the player; the log line is for the arena tests. Only
+-- while it is built and the take is not done.
 local function rebuild_5b()
   S.b5b_dead_at = nil
   local d = S.done[5]
   if not d.b_build or d.b_pick or not blocker_5b_gone() then return end
   if pill_home("t5b_blocker", S.player, rule("pill_max_armour")) then
-    say("To help you out, your friendly blocking\npillbox has been "
-        .. "automatically rebuilt.", 4)
+    game.log("Tutorial: the 5B blocker was automatically rebuilt")
   end
 end
 
