@@ -206,6 +206,10 @@ local S = {
   at       = 1,       -- the station the player last drove into
   entered  = {},      -- station -> true once driven into
   done     = { {}, {}, {}, {}, {}, {}, {} },  -- checklist, by station
+  -- Goals passed over, by station: not ticked and still there to do, but
+  -- the station no longer waits for them (Station 4's hide, when the
+  -- pillbox is killed first).
+  passed   = { {}, {}, {}, {}, {}, {}, {} },
   popped   = {},      -- popup id -> true once shown
   queue    = {},      -- popups waiting for their delay: { id, due }
   says     = {},      -- announcements waiting for a popup: { text, secs }
@@ -679,15 +683,20 @@ local function station_done(n)
     return c >= TERRAINS_NEEDED
   end
   for _, item in ipairs(LIST[n]) do
-    if not S.done[n][item[1]] then return false end
+    if not S.done[n][item[1]] and not S.passed[n][item[1]] then
+      return false
+    end
   end
   return true
 end
 
--- The first unticked goal of station n, or nil.
+-- The first goal of station n that is neither ticked nor passed over, or
+-- nil.
 local function current_goal(n)
   for _, item in ipairs(LIST[n]) do
-    if not S.done[n][item[1]] then return item[1] end
+    if not S.done[n][item[1]] and not S.passed[n][item[1]] then
+      return item[1]
+    end
   end
   return nil
 end
@@ -1435,6 +1444,7 @@ end
 
 local function reset_station(n)
   S.done[n] = {}
+  S.passed[n] = {}
   if n == 5 then
     reset_pill("t5b_target")
     reset_pill("t5b_blocker")
@@ -1918,26 +1928,28 @@ local function poll()
     if left ~= nil and left <= 0 then mark(3, "shoot") end
   elseif n == 4 then
     local pb = game.pill(P.p4.n)
-    if pb ~= nil and not pb.in_tank then
-      local cx = pb.x * 256 + 128
-      local cy = pb.y * 256 + 128
+    if pb ~= nil and not pb.in_tank and pb.armour <= 0 then
+      -- Dead. Killed before the hide too: the hide goals are passed over,
+      -- not ticked, and the station goes on to the pick-up (Andrew, Oct 12:
+      -- "keep it as not checked off so they can still complete it").
+      if not S.done[4].b_in then S.passed[4].b_in = true end
+      if not S.done[4].b_hide then S.passed[4].b_hide = true end
+      mark(4, "c_kill")
+    end
+    if not S.done[4].b_hide then
+      -- The hide is measured from the pillbox's own square, which is where
+      -- it stands while it is alive, so a player who killed it first can
+      -- still come back and do the hide.
+      local cx = P.p4.x * 256 + 128
+      local cy = P.p4.y * 256 + 128
       local d = math.sqrt((t.wx - cx) ^ 2 + (t.wy - cy) ^ 2)
       local inr = d <= rule("pill_range")
-      if pb.armour > 0 then
-        if inr and terrain_at(t.mx, t.my) == "forest" then mark(4, "b_in") end
-        if inr and hidden_in_trees(t, cx, cy) then
-          S.hide = S.hide + 0.2
-          if S.hide >= 5 and S.done[4].b_in then mark(4, "b_hide") end
-        else
-          S.hide = 0
-        end
+      if inr and terrain_at(t.mx, t.my) == "forest" then mark(4, "b_in") end
+      if inr and hidden_in_trees(t, cx, cy) then
+        S.hide = S.hide + 0.2
+        if S.hide >= 5 and S.done[4].b_in then mark(4, "b_hide") end
       else
-        -- Dead. Killed before the hide too: the hide goals are ticked with
-        -- it and the station goes on (Andrew, Oct 11: "let it die and
-        -- complete that goal").
-        S.done[4].b_in = true
-        S.done[4].b_hide = true
-        mark(4, "c_kill")
+        S.hide = 0
       end
     end
   elseif n == 5 then
