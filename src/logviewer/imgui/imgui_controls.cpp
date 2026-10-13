@@ -132,8 +132,27 @@ static void update_speed_from_slider(int stop) {
     lv_updateSpeed(speed_stops[stop], 0);
 }
 
+/* End a scrub the seek slider can no longer end itself. The slider pauses
+ * playback while its handle is held and starts it again on release. When
+ * the slider is not drawn in a frame (the Controls window was closed with
+ * Ctrl+1 in the middle of a drag, its dock tab went to the back, the log
+ * was closed) no release is ever seen, and playback would stay paused with
+ * the slider stuck on the dragged value. */
+static void controls_drop_scrub(void) {
+    if (!s_is_seeking) return;
+    s_is_seeking = false;
+    /* A log that was closed has nothing to play. */
+    if (s_seek_was_playing && s_lv != NULL && s_lv->isLoaded) {
+        lv_windowPlay();
+    }
+    s_seek_was_playing = false;
+}
+
 void lv_imgui_controls_window(void) {
+    bool seek_slider_drawn = false;
+
     if (!lv_g_show_controls_window) {
+        controls_drop_scrub();
         return;
     }
 
@@ -305,6 +324,7 @@ void lv_imgui_controls_window(void) {
              * Without this flag ImGui rounds the dragged value by round-tripping
              * it through seek_fmt -- which parses back to 0 -- pinning the
              * slider (and every seek) to the start of the log. */
+            seek_slider_drawn = true;
             if (ImGui::SliderFloat("##seek", &s_seek_ratio, 0.0f, 1.0f, seek_fmt,
                                    ImGuiSliderFlags_NoRoundToFormat)) {
                 if (!s_is_seeking) {
@@ -396,4 +416,7 @@ void lv_imgui_controls_window(void) {
         }
     }
     ImGui::End();
+    if (!seek_slider_drawn) {
+        controls_drop_scrub();
+    }
 }
