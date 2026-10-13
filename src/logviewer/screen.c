@@ -2095,12 +2095,25 @@ static void lv_builderTripsAdd(int slot, const LvBuilderTrip *trip) {
   s_builderTrips[slot].item[s_builderTrips[slot].count++] = *trip;
 }
 
+/* A player left with his builder away: the builder never came back, so the
+   trip is dropped. Without this the empty slot read as a builder in the
+   tank, and the trip ended in the tick the player left. */
+static void lv_builderTripsPlayerLeft(int slot) {
+  if (slot < 0 || slot >= MAX_TANKS) return;
+  s_builderTrips[slot].track.open = false;
+}
+
 /* One tick of the event scan: every builder's state as the tick left it. */
 static void lv_builderTripsScanTick(void) {
   int i;
   for (i = 0; i < MAX_TANKS; i++) {
     bool          isOut = FALSE, isDead = FALSE;
     LvBuilderTrip done;
+    if (lv_playersIsInUse((BYTE) i) == FALSE) {
+      /* A slot a snapshot emptied, too. */
+      lv_builderTripsPlayerLeft(i);
+      continue;
+    }
     lv_playersGetLgmStatus((BYTE) i, &isOut, &isDead);
     if (lvBuilderTrackTick(&s_builderTrips[i].track, g_lv->timeRunning,
                            isOut != FALSE, isDead != FALSE, &done)) {
@@ -2123,6 +2136,14 @@ static void lv_builderTripsScanEnd(void) {
 
 int lv_screenBuilderTripsKnown(void) {
   return s_builderTripsKnown ? 1 : 0;
+}
+
+int lv_screenBuilderAwayMs(int slot, uint32_t deathMs, uint32_t *awayMs) {
+  if (s_builderTripsKnown == FALSE || slot < 0 || slot >= MAX_TANKS) {
+    return 0;
+  }
+  return lvBuilderTripAway(s_builderTrips[slot].item, s_builderTrips[slot].count,
+                           deathMs, awayMs) ? 1 : 0;
 }
 
 int lv_screenBuilderReturn(int slot, long *remainMs, int *approx) {
@@ -2322,6 +2343,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);
       lv_playersGetPlayerName(opt1, str, sizeof(str));
       lv_playersLeaveGame(opt1, TRUE);
+      if (s_eventScan) {
+        lv_builderTripsPlayerLeft(opt1);
+      }
       if (s_scanGathers) {
         lvRosterQuit(&s_roster, opt1);
       }
@@ -6037,6 +6061,8 @@ void lv_screenPanToTotalPixels(int totalPxX, int totalPxY) {
  * -1 for none. lv_messageAddAt clears them once the line is added. */
 static int s_eventTeam = -1;
 static int s_eventOtherTeam = -1;
+/* The first of those players, 0..15, or -1. Cleared with the teams. */
+static int s_eventPlayer = -1;
 /* The kind of ping the next line is (lv_messageTagPing), -1 for a line that
  * is not a ping. Cleared with the teams. */
 static int s_eventPing = -1;
@@ -6052,6 +6078,7 @@ static int lv_screenEventTeamOf(int player) {
 }
 
 void lv_messageTagPlayers(int actor, int other) {
+  s_eventPlayer = (actor >= 0 && actor < MAX_TANKS) ? actor : -1;
   s_eventTeam = lv_screenEventTeamOf(actor);
   s_eventOtherTeam = lv_screenEventTeamOf(other);
 }
@@ -6061,6 +6088,8 @@ void lv_messageTagPing(int pingKind) {
 }
 
 int lv_screenEventPing(void) { return s_eventPing; }
+
+int lv_screenEventPlayer(void) { return s_eventPlayer; }
 
 void lv_screenEventTeams(int *team, int *otherTeam) {
   if (team != NULL) *team = s_eventTeam;
@@ -6105,6 +6134,7 @@ void lv_messageAddAt(lvEventKind kind, int mapX, int mapY,
     s_eventTeam = -1;
     s_eventOtherTeam = -1;
     s_eventPing = -1;
+    s_eventPlayer = -1;
     return;
   }
   lv_windowAddEvent(0, (int)kind, mapX, mapY, body);
@@ -6113,6 +6143,7 @@ void lv_messageAddAt(lvEventKind kind, int mapX, int mapY,
   s_eventTeam = -1;
   s_eventOtherTeam = -1;
   s_eventPing = -1;
+  s_eventPlayer = -1;
 
   /* The event scan decodes the whole log once to fill the events panel and
    * nothing else. The marquee queue is walked to its tail on every append,

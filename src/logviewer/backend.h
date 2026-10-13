@@ -691,6 +691,9 @@ int lv_screenGetPingCapacity(void);
 /* The kind of ping the line now being added is (lv_messageTagPing,
  * PING_KIND_*), or -1 for a line that is not a map ping. */
 int lv_screenEventPing(void);
+/* The first player the line now being added is about (the actor of
+ * lv_messageTagPlayers), 0..15, or -1 for none. */
+int lv_screenEventPlayer(void);
 /* The palette colour a team is drawn in (the tc[] row of the Team Colours
  * dialog); the neutral colour for a number that is not a team. */
 unsigned char lv_screenTeamColour(int team);
@@ -732,6 +735,14 @@ void lv_screenTankStatusSnapshot(struct LvTankStatus *out);
 int lv_screenBuilderReturn(int slot, long *remainMs, int *approx);
 /* 1 when the table is filled for the loaded log. */
 int lv_screenBuilderTripsKnown(void);
+/* How long the builder of a player was away after the death at deathMs (the
+ * time of the "lost builder" line): from the death to the tick the new
+ * builder was in the tank, out of the same table. It is by the log's time,
+ * not the playback's, so it is the same wherever playback is. Returns 1
+ * with the time in awayMs. Returns 0, and there is no estimate, when there
+ * is no table, when the log ends before he is back, and when the player
+ * left the game before he was back. */
+int lv_screenBuilderAwayMs(int slot, uint32_t deathMs, uint32_t *awayMs);
 
 /* The selected tank: the one the Tank panel shows and the map marks. Select
  * picks the tank in a slot and changes nothing else (not whose view the map

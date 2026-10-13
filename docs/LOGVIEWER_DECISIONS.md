@@ -1716,6 +1716,52 @@ Calls made:
 The sum is `lvEventClickPick` in `src/logviewer/lv_event_kind.h`. Test:
 `lv_event_click_pick`.
 
+### A lost builder's line says how long he was away (Oct 13)
+
+Each "lost builder" line of the Events panel now ends with the time the
+builder was away, in brackets: `(0:42)`, `(1:05)`. The time is from the
+tick of the death to the tick the new builder is in the tank: the flight
+and the walk from where he landed.
+
+The time is out of the table the scan of the whole log fills at load (the
+table the parachute's countdown reads). So every line has its time from the
+load on, the lines after the "now" line too, and playback does not change
+it. It is measured. There is no estimate here.
+
+Calls made:
+
+- **No time, no brackets.** The line is as it was when the log ends before
+  the builder is back, when his player leaves the game before he is back,
+  and on a live feed (no scan, so no table).
+- **A player who left.** Before this change the table ended a builder's
+  trip in the tick his player left, as if the builder was back. That was
+  wrong, and it gave the parachute's countdown of a leaving player a false
+  end. The trip is now dropped. The countdown of such a builder is then the
+  estimate, as it is when the log ends first.
+- **Killed again on the walk back.** The new builder can be killed before
+  he is in the tank. Both lines count to the same return: the first line
+  says the whole time the tank had no builder, the second the time from the
+  second death.
+- **The text is the countdown's.** `lvBuilderCountdownText` writes it, so a
+  part of a second counts as a whole one, and the line says what the
+  parachute's countdown says in the tick of the death.
+- **The marker over the seek bar.** Its hover text shows the line of the
+  Events panel, so it has the time too. Copy and Copy All have it as well.
+- **No new string.** The brackets and the time need no words.
+- **A trip that starts one tick late.** If the tick of the death goes on to
+  name a place for the builder, the table starts the trip one tick later.
+  The line still finds that trip.
+
+The sums are `lvBuilderTripAway` and `lvBuilderAwayText` in
+`src/logviewer/lv_builder_status.h`. `lv_screenBuilderAwayMs` in `screen.c`
+asks the table, and `lv_screenEventPlayer` says which player a line is
+about. `add_builder_away_times` in `imgui_events.cpp` adds the text once,
+when the list is complete.
+
+Tests: `lv_builder_away_text` (the table and the text), `lv_builder_away_scan`
+(two hand-built logs: 100 ms away, the same at each place of playback; and a
+player who leaves, no time).
+
 ### The first view of a log is on the land (Oct 13)
 
 Before: a load put the view's top left corner at square 127,127

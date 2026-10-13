@@ -6930,6 +6930,8 @@ set(_unit_test_names
     lv_builder_status_sums
     lv_builder_countdown
     lv_builder_dead_text
+    lv_builder_away_text
+    lv_builder_away_scan
     lv_builder_trips
     lv_builder_trips_scan
     lv_controls_top_row

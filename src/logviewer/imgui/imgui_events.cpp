@@ -17,6 +17,7 @@
 #include "platform_config.h"
 #include "../lv_event_kind.h"
 #include "../lv_event_overlay.h"
+#include "../lv_builder_status.h"
 #include "../../gui/lang.h"
 #include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
 
@@ -40,6 +41,8 @@ extern "C" {
     void lv_windowCentreOnEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
     void lv_screenEventTeams(int *team, int *otherTeam);
     int lv_screenEventPing(void);
+    int lv_screenEventPlayer(void);
+    int lv_screenBuilderAwayMs(int slot, uint32_t deathMs, uint32_t *awayMs);
 }
 
 /* Event with associated playback timestamp, held in absolute log ms so the
@@ -65,6 +68,8 @@ struct LogEvent {
     /* The kind of ping the line is (lv_messageTagPing), -1 for a line that
      * is not a map ping. */
     int      ping = -1;
+    /* The player the line is about (lv_screenEventPlayer), -1 for none. */
+    int      player = -1;
 };
 
 /* Event list storage */
@@ -174,6 +179,7 @@ void lv_imgui_events_add(int eventType, int kind, int mapX, int mapY,
     e.mapY     = mapY;
     lv_screenEventTeams(&e.team, &e.otherTeam);
     e.ping     = lv_screenEventPing();
+    e.player   = lv_screenEventPlayer();
     s_events.push_back(e);
     s_version++;
 
@@ -248,7 +254,29 @@ void lv_imgui_events_remove_after(unsigned int timeMs) {
     }
 }
 
+/* The line of a lost builder says how long he was away, "(0:42)", after
+ * its text: from his death to the tick the new builder was in the tank. The
+ * time is out of the table the scan of the whole log has just filled, so
+ * every line has it from the load on, the lines still to come too, and
+ * playback does not change it. A builder who was not back when the log
+ * ended, or when his player left, has no time and the line is as it was.
+ * The text is part of the line, so the marker over the seek bar and Copy
+ * say it too. */
+static void add_builder_away_times(void) {
+    for (LogEvent &e : s_events) {
+        uint32_t awayMs = 0;
+        char     away[LV_BUILDER_AWAY_TEXT_MAX];
+        if (e.kind != LV_EVK_BUILDER_LOST || e.pinned || e.player < 0) continue;
+        if (!lv_screenBuilderAwayMs(e.player, e.timeMs, &awayMs)) continue;
+        lvBuilderAwayText(true, awayMs, away, sizeof(away));
+        e.text += away;
+        /* Once only: the line has its time. */
+        e.player = -1;
+    }
+}
+
 void lv_imgui_events_set_complete(void) {
+    add_builder_away_times();
     /* The divider is placed by a binary search on time, so the lines must be
      * in time order with the pinned summary lines in front. The decoder posts
      * them that way already; the stable sort then changes nothing, and it

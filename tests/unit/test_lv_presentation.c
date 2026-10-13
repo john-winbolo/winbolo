@@ -1438,6 +1438,107 @@ int run_lv_builder_trips_scan(void) {
     return 0;
 }
 
+/* The same player, whose builder is killed and who then leaves the game
+ * with the new builder still on his way:
+ *   tick 0    log_PlayerLocation: the tank at 50,50               20 ms
+ *   tick 1    log_LgmLocation: the builder out at 52,50           40 ms
+ *   tick 2    log_LostMan, and the new builder flying at 60,50    60 ms
+ *   tick 3    flying at 58,50                                     80 ms
+ *   tick 4    log_PlayerQuit                                     100 ms
+ *   ticks 5-8 NOEVENTS 3                                         120 ms
+ *   tick 9    LOG_QUIT                                           200 ms */
+static const uint8_t kLvpBuilderLeftStream[] = {
+    0x03, 0x01, 0x03, 0x00, 0x05,
+        0x01, 0x32, 0x32, 0x00, 0x00,
+    0x03, 0x01, 0x04, 0x00, 0x04,
+        0x10, 0x34, 0x32, 0x00,
+    0x03, 0x02, 0x20, 0x00, 0x01,
+        0x01,
+        0x04, 0x00, 0x04,
+        0x13, 0x3C, 0x32, 0x00,
+    0x03, 0x01, 0x04, 0x00, 0x04,
+        0x13, 0x3A, 0x32, 0x00,
+    0x03, 0x01, 0x02, 0x00, 0x01,
+        0x01,
+    0x01, 0x03,
+    0x00,
+};
+
+static LogViewerState *lvpOpenBuilderLog(LvpLog *b, const char *path,
+                                         const uint8_t *stream, size_t streamLen) {
+    int i;
+    b->len = 0;
+    lvpPut(b, kLvpHeader, sizeof(kLvpHeader));
+    lvpPut(b, kLvpSnapshot, sizeof(kLvpSnapshot));
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (i == 1) {
+            lvpPut(b, kLvpBuilderPlayer, sizeof(kLvpBuilderPlayer));
+        } else {
+            lvpPut(b, kLvpEmptyPlayer, sizeof(kLvpEmptyPlayer));
+        }
+    }
+    lvpPut(b, stream, streamLen);
+    return lvpOpen(b, path);
+}
+
+/* The time after a "lost builder" line of the Events panel is out of the
+ * same table. On the first log the builder is killed at 60 ms and the new
+ * one is in the tank at 160 ms: 100 ms away, wherever playback is, and no
+ * time before the scan. On the second the player leaves before the new
+ * builder is in the tank: no time. */
+int run_lv_builder_away_scan(void) {
+    const char     *path = "lv_builder_away.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    uint32_t        away = 7, awayStart = 7, awayEnd = 7, awayLeft = 7;
+    int             before, after, atStart, atEnd, otherSlot, noSlot, early;
+    int             leftRan, left, leftKnown;
+
+    lv = lvpOpenBuilderLog(&b, path, kLvpBuilderStream, sizeof(kLvpBuilderStream));
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+    before = lv_screenBuilderAwayMs(1, 60, &away);
+    (void)lv_screenEventScanRun();
+    lv_screenEventScanRestore();
+    after = lv_screenBuilderAwayMs(1, 60, &away);
+    lv_screenSeekToTimeMs(20);
+    atStart = lv_screenBuilderAwayMs(1, 60, &awayStart);
+    lv_screenSeekToTimeMs(200);
+    atEnd = lv_screenBuilderAwayMs(1, 60, &awayEnd);
+    otherSlot = lv_screenBuilderAwayMs(0, 60, NULL);
+    noSlot = lv_screenBuilderAwayMs(-1, 60, NULL) + lv_screenBuilderAwayMs(MAX_TANKS, 60, NULL);
+    early = lv_screenBuilderAwayMs(1, 20, NULL);
+    lv_decoderDestroy(lv);
+
+    lv = lvpOpenBuilderLog(&b, path, kLvpBuilderLeftStream, sizeof(kLvpBuilderLeftStream));
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the second hand-built log could not be loaded");
+    }
+    leftRan = lv_screenEventScanRun() ? 1 : 0;
+    lv_screenEventScanRestore();
+    leftKnown = lv_screenBuilderTripsKnown();
+    left = lv_screenBuilderAwayMs(1, 60, &awayLeft);
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(!before, "a time with no scan");
+    UT_ASSERT_MSG(after && away == 100, "after the scan: %d, %u ms (want 100)",
+                  after, (unsigned)away);
+    UT_ASSERT_MSG(atStart && awayStart == 100 && atEnd && awayEnd == 100,
+                  "the time moved with playback: %u ms at the start, %u ms at "
+                  "the end", (unsigned)awayStart, (unsigned)awayEnd);
+    UT_ASSERT_MSG(!otherSlot, "a player whose builder was not killed has a time");
+    UT_ASSERT_MSG(noSlot == 0, "a slot that is no player has a time");
+    UT_ASSERT_MSG(!early, "a time two ticks before the death");
+    UT_ASSERT_MSG(leftRan && leftKnown, "the scan of the second log did not run");
+    UT_ASSERT_MSG(!left && awayLeft == 7, "the player left before the builder "
+                  "was back: %d, %u ms (want no time)", left, (unsigned)awayLeft);
+    return 0;
+}
+
 /* ── 7c. A jump to an event lands on the event's own tick ──────────── */
 
 /* A click on a line of the Events panel seeks to the time the line was posted

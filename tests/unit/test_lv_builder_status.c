@@ -14,6 +14,8 @@
  *       never under "0:00"; the estimate of a flight by the game's rule.
  *   lv_builder_trips — the walk that fills the table of the times a builder
  *       was away, and the time left read back out of it.
+ *   lv_builder_away_text — how long a builder was away after a death, out
+ *       of the table, and the "(0:42)" the Events panel puts after his line.
  */
 
 #include <stdbool.h>
@@ -355,5 +357,79 @@ int run_lv_builder_dead_text(void) {
     UT_ASSERT_MSG((size_t)n == strlen(LV_BUILDER_COUNTDOWN_WIDEST),
                   "9:59 is \"%s\", measured as \"%s\"", text,
                   LV_BUILDER_COUNTDOWN_WIDEST);
+    return 0;
+}
+
+/* The time after the line of a lost builder in the Events panel: how long
+ * he was away out of the table of trips, and its text. */
+int run_lv_builder_away_text(void) {
+    LvBuilderTrip trips[4];
+    uint32_t      away = 7;
+    char          text[LV_BUILDER_AWAY_TEXT_MAX];
+    char          small[5];
+    int           n;
+
+    trips[0].deathMs = 1000;   trips[0].backMs = 43000;
+    trips[1].deathMs = 60000;  trips[1].backMs = 125000;
+    trips[2].deathMs = 200020; trips[2].backMs = 210000;
+    trips[3].deathMs = 300000; trips[3].backMs = 0;
+
+    /* The death that opened a trip: the whole trip. */
+    UT_ASSERT_MSG(lvBuilderTripAway(trips, 4, 1000, &away) && away == 42000,
+                  "first trip: %u (want 42000)", (unsigned)away);
+    UT_ASSERT_MSG(lvBuilderTripAway(trips, 4, 60000, &away) && away == 65000,
+                  "second trip: %u (want 65000)", (unsigned)away);
+    /* Killed again on the walk back: from the second death to the same
+       return. */
+    UT_ASSERT_MSG(lvBuilderTripAway(trips, 4, 100000, &away) && away == 25000,
+                  "second death of a trip: %u (want 25000)", (unsigned)away);
+    /* The trip started one tick after the death. */
+    UT_ASSERT_MSG(lvBuilderTripAway(trips, 4, 200000, &away) && away == 10000,
+                  "trip one tick late: %u (want 10000)", (unsigned)away);
+    /* Two ticks before a trip is not its death. */
+    away = 7;
+    UT_ASSERT_MSG(!lvBuilderTripAway(trips, 4, 199980, &away) && away == 7,
+                  "two ticks before a trip");
+    /* A death in no trip, and at the tick of a return. */
+    UT_ASSERT_MSG(!lvBuilderTripAway(trips, 4, 50000, &away) && away == 7,
+                  "a death in no trip");
+    UT_ASSERT_MSG(!lvBuilderTripAway(trips, 4, 43000, &away), "at a return");
+    UT_ASSERT_MSG(!lvBuilderTripAway(trips, 4, 500, &away), "before any trip");
+    /* The log ended before he was back: no time, and no estimate. */
+    UT_ASSERT_MSG(!lvBuilderTripAway(trips, 4, 300000, &away) && away == 7,
+                  "the trip with no end");
+    UT_ASSERT_MSG(!lvBuilderTripAway(trips, 4, 400000, &away) && away == 7,
+                  "a second death in the trip with no end");
+    UT_ASSERT_MSG(!lvBuilderTripAway(trips, 4, 299980, &away),
+                  "one tick before the trip with no end");
+    UT_ASSERT_MSG(!lvBuilderTripAway(NULL, 4, 1000, &away) &&
+                  !lvBuilderTripAway(trips, 0, 1000, &away), "no table");
+    UT_ASSERT_MSG(lvBuilderTripAway(trips, 4, 1000, NULL), "no place for the answer");
+
+    /* The text: a space, then the time in brackets. Minutes have no zero in
+       front, seconds have two digits. */
+    n = lvBuilderAwayText(true, 42000, text, sizeof(text));
+    UT_ASSERT_MSG(strcmp(text, " (0:42)") == 0 && n == 7, "42 s: \"%s\" %d", text, n);
+    lvBuilderAwayText(true, 65000, text, sizeof(text));
+    UT_ASSERT_MSG(strcmp(text, " (1:05)") == 0, "65 s: \"%s\"", text);
+    lvBuilderAwayText(true, 600000, text, sizeof(text));
+    UT_ASSERT_MSG(strcmp(text, " (10:00)") == 0, "ten minutes: \"%s\"", text);
+    /* A part of a second counts as a whole one, as in the countdown. */
+    lvBuilderAwayText(true, 42020, text, sizeof(text));
+    UT_ASSERT_MSG(strcmp(text, " (0:43)") == 0, "42.02 s: \"%s\"", text);
+    lvBuilderAwayText(true, 20, text, sizeof(text));
+    UT_ASSERT_MSG(strcmp(text, " (0:01)") == 0, "one tick: \"%s\"", text);
+    /* The longest. */
+    n = lvBuilderAwayText(true, 0xFFFFFFFFu / 2u, text, sizeof(text));
+    UT_ASSERT_MSG(strcmp(text, " (99:59)") == 0 && n == 8, "longest: \"%s\"", text);
+    /* Not known: nothing, not even the brackets. */
+    strcpy(text, "x");
+    n = lvBuilderAwayText(false, 42000, text, sizeof(text));
+    UT_ASSERT_MSG(text[0] == '\0' && n == 0, "not known: \"%s\"", text);
+    /* No room, and too little room. */
+    UT_ASSERT(lvBuilderAwayText(true, 42000, NULL, 8) == 0);
+    UT_ASSERT(lvBuilderAwayText(true, 42000, text, 0) == 0);
+    n = lvBuilderAwayText(true, 42000, small, sizeof(small));
+    UT_ASSERT_MSG(n == 4 && strcmp(small, " (0:") == 0, "cut short: \"%s\" %d", small, n);
     return 0;
 }
