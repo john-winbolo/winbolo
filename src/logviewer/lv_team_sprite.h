@@ -146,4 +146,31 @@ static inline LvMapItemSprite lvMapBaseSprite(bool neutral, int palette) {
     return s;
 }
 
+/* The side of a cell of the tile atlas and of items.bmp, in pixels (the
+ * game's TILE_SIZE_X; draw.c checks it when it is compiled). */
+#define LV_ITEM_PICTURE_PX 16
+
+/* A pillbox or a base as a small picture in a panel (a marker of the
+ * "Overlay events" lane, the Overview panel). It is the map's own picture
+ * by the map's own rule: a thing a team holds is that team's cell of
+ * items.bmp, and a thing no team holds is the game's tile (the red pillbox,
+ * the neutral base). A pillbox is drawn whole: full armour. */
+static inline LvMapItemSprite lvPanelItemSprite(bool isBase, bool hasTeam, int palette) {
+    if (isBase) return lvMapBaseSprite(!hasTeam, palette);
+    return lvMapPillSprite(!hasTeam, 15, palette);
+}
+
+/* How the picture is made smaller or larger. Drawn at a whole number of
+ * times its own size (16, 32, 48 pixels of the display) each pixel of it is
+ * a whole block, so it is drawn with no blending and stays sharp. At any
+ * other size (12 or 13 pixels in a line of text) pixels would be dropped,
+ * so it is blended. sidePx is in pixels of the display, not in points. */
+static inline bool lvItemPictureSharp(float sidePx) {
+    int whole = (int)(sidePx + 0.5f);
+    float d = sidePx - (float)whole;
+    if (d < 0.0f) d = -d;
+    if (d > 0.01f) return false;
+    return whole >= LV_ITEM_PICTURE_PX && (whole % LV_ITEM_PICTURE_PX) == 0;
+}
+
 #endif /* LV_TEAM_SPRITE_H */

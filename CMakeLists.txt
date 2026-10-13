@@ -1778,7 +1778,6 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_overview.cpp
     src/logviewer/imgui/imgui_tank.cpp
     src/logviewer/imgui/imgui_lv_icons.cpp
-    src/logviewer/imgui/imgui_lv_panel.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
@@ -2421,7 +2420,6 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_overview.cpp
     src/logviewer/imgui/imgui_tank.cpp
     src/logviewer/imgui/imgui_lv_icons.cpp
-    src/logviewer/imgui/imgui_lv_panel.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
@@ -4628,10 +4626,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # A click on a tank on the viewer's map: which tank a point is on and
     # the mark round the selected one (lv_tank_pick.h, header only).
     tests/unit/test_lv_tank_pick.c
-    # The options every panel of the viewer has: the names in the
-    # preferences, where the gear goes, and which parts of a transparent
-    # panel get a backing (lv_panel_opts.h, header only).
-    tests/unit/test_lv_panel_opts.c
+    # A sidebar of the viewer whose unused part is clear: where its panels
+    # go, the clear part, the map under it and the preference text
+    # (lv_dock_clear.h, header only).
+    tests/unit/test_lv_dock_clear.c
     # The viewer's text dump of a recording around one tick (lv_dump.c): a
     # recorded round dumped with the production decoder.
     tests/unit/test_lv_dump.c
@@ -4656,6 +4654,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # the arrow's direction, the countdown and the table of the times a
     # builder was away (lv_builder_status.h, header only).
     tests/unit/test_lv_builder_status.c
+    # Where the items of the log viewer's Controls panel go
+    # (lv_controls_layout.h, header only).
+    tests/unit/test_lv_controls_layout.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).

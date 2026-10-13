@@ -196,4 +196,41 @@ static inline void lvOverlayMaskToText(unsigned mask, char *dest,
   }
 }
 
+/* The marker of a pillbox event or a base event is the map's picture of a
+ * pillbox or a base, in the colour of the team the event names (the new
+ * owner). Every other kind has a drawn icon. */
+typedef enum {
+  LV_OVERLAY_PIC_NONE = 0, /* a drawn icon */
+  LV_OVERLAY_PIC_PILL,
+  LV_OVERLAY_PIC_BASE
+} LvOverlayPicture;
+
+static inline LvOverlayPicture lvOverlayKindPicture(int kind) {
+  switch (kind) {
+  case LV_EVK_PILL_CAPTURED:
+  case LV_EVK_PILL_STOLEN:
+    return LV_OVERLAY_PIC_PILL;
+  case LV_EVK_BASE_CAPTURED:
+  case LV_EVK_BASE_STOLEN:
+    return LV_OVERLAY_PIC_BASE;
+  default:
+    return LV_OVERLAY_PIC_NONE;
+  }
+}
+
+/* The picture of a marker that stands for several events: the pillbox when
+ * every one of them is a pillbox event (captured or stolen, in any mix), the
+ * base when every one is a base event, none for any other mix. kinds has
+ * count entries. */
+static inline LvOverlayPicture lvOverlayClusterPicture(const int *kinds, int count) {
+  LvOverlayPicture pic;
+  int i;
+  if (count <= 0) return LV_OVERLAY_PIC_NONE;
+  pic = lvOverlayKindPicture(kinds[0]);
+  for (i = 1; i < count && pic != LV_OVERLAY_PIC_NONE; i++) {
+    if (lvOverlayKindPicture(kinds[i]) != pic) pic = LV_OVERLAY_PIC_NONE;
+  }
+  return pic;
+}
+
 #endif /* LV_EVENT_OVERLAY_H */

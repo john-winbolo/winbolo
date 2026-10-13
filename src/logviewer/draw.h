@@ -230,6 +230,11 @@ int lv_drawTankAtPoint(float xPoints, float yPoints);
 void lv_drawEventFlashStart(int mapX, int mapY, int team);
 void lv_drawEventFlashCancel(void);
 int lv_drawEventFlashActive(void);
+/* For a host that draws a view of the map itself (the game view): the
+   ring's map square, and the ring or its edge arrow at a place on screen. */
+int lv_drawEventFlashCell(int *mapX, int *mapY);
+struct SDL_Rect;
+void lv_drawEventFlashAt(float cx, float cy, float tilePx, const struct SDL_Rect *view);
 
 /*********************************************************
 *NAME:          lv_drawSplashForImGui
@@ -323,6 +328,15 @@ void lv_drawGetGameTargetSize(int *outW, int *outH);
 *********************************************************/
 struct SDL_Texture* lv_drawGetTilesTexture(void);
 int lv_drawGetSheetScale(void);
+
+/* The map's own picture of a pillbox (isBase 0, at full armour) or a base
+ * (isBase 1), for a panel to draw small: the sheet and the place in it, in
+ * pixels of the sheet. A team's number gives the picture in that team's
+ * colour, out of items.bmp, as the map draws it. A number under 0 gives the
+ * one no team holds, out of the tile atlas: the game's red pillbox, the
+ * game's neutral base. FALSE when the sheet is not there. */
+bool lv_drawItemPicture(int isBase, int team, struct SDL_Texture **tex, float *sx, float *sy,
+                        float *sw, float *sh);
 
 /*********************************************************
 *NAME:          lv_drawGetHudShapesTexture

@@ -4165,11 +4165,13 @@ int run_lv_tank_bars_sums(void);
  * tank a point is on, and where the mark round the selected one goes. */
 int run_lv_tank_pick_sums(void);
 int run_lv_name_header_sums(void);
-/* The options every panel of the log viewer has (test_lv_panel_opts.c): the
- * names in the preferences and the place of the gear; and which parts of a
- * transparent panel get a backing. */
-int run_lv_panel_opts_sums(void);
-int run_lv_panel_backing_sums(void);
+/* A sidebar of the log viewer whose unused part is clear
+ * (test_lv_dock_clear.c): the panels packed along it both ways, their
+ * rectangles and the clear one, the map under it, the preference text. */
+int run_lv_dock_clear_layout(void);
+int run_lv_dock_clear_rects(void);
+int run_lv_dock_clear_map(void);
+int run_lv_dock_clear_prefs(void);
 /* The log viewer's text dump (test_lv_dump.c): a recorded round dumped
  * around one tick, a tick the round does not hold, and the event list. */
 int run_lv_dump_recorded_round(void);
@@ -4188,12 +4190,16 @@ int run_lv_event_kind_sums(void);
 int run_lv_event_overlay_slider(void);
 int run_lv_event_overlay_clusters(void);
 int run_lv_event_overlay_choice(void);
+int run_lv_event_overlay_picture(void);
 /* The log viewer's playback times as text and the ring flashed round an
  * event's place (test_lv_time_fmt.c); and a jump to an event stopping on the
  * event's own tick (test_lv_presentation.c). */
 int run_lv_time_fmt_sums(void);
 int run_lv_time_parse_sums(void);
 int run_lv_event_flash_sums(void);
+int run_lv_event_flash_arrow(void);
+int run_lv_event_centre_scroll(void);
+int run_lv_event_jump_keeps_place_in_view(void);
 int run_lv_event_seek_exact(void);
 /* The builder marker over each tank on the log viewer's map
  * (test_lv_builder_status.c), and the table of the times a builder was away
@@ -4202,6 +4208,10 @@ int run_lv_builder_status_sums(void);
 int run_lv_builder_countdown(void);
 int run_lv_builder_trips(void);
 int run_lv_builder_trips_scan(void);
+/* Where the items of the log viewer's Controls panel go
+ * (test_lv_controls_layout.c). */
+int run_lv_controls_top_row(void);
+int run_lv_controls_bottom_row(void);
 /* The decode pass that lists a whole log's events at load
  * (test_lv_presentation.c): it posts each line once, stores no snapshot, and
  * leaves the world at the start as the loader did. */

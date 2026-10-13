@@ -47,11 +47,30 @@ static int bs_cells(const LvBuilderGlyph *g) {
     return n;
 }
 
+/* White and fully solid for every team colour and for no team; the edge is
+   black, as solid, 1 point. */
+static bool bs_white_always(void) {
+    int team;
+    LvBuilderColour e = lvBuilderEdgeColour();
+    for (team = 0; team < 256; team++) {
+        int has;
+        for (has = 0; has < 2; has++) {
+            LvBuilderColour c = lvBuilderMarkColour(has != 0, (unsigned char)team);
+            if (c.r != 1.0f || c.g != 1.0f || c.b != 1.0f || c.a != 1.0f) return false;
+        }
+    }
+    if (e.r != 0.0f || e.g != 0.0f || e.b != 0.0f || e.a != 1.0f) return false;
+    return LV_BUILDER_ALPHA == 1.0f && LV_BUILDER_EDGE_POINTS == 1.0f;
+}
+
 int run_lv_builder_status_sums(void) {
     LvBuilderMarkLayout m;
     LvTankBarsLayout bars;
     float x, y;
     int d, c;
+
+    /* The colour: white, solid, for every team. */
+    UT_ASSERT_MSG(bs_white_always(), "the marker is white and solid for every team");
 
     /* The states. Dead wins: in the tick of the death the log may name no
        place for the builder. */

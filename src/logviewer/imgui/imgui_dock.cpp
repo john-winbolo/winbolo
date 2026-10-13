@@ -15,7 +15,7 @@
 #include "imgui_hud.h"
 #include "imgui_overview.h"
 #include "imgui_tank.h"
-#include "imgui_lv_panel.h"
+#include "imgui_lv_icons.h"
 #include "imgui.h"
 #include "imgui_internal.h"  /* DockBuilder*, FindWindowByName */
 #include "platform_config.h"
@@ -23,6 +23,7 @@
 #include "../../gui/ui_mode.h"
 #include <SDL3/SDL.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -33,6 +34,7 @@ extern "C" {
     #include "../backend.h"
     #include "../lv_dock_fit.h"
     #include "../lv_dock_layout.h"
+    #include "../lv_dock_clear.h"
 }
 
 /* How thick the strip on a sidebar's inner edge is that the user drags to
@@ -115,6 +117,26 @@ static LvDockSide s_side[LV_DOCK_SIDES] = {
     { "LvTopDock",    "###lv_dock_host_top",    "Top",    false, LV_DOCK_HEIGHT_DEFAULT, false, "", false, false },
     { "LvBottomDock", "###lv_dock_host_bottom", "Bottom", false, LV_DOCK_HEIGHT_DEFAULT, false, "", false, false },
 };
+
+/* The option "Make unused sidebar portions transparent" of each sidebar, and
+ * with it on the length each panel has in that sidebar (a height in the
+ * left and right ones, a width in the top and bottom ones; 0 until the
+ * panel has been in it). Indexed as k_panels, which is the order of
+ * lvDockClearPanels. */
+static bool s_clear[LV_DOCK_SIDES] = { false, false, false, false };
+static int  s_len[LV_DOCK_SIDES][LV_DOCK_CLEAR_PANELS];
+
+/* The part of each sidebar its panels took the last time it drew: all of
+ * the strip for a solid one, and for one with no panel in it. */
+static LvDockRect s_used[LV_DOCK_SIDES];
+
+/* The user is dragging the grip of a panel in this sidebar, and where on
+ * the grip the mouse took hold. */
+static bool  s_slot_drag[LV_DOCK_SIDES] = { false, false, false, false };
+static float s_slot_grab = 0.0f;
+
+/* The mouse was on the sidebar's gear the last time it drew. */
+static bool s_gear_hot[LV_DOCK_SIDES] = { false, false, false, false };
 
 /* Whether this host may show sidebars at all. Only the standalone viewer
  * says yes; the spectator host shares this code and the same preferences and
@@ -219,6 +241,25 @@ void lv_imgui_dock_init(struct LogViewerState *lv) {
         s_side[i].wantRebuild = false;
         s_side[i].gripHeld = false;
         s_side[i].tree.clear();
+        s_slot_drag[i] = false;
+        s_gear_hot[i] = false;
+        s_used[i].x = s_used[i].y = s_used[i].w = s_used[i].h = 0;
+    }
+
+    /* Which sidebars are clear past their panels, and the panels' lengths
+     * in each. Text that does not read gives off, and no length. */
+    {
+        int  clear[LV_DOCK_SIDES];
+        char key[64];
+        lv_platform_config_get_string("LOGVIEWER", "Dock.Clear", "", val, sizeof(val));
+        lvDockClearFlagsParse(val, clear);
+        for (int i = 0; i < LV_DOCK_SIDES; i++) {
+            char lens[256];
+            s_clear[i] = clear[i] != 0;
+            snprintf(key, sizeof(key), "Dock.Len.%s", s_side[i].key);
+            lv_platform_config_get_string("LOGVIEWER", key, "", lens, sizeof(lens));
+            lvDockClearLensParse(lens, s_len[i]);
+        }
     }
 
     lv_platform_config_get_string("LOGVIEWER", "Dock.Sides", "", val, sizeof(val));
@@ -304,6 +345,19 @@ void lv_imgui_dock_save(void) {
         lv_platform_config_set_string("LOGVIEWER", key,
                                       s_side[i].active ? "" : s_side[i].tree.c_str());
     }
+
+    int clear[LV_DOCK_SIDES];
+    for (int i = 0; i < LV_DOCK_SIDES; i++) clear[i] = s_clear[i] ? 1 : 0;
+    if (lvDockClearFlagsFormat(clear, line, sizeof(line)) > 0) {
+        lv_platform_config_set_string("LOGVIEWER", "Dock.Clear", line);
+    }
+    for (int i = 0; i < LV_DOCK_SIDES; i++) {
+        char lens[256];
+        snprintf(key, sizeof(key), "Dock.Len.%s", s_side[i].key);
+        if (lvDockClearLensFormat(s_len[i], lens, sizeof(lens)) > 0) {
+            lv_platform_config_set_string("LOGVIEWER", key, lens);
+        }
+    }
 }
 
 void lv_imgui_dock_set_standalone(int standalone) {
@@ -318,6 +372,16 @@ int lv_imgui_dock_get_side_enabled(int side) {
 void lv_imgui_dock_set_side_enabled(int side, int enabled) {
     if (side < 0 || side >= LV_DOCK_SIDES) return;
     s_side[side].enabled = enabled != 0;
+}
+
+int lv_imgui_dock_get_side_clear(int side) {
+    if (side < 0 || side >= LV_DOCK_SIDES) return 0;
+    return s_clear[side] ? 1 : 0;
+}
+
+void lv_imgui_dock_set_side_clear(int side, int clear) {
+    if (side < 0 || side >= LV_DOCK_SIDES) return;
+    s_clear[side] = clear != 0;
 }
 
 int lv_imgui_dock_get_enabled(void) {
@@ -592,6 +656,35 @@ void lv_imgui_dock_margins(int *left, int *top, int *right, int *bottom) {
     if (bottom) *bottom = m.bottom;
 }
 
+void lv_imgui_dock_map_margins(int *left, int *top, int *right, int *bottom) {
+    LvDockMargins m = { 0, 0, 0, 0 };
+    if (any_active()) {
+        int clear[LV_DOCK_SIDES];
+        for (int i = 0; i < LV_DOCK_SIDES; i++) {
+            clear[i] = (s_side[i].active && s_clear[i]) ? 1 : 0;
+        }
+        m = current_margins(nullptr, nullptr);
+        m = lvDockClearMapMargins(&m, clear);
+    }
+    if (left)   *left = m.left;
+    if (top)    *top = m.top;
+    if (right)  *right = m.right;
+    if (bottom) *bottom = m.bottom;
+}
+
+int lv_imgui_dock_point_on_map(float px, float py) {
+    int w = 0, areaH = 0, h = 0;
+    int clear[LV_DOCK_SIDES];
+
+    if (!any_active()) return 1;
+    LvDockMargins m = current_margins(&w, &areaH);
+    if (s_lv && s_lv->window) SDL_GetWindowSize(s_lv->window, &w, &h);
+    for (int i = 0; i < LV_DOCK_SIDES; i++) {
+        clear[i] = (s_side[i].active && s_clear[i]) ? 1 : 0;
+    }
+    return lvDockClearPointOnMap(&m, clear, s_used, w, h, h - areaH, px, py);
+}
+
 int lv_imgui_dock_autosave_due(void) {
     if (!s_standalone || !s_booted || lv_imgui_context_get() == nullptr) return 0;
     ImGui::SetCurrentContext(lv_imgui_context_get());
@@ -613,13 +706,16 @@ int lv_imgui_dock_autosave_due(void) {
     for (int i = 0; i < LV_DOCK_SIDES; i++) {
         sig = (sig ^ (unsigned)(s_side[i].enabled ? 1 : 0)) * 16777619u;
         sig = (sig ^ (unsigned)s_side[i].size) * 16777619u;
-        dragging = dragging || s_side[i].gripHeld;
+        dragging = dragging || s_side[i].gripHeld || s_slot_drag[i];
+        /* The option of each sidebar and the lengths of its panels. */
+        sig = (sig ^ (unsigned)(s_clear[i] ? 1 : 0)) * 16777619u;
+        for (int k = 0; k < LV_DOCK_CLEAR_PANELS; k++) {
+            sig = (sig ^ (unsigned)s_len[i][k]) * 16777619u;
+        }
     }
     for (int i = 0; i < LV_DOCK_PANEL_COUNT; i++) {
         sig = (sig ^ (unsigned)(*k_panels[i].show ? 1 : 0)) * 16777619u;
     }
-    /* And the options of the panels (the gear of each). */
-    sig = (sig ^ lv_panel_options_signature()) * 16777619u;
     if (s_sig_saved == 0) s_sig_saved = sig;  /* the first look: as loaded */
     if (sig != s_sig_saved) {
         Uint64 now = SDL_GetTicks();
@@ -730,41 +826,270 @@ static void build_layout(ImGuiID dockId, ImVec2 size) {
     s_float_reset_mask = 0;
 }
 
-/* Draw one sidebar: its strip, the grip on its inner edge and its dock space.
- * pos and size are the strip's place, other the size of the sidebar facing
- * it and extent the length the two share. */
-static void draw_side(int side, ImVec2 pos, ImVec2 size, int other, int extent) {
+/* ---- A sidebar whose unused part is clear ---------------------------------- */
+
+/* One panel's place along a sidebar: the part of the dock space it is in.
+ * That is one dock node, or, where the user has put panels side by side
+ * across the sidebar, the node that holds them all. panel is the first
+ * panel in it by the order of k_panels, whose saved length the part has;
+ * -1 for a part with no panel in it. */
+struct LvClearSlot {
+    ImGuiDockNode *node;
+    ImGuiID        id;
+    int            panel;
+};
+
+static int node_key_panel(const ImGuiDockNode *n, int depth) {
+    if (n == nullptr || depth > LV_DOCK_TREE_DEPTH) return -1;
+    if (n->IsSplitNode()) {
+        int a = node_key_panel(n->ChildNodes[0], depth + 1);
+        int b = node_key_panel(n->ChildNodes[1], depth + 1);
+        if (a < 0) return b;
+        if (b < 0) return a;
+        return a < b ? a : b;
+    }
+    int best = -1;
+    for (int i = 0; i < n->Windows.Size; i++) {
+        int p = panel_index(n->Windows[i]->Name);
+        if (p >= 0 && (best < 0 || p < best)) best = p;
+    }
+    return best;
+}
+
+/* The parts of a dock space in order along axis: what its splits along
+ * that axis divide it into. A part that does not show is left out. */
+static void collect_slots(ImGuiDockNode *n, ImGuiAxis axis, LvClearSlot *out, int *count,
+                          int depth) {
+    if (n == nullptr || !n->IsVisible || depth > LV_DOCK_TREE_DEPTH) return;
+    if (n->IsSplitNode() && n->SplitAxis == axis) {
+        collect_slots(n->ChildNodes[0], axis, out, count, depth + 1);
+        collect_slots(n->ChildNodes[1], axis, out, count, depth + 1);
+        return;
+    }
+    if (*count >= LV_DOCK_CLEAR_SLOTS) return;
+    out[*count].node = n;
+    out[*count].id = n->ID;
+    out[*count].panel = node_key_panel(n, 0);
+    (*count)++;
+}
+
+/* The length along axis of what a part shows, 0 when that is not known
+ * (a panel that has not drawn yet). A panel with a height that follows from
+ * its width (k_panels) is asked for it; any other gives the size of what it
+ * last drew. */
+static float node_content(ImGuiDockNode *n, ImGuiAxis axis, int depth) {
+    if (n == nullptr || !n->IsVisible || depth > LV_DOCK_TREE_DEPTH) return 0.0f;
+    if (n->IsSplitNode()) {
+        ImGuiDockNode *a = n->ChildNodes[0], *b = n->ChildNodes[1];
+        float ca = node_content(a, axis, depth + 1);
+        float cb = node_content(b, axis, depth + 1);
+        if ((a->IsVisible && ca <= 0.0f) || (b->IsVisible && cb <= 0.0f)) return 0.0f;
+        if (n->SplitAxis == axis) {
+            return ca + cb + ((a->IsVisible && b->IsVisible) ? (float)LV_DOCK_CLEAR_GRIP : 0.0f);
+        }
+        return ca > cb ? ca : cb;
+    }
+    ImGuiWindow *w = n->VisibleWindow;
+    if (w == nullptr) return 0.0f;
+    if (axis == ImGuiAxis_Y) {
+        int p = panel_index(w->Name);
+        if (p >= 0 && k_panels[p].heightFor != nullptr && n->Size.x > 1.0f) {
+            return k_panels[p].heightFor(n->Size.x);
+        }
+        if (w->ContentSize.y <= 0.0f) return 0.0f;
+        bool bar = n->TabBar != nullptr && !n->IsHiddenTabBar() && !n->IsNoTabBar();
+        return (bar ? ImGui::GetFrameHeight() : 0.0f) + w->ContentSize.y +
+               w->WindowPadding.y * 2.0f;
+    }
+    if (w->ContentSize.x <= 0.0f) return 0.0f;
+    return w->ContentSize.x + w->WindowPadding.x * 2.0f +
+           (w->ScrollbarY ? ImGui::GetStyle().ScrollbarSize : 0.0f);
+}
+
+/* Tell ImGui the length of each part: the size it works from when it shares
+ * a dock space out among its parts. The dock space is then submitted exactly
+ * as long as the parts and the grips between them, so each part gets its
+ * own length. Returns the length of n and what is under it. */
+static float apply_lens(ImGuiDockNode *n, ImGuiAxis axis, const LvDockClearPlan *plan, int *at,
+                        int depth) {
+    if (n == nullptr || !n->IsVisible || depth > LV_DOCK_TREE_DEPTH) return 0.0f;
+    if (n->IsSplitNode() && n->SplitAxis == axis) {
+        float a = apply_lens(n->ChildNodes[0], axis, plan, at, depth + 1);
+        float b = apply_lens(n->ChildNodes[1], axis, plan, at, depth + 1);
+        float total = a + b + ((a > 0.0f && b > 0.0f) ? (float)LV_DOCK_CLEAR_GRIP : 0.0f);
+        if (total > 0.0f) n->SizeRef[axis] = total;
+        return total;
+    }
+    if (*at >= plan->count) return n->SizeRef[axis];
+    float len = (float)plan->len[(*at)++];
+    n->SizeRef[axis] = len;
+    return len;
+}
+
+/* The grip on a sidebar's inner edge, in the window that is current: the
+ * user drags it to make the sidebar bigger or smaller. gripPos and gripSize
+ * are the part of the edge this window has; pos and size are the whole
+ * strip. Dragging sets the size from where the mouse is, between the
+ * sidebar's smallest size and what the sidebar facing it leaves of two
+ * thirds of the window. The map follows on the next frame. With always
+ * false the grip is drawn only while the mouse is on it or holds it.
+ * Returns true while it is held. */
+static bool edge_grip(int side, ImVec2 gripPos, ImVec2 gripSize, ImVec2 pos, ImVec2 size,
+                      int other, int extent, bool always) {
     LvDockSide &s = s_side[side];
     bool        wide = lvDockSideIsWide(side) != 0;
+
+    if (gripSize.x < 1.0f || gripSize.y < 1.0f) return false;
+    ImGui::SetCursorScreenPos(gripPos);
+    ImGui::InvisibleButton("##lv_dock_grip", gripSize);
+    bool gripHot = ImGui::IsItemHovered();
+    bool gripHeld = ImGui::IsItemActive();
+    if (gripHot || gripHeld) {
+        ImGui::SetMouseCursor(wide ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNS);
+    }
+    if (gripHeld) {
+        ImVec2 mouse = ImGui::GetIO().MousePos;
+        float  wanted;
+        switch (side) {
+            case LV_DOCK_RIGHT: wanted = pos.x + size.x - mouse.x; break;
+            case LV_DOCK_LEFT:  wanted = mouse.x - pos.x; break;
+            case LV_DOCK_TOP:   wanted = mouse.y - pos.y; break;
+            default:            wanted = pos.y + size.y - mouse.y; break;
+        }
+        wanted += LV_DOCK_GRIP_W * 0.5f;
+        s.size = lvDockDragSize(side, (int)(wanted + 0.5f), other, extent);
+    }
+    if (always || gripHot || gripHeld) {
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            gripPos, ImVec2(gripPos.x + gripSize.x, gripPos.y + gripSize.y),
+            ImGui::GetColorU32(gripHeld ? ImGuiCol_SeparatorActive
+                               : gripHot ? ImGuiCol_SeparatorHovered
+                                         : ImGuiCol_Separator));
+    }
+    return gripHeld;
+}
+
+/* The flags of a bare window the sidebars put on the screen: nothing to
+ * grab, move or close, never in front of a floating panel, never itself
+ * dockable, and with no settings of its own (its place is worked out every
+ * frame). */
+static const ImGuiWindowFlags k_bare_flags =
+    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+    ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
+    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
+
+/* Draw one sidebar: its strip, the grip on its inner edge and its dock space.
+ * pos and size are the strip's place, other the size of the sidebar facing
+ * it and extent the length the two share.
+ *
+ * A sidebar whose unused part is clear (s_clear) is drawn another way. Its
+ * strip has no background, and is only as long as its panels: each panel
+ * has its own length, they are packed from the start of the sidebar, and a
+ * grip on the far edge of each changes the length of that panel and of no
+ * other (lv_dock_clear.h). Past the last grip there is no window at all, so
+ * the map shows there and gets the mouse. The grip on the sidebar's inner
+ * edge still runs the whole length: the part of it beside the clear part is
+ * a window of its own that shows only under the mouse. */
+static void draw_side(int side, ImVec2 pos, ImVec2 size, int other, int extent) {
+    LvDockSide      &s = s_side[side];
+    bool             wide = lvDockSideIsWide(side) != 0;
+    const ImGuiAxis  axis = wide ? ImGuiAxis_Y : ImGuiAxis_X;
+    const ImGuiStyle &style = ImGui::GetStyle();
+    const bool       clear = s_clear[side];
+    const float      slotGrip = (float)LV_DOCK_CLEAR_GRIP;
 
     /* With no room at all (a window a few points high) the strip is still
      * made: the dock space has to be submitted every frame or its panels
      * would be undocked for good. */
     if (size.x < 1.0f) size.x = 1.0f;
     if (size.y < 1.0f) size.y = 1.0f;
-    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
-    ImGui::SetNextWindowSize(size, ImGuiCond_Always);
 
-    /* A bare strip: nothing to grab, move or close, never in front of a
-     * floating panel, never itself dockable, and with no settings of its own
-     * (its place is worked out every frame). */
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
-                             ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-                             ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
-                             ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
+    ImGuiID        dockId = dock_space_id(side);
+    ImGuiDockNode *root = ImGui::DockBuilderGetNode(dockId);
+    bool building = (side == LV_DOCK_RIGHT && s_want_layout) || s.wantRebuild;
+
+    /* The panels and their lengths, when they are packed. */
+    LvClearSlot     slots[LV_DOCK_CLEAR_SLOTS];
+    int             slotCount = 0;
+    int             wanted[LV_DOCK_CLEAR_SLOTS], mins[LV_DOCK_CLEAR_SLOTS];
+    LvDockClearPlan plan;
+    bool            packed = false;
+    const int       stripLen = (int)size[axis];
+    plan.count = 0;
+    if (clear && root != nullptr && !building) {
+        bool anyPanel = false;
+        int  minLen = lvDockClearMin(side);
+        if (minLen < (int)style.WindowMinSize[axis]) minLen = (int)style.WindowMinSize[axis];
+        collect_slots(root, axis, slots, &slotCount, 0);
+        for (int i = 0; i < slotCount; i++) {
+            ImGuiDockNode *n = slots[i].node;
+            int cur = (int)(n->Size[axis] + 0.5f);
+            int p = slots[i].panel;
+            if (cur <= 0) cur = (int)(n->SizeRef[axis] + 0.5f);
+            if (p < 0) {
+                /* A part with no panel in it: the least there can be. */
+                bool hollow = n->IsLeafNode() && n->Windows.Size == 0;
+                mins[i] = (int)style.WindowMinSize[axis];
+                wanted[i] = (hollow || cur < mins[i]) ? mins[i] : cur;
+                continue;
+            }
+            anyPanel = true;
+            mins[i] = minLen;
+            if (s_len[side][p] <= 0 && cur > 0) {
+                /* The first time the panel is here: its content's length,
+                 * once that is known. Until then it stays as it is. */
+                int content = (int)ceilf(node_content(n, axis, 0));
+                /* A panel whose height follows from its width shows a
+                 * fixed amount: all of it. */
+                bool exact = wide && n->IsLeafNode() && n->VisibleWindow != nullptr &&
+                             k_panels[p].heightFor != nullptr &&
+                             panel_index(n->VisibleWindow->Name) == p;
+                if (content > 0) {
+                    s_len[side][p] = lvDockClearFirstLen(cur, content, minLen, exact ? 1 : 0);
+                }
+            }
+            wanted[i] = (s_len[side][p] > 0) ? s_len[side][p] : cur;
+        }
+        if (anyPanel) {
+            lvDockClearLayout(wanted, mins, slotCount, stripLen, LV_DOCK_CLEAR_GRIP, &plan);
+            packed = true;
+        }
+    }
+
+    /* The strip is all of the sidebar, or only what the packed panels and
+     * their grips take of it. */
+    ImVec2 hostSize = size;
+    if (packed) {
+        float used = (float)(plan.used < stripLen ? plan.used : stripLen);
+        if (used < 1.0f) used = 1.0f;
+        hostSize[axis] = used;
+    }
+    s_used[side].x = (int)pos.x;
+    s_used[side].y = (int)pos.y;
+    s_used[side].w = (int)hostSize.x;
+    s_used[side].h = (int)hostSize.y;
+
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(hostSize, ImGuiCond_Always);
+
+    ImGuiWindowFlags flags = k_bare_flags;
+    /* A clear sidebar has no backdrop: each panel in it paints its own. */
+    if (clear) flags |= ImGuiWindowFlags_NoBackground;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(1, 1));
     /* The panels docked here look for the dock space every frame, so it is
      * submitted whatever Begin answers. */
     ImGui::Begin(s.hostName, nullptr, flags);
-    ImGui::PopStyleVar(4);
+    ImGui::PopStyleVar(5);
+    ImGuiWindow *outer = ImGui::GetCurrentWindow();
 
     /* The grip along the inner edge, the dock space in the rest. */
-    ImVec2 gripPos = pos, gripSize = size, dockPos = pos, dockSize = size;
+    ImVec2 gripPos = pos, gripSize = hostSize, dockPos = pos, dockSize = hostSize;
     switch (side) {
         case LV_DOCK_RIGHT:
             gripSize.x = LV_DOCK_GRIP_W;
@@ -787,39 +1112,13 @@ static void draw_side(int side, ImVec2 pos, ImVec2 size, int other, int extent) 
             dockSize.y -= LV_DOCK_GRIP_W;
             break;
     }
+    /* Packed: the last panel's own grip is past the dock space. */
+    if (packed) dockSize[axis] -= slotGrip;
     if (dockSize.x < 1.0f) dockSize.x = 1.0f;
     if (dockSize.y < 1.0f) dockSize.y = 1.0f;
 
-    /* Dragging the grip sets the size from where the mouse is, between the
-     * sidebar's smallest size and what the sidebar facing it leaves of two
-     * thirds of the window. The map follows on the next frame. */
-    ImGui::SetCursorScreenPos(gripPos);
-    ImGui::InvisibleButton("##lv_dock_grip", gripSize);
-    bool gripHot = ImGui::IsItemHovered();
-    bool gripHeld = ImGui::IsItemActive();
-    if (gripHot || gripHeld) {
-        ImGui::SetMouseCursor(wide ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNS);
-    }
-    if (gripHeld) {
-        ImVec2 mouse = ImGui::GetIO().MousePos;
-        float  wanted;
-        switch (side) {
-            case LV_DOCK_RIGHT: wanted = pos.x + size.x - mouse.x; break;
-            case LV_DOCK_LEFT:  wanted = mouse.x - pos.x; break;
-            case LV_DOCK_TOP:   wanted = mouse.y - pos.y; break;
-            default:            wanted = pos.y + size.y - mouse.y; break;
-        }
-        wanted += LV_DOCK_GRIP_W * 0.5f;
-        s.size = lvDockDragSize(side, (int)(wanted + 0.5f), other, extent);
-    }
-    s.gripHeld = gripHeld;
-    ImGui::GetWindowDrawList()->AddRectFilled(
-        gripPos, ImVec2(gripPos.x + gripSize.x, gripPos.y + gripSize.y),
-        ImGui::GetColorU32(gripHeld ? ImGuiCol_SeparatorActive
-                           : gripHot ? ImGuiCol_SeparatorHovered
-                                     : ImGuiCol_Separator));
+    s.gripHeld = edge_grip(side, gripPos, gripSize, pos, size, other, extent, true);
 
-    ImGuiID dockId = dock_space_id(side);
     if (dockSize.x > 1.0f && dockSize.y > 1.0f) {
         if (side == LV_DOCK_RIGHT && s_want_layout) {
             build_layout(dockId, dockSize);
@@ -834,7 +1133,7 @@ static void draw_side(int side, ImVec2 pos, ImVec2 size, int other, int extent) 
     /* A sidebar with nothing in it says what it is for. ImGui paints an
      * empty dock space over; with that colour clear, the words drawn on the
      * strip under it show. */
-    ImGuiDockNode *root = ImGui::DockBuilderGetNode(dockId);
+    root = ImGui::DockBuilderGetNode(dockId);
     bool empty = root == nullptr || (root->IsLeafNode() && root->Windows.Size == 0);
     if (empty) {
         const char *hint = langGetText(STR_LV_DOCK_EMPTY_HINT);
@@ -845,15 +1144,194 @@ static void draw_side(int side, ImVec2 pos, ImVec2 size, int other, int extent) 
                   dockPos.y + (dockSize.y - text.y) * 0.5f);
         if (at.x < dockPos.x + 8.0f) at.x = dockPos.x + 8.0f;
         if (at.y < dockPos.y + 4.0f) at.y = dockPos.y + 4.0f;
+        if (clear) {
+            /* The words are over the map: a plate under them. */
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                ImVec2(at.x - 6.0f, at.y - 4.0f), ImVec2(at.x + text.x + 6.0f, at.y + text.y + 4.0f),
+                ImGui::GetColorU32(ImGuiCol_WindowBg), 3.0f);
+        }
         ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(), at,
                                             ImGui::GetColorU32(ImGuiCol_TextDisabled),
                                             hint, nullptr, wrap);
+    }
+    if (empty || clear) {
         ImGui::PushStyleColor(ImGuiCol_DockingEmptyBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
     }
+    ImGuiDockNodeFlags dockFlags = ImGuiDockNodeFlags_None;
+    if (packed) {
+        /* Each part its own length, and ImGui's own splitters along the
+         * sidebar off: a drag of one of those takes from one panel what it
+         * gives the next. The grips drawn below take their place. */
+        int at = 0;
+        apply_lens(root, axis, &plan, &at, 0);
+        dockFlags = wide ? ImGuiDockNodeFlags_NoResizeY : ImGuiDockNodeFlags_NoResizeX;
+        ImGui::PushStyleVar(ImGuiStyleVar_DockingSeparatorSize, slotGrip);
+    }
     ImGui::SetCursorScreenPos(dockPos);
-    ImGui::DockSpace(dockId, dockSize, ImGuiDockNodeFlags_None);
-    if (empty) ImGui::PopStyleColor();
+    ImGui::DockSpace(dockId, dockSize, dockFlags);
+    if (packed) ImGui::PopStyleVar();
+    if (empty || clear) ImGui::PopStyleColor();
 
+    /* The grips of the packed panels: one on the far edge of each. They are
+     * not items of a window. Between two panels the place is ImGui's own
+     * (its dock space is a window inside this one), so the mouse is tested
+     * here, and a grip that has it takes the "hovered" and "active" IDs so
+     * nothing under it acts on the click. */
+    bool slotDrag = false;
+    if (packed) {
+        ImGuiContext &g = *GImGui;
+        LvClearSlot   now[LV_DOCK_CLEAR_SLOTS];
+        int           nowCount = 0;
+        bool          same;
+
+        /* The dock space has just been updated and may have dropped or
+         * joined parts: only what is still there, in the same order. */
+        root = ImGui::DockBuilderGetNode(dockId);
+        collect_slots(root, axis, now, &nowCount, 0);
+        same = nowCount == slotCount;
+        for (int i = 0; same && i < nowCount; i++) same = now[i].id == slots[i].id;
+
+        ImGuiWindow *inner = (root != nullptr) ? root->HostWindow : nullptr;
+        bool overHost = g.HoveredWindow != nullptr &&
+                        (g.HoveredWindow == outer || g.HoveredWindow == inner);
+        for (int i = 0; same && i < nowCount; i++) {
+            ImGuiDockNode *n = now[i].node;
+            const int      p = now[i].panel;
+            const float    farEdge = n->Pos[axis] + n->Size[axis];
+            ImRect         box;
+            if (wide) {
+                box = ImRect(dockPos.x, farEdge, dockPos.x + dockSize.x, farEdge + slotGrip);
+            } else {
+                box = ImRect(farEdge, dockPos.y, farEdge + slotGrip, dockPos.y + dockSize.y);
+            }
+            ImGui::PushID(i);
+            const ImGuiID id = outer->GetID("##lv_slot_grip");
+            ImGui::PopID();
+
+            bool held = g.ActiveId == id;
+            bool hot = p >= 0 && overHost && box.Contains(g.IO.MousePos) &&
+                       (g.ActiveId == 0 || held) && (g.HoveredId == 0 || g.HoveredId == id) &&
+                       !g.DragDropActive;
+            if (hot) {
+                ImGui::SetHoveredID(id);
+                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    /* As long as what it shows. */
+                    int content = (int)ceilf(node_content(n, axis, 0));
+                    s_len[side][p] = lvDockClearSnapLen((int)(n->Size[axis] + 0.5f), content, mins[i]);
+                    s_len[side][p] = lvDockClearDragLen(&plan, mins, i, s_len[side][p], stripLen,
+                                                        LV_DOCK_CLEAR_GRIP);
+                } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    ImGui::SetActiveID(id, outer);
+                    s_slot_grab = g.IO.MousePos[axis] - farEdge;
+                    held = true;
+                }
+            }
+            if (held) {
+                if (p >= 0 && g.IO.MouseDown[ImGuiMouseButton_Left]) {
+                    ImGui::KeepAliveID(id);
+                    float len = g.IO.MousePos[axis] - s_slot_grab - n->Pos[axis];
+                    s_len[side][p] = lvDockClearDragLen(&plan, mins, i, (int)(len + 0.5f),
+                                                        stripLen, LV_DOCK_CLEAR_GRIP);
+                    slotDrag = true;
+                } else {
+                    ImGui::ClearActiveID();
+                    held = false;
+                }
+            }
+            if (hot || held) {
+                ImGui::SetMouseCursor(wide ? ImGuiMouseCursor_ResizeNS : ImGuiMouseCursor_ResizeEW);
+            }
+            /* Between two panels ImGui has drawn the line already, in its
+             * own window; the last panel's is past it, in this one. */
+            ImDrawList *dl = (i < nowCount - 1 && inner != nullptr) ? inner->DrawList
+                                                                    : outer->DrawList;
+            if (hot || held || dl == outer->DrawList) {
+                dl->PushClipRect(box.Min, box.Max, false);
+                dl->AddRectFilled(box.Min, box.Max,
+                                  ImGui::GetColorU32(held ? ImGuiCol_SeparatorActive
+                                                     : hot ? ImGuiCol_SeparatorHovered
+                                                           : ImGuiCol_Separator));
+                dl->PopClipRect();
+            }
+        }
+    }
+    s_slot_drag[side] = slotDrag;
+
+    ImGui::End();
+
+    /* The rest of the inner edge's grip, beside the clear part. */
+    if (packed && plan.clearLen > 0) {
+        ImVec2 restPos = gripPos, restSize = gripSize;
+        restPos[axis] = pos[axis] + hostSize[axis];
+        restSize[axis] = size[axis] - hostSize[axis];
+        if (restSize[axis] >= 1.0f) {
+            char name[64];
+            snprintf(name, sizeof(name), "%s_edge", s.hostName);
+            ImGui::SetNextWindowPos(restPos, ImGuiCond_Always);
+            ImGui::SetNextWindowSize(restSize, ImGuiCond_Always);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(1, 1));
+            ImGui::Begin(name, nullptr, k_bare_flags | ImGuiWindowFlags_NoBackground |
+                                            ImGuiWindowFlags_NoFocusOnAppearing);
+            ImGui::PopStyleVar(3);
+            if (edge_grip(side, restPos, restSize, pos, size, other, extent, false)) {
+                s.gripHeld = true;
+            }
+            ImGui::End();
+        }
+    }
+}
+
+/* The gear of a sidebar: a small button that opens the sidebar's options.
+ * It is not on the sidebar, where it would be over a panel, but on the map
+ * in the corner that is at the end of the sidebar's inner edge going round
+ * the map clockwise: the left sidebar's at the map's top left, the top
+ * one's at the top right, the right one's at the bottom right and the
+ * bottom one's at the bottom left. So no two are in one corner. It is dim
+ * until the mouse is on it. (x0, y0) to (x1, y1) is the part of the window
+ * no sidebar is on. */
+static void draw_gear(int side, float x0, float y0, float x1, float y1) {
+    const float box = ImGui::GetFrameHeight();
+    const float in = 3.0f;
+    ImVec2      at;
+    char        name[64];
+
+    if (x1 - x0 < box * 3.0f || y1 - y0 < box * 3.0f) return;
+    switch (side) {
+        case LV_DOCK_LEFT:  at = ImVec2(x0 + in, y0 + in); break;
+        case LV_DOCK_TOP:   at = ImVec2(x1 - in - box, y0 + in); break;
+        case LV_DOCK_RIGHT: at = ImVec2(x1 - in - box, y1 - in - box); break;
+        default:            at = ImVec2(x0 + in, y1 - in - box); break;
+    }
+    snprintf(name, sizeof(name), "%s_gear", s_side[side].hostName);
+    ImGui::SetNextWindowPos(at, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(box, box), ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(1, 1));
+    ImGui::Begin(name, nullptr, k_bare_flags | ImGuiWindowFlags_NoBackground |
+                                    ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::PopStyleVar(3);
+
+    bool open = ImGui::IsPopupOpen("##lv_dock_opts");
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                        ImGui::GetStyle().Alpha * ((s_gear_hot[side] || open) ? 1.0f : 0.45f));
+    if (lv_icon_button("##lv_dock_gear", LV_ICON_GEAR, box)) {
+        ImGui::OpenPopup("##lv_dock_opts");
+    }
+    ImGui::PopStyleVar();
+    s_gear_hot[side] = ImGui::IsItemHovered();
+    if (s_gear_hot[side] && !open) {
+        static const int k_label[LV_DOCK_SIDES] = { STR_LV_DOCK_ENABLED, STR_LV_DOCK_LEFT,
+                                                    STR_LV_DOCK_TOP, STR_LV_DOCK_BOTTOM };
+        ImGui::SetTooltip("%s: %s", langGetText(k_label[side]),
+                          langGetText(STR_LV_TIP_DOCK_OPTIONS));
+    }
+    if (ImGui::BeginPopup("##lv_dock_opts")) {
+        ImGui::MenuItem(langGetText(STR_LV_DOCK_TRANSPARENT), nullptr, &s_clear[side]);
+        ImGui::EndPopup();
+    }
     ImGui::End();
 }
 
@@ -888,5 +1366,11 @@ void lv_imgui_dock_host(void) {
     if (s_side[LV_DOCK_BOTTOM].active) {
         draw_side(LV_DOCK_BOTTOM, ImVec2(x0 + (float)m.left, y1 - (float)m.bottom),
                   ImVec2(midW, (float)m.bottom), m.top, areaH);
+    }
+    for (int i = 0; i < LV_DOCK_SIDES; i++) {
+        if (s_side[i].active) {
+            draw_gear(i, x0 + (float)m.left, y0 + (float)m.top, x1 - (float)m.right,
+                      y1 - (float)m.bottom);
+        }
     }
 }

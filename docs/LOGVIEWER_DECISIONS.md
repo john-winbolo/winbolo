@@ -32,7 +32,20 @@ call can be changed; the file says where.
 
 ### Overview panel
 
-- One table. The column headers are the game's neutral status icons.
+- One table. The column headers are the map's own pictures of a pillbox and
+  a base no team holds: the game's red pillbox and the game's neutral base
+  (black with white dots), made smaller (Oct 13; `lv_item_picture`, the
+  helper the events lane uses). The two share bars start with the same
+  pictures. They keep the size the game's status icons had there (12
+  points at the usual font), so the table, the bars and the least width of
+  the panel are as they were. The tooltip of a header picture is its word
+  ("Pillboxes", "Bases"). The table has no picture for each team, so none
+  is in a team's colour.
+- Not changed, because the map's picture does not go in with no change to
+  the layout: the HUD panel (its grids are the game's own 12 by 12 status
+  slots) and the Tank panel's line of carried pillboxes (the game's status
+  picture, in the game's status layout). The Events panel has no column of
+  icons.
 - Each team row has a stripe in the team's colour. Below the teams there is a
   Neutral row and a Total row.
 - Two share bars (pillboxes, bases), each 6 pixels high.
@@ -437,7 +450,7 @@ drawn icons of the viewer are now in one file, `imgui_lv_icons.cpp`:
 | `LV_ICON_FAST_FORWARD` | two triangles to the right | Controls |
 | `LV_ICON_TO_END` | a triangle against a bar | Controls, "Jump to live" (live feed only) |
 | `LV_ICON_EYE` | an eye | HUD panel (moved here from `imgui_hud.cpp`) |
-| `LV_ICON_GEAR` | a toothed wheel | panel options |
+| `LV_ICON_GEAR` | a toothed wheel | sidebar options |
 
 No picture file and no icon font were added. A button whose action has
 nothing to act on is dimmed: Rewind at the start, Play at the end or while
@@ -552,87 +565,174 @@ now has the same stripe. Both panels draw the line with one helper
   frame until the mouse is over it.
 
 
-### A gear on every panel, and "Make unused panel portions transparent"
+### "Make unused sidebar portions transparent": an option of a sidebar
 
-Every panel (Controls, HUD, Overview, Tank, Game Information, the scenario
-panel, Item Information, Events, Comments) has a small gear. A click opens
-the panel's options: one check item, "Make unused panel portions
-transparent". One helper does it for all nine: a panel opens its window with
-`lv_panel_begin` and closes it with `lv_panel_end` (`imgui_lv_panel.cpp`).
+**What was there before, and why it did nothing.** The option was one a
+panel ("Make unused panel portions transparent", a gear on every panel). In
+a sidebar it showed no change: a docked panel made clear showed the
+sidebar's own strip, which is a window in the same colour (`ImGui::Begin` of
+the strip in `draw_side`, `imgui_dock.cpp`), and the map stopped at the
+sidebar's edge (`lvDrawBlitTargetToWindow`, `draw.c`), so nothing was behind a
+docked panel to see. The owner then said what was wanted: the option belongs
+to a sidebar, and "unused" means the part of the sidebar under its panels,
+not the background of a panel.
 
-**Where the gear is.**
+**The per-panel option is removed.** The gear on every panel, the helper
+(`imgui_lv_panel.cpp`, `lv_panel_opts.h`), the backing boxes and the
+preference `Window.<Panel>.Transparent` are gone. The gear had no other
+item. An old `Window.<Panel>.Transparent` key in a preferences file is not
+read and is not moved to the new option. A floating panel has no such option
+now. The two strings keep their numbers (2839, 2840) with new names and
+words: `STR_LV_TIP_DOCK_OPTIONS` "Sidebar options", `STR_LV_DOCK_TRANSPARENT`
+"Make unused sidebar portions transparent".
 
-- A floating panel: in the title bar, left of the close button, the same
-  size as the close button. It takes no room from what the panel shows.
-- A panel that is a tab in a sidebar (or tabbed with another panel) has no
-  title bar of its own. Its gear is in the same place in the bar of tabs. It
-  belongs to the tab that shows, as the close button of that bar does.
-- With no bar at all (the bar of tabs of a dock node can be hidden): the
-  bottom right corner of the panel, drawn over what the panel shows. Not the
-  top right corner: that is where the Tank and HUD panels have the X of
-  their name line.
-- The gear is drawn with the draw list (the shared icon helper), as tall as
-  the text, in the colour of the text, dim until the mouse is over it. Its
-  tooltip is "Panel options". A patch in the bar's colour is drawn under it,
-  so a long title or a tab does not show through it.
-- A click on the gear does not start a drag of the window, and does not pull
-  a tab out of its sidebar.
+**The option.** One a sidebar (left, right, top, bottom), off by default.
+It is in two places:
 
-**What the option does.** The option is one a panel, off by default, kept in
-the LOGVIEWER preferences as `Window.<Panel>.Transparent` (Yes/No) with the
-same panel names the `Window.<Panel>.Visible` keys have, and saved by the
-same "once it has been still for a second" save as the rest of the layout.
+- Windows menu, under the four sidebar items: a submenu "Make unused sidebar
+  portions transparent" with the four sidebars as check items.
+- A gear for each sidebar that shows. It is NOT on the sidebar, where it
+  would be over a panel's controls. It is on the map, in the corner at the
+  end of the sidebar's inner edge going clockwise: the left sidebar's gear
+  at the map's top left, the top one's at the top right, the right one's at
+  the bottom right, the bottom one's at the bottom left. So two gears are
+  never in one corner. It is one button the height of a text line, dim (45%)
+  until the mouse is on it, tooltip "<sidebar>: Sidebar options". It covers
+  that small square of the map. It is not drawn when the map area is less
+  than three such buttons wide or high.
 
-With it on:
+**Option off.** The sidebar is as it was: a solid strip, the panels share
+all of its length, the map stops at its edge.
 
-- The background of the panel is not drawn: not the window's, not that of a
-  list inside it, not the striped rows of a table, not the lines of a
-  table.
-- What the panel shows stays: text, pictures, gauges, buttons, sliders,
-  scroll bars. The title bar (or the tab) stays as it is.
-- **To keep text readable over the map, each block of what the panel shows
-  has a backing**: a rounded box in the colour of the panel's background at
-  75% of its opacity, 3 points larger than the block on every side. This
-  was chosen over a dark outline round the letters: a backing keeps small
-  text readable over the brightest squares of the map, and pictures and
-  gauges get it too. The blocks are found from what the panel drew in the
-  frame: rows that have something in them and are no more than 6 points
-  apart are one block, as wide as its widest row (`lvBackingBlocks` in
-  `lv_panel_opts.h`, unit test `lv_panel_backing_sums`). So lines of text
-  under each other are one box, and the empty part of the panel under and
-  beside them is see-through. A list with three rows in a tall panel has a
-  box round the three rows only.
-- The border shows only while the mouse is over the panel or the panel is
-  being moved or resized.
-- The option does not change the size of anything in the panel (measured in
-  the headless try-out).
+**Option on.** (`lv_dock_clear.h` has the sums, `draw_side` uses them.)
 
-**Open question for the owner: clicks.** A click on the see-through part of
-a panel still belongs to the panel. It does not go through to the map. That
-is the simple and safe choice (the panel can still be moved and resized by
-its empty part), but it can surprise: the map shows there and does not
-answer. Making that part click-through is possible later.
+- The panels are packed from the start of the sidebar with nothing between
+  them but a grip: from the top down in the left and right sidebars, from
+  the left across in the top and bottom ones. The same function does both;
+  only the axis differs.
+- Each panel has its own length there (a height in the left and right
+  sidebars, a width in the top and bottom ones). It does not stretch.
+- A grip 4 points thick is on the far edge of each panel (its bottom edge,
+  or its right edge in the top and bottom sidebars). The cursor changes on
+  it. A drag changes the length of that panel and of no other; the panels
+  after it move. A double click gives the panel the length of what it shows.
+  ImGui's own splitters along the sidebar are off while the option is on
+  (a drag of one takes from one panel what it gives the next).
+- A panel is fully solid inside its rectangle. Nothing in a panel is
+  see-through.
+- After the last grip the sidebar is clear to its end. There is no window
+  there at all: the map shows, and **a click, a drag or the wheel there goes
+  to the map**.
+- The first length of a panel, the first time it is in a sidebar with the
+  option on: the Controls, HUD, Overview and Tank panels show a fixed amount
+  and get the length of their content (shorter or longer than they were). A
+  list (Game Information, the scenario panel, Item Information, Events,
+  Comments) gets the smaller of the length it had and the length of its
+  content, so a long list does not take the whole sidebar. Never less than
+  the least length: 48 points down, 110 points across.
+- **When the panels do not fit** (a short window): the last panel gives up
+  length first, down to its least length, then the one before it, and so
+  on. The first panels keep their size. When even the least lengths do not
+  fit, every panel gets its share of the room. Nothing goes past the end of
+  the sidebar, and a panel too short for what it shows scrolls inside, as
+  any panel does. The saved lengths are not changed by this: in a taller
+  window each panel has its own length again.
+- Panels side by side across the sidebar (a split the other way) count as
+  one part with one length and one grip. Panels as tabs of one node are one
+  part too. The length saved for such a part is under its first panel.
+- A sidebar with no panel in it and the option on is the whole strip with
+  no backdrop and the hint text on a small plate. That strip still takes the
+  mouse, so a panel can be dropped in it.
+- The grip on the sidebar's inner edge (the one that makes the sidebar
+  bigger) works along the whole length. Beside the clear part it is drawn
+  only while the mouse is on it or holds it.
+- To add a panel to a sidebar with the option on, drop it on a panel that is
+  there (the drop targets of that panel). The clear part is map, not a drop
+  target.
+- Option turned off again: the panels fill the strip again, in the
+  proportions the lengths left them.
 
-**In a sidebar.** The map is not drawn under a sidebar, and that is not
-changed. The option still applies to a docked panel: its own background is
-not drawn, and the backdrop of the sidebar shows in the unused part. The
-difference to see is small there. The option is for floating panels.
+**The map under the sidebar.** With the option on the map is drawn under
+that sidebar (`lv_imgui_dock_map_margins`: the margins with 0 for a clear
+sidebar). The left and right sidebars run the full height, so when one of
+them is clear the map also reaches the top and the bottom of the window, and
+goes under the top and bottom sidebars, solid or not; a solid one hides that
+part.
 
-**Other notes.**
+**The visible map area does not change.** What counts as the visible map,
+for the middle of the view, is still the part of the window no sidebar is
+on, option on or off. The screen is told how much of the view is under a
+clear sidebar at each edge (`lv_screenSetViewInset`), and "Tank Centred",
+centre-on-click, the jump to an item and the jump to an event all take it
+off first. When the option is turned on or off the map's corner moves on the
+screen; the scroll position is moved by as much the other way, so the map
+stays where it was (at the edge of the world it can only go as far as the
+map allows). The ring's arrow for a place off the view goes at the edge of
+the visible area, not under a sidebar. The "sidebars take at most two thirds
+of the window" rule is unchanged.
 
-- The embedded viewer and the browser build draw the same panels with the
-  same helper, so they have the gear too.
-- The Mac menu needs nothing: the option is in the panel, not in a menu.
-- Unit tests: `lv_panel_opts_sums` (key names, the place of the gear),
-  `lv_panel_backing_sums` (the blocks).
-- Headless try-out (Overview, Tank, Controls and HUD panels): option off and
-  on, floating at 6 sizes down to 32 x 32, docked as tabs in a dock space at
-  5 sizes down to 40 x 40: no assert. A click on the gear of a floating
-  panel and on the gear in a bar of tabs opened the options; a click on the
-  item changed that panel only; the floating window did not move and the
-  tab stayed docked. The other five panels use the same helper but were not
-  run there.
+**Preferences** (section LOGVIEWER), saved with the rest of the layout:
 
+- `Dock.Clear`: one line, `v1 R=0 L=1 T=0 B=0`.
+- `Dock.Len.Right`, `.Left`, `.Top`, `.Bottom`: the lengths of that
+  sidebar's panels, `v1 Controls=142 Overview=394 Events=267`. A panel with
+  no length yet is left out.
+
+**Tests.**
+
+- Unit: `lv_dock_clear_layout` (packing, overflow, drag limits, first and
+  snap lengths), `lv_dock_clear_rects` (panel, grip, used and clear
+  rectangles, both axes), `lv_dock_clear_map` (map margins, which points are
+  map, the middle of the visible map, the scroll shift), `lv_dock_clear_prefs`
+  (both preference lines out and back, damaged text).
+- Headless try-out with the real `imgui_dock.cpp` and the real Controls,
+  HUD, Overview and Tank panels (the other five are stand-ins with rows of
+  text), a hidden SDL window, a made-up mouse. For each of the four sides:
+  empty with the option on; three parts (Controls, Overview, Events with
+  Comments as a tab) option off, then on; packing and the 4 point grips; the
+  clear part has no window under the mouse and is map; a drag of the last
+  grip and of the first grip; a double click; a window too short and far too
+  short, and back; the inner edge dragged beside the clear part; the gear
+  opened and its item clicked; option off again; Tank beside Controls across
+  the sidebar; the saved lines. No check failed and no ImGui assert.
+- NOT tested: the map drawn under the sidebar (the try-out has no renderer),
+  the look of the grips and the gear, and the wiring in `screen.c`,
+  `draw.c` and `logviewer.c` beyond the sums above. Those need a look on a
+  screen.
+
+
+### Controls panel: rows in the middle, wider playback buttons (Oct 13)
+
+The panel has three parts, top to bottom:
+
+- **The top row:** Rewind, Play, Pause, Fast Forward ("Jump to live" as a
+  fifth on a live feed), the speed (its label and its slider) and the
+  "Overlay events" list.
+- The lane of event markers and the seek bar. They keep the full width.
+- **The bottom row:** the time ("Time: now / total"), the time left and the
+  tick. (Tablet and Steam Deck modes do not draw this row.)
+
+The top row and the bottom row are in the middle of the panel's width. The
+places are worked out every frame from the width of the panel, before
+anything is drawn (`lv_controls_layout.h`: `lvControlsTopLayout`,
+`lvControlsFlow`). A row that does not go on one line takes more lines, and
+each line is in the middle by itself. A piece of text wider than the panel
+starts at the left edge and goes on to more lines.
+
+The playback buttons are twice as wide as they are high. The icon keeps its
+size and stays in the middle; the whole button takes the click. In less room
+all the buttons get narrower by the same amount, down to the old square. That
+is what a sidebar at its least width (110) gets: four buttons 20 wide. In
+less room than four squares they stay square and go on more lines, as before.
+The buttons take their double width before the speed gets room on their
+line: at a panel 300 wide the speed is now on a second line. No width gives a
+scroll bar from left to right.
+
+- Unit tests: `lv_controls_top_row` (every width from 20 to 900, four and
+  five buttons), `lv_controls_bottom_row`.
+- Headless try-out: the Controls panel at twelve sizes in five states,
+  floating and docked: no assert, and no content wider than the panel that
+  was not so before (only the 32 by 32 panel, as before).
 
 ### Controls panel: "Overlay events", markers over the seek bar
 
@@ -685,11 +785,32 @@ while the lane shows.
 
 **The markers.**
 
-- A pillbox or a base changed hands: the shape the HUD panel has for an
-  owned one (a square for a pillbox, a disc for a base), filled **in the
-  colour of the team that now owns it**. The colour is the HUD panel's:
-  the team's palette colour, lifted when too dark, and orange for a red
-  team.
+- A pillbox or a base changed hands: **the map's own picture of a pillbox or
+  a base, made smaller, in the colour of the team that now owns it** (Oct
+  13; before that a filled square and a filled disc). It is the same sheet
+  and the same cell the map draws (`lv_drawItemPicture` in `draw.c`, by
+  `lvPanelItemSprite` in `lv_team_sprite.h`): a team's cell of
+  `data/items.bmp`, a red team in orange, the pillbox at full armour. With
+  no team it is the game's own tile: the red pillbox, the neutral base
+  (black with white dots). The picture carries the team's colour, so these
+  markers have no dark box, no fill and no line in the team's colour. The
+  white line round the marker under the mouse stays.
+- The picture is 16 pixels in the sheet and the marker is as high as a line
+  of text (13 points). At a whole number of times 16 pixels on the display
+  it is drawn sharp, with no blending; at any other size it is blended, so
+  no row or column of pixels is dropped (`lvItemPictureSharp`). The 12 by 12
+  status icons in the other panels are only ever drawn at whole multiples,
+  sharp.
+- A marker that stands for several events, all of them pillbox events
+  (captured or stolen, in any mix) or all of them base events: the picture,
+  in the colour of the team most of them name, with the number on a small
+  dark plate in its lower right corner. Any other mix is the box with the
+  number, as before.
+- In the "Overlay events" list the four pillbox and base kinds have the
+  picture of one no team holds.
+- One helper draws the picture for every panel (`lv_item_picture` in
+  `imgui_lv_icons.cpp`). When the game's sheets are not there the old plain
+  shape is drawn. Unit test: `lv_event_overlay_picture`.
 - Any other kind: a plain icon in the colour of the text on a dark square,
   with a **1 point line in the team's colour round it**. A tank kill has
   the game's own "dead" picture of the status panels and the colour of the
@@ -795,28 +916,49 @@ event has not happened; the `,` key steps back to it.
 **The ring.** After such a click a ring flashes on the map round the place of
 the event (`draw.c`, sums in `lv_event_flash.h`).
 
-- It starts 1.5 squares out from the middle of the event's square, grows to
-  2 squares and fades, in 1.2 seconds of real time. It is full strength for
-  the first 0.3 seconds. It runs the same with playback stopped.
+- It closes in on the place. It starts 3 squares out from the middle of the
+  event's square and shrinks to 1 square, twice over, one second each time:
+  2 seconds of real time. Each pulse is full strength for its first half
+  second; the first then fades to 45% and the second to nothing. It runs the
+  same with playback stopped. (The first ring was 1.5 to 2 squares in 1.2
+  seconds, once: too small and too short.)
 - With a team: a white band 2 points wide with a band in the team's colour,
-  2 points wide, inside it. With no team: white alone, 3 points. A thin dark
-  line each side keeps it readable on pale ground. The team is the one the
+  2 points wide, inside it. With no team: white alone, 3 points. A dark line
+  1 point wide, 85% solid, each side keeps it readable on pale ground. The team is the one the
   marker over the seek bar has: the new owner of a pillbox or base, the
   killer of a tank (the tank's own team when it died with no killer), the
   team that lost the builder. The colour is the HUD panel's.
-- **The map moves only when it has to.** Before, a click always put the
-  place in the middle of the map. Now the map goes there only when the place
-  is outside the view or nearer than 2 squares to its edge; a place already
-  well in view stays where it is and the ring shows it. With "Tank Centred"
-  on the view belongs to the followed tank and is not moved at all; the ring
-  is drawn when the place is in view.
+- **The place goes to the middle of the visible map area, every time.** The
+  visible map area is the window less the menu bar and the sidebars: where
+  the map shows. The middle of the event's square goes to the middle of that
+  area, to the pixel (`lvFlashCentreScroll`; the view scrolls in pixels).
+  Near an edge of the map the place goes as near the middle as the map
+  allows, and the ring still marks it. A panel that floats over the map is
+  not counted: only sidebars are.
+- **The view that cannot move: an arrow at its edge.** With "Tank Centred"
+  on, and in the game view (one player's own screen), the view belongs to
+  the followed tank and the click does not move it. The ring is drawn when
+  the place is in view. When it is not, an arrow at the edge of the view
+  points to it and pulses as the ring does: white on a dark arrow, with the
+  team's colour inside it. The game view draws the ring too now.
+- **The fault the owner found (Oct 13): no ring, and poor centring.** After
+  every jump the window called `lv_imgui_game_view_init_camera`, which puts
+  the view on the camera slot's tank. That is right in the game view and
+  wrong in the overview: the map left the event's place on each click, so
+  the place was not in the middle and the ring was drawn where the view no
+  longer was. The call was there before this branch (it also undid the
+  centring of a highlight line). It is now made only in the game view
+  (`lvFlashCameraFollowsTank`). Two smaller causes of poor centring went
+  with it: the view was placed in whole squares, up to a square to one side,
+  and the first ring's rule moved the map only for a place outside the view
+  or within 2 squares of its edge. That rule is gone.
+- A second click on the same line starts the ring again.
 - One ring at a time. A new click starts it again at the new place. It ends
   at once when playback is moved by anything else: the seek bar, Rewind,
   Fast Forward, a step key. Playing on does not end it.
 - It is drawn after the map and before the panels, so a panel over the map
-  hides it. It is only in the viewer's own window: not in the game view, not
-  in the viewer inside the game's lobby, not in the browser build, not in a
-  saved picture.
+  hides it. It is only in the viewer's own window: not in the viewer inside
+  the game's lobby, not in the browser build, not in a saved picture.
 - The viewer draws a frame every time round its loop, so the ring needs no
   redraw request of its own and costs nothing when none is running.
 
@@ -830,8 +972,108 @@ died, a ping, a highlight.
 
 - A click on a live feed still does nothing, so there is no ring there.
 - Unit tests: `lv_time_fmt_sums`, `lv_time_parse_sums`,
-  `lv_event_flash_sums`, `lv_event_seek_exact`.
-- The ring itself is SDL drawing and was not run in the headless try-out.
+  `lv_event_flash_sums`, `lv_event_flash_arrow`, `lv_event_centre_scroll`,
+  `lv_event_jump_keeps_place_in_view`, `lv_event_seek_exact`.
+- The ring and the arrow are SDL drawing and were not run in the headless
+  try-out. The faulty call was in the window's own file, which the unit
+  tests do not link: `lv_event_jump_keeps_place_in_view` runs the window's
+  steps by hand, the old way and the new.
+
+
+### "Tank Builder Status": a marker over each tank for its builder
+
+**What it is.** Options has a second check item under "Tank Armour and
+Shells Bars": "Tank Builder Status". It is off until set and is saved
+(`LOGVIEWER`, key `Tank Builder Status`). With it on, each live tank on the
+map has a small marker for its builder (`draw.c`, sums in
+`lv_builder_status.h`):
+
+- Builder in the tank: nothing.
+- Builder out of the tank: an arrow that points from the tank toward the
+  builder, one of 16 ways. When the builder is on the tank's own square: a
+  dot.
+- Builder dead: a small parachute, then the time until the new builder is in
+  the tank, as `M:SS`.
+
+**Where it is.** Over the tank, middle over middle. From the tank up: the
+tank's picture, a gap of 1 point, the two bars when they are on, a gap of 1
+point, the marker. With the bars off (or a recording that holds no tank
+stocks, where no bars are drawn) the marker is 1 point above the picture. It
+follows the rules of the bars: none for a dead tank, none for a tank the view
+does not draw, none when a map square is under 12 points, and only in the
+viewer's own window (not the game view, not the viewer in the game's lobby,
+not the browser build, not a saved picture).
+
+**Sizes and colours.** The marker is made of square cells: the arrow and the
+parachute are 7 cells high and wide, a digit is 3 cells wide and 5 high. A
+cell is 1 point, and 2 points from 32 points to a map square. So the marker
+is 7 points high at the usual zooms and 14 at the large ones. Every part is
+white, for every team and for no team: the arrow, the dot, the parachute and
+the time (`lvBuilderMarkColour`). Every part has a black edge of 1 point and
+is drawn fully solid. (Until Oct 13 the arrow, the dot and the parachute were
+in the team's colour and all of it was 75% solid, like the bars. The owner
+found that too hard to see. The marker stands over the tank, not on it, so a
+solid marker hides no tank; it can hide a little of the map above the tank.)
+The digits are drawn by the viewer as cells; no font is loaded for them.
+
+**Where the time comes from.** The game has no fixed time for a new builder.
+When a builder dies, the new one starts at a random start square, flies in a
+straight line to where the tank was at the death (3 world units a tick with
+the usual rules, `lgm_helicopter_speed`; a map square is 256), lands when he
+is within 16 units of that place (`lgm_arrive_tolerance`), and then walks to
+the tank. So the time depends on the map and on where the tank goes. The
+exact answer is only in the log, later than the death.
+
+- **A log from a file: exact.** The viewer already decodes the whole log
+  once at load, for the Events panel (`lv_screenEventScanRun`). That walk now
+  also fills a table: for each player, each stretch from a builder's death
+  (`log_LostMan`) to the first tick the log names no place for the builder
+  (he is in the tank). The countdown is the end of that stretch less the
+  playback time. It is by time, so it is right after any seek, and it runs
+  backward when playback is stepped backward.
+- **The countdown runs to "in the tank", not to the landing.** After the new
+  builder lands he is an ordinary builder on foot: the marker changes from
+  the parachute to the arrow, and the time stays beside the arrow until he
+  is in the tank. A builder who is out and was not killed has an arrow and
+  no time. A builder killed again on his walk back stays in the same
+  stretch.
+- **A live feed, or a log that ends before he is back: an estimate, with
+  "~".** There is no later log to read. While the new builder flies, the
+  time is his distance to the tank less the 16 units, over the speed (both
+  out of the recorded rules), one 20 ms tick a step: "~0:17" for 10 squares.
+  The log does not say where the tank was at the death, so the place of the
+  tank now stands in. The estimate ends at the landing; after it the arrow
+  has no time.
+- Seconds are rounded up, so "0:00" is shown only when no time is left. A
+  time is never under "0:00". Minutes stop at 99.
+
+**The Tank panel.** The builder's line reads "Builder: dead, back in 0:07"
+(the same time, with "~" for an estimate) when there is room for the longer
+line. The longer line is not part of the width the panel's layout is chosen
+by, so it never costs the panel its words; with less room the line reads
+"Builder: dead" as before. In the try-out the time showed at 250 and 700
+points wide, and not at 300 (text beside the gauges) or 180.
+
+**One change to playback.** The log names a builder's place in every tick he
+is out. The viewer cleared the places only in a tick that had events, so
+through a run of ticks with no events the last place stayed: a builder back
+in his tank was still "out" until the next event. Now the first tick of such
+a run clears them too (`lv_screenQuietTick`). In a real round nearly every
+tick has events, so this showed only in quiet moments.
+
+**Other notes.**
+
+- The state (in, out, dead; the places; the time) is read at the playback
+  time under the client mutex, as the bars' values are.
+- The Mac menu bar has the item by the pattern of the bars' item. It was not
+  built.
+- Unit tests: `lv_builder_status_sums`, `lv_builder_countdown`,
+  `lv_builder_trips`, and `lv_builder_trips_scan` (a hand-built log: the
+  estimate with no scan, the exact time after the scan, nothing for a
+  builder who was not killed, and the table dropped by a new load).
+- The marker is SDL drawing and was not run in the headless try-out. The
+  Tank panel's line was: three states, nine sizes, no assert, no size
+  clipped that was not clipped before.
 
 
 ### "Tank Builder Status": a marker over each tank for its builder
@@ -940,6 +1182,11 @@ Please look at, at least:
 - The builder markers over the tanks, with the bars on and off: the arrow,
   the parachute and its time, on a file log and on a live feed.
 - Sidebars on all four sides, and the layout after a restart.
+- "Make unused sidebar portions transparent" on each of the four sidebars:
+  the map under the clear part, a click and a drag there, the panel grips,
+  the gear in its corner, a jump to an event with the option on (the place
+  goes to the middle of the map that shows), and the option turned on and
+  off (the map does not move).
 - Seek slider: drag, release, and hiding the Controls panel during a drag.
 - Step back and forward across a kill: counts and the dead tank.
 - Play at the end of a log: the clock stays.

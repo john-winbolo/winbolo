@@ -12,7 +12,6 @@
 #include "imgui_main_menu.h"
 #include "imgui_dock.h"
 #include "imgui_context.h"
-#include "imgui_lv_panel.h"
 #include "imgui.h"
 #include "platform_config.h"
 #include "../lv_event_kind.h"
@@ -469,7 +468,7 @@ void lv_imgui_events_window(void) {
 
     char ev_title[128];
     snprintf(ev_title, sizeof(ev_title), "%s###events", langGetText(STR_LV_WIN_EVENTS));
-    if (lv_panel_begin("###events", ev_title, &lv_g_show_events_window, ImGuiWindowFlags_NoCollapse)) {
+    if (ImGui::Begin(ev_title, &lv_g_show_events_window, ImGuiWindowFlags_NoCollapse)) {
         /* In the dock the dock places the window; moving it here would pull
          * it straight back out. */
         if (!ImGui::IsWindowDocked()) {
@@ -680,5 +679,5 @@ void lv_imgui_events_window(void) {
             }
         }
     }
-    lv_panel_end();
+    ImGui::End();
 }

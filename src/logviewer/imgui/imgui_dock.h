@@ -60,6 +60,14 @@ void lv_imgui_dock_set_standalone(int standalone);
 int  lv_imgui_dock_get_side_enabled(int side);
 void lv_imgui_dock_set_side_enabled(int side, int enabled);
 
+/* The option "Make unused sidebar portions transparent" of one sidebar. With
+ * it on the sidebar's panels are packed from its start, each with a length
+ * of its own and a grip on its far edge, and the rest of the sidebar is
+ * clear: the map shows there (lv_dock_clear.h). Off for every sidebar until
+ * the user turns it on. */
+int  lv_imgui_dock_get_side_clear(int side);
+void lv_imgui_dock_set_side_clear(int side, int clear);
+
 /* The right sidebar's option, for the callers from when it was the only one. */
 int  lv_imgui_dock_get_enabled(void);
 void lv_imgui_dock_set_enabled(int enabled);
@@ -80,6 +88,18 @@ void lv_imgui_dock_pre_frame(void);
  * mouse hit test and the things centred on the map all leave these alone.
  * Any pointer may be NULL. */
 void lv_imgui_dock_margins(int *left, int *top, int *right, int *bottom);
+
+/* What bounds the map as it is drawn. The same as lv_imgui_dock_margins but
+ * with 0 for a sidebar whose unused part is clear: the map is drawn under
+ * that one. What places the map on the screen (its corner, how many squares
+ * it has, the mouse-to-square sum) uses these; what is centred on the
+ * VISIBLE map still uses lv_imgui_dock_margins. Any pointer may be NULL. */
+void lv_imgui_dock_map_margins(int *left, int *top, int *right, int *bottom);
+
+/* True when the window point is on the map: not on the menu bar, not on a
+ * solid sidebar and not on the panels of a clear one. The clear part of a
+ * sidebar is map. */
+int  lv_imgui_dock_point_on_map(float px, float py);
 
 /* True when the layout has changed and has then been left alone for a
  * moment, so now is the time to write the preferences. Answers true once a

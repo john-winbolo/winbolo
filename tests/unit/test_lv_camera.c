@@ -36,6 +36,7 @@
 #include "lv_global.h"
 #include "backend.h"
 #include "logviewer.h"
+#include "lv_event_flash.h"
 #include "test_harness.h"
 
 /* A decoder sized the way a host sizes it (grid first) and then taken through
@@ -185,5 +186,91 @@ int run_lv_camera_arrow_nudge_stays_on_map(void) {
   lv_screenGetOffsets(&ox, &oy);
   UT_ASSERT_MSG(oy == 1, "y offset after down = %u (want 1)", oy);
   lv_decoderDestroy(lv);
+  return 0;
+}
+
+/* 1 when a map square is inside the view. */
+static int cameraShows(int mapX, int mapY) {
+  BYTE ox = 0, oy = 0;
+  lv_screenGetOffsets(&ox, &oy);
+  return mapX >= (int)ox && mapX < (int)ox + lv_screenGetSizeX() &&
+         mapY >= (int)oy && mapY < (int)oy + lv_screenGetSizeY();
+}
+
+/* A jump to an event puts the event's place in the middle of the view and
+ * leaves it there.
+ *
+ * The fault this pins: after the jump the viewer's window took the view to
+ * the camera slot's tank in every mode (as the game view needs), so in the
+ * overview the map left the event's place: the place was not centred and
+ * the ring round it was drawn off the view. The window's steps are run here
+ * as it runs them: centre the place (lv_screenShowCell), then go to the tank
+ * only when lvFlashCameraFollowsTank says so. The tank is at 40,40 and the
+ * event at 200,180, on a 30 by 30 view (480 map pixels each way). */
+int run_lv_event_jump_keeps_place_in_view(void) {
+  LogViewerState *lv = cameraDecoder(30, 30);
+  const int tankPxX = 40 * 16 - 120, tankPxY = 40 * 16 - 120;
+  int shownAfterShow, shownOverview, shownOldWay, movedGameView;
+  int gameViewShows, placedOverview, placedDocked;
+  BYTE ox = 0, oy = 0, dockOx = 0, dockOy = 0;
+  int sx = -1, sy = -1, dockSx = -1, dockSy = -1;
+
+  UT_ASSERT_MSG(lv != NULL, "decoder failed to create");
+  lv->logLoaded = TRUE;
+  lv->gameView = FALSE;
+  lv->centredTank = FALSE;
+
+  /* Overview: the place goes to the middle and stays there. */
+  lv_screenCentreOnCell(40, 40);
+  placedOverview = lv_screenShowCell(200, 180, 0.0f, 0.0f, 1.0f);
+  shownAfterShow = cameraShows(200, 180);
+  if (lvFlashCameraFollowsTank(lv->gameView ? 1 : 0)) {
+    lv_screenPanToTotalPixels(tankPxX, tankPxY);
+  }
+  shownOverview = cameraShows(200, 180);
+  lv_screenGetOffsets(&ox, &oy);
+  lv_screenGetSubOffset(&sx, &sy);
+
+  /* A visible map area of 400 by 300 points at 2x: 200 by 150 map pixels.
+     The middle of square 200 is pixel 3208: less 100 is 3108, square 194
+     and 4 pixels. Down: 2888 less 75 is 2813, square 175 and 13 pixels. */
+  placedDocked = lv_screenShowCell(200, 180, 400.0f, 300.0f, 2.0f);
+  lv_screenGetOffsets(&dockOx, &dockOy);
+  lv_screenGetSubOffset(&dockSx, &dockSy);
+
+  /* What the window did before: to the tank whatever the mode. The place is
+     then outside the view; this is the fault. */
+  lv_screenPanToTotalPixels(tankPxX, tankPxY);
+  shownOldWay = cameraShows(200, 180);
+
+  /* Game view: the view is the tank's, the jump does not move it, and the
+     window puts the camera on the tank. */
+  lv->gameView = TRUE;
+  movedGameView = lv_screenShowCell(200, 180, 0.0f, 0.0f, 1.0f);
+  if (lvFlashCameraFollowsTank(lv->gameView ? 1 : 0)) {
+    lv_screenPanToTotalPixels(tankPxX, tankPxY);
+  }
+  gameViewShows = cameraShows(40, 40);
+  lv->gameView = FALSE;
+
+  lv_decoderDestroy(lv);
+
+  UT_ASSERT_MSG(placedOverview == 1 && shownAfterShow,
+                "the jump did not bring the event's place into view");
+  UT_ASSERT_MSG(shownOverview, "in the overview the view left the event's "
+                "place after the jump");
+  /* The middle of square 200 is pixel 3208; less half of 480 is 2968:
+     square 185 and 8 pixels. Down: 2888 less 240 is 2648: 165 and 8. */
+  UT_ASSERT_MSG(ox == 185 && sx == 8 && oy == 165 && sy == 8,
+                "the view is at %u+%d, %u+%d (want 185+8, 165+8: the place "
+                "in the middle to the pixel)", ox, sx, oy, sy);
+  UT_ASSERT_MSG(placedDocked == 1 && dockOx == 194 && dockSx == 4 &&
+                dockOy == 175 && dockSy == 13,
+                "for a 400 by 300 point area at 2x the view is at %u+%d, "
+                "%u+%d (want 194+4, 175+13)", dockOx, dockSx, dockOy, dockSy);
+  UT_ASSERT_MSG(!shownOldWay, "the old steps kept the place in view: the test "
+                "no longer shows the fault");
+  UT_ASSERT_MSG(movedGameView == 0, "the jump moved the game view's camera");
+  UT_ASSERT_MSG(gameViewShows, "the game view is not on its tank after the jump");
   return 0;
 }

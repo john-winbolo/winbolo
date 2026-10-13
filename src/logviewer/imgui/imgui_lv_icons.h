@@ -45,13 +45,15 @@ enum LvIcon {
  * a caller that wants a margin round it hands in a smaller box. */
 void lv_icon_draw(ImDrawList *dl, int icon, ImVec2 p0, ImVec2 p1, ImU32 col);
 
-/* A square button with the icon in its middle, in the colour of the text.
- * The hovered, held and disabled looks are the ones every ImGui button has
+/* A button with the icon in its middle, in the colour of the text. The
+ * hovered, held and disabled looks are the ones every ImGui button has
  * (inside BeginDisabled it is dimmed and does not answer). id is the
  * button's ID for the keyboard and the gamepad; it is not shown. side is the
- * length of the square, 0 for the height of a framed widget, so it lines up
- * with a slider or a combo on the same row. Returns true when pressed. */
-bool lv_icon_button(const char *id, int icon, float side = 0.0f);
+ * height, 0 for the height of a framed widget, so it lines up with a slider
+ * or a combo on the same row. width is 0 for a square, or the width of a
+ * wider button: the icon keeps the size side gives it and stays in the
+ * middle, and the whole button takes the press. Returns true when pressed. */
+bool lv_icon_button(const char *id, int icon, float side = 0.0f, float width = 0.0f);
 
 /* The length lv_icon_button's square has for side = 0. */
 float lv_icon_button_side(void);
@@ -62,6 +64,17 @@ void lv_icon_text(int icon);
 
 /* The width lv_icon_text takes for this icon. */
 float lv_icon_text_width(int icon);
+
+/* The map's own picture of a pillbox or a base over the box p0..p1: the one
+ * helper every panel uses for it. team is the number of the team that holds
+ * the thing, for the picture in that team's colour as the map has it; -1 is
+ * a thing no team holds: the game's red pillbox, the game's neutral base.
+ * alpha dims it. The picture is drawn sharp at a whole number of times its
+ * 16 pixels and blended at any other size (lvItemPictureSharp). Returns
+ * false, and draws nothing, when the game's sheets are not there; the
+ * caller then draws its own plain shape. */
+bool lv_item_picture(ImDrawList *dl, bool isBase, int team, ImVec2 p0, ImVec2 p1,
+                     float alpha = 1.0f);
 
 /* The line that names a player at the top of a panel (the Tank panel, the
  * HUD panel): a stripe in the colour of the player's team, an icon when

@@ -120,6 +120,9 @@ extern SDL_Window   *lv_drawGetSDLWindow(void);
 extern SDL_Renderer *lv_drawGetSDLRenderer(void);
 extern SDL_Texture  *lv_drawGetTilesTexture(void);
 extern int           lv_drawGetSheetScale(void);
+/* draw.h: the ring round the place of an event the user went to. */
+extern int  lv_drawEventFlashCell(int *mapX, int *mapY);
+extern void lv_drawEventFlashAt(float cx, float cy, float tilePx, const SDL_Rect *view);
 
 extern bool  lv_playersIsInUse(BYTE playerNumber);
 extern void  lv_playersGetTankDetails(BYTE playerNumber, BYTE *mx, BYTE *my,
@@ -940,6 +943,29 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
                        MAIN_SCREEN_SIZE_X * tileW,
                        MAIN_SCREEN_SIZE_Y * tileH,
                        SDL_GetTicks() / GAME_TICK_LENGTH);
+  }
+
+  /* The ring round the place of an event the user went to (draw.c). The
+   * view here is the followed tank's and does not move to the event, so a
+   * place it does not show gets the arrow at the view's edge. Same
+   * arithmetic as a ping's square above. */
+  {
+    int flashX = 0, flashY = 0;
+    if (lv_drawEventFlashCell(&flashX, &flashY)) {
+      SDL_Rect view = {
+        originX, originY,
+        MAIN_SCREEN_SIZE_X * tileW,
+        MAIN_SCREEN_SIZE_Y * tileH
+      };
+      float cx = (float)originX
+               + ((float)flashX + 0.5f - (float)(lv_screenGetXOffset() + 1)) * (float)tileW
+               - (float)edgeX;
+      float cy = (float)originY
+               + ((float)flashY + 0.5f - (float)(lv_screenGetYOffset() + 1)) * (float)tileH
+               - (float)edgeY;
+      lv_drawEventFlashAt(cx, cy, (float)tileW, &view);
+      /* lv_drawEventFlashAt puts back the clip it found: the view's. */
+    }
   }
 
   SDL_SetRenderClipRect(renderer, NULL);

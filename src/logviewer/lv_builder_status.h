@@ -51,8 +51,31 @@
  * the tank when the bars are off), in points: the bars' own. */
 #define LV_BUILDER_GAP LV_TANK_BARS_GAP
 
-/* Drawn 75% solid, like the bars. */
-#define LV_BUILDER_ALPHA LV_TANK_BARS_ALPHA
+/* Every part of the marker is white and fully solid, for every team and for
+ * no team: a team's colour was too hard to see on the map. The marker stands
+ * over the tank, not on it, so a solid marker hides no tank. The edge is
+ * black, as solid. */
+#define LV_BUILDER_ALPHA 1.0f
+#define LV_BUILDER_EDGE_POINTS 1.0f
+
+typedef struct {
+    float r, g, b, a;
+} LvBuilderColour;
+
+/* The colour of the arrow, the dot, the parachute and the time. The team is
+ * not used: it is here so the rule is plain where the marker is drawn. */
+static inline LvBuilderColour lvBuilderMarkColour(bool hasTeam, unsigned char teamColour) {
+    LvBuilderColour c = { 1.0f, 1.0f, 1.0f, LV_BUILDER_ALPHA };
+    (void)hasTeam;
+    (void)teamColour;
+    return c;
+}
+
+/* The colour of the edge round each part. */
+static inline LvBuilderColour lvBuilderEdgeColour(void) {
+    LvBuilderColour c = { 0.0f, 0.0f, 0.0f, LV_BUILDER_ALPHA };
+    return c;
+}
 
 /* The arrow points one of 16 ways. */
 #define LV_BUILDER_DIRECTIONS 16
