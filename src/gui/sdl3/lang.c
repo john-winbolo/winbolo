@@ -1076,6 +1076,9 @@ static const LangEntry langTable[] = {
     /* Log viewer: the X at the end of a panel's name line */
     {2837, "Deselect tank"},
     {2838, "Back to all teams"},
+    /* Log viewer: the gear of a panel and its options */
+    {2839, "Panel options"},
+    {2840, "Make unused panel portions transparent"},
 
     /* Log viewer dialogs */
     {1128, "Assign colours to each player team:"},

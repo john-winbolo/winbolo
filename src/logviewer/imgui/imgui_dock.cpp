@@ -14,6 +14,7 @@
 #include "imgui_hud.h"
 #include "imgui_overview.h"
 #include "imgui_tank.h"
+#include "imgui_lv_panel.h"
 #include "imgui.h"
 #include "imgui_internal.h"  /* DockBuilder*, FindWindowByName */
 #include "platform_config.h"
@@ -620,6 +621,8 @@ int lv_imgui_dock_autosave_due(void) {
     for (int i = 0; i < LV_DOCK_PANEL_COUNT; i++) {
         sig = (sig ^ (unsigned)(*k_panels[i].show ? 1 : 0)) * 16777619u;
     }
+    /* And the options of the panels (the gear of each). */
+    sig = (sig ^ lv_panel_options_signature()) * 16777619u;
     if (s_sig_saved == 0) s_sig_saved = sig;  /* the first look: as loaded */
     if (sig != s_sig_saved) {
         Uint64 now = SDL_GetTicks();

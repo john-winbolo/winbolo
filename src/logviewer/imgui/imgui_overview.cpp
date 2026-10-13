@@ -28,6 +28,7 @@
 #include "imgui_dialogs.h"
 #include "imgui_dock.h"
 #include "imgui_context.h"
+#include "imgui_lv_panel.h"
 #include "imgui.h"
 #include "../../gui/lang.h"
 #include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
@@ -363,7 +364,7 @@ void lv_imgui_overview_window(void) {
 
     char title[128];
     snprintf(title, sizeof(title), "%s###overview", langGetText(STR_LV_WIN_OVERVIEW));
-    if (ImGui::Begin(title, &lv_g_show_overview_window, ImGuiWindowFlags_NoCollapse)) {
+    if (lv_panel_begin("###overview", title, &lv_g_show_overview_window, ImGuiWindowFlags_NoCollapse)) {
         /* In the dock the dock places the window; moving it here would pull
          * it straight back out. */
         if (!ImGui::IsWindowDocked()) {
@@ -417,5 +418,5 @@ void lv_imgui_overview_window(void) {
             ImGui::EndGroup();
         }
     }
-    ImGui::End();
+    lv_panel_end();
 }

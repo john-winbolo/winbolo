@@ -552,6 +552,88 @@ now has the same stripe. Both panels draw the line with one helper
   frame until the mouse is over it.
 
 
+### A gear on every panel, and "Make unused panel portions transparent"
+
+Every panel (Controls, HUD, Overview, Tank, Game Information, the scenario
+panel, Item Information, Events, Comments) has a small gear. A click opens
+the panel's options: one check item, "Make unused panel portions
+transparent". One helper does it for all nine: a panel opens its window with
+`lv_panel_begin` and closes it with `lv_panel_end` (`imgui_lv_panel.cpp`).
+
+**Where the gear is.**
+
+- A floating panel: in the title bar, left of the close button, the same
+  size as the close button. It takes no room from what the panel shows.
+- A panel that is a tab in a sidebar (or tabbed with another panel) has no
+  title bar of its own. Its gear is in the same place in the bar of tabs. It
+  belongs to the tab that shows, as the close button of that bar does.
+- With no bar at all (the bar of tabs of a dock node can be hidden): the
+  bottom right corner of the panel, drawn over what the panel shows. Not the
+  top right corner: that is where the Tank and HUD panels have the X of
+  their name line.
+- The gear is drawn with the draw list (the shared icon helper), as tall as
+  the text, in the colour of the text, dim until the mouse is over it. Its
+  tooltip is "Panel options". A patch in the bar's colour is drawn under it,
+  so a long title or a tab does not show through it.
+- A click on the gear does not start a drag of the window, and does not pull
+  a tab out of its sidebar.
+
+**What the option does.** The option is one a panel, off by default, kept in
+the LOGVIEWER preferences as `Window.<Panel>.Transparent` (Yes/No) with the
+same panel names the `Window.<Panel>.Visible` keys have, and saved by the
+same "once it has been still for a second" save as the rest of the layout.
+
+With it on:
+
+- The background of the panel is not drawn: not the window's, not that of a
+  list inside it, not the striped rows of a table, not the lines of a
+  table.
+- What the panel shows stays: text, pictures, gauges, buttons, sliders,
+  scroll bars. The title bar (or the tab) stays as it is.
+- **To keep text readable over the map, each block of what the panel shows
+  has a backing**: a rounded box in the colour of the panel's background at
+  75% of its opacity, 3 points larger than the block on every side. This
+  was chosen over a dark outline round the letters: a backing keeps small
+  text readable over the brightest squares of the map, and pictures and
+  gauges get it too. The blocks are found from what the panel drew in the
+  frame: rows that have something in them and are no more than 6 points
+  apart are one block, as wide as its widest row (`lvBackingBlocks` in
+  `lv_panel_opts.h`, unit test `lv_panel_backing_sums`). So lines of text
+  under each other are one box, and the empty part of the panel under and
+  beside them is see-through. A list with three rows in a tall panel has a
+  box round the three rows only.
+- The border shows only while the mouse is over the panel or the panel is
+  being moved or resized.
+- The option does not change the size of anything in the panel (measured in
+  the headless try-out).
+
+**Open question for the owner: clicks.** A click on the see-through part of
+a panel still belongs to the panel. It does not go through to the map. That
+is the simple and safe choice (the panel can still be moved and resized by
+its empty part), but it can surprise: the map shows there and does not
+answer. Making that part click-through is possible later.
+
+**In a sidebar.** The map is not drawn under a sidebar, and that is not
+changed. The option still applies to a docked panel: its own background is
+not drawn, and the backdrop of the sidebar shows in the unused part. The
+difference to see is small there. The option is for floating panels.
+
+**Other notes.**
+
+- The embedded viewer and the browser build draw the same panels with the
+  same helper, so they have the gear too.
+- The Mac menu needs nothing: the option is in the panel, not in a menu.
+- Unit tests: `lv_panel_opts_sums` (key names, the place of the gear),
+  `lv_panel_backing_sums` (the blocks).
+- Headless try-out (Overview, Tank, Controls and HUD panels): option off and
+  on, floating at 6 sizes down to 32 x 32, docked as tabs in a dock space at
+  5 sizes down to 40 x 40: no assert. A click on the gear of a floating
+  panel and on the gear in a bar of tabs opened the options; a click on the
+  item changed that panel only; the floating window did not move and the
+  tab stayed docked. The other five panels use the same helper but were not
+  run there.
+
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the
