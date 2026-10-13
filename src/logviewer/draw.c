@@ -50,6 +50,7 @@
 #include "lv_tank_pick.h"
 #include "lv_event_flash.h"
 #include "lv_builder_status.h"
+#include "lv_zoom_text.h"
 #include "clientmutex.h"
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/sdl3/sprite_positions.h"
@@ -457,6 +458,27 @@ static float lvDrawPixelScale(void) {
     if (g_embedded || sdlWindow == NULL) return 1.0f;
     d = SDL_GetWindowPixelDensity(sdlWindow);
     return (d > 0.0f) ? d : 1.0f;
+}
+
+/* The zoom of the map as a percentage, 100 for the game's own size: one map
+ * square on 16 points of the window (lv_zoom_text.h). It is worked out from
+ * the size a square is really drawn at, in pixels of the display, so it is
+ * right on a dense display too, and in the game view, whose whole number of
+ * times is cut to what a full screen window has room for. */
+float lv_drawZoomPercent(void) {
+    LogViewerState *lv = lv_screenGetState();
+    if (lv != NULL && lv->gameView) {
+        float d = (sdlWindow != NULL) ? SDL_GetWindowPixelDensity(sdlWindow) : 1.0f;
+        int px = lv_drawGameViewPixelZoom();
+        if (px > 0) {
+            return lvZoomPercent((float)(TILE_SIZE_X * px), (d > 0.0f) ? d : 1.0f);
+        }
+    }
+    {
+        float pxScale = lvDrawPixelScale();
+        float squarePx = (float)(lv_windowGetZoomFactor() * TILE_SIZE_X) * g_zoomLevel * pxScale;
+        return lvZoomPercent(squarePx, pxScale);
+    }
 }
 
 static void lvDrawTankLabelsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);

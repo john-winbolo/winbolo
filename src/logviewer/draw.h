@@ -457,6 +457,16 @@ void lv_drawZoomOut(int mouseScreenX, int mouseScreenY);
 float lv_drawGetZoomLevel(void);
 
 /*********************************************************
+*NAME:          lv_drawZoomPercent
+*PURPOSE:
+*  Returns the zoom of the map as a percentage. 100 is the
+*  game's own size: one map square on 16 points of the
+*  window, on a display of any density. In the game view it
+*  is that view's own zoom.
+*********************************************************/
+float lv_drawZoomPercent(void);
+
+/*********************************************************
 *NAME:          lv_drawGetZoomStepIndex
 *PURPOSE:
 *  Returns the current zoom step index into the zoom table.

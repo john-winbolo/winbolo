@@ -1280,6 +1280,9 @@ STR_LV_EVT_FILTER_SOME={string1} of {string2} events
 STR_LV_EVT_FILTER_EMPTY=No events of the selected kinds
 STR_LV_EVT_FILTER_TIP=Show only the events of the ticked kinds
 
+# Log viewer: the zoom of the map as a percentage
+STR_LV_ZOOM_TIP=Map zoom. 100% is the game's own size. Change it with + and -, the mouse wheel, or Options > Zoom
+
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:
 STR_LV_PLAYER_LBL=Player {number}:

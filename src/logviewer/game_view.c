@@ -547,6 +547,10 @@ int lv_drawGameViewGetZoom(void) {
   return s_displayZoom;
 }
 
+int lv_drawGameViewPixelZoom(void) {
+  return (s_displayZoom > 0) ? s_zoom : 0;
+}
+
 void lv_drawGameViewSetup(int zoomFactor) {
   SDL_Window   *window   = lv_drawGetSDLWindow();
   SDL_Renderer *renderer = lv_drawGetSDLRenderer();

@@ -18,6 +18,8 @@
 #include "../../gui/sdl3/dialogs/imgui_wbn_browser.h"
 #include <SDL3/SDL.h>
 
+#include <cfloat>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -28,6 +30,7 @@ extern "C" {
     #include "../backend.h"
     #include "../draw.h"
     #include "../lv_dock_fit.h"
+    #include "../lv_zoom_text.h"
     #include "../../winbolonet/http.h"
     void lv_windowOpenFile(char *cmdLine);
     void lv_windowSaveMap(void);
@@ -236,6 +239,57 @@ static void zoom_at_center(int stepIndex) {
 }
 
 void lv_imgui_zoom_at_center(int stepIndex) { zoom_at_center(stepIndex); }
+
+/* The zoom on the map itself: "Zoom 150%" in the bottom left corner of the
+ * map's part of the window, for a moment after the zoom changes. So the
+ * change shows also with the Controls panel closed, and whatever changed
+ * it (the wheel, a pinch, a key, the menu, a controller). It is drawn
+ * behind the panels, white with a dark edge as the scenario's status line
+ * is. Nothing shows for the zoom the viewer starts with. */
+void lv_imgui_zoom_label(void) {
+    static float s_lastPercent = -1.0f;
+    static double s_changedAt = -1000.0;
+    const float percent = lv_drawZoomPercent();
+    const double now = ImGui::GetTime();
+    if (s_lastPercent < 0.0f) {
+        s_lastPercent = percent;
+        return;
+    }
+    if (fabsf(percent - s_lastPercent) > 0.01f) {
+        s_lastPercent = percent;
+        s_changedAt = now;
+    }
+    const float alpha = lvZoomLabelAlpha((float)(now - s_changedAt));
+    if (alpha <= 0.0f) return;
+
+    ImDrawList *dl = ImGui::GetBackgroundDrawList();
+    ImFont *font = ImGui::GetFont();
+    if (dl == nullptr || font == nullptr) return;
+    char pct[24], text[96];
+    lvZoomPercentText(percent, pct, sizeof(pct));
+    snprintf(text, sizeof(text), "%s %s", langGetText(STR_LV_ZOOM), pct);
+
+    /* The map's part of the window: what the sidebars and the menu bar
+     * leave, so the label moves with the sidebars. */
+    const ImGuiViewport *vp = ImGui::GetMainViewport();
+    LvDockMargins dock = { 0, 0, 0, 0 };
+    int menuH = (int)lv_imgui_get_menu_bar_height();
+    int mapX = 0, mapY = 0, mapW = 0, mapH = 0;
+    lv_imgui_dock_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
+    lvDockMapRect(&dock, (int)vp->Size.x, (int)vp->Size.y, menuH, &mapX, &mapY, &mapW, &mapH);
+    const float height = ImGui::GetFontSize() * 1.25f;
+    const ImVec2 size = font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
+    const float px = floorf(vp->Pos.x + (float)mapX + 8.0f);
+    const float py = floorf(vp->Pos.y + (float)(mapY + mapH) - size.y - 8.0f);
+    const ImU32 edge = IM_COL32(0, 0, 0, (int)(255.0f * alpha));
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            dl->AddText(font, height, ImVec2(px + (float)dx, py + (float)dy), edge, text);
+        }
+    }
+    dl->AddText(font, height, ImVec2(px, py), IM_COL32(255, 255, 255, (int)(255.0f * alpha)), text);
+}
 
 void lv_imgui_set_mode_information(int isInformation) {
     s_mode_information = isInformation ? true : false;
@@ -458,6 +512,14 @@ int lv_imgui_main_menu_bar(void) {
             if (ImGui::BeginMenu(langGetText(STR_LV_ZOOM))) {
                 int curStep = lv_drawGetZoomStepIndex();
                 int stepCount = lv_drawGetZoomStepCount();
+                /* The zoom as it is now, as a percentage: a line to read,
+                 * not one to click. */
+                {
+                    char pct[24];
+                    lvZoomPercentText(lv_drawZoomPercent(), pct, sizeof(pct));
+                    ImGui::MenuItem(pct, NULL, false, false);
+                    ImGui::Separator();
+                }
                 for (int i = 0; i < stepCount; i++) {
                     float val = lv_drawGetZoomStepValue(i);
                     char label[32];

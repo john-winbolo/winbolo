@@ -1365,6 +1365,8 @@
 #define STR_LV_EVT_FILTER_SOME              2848
 #define STR_LV_EVT_FILTER_EMPTY             2849
 #define STR_LV_EVT_FILTER_TIP               2850
+/* Log viewer: the zoom of the map as a percentage */
+#define STR_LV_ZOOM_TIP                     2851
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

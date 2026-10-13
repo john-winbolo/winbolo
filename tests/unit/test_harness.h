@@ -4098,6 +4098,8 @@ int run_lv_builder_trips_scan(void);
  * (test_lv_controls_layout.c). */
 int run_lv_controls_top_row(void);
 int run_lv_controls_bottom_row(void);
+/* The zoom of the log viewer's map as a percentage. */
+int run_lv_zoom_percent(void);
 /* The decode pass that lists a whole log's events at load
  * (test_lv_presentation.c): it posts each line once, stores no snapshot, and
  * leaves the world at the start as the loader did. */

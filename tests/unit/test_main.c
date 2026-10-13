@@ -2331,6 +2331,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_builder_trips_scan",                           run_lv_builder_trips_scan                           },
     { "lv_controls_top_row",                             run_lv_controls_top_row                             },
     { "lv_controls_bottom_row",                          run_lv_controls_bottom_row                          },
+    { "lv_zoom_percent",                                 run_lv_zoom_percent                                 },
     { "lv_event_scan_returns_to_start",                  run_lv_event_scan_returns_to_start                  },
     { "lv_kill_tally_seek_back",                         run_lv_kill_tally_seek_back                         },
     { "lv_alive_seek_back",                              run_lv_alive_seek_back                              },

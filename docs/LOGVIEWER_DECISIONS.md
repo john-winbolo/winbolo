@@ -1250,6 +1250,67 @@ tick has events, so this showed only in quiet moments.
   the same sizes clip as before (60 by 60 and 20 by 20), no new one.
 
 
+### The zoom of the map as a percentage (Oct 13)
+
+The owner: "Can you put the zoom % printed somewhere visible".
+
+**What zoom is in the code.** The overview has nine steps
+(`g_zoomSteps` in `draw.c`): 0.5, 0.6, 0.7, 0.8, 0.9, 1, 2, 3 and 4. A step
+is how many points of the window one pixel of the game's art takes. The
+wheel, a pinch, the + and - keys, a controller and the Zoom menu all move
+one step or pick one. Nothing fits the overview to the window, so its zoom
+is always one of the nine. The game view has its own zoom, a whole number
+of times from 1 to 4, cut to what the window has room for when the window
+is full screen or maximized.
+
+**100% is the game's own size:** one map square (16 pixels of art) on 16
+points of the window. A point is one pixel of an ordinary display and more
+of a dense one, so 100% is 16 pixels there and 32 on a display with two
+pixels a point: the same size to the eye. The number comes from the size a
+square is really drawn at, in pixels of the display, over 16 times the
+display's pixels a point (`lvZoomPercent` in `lv_zoom_text.h`, fed by
+`lv_drawZoomPercent` in `draw.c`). For the overview that is the step times
+100 on every display. For the game view it is the pixels a pixel of art
+takes over the true density, which can be a number such as 267% on a
+display of 1.5 (the game view draws at a whole number of pixels).
+
+**The text** is a whole number ("150%"). A value under 100 that is not
+whole has one decimal ("62.5%"). The nine steps are all whole.
+
+**Where it shows.**
+
+1. The Controls panel, as the last piece of the bottom row, after the time,
+   the time left and the tick: "Zoom 150%". The row stays in the middle.
+   The zoom gives way first when the panel gets narrow: it never adds a
+   line to the row. It is whole while it goes on the last line, then only
+   the number ("150%"), then it is left out (`lvControlsZoomForm` in
+   `lv_controls_layout.h`). The tooltip says what the number is and what
+   changes it. A click does nothing: the viewer has no "back to 100%" of
+   its own (the Zoom menu has the 1x step). In the tablet and Steam Deck
+   layout the panel has no bottom row, so nothing shows there.
+2. On the map: "Zoom 150%" in the bottom left corner of the map's part of
+   the window (inside the sidebars, so it moves with them), for 1.5 s after
+   the zoom changes, the last 0.5 s fading out. White with a dark edge, as
+   the scenario's status line is. It is behind the panels, so a floating
+   panel in that corner is over it. The other corners: the scenario's
+   status line is top centre and the spectator badge top right. Nothing
+   shows for the zoom the viewer starts with. It is drawn in the overview,
+   on a live feed and in the game view.
+3. The Zoom menu (Options): the percentage is its first line, greyed, a
+   line to read.
+
+- New string 2851 (the tooltip). The word "Zoom" is string 1229, the name
+  of the menu.
+- The embedded viewer inside the game has the same Controls panel, so it
+  has the piece on the bottom row. It does not call the label on the map.
+  The browser build does not call it either.
+- Unit test: `lv_zoom_percent` (the percentage on three densities, the
+  text, the fade, and the form on the bottom row at every width from 600
+  down to 10). The headless try-out of the Controls panel at all its sizes:
+  the size of the content is the same as before at every size, and the
+  count of lines that were too wide before (20, none of them this row) did
+  not change.
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the

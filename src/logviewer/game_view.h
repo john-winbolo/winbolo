@@ -50,6 +50,11 @@ void lv_drawGameViewTeardown(void);
  * elide a no-op teardown+setup when the user picks the active zoom. */
 int  lv_drawGameViewGetZoom(void);
 
+/* The pixels of the display one pixel of the game's art is drawn on while
+ * game view is up (the zoom factor times the whole display density), or 0
+ * when game view is inactive. */
+int  lv_drawGameViewPixelZoom(void);
+
 /* Render one game-view frame. Called from lv_drawMainScreen when
  * gameView && ownsWindow. The pointers are the same screen* /
  * screenMines* / screenTanks* / screenBullets* / screenLgm* values
