@@ -1276,6 +1276,167 @@ int run_lv_event_scan_returns_to_start(void) {
     return 0;
 }
 
+/* ── 7b2. The times a builder was away ─────────────────────────────── */
+
+/* The opening snapshot holds a player in slot 1 (the block of
+ * kLvpDeadPlayer, further down). After it:
+ *   tick 0    log_PlayerLocation: the tank at 50,50               20 ms
+ *   tick 1    log_LgmLocation: the builder out at 52,50           40 ms
+ *   tick 2    log_LostMan, and the new builder flying at 60,50    60 ms
+ *   tick 3    flying at 58,50                                     80 ms
+ *   tick 4    flying at 56,50                                    100 ms
+ *   tick 5    landed, walking at 52,50                           120 ms
+ *   tick 6    walking at 51,50                                   140 ms
+ *   ticks 7-10 NOEVENTS 3: he is in the tank                     160 ms
+ *   tick 11   LOG_QUIT                                           240 ms */
+static const uint8_t kLvpBuilderPlayer[] = {
+    0x0F,
+    0x01, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+    0x01, 0x41,
+    0x00,
+    0x00,
+};
+static const uint8_t kLvpBuilderStream[] = {
+    0x03, 0x01, 0x03, 0x00, 0x05,
+        0x01, 0x32, 0x32, 0x00, 0x00,
+    0x03, 0x01, 0x04, 0x00, 0x04,
+        0x10, 0x34, 0x32, 0x00,
+    0x03, 0x02, 0x20, 0x00, 0x01,
+        0x01,
+        0x04, 0x00, 0x04,
+        0x13, 0x3C, 0x32, 0x00,
+    0x03, 0x01, 0x04, 0x00, 0x04,
+        0x13, 0x3A, 0x32, 0x00,
+    0x03, 0x01, 0x04, 0x00, 0x04,
+        0x13, 0x38, 0x32, 0x00,
+    0x03, 0x01, 0x04, 0x00, 0x04,
+        0x10, 0x34, 0x32, 0x00,
+    0x03, 0x01, 0x04, 0x00, 0x04,
+        0x10, 0x33, 0x32, 0x00,
+    0x01, 0x03,
+    0x00,
+};
+
+typedef struct {
+    int  has;       /* lv_screenBuilderReturn's answer */
+    long remain;
+    int  approx;
+    bool isOut, isDead;
+} LvpBuilderAt;
+
+static LvpBuilderAt lvpBuilderAt(uint32_t ms) {
+    LvpBuilderAt a;
+    memset(&a, 0, sizeof(a));
+    a.remain = -1;
+    a.approx = -1;
+    lv_screenSeekToTimeMs(ms);
+    a.has = lv_screenBuilderReturn(1, &a.remain, &a.approx);
+    lv_playersGetLgmStatus(1, &a.isOut, &a.isDead);
+    return a;
+}
+
+/* The countdown over a tank and on the Tank panel reads the table the event
+ * scan fills. On the log above: with no scan the time is an estimate, and
+ * only while the new builder flies; after the scan it is exact, to the tick
+ * he is in the tank (160 ms), from the death through the flight and the walk;
+ * a builder out who was not killed has no time; a builder in the tank has
+ * none; a tick with no events leaves no builder out; and a new load drops
+ * the table. */
+int run_lv_builder_trips_scan(void) {
+    const char     *path = "lv_builder_trips.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    LvpBuilderAt    est40, est80, est120;
+    LvpBuilderAt    at20, at40, at60, at80, at120, at140, at160, at200;
+    bool            ran, knownBefore, knownAfter, knownReload;
+    int             i;
+
+    b.len = 0;
+    lvpPut(&b, kLvpHeader, sizeof(kLvpHeader));
+    lvpPut(&b, kLvpSnapshot, sizeof(kLvpSnapshot));
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (i == 1) {
+            lvpPut(&b, kLvpBuilderPlayer, sizeof(kLvpBuilderPlayer));
+        } else {
+            lvpPut(&b, kLvpEmptyPlayer, sizeof(kLvpEmptyPlayer));
+        }
+    }
+    lvpPut(&b, kLvpBuilderStream, sizeof(kLvpBuilderStream));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    /* No scan yet: the estimate. */
+    knownBefore = lv_screenBuilderTripsKnown() != 0;
+    est40  = lvpBuilderAt(40);
+    est80  = lvpBuilderAt(80);
+    est120 = lvpBuilderAt(120);
+
+    ran = lv_screenEventScanRun();
+    lv_screenEventScanRestore();
+    knownAfter = lv_screenBuilderTripsKnown() != 0;
+    at20  = lvpBuilderAt(20);
+    at40  = lvpBuilderAt(40);
+    at60  = lvpBuilderAt(60);
+    at80  = lvpBuilderAt(80);
+    at120 = lvpBuilderAt(120);
+    at140 = lvpBuilderAt(140);
+    at160 = lvpBuilderAt(160);
+    at200 = lvpBuilderAt(200);
+
+    lv_decoderDestroy(lv);
+    lv = lvpOpen(&b, path);
+    knownReload = lv_screenBuilderTripsKnown() != 0;
+    if (lv != NULL) lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(!knownBefore, "the table is known before any scan");
+    UT_ASSERT_MSG(est40.isOut && !est40.isDead && !est40.has,
+                  "no scan, builder out and alive at 40 ms: out %d dead %d "
+                  "time %d", est40.isOut, est40.isDead, est40.has);
+    /* Flying at 58,50, the tank at 50,50: 8 squares, 2048 world units, less
+       the 16 that count as there, at 3 a tick: 678 ticks of 20 ms. */
+    UT_ASSERT_MSG(est80.isDead && est80.has && est80.approx == 1 &&
+                  est80.remain == 13560L,
+                  "no scan, flying at 80 ms: dead %d time %d approx %d "
+                  "remain %ld (want an estimate of 13560)", est80.isDead,
+                  est80.has, est80.approx, est80.remain);
+    UT_ASSERT_MSG(est120.isOut && !est120.isDead && !est120.has,
+                  "no scan, landed at 120 ms: out %d dead %d time %d (an "
+                  "estimate is for the flight only)", est120.isOut,
+                  est120.isDead, est120.has);
+
+    UT_ASSERT_MSG(ran && knownAfter, "the scan did not fill the table");
+    UT_ASSERT_MSG(!at20.isOut && !at20.has, "at 20 ms the builder is in the "
+                  "tank: out %d time %d", at20.isOut, at20.has);
+    UT_ASSERT_MSG(at40.isOut && !at40.isDead && !at40.has, "at 40 ms the "
+                  "builder is out and was not killed: time %d", at40.has);
+    UT_ASSERT_MSG(at60.isDead && at60.has && at60.approx == 0 &&
+                  at60.remain == 100L, "at the death, 60 ms: dead %d time %d "
+                  "approx %d remain %ld (want exact, 100)", at60.isDead,
+                  at60.has, at60.approx, at60.remain);
+    UT_ASSERT_MSG(at80.isDead && at80.has && at80.approx == 0 &&
+                  at80.remain == 80L, "flying at 80 ms: remain %ld approx %d "
+                  "(want exact, 80)", at80.remain, at80.approx);
+    UT_ASSERT_MSG(at120.isOut && !at120.isDead && at120.has &&
+                  at120.approx == 0 && at120.remain == 40L, "landed at 120 "
+                  "ms: dead %d time %d remain %ld (want out, exact, 40)",
+                  at120.isDead, at120.has, at120.remain);
+    UT_ASSERT_MSG(at140.has && at140.remain == 20L, "walking at 140 ms: "
+                  "remain %ld (want 20)", at140.remain);
+    UT_ASSERT_MSG(!at160.isOut && !at160.isDead && !at160.has, "at 160 ms, "
+                  "the first tick with no events: out %d dead %d time %d "
+                  "(want in the tank)", at160.isOut, at160.isDead, at160.has);
+    UT_ASSERT_MSG(!at200.isOut && !at200.has, "at 200 ms: out %d time %d",
+                  at200.isOut, at200.has);
+    UT_ASSERT_MSG(!knownReload, "a new load kept the old log's table");
+    return 0;
+}
+
 /* ── 7c. A jump to an event lands on the event's own tick ──────────── */
 
 /* A click on a line of the Events panel seeks to the time the line was posted

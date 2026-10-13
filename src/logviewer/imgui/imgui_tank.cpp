@@ -51,6 +51,7 @@
 extern "C" {
     #include "../lv_hud.h"
     #include "../lv_tank_status.h"
+    #include "../lv_builder_status.h"
     #include "../../gui/positions.h"
     #include "../../gui/tiles.h"
     #include "../../gui/sdl3/map_colours.h"  /* mapColourTeam */
@@ -115,6 +116,27 @@ static float tank_header_h(void) {
 /* The most pillboxes a tank can carry: all there are on a map. The line for
  * them is measured with it, so its width does not move. */
 #define TANK_PILLS_MOST 16
+
+/* The builder's line: in the tank, out of it, or dead. While he is dead and
+ * the time until the new builder is in the tank is known, the line has that
+ * time too, as the marker over the tank on the map has
+ * (lv_builder_status.h) -- when there is room for it. The longer line is
+ * not part of the width the panel's layout is chosen by (tank_builder_w), so
+ * the time never costs the panel its words: in less room than the longer
+ * line needs, the line says "dead" alone. */
+static const char *tank_builder_text(const LvTankStatus &st, float roomW) {
+    if (st.builderDead && st.builderBack) {
+        MessageArgs args = {};
+        const char *text;
+        lvBuilderCountdownText(st.builderBackMs, st.builderBackApprox != 0,
+                               args.string1, sizeof(args.string1));
+        text = langGetTextFmt(STR_LV_TANK_BUILDER_BACK, &args);
+        if (ImGui::CalcTextSize(text).x <= roomW + 0.5f) return text;
+    }
+    return langGetText(st.builderDead ? STR_LV_TANK_BUILDER_DEAD :
+                       st.builderOut  ? STR_LV_TANK_BUILDER_OUT :
+                                        STR_LV_TANK_BUILDER_IN);
+}
 
 /* The width the builder's line needs, whatever it says at the moment: the
  * widest of the builder's three states. */
@@ -478,9 +500,7 @@ static void tank_text(const LvTankStatus &st, bool icons) {
         ImGui::TextDisabled("%s", langGetText(STR_LV_TANK_NO_STOCK));
         ImGui::PopTextWrapPos();
     }
-    ImGui::TextUnformatted(langGetText(st.builderDead ? STR_LV_TANK_BUILDER_DEAD :
-                                       st.builderOut  ? STR_LV_TANK_BUILDER_OUT :
-                                                        STR_LV_TANK_BUILDER_IN));
+    ImGui::TextUnformatted(tank_builder_text(st, ImGui::GetContentRegionAvail().x));
     if (pillIcon) {
         tank_pill_icon_line(st, m);
     } else {

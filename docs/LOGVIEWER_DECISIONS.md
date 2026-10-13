@@ -834,6 +834,99 @@ died, a ping, a highlight.
 - The ring itself is SDL drawing and was not run in the headless try-out.
 
 
+### "Tank Builder Status": a marker over each tank for its builder
+
+**What it is.** Options has a second check item under "Tank Armour and
+Shells Bars": "Tank Builder Status". It is off until set and is saved
+(`LOGVIEWER`, key `Tank Builder Status`). With it on, each live tank on the
+map has a small marker for its builder (`draw.c`, sums in
+`lv_builder_status.h`):
+
+- Builder in the tank: nothing.
+- Builder out of the tank: an arrow that points from the tank toward the
+  builder, one of 16 ways. When the builder is on the tank's own square: a
+  dot.
+- Builder dead: a small parachute, then the time until the new builder is in
+  the tank, as `M:SS`.
+
+**Where it is.** Over the tank, middle over middle. From the tank up: the
+tank's picture, a gap of 1 point, the two bars when they are on, a gap of 1
+point, the marker. With the bars off (or a recording that holds no tank
+stocks, where no bars are drawn) the marker is 1 point above the picture. It
+follows the rules of the bars: none for a dead tank, none for a tank the view
+does not draw, none when a map square is under 12 points, and only in the
+viewer's own window (not the game view, not the viewer in the game's lobby,
+not the browser build, not a saved picture).
+
+**Sizes and colours.** The marker is made of square cells: the arrow and the
+parachute are 7 cells high and wide, a digit is 3 cells wide and 5 high. A
+cell is 1 point, and 2 points from 32 points to a map square. So the marker
+is 7 points high at the usual zooms and 14 at the large ones. The arrow, the
+dot and the parachute are in the team's colour (the HUD panel's; white for a
+player in no team). The time is white, so it reads the same for every team.
+Every part has a dark edge of 1 point and is drawn 75% solid, like the bars.
+The digits are drawn by the viewer as cells; no font is loaded for them.
+
+**Where the time comes from.** The game has no fixed time for a new builder.
+When a builder dies, the new one starts at a random start square, flies in a
+straight line to where the tank was at the death (3 world units a tick with
+the usual rules, `lgm_helicopter_speed`; a map square is 256), lands when he
+is within 16 units of that place (`lgm_arrive_tolerance`), and then walks to
+the tank. So the time depends on the map and on where the tank goes. The
+exact answer is only in the log, later than the death.
+
+- **A log from a file: exact.** The viewer already decodes the whole log
+  once at load, for the Events panel (`lv_screenEventScanRun`). That walk now
+  also fills a table: for each player, each stretch from a builder's death
+  (`log_LostMan`) to the first tick the log names no place for the builder
+  (he is in the tank). The countdown is the end of that stretch less the
+  playback time. It is by time, so it is right after any seek, and it runs
+  backward when playback is stepped backward.
+- **The countdown runs to "in the tank", not to the landing.** After the new
+  builder lands he is an ordinary builder on foot: the marker changes from
+  the parachute to the arrow, and the time stays beside the arrow until he
+  is in the tank. A builder who is out and was not killed has an arrow and
+  no time. A builder killed again on his walk back stays in the same
+  stretch.
+- **A live feed, or a log that ends before he is back: an estimate, with
+  "~".** There is no later log to read. While the new builder flies, the
+  time is his distance to the tank less the 16 units, over the speed (both
+  out of the recorded rules), one 20 ms tick a step: "~0:17" for 10 squares.
+  The log does not say where the tank was at the death, so the place of the
+  tank now stands in. The estimate ends at the landing; after it the arrow
+  has no time.
+- Seconds are rounded up, so "0:00" is shown only when no time is left. A
+  time is never under "0:00". Minutes stop at 99.
+
+**The Tank panel.** The builder's line reads "Builder: dead, back in 0:07"
+(the same time, with "~" for an estimate) when there is room for the longer
+line. The longer line is not part of the width the panel's layout is chosen
+by, so it never costs the panel its words; with less room the line reads
+"Builder: dead" as before. In the try-out the time showed at 250 and 700
+points wide, and not at 300 (text beside the gauges) or 180.
+
+**One change to playback.** The log names a builder's place in every tick he
+is out. The viewer cleared the places only in a tick that had events, so
+through a run of ticks with no events the last place stayed: a builder back
+in his tank was still "out" until the next event. Now the first tick of such
+a run clears them too (`lv_screenQuietTick`). In a real round nearly every
+tick has events, so this showed only in quiet moments.
+
+**Other notes.**
+
+- The state (in, out, dead; the places; the time) is read at the playback
+  time under the client mutex, as the bars' values are.
+- The Mac menu bar has the item by the pattern of the bars' item. It was not
+  built.
+- Unit tests: `lv_builder_status_sums`, `lv_builder_countdown`,
+  `lv_builder_trips`, and `lv_builder_trips_scan` (a hand-built log: the
+  estimate with no scan, the exact time after the scan, nothing for a
+  builder who was not killed, and the table dropped by a new load).
+- The marker is SDL drawing and was not run in the headless try-out. The
+  Tank panel's line was: three states, nine sizes, no assert, no size
+  clipped that was not clipped before.
+
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the
@@ -844,6 +937,8 @@ Please look at, at least:
 
 - The eye icon, the Overview panel and the Tank panel, floating and docked.
 - Tank bars at each zoom step, and on a display with a pixel density of 2.
+- The builder markers over the tanks, with the bars on and off: the arrow,
+  the parachute and its time, on a file log and on a live feed.
 - Sidebars on all four sides, and the layout after a restart.
 - Seek slider: drag, release, and hiding the Controls panel during a drag.
 - Step back and forward across a kill: counts and the dead tank.

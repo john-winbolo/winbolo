@@ -191,6 +191,8 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     /* Off until asked for: the bars sit over the map. */
     lv_platform_config_get_string("LOGVIEWER", "Tank Bars", "No", val, sizeof(val));
     lv_drawSetTankBars((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
+    lv_platform_config_get_string("LOGVIEWER", "Tank Builder Status", "No", val, sizeof(val));
+    lv_drawSetBuilderStatus((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
 }
 
 void lv_imgui_main_menu_save(void) {
@@ -217,6 +219,8 @@ void lv_imgui_main_menu_save(void) {
     }
     lv_platform_config_set_string("LOGVIEWER", "Show Regions", lv_g_show_regions ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Tank Bars", lv_drawGetTankBars() ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Tank Builder Status",
+                                  lv_drawGetBuilderStatus() ? "Yes" : "No");
 }
 
 static void zoom_at_center(int stepIndex) {
@@ -529,6 +533,15 @@ int lv_imgui_main_menu_bar(void) {
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", langGetText(STR_LV_TANK_BARS_TIP));
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_BUILDER_STATUS), NULL,
+                                lv_drawGetBuilderStatus() != 0)) {
+                lv_drawSetBuilderStatus(lv_drawGetBuilderStatus() ? 0 : 1);
+                lv_windowNeedRedraw();
+                clicked = 1;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", langGetText(STR_LV_BUILDER_STATUS_TIP));
             }
             if (ImGui::MenuItem(langGetText(STR_MENU_SOUND_EFFECTS), NULL, s_lv->isSoundsPlaying != 0)) {
                 s_lv->isSoundsPlaying = s_lv->isSoundsPlaying ? 0 : 1;

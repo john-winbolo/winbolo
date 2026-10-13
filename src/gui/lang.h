@@ -1356,6 +1356,10 @@
 #define STR_LV_OVERLAY_TIP                  2842
 #define STR_LV_OVERLAY_COUNT                2843
 #define STR_LV_OVERLAY_MORE                 2844
+/* Log viewer: the builder marker over each tank (Options), and the time left on the Tank panel's builder line */
+#define STR_LV_BUILDER_STATUS               2845
+#define STR_LV_BUILDER_STATUS_TIP           2846
+#define STR_LV_TANK_BUILDER_BACK            2847
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128
