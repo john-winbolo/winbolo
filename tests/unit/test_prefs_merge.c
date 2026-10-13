@@ -17,6 +17,14 @@
  *   - prefs_merge_one_write:        sets do not write; one flush writes
  *                                   them all; with the mode off a set
  *                                   writes at once, as before
+ *   - prefs_merge_reset_wins:       a key set again to the value in memory
+ *                                   still goes over what the game wrote
+ *   - prefs_merge_idle_no_write:    a viewer that changes nothing writes
+ *                                   nothing
+ *   - prefs_merge_missing_retry:    file gone for a moment: the first flush
+ *                                   waits; the file back = a merge, still
+ *                                   gone = the whole document; shutdown
+ *                                   does both tries
  *
  * Portable on purpose (stdio only): these run on Windows too.
  */
@@ -185,9 +193,12 @@ int run_prefs_merge_fallback(void) {
     prefsInit(path);
     prefsSetMergeOnSave(true);
 
-    /* The file is gone: the whole document in memory is written. */
+    /* The file is gone, and stays gone: the first flush waits, the second
+     * writes the whole document in memory. */
     UT_ASSERT(remove(path) == 0);
     UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "250") == 1);
+    UT_ASSERT(prefsFlush() == 0);
+    UT_ASSERT(prefsIsDirty());
     UT_ASSERT(prefsFlush() == 1);
     diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
     UT_ASSERT_MSG(strcmp(got, "250") == 0, "after missing file: %s", got);
@@ -389,6 +400,73 @@ int run_prefs_merge_idle_no_write(void) {
     UT_ASSERT_MSG(diskSize(path) != marked, "a real change was not written");
     diskGet(path, "LOGVIEWER", "Dock.Ini", got, sizeof(got));
     UT_ASSERT(strcmp(got, "new layout") == 0);
+
+    endTest(path);
+    return 0;
+}
+
+/* The file is gone for a moment (the other program is between taking the
+ * old file away and putting the new one in place). The viewer's first flush
+ * must not write its whole document over what is about to appear. */
+int run_prefs_merge_missing_retry(void) {
+    char path[1024];
+    char got[256];
+    PrefsDoc *game;
+
+    UT_ASSERT(utScratchPath(path, sizeof(path), "WinBolo.json"));
+    remove(path);
+    UT_ASSERT(seedFile(path));
+
+    prefsInit(path);
+    prefsSetMergeOnSave(true);
+
+    /* The game, part one: it has its new document and takes the file away. */
+    game = prefsDocLoad(path);
+    UT_ASSERT(game != NULL);
+    UT_ASSERT(prefsDocSetString(game, "SETTINGS", "Player Name", "Game"));
+    UT_ASSERT(remove(path) == 0);
+
+    /* The viewer saves in that moment: not written, still pending. */
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "250") == 1);
+    UT_ASSERT(prefsFlush() == 0);
+    UT_ASSERT(prefsIsDirty());
+    UT_ASSERT_MSG(diskSize(path) == -1, "the first flush wrote a file");
+
+    /* The game, part two: its file arrives. */
+    UT_ASSERT(prefsDocSave(game, path));
+    prefsDocFree(game);
+
+    /* The viewer's next flush is a merge: both changes are in the file. */
+    UT_ASSERT(prefsFlush() == 1);
+    UT_ASSERT(!prefsIsDirty());
+    diskGet(path, "SETTINGS", "Player Name", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "Game") == 0, "game's change lost: %s", got);
+    diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "250") == 0, "viewer's change lost: %s", got);
+
+    /* The wait is one flush each time the file goes, not once for good. */
+    UT_ASSERT(remove(path) == 0);
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "300") == 1);
+    UT_ASSERT(prefsFlush() == 0);
+    UT_ASSERT_MSG(diskSize(path) == -1, "the first flush wrote a file");
+    /* Still gone on the next flush: really gone, so the whole document. */
+    UT_ASSERT(prefsFlush() == 1);
+    UT_ASSERT(!prefsIsDirty());
+    diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "300") == 0, "after missing file: %s", got);
+    diskGet(path, "SETTINGS", "Player Name", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "Game") == 0, "after missing file: %s", got);
+
+    /* A flush with nothing pending and no file writes nothing and is ok. */
+    UT_ASSERT(remove(path) == 0);
+    UT_ASSERT(prefsFlush() == 1);
+    UT_ASSERT(diskSize(path) == -1);
+
+    /* Shutdown has no later flush: it does both tries itself. */
+    UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "350") == 1);
+    prefsShutdown();
+    diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "350") == 0, "shutdown did not write: %s", got);
 
     endTest(path);
     return 0;

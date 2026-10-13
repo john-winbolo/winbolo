@@ -78,7 +78,9 @@ int main(int argc, char *argv[]) {
        no renderer and no network (lv_dump.h). */
     if (lvDumpWanted(argc, argv)) {
         int dumpResult = lvDumpMain(argc, argv);
-        prefsFlush();
+        if (!prefsFlush()) {
+            prefsFlush();
+        }
         return dumpResult;
     }
 
@@ -89,7 +91,11 @@ int main(int argc, char *argv[]) {
     logViewerRun(NULL, NULL, logPath, false);
 
     httpDestroy();
-    /* Anything set after the viewer's last save. */
-    prefsFlush();
+    /* Anything set after the viewer's last save. A flush that found no
+     * file waits for one more flush (prefs.h); this is the last, so it is
+     * tried twice. */
+    if (!prefsFlush()) {
+        prefsFlush();
+    }
     return 0;
 }

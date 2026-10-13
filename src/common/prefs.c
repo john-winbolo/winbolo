@@ -75,8 +75,9 @@ static bool prefsFileExists(const char *path) {
  * the other programs last wrote. A set then only marks the document dirty;
  * prefsFlush (or prefsShutdown) does the one write.
  *
- * A file that is gone, or that no longer parses, is written from the
- * document in memory, as without the merge. */
+ * A file that no longer parses is written from the document in memory, as
+ * without the merge. A file that is gone is first waited for, one flush
+ * long (see prefsWrite), and then written the same way. */
 typedef struct {
     char *section;
     char *key;
@@ -84,6 +85,7 @@ typedef struct {
 
 static bool s_merge;
 static bool s_mergeWhole;        /* the next write is the whole document */
+static bool s_mergeMissing;      /* the last write found no file and waited */
 static PrefsChangedKey *s_changed;
 static size_t s_changedCount;
 static size_t s_changedCap;
@@ -138,8 +140,21 @@ static void prefsChangedNote(const char *section, const char *key) {
 /* Every write of the document goes through here. 1 ok / 0 fail. */
 static int prefsWrite(void) {
     if (!g_doc) return 0;
+    if (s_merge && !s_mergeWhole && !prefsFileExists(g_path) &&
+        !s_mergeMissing) {
+        /* No file. The other program may be between taking the old file
+         * away and putting its new one in place, which is a moment only.
+         * Writing the whole document now would put this program's old copy
+         * of the other program's keys over that new file. So this write is
+         * not done: the document stays dirty and the next flush tries
+         * again. A file still gone then is really gone, and is written
+         * whole below. */
+        s_mergeMissing = true;
+        return 0;
+    }
     if (s_merge && !s_mergeWhole && prefsFileExists(g_path)) {
         PrefsDoc *disk = prefsDocLoad(g_path);
+        s_mergeMissing = false;
         bool grafted = (disk != NULL);
         for (size_t i = 0; grafted && i < s_changedCount; i++) {
             if (!prefsDocCopyKey(disk, g_doc, s_changed[i].section,
@@ -176,12 +191,14 @@ static int prefsWrite(void) {
     if (!prefsDocSave(g_doc, g_path)) return 0;
     prefsChangedClear();
     s_mergeWhole = false;
+    s_mergeMissing = false;
     return 1;
 }
 
 void prefsSetMergeOnSave(bool on) {
     s_merge = on;
     s_mergeWhole = false;
+    s_mergeMissing = false;
     prefsChangedClear();
 }
 
@@ -196,6 +213,7 @@ void prefsInit(const char *jsonPath) {
     g_path[0] = '\0';
     prefsChangedClear();
     s_mergeWhole = false;
+    s_mergeMissing = false;
 
     if (!jsonPath) {
         return;
@@ -230,12 +248,20 @@ void prefsInit(const char *jsonPath) {
 void prefsShutdown(void) {
     /* Flush a pending debounced change so a clean exit never loses it. */
     if (g_doc && prefsDocIsDirty(g_doc)) {
-        prefsWrite();
+        /* There is no later flush after this one. A merge write that found
+         * no file and waited is tried once more, at once: the file is back
+         * by then if another program was only replacing it, and if it is
+         * still gone the whole document is written, so nothing of this
+         * program's is lost at exit. */
+        if (!prefsWrite() && s_mergeMissing) {
+            prefsWrite();
+        }
     }
     prefsDocFree(g_doc);
     g_doc = NULL;
     prefsChangedClear();
     s_mergeWhole = false;
+    s_mergeMissing = false;
 }
 
 unsigned long prefsGetString(const char *section, const char *key,

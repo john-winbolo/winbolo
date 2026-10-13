@@ -80,8 +80,12 @@ bool prefsPumpAutosave(uint64_t nowMs);
  * reads the file again, puts onto it only the keys this program changed
  * since its last write, writes the result atomically and keeps it as the
  * document in memory. So the other program's changes stay in the file and
- * later reads here see them. When the file is gone or does not parse, the
- * document in memory is written whole, as with the merge off.
+ * later reads here see them. When the file does not parse, the
+ * document in memory is written whole, as with the merge off. When the
+ * file is gone, the first prefsFlush returns 0 and writes nothing (another
+ * program may be replacing the file at that moment); the next one writes
+ * the whole document if the file is still gone. prefsShutdown does both
+ * tries itself.
  *
  * Turning it on or off forgets the list of changed keys; do it straight
  * after prefsInit. */
