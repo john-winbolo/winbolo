@@ -5833,8 +5833,8 @@ set(_unit_test_names
     loopback_join_loss
     loopback_password
     # The builder walled in behind his own tank under pillbox fire. The
-    # lagged case is a bug report written as a test and FAILS today on
-    # purpose; the nolag case is its control and passes.
+    # lagged case was the bug report written as a test: it failed until pill
+    # shells stopped being rewound. The nolag case is its control.
     lgm_wall_behind_tank_under_fire_lagged
     lgm_wall_behind_tank_under_fire_nolag
     # The server rewinding a builder when a shell goes off near him: a lagged
