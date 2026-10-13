@@ -32,7 +32,20 @@ call can be changed; the file says where.
 
 ### Overview panel
 
-- One table. The column headers are the game's neutral status icons.
+- One table. The column headers are the map's own pictures of a pillbox and
+  a base no team holds: the game's red pillbox and the game's neutral base
+  (black with white dots), made smaller (Oct 13; `lv_item_picture`, the
+  helper the events lane uses). The two share bars start with the same
+  pictures. They keep the size the game's status icons had there (12
+  points at the usual font), so the table, the bars and the least width of
+  the panel are as they were. The tooltip of a header picture is its word
+  ("Pillboxes", "Bases"). The table has no picture for each team, so none
+  is in a team's colour.
+- Not changed, because the map's picture does not go in with no change to
+  the layout: the HUD panel (its grids are the game's own 12 by 12 status
+  slots) and the Tank panel's line of carried pillboxes (the game's status
+  picture, in the game's status layout). The Events panel has no column of
+  icons.
 - Each team row has a stripe in the team's colour. Below the teams there is a
   Neutral row and a Total row.
 - Two share bars (pillboxes, bases), each 6 pixels high.
@@ -718,11 +731,32 @@ while the lane shows.
 
 **The markers.**
 
-- A pillbox or a base changed hands: the shape the HUD panel has for an
-  owned one (a square for a pillbox, a disc for a base), filled **in the
-  colour of the team that now owns it**. The colour is the HUD panel's:
-  the team's palette colour, lifted when too dark, and orange for a red
-  team.
+- A pillbox or a base changed hands: **the map's own picture of a pillbox or
+  a base, made smaller, in the colour of the team that now owns it** (Oct
+  13; before that a filled square and a filled disc). It is the same sheet
+  and the same cell the map draws (`lv_drawItemPicture` in `draw.c`, by
+  `lvPanelItemSprite` in `lv_team_sprite.h`): a team's cell of
+  `data/items.bmp`, a red team in orange, the pillbox at full armour. With
+  no team it is the game's own tile: the red pillbox, the neutral base
+  (black with white dots). The picture carries the team's colour, so these
+  markers have no dark box, no fill and no line in the team's colour. The
+  white line round the marker under the mouse stays.
+- The picture is 16 pixels in the sheet and the marker is as high as a line
+  of text (13 points). At a whole number of times 16 pixels on the display
+  it is drawn sharp, with no blending; at any other size it is blended, so
+  no row or column of pixels is dropped (`lvItemPictureSharp`). The 12 by 12
+  status icons in the other panels are only ever drawn at whole multiples,
+  sharp.
+- A marker that stands for several events, all of them pillbox events
+  (captured or stolen, in any mix) or all of them base events: the picture,
+  in the colour of the team most of them name, with the number on a small
+  dark plate in its lower right corner. Any other mix is the box with the
+  number, as before.
+- In the "Overlay events" list the four pillbox and base kinds have the
+  picture of one no team holds.
+- One helper draws the picture for every panel (`lv_item_picture` in
+  `imgui_lv_icons.cpp`). When the game's sheets are not there the old plain
+  shape is drawn. Unit test: `lv_event_overlay_picture`.
 - Any other kind: a plain icon in the colour of the text on a dark square,
   with a **1 point line in the team's colour round it**. A tank kill has
   the game's own "dead" picture of the status panels and the colour of the

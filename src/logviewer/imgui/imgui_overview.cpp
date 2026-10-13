@@ -29,6 +29,7 @@
 #include "imgui_dock.h"
 #include "imgui_context.h"
 #include "imgui_lv_panel.h"
+#include "imgui_lv_icons.h"
 #include "imgui.h"
 #include "../../gui/lang.h"
 #include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
@@ -93,40 +94,32 @@ static ImU32 overview_team_colour(int colour) {
     return ImGui::ColorConvertFloat4ToU32(ImVec4(c.r, c.g, c.b, 1.0f));
 }
 
-/* The whole-number scale the 12x12 status icons are drawn at: as large as
- * fits in a line of text. */
+/* The side of the picture of a pillbox or a base: the size the game's 12x12
+ * status icons had here, at the largest whole number of times that fits in
+ * a line of text, so the table and the bars keep their sizes. */
 static float overview_icon_size(void) {
     int scale = (int)(ImGui::GetTextLineHeight() / (float)STATUS_ITEM_SIZE_Y);
     if (scale < 1) scale = 1;
     return (float)(scale * STATUS_ITEM_SIZE_Y);
 }
 
-/* The game's neutral status icon for a pillbox or a base, with its top left
- * at p. */
+/* The picture of a pillbox or a base, with its top left at p: the map's own
+ * picture of one no team holds (the game's red pillbox, the game's neutral
+ * base), made smaller (lv_item_picture; the events lane uses the same). */
 static void overview_icon(ImDrawList *dl, bool isBase, ImVec2 p) {
-    SDL_Texture *atlas = lv_drawGetTilesTexture();
-    float tw = 0.0f, th = 0.0f;
     const float size = overview_icon_size();
-    const float sx = isBase ? (float)STATUS_BASE_NEUTRAL_X : (float)STATUS_PILLBOX_NEUTRAL_X;
-    const float sy = isBase ? (float)STATUS_BASE_NEUTRAL_Y : (float)STATUS_PILLBOX_NEUTRAL_Y;
 
     p.x = floorf(p.x);
     p.y = floorf(p.y);
-    if (atlas == nullptr || !SDL_GetTextureSize(atlas, &tw, &th) || tw <= 0.0f || th <= 0.0f) {
-        /* No atlas: a plain shape still tells the two columns apart. */
+    if (!lv_item_picture(dl, isBase, -1, p, ImVec2(p.x + size, p.y + size))) {
+        /* No sheet: a plain shape still tells the two columns apart. */
         ImU32 col = ImGui::GetColorU32(ImGuiCol_TextDisabled);
         if (isBase) {
             dl->AddCircleFilled(ImVec2(p.x + size * 0.5f, p.y + size * 0.5f), size * 0.5f, col);
         } else {
             dl->AddRectFilled(p, ImVec2(p.x + size, p.y + size), col);
         }
-        return;
     }
-    imguiPushNearestSamplingOn(dl);
-    dl->AddImage((ImTextureID)(size_t)atlas, p, ImVec2(p.x + size, p.y + size),
-                 ImVec2(sx / tw, sy / th),
-                 ImVec2((sx + STATUS_ITEM_SIZE_X) / tw, (sy + STATUS_ITEM_SIZE_Y) / th));
-    imguiPopNearestSamplingOn(dl);
 }
 
 /* The width a count column needs: three digits, or the icon above them. */
