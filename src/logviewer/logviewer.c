@@ -410,10 +410,61 @@ void lv_windowSaveMap(void) {
  * beside this executable on it. The viewer stays open, paused.
  * -------------------------------------------------------------------------- */
 
+/* The path of the WinBolo game that goes with this Log Viewer, or FALSE
+ * when there is none.
+ *
+ * Windows and Linux: the game is the file beside this executable.
+ *
+ * macOS: both programs are application bundles, and they sit side by side
+ * (the build folder, the disk image and the Applications folder all hold
+ * them so). SDL_GetBasePath answers "Log Viewer.app/Contents/Resources/"
+ * for a bundle, so the game is three folders up and then down into
+ * "WinBolo.app/Contents/MacOS/WinBolo". A Log Viewer built without a bundle
+ * has the game beside it as on Linux, so that place is tried second. */
+static bool lvFindGameExe(char *out, size_t outSize) {
+    const char *baseDir = SDL_GetBasePath();
+    int         n;
+
+    if (baseDir == NULL) {
+        baseDir = "";
+    }
+#ifdef __APPLE__
+    n = snprintf(out, outSize, "%s../../../WinBolo.app/Contents/MacOS/WinBolo", baseDir);
+    if (n > 0 && (size_t)n < outSize && SDL_GetPathInfo(out, NULL)) {
+        return TRUE;
+    }
+#endif
+#ifdef _WIN32
+    n = snprintf(out, outSize, "%sWinBolo.exe", baseDir);
+#else
+    n = snprintf(out, outSize, "%sWinBolo", baseDir);
+#endif
+    if (n > 0 && (size_t)n < outSize && SDL_GetPathInfo(out, NULL)) {
+        return TRUE;
+    }
+    return FALSE;
+}
+
 /* Only the Log Viewer run as its own program offers it. The viewer opened
  * from the game's menu is inside the game, and a live spectator has no
- * whole world to hand over. */
+ * whole world to hand over.
+ *
+ * On macOS the menu item is also off when the game is not found. The place
+ * the game is looked for there has not been tried on a Mac, and macOS can
+ * run a downloaded bundle from a private copy with nothing beside it, so a
+ * greyed item is better than an item that always ends in an error. The
+ * look-up is done once: the menu asks every frame. */
 bool lv_windowCanOpenSinglePlayer(void) {
+#ifdef __APPLE__
+    static int s_gameFound = -1;
+    if (s_gameFound < 0) {
+        char exePath[FILENAME_MAX];
+        s_gameFound = lvFindGameExe(exePath, sizeof(exePath)) ? 1 : 0;
+    }
+    if (s_gameFound == 0) {
+        return FALSE;
+    }
+#endif
     return (g_lv != NULL && g_lv->isLoaded && !g_lv->fromMainMenu &&
             !lv_screenSpecIsLiveMode()) ? TRUE : FALSE;
 }
@@ -424,18 +475,28 @@ void lv_windowOpenSinglePlayer(void) {
     char         mapName[FILENAME_MAX];
     char         currentTime[FILENAME_MAX];
     char        *prefDir;
-    const char  *baseDir;
     const char  *args[4];
-    SDL_Process *game;
+    SDL_Process *game = NULL;
+    SDL_PropertiesID props;
     LvSpmapInfo  info;
     int          self;
     int          wrote;
+    int          n;
+    int          attempt;
     size_t       i;
 
     if (lv_windowCanOpenSinglePlayer() == FALSE) {
         return;
     }
     lv_windowPause();
+
+    /* The game first: with no game to start there is no reason to write a
+       map file. */
+    if (!lvFindGameExe(exePath, sizeof(exePath))) {
+        lv_platform_dialog_error(DIALOG_BOX_TITLE,
+                                 "Could not find the WinBolo game beside the Log Viewer");
+        return;
+    }
 
     /* The map goes with the game's own files (where it keeps its logs and
        preferences), in a folder of its own, never in data/maps. The name is
@@ -445,8 +506,14 @@ void lv_windowOpenSinglePlayer(void) {
         lv_platform_dialog_error(DIALOG_BOX_TITLE, "Error Saving Map File");
         return;
     }
-    snprintf(mapPath, sizeof(mapPath), "%slogviewer-maps", prefDir);
-    SDL_CreateDirectory(mapPath);
+    n = snprintf(mapPath, sizeof(mapPath), "%slogviewer-maps", prefDir);
+    /* SDL_CreateDirectory is true for a folder that is already there. */
+    if (n <= 0 || (size_t)n >= sizeof(mapPath) || !SDL_CreateDirectory(mapPath)) {
+        SDL_free(prefDir);
+        lv_platform_dialog_error(DIALOG_BOX_TITLE,
+                                 "Could not make the folder for the map file");
+        return;
+    }
 
     mapName[0]     = '\0';
     currentTime[0] = '\0';
@@ -462,8 +529,31 @@ void lv_windowOpenSinglePlayer(void) {
             mapName[i] = '.';
         }
     }
-    snprintf(mapPath, sizeof(mapPath), "%slogviewer-maps/%.200s.map", prefDir, mapName);
+    /* A name no file has yet. The map name and the playback time are the
+       same for two logs of one map, and for a second try at the same time;
+       the game that was started on the first file may still have it open.
+       So a file is never written over: the second gets " (2)", and so on. */
+    for (attempt = 1; attempt <= 9999; attempt++) {
+        if (attempt == 1) {
+            n = snprintf(mapPath, sizeof(mapPath), "%slogviewer-maps/%.200s.map",
+                         prefDir, mapName);
+        } else {
+            n = snprintf(mapPath, sizeof(mapPath), "%slogviewer-maps/%.200s (%d).map",
+                         prefDir, mapName, attempt);
+        }
+        if (n <= 0 || (size_t)n >= sizeof(mapPath)) {
+            attempt = 10000;
+            break;
+        }
+        if (!SDL_GetPathInfo(mapPath, NULL)) {
+            break;
+        }
+    }
     SDL_free(prefDir);
+    if (attempt > 9999) {
+        lv_platform_dialog_error(DIALOG_BOX_TITLE, "Error Saving Map File");
+        return;
+    }
 
     /* The selected player (the perspective the HUD or Select Team set) is
        the side the user takes. With none, nothing is the user's. */
@@ -476,22 +566,24 @@ void lv_windowOpenSinglePlayer(void) {
         return;
     }
 
-    baseDir = SDL_GetBasePath();
-#ifdef _WIN32
-    snprintf(exePath, sizeof(exePath), "%sWinBolo.exe", baseDir != NULL ? baseDir : "");
-#else
-    snprintf(exePath, sizeof(exePath), "%sWinBolo", baseDir != NULL ? baseDir : "");
-#endif
-    if (!SDL_GetPathInfo(exePath, NULL)) {
-        lv_platform_dialog_error(DIALOG_BOX_TITLE,
-                                 "Could not find the WinBolo game beside the Log Viewer");
-        return;
-    }
     args[0] = exePath;
     args[1] = "-spmap";
     args[2] = mapPath;
     args[3] = NULL;
-    game = SDL_CreateProcess(args, false);
+    /* Started as a background process: the viewer never waits for the game.
+       On macOS and Linux a child that is not waited for stays in the process
+       table as a zombie after it ends, until the viewer itself ends. SDL
+       starts a background process through a middle process that ends at
+       once, so the game is nobody's child and leaves nothing behind. On
+       Windows there is no such thing and this changes nothing but the
+       game's standard input and output, which go nowhere. */
+    props = SDL_CreateProperties();
+    if (props != 0) {
+        SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, (void *)args);
+        SDL_SetBooleanProperty(props, SDL_PROP_PROCESS_CREATE_BACKGROUND_BOOLEAN, true);
+        game = SDL_CreateProcessWithProperties(props);
+        SDL_DestroyProperties(props);
+    }
     if (game == NULL) {
         lv_platform_dialog_error(DIALOG_BOX_TITLE, "Could not start the WinBolo game");
         return;
@@ -536,24 +628,34 @@ bool lv_windowCanSaveLog(void) {
 
 void lv_windowSaveLog(void) {
     char           srcPath[FILENAME_MAX];
+    char           defaultName[FILENAME_MAX];
     char           fileName[FILENAME_MAX];
     const char    *path = NULL;
     const uint8_t *data = NULL;
     uint8_t       *copy = NULL;
     size_t         len  = 0;
+    size_t         i;
     char          *prefDir;
     FILE          *fp;
     int            source;
     int            dlgResult;
     bool           ok;
+    const char    *failed = "Error Saving Log File";
 
     if (lv_windowCanSaveLog() == FALSE) {
         return;
     }
     lv_windowPause();
 
-    srcPath[0]  = '\0';
-    fileName[0] = '\0';
+    /* Everything the save needs from the decoder is taken here, under the
+       mutex, and nothing of the decoder's is touched after it is released:
+       the dialog below can stay open for minutes, and the bytes of a
+       downloaded log belong to the decoder, which frees them when another
+       log is loaded. */
+    srcPath[0]     = '\0';
+    defaultName[0] = '\0';
+    fileName[0]    = '\0';
+    ok = TRUE;
     lv_clientMutexWaitFor();
     source = lv_blocksGetSource(&path, &data, &len);
     if (source == LV_LOG_SOURCE_FILE) {
@@ -564,28 +666,57 @@ void lv_windowSaveLog(void) {
         for (p = path; *p != '\0'; p++) {
             if (*p == '/' || *p == '\\') base = p + 1;
         }
-        snprintf(fileName, sizeof(fileName), "%s", base);
+        snprintf(defaultName, sizeof(defaultName), "%s", base);
+    } else if (source == LV_LOG_SOURCE_MEMORY) {
+        /* A downloaded log has no name: the map's. Its bytes are copied now. */
+        lv_screenGetMapName(defaultName);
+        copy = (uint8_t *)malloc(len);
+        if (copy != NULL) {
+            memcpy(copy, data, len);
+        } else {
+            ok = FALSE;
+        }
     } else {
-        /* A downloaded log has no name: the map's. */
-        lv_screenGetMapName(fileName);
-        strncat(fileName, ".wbv", sizeof(fileName) - strlen(fileName) - 1);
+        ok = FALSE;
     }
     lv_clientMutexRelease();
+    data = NULL;
+    path = NULL;
+    if (!ok) {
+        free(copy);
+        lv_platform_dialog_error(DIALOG_BOX_TITLE, failed);
+        return;
+    }
+    if (source == LV_LOG_SOURCE_MEMORY) {
+        /* Nothing a file name cannot hold: a map name is free text. */
+        for (i = 0; defaultName[i] != '\0'; i++) {
+            if (strchr("\\/:*?\"<>|", defaultName[i]) != NULL ||
+                (unsigned char)defaultName[i] < 0x20) {
+                defaultName[i] = '.';
+            }
+        }
+        if (defaultName[0] == '\0') {
+            snprintf(defaultName, sizeof(defaultName), "log");
+        }
+        strncat(defaultName, ".wbv", sizeof(defaultName) - strlen(defaultName) - 1);
+    }
 
-    /* Opens on the folder the game keeps its logs in. */
+    /* Opens on the folder the game keeps its logs in. The name offered and
+       the path that comes back are two buffers: the dialog copies the one
+       into the other. */
     prefDir   = SDL_GetPrefPath("WinBolo", "WinBolo");
     dlgResult = lv_platform_dialog_save_file(
         "Save Log File...", "WinBolo Log Files", "*.wbv", "wbv",
-        fileName, fileName, sizeof(fileName), prefDir);
+        defaultName, fileName, sizeof(fileName), prefDir);
     SDL_free(prefDir);
     if (dlgResult != PLATFORM_DIALOG_OK) {
+        free(copy);
         return;
     }
     if (source == LV_LOG_SOURCE_FILE && lvSamePath(srcPath, fileName)) {
         return;   /* it is already there */
     }
 
-    ok = TRUE;
     if (source == LV_LOG_SOURCE_FILE) {
         /* All of the source first, then the write: right even if the two
            names turn out to be one file. */
@@ -604,13 +735,16 @@ void lv_windowSaveLog(void) {
         if (fp != NULL) {
             fclose(fp);
         }
-        data = copy;
+        if (!ok) {
+            failed = "The log's own file could not be read. "
+                     "It may have been moved or deleted since it was opened.";
+        }
     }
     if (ok) {
         fp = fopen(fileName, "wb");
         ok = (fp != NULL);
         if (ok) {
-            ok = fwrite(data, 1, len, fp) == len;
+            ok = fwrite(copy, 1, len, fp) == len;
             if (fclose(fp) != 0) {
                 ok = FALSE;
             }
@@ -618,7 +752,7 @@ void lv_windowSaveLog(void) {
     }
     free(copy);
     if (!ok) {
-        lv_platform_dialog_error(DIALOG_BOX_TITLE, "Error Saving Log File");
+        lv_platform_dialog_error(DIALOG_BOX_TITLE, failed);
     }
 }
 
@@ -1383,7 +1517,13 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.showComments     = lv_g_show_comments_window;
         lvms.showScenarioPanel = lv_g_show_scenario_panel_window;
         lvms.showHud          = lv_g_show_hud_window;
+        lvms.showOverview     = lv_g_show_overview_window;
+        lvms.showTank         = lv_g_show_tank_window;
+        lvms.tankBars         = lv_drawGetTankBars() ? true : false;
         lvms.dockEnabled      = lv_imgui_dock_get_enabled() ? true : false;
+        lvms.dockLeft         = lv_imgui_dock_get_side_enabled(LV_DOCK_LEFT) ? true : false;
+        lvms.dockTop          = lv_imgui_dock_get_side_enabled(LV_DOCK_TOP) ? true : false;
+        lvms.dockBottom       = lv_imgui_dock_get_side_enabled(LV_DOCK_BOTTOM) ? true : false;
         lvms.zoomStepIndex    = lv_drawGetZoomStepIndex();
         lvms.zoomStepCount    = lv_drawGetZoomStepCount();
         lvms.fromMainMenu     = g_lv->fromMainMenu ? true : false;
@@ -1705,6 +1845,13 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
 
         /* Keep the saved layout no more than a moment behind the screen. */
         lvHostAutosave();
+
+        /* The standalone viewer's preference sets only mark the document
+         * (merge-on-save, main.c). Whatever was set this frame by code that
+         * does not save for itself (the Events filter, the shared network
+         * code) goes to the file here, in one write. Nothing was set: no
+         * write. Inside the game this does nothing. */
+        lv_platform_config_save();
     }
 
     /* -----------------------------------------------------------------------

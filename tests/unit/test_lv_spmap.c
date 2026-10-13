@@ -214,8 +214,6 @@ int run_lv_spmap_reads_back(void) {
                   rSelf.bases, self.pills, self.bases);
     dx = (int) rSelf.pillX - (int) self.firstPillX;
     dy = (int) rSelf.pillY - (int) self.firstPillY;
-    printf("     lv_spmap: with the tank as the one start mapRead moved the map by %d,%d\n",
-           dx, dy);
     UT_ASSERT_MSG((int) rSelf.startX == (int) self.startX + dx &&
                   (int) rSelf.startY == (int) self.startY + dy,
                   "the start written at %u,%u reads at %u,%u; the map moved by %d,%d",

@@ -155,6 +155,14 @@ set(LV_IMGUI_SOURCES
     ${LV_ROOT}/imgui/imgui_dialogs.cpp
     ${LV_ROOT}/imgui/imgui_game_viewport.cpp
     ${LV_ROOT}/imgui/imgui_scenario_panel.cpp
+    # The sidebars and the HUD, Overview and Tank panels. This page draws
+    # none of them (main_wasm.c), but imgui_main_menu.cpp, draw.c and the
+    # panels above call into imgui_dock.cpp, and its panel table names the
+    # other three.
+    ${LV_ROOT}/imgui/imgui_dock.cpp
+    ${LV_ROOT}/imgui/imgui_hud.cpp
+    ${LV_ROOT}/imgui/imgui_overview.cpp
+    ${LV_ROOT}/imgui/imgui_tank.cpp
 )
 
 # WASM replacement files

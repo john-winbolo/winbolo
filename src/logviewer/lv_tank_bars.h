@@ -25,19 +25,25 @@
 #include <math.h>
 #include <stdbool.h>
 
-/* Under this many screen pixels to a map square no bars are drawn: a bar
- * would be too short to read, and the zoomed-out view has enough on it. The
- * viewer's zoom steps give squares of 8, 9.6, 11.2, 12.8, 14.4, 16, 32, 48
- * and 64 pixels (at a pixel density of 1), so the bars come in at 0.8x. */
+/* Sizes here are in points, not in framebuffer pixels. On a display with a
+ * pixel density of 2 (a Retina Mac) a point is two pixels, so each size is
+ * multiplied by the density before it is drawn: a bar is as thick to the eye
+ * on every display. The width is the exception. It is one map square, and
+ * the square's size on the screen already holds the density.
+ *
+ * Under this many points to a map square no bars are drawn: a bar would be
+ * too short to read, and the zoomed-out view has enough on it. The viewer's
+ * zoom steps give squares of 8, 9.6, 11.2, 12.8, 14.4, 16, 32, 48 and 64
+ * points, so the bars come in at 0.8x, on every display. */
 #define LV_TANK_BARS_MIN_TILE 12.0f
 
-/* A bar is an eighth of a square high, but never under 2 pixels (it would
+/* A bar is an eighth of a square high, but never under 2 points (it would
  * not be seen) nor over 5 (it would hide the map at a large zoom). */
 #define LV_TANK_BARS_MIN_H 2.0f
 #define LV_TANK_BARS_MAX_H 5.0f
 
 /* The space between the two bars, and between the lower one and the top of
- * the tank. */
+ * the tank, in points. */
 #define LV_TANK_BARS_GAP 1.0f
 
 /* "25% transparent": the fill and the empty part are both drawn 75% solid. */
@@ -68,36 +74,56 @@ typedef struct LvTankBarsLayout {
     LvTankBarRect shells;   /* the lower bar */
 } LvTankBarsLayout;
 
-/* The height of one bar for squares tilePx screen pixels across. */
-static inline float lvTankBarThickness(float tilePx) {
-    float t = floorf(tilePx / 8.0f);
+/* A length in points as whole framebuffer pixels, never under one. */
+static inline float lvTankBarPointsToPixels(float points, float pxScale) {
+    float px;
+    if (pxScale <= 0.0f) pxScale = 1.0f;
+    px = floorf(points * pxScale + 0.5f);
+    return (px < 1.0f) ? 1.0f : px;
+}
+
+/* The height of one bar, in framebuffer pixels, for squares tilePx
+ * framebuffer pixels across on a display of pixel density pxScale. */
+static inline float lvTankBarThickness(float tilePx, float pxScale) {
+    float t;
+    if (pxScale <= 0.0f) pxScale = 1.0f;
+    t = floorf(tilePx / pxScale / 8.0f);
     if (t < LV_TANK_BARS_MIN_H) t = LV_TANK_BARS_MIN_H;
     if (t > LV_TANK_BARS_MAX_H) t = LV_TANK_BARS_MAX_H;
-    return t;
+    return lvTankBarPointsToPixels(t, pxScale);
+}
+
+/* Whether squares tilePx framebuffer pixels across are large enough for
+ * bars on a display of pixel density pxScale. */
+static inline bool lvTankBarsVisible(float tilePx, float pxScale) {
+    if (pxScale <= 0.0f) pxScale = 1.0f;
+    return tilePx >= LV_TANK_BARS_MIN_TILE * pxScale;
 }
 
 /* Where the two bars go. tankLeft and tankTop are the top left of the tank's
- * picture on the screen, in pixels, and tilePx is the size of a map square
- * (and of the picture) there. Both bars are as wide as one square, start at
- * the picture's left edge and sit on whole pixels: the shells bar one gap
- * above the picture, the armour bar one gap above that. */
+ * picture in the framebuffer, in pixels, tilePx is the size of a map square
+ * (and of the picture) there, and pxScale is the display's pixel density (1
+ * on most, 2 on a Retina Mac). Both bars are exactly as wide as one square,
+ * start at the picture's left edge and sit on whole pixels: the shells bar
+ * one gap above the picture, the armour bar one gap above that. */
 static inline LvTankBarsLayout lvTankBarsLayout(float tankLeft, float tankTop,
-                                                float tilePx) {
+                                                float tilePx, float pxScale) {
     LvTankBarsLayout out;
-    float t = lvTankBarThickness(tilePx);
+    float t = lvTankBarThickness(tilePx, pxScale);
+    float gap = lvTankBarPointsToPixels(LV_TANK_BARS_GAP, pxScale);
     float x = floorf(tankLeft);
     float top = floorf(tankTop);
     float w = floorf(tilePx + 0.5f);
 
-    out.visible = (tilePx >= LV_TANK_BARS_MIN_TILE);
+    out.visible = lvTankBarsVisible(tilePx, pxScale);
     out.shells.x = x;
     out.shells.w = w;
     out.shells.h = t;
-    out.shells.y = top - LV_TANK_BARS_GAP - t;
+    out.shells.y = top - gap - t;
     out.armour.x = x;
     out.armour.w = w;
     out.armour.h = t;
-    out.armour.y = out.shells.y - LV_TANK_BARS_GAP - t;
+    out.armour.y = out.shells.y - gap - t;
     return out;
 }
 

@@ -125,7 +125,12 @@ int lv_platform_dialog_save_file(const char* title,
     ofn.nFilterIndex = 1;
     
     ofn.lpstrFile = out_path;
-    if (default_name) {
+    if (default_name == out_path) {
+        /* The caller offers the name in the buffer the path comes back
+           in (Save Map does): it is there already, and strncpy onto
+           itself is not allowed. */
+        out_path[out_size - 1] = '\0';
+    } else if (default_name) {
         strncpy(out_path, default_name, out_size - 1);
         out_path[out_size - 1] = '\0';
     } else {
@@ -398,7 +403,12 @@ int lv_platform_dialog_save_file(const char* title,
     (void)default_ext; (void)initial_dir;
     if (!g_initialized) return PLATFORM_DIALOG_ERROR;
 
-    if (default_name) {
+    if (default_name == out_path) {
+        /* The caller offers the name in the buffer the path comes back
+           in (Save Map does): it is there already, and strncpy onto
+           itself is not allowed. */
+        out_path[out_size - 1] = '\0';
+    } else if (default_name) {
         strncpy(out_path, default_name, out_size - 1);
         out_path[out_size - 1] = '\0';
     } else {

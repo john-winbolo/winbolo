@@ -68,12 +68,20 @@ int main(int argc, char *argv[]) {
             SDL_snprintf(prefsJsonPath, sizeof(prefsJsonPath), "%s", "WinBolo.json");
         }
         prefsInit(prefsJsonPath);
+        /* The game may be running beside the viewer and keeps the same
+         * file. Write only the keys the viewer changed, onto a fresh read
+         * of the file, so neither program wipes the other's changes. */
+        prefsSetMergeOnSave(true);
     }
 
     /* "-dump <log> ..." writes the recording out as text and ends: no window,
        no renderer and no network (lv_dump.h). */
     if (lvDumpWanted(argc, argv)) {
-        return lvDumpMain(argc, argv);
+        int dumpResult = lvDumpMain(argc, argv);
+        if (!prefsFlush()) {
+            prefsFlush();
+        }
+        return dumpResult;
     }
 
     httpCreate();
@@ -83,5 +91,11 @@ int main(int argc, char *argv[]) {
     logViewerRun(NULL, NULL, logPath, false);
 
     httpDestroy();
+    /* Anything set after the viewer's last save. A flush that found no
+     * file waits for one more flush (prefs.h); this is the last, so it is
+     * tried twice. */
+    if (!prefsFlush()) {
+        prefsFlush();
+    }
     return 0;
 }

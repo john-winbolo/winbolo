@@ -47,6 +47,7 @@
 #include "lv_hud.h"
 #include "lv_team_sprite.h"
 #include "lv_tank_bars.h"
+#include "clientmutex.h"
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/sdl3/sprite_positions.h"
 #include "../gui/sdl3/tileloader.h"
@@ -535,7 +536,9 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     float maxGx, maxGy;
     int   curTexW, curTexH;
     int   gameW;
+    int   mapW = 0;
     int   dockL = 0, dockT = 0, dockR = 0, dockB = 0;
+    LvDockMargins dock = { 0, 0, 0, 0 };
 
     if (newStepIndex < 0) newStepIndex = 0;
     if (newStepIndex >= ZOOM_STEP_COUNT) newStepIndex = ZOOM_STEP_COUNT - 1;
@@ -559,8 +562,11 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
      * is what they leave, as it is when a sidebar comes in or is resized
      * (lvHostDockSync). The embedded reel has none. */
     if (!g_embedded) lv_imgui_dock_margins(&dockL, &dockT, &dockR, &dockB);
-    gameH = windowH - menuH - dockT - dockB;
-    if (gameH < 1) gameH = 1;
+    dock.left = dockL;
+    dock.top = dockT;
+    dock.right = dockR;
+    dock.bottom = dockB;
+    lvDockMapRect(&dock, windowW, windowH, menuH, NULL, NULL, &mapW, &gameH);
 
     /* Compute map tile under cursor at the OLD zoom. The blit width is
      * curTilesX * TILE_SIZE_X * oldZoom, and the cursor screen X covers
@@ -607,7 +613,7 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     /* Beside a sidebar the map runs up to the sidebar's edge: the last
      * square may go a little way under it rather than stop short. */
     if (dockL + dockR > 0) {
-        gameW = windowW - dockL - dockR;
+        gameW = mapW;
         newTilesX = lvFitTilesCover(gameW, newEffective);
     }
     newTilesY = (int)(((float)gameH + newEffective * 0.5f) / newEffective);
@@ -2001,18 +2007,46 @@ static void lvDrawOneTankBar(const LvTankBarRect *bar, int value, int full,
    the map having to be repainted. */
 static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     LogViewerState *lv = lv_screenGetState();
-    float scale, tilePx;
+    float scale, tilePx, pxScale;
     int i;
     SDL_Rect clip, oldClip;
     bool hadClip;
     SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
     Uint8 oldR, oldG, oldB, oldA;
+    struct { bool alive; int armour, shells; } held[MAX_TANKS];
+    int fullArmour, fullShells;
+    bool hasStock;
 
     if (!s_tankBars || s_tankBarCount == 0 || lv == NULL) return;
+    /* What the tanks hold is written by playback on the timer thread, under
+       the client mutex. Copy it out under the same mutex and draw from the
+       copy, so a bar never shows half of one tick and half of the next. The
+       mutex is recursive (SDL_Mutex), so this is safe on both ways in: the
+       repaint, which already holds it, and the plain blit of an unchanged
+       frame, which does not. The places in s_tankBarPos are this thread's
+       own. */
+    lv_clientMutexWaitFor();
+    hasStock = lv_screenHasTankStock() != 0;
+    fullArmour = lv->rules.tankFullArmour;
+    fullShells = lv->rules.tankFullShells;
+    for (i = 0; i < MAX_TANKS; i++) {
+        held[i].alive = lv->gameViewHud[i].alive;
+        held[i].armour = lv->tankInv[i].armour;
+        held[i].shells = lv->tankInv[i].shells;
+    }
+    lv_clientMutexRelease();
+    /* A recording written before tank stocks were recorded reads zero for
+       every tank. Two empty bars over each one would say "no armour, no
+       shells", which is not known: draw none, as the Tank panel shows no
+       gauges for such a recording. */
+    if (!hasStock) return;
     if (src->w <= 0.0f || src->h <= 0.0f) return;
     scale = dst->w / src->w;
     tilePx = (float)TILE_SIZE_X * scale;
-    if (tilePx < LV_TANK_BARS_MIN_TILE) return;
+    /* scale is in framebuffer pixels (the blit folds the pixel density in),
+       and the bars' sizes are in points: hand the density to the sums. */
+    pxScale = lvDrawPixelScale();
+    if (!lvTankBarsVisible(tilePx, pxScale)) return;
 
     hadClip = SDL_RenderClipEnabled(sdlRenderer);
     SDL_GetRenderClipRect(sdlRenderer, &oldClip);
@@ -2033,17 +2067,17 @@ static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
 
         /* No bars for a tank that is dead: the picture left in the target
            until the next repaint is not a tank that holds anything. */
-        if (slot >= MAX_TANKS || !lv->gameViewHud[slot].alive) continue;
+        if (slot >= MAX_TANKS || !held[slot].alive) continue;
         bars = lvTankBarsLayout(dst->x + ((float)s_tankBarPos[i].x - src->x) * scale,
                                 dst->y + ((float)s_tankBarPos[i].y - src->y) * scale,
-                                tilePx);
+                                tilePx, pxScale);
         if (!bars.visible) continue;
 
-        armour = lv->tankInv[slot].armour;
-        shells = lv->tankInv[slot].shells;
-        lvTankBarArmourColour(lvTankBarFraction(armour, lv->rules.tankFullArmour), &r, &g, &b);
-        lvDrawOneTankBar(&bars.armour, armour, lv->rules.tankFullArmour, r, g, b);
-        lvDrawOneTankBar(&bars.shells, shells, lv->rules.tankFullShells,
+        armour = held[slot].armour;
+        shells = held[slot].shells;
+        lvTankBarArmourColour(lvTankBarFraction(armour, fullArmour), &r, &g, &b);
+        lvDrawOneTankBar(&bars.armour, armour, fullArmour, r, g, b);
+        lvDrawOneTankBar(&bars.shells, shells, fullShells,
                          LV_TANK_BARS_SHELLS_R, LV_TANK_BARS_SHELLS_G, LV_TANK_BARS_SHELLS_B);
     }
 

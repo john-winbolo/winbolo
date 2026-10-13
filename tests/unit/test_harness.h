@@ -117,6 +117,13 @@ int run_prefs_api_sync_dirty(void);
 int run_prefs_api_device_identity(void);
 int run_prefs_api_adopt_server(void);
 int run_prefs_api_mark_synced(void);
+int run_prefs_merge_game_then_viewer(void);
+int run_prefs_merge_viewer_then_game(void);
+int run_prefs_merge_fallback(void);
+int run_prefs_merge_one_write(void);
+int run_prefs_merge_reset_wins(void);
+int run_prefs_merge_idle_no_write(void);
+int run_prefs_merge_missing_retry(void);
 int run_join_running_phase_not_lobby(void);
 int run_lobby_settings_codec_and_apply(void);
 /* The scenario the settings event names, onto the ClientSim and back out
@@ -4140,6 +4147,8 @@ int run_lv_dump_recorded_round(void);
  * the owner rules, and a recorded round read back with mapRead. */
 int run_lv_spmap_owner_table(void);
 int run_lv_spmap_reads_back(void);
+int run_lv_pill_get_in_tank(void);
+int run_lv_spmap_carried_pill_left_out(void);
 /* The log viewer's events panel (test_lv_event_kind.c): the saved name of
  * each event kind, and where the "now" divider falls among the lines. */
 int run_lv_event_kind_sums(void);
@@ -4147,6 +4156,11 @@ int run_lv_event_kind_sums(void);
  * (test_lv_presentation.c): it posts each line once, stores no snapshot, and
  * leaves the world at the start as the loader did. */
 int run_lv_event_scan_returns_to_start(void);
+/* The kill and death tallies go back with a seek (test_lv_presentation.c). */
+int run_lv_kill_tally_seek_back(void);
+/* Whether a tank is alive goes back with a seek (test_lv_presentation.c). */
+int run_lv_alive_seek_back(void);
+int run_lv_death_time_seek_back(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

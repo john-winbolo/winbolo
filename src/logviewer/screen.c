@@ -411,6 +411,8 @@ static void lv_screenSetTankStock(BYTE slot, BYTE shells, BYTE mines, BYTE armou
   g_lv->tankInv[slot].trees  = trees;
 }
 
+int lv_screenHasTankStock(void) { return lvTankStockSeen ? 1 : 0; }
+
 /* Store a slot's modifier set. A log_TankSetModifiers record replaces the whole
  * set, as the op that wrote it did. Nothing draws these yet. */
 static void lv_screenSetTankModifiers(BYTE slot, const BYTE *mods, uint16_t speed) {
@@ -2954,12 +2956,17 @@ bool lv_screenLogTick() {
 
   bool process = FALSE;
   s_logTickAtLiveHead = FALSE;
-  g_lv->timeRunning += 20; /* Add 20 ms */
-  if (g_lv->gmeStartDelay > 0) {
-    g_lv->gmeStartDelay--;
-  }
-  if (g_lv->gmeLength > 0 && g_lv->gmeStartDelay == 0) {
-    g_lv->gmeLength--;
+  /* The clocks stop with the log. A tick after the end (the Play button at
+     the end of a log, a step key) reads nothing, so it must not move the
+     time either: the readout would run on past the end of the recording. */
+  if (g_lv->isPlaying == TRUE) {
+    g_lv->timeRunning += 20; /* Add 20 ms */
+    if (g_lv->gmeStartDelay > 0) {
+      g_lv->gmeStartDelay--;
+    }
+    if (g_lv->gmeLength > 0 && g_lv->gmeStartDelay == 0) {
+      g_lv->gmeLength--;
+    }
   }
   lv_shellsDestroy(&g_lv->shs);
   g_lv->shs = lv_shellsCreate();
@@ -3199,6 +3206,35 @@ static size_t s_firstWorldSnapPos = 0;
  * snapshot, so it needs no separate reset. */
 static bool s_openingSnapshotHadWorld = FALSE;
 
+/* Store, with the snapshot at this time, when each slot's tank last died. */
+static void lv_snapshotKeepDeathTimes(uint32_t snapTime) {
+  uint32_t times[MAX_TANKS];
+  int slot;
+
+  for (slot = 0; slot < MAX_TANKS; slot++) {
+    times[slot] = g_lv->gameViewHud[slot].deathTimeMs;
+  }
+  lv_snapshotSetDeathTimes(&g_lv->snap, snapTime, times);
+}
+
+/* After a seek has decoded the snapshot at this time again: a tank that is
+   destroyed in it died when playback first got here said it did, not at the
+   snapshot's own time, which is what the decode stamps on a tank that was
+   alive at the time the seek left. The death static plays from this time. */
+static void lv_snapshotRestoreDeathTimes(uint32_t snapTime) {
+  uint32_t times[MAX_TANKS];
+  int slot;
+
+  if (lv_snapshotGetDeathTimes(&g_lv->snap, snapTime, times) == FALSE) {
+    return;
+  }
+  for (slot = 0; slot < MAX_TANKS; slot++) {
+    if (g_lv->gameViewHud[slot].alive == false) {
+      g_lv->gameViewHud[slot].deathTimeMs = times[slot];
+    }
+  }
+}
+
 bool lv_processSnapshot() {
   bool returnValue = TRUE;
   BYTE data[512];
@@ -3279,6 +3315,9 @@ bool lv_processSnapshot() {
       // Process the dummy data
       len = logReadBytes(data, 2);
       lv_screenClearTankStock(count);
+      /* No player, no living tank: a seek back to before the player joined
+         must not leave the slot alive from the later time. */
+      g_lv->gameViewHud[count].alive = false;
 
     } else if (dataLen > sizeof(data)) {
       returnValue = FALSE;
@@ -3347,12 +3386,22 @@ bool lv_processSnapshot() {
                 lv_screenClearTankStock(count);
               }
               /* mx != 0 means the tank is on the map (alive) — the same sentinel
-                 the forward log_PlayerLocation path uses. Mark the slot alive so
-                 a mid-game seed clears the death-static overlay for living tanks;
-                 a dead/off-map tank (mx == 0) stays not-alive. */
+                 the forward log_PlayerLocation path uses. The recorder writes
+                 tankGetMX here, which is 0 for a destroyed tank and for
+                 nothing else: column 0 is outside the mined border, no tank
+                 gets there. Mark the slot alive so a mid-game seed clears the
+                 death-static overlay for living tanks. Mark it dead too when
+                 mx == 0: a seek back restores this snapshot over whatever the
+                 slot was at the later time, and a tank that was dead here must
+                 not stay alive because it was alive there. */
               if (mx != 0) {
                 g_lv->gameViewHud[count].alive = true;
                 g_lv->gameViewHud[count].respawnTimeMs = g_lv->timeRunning;
+              } else {
+                if (g_lv->gameViewHud[count].alive) {
+                  g_lv->gameViewHud[count].deathTimeMs = g_lv->timeRunning;
+                }
+                g_lv->gameViewHud[count].alive = false;
               }
               /* A snapshot carries (0,0) lgm coords for a man who is aboard/idle
                  (the server's idle sentinel). Only mark him out for a real
@@ -3384,7 +3433,15 @@ bool lv_processSnapshot() {
      the seek index after it is the one a load without the scan leaves:
      filled only by the snapshots playback has really reached. */
   if (s_eventScan == FALSE) {
+    /* The tallies go in with a new entry only. A seek that restores this
+       snapshot decodes it again with later tallies in hand, and those must
+       not replace the ones counted when playback first got here. */
+    bool isNew = lv_snapshotExist(&g_lv->snap, snapPos, snapTime) == FALSE;
     lv_snapshotAdd(&g_lv->snap, snapPos, snapTime, snapKey, data);
+    if (isNew == TRUE) {
+      lv_snapshotSetTallies(&g_lv->snap, snapTime, g_lv->kills, g_lv->deaths);
+      lv_snapshotKeepDeathTimes(snapTime);
+    }
   }
   return returnValue;
 }
@@ -6275,7 +6332,10 @@ void lv_screenRewind() {
     lv_logSetPosition(wantedPos);
     lv_blocksSetKey(key);
     lv_playersSetTeams(pTeams);
+    /* Playback counts the kills after this snapshot again from here. */
+    lv_snapshotGetTallies(&g_lv->snap, currentTime, g_lv->kills, g_lv->deaths);
     lv_processSnapshot();
+    lv_snapshotRestoreDeathTimes(currentTime);
     /* The snapshot carries no rules: read them again at its time. */
     lv_rulesRefresh();
     lv_presRebuild(g_lv->timeRunning);
@@ -6330,6 +6390,16 @@ static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
   BYTE key;
   BYTE *pTeams = NULL;
 
+  /* A target inside the tick playback is on. A forward seek to a time that
+     is not a whole tick stops on the first tick at or past it, so a second
+     seek to the same time (the seek slider's release after its last live
+     apply) names a time just behind the playhead. The restore below would
+     decode the whole round again to stop on this same tick. */
+  if (g_lv->logLoaded == TRUE && targetTime < g_lv->timeRunning &&
+      g_lv->timeRunning - targetTime < 20) {
+    return;
+  }
+
   if (targetTime >= g_lv->timeRunning && g_lv->logLoaded == TRUE) {
     /* Already there: nothing to decode, and no state to disturb. */
     if (targetTime == g_lv->timeRunning) {
@@ -6360,7 +6430,12 @@ static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
        appearing in the snapshot get a valid team assigned instead of being
        overwritten with NO_TEAM_SET from the pre-snapshot pTeams. */
     lv_playersSetTeams(pTeams);
+    /* The kill and death tallies only count up, and the fast-forward below
+       counts every kill after the snapshot again: start it from the tallies
+       that go with the snapshot, or a step back counts those kills twice. */
+    lv_snapshotGetTallies(&g_lv->snap, snapTime, g_lv->kills, g_lv->deaths);
     lv_processSnapshot();
+    lv_snapshotRestoreDeathTimes(snapTime);
     /* The snapshot carries no rules: read them again at its time, so the
        fast-forward below starts from the values in force there. */
     lv_rulesRefresh();

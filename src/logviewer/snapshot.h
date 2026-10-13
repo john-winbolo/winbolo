@@ -39,6 +39,9 @@ struct snapshotObj {
   uint32_t time; /* Time in ticks in the game */
   BYTE pTeams[MAX_TANKS]; /* Team IDs */
   BYTE key; /* Decryption XOR key */
+  uint16_t kills[MAX_TANKS];  /* Kill tally of each slot when playback first reached this snapshot */
+  uint16_t deaths[MAX_TANKS]; /* Death tally of each slot, likewise */
+  uint32_t deathTimeMs[MAX_TANKS]; /* When each slot's tank last died, likewise */
 };
 
 
@@ -182,5 +185,22 @@ bool lv_snapshotFindByPosition(snapshot *value, size_t targetPos, size_t *filePo
 * pTeams     - Returned pointer to team data
 *********************************************************/
 bool lv_snapshotFindByTime(snapshot *value, uint32_t targetTime, size_t *filePos, uint32_t *time, BYTE *key, BYTE **pTeams);
+
+/* The kill and death tallies that go with the snapshot at this time. The
+   snapshot block in the file holds no tallies, so the viewer stores the
+   ones it had counted when playback first reached the snapshot, and a seek
+   that restores the snapshot puts them back before it plays forward again.
+   Both take arrays of MAX_TANKS and return FALSE when no snapshot is stored
+   at that time. A new snapshot's tallies are zero until they are set. */
+bool lv_snapshotSetTallies(snapshot *value, uint32_t time, const uint16_t *kills, const uint16_t *deaths);
+bool lv_snapshotGetTallies(snapshot *value, uint32_t time, uint16_t *kills, uint16_t *deaths);
+
+/* The time each slot's tank last died, as playback had it when it first
+   reached the snapshot at this time. The snapshot block says only that a
+   tank is destroyed, not since when, and the death static over the game
+   view plays from that time. Stored and put back like the tallies; arrays
+   of MAX_TANKS, FALSE when no snapshot is stored at that time. */
+bool lv_snapshotSetDeathTimes(snapshot *value, uint32_t time, const uint32_t *deathTimeMs);
+bool lv_snapshotGetDeathTimes(snapshot *value, uint32_t time, uint32_t *deathTimeMs);
 
 #endif /* __SNAPSHOT_H */

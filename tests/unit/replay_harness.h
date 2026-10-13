@@ -71,11 +71,9 @@
  *   them. baseTime is also an int32 that the snapshot blob truncates to 16
  *   bits, so even a snapshot does not round-trip it.
  *
- *   pillbox inTank — the recording does carry it (log_PillSetInTank), but
- *   the viewer's lv_pillsGetPill does not copy it out and there is no
- *   getter that does. Adding one is a production change; comparing a field
- *   the getter leaves untouched would read whatever was in the caller's
- *   struct.
+ *   pillbox inTank — the recording does carry it (log_PillSetInTank) and
+ *   the viewer's lv_pillsGetPill copies it out (test_lv_pill_carried.c),
+ *   but this fixture's seam struct has no field for it yet.
  *
  * ── Rounds this fixture does not prove ──────────────────────────────────
  * Some pill ownership paths still change compared fields without writing

@@ -196,11 +196,17 @@ int lvSpmapWriteFromLog(const char *logPath, uint32_t ms, int self,
   char             path[FILENAME_MAX];
   int             hideLobby;
   int             result = 0;
+  int             n;
 
   if (logPath == NULL || mapPath == NULL) {
     return 0;
   }
-  snprintf(path, sizeof(path), "%s", logPath);
+  /* A path too long for the buffer is refused: cut short it would name
+     some other file. */
+  n = snprintf(path, sizeof(path), "%s", logPath);
+  if (n < 0 || (size_t)n >= sizeof(path)) {
+    return 0;
+  }
   lv = lv_decoderCreate(false);
   if (lv == NULL) {
     return 0;

@@ -119,6 +119,28 @@ void lv_windowRemoveEvents(void) {
     lv_imgui_events_clear();
 }
 
+/* Fill the events panel with every event of the loaded file, as the desktop
+ * viewer does (logviewer.c has the full account). Only the WinBolo.net
+ * browser path of imgui_main_menu.cpp calls it, which this page never
+ * reaches: a log opened here goes through lv_windowOpenFile below, which
+ * leaves the panel collecting line by line as it always has. */
+void lv_windowCollectAllEvents(void) {
+    if (lv_screenEventScanRun()) {
+        lv_imgui_events_set_complete();
+        lv_screenEventScanRestore();
+    }
+}
+
+/* imgui_hud.cpp asks the game's status-panel code (sdl3draw_status.c) where
+ * a slot sits. That file needs the game's name-label and voice code, which
+ * this target does not build, and this page never draws the HUD panel
+ * (main_loop_iteration below), so the question is never asked here. */
+void sdl3StatusItemPos(int n, int type, int *outX, int *outY) {
+    (void)n; (void)type;
+    if (outX != NULL) *outX = 0;
+    if (outY != NULL) *outY = 0;
+}
+
 /* --------------------------------------------------------------------------
  * Control state – no-ops (ImGui reads the state directly)
  * -------------------------------------------------------------------------- */
@@ -282,7 +304,7 @@ static void mainLoadPreferences(void) {
     lv_platform_config_get_string("LOGVIEWER", "Playback Speed", "1", val, sizeof(val));
     {
         BYTE spd = (BYTE)atoi(val);
-        if (spd < 1 || spd > 9) spd = 1;
+        if (spd < 1 || spd > LV_SPEED_MAX) spd = 1;
         lv_updateSpeed(spd, 0);
     }
 }

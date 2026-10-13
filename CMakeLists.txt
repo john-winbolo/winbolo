@@ -3569,6 +3569,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_prefs_roundtrip.c
     tests/unit/test_prefs_doc.c
     tests/unit/test_prefs_api.c
+    tests/unit/test_prefs_merge.c
     src/common/prefs_doc.c
     src/common/prefs.c
     tests/unit/test_join_running_phase.c
@@ -4620,6 +4621,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The map the viewer writes for a single-player game (lv_spmap.c): the
     # owner rules, and a recorded round read back with mapRead.
     tests/unit/test_lv_spmap.c
+    # A pillbox a tank carries: the getter says so, and the single-player
+    # map leaves it out (pillbox.c, lv_spmap.c).
+    tests/unit/test_lv_pill_carried.c
     # The events panel's kind names and the search that places its "now"
     # divider (lv_event_kind.h, header only).
     tests/unit/test_lv_event_kind.c
@@ -4894,6 +4898,13 @@ set(_unit_test_names
     prefs_api_device_identity
     prefs_api_adopt_server
     prefs_api_mark_synced
+    prefs_merge_game_then_viewer
+    prefs_merge_viewer_then_game
+    prefs_merge_fallback
+    prefs_merge_one_write
+    prefs_merge_reset_wins
+    prefs_merge_idle_no_write
+    prefs_merge_missing_retry
     join_running_phase_not_lobby
     lobby_settings_codec_and_apply
     lobby_settings_scenario_apply
@@ -6934,8 +6945,13 @@ set(_unit_test_names
     lv_dump_recorded_round
     lv_spmap_owner_table
     lv_spmap_reads_back
+    lv_pill_get_in_tank
+    lv_spmap_carried_pill_left_out
     lv_event_kind_sums
     lv_event_scan_returns_to_start
+    lv_kill_tally_seek_back
+    lv_alive_seek_back
+    lv_death_time_seek_back
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast

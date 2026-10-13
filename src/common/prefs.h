@@ -69,6 +69,29 @@ void prefsSetAutosaveDebounce(unsigned intervalMs);
  * interval has not yet elapsed). */
 bool prefsPumpAutosave(uint64_t nowMs);
 
+/* Merge-on-save, for a program that shares the file with another running
+ * program (the log viewer beside the game). Off by default.
+ *
+ * On: prefsSetString only marks the document dirty and remembers the key,
+ * even when the value is the one the document already holds (the file may
+ * hold another by now); the caller writes with prefsFlush (prefsShutdown
+ * writes too). A write whose keys the file all holds already writes
+ * nothing. A write
+ * reads the file again, puts onto it only the keys this program changed
+ * since its last write, writes the result atomically and keeps it as the
+ * document in memory. So the other program's changes stay in the file and
+ * later reads here see them. When the file does not parse, the
+ * document in memory is written whole, as with the merge off. When the
+ * file is gone, the first prefsFlush returns 0 and writes nothing (another
+ * program may be replacing the file at that moment); the next one writes
+ * the whole document if the file is still gone. prefsShutdown does both
+ * tries itself.
+ *
+ * Turning it on or off forgets the list of changed keys; do it straight
+ * after prefsInit. */
+void prefsSetMergeOnSave(bool on);
+bool prefsMergeOnSave(void);
+
 /* ---- Cloud sync (device-local) ---------------------------------------- */
 
 /* Serialize the upload body: the document minus the device-local sections

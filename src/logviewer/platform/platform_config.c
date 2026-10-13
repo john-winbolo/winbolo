@@ -81,7 +81,13 @@ void lv_platform_config_set_bool(const char *section, const char *key, int value
 }
 
 int lv_platform_config_save(void) {
-    /* prefsSetString flushes the document on every write — nothing to do. */
+    /* The standalone viewer turns merge-on-save on (main.c): its sets only
+     * mark the document, and this is the one write for all of them. Inside
+     * the game the document is the game's own, which the game writes when
+     * it chooses to; nothing to do here. */
+    if (prefsMergeOnSave()) {
+        return prefsFlush();
+    }
     return 1;
 }
 
