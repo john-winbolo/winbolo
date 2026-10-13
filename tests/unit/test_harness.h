@@ -4038,6 +4038,9 @@ int run_lv_tank_status_sums(void);
 /* The bars the log viewer draws over each tank (test_lv_tank_bars.c): their
  * size and place for a size of map square, the filled part, the colours. */
 int run_lv_tank_bars_sums(void);
+/* A click on a tank on the log viewer's map (test_lv_tank_pick.c): which
+ * tank a point is on, and where the mark round the selected one goes. */
+int run_lv_tank_pick_sums(void);
 /* The log viewer's text dump (test_lv_dump.c): a recorded round dumped
  * around one tick, a tick the round does not hold, and the event list. */
 int run_lv_dump_recorded_round(void);

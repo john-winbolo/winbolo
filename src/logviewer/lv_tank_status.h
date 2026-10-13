@@ -53,11 +53,10 @@ typedef struct LvTankStatus {
     char name[LV_TANK_STATUS_NAME_LEN];
 } LvTankStatus;
 
-/* The tank the panel shows: the viewer's "self" player, when that slot has
- * a player in it. "Self" is the one selection of a tank the viewer has: a
- * click on a tank in the HUD panel picks it, as does a Select Team click on
- * a tank on the map, and Tank Centred follows it. Returns the slot, or -1
- * for no tank. */
+/* The tank the panel shows: the selected one, when that slot has a player
+ * in it. A click on a tank on the map selects it, as does a click on a tank
+ * in the HUD panel (which also shows that player's view). Returns the slot,
+ * or -1 for no tank. */
 static inline int lvTankStatusSelected(int selfSlot, int maxTanks, bool selfInUse) {
     if (selfSlot < 0 || selfSlot >= maxTanks || !selfInUse) return -1;
     return selfSlot;

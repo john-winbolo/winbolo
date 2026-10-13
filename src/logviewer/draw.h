@@ -209,6 +209,12 @@ void lv_drawDirtyScreen(void);
 void lv_drawSetTankBars(BYTE on);
 BYTE lv_drawGetTankBars(void);
 
+/* The slot of the live tank drawn at a point of the window (in points, as
+ * the mouse is), or -1 for none. The box tested is the tank's picture, and
+ * never under 12 points a side; with two tanks under the point the nearer
+ * middle wins (lv_tank_pick.h). */
+int lv_drawTankAtPoint(float xPoints, float yPoints);
+
 /*********************************************************
 *NAME:          lv_drawSplashForImGui
 *PURPOSE:

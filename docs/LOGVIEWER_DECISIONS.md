@@ -478,6 +478,50 @@ and base cells use the same code, so they do the same. The tooltip delay of
 the rest of the viewer is not changed.
 
 
+### A click on a tank on the map selects it
+
+A left click on a tank's picture on the map selects that tank. The Tank
+panel shows it, the map marks it, and the HUD panel puts a thin white edge
+round its cell.
+
+- **The selection is a state of its own.** Before, "the selected tank" was
+  the viewer's "self" player, the same number the one-player view uses. Now
+  there is a separate slot (`lv_playersGetSelected`, -1 for none). A map
+  click sets only that slot. It does not turn the one-player view on, and in
+  a one-player view it does not move the view to the other player.
+- A click on a tank in the HUD panel sets both, as before: that player's
+  view, and that tank selected.
+- **Information mode** (the default): a click on a tank selects it, and the
+  square under the click still gets its information as before. The two do
+  not fight.
+- **Select Team mode**: a click there has always meant "pick this player's
+  team", and a one-player view that is on goes with it. That is kept, and
+  the tank is selected too. This is the one place where a map click still
+  moves a one-player view. The owner can say if Select Team mode must also
+  only select.
+- **The hit box** is the tank's picture where the last blit drew it
+  (`lv_drawTankAtPoint`, the same place sums as the bars: sidebars, scroll,
+  zoom, pixel density). It is never under 12 points a side, so a tank can be
+  hit when the map is zoomed out. With two tanks under the mouse the nearer
+  middle wins (`lv_tank_pick.h`, unit test `lv_tank_pick_sums`).
+- A dead tank cannot be clicked. A tank the view does not draw cannot be
+  clicked. A click that was a drag scrolls the map and selects nothing. A
+  click on a panel does not reach the map.
+- A click on empty map keeps the selection. A second click on the selected
+  tank keeps it. Escape does nothing.
+- **The mark** is four white corners just outside the picture, 1 point
+  thick, 75% solid. It follows the rules of the bars: no mark for a dead
+  tank, none under 12 points to a square, only in the viewer's own window
+  (not in the game view, the embedded viewer or an export).
+- The selection stays through a seek. When its player is not in the game at
+  the new time, the Tank panel shows its hint until the player is there
+  again. The selection is not saved in the preferences. A log opens with the
+  first player selected, as before.
+- "Tank Centred" still follows "self", not the selection.
+- The hint of the Tank panel now reads "Click a tank on the map or in the
+  HUD panel to select it".
+
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the

@@ -311,7 +311,7 @@ static void hud_slot_click(int grid, int index) {
 /* One grid: its name, the black panel, the tile in the middle and the 16
  * slots. origin is the top left of the name; scale is whole. */
 static void hud_grid(int grid, const LvHudSlot *slots, bool perspective,
-                     ImVec2 origin, int scale) {
+                     ImVec2 origin, int scale, int selected) {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const float s = (float)scale;
     const char *label = langGetText(grid == HUD_GRID_TANKS ? STR_TABLET_TANKS :
@@ -355,6 +355,12 @@ static void hud_grid(int grid, const LvHudSlot *slots, bool perspective,
         ImVec2 q0(p0.x + s * x, p0.y + s * y);
         ImVec2 q1(q0.x + s * STATUS_ITEM_SIZE_X, q0.y + s * STATUS_ITEM_SIZE_Y);
         hud_slot_icon(dl, grid, slot, perspective, q0, q1);
+        if (n == selected) {
+            /* The selected tank: a thin white edge round its cell, as the
+             * map has white corners round the tank. */
+            dl->AddRect(ImVec2(q0.x - 1.0f, q0.y - 1.0f), ImVec2(q1.x + 1.0f, q1.y + 1.0f),
+                        IM_COL32(255, 255, 255, 190));
+        }
 
         /* The slot is an item of the window, so the hover and the click go
          * through ImGui: a popup or another window over the grid hides it. */
@@ -506,7 +512,8 @@ void lv_imgui_hud_window(void) {
             } else {
                 at.y += (float)(i * (hud_label_h() + fit.scale * HUD_PANEL_H + hud_gap()));
             }
-            hud_grid(grid, slots, snap.perspective != 0, at, fit.scale);
+            hud_grid(grid, slots, snap.perspective != 0, at, fit.scale,
+                     (grid == HUD_GRID_TANKS && snap.hasSelected) ? (int)snap.selected : -1);
         }
 
         /* The slots moved the cursor about; leave it under the whole block. */

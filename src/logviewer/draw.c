@@ -47,6 +47,7 @@
 #include "lv_hud.h"
 #include "lv_team_sprite.h"
 #include "lv_tank_bars.h"
+#include "lv_tank_pick.h"
 #include "clientmutex.h"
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/sdl3/sprite_positions.h"
@@ -132,6 +133,11 @@ typedef struct {
 static LvTankBarPos s_tankBarPos[MAX_TANKS];
 static int          s_tankBarCount = 0;
 static bool         s_tankBars = FALSE;
+/* The last blit of the map into the window: the slice of the target it took
+ * and where it went, in framebuffer pixels. A click on the map is matched
+ * against the tanks with these (lv_drawTankAtPoint). */
+static SDL_FRect    s_blitSrc, s_blitDst;
+static bool         s_blitKnown = FALSE;
 
 /* Used for storing time */
 static uint32_t g_dwFrameTotal = 0;
@@ -450,6 +456,7 @@ static float lvDrawPixelScale(void) {
 
 static void lvDrawTankLabelsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawTankMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 
 /* Paint the world render target into the viewer's own window.
  *
@@ -509,7 +516,11 @@ static void lvDrawBlitTargetToWindow(void) {
                             (blitZoom >= 1.0f) ? SDL_SCALEMODE_NEAREST
                                                : SDL_SCALEMODE_LINEAR);
     SDL_RenderTexture(sdlRenderer, textureTarget, &srcRect, &dstRect);
+    s_blitKnown = !lv->gameView;
     if (!lv->gameView) {
+        s_blitSrc = srcRect;
+        s_blitDst = dstRect;
+        lvDrawTankMarkOverBlit(&srcRect, &dstRect);
         /* The bars first, so a name is never under one. */
         lvDrawTankBarsOverBlit(&srcRect, &dstRect);
         lvDrawTankLabelsOverBlit(&srcRect, &dstRect);
@@ -2084,6 +2095,106 @@ static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
     SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
     SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+/* The mark round the selected tank: four corners just outside its picture,
+   white, 75% solid. It is drawn over the blit like the bars, with the same
+   sums for the place, so it stays on its tank. It follows the rules of the
+   bars: none for a dead tank, none for a tank the view does not draw, none
+   when the squares are too small, and only in the viewer's own window. */
+static void lvDrawTankMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    LogViewerState *lv = lv_screenGetState();
+    float scale, tilePx, pxScale;
+    int i, selected;
+    bool alive;
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    Uint8 oldR, oldG, oldB, oldA;
+
+    if (s_tankBarCount == 0 || lv == NULL) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    lv_clientMutexWaitFor();
+    selected = lv_screenSelectedTank();
+    alive = (selected >= 0) ? lv->gameViewHud[selected].alive : FALSE;
+    lv_clientMutexRelease();
+    if (selected < 0 || !alive) return;
+    scale = dst->w / src->w;
+    tilePx = (float)TILE_SIZE_X * scale;
+    pxScale = lvDrawPixelScale();
+    if (!lvTankBarsVisible(tilePx, pxScale)) return;
+
+    for (i = 0; i < s_tankBarCount; i++) {
+        LvTankMark m;
+        SDL_FRect r[8];
+        if (s_tankBarPos[i].slot != (BYTE)selected) continue;
+        m = lvTankMarkLayout(dst->x + ((float)s_tankBarPos[i].x - src->x) * scale,
+                             dst->y + ((float)s_tankBarPos[i].y - src->y) * scale,
+                             tilePx, pxScale);
+        /* Each corner: an arm along the top or bottom, and one down or up
+           the side. */
+        r[0].x = m.x;                  r[0].y = m.y;                    r[0].w = m.arm;   r[0].h = m.thick;
+        r[1].x = m.x;                  r[1].y = m.y;                    r[1].w = m.thick; r[1].h = m.arm;
+        r[2].x = m.x + m.side - m.arm; r[2].y = m.y;                    r[2].w = m.arm;   r[2].h = m.thick;
+        r[3].x = m.x + m.side - m.thick; r[3].y = m.y;                  r[3].w = m.thick; r[3].h = m.arm;
+        r[4].x = m.x;                  r[4].y = m.y + m.side - m.thick; r[4].w = m.arm;   r[4].h = m.thick;
+        r[5].x = m.x;                  r[5].y = m.y + m.side - m.arm;   r[5].w = m.thick; r[5].h = m.arm;
+        r[6].x = m.x + m.side - m.arm; r[6].y = m.y + m.side - m.thick; r[6].w = m.arm;   r[6].h = m.thick;
+        r[7].x = m.x + m.side - m.thick; r[7].y = m.y + m.side - m.arm; r[7].w = m.thick; r[7].h = m.arm;
+
+        hadClip = SDL_RenderClipEnabled(sdlRenderer);
+        SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+        clip.x = (int)dst->x;
+        clip.y = (int)dst->y;
+        clip.w = (int)dst->w;
+        clip.h = (int)dst->h;
+        SDL_SetRenderClipRect(sdlRenderer, &clip);
+        SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+        SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
+        SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(sdlRenderer, 255, 255, 255,
+                               (Uint8)(LV_TANK_MARK_ALPHA * 255.0f + 0.5f));
+        SDL_RenderFillRects(sdlRenderer, r, 8);
+        SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
+        SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+        SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+        break;
+    }
+}
+
+/* The slot of the tank drawn at a point of the window, or -1 for none. The
+   point is in points, as the mouse is. The test is against where the last
+   blit put each tank's picture (lv_tank_pick.h): a tank the view does not
+   draw is not in that list, and a dead one is passed over. */
+int lv_drawTankAtPoint(float xPoints, float yPoints) {
+    LogViewerState *lv = lv_screenGetState();
+    LvTankPickBox boxes[MAX_TANKS];
+    float scale, tilePx, pxScale, px, py;
+    int i, found;
+
+    if (!s_blitKnown || lv == NULL || s_tankBarCount == 0) return -1;
+    if (s_blitSrc.w <= 0.0f || s_blitDst.w <= 0.0f) return -1;
+    pxScale = lvDrawPixelScale();
+    px = xPoints * pxScale;
+    py = yPoints * pxScale;
+    if (px < s_blitDst.x || py < s_blitDst.y ||
+        px >= s_blitDst.x + s_blitDst.w || py >= s_blitDst.y + s_blitDst.h) {
+        return -1;
+    }
+    scale = s_blitDst.w / s_blitSrc.w;
+    tilePx = (float)TILE_SIZE_X * scale;
+    lv_clientMutexWaitFor();
+    for (i = 0; i < s_tankBarCount; i++) {
+        BYTE slot = s_tankBarPos[i].slot;
+        boxes[i].x = s_blitDst.x + ((float)s_tankBarPos[i].x - s_blitSrc.x) * scale;
+        boxes[i].y = s_blitDst.y + ((float)s_tankBarPos[i].y - s_blitSrc.y) * scale;
+        boxes[i].slot = slot;
+        boxes[i].pickable = (slot < MAX_TANKS) && lv->gameViewHud[slot].alive &&
+                            lv_playersIsInUse(slot) == TRUE;
+    }
+    lv_clientMutexRelease();
+    found = lvTankPick(boxes, s_tankBarCount, px, py, tilePx, pxScale);
+    return (found >= 0) ? boxes[found].slot : -1;
 }
 
 /*********************************************************

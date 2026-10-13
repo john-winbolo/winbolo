@@ -716,6 +716,9 @@ void lv_screenSetup() {
   lv_basesCreate(&g_lv->bs);
   lv_playersCreate();
   lv_playersSetSelf(0);
+  /* A log opens with the first player selected. Only here: once the user
+     has selected a tank, or none, nothing puts this back. */
+  lv_playersSetSelected(0);
   lvTankStockSeen = FALSE;
   g_lv->shs = lv_shellsCreate();
   if (g_lv->view != NULL) {
@@ -6102,6 +6105,13 @@ void lv_screenHudSnapshot(LvHudSnapshot *out) {
 
   perspective = lv_playersHasPerspective();
   viewer = lv_playersGetSelf();
+  {
+    int sel = lv_screenSelectedTank();
+    if (sel >= 0) {
+      out->hasSelected = 1;
+      out->selected = (unsigned char) sel;
+    }
+  }
   if (perspective == TRUE) {
     out->perspective = 1;
     out->viewer = viewer;
@@ -6205,9 +6215,9 @@ void lv_screenOverviewSnapshot(LvOverview *out) {
 
 /* Copy out what the Tank panel shows (lv_tank_status.h): the selected tank's
    stocks against their caps, its builder and the pillboxes it carries. The
-   selected tank is the viewer's "self" player. All of it is the state at the
-   playback time, so it is right after a seek either way. The caller holds
-   the client mutex. */
+   selected tank is the viewer's own slot for it (lv_playersGetSelected), not
+   "self". All of it is the state at the playback time, so it is right after
+   a seek either way. The caller holds the client mutex. */
 void lv_screenTankStatusSnapshot(LvTankStatus *out) {
   int slot;
   BYTE team;
@@ -6224,7 +6234,7 @@ void lv_screenTankStatusSnapshot(LvTankStatus *out) {
   if (g_lv == NULL || g_lv->logLoaded == FALSE) {
     return;
   }
-  slot = lv_playersGetSelf();
+  slot = lv_playersGetSelected();
   slot = lvTankStatusSelected(slot, MAX_TANKS,
       (slot >= 0 && slot < MAX_TANKS) ? (lv_playersIsInUse((BYTE) slot) != FALSE) : false);
   if (slot < 0) {
@@ -6282,8 +6292,52 @@ void lv_screenMouseClick(int xPos, int yPos) {
   } else if (lv_pillsChooseView(&g_lv->pb, g_lv->xOffset + xClick, g_lv->yOffset + yClick) == TRUE) {
   } else if (lv_basesChooseView(&g_lv->bs, g_lv->xOffset + xClick, g_lv->yOffset + yClick) == TRUE) {
   } else {
+    return;
   }
+  /* The player the click picked is the selected tank too. */
+  lv_playersSetSelected(lv_playersGetSelf());
   /* A perspective that is on goes with the view to the new player. */
+  lv_playersPerspectiveFollowSelf();
+}
+
+/* Select the tank in a slot: the Tank panel shows it and the map marks it.
+   Nothing else changes: not "self", not whose view the map shows. A slot with
+   no player in it changes nothing. The caller holds the client mutex. */
+void lv_screenSelectTank(int slot) {
+  if (g_lv == NULL || g_lv->logLoaded == FALSE || slot < 0 || slot >= MAX_TANKS ||
+      lv_playersIsInUse((BYTE) slot) == FALSE) {
+    return;
+  }
+  lv_playersSetSelected(slot);
+}
+
+/* No tank is selected. The caller holds the client mutex. */
+void lv_screenDeselectTank(void) {
+  lv_playersSetSelected(-1);
+}
+
+/* The slot of the selected tank, or -1 for none or for one whose player is
+   not in the game at the playback time. The caller holds the client mutex. */
+int lv_screenSelectedTank(void) {
+  int slot = lv_playersGetSelected();
+  if (g_lv == NULL || g_lv->logLoaded == FALSE || slot < 0 || slot >= MAX_TANKS ||
+      lv_playersIsInUse((BYTE) slot) == FALSE) {
+    return -1;
+  }
+  return slot;
+}
+
+/* A Select Team click on the tank in a slot, where the click was on the
+   tank's picture: that player is "self" and the selected tank, and a
+   perspective that is on goes with it. lv_screenMouseClick does the same for
+   the tank on a map square. The caller holds the client mutex. */
+void lv_screenChooseTank(int slot) {
+  if (g_lv == NULL || g_lv->logLoaded == FALSE || slot < 0 || slot >= MAX_TANKS ||
+      lv_playersIsInUse((BYTE) slot) == FALSE) {
+    return;
+  }
+  lv_playersSetSelf((BYTE) slot);
+  lv_playersSetSelected(slot);
   lv_playersPerspectiveFollowSelf();
 }
 

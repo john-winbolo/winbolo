@@ -142,6 +142,11 @@ BYTE lv_playersGetSelf();
 
 void lv_playersSetSelf(BYTE pn);
 
+/* The selected tank (the Tank panel's, the map's mark), a slot apart from
+ * "self". -1 is none. See players.c. */
+void lv_playersSetSelected(int slot);
+int lv_playersGetSelected(void);
+
 /* The perspective: the viewer shows the game as the "self" player saw it,
  * not every team at once. See players.c. */
 void lv_playersSetPerspective(BYTE playerNum);

@@ -27,10 +27,9 @@
  * none of it, only the gauges (lvTankLayoutPick has the rule). Nothing is
  * ever cut off, so the panel does not scroll.
  *
- * The selected tank is the viewer's "self" player: the one a click on a
- * tank in the HUD panel picks, the one a Select Team click on a tank on the
- * map picks, and the one Tank Centred follows. Everything is read off the
- * game's state every frame, so it follows a seek in either direction.
+ * The selected tank is the one a click on a tank on the map picks, or a
+ * click on a tank in the HUD panel. Everything is read off the game's state
+ * every frame, so it follows a seek in either direction.
  */
 
 #include "imgui_tank.h"

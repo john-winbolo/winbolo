@@ -4594,6 +4594,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The bars the viewer draws over each tank: where they go, how full
     # they are and their colours (lv_tank_bars.h, header only).
     tests/unit/test_lv_tank_bars.c
+    # A click on a tank on the viewer's map: which tank a point is on and
+    # the mark round the selected one (lv_tank_pick.h, header only).
+    tests/unit/test_lv_tank_pick.c
     # The viewer's text dump of a recording around one tick (lv_dump.c): a
     # recorded round dumped with the production decoder.
     tests/unit/test_lv_dump.c
