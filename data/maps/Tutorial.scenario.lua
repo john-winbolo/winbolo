@@ -1563,12 +1563,20 @@ local function enter_station(n)
   redraw(true)
 end
 
--- Note what the player owns, once a second (see S.owned).
+-- Note what the player owns, once a second (see S.owned). The pillboxes of
+-- the stations' own set-up are left out, so give_back never hands them to
+-- the next player: the two 5A demo pillboxes always, and the 5B target
+-- until the player has picked it up. The pillboxes a goal has the player
+-- take or build (4A, 4B, the 5B blocker, Station 7's) are noted.
 local function note_owned()
   local o = { pills = {}, bases = {} }
-  for _, L in pairs(P) do
+  for name, L in pairs(P) do
+    local setup = name == "t5a_target" or name == "t5a_blocker" or
+                  (name == "t5b_target" and not S.done[5].b_pick)
     local pb = game.pill(L.n)
-    if pb ~= nil and pb.owner == S.player then o.pills[#o.pills + 1] = L.n end
+    if not setup and pb ~= nil and pb.owner == S.player then
+      o.pills[#o.pills + 1] = L.n
+    end
   end
   for _, L in pairs(B) do
     local b = game.base(L.n)
