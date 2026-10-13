@@ -35,6 +35,7 @@ extern "C" {
     bool lv_screenSpecIsLiveMode(void);
     void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY);
     void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY);
+    void lv_screenEventTeams(int *team, int *otherTeam);
 }
 
 /* Event with associated playback timestamp, held in absolute log ms so the
@@ -53,6 +54,10 @@ struct LogEvent {
     uint32_t seekMs = 0;
     int      mapX = 0;
     int      mapY = 0;
+    /* The teams of the players the line is about, as they were when it
+     * happened (lv_messageTagPlayers), -1 for none. */
+    int      team = -1;
+    int      otherTeam = -1;
 };
 
 /* Event list storage */
@@ -131,6 +136,7 @@ void lv_imgui_events_add(int eventType, int kind, int mapX, int mapY,
     e.hasCell  = (mapX >= 0 && mapY >= 0);
     e.mapX     = mapX;
     e.mapY     = mapY;
+    lv_screenEventTeams(&e.team, &e.otherTeam);
     s_events.push_back(e);
     s_version++;
 
@@ -236,6 +242,28 @@ uint32_t lv_imgui_events_get_time(int i) {
     return s_events[i].timeMs;
 }
 
+unsigned lv_imgui_events_version(void) {
+    return s_version;
+}
+
+bool lv_imgui_events_get_info(int i, LvEventInfo *out) {
+    if (out == nullptr || i < 0 || i >= (int)s_events.size()) return false;
+    const LogEvent &e = s_events[i];
+    /* A summary line is about the whole round, not about a moment. */
+    if (e.pinned && !e.seekable) return false;
+    if (!e.pinned && !e.showTime) return false;
+    out->timeMs    = e.seekable ? e.seekMs : e.timeMs;
+    out->kind      = e.kind;
+    out->highlight = e.seekable ? 1 : 0;
+    out->hasCell   = e.hasCell ? 1 : 0;
+    out->mapX      = e.mapX;
+    out->mapY      = e.mapY;
+    out->team      = e.team;
+    out->otherTeam = e.otherTeam;
+    out->text      = e.text.c_str();
+    return true;
+}
+
 /* Copy selected text to clipboard */
 static void copy_to_clipboard(const char* text) {
     ImGui::SetClipboardText(text);
@@ -278,6 +306,10 @@ static langid kind_label_id(int kind) {
         case LV_EVK_HIGHLIGHT:     return STR_LV_EVT_KIND_HIGHLIGHT;
         default:                   return STR_LV_EVT_FILTER_ALL;
     }
+}
+
+const char *lv_imgui_events_kind_label(int kind) {
+    return langGetText(kind_label_id(kind));
 }
 
 /* Count the lines of each kind the lobby hiding leaves. The counts decide

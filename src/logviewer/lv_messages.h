@@ -205,6 +205,26 @@ void lv_messageAddAt(lvEventKind kind, int mapX, int mapY,
                      const MessageArgs *args);
 
 /*********************************************************
+*NAME:          lv_messageTagPlayers
+*PURPOSE:
+*  Says which players the next lv_messageAdd or
+*  lv_messageAddAt line is about, so the host can show the
+*  line in the colour of a team (the event markers of the
+*  seek slider do). Call it just before the line is added;
+*  the line takes the tag with it, and a line added with
+*  no call before it has none.
+*
+*ARGUMENTS:
+*  actor - The player that did it: the new owner of a
+*          pillbox or base, the killer of a tank. For a
+*          death with no killer, the player that died.
+*          -1 or NEUTRAL for none.
+*  other - The player it was done to (the old owner, the
+*          tank that was killed), or -1 or NEUTRAL for none
+*********************************************************/
+void lv_messageTagPlayers(int actor, int other);
+
+/*********************************************************
 *NAME:          lv_messageAddItem
 *AUTHOR:        John Morrison
 *CREATION DATE:  3/1/99

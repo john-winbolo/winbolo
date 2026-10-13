@@ -151,6 +151,7 @@ set(LV_IMGUI_SOURCES
     ${LV_ROOT}/imgui/imgui_controls.cpp
     ${LV_ROOT}/imgui/imgui_game_info.cpp
     ${LV_ROOT}/imgui/imgui_events.cpp
+    ${LV_ROOT}/imgui/imgui_event_overlay.cpp
     ${LV_ROOT}/imgui/imgui_item_info.cpp
     ${LV_ROOT}/imgui/imgui_dialogs.cpp
     ${LV_ROOT}/imgui/imgui_game_viewport.cpp
