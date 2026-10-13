@@ -1606,10 +1606,15 @@ end
 
 -- An empty seat put by for a bot that is not on the field can be taken by a
 -- person who joins later. The bot then gets another empty seat, if there is
--- one.
+-- one. The Station 6 bot's peace list leaves out its own seat and the
+-- Station 7 bot's (bot_init), so when one of those two moves and the Station
+-- 6 bot is in the round, it is handed the list again: without that it would
+-- treat the person now on the old seat as an enemy.
 local function move_bot_seat(p)
+  local peace_moved = false
   for _, role in ipairs({ "bot5a", "bot6", "bot7" }) do
     if S[role] == p then
+      if role ~= "bot5a" then peace_moved = true end
       S[role] = nil
       S.free_seat[p] = nil
       for q = 0, game.max_tanks() - 1 do
@@ -1623,6 +1628,13 @@ local function move_bot_seat(p)
       if S[role] == nil then
         game.log("Tutorial: no seat left for the " .. role .. " bot")
       end
+    end
+  end
+  if peace_moved and S.fielded.bot6 and S.bot6 ~= nil then
+    local ok, code = game.bot_init(S.bot6, bot_init("bot6"))
+    if not ok then
+      game.log("Tutorial: new peace list for the Station 6 bot refused: "
+               .. tostring(code))
     end
   end
 end
