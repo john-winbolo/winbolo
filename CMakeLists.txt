@@ -6883,12 +6883,47 @@ set(_unit_test_names
     lv_overview_bots
     lv_tank_status_sums
     lv_tank_bars_sums
+    lv_tank_pick_sums
+    lv_map_double_click
+    lv_name_header_sums
+    lv_dock_clear_layout
+    lv_dock_clear_rects
+    lv_dock_clear_map
+    lv_dock_clear_prefs
     lv_dump_recorded_round
     lv_spmap_owner_table
     lv_spmap_reads_back
     lv_pill_get_in_tank
     lv_spmap_carried_pill_left_out
     lv_event_kind_sums
+    lv_event_overlay_slider
+    lv_event_overlay_clusters
+    lv_event_overlay_choice
+    lv_event_overlay_picture
+    lv_event_kinds_filter
+    lv_event_kinds_prefs
+    lv_event_marker
+    lv_ping_store
+    lv_ping_marker
+    lv_ping_phase
+    lv_dump_ping
+    lv_time_fmt_sums
+    lv_time_parse_sums
+    lv_event_flash_sums
+    lv_event_flash_arrow
+    lv_event_centre_scroll
+    lv_view_centre_scroll
+    lv_event_jump_keeps_place_in_view
+    lv_event_seek_exact
+    lv_builder_status_sums
+    lv_builder_countdown
+    lv_builder_dead_text
+    lv_builder_trips
+    lv_builder_trips_scan
+    lv_controls_top_row
+    lv_controls_bottom_row
+    lv_zoom_percent
+    lv_fullscreen_key
     lv_event_scan_returns_to_start
     lv_save_name_parts
     lv_save_name_limits
@@ -6897,6 +6932,7 @@ set(_unit_test_names
     lv_kill_tally_seek_back
     lv_alive_seek_back
     lv_death_time_seek_back
+    lv_jump_targets
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast
