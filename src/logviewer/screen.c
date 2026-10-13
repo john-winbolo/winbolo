@@ -59,6 +59,8 @@
 #include "lv_hud.h"
 #include "lv_overview.h"
 #include "lv_tank_status.h"
+#include "lv_time_fmt.h"
+#include "lv_event_flash.h"
 #include "lv_messages.h"
 #include "../gui/lang.h"
 #include "../gui/ping_kinds.h"   /* PING_DISPLAY_MS, pingKindMessageId */
@@ -5804,15 +5806,21 @@ void lv_messageAddAt(lvEventKind kind, int mapX, int mapY,
   }
 }
 
-/* Format an absolute log time as the displayed (window-relative) mm:ss. */
+/* Format an absolute log time as the displayed (window-relative) time, to the
+   hundredth of a second: "19:48.22", and "1:02:07.22" from one hour on
+   (lv_time_fmt.h). The time is the tick's own, cut to hundredths, never
+   rounded to the second first. */
 void lv_screenFormatTime(uint32_t absMs, char *dest, size_t destSize) {
   uint32_t start = lv_windowStartMs();
-  uint32_t secs  = ((absMs > start) ? (absMs - start) : 0) / 1000u;
-  snprintf(dest, destSize, "%02u:%02u", secs / 60u, secs % 60u);
+  lvTimeFormat((absMs > start) ? (absMs - start) : 0u, 1, dest, destSize);
 }
 
+/* The playback time to the second ("19:48"), for the name of a saved map.
+   dest holds LV_TIME_TEXT_MAX characters or more. */
 void lv_screenGetTime(char *dest) {
-  lv_screenFormatTime(g_lv->timeRunning, dest, 6);
+  uint32_t start = lv_windowStartMs();
+  uint32_t now   = g_lv->timeRunning;
+  lvTimeFormat((now > start) ? (now - start) : 0u, 0, dest, LV_TIME_TEXT_MAX);
 }
 
 
@@ -5868,6 +5876,35 @@ void lv_screenCentreOnCell(int mapX, int mapY) {
   /* Defer to the flag — see lv_screenPanToTotalPixels. */
   g_lv->wantScreenUpdate = TRUE;
 }
+
+/* Bring a map cell into the view for a jump to an event there. The map moves
+ * (the cell goes to the middle) only when it has to: the cell is outside the
+ * view or nearer than LV_FLASH_EDGE_TILES squares to an edge of it. A cell
+ * that is already well in view stays where it is, so the eye does not lose
+ * the map. With "Tank Centred" on the view belongs to the followed tank and
+ * is not moved at all. Returns 1 when the map moved. */
+int lv_screenShowCell(int mapX, int mapY) {
+  if (g_lv == NULL || g_lv->logLoaded == FALSE) {
+    return 0;
+  }
+  if (g_lv->centredTank == TRUE) {
+    return 0;
+  }
+  if (!lvFlashNeedsCentre(mapX, mapY, (int)g_lv->xOffset, (int)g_lv->yOffset,
+                          lv_screenGetSizeX(), lv_screenGetSizeY(),
+                          LV_FLASH_EDGE_TILES)) {
+    return 0;
+  }
+  lv_screenCentreOnCell(mapX, mapY);
+  return 1;
+}
+
+/* Counts the seeks: every request to move playback other than by playing.
+ * What is tied to one jump (the ring round an event's place) keeps the count
+ * it started at and ends when the count has moved on. */
+static uint32_t s_seekSerial = 0;
+
+uint32_t lv_screenSeekSerial(void) { return s_seekSerial; }
 
 /* Takes an absolute log time (highlight clip times are absolute) and clamps it
  * into the presented window. */
@@ -6414,6 +6451,7 @@ bool lv_screenFastForwardTargetMs(uint32_t *ms) {
 void lv_screenFastForward() {
   bool available;
 
+  s_seekSerial++;
   if (g_lv->isPlaying == TRUE && g_lv->fastForwarding == FALSE) {
     g_lv->fastForwarding = TRUE;
     available = lv_screenLogTick();
@@ -6495,6 +6533,7 @@ void lv_screenRewind() {
   BYTE key;
   BYTE *pTeams = NULL;
 
+  s_seekSerial++;
   available = lv_rewindPick(&wantedPos, &currentTime, &key, &pTeams);
   if (available == TRUE) {
     /* A rewind never steps back into the hidden lobby; it parks at game start. */
@@ -6563,6 +6602,8 @@ static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
   uint32_t snapTime;
   BYTE key;
   BYTE *pTeams = NULL;
+
+  s_seekSerial++;
 
   /* A target inside the tick playback is on. A forward seek to a time that
      is not a whole tick stops on the first tick at or past it, so a second

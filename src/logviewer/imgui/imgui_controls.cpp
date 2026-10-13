@@ -30,6 +30,7 @@
 /* External functions from main.c - using C types directly */
 extern "C" {
     #include "logviewer.h"
+    #include "../lv_time_fmt.h"
     void lv_windowPlay(void);
     void lv_windowPause(void);
     void lv_windowStop(int corruptLog);
@@ -107,12 +108,12 @@ static void seek_to_ratio(float ratio) {
 /* Forward declaration for speed update helper */
 static void update_speed_from_slider(int new_speed);
 
-/* Format time from milliseconds into MM:SS */
-static void format_time(char *buf, size_t buf_size, unsigned int time_ms) {
-    double secs = time_ms / 1000.0;
-    double mins = floor(secs / 60.0);
-    secs = floor(secs - (mins * 60.0));
-    snprintf(buf, buf_size, "%02d:%02d", (int)mins, (int)secs);
+/* A length of playback time as text, the way every time of the viewer is
+ * written (lv_time_fmt.h). The time playback is at has its hundredths, so a
+ * jump to an event shows the event's own time; the length of the log and the
+ * time left are to the second. */
+static void format_time(char *buf, size_t buf_size, unsigned int time_ms, bool hundredths) {
+    lvTimeFormat(time_ms, hundredths ? 1 : 0, buf, buf_size);
 }
 
 void lv_imgui_controls_init(struct LogViewerState *lv) {
@@ -452,14 +453,14 @@ void lv_imgui_controls_window(void) {
             }
 
             /* Current time */
-            format_time(s_current_time, sizeof(s_current_time), currentTime);
+            format_time(s_current_time, sizeof(s_current_time), currentTime, true);
 
             char total_time_str[32] = "--:--";
             char remaining_str[32] = "--:--";
             if (totalTime > 0) {
                 uint32_t remaining = totalTime > currentTime ? totalTime - currentTime : 0;
-                format_time(total_time_str, sizeof(total_time_str), totalTime);
-                format_time(remaining_str, sizeof(remaining_str), remaining);
+                format_time(total_time_str, sizeof(total_time_str), totalTime, false);
+                format_time(remaining_str, sizeof(remaining_str), remaining, false);
             }
 
             /* Seek slider - full width.  Always-visible in-slider time
@@ -475,7 +476,7 @@ void lv_imgui_controls_window(void) {
                 snprintf(seek_fmt, sizeof(seek_fmt), "%s", s_current_time);
             }
             /* NoRoundToFormat is essential here: seek_fmt is a pre-rendered
-             * label ("12:34 / 51:32 (0.4%)"), not a numeric printf format.
+             * label ("12:34.56 / 51:32 (0.4%)"), not a numeric printf format.
              * Without this flag ImGui rounds the dragged value by round-tripping
              * it through seek_fmt -- which parses back to 0 -- pinning the
              * slider (and every seek) to the start of the log. */

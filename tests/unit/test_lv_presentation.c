@@ -1276,6 +1276,133 @@ int run_lv_event_scan_returns_to_start(void) {
     return 0;
 }
 
+/* ── 7c. A jump to an event lands on the event's own tick ──────────── */
+
+/* A click on a line of the Events panel seeks to the time the line was posted
+ * at. On the log_TeamSet log: the time of the line is the clock of the tick
+ * that posted it; a seek to that time, from before it and from after it,
+ * stops on that same tick with the event done (slot 1 is on its team) and
+ * posts the line once on the way; one tick earlier the event has not
+ * happened; a seek to where playback already is posts nothing and moves
+ * nothing; every seek moves the seek count, so the ring a jump starts can
+ * tell it was followed by another; and the time reads to the hundredth. */
+int run_lv_event_seek_exact(void) {
+    const char     *path = "lv_event_seek.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    int             before, steps = 0;
+    uint32_t        eventMs = 0;
+    bool            found = false;
+    uint32_t        timeBack, timeBefore, timeFwd, timeSame, timeFromEnd;
+    int             teamBack, teamBefore, teamFwd, teamFromEnd;
+    int             linesFwd, linesSame, linesFromEnd;
+    uint32_t        serial0, serial1, serial2;
+    char            stamp[16], stampTick[16];
+
+    lvpPutOpening(&b);
+    lvpPut(&b, kLvpTeamStream, sizeof(kLvpTeamStream));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    /* Play until the team's line is posted: the clock then is the time the
+       Events panel keeps for it. */
+    before = g_lvStubEventsAdded;
+    while (lv_screenIsPlaying() == TRUE && steps < 64) {
+        lv_screenLogTick();
+        steps++;
+        if (g_lvStubEventsAdded != before) {
+            eventMs = lv_screenGetTimeRunning();
+            found = true;
+            break;
+        }
+    }
+    if (!found || !lvpPlayToEnd()) {
+        lv_decoderDestroy(lv);
+        remove(path);
+        UT_FAIL("the log_TeamSet line was not posted, or the log did not end");
+    }
+
+    /* From the end, back to the event. */
+    before       = g_lvStubEventsAdded;
+    serial0      = lv_screenSeekSerial();
+    lv_screenSeekToTimeMs(eventMs);
+    serial1      = lv_screenSeekSerial();
+    linesFromEnd = g_lvStubEventsAdded - before;
+    timeFromEnd  = lv_screenGetTimeRunning();
+    teamFromEnd  = lvpSlot1Team();
+
+    /* One tick before it. */
+    lv_screenSeekToTimeMs(eventMs - 20u);
+    timeBefore = lv_screenGetTimeRunning();
+    teamBefore = lvpSlot1Team();
+
+    /* Forward one tick to it. */
+    before   = g_lvStubEventsAdded;
+    lv_screenSeekToTimeMs(eventMs);
+    linesFwd = g_lvStubEventsAdded - before;
+    timeFwd  = lv_screenGetTimeRunning();
+    teamFwd  = lvpSlot1Team();
+
+    /* To where playback already is. */
+    before    = g_lvStubEventsAdded;
+    serial2   = lv_screenSeekSerial();
+    lv_screenSeekToTimeMs(eventMs);
+    linesSame = g_lvStubEventsAdded - before;
+    timeSame  = lv_screenGetTimeRunning();
+
+    /* From the start. */
+    lv_screenSeekToTimeMs(0);
+    lv_screenSeekToTimeMs(eventMs);
+    timeBack = lv_screenGetTimeRunning();
+    teamBack = lvpSlot1Team();
+
+    lv_screenFormatTime(eventMs, stamp, sizeof(stamp));
+    lv_screenFormatTime(eventMs + 20u, stampTick, sizeof(stampTick));
+
+    {
+        bool serialMoved = lv_screenSeekSerial() != serial2;
+        lv_decoderDestroy(lv);
+        remove(path);
+        UT_ASSERT_MSG(serialMoved, "a seek to where playback is did not move "
+                      "the seek count");
+    }
+
+    UT_ASSERT_MSG(eventMs > 0 && eventMs % 20u == 0, "the line was posted at "
+                  "%u ms (want a whole tick)", (unsigned)eventMs);
+    UT_ASSERT_MSG(serial1 != serial0, "a seek did not move the seek count");
+    UT_ASSERT_MSG(timeFromEnd == eventMs, "from the end the seek stopped at "
+                  "%u ms (want %u)", (unsigned)timeFromEnd, (unsigned)eventMs);
+    UT_ASSERT_MSG(teamFromEnd == 2, "from the end, at the event's tick slot "
+                  "1's team is %d (want 2: the event is done)", teamFromEnd);
+    UT_ASSERT_MSG(linesFromEnd == 1, "the seek back to the event posted %d "
+                  "lines (want its one)", linesFromEnd);
+    UT_ASSERT_MSG(timeBefore == eventMs - 20u, "the seek to one tick before "
+                  "stopped at %u ms", (unsigned)timeBefore);
+    UT_ASSERT_MSG(teamBefore == -1, "one tick before the event slot 1's team "
+                  "is %d (want unknown)", teamBefore);
+    UT_ASSERT_MSG(timeFwd == eventMs && teamFwd == 2 && linesFwd == 1,
+                  "one tick forward: %u ms, team %d, %d lines (want %u, 2, 1)",
+                  (unsigned)timeFwd, teamFwd, linesFwd, (unsigned)eventMs);
+    UT_ASSERT_MSG(timeSame == eventMs && linesSame == 0, "a seek to where "
+                  "playback is moved it (%u ms, %d lines)", (unsigned)timeSame,
+                  linesSame);
+    UT_ASSERT_MSG(timeBack == eventMs && teamBack == 2, "from the start: %u "
+                  "ms, team %d (want %u, 2)", (unsigned)timeBack, teamBack,
+                  (unsigned)eventMs);
+    {
+        char want[16];
+        snprintf(want, sizeof(want), "00:00.%02u", (unsigned)(eventMs / 10u));
+        UT_ASSERT_MSG(strcmp(stamp, want) == 0, "the event's time reads "
+                      "\"%s\" (want \"%s\")", stamp, want);
+        UT_ASSERT_MSG(strcmp(stamp, stampTick) != 0, "the next tick reads the "
+                      "same time, \"%s\"", stamp);
+    }
+    return 0;
+}
+
 /* The kill and death tallies across a seek.
  *
  * After the opening:

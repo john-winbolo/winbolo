@@ -4621,6 +4621,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # slider, which markers become one, and the saved list of chosen kinds
     # (lv_event_overlay.h, header only).
     tests/unit/test_lv_event_overlay.c
+    # The viewer's playback times as text, to the hundredth of a second, and
+    # the ring flashed on the map round an event's place (lv_time_fmt.h,
+    # lv_event_flash.h, header only).
+    tests/unit/test_lv_time_fmt.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).

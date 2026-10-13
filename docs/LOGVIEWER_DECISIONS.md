@@ -749,6 +749,91 @@ read of the list.
   tab at 4 sizes: no assert.
 
 
+### Times to the hundredth of a second; a jump to an event flashes a ring on the map
+
+**How a time is written.** Every playback time of the viewer is now written
+by one function, `lvTimeFormat` (`lv_time_fmt.h`): `19:48.22`, and
+`1:02:07.22` from one hour on. Before, each place had its own "mm:ss".
+
+- The request wrote the example as "19:48:22". The mark before the
+  hundredths is a **dot**, not a colon: with a colon, "19:48:22" reads as
+  hours, minutes and seconds, and a log of one hour or more could not be told
+  from it. The mark is one constant, `LV_TIME_FRACTION_MARK`; it is one line
+  to change.
+- The hundredths are cut, not rounded, and the time is never rounded to the
+  second first. Playback moves in steps of 20 ms, so each step has a text of
+  its own and the last digit is always even.
+- With the hundredths: each line of the Events panel, the "now" line of that
+  panel, the tooltips of the markers over the seek bar, and the time playback
+  is at in the Controls panel (in the seek bar and in the line under it).
+- To the second, with the same function: the length of the log and the time
+  left in the Controls panel (they do not change by the hundredth in a way a
+  reader can use), and the time in the name of a saved map.
+- From one hour on the hours are written ("1:15:03"; before it was "75:03").
+- No box of the viewer takes a typed time today, so there was none to
+  change. `lvTimeParse` reads the new form back ("ss", "mm:ss", "h:mm:ss",
+  each with or without hundredths) for the day one does.
+
+**Where a click on an event goes.** The time kept with an event is the clock
+of the tick that posted it, so it is already exact: a whole 20 ms step. A
+click on a line of the Events panel, or on a marker over the seek bar, seeks
+to that time and playback stops **on that tick, with the event done** (the
+pillbox has its new owner, the tank is dead). No lead time is added. The
+Controls panel then reads the same time the line has. One tick earlier the
+event has not happened; the `,` key steps back to it.
+
+- A highlight still goes to 5 seconds before its moment, as before: it is a
+  clip to watch, not a point.
+- The seek skips a target that is less than one tick behind the playhead
+  (made for the release of the seek bar). An event's time is a whole tick, so
+  that never takes a jump to an event: it is either the tick playback is on
+  (nothing to do) or a tick away.
+- Unit test `lv_event_seek_exact`: from the end, from the start and from one
+  tick before, the seek stops on the event's tick with the event done and
+  posts its line once.
+
+**The ring.** After such a click a ring flashes on the map round the place of
+the event (`draw.c`, sums in `lv_event_flash.h`).
+
+- It starts 1.5 squares out from the middle of the event's square, grows to
+  2 squares and fades, in 1.2 seconds of real time. It is full strength for
+  the first 0.3 seconds. It runs the same with playback stopped.
+- With a team: a white band 2 points wide with a band in the team's colour,
+  2 points wide, inside it. With no team: white alone, 3 points. A thin dark
+  line each side keeps it readable on pale ground. The team is the one the
+  marker over the seek bar has: the new owner of a pillbox or base, the
+  killer of a tank (the tank's own team when it died with no killer), the
+  team that lost the builder. The colour is the HUD panel's.
+- **The map moves only when it has to.** Before, a click always put the
+  place in the middle of the map. Now the map goes there only when the place
+  is outside the view or nearer than 2 squares to its edge; a place already
+  well in view stays where it is and the ring shows it. With "Tank Centred"
+  on the view belongs to the followed tank and is not moved at all; the ring
+  is drawn when the place is in view.
+- One ring at a time. A new click starts it again at the new place. It ends
+  at once when playback is moved by anything else: the seek bar, Rewind,
+  Fast Forward, a step key. Playing on does not end it.
+- It is drawn after the map and before the panels, so a panel over the map
+  hides it. It is only in the viewer's own window: not in the game view, not
+  in the viewer inside the game's lobby, not in the browser build, not in a
+  saved picture.
+- The viewer draws a frame every time round its loop, so the ring needs no
+  redraw request of its own and costs nothing when none is running.
+
+**Events with no place: no ring, and the map is not moved.** Player lines
+(joined, left, changed team), chat messages, game lines (the start, the end
+of the log) and a pillbox that changed hands while a tank carried it. With a
+place: pillbox and base captured and stolen, builder killed, tank killed or
+died, a ping, a highlight.
+
+**Other notes.**
+
+- A click on a live feed still does nothing, so there is no ring there.
+- Unit tests: `lv_time_fmt_sums`, `lv_time_parse_sums`,
+  `lv_event_flash_sums`, `lv_event_seek_exact`.
+- The ring itself is SDL drawing and was not run in the headless try-out.
+
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the

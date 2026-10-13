@@ -4065,6 +4065,13 @@ int run_lv_event_kind_sums(void);
 int run_lv_event_overlay_slider(void);
 int run_lv_event_overlay_clusters(void);
 int run_lv_event_overlay_choice(void);
+/* The log viewer's playback times as text and the ring flashed round an
+ * event's place (test_lv_time_fmt.c); and a jump to an event stopping on the
+ * event's own tick (test_lv_presentation.c). */
+int run_lv_time_fmt_sums(void);
+int run_lv_time_parse_sums(void);
+int run_lv_event_flash_sums(void);
+int run_lv_event_seek_exact(void);
 /* The decode pass that lists a whole log's events at load
  * (test_lv_presentation.c): it posts each line once, stores no snapshot, and
  * leaves the world at the start as the loader did. */

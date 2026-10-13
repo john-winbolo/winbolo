@@ -158,12 +158,13 @@ void lv_controlsEnable(int state) {
 /* Jump the scrubber to a highlight moment and centre the view on its cell.
  * Playback stops across the seek, as it does on the desktop. */
 void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
-    lv_windowSeekToEvent(ms, 1, mapX, mapY);
+    lv_windowSeekToEvent(ms, 1, mapX, mapY, -1);
 }
 
 /* The same jump for any events panel line; only a line about a place on the
  * map (hasCell) moves the view. */
-void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY) {
+void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team) {
+    (void)team; /* the ring round the place is the desktop viewer's */
     bool wasPlaying = g_lv->playIsPlaying;
     if (wasPlaying) {
         lv_windowPause();
