@@ -436,6 +436,46 @@ int run_lv_event_marker(void) {
     UT_ASSERT_MSG(m.picture == LV_OVERLAY_PIC_BASE, "base stolen: the base");
     UT_ASSERT(m.team == -1);
 
+    /* How each is drawn: the two pictures of the map, the builder with an
+       X for a builder lost (with or with no team), the icon for the rest. */
+    UT_ASSERT(lvEventMarker(LV_EVK_PILL_CAPTURED, 3).drawing == LV_MARKER_PILL);
+    UT_ASSERT(lvEventMarker(LV_EVK_PILL_STOLEN, -1).drawing == LV_MARKER_PILL);
+    UT_ASSERT(lvEventMarker(LV_EVK_BASE_CAPTURED, 3).drawing == LV_MARKER_BASE);
+    UT_ASSERT(lvEventMarker(LV_EVK_BASE_STOLEN, -1).drawing == LV_MARKER_BASE);
+    UT_ASSERT_MSG(lvEventMarker(LV_EVK_BUILDER_LOST, 3).drawing == LV_MARKER_BUILDER_LOST,
+                  "builder lost: the builder with an X");
+    UT_ASSERT_MSG(lvEventMarker(LV_EVK_BUILDER_LOST, -1).drawing == LV_MARKER_BUILDER_LOST,
+                  "builder lost, no team: the same");
+    UT_ASSERT_MSG(lvEventMarker(LV_EVK_BUILDER_LOST, 3).team == 3,
+                  "builder lost keeps the team for the line round it");
+    for (kind = 0; kind < LV_EVK_COUNT; kind++) {
+        if (kind == LV_EVK_BUILDER_LOST || lvOverlayKindPicture(kind) != LV_OVERLAY_PIC_NONE) continue;
+        UT_ASSERT_MSG(lvEventMarker(kind, 2).drawing == LV_MARKER_ICON, "kind %d: its icon", kind);
+    }
+    UT_ASSERT_MSG(lvEventMarker(-1, 2).drawing == LV_MARKER_ICON, "unknown kind: the game icon");
+
+    /* The builder is drawn a whole number of times his 3 by 4 pixels, the
+       most that go in the room inside the marker's edge, and never wider or
+       higher than that room once it holds him at all. */
+    UT_ASSERT(lvMarkerBuilderScale(9.0f) == 2);   /* a marker of 13 */
+    UT_ASSERT(lvMarkerBuilderScale(8.0f) == 2);
+    UT_ASSERT(lvMarkerBuilderScale(7.9f) == 1);
+    UT_ASSERT(lvMarkerBuilderScale(12.0f) == 3);  /* a marker of 16 */
+    UT_ASSERT(lvMarkerBuilderScale(22.0f) == 5);  /* a marker of 26 */
+    UT_ASSERT(lvMarkerBuilderScale(2.0f) == 1);
+    UT_ASSERT(lvMarkerBuilderScale(0.0f) == 1);
+    {
+        float room;
+        for (room = 4.0f; room <= 40.0f; room += 0.5f) {
+            int n = lvMarkerBuilderScale(room);
+            UT_ASSERT_MSG((float)(n * LV_MARKER_BUILDER_H) <= room &&
+                          (float)(n * LV_MARKER_BUILDER_W) <= room,
+                          "room %g: %d times goes in", (double)room, n);
+            UT_ASSERT_MSG((float)((n + 1) * LV_MARKER_BUILDER_H) > room,
+                          "room %g: %d times is the most", (double)room, n);
+        }
+    }
+
     /* Every other kind: its own icon, with the team for the line round it. */
     for (kind = LV_EVK_BUILDER_LOST; kind < LV_EVK_COUNT; kind++) {
         m = lvEventMarker(kind, 5);

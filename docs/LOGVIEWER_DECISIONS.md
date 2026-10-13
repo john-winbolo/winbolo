@@ -911,6 +911,24 @@ events actual list".
   list, before this change, and it still does. The marker does not scroll:
   it stays at the left of the list and the text goes under its column and
   is cut off there. The text is not shortened with "...".
+- **"Builder lost" is a builder with an X over him (Oct 13).** The owner:
+  "'Builder lost' should be an LGM with X over it, I think we have that
+  icon somewhere?" The game has no such picture. What it has: the builder
+  of the map (`data/tile.bmp`, three frames of 3 by 4 pixels at x 428, 431
+  and 434, y 90: `LGM0_X`... in `src/gui/tiles.h`), the parachute tile of
+  his replacement, the "dead" picture of the status panels (a white X on
+  black, 12 by 12 at 440, 60: `STATUS_ITEM_DEAD_X`), and, for a dead
+  builder in the game's own HUD, the builder circle filled red
+  (`sdl3DrawSetManStatus` in `src/gui/sdl3/sdl3draw.c`). `data/items.bmp`
+  and `data/background.bmp` have no builder. So the marker is put together:
+  the map's builder (the standing frame, through `lv_builder_picture`), in
+  the game's own green with the red head, the most whole times his size
+  that go in the marker (2 times at 13 points: 6 by 8), and two thin red
+  lines from corner to corner over him, each on a darker line. It is on the
+  dark square with the line in the team's colour round it, as the other
+  icons are. With no tile sheet the drawn head and shoulders takes the
+  builder's place under the X. `lvEventMarker` says "builder lost" is drawn
+  so, for the lane, the list of kinds and the lines of the Events panel.
 - Only the lines in view are drawn (the list clipper is kept), and no
   texture is made: the pictures come from the game's sheets, already loaded.
 - Unit test: `lv_event_marker`. The headless try-out of the real Events
@@ -968,8 +986,9 @@ while the lane shows.
   with a **1 point line in the team's colour round it**. A tank kill has
   the game's own "dead" picture of the status panels and the colour of the
   killer's team (the team of the tank that died, when it died with no
-  killer). A builder is a head and shoulders, in the colour of the team
-  that lost it (the log does not say who shot it). Chat is a speech bubble
+  killer). A builder lost is the map's builder with an X over him (see
+  below), with the line in the colour of the team that lost it (the log
+  does not say who shot it). Chat is a speech bubble
   in the colour of the sender's team. Player is a ring, game a diamond and
   highlight a star; these have no team.
 - A second team (the old owner of a stolen pillbox or base, the tank that

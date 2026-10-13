@@ -318,7 +318,33 @@ void lv_event_marker_draw(ImDrawList *dl, int eventKind, int eventTeam, ImVec2 p
     /* A plain icon, with the colour of the team as a line round it. */
     const ImVec2 i0(p0.x + 2.0f, p0.y + 2.0f), i1(p1.x - 2.0f, p1.y - 2.0f);
     dl->AddRectFilled(p0, p1, dark, 2.0f);
-    if (kind != LV_EVK_TANK_KILLED || !overlay_dead_picture(dl, i0, i1, alpha)) {
+    if (marker.drawing == LV_MARKER_BUILDER_LOST) {
+        /* A builder lost: the map's own builder, in the game's colours, a
+         * whole number of times his 3 by 4 pixels, with an X over him. The
+         * game has no picture of a crossed-out builder, so it is put
+         * together here. With no tile sheet the drawn person takes his
+         * place. */
+        const float room = i1.x - i0.x;
+        const int n = lvMarkerBuilderScale(room);
+        const float bw = (float)(n * LV_MARKER_BUILDER_W), bh = (float)(n * LV_MARKER_BUILDER_H);
+        const ImVec2 b0(floorf(i0.x + (room - bw) * 0.5f), floorf(i0.y + (i1.y - i0.y - bh) * 0.5f));
+        if (!lv_builder_picture(dl, false, b0, ImVec2(b0.x + bw, b0.y + bh), alpha)) {
+            lv_icon_draw(dl, LV_ICON_PERSON, ImVec2(i0.x + 1.0f, i0.y + 1.0f),
+                         ImVec2(i1.x - 1.0f, i1.y - 1.0f), overlay_u32(text, alpha));
+        }
+        /* The X: two thin red lines from corner to corner, each on a
+         * darker one so it shows on the green of the builder. Thin, so
+         * most of him still shows. */
+        const float thick = (room >= 14.0f) ? 2.0f : 1.2f;
+        const ImU32 edge = overlay_u32(ImVec4(0.0f, 0.0f, 0.0f, 0.6f), alpha);
+        const ImU32 red = overlay_u32(ImVec4(1.0f, 0.22f, 0.22f, 1.0f), alpha);
+        const ImVec2 a0(i0.x + 0.5f, i0.y + 0.5f), a1(i1.x - 0.5f, i1.y - 0.5f);
+        const ImVec2 c0(i1.x - 0.5f, i0.y + 0.5f), c1(i0.x + 0.5f, i1.y - 0.5f);
+        dl->AddLine(a0, a1, edge, thick + 1.2f);
+        dl->AddLine(c0, c1, edge, thick + 1.2f);
+        dl->AddLine(a0, a1, red, thick);
+        dl->AddLine(c0, c1, red, thick);
+    } else if (kind != LV_EVK_TANK_KILLED || !overlay_dead_picture(dl, i0, i1, alpha)) {
         lv_icon_draw(dl, overlay_kind_icon(kind), ImVec2(i0.x + 1.0f, i0.y + 1.0f),
                      ImVec2(i1.x - 1.0f, i1.y - 1.0f), overlay_u32(text, alpha));
     }

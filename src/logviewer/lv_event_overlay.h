@@ -297,13 +297,38 @@ static inline LvOverlayPicture lvOverlayClusterPicture(const int *kinds, int cou
  * function what the marker is and one function draws it
  * (lv_event_marker_draw), so they cannot differ. */
 
+/* How the marker is drawn. */
+typedef enum {
+  LV_MARKER_ICON = 0,     /* the kind's drawn icon on a dark square */
+  LV_MARKER_PILL,         /* the map's picture of a pillbox */
+  LV_MARKER_BASE,         /* the map's picture of a base */
+  LV_MARKER_BUILDER_LOST  /* the map's picture of a builder on a dark square,
+                             with an X over him */
+} LvMarkerDrawing;
+
+/* The builder of the map is 3 pixels by 4 (LGM_WIDTH, LGM_HEIGHT of
+ * tiles.h). */
+#define LV_MARKER_BUILDER_W 3
+#define LV_MARKER_BUILDER_H 4
+
+/* How many times his own size the builder is drawn in a square room `room`
+ * on a side: the most whole times that go in, so that each of his pixels is
+ * a whole block and he stays sharp; 1 at least. In the 9 points a marker of
+ * 13 has inside its edge that is 2: a builder 6 wide and 8 high. */
+static inline int lvMarkerBuilderScale(float room) {
+  int n = (int)(room / (float)LV_MARKER_BUILDER_H);
+  return (n < 1) ? 1 : n;
+}
+
 /* What the marker of one event is:
+ *   drawing  how it is drawn
  *   picture  the map's picture of a pillbox or a base, or none (a drawn icon)
  *   kind     the kind the drawn icon is of (lvEventKind)
  *   team     the team whose colour the marker has: the colour of the picture
  *            (-1: the game's red pillbox, the game's neutral base), or of
  *            the line round the icon (-1: no line) */
 typedef struct {
+  LvMarkerDrawing drawing;
   LvOverlayPicture picture;
   int kind;
   int team;
@@ -318,6 +343,15 @@ static inline LvEventMarker lvEventMarker(int kind, int team) {
   if (kind < 0 || kind >= LV_EVK_COUNT) kind = LV_EVK_GAME;
   if (team < 0 || team >= LV_OVERLAY_TEAMS - 1) team = -1;
   m.picture = lvOverlayKindPicture(kind);
+  if (m.picture == LV_OVERLAY_PIC_PILL) {
+    m.drawing = LV_MARKER_PILL;
+  } else if (m.picture == LV_OVERLAY_PIC_BASE) {
+    m.drawing = LV_MARKER_BASE;
+  } else if (kind == LV_EVK_BUILDER_LOST) {
+    m.drawing = LV_MARKER_BUILDER_LOST;
+  } else {
+    m.drawing = LV_MARKER_ICON;
+  }
   m.kind = kind;
   m.team = team;
   return m;
