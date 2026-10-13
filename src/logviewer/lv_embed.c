@@ -161,6 +161,14 @@ void lv_windowPlay(void) {
         g_lv->playIsPlaying = TRUE;
         return;
     }
+    /* At the end of the log there is nothing to play: the timers would tick
+       a decoder that reads nothing, with the Pause button showing. A seek
+       or a rewind sets the decoder going again, and Play works after it.
+       Not for the viewer the game embeds (the recap reel): the game drives
+       that one, and what it sees from a Play at the end stays as it was. */
+    if (!lvEmbedIsActive() && g_lv->isLoaded && g_lv->isPlaying == FALSE) {
+        return;
+    }
     if (g_lv->playIsPlaying == FALSE) {
         if (!s_hostRunsTicks) {
             g_lv->timerGameID = SDL_AddTimer(20, lv_windowTimer, NULL);

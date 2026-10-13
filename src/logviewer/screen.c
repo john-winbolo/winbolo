@@ -2955,12 +2955,17 @@ bool lv_screenLogTick() {
 
   bool process = FALSE;
   s_logTickAtLiveHead = FALSE;
-  g_lv->timeRunning += 20; /* Add 20 ms */
-  if (g_lv->gmeStartDelay > 0) {
-    g_lv->gmeStartDelay--;
-  }
-  if (g_lv->gmeLength > 0 && g_lv->gmeStartDelay == 0) {
-    g_lv->gmeLength--;
+  /* The clocks stop with the log. A tick after the end (the Play button at
+     the end of a log, a step key) reads nothing, so it must not move the
+     time either: the readout would run on past the end of the recording. */
+  if (g_lv->isPlaying == TRUE) {
+    g_lv->timeRunning += 20; /* Add 20 ms */
+    if (g_lv->gmeStartDelay > 0) {
+      g_lv->gmeStartDelay--;
+    }
+    if (g_lv->gmeLength > 0 && g_lv->gmeStartDelay == 0) {
+      g_lv->gmeLength--;
+    }
   }
   lv_shellsDestroy(&g_lv->shs);
   g_lv->shs = lv_shellsCreate();

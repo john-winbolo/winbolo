@@ -1185,7 +1185,7 @@ int run_lv_event_scan_returns_to_start(void) {
     int             linesScan, linesRestore, linesPlay, linesAgain;
     bool            ran, ranLive, playingAtEnd, playingAfter, ffAfter;
     bool            reachedEnd;
-    uint32_t        timeAtEnd, timeAfter, timeAgain, timeLive;
+    uint32_t        timeAtEnd, timeAfter, timeAgain, timeLive, timeEndAgain;
     int             teamAtEnd, teamAfter;
     uint16_t        killsAfter;
 
@@ -1220,6 +1220,11 @@ int run_lv_event_scan_returns_to_start(void) {
     before     = g_lvStubEventsAdded;
     reachedEnd = lvpPlayToEnd();
     linesPlay  = g_lvStubEventsAdded - before;
+
+    /* Ticks after the end read nothing and must not move the clock. */
+    lv_screenLogTick();
+    lv_screenLogTick();
+    timeEndAgain = lv_screenGetTimeRunning();
 
     /* A restore with no scan before it does nothing. */
     before     = g_lvStubEventsAdded;
@@ -1260,6 +1265,8 @@ int run_lv_event_scan_returns_to_start(void) {
                   "end-of-log");
     UT_ASSERT_MSG(linesPlay == linesScan, "playback after the restore posted "
                   "%d lines, the scan %d", linesPlay, linesScan);
+    UT_ASSERT_MSG(timeEndAgain == 140, "two ticks after the end of the log "
+                  "moved the clock to %u ms (want 140)", (unsigned)timeEndAgain);
     UT_ASSERT_MSG(linesAgain == 0 && timeAgain == 140, "a restore with no "
                   "scan moved playback (%d lines, clock %u ms)", linesAgain,
                   (unsigned)timeAgain);
