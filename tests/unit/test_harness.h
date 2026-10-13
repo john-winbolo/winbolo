@@ -4207,6 +4207,10 @@ int run_lv_event_kinds_prefs(void);
 /* What the marker of one event is, for the lane, the list of kinds and the
  * lines of the Events panel. */
 int run_lv_event_marker(void);
+int run_lv_ping_store(void);
+int run_lv_ping_marker(void);
+int run_lv_ping_phase(void);
+int run_lv_dump_ping(void);
 /* The log viewer's playback times as text and the ring flashed round an
  * event's place (test_lv_time_fmt.c); and a jump to an event stopping on the
  * event's own tick (test_lv_presentation.c). */
@@ -4230,6 +4234,7 @@ int run_lv_controls_top_row(void);
 int run_lv_controls_bottom_row(void);
 /* The zoom of the log viewer's map as a percentage. */
 int run_lv_zoom_percent(void);
+int run_lv_fullscreen_key(void);
 /* The decode pass that lists a whole log's events at load
  * (test_lv_presentation.c): it posts each line once, stores no snapshot, and
  * leaves the world at the start as the loader did. */

@@ -302,9 +302,15 @@ typedef enum {
   LV_MARKER_ICON = 0,     /* the kind's drawn icon on a dark square */
   LV_MARKER_PILL,         /* the map's picture of a pillbox */
   LV_MARKER_BASE,         /* the map's picture of a base */
-  LV_MARKER_BUILDER_LOST  /* the map's picture of a builder on a dark square,
+  LV_MARKER_BUILDER_LOST, /* the map's picture of a builder on a dark square,
                              with an X over him */
+  LV_MARKER_PING          /* the game's icon for the kind of ping, in the
+                             game's colour for it, on a dark square */
 } LvMarkerDrawing;
+
+/* The number of kinds of ping (PING_KIND_COUNT; lv_ping_view.h has the same
+ * number and screen.c checks it against the game's). */
+#define LV_MARKER_PING_KINDS 6
 
 /* The builder of the map is 3 pixels by 4 (LGM_WIDTH, LGM_HEIGHT of
  * tiles.h). */
@@ -326,35 +332,56 @@ static inline int lvMarkerBuilderScale(float room) {
  *   kind     the kind the drawn icon is of (lvEventKind)
  *   team     the team whose colour the marker has: the colour of the picture
  *            (-1: the game's red pillbox, the game's neutral base), or of
- *            the line round the icon (-1: no line) */
+ *            the line round the icon (-1: no line)
+ *   ping     for LV_MARKER_PING the kind of ping whose icon it is
+ *            (PING_KIND_*, 0 .. LV_MARKER_PING_KINDS - 1); -1 for any other
+ *            marker */
 typedef struct {
   LvMarkerDrawing drawing;
   LvOverlayPicture picture;
   int kind;
   int team;
+  int ping;
 } LvEventMarker;
 
 /* The marker of an event of this kind that names this team (the new owner of
  * a pillbox or a base, the killer of a tank, the sender of a chat line; -1
  * when the event names no team). A kind out of range is a game event, as
- * the Events panel files it; a team that is not one of the 16 is no team. */
-static inline LvEventMarker lvEventMarker(int kind, int team) {
+ * the Events panel files it; a team that is not one of the 16 is no team.
+ *
+ * ping is the kind of ping the event is (PING_KIND_*), or -1 for an event
+ * that is not a map ping. Pings are filed with the chat lines (LV_EVK_CHAT),
+ * and a chat event that is a ping has the game's icon for its kind in place
+ * of the speech bubble. A kind of ping this build does not know is drawn as
+ * the plain ping, as the game draws it. On an event of any other kind the
+ * number means nothing. */
+static inline LvEventMarker lvEventMarkerFor(int kind, int team, int ping) {
   LvEventMarker m;
   if (kind < 0 || kind >= LV_EVK_COUNT) kind = LV_EVK_GAME;
   if (team < 0 || team >= LV_OVERLAY_TEAMS - 1) team = -1;
   m.picture = lvOverlayKindPicture(kind);
+  m.ping = -1;
   if (m.picture == LV_OVERLAY_PIC_PILL) {
     m.drawing = LV_MARKER_PILL;
   } else if (m.picture == LV_OVERLAY_PIC_BASE) {
     m.drawing = LV_MARKER_BASE;
   } else if (kind == LV_EVK_BUILDER_LOST) {
     m.drawing = LV_MARKER_BUILDER_LOST;
+  } else if (kind == LV_EVK_CHAT && ping >= 0) {
+    m.drawing = LV_MARKER_PING;
+    m.ping = (ping < LV_MARKER_PING_KINDS) ? ping : 0;
   } else {
     m.drawing = LV_MARKER_ICON;
   }
   m.kind = kind;
   m.team = team;
   return m;
+}
+
+/* The marker of an event that is not a map ping, and of a kind in the list
+ * of kinds. */
+static inline LvEventMarker lvEventMarker(int kind, int team) {
+  return lvEventMarkerFor(kind, team, -1);
 }
 
 #endif /* LV_EVENT_OVERLAY_H */

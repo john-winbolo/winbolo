@@ -30,6 +30,8 @@
 
 #include "lv_event_overlay.h"
 #include "lv_team_sprite.h"
+#include "lv_ping_view.h"
+#include "ping_kinds.h"   /* the game's kinds of ping, their icons, names and animation */
 #include "test_harness.h"
 
 static bool ovl_near(float a, float b) {
@@ -221,12 +223,12 @@ int run_lv_event_overlay_choice(void) {
 
     /* A buffer too small holds whole names only. */
     {
-        char small[14];
+        char tight[14];
         lvOverlayMaskToText((1u << LV_EVK_CHAT) | (1u << LV_EVK_GAME) | (1u << LV_EVK_PLAYER),
-                            small, sizeof(small));
-        UT_ASSERT_MSG(strcmp(small, "player,chat") == 0, "small buffer: \"%s\"", small);
-        lvOverlayMaskToText(1u << LV_EVK_PILL_CAPTURED, small, 4);
-        UT_ASSERT_MSG(strcmp(small, "non") == 0 || small[0] == '\0', "tiny buffer: \"%s\"", small);
+                            tight, sizeof(tight));
+        UT_ASSERT_MSG(strcmp(tight, "player,chat") == 0, "small buffer: \"%s\"", tight);
+        lvOverlayMaskToText(1u << LV_EVK_PILL_CAPTURED, tight, 4);
+        UT_ASSERT_MSG(strcmp(tight, "non") == 0 || tight[0] == '\0', "tiny buffer: \"%s\"", tight);
     }
     return 0;
 }
@@ -529,5 +531,229 @@ int run_lv_event_marker(void) {
     b = eo_row_sprite(LV_EVK_BASE_STOLEN, 3, 3);
     UT_ASSERT_MSG(a.fromAtlas != b.fromAtlas || a.tile != b.tile || a.col != b.col || a.row != b.row,
                   "a pillbox is not a base");
+    return 0;
+}
+
+/* ---- Map pings ------------------------------------------------------------ */
+
+/* The store keeps the kind and the place of every ping, in the order of
+   their times, keeps a ping the decoder passes twice only once, and says
+   which pings are on the map at a time. */
+int run_lv_ping_store(void) {
+    static LvPingStore st;
+    int first = -1, n, i;
+
+    lvPingStoreClear(&st);
+    UT_ASSERT(lvPingStoreShown(&st, 5000u, PING_DISPLAY_MS, &first) == 0);
+
+    /* Three pings, given out of order as a seek back gives them. */
+    UT_ASSERT(lvPingStoreAdd(&st, 20000u, 3, PING_KIND_ATTACK, 0x1234, 0xABCD));
+    UT_ASSERT(lvPingStoreAdd(&st, 30000u, 1, PING_KIND_ON_MY_WAY, 0x0A80, 0x6F10));
+    UT_ASSERT(lvPingStoreAdd(&st, 10000u, 7, PING_KIND_CAUTION, 0x8000, 0x0100));
+    UT_ASSERT(st.count == 3);
+    UT_ASSERT(st.rec[0].timeMs == 10000u && st.rec[1].timeMs == 20000u && st.rec[2].timeMs == 30000u);
+    /* Kind and place as given: every byte, neither swapped nor cut. */
+    UT_ASSERT_MSG(st.rec[1].sender == 3 && st.rec[1].kind == PING_KIND_ATTACK &&
+                      st.rec[1].worldX == 0x1234 && st.rec[1].worldY == 0xABCD,
+                  "the attack ping: sender %u kind %u at %04x,%04x", st.rec[1].sender,
+                  st.rec[1].kind, st.rec[1].worldX, st.rec[1].worldY);
+    UT_ASSERT(st.rec[0].sender == 7 && st.rec[0].kind == PING_KIND_CAUTION &&
+              st.rec[0].worldX == 0x8000 && st.rec[0].worldY == 0x0100);
+    UT_ASSERT(st.rec[2].sender == 1 && st.rec[2].kind == PING_KIND_ON_MY_WAY &&
+              st.rec[2].worldX == 0x0A80 && st.rec[2].worldY == 0x6F10);
+    /* The map square is the high byte of each. */
+    UT_ASSERT((st.rec[1].worldX >> 8) == 0x12 && (st.rec[1].worldY >> 8) == 0xAB);
+
+    /* The same record again (a seek, the pass that lists the events): not
+       kept twice, at the same time or a little off it, before or after. */
+    UT_ASSERT(!lvPingStoreAdd(&st, 20000u, 3, PING_KIND_ATTACK, 0x1234, 0xABCD));
+    UT_ASSERT(!lvPingStoreAdd(&st, 20020u, 3, PING_KIND_ATTACK, 0x1234, 0xABCD));
+    UT_ASSERT(!lvPingStoreAdd(&st, 19980u, 3, PING_KIND_ATTACK, 0x1234, 0xABCD));
+    UT_ASSERT(!lvPingStoreAdd(&st, 20000u + LV_PING_SAME_MS - 1u, 3, PING_KIND_ATTACK, 0x1234, 0xABCD));
+    UT_ASSERT(st.count == 3);
+    /* Another sender, kind or place at the same time is another ping, and
+       so is the same ping sent again later. */
+    UT_ASSERT(lvPingStoreAdd(&st, 20000u, 4, PING_KIND_ATTACK, 0x1234, 0xABCD));
+    UT_ASSERT(lvPingStoreAdd(&st, 20000u, 3, PING_KIND_ASSIST, 0x1234, 0xABCD));
+    UT_ASSERT(lvPingStoreAdd(&st, 20000u, 3, PING_KIND_ATTACK, 0x1334, 0xABCD));
+    UT_ASSERT(lvPingStoreAdd(&st, 20000u + LV_PING_SAME_MS, 3, PING_KIND_ATTACK, 0x1234, 0xABCD));
+    UT_ASSERT(st.count == 7);
+    for (i = 1; i < st.count; i++) {
+        UT_ASSERT_MSG(st.rec[i - 1].timeMs <= st.rec[i].timeMs, "out of order at %d", i);
+    }
+
+    /* What is on the map at a time: the pings of the five seconds before
+       it. The one at 10000 from 10000 to 14999. */
+    UT_ASSERT(lvPingStoreShown(&st, 9999u, PING_DISPLAY_MS, &first) == 0);
+    UT_ASSERT(lvPingStoreShown(&st, 10000u, PING_DISPLAY_MS, &first) == 1 && first == 0);
+    UT_ASSERT(lvPingStoreShown(&st, 14999u, PING_DISPLAY_MS, &first) == 1 && first == 0);
+    UT_ASSERT(lvPingStoreShown(&st, 15000u, PING_DISPLAY_MS, &first) == 0);
+    /* The four at 20000 and the one just after it, the oldest first. */
+    n = lvPingStoreShown(&st, 20200u, PING_DISPLAY_MS, &first);
+    UT_ASSERT_MSG(n == 5 && first == 1, "at 20200: %d from %d", n, first);
+    UT_ASSERT(st.rec[first + n - 1].timeMs == 20000u + LV_PING_SAME_MS);
+    /* A seek back to before them: none, and they are still kept. */
+    UT_ASSERT(lvPingStoreShown(&st, 19000u, PING_DISPLAY_MS, &first) == 0);
+    UT_ASSERT(st.count == 7);
+    UT_ASSERT(lvPingStoreShown(&st, 32000u, PING_DISPLAY_MS, &first) == 1 && first == 6);
+
+    /* A full store drops its oldest, and stays in order. */
+    lvPingStoreClear(&st);
+    for (i = 0; i < LV_PING_STORE_MAX; i++) {
+        UT_ASSERT(lvPingStoreAdd(&st, 1000u * (uint32_t)(i + 1), 2, PING_KIND_STANDARD,
+                                 (uint16_t)i, (uint16_t)(i * 3)));
+    }
+    UT_ASSERT(st.count == LV_PING_STORE_MAX);
+    UT_ASSERT(lvPingStoreAdd(&st, 1000u * (uint32_t)(LV_PING_STORE_MAX + 1), 2, PING_KIND_ATTACK, 9, 9));
+    UT_ASSERT(st.count == LV_PING_STORE_MAX);
+    UT_ASSERT(st.rec[0].timeMs == 2000u && st.rec[0].worldX == 1);
+    UT_ASSERT(st.rec[LV_PING_STORE_MAX - 1].kind == PING_KIND_ATTACK);
+    /* One older than all of a full store is not taken. */
+    UT_ASSERT(!lvPingStoreAdd(&st, 500u, 2, PING_KIND_ATTACK, 9, 9));
+
+    /* Who sees a ping. The view of all teams: every one. */
+    UT_ASSERT(lvPingSeen(false, 3, 5, false, 0, 0));
+    UT_ASSERT(lvPingSeen(false, 3, 5, false, 1, 2));
+    /* One player's view: its own, an ally's, and its lobby team's. */
+    UT_ASSERT(lvPingSeen(true, 5, 5, false, 0, 0));
+    UT_ASSERT(lvPingSeen(true, 3, 5, true, 0, 0));
+    UT_ASSERT(lvPingSeen(true, 3, 5, true, 1, 2));
+    UT_ASSERT(lvPingSeen(true, 3, 5, false, 2, 2));
+    /* Not another team's, and "no team" (0) is not a team two players share. */
+    UT_ASSERT(!lvPingSeen(true, 3, 5, false, 1, 2));
+    UT_ASSERT(!lvPingSeen(true, 3, 5, false, 0, 0));
+    UT_ASSERT(!lvPingSeen(true, 3, 5, false, 0, 2));
+    UT_ASSERT(!lvPingSeen(true, 3, 5, false, 2, 0));
+    return 0;
+}
+
+/* A chat event that is a ping has the game's icon for its kind: one picture
+   for each of the game's kinds, each with its own colour and name. */
+int run_lv_ping_marker(void) {
+    static const char *const files[PING_KIND_COUNT] = {
+        "standard.svg", "caution.svg", "assist.svg", "attack.svg", "onmyway.svg", "botcommand.svg"
+    };
+    LvEventMarker m;
+    int k, j;
+
+    /* The viewer's two counts of the kinds are the game's. */
+    UT_ASSERT_MSG(LV_MARKER_PING_KINDS == PING_KIND_COUNT && LV_PING_KINDS == PING_KIND_COUNT,
+                  "the game has %d kinds of ping", (int)PING_KIND_COUNT);
+    UT_ASSERT(PING_KIND_STANDARD == 0 && PING_KIND_CAUTION == 1 && PING_KIND_ASSIST == 2 &&
+              PING_KIND_ATTACK == 3 && PING_KIND_ON_MY_WAY == 4 && PING_KIND_BOT_COMMAND == 5);
+
+    for (k = 0; k < PING_KIND_COUNT; k++) {
+        m = lvEventMarkerFor(LV_EVK_CHAT, 4, k);
+        UT_ASSERT_MSG(m.drawing == LV_MARKER_PING, "ping kind %d: a ping marker", k);
+        UT_ASSERT_MSG(m.ping == k, "ping kind %d: its own icon, not %d", k, m.ping);
+        UT_ASSERT_MSG(m.team == 4, "ping kind %d: the sender's team for the line round it", k);
+        UT_ASSERT(m.kind == LV_EVK_CHAT && m.picture == LV_OVERLAY_PIC_NONE);
+        UT_ASSERT(lvEventMarkerFor(LV_EVK_CHAT, -1, k).team == -1);
+        UT_ASSERT(lvPingDrawnKind(k) == k);
+        /* The picture is the game's file for the kind, and no two kinds
+           share a file, a colour or a name. */
+        UT_ASSERT_MSG(strcmp(pingKindStyle((unsigned char)m.ping)->iconFile, files[k]) == 0,
+                      "ping kind %d: file %s", k, pingKindStyle((unsigned char)m.ping)->iconFile);
+        for (j = 0; j < k; j++) {
+            const PingKindStyle *a = pingKindStyle((unsigned char)k);
+            const PingKindStyle *b = pingKindStyle((unsigned char)j);
+            UT_ASSERT_MSG(strcmp(a->iconFile, b->iconFile) != 0, "kinds %d and %d: one file", k, j);
+            UT_ASSERT_MSG(a->r != b->r || a->g != b->g || a->b != b->b, "kinds %d and %d: one colour", k, j);
+            UT_ASSERT_MSG(pingKindNameId((unsigned char)k) != pingKindNameId((unsigned char)j),
+                          "kinds %d and %d: one name", k, j);
+            UT_ASSERT_MSG(pingKindMessageId((unsigned char)k) != pingKindMessageId((unsigned char)j),
+                          "kinds %d and %d: one line", k, j);
+        }
+    }
+    UT_ASSERT(pingKindNameId(PING_KIND_ATTACK) == STR_PING_ATTACK);
+    UT_ASSERT(pingKindMessageId(PING_KIND_ATTACK) == MESSAGE_PING_ATTACK);
+
+    /* A kind this build does not know: the plain ping, as the game draws it. */
+    m = lvEventMarkerFor(LV_EVK_CHAT, 2, PING_KIND_COUNT);
+    UT_ASSERT(m.drawing == LV_MARKER_PING && m.ping == PING_KIND_STANDARD);
+    m = lvEventMarkerFor(LV_EVK_CHAT, 2, 255);
+    UT_ASSERT(m.drawing == LV_MARKER_PING && m.ping == PING_KIND_STANDARD);
+    UT_ASSERT(lvPingDrawnKind(PING_KIND_COUNT) == PING_KIND_STANDARD && lvPingDrawnKind(-1) == 0);
+
+    /* A chat line that is not a ping keeps the speech bubble, and so does
+       the row for chat in the list of kinds. */
+    m = lvEventMarkerFor(LV_EVK_CHAT, 2, -1);
+    UT_ASSERT_MSG(m.drawing == LV_MARKER_ICON && m.ping == -1, "a chat line is not a ping");
+    m = lvEventMarker(LV_EVK_CHAT, 2);
+    UT_ASSERT(m.drawing == LV_MARKER_ICON && m.ping == -1);
+
+    /* The number means nothing on an event of another kind. */
+    for (k = 0; k < LV_EVK_COUNT; k++) {
+        LvEventMarker plain = lvEventMarker(k, 1);
+        if (k == LV_EVK_CHAT) continue;
+        m = lvEventMarkerFor(k, 1, PING_KIND_ATTACK);
+        UT_ASSERT_MSG(m.drawing == plain.drawing && m.ping == -1 && m.picture == plain.picture,
+                      "kind %d is not a ping", k);
+    }
+    return 0;
+}
+
+/* The animation of a ping on the map is the game's, and the only thing it is
+   worked out from is the playback clock's time less the time of the ping. So
+   it is the same however that time was reached: played at any speed, paused,
+   or jumped to. */
+int run_lv_ping_phase(void) {
+    static LvPingStore st;
+    const uint32_t at = 61000u;
+    uint32_t now;
+    int first = 0, n;
+
+    /* The game's numbers this test is written against. */
+    UT_ASSERT(PING_DISPLAY_MS == 5000 && PING_FADE_MS == 1000 && PING_BLINK_PERIOD_MS == 1000 &&
+              PING_BLINK_FIRST_ON_MS == 500 && PING_BLINK_ON_MS == 250 && PING_BLINK_COUNT == 3);
+
+    /* Not on the map before it is sent, or five seconds after. */
+    UT_ASSERT(lvPingAgeMs(at - 1u, at, PING_DISPLAY_MS) == -1);
+    UT_ASSERT(lvPingAgeMs(0u, at, PING_DISPLAY_MS) == -1);
+    UT_ASSERT(lvPingAgeMs(at, at, PING_DISPLAY_MS) == 0);
+    UT_ASSERT(lvPingAgeMs(at + 4999u, at, PING_DISPLAY_MS) == 4999);
+    UT_ASSERT(lvPingAgeMs(at + 5000u, at, PING_DISPLAY_MS) == -1);
+    UT_ASSERT(lvPingAgeMs(at + 600000u, at, PING_DISPLAY_MS) == -1);
+
+    /* The age is the difference of the two times and nothing else: the same
+       ping at another time of the log has the same ages. */
+    for (now = 0u; now < 6000u; now += 20u) {
+        UT_ASSERT(lvPingAgeMs(at + now, at, PING_DISPLAY_MS) ==
+                  lvPingAgeMs(1000u + now, 1000u, PING_DISPLAY_MS));
+    }
+
+    /* A click on the ping's event seeks to its time: age 0, where the game's
+       marker is full on, with its ring just starting to close. */
+    UT_ASSERT(pingWorldMarkerAlpha(lvPingAgeMs(at, at, PING_DISPLAY_MS)) == 1.0f);
+    UT_ASSERT(pingDisplayAlpha(lvPingAgeMs(at, at, PING_DISPLAY_MS)) == 1.0f);
+    /* A jump into the middle of it, or a pause there: the marker is where
+       the game has it at that age. Dark between the flashes... */
+    UT_ASSERT(pingWorldMarkerAlpha(lvPingAgeMs(at + 600u, at, PING_DISPLAY_MS)) == 0.0f);
+    UT_ASSERT(pingWorldMarkerAlpha(lvPingAgeMs(at + 1500u, at, PING_DISPLAY_MS)) == 0.0f);
+    /* ...on in the second and third flash... */
+    UT_ASSERT(pingWorldMarkerAlpha(lvPingAgeMs(at + 1120u, at, PING_DISPLAY_MS)) == 1.0f);
+    UT_ASSERT(pingWorldMarkerAlpha(lvPingAgeMs(at + 2120u, at, PING_DISPLAY_MS)) == 1.0f);
+    /* ...and no fourth flash, while the sender's name stays to the end. */
+    UT_ASSERT(pingWorldMarkerAlpha(lvPingAgeMs(at + 3120u, at, PING_DISPLAY_MS)) == 0.0f);
+    UT_ASSERT(pingDisplayAlpha(lvPingAgeMs(at + 3120u, at, PING_DISPLAY_MS)) == 1.0f);
+    UT_ASSERT(pingDisplayAlpha(lvPingAgeMs(at + 4500u, at, PING_DISPLAY_MS)) == 0.5f);
+    /* Paused: the same time gives the same marker, however often asked. */
+    UT_ASSERT(pingWorldMarkerAlpha(lvPingAgeMs(at + 460u, at, PING_DISPLAY_MS)) ==
+              pingWorldMarkerAlpha(lvPingAgeMs(at + 460u, at, PING_DISPLAY_MS)));
+    /* Past its time and before it: the game draws nothing for an age of -1. */
+    UT_ASSERT(pingDisplayAlpha(lvPingAgeMs(at + 5000u, at, PING_DISPLAY_MS)) == 0.0f);
+    UT_ASSERT(pingDisplayAlpha(lvPingAgeMs(at - 20u, at, PING_DISPLAY_MS)) == 0.0f);
+    UT_ASSERT(pingWorldMarkerAlpha(lvPingAgeMs(at - 20u, at, PING_DISPLAY_MS)) == 0.0f);
+
+    /* The store and the age agree on when a ping is on the map, for every
+       step of playback across its life and a little each side. */
+    lvPingStoreClear(&st);
+    UT_ASSERT(lvPingStoreAdd(&st, at, 0, PING_KIND_ATTACK, 0x4040, 0x5050));
+    for (now = at - 200u; now <= at + 5200u; now += 20u) {
+        n = lvPingStoreShown(&st, now, PING_DISPLAY_MS, &first);
+        UT_ASSERT_MSG((n == 1) == (lvPingAgeMs(now, at, PING_DISPLAY_MS) >= 0), "at %u", (unsigned)now);
+        UT_ASSERT_MSG((n == 1) == (pingDisplayAlpha((int)now - (int)at) > 0.0f), "game, at %u",
+                      (unsigned)now);
+    }
     return 0;
 }

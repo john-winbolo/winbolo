@@ -27,6 +27,7 @@
 
 #include "lv_controls_layout.h"
 #include "lv_zoom_text.h"
+#include "lv_fullscreen_key.h"
 #include "test_harness.h"
 
 static LvControlsTopIn cl_in(float w, int buttons) {
@@ -346,6 +347,50 @@ int run_lv_zoom_percent(void) {
                 }
             }
         }
+    }
+    return 0;
+}
+
+/* Alt+Enter is the full screen key: Enter or the Enter of the number pad
+   with either Alt key. A repeat of it does nothing but is still kept from the
+   viewer. Any other key is not this command's. */
+int run_lv_fullscreen_key(void) {
+    const unsigned int ret = LV_FSKEY_SCANCODE_RETURN, kp = LV_FSKEY_SCANCODE_KP_ENTER;
+    const unsigned int lalt = LV_FSKEY_MOD_LALT, ralt = LV_FSKEY_MOD_RALT;
+    const unsigned int shift = 0x0001u, ctrl = 0x0040u, gui = 0x0400u, num = 0x1000u, caps = 0x2000u;
+    unsigned int sc;
+
+    /* The numbers are SDL's (SDL_scancode.h, SDL_keycode.h). */
+    UT_ASSERT(ret == 40u && kp == 88u && lalt == 0x0100u && ralt == 0x0200u);
+
+    /* Both Alt keys, both Enters. */
+    UT_ASSERT(lvFullScreenKey(false, lalt, ret) == LV_FSKEY_TOGGLE);
+    UT_ASSERT(lvFullScreenKey(false, ralt, ret) == LV_FSKEY_TOGGLE);
+    UT_ASSERT(lvFullScreenKey(false, lalt, kp) == LV_FSKEY_TOGGLE);
+    UT_ASSERT(lvFullScreenKey(false, ralt, kp) == LV_FSKEY_TOGGLE);
+    UT_ASSERT(lvFullScreenKey(false, lalt | ralt, ret) == LV_FSKEY_TOGGLE);
+
+    /* Num Lock and Caps Lock are "held" all the time on many keyboards, and
+       the other modifier keys make no difference, as in the game. */
+    UT_ASSERT(lvFullScreenKey(false, lalt | num | caps, ret) == LV_FSKEY_TOGGLE);
+    UT_ASSERT(lvFullScreenKey(false, lalt | shift, ret) == LV_FSKEY_TOGGLE);
+    UT_ASSERT(lvFullScreenKey(false, ralt | ctrl, kp) == LV_FSKEY_TOGGLE);
+
+    /* Held down: one command. The repeats are swallowed, not passed on. */
+    UT_ASSERT(lvFullScreenKey(true, lalt, ret) == LV_FSKEY_SWALLOW);
+    UT_ASSERT(lvFullScreenKey(true, ralt, kp) == LV_FSKEY_SWALLOW);
+
+    /* Enter with no Alt is an ordinary Enter, repeated or not. */
+    UT_ASSERT(lvFullScreenKey(false, 0u, ret) == LV_FSKEY_NOT_OURS);
+    UT_ASSERT(lvFullScreenKey(true, 0u, ret) == LV_FSKEY_NOT_OURS);
+    UT_ASSERT(lvFullScreenKey(false, 0u, kp) == LV_FSKEY_NOT_OURS);
+    UT_ASSERT(lvFullScreenKey(false, shift | ctrl | gui | num | caps, ret) == LV_FSKEY_NOT_OURS);
+
+    /* Alt with any other key is not the command: every scancode but the two. */
+    for (sc = 0; sc < 512u; sc++) {
+        if (sc == ret || sc == kp) continue;
+        UT_ASSERT_MSG(lvFullScreenKey(false, lalt, sc) == LV_FSKEY_NOT_OURS, "scancode %u", sc);
+        UT_ASSERT_MSG(lvFullScreenKey(true, ralt, sc) == LV_FSKEY_NOT_OURS, "scancode %u, repeat", sc);
     }
     return 0;
 }

@@ -62,6 +62,22 @@ int  lv_drawGameViewPixelZoom(void);
 void lv_drawGameViewFrame(void *screenView, void *mineView,
                           void *tanks, void *bullets, void *lgms);
 
+/* One map ping on the overview map, drawn by the game's own marker
+ * (pingMarkerDraw), so it has the game's icon, colour, flashes, arrival
+ * ring and sender's name. It is here because the game's marker is built on
+ * the game's types, which draw.c cannot include. (cx, cy) is the middle of
+ * the ping's map square on the window and tilePx the side of a square
+ * there, both in pixels; ageMs how long ago on the playback clock the ping
+ * was sent, which is all the animation is worked out from; name the
+ * sender's name and font a TTF_Font to draw it in (NULL: no name). A ping
+ * past its time draws nothing. */
+void lv_drawOverviewPing(float cx, float cy, float tilePx, unsigned char kind,
+                         unsigned char sender, const char *name,
+                         unsigned int ageMs, void *font);
+/* Free the textures of the names lv_drawOverviewPing made. Before the font
+ * they were made from is closed, and before the renderer goes. */
+void lv_drawOverviewPingsFlush(void);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

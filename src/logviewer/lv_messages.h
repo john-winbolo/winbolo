@@ -225,6 +225,20 @@ void lv_messageAddAt(lvEventKind kind, int mapX, int mapY,
 void lv_messageTagPlayers(int actor, int other);
 
 /*********************************************************
+*NAME:          lv_messageTagPing
+*PURPOSE:
+*  Says that the next lv_messageAddAt line is a map ping
+*  and of which kind, so the host can show the game's icon
+*  for that kind beside the line. Call it just before the
+*  line is added, as lv_messageTagPlayers; a line added
+*  with no call before it is not a ping.
+*
+*ARGUMENTS:
+*  pingKind - PING_KIND_*, as the log record has it
+*********************************************************/
+void lv_messageTagPing(int pingKind);
+
+/*********************************************************
 *NAME:          lv_messageAddItem
 *AUTHOR:        John Morrison
 *CREATION DATE:  3/1/99

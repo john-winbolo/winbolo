@@ -249,6 +249,13 @@ void logViewerRequestAppQuit(void);
  * embedded caller asks; it hands the answer to windowSetQuitting(). */
 bool logViewerAppQuitRequested(void);
 
+/* Full screen for the viewer's window: can it be turned on and off here
+ * (not on a Steam Deck or a tablet), is it on, and the command itself, which
+ * Alt+Enter and the Full Screen item of the Windows menu both give. */
+bool lv_windowCanFullScreen(void);
+bool lv_windowIsFullScreen(void);
+void lv_windowToggleFullScreen(void);
+
 /* Entry point for loading from an in-memory zip buffer (mobile).
  * Takes ownership of zipData. */
 void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *renderer,

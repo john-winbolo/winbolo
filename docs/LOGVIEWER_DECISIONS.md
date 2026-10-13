@@ -1311,6 +1311,126 @@ whole has one decimal ("62.5%"). The nine steps are all whole.
   count of lines that were too wide before (20, none of them this row) did
   not change.
 
+### Alt+Enter is full screen (Oct 13)
+
+The owner: "can we also support alt+enter when in the log viewer?"
+
+**How the game does it.** The key is read off the SDL event before ImGui is
+given it: in a game in `sdl3imgui.cpp`, on the welcome screen and the lobby
+through `dialogIsFullScreenToggleEvent` (`imgui_dialog_utils.h`). Both Alt
+keys, Enter and the Enter of the number pad, no repeats. Outside a game the
+command is `windowFullScreenChoose` (`winbolo.c`): `SDL_SetWindowFullscreen`
+with no display mode chosen, which is a borderless window over the whole of
+the display the window is on, then `SDL_SyncWindow`, then the setting is
+saved (`[SETTINGS] FullScreen`) and comes back at the next start. SDL keeps
+the size and place the window had. On a Mac the Window menu has "Enter Full
+Screen" with Control-Command-F and a checkmark. Not on a Steam Deck or a
+tablet, where the window is full screen from the start.
+
+**The viewer had no full screen** of its own: no menu item, no key, no
+setting. (The old Windows resource file has a greyed "Fullscreen" item that
+nothing reads.)
+
+**What the viewer does now.**
+
+- Alt+Enter turns full screen on and off. The key is taken before anything
+  else sees the event, in all three loops (a log, a live game, and the wait
+  for a live game to start), so it works with the keyboard in any panel, on
+  the map, playing or paused, with a log open or none, and the Enter never
+  reaches a text box or a button. Held down it is one command: the repeats
+  do nothing and are kept from the viewer too (the game lets them through;
+  here a repeat of Enter in the comment box would be a new line). The rule
+  is `lvFullScreenKey` in `lv_fullscreen_key.h`.
+- The Windows menu has "Full Screen" as its last item, with a checkmark and
+  "Alt+Enter" beside it (string 2013, which the game's settings already
+  had). On a Mac it is "Enter Full Screen" with Control-Command-F and a
+  checkmark, as in the game's Window menu (string 1249). No new string.
+- The viewer's own window: the same SDL call as the game, so the same kind
+  of full screen, and SDL puts the size and place back. The state is saved
+  as `Window.FullScreen` beside the window's place and comes back at the
+  next start, as the game's does. While the window is full screen its
+  saved size, place and "maximized" stay as they were, so they are what it
+  goes back to.
+- WinBolo's window (Watch a Log, or a live game watched from the game): the
+  game is not reading the keyboard while the viewer runs, so nothing would
+  happen, and nothing is done twice. The viewer asks the game: it
+  calls `lvGameFullScreenChoose` (`lv_fullscreen_game.c`, built into WinBolo
+  only), which calls the game's `windowFullScreenChoose`. The game's front
+  end has no code for this. So the game's own setting changes with
+  the window and is saved by the game.
+- The sidebars and panels stay as they are: to them it is a change of the
+  window's size, the same as maximizing. The zoom of the overview does not
+  change, so its percentage does not. The game view (the ` key) has a size
+  of its own; when full screen is turned off while it shows, it is set up
+  again so its window has that size.
+- Not on a Steam Deck or a tablet, as in the game, and not in a browser.
+
+- Unit test: `lv_fullscreen_key`.
+
+### Pings show their kind and the game's marker (Oct 13)
+
+The owner: "For chat and pings, can we put the type of ping it is and its
+animation just like how the game does it?"
+
+**What the log holds.** One `log_Ping` record for each ping (`log.h`,
+written in `server_command_dispatch.c`): the sender's slot, the kind, and
+the place in world units (256 for each map square). The time is the tick of
+the record. The log does not hold who the ping was sent to, the object the
+ping was on (a pill, a base, a tank), or which players had pings muted. It
+does hold the lobby teams (`log_TeamSet`) and the alliances, so the viewer
+works out who was sent a ping with the game's own rule
+(`serverSimPingReachesClient`): the sender, the sender's allies, and the
+players in the sender's lobby team.
+
+**The kind.** A ping is still an event of the Chat kind, with the game's own
+line as its text ("{player}: Attack!"). A kind of its own would drop pings
+from the list of every user who has a saved choice of kinds. The marker at
+the start of the Events row, and the marker on the timeline's event lane, is
+now the game's icon for that kind of ping, in the game's colour for the
+kind, with a line in the sender's team colour round it. The tooltip of the
+marker is the game's name for the kind. A chat line keeps the speech bubble.
+The icons and the colours are the game's (`ping_kinds.h`, `ping_icons.c`),
+so a new kind of ping in the game needs no work here; a compile-time check
+in `screen.c` fails if the count of kinds changes.
+
+**The animation.** The game draws a ping with `pingMarkerDraw`
+(`ping_marker.c`), which works out the blink and the fade from the age of
+the ping and nothing else. The viewer calls the same function with the age
+in game time: the time of the log now, minus the time of the ping. So the
+marker is the game's at each speed, stands still while the log is paused,
+and is right after a seek. A click on a ping's row goes to the tick of the
+ping, where its age is 0 and the animation starts.
+
+- The viewer kept the last 16 pings that the decoder passed. After a seek
+  back, those were pings from later in the log. It now keeps the pings of
+  the whole log (`lv_ping_view.h`, up to 4096, sorted by time; the scan of
+  the log fills it) and shows those whose time is in the last
+  `PING_DISPLAY_MS` before now. On a live feed it has the pings decoded so
+  far.
+- The game view drew pings already. The Overview map now draws them too
+  (`lvDrawPingsOverBlit` in `draw.c`), with the sender's name as the game's
+  full-screen map does.
+- With the view of one player (the eye), only the pings that player was
+  sent are drawn. With all teams, all pings are drawn. The Events list
+  shows all pings in both views, as it shows all chat.
+
+**Not done, and why.**
+
+- No object for the ping: the log has none. The marker is at the place the
+  sender clicked.
+- A player who had pings muted still has the ping drawn in that player's
+  view: the log does not hold mutes.
+- On the Overview map the marker is drawn over the finished picture, so it
+  is over the tanks. The game draws it under them.
+- The Overview map of the viewer inside WinBolo (Watch a Log) is drawn by
+  another path and has no ping markers yet. Its game view has them.
+- No sound: the viewer plays no ping sound, and none was added.
+- No setting to turn the markers off.
+- More than 16 pings on screen at one time: the newest 16 are drawn.
+
+To show more, the log writer must also write, at the time the ping is sent:
+the players the ping went to, the object it was on, and the mutes.
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the

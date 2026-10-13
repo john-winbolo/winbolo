@@ -486,6 +486,7 @@ static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawTankMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawEventFlashOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 
 /* Paint the world render target into the viewer's own window.
  *
@@ -551,6 +552,9 @@ static void lvDrawBlitTargetToWindow(void) {
     if (!lv->gameView) {
         s_blitSrc = srcRect;
         s_blitDst = dstRect;
+        /* The map pings first: the tank names, the bars and the ring of an
+           event go over them. */
+        lvDrawPingsOverBlit(&srcRect, &dstRect);
         lvDrawTankMarkOverBlit(&srcRect, &dstRect);
         /* The bars first, so a name is never under one. */
         lvDrawTankBarsOverBlit(&srcRect, &dstRect);
@@ -1078,12 +1082,14 @@ BYTE lv_drawSetup(void) {
 
 static void lvFlushRegionNames(void);
 static void lvFlushTankLabels(void);
+static void lvFlushPingNames(void);
 
 void lv_drawCleanup(void) {
     /* First, while the renderer the names were made on and the font they
        were made from are both still there. */
     lvFlushRegionNames();
     lvFlushTankLabels();
+    lvFlushPingNames();
     s_tankLabelCount = 0;
     /* A GIF export that was still running when the session ended must not
        leave the next session drawing its names into the target. */
@@ -2656,6 +2662,104 @@ void lv_drawEventFlashAt(float cx, float cy, float tilePx, const SDL_Rect *view)
 
     SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
     SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+/* ---- Map pings on the overview map ---------------------------------------
+   The game view draws the pings of the log with the game's own marker
+   (gv_drawPings). The overview map does the same, over the blit: the marker
+   is drawn at the size the map square has on the window, so it is sharp at
+   every zoom. lv_screenGetPing gives the pings that are on the map at the
+   playback's time now and the age of each, and the marker's animation is
+   worked out from the age alone, so it is the game's at any playback speed,
+   stands still when playback is paused, and is part way through after a
+   jump into the middle of it. */
+
+/* The font of the sender's name under a marker: the tank names' face, at the
+   game's size for the display. Its own, since the tank names' font changes
+   size with the zoom and is not there at all while the names are drawn into
+   the target. */
+static TTF_Font *s_pingNameFont = NULL;
+static int       s_pingNameFontPx = 0;
+
+static void lvFlushPingNames(void) {
+    /* The textures first: they were made from the font. */
+    lv_drawOverviewPingsFlush();
+    if (s_pingNameFont != NULL) TTF_CloseFont(s_pingNameFont);
+    s_pingNameFont = NULL;
+    s_pingNameFontPx = 0;
+}
+
+static TTF_Font *lvPingNameFont(void) {
+    int px = (int)SDL_lroundf((float)LV_TANK_LABEL_PX * lvDrawPixelScale());
+    if (px < LV_TANK_LABEL_MIN_PX) px = LV_TANK_LABEL_MIN_PX;
+    if (px != s_pingNameFontPx) {
+        const char *base = SDL_GetBasePath();
+        char path[1024];
+        lvFlushPingNames();
+        SDL_snprintf(path, sizeof(path), "%sdata/fonts/SarasaMonoSlabJ-Regular.ttf",
+                     base ? base : "./");
+        s_pingNameFont = TTF_OpenFont(path, (float)px);
+        s_pingNameFontPx = px;
+    }
+    return s_pingNameFont;
+}
+
+/* Draw the pings over the blit: src is the slice of the target the blit
+   took, dst where it went. The place is worked out as the ring of an event
+   works out its own (lvDrawEventFlashOverBlit). */
+static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    float scale, tilePx;
+    BYTE offX = 0, offY = 0;
+    BYTE zoomFactor;
+    SDL_Rect clip, oldClip;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    bool hadClip = FALSE;
+    bool begun = FALSE;
+    int cap, i;
+
+    if (sdlRenderer == NULL) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    scale = dst->w / src->w;
+    zoomFactor = lv_windowGetZoomFactor();
+    tilePx = (float)(zoomFactor * TILE_SIZE_X) * scale;
+    lv_screenGetOffsets(&offX, &offY);
+    cap = lv_screenGetPingCapacity();
+
+    for (i = 0; i < cap; i++) {
+        BYTE sender = 0, kind = 0;
+        uint16_t wx = 0, wy = 0;
+        uint32_t ageMs = 0;
+        char name[PLAYER_NAME_LEN];
+        float cx, cy;
+
+        if (!lv_screenGetPing(i, &sender, &kind, &wx, &wy, &ageMs)) continue;
+        if (!begun) {
+            /* Only when there is a ping to draw: most frames have none. The
+               marker stays on the map, and off the sidebars beside it. */
+            begun = TRUE;
+            hadClip = SDL_RenderClipEnabled(sdlRenderer);
+            SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+            SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+            clip.x = (int)dst->x;
+            clip.y = (int)dst->y;
+            clip.w = (int)dst->w;
+            clip.h = (int)dst->h;
+            SDL_SetRenderClipRect(sdlRenderer, &clip);
+        }
+        /* World units are 256 to a map square; the marker names the square
+           the ping is in, so it goes on the middle of that square. */
+        cx = ((float)((int)(wx >> 8) - (int)offX) + 0.5f) * (float)(zoomFactor * TILE_SIZE_X);
+        cy = ((float)((int)(wy >> 8) - (int)offY) + 0.5f) * (float)(zoomFactor * TILE_SIZE_Y);
+        cx = dst->x + (cx - src->x) * scale;
+        cy = dst->y + (cy - src->y) * scale;
+        name[0] = '\0';
+        lv_playersGetPlayerName(sender, name, sizeof(name));
+        lv_drawOverviewPing(cx, cy, tilePx, kind, sender, name, ageMs, lvPingNameFont());
+    }
+    if (begun) {
+        SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+        SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+    }
 }
 
 /* The place of the ring, as a map square; 0 when no ring is on. For a host

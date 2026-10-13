@@ -670,6 +670,18 @@ uint32_t lv_screenWindowLenMs(void);
  * (lv_messageTagPlayers), each 0..15, or -1 for none. For a host's
  * lv_windowAddEvent to ask while it takes the line. */
 void lv_screenEventTeams(int *team, int *otherTeam);
+/* One map ping that is on the map at the playback's time now, for the view
+ * in use: every team's for the view of all teams, and for one player's view
+ * the pings that player was sent. index is 0 .. lv_screenGetPingCapacity()
+ * - 1, the oldest first; false for an index with no ping. worldX and worldY
+ * are 256 to a map square; ageMs is the time since the ping on the playback
+ * clock. */
+bool lv_screenGetPing(int index, BYTE *sender, BYTE *kind, uint16_t *worldX,
+                      uint16_t *worldY, uint32_t *ageMs);
+int lv_screenGetPingCapacity(void);
+/* The kind of ping the line now being added is (lv_messageTagPing,
+ * PING_KIND_*), or -1 for a line that is not a map ping. */
+int lv_screenEventPing(void);
 /* The palette colour a team is drawn in (the tc[] row of the Team Colours
  * dialog); the neutral colour for a number that is not a team. */
 unsigned char lv_screenTeamColour(int team);
