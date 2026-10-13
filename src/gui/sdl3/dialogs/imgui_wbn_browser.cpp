@@ -1132,6 +1132,17 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                     args.number = e.num_players;
                     ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_NUMPLAYERS_FMT, &args));
                 }
+                else if (e.num_players > (int)e.players.size()) {
+                    /* The server names only some of the players (those it has
+                     * an account for). Say how many more were in the game. */
+                    int others = e.num_players - (int)e.players.size();
+                    MessageArgs args = {};
+                    args.number = others;
+                    ImGui::SameLine();
+                    ImGui::TextUnformatted(langGetTextFmt(
+                        others == 1 ? STR_DLGWBN_PLAYERS_OTHER_ONE : STR_DLGWBN_PLAYERS_OTHERS_FMT,
+                        &args));
+                }
 
                 /* Stats */
                 {

@@ -672,6 +672,8 @@
 #define STR_DLGWBN_COL_DATE                 727
 #define STR_DLGWBN_PLAYERS_LBL              728
 #define STR_DLGWBN_NUMPLAYERS_FMT           729
+#define STR_DLGWBN_PLAYERS_OTHERS_FMT       2860
+#define STR_DLGWBN_PLAYERS_OTHER_ONE        2861
 #define STR_DLGWBN_DURATION                 730
 #define STR_DLGWBN_RATING                   731
 #define STR_DLGWBN_DOWNLOADS_FMT            732
