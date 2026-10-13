@@ -1090,3 +1090,69 @@ against the current script.
   no tests of its own. It does not copy the map into `tests/scenario/maps`;
   the twenty copies there are the same file as `data/maps/Tutorial.map`
   today and must be copied again by hand after the map changes.
+
+## Oct 13 review round 2
+
+A second review of the round 1 fixes found nothing that blocks and gave
+five small items.
+
+### 1. The Station 6 bot's peace list left out the 5A bot's seat
+
+The list was every seat but the three bots'. `move_bot_seat` can move the 5A
+bot to another seat, and a person who then took its old seat was not on the
+list, so the Station 6 bot would have treated him as an enemy.
+
+*Done:* the list is every seat but the Station 6 bot's own and the Station 7
+bot's. It no longer depends on where the 5A bot sits. Nothing changes in the
+normal game: the 5A bot is held on its island (`island5a`, rows 104 to 117)
+and the Station 6 tank is parked at 131,80, 24 squares away, so the two never
+meet. With 16 seats the list is 14 numbers and 33 bytes, inside the 63 bytes
+a token value may have.
+
+The comment said the token cannot be changed once the bot is fielded. That
+was wrong: `game.bot_init(p, t)` hands a bot in the round a new init table,
+and GoalHunter takes a new `peace=` token as a whole new list. The comment
+now says the list names every seat so that no new token is needed.
+
+### 2. The cut-short rebuild in `tutorial_watch5a` could be beaten by a spawn
+
+The script's 5A reset takes the demo bot off and the poll fields it again.
+The bot's spawn runs the ring rebuild too. If that spawn landed in the frame
+the arena cuts short, the arena's numbers would be wrong.
+
+*Done:* the arena now waits until the demo bot is a live tank, and has been
+for 20 ticks, before it breaks the squares. The check that the arena can
+fail was run again: with the `on_tick` line taken out it still fails.
+
+### 3. `give_back` could hand the station's own pillboxes to the new player
+
+*Done:* `note_owned` leaves out the pillboxes of the stations' own set-up, so
+they are never handed back: the two 5A demo pillboxes always, and the 5B
+target until the player has picked it up.
+
+*Not done as written:* the review said to skip every pillbox that starts
+with no owner or a bot's. That would also skip the pillboxes a goal has the
+player take or build: 4A's dead pillbox, the 4B pillbox, the 5B blocker and
+Station 7's two dead ones. A new player who takes the round as it stands is
+meant to own those once the goal is done, so they are still handed back.
+The same holds for the 5B target after "pick it up" is ticked.
+
+### 4. A dropped callbacks row would only show on the console
+
+The Tutorial's block is 1936 bytes of the 2048 allowed, so one more row
+would be dropped with a console line and nothing else.
+
+*Done:* the unit tests `scenario_details_fetch_tutorial`, `_survival` and
+`_soccer` now count the rows the script's file declares and fail when fewer
+arrive. The count is read from the file's text, so no engine code changed.
+It reads one row to a line, which is how the shipped scripts are written.
+
+### 5. The server's own rejoin restore
+
+The server keeps what a leaving player owned under his name
+(`src/server/sim/server_sim_players.c`, `src/bolo/playersrejoin.c`). When a
+player of the same name joins again it gives him each of those pillboxes and
+bases that is still neutral. That does not fight `give_back`: both only take
+what nobody holds, so whichever runs first, the other finds nothing left to
+do for that item. `give_back` is still needed for a player with another
+name, and for what the 5A bot was given.
