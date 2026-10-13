@@ -15,6 +15,9 @@
  *   lv_event_overlay_choice — the chosen kinds go to the preferences text
  *       and back; a name no build knows is ignored; an empty choice stays
  *       empty.
+ *   lv_event_overlay_picture — a pillbox event and a base event have the
+ *       map's own picture, by kind and team: which sheet, which cell; the
+ *       picture of a marker of several events; when it is drawn sharp.
  */
 
 #include <stdbool.h>
@@ -23,6 +26,7 @@
 #include <string.h>
 
 #include "lv_event_overlay.h"
+#include "lv_team_sprite.h"
 #include "test_harness.h"
 
 static bool ovl_near(float a, float b) {
@@ -221,5 +225,73 @@ int run_lv_event_overlay_choice(void) {
         lvOverlayMaskToText(1u << LV_EVK_PILL_CAPTURED, small, 4);
         UT_ASSERT_MSG(strcmp(small, "non") == 0 || small[0] == '\0', "tiny buffer: \"%s\"", small);
     }
+    return 0;
+}
+
+/* The sheet and the cell of the marker of an event of this kind, done by a
+   team with this palette entry (hasTeam false: no team). */
+static LvMapItemSprite eo_marker(int kind, bool hasTeam, int palette) {
+    return lvPanelItemSprite(lvOverlayKindPicture(kind) == LV_OVERLAY_PIC_BASE, hasTeam, palette);
+}
+
+int run_lv_event_overlay_picture(void) {
+    LvMapItemSprite s;
+    int kind, palette;
+
+    /* Which kinds have a picture. */
+    UT_ASSERT_MSG(lvOverlayKindPicture(LV_EVK_PILL_CAPTURED) == LV_OVERLAY_PIC_PILL, "pill captured");
+    UT_ASSERT_MSG(lvOverlayKindPicture(LV_EVK_PILL_STOLEN) == LV_OVERLAY_PIC_PILL, "pill stolen");
+    UT_ASSERT_MSG(lvOverlayKindPicture(LV_EVK_BASE_CAPTURED) == LV_OVERLAY_PIC_BASE, "base captured");
+    UT_ASSERT_MSG(lvOverlayKindPicture(LV_EVK_BASE_STOLEN) == LV_OVERLAY_PIC_BASE, "base stolen");
+    for (kind = LV_EVK_BUILDER_LOST; kind < LV_EVK_COUNT; kind++) {
+        UT_ASSERT_MSG(lvOverlayKindPicture(kind) == LV_OVERLAY_PIC_NONE, "the others keep an icon");
+    }
+    UT_ASSERT_MSG(lvOverlayKindPicture(-1) == LV_OVERLAY_PIC_NONE, "no kind: no picture");
+
+    /* A team's pillbox: its row of items.bmp, the column of full armour. */
+    for (palette = 0; palette < LV_TEAM_SHEET_ROWS; palette++) {
+        int row = (palette == LV_TEAM_PALETTE_RED) ? LV_TEAM_SHEET_ROW_ORANGE : palette;
+        s = eo_marker(LV_EVK_PILL_CAPTURED, true, palette);
+        UT_ASSERT_MSG(!s.fromAtlas && s.col == 15 && s.row == row, "a team's pillbox, whole");
+        s = eo_marker(LV_EVK_PILL_STOLEN, true, palette);
+        UT_ASSERT_MSG(!s.fromAtlas && s.col == 15 && s.row == row, "stolen: the same picture");
+        s = eo_marker(LV_EVK_BASE_CAPTURED, true, palette);
+        UT_ASSERT_MSG(!s.fromAtlas && s.col == LV_ITEMS_COL_BASE && s.row == row, "a team's base");
+        s = eo_marker(LV_EVK_BASE_STOLEN, true, palette);
+        UT_ASSERT_MSG(!s.fromAtlas && s.col == LV_ITEMS_COL_BASE && s.row == row, "stolen: the same");
+        /* The same cell the map draws for that team. */
+        UT_ASSERT_MSG(s.row == lvMapBaseSprite(false, palette).row, "the map's own row");
+    }
+    /* A red team is orange here as on the map. */
+    s = eo_marker(LV_EVK_PILL_CAPTURED, true, LV_TEAM_PALETTE_RED);
+    UT_ASSERT_MSG(s.row == LV_TEAM_SHEET_ROW_ORANGE, "no team is drawn in the red row");
+
+    /* No team: the game's own tiles. The red pillbox, the neutral base. */
+    s = eo_marker(LV_EVK_PILL_CAPTURED, false, 3);
+    UT_ASSERT_MSG(s.fromAtlas && s.tile == LV_TILE_PILL_EVIL_15, "the game's red pillbox, whole");
+    s = eo_marker(LV_EVK_BASE_CAPTURED, false, 3);
+    UT_ASSERT_MSG(s.fromAtlas && s.tile == LV_TILE_BASE_NEUTRAL, "the game's neutral base");
+
+    /* A marker of several events. */
+    {
+        int pills[3] = { LV_EVK_PILL_CAPTURED, LV_EVK_PILL_STOLEN, LV_EVK_PILL_CAPTURED };
+        int bases[2] = { LV_EVK_BASE_STOLEN, LV_EVK_BASE_CAPTURED };
+        int mixed[2] = { LV_EVK_PILL_CAPTURED, LV_EVK_BASE_CAPTURED };
+        int other[2] = { LV_EVK_PILL_CAPTURED, LV_EVK_CHAT };
+        int chat[2] = { LV_EVK_CHAT, LV_EVK_CHAT };
+        UT_ASSERT_MSG(lvOverlayClusterPicture(pills, 3) == LV_OVERLAY_PIC_PILL, "only pillboxes");
+        UT_ASSERT_MSG(lvOverlayClusterPicture(bases, 2) == LV_OVERLAY_PIC_BASE, "only bases");
+        UT_ASSERT_MSG(lvOverlayClusterPicture(mixed, 2) == LV_OVERLAY_PIC_NONE, "both: none");
+        UT_ASSERT_MSG(lvOverlayClusterPicture(other, 2) == LV_OVERLAY_PIC_NONE, "with chat: none");
+        UT_ASSERT_MSG(lvOverlayClusterPicture(chat, 2) == LV_OVERLAY_PIC_NONE, "no picture kinds");
+        UT_ASSERT_MSG(lvOverlayClusterPicture(pills, 0) == LV_OVERLAY_PIC_NONE, "none at all");
+    }
+
+    /* Sharp at a whole number of times 16 pixels, blended at any other. */
+    UT_ASSERT_MSG(lvItemPictureSharp(16.0f) && lvItemPictureSharp(32.0f) && lvItemPictureSharp(48.0f),
+                  "16, 32, 48: sharp");
+    UT_ASSERT_MSG(!lvItemPictureSharp(12.0f) && !lvItemPictureSharp(13.0f) && !lvItemPictureSharp(24.0f) &&
+                  !lvItemPictureSharp(26.0f) && !lvItemPictureSharp(8.0f) && !lvItemPictureSharp(19.5f),
+                  "any other size: blended");
     return 0;
 }

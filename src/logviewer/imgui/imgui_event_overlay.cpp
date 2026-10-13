@@ -18,6 +18,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -70,6 +71,7 @@ struct OverlayMarker {
     int      first;    /* index into s_items of its first event */
     int      count;
     int      kind;     /* the kind of all its events, or -1 when they differ */
+    int      picture;  /* LvOverlayPicture: all pillbox events, all base events, or none */
     int      team;     /* the team most of them name, or -1 */
     int      otherTeam;/* a lone event's second team, or -1 */
     uint32_t timeMs;   /* the time of its first event */
@@ -241,16 +243,26 @@ static void overlay_refresh(float width, float grabMin, float minGap) {
         out.first = c.first;
         out.count = c.count;
         out.kind = -1;
+        out.picture = LV_OVERLAY_PIC_NONE;
         out.otherTeam = -1;
         out.timeMs = s_item_time[c.first];
         for (int k = 0; k < c.count; k++) {
             LvEventInfo info;
-            if (!lv_imgui_events_get_info(s_items[c.first + k], &info)) continue;
+            if (!lv_imgui_events_get_info(s_items[c.first + k], &info)) {
+                out.picture = LV_OVERLAY_PIC_NONE;
+                continue;
+            }
             if (k == 0) {
                 out.kind = info.kind;
                 out.otherTeam = info.otherTeam;
-            } else if (out.kind != info.kind) {
-                out.kind = -1;
+                out.picture = lvOverlayKindPicture(info.kind);
+            } else {
+                /* lvOverlayClusterPicture's rule, one event at a time. */
+                const int pair[2] = { info.kind, info.kind };
+                if (out.kind != info.kind) out.kind = -1;
+                if (out.picture != lvOverlayClusterPicture(pair, 2)) {
+                    out.picture = LV_OVERLAY_PIC_NONE;
+                }
             }
             teams[(info.team >= 0 && info.team < LV_OVERLAY_TEAMS - 1) ? info.team
                                                                        : LV_OVERLAY_TEAMS - 1]++;
@@ -282,9 +294,18 @@ static void overlay_draw_kind(ImDrawList *dl, int kind, int team, ImVec2 p0, ImV
                               float alpha) {
     const ImVec4 text = ImGui::GetStyleColorVec4(ImGuiCol_Text);
     const ImU32 dark = overlay_u32(ImVec4(0.0f, 0.0f, 0.0f, 0.8f), alpha);
+    const LvOverlayPicture picture = lvOverlayKindPicture(kind);
+    if (picture != LV_OVERLAY_PIC_NONE &&
+        lv_item_picture(dl, picture == LV_OVERLAY_PIC_BASE, team, p0, p1, alpha)) {
+        /* A pillbox or a base: the map's own picture, in the colour of its
+         * new owner as the map has it. The picture says the team, so it has
+         * no box and no line round it. */
+        return;
+    }
     if (overlay_kind_is_owned_shape(kind)) {
-        /* The shape in the colour of its new owner, on a dark edge so a
-         * dark colour still shows on a dark panel. */
+        /* The game's sheets are not there: the plain shape in the colour of
+         * its new owner, on a dark edge so a dark colour still shows on a
+         * dark panel. */
         const ImVec4 fill = (team >= 0) ? overlay_team_colour(team) : text;
         lv_icon_draw(dl, overlay_kind_icon(kind), p0, p1, dark);
         lv_icon_draw(dl, overlay_kind_icon(kind), ImVec2(p0.x + 1.0f, p0.y + 1.0f),
@@ -317,6 +338,27 @@ static void overlay_draw_count(ImDrawList *dl, const OverlayMarker &m, ImVec2 p0
         snprintf(num, sizeof(num), "99+");
     } else {
         snprintf(num, sizeof(num), "%d", m.count);
+    }
+    /* Only pillbox events, or only base events: the map's picture, in the
+     * colour of the team most of them name, with the number on a small dark
+     * plate in its lower right corner. */
+    if (m.picture != LV_OVERLAY_PIC_NONE &&
+        lv_item_picture(dl, m.picture == LV_OVERLAY_PIC_BASE, m.team, p0, p1, alpha)) {
+        ImFont *font = ImGui::GetFont();
+        float size = floorf(ImGui::GetFontSize() * 0.7f);
+        ImVec2 ts = font->CalcTextSizeA(size, FLT_MAX, 0.0f, num);
+        const float room = (p1.x - p0.x) - 1.0f;
+        if (ts.x > room && ts.x > 0.0f) {
+            const float scale = room / ts.x;
+            size *= scale;
+            ts.x *= scale;
+            ts.y *= scale;
+        }
+        const ImVec2 at(floorf(p1.x - ts.x), floorf(p1.y - ts.y + 1.0f));
+        dl->AddRectFilled(ImVec2(at.x - 1.0f, at.y), ImVec2(p1.x, p1.y + 1.0f),
+                          overlay_u32(ImVec4(0.0f, 0.0f, 0.0f, 0.8f), alpha), 1.0f);
+        dl->AddText(font, size, at, overlay_u32(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), alpha), num);
+        return;
     }
     dl->AddRectFilled(p0, p1, overlay_u32(fill, alpha), 3.0f);
     /* The number as large as fits in the box. */
@@ -508,9 +550,16 @@ void lv_event_overlay_combo(bool full) {
             const float rowH = ImGui::GetFrameHeight();
             const ImVec2 at = ImGui::GetCursorScreenPos();
             const float top = floorf(at.y + (rowH - side) * 0.5f);
-            lv_icon_draw(ImGui::GetWindowDrawList(), overlay_kind_icon(kind),
-                         ImVec2(at.x + 1.0f, top + 1.0f), ImVec2(at.x + side - 1.0f, top + side - 1.0f),
-                         ImGui::GetColorU32(ImGuiCol_Text));
+            const LvOverlayPicture picture = lvOverlayKindPicture(kind);
+            /* A pillbox or a base as the lane has it, held by no team. */
+            if (picture == LV_OVERLAY_PIC_NONE ||
+                !lv_item_picture(ImGui::GetWindowDrawList(), picture == LV_OVERLAY_PIC_BASE, -1,
+                                 ImVec2(at.x, top), ImVec2(at.x + side, top + side))) {
+                lv_icon_draw(ImGui::GetWindowDrawList(), overlay_kind_icon(kind),
+                             ImVec2(at.x + 1.0f, top + 1.0f),
+                             ImVec2(at.x + side - 1.0f, top + side - 1.0f),
+                             ImGui::GetColorU32(ImGuiCol_Text));
+            }
             ImGui::Dummy(ImVec2(side, rowH));
             ImGui::SameLine();
         }

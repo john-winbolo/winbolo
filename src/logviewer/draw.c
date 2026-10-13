@@ -1384,6 +1384,34 @@ static void lvDrawMapItem(LvMapItemSprite s, int x, int y, BYTE zoomFactor) {
     }
 }
 
+typedef char lvItemPictureSizeCheck[(LV_ITEM_PICTURE_PX == TILE_SIZE_X &&
+                                     LV_ITEM_PICTURE_PX == TILE_SIZE_Y) ? 1 : -1];
+
+/* The map's picture of a pillbox or a base, for a panel: the sheet it is in
+   and where in it, in pixels of the sheet. It is the sheet and the cell
+   lvDrawMapItem draws on the map (lvPanelItemSprite has the rule). team is
+   a team's number; under 0 or NEUTRAL_TEAM is no team. FALSE when the sheet
+   is not there. */
+bool lv_drawItemPicture(int isBase, int team, SDL_Texture **tex, float *sx, float *sy,
+                        float *sw, float *sh) {
+    LogViewerState *lv = lv_screenGetState();
+    bool hasTeam = (lv != NULL && team >= 0 && team < NEUTRAL_TEAM);
+    LvMapItemSprite s = lvPanelItemSprite(isBase != 0, hasTeam, hasTeam ? lv->tc[team] : 0);
+
+    *sw = (float)TILE_SIZE_X;
+    *sh = (float)TILE_SIZE_Y;
+    if (s.fromAtlas) {
+        *tex = textureTiles;
+        *sx = (float)mapViewPosX[s.tile];
+        *sy = (float)mapViewPosY[s.tile];
+    } else {
+        *tex = textureItems;
+        *sx = (float)(s.col * TILE_SIZE_X);
+        *sy = (float)(lvTeamSheetRowHave(s.row, s_teamOrangeRow) * TILE_SIZE_Y);
+    }
+    return *tex != NULL;
+}
+
 /* Whether tanks, pillboxes and bases are drawn in their team's colour. With
    a perspective on they are not, whatever the setting says: the map then
    shows them as that player's game does, own and allied against hostile. */

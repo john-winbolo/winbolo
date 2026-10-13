@@ -14,8 +14,13 @@
 #include <cstdio>
 #include <cstring>
 
+#include <SDL3/SDL.h>
+
 extern "C" {
     #include "../lv_name_header.h"
+    #include "../lv_team_sprite.h"
+    bool lv_drawItemPicture(int isBase, int team, struct SDL_Texture **tex, float *sx, float *sy,
+                            float *sw, float *sh);
 }
 
 /* A triangle that points right (dir > 0) or left, in the box x0..x1 by
@@ -188,6 +193,35 @@ bool lv_icon_button(const char *id, int icon, float side, float width) {
     lv_icon_draw(ImGui::GetWindowDrawList(), icon, ImVec2(ox, oy), ImVec2(ox + box, oy + box),
                  ImGui::GetColorU32(ImGuiCol_Text));
     return pressed;
+}
+
+bool lv_item_picture(ImDrawList *dl, bool isBase, int team, ImVec2 p0, ImVec2 p1, float alpha) {
+    SDL_Texture *tex = nullptr;
+    float sx = 0.0f, sy = 0.0f, sw = 0.0f, sh = 0.0f, tw = 0.0f, th = 0.0f;
+    if (!lv_drawItemPicture(isBase ? 1 : 0, team, &tex, &sx, &sy, &sw, &sh) || tex == nullptr ||
+        !SDL_GetTextureSize(tex, &tw, &th) || tw <= 0.0f || th <= 0.0f) {
+        return false;
+    }
+    /* Whole pixels, so the picture is not smeared over two. */
+    p0.x = floorf(p0.x);
+    p0.y = floorf(p0.y);
+    p1.x = floorf(p1.x);
+    p1.y = floorf(p1.y);
+    /* The size on the display: a point is more than a pixel on a dense one. */
+    const float sidePx = (p1.x - p0.x) * ImGui::GetIO().DisplayFramebufferScale.x;
+    const bool sharp = lvItemPictureSharp(sidePx);
+    const ImGuiPlatformIO &pio = ImGui::GetPlatformIO();
+    const ImDrawCallback toSharp = sharp ? pio.DrawCallback_SetSamplerNearest
+                                         : pio.DrawCallback_SetSamplerLinear;
+    /* The renderer's own setting comes back after the picture. */
+    if (toSharp != nullptr) dl->AddCallback(toSharp, nullptr);
+    dl->AddImage((ImTextureID)(size_t)tex, p0, p1, ImVec2(sx / tw, sy / th),
+                 ImVec2((sx + sw) / tw, (sy + sh) / th),
+                 ImGui::ColorConvertFloat4ToU32(ImVec4(1.0f, 1.0f, 1.0f, alpha)));
+    if (toSharp != nullptr && pio.DrawCallback_SetSamplerLinear != nullptr) {
+        dl->AddCallback(pio.DrawCallback_SetSamplerLinear, nullptr);
+    }
+    return true;
 }
 
 float lv_icon_text_width(int icon) {

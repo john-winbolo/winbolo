@@ -65,6 +65,17 @@ void lv_icon_text(int icon);
 /* The width lv_icon_text takes for this icon. */
 float lv_icon_text_width(int icon);
 
+/* The map's own picture of a pillbox or a base over the box p0..p1: the one
+ * helper every panel uses for it. team is the number of the team that holds
+ * the thing, for the picture in that team's colour as the map has it; -1 is
+ * a thing no team holds: the game's red pillbox, the game's neutral base.
+ * alpha dims it. The picture is drawn sharp at a whole number of times its
+ * 16 pixels and blended at any other size (lvItemPictureSharp). Returns
+ * false, and draws nothing, when the game's sheets are not there; the
+ * caller then draws its own plain shape. */
+bool lv_item_picture(ImDrawList *dl, bool isBase, int team, ImVec2 p0, ImVec2 p1,
+                     float alpha = 1.0f);
+
 /* The line that names a player at the top of a panel (the Tank panel, the
  * HUD panel): a stripe in the colour of the player's team, an icon when
  * leadIcon is one (-1 for none), the name, and at the right end a small X
