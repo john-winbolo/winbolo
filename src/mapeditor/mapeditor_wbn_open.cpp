@@ -342,13 +342,18 @@ extern "C" bool meWbnOpenFrame(SDL_Renderer *renderer,
         meWbnPollDownload(renderer);
 
         /* Status line: download progress, else the last failure, else
-         * an empty line so the button row doesn't jump. */
+         * the map list's own failure once its retries have stopped,
+         * else an empty line so the button row doesn't jump. */
         if (s_downloading) {
             ImGui::Text("%s  %s", langGetText(STR_DLGLOBBY_DOWNLOADING),
                         s_pendingName);
         } else if (s_errText[0]) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
             ImGui::TextWrapped("%s", s_errText);
+            ImGui::PopStyleColor();
+        } else if (wbnMapSourceListError()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+            ImGui::TextWrapped("%s", wbnMapSourceListError());
             ImGui::PopStyleColor();
         } else {
             ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeight()));

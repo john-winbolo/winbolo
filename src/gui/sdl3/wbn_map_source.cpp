@@ -564,6 +564,18 @@ bool wbnMapSourcePollDownload(WbnMapDownloadResult *out) {
     return true;
 }
 
+/* The text a player is shown for a listing or search request that did
+ * not return a usable answer. status is what wbn_api_get returned: -1
+ * when the request never got a reply, else the HTTP status. The URL and
+ * the status are in the log line the worker writes for every result. */
+static std::string wbnMapsFetchErrorText(int status) {
+    if (status == -1) return langGetText(STR_DLGLOBBY_WBN_ERR_NETERROR);
+    if (status == 200) return langGetText(STR_DLGLOBBY_WBN_ERR_BADRESPONSE);
+    MessageArgs args = {};
+    args.number = status;
+    return langGetTextFmt(STR_DLGLOBBY_WBN_ERR_HTTPERROR, &args);
+}
+
 static void wbnMapsKickFolderFetch(int folderId) {
     if (s_wbnMaps.fetching.exchange(true)) return; /* one at a time */
     uint32_t seq = ++s_wbnMaps.fetchSeq;
@@ -584,13 +596,8 @@ static void wbnMapsKickFolderFetch(int folderId) {
             if (status == 200 && resp) {
                 wbnMapsParseFolderJson(resp);
             } else {
+                std::string err = wbnMapsFetchErrorText(status);
                 std::lock_guard<std::mutex> lk(s_wbnMaps.mutex);
-                char err[512];
-                SDL_snprintf(err, sizeof(err),
-                             "Folder fetch failed (HTTP %d) for %s/api/v1/%s",
-                             status,
-                             (base && *base) ? base : "(no base)",
-                             path);
                 s_wbnMaps.error = err;
             }
         }
@@ -642,13 +649,8 @@ static void wbnMapsKickSearchFetch(const char *queryRaw) {
                     resp);
                 wbnMapsParseSearchJson(resp, qcopy.c_str());
             } else {
+                std::string err = wbnMapsFetchErrorText(status);
                 std::lock_guard<std::mutex> lk(s_wbnMaps.mutex);
-                char err[512];
-                SDL_snprintf(err, sizeof(err),
-                             "Search failed (HTTP %d) for %s/api/v1/%s",
-                             status,
-                             (base && *base) ? base : "(no base)",
-                             path.c_str());
                 s_wbnMaps.searchError = err;
             }
         }
@@ -666,6 +668,9 @@ struct WbnMapsAsk {
     WbnMapsRetry folderRetry = { 0, 0 };
     std::string  search;         /* empty = no search outstanding */
     WbnMapsRetry searchRetry = { 0, 0 };
+    /* Set by each run of the provider: the error for the request it
+     * has stopped asking for, empty while it has not stopped. */
+    std::string  shownError;
 };
 
 static WbnMapsAsk s_wbnAsk;
@@ -677,6 +682,16 @@ void wbnMapSourceResetRetry(void) {
     wbnMapsRetryReset(&s_wbnAsk.folderRetry);
     s_wbnAsk.search.clear();
     wbnMapsRetryReset(&s_wbnAsk.searchRetry);
+    s_wbnAsk.shownError.clear();
+}
+
+/* The error for the list the provider last built, or NULL. Only set
+ * once the retries have stopped: while the listing is still asking, the
+ * next answer may well arrive, and an error shown between tries would
+ * come and go. UI thread only. */
+const char *wbnMapSourceListError(void) {
+    if (s_wbnAsk.shownError.empty()) return nullptr;
+    return s_wbnAsk.shownError.c_str();
 }
 
 /* WbnMapsLookupFn over s_wbnMaps.pathToId. The caller holds the cache
@@ -707,6 +722,7 @@ void wbnMapsListProvider(MapChooserState *state,
     (void)ctx;
     state->numMaps = 0;
     if (!relPath) relPath = "";
+    s_wbnAsk.shownError.clear();
 
     /* Recursive-search branch: when the user has "Search subfolders"
      * checked and typed a non-empty query, ignore relPath entirely
@@ -736,6 +752,17 @@ void wbnMapsListProvider(MapChooserState *state,
          * after WBN_MAPS_RETRY_MAX_SENDS sends. */
         Uint64 srchNowMs = SDL_GetTicks();
         bool   srchSame  = (s_wbnAsk.search == state->searchFilter);
+        /* Looked at before the send below, so the last send is not
+         * reported as given up on while it is still on its way. */
+        if (!srchInFlight &&
+            (!hasResults || query != state->searchFilter) &&
+            wbnMapsRetriesStopped(&s_wbnAsk.searchRetry, srchSame)) {
+            s_wbnAsk.shownError = srchErr;
+            if (srchErr.empty()) {
+                s_wbnAsk.shownError =
+                    langGetText(STR_DLGLOBBY_WBN_ERR_BADSEARCHRESPONSE);
+            }
+        }
         if (!srchInFlight &&
             (!hasResults || query != state->searchFilter) &&
             wbnMapsFetchDue(&s_wbnAsk.searchRetry, srchSame, srchNowMs)) {
@@ -878,6 +905,18 @@ void wbnMapsListProvider(MapChooserState *state,
             s_wbnAsk.folderId,
             subs.size(), entries.size(),
             errMsg.c_str());
+    }
+    /* Looked at before the send below, so the last send is not reported
+     * as given up on while it is still on its way. A listing that did
+     * arrive but is not the folder asked for leaves no error text. */
+    if (!cacheMatches && !inFlight &&
+        wbnMapsRetriesStopped(&s_wbnAsk.folderRetry,
+                              s_wbnAsk.folderId == targetId)) {
+        s_wbnAsk.shownError = errMsg;
+        if (errMsg.empty()) {
+            s_wbnAsk.shownError =
+                langGetText(STR_DLGLOBBY_WBN_ERR_BADRESPONSE);
+        }
     }
     if (!cacheMatches && !inFlight) {
         /* A folder already asked for and still not in the cache means
