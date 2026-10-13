@@ -279,9 +279,15 @@ static void wbnMapsParseFolderJson(const char *json) {
 
         /* Stamp every (path, id) pair we now know — current folder
          * and each subfolder — so the listProvider can resolve
-         * any seen path back to a numeric ID for fetching. */
-        s_wbnMaps.pathToId[canonicalPath] = newFolderId;
+         * any seen path back to a numeric ID for fetching. Only the
+         * root has id 0: a folder that came with no id reads as 0
+         * too (wbnJsonInt), and stamping that would make its path
+         * resolve to the root. */
+        if (newFolderId != 0 || canonicalPath.empty()) {
+            s_wbnMaps.pathToId[canonicalPath] = newFolderId;
+        }
         for (const auto &f : subs) {
+            if (f.id == 0) continue;
             std::string childPath = canonicalPath.empty()
                 ? f.name : (canonicalPath + "/" + f.name);
             s_wbnMaps.pathToId[childPath] = f.id;
@@ -651,6 +657,17 @@ static void wbnMapsKickSearchFetch(const char *queryRaw) {
     }).detach();
 }
 
+/* WbnMapsLookupFn over s_wbnMaps.pathToId. The caller holds the cache
+ * mutex. */
+static bool wbnMapsLookupPath(void *ctx, const char *path, size_t len,
+                              int *idOut) {
+    (void)ctx;
+    auto it = s_wbnMaps.pathToId.find(std::string(path, len));
+    if (it == s_wbnMaps.pathToId.end()) return false;
+    *idOut = it->second;
+    return true;
+}
+
 /* listProvider for the Winbolo.net Maps tab. The chooser hands us
  * relPath (the chooser's currentDir — a friendly slash-separated
  * path like "ClassicMap's Maps/classics-popular"). We:
@@ -789,22 +806,11 @@ void wbnMapsListProvider(MapChooserState *state,
          * could clear after an old snapshot was taken and the same
          * folder would be asked for a second time. */
         inFlight = s_wbnMaps.fetching.load();
-        /* The table only knows folders some listing has named, and a
-         * starred folder can be opened before its parent was ever
-         * listed. Walk up to the deepest ancestor the table does
-         * know (the root, id 0, when it knows none): that listing
-         * names the next folder down, so the walk gets one level
-         * closer per fetch instead of stopping at the root. */
-        size_t knownLen = SDL_strlen(relPath);
-        for (;;) {
-            auto it = s_wbnMaps.pathToId.find(std::string(relPath, knownLen));
-            if (it != s_wbnMaps.pathToId.end()) {
-                targetId = it->second;
-                break;
-            }
-            if (knownLen == 0) break;
-            knownLen = wbnMapsParentLen(relPath, knownLen);
-        }
+        /* The deepest ancestor of relPath the table knows, so a
+         * starred folder whose parents were never listed is reached
+         * one level per fetch (see wbnMapsResolveTarget). */
+        targetId   = wbnMapsResolveTarget(relPath, wbnMapsLookupPath,
+                                          nullptr);
         cachedId   = s_wbnMaps.currentFolderId;
         cachedPath = s_wbnMaps.currentPath;
         subs       = s_wbnMaps.subfolders;
@@ -825,8 +831,12 @@ void wbnMapsListProvider(MapChooserState *state,
      * Fetching the same id again would return the same listing, so
      * move the chooser onto the folder that did load — the tab then
      * shows a list instead of staying empty. relPath is the chooser's
-     * currentDir, which is why it is re-pointed too. */
-    if (!cacheMatches && !inFlight && hasData && cachedId == targetId) {
+     * currentDir, which is why it is re-pointed too. Not done at the
+     * root, nor for a cached listing that came with no id (see
+     * wbnMapsRepointDue). */
+    if (!cacheMatches && !inFlight && hasData &&
+        wbnMapsRepointDue(relPath[0] == '\0', cachedPath.empty(),
+                          cachedId, targetId)) {
         WB_LOG_INFO(WB_LOG_CAT_GUI,
             "[WBN-TAB] provider relPath='%s' not in the catalogue; "
             "showing '%s' (folderId=%d)",

@@ -17,13 +17,15 @@
 
 /*********************************************************
  * Name:          wbn_map_fetch_policy.h
- * Purpose:       The two decisions the WinBolo.net map
+ * Purpose:       The decisions the WinBolo.net map
  *                listing in wbn_map_source.cpp makes
  *                without touching the network or the
  *                chooser: when a listing that has not
- *                arrived is asked for again, and which
+ *                arrived is asked for again, which
  *                folder to ask for when the path is one
- *                the catalogue cache has not met. Plain C
+ *                the catalogue cache has not met, and
+ *                when to show the folder that did load
+ *                in place of one that is gone. Plain C
  *                and header-only so the unit tests reach
  *                them without the HTTP and chooser stack.
  *********************************************************/
@@ -63,6 +65,49 @@ static inline size_t wbnMapsParentLen(const char *path, size_t len) {
         if (path[len] == '/' || path[len] == '\\') return len;
     }
     return 0;
+}
+
+/* Looks up the folder path held in path[0..len) in the catalogue's path
+ * to folder id table. Returns true and writes the id when the table has
+ * the path. */
+typedef bool (*WbnMapsLookupFn)(void *ctx, const char *path, size_t len,
+                                int *idOut);
+
+/* The folder id to ask for when the chooser wants relPath. The table
+ * only knows folders some listing has named, and a starred folder can
+ * be opened before its parent was ever listed. So this walks up to the
+ * deepest ancestor the table does know and returns its id (the root,
+ * id 0, when it knows none): that listing names the next folder down,
+ * so the walk gets one level closer per fetch instead of stopping at
+ * the root. */
+static inline int wbnMapsResolveTarget(const char *relPath,
+                                       WbnMapsLookupFn lookup, void *ctx) {
+    size_t len = 0;
+    int id = 0;
+    while (relPath[len] != '\0') len++;
+    for (;;) {
+        if (lookup(ctx, relPath, len, &id)) return id;
+        if (len == 0) return 0;
+        len = wbnMapsParentLen(relPath, len);
+    }
+}
+
+/* Whether to move the chooser onto the folder the cache holds. Asked
+ * when the cached listing is not the path the chooser wants and no
+ * request is in flight. True when the cache holds the folder the wanted
+ * path resolves to: the wanted folder is gone or was renamed, and
+ * asking for the same id again would return the same listing.
+ *
+ * Never at the root, which can always be asked for by itself. And a
+ * cached listing that has a path but came with no id (it reads as 0)
+ * is not the root, so it does not match a path that resolves to the
+ * root. Without these two, a listing with no id would be copied over
+ * the root path and the chooser could not get back to the root. */
+static inline bool wbnMapsRepointDue(bool wantedIsRoot, bool cachedIsRoot,
+                                     int cachedId, int targetId) {
+    if (wantedIsRoot) return false;
+    if (cachedId == 0 && !cachedIsRoot) return false;
+    return cachedId == targetId;
 }
 
 #endif /* WBN_MAP_FETCH_POLICY_H */
