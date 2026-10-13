@@ -1448,6 +1448,102 @@ int run_lv_alive_seek_back(void) {
     return 0;
 }
 
+/* The time a tank died, across a seek.
+ *
+ * Slot 1 again, destroyed in the opening snapshot, then:
+ *   tick 0     log_PlayerLocation: slot 1 at 50,50                (alive)
+ *   tick 1     log_KillPlayer: slot 1 dies with no killer         (dead)
+ *   NOEVENTS 9
+ *   a second snapshot, slot 1 destroyed in it
+ *   NOEVENTS 9
+ *   log_PlayerLocation: slot 1 at 50,50                           (alive)
+ *   NOEVENTS 9
+ *   LOG_QUIT
+ *
+ * A seek from the end, where the tank is alive, back to between the second
+ * snapshot and the respawn restores that snapshot. The snapshot says the
+ * tank is destroyed but not since when. The death time has to be the one
+ * playback had when it first got there, not the snapshot's own time: the
+ * death static over the game view plays from it. */
+static const uint8_t kLvpDieStreamA[] = {
+    0x03, 0x01, 0x03, 0x00, 0x05,
+        0x01, 0x32, 0x32, 0x00, 0x00,
+    0x03, 0x01, 0x21, 0x00, 0x02,
+        0x01, 0x01,
+    0x01, 0x09,
+};
+static const uint8_t kLvpDieStreamB[] = {
+    0x01, 0x09,
+    0x03, 0x01, 0x03, 0x00, 0x05,
+        0x01, 0x32, 0x32, 0x00, 0x00,
+    0x01, 0x09,
+    0x00,
+};
+
+static void lvpPutSnapshotSlot1Dead(LvpLog *b) {
+    int i;
+
+    lvpPut(b, kLvpSnapshot, sizeof(kLvpSnapshot));
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (i == 1) {
+            lvpPut(b, kLvpDeadPlayer, sizeof(kLvpDeadPlayer));
+        } else {
+            lvpPut(b, kLvpEmptyPlayer, sizeof(kLvpEmptyPlayer));
+        }
+    }
+}
+
+int run_lv_death_time_seek_back(void) {
+    const char     *path = "lv_death_time_seek.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    bool            aliveFirst, deadMid, aliveEnd, deadBack;
+    uint32_t        diedAt, midTime, endTime, backTime, diedBack;
+
+    b.len = 0;
+    lvpPut(&b, kLvpHeader, sizeof(kLvpHeader));
+    lvpPutSnapshotSlot1Dead(&b);
+    lvpPut(&b, kLvpDieStreamA, sizeof(kLvpDieStreamA));
+    lvpPutSnapshotSlot1Dead(&b);
+    lvpPut(&b, kLvpDieStreamB, sizeof(kLvpDieStreamB));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    lv_screenSeekToTimeMs(20);          /* on the map */
+    aliveFirst = lv->gameViewHud[1].alive;
+    lv_screenSeekToTimeMs(350);         /* past the death and the snapshot */
+    deadMid  = !lv->gameViewHud[1].alive;
+    diedAt   = lv->gameViewHud[1].deathTimeMs;
+    midTime  = lv_screenGetTimeRunning();
+    lv_screenSeekToTimeMs(600);         /* past the respawn */
+    aliveEnd = lv->gameViewHud[1].alive;
+    endTime  = lv_screenGetTimeRunning();
+    lv_screenSeekToTimeMs(350);         /* back: the second snapshot again */
+    deadBack = !lv->gameViewHud[1].alive;
+    diedBack = lv->gameViewHud[1].deathTimeMs;
+    backTime = lv_screenGetTimeRunning();
+
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(aliveFirst, "the tank reads dead after its place on the map");
+    UT_ASSERT_MSG(deadMid, "the tank reads alive after its death (clock %u ms)",
+                  (unsigned)midTime);
+    UT_ASSERT_MSG(diedAt > 0 && diedAt < 100, "the death is at %u ms (want "
+                  "the kill record's time, under 100)", (unsigned)diedAt);
+    UT_ASSERT_MSG(aliveEnd, "the tank reads dead after its second place on "
+                  "the map (clock %u ms)", (unsigned)endTime);
+    UT_ASSERT_MSG(deadBack, "after the seek back the tank reads alive (clock "
+                  "%u ms)", (unsigned)backTime);
+    UT_ASSERT_MSG(diedBack == diedAt, "after the seek back the death is at %u "
+                  "ms (want %u, the time it really died)", (unsigned)diedBack,
+                  (unsigned)diedAt);
+    return 0;
+}
+
 /* ── 8. Announcements on the newswire ──────────────────────────────── */
 
 /* After the opening:

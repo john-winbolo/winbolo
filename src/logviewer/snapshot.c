@@ -161,6 +161,7 @@ void lv_snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BY
     q->key = key;
     memset(q->kills, 0, sizeof(q->kills));
     memset(q->deaths, 0, sizeof(q->deaths));
+    memset(q->deathTimeMs, 0, sizeof(q->deathTimeMs));
     q->next = NULL;
     while (count < MAX_TANKS) {
       q->pTeams[count] = pTeams[count];
@@ -181,6 +182,7 @@ void lv_snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BY
         add->key = key;
         memset(add->kills, 0, sizeof(add->kills));
         memset(add->deaths, 0, sizeof(add->deaths));
+        memset(add->deathTimeMs, 0, sizeof(add->deathTimeMs));
         add->next = (*value);
         while (count < MAX_TANKS) {
           add->pTeams[count] = pTeams[count];
@@ -196,6 +198,7 @@ void lv_snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BY
         add->key = key;
         memset(add->kills, 0, sizeof(add->kills));
         memset(add->deaths, 0, sizeof(add->deaths));
+        memset(add->deathTimeMs, 0, sizeof(add->deathTimeMs));
         add->next = q;
         prev->next = add;
         while (count < MAX_TANKS) {
@@ -216,6 +219,7 @@ void lv_snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BY
       q->key = key;
       memset(q->kills, 0, sizeof(q->kills));
       memset(q->deaths, 0, sizeof(q->deaths));
+      memset(q->deathTimeMs, 0, sizeof(q->deathTimeMs));
       while (count < MAX_TANKS) {
         q->pTeams[count] = pTeams[count];
         count++;
@@ -390,5 +394,25 @@ bool lv_snapshotGetTallies(snapshot *value, uint32_t time, uint16_t *kills, uint
   }
   memcpy(kills, q->kills, sizeof(q->kills));
   memcpy(deaths, q->deaths, sizeof(q->deaths));
+  return TRUE;
+}
+
+bool lv_snapshotSetDeathTimes(snapshot *value, uint32_t time, const uint32_t *deathTimeMs) {
+  snapshot q = lv_snapshotAtTime(value, time);
+
+  if (q == NULL) {
+    return FALSE;
+  }
+  memcpy(q->deathTimeMs, deathTimeMs, sizeof(q->deathTimeMs));
+  return TRUE;
+}
+
+bool lv_snapshotGetDeathTimes(snapshot *value, uint32_t time, uint32_t *deathTimeMs) {
+  snapshot q = lv_snapshotAtTime(value, time);
+
+  if (q == NULL) {
+    return FALSE;
+  }
+  memcpy(deathTimeMs, q->deathTimeMs, sizeof(q->deathTimeMs));
   return TRUE;
 }

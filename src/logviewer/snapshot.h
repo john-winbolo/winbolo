@@ -41,6 +41,7 @@ struct snapshotObj {
   BYTE key; /* Decryption XOR key */
   uint16_t kills[MAX_TANKS];  /* Kill tally of each slot when playback first reached this snapshot */
   uint16_t deaths[MAX_TANKS]; /* Death tally of each slot, likewise */
+  uint32_t deathTimeMs[MAX_TANKS]; /* When each slot's tank last died, likewise */
 };
 
 
@@ -193,5 +194,13 @@ bool lv_snapshotFindByTime(snapshot *value, uint32_t targetTime, size_t *filePos
    at that time. A new snapshot's tallies are zero until they are set. */
 bool lv_snapshotSetTallies(snapshot *value, uint32_t time, const uint16_t *kills, const uint16_t *deaths);
 bool lv_snapshotGetTallies(snapshot *value, uint32_t time, uint16_t *kills, uint16_t *deaths);
+
+/* The time each slot's tank last died, as playback had it when it first
+   reached the snapshot at this time. The snapshot block says only that a
+   tank is destroyed, not since when, and the death static over the game
+   view plays from that time. Stored and put back like the tallies; arrays
+   of MAX_TANKS, FALSE when no snapshot is stored at that time. */
+bool lv_snapshotSetDeathTimes(snapshot *value, uint32_t time, const uint32_t *deathTimeMs);
+bool lv_snapshotGetDeathTimes(snapshot *value, uint32_t time, uint32_t *deathTimeMs);
 
 #endif /* __SNAPSHOT_H */

@@ -2307,6 +2307,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_event_scan_returns_to_start",                  run_lv_event_scan_returns_to_start                  },
     { "lv_kill_tally_seek_back",                         run_lv_kill_tally_seek_back                         },
     { "lv_alive_seek_back",                              run_lv_alive_seek_back                              },
+    { "lv_death_time_seek_back",                         run_lv_death_time_seek_back                         },
     { "scn_presentation_codec_bodies",                   run_scn_presentation_codec_bodies                   },
     { "scn_presentation_codec_refuses_short",            run_scn_presentation_codec_refuses_short            },
     { "scn_presentation_decoder_sets_broadcast",         run_scn_presentation_decoder_sets_broadcast         },

@@ -3205,6 +3205,35 @@ static size_t s_firstWorldSnapPos = 0;
  * snapshot, so it needs no separate reset. */
 static bool s_openingSnapshotHadWorld = FALSE;
 
+/* Store, with the snapshot at this time, when each slot's tank last died. */
+static void lv_snapshotKeepDeathTimes(uint32_t snapTime) {
+  uint32_t times[MAX_TANKS];
+  int slot;
+
+  for (slot = 0; slot < MAX_TANKS; slot++) {
+    times[slot] = g_lv->gameViewHud[slot].deathTimeMs;
+  }
+  lv_snapshotSetDeathTimes(&g_lv->snap, snapTime, times);
+}
+
+/* After a seek has decoded the snapshot at this time again: a tank that is
+   destroyed in it died when playback first got here said it did, not at the
+   snapshot's own time, which is what the decode stamps on a tank that was
+   alive at the time the seek left. The death static plays from this time. */
+static void lv_snapshotRestoreDeathTimes(uint32_t snapTime) {
+  uint32_t times[MAX_TANKS];
+  int slot;
+
+  if (lv_snapshotGetDeathTimes(&g_lv->snap, snapTime, times) == FALSE) {
+    return;
+  }
+  for (slot = 0; slot < MAX_TANKS; slot++) {
+    if (g_lv->gameViewHud[slot].alive == false) {
+      g_lv->gameViewHud[slot].deathTimeMs = times[slot];
+    }
+  }
+}
+
 bool lv_processSnapshot() {
   bool returnValue = TRUE;
   BYTE data[512];
@@ -3410,6 +3439,7 @@ bool lv_processSnapshot() {
     lv_snapshotAdd(&g_lv->snap, snapPos, snapTime, snapKey, data);
     if (isNew == TRUE) {
       lv_snapshotSetTallies(&g_lv->snap, snapTime, g_lv->kills, g_lv->deaths);
+      lv_snapshotKeepDeathTimes(snapTime);
     }
   }
   return returnValue;
@@ -6304,6 +6334,7 @@ void lv_screenRewind() {
     /* Playback counts the kills after this snapshot again from here. */
     lv_snapshotGetTallies(&g_lv->snap, currentTime, g_lv->kills, g_lv->deaths);
     lv_processSnapshot();
+    lv_snapshotRestoreDeathTimes(currentTime);
     /* The snapshot carries no rules: read them again at its time. */
     lv_rulesRefresh();
     lv_presRebuild(g_lv->timeRunning);
@@ -6403,6 +6434,7 @@ static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
        that go with the snapshot, or a step back counts those kills twice. */
     lv_snapshotGetTallies(&g_lv->snap, snapTime, g_lv->kills, g_lv->deaths);
     lv_processSnapshot();
+    lv_snapshotRestoreDeathTimes(snapTime);
     /* The snapshot carries no rules: read them again at its time, so the
        fast-forward below starts from the values in force there. */
     lv_rulesRefresh();
