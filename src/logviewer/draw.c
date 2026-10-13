@@ -148,13 +148,18 @@ static bool         s_blitKnown = FALSE;
 /* Used for storing time */
 static uint32_t g_dwFrameTotal = 0;
 
-/* Stepped zoom table — same values as the map editor (mapeditor.c).
+/* Stepped zoom table. Up to 1.0 the values are the map editor's
+ * (mapeditor.c); above it the viewer has its own, with 1.5 between 1.0
+ * and 2.0, and stops at 4.0.
  * Below 1.0 the texture target grows so we can show more tiles, then
  * the blit scales it down; at and above 1.0 the texture target stays
- * sized to the visible tile count and the blit scales it up. */
+ * sized to the visible tile count and the blit scales it up.
+ * At 1.5 a map square is 24 points, so the pixels of the art are 1 and 2
+ * pixels of the display in turn: sharp, but not all the same width.
+ * ZOOM_STEP_1X is the place of 1.0 in the table. */
 static const float g_zoomSteps[] = {
     0.5f, 0.6f, 0.7f, 0.8f, 0.9f,
-    1.0f, 2.0f, 3.0f, 4.0f
+    1.0f, 1.5f, 2.0f, 3.0f, 4.0f
 };
 #define ZOOM_STEP_COUNT ((int)(sizeof(g_zoomSteps) / sizeof(g_zoomSteps[0])))
 #define ZOOM_STEP_1X    5

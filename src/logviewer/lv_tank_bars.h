@@ -33,7 +33,7 @@
  *
  * Under this many points to a map square no bars are drawn: a bar would be
  * too short to read, and the zoomed-out view has enough on it. The viewer's
- * zoom steps give squares of 8, 9.6, 11.2, 12.8, 14.4, 16, 32, 48 and 64
+ * zoom steps give squares of 8, 9.6, 11.2, 12.8, 14.4, 16, 24, 32, 48 and 64
  * points, so the bars come in at 0.8x, on every display. */
 #define LV_TANK_BARS_MIN_TILE 12.0f
 

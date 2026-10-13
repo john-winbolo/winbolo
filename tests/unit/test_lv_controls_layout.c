@@ -234,9 +234,11 @@ static int zp_text_is(float squarePx, float scale, const char *want) {
 
 int run_lv_zoom_percent(void) {
     char buf[24];
-    static const float steps[] = { 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 2.0f, 3.0f, 4.0f };
+    static const float steps[] = { 0.5f, 0.6f, 0.7f, 0.8f, 0.9f,
+                                   1.0f, 1.5f, 2.0f, 3.0f, 4.0f };
     static const char *const stepText[] = { "50%", "60%", "70%", "80%", "90%",
-                                            "100%", "200%", "300%", "400%" };
+                                            "100%", "150%", "200%", "300%", "400%" };
+    const int stepCount = (int)(sizeof(steps) / sizeof(steps[0]));
     int i;
 
     /* 100% is one square on 16 points: 16 pixels of an ordinary display,
@@ -245,13 +247,17 @@ int run_lv_zoom_percent(void) {
     UT_ASSERT_MSG(lvZoomPercent(32.0f, 2.0f) == 100.0f, "32 px at 2x is still 100");
     UT_ASSERT_MSG(lvZoomPercent(24.0f, 1.5f) == 100.0f, "24 px at 1.5x");
     UT_ASSERT_MSG(lvZoomPercent(32.0f, 1.0f) == 200.0f, "32 px at 1x is 200");
+    /* The step between 100 and 200: a square on 24 points. */
+    UT_ASSERT_MSG(lvZoomPercent(24.0f, 1.0f) == 150.0f, "24 px at 1x is 150");
+    UT_ASSERT_MSG(lvZoomPercent(48.0f, 2.0f) == 150.0f, "48 px at 2x is 150");
+    UT_ASSERT_MSG(zp_text_is(24.0f, 1.0f, "150%"), "the text of the 1.5 step");
     UT_ASSERT_MSG(lvZoomPercent(8.0f, 1.0f) == 50.0f, "8 px at 1x is 50");
     UT_ASSERT_MSG(lvZoomPercent(16.0f, 2.0f) == 50.0f, "16 px at 2x is 50");
     UT_ASSERT_MSG(lvZoomPercent(0.0f, 1.0f) == 0.0f, "no square");
     UT_ASSERT_MSG(lvZoomPercent(16.0f, 0.0f) == 100.0f, "no scale given: 1");
 
     /* Each step of the viewer, on three displays: the same text. */
-    for (i = 0; i < 9; i++) {
+    for (i = 0; i < stepCount; i++) {
         UT_ASSERT_MSG(zp_text_is(16.0f * steps[i], 1.0f, stepText[i]), "step %d at 1x", i);
         UT_ASSERT_MSG(zp_text_is(16.0f * steps[i] * 2.0f, 2.0f, stepText[i]), "step %d at 2x", i);
         UT_ASSERT_MSG(zp_text_is(16.0f * steps[i] * 1.25f, 1.25f, stepText[i]), "step %d at 1.25x", i);

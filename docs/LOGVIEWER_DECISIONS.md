@@ -1799,6 +1799,29 @@ The sum is `lvControlsWheelStep` in `src/logviewer/lv_controls_layout.h`;
 `seek_wheel_step` in `imgui_controls.cpp` uses it. Test:
 `lv_controls_wheel_step`.
 
+### A 150% zoom step (Oct 13)
+
+The zoom went from 100% straight to 200%. The table in `draw.c` now has
+1.5 between them: 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.5, 2.0, 3.0, 4.0.
+
+- **One table, read by all.** The Options > Zoom menu (and the Mac menu
+  bar) make their lines from the table's count and values, so "1.5x" is
+  there with no other change. The wheel, the keys, the controller and the
+  web viewer go one step at a time through the same table.
+- **1.0 keeps its place.** It is still step 5, the step the viewer starts
+  at. No step number is saved in the preferences. The embedded reel keeps
+  its step number only while it is open, so nothing old points at a wrong
+  step.
+- **How it looks.** A map square is 24 points. The map is scaled up with
+  no blending, as at 2x, so a pixel of the art is 1 and 2 pixels of the
+  display in turn. Lines are sharp but not all the same width. That is
+  accepted for this step.
+- **The first view can now stop at 150%.** It goes down from the zoom the
+  viewer has to the largest step the land goes in at; from 2x or more
+  that can now be 1.5x where it was 1x.
+- **The map editor is not changed.** The comment over the table said the
+  values were the map editor's; it now says which part still is.
+
 ### The first view of a log is on the land (Oct 13)
 
 Before: a load put the view's top left corner at square 127,127
