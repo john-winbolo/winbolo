@@ -21,9 +21,10 @@
  *
  * error_bounds: the same chain carried on through spritePositionLgm, the
  * drawn sprite's centre measured against the true server position in world
- * units, own man and other players' men alike. These are the bounds the wire
- * format allows without rounding to nearest on the server; they are pinned as
- * they stand so a later change to the rounding has to move them on purpose.
+ * units, own man and other players' men alike. spritePositionLgm centres the
+ * sprite on the middle of the game pixel that was sent, which is as close as
+ * a rounded-down position allows; the bounds are pinned as they stand so a
+ * later change to the rounding has to move them on purpose.
  *
  * Not covered: the two lines in clientApplySnapshot that build the world
  * position from the snapshot fields are repeated here (ldc_decode) rather
@@ -265,8 +266,17 @@ int run_lgm_draw_centre_error_bounds(void) {
                           "from another player's",
                           heli ? "helicopter" : "on foot", kModeNames[m]);
 
-            if (heli) {
-                /* The square-sized sprite's centre, rounded down a pixel. */
+            if (heli && kModes[m] == GFX_ANIM_SMOOTH) {
+                /* The middle of the pixel the square-sized sprite's corner
+                   was rounded down to. */
+                UT_ASSERT_MSG(own.minX == -7.0f && own.maxX == 8.0f &&
+                                  own.minY == -7.0f && own.maxY == 8.0f,
+                              "Smooth helicopter: centre error x %.1f..%.1f "
+                              "y %.1f..%.1f, wanted -7..8 on both",
+                              own.minX, own.maxX, own.minY, own.maxY);
+            } else if (heli) {
+                /* On the grid the round-down stays: the next pixel along
+                   would be +1..+16. */
                 UT_ASSERT_MSG(own.minX == -15.0f && own.maxX == 0.0f &&
                                   own.minY == -15.0f && own.maxY == 0.0f,
                               "%s helicopter: centre error x %.1f..%.1f "
@@ -274,20 +284,21 @@ int run_lgm_draw_centre_error_bounds(void) {
                               kModeNames[m], own.minX, own.maxX,
                               own.minY, own.maxY);
             } else if (kModes[m] == GFX_ANIM_SMOOTH) {
-                /* No snap: the full round-down shows, plus the 1 and 2. */
-                UT_ASSERT_MSG(own.minX == -16.0f && own.maxX == -1.0f &&
-                                  own.minY == -17.0f && own.maxY == -2.0f,
+                /* The middle of the pixel on both axes; the odd unit is the
+                   1 and 2 the server takes off before it rounds. */
+                UT_ASSERT_MSG(own.minX == -8.0f && own.maxX == 7.0f &&
+                                  own.minY == -9.0f && own.maxY == 6.0f,
                               "Smooth on foot: centre error x %.1f..%.1f "
-                              "y %.1f..%.1f, wanted -16..-1 and -17..-2",
+                              "y %.1f..%.1f, wanted -8..7 and -9..6",
                               own.minX, own.maxX, own.minY, own.maxY);
             } else {
-                /* The snap to a whole game pixel moves the three-pixel-wide
-                   sprite half a pixel right, which cancels the round-down
-                   on x. The four-pixel-high sprite gets no such help on y. */
+                /* On the grid the three-pixel-wide sprite's centre falls on
+                   the middle of a pixel, the four-pixel-high sprite's on a
+                   pixel edge: the nearer edge is the one below. */
                 UT_ASSERT_MSG(own.minX == -8.0f && own.maxX == 7.0f &&
-                                  own.minY == -17.0f && own.maxY == -2.0f,
+                                  own.minY == -1.0f && own.maxY == 14.0f,
                               "%s on foot: centre error x %.1f..%.1f "
-                              "y %.1f..%.1f, wanted -8..7 and -17..-2",
+                              "y %.1f..%.1f, wanted -8..7 and -1..14",
                               kModeNames[m], own.minX, own.maxX,
                               own.minY, own.maxY);
             }

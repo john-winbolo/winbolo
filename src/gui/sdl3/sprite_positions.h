@@ -66,11 +66,14 @@ void spritePositionShell(float baseX, float baseY, int mode, float scale,
                          int wx, int wy, int frame,
                          float *outX, float *outY);
 
-/* LGM top-left, including the (1.5, 2.0) game-pixel centring and the
-   whole-game-pixel display snap that every mode but Smooth applies. Both
-   are for the on-foot frames LGM0..LGM2; any other frame is the helicopter,
-   drawn from its own top-left. The snap is relative to baseX/baseY, so the
-   base has to be the same one the tanks are placed from. */
+/* LGM top-left. The position passed in is the game pixel the server sent,
+   which it rounds down to, so the man is taken to be at the middle of that
+   pixel. The on-foot frames LGM0..LGM2 get the (1.5, 2.0) game-pixel
+   centring on that point and then the whole-game-pixel display snap that
+   every mode but Smooth applies; any other frame is the helicopter, drawn
+   from its own top-left, moved half a game pixel under Smooth only. The
+   snap is relative to baseX/baseY, so the base has to be the same one the
+   tanks are placed from. spritePositionLgm has the per-axis reasoning. */
 void spritePositionLgm(float baseX, float baseY, int mode, float scale,
                        int sheetScale, int mx, int my, int px, int py,
                        int wx, int wy, int frame,
