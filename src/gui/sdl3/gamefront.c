@@ -109,6 +109,7 @@ void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
 void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *renderer,
                             uint8_t *zipData, size_t zipLen, bool fromMainMenu);
 bool logViewerAppQuitRequested(void);
+void logViewerSetFullScreenHandler(void (*fn)(bool on));
 bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   void *cs, const char *serverHost, uint16_t serverPort);
 
@@ -1412,6 +1413,10 @@ static bool gameFrontDialogs(void) {
       dlgState = openWelcome;
       break;
     case openLogViewer: {
+      /* Alt+Enter in the viewer: it has this window and reads the keyboard
+       * itself, so it asks for full screen through the same call the welcome
+       * screen makes, and the FullScreen setting stays right. */
+      logViewerSetFullScreenHandler(windowFullScreenChoose);
       WbnBrowserResult wbnResult = imguiWbnBrowserShow(sdl3DrawGetWindow(),
                                                        sdl3DrawGetRenderer());
       /* The LogViewer NSMenu install/uninstall lives inside logViewerRun
@@ -1459,6 +1464,8 @@ static bool gameFrontDialogs(void) {
        * reject is what asks for one; a wrong entry asks again. A spectator
        * is never the host, so the global always starts empty here. */
       password[0] = '\0';
+      /* Alt+Enter while watching, as for the log viewer above. */
+      logViewerSetFullScreenHandler(windowFullScreenChoose);
       ClientSim *spectatorSim;
       for (;;) {
         spectatorSim = clientSimAlloc();

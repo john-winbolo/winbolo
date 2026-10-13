@@ -725,6 +725,17 @@ int lv_imgui_main_menu_bar(void) {
                 lv_imgui_dock_request_layout();
                 clicked = 1;
             }
+            /* Full screen, on and off: the same command as Alt+Enter. Left
+             * out where the window cannot leave full screen (a Steam Deck, a
+             * tablet, a browser). */
+            if (lv_windowCanFullScreen()) {
+                ImGui::Separator();
+                if (ImGui::MenuItem(langGetText(STR_DLGSETTINGS_FULLSCREEN), "Alt+Enter",
+                                    lv_windowIsFullScreen())) {
+                    lv_windowToggleFullScreen();
+                    clicked = 1;
+                }
+            }
             ImGui::EndMenu();
         }
 

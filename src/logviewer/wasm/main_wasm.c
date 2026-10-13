@@ -252,6 +252,11 @@ void lv_windowSaveMap(void) {
 /* The two desktop items of the File menu. The web version has no file to
  * save a copy of and no game to start, so both stay disabled. */
 bool lv_windowCanSaveLog(void) { return FALSE; }
+/* Full screen in a browser is the browser's own; the Windows menu item is
+ * left out here. */
+bool lv_windowCanFullScreen(void) { return FALSE; }
+bool lv_windowIsFullScreen(void) { return FALSE; }
+void lv_windowToggleFullScreen(void) {}
 void lv_windowSaveLog(void) {}
 bool lv_windowCanOpenSinglePlayer(void) { return FALSE; }
 void lv_windowOpenSinglePlayer(void) {}

@@ -80,6 +80,7 @@ static NSMenuItem *s_lv_dockLeftItem       = nil;
 static NSMenuItem *s_lv_dockTopItem        = nil;
 static NSMenuItem *s_lv_dockBottomItem     = nil;
 static NSMenuItem *s_lv_resetIntoDockItem  = nil;
+static NSMenuItem *s_lv_fullScreenItem     = nil;
 
 static int s_lv_zoomStepsBuilt = -1;   /* Zoom submenu's per-step items rebuilt on count change. */
 
@@ -133,6 +134,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleDockTop:(id)sender;
 - (void)onToggleDockBottom:(id)sender;
 - (void)onResetWindows:(id)sender;
+- (void)onToggleFullScreen:(id)sender;
 - (void)onResetWindowsIntoDock:(id)sender;
 - (void)onHelp:(id)sender;
 @end
@@ -235,6 +237,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleDockTop:(id)sender { (void)sender; lv_imgui_dock_set_side_enabled(LV_DOCK_TOP, !lv_imgui_dock_get_side_enabled(LV_DOCK_TOP)); }
 - (void)onToggleDockBottom:(id)sender { (void)sender; lv_imgui_dock_set_side_enabled(LV_DOCK_BOTTOM, !lv_imgui_dock_get_side_enabled(LV_DOCK_BOTTOM)); }
 - (void)onResetWindows:(id)sender { (void)sender; lv_g_reset_window_positions = true; }
+- (void)onToggleFullScreen:(id)sender { (void)sender; lv_windowToggleFullScreen(); }
 - (void)onResetWindowsIntoDock:(id)sender { (void)sender; lv_imgui_dock_request_layout(); }
 - (void)onHelp:(id)sender { (void)sender; /* Phase 3 — Help is a placeholder */ }
 @end
@@ -737,6 +740,21 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [winMenu addItem:resetIntoDock];
     s_lv_resetIntoDockItem = resetIntoDock;
 
+    [winMenu addItem:[NSMenuItem separatorItem]];
+
+    /* Full screen, as the game's Window menu has it: the viewer's own
+     * command (the one Alt+Enter gives) and not AppKit's toggleFullScreen:,
+     * with the game's title and the game's shortcut, Control-Command-F. The
+     * state shows as a checkmark. */
+    NSMenuItem *fullScreenItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_ENTER_FULL_SCREEN)
+        action:@selector(onToggleFullScreen:)
+        keyEquivalent:@"f"];
+    [fullScreenItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagControl];
+    [fullScreenItem setTarget:s_lv_bridge];
+    [winMenu addItem:fullScreenItem];
+    s_lv_fullScreenItem = fullScreenItem;
+
     /* Help menu — kept symmetric with the in-window ImGui menu so the
      * Win/Linux/Web rendering of this menu doesn't diverge. About is
      * also present in the standalone app menu via STR_MENU_ABOUT_LV. */
@@ -827,6 +845,7 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_dockTopItem = nil;
     s_lv_dockBottomItem = nil;
     s_lv_resetIntoDockItem = nil;
+    s_lv_fullScreenItem = nil;
     s_lv_zoomStepsBuilt = -1;
 }
 
@@ -882,6 +901,10 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (s_lv_dockTopItem) [s_lv_dockTopItem setState:(s->dockTop ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_dockBottomItem) [s_lv_dockBottomItem setState:(s->dockBottom ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_resetIntoDockItem) [s_lv_resetIntoDockItem setEnabled:(s->dockEnabled ? YES : NO)];
+    if (s_lv_fullScreenItem) {
+        [s_lv_fullScreenItem setState:(s->fullScreen ? NSControlStateValueOn : NSControlStateValueOff)];
+        [s_lv_fullScreenItem setEnabled:(s->canFullScreen ? YES : NO)];
+    }
 
     /* Zoom submenu — rebuild per-step items when the step count changes,
      * then mirror checkmarks every frame so wheel-zoom updates land. */

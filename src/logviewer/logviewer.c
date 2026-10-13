@@ -66,6 +66,7 @@
 #include "imgui/imgui_dock.h"
 #include "lv_dock_fit.h"
 #include "lv_dock_clear.h"
+#include "lv_fullscreen_key.h"
 #include "imgui/imgui_game_view.h"
 #include "imgui/imgui_logviewer_menu.h"
 #include "game_view.h"
@@ -863,6 +864,8 @@ static void loadPreferences(void) {
     }
 }
 
+bool lv_windowCanFullScreen(void);
+
 static void savePreferences(void) {
     char line[256];
     char val[64];
@@ -924,9 +927,17 @@ static void savePreferences(void) {
          * above are whole squares, which is not exact enough to bring a
          * layout back as it was. Not written for WinBolo's window, which the
          * viewer only borrows. */
+        /* Full screen is saved as the game saves its own ([SETTINGS]
+         * FullScreen there), so the viewer opens the way it was closed.
+         * While the window is full screen "maximized" is left as it was
+         * saved: that is the state the window goes back to. */
         if (g_lv->ownsWindow) {
-            lv_platform_config_set_string("LOGVIEWER", "Window.Maximized",
-                                          (wflags & SDL_WINDOW_MAXIMIZED) ? "Yes" : "No");
+            if (!(wflags & SDL_WINDOW_FULLSCREEN)) {
+                lv_platform_config_set_string("LOGVIEWER", "Window.Maximized",
+                                              (wflags & SDL_WINDOW_MAXIMIZED) ? "Yes" : "No");
+            }
+            lv_platform_config_set_string("LOGVIEWER", "Window.FullScreen",
+                                          (wflags & SDL_WINDOW_FULLSCREEN) ? "Yes" : "No");
         }
         if (placed) {
             int x = 0, y = 0, w = 0, h = 0;
@@ -1021,6 +1032,13 @@ static void lvHostRestoreWindowPlace(void) {
     lv_platform_config_get_string("LOGVIEWER", "Window.Maximized", "No", val, sizeof(val));
     if (val[0] == 'Y' || val[0] == 'y') {
         SDL_MaximizeWindow(g_lv->window);
+    }
+    /* Full screen last, so the size and place above are what the window has
+     * when full screen is turned off. */
+    lv_platform_config_get_string("LOGVIEWER", "Window.FullScreen", "No", val, sizeof(val));
+    if ((val[0] == 'Y' || val[0] == 'y') && lv_windowCanFullScreen()) {
+        SDL_SetWindowFullscreen(g_lv->window, true);
+        SDL_SyncWindow(g_lv->window);
     }
     /* The resize this causes reaches the event loop before the first frame,
      * where lvHostHandleResize fits the map to the window. */
@@ -1118,6 +1136,119 @@ static void lvHostTeardown(void) {
     lvHostTeardownCommon(true);
     free(g_lv);
     g_lv = NULL;
+}
+
+/* --------------------------------------------------------------------------
+ * Full screen
+ *
+ * Alt+Enter, and the Full Screen item of the Windows menu, as in the game.
+ * It is the same kind of full screen the game has: SDL_SetWindowFullscreen
+ * with no display mode chosen, which is a borderless window over the whole
+ * of the display the window is on. SDL keeps the size and place the window
+ * had and puts them back when full screen is turned off.
+ *
+ * The viewer's own window: the state is saved with the window's place
+ * (Window.FullScreen) and comes back at the next start, as the game's does.
+ *
+ * WinBolo's window (Watch a Log, a live game watched from the game): the
+ * window and its full screen setting are the game's, and the game is not
+ * reading the keyboard while the viewer runs. So the viewer asks the game to
+ * do it, through the handler the game gave (windowFullScreenChoose, which is
+ * what Alt+Enter does on the game's own screens outside a game). The game's
+ * setting and the window then agree when the viewer hands the window back,
+ * and the game saves the setting itself.
+ *
+ * Not on a Steam Deck or a tablet: the window there is full screen from the
+ * start and has no other size to go back to. The game has the same rule.
+ * -------------------------------------------------------------------------- */
+SDL_COMPILE_TIME_ASSERT(lv_fskey_return, LV_FSKEY_SCANCODE_RETURN == SDL_SCANCODE_RETURN);
+SDL_COMPILE_TIME_ASSERT(lv_fskey_kp_enter, LV_FSKEY_SCANCODE_KP_ENTER == SDL_SCANCODE_KP_ENTER);
+SDL_COMPILE_TIME_ASSERT(lv_fskey_lalt, LV_FSKEY_MOD_LALT == SDL_KMOD_LALT);
+SDL_COMPILE_TIME_ASSERT(lv_fskey_ralt, LV_FSKEY_MOD_RALT == SDL_KMOD_RALT);
+
+static void (*s_fullScreenHost)(bool on) = NULL;
+
+/* The embedding game says how its window goes full screen. Scalars only:
+ * the game hand-declares this, as it does logViewerRun. */
+void logViewerSetFullScreenHandler(void (*fn)(bool on)) {
+    s_fullScreenHost = fn;
+}
+
+bool lv_windowCanFullScreen(void) {
+    if (g_lv == NULL || g_lv->window == NULL) {
+        return FALSE;
+    }
+    if (uiModeIsSteamDeck() || uiModeIsTablet()) {
+        return FALSE;
+    }
+    return TRUE;
+}
+
+bool lv_windowIsFullScreen(void) {
+    if (g_lv == NULL || g_lv->window == NULL) {
+        return FALSE;
+    }
+    return (SDL_GetWindowFlags(g_lv->window) & SDL_WINDOW_FULLSCREEN) != 0;
+}
+
+void lv_windowToggleFullScreen(void) {
+    bool on;
+    if (!lv_windowCanFullScreen()) {
+        return;
+    }
+    on = !lv_windowIsFullScreen();
+    if (!g_lv->ownsWindow && s_fullScreenHost != NULL) {
+        s_fullScreenHost(on);
+    } else {
+        SDL_SetWindowFullscreen(g_lv->window, on);
+        /* The change is not immediate on Wayland and X11, and the frame that
+         * follows reads the size of the window. */
+        SDL_SyncWindow(g_lv->window);
+    }
+    lv_drawDirtyScreen();
+    g_lv->wantScreenUpdate = TRUE;
+}
+
+/* Alt+Enter. TRUE when the event is that keystroke, a repeat of it included:
+ * the caller then gives the event to nothing else. Called before ImGui is
+ * given the event, so the Enter is never an Enter in a text box, on a button
+ * or in a list, whichever panel has the keyboard. */
+static bool lvHostHandleFullScreenKey(const SDL_Event *e) {
+    LvFullScreenKey what;
+    if (e->type != SDL_EVENT_KEY_DOWN || g_lv == NULL || g_lv->window == NULL ||
+        e->key.windowID != SDL_GetWindowID(g_lv->window)) {
+        return FALSE;
+    }
+    what = lvFullScreenKey(e->key.repeat, (unsigned int)e->key.mod,
+                           (unsigned int)e->key.scancode);
+    if (what == LV_FSKEY_NOT_OURS || !lv_windowCanFullScreen()) {
+        return FALSE;
+    }
+    if (what == LV_FSKEY_TOGGLE) {
+        lv_windowToggleFullScreen();
+    }
+    return TRUE;
+}
+
+/* The window has gone into or come out of full screen, by this command or by
+ * the system's own (the green button of a Mac). The overview is fitted to the
+ * new size by the resize event that comes with it. The game view is not: it
+ * has a size of its own that it gave the window. Coming out of full screen it
+ * is set up again, so a game view that was started in full screen, where its
+ * zoom was cut to fit the display, gets a window of its own size. */
+static void lvHostHandleFullScreenChange(const SDL_Event *e) {
+    if (g_lv == NULL || g_lv->window == NULL ||
+        e->window.windowID != SDL_GetWindowID(g_lv->window)) {
+        return;
+    }
+    if (e->type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN && g_lv->gameView) {
+        int zoom = lv_drawGameViewGetZoom();
+        lv_drawGameViewTeardown();
+        lv_drawGameViewSetup(zoom > 0 ? zoom : 3);
+        lv_imgui_game_view_init_camera(g_lv);
+    }
+    lv_drawDirtyScreen();
+    g_lv->wantScreenUpdate = TRUE;
 }
 
 /* --------------------------------------------------------------------------
@@ -1606,6 +1737,8 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.zoomStepIndex    = lv_drawGetZoomStepIndex();
         lvms.zoomStepCount    = lv_drawGetZoomStepCount();
         lvms.fromMainMenu     = g_lv->fromMainMenu ? true : false;
+        lvms.fullScreen       = lv_windowIsFullScreen() ? true : false;
+        lvms.canFullScreen    = lv_windowCanFullScreen() ? true : false;
         lv_mac_menubar_refresh(&lvms);
     }
 #endif
@@ -1754,11 +1887,11 @@ static void lvHostRenderFrame(const char *overlay) {
  * saved as the viewer's.
  * -------------------------------------------------------------------------- */
 static void lvHostAutosave(void) {
-    static int    seen[5] = { 0, 0, 0, 0, 0 };
+    static int    seen[6] = { 0, 0, 0, 0, 0, 0 };
     static bool   haveSeen = FALSE;
     static bool   pending = FALSE;
     static Uint64 pendingAt = 0;
-    int now[5] = { 0, 0, 0, 0, 0 };
+    int now[6] = { 0, 0, 0, 0, 0, 0 };
     bool due;
 
     if (g_lv == NULL || g_lv->gameView) {
@@ -1770,6 +1903,7 @@ static void lvHostAutosave(void) {
         SDL_GetWindowPosition(g_lv->window, &now[0], &now[1]);
         SDL_GetWindowSize(g_lv->window, &now[2], &now[3]);
         now[4] = (SDL_GetWindowFlags(g_lv->window) & SDL_WINDOW_MAXIMIZED) ? 1 : 0;
+        now[5] = (SDL_GetWindowFlags(g_lv->window) & SDL_WINDOW_FULLSCREEN) ? 1 : 0;
         if (!haveSeen) {
             memcpy(seen, now, sizeof(seen));
             haveSeen = TRUE;
@@ -1850,6 +1984,14 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
 
         /* Process SDL events */
         while (SDL_PollEvent(&sdlEvent)) {
+            /* Alt+Enter: full screen. First, so nothing else has the key. */
+            if (lvHostHandleFullScreenKey(&sdlEvent)) {
+                continue;
+            }
+            if (sdlEvent.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN ||
+                sdlEvent.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN) {
+                lvHostHandleFullScreenChange(&sdlEvent);
+            }
             /* Game-view input (grave toggle / Tab cycle / 1-4 zoom / arrow pan
              * / ,-. seek), shared with spectatorRun. The viewer allows the
              * toggle and the seek; the spectator host suppresses both. */
@@ -2089,6 +2231,10 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
 
         specDrainPump(cs);
         while (SDL_PollEvent(&sdlEvent)) {
+            /* Alt+Enter: full screen, while the feed is waited for too. */
+            if (lvHostHandleFullScreenKey(&sdlEvent)) {
+                continue;
+            }
             lv_imgui_context_handle_event(&sdlEvent);
             /* Esc is the back affordance: leave the spectator view (including
              * a stalled "connection lost" overlay) and return to the caller. */
@@ -2231,6 +2377,14 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
 
         specDrainPump(cs);
         while (SDL_PollEvent(&sdlEvent)) {
+            /* Alt+Enter: full screen. First, so nothing else has the key. */
+            if (lvHostHandleFullScreenKey(&sdlEvent)) {
+                continue;
+            }
+            if (sdlEvent.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN ||
+                sdlEvent.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN) {
+                lvHostHandleFullScreenChange(&sdlEvent);
+            }
             /* Reuse the viewer's game-view input. The grave key toggles
              * between the block-grid overview and the game view (allowToggle),
              * and ,-. seek parks the live feed like the scrubber (allowSeek). */
