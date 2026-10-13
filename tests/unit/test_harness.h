@@ -2670,6 +2670,10 @@ int run_tank_blast_zero_rewind_unchanged(void);
 int run_tank_blast_hit_decision_unchanged(void);
 int run_tank_blast_builder_at_present_tank(void);
 int run_tank_blast_absent_builder_lives(void);
+int run_teleport_erases_tank_rewind_record(void);
+int run_teleport_shell_hits_new_place(void);
+int run_teleport_rewind_refills(void);
+int run_teleport_builder_rewind_record(void);
 
 /* In-game input gate taxonomy (test_input_gate.c). gameInputSuspended()
  * suspends the polled in-game readers only for blocking surfaces (text

@@ -4393,6 +4393,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # A shell that hits a tank blows up at the hit tank's present centre, not
     # at the shell, which a lag-compensated test leaves behind the tank.
     tests/unit/test_tank_blast_at_tank.c
+    tests/unit/test_teleport_clears_rewind.c
     tests/unit/test_input_gate.c
     tests/unit/test_input_source.c
     src/gui/sdl3/input_source.c
@@ -5668,6 +5669,10 @@ set(_unit_test_names
     tank_blast_hit_decision_unchanged
     tank_blast_builder_at_present_tank
     tank_blast_absent_builder_lives
+    teleport_erases_tank_rewind_record
+    teleport_shell_hits_new_place
+    teleport_rewind_refills
+    teleport_builder_rewind_record
     loopback_join
     loopback_join_loss
     loopback_password

@@ -323,6 +323,21 @@ static ScnOpResult scenarioOpTankTeleport(ServerSim *sim,
        does. */
     tankSetOnBoat(t, (pos == DEEP_SEA || pos == RIVER || pos == BOAT));
     tankClearBoatTrail(t);
+    /* The lag-compensation record of this tank holds the last 16 frames of
+       where it was, all of them before the jump. A player's shell tests a
+       tank where it was on the shooter's screen, so for as long as those
+       frames stayed in the record a shell at the old place would hit a tank
+       that is no longer there. Erased, the record says "nothing that old",
+       and the shell test falls back to where the tank is now, until the
+       record has filled again. scenarioTankFor has checked the slot. */
+    posHistoryInit(&sim->posHistory[p->slot]);
+    /* A builder inside the tank went with it, so his record goes too: a
+       frame that had him out beside the old place must not be where a blast
+       looks for him if he steps out again at the new one. A builder who is
+       out did not move. His record is still true and is left alone. */
+    if (sim->sim.lgmen[p->slot] != NULL && sim->sim.lgmen[p->slot]->inTank) {
+        posHistoryInit(&sim->lgmPosHistory[p->slot]);
+    }
     return SCN_OP_OK;
 }
 
@@ -650,6 +665,11 @@ static ScnOpResult scenarioOpLgmParachute(ServerSim *sim,
     (*l)->y = (WORLD)(((WORLD)ey << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
     (*l)->destX = dx;
     (*l)->destY = dy;
+    /* The script moved the builder, so the frames recorded before the move
+       go, as a teleported tank's do. He is dead for the whole flight and the
+       frames say so already; this keeps the one rule for every scripted
+       move. scenarioBuilderFor has checked the slot. */
+    posHistoryInit(&sim->lgmPosHistory[p->slot]);
     return SCN_OP_OK;
 }
 
