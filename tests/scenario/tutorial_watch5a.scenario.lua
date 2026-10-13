@@ -117,6 +117,21 @@ function on_tick(tick)
       return fail(string.format("rings broken %d, after reset bad %d (%s)",
                                 A.broken, #bad, table.concat(bad, " ")))
     end
+    A.phase, A.t = 5.5, tick
+  elseif A.phase == 5.5 then
+    -- The reset took the demo bot off, and the poll fields it again. Its
+    -- spawn runs the ring rebuild too (on_tank_spawned), and that must not
+    -- land in the frame the arena cuts short: wait until the bot is a live
+    -- tank, and has been for 20 ticks.
+    if live_tank(S.bot5a) == nil then
+      A.live_at = nil
+      if tick >= A.t + 1000 then
+        return fail("5A bot not back on the field after the reset")
+      end
+      return
+    end
+    A.live_at = A.live_at or tick
+    if tick < A.live_at + 20 then return end
     -- Break every square of the rings and the moat.
     for _, w in ipairs(LAYOUT.walls5a) do
       game.set_tile(w[1], w[2], game.TERRAIN.rubble)
