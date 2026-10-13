@@ -5600,6 +5600,7 @@ set(_unit_test_names
     lgm_kill_rewound_position
     lgm_kill_pill_shell_present
     lgm_kill_short_history
+    lgm_start_offset
     jitter_buffer_grow
     shell_projection
     sim_rules_classic_defaults
