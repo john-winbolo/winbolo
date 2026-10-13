@@ -32,10 +32,14 @@
 #include "lv_team_sprite.h"
 #include "test_harness.h"
 
-/* One grid of the game's panels, the name above it and the gap between two,
-   as the panel uses them at an ordinary font size. */
-#define PW 90
-#define PH 66
+/* One grid of the game's panels, from the header the panel itself reads
+   (90 by 66; the sums below state those numbers, so a change to the header
+   shows here). The name above a grid and the gap between two come from the
+   font and the style when the panel runs, so no header holds them: 17 and 8
+   are what they are at an ordinary font size. */
+#include "../../src/gui/positions.h"
+#define PW STATUS_TANKS_WIDTH
+#define PH STATUS_TANKS_HEIGHT
 #define LH 17
 #define GAP 8
 

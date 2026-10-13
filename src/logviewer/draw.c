@@ -536,7 +536,9 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     float maxGx, maxGy;
     int   curTexW, curTexH;
     int   gameW;
+    int   mapW = 0;
     int   dockL = 0, dockT = 0, dockR = 0, dockB = 0;
+    LvDockMargins dock = { 0, 0, 0, 0 };
 
     if (newStepIndex < 0) newStepIndex = 0;
     if (newStepIndex >= ZOOM_STEP_COUNT) newStepIndex = ZOOM_STEP_COUNT - 1;
@@ -560,8 +562,11 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
      * is what they leave, as it is when a sidebar comes in or is resized
      * (lvHostDockSync). The embedded reel has none. */
     if (!g_embedded) lv_imgui_dock_margins(&dockL, &dockT, &dockR, &dockB);
-    gameH = windowH - menuH - dockT - dockB;
-    if (gameH < 1) gameH = 1;
+    dock.left = dockL;
+    dock.top = dockT;
+    dock.right = dockR;
+    dock.bottom = dockB;
+    lvDockMapRect(&dock, windowW, windowH, menuH, NULL, NULL, &mapW, &gameH);
 
     /* Compute map tile under cursor at the OLD zoom. The blit width is
      * curTilesX * TILE_SIZE_X * oldZoom, and the cursor screen X covers
@@ -608,7 +613,7 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     /* Beside a sidebar the map runs up to the sidebar's edge: the last
      * square may go a little way under it rather than stop short. */
     if (dockL + dockR > 0) {
-        gameW = windowW - dockL - dockR;
+        gameW = mapW;
         newTilesX = lvFitTilesCover(gameW, newEffective);
     }
     newTilesY = (int)(((float)gameH + newEffective * 0.5f) / newEffective);

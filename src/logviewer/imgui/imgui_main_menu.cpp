@@ -222,12 +222,13 @@ static void zoom_at_center(int stepIndex) {
     if (s_lv && s_lv->window) SDL_GetWindowSize(s_lv->window, &w, &h);
     /* The middle of the map's part of the window: what the sidebars and the
      * menu bar leave. */
-    int dockL = 0, dockT = 0, dockR = 0, dockB = 0;
+    LvDockMargins dock = { 0, 0, 0, 0 };
     int menuH = (int)lv_imgui_get_menu_bar_height();
-    lv_imgui_dock_margins(&dockL, &dockT, &dockR, &dockB);
-    if (dockL + dockT + dockR + dockB == 0) menuH = 0;  /* as it always was */
-    lv_drawSetZoomStep(stepIndex, (dockL + (w - dockR)) / 2,
-                       (menuH + dockT + (h - dockB)) / 2);
+    int mapX = 0, mapY = 0, mapW = 0, mapH = 0;
+    lv_imgui_dock_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
+    if (dock.left + dock.top + dock.right + dock.bottom == 0) menuH = 0;  /* as it always was */
+    lvDockMapRect(&dock, w, h, menuH, &mapX, &mapY, &mapW, &mapH);
+    lv_drawSetZoomStep(stepIndex, mapX + mapW / 2, mapY + mapH / 2);
 }
 
 void lv_imgui_zoom_at_center(int stepIndex) { zoom_at_center(stepIndex); }

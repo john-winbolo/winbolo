@@ -19,9 +19,12 @@
 #include "lv_tank_status.h"
 #include "test_harness.h"
 
-/* The game's numbers (gui/positions.h): a full gauge, and the well. */
-#define FULL_PX 80
-#define WELL_PX 85
+/* The game's numbers, from the header the panel itself reads: a full gauge,
+   and the well. The sums below state what those numbers are (80 and 85), so
+   a change to the header shows here. */
+#include "../../src/gui/positions.h"
+#define FULL_PX BAR_TANK_FULL_PIXELS
+#define WELL_PX STATUS_TANK_BARS_HEIGHT
 
 int run_lv_tank_status_sums(void) {
     /* The selected tank. */
