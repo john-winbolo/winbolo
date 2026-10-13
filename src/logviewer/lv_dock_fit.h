@@ -17,8 +17,11 @@
 #define LV_DOCK_FIT_H
 
 /* The narrowest the dock gets, and the width it has before the user drags its
- * edge. The default leaves the Controls panel's button row room on one line. */
-#define LV_DOCK_WIDTH_MIN     220
+ * edge. The default leaves the Controls panel's button row room on one line.
+ * The narrowest was 220 and is half of that: a panel that has less room than
+ * its content needs shows less (the Tank panel its gauges only), it is not
+ * cut off. A width saved under the old limit is inside the new one. */
+#define LV_DOCK_WIDTH_MIN     110
 #define LV_DOCK_WIDTH_DEFAULT 420
 
 /* The viewport is at least one map square across and at most the whole map. */

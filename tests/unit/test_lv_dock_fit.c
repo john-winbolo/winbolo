@@ -87,10 +87,19 @@ int run_lv_dock_fit_sums(void) {
                   lvDockClampWidth(2000, 1200));
     /* A window whose two thirds is under the smallest width: the smallest
        wins while it fits, and the dock never passes the window's own width. */
-    UT_ASSERT_MSG(lvDockClampWidth(420, 300) == LV_DOCK_WIDTH_MIN,
-                  "420 of 300: %d", lvDockClampWidth(420, 300));
-    UT_ASSERT_MSG(lvDockClampWidth(420, 150) == 150, "420 of 150: %d",
-                  lvDockClampWidth(420, 150));
+    UT_ASSERT_MSG(lvDockClampWidth(420, 150) == LV_DOCK_WIDTH_MIN,
+                  "420 of 150: %d", lvDockClampWidth(420, 150));
+    UT_ASSERT_MSG(lvDockClampWidth(420, 90) == 90, "420 of 90: %d",
+                  lvDockClampWidth(420, 90));
+    /* The smallest width is half of the 220 it was. A width saved under the
+       old limit is still inside the new one and is kept as it is. */
+    UT_ASSERT_MSG(LV_DOCK_WIDTH_MIN == 110, "the smallest width: %d", LV_DOCK_WIDTH_MIN);
+    UT_ASSERT_MSG(lvDockClampWidth(220, 1280) == 220, "220 of 1280: %d",
+                  lvDockClampWidth(220, 1280));
+    UT_ASSERT_MSG(lvDockClampWidth(110, 1280) == 110, "110 of 1280: %d",
+                  lvDockClampWidth(110, 1280));
+    UT_ASSERT_MSG(lvDockClampWidth(109, 1280) == 110, "109 of 1280: %d",
+                  lvDockClampWidth(109, 1280));
     UT_ASSERT_MSG(lvDockClampWidth(420, 0) == 0, "no window: %d",
                   lvDockClampWidth(420, 0));
     return 0;
@@ -205,8 +214,8 @@ int run_lv_dock_fit_margins(void) {
                   "drag top under: %d", lvDockDragSize(LV_DOCK_TOP, 10, 0, 600));
     UT_ASSERT_MSG(lvDockDragSize(LV_DOCK_BOTTOM, 900, 150, 600) == 250,
                   "drag bottom past: %d", lvDockDragSize(LV_DOCK_BOTTOM, 900, 150, 600));
-    UT_ASSERT_MSG(lvDockDragSize(LV_DOCK_RIGHT, 500, 0, 240) == LV_DOCK_WIDTH_MIN,
-                  "drag in a small window: %d", lvDockDragSize(LV_DOCK_RIGHT, 500, 0, 240));
+    UT_ASSERT_MSG(lvDockDragSize(LV_DOCK_RIGHT, 500, 0, 150) == LV_DOCK_WIDTH_MIN,
+                  "drag in a small window: %d", lvDockDragSize(LV_DOCK_RIGHT, 500, 0, 150));
     UT_ASSERT_MSG(lvDockDragSize(LV_DOCK_TOP, 500, 0, 0) == LV_DOCK_HEIGHT_MIN,
                   "drag with no window: %d", lvDockDragSize(LV_DOCK_TOP, 500, 0, 0));
 

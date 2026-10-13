@@ -384,6 +384,27 @@ Notes for the owner:
 - No new strings. The numbers are taken from the existing lines: the part
   after the colon. A translation with no colon keeps its line in words.
 
+### The narrowest sidebar is half as wide
+
+The owner asked for the panel's minimum width to be half of what it was.
+
+Limits found, and what was done with each:
+
+- Left and right sidebar, `LV_DOCK_WIDTH_MIN` in `src/logviewer/lv_dock_fit.h`:
+  220 before, 110 now. This is the limit that stopped a docked panel.
+- Tank panel: it has no minimum of its own. A floating panel is held only by
+  ImGui's own smallest window (32 by 32). Nothing was changed.
+- No other panel shares a minimum width with the others.
+- Scenario panel, `LV_SCN_PANEL_SIDE_MIN`: 128. This is the smallest side of
+  its square map when it floats. It is that panel's own limit, so it was
+  left at 128. Tell me if this one must be 64.
+- Top and bottom sidebar height (100): left as it is.
+
+The map still keeps at least one third of the window. A width saved with the
+old limit is inside the new one, so a saved layout loads as before.
+
+At 110 wide the Tank panel shows its gauges only.
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the
