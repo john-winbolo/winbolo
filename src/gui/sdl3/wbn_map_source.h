@@ -61,6 +61,11 @@ bool wbnMapsGeneratePreview(const char *entryPath,
                             void *ctx);
 void wbnMapsTooltipPrefix(MapChooserState *state, void *ctx);
 
+/* A listing or search that keeps failing is asked for again a limited
+ * number of times and then left alone. Call this when the chooser is
+ * opened so a request that had been given up on gets a fresh start. */
+void wbnMapSourceResetRetry(void);
+
 /* ── Map download ────────────────────────────────────────────────
  * One worker slot: submitting a map supersedes whatever is in flight,
  * and the completion sits in the slot until the host polls it off on

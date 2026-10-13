@@ -657,6 +657,28 @@ static void wbnMapsKickSearchFetch(const char *queryRaw) {
     }).detach();
 }
 
+/* What the listing last asked for and has not had an answer to, and
+ * how many times it has asked: one request for the folder branch and
+ * one for the search branch. Read and written by wbnMapsListProvider on
+ * the UI thread only, so it sits outside the mutex-guarded cache. */
+struct WbnMapsAsk {
+    int          folderId = -2;  /* -2 = no folder request outstanding */
+    WbnMapsRetry folderRetry = { 0, 0 };
+    std::string  search;         /* empty = no search outstanding */
+    WbnMapsRetry searchRetry = { 0, 0 };
+};
+
+static WbnMapsAsk s_wbnAsk;
+
+/* Start the retry counts again, so a request the listing had stopped
+ * asking for is sent on the next frame. */
+void wbnMapSourceResetRetry(void) {
+    s_wbnAsk.folderId = -2;
+    wbnMapsRetryReset(&s_wbnAsk.folderRetry);
+    s_wbnAsk.search.clear();
+    wbnMapsRetryReset(&s_wbnAsk.searchRetry);
+}
+
 /* WbnMapsLookupFn over s_wbnMaps.pathToId. The caller holds the cache
  * mutex. */
 static bool wbnMapsLookupPath(void *ctx, const char *path, size_t len,
@@ -710,22 +732,22 @@ void wbnMapsListProvider(MapChooserState *state,
         /* Kick a fetch if the query changed. Throttled per query
          * string — typing fast doesn't pile up requests. A query
          * whose results never arrived (the request failed) is sent
-         * again after WBN_MAPS_RETRY_MS rather than never. */
-        static std::string s_wbnSearchLastReq;
-        static Uint64      s_wbnSearchLastKickMs = 0;
+         * again after a wait that doubles each time, and no more
+         * after WBN_MAPS_RETRY_MAX_SENDS sends. */
         Uint64 srchNowMs = SDL_GetTicks();
+        bool   srchSame  = (s_wbnAsk.search == state->searchFilter);
         if (!srchInFlight &&
             (!hasResults || query != state->searchFilter) &&
-            wbnMapsFetchDue(s_wbnSearchLastReq == state->searchFilter,
-                            srchNowMs, s_wbnSearchLastKickMs)) {
-            s_wbnSearchLastReq    = state->searchFilter;
-            s_wbnSearchLastKickMs = srchNowMs;
+            wbnMapsFetchDue(&s_wbnAsk.searchRetry, srchSame, srchNowMs)) {
+            wbnMapsRetryNoteSent(&s_wbnAsk.searchRetry, srchSame, srchNowMs);
+            s_wbnAsk.search = state->searchFilter;
             WB_LOG_INFO(WB_LOG_CAT_GUI,
-                "[WBN-TAB] provider kicking search for '%s'",
-                state->searchFilter);
+                "[WBN-TAB] provider kicking search for '%s' (send %u)",
+                state->searchFilter, s_wbnAsk.searchRetry.sends);
             wbnMapsKickSearchFetch(state->searchFilter);
         } else if (hasResults && query == state->searchFilter) {
-            s_wbnSearchLastReq.clear();
+            s_wbnAsk.search.clear();
+            wbnMapsRetryReset(&s_wbnAsk.searchRetry);
         }
 
         /* Throttled log so we can confirm the branch is running
@@ -822,8 +844,6 @@ void wbnMapsListProvider(MapChooserState *state,
     /* Kick a fetch if the cache doesn't match what the chooser
      * currently wants. Tracks the most recently-requested ID so
      * rapid folder clicks while one is in flight don't pile up. */
-    static int    s_wbnMapsLastRequested = -2;
-    static Uint64 s_wbnMapsLastKickMs    = 0;
     bool cacheMatches = hasData && (cachedPath == relPath);
     /* The cache already holds the folder this path resolves to, under
      * another path: the folder the chooser asked for is gone or was
@@ -855,27 +875,32 @@ void wbnMapsListProvider(MapChooserState *state,
             relPath, targetId,
             cachedId, cachedPath.c_str(), (int)hasData,
             (int)cacheMatches, (int)inFlight,
-            s_wbnMapsLastRequested,
+            s_wbnAsk.folderId,
             subs.size(), entries.size(),
             errMsg.c_str());
     }
     if (!cacheMatches && !inFlight) {
         /* A folder already asked for and still not in the cache means
-         * the request failed. Ask again after WBN_MAPS_RETRY_MS: with
-         * no retry, one failure left this folder — and a starred row
-         * that points at it — empty for the rest of the run. */
+         * the request failed. Ask again after a wait: with no retry,
+         * one failure left this folder — and a starred row that points
+         * at it — empty for the rest of the run. The wait doubles each
+         * time and the asking stops after WBN_MAPS_RETRY_MAX_SENDS
+         * sends, so a folder the server no longer has is not asked
+         * for as long as the tab is open. */
         Uint64 nowMs = SDL_GetTicks();
-        if (wbnMapsFetchDue(s_wbnMapsLastRequested == targetId,
-                            nowMs, s_wbnMapsLastKickMs)) {
-            s_wbnMapsLastRequested = targetId;
-            s_wbnMapsLastKickMs    = nowMs;
+        bool   same  = (s_wbnAsk.folderId == targetId);
+        if (wbnMapsFetchDue(&s_wbnAsk.folderRetry, same, nowMs)) {
+            wbnMapsRetryNoteSent(&s_wbnAsk.folderRetry, same, nowMs);
+            s_wbnAsk.folderId = targetId;
             WB_LOG_INFO(WB_LOG_CAT_GUI,
                 "[WBN-TAB] provider kicking fetch for folderId=%d "
-                "(relPath='%s')", targetId, relPath);
+                "(relPath='%s', send %u)", targetId, relPath,
+                s_wbnAsk.folderRetry.sends);
             wbnMapsKickFolderFetch(targetId);
         }
     } else if (cacheMatches) {
-        s_wbnMapsLastRequested = -2;
+        s_wbnAsk.folderId = -2;
+        wbnMapsRetryReset(&s_wbnAsk.folderRetry);
     }
 
     /* Synthetic "[..]" entry — points at the parent friendly path.

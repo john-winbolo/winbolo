@@ -279,6 +279,9 @@ extern "C" void meWbnOpenShow(void) {
     s_pendingPath.clear();
     s_errText[0]   = '\0';
     meWbnClearStash();
+    /* A listing that failed until the retries stopped is asked for
+     * again on each opening. */
+    wbnMapSourceResetRetry();
 }
 
 extern "C" bool meWbnOpenIsOpen(void) {

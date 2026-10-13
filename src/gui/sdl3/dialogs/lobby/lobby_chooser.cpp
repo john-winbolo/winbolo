@@ -1050,6 +1050,9 @@ void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer) {
     s_chooserTabs.upload.provider.ctx  = cs;
 #ifndef __EMSCRIPTEN__
     s_chooserTabs.wbn.provider.ctx     = cs;
+    /* A WinBolo.net listing that failed until the retries stopped is
+     * asked for again on each opening of the chooser. */
+    wbnMapSourceResetRetry();
 #endif
     /* Re-enumerate Server Maps on every open. EnsureInit's discover runs
      * once per process, so without this a second opening of the dialog
