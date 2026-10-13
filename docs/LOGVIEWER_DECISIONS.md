@@ -554,8 +554,8 @@ round its cell.
 - The hint of the Tank panel now reads "Click a tank on the map or in the
   HUD panel to select it".
 
-**A double click on a tank shows that player's view (Oct 13).** A double
-click on a tank on the map selects it and turns on the view of its player:
+**A double click on a tank shows that player's view, or turns it off (Oct 13).**
+A double click on a tank on the map selects it and turns on the view of its player:
 the state the eye and the name in the HUD panel stand for. The X of the HUD
 panel goes back to all teams, as before.
 
@@ -565,23 +565,40 @@ panel goes back to all teams, as before.
   player's view on; only a click on a tank in the HUD panel did that. (In
   Select Team mode a view that was already on moved with the picked tank,
   and still does.)
-- The call is the one the HUD panel makes for a click on a tank there
-  (`lv_screenTogglePerspective`). That call turns the view off when it is
-  on for the same player, so the map makes it only when the view is not on
-  for that tank yet (`lvMapClickViewsTank` in `lv_tank_pick.h`, asked with
-  `lv_screenPerspectivePlayer`). So a double click on the tank whose view
-  is on leaves it on, and a third click does nothing more.
+- A double click on the tank whose view is on turns the view off: back to
+  all teams, as the X of the HUD panel does. The tank stays selected. (The
+  first build of this left the view on; the owner then asked: "let's make
+  double clicking when it's on also turn it off if it's the same tank".)
+- A double click on another tank while a view is on moves the view to that
+  tank. A double click on a tank with no view on turns its view on.
+- The rule is `lvMapClickViewsTank` in `lv_tank_pick.h`. It answers "on",
+  "off" or "no change" for a click, from which click of the row it is, the
+  tank, the tank of the click before, and the view **as it was before the
+  first click of the pair** (kept by the map when that first click comes
+  in). The map then puts the view in that state: the HUD panel's own calls
+  (`lv_screenTogglePerspective` to turn it on, `lv_screenClearPerspective`
+  to turn it off), each made only when the view is not in that state yet.
 - Each click of the double click still does all a single click does. The
-  first selects the tank. The second selects the same tank again, which
-  changes nothing, and then turns the view on. The view changes once.
+  first selects the tank and does not change the view in Information mode.
+  Only the second click of a pair changes the view, so it changes once for
+  a double click. A third fast click is the first of a new pair and changes
+  nothing; a fourth is a second double click.
 - Both clicks must be on the same tank. ImGui counts the clicks (its double
   click time and distance: 0.3 s, 6 points).
 - A double click on the map, a pillbox or a base does what it did before:
   two single clicks.
 - Select Team mode: the first click picks the tank's team as before ("self"
-  is that player). The second click then turns that player's view on. If a
-  view was on already, the first click moved it to this tank, and the
-  second click changes nothing.
+  is that player), and, as before, moves a view that is on to the picked
+  tank. That is why the rule uses the view from before the first click:
+  - view on tank A, double click on tank B: the first click moves the view
+    to B, the second finds "the view was on A, not B" and keeps it on B;
+  - view on tank A, double click on A: the first click changes nothing, the
+    second turns the view off. "Self" stays A;
+  - no view on: the first click picks the tank, the second turns its view
+    on.
+  So both modes end in the same state for the same double click. In Select
+  Team mode with a view on another tank the view changes on the first click
+  and not on the second.
 - The viewer has one map and one place where a click on it is read
   (`imgui_game_viewport.cpp`), so this is the same in every view of the map,
   on a file log and on a live feed. The embedded viewer in the game has no

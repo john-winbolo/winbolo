@@ -111,29 +111,42 @@ static inline LvTankMark lvTankMarkLayout(float tankLeft, float tankTop, float t
 }
 
 /* ---- A double click on a tank -----------------------------------------
- * One click on a tank on the map selects it. A double click also shows the
- * game as that tank's player sees it: the view the eye of the HUD panel
- * stands for. Each click of a double click still does all a single click
- * does, so the first one selects the tank and the second one adds the view.
+ * One click on a tank on the map selects it. A double click also changes
+ * whose view of the game is shown, the view the eye of the HUD panel stands
+ * for: it turns the view of that tank's player on, or, when that view was
+ * on already, off again (back to all teams). Each click of a double click
+ * still does all a single click does, so the first one selects the tank and
+ * the second one changes the view.
  *
  * clickCount: which click in a row this one is (1 for a single click, 2 for
  *             the second click of a double click, 3 for a third...).
  * tank:       the slot of the tank the click is on, -1 for a click on
  *             anything else (a pillbox, a base, the map).
  * prevTank:   what the click before this one in the row was on.
- * viewPlayer: the slot of the player whose view is shown now, -1 for the
- *             view of all teams.
+ * viewBefore: the slot of the player whose view was shown before the click
+ *             before this one (the first click of the pair) did anything,
+ *             -1 for the view of all teams. It is not the view as it is
+ *             now: in Select Team mode the first click moves a view that is
+ *             on to the tank it picks, and the pair must not be read as a
+ *             double click on a tank whose view was on.
  *
- * True when this click is to turn that tank's view on. It is false for a
- * tank whose view is on already, so a double click never turns a view off
- * and a third click in the row does nothing more. Both clicks must be on
- * the same tank: a click on the map and then one on a tank that drove under
- * the mouse is not a double click on that tank. */
-static inline bool lvMapClickViewsTank(int clickCount, int tank, int prevTank,
-                                       int viewPlayer) {
-    if (clickCount < 2) return false;
-    if (tank < 0 || tank != prevTank) return false;
-    return viewPlayer != tank;
+ * The answer is what the view is to be after this click. Only the second
+ * click of a pair changes it (the 2nd, the 4th... of a row), so a double
+ * click changes the view exactly once and a triple click no more than a
+ * double click. Both clicks must be on the same tank: a click on the map
+ * and then one on a tank that drove under the mouse is not a double click
+ * on that tank. */
+typedef enum {
+    LV_MAP_VIEW_KEEP = 0, /* this click does not change the view */
+    LV_MAP_VIEW_ON,       /* show the view of the clicked tank's player */
+    LV_MAP_VIEW_OFF       /* back to all teams */
+} LvMapClickView;
+
+static inline LvMapClickView lvMapClickViewsTank(int clickCount, int tank, int prevTank,
+                                                 int viewBefore) {
+    if (clickCount < 2 || (clickCount % 2) != 0) return LV_MAP_VIEW_KEEP;
+    if (tank < 0 || tank != prevTank) return LV_MAP_VIEW_KEEP;
+    return (viewBefore == tank) ? LV_MAP_VIEW_OFF : LV_MAP_VIEW_ON;
 }
 
 #endif /* LV_TANK_PICK_H */

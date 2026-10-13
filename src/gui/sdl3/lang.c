@@ -1059,7 +1059,7 @@ static const LangEntry langTable[] = {
     {2821, "Total"},
     {2822, "{string1} +{number}"},
     {2823, "Tank"},
-    {2824, "Click a tank on the map or in the HUD panel to select it. Double-click a tank on the map to see the game as its player sees it"},
+    {2824, "Click a tank on the map or in the HUD panel to select it. Double-click a tank on the map to see the game as its player sees it; double-click it again to go back to all teams"},
     {2825, "{string1}: {number} / {number2}"},
     {2826, "Builder: in tank"},
     {2827, "Builder: out"},
