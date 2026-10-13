@@ -4069,6 +4069,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_view_policy_rects.c
     tests/unit/test_tree_hide.c
     tests/unit/test_lgm_visibility.c
+    tests/unit/test_lgm_draw_centre.c
     tests/unit/test_view_state.c
     tests/unit/test_view_target_codec.c
     tests/unit/test_view_target_apply.c

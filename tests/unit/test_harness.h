@@ -1655,6 +1655,8 @@ int run_tree_hide_ally_option(void);
  * entry that carries the man must still not carry the tank's position. */
 int run_lgm_visibility_tank_in_trees(void);
 int run_lgm_visibility_tank_visible(void);
+int run_lgm_draw_own_matches_wire(void);
+int run_lgm_draw_centre_error_bounds(void);
 
 /* Client-reported view state (test_view_state.c): CMD_VIEW_STATE stores which
  * view a client is in, a viewPolicyKey category grants the claimed item a rect
