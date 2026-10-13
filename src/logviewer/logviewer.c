@@ -245,13 +245,21 @@ void lv_controlsEnable(int state) {
  * Without that, a click during playback lands lv_shellsAddItem and
  * lv_shellsDestroy on the same list from two threads and corrupts the heap. */
 void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
-    lv_windowSeekToEvent(ms, 1, mapX, mapY);
+    lv_windowSeekToEvent(ms, 1, mapX, mapY, -1);
 }
 
-/* The same jump for any events panel line. A line about a place on the map
- * (hasCell) centres the view on it; any other line moves only the playhead
- * and leaves the view where the user put it. */
-void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY) {
+/* The same jump for any events panel line, and for a marker over the seek
+ * bar. The playhead goes to ms, which for an event is the time of its own
+ * tick: playback then stands on the tick the event happened in, with the
+ * event done.
+ *
+ * A line about a place on the map (hasCell) brings that place into view
+ * (lv_screenShowCell: the map moves only when the place is outside the view
+ * or near its edge, and never with "Tank Centred" on) and flashes a ring
+ * round it, in the colour of the team the event names (team; -1 for none).
+ * Any other line moves only the playhead and leaves the view where the user
+ * put it. */
+void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team) {
     unsigned char wasPlaying = g_lv->playIsPlaying;
     if (wasPlaying) {
         lv_windowPause();
@@ -260,7 +268,11 @@ void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY) {
     lv_drawDirtyScreen();
     lv_screenSeekToTimeMs(ms);
     if (hasCell) {
-        lv_screenCentreOnCell(mapX, mapY);
+        lv_screenShowCell(mapX, mapY);
+        /* After the seek: the ring is tied to the seek count as it is now. */
+        lv_drawEventFlashStart(mapX, mapY, team);
+    } else {
+        lv_drawEventFlashCancel();
     }
     lv_drawDirtyScreen();
     lv_clientMutexRelease();

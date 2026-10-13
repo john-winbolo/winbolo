@@ -215,6 +215,14 @@ BYTE lv_drawGetTankBars(void);
  * middle wins (lv_tank_pick.h). */
 int lv_drawTankAtPoint(float xPoints, float yPoints);
 
+/* The ring that flashes on the map round the place of an event the user went
+   to (lv_event_flash.h). Start: at a map square, in the colour of a team, or
+   white alone for team -1; call it after the jump. A ring that is running is
+   started again. Cancel ends it at once. Active: 1 while one is running. */
+void lv_drawEventFlashStart(int mapX, int mapY, int team);
+void lv_drawEventFlashCancel(void);
+int lv_drawEventFlashActive(void);
+
 /*********************************************************
 *NAME:          lv_drawSplashForImGui
 *PURPOSE:

@@ -48,6 +48,7 @@
 #include "lv_team_sprite.h"
 #include "lv_tank_bars.h"
 #include "lv_tank_pick.h"
+#include "lv_event_flash.h"
 #include "clientmutex.h"
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/sdl3/sprite_positions.h"
@@ -457,6 +458,7 @@ static float lvDrawPixelScale(void) {
 static void lvDrawTankLabelsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawTankMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawEventFlashOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 
 /* Paint the world render target into the viewer's own window.
  *
@@ -524,6 +526,8 @@ static void lvDrawBlitTargetToWindow(void) {
         /* The bars first, so a name is never under one. */
         lvDrawTankBarsOverBlit(&srcRect, &dstRect);
         lvDrawTankLabelsOverBlit(&srcRect, &dstRect);
+        /* Last, so nothing on the map hides it. */
+        lvDrawEventFlashOverBlit(&srcRect, &dstRect);
     }
 }
 
@@ -2160,6 +2164,153 @@ static void lvDrawTankMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
         SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
         break;
     }
+}
+
+/* --- The ring round the place of an event the user went to ----------------
+   A click on a line of the Events panel, or on a marker over the seek bar,
+   takes playback to the event. The ring shows where on the map it happened:
+   it starts round the event's square, grows a little and fades, in
+   LV_FLASH_MS of real time (lv_event_flash.h), so it runs with playback
+   stopped too. The viewer's loop draws a frame every time round, and each
+   frame comes through the blit, so the ring needs no redraw of its own.
+
+   One ring at a time: a new click starts it again from the new place. It
+   ends early when playback is moved by anything else (the seek count has
+   moved on). Like the bars it is only in the viewer's own window: not in the
+   game view, not embedded, not in a saved picture. */
+static struct {
+    bool     on;
+    int      mapX, mapY;
+    int      team;       /* -1: no team, a white ring */
+    Uint64   startMs;    /* SDL_GetTicks at the click */
+    uint32_t seekSerial; /* lv_screenSeekSerial just after the jump */
+} s_eventFlash;
+
+void lv_drawEventFlashStart(int mapX, int mapY, int team) {
+    s_eventFlash.on = true;
+    s_eventFlash.mapX = mapX;
+    s_eventFlash.mapY = mapY;
+    s_eventFlash.team = team;
+    s_eventFlash.startMs = SDL_GetTicks();
+    s_eventFlash.seekSerial = lv_screenSeekSerial();
+}
+
+void lv_drawEventFlashCancel(void) {
+    s_eventFlash.on = false;
+}
+
+int lv_drawEventFlashActive(void) {
+    return s_eventFlash.on ? 1 : 0;
+}
+
+/* One band of the ring: the part between two radii, as a strip of
+   triangles. */
+#define LV_FLASH_SEGMENTS 48
+static void lvDrawRingBand(float cx, float cy, float rIn, float rOut, SDL_FColor col) {
+    SDL_Vertex v[(LV_FLASH_SEGMENTS + 1) * 2];
+    int idx[LV_FLASH_SEGMENTS * 6];
+    int i;
+
+    if (rIn < 0.0f) rIn = 0.0f;
+    if (rOut <= rIn) return;
+    for (i = 0; i <= LV_FLASH_SEGMENTS; i++) {
+        float a = (float)i * (2.0f * SDL_PI_F / (float)LV_FLASH_SEGMENTS);
+        float c = SDL_cosf(a), s = SDL_sinf(a);
+        v[i * 2].position.x = cx + c * rIn;
+        v[i * 2].position.y = cy + s * rIn;
+        v[i * 2].color = col;
+        v[i * 2].tex_coord.x = 0.0f;
+        v[i * 2].tex_coord.y = 0.0f;
+        v[i * 2 + 1].position.x = cx + c * rOut;
+        v[i * 2 + 1].position.y = cy + s * rOut;
+        v[i * 2 + 1].color = col;
+        v[i * 2 + 1].tex_coord.x = 0.0f;
+        v[i * 2 + 1].tex_coord.y = 0.0f;
+    }
+    for (i = 0; i < LV_FLASH_SEGMENTS; i++) {
+        idx[i * 6 + 0] = i * 2;
+        idx[i * 6 + 1] = i * 2 + 1;
+        idx[i * 6 + 2] = i * 2 + 2;
+        idx[i * 6 + 3] = i * 2 + 1;
+        idx[i * 6 + 4] = i * 2 + 3;
+        idx[i * 6 + 5] = i * 2 + 2;
+    }
+    SDL_RenderGeometry(sdlRenderer, NULL, v, (LV_FLASH_SEGMENTS + 1) * 2, idx,
+                       LV_FLASH_SEGMENTS * 6);
+}
+
+/* Draw the ring over the blit: src is the slice of the target the blit took,
+   dst where it went. The place is worked out as the blit works out a tank's:
+   a map square is (square - view offset) squares into the target. */
+static void lvDrawEventFlashOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    LogViewerState *lv = lv_screenGetState();
+    Uint64 now;
+    uint32_t elapsed;
+    float scale, pxScale, cx, cy, radius, alpha, half;
+    BYTE offX = 0, offY = 0;
+    BYTE zoomFactor;
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    SDL_FColor white, dark;
+
+    if (!s_eventFlash.on) return;
+    now = SDL_GetTicks();
+    elapsed = (now > s_eventFlash.startMs) ? (uint32_t)(now - s_eventFlash.startMs) : 0u;
+    if (lv == NULL || !lv->isLoaded || !lvFlashActive(elapsed) ||
+        s_eventFlash.seekSerial != lv_screenSeekSerial()) {
+        s_eventFlash.on = false;
+        return;
+    }
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+
+    scale = dst->w / src->w;
+    pxScale = lvDrawPixelScale();
+    zoomFactor = lv_windowGetZoomFactor();
+    lv_screenGetOffsets(&offX, &offY);
+    /* The middle of the event's square, in the target and then on screen. */
+    cx = ((float)(s_eventFlash.mapX - (int)offX) + 0.5f) * (float)(zoomFactor * TILE_SIZE_X);
+    cy = ((float)(s_eventFlash.mapY - (int)offY) + 0.5f) * (float)(zoomFactor * TILE_SIZE_Y);
+    cx = dst->x + (cx - src->x) * scale;
+    cy = dst->y + (cy - src->y) * scale;
+    radius = lvFlashRadiusTiles(elapsed) * (float)(zoomFactor * TILE_SIZE_X) * scale;
+    alpha = lvFlashAlpha(elapsed);
+
+    hadClip = SDL_RenderClipEnabled(sdlRenderer);
+    SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+    clip.x = (int)dst->x;
+    clip.y = (int)dst->y;
+    clip.w = (int)dst->w;
+    clip.h = (int)dst->h;
+    SDL_SetRenderClipRect(sdlRenderer, &clip);
+    SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+
+    white.r = 1.0f; white.g = 1.0f; white.b = 1.0f; white.a = alpha;
+    /* A thin dark line each side, so the ring shows on pale ground too. */
+    dark.r = 0.0f; dark.g = 0.0f; dark.b = 0.0f; dark.a = alpha * 0.6f;
+    if (s_eventFlash.team >= 0) {
+        /* A white band outside, the team's colour inside it. The colour is
+           the one the HUD panel gives the team. */
+        SDL_FColor team = mapColourTeam(lv_screenTeamColour(s_eventFlash.team));
+        float whiteW = LV_FLASH_WHITE_PT * pxScale;
+        float teamW = LV_FLASH_TEAM_PT * pxScale;
+        if (!lvHudRedToOrange(&team.r, &team.g, &team.b)) {
+            lvHudReadableColour(&team.r, &team.g, &team.b);
+        }
+        team.a = alpha;
+        half = (whiteW + teamW) * 0.5f;
+        lvDrawRingBand(cx, cy, radius - half - pxScale, radius + half + pxScale, dark);
+        lvDrawRingBand(cx, cy, radius + half - whiteW, radius + half, white);
+        lvDrawRingBand(cx, cy, radius - half, radius - half + teamW, team);
+    } else {
+        half = LV_FLASH_RING_PT * pxScale * 0.5f;
+        lvDrawRingBand(cx, cy, radius - half - pxScale, radius + half + pxScale, dark);
+        lvDrawRingBand(cx, cy, radius - half, radius + half, white);
+    }
+
+    SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+    SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
 }
 
 /* The slot of the tank drawn at a point of the window, or -1 for none. The

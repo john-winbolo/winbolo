@@ -34,7 +34,7 @@ extern "C" {
     uint32_t lv_screenWindowStartMs(void);
     bool lv_screenSpecIsLiveMode(void);
     void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY);
-    void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY);
+    void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
     void lv_screenEventTeams(int *team, int *otherTeam);
 }
 
@@ -515,6 +515,7 @@ void lv_imgui_events_window(void) {
         uint32_t jumpMs        = 0;
         int      jumpX         = 0;
         int      jumpY         = 0;
+        int      jumpTeam      = -1;
         bool     copyAll       = false;
 
         /* List box for events */
@@ -598,6 +599,7 @@ void lv_imgui_events_window(void) {
                             jumpHasCell = ev.hasCell;
                             jumpX       = ev.mapX;
                             jumpY       = ev.mapY;
+                            jumpTeam    = ev.team;
                         }
                     }
                 }
@@ -674,7 +676,7 @@ void lv_imgui_events_window(void) {
             if (jumpHighlight) {
                 lv_windowSeekToHighlight(jumpMs, jumpX, jumpY);
             } else {
-                lv_windowSeekToEvent(jumpMs, jumpHasCell ? 1 : 0, jumpX, jumpY);
+                lv_windowSeekToEvent(jumpMs, jumpHasCell ? 1 : 0, jumpX, jumpY, jumpTeam);
             }
         }
     }

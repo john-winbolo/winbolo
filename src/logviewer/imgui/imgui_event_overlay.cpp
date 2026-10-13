@@ -39,7 +39,7 @@ extern "C" {
     bool lv_screenSpecIsLiveMode(void);
     unsigned char lv_screenTeamColour(int team);
     void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY);
-    void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY);
+    void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
     SDL_Texture *lv_drawGetTilesTexture(void);
 }
 
@@ -449,7 +449,8 @@ void lv_event_overlay_lane(void) {
                 lv_windowSeekToHighlight(info.timeMs > 5000u ? info.timeMs - 5000u : 0u,
                                          info.mapX, info.mapY);
             } else {
-                lv_windowSeekToEvent(info.timeMs, info.hasCell, info.mapX, info.mapY);
+                lv_windowSeekToEvent(info.timeMs, info.hasCell, info.mapX, info.mapY,
+                                     info.team);
             }
         }
     }

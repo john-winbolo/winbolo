@@ -595,7 +595,9 @@ void lv_windowAddSummary(char *msg);
  * lock, as the scrubber does. SeekToHighlight always centres the view on the
  * cell; SeekToEvent only when hasCell is non-zero. */
 void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY);
-void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY);
+/* team: the team the event names, for the colour of the ring flashed round
+ * its place; -1 for none. */
+void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
 /* Standalone viewer only: list every event of the file just loaded in the
  * events panel (one decode pass, then back to the start). */
 void lv_windowCollectAllEvents(void);
@@ -629,8 +631,11 @@ void lv_screenRewind();
  * when it would not move (screen.c). */
 bool lv_screenFastForwardTargetMs(uint32_t *ms);
 bool lv_screenRewindTargetMs(uint32_t *ms);
+/* The playback time to the second, for a file name. dest: 16 characters or
+ * more. */
 void lv_screenGetTime(char *dest);
-/* Format an absolute log time as the displayed (window-relative) mm:ss. */
+/* Format an absolute log time as the displayed (window-relative) time to the
+ * hundredth of a second, "19:48.22" (lv_time_fmt.h). destSize: 16 or more. */
 void lv_screenFormatTime(uint32_t absMs, char *dest, size_t destSize);
 /* Playback position in absolute log ms (the decoder's own clock, not the
  * presented window). */
@@ -746,6 +751,11 @@ void lv_screenSeekToTimeMs(uint32_t ms);
 
 /* Centre the game view on a map cell (mapX,mapY). */
 void lv_screenCentreOnCell(int mapX, int mapY);
+/* The same only when the cell is outside the view or near its edge, and not
+ * at all with "Tank Centred" on. Returns 1 when the map moved. */
+int lv_screenShowCell(int mapX, int mapY);
+/* Counts every request to move playback other than by playing. */
+uint32_t lv_screenSeekSerial(void);
 
 /* Event scan: decode the whole of a loaded file once so the host is posted
  * every event line (lv_windowAddEvent), then return to the start as the
