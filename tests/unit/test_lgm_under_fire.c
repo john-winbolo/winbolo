@@ -9,8 +9,8 @@
  * stands between the man and every shell, so the man walks out, builds, and
  * walks back. That is what happens in single player.
  *
- * Online, with a normal amount of lag, the same move kills the man. This test
- * writes down the player's expectation — the man lives — and runs the move
+ * Online, with a normal amount of lag, the same move used to kill the man.
+ * This test writes down the player's expectation — the man lives — and runs the move
  * twice over the real loopback transport:
  *
  *   lgm_wall_behind_tank_under_fire_lagged  — delay=80,jitter=20, which the
@@ -18,9 +18,9 @@
  *   lgm_wall_behind_tank_under_fire_nolag   — the same script on a clean
  *       link, the single-player control.
  *
- * The lagged case is EXPECTED TO FAIL today: it is the bug report, written as
- * a test. The control is expected to pass; if it ever fails, lag is not the
- * cause and the two failures should be read together.
+ * The lagged case was written as the bug report and failed until pill shells
+ * stopped being rewound; both cases now pass. If the control ever fails, lag
+ * is not the cause and the two failures should be read together.
  *
  * What the script drives, and what it does not:
  *   - Every tank key, every shot and the build order itself go through the
@@ -47,15 +47,18 @@
  * Everything the run saw is printed: the dispatch tick, both views of the
  * tank, the pill's heat, the man's position every frame, and every shell
  * impact with its distance to the man. MAP_SQUARE_MIDDLE (128 world units) is
- * the radius lgmDeathCheckAtPosition kills inside on open ground. What the
- * two printouts differ in is where the pill's shells stop: on the clean link
- * they explode about 170 world units east of the tank's centre, clear of the
- * man walking away west, and under lag they explode about 80 — inside the
- * tank, on the man's side of it, a rewind's worth deeper. shells.c tests a
- * pill shell against each tank at the position it held perPlayerCompTicks
- * frames ago (server_sim_tick.c fills that in from the player's ping), and a
- * tank driving east was further west then. The same rewind is applied to the
- * man himself in lgmDeathCheckAtPosition.
+ * the radius lgmDeathCheckAtPosition kills inside on open ground. On the
+ * clean link the pill's shells explode about 170 world units east of the
+ * tank's centre, clear of the man walking away west.
+ *
+ * The bug this test found: shells.c tested a pill shell against each tank at
+ * the position it held perPlayerCompTicks frames ago (server_sim_tick.c fills
+ * that in from the player's ping), and a tank driving east was further west
+ * then. Under lag the shells went through the real hull and exploded on the
+ * man's side of it, and lgmDeathCheckAtPosition rewound the man the same
+ * way. A pill has no lag to make up for, so its shells are no longer rewound,
+ * against the tank or against the man, and the lagged run now matches the
+ * clean one.
  */
 
 #include <math.h>
