@@ -4598,6 +4598,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The map the viewer writes for a single-player game (lv_spmap.c): the
     # owner rules, and a recorded round read back with mapRead.
     tests/unit/test_lv_spmap.c
+    # A pillbox a tank carries: the getter says so, and the single-player
+    # map leaves it out (pillbox.c, lv_spmap.c).
+    tests/unit/test_lv_pill_carried.c
     # The events panel's kind names and the search that places its "now"
     # divider (lv_event_kind.h, header only).
     tests/unit/test_lv_event_kind.c
@@ -6844,6 +6847,8 @@ set(_unit_test_names
     lv_dump_recorded_round
     lv_spmap_owner_table
     lv_spmap_reads_back
+    lv_pill_get_in_tank
+    lv_spmap_carried_pill_left_out
     lv_event_kind_sums
     lv_event_scan_returns_to_start
     scn_presentation_codec_bodies

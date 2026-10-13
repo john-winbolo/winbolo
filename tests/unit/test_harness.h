@@ -4042,6 +4042,8 @@ int run_lv_dump_recorded_round(void);
  * the owner rules, and a recorded round read back with mapRead. */
 int run_lv_spmap_owner_table(void);
 int run_lv_spmap_reads_back(void);
+int run_lv_pill_get_in_tank(void);
+int run_lv_spmap_carried_pill_left_out(void);
 /* The log viewer's events panel (test_lv_event_kind.c): the saved name of
  * each event kind, and where the "now" divider falls among the lines. */
 int run_lv_event_kind_sums(void);

@@ -360,6 +360,9 @@ void lv_pillsGetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
     item->owner = ((*value)->item[pillNum]).owner;
     item->armour = ((*value)->item[pillNum]).armour;
     item->speed = ((*value)->item[pillNum]).speed;
+    /* A carried pillbox keeps the place it was picked up at: a caller that
+       wants the pillboxes on the map has to be able to tell. */
+    item->inTank = ((*value)->item[pillNum]).inTank;
   }
 }
 

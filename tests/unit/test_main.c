@@ -2298,6 +2298,8 @@ static const UnitTestEntry s_tests[] = {
     { "lv_dump_recorded_round",                          run_lv_dump_recorded_round                          },
     { "lv_spmap_owner_table",                            run_lv_spmap_owner_table                            },
     { "lv_spmap_reads_back",                             run_lv_spmap_reads_back                             },
+    { "lv_pill_get_in_tank",                             run_lv_pill_get_in_tank                             },
+    { "lv_spmap_carried_pill_left_out",                  run_lv_spmap_carried_pill_left_out                  },
     { "lv_event_kind_sums",                              run_lv_event_kind_sums                              },
     { "lv_event_scan_returns_to_start",                  run_lv_event_scan_returns_to_start                  },
     { "scn_presentation_codec_bodies",                   run_scn_presentation_codec_bodies                   },
