@@ -29,9 +29,12 @@
  *                                   branch of shellsBlastTestBuilder turned
  *                                   back into a lgmDeathCheck call, the two
  *                                   "must live" checks here fail.
- * lgm_kill_rewound_position       — out on both frames: he is tested where
- *                                   he was. A blast at the old place kills, a
- *                                   blast only at the new place does not.
+ * lgm_kill_rewound_position       — out on both frames. A blast that is
+ *                                   not on a hit tank tests him where he
+ *                                   was: at the old place it kills, only at
+ *                                   the new place it does not. A blast on a
+ *                                   hit tank is where the tank is now and
+ *                                   tests him where he is now: it kills.
  * lgm_kill_pill_shell_present     — a pill's shell carries no rewind and
  *                                   kills a builder who has just left the
  *                                   tank where he is now.
@@ -445,7 +448,11 @@ int run_lgm_kill_rewound_position(void) {
                             "not kill him");
     }
 
-    /* A blast only where he is now does not: the shooter saw him elsewhere. */
+    /* A blast only where he is now. At the end of a shell's life it does
+     * not kill: the shooter saw him elsewhere. On a hit tank it does: that
+     * blast is where the tank is now, so the builder is tested where he is
+     * now, 16 from it. The shooter's screen did show a builder, which is all
+     * it is asked for a blast on a tank. */
     for (s = LAS_SITE_EXPIRY; s <= LAS_SITE_COLLISION && rc == 0; s++) {
         LasSite site = (LasSite)s;
         rc = las_send_out(&f);
@@ -455,10 +462,16 @@ int run_lgm_kill_rewound_position(void) {
         rc = las_explode(&f, site, man->x, man->y, LAS_SHOOTER, DMG_NO_PILL,
                          LAS_COMP, &died);
         if (rc != 0) break;
-        UT_ASSERT_MSG(!died,
-                      "%s: a blast where the builder is now killed him, but "
-                      "the shooter saw him two squares away",
-                      las_site_name(site));
+        if (site == LAS_SITE_EXPIRY) {
+            UT_ASSERT_MSG(!died,
+                          "%s: a blast where the builder is now killed him, "
+                          "but the shooter saw him two squares away",
+                          las_site_name(site));
+        } else {
+            UT_ASSERT_MSG(died,
+                          "%s: a blast on the hit tank did not kill the "
+                          "builder who is 16 from it now", las_site_name(site));
+        }
     }
 
     las_close(&f);

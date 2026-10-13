@@ -4390,6 +4390,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tkExplosionUpdate's lgm/tank index pairing over the compacted per-player
     # arrays, plus the small-explosion sweep's off-by-one.
     tests/unit/test_tkexp_lgm_pairing.c
+    # A shell that hits a tank blows up at the hit tank's present centre, not
+    # at the shell, which a lag-compensated test leaves behind the tank.
+    tests/unit/test_tank_blast_at_tank.c
     tests/unit/test_input_gate.c
     tests/unit/test_input_source.c
     src/gui/sdl3/input_source.c
@@ -5659,6 +5662,12 @@ set(_unit_test_names
     ping_kick_defers_teardown
     ping_kick_clears_strikes_on_disconnect
     tkexp_lgm_pairing
+    tank_blast_rewound_hit_at_present_tank
+    tank_blast_kill_starts_at_present_tank
+    tank_blast_zero_rewind_unchanged
+    tank_blast_hit_decision_unchanged
+    tank_blast_builder_at_present_tank
+    tank_blast_absent_builder_lives
     loopback_join
     loopback_join_loss
     loopback_password

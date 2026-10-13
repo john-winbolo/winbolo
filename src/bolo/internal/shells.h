@@ -328,8 +328,16 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
 *  pb       - Pointer to the pillboxes structure
 *  tk       - Pointer to an array of tank structures
 *  bs       - Pointer to the bases structure
-*  xValue   - X position
-*  yValue   - Y position
+*  xValue   - X position of the shell. On a collision it is
+*             set to where the effects go: the middle of
+*             the square for a pillbox, base or terrain
+*             hit. For a tank hit it is the point on the
+*             hull the shell reached, carried to where the
+*             tank is now: the tank's present position plus
+*             the shell's offset from the position the hit
+*             was tested against. A hit that was not
+*             rewound leaves it the shell's own point
+*  yValue   - Y position, as xValue
 *  shell    - The shell, for its angle, owner, boat flag,
 *             lag compensation, firing pill and the
 *             targets can_hit has already let it pass
