@@ -734,6 +734,97 @@ static void buildHudShapes(SDL_Renderer *renderer, SDL_Surface *sheet) {
     }
 }
 
+/* The three team sheets all have the orange row (lv_team_sprite.h). */
+static bool s_teamOrangeRow = false;
+
+/* Load a team sheet (tanks.bmp, boats.bmp, items.bmp) with one row more than
+ * the file has: the red row again in orange, for a team whose colour is the
+ * red (lv_team_sprite.h says why). The rows of a sheet differ in one flat
+ * colour, so changing that colour in a copy of a row is all it takes; the
+ * pixels the key made transparent go through the same change, because the
+ * edge bleed has put the red of the pixels beside them into them.
+ *
+ * If the taller sheet cannot be made the file's own rows are used, and
+ * *hasOrange says so. Returns NULL only when the file itself did not load. */
+static SDL_Texture *lvLoadTeamSheet(SDL_Renderer *renderer, const char *path,
+                                    bool *hasOrange) {
+    SDL_Surface *sheet = sdlLoadBmpSheetSurface(path, TILE_SIZE_X, TILE_SIZE_Y);
+    SDL_Surface *tall = NULL;
+    SDL_Texture *texture;
+
+    *hasOrange = false;
+    if (!sheet) return NULL;
+
+    if (sheet->format == SDL_PIXELFORMAT_RGBA32 &&
+        sheet->h >= LV_TEAM_SHEET_ROWS * TILE_SIZE_Y) {
+        tall = SDL_CreateSurface(sheet->w, (LV_TEAM_SHEET_ROWS + 1) * TILE_SIZE_Y,
+                                 SDL_PIXELFORMAT_RGBA32);
+    }
+    if (tall) {
+        const size_t rowBytes = (size_t)sheet->w * 4;
+        for (int y = 0; y < tall->h; y++) {
+            /* The rows of the file as they are, then the red row once more. */
+            int from = (y < LV_TEAM_SHEET_ROWS * TILE_SIZE_Y)
+                           ? y
+                           : LV_TEAM_PALETTE_RED * TILE_SIZE_Y +
+                                 (y - LV_TEAM_SHEET_ROW_ORANGE * TILE_SIZE_Y);
+            unsigned char *dst = (unsigned char *)tall->pixels + (size_t)y * (size_t)tall->pitch;
+            memcpy(dst, (const unsigned char *)sheet->pixels + (size_t)from * (size_t)sheet->pitch,
+                   rowBytes);
+            if (from != y) {
+                for (int x = 0; x < tall->w; x++) {
+                    lvTeamRedPixelToOrange(&dst[x * 4], &dst[x * 4 + 1], &dst[x * 4 + 2]);
+                }
+            }
+        }
+        *hasOrange = true;
+    }
+
+    texture = SDL_CreateTextureFromSurface(renderer, tall ? tall : sheet);
+    if (tall) SDL_DestroySurface(tall);
+    SDL_DestroySurface(sheet);
+    if (!texture) {
+        *hasOrange = false;
+        return NULL;
+    }
+    /* As sdlLoadBmpSheetAsTexture leaves a sheet. */
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+    return texture;
+}
+
+/* Load tanks.bmp, boats.bmp and items.bmp out of the data directory. */
+static void lvLoadTeamSheets(SDL_Renderer *renderer) {
+    const char *basePath = SDL_GetBasePath();
+    char bmpPath[1024];
+    bool tanks = false, boats = false, items = false;
+
+    if (!basePath) basePath = "./";
+    SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tanks.bmp", basePath);
+    textureTanks = lvLoadTeamSheet(renderer, bmpPath, &tanks);
+    SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/boats.bmp", basePath);
+    textureBoats = lvLoadTeamSheet(renderer, bmpPath, &boats);
+    SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/items.bmp", basePath);
+    textureItems = lvLoadTeamSheet(renderer, bmpPath, &items);
+    /* All three or none, so a team's tank and its pillboxes cannot end up in
+       two different oranges. */
+    s_teamOrangeRow = tanks && boats && items;
+}
+
+/* The row of a team sheet a team with this palette entry is drawn from. */
+static int lvDrawTeamRow(int palette) {
+    return lvTeamSheetRowHave(lvTeamSheetRow(palette), s_teamOrangeRow);
+}
+
+/* The flat colour of a team with this palette entry, for the shapes of the
+   simplified view: the palette's, and orange for a red one, as its sprites
+   are. */
+static SDL_FColor lvDrawTeamColour(int palette) {
+    SDL_FColor c = mapColourTeam(palette);
+    lvHudRedToOrange(&c.r, &c.g, &c.b);
+    return c;
+}
+
 /* Build the unified tile atlas (SVG/PNG/BMP combined sheet) at scale 1.
  * Returns NULL on failure. The log viewer always uses scale 1 — the
  * blit-time scaling is in the texture target, not the source atlas. */
@@ -782,26 +873,10 @@ BYTE lv_drawSetupWithHandles(SDL_Window *window, SDL_Renderer *renderer) {
     /* Tile background uses the unified atlas (SVG/PNG with skin.bmp
      * fallback) shared with the game and map editor. Tank, boat, and
      * pill/base sprites stay on their own BMPs because they use the
-     * 16-row team-colour palette indexed via lv->tc[], which the
-     * unified atlas does not provide. */
+     * 17-row team-colour palette indexed via lv->tc[], which the
+     * unified atlas does not provide (lvLoadTeamSheets adds a row). */
     textureTiles = buildTileAtlas(sdlRenderer);
-    {
-        const char *basePath = SDL_GetBasePath();
-        if (!basePath) basePath = "./";
-        char bmpPath[1024];
-
-        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tanks.bmp", basePath);
-        textureTanks = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
-                                              TILE_SIZE_X, TILE_SIZE_Y);
-
-        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/boats.bmp", basePath);
-        textureBoats = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
-                                              TILE_SIZE_X, TILE_SIZE_Y);
-
-        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/items.bmp", basePath);
-        textureItems = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
-                                              TILE_SIZE_X, TILE_SIZE_Y);
-    }
+    lvLoadTeamSheets(sdlRenderer);
 
     if (!textureTiles || !textureTanks || !textureBoats || !textureItems) {
         return FALSE;
@@ -911,23 +986,7 @@ BYTE lv_drawSetup(void) {
     }
     /* See lv_drawSetupWithHandles for the tile-vs-tank/items split. */
     textureTiles = buildTileAtlas(sdlRenderer);
-    {
-        const char *basePath = SDL_GetBasePath();
-        if (!basePath) basePath = "./";
-        char bmpPath[1024];
-
-        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/tanks.bmp", basePath);
-        textureTanks = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
-                                              TILE_SIZE_X, TILE_SIZE_Y);
-
-        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/boats.bmp", basePath);
-        textureBoats = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
-                                              TILE_SIZE_X, TILE_SIZE_Y);
-
-        SDL_snprintf(bmpPath, sizeof(bmpPath), "%sdata/items.bmp", basePath);
-        textureItems = sdlLoadBmpSheetAsTexture(sdlRenderer, bmpPath,
-                                              TILE_SIZE_X, TILE_SIZE_Y);
-    }
+    lvLoadTeamSheets(sdlRenderer);
 
     if (!textureTiles || !textureTanks || !textureBoats || !textureItems) {
 
@@ -1270,7 +1329,8 @@ static void lvDrawMapItem(LvMapItemSprite s, int x, int y, BYTE zoomFactor) {
             zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y,
             zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
     } else {
-        drawRenderTexture(textureItems, s.col * zoomFactor * TILE_SIZE_X, s.row * zoomFactor * TILE_SIZE_Y,
+        int row = lvTeamSheetRowHave(s.row, s_teamOrangeRow);
+        drawRenderTexture(textureItems, s.col * zoomFactor * TILE_SIZE_X, row * zoomFactor * TILE_SIZE_Y,
             zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y,
             zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
     }
@@ -1396,7 +1456,7 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                                      : lv_screenGetPillTeam(x, y, &pillHealth);
                     }
                     if (teamColours && itc != NEUTRAL_TEAM) {
-                        itemHits[itemHitCount].colour = mapColourTeam(lv->tc[itc]);
+                        itemHits[itemHitCount].colour = lvDrawTeamColour(lv->tc[itc]);
                     } else if (teamColours) {
                         itemHits[itemHitCount].colour = isBase ? mapColourMarkerNeutral()
                                                                : mapColourMarkerEvil();
@@ -1554,7 +1614,9 @@ void lv_drawShells(screenBullets *sBullets) {
 /* Rows of tanks.bmp / boats.bmp the ally colouring draws from. The sheets carry
    17 rows of team colours; row 2 is the same green and row 11 the same red the
    game's own good and evil tank sprites use, and row 0 is the uncoloured tank
-   an unloaded tc[] already lands every team on. */
+   an unloaded tc[] already lands every team on. Row 11 is drawn only here, as
+   "hostile": with team colours a team whose colour is the red gets the orange
+   row instead (lvDrawTeamRow). */
 #define TANK_ROW_SELF 0
 #define TANK_ROW_GOOD 2
 #define TANK_ROW_EVIL 11
@@ -1617,7 +1679,7 @@ void lv_drawTanks(screenTanks *tks) {
                        : (row == TANK_ROW_GOOD) ? mapColourMarkerGood()
                                                 : mapColourMarkerEvil();
             } else {
-                colour = mapColourTeam(lv->tc[team]);
+                colour = lvDrawTeamColour(lv->tc[team]);
             }
             {
                 float side = (float)(zoomFactor * TILE_SIZE_X);
@@ -1631,7 +1693,7 @@ void lv_drawTanks(screenTanks *tks) {
             drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
         } else {
             srcX = zoomFactor * TILE_SIZE_X * dir;
-            srcY = zoomFactor * TILE_SIZE_Y * lv->tc[team];
+            srcY = zoomFactor * TILE_SIZE_Y * lvDrawTeamRow(lv->tc[team]);
             drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
         }
         if (s_tankLabelsInTarget) {

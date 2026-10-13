@@ -20,7 +20,9 @@
  *       drawn with when every team is shown in its colour (lv_team_sprite.h):
  *       a neutral pillbox is the game's hostile pillbox tile at each armour
  *       level, a neutral base the game's neutral base tile, and an owned one
- *       its team's cell of the items sheet.
+ *       its team's cell of the items sheet; and that no team is drawn in
+ *       the game's red, which is kept for the pillbox nobody owns: a team
+ *       whose colour is the palette's red gets the orange row.
  */
 
 #include <stdbool.h>
@@ -270,5 +272,62 @@ int run_lv_team_sprite_sums(void) {
     UT_ASSERT_MSG(s.row == 0, "palette entry out of range");
     s = lvMapPillSprite(false, 15, -1);
     UT_ASSERT_MSG(s.row == 0, "palette entry under 0");
+
+    /* No team in the game's red. The one colour of each row of the team
+       sheets, read out of data/items.bmp, in palette order. */
+    {
+        static const unsigned char palette[LV_TEAM_SHEET_ROWS][3] = {
+            { 111, 111, 111 }, { 200, 223, 0 },   { 24, 181, 16 },   { 253, 119, 255 },
+            { 255, 255, 49 },  { 0, 143, 159 },   { 255, 206, 0 },   { 191, 0, 191 },
+            { 0, 255, 255 },   { 49, 206, 49 },   { 165, 165, 165 }, { 192, 0, 0 },
+            { 0, 0, 189 },     { 128, 128, 0 },   { 255, 192, 192 }, { 150, 255, 150 },
+            { 96, 18, 122 }
+        };
+        unsigned char r, g, b;
+        int entry;
+
+        /* The game's hostile pillbox red (223,0,0) is what counts as red. */
+        r = 223; g = 0; b = 0;
+        UT_ASSERT_MSG(lvTeamRedPixelToOrange(&r, &g, &b) == true, "the game's red is not red");
+        UT_ASSERT_MSG(r == 255 && g == 140 && b == 0, "red became %d %d %d", r, g, b);
+        /* The orange is the HUD panel's, and is not itself red. */
+        UT_ASSERT_MSG(LV_TEAM_ORANGE_R / 255.0f == LV_HUD_ORANGE_R &&
+                      LV_TEAM_ORANGE_G / 255.0f == LV_HUD_ORANGE_G &&
+                      LV_TEAM_ORANGE_B / 255.0f == LV_HUD_ORANGE_B, "two oranges");
+        UT_ASSERT_MSG(lvTeamRedPixelToOrange(&r, &g, &b) == false, "orange counts as red");
+
+        for (entry = 0; entry < LV_TEAM_SHEET_ROWS; entry++) {
+            int row = lvTeamSheetRow(entry);
+            float fr = palette[entry][0] / 255.0f;
+            float fg = palette[entry][1] / 255.0f;
+            float fb = palette[entry][2] / 255.0f;
+            bool red;
+            r = palette[entry][0]; g = palette[entry][1]; b = palette[entry][2];
+            red = lvTeamRedPixelToOrange(&r, &g, &b);
+            /* Only entry 11 is red, by the sheet's rule and by the HUD's. */
+            UT_ASSERT_MSG(red == (entry == LV_TEAM_PALETTE_RED), "entry %d red %d", entry, red);
+            UT_ASSERT_MSG(lvHudRedToOrange(&fr, &fg, &fb) == red, "entry %d: HUD disagrees", entry);
+            /* The red row is never a team's row, with the orange row or
+               without it; every other entry keeps its own. */
+            UT_ASSERT_MSG(row != LV_TEAM_PALETTE_RED, "entry %d is drawn in the red row", entry);
+            UT_ASSERT_MSG(lvTeamSheetRowHave(row, true) != LV_TEAM_PALETTE_RED &&
+                          lvTeamSheetRowHave(row, false) != LV_TEAM_PALETTE_RED,
+                          "entry %d falls back to the red row", entry);
+            if (entry != LV_TEAM_PALETTE_RED) {
+                UT_ASSERT_MSG(row == entry && lvTeamSheetRowHave(row, false) == entry,
+                              "entry %d moved to row %d", entry, row);
+            }
+            /* A pillbox and a base of the team go where its tank goes. */
+            UT_ASSERT_MSG(lvMapPillSprite(false, 15, entry).row == row &&
+                          lvMapBaseSprite(false, entry).row == row, "entry %d: items row", entry);
+        }
+        UT_ASSERT_MSG(lvTeamSheetRow(LV_TEAM_PALETTE_RED) == LV_TEAM_SHEET_ROW_ORANGE,
+                      "red is not the orange row");
+        UT_ASSERT_MSG(lvTeamSheetRowHave(LV_TEAM_SHEET_ROW_ORANGE, false) == LV_TEAM_PALETTE_ORANGE,
+                      "no orange row: the palette's orange");
+        /* A neutral pillbox is still the game's red tile, not a row. */
+        UT_ASSERT_MSG(lvMapPillSprite(true, 15, LV_TEAM_PALETTE_RED).fromAtlas == 1,
+                      "neutral pill with the red entry");
+    }
     return 0;
 }
