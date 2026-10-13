@@ -176,6 +176,7 @@ scenario = {
   callbacks = {
     on_start = "Hands out the bases and pillboxes and picks the bots' seats.",
     on_player_join = "Sets the tutorial up for a player who joins after the round has started.",
+    on_player_leave = "Forgets a player who leaves, so the next one to join carries on from the same station.",
     on_tick = "Ticks off goals, draws the panel, markers and status line, puts back what a goal needs, and runs the bots.",
     on_enter_region = "Shows each station's popup, fields its bot, moves your checkpoint, and runs the RESET pens.",
     on_tank_spawned = "Parks the Station 6 bot, arms each bot, and hands you your 5B pillbox.",
@@ -191,7 +192,7 @@ scenario = {
     can_capture = "The 5A bot takes only its own two pillboxes; the Station 7 bot leaves your two dead ones.",
     can_hit = "Tank shells pass between you and the demo bots; yours pass your 5B pillbox; the 5A pillboxes' pass you.",
     can_target = "The two Station 5A pillboxes never aim or fire at you; they shoot only at the demo bot.",
-    can_die = "The parked Station 6 tank cannot be destroyed, and the Station 4 pillbox cannot be killed before you have hidden.",
+    can_die = "The parked Station 6 tank cannot be destroyed.",
     on_choose_start = "You respawn at the furthest station you have reached.",
     spawn_loadout = "You respawn with the tank that station starts you with.",
     allow_base_win = "Owning every base does not end the round; Station 7 has its own win.",
@@ -202,7 +203,12 @@ scenario = {
 -- Round state. The host builds a fresh Lua state for every round, so none
 -- of this needs a reset between rounds.
 local S = {
-  player   = nil,     -- the tutorial's player seat
+  player   = nil,     -- the tutorial's player seat; nil again once he leaves
+  adopted  = false,   -- a player has been set up once: the round is handed out
+  -- The pillboxes and bases the player owned at the last whole second, by
+  -- number. The server gives a leaving player's away before on_player_leave
+  -- runs, so this is what the next player gets back.
+  owned    = { pills = {}, bases = {} },
   reached  = 1,       -- the furthest station reached: the checkpoint
   at       = 1,       -- the station the player last drove into
   entered  = {},      -- station -> true once driven into
@@ -623,8 +629,8 @@ local function pill_start(name)
      name == "t5a_blocker" or name == "t5b_blocker" then
     return nil, 0
   elseif name == "p4" then
-    -- Damaged from the start: two shots kill it in 4C, and can_die keeps
-    -- it alive until the player has hidden from it in 4B.
+    -- Damaged from the start: two shots kill it in 4C. It is never
+    -- repaired (rearm).
     return nil, P4_ARMOUR
   elseif name == "t5a_target" then
     return nil, rule("pill_max_armour")
@@ -1146,7 +1152,16 @@ local function bot_init(role)
              cfg2 = "0;cfg=STRATEGIC_PLACE_ENABLED=false" }
   elseif role == "bot6" then
     -- The Station 6 bot never fights: its man is the target.
-    return { peace = tostring(S.player or "") }
+    -- It spares every seat that is not one of the three bots, not only the
+    -- player's: a player who leaves may come back on another seat, and the
+    -- token cannot be changed once the bot is fielded.
+    local seats = {}
+    for p = 0, game.max_tanks() - 1 do
+      if p ~= S.bot5a and p ~= S.bot6 and p ~= S.bot7 then
+        seats[#seats + 1] = tostring(p)
+      end
+    end
+    return { peace = table.concat(seats, "/") }
   elseif role == "bot7" then
     -- The Station 7 bot shoots at the player's man and usually misses.
     -- LGM_MISS_WU / LGM_HIT_PCT: one aim in ten is true; the rest burst one
@@ -1543,18 +1558,86 @@ local function enter_station(n)
   redraw(true)
 end
 
+-- Note what the player owns, once a second (see S.owned).
+local function note_owned()
+  local o = { pills = {}, bases = {} }
+  for _, L in pairs(P) do
+    local pb = game.pill(L.n)
+    if pb ~= nil and pb.owner == S.player then o.pills[#o.pills + 1] = L.n end
+  end
+  for _, L in pairs(B) do
+    local b = game.base(L.n)
+    if b ~= nil and b.owner == S.player then o.bases[#o.bases + 1] = L.n end
+  end
+  table.sort(o.pills)
+  table.sort(o.bases)
+  S.owned = o
+end
+
+-- Give the new player what the last one owned. The server passed each of
+-- those to an ally on the field (only the 5A demo bot can be one) or to
+-- nobody; one that anybody else holds now is left alone.
+local function give_back(p)
+  local function lost(owner)
+    return owner == game.NEUTRAL or (S.bot5a ~= nil and owner == S.bot5a)
+  end
+  for _, n in ipairs(S.owned.pills) do
+    local pb = game.pill(n)
+    if pb ~= nil and lost(pb.owner) then game.set_pill_owner(n, p) end
+  end
+  for _, n in ipairs(S.owned.bases) do
+    local b = game.base(n)
+    if b ~= nil and lost(b.owner) then game.set_base_owner(n, p) end
+  end
+end
+
+-- An empty seat put by for a bot that is not on the field can be taken by a
+-- person who joins later. The bot then gets another empty seat, if there is
+-- one.
+local function move_bot_seat(p)
+  for _, role in ipairs({ "bot5a", "bot6", "bot7" }) do
+    if S[role] == p then
+      S[role] = nil
+      S.free_seat[p] = nil
+      for q = 0, game.max_tanks() - 1 do
+        if q ~= p and q ~= S.bot5a and q ~= S.bot6 and q ~= S.bot7 and
+           game.lobby_slot(q) == nil then
+          S[role] = q
+          S.free_seat[q] = true
+          break
+        end
+      end
+      if S[role] == nil then
+        game.log("Tutorial: no seat left for the " .. role .. " bot")
+      end
+    end
+  end
+end
+
+-- Set the tutorial up for seat p. The first player gets the round handed
+-- out. A player who joins after the last one left (on_player_leave) takes
+-- the round as it stands: the stations reached and the goals ticked are
+-- kept, because the map was not put back, and he gets what the last player
+-- owned. The popups start again, so he is shown the one for where he is.
 local function adopt_player(p)
   if S.player ~= nil then return end
+  if S.adopted then move_bot_seat(p) end
   S.player = p
   local s = game.lobby_slot(p)
   if TUTORIAL_PLAYER == nil and s ~= nil and s.team == 2 then
     game.set_team(p, 1)
   end
-  reserve_seats()
-  hand_out()
+  if not S.adopted then
+    S.adopted = true
+    reserve_seats()
+    hand_out()
+  else
+    give_back(p)
+  end
+  -- A seat with no tank yet spawns at the checkpoint (on_choose_start).
   local t = game.tank(p)
-  local n = 1
-  if t ~= nil then n = station_of(t.mx, t.my) or 1 end
+  local n = S.reached
+  if t ~= nil then n = station_of(t.mx, t.my) or S.reached end
   S.at = n
   if n == 1 then show("welcome") end
   enter_station(n)
@@ -1583,6 +1666,27 @@ end
 function on_player_join(p, scripted)
   if scripted then return end
   if S.player == nil and is_player_seat(p) then adopt_player(p) end
+end
+
+-- The player left. His seat is forgotten, so the next person to join is set
+-- up as the player (adopt_player), and everything kept for his screen and
+-- his tank goes: the popups shown and waiting, the white lines waiting, the
+-- panel, markers and status line last sent, the pillboxes he carried. The
+-- stations and goals stay as they are. The 5A demo bot comes off the field
+-- until a player is in Station 5 again. The seat is empty by now, so nothing
+-- is sent to it.
+function on_player_leave(p, scripted)
+  if p == nil or p ~= S.player then return end
+  S.player = nil
+  for n, c in pairs(S.carrier) do
+    if c == p then S.carrier[n] = nil end
+  end
+  S.popped, S.queue, S.says = {}, {}, {}
+  S.say_until, S.status_gap_until = nil, nil
+  S.panel_key, S.status, S.marker_key, S.markers = nil, nil, nil, 0
+  S.last_pos, S.moving, S.hide, S.gun_remind = nil, false, 0, false
+  S.b5b_dead_at, S.out5 = nil, 0
+  unfield_bot5a()
 end
 
 function on_tank_spawned(p, mx, my, respawn, scripted)
@@ -2035,6 +2139,7 @@ local function every_second()
   if S.player ~= nil then
     supply_bases()
     rearm(S.at)
+    note_owned()
   end
   if S.fielded.bot6 then bot6_loop() end
   -- 5A: the bot stays on its island, and a take that stalls starts again.
