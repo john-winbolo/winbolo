@@ -1318,6 +1318,29 @@
 #define STR_LV_DOCK_TOP                     2805
 #define STR_LV_DOCK_BOTTOM                  2806
 #define STR_LV_DOCK_EMPTY_HINT              2807
+/* The viewer's Overview panel: its name in the Windows menu and its title
+   bar, the name of the row of totals, and the label of a team with more
+   players than there is room to name: the first one (string1) and how many
+   more there are (number). */
+#define STR_LV_WIN_OVERVIEW                 2820
+#define STR_LV_OVERVIEW_TOTAL               2821
+#define STR_LV_OVERVIEW_MORE                2822
+/* The viewer's Tank panel: its name, the hint with no tank selected, a
+   gauge as numbers (string1 its name, number what the tank holds, number2
+   the most it can hold), the three states of the builder, the pillboxes the
+   tank carries (number), and the line for a recording with no stocks. */
+#define STR_LV_WIN_TANK                     2823
+#define STR_LV_TANK_HINT                    2824
+#define STR_LV_TANK_STOCK_FMT               2825
+#define STR_LV_TANK_BUILDER_IN              2826
+#define STR_LV_TANK_BUILDER_OUT             2827
+#define STR_LV_TANK_BUILDER_DEAD            2828
+#define STR_LV_TANK_PILLS                   2829
+#define STR_LV_TANK_NO_STOCK                2830
+/* The viewer's Options menu: the two bars over each tank, and the item's
+   tooltip. */
+#define STR_LV_TANK_BARS                    2831
+#define STR_LV_TANK_BARS_TIP                2832
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

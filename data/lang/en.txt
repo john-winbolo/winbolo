@@ -1242,6 +1242,19 @@ STR_LV_DOCK_LEFT=Left sidebar
 STR_LV_DOCK_TOP=Top sidebar
 STR_LV_DOCK_BOTTOM=Bottom sidebar
 STR_LV_DOCK_EMPTY_HINT=Drag a panel here
+STR_LV_WIN_OVERVIEW=Overview
+STR_LV_OVERVIEW_TOTAL=Total
+STR_LV_OVERVIEW_MORE={string1} +{number}
+STR_LV_WIN_TANK=Tank
+STR_LV_TANK_HINT=Click a tank in the HUD panel to select it
+STR_LV_TANK_STOCK_FMT={string1}: {number} / {number2}
+STR_LV_TANK_BUILDER_IN=Builder: in tank
+STR_LV_TANK_BUILDER_OUT=Builder: out
+STR_LV_TANK_BUILDER_DEAD=Builder: dead
+STR_LV_TANK_PILLS=Pillboxes carried: {number}
+STR_LV_TANK_NO_STOCK=This recording does not hold tank resources
+STR_LV_TANK_BARS=Tank Armour and Shells Bars
+STR_LV_TANK_BARS_TIP=Two small bars over each tank: armour on top, shells under it
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:

@@ -1774,6 +1774,8 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_scenario_panel.cpp
     src/logviewer/imgui/imgui_dock.cpp
     src/logviewer/imgui/imgui_hud.cpp
+    src/logviewer/imgui/imgui_overview.cpp
+    src/logviewer/imgui/imgui_tank.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
@@ -2412,6 +2414,8 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_scenario_panel.cpp
     src/logviewer/imgui/imgui_dock.cpp
     src/logviewer/imgui/imgui_hud.cpp
+    src/logviewer/imgui/imgui_overview.cpp
+    src/logviewer/imgui/imgui_tank.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
@@ -4601,6 +4605,15 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Which icon a slot of the viewer's HUD panel shows, how its three grids
     # are laid out, and its colour sums (lv_hud.h, header only).
     tests/unit/test_lv_hud.c
+    # The table of the viewer's Overview panel: which team's row a pillbox
+    # or a base is counted in (lv_overview.h, header only).
+    tests/unit/test_lv_overview.c
+    # The viewer's Tank panel: which tank it shows and how tall a gauge is
+    # drawn (lv_tank_status.h, header only).
+    tests/unit/test_lv_tank_status.c
+    # The bars the viewer draws over each tank: where they go, how full
+    # they are and their colours (lv_tank_bars.h, header only).
+    tests/unit/test_lv_tank_bars.c
     # The viewer's text dump of a recording around one tick (lv_dump.c): a
     # recorded round dumped with the production decoder.
     tests/unit/test_lv_dump.c
@@ -6915,6 +6928,9 @@ set(_unit_test_names
     lv_dock_layout_tree
     lv_hud_sums
     lv_team_sprite_sums
+    lv_overview_sums
+    lv_tank_status_sums
+    lv_tank_bars_sums
     lv_dump_recorded_round
     lv_spmap_owner_table
     lv_spmap_reads_back

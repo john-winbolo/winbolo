@@ -57,6 +57,7 @@ typedef struct {
   BYTE team;
   BYTE dir;
   bool onBoat;
+  BYTE slot;  /* The player's slot; set after the add (lv_screenTanksSetLastSlot) */
   char playerName[PLAYER_NAME_LEN];
 } screenPosTank;
 
@@ -198,6 +199,13 @@ void lv_screenTanksGetItem(screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *my,
 *  angle      - The full 0-255 facing angle
 *********************************************************/
 void lv_screenTanksGetSubPixel(screenTanks *value, BYTE itemNum, BYTE *wx, BYTE *wy, BYTE *angle);
+
+/* Whose tank an item is. SetLastSlot names the player slot of the item added
+ * last (lv_screenTanksAddItem leaves it as NEUTRAL, no player); GetSlot gives
+ * it back for an item, numbered from 1 as lv_screenTanksGetItem numbers
+ * them, and NEUTRAL for an item that is not there. */
+void lv_screenTanksSetLastSlot(screenTanks *value, BYTE slot);
+BYTE lv_screenTanksGetSlot(screenTanks *value, BYTE itemNum);
 
 #endif /* SCREENTANKS_H */
 

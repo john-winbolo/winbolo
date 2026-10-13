@@ -202,6 +202,13 @@ void lv_drawSetTankLabelsInTarget(BYTE inTarget);
 
 void lv_drawDirtyScreen(void);
 
+/* The two small bars over each live tank on the map: its armour, and under
+ * that its shells (lv_tank_bars.h). Off until set. Drawn over the map in the
+ * viewer's own window only: not in the game view, not when the viewer is
+ * embedded, and not in an exported picture. */
+void lv_drawSetTankBars(BYTE on);
+BYTE lv_drawGetTankBars(void);
+
 /*********************************************************
 *NAME:          lv_drawSplashForImGui
 *PURPOSE:
@@ -305,6 +312,11 @@ int lv_drawGetSheetScale(void);
 *  destroyed with it. NULL when there is none.
 *********************************************************/
 struct SDL_Texture* lv_drawGetHudShapesTexture(void);
+
+/* The game's background picture (data/background.bmp), which holds the well
+ * the game's four tank gauges stand in. Loaded on the first call; NULL when
+ * the renderer is not up yet or the file is missing. */
+struct SDL_Texture* lv_drawGetStatusBackgroundTexture(void);
 
 /*********************************************************
 *NAME:          lv_drawScnMarker
