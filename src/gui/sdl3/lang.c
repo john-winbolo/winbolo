@@ -2786,6 +2786,8 @@ static const LangEntry langTable[] = {
     {2774, "Who a tank's death is credited to, asked at every death; a drowning names the victim unless a script names the tank that sank it."},
     {2775, "the build buttons"},
     {2810, "Whether a pillbox may pick a tank as its target."},
+    {2860, "+ {number} others"},
+    {2861, "+ 1 other"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
