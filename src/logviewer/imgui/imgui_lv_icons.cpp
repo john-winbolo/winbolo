@@ -165,19 +165,22 @@ float lv_icon_button_side(void) {
     return floorf(ImGui::GetFrameHeight());
 }
 
-bool lv_icon_button(const char *id, int icon, float side) {
+bool lv_icon_button(const char *id, int icon, float side, float width) {
     if (side <= 0.0f) {
         side = lv_icon_button_side();
+    }
+    if (width <= 0.0f) {
+        width = side;
     }
     ImGui::PushID(id);
     /* A real button with no label: the frame, the three looks and the
      * keyboard are ImGui's. The icon goes over it. */
-    const bool pressed = ImGui::Button("##icon", ImVec2(side, side));
+    const bool pressed = ImGui::Button("##icon", ImVec2(width, side));
     const ImVec2 p0 = ImGui::GetItemRectMin();
     const ImVec2 p1 = ImGui::GetItemRectMax();
     ImGui::PopID();
 
-    /* The icon is a little over half the button, in its middle. */
+    /* The icon is a little over half the button's height, in its middle. */
     float box = floorf(side * 0.56f);
     if (box < 4.0f) box = 4.0f;
     const float ox = floorf(p0.x + (p1.x - p0.x - box) * 0.5f);

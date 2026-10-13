@@ -45,13 +45,15 @@ enum LvIcon {
  * a caller that wants a margin round it hands in a smaller box. */
 void lv_icon_draw(ImDrawList *dl, int icon, ImVec2 p0, ImVec2 p1, ImU32 col);
 
-/* A square button with the icon in its middle, in the colour of the text.
- * The hovered, held and disabled looks are the ones every ImGui button has
+/* A button with the icon in its middle, in the colour of the text. The
+ * hovered, held and disabled looks are the ones every ImGui button has
  * (inside BeginDisabled it is dimmed and does not answer). id is the
  * button's ID for the keyboard and the gamepad; it is not shown. side is the
- * length of the square, 0 for the height of a framed widget, so it lines up
- * with a slider or a combo on the same row. Returns true when pressed. */
-bool lv_icon_button(const char *id, int icon, float side = 0.0f);
+ * height, 0 for the height of a framed widget, so it lines up with a slider
+ * or a combo on the same row. width is 0 for a square, or the width of a
+ * wider button: the icon keeps the size side gives it and stays in the
+ * middle, and the whole button takes the press. Returns true when pressed. */
+bool lv_icon_button(const char *id, int icon, float side = 0.0f, float width = 0.0f);
 
 /* The length lv_icon_button's square has for side = 0. */
 float lv_icon_button_side(void);

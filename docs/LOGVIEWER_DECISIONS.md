@@ -634,6 +634,39 @@ difference to see is small there. The option is for floating panels.
   run there.
 
 
+### Controls panel: rows in the middle, wider playback buttons (Oct 13)
+
+The panel has three parts, top to bottom:
+
+- **The top row:** Rewind, Play, Pause, Fast Forward ("Jump to live" as a
+  fifth on a live feed), the speed (its label and its slider) and the
+  "Overlay events" list.
+- The lane of event markers and the seek bar. They keep the full width.
+- **The bottom row:** the time ("Time: now / total"), the time left and the
+  tick. (Tablet and Steam Deck modes do not draw this row.)
+
+The top row and the bottom row are in the middle of the panel's width. The
+places are worked out every frame from the width of the panel, before
+anything is drawn (`lv_controls_layout.h`: `lvControlsTopLayout`,
+`lvControlsFlow`). A row that does not go on one line takes more lines, and
+each line is in the middle by itself. A piece of text wider than the panel
+starts at the left edge and goes on to more lines.
+
+The playback buttons are twice as wide as they are high. The icon keeps its
+size and stays in the middle; the whole button takes the click. In less room
+all the buttons get narrower by the same amount, down to the old square. That
+is what a sidebar at its least width (110) gets: four buttons 20 wide. In
+less room than four squares they stay square and go on more lines, as before.
+The buttons take their double width before the speed gets room on their
+line: at a panel 300 wide the speed is now on a second line. No width gives a
+scroll bar from left to right.
+
+- Unit tests: `lv_controls_top_row` (every width from 20 to 900, four and
+  five buttons), `lv_controls_bottom_row`.
+- Headless try-out: the Controls panel at twelve sizes in five states,
+  floating and docked: no assert, and no content wider than the panel that
+  was not so before (only the 32 by 32 panel, as before).
+
 ### Controls panel: "Overlay events", markers over the seek bar
 
 The Controls panel has a list, "Overlay events". The user ticks kinds of

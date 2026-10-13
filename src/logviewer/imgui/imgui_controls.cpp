@@ -31,6 +31,7 @@
 extern "C" {
     #include "logviewer.h"
     #include "../lv_time_fmt.h"
+    #include "../lv_controls_layout.h"
     void lv_windowPlay(void);
     void lv_windowPause(void);
     void lv_windowStop(int corruptLog);
@@ -164,21 +165,15 @@ static void controls_drop_scrub(void) {
     s_seek_was_playing = false;
 }
 
-/* The room left on the line of the last item, after a gap. It is asked
- * before SameLine: a SameLine that is then taken back with NewLine leaves
- * the content of the window wider than what is drawn in it. */
-static float controls_room_after(float gap) {
-    /* The cursor is at the start of the next line, whose room is the whole
-     * width of the content. */
-    const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
-    return right - (ImGui::GetItemRectMax().x + gap);
-}
-
-/* The next item goes on the same line when it has room there (it is w
- * wide), and starts a new line when it has not. */
-static void controls_same_line(float w, float gap) {
-    if (controls_room_after(gap) >= w) {
-        ImGui::SameLine(0.0f, gap);
+/* Puts the next item at x on its line of a row whose places were worked out
+ * beforehand (lv_controls_layout.h). baseX is the cursor's x at the start of
+ * the row; curLine is the line the last item was on, -1 before the first. */
+static void controls_place(float baseX, int *curLine, int line, float x) {
+    if (line == *curLine) {
+        ImGui::SameLine(baseX + x, 0.0f);
+    } else {
+        ImGui::SetCursorPosX(baseX + x);
+        *curLine = line;
     }
 }
 
@@ -282,16 +277,18 @@ void lv_imgui_controls_window(void) {
             }
         }
 
-        /* The playback buttons: back to the last snapshot, play, pause,
-         * on to the next snapshot, and on a live feed back to the live
-         * head. Each is a square with a drawn icon (imgui_lv_icons.cpp) and
-         * says what it does, with its key, in its tooltip. A button whose
-         * action has nothing to act on is dimmed. A button that does not go
-         * on the line starts the next one, so none is cut off in a narrow
-         * panel. */
+        /* The top row: the playback buttons (back to the last snapshot,
+         * play, pause, on to the next snapshot, and on a live feed back to
+         * the live head), the speed and the "Overlay events" list. Each
+         * button has a drawn icon (imgui_lv_icons.cpp) and says what it
+         * does, with its key, in its tooltip. A button whose action has
+         * nothing to act on is dimmed. Where each item goes is worked out
+         * first, every frame, from the width of the panel
+         * (lvControlsTopLayout): the buttons are twice as wide as high where
+         * there is room, the row takes more lines where it must, and each
+         * line is in the middle of the panel. */
         const ImGuiStyle &style = ImGui::GetStyle();
         const float btn = lv_icon_button_side();
-        const float btnGap = style.ItemInnerSpacing.x;
         const bool loaded = s_lv->isLoaded != 0;
         const bool live = lv_screenSpecIsLiveMode();
         const bool playing = loaded && s_lv->playIsPlaying != 0;
@@ -308,9 +305,26 @@ void lv_imgui_controls_window(void) {
             lv_clientMutexRelease();
         }
         char tip[LANG_MSGARG_STRING_LEN * 2 + 16];
+        const char *speedLbl = langGetText(STR_LV_SPEED_LBL);
 
+        LvControlsTopIn topIn;
+        topIn.contentW = ImGui::GetContentRegionAvail().x;
+        topIn.buttons = live ? 5 : 4;
+        topIn.btnSide = btn;
+        topIn.btnGap = style.ItemInnerSpacing.x;
+        topIn.labelW = ImGui::CalcTextSize(speedLbl).x + style.ItemSpacing.x;
+        topIn.speedMin = 50.0f;
+        topIn.speedMax = 100.0f;
+        topIn.comboFullW = lv_event_overlay_combo_width(true);
+        topIn.comboArrowW = lv_event_overlay_combo_width(false);
+        topIn.gap = 15.0f;
+        const LvControlsTop top = lvControlsTopLayout(&topIn);
+        const float topX = ImGui::GetCursorPosX();
+        int topLine = -1;
+
+        controls_place(topX, &topLine, top.btnLine[0], top.btnX[0]);
         ImGui::BeginDisabled(!backKnown);
-        if (lv_icon_button("rewind", LV_ICON_REWIND)) {
+        if (lv_icon_button("rewind", LV_ICON_REWIND, btn, top.btnW)) {
             lv_windowRewind();
         }
         ImGui::EndDisabled();
@@ -318,9 +332,9 @@ void lv_imgui_controls_window(void) {
                           "Ctrl+R", tip, sizeof(tip));
         controls_tooltip(tip, backKnown);
 
-        controls_same_line(btn, btnGap);
+        controls_place(topX, &topLine, top.btnLine[1], top.btnX[1]);
         ImGui::BeginDisabled(!loaded || playing || atEnd);
-        if (lv_icon_button("play", LV_ICON_PLAY)) {
+        if (lv_icon_button("play", LV_ICON_PLAY, btn, top.btnW)) {
             lv_windowPlay();
         }
         ImGui::EndDisabled();
@@ -330,21 +344,21 @@ void lv_imgui_controls_window(void) {
         /* Pause holds playback where it is; nothing moves the playhead and
          * the log stays open. (The Stop this button replaced closed the
          * log; Action > Stop still does.) */
-        controls_same_line(btn, btnGap);
+        controls_place(topX, &topLine, top.btnLine[2], top.btnX[2]);
         ImGui::BeginDisabled(!playing);
-        if (lv_icon_button("pause", LV_ICON_PAUSE)) {
+        if (lv_icon_button("pause", LV_ICON_PAUSE, btn, top.btnW)) {
             lv_windowPause();
         }
         ImGui::EndDisabled();
         controls_key_tip(langGetText(STR_LV_PAUSE), "Ctrl+U, Space", tip, sizeof(tip));
         controls_tooltip(tip, playing);
 
-        controls_same_line(btn, btnGap);
+        controls_place(topX, &topLine, top.btnLine[3], top.btnX[3]);
         /* A live feed has no snapshot ahead to name; the button still plays
          * on to the head. */
         const bool fwdOn = fwdKnown || (loaded && live);
         ImGui::BeginDisabled(!fwdOn);
-        if (lv_icon_button("forward", LV_ICON_FAST_FORWARD)) {
+        if (lv_icon_button("forward", LV_ICON_FAST_FORWARD, btn, top.btnW)) {
             lv_windowFastForward();
         }
         ImGui::EndDisabled();
@@ -355,78 +369,40 @@ void lv_imgui_controls_window(void) {
         /* Spectator live-DVR: jump back to the live head and resume following it.
          * Shown only on the live spectator feed, not for standalone .wbv playback. */
         if (live) {
-            controls_same_line(btn, btnGap);
-            if (lv_icon_button("live", LV_ICON_TO_END)) {
+            controls_place(topX, &topLine, top.btnLine[4], top.btnX[4]);
+            if (lv_icon_button("live", LV_ICON_TO_END, btn, top.btnW)) {
                 lv_screenSpecJumpToLive();
             }
             controls_tooltip(langGetText(STR_LV_TIP_LIVE), true);
         }
 
-        /* The speed: its label and a slider, after the buttons where there
-         * is room. The slider gives up width first, down to half. Under
-         * that the two go on a line of their own, and in a panel too narrow
-         * for both the label goes and the slider keeps the line; the label
-         * is then the slider's tooltip. */
-        const float overlayGap = 15.0f;
+        /* The speed: its label and a slider. In a panel too narrow for both
+         * the label goes and is the slider's tooltip. */
         {
-            const char *speedLbl = langGetText(STR_LV_SPEED_LBL);
-            const float labelW = ImGui::CalcTextSize(speedLbl).x + style.ItemSpacing.x;
-            const float speedMax = 100.0f, speedMin = 50.0f;
-            /* The arrow of the "Overlay events" list goes after the slider
-             * when the slider can spare it the room. */
-            const float spare = overlayGap + lv_event_overlay_combo_width(false);
-            bool label = true;
-            float room = controls_room_after(15.0f) - labelW;
-            if (room >= speedMin) {
-                ImGui::SameLine(0, 15);
-            } else {
-                room = ImGui::GetContentRegionAvail().x - labelW;
-                if (room < speedMin) {
-                    label = false;
-                    room = ImGui::GetContentRegionAvail().x;
-                }
-            }
-            if (room - spare >= speedMin) {
-                room -= spare;
-            }
-            float speedW = (room < speedMax) ? room : speedMax;
-            if (speedW < 16.0f) speedW = 16.0f;
-            if (label) {
+            if (top.label) {
+                controls_place(topX, &topLine, top.speedLine, top.labelX);
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextUnformatted(speedLbl);
-                ImGui::SameLine();
             }
+            controls_place(topX, &topLine, top.speedLine, top.speedX);
 
             int stop = speed_stop_for((int)s_lv->speed);
 
-            ImGui::PushItemWidth(speedW);
+            ImGui::PushItemWidth(top.speedW);
             if (ImGui::SliderInt("##speed", &stop, 0, SPEED_STOP_COUNT - 1, speed_labels[stop])) {
                 update_speed_from_slider(stop);
             }
             ImGui::PopItemWidth();
-            if (!label) {
+            if (!top.label) {
                 controls_tooltip(speedLbl, true);
             }
         }
 
         /* "Overlay events": which kinds of event have a marker over the
-         * seek bar. After the speed where it has room with its name on it;
-         * with less room only its arrow, which says its name in a tooltip;
-         * and on a line of its own when not even that goes on the line. */
-        {
-            const float gap = overlayGap;
-            const float room = controls_room_after(gap);
-            if (room >= lv_event_overlay_combo_width(true)) {
-                ImGui::SameLine(0, gap);
-                lv_event_overlay_combo(true);
-            } else if (room >= lv_event_overlay_combo_width(false)) {
-                ImGui::SameLine(0, gap);
-                lv_event_overlay_combo(false);
-            } else {
-                lv_event_overlay_combo(ImGui::GetContentRegionAvail().x >=
-                                       lv_event_overlay_combo_width(true));
-            }
-        }
+         * seek bar. With its name on it where it has room; with less room
+         * only its arrow, which says its name in a tooltip. */
+        controls_place(topX, &topLine, top.comboLine, top.comboX);
+        lv_event_overlay_combo(top.comboFull);
 
         /* Seek slider row */
         if (s_lv->isLoaded) {
@@ -551,20 +527,20 @@ void lv_imgui_controls_window(void) {
              * elapsed/total/percent, so suppress this row to avoid
              * double-display. */
             if (!(uiModeIsTablet() || uiModeIsSteamDeck())) {
+                /* The bottom row: the time, the time left and the tick.
+                 * Each goes on the line while it has room there, and each
+                 * line is in the middle of the panel (lvControlsFlow). */
+                char part[3][LANG_MSGARG_STRING_LEN * 2];
+                float partW[3], partX[3];
+                int partLine[3];
                 MessageArgs args = {};
                 strncpy(args.string1, s_current_time, sizeof(args.string1) - 1);
                 strncpy(args.string2, total_time_str, sizeof(args.string2) - 1);
-                /* A text wider than the panel goes on to a second line. */
-                ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextUnformatted(langGetTextFmt(STR_LV_TIME_FMT, &args));
+                snprintf(part[0], sizeof(part[0]), "%s", langGetTextFmt(STR_LV_TIME_FMT, &args));
                 MessageArgs args2 = {};
                 strncpy(args2.string1, remaining_str, sizeof(args2.string1) - 1);
-                /* Each part goes on the line while it has room there. */
-                char remaining[LANG_MSGARG_STRING_LEN];
-                snprintf(remaining, sizeof(remaining), "%s",
+                snprintf(part[1], sizeof(part[1]), "%s",
                          langGetTextFmt(STR_LV_TIME_REMAINING, &args2));
-                controls_same_line(ImGui::CalcTextSize(remaining).x, 15.0f);
-                ImGui::TextDisabled("%s", remaining);
                 /* The tick playback is on. The server's own game tick when
                  * the recording states it (lv_screenServerTickAt), so the
                  * number is the one the server and the bots count by. An
@@ -574,11 +550,24 @@ void lv_imgui_controls_window(void) {
                     uint32_t ms = lv_screenGetTimeRunning();
                     uint32_t tick = lv_screenHasServerTick() ? lv_screenServerTickAt(ms)
                                                              : ms / 20u;
-                    char tickText[64];
-                    snprintf(tickText, sizeof(tickText), "%s %u",
+                    snprintf(part[2], sizeof(part[2]), "%s %u",
                              langGetText(STR_DLGSYSINFO_TICK), (unsigned)tick);
-                    controls_same_line(ImGui::CalcTextSize(tickText).x, 15.0f);
-                    ImGui::TextUnformatted(tickText);
+                }
+                for (int i = 0; i < 3; i++) {
+                    partW[i] = ImGui::CalcTextSize(part[i]).x;
+                }
+                lvControlsFlow(partW, 3, 15.0f, ImGui::GetContentRegionAvail().x, partLine, partX);
+                const float rowX = ImGui::GetCursorPosX();
+                int rowLine = -1;
+                /* A text wider than the panel goes on to a second line. */
+                ImGui::PushTextWrapPos(0.0f);
+                for (int i = 0; i < 3; i++) {
+                    controls_place(rowX, &rowLine, partLine[i], partX[i]);
+                    if (i == 1) {
+                        ImGui::TextDisabled("%s", part[i]);
+                    } else {
+                        ImGui::TextUnformatted(part[i]);
+                    }
                 }
                 ImGui::PopTextWrapPos();
             }

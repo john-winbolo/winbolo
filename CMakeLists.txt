@@ -4629,6 +4629,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # the arrow's direction, the countdown and the table of the times a
     # builder was away (lv_builder_status.h, header only).
     tests/unit/test_lv_builder_status.c
+    # Where the items of the log viewer's Controls panel go
+    # (lv_controls_layout.h, header only).
+    tests/unit/test_lv_controls_layout.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
