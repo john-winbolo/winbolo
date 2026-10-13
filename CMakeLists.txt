@@ -6889,6 +6889,7 @@ set(_unit_test_names
     lv_team_sprite_sums
     lv_overview_sums
     lv_overview_bots
+    lv_overview_row_layout
     lv_tank_status_sums
     lv_tank_bars_sums
     lv_tank_pick_sums

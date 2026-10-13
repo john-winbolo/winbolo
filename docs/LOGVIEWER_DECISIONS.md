@@ -40,7 +40,8 @@ call can be changed; the file says where.
   points at the usual font), so the table, the bars and the least width of
   the panel are as they were. The tooltip of a header picture is its word
   ("Pillboxes", "Bases"). The table has no picture for each team, so none
-  is in a team's colour.
+  is in a team's colour. (Changed later on Oct 13: see "Overview rows:
+  names, then a number and a picture for each count".)
 - Not changed, because the map's picture does not go in with no change to
   the layout: the HUD panel (its grids are the game's own 12 by 12 status
   slots) and the Tank panel's line of carried pillboxes (the game's status
@@ -1798,6 +1799,36 @@ Calls made:
 The sum is `lvControlsWheelStep` in `src/logviewer/lv_controls_layout.h`;
 `seek_wheel_step` in `imgui_controls.cpp` uses it. Test:
 `lv_controls_wheel_step`.
+
+### Overview rows: names, then a number and a picture for each count (Oct 13)
+
+A team's row was a stripe in its colour, its players' names, and two
+numbers under a head row with the neutral pillbox and base pictures. It is
+now "Sethos, ErYan, GB   10 [pillbox]   5 [base]", with each picture in the
+team's colour.
+
+- **Number first, picture after.** The picture is at the right end of its
+  column and the number ends a gap in front of it, so the numbers of all
+  the rows end at one place (`lvOverviewCountPlace`).
+- **The pictures** are the map's own (`lv_item_picture`), at the size the
+  head row's pictures had (12 points at the usual font).
+- **The head row is gone:** each row has the pictures now. The hover of a
+  count says "Pillboxes" or "Bases", as the head pictures did.
+- **Neutral row:** kept, with its label, the game's red pillbox and the
+  real neutral base.
+- **Total row:** kept, the numbers alone, under the numbers of the rows.
+- **The stripe** in the team's colour at the start of a row is kept.
+- **No "Team 1" label.** There was none: a row is the names of its players,
+  and a row exists only for a team with a player in it.
+- **A narrow panel.** The two count columns keep their width; a number or
+  a picture is never cut. The names give way: the whole names that fit,
+  then ", ..." (`lvOverviewNamesFit`); when not even the first fits, that
+  name cut short with "...". The hover of the row has the whole list. This
+  takes the place of "first name +N".
+- **Not changed:** the order of the rows (by team number), a carried
+  pillbox counts for its owner, a zero is dim, the share bars. The panel
+  has no mark for the team that is viewed in the one-player view; it had
+  none before.
 
 ### Smaller markers over the seek bar (Oct 13)
 

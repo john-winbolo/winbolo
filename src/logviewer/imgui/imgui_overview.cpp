@@ -10,14 +10,16 @@
 
 /*
  * Who owns what, in one small table: a row for each team in the game, with
- * the number of pillboxes and of bases it owns at the playback time, then
- * the ones nobody owns, then the totals. Under the table (beside it when the
- * window is wide) two thin bars show the same numbers as shares: one for the
- * pillboxes and one for the bases, each cut into the teams' colours.
+ * the names of its players and then the number of pillboxes and of bases it
+ * owns at the playback time, each number in front of the map's picture of a
+ * pillbox or a base in the team's colour. Then the ones nobody owns, with
+ * the game's red pillbox and its neutral base, then the totals. Under the
+ * table (beside it when the window is wide) two thin bars show the same
+ * numbers as shares: one for the pillboxes and one for the bases, each cut
+ * into the teams' colours.
  *
  * The colours are the ones the map and the HUD panel use, so a red team is
- * orange here too. The two count columns are headed by the game's own
- * status icons for a pillbox and a base.
+ * orange here too.
  *
  * The numbers are read off the game's state every frame
  * (lv_screenOverviewSnapshot), so they follow a seek in either direction.
@@ -103,29 +105,29 @@ static float overview_icon_size(void) {
 }
 
 /* The picture of a pillbox or a base, with its top left at p: the map's own
- * picture of one no team holds (the game's red pillbox, the game's neutral
- * base), made smaller (lv_item_picture; the events lane uses the same). */
-static void overview_icon(ImDrawList *dl, bool isBase, ImVec2 p) {
+ * picture, made smaller (lv_item_picture; the events lane uses the same). It
+ * is in the colour of team; with team -1 it is the one no team holds (the
+ * game's red pillbox, the game's neutral base). plain is the colour of the
+ * shape drawn when the game's sheets are not there. */
+static void overview_icon(ImDrawList *dl, bool isBase, int team, ImU32 plain, ImVec2 p) {
     const float size = overview_icon_size();
 
     p.x = floorf(p.x);
     p.y = floorf(p.y);
-    if (!lv_item_picture(dl, isBase, -1, p, ImVec2(p.x + size, p.y + size))) {
+    if (!lv_item_picture(dl, isBase, team, p, ImVec2(p.x + size, p.y + size))) {
         /* No sheet: a plain shape still tells the two columns apart. */
-        ImU32 col = ImGui::GetColorU32(ImGuiCol_TextDisabled);
         if (isBase) {
-            dl->AddCircleFilled(ImVec2(p.x + size * 0.5f, p.y + size * 0.5f), size * 0.5f, col);
+            dl->AddCircleFilled(ImVec2(p.x + size * 0.5f, p.y + size * 0.5f), size * 0.5f, plain);
         } else {
-            dl->AddRectFilled(p, ImVec2(p.x + size, p.y + size), col);
+            dl->AddRectFilled(p, ImVec2(p.x + size, p.y + size), plain);
         }
     }
 }
 
-/* The width a count column needs: three digits, or the icon above them. */
+/* The width a count column needs: three digits, a gap and the picture. */
 static float overview_count_w(void) {
-    float w = ImGui::CalcTextSize("000").x;
-    float icon = overview_icon_size();
-    return (icon > w) ? icon : w;
+    return lvOverviewCountColW(ImGui::CalcTextSize("000").x, overview_icon_size(),
+                               ImGui::GetStyle().ItemInnerSpacing.x);
 }
 
 /* The height of one row of the table. */
@@ -138,10 +140,10 @@ static float overview_bars_h(void) {
     return 2.0f * (overview_icon_size() + ImGui::GetStyle().ItemSpacing.y);
 }
 
-/* The height of the table for a number of teams: the icons, the teams, the
- * neutral row and the totals. */
+/* The height of the table for a number of teams: the teams, the neutral row
+ * and the totals. */
 static float overview_table_h(int teams) {
-    return (float)(teams + 3) * overview_row_h();
+    return (float)(teams + 2) * overview_row_h();
 }
 
 float lv_imgui_overview_dock_height(float dockWidth) {
@@ -155,18 +157,41 @@ float lv_imgui_overview_dock_height(float dockWidth) {
     return h + style.WindowPadding.y * 2.0f + ImGui::GetFrameHeight();
 }
 
-/* A number at the right of the current cell. A zero is dimmed, so the eye
- * goes to the teams that own something. */
-static void overview_count_cell(int count, bool dim) {
+/* What a count cell has after its number. */
+enum OverviewPicture {
+    OVERVIEW_PIC_NONE, /* the totals: the number alone */
+    OVERVIEW_PIC_PILL,
+    OVERVIEW_PIC_BASE
+};
+
+/* A count cell: the number, then the picture of what is counted, in the
+ * colour of team (-1: the one no team holds). The picture is at the right
+ * of the cell and the number ends in front of it, so the numbers of all the
+ * rows end at one place (lvOverviewCountPlace). A zero is dimmed, so the eye
+ * goes to the teams that own something; the picture is not. */
+static void overview_count_cell(int count, bool dim, OverviewPicture picture, bool isBase,
+                                int team, ImU32 plain) {
     char text[16];
     snprintf(text, sizeof(text), "%d", count);
-    float w = ImGui::CalcTextSize(text).x;
-    float room = ImGui::GetContentRegionAvail().x;
-    if (room > w) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (room - w));
-    if (dim || count == 0) {
-        ImGui::TextDisabled("%s", text);
-    } else {
-        ImGui::TextUnformatted(text);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float lineH = ImGui::GetTextLineHeight();
+    const float icon = overview_icon_size();
+    const float room = ImGui::GetContentRegionAvail().x;
+    float numX = 0.0f, iconX = 0.0f;
+    lvOverviewCountPlace(room, ImGui::CalcTextSize(text).x, icon,
+                         ImGui::GetStyle().ItemInnerSpacing.x, &numX, &iconX);
+    dl->AddText(ImVec2(floorf(p.x + numX), p.y),
+                ImGui::GetColorU32((dim || count == 0) ? ImGuiCol_TextDisabled : ImGuiCol_Text),
+                text);
+    if (picture != OVERVIEW_PIC_NONE) {
+        overview_icon(dl, isBase, team, plain,
+                      ImVec2(p.x + iconX, p.y + (lineH - icon) * 0.5f));
+    }
+    /* The cell is one item: its tooltip is the word for what it counts. */
+    ImGui::Dummy(ImVec2(room, lineH));
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+        ImGui::SetTooltip("%s", langGetText(isBase ? STR_TABLET_BASES : STR_TABLET_PILLBOXES));
     }
 }
 
@@ -195,17 +220,18 @@ static float overview_chip_room(const LvOverviewRow &row, int index) {
     return (w > 0.0f) ? w + lv_bot_chip_gap() : 0.0f;
 }
 
-/* The names of all the row's players on one line, "A, B, C", with the chip
- * in front of each bot. With dl NULL nothing is drawn. Returns the width. */
+/* The names of the row's first `count` players on one line, "A, B, C", with
+ * the chip in front of each bot. With dl NULL nothing is drawn. Returns the
+ * width. */
 static float overview_names_run(ImDrawList *dl, ImVec2 at, ImU32 col,
-                                const LvOverviewRow &row) {
-    /* No bot in the team: the list as one piece of text, as it always was. */
-    if (row.bots == 0) {
+                                const LvOverviewRow &row, int count) {
+    /* The whole list of a team with no bot: one piece of text. */
+    if (row.bots == 0 && count >= row.players) {
         if (dl != nullptr) dl->AddText(at, col, row.names);
         return ImGui::CalcTextSize(row.names).x;
     }
     float x = at.x;
-    for (int i = 0; i < row.players && i < LV_OVERVIEW_MAX_TEAMS; i++) {
+    for (int i = 0; i < count && i < row.players && i < LV_OVERVIEW_MAX_TEAMS; i++) {
         size_t len = 0;
         const char *name = lvOverviewName(&row, i, &len);
         if (name == nullptr) break;
@@ -224,44 +250,87 @@ static float overview_names_run(ImDrawList *dl, ImVec2 at, ImU32 col,
     return x - at.x;
 }
 
-/* The label of a team's row: the names of its players when they fit in the
- * room there is, else the first of them and how many more there are. The
- * chip of a bot is in front of its name in both. Drawn at `at`; returns the
- * width. */
+/* What is put where names are left out. */
+#define OVERVIEW_ELLIPSIS "..."
+
+/* The label of a team's row: the names of its players, "A, B, C", with the
+ * chip of a bot in front of its name. When they do not fit in the room
+ * there is, the names from the start that do and then "..." ("A, B, ...");
+ * when not even the first fits, that name cut short with "...". Drawn at
+ * `at`; returns the width, and in *cut whether anything was left out (the
+ * tooltip of the row then has the whole list). */
 static float overview_team_label(ImDrawList *dl, ImVec2 at, ImU32 col,
-                                 const LvOverviewRow &row, float room) {
-    if (row.players <= 1 || overview_names_run(nullptr, at, col, row) <= room) {
-        return overview_names_run(dl, at, col, row);
+                                 const LvOverviewRow &row, float room, bool *cut) {
+    float widths[LV_OVERVIEW_MAX_TEAMS];
+    int n = 0;
+    *cut = false;
+    for (int i = 0; i < row.players && i < LV_OVERVIEW_MAX_TEAMS; i++) {
+        size_t len = 0;
+        const char *name = lvOverviewName(&row, i, &len);
+        if (name == nullptr) break;
+        widths[n++] = overview_chip_room(row, i) + ImGui::CalcTextSize(name, name + len).x;
     }
-    MessageArgs args = {};
-    snprintf(args.string1, sizeof(args.string1), "%s", row.firstName);
-    args.number = row.players - 1;
-    const char *label = langGetTextFmt(STR_LV_OVERVIEW_MORE, &args);
+    if (n == 0) return 0.0f;
+    const float sepW = ImGui::CalcTextSize(LV_OVERVIEW_NAME_SEP).x;
+    const float ellW = ImGui::CalcTextSize(OVERVIEW_ELLIPSIS).x;
+    const int shown = lvOverviewNamesFit(widths, n, sepW, ellW, room, cut);
+    if (!*cut) {
+        return overview_names_run(dl, at, col, row, row.players);
+    }
+    if (shown > 0) {
+        /* "A, B, ...": whole names, then what says there are more. */
+        float x = at.x + overview_names_run(dl, at, col, row, shown);
+        dl->AddText(ImVec2(x, at.y), col, LV_OVERVIEW_NAME_SEP OVERVIEW_ELLIPSIS);
+        return x + sepW + ellW - at.x;
+    }
+    /* Not even the first name: its chip, then as much of it as goes in,
+     * with "..." for the rest. Whole UTF-8 characters are taken off. */
     const float chip = overview_chip_room(row, 0);
-    if (chip > 0.0f) lv_bot_chip_draw(dl, row.chip[0], at);
-    dl->AddText(ImVec2(at.x + chip, at.y), col, label);
-    return chip + ImGui::CalcTextSize(label).x;
+    float x = at.x;
+    if (chip > 0.0f && chip <= room) {
+        lv_bot_chip_draw(dl, row.chip[0], at);
+        x += chip;
+    }
+    size_t len = 0;
+    const char *name = lvOverviewName(&row, 0, &len);
+    char part[LV_OVERVIEW_NAMES_LEN + 4];
+    if (name == nullptr) return x - at.x;
+    while (len > 0) {
+        len--;
+        while (len > 0 && ((unsigned char)name[len] & 0xC0) == 0x80) len--;
+        snprintf(part, sizeof(part), "%.*s" OVERVIEW_ELLIPSIS, (int)len, name);
+        const float w = ImGui::CalcTextSize(part).x;
+        if (w <= room - (x - at.x)) {
+            dl->AddText(ImVec2(x, at.y), col, part);
+            return x + w - at.x;
+        }
+    }
+    /* Not even "..." goes in: nothing more. */
+    return x - at.x;
 }
 
 /* The first cell of a team's row: a stripe in the team's colour, then the
  * names of its players. The cell is one item, so the tooltip of the row is
- * asked of it. */
-static void overview_team_cell(ImU32 stripe, const LvOverviewRow &row, float room) {
+ * asked of it. Returns whether any name was left out or cut. */
+static bool overview_team_cell(ImU32 stripe, const LvOverviewRow &row, float room) {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const float h = ImGui::GetTextLineHeight();
     const float lead = OVERVIEW_STRIPE_W + ImGui::GetStyle().ItemInnerSpacing.x;
+    bool cut = false;
     dl->AddRectFilled(ImVec2(p.x, p.y + 1.0f),
                       ImVec2(p.x + OVERVIEW_STRIPE_W, p.y + h - 1.0f), stripe, 1.0f);
     const float w = overview_team_label(dl, ImVec2(p.x + lead, p.y),
-                                        ImGui::GetColorU32(ImGuiCol_Text), row, room);
+                                        ImGui::GetColorU32(ImGuiCol_Text), row, room, &cut);
     ImGui::Dummy(ImVec2(lead + w, h));
+    return cut;
 }
 
 /* The table, width wide. */
 static void overview_table(const LvOverview &ov, float width) {
     const ImGuiStyle &style = ImGui::GetStyle();
     const float countW = overview_count_w();
+    const ImU32 plain = ImGui::GetColorU32(ImGuiCol_TextDisabled);
     const ImGuiTableFlags flags = ImGuiTableFlags_SizingFixedFit |
                                   ImGuiTableFlags_NoSavedSettings |
                                   ImGuiTableFlags_NoHostExtendX;
@@ -271,63 +340,49 @@ static void overview_table(const LvOverview &ov, float width) {
     if (!ImGui::BeginTable("##overview", 3, flags, ImVec2(width, 0.0f))) {
         return;
     }
+    /* The count columns keep their width; the names have what is left. */
     ImGui::TableSetupColumn("##team", ImGuiTableColumnFlags_WidthStretch);
     ImGui::TableSetupColumn("##pills", ImGuiTableColumnFlags_WidthFixed, countW);
     ImGui::TableSetupColumn("##bases", ImGuiTableColumnFlags_WidthFixed, countW);
 
-    /* The icons that head the two count columns, over the right of each
-     * column, where the numbers end. */
-    {
-        ImDrawList *dl = ImGui::GetWindowDrawList();
-        const float icon = overview_icon_size();
-        ImGui::TableNextRow();
-        for (int col = 1; col <= 2; col++) {
-            ImGui::TableSetColumnIndex(col);
-            ImVec2 p = ImGui::GetCursorScreenPos();
-            float room = ImGui::GetContentRegionAvail().x;
-            float off = (room > icon) ? (room - icon) : 0.0f;
-            float down = (ImGui::GetTextLineHeight() - icon) * 0.5f;
-            overview_icon(dl, col == 2, ImVec2(p.x + off, p.y + down));
-            ImGui::Dummy(ImVec2(room, ImGui::GetTextLineHeight()));
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
-                ImGui::SetTooltip("%s", langGetText(col == 2 ? STR_TABLET_BASES
-                                                             : STR_TABLET_PILLBOXES));
-            }
-        }
-    }
-
     for (int i = 0; i < ov.rowCount; i++) {
         const LvOverviewRow &row = ov.rows[i];
+        const ImU32 colour = overview_team_colour(row.colour);
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
         float room = ImGui::GetContentRegionAvail().x - OVERVIEW_STRIPE_W -
                      style.ItemInnerSpacing.x;
-        overview_team_cell(overview_team_colour(row.colour), row, room);
+        const bool cut = overview_team_cell(colour, row, room);
         /* The whole team, for a row that had no room for it. */
-        if (row.players > 1 && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+        if ((cut || row.players > 1) && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
             if (ImGui::BeginTooltip()) {
                 const ImVec2 at = ImGui::GetCursorScreenPos();
                 const float w = overview_names_run(ImGui::GetWindowDrawList(), at,
-                                                   ImGui::GetColorU32(ImGuiCol_Text), row);
+                                                   ImGui::GetColorU32(ImGuiCol_Text), row,
+                                                   row.players);
                 ImGui::Dummy(ImVec2(w, ImGui::GetTextLineHeight()));
                 ImGui::EndTooltip();
             }
         }
+        /* The number, then the picture in the team's colour. */
         ImGui::TableSetColumnIndex(1);
-        overview_count_cell(row.pills, false);
+        overview_count_cell(row.pills, false, OVERVIEW_PIC_PILL, false, row.team, colour);
         ImGui::TableSetColumnIndex(2);
-        overview_count_cell(row.bases, false);
+        overview_count_cell(row.bases, false, OVERVIEW_PIC_BASE, true, row.team, colour);
     }
 
+    /* The ones no team holds, with the game's red pillbox and its neutral
+     * base. */
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
     overview_label_cell(OVERVIEW_NEUTRAL_COLOUR, langGetText(STR_MAPEDIT_OWNER_NEUTRAL), true);
     ImGui::TableSetColumnIndex(1);
-    overview_count_cell(ov.neutralPills, true);
+    overview_count_cell(ov.neutralPills, true, OVERVIEW_PIC_PILL, false, -1, plain);
     ImGui::TableSetColumnIndex(2);
-    overview_count_cell(ov.neutralBases, true);
+    overview_count_cell(ov.neutralBases, true, OVERVIEW_PIC_BASE, true, -1, plain);
 
-    /* The totals, under a line across the table. */
+    /* The totals, under a line across the table: the numbers alone, under
+     * the numbers of the rows. */
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
     {
@@ -340,9 +395,9 @@ static void overview_table(const LvOverview &ov, float width) {
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + OVERVIEW_STRIPE_W + style.ItemInnerSpacing.x);
     ImGui::TextUnformatted(langGetText(STR_LV_OVERVIEW_TOTAL));
     ImGui::TableSetColumnIndex(1);
-    overview_count_cell(ov.totalPills, false);
+    overview_count_cell(ov.totalPills, false, OVERVIEW_PIC_NONE, false, -1, plain);
     ImGui::TableSetColumnIndex(2);
-    overview_count_cell(ov.totalBases, false);
+    overview_count_cell(ov.totalBases, false, OVERVIEW_PIC_NONE, true, -1, plain);
 
     ImGui::EndTable();
 }
@@ -356,7 +411,7 @@ static void overview_share_bar(const LvOverview &ov, bool isBase, float width) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     const int total = isBase ? ov.totalBases : ov.totalPills;
 
-    overview_icon(dl, isBase, p);
+    overview_icon(dl, isBase, -1, ImGui::GetColorU32(ImGuiCol_TextDisabled), p);
 
     float x0 = floorf(p.x + icon + style.ItemInnerSpacing.x);
     float x1 = floorf(p.x + width);

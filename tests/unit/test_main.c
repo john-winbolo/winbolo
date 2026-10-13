@@ -2297,6 +2297,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_team_sprite_sums",                             run_lv_team_sprite_sums                             },
     { "lv_overview_sums",                                run_lv_overview_sums                                },
     { "lv_overview_bots",                                run_lv_overview_bots                                },
+    { "lv_overview_row_layout",                          run_lv_overview_row_layout                          },
     { "lv_tank_status_sums",                             run_lv_tank_status_sums                             },
     { "lv_tank_bars_sums",                               run_lv_tank_bars_sums                               },
     { "lv_tank_pick_sums",                               run_lv_tank_pick_sums                               },
