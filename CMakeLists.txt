@@ -4629,6 +4629,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # the ring flashed on the map round an event's place (lv_time_fmt.h,
     # lv_event_flash.h, header only).
     tests/unit/test_lv_time_fmt.c
+    # Where the viewer's map is when a log is first shown: the box round
+    # everything that is not deep sea, and the zoom it is shown at
+    # (lv_first_view.h, header only).
+    tests/unit/test_lv_first_view.c
     # The builder marker over each tank on the viewer's map: where it goes,
     # the arrow's direction, the countdown and the table of the times a
     # builder was away (lv_builder_status.h, header only).
@@ -6913,6 +6917,9 @@ set(_unit_test_names
     lv_event_flash_arrow
     lv_event_centre_scroll
     lv_view_centre_scroll
+    lv_first_view_box
+    lv_first_view_zoom
+    lv_first_view_place
     lv_event_jump_keeps_place_in_view
     lv_event_seek_exact
     lv_builder_status_sums

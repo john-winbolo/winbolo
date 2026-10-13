@@ -692,6 +692,8 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
      * request a full redraw so the texture target gets repopulated. */
     g_zoomStepIndex = newStepIndex;
     g_zoomLevel = newZoom;
+    /* A zoom places the view: the first view of the log is over. */
+    lv_screenFirstViewCancel();
 
     if (newTilesX != curTilesX) lv_screenSetSizeX((BYTE)newTilesX);
     if (newTilesY != curTilesY) lv_screenSetSizeY((BYTE)newTilesY);

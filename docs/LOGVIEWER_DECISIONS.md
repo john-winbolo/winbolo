@@ -1688,6 +1688,58 @@ five visible parts: the place is in the middle to a map pixel, or held by
 the map's edge on the right side of the middle), `lv_dock_clear_map` (what
 the solid sidebars take).
 
+### The first view of a log is on the land (Oct 13)
+
+Before: a load put the view's top left corner at square 127,127
+(`lv_screenSetup` in `screen.c`). That square is the middle of the world,
+and the server moves a map so its middle is at square 126,126. So the first
+view showed only the lower right quarter of the land, and sea. The zoom was
+1x at the start of a run (`g_zoomStepIndex` in `draw.c`); a second log in
+the same run kept the zoom the user had. The zoom is not saved.
+
+Now: once for each load, the log viewer puts the view on the land.
+
+- **The box.** Every square that is not deep sea, each pillbox that no tank
+  carries, each base and each start. `lv_screenLandBox` in `screen.c` makes
+  it from the map the log holds when the first view is placed.
+- **The place.** The middle of the box goes to the middle of the map that
+  shows: the window less the menu bar and the solid sidebars. It is the
+  sum a double click on an event uses (`lvViewCentreScrollPx`).
+- **The zoom.** It is kept when the whole box goes in. If not, the viewer
+  zooms out to the largest of its steps at which the box and one square of
+  room on each side go in. If there is none, it goes to the smallest step.
+  It never zooms in, and no new step was made.
+- **A map that is all sea with nothing on it** has no box. The view stays
+  where the load put it.
+
+Calls made:
+
+- **Only the log viewer's own window does this.** The game's camera, the
+  reel in the game, the live spectator and the browser build are as they
+  were.
+- **Only the first view.** The view is placed on the second frame after
+  the load, so the sidebars are in place. Anything that moves the view
+  before then ends it: an arrow key, a drag, a zoom, a click on an event, a
+  jump to an item. A seek, a new window size and a sidebar change never
+  place the view again.
+- **A log that opens in the lobby** has no map until the round starts. The
+  view is placed when the map first shows, if the user has not moved the
+  view before then.
+- **The box is not made again** when the map changes later in the same log
+  (a second round on another map).
+- **"Tank Centred" on:** the zoom is left alone, and the view goes back to
+  the tank on the next tick. The game view (one player's own screen) is
+  never placed.
+
+The sums are in `src/logviewer/lv_first_view.h` (`lvLandBoxAddTerrain`,
+`lvLandBoxAdd`, `lvLandBoxMidPx`, `lvFirstViewZoomStep`). `lvHostFirstView`
+in `logviewer.c` places the view.
+
+Tests: `lv_first_view_box` (all sea, an island in a corner, pillboxes
+outside the land, the edges of the map), `lv_first_view_zoom` (kept when
+the box goes in, the step chosen when not, a box bigger than the view),
+`lv_first_view_place` (the box's middle is the middle of what shows).
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the

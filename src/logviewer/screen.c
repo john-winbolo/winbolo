@@ -72,6 +72,7 @@
 #include "lv_builder_status.h"   /* the times each builder was away */
 #include "lv_ping_view.h"        /* the pings of the log, kept by time */
 #include "lv_save_name.h"        /* the players of the whole log, the lobby's map */
+#include "lv_first_view.h"       /* the box round everything that is not deep sea */
 
 /* The middle of the visible map from the start of the view (defined with
  * lv_screenSetViewInset). */
@@ -165,6 +166,75 @@ static void lv_screenClampOffsets(void) {
     g_lv->yOffset = (BYTE)maxOffY;
     g_lv->subPxY = 0;
   }
+}
+
+/* The first view of a log (lv_first_view.h). Set by each load and cleared
+ * when the host has placed the view, or when anything else has: a pan, a
+ * zoom, a jump to a place. So the host places the view once for a load and
+ * never takes it from the user. s_firstViewAsked counts the frames the host
+ * has asked in: the first is passed over, so the sidebars are in place. */
+static bool s_firstViewPending = FALSE;
+static int  s_firstViewAsked = 0;
+
+void lv_screenFirstViewCancel(void) {
+  s_firstViewPending = FALSE;
+}
+
+int lv_screenFirstViewDue(void) {
+  if (s_firstViewPending == FALSE) {
+    return 0;
+  }
+  if (s_firstViewAsked < 1) {
+    s_firstViewAsked++;
+    return 0;
+  }
+  return 1;
+}
+
+/* The box round everything on the map that is not deep sea: the terrain,
+ * and each pillbox (but one a tank carries), base and start. Returns 0, and
+ * sets nothing, when there is nothing: the lobby before a round, or a map
+ * that is all sea with nothing on it. */
+int lv_screenLandBox(int *x0, int *y0, int *x1, int *y1) {
+  LvLandBox box;
+  BYTE count, n;
+
+  if (g_lv == NULL || g_lv->logLoaded == FALSE || g_lv->mp == NULL) {
+    return 0;
+  }
+  lvLandBoxClear(&box);
+  lvLandBoxAddTerrain(&box, (const unsigned char *) &(g_lv->mp->mapItem[0][0]), DEEP_SEA);
+  n = lv_pillsGetNumPills(&g_lv->pb);
+  for (count = 1; count <= n; count++) {
+    pillbox p;
+    memset(&p, 0, sizeof(p));
+    lv_pillsGetPill(&g_lv->pb, &p, count);
+    if (p.inTank == FALSE) {
+      lvLandBoxAdd(&box, p.x, p.y);
+    }
+  }
+  n = lv_basesGetNumBases(&g_lv->bs);
+  for (count = 1; count <= n; count++) {
+    base b;
+    memset(&b, 0, sizeof(b));
+    lv_basesGetBase(&g_lv->bs, &b, count);
+    lvLandBoxAdd(&box, b.x, b.y);
+  }
+  n = lv_startsGetNumStarts(&g_lv->ss);
+  for (count = 1; count <= n; count++) {
+    start st;
+    memset(&st, 0, sizeof(st));
+    lv_startsGetStartStruct(&g_lv->ss, &st, count);
+    lvLandBoxAdd(&box, st.x, st.y);
+  }
+  if (!box.has) {
+    return 0;
+  }
+  if (x0 != NULL) *x0 = box.x0;
+  if (y0 != NULL) *y0 = box.y0;
+  if (x1 != NULL) *x1 = box.x1;
+  if (y1 != NULL) *y1 = box.y1;
+  return 1;
 }
 
 /* Decode a log_RuleSet payload from its two index bytes, its blob's length
@@ -676,6 +746,9 @@ void lv_screenUpdateView(updateType value) {
      * drew the wrapped borders like every other unclamped writer. */
     int ox = g_lv->xOffset;
     int oy = g_lv->yOffset;
+    if (value == left || value == right || value == up || value == down) {
+      lv_screenFirstViewCancel();
+    }
     if (value == left) {
       ox--;
     } else if (value == right) {
@@ -739,6 +812,10 @@ void lv_screenSetup() {
   g_lv->yOffset = 127;
   g_lv->subPxX  = 0;
   g_lv->subPxY  = 0;
+  /* Where the view opens until the host places it (lv_first_view.h). The
+   * embedded reel and the live spectator never do, and keep this. */
+  s_firstViewPending = TRUE;
+  s_firstViewAsked = 0;
   /* Every load runs through here after the host has sized the tile grid, and
    * the embedded reel's grid can be wider than half the map at 0.5x. Left at
    * 127 the view would open past column 255 and wrap, so the default is
@@ -3400,6 +3477,7 @@ void lv_screenCentreOnSelectedItem() {
     if (cy + g_lv->screenSizeY > 255) cy = 255 - g_lv->screenSizeY;
     BYTE newXOffset = (BYTE)cx;
     BYTE newYOffset = (BYTE)cy;
+    lv_screenFirstViewCancel();
     if (newXOffset != g_lv->xOffset || g_lv->yOffset != newYOffset) {
       g_lv->xOffset = newXOffset;
       g_lv->yOffset = newYOffset;
@@ -5950,6 +6028,8 @@ void lv_screenPanToTotalPixels(int totalPxX, int totalPxY) {
    * differential, so an unchanged grid blits nothing. */
   if (wholeChanged || subChanged) {
     g_lv->wantScreenUpdate = TRUE;
+    /* The view has been put somewhere: the first view of the log is over. */
+    lv_screenFirstViewCancel();
   }
 }
 
@@ -6107,6 +6187,7 @@ void lv_screenMouseCentreClick(int xPos, int yPos) {
   g_lv->xOffset = (BYTE)cx;
   g_lv->yOffset = (BYTE)cy;
   lv_screenClampOffsets();
+  lv_screenFirstViewCancel();
   /* Defer to the flag — see lv_screenPanToTotalPixels. */
   g_lv->wantScreenUpdate = TRUE;
 }
@@ -6131,6 +6212,7 @@ void lv_screenCentreOnCell(int mapX, int mapY) {
   g_lv->subPxX = 0;
   g_lv->subPxY = 0;
   lv_screenClampOffsets();
+  lv_screenFirstViewCancel();
   /* Defer to the flag — see lv_screenPanToTotalPixels. */
   g_lv->wantScreenUpdate = TRUE;
 }
@@ -6177,6 +6259,7 @@ int lv_screenShowCell(int mapX, int mapY, float viewPtsW, float viewPtsH, float 
   lv_screenPanToTotalPixels(
       lvFlashCentreScroll(mapX, mapPxW, TILE_SIZE_X, maxOffX * TILE_SIZE_X),
       lvFlashCentreScroll(mapY, mapPxH, TILE_SIZE_Y, maxOffY * TILE_SIZE_Y));
+  lv_screenFirstViewCancel();
   g_lv->wantScreenUpdate = TRUE;
   return 1;
 }
@@ -6207,6 +6290,7 @@ int lv_screenCentrePxIn(float mapPxX, float mapPxY, float startPtX, float startP
   lv_screenPanToTotalPixels(
       lvViewCentreScrollPx(mapPxX, startPtX, lenPtX, zoom, maxOffX * TILE_SIZE_X),
       lvViewCentreScrollPx(mapPxY, startPtY, lenPtY, zoom, maxOffY * TILE_SIZE_Y));
+  lv_screenFirstViewCancel();
   g_lv->wantScreenUpdate = TRUE;
   return 1;
 }

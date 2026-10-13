@@ -805,6 +805,15 @@ int lv_screenCentrePxIn(float mapPxX, float mapPxY, float startPtX, float startP
                         float lenPtX, float lenPtY, float zoom);
 int lv_screenCentreCellIn(int mapX, int mapY, float startPtX, float startPtY,
                           float lenPtX, float lenPtY, float zoom);
+/* The first view of a log (lv_first_view.h). Each load asks for one. Due
+ * says 1 when the host is to place it: not in the first frame it asks in,
+ * and not once the view has been placed by the host or moved by anything
+ * else (Cancel, which every pan, zoom and jump to a place calls).
+ * lv_screenLandBox gives the box round all that is not deep sea, in squares;
+ * 0 when there is nothing (the lobby, or a map of sea alone). */
+int  lv_screenFirstViewDue(void);
+void lv_screenFirstViewCancel(void);
+int  lv_screenLandBox(int *x0, int *y0, int *x1, int *y1);
 /* Counts every request to move playback other than by playing. */
 uint32_t lv_screenSeekSerial(void);
 

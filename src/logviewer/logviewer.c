@@ -68,6 +68,7 @@
 #include "lv_dock_clear.h"
 #include "lv_fullscreen_key.h"
 #include "lv_save_name.h"   /* the file name Save Log File offers */
+#include "lv_first_view.h"  /* where the map is when a log is first shown */
 #include "lv_fullscreen_game.h"
 #include "imgui/imgui_game_view.h"
 #include "imgui/imgui_logviewer_menu.h"
@@ -1735,6 +1736,78 @@ static void lvHostDockSync(void) {
     g_lv->wantScreenUpdate = TRUE;
 }
 
+/* TRUE in the log viewer's own run (logViewerRun), which is the one host that
+ * places the first view of a log. The live spectator and the reel in the
+ * game keep the view the load gave them. */
+static bool s_lvFirstViewHost = FALSE;
+
+/* --------------------------------------------------------------------------
+ * lvHostFirstView -- Put the map where the first look at a log is worth it.
+ *
+ * A load opens the view with its corner at square 127,127, which is the
+ * middle of the world: the land of a map is round that square, so three
+ * quarters of it were off the view. Once for each load this puts the middle
+ * of the box round everything that is not deep sea (lv_screenLandBox) in the
+ * middle of the map that shows (lvHostVisibleMap), and zooms out when the
+ * box does not go in at the zoom the viewer has (lvFirstViewZoomStep).
+ *
+ * It waits for a frame, so the sidebars are in place, and for a map: a log
+ * that opens in the lobby has none until the round starts. Anything that
+ * moves the view before then ends the wait (lv_screenFirstViewCancel), so
+ * the view is never taken from the user. With "Tank Centred" on the zoom is
+ * left alone and the view goes back to the tank on the next tick.
+ * -------------------------------------------------------------------------- */
+static void lvHostFirstView(void) {
+    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    int has;
+    float startX, startY, lenX, lenY;
+
+    if (!s_lvFirstViewHost || g_lv->isLoaded == FALSE) {
+        return;
+    }
+    if (g_lv->gameView || lv_screenSpecIsLiveMode()) {
+        lv_screenFirstViewCancel();
+        return;
+    }
+    if (!lv_screenFirstViewDue()) {
+        return;
+    }
+    lv_clientMutexWaitFor();
+    has = lv_screenLandBox(&x0, &y0, &x1, &y1);
+    lv_clientMutexRelease();
+    if (!has) {
+        return;
+    }
+    lv_screenFirstViewCancel();
+    lvHostVisibleMap(&startX, &startY, &lenX, &lenY);
+    if (g_lv->centredTank == FALSE) {
+        float steps[32];
+        int count = lv_drawGetZoomStepCount();
+        int current = lv_drawGetZoomStepIndex();
+        int i, step;
+        if (count > (int)(sizeof(steps) / sizeof(steps[0]))) {
+            count = (int)(sizeof(steps) / sizeof(steps[0]));
+        }
+        for (i = 0; i < count; i++) {
+            steps[i] = lv_drawGetZoomStepValue(i);
+        }
+        step = lvFirstViewZoomStep(steps, count, current, x1 - x0 + 1, y1 - y0 + 1,
+                                   lenX, lenY, TILE_SIZE_X);
+        if (step != current) {
+            int winW = 0, winH = 0;
+            SDL_GetWindowSize(g_lv->window, &winW, &winH);
+            lv_drawSetZoomStep(step, winW / 2, winH / 2);
+        }
+    }
+    lv_clientMutexWaitFor();
+    lv_drawDirtyScreen();
+    lv_screenCentrePxIn(lvLandBoxMidPx(x0, x1, TILE_SIZE_X), lvLandBoxMidPx(y0, y1, TILE_SIZE_Y),
+                        startX, startY, lenX, lenY, lv_drawGetZoomLevel());
+    lv_clientMutexRelease();
+    lv_windowNeedRedraw();
+    g_lv->wantScreenUpdate = TRUE;
+}
+
 /* --------------------------------------------------------------------------
  * lvHostRenderFrame -- Shared per-frame scene + ImGui render dispatch.
  *
@@ -1757,6 +1830,7 @@ static void lvHostDockSync(void) {
  * live mode, so its behaviour is unchanged. */
 static void lvHostRenderFrame(const char *overlay) {
     lvHostDockSync();
+    lvHostFirstView();
 
     /* Clear the frame */
     SDL_SetRenderDrawColor(g_lv->renderer, 0, 0, 0, 255);
@@ -2079,6 +2153,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     /* Only this host has the sidebars; the spectator shares the setup above
      * and leaves the answer at no. */
     lv_imgui_dock_set_standalone(1);
+    s_lvFirstViewHost = TRUE;
     lvHostRestoreWindowPlace();
 
     /* Open file from command line / caller if provided */
@@ -2332,6 +2407,7 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
     if (lvHostSetup(window, renderer, /* fromMainMenu */ TRUE) == FALSE) {
         return false;
     }
+    s_lvFirstViewHost = FALSE;
 
     /* Stalled-feed watchdog. A spectator sends no input, so the transport's
      * normal liveness timeout never fires — the host times the wait itself.
