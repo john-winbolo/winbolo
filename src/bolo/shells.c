@@ -438,6 +438,11 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				conv <<= TANK_SHIFT_MAPSIZE;
 				conv >>= TANK_SHIFT_PIXELSIZE;
 				spy = (BYTE) conv;
+				/* newX, newY are where the shell ended: the middle of the
+				 * square for a pillbox, base or terrain hit, and the hit
+				 * tank's present centre for a tank hit, wherever the shell
+				 * itself was (see shellsCalcCollision). Everything below is
+				 * at that one place. */
 				explosionsAddItem(&sim->expl, sx,sy,spx,spy,EXPLOSION_START);
 				/* Debug: record the exact world-pixel hit for BrainTest viz */
 				shellsDebugHitLogAdd((int)newX, (int)newY, 0, position->owner);
@@ -461,7 +466,16 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 						WORLD lgmHitX = 0, lgmHitY = 0;
 						bool useRewound = FALSE;
 
-						if (position->compensationTicks > 0) {
+						if (shellOutcome == SHELL_OUTCOME_TANK_HIT ||
+						    shellOutcome == SHELL_OUTCOME_TANK_KILL) {
+							/* The blast is at the hit tank's PRESENT position
+							 * (shellsCalcCollision moved newX, newY there), so
+							 * a builder is tested where he is now as well. A
+							 * builder from the past against a blast from the
+							 * present would be a place neither the shooter nor
+							 * the victim ever saw. */
+							rewindTicks = 0;
+						} else if (position->compensationTicks > 0) {
 							rewindTicks = position->compensationTicks;
 						} else if (sim->isServer && position->owner == NEUTRAL) {
 							rewindTicks = sim->perPlayerCompTicks[lgmOwner];
@@ -831,6 +845,36 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 				} else {
 					th = tankIsTankHit(sim, &(tk[count]), *xValue, *yValue, angle,
 					                   owner, shell->pill);
+				}
+
+				/* A shell that hit a tank blows up AT THE TANK, not at the
+				 * shell. The hit is decided on the shooter's screen, but the
+				 * blast belongs to the tank: one client's lag must not move an
+				 * explosion away from where the tank is for everybody.
+				 * The test above may have been made against where the
+				 * tank was on the shooter's screen (useRewound), and the shell
+				 * is at that old place, which the tank has since left: 64 to 80
+				 * world units behind a tank at top speed for a 120 ms ping, up
+				 * to 224 at the 14-entry cap. The damage, the knockback and the
+				 * kill record are all at the tank's present position already
+				 * (tankIsTankHitAtPosition), so the effects that follow go there
+				 * too: the hit sound here, the start of a killed tank's
+				 * explosion here, and, through xValue and yValue, everything
+				 * shellsUpdate does with the place the shell ended (the hit
+				 * explosion, the shell-death event, the mine and builder
+				 * checks). "At the tank" is the tank's centre, which is what
+				 * its world co-ordinates are. The pillbox,
+				 * base and terrain branches move the shell to the middle of
+				 * the square they hit in the same way. Whether the shell hit is
+				 * decided above and is not touched by this. */
+				if (th != TH_MISSED) {
+					tankGetWorld(&tk[count], xValue, yValue);
+					conv = *xValue;
+					conv >>= TANK_SHIFT_MAPSIZE;
+					mapX = (BYTE) conv;
+					conv = *yValue;
+					conv >>= TANK_SHIFT_MAPSIZE;
+					mapY = (BYTE) conv;
 				}
 
 				switch (th) {

@@ -2644,6 +2644,15 @@ int run_ping_kick_clears_strikes_on_disconnect(void);
  * (test_tkexp_lgm_pairing.c). */
 int run_tkexp_lgm_pairing(void);
 
+/* A shell that hits a tank blows up at the hit tank's present centre, not at
+ * the shell, which a lag-compensated test leaves behind the tank
+ * (test_tank_blast_at_tank.c). */
+int run_tank_blast_rewound_hit_at_present_tank(void);
+int run_tank_blast_kill_starts_at_present_tank(void);
+int run_tank_blast_zero_rewind_at_tank_centre(void);
+int run_tank_blast_hit_decision_unchanged(void);
+int run_tank_blast_builder_at_present_tank(void);
+
 /* In-game input gate taxonomy (test_input_gate.c). gameInputSuspended()
  * suspends the polled in-game readers only for blocking surfaces (text
  * input, a focus-stealing modal, a popup/menu on the stack, a defocused
