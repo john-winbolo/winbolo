@@ -5179,7 +5179,7 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
  * fresh one, so the lookup goes to whichever state is current. */
 
 /* How the answers of a list of scripts are read, now that every one of them
- * is asked. The fourteen sites below each hold the arbitration for their own
+ * is asked. The fifteen sites below each hold the arbitration for their own
  * row, because what the answers mean differs by row:
  *
  *   the nine predicates

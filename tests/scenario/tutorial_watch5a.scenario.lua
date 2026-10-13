@@ -12,12 +12,19 @@
 -- rings (rubble, crater, grass) and fills moat squares (grass, road), and
 -- runs the script's 5A reset.
 --
+-- Last, the frame's write count: the arena breaks every ring and moat
+-- square, and on the next frame spends 200 of the frame's 256 writes before
+-- it runs the script's ring rebuild, so the rebuild is refused part way.
+--
 -- PASS:
 --   - 7 squares off for 15 seconds: "Watch the bot take one" is not ticked
 --     and no timer started;
 --   - 4 squares off: it ticks 9 to 11 seconds after the tank got there;
 --   - after the reset every LAYOUT.walls5a square is a full wall again and
---     every LAYOUT.moat5a square is deep water again.
+--     every LAYOUT.moat5a square is deep water again;
+--   - the rebuild that was refused part way leaves squares broken in that
+--     frame, notes that it is not finished, and has every square back
+--     three frames later with no help from the arena.
 
 TUTORIAL_PLAYER = 0
 ARENA = { phase = 0 }
@@ -106,10 +113,55 @@ function on_tick(tick)
     A.phase, A.t = 5, tick
   elseif A.phase == 5 and tick >= A.t + 10 then
     local bad = rings_ok()
-    verdict(A.broken == 9 and #bad == 0, string.format(
-      "7 off: no tick in 15 s; 4 off: ticked after %.2f s; rings broken %d, "
-      .. "after reset bad %d (%s)", A.near_s, A.broken, #bad,
-      table.concat(bad, " ")))
+    if A.broken ~= 9 or #bad ~= 0 then
+      return fail(string.format("rings broken %d, after reset bad %d (%s)",
+                                A.broken, #bad, table.concat(bad, " ")))
+    end
+    A.phase, A.t = 5.5, tick
+  elseif A.phase == 5.5 then
+    -- The reset took the demo bot off, and the poll fields it again. Its
+    -- spawn runs the ring rebuild too (on_tank_spawned), and that must not
+    -- land in the frame the arena cuts short: wait until the bot is a live
+    -- tank, and has been for 20 ticks.
+    if live_tank(S.bot5a) == nil then
+      A.live_at = nil
+      if tick >= A.t + 1000 then
+        return fail("5A bot not back on the field after the reset")
+      end
+      return
+    end
+    A.live_at = A.live_at or tick
+    if tick < A.live_at + 20 then return end
+    -- Break every square of the rings and the moat.
+    for _, w in ipairs(LAYOUT.walls5a) do
+      game.set_tile(w[1], w[2], game.TERRAIN.rubble)
+    end
+    for _, w in ipairs(LAYOUT.moat5a) do
+      game.set_tile(w[1], w[2], game.TERRAIN.grass)
+    end
+    A.all = #LAYOUT.walls5a + #LAYOUT.moat5a
+    A.broken2 = #rings_ok()
+    A.phase, A.t = 6, tick
+  elseif A.phase == 6 then
+    -- The next frame. Spend 200 of the frame's writes (a square written
+    -- with the terrain it has still costs one), then run the rebuild.
+    local far = FAR
+    local tile = game.map_tile(far[1], far[2])
+    for _ = 1, 200 do game.set_tile(far[1], far[2], tile) end
+    rebuild_5a_rings()
+    A.left = #rings_ok()
+    A.again = S.rings5a_again
+    A.phase, A.t = 7, tick
+  elseif A.phase == 7 and tick >= A.t + 6 then
+    local bad = rings_ok()
+    verdict(A.broken2 == A.all and A.left > 0 and A.left < A.all and
+            A.again == true and #bad == 0 and S.rings5a_again == false,
+      string.format(
+      "7 off: no tick in 15 s; 4 off: ticked after %.2f s; rings back after "
+      .. "reset; all %d broken (%d), cut short with %d left (again %s), "
+      .. "3 frames later bad %d (%s) again %s", A.near_s, A.all, A.broken2,
+      A.left, tostring(A.again), #bad, table.concat(bad, " "),
+      tostring(S.rings5a_again)))
     A.done = true
   end
 end
