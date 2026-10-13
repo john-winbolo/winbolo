@@ -86,4 +86,36 @@ static inline int lvEventPastCount(const uint32_t *times, int count,
   return lo;
 }
 
+/* What a plain click on a line of the panel does. target is the line it is
+ * for. centre is 1 when the click also puts the line's place in the middle
+ * of the map that shows, 0 when it only jumps to the line.
+ *
+ * row: the line under the mouse. selected: the one selected line, -1 for
+ * none (and when every line is selected). lastClicked: the line the last
+ * plain click jumped to, -1 for none. clicks: 1 for one click, 2 or more for
+ * the later clicks of a double click. count: how many lines there are.
+ *
+ * A click on the line that is selected already is a centre click. So is the
+ * second click of a double click, and that one is for the line the first
+ * click chose, whatever row is under the mouse now: the first click's jump
+ * can move the rows. Both end the same way, so a double click and two slow
+ * clicks on a line do the same thing. */
+typedef struct LvEventClick {
+  int target;
+  int centre;
+} LvEventClick;
+
+static inline LvEventClick lvEventClickPick(int row, int selected, int lastClicked,
+                                            int clicks, int count) {
+  LvEventClick out;
+  if (clicks >= 2 && lastClicked >= 0 && lastClicked < count) {
+    out.target = lastClicked;
+    out.centre = 1;
+    return out;
+  }
+  out.target = row;
+  out.centre = (row >= 0 && row == selected) ? 1 : 0;
+  return out;
+}
+
 #endif /* LV_EVENT_KIND_H */

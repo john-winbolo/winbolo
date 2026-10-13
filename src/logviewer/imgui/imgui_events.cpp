@@ -91,7 +91,9 @@ static int s_selected_index = -1;
 /* The line the last plain click jumped to, -1 for none. The second click of
  * a double click is for this line: the first click's jump can move the rows
  * of the list (the "now" line, auto scroll), so the row under the mouse at
- * the second click need not be the one the user chose. */
+ * the second click need not be the one the user chose.
+ * A plain click on the selected line (s_selected_index) is a centre click
+ * too, with no limit of time between the two clicks. */
 static int s_clicked_index = -1;
 static bool s_select_all = false;
 
@@ -557,7 +559,7 @@ void lv_imgui_events_window(void) {
          * posts them again, under the loop that is drawing them. */
         bool     jump          = false;
         bool     jumpHighlight = false;
-        bool     jumpCentre    = false; /* the second click of a double click */
+        bool     jumpCentre    = false; /* a click on the selected line */
         bool     jumpHasCell   = false;
         uint32_t jumpMs        = 0;
         int      jumpX         = 0;
@@ -696,14 +698,18 @@ void lv_imgui_events_window(void) {
                         }
                         s_clicked_index = -1;
                     } else {
-                        /* The second click of a double click is for the line
-                         * the first one chose, and puts its place in the
-                         * middle of the map that shows. The first click has
-                         * done the plain jump already: there is no wait. */
-                        const bool twice =
-                            ImGui::GetIO().MouseClickedLastCount[ImGuiMouseButton_Left] >= 2 &&
-                            s_clicked_index >= 0 && s_clicked_index < (int)s_events.size();
-                        const int target = twice ? s_clicked_index : i;
+                        /* A click on the line that is selected already
+                         * puts its place in the middle of the map that
+                         * shows. The second click of a double click does the
+                         * same, for the line the first one chose. The first
+                         * click has done the plain jump already: there is no
+                         * wait (lvEventClickPick). */
+                        const LvEventClick pick = lvEventClickPick(
+                            i, s_select_all ? -1 : s_selected_index, s_clicked_index,
+                            ImGui::GetIO().MouseClickedLastCount[ImGuiMouseButton_Left],
+                            (int)s_events.size());
+                        const bool twice = pick.centre != 0;
+                        const int target = pick.target;
                         const LogEvent &tev = s_events[target];
                         s_selected_index = target;
                         s_clicked_index = target;

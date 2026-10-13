@@ -1688,6 +1688,34 @@ five visible parts: the place is in the middle to a map pixel, or held by
 the map's edge on the right side of the middle), `lv_dock_clear_map` (what
 the solid sidebars take).
 
+### A click on the selected event line centres the map (Oct 13)
+
+In the Events panel, a plain click on the line that is selected already now
+does what a double click does: it goes to the event's time, shows the ring,
+and puts the event's square in the middle of the map that shows. There is
+no limit of time between the two clicks. The first click on another line is
+as it was: the jump and the ring, and "Tank Centred" is left on.
+
+Calls made:
+
+- **One function.** Both ways end in `lv_windowCentreOnEvent`, so the click
+  on the selected line also turns "Tank Centred" off, as the double click
+  does. A line with no place only seeks.
+- **A double click is the same as before.** Its first click jumps, its
+  second click centres, for the line the first click chose. Each later
+  click on that line centres again.
+- **The selected line** is the panel's one selected line, the same one
+  Copy uses. A line selected with Ctrl and then clicked is a centre click.
+  With Select All on, no line is the selected line, so the first click on a
+  line only jumps.
+- **The selection is forgotten** when a log loads and when the filter hides
+  the line, as before.
+- **The markers over the seek bar** have no selected marker. They are as
+  they were: a double click centres.
+
+The sum is `lvEventClickPick` in `src/logviewer/lv_event_kind.h`. Test:
+`lv_event_click_pick`.
+
 ### The first view of a log is on the land (Oct 13)
 
 Before: a load put the view's top left corner at square 127,127

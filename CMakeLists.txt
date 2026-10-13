@@ -6904,6 +6904,7 @@ set(_unit_test_names
     lv_pill_get_in_tank
     lv_spmap_carried_pill_left_out
     lv_event_kind_sums
+    lv_event_click_pick
     lv_event_overlay_slider
     lv_event_overlay_clusters
     lv_event_overlay_choice
