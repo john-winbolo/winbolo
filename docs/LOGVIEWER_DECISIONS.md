@@ -331,6 +331,59 @@ Five small items. No blockers.
   belongs in a separate pull request, after a unit test of debounce and merge
   together.
 
+## Oct 13 panel changes
+
+### Tank panel: pictures for the words, and three states
+
+The owner asked for icons in place of the words at the smallest size, and
+for the text to go away when it cannot all be shown.
+
+The panel now shows one of three things. `lvTankLayoutPick` in
+`src/logviewer/lv_tank_status.h` picks it each frame. It reads only the room
+under the name and the sizes of the text. It does not read what the last
+frame drew, so the panel does not flicker at an edge.
+
+1. Words: `Shells: 12 / 40`. Shown when all the text fits with the gauges at
+   scale 2 or more. Scale 2 is the size the panel opens at.
+2. Pictures: `<picture>: 12 / 40`. Shown when the words do not fit as above,
+   and the pictures fit with the gauges at scale 1 or more.
+3. No text. Shown when no line of text can be shown whole. Only the name
+   and the gauges stay. The text comes back when the panel is large enough.
+
+Rules that go with this:
+
+- Each form is tried beside the gauges and under them. The place that leaves
+  the larger gauges wins. Beside wins a tie.
+- A block that fits exactly is shown. One pixel less and it is not.
+- If there are no pictures (the background picture did not load), the words
+  stay down to scale 1.
+- The panel never scrolls now. It has no scroll bar and the mouse wheel does
+  nothing in it. The small scroll in a 700 by 150 bottom slot is gone.
+- A room smaller than the gauges at scale 1 shrinks the gauges to fit, down
+  to a quarter of their size (`LV_TANK_WELL_MIN_SCALE`). Under scale 1 the
+  picture is drawn smoothed. Smaller than a quarter, the gauges are cut off.
+
+The art:
+
+- Shells, mines, armour, trees: the four small pictures under the gauges in
+  `data/background.bmp`. Each is 7 by 8 pixels. The panel cuts a 9 by 10
+  cell with one black pixel round it and draws it as tall as a line of text.
+  They read well at that size. The tooltip on each picture is the word.
+- Pillboxes carried: the game's 12 by 12 neutral pillbox status picture from
+  the tiles, the same one the Overview panel uses. The line becomes
+  `<picture>: 2`. The tooltip is the full line in words.
+- Builder: no picture. The game's builder is 3 by 4 pixels and does not read
+  as an icon. The line stays `Builder: in tank` in both forms.
+
+Notes for the owner:
+
+- The builder line is the widest line of the picture form (about 112 pixels
+  in the default font). A panel narrower than that shows gauges only. A
+  short word or a drawn icon for the builder would let the picture form go
+  narrower. That needs a new string or new art, so it was not done.
+- No new strings. The numbers are taken from the existing lines: the part
+  after the colon. A translation with no colon keeps its line in words.
+
 ## Not tested on screen
 
 Nothing on this branch was seen on a screen by the author. The rules of the

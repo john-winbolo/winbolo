@@ -19,7 +19,13 @@
  *
  * Beside the gauges (under them in a narrow window) the same four values
  * are given as numbers, with the state of the tank's builder and how many
- * pillboxes the tank carries.
+ * pillboxes the tank carries. In a small panel each of the four lines starts
+ * with the game's small picture for what it counts in place of the word,
+ * and the line for the pillboxes with the game's status picture of a
+ * pillbox; the builder's line has no picture (the game's builder is 3 pixels
+ * by 4) and keeps its words. A panel with no room for all of the text shows
+ * none of it, only the gauges (lvTankLayoutPick has the rule). Nothing is
+ * ever cut off, so the panel does not scroll.
  *
  * The selected tank is the viewer's "self" player: the one a click on a
  * tank in the HUD panel picks, the one a Select Team click on a tank on the
@@ -45,6 +51,7 @@ extern "C" {
     #include "../lv_hud.h"
     #include "../lv_tank_status.h"
     #include "../../gui/positions.h"
+    #include "../../gui/tiles.h"
     #include "../../gui/sdl3/map_colours.h"  /* mapColourTeam */
 
     /* External functions from backend - using C types directly. The viewer's
@@ -54,6 +61,7 @@ extern "C" {
     void lv_clientMutexRelease(void);
     void lv_screenTankStatusSnapshot(LvTankStatus *out);
     SDL_Texture *lv_drawGetStatusBackgroundTexture(void);
+    SDL_Texture *lv_drawGetTilesTexture(void);
 }
 
 /* The part of the game's background picture the gauges stand in: the black
@@ -105,25 +113,50 @@ static float tank_header_h(void) {
     return ceilf(ImGui::GetTextLineHeightWithSpacing());
 }
 
-/* The width the lines of text need, near enough: the longest of them is the
- * line for the pillboxes carried. */
+/* The most pillboxes a tank can carry: all there are on a map. The line for
+ * them is measured with it, so its width does not move. */
+#define TANK_PILLS_MOST 16
+
+/* The width the builder's line needs, whatever it says at the moment: the
+ * widest of the builder's three states. */
+static float tank_builder_w(void) {
+    static const langid k_builder[] = {
+        STR_LV_TANK_BUILDER_IN, STR_LV_TANK_BUILDER_OUT, STR_LV_TANK_BUILDER_DEAD
+    };
+    float w = 0.0f;
+    for (langid id : k_builder) {
+        float builder = ImGui::CalcTextSize(langGetText(id)).x;
+        if (builder > w) w = builder;
+    }
+    return w;
+}
+
+/* The width the two lines under the four values need written in words: the
+ * builder's, and the line for the pillboxes carried with the most a tank
+ * can carry. */
 static float tank_text_w(void) {
     MessageArgs args = {};
-    args.number = 16;
+    args.number = TANK_PILLS_MOST;
     float w = ImGui::CalcTextSize(langGetTextFmt(STR_LV_TANK_PILLS, &args)).x;
-    float builder = ImGui::CalcTextSize(langGetText(STR_LV_TANK_BUILDER_IN)).x;
+    float builder = tank_builder_w();
     return (builder > w) ? builder : w;
 }
 
+/* The height of a block of so many lines of text, to the foot of the last. */
+static float tank_lines_h(int lines) {
+    return (float)lines * ImGui::GetTextLineHeight() +
+           (float)(lines - 1) * ImGui::GetStyle().ItemSpacing.y;
+}
+
 static float tank_text_h(void) {
-    return TANK_TEXT_LINES * ImGui::GetTextLineHeightWithSpacing();
+    return tank_lines_h(TANK_TEXT_LINES);
 }
 
 /* True when the text goes beside the gauges at the default scale in a
  * window with availW of room across. */
 static bool tank_text_beside(float availW) {
-    return availW >= TANK_DEFAULT_SCALE * TANK_SLICE_W + ImGui::GetStyle().ItemSpacing.x * 2.0f +
-                         tank_text_w();
+    return availW >= TANK_DEFAULT_SCALE * TANK_SLICE_W + 2.0f +
+                         ImGui::GetStyle().ItemSpacing.x * 2.0f + tank_text_w();
 }
 
 float lv_imgui_tank_dock_height(float dockWidth) {
@@ -133,7 +166,8 @@ float lv_imgui_tank_dock_height(float dockWidth) {
     if (!tank_text_beside(availW)) {
         h += style.ItemSpacing.y + tank_text_h();
     }
-    return h + style.WindowPadding.y * 2.0f + ImGui::GetFrameHeight();
+    /* One more: the heights are whole pixels and the text's may not be. */
+    return ceilf(h) + 1.0f + style.WindowPadding.y * 2.0f + ImGui::GetFrameHeight();
 }
 
 /* The colour of the tank's team: the HUD panel's (imgui_hud.cpp). */
@@ -154,27 +188,132 @@ static void tank_gauge_text(const LvTankStatus &st, int gauge, char *out, size_t
     snprintf(out, outSize, "%s", langGetTextFmt(STR_LV_TANK_STOCK_FMT, &args));
 }
 
-/* The well and its four gauges with the top left at origin, at a whole
- * scale. It is an item of the window; each gauge has a tooltip. */
-static void tank_gauges(const LvTankStatus &st, ImVec2 origin, int scale) {
-    ImDrawList *dl = ImGui::GetWindowDrawList();
-    const float s = (float)scale;
+/* The same line with no word: ": 12 / 40". The picture stands for the word. */
+static void tank_gauge_numbers(const LvTankStatus &st, int gauge, char *out, size_t outSize) {
+    MessageArgs args = {};
+    args.number = st.alive ? st.value[gauge] : 0;
+    args.number2 = st.full[gauge];
+    snprintf(out, outSize, "%s", langGetTextFmt(STR_LV_TANK_STOCK_FMT, &args));
+}
+
+/* The width of the widest of the four lines written with their words. Each
+ * is measured with its cap for the value too, the most digits it has in
+ * play, so the answer does not move as the tank fires and refuels. */
+static float tank_words_w(const LvTankStatus &st) {
+    float widest = 0.0f;
+    for (int g = 0; g < LV_TANK_GAUGE_COUNT; g++) {
+        MessageArgs args = {};
+        snprintf(args.string1, sizeof(args.string1), "%s", langGetText(k_gauge_name[g]));
+        args.number = (st.value[g] > st.full[g]) ? st.value[g] : st.full[g];
+        args.number2 = st.full[g];
+        float w = ImGui::CalcTextSize(langGetTextFmt(STR_LV_TANK_STOCK_FMT, &args)).x;
+        if (w > widest) widest = w;
+    }
+    return widest;
+}
+
+/* What a line with a picture is made of across: the picture, the colon, a
+ * gap and the column the numbers end in. The column is as wide as the widest
+ * numbers the four lines can show (each with its cap for the value too), so
+ * it does not move as the tank fires and refuels. */
+struct TankIconMetrics {
+    float picW;     /* a gauge's picture */
+    float pillSize; /* the pillbox's picture; 0: that line keeps its words */
+    float iconW;    /* the column the pictures stand in */
+    float colonW;   /* 0 when the lines have no colon */
+    float gap;
+    float columnW;
+    float lineW;    /* all of it */
+};
+
+/* The tiles when they are loaded and hold the pillbox's status picture. */
+static SDL_Texture *tank_tiles(float *tw, float *th) {
+    SDL_Texture *atlas = lv_drawGetTilesTexture();
+    *tw = 0.0f;
+    *th = 0.0f;
+    if (atlas != nullptr && SDL_GetTextureSize(atlas, tw, th) &&
+        *tw >= (float)(STATUS_PILLBOX_NEUTRAL_X + STATUS_ITEM_SIZE_X) &&
+        *th >= (float)(STATUS_PILLBOX_NEUTRAL_Y + STATUS_ITEM_SIZE_Y)) {
+        return atlas;
+    }
+    return nullptr;
+}
+
+static TankIconMetrics tank_icon_metrics(const LvTankStatus &st) {
+    TankIconMetrics m;
+    bool anyColon = false;
+    m.picW = lvTankIconWidth(ImGui::GetTextLineHeight());
+    m.iconW = m.picW;
+    m.pillSize = 0.0f;
+    m.gap = ImGui::GetStyle().ItemInnerSpacing.x;
+    m.columnW = 0.0f;
+    {
+        /* The pillboxes carried go after a picture too, when the tiles are
+         * loaded and the line has its number after a colon. */
+        float tw = 0.0f, th = 0.0f;
+        MessageArgs args = {};
+        bool colon = false;
+        args.number = TANK_PILLS_MOST;
+        const char *most = lvTankAfterColon(langGetTextFmt(STR_LV_TANK_PILLS, &args), &colon);
+        if (colon && tank_tiles(&tw, &th) != nullptr) {
+            m.pillSize = lvTankPillIconSize(ImGui::GetTextLineHeight(), STATUS_ITEM_SIZE_Y);
+            if (m.pillSize > m.iconW) m.iconW = m.pillSize;
+            m.columnW = ImGui::CalcTextSize(most).x;
+            anyColon = true;
+        }
+    }
+    for (int g = 0; g < LV_TANK_GAUGE_COUNT; g++) {
+        MessageArgs args = {};
+        bool colon = false;
+        args.number = (st.value[g] > st.full[g]) ? st.value[g] : st.full[g];
+        args.number2 = st.full[g];
+        float w = ImGui::CalcTextSize(
+            lvTankStockNumbers(langGetTextFmt(STR_LV_TANK_STOCK_FMT, &args), &colon)).x;
+        if (w > m.columnW) m.columnW = w;
+        if (colon) anyColon = true;
+    }
+    m.colonW = anyColon ? ImGui::CalcTextSize(":").x : 0.0f;
+    m.lineW = lvTankIconNumberX(m.iconW, m.colonW, m.gap, m.columnW, m.columnW) + m.columnW;
+    return m;
+}
+
+/* The background picture when it is loaded and holds the well; its size. */
+static SDL_Texture *tank_background(float *tw, float *th) {
     SDL_Texture *bg = lv_drawGetStatusBackgroundTexture();
+    *tw = 0.0f;
+    *th = 0.0f;
+    if (bg != nullptr && SDL_GetTextureSize(bg, tw, th) &&
+        *tw >= (float)(TANK_SLICE_X + TANK_SLICE_W) && *th >= (float)(TANK_SLICE_Y + TANK_SLICE_H)) {
+        return bg;
+    }
+    return nullptr;
+}
+
+/* The well and its four gauges with the top left at origin. The scale is a
+ * whole number but in a room smaller than the well, where it is under 1 and
+ * the picture is drawn smoothed. It is an item of the window; each gauge
+ * has a tooltip. */
+static void tank_gauges(const LvTankStatus &st, ImVec2 origin, float scale) {
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const float s = scale;
     float tw = 0.0f, th = 0.0f;
+    SDL_Texture *bg = tank_background(&tw, &th);
     ImVec2 p0(floorf(origin.x) + 1.0f, floorf(origin.y) + 1.0f);
     ImVec2 p1(p0.x + s * TANK_SLICE_W, p0.y + s * TANK_SLICE_H);
 
     dl->AddRect(ImVec2(p0.x - 1.0f, p0.y - 1.0f), ImVec2(p1.x + 1.0f, p1.y + 1.0f),
                 TANK_EDGE_COLOUR);
-    if (bg != nullptr && SDL_GetTextureSize(bg, &tw, &th) &&
-        tw >= (float)(TANK_SLICE_X + TANK_SLICE_W) && th >= (float)(TANK_SLICE_Y + TANK_SLICE_H)) {
-        /* Pixel art drawn several times its size: point sampled, or it blurs. */
-        imguiPushNearestSamplingOn(dl);
+    if (bg != nullptr) {
+        /* Pixel art drawn several times its size: point sampled, or it
+         * blurs. Drawn under its size it is left smoothed, or whole columns
+         * of it drop out. */
+        const bool nearest = (s >= 1.0f);
+        if (nearest) imguiPushNearestSamplingOn(dl);
         dl->AddImage((ImTextureID)(size_t)bg, p0, p1,
                      ImVec2((float)TANK_SLICE_X / tw, (float)TANK_SLICE_Y / th),
                      ImVec2((float)(TANK_SLICE_X + TANK_SLICE_W) / tw,
                             (float)(TANK_SLICE_Y + TANK_SLICE_H) / th));
-        imguiPopNearestSamplingOn(dl);
+        if (nearest) imguiPopNearestSamplingOn(dl);
     } else {
         /* No background picture: the well is black in it, and the gauges
          * still read from the left as the tooltips name them. */
@@ -214,24 +353,138 @@ static void tank_gauges(const LvTankStatus &st, ImVec2 origin, int scale) {
     ImGui::Dummy(ImVec2(s * TANK_SLICE_W + 2.0f, s * TANK_SLICE_H + 2.0f));
 }
 
-/* The lines of text: the four values, the builder, the pillboxes. */
-static void tank_text(const LvTankStatus &st) {
-    if (st.hasStock) {
+/* The four values, each after the small picture the game has under that
+ * gauge in place of its word: "<picture>: 12 / 40". The picture is as tall
+ * as a line of text and sits on the line as a letter would; the colons are
+ * under each other and the numbers end under each other. The word is the
+ * picture's tooltip. */
+static void tank_icon_lines(const LvTankStatus &st, SDL_Texture *bg, float tw, float th) {
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const TankIconMetrics m = tank_icon_metrics(st);
+    const float lineH = ImGui::GetTextLineHeight();
+    const float iconW = m.iconW;
+    const float picW = m.picW;
+    const ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
+    char line[LV_TANK_GAUGE_COUNT][LANG_MSGARG_STRING_LEN];
+    const char *numbers[LV_TANK_GAUGE_COUNT];
+    bool colon[LV_TANK_GAUGE_COUNT];
+    float numW[LV_TANK_GAUGE_COUNT];
+
+    for (int g = 0; g < LV_TANK_GAUGE_COUNT; g++) {
+        tank_gauge_numbers(st, g, line[g], sizeof(line[g]));
+        numbers[g] = lvTankStockNumbers(line[g], &colon[g]);
+        numW[g] = ImGui::CalcTextSize(numbers[g]).x;
+    }
+
+    const float cellY = (float)(STATUS_TANK_BARS_TOP + STATUS_TANK_BARS_HEIGHT + LV_TANK_ICON_CELL_DY);
+    for (int g = 0; g < LV_TANK_GAUGE_COUNT; g++) {
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        ImVec2 p0(floorf(pos.x), floorf(pos.y));
+        ImVec2 p1(p0.x + picW, p0.y + lineH);
+        const float cellX = (float)(STATUS_TANK_SHELLS + k_gauge_x[g] + LV_TANK_ICON_CELL_DX);
+        const float numX = lvTankIconNumberX(iconW, m.colonW, m.gap, m.columnW, numW[g]);
+
+        /* The picture is an item, so it has the tooltip; the rest of the
+         * line is one more, so the window knows how wide the lines are. */
+        ImGui::PushID(g);
+        ImGui::Dummy(ImVec2(iconW, lineH));
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+            ImGui::SetTooltip("%s", langGetText(k_gauge_name[g]));
+        }
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::Dummy(ImVec2(m.lineW - iconW, lineH));
+        ImGui::PopID();
+
+        imguiPushNearestSamplingOn(dl);
+        dl->AddImage((ImTextureID)(size_t)bg, p0, p1,
+                     ImVec2(cellX / tw, cellY / th),
+                     ImVec2((cellX + (float)LV_TANK_ICON_CELL_W) / tw,
+                            (cellY + (float)LV_TANK_ICON_CELL_H) / th));
+        imguiPopNearestSamplingOn(dl);
+        if (colon[g]) {
+            dl->AddText(ImVec2(p0.x + iconW, p0.y), textCol, ":");
+        }
+        dl->AddText(ImVec2(p0.x + numX, p0.y), textCol, numbers[g]);
+    }
+}
+
+/* The pillboxes carried, after the game's status picture of a pillbox (the
+ * one the Overview panel has over its column of pillboxes): "<picture>: 2",
+ * in the same columns as the four lines over it. The whole line in words is
+ * the picture's tooltip. With none carried it is dimmed, as in words. */
+static void tank_pill_icon_line(const LvTankStatus &st, const TankIconMetrics &m) {
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const float lineH = ImGui::GetTextLineHeight();
+    float tw = 0.0f, th = 0.0f;
+    SDL_Texture *atlas = tank_tiles(&tw, &th);
+    MessageArgs args = {};
+    char line[LANG_MSGARG_STRING_LEN];
+    bool colon = false;
+    args.number = st.carriedPills;
+    snprintf(line, sizeof(line), "%s", langGetTextFmt(STR_LV_TANK_PILLS, &args));
+    const char *number = lvTankAfterColon(line, &colon);
+    const ImU32 col = ImGui::GetColorU32(st.carriedPills > 0 ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImVec2 p0(floorf(pos.x), floorf(pos.y));
+    const float top = p0.y + floorf((lineH - m.pillSize) * 0.5f);
+    const float numX = lvTankIconNumberX(m.iconW, m.colonW, m.gap, m.columnW,
+                                         ImGui::CalcTextSize(number).x);
+
+    ImGui::PushID("pills");
+    ImGui::Dummy(ImVec2(m.iconW, lineH));
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+        ImGui::SetTooltip("%s", line);
+    }
+    ImGui::SameLine(0.0f, 0.0f);
+    ImGui::Dummy(ImVec2(m.lineW - m.iconW, lineH));
+    ImGui::PopID();
+
+    if (atlas != nullptr) {
+        imguiPushNearestSamplingOn(dl);
+        dl->AddImage((ImTextureID)(size_t)atlas, ImVec2(p0.x, top),
+                     ImVec2(p0.x + m.pillSize, top + m.pillSize),
+                     ImVec2((float)STATUS_PILLBOX_NEUTRAL_X / tw, (float)STATUS_PILLBOX_NEUTRAL_Y / th),
+                     ImVec2((float)(STATUS_PILLBOX_NEUTRAL_X + STATUS_ITEM_SIZE_X) / tw,
+                            (float)(STATUS_PILLBOX_NEUTRAL_Y + STATUS_ITEM_SIZE_Y) / th));
+        imguiPopNearestSamplingOn(dl);
+    }
+    if (colon) {
+        dl->AddText(ImVec2(p0.x + m.iconW, p0.y), col, ":");
+    }
+    dl->AddText(ImVec2(p0.x + numX, p0.y), col, number);
+}
+
+/* The lines of text: the four values, the builder, the pillboxes. With
+ * icons the four values are written after the game's small pictures (with
+ * no background picture loaded they keep their words). */
+static void tank_text(const LvTankStatus &st, bool icons) {
+    float tw = 0.0f, th = 0.0f;
+    SDL_Texture *bg = icons ? tank_background(&tw, &th) : nullptr;
+    bool pillIcon = false;
+    TankIconMetrics m = {};
+    if (st.hasStock && bg != nullptr) {
+        tank_icon_lines(st, bg, tw, th);
+        m = tank_icon_metrics(st);
+        pillIcon = (m.pillSize > 0.0f);
+    } else if (st.hasStock) {
         for (int g = 0; g < LV_TANK_GAUGE_COUNT; g++) {
             char line[LANG_MSGARG_STRING_LEN];
             tank_gauge_text(st, g, line, sizeof(line));
             ImGui::TextUnformatted(line);
         }
     } else {
-        /* A recording made before the tanks' resources were recorded. */
-        ImGui::PushTextWrapPos(0.0f);
+        /* A recording made before the tanks' resources were recorded. It
+         * wraps at the width the block was measured with (tank_room). */
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + tank_text_w());
         ImGui::TextDisabled("%s", langGetText(STR_LV_TANK_NO_STOCK));
         ImGui::PopTextWrapPos();
     }
     ImGui::TextUnformatted(langGetText(st.builderDead ? STR_LV_TANK_BUILDER_DEAD :
                                        st.builderOut  ? STR_LV_TANK_BUILDER_OUT :
                                                         STR_LV_TANK_BUILDER_IN));
-    {
+    if (pillIcon) {
+        tank_pill_icon_line(st, m);
+    } else {
         MessageArgs args = {};
         args.number = st.carriedPills;
         if (st.carriedPills > 0) {
@@ -240,6 +493,47 @@ static void tank_text(const LvTankStatus &st) {
             ImGui::TextDisabled("%s", langGetTextFmt(STR_LV_TANK_PILLS, &args));
         }
     }
+}
+
+/* The room under the name and the sizes of what goes in it, for
+ * lvTankLayoutPick: all from the size of the window's content and from the
+ * font, none of it from what was drawn before. */
+static LvTankRoom tank_room(const LvTankStatus &st, ImVec2 avail) {
+    const ImGuiStyle &style = ImGui::GetStyle();
+    const float otherW = tank_text_w();
+    LvTankRoom r;
+    r.availW = avail.x;
+    r.availH = avail.y;
+    r.wellW = TANK_SLICE_W;
+    r.wellH = TANK_SLICE_H;
+    r.wellEdge = 2.0f;
+    r.maxScale = TANK_MAX_SCALE;
+    r.wordsMinScale = TANK_DEFAULT_SCALE;
+    r.gapBeside = style.ItemSpacing.x * 2.0f;
+    r.gapUnder = style.ItemSpacing.y;
+    r.iconsW = 0.0f;
+    r.iconsH = 0.0f;
+    if (st.hasStock) {
+        float tw = 0.0f, th = 0.0f;
+        float words = tank_words_w(st);
+        r.wordsW = (words > otherW) ? words : otherW;
+        r.wordsH = tank_text_h();
+        if (tank_background(&tw, &th) != nullptr) {
+            /* With its picture the line for the pillboxes is one of the
+             * short ones; only the builder's line is still in words. */
+            const TankIconMetrics m = tank_icon_metrics(st);
+            const float other = (m.pillSize > 0.0f) ? tank_builder_w() : otherW;
+            r.iconsW = (m.lineW > other) ? m.lineW : other;
+            r.iconsH = tank_text_h();
+        }
+    } else {
+        /* One wrapped note in place of the four values, then the two lines. */
+        float noteH = ImGui::CalcTextSize(langGetText(STR_LV_TANK_NO_STOCK), nullptr, false,
+                                          otherW).y;
+        r.wordsW = otherW;
+        r.wordsH = noteH + style.ItemSpacing.y + tank_lines_h(2);
+    }
+    return r;
 }
 
 void lv_imgui_tank_window(void) {
@@ -261,7 +555,11 @@ void lv_imgui_tank_window(void) {
 
     char title[128];
     snprintf(title, sizeof(title), "%s###tank", langGetText(STR_LV_WIN_TANK));
-    if (ImGui::Begin(title, &lv_g_show_tank_window, ImGuiWindowFlags_NoCollapse)) {
+    /* No scroll bar: what does not go into the window is not drawn at all
+     * (lvTankLayoutPick), so there is nothing to scroll to. */
+    if (ImGui::Begin(title, &lv_g_show_tank_window,
+                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
+                     ImGuiWindowFlags_NoScrollWithMouse)) {
         /* In the dock the dock places the window; moving it here would pull
          * it straight back out. */
         if (!ImGui::IsWindowDocked()) {
@@ -332,30 +630,25 @@ void lv_imgui_tank_window(void) {
                 ImGui::SetCursorScreenPos(ImVec2(top.x, top.y + tank_header_h()));
             }
 
-            ImVec2 avail = ImGui::GetContentRegionAvail();
-            bool beside = tank_text_beside(avail.x);
-            /* The largest whole scale the room has for the well, with the
-             * text under it when the text is not beside it. Never under 1:
-             * a window too small for that scrolls. */
-            float roomH = avail.y - 2.0f;
-            if (!beside) roomH -= style.ItemSpacing.y + tank_text_h();
-            int scale = 1;
-            for (int s = 2; s <= TANK_MAX_SCALE; s++) {
-                float needW = (float)(s * TANK_SLICE_W) + 2.0f;
-                if (beside) needW += style.ItemSpacing.x * 2.0f + tank_text_w();
-                if (needW > avail.x || (float)(s * TANK_SLICE_H) > roomH) break;
-                scale = s;
-            }
+            /* What the room under the name has space for: the text with
+             * words, with the small pictures, or none of it; beside the
+             * well or under it; and the scale of the well. */
+            const LvTankRoom room = tank_room(st, ImGui::GetContentRegionAvail());
+            const LvTankLayout lay = lvTankLayoutPick(&room);
+            const bool icons = (lay.text == LV_TANK_TEXT_ICONS);
 
             ImVec2 origin = ImGui::GetCursorScreenPos();
-            tank_gauges(st, origin, scale);
-            if (beside) {
-                ImGui::SameLine(0.0f, style.ItemSpacing.x * 2.0f);
+            tank_gauges(st, origin, lay.scale);
+            if (lay.text == LV_TANK_TEXT_NONE) {
+                /* No room for all of the text: none of it. It comes back
+                 * when the panel is large enough again. */
+            } else if (lay.beside) {
+                ImGui::SameLine(0.0f, room.gapBeside);
                 ImGui::BeginGroup();
-                tank_text(st);
+                tank_text(st, icons);
                 ImGui::EndGroup();
             } else {
-                tank_text(st);
+                tank_text(st, icons);
             }
         }
     }
