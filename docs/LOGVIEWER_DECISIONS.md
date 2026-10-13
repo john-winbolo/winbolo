@@ -94,11 +94,16 @@ Numbers are the reviewer's finding numbers.
   temporary file and a rename. It then keeps the result as its own copy, so
   it sees the game's other changes.
 - One file write for each autosave. All viewer saves go through `prefsWrite`.
-- The viewer does write three keys outside `[LOGVIEWER]`:
-  `[WINBOLO.NET] Host`, `[WINBOLO.NET] CountryCode` and `[DEVICE] SyncDirty`.
-  For this reason the merge works by key, not by section. This differs from
-  the instruction ("graft the LOGVIEWER section"); a section graft would lose
-  those three keys or need a special list.
+- The viewer does write two keys outside `[LOGVIEWER]`:
+  `[WINBOLO.NET] Host` and `[WINBOLO.NET] CountryCode` (the shared network
+  code sets them). For this reason the merge works by key, not by section.
+  This differs from the instruction ("graft the LOGVIEWER section"); a
+  section graft would lose those two keys or need a special list.
+- The viewer does not write `[DEVICE] SyncDirty`. That flag is set only for a
+  change in a section that goes to the cloud. `[LOGVIEWER]` and
+  `[WINBOLO.NET]` are both kept on the device only (`kDeviceLocalSections` in
+  `src/common/prefs.c`), so no viewer save sets it. An earlier version of
+  this file said the viewer wrote it. That was wrong.
 - If the file is missing or cannot be read, the viewer writes its whole copy,
   as before.
 - Left for the owner: the game client was not changed. The game still writes
