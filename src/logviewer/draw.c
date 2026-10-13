@@ -2002,7 +2002,7 @@ static void lvDrawOneTankBar(const LvTankBarRect *bar, int value, int full,
    the map having to be repainted. */
 static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     LogViewerState *lv = lv_screenGetState();
-    float scale, tilePx;
+    float scale, tilePx, pxScale;
     int i;
     SDL_Rect clip, oldClip;
     bool hadClip;
@@ -2038,7 +2038,10 @@ static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     if (src->w <= 0.0f || src->h <= 0.0f) return;
     scale = dst->w / src->w;
     tilePx = (float)TILE_SIZE_X * scale;
-    if (tilePx < LV_TANK_BARS_MIN_TILE) return;
+    /* scale is in framebuffer pixels (the blit folds the pixel density in),
+       and the bars' sizes are in points: hand the density to the sums. */
+    pxScale = lvDrawPixelScale();
+    if (!lvTankBarsVisible(tilePx, pxScale)) return;
 
     hadClip = SDL_RenderClipEnabled(sdlRenderer);
     SDL_GetRenderClipRect(sdlRenderer, &oldClip);
@@ -2062,7 +2065,7 @@ static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
         if (slot >= MAX_TANKS || !held[slot].alive) continue;
         bars = lvTankBarsLayout(dst->x + ((float)s_tankBarPos[i].x - src->x) * scale,
                                 dst->y + ((float)s_tankBarPos[i].y - src->y) * scale,
-                                tilePx);
+                                tilePx, pxScale);
         if (!bars.visible) continue;
 
         armour = held[slot].armour;

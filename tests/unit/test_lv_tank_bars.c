@@ -28,15 +28,15 @@ int run_lv_tank_bars_sums(void) {
     unsigned char r, g, b;
 
     /* The height of a bar at each size of square the viewer's zoom gives. */
-    UT_ASSERT_MSG(lvTankBarThickness(8.0f) == 2.0f, "8 px square: the least");
-    UT_ASSERT_MSG(lvTankBarThickness(12.8f) == 2.0f, "12.8 px square");
-    UT_ASSERT_MSG(lvTankBarThickness(16.0f) == 2.0f, "16 px square: an eighth");
-    UT_ASSERT_MSG(lvTankBarThickness(32.0f) == 4.0f, "32 px square: an eighth");
-    UT_ASSERT_MSG(lvTankBarThickness(48.0f) == 5.0f, "48 px square: the most");
-    UT_ASSERT_MSG(lvTankBarThickness(64.0f) == 5.0f, "64 px square: the most");
+    UT_ASSERT_MSG(lvTankBarThickness(8.0f, 1.0f) == 2.0f, "8 px square: the least");
+    UT_ASSERT_MSG(lvTankBarThickness(12.8f, 1.0f) == 2.0f, "12.8 px square");
+    UT_ASSERT_MSG(lvTankBarThickness(16.0f, 1.0f) == 2.0f, "16 px square: an eighth");
+    UT_ASSERT_MSG(lvTankBarThickness(32.0f, 1.0f) == 4.0f, "32 px square: an eighth");
+    UT_ASSERT_MSG(lvTankBarThickness(48.0f, 1.0f) == 5.0f, "48 px square: the most");
+    UT_ASSERT_MSG(lvTankBarThickness(64.0f, 1.0f) == 5.0f, "64 px square: the most");
 
     /* A tank at a whole place, squares of 32. */
-    l = lvTankBarsLayout(100.0f, 200.0f, 32.0f);
+    l = lvTankBarsLayout(100.0f, 200.0f, 32.0f, 1.0f);
     UT_ASSERT_MSG(l.visible, "32 px squares have bars");
     UT_ASSERT_MSG(l.shells.x == 100.0f && l.armour.x == 100.0f, "start at the tank's left");
     UT_ASSERT_MSG(l.shells.w == 32.0f && l.armour.w == 32.0f, "one square wide");
@@ -47,23 +47,46 @@ int run_lv_tank_bars_sums(void) {
 
     /* A tank part way through a pixel: the bars are on whole pixels, and
        move with the tank. */
-    l = lvTankBarsLayout(100.7f, 200.3f, 16.0f);
+    l = lvTankBarsLayout(100.7f, 200.3f, 16.0f, 1.0f);
     UT_ASSERT_MSG(l.shells.x == 100.0f && l.shells.y == 197.0f, "floored");
     UT_ASSERT_MSG(l.armour.y == 194.0f && l.armour.h == 2.0f && l.armour.w == 16.0f,
                   "16 px squares");
-    l = lvTankBarsLayout(101.2f, 200.3f, 16.0f);
+    l = lvTankBarsLayout(101.2f, 200.3f, 16.0f, 1.0f);
     UT_ASSERT_MSG(l.shells.x == 101.0f && l.armour.x == 101.0f, "follows the tank");
 
     /* A square that is not a whole number of pixels: the nearest. */
-    l = lvTankBarsLayout(0.0f, 50.0f, 12.8f);
+    l = lvTankBarsLayout(0.0f, 50.0f, 12.8f, 1.0f);
     UT_ASSERT_MSG(l.visible && l.shells.w == 13.0f, "12.8 px squares");
-    l = lvTankBarsLayout(0.0f, 50.0f, 14.4f);
+    l = lvTankBarsLayout(0.0f, 50.0f, 14.4f, 1.0f);
     UT_ASSERT_MSG(l.visible && l.shells.w == 14.0f, "14.4 px squares");
 
     /* The cutoff. */
-    UT_ASSERT_MSG(lvTankBarsLayout(0.0f, 50.0f, 12.0f).visible, "12 px squares have bars");
-    UT_ASSERT_MSG(!lvTankBarsLayout(0.0f, 50.0f, 11.2f).visible, "11.2 px squares have none");
-    UT_ASSERT_MSG(!lvTankBarsLayout(0.0f, 50.0f, 8.0f).visible, "8 px squares have none");
+    UT_ASSERT_MSG(lvTankBarsLayout(0.0f, 50.0f, 12.0f, 1.0f).visible, "12 px squares have bars");
+    UT_ASSERT_MSG(!lvTankBarsLayout(0.0f, 50.0f, 11.2f, 1.0f).visible, "11.2 px squares have none");
+    UT_ASSERT_MSG(!lvTankBarsLayout(0.0f, 50.0f, 8.0f, 1.0f).visible, "8 px squares have none");
+
+    /* A pixel density of 2: the sizes are in points, so the bars and the
+       gaps are twice the pixels, the width is still exactly one square, and
+       the cutoff is at the same zoom step (12 points, 24 pixels). */
+    UT_ASSERT_MSG(lvTankBarThickness(32.0f, 2.0f) == 4.0f, "16 pt square at 2x: 2 pt, 4 px");
+    UT_ASSERT_MSG(lvTankBarThickness(64.0f, 2.0f) == 8.0f, "32 pt square at 2x: 4 pt, 8 px");
+    UT_ASSERT_MSG(lvTankBarThickness(128.0f, 2.0f) == 10.0f, "64 pt square at 2x: the most, 10 px");
+    l = lvTankBarsLayout(100.0f, 200.0f, 64.0f, 2.0f);
+    UT_ASSERT_MSG(l.visible, "32 pt squares at 2x have bars");
+    UT_ASSERT_MSG(l.shells.w == 64.0f && l.armour.w == 64.0f, "one square wide at 2x");
+    UT_ASSERT_MSG(l.shells.h == 8.0f && l.armour.h == 8.0f, "twice the pixels high");
+    UT_ASSERT_MSG(l.shells.y + l.shells.h == 198.0f, "shells one point above the tank");
+    UT_ASSERT_MSG(l.armour.y + l.armour.h == l.shells.y - 2.0f, "armour one point above shells");
+    UT_ASSERT_MSG(lvTankBarsLayout(0.0f, 50.0f, 24.0f, 2.0f).visible, "12 pt squares at 2x have bars");
+    UT_ASSERT_MSG(!lvTankBarsLayout(0.0f, 50.0f, 22.4f, 2.0f).visible, "11.2 pt squares at 2x have none");
+    UT_ASSERT_MSG(!lvTankBarsLayout(0.0f, 50.0f, 16.0f, 2.0f).visible,
+                  "8 pt squares at 2x have none, though they are 16 px");
+    /* A density that is not a whole number: whole pixels, never none. */
+    UT_ASSERT_MSG(lvTankBarThickness(24.0f, 1.5f) == 3.0f, "16 pt square at 1.5x: 2 pt, 3 px");
+    l = lvTankBarsLayout(10.0f, 100.0f, 24.0f, 1.5f);
+    UT_ASSERT_MSG(l.shells.y + l.shells.h == 98.0f, "a 1 pt gap at 1.5x is 2 px");
+    /* A density of 0 is treated as 1. */
+    UT_ASSERT_MSG(lvTankBarThickness(16.0f, 0.0f) == 2.0f, "density 0 reads as 1");
 
     /* How full. */
     UT_ASSERT_MSG(lvTankBarFraction(40, 40) == 1.0f, "full");
