@@ -4051,6 +4051,8 @@ int run_lv_event_kind_sums(void);
  * (test_lv_presentation.c): it posts each line once, stores no snapshot, and
  * leaves the world at the start as the loader did. */
 int run_lv_event_scan_returns_to_start(void);
+/* The kill and death tallies go back with a seek (test_lv_presentation.c). */
+int run_lv_kill_tally_seek_back(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

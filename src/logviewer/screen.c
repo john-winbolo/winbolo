@@ -3383,7 +3383,14 @@ bool lv_processSnapshot() {
      the seek index after it is the one a load without the scan leaves:
      filled only by the snapshots playback has really reached. */
   if (s_eventScan == FALSE) {
+    /* The tallies go in with a new entry only. A seek that restores this
+       snapshot decodes it again with later tallies in hand, and those must
+       not replace the ones counted when playback first got here. */
+    bool isNew = lv_snapshotExist(&g_lv->snap, snapPos, snapTime) == FALSE;
     lv_snapshotAdd(&g_lv->snap, snapPos, snapTime, snapKey, data);
+    if (isNew == TRUE) {
+      lv_snapshotSetTallies(&g_lv->snap, snapTime, g_lv->kills, g_lv->deaths);
+    }
   }
   return returnValue;
 }
@@ -6274,6 +6281,8 @@ void lv_screenRewind() {
     lv_logSetPosition(wantedPos);
     lv_blocksSetKey(key);
     lv_playersSetTeams(pTeams);
+    /* Playback counts the kills after this snapshot again from here. */
+    lv_snapshotGetTallies(&g_lv->snap, currentTime, g_lv->kills, g_lv->deaths);
     lv_processSnapshot();
     /* The snapshot carries no rules: read them again at its time. */
     lv_rulesRefresh();
@@ -6359,6 +6368,10 @@ static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
        appearing in the snapshot get a valid team assigned instead of being
        overwritten with NO_TEAM_SET from the pre-snapshot pTeams. */
     lv_playersSetTeams(pTeams);
+    /* The kill and death tallies only count up, and the fast-forward below
+       counts every kill after the snapshot again: start it from the tallies
+       that go with the snapshot, or a step back counts those kills twice. */
+    lv_snapshotGetTallies(&g_lv->snap, snapTime, g_lv->kills, g_lv->deaths);
     lv_processSnapshot();
     /* The snapshot carries no rules: read them again at its time, so the
        fast-forward below starts from the values in force there. */

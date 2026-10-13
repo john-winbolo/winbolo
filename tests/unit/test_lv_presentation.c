@@ -1269,6 +1269,101 @@ int run_lv_event_scan_returns_to_start(void) {
     return 0;
 }
 
+/* The kill and death tallies across a seek.
+ *
+ * After the opening:
+ *   ticks 0-1 NOEVENTS 1
+ *   tick 2    log_KillPlayer: slot 2 kills slot 1                 60 ms
+ *   tick 3    log_KillPlayer: slot 1 dies with no killer          80 ms
+ *   ticks 4-7 NOEVENTS 3
+ *   tick 8    LOG_QUIT                                           180 ms
+ *
+ * The decoder only ever adds to the tallies, and a seek back restores the
+ * opening snapshot and plays forward again. So the tallies have to go back
+ * to the snapshot's with it, or every step back counts the kills behind the
+ * playhead once more. */
+static const uint8_t kLvpKillStream[] = {
+    0x01, 0x01,
+    0x03, 0x01, 0x21, 0x00, 0x02,
+        0x01, 0x02,
+    0x03, 0x01, 0x21, 0x00, 0x02,
+        0x01, 0x01,
+    0x01, 0x03,
+    0x00,
+};
+
+typedef struct { unsigned kills2, deaths1, kills1; } LvpTally;
+
+static LvpTally lvpTally(const LogViewerState *lv) {
+    LvpTally t;
+    t.kills2  = lv->kills[2];
+    t.deaths1 = lv->deaths[1];
+    t.kills1  = lv->kills[1];
+    return t;
+}
+
+int run_lv_kill_tally_seek_back(void) {
+    const char     *path = "lv_kill_tally.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    LvpTally        at120, at20, at60, again120, stepBack, afterRewind, atEnd;
+    bool            reachedEnd;
+
+    lvpPutOpening(&b);
+    lvpPut(&b, kLvpKillStream, sizeof(kLvpKillStream));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    lv_screenSeekToTimeMs(120);     /* forward, past both deaths */
+    at120 = lvpTally(lv);
+    lv_screenSeekToTimeMs(20);      /* back, before both */
+    at20 = lvpTally(lv);
+    lv_screenSeekToTimeMs(60);      /* forward, between the two */
+    at60 = lvpTally(lv);
+    lv_screenSeekToTimeMs(120);     /* forward across the second */
+    again120 = lvpTally(lv);
+    lv_screenSeekToTimeMs(100);     /* one step back, both still behind */
+    stepBack = lvpTally(lv);
+    lv_screenRewind();              /* to the opening snapshot */
+    afterRewind = lvpTally(lv);
+    reachedEnd = lvpPlayToEnd();
+    atEnd = lvpTally(lv);
+
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(at120.kills2 == 1 && at120.deaths1 == 2 && at120.kills1 == 0,
+                  "played to 120 ms: slot 2 kills %u, slot 1 deaths %u, slot 1 "
+                  "kills %u (want 1, 2, 0)", at120.kills2, at120.deaths1,
+                  at120.kills1);
+    UT_ASSERT_MSG(at20.kills2 == 0 && at20.deaths1 == 0,
+                  "back before the kills: slot 2 kills %u, slot 1 deaths %u "
+                  "(want 0, 0)", at20.kills2, at20.deaths1);
+    UT_ASSERT_MSG(at60.kills2 == 1 && at60.deaths1 == 1,
+                  "between the two deaths: slot 2 kills %u, slot 1 deaths %u "
+                  "(want 1, 1)", at60.kills2, at60.deaths1);
+    UT_ASSERT_MSG(again120.kills2 == 1 && again120.deaths1 == 2,
+                  "forward across the kill again: slot 2 kills %u, slot 1 "
+                  "deaths %u (want 1, 2)", again120.kills2, again120.deaths1);
+    UT_ASSERT_MSG(stepBack.kills2 == 1 && stepBack.deaths1 == 2,
+                  "one step back counted the kills twice: slot 2 kills %u, "
+                  "slot 1 deaths %u (want 1, 2)", stepBack.kills2,
+                  stepBack.deaths1);
+    UT_ASSERT_MSG(afterRewind.kills2 == 0 && afterRewind.deaths1 == 0,
+                  "after the rewind: slot 2 kills %u, slot 1 deaths %u "
+                  "(want 0, 0)", afterRewind.kills2, afterRewind.deaths1);
+    UT_ASSERT_MSG(reachedEnd, "playback after the rewind did not reach "
+                  "end-of-log");
+    UT_ASSERT_MSG(atEnd.kills2 == 1 && atEnd.deaths1 == 2 && atEnd.kills1 == 0,
+                  "played to the end after the rewind: slot 2 kills %u, slot 1 "
+                  "deaths %u, slot 1 kills %u (want 1, 2, 0)", atEnd.kills2,
+                  atEnd.deaths1, atEnd.kills1);
+    return 0;
+}
+
 /* ── 8. Announcements on the newswire ──────────────────────────────── */
 
 /* After the opening:

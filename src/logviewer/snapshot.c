@@ -28,6 +28,7 @@
 *********************************************************/
 
 #include "lv_global.h"
+#include <string.h>
 #include "snapshot.h"
 
 /*
@@ -158,6 +159,8 @@ void lv_snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BY
     q->filePos = filePos;
     q->time = time;
     q->key = key;
+    memset(q->kills, 0, sizeof(q->kills));
+    memset(q->deaths, 0, sizeof(q->deaths));
     q->next = NULL;
     while (count < MAX_TANKS) {
       q->pTeams[count] = pTeams[count];
@@ -176,6 +179,8 @@ void lv_snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BY
         add->filePos = filePos;
         add->time = time;
         add->key = key;
+        memset(add->kills, 0, sizeof(add->kills));
+        memset(add->deaths, 0, sizeof(add->deaths));
         add->next = (*value);
         while (count < MAX_TANKS) {
           add->pTeams[count] = pTeams[count];
@@ -189,6 +194,8 @@ void lv_snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BY
         add->filePos = filePos;
         add->time = time;
         add->key = key;
+        memset(add->kills, 0, sizeof(add->kills));
+        memset(add->deaths, 0, sizeof(add->deaths));
         add->next = q;
         prev->next = add;
         while (count < MAX_TANKS) {
@@ -207,6 +214,8 @@ void lv_snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BY
       q->filePos = filePos;
       q->time = time;
       q->key = key;
+      memset(q->kills, 0, sizeof(q->kills));
+      memset(q->deaths, 0, sizeof(q->deaths));
       while (count < MAX_TANKS) {
         q->pTeams[count] = pTeams[count];
         count++;
@@ -350,4 +359,36 @@ bool lv_snapshotBackwards(snapshot *value, size_t *filePos, uint32_t *time, BYTE
   }
   return returnValue;
 
+}
+
+/* The entry at this time, or NULL. */
+static snapshot lv_snapshotAtTime(snapshot *value, uint32_t time) {
+  snapshot q = *value;
+
+  while (q != NULL && q->time != time) {
+    q = q->next;
+  }
+  return q;
+}
+
+bool lv_snapshotSetTallies(snapshot *value, uint32_t time, const uint16_t *kills, const uint16_t *deaths) {
+  snapshot q = lv_snapshotAtTime(value, time);
+
+  if (q == NULL) {
+    return FALSE;
+  }
+  memcpy(q->kills, kills, sizeof(q->kills));
+  memcpy(q->deaths, deaths, sizeof(q->deaths));
+  return TRUE;
+}
+
+bool lv_snapshotGetTallies(snapshot *value, uint32_t time, uint16_t *kills, uint16_t *deaths) {
+  snapshot q = lv_snapshotAtTime(value, time);
+
+  if (q == NULL) {
+    return FALSE;
+  }
+  memcpy(kills, q->kills, sizeof(q->kills));
+  memcpy(deaths, q->deaths, sizeof(q->deaths));
+  return TRUE;
 }
