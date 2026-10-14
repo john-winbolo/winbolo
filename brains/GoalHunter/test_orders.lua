@@ -6531,6 +6531,48 @@ do
   C.ORDER_RELEASE_HINT = saved
 end
 
+-- THE obq LONG FORM IS RANGE-CHECKED (PR #510 review item 5).  A field out
+-- of range drops the whole line: answered true, nothing queued.
+do
+  print("orders.lua — an obq long form with a field out of range is dropped")
+  local saved = C.ORDER_HANDOFF_MAX_HOPS
+  C.ORDER_HANDOFF_MAX_HOPS = 3
+  local function rx(line)
+    local st = ST()
+    local ok = ORD.rx(2, line, 500, st)
+    local q = (st.orders and st.orders.rx) or {}
+    return ok, #q, q[1]
+  end
+  local r, n, e = rx("/info obq 1234 2 6 1234 1")
+  check("obq long: a good line is queued as a relief",
+        r == true and n == 1 and e.relief == true and e.hop == 2 and e.mask == 6
+        and e.root == 1234 and e.asker == 1, tostring(n))
+  r, n, e = rx("/info obq 1234 4 6 1234 1")
+  check("obq long: hop at the cap + 1 (4 with 3 hops) is good", r == true and n == 1, tostring(n))
+  r, n, e = rx("/info obq 0 1 1 0 0")
+  check("obq long: oid and root 0 are good (a hash can be 0)", r == true and n == 1, tostring(n))
+  local bad = {
+    { "hop 0",                "/info obq 1234 0 6 1234 1" },
+    { "hop past the cap + 1", "/info obq 1234 5 6 1234 1" },
+    { "mask 0",               "/info obq 1234 2 0 1234 1" },
+    { "mask bit 16",          "/info obq 1234 2 65536 1234 1" },
+    { "root past any oid",    "/info obq 1234 2 6 16777213 1" },
+    { "asker 16",             "/info obq 1234 2 6 1234 16" },
+  }
+  for _, b in ipairs(bad) do
+    r, n = rx(b[2])
+    check("obq long: " .. b[1] .. ": answered true, nothing queued",
+          r == true and n == 0, tostring(r) .. " " .. tostring(n))
+  end
+  C.ORDER_HANDOFF_MAX_HOPS = 0
+  r, n = rx("/info obq 1234 2 6 1234 1")
+  check("obq long: hops off (keel 0): hop 2 is dropped", r == true and n == 0, tostring(n))
+  r, n, e = rx("/info obq 1234")
+  check("obq bare: still read as hop 1 from the sender",
+        r == true and n == 1 and e.hop == 1 and e.asker == 2 and e.root == 1234, tostring(n))
+  C.ORDER_HANDOFF_MAX_HOPS = saved
+end
+
 -- =========================================================================
 -- BOT ORDER BIDS (2026-10-04, branch bot-order-bids).  Three changes:
 --   1. a go-there order arrives on the square itself (ORDER_GOTO_ARRIVE_*)

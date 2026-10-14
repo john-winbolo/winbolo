@@ -619,6 +619,8 @@ end
 -- who ask for the same thing are asking for ONE job, so the second line is a
 -- repeat of the first (it refreshes the focus and gets the "Still on it."
 -- line) rather than a second order the bots would have to fight over.
+-- Every order id is a hash taken mod OID_MOD, so a good one is 0..OID_MOD-1.
+M.OID_MOD = 16777213
 function M.order_id(sender, cmd)
   local w = cmd.who or {}
   local wk = w.mode or "auto"
@@ -637,7 +639,7 @@ function M.order_id(sender, cmd)
   local key = string.format("%s|%s|%s|%s", cmd.verb or "",
                             wk, t.kind or "-", tostring(t.id or t.pn or "-"))
   local h = 5381
-  for i = 1, #key do h = (h * 33 + key:byte(i)) % 16777213 end
+  for i = 1, #key do h = (h * 33 + key:byte(i)) % M.OID_MOD end
   return h
 end
 
@@ -1292,6 +1294,25 @@ function M.rx(sender, text, tick, state)
   -- (ORDER_HANDOFF_MAX_HOPS, see relief_msg); the bare form is hop 1, with
   -- the sender as the only bot in the chain and the one that asks.
   local qo, qh, qm, qr, qa = text:match("^/info obq (%d+) (%d+) (%d+) (%d+) (%d+)$")
+  -- A LONG FORM WITH A FIELD OUT OF RANGE IS DROPPED WHOLE (PR #510 review
+  -- item 5).  No bot sends one; a line typed by hand, or garbled, could
+  -- otherwise put a hop past the cap, an empty or oversized chain mask, a
+  -- root no order id can be, or an asker that is no seat into the relief.
+  -- It is still answered true, so nothing else parses it.
+  if qo then
+    local h, m = tonumber(qh), tonumber(qm)
+    local r, a = tonumber(qr), tonumber(qa)
+    local bad = nil
+    if h < 1 or h > (C.ORDER_HANDOFF_MAX_HOPS or 0) + 1 then bad = "hop"
+    elseif m == 0 or m >= 65536 then bad = "mask"
+    elseif r >= M.OID_MOD then bad = "root"
+    elseif a > 15 then bad = "asker" end
+    if bad then
+      print2(string.format("ORDER_RX_BAD obq from p%s field=%s line=%q t=%d",
+             tostring(sender), bad, text, tick))
+      return true
+    end
+  end
   oid = qo or text:match("^/info obq (%d+)$")
   if oid then
     local o = S(state)
