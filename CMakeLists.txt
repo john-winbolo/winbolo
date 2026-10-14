@@ -4644,7 +4644,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Where the items of the log viewer's Controls panel go
     # (lv_controls_layout.h, header only).
     tests/unit/test_lv_controls_layout.c
-    # The file name the viewer's Save Log File offers: date, map and players
+    # The file name the viewer's Save Log File offers: date, map, the people
+    # by name and the bots as a count
     # (lv_save_name.h, header only).
     tests/unit/test_lv_save_name.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
@@ -6945,7 +6946,9 @@ set(_unit_test_names
     lv_fullscreen_key
     lv_event_scan_returns_to_start
     lv_save_name_parts
+    lv_save_name_bots
     lv_save_name_limits
+    lv_save_name_long
     lv_save_name_roster
     lv_save_name_scan
     lv_kill_tally_seek_back

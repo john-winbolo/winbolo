@@ -841,7 +841,7 @@ void lv_screenEventScanRestore(void);
 
 /* For the name Save Log File offers (lv_save_name.h). The roster is every
  * player the loaded log has had, in the order they came, with the last team
- * each was on; the event scan fills it. Returns how many rows it wrote. The
+ * each was on and whether it is a bot; the event scan fills it. Returns how many rows it wrote. The
  * create time is the header's: the time the server that wrote the log was
  * started, in seconds since 1970, or 0. */
 int     lv_screenGetRoster(LvRosterRow *rows, int max);

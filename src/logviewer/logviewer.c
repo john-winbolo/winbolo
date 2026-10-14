@@ -926,6 +926,7 @@ static void lvSaveLogDefaultName(const char *srcPath, char *out, size_t outSize)
     static LvRosterRow rows[LV_ROSTER_MAX]; /* main thread only */
     const char        *names[LV_ROSTER_MAX];
     unsigned char      teams[LV_ROSTER_MAX];
+    unsigned char      bots[LV_ROSTER_MAX];
     char               mapName[FILENAME_MAX];
     const char        *base = srcPath;
     const char        *p;
@@ -968,9 +969,10 @@ static void lvSaveLogDefaultName(const char *srcPath, char *out, size_t outSize)
     for (i = 0; i < count; i++) {
         names[i] = rows[i].name;
         teams[i] = rows[i].team;
+        bots[i]  = rows[i].bot;
     }
     lvSaveNameBuild(out, outSize, year, month, day, hour, minute, mapName,
-                    names, teams, count);
+                    names, teams, bots, count);
 }
 
 void lv_windowSaveLog(void) {

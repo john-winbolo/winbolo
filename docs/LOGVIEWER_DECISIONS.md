@@ -1471,17 +1471,58 @@ Calls made:
   The names are grouped with ` vs ` only when every listed player has a team
   and there are two teams or more. Otherwise the names are one comma list.
   Alliances are not used, so an old log with no team records gets one list.
-- **Limits.** Six names at most, then ` +N`. By team, the six are taken one
-  from each team in turn. The name without `.wbv` is 120 bytes at most. A cut
-  is never inside a UTF-8 character, and a cut removes a separator, a ` vs`
-  or a count left at the end.
+- **Limits.** See the next section: the six-name limit and the 120-byte cut
+  are gone.
 - **Characters.** `\ / : * ? " < > |` and control characters become `.`, as
   before. Dots and spaces at the end are removed. An empty name is
   `log.wbv`.
-- Bots are named as other players. There is no bot mark in the file name.
 
 Tests: `lv_save_name_parts`, `lv_save_name_limits`, `lv_save_name_roster`,
 `lv_save_name_scan`.
+
+### Save Log File: every person is named, the bots are a count (Oct 13)
+
+The owner: "include the full player names, unless they're bots you can just
+say # Bots".
+
+`2026-10-13 14.05 Chew Toy 3 - Sethos, ErYan, Canuck, Chapu, rider, Elvis.wbv`
+`2026-10-13 14.05 Chew Toy 3 - Canuck, Chapu, 4 Bots.wbv`
+`2026-10-13 14.05 Chew Toy 3 - 4 Bots.wbv`
+
+Calls made:
+
+- **Every person is named.** There is no limit on the number of names.
+- **Bots are not named.** They are counted, and the count is the last thing
+  in the name: `4 Bots`, `1 Bot`. With no bots there is no bot part. With no
+  people the count is alone.
+- **Which player is a bot** comes from the log, the same source as the chip
+  in the panels: the account flags of the join record
+  (`LV_PLAYER_FLAG_BOT`, read with `lv_playersIsBot`). The event scan puts it
+  in the roster row (`LvRosterRow.bot`, `lvRosterBot`). There is no second
+  parser. A version 0 log has no flags, so its bots are named as people.
+- **Teams** are the people's. The ` vs ` rule looks at people only. The bot
+  count is one number for all sides: `Canuck, Eryan vs rooklift, 2 Bots`.
+- **Roster and map are the log's own.** The WinBolo.net list names only some
+  of a game's players. That list is not used for the name. The WinBolo.net
+  browser has no save dialog: it puts the download in the cache as
+  `<key>.wbv` and the viewer opens it. The only place a name is offered is
+  the viewer's Save Log File, and there the log is open.
+- **Length.** The whole name, `.wbv` and all, is 180 bytes at most
+  (`LV_SAVE_NAME_MAX_BYTES`). Bytes, not characters, so the limit holds for
+  UTF-8 names too. The map part is 64 bytes at most and a player name is 64
+  bytes at most (the game's own limit). When the people do not all fit, the
+  name has as many whole names as fit, then ` + N more`, then the bots:
+  `a, b, c + 3 more, 2 Bots`. No name is cut in the middle. By team, the
+  names kept are taken one from each team in turn. `+ N more` counts people
+  only, which is why it is before the bot count.
+- **Device names.** A name that Windows keeps for a device (`CON`, `NUL`,
+  `COM1`, ...) gets `log ` in front.
+- **Not done:** the Windows save dialog is `GetSaveFileNameA`
+  (`platform_dialogs.c`), which reads the name in the ANSI code page. A name
+  with characters outside ASCII is offered with wrong characters. This was
+  so before this change.
+
+Tests: `lv_save_name_bots`, `lv_save_name_long`, and the four above.
 
 ### The map name of a log that opens in a lobby (Oct 13)
 
@@ -1582,7 +1623,7 @@ Where a player's name is shown, and what changed:
 | Chat and newswire lines on the map | names are inside the text | not changed |
 | Tank labels on the map | the text `[AI] ` before the name | not changed |
 | Statistics text (`lv_stats.c`) | the text ` (bot)` | not changed |
-| Save Log File name | no mark | no mark, on purpose |
+| Save Log File name | no mark | no mark, on purpose (later the same day: bots are not named, they are a count; see above) |
 
 Calls made:
 

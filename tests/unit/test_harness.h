@@ -4133,7 +4133,9 @@ int run_lv_event_scan_returns_to_start(void);
  * what the event scan keeps for it: the players of the whole log and the map
  * the lobby chose (test_lv_presentation.c). */
 int run_lv_save_name_parts(void);
+int run_lv_save_name_bots(void);
 int run_lv_save_name_limits(void);
+int run_lv_save_name_long(void);
 int run_lv_save_name_roster(void);
 int run_lv_save_name_scan(void);
 /* The kill and death tallies go back with a seek (test_lv_presentation.c). */

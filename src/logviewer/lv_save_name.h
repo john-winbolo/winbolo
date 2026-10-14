@@ -10,10 +10,11 @@
  * A log's own file name is often a key of letters and numbers. The name
  * offered for a saved copy is made from what the log says about the game:
  *
- *   2026-10-13 14.05 Oil Rig - Canuck, Eryan vs rooklift, Bot1.wbv
+ *   2026-10-13 14.05 Oil Rig - Canuck, Eryan vs rooklift, 2 Bots.wbv
  *
- * the date and time, the map, and the players, by team where the log gives
- * every player a team. A part the log does not have is left out.
+ * the date and time, the map, and the players: every person by name, by team
+ * where the log gives each of them a team, and then how many bots there
+ * were. A part the log does not have is left out.
  *
  * Three things are here, with no SDL and no decoder in them, so the unit
  * tests can run them:
@@ -39,6 +40,7 @@
 typedef struct {
   char          name[LV_ROSTER_NAME_LEN];
   unsigned char team; /* 0 is no team */
+  unsigned char bot;  /* 1 for a computer player */
 } LvRosterRow;
 
 /* Every player a log has had, in the order they came, and the row the
@@ -81,6 +83,7 @@ static inline void lvRosterJoin(LvRoster *r, int slot, const char *name) {
   }
   snprintf(r->row[r->count].name, LV_ROSTER_NAME_LEN, "%s", name);
   r->row[r->count].team = 0;
+  r->row[r->count].bot  = 0;
   r->slotRow[slot] = r->count;
   r->count++;
 }
@@ -102,6 +105,15 @@ static inline void lvRosterTeam(LvRoster *r, int slot, unsigned char team) {
     return;
   }
   r->row[r->slotRow[slot]].team = team;
+}
+
+/* The player in a slot is a bot, or is not: what the log's join record (or
+ * a snapshot) says of it. Told after each lvRosterJoin. */
+static inline void lvRosterBot(LvRoster *r, int slot, bool isBot) {
+  if (slot < 0 || slot >= LV_ROSTER_SLOTS || r->slotRow[slot] < 0) {
+    return;
+  }
+  r->row[r->slotRow[slot]].bot = isBot ? 1 : 0;
 }
 
 /* The player in a slot left. The row stays: the player was in the game. */
@@ -195,14 +207,57 @@ static inline bool lvSaveNameStamp(const char *fileName, int *year, int *month,
 
 /* --- The name -------------------------------------------------------------- */
 
-#define LV_SAVE_NAME_MAX_NAMES 6   /* players named; the rest are " +N" */
-#define LV_SAVE_NAME_MAX_BYTES 120 /* the name without ".wbv" */
-#define LV_SAVE_NAME_EXT       ".wbv"
+#define LV_SAVE_NAME_MAX_BYTES  180 /* the whole name, ".wbv" and all */
+#define LV_SAVE_NAME_EXT        ".wbv"
+#define LV_SAVE_NAME_STEM_BYTES (LV_SAVE_NAME_MAX_BYTES - 4) /* without it */
+#define LV_SAVE_NAME_MAP_BYTES  64  /* of them, the most the map can have */
+
+/* The length of text[0..len) without a UTF-8 character that a cut left
+ * unfinished at its end. */
+static inline size_t lvSaveNameWholeChars(const char *text, size_t len) {
+  size_t back = 0;
+  while (back < 3 && back < len &&
+         ((unsigned char)text[len - 1 - back] & 0xC0) == 0x80) {
+    back++;
+  }
+  if (back < len) {
+    unsigned char lead = (unsigned char)text[len - 1 - back];
+    size_t        need = (lead >= 0xF0) ? 4 : (lead >= 0xE0) ? 3 : (lead >= 0xC0) ? 2 : 1;
+    if (need > back + 1) {
+      return len - 1 - back;
+    }
+  }
+  return len;
+}
+
+/* TRUE when Windows keeps a name for a device: CON, PRN, AUX, NUL, COM1 to
+ * COM9 and LPT1 to LPT9, alone or with anything after a dot. */
+static inline bool lvSaveNameIsDevice(const char *stem) {
+  static const char *const three[] = {"CON", "PRN", "AUX", "NUL"};
+  char   up[6];
+  size_t n = 0, i;
+  while (stem[n] != '\0' && stem[n] != '.' && n < 5) {
+    char c = stem[n];
+    up[n++] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
+  }
+  if (stem[n] != '\0' && stem[n] != '.') {
+    return false;
+  }
+  up[n] = '\0';
+  for (i = 0; i < 4; i++) {
+    if (strcmp(up, three[i]) == 0) {
+      return true;
+    }
+  }
+  return n == 4 && (strncmp(up, "COM", 3) == 0 || strncmp(up, "LPT", 3) == 0) &&
+         up[3] >= '1' && up[3] <= '9';
+}
 
 /* Add text to a part of the name, made fit for a file name: a character a
  * file name cannot hold becomes '.', as the map name always has; spaces at
  * the two ends go and a run of them becomes one. Text past the end of the
- * buffer is dropped. Returns the new length. */
+ * buffer is dropped, never a part of a UTF-8 character. Returns the new
+ * length. */
 static inline size_t lvSaveNameAddClean(char *buf, size_t size, size_t len,
                                         const char *text) {
   size_t start = len;
@@ -218,6 +273,9 @@ static inline size_t lvSaveNameAddClean(char *buf, size_t size, size_t len,
       continue;
     }
     buf[len++] = (char)c;
+  }
+  if (*text != '\0') {
+    len = start + lvSaveNameWholeChars(buf + start, len - start);
   }
   while (len > start && buf[len - 1] == ' ') {
     len--;
@@ -241,29 +299,39 @@ static inline size_t lvSaveNameAddRaw(char *buf, size_t size, size_t len,
  *   mapName            NULL or "" is no map
  *   names, teams       the players, in the order they came; teams may be
  *                      NULL, and team 0 is no team
+ *   bots               not 0 for a player that is a bot; NULL is no bots
  *   nameCount          how many
  *
- * The players are by team, with " vs " between the teams, when every one of
- * them has a team and there are two teams or more; otherwise they are one
- * list. At most LV_SAVE_NAME_MAX_NAMES are named, taken a player from each
- * team in turn so no side goes unnamed for another's sake, and " +N" counts
- * the rest. The name is cut at LV_SAVE_NAME_MAX_BYTES bytes, never inside a
- * UTF-8 character, and never ends with a dot or a space, which Windows
- * refuses. With nothing to make a name of it is "log.wbv". */
+ * Every person is named. The bots are not: they are counted, and the count
+ * is the last thing in the name, "4 Bots" or "1 Bot". The people are by
+ * team, with " vs " between the teams, when every one of them has a team and
+ * there are two teams or more; otherwise they are one list.
+ *
+ * The whole name is LV_SAVE_NAME_MAX_BYTES bytes at most. When the people do
+ * not all fit, as many whole names as do fit are given, taken a player from
+ * each team in turn so no side goes unnamed for another's sake, and
+ * " + N more" counts the rest of them. No name is ever cut short. The name
+ * has no character Windows refuses, no dot or space before ".wbv", and is
+ * not a name Windows keeps for a device. With nothing to make a name of it
+ * is "log.wbv". */
 static inline void lvSaveNameBuild(char *out, size_t outSize, int year,
                                    int month, int day, int hour, int minute,
                                    const char *mapName, const char *const *names,
-                                   const unsigned char *teams, int nameCount) {
-  char   buf[1024];
-  char   clean[LV_ROSTER_NAME_LEN + 1];
-  size_t len = 0, mark;
-  int    used[LV_ROSTER_MAX];     /* indexes of the players with a name */
-  int    shown[LV_ROSTER_MAX];    /* 1 when that player is named */
-  int    usedCount = 0, shownCount = 0;
+                                   const unsigned char *teams,
+                                   const unsigned char *bots, int nameCount) {
+  char   buf[LV_SAVE_NAME_MAX_BYTES + LV_ROSTER_NAME_LEN + 80];
+  char   mapClean[LV_SAVE_NAME_MAP_BYTES + 1];
+  char   clean[LV_ROSTER_MAX][LV_ROSTER_NAME_LEN]; /* the people, made fit */
+  int    team[LV_ROSTER_MAX];     /* each one's team */
+  int    rank[LV_ROSTER_MAX];     /* each one's turn to be named */
+  int    people = 0;              /* how many are in clean[] */
+  int    unlisted = 0;            /* people past the end of clean[] */
+  int    botCount = 0;
   int    teamList[LV_ROSTER_MAX]; /* the teams, lowest first */
   int    teamCount = 0;
   bool   byTeam;
-  int    i, j, t;
+  size_t len = 0, head;
+  int    i, j, t, k, picked;
 
   if (out == NULL || outSize == 0) {
     return;
@@ -281,45 +349,47 @@ static inline void lvSaveNameBuild(char *out, size_t outSize, int year,
     }
     len = lvSaveNameAddRaw(buf, sizeof(buf), len, date);
   }
-
-  mark = len;
-  if (len > 0) {
-    len = lvSaveNameAddRaw(buf, sizeof(buf), len, " ");
+  if (lvSaveNameAddClean(mapClean, sizeof(mapClean), 0, mapName) > 0) {
+    if (len > 0) {
+      len = lvSaveNameAddRaw(buf, sizeof(buf), len, " ");
+    }
+    len = lvSaveNameAddRaw(buf, sizeof(buf), len, mapClean);
   }
-  if (lvSaveNameAddClean(buf, sizeof(buf), len, mapName) == len) {
-    len = mark; /* no map: the space goes too */
-    buf[len] = '\0';
-  } else {
-    len = strlen(buf);
-  }
+  head = len;
 
-  /* The players that have a name once it is made fit. */
+  /* The people that have a name once it is made fit, and the bots. */
   if (names == NULL) {
     nameCount = 0;
   }
-  for (i = 0; i < nameCount && usedCount < LV_ROSTER_MAX; i++) {
-    if (lvSaveNameAddClean(clean, sizeof(clean), 0, names[i]) > 0) {
-      used[usedCount]  = i;
-      shown[usedCount] = 0;
-      usedCount++;
+  for (i = 0; i < nameCount; i++) {
+    if (bots != NULL && bots[i] != 0) {
+      botCount++;
+    } else if (people >= LV_ROSTER_MAX) {
+      if (names[i] != NULL && names[i][0] != '\0') {
+        unlisted++;
+      }
+    } else if (lvSaveNameAddClean(clean[people], sizeof(clean[people]), 0,
+                                  names[i]) > 0) {
+      team[people] = (teams != NULL) ? teams[i] : 0;
+      rank[people] = -1;
+      people++;
     }
   }
 
-  /* By team only when every player has one and there are two or more. */
-  byTeam = (teams != NULL && usedCount > 0);
-  for (i = 0; byTeam && i < usedCount; i++) {
-    int team = teams[used[i]];
-    if (team == 0) {
+  /* By team only when every one has a team and there are two or more. */
+  byTeam = (people > 0 && unlisted == 0);
+  for (i = 0; byTeam && i < people; i++) {
+    if (team[i] == 0) {
       byTeam = false;
       break;
     }
-    for (j = 0; j < teamCount && teamList[j] != team; j++) {
+    for (j = 0; j < teamCount && teamList[j] != team[i]; j++) {
     }
     if (j == teamCount) {
-      for (j = teamCount; j > 0 && teamList[j - 1] > team; j--) {
+      for (j = teamCount; j > 0 && teamList[j - 1] > team[i]; j--) {
         teamList[j] = teamList[j - 1];
       }
-      teamList[j] = team;
+      teamList[j] = team[i];
       teamCount++;
     }
   }
@@ -327,39 +397,39 @@ static inline void lvSaveNameBuild(char *out, size_t outSize, int year,
     byTeam = false;
   }
 
-  /* Which players are named. */
+  /* Each one's turn to be named, for a name that cannot hold them all. */
   if (byTeam) {
-    bool more = true;
-    while (more && shownCount < LV_SAVE_NAME_MAX_NAMES) {
-      more = false;
-      for (t = 0; t < teamCount && shownCount < LV_SAVE_NAME_MAX_NAMES; t++) {
-        for (i = 0; i < usedCount; i++) {
-          if (!shown[i] && teams[used[i]] == teamList[t]) {
-            shown[i] = 1;
-            shownCount++;
-            more = true;
+    picked = 0;
+    while (picked < people) {
+      for (t = 0; t < teamCount; t++) {
+        for (i = 0; i < people; i++) {
+          if (rank[i] < 0 && team[i] == teamList[t]) {
+            rank[i] = picked++;
             break;
           }
         }
       }
     }
   } else {
-    for (i = 0; i < usedCount && shownCount < LV_SAVE_NAME_MAX_NAMES; i++) {
-      shown[i] = 1;
-      shownCount++;
+    for (i = 0; i < people; i++) {
+      rank[i] = i;
     }
     teamCount = 1;
   }
 
-  if (shownCount > 0) {
+  /* All of them if they fit; if not, one fewer, until what is left fits. */
+  for (k = people;; k--) {
+    int  left      = people - k + unlisted;
     bool firstTeam = true;
-    if (len > 0) {
+    len      = head;
+    buf[len] = '\0';
+    if (len > 0 && (k > 0 || left > 0 || botCount > 0)) {
       len = lvSaveNameAddRaw(buf, sizeof(buf), len, " - ");
     }
     for (t = 0; t < teamCount; t++) {
       bool firstName = true;
-      for (i = 0; i < usedCount; i++) {
-        if (!shown[i] || (byTeam && teams[used[i]] != teamList[t])) {
+      for (i = 0; i < people; i++) {
+        if (rank[i] >= k || (byTeam && team[i] != teamList[t])) {
           continue;
         }
         if (firstName && !firstTeam) {
@@ -367,45 +437,36 @@ static inline void lvSaveNameBuild(char *out, size_t outSize, int year,
         } else if (!firstName) {
           len = lvSaveNameAddRaw(buf, sizeof(buf), len, ", ");
         }
-        len = lvSaveNameAddClean(buf, sizeof(buf), len, names[used[i]]);
+        len = lvSaveNameAddRaw(buf, sizeof(buf), len, clean[i]);
         firstName = false;
         firstTeam = false;
       }
     }
-    if (usedCount > shownCount) {
-      char rest[24];
-      snprintf(rest, sizeof(rest), " +%d", usedCount - shownCount);
+    if (left > 0) {
+      char rest[32];
+      snprintf(rest, sizeof(rest), "%s+ %d more", (k > 0) ? " " : "", left);
       len = lvSaveNameAddRaw(buf, sizeof(buf), len, rest);
+    }
+    if (botCount > 0) {
+      char count[32];
+      snprintf(count, sizeof(count), "%s%d %s", (k > 0 || left > 0) ? ", " : "",
+               botCount, (botCount == 1) ? "Bot" : "Bots");
+      len = lvSaveNameAddRaw(buf, sizeof(buf), len, count);
+    }
+    if (len <= LV_SAVE_NAME_STEM_BYTES || k <= 1) {
+      break;
     }
   }
 
-  /* Too long: cut at the limit, back to the start of the character the
-     limit falls in, and then past what a cut can leave hanging. */
-  if (len > LV_SAVE_NAME_MAX_BYTES) {
-    len = LV_SAVE_NAME_MAX_BYTES;
-    while (len > 0 && ((unsigned char)buf[len] & 0xC0) == 0x80) {
-      len--;
-    }
-    buf[len] = '\0';
-    for (;;) {
-      /* A count cut short would be a wrong count. */
-      size_t d = len;
-      while (d > 0 && buf[d - 1] >= '0' && buf[d - 1] <= '9') {
-        d--;
-      }
-      if (d >= 2 && buf[d - 1] == '+' && buf[d - 2] == ' ') {
-        len = d - 2;
-      }
-      while (len > 0 && strchr(" ,-+", buf[len - 1]) != NULL) {
-        len--;
-      }
-      if (len >= 3 && strncmp(buf + len - 3, " vs", 3) == 0) {
-        len -= 3;
-        continue;
-      }
-      break;
-    }
-    buf[len] = '\0';
+  if (lvSaveNameIsDevice(buf)) {
+    memmove(buf + 4, buf, len + 1);
+    memcpy(buf, "log ", 4);
+    len += 4;
+  }
+  /* The date, the map and one name are always less than the limit, so this
+     cut is for nothing the viewer gives: it only keeps the promise. */
+  if (len > LV_SAVE_NAME_STEM_BYTES) {
+    len = lvSaveNameWholeChars(buf, LV_SAVE_NAME_STEM_BYTES);
   }
   while (len > 0 && (buf[len - 1] == '.' || buf[len - 1] == ' ')) {
     len--;
