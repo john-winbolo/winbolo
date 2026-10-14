@@ -12,6 +12,10 @@
  *       the lobby hidden, and in a slider too narrow for its handle.
  *   lv_event_overlay_clusters — markers nearer than one marker width become
  *       one; the one a point is on; the team most of a marker's events name.
+ *   lv_event_overlay_tip_place — the tooltip of a marker of several events
+ *       is all in the window wherever the mouse is: under the mouse, over
+ *       it, or moved up and to the side; and its lines are drawn smaller
+ *       when they are too many for columns.
  *   lv_event_overlay_choice — the chosen kinds go to the preferences text
  *       and back; a name no build knows is ignored; an empty choice stays
  *       empty.
@@ -306,6 +310,108 @@ int run_lv_event_overlay_tip_columns(void) {
     }
     lvOverlayTipCell(3, 0, &col, &row);
     UT_ASSERT(col == 3 && row == 0);
+    return 0;
+}
+
+/* Where the tooltip of a marker goes, and how much smaller its lines are
+   drawn when they are too many for columns: all of it is in the window. */
+int run_lv_event_overlay_tip_place(void) {
+    /* The window: 1000 by 600, with a border of 4 kept free. */
+    const float x0 = 4.0f, y0 = 4.0f, x1 = 996.0f, y1 = 596.0f, gap = 16.0f;
+    LvOverlayTipPos p;
+    LvOverlayTipColumns g;
+    float s;
+    int mx, my, w, h;
+
+    /* Room everywhere: under the mouse and to the right of it. */
+    p = lvOverlayTipPlace(300.0f, 200.0f, 200.0f, 100.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.x, 316.0f) && ovl_near(p.y, 216.0f), "free: %f %f", (double)p.x,
+                  (double)p.y);
+    /* Just in at the bottom stays under the mouse. */
+    p = lvOverlayTipPlace(300.0f, 480.0f, 200.0f, 100.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.y, 496.0f), "just in: %f", (double)p.y);
+    /* The lane is at the bottom of the window: no room under the mouse, so
+       the tooltip goes over it. */
+    p = lvOverlayTipPlace(300.0f, 560.0f, 200.0f, 100.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.x, 316.0f) && ovl_near(p.y, 444.0f), "over the mouse: %f %f",
+                  (double)p.x, (double)p.y);
+    /* No room to the right: it moves left until its right edge is in. */
+    p = lvOverlayTipPlace(950.0f, 560.0f, 200.0f, 100.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.x, 796.0f) && ovl_near(p.y, 444.0f), "at the right edge: %f %f",
+                  (double)p.x, (double)p.y);
+    /* A long list, higher than the room over the mouse and than the room
+       under it: it moves up until its bottom edge is in, beside the mouse. */
+    p = lvOverlayTipPlace(300.0f, 400.0f, 200.0f, 450.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.x, 316.0f) && ovl_near(p.y, 146.0f), "long: %f %f", (double)p.x,
+                  (double)p.y);
+    /* The same at the right edge: beside the mouse on its left. */
+    p = lvOverlayTipPlace(900.0f, 400.0f, 200.0f, 450.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.x, 684.0f) && ovl_near(p.y, 146.0f), "long, on the left: %f %f",
+                  (double)p.x, (double)p.y);
+    /* Too wide for either side of the mouse: its right edge is in. */
+    p = lvOverlayTipPlace(500.0f, 400.0f, 800.0f, 450.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.x, 196.0f) && ovl_near(p.y, 146.0f), "long and wide: %f %f",
+                  (double)p.x, (double)p.y);
+    /* As big as the room: it fills it. */
+    p = lvOverlayTipPlace(500.0f, 560.0f, 992.0f, 592.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.x, 4.0f) && ovl_near(p.y, 4.0f), "the whole room: %f %f",
+                  (double)p.x, (double)p.y);
+    /* Bigger than the room: it starts at the top and at the left edge. */
+    p = lvOverlayTipPlace(500.0f, 560.0f, 1500.0f, 900.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.x, 4.0f) && ovl_near(p.y, 4.0f), "too big: %f %f", (double)p.x,
+                  (double)p.y);
+
+    /* Every tooltip that is no bigger than the room is all in the room,
+       wherever the mouse is. */
+    for (w = 50; w <= 992; w += 157) {
+        for (h = 20; h <= 592; h += 143) {
+            for (mx = 0; mx <= 1000; mx += 50) {
+                for (my = 0; my <= 600; my += 50) {
+                    p = lvOverlayTipPlace((float)mx, (float)my, (float)w, (float)h, x0, y0, x1,
+                                          y1, gap);
+                    UT_ASSERT_MSG(p.x >= x0 && p.y >= y0 && p.x + (float)w <= x1 &&
+                                      p.y + (float)h <= y1,
+                                  "%d by %d, mouse %d %d: at %f %f", w, h, mx, my, (double)p.x,
+                                  (double)p.y);
+                }
+            }
+        }
+    }
+    /* Sizes that are not sizes. */
+    p = lvOverlayTipPlace(300.0f, 200.0f, -5.0f, -5.0f, x0, y0, x1, y1, -3.0f);
+    UT_ASSERT_MSG(ovl_near(p.x, 300.0f) && ovl_near(p.y, 200.0f), "no size: %f %f", (double)p.x,
+                  (double)p.y);
+
+    /* The lines at their own size while they go in, in one column or more. */
+    s = lvOverlayTipScale(3, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(ovl_near(s, 1.0f), "3 lines: %f", (double)s);
+    s = lvOverlayTipScale(50, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(ovl_near(s, 1.0f), "50 lines fill the room: %f", (double)s);
+    s = lvOverlayTipScale(0, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(ovl_near(s, 1.0f), "no lines: %f", (double)s);
+    /* One line too many. One step smaller is still 10 lines in each of 5
+       columns; two steps are 11 lines, and then they all go in. */
+    s = lvOverlayTipScale(51, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(ovl_near(s, 0.90f), "51 lines: %f", (double)s);
+    g = lvOverlayTipColumns(51, 17.0f * s, 170.0f, 200.0f * s, 1000.0f);
+    UT_ASSERT_MSG(g.fits && g.cols * g.rows >= 51 && (float)g.rows * 17.0f * s <= 170.0f &&
+                      (float)g.cols * 200.0f * s <= 1000.0f,
+                  "51 lines at %f: %d columns of %d", (double)s, g.cols, g.rows);
+    /* Many more: as much smaller as it takes, and no smaller. */
+    s = lvOverlayTipScale(120, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(s < 0.95f && s > LV_OVERLAY_TIP_SCALE_MIN, "120 lines: %f", (double)s);
+    g = lvOverlayTipColumns(120, 17.0f * s, 170.0f, 200.0f * s, 1000.0f);
+    UT_ASSERT_MSG(g.fits && g.cols * g.rows >= 120, "120 lines at %f: %d columns of %d",
+                  (double)s, g.cols, g.rows);
+    g = lvOverlayTipColumns(120, 17.0f * (s + LV_OVERLAY_TIP_SCALE_STEP), 170.0f,
+                            200.0f * (s + LV_OVERLAY_TIP_SCALE_STEP), 1000.0f);
+    UT_ASSERT_MSG(!g.fits, "120 lines do not go in one step bigger than %f", (double)s);
+    /* More than can be read at any size: the least size, and every line is
+       still in the columns. */
+    s = lvOverlayTipScale(5000, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(ovl_near(s, LV_OVERLAY_TIP_SCALE_MIN), "5000 lines: %f", (double)s);
+    g = lvOverlayTipColumns(5000, 17.0f * s, 170.0f, 200.0f * s, 1000.0f);
+    UT_ASSERT_MSG(g.cols * g.rows >= 5000, "5000 lines: %d columns of %d", g.cols, g.rows);
     return 0;
 }
 

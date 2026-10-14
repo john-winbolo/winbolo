@@ -20,6 +20,8 @@
  *       whole, only its number, or left out.
  *   lv_controls_wheel_step — Shift and the wheel over the seek bar: one
  *       tick a notch, wheel up back in time, held inside the log.
+ *   lv_controls_fine_drag — Shift and a drag of the seek bar: no move when
+ *       the anchor is set, two pixels a tick, held inside the log.
  */
 
 #include <stdbool.h>
@@ -489,5 +491,84 @@ int run_lv_controls_wheel_step(void) {
     st = lvControlsWheelStep(-1.0e30f, NULL, 0xFFFFFF00u, 0, 0xFFFFFFF0u, 20);
     UT_ASSERT_MSG(st.targetMs == 0xFFFFFFF0u, "a huge wheel at the top of the clock: %u",
                   (unsigned)st.targetMs);
+    return 0;
+}
+
+int run_lv_controls_fine_drag(void) {
+    const float fine = LV_CONTROLS_FINE_DRAG_PX_PER_TICK;
+    uint32_t got;
+    int px;
+
+    UT_ASSERT_MSG(fine == 2.0f, "pixels for a tick: %f", (double)fine);
+
+    /* No jump when the anchor is set: with the mouse at the anchor the
+       answer is the anchor's own time, also one between two ticks, at any
+       x, and at any rate. */
+    got = lvControlsDragTargetMs(30000, 412.0f, 412.0f, fine, 20.0f, 0, 60000);
+    UT_ASSERT_MSG(got == 30000, "at the anchor: %u", (unsigned)got);
+    got = lvControlsDragTargetMs(30007, 0.5f, 0.5f, fine, 20.0f, 0, 60000);
+    UT_ASSERT_MSG(got == 30007, "at an anchor between two ticks: %u", (unsigned)got);
+    got = lvControlsDragTargetMs(30007, 900.0f, 900.0f, 1.0f, 3600.0f, 0, 60000);
+    UT_ASSERT_MSG(got == 30007, "at the anchor, without Shift: %u", (unsigned)got);
+
+    /* With Shift: two pixels are one tick, either way. A part of a step
+       does not count. */
+    got = lvControlsDragTargetMs(30000, 400.0f, 401.0f, fine, 20.0f, 0, 60000);
+    UT_ASSERT_MSG(got == 30000, "one pixel right: %u", (unsigned)got);
+    got = lvControlsDragTargetMs(30000, 400.0f, 402.0f, fine, 20.0f, 0, 60000);
+    UT_ASSERT_MSG(got == 30020, "two pixels right: %u", (unsigned)got);
+    got = lvControlsDragTargetMs(30000, 400.0f, 399.0f, fine, 20.0f, 0, 60000);
+    UT_ASSERT_MSG(got == 30000, "one pixel left: %u", (unsigned)got);
+    got = lvControlsDragTargetMs(30000, 400.0f, 398.0f, fine, 20.0f, 0, 60000);
+    UT_ASSERT_MSG(got == 29980, "two pixels left: %u", (unsigned)got);
+    got = lvControlsDragTargetMs(30000, 400.0f, 500.0f, fine, 20.0f, 0, 60000);
+    UT_ASSERT_MSG(got == 31000, "100 pixels right: %u", (unsigned)got);
+    got = lvControlsDragTargetMs(30000, 400.0f, 300.0f, fine, 20.0f, 0, 60000);
+    UT_ASSERT_MSG(got == 29000, "100 pixels left: %u", (unsigned)got);
+    /* Every pixel of a slow drag: never more than one tick at a time. */
+    for (px = -200; px < 200; px++) {
+        uint32_t a = lvControlsDragTargetMs(30000, 400.0f, 400.0f + (float)px, fine, 20.0f, 0,
+                                            60000);
+        uint32_t b = lvControlsDragTargetMs(30000, 400.0f, 401.0f + (float)px, fine, 20.0f, 0,
+                                            60000);
+        UT_ASSERT_MSG(b == a || b == a + 20, "pixel %d: %u then %u", px, (unsigned)a,
+                      (unsigned)b);
+    }
+    /* An anchor between two ticks stays that far from the ticks. */
+    got = lvControlsDragTargetMs(30007, 400.0f, 404.0f, fine, 20.0f, 0, 60000);
+    UT_ASSERT_MSG(got == 30047, "from between two ticks: %u", (unsigned)got);
+
+    /* Held at the two ends of the log that shows. */
+    got = lvControlsDragTargetMs(60, 400.0f, 380.0f, fine, 20.0f, 0, 60000);
+    UT_ASSERT_MSG(got == 0, "past the start: %u", (unsigned)got);
+    got = lvControlsDragTargetMs(60, 400.0f, 394.0f, fine, 20.0f, 0, 60000);
+    UT_ASSERT_MSG(got == 0, "to the start: %u", (unsigned)got);
+    got = lvControlsDragTargetMs(59960, 400.0f, 420.0f, fine, 20.0f, 0, 60000);
+    UT_ASSERT_MSG(got == 60000, "past the end: %u", (unsigned)got);
+    got = lvControlsDragTargetMs(12040, 400.0f, 300.0f, fine, 20.0f, 12000, 60000);
+    UT_ASSERT_MSG(got == 12000, "past the start of the round: %u", (unsigned)got);
+    got = lvControlsDragTargetMs(0xFFFFFFE0u, 0.0f, 4000.0f, fine, 20.0f, 0, 0xFFFFFFF0u);
+    UT_ASSERT_MSG(got == 0xFFFFFFF0u, "at the top of the clock: %u", (unsigned)got);
+
+    /* Without Shift, after it was let go: each pixel is the length of the
+       log one pixel of the bar stands for. */
+    got = lvControlsDragTargetMs(30000, 400.0f, 410.0f, 1.0f, 3600.0f, 0, 3600000);
+    UT_ASSERT_MSG(got == 66000, "ten pixels of the bar: %u", (unsigned)got);
+    got = lvControlsDragTargetMs(30000, 400.0f, 390.0f, 1.0f, 3600.0f, 0, 3600000);
+    UT_ASSERT_MSG(got == 0, "ten pixels back, past the start: %u", (unsigned)got);
+    got = lvControlsDragTargetMs(30000, 400.0f, 410.5f, 1.0f, 12.5f, 0, 3600000);
+    UT_ASSERT_MSG(got == 30125, "a step that is no whole number: %u", (unsigned)got);
+
+    /* Numbers that make no sense do no harm. */
+    got = lvControlsDragTargetMs(1000, 0.0f, 10.0f, 0.0f, 20.0f, 0, 60000);
+    UT_ASSERT_MSG(got == 1200, "no pixels for a step: %u", (unsigned)got);
+    got = lvControlsDragTargetMs(1000, 0.0f, 10.0f, fine, -5.0f, 0, 60000);
+    UT_ASSERT_MSG(got == 1000, "a step under zero: %u", (unsigned)got);
+    got = lvControlsDragTargetMs(1000, 0.0f, 10.0f, fine, 20.0f, 500, 100);
+    UT_ASSERT_MSG(got == 500, "ends the wrong way round: %u", (unsigned)got);
+    got = lvControlsDragTargetMs(1000, 0.0f, 1.0e30f, fine, 20.0f, 0, 60000);
+    UT_ASSERT_MSG(got == 60000, "a mouse far off to the right: %u", (unsigned)got);
+    got = lvControlsDragTargetMs(1000, 0.0f, -1.0e30f, fine, 20.0f, 0, 60000);
+    UT_ASSERT_MSG(got == 0, "a mouse far off to the left: %u", (unsigned)got);
     return 0;
 }

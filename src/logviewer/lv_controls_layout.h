@@ -324,4 +324,46 @@ static inline LvWheelStep lvControlsWheelStep(float wheel, float *carry, uint32_
     return out;
 }
 
+/* ── Shift and a drag of the seek bar ───────────────────────────────── */
+
+/* With Shift held while the seek bar is dragged, playback moves one tick of
+ * the log for each this many pixels the mouse moves sideways. A bar 1000
+ * pixels wide over a round of an hour moves 180 ticks for each pixel
+ * without Shift, so this is the way to put playback on one tick. */
+#define LV_CONTROLS_FINE_DRAG_PX_PER_TICK 2.0f
+
+/* Where a drag that is measured from an anchor puts playback.
+ *
+ * The anchor is the place playback was at (anchorMs) and the x of the mouse
+ * (anchorX) when the measuring started: when Shift went down in a drag, when
+ * a drag started with Shift down, or when Shift was let go. mouseX is where
+ * the mouse is now. Each whole pxPerStep the mouse is from the anchor is one
+ * step of stepMs; a part of a step does not count, on either side. So with
+ * the mouse at the anchor the answer is anchorMs itself: playback does not
+ * move at the moment the anchor is set.
+ *
+ * With Shift: pxPerStep is LV_CONTROLS_FINE_DRAG_PX_PER_TICK and stepMs one
+ * tick (20). Without, after Shift was let go: pxPerStep is 1 and stepMs the
+ * length of the log one pixel of the bar stands for.
+ *
+ * The answer is held to startMs..endMs, the ends of the log that shows. */
+static inline uint32_t lvControlsDragTargetMs(uint32_t anchorMs, float anchorX, float mouseX,
+                                              float pxPerStep, float stepMs,
+                                              uint32_t startMs, uint32_t endMs) {
+    double dx = (double)mouseX - (double)anchorX;
+    double steps, target;
+
+    if (endMs < startMs) endMs = startMs;
+    if (!(pxPerStep > 0.0f)) pxPerStep = 1.0f;
+    if (!(stepMs >= 0.0f)) stepMs = 0.0f;
+    /* No screen is this wide; it also takes a mouse x that is no number. */
+    if (!(dx > -1.0e7)) dx = -1.0e7;
+    if (dx > 1.0e7) dx = 1.0e7;
+    steps = (double)(int64_t)(dx / (double)pxPerStep); /* toward zero */
+    target = (double)anchorMs + steps * (double)stepMs;
+    if (target < (double)startMs) return startMs;
+    if (target > (double)endMs) return endMs;
+    return (uint32_t)(target + 0.5);
+}
+
 #endif /* LV_CONTROLS_LAYOUT_H */

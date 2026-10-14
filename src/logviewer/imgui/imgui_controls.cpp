@@ -111,6 +111,116 @@ static void seek_to_ratio(float ratio) {
     lv_windowNeedRedraw();
 }
 
+/* Move the world to an exact time of the log. Playback must already be
+ * paused, as for seek_to_ratio. */
+static void seek_to_ms(uint32_t ms) {
+    lv_clientMutexWaitFor();
+    lv_drawDirtyScreen();
+    lv_screenSeekToTimeMs(ms);
+    lv_drawDirtyScreen();
+    lv_clientMutexRelease();
+    lv_windowNeedRedraw();
+}
+
+/* Shift and a drag of the seek bar: playback moves one tick of the log for
+ * each LV_CONTROLS_FINE_DRAG_PX_PER_TICK pixels of the mouse, so it can be
+ * put on one tick (lvControlsDragTargetMs).
+ *
+ * The drag is then measured from an anchor, not from where the mouse is on
+ * the bar: the place playback was at and the x of the mouse when Shift went
+ * down, or when the drag started with Shift down. Playback does not move at
+ * that moment. When Shift is let go in the middle of the drag a new anchor
+ * is set there and the drag goes on from it at the bar's ordinary rate (the
+ * length of the log one pixel of the bar stands for) until the button is
+ * let go. The handle is by then not under the mouse, so the ordinary way,
+ * the handle goes where the mouse is, would make it jump.
+ *
+ * While the drag is measured like this ImGui only draws the slider
+ * (ImGuiSliderFlags_ReadOnly) and the value is worked out here. A drag in
+ * which Shift is never down does not come here at all. */
+static bool s_rel_drag = false;       /* this drag is measured from an anchor */
+static bool s_rel_fine = false;       /* at the fine rate: Shift is down */
+static uint32_t s_rel_anchor_ms = 0;  /* the log's own time */
+static float s_rel_anchor_x = 0.0f;
+static uint32_t s_rel_target_ms = 0;  /* where the drag puts playback now */
+/* The pixels the handle of the seek bar can move over, from the last frame
+ * the bar was drawn. */
+static float s_seek_usable_px = 0.0f;
+
+/* One tick of the log. */
+#define LV_CONTROLS_TICK_MS 20.0f
+
+/* Before the slider is drawn: sets or moves the anchor, and puts the value
+ * the drag gives in s_seek_ratio. True when the slider is to be drawn
+ * read-only in this frame. */
+static bool seek_rel_drag_update(ImGuiID seek_id) {
+    const ImGuiIO &io = ImGui::GetIO();
+    const ImGuiContext &g = *ImGui::GetCurrentContext();
+    const uint32_t startMs = lv_screenWindowStartMs();
+    const uint32_t lenMs = lv_screenWindowLenMs();
+    const bool active = ImGui::GetActiveID() == seek_id;
+
+    if (lenMs == 0 || lv_screenSpecIsLiveMode()) {
+        s_rel_drag = false;
+        return false;
+    }
+    if (!active) {
+        s_rel_drag = false;
+        /* A press on the bar with Shift down starts a fine drag: it must
+         * not first put the handle where the press was. Ctrl and a press is
+         * the slider's text box, left alone. */
+        return io.KeyShift && !io.KeyCtrl;
+    }
+    if (g.ActiveIdSource != ImGuiInputSource_Mouse || ImGui::TempInputIsActive(seek_id)) {
+        s_rel_drag = false;
+        return false;
+    }
+    if (io.MouseDown[0]) {
+        const bool fine = io.KeyShift;
+        /* The world is where the handle is: no seek is owed. */
+        const bool at_world = s_is_seeking && s_seek_ratio == s_seek_applied;
+        bool anchored = false;
+        if ((fine && !(s_rel_drag && s_rel_fine)) || (!fine && s_rel_drag && s_rel_fine)) {
+            anchored = true;
+            /* Shift went down, or was let go: a new anchor, where the handle
+             * is. The sum is lv_screenSeekToPosition's own, so the anchor is
+             * the very time the drag last asked for. */
+            if (s_rel_drag) {
+                s_rel_anchor_ms = s_rel_target_ms;
+            } else if (s_is_seeking) {
+                s_rel_anchor_ms = startMs + (uint32_t)(s_seek_ratio * (float)lenMs);
+            } else {
+                uint32_t now = lv_screenGetTimeRunning();
+                if (now < startMs) now = startMs;
+                if (now > startMs + lenMs) now = startMs + lenMs;
+                s_rel_anchor_ms = now;
+            }
+            s_rel_anchor_x = io.MousePos.x;
+            s_rel_drag = true;
+            s_rel_fine = fine;
+        }
+        if (s_rel_drag) {
+            float pxPerStep = LV_CONTROLS_FINE_DRAG_PX_PER_TICK;
+            float stepMs = LV_CONTROLS_TICK_MS;
+            if (!s_rel_fine) {
+                pxPerStep = 1.0f;
+                stepMs = (float)lenMs / ((s_seek_usable_px >= 1.0f) ? s_seek_usable_px : 1.0f);
+            }
+            s_rel_target_ms = lvControlsDragTargetMs(s_rel_anchor_ms, s_rel_anchor_x,
+                                                     io.MousePos.x, pxPerStep, stepMs,
+                                                     startMs, startMs + lenMs);
+            s_seek_ratio = (float)(s_rel_target_ms - startMs) / (float)lenMs;
+            if (anchored && at_world) {
+                /* The same time written as another fraction: still no seek
+                 * owed, or the scrub would go back to where it is. */
+                s_seek_applied = s_seek_ratio;
+            }
+        }
+    }
+    /* On the frame the button is let go the value stays what it was. */
+    return s_rel_drag;
+}
+
 /* Shift and the wheel over the seek bar, or over the lane of event markers
  * on it: one tick of the log for each notch, wheel up back in time
  * (lvControlsWheelStep). a, b: the corners of the bar and the lane. The
@@ -523,8 +633,24 @@ void lv_imgui_controls_window(void) {
             lv_event_overlay_lane();
 
             seek_slider_drawn = true;
-            if (ImGui::SliderFloat("##seek", &s_seek_ratio, 0.0f, 1.0f, seek_fmt,
-                                   ImGuiSliderFlags_NoRoundToFormat)) {
+            /* Shift and a drag: the value comes from seek_rel_drag_update
+             * and the slider is only drawn. */
+            ImGuiSliderFlags seek_flags = ImGuiSliderFlags_NoRoundToFormat;
+            if (seek_rel_drag_update(ImGui::GetID("##seek"))) {
+                seek_flags |= ImGuiSliderFlags_ReadOnly;
+            }
+            bool seek_changed = ImGui::SliderFloat("##seek", &s_seek_ratio, 0.0f, 1.0f, seek_fmt,
+                                                   seek_flags);
+            {
+                /* As ImGui's own slider has it: two pixels at each end, and
+                 * the handle is all on the bar. */
+                const float bar = ImGui::GetItemRectSize().x - 4.0f;
+                const float grab = ImGui::GetStyle().GrabMinSize;
+                s_seek_usable_px = bar - ((grab < bar) ? grab : bar);
+            }
+            /* A read-only slider reports no change: a drag that is measured
+             * from an anchor starts the scrub by being held. */
+            if (seek_changed || (s_rel_drag && ImGui::IsItemActive())) {
                 if (!s_is_seeking) {
                     /* Freeze playback for the whole scrub rather than
                      * pausing and resuming around every applied seek: that
@@ -553,7 +679,11 @@ void lv_imgui_controls_window(void) {
                     apply = (now - s_seek_applied_at >= LV_SCRUB_BACK_SECS);
                 }
                 if (apply) {
-                    seek_to_ratio(s_seek_ratio);
+                    if (s_rel_drag) {
+                        seek_to_ms(s_rel_target_ms);
+                    } else {
+                        seek_to_ratio(s_seek_ratio);
+                    }
                     s_seek_applied = s_seek_ratio;
                     s_seek_applied_at = now;
                 }
@@ -572,13 +702,20 @@ void lv_imgui_controls_window(void) {
                  * backward one to the decoder, a snapshot restore and a
                  * decode of the whole round up to here, for no change. */
                 if (s_seek_ratio != s_seek_applied) {
-                    seek_to_ratio(s_seek_ratio);
+                    if (s_rel_drag) {
+                        seek_to_ms(s_rel_target_ms);
+                    } else {
+                        seek_to_ratio(s_seek_ratio);
+                    }
                     s_seek_applied = s_seek_ratio;
                 }
                 if (s_seek_was_playing) {
                     lv_windowPlay();
                 }
                 s_seek_was_playing = false;
+            }
+            if (!ImGui::IsItemActive()) {
+                s_rel_drag = false;
             }
             seek_wheel_step(seek_top, ImGui::GetItemRectMax());
 

@@ -463,22 +463,28 @@ static float overlay_tip_icon_side(void) {
     return floorf(ImGui::GetFontSize());
 }
 
-/* The lines of a marker that stands for several events: each event's own
- * picture (the marker of the lane and of the Events panel, by the same
- * call), its time and its line of the Events panel. Every event has a line.
- * When they are more than the window is high they go in columns. */
-static void overlay_tooltip_lines(const OverlayMarker &m) {
+/* The tooltip of a marker that stands for several events: how many they
+ * are, then a line for each: the event's own picture (the marker of the lane
+ * and of the Events panel, by the same call), its time and its line of the
+ * Events panel. Every event has a line.
+ *
+ * All of it is worked out before the tooltip is begun, so the tooltip can be
+ * put where the whole of it is in the window (lvOverlayTipPlace). ImGui's
+ * own placing of a tooltip that goes neither beside the mouse nor over or
+ * under it is at the mouse, and what is past the edge of the window is cut
+ * off. When the lines are more than the window is high they go in columns;
+ * when the columns are more than the window is wide the lines are drawn
+ * smaller (lvOverlayTipScale). */
+static void overlay_tooltip_list(const OverlayMarker &m) {
     const ImGuiStyle &style = ImGui::GetStyle();
     const ImGuiViewport *vp = ImGui::GetMainViewport();
-    const float iconSide = overlay_tip_icon_side();
-    const float iconCol = iconSide + style.ItemInnerSpacing.x;
-    const float textH = ImGui::GetTextLineHeight();
-    const float lineH = ((textH > iconSide) ? textH : iconSide) + style.ItemSpacing.y;
-    const float colGap = style.ItemSpacing.x * 2.0f;
+    ImFont *font = ImGui::GetFont();
+    const float fontSize = ImGui::GetFontSize();
     std::vector<std::string> lines;
     std::vector<LvEventInfo> infos;
     float textW = 0.0f;
     LvEventInfo info;
+    char head[256];
 
     lines.reserve((size_t)m.count);
     infos.reserve((size_t)m.count);
@@ -492,57 +498,110 @@ static void overlay_tooltip_lines(const OverlayMarker &m) {
         if (w > textW) textW = w;
     }
     const int n = (int)lines.size();
-    if (n == 0) return;
+
+    MessageArgs args = {};
+    snprintf(args.string1, sizeof(args.string1), "%d", m.count);
+    snprintf(head, sizeof(head), "%s", langGetTextFmt(STR_LV_OVERLAY_COUNT, &args));
+    const float headW = ImGui::CalcTextSize(head).x;
+    const float headH = ImGui::GetTextLineHeightWithSpacing();
 
     /* The room: the window, less the tooltip's own edges and the line that
-     * says how many events there are (it is drawn already). */
-    const float colW = iconCol + textW + colGap;
-    const float availW = vp->WorkSize.x - style.DisplaySafeAreaPadding.x * 2.0f -
-                         style.WindowPadding.x * 2.0f + colGap;
-    const float availH = vp->WorkSize.y - style.DisplaySafeAreaPadding.y * 2.0f -
-                         style.WindowPadding.y * 2.0f - ImGui::GetTextLineHeightWithSpacing();
-    const LvOverlayTipColumns grid = lvOverlayTipColumns(n, lineH, availH, colW, availW);
+     * says how many events there are. */
+    const float roomX0 = vp->WorkPos.x + style.DisplaySafeAreaPadding.x;
+    const float roomY0 = vp->WorkPos.y + style.DisplaySafeAreaPadding.y;
+    const float roomX1 = vp->WorkPos.x + vp->WorkSize.x - style.DisplaySafeAreaPadding.x;
+    const float roomY1 = vp->WorkPos.y + vp->WorkSize.y - style.DisplaySafeAreaPadding.y;
+    const float iconSide1 = overlay_tip_icon_side();
+    const float textH1 = ImGui::GetTextLineHeight();
+    const float colGap1 = style.ItemSpacing.x * 2.0f;
+    float iconSide = iconSide1;
+    float iconCol = iconSide + style.ItemInnerSpacing.x;
+    float textH = textH1;
+    float lineGap = style.ItemSpacing.y;
+    float lineH = ((textH > iconSide) ? textH : iconSide) + lineGap;
+    float colGap = colGap1;
+    float colW = iconCol + textW + colGap;
+    float textSize = fontSize;
+    const float availW = (roomX1 - roomX0) - style.WindowPadding.x * 2.0f;
+    const float availH = (roomY1 - roomY0) - style.WindowPadding.y * 2.0f - headH;
 
-    const ImVec2 origin = ImGui::GetCursorScreenPos();
-    ImDrawList *dl = ImGui::GetWindowDrawList();
-    const ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
-    for (int k = 0; k < n; k++) {
-        int col = 0, row = 0;
-        lvOverlayTipCell(k, grid.rows, &col, &row);
-        const float x = floorf(origin.x + (float)col * colW);
-        const float y = floorf(origin.y + (float)row * lineH);
-        const float iconY = floorf(y + (textH - iconSide) * 0.5f);
-        lv_event_marker_draw(dl, infos[k].kind, infos[k].team, infos[k].ping, ImVec2(x, iconY),
-                             ImVec2(x + iconSide, iconY + iconSide), 1.0f);
-        dl->AddText(ImVec2(x + iconCol, y), textCol, lines[k].c_str());
+    /* The last column has no gap after it, so the columns have a gap more
+     * of room than the window gives. */
+    float scale = lvOverlayTipScale(n, lineH, availH, colW, availW + colGap);
+    LvOverlayTipColumns grid = lvOverlayTipColumns(n, lineH, availH, colW, availW + colGap);
+    while (scale < 1.0f) {
+        /* Everything of a line that much smaller. The text is measured
+         * again: a font at another size is not that much narrower to the
+         * pixel, so it can take one step more. */
+        textSize = floorf(fontSize * scale);
+        if (textSize < 1.0f) textSize = 1.0f;
+        iconSide = floorf(iconSide1 * scale);
+        iconCol = iconSide + style.ItemInnerSpacing.x * scale;
+        textH = floorf(textH1 * scale);
+        lineGap = floorf(style.ItemSpacing.y * scale);
+        lineH = ((textH > iconSide) ? textH : iconSide) + lineGap;
+        colGap = colGap1 * scale;
+        textW = 0.0f;
+        for (int k = 0; k < n; k++) {
+            const float w = font->CalcTextSizeA(textSize, FLT_MAX, 0.0f, lines[k].c_str()).x;
+            if (w > textW) textW = w;
+        }
+        colW = iconCol + textW + colGap;
+        grid = lvOverlayTipColumns(n, lineH, availH, colW, availW + colGap);
+        if (grid.fits || scale <= LV_OVERLAY_TIP_SCALE_MIN + 0.001f) break;
+        scale -= LV_OVERLAY_TIP_SCALE_STEP;
     }
-    /* The room the lines took: the tooltip is made this big. */
-    ImGui::Dummy(ImVec2((float)grid.cols * colW - colGap,
-                        (float)grid.rows * lineH - style.ItemSpacing.y));
+    const float gridW = (n > 0) ? (float)grid.cols * colW - colGap : 0.0f;
+    const float gridH = (n > 0) ? (float)grid.rows * lineH - lineGap : 0.0f;
+
+    /* How big the tooltip is going to be, and so where it goes. */
+    const float tipW = ((gridW > headW) ? gridW : headW) + style.WindowPadding.x * 2.0f;
+    const float tipH = headH + gridH + style.WindowPadding.y * 2.0f;
+    const ImVec2 mouse = ImGui::GetMousePos();
+    const LvOverlayTipPos at = lvOverlayTipPlace(mouse.x, mouse.y, tipW, tipH, roomX0, roomY0,
+                                                 roomX1, roomY1, fontSize);
+    ImGui::SetNextWindowPos(ImVec2(floorf(at.x), floorf(at.y)), ImGuiCond_Always);
+    if (!ImGui::BeginTooltip()) return;
+    ImGui::TextDisabled("%s", head);
+    if (n > 0) {
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        const ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
+        for (int k = 0; k < n; k++) {
+            int col = 0, row = 0;
+            lvOverlayTipCell(k, grid.rows, &col, &row);
+            const float x = floorf(origin.x + (float)col * colW);
+            const float y = floorf(origin.y + (float)row * lineH);
+            const float iconY = floorf(y + (textH - iconSide) * 0.5f);
+            lv_event_marker_draw(dl, infos[k].kind, infos[k].team, infos[k].ping,
+                                 ImVec2(x, iconY), ImVec2(x + iconSide, iconY + iconSide), 1.0f);
+            dl->AddText(font, textSize, ImVec2(x + iconCol, y), textCol, lines[k].c_str());
+        }
+        /* The room the lines took: the tooltip is made this big. */
+        ImGui::Dummy(ImVec2(gridW, gridH));
+    }
+    ImGui::EndTooltip();
 }
 
 /* What the mouse over a marker says. One event is its time, its tick and
  * its kind, then its line of the Events panel; several are their number,
- * then a line for each of them (overlay_tooltip_lines). */
+ * then a line for each of them (overlay_tooltip_list). */
 static void overlay_tooltip(const OverlayMarker &m) {
     char when[96];
     LvEventInfo info;
+    if (m.count != 1) {
+        overlay_tooltip_list(m);
+        return;
+    }
     if (!ImGui::BeginTooltip()) return;
-    if (m.count == 1) {
-        if (lv_imgui_events_get_info(s_items[m.first], &info)) {
-            overlay_format_when(info.timeMs, when, sizeof(when));
-            /* A ping says which kind of ping it is. */
-            ImGui::TextDisabled("%s  %s", when,
-                                (info.kind == LV_EVK_CHAT && info.ping >= 0)
-                                    ? lv_event_ping_name(info.ping)
-                                    : lv_imgui_events_kind_label(info.kind));
-            ImGui::TextUnformatted(info.text);
-        }
-    } else {
-        MessageArgs args = {};
-        snprintf(args.string1, sizeof(args.string1), "%d", m.count);
-        ImGui::TextDisabled("%s", langGetTextFmt(STR_LV_OVERLAY_COUNT, &args));
-        overlay_tooltip_lines(m);
+    if (lv_imgui_events_get_info(s_items[m.first], &info)) {
+        overlay_format_when(info.timeMs, when, sizeof(when));
+        /* A ping says which kind of ping it is. */
+        ImGui::TextDisabled("%s  %s", when,
+                            (info.kind == LV_EVK_CHAT && info.ping >= 0)
+                                ? lv_event_ping_name(info.ping)
+                                : lv_imgui_events_kind_label(info.kind));
+        ImGui::TextUnformatted(info.text);
     }
     ImGui::EndTooltip();
 }
