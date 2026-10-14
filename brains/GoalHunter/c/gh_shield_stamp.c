@@ -7,6 +7,8 @@
  *
  * Entry index: angle_key * n_nudges + nudge_idx
  *
+ * Every multi-byte field is little-endian, as attack_shield.lua writes it.
+ *
  * Each ShieldStampEntry holds 6 ShieldShotPath structs:
  *   aim[0..4]    — tank → aim point (5 outgoing AIM_OFFSETS)
  *   pill_to_tank — pill → tank standoff (return fire)
@@ -28,6 +30,7 @@
 #include "gh_shield_stamp.h"
 #include "gh_threat.h"
 #include "bot_manager.h"
+#include "byte_order.h"
 #include <SDL3/SDL.h>
 #include <lauxlib.h>
 #include <math.h>
@@ -305,15 +308,33 @@ static void publish_pill_hit_table(lua_State *L) {
     lua_pop(L, 1);
 }
 
+/* A path's four int16 coordinates, read in place from the file's
+ * little-endian bytes. */
+static void decode_path(ShieldShotPath *p) {
+    const uint8_t *b = (const uint8_t *)p;
+    p->source.x = (int16_t)byteOrderGetLe16(b + 0);
+    p->source.y = (int16_t)byteOrderGetLe16(b + 2);
+    p->target.x = (int16_t)byteOrderGetLe16(b + 4);
+    p->target.y = (int16_t)byteOrderGetLe16(b + 6);
+}
+
 /* Disk read for the winner of the load CAS. Returns 1 on success
  * (s_entries / sizes populated), 0 on failure (sizes left at 0). */
 static int do_disk_load(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return 0;
 
+    uint8_t raw[sizeof(ShieldStampHeader)];
+    if (fread(raw, sizeof(raw), 1, f) != 1) { fclose(f); return 0; }
     ShieldStampHeader hdr;
-    memset(&hdr, 0, sizeof(hdr));
-    if (fread(&hdr, sizeof(hdr), 1, f) != 1) { fclose(f); return 0; }
+    hdr.magic         = byteOrderGetLe32(raw + 0);
+    hdr.version       = byteOrderGetLe32(raw + 4);
+    hdr.n_angles      = byteOrderGetLe32(raw + 8);
+    hdr.n_nudges      = byteOrderGetLe32(raw + 12);
+    hdr.nudge_step_wu = byteOrderGetLe32(raw + 16);
+    hdr.standoff      = byteOrderGetLeFloat(raw + 20);
+    hdr.aim_inset     = byteOrderGetLeFloat(raw + 24);
+    hdr.step_deg      = byteOrderGetLeFloat(raw + 28);
     if (hdr.magic   != STAMP_MAGIC   ||
         hdr.version != STAMP_VERSION ||
         hdr.n_angles == 0 || hdr.n_nudges == 0 ||
@@ -330,6 +351,12 @@ static int do_disk_load(const char *path) {
         free(buf); fclose(f); return 0;
     }
     fclose(f);
+    for (size_t i = 0; i < n; i++) {
+        for (int a = 0; a < STAMP_N_AIMS; a++) {
+            decode_path(&buf[i].aim[a]);
+        }
+        decode_path(&buf[i].pill_to_tank);
+    }
 
     s_entries    = buf;
     s_n_angles   = (int)hdr.n_angles;

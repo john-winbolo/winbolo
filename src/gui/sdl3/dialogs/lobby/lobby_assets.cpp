@@ -292,22 +292,15 @@ static uint64_t lobbyScriptRowWorkshopId(ClientSim *cs, int i) {
     return clientSimGetLobbyScriptWorkshopId(cs, i);
 }
 
-/* Whether a row is the committed map's own script. The fallback's single
- * slot says the same about itself, so a client with no list yet still gets
- * an answer. */
-static bool lobbyScriptRowBound(ClientSim *cs, int i) {
-    if (clientSimGetLobbyScriptCount(cs) > 0) {
-        return clientSimGetLobbyScriptBound(cs, i);
-    }
-    return clientSimGetLobbyScenarioBound(cs);
-}
-
 /* Whether the Mods/Scenario setting keeps a row out of the round. Off, the
- * round composes none of the host's picks, mods and picked scenarios alike;
- * the map's own script is the one row it leaves playing, which is the same
- * line scnDecideScenario draws on the server. */
+ * round composes no script at all — mods, picked scenarios and the map's own
+ * alike — which is the same line scnDecideScenario draws on the server. The
+ * server publishes no row for the map's own script while it is not playing,
+ * so a bound row is not normally on the list with the box off; one that is
+ * reads as off with the rest. */
 static bool lobbyScriptRowSwitchedOff(ClientSim *cs, int i) {
-    return !clientSimGetLobbyModsEnabled(cs) && !lobbyScriptRowBound(cs, i);
+    (void)i;
+    return !clientSimGetLobbyModsEnabled(cs);
 }
 
 /* A row's name, and its file name where it named itself nothing: a script
@@ -500,7 +493,6 @@ static const char *lobbyScenarioName(ClientSim *cs) {
  * each name the setting keeps out, and those names are dimmed. The names are
  * still what the host picked, so they stay on the row, but counting them
  * beside an unchecked box would say they are running when they are not. The
- * map's own script runs either way, so it is counted either way and the
  * count itself is never dimmed.
  *
  * Details sits next to the box and the count comes last, which is the order
@@ -522,8 +514,8 @@ static void lobbyRenderModsRow(ClientSim *cs, bool effectiveHost,
     int  active  = 0;
     int  i;
 
-    /* The scripts that will run, which is every row with the box on and the
-       map's own script alone with it off. */
+    /* The scripts that will run, which is every row with the box on and none
+       with it off. */
     for (i = 0; i < scriptCount; i++) {
         if (!lobbyScriptRowSwitchedOff(cs, i)) active++;
     }
@@ -695,20 +687,18 @@ void lobbyRenderScenarioInfoLines(ClientSim *cs, float s) {
         return;
     }
 
-    /* One line a scenario row. A round that plays has one such row, but
-       with Mods/Scenario off on a map that brings its own script the list
-       holds two: the map's own, which plays, and the host's picked one,
-       which the server keeps for when the box goes back on. Both are drawn,
-       so a joiner is shown the switched-off pick the same way a plain map
-       shows it. */
+    /* One line a scenario row. A round that plays has one such row. With
+       Mods/Scenario off nothing plays, and the server publishes no row for
+       the map's own script, so the rows are the host's picks, which the
+       server keeps for when the box goes back on. Each is drawn, dimmed, so
+       a joiner is shown the switched-off pick the same way on any map. */
     for (int scnRow = 0; scenario != NULL && scnRow < lobbyScriptRowCount(cs);
          scnRow++) {
         /* A scenario the host picked is kept out of the round while the
            Mods/Scenario setting is off, the same as the mods, so it is
-           dimmed and noted the way the mods line below is. The map's own
-           script plays either way and is drawn as it always was. Pushed
-           here and popped after the note, with nothing that can return
-           between the two. */
+           dimmed and noted the way the mods line below is, the map's own
+           script included. Pushed here and popped after the note, with
+           nothing that can return between the two. */
         bool scnOff;
 
         if (lobbyScriptRowIsMod(cs, scnRow)) continue;
@@ -751,10 +741,10 @@ void lobbyRenderScenarioInfoLines(ClientSim *cs, float s) {
            when they are not. The note is what answers it.
 
            Each name is dimmed on its own, by lobbyScenarioScriptLinks, and
-           not the line as a whole: a map whose own script is a mod still
-           plays it with the box off, and that name stays at full strength.
-           The label and the note are dimmed only as far as the names are —
-           the label when every mod on the line is off, the note when any is.
+           not the line as a whole. With the box off every name is off,
+           because nothing plays, the map's own script included; the label
+           and the note are still dimmed only as far as the names are — the
+           label when every mod on the line is off, the note when any is.
            Dimmed with an alpha style var and not BeginDisabled, because the
            names are links and a disabled link cannot be pressed. Each push
            is popped with nothing that can return between the two. */
@@ -848,13 +838,10 @@ static void lobbyRenderModsTooltip(ClientSim *cs, bool modsOn, int modCount) {
     int n = lobbyScriptRowCount(cs);
     int i, shown = 0, listed = modCount;
 
-    /* Off, the hover lists every pick the setting keeps out, the picked
-       scenario as well as the mods: every row that is not the map's own. */
+    /* Off, the hover lists every row the setting keeps out, the picked
+       scenario as well as the mods. */
     if (!modsOn) {
-        listed = 0;
-        for (i = 0; i < n; i++) {
-            if (!lobbyScriptRowBound(cs, i)) listed++;
-        }
+        listed = n;
     }
 
     ImGui::BeginTooltip();
@@ -884,8 +871,7 @@ static void lobbyRenderModsTooltip(ClientSim *cs, bool modsOn, int modCount) {
                             ImGui::GetStyle().Alpha * 0.45f);
     }
     for (i = 0; i < n; i++) {
-        if (modsOn ? !lobbyScriptRowIsMod(cs, i)
-                   : lobbyScriptRowBound(cs, i)) {
+        if (modsOn && !lobbyScriptRowIsMod(cs, i)) {
             continue;
         }
         shown++;

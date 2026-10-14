@@ -497,6 +497,14 @@ static volatile bool spServerTimerShutdown = false;
  * host keeps simulating so remote players aren't frozen. */
 static volatile bool spServerPaused = false;
 
+/* The single-player ClientSim whose frame queue the timer fills, or NULL.
+ * The timer ticks the server on its own thread while the main thread polls
+ * the client, so a poll can come after two server frames; capturing each
+ * frame as it ends is what keeps the first one's events, map changes among
+ * them, from being lost. Written and read only under the threads mutex, and
+ * cleared before the ClientSim it names is destroyed. */
+static ClientSim *spFrameQueueSim = NULL;
+
 static Uint32 SDLCALL hostedServerTimerCb(void *userdata, SDL_TimerID id, Uint32 interval) {
   (void)userdata; (void)id;
   if (spServerTimerShutdown) return 0;
@@ -512,6 +520,9 @@ static Uint32 SDLCALL hostedServerTimerCb(void *userdata, SDL_TimerID id, Uint32
    * so a single-player resume picks straight back up. */
   if (alive && !spServerPaused) {
     serverInstanceTick(spServerSim);
+    if (spFrameQueueSim != NULL) {
+      clientSimNetCaptureLocalFrame(spFrameQueueSim);
+    }
   }
   threadsReleaseMutex();
   return alive ? interval : 0;
@@ -1013,6 +1024,11 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
    * runs at atexit and trips std::terminate. */
   mapChooserStopPreviewWorker();
   if (spServerSimActive) {
+    /* The timer stops filling humanSim's frame queue before humanSim is
+     * destroyed below, which is ahead of the timer being removed. */
+    threadsWaitForMutex();
+    spFrameQueueSim = NULL;
+    threadsReleaseMutex();
     /* Unregister the SP humanSim subscriber before gameFrontShutdownServer
      * destroys the ServerSim's subscriber registry.  The hostedServer-only
      * path skips this (no subscriber was registered) by leaving the handle
@@ -2206,6 +2222,10 @@ bool gameFrontSetDlgState(openingStates newState) {
               returnValue = FALSE;
             } else {
             spServerSimActive = TRUE;
+            threadsWaitForMutex();
+            clientSimNetSetLocalFrameQueue(humanSim, true);
+            spFrameQueueSim = humanSim;
+            threadsReleaseMutex();
             /* Phase 2 leaves the legacy spHumanSubHandle field unset —
              * the auto-subscriber registered by connect lives inside
              * the ClientSim. Phase 4 deletes the field. */
@@ -3306,6 +3326,7 @@ void gameFrontShutdownServer(void) {
   toFree = spServerSim;
   spServerSim = NULL;
   spServerSimActive = FALSE;
+  spFrameQueueSim = NULL;
   threadsReleaseMutex();
 
   /* Finalize the current round's log and upload it before serverInstanceShutdown
@@ -4186,7 +4207,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   bool voiceKeyDefaults = (buff[0] == '\0');
 
   /* Push to talk — Q, which is bound to nothing else and sits under the left
-     hand beside the movement keys (E/D/S/F). A file saved while the key was
+     hand beside the movement keys (W/A/S/D). A file saved while the key was
      unbound holds 0, which the one-shot above turns into Q. */
   intToStr(DEFAULT_PUSHTOTALK, def, sizeof(def));
   prefsGetString("KEYS", "Push To Talk", def, buff, FILENAME_MAX);

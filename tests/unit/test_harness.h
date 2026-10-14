@@ -94,6 +94,12 @@ int run_active_sim_armed_on_lobby_tick(void);
 int run_active_sim_cleared_on_cross_thread_destroy(void);
 int run_active_local_input_to_shot(void);
 int run_sp_shoot_through_timer(void);
+int run_sp_frame_queue_keeps_skipped_frame(void);
+int run_sp_local_map_repair(void);
+int run_sp_frame_queue_repairs_after_drop(void);
+int run_sp_frame_queue_resets_on_lobby(void);
+int run_sp_frame_queue_resets_on_map_change(void);
+int run_sp_frame_queue_keeps_departed_player_gone(void);
 int run_prefs_document_roundtrip(void);
 int run_prefs_keys_roundtrip(void);
 int run_prefs_doc_roundtrip(void);
@@ -366,6 +372,20 @@ int run_positional_sound_lobby_event(void);
 int run_lobby_mods_enabled_defaults(void);
 int run_lobby_mods_enabled_dispatch(void);
 int run_lobby_mods_enabled_codec(void);
+int run_operator_mods_resolve(void);
+int run_operator_mods_required(void);
+int run_operator_mods_locked(void);
+int run_operator_mods_reapply(void);
+int run_operator_mods_wire(void);
+int run_operator_mods_args(void);
+int run_operator_mods_evict(void);
+int run_operator_mods_lock_mask(void);
+int run_operator_mods_mods_off(void);
+int run_operator_mods_map_yield(void);
+int run_operator_mods_setting_short_name(void);
+int run_operator_mods_setting_reapply(void);
+int run_operator_mods_setting_locked(void);
+int run_operator_mods_setting_wire(void);
 int run_fog_settings_defaults(void);
 int run_fog_settings_classic_mode_preset(void);
 int run_fog_settings_lock_implied(void);
@@ -513,6 +533,7 @@ int run_wbn_serverlist_motd(void);
 int run_wbn_serverlist_malformed(void);
 int run_wbn_serverlist_scripts(void);
 int run_wbn_map_parse(void);
+int run_wbn_map_fetch_policy(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
 int run_brain_msgh_budget_kill_no_traceback(void);
@@ -1297,6 +1318,16 @@ int run_attribution_reader_rejects_bad(void);
 int run_attribution_reader_clamps_slotcount(void);
 int run_attribution_reader_old_wbv(void);
 int run_wbv_v2_capture(void);
+/* test_byte_order.c — the formats' little-endian fields, pinned through
+ * their writers and readers. */
+int run_byte_order_helpers(void);
+int run_byte_order_log_long_counts(void);
+int run_byte_order_log_long_counts_viewer(void);
+int run_byte_order_snapshot_base_time(void);
+int run_byte_order_compressed_map_base_time(void);
+int run_byte_order_attribution_member(void);
+int run_byte_order_info_packet(void);
+int run_byte_order_pathfinder_blob(void);
 
 /* Recorded headless runs (test_wbv_fixture_summaries.c): each committed
  * tests/fixtures/wbv/<name>.wbv from a --record scenario is decoded through
@@ -1635,6 +1666,8 @@ int run_tree_hide_ally_option(void);
  * entry that carries the man must still not carry the tank's position. */
 int run_lgm_visibility_tank_in_trees(void);
 int run_lgm_visibility_tank_visible(void);
+int run_lgm_draw_own_matches_wire(void);
+int run_lgm_draw_centre_error_bounds(void);
 
 /* Client-reported view state (test_view_state.c): CMD_VIEW_STATE stores which
  * view a client is in, a viewPolicyKey category grants the claimed item a rect
@@ -2176,6 +2209,7 @@ int run_loopback_quiet_lobby_control_loss(void);
 /* A command packet refreshes the sending client's server-side liveness clock:
  * watched directly across a window in which nothing else is refreshing it. */
 int run_loopback_command_liveness(void);
+int run_loopback_command_queued_behind_map_change(void);
 /* Parallel channel layer over the loopback transport: empty-flow inertness
  * plus a synthetic message round-trip under loss + jitter + dup. */
 int run_loopback_channel(void);
@@ -2855,6 +2889,14 @@ int run_scenario_tank_drop_pill(void);
 int run_scenario_tank_arm_records(void);
 int run_scenario_tank_death_ticks_respawn(void);
 
+int run_tank_drop_pills_spiral_order(void);
+int run_tank_drop_pills_blocked(void);
+int run_tank_drop_pills_map_edge(void);
+int run_tank_drop_pills_hostile_map(void);
+int run_tank_drop_pills_no_room(void);
+int run_lgm_drop_pill_spiral(void);
+int run_lgm_drop_pill_no_room(void);
+
 int run_scenario_lgm_dispatch(void);
 int run_scenario_lgm_recall(void);
 int run_scenario_lgm_kill(void);
@@ -3283,6 +3325,8 @@ int run_scenario_pill_damage_scale(void);
 int run_scenario_blast_names_tank(void);
 int run_scenario_mine_names_layer(void);
 int run_scenario_on_tank_hit(void);
+int run_scenario_kill_credit(void);
+int run_scenario_kill_credit_none(void);
 
 /* The in-process game-event channel (test_game_event_channel.c): a subscriber
  * that asks for it hears the captures and the builder death on it rather than
@@ -3846,6 +3890,7 @@ int run_scenario_precedence_reload_refuses_bound(void);
  * with every region keeping the bit it had at the front. */
 int run_scenario_compose_map_and_mods(void);
 int run_scenario_compose_keeps_map_scenario(void);
+int run_scenario_compose_operator_mod_yields(void);
 int run_scenario_compose_mod_rules_load(void);
 int run_scenario_compose_region_clash_loads(void);
 int run_scenario_compose_reload_list(void);
@@ -3868,11 +3913,27 @@ int run_scenario_compose_game_nested_copy(void);
 int run_scenario_compose_compat_write_stays_local(void);
 int run_scenario_compose_pairs_game_complete(void);
 int run_scenario_compose_unsafe_keeps_sharing(void);
-int run_scenario_compose_off_map_script_only(void);
+int run_scenario_compose_off_map_script_too(void);
+int run_scenario_compose_off_map_alone_plain(void);
 int run_scenario_compose_off_plain_map_none(void);
 int run_scenario_compose_on_picks_replace_map(void);
 int run_scenario_compose_off_then_on(void);
-int run_scenario_compose_off_full_list_hides_last(void);
+int run_scenario_compose_off_full_list_shows_all(void);
+int run_scenario_compose_commit_map_drops_picked(void);
+int run_scenario_compose_preview_cancel_keeps_picks(void);
+int run_scenario_compose_commit_off_keeps_picks(void);
+int run_scenario_compose_commit_mod_map_keeps_picks(void);
+int run_scenario_compose_commit_broken_map_keeps_picks(void);
+int run_scenario_compose_off_on_keeps_map_row_place(void);
+int run_scenario_compose_commit_no_lobby_keeps_picks(void);
+int run_scenario_compose_off_shortened_keeps_map_own(void);
+int run_scenario_compose_rotation_keeps_picks(void);
+int run_scenario_compose_round_start_closes_preview(void);
+int run_scenario_compose_drop_picked_scenarios(void);
+int run_scenario_compose_commit_map_keeps_operator_mod(void);
+int run_scenario_compose_commit_map_fixed_operator_mod(void);
+int run_scenario_compose_map_kind_cached(void);
+int run_scenario_compose_fallback_strict(void);
 int run_scenario_compose_needs_bots_any_mod(void);
 int run_scenario_compose_needs_bots_scenario_and_mod(void);
 int run_scenario_compose_on_tick_bottom_first(void);
