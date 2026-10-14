@@ -68,12 +68,12 @@
 #include "../common/prefs.h"
 #include "../headless/cmd_stdin.h"
 #include "server_console.h"
+#include "server_args.h"        /* the -mod flags and -setting */
 #include "wire_limits.h"
 #include "../scenario/scenario_host.h"
 #include "../scenario/scenario_pack.h"
 #include "../scenario_io/scenario_package.h"
 #include "../scenario/scenario_validate.h"
-#include "scenario_settings.h"
 #include "cJSON.h"
 
 /* Constants previously from backend.h */
@@ -664,15 +664,38 @@ void printArgs() {
   fprintf(stderr, "                build, which are always offered. A directory that is not\n");
   fprintf(stderr, "                there means the server offers none of its own, which is not\n");
   fprintf(stderr, "                an error. -scenariodir is the old name for this argument.\n");
+  fprintf(stderr, "-mod <Names>  - Comma-separated mods or scenarios from -moddir (or the\n");
+  fprintf(stderr, "                shipped mods) to put on every game's script list. The\n");
+  fprintf(stderr, "                file name, with or without .scenario.lua. On by default:\n");
+  fprintf(stderr, "                the host may take one off for that game; the next lobby\n");
+  fprintf(stderr, "                has it again. May be given more than once.\n");
+  fprintf(stderr, "-mod-required <Names> - The same, but always on: the host cannot take\n");
+  fprintf(stderr, "                these off, and may add or take off any other mod. Also\n");
+  fprintf(stderr, "                locks the Mods/Scenario checkbox on.\n");
+  fprintf(stderr, "-mod-locked <Names> - The script list is exactly these, read-only, as\n");
+  fprintf(stderr, "                -lock mods plus the list. Cannot be given with -mod or\n");
+  fprintf(stderr, "                -mod-required: the server will not start. A name given\n");
+  fprintf(stderr, "                to both -mod and -mod-required keeps -mod-required. A\n");
+  fprintf(stderr, "                -mod scenario gives way to a map's own scenario; a required\n");
+  fprintf(stderr, "                or locked one replaces it. At most 10 scripts and one\n");
+  fprintf(stderr, "                scenario; -noscenarios ignores all three. A mod from any\n");
+  fprintf(stderr, "                of the three keeps the server out of ranked, which allows\n");
+  fprintf(stderr, "                no scripts. -setting gives these mods' settings values.\n");
   fprintf(stderr, "-noscenarios  - Do not load the scenario script beside a map. Every map,\n");
   fprintf(stderr, "                including one committed later, plays plainly. A map that\n");
   fprintf(stderr, "                has a script says which one was not loaded.\n");
   fprintf(stderr, "-setting [<File>:]<id>=<value> - Choose a value for one of a scenario\n");
   fprintf(stderr, "                script's own settings, as the lobby host would. File is the\n");
-  fprintf(stderr, "                script's file name and defaults to the map's own script.\n");
-  fprintf(stderr, "                Value is a number, true or false for a bool setting, or one\n");
-  fprintf(stderr, "                of the words of a choice setting (quote words with spaces).\n");
-  fprintf(stderr, "                May be given more than once.\n");
+  fprintf(stderr, "                script's name, with or without .scenario.lua, as -mod takes\n");
+  fprintf(stderr, "                it, and defaults to the map's own script. Value is a\n");
+  fprintf(stderr, "                number, true or false for a bool setting, or one of the\n");
+  fprintf(stderr, "                words of a choice setting (quote words with spaces). May be\n");
+  fprintf(stderr, "                given more than once. On a mod named by -mod the value is\n");
+  fprintf(stderr, "                every new lobby's default, and the host may change it for\n");
+  fprintf(stderr, "                that game. On a -mod-required or -mod-locked mod the value\n");
+  fprintf(stderr, "                is locked: the host cannot change it. Settings not given\n");
+  fprintf(stderr, "                stay the host's. Example:\n");
+  fprintf(stderr, "                -mod-required MacBoloRules -setting MacBoloRules:pushback=false\n");
   fprintf(stderr, "-allow-unsafe-scripts - Run scenario scripts with the full Lua standard\n");
   fprintf(stderr, "                library, no memory cap, no time limits and precompiled chunks\n");
   fprintf(stderr, "                accepted. Reaches uploaded maps' scripts and -validate too;\n");
@@ -951,113 +974,19 @@ void processTrackerArg(char *argItem, char *trackerAddr, unsigned short *tracker
 
 #define ARG_NOT_FOUND -1
 
-/* One -setting argument, "[file:]id=value", chosen on sim as the lobby
- * host's CMD_SET_SCRIPT_SETTING would choose it. defaultFile is the map's own
- * script, used when the argument names no file. The value is read against
- * the setting's declaration: a number for any type, true or false (or on or
- * off) for a bool, one of the words for a choice. Says on the console what
- * it did, or why it did nothing. */
+/* Where serverArgsApplySetting sends what it did: the console, as the
+   rest of startup says what it loaded. */
+static void serverSettingArgSay(void *ctx, const char *line) {
+  serverMessageConsoleMessage((ServerSim *)ctx, (char *)line);
+}
+
+/* One -setting argument, "[file:]id=value" (serverArgsApplySetting).
+ * defaultFile is the map's own script, used when the argument names no
+ * file. Says on the console what it did, or why it did nothing. */
 static void serverApplySettingArg(ServerSim *sim, const char *arg,
                                   const char *defaultFile) {
-  char              file[LOBBY_SCENARIO_FILE_LEN];
-  char              id[SCN_SETTING_ID_LEN];
-  char              line[512];
-  const char       *eq;
-  const char       *colon;
-  const char       *word;
-  uint8_t           blob[SCN_SETTINGS_BLOB_MAX];
-  ScnSetting        rows[SCN_SETTINGS_MAX];
-  const ScnSetting *decl = NULL;
-  int               len;
-  int               n = 0;
-  int32_t           value = 0;
-  int32_t           got = 0;
-  char             *end = NULL;
-  long              num;
-  size_t            idLen;
-
-  eq = strchr(arg, '=');
-  if (eq == NULL) {
-    snprintf(line, sizeof(line), "-setting %s: wanted [file:]id=value", arg);
-    serverMessageConsoleMessage(sim, line);
-    return;
-  }
-  colon = memchr(arg, ':', (size_t)(eq - arg));
-  if (colon != NULL) {
-    size_t fl = (size_t)(colon - arg);
-    if (fl == 0 || fl >= sizeof(file)) {
-      snprintf(line, sizeof(line), "-setting %s: bad file name", arg);
-      serverMessageConsoleMessage(sim, line);
-      return;
-    }
-    memcpy(file, arg, fl);
-    file[fl] = '\0';
-    arg = colon + 1;
-  } else {
-    if (defaultFile == NULL || defaultFile[0] == '\0') {
-      snprintf(line, sizeof(line),
-               "-setting %s: the map has no script, so name the file", arg);
-      serverMessageConsoleMessage(sim, line);
-      return;
-    }
-    snprintf(file, sizeof(file), "%s", defaultFile);
-  }
-  idLen = (size_t)(eq - arg);
-  if (idLen == 0 || idLen >= sizeof(id)) {
-    snprintf(line, sizeof(line), "-setting %s: bad setting id", arg);
-    serverMessageConsoleMessage(sim, line);
-    return;
-  }
-  memcpy(id, arg, idLen);
-  id[idLen] = '\0';
-  word = eq + 1;
-
-  len = serverSimScenarioSettingsDecl(sim, file, blob, sizeof(blob));
-  if (len > 0) {
-    n = scnSettingsBlobRead(blob, (size_t)len, rows, SCN_SETTINGS_MAX);
-  }
-  if (n > 0) {
-    decl = scnSettingFind(rows, n, id);
-  }
-  if (decl == NULL) {
-    snprintf(line, sizeof(line), "-setting: %s declares no setting '%s'",
-             file, id);
-    serverMessageConsoleMessage(sim, line);
-    return;
-  }
-  /* A choice's own words come first, so a choice whose words are numerals
-     is set by word, not read as an index. */
-  num = strtol(word, &end, 10);
-  if (decl->type == SCN_SETTING_TYPE_CHOICE &&
-      scnSettingChoiceIndex(decl, word) >= 0) {
-    value = scnSettingChoiceIndex(decl, word);
-  } else if (word[0] != '\0' && end != NULL && *end == '\0') {
-    value = (int32_t)num;
-  } else if (decl->type == SCN_SETTING_TYPE_BOOL &&
-             (strcmp(word, "true") == 0 || strcmp(word, "on") == 0)) {
-    value = 1;
-  } else if (decl->type == SCN_SETTING_TYPE_BOOL &&
-             (strcmp(word, "false") == 0 || strcmp(word, "off") == 0)) {
-    value = 0;
-  } else {
-    snprintf(line, sizeof(line), "-setting: '%s' is not a value of %s:%s",
-             word, file, id);
-    serverMessageConsoleMessage(sim, line);
-    return;
-  }
-  if (!serverSimSetScriptSetting(sim, file, id, value, &got)) {
-    snprintf(line, sizeof(line), "-setting: %s:%s refused %d", file, id,
-             (int)value);
-    serverMessageConsoleMessage(sim, line);
-    return;
-  }
-  if (decl->type == SCN_SETTING_TYPE_CHOICE) {
-    snprintf(line, sizeof(line), "Setting %s:%s = %s", file, id,
-             scnSettingChoiceText(decl, got));
-  } else {
-    snprintf(line, sizeof(line), "Setting %s:%s = %d", file, id, (int)got);
-  }
-  serverMessageConsoleMessage(sim, line);
+  (void)serverArgsApplySetting(sim, arg, defaultFile, serverSettingArgSay,
+                               sim);
 }
 
 /* Whether arg is the flag "-<name>", with argExist's rule: case does not
@@ -1075,6 +1004,38 @@ static bool argIsFlag(const char *arg, const char *name) {
     name++;
   }
   return (*arg == '\0' && *name == '\0') ? TRUE : FALSE;
+}
+
+/* Where serverArgsApplyMods sends its warnings and notes: stderr,
+   the way an unknown -lock name is warned about. */
+static void serverModArgsSay(void *ctx, const char *line) {
+  (void)ctx;
+  fprintf(stderr, "%s\n", line);
+}
+
+/* The rows -mod, -mod-required and -mod-locked recorded, one console line
+ * each, so an operator reading the log sees the list every game will open
+ * with. */
+static void serverSayOperatorMods(ServerSim *sim) {
+  char line[SERVER_SCENARIO_FILE_LEN + 64];
+  int  n = serverSimGetOperatorModCount(sim);
+  int  i;
+
+  for (i = 0; i < n; i++) {
+    const char *kind;
+
+    if (serverSimGetOperatorModsLocked(sim)) {
+      kind = "locked";
+    } else if (serverSimGetOperatorModStrength(sim, i) ==
+               SERVER_MOD_REQUIRED) {
+      kind = "required";
+    } else {
+      kind = "on by default";
+    }
+    snprintf(line, sizeof(line), "Mod %s: %s", kind,
+             serverSimGetOperatorModFile(sim, i));
+    serverMessageConsoleMessage(sim, line);
+  }
 }
 
 int findArg(int numArgs, char **argv, const char *argname) {
@@ -1769,6 +1730,18 @@ int main(int argc, char **argv) {
     exit(0);
   }
 
+  /* -mod-locked asks for a list nobody edits; -mod and -mod-required ask for
+     one a host edits around fixed rows. Both at once is a mistake in the
+     command line, not something to guess at, so the server does not start.
+     Checked here, before the sim, the sockets and the tracker are set up,
+     so there is nothing to close. Not under -noscenarios, which ignores all
+     three flags and says so further down. */
+  if (argExist(argc, argv, "noscenarios") != TRUE &&
+      serverArgsModConflict(argc, (const char *const *)argv)) {
+    fprintf(stderr, "%s\n", SERVER_MOD_ARGS_CONFLICT_TEXT);
+    exit(1);
+  }
+
   /* Copy tracker settings to file-scope globals for the timer */
   sTrackerUse = trackerUse;
   if (trackerUse) {
@@ -2062,11 +2035,48 @@ int main(int argc, char **argv) {
   }
   scenarioHostRegisterScenarioLister(serverSim);
 
+  /* -mod, -mod-required, -mod-locked: the operator's mods, on the list every
+     game opens with. Read after the lister above is registered, because a
+     name is resolved against the directory it lists. -mod-locked beside
+     either of the others has already stopped the server at the top of main.
+
+     The rows go on the list once here and the decision is made without
+     seating anyone: the lobby is seated further down, after the startup, as
+     it is for a map's own script, and a server that skipped the lobby has
+     its round built inside the startup from whatever this attaches. That
+     decision reads the map's own script too, so it takes the place of the
+     plain attach below, which would only be detached again (and would say
+     "loaded" for it a second time). From then on the list stays put — no
+     lobby means no command can change it — so -nolobby plays these every
+     round, and so does -maprotate, whose every map commit composes the same
+     list again. A server with a lobby puts them back at each return to it
+     (serverSimReturnToLobby).
+
+     Not under -noscenarios, which turns every script off: a mod named
+     beside it would only fail to load at every game, so it is said once
+     here instead. */
+  bool operatorModsDecided = FALSE;
+  if (serverArgsModGiven(argc, (const char *const *)argv)) {
+    if (argExist(argc, argv, "noscenarios") == TRUE) {
+      fprintf(stderr,
+              "Warning: -noscenarios turns scripts off; -mod, -mod-required "
+              "and -mod-locked are ignored\n");
+    } else {
+      (void)serverArgsApplyMods(serverSim, argc, (const char *const *)argv,
+                                serverModArgsSay, NULL);
+      serverSayOperatorMods(serverSim);
+      if (serverSimRecordOperatorMods(serverSim)) {
+        scenarioHostDecide(serverSim, &scenarioHost, scenarioMapPath);
+        operatorModsDecided = TRUE;
+      }
+    }
+  }
+
   /* A scenario script beside the map, when the map came from a file and one
      is there. No script is the ordinary case and says nothing; a script
      that cannot be used says why, as does one -noscenarios turned down, and
      the server runs the map plainly. */
-  if (scenarioMapPath[0] != '\0') {
+  if (!operatorModsDecided && scenarioMapPath[0] != '\0') {
     char scenarioErr[512];
     scenarioHost = scenarioHostAttach(serverSim, scenarioMapPath,
                                       scenarioErr, sizeof(scenarioErr));
@@ -2081,8 +2091,12 @@ int main(int argc, char **argv) {
     }
   }
   /* -setting: the values a lobby host would choose for scripts' own
-     settings, for a server with no lobby to choose them in. Applied before
-     any round starts, so on_setup already reads them. */
+     settings, for a server with no lobby to choose them in, or for the
+     operator's own mods. Applied before any round starts, so on_setup
+     already reads them. A value on a -mod row is also kept by the sim and
+     put back at every new lobby with the row (serverSimRecordOperatorMods),
+     and on a fixed row the host cannot change it. After the rows are
+     recorded above, so a short name finds the operator's row first. */
   {
     const char *mapScript = "";
     int         i;
@@ -2093,7 +2107,11 @@ int main(int argc, char **argv) {
       scenarioHostPublishMapScript(serverSim, scenarioHost);
     }
     if (scenarioHost != NULL) {
-      const char *path = scenarioHostScriptPath(scenarioHost);
+      /* The map's own entry, not the scenario that decides the round: with
+         -mod rows attached the host may be composed with no map script at
+         all, and a bare id=value must then get "the map has no script"
+         rather than land on an operator's mod. */
+      const char *path = scenarioHostMapScriptPath(scenarioHost);
       const char *p;
       mapScript = path;
       for (p = path; *p != '\0'; p++) {
@@ -2283,6 +2301,21 @@ int main(int argc, char **argv) {
         serverLocks = implied;
       }
     }
+  }
+  /* And the locks the -mod flags above call for: LOBBY_LOCK_MODS for any
+   * -mod-required or -mod-locked row, so the Mods/Scenario checkbox cannot
+   * switch them off, and LOBBY_LOCK_SCRIPT_LIST for -mod-locked, which is
+   * -lock mods plus a list nobody edits. Not a name -lock takes: the list
+   * lock without the rows the operator fixed on it would only be an empty
+   * list. A plain -mod locks nothing, being the host's to take off. */
+  serverLocks |= serverSimOperatorModLocks(serverSim);
+  /* Ranked allows no scripts, and the lobby rules take a lobby with any
+     attached out of ranked, so -ranked beside operator mods does not hold.
+     Said once here rather than left for the operator to find in the lobby. */
+  if (ranked && serverSimGetOperatorModCount(serverSim) > 0) {
+    fprintf(stderr,
+            "Warning: -ranked: the -mod, -mod-required and -mod-locked "
+            "scripts keep the server out of ranked\n");
   }
 
   /* -pillview / -baseview / -allyview and their decay values. Applied

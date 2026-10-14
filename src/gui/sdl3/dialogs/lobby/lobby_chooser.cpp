@@ -617,13 +617,16 @@ static void lobbyServerMapsPumpPreview(ClientSim *cs, SDL_Renderer *renderer) {
      * mapChooserSetSelectedMapBytes takes the same raw .map image the WBN
      * tab feeds it and needs no file at all. It does stamp a synthetic
      * "wbnmem:" marker over selectedPath for that tab's loading-spinner
-     * check, so preserve the row path the click already put there. */
+     * check and clears selectedIdx, so preserve the clicked row's path
+     * and selection when updating only its preview. */
     char keepPath[FILENAME_MAX];
+    int keepIdx = s_chooserTabs.server.selectedIdx;
     SDL_strlcpy(keepPath, s_chooserTabs.server.selectedPath, sizeof(keepPath));
     mapChooserSetSelectedMapBytes(&s_chooserTabs.server, renderer,
                                   bytes, (int)blen, disp);
     SDL_strlcpy(s_chooserTabs.server.selectedPath, keepPath,
                 sizeof(s_chooserTabs.server.selectedPath));
+    s_chooserTabs.server.selectedIdx = keepIdx;
     clientSimClearLobbyMapPreview(cs);
 }
 
@@ -890,6 +893,11 @@ static const char *lobbyGetActiveTabError(ClientSim *cs) {
             }
             return NULL;
         case 3: /* WBN */
+#ifndef __EMSCRIPTEN__
+            /* The map list or search could not be fetched and the
+             * retries have stopped: the list is empty, so say why. */
+            if (wbnMapSourceListError()) return wbnMapSourceListError();
+#endif
             if (clientSimGetLobbyWbnPreviewStatus(cs) == 3) {
                 const char *m = clientSimGetLobbyWbnPreviewErrMsg(cs);
                 return (m && *m) ? m : langGetText(STR_DLGLOBBY_WBN_ERR_DOWNLOAD);
@@ -1047,6 +1055,9 @@ void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer) {
     s_chooserTabs.upload.provider.ctx  = cs;
 #ifndef __EMSCRIPTEN__
     s_chooserTabs.wbn.provider.ctx     = cs;
+    /* A WinBolo.net listing that failed until the retries stopped is
+     * asked for again on each opening of the chooser. */
+    wbnMapSourceResetRetry();
 #endif
     /* Re-enumerate Server Maps on every open. EnsureInit's discover runs
      * once per process, so without this a second opening of the dialog

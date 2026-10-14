@@ -492,27 +492,54 @@ void spritePositionLgm(float baseX, float baseY, int mode, float scale,
   float sx = baseX + spritePositionOffset(mode, scale, sheetScale, mx, px, wx);
   float sy = baseY + spritePositionOffset(mode, scale, sheetScale, my, py, wy);
 
-  /* Centre the LGM sprite on its authoritative hit pixel. LGM_WIDTH=3,
-   * LGM_HEIGHT=4, so the precise sub-pixel centre is (1.5, 2.0) game
-   * pixels — kept as the internal model (the sim's hit position stays
-   * sub-pixel precise). But 1.5*scale is a half pixel at 1x / odd zoom,
-   * which renders the sprite off the game-pixel grid every other sprite
-   * sits on. So compute the precise centre, then snap only the DISPLAYED
-   * position to the nearest whole game pixel — rounded relative to the
+  /* Centre the LGM sprite on where the man is. LGM_WIDTH=3, LGM_HEIGHT=4,
+   * so the sprite's centre is (1.5, 2.0) game pixels from its corner.
+   *
+   * The position handed in is not the man's exact position. Every caller
+   * passes the game pixel the server sent (worldOff == pixelOff << 4), and
+   * the server rounds DOWN to that pixel, so the man is somewhere inside
+   * it: on average half a game pixel right of and below its corner. The
+   * best point to centre the sprite on is therefore the middle of the
+   * pixel, (+0.5, +0.5), which puts the corner at (-1.0, -1.5) from the
+   * pixel's corner instead of (-1.5, -2.0).
+   *
+   * Classic and Match pixelation then have to put the sprite on the
+   * game-pixel grid every other sprite sits on, so the DISPLAYED position
+   * is snapped to the nearest whole game pixel, rounded relative to the
    * scroll origin so the LGM stays in lockstep with smoothly-scrolling
-   * sprites instead of snapping to an absolute grid.
+   * sprites instead of snapping to an absolute grid. What that leaves, per
+   * axis, measured as drawn centre against the true position in world
+   * units (16 to a game pixel):
+   *
+   *   x  The snap of -1.5 already rounds the half up to -1.0, which is the
+   *      middle-of-the-pixel answer: -8..+7. Left exactly as it was.
+   *   y  -2.0 was a whole pixel and stayed put, a pixel high on average:
+   *      -17..-2. From the pixel's middle it is -1.5, which snaps to -1.0:
+   *      -1..+14. A four-pixel-high sprite on the grid can do no better
+   *      from a rounded-down position.
    *
    * Smooth drops the snap: motion finer than a game pixel is the whole
    * point of that mode, and the grid it lines up with is the one Smooth
-   * has already left. Classic and Match pixelation keep it. The (1.5, 2.0)
-   * centre applies in all three. */
+   * has already left. It takes the middle of the pixel on both axes,
+   * x -8..+7 and y -9..+6 (the odd unit is the server's own 1 and 2). */
   if (frame == LGM0 || frame == LGM1 || frame == LGM2) {
-    sx -= 1.5f * scale;   /* precise sub-pixel centre */
-    sy -= 2.0f * scale;
-    if (mode != GFX_ANIM_SMOOTH) {
+    if (mode == GFX_ANIM_SMOOTH) {
+      sx -= 1.0f * scale;   /* 1.5 to the centre, less the half pixel */
+      sy -= 1.5f * scale;   /* 2.0 to the centre, less the half pixel */
+    } else {
+      sx -= 1.5f * scale;   /* the snap below supplies the half pixel */
+      sy -= 1.5f * scale;   /* 2.0 to the centre, less the half pixel */
       sx = baseX + floorf((sx - baseX) / scale + 0.5f) * scale;  /* display snaps to a pixel */
       sy = baseY + floorf((sy - baseY) / scale + 0.5f) * scale;
     }
+  } else if (mode == GFX_ANIM_SMOOTH) {
+    /* The helicopter is a whole square drawn from its corner, and the
+     * server sends that corner rounded down the same way. Smooth takes the
+     * middle of the pixel here too: -7..+8 instead of -15..0. Classic and
+     * Match pixelation keep it on the grid, where -15..0 is as close as a
+     * sixteen-pixel sprite gets (the next pixel along is +1..+16). */
+    sx += 0.5f * scale;
+    sy += 0.5f * scale;
   }
 
   *outX = sx;

@@ -95,6 +95,12 @@ void buildCursorSetTile(BYTE mapX, BYTE mapY);
    if the tank has since driven it off-screen / out of range. */
 bool buildCursorGetTargetTile(BYTE *mapX, BYTE *mapY);
 
+/* The mouse pointer was carried off the view with this tile: forget it as
+   the target, so a click or Build Now no longer sends the builder there.
+   Only when it is still the target the mouse set — not while cursor mode is
+   steering, nor once the stick or a tap has moved it elsewhere. */
+void buildCursorDropTarget(BYTE mapX, BYTE mapY);
+
 /* Clamp the cursor inside the visible area — only while cursor mode is ON.
    Call once per frame so that as the tank drives and the view scrolls, the
    cursor is dragged along the edge and never leaves the screen.  No-op when

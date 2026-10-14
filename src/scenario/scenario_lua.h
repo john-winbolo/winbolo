@@ -490,7 +490,12 @@ typedef struct {
     X(PILL_DAMAGE_SCALE, "pill_damage_scale",                                \
       SCN_FN_ARGS4("attacker", SCN_PARAM_OWNER, "n", SCN_PARAM_PILL,         \
                    "cause", SCN_PARAM_WORD, "pill", SCN_PARAM_PILL),         \
-      "a percent from 0 to 10000 of the armour the pillbox loses")
+      "a percent from 0 to 10000 of the armour the pillbox loses")           \
+    X(KILL_CREDIT,       "kill_credit",                                      \
+      SCN_FN_ARGS5("victim", SCN_PARAM_SLOT, "killer", SCN_PARAM_OWNER,      \
+                   "cause", SCN_PARAM_WORD, "hit_by", SCN_PARAM_SLOT,        \
+                   "hit_at", SCN_PARAM_NUMBER),                              \
+      "a seat to credit with the kill in the killer's place")
 
 /*********************************************************
  *NAME:          scenarioLuaInstall

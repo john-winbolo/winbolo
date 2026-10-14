@@ -1674,7 +1674,7 @@ local function attack_pill_adjustments(pill, pcost, state, world)
     if BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" +intercept=%.0f", worst_intercept) end
   end
 
-  -- Crossfire penalty
+  -- Crossfire penalty (x CROSSFIRE_MULT, as in step_eval_queue's pool 6)
   local crossfire_pen = 0
   for _, pm in pairs(world.pills) do
     if (pm.mx ~= pill.mx or pm.my ~= pill.my)
@@ -1684,7 +1684,7 @@ local function attack_pill_adjustments(pill, pcost, state, world)
       if d <= C.PILL_FIRE_RANGE + C.ATTACK_PILL_STANDOFF then
         local max_d = C.PILL_FIRE_RANGE + C.ATTACK_PILL_STANDOFF
         local proximity = 1.0 - d / (max_d + 1)
-        crossfire_pen = crossfire_pen + C.GOAL_CROSSFIRE_PENALTY * proximity
+        crossfire_pen = crossfire_pen + C.GOAL_CROSSFIRE_PENALTY * (C.CROSSFIRE_MULT or 1) * proximity
       end
     end
   end
@@ -1796,7 +1796,7 @@ end
 
 local function eval_attack_pill(state, world, info, tmx, tmy, boat, ammo)
   local has_hostile = not state.perc or (state.perc.attackable_pill_count > 0)
-  if not (has_hostile and info.shells > C.SHELLS_LOW) then return nil end
+  if not (has_hostile and info.shells > U.attack_shells_low()) then return nil end
   -- Lower armour threshold for wounded pills (few shots needed)
   local min_armour = C.ATTACK_PILL_MIN_ARMOUR
   if state.wounded_pill then min_armour = 15 end
@@ -1852,7 +1852,7 @@ local function eval_attack_base(state, world, info, tmx, tmy, boat, ammo)
   -- that would peel us off to refuel one shot short (20260706_231404 t=17961:
   -- base#3 at armour 5, bot had 8 shells, refuel won and the base healed back).
   local closeout = (base.health or 99) <= (C.ATTACK_BASE_CLOSEOUT_HEALTH or 3)
-  local min_shells = closeout and (C.SHELL_RESERVE or 0) or C.SHELLS_LOW
+  local min_shells = closeout and (C.SHELL_RESERVE or 0) or U.attack_shells_low()
   if info.shells <= min_shells then return nil end
   local shells_on_arrival = cpf.dijkstra_shells_at(KIND_NORMAL, base.mx, base.my)
                          or cpf.astar_shells_at(base.mx, base.my)
@@ -10551,10 +10551,11 @@ function M.build_eval_queue(state, world, info)
   -- Check preconditions that would skip entire pools.
   -- needs_resupply is the REFUEL CANDIDACY test (see refuel_need): the low
   -- watermarks, plus below-full when REFUEL_TOPOFF_CANDIDATE is on.
-  -- has_shells is NOT part of that and keeps the raw SHELLS_LOW line — it
+  -- has_shells is NOT part of that and keeps the SHELLS_LOW line (capped by
+  -- SIDE_SHELLS_LOW_CAP, U.attack_shells_low) — it
   -- gates offence (pill takes), which is a different question.
   local needs_resupply = refuel_need(state, info)
-  local has_shells = info.shells > C.SHELLS_LOW
+  local has_shells = info.shells > U.attack_shells_low()
   local perc = state.perc
 
   -- Block depleted bases (side effect from eval_refuel)
@@ -11281,19 +11282,24 @@ local function get_formula_inner(e)
     local _sh_end = e._sh_end or 0
     local _ammo_str = (_ammo >= 1e29) and "INF" or string.format("%.0f", _ammo)
     local _d_ammo
+    -- The line the cost used (U.attack_shells_low): SHELLS_LOW, or
+    -- SIDE_SHELLS_LOW_CAP when that is below it. No new locals here.
     if _ammo >= 1e29 then
       _d_ammo = string.format(
         "shells=%d < pill_hp=%d → cannot finish; cost = INF (filtered)",
         _sh_now, e._hpv)
     elseif _ammo > 0 then
       _d_ammo = string.format(
-        "shells=%d, pill_hp=%d, end=%d < SHELLS_LOW=%d → (%d-%d) × 5 = %d",
-        _sh_now, e._hpv, _sh_end, C.SHELLS_LOW,
-        C.SHELLS_LOW, _sh_end, _ammo)
+        "shells=%d, pill_hp=%d, end=%d < %s=%d → (%d-%d) × 5 = %d",
+        _sh_now, e._hpv, _sh_end,
+        (U.attack_shells_low() < C.SHELLS_LOW) and "SIDE_SHELLS_LOW_CAP" or "SHELLS_LOW",
+        U.attack_shells_low(), U.attack_shells_low(), _sh_end, _ammo)
     else
       _d_ammo = string.format(
-        "shells=%d - pill_hp=%d = %d ≥ SHELLS_LOW=%d → 0",
-        _sh_now, e._hpv, _sh_end, C.SHELLS_LOW)
+        "shells=%d - pill_hp=%d = %d ≥ %s=%d → 0",
+        _sh_now, e._hpv, _sh_end,
+        (U.attack_shells_low() < C.SHELLS_LOW) and "SIDE_SHELLS_LOW_CAP" or "SHELLS_LOW",
+        U.attack_shells_low())
     end
     -- "How spot was computed" detail. Method tag (dijkstra/astar/none),
     -- slate index when dijkstra was used, the tick smart_cost ran on,
@@ -12762,7 +12768,7 @@ function M.step_eval_queue(state, world, info)
             _ticks_to_calm = 0  -- capped to ANGER_WAIT_MAX, effectively no wait penalty
           end
         end
-        -- Crossfire
+        -- Crossfire. CROSSFIRE_MULT scales the whole term (1.0 = today).
         for _, pm in pairs(world.pills) do
           if (pm.mx ~= obj.mx or pm.my ~= obj.my)
              and (pm.owner == "hostile" or pm.owner == "neutral")
@@ -12771,7 +12777,7 @@ function M.step_eval_queue(state, world, info)
             if d <= C.PILL_FIRE_RANGE + C.ATTACK_PILL_STANDOFF then
               local max_d = C.PILL_FIRE_RANGE + C.ATTACK_PILL_STANDOFF
               local proximity = 1.0 - d / (max_d + 1)
-              xfire_cost = xfire_cost + C.GOAL_CROSSFIRE_PENALTY * proximity
+              xfire_cost = xfire_cost + C.GOAL_CROSSFIRE_PENALTY * (C.CROSSFIRE_MULT or 1) * proximity
             end
           end
         end
@@ -12814,8 +12820,8 @@ function M.step_eval_queue(state, world, info)
           ammo_cost = 1e30
         else
           local ending = _shells_for_cost - pill_hp_now
-          if ending < C.SHELLS_LOW then
-            ammo_cost = (C.SHELLS_LOW - ending) * 5
+          if ending < U.attack_shells_low() then
+            ammo_cost = (U.attack_shells_low() - ending) * 5
           end
         end
         -- "Finish what you started" penalty: every OTHER pill take
@@ -14028,6 +14034,13 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
           -- soft penalty is untouched.
           we_keep = true
           _reason = "claims_dead_off (noclaimdead init_arg — allies' capture_pill claims ignored)"
+        elseif (pool_idx == 6 or pool_idx == 7) and C.ATTACK_CLAIM_SHARE then
+          -- ── ATTACK_CLAIM_SHARE (Virus horde): an ally's claim on this pill
+          -- or base never rejects ours, so many bots may take the same target.
+          -- Keep the row unconditionally: no steal request, no dual-hold
+          -- abandon, no yield. The blitz_full reject above still holds.
+          we_keep = true
+          _reason = "attack_claim_share (allies' attack claims ignored)"
         elseif pool_idx == 6 and e._id then
           -- ── attack_pill: NEGOTIATED steal (stq/sta/str), no silent takeover ──
           -- The old silent cost-steal let a cheaper challenger just KEEP the
@@ -17962,8 +17975,8 @@ local function goal_selection(state, world, info, quiet)
     if not state.capture_objective then
       skip_reasons[#skip_reasons + 1] = "no capture objective"
     end
-    if info.shells <= C.SHELLS_LOW then
-      skip_reasons[#skip_reasons + 1] = string.format("shells too low for attack (%d<=%d)", info.shells, C.SHELLS_LOW)
+    if info.shells <= U.attack_shells_low() then
+      skip_reasons[#skip_reasons + 1] = string.format("shells too low for attack (%d<=%d)", info.shells, U.attack_shells_low())
     end
     log.reason("goal", {
       pick = "none", why = "no strategic goal (pool empty)",

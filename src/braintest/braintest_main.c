@@ -1422,26 +1422,26 @@ static void recordingTruncate(RecordingBuffer *rb, int keepCount) {
  * the muscle memory the user already has. Falls back to defaults if the
  * [KEYS] section is missing. Stored as SDL_Scancode values. */
 static void loadKeyBindings(BrainTestApp *app) {
-    /* Defaults match Bolo's Mac defaults — E forward, D backward,
-     * S left, F right, Space shoot, LShift mine. */
-    app->keyForward  = SDL_SCANCODE_E;
-    app->keyBackward = SDL_SCANCODE_D;
-    app->keyLeft     = SDL_SCANCODE_S;
-    app->keyRight    = SDL_SCANCODE_F;
+    /* Defaults match the main game's — W forward, S backward,
+     * A left, D right, Space shoot, LShift mine. */
+    app->keyForward  = SDL_SCANCODE_W;
+    app->keyBackward = SDL_SCANCODE_S;
+    app->keyLeft     = SDL_SCANCODE_A;
+    app->keyRight    = SDL_SCANCODE_D;
     app->keyShoot    = SDL_SCANCODE_SPACE;
     app->keyLayMine  = SDL_SCANCODE_LSHIFT;
 
     char buff[64];
     /* The values stored by the main game are SDL scancodes (the same
      * numbers SDL3 uses). Default fallbacks are scancodes for
-     * E/D/S/F/Space/LShift respectively. */
-    prefsGetString("KEYS", "Forward",   "8",   buff, sizeof(buff)); /* E */
+     * W/S/A/D/Space/LShift respectively. */
+    prefsGetString("KEYS", "Forward",   "26",  buff, sizeof(buff)); /* W */
     app->keyForward  = atoi(buff);
-    prefsGetString("KEYS", "Backwards", "7",   buff, sizeof(buff)); /* D */
+    prefsGetString("KEYS", "Backwards", "22",  buff, sizeof(buff)); /* S */
     app->keyBackward = atoi(buff);
-    prefsGetString("KEYS", "Left",      "22",  buff, sizeof(buff)); /* S */
+    prefsGetString("KEYS", "Left",      "4",   buff, sizeof(buff)); /* A */
     app->keyLeft     = atoi(buff);
-    prefsGetString("KEYS", "Right",     "9",   buff, sizeof(buff)); /* F */
+    prefsGetString("KEYS", "Right",     "7",   buff, sizeof(buff)); /* D */
     app->keyRight    = atoi(buff);
     prefsGetString("KEYS", "Shoot",     "44",  buff, sizeof(buff)); /* Space */
     app->keyShoot    = atoi(buff);
