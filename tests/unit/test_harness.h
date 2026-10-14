@@ -1318,6 +1318,16 @@ int run_attribution_reader_rejects_bad(void);
 int run_attribution_reader_clamps_slotcount(void);
 int run_attribution_reader_old_wbv(void);
 int run_wbv_v2_capture(void);
+/* test_byte_order.c — the formats' little-endian fields, pinned through
+ * their writers and readers. */
+int run_byte_order_helpers(void);
+int run_byte_order_log_long_counts(void);
+int run_byte_order_log_long_counts_viewer(void);
+int run_byte_order_snapshot_base_time(void);
+int run_byte_order_compressed_map_base_time(void);
+int run_byte_order_attribution_member(void);
+int run_byte_order_info_packet(void);
+int run_byte_order_pathfinder_blob(void);
 
 /* Recorded headless runs (test_wbv_fixture_summaries.c): each committed
  * tests/fixtures/wbv/<name>.wbv from a --record scenario is decoded through
