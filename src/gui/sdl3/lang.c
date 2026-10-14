@@ -2788,6 +2788,10 @@ static const LangEntry langTable[] = {
     {2810, "Whether a pillbox may pick a tank as its target."},
     {2860, "+ {number} others"},
     {2861, "+ 1 other"},
+    {2862, "1 pillbox"},
+    {2863, "{number} pillboxes"},
+    {2864, "1 base"},
+    {2865, "{number} bases"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
