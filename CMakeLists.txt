@@ -6895,6 +6895,7 @@ set(_unit_test_names
     lv_overview_sums
     lv_overview_bots
     lv_overview_row_layout
+    lv_overview_neutral_row
     lv_tank_status_sums
     lv_tank_bars_sums
     lv_tank_pick_sums
@@ -6918,6 +6919,7 @@ set(_unit_test_names
     lv_event_overlay_marker_size
     lv_event_overlay_choice
     lv_event_overlay_picture
+    lv_event_overlay_no_sign
     lv_event_kinds_filter
     lv_event_kinds_prefs
     lv_event_marker

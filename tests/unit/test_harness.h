@@ -4041,6 +4041,7 @@ int run_lv_overview_sums(void);
  * row starts, so the chip goes in front of the bot's name. */
 int run_lv_overview_bots(void);
 int run_lv_overview_row_layout(void);
+int run_lv_overview_neutral_row(void);
 /* The log viewer's Tank panel (test_lv_tank_status.c): which tank is the
  * selected one, and the height of a gauge against its cap. */
 int run_lv_tank_status_sums(void);
@@ -4083,6 +4084,7 @@ int run_lv_event_overlay_tip_place(void);
 int run_lv_event_overlay_marker_size(void);
 int run_lv_event_overlay_choice(void);
 int run_lv_event_overlay_picture(void);
+int run_lv_event_overlay_no_sign(void);
 /* The one list of ticked kinds of the Controls and Events panels, and the
  * Events panel's saved choice. */
 int run_lv_event_kinds_filter(void);
