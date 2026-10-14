@@ -317,8 +317,9 @@ void drainPending_locked() {
 
         SDL_Texture *tex = nullptr;
         if (renderer) {
+            /* stb_image's R, G, B, A bytes, on any host */
             tex = SDL_CreateTexture(renderer,
-                                    SDL_PIXELFORMAT_ABGR8888,
+                                    SDL_PIXELFORMAT_RGBA32,
                                     SDL_TEXTUREACCESS_STATIC,
                                     e.pendingW, e.pendingH);
             if (tex) {

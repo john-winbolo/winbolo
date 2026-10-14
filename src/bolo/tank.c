@@ -2636,20 +2636,11 @@ void tankTakePill(GameSim *sim, tank *value, BYTE pillNum) {
 *  my      - Y map square to drop it on
 *********************************************************/
 bool tankDropPillAt(GameSim *sim, tank *value, BYTE pillNum, BYTE mx, BYTE my) {
-  map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
-  bases *bs = &sim->bs;
   bool isServer = sim->isServer;
   pillbox item;   /* Item to add to the pillbox */
-  BYTE pos;       /* The Map position */
 
-  if (mx <= MAP_MINE_EDGE_LEFT || mx >= MAP_MINE_EDGE_RIGHT ||
-      my <= MAP_MINE_EDGE_TOP || my >= MAP_MINE_EDGE_BOTTOM) {
-    return FALSE;
-  }
-  pos = mapGetPos(mp, mx, my);
-  if (pillsExistPos(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE ||
-      pos == BUILDING || pos == HALFBUILDING || pos == BOAT) {
+  if (!pillsDropCanLand(sim, mx, my)) {
     return FALSE;
   }
 
@@ -2687,79 +2678,53 @@ bool tankDropPillAt(GameSim *sim, tank *value, BYTE pillNum, BYTE mx, BYTE my) {
 *NAME:          tankDropPills
 *AUTHOR:        John Morrison
 *CREATION DATE: 16/1/99
-*LAST MODIFIED: 21/6/00
+*LAST MODIFIED: 12/10/26
 *PURPOSE:
-* Drops all the pillboxes at the tanks current location.
-* Called when tank dies
+* Drops all the pillboxes around the tank's current
+* location. Called when tank dies.
+*
+* The squares are searched the way Mac Bolo searches them
+* (pillsDropSpiralFind): the tank's own square, then
+* square rings of growing radius, each one starting on the
+* square straight north of the tank and going clockwise.
+* The pill at the head of the carry list (the last one
+* picked up) goes on the first square that will hold it,
+* the next pill on the next, and so on. A pill the search
+* finds no room for stays on the tank.
 *
 *ARGUMENTS:
+*  sim    - The game the tank belongs to
 *  value  - Pointer to the tank structure
-*  mp     - Pointer to the map structure
-*  pb     - Pointer to the pillbox structure
-*  bs     - Pointer to the bases structure
 *********************************************************/
 void tankDropPills(GameSim *sim, tank *value) {
-  bool isServer = sim->isServer;
-  WORLD conv;     /* Used for conversion */
-  BYTE bmx;       /* Current Position of Tank */
-  BYTE bmy;
-  BYTE numPills;  /* The number of pills on the tank */
-  BYTE width;     /* How wide the pills length should be */
-  tankCarryPb q;  /* Temp pointer for removing pills */
-  BYTE count;     /* Looping variable */
+  WORLD conv;           /* Used for conversion */
+  BYTE tx;              /* Square the tank is on */
+  BYTE ty;
+  pillsDropSpiral spiral;
+  BYTE mx;              /* Square the next pill goes on */
+  BYTE my;
 
-
-  /* Get the number of pills on the tank */
-  numPills = 0;
-  q = (*value)->carryPills;
-  while (NonEmpty(q)) {
-    numPills++;
-    q = TankPillsTail(q);
+  if (IsEmpty((*value)->carryPills) || !sim->isServer) {
+    return;
   }
-  if (numPills > 0 && (isServer)) {
-    count = 0;
-    /* Get tank location */
-    conv = (*value)->x;
-    conv >>= TANK_SHIFT_MAPSIZE;
-    bmx = (BYTE) conv;
-    conv = (*value)->y;
-    conv >>= TANK_SHIFT_MAPSIZE;
-    bmy = (BYTE) conv;
-    /* Get the width for depositing them */
-    width = (BYTE) sqrt((double) numPills);
-    bmx -= width/2;
-    bmy -= width/2;
 
-    if (bmx <= MAP_MINE_EDGE_LEFT) { /*bmx >= 0 is always true becuase of the data type.*/
-      bmx = MAP_MINE_EDGE_LEFT+1;
-    } else if (bmx >= MAP_MINE_EDGE_RIGHT) {
-      bmx = MAP_MINE_EDGE_RIGHT - 10;
+  /* Get tank location */
+  conv = (*value)->x;
+  conv >>= TANK_SHIFT_MAPSIZE;
+  tx = (BYTE) conv;
+  conv = (*value)->y;
+  conv >>= TANK_SHIFT_MAPSIZE;
+  ty = (BYTE) conv;
+
+  pillsDropSpiralStart(&spiral, tx, ty);
+  while (NonEmpty((*value)->carryPills) &&
+         pillsDropSpiralFind(sim, &spiral, &mx, &my)) {
+    /* The search and the drop make the same square test, so this only
+       fails if they stop agreeing; stop rather than offer it again. */
+    if (!tankDropPillAt(sim, value, (*value)->carryPills->pillNum, mx, my)) {
+      break;
     }
-
-    if (bmy <= MAP_MINE_EDGE_TOP) { /*bmx >= 0 is always true becuase of the data type.*/
-      bmy = MAP_MINE_EDGE_TOP+1;
-    } else if (bmy >= MAP_MINE_EDGE_BOTTOM) {
-      bmy = MAP_MINE_EDGE_BOTTOM - 10;
-    }
-
-    while (NonEmpty((*value)->carryPills)) {
-      q = (*value)->carryPills;
-      if (isServer) {
-        tankDropPillAt(sim, value, q->pillNum, bmx, (BYTE)(bmy+count));
-        count++;
-        if (count == width) {
-          count = 0;
-          bmx++;
-        }
-      } else {
-//        (*value)->carryPills = TankPillsTail(q);
-//        Dispose(q);
-      }
-
-    }
-    if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
   }
-  return;
 }
 
 /*********************************************************

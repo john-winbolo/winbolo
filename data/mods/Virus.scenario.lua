@@ -37,10 +37,22 @@
 -- them, and they come back a survivor. The help below and deep sea turn a
 -- survivor without a death.
 --
+-- The host can widen that in the lobby with two settings, both off unless set.
+-- "Drowning infects" turns a survivor who drowns. The turn is credited to the
+-- infected tank whose shell last hit them, if that was in the last few seconds,
+-- and to nobody otherwise. "Bite time" makes every infected shell a bite: a
+-- survivor it hits is bitten for that many seconds, and each new hit starts the
+-- count again. A survivor who dies while bitten turns, whatever killed them,
+-- and the infected tank that bit them is credited. That holds for drowning too,
+-- so a bitten survivor who drowns turns even with "Drowning infects" off. Their
+-- screen counts the bite down. A survivor who outlasts it has recovered and is
+-- told so, and the next hit is a new bite.
+--
 -- Until the horde has made its first kill it is helped. Every minute that goes
 -- by without one, another survivor picked at random turns where they stand, and
 -- everybody is told why. The first kill by an infected shell ends the help for
--- the rest of the round. The last survivor is never taken this way: the round
+-- the rest of the round, and so does the first bite or drowning that turns a
+-- survivor with an infected tank credited. The last survivor is never taken this way: the round
 -- ends in a fight or on the clock, not on a draw.
 --
 -- A bot plays the round the way it plays any game, with one thing taken away:
@@ -74,7 +86,7 @@ local HEAD_START      = 10    -- before the first one turns
 local WARNING_SECONDS = 3     -- what the first one is told, and nobody else
 local HELP_EVERY      = 60    -- seconds with no infected kill before another turns
 local FEED_EVERY      = 2     -- seconds between points of armour for the infected
-local SHELL_EVERY     = 0.5   -- seconds between shells for the infected
+local SHELL_EVERY     = 0.25  -- seconds between shells for the infected
 local REFRESH_SECONDS = 0.2   -- how often the deep sea clock and compass run
 local SPAWN_GRACE     = 20    -- seconds a respawned survivor has to reach land
                               -- before the deep sea clock counts them
@@ -92,11 +104,22 @@ local ZERO_HUMAN         = "No" -- who turns first, the lobby's choice:
                                 -- "Yes" a person when one is playing; "No"
                                 -- a bot when one is playing; "Random" any
                                 -- seat, person or bot.
+local DROWN_INFECTS      = false -- a survivor who drowns turns
+local BITE_SECONDS       = 0    -- how long an infected shell's bite lasts;
+                                -- 0 is no bite. A bitten survivor who dies
+                                -- turns, drowning included, even with
+                                -- DROWN_INFECTS off: the bite wins.
+
+local DROWN_CREDIT_SECONDS = 5  -- how recent an infected shell has to be for
+                                -- its tank to be credited with a drowning
+
+-- What a survivor whose bite runs out is told, on their own screen.
+local RECOVERED_TEXT = "Recovered! The bite wore off."
 
 -- What an infected tank comes back with, and the most the trickle feeds it
--- to: half a full tank of shells.
+-- to: a full tank of shells.
 local function infected_shells()
-  return math.floor(game.rule("tank_full_shells") / 2)
+  return game.rule("tank_full_shells")
 end
 
 -- What the first one to turn is handed, and nobody else. Percentages of the
@@ -149,6 +172,11 @@ local fresh   = {}            -- seat -> the tick a respawned survivor's deep se
                               -- clock starts, if they have not reached land
 local drawn   = {}            -- seat -> what its panel was last sent, as a key
 local heir_of = {}            -- seat -> who got its pillboxes when it turned
+local shot_by = {}            -- seat -> the infected seat whose shell last hit
+                              -- this survivor
+local shot_at = {}            -- seat -> the tick of that hit
+local bite    = {}            -- seat -> the tick a survivor's bite runs out
+local bite_on = {}            -- seat -> the bite count is on its screen
 local roster  = nil           -- the roster panel, while it is sent seat by seat
 local roster_n = 0            -- counts roster panels, to tell a seat is behind
 local elapsed = 0
@@ -157,7 +185,7 @@ local over    = false
 local ending  = false         -- the round is decided and waits on an explosion
 local compass_on = false      -- the horde has a compass on the survivors
 local loose   = false         -- the first one has turned
-local bitten  = false         -- an infected shell has turned somebody
+local first_kill = false      -- an infected tank has turned somebody by a kill
 local helper  = nil           -- the help's waiting timer, while there is one
 local ends_at = 0             -- the tick the round ends on, for the panel clock
 local zero    = nil           -- the first to turn, once one has been picked
@@ -291,6 +319,20 @@ local function dry_off(p)
   if warned[p] then
     warned[p] = nil
     game.announce("", 0, p)
+  end
+end
+
+-- Takes a survivor's bite off, and its count off their screen. The last
+-- infected hit stays on record unless all is set, for a drowning soon after.
+local function forget_bite(p, all)
+  bite[p] = nil
+  if bite_on[p] then
+    bite_on[p] = nil
+    game.announce("", 0, p)
+  end
+  if all then
+    shot_by[p] = nil
+    shot_at[p] = nil
   end
 end
 
@@ -677,9 +719,11 @@ end
 -- "horde": the bot never picks a base to refuel at. A base refuels nobody on
 -- the horde, and a brain that was not told so would drive to one and sit on
 -- it. The horde is not out of shells: Virus feeds each infected tank a
--- shell every SHELL_EVERY seconds up to half a full tank, and a point of
--- armour every FEED_EVERY seconds up to a full tank. The word also turns off
--- the two survivor settings below.
+-- shell every SHELL_EVERY seconds up to a full tank, and a point of armour
+-- every FEED_EVERY seconds up to a full tank. The word also turns off the two
+-- survivor settings below, and turns on the brain's attack settings that send
+-- the whole horde at the survivors' pillboxes and bases (any number of bots on
+-- one target, lower shell lines, no tree gathering for a wall shield).
 --
 -- "survivor": the bot refuels at its bases as normal, and two GoalHunter
 -- settings go on. ATTACK_TANK_PILL_HEAT_ONLY: the bot never fights a tank
@@ -694,6 +738,13 @@ end
 -- from the last round. Each side's settings are then stated by this script,
 -- not inherited. A seat never goes from the horde back to the survivors
 -- inside a round, so this is the only thing a survivor is ever handed.
+--
+-- Each table also names the blitz party size (blitz = "MIN/MAX", tanks with
+-- the commander). The horde blitzes in parties of up to eight. A survivor
+-- gets "default", the size the bot's own level gives it. The brain does not
+-- reset a party size on a new table, so each side states its own.
+local BLITZ_FOR = { horde = "2/8", survivor = "default" }
+
 local function word_for(p)
   if side[p] == INFECTED then
     return "horde"
@@ -714,7 +765,7 @@ local function hand_word(p)
   if handed[p] == word then
     return
   end
-  if game.bot_init(p, { [word] = "1" }) then
+  if game.bot_init(p, { [word] = "1", blitz = BLITZ_FOR[word] }) then
     handed[p] = word
   end
 end
@@ -741,10 +792,10 @@ local function infect(p, by)
   post_score(p)
   -- Everybody but the first turns by dying, and comes back on the loadout the
   -- policy below hands the horde. The first turns where they stand, with a
-  -- survivor's forty shells and forty mines still in the tank, so their kit
-  -- is brought down to the horde's here rather than at their first death, and
-  -- their armour is filled, so one turned mid-fight starts their new life
-  -- whole. So is one the help or deep sea turns where they stand.
+  -- survivor's kit still in the tank, so it is set to the horde's here (a
+  -- full tank of shells, no mines, no trees) rather than at their first
+  -- death, and their armour is filled, so one turned mid-fight starts their
+  -- new life whole. So is one the help or deep sea turns where they stand.
   local t = game.tank(p)
   if t ~= nil and not t.dead then
     game.set_stocks(p, { shells = infected_shells(), mines = 0, trees = 0,
@@ -755,6 +806,7 @@ local function infect(p, by)
     post_score(by)
   end
   dry_off(p)
+  forget_bite(p, true)
   fresh[p] = nil
   heir_of[p] = nil
   let_go_of(p)
@@ -807,12 +859,13 @@ local function pick_zero()
 end
 
 -- The help. A survivor at random turns where they stand, as the first one did,
--- and the clock goes round again, until an infected shell has made a kill. It
+-- and the clock goes round again, until an infected tank has made a kill
+-- (first_kill: a shell kill, or a bite or drowning credited to the tank). It
 -- stops for good at one survivor: a joiner after the first turn is infected, so
 -- the count never goes back up.
 local function help_the_horde()
   helper = nil
-  if over or not running or bitten then
+  if over or not running or first_kill then
     return
   end
   local pool = roll(SURVIVORS)
@@ -844,7 +897,7 @@ local function turn_zero()
   infect(p, nil)
   -- A restart after the whole horde has walked out is a fresh horde, and it is
   -- helped the same way, so the clock is started over rather than doubled.
-  bitten = false
+  first_kill = false
   if helper ~= nil then
     game.cancel_timer(helper)
   end
@@ -882,7 +935,7 @@ local function feed_the_horde()
   end
 end
 
--- And a shell every half second, to half a full tank of shells. On its own
+-- And a shell every quarter second, to a full tank of shells. On its own
 -- timer rather than the second's, which is too slow for it.
 local function feed_shells()
   if over then
@@ -949,7 +1002,41 @@ local function watch_the_water(now)
   end
 end
 
--- Five times a second: the deep sea clock, and while it is on, the compass.
+-- The bite clock. A bitten survivor's screen counts the whole seconds left,
+-- written again on every pass. The deep sea warning goes first when both are
+-- running, so the bite count waits until they are off the deep sea. A bite
+-- that runs out with the survivor alive leaves them recovered, and they are
+-- told so. A death while bitten is on_tank_killed's, and turns them.
+local function watch_the_bites(now)
+  for p, ends in pairs(bite) do
+    local t = nil
+    if side[p] == SURVIVORS and in_round(p) then
+      t = game.tank(p)
+    end
+    if t == nil then
+      forget_bite(p, true)
+    elseif t.dead then
+      -- Dead between hooks: on_tank_killed has it, or the round is over.
+    elseif now >= ends then
+      forget_bite(p)
+      if warned[p] then
+        game.message(RECOVERED_TEXT, p)
+      else
+        game.announce(RECOVERED_TEXT, 2, p, "top")
+      end
+    elseif warned[p] then
+      bite_on[p] = nil
+    else
+      bite_on[p] = true
+      game.announce(string.format("Bitten! %d s",
+                                  math.ceil((ends - now) / TICKS_PER_SEC)),
+                    1, p, "top")
+    end
+  end
+end
+
+-- Five times a second: the deep sea clock, the bite clock, and while it is
+-- on, the compass.
 local function refresh()
   if over then
     return
@@ -958,6 +1045,7 @@ local function refresh()
   if over then
     return
   end
+  watch_the_bites(game.tick())
   if compass_on then
     draw_everybody()
   end
@@ -1031,6 +1119,13 @@ function on_start()
   if ZERO_HUMAN ~= "Yes" and ZERO_HUMAN ~= "Random" then
     ZERO_HUMAN = "No"
   end
+  DROWN_INFECTS      = game.setting("drown_infects") == true
+  BITE_SECONDS       = game.setting("bite_seconds")
+  -- No bite or hit from a round before outlives it.
+  shot_by = {}
+  shot_at = {}
+  bite    = {}
+  bite_on = {}
   running = true
   elapsed = 0
   ends_at = game.tick() + ROUND_SECONDS * 100
@@ -1062,6 +1157,14 @@ function on_start()
                "of you is quicker and tougher. Kill them all.")
   game.message(string.format("Survivors: stay in deep water for %d seconds " ..
                              "and you are infected.", DEEP_WATER_SECONDS))
+  if DROWN_INFECTS then
+    game.message("Survivors: drown and you are infected.")
+  end
+  if BITE_SECONDS > 0 then
+    game.message(string.format("Survivors: an infected shell bites for %d " ..
+                               "seconds. Die bitten and you are infected.",
+                               BITE_SECONDS))
+  end
   game.timer(HEAD_START - WARNING_SECONDS, warn_zero)
   game.timer(HEAD_START, turn_zero)
   game.timer(1, each_second)
@@ -1070,14 +1173,22 @@ function on_start()
   panel()
 end
 
--- Only an infected tank's shell turns you. Every other death is a hazard, not
--- a recruiter: dying to one costs a survivor their position and their pills and
+-- Only an infected tank's shell turns you, unless the host has turned on one
+-- of the two lobby settings below. Every other death is a hazard, not a
+-- recruiter: dying to one costs a survivor their position and their pills and
 -- nothing else, and the horde does not get to count a kill its gun did not make.
 --
 -- That covers drowning and your own mine (the dying tank is named as its own
 -- killer), a pillbox (the sim fires every pillbox shell with no owner on it, so
 -- the killer is game.NEUTRAL), and any mine, even one an infected tank is named
 -- for, because it was laid before that player turned.
+--
+-- With a bite time set, a survivor who dies while bitten turns whatever the
+-- cause, drowning included, and the tank that bit them is credited. With
+-- "Drowning infects" on, a drowning turns too (cause "deep_sea", the victim
+-- named as their own killer), credited to the infected tank whose shell last
+-- hit them if that was inside DROWN_CREDIT_SECONDS, and to nobody otherwise.
+-- A turn credited to an infected tank is a kill, and ends the help.
 function on_tank_killed(victim, killer, cause, scripted)
   if over or not running then
     return
@@ -1085,9 +1196,49 @@ function on_tank_killed(victim, killer, cause, scripted)
   if side[victim] == INFECTED then
     return
   end
+  local now = game.tick()
+  local by = nil
   if cause == "shell" and side[killer] == INFECTED then
-    bitten = true
-    infect(victim, killer)
+    by = killer
+  elseif bite[victim] ~= nil and now < bite[victim] then
+    by = shot_by[victim]
+  elseif cause == "deep_sea" and DROWN_INFECTS then
+    if shot_at[victim] ~= nil and
+       now - shot_at[victim] <= DROWN_CREDIT_SECONDS * TICKS_PER_SEC then
+      by = shot_by[victim]
+    end
+  else
+    -- An ordinary death: the bite, if it had run out, and the last hit go
+    -- with it.
+    forget_bite(victim, true)
+    return
+  end
+  if by ~= nil and side[by] ~= INFECTED then
+    by = nil
+  end
+  if by ~= nil then
+    first_kill = true
+  end
+  infect(victim, by)
+end
+
+-- Every hit an infected tank's shell lands on a survivor is written down: who
+-- fired it and when, for the credit on a drowning, and with a bite time set,
+-- a bite that runs from now. A new hit starts the bite again. The hit is
+-- priced by damage_scale before this, and nothing here changes it.
+function on_tank_hit(victim, attacker, cause, amount, pill, scripted)
+  if over or not running then
+    return
+  end
+  if cause ~= "shell" or side[victim] ~= SURVIVORS or
+     side[attacker] ~= INFECTED then
+    return
+  end
+  local now = game.tick()
+  shot_by[victim] = attacker
+  shot_at[victim] = now
+  if BITE_SECONDS > 0 then
+    bite[victim] = now + BITE_SECONDS * TICKS_PER_SEC
   end
 end
 
@@ -1162,6 +1313,10 @@ function on_player_join(p, scripted)
   warned[p] = nil
   drawn[p]  = nil
   heir_of[p] = nil
+  bite[p]    = nil
+  bite_on[p] = nil
+  shot_by[p] = nil
+  shot_at[p] = nil
   if loose then
     side[p] = INFECTED
     game.set_team(p, INFECTED)
@@ -1187,13 +1342,24 @@ end
 function on_player_leave(p, scripted)
   local was = side[p]
   side[p]    = nil
-  -- Nothing is sent to an empty seat: the deep sea count and the panel it was
-  -- last sent are only forgotten, so a joiner in the seat starts from nothing.
+  -- Nothing is sent to an empty seat: the deep sea count, the bite and the
+  -- panel it was last sent are only forgotten, so a joiner in the seat starts
+  -- from nothing.
   wet[p]     = nil
   warned[p]  = nil
   fresh[p]   = nil
   drawn[p]   = nil
   handed[p]  = nil
+  bite[p]    = nil
+  bite_on[p] = nil
+  shot_by[p] = nil
+  shot_at[p] = nil
+  -- A bite or a hit the seat made is credited to nobody once it has gone.
+  for q, b in pairs(shot_by) do
+    if b == p then
+      shot_by[q] = nil
+    end
+  end
   if alone == p then
     alone = nil
   end
@@ -1265,7 +1431,7 @@ function can_ally(p, q)
   return false
 end
 
--- A survivor comes back with everything; an infected one with half a tank
+-- A survivor comes back with everything; an infected one with a full tank
 -- of shells, nothing to build with, and a full tank of armour. Asked on every
 -- respawn, and by then the seat has changed sides, so a survivor's last death
 -- is what fuels their first life on the other side.
@@ -1371,13 +1537,21 @@ scenario = {
     { id = "zero_human", label = "First infected is a person",
       type = "choice", choices = { "No", "Yes", "Random" },
       default = ZERO_HUMAN },
+    -- Off is the classic rule: only an infected shell kill turns a survivor.
+    { id = "drown_infects", label = "Drowning infects", type = "bool",
+      default = DROWN_INFECTS },
+    -- 0 is no bite. A survivor who dies while bitten turns, drowning
+    -- included, so with a bite time set a bitten survivor who drowns turns
+    -- even with "Drowning infects" off: the bite wins.
+    { id = "bite_seconds", label = "Bite time (s)", type = "int",
+      min = 0, max = 60, step = 1, default = BITE_SECONDS },
   },
 
   -- What each callback below does, in a line a player reads: the lobby's
   -- details dialog lists these under "What this scenario implements:".
   callbacks = {
     on_start = "All start as survivors; one is infected after 10 s. Runs the " ..
-               "deep water clock and compass.",
+               "deep water and bite clocks and the compass.",
     on_end = "Logs how long the round ran.",
     on_player_join = "A late joiner arrives infected, or starts the " ..
                      "virus when nobody could.",
@@ -1388,15 +1562,18 @@ scenario = {
     on_team_changed = "Players cannot change side.",
     on_tank_spawned = "Keeps the first infected strong; survivors get " ..
                       "20 s to reach land.",
-    on_tank_killed = "A survivor the infected kill is infected; their " ..
-                     "pillboxes go to a survivor.",
+    on_tank_killed = "A survivor the infected kill is infected; so is " ..
+                     "one who dies bitten (drowning too) or drowns with " ..
+                     "drowning on. Pillboxes go to a survivor.",
+    on_tank_hit = "An infected shell bites a survivor for the bite time " ..
+                  "and is credited with a drowning soon after.",
     allow_extra_teams = "Only the two sides.",
     can_ally = "Players cannot ally.",
     allow_base_win = "Holding every base does not win.",
     can_build = "The infected cannot build.",
     can_capture = "The infected cannot take bases or pillboxes.",
     on_tick = "Removes bases and dead pillboxes the infected drive over.",
-    spawn_loadout = "Infected respawn with half shells and full armour.",
+    spawn_loadout = "Infected respawn with full shells and full armour.",
     damage_scale = "No friendly fire.",
   },
 

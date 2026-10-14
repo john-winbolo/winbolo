@@ -13,6 +13,7 @@
 #include "mapeditor_stamp.h"
 #include "../gui/sdl3/minimap_render.h"
 #include "mapeditor_imgui.h"  /* ME_TRANSPARENT */
+#include "byte_order.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -98,7 +99,69 @@ void stampGetUserDir(char *dest, int destLen) {
 
 /* -------------------------------------------------------
  * Stamp file I/O
+ *
+ * The header's counts and a base's baseTime are little-endian, as every
+ * stamp written so far has them, so they go through these rather than as
+ * the structs lie in memory.
  * ------------------------------------------------------- */
+
+#define STAMP_HEADER_BYTES 24
+
+static bool stampWriteHeader(FILE *f, const StampHeader *hdr) {
+    BYTE b[STAMP_HEADER_BYTES];
+    memcpy(b, hdr->magic, STAMP_MAGIC_LEN);
+    byteOrderPutLe16(b + 8, hdr->width);
+    byteOrderPutLe16(b + 10, hdr->height);
+    byteOrderPutLe16(b + 12, hdr->numPills);
+    byteOrderPutLe16(b + 14, hdr->numBases);
+    byteOrderPutLe16(b + 16, hdr->numStarts);
+    memcpy(b + 18, hdr->reserved, sizeof(hdr->reserved));
+    return fwrite(b, sizeof(b), 1, f) == 1;
+}
+
+static bool stampReadHeader(FILE *f, StampHeader *hdr) {
+    BYTE b[STAMP_HEADER_BYTES];
+    if (fread(b, sizeof(b), 1, f) != 1) return false;
+    memcpy(hdr->magic, b, STAMP_MAGIC_LEN);
+    hdr->width = byteOrderGetLe16(b + 8);
+    hdr->height = byteOrderGetLe16(b + 10);
+    hdr->numPills = byteOrderGetLe16(b + 12);
+    hdr->numBases = byteOrderGetLe16(b + 14);
+    hdr->numStarts = byteOrderGetLe16(b + 16);
+    memcpy(hdr->reserved, b + 18, sizeof(hdr->reserved));
+    return true;
+}
+
+/* A base as the file holds it: the struct's layout, padding zeroed. */
+static bool stampWriteBase(FILE *f, const base *bs) {
+    BYTE b[sizeof(base)];
+    memset(b, 0, sizeof(b));
+    b[offsetof(base, x)] = bs->x;
+    b[offsetof(base, y)] = bs->y;
+    b[offsetof(base, owner)] = bs->owner;
+    b[offsetof(base, armour)] = bs->armour;
+    b[offsetof(base, shells)] = bs->shells;
+    b[offsetof(base, mines)] = bs->mines;
+    b[offsetof(base, refuelTime)] = bs->refuelTime;
+    byteOrderPutLe32(b + offsetof(base, baseTime), (uint32_t)bs->baseTime);
+    b[offsetof(base, justStopped)] = bs->justStopped ? 1 : 0;
+    return fwrite(b, sizeof(b), 1, f) == 1;
+}
+
+static bool stampReadBase(FILE *f, base *bs) {
+    BYTE b[sizeof(base)];
+    if (fread(b, sizeof(b), 1, f) != 1) return false;
+    bs->x = b[offsetof(base, x)];
+    bs->y = b[offsetof(base, y)];
+    bs->owner = b[offsetof(base, owner)];
+    bs->armour = b[offsetof(base, armour)];
+    bs->shells = b[offsetof(base, shells)];
+    bs->mines = b[offsetof(base, mines)];
+    bs->refuelTime = b[offsetof(base, refuelTime)];
+    bs->baseTime = (int32_t)byteOrderGetLe32(b + offsetof(base, baseTime));
+    bs->justStopped = b[offsetof(base, justStopped)] != 0;
+    return true;
+}
 
 bool stampSave(const char *filePath,
                int clipW, int clipH,
@@ -123,7 +186,7 @@ bool stampSave(const char *filePath,
     hdr.numBases = (uint16_t)numBases;
     hdr.numStarts = (uint16_t)numStarts;
 
-    if (fwrite(&hdr, sizeof(hdr), 1, f) != 1) { fclose(f); return false; }
+    if (!stampWriteHeader(f, &hdr)) { fclose(f); return false; }
 
     /* Terrain data: column-major (for x { for y { ... } }) */
     for (int x = 0; x < clipW; x++) {
@@ -140,8 +203,8 @@ bool stampSave(const char *filePath,
             return false;
         }
     }
-    if (numBases > 0) {
-        if (fwrite(bases, sizeof(base), (size_t)numBases, f) != (size_t)numBases) {
+    for (int i = 0; i < numBases; i++) {
+        if (!stampWriteBase(f, &bases[i])) {
             fclose(f);
             return false;
         }
@@ -166,7 +229,7 @@ bool stampLoad(const char *filePath,
     if (!f) return false;
 
     StampHeader hdr;
-    if (fread(&hdr, sizeof(hdr), 1, f) != 1) { fclose(f); return false; }
+    if (!stampReadHeader(f, &hdr)) { fclose(f); return false; }
 
     /* Validate magic */
     if (memcmp(hdr.magic, STAMP_MAGIC, STAMP_MAGIC_LEN) != 0) {
@@ -208,8 +271,8 @@ bool stampLoad(const char *filePath,
     }
 
     *numBases = (int)hdr.numBases;
-    if (hdr.numBases > 0) {
-        if (fread(bases, sizeof(base), (size_t)hdr.numBases, f) != (size_t)hdr.numBases) {
+    for (int i = 0; i < (int)hdr.numBases; i++) {
+        if (!stampReadBase(f, &bases[i])) {
             fclose(f);
             return false;
         }
@@ -357,7 +420,7 @@ static void stampScanDirectory(StampLibrary *lib, const char *dirPath, bool isBu
         FILE *f = fopen(entry->filePath, "rb");
         if (f) {
             StampHeader hdr;
-            if (fread(&hdr, sizeof(hdr), 1, f) == 1 &&
+            if (stampReadHeader(f, &hdr) &&
                 memcmp(hdr.magic, STAMP_MAGIC, STAMP_MAGIC_LEN) == 0 &&
                 hdr.width >= 1 && hdr.width <= 256 &&
                 hdr.height >= 1 && hdr.height <= 256) {
@@ -416,7 +479,7 @@ static void stampScanDirectory(StampLibrary *lib, const char *dirPath, bool isBu
         FILE *f = fopen(entry->filePath, "rb");
         if (f) {
             StampHeader hdr;
-            if (fread(&hdr, sizeof(hdr), 1, f) == 1 &&
+            if (stampReadHeader(f, &hdr) &&
                 memcmp(hdr.magic, STAMP_MAGIC, STAMP_MAGIC_LEN) == 0 &&
                 hdr.width >= 1 && hdr.width <= 256 &&
                 hdr.height >= 1 && hdr.height <= 256) {
