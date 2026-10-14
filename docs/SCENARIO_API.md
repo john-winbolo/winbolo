@@ -1915,11 +1915,22 @@ author and a script author can agree on words of their own.
 | `escort` | `player`, and optionally `distance` | Stay with that seat, within `distance` squares of it (3 by default) |
 | `avoid` | `x`, `y`, `w`, `h` | Keep out of that rectangle until told otherwise |
 
-Past the seven, GoalHunter knows one more word:
+Past the seven, GoalHunter knows one more word, and one more key:
 
 | `verb` | Keys | Means |
 |---|---|---|
 | `release` | none | End the order the bot holds and give it no new one |
+| `attack` | `pill` | Attack that pillbox: the order a person gives with `attack pill` |
+
+`attack` with `pill = n` names the pillbox the way a script does, 1-based
+(`game.pill(n)`). The bot gets the same order as from the chat line `attack
+pill <id>`, where the id is the brain's own pill number, `n - 1`. A dead
+pillbox is picked up instead, as in chat. With `pill` given, `player` is not
+read; a `pill` the bot does not know of yet gives no order. Under the order
+every goal of the bot's own loses, except its fight with a tank and the
+other moves that keep it alive. The same hint again keeps the order held for
+another minute. GoalHunter's `ORDER_HINT_ATTACK_PILL` switches the key off;
+the KEEL preset has it off, and then an `attack` with only `pill` is ignored.
 
 `release` is the way to call an order off. A `hold` is not: it is a `goto`
 to the square the bot is on, so it is a new order, and the bot holds it.

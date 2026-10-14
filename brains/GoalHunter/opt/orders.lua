@@ -3440,6 +3440,17 @@ local function hint_command(state, world, info, t)
   end
 
   if v == "attack" then
+    -- `pill = N` (C.ORDER_HINT_ATTACK_PILL): the order a person gets with
+    -- "attack pill <id>".  N is the SCRIPT's number for the pillbox, which
+    -- is 1-based (game.pill(N)); the brain's pill ids are the engine's
+    -- 0-based slots, so the order is on pill N - 1.  A bad number drops the
+    -- hint; it does not fall back to `player`.  Knob off: the key is not
+    -- read, and an attack with only `pill` is ignored as before.
+    if C.ORDER_HINT_ATTACK_PILL and t.pill ~= nil then
+      local n = hint_num(t.pill)
+      if not n or n < 1 then return nil end
+      return { verb = "attack", who = who, target = { kind = "pill", id = n - 1 } }
+    end
     local pn = hint_num(t.player)
     if not pn or pn < 0 or pn >= ally_state.MAX_TANKS then return nil end
     return { verb = "attack", who = who, target = { kind = "tank", pn = pn } }

@@ -6531,6 +6531,100 @@ do
   C.ORDER_RELEASE_HINT = saved
 end
 
+-- THE "attack" HINT TAKES `pill = N` (ORDER_HINT_ATTACK_PILL).  N is the
+-- script's 1-based pillbox number; the order is attack_pill on the brain's
+-- pill N - 1, the order "attack pill <N - 1>" in chat gives.  Knob off
+-- (keel): the key is not read.  `player` works as before either way.
+do
+  print("orders.lua — the attack hint with pill = N is an attack_pill order")
+  local saved = C.ORDER_HINT_ATTACK_PILL
+  local function hint(t)
+    local st, w, inf = ST(), W(), I()
+    local r = ORD.on_scenario_hint(st, w, inf, t, 100)
+    ORD.update(st, w, inf, 101)
+    return r, st, w, inf
+  end
+  local function chat_held(line)
+    local st, w, inf = ST(), W(), I()
+    inf.allies = 0x17
+    -- player_names is indexed pn+1, so this bot (p1) is "Socrates": the
+    -- order is addressed straight at it, no auction.
+    ORD.on_chat(st, w, inf, 0, "socrates " .. line, 100, true, false)
+    return st.orders.held
+  end
+
+  C.ORDER_HINT_ATTACK_PILL = true
+  -- Script pill 6 is the brain's pill 5 (hostile, alive).
+  local r, st = hint({ verb = "attack", pill = "6" })
+  local h = st.orders.held
+  check("attack pill: answered true", r == true, tostring(r))
+  check("attack pill: holds attack_pill on brain pill 5 (script pill 6)",
+        h ~= nil and h.kind == "attack_pill" and h.tid == 5,
+        h and (tostring(h.kind) .. "#" .. tostring(h.tid)) or "nil")
+  check("attack pill: published as the live order",
+        st._order ~= nil and st._order.kind == "attack_pill" and st._order.tid == 5,
+        tostring(st._order and st._order.kind))
+  check("attack pill: it needs shells", h ~= nil and h.needs_shells == true,
+        tostring(h and h.needs_shells))
+  check("attack pill: no go-there lock", st.command_goal == nil, tostring(st.command_goal))
+  -- The same order a person gets with "attack pill 5".
+  local ch = chat_held("attack pill 5")
+  check("attack pill: same kind and pill as chat \"attack pill 5\"",
+        ch ~= nil and h ~= nil and ch.kind == h.kind and ch.tid == h.tid,
+        ch and (tostring(ch.kind) .. "#" .. tostring(ch.tid)) or "nil")
+  -- A number reaches the brain as text, but a Lua number is read the same.
+  r, st = hint({ verb = "attack", pill = 6 })
+  check("attack pill: a number value works too",
+        st.orders.held ~= nil and st.orders.held.tid == 5, "nil")
+  -- A dead pill is picked up, as in chat (script 8 = brain 7, health 0).
+  r, st = hint({ verb = "attack", pill = "8" })
+  check("attack pill: a dead pill becomes capture_pill, as in chat",
+        st.orders.held ~= nil and st.orders.held.kind == "capture_pill"
+        and st.orders.held.tid == 7, tostring(st.orders.held and st.orders.held.kind))
+  -- A pill the bot does not know, or a bad number: no order.
+  r, st = hint({ verb = "attack", pill = "40" })
+  check("attack pill: an unknown pill gives no order",
+        r == false and st.orders.held == nil, tostring(r))
+  r, st = hint({ verb = "attack", pill = "0" })
+  check("attack pill: pill 0 (not a script number) gives no order",
+        r == false and st.orders.held == nil, tostring(r))
+  r, st = hint({ verb = "attack", pill = "x", player = "7" })
+  check("attack pill: a bad pill does not fall back to player",
+        r == false and st.orders.held == nil, tostring(r))
+  -- The same hint again refreshes the focus, not a new order.
+  do
+    local st2, w2, inf2 = ST(), W(), I()
+    ORD.on_scenario_hint(st2, w2, inf2, { verb = "attack", pill = "6" }, 100)
+    ORD.update(st2, w2, inf2, 101)
+    local oid = st2.orders.held and st2.orders.held.oid
+    local exp0 = st2.orders.held and st2.orders.held.expiry
+    ORD.on_scenario_hint(st2, w2, inf2, { verb = "attack", pill = "6" }, 900)
+    check("attack pill: a repeat refreshes the focus on the same order",
+          st2.orders.held ~= nil and st2.orders.held.oid == oid
+          and st2.orders.held.expiry == 900 + (C.ORDER_FOCUS_TICKS or 3000)
+          and exp0 ~= st2.orders.held.expiry, tostring(st2.orders.held and st2.orders.held.expiry))
+  end
+  -- The player key is unchanged.
+  r, st = hint({ verb = "attack", player = "7" })
+  check("attack player: still attack_tank on that seat",
+        st.orders.held ~= nil and st.orders.held.kind == "attack_tank"
+        and st.orders.held.tid == 7, tostring(st.orders.held and st.orders.held.kind))
+
+  -- KEEL: the pill key is not read.
+  C.ORDER_HINT_ATTACK_PILL = false
+  r, st = hint({ verb = "attack", pill = "6" })
+  check("ORDER_HINT_ATTACK_PILL=false (keel): attack with only pill is ignored",
+        r == false and st.orders.held == nil, tostring(r))
+  r, st = hint({ verb = "attack", pill = "6", player = "7" })
+  check("ORDER_HINT_ATTACK_PILL=false (keel): pill ignored, player used",
+        st.orders.held ~= nil and st.orders.held.kind == "attack_tank"
+        and st.orders.held.tid == 7, tostring(st.orders.held and st.orders.held.kind))
+  check("keel preset carries ORDER_HINT_ATTACK_PILL = false",
+        C.PRESETS.keel.ORDER_HINT_ATTACK_PILL == false,
+        tostring(C.PRESETS.keel.ORDER_HINT_ATTACK_PILL))
+  C.ORDER_HINT_ATTACK_PILL = saved
+end
+
 -- THE obq LONG FORM IS RANGE-CHECKED (PR #510 review item 5).  A field out
 -- of range drops the whole line: answered true, nothing queued.
 do

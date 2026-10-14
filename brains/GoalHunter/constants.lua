@@ -5291,6 +5291,13 @@ M.ORDER_HINT_BUSY_SILENT  = true  -- keel false (2026-10-01: newswire spam)
 -- false = the verb is unknown and ignored in silence (the brain had no word
 -- that only ends an order; a script sent "hold", a goto to its own square).
 M.ORDER_RELEASE_HINT      = true  -- keel false (2026-10-14: Pillbox Tag)
+-- The "attack" SCENARIO HINT takes `pill = N` (2026-10-14): the same
+-- attack_pill order a person gets with "attack pill <id>".  N is the
+-- script's 1-based pillbox number, so the order is on the brain's pill N - 1.
+-- Pillbox Tag sends it to each hunter when the prize is set down.
+-- false = the `pill` key is not read: an attack hint names a `player` only,
+-- and one with only `pill` is ignored.
+M.ORDER_HINT_ATTACK_PILL  = true  -- keel false (2026-10-14: Pillbox Tag)
 -- Shortest gap between two ATTACK markers from the SAME bot about the SAME
 -- target.  A bot re-plans the same goal often, and without this every replan
 -- would put another marker on the same pill.  1500 ticks is 30 s.
@@ -5799,6 +5806,9 @@ M.PRESETS = {
     --   2026-10-14: the "release" scenario hint ends a held order. KEEL
     --   had no such verb: an unknown verb, ignored.
     ORDER_RELEASE_HINT            = false,
+    --   2026-10-14: the "attack" scenario hint takes `pill = N`. KEEL read
+    --   `player` only.
+    ORDER_HINT_ATTACK_PILL        = false,
     --   2026-09-17: a bot attacking a pill with a HUMAN team-mate within 7
     --   tiles now skips the wall shield and goes straight in (the lobby docs
     --   promise it). KEEL never looked at where the humans were: 0 = off, so

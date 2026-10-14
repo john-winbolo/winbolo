@@ -5,10 +5,11 @@
 --
 -- pilltag_wall_lines with walled.LINE_GOTO off. The ground, the walls, the
 -- gap at (128,126), the holder and the three hunters are that arena's. When
--- the prize goes up each hunter gets the "release" hint only (its chase order
--- ends and it gets no new one), so its own goal choice decides what it does.
+-- the prize goes up each hunter is told to attack it at once ({ verb =
+-- "attack", pill = <prize> }, in place of its chase order) and is sent to no
+-- square, so the brain's attack on the pillbox finds its own firing square.
 -- The script still works out the line squares, and the 30 s net is timed
--- from the release.
+-- from the attack order.
 --
 -- PASS: any hunter hits the prize before the shot through the walls is
 -- turned on, within 60 s of the build.
