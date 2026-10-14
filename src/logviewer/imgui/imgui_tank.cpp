@@ -689,6 +689,10 @@ static void tank_text(const LvTankStatus &st, bool icons) {
     } else {
         tank_builder_words_line(st);
     }
+    /* The pillboxes' line only while the tank carries one. The room for it
+     * stays (tank_room counts it), so the panel does not jump when a
+     * pillbox is picked up or put down. */
+    if (st.carriedPills <= 0) return;
     TankIconMetrics pm = {};
     if (pillIcon) {
         tank_pill_icon_line(st, m);
@@ -698,11 +702,7 @@ static void tank_text(const LvTankStatus &st, bool icons) {
     } else {
         MessageArgs args = {};
         args.number = st.carriedPills;
-        if (st.carriedPills > 0) {
-            ImGui::TextUnformatted(langGetTextFmt(STR_LV_TANK_PILLS, &args));
-        } else {
-            ImGui::TextDisabled("%s", langGetTextFmt(STR_LV_TANK_PILLS, &args));
-        }
+        ImGui::TextUnformatted(langGetTextFmt(STR_LV_TANK_PILLS, &args));
     }
 }
 
