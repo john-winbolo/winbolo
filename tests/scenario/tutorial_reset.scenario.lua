@@ -26,8 +26,9 @@
 -- PASS: Station 4 re-arms as above; after each pen everything in that
 -- station is back as it started: the walls standing, the arrow road whole,
 -- the pillboxes and bases with their first owners, the checklist empty (but
--- for 5A, which is not undone), and for Station 5 the blocker back in the
--- player's tank.
+-- for 5A, which is not undone, and Station 7's "dead", as its two dead
+-- pillboxes are handed back), for Station 5 the blocker back in the
+-- player's tank, and for Station 7 both dead pillboxes of the road in.
 
 TUTORIAL_PLAYER = 0
 ARENA = { phase = 0 }
@@ -125,8 +126,17 @@ function arena_check7()
   if base == nil or base.owner ~= S.bot7 then
     bad[#bad + 1] = "bot base not the bot's"
   end
-  if next(S.done[7]) ~= nil then
-    bad[#bad + 1] = "checklist not empty (" .. done_keys(7) .. ")"
+  for _, k in ipairs({ "p7_sw1", "p7_sw2" }) do
+    local n = LAYOUT.pill[k].n
+    local sw = game.pill(n)
+    if sw == nil or not sw.in_tank or S.carrier[n] ~= 0 then
+      bad[#bad + 1] = k .. " not in the player's tank"
+    end
+  end
+  -- The two pillboxes are handed back, so "dead" is the one goal ticked.
+  local keys = done_keys(7)
+  if keys ~= "dead" then
+    bad[#bad + 1] = "checklist not just dead (" .. keys .. ")"
   end
   return bad
 end
