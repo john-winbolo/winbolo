@@ -2082,6 +2082,34 @@ local function decoy_pills(world, mx, my)
 end
 M.decoy_pills = decoy_pills
 
+-- 2026-10-14 (Andrew): WHAT IS STANDING ON A GO-THERE SQUARE.  A go-there
+-- order arrives on the square itself, but some squares cannot be driven
+-- onto: another tank is parked there (PillboxTag sends hunters onto a
+-- tank's square), a pillbox sits there, or it is a wall.  This returns
+-- "tank", "pill" or "wall" for such a square, else nil.  Any tank counts
+-- (any team) except this bot's own; any pill on the map counts (any owner;
+-- a carried pill holds no square); a wall is a building or damaged building
+-- square.  Called only while the tank is in the one-square ring and has not
+-- arrived, so the object and pill scans stay rare.
+function M.goto_target_blocked(world, info, mx, my)
+  local OT = _G.OBJECT_TANK
+  local me = info and info.player_number
+  for _, ob in ipairs((info and info.objects) or {}) do
+    if ob.type == OT and ob.idnum ~= me
+       and bit.rshift(ob.x or 0, 8) == mx and bit.rshift(ob.y or 0, 8) == my then
+      return "tank"
+    end
+  end
+  for _, p in pairs((world and world.pills) or {}) do
+    if not p.in_tank and p.mx == mx and p.my == my then return "pill" end
+  end
+  if _G.get_terrain then
+    local tt = U.ttype_peek(mx, my)
+    if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return "wall" end
+  end
+  return nil
+end
+
 -- The hold goal: the same goto_tile pick_goal hands back in a hold, marked
 -- so the end of the decoy can tell it from any other goto_tile.  A NEW
 -- table every call: clear_attack_goal wipes the live goal in place.
@@ -4851,6 +4879,18 @@ function M.update(state, world, info, now)
       local cheb = (dx > dy) and dx or dy
       local arrive = cheb <= (C.ORDER_GOTO_ARRIVE_TILES or 1)
       local fb = C.ORDER_GOTO_ARRIVE_FALLBACK_TICKS or 0
+      -- 2026-10-14 (Andrew): A BLOCKED SQUARE ARRIVES FROM THE RING.  On
+      -- every think in the one-square ring, look at the square itself.  If a
+      -- tank, a pill or a wall stands on it, the tank cannot get there, so
+      -- being beside it is good enough: arrival happens now, with no timer.
+      -- An open square keeps the rules above (the square itself, or the
+      -- fallback timer).  ORDER_GOTO_ARRIVE_BLOCKED_RING, keel false.
+      if not arrive and cheb == 1 and C.ORDER_GOTO_ARRIVE_BLOCKED_RING then
+        local what = M.goto_target_blocked(world, info, h.mx, h.my)
+        if what then
+          arrive = true
+        end
+      end
       if not arrive then
         if fb > 0 and cheb <= 1 then
           h.near_since = h.near_since or now

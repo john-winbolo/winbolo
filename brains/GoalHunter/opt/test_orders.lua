@@ -6324,6 +6324,7 @@ do
   local knobs = {
     { "ORDER_GOTO_ARRIVE_TILES",          0,    1 },
     { "ORDER_GOTO_ARRIVE_FALLBACK_TICKS", 100,  0 },
+    { "ORDER_GOTO_ARRIVE_BLOCKED_RING",   true, false },
     { "ORDER_BID_STOP_AWARE",             true, false },
     { "ORDER_BID_REFUEL_STOP_COST",       30,   0 },
     { "ORDER_BID_ENGAGED_COST",           30,   0 },
@@ -6374,6 +6375,60 @@ do
   arrive(b, 200, 23, 24)
   check("keel (1, 0): one square off arrives at once", arrived(b), "no")
   C.ORDER_GOTO_ARRIVE_TILES, C.ORDER_GOTO_ARRIVE_FALLBACK_TICKS = 0, 100
+
+  -- ── 1b. A BLOCKED SQUARE ARRIVES FROM THE RING (2026-10-14, Andrew) ────
+  -- PR #510 review item 1: PillboxTag sends hunters onto a tank's square.
+  -- In the one-square ring, a tank, a pill or a wall on the square means
+  -- arrival at once.  The tank stands at (23,24), one square east of (22,24).
+  print("orders.lua -- bot order bids: a blocked square arrives from the ring")
+  local function tank_on(bb, pn, mx, my)
+    table.insert(bb.inf.objects, { type = _G.OBJECT_TANK, idnum = pn,
+      x = mx * 256 + 128, y = my * 256 + 128, info = 0x80 })
+  end
+  local sv_gt, sv_tm = _G.get_terrain, _G.TERRAIN_MASK
+  local TMAP = {}
+  _G.TERRAIN_MASK = 0x0F
+  _G.get_terrain = function(mx, my) return TMAP[my * 256 + mx] or C.T_GRASS end
+  b = dbot(); tank_on(b, 7, 22, 24)
+  arrive(b, 200, 23, 24)
+  check("ring + an enemy tank on the square: arrives at once", arrived(b), "no")
+  b = dbot(); tank_on(b, 2, 22, 24)
+  arrive(b, 200, 23, 24)
+  check("ring + an ally tank on the square: arrives at once", arrived(b), "no")
+  b = dbot(); tank_on(b, 1, 22, 24)
+  arrive(b, 200, 23, 24)
+  check("ring + an object with this bot's own number: not arrived", not arrived(b), "arrived")
+  b = dbot(); b.w.pills[11] = { mx = 22, my = 24, owner = "friendly", health = 12 }
+  arrive(b, 200, 23, 24)
+  check("ring + a pill on the square: arrives at once", arrived(b), "no")
+  b = dbot(); b.w.pills[11] = { mx = 22, my = 24, owner = "friendly", health = 12, in_tank = true }
+  arrive(b, 200, 23, 24)
+  check("ring + a carried pill (no square): not arrived", not arrived(b), "arrived")
+  TMAP[24 * 256 + 22] = C.T_BUILDING
+  b = dbot(); arrive(b, 200, 23, 24)
+  check("ring + a wall on the square: arrives at once", arrived(b), "no")
+  TMAP[24 * 256 + 22] = C.T_HALFBUILD
+  b = dbot(); arrive(b, 200, 23, 24)
+  check("ring + a damaged wall on the square: arrives at once", arrived(b), "no")
+  TMAP[24 * 256 + 22] = nil
+  b = dbot(); arrive(b, 200, 23, 24)
+  check("ring + open grass: not arrived (timer only)", not arrived(b), "arrived")
+  arrive(b, 299, 23, 24)
+  check("ring + open grass for 99 ticks: still not arrived", not arrived(b), "arrived")
+  arrive(b, 300, 23, 24)
+  check("ring + open grass for 100 ticks: the fallback arrives", arrived(b), "no")
+  b = dbot(); tank_on(b, 7, 22, 24)
+  arrive(b, 200, 24, 24)
+  check("two squares off with a tank on the square: not arrived", not arrived(b), "arrived")
+  C.ORDER_GOTO_ARRIVE_BLOCKED_RING = false
+  b = dbot(); tank_on(b, 7, 22, 24)
+  arrive(b, 200, 23, 24)
+  check("knob off: ring + tank on the square does not arrive at once",
+        not arrived(b), "arrived")
+  arrive(b, 300, 23, 24)
+  check("knob off: the old fallback timer still arrives", arrived(b), "no")
+  C.ORDER_GOTO_ARRIVE_BLOCKED_RING = true
+  _G.get_terrain, _G.TERRAIN_MASK = sv_gt, sv_tm
 
   -- ── 2. THE BID COUNTS A REFUEL STOP AND A FIGHT ─────────────────────────
   -- Me at (10,10).  Friendly base #4 at (50,50).  Target (20,70).  The cost

@@ -4775,6 +4775,14 @@ M.ORDER_GOTO_ARRIVE_TILES = 0    -- keel 1
 -- this way parks where it is, because the hold park (orders.hold_parked) and
 -- steering still use the one-square test.  0 = no fallback (keel).
 M.ORDER_GOTO_ARRIVE_FALLBACK_TICKS = 100   -- keel 0
+-- 2026-10-14 (Andrew): A BLOCKED SQUARE ARRIVES FROM THE RING.  While the
+-- tank is in the one-square ring and has not arrived, every think looks at
+-- the target square.  If another tank (any team), a pillbox (any owner) or a
+-- wall (building or damaged building) is on it, the order arrives at once,
+-- with no timer.  An open square keeps the two rules above.  false = only
+-- the square itself or the fallback timer.  Keel false: keel already
+-- arrives anywhere in the one-square ring.
+M.ORDER_GOTO_ARRIVE_BLOCKED_RING = true   -- keel false
 -- THE HOLD PHASE STILL FIGHTS.  While the hold runs the hard goto lock comes
 -- off and goal selection runs again, so attack_tank and kill_lgm can win --
 -- but the tank must not DRIVE anywhere: it was sent to that square.  These
@@ -5814,6 +5822,9 @@ M.PRESETS = {
     --   timer for a square it cannot reach.  KEEL: within one square, no timer.
     ORDER_GOTO_ARRIVE_TILES       = 1,
     ORDER_GOTO_ARRIVE_FALLBACK_TICKS = 0,
+    --   2026-10-14: a go-there order arrives from the one-square ring when
+    --   a tank, a pill or a wall is on the square.  KEEL: no such check.
+    ORDER_GOTO_ARRIVE_BLOCKED_RING = false,
     --   2026-10-04: the bid prices in a refuel stop and a fight.  KEEL: the
     --   bid is the travel cost alone.
     ORDER_BID_STOP_AWARE          = false,
