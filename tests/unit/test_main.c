@@ -440,6 +440,7 @@ static const UnitTestEntry s_tests[] = {
     { "wbn_serverlist_malformed",                run_wbn_serverlist_malformed                },
     { "wbn_serverlist_scripts",                  run_wbn_serverlist_scripts                  },
     { "wbn_map_parse",                           run_wbn_map_parse                           },
+    { "wbn_map_fetch_policy",                    run_wbn_map_fetch_policy                    },
     { "brain_crash_log_writes_file",             run_brain_crash_log_writes_file             },
     { "brain_crash_log_falls_back_to_luaptr",    run_brain_crash_log_falls_back_to_luaptr    },
     { "brain_msgh_budget_kill_no_traceback",     run_brain_msgh_budget_kill_no_traceback     },
