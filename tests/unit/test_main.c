@@ -2314,6 +2314,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_bot_init_refusals",              run_scenario_bot_init_refusals              },
     { "scenario_bot_init_parked_seat",           run_scenario_bot_init_parked_seat           },
     { "scenario_bot_init_round_reset",           run_scenario_bot_init_round_reset           },
+    { "scenario_bot_init_free_seat_spawn",       run_scenario_bot_init_free_seat_spawn       },
     { "brain_on_init_update",                    run_brain_on_init_update                    },
     { "editor_script_path",                      run_editor_script_path                      },
     { "editor_script_round_trip",                run_editor_script_round_trip                },

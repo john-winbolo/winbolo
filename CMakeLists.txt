@@ -6817,6 +6817,7 @@ set(_unit_test_names
     scenario_bot_init_refusals
     scenario_bot_init_parked_seat
     scenario_bot_init_round_reset
+    scenario_bot_init_free_seat_spawn
     brain_on_init_update
     editor_script_path
     editor_script_round_trip

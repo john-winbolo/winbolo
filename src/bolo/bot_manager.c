@@ -2600,6 +2600,12 @@ void botManagerResetInitTablesToAdded(ServerSim *sim) {
     }
 }
 
+void botManagerForgetAddedInit(ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    if (!sim->botMgr.bots[playerNum].active) return;
+    scnTableClear(&sim->botMgr.bots[playerNum].addedInit);
+}
+
 const ScnTable *botManagerGetBotInitTable(ServerSim *sim, BYTE playerNum) {
     if (sim == NULL || playerNum >= MAX_TANKS) return NULL;
     /* The same seats the setter takes. A parked runner holds its table as

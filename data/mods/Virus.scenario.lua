@@ -689,11 +689,11 @@ end
 -- what each side turns on and off is in the brain (SIDE_SETTINGS in
 -- constants.lua), so this script only names the side.
 --
--- A survivor needs its word too: the word outlives the round. The server
--- builds a bot's brain for the next round from the last table it was handed,
--- so a bot that ended the last round infected would start this one on the
--- horde. A seat never goes from the horde back to the survivors inside a
--- round, so this is the only thing a survivor is ever handed.
+-- A survivor is handed its word too. At each round start the server puts
+-- every bot back on the table it was added with, so no word carries over
+-- from the last round. Each side's settings are then stated by this script,
+-- not inherited. A seat never goes from the horde back to the survivors
+-- inside a round, so this is the only thing a survivor is ever handed.
 local function word_for(p)
   if side[p] == INFECTED then
     return "horde"
