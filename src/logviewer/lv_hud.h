@@ -215,27 +215,6 @@ static inline void lvHudReadableColour(float *r, float *g, float *b) {
     *b += (1.0f - *b) * t;
 }
 
-/* In the game's HUD red means hostile, and the perspective view draws the
- * game's red icons. So in the all-teams view a red team is drawn orange, or
- * it would read as "the enemy". A colour is red when its red is at least
- * half way up and its green and blue are each no more than 35% of its red.
- * The palette's red (191,0,0) is; its orange (255,206,0), brown, pink and
- * purple are not. Returns true when the colour was changed. Channels are
- * 0..1. */
-#define LV_HUD_RED_MIN_R     0.5f
-#define LV_HUD_RED_MAX_OTHER 0.35f
-#define LV_HUD_ORANGE_R 1.0f
-#define LV_HUD_ORANGE_G (140.0f / 255.0f)
-#define LV_HUD_ORANGE_B 0.0f
-static inline bool lvHudRedToOrange(float *r, float *g, float *b) {
-    if (*r < LV_HUD_RED_MIN_R) return false;
-    if (*g > *r * LV_HUD_RED_MAX_OTHER || *b > *r * LV_HUD_RED_MAX_OTHER) return false;
-    *r = LV_HUD_ORANGE_R;
-    *g = LV_HUD_ORANGE_G;
-    *b = LV_HUD_ORANGE_B;
-    return true;
-}
-
 /* The largest scale lvHudFit tries. */
 #define LV_HUD_MAX_SCALE 8
 

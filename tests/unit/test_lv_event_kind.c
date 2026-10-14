@@ -10,6 +10,9 @@
  *       from it; "all" and a name no build knows read as no filter; and the
  *       search that places the "now" divider counts the lines at or before
  *       the playhead, with the lines that share its tick on the past side.
+ *   lv_event_click_pick — which line a click on the panel is for, and when
+ *       the click also centres the map on it: a click on the selected line,
+ *       and the second click of a double click.
  */
 
 #include <stdbool.h>
@@ -79,5 +82,98 @@ int run_lv_event_kind_sums(void) {
     /* One line, either side of the playhead. */
     UT_ASSERT_MSG(lvEventPastCount(times + 3, 1, 399) == 0, "one line, ahead");
     UT_ASSERT_MSG(lvEventPastCount(times + 3, 1, 400) == 1, "one line, passed");
+    return 0;
+}
+
+/* The panel's state a click leaves, as imgui_events.cpp keeps it. */
+typedef struct ClickState {
+    int selected;
+    int lastClicked;
+} ClickState;
+
+/* One plain click on a row: the pick, and the state after it. */
+static LvEventClick click_row(ClickState *st, int row, int clicks, int count) {
+    LvEventClick pick = lvEventClickPick(row, st->selected, st->lastClicked, clicks, count);
+    st->selected = pick.target;
+    st->lastClicked = pick.target;
+    return pick;
+}
+
+int run_lv_event_click_pick(void) {
+    const int n = 10;
+    ClickState st = { -1, -1 };
+    LvEventClick pick;
+
+    /* The first click on a line only jumps to it. */
+    pick = click_row(&st, 4, 1, n);
+    UT_ASSERT_MSG(pick.target == 4 && pick.centre == 0, "first click: %d %d",
+                  pick.target, pick.centre);
+    /* A later click on the same line, however long after, centres. */
+    pick = click_row(&st, 4, 1, n);
+    UT_ASSERT_MSG(pick.target == 4 && pick.centre == 1, "second click: %d %d",
+                  pick.target, pick.centre);
+    /* And so does each click after that. */
+    pick = click_row(&st, 4, 1, n);
+    UT_ASSERT_MSG(pick.target == 4 && pick.centre == 1, "third click: %d %d",
+                  pick.target, pick.centre);
+    /* A click on another line is a first click again. */
+    pick = click_row(&st, 7, 1, n);
+    UT_ASSERT_MSG(pick.target == 7 && pick.centre == 0, "another line: %d %d",
+                  pick.target, pick.centre);
+    pick = click_row(&st, 4, 1, n);
+    UT_ASSERT_MSG(pick.target == 4 && pick.centre == 0, "back to the first: %d %d",
+                  pick.target, pick.centre);
+
+    /* A double click: the first click jumps, the second centres. The end is
+       the same as two slow clicks. */
+    st.selected = -1;
+    st.lastClicked = -1;
+    pick = click_row(&st, 2, 1, n);
+    UT_ASSERT_MSG(pick.target == 2 && pick.centre == 0, "double, first: %d %d",
+                  pick.target, pick.centre);
+    pick = click_row(&st, 2, 2, n);
+    UT_ASSERT_MSG(pick.target == 2 && pick.centre == 1, "double, second: %d %d",
+                  pick.target, pick.centre);
+    UT_ASSERT_MSG(st.selected == 2, "double click leaves line %d selected", st.selected);
+
+    /* The rows moved under the mouse after the first click: the second click
+       of the double click is still for the line the first one chose. */
+    st.selected = -1;
+    st.lastClicked = -1;
+    click_row(&st, 2, 1, n);
+    pick = click_row(&st, 5, 2, n);
+    UT_ASSERT_MSG(pick.target == 2 && pick.centre == 1, "rows moved: %d %d",
+                  pick.target, pick.centre);
+    /* A third quick click is for that line too. */
+    pick = click_row(&st, 6, 3, n);
+    UT_ASSERT_MSG(pick.target == 2 && pick.centre == 1, "triple click: %d %d",
+                  pick.target, pick.centre);
+
+    /* A double click on a selected line: each of its clicks centres. */
+    st.selected = 3;
+    st.lastClicked = 3;
+    pick = click_row(&st, 3, 1, n);
+    UT_ASSERT_MSG(pick.target == 3 && pick.centre == 1, "selected, first of two");
+    pick = click_row(&st, 3, 2, n);
+    UT_ASSERT_MSG(pick.target == 3 && pick.centre == 1, "selected, second of two");
+
+    /* No line was clicked before (a Ctrl click forgets it): the count of
+       clicks alone does not centre, and the row under the mouse is used. */
+    pick = lvEventClickPick(5, -1, -1, 2, n);
+    UT_ASSERT_MSG(pick.target == 5 && pick.centre == 0, "no line clicked before: %d %d",
+                  pick.target, pick.centre);
+    /* A line selected with Ctrl, then clicked: it is the selected line. */
+    pick = lvEventClickPick(5, 5, -1, 1, n);
+    UT_ASSERT_MSG(pick.target == 5 && pick.centre == 1, "selected with Ctrl");
+    /* Every line selected (Select All) is no one selected line. */
+    pick = lvEventClickPick(5, -1, 2, 1, n);
+    UT_ASSERT_MSG(pick.target == 5 && pick.centre == 0, "select all");
+    /* The clicked line is no longer in the list. */
+    pick = lvEventClickPick(1, -1, 12, 2, n);
+    UT_ASSERT_MSG(pick.target == 1 && pick.centre == 0, "clicked line gone: %d %d",
+                  pick.target, pick.centre);
+    /* No row is never the selected row. */
+    pick = lvEventClickPick(-1, -1, -1, 1, n);
+    UT_ASSERT_MSG(pick.centre == 0, "no row");
     return 0;
 }

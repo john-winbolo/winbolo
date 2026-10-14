@@ -176,6 +176,139 @@ int run_lv_event_overlay_clusters(void) {
     return 0;
 }
 
+/* The size of a marker of the lane, and what follows it: how near two
+   events are put together, where the mouse is on a marker, how high the
+   lane is. */
+int run_lv_event_overlay_marker_size(void) {
+    float text;
+    LvOverlayCluster c[8];
+    int n;
+
+    /* 80% of a line of text, cut to a whole point. The viewer's text is 18
+       points: the marker was 18 and is 14. */
+    UT_ASSERT_MSG(lvOverlayMarkerSide(18.0f) == 14.0f, "text of 18: %g",
+                  (double)lvOverlayMarkerSide(18.0f));
+    UT_ASSERT_MSG(lvOverlayMarkerSide(20.0f) == 16.0f, "text of 20");
+    UT_ASSERT_MSG(lvOverlayMarkerSide(15.0f) == 12.0f, "text of 15");
+    UT_ASSERT_MSG(lvOverlayMarkerSide(13.0f) == 10.0f, "text of 13");
+    UT_ASSERT_MSG(lvOverlayMarkerSide(32.4f) == 25.0f, "text of 32.4 (a tablet)");
+    /* Never so small that the builder is cut: 8 has 4 points inside its
+       edge, the builder's height at 1 time. */
+    UT_ASSERT_MSG(lvOverlayMarkerSide(9.0f) == 8.0f, "text of 9: the least");
+    UT_ASSERT_MSG(lvOverlayMarkerSide(0.0f) == 8.0f, "no text height: the least");
+    for (text = 8.0f; text <= 60.0f; text += 0.5f) {
+        const float side = lvOverlayMarkerSide(text);
+        const float room = side - 4.0f; /* 2 points of edge on each side */
+        const int times = lvMarkerBuilderScale(room);
+        UT_ASSERT_MSG(side == (float)(int)side, "text %g: a whole point", (double)text);
+        UT_ASSERT_MSG(side <= text * 0.8f + 0.001f || side == LV_OVERLAY_MARKER_MIN,
+                      "text %g: not over 80%%", (double)text);
+        UT_ASSERT_MSG(times >= 1 && (float)(times * LV_MARKER_BUILDER_H) <= room,
+                      "text %g: the builder goes in whole", (double)text);
+    }
+
+    /* The distance events are put together at is the marker's side: it
+       gets smaller with the marker. */
+    UT_ASSERT_MSG(lvOverlayMergeGap(lvOverlayMarkerSide(18.0f)) == 14.0f, "gap at text of 18");
+    UT_ASSERT_MSG(lvOverlayMergeGap(lvOverlayMarkerSide(20.0f)) == 16.0f, "gap at text of 20");
+    UT_ASSERT_MSG(lvOverlayMergeGap(lvOverlayMarkerSide(13.0f)) ==
+                      lvOverlayMarkerSide(13.0f), "the gap is the side");
+    {
+        /* Events 15 apart were one marker in two at the old size (18) and
+           are a marker each at the new one. */
+        static const float xs[] = {10.0f, 25.0f, 40.0f, 55.0f};
+        n = lvOverlayClusters(xs, 4, 18.0f, c, 8);
+        UT_ASSERT_MSG(n == 2, "at the old size: %d", n);
+        n = lvOverlayClusters(xs, 4, lvOverlayMergeGap(lvOverlayMarkerSide(18.0f)), c, 8);
+        UT_ASSERT_MSG(n == 4, "at the new size: %d", n);
+        /* Markers that are drawn never overlap: no two nearer than a side. */
+        UT_ASSERT_MSG(c[1].x - c[0].x >= lvOverlayMarkerSide(18.0f), "markers overlap");
+    }
+    {
+        /* Events 13 apart are still put together: nearer than a side. */
+        static const float xs[] = {10.0f, 23.0f, 36.0f};
+        n = lvOverlayClusters(xs, 3, lvOverlayMergeGap(lvOverlayMarkerSide(18.0f)), c, 8);
+        UT_ASSERT_MSG(n == 2 && c[0].count == 2, "13 apart: %d", n);
+    }
+
+    /* The mouse is on a marker over the whole width that is drawn. */
+    UT_ASSERT_MSG(lvOverlayHitHalf(14.0f) * 2.0f == 14.0f, "as wide as the marker");
+    {
+        static const LvOverlayCluster m[] = {{50.0f, 0, 1}};
+        UT_ASSERT(lvOverlayHit(m, 1, 43.0f, lvOverlayHitHalf(14.0f)) == 0);
+        UT_ASSERT(lvOverlayHit(m, 1, 57.0f, lvOverlayHitHalf(14.0f)) == 0);
+        UT_ASSERT(lvOverlayHit(m, 1, 42.5f, lvOverlayHitHalf(14.0f)) == -1);
+    }
+
+    /* The lane: the marker and 3 points under it. */
+    UT_ASSERT_MSG(lvOverlayLaneHeight(14.0f) == 17.0f, "lane of a marker of 14");
+    UT_ASSERT_MSG(lvOverlayLaneHeight(lvOverlayMarkerSide(18.0f)) < 18.0f + 3.0f,
+                  "the lane is lower than it was");
+    return 0;
+}
+
+/* The lines of the tooltip of a marker that stands for several events: one
+   line an event, none left out, in columns when they are too many for the
+   height. */
+int run_lv_event_overlay_tip_columns(void) {
+    LvOverlayTipColumns g;
+    int col, row, k;
+
+    /* Lines 17 high in a room 170 high: 10 to a column. */
+    g = lvOverlayTipColumns(3, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 3 && g.fits, "3 lines: one column of 3");
+    g = lvOverlayTipColumns(6, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 6 && g.fits, "6 lines: over the old 5, all shown");
+    g = lvOverlayTipColumns(10, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 10 && g.fits, "10 lines: the column is full");
+    g = lvOverlayTipColumns(11, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 2 && g.rows == 10 && g.fits, "11 lines: a second column");
+    g = lvOverlayTipColumns(50, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 5 && g.rows == 10 && g.fits, "50 lines: 5 columns fill the width");
+    /* A room a little under a whole line more: still 10 to a column. */
+    g = lvOverlayTipColumns(11, 17.0f, 186.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 2 && g.rows == 10, "186 high is 10 lines");
+
+    /* More than the room holds: as many columns as go in the width, and
+       every line is still there. The columns are then higher than the room. */
+    g = lvOverlayTipColumns(51, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 5 && g.rows == 11 && !g.fits, "51 lines: 5 columns of 11");
+    UT_ASSERT_MSG(g.cols * g.rows >= 51, "no line is left out");
+    g = lvOverlayTipColumns(300, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 5 && g.rows == 60 && !g.fits, "300 lines: 5 columns of 60");
+
+    /* A room smaller than one line or one column: one of each at least. */
+    g = lvOverlayTipColumns(4, 17.0f, 5.0f, 200.0f, 50.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 4 && !g.fits, "no room: one column, all lines");
+    g = lvOverlayTipColumns(1, 17.0f, 5.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 1 && !g.fits, "a line higher than the room");
+
+    /* Nothing to show, and sizes that are not sizes. */
+    g = lvOverlayTipColumns(0, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 0 && g.rows == 0 && g.fits, "no lines");
+    g = lvOverlayTipColumns(3, 0.0f, 170.0f, 0.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 3, "no line height given");
+
+    /* Down the first column, then the next. */
+    lvOverlayTipCell(0, 10, &col, &row);
+    UT_ASSERT(col == 0 && row == 0);
+    lvOverlayTipCell(9, 10, &col, &row);
+    UT_ASSERT(col == 0 && row == 9);
+    lvOverlayTipCell(10, 10, &col, &row);
+    UT_ASSERT(col == 1 && row == 0);
+    lvOverlayTipCell(25, 10, &col, &row);
+    UT_ASSERT(col == 2 && row == 5);
+    /* Every event of a full grid has a cell inside it. */
+    g = lvOverlayTipColumns(47, 17.0f, 170.0f, 200.0f, 1000.0f);
+    for (k = 0; k < 47; k++) {
+        lvOverlayTipCell(k, g.rows, &col, &row);
+        UT_ASSERT_MSG(col >= 0 && col < g.cols && row >= 0 && row < g.rows, "event %d", k);
+    }
+    lvOverlayTipCell(3, 0, &col, &row);
+    UT_ASSERT(col == 3 && row == 0);
+    return 0;
+}
+
 int run_lv_event_overlay_choice(void) {
     char text[256];
     int kind;
@@ -255,7 +388,7 @@ int run_lv_event_overlay_picture(void) {
 
     /* A team's pillbox: its row of items.bmp, the column of full armour. */
     for (palette = 0; palette < LV_TEAM_SHEET_ROWS; palette++) {
-        int row = (palette == LV_TEAM_PALETTE_RED) ? LV_TEAM_SHEET_ROW_ORANGE : palette;
+        int row = palette;
         s = eo_marker(LV_EVK_PILL_CAPTURED, true, palette);
         UT_ASSERT_MSG(!s.fromAtlas && s.col == 15 && s.row == row, "a team's pillbox, whole");
         s = eo_marker(LV_EVK_PILL_STOLEN, true, palette);
@@ -267,9 +400,9 @@ int run_lv_event_overlay_picture(void) {
         /* The same cell the map draws for that team. */
         UT_ASSERT_MSG(s.row == lvMapBaseSprite(false, palette).row, "the map's own row");
     }
-    /* A red team is orange here as on the map. */
+    /* A red team is red here as on the map. */
     s = eo_marker(LV_EVK_PILL_CAPTURED, true, LV_TEAM_PALETTE_RED);
-    UT_ASSERT_MSG(s.row == LV_TEAM_SHEET_ROW_ORANGE, "no team is drawn in the red row");
+    UT_ASSERT_MSG(s.row == LV_TEAM_PALETTE_RED, "a red team is not in the red row");
 
     /* No team: the game's own tiles. The red pillbox, the neutral base. */
     s = eo_marker(LV_EVK_PILL_CAPTURED, false, 3);
@@ -460,6 +593,7 @@ int run_lv_event_marker(void) {
        most that go in the room inside the marker's edge, and never wider or
        higher than that room once it holds him at all. */
     UT_ASSERT(lvMarkerBuilderScale(9.0f) == 2);   /* a marker of 13 */
+    UT_ASSERT(lvMarkerBuilderScale(10.0f) == 2);  /* a marker of 14 */
     UT_ASSERT(lvMarkerBuilderScale(8.0f) == 2);
     UT_ASSERT(lvMarkerBuilderScale(7.9f) == 1);
     UT_ASSERT(lvMarkerBuilderScale(12.0f) == 3);  /* a marker of 16 */

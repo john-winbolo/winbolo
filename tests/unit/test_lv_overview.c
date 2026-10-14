@@ -188,3 +188,64 @@ int run_lv_overview_bots(void) {
 
     return 0;
 }
+
+/* A row of the Overview panel: the names, then a number and a picture for
+   the pillboxes and a number and a picture for the bases. */
+int run_lv_overview_row_layout(void) {
+    float numX, iconX;
+    bool ell;
+    /* Three names 40, 30 and 20 wide; ", " is 8 and "..." is 12. */
+    static const float w3[] = { 40.0f, 30.0f, 20.0f };
+    static const float w1[] = { 40.0f };
+
+    /* A count column: three digits (27), a gap (4), the picture (12). */
+    UT_ASSERT_MSG(lvOverviewCountColW(27.0f, 12.0f, 4.0f) == 43.0f, "column width");
+    UT_ASSERT_MSG(lvOverviewCountColW(-1.0f, 12.0f, 4.0f) == 16.0f, "no digits width");
+
+    /* In the cell the picture is at the right end and the number ends a gap
+       in front of it, whatever the number's width: the numbers of all rows
+       end at one place. */
+    lvOverviewCountPlace(43.0f, 9.0f, 12.0f, 4.0f, &numX, &iconX);
+    UT_ASSERT_MSG(iconX == 31.0f && numX == 18.0f, "one digit: %g %g", (double)numX, (double)iconX);
+    UT_ASSERT_MSG(numX + 9.0f == iconX - 4.0f, "one digit ends at the gap");
+    lvOverviewCountPlace(43.0f, 18.0f, 12.0f, 4.0f, &numX, &iconX);
+    UT_ASSERT_MSG(iconX == 31.0f && numX == 9.0f, "two digits");
+    UT_ASSERT_MSG(numX + 18.0f == 27.0f, "two digits end where one digit ends");
+    lvOverviewCountPlace(43.0f, 27.0f, 12.0f, 4.0f, &numX, &iconX);
+    UT_ASSERT_MSG(iconX == 31.0f && numX == 0.0f, "three digits fill the column");
+    UT_ASSERT_MSG(iconX + 12.0f == 43.0f, "the picture ends at the cell's end");
+    /* A cell too small (it never is: the column is fixed): nothing goes
+       left of the cell. */
+    lvOverviewCountPlace(10.0f, 27.0f, 12.0f, 4.0f, &numX, &iconX);
+    UT_ASSERT_MSG(numX == 0.0f && iconX == 0.0f, "small cell");
+    lvOverviewCountPlace(43.0f, 9.0f, 12.0f, 4.0f, NULL, NULL);
+
+    /* The whole list is 40 + 8 + 30 + 8 + 20 = 106. */
+    UT_ASSERT_MSG(lvOverviewNamesFit(w3, 3, 8.0f, 12.0f, 106.0f, &ell) == 3 && !ell,
+                  "all three fit exactly");
+    UT_ASSERT_MSG(lvOverviewNamesFit(w3, 3, 8.0f, 12.0f, 500.0f, &ell) == 3 && !ell, "wide");
+    /* One point short: "A, B, ..." is 40 + 8 + 30 + 8 + 12 = 98. */
+    UT_ASSERT_MSG(lvOverviewNamesFit(w3, 3, 8.0f, 12.0f, 105.0f, &ell) == 2 && ell,
+                  "two names and the dots");
+    UT_ASSERT_MSG(lvOverviewNamesFit(w3, 3, 8.0f, 12.0f, 98.0f, &ell) == 2 && ell,
+                  "two names and the dots, exactly");
+    /* "A, ..." is 40 + 8 + 12 = 60. */
+    UT_ASSERT_MSG(lvOverviewNamesFit(w3, 3, 8.0f, 12.0f, 97.0f, &ell) == 1 && ell,
+                  "one name and the dots");
+    UT_ASSERT_MSG(lvOverviewNamesFit(w3, 3, 8.0f, 12.0f, 60.0f, &ell) == 1 && ell,
+                  "one name and the dots, exactly");
+    /* Not even the first name whole: the caller cuts it. */
+    UT_ASSERT_MSG(lvOverviewNamesFit(w3, 3, 8.0f, 12.0f, 59.0f, &ell) == 0 && ell,
+                  "no whole name");
+    UT_ASSERT_MSG(lvOverviewNamesFit(w3, 3, 8.0f, 12.0f, 0.0f, &ell) == 0 && ell, "no room");
+
+    /* One player: the name, or the name cut. */
+    UT_ASSERT_MSG(lvOverviewNamesFit(w1, 1, 8.0f, 12.0f, 40.0f, &ell) == 1 && !ell, "one fits");
+    UT_ASSERT_MSG(lvOverviewNamesFit(w1, 1, 8.0f, 12.0f, 39.0f, &ell) == 0 && ell, "one is cut");
+
+    /* No names. */
+    UT_ASSERT_MSG(lvOverviewNamesFit(w3, 0, 8.0f, 12.0f, 100.0f, &ell) == 0 && !ell, "none");
+    UT_ASSERT_MSG(lvOverviewNamesFit(NULL, 3, 8.0f, 12.0f, 100.0f, &ell) == 0 && !ell, "no list");
+    UT_ASSERT_MSG(lvOverviewNamesFit(w3, 3, 8.0f, 12.0f, 105.0f, NULL) == 2, "no answer asked");
+    return 0;
+}

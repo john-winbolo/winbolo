@@ -61,6 +61,7 @@ extern "C" {
     void lv_screenDeselectTank(void);
     bool lv_screenCheckPerspective(void);
     void lv_drawDirtyScreen(void);
+    void lv_drawTeamPanelColour(int palette, float *r, float *g, float *b);
     SDL_Texture *lv_drawGetTilesTexture(void);
     SDL_Texture *lv_drawGetHudShapesTexture(void);
     /* sdl3draw_status.h: where slot n (1..16) sits in a status panel. */
@@ -124,15 +125,13 @@ static void hud_image(ImDrawList *dl, SDL_Texture *tex, float sx, float sy,
                  ImVec2(sx / tw, sy / th), ImVec2((sx + sw) / tw, (sy + sh) / th), tint);
 }
 
-/* The colour an owned slot is drawn in with all teams shown: its team's,
- * lifted where it would be too dark to see on the black panel. A red team is
- * drawn orange: red is what the game's HUD keeps for hostile. */
+/* The colour an owned slot is drawn in with all teams shown: the one the
+ * Team Colours dialog has for its team, lifted where it would be too dark to
+ * see on the black panel (lv_drawTeamPanelColour). */
 static ImU32 hud_team_colour(const LvHudSlot &slot) {
-    SDL_FColor c = mapColourTeam(slot.colour);
-    if (!lvHudRedToOrange(&c.r, &c.g, &c.b)) {
-        lvHudReadableColour(&c.r, &c.g, &c.b);
-    }
-    return ImGui::ColorConvertFloat4ToU32(ImVec4(c.r, c.g, c.b, 1.0f));
+    float r = 0.0f, g = 0.0f, b = 0.0f;
+    lv_drawTeamPanelColour(slot.colour, &r, &g, &b);
+    return ImGui::ColorConvertFloat4ToU32(ImVec4(r, g, b, 1.0f));
 }
 
 /* Where one of the game's status icons is in the tile atlas. False for the

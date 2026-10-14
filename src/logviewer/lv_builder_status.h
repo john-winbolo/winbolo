@@ -309,6 +309,56 @@ static inline bool lvBuilderTripRemaining(const LvBuilderTrip *trips, int count,
     return true;
 }
 
+/* How long the builder killed at deathMs was away: from that tick to the
+ * tick the new builder was in the tank, out of the table. It is measured,
+ * never an estimate. False, with nothing written, when the table has no trip
+ * for the death or the trip has no end (the log ended first).
+ *
+ * A builder killed again on his walk back is in the trip of the first
+ * death, so each of the two deaths counts to the same return. The trip of a
+ * death can start one tick after it, when the same tick of the log went on
+ * to name a place for the builder; that trip is the death's too. */
+static inline bool lvBuilderTripAway(const LvBuilderTrip *trips, int count,
+                                     uint32_t deathMs, uint32_t *awayMs) {
+    int i = lvBuilderTripFind(trips, count, deathMs);
+    if (i < 0 && trips != NULL) {
+        int k;
+        for (k = 0; k < count; k++) {
+            if (trips[k].deathMs > deathMs) {
+                if (trips[k].deathMs - deathMs <= (uint32_t)LV_BUILDER_TICK_MS) i = k;
+                break;
+            }
+        }
+    }
+    if (i < 0 || trips[i].backMs == 0 || trips[i].backMs <= deathMs) return false;
+    if (awayMs != NULL) *awayMs = trips[i].backMs - deathMs;
+    return true;
+}
+
+/* The longest text of lvBuilderAwayText: " (99:59)" and the end. */
+#define LV_BUILDER_AWAY_TEXT_MAX 12
+
+/* What goes after the line of a lost builder in the Events panel: a space
+ * and, in brackets, how long he was away, " (0:42)", " (1:05)". The time is
+ * written as the countdown is (lvBuilderCountdownText), so the line says
+ * what the parachute's countdown said in the tick of the death. Nothing at
+ * all when the time is not known. Returns the length. */
+static inline int lvBuilderAwayText(bool known, uint32_t awayMs, char *dest, size_t size) {
+    char time[LV_BUILDER_TEXT_MAX];
+    int  n;
+
+    if (dest == NULL || size == 0) return 0;
+    dest[0] = '\0';
+    if (!known) return 0;
+    /* The countdown stops at 99:59; hold the time there so it is a long. */
+    if (awayMs > 5999000u) awayMs = 5999000u;
+    lvBuilderCountdownText((long)awayMs, false, time, sizeof(time));
+    n = snprintf(dest, size, " (%s)", time);
+    if (n < 0) { dest[0] = '\0'; return 0; }
+    if ((size_t)n >= size) n = (int)size - 1;
+    return n;
+}
+
 /* ── The small pictures ────────────────────────────────────────────── */
 
 /* A picture is rows of cells; bit (width - 1 - column) of a row is set

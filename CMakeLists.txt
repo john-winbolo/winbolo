@@ -7012,8 +7012,10 @@ set(_unit_test_names
     lv_dock_layout_tree
     lv_hud_sums
     lv_team_sprite_sums
+    lv_team_colour_lookup
     lv_overview_sums
     lv_overview_bots
+    lv_overview_row_layout
     lv_tank_status_sums
     lv_tank_bars_sums
     lv_tank_pick_sums
@@ -7029,8 +7031,11 @@ set(_unit_test_names
     lv_pill_get_in_tank
     lv_spmap_carried_pill_left_out
     lv_event_kind_sums
+    lv_event_click_pick
     lv_event_overlay_slider
     lv_event_overlay_clusters
+    lv_event_overlay_tip_columns
+    lv_event_overlay_marker_size
     lv_event_overlay_choice
     lv_event_overlay_picture
     lv_event_kinds_filter
@@ -7054,10 +7059,13 @@ set(_unit_test_names
     lv_builder_status_sums
     lv_builder_countdown
     lv_builder_dead_text
+    lv_builder_away_text
+    lv_builder_away_scan
     lv_builder_trips
     lv_builder_trips_scan
     lv_controls_top_row
     lv_controls_bottom_row
+    lv_controls_wheel_step
     lv_zoom_percent
     lv_fullscreen_key
     lv_event_scan_returns_to_start

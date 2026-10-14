@@ -18,6 +18,8 @@
  *       (lv_zoom_text.h), on an ordinary and on a dense display; how long
  *       the label on the map shows; and when the zoom on the bottom row is
  *       whole, only its number, or left out.
+ *   lv_controls_wheel_step — Shift and the wheel over the seek bar: one
+ *       tick a notch, wheel up back in time, held inside the log.
  */
 
 #include <stdbool.h>
@@ -232,9 +234,11 @@ static int zp_text_is(float squarePx, float scale, const char *want) {
 
 int run_lv_zoom_percent(void) {
     char buf[24];
-    static const float steps[] = { 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 2.0f, 3.0f, 4.0f };
+    static const float steps[] = { 0.5f, 0.6f, 0.7f, 0.8f, 0.9f,
+                                   1.0f, 1.5f, 2.0f, 3.0f, 4.0f };
     static const char *const stepText[] = { "50%", "60%", "70%", "80%", "90%",
-                                            "100%", "200%", "300%", "400%" };
+                                            "100%", "150%", "200%", "300%", "400%" };
+    const int stepCount = (int)(sizeof(steps) / sizeof(steps[0]));
     int i;
 
     /* 100% is one square on 16 points: 16 pixels of an ordinary display,
@@ -243,13 +247,17 @@ int run_lv_zoom_percent(void) {
     UT_ASSERT_MSG(lvZoomPercent(32.0f, 2.0f) == 100.0f, "32 px at 2x is still 100");
     UT_ASSERT_MSG(lvZoomPercent(24.0f, 1.5f) == 100.0f, "24 px at 1.5x");
     UT_ASSERT_MSG(lvZoomPercent(32.0f, 1.0f) == 200.0f, "32 px at 1x is 200");
+    /* The step between 100 and 200: a square on 24 points. */
+    UT_ASSERT_MSG(lvZoomPercent(24.0f, 1.0f) == 150.0f, "24 px at 1x is 150");
+    UT_ASSERT_MSG(lvZoomPercent(48.0f, 2.0f) == 150.0f, "48 px at 2x is 150");
+    UT_ASSERT_MSG(zp_text_is(24.0f, 1.0f, "150%"), "the text of the 1.5 step");
     UT_ASSERT_MSG(lvZoomPercent(8.0f, 1.0f) == 50.0f, "8 px at 1x is 50");
     UT_ASSERT_MSG(lvZoomPercent(16.0f, 2.0f) == 50.0f, "16 px at 2x is 50");
     UT_ASSERT_MSG(lvZoomPercent(0.0f, 1.0f) == 0.0f, "no square");
     UT_ASSERT_MSG(lvZoomPercent(16.0f, 0.0f) == 100.0f, "no scale given: 1");
 
     /* Each step of the viewer, on three displays: the same text. */
-    for (i = 0; i < 9; i++) {
+    for (i = 0; i < stepCount; i++) {
         UT_ASSERT_MSG(zp_text_is(16.0f * steps[i], 1.0f, stepText[i]), "step %d at 1x", i);
         UT_ASSERT_MSG(zp_text_is(16.0f * steps[i] * 2.0f, 2.0f, stepText[i]), "step %d at 2x", i);
         UT_ASSERT_MSG(zp_text_is(16.0f * steps[i] * 1.25f, 1.25f, stepText[i]), "step %d at 1.25x", i);
@@ -392,5 +400,94 @@ int run_lv_fullscreen_key(void) {
         UT_ASSERT_MSG(lvFullScreenKey(false, lalt, sc) == LV_FSKEY_NOT_OURS, "scancode %u", sc);
         UT_ASSERT_MSG(lvFullScreenKey(true, ralt, sc) == LV_FSKEY_NOT_OURS, "scancode %u, repeat", sc);
     }
+    return 0;
+}
+
+int run_lv_controls_wheel_step(void) {
+    LvWheelStep st;
+    float carry = 0.0f;
+    uint32_t now;
+    int i;
+
+    /* One notch up is one tick back, one notch down one tick forward. */
+    st = lvControlsWheelStep(1.0f, &carry, 1000, 0, 60000, 20);
+    UT_ASSERT_MSG(st.moved && st.ticks == -1 && st.targetMs == 980,
+                  "up: %d ticks to %u", st.ticks, (unsigned)st.targetMs);
+    st = lvControlsWheelStep(-1.0f, &carry, 1000, 0, 60000, 20);
+    UT_ASSERT_MSG(st.moved && st.ticks == 1 && st.targetMs == 1020,
+                  "down: %d ticks to %u", st.ticks, (unsigned)st.targetMs);
+    UT_ASSERT_MSG(carry == 0.0f, "a whole notch left %f", (double)carry);
+
+    /* Several notches in one frame are that many ticks. */
+    st = lvControlsWheelStep(3.0f, &carry, 1000, 0, 60000, 20);
+    UT_ASSERT_MSG(st.ticks == -3 && st.targetMs == 940, "three up: %d to %u", st.ticks,
+                  (unsigned)st.targetMs);
+    st = lvControlsWheelStep(-5.0f, &carry, 1000, 0, 60000, 20);
+    UT_ASSERT_MSG(st.ticks == 5 && st.targetMs == 1100, "five down: %d to %u", st.ticks,
+                  (unsigned)st.targetMs);
+
+    /* No wheel: nothing. */
+    st = lvControlsWheelStep(0.0f, &carry, 1000, 0, 60000, 20);
+    UT_ASSERT_MSG(!st.moved && st.ticks == 0 && st.targetMs == 1000, "no wheel moved");
+
+    /* The ends of the log hold it. */
+    st = lvControlsWheelStep(1.0f, &carry, 0, 0, 60000, 20);
+    UT_ASSERT_MSG(!st.moved && st.targetMs == 0, "back at the start: %u",
+                  (unsigned)st.targetMs);
+    st = lvControlsWheelStep(4.0f, &carry, 40, 0, 60000, 20);
+    UT_ASSERT_MSG(st.moved && st.targetMs == 0, "back past the start: %u",
+                  (unsigned)st.targetMs);
+    st = lvControlsWheelStep(-1.0f, &carry, 60000, 0, 60000, 20);
+    UT_ASSERT_MSG(!st.moved && st.targetMs == 60000, "forward at the end: %u",
+                  (unsigned)st.targetMs);
+    st = lvControlsWheelStep(-4.0f, &carry, 59960, 0, 60000, 20);
+    UT_ASSERT_MSG(st.moved && st.targetMs == 60000, "forward past the end: %u",
+                  (unsigned)st.targetMs);
+    /* The lobby is hidden: the round starts at 12000 ms. */
+    st = lvControlsWheelStep(2.0f, &carry, 12020, 12000, 60000, 20);
+    UT_ASSERT_MSG(st.moved && st.targetMs == 12000, "into the hidden lobby: %u",
+                  (unsigned)st.targetMs);
+    st = lvControlsWheelStep(1.0f, &carry, 12000, 12000, 60000, 20);
+    UT_ASSERT_MSG(!st.moved, "back at the start of the round");
+
+    /* A time between two ticks goes to a tick: the one before it for back,
+       the one after it for forward. */
+    st = lvControlsWheelStep(1.0f, &carry, 1010, 0, 60000, 20);
+    UT_ASSERT_MSG(st.targetMs == 1000, "back off a tick: %u", (unsigned)st.targetMs);
+    st = lvControlsWheelStep(-1.0f, &carry, 1010, 0, 60000, 20);
+    UT_ASSERT_MSG(st.targetMs == 1020, "forward off a tick: %u", (unsigned)st.targetMs);
+    /* An end of the log that is between two ticks is still the end. */
+    st = lvControlsWheelStep(-1.0f, &carry, 59990, 0, 59995, 20);
+    UT_ASSERT_MSG(st.moved && st.targetMs == 59995, "an end off a tick: %u",
+                  (unsigned)st.targetMs);
+
+    /* A wheel that gives parts of a notch: a tick for each whole one. */
+    carry = 0.0f;
+    now = 1000;
+    for (i = 0; i < 8; i++) {
+        st = lvControlsWheelStep(0.25f, &carry, now, 0, 60000, 20);
+        now = st.targetMs;
+    }
+    UT_ASSERT_MSG(now == 960, "eight quarters of a notch: %u (want 960)", (unsigned)now);
+    /* A part one way and then the other way is no tick. */
+    carry = 0.0f;
+    st = lvControlsWheelStep(0.5f, &carry, 1000, 0, 60000, 20);
+    UT_ASSERT_MSG(!st.moved, "half a notch moved");
+    st = lvControlsWheelStep(-0.5f, &carry, 1000, 0, 60000, 20);
+    UT_ASSERT_MSG(!st.moved && carry == 0.0f, "half up and half down moved");
+
+    /* No place for the parts, no tick length, the ends the wrong way round. */
+    st = lvControlsWheelStep(1.0f, NULL, 1000, 0, 60000, 20);
+    UT_ASSERT_MSG(st.targetMs == 980, "no carry: %u", (unsigned)st.targetMs);
+    st = lvControlsWheelStep(1.0f, NULL, 1000, 0, 60000, 0);
+    UT_ASSERT_MSG(st.targetMs == 980, "no tick length: %u", (unsigned)st.targetMs);
+    st = lvControlsWheelStep(1.0f, NULL, 1000, 500, 100, 20);
+    UT_ASSERT_MSG(st.targetMs == 500, "ends the wrong way round: %u", (unsigned)st.targetMs);
+    /* A wheel that is no wheel does not run off the numbers. */
+    st = lvControlsWheelStep(1.0e30f, NULL, 1000, 0, 60000, 20);
+    UT_ASSERT_MSG(st.moved && st.targetMs == 0, "a huge wheel: %u", (unsigned)st.targetMs);
+    st = lvControlsWheelStep(-1.0e30f, NULL, 0xFFFFFF00u, 0, 0xFFFFFFF0u, 20);
+    UT_ASSERT_MSG(st.targetMs == 0xFFFFFFF0u, "a huge wheel at the top of the clock: %u",
+                  (unsigned)st.targetMs);
     return 0;
 }

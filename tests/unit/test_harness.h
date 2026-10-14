@@ -4161,6 +4161,10 @@ int run_lv_hud_sums(void);
  * (test_lv_hud.c, lv_team_sprite.h): the game's own tile for a thing nobody
  * owns, a team's cell of the items sheet for one that is owned. */
 int run_lv_team_sprite_sums(void);
+/* Which palette entry the log viewer draws a team in (test_lv_hud.c,
+ * lv_team_colour.h): the default, the one the Team Colours dialog has, the
+ * Neutral entry for a number that is not a team. */
+int run_lv_team_colour_lookup(void);
 /* The table of the log viewer's Overview panel (test_lv_overview.c): the
  * rows of the teams, which row a pillbox or a base is counted in, and the
  * share a count is of the whole. */
@@ -4169,6 +4173,7 @@ int run_lv_overview_sums(void);
  * lv_bot_chip.h): which chip a player has, and where each name of a team's
  * row starts, so the chip goes in front of the bot's name. */
 int run_lv_overview_bots(void);
+int run_lv_overview_row_layout(void);
 /* The log viewer's Tank panel (test_lv_tank_status.c): which tank is the
  * selected one, and the height of a gauge against its cap. */
 int run_lv_tank_status_sums(void);
@@ -4200,11 +4205,14 @@ int run_lv_spmap_carried_pill_left_out(void);
 /* The log viewer's events panel (test_lv_event_kind.c): the saved name of
  * each event kind, and where the "now" divider falls among the lines. */
 int run_lv_event_kind_sums(void);
+int run_lv_event_click_pick(void);
 /* The event markers of the log viewer's seek slider
  * (test_lv_event_overlay.c): where a time is on the slider, which markers
  * become one, and the saved list of chosen kinds. */
 int run_lv_event_overlay_slider(void);
 int run_lv_event_overlay_clusters(void);
+int run_lv_event_overlay_tip_columns(void);
+int run_lv_event_overlay_marker_size(void);
 int run_lv_event_overlay_choice(void);
 int run_lv_event_overlay_picture(void);
 /* The one list of ticked kinds of the Controls and Events panels, and the
@@ -4238,12 +4246,15 @@ int run_lv_event_seek_exact(void);
 int run_lv_builder_status_sums(void);
 int run_lv_builder_countdown(void);
 int run_lv_builder_dead_text(void);
+int run_lv_builder_away_text(void);
+int run_lv_builder_away_scan(void);
 int run_lv_builder_trips(void);
 int run_lv_builder_trips_scan(void);
 /* Where the items of the log viewer's Controls panel go
  * (test_lv_controls_layout.c). */
 int run_lv_controls_top_row(void);
 int run_lv_controls_bottom_row(void);
+int run_lv_controls_wheel_step(void);
 /* The zoom of the log viewer's map as a percentage. */
 int run_lv_zoom_percent(void);
 int run_lv_fullscreen_key(void);

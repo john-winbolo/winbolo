@@ -169,6 +169,59 @@ static inline void lvOverviewCount(LvOverview *o, bool isBase, bool hasOwner,
     }
 }
 
+/* A count cell of a row holds a number and then a picture (a pillbox or a
+ * base in the row's colour). The picture is at the right end of the cell
+ * and the number ends a gap to its left, so in every row the numbers end at
+ * one place and the pictures are in one column.
+ *
+ * The width a count column has: room for the widest number (digitsW), the
+ * gap and the picture. It does not get narrower in a narrow panel: the
+ * names of the team give way, never a number or a picture. */
+static inline float lvOverviewCountColW(float digitsW, float iconW, float gap) {
+    if (digitsW < 0.0f) digitsW = 0.0f;
+    if (iconW < 0.0f) iconW = 0.0f;
+    if (gap < 0.0f) gap = 0.0f;
+    return digitsW + gap + iconW;
+}
+
+/* Where the number (numW wide) and the picture start in a cell cellW wide,
+ * from the cell's left edge. */
+static inline void lvOverviewCountPlace(float cellW, float numW, float iconW, float gap,
+                                        float *numX, float *iconX) {
+    float ix = cellW - iconW;
+    float nx;
+    if (ix < 0.0f) ix = 0.0f;
+    nx = ix - gap - numW;
+    if (nx < 0.0f) nx = 0.0f;
+    if (numX != NULL) *numX = nx;
+    if (iconX != NULL) *iconX = ix;
+}
+
+/* How many of a team's names are shown when the list has `room`. nameW has
+ * the width of each of the count names (with the chip of a bot), sepW is the
+ * width of what is between two names and ellW the width of "...".
+ *
+ * The whole list when it fits: *ellipsis is false. Otherwise as many whole
+ * names from the start as fit with the separator and "..." after them
+ * ("A, B, ..."), and *ellipsis is true. That can be 0: not even the first
+ * name fits whole, and the caller cuts that name short. */
+static inline int lvOverviewNamesFit(const float *nameW, int count, float sepW, float ellW,
+                                     float room, bool *ellipsis) {
+    float total = 0.0f, run = 0.0f;
+    int i, shown = 0;
+    if (ellipsis != NULL) *ellipsis = false;
+    if (nameW == NULL || count <= 0) return 0;
+    for (i = 0; i < count; i++) total += nameW[i] + ((i > 0) ? sepW : 0.0f);
+    if (total <= room) return count;
+    if (ellipsis != NULL) *ellipsis = true;
+    for (i = 0; i < count - 1; i++) {
+        run += nameW[i] + ((i > 0) ? sepW : 0.0f);
+        if (run + sepW + ellW > room) break;
+        shown = i + 1;
+    }
+    return shown;
+}
+
 /* The part of the whole a count is, 0..1. Nothing of nothing is 0. */
 static inline float lvOverviewShare(int count, int total) {
     if (total <= 0 || count <= 0) return 0.0f;

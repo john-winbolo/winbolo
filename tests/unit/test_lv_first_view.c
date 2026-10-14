@@ -23,9 +23,13 @@
 #define FV_MINED_GRASS 15
 
 /* The viewer's zoom steps, smallest first. */
-static const float fvSteps[] = { 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 2.0f, 3.0f, 4.0f };
+static const float fvSteps[] = { 0.5f, 0.6f, 0.7f, 0.8f, 0.9f,
+                                 1.0f, 1.5f, 2.0f, 3.0f, 4.0f };
 #define FV_STEPS ((int)(sizeof(fvSteps) / sizeof(fvSteps[0])))
 #define FV_1X 5
+#define FV_15X 6
+#define FV_2X 7
+#define FV_3X 8
 
 static unsigned char *fv_sea(void) {
     unsigned char *t = (unsigned char *)malloc(LV_LAND_MAP_SIZE * LV_LAND_MAP_SIZE);
@@ -135,12 +139,18 @@ int run_lv_first_view_zoom(void) {
        576 points at 0.5x and 691.2 at 0.6x, 806.4 at 0.7x. */
     UT_ASSERT(lvFirstViewZoomStep(fvSteps, FV_STEPS, FV_1X, 40, 70, visW, visH, 16) == 1);
     /* From 3x: 30 by 20 does not go in (1440 points); at 2x with its room it
-       is 32 * 16 * 2 = 1024, too wide; at 1x it goes in. */
-    UT_ASSERT(lvFirstViewZoomStep(fvSteps, FV_STEPS, 7, 30, 20, visW, visH, 16) == FV_1X);
+       is 32 * 16 * 2 = 1024, too wide; at 1.5x it is 32 * 24 = 768 across
+       and 22 * 24 = 528 down, and goes in. */
+    UT_ASSERT(lvFirstViewZoomStep(fvSteps, FV_STEPS, FV_3X, 30, 20, visW, visH, 16) == FV_15X);
+    /* From 2x: 40 by 20 with its room is 42 * 32 = 1344 points across, too
+       wide, and at 1.5x 42 * 24 = 1008, still too wide; at 1x it goes in. */
+    UT_ASSERT(lvFirstViewZoomStep(fvSteps, FV_STEPS, FV_2X, 40, 20, visW, visH, 16) == FV_1X);
     /* From 2x: 28 by 20 with its room is 30 * 32 = 960 points across and
        22 * 32 = 704 down. It does not go in bare at 3x but the viewer is at
        2x, where it does: kept. */
-    UT_ASSERT(lvFirstViewZoomStep(fvSteps, FV_STEPS, 6, 28, 20, visW, visH, 16) == 6);
+    UT_ASSERT(lvFirstViewZoomStep(fvSteps, FV_STEPS, FV_2X, 28, 20, visW, visH, 16) == FV_2X);
+    /* The 1.5x step is kept the same way: 40 by 30 is 960 by 720 points. */
+    UT_ASSERT(lvFirstViewZoomStep(fvSteps, FV_STEPS, FV_15X, 40, 30, visW, visH, 16) == FV_15X);
 
     /* A box bigger than the view at the smallest step: the smallest step.
        150 by 150 is 1200 points at 0.5x. */

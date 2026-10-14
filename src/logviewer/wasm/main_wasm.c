@@ -24,6 +24,7 @@
 #include "lv_global.h"
 #include "clientmutex.h"
 #include "draw.h"
+#include "lv_team_colour.h"
 #include "sound.h"
 #include "dns.h"
 #include "positions.h"
@@ -58,9 +59,8 @@
  * and Team 2 red, the game's own ally / enemy reading.
  * -------------------------------------------------------------------------- */
 static void getDef(char *dest, int index) {
-    static const int defaults[] = { 2, 11, 12, 4, 16, 13, 8, 3, 6, 1, 5, 7, 9, 14, 15, 0 };
-    int val = (index >= 0 && index < 16) ? defaults[index] : 0;
-    snprintf(dest, 12, "%d", val);
+    /* The one table of the defaults is in lv_team_colour.h. */
+    snprintf(dest, 12, "%d", (int)lvTeamColourDefault(index));
 }
 
 /* --------------------------------------------------------------------------
@@ -308,13 +308,11 @@ static void mainLoadPreferences(void) {
         snprintf(line, sizeof(line), "Team Colour %d", count + 1);
         getDef(def, count);
         lv_platform_config_get_string("LOGVIEWER", line, def, val, sizeof(val));
-        g_lv->tc[count] = (BYTE)atoi(val);
-        if (g_lv->tc[count] > 16) g_lv->tc[count] = count;
+        g_lv->tc[count] = lvTeamColourPref(count, atoi(val));
         count++;
     }
     lv_platform_config_get_string("LOGVIEWER", "Neutral Colour", "10", val, sizeof(val));
-    g_lv->tc[16] = (BYTE)atoi(val);
-    if (g_lv->tc[16] > 16) g_lv->tc[16] = 16;
+    g_lv->tc[16] = lvTeamColourPref(LV_TEAM_COLOUR_NEUTRAL, atoi(val));
 
     /* Playback Speed */
     lv_platform_config_get_string("LOGVIEWER", "Playback Speed", "1", val, sizeof(val));

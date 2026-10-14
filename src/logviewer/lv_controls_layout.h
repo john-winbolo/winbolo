@@ -24,6 +24,7 @@
 #define LV_CONTROLS_LAYOUT_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /* A playback button is this many times as wide as it is high, when the
  * panel has the room. */
@@ -263,6 +264,64 @@ static inline LvZoomForm lvControlsZoomForm(const float *w, int n, float fullW, 
         return LV_ZOOM_FORM_SHORT;
     }
     return LV_ZOOM_FORM_NONE;
+}
+
+/* ── Shift and the wheel over the seek bar ──────────────────────────── */
+
+/* With Shift held, each notch of the mouse wheel over the seek bar moves
+ * playback one tick of the log: wheel up (a positive number) goes back in
+ * time, wheel down goes forward, as the wheel moves the list of the Events
+ * panel. Several notches in one frame are that many ticks.
+ *
+ * wheel: what the wheel moved in the frame, in notches. A wheel that gives
+ * parts of a notch is added up in carry until a whole one is there; the
+ * caller sets carry to 0 when Shift is let go or the mouse leaves the bar.
+ * nowMs: where playback is. startMs, endMs: the ends of the log that shows
+ * (with the lobby hidden, the round). tickMs: one tick, 20 ms.
+ *
+ * ticks is how many ticks were asked for, under zero for back. targetMs is
+ * the time to seek to: a whole number of ticks from the start of the log,
+ * held to startMs..endMs. moved is false when there is nothing to do: no
+ * whole notch, or playback is at that end of the log already. */
+typedef struct {
+    int      ticks;
+    uint32_t targetMs;
+    bool     moved;
+} LvWheelStep;
+
+static inline LvWheelStep lvControlsWheelStep(float wheel, float *carry, uint32_t nowMs,
+                                              uint32_t startMs, uint32_t endMs,
+                                              uint32_t tickMs) {
+    LvWheelStep out;
+    float sum = wheel + ((carry != 0) ? *carry : 0.0f);
+    int notches;
+    int64_t at, target;
+
+    out.ticks = 0;
+    out.targetMs = nowMs;
+    out.moved = false;
+    if (tickMs == 0) tickMs = 20;
+    if (endMs < startMs) endMs = startMs;
+    /* More than this in a frame is no wheel. */
+    if (sum > 10000.0f) sum = 10000.0f;
+    if (sum < -10000.0f) sum = -10000.0f;
+    notches = (int)sum; /* toward zero: a part of a notch waits */
+    if (carry != 0) *carry = sum - (float)notches;
+    if (notches == 0) return out;
+
+    out.ticks = -notches;
+    if (notches > 0) {
+        /* Back. A time between two ticks first goes to the tick before. */
+        at = ((int64_t)nowMs + (int64_t)tickMs - 1) / (int64_t)tickMs;
+    } else {
+        at = (int64_t)nowMs / (int64_t)tickMs;
+    }
+    target = (at - (int64_t)notches) * (int64_t)tickMs;
+    if (target < (int64_t)startMs) target = (int64_t)startMs;
+    if (target > (int64_t)endMs) target = (int64_t)endMs;
+    out.targetMs = (uint32_t)target;
+    out.moved = (out.targetMs != nowMs);
+    return out;
 }
 
 #endif /* LV_CONTROLS_LAYOUT_H */

@@ -329,6 +329,11 @@ void lv_drawGetGameTargetSize(int *outW, int *outH);
 struct SDL_Texture* lv_drawGetTilesTexture(void);
 int lv_drawGetSheetScale(void);
 
+/* The colour a panel draws a team in: the colour of palette entry `palette`
+ * (the team's entry, lv_screenTeamColour) as the map draws it, made lighter
+ * where it would be too dark to see on a dark panel. Channels are 0..1. */
+void lv_drawTeamPanelColour(int palette, float *r, float *g, float *b);
+
 /* The map's own picture of a pillbox (isBase 0, at full armour) or a base
  * (isBase 1), for a panel to draw small: the sheet and the place in it, in
  * pixels of the sheet. A team's number gives the picture in that team's

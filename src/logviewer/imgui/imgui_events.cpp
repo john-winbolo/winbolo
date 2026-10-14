@@ -17,6 +17,7 @@
 #include "platform_config.h"
 #include "../lv_event_kind.h"
 #include "../lv_event_overlay.h"
+#include "../lv_builder_status.h"
 #include "../../gui/lang.h"
 #include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
 
@@ -40,6 +41,8 @@ extern "C" {
     void lv_windowCentreOnEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
     void lv_screenEventTeams(int *team, int *otherTeam);
     int lv_screenEventPing(void);
+    int lv_screenEventPlayer(void);
+    int lv_screenBuilderAwayMs(int slot, uint32_t deathMs, uint32_t *awayMs);
 }
 
 /* Event with associated playback timestamp, held in absolute log ms so the
@@ -65,6 +68,8 @@ struct LogEvent {
     /* The kind of ping the line is (lv_messageTagPing), -1 for a line that
      * is not a map ping. */
     int      ping = -1;
+    /* The player the line is about (lv_screenEventPlayer), -1 for none. */
+    int      player = -1;
 };
 
 /* Event list storage */
@@ -91,7 +96,9 @@ static int s_selected_index = -1;
 /* The line the last plain click jumped to, -1 for none. The second click of
  * a double click is for this line: the first click's jump can move the rows
  * of the list (the "now" line, auto scroll), so the row under the mouse at
- * the second click need not be the one the user chose. */
+ * the second click need not be the one the user chose.
+ * A plain click on the selected line (s_selected_index) is a centre click
+ * too, with no limit of time between the two clicks. */
 static int s_clicked_index = -1;
 static bool s_select_all = false;
 
@@ -172,6 +179,7 @@ void lv_imgui_events_add(int eventType, int kind, int mapX, int mapY,
     e.mapY     = mapY;
     lv_screenEventTeams(&e.team, &e.otherTeam);
     e.ping     = lv_screenEventPing();
+    e.player   = lv_screenEventPlayer();
     s_events.push_back(e);
     s_version++;
 
@@ -246,7 +254,29 @@ void lv_imgui_events_remove_after(unsigned int timeMs) {
     }
 }
 
+/* The line of a lost builder says how long he was away, "(0:42)", after
+ * its text: from his death to the tick the new builder was in the tank. The
+ * time is out of the table the scan of the whole log has just filled, so
+ * every line has it from the load on, the lines still to come too, and
+ * playback does not change it. A builder who was not back when the log
+ * ended, or when his player left, has no time and the line is as it was.
+ * The text is part of the line, so the marker over the seek bar and Copy
+ * say it too. */
+static void add_builder_away_times(void) {
+    for (LogEvent &e : s_events) {
+        uint32_t awayMs = 0;
+        char     away[LV_BUILDER_AWAY_TEXT_MAX];
+        if (e.kind != LV_EVK_BUILDER_LOST || e.pinned || e.player < 0) continue;
+        if (!lv_screenBuilderAwayMs(e.player, e.timeMs, &awayMs)) continue;
+        lvBuilderAwayText(true, awayMs, away, sizeof(away));
+        e.text += away;
+        /* Once only: the line has its time. */
+        e.player = -1;
+    }
+}
+
 void lv_imgui_events_set_complete(void) {
+    add_builder_away_times();
     /* The divider is placed by a binary search on time, so the lines must be
      * in time order with the pinned summary lines in front. The decoder posts
      * them that way already; the stable sort then changes nothing, and it
@@ -557,7 +587,7 @@ void lv_imgui_events_window(void) {
          * posts them again, under the loop that is drawing them. */
         bool     jump          = false;
         bool     jumpHighlight = false;
-        bool     jumpCentre    = false; /* the second click of a double click */
+        bool     jumpCentre    = false; /* a click on the selected line */
         bool     jumpHasCell   = false;
         uint32_t jumpMs        = 0;
         int      jumpX         = 0;
@@ -696,14 +726,18 @@ void lv_imgui_events_window(void) {
                         }
                         s_clicked_index = -1;
                     } else {
-                        /* The second click of a double click is for the line
-                         * the first one chose, and puts its place in the
-                         * middle of the map that shows. The first click has
-                         * done the plain jump already: there is no wait. */
-                        const bool twice =
-                            ImGui::GetIO().MouseClickedLastCount[ImGuiMouseButton_Left] >= 2 &&
-                            s_clicked_index >= 0 && s_clicked_index < (int)s_events.size();
-                        const int target = twice ? s_clicked_index : i;
+                        /* A click on the line that is selected already
+                         * puts its place in the middle of the map that
+                         * shows. The second click of a double click does the
+                         * same, for the line the first one chose. The first
+                         * click has done the plain jump already: there is no
+                         * wait (lvEventClickPick). */
+                        const LvEventClick pick = lvEventClickPick(
+                            i, s_select_all ? -1 : s_selected_index, s_clicked_index,
+                            ImGui::GetIO().MouseClickedLastCount[ImGuiMouseButton_Left],
+                            (int)s_events.size());
+                        const bool twice = pick.centre != 0;
+                        const int target = pick.target;
                         const LogEvent &tev = s_events[target];
                         s_selected_index = target;
                         s_clicked_index = target;

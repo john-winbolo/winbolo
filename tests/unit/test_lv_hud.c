@@ -12,17 +12,21 @@
  *       has (the larger icons win, a tie goes to the row, and a window too
  *       small for either still gets scale 1); and how a status icon becomes
  *       a grey shape and a dark team colour becomes one that shows on black;
- *       that a red team is drawn orange and no other colour is; and, with a
- *       player's perspective on, which of the game's own icons each slot
- *       shows (own, allied, hostile, neutral, dead).
+ *       and, with a player's perspective on, which of the game's own icons
+ *       each slot shows (own, allied, hostile, neutral, dead).
  *
  *   lv_team_sprite_sums — which picture a pillbox and a base on the map are
  *       drawn with when every team is shown in its colour (lv_team_sprite.h):
  *       a neutral pillbox is the game's hostile pillbox tile at each armour
  *       level, a neutral base the game's neutral base tile, and an owned one
- *       its team's cell of the items sheet; and that no team is drawn in
- *       the game's red, which is kept for the pillbox nobody owns: a team
- *       whose colour is the palette's red gets the orange row.
+ *       its team's cell of the items sheet; and that every palette entry,
+ *       the red one too, is drawn from the row with its own number.
+ *
+ *   lv_team_colour_lookup — which palette entry a team is drawn in
+ *       (lv_team_colour.h): the default when nothing was chosen, the entry
+ *       the Team Colours dialog has when one was, the dialog's Neutral entry
+ *       for a number that is not a team, and the default again for a stored
+ *       value that is not an entry of the palette.
  */
 
 #include <stdbool.h>
@@ -30,6 +34,7 @@
 
 #include "lv_hud.h"
 #include "lv_team_sprite.h"
+#include "lv_team_colour.h"
 #include "test_harness.h"
 
 /* One grid of the game's panels, from the header the panel itself reads
@@ -145,34 +150,13 @@ int run_lv_hud_sums(void) {
     lvHudReadableColour(&r, &g, &b);
     UT_ASSERT_MSG(r == g && g == b && r > 0.3f && r < 0.4f, "black lifted to %f", (double)r);
 
-    /* All teams shown: the palette's red (191,0,0) is drawn orange
-       (255,140,0), and so is a pure red. */
-    r = 191.0f / 255.0f; g = 0.0f; b = 0.0f;
-    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == true, "palette red not changed");
-    UT_ASSERT_MSG(r == 1.0f && g == 140.0f / 255.0f && b == 0.0f, "red became %f %f %f",
+    /* The palette's red (192,0,0) is a little darker than the least
+       brightness, so it is lifted a little and stays red: green and blue
+       rise together and stay far under red. */
+    r = 192.0f / 255.0f; g = 0.0f; b = 0.0f;
+    lvHudReadableColour(&r, &g, &b);
+    UT_ASSERT_MSG(g == b && r > 0.75f && g < 0.25f, "red is %f %f %f",
                   (double)r, (double)g, (double)b);
-    r = 1.0f; g = 0.0f; b = 0.0f;
-    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == true && g == 140.0f / 255.0f, "pure red");
-    /* The other colours of the palette are left as they are: its orange
-       (255,206,0), brown (128,128,0), light pink (255,192,192), pink
-       (253,119,255), purple (96,18,122) and blue (0,0,189). */
-    r = 1.0f; g = 206.0f / 255.0f; b = 0.0f;
-    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == false && g == 206.0f / 255.0f, "orange changed");
-    r = 128.0f / 255.0f; g = 128.0f / 255.0f; b = 0.0f;
-    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == false, "brown changed");
-    r = 1.0f; g = 192.0f / 255.0f; b = 192.0f / 255.0f;
-    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == false, "light pink changed");
-    r = 253.0f / 255.0f; g = 119.0f / 255.0f; b = 1.0f;
-    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == false, "pink changed");
-    r = 96.0f / 255.0f; g = 18.0f / 255.0f; b = 122.0f / 255.0f;
-    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == false, "purple changed");
-    r = 0.0f; g = 0.0f; b = 189.0f / 255.0f;
-    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == false && b == 189.0f / 255.0f, "blue changed");
-    /* A red too dark to be called red, and one with too much green in it. */
-    r = 0.4f; g = 0.0f; b = 0.0f;
-    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == false, "dark red changed");
-    r = 1.0f; g = 0.4f; b = 0.0f;
-    UT_ASSERT_MSG(lvHudRedToOrange(&r, &g, &b) == false, "red-orange changed");
 
     /* What a thing is to the perspective player: own before allied, and
        everybody else's hostile. A thing with no owner is none of them. */
@@ -277,61 +261,97 @@ int run_lv_team_sprite_sums(void) {
     s = lvMapPillSprite(false, 15, -1);
     UT_ASSERT_MSG(s.row == 0, "palette entry under 0");
 
-    /* No team in the game's red. The one colour of each row of the team
-       sheets, read out of data/items.bmp, in palette order. */
+    /* A team is drawn from the row of its own palette entry, whichever the
+       entry is: the red one (11) too. A pillbox and a base of the team go
+       where its tank goes. */
     {
-        static const unsigned char palette[LV_TEAM_SHEET_ROWS][3] = {
-            { 111, 111, 111 }, { 200, 223, 0 },   { 24, 181, 16 },   { 253, 119, 255 },
-            { 255, 255, 49 },  { 0, 143, 159 },   { 255, 206, 0 },   { 191, 0, 191 },
-            { 0, 255, 255 },   { 49, 206, 49 },   { 165, 165, 165 }, { 192, 0, 0 },
-            { 0, 0, 189 },     { 128, 128, 0 },   { 255, 192, 192 }, { 150, 255, 150 },
-            { 96, 18, 122 }
-        };
-        unsigned char r, g, b;
         int entry;
-
-        /* The game's hostile pillbox red (223,0,0) is what counts as red. */
-        r = 223; g = 0; b = 0;
-        UT_ASSERT_MSG(lvTeamRedPixelToOrange(&r, &g, &b) == true, "the game's red is not red");
-        UT_ASSERT_MSG(r == 255 && g == 140 && b == 0, "red became %d %d %d", r, g, b);
-        /* The orange is the HUD panel's, and is not itself red. */
-        UT_ASSERT_MSG(LV_TEAM_ORANGE_R / 255.0f == LV_HUD_ORANGE_R &&
-                      LV_TEAM_ORANGE_G / 255.0f == LV_HUD_ORANGE_G &&
-                      LV_TEAM_ORANGE_B / 255.0f == LV_HUD_ORANGE_B, "two oranges");
-        UT_ASSERT_MSG(lvTeamRedPixelToOrange(&r, &g, &b) == false, "orange counts as red");
-
         for (entry = 0; entry < LV_TEAM_SHEET_ROWS; entry++) {
-            int row = lvTeamSheetRow(entry);
-            float fr = palette[entry][0] / 255.0f;
-            float fg = palette[entry][1] / 255.0f;
-            float fb = palette[entry][2] / 255.0f;
-            bool red;
-            r = palette[entry][0]; g = palette[entry][1]; b = palette[entry][2];
-            red = lvTeamRedPixelToOrange(&r, &g, &b);
-            /* Only entry 11 is red, by the sheet's rule and by the HUD's. */
-            UT_ASSERT_MSG(red == (entry == LV_TEAM_PALETTE_RED), "entry %d red %d", entry, red);
-            UT_ASSERT_MSG(lvHudRedToOrange(&fr, &fg, &fb) == red, "entry %d: HUD disagrees", entry);
-            /* The red row is never a team's row, with the orange row or
-               without it; every other entry keeps its own. */
-            UT_ASSERT_MSG(row != LV_TEAM_PALETTE_RED, "entry %d is drawn in the red row", entry);
-            UT_ASSERT_MSG(lvTeamSheetRowHave(row, true) != LV_TEAM_PALETTE_RED &&
-                          lvTeamSheetRowHave(row, false) != LV_TEAM_PALETTE_RED,
-                          "entry %d falls back to the red row", entry);
-            if (entry != LV_TEAM_PALETTE_RED) {
-                UT_ASSERT_MSG(row == entry && lvTeamSheetRowHave(row, false) == entry,
-                              "entry %d moved to row %d", entry, row);
-            }
-            /* A pillbox and a base of the team go where its tank goes. */
-            UT_ASSERT_MSG(lvMapPillSprite(false, 15, entry).row == row &&
-                          lvMapBaseSprite(false, entry).row == row, "entry %d: items row", entry);
+            UT_ASSERT_MSG(lvTeamSheetRow(entry) == entry, "entry %d moved to row %d",
+                          entry, lvTeamSheetRow(entry));
+            UT_ASSERT_MSG(lvMapPillSprite(false, 15, entry).row == entry &&
+                          lvMapBaseSprite(false, entry).row == entry, "entry %d: items row", entry);
         }
-        UT_ASSERT_MSG(lvTeamSheetRow(LV_TEAM_PALETTE_RED) == LV_TEAM_SHEET_ROW_ORANGE,
-                      "red is not the orange row");
-        UT_ASSERT_MSG(lvTeamSheetRowHave(LV_TEAM_SHEET_ROW_ORANGE, false) == LV_TEAM_PALETTE_ORANGE,
-                      "no orange row: the palette's orange");
+        UT_ASSERT_MSG(lvTeamSheetRow(LV_TEAM_PALETTE_RED) == LV_TEAM_PALETTE_RED,
+                      "a red team is not in the red row");
+        UT_ASSERT_MSG(lvTeamSheetRow(LV_TEAM_SHEET_ROWS) == 0 && lvTeamSheetRow(-1) == 0,
+                      "no row past the sheet");
         /* A neutral pillbox is still the game's red tile, not a row. */
         UT_ASSERT_MSG(lvMapPillSprite(true, 15, LV_TEAM_PALETTE_RED).fromAtlas == 1,
                       "neutral pill with the red entry");
     }
+    return 0;
+}
+
+int run_lv_team_colour_lookup(void) {
+    /* The defaults the Team Colours dialog opens with: Team 1 green (2),
+       Team 2 red (11), Team 3 blue (12), Team 4 yellow (4), ..., and light
+       grey (10) for neutral. */
+    static const unsigned char defaults[LV_TEAM_COLOUR_SLOTS] = {
+        2, 11, 12, 4, 16, 13, 8, 3, 6, 1, 5, 7, 9, 14, 15, 0, 10
+    };
+    unsigned char tc[LV_TEAM_COLOUR_SLOTS];
+    int team, other;
+
+    /* Nothing chosen: every team has its default, and so has neutral. */
+    for (team = 0; team < LV_TEAM_COLOUR_SLOTS; team++) {
+        UT_ASSERT_MSG(lvTeamColourDefault(team) == defaults[team], "default of %d is %d",
+                      team, lvTeamColourDefault(team));
+        UT_ASSERT_MSG(lvTeamColourDefault(team) < LV_TEAM_COLOUR_ENTRIES, "default %d off the palette", team);
+        tc[team] = lvTeamColourDefault(team);
+    }
+    for (team = 0; team < LV_TEAM_COLOUR_TEAMS; team++) {
+        UT_ASSERT_MSG(lvTeamColourEntry(tc, team) == defaults[team], "team %d at the defaults", team);
+        /* No two teams start with the same colour. */
+        for (other = 0; other < team; other++) {
+            UT_ASSERT_MSG(defaults[other] != defaults[team], "teams %d and %d share a default", other, team);
+        }
+    }
+    /* The second team's default is the palette's red, and it is drawn in
+       it: the row of the sheet is the red row. */
+    UT_ASSERT_MSG(lvTeamColourEntry(tc, 1) == LV_TEAM_PALETTE_RED, "team 2 is not red");
+    UT_ASSERT_MSG(lvTeamSheetRow(lvTeamColourEntry(tc, 1)) == LV_TEAM_PALETTE_RED, "team 2: row");
+
+    /* A colour chosen for one team: that team has it and no other changes. */
+    tc[1] = 6;
+    UT_ASSERT_MSG(lvTeamColourEntry(tc, 1) == 6, "the chosen colour is not used");
+    UT_ASSERT_MSG(lvTeamSheetRow(lvTeamColourEntry(tc, 1)) == 6, "the chosen colour: row");
+    UT_ASSERT_MSG(lvTeamColourEntry(tc, 0) == 2 && lvTeamColourEntry(tc, 2) == 12, "another team changed");
+    /* Every entry of the palette can be chosen for every team, red too. */
+    for (team = 0; team < LV_TEAM_COLOUR_TEAMS; team++) {
+        for (other = 0; other < LV_TEAM_COLOUR_ENTRIES; other++) {
+            tc[team] = (unsigned char)other;
+            UT_ASSERT_MSG(lvTeamColourEntry(tc, team) == other, "team %d entry %d", team, other);
+        }
+        tc[team] = defaults[team];
+    }
+
+    /* Neutral: the dialog's Neutral entry, at its default and when chosen. */
+    UT_ASSERT_MSG(lvTeamColourEntry(tc, LV_TEAM_COLOUR_NEUTRAL) == 10, "neutral default");
+    tc[LV_TEAM_COLOUR_NEUTRAL] = 0;
+    UT_ASSERT_MSG(lvTeamColourEntry(tc, LV_TEAM_COLOUR_NEUTRAL) == 0, "neutral chosen");
+
+    /* A number that is not a team is neutral: under 0, and past the last
+       team. It never reads outside tc. */
+    UT_ASSERT_MSG(lvTeamColourSlot(-1) == LV_TEAM_COLOUR_NEUTRAL, "team -1");
+    UT_ASSERT_MSG(lvTeamColourSlot(16) == LV_TEAM_COLOUR_NEUTRAL, "team 16");
+    UT_ASSERT_MSG(lvTeamColourSlot(17) == LV_TEAM_COLOUR_NEUTRAL, "team 17");
+    UT_ASSERT_MSG(lvTeamColourSlot(255) == LV_TEAM_COLOUR_NEUTRAL, "team 255");
+    UT_ASSERT_MSG(lvTeamColourSlot(15) == 15 && lvTeamColourSlot(0) == 0, "a team keeps its place");
+    UT_ASSERT_MSG(lvTeamColourEntry(tc, -1) == 0 && lvTeamColourEntry(tc, 17) == 0 &&
+                  lvTeamColourEntry(tc, 255) == 0, "no team: the neutral entry");
+    UT_ASSERT_MSG(lvTeamColourDefault(-1) == 10 && lvTeamColourDefault(99) == 10, "no team: neutral default");
+
+    /* A stored value that is not an entry of the palette: the default. */
+    tc[3] = 17;
+    UT_ASSERT_MSG(lvTeamColourEntry(tc, 3) == 4, "value 17 for team 4");
+    tc[3] = 255;
+    UT_ASSERT_MSG(lvTeamColourEntry(tc, 3) == 4, "value 255 for team 4");
+    UT_ASSERT_MSG(lvTeamColourPref(3, -1) == 4 && lvTeamColourPref(3, 17) == 4, "bad preference");
+    UT_ASSERT_MSG(lvTeamColourPref(3, 0) == 0 && lvTeamColourPref(3, 16) == 16, "good preference");
+    UT_ASSERT_MSG(lvTeamColourPref(LV_TEAM_COLOUR_NEUTRAL, 99) == 10, "bad neutral preference");
+
+    /* With no table at all the answer is entry 0. */
+    UT_ASSERT_MSG(lvTeamColourEntry(NULL, 2) == 0, "no table");
     return 0;
 }

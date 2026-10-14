@@ -109,6 +109,94 @@ static inline int lvOverlayClusters(const float *xs, int n, float minGap,
   return made;
 }
 
+/* The size of a marker of the lane. It is LV_OVERLAY_MARKER_SCALE of the
+ * height of a line of text, cut to a whole point, so that more markers go
+ * in the lane before they are put together. With the viewer's text of 18
+ * points that is 14 (it was 18). It is never under LV_OVERLAY_MARKER_MIN:
+ * the builder of a "builder lost" marker is 4 pixels high and has 2 points
+ * of edge on each side, so a smaller marker would cut him. */
+#define LV_OVERLAY_MARKER_SCALE 0.8f
+#define LV_OVERLAY_MARKER_MIN 8.0f
+
+static inline float lvOverlayMarkerSide(float textHeight) {
+  float side = (float)(int)(textHeight * LV_OVERLAY_MARKER_SCALE);
+  return (side < LV_OVERLAY_MARKER_MIN) ? LV_OVERLAY_MARKER_MIN : side;
+}
+
+/* How near two events are put in one marker (the minGap of
+ * lvOverlayClusters): the side of a marker, so two markers touch at the
+ * nearest and never overlap. It follows the size of the marker. */
+static inline float lvOverlayMergeGap(float side) {
+  return side;
+}
+
+/* How far to each side of a marker's middle the mouse is on it: half its
+ * side. The part that takes the mouse is as wide as the marker that is
+ * drawn, and as high as the lane. */
+static inline float lvOverlayHitHalf(float side) {
+  return side * 0.5f;
+}
+
+/* The height of the lane: the marker, then a point of room and two points
+ * for the tick of a second team under it. */
+static inline float lvOverlayLaneHeight(float side) {
+  return side + 3.0f;
+}
+
+/* How the lines of a marker's tooltip are set out when the marker stands for
+ * several events. Every event has a line: none is left out. The lines go
+ * down a column until the room is used, then start the next column. */
+typedef struct LvOverlayTipColumns {
+  int cols; /* how many columns */
+  int rows; /* how many lines the longest column has */
+  bool fits; /* false: the lines need more room than there is */
+} LvOverlayTipColumns;
+
+/* n lines, each lineH high, in columns each colW wide, in a room availW by
+ * availH. A column takes as many lines as go in availH (at least one).
+ * When the columns that makes are wider than availW there are only as many
+ * columns as go in availW (at least one), and each takes more lines than
+ * the room is high: the lines are all still there, and `fits` is false. */
+static inline LvOverlayTipColumns lvOverlayTipColumns(int n, float lineH, float availH,
+                                                      float colW, float availW) {
+  LvOverlayTipColumns out;
+  int rowsFit, maxCols;
+  out.cols = 0;
+  out.rows = 0;
+  out.fits = true;
+  if (n <= 0) return out;
+  if (lineH <= 0.0f) lineH = 1.0f;
+  if (colW <= 0.0f) colW = 1.0f;
+  rowsFit = (int)(availH / lineH);
+  maxCols = (int)(availW / colW);
+  if (rowsFit < 1) {
+    rowsFit = 1;
+    out.fits = false;
+  }
+  if (maxCols < 1) {
+    maxCols = 1;
+    out.fits = false;
+  }
+  out.cols = (n + rowsFit - 1) / rowsFit;
+  if (out.cols <= maxCols) {
+    out.rows = (n < rowsFit) ? n : rowsFit;
+    return out;
+  }
+  out.cols = maxCols;
+  out.rows = (n + maxCols - 1) / maxCols;
+  out.fits = false;
+  return out;
+}
+
+/* The column and the line of the k-th event (from 0) in columns of `rows`
+ * lines: down the first column, then down the next. */
+static inline void lvOverlayTipCell(int k, int rows, int *col, int *row) {
+  if (rows < 1) rows = 1;
+  if (k < 0) k = 0;
+  if (col != NULL) *col = k / rows;
+  if (row != NULL) *row = k % rows;
+}
+
 /* The marker the point x is on: the nearest one within halfWidth, or -1. */
 static inline int lvOverlayHit(const LvOverlayCluster *clusters, int count,
                                float x, float halfWidth) {
@@ -319,8 +407,8 @@ typedef enum {
 
 /* How many times his own size the builder is drawn in a square room `room`
  * on a side: the most whole times that go in, so that each of his pixels is
- * a whole block and he stays sharp; 1 at least. In the 9 points a marker of
- * 13 has inside its edge that is 2: a builder 6 wide and 8 high. */
+ * a whole block and he stays sharp; 1 at least. In the 10 points a marker of
+ * 14 has inside its edge that is 2: a builder 6 wide and 8 high. */
 static inline int lvMarkerBuilderScale(float room) {
   int n = (int)(room / (float)LV_MARKER_BUILDER_H);
   return (n < 1) ? 1 : n;

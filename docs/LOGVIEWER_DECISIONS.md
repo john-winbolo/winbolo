@@ -16,8 +16,8 @@ call can be changed; the file says where.
 - A text dump of a recording around one tick (`-dump`).
 - File > "Open in single player" (the map at this time) and "Save Log".
 - The server tick in the Controls panel.
-- Neutral pillboxes and bases drawn with the game's own tiles. A red team is
-  drawn orange.
+- Neutral pillboxes and bases drawn with the game's own tiles. Each team is
+  drawn in the colour the Team Colours dialog has for it.
 - An eye icon in the HUD panel in place of the words "View of".
 - An Overview panel: pillboxes and bases for each team.
 - A Tank panel: the four gauges of the selected tank.
@@ -40,7 +40,8 @@ call can be changed; the file says where.
   points at the usual font), so the table, the bars and the least width of
   the panel are as they were. The tooltip of a header picture is its word
   ("Pillboxes", "Bases"). The table has no picture for each team, so none
-  is in a team's colour.
+  is in a team's colour. (Changed later on Oct 13: see "Overview rows:
+  names, then a number and a picture for each count".)
 - Not changed, because the map's picture does not go in with no change to
   the layout: the HUD panel (its grids are the game's own 12 by 12 status
   slots) and the Tank panel's line of carried pillboxes (the game's status
@@ -91,11 +92,12 @@ call can be changed; the file says where.
 
 ### Colours (earlier commits)
 
-- A team whose colour is the game's red is drawn orange. Only that team
-  changes.
+- A team whose colour is the game's red was drawn orange. **Taken back on
+  Oct 13**: see "Team Colours are drawn as chosen". A red team is red.
 - Neutral pillboxes and bases use the game's red (hostile) tiles.
-- The "Neutral Colour" setting no longer changes the map. It is still in the
-  Team Colours dialog. The owner can remove it or give it a new use.
+- The "Neutral Colour" setting does not change the map. It is still in the
+  Team Colours dialog. Since Oct 13 it is the colour of the neutral stripe
+  and the neutral part of the share bars in the Overview panel.
 
 ## Oct 13 review round 1
 
@@ -959,7 +961,7 @@ while the lane shows.
   13; before that a filled square and a filled disc). It is the same sheet
   and the same cell the map draws (`lv_drawItemPicture` in `draw.c`, by
   `lvPanelItemSprite` in `lv_team_sprite.h`): a team's cell of
-  `data/items.bmp`, a red team in orange, the pillbox at full armour. With
+  `data/items.bmp`, the pillbox at full armour. With
   no team it is the game's own tile: the red pillbox, the neutral base
   (black with white dots). The picture carries the team's colour, so these
   markers have no dark box, no fill and no line in the team's colour. The
@@ -1687,6 +1689,295 @@ Tests: `lv_view_centre_scroll` (each square of the map at seven zooms and
 five visible parts: the place is in the middle to a map pixel, or held by
 the map's edge on the right side of the middle), `lv_dock_clear_map` (what
 the solid sidebars take).
+
+### A click on the selected event line centres the map (Oct 13)
+
+In the Events panel, a plain click on the line that is selected already now
+does what a double click does: it goes to the event's time, shows the ring,
+and puts the event's square in the middle of the map that shows. There is
+no limit of time between the two clicks. The first click on another line is
+as it was: the jump and the ring, and "Tank Centred" is left on.
+
+Calls made:
+
+- **One function.** Both ways end in `lv_windowCentreOnEvent`, so the click
+  on the selected line also turns "Tank Centred" off, as the double click
+  does. A line with no place only seeks.
+- **A double click is the same as before.** Its first click jumps, its
+  second click centres, for the line the first click chose. Each later
+  click on that line centres again.
+- **The selected line** is the panel's one selected line, the same one
+  Copy uses. A line selected with Ctrl and then clicked is a centre click.
+  With Select All on, no line is the selected line, so the first click on a
+  line only jumps.
+- **The selection is forgotten** when a log loads and when the filter hides
+  the line, as before.
+- **The markers over the seek bar** have no selected marker. They are as
+  they were: a double click centres.
+
+The sum is `lvEventClickPick` in `src/logviewer/lv_event_kind.h`. Test:
+`lv_event_click_pick`.
+
+### A lost builder's line says how long he was away (Oct 13)
+
+Each "lost builder" line of the Events panel now ends with the time the
+builder was away, in brackets: `(0:42)`, `(1:05)`. The time is from the
+tick of the death to the tick the new builder is in the tank: the flight
+and the walk from where he landed.
+
+The time is out of the table the scan of the whole log fills at load (the
+table the parachute's countdown reads). So every line has its time from the
+load on, the lines after the "now" line too, and playback does not change
+it. It is measured. There is no estimate here.
+
+Calls made:
+
+- **No time, no brackets.** The line is as it was when the log ends before
+  the builder is back, when his player leaves the game before he is back,
+  and on a live feed (no scan, so no table).
+- **A player who left.** Before this change the table ended a builder's
+  trip in the tick his player left, as if the builder was back. That was
+  wrong, and it gave the parachute's countdown of a leaving player a false
+  end. The trip is now dropped. The countdown of such a builder is then the
+  estimate, as it is when the log ends first.
+- **Killed again on the walk back.** The new builder can be killed before
+  he is in the tank. Both lines count to the same return: the first line
+  says the whole time the tank had no builder, the second the time from the
+  second death.
+- **The text is the countdown's.** `lvBuilderCountdownText` writes it, so a
+  part of a second counts as a whole one, and the line says what the
+  parachute's countdown says in the tick of the death.
+- **The marker over the seek bar.** Its hover text shows the line of the
+  Events panel, so it has the time too. Copy and Copy All have it as well.
+- **No new string.** The brackets and the time need no words.
+- **A trip that starts one tick late.** If the tick of the death goes on to
+  name a place for the builder, the table starts the trip one tick later.
+  The line still finds that trip.
+
+The sums are `lvBuilderTripAway` and `lvBuilderAwayText` in
+`src/logviewer/lv_builder_status.h`. `lv_screenBuilderAwayMs` in `screen.c`
+asks the table, and `lv_screenEventPlayer` says which player a line is
+about. `add_builder_away_times` in `imgui_events.cpp` adds the text once,
+when the list is complete.
+
+Tests: `lv_builder_away_text` (the table and the text), `lv_builder_away_scan`
+(two hand-built logs: 100 ms away, the same at each place of playback; and a
+player who leaves, no time).
+
+### Shift and the wheel over the seek bar step one tick (Oct 13)
+
+With the mouse over the seek bar of the Controls panel, or over the lane of
+event markers on it, Shift and one notch of the wheel move playback one
+tick of the log (20 ms). Several notches in a frame are that many ticks.
+
+Before this the wheel did nothing over the seek bar. The viewer's own wheel
+code zooms the map, and only when the mouse is not over a panel. Over the
+Controls panel the wheel went to ImGui, which scrolls a panel that has more
+than it shows. The plain wheel is left like that.
+
+Calls made:
+
+- **Wheel up is back in time, wheel down is forward.** No rule of the
+  viewer said which. The list of the Events panel goes to earlier lines
+  with wheel up, so the seek bar does the same.
+- **Play and Pause stay as they are.** The step key `,` pauses; this does
+  not. A step during play is one tick and play then goes on.
+- **An exact seek.** It is `lv_screenSeekToTimeMs`, the seek of the `,` and
+  `.` keys, to a whole tick. It is held to the start and the end of the log
+  that shows (the round, when the lobby is hidden).
+- **Rewind and Fast Forward.** The step is a seek like any other. It starts
+  no animation, and a running one is dropped at the next frame (the seek
+  count has moved on).
+- **The panel does not scroll too.** While Shift is held over the bar the
+  wheel is the bar's (ImGui key owner), both ways of the wheel: ImGui turns
+  Shift and the wheel into a sideways scroll, and some systems send the
+  sideways wheel themselves. The notch is read from whichever moved.
+- **A wheel that gives parts of a notch** (a touchpad) adds up to whole
+  notches. The sum is dropped when Shift is let go or the mouse leaves.
+- **Not on a live feed, and not while the bar is dragged.**
+- No text was added: no string of the viewer says what the wheel does.
+
+The sum is `lvControlsWheelStep` in `src/logviewer/lv_controls_layout.h`;
+`seek_wheel_step` in `imgui_controls.cpp` uses it. Test:
+`lv_controls_wheel_step`.
+
+### Team Colours are drawn as chosen (Oct 13)
+
+The owner: "I just noticed the Team Colors widget. we seemed to have just
+deviated and ignored that. can we make it actually honor the team colors
+chosen".
+
+What the dialog is: Options > Team Colours. Sixteen team rows and a Neutral
+row; each picks one of the seventeen named palette colours. OK applies and
+saves; Cancel drops the changes. The values are `LogViewerState.tc[17]`.
+
+What was wrong:
+
+- A team with the palette's red (entry 11, the default of Team 2) was drawn
+  orange (255,140,0) on the map and in every panel. That was a call made
+  without the owner. It is taken back: a team is drawn in the colour the
+  dialog has for it, red too.
+- The pillboxes and bases of the map are kept from frame to frame. After OK
+  they kept the old colour until the map was scrolled or zoomed. OK now
+  marks the map for a redraw, so they change on the next frame.
+- The dialog showed colour names only, and one unused table of defaults in
+  it was not the viewer's table.
+- The Neutral entry changed nothing.
+
+What was built:
+
+- One source: `lv_team_colour.h` (the defaults, the lookup) and
+  `lv_screenTeamColour(team)` in `screen.c`, the one call that reads `tc[]`
+  for drawing. The map (tanks, boats, pillboxes, bases), the simplified
+  view, the HUD, Overview and Tank panels, the event markers and the ring of
+  an event all ask it.
+- One panel colour: `lv_drawTeamPanelColour` in `draw.c`. It is the map's
+  colour, made lighter when it is too dark to see on a dark panel (the
+  palette's blue, purple and red are). The hue stays. This lift was there
+  before and is kept.
+- The extra orange row of the team sheets, `lvHudRedToOrange` and
+  `lvTeamRedPixelToOrange` are removed.
+- The dialog shows a square of each colour: beside each combo box and
+  beside each name in the list. No new string.
+- The Neutral entry is the colour of the neutral stripe and the neutral
+  part of the share bars in the Overview panel (it was a fixed grey,
+  120,120,120). To change: `overview_neutral_colour` in
+  `imgui_overview.cpp`.
+- A preference value that is not a palette entry now gives the team's
+  default (it gave the team's number, or purple for neutral).
+
+Not changed:
+
+- A neutral pillbox is the game's red pillbox and a neutral base is the
+  game's neutral base, on the map and in the panels. The marks of neutral
+  things in the simplified view are the game's marker colours.
+- Builder marks on the map are white. The lost-builder mark is the builder
+  with a red circle and one line.
+- With "Use Team Colours" off, in the one-player view, and in the embedded
+  reel the game's own reading is drawn (own, allied, hostile). The dialog
+  does not apply there, as before.
+- No "own player" colour exists in the dialog. The orange that was seen was
+  the red team's orange.
+
+What looks different with untouched preferences:
+
+- Team 2 (red by default) is red, not orange: tank, boat, pillboxes, bases,
+  simplified-view marks, HUD icons, Overview stripe, pictures and bar, Tank
+  panel stripe, event markers and the event ring.
+- **Note:** a red team's pillboxes are now close to the neutral pillbox
+  (the game's red pillbox). To tell them apart, give that team another
+  colour in the dialog (the palette has an orange).
+- Overview: the neutral stripe and bar part are the palette's light grey
+  (165,165,165), not 120,120,120.
+
+Tests: `lv_team_colour_lookup` (new), `lv_team_sprite_sums`, `lv_hud_sums`,
+`lv_event_overlay_picture`.
+
+### Overview rows: names, then a number and a picture for each count (Oct 13)
+
+A team's row was a stripe in its colour, its players' names, and two
+numbers under a head row with the neutral pillbox and base pictures. It is
+now "Sethos, ErYan, GB   10 [pillbox]   5 [base]", with each picture in the
+team's colour.
+
+- **Number first, picture after.** The picture is at the right end of its
+  column and the number ends a gap in front of it, so the numbers of all
+  the rows end at one place (`lvOverviewCountPlace`).
+- **The pictures** are the map's own (`lv_item_picture`), at the size the
+  head row's pictures had (12 points at the usual font).
+- **The head row is gone:** each row has the pictures now. The hover of a
+  count says "Pillboxes" or "Bases", as the head pictures did.
+- **Neutral row:** kept, with its label, the game's red pillbox and the
+  real neutral base.
+- **Total row:** kept, the numbers alone, under the numbers of the rows.
+- **The stripe** in the team's colour at the start of a row is kept.
+- **No "Team 1" label.** There was none: a row is the names of its players,
+  and a row exists only for a team with a player in it.
+- **A narrow panel.** The two count columns keep their width; a number or
+  a picture is never cut. The names give way: the whole names that fit,
+  then ", ..." (`lvOverviewNamesFit`); when not even the first fits, that
+  name cut short with "...". The hover of the row has the whole list. This
+  takes the place of "first name +N".
+- **Not changed:** the order of the rows (by team number), a carried
+  pillbox counts for its owner, a zero is dim, the share bars. The panel
+  has no mark for the team that is viewed in the one-player view; it had
+  none before.
+
+### Smaller markers over the seek bar (Oct 13)
+
+The markers of the lane over the seek bar are 80% of what they were, so
+more of them go in before they are put together.
+
+- **The size.** A marker was the height of a line of text: 18 points with
+  the viewer's text. It is now 0.8 of that cut to a whole point: 14 points
+  (77.8%; 15 would be 83%, over the 80% asked for). One sum,
+  `lvOverlayMarkerSide`, gives it. A display with more pixels to a point
+  draws it with more pixels, as before.
+- **The distance for putting events together follows it.** It is the
+  marker's side (`lvOverlayMergeGap`), so it went from 18 to 14 with the
+  marker and two markers still never overlap.
+- **What is in a marker.** The builder of "builder lost" is 2 times his 3
+  by 4 pixels (6 by 8); he was 3 times. He is still whole pixels. The
+  marker is never under 8 points, where he would be cut. The pillbox and
+  base pictures (16 pixels), the "dead" picture (12 pixels) and the ping
+  pictures were already scaled with blending at 18, as 18 is not a whole
+  number of times their size; they still are. The line of the team's
+  colour (1 point) and the red circle and line (1.5 points) keep their
+  widths.
+- **The number on a marker for several events** is as high as the box at
+  most; it was as high as a line of text, which the box no longer is.
+- **The mouse.** A marker takes the mouse over its drawn width and the
+  whole height of the lane, as before.
+- **The lane** is 4 points lower (17, was 21), and the Controls panel with
+  it.
+- **Not smaller:** the pictures of the lines of the Events panel, of the
+  hover for several events and of the list of kinds. They stay the height
+  of a line of text.
+
+### The hover of a marker for several events shows them all (Oct 13)
+
+A marker over the seek bar that stands for several events showed the first
+5 of them in its hover and then "+N more", with no way to see the rest.
+
+- **Every event has a line.** The cut at 5 lines and the "+N more" line are
+  gone. The text `STR_LV_OVERLAY_MORE` stays in the language files and is
+  not used.
+- **Each line starts with the event's picture.** It is drawn by
+  `lv_event_marker_draw`, the call the lane and the Events panel use, at
+  the size the Events panel uses (the height of a line of text). Then the
+  time and the event's line of the Events panel, with the "(M:SS)" of a
+  lost builder.
+- **Columns.** When the lines are more than the window is high they go
+  down a column and then start the next (`lvOverlayTipColumns`). All
+  columns are as wide as the longest line.
+- **More than the window holds.** With more columns than the window is
+  wide, there are as many columns as go in the width and each takes more
+  lines. No event is left out and no "+N more" line is made, but the
+  bottom of the hover is then cut off by the window's edge.
+- **One event.** The hover of a marker for one event is as it was.
+
+### A 150% zoom step (Oct 13)
+
+The zoom went from 100% straight to 200%. The table in `draw.c` now has
+1.5 between them: 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.5, 2.0, 3.0, 4.0.
+
+- **One table, read by all.** The Options > Zoom menu (and the Mac menu
+  bar) make their lines from the table's count and values, so "1.5x" is
+  there with no other change. The wheel, the keys, the controller and the
+  web viewer go one step at a time through the same table.
+- **1.0 keeps its place.** It is still step 5, the step the viewer starts
+  at. No step number is saved in the preferences. The embedded reel keeps
+  its step number only while it is open, so nothing old points at a wrong
+  step.
+- **How it looks.** A map square is 24 points. The map is scaled up with
+  no blending, as at 2x, so a pixel of the art is 1 and 2 pixels of the
+  display in turn. Lines are sharp but not all the same width. That is
+  accepted for this step.
+- **The first view can now stop at 150%.** It goes down from the zoom the
+  viewer has to the largest step the land goes in at; from 2x or more
+  that can now be 1.5x where it was 1x.
+- **The map editor is not changed.** The comment over the table said the
+  values were the map editor's; it now says which part still is.
 
 ### The first view of a log is on the land (Oct 13)
 
