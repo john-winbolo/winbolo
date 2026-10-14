@@ -177,3 +177,37 @@ int run_lv_event_click_pick(void) {
     UT_ASSERT_MSG(pick.centre == 0, "no row");
     return 0;
 }
+
+/* What a click on a line does to the map view: a plain click leaves it, a
+ * centre click moves it. A highlight always has a place and names no team. */
+int run_lv_event_jump_view(void) {
+    LvEventJump j;
+
+    /* A plain click on a line with a place: the view stays, the ring shows. */
+    j = lvEventJumpFor(0, 0, 1, 4);
+    UT_ASSERT_MSG(j.view == LV_EVENT_JUMP_KEEP_VIEW, "plain click moves the view");
+    UT_ASSERT_MSG(j.hasCell == 1 && j.team == 4, "plain click: %d %d", j.hasCell, j.team);
+    /* A plain click on a line with no place. */
+    j = lvEventJumpFor(0, 0, 0, -1);
+    UT_ASSERT_MSG(j.view == LV_EVENT_JUMP_KEEP_VIEW && j.hasCell == 0, "no place");
+    /* A plain click on a highlight: a place, no team, and the view stays. */
+    j = lvEventJumpFor(0, 1, 0, 7);
+    UT_ASSERT_MSG(j.view == LV_EVENT_JUMP_KEEP_VIEW, "plain click on a highlight moves the view");
+    UT_ASSERT_MSG(j.hasCell == 1 && j.team == -1, "highlight: %d %d", j.hasCell, j.team);
+    /* A centre click (the selected line, or the second click of a double
+       click) moves the view. */
+    j = lvEventJumpFor(1, 0, 1, 2);
+    UT_ASSERT_MSG(j.view == LV_EVENT_JUMP_CENTRE && j.hasCell == 1 && j.team == 2,
+                  "centre click: %d %d %d", (int)j.view, j.hasCell, j.team);
+    j = lvEventJumpFor(1, 1, 0, 2);
+    UT_ASSERT_MSG(j.view == LV_EVENT_JUMP_CENTRE && j.hasCell == 1 && j.team == -1,
+                  "centre click on a highlight");
+
+    /* The two together: the first click on a line jumps only, a click on it
+       again centres. */
+    j = lvEventJumpFor(lvEventClickPick(5, -1, -1, 1, 10).centre, 0, 1, 0);
+    UT_ASSERT_MSG(j.view == LV_EVENT_JUMP_KEEP_VIEW, "first click moves the view");
+    j = lvEventJumpFor(lvEventClickPick(5, 5, 5, 1, 10).centre, 0, 1, 0);
+    UT_ASSERT_MSG(j.view == LV_EVENT_JUMP_CENTRE, "click on the selected line does not centre");
+    return 0;
+}

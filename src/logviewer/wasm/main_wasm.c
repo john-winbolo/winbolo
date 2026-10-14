@@ -181,6 +181,16 @@ void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team
     }
 }
 
+/* A plain click on a line of the Events panel: the jump with no view move.
+ * The browser build has no ring to show the place. */
+void lv_windowSeekToEventKeepView(uint32_t ms, int hasCell, int mapX, int mapY, int team) {
+    (void)hasCell;
+    (void)mapX;
+    (void)mapY;
+    (void)team;
+    lv_windowSeekToEvent(ms, 0, 0, 0, -1);
+}
+
 /* A double click on the same line. The browser build centres on the square
  * with every click; here "Tank Centred" is turned off first, so the view
  * stays on the place. */

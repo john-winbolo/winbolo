@@ -256,18 +256,17 @@ void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
     lv_windowSeekToEvent(ms, 1, mapX, mapY, -1);
 }
 
-/* The same jump for any events panel line, and for a marker over the seek
- * bar. The playhead goes to ms, which for an event is the time of its own
- * tick: playback then stands on the tick the event happened in, with the
- * event done.
+/* The same jump for a marker over the seek bar. The playhead goes to ms,
+ * which for an event is the time of its own tick: playback then stands on
+ * the tick the event happened in, with the event done.
  *
- * A line about a place on the map (hasCell) puts that place in the middle of
+ * An event at a place on the map (hasCell) puts that place in the middle of
  * the visible map area (lv_screenShowCell; never with "Tank Centred" on or
  * in the game view) and flashes a ring round it, in the colour of the team
  * the event names (team; -1 for none).
  * Where the view cannot move ("Tank Centred", the game view) and does not
  * show the place, the ring is an arrow at the view's edge.
- * Any other line moves only the playhead and leaves the view where the user
+ * Any other event moves only the playhead and leaves the view where the user
  * put it. */
 /* The part of the map's view no solid sidebar hides, each way: where it
  * starts, in points from the view's own start on the screen, and how long
@@ -300,11 +299,19 @@ static void lvHostVisibleMap(float *startX, float *startY, float *lenX, float *l
     if (*lenY < 1.0f) *lenY = 1.0f;
 }
 
-/* The jump of lv_windowSeekToEvent and of lv_windowCentreOnEvent. centre is
- * the second one's: the place goes to the middle of the map that shows, and
- * "Tank Centred" is not asked about (the caller has turned it off). */
+/* What a jump does to the view when the event has a place. */
+typedef enum {
+    LV_JUMP_VIEW_KEEP = 0, /* the view stays; the ring (or its edge arrow) shows the place */
+    LV_JUMP_VIEW_SHOW,     /* the place goes to the middle (lv_screenShowCell) */
+    LV_JUMP_VIEW_CENTRE    /* the same, whatever held the view (lv_windowCentreOnEvent) */
+} LvJumpView;
+
+/* The jump of lv_windowSeekToEvent, lv_windowSeekToEventKeepView and
+ * lv_windowCentreOnEvent. With LV_JUMP_VIEW_CENTRE the place goes to the
+ * middle of the map that shows, and "Tank Centred" is not asked about (the
+ * caller has turned it off). */
 static void lvWindowJumpToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team,
-                                int centre) {
+                                LvJumpView view) {
     unsigned char wasPlaying = g_lv->playIsPlaying;
     if (wasPlaying) {
         lv_windowPause();
@@ -312,13 +319,13 @@ static void lvWindowJumpToEvent(uint32_t ms, int hasCell, int mapX, int mapY, in
     lv_clientMutexWaitFor();
     lv_drawDirtyScreen();
     lv_screenSeekToTimeMs(ms);
-    if (hasCell && centre) {
+    if (hasCell && view == LV_JUMP_VIEW_CENTRE) {
         float startX, startY, lenX, lenY;
         lvHostVisibleMap(&startX, &startY, &lenX, &lenY);
         lv_screenCentreCellIn(mapX, mapY, startX, startY, lenX, lenY, lv_drawGetZoomLevel());
         /* After the seek: the ring is tied to the seek count as it is now. */
         lv_drawEventFlashStart(mapX, mapY, team);
-    } else if (hasCell) {
+    } else if (hasCell && view == LV_JUMP_VIEW_SHOW) {
         /* The part of the window the map shows in: the window less the menu
          * bar and the sidebars. The place goes to the middle of that, not of
          * the window. */
@@ -332,6 +339,10 @@ static void lvWindowJumpToEvent(uint32_t ms, int hasCell, int mapX, int mapY, in
                                   dock.top - dock.bottom),
                           lv_drawGetZoomLevel());
         /* After the seek: the ring is tied to the seek count as it is now. */
+        lv_drawEventFlashStart(mapX, mapY, team);
+    } else if (hasCell) {
+        /* The view stays. The ring is drawn where the place is, or as an
+         * arrow at the view's edge when the view does not show it. */
         lv_drawEventFlashStart(mapX, mapY, team);
     } else {
         lv_drawEventFlashCancel();
@@ -353,12 +364,21 @@ static void lvWindowJumpToEvent(uint32_t ms, int hasCell, int mapX, int mapY, in
 }
 
 void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team) {
-    lvWindowJumpToEvent(ms, hasCell, mapX, mapY, team, 0);
+    lvWindowJumpToEvent(ms, hasCell, mapX, mapY, team, LV_JUMP_VIEW_SHOW);
 }
 
-/* A double click on a line of the Events panel or on a marker over the seek
- * bar: the same jump, and the place goes to the middle of the map that shows
- * (lvHostVisibleMap) whatever held the view. "Tank Centred" is the one thing
+/* A plain click on a line of the Events panel: the same jump, and the view
+ * stays where the user put it. A line with a place flashes the ring round
+ * it, or an arrow at the view's edge when the view does not show it. A
+ * click on the selected line is lv_windowCentreOnEvent. */
+void lv_windowSeekToEventKeepView(uint32_t ms, int hasCell, int mapX, int mapY, int team) {
+    lvWindowJumpToEvent(ms, hasCell, mapX, mapY, team, LV_JUMP_VIEW_KEEP);
+}
+
+/* A click on the selected line of the Events panel, or a double click on a
+ * line or on a marker over the seek bar: the same jump, and the place goes
+ * to the middle of the map that shows (lvHostVisibleMap) whatever held the
+ * view. "Tank Centred" is the one thing
  * that holds the overview, so it is turned off, as from the menu, and it
  * stays off: nothing then takes the view back to the tank. The view of one
  * player (the eye of the HUD panel) does not move the map and is left on.
@@ -375,7 +395,7 @@ void lv_windowCentreOnEvent(uint32_t ms, int hasCell, int mapX, int mapY, int te
     }
     /* A host that turned the flag on by another road. */
     lv_screenTankCentred(0);
-    lvWindowJumpToEvent(ms, hasCell, mapX, mapY, team, 1);
+    lvWindowJumpToEvent(ms, hasCell, mapX, mapY, team, LV_JUMP_VIEW_CENTRE);
 }
 
 /* Fast Forward with no animation: on to the next snapshot, or the end. */

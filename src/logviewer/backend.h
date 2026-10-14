@@ -607,6 +607,9 @@ void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY);
 /* team: the team the event names, for the colour of the ring flashed round
  * its place; -1 for none. */
 void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
+/* A plain click on a line of the Events panel: the same jump, with the view
+ * left where it is. A place (hasCell) is shown by the ring alone. */
+void lv_windowSeekToEventKeepView(uint32_t ms, int hasCell, int mapX, int mapY, int team);
 /* A double click on the same line or marker. The same jump, and the place
  * goes to the middle of the map that shows whatever held the view: "Tank
  * Centred" is turned off first. With no place (hasCell 0) it is
