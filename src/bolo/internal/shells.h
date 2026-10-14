@@ -345,8 +345,17 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
 *  outOutcome - NULL-tolerant out-param; on a collision, set to the
 *               SHELL_OUTCOME_* describing what was hit (TANK_HIT /
 *               TANK_KILL / IMPACT). Untouched when no collision occurs.
+*  outSeenX - NULL-tolerant out-param; on a collision, the X of the
+*             blast as the shooter's screen had it. It is what the
+*             builder test uses, and only that. The same as xValue
+*             except for a rewound tank hit, where it is the shell's
+*             own point: where it reached the hull of the tank at
+*             the place the hit was tested against, before that
+*             point is carried to where the tank is now. Untouched
+*             when no collision occurs.
+*  outSeenY - Y, as outSeenX
 *********************************************************/
-bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome);
+bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome, WORLD *outSeenX, WORLD *outSeenY);
 
 /*********************************************************
 *NAME:          shellsCheckRoad

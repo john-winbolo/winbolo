@@ -19,6 +19,8 @@
  * run_scenario_lgm_recall       — turned round, with the queued order dropped
  * run_scenario_lgm_kill         — the newswire event, who is credited, and
  *                                 the WinBolo.net reports
+ * run_scenario_lgm_kill_force   — the flag that reaches a man in his tank,
+ *                                 and what it still leaves alone
  * run_scenario_lgm_parachute    — a flight aimed at a square or at the tank
  * run_scenario_lgm_set_carried  — what he carries, and the caps
  * run_scenario_lgm_kill_record  — log_LostMan survives a real recording
@@ -416,6 +418,170 @@ int run_scenario_lgm_kill(void) {
 
     /* Not while the round is not running. */
     op.u.lgmKill.slot = BA_SLOT;
+    sim->state = serverStateLobby;
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_WRONG_STATE);
+    sim->state = serverStateRunning;
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── Kill, forced ────────────────────────────────────────────────── */
+
+/* The square a world position is on. */
+static BYTE baSquare(WORLD w) {
+    return (BYTE)(w >> TANK_SHIFT_MAPSIZE);
+}
+
+/* The force flag reaches the one state the plain kill leaves alone: a man
+   inside his tank. Without it nothing changes, with it he dies on the tank
+   and the tank waits for him. A dead tank is refused either way, and so is a
+   man already in the air; a man who is out dies as he does without the
+   flag. */
+int run_scenario_lgm_kill_force(void) {
+    ServerSim *sim = ut_make_running_sim("Builder");
+    ScenarioOp op;
+    const GameEvent *ev;
+    lgm *l;
+    lgm *other;
+    tank *t;
+    tank *otherTank;
+    WORLD tx = 0, ty = 0;
+    WORLD ox = 0, oy = 0;
+    BYTE gx = 0, gy = 0;
+    BYTE armour;
+    BYTE trees;
+
+    UT_ASSERT(sim != NULL);
+    serverSimAddPlayer(sim, BA_OTHER, "Other", false);
+    l = baMan(sim, BA_SLOT);
+    other = baMan(sim, BA_OTHER);
+    t = baTank(sim, BA_SLOT);
+    otherTank = baTank(sim, BA_OTHER);
+    UT_ASSERT(*l != NULL && *other != NULL && *t != NULL && *otherTank != NULL);
+    UT_ASSERT_MSG(baFindTile(sim, GRASS, &gx, &gy), "map has no free grass");
+    UT_ASSERT((*l)->inTank && !(*l)->isDead);
+
+    tankSetTrees(&sim->sim, t, TANK_FULL_TREES);
+    armour = tankGetArmour(t);
+    trees = tankGetTrees(t);
+    tankGetWorld(t, &tx, &ty);
+
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_LGM_KILL;
+    op.u.lgmKill.slot   = BA_SLOT;
+    op.u.lgmKill.killer = BA_OTHER;
+
+    /* Without the flag: refused, and he is still in the tank. */
+    baDrainEvents(sim);
+    wbnStubLgmLostCalls = 0;
+    wbnStubLgmKillCalls = 0;
+    op.u.lgmKill.force = false;
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_ALREADY,
+                  "the plain kill no longer refuses a man in his tank");
+    UT_ASSERT_MSG((*l)->inTank && !(*l)->isDead,
+                  "the refused kill touched the man in his tank");
+    UT_ASSERT(baCountEvents(sim, EVENT_LGM_LOST) == 0);
+    UT_ASSERT(wbnStubLgmLostCalls == 0 && wbnStubLgmKillCalls == 0);
+
+    /* Forced, with a killer who is not a player: refused as the plain kill
+       refuses it, and nothing is touched. */
+    op.u.lgmKill.force  = true;
+    op.u.lgmKill.killer = 7;           /* an empty seat */
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_NO_SUCH_PLAYER);
+    UT_ASSERT_MSG((*l)->inTank && !(*l)->isDead,
+                  "a forced kill with a bogus killer touched the man");
+    UT_ASSERT(baCountEvents(sim, EVENT_LGM_LOST) == 0);
+    op.u.lgmKill.killer = BA_OTHER;
+
+    /* Forced, with his tank dead: refused, in both of the states a dead tank
+       is in. He went down with it. */
+    (*t)->deathWait = 1;
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_ALREADY,
+                  "a forced kill was not refused for a tank waiting to come "
+                  "back");
+    (*t)->deathWait = 0;
+    tankSetDestroyed(t, TRUE);
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_ALREADY,
+                  "a forced kill was not refused for a destroyed tank");
+    tankSetDestroyed(t, FALSE);
+    UT_ASSERT_MSG((*l)->inTank && !(*l)->isDead,
+                  "a forced kill reached the man inside a dead tank");
+    UT_ASSERT(baCountEvents(sim, EVENT_LGM_LOST) == 0);
+    UT_ASSERT(wbnStubLgmLostCalls == 0 && wbnStubLgmKillCalls == 0);
+
+    /* Forced, tank alive: he dies on the tank's square, flies back to the
+       tank, and the tank itself is untouched. */
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK,
+                  "the forced kill of a man in his tank was refused");
+    UT_ASSERT_MSG((*l)->isDead, "the forced kill left the man alive");
+    UT_ASSERT_MSG(!(*l)->inTank, "the dead man still reads as in the tank");
+    UT_ASSERT_MSG((*l)->frame == LGM_HELICOPTER_FRAME, "frame %u",
+                  (unsigned)(*l)->frame);
+    UT_ASSERT_MSG((*l)->destX == tx && (*l)->destY == ty,
+                  "the helicopter is not flying to the tank");
+    UT_ASSERT_MSG((*l)->numTrees == 0 && (*l)->numMines == 0,
+                  "he carried %u trees and %u mines out of the tank",
+                  (unsigned)(*l)->numTrees, (unsigned)(*l)->numMines);
+    UT_ASSERT_MSG(!tankIsDestroyed(t) && (*t)->deathWait == 0 &&
+                      tankGetArmour(t) == armour,
+                  "the forced kill hurt the tank");
+    UT_ASSERT_MSG(tankGetTrees(t) == trees,
+                  "the tank held %u trees and holds %u", (unsigned)trees,
+                  (unsigned)tankGetTrees(t));
+
+    UT_ASSERT_MSG(baCountEvents(sim, EVENT_LGM_LOST) == 1,
+                  "%d builder losses were published, expected 1",
+                  baCountEvents(sim, EVENT_LGM_LOST));
+    ev = baFindEvent(sim, EVENT_LGM_LOST);
+    UT_ASSERT(ev != NULL);
+    UT_ASSERT_MSG(ev->data[0] == BA_SLOT, "victim %u", (unsigned)ev->data[0]);
+    UT_ASSERT_MSG(ev->data[1] == BA_OTHER, "killer %u", (unsigned)ev->data[1]);
+    UT_ASSERT_MSG(ev->data[3] == baSquare(tx) && ev->data[4] == baSquare(ty),
+                  "the loss is on square (%u,%u); the tank is on (%u,%u)",
+                  (unsigned)ev->data[3], (unsigned)ev->data[4],
+                  (unsigned)baSquare(tx), (unsigned)baSquare(ty));
+    UT_ASSERT_MSG(wbnStubLgmLostCalls == 1 && wbnStubLastLgmLost == BA_SLOT,
+                  "%d loss reports, the last for %u", wbnStubLgmLostCalls,
+                  (unsigned)wbnStubLastLgmLost);
+    UT_ASSERT_MSG(wbnStubLgmKillCalls == 1 &&
+                      wbnStubLastLgmKiller == BA_OTHER &&
+                      wbnStubLastLgmKilled == BA_SLOT,
+                  "%d kill reports, the last %u killing %u",
+                  wbnStubLgmKillCalls, (unsigned)wbnStubLastLgmKiller,
+                  (unsigned)wbnStubLastLgmKilled);
+
+    /* A man already in the air is not killed twice, forced or not. */
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_ALREADY);
+    UT_ASSERT(baCountEvents(sim, EVENT_LGM_LOST) == 1);
+
+    /* Forced on a man who is out: what the plain kill does. He dies where he
+       stands, not on the tank, and nobody is credited when nobody is named. */
+    UT_ASSERT(baSendOut(sim, BA_OTHER, gx, gy) == SCN_OP_OK);
+    UT_ASSERT(!(*other)->inTank && !(*other)->isDead);
+    ox = (*other)->x;
+    oy = (*other)->y;
+    baDrainEvents(sim);
+    wbnStubLgmLostCalls = 0;
+    wbnStubLgmKillCalls = 0;
+    op.u.lgmKill.slot   = BA_OTHER;
+    op.u.lgmKill.killer = SCN_NONE;
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
+    UT_ASSERT_MSG((*other)->isDead, "the forced kill left a man who was out");
+    ev = baFindEvent(sim, EVENT_LGM_LOST);
+    UT_ASSERT_MSG(ev != NULL, "no builder-lost event for the man who was out");
+    UT_ASSERT(ev->data[0] == BA_OTHER);
+    UT_ASSERT_MSG(ev->data[1] == NEUTRAL, "killer %u, wanted nobody",
+                  (unsigned)ev->data[1]);
+    UT_ASSERT_MSG(ev->data[3] == baSquare(ox) && ev->data[4] == baSquare(oy),
+                  "the loss is on square (%u,%u); he stood on (%u,%u)",
+                  (unsigned)ev->data[3], (unsigned)ev->data[4],
+                  (unsigned)baSquare(ox), (unsigned)baSquare(oy));
+    UT_ASSERT_MSG(wbnStubLgmLostCalls == 1 && wbnStubLgmKillCalls == 0,
+                  "%d loss and %d kill reports, expected 1 and 0",
+                  wbnStubLgmLostCalls, wbnStubLgmKillCalls);
+
+    /* Not while the round is not running. */
     sim->state = serverStateLobby;
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_WRONG_STATE);
     sim->state = serverStateRunning;

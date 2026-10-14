@@ -5835,8 +5835,12 @@ set(_unit_test_names
     tank_blast_kill_starts_at_present_tank
     tank_blast_zero_rewind_unchanged
     tank_blast_hit_decision_unchanged
-    tank_blast_builder_at_present_tank
+    tank_blast_builder_on_shooter_screen
     tank_blast_absent_builder_lives
+    tank_blast_builder_back_in_tank
+    tank_blast_pill_shell_builder_now
+    tank_blast_no_record_builder_now
+    shell_blast_pill_hit_on_shooter_screen
     teleport_erases_tank_rewind_record
     teleport_shell_hits_new_place
     teleport_rewind_refills
@@ -6274,6 +6278,7 @@ set(_unit_test_names
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill
+    scenario_lgm_kill_force
     scenario_lgm_parachute
     scenario_lgm_set_carried
     scenario_lgm_kill_record
@@ -6678,6 +6683,7 @@ set(_unit_test_names
     scenario_lua_queued_answers_queued
     scenario_lua_shape_raises_refusal_does_not
     scenario_lua_detail_carries_the_number
+    scenario_lua_kill_lgm_force
     scenario_lua_teleport_start_refuses_bad_index
     scenario_lua_spawn_bot_refuses_bad_start
     scenario_lua_game_type_resolves_scripted

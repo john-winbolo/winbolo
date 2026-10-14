@@ -1759,7 +1759,7 @@ refused with `SCN_OP_BAD_SQUARE`, the same answer as a square off the map.
 |---|---|
 | `game.builder_order(p, action, x, y)` | Sends a builder out to do one of `"trees"`, `"road"`, `"building"`, `"pill"`, `"mine"` or `"boat"` on a square. The engine repairs rather than builds where the square already holds one. |
 | `game.builder_recall(p)` | Calls a builder back to the tank. |
-| `game.kill_lgm(p[, killer])` | Kills a builder. `killer` is a seat. |
+| `game.kill_lgm(p[, killer[, force]])` | Kills a builder. `killer` is a seat. A builder inside his tank is left there and the call is refused, unless `force` is `true`: then he dies on the tank and the tank waits for him to fly back in. A builder inside a dead tank is refused either way. |
 | `game.builder_parachute(p[, x, y[, from]])` | Drops a dead builder back in, on a square or at the tank. A death starts his flight on a random start, which can be most of a minute away; this moves the start to the nearest map edge on the line in. `from` (0 to 32, default 0) starts him only that many squares short of the landing square on the same line instead, unless the edge is nearer; call it from `on_lgm_died` to land a new man beside his tank within a few seconds (at the classic `lgm_helicopter_speed` of 3, about 85 ticks a square). |
 | `game.set_builder_carried(p[, trees[, mines]])` | What a builder is carrying. A count left out is left alone. |
 
