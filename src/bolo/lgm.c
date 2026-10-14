@@ -1408,8 +1408,9 @@ bool lgmOnScreen(lgm *lgman, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom)
   BYTE y;
  
   returnValue = FALSE;
-  x = (BYTE) (( (unsigned int)(*lgman)->x -1) >> TANK_SHIFT_MAPSIZE);
-  y = (BYTE) (((unsigned int) (*lgman)->y -2) >> TANK_SHIFT_MAPSIZE);
+  /* The square lgmGetScreenCoords draws him on; see the note there. */
+  x = (BYTE) ((*lgman)->x >> TANK_SHIFT_MAPSIZE);
+  y = (BYTE) ((*lgman)->y >> TANK_SHIFT_MAPSIZE);
   if (x >= leftPos && x < rightPos && y >= top && y < bottom && (*lgman)->state != LGM_STATE_IDLE && (*lgman)->inTank == FALSE) {
     returnValue = TRUE; 
   }
@@ -1436,39 +1437,36 @@ bool lgmOnScreen(lgm *lgman, BYTE leftPos, BYTE rightPos, BYTE top, BYTE bottom)
 void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame) {
   WORLD conv; /* Used for Bit shifting */
 
+  /* This is only ever asked of the player's own man on the client, and the
+     position the client holds for him is not his true position: it is the
+     square and game pixel the server sent, put back together by
+     clientApplySnapshot (square << 8 + pixel << 4). The server's
+     lgmGetMX/MY/PX/PY have already taken the drawing offset off (1 and 2
+     world units on foot, half a square on the helicopter frame) and rounded
+     down to a game pixel. Taking the offset off and rounding down again here
+     drew the player's own man one game pixel further up and left than every
+     other player's man, and his own helicopter half a square up and left.
+     So hand back the square and pixel exactly as they arrived, which is what
+     playersMakeScreenLgm does for the other players. */
   if ((*lgman)->isDead == TRUE) {
     *frame = LGM_HELICOPTER_FRAME;
-    conv = (*lgman)->x-MAP_SQUARE_MIDDLE;
-    conv >>= TANK_SHIFT_MAPSIZE;
-    *mx = (BYTE) conv - leftPos;
-    conv = (*lgman)->y-MAP_SQUARE_MIDDLE;
-    conv >>= TANK_SHIFT_MAPSIZE;
-    *my = (BYTE) conv - topPos;
-    conv = (*lgman)->x-MAP_SQUARE_MIDDLE;
-    conv <<= TANK_SHIFT_MAPSIZE;
-    conv >>= TANK_SHIFT_PIXELSIZE;
-    *px = (BYTE) conv;
-    conv = (*lgman)->y-MAP_SQUARE_MIDDLE;
-    conv <<= TANK_SHIFT_MAPSIZE;
-    conv >>= TANK_SHIFT_PIXELSIZE;
-    *py = (BYTE) conv;
   } else {
     *frame = (*lgman)->frame;
-    conv = (*lgman)->x - 1;
-    conv >>= TANK_SHIFT_MAPSIZE;
-    *mx = (BYTE) conv - leftPos;
-    conv = (*lgman)->y - 2;
-    conv >>= TANK_SHIFT_MAPSIZE;
-    *my = (BYTE) conv - topPos;
-    conv = (*lgman)->x -1 ;
-    conv <<= TANK_SHIFT_MAPSIZE;
-    conv >>= TANK_SHIFT_PIXELSIZE;
-    *px = (BYTE) conv;
-    conv = (*lgman)->y -2;
-    conv <<= TANK_SHIFT_MAPSIZE;
-    conv >>= TANK_SHIFT_PIXELSIZE;
-    *py = (BYTE) conv;
   }
+  conv = (*lgman)->x;
+  conv >>= TANK_SHIFT_MAPSIZE;
+  *mx = (BYTE) conv - leftPos;
+  conv = (*lgman)->y;
+  conv >>= TANK_SHIFT_MAPSIZE;
+  *my = (BYTE) conv - topPos;
+  conv = (*lgman)->x;
+  conv <<= TANK_SHIFT_MAPSIZE;
+  conv >>= TANK_SHIFT_PIXELSIZE;
+  *px = (BYTE) conv;
+  conv = (*lgman)->y;
+  conv <<= TANK_SHIFT_MAPSIZE;
+  conv >>= TANK_SHIFT_PIXELSIZE;
+  *py = (BYTE) conv;
 }
 
 

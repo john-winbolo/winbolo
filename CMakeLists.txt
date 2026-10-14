@@ -4069,6 +4069,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_view_policy_rects.c
     tests/unit/test_tree_hide.c
     tests/unit/test_lgm_visibility.c
+    tests/unit/test_lgm_draw_centre.c
     tests/unit/test_view_state.c
     tests/unit/test_view_target_codec.c
     tests/unit/test_view_target_apply.c
@@ -5589,6 +5590,8 @@ set(_unit_test_names
     lgm_request_quiet
     lgm_quit_drops_carried_pill
     lgm_unfield_drops_carried_pill
+    lgm_draw_own_matches_wire
+    lgm_draw_centre_error_bounds
     jitter_buffer_grow
     shell_projection
     sim_rules_classic_defaults

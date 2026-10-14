@@ -924,6 +924,8 @@ static const UnitTestEntry s_tests[] = {
     { "tree_hide_ally_option",                   run_tree_hide_ally_option                   },
     { "lgm_visibility_tank_in_trees",            run_lgm_visibility_tank_in_trees            },
     { "lgm_visibility_tank_visible",             run_lgm_visibility_tank_visible             },
+    { "lgm_draw_own_matches_wire",               run_lgm_draw_own_matches_wire               },
+    { "lgm_draw_centre_error_bounds",            run_lgm_draw_centre_error_bounds            },
     { "view_state_key_grants_rect",              run_view_state_key_grants_rect              },
     { "view_state_bad_claims_degrade",           run_view_state_bad_claims_degrade           },
     { "view_state_invalidation",                 run_view_state_invalidation                 },
