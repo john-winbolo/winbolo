@@ -99,7 +99,7 @@ static lua_State *botMemState(struct ServerSim *sim, BYTE playerNum) {
     return NULL;
   }
   bot = &sim->botMgr.bots[playerNum];
-  if (!bot->active || !bot->brain.running) {
+  if (!bot->active || !bot->brain.running || bot->brain.L == NULL) {
     return NULL;
   }
   return bot->brain.L;

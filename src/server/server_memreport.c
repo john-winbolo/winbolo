@@ -95,7 +95,16 @@ void serverMemReportConfigure(double periodMinutes, bool deepEveryReport) {
 }
 
 void serverMemReportRequest(bool deep) {
-  SDL_SetAtomicInt(&s_request, deep ? 2 : 1);
+  /* Keep the larger request: a "mem" that arrives after a "memdeep" and
+   * before the next poll must not drop the deep walk. */
+  int want = deep ? 2 : 1;
+  int cur;
+  do {
+    cur = SDL_GetAtomicInt(&s_request);
+    if (cur >= want) {
+      return;
+    }
+  } while (!SDL_CompareAndSwapAtomicInt(&s_request, cur, want));
 }
 
 bool serverMemReadProcess(ServerMemProcess *out) {

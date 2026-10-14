@@ -939,7 +939,9 @@ void printArgs() {
   fprintf(stderr, "                console commands mem and memdeep write one at once.\n");
   fprintf(stderr, "-memreportdeep - Every timed memory report also walks each bot's Lua\n");
   fprintf(stderr, "                tables and lists the biggest ones. Slow (it pauses the\n");
-  fprintf(stderr, "                game while it walks); for chasing a leak.\n");
+  fprintf(stderr, "                game while it walks); for chasing a leak. The walk\n");
+  fprintf(stderr, "                allocates inside each bot's Lua state, so do not use it\n");
+  fprintf(stderr, "                in seeded repro runs.\n");
   fprintf(stderr, "-seed <N>     - Seed the RNG with N (64-bit unsigned) for reproducible runs.\n");
   fprintf(stderr, "                Seeds the C sim stream only; see -brain-lua-seed for Lua.\n");
   fprintf(stderr, "-brain-tier <1..10> - Pin every brain's capacity tier instead of deriving it\n");
@@ -2228,7 +2230,17 @@ int main(int argc, char **argv) {
     double memMins = (double)SERVER_MEMREPORT_DEFAULT_MINUTES;
     int argNum = findArg(argc, argv, "memreport");
     if (argNum != ARG_NOT_FOUND) {
-      memMins = strtod((char *)argv[argNum], NULL);
+      /* A value that is not a number (another flag, say) must not read as
+       * 0 and turn the report off. "5m" parses as 5. */
+      char *end = NULL;
+      double parsed = strtod((char *)argv[argNum], &end);
+      if (end == (char *)argv[argNum]) {
+        fprintf(stderr,
+                "Warning: -memreport '%s' is not a number; using %d minutes\n",
+                (char *)argv[argNum], SERVER_MEMREPORT_DEFAULT_MINUTES);
+      } else {
+        memMins = parsed;
+      }
     }
     serverMemReportConfigure(memMins,
                              argExist(argc, argv, "memreportdeep") == TRUE);
