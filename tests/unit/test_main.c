@@ -465,6 +465,7 @@ static const UnitTestEntry s_tests[] = {
     { "pf_dijkstra_no_solid_corner_cut",         run_pf_dijkstra_no_solid_corner_cut         },
     { "pf_astar_no_solid_corner_cut",            run_pf_astar_no_solid_corner_cut            },
     { "pf_costto_no_solid_corner_cut",           run_pf_costto_no_solid_corner_cut           },
+    { "bench_decoy_step_first",                  run_bench_decoy_step_first                  },
     { "pf_tail_reaches_radius_and_stops",        run_pf_tail_reaches_radius_and_stops        },
     { "pf_tail_blocked_by_wall_and_sea",         run_pf_tail_blocked_by_wall_and_sea         },
     { "pf_tail_neutral_zone_slows",              run_pf_tail_neutral_zone_slows              },
