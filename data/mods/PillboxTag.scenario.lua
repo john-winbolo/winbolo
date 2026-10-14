@@ -1343,9 +1343,9 @@ local function init_table(role_name, p)
      (role_name == "hunter" or role_name == "manhunt") then
     want.ATTACK_PILL_WALL_FALLBACK = true
   end
-  -- While the prize stands as a fort, a hunter's fight with a tank or a man
-  -- costs walled.FIGHT_MULT times as much: the fort is the target. It goes
-  -- back to 1 when the prize is picked up or goes down.
+  -- While the prize stands as a fort, a hunter's fight with a tank or a man,
+  -- and its run for cover, cost walled.FIGHT_MULT times as much: the fort is
+  -- the target. It goes back to 1 when the prize is picked up or goes down.
   if role_name == "hunter" and walled.fort_stands() then
     want.FIGHT_COST_MULT = walled.FIGHT_MULT
   end
@@ -1457,6 +1457,38 @@ local function tune_everybody()
   for p = 0, game.max_tanks() - 1 do
     if in_round(p) then
       tune(p)
+    end
+  end
+end
+
+-- At the end of the round, every bot this script made a fighter-shy hunter
+-- (FIGHT_COST_MULT above 1) is put back to 1. The next round starts each bot
+-- on a fresh brain built from the last table it was handed, and a new
+-- script there would think the knob is at its default. (The brain also
+-- refuses this knob from a start-up table, so a round ended where this
+-- cannot run, by the host or the server, still starts the next one at 1.)
+-- Called after `over` is set, so walled.fort_stands() says no and tune()
+-- hands the bot 1. Anything tune() could not send goes in a table of its
+-- own. A table is a roster write, which the engine refuses once the round
+-- has stopped, so finish() calls this before game.end_round; on_end calls
+-- it too, for whatever it can still reach. (A field of walled, not a local:
+-- the script is at the gate's cap on top-level locals.)
+function walled.clear_fight_mult()
+  for p = 0, game.max_tanks() - 1 do
+    local h = have[p]
+    if h ~= nil and h.FIGHT_COST_MULT ~= nil and h.FIGHT_COST_MULT ~= 1 then
+      tune(p)
+      if (have[p].FIGHT_COST_MULT or 1) ~= 1 and
+         game.bot_init(p, { cfg = "FIGHT_COST_MULT=1" }) then
+        have[p].FIGHT_COST_MULT = 1
+      end
+      if (have[p].FIGHT_COST_MULT or 1) == 1 then
+        game.log(string.format("Pillbox Tag: seat %d FIGHT_COST_MULT back to 1", p))
+      else
+        game.log(string.format("Pillbox Tag: seat %d FIGHT_COST_MULT left at %s"
+                               .. " (no table taken; its next brain starts at 1)",
+                               p, tostring(have[p].FIGHT_COST_MULT)))
+      end
     end
   end
 end
@@ -1700,19 +1732,21 @@ walled.LINE_THEN_ATTACK = false -- true: a hunter sent to a line square is
                                 -- hunters broke through closed walls before
                                 -- the 30 s net (pilltag_wall_timer 0/8)
 walled.LINE_ATTACK_AFTER = 15   -- seconds
-walled.FIGHT_MULT = 4           -- while the prize stands as a fort, what a
-                                -- hunter's fight with a tank or a man
-                                -- (attack_tank, kill_lgm) costs, times the
-                                -- ordinary price: the brain's FIGHT_COST_MULT.
-                                -- The fort is the target and an enemy tank
-                                -- rarely worth a fight. 1: as before. The
-                                -- brain drops it when its armour is critical.
+walled.FIGHT_MULT = 10          -- while the prize stands as a fort, what a
+                                -- hunter's fight with a tank or a man, or
+                                -- its run for cover (attack_tank, kill_lgm,
+                                -- take_cover), costs, times the ordinary
+                                -- price: the brain's FIGHT_COST_MULT. The
+                                -- fort is the target; an enemy tank or a safe
+                                -- tile is rarely worth the detour. 1: as
+                                -- before. The brain drops it when its armour
+                                -- is critical.
 
 -- Whether the prize stands as a fort the hunters are to shoot: built, with a
 -- holder, and not a bot holder's hop (a hop stands for a few seconds, and
 -- the hunters stay on the holder through it).
 function walled.fort_stands()
-  if pill == nil or holder == nil or (plan ~= nil and plan.kind == "hop") then
+  if over or pill == nil or holder == nil or (plan ~= nil and plan.kind == "hop") then
     return false
   end
   return standing(game.pill(pill))
@@ -1963,8 +1997,8 @@ local function aim_one(p)
   -- with a tank (the guard or the holder too), a man to shoot, cover, a
   -- refuel. So the bot still turns on a tank that comes at it, and it can
   -- still pick a tank over the fort, though while the fort stands a fight
-  -- with a tank or a man costs it walled.FIGHT_MULT times as much (see
-  -- init_table), so it rarely does. tell() sends the order again every
+  -- with a tank or a man, or a run for cover, costs it walled.FIGHT_MULT
+  -- times as much (see init_table), so it rarely does. tell() sends the order again every
   -- AIM_REFRESH seconds, which keeps it held while the prize stands.
   -- A brain that does not know the `pill` key ignores the hint.
   --
@@ -2696,6 +2730,7 @@ finish = function()
   end
   game.message(line)
   restore_teams()
+  walled.clear_fight_mult()
   if winner ~= nil then
     game.end_round(line, winner)
   else
@@ -3679,6 +3714,10 @@ end
 
 function on_end()
   over = true
+  -- A round the host or the server ended never went through finish(). The
+  -- engine may refuse the tables now; the brain's own start-up rule covers
+  -- that (see walled.clear_fight_mult).
+  pcall(walled.clear_fight_mult)
   game.log(string.format("Pillbox Tag ended after %d seconds", elapsed))
 end
 

@@ -349,7 +349,20 @@ local function _apply_cfg_tokens(a, source, runtime)
     elseif raw == "false" then v = false
     elseif tonumber(raw) then v = tonumber(raw)
     else v = raw end
-    _cfg_set(name, v, source)
+    -- A round-scoped knob (C.CFG_RUNTIME_ONLY) is taken from game.bot_init
+    -- on a running brain only, never from the table a new brain starts
+    -- with: that table is the last one of the PREVIOUS round, and a fresh
+    -- round must start the knob at its default (Pillbox Tag's x10).
+    -- (Quiet when the value is the one already there: a script's "put it
+    -- back to 1" is the usual last table, and there is nothing to refuse.)
+    if not runtime and C.CFG_RUNTIME_ONLY and C.CFG_RUNTIME_ONLY[name] then
+      if v ~= C[name] then
+        _cfg_warn_add("[cfg] '%s'=%s (%s) is round-scoped: only a running brain takes it (game.bot_init), a new brain starts it at its default; IGNORED.",
+                      tostring(name), tostring(raw), source)
+      end
+    else
+      _cfg_set(name, v, source)
+    end
   end
 end
 

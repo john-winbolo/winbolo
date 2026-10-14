@@ -8187,64 +8187,141 @@ do
 end
 
 -- ─────────────────────────────────────────────────────────────────────────
--- FIGHT_COST_MULT: a script's multiplier on attack_tank and kill_lgm
--- (Pillbox Tag sets it on its hunters while the prize stands as a fort).
+-- FIGHT_COST_MULT: a script's multiplier on attack_tank, kill_lgm and
+-- take_cover (Pillbox Tag sets it on its hunters while the prize stands as a
+-- fort).
 -- ─────────────────────────────────────────────────────────────────────────
 print("\n== FIGHT_COST_MULT ==")
 do
   local G = require("goals")
   local saved_m, saved_on = C.FIGHT_COST_MULT, C.FIGHT_COST_MULT_ENABLED
   local well = { armour = 40 }
+  local crit = { armour = C.ARMOUR_CRITICAL }
+  local KINDS = { "attack_tank", "kill_lgm", "take_cover" }
   local function g(kind, extra)
     local t = { kind = kind, mx = 10, my = 10 }
     for k, v in pairs(extra or {}) do t[k] = v end
     return t
   end
+  -- true when every one of the three kinds gets `want`; else false and the
+  -- first kind that did not.
+  local function each(inf, want, extra, cost)
+    for _, k in ipairs(KINDS) do
+      if G.fight_cost_mult(inf, g(k, extra), cost) ~= want then return false, k end
+    end
+    return true, "-"
+  end
 
   check("default: FIGHT_COST_MULT is 1 and the knob is on",
         C.FIGHT_COST_MULT == 1.0 and C.FIGHT_COST_MULT_ENABLED == true,
         tostring(C.FIGHT_COST_MULT) .. "/" .. tostring(C.FIGHT_COST_MULT_ENABLED))
-  check("default: a number, so cfg=FIGHT_COST_MULT=4 is taken",
+  check("default: a number, so cfg=FIGHT_COST_MULT=10 is taken",
         type(C.FIGHT_COST_MULT) == "number", type(C.FIGHT_COST_MULT))
   check("keel turns the knob off", C.PRESETS.keel.FIGHT_COST_MULT_ENABLED == false, "?")
-  check("not set: attack_tank x1", G.fight_cost_mult(well, g("attack_tank")) == 1.0, "?")
-  check("not set: kill_lgm x1", G.fight_cost_mult(well, g("kill_lgm")) == 1.0, "?")
+  check("not set: attack_tank, kill_lgm, take_cover x1", each(well, 1.0))
 
   C.FIGHT_COST_MULT = 4
-  check("set 4: attack_tank x4", G.fight_cost_mult(well, g("attack_tank")) == 4,
+  check("set 4: attack_tank, kill_lgm, take_cover x4", each(well, 4))
+
+  C.FIGHT_COST_MULT = 10
+  check("set 10: attack_tank x10", G.fight_cost_mult(well, g("attack_tank")) == 10,
         tostring(G.fight_cost_mult(well, g("attack_tank"))))
-  check("set 4: kill_lgm x4", G.fight_cost_mult(well, g("kill_lgm")) == 4,
+  check("set 10: kill_lgm x10", G.fight_cost_mult(well, g("kill_lgm")) == 10,
         tostring(G.fight_cost_mult(well, g("kill_lgm"))))
-  local others = { "attack_pill", "capture_pill", "take_cover", "defend_pill",
-                   "refuel_at_base", "flee_to_base", "capture_base", "goto" }
+  check("set 10: take_cover x10", G.fight_cost_mult(well, g("take_cover")) == 10,
+        tostring(G.fight_cost_mult(well, g("take_cover"))))
+  check("set 10: take_cover with a real cost x10",
+        G.fight_cost_mult(well, g("take_cover"), 42.5) == 10, "?")
+  local others = { "attack_pill", "capture_pill", "defend_pill", "refuel_at_base",
+                   "flee_to_base", "capture_base", "goto", "escape" }
   local all_one = true
   for _, k in ipairs(others) do
     if G.fight_cost_mult(well, g(k)) ~= 1.0 then all_one = false end
   end
-  check("set 4: every other kind x1 (attack_pill, take_cover, ...)", all_one, "?")
-  check("set 4: an ordered attack_tank x1",
-        G.fight_cost_mult(well, g("attack_tank", { _ordered = true })) == 1.0, "?")
-  check("set 4: the kill-me delivery row x1",
+  check("set 10: every other kind x1 (attack_pill, refuel, ...)", all_one, "?")
+  check("set 10: an ordered row x1 (all three kinds)", each(well, 1.0, { _ordered = true }))
+  check("set 10: the kill-me delivery row x1",
         G.fight_cost_mult(well, g("attack_tank", { km_ally_pn = 3 })) == 1.0, "?")
-  check("set 4: armour at ARMOUR_CRITICAL x1 (fights back at the normal price)",
-        G.fight_cost_mult({ armour = C.ARMOUR_CRITICAL }, g("attack_tank")) == 1.0
-        and G.fight_cost_mult({ armour = C.ARMOUR_CRITICAL }, g("kill_lgm")) == 1.0, "?")
-  check("set 4: armour one above ARMOUR_CRITICAL x4",
-        G.fight_cost_mult({ armour = C.ARMOUR_CRITICAL + 1 }, g("attack_tank")) == 4, "?")
-  check("set 4: no goal x1", G.fight_cost_mult(well, nil) == 1.0, "?")
+  check("set 10: armour at ARMOUR_CRITICAL x1 (fights back or hides at the normal price)",
+        each(crit, 1.0))
+  check("set 10: armour one above ARMOUR_CRITICAL x10",
+        each({ armour = C.ARMOUR_CRITICAL + 1 }, 10))
+  check("set 10: no goal x1", G.fight_cost_mult(well, nil) == 1.0, "?")
+  check("set 10: take_cover reject sentinel (TAKE_COVER_REJECT_COST) x1",
+        G.fight_cost_mult(well, g("take_cover"), C.TAKE_COVER_REJECT_COST) == 1.0, "?")
+  check("set 10: a 1e30 display sentinel x1 (all three kinds)", each(well, 1.0, nil, 1e30))
+  check("set 10: half the sentinel is still a score, x10",
+        G.fight_cost_mult(well, g("take_cover"), C.TAKE_COVER_REJECT_COST * 0.5) == 10, "?")
 
   C.FIGHT_COST_MULT_ENABLED = C.PRESETS.keel.FIGHT_COST_MULT_ENABLED
-  check("keel: set 4 is ignored, attack_tank and kill_lgm x1",
-        G.fight_cost_mult(well, g("attack_tank")) == 1.0
-        and G.fight_cost_mult(well, g("kill_lgm")) == 1.0, "?")
+  check("keel: set 10 is ignored, all three kinds x1", each(well, 1.0))
   C.FIGHT_COST_MULT_ENABLED = true
 
   C.FIGHT_COST_MULT = 1
-  check("reset to 1: attack_tank and kill_lgm x1 again",
-        G.fight_cost_mult(well, g("attack_tank")) == 1.0
-        and G.fight_cost_mult(well, g("kill_lgm")) == 1.0, "?")
+  check("reset to 1: all three kinds x1 again", each(well, 1.0))
 
   C.FIGHT_COST_MULT, C.FIGHT_COST_MULT_ENABLED = saved_m, saved_on
+end
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- FIGHT_COST_MULT is round-scoped: a NEW brain never takes it from its
+-- start-up init table. Every round starts every bot on a fresh brain built
+-- from the last table the script handed it, so a hunter that ended a round
+-- at x10 must start the next one at 1. This runs init.lua's real chunk-load
+-- code (the BRAIN_INIT flatten and the cfg= parse) against a FRESH copy of
+-- constants.lua, the way a new VM sees it, and stops it at the first module
+-- after the parse.
+-- ─────────────────────────────────────────────────────────────────────────
+print("\n== FIGHT_COST_MULT is round-scoped ==")
+do
+  local saved_init, saved_arg = rawget(_G, "BRAIN_INIT"), rawget(_G, "BRAIN_INIT_ARG")
+  local STOP = {}
+  -- A fresh brain's start: answers the fresh constants table it wrote into,
+  -- and whether the chunk ran as far as the first require after the parse.
+  local function new_brain(init_tbl, arg)
+    local freshC = dofile("constants.lua")
+    rawset(_G, "BRAIN_INIT", init_tbl)
+    rawset(_G, "BRAIN_INIT_ARG", arg)
+    local chunk = assert(loadfile("init.lua"))
+    local env = setmetatable({
+      require = function(m)
+        if m == "constants" then return freshC end
+        if m == "bitcompat" then return require(m) end
+        error(STOP)
+      end,
+    }, { __index = _G, __newindex = _G })
+    setfenv(chunk, env)
+    local ok, err = pcall(chunk)
+    rawset(_G, "BRAIN_INIT", saved_init)
+    rawset(_G, "BRAIN_INIT_ARG", saved_arg)
+    return freshC, (not ok and err == STOP)
+  end
+
+  check("FIGHT_COST_MULT is on the round-scoped list",
+        type(C.CFG_RUNTIME_ONLY) == "table" and C.CFG_RUNTIME_ONLY.FIGHT_COST_MULT == true, "?")
+
+  local fc, reached = new_brain({ cfg = "FIGHT_COST_MULT=10" }, nil)
+  check("new round: the start-up table's cfg was parsed", reached, tostring(reached))
+  check("new round: a start-up table at x10 starts the brain at 1",
+        fc.FIGHT_COST_MULT == 1.0, tostring(fc.FIGHT_COST_MULT))
+
+  fc, reached = new_brain({ cfg = "FIGHT_COST_MULT=10",
+                            cfg2 = "0;cfg=TANK_COMBAT_BASE_COST=31" }, nil)
+  check("new round: another cfg= in the same table still lands",
+        reached and fc.TANK_COMBAT_BASE_COST == 31, tostring(fc.TANK_COMBAT_BASE_COST))
+  check("new round: and FIGHT_COST_MULT beside it stays at 1",
+        fc.FIGHT_COST_MULT == 1.0, tostring(fc.FIGHT_COST_MULT))
+
+  fc, reached = new_brain(nil, "cfg=FIGHT_COST_MULT=10")
+  check("new brain: a start-up init arg at x10 starts at 1 too",
+        reached and fc.FIGHT_COST_MULT == 1.0, tostring(fc.FIGHT_COST_MULT))
+
+  fc, reached = new_brain({ cfg = "FIGHT_COST_MULT=10" }, nil)
+  check("new round: the knob itself stays on (only the value is dropped)",
+        fc.FIGHT_COST_MULT_ENABLED == true, tostring(fc.FIGHT_COST_MULT_ENABLED))
+
+  check("the shared constants were not touched by the fresh brains",
+        C.FIGHT_COST_MULT == 1.0, tostring(C.FIGHT_COST_MULT))
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))

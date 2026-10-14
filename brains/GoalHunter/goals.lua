@@ -16672,16 +16672,22 @@ function M.order_goal(state, world, info, ord)
 end
 
 -- What one pool row pays for C.FIGHT_COST_MULT, the multiplier a script sets
--- with cfg= to make tank fights dearer (Pillbox Tag: on its hunters while
--- the prize stands as a fort).  attack_tank and kill_lgm only.  1.0 when the
--- knob is off (keel) or at 1, for an ordered row and the "kill me" delivery
--- row, and while armour is at or below ARMOUR_CRITICAL: the line where every
--- order pauses, so a dying tank still fights back at the normal price.
-function M.fight_cost_mult(info, goal)
+-- with cfg= to make tank fights and hiding dearer (Pillbox Tag: on its
+-- hunters while the prize stands as a fort).  attack_tank, kill_lgm and
+-- take_cover only.  1.0 when the knob is off (keel) or at 1, for an ordered
+-- row and the "kill me" delivery row, for a reject sentinel row (cost at or
+-- above TAKE_COVER_REJECT_COST: a display value, not a score), and while
+-- armour is at or below ARMOUR_CRITICAL: the line where every order pauses,
+-- so a dying tank still fights back or hides at the normal price.
+-- `cost` is optional (the row's cost, to spot a sentinel).
+-- (A field, not a file local: goals.lua's main chunk is at the 200-local cap.)
+M.FIGHT_MULT_KINDS = { attack_tank = true, kill_lgm = true, take_cover = true }
+function M.fight_cost_mult(info, goal, cost)
   local m = C.FIGHT_COST_MULT or 1.0
   if m == 1.0 or not C.FIGHT_COST_MULT_ENABLED or not goal then return 1.0 end
-  if goal.kind ~= "attack_tank" and goal.kind ~= "kill_lgm" then return 1.0 end
+  if not M.FIGHT_MULT_KINDS[goal.kind] then return 1.0 end
   if goal._ordered or goal.km_ally_pn then return 1.0 end
+  if cost and cost >= (C.TAKE_COVER_REJECT_COST or 1e8) then return 1.0 end
   if ((info and info.armour) or 0) <= C.ARMOUR_CRITICAL then return 1.0 end
   return m
 end
@@ -17912,15 +17918,16 @@ local function goal_selection(state, world, info, quiet)
     end
 
     -- ── Scenario fight multiplier (FIGHT_COST_MULT) ──
-    -- A script makes attack_tank and kill_lgm dearer with cfg=FIGHT_COST_MULT
-    -- (see M.fight_cost_mult for what is left out). Same selection layer as
-    -- the passes above: after the influence scaling, before hysteresis.
+    -- A script makes attack_tank, kill_lgm and take_cover dearer with
+    -- cfg=FIGHT_COST_MULT (see M.fight_cost_mult for what is left out).
+    -- Same selection layer as the passes above: after the influence
+    -- scaling, before hysteresis.
     -- No-op at the 1.0 default and with the knob off (keel). _fight_mult is
     -- stashed for FINAL_SCORES (fight=) and the WINNERS-row reconciliation.
     if C.FIGHT_COST_MULT_ENABLED and C.FIGHT_COST_MULT ~= 1.0 then
       for _, c in ipairs(pool) do
         if c.cost and c.cost > 0 and not c._reject_sentinel then
-          local fm = M.fight_cost_mult(info, c.goal)
+          local fm = M.fight_cost_mult(info, c.goal, c.cost)
           if fm ~= 1.0 then
             c.cost = c.cost * fm
             c._fight_mult = fm
@@ -18865,8 +18872,8 @@ local function goal_selection(state, world, info, quiet)
         --   inf     — the territory-influence x0.5/x2 scale
         --   nobuild — ATTACK_NO_BUILDER_MULT, the LOADED, BUILDER-LESS
         --             surcharge on the four "drive at a fight" kinds
-        --   fight   — FIGHT_COST_MULT, a script's surcharge on attack_tank
-        --             and kill_lgm
+        --   fight   — FIGHT_COST_MULT, a script's surcharge on attack_tank,
+        --             kill_lgm and take_cover
         print2(string.format(
           "  [%d] %s@%d,%d total=%.1f base=%.1f pen=%.1f inf=%.2f nobuild=%.1f fight=%.2f hyst=%s sw=%.1f cmt=%.1f histT=%s histK=%s wsim=%.1f dens=%.2f pickup=%.1f desc=%s",
           i,
@@ -20320,7 +20327,7 @@ function M.get_pool_breakdown_json(state)
       if fight_mult_d ~= 1.0 then
         detail_formula = string.format("%s * fight{x%.2f}", detail_formula, fight_mult_d)
         detail_map[#detail_map + 1] = string.format(
-          "fight:a script set FIGHT_COST_MULT (cfg=) -> this attack_tank / kill_lgm row costs x%.2f (not on an ordered row, the kill-me row, or at armour <= ARMOUR_CRITICAL %d)",
+          "fight:a script set FIGHT_COST_MULT (cfg=) -> this attack_tank / kill_lgm / take_cover row costs x%.2f (not on an ordered row, the kill-me row, a reject sentinel, or at armour <= ARMOUR_CRITICAL %d)",
           fight_mult_d, C.ARMOUR_CRITICAL)
       end
 

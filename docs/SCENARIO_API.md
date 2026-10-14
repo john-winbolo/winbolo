@@ -1815,14 +1815,21 @@ a scenario that retunes its bots often would fill the newswire), so a script's
 `on_chat` can see the change land when another bot is on the same side.
 
 One GoalHunter constant is there for scripts: `FIGHT_COST_MULT` (1 by
-default). `cfg=FIGHT_COST_MULT=4` makes every fight the bot picks for itself
-with a tank (`attack_tank`) or a man on foot (`kill_lgm`) cost four times as
-much, so it goes for other goals first and fights only when the fight is far
-the best thing to do. An ordered fight is not made dearer, and nor is any
-fight while the bot's armour is critical, so a dying tank still fights back.
+default). `cfg=FIGHT_COST_MULT=10` makes every fight the bot picks for itself
+with a tank (`attack_tank`) or a man on foot (`kill_lgm`), and every run for
+cover (`take_cover`), cost ten times as much, so it goes for other goals first
+and fights or hides only when that is far the best thing to do. An ordered
+goal is not made dearer, and nor is any of them while the bot's armour is
+critical, so a dying tank still fights back or gets to cover.
 Write `cfg=FIGHT_COST_MULT=1` to put it back: a constant stays where it was
-put. Pillbox Tag sets it on its hunters while the prize stands as a fort. A
-bot on `preset=keel` ignores it.
+put. It is a round-scoped knob: only a running brain takes it, from
+`game.bot_init`. A new brain does not take it from the table it starts with,
+and every round starts every bot on a new brain, so each round starts it at 1
+even if the last round ended with it set. A script should still put it back
+before it ends the round, because the table it last handed a bot is what that
+bot's next brain is built from. Pillbox Tag sets it on its hunters while the
+prize stands as a fort and puts it back to 1 when the prize is picked up and
+just before it ends the round. A bot on `preset=keel` ignores it.
 
 A bot whose brain is not running yet still keeps the table: the record is what
 its next brain is built from, so nothing the script asked for is lost.

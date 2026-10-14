@@ -5303,21 +5303,34 @@ M.ORDER_RELEASE_HINT      = true  -- keel false (2026-10-14: Pillbox Tag)
 -- and one with only `pill` is ignored.
 M.ORDER_HINT_ATTACK_PILL  = true  -- keel false (2026-10-14: Pillbox Tag)
 -- FIGHT COST MULTIPLIER (2026-10-14): a script makes this bot's tank fights
--- dearer with game.bot_init(p, { cfg = "FIGHT_COST_MULT=4" }).  Every
--- attack_tank and kill_lgm row in the pool costs FIGHT_COST_MULT times as
--- much, after the influence scaling and before hysteresis (FINAL_SCORES
--- prints it as fight=).  Pillbox Tag sets it on the hunters while the prize
--- stands as a fort, so the fort is the target and an enemy tank is only
--- rarely worth a fight, and puts it back to 1 when the prize is picked up.
+-- and hiding dearer with game.bot_init(p, { cfg = "FIGHT_COST_MULT=10" }).
+-- Every attack_tank, kill_lgm and take_cover row in the pool costs
+-- FIGHT_COST_MULT times as much, after the influence scaling and before
+-- hysteresis (FINAL_SCORES prints it as fight=).  Pillbox Tag sets it on the
+-- hunters while the prize stands as a fort, so the fort is the target and an
+-- enemy tank or a safe tile is only rarely worth the detour, and puts it
+-- back to 1 when the prize is picked up.
 -- Not applied:
---   * to an ordered row (a person or a script asked for that fight), or to
+--   * to an ordered row (a person or a script asked for that goal), or to
 --     the "kill me" delivery row (an attack_tank on an ALLY);
+--   * to a reject sentinel row (cost at or above TAKE_COVER_REJECT_COST);
 --   * while armour is at or below ARMOUR_CRITICAL, the line where every
---     order pauses: a dying tank fights back at the normal price.
+--     order pauses: a dying tank fights back or hides at the normal price.
 -- 1.0 = no change (the default: nothing in an ordinary game sets it).
 M.FIGHT_COST_MULT         = 1.0
 -- false = FIGHT_COST_MULT is not read: a script that sets it changes nothing.
 M.FIGHT_COST_MULT_ENABLED = true  -- keel false (2026-10-14: Pillbox Tag)
+-- ROUND-SCOPED cfg= KNOBS (2026-10-14): constants a RUNNING brain takes from
+-- game.bot_init (Brain.on_init), but a NEW brain does not take from the init
+-- table it starts with.  Every round starts every bot on a fresh brain built
+-- from the last table the script handed it, so a knob a script set for one
+-- moment of a round (Pillbox Tag's x10 while the prize stands as a fort)
+-- would otherwise come back on at the next round's first tick, even on
+-- another map or with no script at all, and the script, which starts the new
+-- round believing the knob is at its default, would never put it back.  At
+-- start-up such a token is refused (logged, IGNORED) and the knob stays at
+-- its constants.lua value.  A table, so cfg= cannot change the list.
+M.CFG_RUNTIME_ONLY = { FIGHT_COST_MULT = true }
 -- Shortest gap between two ATTACK markers from the SAME bot about the SAME
 -- target.  A bot re-plans the same goal often, and without this every replan
 -- would put another marker on the same pill.  1500 ticks is 30 s.
@@ -5829,8 +5842,8 @@ M.PRESETS = {
     --   2026-10-14: the "attack" scenario hint takes `pill = N`. KEEL read
     --   `player` only.
     ORDER_HINT_ATTACK_PILL        = false,
-    --   2026-10-14: a script can make attack_tank and kill_lgm dearer with
-    --   cfg=FIGHT_COST_MULT. KEEL had no such multiplier.
+    --   2026-10-14: a script can make attack_tank, kill_lgm and take_cover
+    --   dearer with cfg=FIGHT_COST_MULT. KEEL had no such multiplier.
     FIGHT_COST_MULT_ENABLED       = false,
     --   2026-09-17: a bot attacking a pill with a HUMAN team-mate within 7
     --   tiles now skips the wall shield and goes straight in (the lobby docs
