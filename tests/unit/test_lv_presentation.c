@@ -2654,18 +2654,24 @@ static void lvpPutText(LvpLog *b, uint8_t code, const char *text) {
     lvpPutEvent(b, code, payload, n + 1);
 }
 
-static void lvpPutJoin(LvpLog *b, uint8_t slot, const char *name) {
+/* flags is the join record's account flags: 0x20 marks a bot. */
+static void lvpPutJoinFlags(LvpLog *b, uint8_t slot, const char *name,
+                            uint8_t flags) {
     uint8_t payload[262];
     size_t  n = strlen(name);
 
     payload[0] = slot;
     payload[1] = 'X';
     payload[2] = 'X';
-    payload[3] = 0;
+    payload[3] = flags;
     payload[4] = 0;
     payload[5] = (uint8_t)n;
     memcpy(payload + 6, name, n);
     lvpPutEvent(b, log_PlayerJoined, payload, n + 6);
+}
+
+static void lvpPutJoin(LvpLog *b, uint8_t slot, const char *name) {
+    lvpPutJoinFlags(b, slot, name, 0);
 }
 
 static void lvpPutTeam(LvpLog *b, uint8_t slot, uint8_t team) {
@@ -2677,7 +2683,8 @@ static void lvpPutTeam(LvpLog *b, uint8_t slot, uint8_t team) {
  * host then chooses another, twice; the round is played; the server names
  * its next map before the log ends; a player leaves and a bot takes the
  * slot. After the scan the log's map is the last one the lobby chose, and
- * the roster has all three players with their teams. The header here says
+ * the roster has all three players with their teams, and knows which one is
+ * the bot: the name has the two people and "1 Bot". The header here says
  * "Test". */
 int run_lv_save_name_scan(void) {
     const char     *path = "lv_save_name_scan.wbv";
@@ -2686,6 +2693,7 @@ int run_lv_save_name_scan(void) {
     LvRosterRow     rows[LV_ROSTER_MAX];
     const char     *names[LV_ROSTER_MAX];
     unsigned char   teams[LV_ROSTER_MAX];
+    unsigned char   bots[LV_ROSTER_MAX];
     char            mapBefore[64], mapAfter[64], mapReload[64];
     char            fileName[200];
     const uint8_t   slot1[1] = {1};
@@ -2705,7 +2713,7 @@ int run_lv_save_name_scan(void) {
     lvpPutEvent(&b, log_LobbyExit, NULL, 0);
     lvpPutText(&b, log_MessageServer, "Map changed to Next Round");
     lvpPutEvent(&b, log_PlayerQuit, slot1, 1);
-    lvpPutJoin(&b, 1, "Bot1");
+    lvpPutJoinFlags(&b, 1, "Bot1", 0x20);
     lvpPutTeam(&b, 1, 2);
     lvpPut(&b, tail, sizeof(tail));
     lv = lvpOpen(&b, path);
@@ -2722,9 +2730,10 @@ int run_lv_save_name_scan(void) {
     for (i = 0; i < count; i++) {
         names[i] = rows[i].name;
         teams[i] = rows[i].team;
+        bots[i]  = rows[i].bot;
     }
     lvSaveNameBuild(fileName, sizeof(fileName), 2026, 10, 13, 14, 5, mapAfter,
-                    names, teams, count);
+                    names, teams, bots, count);
 
     /* A second load starts again from the header and an empty roster. */
     lv_decoderDestroy(lv);
@@ -2745,8 +2754,11 @@ int run_lv_save_name_scan(void) {
                   "the map after the scan is \"%s\", not the lobby's last",
                   mapAfter);
     UT_ASSERT_MSG(count == 3, "the roster has %d players", count);
+    UT_ASSERT_MSG(bots[0] == 0 && bots[1] == 0 && bots[2] == 1,
+                  "the bot marks are %d %d %d, not 0 0 1", bots[0], bots[1],
+                  bots[2]);
     UT_ASSERT_MSG(strcmp(fileName, "2026-10-13 14.05 Oil Rig - Canuck vs "
-                                   "rooklift, Bot1.wbv") == 0,
+                                   "rooklift, 1 Bot.wbv") == 0,
                   "the name is \"%s\"", fileName);
     UT_ASSERT_MSG(strcmp(mapReload, "Test") == 0 && countReload == 0,
                   "a reload kept the last scan: map \"%s\", %d players",

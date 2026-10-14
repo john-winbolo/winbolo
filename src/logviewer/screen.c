@@ -2217,6 +2217,7 @@ static void lv_rosterTakePlayers(void) {
     lv_playersGetPlayerName(slot, name, sizeof(name));
     if (s_roster.slotRow[slot] < 0) {
       lvRosterJoin(&s_roster, slot, name);
+      lvRosterBot(&s_roster, slot, lv_playersIsBot(slot) != FALSE);
     }
     if (lv_screenGetSlotTeam(slot, &team)) {
       lvRosterTeam(&s_roster, slot, team);
@@ -2328,7 +2329,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
         lv_playersSetPlayer(opt1, name, mem, 0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE, FALSE, accountFlags);
       }
       if (s_scanGathers) {
+        /* The join record's own flag, the one the panels' chip is from. */
         lvRosterJoin(&s_roster, opt1, name);
+        lvRosterBot(&s_roster, opt1, lv_playersIsBot(opt1) != FALSE);
       }
       {
         MessageArgs args = {0};
