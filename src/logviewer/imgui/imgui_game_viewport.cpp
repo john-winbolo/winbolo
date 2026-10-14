@@ -11,6 +11,7 @@
 #include "imgui_game_viewport.h"
 #include "imgui_main_menu.h"
 #include "imgui_dock.h"
+#include "imgui_item_info.h"
 #include "imgui.h"
 
 #include <cstdio>
@@ -154,6 +155,35 @@ static int screen_to_game_coords(float screen_x, float screen_y,
     }
 
     return 1;
+}
+
+void lv_imgui_game_viewport_hover(void) {
+    ImGuiIO& io = ImGui::GetIO();
+    int game_x, game_y;
+    int number, team = -1, colour = -1;
+    unsigned char owner = NEUTRAL, armour = 0;
+    char name[PLAYER_NAME_LEN];
+
+    /* Only over the map of the overview, with nothing of ImGui's under the
+     * mouse, and not while the map is dragged. */
+    if (s_lv == nullptr || s_lv->isLoaded == 0 || s_lv->gameView) return;
+    if (io.WantCaptureMouse || s_is_dragging || !ImGui::IsMousePosValid()) return;
+    if (!screen_to_game_coords(io.MousePos.x, io.MousePos.y, &game_x, &game_y)) return;
+
+    name[0] = '\0';
+    lv_clientMutexWaitFor();
+    number = lv_screenPillAt(game_x, game_y, &owner, &armour, &team);
+    if (number > 0 && owner != NEUTRAL) {
+        lv_screenGetPlayerName(name, owner, sizeof(name));
+        if (name[0] == '\0') snprintf(name, sizeof(name), "%d", (int)owner);
+    }
+    if (team >= 0) colour = lv_screenTeamColour(team);
+    lv_clientMutexRelease();
+
+    if (number > 0) {
+        lv_imgui_item_info_pill_tooltip(number, (owner != NEUTRAL) ? name : nullptr, colour,
+                                        armour);
+    }
 }
 
 int lv_imgui_game_viewport_process_input(void) {

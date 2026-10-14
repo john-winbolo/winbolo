@@ -197,6 +197,9 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     lv_drawSetTankBars((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
     lv_platform_config_get_string("LOGVIEWER", "Tank Builder Status", "No", val, sizeof(val));
     lv_drawSetBuilderStatus((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
+    /* On until turned off: a number is small and hides nothing. */
+    lv_platform_config_get_string("LOGVIEWER", "Pillbox Numbers", "Yes", val, sizeof(val));
+    lv_drawSetPillNumbers((val[0] == 'N' || val[0] == 'n') ? 0 : 1);
     /* On until turned off. */
     lv_platform_config_get_string("LOGVIEWER", "Animate Jumps", "Yes", val, sizeof(val));
     s_jump_anim = !(val[0] == 'N' || val[0] == 'n');
@@ -227,6 +230,8 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Tank Bars", lv_drawGetTankBars() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Tank Builder Status",
                                   lv_drawGetBuilderStatus() ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Pillbox Numbers",
+                                  lv_drawGetPillNumbers() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Animate Jumps", s_jump_anim ? "Yes" : "No");
 }
 
@@ -616,6 +621,15 @@ int lv_imgui_main_menu_bar(void) {
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", langGetText(STR_LV_BUILDER_STATUS_TIP));
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_PILL_NUMBERS), NULL,
+                                lv_drawGetPillNumbers() != 0)) {
+                lv_drawSetPillNumbers(lv_drawGetPillNumbers() ? 0 : 1);
+                lv_windowNeedRedraw();
+                clicked = 1;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", langGetText(STR_LV_PILL_NUMBERS_TIP));
             }
 #ifndef __EMSCRIPTEN__
             /* The browser build's Rewind and Fast Forward jump: it has no

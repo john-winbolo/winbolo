@@ -51,6 +51,7 @@
 #include "lv_tank_pick.h"
 #include "lv_event_flash.h"
 #include "lv_builder_status.h"
+#include "lv_pill_numbers.h"
 #include "lv_zoom_text.h"
 #include "clientmutex.h"
 #include "../gui/sdl3/sdl_bmp.h"
@@ -140,6 +141,8 @@ static bool         s_tankBars = FALSE;
 /* The builder markers over the tanks (lv_builder_status.h), at the same
    places. */
 static bool         s_builderStatus = FALSE;
+/* The number of each pillbox on the map (lv_pill_numbers.h). On until set. */
+static bool         s_pillNumbers = TRUE;
 /* The last blit of the map into the window: the slice of the target it took
  * and where it went, in framebuffer pixels. A click on the map is matched
  * against the tanks with these (lv_drawTankAtPoint). */
@@ -493,6 +496,7 @@ static void lvDrawTankMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawEventFlashOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
+static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst);
 
 /* Paint the world render target into the viewer's own window.
  *
@@ -558,6 +562,9 @@ static void lvDrawBlitTargetToWindow(void) {
     if (!lv->gameView) {
         s_blitSrc = srcRect;
         s_blitDst = dstRect;
+        /* The pillbox numbers before everything else: they belong to the
+           map, and all that moves over it goes over them. */
+        lvDrawPillNumbersOverBlit(&srcRect, &dstRect);
         /* The map pings first: the tank names, the bars and the ring of an
            event go over them. */
         lvDrawPingsOverBlit(&srcRect, &dstRect);
@@ -2353,6 +2360,78 @@ static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *d
                 lvDrawBuilderText(text, x + (float)(LV_BUILDER_CELLS + 1) * m.cell, textY,
                                   m.cell, grow);
             }
+        }
+    }
+
+    SDL_SetRenderDrawColor(sdlRenderer, oldR, oldG, oldB, oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+    SDL_SetRenderClipRect(sdlRenderer, hadClip ? &oldClip : NULL);
+}
+
+void lv_drawSetPillNumbers(BYTE on) {
+    s_pillNumbers = on ? TRUE : FALSE;
+}
+
+BYTE lv_drawGetPillNumbers(void) {
+    return s_pillNumbers ? TRUE : FALSE;
+}
+
+/* The number of each pillbox that stands on the map, at the bottom right
+   corner of its square (lvPillLabelLayout): white digits with a black edge,
+   the builder marker's, drawn over the blit at the screen's own pixels so
+   they are sharp and of a size to read at every zoom. A pillbox a tank
+   carries has none. The list is the one at the playback time, copied out
+   under the client mutex. */
+static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
+    LvPillSpot spots[MAX_PILLS];
+    float scale, tilePx, pxScale, edge;
+    int n, i, pass;
+    BYTE zf;
+    SDL_Rect clip, oldClip;
+    bool hadClip;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
+    Uint8 oldR, oldG, oldB, oldA;
+
+    if (!s_pillNumbers) return;
+    if (src->w <= 0.0f || src->h <= 0.0f) return;
+    lv_clientMutexWaitFor();
+    n = lv_screenPillSpots(spots, MAX_PILLS);
+    lv_clientMutexRelease();
+    if (n <= 0) return;
+
+    zf = lv_windowGetZoomFactor();
+    scale = dst->w / src->w;
+    tilePx = (float)(zf * TILE_SIZE_X) * scale;
+    pxScale = lvDrawPixelScale();
+    edge = lvTankBarPointsToPixels(LV_BUILDER_EDGE_POINTS, pxScale);
+
+    hadClip = SDL_RenderClipEnabled(sdlRenderer);
+    SDL_GetRenderClipRect(sdlRenderer, &oldClip);
+    clip.x = (int)dst->x;
+    clip.y = (int)dst->y;
+    clip.w = (int)dst->w;
+    clip.h = (int)dst->h;
+    SDL_SetRenderClipRect(sdlRenderer, &clip);
+    SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+    SDL_GetRenderDrawColor(sdlRenderer, &oldR, &oldG, &oldB, &oldA);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+
+    /* Every edge first, then every white over them, so the edge of one
+       number never covers the digits of a number beside it. */
+    for (pass = 0; pass < 2; pass++) {
+        LvBuilderColour c = (pass == 0) ? lvBuilderEdgeColour()
+                                        : lvBuilderMarkColour(false, 0);
+        SDL_SetRenderDrawColorFloat(sdlRenderer, c.r, c.g, c.b, c.a);
+        for (i = 0; i < n; i++) {
+            char text[LV_PILL_NUMBER_TEXT_MAX];
+            LvPillLabelLayout l;
+            float left = dst->x + ((float)(spots[i].viewX * zf * TILE_SIZE_X) - src->x) * scale;
+            float top = dst->y + ((float)(spots[i].viewY * zf * TILE_SIZE_Y) - src->y) * scale;
+
+            if (lvPillNumberText(spots[i].number, text, sizeof(text)) == 0) continue;
+            l = lvPillLabelLayout(left, top, tilePx, pxScale, lvBuilderTextCells(text));
+            if (!l.visible) continue;
+            lvDrawBuilderText(text, l.x, l.y, l.cell, (pass == 0) ? edge : 0.0f);
         }
     }
 

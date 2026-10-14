@@ -44,6 +44,7 @@ typedef struct LvOverviewRow {
     unsigned char colour;   /* the palette entry the team is drawn in */
     unsigned char players;  /* how many players are in it */
     int pills;              /* pillboxes it owns, carried ones too */
+    unsigned int pillNumbers; /* their numbers, a bit each (lvPillNumberBit) */
     int bases;              /* bases it owns */
     char firstName[LV_OVERVIEW_NAMES_LEN]; /* its first player, by slot */
     char names[LV_OVERVIEW_NAMES_LEN];     /* all its players, "A, B, C" */
@@ -61,6 +62,7 @@ typedef struct LvOverview {
     int rowCount;
     LvOverviewRow rows[LV_OVERVIEW_MAX_TEAMS];
     int neutralPills;
+    unsigned int neutralPillNumbers; /* their numbers, a bit each */
     int neutralBases;
     int totalPills;
     int totalBases;
@@ -167,6 +169,16 @@ static inline void lvOverviewCount(LvOverview *o, bool isBase, bool hasOwner,
         o->totalPills++;
         if (row != NULL) row->pills++; else o->neutralPills++;
     }
+}
+
+/* Count one pillbox as lvOverviewCount does, and note its number (from 1)
+ * in the list of the row it goes to. A number no pillbox has is counted and
+ * not noted. */
+static inline void lvOverviewCountPill(LvOverview *o, bool hasOwner, int team, int number) {
+    LvOverviewRow *row = hasOwner ? lvOverviewFind(o, team) : NULL;
+    unsigned int bit = (number >= 1 && number <= 32) ? (1u << (number - 1)) : 0u;
+    lvOverviewCount(o, false, hasOwner, team);
+    if (row != NULL) row->pillNumbers |= bit; else o->neutralPillNumbers |= bit;
 }
 
 /* The table has its Neutral row only while something is neutral: a pillbox

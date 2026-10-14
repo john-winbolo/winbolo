@@ -63,6 +63,7 @@ static NSMenuItem *s_lv_hideLobbyItem      = nil;
 static NSMenuItem *s_lv_regionsItem        = nil;
 static NSMenuItem *s_lv_tankBarsItem       = nil;
 static NSMenuItem *s_lv_builderStatusItem  = nil;
+static NSMenuItem *s_lv_pillNumbersItem    = nil;
 static NSMenuItem *s_lv_soundEffectsItem   = nil;
 static NSMenu     *s_lv_volumeMenu         = nil;
 static NSMenuItem *s_lv_dnsLookupsItem     = nil;
@@ -116,6 +117,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleRegions:(id)sender;
 - (void)onToggleTankBars:(id)sender;
 - (void)onToggleBuilderStatus:(id)sender;
+- (void)onTogglePillNumbers:(id)sender;
 - (void)onToggleSoundEffects:(id)sender;
 - (void)onSetSoundVolume:(id)sender;
 - (void)onToggleDnsLookups:(id)sender;
@@ -207,6 +209,11 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleBuilderStatus:(id)sender {
     (void)sender;
     lv_drawSetBuilderStatus(lv_drawGetBuilderStatus() ? 0 : 1);
+    lv_windowNeedRedraw();
+}
+- (void)onTogglePillNumbers:(id)sender {
+    (void)sender;
+    lv_drawSetPillNumbers(lv_drawGetPillNumbers() ? 0 : 1);
     lv_windowNeedRedraw();
 }
 - (void)onToggleSoundEffects:(id)sender {
@@ -559,6 +566,15 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [optionsMenu addItem:builderStatus];
     s_lv_builderStatusItem = builderStatus;
 
+    NSMenuItem *pillNumbers = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_PILL_NUMBERS)
+        action:@selector(onTogglePillNumbers:)
+        keyEquivalent:@""];
+    [pillNumbers setTarget:s_lv_bridge];
+    [pillNumbers setToolTip:LANG_STR(STR_LV_PILL_NUMBERS_TIP)];
+    [optionsMenu addItem:pillNumbers];
+    s_lv_pillNumbersItem = pillNumbers;
+
     NSMenuItem *soundEffects = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_SOUND_EFFECTS)
         action:@selector(onToggleSoundEffects:)
@@ -828,6 +844,7 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_regionsItem = nil;
     s_lv_tankBarsItem = nil;
     s_lv_builderStatusItem = nil;
+    s_lv_pillNumbersItem = nil;
     s_lv_soundEffectsItem = nil;
     s_lv_volumeMenu = nil;
     s_lv_dnsLookupsItem = nil;
@@ -879,6 +896,7 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     }
     if (s_lv_tankBarsItem) [s_lv_tankBarsItem setState:(s->tankBars ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_builderStatusItem) [s_lv_builderStatusItem setState:(s->builderStatus ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_pillNumbersItem) [s_lv_pillNumbersItem setState:(s->pillNumbers ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_soundEffectsItem) [s_lv_soundEffectsItem setState:(s->soundEffects ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_volumeMenu) {
         for (NSMenuItem *item in [s_lv_volumeMenu itemArray]) {

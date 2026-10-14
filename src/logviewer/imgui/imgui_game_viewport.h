@@ -31,6 +31,11 @@ void lv_imgui_game_viewport_render_background(void);
  * Returns 1 if input was processed, 0 otherwise. */
 int lv_imgui_game_viewport_process_input(void);
 
+/* The tooltip of the pillbox under the mouse on the overview's map: its
+ * number, its owner and its armour. Call it in the ImGui frame, before the
+ * frame is drawn. */
+void lv_imgui_game_viewport_hover(void);
+
 #ifdef __cplusplus
 }
 #endif

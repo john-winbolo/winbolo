@@ -44,6 +44,7 @@ struct LvMenuState {
     bool showScenarioPanel;
     bool tankBars;             /* Options > Tank Bars checkmark */
     bool builderStatus;        /* Options > Tank Builder Status checkmark */
+    bool pillNumbers;          /* Options > Pillbox Numbers checkmark */
     bool dockEnabled;          /* Windows > the right sidebar */
     bool dockLeft;             /* Windows > the left sidebar */
     bool dockTop;              /* Windows > the top sidebar */
