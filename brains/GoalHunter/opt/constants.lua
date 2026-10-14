@@ -5302,6 +5302,22 @@ M.ORDER_RELEASE_HINT      = true  -- keel false (2026-10-14: Pillbox Tag)
 -- false = the `pill` key is not read: an attack hint names a `player` only,
 -- and one with only `pill` is ignored.
 M.ORDER_HINT_ATTACK_PILL  = true  -- keel false (2026-10-14: Pillbox Tag)
+-- FIGHT COST MULTIPLIER (2026-10-14): a script makes this bot's tank fights
+-- dearer with game.bot_init(p, { cfg = "FIGHT_COST_MULT=4" }).  Every
+-- attack_tank and kill_lgm row in the pool costs FIGHT_COST_MULT times as
+-- much, after the influence scaling and before hysteresis (FINAL_SCORES
+-- prints it as fight=).  Pillbox Tag sets it on the hunters while the prize
+-- stands as a fort, so the fort is the target and an enemy tank is only
+-- rarely worth a fight, and puts it back to 1 when the prize is picked up.
+-- Not applied:
+--   * to an ordered row (a person or a script asked for that fight), or to
+--     the "kill me" delivery row (an attack_tank on an ALLY);
+--   * while armour is at or below ARMOUR_CRITICAL, the line where every
+--     order pauses: a dying tank fights back at the normal price.
+-- 1.0 = no change (the default: nothing in an ordinary game sets it).
+M.FIGHT_COST_MULT         = 1.0
+-- false = FIGHT_COST_MULT is not read: a script that sets it changes nothing.
+M.FIGHT_COST_MULT_ENABLED = true  -- keel false (2026-10-14: Pillbox Tag)
 -- Shortest gap between two ATTACK markers from the SAME bot about the SAME
 -- target.  A bot re-plans the same goal often, and without this every replan
 -- would put another marker on the same pill.  1500 ticks is 30 s.
@@ -5813,6 +5829,9 @@ M.PRESETS = {
     --   2026-10-14: the "attack" scenario hint takes `pill = N`. KEEL read
     --   `player` only.
     ORDER_HINT_ATTACK_PILL        = false,
+    --   2026-10-14: a script can make attack_tank and kill_lgm dearer with
+    --   cfg=FIGHT_COST_MULT. KEEL had no such multiplier.
+    FIGHT_COST_MULT_ENABLED       = false,
     --   2026-09-17: a bot attacking a pill with a HUMAN team-mate within 7
     --   tiles now skips the wall shield and goes straight in (the lobby docs
     --   promise it). KEEL never looked at where the humans were: 0 = off, so

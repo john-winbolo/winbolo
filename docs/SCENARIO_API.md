@@ -1814,6 +1814,16 @@ the brain logs them as unsupported and leaves them. It also says one line,
 a scenario that retunes its bots often would fill the newswire), so a script's
 `on_chat` can see the change land when another bot is on the same side.
 
+One GoalHunter constant is there for scripts: `FIGHT_COST_MULT` (1 by
+default). `cfg=FIGHT_COST_MULT=4` makes every fight the bot picks for itself
+with a tank (`attack_tank`) or a man on foot (`kill_lgm`) cost four times as
+much, so it goes for other goals first and fights only when the fight is far
+the best thing to do. An ordered fight is not made dearer, and nor is any
+fight while the bot's armour is critical, so a dying tank still fights back.
+Write `cfg=FIGHT_COST_MULT=1` to put it back: a constant stays where it was
+put. Pillbox Tag sets it on its hunters while the prize stands as a fort. A
+bot on `preset=keel` ignores it.
+
 A bot whose brain is not running yet still keeps the table: the record is what
 its next brain is built from, so nothing the script asked for is lost.
 

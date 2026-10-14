@@ -16671,6 +16671,21 @@ function M.order_goal(state, world, info, ord)
   return nil
 end
 
+-- What one pool row pays for C.FIGHT_COST_MULT, the multiplier a script sets
+-- with cfg= to make tank fights dearer (Pillbox Tag: on its hunters while
+-- the prize stands as a fort).  attack_tank and kill_lgm only.  1.0 when the
+-- knob is off (keel) or at 1, for an ordered row and the "kill me" delivery
+-- row, and while armour is at or below ARMOUR_CRITICAL: the line where every
+-- order pauses, so a dying tank still fights back at the normal price.
+function M.fight_cost_mult(info, goal)
+  local m = C.FIGHT_COST_MULT or 1.0
+  if m == 1.0 or not C.FIGHT_COST_MULT_ENABLED or not goal then return 1.0 end
+  if goal.kind ~= "attack_tank" and goal.kind ~= "kill_lgm" then return 1.0 end
+  if goal._ordered or goal.km_ally_pn then return 1.0 end
+  if ((info and info.armour) or 0) <= C.ARMOUR_CRITICAL then return 1.0 end
+  return m
+end
+
 local function goal_selection(state, world, info, quiet)
   local _tgs0 = clock_us()  -- used by gs_diag slow-tick check (BRAIN_PROFILE)
   local _tgs_t = 0
@@ -17896,6 +17911,24 @@ local function goal_selection(state, world, info, quiet)
       end
     end
 
+    -- ── Scenario fight multiplier (FIGHT_COST_MULT) ──
+    -- A script makes attack_tank and kill_lgm dearer with cfg=FIGHT_COST_MULT
+    -- (see M.fight_cost_mult for what is left out). Same selection layer as
+    -- the passes above: after the influence scaling, before hysteresis.
+    -- No-op at the 1.0 default and with the knob off (keel). _fight_mult is
+    -- stashed for FINAL_SCORES (fight=) and the WINNERS-row reconciliation.
+    if C.FIGHT_COST_MULT_ENABLED and C.FIGHT_COST_MULT ~= 1.0 then
+      for _, c in ipairs(pool) do
+        if c.cost and c.cost > 0 and not c._reject_sentinel then
+          local fm = M.fight_cost_mult(info, c.goal)
+          if fm ~= 1.0 then
+            c.cost = c.cost * fm
+            c._fight_mult = fm
+          end
+        end
+      end
+    end
+
     -- ── Apply hysteresis to discourage thrashing ──
     -- High-value opportunistic goals are exempt so they can win on raw
     -- cost (flee_to_base / rescue_lgm skip this pool entirely as
@@ -18322,6 +18355,7 @@ local function goal_selection(state, world, info, quiet)
         refuel_mult   = c._refuel_mult or 1.0,
         focus_mult    = c._focus_mult or 1.0,
         ahead_mult    = c._ahead_mult or 1.0,
+        fight_mult    = c._fight_mult or 1.0,
         -- LOADED, BUILDER-LESS surcharge (ATTACK_NO_BUILDER_MULT) and the
         -- escape-row hysteresis waiver, both needed for the WINNERS row to
         -- reconcile to its own total.
@@ -18831,13 +18865,15 @@ local function goal_selection(state, world, info, quiet)
         --   inf     — the territory-influence x0.5/x2 scale
         --   nobuild — ATTACK_NO_BUILDER_MULT, the LOADED, BUILDER-LESS
         --             surcharge on the four "drive at a fight" kinds
+        --   fight   — FIGHT_COST_MULT, a script's surcharge on attack_tank
+        --             and kill_lgm
         print2(string.format(
-          "  [%d] %s@%d,%d total=%.1f base=%.1f pen=%.1f inf=%.2f nobuild=%.1f hyst=%s sw=%.1f cmt=%.1f histT=%s histK=%s wsim=%.1f dens=%.2f pickup=%.1f desc=%s",
+          "  [%d] %s@%d,%d total=%.1f base=%.1f pen=%.1f inf=%.2f nobuild=%.1f fight=%.2f hyst=%s sw=%.1f cmt=%.1f histT=%s histK=%s wsim=%.1f dens=%.2f pickup=%.1f desc=%s",
           i,
           c.goal and c.goal.kind or "?",
           c.goal and c.goal.mx or 0, c.goal and c.goal.my or 0,
           c.cost or 0, base, penalty,
-          c._inf_mult or 1.0, c._nobuild_mult or 1.0,
+          c._inf_mult or 1.0, c._nobuild_mult or 1.0, c._fight_mult or 1.0,
           tostring(c.hysteresis or "-"),
           c.switch_flat or 0, c.commit_val or 0,
           tostring(c.hist_target or 0), tostring(c.hist_kind or 0),
@@ -20279,6 +20315,15 @@ function M.get_pool_breakdown_json(state)
           state.strength or 0, C.AHEAD_PILL_FRAC, state.base_strength or 0, C.AHEAD_BASE_FRAC, ahead_mult_d)
       end
 
+      -- Scenario fight multiplier, same layer again.
+      local fight_mult_d = (gc and gc.fight_mult) or 1.0
+      if fight_mult_d ~= 1.0 then
+        detail_formula = string.format("%s * fight{x%.2f}", detail_formula, fight_mult_d)
+        detail_map[#detail_map + 1] = string.format(
+          "fight:a script set FIGHT_COST_MULT (cfg=) -> this attack_tank / kill_lgm row costs x%.2f (not on an ordered row, the kill-me row, or at armour <= ARMOUR_CRITICAL %d)",
+          fight_mult_d, C.ARMOUR_CRITICAL)
+      end
+
       if w.imminent then
         detail_map[#detail_map + 1] = string.format("imminent:cost_forced_to_floor(%.0f) because neutral and close", C.IMMINENT_CAPTURE_FLOOR)
       end
@@ -20362,6 +20407,10 @@ function M.get_pool_breakdown_json(state)
       local refuel_mult = (gc and gc.refuel_mult) or 1.0
       if refuel_mult ~= 1.0 then
         row_summary = row_summary .. " x " .. M.refuel_mult_label()
+      end
+      local fight_mult = (gc and gc.fight_mult) or 1.0
+      if fight_mult ~= 1.0 then
+        row_summary = row_summary .. string.format(" x fight{%.2f}", fight_mult)
       end
 
       if penalty > 0 or wsim_add > 0 or w.imminent then

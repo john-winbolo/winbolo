@@ -8186,5 +8186,66 @@ do
     saved_ev[1], saved_ev[2], saved_ev[3], saved_ev[4]
 end
 
+-- ─────────────────────────────────────────────────────────────────────────
+-- FIGHT_COST_MULT: a script's multiplier on attack_tank and kill_lgm
+-- (Pillbox Tag sets it on its hunters while the prize stands as a fort).
+-- ─────────────────────────────────────────────────────────────────────────
+print("\n== FIGHT_COST_MULT ==")
+do
+  local G = require("goals")
+  local saved_m, saved_on = C.FIGHT_COST_MULT, C.FIGHT_COST_MULT_ENABLED
+  local well = { armour = 40 }
+  local function g(kind, extra)
+    local t = { kind = kind, mx = 10, my = 10 }
+    for k, v in pairs(extra or {}) do t[k] = v end
+    return t
+  end
+
+  check("default: FIGHT_COST_MULT is 1 and the knob is on",
+        C.FIGHT_COST_MULT == 1.0 and C.FIGHT_COST_MULT_ENABLED == true,
+        tostring(C.FIGHT_COST_MULT) .. "/" .. tostring(C.FIGHT_COST_MULT_ENABLED))
+  check("default: a number, so cfg=FIGHT_COST_MULT=4 is taken",
+        type(C.FIGHT_COST_MULT) == "number", type(C.FIGHT_COST_MULT))
+  check("keel turns the knob off", C.PRESETS.keel.FIGHT_COST_MULT_ENABLED == false, "?")
+  check("not set: attack_tank x1", G.fight_cost_mult(well, g("attack_tank")) == 1.0, "?")
+  check("not set: kill_lgm x1", G.fight_cost_mult(well, g("kill_lgm")) == 1.0, "?")
+
+  C.FIGHT_COST_MULT = 4
+  check("set 4: attack_tank x4", G.fight_cost_mult(well, g("attack_tank")) == 4,
+        tostring(G.fight_cost_mult(well, g("attack_tank"))))
+  check("set 4: kill_lgm x4", G.fight_cost_mult(well, g("kill_lgm")) == 4,
+        tostring(G.fight_cost_mult(well, g("kill_lgm"))))
+  local others = { "attack_pill", "capture_pill", "take_cover", "defend_pill",
+                   "refuel_at_base", "flee_to_base", "capture_base", "goto" }
+  local all_one = true
+  for _, k in ipairs(others) do
+    if G.fight_cost_mult(well, g(k)) ~= 1.0 then all_one = false end
+  end
+  check("set 4: every other kind x1 (attack_pill, take_cover, ...)", all_one, "?")
+  check("set 4: an ordered attack_tank x1",
+        G.fight_cost_mult(well, g("attack_tank", { _ordered = true })) == 1.0, "?")
+  check("set 4: the kill-me delivery row x1",
+        G.fight_cost_mult(well, g("attack_tank", { km_ally_pn = 3 })) == 1.0, "?")
+  check("set 4: armour at ARMOUR_CRITICAL x1 (fights back at the normal price)",
+        G.fight_cost_mult({ armour = C.ARMOUR_CRITICAL }, g("attack_tank")) == 1.0
+        and G.fight_cost_mult({ armour = C.ARMOUR_CRITICAL }, g("kill_lgm")) == 1.0, "?")
+  check("set 4: armour one above ARMOUR_CRITICAL x4",
+        G.fight_cost_mult({ armour = C.ARMOUR_CRITICAL + 1 }, g("attack_tank")) == 4, "?")
+  check("set 4: no goal x1", G.fight_cost_mult(well, nil) == 1.0, "?")
+
+  C.FIGHT_COST_MULT_ENABLED = C.PRESETS.keel.FIGHT_COST_MULT_ENABLED
+  check("keel: set 4 is ignored, attack_tank and kill_lgm x1",
+        G.fight_cost_mult(well, g("attack_tank")) == 1.0
+        and G.fight_cost_mult(well, g("kill_lgm")) == 1.0, "?")
+  C.FIGHT_COST_MULT_ENABLED = true
+
+  C.FIGHT_COST_MULT = 1
+  check("reset to 1: attack_tank and kill_lgm x1 again",
+        G.fight_cost_mult(well, g("attack_tank")) == 1.0
+        and G.fight_cost_mult(well, g("kill_lgm")) == 1.0, "?")
+
+  C.FIGHT_COST_MULT, C.FIGHT_COST_MULT_ENABLED = saved_m, saved_on
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

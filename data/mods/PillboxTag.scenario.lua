@@ -1097,6 +1097,7 @@ local DEFAULTS = {
   CAPTURE_BASE_EXTRA_COST              = 0,
   CAPTURE_BASE_EXTRA_FREE_DIST         = 0,
   ATTACK_PILL_WALL_FALLBACK            = false,
+  FIGHT_COST_MULT                      = 1,
 }
 
 -- The flag words a brain keeps until it is told the opposite. GoalHunter puts
@@ -1341,6 +1342,12 @@ local function init_table(role_name, p)
   if walled.watch ~= nil and walled.watch.fallback and
      (role_name == "hunter" or role_name == "manhunt") then
     want.ATTACK_PILL_WALL_FALLBACK = true
+  end
+  -- While the prize stands as a fort, a hunter's fight with a tank or a man
+  -- costs walled.FIGHT_MULT times as much: the fort is the target. It goes
+  -- back to 1 when the prize is picked up or goes down.
+  if role_name == "hunter" and walled.fort_stands() then
+    want.FIGHT_COST_MULT = walled.FIGHT_MULT
   end
 
   local t, pairs_n = {}, 1
@@ -1693,6 +1700,23 @@ walled.LINE_THEN_ATTACK = false -- true: a hunter sent to a line square is
                                 -- hunters broke through closed walls before
                                 -- the 30 s net (pilltag_wall_timer 0/8)
 walled.LINE_ATTACK_AFTER = 15   -- seconds
+walled.FIGHT_MULT = 4           -- while the prize stands as a fort, what a
+                                -- hunter's fight with a tank or a man
+                                -- (attack_tank, kill_lgm) costs, times the
+                                -- ordinary price: the brain's FIGHT_COST_MULT.
+                                -- The fort is the target and an enemy tank
+                                -- rarely worth a fight. 1: as before. The
+                                -- brain drops it when its armour is critical.
+
+-- Whether the prize stands as a fort the hunters are to shoot: built, with a
+-- holder, and not a bot holder's hop (a hop stands for a few seconds, and
+-- the hunters stay on the holder through it).
+function walled.fort_stands()
+  if pill == nil or holder == nil or (plan ~= nil and plan.kind == "hop") then
+    return false
+  end
+  return standing(game.pill(pill))
+end
 walled.STANDOFF  = 7.4          -- the brain's ATTACK_PILL_STANDOFF
 walled.AIM_INSET = 16 / 256     -- the brain's AIM_INSET_FIRE: how far inside
                                 -- the pillbox's square a corner aim is
@@ -1938,7 +1962,9 @@ local function aim_one(p)
   -- the bot's own loses, but the brain's reactive goals still bid: a fight
   -- with a tank (the guard or the holder too), a man to shoot, cover, a
   -- refuel. So the bot still turns on a tank that comes at it, and it can
-  -- still pick a tank over the fort. tell() sends the order again every
+  -- still pick a tank over the fort, though while the fort stands a fight
+  -- with a tank or a man costs it walled.FIGHT_MULT times as much (see
+  -- init_table), so it rarely does. tell() sends the order again every
   -- AIM_REFRESH seconds, which keeps it held while the prize stands.
   -- A brain that does not know the `pill` key ignores the hint.
   --
