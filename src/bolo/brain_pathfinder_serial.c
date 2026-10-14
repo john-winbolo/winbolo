@@ -32,6 +32,10 @@
 #define MAP_SIZE   256
 #define GRID_SIZE  65536
 #define NODE_COUNT 131072
+/* Entries in each of the three terrain tables, from the array itself so the
+ * writer and reader cannot disagree with it. The three are the same size. */
+#define TERRAIN_TABLE_LEN \
+    (sizeof(((BrainPathfinder *)0)->terrain_cost_table) / sizeof(float))
 
 /* ── Helper: grow a dynamic buffer ──────────────────────────── */
 
@@ -193,10 +197,10 @@ unsigned char *brainPathfinderSerialize(BrainPathfinder *pf, size_t *out_size) {
     bufAppendFloat(&b, pf->min_mines);
     bufAppendFloat(&b, pf->min_armour);
 
-    /* Terrain tables (3 × 16 floats) */
-    for (int i = 0; i < 16; i++) bufAppendFloat(&b, pf->terrain_cost_table[i]);
-    for (int i = 0; i < 16; i++) bufAppendFloat(&b, pf->terrain_cost_boat_table[i]);
-    for (int i = 0; i < 16; i++) bufAppendFloat(&b, pf->terrain_speed_table[i]);
+    /* Terrain tables (3 × TERRAIN_TABLE_LEN floats) */
+    for (size_t i = 0; i < TERRAIN_TABLE_LEN; i++) bufAppendFloat(&b, pf->terrain_cost_table[i]);
+    for (size_t i = 0; i < TERRAIN_TABLE_LEN; i++) bufAppendFloat(&b, pf->terrain_cost_boat_table[i]);
+    for (size_t i = 0; i < TERRAIN_TABLE_LEN; i++) bufAppendFloat(&b, pf->terrain_speed_table[i]);
 
     /* Grids (compressed together) */
     {
@@ -324,9 +328,9 @@ int brainPathfinderDeserialize(BrainPathfinder *pf,
     curReadFloat(&c, &pf->min_armour);
 
     /* Terrain tables */
-    for (int i = 0; i < 16; i++) curReadFloat(&c, &pf->terrain_cost_table[i]);
-    for (int i = 0; i < 16; i++) curReadFloat(&c, &pf->terrain_cost_boat_table[i]);
-    for (int i = 0; i < 16; i++) curReadFloat(&c, &pf->terrain_speed_table[i]);
+    for (size_t i = 0; i < TERRAIN_TABLE_LEN; i++) curReadFloat(&c, &pf->terrain_cost_table[i]);
+    for (size_t i = 0; i < TERRAIN_TABLE_LEN; i++) curReadFloat(&c, &pf->terrain_cost_boat_table[i]);
+    for (size_t i = 0; i < TERRAIN_TABLE_LEN; i++) curReadFloat(&c, &pf->terrain_speed_table[i]);
 
     /* Grids */
     {

@@ -444,7 +444,7 @@ void logStop() {
         attrTrackEncodeHeader(hbuf, &hdr);
         zipWriteInFileInZip(logFile, hbuf, (unsigned)sizeof hbuf);
         if (tbuf != NULL && tlen > 0) {
-          /* Encoded a chunk of whole records at a time */
+          /* Encode a chunk of whole records at a time */
           BYTE chunk[4096];
           size_t off = 0;
           size_t used = 0;
@@ -463,6 +463,13 @@ void logStop() {
           }
           if (used > 0) {
             zipWriteInFileInZip(logFile, chunk, (unsigned)used);
+          }
+          if (off != tlen) {
+            /* The header's recordCount is already written and counts the
+             * whole buffer; the member now holds fewer records than it says. */
+            WB_LOG_WARN(WB_LOG_CAT_SERVER,
+                        "attribution track: stopped at byte %zu of %zu on tag %u, %zu bytes dropped",
+                        off, tlen, (unsigned)tbuf[off], tlen - off);
           }
         }
         zipCloseFileInZip(logFile);
