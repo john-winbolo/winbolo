@@ -4122,6 +4122,7 @@ int run_lv_builder_trips_scan(void);
 int run_lv_controls_top_row(void);
 int run_lv_controls_bottom_row(void);
 int run_lv_controls_wheel_step(void);
+int run_lv_controls_fine_drag(void);
 /* The zoom of the log viewer's map as a percentage. */
 int run_lv_zoom_percent(void);
 int run_lv_fullscreen_key(void);
@@ -4138,6 +4139,8 @@ int run_lv_save_name_limits(void);
 int run_lv_save_name_long(void);
 int run_lv_save_name_roster(void);
 int run_lv_save_name_scan(void);
+/* File paths as UTF-8 on every system (test_lv_utf8_path.c). */
+int run_lv_utf8_path(void);
 /* The kill and death tallies go back with a seek (test_lv_presentation.c). */
 int run_lv_kill_tally_seek_back(void);
 /* Whether a tank is alive goes back with a seek (test_lv_presentation.c). */

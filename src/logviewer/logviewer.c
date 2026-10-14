@@ -69,6 +69,7 @@
 #include "lv_dock_clear.h"
 #include "lv_fullscreen_key.h"
 #include "lv_save_name.h"   /* the file name Save Log File offers */
+#include "lv_utf8_path.h"   /* lvFopenUtf8: the dialogs' paths are UTF-8 */
 #include "lv_first_view.h"  /* where the map is when a log is first shown */
 #include "lv_jump_anim.h"   /* the animation of Rewind and Fast Forward */
 #include "lv_fullscreen_game.h"
@@ -1041,6 +1042,11 @@ void lv_windowSaveLog(void) {
     SDL_free(prefDir);
     if (dlgResult != PLATFORM_DIALOG_OK) {
         free(copy);
+        if (dlgResult == PLATFORM_DIALOG_ERROR) {
+            /* No dialog, or a path too long for fileName: nothing was
+               saved, and the user is told. */
+            lv_platform_dialog_error(DIALOG_BOX_TITLE, failed);
+        }
         return;
     }
     if (source == LV_LOG_SOURCE_FILE && lvSamePath(srcPath, fileName)) {
@@ -1051,7 +1057,7 @@ void lv_windowSaveLog(void) {
         /* All of the source first, then the write: right even if the two
            names turn out to be one file. */
         long size = 0;
-        fp = fopen(srcPath, "rb");
+        fp = lvFopenUtf8(srcPath, "rb");
         ok = (fp != NULL);
         if (ok) {
             ok = fseek(fp, 0, SEEK_END) == 0 && (size = ftell(fp)) > 0 &&
@@ -1071,7 +1077,8 @@ void lv_windowSaveLog(void) {
         }
     }
     if (ok) {
-        fp = fopen(fileName, "wb");
+        /* The dialog's path is UTF-8, on Windows too. */
+        fp = lvFopenUtf8(fileName, "wb");
         ok = (fp != NULL);
         if (ok) {
             ok = fwrite(copy, 1, len, fp) == len;

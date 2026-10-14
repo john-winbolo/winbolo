@@ -19,6 +19,9 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <shellapi.h>
+#include <limits.h>
+#include <wchar.h>
+#include "../lv_utf8_path.h"
 #else
 #include <SDL3/SDL.h>
 #endif
@@ -51,54 +54,121 @@ void lv_platform_dialogs_set_window(void *window) {
 
 #ifdef _WIN32
 
-/* Helper to build filter string for Windows dialogs */
-static void build_filter_string(char* filter, size_t filter_size,
-                                const char* name, const char* ext) {
-    /* Windows filter format: "Name\0*.ext\0" */
-    memset(filter, 0, filter_size);
-    snprintf(filter, filter_size - 2, "%s", name);
-    size_t name_len = strlen(name);
-    filter[name_len] = '\0';
-    snprintf(filter + name_len + 1, filter_size - name_len - 2, "%s", ext);
+/* The dialogs are the UTF-16 ones (GetOpenFileNameW, GetSaveFileNameW): the
+ * text that goes in is UTF-8 and the path that comes back is UTF-8, so a
+ * name with a letter outside the system's code page is shown right and
+ * comes back whole. The caller opens the path with lvFopenUtf8. */
+
+/* Text for a dialog as UTF-16. It is UTF-8; text that is not good UTF-8 (a
+ * map's name out of an old log can be in any code page) is read in the
+ * system's code page, as the dialogs read all text before. False, with out
+ * empty, for no text and for text that does not go in. */
+static int dlg_to_wide(const char *text, WCHAR *out, size_t out_count) {
+    if (out == NULL || out_count == 0) return 0;
+    out[0] = L'\0';
+    if (text == NULL) return 0;
+    if (lvUtf8ToWide(text, out, out_count)) return 1;
+    if (out_count <= (size_t)INT_MAX &&
+        MultiByteToWideChar(CP_ACP, 0, text, -1, out, (int)out_count) > 0) {
+        return 1;
+    }
+    out[0] = L'\0';
+    return 0;
 }
 
-int lv_platform_dialog_open_file(const char* title, 
-                              const char* filter_name,
-                              const char* filter_ext,
-                              const char* default_ext,
-                              char* out_path, 
-                              size_t out_size,
-                              const char* initial_dir) {
-    OPENFILENAMEA ofn;
-    char filter[256];
-    
+/* The filter of a Windows dialog: "Name\0*.ext\0\0". False when the two do
+ * not go in; the dialog then shows every file. */
+static int build_filter_string(WCHAR *filter, size_t filter_count,
+                               const char *name, const char *ext) {
+    size_t name_len;
+    if (filter_count < 4) return 0;
+    memset(filter, 0, filter_count * sizeof(WCHAR));
+    /* Room is kept for the two ends after the extension. */
+    if (!dlg_to_wide(name, filter, filter_count - 3)) return 0;
+    name_len = wcslen(filter);
+    if (!dlg_to_wide(ext, filter + name_len + 1, filter_count - name_len - 2)) {
+        memset(filter, 0, filter_count * sizeof(WCHAR));
+        return 0;
+    }
+    return 1;
+}
+
+/* The open dialog (save 0) or the save dialog. */
+static int win_file_dialog(int save,
+                           const char *title,
+                           const char *filter_name,
+                           const char *filter_ext,
+                           const char *default_ext,
+                           const char *default_name,
+                           char *out_path,
+                           size_t out_size,
+                           const char *initial_dir) {
+    OPENFILENAMEW ofn;
+    WCHAR filter[256];
+    WCHAR wtitle[256];
+    WCHAR wext[32];
+    WCHAR wdir[LV_UTF8_PATH_WIDE_MAX];
+    WCHAR wpath[LV_UTF8_PATH_WIDE_MAX];
+    BOOL chosen;
+
     if (!g_initialized) return PLATFORM_DIALOG_ERROR;
-    
+    if (out_path == NULL || out_size == 0) return PLATFORM_DIALOG_ERROR;
+
     memset(&ofn, 0, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = NULL;  /* No parent window for now */
     ofn.hInstance = NULL;
-    
-    build_filter_string(filter, sizeof(filter), filter_name, filter_ext);
-    ofn.lpstrFilter = filter;
+
+    ofn.lpstrFilter = build_filter_string(filter, sizeof(filter) / sizeof(filter[0]),
+                                          filter_name, filter_ext) ? filter : NULL;
     ofn.lpstrCustomFilter = NULL;
     ofn.nFilterIndex = 1;
-    
-    ofn.lpstrFile = out_path;
-    out_path[0] = '\0';
-    ofn.nMaxFile = (DWORD)min(out_size, (size_t)MAXDWORD);
-    
+
+    /* The name offered. One that does not go in is not offered. The caller
+       can offer it in the buffer the path comes back in (Save Map does):
+       it is read here, before that buffer is written. */
+    if (!save || !dlg_to_wide(default_name, wpath, LV_UTF8_PATH_WIDE_MAX)) {
+        wpath[0] = L'\0';
+    }
+    ofn.lpstrFile = wpath;
+    ofn.nMaxFile = LV_UTF8_PATH_WIDE_MAX;
+
     ofn.lpstrFileTitle = NULL;
     ofn.nMaxFileTitle = 0;
-    ofn.lpstrInitialDir = initial_dir;
-    ofn.lpstrTitle = title;
-    ofn.Flags = OFN_HIDEREADONLY | OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-    ofn.lpstrDefExt = default_ext;
-    
-    if (GetOpenFileNameA(&ofn)) {
-        return PLATFORM_DIALOG_OK;
+    ofn.lpstrInitialDir = dlg_to_wide(initial_dir, wdir, LV_UTF8_PATH_WIDE_MAX) ? wdir : NULL;
+    ofn.lpstrTitle = dlg_to_wide(title, wtitle, sizeof(wtitle) / sizeof(wtitle[0]))
+                         ? wtitle : NULL;
+    ofn.lpstrDefExt = dlg_to_wide(default_ext, wext, sizeof(wext) / sizeof(wext[0]))
+                          ? wext : NULL;
+    if (save) {
+        ofn.Flags = OFN_HIDEREADONLY | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+        chosen = GetSaveFileNameW(&ofn);
+    } else {
+        ofn.Flags = OFN_HIDEREADONLY | OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+        chosen = GetOpenFileNameW(&ofn);
     }
-    return PLATFORM_DIALOG_CANCEL;
+    if (!chosen) {
+        if (!save) out_path[0] = '\0';
+        return PLATFORM_DIALOG_CANCEL;
+    }
+    wpath[LV_UTF8_PATH_WIDE_MAX - 1] = L'\0';
+    if (!lvWideToUtf8(wpath, out_path, out_size)) {
+        /* The path does not go in the caller's buffer. Part of a path is
+           the path of another file, so none is given. */
+        return PLATFORM_DIALOG_ERROR;
+    }
+    return PLATFORM_DIALOG_OK;
+}
+
+int lv_platform_dialog_open_file(const char* title,
+                              const char* filter_name,
+                              const char* filter_ext,
+                              const char* default_ext,
+                              char* out_path,
+                              size_t out_size,
+                              const char* initial_dir) {
+    return win_file_dialog(0, title, filter_name, filter_ext, default_ext, NULL,
+                           out_path, out_size, initial_dir);
 }
 
 int lv_platform_dialog_save_file(const char* title,
@@ -109,46 +179,8 @@ int lv_platform_dialog_save_file(const char* title,
                               char* out_path,
                               size_t out_size,
                               const char* initial_dir) {
-    OPENFILENAMEA ofn;
-    char filter[256];
-    
-    if (!g_initialized) return PLATFORM_DIALOG_ERROR;
-    
-    memset(&ofn, 0, sizeof(ofn));
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = NULL;
-    ofn.hInstance = NULL;
-    
-    build_filter_string(filter, sizeof(filter), filter_name, filter_ext);
-    ofn.lpstrFilter = filter;
-    ofn.lpstrCustomFilter = NULL;
-    ofn.nFilterIndex = 1;
-    
-    ofn.lpstrFile = out_path;
-    if (default_name == out_path) {
-        /* The caller offers the name in the buffer the path comes back
-           in (Save Map does): it is there already, and strncpy onto
-           itself is not allowed. */
-        out_path[out_size - 1] = '\0';
-    } else if (default_name) {
-        strncpy(out_path, default_name, out_size - 1);
-        out_path[out_size - 1] = '\0';
-    } else {
-        out_path[0] = '\0';
-    }
-    ofn.nMaxFile = (DWORD)min(out_size, (size_t)MAXDWORD);
-    
-    ofn.lpstrFileTitle = NULL;
-    ofn.nMaxFileTitle = 0;
-    ofn.lpstrInitialDir = initial_dir;
-    ofn.lpstrTitle = title;
-    ofn.Flags = OFN_HIDEREADONLY | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
-    ofn.lpstrDefExt = default_ext;
-    
-    if (GetSaveFileNameA(&ofn)) {
-        return PLATFORM_DIALOG_OK;
-    }
-    return PLATFORM_DIALOG_CANCEL;
+    return win_file_dialog(1, title, filter_name, filter_ext, default_ext, default_name,
+                           out_path, out_size, initial_dir);
 }
 
 int lv_platform_dialog_message(const char* title, const char* message) {

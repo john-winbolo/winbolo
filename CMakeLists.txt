@@ -4648,6 +4648,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # by name and the bots as a count
     # (lv_save_name.h, header only).
     tests/unit/test_lv_save_name.c
+    # File paths as UTF-8 on every system: what the viewer's file dialogs
+    # give back and how the viewer opens it (lv_utf8_path.h, header only).
+    tests/unit/test_lv_utf8_path.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -6942,6 +6945,7 @@ set(_unit_test_names
     lv_controls_top_row
     lv_controls_bottom_row
     lv_controls_wheel_step
+    lv_controls_fine_drag
     lv_zoom_percent
     lv_fullscreen_key
     lv_event_scan_returns_to_start
@@ -6951,6 +6955,7 @@ set(_unit_test_names
     lv_save_name_long
     lv_save_name_roster
     lv_save_name_scan
+    lv_utf8_path
     lv_kill_tally_seek_back
     lv_alive_seek_back
     lv_death_time_seek_back

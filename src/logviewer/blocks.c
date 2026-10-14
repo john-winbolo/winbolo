@@ -25,6 +25,7 @@
 #include "scripts_record.h"   /* SCRIPTS_RECORD_MEMBER, SCN_RECORD_TEXT_MAX */
 #include "unzip.h"
 #include "ioapi.h"
+#include "lv_utf8_path.h"
 
 /* Initial decompression buffer capacity (256 KB) */
 #define LOG_INITIAL_CAPACITY (256 * 1024)
@@ -204,8 +205,20 @@ const char *lv_blocksGetScriptsJson(size_t *len) {
   return scriptsJson;
 }
 
+/* The open of a log's file for minizip: its own open (ioapi.c), with
+ * lvFopenUtf8 in the place of fopen. The log is only read. */
+static voidpf ZCALLBACK lv_blocksOpenUtf8(voidpf opaque, const void *filename, int mode) {
+  (void)opaque;
+  if (filename == NULL ||
+      (mode & ZLIB_FILEFUNC_MODE_READWRITEFILTER) != ZLIB_FILEFUNC_MODE_READ) {
+    return NULL;
+  }
+  return lvFopenUtf8((const char *)filename, "rb");
+}
+
 /* Size parameter is ignored -- we buffer the whole file. */
 bool lv_blocksCreate(char *fileName, int size) {
+  zlib_filefunc64_def pathFuncs;
   (void)size;
   logMaxSize  = LOG_MAX_SIZE;   /* the user chose this file */
   blockKey    = 0;
@@ -221,7 +234,11 @@ bool lv_blocksCreate(char *fileName, int size) {
   sourcePath[0] = 0;
   lv_blocksDropScriptsJson();
 
-  logFile = unzOpen(fileName);
+  /* As unzOpen, but for the open of the file itself: the path is UTF-8 when
+   * it comes from the Open File dialog, on Windows too. */
+  fill_fopen64_filefunc(&pathFuncs);
+  pathFuncs.zopen64_file = lv_blocksOpenUtf8;
+  logFile = unzOpen2_64(fileName, &pathFuncs);
   if (logFile == NULL) return FALSE;
 
   if (unzLocateFile(logFile, "log.dat", 0) != UNZ_OK) {
