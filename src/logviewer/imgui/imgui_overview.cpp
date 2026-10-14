@@ -414,7 +414,9 @@ static void overview_table(const LvOverview &ov, float width) {
 }
 
 /* One share bar, width wide: the icon of the kind, then a bar cut into the
- * part each team owns, in team order, with the part nobody owns last. */
+ * part each team owns, in team order, with the part nobody owns last. The
+ * mouse over a part draws a white line round it and says how many that is
+ * and whose: "3 pillboxes (Rider, ErYan)". */
 static void overview_share_bar(const LvOverview &ov, bool isBase, float width) {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const ImGuiStyle &style = ImGui::GetStyle();
@@ -428,6 +430,11 @@ static void overview_share_bar(const LvOverview &ov, bool isBase, float width) {
     float x1 = floorf(p.x + width);
     float y0 = floorf(p.y + (icon - OVERVIEW_BAR_H) * 0.5f);
     float y1 = y0 + OVERVIEW_BAR_H;
+    ImGui::Dummy(ImVec2(width, icon));
+    const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip);
+    const float mouseX = ImGui::GetIO().MousePos.x;
+    int hoverPart = -1, hoverCount = 0;
+    float hoverFrom = 0.0f, hoverTo = 0.0f;
     if (x1 - x0 >= 8.0f) {
         dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), ImGui::GetColorU32(ImGuiCol_FrameBg));
         /* Each part ends where the running count says, so the parts meet
@@ -445,12 +452,30 @@ static void overview_share_bar(const LvOverview &ov, bool isBase, float width) {
                 dl->AddRectFilled(ImVec2(from, y0), ImVec2(to, y1),
                                   neutral ? overview_neutral_colour()
                                           : overview_team_colour(ov.rows[i].colour));
+                if (hovered && mouseX >= from && mouseX < to) {
+                    hoverPart = i;
+                    hoverCount = count;
+                    hoverFrom = from;
+                    hoverTo = to;
+                }
             }
             from = to;
         }
     }
-    ImGui::Dummy(ImVec2(width, icon));
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+    if (hoverPart >= 0) {
+        /* Over the parts beside it, so the line shows on both sides. */
+        dl->AddRect(ImVec2(hoverFrom - 1.0f, y0 - 1.0f), ImVec2(hoverTo + 1.0f, y1 + 1.0f),
+                    IM_COL32(255, 255, 255, 255), 0.0f, 0, 2.0f);
+        MessageArgs args = {};
+        args.number = hoverCount;
+        const int id = isBase ? (hoverCount == 1 ? STR_LV_OVERVIEW_BAR_BASE : STR_LV_OVERVIEW_BAR_BASES)
+                              : (hoverCount == 1 ? STR_LV_OVERVIEW_BAR_PILL : STR_LV_OVERVIEW_BAR_PILLS);
+        char what[LANG_MSGARG_STRING_LEN];
+        snprintf(what, sizeof(what), "%s", langGetTextFmt(id, &args));
+        const char *whose = (hoverPart == ov.rowCount) ? langGetText(STR_MAPEDIT_OWNER_NEUTRAL)
+                                                       : ov.rows[hoverPart].names;
+        ImGui::SetTooltip("%s (%s)", what, whose);
+    } else if (hovered) {
         ImGui::SetTooltip("%s", langGetText(isBase ? STR_TABLET_BASES : STR_TABLET_PILLBOXES));
     }
 }

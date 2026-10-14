@@ -1326,6 +1326,10 @@
 #define STR_LV_WIN_OVERVIEW                 2820
 #define STR_LV_OVERVIEW_TOTAL               2821
 #define STR_LV_OVERVIEW_MORE                2822
+#define STR_LV_OVERVIEW_BAR_PILL            2862
+#define STR_LV_OVERVIEW_BAR_PILLS           2863
+#define STR_LV_OVERVIEW_BAR_BASE            2864
+#define STR_LV_OVERVIEW_BAR_BASES           2865
 /* The viewer's Tank panel: its name, the hint with no tank selected, a
    gauge as numbers (string1 its name, number what the tank holds, number2
    the most it can hold), the three states of the builder, the pillboxes the
