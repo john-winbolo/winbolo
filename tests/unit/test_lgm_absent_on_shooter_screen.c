@@ -29,12 +29,12 @@
  *                                   branch of shellsBlastTestBuilder turned
  *                                   back into a lgmDeathCheck call, the two
  *                                   "must live" checks here fail.
- * lgm_kill_rewound_position       — out on both frames. A blast that is
- *                                   not on a hit tank tests him where he
- *                                   was: at the old place it kills, only at
- *                                   the new place it does not. A blast on a
- *                                   hit tank is where the tank is now and
- *                                   tests him where he is now: it kills.
+ * lgm_kill_rewound_position       — out on both frames. Every blast of a
+ *                                   player's shell tests him where he was:
+ *                                   at the old place it kills, only at the
+ *                                   new place it does not, and that holds
+ *                                   for a blast on a hit tank as for one at
+ *                                   the end of a shell's life.
  * lgm_kill_pill_shell_present     — a pill's shell carries no rewind and
  *                                   kills a builder who has just left the
  *                                   tank where he is now.
@@ -67,8 +67,10 @@
  * lgm_kill_seen_out_already_dead  — a second blast on a builder who is
  *                                   already flying back in is no second
  *                                   death.
- * lgm_kill_seen_out_tank_hit_blast — a blast on his own hit tank tests him
- *                                   as he is now: in the tank he lives.
+ * lgm_kill_seen_out_tank_hit_blast — a blast on his own hit tank is no
+ *                                   exception: seen out inside it he dies,
+ *                                   on the tank; seen out two squares from
+ *                                   it he lives, in the tank.
  * lgm_kill_seen_out_dead_tank     — his tank is dead now: he is left alone.
  *
  * Every builder case runs at both places a shell explodes: the end of its
@@ -476,11 +478,9 @@ int run_lgm_kill_rewound_position(void) {
                             "not kill him");
     }
 
-    /* A blast only where he is now. At the end of a shell's life it does
-     * not kill: the shooter saw him elsewhere. On a hit tank it does: that
-     * blast is where the tank is now, so the builder is tested where he is
-     * now, 16 from it. The shooter's screen did show a builder, which is all
-     * it is asked for a blast on a tank. */
+    /* A blast only where he is now: at the end of a shell's life, and on his
+     * own tank, which the shell hits 16 from him. Neither kills: the shooter
+     * saw him two squares away. What the shell hit makes no difference. */
     for (s = LAS_SITE_EXPIRY; s <= LAS_SITE_COLLISION && rc == 0; s++) {
         LasSite site = (LasSite)s;
         rc = las_send_out(&f);
@@ -490,16 +490,10 @@ int run_lgm_kill_rewound_position(void) {
         rc = las_explode(&f, site, man->x, man->y, LAS_SHOOTER, DMG_NO_PILL,
                          LAS_COMP, &died);
         if (rc != 0) break;
-        if (site == LAS_SITE_EXPIRY) {
-            UT_ASSERT_MSG(!died,
-                          "%s: a blast where the builder is now killed him, "
-                          "but the shooter saw him two squares away",
-                          las_site_name(site));
-        } else {
-            UT_ASSERT_MSG(died,
-                          "%s: a blast on the hit tank did not kill the "
-                          "builder who is 16 from it now", las_site_name(site));
-        }
+        UT_ASSERT_MSG(!died,
+                      "%s: a blast where the builder is now killed him, "
+                      "but the shooter saw him two squares away",
+                      las_site_name(site));
     }
 
     las_close(&f);
@@ -904,10 +898,26 @@ int run_lgm_kill_seen_out_tank_hit_blast(void) {
     int rc = las_open(&f);
     bool died = false;
 
-    /* The shell hits his tank. The shooter's screen had him out, but a blast
-     * on a hit tank tests him as he is now, and he is in the tank. The old
-     * place is put 16 from the tank's centre, so that the blast on the tank
-     * is well inside the half square of it. */
+    /* The shell hits his tank. The shooter's screen had him out two squares
+     * east of it: the blast on the tank is nowhere near that, and he lives,
+     * in the tank. */
+    if (rc == 0) {
+        las_put_in_tank(&f);
+        las_history_back_in(&f, POSITION_HISTORY_SIZE - LAS_REWIND, LAS_REWIND);
+        rc = las_explode(&f, LAS_SITE_COLLISION, 0, 0, LAS_SHOOTER,
+                         DMG_NO_PILL, LAS_COMP, &died);
+    }
+    if (rc == 0) {
+        UT_ASSERT_MSG(!died, "a blast on the hit tank killed the builder "
+                             "inside it, but the shooter saw him two squares "
+                             "away");
+        rc = las_check_untouched(&f, "blast on the hit tank, seen far off");
+    }
+
+    /* The same shell, and the shooter's screen had him out 16 from the
+     * tank's centre, well inside the half square of the blast on the tank.
+     * A blast on a hit tank is a blast like any other: he dies, though he is
+     * in the tank now, and he dies on the tank. */
     if (rc == 0) {
         las_put_in_tank(&f);
         f.oldX = (WORLD)(f.midX + 16);
@@ -916,23 +926,36 @@ int run_lgm_kill_seen_out_tank_hit_blast(void) {
                          DMG_NO_PILL, LAS_COMP, &died);
     }
     if (rc == 0) {
-        UT_ASSERT_MSG(!died, "a blast on the hit tank killed the builder "
-                             "inside it");
-        rc = las_check_untouched(&f, "blast on the hit tank");
+        lgm man = f.gs->lgmen[LAS_BUILDER];
+        GameEvent ev;
+
+        memset(&ev, 0, sizeof(ev));
+        UT_ASSERT_MSG(died, "the shooter's screen showed the builder out, 16 "
+                            "from where the shell hit his tank, and he lived "
+                            "because he is back in the tank");
+        UT_ASSERT_MSG(man->inTank == FALSE,
+                      "the dead builder still reads as in the tank");
+        UT_ASSERT_MSG(las_lost_events(&f, &ev) == 1,
+                      "%d builder losses were sent, expected 1",
+                      las_lost_events(&f, NULL));
+        UT_ASSERT_MSG(ev.data[0] == LAS_BUILDER && ev.data[1] == LAS_SHOOTER &&
+                      ev.data[3] == f.cx && ev.data[4] == f.cy,
+                      "the loss names victim %u, killer %u, square (%u,%u)",
+                      (unsigned)ev.data[0], (unsigned)ev.data[1],
+                      (unsigned)ev.data[3], (unsigned)ev.data[4]);
     }
 
-    /* The same history and a blast on the tank's centre at the end of a
-     * shell's life: that one is tested on the shooter's screen and kills. So
-     * the case above is one the blast would have killed in. */
+    /* A pill's shell that hits the tank, with the same history: it is not
+     * rewound, he is in the tank now, and he lives. */
     if (rc == 0) {
         las_put_in_tank(&f);
         las_history_back_in(&f, POSITION_HISTORY_SIZE - LAS_REWIND, LAS_REWIND);
-        rc = las_explode(&f, LAS_SITE_EXPIRY, f.midX, f.midY, LAS_SHOOTER,
-                         DMG_NO_PILL, LAS_COMP, &died);
+        rc = las_explode(&f, LAS_SITE_COLLISION, 0, 0, NEUTRAL, 0, 0, &died);
     }
     if (rc == 0) {
-        UT_ASSERT_MSG(died, "the same blast at the end of a shell's life did "
-                            "not kill the builder");
+        UT_ASSERT_MSG(!died, "a pill's shell on the hit tank killed the "
+                             "builder inside it");
+        rc = las_check_untouched(&f, "pill's shell on the hit tank");
     }
 
     las_close(&f);

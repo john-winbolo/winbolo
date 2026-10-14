@@ -1876,15 +1876,25 @@ void lgmDeathCheck(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, BYT
 *
 *  A man inside a tank that is itself dead is left alone. He
 *  went down with the tank and it has no present place to
-*  put the death at.
+*  put the death at. The shell that has just killed the tank
+*  is no exception: its blast does not kill him a second
+*  time.
+*
+*  The man's place and the explosion's place must be from
+*  the same moment: both as the attacker's screen had them.
+*  A shell that hit a tank is drawn where the tank is now,
+*  but that is not the point to hand in here; the point the
+*  shell reached on the attacker's screen is (shells.c,
+*  shellsBlastTestBuilder).
 *
 *ARGUMENTS:
 *  sim       - Pointer to the game sim structure
 *  lgman     - Pointer to the lgm pointer
 *  lgmWorldX - Where the attacker's screen showed him, X
 *  lgmWorldY - Where the attacker's screen showed him, Y
-*  wx        - X World co ord of explosion
-*  wy        - Y World co ord of explosion
+*  wx        - X World co ord of the explosion, as the
+*              attacker's screen had it
+*  wy        - Y World co ord of the explosion, likewise
 *  owner     - Who is credited with the kill
 *  attacker  - Who the can_die question names
 *  cause     - The DMG_SRC_* the can_die question is handed

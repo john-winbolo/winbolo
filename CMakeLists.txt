@@ -5687,8 +5687,12 @@ set(_unit_test_names
     tank_blast_kill_starts_at_present_tank
     tank_blast_zero_rewind_unchanged
     tank_blast_hit_decision_unchanged
-    tank_blast_builder_at_present_tank
+    tank_blast_builder_on_shooter_screen
     tank_blast_absent_builder_lives
+    tank_blast_builder_back_in_tank
+    tank_blast_pill_shell_builder_now
+    tank_blast_no_record_builder_now
+    shell_blast_pill_hit_on_shooter_screen
     teleport_erases_tank_rewind_record
     teleport_shell_hits_new_place
     teleport_rewind_refills

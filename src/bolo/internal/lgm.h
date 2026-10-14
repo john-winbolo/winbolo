@@ -522,15 +522,18 @@ void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, W
 *  inside his tank now: he dies on the tank's present
 *  centre, through lgmKill. A man who is out now, or dead,
 *  goes through lgmDeathCheckAtPosition unchanged. A man
-*  inside a tank that is itself dead is left alone.
+*  inside a tank that is itself dead is left alone. The
+*  man's place and the explosion's place are both as the
+*  attacker's screen had them, whatever the shell hit.
 *
 *ARGUMENTS:
 *  sim    - Pointer to the game sim structure
 *  lgman  - Pointer to the lgm pointer
 *  lgmWorldX - Where the attacker's screen showed him, X
 *  lgmWorldY - Where the attacker's screen showed him, Y
-*  wx     - X World co ord of explosion
-*  wy     - Y World co ord of explosion
+*  wx     - X World co ord of the explosion, as the
+*           attacker's screen had it
+*  wy     - Y World co ord of the explosion, likewise
 *  owner  - Who is credited with the kill
 *  attacker - Who the can_die question names
 *  cause  - The DMG_SRC_* the can_die question is handed

@@ -2684,8 +2684,14 @@ int run_tank_blast_rewound_hit_at_present_tank(void);
 int run_tank_blast_kill_starts_at_present_tank(void);
 int run_tank_blast_zero_rewind_unchanged(void);
 int run_tank_blast_hit_decision_unchanged(void);
-int run_tank_blast_builder_at_present_tank(void);
+/* Whether that blast kills a builder is decided on the shooter's screen, not
+ * by where it is drawn (the same file). */
+int run_tank_blast_builder_on_shooter_screen(void);
 int run_tank_blast_absent_builder_lives(void);
+int run_tank_blast_builder_back_in_tank(void);
+int run_tank_blast_pill_shell_builder_now(void);
+int run_tank_blast_no_record_builder_now(void);
+int run_shell_blast_pill_hit_on_shooter_screen(void);
 int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
 int run_teleport_rewind_refills(void);
