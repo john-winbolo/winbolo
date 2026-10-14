@@ -3008,6 +3008,12 @@ local function start_order(state, world, info, spec, who, now, want)
   o.auctions[spec.oid] = {
     spec = spec, open = now, bids = {}, answered = {}, want = want or 1,
   }
+  -- 2026-10-14 (PR #510 review item 2): the order line's slot count stays
+  -- on the known record after the auction settles, so an offer (obo) of a
+  -- count line ("4 attack 5") re-opens its auction for all of its slots.
+  -- A ping keeps its count on the anchor instead.
+  local kw = o.known[spec.oid]
+  if kw and (want or 1) > (kw.want or 1) then kw.want = want end
   M.merge_early_bids(o, spec.oid, now)
   local bid = cost and math.floor(math.min(cost, 999999))
               or (busy and M.BID_BUSY or -1)
@@ -4260,8 +4266,10 @@ end
 --      for Y".
 -- Every other way out:
 --   * OLD ends first (done, cancelled, lost a tiebreak): NEW is taken now.
---   * NEW is cancelled, or another bot claims it: the handoff is called off,
---     OLD is kept and claimed again (obc OLD), which closes the relief.
+--   * NEW is cancelled, or other bots' claims fill all of its slots: the
+--     handoff is called off, OLD is kept and claimed again (obc OLD), which
+--     closes the relief.  Other claims below the slot count (an order for
+--     several bots) are the other slots: this bot keeps waiting for cover.
 --   * busy when the wait runs out (a pill take began on OLD): called off the
 --     same way, and NEW is offered on (obo) for a free bot.
 --   * this bot dies: NEW is offered on (obo) and OLD is released as on any
@@ -4292,13 +4300,14 @@ end
 -- chain = nil for the bot that starts a chain, else the chain of the relief
 -- this bot won ({ hop, mask, root, asker } with hop and mask already
 -- counting this bot); cover_for = the asker's name for the line.
-function M.handoff_start(state, spec, cost, now, group, terms, chain, cover_for)
+-- want = the number of bots NEW is for (the auction's slot count; nil = 1).
+function M.handoff_start(state, spec, cost, now, group, terms, chain, cover_for, want)
   local o = S(state)
   local h = o.held
   local me = state.player_number
   local ch = chain or { hop = 1, mask = chain_bit(me), root = spec.oid }
   o.handoff = { new_oid = spec.oid, old_oid = h.oid, spec = spec, cost = cost,
-                since = now, group = group, terms = terms,
+                since = now, group = group, terms = terms, want = want or 1,
                 hop = ch.hop, mask = ch.mask, root = ch.root,
                 asker = chain and chain.asker or nil,
                 promised = chain and true or nil }
@@ -4347,6 +4356,24 @@ local function handoff_keep_old(state, why, now, offered)
          now, hf.new_oid, hf.old_oid, why))
 end
 
+-- How many OTHER bots claim NEW, and how many slots NEW has.  The bot that
+-- asked THIS bot for cover (a chain) still holds NEW until it hears the
+-- promise, so its claim is not counted.  The slot count is the largest of
+-- the auction's (kept on the handoff), the ping's (a repeat ping adds a
+-- slot later) and the order line's (o.known, a count line).
+function M.handoff_slots(o, hf, me)
+  local others = 0
+  for pn in pairs(o.gclaims[hf.new_oid] or {}) do
+    if pn ~= me and pn ~= hf.asker then others = others + 1 end
+  end
+  local want = hf.want or 1
+  local anc = o.anchors and o.anchors[hf.new_oid]
+  if anc and (anc.want or 1) > want then want = anc.want end
+  local k = o.known and o.known[hf.new_oid]
+  if k and (k.want or 1) > want then want = k.want end
+  return others, want
+end
+
 function M.handoff_step(state, world, info, now)
   local o = state.orders
   local hf = o and o.handoff
@@ -4354,12 +4381,14 @@ function M.handoff_step(state, world, info, now)
   local me = state.player_number
   local h  = o.held
   local k  = o.known[hf.new_oid]
-  local other = false
-  for pn in pairs(o.gclaims[hf.new_oid] or {}) do
-    -- The bot that asked THIS bot for cover still holds NEW until it hears
-    -- the promise: that claim is not a rival.
-    if pn ~= me and pn ~= hf.asker then other = true end
-  end
+  -- 2026-10-14 (Andrew, PR #510 review item 2): NEW IS TAKEN ONLY WHEN ITS
+  -- SLOTS ARE FULL.  An order for several bots ("4 attack 5", a repeat
+  -- ping) has the other winners claim the other slots while this bot waits
+  -- for cover.  Those claims are not rivals: NEW is taken only when the
+  -- other claims fill every slot.  Below that, this bot keeps waiting for
+  -- cover (and takes NEW when it is relieved).
+  local others, want = M.handoff_slots(o, hf, me)
+  local other = others >= want
   if not k or other then
     if hf.relieved and h and h.oid == hf.old_oid then
       -- Relieved, but NEW is gone: the bot that claimed OLD keeps it, and
@@ -4393,6 +4422,9 @@ function M.handoff_step(state, world, info, now)
   end
   if now - hf.since >= (C.ORDER_HANDOFF_WAIT_TICKS or 0) then
     if M.busy(state, info) then
+      -- NEW still has a free slot here (a full NEW ended the handoff
+      -- above), so it is offered on (obo) for a free bot.  offered = true:
+      -- a chained reliever's promise comes off with the obo, no obr.
       local nid = hf.new_oid
       handoff_keep_old(state, "busy at timeout", now, true)
       tx(state, string.format("/info obo %d", nid))
@@ -4622,7 +4654,7 @@ function M.update(state, world, info, now)
         end
         o.auctions[r.oid] = { spec = k.spec, open = now, bids = {},
                               answered = {},
-                              want = r.offer and anc and anc.want or nil,
+                              want = r.offer and ((anc and anc.want) or k.want) or nil,
                               relief = r.relief or nil, hand = hand,
                               terms = terms,
                               chain = r.relief and { hop = r.hop or 1,
@@ -4738,9 +4770,10 @@ function M.update(state, world, info, now)
               M.handoff_start(state, a.spec, rank[i].c, now, want > 1, a.terms,
                               { hop = ch.hop + 1, mask = bit.bor(ch.mask, chain_bit(me)),
                                 root = ch.root, asker = ch.asker },
-                              player_name(info, ch.asker))
+                              player_name(info, ch.asker), want)
             else
-              M.handoff_start(state, a.spec, rank[i].c, now, want > 1, a.terms)
+              M.handoff_start(state, a.spec, rank[i].c, now, want > 1, a.terms,
+                              nil, nil, want)
             end
           elseif M.holds_job(state) and o.held.oid ~= oid then
             offer = true

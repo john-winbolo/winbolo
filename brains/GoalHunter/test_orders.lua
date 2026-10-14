@@ -6748,6 +6748,107 @@ do
   check("another bot claimed Z: A keeps X", held(a) == x and a.st.orders.handoff == nil,
         tostring(held(a)))
 
+  -- 2026-10-14 (PR #510 review item 2): Z IS FOR SEVERAL BOTS.  The other
+  -- winners' claims on Z fill the other slots; they are not rivals.  The
+  -- handoff reads Z's slot count (here the ping anchor: a 4-slot ping).
+  print("orders.lua -- bot order bids: a handoff onto an order for several bots")
+  check("a one-bot Z: the handoff keeps want 1", (function()
+          local a0, _, al0 = rig(); al0[2].st.stuck_for = 10000
+          new_ping(al0, 300); run(al0, 301, 305)
+          return a0.st.orders.handoff ~= nil and a0.st.orders.handoff.want == 1
+        end)(), "?")
+  local function claims_on(q, oid, pns, t)
+    for _, pn in ipairs(pns) do ORD.rx(pn, "/info obc " .. oid .. " 10", t, q.st) end
+  end
+  local function out_has(q, line)
+    for _, m in ipairs(q.st.orders.out or {}) do if m == line then return true end end
+    return false
+  end
+  -- (a) 4 slots, 3 other claims: A keeps waiting, then goes on the relief.
+  a, bb, all, x = rig(); bb.st.stuck_for = 10000
+  z = new_ping(all, 300); run(all, 301, 320)
+  a.st.orders.anchors[z].want = 4
+  claims_on(a, z, { 3, 4, 5 }, 321)
+  run(all, 322, 330)
+  check("4-slot Z, 3 other claims: A still waits on Z and holds X",
+        held(a) == x and a.st.orders.handoff ~= nil
+        and a.st.orders.handoff.new_oid == z, tostring(held(a)))
+  ORD.rx(2, "/info obc " .. x .. " 10", 331, a.st)
+  run(all, 332, 335)
+  check("4-slot Z, 3 other claims: the relief comes and A takes Z",
+        held(a) == z and a.st.orders.handoff == nil, tostring(held(a)))
+  -- (b) The relief and the other claims land in the same pass.
+  a, bb, all, x = rig(); bb.st.stuck_for = 10000
+  z = new_ping(all, 300); run(all, 301, 320)
+  a.st.orders.anchors[z].want = 4
+  claims_on(a, z, { 3, 4, 5 }, 321)
+  ORD.rx(2, "/info obc " .. x .. " 10", 321, a.st)
+  upd({ a }, 322)
+  check("relief in the same pass, Z has a free slot: A takes Z (not nothing)",
+        held(a) == z and a.st.orders.handoff == nil, tostring(held(a)))
+  -- (c) Every slot full of other bots: A gives Z up and keeps X (as before).
+  a, bb, all, x = rig(); bb.st.stuck_for = 10000
+  z = new_ping(all, 300); run(all, 301, 320)
+  a.st.orders.anchors[z].want = 4
+  a.st.orders.out = {}
+  claims_on(a, z, { 3, 4, 5, 6 }, 321)
+  upd({ a }, 322)
+  check("4-slot Z full of other bots: A keeps X, no handoff",
+        held(a) == x and a.st.orders.handoff == nil, tostring(held(a)))
+  check("and Z is not offered on (no free slot)", not out_has(a, "/info obo " .. z),
+        table.concat(a.st.orders.out, " | "))
+  -- (d) A gives Z up with a free slot (busy at the timeout): Z is offered on
+  -- (obo), with no obr beside it.
+  a, bb, all, x = rig(); bb.st.stuck_for = 10000
+  z = new_ping(all, 300); run(all, 301, 320)
+  a.st.orders.anchors[z].want = 4
+  claims_on(a, z, { 3, 4 }, 321)
+  run(all, 322, 395)
+  local seen_obo, seen_obr = false, false
+  for tt = 396, 420 do
+    -- Shooting a pill (busy); ORD.update puts the order's goal back each
+    -- think, so the goal is set again before each one.
+    a.st.goal = { kind = "attack_pill", substate = "engage" }
+    a.st.orders.out = {}
+    upd({ a }, tt)
+    seen_obo = seen_obo or out_has(a, "/info obo " .. z)
+    seen_obr = seen_obr or out_has(a, "/info obr " .. z)
+  end
+  check("busy at the timeout with a free slot on Z: A keeps X",
+        held(a) == x and a.st.orders.handoff == nil, tostring(held(a)))
+  check("and offers Z on (obo), no obr", seen_obo and not seen_obr,
+        tostring(seen_obo) .. " " .. tostring(seen_obr))
+  -- The same as a chained reliever that promised Z: still one obo, no obr.
+  a, bb, all, x = rig(); bb.st.stuck_for = 10000
+  z = new_ping(all, 300); run(all, 301, 320)
+  a.st.orders.anchors[z].want = 4
+  a.st.orders.handoff.promised = true
+  a.st.orders.gclaims[z] = a.st.orders.gclaims[z] or {}
+  a.st.orders.gclaims[z][1] = 55
+  claims_on(a, z, { 3, 4 }, 321)
+  run(all, 322, 395)
+  seen_obo, seen_obr = false, false
+  for tt = 396, 420 do
+    a.st.goal = { kind = "attack_pill", substate = "engage" }
+    a.st.orders.out = {}
+    upd({ a }, tt)
+    seen_obo = seen_obo or out_has(a, "/info obo " .. z)
+    seen_obr = seen_obr or out_has(a, "/info obr " .. z)
+  end
+  check("a promised Z, busy at the timeout: obo, no obr, A keeps X",
+        seen_obo and not seen_obr and held(a) == x
+        and a.st.orders.gclaims[z][1] == nil,
+        tostring(seen_obo) .. " " .. tostring(seen_obr) .. " " .. tostring(held(a)))
+  -- A count line keeps its slot count on the known record, so an offer of
+  -- it re-opens the auction for every slot.
+  do
+    local q = BOT(1, 10, 10)
+    ORD.on_chat(q.st, q.w, q.inf, 0, "4 attack 5", 100, true, false)
+    local kw = nil
+    for _, kk in pairs(q.st.orders.known) do kw = kw or kk.want end
+    check("a count line ('4 attack 5') keeps want 4 on the known record", kw == 4, tostring(kw))
+  end
+
   -- A dies while it waits: Z is offered on.
   a, bb, all, x = rig(); bb.st.stuck_for = 10000
   z = new_ping(all, 300); run(all, 301, 320)
