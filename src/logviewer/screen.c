@@ -4779,6 +4779,30 @@ static void lv_scriptsLoadFromBlocks(void) {
   lv_scriptsParse(&g_lv->scripts, text, len);
 }
 
+/* Read the map name of the log header: one length byte, then that many name
+ * bytes. The length byte can state up to 255 and the field holds 63, so all
+ * the stated bytes are read into a local buffer, which leaves the read
+ * position on the byte after the name, and the name is cut to the field when
+ * it is stored. An empty name is valid (display-only field; the map data lives
+ * in the snapshot body) and is not read at all, because a zero-length read
+ * returns -1. Returns FALSE when the log ends inside the name. */
+static bool lv_logReadHeaderMapName(void) {
+  BYTE name[256];
+  BYTE dataLen = 0;
+  int len;
+
+  logReadBytes(&dataLen, 1);
+  if (dataLen > 0) {
+    len = logReadBytes(name, dataLen);
+    if (len != dataLen) {
+      g_lv->mapName[0] = '\0';
+      return FALSE;
+    }
+  }
+  lv_screenStoreMapName(name, dataLen);
+  return TRUE;
+}
+
 // Memory size in MB
 bool lv_logLoad(char *fileName, int memoryBufferSize) {
   char id[LENGTH_ID+1]; /* The map ID Should read "BMAPBOLO" */
@@ -4824,17 +4848,7 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
 
   /* Read map name */
   if (returnValue == TRUE) {
-    logReadBytes(&dataLen, 1);
-    /* An empty map name is valid (display-only field; the map data lives in the
-       snapshot body). Only read+check when there are name bytes — a zero-length
-       read returns -1, which would otherwise fail the load. */
-    if (dataLen > 0) {
-      len = logReadBytes((BYTE *)g_lv->mapName, dataLen);
-      if (len != dataLen) {
-        returnValue = FALSE;
-      }
-    }
-    g_lv->mapName[dataLen] = '\0';
+    returnValue = lv_logReadHeaderMapName();
   }
 
   /* Read game type, mines, ai, password, max players */
@@ -4983,17 +4997,7 @@ static bool lv_logLoadCommon(void) {
   }
 
   if (returnValue == TRUE) {
-    logReadBytes(&dataLen, 1);
-    /* An empty map name is valid (display-only field; the map data lives in the
-       snapshot body). Only read+check when there are name bytes — a zero-length
-       read returns -1, which would otherwise fail the load. */
-    if (dataLen > 0) {
-      len = logReadBytes((BYTE *)g_lv->mapName, dataLen);
-      if (len != dataLen) {
-        returnValue = FALSE;
-      }
-    }
-    g_lv->mapName[dataLen] = '\0';
+    returnValue = lv_logReadHeaderMapName();
   }
 
   if (returnValue == TRUE) {

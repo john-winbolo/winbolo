@@ -65,11 +65,13 @@ static void putZeros(LogBuf *b, size_t n) {
 
 /* File header, as lv_logLoad reads it: magic, version, map name, seven
  * settings bytes, ip4 + port, create time, WBN key. */
-static void putHeader(LogBuf *b) {
+static void putHeaderNamed(LogBuf *b, const char *mapName) {
+  uint8_t nameLen = (uint8_t)strlen(mapName);
+
   put(b, "WBOLOMOV", 8);
   putU8(b, LOG_VERSION_V2);
-  putU8(b, 4);
-  put(b, "Test", 4);
+  putU8(b, nameLen);
+  put(b, mapName, nameLen);
   putU8(b, 1);            /* game type */
   putU8(b, 0);            /* hidden mines */
   putU8(b, 0);            /* ai */
@@ -80,6 +82,8 @@ static void putHeader(LogBuf *b) {
   putZeros(b, 4);         /* create time (v2: no XOR seed) */
   putZeros(b, 32);        /* WBN key */
 }
+
+static void putHeader(LogBuf *b) { putHeaderNamed(b, "Test"); }
 
 /* One LOG_SNAPSHOT frame. withWorld=false is the lobby form the recorder
  * writes while the game world doesn't exist yet: no bases and no map runs.
@@ -857,6 +861,94 @@ int run_lv_map_name_absent(void) {
   lv_decoderDestroy(lv);
   remove(withPath);
   remove(withoutPath);
+  return 0;
+}
+
+/* What a log whose header names a map longer than the viewer's field has to
+ * show once it is loaded: the first 63 bytes of the name, nothing written past
+ * the field, and the records after the header read from the right place. The
+ * base anchors are the ones of run_lv_walk_base_anchor_opening_snapshot. */
+static int checkLongHeaderNameLoad(LogViewerState *lv, const char *longName,
+                                   const char *how) {
+  char got[64];
+  uint32_t msE = 0, msL = 0;
+  bool found;
+  int i;
+
+  lv_screenGetMapName(got);
+  UT_ASSERT_MSG(strlen(got) == sizeof(got) - 1 &&
+                    strncmp(got, longName, sizeof(got) - 1) == 0,
+                "%s: a long header map name came back %d characters long", how,
+                (int)strlen(got));
+  UT_ASSERT_MSG(lv->mapName[sizeof(lv->mapName) - 1] == '\0',
+                "%s: the map name field is not terminated", how);
+  /* Nothing sets logFileName, and it lies within the 200 bytes after the start
+     of mapName, so a name copied whole would land in it. */
+  UT_ASSERT_MSG(lv->logFileName[0] == '\0',
+                "%s: the header map name ran past its field", how);
+  UT_ASSERT_MSG(lv->gt == 1 && lv->maxPlayers == MAX_TANKS &&
+                    lv->versionMajor == 2 && lv->versionMinor == 0 &&
+                    lv->versionRevision == 2,
+                "%s: the header fields after the name read shifted", how);
+
+  found = lv_walkFindBaseOwnerTimes(10, 20, 2, 1, 30, 40, 3, 1, &msE, &msL);
+  UT_ASSERT_MSG(found == TRUE, "%s: the anchor walk found nothing", how);
+  UT_ASSERT_MSG(msE == 20, "%s: first anchor ms = %u (want 20)", how, msE);
+  UT_ASSERT_MSG(msL == 1060, "%s: last anchor ms = %u (want 1060)", how, msL);
+
+  for (i = 0; i < 200; i++) {
+    lv_screenLogTick();
+  }
+  lv_screenGetMapName(got);
+  UT_ASSERT_MSG(strlen(got) == sizeof(got) - 1 &&
+                    strncmp(got, longName, sizeof(got) - 1) == 0,
+                "%s: playback left the map name %d characters long", how,
+                (int)strlen(got));
+  return 0;
+}
+
+/*
+ * The header states its map name's length in one byte, so it can name up to
+ * 255 bytes, and the viewer's field holds 63. Such a header loads, by both the
+ * in-memory loader and the file loader, shows the name cut to the field, and
+ * plays back from the right place.
+ */
+int run_lv_map_name_long_header(void) {
+  const char *path = "lv_map_name_long_header.wbv";
+  LogBuf b;
+  LogViewerState *lv;
+  char longName[201];
+  int rc;
+
+  memset(longName, 'm', sizeof(longName) - 1);
+  longName[sizeof(longName) - 1] = '\0';
+
+  b.len = 0;
+  putHeaderNamed(&b, longName);
+  putSnapshot(&b, true);    /* opening snapshot carries the bases */
+  putBaseSetOwner(&b, 0, 2);
+  putNoEvents(&b, 50);
+  putBaseSetOwner(&b, 1, 3);
+  putU8(&b, LOG_QUIT);
+
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "the long header name log failed to build/load");
+  rc = checkLongHeaderNameLoad(lv, longName, "memory load");
+  if (rc != 0) {
+    return rc;
+  }
+
+  /* loadSynthetic left the .wbv on disk: the file loader reads the header
+     with its own copy of the same steps. */
+  UT_ASSERT_MSG(lv_screenLoadMap((char *)path, 4) == TRUE,
+                "the long header name log failed to load from its file");
+  rc = checkLongHeaderNameLoad(lv, longName, "file load");
+  if (rc != 0) {
+    return rc;
+  }
+
+  lv_decoderDestroy(lv);
+  remove(path);
   return 0;
 }
 

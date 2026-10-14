@@ -1368,6 +1368,7 @@ int run_lv_game_settings_absent(void);
  * log_MapName over it. A log with no such record shows the header's name. */
 int run_lv_map_name_from_walk(void);
 int run_lv_map_name_absent(void);
+int run_lv_map_name_long_header(void);
 
 /* Replay camera range (test_lv_camera.c): the tile fetch casts the column to
  * a BYTE, so a view whose left edge plus width passes 255 wraps and draws the
