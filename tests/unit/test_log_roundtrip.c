@@ -37,6 +37,7 @@
 #include "game_sim.h"       /* GameSim.tanks — set the stocks a snapshot records */
 #include "tank.h"           /* tankSetShells / tankSetMines / ... */
 #include "unzip.h"
+#include "replay_harness.h"   /* replayHarnessDecodeFile: the viewer's read of a file */
 #include "test_harness.h"
 
 /* -------- Wire-format walker (self-contained on purpose) ---------- */
@@ -99,6 +100,7 @@ static int eventFixedBytesAfterCode(uint8_t code) {
         case log_GameSettings:     return -1;  /* 0 + pstr */
         case log_Ping:             return 6;   /* sender, kind, x (BE u16), y (BE u16) */
         case log_TankSetStock:     return 5;   /* player, shells, mines, armour, trees */
+        case log_MapName:          return -1;  /* 0 + pstr */
         default:                   return -2;  /* unknown */
     }
 }
@@ -112,6 +114,7 @@ static int variableEventPrefixBytes(uint8_t code) {
         case log_ChangeName:      return 1;
         case log_MapSkipApplied:  return 0;
         case log_GameSettings:    return 0;
+        case log_MapName:         return 0;
         default:                  return -1;  /* not variable */
     }
 }
@@ -786,6 +789,97 @@ int run_log_roundtrip_lobby_mode_drops_world_events(void) {
     UT_ASSERT(got[4] == log_LobbyExit);
     UT_ASSERT(got[5] == log_BaseSetOwner);
     UT_ASSERT(got[6] == log_Shell);
+    return 0;
+}
+
+/* The header's map name is written when the log opens. A log that opens in
+ * the lobby is started while the previous round's map is still loaded, and
+ * the host chooses the round's map after that, so the header of every round
+ * but a server's first named the wrong map. The round start writes
+ * log_MapName with the map that is played. This drives the writer the way the
+ * dedicated log does (open in lobby mode on one map, change the map, start
+ * the round) and reads the file back twice: byte by byte, and through the
+ * viewer. */
+int run_log_roundtrip_map_name_at_round_start(void) {
+    static const char kLobbyMap[] = "Oil Rigette";
+    static const char kRoundMap[] = "Chew Toy 3";
+    char fname[64];
+    mkTempPath(fname, sizeof(fname), "mapname");
+    remove(fname);
+
+    ServerSim *sim = ut_make_running_sim("Tester");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim failed");
+
+    /* The lobby opens with the last round's map still loaded. */
+    serverSimSetMapName(sim, kLobbyMap);
+    logCreate();
+    logSetLobbyMode(TRUE);
+    UT_ASSERT_MSG(logStart(fname, sim, 0, MAX_TANKS, FALSE),
+                  "logStart failed");
+    logWriteTick();
+    logAddEvent(log_LobbyEnter, 0, 0, 0, 0, 0, NULL);
+    logWriteTick();
+
+    /* The host picks another map, and the countdown ends. */
+    serverSimSetMapName(sim, kRoundMap);
+    logSetLobbyMode(FALSE);
+    logAddEvent(log_LobbyExit, 0, 0, 0, 0, 0, NULL);
+    logAddMapName(sim);
+    logWriteSnapshot(sim, TRUE);
+    logWriteTick();
+
+    logStop();
+    logDestroy();
+    serverSimDestroy(sim);
+
+    uint8_t *buf = NULL;
+    size_t   blen = 0;
+    UT_ASSERT_MSG(extractLogDat(fname, &buf, &blen), "extractLogDat failed");
+
+    /* The header is untouched: it still names the map the log opened on.
+     * That is what an old reader shows, and why the record exists. */
+    UT_ASSERT_MSG(blen > 10 && buf[9] == sizeof(kLobbyMap) - 1 &&
+                  memcmp(buf + 10, kLobbyMap, sizeof(kLobbyMap) - 1) == 0,
+                  "the header does not name the map the log opened on");
+
+    size_t  blockStart = 0;
+    uint8_t version    = 0;
+    UT_ASSERT_MSG(locateSnapshotMarker(buf, blen, &blockStart, &version),
+                  "header parse failed");
+
+    uint8_t got[16];
+    int     nGot  = 0;
+    int     nSnap = 0;
+    eventPayloadCapture name;
+    name.code = log_MapName;
+    name.len  = -1;
+    int rc = walkLog(buf, blen, blockStart, got, &nGot, (int)sizeof(got),
+                     &nSnap, &name);
+    free(buf);
+
+    UT_ASSERT_MSG(rc == 0, "walkLog rc=%d", rc);
+    UT_ASSERT_MSG(nGot == 3, "expected 3 events, got %d", nGot);
+    UT_ASSERT(got[0] == log_LobbyEnter);
+    UT_ASSERT(got[1] == log_LobbyExit);
+    UT_ASSERT(got[2] == log_MapName);
+    UT_ASSERT_MSG(name.len == (int)sizeof(kRoundMap),
+                  "log_MapName payload is %d bytes (want %d)", name.len,
+                  (int)sizeof(kRoundMap));
+    UT_ASSERT(name.bytes[0] == sizeof(kRoundMap) - 1);
+    UT_ASSERT_MSG(memcmp(name.bytes + 1, kRoundMap, sizeof(kRoundMap) - 1) == 0,
+                  "log_MapName does not carry the map the round started on");
+
+    /* The viewer takes the record over the header. */
+    ReplayWorld    *world = (ReplayWorld *)malloc(sizeof(*world));
+    ReplayFileInfo  info;
+    UT_ASSERT_MSG(world != NULL, "out of memory");
+    bool decoded = replayHarnessDecodeFile(fname, world, &info);
+    free(world);
+    remove(fname);
+    UT_ASSERT_MSG(decoded, "the viewer could not decode the file");
+    UT_ASSERT_MSG(strcmp(info.mapName, kRoundMap) == 0,
+                  "the viewer reports map '%s' (want '%s')", info.mapName,
+                  kRoundMap);
     return 0;
 }
 

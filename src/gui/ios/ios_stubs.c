@@ -254,6 +254,7 @@ bool logCheckTankSame(BYTE playerNum, BYTE mx, BYTE my, BYTE pxy, BYTE opt) {
     return true;
 }
 void logSetLobbyMode(bool enabled) { (void)enabled; }
+void logAddMapName(ServerSim *ssim) { (void)ssim; }
 
 /* ---- WinBolo.net REST stubs (requires libcurl) ----
  *

@@ -89,7 +89,7 @@ by the first `LOG_EVENT_SNAPSHOT` record.
 |---|---|-----------------------------------------------------------------|
 | Magic | 8 | Literal `WBOLOMOV`                                              |
 | Version | 1 | `0`, `1`, `2`, or `3` (current)                                 |
-| Map name | 1 + N | Length byte + UTF-8 name                                        |
+| Map name | 1 + N | Length byte + UTF-8 name. The map loaded when the log opened; `log_MapName` (70) names the map the round is played on and replaces it |
 | Game type | 1 | From `gameTypeGet()` — 1 open, 2 tournament, 3 strict, 4 scripted |
 | Allow hidden mines | 1 | Boolean                                                         |
 | AI type | 1 | `aiType` — whether brains are allowed, not a bot difficulty     |
@@ -164,6 +164,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 67 | `log_ServerTick` | The server's game tick at this entry (below) |
 | 68 | `log_ScnStatus` | A scenario's status line at the top of the view (below) |
 | 69 | `log_VoiceEveryone` | Who a scenario sent the round's voice to: `on:u8`, 1 for every player and 0 for the talker's allies alone. Written when the value changes |
+| 70 | `log_MapName` | Pascal-form name of the map the round is played on. Written when the round starts. A log that opens in the lobby writes its header before the host chooses the map, so the header can name the previous round's map; a reader shows this name in its place |
 
 ### `log_GameSettings` payload
 

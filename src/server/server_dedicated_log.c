@@ -453,6 +453,11 @@ static void handleGameStart(ServerSim *sim) {
         /* The settings the round is actually played under, whatever the lobby
          * opened with and whatever the host changed since. */
         serverDedicatedLogEmitSettings(sim, TRUE);
+        /* The map the round is actually played on. The header named the map
+         * that was loaded when the lobby opened, which is the previous
+         * round's unless the host kept it, and the header cannot be written
+         * again. */
+        logAddMapName(sim);
         /* Team-derived alliances from serverSimReapplyTeamAlliances are
          * applied silently — playersAcceptAlliance writes the bitmap but
          * doesn't emit log events the way the in-game /accept path does
@@ -489,6 +494,10 @@ static void handleGameStart(ServerSim *sim) {
         /* No lobby means no edits and no second chance: this is the only
          * settings record a -nolobby or -maprotate round gets. */
         serverDedicatedLogEmitSettings(sim, TRUE);
+        /* The header written just above already names this map. The record
+         * is written all the same, so a reader finds the round's map in one
+         * place whether or not a lobby ran. */
+        logAddMapName(sim);
         fprintf(stderr, "Logging to %s\n", s_logFileName);
     }
 }
