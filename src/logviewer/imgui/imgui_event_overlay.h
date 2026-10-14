@@ -61,9 +61,11 @@ bool lv_event_kinds_combo(const char *id, const char *preview, const char *tip,
  * owner of a pillbox or a base, the killer of a tank, the sender of a chat
  * line), -1 for none; lvEventMarker says what that makes the marker. A
  * pillbox event or a base event is the map's own picture in the colour of
- * that team (no team: the game's red pillbox, the game's neutral base). Any
- * other kind is its icon on a dark square, with a line in the team's colour
- * round it when there is a team. The picture is made larger or smaller as
+ * that team (no team: the game's red pillbox, the game's neutral base). A
+ * lost builder is a red "no" sign as big as the square, with the builder in
+ * it and nothing behind it. Any other kind is its icon on a dark square,
+ * with a line in the team's colour round it when there is a team. The
+ * picture is made larger or smaller as
  * lv_item_picture does it. alpha dims the marker.
  *
  * ping is the kind of ping the event is (PING_KIND_*), -1 for an event that

@@ -457,8 +457,8 @@ typedef enum {
   LV_MARKER_ICON = 0,     /* the kind's drawn icon on a dark square */
   LV_MARKER_PILL,         /* the map's picture of a pillbox */
   LV_MARKER_BASE,         /* the map's picture of a base */
-  LV_MARKER_BUILDER_LOST, /* the map's picture of a builder on a dark square,
-                             with an X over him */
+  LV_MARKER_BUILDER_LOST, /* the map's picture of a builder inside a red "no"
+                             sign as big as the marker, with no square */
   LV_MARKER_PING          /* the game's icon for the kind of ping, in the
                              game's colour for it, on a dark square */
 } LvMarkerDrawing;
@@ -478,6 +478,29 @@ typedef enum {
  * 14 has inside its edge that is 2: a builder 6 wide and 8 high. */
 static inline int lvMarkerBuilderScale(float room) {
   int n = (int)(room / (float)LV_MARKER_BUILDER_H);
+  return (n < 1) ? 1 : n;
+}
+
+/* The marker of a lost builder is a "no" sign as big as the marker, with no
+ * square behind it: a red ring `line` thick whose outer edge touches the
+ * sides of the marker (`side` on a side), a line across it, and the builder
+ * inside it.
+ *
+ * The radius the ring is drawn at: the middle of its line. */
+static inline float lvMarkerNoSignRadius(float side, float line) {
+  float r = side * 0.5f - line * 0.5f;
+  return (r < 0.0f) ? 0.0f : r;
+}
+
+/* How many times his own size the builder is drawn inside the ring: the most
+ * whole times at which all of him (his corners too) is inside the inner edge
+ * of the ring; 1 at least. Half the diagonal of the builder is 2.5 of his
+ * pixels (3 by 4). In a marker of 14 with a line of 1.5 the inner edge is
+ * 5.5 from the middle, and that is 2: a builder 6 wide and 8 high. */
+static inline int lvMarkerNoSignBuilderScale(float side, float line) {
+  const float inner = side * 0.5f - line;
+  const float halfDiag = 2.5f; /* sqrt(3 * 3 + 4 * 4) / 2 */
+  int n = (int)(inner / halfDiag);
   return (n < 1) ? 1 : n;
 }
 

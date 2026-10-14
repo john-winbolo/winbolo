@@ -249,3 +249,45 @@ int run_lv_overview_row_layout(void) {
     UT_ASSERT_MSG(lvOverviewNamesFit(w3, 3, 8.0f, 12.0f, 105.0f, NULL) == 2, "no answer asked");
     return 0;
 }
+
+/* The Neutral row is in the table only while a pillbox or a base has no
+   owner, and the table's height follows. */
+int run_lv_overview_neutral_row(void) {
+    LvOverview o;
+    lvOverviewInit(&o);
+    lvOverviewAddPlayer(&o, 0, 0, "A");
+    lvOverviewAddPlayer(&o, 1, 1, "B");
+
+    /* At the start: one pillbox and one base nobody owns. */
+    lvOverviewCount(&o, false, false, -1);
+    lvOverviewCount(&o, true, false, -1);
+    UT_ASSERT_MSG(lvOverviewHasNeutral(&o), "both neutral");
+    UT_ASSERT_MSG(lvOverviewTableRows(o.rowCount, lvOverviewHasNeutral(&o)) == 4,
+                  "two teams, Neutral and the totals");
+
+    /* Only a base is neutral: the row stays. */
+    o.neutralPills = 0;
+    UT_ASSERT_MSG(lvOverviewHasNeutral(&o), "a neutral base alone");
+    /* Only a pillbox is neutral: the row stays. */
+    o.neutralPills = 1;
+    o.neutralBases = 0;
+    UT_ASSERT_MSG(lvOverviewHasNeutral(&o), "a neutral pillbox alone");
+
+    /* All of them taken: the row goes. */
+    o.neutralPills = 0;
+    UT_ASSERT_MSG(!lvOverviewHasNeutral(&o), "nothing neutral");
+    UT_ASSERT_MSG(lvOverviewTableRows(o.rowCount, lvOverviewHasNeutral(&o)) == 3,
+                  "two teams and the totals");
+
+    /* A seek back to a time with a neutral base: the row is back. */
+    o.neutralBases = 2;
+    UT_ASSERT_MSG(lvOverviewHasNeutral(&o), "neutral again");
+    UT_ASSERT_MSG(lvOverviewTableRows(o.rowCount, true) == 4, "the row is back");
+
+    /* An empty table, and a count that cannot be. */
+    lvOverviewInit(&o);
+    UT_ASSERT_MSG(!lvOverviewHasNeutral(&o), "empty table");
+    UT_ASSERT_MSG(lvOverviewTableRows(0, false) == 1, "the totals alone");
+    UT_ASSERT_MSG(lvOverviewTableRows(-3, true) == 2, "no teams below 0");
+    return 0;
+}

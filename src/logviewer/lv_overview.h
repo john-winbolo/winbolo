@@ -169,6 +169,20 @@ static inline void lvOverviewCount(LvOverview *o, bool isBase, bool hasOwner,
     }
 }
 
+/* The table has its Neutral row only while something is neutral: a pillbox
+ * or a base that nobody owns. When the last one is taken the row goes; a
+ * seek back to a time with one neutral brings it back. */
+static inline bool lvOverviewHasNeutral(const LvOverview *o) {
+    return o->neutralPills > 0 || o->neutralBases > 0;
+}
+
+/* How many rows the table has under its header: a row for each team, the
+ * Neutral row while it is there, and the totals. */
+static inline int lvOverviewTableRows(int teams, bool neutral) {
+    if (teams < 0) teams = 0;
+    return teams + (neutral ? 1 : 0) + 1;
+}
+
 /* A count cell of a row holds a number and then a picture (a pillbox or a
  * base in the row's colour). The picture is at the right end of the cell
  * and the number ends a gap to its left, so in every row the numbers end at

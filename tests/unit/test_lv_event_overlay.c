@@ -997,3 +997,32 @@ int run_lv_ping_phase(void) {
     }
     return 0;
 }
+
+/* The "no" sign of a lost builder: the ring fills the marker and the
+   builder goes inside the ring whole, at every size a marker can be. */
+int run_lv_event_overlay_no_sign(void) {
+    float text;
+    /* The marker of the viewer's text of 18 is 14; the line is 1.5. */
+    UT_ASSERT_MSG(lvMarkerNoSignRadius(14.0f, 1.5f) == 6.25f, "radius at 14: %g",
+                  (double)lvMarkerNoSignRadius(14.0f, 1.5f));
+    UT_ASSERT_MSG(lvMarkerNoSignBuilderScale(14.0f, 1.5f) == 2, "builder at 14: %d",
+                  lvMarkerNoSignBuilderScale(14.0f, 1.5f));
+    UT_ASSERT_MSG(lvMarkerNoSignBuilderScale(8.0f, 1.5f) == 1, "builder at the least");
+    UT_ASSERT_MSG(lvMarkerNoSignRadius(1.0f, 4.0f) == 0.0f, "never under 0");
+    UT_ASSERT_MSG(lvMarkerNoSignBuilderScale(1.0f, 4.0f) == 1, "never under 1");
+    for (text = 8.0f; text <= 60.0f; text += 0.5f) {
+        const float side = lvOverlayMarkerSide(text);
+        const float r = lvMarkerNoSignRadius(side, 1.5f);
+        const int n = lvMarkerNoSignBuilderScale(side, 1.5f);
+        const float inner = side * 0.5f - 1.5f;
+        UT_ASSERT_MSG(r + 0.75f <= side * 0.5f + 0.001f, "text %g: ring in the marker",
+                      (double)text);
+        UT_ASSERT_MSG(r + 0.75f >= side * 0.5f - 0.001f, "text %g: ring as big as the marker",
+                      (double)text);
+        UT_ASSERT_MSG(n >= 1 && (float)n * 2.5f <= inner + 0.001f,
+                      "text %g: the builder inside the ring", (double)text);
+        UT_ASSERT_MSG((float)(n + 1) * 2.5f > inner, "text %g: the builder as big as goes in",
+                      (double)text);
+    }
+    return 0;
+}

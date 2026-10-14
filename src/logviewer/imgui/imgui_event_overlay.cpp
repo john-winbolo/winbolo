@@ -60,6 +60,9 @@ static const char *const k_pref = "Controls.OverlayEvents";
 /* The gap between the lane and the slider under it. */
 #define OVERLAY_LANE_GAP 1.0f
 
+/* How thick the ring and the line of a lost builder's "no" sign are. */
+#define OVERLAY_NO_SIGN_LINE 1.5f
+
 /* The ticked kinds, one bit a kind. */
 static unsigned s_mask = LV_OVERLAY_DEFAULT_MASK;
 static bool s_loaded = false;
@@ -348,34 +351,37 @@ void lv_event_marker_draw(ImDrawList *dl, int eventKind, int eventTeam, int even
                      ImVec2(p1.x - 1.0f, p1.y - 1.0f), overlay_u32(fill, alpha));
         return;
     }
+    if (marker.drawing == LV_MARKER_BUILDER_LOST) {
+        /* A builder lost: a red "no" sign as big as the marker, as a
+         * pillbox's picture is, with no square behind it and no line of a
+         * team round it: a ring with one line across it, top left to bottom
+         * right, and inside it the map's own builder in the game's colours,
+         * a whole number of times his 3 by 4 pixels. The game has no
+         * picture of a crossed-out builder, so it is put together here. The
+         * lines are thin so the builder still shows through. With no tile
+         * sheet the drawn person takes his place. */
+        const float lineW = OVERLAY_NO_SIGN_LINE;
+        const float side = ((p1.x - p0.x) < (p1.y - p0.y)) ? (p1.x - p0.x) : (p1.y - p0.y);
+        const ImVec2 mid((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
+        const int n = lvMarkerNoSignBuilderScale(side, lineW);
+        const float bw = (float)(n * LV_MARKER_BUILDER_W), bh = (float)(n * LV_MARKER_BUILDER_H);
+        const ImVec2 b0(floorf(mid.x - bw * 0.5f), floorf(mid.y - bh * 0.5f));
+        if (!lv_builder_picture(dl, false, b0, ImVec2(b0.x + bw, b0.y + bh), alpha)) {
+            const float q = side * 0.3f;
+            lv_icon_draw(dl, LV_ICON_PERSON, ImVec2(mid.x - q, mid.y - q),
+                         ImVec2(mid.x + q, mid.y + q), overlay_u32(text, alpha));
+        }
+        const ImU32 red = overlay_u32(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), alpha);
+        const float r = lvMarkerNoSignRadius(side, lineW);
+        const float d = r * 0.70710678f;
+        dl->AddCircle(mid, r, red, 0, lineW);
+        dl->AddLine(ImVec2(mid.x - d, mid.y - d), ImVec2(mid.x + d, mid.y + d), red, lineW);
+        return;
+    }
     /* A plain icon, with the colour of the team as a line round it. */
     const ImVec2 i0(p0.x + 2.0f, p0.y + 2.0f), i1(p1.x - 2.0f, p1.y - 2.0f);
     dl->AddRectFilled(p0, p1, dark, 2.0f);
-    if (marker.drawing == LV_MARKER_BUILDER_LOST) {
-        /* A builder lost: the map's own builder, in the game's colours, a
-         * whole number of times his 3 by 4 pixels, with a "no" sign over him. The
-         * game has no picture of a crossed-out builder, so it is put
-         * together here. With no tile sheet the drawn person takes his
-         * place. */
-        const float room = i1.x - i0.x;
-        const int n = lvMarkerBuilderScale(room);
-        const float bw = (float)(n * LV_MARKER_BUILDER_W), bh = (float)(n * LV_MARKER_BUILDER_H);
-        const ImVec2 b0(floorf(i0.x + (room - bw) * 0.5f), floorf(i0.y + (i1.y - i0.y - bh) * 0.5f));
-        if (!lv_builder_picture(dl, false, b0, ImVec2(b0.x + bw, b0.y + bh), alpha)) {
-            lv_icon_draw(dl, LV_ICON_PERSON, ImVec2(i0.x + 1.0f, i0.y + 1.0f),
-                         ImVec2(i1.x - 1.0f, i1.y - 1.0f), overlay_u32(text, alpha));
-        }
-        /* Over him, the "no" sign: a red circle with one line across it,
-         * top left to bottom right. The lines are thin so the builder still
-         * shows through. */
-        const ImU32 red = overlay_u32(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), alpha);
-        const ImVec2 mid((i0.x + i1.x) * 0.5f, (i0.y + i1.y) * 0.5f);
-        const float half = (room < (i1.y - i0.y) ? room : (i1.y - i0.y)) * 0.5f;
-        const float r = half - 0.5f;
-        const float d = r * 0.70710678f;
-        dl->AddCircle(mid, r, red, 0, 1.5f);
-        dl->AddLine(ImVec2(mid.x - d, mid.y - d), ImVec2(mid.x + d, mid.y + d), red, 1.5f);
-    } else if (marker.drawing == LV_MARKER_PING) {
+    if (marker.drawing == LV_MARKER_PING) {
         /* A map ping: the game's icon for its kind. It has the room inside
          * the line, a point more than a drawn icon, as the game's icon
          * files keep an edge of their own. */
@@ -584,8 +590,10 @@ static void overlay_tooltip_list(const OverlayMarker &m) {
 }
 
 /* What the mouse over a marker says. One event is its time, its tick and
- * its kind, then its line of the Events panel; several are their number,
- * then a line for each of them (overlay_tooltip_list). */
+ * its kind, then its line of the Events panel after its picture; several
+ * are their number, then a line for each of them, each after its picture
+ * (overlay_tooltip_list). The picture is the same in both, at the same size
+ * and with the same gap after it. */
 static void overlay_tooltip(const OverlayMarker &m) {
     char when[96];
     LvEventInfo info;
@@ -601,6 +609,15 @@ static void overlay_tooltip(const OverlayMarker &m) {
                             (info.kind == LV_EVK_CHAT && info.ping >= 0)
                                 ? lv_event_ping_name(info.ping)
                                 : lv_imgui_events_kind_label(info.kind));
+        const float iconSide = overlay_tip_icon_side();
+        const float textH = ImGui::GetTextLineHeight();
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        const float x = floorf(at.x);
+        const float iconY = floorf(at.y + (textH - iconSide) * 0.5f);
+        lv_event_marker_draw(ImGui::GetWindowDrawList(), info.kind, info.team, info.ping,
+                             ImVec2(x, iconY), ImVec2(x + iconSide, iconY + iconSide), 1.0f);
+        ImGui::Dummy(ImVec2(iconSide, textH));
+        ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
         ImGui::TextUnformatted(info.text);
     }
     ImGui::EndTooltip();

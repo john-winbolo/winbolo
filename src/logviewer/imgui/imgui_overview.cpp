@@ -13,7 +13,8 @@
  * the names of its players and then the number of pillboxes and of bases it
  * owns at the playback time, each number in front of the map's picture of a
  * pillbox or a base in the team's colour. Then the ones nobody owns, with
- * the game's red pillbox and its neutral base, then the totals. Under the
+ * the game's red pillbox and its neutral base, while there is one of them
+ * (lvOverviewHasNeutral), then the totals. Under the
  * table (beside it when the window is wide) two thin bars show the same
  * numbers as shares: one for the pillboxes and one for the bases, each cut
  * into the teams' colours.
@@ -73,16 +74,19 @@ extern "C" {
  * first log, and at the start of a log, before its first player is in. */
 #define OVERVIEW_DEFAULT_ROWS 2
 
-/* How many teams the log has now, read under the decoder's lock. The dock
- * asks for a height before the window is drawn in it, so the count is read
- * for the dock too, and not kept from the last drawing: a count that was
- * kept was the last log's for one frame after another log was loaded. */
+/* How many rows the table has now (lvOverviewTableRows), read under the
+ * decoder's lock. The dock asks for a height before the window is drawn in
+ * it, so the count is read for the dock too, and not kept from the last
+ * drawing: a count that was kept was the last log's for one frame after
+ * another log was loaded. With no team yet it is OVERVIEW_DEFAULT_ROWS
+ * teams and the Neutral row. */
 static int overview_rows_now(void) {
     LvOverview ov;
     lv_clientMutexWaitFor();
     lv_screenOverviewSnapshot(&ov);
     lv_clientMutexRelease();
-    return (ov.rowCount > 0) ? ov.rowCount : OVERVIEW_DEFAULT_ROWS;
+    if (ov.rowCount <= 0) return lvOverviewTableRows(OVERVIEW_DEFAULT_ROWS, true);
+    return lvOverviewTableRows(ov.rowCount, lvOverviewHasNeutral(&ov));
 }
 
 /* The colour a team is drawn in: the one every panel draws the team in
@@ -145,10 +149,9 @@ static float overview_bars_h(void) {
     return 2.0f * (overview_icon_size() + ImGui::GetStyle().ItemSpacing.y);
 }
 
-/* The height of the table for a number of teams: the teams, the neutral row
- * and the totals. */
-static float overview_table_h(int teams) {
-    return (float)(teams + 2) * overview_row_h();
+/* The height of the table for a number of rows (lvOverviewTableRows). */
+static float overview_table_h(int rows) {
+    return (float)rows * overview_row_h();
 }
 
 float lv_imgui_overview_dock_height(float dockWidth) {
@@ -377,14 +380,17 @@ static void overview_table(const LvOverview &ov, float width) {
     }
 
     /* The ones no team holds, with the game's red pillbox and its neutral
-     * base. */
-    ImGui::TableNextRow();
-    ImGui::TableSetColumnIndex(0);
-    overview_label_cell(overview_neutral_colour(), langGetText(STR_MAPEDIT_OWNER_NEUTRAL), true);
-    ImGui::TableSetColumnIndex(1);
-    overview_count_cell(ov.neutralPills, true, OVERVIEW_PIC_PILL, false, -1, plain);
-    ImGui::TableSetColumnIndex(2);
-    overview_count_cell(ov.neutralBases, true, OVERVIEW_PIC_BASE, true, -1, plain);
+     * base: only while there is one. */
+    if (lvOverviewHasNeutral(&ov)) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        overview_label_cell(overview_neutral_colour(), langGetText(STR_MAPEDIT_OWNER_NEUTRAL),
+                            true);
+        ImGui::TableSetColumnIndex(1);
+        overview_count_cell(ov.neutralPills, true, OVERVIEW_PIC_PILL, false, -1, plain);
+        ImGui::TableSetColumnIndex(2);
+        overview_count_cell(ov.neutralBases, true, OVERVIEW_PIC_BASE, true, -1, plain);
+    }
 
     /* The totals, under a line across the table: the numbers alone, under
      * the numbers of the rows. */

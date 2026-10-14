@@ -19,10 +19,12 @@
  *
  * Beside the gauges (under them in a narrow window) the same four values
  * are given as numbers, with the state of the tank's builder and how many
- * pillboxes the tank carries. In a small panel each of the four lines starts
- * with the game's small picture for what it counts in place of the word,
- * and the line for the pillboxes with the game's status picture of a
- * pillbox, and the builder's line with the game's picture of a builder. While
+ * pillboxes the tank carries. The line for the pillboxes always starts with
+ * the game's status picture of a pillbox in a tank (the small green ring of
+ * the game's pillbox panel) in place of its words, when the tiles are
+ * loaded. In a small panel each of the four lines starts with the game's
+ * small picture for what it counts in place of the word, and the builder's
+ * line with the game's picture of a builder. While
  * the builder is dead his line has the parachute the new one flies in on and
  * the time until he is in the tank, in words and in pictures alike; no line
  * says "dead". A panel with no room for all of the text shows
@@ -289,14 +291,15 @@ static float tank_builder_state_w(void) {
     return w;
 }
 
-/* The tiles when they are loaded and hold the pillbox's status picture. */
+/* The tiles when they are loaded and hold the status picture of a pillbox
+ * in a tank. */
 static SDL_Texture *tank_tiles(float *tw, float *th) {
     SDL_Texture *atlas = lv_drawGetTilesTexture();
     *tw = 0.0f;
     *th = 0.0f;
     if (atlas != nullptr && SDL_GetTextureSize(atlas, tw, th) &&
-        *tw >= (float)(STATUS_PILLBOX_NEUTRAL_X + STATUS_ITEM_SIZE_X) &&
-        *th >= (float)(STATUS_PILLBOX_NEUTRAL_Y + STATUS_ITEM_SIZE_Y)) {
+        *tw >= (float)(STATUS_PILLBOX_TANKGOOD_X + STATUS_ITEM_SIZE_X) &&
+        *th >= (float)(STATUS_PILLBOX_TANKGOOD_Y + STATUS_ITEM_SIZE_Y)) {
         return atlas;
     }
     return nullptr;
@@ -491,10 +494,13 @@ static void tank_icon_lines(const LvTankStatus &st, SDL_Texture *bg, float tw, f
     }
 }
 
-/* The pillboxes carried, after the game's status picture of a pillbox (the
- * one the Overview panel has over its column of pillboxes): "<picture>: 2",
- * in the same columns as the four lines over it. The whole line in words is
- * the picture's tooltip. With none carried it is dimmed, as in words. */
+/* The pillboxes carried, after the game's status picture of a pillbox in a
+ * tank: the small green ring the game's pillbox panel shows for one of the
+ * player's own pillboxes that a tank carries (STATUS_PILLBOX_TANKGOOD, the
+ * cell sdl3DrawStatusPillbox draws for pillTankGood), as it is in the tile
+ * sheet: "<picture>: 2", in the same columns as the four lines over it. The
+ * whole line in words is the picture's tooltip. With none carried it is
+ * dimmed, as in words. */
 static void tank_pill_icon_line(const LvTankStatus &st, const TankIconMetrics &m) {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const float lineH = ImGui::GetTextLineHeight();
@@ -526,15 +532,37 @@ static void tank_pill_icon_line(const LvTankStatus &st, const TankIconMetrics &m
         imguiPushNearestSamplingOn(dl);
         dl->AddImage((ImTextureID)(size_t)atlas, ImVec2(p0.x, top),
                      ImVec2(p0.x + m.pillSize, top + m.pillSize),
-                     ImVec2((float)STATUS_PILLBOX_NEUTRAL_X / tw, (float)STATUS_PILLBOX_NEUTRAL_Y / th),
-                     ImVec2((float)(STATUS_PILLBOX_NEUTRAL_X + STATUS_ITEM_SIZE_X) / tw,
-                            (float)(STATUS_PILLBOX_NEUTRAL_Y + STATUS_ITEM_SIZE_Y) / th));
+                     ImVec2((float)STATUS_PILLBOX_TANKGOOD_X / tw, (float)STATUS_PILLBOX_TANKGOOD_Y / th),
+                     ImVec2((float)(STATUS_PILLBOX_TANKGOOD_X + STATUS_ITEM_SIZE_X) / tw,
+                            (float)(STATUS_PILLBOX_TANKGOOD_Y + STATUS_ITEM_SIZE_Y) / th));
         imguiPopNearestSamplingOn(dl);
     }
     if (colon) {
         dl->AddText(ImVec2(p0.x + m.iconW, p0.y), col, ":");
     }
     dl->AddText(ImVec2(p0.x + numX, p0.y), col, number);
+}
+
+/* The line for the pillboxes carried among lines in words: the same picture
+ * in place of the words before the colon ("Pillboxes carried"), then the
+ * colon and the number. False when the tiles are not loaded or the line has
+ * no colon: it then keeps its words. */
+static bool tank_pill_words_metrics(TankIconMetrics *out) {
+    float tw = 0.0f, th = 0.0f;
+    MessageArgs args = {};
+    bool colon = false;
+    args.number = TANK_PILLS_MOST;
+    const char *most = lvTankAfterColon(langGetTextFmt(STR_LV_TANK_PILLS, &args), &colon);
+    if (!colon || tank_tiles(&tw, &th) == nullptr) return false;
+    TankIconMetrics m = {};
+    m.pillSize = lvTankPillIconSize(ImGui::GetTextLineHeight(), STATUS_ITEM_SIZE_Y);
+    m.iconW = m.pillSize;
+    m.colonW = ImGui::CalcTextSize(":").x;
+    m.gap = ImGui::GetStyle().ItemInnerSpacing.x;
+    m.columnW = ImGui::CalcTextSize(most).x;
+    m.lineW = lvTankIconNumberX(m.iconW, m.colonW, m.gap, m.columnW, m.columnW) + m.columnW;
+    *out = m;
+    return true;
 }
 
 /* The builder's line after the game's picture of a builder in place of the
@@ -632,7 +660,8 @@ static void tank_builder_words_line(const LvTankStatus &st) {
 /* The lines of text: the four values, the builder, the pillboxes. With
  * icons the four values are written after the game's small pictures (with
  * no background picture loaded they keep their words), and so are the
- * builder and the pillboxes. */
+ * builder and the pillboxes. The pillboxes have their picture in words too,
+ * whenever the tiles are loaded. */
 static void tank_text(const LvTankStatus &st, bool icons) {
     float tw = 0.0f, th = 0.0f;
     SDL_Texture *bg = icons ? tank_background(&tw, &th) : nullptr;
@@ -660,8 +689,12 @@ static void tank_text(const LvTankStatus &st, bool icons) {
     } else {
         tank_builder_words_line(st);
     }
+    TankIconMetrics pm = {};
     if (pillIcon) {
         tank_pill_icon_line(st, m);
+    } else if (tank_pill_words_metrics(&pm)) {
+        /* Among lines in words too: the picture says what is counted. */
+        tank_pill_icon_line(st, pm);
     } else {
         MessageArgs args = {};
         args.number = st.carriedPills;
