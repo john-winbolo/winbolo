@@ -5223,6 +5223,7 @@ set(_unit_test_names
     log_roundtrip_snapshot_keeps_chain_synced
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
+    log_roundtrip_map_name_at_round_start
     log_roundtrip_ping
     log_roundtrip_snapshot_tank_stocks
     log_roundtrip_tank_stock_record
@@ -5261,6 +5262,8 @@ set(_unit_test_names
     lv_logged_name_from_join_event
     lv_game_settings_from_walk
     lv_game_settings_absent
+    lv_map_name_from_walk
+    lv_map_name_absent
     lv_camera_load_fits_wide_grid
     lv_camera_centre_on_cell_stays_on_map
     lv_camera_resize_and_set_offset_clamp

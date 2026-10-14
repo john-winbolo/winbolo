@@ -223,7 +223,7 @@ bool replayHarnessDecode(ReplayHarness *h);
 /* What the decoder reports about a .wbv besides its world. */
 #define REPLAY_MAP_NAME_LEN 128
 typedef struct {
-    char     mapName[REPLAY_MAP_NAME_LEN];  /* from the log header */
+    char     mapName[REPLAY_MAP_NAME_LEN];  /* log_MapName, else the log header */
     int      ticks;         /* playback ticks to end-of-log */
     uint32_t totalTimeMs;   /* what the load's byte walk made of the file */
     int      gameType;      /* the log header's game type byte */

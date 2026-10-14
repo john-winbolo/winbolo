@@ -150,7 +150,8 @@ log_ScnMarker,       // a scenario map marker: opt1=id, opt2=kind, opt3=destTeam
 log_ScnHint,         // an order a scenario gave one bot: opt1=slot, then the hint's verb as a pascal string. The rest of the hint's pairs are the bot's brain's business and are not recorded
 log_ServerTick,      // the server's game tick at this entry, as a big-endian u32 across opt1..opt4. Written at the round's first entry, at every entry that carries a snapshot and every FULL_SYNC_INTERVAL ticks (layout in docs/replay-format.md)
 log_ScnStatus,       // a scenario's status line at the top of the view: opt1=destTeam, opt2=destPlayer, then the countdown's end tick as a big-endian u32 (0xFFFFFFFF = no countdown) and the text as a pascal string. An empty text is the clear (layout in docs/replay-format.md)
-log_VoiceEveryone    // whether a scenario sent the round's voice to every player rather than to allies alone: opt1=1 for everyone, 0 for allies only. Written when the value changes
+log_VoiceEveryone,   // whether a scenario sent the round's voice to every player rather than to allies alone: opt1=1 for everyone, 0 for allies only. Written when the value changes
+log_MapName          // the name of the map the round is played on, as a pascal string. Written when the round starts; the header's name is the map loaded when the log opened, which a lobby can change (layout in docs/replay-format.md)
 } logitem;
 
 typedef struct {
@@ -306,6 +307,20 @@ bool logStart(char *fileName, ServerSim *ssim, BYTE ai, BYTE maxPlayers, bool us
 * check - Whether to check if running or not
 *********************************************************/
 bool logWriteSnapshot(ServerSim *ssim, bool check);
+
+/*********************************************************
+*NAME:          logAddMapName
+*PURPOSE:
+* Adds a log_MapName event naming the map the sim holds
+* now. The header's map name is written by logStart, and a
+* log that opens in the lobby is started before the host
+* has chosen the round's map, so the round start calls this
+* to record the map that is actually played.
+*
+*ARGUMENTS:
+* ssim - ServerSim whose map name is recorded
+*********************************************************/
+void logAddMapName(ServerSim *ssim);
 
 /*********************************************************
 *NAME:          logSnapshotWrittenThisTick

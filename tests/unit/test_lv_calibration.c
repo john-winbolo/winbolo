@@ -756,6 +756,110 @@ int run_lv_game_settings_from_walk(void) {
   return 0;
 }
 
+/* One log_MapName event: the map's name in pascal form. */
+static void putMapName(LogBuf *b, const char *name) {
+  uint8_t payload[1 + 255];
+  uint8_t len = (uint8_t)strlen(name);
+  payload[0] = len;
+  memcpy(payload + 1, name, len);
+  putEventFrame(b, log_MapName, payload, (uint16_t)(1 + len));
+}
+
+/*
+ * The header names the map that was loaded when the log opened, and a log that
+ * opened in the lobby was started before the host chose the round's map. The
+ * round start writes log_MapName with the map that is played, and the load-time
+ * walk has to take it over the header's, before the game information is set
+ * up and whatever the playhead does afterwards.
+ */
+int run_lv_map_name_from_walk(void) {
+  const char *path = "lv_map_name.wbv";
+  LogBuf b;
+  LogViewerState *lv;
+  char got[64];
+  int i;
+
+  b.len = 0;
+  putHeader(&b);            /* the header names "Test" */
+  putSnapshot(&b, false);   /* lobby: empty world */
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_LobbyExit, NULL, 0);
+  putMapName(&b, "Chew Toy 3");
+  putSnapshot(&b, true);    /* the world rewrite the round starts on */
+  putNoEvents(&b, 100);
+  putU8(&b, LOG_QUIT);
+
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic map name log failed to build/load");
+
+  lv_screenGetMapName(got);
+  UT_ASSERT_MSG(strcmp(got, "Chew Toy 3") == 0,
+                "the viewer reports map '%s', not the one the round started on",
+                got);
+
+  /* Playing through the record leaves the name as the walk set it. */
+  for (i = 0; i < 400; i++) {
+    lv_screenLogTick();
+  }
+  lv_screenGetMapName(got);
+  UT_ASSERT_MSG(strcmp(got, "Chew Toy 3") == 0,
+                "playback left the viewer reporting map '%s'", got);
+
+  lv_decoderDestroy(lv);
+  remove(path);
+  return 0;
+}
+
+/*
+ * A log written before the event existed carries no such record and shows the
+ * header's name, including one opened straight after a log that had the
+ * record. A name longer than the viewer's field is cut to it.
+ */
+int run_lv_map_name_absent(void) {
+  const char *withPath = "lv_map_name_with.wbv";
+  const char *withoutPath = "lv_map_name_without.wbv";
+  LogBuf b;
+  LogViewerState *lv;
+  char got[64];
+  char longName[101];
+
+  memset(longName, 'm', sizeof(longName) - 1);
+  longName[sizeof(longName) - 1] = '\0';
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putMapName(&b, longName);
+  putU8(&b, LOG_QUIT);
+
+  lv = loadSynthetic(&b, withPath);
+  UT_ASSERT_MSG(lv != NULL, "synthetic map name log failed to build/load");
+  lv_screenGetMapName(got);
+  UT_ASSERT_MSG(strlen(got) == sizeof(got) - 1 &&
+                    strncmp(got, longName, sizeof(got) - 1) == 0,
+                "a long map name came back %d characters long",
+                (int)strlen(got));
+  lv_decoderDestroy(lv);
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+
+  lv = loadSynthetic(&b, withoutPath);
+  UT_ASSERT_MSG(lv != NULL, "synthetic name-free log failed to build/load");
+  lv_screenGetMapName(got);
+  UT_ASSERT_MSG(strcmp(got, "Test") == 0,
+                "a log with no map name record reports '%s', not its header's",
+                got);
+
+  lv_decoderDestroy(lv);
+  remove(withPath);
+  remove(withoutPath);
+  return 0;
+}
+
 /*
  * A log written before the event existed carries no settings, and opening one
  * after a log that did must not leave the earlier log's settings on show.
