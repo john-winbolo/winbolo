@@ -2963,6 +2963,11 @@ void serverSimScenarioResetRoster(ServerSim *sim) {
     }
     sim->scenarioRosterHead = 0;
     sim->scenarioRosterCount = 0;
+    /* And the init tables the drained bot_init rows wrote. Those are the
+       ending round's too, and a bot still holding one would carry it into the
+       next round, scenario or not: its brain is rebuilt from it at the round
+       start. See botManagerResetInitTablesToAdded. */
+    botManagerResetInitTablesToAdded(sim);
 }
 
 /* ── Bots ──────────────────────────────────────────────────────────────── */

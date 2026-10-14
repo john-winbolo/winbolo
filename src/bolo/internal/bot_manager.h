@@ -82,6 +82,15 @@ typedef struct {
      * tunes each life with game.bot_init would otherwise mismatch on the
      * next fielding and pay for a VM it already has. */
     ScnTable        builtInit;
+    /* The table the bot was ADDED with: the -bot-init table, the spawn's own
+     * table, or an empty one for a lobby Add Bot. Written once, where the
+     * context is prepared for a build, and never again.
+     *
+     * game.bot_init changes initTable and not this. A round start puts
+     * initTable back to this (botManagerResetInitTablesToAdded), so a table
+     * a scenario handed the bot in one round is not still steering its brain
+     * in the next, which may be a plain round with no scenario at all. */
+    ScnTable        addedInit;
     BYTE            playerNum;
     bool            active;
     /* The runner is built and idle, with cs, transport, controlSub, brain,
@@ -1164,6 +1173,22 @@ bool botManagerSetBotInitTable(struct ServerSim *sim, BYTE playerNum,
  *********************************************************/
 const ScnTable *botManagerGetBotInitTable(struct ServerSim *sim,
                                           BYTE playerNum);
+
+/*********************************************************
+ *NAME:          botManagerResetInitTablesToAdded
+ *PURPOSE:
+ *  Put every playing bot's init table back to the one it
+ *  was added with, undoing any game.bot_init a scenario
+ *  made. Only the bot's own copy is written; the brain
+ *  reads it at the round-start reload that follows
+ *  (botManagerOnGameStart), so no Lua state is touched.
+ *
+ *  A parked runner is left alone: it is released at the
+ *  round end, and its VM still holds whatever it was told.
+ *
+ *  Producer thread only, between ticks.
+ *********************************************************/
+void botManagerResetInitTablesToAdded(struct ServerSim *sim);
 
 /*********************************************************
  *NAME:          botManagerEvalLuaString
