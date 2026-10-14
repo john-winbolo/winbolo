@@ -8,19 +8,36 @@
 -- closer to the pill than his, and must not rush in.
 --
 --   Pill #2 (106,106) belongs to an enemy idle bot (seat 2, team 2), parked
---   in the far corner, with 15 armour.  Pill #3 is given to A's team.
---   Boss (seat 1, tests/brains/idle.lua, team 1) is the stand-in human.  It
---   is parked at (112,104), 6.3 squares from the pill, behind the 2x2 wall
---   at (109..110,104..105).  The gate has no human seat, so A reads seat 1
---   as human through the test seam HUMAN_DECOY_TEST_HUMANS=2 (bot_init).
---   Boss takes no damage (set_modifiers taken=0), so he stays put.
---   A (seat 0) starts at (130,106), due east, and Boss orders "!attack 1".
+--   in the far corner (152,150), with 15 armour.  Pill #3 is given to A's
+--   team.  Boss (seat 1, tests/brains/idle.lua, team 1) is the stand-in
+--   human.  It is parked at (112,104), 6.3 squares from the pill, behind a
+--   3x3 wall of 9 buildings at (108..110,103..105), from tick 100.  The
+--   pill shoots Boss, so its shells hit the wall.  The gate has no human
+--   seat, so A reads seat 1 as human through the test seam
+--   HUMAN_DECOY_TEST_HUMANS=2 (bot_init).  Boss takes no damage
+--   (set_modifiers taken=0), so he stays put.
+--   A (seat 0) is put at (117,106) at tick 395, 11 squares from the pill
+--   (out of its range) and a few squares from where it parks.  Boss orders
+--   "!attack 1" at tick 400.  A parks at (115,107) at about tick 760; the
+--   pill is still shooting the wall then (2 of its squares stand on the
+--   line to Boss), and is not through it until after tick 1600.
 --   With HUMAN_DECOY_AWARE=false (checked by hand, seed 42) A parks at
 --   (113,105), 1.4 squares from Boss, and this arena fails.
 --
+-- PROOF THE DECOY STOOD.  The scenario API cannot read the brain's decoy
+-- flag or the pill's target, so the arena reads the map.  When A says
+-- "Staying wide" and again when A parks, the arena traces the line from the
+-- pill to Boss and counts the building and half-building squares on it.  It
+-- also checks that Boss is in the pill's range (8) and closer to the pill
+-- than A, so Boss is the tank the pill shoots.  If the line has no wall, or
+-- A is the closer tank, the arena fails with "DECOY GONE": the run measured
+-- a plain pill take, not a decoy.
+--
 -- PASS when:
 --   * A said "Staying wide of Boss on pill #1" (the detection),
---   * A never said "Suicide run" or "Charging" (no rush), and
+--   * A never said "Suicide run" or "Charging" (no rush),
+--   * the decoy stood (see above) when A said "Staying wide" and when A
+--     parked, and
 --   * the first square A parks on inside 10 squares of the pill (the same
 --     square for 100 ticks) is at least 2 PROJECTED squares from Boss, not
 --     on Boss's square or the 8 round it, and farther from the pill than
@@ -30,6 +47,10 @@
 --     chord, HUMAN_DECOY_PROJECTED) with HUMAN_DECOY_MIN_TILES 2.  This
 --     arena used the old straight rule (5 squares).  d_boss in the verdict
 --     line stays the straight distance; d_proj is the projected one.
+--   2026-10-14 (Andrew): A used to start at (130,106), 24 squares away, and
+--   the wall was 2x2.  By the time A drove up, the pill had shot through the
+--   wall and A did a plain pill take.  Hence the near, late start, the
+--   thick wall and the decoy proof.
 --
 -- GATE: ticks=6000 bots=1 ai=yesfull gametype=open
 
@@ -37,13 +58,17 @@ local A, BOSS, ENEMY = 0, 1, 2
 local TARGET = 2
 local PILL = { 106, 106 }
 local HUMAN = { 112, 104 }
+local A_START = { 117, 106 }
+local PILL_RANGE = 8
 local PONDS = { { 98, 98 }, { 154, 154 }, { 98, 154 }, { 154, 126 } }
 local GRASS = 7
 local PARK_TICKS = 100
 local st = { spawned = false, owned = false, cfg = false, placed = false,
+             a_placed = false,
              chat_on = false, sent = false,
              wide = false, rush = nil,
-             last_sq = nil, same = 0, park = nil, park_t = nil }
+             last_sq = nil, same = 0, park = nil, park_t = nil,
+             wide_t = nil, wide_proof = nil, park_proof = nil }
 local next_log = 0
 
 function on_setup(g)
@@ -52,17 +77,65 @@ function on_setup(g)
   g.set_pill_owner(3, A)
 end
 
-function on_chat(g, p, text)
-  g.log(string.format("HDECOY_CHAT p%d %s", p, text))
-  if p == A and text == "Staying wide of Boss on pill #1" then st.wide = true end
-  if p == A and (text:find("^Suicide run") or text:find("^Charging")) then
-    st.rush = st.rush or text
-  end
-end
-
 local function edist(ax, ay, bx, by)
   local dx, dy = ax - bx, ay - by
   return math.sqrt(dx * dx + dy * dy)
+end
+
+-- Building and half-building squares on the line from the pill's centre to
+-- Boss's centre (sampled every 0.1 square, each square counted once).
+local function line_walls(g, bx, by)
+  local x0, y0 = PILL[1] + 0.5, PILL[2] + 0.5
+  local x1, y1 = bx + 0.5, by + 0.5
+  local n = math.ceil(edist(x0, y0, x1, y1) * 10)
+  if n < 1 then return 0 end
+  local seen, walls = {}, 0
+  for k = 0, n do
+    local sx = math.floor(x0 + (x1 - x0) * k / n)
+    local sy = math.floor(y0 + (y1 - y0) * k / n)
+    local key = sx * 256 + sy
+    if not seen[key] then
+      seen[key] = true
+      local t = g.map_tile(sx, sy)
+      if t == g.TERRAIN.building or t == g.TERRAIN.half_building then
+        walls = walls + 1
+      end
+    end
+  end
+  return walls
+end
+
+-- The decoy stands when the pill's shells at Boss stop in a wall and Boss
+-- is the tank the pill shoots (in range, closer than A).  Returns ok, text.
+local function decoy_proof(g, when, tick)
+  local h, a = g.tank(BOSS), g.tank(A)
+  if not h or h.dead or not a or a.dead then
+    local txt = string.format("%s t=%d: Boss or A missing", when, tick)
+    return false, txt, txt
+  end
+  local w = line_walls(g, h.mx, h.my)
+  local hb = edist(h.mx, h.my, PILL[1], PILL[2])
+  local ab = edist(a.mx, a.my, PILL[1], PILL[2])
+  local ok = w >= 1 and hb <= PILL_RANGE and hb < ab
+  local txt = string.format("%s t=%d walls_on_line=%d boss=(%d,%d) boss_pill=%.1f a_pill=%.1f",
+                            when, tick, w, h.mx, h.my, hb, ab)
+  local short = string.format("%s@%d walls=%d boss_pill=%.1f a_pill=%.1f",
+                              when, tick, w, hb, ab)
+  return ok, txt, short
+end
+
+function on_chat(g, p, text)
+  g.log(string.format("HDECOY_CHAT p%d %s", p, text))
+  if p == A and text == "Staying wide of Boss on pill #1" and not st.wide then
+    st.wide = true
+    st.wide_t = g.tick()
+    local ok, txt, short = decoy_proof(g, "wide", st.wide_t)
+    st.wide_proof = { ok = ok, txt = short }
+    g.log("HDECOY_PROOF " .. txt .. " ok=" .. tostring(ok))
+  end
+  if p == A and (text:find("^Suicide run") or text:find("^Charging")) then
+    st.rush = st.rush or text
+  end
 end
 
 function on_tick(g, tick)
@@ -82,7 +155,6 @@ function on_tick(g, tick)
   end
   if not st.placed and tick >= 100 then
     st.placed = true
-    g.teleport(A, 130, 106, 0)
     g.teleport(BOSS, HUMAN[1], HUMAN[2], 0)
     g.teleport(ENEMY, 152, 150, 0)
     g.set_modifiers(BOSS, { taken = 0 })
@@ -91,6 +163,12 @@ function on_tick(g, tick)
   if not st.chat_on and tick >= 200 then
     st.chat_on = true
     g.say(BOSS, "!bot chat on")
+  end
+  -- A goes to its start just before the order, so it does not wander off
+  -- first; Boss has drawn the pill's fire into the wall since tick 100.
+  if not st.a_placed and tick >= 395 then
+    st.a_placed = true
+    g.teleport(A, A_START[1], A_START[2], 0)
   end
   if not st.sent and tick >= 400 then
     st.sent = true
@@ -103,15 +181,19 @@ function on_tick(g, tick)
     if st.same >= PARK_TICKS and edist(t.mx, t.my, PILL[1], PILL[2]) <= 10 then
       st.park, st.park_t = { t.mx, t.my }, tick
       g.log(string.format("HDECOY parked t=%d at (%d,%d)", tick, t.mx, t.my))
+      local ok, txt, short = decoy_proof(g, "park", tick)
+      st.park_proof = { ok = ok, txt = short }
+      g.log("HDECOY_PROOF " .. txt .. " ok=" .. tostring(ok))
     end
   end
   if tick >= next_log then
     next_log = tick + 400
     local h, p = g.tank(BOSS), g.pill(TARGET)
-    g.log(string.format("HDECOY t=%d A=(%s,%s) Boss=(%s,%s) pill_owner=%s pill_arm=%s",
+    local w = (h and not h.dead) and line_walls(g, h.mx, h.my) or -1
+    g.log(string.format("HDECOY t=%d A=(%s,%s) Boss=(%s,%s) pill_owner=%s pill_arm=%s walls_on_line=%d",
           tick, tostring(t and t.mx), tostring(t and t.my),
           tostring(h and h.mx), tostring(h and h.my),
-          tostring(p and p.owner), tostring(p and p.armour)))
+          tostring(p and p.owner), tostring(p and p.armour), w))
   end
 end
 
@@ -136,9 +218,29 @@ VERDICT_CHECK = function(g)
     dj = proj_dist(st.park[1], st.park[2], HUMAN[1], HUMAN[2])
     ring = math.abs(st.park[1] - HUMAN[1]) <= 1 and math.abs(st.park[2] - HUMAN[2]) <= 1
   end
-  local why = string.format("wide=%s rush=%s park=%s d_boss=%.1f d_proj=%.1f d_pill=%.1f boss_pill=%.1f",
-                            tostring(st.wide), tostring(st.rush),
+  local function walls(pr) return pr and pr.txt:match("walls=(%d+)") or "-" end
+  -- The gate cuts the VERDICT line at 120 characters, so the numbers come
+  -- first; the HDECOY_DETAIL lines below give each proof in full.  walls=
+  -- is the wall count on the pill-to-Boss line at "wide" / at park.
+  local why = string.format("park=%s d_proj=%.1f d_boss=%.1f d_pill=%.1f boss_pill=%.1f walls=%s/%s wide=%s rush=%s",
                             st.park and (st.park[1] .. "," .. st.park[2]) or "nil",
-                            dh, dj, dp, hp)
-  return st.wide and not st.rush and st.park ~= nil and dj >= 2 and not ring and dp > hp, why
+                            dj, dh, dp, hp, walls(st.wide_proof), walls(st.park_proof),
+                            tostring(st.wide), tostring(st.rush))
+  -- The decoy must have stood when A chose (said "Staying wide") and when
+  -- it parked; otherwise this run measured a plain pill take.
+  local gone = nil
+  if st.wide and not st.wide_proof.ok then
+    gone = st.wide_proof.txt
+  elseif st.park and not st.park_proof.ok then
+    gone = st.park_proof.txt
+  end
+  if gone then
+    why = "DECOY GONE " .. gone .. ": a plain pill take, not a decoy test; " .. why
+  end
+  -- game.log drops a line past 128 bytes, so one proof per line (the
+  -- HDECOY_PROOF lines logged at the moment have the boss square too).
+  g.log("HDECOY_DETAIL proof " .. (st.wide_proof and st.wide_proof.txt or "wide: none"))
+  g.log("HDECOY_DETAIL proof " .. (st.park_proof and st.park_proof.txt or "park: none"))
+  return gone == nil and st.wide and not st.rush and st.park ~= nil
+         and dj >= 2 and not ring and dp > hp, why
 end
