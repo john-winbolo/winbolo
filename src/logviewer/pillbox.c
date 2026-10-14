@@ -539,23 +539,26 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
   pillY = (*value)->item[pillNum].y;
   /* Make the message if required */
   if (returnValue == NEUTRAL && migrate == FALSE) {
-    /* Neutral pill — normalized to MESSAGE_CAPTURE_PILL ("Neutral Pillbox"). */
+    /* Neutral pill: the game's MESSAGE_CAPTURE_PILL ("Neutral Pillbox") with
+       the pillbox's number, from 1 as the game's own pillbox list counts. */
     MessageArgs args = {0};
     lv_playersMakeMessageName(owner, ownerName);
     snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, ownerName);
+    args.number = pillNum + 1;
     lv_messageTagPlayers(owner, -1);
-    lv_messageAddAt(LV_EVK_PILL_CAPTURED, pillX, pillY, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
+    lv_messageAddAt(LV_EVK_PILL_CAPTURED, pillX, pillY, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_PILL_CAPTURED, &args);
   } else if (owner == NEUTRAL) {
     /* Do nothing */
   } else if (lv_playersIsAllie(returnValue, owner) == FALSE && migrate == FALSE) {
-    /* Stole pill */
+    /* Stole pill: the game's MESSAGE_STOLE_PILL with the pillbox's number. */
     MessageArgs args = {0};
     lv_playersMakeMessageName(owner, ownerName);
     snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, ownerName);
     lv_playersGetPlayerName(returnValue, oldOwner, sizeof(oldOwner));
     snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, oldOwner);
+    args.number = pillNum + 1;
     lv_messageTagPlayers(owner, returnValue);
-    lv_messageAddAt(LV_EVK_PILL_STOLEN, pillX, pillY, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
+    lv_messageAddAt(LV_EVK_PILL_STOLEN, pillX, pillY, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_PILL_STOLEN, &args);
   }
   (*value)->item[pillNum].owner = owner;
 //    frontEndStatusPillbox(pillNum, (pillsGetAllianceNum(value, pillNum)));

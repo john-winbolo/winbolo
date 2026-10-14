@@ -1289,6 +1289,11 @@ STR_LV_EVT_FILTER_TIP=Show only the events of the ticked kinds
 # Log viewer: the zoom of the map as a percentage
 STR_LV_ZOOM_TIP=Map zoom. 100% is the game's own size. Change it with + and -, the mouse wheel, or Options > Zoom
 STR_LV_JUMP_ANIM=Animate Rewind and Fast Forward
+STR_LV_PILL_NUMBERS=Pillbox Numbers
+STR_LV_PILL_NUMBERS_TIP=The number of each pillbox beside it on the map, the number the game's own pillbox list gives it
+STR_LV_PILL_NUMBERS_LIST=Numbers: {string1}
+STR_LV_MSG_PILL_CAPTURED={player} captured Neutral Pillbox {number}
+STR_LV_MSG_PILL_STOLEN={player} just stole pillbox {number} from {other}
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:

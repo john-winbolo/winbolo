@@ -4644,6 +4644,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # the arrow's direction, the countdown and the table of the times a
     # builder was away (lv_builder_status.h, header only).
     tests/unit/test_lv_builder_status.c
+    # The number of each pillbox on the viewer's map and in its tooltips:
+    # which pillboxes have one, where it goes, the square under the mouse and
+    # a list of numbers as text (lv_pill_numbers.h, header only).
+    tests/unit/test_lv_pill_numbers.c
     # Where the items of the log viewer's Controls panel go
     # (lv_controls_layout.h, header only).
     tests/unit/test_lv_controls_layout.c
@@ -6948,6 +6952,10 @@ set(_unit_test_names
     lv_builder_away_scan
     lv_builder_trips
     lv_builder_trips_scan
+    lv_pill_numbers_sums
+    lv_pill_numbers_list
+    lv_pill_numbers_layout
+    lv_pill_numbers_overview
     lv_controls_top_row
     lv_controls_bottom_row
     lv_controls_wheel_step

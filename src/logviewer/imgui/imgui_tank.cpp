@@ -55,6 +55,7 @@ extern "C" {
     #include "../lv_hud.h"
     #include "../lv_tank_status.h"
     #include "../lv_builder_status.h"
+    #include "../lv_pill_numbers.h"
     #include "../../gui/positions.h"
     #include "../../gui/tiles.h"
     #include "../../gui/sdl3/map_colours.h"  /* mapColourTeam */
@@ -494,6 +495,17 @@ static void tank_icon_lines(const LvTankStatus &st, SDL_Texture *bg, float tw, f
     }
 }
 
+/* The numbers of the pillboxes the tank carries, for their tooltip:
+ * "Numbers: 3, 5". Empty when it carries none. */
+static void tank_pill_numbers(const LvTankStatus &st, char *dest, size_t size) {
+    char list[LV_PILL_NUMBER_LIST_MAX];
+    dest[0] = '\0';
+    if (lvPillNumberListText(st.carriedPillNumbers, list, sizeof(list)) <= 0) return;
+    MessageArgs args = {};
+    snprintf(args.string1, sizeof(args.string1), "%s", list);
+    snprintf(dest, size, "%s", langGetTextFmt(STR_LV_PILL_NUMBERS_LIST, &args));
+}
+
 /* The pillboxes carried, after the game's status picture of a pillbox in a
  * tank: the small green ring the game's pillbox panel shows for one of the
  * player's own pillboxes that a tank carries (STATUS_PILLBOX_TANKGOOD, the
@@ -522,10 +534,22 @@ static void tank_pill_icon_line(const LvTankStatus &st, const TankIconMetrics &m
     ImGui::PushID("pills");
     ImGui::Dummy(ImVec2(m.iconW, lineH));
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
-        ImGui::SetTooltip("%s", line);
+        char numbers[LANG_MSGARG_STRING_LEN * 2];
+        tank_pill_numbers(st, numbers, sizeof(numbers));
+        if (numbers[0] != '\0') {
+            ImGui::SetTooltip("%s\n%s", line, numbers);
+        } else {
+            ImGui::SetTooltip("%s", line);
+        }
     }
     ImGui::SameLine(0.0f, 0.0f);
     ImGui::Dummy(ImVec2(m.lineW - m.iconW, lineH));
+    /* The number after the picture names the pillboxes too. */
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+        char numbers[LANG_MSGARG_STRING_LEN * 2];
+        tank_pill_numbers(st, numbers, sizeof(numbers));
+        if (numbers[0] != '\0') ImGui::SetTooltip("%s", numbers);
+    }
     ImGui::PopID();
 
     if (atlas != nullptr) {
@@ -703,6 +727,11 @@ static void tank_text(const LvTankStatus &st, bool icons) {
         MessageArgs args = {};
         args.number = st.carriedPills;
         ImGui::TextUnformatted(langGetTextFmt(STR_LV_TANK_PILLS, &args));
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+            char numbers[LANG_MSGARG_STRING_LEN * 2];
+            tank_pill_numbers(st, numbers, sizeof(numbers));
+            if (numbers[0] != '\0') ImGui::SetTooltip("%s", numbers);
+        }
     }
 }
 

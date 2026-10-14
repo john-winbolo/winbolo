@@ -74,6 +74,7 @@
 #include "lv_ping_view.h"        /* the pings of the log, kept by time */
 #include "lv_save_name.h"        /* the players of the whole log, the lobby's map */
 #include "lv_first_view.h"       /* the box round everything that is not deep sea */
+#include "lv_pill_numbers.h"     /* the number of each pillbox on the map */
 
 /* The middle of the visible map from the start of the view (defined with
  * lv_screenSetViewInset). */
@@ -6779,8 +6780,8 @@ void lv_screenOverviewSnapshot(LvOverview *out) {
     if (lv_pillsIsActive(&g_lv->pb, (BYTE) (count + 1)) == FALSE) {
       continue;
     }
-    lvOverviewCount(out, false, p->owner != NEUTRAL,
-                    lv_playersGetTeamForOwner(p->owner));
+    lvOverviewCountPill(out, p->owner != NEUTRAL,
+                        lv_playersGetTeamForOwner(p->owner), lvPillNumber(count));
   }
 
   total = (g_lv->bs != NULL) ? lv_basesGetNumBases(&g_lv->bs) : 0;
@@ -6861,8 +6862,70 @@ void lv_screenTankStatusSnapshot(LvTankStatus *out) {
     }
     if (p->inTank != FALSE && p->owner == (BYTE) slot) {
       out->carriedPills++;
+      out->carriedPillNumbers |= lvPillNumberBit(lvPillNumber(count));
     }
   }
+}
+
+int lv_screenPillSpots(LvPillSpot *out, int max) {
+  BYTE count;
+  BYTE total;
+  int found = 0;
+
+  if (out == NULL || max <= 0 || g_lv == NULL || g_lv->logLoaded == FALSE ||
+      g_lv->pb == NULL) {
+    return 0;
+  }
+  total = lv_pillsGetNumPills(&g_lv->pb);
+  for (count = 0; count < total && found < max; count++) {
+    const pillbox *p = &g_lv->pb->item[count];
+    int vx = 0, vy = 0;
+    if (!lvPillLabelShown(lv_pillsIsActive(&g_lv->pb, (BYTE) (count + 1)) != FALSE,
+                          p->inTank != FALSE)) {
+      continue;
+    }
+    /* The view paints one square more than it shows on the right and at the
+       bottom, for a smooth pan; a number there can show in part. */
+    if (!lvPillViewSquare(p->x, p->y, g_lv->xOffset, g_lv->yOffset,
+                          lv_screenGetSizeX(), lv_screenGetSizeY(), &vx, &vy)) {
+      continue;
+    }
+    out[found].viewX = vx;
+    out[found].viewY = vy;
+    out[found].number = lvPillNumber(count);
+    found++;
+  }
+  return found;
+}
+
+int lv_screenPillAt(int xPos, int yPos, BYTE *owner, BYTE *armour, int *team) {
+  int mapX = 0, mapY = 0;
+  BYTE index;
+  const pillbox *p;
+
+  if (g_lv == NULL || g_lv->logLoaded == FALSE || g_lv->pb == NULL) {
+    return 0;
+  }
+  /* The same square a click on the map picks
+     (lv_screenMouseInformationClick). */
+  if (!lvPillMapSquareAt(xPos, yPos, TILE_SIZE_X, g_lv->xOffset, g_lv->yOffset,
+                         &mapX, &mapY) ||
+      lv_pillsExistPos(&g_lv->pb, (BYTE) mapX, (BYTE) mapY) == FALSE) {
+    return 0;
+  }
+  index = lv_pillsItemNumAt(&g_lv->pb, (BYTE) mapX, (BYTE) mapY);
+  p = &g_lv->pb->item[index];
+  if (owner != NULL) {
+    *owner = p->owner;
+  }
+  if (armour != NULL) {
+    *armour = p->armour;
+  }
+  if (team != NULL) {
+    BYTE t = (p->owner == NEUTRAL) ? NEUTRAL_TEAM : lv_playersGetTeamForOwner(p->owner);
+    *team = (t == NEUTRAL_TEAM) ? -1 : (int) t;
+  }
+  return lvPillNumber(index);
 }
 
 void lv_screenMouseClick(int xPos, int yPos) {

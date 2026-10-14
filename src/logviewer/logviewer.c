@@ -2137,6 +2137,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.showTank         = lv_g_show_tank_window;
         lvms.tankBars         = lv_drawGetTankBars() ? true : false;
         lvms.builderStatus    = lv_drawGetBuilderStatus() ? true : false;
+        lvms.pillNumbers      = lv_drawGetPillNumbers() ? true : false;
         lvms.dockEnabled      = lv_imgui_dock_get_enabled() ? true : false;
         lvms.dockLeft         = lv_imgui_dock_get_side_enabled(LV_DOCK_LEFT) ? true : false;
         lvms.dockTop          = lv_imgui_dock_get_side_enabled(LV_DOCK_TOP) ? true : false;
@@ -2188,6 +2189,7 @@ static void lvHostRenderFrame(const char *overlay) {
             lv_imgui_center_message(overlay);
         }
         lv_imgui_zoom_label();
+        lv_imgui_game_viewport_hover();
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
 
@@ -2265,6 +2267,7 @@ static void lvHostRenderFrame(const char *overlay) {
             lvMenuRender(g_lv);
         }
         lv_imgui_zoom_label();
+        lv_imgui_game_viewport_hover();
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
 

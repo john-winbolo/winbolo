@@ -217,6 +217,12 @@ BYTE lv_drawGetTankBars(void);
 void lv_drawSetBuilderStatus(BYTE on);
 BYTE lv_drawGetBuilderStatus(void);
 
+/* The number of each pillbox that stands on the map, beside it
+ * (lv_pill_numbers.h). On until set. Drawn where the bars are drawn: in the
+ * viewer's own window, not in the game view. */
+void lv_drawSetPillNumbers(BYTE on);
+BYTE lv_drawGetPillNumbers(void);
+
 /* The slot of the live tank drawn at a point of the window (in points, as
  * the mouse is), or -1 for none. The box tested is the tank's picture, and
  * never under 12 points a side; with two tanks under the point the nearer

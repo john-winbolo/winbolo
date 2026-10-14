@@ -45,6 +45,7 @@
 extern "C" {
     #include "../lv_hud.h"
     #include "../lv_overview.h"
+    #include "../lv_pill_numbers.h"
     #include "../../gui/tiles.h"
     #include "../../gui/sdl3/map_colours.h"  /* mapColourTeam */
 
@@ -416,7 +417,8 @@ static void overview_table(const LvOverview &ov, float width) {
 /* One share bar, width wide: the icon of the kind, then a bar cut into the
  * part each team owns, in team order, with the part nobody owns last. The
  * mouse over a part draws a white line round it and says how many that is
- * and whose: "3 pillboxes (Rider, ErYan)". */
+ * and whose: "3 pillboxes (Rider, ErYan)", and for pillboxes their numbers
+ * on a line under it: "Numbers: 1, 4, 7". */
 static void overview_share_bar(const LvOverview &ov, bool isBase, float width) {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const ImGuiStyle &style = ImGui::GetStyle();
@@ -474,7 +476,23 @@ static void overview_share_bar(const LvOverview &ov, bool isBase, float width) {
         snprintf(what, sizeof(what), "%s", langGetTextFmt(id, &args));
         const char *whose = (hoverPart == ov.rowCount) ? langGetText(STR_MAPEDIT_OWNER_NEUTRAL)
                                                        : ov.rows[hoverPart].names;
-        ImGui::SetTooltip("%s (%s)", what, whose);
+        char numbers[LANG_MSGARG_STRING_LEN * 2] = "";
+        if (!isBase) {
+            const unsigned int bits = (hoverPart == ov.rowCount) ? ov.neutralPillNumbers
+                                                                 : ov.rows[hoverPart].pillNumbers;
+            char list[LV_PILL_NUMBER_LIST_MAX];
+            if (lvPillNumberListText(bits, list, sizeof(list)) > 0) {
+                MessageArgs nargs = {};
+                snprintf(nargs.string1, sizeof(nargs.string1), "%s", list);
+                snprintf(numbers, sizeof(numbers), "%s",
+                         langGetTextFmt(STR_LV_PILL_NUMBERS_LIST, &nargs));
+            }
+        }
+        if (numbers[0] != '\0') {
+            ImGui::SetTooltip("%s (%s)\n%s", what, whose, numbers);
+        } else {
+            ImGui::SetTooltip("%s (%s)", what, whose);
+        }
     } else if (hovered) {
         ImGui::SetTooltip("%s", langGetText(isBase ? STR_TABLET_BASES : STR_TABLET_PILLBOXES));
     }

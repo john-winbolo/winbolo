@@ -4125,6 +4125,12 @@ int run_lv_builder_away_text(void);
 int run_lv_builder_away_scan(void);
 int run_lv_builder_trips(void);
 int run_lv_builder_trips_scan(void);
+/* The number of each pillbox on the log viewer's map and in its tooltips
+ * (test_lv_pill_numbers.c). */
+int run_lv_pill_numbers_sums(void);
+int run_lv_pill_numbers_list(void);
+int run_lv_pill_numbers_layout(void);
+int run_lv_pill_numbers_overview(void);
 /* Where the items of the log viewer's Controls panel go
  * (test_lv_controls_layout.c). */
 int run_lv_controls_top_row(void);

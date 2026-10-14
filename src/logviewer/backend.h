@@ -723,6 +723,20 @@ void lv_screenOverviewSnapshot(struct LvOverview *out);
 struct LvTankStatus;
 void lv_screenTankStatusSnapshot(struct LvTankStatus *out);
 
+/* The pillboxes whose numbers the map shows (lv_pill_numbers.h): each one
+ * that stands on the map in the squares the view paints, its square in the
+ * view and its number. Writes at most max and returns how many. Hold the
+ * client mutex. */
+struct LvPillSpot;
+int lv_screenPillSpots(struct LvPillSpot *out, int max);
+
+/* The pillbox on the map square under a point of the view's picture, xPos,
+ * yPos pixels from its top left (the place a click on the map hands
+ * lv_screenMouseInformationClick). Returns its number, from 1, with its
+ * owner (NEUTRAL for none), its armour, and in team the owner's team (-1 for
+ * none); 0 when no pillbox stands there. Hold the client mutex. */
+int lv_screenPillAt(int xPos, int yPos, BYTE *owner, BYTE *armour, int *team);
+
 /* The time left, at the playback time, until the builder of a player's tank
  * is in the tank again after his death (lv_builder_status.h). Returns 1 with
  * the time in remainMs when there is one to show:

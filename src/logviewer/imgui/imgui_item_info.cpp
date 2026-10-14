@@ -12,6 +12,7 @@
 #include "imgui_main_menu.h"
 #include "imgui_dock.h"
 #include "imgui_context.h"
+#include "imgui_dialogs.h"
 #include "imgui.h"
 #include "../../gui/lang.h"
 #include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
@@ -146,10 +147,12 @@ void lv_imgui_item_info_window(void) {
             /* No item selected */
             ImGui::TextUnformatted(langGetText(STR_LV_NO_ITEM_SELECTED));
         } else {
-            /* Item type header */
+            /* Item type header. The number counts from 1, as the game's
+             * own lists of pillboxes and bases do; the item is held by its
+             * place in the list, from 0. */
             {
                 MessageArgs args = {};
-                args.number = s_item_number;
+                args.number = s_item_number + 1;
                 ImGui::TextUnformatted(langGetTextFmt(
                     s_item_type == 1 ? STR_MAPEDIT_INSP_BASE_HASH
                                      : STR_MAPEDIT_INSP_PILL_HASH,
@@ -211,4 +214,44 @@ void lv_imgui_item_info_window(void) {
         }
     }
     ImGui::End();
+}
+
+void lv_imgui_item_info_pill_tooltip(int number, const char *ownerName, int teamColour,
+                                     int armour) {
+    char owner[LANG_MSGARG_STRING_LEN];
+
+    if (number <= 0) return;
+    /* The owner as the HUD panel names one: the player, and the team's
+     * colour after it when the player is in a team. */
+    if (ownerName == nullptr) {
+        snprintf(owner, sizeof(owner), "%s", langGetText(STR_MAPEDIT_OWNER_NEUTRAL));
+    } else {
+        const char *team = (teamColour >= 0) ? lv_imgui_team_colour_name(teamColour) : "";
+        if (team == nullptr || team[0] == '\0') {
+            snprintf(owner, sizeof(owner), "%s", ownerName);
+        } else {
+            MessageArgs args = {};
+            snprintf(args.string1, sizeof(args.string1), "%s", ownerName);
+            snprintf(args.string2, sizeof(args.string2), "%s", team);
+            snprintf(owner, sizeof(owner), "%s", langGetTextFmt(STR_LV_HUD_NAME_TEAM, &args));
+        }
+    }
+
+    if (!ImGui::BeginTooltip()) return;
+    {
+        MessageArgs args = {};
+        args.number = number;
+        ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_INSP_PILL_HASH, &args));
+    }
+    {
+        MessageArgs args = {};
+        snprintf(args.string1, sizeof(args.string1), "%s", owner);
+        ImGui::TextUnformatted(langGetTextFmt(STR_LV_OWNER_LBL, &args));
+    }
+    {
+        MessageArgs args = {};
+        args.number = armour;
+        ImGui::TextUnformatted(langGetTextFmt(STR_LV_ARMOUR_FMT, &args));
+    }
+    ImGui::EndTooltip();
 }

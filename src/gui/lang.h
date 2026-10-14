@@ -1375,6 +1375,14 @@
 #define STR_LV_ZOOM_TIP                     2851
 /* Log viewer Options menu: Rewind and Fast Forward go to the new place in a short animation, not a jump */
 #define STR_LV_JUMP_ANIM                    2852
+/* Log viewer: the number of each pillbox on the map (Options), the list of
+   pillbox numbers in a tooltip (string1, "1, 4, 7"), and the Events panel's
+   lines for a pillbox taken, with its number (number) */
+#define STR_LV_PILL_NUMBERS                 2866
+#define STR_LV_PILL_NUMBERS_TIP             2867
+#define STR_LV_PILL_NUMBERS_LIST            2868
+#define STR_LV_MSG_PILL_CAPTURED            2869
+#define STR_LV_MSG_PILL_STOLEN              2870
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128

@@ -246,15 +246,17 @@ static void hud_owner_text(const LvHudSlot &slot, char *out, size_t outSize) {
     snprintf(out, outSize, "%s", langGetTextFmt(STR_LV_HUD_NAME_TEAM, &args));
 }
 
-/* The tooltip of one slot: which item it is and whose. The numbers count
- * from 0, as the Item Information panel and the owner numbers do. */
+/* The tooltip of one slot: which item it is and whose. A tank's number
+ * counts from 0, as the owner numbers do; a pillbox's and a base's count
+ * from 1, as the game's own lists of them, the numbers on the map and the
+ * Item Information panel do. */
 static void hud_slot_tooltip(int grid, int index, const LvHudSlot &slot) {
     char item[64];
     char tip[LANG_MSGARG_STRING_LEN];
     char who[LANG_MSGARG_STRING_LEN];
     MessageArgs args = {};
 
-    args.number = index;
+    args.number = (grid == HUD_GRID_TANKS) ? index : index + 1;
     snprintf(item, sizeof(item), "%s",
              langGetTextFmt(grid == HUD_GRID_TANKS ? STR_TABLET_TANK_FMT :
                             grid == HUD_GRID_PILLS ? STR_MAPEDIT_INSP_PILL_HASH :
