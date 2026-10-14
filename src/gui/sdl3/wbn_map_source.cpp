@@ -588,11 +588,12 @@ static void wbnMapsKickFolderFetch(int folderId) {
                     "[WBN-TAB] folder fetch: %s/api/v1/%s",
                     (base && *base) ? base : "(no base)", path);
         char *resp = nullptr;
-        /* The list's own time limit, not the HTTP module's 30 s: a
+        /* The list's own time limits, not the HTTP module's 30 s: a
          * server that does not answer must reach the error text soon
          * (see WBN_MAPS_GIVE_UP_BUDGET_MS). */
         int status = wbn_api_get_timeout(path, &resp,
-                                         (long)WBN_MAPS_REQUEST_TIMEOUT_MS);
+                                         (long)WBN_MAPS_REQUEST_TIMEOUT_MS,
+                                         (long)WBN_MAPS_CONNECT_TIMEOUT_MS);
         WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[WBN-TAB] folder fetch result: %s/api/v1/%s -> %d",
                     (base && *base) ? base : "(no base)", path, status);
@@ -637,9 +638,10 @@ static void wbnMapsKickSearchFetch(const char *queryRaw) {
                     "[WBN-TAB] search fetch: %s/api/v1/%s",
                     (base && *base) ? base : "(no base)", path.c_str());
         char *resp = nullptr;
-        /* Same time limit as the folder listing. */
+        /* Same time limits as the folder listing. */
         int status = wbn_api_get_timeout(path.c_str(), &resp,
-                                         (long)WBN_MAPS_REQUEST_TIMEOUT_MS);
+                                         (long)WBN_MAPS_REQUEST_TIMEOUT_MS,
+                                         (long)WBN_MAPS_CONNECT_TIMEOUT_MS);
         WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[WBN-TAB] search fetch result: %s/api/v1/%s -> %d",
                     (base && *base) ? base : "(no base)", path.c_str(),
@@ -754,7 +756,7 @@ void wbnMapsListProvider(MapChooserState *state,
         /* Kick a fetch if the query changed. Throttled per query
          * string — typing fast doesn't pile up requests. A query
          * whose results never arrived (the request failed) is sent
-         * again after a wait that doubles each time, and no more
+         * again after the wait in wbnMapsRetryWaitMs, and no more
          * after WBN_MAPS_RETRY_MAX_SENDS sends. */
         Uint64 srchNowMs = SDL_GetTicks();
         bool   srchSame  = (s_wbnAsk.search == state->searchFilter);
@@ -928,10 +930,10 @@ void wbnMapsListProvider(MapChooserState *state,
         /* A folder already asked for and still not in the cache means
          * the request failed. Ask again after a wait: with no retry,
          * one failure left this folder — and a starred row that points
-         * at it — empty for the rest of the run. The wait doubles each
-         * time and the asking stops after WBN_MAPS_RETRY_MAX_SENDS
-         * sends, so a folder the server no longer has is not asked
-         * for as long as the tab is open. */
+         * at it — empty for the rest of the run. The wait is the one in
+         * wbnMapsRetryWaitMs and the asking stops after
+         * WBN_MAPS_RETRY_MAX_SENDS sends, so a folder the server no
+         * longer has is not asked for as long as the tab is open. */
         Uint64 nowMs = SDL_GetTicks();
         bool   same  = (s_wbnAsk.folderId == targetId);
         if (wbnMapsFetchDue(&s_wbnAsk.folderRetry, same, nowMs)) {

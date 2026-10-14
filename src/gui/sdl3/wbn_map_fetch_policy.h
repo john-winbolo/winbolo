@@ -43,28 +43,46 @@
  * frame, so without a wait a request that keeps failing would be sent
  * back-to-back; with no retry at all, one failed request left the tab
  * empty until the program was restarted. This is the wait after the
- * first send; each further send of the same request doubles it. */
+ * first send, counted from the moment it was sent; each further send of
+ * the same request doubles it. It is kept shorter than both request
+ * limits below, so that a send which ran to a limit is followed by the
+ * next one at once and the wait adds nothing to the total. */
 #define WBN_MAPS_RETRY_MS 1000u
 
-/* The longest the doubled wait is allowed to grow to. */
+/* The longest the doubled wait is allowed to grow to. With two sends
+ * there is one wait, the first, so this only bounds the rule. */
 #define WBN_MAPS_RETRY_MAX_MS 2000u
 
 /* How many times in a row the same request is sent before the listing
  * stops asking. A folder the server no longer has would otherwise be
  * asked for, with a signed request each time, for as long as the tab is
  * open. */
-#define WBN_MAPS_RETRY_MAX_SENDS 3u
+#define WBN_MAPS_RETRY_MAX_SENDS 2u
 
 /* The longest one listing or search request may take, connect and reply
  * together, before it counts as failed. The HTTP module's own limit for
  * a GET is 30 s; a server that does not answer at all would hold each
- * send for that long. This limit is for the map list only: the map file
- * download and the other WinBolo.net requests keep their own. */
-#define WBN_MAPS_REQUEST_TIMEOUT_MS 3000u
+ * send for that long. Long enough that a slow link which does work gets
+ * its reply. This limit is for the map list only: the map file download
+ * and the other WinBolo.net requests keep their own. */
+#define WBN_MAPS_REQUEST_TIMEOUT_MS 5000u
+
+/* The longest the connect phase of one such request may take (name
+ * lookup and connect, before anything is sent). A server that is not
+ * there fails here, well before the total limit; one that accepts the
+ * connection leaves the rest of the total limit for the reply. Also for
+ * the map list only. */
+#define WBN_MAPS_CONNECT_TIMEOUT_MS 3000u
 
 /* The longest the player waits, from the first send of a request to the
- * error text, when nothing ever answers. wbnMapsWorstCaseMs() below must
- * stay at or under it; the unit test checks that. */
+ * error text, when nothing ever answers. With the values above:
+ *   - no reply at all, the connect never completes: each send fails at
+ *     the connect limit, 3 s + 3 s = 6 s;
+ *   - the server accepts the connection and then says nothing: each send
+ *     fails at the total limit, 5 s + 5 s = 10 s, the worst case;
+ *   - every send fails at once: sends at 0 and 1 s, so 1 s.
+ * wbnMapsWorstCaseMs() below must stay at or under it; the unit test
+ * checks that. */
 #define WBN_MAPS_GIVE_UP_BUDGET_MS 10000u
 
 /* The sends of one request that has not been answered. Zeroed is the
@@ -76,14 +94,25 @@ typedef struct WbnMapsRetry {
     uint64_t lastKickMs; /* when it was last sent */
 } WbnMapsRetry;
 
-/* The wait before the same request is sent again, given how many times
- * it has been sent so far: 1 s after the first, then 2 s, never more
- * than WBN_MAPS_RETRY_MAX_MS. */
-static inline uint64_t wbnMapsRetryWaitMs(unsigned sends) {
-    uint64_t wait = WBN_MAPS_RETRY_MS;
+/* The doubling rule with its numbers given: firstMs after the first
+ * send, twice that after each further send, never more than maxMs.
+ * wbnMapsRetryWaitMs below is this with the listing's own numbers; the
+ * unit test gives it others to check the doubling over more sends than
+ * the listing makes. */
+static inline uint64_t wbnMapsRetryWaitFor(unsigned sends, uint64_t firstMs,
+                                           uint64_t maxMs) {
+    uint64_t wait = firstMs;
     unsigned i;
-    for (i = 1; i < sends && wait < WBN_MAPS_RETRY_MAX_MS; i++) wait *= 2;
-    return wait < WBN_MAPS_RETRY_MAX_MS ? wait : WBN_MAPS_RETRY_MAX_MS;
+    for (i = 1; i < sends && wait < maxMs; i++) wait *= 2;
+    return wait < maxMs ? wait : maxMs;
+}
+
+/* The wait before the same request is sent again, given how many times
+ * it has been sent so far: 1 s after the first, which is the only wait
+ * the listing reaches with WBN_MAPS_RETRY_MAX_SENDS at 2. */
+static inline uint64_t wbnMapsRetryWaitMs(unsigned sends) {
+    return wbnMapsRetryWaitFor(sends, WBN_MAPS_RETRY_MS,
+                               WBN_MAPS_RETRY_MAX_MS);
 }
 
 /* Whether the listing has given up on a request: it is the one counted
@@ -120,21 +149,28 @@ static inline void wbnMapsRetryReset(WbnMapsRetry *r) {
     r->lastKickMs = 0;
 }
 
-/* The longest time from the first send of a request to the moment the
- * listing gives up on it. A send is made only when the one before has
- * ended and its wait (counted from when it was sent) has passed, so each
- * send but the last costs the larger of the request time limit and its
- * wait, and the last costs the request time limit. One provider frame
- * per send comes on top of this and is not counted. */
-static inline uint64_t wbnMapsWorstCaseMs(void) {
+/* The time from the first send of a request to the moment the listing
+ * gives up on it, when every send takes perSendMs to fail. A send is
+ * made only when the one before has ended and its wait (counted from
+ * when it was sent) has passed, so each send but the last costs the
+ * larger of perSendMs and its wait, and the last costs perSendMs. One
+ * provider frame per send comes on top of this and is not counted. */
+static inline uint64_t wbnMapsGiveUpAfterMs(uint64_t perSendMs) {
     uint64_t total = 0;
     unsigned sends;
     for (sends = 1; sends < WBN_MAPS_RETRY_MAX_SENDS; sends++) {
         uint64_t wait = wbnMapsRetryWaitMs(sends);
-        total += wait > WBN_MAPS_REQUEST_TIMEOUT_MS
-                     ? wait : WBN_MAPS_REQUEST_TIMEOUT_MS;
+        total += wait > perSendMs ? wait : perSendMs;
     }
-    return total + WBN_MAPS_REQUEST_TIMEOUT_MS;
+    return total + perSendMs;
+}
+
+/* The longest that time can be: no send can take longer than the total
+ * request limit, which is what a server that accepts the connection and
+ * then never answers costs. Two sends of 5 s, the 1 s wait already over
+ * when the first ends: 5000 + 5000 = 10000 ms. */
+static inline uint64_t wbnMapsWorstCaseMs(void) {
+    return wbnMapsGiveUpAfterMs(WBN_MAPS_REQUEST_TIMEOUT_MS);
 }
 
 /* Length of the parent of the folder path held in path[0..len): the

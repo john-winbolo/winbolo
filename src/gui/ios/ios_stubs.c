@@ -280,8 +280,8 @@ int wbn_api_get(const char *path, char **response_out) {
 }
 
 int wbn_api_get_timeout(const char *path, char **response_out,
-                        long timeout_ms) {
-    (void)path; (void)timeout_ms;
+                        long timeout_ms, long connect_timeout_ms) {
+    (void)path; (void)timeout_ms; (void)connect_timeout_ms;
     if (response_out) *response_out = NULL;
     return -1;  /* transport error */
 }
