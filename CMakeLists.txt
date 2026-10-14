@@ -5611,6 +5611,13 @@ set(_unit_test_names
     lgm_kill_rewound_position
     lgm_kill_pill_shell_present
     lgm_kill_short_history
+    lgm_kill_seen_out_back_in_tank
+    lgm_kill_seen_out_outside_blast
+    lgm_kill_seen_out_pill_shell
+    lgm_kill_seen_out_no_record
+    lgm_kill_seen_out_already_dead
+    lgm_kill_seen_out_tank_hit_blast
+    lgm_kill_seen_out_dead_tank
     lgm_start_offset
     jitter_buffer_grow
     shell_projection

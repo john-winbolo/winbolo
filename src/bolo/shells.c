@@ -352,7 +352,11 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
  *     from the past against a blast from the present would be a place
  *     neither the shooter nor the victim ever saw;
  *   - any other blast, and the record of that frame has a position: he is
- *     tested there;
+ *     tested there. A blast that caught him there kills him even if he has
+ *     got back into his tank since: he dies on the tank, where it is now
+ *     (lgmDeathCheckSeenOut). Only this case kills a builder who is in his
+ *     tank; a blast on a hit tank and a pill's shell test him as he is now,
+ *     and in the tank he is not out;
  *   - any other blast, and there is no record that old yet (the start of a
  *     round, a player who has just joined): he is tested where he is now. */
 static void shellsBlastTestBuilder(GameSim *sim, shells shell, lgm *lgman, tank *tnk, WORLD wx, WORLD wy, bool tankHitBlast) {
@@ -383,12 +387,13 @@ static void shellsBlastTestBuilder(GameSim *sim, shells shell, lgm *lgman, tank 
 	if (seen == POS_HISTORY_ABSENT) {
 		/* The shooter's screen showed no builder: no test, no kill. */
 	} else if (tankHitBlast == FALSE && seen == POS_HISTORY_PRESENT) {
-		lgmDeathCheckAtPosition(sim, lgman,
-		                        lgmHitX, lgmHitY,
-		                        wx, wy,
-		                        shell->owner, shell->owner,
-		                        DMG_SRC_SHELL, shell->pill,
-		                        tnk);
+		/* The shooter's screen showed him out, here. */
+		lgmDeathCheckSeenOut(sim, lgman,
+		                     lgmHitX, lgmHitY,
+		                     wx, wy,
+		                     shell->owner, shell->owner,
+		                     DMG_SRC_SHELL, shell->pill,
+		                     tnk);
 	} else {
 		/* A blast on a hit tank, or no record as old as the shooter's
 		 * screen: where he is now. */

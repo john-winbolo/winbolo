@@ -511,6 +511,36 @@ void lgmDeathCheck(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE own
 void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk);
 
 /*********************************************************
+*NAME:          lgmDeathCheckSeenOut
+*AUTHOR:        John Morrison
+*CREATION DATE: 13/10/26
+*LAST MODIFIED: 13/10/26
+*PURPOSE:
+*  Like lgmDeathCheckAtPosition, for a man the attacker's
+*  screen showed out of his tank at the supplied position.
+*  A man the explosion caught there dies even if he is back
+*  inside his tank now: he dies on the tank's present
+*  centre, through lgmKill. A man who is out now, or dead,
+*  goes through lgmDeathCheckAtPosition unchanged. A man
+*  inside a tank that is itself dead is left alone.
+*
+*ARGUMENTS:
+*  sim    - Pointer to the game sim structure
+*  lgman  - Pointer to the lgm pointer
+*  lgmWorldX - Where the attacker's screen showed him, X
+*  lgmWorldY - Where the attacker's screen showed him, Y
+*  wx     - X World co ord of explosion
+*  wy     - Y World co ord of explosion
+*  owner  - Who is credited with the kill
+*  attacker - Who the can_die question names
+*  cause  - The DMG_SRC_* the can_die question is handed
+*  pill   - The pill index whose shell it was, or
+*           DMG_NO_PILL
+*  tnk    - Pointer to the tank
+*********************************************************/
+void lgmDeathCheckSeenOut(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk);
+
+/*********************************************************
 *NAME:          lgmParchutingIn
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/1/99

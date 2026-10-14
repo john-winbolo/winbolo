@@ -2065,12 +2065,22 @@ int run_lgm_start_offset(void);
  * (test_lgm_absent_on_shooter_screen.c): the three answers of
  * posHistoryLookup; no kill when the frame the shooter saw has the builder
  * in his tank; the rewound position when he was out on it; a pill's shell
- * and a history too short for the rewind test him where he is now. */
+ * and a history too short for the rewind test him where he is now. The
+ * seen_out cases have him out on the frame the shooter saw and back in his
+ * tank now: a blast of a player's shell where the shooter saw him kills him
+ * on the tank, and nothing else does. */
 int run_position_history_lookup(void);
 int run_lgm_kill_absent_on_shooter_screen(void);
 int run_lgm_kill_rewound_position(void);
 int run_lgm_kill_pill_shell_present(void);
 int run_lgm_kill_short_history(void);
+int run_lgm_kill_seen_out_back_in_tank(void);
+int run_lgm_kill_seen_out_outside_blast(void);
+int run_lgm_kill_seen_out_pill_shell(void);
+int run_lgm_kill_seen_out_no_record(void);
+int run_lgm_kill_seen_out_already_dead(void);
+int run_lgm_kill_seen_out_tank_hit_blast(void);
+int run_lgm_kill_seen_out_dead_tank(void);
 
 /* Adaptive jitter buffer (test_jitter_buffer_grow.c): queue drains under
  * jitter deepen jitterTarget toward MAX, a steadily full queue shrinks it
