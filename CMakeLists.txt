@@ -5752,6 +5752,13 @@ set(_unit_test_names
     lgm_kill_short_history
     lgm_draw_own_matches_wire
     lgm_draw_centre_error_bounds
+    lgm_kill_seen_out_back_in_tank
+    lgm_kill_seen_out_outside_blast
+    lgm_kill_seen_out_pill_shell
+    lgm_kill_seen_out_no_record
+    lgm_kill_seen_out_already_dead
+    lgm_kill_seen_out_tank_hit_blast
+    lgm_kill_seen_out_dead_tank
     lgm_start_offset
     jitter_buffer_grow
     shell_projection
@@ -5827,6 +5834,11 @@ set(_unit_test_names
     teleport_shell_hits_new_place
     teleport_rewind_refills
     teleport_builder_rewind_record
+    slot_join_erases_tank_rewind_record
+    slot_join_shell_hits_new_tank
+    slot_join_rewind_refills
+    slot_join_erases_builder_rewind_record
+    slot_refield_erases_rewind_records
     shell_rewind_pill_shell_tank_present
     shell_rewind_tank_full_comp
     shell_rewind_builder_one_less

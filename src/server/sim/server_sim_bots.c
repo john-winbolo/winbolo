@@ -71,6 +71,13 @@ bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
             tankCreate(&sim->sim, &sim->sim.tanks[playerNum]);
             sim->sim.lgmen[playerNum] = lgmCreate(playerNum);
             basesUpdateTimer(&sim->sim, playerNum);
+            /* The seat's lag-compensation records still hold where the tank
+               and the builder it had before it left the field were: nothing
+               writes to them while the seat has no tank. Erased here for the
+               reason addPlayerInternal erases them on a join, which this
+               seat does not go through again. */
+            posHistoryInit(&sim->posHistory[playerNum]);
+            posHistoryInit(&sim->lgmPosHistory[playerNum]);
         }
         /* And say so, which is the half serverSimUnfieldBot already does.
            There is no join to announce — the seat was announced when it was
