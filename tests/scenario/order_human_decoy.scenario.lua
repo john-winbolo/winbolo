@@ -22,8 +22,14 @@
 --   * A said "Staying wide of Boss on pill #1" (the detection),
 --   * A never said "Suicide run" or "Charging" (no rush), and
 --   * the first square A parks on inside 10 squares of the pill (the same
---     square for 100 ticks) is at least 5 squares from Boss and farther
---     from the pill than Boss is.
+--     square for 100 ticks) is at least 2 PROJECTED squares from Boss, not
+--     on Boss's square or the 8 round it, and farther from the pill than
+--     Boss is.
+--     2026-10-14 (Andrew, PR #510 review item 3): the brain now measures the
+--     spot-to-human distance projected onto the pill's range circle (the
+--     chord, HUMAN_DECOY_PROJECTED) with HUMAN_DECOY_MIN_TILES 2.  This
+--     arena used the old straight rule (5 squares).  d_boss in the verdict
+--     line stays the straight distance; d_proj is the projected one.
 --
 -- GATE: ticks=6000 bots=1 ai=yesfull gametype=open
 
@@ -109,16 +115,30 @@ function on_tick(g, tick)
   end
 end
 
+-- The brain's projected distance (attack.hd_proj_dist): both squares pushed
+-- out from the pill onto the circle of radius 8 (PILL_FIRE_RANGE), the
+-- chord between them.
+local function proj_dist(ax, ay, bx, by)
+  local atan2 = math.atan2 or math.atan   -- Lua 5.4: math.atan(y, x)
+  local a1 = atan2(ay - PILL[2], ax - PILL[1])
+  local a2 = atan2(by - PILL[2], bx - PILL[1])
+  local d = math.abs(a1 - a2)
+  if d > math.pi then d = 2 * math.pi - d end
+  return 2 * 8 * math.sin(d / 2)
+end
+
 VERDICT_CHECK = function(g)
-  local dh, dp = -1, -1
+  local dh, dp, dj, ring = -1, -1, -1, true
   local hp = edist(HUMAN[1], HUMAN[2], PILL[1], PILL[2])
   if st.park then
     dh = edist(st.park[1], st.park[2], HUMAN[1], HUMAN[2])
     dp = edist(st.park[1], st.park[2], PILL[1], PILL[2])
+    dj = proj_dist(st.park[1], st.park[2], HUMAN[1], HUMAN[2])
+    ring = math.abs(st.park[1] - HUMAN[1]) <= 1 and math.abs(st.park[2] - HUMAN[2]) <= 1
   end
-  local why = string.format("wide=%s rush=%s park=%s d_boss=%.1f d_pill=%.1f boss_pill=%.1f",
+  local why = string.format("wide=%s rush=%s park=%s d_boss=%.1f d_proj=%.1f d_pill=%.1f boss_pill=%.1f",
                             tostring(st.wide), tostring(st.rush),
                             st.park and (st.park[1] .. "," .. st.park[2]) or "nil",
-                            dh, dp, hp)
-  return st.wide and not st.rush and st.park ~= nil and dh >= 5 and dp > hp, why
+                            dh, dj, dp, hp)
+  return st.wide and not st.rush and st.park ~= nil and dj >= 2 and not ring and dp > hp, why
 end

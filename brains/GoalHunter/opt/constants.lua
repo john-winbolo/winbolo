@@ -4933,7 +4933,7 @@ M.ORDER_HANDOFF_MAX_HOPS = 3         -- keel 0
 --     With several, the one closest to the pill;
 --   * decoy_getaway.block() at the human's square says "wall",
 --     "wall_damaged" or "pill" with a value >= HUMAN_DECOY_MIN_BLOCK.
--- The flag stays HUMAN_DECOY_HOLD_TICKS (50 = 1 s) after the tests last
+-- The flag stays HUMAN_DECOY_HOLD_TICKS (150 = 3 s) after the tests last
 -- held.  It drops at once when the goal is something else, the pill is
 -- dead / ours / carried, or the tank dies.  While it stands:
 --   * standoff choice (attack.human_decoy_cost): + HUMAN_DECOY_SPACING_COST
@@ -4943,6 +4943,21 @@ M.ORDER_HANDOFF_MAX_HOPS = 3         -- keel 0
 --     with every spot close, the bot still attacks;
 --   * the human walks to within HUMAN_DECOY_MIN_TILES of the chosen spot: a
 --     fresh spot, at most once per HUMAN_DECOY_REPICK_TICKS;
+-- 2026-10-14 (Andrew, PR #510 review item 3): the spot-to-human distance
+-- above is a PROJECTED distance (HUMAN_DECOY_PROJECTED).  The spot and the
+-- human are both pushed out from the pill centre onto the circle of radius
+-- PILL_FIRE_RANGE, and the distance is the chord between the two points
+-- (2 R sin(dtheta / 2)).  Only the angle round the pill counts: a spot
+-- straight behind the human or in front of him is distance 0.  So
+-- HUMAN_DECOY_MIN_TILES is 2 (was 5 straight tiles).  false = the straight
+-- spot-to-human distance, as before.
+--   * HUMAN_DECOY_REPICK_MAX re-picks per standoff (1).  On that re-pick a
+--     spot within HUMAN_DECOY_MIN_TILES of the human is not a choice (a
+--     rule, not a cost).  If no spot is left, the bot keeps its spot and
+--     takes the pill as usual.  No more re-picks until a new goal or a new
+--     standoff from another cause.  0 = no limit, as before.  Why: a human
+--     standing still beside the only arc made the bot re-pick every
+--     HUMAN_DECOY_REPICK_TICKS and never shoot.
 --   * no human-near suicide run and no charge now (attack ping or human
 --     shooting); a running one ends.  The bot-command + attack ping pair is
 --     a person's direct order and still starts the run.
@@ -4952,11 +4967,28 @@ M.ORDER_HANDOFF_MAX_HOPS = 3         -- keel 0
 M.HUMAN_DECOY_AWARE         = true   -- keel false
 M.HUMAN_DECOY_MIN_BLOCK     = 0.5    -- keel 0.5 (moot; master off)
 M.HUMAN_DECOY_HOLD_TICKS    = 150    -- keel 150 (moot)
-M.HUMAN_DECOY_MIN_TILES     = 5      -- keel 5 (moot)
+M.HUMAN_DECOY_MIN_TILES     = 2      -- keel 5 (moot)
 M.HUMAN_DECOY_SPACING_COST  = 10     -- keel 10 (moot)
 M.HUMAN_DECOY_BEHIND_COST   = 20     -- keel 20 (moot)
 M.HUMAN_DECOY_BEHIND_MARGIN = 0.5    -- keel 0.5 (moot)
 M.HUMAN_DECOY_REPICK_TICKS  = 50     -- keel 50 (moot)
+M.HUMAN_DECOY_PROJECTED     = true   -- keel false
+M.HUMAN_DECOY_REPICK_MAX    = 1      -- keel 0
+-- 2026-10-14 (Andrew, PR #510 review item 3): THE STANDOFF IS NEVER ON AN
+-- ALLY.  Every standoff pick (pill takes: pick_standoff, the blitz spot pick,
+-- plan_position; tank attacks: evaluate_tank_standoff), decoy or not:
+--   * no spot on a human ally's square or within STANDOFF_AVOID_HUMAN_TILES
+--     squares of it (Chebyshev; 1 = his square and the 8 round it);
+--   * no spot on an ally bot's square (STANDOFF_AVOID_ALLY_BOT; the square
+--     only).
+-- Enemy tanks: no rule.  Allies are the visible ally tanks (the
+-- util.human_ally_near filter).  If every spot breaks the rule, the pick
+-- is as before (the bot still attacks).  A human who stops on or next to
+-- the chosen spot after the pick (the same position two thinks running)
+-- makes one re-pick per standoff.  On a decoy pill that re-pick counts
+-- toward HUMAN_DECOY_REPICK_MAX.  0 / false = no rule, as before.
+M.STANDOFF_AVOID_HUMAN_TILES = 1     -- keel 0
+M.STANDOFF_AVOID_ALLY_BOT   = true   -- keel false
 -- Test seam: a bitmask of seats the detection reads as human even though
 -- the engine flags them as bots.  The scenario gate has no human seat, so
 -- its arena (tests/scenario/order_human_decoy) sets this with bot_init.
@@ -5847,6 +5879,13 @@ M.PRESETS = {
     HUMAN_DECOY_BEHIND_MARGIN     = 0.5,
     HUMAN_DECOY_REPICK_TICKS      = 50,
     HUMAN_DECOY_TEST_HUMANS       = 0,
+    --   2026-10-14: projected spot-to-human distance, one re-pick per
+    --   standoff, and no standoff on an ally.  KEEL: straight distance,
+    --   no limit, no ally rule.
+    HUMAN_DECOY_PROJECTED         = false,
+    HUMAN_DECOY_REPICK_MAX        = 0,
+    STANDOFF_AVOID_HUMAN_TILES    = 0,
+    STANDOFF_AVOID_ALLY_BOT       = false,
     --   FOCUS_OTHER_COST_MULT is the one stage-2 knob that is NOT covered by
     --   the master switch: the focus multiplier sits inside the cost
     --   competition, so its keel value has to be the identity, 1.0, for the

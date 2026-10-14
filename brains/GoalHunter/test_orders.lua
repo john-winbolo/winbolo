@@ -7250,6 +7250,15 @@ do
         and C.PRESETS.keel.HUMAN_DECOY_MIN_TILES == 5 and C.PRESETS.keel.HUMAN_DECOY_SPACING_COST == 10
         and C.PRESETS.keel.HUMAN_DECOY_BEHIND_COST == 20 and C.PRESETS.keel.HUMAN_DECOY_BEHIND_MARGIN == 0.5
         and C.PRESETS.keel.HUMAN_DECOY_REPICK_TICKS == 50, "?")
+  -- 2026-10-14 (PR #510 review item 3).
+  check("item 3 knobs live: projected, MIN_TILES 2, one re-pick, ally rule on",
+        C.HUMAN_DECOY_PROJECTED == true and C.HUMAN_DECOY_MIN_TILES == 2
+        and C.HUMAN_DECOY_REPICK_MAX == 1 and C.STANDOFF_AVOID_HUMAN_TILES == 1
+        and C.STANDOFF_AVOID_ALLY_BOT == true and C.HUMAN_DECOY_SPACING_COST == 10, "?")
+  check("item 3 knobs keel: straight distance, no limit, no ally rule",
+        C.PRESETS.keel.HUMAN_DECOY_PROJECTED == false and C.PRESETS.keel.HUMAN_DECOY_REPICK_MAX == 0
+        and C.PRESETS.keel.STANDOFF_AVOID_HUMAN_TILES == 0
+        and C.PRESETS.keel.STANDOFF_AVOID_ALLY_BOT == false, "?")
 
   -- DETECTION
   local r = dbot()
@@ -7406,6 +7415,10 @@ do
   --   d_sh = 1, space = 10 * (5 - 1) = 40
   --   d_sp = sqrt(4^2 + 5^2) = 6.403, d_hp = sqrt(5^2 + 5^2) = 7.071
   --   behind = 20 * ((7.071 + 0.5) - 6.403) = 23.36
+  -- These are the straight-distance values (HUMAN_DECOY_PROJECTED false,
+  -- MIN_TILES 5, as KEEL); the projected ones are tested below.
+  local sv_proj, sv_min = C.HUMAN_DECOY_PROJECTED, C.HUMAN_DECOY_MIN_TILES
+  C.HUMAN_DECOY_PROJECTED, C.HUMAN_DECOY_MIN_TILES = false, 5
   r = dbot(); chk(r, 100)
   local hc, hs, hb = ATTACK.human_decoy_cost(r.st, 20, 20, 16.5, 15.5)
   check("cost: space term", hs and math.abs(hs - 40) < 1e-6, tostring(hs))
@@ -7418,6 +7431,245 @@ do
   check("cost: the breakdown text adds up",
         ATTACK.human_decoy_txt(hc, hs, hb, 1, math.sqrt(41), math.sqrt(50)):match("^hd 63%.4 = space 40%.0 ") ~= nil,
         ATTACK.human_decoy_txt(hc, hs, hb, 1, math.sqrt(41), math.sqrt(50)))
+  C.HUMAN_DECOY_PROJECTED, C.HUMAN_DECOY_MIN_TILES = sv_proj, sv_min
+
+  -- 2026-10-14 (Andrew, PR #510 review item 3): projected distance, one
+  -- re-pick per standoff, and no standoff on an ally.  A function, not a
+  -- do block: the locals limit.
+  ;(function()
+    local P = ATTACK.hd_proj_dist
+    -- Pill (20,20), centre (20.5,20.5), R = PILL_FIRE_RANGE = 8.
+    check("proj: same angle, different radius: 0",
+          math.abs(P(20, 20, 23.5, 20.5, 27.5, 20.5)) < 1e-9, tostring(P(20, 20, 23.5, 20.5, 27.5, 20.5)))
+    check("proj: 90 degrees apart: 2*8*sin(45) = 11.314",
+          math.abs(P(20, 20, 23.5, 20.5, 20.5, 25.5) - 16 * math.sin(math.pi / 4)) < 1e-9,
+          tostring(P(20, 20, 23.5, 20.5, 20.5, 25.5)))
+    check("proj: 60 degrees apart: chord = R = 8",
+          math.abs(P(20, 20, 22.5, 20.5, 20.5 + 6 * math.cos(math.pi / 3), 20.5 + 6 * math.sin(math.pi / 3)) - 8) < 1e-9, "?")
+    check("proj: 180 degrees apart: 2R = 16",
+          math.abs(P(20, 20, 21.5, 20.5, 15.5, 20.5) - 16) < 1e-9, "?")
+    check("proj: the angle wraps (350 and 10 degrees: 20 apart)",
+          math.abs(P(20, 20, 20.5 + math.cos(math.rad(350)), 20.5 + math.sin(math.rad(350)),
+                     20.5 + 5 * math.cos(math.rad(10)), 20.5 + 5 * math.sin(math.rad(10)))
+                   - 16 * math.sin(math.rad(10))) < 1e-9, "?")
+
+    -- The cost reads the projected distance.  Human (15.5,15.5) is at 225
+    -- degrees round the pill.  Spot (12.5,12.5) is on his line, farther
+    -- out: projected 0, space = 10 * (2 - 0) = 20 (straight it is 4.24).
+    local r = dbot(); chk(r, 100)
+    local hc, hs, hb, dsh = ATTACK.human_decoy_cost(r.st, 20, 20, 12.5, 12.5)
+    check("proj cost: a spot behind the human on his line: d 0, space 20",
+          dsh and math.abs(dsh) < 1e-9 and math.abs(hs - 20) < 1e-9, tostring(hs))
+    -- Spot (16.5,15.5): angle 231.3 deg, 6.34 deg off: d = 16 sin(3.17 deg).
+    local dexp = 16 * math.sin((math.atan2(-5, -4) - math.atan2(-5, -5)) / 2)
+    hc, hs, hb, dsh = ATTACK.human_decoy_cost(r.st, 20, 20, 16.5, 15.5)
+    check("proj cost: a spot beside him: the chord", dsh and math.abs(dsh - math.abs(dexp)) < 1e-9,
+          tostring(dsh) .. " v " .. tostring(dexp))
+    check("proj cost: space = 10 * (2 - chord)", math.abs(hs - 10 * (2 - math.abs(dexp))) < 1e-9, tostring(hs))
+    C.HUMAN_DECOY_PROJECTED = false
+    hc, hs, hb, dsh = ATTACK.human_decoy_cost(r.st, 20, 20, 12.5, 12.5)
+    check("proj cost: knob off: the straight distance", math.abs(dsh - math.sqrt(18)) < 1e-9, tostring(dsh))
+    C.HUMAN_DECOY_PROJECTED = true
+
+    -- THE RE-PICK.  The bot heads for (16.5,15.5), 0.89 projected tiles
+    -- from the human.  Spot B (25.5,15.5) is 90 degrees round: far.
+    local function rbot(spots)
+      local b = dbot(); chk(b, 100)
+      local g = b.st.goal
+      g.substate = "approach"
+      g.standoff_mx, g.standoff_my, g.standoff_fx, g.standoff_fy = 16, 15, 16.5, 15.5
+      g.scan_spots = spots
+      return b, g
+    end
+    local near = { mx = 16, my = 15, cx = 16.5, cy = 15.5, has_los = true }
+    local far  = { mx = 25, my = 15, cx = 25.5, cy = 15.5, has_los = true }
+    local near2 = { mx = 14, my = 16, cx = 14.5, cy = 16.5, has_los = true }
+    local function step(b, g, t) b.st.tick = t; chk(b, t); ATTACK._human_decoy_repick(b.st, g, b.w, b.inf) end
+    -- A human standing still beside the bot's arc: one re-pick, then it
+    -- keeps its spot and goes on (no loop).
+    local b, g = rbot({ near, far })
+    step(b, g, 200)
+    check("re-pick: the human beside the spot: a re-pick, with the hard rule",
+          g.substate == "plan_position" and g._hd_hard == true and g._hd_repicks == 1, tostring(g.substate))
+    -- plan_position picks B; the human then walks beside B and stands there.
+    g.standoff_mx, g.standoff_my, g.standoff_fx, g.standoff_fy = 25, 15, 25.5, 15.5
+    g.scan_spots = { near, far }
+    ATTACK._standoff_picked(b.st, g, b.inf)
+    g.substate = "approach"
+    check("re-pick: the re-pick's own spot keeps the count, the hard rule ends",
+          g._hd_repicks == 1 and g._hd_hard == nil, tostring(g._hd_repicks))
+    b.inf.objects[1].x, b.inf.objects[1].y = 24 * 256 + 128, 15 * 256 + 128
+    local n_re = 0
+    for t = 300, 1300, 10 do
+      step(b, g, t)
+      if g.substate ~= "approach" then n_re = n_re + 1; g.substate = "approach"; g.scan_spots = { near, far } end
+    end
+    check("re-pick: the human now stands still beside the new spot: no second re-pick (no loop)",
+          n_re == 0 and g._hd_repicks == 1, tostring(n_re))
+    -- A new standoff from another cause starts the count again.
+    ATTACK._standoff_picked(b.st, g, b.inf)
+    check("re-pick: a new standoff from another cause: the count starts again", g._hd_repicks == nil, "?")
+    -- KEEL (no limit): the same human re-picks every REPICK_TICKS.
+    C.HUMAN_DECOY_REPICK_MAX = 0
+    b, g = rbot({ near, far })
+    b.inf.objects[1].x, b.inf.objects[1].y = 15 * 256 + 128, 15 * 256 + 128
+    n_re = 0
+    for t = 200, 700, 10 do
+      step(b, g, t)
+      if g.substate ~= "approach" then n_re = n_re + 1; g.substate = "approach"; g.scan_spots = { near, far } end
+    end
+    check("re-pick: REPICK_MAX 0 (keel): a re-pick every REPICK_TICKS, no hard rule",
+          n_re == 11 and g._hd_hard == nil, tostring(n_re))
+    C.HUMAN_DECOY_REPICK_MAX = 1
+    -- No spot outside 2 projected tiles: keep the spot, the re-pick is used.
+    b, g = rbot({ near, near2 })
+    step(b, g, 200)
+    check("re-pick: no spot outside the rule: the bot keeps its spot",
+          g.substate == "approach" and g.standoff_fx == 16.5 and g._hd_hard == nil
+          and g._hd_repicks == 1, tostring(g.substate))
+    step(b, g, 300)
+    check("re-pick: and it does not try again", g.substate == "approach", tostring(g.substate))
+    -- Straight distance with KEEL values: far (27.5,13.5) is > 5 straight.
+    C.HUMAN_DECOY_PROJECTED, C.HUMAN_DECOY_MIN_TILES = false, 5
+    b, g = rbot({ near, far })
+    g.standoff_fx, g.standoff_fy = 19.5, 15.5   -- 4 tiles straight
+    step(b, g, 200)
+    check("re-pick: projected off: 4 straight tiles < 5 re-picks (old rule)",
+          g.substate == "plan_position", tostring(g.substate))
+    C.HUMAN_DECOY_PROJECTED, C.HUMAN_DECOY_MIN_TILES = true, 2
+    b, g = rbot({ near, far })
+    g.standoff_fx, g.standoff_fy = 12.5, 12.5   -- his line, 4.24 straight, 0 projected
+    step(b, g, 200)
+    check("re-pick: projected on: a spot behind him on his line re-picks",
+          g.substate == "plan_position", tostring(g.substate))
+    b, g = rbot({ near, far })
+    g.standoff_fx, g.standoff_fy = 27.5, 13.5
+    step(b, g, 200)
+    check("re-pick: projected on: a spot 90 degrees round does not", g.substate == "approach", tostring(g.substate))
+
+    -- THE HARD RULE IN THE BLITZ PICK.  Spot near (best score) and far.
+    local sv_margin = C.BLITZ_SPOT_LOS_MARGIN
+    C.BLITZ_SPOT_LOS_MARGIN = 0
+    local function bspots()
+      return {
+        { mx = 12, my = 12, cx = 12.5, cy = 12.5, has_los = true, total_score = 0, aim_wx = 5248, aim_wy = 5248 },
+        { mx = 27, my = 13, cx = 27.5, cy = 13.5, has_los = true, total_score = 100, aim_wx = 5248, aim_wy = 5248 },
+      }
+    end
+    b, g = rbot({})
+    local mx = ATTACK._blitz_pick_from_scan(bspots(), b.st, 10, 10, nil, 20, 20, b.w, nil)
+    check("blitz pick: no hard rule: the near spot (best score)", mx == 12, tostring(mx))
+    g._hd_hard = true
+    mx = ATTACK._blitz_pick_from_scan(bspots(), b.st, 10, 10, nil, 20, 20, b.w, nil)
+    check("blitz pick: the hard rule: the far spot", mx == 27, tostring(mx))
+    local only = bspots(); only[2] = nil
+    mx = ATTACK._blitz_pick_from_scan(only, b.st, 10, 10, nil, 20, 20, b.w, nil)
+    check("blitz pick: the hard rule with no other spot: as before", mx == 12, tostring(mx))
+    g._hd_hard = nil
+
+    -- THE ALLY RULE.  No decoy flag (dropped by hand here).
+    -- Spots A (12,12) best, B (27,13).
+    b.st._human_decoy = nil
+    local function with_obj(o) b.inf.objects = { o } end
+    local function tank(pn, mx2, my2, info2)
+      return { type = 1, idnum = pn, x = mx2 * 256 + 128, y = my2 * 256 + 128, info = info2 or 0 }
+    end
+    with_obj(tank(0, 13, 13))   -- a human one square off A (diagonal)
+    mx = ATTACK._blitz_pick_from_scan(bspots(), b.st, 10, 10, nil, 20, 20, b.w, b.inf)
+    check("ally rule: a human next to A (one square, diagonal): B", mx == 27, tostring(mx))
+    with_obj(tank(0, 14, 12))   -- two squares off
+    mx = ATTACK._blitz_pick_from_scan(bspots(), b.st, 10, 10, nil, 20, 20, b.w, b.inf)
+    check("ally rule: a human two squares off A: A", mx == 12, tostring(mx))
+    with_obj(tank(2, 12, 12))   -- p2 made an ally bot (player_bots 0x04)
+    b.inf.player_bots = 0x04
+    mx = ATTACK._blitz_pick_from_scan(bspots(), b.st, 10, 10, nil, 20, 20, b.w, b.inf)
+    check("ally rule: an ally bot on A's square: B", mx == 27, tostring(mx))
+    with_obj(tank(2, 13, 12))
+    mx = ATTACK._blitz_pick_from_scan(bspots(), b.st, 10, 10, nil, 20, 20, b.w, b.inf)
+    check("ally rule: an ally bot next to A (not on it): A", mx == 12, tostring(mx))
+    with_obj(tank(7, 12, 12, 0x80))
+    mx = ATTACK._blitz_pick_from_scan(bspots(), b.st, 10, 10, nil, 20, 20, b.w, b.inf)
+    check("ally rule: an enemy on A's square: A (no rule)", mx == 12, tostring(mx))
+    b.inf.objects = { tank(0, 12, 12), tank(4, 27, 13) }
+    b.inf.player_bots = 0x02
+    mx = ATTACK._blitz_pick_from_scan(bspots(), b.st, 10, 10, nil, 20, 20, b.w, b.inf)
+    check("ally rule: humans on both spots: as before (A)", mx == 12, tostring(mx))
+    C.STANDOFF_AVOID_HUMAN_TILES, C.STANDOFF_AVOID_ALLY_BOT = 0, false
+    with_obj(tank(0, 12, 12))
+    mx = ATTACK._blitz_pick_from_scan(bspots(), b.st, 10, 10, nil, 20, 20, b.w, b.inf)
+    check("ally rule: keel (both off): a human on A: A", mx == 12 and ATTACK.standoff_allies(b.inf) == nil, tostring(mx))
+    C.STANDOFF_AVOID_HUMAN_TILES, C.STANDOFF_AVOID_ALLY_BOT = 1, true
+    C.BLITZ_SPOT_LOS_MARGIN = sv_margin
+
+    -- THE ALLY RULE IN THE TANK STANDOFF.  Grass everywhere; cost = the
+    -- Manhattan distance from our tank at (10,10).  Enemy at (30,10), R 7:
+    -- the cheapest ring square is (23,10).
+    local sv_gt, sv_tm, sv_dij, sv_sh = _G.get_terrain, _G.TERRAIN_MASK, cpf.smart_cost_dij_only, cpf.dijkstra_shells_at
+    _G.get_terrain = function() return C.T_GRASS end
+    _G.TERRAIN_MASK = 0x0F
+    cpf.smart_cost_dij_only = function(_, mx2, my2) return math.abs(mx2 - 10) + math.abs(my2 - 10) end
+    cpf.dijkstra_shells_at = function() return 40 end
+    local et = { mx = 30, my = 10 }
+    b.inf.objects = {}
+    local tx, ty = ATTACK.evaluate_tank_standoff(et, 10, 10, b.inf, b.w, b.st)
+    check("tank standoff: no ally: (23,10)", tx == 23 and ty == 10, string.format("%s,%s", tostring(tx), tostring(ty)))
+    b.inf.objects = { tank(0, 23, 10) }
+    tx, ty = ATTACK.evaluate_tank_standoff(et, 10, 10, b.inf, b.w, b.st)
+    check("tank standoff: a human on (23,10): a square off his ring",
+          tx and (math.abs(tx - 23) > 1 or math.abs(ty - 10) > 1), string.format("%s,%s", tostring(tx), tostring(ty)))
+    b.inf.player_bots = 0x03
+    tx, ty = ATTACK.evaluate_tank_standoff(et, 10, 10, b.inf, b.w, b.st)
+    check("tank standoff: an ally bot on (23,10): the next square, (24,9) or (24,11)",
+          tx == 24 and (ty == 9 or ty == 11), string.format("%s,%s", tostring(tx), tostring(ty)))
+    b.inf.player_bots = 0x02
+    b.inf.objects = { tank(7, 23, 10, 0x80) }
+    tx, ty = ATTACK.evaluate_tank_standoff(et, 10, 10, b.inf, b.w, b.st)
+    check("tank standoff: an enemy on (23,10): (23,10)", tx == 23 and ty == 10, "?")
+    _G.get_terrain, _G.TERRAIN_MASK, cpf.smart_cost_dij_only, cpf.dijkstra_shells_at = sv_gt, sv_tm, sv_dij, sv_sh
+
+    -- THE ALLY RE-PICK (no decoy flag).  Spot (30,30); a human stops next
+    -- to it after the pick.
+    local function abot()
+      local a = dbot()
+      a.st._human_decoy = nil
+      local ag = a.st.goal
+      ag.substate = "approach"
+      ag.standoff_mx, ag.standoff_my, ag.standoff_fx, ag.standoff_fy = 30, 30, 30.5, 30.5
+      a.inf.objects = {}
+      ATTACK._standoff_picked(a.st, ag, a.inf)
+      return a, ag
+    end
+    local a, ag = abot()
+    a.inf.objects = { tank(0, 31, 30) }
+    ATTACK._ally_spot_repick(a.st, ag, a.inf)
+    check("ally re-pick: the first sight is not a stop", ag.substate == "approach", tostring(ag.substate))
+    ATTACK._ally_spot_repick(a.st, ag, a.inf)
+    check("ally re-pick: the same position again: a re-pick", ag.substate == "plan_position", tostring(ag.substate))
+    ag.standoff_mx, ag.standoff_my = 40, 40
+    ATTACK._standoff_picked(a.st, ag, a.inf)
+    ag.substate = "approach"
+    a.inf.objects = { tank(0, 41, 40) }
+    for _ = 1, 5 do ATTACK._ally_spot_repick(a.st, ag, a.inf) end
+    check("ally re-pick: one per standoff", ag.substate == "approach", tostring(ag.substate))
+    a, ag = abot()
+    for i2 = 1, 5 do
+      a.inf.objects = { tank(0, 31, 30) }
+      a.inf.objects[1].x = a.inf.objects[1].x + i2 * 10
+      ATTACK._ally_spot_repick(a.st, ag, a.inf)
+    end
+    check("ally re-pick: a human moving through: no re-pick", ag.substate == "approach", tostring(ag.substate))
+    a, ag = abot()
+    a.inf.objects = { tank(0, 31, 30) }
+    ATTACK._standoff_picked(a.st, ag, a.inf)   -- he was there at the pick
+    for _ = 1, 5 do ATTACK._ally_spot_repick(a.st, ag, a.inf) end
+    check("ally re-pick: a human already there at the pick: no re-pick", ag.substate == "approach", tostring(ag.substate))
+    a, ag = abot()
+    C.STANDOFF_AVOID_HUMAN_TILES = 0
+    a.inf.objects = { tank(0, 31, 30) }
+    for _ = 1, 5 do ATTACK._ally_spot_repick(a.st, ag, a.inf) end
+    check("ally re-pick: keel (0): never", ag.substate == "approach", tostring(ag.substate))
+    C.STANDOFF_AVOID_HUMAN_TILES = 1
+  end)()
 
   -- KEEL: master off, nothing is touched and nothing is read.
   C.HUMAN_DECOY_AWARE = false

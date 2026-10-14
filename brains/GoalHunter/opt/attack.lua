@@ -1084,17 +1084,121 @@ end
 --   behind = HUMAN_DECOY_BEHIND_COST
 --            * max(0, (d_hp + HUMAN_DECOY_BEHIND_MARGIN) - d_sp)
 -- d_sh spot-human, d_sp spot-pill centre, d_hp human-pill centre.
+-- 2026-10-14 (Andrew, PR #510 review item 3): d_sh is the PROJECTED
+-- distance (M.hd_proj_dist) when C.HUMAN_DECOY_PROJECTED is on, else the
+-- straight distance.
 -- Answers cost, space, behind, d_sh, d_sp, d_hp.  Every picker that adds the
 -- cost prints these through M.human_decoy_txt.
+
+-- The projected distance between float tiles (ax,ay) and (bx,by) round the
+-- pill at (pmx,pmy): both are pushed out from the pill centre onto the
+-- circle of radius R = C.PILL_FIRE_RANGE (the range the decoy check uses),
+-- and the answer is the chord between the two points, 2 R sin(dtheta / 2).
+-- The distance from the pill does not count.  A point on the pill centre
+-- has no angle: then the straight distance is the answer.
+function M.hd_proj_dist(pmx, pmy, ax, ay, bx, by)
+  local pcx, pcy = pmx + 0.5, pmy + 0.5
+  local ux, uy = ax - pcx, ay - pcy
+  local vx, vy = bx - pcx, by - pcy
+  if (ux * ux + uy * uy) < 1e-6 or (vx * vx + vy * vy) < 1e-6 then
+    local dx, dy = ax - bx, ay - by
+    return math.sqrt(dx * dx + dy * dy)
+  end
+  local R = C.PILL_FIRE_RANGE or 8
+  local dth = math.abs(math.atan2(uy, ux) - math.atan2(vy, vx))
+  if dth > math.pi then dth = 2 * math.pi - dth end
+  return 2 * R * math.sin(dth / 2)
+end
+
+-- The spot-to-human distance the decoy rules use for a spot at float tile
+-- (sfx,sfy) on the pill at (pmx,pmy): projected (C.HUMAN_DECOY_PROJECTED)
+-- or straight.  nil when no decoy flag stands on that pill.
+function M.hd_spot_dist(state, pmx, pmy, sfx, sfy)
+  local f = state and state._human_decoy
+  if not (f and f.pmx == pmx and f.pmy == pmy and f.hx and sfx) then return nil end
+  local hx, hy = f.hx / 256, f.hy / 256
+  if C.HUMAN_DECOY_PROJECTED then
+    return M.hd_proj_dist(pmx, pmy, sfx, sfy, hx, hy)
+  end
+  local dx, dy = sfx - hx, sfy - hy
+  return math.sqrt(dx * dx + dy * dy)
+end
+
+-- The re-pick's hard rule (C.HUMAN_DECOY_REPICK_MAX > 0): while the goal is
+-- re-picking (goal._hd_hard), a spot within HUMAN_DECOY_MIN_TILES of the
+-- human (M.hd_spot_dist) is not a choice.
+function M.hd_hard_reject(state, pmx, pmy, sfx, sfy)
+  local g = state and state.goal
+  if not (g and g._hd_hard) then return false end
+  local d = M.hd_spot_dist(state, pmx, pmy, sfx, sfy)
+  return d ~= nil and d < (C.HUMAN_DECOY_MIN_TILES or 2)
+end
+
+-- 2026-10-14 (Andrew, PR #510 review item 3): THE STANDOFF IS NEVER ON AN
+-- ALLY.  The visible ally tanks (util.human_ally_near's filter, bots too)
+-- as a list of { mx, my, human }, or nil when both knobs are off or no ally
+-- is in sight.  C.STANDOFF_AVOID_HUMAN_TILES = Chebyshev squares round a
+-- human; C.STANDOFF_AVOID_ALLY_BOT = an ally bot's square.
+function M.standoff_allies(info)
+  local ht = C.STANDOFF_AVOID_HUMAN_TILES or 0
+  local ab = C.STANDOFF_AVOID_ALLY_BOT
+  if not info or (ht <= 0 and not ab) then return nil end
+  local allies = info.allies or 0
+  local bots   = info.player_bots or 0
+  local me     = info.player_number
+  local OT     = _G.OBJECT_TANK
+  local OH     = _G.OBJECT_HOSTILE or 0
+  local list
+  for _, ob in ipairs(info.objects or {}) do
+    local pn = ob.idnum or -1
+    if ob.type == OT and pn >= 0 and pn ~= me
+       and bit.band(ob.info or 0, OH) == 0
+       and bit.band(allies, bit.lshift(1, pn)) ~= 0 then
+      local human = bit.band(bots, bit.lshift(1, pn)) == 0
+      if (human and ht > 0) or (not human and ab) then
+        list = list or {}
+        list[#list + 1] = { mx = bit.rshift(ob.x or 0, 8), my = bit.rshift(ob.y or 0, 8),
+                            x = ob.x, y = ob.y, human = human, pn = pn }
+      end
+    end
+  end
+  return list
+end
+
+-- The ally whose square (or, for a human, ring) holds tile (mx,my), or nil.
+function M.standoff_ally_hit(list, mx, my)
+  if not list then return nil end
+  local ht = C.STANDOFF_AVOID_HUMAN_TILES or 0
+  for _, a in ipairs(list) do
+    if a.human then
+      if math.abs(a.mx - mx) <= ht and math.abs(a.my - my) <= ht then return a end
+    elseif a.mx == mx and a.my == my then
+      return a
+    end
+  end
+  return nil
+end
+
+-- How bad a spot is for the two rules: 0 = fine, 1 = on an ally (the ally
+-- rule), 2 = inside the re-pick's hard rule.  A picker takes the best spot
+-- of the lowest level it has; with only level 1 and 2 spots the pick is as
+-- before.
+function M.standoff_spot_level(state, list, pmx, pmy, mx, my, sfx, sfy)
+  if pmx and M.hd_hard_reject(state, pmx, pmy, sfx or (mx + 0.5), sfy or (my + 0.5)) then
+    return 2
+  end
+  if M.standoff_ally_hit(list, mx, my) then return 1 end
+  return 0
+end
+
 function M.human_decoy_cost(state, pmx, pmy, sfx, sfy)
   local f = state and state._human_decoy
   if not (f and f.pmx == pmx and f.pmy == pmy and f.hx and sfx) then return nil end
   local hx, hy = f.hx / 256, f.hy / 256
   local pcx, pcy = pmx + 0.5, pmy + 0.5
-  local ax, ay = sfx - hx, sfy - hy
   local bx, by = sfx - pcx, sfy - pcy
   local cx, cy = hx - pcx, hy - pcy
-  local d_sh = math.sqrt(ax * ax + ay * ay)
+  local d_sh = M.hd_spot_dist(state, pmx, pmy, sfx, sfy)
   local d_sp = math.sqrt(bx * bx + by * by)
   local d_hp = math.sqrt(cx * cx + cy * cy)
   local space  = (C.HUMAN_DECOY_SPACING_COST or 0)
@@ -1398,6 +1502,15 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
   local fb_clear_mx, fb_clear_my = nil, nil
   -- Hoist viz toggle for the candidate-overlay emissions below.
   local v_take = BRAIN_DEBUG_MODE and viz.is_on("pill_take_target")
+  -- 2026-10-14 (Andrew, PR #510 review item 3): the ally rule and the
+  -- decoy re-pick's hard rule (M.standoff_spot_level).  lvl_best[k] = the
+  -- best scored spot of level k or lower; the pick takes the lowest level
+  -- that has one, so with every spot at level 1 or 2 it is as before.
+  local allies = M.standoff_allies(info)
+  local hard   = state and state.goal and state.goal._hd_hard
+  local lvl_on = allies or hard
+  local lvl_best = lvl_on and { {}, {} } or nil
+  local n_lvl = 0
 
   local seen = {}
   for R = R_MAX, R_MIN, -1 do
@@ -1447,6 +1560,14 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
         if score < best_score then
           best_score = score; best_mx = cx; best_my = cy
         end
+        if lvl_on and score < math.huge then
+          local lv = M.standoff_spot_level(state, allies, pill.mx, pill.my, cx, cy)
+          if lv > 0 then n_lvl = n_lvl + 1 end
+          for k = lv, 1 do
+            local b = lvl_best[k + 1]
+            if not b.s or score < b.s then b.s, b.mx, b.my = score, cx, cy end
+          end
+        end
 
         -- Overlay: show candidate positions with color-coded scores
         if v_take then
@@ -1463,6 +1584,12 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
         end
       end
     end
+  end
+
+  -- The ally rule and the hard rule: the best spot of the lowest level.
+  if lvl_on and n_lvl > 0 then
+    local b = (lvl_best[1].s and lvl_best[1]) or (lvl_best[2].s and lvl_best[2]) or nil
+    if b then best_score, best_mx, best_my = b.s, b.mx, b.my end
   end
 
   -- Prefer a fully-scored pick; then the closest verified clear-shot tile; only
@@ -2581,28 +2708,164 @@ end
 
 -- THE HUMAN WALKS ONTO OUR SPOT (C.HUMAN_DECOY_AWARE).  While a human-decoy
 -- flag stands on this goal's pill and the human's last seen spot comes within
--- HUMAN_DECOY_MIN_TILES (Euclidean) of the chosen standoff, plan a fresh spot
--- the usual way (reset_to_plan_position; it does not count as a spot tried),
--- at most once per HUMAN_DECOY_REPICK_TICKS.  Only before the shooting
--- starts: on the way (approach), waiting for a blitz GO, or aiming from the
--- spot of a take that has no walls to waste (a PPT take's walls belong to its
--- spot, so a PPT take re-picks only on the way).
+-- HUMAN_DECOY_MIN_TILES of the chosen standoff (M.hd_spot_dist: projected
+-- with C.HUMAN_DECOY_PROJECTED, else straight), plan a fresh spot the usual
+-- way (reset_to_plan_position; it does not count as a spot tried), at most
+-- once per HUMAN_DECOY_REPICK_TICKS.  Only before the shooting starts: on
+-- the way (approach), waiting for a blitz GO, or aiming from the spot of a
+-- take that has no walls to waste (a PPT take's walls belong to its spot,
+-- so a PPT take re-picks only on the way).
+--
+-- 2026-10-14 (Andrew, PR #510 review item 3): AT MOST
+-- HUMAN_DECOY_REPICK_MAX RE-PICKS PER STANDOFF (0 = no limit).  A human
+-- standing still beside the only arc made the bot re-pick every
+-- HUMAN_DECOY_REPICK_TICKS and never fire.  With a limit:
+--   * the re-pick first looks for a spot outside HUMAN_DECOY_MIN_TILES of
+--     the human (the plan's scan spots, else pick_standoff).  None: the bot
+--     keeps its spot and takes the pill as usual (HUMAN_DECOY_REPICK ...
+--     keep=no spot), and the re-pick is used up;
+--   * else the re-pick runs with goal._hd_hard set: every picker treats a
+--     spot within HUMAN_DECOY_MIN_TILES of the human as not a choice
+--     (M.standoff_spot_level level 2);
+--   * a human ally who stops on or next to the spot (the ally rule,
+--     C.STANDOFF_AVOID_HUMAN_TILES) also re-picks here, and counts.
+-- The count is goal._hd_repicks: it ends with the goal, and a new standoff
+-- from any other cause starts it again (standoff_picked).
 local HD_REPICK_SUBSTATES = { approach = true, blitz_wait = true, aim = true }
-local function human_decoy_repick(state, goal)
+local function repick_allowed(goal)
+  if not HD_REPICK_SUBSTATES[goal.substate] or goal._ping_suicide then return false end
+  if goal._is_ppt and goal.substate ~= "approach" then return false end
+  return true
+end
+
+-- A plan_position pick has set goal.standoff_*.  The re-pick's own spot
+-- keeps the re-pick counts; a new standoff from any other cause starts them
+-- again.  The human allies already on or next to the spot are noted, so
+-- only one who comes there later re-picks (the pick fell back onto them).
+local function standoff_picked(state, goal, info)
+  if goal._repick_pending then
+    goal._repick_pending = nil
+    goal._hd_hard = nil
+  else
+    goal._hd_repicks = nil
+    goal._ally_repicks = nil
+  end
+  goal._ally_seen = nil
+  goal._ally_at_pick = nil
+  local ht = C.STANDOFF_AVOID_HUMAN_TILES or 0
+  if ht > 0 and goal.standoff_mx then
+    for _, a in ipairs(M.standoff_allies(info) or {}) do
+      if a.human and math.abs(a.mx - goal.standoff_mx) <= ht
+         and math.abs(a.my - goal.standoff_my) <= ht then
+        goal._ally_at_pick = goal._ally_at_pick or {}
+        goal._ally_at_pick[a.pn] = true
+      end
+    end
+  end
+end
+M._standoff_picked = standoff_picked   -- unit tests
+
+-- The human ally who has STOPPED on or next to the chosen standoff
+-- (C.STANDOFF_AVOID_HUMAN_TILES, Chebyshev): the same world position as
+-- the last time this was asked.  One who was there when the spot was
+-- picked does not count until he has left and come back.  Answers the
+-- ally entry (M.standoff_allies) or nil.
+local function standoff_human_stopped(goal, info)
+  local ht = C.STANDOFF_AVOID_HUMAN_TILES or 0
+  if ht <= 0 or not goal.standoff_mx then return nil end
+  local seen, now_seen, hit = goal._ally_seen or {}, {}, nil
+  local at_pick = goal._ally_at_pick
+  for _, a in ipairs(M.standoff_allies(info) or {}) do
+    if a.human then
+      if math.abs(a.mx - goal.standoff_mx) <= ht and math.abs(a.my - goal.standoff_my) <= ht then
+        if not (at_pick and at_pick[a.pn]) then
+          local prev = seen[a.pn]
+          now_seen[a.pn] = { a.x, a.y }
+          if prev and prev[1] == a.x and prev[2] == a.y and not hit then hit = a end
+        end
+      elseif at_pick then
+        at_pick[a.pn] = nil
+      end
+    end
+  end
+  goal._ally_seen = now_seen
+  return hit
+end
+
+-- Is there a spot outside HUMAN_DECOY_MIN_TILES of the human to re-pick
+-- onto?  The plan's own scan spots when it had them, else pick_standoff
+-- under the hard rule.  Read before anything is reset.
+local function hd_repick_has_spot(state, goal, world, info)
+  local f = state._human_decoy
+  local min = C.HUMAN_DECOY_MIN_TILES or 2
+  local spots = goal.scan_spots
+  if spots and #spots > 0 then
+    for _, s in ipairs(spots) do
+      if s.has_los and s.mx then
+        local d = M.hd_spot_dist(state, f.pmx, f.pmy, s.cx or (s.mx + 0.5), s.cy or (s.my + 0.5))
+        if d and d >= min then return true end
+      end
+    end
+    return false
+  end
+  local pill = world and world.pills and world.pills[goal.target_id]
+  if not (pill and info) then return false end
+  local was = goal._hd_hard
+  goal._hd_hard = true
+  local smx, smy = M.pick_standoff(world, info, pill, state)
+  goal._hd_hard = was
+  if not smx then return false end
+  local d = M.hd_spot_dist(state, f.pmx, f.pmy, smx + 0.5, smy + 0.5)
+  return d ~= nil and d >= min
+end
+
+local function human_decoy_repick(state, goal, world, info)
   local f = state._human_decoy
   if not (f and f.tid == goal.target_id and f.hx and goal.standoff_fx and goal.standoff_fy) then
     return
   end
-  if not HD_REPICK_SUBSTATES[goal.substate] or goal._ping_suicide then return end
-  if goal._is_ppt and goal.substate ~= "approach" then return end
+  if not repick_allowed(goal) then return end
   local now = state.tick or 0
   if now - (f.repick_t or -1e9) < (C.HUMAN_DECOY_REPICK_TICKS or 50) then return end
-  local dx, dy = goal.standoff_fx - f.hx / 256, goal.standoff_fy - f.hy / 256
-  local d = math.sqrt(dx * dx + dy * dy)
-  if d >= (C.HUMAN_DECOY_MIN_TILES or 5) then return end
+  local min = C.HUMAN_DECOY_MIN_TILES or 5
+  local d = M.hd_spot_dist(state, f.pmx, f.pmy, goal.standoff_fx, goal.standoff_fy) or math.huge
+  local why = "decoy"
+  if d >= min then
+    -- The ally rule's trigger: a human ally stopped on or next to the spot.
+    local a = standoff_human_stopped(goal, info)
+    if not a then return end
+    why = "ally p" .. tostring(a.pn)
+  end
+  local max = C.HUMAN_DECOY_REPICK_MAX or 0
+  if max > 0 and (goal._hd_repicks or 0) >= max then return end
   f.repick_t = now
+  if max > 0 then
+    goal._hd_repicks = (goal._hd_repicks or 0) + 1
+    if not hd_repick_has_spot(state, goal, world, info) then
+      return
+    end
+    goal._hd_hard = true
+  end
+  goal._repick_pending = true
   reset_to_plan_position(state, goal)
 end
+M._human_decoy_repick = human_decoy_repick   -- unit tests
+
+-- 2026-10-14 (Andrew, PR #510 review item 3): NO DECOY FLAG ON THIS PILL.
+-- A human ally who stops on or next to the chosen spot (after the pick)
+-- makes one re-pick per standoff (goal._ally_repicks).  Same substates as
+-- the decoy re-pick.  C.STANDOFF_AVOID_HUMAN_TILES = 0: never.
+local function ally_spot_repick(state, goal, info)
+  if (C.STANDOFF_AVOID_HUMAN_TILES or 0) <= 0 or not goal.standoff_mx then return end
+  if not repick_allowed(goal) then return end
+  if (goal._ally_repicks or 0) >= 1 then return end
+  local a = standoff_human_stopped(goal, info)
+  if not a then return end
+  goal._ally_repicks = 1
+  goal._repick_pending = true
+  reset_to_plan_position(state, goal)
+end
+M._ally_spot_repick = ally_spot_repick   -- unit tests
 
 local function blocked_line_replan(state, goal, pmx, pmy, now)
   goal._sanity_pill_replans = (goal._sanity_pill_replans or 0) + 1
@@ -3486,6 +3749,11 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
   local best_cost = math.huge
   local best_mx, best_my = nil, nil
   local scan_spots = {}
+  -- 2026-10-14 (Andrew, PR #510 review item 3): the ally rule
+  -- (M.standoff_allies).  ok_* = the cheapest spot not on an ally; with
+  -- none, the pick is as before.
+  local allies = M.standoff_allies(info)
+  local ok_cost, ok_mx, ok_my, n_ally = math.huge, nil, nil, 0
 
   -- Walk Manhattan boundary (|dx| + |dy| == R) around the enemy tank.
   -- ~4*R tiles total (28 for R=7) — cheap.
@@ -3513,6 +3781,13 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
               best_cost = c
               best_mx, best_my = mx, my
             end
+            if c and allies then
+              if M.standoff_ally_hit(allies, mx, my) then
+                n_ally = n_ally + 1
+              elseif c < ok_cost then
+                ok_cost, ok_mx, ok_my = c, mx, my
+              end
+            end
           else
             scan_spots[#scan_spots + 1] = {
               cx = mx + 0.5, cy = my + 0.5, mx = mx, my = my,
@@ -3527,6 +3802,10 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
         end
       end
     end
+  end
+
+  if n_ally > 0 and best_mx then
+    if ok_mx then best_cost, best_mx, best_my = ok_cost, ok_mx, ok_my end
   end
 
   -- Geometric fallback: Dijkstra slate hasn't reached any boundary
@@ -4014,10 +4293,11 @@ end
 --     (spot_margin.lua). The margin runs first (pure maths); a shell simulation
 --     is paid only for an aim that passed it, and not at all for the scan's own
 --     aim when we test from the scan's own point. 0 (KEEL) = no margin.
+-- info (optional) = the think's info, for the ally rule (M.standoff_allies).
 -- Returns smx, smy, afx, afy, sfx, sfy, deg -- or nil, reason. reason "margin"
 -- means spots existed but the margin rejected them all (the caller must not
 -- fall back to pick_standoff, which knows nothing about the margin).
-local function blitz_pick_from_scan(spots, state, tmx, tmy, wallset, pmx, pmy, world)
+local function blitz_pick_from_scan(spots, state, tmx, tmy, wallset, pmx, pmy, world, info)
   if not spots then return nil end
   local rej = state._blitz_reject
   local need_clear = wallset and next(wallset) ~= nil
@@ -4061,6 +4341,29 @@ local function blitz_pick_from_scan(spots, state, tmx, tmy, wallset, pmx, pmy, w
       return nil, "margin"
     end
     return nil
+  end
+  -- 2026-10-14 (Andrew, PR #510 review item 3): the ally rule and the decoy
+  -- re-pick's hard rule (M.standoff_spot_level).  Keep the eligible spots of
+  -- the lowest level there is; with every spot at level 1 or 2 the pick is
+  -- as before.
+  do
+    local allies = M.standoff_allies(info)
+    if allies or (state.goal and state.goal._hd_hard) then
+      local lo_lv, n_out = 2, 0
+      for _, e in ipairs(elig) do
+        e.lv = M.standoff_spot_level(state, allies, pmx, pmy, e.s.mx, e.s.my, e.sfx, e.sfy)
+        if e.lv < lo_lv then lo_lv = e.lv end
+      end
+      if lo_lv < 2 then
+        local keep = {}
+        for _, e in ipairs(elig) do
+          if e.lv <= lo_lv then keep[#keep + 1] = e else n_out = n_out + 1 end
+        end
+        if n_out > 0 then
+          elig = keep
+        end
+      end
+    end
   end
   -- The human-decoy costs (C.HUMAN_DECOY_AWARE): added to each eligible
   -- spot's score for both passes when a flag stands on this pill.
@@ -4177,7 +4480,7 @@ function M.blitz_negotiate(state, world, info, now)
   local smx, smy, aim_fx, aim_fy, spot_fx, spot_fy, spot_deg, nospot_why
   local scan_ready = cached and cached.spots
   if scan_ready then
-    smx, smy, aim_fx, aim_fy, spot_fx, spot_fy, spot_deg = blitz_pick_from_scan(cached.spots, state, tmx, tmy, wallset, pill.mx, pill.my, world)
+    smx, smy, aim_fx, aim_fy, spot_fx, spot_fy, spot_deg = blitz_pick_from_scan(cached.spots, state, tmx, tmy, wallset, pill.mx, pill.my, world, info)
     if not smx then nospot_why = smy end   -- "margin" when the LOS margin rejected every spot
   end
   -- Fall back to pick_standoff only when the scan isn't ready yet OR there are no
@@ -4338,7 +4641,13 @@ local function update_attack_substate_body(goal, state, world, info)
   state.squad_blitz_aimed       = nil
 
   -- A human drawing this pill's fire walked onto our spot: plan a fresh one.
-  if state._human_decoy then human_decoy_repick(state, goal) end
+  -- 2026-10-14 (Andrew, PR #510 review item 3): or, with no flag on this
+  -- pill, a human ally stopped on or next to our spot (ally_spot_repick).
+  do
+    local f = state._human_decoy
+    if f and f.tid == goal.target_id then human_decoy_repick(state, goal, world, info)
+    else ally_spot_repick(state, goal, info) end
+  end
 
   state._attack_substate_name = goal.substate
   -- Tally on-target shots and bump bullets_needed for any misses.
@@ -4995,6 +5304,36 @@ local function update_attack_substate_body(goal, state, world, info)
           for s in pairs(az_skip) do bz_skip[s] = true end
         end
       end
+      -- 2026-10-14 (Andrew, PR #510 review item 3): the ally rule and the
+      -- decoy re-pick's hard rule (M.standoff_spot_level).  The LOS spots
+      -- above the lowest level there is are skipped; with every spot at
+      -- level 1 or 2 the pick is as before.
+      do
+        local allies = M.standoff_allies(info)
+        if allies or goal._hd_hard then
+          local lo_lv, lvs = 2, {}
+          for _, s in ipairs(spots) do
+            if s.has_los and s.mx and not (bz_skip and bz_skip[s]) then
+              local lv = M.standoff_spot_level(state, allies, pmx, pmy, s.mx, s.my, s.cx, s.cy)
+              lvs[s] = lv
+              if lv < lo_lv then lo_lv = lv end
+            end
+          end
+          if lo_lv < 2 then
+            local n_out = 0
+            for s, lv in pairs(lvs) do
+              if lv > lo_lv then
+                bz_skip = bz_skip or {}
+                bz_skip[s] = true
+                n_out = n_out + 1
+              end
+            end
+            if n_out > 0 then
+            end
+          elseif goal._hd_hard then
+          end
+        end
+      end
 
       -- Step 2: collect all "green" spots (adj_score < 10 with LOS)
       local greens = {}
@@ -5070,6 +5409,7 @@ local function update_attack_substate_body(goal, state, world, info)
         goal.standoff_my = best.my
         goal.standoff_fx = best.cx  -- precise float for charge/engage
         goal.standoff_fy = best.cy
+        standoff_picked(state, goal, info)
         goal._chosen_deg = best.deg
         -- The aim point the spot scan proved this spot can hit (pill centre or
         -- one of its corners). It rides the goal in WORLD units as
@@ -5232,6 +5572,7 @@ local function update_attack_substate_body(goal, state, world, info)
         end
         goal.standoff_mx = smx
         goal.standoff_my = smy
+        standoff_picked(state, goal, info)
         if smx then
           goal.standoff_fx = smx + 0.5
           goal.standoff_fy = smy + 0.5
