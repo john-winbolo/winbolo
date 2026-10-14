@@ -25,6 +25,9 @@
  * lgm_snap: the on-foot centring lands the sprite a whole number of game
  * pixels from the base under Classic and Match pixelation, and is left where
  * the centring put it under Smooth; the helicopter is not centred at all.
+ * The man is centred on the middle of the game pixel he was sent on, not its
+ * corner, because the server rounds down to that pixel; Smooth moves the
+ * helicopter the same half pixel.
  */
 
 #include <math.h>
@@ -168,15 +171,17 @@ int run_mapview_sprite_classic(void) {
     }
 
     /* An LGM on the same square and pixel. Its centre is 1.5 pixels across
-     * and 2 down, so the corner wants to be at game pixel (51.5, 39) from the
-     * base; the half rounds up to 52, so it is drawn (104, 78) from the base,
-     * (166, 76) on screen. The helicopter is drawn from its corner, (168, 80). */
+     * and 2 down. Across, the corner wants to be at game pixel 51.5 from the
+     * base and the half rounds up to 52. Down, the man is taken to be at the
+     * middle of his pixel, so the corner wants to be at 41.5 - 2 = 39.5,
+     * which rounds up to 40. So it is drawn (104, 80) from the base,
+     * (166, 78) on screen. The helicopter is drawn from its corner, (168, 80). */
     {
         float sx = 0.0f, sy = 0.0f;
         spritePositionLgm(baseX, baseY, GFX_ANIM_CLASSIC, scale, 1,
                           3, 2, 5, 9, 5 << 4, 9 << 4, LGM0, &sx, &sy);
-        UT_ASSERT_MSG(fabsf(sx - 166.0f) < kExact && fabsf(sy - 76.0f) < kExact,
-                      "LGM at (%.4f,%.4f), expected (166,76)",
+        UT_ASSERT_MSG(fabsf(sx - 166.0f) < kExact && fabsf(sy - 78.0f) < kExact,
+                      "LGM at (%.4f,%.4f), expected (166,78)",
                       (double)sx, (double)sy);
 
         spritePositionLgm(baseX, baseY, GFX_ANIM_CLASSIC, scale, 1,
@@ -214,16 +219,29 @@ static float oldShellSteps(long base, int mode, int sheetScale, int square,
            tip * (float)SUBPX;
 }
 
+/* The LGM is the one sprite that no longer matches the old path, on purpose:
+ * the old path centred the man on the corner of the game pixel he was sent
+ * on, and he is now centred on its middle (spritePositionLgm has why). So
+ * this is the old arithmetic with that half pixel put in where the new code
+ * puts it: down in every mode, across under Smooth only (the snap already
+ * supplied it across), and on both axes for the helicopter under Smooth. */
 static float oldLgmSteps(long base, int mode, int sheetScale, int square,
-                         int pixelOff, int worldOff, float centre, bool onFoot) {
+                         int pixelOff, int worldOff, float centre, bool onFoot,
+                         bool isDown) {
+    const float half = 0.5f * (float)SUBPX;
     float s = (float)base +
               oldOffsetSteps(mode, sheetScale, square, pixelOff, worldOff);
     if (onFoot) {
         s -= centre * (float)SUBPX;
+        if (isDown || mode == GFX_ANIM_SMOOTH) {
+            s += half;
+        }
         if (mode != GFX_ANIM_SMOOTH) {
             s = (float)base +
                 floorf((s - (float)base) / (float)SUBPX + 0.5f) * (float)SUBPX;
         }
+    } else if (mode == GFX_ANIM_SMOOTH) {
+        s += half;
     }
     return s;
 }
@@ -346,10 +364,10 @@ int run_mapview_sprite_ladder(void) {
                                                     frame == LGM2;
                                 float wantX = perStep *
                                     oldLgmSteps(ox16, mode, ss, mx, px, wx,
-                                                LGM_CENTRE_X, onFoot);
+                                                LGM_CENTRE_X, onFoot, false);
                                 float wantY = perStep *
                                     oldLgmSteps(oy16, mode, ss, my, py, wy,
-                                                LGM_CENTRE_Y, onFoot);
+                                                LGM_CENTRE_Y, onFoot, true);
                                 float gotX = 0.0f, gotY = 0.0f;
                                 spritePositionLgm(baseX, baseY, mode, zs, ss,
                                                   mx, my, px, py, wx, wy, frame,
@@ -358,7 +376,8 @@ int run_mapview_sprite_ladder(void) {
                                               fabsf(gotY - wantY) <= kSixteenth,
                                               "%.2fx %s sheet %d, square (%d,%d) "
                                               "pixel (%d,%d) world (%d,%d) frame %d: "
-                                              "LGM at (%.4f,%.4f), old path drew "
+                                              "LGM at (%.4f,%.4f), old path with "
+                                              "the half pixel drew "
                                               "(%.4f,%.4f)",
                                               (double)zs, modeName(mode), ss,
                                               mx, my, px, py, wx, wy, frame,
@@ -475,10 +494,13 @@ int run_mapview_sprite_shell_tip(void) {
     return 0;
 }
 
-/* The on-foot centring pulls the corner 1.5 game pixels left and 2 up of the
- * hit pixel, then Classic and Match pixelation round the corner to a whole
- * game pixel from the base — the half rounds up — while Smooth keeps the exact
- * centre. The helicopter is drawn from its corner in every mode. */
+/* The man is taken to be at the middle of the game pixel he was sent on, and
+ * the on-foot centring pulls the corner 1.5 game pixels left and 2 up of that
+ * point: 1 left and 1.5 up of the pixel's corner. Smooth keeps exactly that.
+ * Classic and Match pixelation round the corner to a whole game pixel from
+ * the base — the half rounds up — which across is the old 1.5 rounding to 1
+ * and down is 1.5 rounding to 1. The helicopter is drawn from its corner,
+ * moved the same half pixel under Smooth only. */
 int run_mapview_sprite_lgm_snap(void) {
     static const float kScales[] = { 1.0f, 2.0f, 3.0f, 0.5f, 0.75f, 1.5f };
     static const int kOnFoot[] = { LGM0, LGM1, LGM2 };
@@ -498,15 +520,15 @@ int run_mapview_sprite_lgm_snap(void) {
                 float gotX = 0.0f, gotY = 0.0f;
                 float wantX, wantY;
 
-                /* On the game pixel: the corner wants to be at gp - 1.5 across
-                 * and gp - 2 down. Classic and Match round the half up to
-                 * gp - 1; Smooth keeps gp - 1.5. */
+                /* On the game pixel: from its middle the corner wants to be
+                 * at gp - 1 across and gp - 1.5 down. Smooth keeps that.
+                 * Classic and Match land on gp - 1 on both axes. */
                 spritePositionLgm(baseX, baseY, mode, scale, 1,
                                   mx, my, px, py, px << 4, py << 4,
                                   kOnFoot[f], &gotX, &gotY);
-                wantX = smooth ? baseX + ((float)gpX - 1.5f) * scale
-                               : baseX + (float)(gpX - 1) * scale;
-                wantY = baseY + (float)(gpY - 2) * scale;
+                wantX = baseX + (float)(gpX - 1) * scale;
+                wantY = smooth ? baseY + ((float)gpY - 1.5f) * scale
+                               : baseY + (float)(gpY - 1) * scale;
                 UT_ASSERT_MSG(fabsf(gotX - wantX) < kExact &&
                               fabsf(gotY - wantY) < kExact,
                               "%.2fx %s frame %d on the pixel: LGM at "
@@ -515,20 +537,20 @@ int run_mapview_sprite_lgm_snap(void) {
                               (double)gotX, (double)gotY,
                               (double)wantX, (double)wantY);
 
-                /* A quarter pixel past it (world offset +4): the centre is
-                 * gp - 1.25 across and gp - 1.75 down. Smooth keeps that.
+                /* A quarter pixel past it (world offset +4): the corner is
+                 * gp - 0.75 across and gp - 1.25 down. Smooth keeps that.
                  * Classic never reads the world offset and stays at gp - 1,
-                 * gp - 2; Match pixelation at sheet scale 1 rounds the quarter
+                 * gp - 1; Match pixelation at sheet scale 1 rounds the quarter
                  * away before centring and answers as Classic does. */
                 spritePositionLgm(baseX, baseY, mode, scale, 1,
                                   mx, my, px, py, (px << 4) + 4, (py << 4) + 4,
                                   kOnFoot[f], &gotX, &gotY);
                 if (smooth) {
-                    wantX = baseX + ((float)gpX - 1.25f) * scale;
-                    wantY = baseY + ((float)gpY - 1.75f) * scale;
+                    wantX = baseX + ((float)gpX - 0.75f) * scale;
+                    wantY = baseY + ((float)gpY - 1.25f) * scale;
                 } else {
                     wantX = baseX + (float)(gpX - 1) * scale;
-                    wantY = baseY + (float)(gpY - 2) * scale;
+                    wantY = baseY + (float)(gpY - 1) * scale;
                 }
                 UT_ASSERT_MSG(fabsf(gotX - wantX) < kExact &&
                               fabsf(gotY - wantY) < kExact,
@@ -557,18 +579,18 @@ int run_mapview_sprite_lgm_snap(void) {
             }
 
             /* The helicopter: its corner is on the pixel, plus the quarter
-             * under Smooth. */
+             * and the half pixel under Smooth. */
             {
                 float gotX = 0.0f, gotY = 0.0f;
-                float wantX = baseX + ((float)gpX + (smooth ? 0.25f : 0.0f)) * scale;
-                float wantY = baseY + ((float)gpY + (smooth ? 0.25f : 0.0f)) * scale;
+                float wantX = baseX + ((float)gpX + (smooth ? 0.75f : 0.0f)) * scale;
+                float wantY = baseY + ((float)gpY + (smooth ? 0.75f : 0.0f)) * scale;
                 spritePositionLgm(baseX, baseY, mode, scale, 1,
                                   mx, my, px, py, (px << 4) + 4, (py << 4) + 4,
                                   LGM3, &gotX, &gotY);
                 UT_ASSERT_MSG(fabsf(gotX - wantX) < kExact &&
                               fabsf(gotY - wantY) < kExact,
                               "%.2fx %s: helicopter at (%.4f,%.4f), expected "
-                              "(%.4f,%.4f), its corner with no centring",
+                              "(%.4f,%.4f), its corner",
                               (double)scale, modeName(mode),
                               (double)gotX, (double)gotY,
                               (double)wantX, (double)wantY);

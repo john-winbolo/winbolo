@@ -4207,7 +4207,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   bool voiceKeyDefaults = (buff[0] == '\0');
 
   /* Push to talk — Q, which is bound to nothing else and sits under the left
-     hand beside the movement keys (E/D/S/F). A file saved while the key was
+     hand beside the movement keys (W/A/S/D). A file saved while the key was
      unbound holds 0, which the one-shot above turns into Q. */
   intToStr(DEFAULT_PUSHTOTALK, def, sizeof(def));
   prefsGetString("KEYS", "Push To Talk", def, buff, FILENAME_MAX);
