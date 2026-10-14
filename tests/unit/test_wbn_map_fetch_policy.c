@@ -46,19 +46,57 @@ static int repeat_request_waits_then_goes(void) {
 /* The wait doubles with each send of the same request and stops growing
  * at the cap. */
 static int retry_wait_doubles_to_the_cap(void) {
-    UT_ASSERT(WBN_MAPS_RETRY_MS == 3000u);
-    UT_ASSERT(WBN_MAPS_RETRY_MAX_MS == 60000u);
-    UT_ASSERT(WBN_MAPS_RETRY_MAX_SENDS == 6u);
-    UT_ASSERT(wbnMapsRetryWaitMs(1) == 3000u);
-    UT_ASSERT(wbnMapsRetryWaitMs(2) == 6000u);
-    UT_ASSERT(wbnMapsRetryWaitMs(3) == 12000u);
-    UT_ASSERT(wbnMapsRetryWaitMs(4) == 24000u);
-    UT_ASSERT(wbnMapsRetryWaitMs(5) == 48000u);
-    UT_ASSERT(wbnMapsRetryWaitMs(6) == 60000u);
-    UT_ASSERT(wbnMapsRetryWaitMs(7) == 60000u);
-    UT_ASSERT(wbnMapsRetryWaitMs(1000) == 60000u);
+    UT_ASSERT(WBN_MAPS_RETRY_MS == 1000u);
+    UT_ASSERT(WBN_MAPS_RETRY_MAX_MS == 2000u);
+    UT_ASSERT(WBN_MAPS_RETRY_MAX_SENDS == 3u);
+    UT_ASSERT(wbnMapsRetryWaitMs(1) == 1000u);
+    UT_ASSERT(wbnMapsRetryWaitMs(2) == 2000u);
+    UT_ASSERT(wbnMapsRetryWaitMs(3) == 2000u);
+    UT_ASSERT(wbnMapsRetryWaitMs(7) == 2000u);
+    UT_ASSERT(wbnMapsRetryWaitMs(1000) == 2000u);
     /* Nothing sent yet reads as the first wait, not zero. */
-    UT_ASSERT(wbnMapsRetryWaitMs(0) == 3000u);
+    UT_ASSERT(wbnMapsRetryWaitMs(0) == 1000u);
+    return 0;
+}
+
+/* Drives a request to a server that never answers: each send holds the
+ * "in flight" flag for the request time limit and then fails, and the
+ * provider (one frame per 10 ms) sends again only when nothing is in
+ * flight and the wait has passed. Returns the time from the first send
+ * to the frame that finds the retries stopped. */
+static uint64_t runSilentServer(uint64_t startMs, int *sendsOut) {
+    WbnMapsRetry r = { 0, 0 };
+    uint64_t busyUntil = 0;
+    uint64_t t;
+    int n = 0;
+    for (t = startMs; t <= startMs + 600000; t += 10) {
+        bool inFlight = (n > 0 && t < busyUntil);
+        bool same = (n > 0);
+        if (inFlight) continue;
+        if (wbnMapsRetriesStopped(&r, same)) break;
+        if (wbnMapsFetchDue(&r, same, t)) {
+            wbnMapsRetryNoteSent(&r, same, t);
+            busyUntil = t + WBN_MAPS_REQUEST_TIMEOUT_MS;
+            n++;
+        }
+    }
+    *sendsOut = n;
+    return t - startMs;
+}
+
+/* With a server that does not answer at all, the error text is due about
+ * ten seconds after the load starts: three sends of 3 s each, at 0, 3 and
+ * 6 s, and the stop at 9 s. It was 180 s (six sends of 30 s). */
+static int silent_server_gives_up_inside_the_budget(void) {
+    int sends = 0;
+    uint64_t took = runSilentServer(50000, &sends);
+    UT_ASSERT(WBN_MAPS_REQUEST_TIMEOUT_MS == 3000u);
+    UT_ASSERT(WBN_MAPS_GIVE_UP_BUDGET_MS == 10000u);
+    UT_ASSERT_MSG(sends == (int)WBN_MAPS_RETRY_MAX_SENDS, "sends=%d", sends);
+    UT_ASSERT_MSG(took == 9000u, "took %llu ms", (unsigned long long)took);
+    UT_ASSERT_MSG(wbnMapsWorstCaseMs() == took, "worst case %llu ms",
+                  (unsigned long long)wbnMapsWorstCaseMs());
+    UT_ASSERT(wbnMapsWorstCaseMs() <= WBN_MAPS_GIVE_UP_BUDGET_MS);
     return 0;
 }
 
@@ -80,12 +118,11 @@ static int runFailingRequest(WbnMapsRetry *r, uint64_t startMs,
     return n;
 }
 
-/* A folder that fails every time is sent at 0, 3, 9, 21, 45 and 93 s
- * (waits of 3, 6, 12, 24 and 48 s) and then never again. With a fixed
- * 3 s wait and no limit it was sent for as long as the tab was open:
- * 201 times in the ten minutes run here. */
+/* A folder that fails at once every time is sent at 0, 1 and 3 s (waits
+ * of 1 and 2 s) and then never again. With a fixed wait and no limit it
+ * was sent for as long as the tab was open. */
 static int failing_request_backs_off_and_stops(void) {
-    static const uint64_t kExpect[] = { 0, 3000, 9000, 21000, 45000, 93000 };
+    static const uint64_t kExpect[] = { 0, 1000, 3000 };
     uint64_t sentAt[16];
     WbnMapsRetry r = { 0, 0 };
     int n, i;
@@ -116,15 +153,16 @@ static int retry_count_starts_again(void) {
     wbnMapsRetryNoteSent(&r, true, 4000);
     UT_ASSERT(r.sends == 2);
     UT_ASSERT(!wbnMapsRetriesStopped(&r, true));
-    UT_ASSERT(!wbnMapsFetchDue(&r, true, 4000 + 5999));
-    UT_ASSERT(wbnMapsFetchDue(&r, true, 4000 + 6000));
+    UT_ASSERT(!wbnMapsFetchDue(&r, true, 4000 + 1999));
+    UT_ASSERT(wbnMapsFetchDue(&r, true, 4000 + 2000));
 
-    /* An answer: the next failure of that folder waits 3 s again. */
+    /* An answer: the next failure of that folder waits 1 s again. */
     wbnMapsRetryReset(&r);
     UT_ASSERT(r.sends == 0);
     wbnMapsRetryNoteSent(&r, false, 20000);
     UT_ASSERT(r.sends == 1);
-    UT_ASSERT(wbnMapsFetchDue(&r, true, 23000));
+    UT_ASSERT(!wbnMapsFetchDue(&r, true, 20999));
+    UT_ASSERT(wbnMapsFetchDue(&r, true, 21000));
 
     /* Given up, then reset: the full run of sends is there again. */
     n = runFailingRequest(&r, 100000, 600000, sentAt, 16);
@@ -374,6 +412,7 @@ int run_wbn_map_fetch_policy(void) {
     rc = repeat_request_waits_then_goes();  if (rc) return rc;
     rc = retry_wait_doubles_to_the_cap();        if (rc) return rc;
     rc = failing_request_backs_off_and_stops();  if (rc) return rc;
+    rc = silent_server_gives_up_inside_the_budget();  if (rc) return rc;
     rc = retry_count_starts_again();             if (rc) return rc;
     rc = parent_walk_reaches_root();        if (rc) return rc;
     rc = parent_of_edge_paths();            if (rc) return rc;

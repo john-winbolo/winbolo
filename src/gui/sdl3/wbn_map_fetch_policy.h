@@ -44,16 +44,28 @@
  * back-to-back; with no retry at all, one failed request left the tab
  * empty until the program was restarted. This is the wait after the
  * first send; each further send of the same request doubles it. */
-#define WBN_MAPS_RETRY_MS 3000u
+#define WBN_MAPS_RETRY_MS 1000u
 
 /* The longest the doubled wait is allowed to grow to. */
-#define WBN_MAPS_RETRY_MAX_MS 60000u
+#define WBN_MAPS_RETRY_MAX_MS 2000u
 
 /* How many times in a row the same request is sent before the listing
  * stops asking. A folder the server no longer has would otherwise be
  * asked for, with a signed request each time, for as long as the tab is
  * open. */
-#define WBN_MAPS_RETRY_MAX_SENDS 6u
+#define WBN_MAPS_RETRY_MAX_SENDS 3u
+
+/* The longest one listing or search request may take, connect and reply
+ * together, before it counts as failed. The HTTP module's own limit for
+ * a GET is 30 s; a server that does not answer at all would hold each
+ * send for that long. This limit is for the map list only: the map file
+ * download and the other WinBolo.net requests keep their own. */
+#define WBN_MAPS_REQUEST_TIMEOUT_MS 3000u
+
+/* The longest the player waits, from the first send of a request to the
+ * error text, when nothing ever answers. wbnMapsWorstCaseMs() below must
+ * stay at or under it; the unit test checks that. */
+#define WBN_MAPS_GIVE_UP_BUDGET_MS 10000u
 
 /* The sends of one request that has not been answered. Zeroed is the
  * starting state. The caller knows what the request is (a folder id, a
@@ -65,8 +77,8 @@ typedef struct WbnMapsRetry {
 } WbnMapsRetry;
 
 /* The wait before the same request is sent again, given how many times
- * it has been sent so far: 3 s after the first, then 6, 12, 24 and 48,
- * never more than WBN_MAPS_RETRY_MAX_MS. */
+ * it has been sent so far: 1 s after the first, then 2 s, never more
+ * than WBN_MAPS_RETRY_MAX_MS. */
 static inline uint64_t wbnMapsRetryWaitMs(unsigned sends) {
     uint64_t wait = WBN_MAPS_RETRY_MS;
     unsigned i;
@@ -106,6 +118,23 @@ static inline void wbnMapsRetryNoteSent(WbnMapsRetry *r, bool sameAsLast,
 static inline void wbnMapsRetryReset(WbnMapsRetry *r) {
     r->sends      = 0;
     r->lastKickMs = 0;
+}
+
+/* The longest time from the first send of a request to the moment the
+ * listing gives up on it. A send is made only when the one before has
+ * ended and its wait (counted from when it was sent) has passed, so each
+ * send but the last costs the larger of the request time limit and its
+ * wait, and the last costs the request time limit. One provider frame
+ * per send comes on top of this and is not counted. */
+static inline uint64_t wbnMapsWorstCaseMs(void) {
+    uint64_t total = 0;
+    unsigned sends;
+    for (sends = 1; sends < WBN_MAPS_RETRY_MAX_SENDS; sends++) {
+        uint64_t wait = wbnMapsRetryWaitMs(sends);
+        total += wait > WBN_MAPS_REQUEST_TIMEOUT_MS
+                     ? wait : WBN_MAPS_REQUEST_TIMEOUT_MS;
+    }
+    return total + WBN_MAPS_REQUEST_TIMEOUT_MS;
 }
 
 /* Length of the parent of the folder path held in path[0..len): the

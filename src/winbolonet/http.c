@@ -869,9 +869,13 @@ static int wbnXferInfoProgress(void *userPtr,
   return 0;
 }
 
+/* Total time limit of a WinBolo.net API GET when the caller does not
+ * give its own (see wbn_api_get_timeout). */
+#define WBN_API_GET_TIMEOUT_MS 30000L
+
 static int wbn_api_get_impl(const char *path, char **response_out,
                             volatile int *cancel_flag, bool sign,
-                            const char *bearerToken) {
+                            const char *bearerToken, long timeout_ms) {
   if (response_out) *response_out = NULL;
   /* Lazy-init: the WBN map browser uses this API even when the
    * client isn't logged in / WBN subsystem isn't otherwise active.
@@ -934,7 +938,9 @@ static int wbn_api_get_impl(const char *path, char **response_out,
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER,     headers);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  dynWriteCallback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &respBuf);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT,        30L);
+  /* Total time for the request, connect and reply together. */
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS,
+                   timeout_ms > 0 ? timeout_ms : WBN_API_GET_TIMEOUT_MS);
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
   if (cancel_flag) {
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS,       0L);
@@ -976,23 +982,28 @@ static int wbn_api_get_impl(const char *path, char **response_out,
 }
 
 int wbn_api_get(const char *path, char **response_out) {
-  return wbn_api_get_impl(path, response_out, NULL, true, NULL);
+  return wbn_api_get_impl(path, response_out, NULL, true, NULL, 0L);
+}
+
+int wbn_api_get_timeout(const char *path, char **response_out,
+                        long timeout_ms) {
+  return wbn_api_get_impl(path, response_out, NULL, true, NULL, timeout_ms);
 }
 
 int wbn_api_get_cancellable(const char *path, char **response_out,
                             volatile int *cancel_flag) {
-  return wbn_api_get_impl(path, response_out, cancel_flag, true, NULL);
+  return wbn_api_get_impl(path, response_out, cancel_flag, true, NULL, 0L);
 }
 
 int wbn_api_get_public(const char *path, char **response_out) {
-  return wbn_api_get_impl(path, response_out, NULL, false, NULL);
+  return wbn_api_get_impl(path, response_out, NULL, false, NULL, 0L);
 }
 
 int wbn_api_get_bearer_cancellable(const char *path, const char *bearerToken,
                                    char **response_out, volatile int *cancel_flag) {
   if (response_out) *response_out = NULL;
   if (bearerToken == NULL || bearerToken[0] == '\0') return -1;
-  return wbn_api_get_impl(path, response_out, cancel_flag, true, bearerToken);
+  return wbn_api_get_impl(path, response_out, cancel_flag, true, bearerToken, 0L);
 }
 
 /*********************************************************

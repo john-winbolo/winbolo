@@ -71,7 +71,7 @@ void stbi_image_free(void *);
 
 /* ── Winbolo.net catalogue — state and async folder fetch ─────────
  * Everything here depends on the libcurl-backed WBN HTTP API
- * (httpGetBaseUrl / wbn_api_get / wbn_api_download_to_memory*), which
+ * (httpGetBaseUrl / wbn_api_get[_timeout] / wbn_api_download_to_memory*), which
  * the WASM build does not link. The chooser tab that uses it is
  * already runtime-gated on winbolonetIsRunning() (false in WASM), so
  * it is dead-but-linked there; compile it out entirely to keep
@@ -588,7 +588,11 @@ static void wbnMapsKickFolderFetch(int folderId) {
                     "[WBN-TAB] folder fetch: %s/api/v1/%s",
                     (base && *base) ? base : "(no base)", path);
         char *resp = nullptr;
-        int status = wbn_api_get(path, &resp);
+        /* The list's own time limit, not the HTTP module's 30 s: a
+         * server that does not answer must reach the error text soon
+         * (see WBN_MAPS_GIVE_UP_BUDGET_MS). */
+        int status = wbn_api_get_timeout(path, &resp,
+                                         (long)WBN_MAPS_REQUEST_TIMEOUT_MS);
         WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[WBN-TAB] folder fetch result: %s/api/v1/%s -> %d",
                     (base && *base) ? base : "(no base)", path, status);
@@ -633,7 +637,9 @@ static void wbnMapsKickSearchFetch(const char *queryRaw) {
                     "[WBN-TAB] search fetch: %s/api/v1/%s",
                     (base && *base) ? base : "(no base)", path.c_str());
         char *resp = nullptr;
-        int status = wbn_api_get(path.c_str(), &resp);
+        /* Same time limit as the folder listing. */
+        int status = wbn_api_get_timeout(path.c_str(), &resp,
+                                         (long)WBN_MAPS_REQUEST_TIMEOUT_MS);
         WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[WBN-TAB] search fetch result: %s/api/v1/%s -> %d",
                     (base && *base) ? base : "(no base)", path.c_str(),

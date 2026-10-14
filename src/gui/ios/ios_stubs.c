@@ -279,6 +279,13 @@ int wbn_api_get(const char *path, char **response_out) {
     return -1;  /* transport error */
 }
 
+int wbn_api_get_timeout(const char *path, char **response_out,
+                        long timeout_ms) {
+    (void)path; (void)timeout_ms;
+    if (response_out) *response_out = NULL;
+    return -1;  /* transport error */
+}
+
 int wbn_api_download_to_memory(const char *path, uint8_t **data_out, size_t *size_out) {
     (void)path;
     if (data_out) *data_out = NULL;
