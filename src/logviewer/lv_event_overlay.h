@@ -457,7 +457,7 @@ typedef enum {
   LV_MARKER_ICON = 0,     /* the kind's drawn icon on a dark square */
   LV_MARKER_PILL,         /* the map's picture of a pillbox */
   LV_MARKER_BASE,         /* the map's picture of a base */
-  LV_MARKER_BUILDER_LOST, /* the map's picture of a builder inside a red "no"
+  LV_MARKER_BUILDER_LOST, /* the map's picture of a builder inside a white "no"
                              sign as big as the marker, with no square */
   LV_MARKER_PING          /* the game's icon for the kind of ping, in the
                              game's colour for it, on a dark square */
@@ -482,7 +482,7 @@ static inline int lvMarkerBuilderScale(float room) {
 }
 
 /* The marker of a lost builder is a "no" sign as big as the marker, with no
- * square behind it: a red ring `line` thick whose outer edge touches the
+ * square behind it: a white ring `line` thick whose outer edge touches the
  * sides of the marker (`side` on a side), a line across it, and the builder
  * inside it.
  *
