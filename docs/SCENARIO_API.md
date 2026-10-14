@@ -2396,7 +2396,7 @@ rather than by having no speed.
 | `lgm_helicopter_speed` | 3 | 1 to 255 | How far the builder travels each tick while he parachutes in, so it is also how long he is in the air: the drop is the distance over this. The rule's name is the one the code has always carried for the drop; everything a player meets calls it a parachute, `game.builder_parachute` included. See the note below the table before you raise it. |
 | `lgm_arrive_tolerance` | 16 | 1 to 255 | How near his goal counts as arrived, as a half-width taken either way round it on both axes. The job itself is done on the square that was ordered, not the one he stopped on. |
 | `lgm_return_tolerance` | 128 | 1 to 65535 | The same, coming back to the tank. |
-| `lgm_pill_drop_search` | 10 | 1 to 255 | How many squares of a column the search for somewhere to put a pillbox down walks. |
+| `lgm_pill_drop_search` | 10 | 1 to 255 | Removed, does nothing. The name is still accepted, so a script that sets it still runs. |
 | `lgm_boat_leave_offset` | 144 | 0 to 255 | How far out he steps when he boards a boat. |
 | `lgm_boat_return_offset` | 160 | 0 to 255 | How far in he steps coming off one. |
 
