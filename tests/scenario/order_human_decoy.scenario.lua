@@ -37,7 +37,14 @@
 --   * A said "Staying wide of Boss on pill #1" (the detection),
 --   * A never said "Suicide run" or "Charging" (no rush),
 --   * the decoy stood (see above) when A said "Staying wide" and when A
---     parked, and
+--     parked,
+--   * A's builder built no wall, half-wall or pillbox of its own from the
+--     order (tick 400) until A's team owns the pill (on_built "building"
+--     and on_pill_placed with armour > 0, seat A).  2026-10-14 (Andrew,
+--     recording 20261014t123512): A parked wide but then built its own
+--     blockers; it did not use the human's decoy.  That is a FAIL.  Other
+--     builder trips (trees, road, repair) are logged as HDECOY_BUILD only,
+--     and
 --   * the first square A parks on inside 10 squares of the pill (the same
 --     square for 100 ticks) is at least 2 PROJECTED squares from Boss, not
 --     on Boss's square or the 8 round it, and farther from the pill than
@@ -68,7 +75,8 @@ local st = { spawned = false, owned = false, cfg = false, placed = false,
              chat_on = false, sent = false,
              wide = false, rush = nil,
              last_sq = nil, same = 0, park = nil, park_t = nil,
-             wide_t = nil, wide_proof = nil, park_proof = nil }
+             wide_t = nil, wide_proof = nil, park_proof = nil,
+             taken = false, own_block = nil, builds = 0 }
 local next_log = 0
 
 function on_setup(g)
@@ -138,6 +146,31 @@ function on_chat(g, p, text)
   end
 end
 
+-- A's own blockers: a wall, half-wall or pillbox A's builder puts down
+-- between the order and A's team owning the pill.  The first one fails the
+-- arena; every builder action in that window is logged.
+local function note_build(g, what, x, y)
+  local tick = g.tick()
+  g.log(string.format("HDECOY_BUILD t=%d %s (%d,%d)%s", tick, what, x, y,
+                      st.taken and " after_take" or ""))
+  if not st.sent or st.taken then return end
+  if what == "building" or what:find("^pill") then
+    st.builds = st.builds + 1
+    st.own_block = st.own_block or { x = x, y = y, t = tick, what = what }
+  end
+end
+
+function on_built(g, p, action, x, y, scripted)
+  if scripted or p ~= A then return end
+  note_build(g, action, x, y)
+end
+
+function on_pill_placed(g, n, p, armour, scripted)
+  if scripted or p ~= A or armour == 0 then return end
+  local pl = g.pill(n)
+  note_build(g, "pill#" .. n, pl and pl.x or -1, pl and pl.y or -1)
+end
+
 function on_tick(g, tick)
   if not st.spawned and tick >= 2 then
     st.spawned = true
@@ -173,6 +206,10 @@ function on_tick(g, tick)
   if not st.sent and tick >= 400 then
     st.sent = true
     g.say(BOSS, "!attack 1")
+  end
+  if st.sent and not st.taken then
+    local tp = g.pill(TARGET)
+    if tp and tp.owner == A then st.taken = true end
   end
   local t = g.tank(A)
   if st.sent and not st.park and t and not t.dead then
@@ -237,10 +274,17 @@ VERDICT_CHECK = function(g)
   if gone then
     why = "DECOY GONE " .. gone .. ": a plain pill take, not a decoy test; " .. why
   end
+  local ob = st.own_block
+  if ob then
+    why = string.format("A built its own blocker at (%d,%d) t=%d: it did not use the human's decoy; %s",
+                        ob.x, ob.y, ob.t, why)
+    g.log(string.format("HDECOY_DETAIL own_block first=%s (%d,%d) t=%d count=%d",
+                        ob.what, ob.x, ob.y, ob.t, st.builds))
+  end
   -- game.log drops a line past 128 bytes, so one proof per line (the
   -- HDECOY_PROOF lines logged at the moment have the boss square too).
   g.log("HDECOY_DETAIL proof " .. (st.wide_proof and st.wide_proof.txt or "wide: none"))
   g.log("HDECOY_DETAIL proof " .. (st.park_proof and st.park_proof.txt or "park: none"))
-  return gone == nil and st.wide and not st.rush and st.park ~= nil
+  return gone == nil and ob == nil and st.wide and not st.rush and st.park ~= nil
          and dj >= 2 and not ring and dp > hp, why
 end
