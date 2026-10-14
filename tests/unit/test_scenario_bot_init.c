@@ -35,6 +35,10 @@
  *                                 — a table a scenario handed a bot is gone at
  *                                   the next round start, by either start path;
  *                                   the table the bot was added with is back
+ * run_scenario_bot_init_free_seat_spawn
+ *                                 — a script spawn onto a free seat plays on
+ *                                   into the next round on an empty table,
+ *                                   not on the scenario's spawn table
  * run_brain_on_init_update        — the global is rebuilt either way, and
  *                                   on_init is called when it is there and
  *                                   its error is survived when it raises
@@ -487,6 +491,14 @@ static bool biHoldsAdded(ServerSim *sim, BYTE slot, const char *role) {
     return held->count == 1 && v != NULL && strcmp(v, role) == 0;
 }
 
+/* How many pairs a bot holds, for a failure message: -1 when the seat has
+ * no runner, which is what a reload that failed and took the bot out leaves. */
+static int biHeldCount(ServerSim *sim, BYTE slot) {
+    const ScnTable *held = botManagerGetBotInitTable(sim, slot);
+
+    return held != NULL ? (int)held->count : -1;
+}
+
 /* A table handed with game.bot_init belongs to the round it was handed in.
  *
  * The case this was written for: a Virus round hands every bot the horde's
@@ -503,6 +515,7 @@ int run_scenario_bot_init_round_reset(void) {
     BYTE       lobbyBot = 1;
     BYTE       cmdBot   = 2;
     const ScnTable *held;
+    const ScnTable *stub;
 
     UT_ASSERT(biMakeBrainFile("round_reset"));
     ut_brain_stub_arm(true);
@@ -540,10 +553,21 @@ int run_scenario_bot_init_round_reset(void) {
     UT_ASSERT_MSG(biHoldsAdded(sim, lobbyBot, ""),
                   "the lobby bot kept %d pairs into the next round, "
                   "expected none",
-                  (int)botManagerGetBotInitTable(sim, lobbyBot)->count);
+                  biHeldCount(sim, lobbyBot));
     UT_ASSERT_MSG(biHoldsAdded(sim, cmdBot, "cmdline"),
                   "the -bot-init bot is not back on its own table after the "
                   "in-place start");
+    /* And the brains the in-place start rebuilt read those tables, not only
+       the records: the stub writes down the table each brain is made with. */
+    stub = ut_brain_stub_init(lobbyBot);
+    UT_ASSERT_MSG(stub != NULL && stub->count == 0,
+                  "the lobby bot's rebuilt brain read %d pairs, expected none",
+                  stub != NULL ? (int)stub->count : -1);
+    stub = ut_brain_stub_init(cmdBot);
+    UT_ASSERT(stub != NULL);
+    UT_ASSERT_MSG(stub->count == 1 && scnTableGet(stub, "role") != NULL &&
+                  strcmp(scnTableGet(stub, "role"), "cmdline") == 0,
+                  "the -bot-init bot's rebuilt brain did not read role=cmdline");
 
     /* And again, through the full reset. The round that just started may
        hand the orders again, and they land as before. */
@@ -556,10 +580,59 @@ int run_scenario_bot_init_round_reset(void) {
     UT_ASSERT_MSG(biHoldsAdded(sim, lobbyBot, ""),
                   "the lobby bot kept %d pairs past the full reset, "
                   "expected none",
-                  (int)botManagerGetBotInitTable(sim, lobbyBot)->count);
+                  biHeldCount(sim, lobbyBot));
     UT_ASSERT_MSG(biHoldsAdded(sim, cmdBot, "cmdline"),
                   "the -bot-init bot is not back on its own table after the "
                   "full reset");
+
+    serverSimDestroy(sim);
+    biDropBrainFile();
+    return 0;
+}
+
+/* A script spawn onto a FREE seat, with its own table.
+ *
+ * The bot is not one of the scenario's held seats, so the round end does not
+ * take it out and it plays on into later rounds. Its spawn table is the
+ * scenario's, so the next round start puts it on an empty table, not on the
+ * spawn's. For the rest of its own round it keeps the spawn's table. */
+int run_scenario_bot_init_free_seat_spawn(void) {
+    ServerSim      *sim;
+    BYTE            slot;
+    const ScnTable *held;
+    const ScnTable *stub;
+    const char     *role;
+
+    UT_ASSERT(biMakeBrainFile("free_seat_spawn"));
+    ut_brain_stub_arm(true);
+    sim = biRunningSim();
+    UT_ASSERT(sim != NULL);
+
+    slot = biSpawnBot(sim);
+    UT_ASSERT_MSG(slot != SCN_NONE, "the spawn never landed");
+    UT_ASSERT_MSG(!sim->lobbyPlayers[slot].keepSeat,
+                  "a free-seat spawn was marked as a held seat");
+    held = botManagerGetBotInitTable(sim, slot);
+    UT_ASSERT(held != NULL);
+    role = scnTableGet(held, "role");
+    UT_ASSERT_MSG(held->count == 2 && role != NULL &&
+                  strcmp(role, "scout") == 0,
+                  "the spawned bot does not hold its spawn table this round");
+
+    serverSimStartGameInPlace(sim);
+    UT_ASSERT_MSG(sim->state == serverStateRunning,
+                  "the in-place start did not leave the round running");
+    UT_ASSERT_MSG(serverSimIsBot(sim, slot),
+                  "the free-seat bot did not play on into the next round");
+    UT_ASSERT_MSG(biHoldsAdded(sim, slot, ""),
+                  "the free-seat bot kept %d pairs into the next round, "
+                  "expected none",
+                  biHeldCount(sim, slot));
+    stub = ut_brain_stub_init(slot);
+    UT_ASSERT_MSG(stub != NULL && stub->count == 0,
+                  "the free-seat bot's rebuilt brain read %d pairs, "
+                  "expected none",
+                  stub != NULL ? (int)stub->count : -1);
 
     serverSimDestroy(sim);
     biDropBrainFile();
