@@ -3741,6 +3741,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The tank ops: the six arms, the refusals each one answers with, and the
     # records they leave through the functions a player's own action reaches.
     tests/unit/test_scenario_tank_arms.c
+    # Where a dead tank's pills land: Mac Bolo's spiral round the tank, the
+    # squares it passes over, the map edge, and a map built to have no room.
+    tests/unit/test_tank_drop_pills.c
     # The builder ops: the five arms, the refusals each one answers with, the
     # wood a dispatched order costs, and the loss a scripted death records.
     tests/unit/test_scenario_builder_arms.c
@@ -6060,6 +6063,13 @@ set(_unit_test_names
     scenario_tank_drop_pill
     scenario_tank_arm_records
     scenario_tank_death_ticks_respawn
+    tank_drop_pills_spiral_order
+    tank_drop_pills_blocked
+    tank_drop_pills_map_edge
+    tank_drop_pills_hostile_map
+    tank_drop_pills_no_room
+    lgm_drop_pill_spiral
+    lgm_drop_pill_no_room
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill
