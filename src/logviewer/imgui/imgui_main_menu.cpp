@@ -382,7 +382,15 @@ static void handle_keyboard_shortcuts(int *clicked) {
 
     /* Action */
     if (ImGui::IsKeyPressed(ImGuiKey_P, false)) {
-        if (s_lv->isLoaded && !s_lv->playIsPlaying) { lv_windowPlay(); *clicked = 1; }
+        if (io.KeyShift) {
+            /* Ctrl+Shift+P: Options > Pillbox Numbers. */
+            lv_drawSetPillNumbers(lv_drawGetPillNumbers() ? 0 : 1);
+            lv_windowNeedRedraw();
+            *clicked = 1;
+        } else if (s_lv->isLoaded && !s_lv->playIsPlaying) {
+            lv_windowPlay();
+            *clicked = 1;
+        }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_U, false)) {
         if (s_lv->isLoaded && s_lv->playIsPlaying) { lv_windowPause(); *clicked = 1; }
@@ -622,7 +630,7 @@ int lv_imgui_main_menu_bar(void) {
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", langGetText(STR_LV_BUILDER_STATUS_TIP));
             }
-            if (ImGui::MenuItem(langGetText(STR_LV_PILL_NUMBERS), NULL,
+            if (ImGui::MenuItem(langGetText(STR_LV_PILL_NUMBERS), "Ctrl+Shift+P",
                                 lv_drawGetPillNumbers() != 0)) {
                 lv_drawSetPillNumbers(lv_drawGetPillNumbers() ? 0 : 1);
                 lv_windowNeedRedraw();
