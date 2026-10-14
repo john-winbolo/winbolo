@@ -2449,7 +2449,7 @@ local function take_order(state, world, info, spec, cost, now, group, stolen, sw
     end
   end
   if say_line and say_line ~= "" then sayg(state, say_line) end
-  if not terms then
+  if not terms and _G._PRINT2_ENABLED then
     local _, t = M.bid_cost(state, world, info, spec)
     terms = t
   end
