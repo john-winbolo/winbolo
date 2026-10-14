@@ -665,13 +665,25 @@ static int scDeclaredCallbacks(const char *path) {
     return rows;
 }
 
+/* What a fetch case leaves behind, on every way out of it: UT_ASSERT returns
+ * from the body it is in, so the body cannot clean up after itself. The
+ * harness is stopped when the body brought it up, and the case's directory
+ * is removed when the body got as far as naming it. */
+static int scFetchEnd(int rc, LoopbackHarness *h, ScenarioHost **slot,
+                      bool up) {
+    if (up) scNetStop(h, slot);
+    if (scDir[0] != '\0') scRemoveTree(scDir);
+    return rc;
+}
+
 /* The committed map's own script, through the whole path the dialog takes:
  * the server resolves the map's script by the name the lobby gives it, the
- * answer crosses the wire, and the client's lookup by that name finds it. */
-static int scFetchMapScript(const char *tag, const char *map, int wantRows,
-                            const char *wantMethod) {
-    LoopbackHarness    h;
-    ScenarioHost      *slot;
+ * answer crosses the wire, and the client's lookup by that name finds it.
+ * *up is set once the harness is running; scFetchMapScript stops it and
+ * removes the directory. */
+static int scFetchMapScriptBody(LoopbackHarness *h, ScenarioHost **slot,
+                                bool *up, const char *tag, const char *map,
+                                int wantRows, const char *wantMethod) {
     char               mapPath[512];
     char               luaPath[512];
     char               file[SCN_DIR_FILE_LEN];
@@ -698,33 +710,34 @@ static int scFetchMapScript(const char *tag, const char *map, int wantRows,
     UT_ASSERT_MSG(declared >= 0, "no callbacks block was found in %s", luaPath);
 
     UT_ASSERT(scMakeDir(tag));   /* an empty scenarios directory */
-    UT_ASSERT_MSG(scNetStart(&h, &slot, "loss=5,burst=2", 0x5C0CC3Au),
+    UT_ASSERT_MSG(scNetStart(h, slot, "loss=5,burst=2", 0x5C0CC3Au),
                   "the harness did not come up");
+    *up = true;
 
     /* The host commits the map, the way the lobby's map chooser does. */
     snprintf(mapPath, sizeof(mapPath), "%s/%s.map", WB_DATA_MAPS_DIR, map);
     file[0] = '\0';
     threadsWaitForMutex();
-    committed = serverSimReloadMap(h.sim, mapPath);
-    row = serverSimGetMapScript(h.sim);
+    committed = serverSimReloadMap(h->sim, mapPath);
+    row = serverSimGetMapScript(h->sim);
     if (row != NULL) SDL_strlcpy(file, row->file, sizeof(file));
     threadsReleaseMutex();
     UT_ASSERT_MSG(committed, "the lobby would not commit %s", mapPath);
     UT_ASSERT_MSG(file[0] != '\0', "%s brought no script of its own", map);
 
     /* The dialog opens on the file name the lobby names the script by. */
-    at = loopbackHarnessPumpUntil(&h, SC_FETCH_MAX, scPredLobbyNames,
+    at = loopbackHarnessPumpUntil(h, SC_FETCH_MAX, scPredLobbyNames,
                                   (void *)file);
     UT_ASSERT_MSG(at >= 0, "the lobby never named %s (it says \"%s\")", file,
-                  clientSimGetLobbyScenarioFileName(h.cs));
+                  clientSimGetLobbyScenarioFileName(h->cs));
 
-    clientSimLobbyScenarioDetailsForget(h.cs);   /* as the dialog opens */
-    at = scFetch(&h, clientSimGetLobbyScenarioFileName(h.cs), SC_FETCH_MAX);
+    clientSimLobbyScenarioDetailsForget(h->cs);   /* as the dialog opens */
+    at = scFetch(h, clientSimGetLobbyScenarioFileName(h->cs), SC_FETCH_MAX);
     fprintf(stderr, "  details fetch (%s, loss=5): settled@%d tries=%d\n", file,
-            at, scTries(h.cs, file));
+            at, scTries(h->cs, file));
     UT_ASSERT_MSG(at >= 0, "no answer for %s within %d pumps", file,
                   SC_FETCH_MAX);
-    UT_ASSERT_MSG(clientSimGetLobbyScenarioDetails(h.cs, file, &got, &gotLen) ==
+    UT_ASSERT_MSG(clientSimGetLobbyScenarioDetails(h->cs, file, &got, &gotLen) ==
                       CLIENT_SCN_DETAILS_FOUND,
                   "the map's own script %s was answered as not found", file);
 
@@ -745,14 +758,24 @@ static int scFetchMapScript(const char *tag, const char *map, int wantRows,
                   file, declared, count, SCN_CALLBACKS_BLOB_MAX);
 
     /* The listen host reads the same bytes straight off the sim. */
-    directLen = scDirect(&h, file, direct, sizeof(direct));
+    directLen = scDirect(h, file, direct, sizeof(direct));
     UT_ASSERT(directLen == (int)gotLen);
     UT_ASSERT(memcmp(direct, got, gotLen) == 0);
 
-    UT_ASSERT(clientSimGetConnectState(h.cs) == CLIENT_CONNECT_CONNECTED);
-    scNetStop(&h, &slot);
-    scRemoveTree(scDir);
+    UT_ASSERT(clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED);
     return 0;
+}
+
+static int scFetchMapScript(const char *tag, const char *map, int wantRows,
+                            const char *wantMethod) {
+    LoopbackHarness h;
+    ScenarioHost   *slot = NULL;
+    bool            up   = false;
+    int             rc;
+
+    scDir[0] = '\0';
+    rc = scFetchMapScriptBody(&h, &slot, &up, tag, map, wantRows, wantMethod);
+    return scFetchEnd(rc, &h, &slot, up);
 }
 
 int run_scenario_details_fetch_survival(void) {
@@ -779,15 +802,15 @@ int run_scenario_details_fetch_respawn_loadout(void) {
 
 /* The shipped mods (data/mods), which no map brings: each is copied into the
  * server's scenarios directory and asked for by its file name, as the dialog
- * asks for a mod on the list. Every row its file declares has to arrive. */
-int run_scenario_details_fetch_mods(void) {
+ * asks for a mod on the list. Every row its file declares has to arrive.
+ * *up is set once the harness is running; the case below stops it and
+ * removes the directory. */
+static int scFetchModsBody(LoopbackHarness *h, ScenarioHost **slot, bool *up) {
     static const char *const kMods[] = {
         "BaseRestockingRate", "FasterTreeGrowth", "MacBoloRules",
         "PillboxTag",         "RuleRoulette",     "Virus",
     };
     enum { MODS = (int)(sizeof(kMods) / sizeof(kMods[0])) };
-    LoopbackHarness h;
-    ScenarioHost   *slot;
     char            file[MODS][SCN_DIR_FILE_LEN];
     int             declared[MODS];
     int             i;
@@ -811,7 +834,7 @@ int run_scenario_details_fetch_mods(void) {
 
         f = fopen(path, "rb");
         UT_ASSERT_MSG(f != NULL, "the shipped mod %s could not be opened",
-                      path);
+                      path);   /* nothing is open or allocated yet */
         fseek(f, 0, SEEK_END);
         size = ftell(f);
         fseek(f, 0, SEEK_SET);
@@ -824,8 +847,9 @@ int run_scenario_details_fetch_mods(void) {
         UT_ASSERT_MSG(copied, "%s could not be copied into %s", path, scDir);
     }
 
-    UT_ASSERT_MSG(scNetStart(&h, &slot, "loss=5,burst=2", 0x30D5u),
+    UT_ASSERT_MSG(scNetStart(h, slot, "loss=5,burst=2", 0x30D5u),
                   "the harness did not come up");
+    *up = true;
     for (i = 0; i < MODS; i++) {
         const uint8_t *got;
         size_t         gotLen;
@@ -833,12 +857,12 @@ int run_scenario_details_fetch_mods(void) {
         int            at;
         int            count;
 
-        at = scFetch(&h, file[i], SC_FETCH_MAX);
+        at = scFetch(h, file[i], SC_FETCH_MAX);
         fprintf(stderr, "  details fetch (%s, loss=5): settled@%d tries=%d\n",
-                file[i], at, scTries(h.cs, file[i]));
+                file[i], at, scTries(h->cs, file[i]));
         UT_ASSERT_MSG(at >= 0, "no answer for %s within %d pumps", file[i],
                       SC_FETCH_MAX);
-        UT_ASSERT_MSG(clientSimGetLobbyScenarioDetails(h.cs, file[i], &got,
+        UT_ASSERT_MSG(clientSimGetLobbyScenarioDetails(h->cs, file[i], &got,
                                                        &gotLen) ==
                           CLIENT_SCN_DETAILS_FOUND,
                       "the shipped mod %s was answered as not found", file[i]);
@@ -850,10 +874,19 @@ int run_scenario_details_fetch_mods(void) {
                       file[i], declared[i], count, SCN_CALLBACKS_BLOB_MAX);
     }
 
-    UT_ASSERT(clientSimGetConnectState(h.cs) == CLIENT_CONNECT_CONNECTED);
-    scNetStop(&h, &slot);
-    scRemoveTree(scDir);
+    UT_ASSERT(clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED);
     return 0;
+}
+
+int run_scenario_details_fetch_mods(void) {
+    LoopbackHarness h;
+    ScenarioHost   *slot = NULL;
+    bool            up   = false;
+    int             rc;
+
+    scDir[0] = '\0';
+    rc = scFetchModsBody(&h, &slot, &up);
+    return scFetchEnd(rc, &h, &slot, up);
 }
 
 int run_scenario_details_fetch_not_found(void) {
