@@ -36,6 +36,7 @@
 #include "client_net.h"
 #include "client_connect_state.h"
 #include "server_sim.h"
+#include "threads.h"
 #include "test_harness.h"
 #include "loopback_harness.h"
 
@@ -83,6 +84,13 @@ int run_loopback_command_queued_behind_map_change(void) {
                 REJOIN_CONNECT_MAX);
     }
     slot = (int)clientSimGetMyPlayerNum(h.cs);
+
+    /* The server resolves a SET_MAP name against its map root, which defaults
+     * to "data/maps" relative to the working directory. Point it at the shipped
+     * maps in the source tree so the test does not depend on where it runs. */
+    threadsWaitForMutex();
+    serverSimInstallMapDirList(h.sim, NULL, 0, WB_DATA_MAPS_DIR);
+    threadsReleaseMutex();
 
     /* The map change goes out at once; the mute queues behind it unsent. */
     clientSimNetSendLobbySetMap(h.cs, REJOIN_FIRST_MAP);
