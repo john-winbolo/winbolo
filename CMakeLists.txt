@@ -6914,6 +6914,7 @@ set(_unit_test_names
     lv_event_overlay_slider
     lv_event_overlay_clusters
     lv_event_overlay_tip_columns
+    lv_event_overlay_tip_place
     lv_event_overlay_marker_size
     lv_event_overlay_choice
     lv_event_overlay_picture

@@ -188,6 +188,73 @@ static inline LvOverlayTipColumns lvOverlayTipColumns(int n, float lineH, float 
   return out;
 }
 
+/* The lines of a tooltip are drawn no smaller than this part of their own
+ * size. */
+#define LV_OVERLAY_TIP_SCALE_MIN 0.4f
+#define LV_OVERLAY_TIP_SCALE_STEP 0.05f
+
+/* How much smaller the lines of the tooltip are drawn so that all of them
+ * go in the room: 1 when they go in at their own size in columns
+ * (lvOverlayTipColumns says `fits`), else the largest step under 1 at which
+ * they do, a line and a column both that much smaller. Not under
+ * LV_OVERLAY_TIP_SCALE_MIN: text smaller than that cannot be read, and the
+ * lines that still do not go in are then below the room, not left out. */
+static inline float lvOverlayTipScale(int n, float lineH, float availH, float colW,
+                                      float availW) {
+  int step;
+  if (n <= 0) return 1.0f;
+  for (step = 0;; step++) {
+    float s = 1.0f - (float)step * LV_OVERLAY_TIP_SCALE_STEP;
+    if (s <= LV_OVERLAY_TIP_SCALE_MIN + 0.001f) return LV_OVERLAY_TIP_SCALE_MIN;
+    if (lvOverlayTipColumns(n, lineH * s, availH, colW * s, availW).fits) return s;
+  }
+}
+
+/* Where the tooltip of a marker goes: its top left corner. */
+typedef struct LvOverlayTipPos {
+  float x;
+  float y;
+} LvOverlayTipPos;
+
+/* A tooltip w by h for a mouse at mouseX, mouseY, in a room from minX, minY
+ * to maxX, maxY (the window). gap is kept between the mouse and the tooltip.
+ *
+ * All of the tooltip is in the room when it is no bigger than the room:
+ *   - it is under the mouse and to the right of it;
+ *   - with no room to the right it moves left until its right edge is in;
+ *   - with no room under the mouse it goes over the mouse;
+ *   - with no room there either it moves up until its bottom edge is in,
+ *     and is then beside the mouse (right, else left) when it goes there,
+ *     so the mouse is not on it.
+ * A tooltip higher or wider than the room starts at the top or the left
+ * edge: its first lines are the ones that show. */
+static inline LvOverlayTipPos lvOverlayTipPlace(float mouseX, float mouseY, float w, float h,
+                                                float minX, float minY, float maxX,
+                                                float maxY, float gap) {
+  LvOverlayTipPos p;
+  if (w < 0.0f) w = 0.0f;
+  if (h < 0.0f) h = 0.0f;
+  if (gap < 0.0f) gap = 0.0f;
+  p.x = mouseX + gap;
+  if (p.x + w > maxX) p.x = maxX - w;
+  if (p.x < minX) p.x = minX;
+  p.y = mouseY + gap;
+  if (p.y + h > maxY) {
+    p.y = mouseY - gap - h;
+    if (p.y < minY) {
+      /* Neither under the mouse nor over it. */
+      p.y = maxY - h;
+      if (p.y < minY) p.y = minY;
+      if (mouseX + gap + w <= maxX) {
+        p.x = mouseX + gap;
+      } else if (mouseX - gap - w >= minX) {
+        p.x = mouseX - gap - w;
+      }
+    }
+  }
+  return p;
+}
+
 /* The column and the line of the k-th event (from 0) in columns of `rows`
  * lines: down the first column, then down the next. */
 static inline void lvOverlayTipCell(int k, int rows, int *col, int *row) {

@@ -4079,6 +4079,7 @@ int run_lv_event_click_pick(void);
 int run_lv_event_overlay_slider(void);
 int run_lv_event_overlay_clusters(void);
 int run_lv_event_overlay_tip_columns(void);
+int run_lv_event_overlay_tip_place(void);
 int run_lv_event_overlay_marker_size(void);
 int run_lv_event_overlay_choice(void);
 int run_lv_event_overlay_picture(void);
