@@ -3343,9 +3343,11 @@ end
 -- are one order and nothing more: goto, attack, defend and hold.  Three are
 -- a STANDING instruction that outlives a single order -- patrol, escort and
 -- avoid -- so they are kept on the order state and M.hint_update carries
--- them a step each think.  An eighth verb somebody invented is ignored in
--- silence: a brain is allowed not to know a word, and answering back would
--- make every scenario written for another brain noisy here.
+-- them a step each think.  An eighth, `release`, gives no order: it ends the
+-- one the bot holds (C.ORDER_RELEASE_HINT; see hint_release).  A verb
+-- somebody invented is ignored in silence: a brain is allowed not to know a
+-- word, and answering back would make every scenario written for another
+-- brain noisy here.
 -- =========================================================================
 
 -- The sender a hint is filed under.  Not a seat: player numbers run 0..15,
@@ -3524,6 +3526,32 @@ local function hint_command(state, world, info, t)
   return nil
 end
 
+-- RELEASE: END THE ORDER, GIVE NO NEW ONE (C.ORDER_RELEASE_HINT).  The bot
+-- lets go of whatever it holds -- a chat order, a ping, a hint -- the way a
+-- `cancel <bot>` does: the slot empties, the go-there lock comes off with it
+-- (release_held calls goto_lock), a hold phase ends because the slot it
+-- parks on is gone, and the order is CANCELLED (obx), so no other bot picks
+-- it up.  A running patrol or escort ends too: either would raise its next
+-- leg on the next think.  An avoid is a keep-out, not an order, and stays.
+-- It says nothing: there is no person to answer, and a script sends it to
+-- every hunter at once.  Then the next think replans in full, so the goal
+-- pools pick the bot's own job at once rather than at the next replan timer.
+-- A suicide run is not touched: it takes no order, and only a person's
+-- cancel, a death or the pill's death ends it.
+local function hint_release(state, info, now)
+  local o = S(state)
+  local had = o.held ~= nil or o.hint_patrol ~= nil or o.hint_escort ~= nil
+  local oid = o.held and o.held.oid or 0
+  o.hint_patrol, o.hint_escort = nil, nil
+  if o.held then release_held(state, info, nil, true, true) end
+  if had then
+    state._force_replan_reason = state._force_replan_reason or "order_release"
+  end
+  print2(string.format("HINT_RELEASE t=%d oid=%d had=%s", now, oid, tostring(had)))
+  return true
+end
+M.hint_release = hint_release
+
 -- =========================================================================
 -- HINT ENTRY POINT — called from init.lua once per think for each hint the
 -- server queued on this bot's VM.  Returns true when the hint became an
@@ -3563,6 +3591,11 @@ function M.on_scenario_hint(state, world, info, t, now)
       hint_start(state, world, info, hint_goto(state, mx, my), now)
     end
     return true
+  end
+
+  if v == "release" then
+    if not C.ORDER_RELEASE_HINT then return false end
+    return hint_release(state, info, now)
   end
 
   if v == "avoid" then

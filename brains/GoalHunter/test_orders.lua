@@ -6447,6 +6447,90 @@ do
   C.ORDER_HINT_BUSY_SILENT = saved
 end
 
+-- THE "release" SCENARIO HINT (ORDER_RELEASE_HINT).  It ends the order the bot
+-- holds -- the slot, the go-there lock, the hold phase, a patrol -- gives no
+-- new one, says nothing, and asks for a full replan.  Knob off (keel): an
+-- unknown verb, ignored.
+do
+  print("orders.lua — the release hint ends the held order and gives no new one")
+  local saved = C.ORDER_RELEASE_HINT
+  local function held_bot()
+    local st, w, inf = ST(), W(), I()
+    ORD.on_scenario_hint(st, w, inf, { verb = "goto", x = "40", y = "40" }, 100)
+    ORD.update(st, w, inf, 101)
+    return st, w, inf
+  end
+  local function lines(st)
+    return #((st.orders and st.orders.say) or {})
+  end
+
+  C.ORDER_RELEASE_HINT = true
+  local st, w, inf = held_bot()
+  local had = st.orders.held ~= nil and st._order ~= nil
+              and st.command_goal ~= nil and st.command_goal.kind == "goto_tile"
+  check("release: the bot holds the goto before it", had,
+        tostring(st.orders.held) .. " " .. tostring(st.command_goal))
+  local oid = st.orders.held and st.orders.held.oid
+  local n0 = lines(st)
+  local r = ORD.on_scenario_hint(st, w, inf, { verb = "release" }, 120)
+  check("release: answered true", r == true, tostring(r))
+  check("release: the held order is gone", st.orders.held == nil, "held")
+  check("release: the published order is gone", st._order == nil, "order")
+  check("release: the go-there lock is off", st.command_goal == nil, tostring(st.command_goal))
+  check("release: the order is forgotten (cancelled, not handed back)",
+        oid ~= nil and st.orders.known[oid] == nil, tostring(oid))
+  local obx = false
+  for _, m in ipairs(st.orders.out or {}) do
+    if m == string.format("/info obx %d", oid or -1) then obx = true end
+  end
+  check("release: an obx goes out, so no other bot picks it up", obx, "no obx")
+  check("release: a full replan is asked for",
+        st._force_replan_reason == "order_release", tostring(st._force_replan_reason))
+  check("release: the bot says nothing", lines(st) == n0, tostring(lines(st) - n0))
+  ORD.update(st, w, inf, 121)
+  check("release: no new order next think", st.orders.held == nil and st._order == nil, "held")
+
+  -- In the HOLD PHASE (arrived, the lock already off, steering parked).
+  st, w, inf = held_bot()
+  st.orders.held.hold = true
+  st.orders.held.arrived = true
+  ORD.on_scenario_hint(st, w, inf, { verb = "release" }, 120)
+  check("release: a hold phase ends with the slot", st.orders.held == nil and st._order == nil, "held")
+
+  -- A PATROL is a standing hint: it would raise its next leg, so it ends too.
+  st, w, inf = ST(), W(), I()
+  ORD.on_scenario_hint(st, w, inf,
+                       { verb = "patrol", x1 = "40", y1 = "40", x2 = "50", y2 = "50" }, 100)
+  ORD.on_scenario_hint(st, w, inf, { verb = "release" }, 110)
+  ORD.hint_update(st, w, inf, 111)
+  check("release: a patrol ends and raises no leg",
+        st.orders.hint_patrol == nil and st.orders.held == nil, tostring(st.orders.hint_patrol))
+
+  -- An AVOID is a keep-out, not an order, and stays.
+  st, w, inf = ST(), W(), I()
+  ORD.on_scenario_hint(st, w, inf, { verb = "avoid", x = "90", y = "90", w = "3", h = "3" }, 100)
+  ORD.on_scenario_hint(st, w, inf, { verb = "release" }, 110)
+  check("release: an avoid stays", st.orders.hint_avoid ~= nil, "gone")
+
+  -- Nothing held: answered, but no replan is forced.
+  st, w, inf = ST(), W(), I()
+  r = ORD.on_scenario_hint(st, w, inf, { verb = "release" }, 110)
+  check("release: a free bot: true, no replan forced",
+        r == true and st._force_replan_reason == nil, tostring(st._force_replan_reason))
+
+  -- KEEL: the verb is unknown, the order stays.
+  C.ORDER_RELEASE_HINT = false
+  st, w, inf = held_bot()
+  oid = st.orders.held and st.orders.held.oid
+  r = ORD.on_scenario_hint(st, w, inf, { verb = "release" }, 120)
+  check("ORDER_RELEASE_HINT=false (keel): ignored, the order stays",
+        r == false and st.orders.held ~= nil and st.orders.held.oid == oid
+        and st._force_replan_reason == nil, tostring(r))
+  check("keel preset carries ORDER_RELEASE_HINT = false",
+        C.PRESETS.keel.ORDER_RELEASE_HINT == false, tostring(C.PRESETS.keel.ORDER_RELEASE_HINT))
+  C.ORDER_RELEASE_HINT = saved
+end
+
 -- =========================================================================
 -- BOT ORDER BIDS (2026-10-04, branch bot-order-bids).  Three changes:
 --   1. a go-there order arrives on the square itself (ORDER_GOTO_ARRIVE_*)

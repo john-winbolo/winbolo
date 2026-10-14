@@ -4,8 +4,11 @@
 --
 -- Seat 0 gets the prize at tick 300. Until he builds, the arena holds his
 -- armour at 15 (at or below FORT_ARMOUR_AT, so he builds a fort, not a hop)
--- and keeps seat 1 7 squares behind him. The script hands a standing prize no
--- order: seat 1's brain goes after the hostile pillbox on its own.
+-- and keeps seat 1 7 squares behind him. When the fort stands, the script
+-- calls off seat 1's chase order with the "release" hint and gives it no new
+-- one, or, while walled.update has given it a ring square with a line to
+-- the prize, sends it there once with a goto in place of the release. After
+-- that seat 1's brain goes after the hostile pillbox on its own.
 --
 -- When the fort goes up, seat 1 is put 5 squares behind the guard, so he is
 -- close enough that the guard does not take it straight back.

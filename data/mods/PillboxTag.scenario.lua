@@ -1681,6 +1681,9 @@ end
 -- from each other inside the box, and whether that ground runs out to the
 -- edge of the box. A hunter outside the box can reach the ground that runs to
 -- the edge.
+walled.LINE_GOTO = true         -- false: no hunter is sent to a line square;
+                                -- each gets the release only, and the brain
+                                -- finds its own way (an arena switches it)
 walled.STANDOFF  = 7.4          -- the brain's ATTACK_PILL_STANDOFF
 walled.AIM_INSET = 16 / 256     -- the brain's AIM_INSET_FIRE: how far inside
                                 -- the pillbox's square a corner aim is
@@ -1916,18 +1919,29 @@ local function aim_one(p)
   if pb == nil then
     return
   end
-  -- A built prize gets no order. The only order a script can give a bot
-  -- about a pillbox is defend, and a goto is a hold that shuts off every
-  -- other goal, the brain's pillbox fight with them. Left alone, the brain
-  -- sees a hostile pillbox and goes after it itself.
+  -- A built prize is the brain's to fight. The only order a script can give
+  -- a bot about a pillbox is defend, and a goto is a hold that shuts off
+  -- every other goal, the brain's pillbox fight with them. Left alone, the
+  -- brain sees a hostile pillbox and goes after it itself.
   --
-  -- The order the bot was given before the prize went up is called off, once:
-  -- it still holds it for up to a minute, and an attack on the holder or a
-  -- goto after him keeps it on him and off the prize (a person who builds by
+  -- So when the prize goes up, each hunter's old order is called off, once,
+  -- with the "release" hint: it ends the order the bot holds and gives no new
+  -- one, so the brain's own goal choice runs at once and its pillbox fight
+  -- (or a tank fight, if that costs less) takes over. The old order would
+  -- otherwise hold for up to a minute, and an attack on the holder or a goto
+  -- after him keeps the bot on him and off the prize (a person who builds by
   -- his fort had every hunter sitting on him, unable to shoot through the
-  -- walls, while the fort shot them). The brain has no word that only ends
-  -- an order, so the bot is told to hold where it is: it is there already, so
-  -- the hold is the hunter's short park, and then its own choice takes over.
+  -- walls, while the fort shot them). A brain that does not know the word
+  -- ignores it.
+  --
+  -- A prize inside walls is the one case a hunter is still sent somewhere:
+  -- walled.update gives each hunter that can drive to one a ring square with
+  -- a line to the prize, and the hunter is sent there once with a goto, in
+  -- place of the release. The goto's short hold on that square hands over to
+  -- the brain's own pillbox fight, which now has a firing square. With
+  -- walled.LINE_GOTO off the hunter gets the release instead, and the 30 s
+  -- net (WALL_FALLBACK_SECONDS) is timed from then.
+  --
   -- A bot holder's hop is left as it was: the prize stands for a few seconds
   -- only, and he shoots it down and takes it back himself.
   if standing(pb) then
@@ -1937,7 +1951,10 @@ local function aim_one(p)
       return
     end
     local sq = (walled.watch ~= nil and not walled.watch.fallback) and walled.watch.assign[p] or nil
-    if sq ~= nil then
+    if sq ~= nil and not walled.LINE_GOTO and walled.watch.sent_at == nil then
+      walled.watch.sent_at = elapsed
+    end
+    if sq ~= nil and walled.LINE_GOTO then
       local order = goto_hint(sq.x, sq.y, string.format("line %d,%d", pb.x, pb.y))
       tell(p, order, true)
       if told[p] == order.key then
@@ -1950,7 +1967,7 @@ local function aim_one(p)
        (plan == nil or plan.kind ~= "hop") then
       local man = game.builder(p)
       if (man == nil or man.state == "in_tank") and
-         game.hint(p, { verb = "hold" }) then
+         game.hint(p, { verb = "release" }) then
         told[p], told_for[p], told_at[p] = "release", "release", elapsed
         goto_at[p] = nil
       end

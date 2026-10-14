@@ -1915,6 +1915,22 @@ author and a script author can agree on words of their own.
 | `escort` | `player`, and optionally `distance` | Stay with that seat, within `distance` squares of it (3 by default) |
 | `avoid` | `x`, `y`, `w`, `h` | Keep out of that rectangle until told otherwise |
 
+Past the seven, GoalHunter knows one more word:
+
+| `verb` | Keys | Means |
+|---|---|---|
+| `release` | none | End the order the bot holds and give it no new one |
+
+`release` is the way to call an order off. A `hold` is not: it is a `goto`
+to the square the bot is on, so it is a new order, and the bot holds it.
+After a `release` the bot's own goal choice runs at once, on the next think.
+It ends the held order whoever gave it, and a running `patrol` or `escort`.
+An `avoid` stays, because it is a keep-out and not an order. The bot says
+nothing, and no other bot takes the order up. A bot that holds no order is
+not changed. GoalHunter's `ORDER_RELEASE_HINT` switches the word off; the
+KEEL preset has it off, and then the verb is ignored like any other unknown
+word.
+
 There is no `region` key. A brain has no region table to look a name up in, so
 a script that wants a bot in a region reads the rectangle itself and sends the
 numbers:

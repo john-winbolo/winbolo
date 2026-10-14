@@ -5283,6 +5283,14 @@ M.BOT_INIT_LINE_TO_HUMANS = false -- keel true (2026-10-01: newswire spam)
 -- so true drops the line; a hint a busy bot cannot take is refused in
 -- silence, as a hint that cannot be built already is.  false = say it.
 M.ORDER_HINT_BUSY_SILENT  = true  -- keel false (2026-10-01: newswire spam)
+-- The "release" SCENARIO HINT (2026-10-14): ends whatever order the bot
+-- holds -- the held order, its travel lock and its hold phase, and a running
+-- patrol or escort -- and gives no new one, so goal selection runs on its
+-- own at once.  Pillbox Tag sends it when the prize is set down, to call off
+-- a chase order that would otherwise hold for up to ORDER_FOCUS_TICKS.
+-- false = the verb is unknown and ignored in silence (the brain had no word
+-- that only ends an order; a script sent "hold", a goto to its own square).
+M.ORDER_RELEASE_HINT      = true  -- keel false (2026-10-14: Pillbox Tag)
 -- Shortest gap between two ATTACK markers from the SAME bot about the SAME
 -- target.  A bot re-plans the same goal often, and without this every replan
 -- would put another marker on the same pill.  1500 ticks is 30 s.
@@ -5788,6 +5796,9 @@ M.PRESETS = {
     BOT_CHAT_DEFAULT              = true,
     BOT_INIT_LINE_TO_HUMANS       = true,
     ORDER_HINT_BUSY_SILENT        = false,
+    --   2026-10-14: the "release" scenario hint ends a held order. KEEL
+    --   had no such verb: an unknown verb, ignored.
+    ORDER_RELEASE_HINT            = false,
     --   2026-09-17: a bot attacking a pill with a HUMAN team-mate within 7
     --   tiles now skips the wall shield and goes straight in (the lobby docs
     --   promise it). KEEL never looked at where the humans were: 0 = off, so
