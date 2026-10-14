@@ -1603,6 +1603,9 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
   local lvl_on = allies or hard
   local lvl_best = lvl_on and { {}, {} } or nil
   local n_lvl = 0
+  -- HUMAN_DECOY_CAND: the spots with human-decoy costs (the summary line).
+  local n_hd = 0
+  local hd_rows = C.HUMAN_DECOY_CAND_LOG and _G._PRINT2_ENABLED
 
   local seen = {}
   for R = R_MAX, R_MIN, -1 do
@@ -1637,8 +1640,11 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
         if score < math.huge and state and state._human_decoy then
           local hc, hs, hb, d1, d2, d3 = M.human_decoy_cost(state, pill.mx, pill.my, cx + 0.5, cy + 0.5)
           if hc then
-            print2(string.format("HUMAN_DECOY_CAND src=pick_standoff (%d,%d) R=%d score %.1f = base(score_standoff+range_pen) %.1f + %s",
-              cx, cy, R, score + hc, score, M.human_decoy_txt(hc, hs, hb, d1, d2, d3)))
+            n_hd = n_hd + 1
+            if hd_rows then
+              print2(string.format("HUMAN_DECOY_CAND src=pick_standoff (%d,%d) R=%d score %.1f = base(score_standoff+range_pen) %.1f + %s",
+                cx, cy, R, score + hc, score, M.human_decoy_txt(hc, hs, hb, d1, d2, d3)))
+            end
             score = score + hc
           end
         end
@@ -1696,6 +1702,18 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
   -- orbit position has any shot at the pill, so the take will bail elsewhere).
   local smx = best_mx or fb_clear_mx or fallback_mx
   local smy = best_my or fb_clear_my or fallback_my
+  -- HUMAN_DECOY_CAND summary: the spot picked and its human-decoy terms
+  -- (worked out again for that one spot; the cost has no side effects).
+  if n_hd > 0 and _G._PRINT2_ENABLED then
+    local hc, hs, hb, d1, d2, d3
+    if smx then hc, hs, hb, d1, d2, d3 = M.human_decoy_cost(state, pill.mx, pill.my, smx + 0.5, smy + 0.5) end
+    local scored = best_mx ~= nil and best_score < math.huge
+    print2(string.format("HUMAN_DECOY_CAND src=pick_standoff pick=(%s,%s) %s cands=%d %s",
+      tostring(smx), tostring(smy),
+      scored and string.format("score %.1f = base %.1f + hd %.1f", best_score, best_score - (hc or 0), hc or 0)
+        or "fallback (no scored spot)",
+      n_hd, hc and M.human_decoy_txt(hc, hs, hb, d1, d2, d3) or "hd none"))
+  end
   if smx then
     if v_take then
       -- Overlay: mark chosen standoff with bright green circle
@@ -4633,14 +4651,21 @@ local function blitz_pick_from_scan(spots, state, tmx, tmy, wallset, pmx, pmy, w
   end
   -- The human-decoy costs (C.HUMAN_DECOY_AWARE): added to each eligible
   -- spot's score for both passes when a flag stands on this pill.
+  -- HUMAN_DECOY_CAND: one row per spot only with C.HUMAN_DECOY_CAND_LOG;
+  -- always one summary line after the pick.
+  local n_hd = 0
   if state._human_decoy then
+    local hd_rows = C.HUMAN_DECOY_CAND_LOG and _G._PRINT2_ENABLED
     for _, e in ipairs(elig) do
       local hc, hs, hb, d1, d2, d3 = M.human_decoy_cost(state, pmx, pmy, e.sfx, e.sfy)
       if hc then
         e.hd = hc
-        print2(string.format("HUMAN_DECOY_CAND src=blitz_pick (%d,%d) score %.1f = total_score %.1f + %s",
-          e.s.mx, e.s.my, (e.s.total_score or 1e9) + hc, e.s.total_score or 1e9,
-          M.human_decoy_txt(hc, hs, hb, d1, d2, d3)))
+        n_hd = n_hd + 1
+        if hd_rows then
+          print2(string.format("HUMAN_DECOY_CAND src=blitz_pick (%d,%d) score %.1f = total_score %.1f + %s",
+            e.s.mx, e.s.my, (e.s.total_score or 1e9) + hc, e.s.total_score or 1e9,
+            M.human_decoy_txt(hc, hs, hb, d1, d2, d3)))
+        end
       end
     end
   end
@@ -4656,6 +4681,17 @@ local function blitz_pick_from_scan(spots, state, tmx, tmy, wallset, pmx, pmy, w
     if sc >= lo and sc < hi then
       local d = (tmx and tmy) and U.mdist(tmx, tmy, e.s.mx, e.s.my) or 0
       if not best_d or d < best_d then best_d = d; chosen = e end
+    end
+  end
+  if n_hd > 0 and _G._PRINT2_ENABLED then
+    if chosen then
+      local hc, hs, hb, d1, d2, d3 = M.human_decoy_cost(state, pmx, pmy, chosen.sfx, chosen.sfy)
+      print2(string.format("HUMAN_DECOY_CAND src=blitz_pick pick=(%d,%d) score %.1f = total_score %.1f + hd %.1f cands=%d %s",
+        chosen.s.mx, chosen.s.my, (chosen.s.total_score or 1e9) + (chosen.hd or 0),
+        chosen.s.total_score or 1e9, chosen.hd or 0, n_hd,
+        hc and M.human_decoy_txt(hc, hs, hb, d1, d2, d3) or "hd none"))
+    else
+      print2(string.format("HUMAN_DECOY_CAND src=blitz_pick pick=none cands=%d", n_hd))
     end
   end
   if not chosen then return nil end
@@ -5778,14 +5814,33 @@ local function update_attack_substate_body(goal, state, world, info)
         -- Every spot that the human-decoy costs touched, written out so the
         -- winner can be worked by hand: adj_score decides green (< 10) or the
         -- 25% band, then the lowest rank wins.
-        if state._human_decoy then
+        -- One row per spot only with C.HUMAN_DECOY_CAND_LOG; always one
+        -- summary line: the winner's row and the number of spots with costs.
+        if state._human_decoy and _G._PRINT2_ENABLED then
+          local all_rows = C.HUMAN_DECOY_CAND_LOG
+          local n_hd = 0
           for gi, s in ipairs(greens) do
             if s._hd_cost then
-              print2(string.format("HUMAN_DECOY_CAND src=plan_position%s (%d,%d) adj %.1f = total %.1f + infl %d + %s | rank %.1f = dij %.1f + hd %.1f",
-                gi == 1 and " WINNER" or "", s.mx, s.my, s._adj_score or 0, s.total_score or 0,
-                s._infl_adj or 0,
+              n_hd = n_hd + 1
+              if all_rows then
+                print2(string.format("HUMAN_DECOY_CAND src=plan_position%s (%d,%d) adj %.1f = total %.1f + infl %d + %s | rank %.1f = dij %.1f + hd %.1f",
+                  gi == 1 and " WINNER" or "", s.mx, s.my, s._adj_score or 0, s.total_score or 0,
+                  s._infl_adj or 0,
+                  M.human_decoy_txt(s._hd_cost, s._hd_space, s._hd_behind, s._hd_dsh, s._hd_dsp, s._hd_dhp),
+                  s._est or 0, s._hd_dij or 0, s._hd_cost))
+              end
+            end
+          end
+          if n_hd > 0 then
+            local s = best
+            if s._hd_cost then
+              print2(string.format("HUMAN_DECOY_CAND src=plan_position WINNER (%d,%d) adj %.1f = total %.1f + infl %d + %s | rank %.1f = dij %.1f + hd %.1f cands=%d",
+                s.mx, s.my, s._adj_score or 0, s.total_score or 0, s._infl_adj or 0,
                 M.human_decoy_txt(s._hd_cost, s._hd_space, s._hd_behind, s._hd_dsh, s._hd_dsp, s._hd_dhp),
-                s._est or 0, s._hd_dij or 0, s._hd_cost))
+                s._est or 0, s._hd_dij or 0, s._hd_cost, n_hd))
+            else
+              print2(string.format("HUMAN_DECOY_CAND src=plan_position WINNER (%d,%d) adj %.1f rank %.1f hd none cands=%d",
+                s.mx, s.my, s._adj_score or 0, s._est or 0, n_hd))
             end
           end
         end

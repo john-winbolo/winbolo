@@ -4888,6 +4888,84 @@ print("decoy_getaway.lua -- the decoy getaway")
   check("out of range is 1.0 with no blocker needed",
         (GA.block(wa, wa.pills[1], 30, 33)) == 1.0
         and select(2, GA.block(wa, wa.pills[1], 30, 33)) == "range", "?")
+  -- THE SIGNATURES (PR #510 review item 7): M.signature and
+  -- M.watch_signature are flat lists of numbers now, compared with
+  -- M.sig_same.  Each change below must read as a change (it did with the
+  -- old strings), and nothing changed must read as the same.
+  ;(function()
+  local hold_pill = { mx = 33, my = 34, owner = "friendly", health = 9 }
+  local ws = { pills = {
+    [1] = { mx = 30, my = 24, owner = "hostile", health = 15 },
+    [2] = { mx = 37, my = 30, owner = "hostile", health = 15 },
+    [5] = hold_pill,
+  }, pill_at = { [34 * 256 + 33] = { { pill = hold_pill } } } }
+  local hs = { mx = 30, my = 30 }
+  local gs = { alive = {}, path = { { mx = 31, my = 30,
+    terms = { { sx = 31, sy = 29 }, { sx = 33, sy = 34 }, {} } } },
+    watch = { { id = 9, sx = 32, sy = 28 }, { id = 10, sx = 33, sy = 34 } } }
+  TMAP[29 * 256 + 31] = C.T_BUILDING
+  TMAP[28 * 256 + 32] = C.T_BUILDING
+  local saved_wb = C.DECOY_GETAWAY_WATCH_BLOCKED
+  C.DECOY_GETAWAY_WATCH_BLOCKED = true
+  local base = GA.signature(ws, hs, gs, 30, 30, 100)
+  local wbase = GA.watch_signature(ws, gs)
+  local scratch, wscratch = {}, {}
+  local function sig(tx, ty) return GA.signature(ws, hs, gs, tx or 30, ty or 30, 100, scratch) end
+  local function wsig() return GA.watch_signature(ws, gs, wscratch) end
+  check("signature: 2 ids, 2 shield squares (the term with no square adds none)",
+        base.n == 3 + 2 + 2 * 5 and base[3] == 2 and base[4] == 1 and base[5] == 2,
+        tostring(base.n))
+  check("signature: nothing changed reads the same",
+        GA.sig_same(sig(), base) and GA.sig_same(wsig(), wbase), "?")
+  check("signature: the tank moved reads as a change",
+        not GA.sig_same(sig(31, 30), base) and not GA.sig_same(sig(30, 31), base), "?")
+  TMAP[29 * 256 + 31] = C.T_HALFBUILD
+  check("signature: a shield wall changed terrain reads as a change",
+        not GA.sig_same(sig(), base), "?")
+  TMAP[29 * 256 + 31] = C.T_BUILDING
+  TMAP[28 * 256 + 32] = C.T_HALFBUILD
+  check("watch signature: a watched wall changed terrain reads as a change",
+        not GA.sig_same(wsig(), wbase) and GA.sig_same(sig(), base), "?")
+  TMAP[28 * 256 + 32] = C.T_BUILDING
+  hold_pill.health = 8
+  check("signature: the health of a pill on a shield square changed reads as a change",
+        not GA.sig_same(sig(), base) and not GA.sig_same(wsig(), wbase), "?")
+  hold_pill.health = 9
+  hold_pill.owner = "allied"
+  check("signature: the owner of a pill on a shield square changed reads as a change",
+        not GA.sig_same(sig(), base) and not GA.sig_same(wsig(), wbase), "?")
+  hold_pill.owner = "friendly"
+  hold_pill.health = 0
+  check("signature: a pill on a shield square died reads as a change (no live pill now)",
+        not GA.sig_same(sig(), base) and not GA.sig_same(wsig(), wbase), "?")
+  hold_pill.health = 9
+  ws.pills[2].health = 0
+  check("signature: a counted pill died reads as a change",
+        not GA.sig_same(sig(), base) and GA.sig_same(wsig(), wbase), "?")
+  ws.pills[2].health = 15
+  check("signature: all put back reads the same again (scratch reused)",
+        GA.sig_same(sig(), base) and GA.sig_same(wsig(), wbase), "?")
+  -- A longer fill then a shorter one into the same table: the old entries
+  -- past .n are not read.
+  local long = GA.signature(ws, hs, gs, 30, 30, 100, {})
+  local path0 = gs.path
+  gs.path = nil
+  local short = GA.signature(ws, hs, gs, 30, 30, 100, long)
+  check("signature: a shorter fill into a used table compares by .n",
+        short == long and short.n == 5 and not GA.sig_same(short, base)
+        and GA.sig_same(short, GA.signature(ws, hs, gs, 30, 30, 100)), tostring(short.n))
+  gs.path = path0
+  -- The id count keeps a list of ids from reading as a shield square.
+  check("signature: the same numbers in another layout differ",
+        not GA.sig_same({ n = 3, 1, 2, 0 }, { n = 3, 1, 2, 1 }), "?")
+  C.DECOY_GETAWAY_WATCH_BLOCKED = false
+  check("watch signature: watch off is empty, and the same as an empty watch",
+        wsig().n == 0 and GA.sig_same(GA.watch_signature(ws, { watch = {} }), wsig()), "?")
+  check("signature: nil stored signature reads as a change",
+        not GA.sig_same(sig(), nil), "?")
+  C.DECOY_GETAWAY_WATCH_BLOCKED = saved_wb
+  TMAP[29 * 256 + 31], TMAP[28 * 256 + 32] = nil, nil
+  end)()
   -- A FAILED TRACE (the C call raises, or gives nothing) is not a short
   -- shell: block 0, "error" (no cover).  goals.sea_shot_reaches says so in a
   -- 4th value; a shell that really runs out still gives nil there.

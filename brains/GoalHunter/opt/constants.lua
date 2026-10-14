@@ -5010,6 +5010,10 @@ M.HUMAN_DECOY_ALLY_BOTS     = true   -- keel false
 -- ("decoy: no own blockers"), so a flag that comes after the plan counts
 -- too.  The ally's blocker is the cover.  false = walls as before.
 M.HUMAN_DECOY_NO_BLOCKERS   = true   -- keel false
+-- HUMAN_DECOY_CAND logging.  Each standoff pick on a decoy pill logs one
+-- line: the winner, its terms and how many spots had human-decoy costs.
+-- true prints every candidate row; logging only, no behaviour.
+M.HUMAN_DECOY_CAND_LOG      = false
 -- DECOY GETAWAY (Andrew, 2026-09-24).  A decoy hold (ORDER_GOTO_DECOY) looks
 -- for a way out the moment it starts: a chain of up to
 -- DECOY_GETAWAY_MAX_STEPS squares, each one ring further out from the start
