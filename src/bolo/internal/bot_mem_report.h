@@ -69,8 +69,9 @@ int botMemSumBotClientLists(struct ServerSim *sim, BotMemListCounts *out);
  * tables with the most entries to `emit`, one line each, as
  * "<entries> entries, <KB> KB of strings: <path>". Expensive: it visits
  * the whole heap and builds a visited set inside the bot's own state,
- * so it is for the on-demand deep report only. Returns false when
- * playerNum has no running brain. */
+ * so it is for the on-demand deep report only. A walk that fails (out
+ * of memory) writes one "walk failed: <message>" line instead. Returns
+ * false when playerNum has no running brain. */
 bool botMemLuaDeepWalk(struct ServerSim *sim, BYTE playerNum, int topN,
                        void (*emit)(void *ctx, const char *line),
                        void *ctx);
