@@ -5686,6 +5686,10 @@ set(_unit_test_names
     teleport_shell_hits_new_place
     teleport_rewind_refills
     teleport_builder_rewind_record
+    slot_join_erases_tank_rewind_record
+    slot_join_shell_hits_new_tank
+    slot_join_rewind_refills
+    slot_join_erases_builder_rewind_record
     shell_rewind_pill_shell_tank_present
     shell_rewind_tank_full_comp
     shell_rewind_builder_one_less

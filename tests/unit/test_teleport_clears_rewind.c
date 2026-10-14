@@ -28,6 +28,21 @@
  *   run_teleport_builder_rewind_record     - the builder's record is erased
  *       with the tank's when he is inside the tank, and kept when he is out
  *
+ * A player who takes a seat gets empty records too. The records are kept by
+ * seat, nothing writes to them while the seat is empty, and so the frames of
+ * the player who left are still there when the next one sits down
+ * (addPlayerInternal, server_sim_players.c, erases them).
+ *
+ *   run_slot_join_erases_tank_rewind_record    - after a leave and a join on
+ *       the same seat the tank's record is empty, and a rewound shell through
+ *       the place the old tank stood does not hit the new one
+ *   run_slot_join_shell_hits_new_tank          - a rewound shell at the new
+ *       tank hits at once after the join
+ *   run_slot_join_rewind_refills               - the tick fills both records
+ *       again, one entry a game tick, with the new tank's place only
+ *   run_slot_join_erases_builder_rewind_record - the builder's record is
+ *       erased on the join as well
+ *
  * The shell cases step the shell list the way the tick steps it (shellsUpdate
  * over the compacted tank and builder arrays).
  *
@@ -474,5 +489,237 @@ int run_teleport_builder_rewind_record(void) {
     UT_ASSERT(gs->lgmen[TCR_TARGET]->x == manX && gs->lgmen[TCR_TARGET]->y == manY);
     tcrEnd(sim);
 
+    return 0;
+}
+
+/* The target leaves and another player takes its seat. The new tank is put
+   on the row away from the lane, at rest; the old tank's record said "on the
+   lane". FALSE when the seat did not come back with a tank and a builder. */
+static bool tcrReseat(ServerSim *sim, BYTE lx, BYTE ly) {
+    serverSimRemovePlayer(sim, TCR_TARGET);
+    if (sim->playerConnected[TCR_TARGET] || sim->sim.tanks[TCR_TARGET] != NULL) {
+        return false;
+    }
+    serverSimAddPlayer(sim, TCR_TARGET, "Newcomer", false);
+    if (!sim->playerConnected[TCR_TARGET] ||
+        sim->sim.tanks[TCR_TARGET] == NULL ||
+        sim->sim.lgmen[TCR_TARGET] == NULL) {
+        return false;
+    }
+    tcrPlace(sim, TCR_TARGET, tcrMiddle((BYTE)(lx + TCR_AT_TARGET)),
+             tcrMiddle((BYTE)(ly + TCR_ROW_AWAY)));
+    return true;
+}
+
+/* ================================================================
+ * 5. A join erases the seat's tank record; a shell at the place the last
+ *    occupant's tank stood misses the new tank.
+ *
+ * Guards the posHistoryInit of the tank's record in addPlayerInternal. With
+ * that line taken out, the 16 entries still say "on the lane", the shell
+ * hits the new tank on game tick 16 and this case fails at the armour check.
+ * ================================================================ */
+int run_slot_join_erases_tank_rewind_record(void) {
+    BYTE       lx = 0, ly = 0;
+    ServerSim *sim = tcrSim(&lx, &ly);
+    GameSim   *gs;
+    WORLD      hx = 0, hy = 0;
+    BYTE       armourBefore;
+    int        diedOn;
+
+    UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
+    gs = &sim->sim;
+
+    /* The player who is about to leave: a full record of standing on the
+       lane. */
+    UT_ASSERT(sim->posHistory[TCR_TARGET].count == POSITION_HISTORY_SIZE);
+    UT_ASSERT(posHistoryGet(&sim->posHistory[TCR_TARGET], TCR_COMP, &hx, &hy));
+    UT_ASSERT(hx == tcrMiddle((BYTE)(lx + TCR_AT_TARGET)) && hy == tcrMiddle(ly));
+
+    UT_ASSERT_MSG(tcrReseat(sim, lx, ly),
+                  "setup: the seat did not empty and fill again");
+
+    /* A rewound shell down the lane, through the place the old tank stood.
+       The new tank is two squares off it. */
+    armourBefore = tankGetArmour(&gs->tanks[TCR_TARGET]);
+    tcrFire(sim, lx, ly, TCR_COMP);
+    diedOn = tcrFly(sim);
+    UT_ASSERT_MSG(tankGetArmour(&gs->tanks[TCR_TARGET]) == armourBefore,
+                  "a shell at the place the LAST occupant's tank stood hit the "
+                  "new one (armour %d, was %d, shell ended on game tick %d)",
+                  (int)tankGetArmour(&gs->tanks[TCR_TARGET]), (int)armourBefore,
+                  diedOn);
+    UT_ASSERT(tcrDeaths == 1 && tcrDeathOutcome == SHELL_OUTCOME_EXPIRED);
+    UT_ASSERT(diedOn > TCR_HIT_TICK);
+
+    /* The record holds nothing: no entry of any age. */
+    UT_ASSERT_MSG(sim->posHistory[TCR_TARGET].count == 0,
+                  "the seat's tank record still holds %d entries after the join",
+                  (int)sim->posHistory[TCR_TARGET].count);
+    UT_ASSERT(posHistoryLookup(&sim->posHistory[TCR_TARGET], 0, &hx, &hy) ==
+              POS_HISTORY_NO_RECORD);
+    UT_ASSERT(posHistoryLookup(&sim->posHistory[TCR_TARGET], TCR_COMP, &hx,
+                               &hy) == POS_HISTORY_NO_RECORD);
+
+    tcrEnd(sim);
+    return 0;
+}
+
+/* ================================================================
+ * 6. A shell at the new tank hits right after the join.
+ *
+ * With the erase taken out of addPlayerInternal the shell is tested against
+ * the lane, two squares from the row it flies along, and goes through the
+ * new tank.
+ * ================================================================ */
+int run_slot_join_shell_hits_new_tank(void) {
+    BYTE       lx = 0, ly = 0;
+    ServerSim *sim = tcrSim(&lx, &ly);
+    GameSim   *gs;
+    BYTE       armourBefore;
+    int        diedOn;
+
+    UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
+    gs = &sim->sim;
+
+    UT_ASSERT_MSG(tcrReseat(sim, lx, ly),
+                  "setup: the seat did not empty and fill again");
+
+    /* The shooter on the new tank's row, three squares west of it. Its shell
+       rewinds TCR_COMP entries; there is no entry that old, so the tank is
+       tested where it is. */
+    tcrPlace(sim, TCR_SHOOTER, tcrMiddle(lx), tcrMiddle((BYTE)(ly + TCR_ROW_AWAY)));
+    armourBefore = tankGetArmour(&gs->tanks[TCR_TARGET]);
+    tcrFire(sim, lx, (BYTE)(ly + TCR_ROW_AWAY), TCR_COMP);
+    diedOn = tcrFly(sim);
+    UT_ASSERT_MSG(tankGetArmour(&gs->tanks[TCR_TARGET]) ==
+                      (BYTE)(armourBefore - gs->rules.shell_damage),
+                  "a shell at the tank of the player who just joined missed it "
+                  "(armour %d, was %d)",
+                  (int)tankGetArmour(&gs->tanks[TCR_TARGET]), (int)armourBefore);
+    UT_ASSERT(tcrDeaths == 1 && tcrDeathOutcome == SHELL_OUTCOME_TANK_HIT);
+    UT_ASSERT_MSG(diedOn == TCR_HIT_TICK, "hit on game tick %d, expected %d",
+                  diedOn, TCR_HIT_TICK);
+
+    tcrEnd(sim);
+    return 0;
+}
+
+/* ================================================================
+ * 7. The tick fills the seat's records again after the join, with the new
+ *    occupant's frames only.
+ * ================================================================ */
+int run_slot_join_rewind_refills(void) {
+    BYTE       lx = 0, ly = 0;
+    ServerSim *sim = tcrSim(&lx, &ly);
+    GameSim   *gs;
+    WORLD      newX, newY, hx = 0, hy = 0, wx = 0, wy = 0;
+    BYTE       armourBefore;
+    int        i, diedOn;
+
+    UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
+    gs = &sim->sim;
+
+    UT_ASSERT_MSG(tcrReseat(sim, lx, ly),
+                  "setup: the seat did not empty and fill again");
+    newX = tcrMiddle((BYTE)(lx + TCR_AT_TARGET));
+    newY = tcrMiddle((BYTE)(ly + TCR_ROW_AWAY));
+
+    /* The real tick: one entry a game tick in each record. */
+    for (i = 0; i < TCR_COMP + 1; i++) {
+        serverSimTick(sim);
+        if (i == TCR_COMP - 1) {
+            /* One game tick short: entries 0 .. TCR_COMP - 1, none older. */
+            UT_ASSERT_MSG(sim->posHistory[TCR_TARGET].count == TCR_COMP,
+                          "%d entries after %d game ticks, expected %d",
+                          (int)sim->posHistory[TCR_TARGET].count, TCR_COMP,
+                          TCR_COMP);
+            UT_ASSERT(posHistoryLookup(&sim->posHistory[TCR_TARGET], TCR_COMP,
+                                       &hx, &hy) == POS_HISTORY_NO_RECORD);
+        }
+    }
+    UT_ASSERT_MSG(sim->posHistory[TCR_TARGET].count == TCR_COMP + 1,
+                  "%d tank entries after %d game ticks, expected %d",
+                  (int)sim->posHistory[TCR_TARGET].count, TCR_COMP + 1,
+                  TCR_COMP + 1);
+    UT_ASSERT_MSG(sim->lgmPosHistory[TCR_TARGET].count == TCR_COMP + 1,
+                  "%d builder entries after %d game ticks, expected %d",
+                  (int)sim->lgmPosHistory[TCR_TARGET].count, TCR_COMP + 1,
+                  TCR_COMP + 1);
+    tankGetWorld(&gs->tanks[TCR_TARGET], &wx, &wy);
+    UT_ASSERT_MSG(wx == newX && wy == newY,
+                  "setup: the tank did not stay where it was put (%u,%u)",
+                  (unsigned)wx, (unsigned)wy);
+    /* Every entry is the new tank's place; none is the old tank's. */
+    for (i = 0; i <= TCR_COMP; i++) {
+        UT_ASSERT(posHistoryLookup(&sim->posHistory[TCR_TARGET], (uint8_t)i,
+                                   &hx, &hy) == POS_HISTORY_PRESENT);
+        UT_ASSERT_MSG(hx == newX && hy == newY,
+                      "entry %d back is (%u,%u), not the new tank's place "
+                      "(%u,%u)", i, (unsigned)hx, (unsigned)hy, (unsigned)newX,
+                      (unsigned)newY);
+    }
+
+    /* The rewind works again. The tank drives off the row; a shell along the
+       row that rewinds TCR_COMP entries hits it where that entry says it
+       was. */
+    tcrPlace(sim, TCR_TARGET, newX, (WORLD)(newY + 2 * TANK_HIT_RADIUS));
+    tcrPlace(sim, TCR_SHOOTER, tcrMiddle(lx), newY);
+    armourBefore = tankGetArmour(&gs->tanks[TCR_TARGET]);
+    tcrFire(sim, lx, (BYTE)(ly + TCR_ROW_AWAY), TCR_COMP);
+    diedOn = tcrFly(sim);
+    UT_ASSERT_MSG(tankGetArmour(&gs->tanks[TCR_TARGET]) ==
+                      (BYTE)(armourBefore - gs->rules.shell_damage),
+                  "with the record full again a rewound shell did not hit the "
+                  "tank where the record has it");
+    UT_ASSERT(tcrDeathOutcome == SHELL_OUTCOME_TANK_HIT);
+    UT_ASSERT(diedOn == TCR_HIT_TICK);
+
+    tcrEnd(sim);
+    return 0;
+}
+
+/* ================================================================
+ * 8. A join erases the seat's builder record.
+ *
+ * Guards the posHistoryInit of the builder's record in addPlayerInternal.
+ * ================================================================ */
+int run_slot_join_erases_builder_rewind_record(void) {
+    BYTE       lx = 0, ly = 0;
+    ServerSim *sim = tcrSim(&lx, &ly);
+    GameSim   *gs;
+    WORLD      manX, manY, hx = 0, hy = 0;
+
+    UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
+    gs = &sim->sim;
+
+    /* The player who is about to leave has his builder out beside the lane,
+       with a full record of standing there. */
+    manX = (WORLD)(tcrMiddle((BYTE)(lx + TCR_AT_TARGET)) + 16);
+    manY = tcrMiddle(ly);
+    gs->lgmen[TCR_TARGET]->inTank = FALSE;
+    gs->lgmen[TCR_TARGET]->isDead = FALSE;
+    gs->lgmen[TCR_TARGET]->x = manX;
+    gs->lgmen[TCR_TARGET]->y = manY;
+    tcrStoodAt(&sim->lgmPosHistory[TCR_TARGET], manX, manY);
+    UT_ASSERT(posHistoryLookup(&sim->lgmPosHistory[TCR_TARGET], TCR_COMP, &hx,
+                               &hy) == POS_HISTORY_PRESENT);
+
+    UT_ASSERT_MSG(tcrReseat(sim, lx, ly),
+                  "setup: the seat did not empty and fill again");
+
+    /* The new builder is inside the new tank and has no frame of any age: a
+       blast looks for him where he is now, not beside the lane. */
+    UT_ASSERT(gs->lgmen[TCR_TARGET]->inTank == TRUE);
+    UT_ASSERT_MSG(sim->lgmPosHistory[TCR_TARGET].count == 0,
+                  "the seat's builder record still holds %d entries after the "
+                  "join",
+                  (int)sim->lgmPosHistory[TCR_TARGET].count);
+    UT_ASSERT(posHistoryLookup(&sim->lgmPosHistory[TCR_TARGET], 0, &hx, &hy) ==
+              POS_HISTORY_NO_RECORD);
+    UT_ASSERT(posHistoryLookup(&sim->lgmPosHistory[TCR_TARGET], TCR_COMP, &hx,
+                               &hy) == POS_HISTORY_NO_RECORD);
+
+    tcrEnd(sim);
     return 0;
 }
