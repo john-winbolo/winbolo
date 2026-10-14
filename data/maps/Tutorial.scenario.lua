@@ -1497,7 +1497,15 @@ local function reset_station(n)
     for _, k in ipairs(BASES7) do reset_base(k) end
     rebuild_walls(LAYOUT.walls7)
     rebuild_road(LAYOUT.arrow_reset7)
+    -- The two dead pillboxes of the road in go straight back into the
+    -- player's tank: the pen is far past the road, and driving back for
+    -- them again is no part of starting over. Each one handed counts as
+    -- picked up, so the first goal stays ticked.
     S.sw = {}
+    for _, k in ipairs({ "p7_sw1", "p7_sw2" }) do
+      if hand_pill(S.player, P[k].n) then S.sw[k] = true end
+    end
+    if S.sw.p7_sw1 and S.sw.p7_sw2 then S.done[7].dead = true end
     if live_tank(S.bot7) ~= nil then
       game.teleport_to_start(S.bot7, ST.bot7.n)
       game.set_stocks(S.bot7, full_stock())
