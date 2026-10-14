@@ -4147,6 +4147,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_lobby_running_loss.c
     tests/unit/test_loopback_quiet_lobby_control_loss.c
     tests/unit/test_loopback_command_liveness.c
+    tests/unit/test_loopback_command_rejoin.c
     tests/unit/test_loopback_channel.c
     # A server hitch and its catch-up burst, over an impaired path: the slot
     # it locks out has to start applying real inputs again and keep doing it.
@@ -5658,6 +5659,7 @@ set(_unit_test_names
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
     loopback_command_liveness
+    loopback_command_queued_behind_map_change
     loopback_channel
     loopback_hitch_recovers
     loopback_quit_keeps_peer
