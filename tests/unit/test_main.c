@@ -1290,6 +1290,7 @@ static const UnitTestEntry s_tests[] = {
     { "slot_join_shell_hits_new_tank", run_slot_join_shell_hits_new_tank },
     { "slot_join_rewind_refills", run_slot_join_rewind_refills },
     { "slot_join_erases_builder_rewind_record", run_slot_join_erases_builder_rewind_record },
+    { "slot_refield_erases_rewind_records", run_slot_refield_erases_rewind_records },
     { "shell_rewind_pill_shell_tank_present", run_shell_rewind_pill_shell_tank_present },
     { "shell_rewind_tank_full_comp", run_shell_rewind_tank_full_comp },
     { "shell_rewind_builder_one_less", run_shell_rewind_builder_one_less },

@@ -2694,6 +2694,7 @@ int run_slot_join_erases_tank_rewind_record(void);
 int run_slot_join_shell_hits_new_tank(void);
 int run_slot_join_rewind_refills(void);
 int run_slot_join_erases_builder_rewind_record(void);
+int run_slot_refield_erases_rewind_records(void);
 int run_shell_rewind_pill_shell_tank_present(void);
 int run_shell_rewind_tank_full_comp(void);
 int run_shell_rewind_builder_one_less(void);

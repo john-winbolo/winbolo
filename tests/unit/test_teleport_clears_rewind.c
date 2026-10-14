@@ -43,6 +43,14 @@
  *   run_slot_join_erases_builder_rewind_record - the builder's record is
  *       erased on the join as well
  *
+ * So does a held seat that goes off the field and comes back on it
+ * (serverSimUnfieldBot, then serverSimAddBot on the seat it still holds,
+ * server_sim_bots.c): the new tank and the new builder start with no frame
+ * of the ones that left.
+ *
+ *   run_slot_refield_erases_rewind_records     - both records are empty
+ *       after the seat comes back on the field
+ *
  * The shell cases step the shell list the way the tick steps it (shellsUpdate
  * over the compacted tank and builder arrays).
  *
@@ -717,6 +725,76 @@ int run_slot_join_erases_builder_rewind_record(void) {
                   (int)sim->lgmPosHistory[TCR_TARGET].count);
     UT_ASSERT(posHistoryLookup(&sim->lgmPosHistory[TCR_TARGET], 0, &hx, &hy) ==
               POS_HISTORY_NO_RECORD);
+    UT_ASSERT(posHistoryLookup(&sim->lgmPosHistory[TCR_TARGET], TCR_COMP, &hx,
+                               &hy) == POS_HISTORY_NO_RECORD);
+
+    tcrEnd(sim);
+    return 0;
+}
+
+/* ================================================================
+ * 9. A held seat that comes back on the field has empty records.
+ *
+ * The seat goes off the field (serverSimUnfieldBot: the tank and the builder
+ * go, the seat stays) and comes back (the occupied-seat branch of
+ * serverSimAddBot builds a new tank and a new builder). It does not go
+ * through addPlayerInternal again, so that branch erases the two records
+ * itself.
+ *
+ * Guards the two posHistoryInit lines in serverSimAddBot. With them taken
+ * out, both records still hold the 16 entries of the tank and the builder
+ * that left the field and this case fails at the two count checks.
+ * ================================================================ */
+int run_slot_refield_erases_rewind_records(void) {
+    BYTE               lx = 0, ly = 0;
+    ServerSim         *sim = tcrSim(&lx, &ly);
+    ServerSimBotConfig cfg;
+    WORLD              laneX, laneY, hx = 0, hy = 0;
+
+    UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
+    laneX = tcrMiddle((BYTE)(lx + TCR_AT_TARGET));
+    laneY = tcrMiddle(ly);
+
+    /* The seat is on the field with a full tank record (tcrSim) and a full
+       builder record of standing beside the lane. */
+    tcrStoodAt(&sim->lgmPosHistory[TCR_TARGET], (WORLD)(laneX + 16), laneY);
+    UT_ASSERT(sim->lobbyPlayers[TCR_TARGET].fielded);
+
+    serverSimUnfieldBot(sim, TCR_TARGET);
+    UT_ASSERT_MSG(sim->playerConnected[TCR_TARGET] &&
+                  !sim->lobbyPlayers[TCR_TARGET].fielded &&
+                  sim->sim.tanks[TCR_TARGET] == NULL &&
+                  sim->sim.lgmen[TCR_TARGET] == NULL,
+                  "setup: the seat did not go off the field and stay held");
+    /* Nothing writes to the records of a seat with no tank: both still say
+       "on the lane" when the seat comes back. */
+    UT_ASSERT(posHistoryLookup(&sim->posHistory[TCR_TARGET], TCR_COMP, &hx,
+                               &hy) == POS_HISTORY_PRESENT);
+    UT_ASSERT(posHistoryLookup(&sim->lgmPosHistory[TCR_TARGET], TCR_COMP, &hx,
+                               &hy) == POS_HISTORY_PRESENT);
+
+    /* Fielding a held seat reads nothing of the configuration but that it
+       names a brain; no brain is loaded here. */
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.brainPath = "none";
+    cfg.brainName = "Target";
+    UT_ASSERT_MSG(serverSimAddBot(sim, TCR_TARGET, &cfg),
+                  "the held seat was not fielded");
+    UT_ASSERT_MSG(sim->lobbyPlayers[TCR_TARGET].fielded &&
+                  sim->sim.tanks[TCR_TARGET] != NULL &&
+                  sim->sim.lgmen[TCR_TARGET] != NULL,
+                  "the fielded seat has no tank or no builder");
+
+    UT_ASSERT_MSG(sim->posHistory[TCR_TARGET].count == 0,
+                  "the seat's tank record still holds %d entries after it "
+                  "came back on the field",
+                  (int)sim->posHistory[TCR_TARGET].count);
+    UT_ASSERT_MSG(sim->lgmPosHistory[TCR_TARGET].count == 0,
+                  "the seat's builder record still holds %d entries after it "
+                  "came back on the field",
+                  (int)sim->lgmPosHistory[TCR_TARGET].count);
+    UT_ASSERT(posHistoryLookup(&sim->posHistory[TCR_TARGET], TCR_COMP, &hx,
+                               &hy) == POS_HISTORY_NO_RECORD);
     UT_ASSERT(posHistoryLookup(&sim->lgmPosHistory[TCR_TARGET], TCR_COMP, &hx,
                                &hy) == POS_HISTORY_NO_RECORD);
 
