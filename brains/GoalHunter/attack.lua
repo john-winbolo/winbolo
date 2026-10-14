@@ -5396,12 +5396,15 @@ local function update_attack_substate_body(goal, state, world, info)
                                          bit.rshift(info.tanky or 0, 8), human_tiles)
         end
         goal._human_near = human_near
-        if (state.is_pill_suicider or human_near) and goal._is_ppt then
+        -- PPT_NEVER (Virus horde: no trees, cannot farm) does the same: the
+        -- take goes straight in, with no shield scan and no tree gathering.
+        if (state.is_pill_suicider or human_near or C.PPT_NEVER) and goal._is_ppt then
           goal._is_ppt = false
           if BRAIN_DEBUG_MODE then print2(string.format("PPT_SKIP t=%d reason=%s pill=(%d,%d) hp=%d",
             state.tick or 0,
             state.is_pill_suicider and "pill_suicider"
-              or string.format("human_ally_%d_away", human_near),
+              or human_near and string.format("human_ally_%d_away", human_near)
+              or "PPT_NEVER",
             pmx, pmy, pill_hp)) end
         end
         local scan_radius = goal._is_ppt and C.PPT_STANDOFF
@@ -5445,9 +5448,10 @@ local function update_attack_substate_body(goal, state, world, info)
         -- the spot-selection pass just chose. Also saves the scan's tick budget.
         -- A human standing close skips it for the same reason (see the
         -- PPT_SKIP block above): nothing will be built, so nothing needs
-        -- planning, and the scan's tick budget goes unspent.
+        -- planning, and the scan's tick budget goes unspent. So does
+        -- PPT_NEVER.
         goal._shield_scan_pending =
-          (not (state.is_pill_suicider or goal._human_near)) or nil
+          (not (state.is_pill_suicider or goal._human_near or C.PPT_NEVER)) or nil
       else
         if BRAIN_DEBUG_MODE and not goal._plan_logged then
           print(string.format(TAG .. " PLAN: no candidates for pill@(%d,%d), falling back", pmx, pmy))
@@ -7587,7 +7591,8 @@ local function update_attack_substate_body(goal, state, world, info)
         -- OUR magazine alone can't. Only a solo (or lone-"blitz"-of-one) take needs
         -- enough shells on its own — there, bail and let refuel replan take over.
         -- CHARGE NOW IGNORES SAFETY: no shell abort, it goes in anyway.
-        if avail_shots < total_needed and not blitz_2plus
+        -- SOLO_SHELL_ABORT false (Virus horde): no shell abort either.
+        if avail_shots < total_needed and not blitz_2plus and C.SOLO_SHELL_ABORT
            and not (goal._charge_now and C.CHARGE_NOW_IGNORE_SAFETY) then
           print(string.format(TAG .. " CHARGE: not enough shells (%d obstacles + %d hp = %d needed, have %d + %d in-flight = %d) — aborting",
             obstacle_shots, pill_hp_live, total_needed, info.shells, in_flight, avail_shots))
@@ -8259,11 +8264,12 @@ local function update_attack_substate_body(goal, state, world, info)
         print2(string.format("SHOOT_PILL_ABORT_NOREACH pill=(%d,%d)", pmx, pmy))
         clear_attack_goal(state, "shot does not reach pill")
         return
-      elseif avail_shots < total_needed and not blitz_2plus
+      elseif avail_shots < total_needed and not blitz_2plus and C.SOLO_SHELL_ABORT
              and not (goal._charge_now and C.CHARGE_NOW_IGNORE_SAFETY) then
         -- 2+ blitz exemption (same as charge): the ally(ies) supply finishing
         -- shells, so our own magazine running short isn't a reason to bail.
-        -- CHARGE NOW IGNORES SAFETY: no shell abort either.
+        -- CHARGE NOW IGNORES SAFETY: no shell abort either. Nor does
+        -- SOLO_SHELL_ABORT false (Virus horde).
         print(string.format(TAG .. " SHOOT_PILL: not enough shells (%d obstacles + %d hp = %d needed, have %d + %d in-flight = %d) — aborting",
           obstacle_shots, pill_hp, total_needed, info.shells, in_flight, avail_shots))
         print2(string.format("SHOOT_PILL_ABORT_SHELLS obstacles=%d hp=%d needed=%d have=%d inflight=%d avail=%d pill=(%d,%d)",
