@@ -1359,13 +1359,15 @@ function Brain.apply_init_tokens(state, a)
         state.test_never_refuel = false
       elseif tok == "horde" then
         -- Virus's infected side. No base refuels the horde, so it never
-        -- picks one. Its C settings (C.SIDE_SETTINGS.horde) were written by
-        -- _apply_cfg_tokens.
+        -- picks one. Its C settings (C.SIDE_SETTINGS.horde: the attack knobs
+        -- that make the whole horde go for the survivors' pills and bases)
+        -- were written by _apply_cfg_tokens.
         state.side = "horde"
         state.test_never_refuel = true
       elseif tok == "survivor" then
         -- Virus's survivor side: refuels as normal. Its C settings
-        -- (C.SIDE_SETTINGS.survivor) were written by _apply_cfg_tokens.
+        -- (C.SIDE_SETTINGS.survivor, which also puts the horde's attack knobs
+        -- back to their defaults) were written by _apply_cfg_tokens.
         state.side = "survivor"
         state.test_never_refuel = false
       elseif tok == "suicider" then
@@ -1433,6 +1435,11 @@ function Brain.apply_init_tokens(state, a)
             PP.set_targets(b / sum, f / sum, ag / sum, u / sum, "init_arg")
           end
         end
+      elseif tok == "blitz=default" then
+        -- The party size this bot's level gives it, after a scenario handed
+        -- it another one (Virus: a seat back on the survivors after a round
+        -- on the horde).
+        squad.reset_blitz_size("init_arg_default")
       elseif tok:sub(1, 6) == "blitz=" then
         -- Party size in tanks INCLUDING the commander: MIN or MIN/MAX.
         -- Complaints latch into state._cfg_warn for the same reason as above.
@@ -1779,7 +1786,11 @@ function Brain.think(info)
   --                          writes its C.SIDE_SETTINGS list at chunk load and
   --                          on a runtime bot_init (_apply_cfg_tokens), after
   --                          preset= and before cfg=. No word = state.side nil
-  --                          and every constant as it was.
+  --                          and every constant as it was. The horde list
+  --                          also turns on the five attack knobs
+  --                          (ATTACK_CLAIM_SHARE, SIDE_SHELLS_LOW_CAP,
+  --                          SOLO_SHELL_ABORT off, PPT_NEVER, CROSSFIRE_MULT);
+  --                          the survivor list writes them back.
   --   "deprive=N"         -> this bot's ammo-deprivation delay = N ticks, so the
   --                          ammoless-helper/decoy kicks in sooner (100 ~= 2 s)
   --   "suicider"          -> FORCE the pill_suicider role on for this bot,

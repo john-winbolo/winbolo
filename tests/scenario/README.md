@@ -1,10 +1,11 @@
 # The scenario arenas
 
-A hundred and sixty-three small maps, each with a scenario script beside it.
+A hundred and sixty-seven small maps, each with a scenario script beside it.
 Most are built to make one bot decision happen on purpose and then say whether
-the bot made it. Thirty-four check a shipped mod instead: the twenty-three
-`pilltag_*` arenas, the seven `rule_roulette_*` arenas and the four `virus_*`
-arenas. `deep_sea_safe_rule` checks one gameplay rule. The twenty-one `tutorial_*`
+the bot made it. Thirty-eight check a shipped script instead: the twenty-three
+`pilltag_*` arenas, the seven `rule_roulette_*` arenas, the four `virus_*`
+arenas and the four `survival_pushout*` arenas, which play Survival's own map
+and script. `deep_sea_safe_rule` checks one gameplay rule. The twenty-one `tutorial_*`
 arenas check the shipped Tutorial map's script: the checkpoint respawn,
 re-arming and the RESET pens, the Station 2 goals, the popups and the white
 lines that follow them, the Station 5A demo take, its watch spot and its
@@ -133,6 +134,15 @@ Two other forms mark a debt, and each carries its reason:
 
 An arena marked `expect=fail` that starts passing is reported as `UPASS`, so a
 mark that has gone stale is noticed rather than hiding a fix.
+
+Two more keys pass a server flag through. `allybots=N` seats every `-bots`
+bot on team N, where `-nolobby` would leave them on no team, and
+`setting=id=value` picks a value for one of the script's own lobby settings,
+as `-setting` does (two or more separated by commas):
+
+```
+-- GATE: bots=2 allybots=1 setting=camp_deaths=0 script=data/maps/Survival.scenario.lua
+```
 
 An arena that checks a shipped script names it, from the repository root:
 

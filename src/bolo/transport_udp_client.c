@@ -778,6 +778,25 @@ static void udpClientDrainCommandQueue(TransportUdpClientCtx *c) {
     if (count > 0) udpClientSendTo(c, buf, (int)pos);
 }
 
+/* Per-tick send for the head of the outbound command queue: again if it was
+ * sent more than 80ms ago and is still unacked, or now if it has never been
+ * sent at all. A command submitted behind an unacked one waits unsent, and
+ * when the ACK that moves the head onto it lands outside CONNECTED (a lobby
+ * map change sends the re-join before its own ACK) the ACK handler's drain
+ * sends nothing. Without the never-sent case nothing else would ever send it,
+ * and every later command would queue behind it for good. */
+static void udpClientResendCommandHead(TransportUdpClientCtx *c) {
+    uint32_t now;
+    OutCmdEntry *head;
+
+    if (c->outHeadSeq == c->outTailSeq) return;
+    now = (uint32_t)SDL_GetTicks();
+    head = &c->outCmdQueue[c->outHeadSeq % OUT_CMD_QUEUE_CAP];
+    if (head->lastSentMs == 0 || (now - head->lastSentMs) > 80) {
+        udpClientDrainCommandQueue(c);
+    }
+}
+
 void transportUdpClientSubmitCommand(Transport *t, const ClientCommand *cmd) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     /* SPECTATING is admitted alongside CONNECTED so a spectator's CMD_CHAT
@@ -4586,27 +4605,14 @@ static bool udpClientTick(void *ctx) {
             }
         }
 
-        /* Retransmit head of the outbound command queue if the head
-         * entry was sent more than 80ms ago and is still unacked. */
-        if (c->outHeadSeq != c->outTailSeq) {
-            uint32_t now = (uint32_t)SDL_GetTicks();
-            OutCmdEntry *head = &c->outCmdQueue[c->outHeadSeq % OUT_CMD_QUEUE_CAP];
-            if (head->lastSentMs != 0 && (now - head->lastSentMs) > 80) {
-                udpClientDrainCommandQueue(c);
-            }
-        }
+        udpClientResendCommandHead(c);
     }
 
     /* A spectator runs only the command-queue retransmit (its sole outbound
      * traffic is CMD_CHAT); the ping/timeout/upload pumps above are player-only.
      * Without this a spectator's chat would send once and never retry on loss. */
-    if (c->joinState == UDP_CLIENT_SPECTATING &&
-        c->outHeadSeq != c->outTailSeq) {
-        uint32_t now = (uint32_t)SDL_GetTicks();
-        OutCmdEntry *head = &c->outCmdQueue[c->outHeadSeq % OUT_CMD_QUEUE_CAP];
-        if (head->lastSentMs != 0 && (now - head->lastSentMs) > 80) {
-            udpClientDrainCommandQueue(c);
-        }
+    if (c->joinState == UDP_CLIENT_SPECTATING) {
+        udpClientResendCommandHead(c);
     }
 
     return true;

@@ -533,6 +533,7 @@ int run_wbn_serverlist_motd(void);
 int run_wbn_serverlist_malformed(void);
 int run_wbn_serverlist_scripts(void);
 int run_wbn_map_parse(void);
+int run_wbn_map_fetch_policy(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
 int run_brain_msgh_budget_kill_no_traceback(void);
@@ -1317,6 +1318,16 @@ int run_attribution_reader_rejects_bad(void);
 int run_attribution_reader_clamps_slotcount(void);
 int run_attribution_reader_old_wbv(void);
 int run_wbv_v2_capture(void);
+/* test_byte_order.c — the formats' little-endian fields, pinned through
+ * their writers and readers. */
+int run_byte_order_helpers(void);
+int run_byte_order_log_long_counts(void);
+int run_byte_order_log_long_counts_viewer(void);
+int run_byte_order_snapshot_base_time(void);
+int run_byte_order_compressed_map_base_time(void);
+int run_byte_order_attribution_member(void);
+int run_byte_order_info_packet(void);
+int run_byte_order_pathfinder_blob(void);
 
 /* Recorded headless runs (test_wbv_fixture_summaries.c): each committed
  * tests/fixtures/wbv/<name>.wbv from a --record scenario is decoded through
@@ -1674,6 +1685,8 @@ int run_tree_hide_ally_option(void);
  * entry that carries the man must still not carry the tank's position. */
 int run_lgm_visibility_tank_in_trees(void);
 int run_lgm_visibility_tank_visible(void);
+int run_lgm_draw_own_matches_wire(void);
+int run_lgm_draw_centre_error_bounds(void);
 
 /* Client-reported view state (test_view_state.c): CMD_VIEW_STATE stores which
  * view a client is in, a viewPolicyKey category grants the claimed item a rect
@@ -2215,6 +2228,7 @@ int run_loopback_quiet_lobby_control_loss(void);
 /* A command packet refreshes the sending client's server-side liveness clock:
  * watched directly across a window in which nothing else is refreshing it. */
 int run_loopback_command_liveness(void);
+int run_loopback_command_queued_behind_map_change(void);
 /* Parallel channel layer over the loopback transport: empty-flow inertness
  * plus a synthetic message round-trip under loss + jitter + dup. */
 int run_loopback_channel(void);
@@ -2894,6 +2908,14 @@ int run_scenario_tank_give_pill(void);
 int run_scenario_tank_drop_pill(void);
 int run_scenario_tank_arm_records(void);
 int run_scenario_tank_death_ticks_respawn(void);
+
+int run_tank_drop_pills_spiral_order(void);
+int run_tank_drop_pills_blocked(void);
+int run_tank_drop_pills_map_edge(void);
+int run_tank_drop_pills_hostile_map(void);
+int run_tank_drop_pills_no_room(void);
+int run_lgm_drop_pill_spiral(void);
+int run_lgm_drop_pill_no_room(void);
 
 int run_scenario_lgm_dispatch(void);
 int run_scenario_lgm_recall(void);

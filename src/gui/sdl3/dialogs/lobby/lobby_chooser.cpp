@@ -893,6 +893,11 @@ static const char *lobbyGetActiveTabError(ClientSim *cs) {
             }
             return NULL;
         case 3: /* WBN */
+#ifndef __EMSCRIPTEN__
+            /* The map list or search could not be fetched and the
+             * retries have stopped: the list is empty, so say why. */
+            if (wbnMapSourceListError()) return wbnMapSourceListError();
+#endif
             if (clientSimGetLobbyWbnPreviewStatus(cs) == 3) {
                 const char *m = clientSimGetLobbyWbnPreviewErrMsg(cs);
                 return (m && *m) ? m : langGetText(STR_DLGLOBBY_WBN_ERR_DOWNLOAD);
@@ -1050,6 +1055,9 @@ void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer) {
     s_chooserTabs.upload.provider.ctx  = cs;
 #ifndef __EMSCRIPTEN__
     s_chooserTabs.wbn.provider.ctx     = cs;
+    /* A WinBolo.net listing that failed until the retries stopped is
+     * asked for again on each opening of the chooser. */
+    wbnMapSourceResetRetry();
 #endif
     /* Re-enumerate Server Maps on every open. EnsureInit's discover runs
      * once per process, so without this a second opening of the dialog

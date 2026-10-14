@@ -89,6 +89,7 @@
 #include "gui_message.h"
 #include "log.h"
 #include "server_sim.h"
+#include "byte_order.h"
 #include "../bolo/internal/server_sim_lifecycle.h"
 #include "../server/server_lifecycle.h"
 #include "../gui/brainsHandler.h"
@@ -1804,6 +1805,26 @@ static void logStateBinaryDieNotClassic(void) {
   exit(1);
 }
 
+/* Floats to the binary log as the little-endian bytes the format promises,
+ * a chunk at a time. */
+static void logStateWriteFloats(const float *v, size_t n) {
+  BYTE chunk[1024];
+  size_t used = 0;
+  size_t i;
+
+  for (i = 0; i < n; i++) {
+    if (used == sizeof(chunk)) {
+      fwrite(chunk, used, 1, logFile);
+      used = 0;
+    }
+    byteOrderPutLeFloat(chunk + used, v[i]);
+    used += 4;
+  }
+  if (used > 0) {
+    fwrite(chunk, used, 1, logFile);
+  }
+}
+
 static void logStateBinary(int tickNum) {
   static bool needMapInit = TRUE;
   BrainInfo bi;
@@ -1869,11 +1890,12 @@ static void logStateBinary(int tickNum) {
 
   /* --- HEADER (8 bytes) --- */
   {
-    uint32_t tick = (uint32_t)tickNum;
+    BYTE tick[4];
     uint8_t hdr_dead = dead ? 1 : 0;
     uint8_t hdr_game_over = 0;
     uint8_t hdr_winner = 0;
-    fwrite(&tick, 4, 1, logFile);
+    byteOrderPutLe32(tick, (uint32_t)tickNum);
+    fwrite(tick, 4, 1, logFile);
     fwrite(&hdr_dead, 1, 1, logFile);
     fwrite(&hdr_game_over, 1, 1, logFile);
     fwrite(&hdr_winner, 1, 1, logFile);
@@ -1952,7 +1974,7 @@ static void logStateBinary(int tickNum) {
       }
     }
 
-    fwrite(spatial, sizeof(spatial), 1, logFile);
+    logStateWriteFloats(&spatial[0][0][0], sizeof(spatial) / sizeof(float));
   }
 
   /* --- SCALAR OBSERVATION (68 bytes) --- */
@@ -2006,7 +2028,7 @@ static void logStateBinary(int tickNum) {
     scalars[15] = (float)self_bases / tb;
     scalars[16] = (float)ally_bases / tb;
 
-    fwrite(scalars, sizeof(scalars), 1, logFile);
+    logStateWriteFloats(scalars, BINARY_NUM_SCALARS);
   }
 
   /* --- EVENTS (num_events bytes) --- */
