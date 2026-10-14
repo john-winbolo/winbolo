@@ -352,7 +352,7 @@ void lv_event_marker_draw(ImDrawList *dl, int eventKind, int eventTeam, int even
         return;
     }
     if (marker.drawing == LV_MARKER_BUILDER_LOST) {
-        /* A builder lost: a white "no" sign as big as the marker, as a
+        /* A builder lost: a black "no" sign as big as the marker, as a
          * pillbox's picture is, with no square behind it and no line of a
          * team round it: a ring with one line across it, top left to bottom
          * right, and inside it the map's own builder in the game's colours,
@@ -371,11 +371,11 @@ void lv_event_marker_draw(ImDrawList *dl, int eventKind, int eventTeam, int even
             lv_icon_draw(dl, LV_ICON_PERSON, ImVec2(mid.x - q, mid.y - q),
                          ImVec2(mid.x + q, mid.y + q), overlay_u32(text, alpha));
         }
-        const ImU32 white = overlay_u32(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), alpha);
+        const ImU32 black = overlay_u32(ImVec4(0.0f, 0.0f, 0.0f, 1.0f), alpha);
         const float r = lvMarkerNoSignRadius(side, lineW);
         const float d = r * 0.70710678f;
-        dl->AddCircle(mid, r, white, 0, lineW);
-        dl->AddLine(ImVec2(mid.x - d, mid.y - d), ImVec2(mid.x + d, mid.y + d), white, lineW);
+        dl->AddCircle(mid, r, black, 0, lineW);
+        dl->AddLine(ImVec2(mid.x - d, mid.y - d), ImVec2(mid.x + d, mid.y + d), black, lineW);
         return;
     }
     /* A plain icon, with the colour of the team as a line round it. */
