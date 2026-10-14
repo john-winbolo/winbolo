@@ -291,7 +291,7 @@ void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
     char consoleMsg[256];
 
     buildInfoPacket(sim, &pkt);
-    memcpy(buf, &pkt, sizeof(pkt));
+    infoPacketEncode(buf, &pkt);
     tailLen = buildInfoScriptTail(sim, buf + sizeof(pkt),
                                   sizeof(buf) - sizeof(pkt));
 

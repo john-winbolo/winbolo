@@ -944,6 +944,18 @@ typedef struct ScenarioPolicy {
                         * accepts it. NULL = always. false refuses the
                         * request or the accept; alliances a script makes
                         * through set_team or seating are not asked */
+    bool (*killCredit)(void *ctx, BYTE victim, BYTE killer, BYTE cause,
+                       BYTE hitBy, uint32_t hitAt, BYTE *credit);
+                       /* who a tank's death is credited to. killer is
+                        * the engine's own credit (the victim itself for
+                        * a drowning), cause a LAST_DEATH_BY_* value,
+                        * hitBy the last tank not allied with the victim
+                        * that hit it this life (NEUTRAL for none) and
+                        * hitAt the tick of that hit. true with a seat in
+                        * *credit puts that seat in the killer's place
+                        * wherever the death is told: the kill event, the
+                        * scoreboards, the stats. NULL = the engine's
+                        * killer */
     void *ctx;
 } ScenarioPolicy;
 

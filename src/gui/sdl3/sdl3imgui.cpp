@@ -8581,6 +8581,44 @@ bool sdl3ImguiWantCaptureMouse(void) {
     return ImGui::GetIO().WantCaptureMouse;
 }
 
+/* Whether the pointer, where it is now, is over an ImGui window on screen.
+ * WantCaptureMouse is only worked out in NewFrame, so between frames it
+ * still describes where the pointer was then: the first frame the pointer
+ * is over a vote or alliance overlay, it says no. This asks the hover half
+ * of the question NewFrame is about to ask, with the pointer as it is now.
+ *
+ * The same hit test as ImGui::FindHoveredWindowEx, but against Active
+ * rather than WasActive: NewFrame copies one into the other before it
+ * tests, so between frames Active is the frame on screen, and WasActive the
+ * one before it — which would miss a window that has just appeared. */
+bool sdl3ImguiMouseOverWindow(void) {
+    /* The main window's context — the one whose windows lie over the map —
+       whichever happens to be current. */
+    ImGuiContext *g = s_mainImguiCtx;
+    if (g == nullptr || s_renderer == nullptr) return false;
+    float x = 0.0f, y = 0.0f;
+    SDL_GetMouseState(&x, &y);
+    /* Into the space the event loop hands ImGui its mouse in. */
+    SDL_RenderCoordinatesFromWindow(s_renderer, x, y, &x, &y);
+    const ImVec2 pos(x, y);
+    const ImVec2 pad = ImMax(g->Style.TouchExtraPadding,
+                             ImVec2(g->Style.WindowBorderHoverPadding, g->Style.WindowBorderHoverPadding));
+    for (int i = g->Windows.Size - 1; i >= 0; i--) {
+        ImGuiWindow *window = g->Windows[i];
+        if (!window->Active || window->Hidden) continue;
+        if (window->Flags & ImGuiWindowFlags_NoMouseInputs) continue;
+        if (!window->OuterRectClipped.ContainsWithPad(pos, pad)) continue;
+        if (window->HitTestHoleSize.x != 0) {
+            float hx = window->Pos.x + (float)window->HitTestHoleOffset.x;
+            float hy = window->Pos.y + (float)window->HitTestHoleOffset.y;
+            ImRect hole(hx, hy, hx + (float)window->HitTestHoleSize.x, hy + (float)window->HitTestHoleSize.y);
+            if (hole.Contains(pos)) continue;
+        }
+        return true;
+    }
+    return false;
+}
+
 bool sdl3ImguiIsDialogOpen(void) {
     ImGuiContext *g = ImGui::GetCurrentContext();
     return s_showSysInfo || s_showNetInfo || s_showGameInfo ||

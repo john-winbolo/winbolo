@@ -1103,5 +1103,65 @@ void pillsClampToRules(struct GameSim *sim, pillboxes *value);
    it. Called by serverSimScenarioFillWorldToRules, which writes the records. */
 void pillsFillToRules(struct GameSim *sim, pillboxes *value);
 
+/* The search for somewhere to put down a pillbox that was being carried:
+   Mac Bolo's gen_scatter spiral. The cursor starts on the centre square,
+   then walks square rings of growing radius, each starting on the square
+   straight north of the centre and going clockwise. Squares are kept as int
+   so a ring running off the edge of the map never wraps round to the far
+   side, and the walk ends after the last ring that touches the minable
+   area. */
+typedef struct {
+  int cx;       /* The centre square */
+  int cy;
+  int x;        /* The cursor */
+  int y;
+  int maxRing;  /* Last ring holding any minable square */
+} pillsDropSpiral;
+
+/*********************************************************
+*NAME:          pillsDropCanLand
+*PURPOSE:
+*  Whether a dropped pillbox may land on a square: inside
+*  the minable area, not on a pill, a base, a building, a
+*  half-building or a boat.
+*
+*ARGUMENTS:
+*  sim - The game
+*  mx  - X map square, possibly off the map
+*  my  - Y map square, possibly off the map
+*********************************************************/
+bool pillsDropCanLand(struct GameSim *sim, int mx, int my);
+
+/*********************************************************
+*NAME:          pillsDropSpiralStart
+*PURPOSE:
+*  Starts a drop search with its cursor on the centre.
+*
+*ARGUMENTS:
+*  s  - The search
+*  cx - X map square to search round
+*  cy - Y map square to search round
+*********************************************************/
+void pillsDropSpiralStart(pillsDropSpiral *s, BYTE cx, BYTE cy);
+
+/*********************************************************
+*NAME:          pillsDropSpiralFind
+*PURPOSE:
+*  Moves the cursor on to the first square from where it
+*  is, that one included, that a pillbox may land on, and
+*  answers it. Put the pill down there before asking for
+*  the next square: the cursor stays put, so one search
+*  serves several pills the way Mac Bolo's single cursor
+*  does. Answers FALSE once the spiral has walked past
+*  the minable area without finding one.
+*
+*ARGUMENTS:
+*  sim - The game
+*  s   - The search
+*  mx  - Receives the X map square
+*  my  - Receives the Y map square
+*********************************************************/
+bool pillsDropSpiralFind(struct GameSim *sim, pillsDropSpiral *s, BYTE *mx, BYTE *my);
+
 
 #endif /* PILLBOX_H */

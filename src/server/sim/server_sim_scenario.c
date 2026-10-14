@@ -2255,9 +2255,9 @@ static bool scenarioTemplateHasTeams(const ScnLobbyTemplate *t) {
  * seating then empties the seats the previous one left rather than carrying
  * them into a map that knows nothing about them.
  *
- * A map commit is one caller. The lobby's scenario and script-list commands
- * are the others, and they hand over the committed map's own path because the
- * map has not changed. */
+ * A map commit is one caller, through serverSimScenarioOnMapCommitted below.
+ * The lobby's scenario and script-list commands are the others, and they hand
+ * over the committed map's own path because the map has not changed. */
 void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
     const char *path;
     bool        unchanged;
@@ -2309,6 +2309,74 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
     /* Which also records what the seats it leaves were built from, for the
        next call to hold against. */
     serverSimScenarioSeatLobby(sim);
+}
+
+/* Takes every picked scenario off the host's list and keeps the rest — the
+   mods, the map's own row where the host gave it a place, and every row the
+   operator named with -mod, -mod-required or -mod-locked — in the order the
+   host wrote them. Answers how many rows went.
+
+   The operator's rows are not picks. A fixed one is a row no host may take
+   off, and the command bus refuses a list without it; taking it off here
+   would go round that refusal. A plain -mod scenario stays too: it gives
+   way to the map's own scenario at the compose and is back in play on the
+   next map that has none (serverSimOperatorModYieldsToMap). */
+int serverSimDropPickedScenarios(ServerSim *sim) {
+    int kept = 0;
+    int i;
+
+    if (sim == NULL) return 0;
+    for (i = 0; i < sim->scenarioScriptCount; i++) {
+        const ScnDirEntry *row = &sim->scenarioScripts[i];
+
+        if (row->file[0] != '\0' && !row->bound && !row->keepsWinCondition &&
+            !serverSimIsOperatorMod(sim, row->file)) {
+            continue;
+        }
+        if (kept != i) {
+            sim->scenarioScripts[kept] = *row;
+        }
+        kept++;
+    }
+    i = sim->scenarioScriptCount - kept;
+    if (i > 0) {
+        memset(&sim->scenarioScripts[kept], 0,
+               sizeof(sim->scenarioScripts[0]) * (size_t)i);
+        sim->scenarioScriptCount = kept;
+    }
+    return i;
+}
+
+/* A map commit. The map the host just chose is the newest choice, so when it
+   brings a scenario of its own that scenario is what plays, in place of a
+   scenario picked before it. Mods stay, because a mod plays over the map's
+   scenario and never replaced it.
+
+   The decision itself makes the call (scnDecideScenario,
+   src/scenario/scenario_host.c), because only it reads the map's script: it
+   knows whether that script is a scenario or a mod, and whether it loaded.
+   The picked scenarios come off the list only once the map's own scenario
+   has attached in their place, so a map whose script is a mod, or whose
+   script will not load, leaves the picks where they were. This only says
+   that the map is the newer choice, for as long as the decision runs.
+
+   The other order — a scenario picked after the map — still replaces the
+   map's own, in the decision itself: there the pick is the newer choice.
+
+   Only in a lobby, and only for a map a host chose. A round started from
+   the command line has no host choosing between the two, and a rotation, a
+   map-skip vote or the round-end regenerate does not come here at all
+   (serverSimApplyMapChange is told the map is not the newer choice): the
+   list those rounds play is the operator's. */
+void serverSimScenarioOnMapCommitted(ServerSim *sim, const char *mapPath) {
+    if (sim == NULL) return;
+    sim->scenarioMapIsNewer = serverSimIsLobbyEnabled(sim);
+    serverSimScenarioOnMapChanged(sim, mapPath);
+    sim->scenarioMapIsNewer = false;
+}
+
+bool serverSimScenarioMapIsNewer(const ServerSim *sim) {
+    return sim != NULL && sim->scenarioMapIsNewer;
 }
 
 /* Put back the AI policy a needs_bots list moved the lobby off, and hold
@@ -2369,8 +2437,9 @@ static void scenarioGiveBackAi(ServerSim *sim) {
    preScenarioGameType holds nothing until then, which is what says whether
    there is anything to give back. A lobby already on gameScripted when that
    first script arrives has no earlier type worth keeping — no host can pick
-   that type and no plain map is ever on it — so gameOpen is held instead,
-   which is where such a lobby used to land anyway.
+   that type and no plain map is ever on it — so gameStrictTournament is held
+   instead: with no earlier choice known, the lobby goes to the strictest
+   type rather than to Open, which a ranked lobby could not even take.
 
    The AI policy follows its own rule, because only a needs_bots list moves
    it:
@@ -2398,7 +2467,7 @@ void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
             gameType was = gameTypeGet(&sim->sim.game);
 
             sim->preScenarioGameType =
-                (was == gameScripted) ? gameOpen : was;
+                (was == gameScripted) ? gameStrictTournament : was;
             sim->preScenarioRanked   = serverSimGetRanked(sim);
         }
         if (!sim->scenarioIdentity.keepsWinCondition &&
@@ -2442,8 +2511,9 @@ void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
     } else if (gameTypeGet(&sim->sim.game) == gameScripted) {
         /* On the scripted type with no script and nothing held: a lobby that
            got there without going through the arm above. There is no earlier
-           state to give back, so the type falls to open. */
-        serverSimSetGameType(sim, gameOpen);
+           state to give back, so the type falls to strict tournament, the
+           default a lobby with no other answer has. */
+        serverSimSetGameType(sim, gameStrictTournament);
     }
     serverSimFollowGameTypeBotModes(sim, typeBefore);
 }
@@ -4828,6 +4898,12 @@ bool serverSimScenarioMapIsScripted(const ServerSim *sim, const char *mapPath) {
         return false;
     }
     return sim->scenarioMapScripted(sim->scenarioMapScriptedCtx, mapPath);
+}
+
+/* The same question on server_sim.h, for the scenario runtime, which sees
+   that header and not this one's. */
+bool serverSimMapIsScripted(const ServerSim *sim, const char *mapPath) {
+    return serverSimScenarioMapIsScripted(sim, mapPath);
 }
 
 void serverSimSetScenarioLister(ServerSim *sim,

@@ -44,6 +44,11 @@ bool cursorPos(RECT *rcWindow, BYTE *xValue, BYTE *yValue,
 }
 void cursorAcquireCursor(void) {}
 void cursorLeaveWindow(void) {}
+bool cursorIsWarpEcho(float winX, float winY) { (void)winX; (void)winY; return false; }
+void cursorAnchorToView(int xOffset, int yOffset, int subPosX, int subPosY) {
+    (void)xOffset; (void)yOffset; (void)subPosX; (void)subPosY;
+}
+void cursorDropAnchor(void) {}
 void moveMousePointer(int value) { (void)value; }
 
 /* ---- winbolonet stubs (requires libcurl) ---- */
@@ -270,6 +275,13 @@ void httpSetLogUploadTimeout(long seconds) { (void)seconds; }
 
 int wbn_api_get(const char *path, char **response_out) {
     (void)path;
+    if (response_out) *response_out = NULL;
+    return -1;  /* transport error */
+}
+
+int wbn_api_get_timeout(const char *path, char **response_out,
+                        long timeout_ms, long connect_timeout_ms) {
+    (void)path; (void)timeout_ms; (void)connect_timeout_ms;
     if (response_out) *response_out = NULL;
     return -1;  /* transport error */
 }

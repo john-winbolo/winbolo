@@ -2207,6 +2207,9 @@ set(SERVER_SOURCES
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/server/servermain.c
+    # The -mod flags and -setting off the command line. Public headers
+    # only, so it takes no grant below; the unit tests compile it too.
+    src/server/server_args.c
     src/server/server_frontend_stubs.c
     src/gui/sdl3/luabrainshandler.c
     src/headless/cmd_stdin.c
@@ -3549,6 +3552,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_active_sim_lifetime.c
     tests/unit/test_active_local_input_to_shot.c
     tests/unit/test_sp_shoot_through_timer.c
+    tests/unit/test_sp_frame_queue.c
     tests/unit/test_prefs_roundtrip.c
     tests/unit/test_prefs_doc.c
     tests/unit/test_prefs_api.c
@@ -3737,6 +3741,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The tank ops: the six arms, the refusals each one answers with, and the
     # records they leave through the functions a player's own action reaches.
     tests/unit/test_scenario_tank_arms.c
+    # Where a dead tank's pills land: Mac Bolo's spiral round the tank, the
+    # squares it passes over, the map edge, and a map built to have no room.
+    tests/unit/test_tank_drop_pills.c
     # The builder ops: the five arms, the refusals each one answers with, the
     # wood a dispatched order costs, and the loss a scripted death records.
     tests/unit/test_scenario_builder_arms.c
@@ -3926,6 +3933,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # lobby-settings byte.
     tests/unit/test_positional_sound_settings.c
     tests/unit/test_lobby_mods_enabled.c
+    # The dedicated server's -mod, -mod-required and -mod-locked: name
+    # matching, the CMD_SET_SCRIPT_LIST refusals, the re-apply at each new
+    # lobby, and the required flag on the wire.
+    tests/unit/test_operator_mods.c
+    src/server/server_args.c
     tests/unit/test_fog_settings.c
     # The named visibility sets the lobby offers, and the match that reads
     # a live set of settings back as one of them.
@@ -3962,6 +3974,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_prefs_sync.c
     tests/unit/test_wbn_serverlist.c
     tests/unit/test_wbn_map.c
+    tests/unit/test_wbn_map_fetch_policy.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
@@ -4063,6 +4076,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_view_policy_rects.c
     tests/unit/test_tree_hide.c
     tests/unit/test_lgm_visibility.c
+    tests/unit/test_lgm_draw_centre.c
     tests/unit/test_view_state.c
     tests/unit/test_view_target_codec.c
     tests/unit/test_view_target_apply.c
@@ -4141,6 +4155,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_lobby_running_loss.c
     tests/unit/test_loopback_quiet_lobby_control_loss.c
     tests/unit/test_loopback_command_liveness.c
+    tests/unit/test_loopback_command_rejoin.c
     tests/unit/test_loopback_channel.c
     # A server hitch and its catch-up burst, over an impaired path: the slot
     # it locks out has to start applying real inputs again and keep doing it.
@@ -4506,6 +4521,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # file holds the on-demand capture that rewrites those summaries.
     tests/unit/test_wbv_fixture_summaries.c
     tests/unit/test_attribution_reader.c
+    # The formats' little-endian fields (byte_order.h), pinned through their
+    # writers and readers.
+    tests/unit/test_byte_order.c
     # Calibration anchor walk: synthetic v2 logs prove the highlight
     # clip-time fit resolves base cells from the log's own snapshots
     # (test_lv_calibration.c).
@@ -4793,6 +4811,12 @@ set(_unit_test_names
     sp_subscriber_delivery
     active_local_input_to_shot
     sp_shoot_through_timer
+    sp_frame_queue_keeps_skipped_frame
+    sp_local_map_repair
+    sp_frame_queue_repairs_after_drop
+    sp_frame_queue_resets_on_lobby
+    sp_frame_queue_resets_on_map_change
+    sp_frame_queue_keeps_departed_player_gone
     prefs_document_roundtrip
     prefs_keys_roundtrip
     prefs_doc_roundtrip
@@ -4997,6 +5021,20 @@ set(_unit_test_names
     lobby_mods_enabled_defaults
     lobby_mods_enabled_dispatch
     lobby_mods_enabled_codec
+    operator_mods_resolve
+    operator_mods_required
+    operator_mods_locked
+    operator_mods_reapply
+    operator_mods_wire
+    operator_mods_args
+    operator_mods_evict
+    operator_mods_lock_mask
+    operator_mods_mods_off
+    operator_mods_map_yield
+    operator_mods_setting_short_name
+    operator_mods_setting_reapply
+    operator_mods_setting_locked
+    operator_mods_setting_wire
     fog_settings_defaults
     fog_settings_classic_mode_preset
     fog_settings_lock_implied
@@ -5094,6 +5132,7 @@ set(_unit_test_names
     wbn_serverlist_malformed
     wbn_serverlist_scripts
     wbn_map_parse
+    wbn_map_fetch_policy
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_msgh_budget_kill_no_traceback
@@ -5225,6 +5264,14 @@ set(_unit_test_names
     attribution_reader_rejects_bad
     attribution_reader_old_wbv
     attribution_reader_clamps_slotcount
+    byte_order_helpers
+    byte_order_log_long_counts
+    byte_order_log_long_counts_viewer
+    byte_order_snapshot_base_time
+    byte_order_compressed_map_base_time
+    byte_order_attribution_member
+    byte_order_info_packet
+    byte_order_pathfinder_blob
     lv_walk_base_anchor_lobby_log
     lv_walk_base_anchor_opening_snapshot
     lv_walk_base_anchor_ordinal
@@ -5562,6 +5609,8 @@ set(_unit_test_names
     lgm_request_quiet
     lgm_quit_drops_carried_pill
     lgm_unfield_drops_carried_pill
+    lgm_draw_own_matches_wire
+    lgm_draw_centre_error_bounds
     jitter_buffer_grow
     shell_projection
     sim_rules_classic_defaults
@@ -5632,6 +5681,7 @@ set(_unit_test_names
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
     loopback_command_liveness
+    loopback_command_queued_behind_map_change
     loopback_channel
     loopback_hitch_recovers
     loopback_quit_keeps_peer
@@ -6029,6 +6079,13 @@ set(_unit_test_names
     scenario_tank_drop_pill
     scenario_tank_arm_records
     scenario_tank_death_ticks_respawn
+    tank_drop_pills_spiral_order
+    tank_drop_pills_blocked
+    tank_drop_pills_map_edge
+    tank_drop_pills_hostile_map
+    tank_drop_pills_no_room
+    lgm_drop_pill_spiral
+    lgm_drop_pill_no_room
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill
@@ -6295,6 +6352,8 @@ set(_unit_test_names
     scenario_blast_names_tank
     scenario_mine_names_layer
     scenario_on_tank_hit
+    scenario_kill_credit
+    scenario_kill_credit_none
     game_event_channel_base_captured
     game_event_channel_pill_captured
     game_event_channel_lgm_lost
@@ -6658,6 +6717,7 @@ set(_unit_test_names
     scenario_precedence_reload_refuses_bound
     scenario_compose_map_and_mods
     scenario_compose_keeps_map_scenario
+    scenario_compose_operator_mod_yields
     scenario_compose_mod_rules_load
     scenario_compose_region_clash_loads
     scenario_compose_reload_list
@@ -6680,11 +6740,27 @@ set(_unit_test_names
     scenario_compose_compat_write_stays_local
     scenario_compose_pairs_game_complete
     scenario_compose_unsafe_keeps_sharing
-    scenario_compose_off_map_script_only
+    scenario_compose_off_map_script_too
+    scenario_compose_off_map_alone_plain
     scenario_compose_off_plain_map_none
     scenario_compose_on_picks_replace_map
     scenario_compose_off_then_on
-    scenario_compose_off_full_list_hides_last
+    scenario_compose_off_full_list_shows_all
+    scenario_compose_commit_map_drops_picked
+    scenario_compose_preview_cancel_keeps_picks
+    scenario_compose_commit_off_keeps_picks
+    scenario_compose_commit_mod_map_keeps_picks
+    scenario_compose_commit_broken_map_keeps_picks
+    scenario_compose_off_on_keeps_map_row_place
+    scenario_compose_commit_no_lobby_keeps_picks
+    scenario_compose_off_shortened_keeps_map_own
+    scenario_compose_rotation_keeps_picks
+    scenario_compose_round_start_closes_preview
+    scenario_compose_drop_picked_scenarios
+    scenario_compose_commit_map_keeps_operator_mod
+    scenario_compose_commit_map_fixed_operator_mod
+    scenario_compose_map_kind_cached
+    scenario_compose_fallback_strict
     scenario_compose_needs_bots_any_mod
     scenario_compose_needs_bots_scenario_and_mod
     scenario_compose_on_tick_bottom_first

@@ -102,6 +102,14 @@
 #define LOBBY_LOCK_SMART_PINGS       (1u << 16)
 #define LOBBY_LOCK_MODS              (1u << 17)
 #define LOBBY_LOCK_POSITIONAL_SOUND  (1u << 18)
+/* The lobby's script list itself, rather than the Mods/Scenario checkbox
+ * LOBBY_LOCK_MODS covers: nothing may be added to it, taken off it or moved
+ * on it. Set by the dedicated server's -mod-locked, never by -lock, and it
+ * implies LOBBY_LOCK_MODS (serverSimAddImpliedLocks) so the checkbox cannot
+ * switch the fixed list off either. A client that predates the bit ignores
+ * it and offers the chooser as before; the server refuses the list it
+ * sends with CMD_REJECT_LOCKED. */
+#define LOBBY_LOCK_SCRIPT_LIST       (1u << 19)
 
 /* LST_TIME_MINUTES accepted range. Surfaced publicly so the lobby
  * UI can validate the user's value before sending. Authoritative

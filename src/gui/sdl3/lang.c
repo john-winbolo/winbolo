@@ -2707,6 +2707,11 @@ static const LangEntry langTable[] = {
     {2765, "Description"},
     {2766, "The game finder shows this when a player points at or selects your game. Up to 200 letters (fewer with accented letters or other scripts)."},
     {2767, "Address"},
+    {2768, "The server always runs this script. It cannot be removed."},
+    {2769, "The server always runs the scenario that is in this round"},
+    {2770, "The server sets this list. It cannot be changed."},
+    {2773, "The server sets this value. It cannot be changed."},
+    {2774, "Who a tank's death is credited to, asked at every death; a drowning names the victim unless a script names the tank that sank it."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

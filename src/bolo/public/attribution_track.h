@@ -35,6 +35,12 @@
  *  is no intra-tick sequence field. Each record leads with a
  *  one-byte AttrRecordType tag for reader dispatch.
  *
+ *  Multi-byte fields are little-endian on disk: the header's
+ *  slotCount and recordCount, every record's tick and a damage
+ *  record's amount. The structs below are the records as they
+ *  are in memory; attrTrackEncode* / attrTrackDecode* turn them
+ *  into the member's bytes and back.
+ *
  *  The on-disk enums are a frozen contract. Their numeric
  *  values intentionally mirror the server's internal
  *  DMG_TARGET_* / PLAYER_ACTION_* constants but are defined
@@ -44,14 +50,17 @@
  *  ATTRIBUTION_TRACK_VERSION when the record layout changes.
  *
  *  Public leaf: includes only public/foundational headers
- *  (platform_types.h, wire_limits.h, global.h). No sim
- *  internals.
+ *  (platform_types.h, wire_limits.h, global.h, byte_order.h).
+ *  No sim internals.
  *********************************************************/
 #ifndef ATTRIBUTION_TRACK_H
 #define ATTRIBUTION_TRACK_H
 
+#include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
+#include "byte_order.h"      /* byteOrderPutLe16 / 32, byteOrderGetLe16 / 32 */
 #include "platform_types.h"  /* BOLO_PACK_ATTR, BOLO_STATIC_ASSERT, fixed-width ints */
 #include "wire_limits.h"     /* PACKET_MAX_PLAYER_NAME */
 #include "global.h"          /* MAX_TANKS, NEUTRAL */
@@ -223,5 +232,75 @@ BOLO_STATIC_ASSERT(sizeof(AttrActionRecord)  ==  9, attr_action_size);
 BOLO_STATIC_ASSERT(sizeof(AttrPickupRecord)  ==  9, attr_pickup_size);
 BOLO_STATIC_ASSERT(sizeof(AttrSlotIdentity)  == 2 + PACKET_MAX_PLAYER_NAME, attr_slot_size);
 BOLO_STATIC_ASSERT(sizeof(AttrTrackHeader)   == 12 + MAX_TANKS * sizeof(AttrSlotIdentity), attr_header_size);
+
+/* Byte size of a record with the given tag, for walking a stream; 0 for an
+ * unknown tag (so a caller can stop safely). */
+static inline size_t attrTrackRecordSize(uint8_t type) {
+    switch (type) {
+    case ATTR_REC_DAMAGE:  return sizeof(AttrDamageRecord);
+    case ATTR_REC_KILL:    return sizeof(AttrKillRecord);
+    case ATTR_REC_CAPTURE: return sizeof(AttrCaptureRecord);
+    case ATTR_REC_LGM:     return sizeof(AttrLgmRecord);
+    case ATTR_REC_ACTION:  return sizeof(AttrActionRecord);
+    case ATTR_REC_PICKUP:  return sizeof(AttrPickupRecord);
+    default:               return 0;
+    }
+}
+
+/* The header as the member holds it, from h: sizeof(AttrTrackHeader) bytes
+ * into out, slotCount and recordCount little-endian. */
+static inline void attrTrackEncodeHeader(uint8_t *out, const AttrTrackHeader *h) {
+    memcpy(out, h, sizeof *h);   /* the byte fields and the names */
+    byteOrderPutLe16(out + offsetof(AttrTrackHeader, slotCount), h->slotCount);
+    byteOrderPutLe32(out + offsetof(AttrTrackHeader, recordCount), h->recordCount);
+}
+
+/* And back: sizeof(AttrTrackHeader) bytes of a member into h. */
+static inline void attrTrackDecodeHeader(AttrTrackHeader *h, const uint8_t *in) {
+    memcpy(h, in, sizeof *h);
+    h->slotCount   = byteOrderGetLe16(in + offsetof(AttrTrackHeader, slotCount));
+    h->recordCount = byteOrderGetLe32(in + offsetof(AttrTrackHeader, recordCount));
+}
+
+/* One record as the member holds it, from the record at in: its tick, and a
+ * damage record's amount, little-endian. Every record's tick follows its type
+ * byte. Returns the record's size, or 0 for an unknown tag (nothing written).
+ * out and in must not overlap. */
+static inline size_t attrTrackEncodeRecord(uint8_t *out, const uint8_t *in) {
+    size_t   sz = attrTrackRecordSize(in[0]);
+    uint32_t tick;
+    uint16_t amount;
+
+    if (sz == 0) {
+        return 0;
+    }
+    memcpy(out, in, sz);
+    memcpy(&tick, in + offsetof(AttrKillRecord, tick), sizeof tick);
+    byteOrderPutLe32(out + offsetof(AttrKillRecord, tick), tick);
+    if (in[0] == ATTR_REC_DAMAGE) {
+        memcpy(&amount, in + offsetof(AttrDamageRecord, amount), sizeof amount);
+        byteOrderPutLe16(out + offsetof(AttrDamageRecord, amount), amount);
+    }
+    return sz;
+}
+
+/* And back: one record of a member at in into the record at out. */
+static inline size_t attrTrackDecodeRecord(uint8_t *out, const uint8_t *in) {
+    size_t   sz = attrTrackRecordSize(in[0]);
+    uint32_t tick;
+    uint16_t amount;
+
+    if (sz == 0) {
+        return 0;
+    }
+    memcpy(out, in, sz);
+    tick = byteOrderGetLe32(in + offsetof(AttrKillRecord, tick));
+    memcpy(out + offsetof(AttrKillRecord, tick), &tick, sizeof tick);
+    if (in[0] == ATTR_REC_DAMAGE) {
+        amount = byteOrderGetLe16(in + offsetof(AttrDamageRecord, amount));
+        memcpy(out + offsetof(AttrDamageRecord, amount), &amount, sizeof amount);
+    }
+    return sz;
+}
 
 #endif /* ATTRIBUTION_TRACK_H */

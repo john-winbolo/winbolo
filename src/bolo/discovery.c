@@ -192,16 +192,16 @@ static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const str
     struct in_addr serverAddr = info->gameid.serveraddress;
     SDL_strlcpy(out->address, inet_ntoa(serverAddr), sizeof(out->address));
   }
-  out->port = info->gameid.serverport;
+  out->port = INFO_PACKET_GET16(info, gameid.serverport);
   out->versionMajor = info->h.versionMajor;
   out->versionMinor = info->h.versionMinor;
   out->versionRevision = info->h.versionRevision;
-  out->numPlayers = (BYTE)info->num_players;
-  out->numBases = (BYTE)info->free_bases;
-  out->numPills = (BYTE)info->free_pills;
+  out->numPlayers = (BYTE)INFO_PACKET_GET16(info, num_players);
+  out->numBases = (BYTE)INFO_PACKET_GET16(info, free_bases);
+  out->numPills = (BYTE)INFO_PACKET_GET16(info, free_pills);
   out->game = (gameType)info->gametype;
   out->ai = (aiType)info->allow_AI;
-  out->timeLimit       = info->time_limit;
+  out->timeLimit       = (int32_t)INFO_PACKET_GET32(info, time_limit);
 
   /* The flags/count/md5 fields live past the legacy 76-byte prefix; read them
    * only when the full packet arrived, otherwise they hold garbage from a
@@ -566,13 +566,13 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
      * them only once the rich block has arrived. */
     bool rich = (len >= (int)INFO_PACKET_PRE_VIEWS_SIZE);
     out->rttMs = (int)(recvTime - sendTime);
-    out->freePills = info->free_pills;
-    out->freeBases = info->free_bases;
-    out->numPlayers = info->num_players;
+    out->freePills = INFO_PACKET_GET16(info, free_pills);
+    out->freeBases = INFO_PACKET_GET16(info, free_bases);
+    out->numPlayers = INFO_PACKET_GET16(info, num_players);
     out->versionMajor = info->h.versionMajor;
     out->versionMinor = info->h.versionMinor;
     out->versionRevision = info->h.versionRevision;
-    out->timeLimit       = info->time_limit;
+    out->timeLimit       = (int32_t)INFO_PACKET_GET32(info, time_limit);
     /* has_password sits inside the legacy 76-byte prefix, so it is read
      * unconditionally, the same as discoveryFillServerFromInfoPacket. */
     out->password        = (info->has_password != 0);
