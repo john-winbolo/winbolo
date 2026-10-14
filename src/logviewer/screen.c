@@ -107,6 +107,23 @@ static void lv_screenPlaybackGameSettings(const BYTE *payload, int len) {
   lv_screenStoreGameSettings(payload, len);
 }
 
+/* Take the map name a log_MapName event carries. The header's name is the map
+ * that was loaded when the log opened; a log that opened in the lobby was
+ * started before the host chose the round's map, so the event is the one to
+ * show. Cut to the field the way the name is cut everywhere else. */
+static void lv_screenStoreMapName(const BYTE *name, int len) {
+  if (len < 0) {
+    len = 0;
+  }
+  if (len > (int)sizeof(g_lv->mapName) - 1) {
+    len = (int)sizeof(g_lv->mapName) - 1;
+  }
+  if (len > 0) {
+    memcpy(g_lv->mapName, name, (size_t)len);
+  }
+  g_lv->mapName[len] = '\0';
+}
+
 int lv_screenGetGameSettings(BYTE *out, int maxLen) {
   int len = s_gameSettingsLen;
 
@@ -2702,6 +2719,17 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
       lv_screenPlaybackGameSettings((BYTE *)(mem+1), (unsigned char)mem[0]);
       break;
+    case log_MapName:
+      /* Panel data like the settings above. A loaded file's walk has already
+         taken the name, before the game information was set up; a live feed
+         has no walk, so there the name arrives here and is shown again. */
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
+      if (!s_gameSettingsWalked) {
+        lv_screenStoreMapName((BYTE *)(mem+1), (unsigned char)mem[0]);
+        lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
+      }
+      break;
     case log_BalanceApplied:
       lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_TEAM_BALANCE, NULL);
       break;
@@ -3511,7 +3539,9 @@ static int walkSkipEventBody(BYTE code) {
     }
     case log_MessageServer:
     case log_MapSkipApplied:
-      /* pascal string only */
+    case log_MapName:
+      /* pascal string only. log_MapName is only written to v2 and later
+         logs; it is listed for the reason log_Ping is. */
       if (logReadBytes(&lenByte, 1) != 1) return -1;
       { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
         if (rc != lenByte) return -1; }
@@ -3823,8 +3853,25 @@ static bool walkReadGameSettings(void) {
   return TRUE;
 }
 
-/* Like walkSkipEvents, but decodes the two events that carry a slot name and
- * the lobby settings; every other event is skipped by the shared helper. */
+/* Read a log_MapName payload — a length byte then the name — over the map
+ * name the header gave. Entered with the reader just past the framed length.
+ * The last one in the file wins, like the settings. Returns FALSE on a short
+ * read. */
+static bool walkReadMapName(void) {
+  BYTE name[256];
+  BYTE lenByte;
+  int  len;
+
+  if (logReadBytes(&lenByte, 1) != 1) return FALSE;
+  len = lenByte;
+  if (len > 0 && logReadBytes(name, len) != len) return FALSE;
+  lv_screenStoreMapName(name, len);
+  return TRUE;
+}
+
+/* Like walkSkipEvents, but decodes the two events that carry a slot name, the
+ * lobby settings and the round's map name; every other event is skipped by
+ * the shared helper. */
 static bool walkScanNames(unsigned short numEvents) {
   unsigned short i;
   BYTE code;
@@ -3847,6 +3894,8 @@ static bool walkScanNames(unsigned short numEvents) {
       /* Only the v2 arm looks for settings: the event postdates v0 and v1,
          so no file the arm below reads can contain one. */
       if (code == log_GameSettings && !walkReadGameSettings()) return FALSE;
+      /* The same holds for the map name. */
+      if (code == log_MapName && !walkReadMapName()) return FALSE;
       lv_logSetPosition(payloadPos + evLen);
     } else {
       if (named) {
@@ -4707,6 +4756,30 @@ static void lv_scriptsLoadFromBlocks(void) {
   lv_scriptsParse(&g_lv->scripts, text, len);
 }
 
+/* Read the map name of the log header: one length byte, then that many name
+ * bytes. The length byte can state up to 255 and the field holds 63, so all
+ * the stated bytes are read into a local buffer, which leaves the read
+ * position on the byte after the name, and the name is cut to the field when
+ * it is stored. An empty name is valid (display-only field; the map data lives
+ * in the snapshot body) and is not read at all, because a zero-length read
+ * returns -1. Returns FALSE when the log ends inside the name. */
+static bool lv_logReadHeaderMapName(void) {
+  BYTE name[256];
+  BYTE dataLen = 0;
+  int len;
+
+  logReadBytes(&dataLen, 1);
+  if (dataLen > 0) {
+    len = logReadBytes(name, dataLen);
+    if (len != dataLen) {
+      g_lv->mapName[0] = '\0';
+      return FALSE;
+    }
+  }
+  lv_screenStoreMapName(name, dataLen);
+  return TRUE;
+}
+
 // Memory size in MB
 bool lv_logLoad(char *fileName, int memoryBufferSize) {
   char id[LENGTH_ID+1]; /* The map ID Should read "BMAPBOLO" */
@@ -4752,17 +4825,7 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
 
   /* Read map name */
   if (returnValue == TRUE) {
-    logReadBytes(&dataLen, 1);
-    /* An empty map name is valid (display-only field; the map data lives in the
-       snapshot body). Only read+check when there are name bytes — a zero-length
-       read returns -1, which would otherwise fail the load. */
-    if (dataLen > 0) {
-      len = logReadBytes((BYTE *)g_lv->mapName, dataLen);
-      if (len != dataLen) {
-        returnValue = FALSE;
-      }
-    }
-    g_lv->mapName[dataLen] = '\0';
+    returnValue = lv_logReadHeaderMapName();
   }
 
   /* Read game type, mines, ai, password, max players */
@@ -4911,17 +4974,7 @@ static bool lv_logLoadCommon(void) {
   }
 
   if (returnValue == TRUE) {
-    logReadBytes(&dataLen, 1);
-    /* An empty map name is valid (display-only field; the map data lives in the
-       snapshot body). Only read+check when there are name bytes — a zero-length
-       read returns -1, which would otherwise fail the load. */
-    if (dataLen > 0) {
-      len = logReadBytes((BYTE *)g_lv->mapName, dataLen);
-      if (len != dataLen) {
-        returnValue = FALSE;
-      }
-    }
-    g_lv->mapName[dataLen] = '\0';
+    returnValue = lv_logReadHeaderMapName();
   }
 
   if (returnValue == TRUE) {

@@ -1221,6 +1221,9 @@ int run_log_roundtrip_basic(void);
 int run_log_roundtrip_snapshot_keeps_chain_synced(void);
 int run_log_roundtrip_lobby_snapshot_is_empty_world(void);
 int run_log_roundtrip_lobby_mode_drops_world_events(void);
+/* log_MapName: a log opened in the lobby on one map and started on another
+ * names the second one, to a byte walk and to the viewer. */
+int run_log_roundtrip_map_name_at_round_start(void);
 /* log_Ping's six payload bytes: sender, kind, and two big-endian u16 WORLD
  * coordinates, byte for byte through the writer and back. */
 int run_log_roundtrip_ping(void);
@@ -1370,6 +1373,13 @@ int run_lv_logged_name_from_join_event(void);
  * one opened straight after a log that had them. */
 int run_lv_game_settings_from_walk(void);
 int run_lv_game_settings_absent(void);
+
+/* Load-time map name (test_lv_calibration.c): the header names the map the
+ * log opened on, which a lobby can change, so the walk takes the round's own
+ * log_MapName over it. A log with no such record shows the header's name. */
+int run_lv_map_name_from_walk(void);
+int run_lv_map_name_absent(void);
+int run_lv_map_name_long_header(void);
 
 /* Replay camera range (test_lv_camera.c): the tile fetch casts the column to
  * a BYTE, so a view whose left edge plus width passes 255 wraps and draws the
