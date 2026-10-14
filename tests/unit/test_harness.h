@@ -4074,6 +4074,11 @@ int run_lv_spmap_carried_pill_left_out(void);
  * each event kind, and where the "now" divider falls among the lines. */
 int run_lv_event_kind_sums(void);
 int run_lv_event_click_pick(void);
+int run_lv_event_jump_view(void);
+/* The map place of a captured or stolen pillbox's line and of a lost
+ * builder's line (test_lv_event_places.c). */
+int run_lv_event_pill_capture_place(void);
+int run_lv_event_builder_lost_place(void);
 /* The event markers of the log viewer's seek slider
  * (test_lv_event_overlay.c): where a time is on the slider, which markers
  * become one, and the saved list of chosen kinds. */

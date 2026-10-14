@@ -4618,6 +4618,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # A pillbox a tank carries: the getter says so, and the single-player
     # map leaves it out (pillbox.c, lv_spmap.c).
     tests/unit/test_lv_pill_carried.c
+    # The map place of a captured or stolen pillbox's line and of a lost
+    # builder's line (pillbox.c, players.c).
+    tests/unit/test_lv_event_places.c
     # The events panel's kind names and the search that places its "now"
     # divider (lv_event_kind.h, header only).
     tests/unit/test_lv_event_kind.c

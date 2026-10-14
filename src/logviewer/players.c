@@ -154,6 +154,8 @@ void lv_playersCreate() {
     plrs.item[count].accountFlags = 0;
     plrs.item[count].lgmIsOut = FALSE;
     plrs.item[count].lgmIsDead = FALSE;
+    plrs.item[count].lgmLastMapX = 0;
+    plrs.item[count].lgmLastMapY = 0;
   }
   testP[0] = '\0';
 }
@@ -317,6 +319,8 @@ void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE 
     plrs.item[playerNum].accountFlags = accountFlags;
     plrs.item[playerNum].lgmIsOut = FALSE;
     plrs.item[playerNum].lgmIsDead = FALSE;
+    plrs.item[playerNum].lgmLastMapX = 0;
+    plrs.item[playerNum].lgmLastMapY = 0;
 
     plrs.item[playerNum].allie = lv_allienceCreate();
     count = 0;
@@ -392,6 +396,12 @@ void lv_playersUpdateLgm(BYTE playerNum, BYTE lgmMX, BYTE lgmMY, BYTE lgmPX, BYT
      * respawn animation; the helicopter frame is the durable "dead"
      * signal. log_LostMan only fires once at the moment of death. */
     plrs.item[playerNum].lgmIsDead = (lgmFrame == LGM_HELICOPTER_FRAME) ? TRUE : FALSE;
+    /* The helicopter is not where he can die: it keeps the square he was
+       last on, on foot. */
+    if (lgmFrame != LGM_HELICOPTER_FRAME && (lgmMX != 0 || lgmMY != 0)) {
+      plrs.item[playerNum].lgmLastMapX = lgmMX;
+      plrs.item[playerNum].lgmLastMapY = lgmMY;
+    }
   }
 }
 
@@ -403,6 +413,12 @@ void lv_playersLgmZero() {
  //     plrs.item[count].mapY = 0;
       plrs.item[count].lgmMapX = 0;
       plrs.item[count].lgmMapY = 0;
+      /* A builder the tick before did not name was in his tank: his last
+         place is from an older trip and is no place for a death now. */
+      if (plrs.item[count].lgmIsOut == FALSE) {
+        plrs.item[count].lgmLastMapX = 0;
+        plrs.item[count].lgmLastMapY = 0;
+      }
       plrs.item[count].lgmIsOut = FALSE;
     }
   }
@@ -411,6 +427,16 @@ void lv_playersLgmZero() {
 void lv_playersSetLgmDead(BYTE playerNum) {
   if (playerNum < MAX_TANKS && plrs.item[playerNum].inUse == TRUE) {
     plrs.item[playerNum].lgmIsDead = TRUE;
+  }
+}
+
+void lv_playersGetLgmLastPlace(BYTE playerNum, BYTE *mx, BYTE *my) {
+  if (playerNum < MAX_TANKS && plrs.item[playerNum].inUse == TRUE) {
+    *mx = plrs.item[playerNum].lgmLastMapX;
+    *my = plrs.item[playerNum].lgmLastMapY;
+  } else {
+    *mx = 0;
+    *my = 0;
   }
 }
 

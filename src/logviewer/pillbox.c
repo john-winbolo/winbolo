@@ -517,8 +517,8 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
   char ownerName[FILENAME_MAX];
   char oldOwner[FILENAME_MAX];
   BYTE returnValue; /* Value to return */
-  int pillX = 0;    /* Map cell of the pillbox; (0,0) when it has none */
-  int pillY = 0;
+  int pillX;        /* Map cell of the pillbox; (0,0) when it has none */
+  int pillY;
 
   ownerName[0] = '\0';
   oldOwner[0] = '\0';
@@ -529,12 +529,14 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
   }
   returnValue = (*value)->item[pillNum].owner;
   (*value)->item[pillNum].owner = owner;
-  /* Where the pillbox stands, for the events panel's click-to-jump. One
-     that is being carried has no place on the map. */
-  if ((*value)->item[pillNum].inTank == FALSE) {
-    pillX = (*value)->item[pillNum].x;
-    pillY = (*value)->item[pillNum].y;
-  }
+  /* Where the pillbox is taken, for the events panel's click-to-jump. A
+     capture or a steal is a pickup: the game writes log_PillSetInTank (in
+     the tank) and then this owner change, with no log_PillSetPlace between,
+     so the pillbox is in the tank here and its x and y are still the square
+     it was picked up from. A pillbox that was never put on the map has
+     (0,0), which lv_messageAddAt takes as no place. */
+  pillX = (*value)->item[pillNum].x;
+  pillY = (*value)->item[pillNum].y;
   /* Make the message if required */
   if (returnValue == NEUTRAL && migrate == FALSE) {
     /* Neutral pill — normalized to MESSAGE_CAPTURE_PILL ("Neutral Pillbox"). */

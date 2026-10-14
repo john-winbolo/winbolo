@@ -36,8 +36,7 @@ extern "C" {
     uint32_t lv_screenGetTimeRunning(void);
     uint32_t lv_screenWindowStartMs(void);
     bool lv_screenSpecIsLiveMode(void);
-    void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY);
-    void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
+    void lv_windowSeekToEventKeepView(uint32_t ms, int hasCell, int mapX, int mapY, int team);
     void lv_windowCentreOnEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
     void lv_screenEventTeams(int *team, int *otherTeam);
     int lv_screenEventPing(void);
@@ -743,9 +742,8 @@ void lv_imgui_events_window(void) {
                         s_clicked_index = target;
                         s_select_all = false;
                         if (tev.seekable) {
-                            /* A plain click on a highlight clip jumps the
-                             * scrubber to a few seconds before the moment and
-                             * centres the map on it. */
+                            /* A click on a highlight clip jumps the
+                             * scrubber to a few seconds before the moment. */
                             jump          = true;
                             jumpHighlight = true;
                             jumpCentre    = twice;
@@ -753,8 +751,7 @@ void lv_imgui_events_window(void) {
                             jumpX         = tev.mapX;
                             jumpY         = tev.mapY;
                         } else if (tev.showTime && linesSeek) {
-                            /* Any other timed line jumps to its own moment,
-                             * and to its place when it has one. */
+                            /* Any other timed line jumps to its own moment. */
                             jump        = true;
                             jumpCentre  = twice;
                             jumpMs      = tev.timeMs;
@@ -835,14 +832,17 @@ void lv_imgui_events_window(void) {
         }
 
         if (jump) {
-            if (jumpCentre) {
-                /* A highlight always has a place and names no team. */
-                lv_windowCentreOnEvent(jumpMs, (jumpHighlight || jumpHasCell) ? 1 : 0, jumpX,
-                                       jumpY, jumpHighlight ? -1 : jumpTeam);
-            } else if (jumpHighlight) {
-                lv_windowSeekToHighlight(jumpMs, jumpX, jumpY);
+            /* A plain click only moves playback: the view stays where the
+             * user put it, and the ring (or its arrow at the view's edge)
+             * shows the place. A click on the selected line, or the second
+             * click of a double click, also centres the view on the place
+             * (lvEventJumpFor). */
+            const LvEventJump j = lvEventJumpFor(jumpCentre ? 1 : 0, jumpHighlight ? 1 : 0,
+                                                 jumpHasCell ? 1 : 0, jumpTeam);
+            if (j.view == LV_EVENT_JUMP_CENTRE) {
+                lv_windowCentreOnEvent(jumpMs, j.hasCell, jumpX, jumpY, j.team);
             } else {
-                lv_windowSeekToEvent(jumpMs, jumpHasCell ? 1 : 0, jumpX, jumpY, jumpTeam);
+                lv_windowSeekToEventKeepView(jumpMs, j.hasCell, jumpX, jumpY, j.team);
             }
         }
     }

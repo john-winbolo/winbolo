@@ -2384,11 +2384,15 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_LostMan:
       logReadBytes(&opt1, 1);
       {
-        /* Where the man stood, read before the death clears it, so a click
-           on the events panel line can show the place. */
-        BYTE lgmX = 0, lgmY = 0, lgmPx = 0, lgmPy = 0, lgmFrame = 0;
+        /* Where the man stood, so a click on the events panel line can
+           show the place. The server writes this record in the middle of
+           the tick, before the tick's log_LgmLocation, and the tick began
+           with every builder's place wiped (lv_playersLgmZero): his place
+           now is (0,0). The last place he was named on, in the tick before,
+           is where he died. The record itself names no place. */
+        BYTE lgmX = 0, lgmY = 0;
         MessageArgs args = {0};
-        lv_playersGetLgmDetails(opt1, &lgmX, &lgmY, &lgmPx, &lgmPy, &lgmFrame);
+        lv_playersGetLgmLastPlace(opt1, &lgmX, &lgmY);
         lv_playersSetLgmDead(opt1);
         lv_playersGetPlayerName(opt1, str, sizeof(str));
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);

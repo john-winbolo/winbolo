@@ -118,4 +118,32 @@ static inline LvEventClick lvEventClickPick(int row, int selected, int lastClick
   return out;
 }
 
+/* What the jump of a click on a line of the panel does to the map view.
+ * A plain click moves playback to the line and leaves the view where it is:
+ * the ring round the place (or the arrow at the view's edge, when the view
+ * does not show it) says where the event is. A centre click (lvEventClickPick)
+ * also puts the place in the middle of the map that shows. */
+typedef enum {
+  LV_EVENT_JUMP_KEEP_VIEW = 0,
+  LV_EVENT_JUMP_CENTRE
+} LvEventJumpView;
+
+typedef struct LvEventJump {
+  LvEventJumpView view;
+  int hasCell; /* the jump has a place to ring, and to centre on */
+  int team;    /* the team the ring is in the colour of; -1 for none */
+} LvEventJump;
+
+/* The jump for a click on a line. centre is LvEventClick.centre. highlight
+ * is 1 for a highlight clip: it always has a place and names no team.
+ * hasCell and team are the line's own. */
+static inline LvEventJump lvEventJumpFor(int centre, int highlight, int hasCell,
+                                         int team) {
+  LvEventJump out;
+  out.view = centre ? LV_EVENT_JUMP_CENTRE : LV_EVENT_JUMP_KEEP_VIEW;
+  out.hasCell = (highlight || hasCell) ? 1 : 0;
+  out.team = highlight ? -1 : team;
+  return out;
+}
+
 #endif /* LV_EVENT_KIND_H */
