@@ -31,6 +31,10 @@
  *                                   refield comes back onto that runner
  *                                   carrying it; a seat nothing has fielded
  *                                   yet has no runner and is refused
+ * run_scenario_bot_init_round_reset
+ *                                 — a table a scenario handed a bot is gone at
+ *                                   the next round start, by either start path;
+ *                                   the table the bot was added with is back
  * run_brain_on_init_update        — the global is rebuilt either way, and
  *                                   on_init is called when it is there and
  *                                   its error is survived when it raises
@@ -449,6 +453,113 @@ int run_scenario_bot_init_parked_seat(void) {
     biBrainInitValue(L, "noblitz", seen, sizeof(seen));
     UT_ASSERT_MSG(strcmp(seen, "1") == 0,
                   "the refielded VM's BRAIN_INIT reads noblitz='%s'", seen);
+
+    serverSimDestroy(sim);
+    biDropBrainFile();
+    return 0;
+}
+
+/* Hand both bots the horde's orders and let them land. */
+static bool biHandHorde(ServerSim *sim, BYTE a, BYTE b) {
+    ScenarioOp op;
+
+    biInitOp(&op, a);
+    biPair(&op.u.rosterBotInit.init, "horde", "1");
+    if (serverSimApplyScenarioOp(sim, &op, NULL) != SCN_OP_QUEUED) return false;
+    biInitOp(&op, b);
+    biPair(&op.u.rosterBotInit.init, "horde", "1");
+    if (serverSimApplyScenarioOp(sim, &op, NULL) != SCN_OP_QUEUED) return false;
+    /* One roster change per tick. */
+    serverSimTick(sim);
+    serverSimTick(sim);
+    return true;
+}
+
+/* Whether a bot holds exactly the table it was added with: "" for none, or
+ * one role pair. */
+static bool biHoldsAdded(ServerSim *sim, BYTE slot, const char *role) {
+    const ScnTable *held = botManagerGetBotInitTable(sim, slot);
+    const char     *v;
+
+    if (held == NULL) return false;
+    if (role[0] == '\0') return held->count == 0;
+    v = scnTableGet(held, "role");
+    return held->count == 1 && v != NULL && strcmp(v, role) == 0;
+}
+
+/* A table handed with game.bot_init belongs to the round it was handed in.
+ *
+ * The case this was written for: a Virus round hands every bot the horde's
+ * orders, and the next round on the same server is a plain one. The round
+ * start rebuilds each brain from the table the bot holds, so a bot still
+ * holding the horde's orders played the plain round as the horde. Both round
+ * starts are walked — the in-place one and the full reset a rotation or a
+ * lobby start makes — and after each, each bot is back on the table it was
+ * added with: empty for a bot added from the lobby, and the command line's
+ * own for a bot given one with -bot-init, which no scenario may take away. */
+int run_scenario_bot_init_round_reset(void) {
+    ServerSim *sim;
+    ScnTable   cmdline;
+    BYTE       lobbyBot = 1;
+    BYTE       cmdBot   = 2;
+    const ScnTable *held;
+
+    UT_ASSERT(biMakeBrainFile("round_reset"));
+    ut_brain_stub_arm(true);
+    sim = biRunningSim();
+    UT_ASSERT(sim != NULL);
+
+    scnTableClear(&cmdline);
+    UT_ASSERT(scnTableSet(&cmdline, "role", "cmdline"));
+    UT_ASSERT_MSG(serverSimCreateBot(sim, lobbyBot, biBrainPath, "Lobby", aiFull,
+                                     gameTypeGet(&sim->sim.game), false, 0,
+                                     NULL),
+                  "the lobby bot would not add");
+    UT_ASSERT_MSG(serverSimCreateBot(sim, cmdBot, biBrainPath, "Cmdline", aiFull,
+                                     gameTypeGet(&sim->sim.game), false, 0,
+                                     &cmdline),
+                  "the -bot-init bot would not add");
+    UT_ASSERT(biHoldsAdded(sim, lobbyBot, ""));
+    UT_ASSERT(biHoldsAdded(sim, cmdBot, "cmdline"));
+
+    /* The scenario's round: both bots on the horde's orders. */
+    UT_ASSERT(biHandHorde(sim, lobbyBot, cmdBot));
+    held = botManagerGetBotInitTable(sim, lobbyBot);
+    UT_ASSERT(held != NULL);
+    UT_ASSERT_MSG(scnTableGet(held, "horde") != NULL,
+                  "the lobby bot never took the horde's orders");
+    held = botManagerGetBotInitTable(sim, cmdBot);
+    UT_ASSERT(held != NULL);
+    UT_ASSERT_MSG(scnTableGet(held, "horde") != NULL,
+                  "the -bot-init bot never took the horde's orders");
+
+    /* The next round, started in place. */
+    serverSimStartGameInPlace(sim);
+    UT_ASSERT_MSG(sim->state == serverStateRunning,
+                  "the in-place start did not leave the round running");
+    UT_ASSERT_MSG(biHoldsAdded(sim, lobbyBot, ""),
+                  "the lobby bot kept %d pairs into the next round, "
+                  "expected none",
+                  (int)botManagerGetBotInitTable(sim, lobbyBot)->count);
+    UT_ASSERT_MSG(biHoldsAdded(sim, cmdBot, "cmdline"),
+                  "the -bot-init bot is not back on its own table after the "
+                  "in-place start");
+
+    /* And again, through the full reset. The round that just started may
+       hand the orders again, and they land as before. */
+    UT_ASSERT(biHandHorde(sim, lobbyBot, cmdBot));
+    held = botManagerGetBotInitTable(sim, lobbyBot);
+    UT_ASSERT(held != NULL);
+    UT_ASSERT_MSG(scnTableGet(held, "horde") != NULL,
+                  "the orders handed in the new round did not land");
+    serverSimStartGame(sim);
+    UT_ASSERT_MSG(biHoldsAdded(sim, lobbyBot, ""),
+                  "the lobby bot kept %d pairs past the full reset, "
+                  "expected none",
+                  (int)botManagerGetBotInitTable(sim, lobbyBot)->count);
+    UT_ASSERT_MSG(biHoldsAdded(sim, cmdBot, "cmdline"),
+                  "the -bot-init bot is not back on its own table after the "
+                  "full reset");
 
     serverSimDestroy(sim);
     biDropBrainFile();
