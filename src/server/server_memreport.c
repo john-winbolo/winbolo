@@ -37,6 +37,10 @@
     #define WIN32_LEAN_AND_MEAN
   #endif
   #include <windows.h>
+  /* Version 2 maps GetProcessMemoryInfo onto kernel32, so no psapi.lib. */
+  #ifndef PSAPI_VERSION
+    #define PSAPI_VERSION 2
+  #endif
   #include <psapi.h>
 #endif
 
@@ -314,12 +318,13 @@ void serverMemReportPoll(ServerSim *sim) {
   }
   s_wasRunning = running;
 
-  req = SDL_GetAtomicInt(&s_request);
+  /* Take and clear in one step, so a request the console makes now is
+   * either in req or left for the next tick, never dropped. */
+  req = SDL_SetAtomicInt(&s_request, 0);
   due = (s_periodMs > 0 && nowMs - s_lastMs >= s_periodMs);
   if (req == 0 && !due) {
     return;
   }
-  SDL_SetAtomicInt(&s_request, 0);
   if (due) {
     s_lastMs = nowMs;
   }

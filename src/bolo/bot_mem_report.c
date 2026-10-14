@@ -223,6 +223,8 @@ static void botMemEnqueue(BotMemWalk *w, const char *path) {
     if (np == NULL) {
       return;
     }
+    /* NULL the new room: a failed walk frees every slot up to cap. */
+    memset(np + w->cap, 0, (size_t)(ncap - w->cap) * sizeof(char *));
     w->paths = np;
     w->cap = ncap;
   }
@@ -315,31 +317,14 @@ static void botMemExpand(BotMemWalk *w, const char *path) {
   }
 }
 
-bool botMemLuaDeepWalk(struct ServerSim *sim, BYTE playerNum, int topN,
-                       void (*emit)(void *ctx, const char *line),
-                       void *ctx) {
-  lua_State *L = botMemState(sim, playerNum);
-  BotMemWalk *w;
-  int top;
-  size_t before, after;
-  char line[BOT_MEM_PATH_LEN + 96];
+/* The walk itself. It runs in a protected call (see botMemLuaDeepWalk):
+ * the visited set and the queue grow with the heap, and running out of
+ * memory outside one would be a Lua panic that takes the server down.
+ * The BotMemWalk comes in as a light userdata at index 1. */
+static int botMemWalkBody(lua_State *L) {
+  BotMemWalk *w = (BotMemWalk *)lua_touserdata(L, 1);
 
-  if (L == NULL || emit == NULL) {
-    return false;
-  }
-  w = (BotMemWalk *)calloc(1, sizeof(BotMemWalk));
-  if (w == NULL) {
-    return false;
-  }
-  if (topN < 1) topN = 1;
-  if (topN > BOT_MEM_TOP_MAX) topN = BOT_MEM_TOP_MAX;
-  w->L = L;
-  w->topN = topN;
-
-  before = (size_t)lua_gc(L, LUA_GCCOUNT, 0) * 1024u +
-           (size_t)lua_gc(L, LUA_GCCOUNTB, 0);
-  top = lua_gettop(L);
-  lua_checkstack(L, 16);
+  luaL_checkstack(L, 16, "memory report walk");
   lua_newtable(L);
   w->visited = lua_gettop(L);
   lua_newtable(L);
@@ -374,6 +359,55 @@ bool botMemLuaDeepWalk(struct ServerSim *sim, BYTE playerNum, int topN,
     lua_settop(L, w->queue);
     free(w->paths[i]);
     w->paths[i] = NULL;
+  }
+  return 0;
+}
+
+bool botMemLuaDeepWalk(struct ServerSim *sim, BYTE playerNum, int topN,
+                       void (*emit)(void *ctx, const char *line),
+                       void *ctx) {
+  lua_State *L = botMemState(sim, playerNum);
+  BotMemWalk *w;
+  int top;
+  int status;
+  size_t before, after;
+  char line[BOT_MEM_PATH_LEN + 96];
+
+  if (L == NULL || emit == NULL) {
+    return false;
+  }
+  w = (BotMemWalk *)calloc(1, sizeof(BotMemWalk));
+  if (w == NULL) {
+    return false;
+  }
+  if (topN < 1) topN = 1;
+  if (topN > BOT_MEM_TOP_MAX) topN = BOT_MEM_TOP_MAX;
+  w->L = L;
+  w->topN = topN;
+
+  before = (size_t)lua_gc(L, LUA_GCCOUNT, 0) * 1024u +
+           (size_t)lua_gc(L, LUA_GCCOUNTB, 0);
+  top = lua_gettop(L);
+#if LUA_VERSION_NUM >= 502
+  /* A C function with no upvalues is a light value here: no allocation. */
+  lua_pushcfunction(L, botMemWalkBody);
+  lua_pushlightuserdata(L, w);
+  status = lua_pcall(L, 1, 0, 0);
+#else
+  status = lua_cpcall(L, botMemWalkBody, w);
+#endif
+  if (status != 0) {
+    const char *err = lua_tostring(L, -1);
+    snprintf(line, sizeof(line), "[memdeep] bot p%u: walk failed: %s",
+             (unsigned)playerNum, (err != NULL) ? err : "unknown error");
+    lua_settop(L, top);
+    emit(ctx, line);
+    for (int i = 0; i < w->cap; i++) {
+      free(w->paths[i]);
+    }
+    free(w->paths);
+    free(w);
+    return true;
   }
   lua_settop(L, top);
 
