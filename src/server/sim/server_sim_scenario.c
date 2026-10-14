@@ -580,7 +580,14 @@ BOLO_STATIC_ASSERT(SCN_NONE == NEUTRAL, scn_none_is_neutral_for_an_unowned_kill)
  *
  * Those reports fire on every builder death with no test of who the killer
  * is, so the arm makes sure a named killer is a player rather than putting a
- * condition inside a path the ordinary death shares. */
+ * condition inside a path the ordinary death shares.
+ *
+ * A man inside his tank is left there unless the script forces the kill.
+ * Forced, he dies as a man does whom a shell blast caught on the shooter's
+ * screen and who has got back in since: through lgmKillInTank, on the tank's
+ * centre, and the tank waits for him to fly in. That path leaves a man alone
+ * whose tank is itself dead, and so does this arm, with the same answer it
+ * gives for a man it cannot kill. */
 static ScnOpResult scenarioOpLgmKill(ServerSim *sim, const ScnOpLgmKill *p) {
     lgm *l = NULL;
     tank *t = NULL;
@@ -589,8 +596,9 @@ static ScnOpResult scenarioOpLgmKill(ServerSim *sim, const ScnOpLgmKill *p) {
     if (r != SCN_OP_OK) {
         return r;
     }
-    /* The two states an explosion cannot kill him in either. */
-    if ((*l)->isDead || (*l)->inTank) {
+    /* The two states an explosion cannot kill him in either. Only the second
+       is one a script can force its way past. */
+    if ((*l)->isDead || ((*l)->inTank && !p->force)) {
         return SCN_OP_ALREADY;
     }
     if (p->killer != SCN_NONE &&
@@ -598,6 +606,10 @@ static ScnOpResult scenarioOpLgmKill(ServerSim *sim, const ScnOpLgmKill *p) {
         return SCN_OP_NO_SUCH_PLAYER;
     }
 
+    if ((*l)->inTank) {
+        return lgmKillInTank(&sim->sim, l, t, p->killer) ? SCN_OP_OK
+                                                         : SCN_OP_ALREADY;
+    }
     lgmKill(&sim->sim, l, t, p->killer);
     return SCN_OP_OK;
 }

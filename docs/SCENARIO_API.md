@@ -1675,7 +1675,7 @@ refused with `SCN_OP_BAD_SQUARE`, the same answer as a square off the map.
 |---|---|
 | `game.builder_order(p, action, x, y)` | Sends a builder out to do one of `"trees"`, `"road"`, `"building"`, `"pill"`, `"mine"` or `"boat"` on a square. The engine repairs rather than builds where the square already holds one. |
 | `game.builder_recall(p)` | Calls a builder back to the tank. |
-| `game.kill_lgm(p[, killer])` | Kills a builder. `killer` is a seat. |
+| `game.kill_lgm(p[, killer[, force]])` | Kills a builder. `killer` is a seat. A builder inside his tank is left there and the call is refused, unless `force` is `true`: then he dies on the tank and the tank waits for him to fly back in. A builder inside a dead tank is refused either way. |
 | `game.builder_parachute(p[, x, y])` | Drops a dead builder back in, on a square or at the tank. |
 | `game.set_builder_carried(p[, trees[, mines]])` | What a builder is carrying. A count left out is left alone. |
 

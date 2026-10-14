@@ -1851,6 +1851,8 @@ void lgmDeathCheck(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, BYT
                           attacker, cause, pill, tnk);
 }
 
+static bool lgmInTankCanBeKilled(GameSim *sim, lgm *lgman, tank *tnk);
+
 /*********************************************************
 *NAME:          lgmDeathCheckSeenOut
 *AUTHOR:        John Morrison
@@ -1865,14 +1867,8 @@ void lgmDeathCheck(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, BYT
 *
 *  A man who is out now, or dead, goes through
 *  lgmDeathCheckAtPosition unchanged. A man who is in his
-*  tank now is first put out of it, standing on the tank's
-*  centre as it is now and on his way back in, and then dies
-*  through lgmKill like any other. So the dying sound and
-*  the square the loss is recorded on are the tank's present
-*  square, he flies in from a random start to where the tank
-*  is, and the tank has no man until he has walked back. He
-*  carries nothing: what he brought back went into the tank
-*  when he got in, and stays there.
+*  tank now dies through lgmKillInTank, on the tank's
+*  centre as it is now.
 *
 *  A man inside a tank that is itself dead is left alone. He
 *  went down with the tank and it has no present place to
@@ -1911,8 +1907,7 @@ void lgmDeathCheckSeenOut(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWo
   }
 
   /* In his tank now. */
-  if (sim->isServer == FALSE || tnk == NULL || *tnk == NULL ||
-      tankIsDestroyed(tnk) || (*tnk)->deathWait > 0) {
+  if (lgmInTankCanBeKilled(sim, lgman, tnk) == FALSE) {
     return;
   }
   if (lgmBlastCatches(sim, lgmWorldX, lgmWorldY, wx, wy) == FALSE) {
@@ -1923,6 +1918,65 @@ void lgmDeathCheckSeenOut(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWo
   if (gameSimCanDie(sim, DIE_KIND_BUILDER, (*lgman)->playerNum, attacker,
                     cause, pill) == FALSE) {
     return;
+  }
+
+  lgmKillInTank(sim, lgman, tnk, owner);
+}
+
+/* Can a man who is inside his tank be killed there? Only on the server, and
+   only while the tank is alive: a man inside a dead tank went down with it,
+   and the tank has no present place to put the death at. A tank counts as
+   dead from the hit that killed it (deathWait), before its armour reads so. */
+static bool lgmInTankCanBeKilled(GameSim *sim, lgm *lgman, tank *tnk) {
+  if (lgman == NULL || *lgman == NULL) {
+    return FALSE;
+  }
+  if ((*lgman)->isDead == TRUE || (*lgman)->inTank == FALSE) {
+    return FALSE;
+  }
+  if (sim->isServer == FALSE || tnk == NULL || *tnk == NULL ||
+      tankIsDestroyed(tnk) || (*tnk)->deathWait > 0) {
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/*********************************************************
+*NAME:          lgmKillInTank
+*AUTHOR:        John Morrison
+*CREATION DATE: 13/10/26
+*LAST MODIFIED: 13/10/26
+*PURPOSE:
+*  Kills a man who is inside his tank. He is first put out
+*  of it, standing on the tank's centre as it is now and on
+*  his way back in, and then dies through lgmKill like any
+*  other. So the dying sound and the square the loss is
+*  recorded on are the tank's present square, he flies in
+*  from a random start to where the tank is, and the tank
+*  has no man until he has walked back. He carries nothing:
+*  what he brought back went into the tank when he got in,
+*  and stays there.
+*
+*  This is the one in-tank death path. A shell blast the
+*  attacker's screen caught him in (lgmDeathCheckSeenOut)
+*  and a scenario script that forces the kill both come
+*  through here. The can_die question is the caller's to
+*  ask, before the call.
+*
+*  Returns TRUE if he died. Returns FALSE, with nothing
+*  changed, for a man who is not in his tank or is dead, on
+*  a client, and for a tank that is itself dead or waiting
+*  to come back.
+*
+*ARGUMENTS:
+*  sim    - Pointer to the game sim structure
+*  lgman  - Pointer to the lgm pointer
+*  tnk    - Pointer to the tank
+*  owner  - Who is credited with the kill, or NEUTRAL
+*********************************************************/
+bool lgmKillInTank(GameSim *sim, lgm *lgman, tank *tnk, BYTE owner) {
+  if (lgmInTankCanBeKilled(sim, lgman, tnk) == FALSE) {
+    return FALSE;
   }
 
   /* Out of the tank, on its centre, walking back in: the state of a man one
@@ -1938,6 +1992,7 @@ void lgmDeathCheckSeenOut(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWo
   (*lgman)->state = LGM_STATE_RETURN;
   (*lgman)->action = LGM_TREE_REQUEST;
   lgmKill(sim, lgman, tnk, owner);
+  return TRUE;
 }
 
 /*********************************************************

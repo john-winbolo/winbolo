@@ -2478,6 +2478,7 @@ static int scnLuaKillLgm(lua_State *L) {
     ScenarioOp  op;
     lua_Integer p      = scnArgInt(L, 1, "p");
     lua_Integer killer = scnOptInt(L, 2, "killer", SCN_NONE);
+    bool        force  = scnOptBool(L, 3, "force", false);
 
     if (!scnFitsByte(p)) {
         return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
@@ -2491,7 +2492,9 @@ static int scnLuaKillLgm(lua_State *L) {
     op.type             = SCN_OP_LGM_KILL;
     op.u.lgmKill.slot   = (BYTE)p;
     op.u.lgmKill.killer = (BYTE)killer;
-    return scnDone(L, &op, "player %d, killer %d", (int)p, (int)killer);
+    op.u.lgmKill.force  = force;
+    return scnDone(L, &op, "player %d, killer %d%s", (int)p, (int)killer,
+                   force ? ", forced" : "");
 }
 
 static int scnLuaBuilderParachute(lua_State *L) {
@@ -5213,7 +5216,7 @@ static const ScnLuaOpParam kScnOpArgs_builder_recall[] = {
 };
 static const ScnLuaOpParam kScnOpArgs_kill_lgm[] = {
     { "p", SCN_PARAM_SLOT, false }, { "killer", SCN_PARAM_OWNER, true },
-    SCN_OP_ARG_END
+    { "force", SCN_PARAM_BOOL, true }, SCN_OP_ARG_END
 };
 static const ScnLuaOpParam kScnOpArgs_builder_parachute[] = {
     { "p", SCN_PARAM_SLOT, false }, { "x", SCN_PARAM_SQUARE_X, true },
@@ -5590,7 +5593,8 @@ static const ScnLuaRow kScnLuaRows[] = {
       "builder_recall(p) — call player p's builder back to the tank.",
       SCN_OP_PARAMS(builder_recall), SCN_OP_ACTS },
     { "kill_lgm", scnLuaKillLgm,
-      "kill_lgm(p[, killer]) — kill player p's builder; killer is a seat.",
+      "kill_lgm(p[, killer[, force]]) — kill player p's builder; killer is "
+      "a seat; force kills him even inside his tank.",
       SCN_OP_PARAMS(kill_lgm), SCN_OP_ACTS },
     { "builder_parachute", scnLuaBuilderParachute,
       "builder_parachute(p[, x, y]) — drop a dead builder back in, on a "
