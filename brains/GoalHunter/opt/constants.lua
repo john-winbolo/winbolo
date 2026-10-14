@@ -5103,6 +5103,19 @@ M.DECOY_GETAWAY_BLOCKER_SHOTS = 2     -- keel 2 (not used: the step is off)
 -- damaged at t=5482 and the bot waited for a hit until t=5529.
 -- false = the first step waits for a hit.
 M.DECOY_GETAWAY_BLOCKER_STEP_FIRST = true  -- keel false
+-- 2026-10-14 (Andrew, PR #510 review item 4): THE BLOCKER CHECK CADENCE.
+-- THE BLOCKER STEP's check (the closest counted pill and its shell trace to
+-- the park square, M.closest_pill + M.blockers) runs every Nth think, not
+-- every think.  Between checks the last result is used again.  The bots are
+-- staggered: a bot checks when (tick + player number) % N == 0.  A check
+-- runs at once (whatever the tick) when there is no result yet, the park
+-- square changed, the result is N or more thinks old, the pill is gone,
+-- died, came alive, moved, changed owner or is not counted any more, or a
+-- blocker on the line changed (a wall damaged or gone, a pill of ours
+-- changed armour).  The wall-hit sounds are still heard every think and the
+-- last wall's shots are worked out again from the hit ledger every think,
+-- so a hit counts at once.  1 = every think.
+M.DECOY_GETAWAY_BLOCKER_CHECK_EVERY = 4  -- keel 1
 -- 2026-10-06 (Andrew): THE SHIELDED CHAIN.  With no counted pill able to
 -- reach the decoy square (P empty), the scan still builds a chain against
 -- the counted pills blocked only by a blocker (a full or damaged wall, a
@@ -5842,6 +5855,7 @@ M.PRESETS = {
     DECOY_GETAWAY_BLOCKER_STEP    = false,
     DECOY_GETAWAY_BLOCKER_SHOTS   = 2,
     DECOY_GETAWAY_BLOCKER_STEP_FIRST = false,
+    DECOY_GETAWAY_BLOCKER_CHECK_EVERY = 1,
     DECOY_GETAWAY_SHIELDED_CHAIN  = false,
     DECOY_GETAWAY_STAY_CLOSEST    = false,
     DECOY_GETAWAY_WALL_LIFE       = 4,

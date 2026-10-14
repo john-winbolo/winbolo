@@ -5937,7 +5937,10 @@ print("decoy_getaway.lua -- the decoy getaway")
   -- THE CLOSEST PILL ONLY.  A full wall on pill 5's line (d = 5.39, 5
   -- shots); pill 6 at (22,32) (d = 7, in range) has an open line.  Only pill
   -- 5 counts: it holds.  With pill 6 at (22,29) (d = 4, now the closest) it
-  -- moves.
+  -- moves.  Checked every think here (BLOCKER_CHECK_EVERY 1): a pill that
+  -- becomes the closest is seen on the next check only (section 12d).
+  local keep_every = C.DECOY_GETAWAY_BLOCKER_CHECK_EVERY
+  C.DECOY_GETAWAY_BLOCKER_CHECK_EVERY = 1
   b, hb = on_sq1(600)
   TMAP[K(W1)] = C.T_BUILDING
   b.w.pills[6] = { mx = 22, my = 32, owner = "hostile", health = 5 }
@@ -5951,6 +5954,7 @@ print("decoy_getaway.lua -- the decoy getaway")
         moved(hb, b) and hb.ga.blk.id == 6 and hb.ga.blk.shots == 0
         and hb.ga.trigs[2] == "blk", tostring(hb.ga.blk.id))
   b.w.pills[6] = nil
+  C.DECOY_GETAWAY_BLOCKER_CHECK_EVERY = keep_every
   clear()
 
   -- KNOCKED OFF THE PARK SQUARE (Andrew, Sep 24: "It should stay counting
@@ -6275,6 +6279,140 @@ print("decoy_getaway.lua -- the decoy getaway")
         #GA.humans(b.inf) == 1 and not (hb.ga.path and hb.ga.path[1].mx == 125 and hb.ga.path[1].my == 112),
         pstr(hb.ga.path))
   C.HUMAN_DECOY_TEST_HUMANS = 0
+
+  -- 12d. THE BLOCKER CHECK CADENCE (DECOY_GETAWAY_BLOCKER_CHECK_EVERY, Oct
+  -- 14, PR #510 review item 4).  The closest pill and its trace (M.blockers)
+  -- run every Nth think, staggered by player number; the sounds and the
+  -- ledger count still run every think.  The worked example rig: pill 12,
+  -- a full wall (126,113) on its line, 5 shots, it holds.  BOT(1, ..) is
+  -- player 1, so with N = 4 its due thinks are t % 4 == 3.
+  check("blocker check cadence: 4 live, 1 (every think) in keel",
+        C.DECOY_GETAWAY_BLOCKER_CHECK_EVERY == 4
+        and C.PRESETS.keel.DECOY_GETAWAY_BLOCKER_CHECK_EVERY == 1, "?")
+  local keep_every = C.DECOY_GETAWAY_BLOCKER_CHECK_EVERY
+  local real_blockers, traces = GA.blockers, 0
+  GA.blockers = function(...) traces = traces + 1; return real_blockers(...) end
+  local function thinks(b, t0, t1) for t = t0, t1 do lock(b, t) end end
+  -- N = 1: a trace every think (the old rule).
+  C.DECOY_GETAWAY_BLOCKER_CHECK_EVERY = 1
+  b, hb = rig(C.T_BUILDING)
+  traces = 0
+  thinks(b, 202, 213)
+  check("cadence 1: a trace every think (12 in 12 thinks), reason every",
+        traces == 12 and hb.ga.phase == "wait" and hb.ga.bc.chk == "every"
+        and hb.ga.blk.shots == 5 and hb.ga.blk.age == 0, tostring(traces))
+  -- N = 4: a still bot traces once in 4 thinks, on its due thinks.
+  C.DECOY_GETAWAY_BLOCKER_CHECK_EVERY = 4
+  b, hb = rig(C.T_BUILDING)
+  check("cadence 4: the first think of the hold checks at once (no result yet)",
+        hb.ga.bc and hb.ga.bc.chk == "none" and hb.ga.bc.t == 201 and hb.ga.blk.shots == 5,
+        tostring(hb.ga.bc and hb.ga.bc.chk))
+  traces = 0
+  local due = {}
+  for t = 202, 213 do
+    local n0 = traces
+    lock(b, t)
+    if traces > n0 then due[#due + 1] = t end
+  end
+  check("cadence 4: 3 traces in 12 thinks, at t = 203, 207, 211 ((t + 1) % 4 == 0)",
+        traces == 3 and due[1] == 203 and due[2] == 207 and due[3] == 211
+        and hb.ga.bc.chk == "due" and hb.ga.phase == "wait" and hb.ga.blk.shots == 5,
+        tostring(traces) .. " " .. table.concat(due, ","))
+  check("cadence 4: the overlay's blk is rebuilt every think, with the result's age",
+        hb.ga.blk.age == 2 and hb.ga.blk.id == 12, tostring(hb.ga.blk.age))
+  -- A HIT ON A THINK WITH NO CHECK: heard, counted, shots drop at once.
+  b, hb = rig(C.T_BUILDING)
+  traces = 0
+  sound(b, 202)
+  check("cadence 4: a wall hit on a think with no check counts at once: 5 - 1 = 4",
+        traces == 0 and hb.ga.blk.shots == 4 and hb.ga.blk.age == 1, tostring(hb.ga.blk.shots))
+  sound(b, 204); sound(b, 205)
+  check("cadence 4: three hits (one check at 203 between): 5 - 3 = 2, it steps (trigger blk)",
+        traces == 1 and hb.ga.phase == "move" and hb.ga.trigs[1] == "blk", tostring(hb.ga.phase))
+  -- FORCED CHECKS on a think that is not due.
+  b, hb = rig(C.T_BUILDING)
+  traces = 0
+  TMAP[LW] = C.T_HALFBUILD
+  lock(b, 202)
+  check("cadence 4: the wall on the line is damaged: checked at once (blocker), dmg 5 - 1 = 4",
+        traces == 1 and hb.ga.bc.chk == "blocker" and hb.ga.blk.shots == 4, tostring(hb.ga.bc.chk))
+  -- A pill that dies or turns ours ends the decoy hold itself (orders),
+  -- so these are asked of M.blk_recheck on the hold's own result at t=202
+  -- (not due for player 1).
+  b, hb = rig(C.T_BUILDING)
+  local function rc() return GA.blk_recheck(b.w, hb.ga, hb.ga.bc, 126, 112, 202, 4, 1) end
+  check("cadence 4: nothing changed at t=202: the result is used (no check)", rc() == nil, tostring(rc()))
+  b.w.pills[12].health = 0
+  check("cadence 4: the pill dies: checked at once (pill_alive)", rc() == "pill_alive", tostring(rc()))
+  b.w.pills[12].health = 9
+  b.w.pills[12].in_tank = true
+  check("cadence 4: the pill is picked up: checked at once (pill_alive)", rc() == "pill_alive", tostring(rc()))
+  b.w.pills[12].in_tank = nil
+  b.w.pills[12].owner = "allied"
+  check("cadence 4: the pill is an ally's now: checked at once (pill_owner)", rc() == "pill_owner", tostring(rc()))
+  b.w.pills[12].owner = "neutral"
+  b.w.pills[12].my = 118
+  check("cadence 4: the pill moved: checked at once (pill_moved)", rc() == "pill_moved", tostring(rc()))
+  b.w.pills[12].my = 117
+  local p12 = b.w.pills[12]
+  b.w.pills[12] = nil
+  check("cadence 4: the pill is gone from the table: checked at once (pill_gone)", rc() == "pill_gone", tostring(rc()))
+  b.w.pills[12] = p12
+  TMAP[LW] = nil
+  check("cadence 4: the wall on the line is knocked down: checked at once (blocker)", rc() == "blocker", tostring(rc()))
+  TMAP[LW] = C.T_BUILDING
+  -- An integrated owner change that keeps the hold (neutral -> hostile).
+  b, hb = rig(C.T_BUILDING)
+  traces = 0
+  b.w.pills[12].owner = "hostile"
+  lock(b, 202)
+  check("cadence 4: the pill changes owner in the hold: checked at once (pill_owner)",
+        traces == 1 and hb.ga.bc.chk == "pill_owner", tostring(hb.ga.bc.chk))
+  -- The park square changed, and a result left from a skipped stretch.
+  local bc0 = { kx = 126, ky = 112, t = 200 }
+  check("cadence 4: a new park square checks at once (park)",
+        GA.blk_recheck(b.w, hb.ga, bc0, 125, 112, 201, 4, 1) == "park", "?")
+  check("cadence 4: a result 4 thinks old checks at once (stale)",
+        GA.blk_recheck(b.w, hb.ga, bc0, 126, 112, 204, 4, 1) == "stale", "?")
+  check("cadence 4: no result checks at once (none); cadence 1 always (every)",
+        GA.blk_recheck(b.w, hb.ga, nil, 126, 112, 201, 4, 1) == "none"
+        and GA.blk_recheck(b.w, hb.ga, bc0, 126, 112, 201, 1, 1) == "every", "?")
+  -- A STEP: the first think on the new square checks at once.
+  b, hb = rig(C.T_BUILDING)
+  sound(b, 202); sound(b, 204); sound(b, 205)
+  b.inf.tankx, b.inf.tanky = 125 * 256 + 128, 112 * 256 + 128
+  lock(b, 206)
+  local arrived_wait = hb.ga.phase == "wait" and hb.ga.park_mx == 125 and hb.ga.bc == nil
+  traces = 0
+  lock(b, 208)
+  check("cadence 4: parked on (125,112) after the step: no result kept, the next think checks at once",
+        arrived_wait and (hb.ga.phase ~= "wait" or (traces == 1 and hb.ga.bc.chk == "none"
+        and hb.ga.bc.kx == 125)), tostring(hb.ga.phase) .. " " .. tostring(hb.ga.bc and hb.ga.bc.chk))
+  -- THE STAGGER: player 1 checks at t % 4 == 3, player 2 at t % 4 == 2.
+  local function due_ticks(pn)
+    local out = {}
+    for t = 201, 204 do
+      if GA.blk_recheck({ pills = {} }, { alive = {} }, { kx = 0, ky = 0, t = 200 },
+                        0, 0, t, 4, pn) == "due" then out[#out + 1] = t end
+    end
+    return table.concat(out, ",")
+  end
+  check("cadence 4: the stagger: player 1 is due at 203, player 2 at 202, player 3 at 201",
+        due_ticks(1) == "203" and due_ticks(2) == "202" and due_ticks(3) == "201",
+        due_ticks(1) .. " " .. due_ticks(2) .. " " .. due_ticks(3))
+  b, hb = rig(C.T_BUILDING)
+  b.st.player_number = 2
+  traces = 0
+  local due2 = {}
+  for t = 202, 209 do
+    local n0 = traces
+    lock(b, t)
+    if traces > n0 then due2[#due2 + 1] = t end
+  end
+  check("cadence 4: a bot of player 2 traces on 202 and 206, not player 1's 203 and 207",
+        table.concat(due2, ",") == "202,206", table.concat(due2, ","))
+  GA.blockers = real_blockers
+  C.DECOY_GETAWAY_BLOCKER_CHECK_EVERY = keep_every
   clear()
   end)()
 

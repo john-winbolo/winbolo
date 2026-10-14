@@ -36,6 +36,11 @@
  *     set WB_BENCH=1
  *     WinBoloUnitTests.exe --test bench_decoy_step_first
  * WB_BENCH_N sets the calls per repeat (default 100000).
+ *
+ * "cadence N" is the same block as it is now, with THE BLOCKER CHECK CACHE
+ * (DECOY_GETAWAY_BLOCKER_CHECK_EVERY = N): each call is one think one tick
+ * after the last, player 1, nothing on the line changes, so with N = 4 the
+ * closest pill and the trace run on one think in four.
  */
 
 #include <stdio.h>
@@ -137,8 +142,36 @@ static const char *s_benchLua =
 "               twx = info.tankx, twy = info.tanky, off = false }\n"
 "  end\n"
 "end\n"
+"local function cadence(every)\n"
+"  return function()\n"
+"    now = now + 1\n"
+"    ga.led = ga.led or {}\n"
+"    local kx, ky = ga.park_mx or h.mx, ga.park_my or h.my\n"
+"    local chk = DG.blk_recheck(world, ga, ga.bc, kx, ky, now, every, 1)\n"
+"    if chk then\n"
+"      ga.bc = DG.blk_check(world, ga, kx, ky, now)\n"
+"      ga.bc.chk = chk\n"
+"    end\n"
+"    local bc = ga.bc\n"
+"    local pid, n, list, why = bc.pid, bc.n, bc.list, bc.why\n"
+"    local p = pid and world.pills[pid]\n"
+"    if p then\n"
+"      if why == 'last' and list[1].kind ~= 'pill' then DG.led_entry(ga.led, list[1]) end\n"
+"    end\n"
+"    if DG.hear(ga.led, info.events, now) > 0 then error('no events expected') end\n"
+"    if p then\n"
+"      if why == 'last' and list[1].kind ~= 'pill' then n = DG.wall_shots(ga.led, list[1]) end\n"
+"      ga.blk = { id = pid, mx = p.mx, my = p.my, shots = n, list = list,\n"
+"                 why = why, tx = kx, ty = ky,\n"
+"                 twx = info.tankx, twy = info.tanky, off = false,\n"
+"                 age = now - bc.t }\n"
+"    end\n"
+"  end\n"
+"end\n"
 "local parts = {\n"
 "  full = full,\n"
+"  cadence1 = cadence(1),\n"
+"  cadence4 = cadence(4),\n"
 "  closest = function() DG.closest_pill(world, TX, TY, ga.alive, now) end,\n"
 "  blockers = function() DG.blockers(world, world.pills[1], TX, TY, nil) end,\n"
 "  trace = function()\n"
@@ -259,9 +292,12 @@ int run_bench_decoy_step_first(void) {
     lua_pop(L, 1);
 
     printf("  %d calls x %d repeats\n", n, BDS_REPEATS);
-    static const char *const parts[] = { "full", "closest", "blockers", "trace" };
+    static const char *const parts[] = { "full", "cadence1", "cadence4",
+                                         "closest", "blockers", "trace" };
     static const char *const labels[] = {
         "full step-first block (per think)",
+        "cadence 1 (every think)",
+        "cadence 4 (average per think)",
         "  M.closest_pill",
         "  M.blockers (trace + Lua walk)",
         "  cpf.simulate_shot only (C+tbl)",
@@ -273,7 +309,7 @@ int run_bench_decoy_step_first(void) {
         (void)luaL_dostring(L, "if jit then jit.off(); jit.flush() end");
         printf("  JIT off (interpreter):\n");
     }
-    for (int p = 0; p < 4; p++) {
+    for (int p = 0; p < 6; p++) {
         double us[BDS_REPEATS];
         for (int r = 0; r < BDS_REPEATS; r++) {
             lua_getfield(L, bench, "run");

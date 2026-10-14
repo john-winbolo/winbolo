@@ -902,6 +902,7 @@ local function park_on(ga, mx, my, arm)
   ga.hits, ga.arm = 0, arm
   ga.hit_tick = nil
   ga.led = {}   -- THE HIT LEDGER of this square
+  ga.bc = nil   -- THE BLOCKER CHECK CACHE: a new square checks at once
 end
 
 -- The last blocker's count as text: a wall first seen full "5-3=2", one
@@ -931,6 +932,79 @@ function M.blk_txt(bk)
     return string.format("%d blockers, waiting", #bk.list)
   end
   return tostring(bk.why)
+end
+
+-- THE BLOCKER CHECK CACHE (DECOY_GETAWAY_BLOCKER_CHECK_EVERY, Oct 14).  The
+-- blocker kind on square (mx,my) as M.blockers sees it: "wall",
+-- "wall_damaged", "pill" (a live pill of ours or an ally's, and the pill),
+-- or nil.
+local function blk_kind_at(world, mx, my)
+  local tt = U.ttype(mx, my)
+  if tt == C.T_BUILDING then return "wall" end
+  if tt == C.T_HALFBUILD then return "wall_damaged" end
+  local q = live_pill_at(world, mx, my)
+  if q and (q.owner == "friendly" or q.owner == "allied") then return "pill", q end
+  return nil
+end
+
+-- A new cache entry from one check: the closest counted pill to the park
+-- square (kx,ky) and its blockers, with what the next thinks compare to
+-- see the result is still good (the pill's state, each blocker's kind and
+-- a pill blocker's armour).
+function M.blk_check(world, ga, kx, ky, now)
+  local pid, p = M.closest_pill(world, kx, ky, ga.alive, now)
+  local n, list, why
+  if p then n, list, why = M.blockers(world, p, kx, ky, nil) end
+  local bc = { pid = pid, n = n, list = list, why = why, kx = kx, ky = ky, t = now }
+  if p then
+    bc.palive = ((p.health or 0) > 0 and not p.in_tank) and true or false
+    bc.powner, bc.pmx, bc.pmy = p.owner, p.mx, p.my
+    bc.kinds, bc.arm = {}, {}
+    for i, b in ipairs(list) do
+      local kind, q = blk_kind_at(world, b.mx, b.my)
+      bc.kinds[i], bc.arm[i] = kind, q and q.health
+    end
+  end
+  return bc
+end
+
+-- Why the cache must be checked again this think, or nil to use it.
+-- every = DECOY_GETAWAY_BLOCKER_CHECK_EVERY, pn = our player number (the
+-- stagger).  The reasons:
+--   every     every <= 1: every think (the old rule)
+--   none      no result yet (a new hold, or new park square: park_on)
+--   park      the park square changed
+--   pill_gone / pill_alive / pill_owner / pill_moved / pill_uncounted:
+--             the cached pill is not in the pill table, died or came alive,
+--             changed owner, moved, or is not counted from (kx,ky) now
+--   blocker   a square on the line is not the blocker kind it was (a wall
+--             damaged, knocked down, built), or a pill of ours on it
+--             changed armour
+--   due       (now + pn) % every == 0
+--   stale     the result is every or more thinks old and not due (the
+--             check was not run for a while: no chain then)
+function M.blk_recheck(world, ga, bc, kx, ky, now, every, pn)
+  if every <= 1 then return "every" end
+  if not bc then return "none" end
+  if bc.kx ~= kx or bc.ky ~= ky then return "park" end
+  if bc.pid then
+    local p = world.pills and world.pills[bc.pid]
+    if not p then return "pill_gone" end
+    local live = ((p.health or 0) > 0 and not p.in_tank) and true or false
+    if live ~= bc.palive then return "pill_alive" end
+    if p.owner ~= bc.powner then return "pill_owner" end
+    if p.mx ~= bc.pmx or p.my ~= bc.pmy then return "pill_moved" end
+    if not counted(p, kx, ky, dead_age(bc.pid, p, ga.alive, now)) then
+      return "pill_uncounted"
+    end
+    for i, b in ipairs(bc.list) do
+      local kind, q = blk_kind_at(world, b.mx, b.my)
+      if kind ~= bc.kinds[i] or (q and q.health) ~= bc.arm[i] then return "blocker" end
+    end
+  end
+  if (now + (pn or 0)) % every == 0 then return "due" end
+  if now - bc.t >= every or now < bc.t then return "stale" end
+  return nil
 end
 
 -- Every think of a standing decoy hold (orders.decoy_lock, after the
@@ -1013,13 +1087,24 @@ function M.update(state, world, info, h, now)
       -- the tank really is, for the overlay.
       -- Before the first step the park square is the decoy square.
       local kx, ky = ga.park_mx or h.mx, ga.park_my or h.my
-      local pid, p = M.closest_pill(world, kx, ky, ga.alive, now)
+      -- THE BLOCKER CHECK CACHE: the closest pill and its shell trace run
+      -- every DECOY_GETAWAY_BLOCKER_CHECK_EVERY thinks (staggered by player
+      -- number), or at once when M.blk_recheck finds the result is wrong.
+      -- The sounds and the ledger count below still run every think.
+      local every = math.max(1, math.floor(C.DECOY_GETAWAY_BLOCKER_CHECK_EVERY or 1))
+      local chk = M.blk_recheck(world, ga, ga.bc, kx, ky, now, every,
+                                state and state.player_number)
+      if chk then
+        ga.bc = M.blk_check(world, ga, kx, ky, now)
+        ga.bc.chk = chk
+      end
+      local bc = ga.bc
+      local pid, n, list, why = bc.pid, bc.n, bc.list, bc.why
+      local p = pid and world.pills[pid]
       -- The last blocker first (no ledger yet), then its ledger entry, then
       -- the sounds of this think, then its count: a hit in the think the
       -- wall became the last blocker is not lost.
-      local n, list, why
       if p then
-        n, list, why = M.blockers(world, p, kx, ky, nil)
         if why == "last" and list[1].kind ~= "pill" then M.led_entry(ga.led, list[1]) end
       end
       if M.hear(ga.led, info.events, now) > 0 then
@@ -1032,7 +1117,8 @@ function M.update(state, world, info, h, now)
         if why == "last" and list[1].kind ~= "pill" then n = M.wall_shots(ga.led, list[1]) end
         ga.blk = { id = pid, mx = p.mx, my = p.my, shots = n, list = list,
                    why = why, tx = kx, ty = ky,
-                   twx = info.tankx, twy = info.tanky, off = (tx ~= kx or ty ~= ky) }
+                   twx = info.tankx, twy = info.tanky, off = (tx ~= kx or ty ~= ky),
+                   age = now - bc.t }
       end
     end
     local by_hit = ga.hits >= (C.DECOY_GETAWAY_HITS or 1)
@@ -1052,8 +1138,8 @@ function M.update(state, world, info, h, now)
       local t = ga.path[ga.idx]
       local bs = "-"
       if ga.blk then
-        bs = string.format("p%s(%d,%d):%s", tostring(ga.blk.id), ga.blk.mx,
-                           ga.blk.my, M.blk_txt(ga.blk))
+        bs = string.format("p%s(%d,%d):%s,age=%d", tostring(ga.blk.id), ga.blk.mx,
+                           ga.blk.my, M.blk_txt(ga.blk), ga.blk.age or 0)
         if ga.blk.off then
           local dx, dy = M.off_park(ga.blk)
           bs = bs .. string.format(",tank_off_park(%d,%d_wu)", dx, dy)
