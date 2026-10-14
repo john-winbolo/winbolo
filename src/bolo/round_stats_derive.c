@@ -166,15 +166,7 @@ void roundStatsApplyRecord(PlayerRoundStats stats[MAX_TANKS],
 }
 
 size_t roundStatsRecordSize(uint8_t recordType) {
-    switch (recordType) {
-    case ATTR_REC_DAMAGE:  return sizeof(AttrDamageRecord);
-    case ATTR_REC_KILL:    return sizeof(AttrKillRecord);
-    case ATTR_REC_CAPTURE: return sizeof(AttrCaptureRecord);
-    case ATTR_REC_LGM:     return sizeof(AttrLgmRecord);
-    case ATTR_REC_ACTION:  return sizeof(AttrActionRecord);
-    case ATTR_REC_PICKUP:  return sizeof(AttrPickupRecord);
-    default:               return 0;   /* unknown tag: caller stops */
-    }
+    return attrTrackRecordSize(recordType);   /* 0 for an unknown tag: caller stops */
 }
 
 /* A single slot's standing for one award. `key` is the (possibly signed,

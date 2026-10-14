@@ -3741,6 +3741,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The tank ops: the six arms, the refusals each one answers with, and the
     # records they leave through the functions a player's own action reaches.
     tests/unit/test_scenario_tank_arms.c
+    # Where a dead tank's pills land: Mac Bolo's spiral round the tank, the
+    # squares it passes over, the map edge, and a map built to have no room.
+    tests/unit/test_tank_drop_pills.c
     # The builder ops: the five arms, the refusals each one answers with, the
     # wood a dispatched order costs, and the loss a scripted death records.
     tests/unit/test_scenario_builder_arms.c
@@ -3968,6 +3971,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_prefs_sync.c
     tests/unit/test_wbn_serverlist.c
     tests/unit/test_wbn_map.c
+    tests/unit/test_wbn_map_fetch_policy.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
@@ -4069,6 +4073,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_view_policy_rects.c
     tests/unit/test_tree_hide.c
     tests/unit/test_lgm_visibility.c
+    tests/unit/test_lgm_draw_centre.c
     tests/unit/test_view_state.c
     tests/unit/test_view_target_codec.c
     tests/unit/test_view_target_apply.c
@@ -4149,6 +4154,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_lobby_running_loss.c
     tests/unit/test_loopback_quiet_lobby_control_loss.c
     tests/unit/test_loopback_command_liveness.c
+    tests/unit/test_loopback_command_rejoin.c
     tests/unit/test_loopback_channel.c
     # A server hitch and its catch-up burst, over an impaired path: the slot
     # it locks out has to start applying real inputs again and keep doing it.
@@ -4520,6 +4526,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # file holds the on-demand capture that rewrites those summaries.
     tests/unit/test_wbv_fixture_summaries.c
     tests/unit/test_attribution_reader.c
+    # The formats' little-endian fields (byte_order.h), pinned through their
+    # writers and readers.
+    tests/unit/test_byte_order.c
     # Calibration anchor walk: synthetic v2 logs prove the highlight
     # clip-time fit resolves base cells from the log's own snapshots
     # (test_lv_calibration.c).
@@ -5138,6 +5147,7 @@ set(_unit_test_names
     wbn_serverlist_malformed
     wbn_serverlist_scripts
     wbn_map_parse
+    wbn_map_fetch_policy
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_msgh_budget_kill_no_traceback
@@ -5269,6 +5279,14 @@ set(_unit_test_names
     attribution_reader_rejects_bad
     attribution_reader_old_wbv
     attribution_reader_clamps_slotcount
+    byte_order_helpers
+    byte_order_log_long_counts
+    byte_order_log_long_counts_viewer
+    byte_order_snapshot_base_time
+    byte_order_compressed_map_base_time
+    byte_order_attribution_member
+    byte_order_info_packet
+    byte_order_pathfinder_blob
     lv_walk_base_anchor_lobby_log
     lv_walk_base_anchor_opening_snapshot
     lv_walk_base_anchor_ordinal
@@ -5619,6 +5637,8 @@ set(_unit_test_names
     lgm_kill_seen_out_tank_hit_blast
     lgm_kill_seen_out_dead_tank
     lgm_start_offset
+    lgm_draw_own_matches_wire
+    lgm_draw_centre_error_bounds
     jitter_buffer_grow
     shell_projection
     sim_rules_classic_defaults
@@ -5716,6 +5736,7 @@ set(_unit_test_names
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
     loopback_command_liveness
+    loopback_command_queued_behind_map_change
     loopback_channel
     loopback_hitch_recovers
     loopback_quit_keeps_peer
@@ -6113,6 +6134,13 @@ set(_unit_test_names
     scenario_tank_drop_pill
     scenario_tank_arm_records
     scenario_tank_death_ticks_respawn
+    tank_drop_pills_spiral_order
+    tank_drop_pills_blocked
+    tank_drop_pills_map_edge
+    tank_drop_pills_hostile_map
+    tank_drop_pills_no_room
+    lgm_drop_pill_spiral
+    lgm_drop_pill_no_room
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill

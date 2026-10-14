@@ -1813,6 +1813,9 @@ static bool voiceStatsWavOpen(VoiceStatsWav *w, const char *name) {
 
 static void voiceStatsWavWrite(VoiceStatsWav *w, const char *path,
                                const int16_t *pcm) {
+    uint8_t le[sizeof(int16_t) * VOICE_FRAME_SAMPLES];
+    int i;
+
     if (w->full || voiceDebugOutDir() == NULL) {
         return;
     }
@@ -1821,8 +1824,11 @@ static void voiceStatsWavWrite(VoiceStatsWav *w, const char *path,
                            * player about a file they did not ask for */
         return;
     }
-    if (fwrite(pcm, sizeof(int16_t), VOICE_FRAME_SAMPLES, w->fp) !=
-        VOICE_FRAME_SAMPLES) {
+    /* WAV samples are little-endian */
+    for (i = 0; i < VOICE_FRAME_SAMPLES; i++) {
+        putLe16At(le + 2 * i, (uint16_t)pcm[i]);
+    }
+    if (fwrite(le, 1, sizeof(le), w->fp) != sizeof(le)) {
         w->full = true;
         return;
     }

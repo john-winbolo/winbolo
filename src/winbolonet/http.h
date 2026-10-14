@@ -215,6 +215,32 @@ void httpSetLogUploadTimeout(long seconds);
 int wbn_api_get(const char *path, char **response_out);
 
 /*********************************************************
+*NAME:          wbn_api_get_timeout
+*PURPOSE:
+* Like wbn_api_get, but the caller gives the total time
+* limit of the request (connect and reply together) in
+* place of the 30 s default, and can also give a shorter
+* limit for the connect phase alone (name lookup and
+* connect). For a small request whose caller must know
+* soon that the server did not answer: the connect limit
+* ends a request to a server that is not there, and the
+* total limit leaves a slow link the rest of the time to
+* deliver the reply. A request that runs out of either
+* time returns -1.
+*
+*ARGUMENTS:
+* path               - API path after /api/v1/ (e.g. "maps/60")
+* response_out       - Receives heap-allocated response string
+*                      (caller frees)
+* timeout_ms         - Total time limit in milliseconds; 0 or
+*                      less selects the default
+* connect_timeout_ms - Connect phase limit in milliseconds; 0
+*                      or less sets none, as wbn_api_get
+*********************************************************/
+int wbn_api_get_timeout(const char *path, char **response_out,
+                        long timeout_ms, long connect_timeout_ms);
+
+/*********************************************************
 *NAME:          wbn_api_get_cancellable
 *PURPOSE:
 * Like wbn_api_get, but the caller may abort the request
