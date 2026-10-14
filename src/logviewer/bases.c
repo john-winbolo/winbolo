@@ -585,7 +585,7 @@ void lv_basesSetBaseNetData(bases *value, BYTE *buff, int len)  {
     returnValue++;
     us = buff[returnValue];
     us += (buff[returnValue+1] << 8);
-/*    (*value)->item[count].baseTime = ntohs(us); */
+/*    (*value)->item[count].baseTime = us; */
     returnValue += 2;
 /*    (*value)->item[count].justStopped = buff[returnValue]; */
     returnValue++;

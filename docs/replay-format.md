@@ -18,7 +18,9 @@ any unzip tool.
 A logged round also carries `attribution.trk`
 (`src/bolo/public/attribution_track.h`), and a round that ran scripts
 carries `scripts.json`, described below. Both are written by `logStop`
-after `log.dat` is closed.
+after `log.dat` is closed. The track's multi-byte fields — the header's slot
+and record counts, each record's tick and a damage record's amount — are
+little-endian.
 
 Files are named `<timestamp>_<mapname>.wbv`, e.g.
 `20260609t015459_DH-Oil_Rig.wbv`.
@@ -110,9 +112,9 @@ opcode (`src/bolo/public/log.h`):
 |---|---|---|
 | 0 | `LOG_QUIT` | opcode only — end of stream |
 | 1 | `LOG_NOEVENTS` | opcode + `count:u8` — advance 1–255 ticks with no events |
-| 2 | `LOG_NOEVENTS_LONG` | opcode + `count:u16` (big-endian) — advance up to 65535 ticks |
+| 2 | `LOG_NOEVENTS_LONG` | opcode + `count:u16` (little-endian) — advance up to 65535 ticks |
 | 3 | `LOG_EVENT` | opcode + `count:u8` + events |
-| 4 | `LOG_EVENT_LONG` | opcode + `count:u16` (big-endian) + events |
+| 4 | `LOG_EVENT_LONG` | opcode + `count:u16` (little-endian) + events |
 | 5 | `LOG_EVENT_SNAPSHOT` | opcode + snapshot body (see below) |
 
 ## Events

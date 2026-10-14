@@ -39,6 +39,7 @@
 #include "players.h"
 #include "brain_data.h"
 #include "log.h"
+#include "byte_order.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "bases.h"
 #include "bolo_map.h"
@@ -1780,7 +1781,12 @@ void basesFillToRules(GameSim *sim, bases *value) {
 }
 
 void basesSetBaseCompressData(bases *value, BYTE *buff, int dataLen) {
+  int i;
+
   memcpy(&(**value), buff, SIZEOF_BASES);
+  for (i = 0; i < MAX_BASES; i++) {
+    (*value)->item[i].baseTime = (int32_t) byteOrderGetLe32(buff + BASE_WIRE_TIME_OFFSET(i));
+  }
   /* The wire blob carries numBases in its trailing byte; a hostile map can
    * set it past MAX_BASES, driving out-of-bounds reads of item[] for the
    * life of the game. Clamp it here so the corrupt count never propagates. */
@@ -1812,7 +1818,6 @@ void basesSetBaseCompressData(bases *value, BYTE *buff, int dataLen) {
 BYTE basesGetBaseNetData(bases *value, BYTE *buff) {
   int returnValue = 1; /* Value to return - Data length  */
   BYTE count = 0;
-  unsigned short us;
 
   buff[0] = (*value)->numBases;
   while (count < (*value)->numBases) {
@@ -1830,12 +1835,9 @@ BYTE basesGetBaseNetData(bases *value, BYTE *buff) {
     returnValue++;
     buff[returnValue] = (*value)->item[count].refuelTime;
     returnValue++;
-    us = (*value)->item[count].baseTime;
-    us = htons(us);
-    buff[returnValue] = (BYTE) (us >> 8);
-    returnValue++;
-    buff[returnValue] = (BYTE) (us & 0xFF);
-    returnValue++;
+    /* Little-endian, as every recording made so far has it */
+    byteOrderPutLe16(buff + returnValue, (uint16_t) (*value)->item[count].baseTime);
+    returnValue += 2;
     buff[returnValue] = (*value)->item[count].justStopped;
     returnValue++;
     count++;
