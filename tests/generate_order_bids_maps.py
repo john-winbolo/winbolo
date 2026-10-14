@@ -37,7 +37,8 @@ order_warmup_start) is the first with a second base:
     base #2 (112,128)      the arena gives it to an enemy seat, full armour:
                            "capture base 1".
 
-The human-decoy field (order_human_decoy) is the main field with a wall:
+The human-decoy field (order_human_decoy, order_human_decoy_off,
+order_human_decoy_walls) is the main field with a wall:
 
     x=108..110, y=103..105 a 3x3 block of buildings (9 squares) between
                            pill #2 (106,106) and the stand-in human the arena
@@ -87,7 +88,9 @@ BASE_ARENAS = [
     "order_warmup_start",
 ]
 
-DECOY_ARENA = "order_human_decoy"
+# order_human_decoy_off and order_human_decoy_walls play the same map with
+# knobs off.
+DECOY_ARENAS = ["order_human_decoy", "order_human_decoy_off", "order_human_decoy_walls"]
 
 PONDS = [(98, 98), (154, 154), (98, 154), (154, 126)]
 
@@ -133,7 +136,8 @@ def main():
     for y in range(103, 106):
         for x in range(108, 111):
             decoy_terrain[y][x] = BUILDING
-    write_bmap(str(out / (DECOY_ARENA + ".map")), decoy_terrain, pills, bases, starts)
+    for name in DECOY_ARENAS:
+        write_bmap(str(out / (name + ".map")), decoy_terrain, pills, bases, starts)
 
 
 if __name__ == "__main__":

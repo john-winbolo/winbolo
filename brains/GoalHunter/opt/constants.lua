@@ -4995,6 +4995,21 @@ M.STANDOFF_AVOID_ALLY_BOT   = true   -- keel false
 -- It touches the detection only (orders.human_decoy_check), never the
 -- human-near run or charge now.  0 = no seat.
 M.HUMAN_DECOY_TEST_HUMANS   = 0      -- keel 0
+-- 2026-10-14 (Andrew): AN ALLY BOT DECOYS TOO.  true = the detection
+-- (orders.human_decoy_check) takes a visible ally BOT as the decoy under the
+-- same tests as a human: in the pill's range, strictly closer to the pill
+-- than us, and decoy_getaway.block() at its square >= HUMAN_DECOY_MIN_BLOCK.
+-- Strictly closer means two bots never each take the other as the decoy.
+-- Every decoy rule (stay wide, no rush, the projected spacing, the re-pick,
+-- the stopped-ally re-pick, the standoff ring) then uses that ally.
+-- false = humans only (and HUMAN_DECOY_TEST_HUMANS seats).
+M.HUMAN_DECOY_ALLY_BOTS     = true   -- keel false
+-- 2026-10-14 (Andrew): NO OWN BLOCKERS ON A DECOY PILL.  While the decoy
+-- flag stands on the goal's pill, the take is not a protected (PPT) take
+-- (PPT_SKIP reason=human_decoy) and the wall commit builds no wall
+-- ("decoy: no own blockers"), so a flag that comes after the plan counts
+-- too.  The ally's blocker is the cover.  false = walls as before.
+M.HUMAN_DECOY_NO_BLOCKERS   = true   -- keel false
 -- DECOY GETAWAY (Andrew, 2026-09-24).  A decoy hold (ORDER_GOTO_DECOY) looks
 -- for a way out the moment it starts: a chain of up to
 -- DECOY_GETAWAY_MAX_STEPS squares, each one ring further out from the start
@@ -5886,6 +5901,10 @@ M.PRESETS = {
     HUMAN_DECOY_REPICK_MAX        = 0,
     STANDOFF_AVOID_HUMAN_TILES    = 0,
     STANDOFF_AVOID_ALLY_BOT       = false,
+    --   2026-10-14: an ally bot can be the decoy, and a decoy pill gets no
+    --   walls of our own.  KEEL: humans only, walls as before.
+    HUMAN_DECOY_ALLY_BOTS         = false,
+    HUMAN_DECOY_NO_BLOCKERS       = false,
     --   FOCUS_OTHER_COST_MULT is the one stage-2 knob that is NOT covered by
     --   the master switch: the focus multiplier sits inside the cost
     --   competition, so its keel value has to be the identity, 1.0, for the

@@ -1139,10 +1139,15 @@ end
 -- as a list of { mx, my, human }, or nil when both knobs are off or no ally
 -- is in sight.  C.STANDOFF_AVOID_HUMAN_TILES = Chebyshev squares round a
 -- human; C.STANDOFF_AVOID_ALLY_BOT = an ally bot's square.
-function M.standoff_allies(info)
+-- state (optional): an ally BOT that is the decoy (state._human_decoy.bot,
+-- C.HUMAN_DECOY_ALLY_BOTS) counts as a human here, so the ring round him
+-- and the stopped-ally re-pick hold for him as for a human decoy.
+function M.standoff_allies(info, state)
   local ht = C.STANDOFF_AVOID_HUMAN_TILES or 0
   local ab = C.STANDOFF_AVOID_ALLY_BOT
   if not info or (ht <= 0 and not ab) then return nil end
+  local hf = state and state._human_decoy
+  local decoy_bot = hf and hf.bot and hf.pn or nil
   local allies = info.allies or 0
   local bots   = info.player_bots or 0
   local me     = info.player_number
@@ -1155,6 +1160,7 @@ function M.standoff_allies(info)
        and bit.band(ob.info or 0, OH) == 0
        and bit.band(allies, bit.lshift(1, pn)) ~= 0 then
       local human = bit.band(bots, bit.lshift(1, pn)) == 0
+                    or (pn == decoy_bot and ht > 0)
       if (human and ht > 0) or (not human and ab) then
         list = list or {}
         list[#list + 1] = { mx = bit.rshift(ob.x or 0, 8), my = bit.rshift(ob.y or 0, 8),
@@ -1206,6 +1212,32 @@ function M.human_decoy_cost(state, pmx, pmy, sfx, sfy)
   local behind = (C.HUMAN_DECOY_BEHIND_COST or 0)
                  * math.max(0, (d_hp + (C.HUMAN_DECOY_BEHIND_MARGIN or 0)) - d_sp)
   return space + behind, space, behind, d_sh, d_sp, d_hp
+end
+
+-- 2026-10-14 (Andrew): NO OWN BLOCKERS ON A DECOY PILL
+-- (C.HUMAN_DECOY_NO_BLOCKERS).  True while the decoy flag
+-- (state._human_decoy, human or ally bot) stands on this goal's pill: the
+-- ally's blocker is the cover, so the bot builds no wall of its own.
+function M.hd_no_blockers(state, goal)
+  if not C.HUMAN_DECOY_NO_BLOCKERS then return false end
+  local f = state and state._human_decoy
+  return f ~= nil and goal ~= nil and f.tid == goal.target_id
+end
+
+-- plan_position's PPT call: a decoy pill is not a protected take.  Clears
+-- goal._is_ppt (goal._shield_scan_pending stays nil: no shield scan) and
+-- logs PPT_SKIP reason=human_decoy.  True when it cleared it.
+function M.hd_ppt_skip(state, goal, pmx, pmy, pill_hp)
+  if not (goal and goal._is_ppt and M.hd_no_blockers(state, goal)) then return false end
+  goal._is_ppt = false
+  return true
+end
+
+-- The wall commit at the end of approach: no walls on a decoy pill.
+-- Answers needs_build, why_no_build.
+function M.hd_wall_commit(state, goal, needs_build, why, npots)
+  if not (needs_build and M.hd_no_blockers(state, goal)) then return needs_build, why end
+  return false, "decoy: no own blockers"
 end
 
 -- The two terms written out, so the sum can be worked by hand.
@@ -1506,7 +1538,7 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
   -- decoy re-pick's hard rule (M.standoff_spot_level).  lvl_best[k] = the
   -- best scored spot of level k or lower; the pick takes the lowest level
   -- that has one, so with every spot at level 1 or 2 it is as before.
-  local allies = M.standoff_allies(info)
+  local allies = M.standoff_allies(info, state)
   local hard   = state and state.goal and state.goal._hd_hard
   local lvl_on = allies or hard
   local lvl_best = lvl_on and { {}, {} } or nil
@@ -2754,7 +2786,7 @@ local function standoff_picked(state, goal, info)
   goal._ally_at_pick = nil
   local ht = C.STANDOFF_AVOID_HUMAN_TILES or 0
   if ht > 0 and goal.standoff_mx then
-    for _, a in ipairs(M.standoff_allies(info) or {}) do
+    for _, a in ipairs(M.standoff_allies(info, state) or {}) do
       if a.human and math.abs(a.mx - goal.standoff_mx) <= ht
          and math.abs(a.my - goal.standoff_my) <= ht then
         goal._ally_at_pick = goal._ally_at_pick or {}
@@ -2770,12 +2802,12 @@ M._standoff_picked = standoff_picked   -- unit tests
 -- the last time this was asked.  One who was there when the spot was
 -- picked does not count until he has left and come back.  Answers the
 -- ally entry (M.standoff_allies) or nil.
-local function standoff_human_stopped(goal, info)
+local function standoff_human_stopped(goal, info, state)
   local ht = C.STANDOFF_AVOID_HUMAN_TILES or 0
   if ht <= 0 or not goal.standoff_mx then return nil end
   local seen, now_seen, hit = goal._ally_seen or {}, {}, nil
   local at_pick = goal._ally_at_pick
-  for _, a in ipairs(M.standoff_allies(info) or {}) do
+  for _, a in ipairs(M.standoff_allies(info, state) or {}) do
     if a.human then
       if math.abs(a.mx - goal.standoff_mx) <= ht and math.abs(a.my - goal.standoff_my) <= ht then
         if not (at_pick and at_pick[a.pn]) then
@@ -2832,7 +2864,7 @@ local function human_decoy_repick(state, goal, world, info)
   local why = "decoy"
   if d >= min then
     -- The ally rule's trigger: a human ally stopped on or next to the spot.
-    local a = standoff_human_stopped(goal, info)
+    local a = standoff_human_stopped(goal, info, state)
     if not a then return end
     why = "ally p" .. tostring(a.pn)
   end
@@ -2859,7 +2891,7 @@ local function ally_spot_repick(state, goal, info)
   if (C.STANDOFF_AVOID_HUMAN_TILES or 0) <= 0 or not goal.standoff_mx then return end
   if not repick_allowed(goal) then return end
   if (goal._ally_repicks or 0) >= 1 then return end
-  local a = standoff_human_stopped(goal, info)
+  local a = standoff_human_stopped(goal, info, state)
   if not a then return end
   goal._ally_repicks = 1
   goal._repick_pending = true
@@ -4347,7 +4379,7 @@ local function blitz_pick_from_scan(spots, state, tmx, tmy, wallset, pmx, pmy, w
   -- the lowest level there is; with every spot at level 1 or 2 the pick is
   -- as before.
   do
-    local allies = M.standoff_allies(info)
+    local allies = M.standoff_allies(info, state)
     if allies or (state.goal and state.goal._hd_hard) then
       local lo_lv, n_out = 2, 0
       for _, e in ipairs(elig) do
@@ -5309,7 +5341,7 @@ local function update_attack_substate_body(goal, state, world, info)
       -- above the lowest level there is are skipped; with every spot at
       -- level 1 or 2 the pick is as before.
       do
-        local allies = M.standoff_allies(info)
+        local allies = M.standoff_allies(info, state)
         if allies or goal._hd_hard then
           local lo_lv, lvs = 2, {}
           for _, s in ipairs(spots) do
@@ -5512,6 +5544,8 @@ local function update_attack_substate_body(goal, state, world, info)
         if (state.is_pill_suicider or human_near or C.PPT_NEVER) and goal._is_ppt then
           goal._is_ppt = false
         end
+        -- An ally decoys this pill (C.HUMAN_DECOY_NO_BLOCKERS): no PPT.
+        M.hd_ppt_skip(state, goal, pmx, pmy, pill_hp)
         local scan_radius = goal._is_ppt and C.PPT_STANDOFF
                             or C.ATTACK_PILL_STANDOFF
         -- For PPT, pull the chosen standoff in from 7.4 to 7.0 along
@@ -5554,9 +5588,10 @@ local function update_attack_substate_body(goal, state, world, info)
         -- A human standing close skips it for the same reason (see the
         -- PPT_SKIP block above): nothing will be built, so nothing needs
         -- planning, and the scan's tick budget goes unspent. So does
-        -- PPT_NEVER.
+        -- PPT_NEVER, and so does a decoy pill (C.HUMAN_DECOY_NO_BLOCKERS).
         goal._shield_scan_pending =
-          (not (state.is_pill_suicider or goal._human_near or C.PPT_NEVER)) or nil
+          (not (state.is_pill_suicider or goal._human_near or C.PPT_NEVER
+                or M.hd_no_blockers(state, goal))) or nil
       else
         local smx, smy = M.pick_standoff(world, info, pill, state)
         -- C.BLITZ_NOSPOT_RENEGOTIATE: the geometric fallback gets the same
@@ -6749,6 +6784,10 @@ local function update_attack_substate_body(goal, state, world, info)
             why_no_build = string.format("human ally %d away — going straight in", hn)
           end
         end
+        -- An ally decoys this pill (C.HUMAN_DECOY_NO_BLOCKERS), re-read here
+        -- so a decoy flag that came after the plan counts too.
+        needs_build, why_no_build = M.hd_wall_commit(state, goal, needs_build,
+                                                     why_no_build, pots and #pots or 0)
         -- CHARGE NOW: no more blockers.
         if needs_build and goal._charge_now then
           needs_build = false

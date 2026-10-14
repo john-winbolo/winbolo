@@ -1651,7 +1651,8 @@ end
 --
 -- state._human_decoy = { tid, pmx, pmy, pn, hx, hy (the human's last seen
 -- world position), since, last (last think the tests held), b, why (the
--- block), dh, dme (human / our distance to the pill, world units) }.
+-- block), dh, dme (human / our distance to the pill, world units), bot
+-- (true when the decoy is an ally bot, C.HUMAN_DECOY_ALLY_BOTS) }.
 -- init.lua calls M.human_decoy_check every think, before the human-near run
 -- and the charge-now rules read it.  attack.lua reads it for the standoff
 -- costs (attack.human_decoy_cost) and the re-pick.  With the master off it
@@ -1667,12 +1668,20 @@ local HUMAN_DECOY_BLOCKS = { wall = true, wall_damaged = true, pill = true }
 -- our tank.  The pill shoots the closest one, so that one is the answer
 -- (lowest player number on a tie).  Answers the object, its distance and
 -- ours to the pill centre in world units.
+--
+-- 2026-10-14 (Andrew): AN ALLY BOT DECOYS TOO (C.HUMAN_DECOY_ALLY_BOTS).
+-- With the knob on, a visible ally bot counts under the same tests as a
+-- human (in range, closer to the pill than us, the block test in
+-- human_decoy_check).  The test is strictly closer, so two bots never
+-- each take the other as the decoy.  Everything downstream reads the
+-- chosen ally from state._human_decoy (pn, hx, hy), human or bot.
 local function human_decoy_target(info, p)
   local OT = _G.OBJECT_TANK
   local OH = _G.OBJECT_HOSTILE or 0
   local allies, bots = info.allies or 0, info.player_bots or 0
   -- The gate's stand-in humans (C.HUMAN_DECOY_TEST_HUMANS, 0 in play).
   bots = bit.band(bots, bit.bnot(C.HUMAN_DECOY_TEST_HUMANS or 0))
+  if C.HUMAN_DECOY_ALLY_BOTS then bots = 0 end
   local me = info.player_number
   local R = C.PILL_FIRE_RANGE or 8
   local pwx, pwy = U.m2w(p.mx), U.m2w(p.my)
@@ -1789,8 +1798,10 @@ function M.human_decoy_check(state, world, info, now)
     end
     f.pn, f.hx, f.hy, f.last = ob.idnum, ob.x, ob.y, now
     f.b, f.why, f.dh, f.dme = b, bwhy, dh, dme
+    f.bot = bit.band(info.player_bots or 0, bit.lshift(1, ob.idnum or 0)) ~= 0
+            and bit.band(C.HUMAN_DECOY_TEST_HUMANS or 0, bit.lshift(1, ob.idnum or 0)) == 0
     if fresh then
-      print2(human_decoy_line("HUMAN_DECOY_ON", f, now, ""))
+      print2(human_decoy_line("HUMAN_DECOY_ON", f, now, f.bot and " ally=bot" or " ally=human"))
       sayg(state, string.format("Staying wide of %s on pill #%s",
                                 player_name(info, f.pn), tostring(tid)))
     end

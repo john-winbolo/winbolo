@@ -7295,12 +7295,74 @@ do
   check("detect: the human out of the pill's range: no flag", flag(r) == nil, "?")
   r = dbot(); r.st.goal = { kind = "defend_pill", target_id = 5, mx = 20, my = 20 }; chk(r, 100)
   check("detect: the bot not on attack_pill: no flag", flag(r) == nil, "?")
+  -- 2026-10-14: AN ALLY BOT DECOYS TOO (HUMAN_DECOY_ALLY_BOTS).
+  check("ally-bot decoy: on live, keel off",
+        C.HUMAN_DECOY_ALLY_BOTS == true and C.PRESETS.keel.HUMAN_DECOY_ALLY_BOTS == false, "?")
   r = dbot(); r.inf.player_bots = 0x03; chk(r, 100)
-  check("detect: the 'human' is an ally bot: no flag", flag(r) == nil, "?")
+  check("detect: an ally bot behind a wall, closer to the pill: the flag is set (bot)",
+        flag(r) ~= nil and flag(r).pn == 0 and flag(r).bot == true, "?")
+  r = dbot(15, 15, 17, 17); r.inf.player_bots = 0x03; chk(r, 100)
+  check("detect: an ally bot farther from the pill than us: no flag", flag(r) == nil, "?")
+  r = dbot(15, 15, 15, 15); r.inf.player_bots = 0x03; chk(r, 100)
+  check("detect: an ally bot exactly as close as us: no flag (strictly closer)", flag(r) == nil, "?")
+  C.HUMAN_DECOY_ALLY_BOTS = false
+  r = dbot(); r.inf.player_bots = 0x03; chk(r, 100)
+  check("detect: knob off: an ally bot is not a decoy", flag(r) == nil, "?")
   C.HUMAN_DECOY_TEST_HUMANS = 0x01
   r = dbot(); r.inf.player_bots = 0x03; chk(r, 100)
-  check("detect: the gate's test seam reads seat 0 as human", flag(r) ~= nil and flag(r).pn == 0, "?")
+  check("detect: the gate's test seam reads seat 0 as human",
+        flag(r) ~= nil and flag(r).pn == 0 and not flag(r).bot, "?")
   C.HUMAN_DECOY_TEST_HUMANS = 0
+  C.HUMAN_DECOY_ALLY_BOTS = true
+  r = dbot(); chk(r, 100)
+  check("detect: a human decoy is not marked bot", flag(r) ~= nil and flag(r).bot == false, "?")
+  -- The decoy bot counts as a human for the standoff ring (and the
+  -- stopped-ally re-pick); another ally bot stays a bot.
+  r = dbot(); r.inf.player_bots = 0x13   -- allies 0x17: seats 0, 1, 2, 4
+  r.inf.objects[2] = { type = 1, idnum = 4, x = 30 * 256 + 128, y = 30 * 256 + 128, info = 0 }
+  chk(r, 100)
+  do
+    local hum = {}
+    for _, a in ipairs(ATTACK.standoff_allies(r.inf, r.st) or {}) do hum[a.pn] = a.human end
+    check("ally-bot decoy: the decoy bot is a human in the standoff ally list, the other bot not",
+          flag(r) ~= nil and flag(r).pn == 0 and hum[0] == true and hum[4] == false,
+          tostring(hum[0]) .. "/" .. tostring(hum[4]))
+    hum = {}
+    for _, a in ipairs(ATTACK.standoff_allies(r.inf) or {}) do hum[a.pn] = a.human end
+    check("ally-bot decoy: with no state both are bots", hum[0] == false and hum[4] == false,
+          tostring(hum[0]) .. "/" .. tostring(hum[4]))
+  end
+
+  -- 2026-10-14: NO OWN BLOCKERS ON A DECOY PILL (HUMAN_DECOY_NO_BLOCKERS).
+  check("no-blockers: on live, keel off",
+        C.HUMAN_DECOY_NO_BLOCKERS == true and C.PRESETS.keel.HUMAN_DECOY_NO_BLOCKERS == false, "?")
+  r = dbot(); r.inf.player_bots = 0x03; chk(r, 100)
+  do
+    local g = r.st.goal
+    g._is_ppt = true
+    check("no-blockers: PPT skip clears _is_ppt on the decoy pill",
+          ATTACK.hd_ppt_skip(r.st, g, 20, 20, 15) == true and g._is_ppt == false
+          and g._shield_scan_pending == nil, tostring(g._is_ppt))
+    local nb, why = ATTACK.hd_wall_commit(r.st, g, true, "x", 3)
+    check("no-blockers: wall commit clears needs_build", nb == false and why == "decoy: no own blockers",
+          tostring(nb) .. " " .. tostring(why))
+    local og = { kind = "attack_pill", target_id = 9, _is_ppt = true }
+    nb, why = ATTACK.hd_wall_commit(r.st, og, true, "x", 3)
+    check("no-blockers: another pill: unchanged",
+          ATTACK.hd_ppt_skip(r.st, og, 1, 1, 15) == false and og._is_ppt == true and nb == true and why == "x", "?")
+    C.HUMAN_DECOY_NO_BLOCKERS = false
+    g._is_ppt = true
+    nb, why = ATTACK.hd_wall_commit(r.st, g, true, "x", 3)
+    check("no-blockers: knob off: _is_ppt and needs_build unchanged",
+          ATTACK.hd_ppt_skip(r.st, g, 20, 20, 15) == false and g._is_ppt == true
+          and nb == true and why == "x", tostring(nb))
+    C.HUMAN_DECOY_NO_BLOCKERS = true
+    r.st._human_decoy = nil
+    g._is_ppt = true
+    nb = ATTACK.hd_wall_commit(r.st, g, true, "x", 3)
+    check("no-blockers: no decoy flag: unchanged",
+          ATTACK.hd_ppt_skip(r.st, g, 20, 20, 15) == false and g._is_ppt == true and nb == true, "?")
+  end
   r = dbot(); r.inf.objects[1].info = 0x80; chk(r, 100)
   check("detect: an enemy tank there: no flag", flag(r) == nil, "?")
   -- Two humans: the one closest to the pill is its target.

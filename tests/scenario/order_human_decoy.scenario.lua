@@ -1,21 +1,23 @@
 -- Scenario script for tests/scenario/maps/order_human_decoy.map --
 -- GENERATED map: tests/generate_order_bids_maps.py.
 --
--- THE HUMAN IS DECOYING FOR US (HUMAN_DECOY_AWARE).  A pill shoots the
--- closest tank in its range, and a wall does not stop it picking that tank.
--- A human team-mate behind a wall draws the pill's fire into the wall.  The
--- bot attacking that pill must not park beside him, must not take a spot
--- closer to the pill than his, and must not rush in.
+-- THE ALLY IS DECOYING FOR US (HUMAN_DECOY_AWARE, HUMAN_DECOY_ALLY_BOTS,
+-- HUMAN_DECOY_NO_BLOCKERS).  A pill shoots the closest tank in its range,
+-- and a wall does not stop it picking that tank.  A team-mate behind a wall
+-- draws the pill's fire into the wall.  The bot attacking that pill must
+-- not park beside him, must not take a spot closer to the pill than his,
+-- must not rush in, and must not build walls of its own.
 --
 --   Pill #2 (106,106) belongs to an enemy idle bot (seat 2, team 2), parked
 --   in the far corner (152,150), with 15 armour.  Pill #3 is given to A's
---   team.  Boss (seat 1, tests/brains/idle.lua, team 1) is the stand-in
---   human.  It is parked at (112,104), 6.3 squares from the pill, behind a
---   3x3 wall of 9 buildings at (108..110,103..105), from tick 100.  The
---   pill shoots Boss, so its shells hit the wall.  The gate has no human
---   seat, so A reads seat 1 as human through the test seam
---   HUMAN_DECOY_TEST_HUMANS=2 (bot_init).  Boss takes no damage
---   (set_modifiers taken=0), so he stays put.
+--   team.  Boss (seat 1, tests/brains/idle.lua, team 1) is an ally bot,
+--   the decoy.  It is parked at (112,104), 6.3 squares from the pill,
+--   behind a 3x3 wall of 9 buildings at (108..110,103..105), from tick 100.
+--   The pill shoots Boss, so its shells hit the wall.  A reads Boss as the
+--   decoy because HUMAN_DECOY_ALLY_BOTS is on (the default).  2026-10-14
+--   (Andrew): until then the arena made seat 1 a human through the test
+--   seam HUMAN_DECOY_TEST_HUMANS=2; it no longer does.  Boss takes no
+--   damage (set_modifiers taken=0), so he stays put.
 --   A (seat 0) is put at (117,106) at tick 395, 11 squares from the pill
 --   (out of its range) and a few squares from where it parks.  Boss orders
 --   "!attack 1" at tick 400.  A parks at (115,107) at about tick 760; the
@@ -42,7 +44,8 @@
 --     order (tick 400) until A's team owns the pill (on_built "building"
 --     and on_pill_placed with armour > 0, seat A).  2026-10-14 (Andrew,
 --     recording 20261014t123512): A parked wide but then built its own
---     blockers; it did not use the human's decoy.  That is a FAIL.  Other
+--     blockers; it did not use the human's decoy.  That is a FAIL
+--     (HUMAN_DECOY_NO_BLOCKERS stops it).  Other
 --     builder trips (trees, road, repair) are logged as HDECOY_BUILD only,
 --     and
 --   * the first square A parks on inside 10 squares of the pill (the same
@@ -59,8 +62,18 @@
 --   wall and A did a plain pill take.  Hence the near, late start, the
 --   thick wall and the decoy proof.
 --
+-- Two knob variants (A_CFG below), both expected to fail:
+--   * order_human_decoy_off: HUMAN_DECOY_ALLY_BOTS and HUMAN_DECOY_NO_BLOCKERS
+--     off.  A does not read Boss as a decoy and parks beside him.
+--   * order_human_decoy_walls: HUMAN_DECOY_NO_BLOCKERS off.  A parks wide
+--     but builds its own walls.
+--
 -- GATE: ticks=6000 bots=1 ai=yesfull gametype=open
 
+-- KNOB VARIANT.  A_CFG goes to seat A through game.bot_init at tick 3.
+-- game.init_tokens packs the pins into 64-byte values (one value of
+-- "cfg=...;cfg=..." past 64 bytes is refused by the host).
+local A_CFG = "cfg=PILL_REPOSITION_ENABLED=false"
 local A, BOSS, ENEMY = 0, 1, 2
 local TARGET = 2
 local PILL = { 106, 106 }
@@ -184,7 +197,8 @@ function on_tick(g, tick)
   end
   if not st.cfg and tick >= 3 then
     st.cfg = true
-    g.bot_init(A, { cfg = "PILL_REPOSITION_ENABLED=false;cfg=HUMAN_DECOY_TEST_HUMANS=2" })
+    local ok, code = g.bot_init(A, g.init_tokens(A_CFG))
+    g.log("HDECOY_KNOB " .. A_CFG .. " bot_init " .. tostring(ok) .. " " .. tostring(code))
   end
   if not st.placed and tick >= 100 then
     st.placed = true
