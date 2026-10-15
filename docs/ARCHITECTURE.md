@@ -34,8 +34,8 @@ document is the stable reference for the rules themselves.
 | `src/wasm/` | T1 + T3 + T4 | Web build of the desktop client — shares the `src/gui/sdl3/` ImGui UI and the shared sim-driving cores, forking only the driver: a blocking loop in `main` that waits on each browser animation frame through ASYNCIFY, in place of the SDL timer thread. The sim, the draw and the menus all run on the page's thread; bot brain thinks run on the bot worker pool's threads, as on desktop, which is why the build links with `-pthread` and the page must be cross-origin isolated. The menu and its dialogs run their own blocking loops on that same stack between games. Its practice game hosts a `ServerSim` in the page, ticked from that loop through `serverInstanceTick` in `server_stubs_wasm.c`, which runs the shared `serverSimLocalTick` sequence (see "Per-file T2 grants"), and records its rounds through `server_round_log_static`. See "Platform variants: share the logic, fork only the driver". |
 | `src/android/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
 | `src/gui/ios/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
-| `src/client_frontend/` | T1 + T3 + T4 | The shared sim-driving cores every client platform calls instead of keeping its own copy: `client_frontend_tick.c` (the alternating keys/game tick step), `client_frontend_connect.c` (the post-connect join/landing wait), `client_frontend_common.c` (the sim-state-guarded `frontEnd*` bodies, and the tutorial step sequencer behind `client_frontend_tutorial.h`), `client_frontend_sp.c` (the single-player lobby seeding). The voice runtime (`voice_*.c`) lives here too and is compiled by the targets that build voice. Not a library — the sources compile directly inside each frontend target (WinBolo, WinBoloIOS and wasm `winbolo` take all four cores; android `main` takes `client_frontend_connect.c` and `client_frontend_sp.c`) under that target's `gui` profile, so they see only `public/`. See "Platform variants: share the logic, fork only the driver". |
-| `src/logviewer/` | T1 + T3 + T4 | Replays recorded games; uses T3 for the playback render path. The standalone `LogViewer` and the wasm log viewer compile `src/bolo/sim_rules.c` from source under a per-file T2 grant, since neither links `bolo_static`; that is the sim's own file rather than anything in this directory (see "Per-file T2 grants"). The lobby's replay reel is the embedded host `lv_embed.c`, which the web client and WinBoloIOS compile with the decoder and renderer but without the modal viewer `logviewer.c`; `lv_embed_stubs.c` stubs what the left-out viewer would provide, for both. iOS drives the viewer's dialogs through `src/logviewer/ios/platform_dialogs_ios.c` in place of the desktop driver that shells out, and plays a game the WinBolo.net log browser downloads in the reel through `src/gui/ios/ios_log_player.cpp`. |
+| `src/client_frontend/` | T1 + T3 + T4 | The shared sim-driving cores every client platform calls instead of keeping its own copy: `client_frontend_tick.c` (the alternating keys/game tick step), `client_frontend_connect.c` (the post-connect join/landing wait, as the blocking `clientFrontAwaitJoin` and the per-call `clientFrontAwaitJoinStep` it loops over), `client_frontend_common.c` (the sim-state-guarded `frontEnd*` bodies, the active-sim test `clientFrontIsActiveUiSim` that each driver's guarded callbacks make first, `clientFrontSaveMapAutoNamed` for a player with no file dialog, both declared in `client_frontend_common.h`, and the tutorial step sequencer behind `client_frontend_tutorial.h`), `client_frontend_sp.c` (the single-player lobby seeding). The voice runtime (`voice_*.c`) lives here too and is compiled by the targets that build voice. Not a library — the sources compile directly inside each frontend target (WinBolo, WinBoloIOS and wasm `winbolo` take all four cores; android `main` takes `client_frontend_connect.c` and `client_frontend_sp.c`) under that target's `gui` profile, so they see only `public/`. See "Platform variants: share the logic, fork only the driver". |
+| `src/logviewer/` | T1 + T3 + T4 | Replays recorded games; uses T3 for the playback render path. The standalone `LogViewer` and the wasm log viewer compile `src/bolo/sim_rules.c` from source under a per-file T2 grant, since neither links `bolo_static`; that is the sim's own file rather than anything in this directory (see "Per-file T2 grants"). The lobby's replay reel is the embedded host `lv_embed.c`, which the web client and WinBoloIOS compile with the decoder and renderer but without the modal viewer `logviewer.c`; `lv_embed_stubs.c` stubs what the left-out viewer would provide, for both. iOS drives the viewer's dialogs through `src/logviewer/ios/platform_dialogs_ios.c` in place of the desktop driver that shells out, plays a game the WinBolo.net log browser downloads, or a recording on the phone, in the reel through `src/gui/ios/ios_log_player.cpp` and `ios_recordings.cpp`, and watches a server's live delayed feed in the reel through `src/gui/ios/ios_spectator.cpp`. What a spectator host does with that feed's seed and records — load the seed, re-seed on a new segment, refresh the roster and phase on a keyframe, move the live head — is `lv_spec_feed.c`, the one body the modal viewer's `spectatorRun` (`logviewer.c`) and the embedded spectator in `lv_embed.c` both call. Those iOS screens reach the reel through `src/gui/sdl3/dialogs/lobby/lobby_reel.h`, the reel's public header, and not through the lobby's own `lobby_internal.h`, which includes it. |
 | `src/winbolonet/winbolonet_core/` | T1 + T4 | Shared HTTP, async event queue, WBN key storage. Includes `server_sim.h` (T1) only. Linked by every WBN-aware binary. |
 | `src/winbolonet/winbolonet_server/` | T1 + T4 | Server tracker calls (`server/register`, `server/update`, lobby/map/teams/balance). Linked by binaries that run a server: WinBoloDS, WinBoloHeadless, SDL3 client (SP host). |
 | `src/winbolonet/winbolonet_client/` | T4 | User auth, comments. Linked by binaries with a UI: SDL3 client, LogViewer, WinBoloIOS. |
@@ -472,13 +472,18 @@ into each frontend target rather than as a separate library:
   when `state == CLIENT_CONNECT_CONNECTED` **or** `clientSimIsInLobby`.
   A landing check that only accepts `CONNECTED` hangs every lobby join
   until timeout. See the connect post-conditions above.
+  `clientFrontAwaitJoinStep` is one pass of the same wait, for a driver
+  that draws while it waits (the iOS Connecting screen);
+  `clientFrontAwaitJoin` is that step in a loop.
 - **The sim-state-guarded `frontEnd*` bodies** —
   `client_frontend_common.c`. Several callbacks carry
   guard logic that is part of the contract, not cosmetics:
   `frontEndRedrawAll` skips the game-frame blit when `!clientSimIsRunning`
   or `clientSimIsInLobby` (so a mid-lobby roster update does not stomp
   the lobby UI); the status/draw callbacks drop stale-sim events via the
-  active-`ClientSim` guard; the settings toggles persist through
+  active-`ClientSim` guard, whose test is `clientFrontIsActiveUiSim`
+  (`client_frontend_common.h`) so the callbacks a driver keeps for itself
+  make the same one; the settings toggles persist through
   `gameFrontSaveCurrentPrefs`. These guards belong in shared code so a
   platform cannot silently omit one.
 - **The tutorial step sequencer** — also in `client_frontend_common.c`,
@@ -645,6 +650,18 @@ If the new accessor would expose a T2 struct by value, forward-declare
 it as opaque in the T1 header and add getter/setter functions for
 the fields the client actually needs. Opacity is what makes T1 a
 real boundary instead of a documentation convention.
+
+The same goes for a platform that has to do part of a sim-side job its
+own way. LAN discovery is the example: iOS lets an app send raw mDNS
+only with Apple's multicast entitlement, so `src/bolo/public/discovery.h`
+has a door for the platform rather than an iOS branch in
+`src/bolo/discovery_mdns.c`. `discoverySetMdnsBrowser` hands discovery a
+browser that `discoveryFindMdnsGamesAsync` runs in place of the raw
+socket, `discoveryMdnsAbortRequested` lets that browser see a cancelled
+search, and `discoveryServerFromMdns` reads what it resolved with the
+same TXT key schema the raw browser uses. `src/gui/ios/ios_discovery.m`,
+which browses through the system's Bonjour API, is the one user; the
+other targets never set a browser.
 
 ## Adding a feature end-to-end
 
@@ -1778,6 +1795,15 @@ them every frame.
 
 `src/gui/sdl3/dialogs/imgui_keysetup.cpp` is the canonical reference —
 copy its context setup and per-frame preamble when adding a dialog.
+The iOS Connecting screen (`imgui_connecting.cpp`) follows the same
+contract.
+
+On iOS, `dialogDrawNavOutline` (`imgui_nav_outline.cpp`), which every
+dialog calls once a frame before `ImGui::Render()`, also runs the
+shared touch handling in `imgui_touch.cpp`: the on-screen keyboard
+without auto-capitalisation or autocorrect, and dragging a finger to
+scroll. A dialog gets both by calling the nav outline as the contract
+already asks.
 
 ### Contract — every standalone dialog must also end the application
 
@@ -1861,8 +1887,11 @@ short-lived server-scoped `player_key`
 (`winbolonetClientJoinSession`, called from the transport on
 JOIN / rejoin / re-auth — see "Cross-tier dependency" below),
 and to fetch user-facing data (`wbn_comments`). It depends on
-`winbolonet_core`. Linked into binaries with a UI, plus
-WinBoloDS and WinBoloHeadless — those two pull it solely to
+`winbolonet_core`. A stored token is checked with
+`winbolonetAuthValidateEx`, which also says whether WinBolo.net
+answered and turned the token down; a frontend clears the token only
+then, so a check that got no answer does not sign the player out.
+Linked into binaries with a UI, plus WinBoloDS and WinBoloHeadless — those two pull it solely to
 satisfy `winbolonetClientJoinSession`, which the per-target
 `transport_udp_client.c` references unconditionally (see
 "Cross-tier dependency" below). The stub-set binaries
@@ -2764,10 +2793,10 @@ the target deliberately doesn't link:
   `serverInstanceStartup` forwards to `serverSimApplyInstanceConfig` and
   its `serverInstanceTick` calls `serverSimLocalTick` for the
   single-player game.
-- WinBolo's embedded map editor TUs (`src/mapeditor/mapeditor.c`,
-  `mapeditor_export.c`, `mapeditor_validate.c`) — sim-co-owner files
-  from the editor that need T2 access regardless of which binary
-  they're compiled into.
+- The embedded map editor TUs in WinBolo and WinBoloIOS
+  (`src/mapeditor/mapeditor.c`, `mapeditor_export.c`,
+  `mapeditor_validate.c`) — sim-co-owner files from the editor that
+  need T2 access regardless of which binary they're compiled into.
 
 **Frontend sim-driver without per-actor ClientSim.** A frontend that
 drives an in-process ServerSim with bots but doesn't allocate a
