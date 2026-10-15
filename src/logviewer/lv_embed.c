@@ -332,7 +332,7 @@ bool lvHostSetupCore(SDL_Window *window, SDL_Renderer *renderer,
 void lvHostTeardownCommon(bool withImGui) {
     lv_windowStop(FALSE);
     if (withImGui) {
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(__IPHONEOS__)  /* iOS has no menu bar */
         /* Restore the previously-installed NSMenu (WinBolo's, when embedded;
          * empty stub when standalone since the process is exiting). */
         lv_mac_menubar_uninstall();

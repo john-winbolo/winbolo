@@ -693,7 +693,7 @@ static void lobbyNameJumpToPlayer(ClientSim *cs, int slot) {
          * case: no affordance, nothing moves. */
         if (!ls->playerName[0]) return;
         if (!ImGui::IsItemHovered()) return;
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         ImVec2 rmn = ImGui::GetItemRectMin();
         ImVec2 rmx = ImGui::GetItemRectMax();
@@ -703,7 +703,7 @@ static void lobbyNameJumpToPlayer(ClientSim *cs, int slot) {
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             lvEmbedFocusPlayerByName(ls->playerName);
         }
-#endif /* !BOLO_MOBILE */
+#endif /* BOLO_LOBBY_REEL */
         return;
     }
 
@@ -755,9 +755,9 @@ void lobbyRecapRowJump(ClientSim *cs, int slot, bool isBot) {
     if (slot < 0 || slot >= MAX_TANKS) return;
     const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)slot);
     if (!ls || !ls->playerName[0]) return;
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
     lvEmbedFocusPlayerByName(ls->playerName);
-#endif /* !BOLO_MOBILE */
+#endif /* BOLO_LOBBY_REEL */
 }
 
 void lobbyRenderTeamGroupedPlayers(ClientSim *cs,

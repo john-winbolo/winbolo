@@ -65,8 +65,11 @@ extern "C" {
 #include "../input_gamepad.h"
 }
 
+/* The window size the browser asks for; a mobile window is the whole screen. */
+#if !BOLO_MOBILE
 static const int DIALOG_W = 1024;
 static const int DIALOG_H = 768;
+#endif
 
 /* ---- Data structures ---- */
 

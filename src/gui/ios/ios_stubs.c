@@ -107,7 +107,10 @@ void mapEditorRun(void *window, void *renderer, const char *mapPath, bool fromMa
     (void)window; (void)renderer; (void)mapPath; (void)fromMainMenu;
 }
 
-/* ---- log viewer stubs (not available on iOS) ---- */
+/* ---- log viewer stubs (the modal viewer is not built on iOS) ----
+ *
+ * The WinBolo.net log browser downloads to memory on mobile, so nothing on
+ * iOS opens a log by path. */
 
 void logViewerRun(void *window, void *renderer, const char *logPath, bool fromMainMenu) {
     (void)window; (void)renderer; (void)logPath; (void)fromMainMenu;
@@ -126,24 +129,8 @@ bool mapEditorAppQuitRequested(void) { return false; }
  * pointers. */
 void mapEditorSetSettingsHandler(void (*fn)(void)) { (void)fn; }
 
-#include <stdint.h>
-#include <stddef.h>
-
-void logViewerRunFromMemory(void *window, void *renderer, uint8_t *zipData, size_t zipLen, bool fromMainMenu) {
-    (void)window; (void)renderer; (void)zipData; (void)zipLen; (void)fromMainMenu;
-}
-
-/* ---- WBN browser stub (imgui_wbn_browser.cpp is not built on iOS) ---- */
-
-#include "../sdl3/dialogs/imgui_wbn_browser.h"
-
-WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window,
-                                     struct SDL_Renderer *renderer) {
-    (void)window; (void)renderer;
-    WbnBrowserResult r = {0};
-    r.action = WBN_BROWSER_CLOSE;
-    return r;
-}
+/* logViewerRunFromMemory, which the WinBolo.net log browser's downloads come
+ * to, is in ios_log_player.cpp: it plays the game in the lobby's reel. */
 
 /* ---- server lifecycle (local-only) ----
  *
@@ -229,35 +216,6 @@ void winbolonetSetLobbyInfo(const WbnLobbyInfo *info) { (void)info; }
 
 void winbolonetSendLobbyUpdate(void) { }
 
-/* ---- log stubs (log.c requires minizip/zlib) ---- */
-
-#include "log.h"
-
-void logCreate(void) {}
-void logWriteEmpty(void) {}
-void logWriteEvents(BYTE key) { (void)key; }
-void logWriteTick(void) {}
-void logStop(void) {}
-bool logIsRecording(void) { return false; }
-void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, unsigned short short1, char *words) {
-    (void)itemNum; (void)opt1; (void)opt2; (void)opt3; (void)opt4; (void)short1; (void)words;
-}
-void logDestroy(void) {}
-bool logStart(char *fn, ServerSim *ssim, BYTE ai, BYTE maxPlayers, bool usePassword) {
-    (void)fn; (void)ssim; (void)ai; (void)maxPlayers; (void)usePassword;
-    return false;
-}
-bool logWriteSnapshot(ServerSim *ssim, bool check) {
-    (void)ssim; (void)check;
-    return false;
-}
-bool logCheckTankSame(BYTE playerNum, BYTE mx, BYTE my, BYTE pxy, BYTE opt) {
-    (void)playerNum; (void)mx; (void)my; (void)pxy; (void)opt;
-    return true;
-}
-void logSetLobbyMode(bool enabled) { (void)enabled; }
-void logAddMapName(ServerSim *ssim) { (void)ssim; }
-
 /* ---- winbolonet server stub: session end ----
  *
  * gamefront.c ends a hosted session before it leaves; there is never one
@@ -265,24 +223,23 @@ void logAddMapName(ServerSim *ssim) { (void)ssim; }
 
 void winbolonetEndSession(uint32_t drainMaxMs) { (void)drainMaxMs; }
 
-/* ---- dedicated-server round log stubs ----
+/* ---- round log hand-offs to the hosting server ----
  *
- * The .wbv round log the host records and uploads lives in
- * server_dedicated_log.c (server_static), which iOS does not link because a
- * phone does not host games. gamefront.c drives these on every game start
- * and leave, so they need bodies; there is never a round to stash or send. */
+ * server_round_log_static records single-player rounds for the lobby's replay
+ * reel, as on the desktop. It hands its round-log source to the UDP server and
+ * its stash and flush hooks to the dedicated server's lifecycle; iOS links
+ * neither, because a phone does not host games, so there is no one to give
+ * them to. The web client stubs the same two (src/wasm/server_stubs_wasm.c). */
 
-#include "../../server/server_dedicated_log.h"
+#include "transport_udp.h"   /* RoundLogSource */
+#include "../../server/server_lifecycle.h"  /* serverLifecycleSetRoundLogHooks */
 
-void serverDedicatedLogInstall(struct ServerSim *sim, bool dontSendLogFlag) {
-    (void)sim; (void)dontSendLogFlag;
+void transportUdpServerSetRoundLogSource(const RoundLogSource *src) {
+    (void)src;
 }
-void serverDedicatedLogUninstall(void) {}
-void serverDedicatedLogSetServeMode(int mode) { (void)mode; }
-void serverDedicatedLogSetCompletedPath(const char *path) { (void)path; }
-void serverDedicatedLogStashCurrentRound(void) {}
-void serverDedicatedLogFlushPendingUpload(void) {}
-bool serverDedicatedLogHasPendingUpload(void) { return false; }
+void serverLifecycleSetRoundLogHooks(void (*stash)(void), void (*flush)(void)) {
+    (void)stash; (void)flush;
+}
 
 /* ---- macOS menu-bar stubs ----
  *

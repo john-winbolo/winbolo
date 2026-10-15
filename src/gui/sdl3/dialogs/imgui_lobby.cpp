@@ -246,7 +246,7 @@ extern "C" void imguiLobbyFrameReset(void) {
      * recap, not on whatever the last session was left looking at. */
     lobbyRecapReset();
 
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
     /* The reel holds the viewer's decoder singleton — never leave it running
      * past the lobby session. */
     lobbyReelEnd();
@@ -2508,7 +2508,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * or folded the settings header away. */
         lobbyScenarioChooserRenderWindow(cs, s, winW, winH);
 
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
     /* The reel outlives any single body render. Once the summary is gone (the
      * countdown clears it) drop the reel and the per-summary load latch —
      * unconditionally, since a round whose load failed leaves the latch set

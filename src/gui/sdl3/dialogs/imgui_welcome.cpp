@@ -442,6 +442,9 @@ extern "C" int imguiWelcomeShow(void) {
 #endif
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
                 { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    showDesktopTools, nullptr },
+#endif
+                /* Android does not compile the log browser or the reel. */
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
                 { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    showDesktopTools, nullptr },
 #endif
                 { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true,             nullptr },

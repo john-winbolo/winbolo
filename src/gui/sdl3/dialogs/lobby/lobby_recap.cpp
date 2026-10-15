@@ -266,13 +266,13 @@ static bool lastRoundDrawSkull(void) {
 void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
     const RoundStatsSummary *st = clientSimGetLastRoundStats(cs);
     if (!st) {
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
         lobbyReelEnd();
 #endif
         return;
     }
 
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
     /* Height of the container the body is about to fill, and where it starts,
      * so the tail of this function can see how much of it went unused and feed
      * that back into the reel. */
@@ -321,7 +321,7 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
                  * carries are the scorer's own units and do not convert at any
                  * rate this side knows. */
                 unsigned secs = (unsigned)(h->startMs / 1000u);
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
                 /* While a reel is up the whole row is a seek target: a selectable
                  * underneath for the hit area and controller focus, with the row's
                  * own two-tone text drawn back over it (text is not interactive,
@@ -906,7 +906,7 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
     lobbyClipGifRender(s);
 #endif
 
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
     /* What the body did not use goes to the reel next frame. One frame of lag
      * is inherent — the cost of everything below the reel is only known once
      * it has been drawn — so switching between the desktop column and the

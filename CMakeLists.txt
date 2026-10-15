@@ -1305,6 +1305,68 @@ target_sources(WinBoloIOS PRIVATE
 target_link_libraries(WinBoloIOS PRIVATE Opus::opus speexdsp)
 target_compile_definitions(WinBoloIOS PRIVATE WINBOLO_VOICE=1 WINBOLO_VOICE_AEC=1)
 
+# The lobby's replay reel and the rounds it plays. The log viewer's decoder,
+# renderer and embedded reel host (lv_embed.c) are the set the web client
+# links (src/wasm/CMakeLists.txt, LOGVIEWER_SOURCES, and its "Never add here"
+# list applies here too), with the desktop's platform drivers in place of
+# the wasm ones, except the dialogs, which have an iOS driver. The modal
+# viewer, logviewer.c, is not built; the WinBolo.net log browser opens a game
+# in the reel instead. Rounds are recorded by server_round_log_static,
+# installed by gameFrontSetupServer for single player as on the desktop, with
+# log.c from bolo_static.
+set(IOS_LOGVIEWER_SOURCES
+    src/logviewer/lv_embed.c
+    src/logviewer/lv_embed_stubs.c
+    src/logviewer/blocks.c
+    src/logviewer/lv_attribution.c
+    src/logviewer/snapshot.c
+    src/logviewer/screen.c
+    src/logviewer/screencalc.c
+    src/logviewer/screentank.c
+    src/logviewer/screenlgm.c
+    src/logviewer/screenbullet.c
+    src/logviewer/spec_seed_load.c
+    src/logviewer/players.c
+    src/logviewer/shells.c
+    src/logviewer/allience.c
+    src/logviewer/pillbox.c
+    src/logviewer/bases.c
+    src/logviewer/bolo_map.c
+    src/logviewer/starts.c
+    src/logviewer/labels.c
+    src/logviewer/messages.c
+    src/logviewer/sounddist.c
+    src/logviewer/global.c
+    src/logviewer/util.c
+    src/logviewer/draw.c
+    src/logviewer/game_view_stubs.c
+    src/logviewer/clientmutex.c
+    src/logviewer/dns.c
+    src/logviewer/platform/platform_config.c
+    # platform/platform_dialogs.c runs its file pickers through system() and
+    # popen(), which iOS does not have.
+    src/logviewer/ios/platform_dialogs_ios.c
+)
+target_sources(WinBoloIOS PRIVATE ${IOS_LOGVIEWER_SOURCES})
+source_group("Log Viewer" FILES ${IOS_LOGVIEWER_SOURCES})
+# After src/gui, so a GUI source's "tiles.h" / "positions.h" still resolves
+# to its own; the log viewer's sources reach their copies through their own
+# directory.
+target_include_directories(WinBoloIOS PRIVATE
+    src/logviewer
+    src/logviewer/imgui
+    src/logviewer/platform
+)
+target_link_libraries(WinBoloIOS PRIVATE server_round_log_static)
+# The WinBolo.net log browser ("My Games" and the welcome screen's Log Viewer
+# entry) and the screen that plays a game it downloads in the reel
+# (ios_log_player.cpp, in place of the modal viewer). Its star rating widget
+# is already in the news and ratings block above.
+target_sources(WinBoloIOS PRIVATE
+    src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
+    src/gui/ios/ios_log_player.cpp
+)
+
 target_sources(WinBoloIOS PRIVATE src/steam/steam_wrapper_stub.c)
 target_sources(WinBoloIOS PRIVATE src/common/wb_log.c)
 target_sources(WinBoloIOS PRIVATE src/common/md5.c)

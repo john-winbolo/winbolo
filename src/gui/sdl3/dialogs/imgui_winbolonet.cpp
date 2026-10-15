@@ -1013,11 +1013,12 @@ extern "C" void imguiWinbolonetDrawStatsDialog(void) {
      * Esc closes the dialog rather than signing out. The buttons share a
      * width and are centred as a group, mirroring the standard dialog
      * footer. My Games opens the WBN log browser, which defaults to its
-     * My Games tab; it is gated to the same desktop, non-controller builds
+     * My Games tab; it is gated to the same desktop and iOS, non-controller builds
      * as the welcome screen's Log Viewer entry. */
     const char *signOutLbl = langGetText(STR_DLGWBN_SIGN_OUT);
     const char *closeLbl    = langGetText(STR_OK);
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    /* Android does not compile the log browser or the reel. */
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
     const bool showMyGames  =
         !inputGamepadRealControllerConnected() && !uiModeIsSteamDeck();
     const char *myGamesLbl  = langGetText(STR_DLGWBN_TAB_MYGAMES);
