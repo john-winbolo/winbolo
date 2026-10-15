@@ -170,7 +170,7 @@ static const VizMeta kVizMeta[] = {
     {"attack_scan_spots", VCAT_PILLTAKE, false}, {"attack_scan_spots_all_pills", VCAT_PILLTAKE, false},
     {"attack_clear_reason", VCAT_PILLTAKE, true},{"attack_chosen_standoff_marker", VCAT_PILLTAKE, false},
     {"attack_pill_pickup_path", VCAT_PILLTAKE, false},
-    {"fast_approach", VCAT_PILLTAKE, false},
+    {"fast_approach", VCAT_PILLTAKE, false},     {"attack_pill_approach", VCAT_PILLTAKE, true},
     /* Squad / blitz */
     {"blitz_comm_lines", VCAT_SQUAD, false}, {"blitz_joinable", VCAT_SQUAD, true},
     {"squad_roster", VCAT_SQUAD, true},      {"blitz_call", VCAT_SQUAD, false},

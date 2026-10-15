@@ -7277,6 +7277,25 @@ local function update_attack_substate_body(goal, state, world, info)
       local awx = math.floor(afx * 256 + 0.5)
       local awy = math.floor(afy * 256 + 0.5)
       local adist = U.wdist(info.tankx, info.tanky, awx, awy)
+      -- Approach-spot marker: the point this substate drives to (the same
+      -- approach_fx/fy that APPROACH_TICK logs), a line on to the standoff
+      -- and a line on to the pill. Cyan so it is not confused with
+      -- kill_lgm_engage's magenta "APPROACH" ring, which marks a kill_lgm
+      -- option and not this goal.
+      if BRAIN_DEBUG_MODE and viz.is_on("attack_pill_approach") then
+        local R, G, B = 0, 210, 255
+        viz.circle("attack_pill_approach", afx, afy, 0.45, R, G, B, 240)
+        viz.circle("attack_pill_approach", afx, afy, 0.10, R, G, B, 255)
+        viz.text("attack_pill_approach", afx, afy + 0.6,
+                 string.format("PILL APPROACH (%d,%d)", math.floor(afx), math.floor(afy)),
+                 "center", R, G, B, 255, 0.4)
+        local sfx = goal.standoff_fx or (goal.standoff_mx and goal.standoff_mx + 0.5)
+        local sfy = goal.standoff_fy or (goal.standoff_my and goal.standoff_my + 0.5)
+        if sfx and sfy then
+          viz.line("attack_pill_approach", afx, afy, sfx, sfy, R, G, B, 200)
+          viz.line("attack_pill_approach", sfx, sfy, pmx + 0.5, pmy + 0.5, R, G, B, 140)
+        end
+      end
       if now % 25 == 0 then
         print2(string.format("APPROACH_TICK t=%d adist=%.0f tank=(%d,%d) approach_wu=(%d,%d) standoff=(%.1f,%.1f) last_prog=%d last_dist=%s",
           now, adist, info.tankx, info.tanky, awx, awy,

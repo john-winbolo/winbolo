@@ -6712,6 +6712,11 @@ local function update_attack_substate_body(goal, state, world, info)
       local awx = math.floor(afx * 256 + 0.5)
       local awy = math.floor(afy * 256 + 0.5)
       local adist = U.wdist(info.tankx, info.tanky, awx, awy)
+      -- Approach-spot marker: the point this substate drives to (the same
+      -- approach_fx/fy that APPROACH_TICK logs), a line on to the standoff
+      -- and a line on to the pill. Cyan so it is not confused with
+      -- kill_lgm_engage's magenta "APPROACH" ring, which marks a kill_lgm
+      -- option and not this goal.
       if now % 25 == 0 then
       end
       -- Closing the distance counts as progress and resets the timer.
