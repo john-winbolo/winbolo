@@ -144,7 +144,7 @@ typedef struct SimRules {
     int32_t lgm_helicopter_speed;  /* also the parachute delay: distance / speed */
     int32_t lgm_arrive_tolerance;  /* how near his goal counts as arrived */
     int32_t lgm_return_tolerance;  /* the same, coming back to the tank */
-    int32_t lgm_pill_drop_search;  /* squares a column of the drop search walks */
+    int32_t lgm_pill_drop_search;  /* read by nothing; see lgm.h */
     int32_t lgm_boat_leave_offset; /* how far out he steps onto a boat */
     int32_t lgm_boat_return_offset;
 
