@@ -2514,7 +2514,7 @@ static const LangEntry langTable[] = {
     {2510, "The fastest the builder may walk over a base."},
     {2511, "How near his goal the builder has to be to count as arrived."},
     {2512, "How near the tank the builder has to be to count as back."},
-    {2513, "Squares a column of the pillbox drop search walks."},
+    {2513, "Removed, does nothing."},
     {2514, "How far out the builder steps to board a boat."},
     {2515, "How far the builder steps coming back off a boat."},
     {2516, "Armour one shell takes off a pillbox."},
