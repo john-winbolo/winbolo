@@ -63,6 +63,10 @@ typedef struct {
   float gsIncCenterX, gsIncCenterY, gsIncRadius;
   float gsDecCenterX, gsDecCenterY, gsDecRadius;
 
+  /* Voice talk button (circle) — right of the gunsight pair, above fire.
+     Laid out every frame; drawn only while voice can reach anyone. */
+  float talkCenterX, talkCenterY, talkRadius;
+
   /* Build bar — vertical right column */
   float buildIconSize;
   float buildSpacing;

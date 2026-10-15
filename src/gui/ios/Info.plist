@@ -24,6 +24,8 @@
     <true/>
     <key>UIApplicationSupportsIndirectInputEvents</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>WinBolo uses the microphone for voice chat with other players while voice chat is switched on.</string>
     <key>UILaunchScreen</key>
     <dict>
         <key>UIColorName</key>

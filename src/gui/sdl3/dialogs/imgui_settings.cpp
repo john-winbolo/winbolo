@@ -695,6 +695,14 @@ extern "C" void imguiSettingsVoiceModeCombo(float comboWidth) {
 }
 
 extern "C" bool imguiSettingsVoiceDeviceCombo(bool recording, float comboWidth) {
+#if defined(__IPHONEOS__)
+    /* iOS picks the route itself - speaker, wired or Bluetooth headset - and
+       SDL's CoreAudio driver there reports only the one default device each
+       way, so there is nothing to choose between.  Left out as on the web. */
+    (void)recording;
+    (void)comboWidth;
+    return false;
+#endif
     voiceRefreshDeviceLists();
     int count = recording ? s_voiceMicCount : s_voiceOutCount;
     /* Left out entirely where there is nothing to choose between — the web

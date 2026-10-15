@@ -9,7 +9,7 @@
 *Purpose:
 *  Renders the tablet-mode ImGui overlay:
 *  - Floating virtual joystick visualization
-*  - Action buttons (fire, mine, gunsight, view toggle)
+*  - Action buttons (fire, mine, gunsight, view toggle, voice talk)
 *  - Vertical build select bar (right side)
 *  - Top bar (players, messages, settings icons)
 *  - Resource bars (tank S/M/A/T + closest base S/M/A)
@@ -53,6 +53,9 @@ extern "C" {
 #include "sdl3draw.h"
 #include "build_cursor.h"
 #include "scenario_panel_slot.h"
+#if defined(WINBOLO_VOICE)
+#include "../voice.h"  /* the talk button: mode, enabled, muted, transmitting */
+#endif
 }
 
 #include "sdl3imgui.h"
@@ -82,6 +85,13 @@ static SDL_Texture *s_iconPlayers  = nullptr;
 static SDL_Texture *s_iconMessages = nullptr;
 static SDL_Texture *s_iconSettings = nullptr;
 static bool s_iconsLoaded = false;
+
+#if defined(WINBOLO_VOICE)
+/* Talk button icons (white SVG masks, loaded on first draw of the button) */
+static SDL_Texture *s_iconMic      = nullptr;
+static SDL_Texture *s_iconMicMuted = nullptr;
+static bool s_micIconsLoaded = false;
+#endif
 
 static void ensureIconsLoaded(int size) {
   if (s_iconsLoaded) return;
@@ -196,6 +206,22 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->gsDecCenterY = gsRowY;
   cfg->gsIncCenterX = gutterCenterX + cfg->gsIncRadius + gsGap * 0.5f;
   cfg->gsIncCenterY = gsRowY;
+
+  /* Voice talk button — same row as the gunsight pair, in the space between
+     the increase button and the right edge, so it sits above the fire button
+     and below the scroll joystick zone.  Shrunk when that space is narrower
+     than a gunsight button, rather than moved over something else. */
+  {
+    float spaceLeft = cfg->gsIncCenterX + cfg->gsIncRadius + pad;
+    float spaceRight = rightEdge - pad;
+    cfg->talkRadius = cfg->gsIncRadius;
+    if ((spaceRight - spaceLeft) * 0.5f < cfg->talkRadius) {
+      cfg->talkRadius = (spaceRight - spaceLeft) * 0.5f;
+    }
+    if (cfg->talkRadius < 0.0f) cfg->talkRadius = 0.0f;
+    cfg->talkCenterX = spaceRight - cfg->talkRadius;
+    cfg->talkCenterY = gsRowY;
+  }
 
   /* Item views / Tank view — vertical stack in gap between viewport edge and
      mine button. Every button is here; tabletViewButtonsApplyPolicies drops
@@ -774,6 +800,73 @@ static void renderGunsightButtons(void) {
   ImVec2 incSize = ImGui::CalcTextSize(incLabel);
   dl->AddText(ImVec2(s_cfg.gsIncCenterX - incSize.x * 0.5f, s_cfg.gsIncCenterY - incSize.y * 0.5f),
               scaleAlpha(IM_COL32(255, 255, 255, 220), incAlpha), incLabel);
+}
+
+/* -------------------------------------------------------
+ * Voice talk button
+ * ------------------------------------------------------- */
+
+/* Whether the talk button is on screen: voice is switched on, the chosen
+   mode sends audio, and this connection carries the player's voice to
+   anyone.  That leaves it off in single player, on a server started with
+   voice off, and for a viewer.  What the button does is decided in input.c
+   with the keys it stands in for: held in push-to-talk mode, and the mute
+   toggle in open mic mode. */
+static bool tabletTalkButtonShown(void) {
+#if defined(WINBOLO_VOICE)
+  return s_cfg.talkRadius > 0.0f && voiceIsEnabled() &&
+         voiceGetMode() != VOICE_MODE_OFF && voiceConnectionCarriesVoice();
+#else
+  return false;
+#endif
+}
+
+static void renderTalkButton(void) {
+#if defined(WINBOLO_VOICE)
+  static bool s_prevTalkPressed = false;
+
+  if (!tabletTalkButtonShown()) {
+    s_prevTalkPressed = false;
+    return;
+  }
+
+  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  float cx = s_cfg.talkCenterX;
+  float cy = s_cfg.talkCenterY;
+  float r = s_cfg.talkRadius;
+  bool held = inputTouchIsButtonHeld(TOUCH_BTN_TALK);
+  bool muted = voiceIsSelfMuted();
+  bool sending = voiceIsTransmitting();
+
+  if (!s_micIconsLoaded) {
+    SDL_Renderer *rend = sdl3DrawGetRenderer();
+    s_micIconsLoaded = true;
+    s_iconMic      = imguiLoadSvgIconWhite(rend, "data/ui/mic.svg", (int)(r * 4.0f));
+    s_iconMicMuted = imguiLoadSvgIconWhite(rend, "data/ui/mic-muted.svg", (int)(r * 4.0f));
+  }
+
+  if (held && !s_prevTalkPressed) {
+    inputTouchTriggerHaptic(0.4f, 20);
+  }
+  s_prevTalkPressed = held;
+
+  float alpha = (held || sending) ? s_cfg.activeOpacity : s_cfg.idleOpacity;
+  /* Green while audio is going out, red outline while the player's own
+     microphone is muted, the plain black and white of the other buttons
+     otherwise. */
+  ImU32 fill = sending ? IM_COL32(30, 130, 50, 200) : IM_COL32(0, 0, 0, 200);
+  ImU32 outline = muted ? IM_COL32(230, 70, 70, 220) : IM_COL32(255, 255, 255, 220);
+  dl->AddCircleFilled(ImVec2(cx, cy), r, scaleAlpha(fill, alpha), 32);
+  dl->AddCircle(ImVec2(cx, cy), r, scaleAlpha(outline, alpha), 32, 2.0f);
+
+  SDL_Texture *icon = muted ? s_iconMicMuted : s_iconMic;
+  if (icon) {
+    float iconHalf = r * 0.6f;
+    dl->AddImage((ImTextureID)icon, ImVec2(cx - iconHalf, cy - iconHalf),
+                 ImVec2(cx + iconHalf, cy + iconHalf), ImVec2(0, 0), ImVec2(1, 1),
+                 scaleAlpha(IM_COL32(255, 255, 255, 255), alpha));
+  }
+#endif
 }
 
 /* -------------------------------------------------------
@@ -1441,6 +1534,10 @@ static void registerTouchButtons(void) {
   for (int i = 0; i < viewBtnCount; i++) {
     inputTouchRegisterButton(viewBtns[i].id, viewBtns[i].cx, viewBtns[i].cy, viewBtns[i].r);
   }
+  if (tabletTalkButtonShown()) {
+    inputTouchRegisterButton(TOUCH_BTN_TALK, s_cfg.talkCenterX, s_cfg.talkCenterY,
+                             s_cfg.talkRadius);
+  }
 }
 
 /* -------------------------------------------------------
@@ -1571,6 +1668,7 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
   renderScrollJoystickOverlay();
   renderFireMineButtons();
   renderGunsightButtons();
+  renderTalkButton();
   renderViewButtons(cs);
   renderBuildSelectBar(cs);
   renderResourceBars(cs);

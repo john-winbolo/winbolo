@@ -122,8 +122,8 @@ bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
 /* Voice settings live in the voice module; these apply them with the same
    clamping the settings dialog uses, and read them back for the save.
    Declared here rather than in winbolo.h so the voice build option does not
-   leak into the shared frontend header — the mobile targets compile this
-   file with no voice sources at all. */
+   leak into the shared frontend header — a target built without voice
+   compiles this file too.  The definitions are in voice_settings.c. */
 void  windowSetVoiceEnabled(bool on);
 bool  windowGetVoiceEnabled(void);
 void  windowSetVoiceMode(int mode);

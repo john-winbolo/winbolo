@@ -34,6 +34,7 @@ typedef enum {
   TOUCH_BTN_BASE_VIEW,
   TOUCH_BTN_ALLY_VIEW,
   TOUCH_BTN_TANK_VIEW,
+  TOUCH_BTN_TALK,  /* voice: hold to talk, or tap to mute in open mic mode */
   TOUCH_BTN_COUNT
 } TouchButtonID;
 

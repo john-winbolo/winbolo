@@ -198,6 +198,7 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
   float fx, fy;
   SDL_FingerID fid;
   bool isDown, isUp, isMotion;
+  bool isCancel = false;
 
   switch (ev->type) {
     case SDL_EVENT_FINGER_DOWN:
@@ -211,6 +212,17 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
       fy = ev->tfinger.y * (float)windowH;
       fid = ev->tfinger.fingerID;
       isDown = false; isUp = true; isMotion = false;
+      break;
+    case SDL_EVENT_FINGER_CANCELED:
+      /* The OS took the touch away (a system gesture, a call, the app going
+         to the background).  Released like a lift, so nothing stays held -
+         the talk button above all, which would leave the microphone sending -
+         but never counted as a tap. */
+      fx = ev->tfinger.x * (float)windowW;
+      fy = ev->tfinger.y * (float)windowH;
+      fid = ev->tfinger.fingerID;
+      isDown = false; isUp = true; isMotion = false;
+      isCancel = true;
       break;
     case SDL_EVENT_FINGER_MOTION:
       fx = ev->tfinger.x * (float)windowW;
@@ -245,7 +257,8 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
 
         /* If this finger was a viewport drag, don't fire a tap */
         bool wasDrag = (s_vpDragTracking && fid == s_vpDragFingerID && s_vpDragActive);
-        if (!wasDrag && dist < TAP_DISTANCE_THRESHOLD && elapsed < TAP_TIME_THRESHOLD_MS) {
+        if (!isCancel && !wasDrag && dist < TAP_DISTANCE_THRESHOLD &&
+            elapsed < TAP_TIME_THRESHOLD_MS) {
           float tx = s_tapTrackers[i].downX;
           float ty = s_tapTrackers[i].downY;
           /* Store as general tap for UI elements (e.g. build bar) */

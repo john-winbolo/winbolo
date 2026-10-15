@@ -36,6 +36,7 @@
 #include "../lang.h"
 #include "../winbolo.h"
 #include "../sound.h"
+#include "../voice.h"
 #include "sdl3draw.h"
 #include "../sdl3/build_cursor.h"
 #include "../sdl3/sdl3imgui.h"
@@ -163,11 +164,36 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
-    /* Configure audio session */
+    /* Configure audio session.
+
+       SDL's CoreAudio backend sets the category itself every time it opens or
+       closes a device, so what is set here only lasts until sound.c opens the
+       game sounds.  With game sounds alone open, SDL picks Playback, mixed with
+       other apps' audio and lowering it.  When voice opens the microphone, SDL
+       moves the session to PlayAndRecord with DefaultToSpeaker (the speaker
+       rather than the earpiece), Bluetooth HFP and A2DP, and AirPlay - the
+       options voice chat needs - and keeps it there, since voice.c never
+       closes the microphone once it has it.  The game sounds pause for a
+       moment while it does so.
+
+       The session is not forced to PlayAndRecord from launch (which the hint
+       SDL_HINT_AUDIO_CATEGORY = "playandrecord" would do): with Bluetooth HFP
+       allowed, a headset that offers both HFP and A2DP is routed over HFP, so
+       a player who never uses voice would hear the game in call quality.
+
+       Set here to the same category and options SDL picks for game sounds,
+       so other apps' audio is not stopped at launch and SDL finds nothing to
+       change when it opens the first device.  Setting the category does not
+       ask for microphone permission; that only happens when voice first opens
+       the microphone, so a player who never turns voice on is never asked. */
     {
         NSError *err = nil;
         AVAudioSession *session = [AVAudioSession sharedInstance];
-        [session setCategory:AVAudioSessionCategoryAmbient error:&err];
+        [session setCategory:AVAudioSessionCategoryPlayback
+                        mode:AVAudioSessionModeDefault
+                     options:AVAudioSessionCategoryOptionMixWithOthers |
+                             AVAudioSessionCategoryOptionDuckOthers
+                       error:&err];
         if (err) WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "AVAudioSession setCategory failed: %s", [[err localizedDescription] UTF8String]);
         [session setActive:YES error:&err];
         if (err) WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "AVAudioSession setActive failed: %s", [[err localizedDescription] UTF8String]);
@@ -204,6 +230,13 @@ int main(int argc, char *argv[]) {
     }
 
     dialogBackendInit();
+
+    /* Voice runs for the life of the process, as on the desktop: it comes up
+       before gameFrontStart, which applies the saved voice settings to it and
+       runs the pre-game dialogs that already expect it.  It opens playback
+       only; the microphone waits until voice is switched on.  A device that
+       will not open is not fatal - voice stays disabled. */
+    voiceInit();
 
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Starting gameFrontStart...");
     if (gameFrontStart("", &keys, FALSE, NULL) == FALSE) {
@@ -295,6 +328,7 @@ ios_game_start:
             clientMutexDestroy();
             sdl3DrawCleanup();
             soundCleanup();
+            voiceCleanup();
             serverSimBotPoolDestroy();
             SDL_Quit();
             return 0;
@@ -354,7 +388,8 @@ ios_game_start:
             if (paused) {
                 if (SDL_WaitEvent(&ev)) {
                     if (uiModeIsTablet()) {
-                        if (ev.type == SDL_EVENT_FINGER_DOWN || ev.type == SDL_EVENT_FINGER_UP || ev.type == SDL_EVENT_FINGER_MOTION) {
+                        if (ev.type == SDL_EVENT_FINGER_DOWN || ev.type == SDL_EVENT_FINGER_UP || ev.type == SDL_EVENT_FINGER_MOTION ||
+                            ev.type == SDL_EVENT_FINGER_CANCELED) {
                             int tw = 0, th = 0;
                             SDL_Renderer *ren = sdl3DrawGetRenderer();
                             if (ren) { SDL_RendererLogicalPresentation m; SDL_GetRenderLogicalPresentation(ren, &tw, &th, &m); }
@@ -394,7 +429,8 @@ ios_game_start:
                    still gates on WantCaptureMouse to avoid conflicts
                    with dialog input. */
                 if (uiModeIsTablet()) {
-                    if (rawEv.type == SDL_EVENT_FINGER_DOWN || rawEv.type == SDL_EVENT_FINGER_UP || rawEv.type == SDL_EVENT_FINGER_MOTION) {
+                    if (rawEv.type == SDL_EVENT_FINGER_DOWN || rawEv.type == SDL_EVENT_FINGER_UP || rawEv.type == SDL_EVENT_FINGER_MOTION ||
+                        rawEv.type == SDL_EVENT_FINGER_CANCELED) {
                         int tw = 0, th = 0;
                         if (ren) { SDL_RendererLogicalPresentation m; SDL_GetRenderLogicalPresentation(ren, &tw, &th, &m); }
                         if (tw <= 0 || th <= 0) SDL_GetWindowSize(sdl3DrawGetWindow(), &tw, &th);
@@ -431,6 +467,11 @@ ios_game_start:
                 windowRunGameTick(cs);
             }
         }
+
+        /* Voice encode/decode runs here, on the main thread, beside the game
+           tick, once a frame as on the desktop - the codec state has no lock
+           of its own. */
+        voiceTick(cs);
 
         /* Render */
         tick = SDL_GetTicks();
@@ -472,6 +513,11 @@ ios_game_start:
 
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Main loop ended, cleaning up");
 
+    /* Release the remote talkers with the game they belong to - player
+       numbers are handed out afresh next time, so a stale decoder would be
+       fed someone else's voice. */
+    voiceReset();
+
     sdl3ImguiCleanup();
     gameFrontEnd(&keys, TRUE, winboloQuit);
 
@@ -487,6 +533,7 @@ ios_game_start:
     clientMutexDestroy();
     sdl3DrawCleanup();
     soundCleanup();
+    voiceCleanup();
     serverSimBotPoolDestroy();
     SDL_Quit();
     return 0;
@@ -635,6 +682,7 @@ void windowSetMasterVolume(int pct) {
     if (pct > 100) pct = 100;
     windowMasterVolume = pct;
     soundSetMasterVolume(pct);
+    voiceSetMasterVolume((float)pct / 100.0f);
 }
 void windowLabelOwnTank_toggle(ClientSim *cs) {
     labelSelf = !labelSelf;

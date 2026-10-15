@@ -534,29 +534,30 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(MAXMINDDB_BUILD_BINARIES OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(libmaxminddb)
     set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE}" CACHE BOOL "" FORCE)
-
-    # libopus — voice codec, forced static
-    set(BUILD_SHARED_LIBS_SAVE3 "${BUILD_SHARED_LIBS}")
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
-    set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
-    set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
-    set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
-    set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(opus)
-    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE3}" CACHE BOOL "" FORCE)
-
-    # SpeexDSP — the acoustic echo canceller in the voice capture path, forced
-    # static.  Its CMake build declares no test or program targets, so there is
-    # nothing of that kind to switch off; the one option it does carry picks
-    # fixed- over floating-point arithmetic, and every platform we build for
-    # has an FPU.
-    set(BUILD_SHARED_LIBS_SAVE4 "${BUILD_SHARED_LIBS}")
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(USE_FIXED_POINT OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(speexdsp)
-    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE4}" CACHE BOOL "" FORCE)
 endif()
+
+# libopus — voice codec, forced static.  Outside the guard above, as is
+# SpeexDSP below: the iOS target builds voice chat as well.
+set(BUILD_SHARED_LIBS_SAVE3 "${BUILD_SHARED_LIBS}")
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(opus)
+set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE3}" CACHE BOOL "" FORCE)
+
+# SpeexDSP — the acoustic echo canceller in the voice capture path, forced
+# static.  Its CMake build declares no test or program targets, so there is
+# nothing of that kind to switch off; the one option it does carry picks
+# fixed- over floating-point arithmetic, and every platform we build for
+# has an FPU.
+set(BUILD_SHARED_LIBS_SAVE4 "${BUILD_SHARED_LIBS}")
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(USE_FIXED_POINT OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(speexdsp)
+set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE4}" CACHE BOOL "" FORCE)
 
 # cJSON — force static.  Outside the guard above: the iOS target compiles
 # src/common/prefs_doc.c and src/bolo/lobby_bot_pools_json.c and links cjson.
@@ -1276,6 +1277,21 @@ if(HAVE_SENTRY_IOS)
         PROPERTIES COMPILE_OPTIONS "-fmodules")
 endif()
 
+# Voice chat: the shared runtime in src/client_frontend and the SDL3 device
+# half in src/gui/sdl3/voice.c, which runs unchanged on iOS because it captures
+# and plays through SDL audio streams.  The same definitions as the desktop
+# WinBolo target, echo cancellation included: SDL's CoreAudio driver does not
+# cancel echo, so voiceBackendOsCancelsEcho answers false here and Speex does
+# the work, as it does on macOS.
+target_sources(WinBoloIOS PRIVATE
+    src/client_frontend/voice_core.c
+    src/client_frontend/voice_client.c
+    src/client_frontend/voice_aec.c
+    src/gui/sdl3/voice.c
+    src/gui/sdl3/voice_settings.c)
+target_link_libraries(WinBoloIOS PRIVATE Opus::opus speexdsp)
+target_compile_definitions(WinBoloIOS PRIVATE WINBOLO_VOICE=1 WINBOLO_VOICE_AEC=1)
+
 target_sources(WinBoloIOS PRIVATE src/steam/steam_wrapper_stub.c)
 target_sources(WinBoloIOS PRIVATE src/common/wb_log.c)
 target_sources(WinBoloIOS PRIVATE src/common/md5.c)
@@ -1342,8 +1358,9 @@ endif()
 
 # Voice capture-chain recorder: WAV taps at each stage of the capture chain,
 # the two CSVs, and the WAV injection path (src/client_frontend/voice_debug.c).
-# OFF in every shipping build. The source is on the WinBolo target only, which
-# is the only target that compiles voice_client.c.
+# OFF in every shipping build. The source is on the WinBolo target only; the
+# iOS target also compiles voice_client.c but is configured in the iOS branch
+# above, which never reads this option.
 option(WB_VOICEDEBUG "Build the voice capture-chain recorder" OFF)
 if(WB_VOICEDEBUG)
     add_compile_definitions(WB_VOICEDEBUG=1)
@@ -1761,6 +1778,7 @@ set(CLIENT_SOURCES
     src/client_frontend/voice_core.c
     src/client_frontend/voice_client.c
     src/gui/sdl3/voice.c
+    src/gui/sdl3/voice_settings.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     # The scenario panel: the script buffer and the file handling in C, the
     # manifest its metadata, lobby and rules forms edit, the container that
@@ -1983,14 +2001,15 @@ target_compile_definitions(WinBolo PRIVATE WINBOLO_VOICE=1)
 
 # Acoustic echo cancellation of remote voice out of the microphone
 # (src/client_frontend/voice_aec.c).  This target only: the browser build uses
-# getUserMedia's own canceller and never sees SpeexDSP, and no other target
-# compiles the voice sources at all.
+# getUserMedia's own canceller and never sees SpeexDSP, and the iOS target
+# sets the same three lines in its own block.
 target_sources(WinBolo PRIVATE src/client_frontend/voice_aec.c)
 target_link_libraries(WinBolo PRIVATE speexdsp)
 target_compile_definitions(WinBolo PRIVATE WINBOLO_VOICE_AEC=1)
 
 # The capture-chain recorder (WB_VOICEDEBUG above). This target only: it is
-# called from voice_client.c and winbolo.c, which nothing else compiles.
+# called from voice_client.c and winbolo.c, and the iOS target never defines
+# WB_VOICEDEBUG.
 if(WB_VOICEDEBUG)
     target_sources(WinBolo PRIVATE src/client_frontend/voice_debug.c)
 endif()

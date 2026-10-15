@@ -198,13 +198,20 @@ static bool overviewOwnsScrollKeys(ClientSim *cs) {
 *  as held, so an unbound push-to-talk simply never
 *  transmits.
 *
+*  The talk button of the tablet overlay counts as the key
+*  in push-to-talk mode.  In open mic mode the same button
+*  is the mute toggle instead; see muteMicPoll.
+*
 *ARGUMENTS:
 *  setKeys - Structure that holds the key settings
 *  active  - FALSE when this poll is not reading input
 *********************************************************/
 void inputPushToTalkPoll(keyItems *setKeys, bool active) {
 #if defined(WINBOLO_VOICE)
-  voiceSetPushToTalkHeld(active && KEY_DOWN(setKeys->kiPushToTalk));
+  bool touchHeld = voiceGetMode() == VOICE_MODE_PTT &&
+                   inputTouchIsButtonHeld(TOUCH_BTN_TALK);
+  voiceSetPushToTalkHeld(active &&
+                         (KEY_DOWN(setKeys->kiPushToTalk) || touchHeld));
 #else
   (void)setKeys;
   (void)active;
@@ -227,6 +234,10 @@ void inputPushToTalkPoll(keyItems *setKeys, bool active) {
 *  down when focus returns.  It stays in-game only: the mute
 *  in the lobby is a checkbox there.
 *
+*  In open mic mode the talk button of the tablet overlay
+*  counts as the mute key, since there is nothing to hold
+*  down to talk in that mode.
+*
 *ARGUMENTS:
 *  setKeys - Structure that holds the key settings
 *  active  - FALSE when this poll is not reading input
@@ -234,7 +245,9 @@ void inputPushToTalkPoll(keyItems *setKeys, bool active) {
 static void muteMicPoll(keyItems *setKeys, bool active) {
 #if defined(WINBOLO_VOICE)
   static bool prevDown = false;
-  bool down = active && KEY_DOWN(setKeys->kiMuteMic);
+  bool touchDown = voiceGetMode() == VOICE_MODE_OPEN &&
+                   inputTouchIsButtonHeld(TOUCH_BTN_TALK);
+  bool down = active && (KEY_DOWN(setKeys->kiMuteMic) || touchDown);
   if (down && !prevDown) {
     voiceSetSelfMuted(!voiceIsSelfMuted());
   }

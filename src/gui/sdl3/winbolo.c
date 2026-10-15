@@ -75,9 +75,6 @@
 #include "../lang.h"
 #include "../sound.h"
 #include "../voice.h"
-#if defined(WINBOLO_VOICE_AEC)
-#include "voice_aec.h"
-#endif
 #if defined(WB_VOICEDEBUG)
 #include "voice_debug.h"
 #endif
@@ -1817,107 +1814,8 @@ void windowSetMasterVolume(int pct) {
   voiceSetMasterVolume((float)pct / 100.0f);
 }
 
-/* -------------------------------------------------------
- * Voice settings — apply a value to the running voice module
- * and clamp it to the range the UI offers, in one place, so
- * the settings dialog and the prefs loader agree.  The voice
- * module itself holds the value; gameFrontPutPrefs reads it
- * back out through the getters below at save time.
- * ------------------------------------------------------- */
-void windowSetVoiceEnabled(bool on) {
-  voiceSetEnabled(on);
-}
-
-bool windowGetVoiceEnabled(void) {
-  return voiceIsEnabled();
-}
-
-void windowSetVoiceMode(int mode) {
-  if (mode < VOICE_MODE_OFF || mode > VOICE_MODE_OPEN) {
-    mode = VOICE_MODE_PTT;
-  }
-  voiceSetMode((VoiceMode)mode);
-}
-
-int windowGetVoiceMode(void) {
-  return (int)voiceGetMode();
-}
-
-void windowSetVoiceMicGain(float gain) {
-  if (gain < 0.0f) gain = 0.0f;
-  if (gain > 4.0f) gain = 4.0f;
-  voiceSetMicGain(gain);
-}
-
-float windowGetVoiceMicGain(void) {
-  return voiceGetMicGain();
-}
-
-void windowSetVoiceVolume(float gain) {
-  if (gain < 0.0f) gain = 0.0f;
-  if (gain > 2.0f) gain = 2.0f;
-  voiceSetOutputVolume(gain);
-}
-
-float windowGetVoiceVolume(void) {
-  return voiceGetOutputVolume();
-}
-
-/* The chosen audio devices, by display name, "" for the system default.
- * Nothing to clamp — the voice module holds the name and truncates it — but
- * they sit with the rest of the façade so gameFrontPutPrefs reads them back
- * the same way as everything else here. */
-void windowSetVoiceRecordingDevice(const char *name) {
-  voiceSetRecordingDevice(name);
-}
-
-const char *windowGetVoiceRecordingDevice(void) {
-  return voiceGetRecordingDevice();
-}
-
-void windowSetVoicePlaybackDevice(const char *name) {
-  voiceSetPlaybackDevice(name);
-}
-
-const char *windowGetVoicePlaybackDevice(void) {
-  return voiceGetPlaybackDevice();
-}
-
-#if defined(WINBOLO_VOICE_AEC)
-/* Echo cancellation of the other players' voices out of this microphone.
- * Same shape as the voice settings above: the canceller module holds the
- * switch and gameFrontPutPrefs reads it back through the getter. */
-void windowSetVoiceEchoCancel(bool on) {
-  voiceAecSetEnabled(on);
-}
-
-bool windowGetVoiceEchoCancel(void) {
-  return voiceAecIsEnabled();
-}
-
-/* Whether a canceller came up at all, which the getter above cannot say -
- * it reports the switch, and the switch is the player's either way. */
-bool windowGetVoiceEchoCancelAvailable(void) {
-  return voiceAecIsAvailable();
-}
-
-/* Whether that canceller is the operating system's rather than ours, which
- * is a different row in Settings: switched off and greyed, because there is
- * nothing here for the player to switch. */
-bool windowGetVoiceEchoCancelPlatform(void) {
-  return voiceAecIsPlatform();
-}
-#endif
-
-/* Tank-label microphone icons are held by the status renderer that
- * draws them; same façade shape as the voice settings above. */
-void windowSetShowTankMicIcons(bool on) {
-  sdl3DrawStatusSetShowMicIcons(on);
-}
-
-bool windowGetShowTankMicIcons(void) {
-  return sdl3DrawStatusGetShowMicIcons();
-}
+/* The voice settings façade (windowSetVoice* and friends) is in
+ * voice_settings.c, which the iOS client compiles as well. */
 
 void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
   allowNewPlayers = !allowNewPlayers;
