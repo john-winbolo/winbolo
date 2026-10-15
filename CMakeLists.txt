@@ -854,7 +854,6 @@ set(IOS_DATA_BMP
     ${CMAKE_SOURCE_DIR}/data/tanks.bmp
     ${CMAKE_SOURCE_DIR}/data/boats.bmp
     ${CMAKE_SOURCE_DIR}/data/items.bmp
-    ${CMAKE_SOURCE_DIR}/data/splash.bmp
     ${CMAKE_SOURCE_DIR}/data/logo.bmp
     ${CMAKE_SOURCE_DIR}/data/base.bmp
     ${CMAKE_SOURCE_DIR}/data/pillbox.bmp
@@ -1758,6 +1757,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/labels.c
     src/logviewer/messages.c
     src/logviewer/game_settings_blob.c
+    src/logviewer/lv_event_list.c
     src/logviewer/imgui/imgui_context.cpp
     src/logviewer/imgui/imgui_main_menu.cpp
     src/logviewer/imgui/imgui_controls.cpp
@@ -4525,6 +4525,15 @@ set(WINBOLO_UNITTESTS_SOURCES
     # clip-time fit resolves base cells from the log's own snapshots
     # (test_lv_calibration.c).
     tests/unit/test_lv_calibration.c
+    # Log viewer snapshot index: time lookups and a ten-day log's worth of
+    # entries (test_lv_snapshot_index.c).
+    tests/unit/test_lv_snapshot_index.c
+    # Log viewer load results pinned on the committed .wbv fixtures
+    # (test_lv_load_walk.c).
+    tests/unit/test_lv_load_walk.c
+    # Log viewer events panel list: replays after a seek back and pinned
+    # lines (test_lv_event_list.c).
+    tests/unit/test_lv_event_list.c
     # Replay camera range: the load's 127,127 default, a highlight jump, a
     # grid that grew and the raw setter all keep the view's far edge at 255
     # on a grid wider than half the map (test_lv_camera.c).
@@ -4645,6 +4654,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # split out of imgui_game_info.cpp so test_game_settings_blob.c drives
     # the code the Game Information panel runs rather than a copy of it.
     src/logviewer/game_settings_blob.c
+    # The events panel's line list. Plain C with no ImGui headers, split out
+    # of imgui_events.cpp so test_lv_event_list.c drives the code the panel
+    # runs.
+    src/logviewer/lv_event_list.c
 )
 
 if(WB_NETDEBUG)
@@ -5277,6 +5290,16 @@ set(_unit_test_names
     lv_hide_lobby_no_lobby_fallback
     lv_hide_lobby_no_marker_anchor
     lv_hide_lobby_periodic_snapshot
+    lv_kill_tally_seek
+    lv_alive_seek
+    lv_load_steps
+    lv_fast_forward_waits
+    lv_same_map_runs
+    lv_event_list_replay
+    lv_event_list_pinned
+    lv_snapshot_index_lookup
+    lv_snapshot_index_ten_days
+    lv_load_walk_fixtures
     lv_logged_name_from_join_event
     lv_game_settings_from_walk
     lv_game_settings_absent

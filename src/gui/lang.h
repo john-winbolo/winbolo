@@ -1348,6 +1348,12 @@
 /* Log viewer end-of-log marker */
 #define STR_LV_END_OF_LOG                   1182
 
+/* Log viewer progress window while a log opens */
+#define STR_LV_LOAD_TITLE                   2775
+#define STR_LV_LOAD_UNZIP                   2776
+#define STR_LV_LOAD_SCAN                    2777
+#define STR_LV_LOAD_PLAY                    2778
+
 /* iOS Settings panel additions */
 #define STR_DLGSETTINGS_ZOOM                1183
 #define STR_DLGSETTINGS_PERFORMANCE         1184
