@@ -465,6 +465,31 @@ int run_memreport_flags(void) {
     return 0;
 }
 
+/* A process figure that could not be read prints as "n/a", not as a
+ * zero that looks real; a figure that was read prints in MB. */
+int run_memreport_process_na(void) {
+    ServerMemProcess pm;
+    char buf[256];
+
+    memset(&pm, 0, sizeof(pm));
+    serverMemFormatProcess(&pm, buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "process rss n/a (peak n/a), private n/a, "
+                              "virtual n/a") == 0,
+                  "nothing read should print n/a for every figure, got '%s'",
+                  buf);
+
+    pm.rss = 3u * 1024u * 1024u;
+    pm.haveRss = true;
+    pm.virt = 0;
+    pm.haveVirt = true;
+    serverMemFormatProcess(&pm, buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "process rss 3.0 MB (peak n/a), private n/a, "
+                              "virtual 0.0 MB") == 0,
+                  "read figures should print in MB and the rest n/a, got '%s'",
+                  buf);
+    return 0;
+}
+
 /* A console with nothing typed on it times out and leaves an empty
  * buffer, and a pipe whose writer goes away reports EOF rather than
  * handing back the last line again. */

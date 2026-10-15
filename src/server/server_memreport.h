@@ -59,15 +59,28 @@ void serverMemReportRequest(bool deep);
  * or was asked for; otherwise costs one clock read. */
 void serverMemReportPoll(struct ServerSim *sim);
 
-/* The process's own memory, in bytes. Fields the platform cannot give are
- * 0. Returns false when nothing could be read. */
+/* The process's own memory, in bytes. Each figure has a have* flag; a
+ * figure the platform cannot give, or whose read failed, is 0 with its
+ * flag false, and the report prints it as "n/a". Returns false when
+ * nothing could be read. */
 typedef struct {
   uint64_t rss;      /* resident set / working set */
   uint64_t peakRss;  /* high-water mark of rss */
-  uint64_t priv;     /* private bytes (Windows) / VmData (Linux) */
+  uint64_t priv;     /* private bytes (Windows) / VmData (Linux) /
+                        phys_footprint (macOS) */
   uint64_t virt;     /* virtual address space in use */
+  bool haveRss;
+  bool havePeakRss;
+  bool havePriv;
+  bool haveVirt;
 } ServerMemProcess;
 
 bool serverMemReadProcess(ServerMemProcess *out);
+
+/* Write the report's process part ("process rss 12.3 MB (peak 14.0 MB),
+ * private ..., virtual ...") into buf, with "n/a" for each figure whose
+ * have* flag is false. Split out so a test can check it. */
+void serverMemFormatProcess(const ServerMemProcess *pm, char *buf,
+                            size_t bufSize);
 
 #endif /* WINBOLO_SERVER_MEMREPORT_H */
