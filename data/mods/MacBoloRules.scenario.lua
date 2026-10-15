@@ -119,6 +119,8 @@ scenario = {
                 "builder walk and spawn starts. Each part can be turned " ..
                 "off in the lobby.",
   api = 1,
+  author = "WinBolo",
+  updated = "2026-10-15T15:09Z",
   kind = "mod",
   bound = false,
 
