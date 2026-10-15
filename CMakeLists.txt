@@ -1030,6 +1030,7 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     src/gui/sdl3/gamefront.c
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
+    src/client_frontend/client_frontend_common.c
     src/client_frontend/client_frontend_sp.c
     src/bolo/lobby_bot_pools_json.c
     src/gui/sdl3/dialog_backend.c

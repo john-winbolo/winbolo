@@ -599,10 +599,10 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
     frameRate = newFrameRate;
 }
 
-void windowShowGunsight_toggle(void) {
-    showGunsight = !showGunsight;
-    if (humanSim) clientSimSetGunsight(humanSim, showGunsight);
-}
+/* windowShowGunsight_toggle, windowAutomaticScrolling_toggle,
+   windowShowPillLabels_toggle, windowShowBaseLabels_toggle, windowKeyPressed
+   and frontEndRedrawAll come from client_frontend_common.c, the one body
+   every platform calls; see "Platform variants" in docs/ARCHITECTURE.md. */
 
 void windowSoundEffects_toggle(void) { soundEffects = !soundEffects; }
 void windowBackgroundSoundChange_toggle(void) { backgroundSound = !backgroundSound; }
@@ -619,13 +619,6 @@ void windowSetMasterVolume(int pct) {
     windowMasterVolume = pct;
     soundSetMasterVolume(pct);
 }
-void windowAutomaticScrolling_toggle(ClientSim *cs) {
-    autoScrollingEnabled = !autoScrollingEnabled;
-    if (cs) clientSimSetAutoScroll(cs, autoScrollingEnabled);
-}
-
-void windowShowPillLabels_toggle(void) { showPillLabels = !showPillLabels; }
-void windowShowBaseLabels_toggle(void) { showBaseLabels = !showBaseLabels; }
 void windowLabelOwnTank_toggle(ClientSim *cs) {
     labelSelf = !labelSelf;
     if (cs) clientSimSetLabelOwnTank(cs, labelSelf);
@@ -674,11 +667,6 @@ void windowRedrawAll(ClientSim *cs) {
 }
 
 void windowSaveMap(ClientSim *cs) { (void)cs; }
-
-void windowKeyPressed(ClientSim *cs, int keyCode) {
-    if (keyCode == keys.kiTankView) clientSimTankView(cs);
-    else if (keyCode == keys.kiPillView) clientSimPillView(cs, 0, 0);
-}
 
 void windowButtonAdd(int keyCode) { (void)keyCode; }
 void windowButtonRemove(int keyCode) { (void)keyCode; }
@@ -875,8 +863,6 @@ void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
 
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled) { (void)enabled; }
-
-void frontEndRedrawAll(ClientSim *cs) { windowRedrawAll(cs); }
 
 void frontEndShowGunsight(ClientSim *cs, bool isShown) {
     if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
