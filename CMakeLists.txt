@@ -6945,6 +6945,9 @@ set(_unit_test_names
     lv_first_view_place
     lv_event_jump_keeps_place_in_view
     lv_event_seek_exact
+    lv_event_jump_view
+    lv_event_pill_capture_place
+    lv_event_builder_lost_place
     lv_builder_status_sums
     lv_builder_countdown
     lv_builder_dead_text
