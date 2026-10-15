@@ -15986,6 +15986,28 @@ function M.order_goal(state, world, info, ord)
   return nil
 end
 
+-- A DEAD PILL BESIDE A BOT ON AN ORDER (C.ORDER_NEAR_DEAD_PILL_CAPTURE).
+-- true when `goal` is capture_pill for a pill that is dead (health 0), not
+-- carried, and within C.ORDER_NEAR_DEAD_PILL_RADIUS squares (Chebyshev) of
+-- the tank's square.  Any owner: our own team's dead prize is picked up too.
+-- The order reject pass leaves such a row at its normal cost, and the hold
+-- phase of a go-there order lets it win as it lets a fight win.  false when
+-- the knob is off (keel).
+function M.order_near_dead_pill(world, info, goal)
+  if not C.ORDER_NEAR_DEAD_PILL_CAPTURE then return false end
+  if not (goal and goal.kind == "capture_pill" and goal.target_id ~= nil) then
+    return false
+  end
+  if not (info and info.tankx and info.tanky) then return false end
+  local p = world and world.pills and world.pills[goal.target_id]
+  if not (p and p.mx and p.my) or p.in_tank or (p.health or 1) ~= 0 then
+    return false
+  end
+  local dx = math.abs(bit.rshift(info.tankx, 8) - p.mx)
+  local dy = math.abs(bit.rshift(info.tanky, 8) - p.my)
+  return math.max(dx, dy) <= (C.ORDER_NEAR_DEAD_PILL_RADIUS or 2)
+end
+
 -- What one pool row pays for C.FIGHT_COST_MULT, the multiplier a script sets
 -- with cfg= to make tank fights and hiding dearer (Pillbox Tag: on its
 -- hunters while the prize stands as a fort).  attack_tank, kill_lgm and
@@ -16969,6 +16991,12 @@ local function goal_selection(state, world, info, quiet)
              and C.ORDER_REFUEL_SKIP_NO_SHELLS
              and (info.armour or 0) > C.ARMOUR_LOW then
             rej = true
+          end
+          -- A dead pill within ORDER_NEAR_DEAD_PILL_RADIUS squares of the
+          -- tank is picked up at its normal cost: one or two squares of
+          -- driving, and nobody else's pill to take for the asking.
+          if rej and ck == "capture_pill" and M.order_near_dead_pill(world, info, c.goal) then
+            rej = false
           end
           if rej then
             c.cost = C.POOL_REJECT_COST or 1e30
@@ -18283,6 +18311,12 @@ function M.pick_goal(state, world, info, quiet)
     -- undoes them every think anyway; turning them down here keeps the
     -- goal from flickering between a replan and the lock.
     local ok = g and g.kind and g.kind ~= "none" and g.kind ~= "goto_tile" and rk[g.kind]
+    -- A dead pill within ORDER_NEAR_DEAD_PILL_RADIUS (the one strategic row
+    -- the reject pass lets through) wins here as a fight does: the bot
+    -- picks it up, and the hold goal takes it back to the square on the
+    -- next replan.  A decoy hold turns it down below (decoy_allows: fights
+    -- only), since it must not leave the square.
+    if not ok and g and M.order_near_dead_pill(world, info, g) then ok = true end
     if ok and ord.decoy then
       ok = require("orders").decoy_allows(state, info, g)
     end

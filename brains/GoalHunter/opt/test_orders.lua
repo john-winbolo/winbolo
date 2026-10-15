@@ -8607,5 +8607,90 @@ do
         C.FIGHT_COST_MULT == 1.0, tostring(C.FIGHT_COST_MULT))
 end
 
+-- ─────────────────────────────────────────────────────────────────────────
+-- ORDER_NEAR_DEAD_PILL_CAPTURE (K): under an order, capture_pill for a dead
+-- pill within ORDER_NEAR_DEAD_PILL_RADIUS squares of the tank is not given
+-- the "order" reject, and wins the hold phase as a fight does.
+-- ─────────────────────────────────────────────────────────────────────────
+print("\n== ORDER_NEAR_DEAD_PILL_CAPTURE ==")
+do
+  local G = require("goals")
+  local saved_on, saved_r = C.ORDER_NEAR_DEAD_PILL_CAPTURE, C.ORDER_NEAR_DEAD_PILL_RADIUS
+  -- The tank is on (10,10) (I()).
+  local function w_with(p) return { pills = { [0] = p } } end
+  local function cap() return { kind = "capture_pill", target_id = 0, mx = 0, my = 0 } end
+  local inf = I()
+
+  check("default: the knob is on, radius 2",
+        C.ORDER_NEAR_DEAD_PILL_CAPTURE == true and C.ORDER_NEAR_DEAD_PILL_RADIUS == 2,
+        tostring(C.ORDER_NEAR_DEAD_PILL_CAPTURE) .. "/" .. tostring(C.ORDER_NEAR_DEAD_PILL_RADIUS))
+  check("keel preset carries ORDER_NEAR_DEAD_PILL_CAPTURE = false",
+        C.PRESETS.keel.ORDER_NEAR_DEAD_PILL_CAPTURE == false,
+        tostring(C.PRESETS.keel.ORDER_NEAR_DEAD_PILL_CAPTURE))
+
+  C.ORDER_NEAR_DEAD_PILL_CAPTURE = true
+  check("on: a dead pill one square away is let through",
+        G.order_near_dead_pill(w_with({ mx = 11, my = 10, health = 0, owner = "hostile" }), inf, cap()) == true, "false")
+  check("on: our own team's dead pill two squares away (diagonal) too",
+        G.order_near_dead_pill(w_with({ mx = 12, my = 8, health = 0, owner = "friendly" }), inf, cap()) == true, "false")
+  check("on: a dead pill three squares away is still rejected",
+        G.order_near_dead_pill(w_with({ mx = 13, my = 10, health = 0, owner = "hostile" }), inf, cap()) == false, "true")
+  check("on: a live pill beside the tank is still rejected",
+        G.order_near_dead_pill(w_with({ mx = 11, my = 10, health = 3, owner = "hostile" }), inf, cap()) == false, "true")
+  check("on: a carried pill is still rejected",
+        G.order_near_dead_pill(w_with({ mx = 10, my = 10, health = 0, in_tank = true }), inf, cap()) == false, "true")
+  check("on: a row that is not capture_pill is still rejected",
+        G.order_near_dead_pill(w_with({ mx = 11, my = 10, health = 0 }), inf,
+                               { kind = "attack_pill", target_id = 0 }) == false, "true")
+  check("on: a pill the world does not know is still rejected",
+        G.order_near_dead_pill({ pills = {} }, inf, cap()) == false, "true")
+  C.ORDER_NEAR_DEAD_PILL_RADIUS = 3
+  check("radius 3: the dead pill three squares away is let through",
+        G.order_near_dead_pill(w_with({ mx = 13, my = 10, health = 0 }), inf, cap()) == true, "false")
+  C.ORDER_NEAR_DEAD_PILL_RADIUS = 2
+
+  C.ORDER_NEAR_DEAD_PILL_CAPTURE = false
+  check("off (keel): the dead pill beside the tank is rejected, as before",
+        G.order_near_dead_pill(w_with({ mx = 11, my = 10, health = 0 }), inf, cap()) == false, "true")
+  C.ORDER_NEAR_DEAD_PILL_CAPTURE, C.ORDER_NEAR_DEAD_PILL_RADIUS = saved_on, saved_r
+end
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- ORDER_HINT_HOLD_EXPIRY_FIX (L): the same hint again in the hold phase sets
+-- the hold clock (ORDER_GOTO_HOLD_TICKS), not the 60 s focus.
+-- ─────────────────────────────────────────────────────────────────────────
+print("\n== ORDER_HINT_HOLD_EXPIRY_FIX ==")
+do
+  local saved = C.ORDER_HINT_HOLD_EXPIRY_FIX
+  local HOLD  = C.ORDER_GOTO_HOLD_TICKS or 500
+  local FOCUS = C.ORDER_FOCUS_TICKS or 3000
+  local function refreshed(hold)
+    local st, w, inf = ST(), W(), I()
+    ORD.on_scenario_hint(st, w, inf, { verb = "goto", x = "40", y = "40" }, 100)
+    ORD.update(st, w, inf, 101)
+    local h = st.orders.held
+    if not h then return nil end
+    if hold then h.hold = true; h.arrived = 101 end
+    ORD.on_scenario_hint(st, w, inf, { verb = "goto", x = "40", y = "40" }, 200)
+    return st.orders.held == h and h.expiry or nil
+  end
+
+  check("keel preset carries ORDER_HINT_HOLD_EXPIRY_FIX = false",
+        C.PRESETS.keel.ORDER_HINT_HOLD_EXPIRY_FIX == false,
+        tostring(C.PRESETS.keel.ORDER_HINT_HOLD_EXPIRY_FIX))
+  C.ORDER_HINT_HOLD_EXPIRY_FIX = true
+  local e = refreshed(true)
+  check("on: a repeated hint in the hold phase sets the hold clock",
+        e == 200 + HOLD, tostring(e))
+  e = refreshed(false)
+  check("on: a repeated hint while travelling still sets the focus",
+        e == 200 + FOCUS, tostring(e))
+  C.ORDER_HINT_HOLD_EXPIRY_FIX = false
+  e = refreshed(true)
+  check("off (keel): a repeated hint in the hold phase sets the focus, as before",
+        e == 200 + FOCUS, tostring(e))
+  C.ORDER_HINT_HOLD_EXPIRY_FIX = saved
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

@@ -5372,6 +5372,22 @@ M.ORDER_HINT_ATTACK_PILL  = true  -- keel false (2026-10-14: Pillbox Tag)
 -- scenario hint has the key; chat and bot commands cannot force.
 -- false = the `force` key is not read.
 M.ORDER_HINT_FORCE        = true  -- keel false (2026-10-15: Pillbox Tag)
+-- A REPEATED HINT IN THE HOLD PHASE (2026-10-15).  The same hint again while
+-- the bot holds that go-there order on its square sets the hold clock
+-- (ORDER_GOTO_HOLD_TICKS), as a repeated chat line does.  false = it sets the
+-- 60 s focus (ORDER_FOCUS_TICKS), so a "hold" hint sent every 500 ticks kept
+-- the hold for ever.
+M.ORDER_HINT_HOLD_EXPIRY_FIX = true  -- keel false
+-- A DEAD PILL BESIDE A BOT ON AN ORDER (2026-10-15).  While an order is held,
+-- capture_pill for a dead pill (health 0, not carried, any owner, our own
+-- team's too) within ORDER_NEAR_DEAD_PILL_RADIUS squares (Chebyshev, from the
+-- tank's square) is NOT given the "order" reject: it competes at its normal
+-- cost.  In a go-there hold it can win as a fight would, so the bot picks
+-- the pill up and then goes back to the held square.  On human_fort seed 1
+-- player 0 sat 8.7 s on a "hold" beside his own team's dead prize.
+-- false = every capture_pill is rejected under an order, as before.
+M.ORDER_NEAR_DEAD_PILL_CAPTURE = true  -- keel false
+M.ORDER_NEAR_DEAD_PILL_RADIUS  = 2     -- keel 2 (moot; the bool is off)
 -- FIGHT COST MULTIPLIER (2026-10-14): a script makes this bot's tank fights
 -- and hiding dearer with game.bot_init(p, { cfg = "FIGHT_COST_MULT=10" }).
 -- Every attack_tank, kill_lgm and take_cover row in the pool costs
@@ -5915,6 +5931,12 @@ M.PRESETS = {
     --   2026-10-15: a scenario attack-pill hint can be forced. KEEL had no
     --   `force` key.
     ORDER_HINT_FORCE              = false,
+    --   2026-10-15: a repeated hint in the hold phase sets the hold clock.
+    --   KEEL set the 60 s focus, so a repeated "hold" never ended.
+    ORDER_HINT_HOLD_EXPIRY_FIX    = false,
+    --   2026-10-15: under an order, capture_pill for a dead pill within 2
+    --   squares is not rejected. KEEL rejected every capture_pill.
+    ORDER_NEAR_DEAD_PILL_CAPTURE  = false,
     --   2026-10-14: a script can make attack_tank, kill_lgm and take_cover
     --   dearer with cfg=FIGHT_COST_MULT. KEEL had no such multiplier.
     FIGHT_COST_MULT_ENABLED       = false,

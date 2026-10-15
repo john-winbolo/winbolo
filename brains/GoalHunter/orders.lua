@@ -3564,7 +3564,16 @@ local function hint_start(state, world, info, cmd, now)
   -- The same hint again, while it is still held, refreshes the focus rather
   -- than restarting the job -- what a repeated chat line does.
   if o.held and o.held.oid == spec.oid then
-    o.held.expiry = now + (C.ORDER_FOCUS_TICKS or 3000)
+    -- A go-there order in its HOLD phase gets the hold clock again, as the
+    -- repeated chat line does (on_chat, "the hold clock once it has
+    -- arrived").  The 60 s focus here made a "hold" hint sent every 500
+    -- ticks keep the bot on its square for ever.  ORDER_HINT_HOLD_EXPIRY_FIX,
+    -- keel false (the focus for every refresh, as before).
+    if o.held.hold and C.ORDER_HINT_HOLD_EXPIRY_FIX then
+      o.held.expiry = now + (C.ORDER_GOTO_HOLD_TICKS or 500)
+    else
+      o.held.expiry = now + (C.ORDER_FOCUS_TICKS or 3000)
+    end
     -- The newest hint says whether the order is forced.
     o.held.force = spec.force
     return true
