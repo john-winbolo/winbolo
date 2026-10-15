@@ -27,6 +27,8 @@
  *   lists server: shells 3 ... | lists bots (8): shells 21 ... |
  *   recording brain-debug off, game log off
  *
+ * A process figure the platform could not read shows as "n/a", never 0.
+ *
  * The timed report reads no more than a clock until it is due. When it is
  * due, the Lua figures are lua_gc counters (no walk) and the list figures
  * walk lists that hold tens of items, so a report costs well under a
@@ -42,10 +44,14 @@
     #define PSAPI_VERSION 2
   #endif
   #include <psapi.h>
+#elif defined(__APPLE__)
+  #include <mach/mach.h>
 #endif
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -67,7 +73,7 @@ void serverMessageConsoleMessage(ServerSim *sim, char *msg);
 #define MEMREPORT_LINE 2048
 #define MEMREPORT_DEEP_TOP 20
 
-static Uint64 s_periodMs = (Uint64)SERVER_MEMREPORT_DEFAULT_MINUTES * 60u * 1000u;
+static Uint64 s_periodMs = 0;  /* off until -memreport turns it on */
 static bool   s_deepEvery = false;
 static Uint64 s_startMs = 0;
 static Uint64 s_lastMs = 0;
@@ -81,11 +87,71 @@ static size_t   s_prevBotBytes[MAX_TANKS];
 static bool     s_prevBotValid[MAX_TANKS];
 static uint64_t s_prevLuaTotal = 0;
 static uint64_t s_prevNonLua = 0;
+static bool     s_prevNonLuaValid = false;
+
+/* A year: far past any real period, and small enough to convert. */
+#define MEMREPORT_MAX_MINUTES (365.0 * 24.0 * 60.0)
+
+double serverMemReportPeriodFromArgs(bool given, const char *value, bool deep,
+                                     char *warn, size_t warnSize) {
+  double mins = 0.0;
+
+  if (warn != NULL && warnSize > 0) {
+    warn[0] = '\0';
+  }
+  if (given) {
+    mins = (double)SERVER_MEMREPORT_DEFAULT_MINUTES;
+    if (value != NULL) {
+      char *end = NULL;
+      double parsed = strtod(value, &end);
+      if (end != value && (!isfinite(parsed) || parsed < 0.0)) {
+        /* nan, inf, 1e999 and negatives are typing mistakes: like a
+         * value that is not a number, they must not turn the report off
+         * or set a period of a year. */
+        if (warn != NULL && warnSize > 0) {
+          snprintf(warn, warnSize,
+                   "Warning: -memreport '%s' is not a usable number; "
+                   "using %d minutes",
+                   value, SERVER_MEMREPORT_DEFAULT_MINUTES);
+        }
+      } else if (end != value) {
+        /* "5m" parses as 5; 0 turns the report off. */
+        mins = parsed;
+      } else if (value[0] != '-' && warn != NULL && warnSize > 0) {
+        /* A following flag means a bare -memreport; anything else is a
+         * mistyped period, which must not turn the report off. */
+        snprintf(warn, warnSize,
+                 "Warning: -memreport '%s' is not a number; using %d minutes",
+                 value, SERVER_MEMREPORT_DEFAULT_MINUTES);
+      }
+    }
+  }
+  /* mins is finite and not negative here; clamp a very long period. */
+  if (!(mins > 0.0)) {
+    mins = 0.0;
+  } else if (mins > MEMREPORT_MAX_MINUTES) {
+    mins = MEMREPORT_MAX_MINUTES;
+  }
+  if (deep) {
+    if (!given) {
+      mins = (double)SERVER_MEMREPORT_DEFAULT_MINUTES;
+    } else if (mins == 0.0 && warn != NULL && warnSize > 0) {
+      snprintf(warn, warnSize,
+               "Warning: -memreportdeep has no effect; -memreport %s turns "
+               "the timed memory report off",
+               (value != NULL) ? value : "0");
+    }
+  }
+  return mins;
+}
 
 void serverMemReportConfigure(double periodMinutes, bool deepEveryReport) {
-  if (periodMinutes <= 0.0) {
+  if (!(periodMinutes > 0.0)) {
     s_periodMs = 0;
   } else {
+    if (periodMinutes > MEMREPORT_MAX_MINUTES) {
+      periodMinutes = MEMREPORT_MAX_MINUTES;
+    }
     s_periodMs = (Uint64)(periodMinutes * 60000.0);
     if (s_periodMs == 0) {
       s_periodMs = 1;
@@ -121,11 +187,13 @@ bool serverMemReadProcess(ServerMemProcess *out) {
       out->rss = pmc.WorkingSetSize;
       out->peakRss = pmc.PeakWorkingSetSize;
       out->priv = pmc.PrivateUsage;
+      out->haveRss = out->havePeakRss = out->havePriv = true;
       ok = true;
     }
     ms.dwLength = sizeof(ms);
     if (GlobalMemoryStatusEx(&ms)) {
       out->virt = ms.ullTotalVirtual - ms.ullAvailVirtual;
+      out->haveVirt = true;
       ok = true;
     }
     return ok;
@@ -142,16 +210,51 @@ bool serverMemReadProcess(ServerMemProcess *out) {
     while (fgets(line, sizeof(line), fp) != NULL) {
       unsigned long long kb;
       if (sscanf(line, "VmRSS: %llu", &kb) == 1) {
-        out->rss = kb * 1024ull; ok = true;
+        out->rss = kb * 1024ull; out->haveRss = true; ok = true;
       } else if (sscanf(line, "VmHWM: %llu", &kb) == 1) {
-        out->peakRss = kb * 1024ull;
+        out->peakRss = kb * 1024ull; out->havePeakRss = true; ok = true;
       } else if (sscanf(line, "VmData: %llu", &kb) == 1) {
-        out->priv = kb * 1024ull;
+        out->priv = kb * 1024ull; out->havePriv = true; ok = true;
       } else if (sscanf(line, "VmSize: %llu", &kb) == 1) {
-        out->virt = kb * 1024ull;
+        out->virt = kb * 1024ull; out->haveVirt = true; ok = true;
       }
     }
     fclose(fp);
+    return ok;
+  }
+#elif defined(__APPLE__)
+  {
+    /* MACH_TASK_BASIC_INFO gives resident (and its peak) and virtual.
+     * macOS has no "private bytes"; the nearest is phys_footprint from
+     * TASK_VM_INFO, the figure Activity Monitor shows as "Memory": dirty
+     * and compressed pages the process owns, which takes in every Lua
+     * heap. virtual_size takes in the shared system region, so it reads
+     * far bigger than on the other platforms. */
+    mach_task_basic_info_data_t info;
+    task_vm_info_data_t vm;
+    mach_msg_type_number_t count;
+    bool ok = false;
+
+    count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+                  (task_info_t)&info, &count) == KERN_SUCCESS) {
+      out->rss = info.resident_size;
+      out->peakRss = info.resident_size_max;
+      out->virt = info.virtual_size;
+      out->haveRss = out->havePeakRss = out->haveVirt = true;
+      ok = true;
+    }
+    /* phys_footprint is in revision 1 of the struct and later; an older
+     * kernel fills fewer fields and says so in count. */
+    memset(&vm, 0, sizeof(vm));
+    count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO,
+                  (task_info_t)&vm, &count) == KERN_SUCCESS &&
+        count >= TASK_VM_INFO_REV1_COUNT) {
+      out->priv = vm.phys_footprint;
+      out->havePriv = true;
+      ok = true;
+    }
     return ok;
   }
 #else
@@ -190,6 +293,37 @@ static double memMB(uint64_t bytes) {
 /* Signed difference in MB, for the "(+x MB)" growth figures. */
 static double memDeltaMB(uint64_t now, uint64_t before) {
   return ((double)now - (double)before) / (1024.0 * 1024.0);
+}
+
+/* One process figure in MB, or "n/a" when it could not be read: a 0
+ * there would read as a real figure. */
+static void memLineMB(MemLine *l, bool have, uint64_t bytes) {
+  if (have) {
+    memLineAdd(l, "%.1f MB", memMB(bytes));
+  } else {
+    memLineAdd(l, "n/a");
+  }
+}
+
+static void memLineProcess(MemLine *l, const ServerMemProcess *pm) {
+  memLineAdd(l, "process rss ");
+  memLineMB(l, pm->haveRss, pm->rss);
+  memLineAdd(l, " (peak ");
+  memLineMB(l, pm->havePeakRss, pm->peakRss);
+  memLineAdd(l, "), private ");
+  memLineMB(l, pm->havePriv, pm->priv);
+  memLineAdd(l, ", virtual ");
+  memLineMB(l, pm->haveVirt, pm->virt);
+}
+
+void serverMemFormatProcess(const ServerMemProcess *pm, char *buf,
+                            size_t bufSize) {
+  MemLine l = { buf, bufSize, 0 };
+  if (buf == NULL || bufSize == 0) {
+    return;
+  }
+  buf[0] = '\0';
+  memLineProcess(&l, pm);
 }
 
 static void memLineLists(MemLine *l, const BotMemListCounts *c) {
@@ -233,10 +367,8 @@ static void memReportWrite(ServerSim *sim, Uint64 nowMs, bool deep) {
              stamp, (unsigned)(up / 3600u), (unsigned)((up / 60u) % 60u),
              (unsigned)(up % 60u), (unsigned)serverSimGetTick(sim),
              (unsigned)s_rounds, sim->mapName);
-  memLineAdd(&l, " | process rss %.1f MB (peak %.1f MB), private %.1f MB, "
-                 "virtual %.1f MB",
-             memMB(pm.rss), memMB(pm.peakRss), memMB(pm.priv),
-             memMB(pm.virt));
+  memLineAdd(&l, " | ");
+  memLineProcess(&l, &pm);
 
   for (int i = 0; i < MAX_TANKS; i++) {
     botValid[i] = botMemLuaHeapBytes(sim, (BYTE)i, &botBytes[i]);
@@ -265,12 +397,14 @@ static void memReportWrite(ServerSim *sim, Uint64 nowMs, bool deep) {
 
   /* Private bytes include every Lua heap (LuaJIT and PUC-Lua both take
    * their heap from the process), so what is left is the engine's own C
-   * heap plus code and JIT machine code. On Linux "private" is VmData. */
+   * heap plus code and JIT machine code. On Linux "private" is VmData,
+   * on macOS phys_footprint. */
   if (pm.priv > luaTotal) {
     nonLua = pm.priv - luaTotal;
   }
-  memLineAdd(&l, " | private minus lua %.1f MB", memMB(nonLua));
-  if (s_havePrev) {
+  memLineAdd(&l, " | private minus lua ");
+  memLineMB(&l, pm.havePriv, nonLua);
+  if (s_havePrev && pm.havePriv && s_prevNonLuaValid) {
     memLineAdd(&l, " (%+.1f MB)", memDeltaMB(nonLua, s_prevNonLua));
   }
 
@@ -303,6 +437,7 @@ static void memReportWrite(ServerSim *sim, Uint64 nowMs, bool deep) {
   }
   s_prevLuaTotal = luaTotal;
   s_prevNonLua = nonLua;
+  s_prevNonLuaValid = pm.havePriv;
   s_havePrev = true;
 }
 
