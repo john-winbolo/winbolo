@@ -27,6 +27,10 @@
 -- A hunter that has moved at least 1 square (256 world units) in a straight
 -- line over the last 2 s is busy too: travelling is real play, even when it
 -- stays within 2 squares of the spot it last stood on for a while.
+-- A hunter whose order from the script is to attack a tank (told[p] is
+-- "attack <seat>", not "attack pill ...") is busy too: a hunter in a
+-- tank fight is busy (Andrew, 2026-10-15). No game API gives a bot's goal,
+-- so the arena reads the order the script last gave it.
 --
 -- The holder is put in the walled middle of the island, the way a person
 -- builds a fort among walls. With the script as it was, the order to attack
@@ -231,6 +235,8 @@ function on_tick(tick)
     if s == nil or s.dead or s.mx == 0 then
       A.busy[p], A.anchor[p] = tick, nil
     elseif moved then
+      A.busy[p], A.anchor[p] = tick, { s.mx, s.my }
+    elseif type(told[p]) == "string" and told[p]:match("^attack %d+$") then
       A.busy[p], A.anchor[p] = tick, { s.mx, s.my }
     elseif chebyshev(s.mx, s.my, A.hx, A.hy) > NEAR then
       A.busy[p], A.anchor[p] = tick, { s.mx, s.my }
