@@ -925,6 +925,71 @@ int16_t brainPathfinderInfluenceAt(BrainPathfinder *pf, int x, int y) {
   return 0;
 }
 
+int brainPathfinderBuildOwnDist(BrainPathfinder *pf, int cap) {
+  uint8_t *d;
+  int x, y, idx, n = 0;
+
+  if (!pf) return 0;
+  if (cap < 0) cap = 0;
+  if (cap > 254) cap = 254;
+  d = pf->own_dist;
+
+  /* 255 = no source reached yet. A real distance on a 256-wide grid is at
+   * most 255 only from corner to corner, and the clamp below is <= 254. */
+  for (idx = 0; idx < 65536; idx++) {
+    if (pf->influence_grid[idx] > 0) { d[idx] = 0; n++; }
+    else d[idx] = 255;
+  }
+  if (n == 0) {
+    memset(d, cap, 65536);
+    return 0;
+  }
+
+  /* Forward sweep: NW, N, NE, W. Backward sweep: SE, S, SW, E. Two raster
+   * sweeps give the exact 8-connected (Chebyshev) distance. Off-map
+   * neighbours are skipped (they are not sources). */
+  for (y = 0; y < MAP_SIZE; y++) {
+    for (x = 0; x < MAP_SIZE; x++) {
+      int best, nb;
+      idx = y * MAP_SIZE + x;
+      best = d[idx];
+      if (best == 0) continue;
+      if (y > 0) {
+        if (x > 0) { nb = d[idx - MAP_SIZE - 1]; if (nb + 1 < best) best = nb + 1; }
+        nb = d[idx - MAP_SIZE]; if (nb + 1 < best) best = nb + 1;
+        if (x < MAP_SIZE - 1) { nb = d[idx - MAP_SIZE + 1]; if (nb + 1 < best) best = nb + 1; }
+      }
+      if (x > 0) { nb = d[idx - 1]; if (nb + 1 < best) best = nb + 1; }
+      d[idx] = (uint8_t)best;
+    }
+  }
+  for (y = MAP_SIZE - 1; y >= 0; y--) {
+    for (x = MAP_SIZE - 1; x >= 0; x--) {
+      int best, nb;
+      idx = y * MAP_SIZE + x;
+      best = d[idx];
+      if (best == 0) continue;
+      if (y < MAP_SIZE - 1) {
+        if (x < MAP_SIZE - 1) { nb = d[idx + MAP_SIZE + 1]; if (nb + 1 < best) best = nb + 1; }
+        nb = d[idx + MAP_SIZE]; if (nb + 1 < best) best = nb + 1;
+        if (x > 0) { nb = d[idx + MAP_SIZE - 1]; if (nb + 1 < best) best = nb + 1; }
+      }
+      if (x < MAP_SIZE - 1) { nb = d[idx + 1]; if (nb + 1 < best) best = nb + 1; }
+      d[idx] = (uint8_t)best;
+    }
+  }
+  for (idx = 0; idx < 65536; idx++)
+    if (d[idx] > cap) d[idx] = (uint8_t)cap;
+  return n;
+}
+
+int brainPathfinderOwnDistAt(BrainPathfinder *pf, int x, int y) {
+  if (pf && x >= 0 && x < MAP_SIZE && y >= 0 && y < MAP_SIZE) {
+    return pf->own_dist[y * MAP_SIZE + x];
+  }
+  return 255;
+}
+
 /* ------------------------------------------------------------------ */
 /* Influence tail                                                      */
 /* ------------------------------------------------------------------ */

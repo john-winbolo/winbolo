@@ -54,3 +54,15 @@ about = Builds its pillboxes close together in one cluster at home instead of sp
 levels = easy:Easy:1, medium:Medium:2, hard:Hard:3
 default = hard
 standard_levels = yes
+
+# Turtle2. Turtle plus the nest base rules: bases far from its own ground
+# cost more (TURTLE_BASE_*), the opening ends once a share of the bases are
+# taken, and no influence tail. Those rules run only in this mode
+# (goals.lua M.turtle_nest_on). constants.lua builds its bundles from
+# Turtle's.
+[turtle2]
+label = Turtle2
+about = Turtle that stays near its nest: far bases cost more, the base run ends early, no influence tail.
+levels = easy:Easy:1, medium:Medium:2, hard:Hard:3
+default = hard
+standard_levels = yes
