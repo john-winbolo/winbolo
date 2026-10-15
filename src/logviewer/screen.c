@@ -3214,6 +3214,7 @@ bool lv_processSnapshot() {
       // Process the dummy data
       len = logReadBytes(data, 2);
       lv_screenSetTankStock(count, 0, 0, 0, 0);
+      g_lv->gameViewHud[count].alive = false;
 
     } else if (dataLen > sizeof(data)) {
       returnValue = FALSE;
@@ -3282,12 +3283,15 @@ bool lv_processSnapshot() {
                 lv_screenSetTankStock(count, 0, 0, 0, 0);
               }
               /* mx != 0 means the tank is on the map (alive) — the same sentinel
-                 the forward log_PlayerLocation path uses. Mark the slot alive so
-                 a mid-game seed clears the death-static overlay for living tanks;
-                 a dead/off-map tank (mx == 0) stays not-alive. */
+                 the forward log_PlayerLocation path uses. The snapshot states
+                 it either way: a mid-game seed clears the death-static overlay
+                 for living tanks, and a seek back to a moment a tank was dead
+                 shows it dead whatever playback last had it as. */
               if (mx != 0) {
                 g_lv->gameViewHud[count].alive = true;
                 g_lv->gameViewHud[count].respawnTimeMs = g_lv->timeRunning;
+              } else {
+                g_lv->gameViewHud[count].alive = false;
               }
               /* A snapshot carries (0,0) lgm coords for a man who is aboard/idle
                  (the server's idle sentinel). Only mark him out for a real

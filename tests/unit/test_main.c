@@ -670,6 +670,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_hide_lobby_no_marker_anchor",          run_lv_hide_lobby_no_marker_anchor          },
     { "lv_hide_lobby_periodic_snapshot",         run_lv_hide_lobby_periodic_snapshot         },
     { "lv_kill_tally_seek",                      run_lv_kill_tally_seek                      },
+    { "lv_alive_seek",                           run_lv_alive_seek                           },
     { "lv_event_list_replay",                    run_lv_event_list_replay                    },
     { "lv_event_list_pinned",                    run_lv_event_list_pinned                    },
     { "lv_snapshot_index_lookup",                run_lv_snapshot_index_lookup                },

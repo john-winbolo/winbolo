@@ -673,6 +673,104 @@ int run_lv_kill_tally_seek(void) {
   return 0;
 }
 
+/* A running-round snapshot like putSnapshot(b, true), with slot 1 in use at
+ * map column mx (0 is the server's "not on the map": a dead tank). The player
+ * block is the layout lv_processSnapshot reads: two header bytes, mx, my,
+ * pixel nibbles, frame, onBoat, the builder's four, the name and location as
+ * pascal strings, no allies and the four stocks. */
+static void putSnapshotSlot1(LogBuf *b, uint8_t mx) {
+  static const uint8_t mapRun[5] = {5, 0, 0, 2, (8 << 4) | GRASS};
+  static const uint8_t mapTerminator[4] = {4, 255, 255, 255};
+  uint8_t player[19] = {0};
+  int i;
+
+  player[2] = mx;
+  player[3] = (mx != 0) ? 10 : 0;   /* my */
+  player[11] = 1;                   /* name length */
+  player[12] = 'P';
+  player[13] = 0;                   /* location length */
+  player[14] = 0;                   /* allies */
+  player[15] = 40;                  /* shells, mines, armour, trees */
+  player[16] = 0;
+  player[17] = 40;
+  player[18] = 0;
+
+  putU8(b, LOG_SNAPSHOT);
+  putZeros(b, 8);
+  putU8(b, 1); putU8(b, 0);          /* pills */
+  putU8(b, 1); putU8(b, 0);          /* bases */
+  putU8(b, 1); putU8(b, 0);          /* starts */
+  put(b, mapRun, sizeof(mapRun));
+  put(b, mapTerminator, 4);
+  for (i = 0; i < MAX_TANKS; i++) {
+    if (i == 1) {
+      putU8(b, (uint8_t)sizeof(player));
+      put(b, player, sizeof(player));
+    } else {
+      putU8(b, 2); putU8(b, 0); putU8(b, 0);
+    }
+  }
+}
+
+/*
+ * Whether a tank is alive is what the game view's death overlay reads. A
+ * snapshot marked a tank on the map alive but never marked one off it dead,
+ * so a seek back to a moment it was dead showed it alive.
+ *
+ *   opening snapshot, slot 1 on the map  -> tick   0
+ *   NOEVENTS 50                          -> tick  51
+ *   KillPlayer 1 by 2                    -> tick  52  (ms 1040)
+ *   NOEVENTS 50                          -> tick 103
+ *   snapshot, slot 1 off the map         -> tick 104  (ms 2080)
+ *   NOEVENTS 50                          -> tick 155
+ *   snapshot, slot 1 on the map          -> tick 156  (ms 3120)
+ *   NOEVENTS 50                          -> tick 207
+ *   LOG_QUIT                             -> tick 208
+ */
+int run_lv_alive_seek(void) {
+  const char *path = "lv_alive_seek.wbv";
+  static const uint8_t kill[2] = {1, 2};
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshotSlot1(&b, 10);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_KillPlayer, kill, 2);
+  putNoEvents(&b, 50);
+  putSnapshotSlot1(&b, 0);
+  putNoEvents(&b, 50);
+  putSnapshotSlot1(&b, 10);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic alive log failed to build/load");
+
+  lv_screenSeekToTimeMs(500);
+  UT_ASSERT_MSG(lv_screenGetState()->gameViewHud[1].alive,
+                "slot 1 not alive before the kill");
+  lv_screenSeekToTimeMs(1500);
+  UT_ASSERT_MSG(!lv_screenGetState()->gameViewHud[1].alive,
+                "slot 1 alive after the kill");
+  lv_screenSeekToTimeMs(3500);
+  UT_ASSERT_MSG(lv_screenGetState()->gameViewHud[1].alive,
+                "slot 1 not alive after the last snapshot");
+
+  /* Back to the snapshot that has it off the map. */
+  lv_screenSeekToTimeMs(2100);
+  UT_ASSERT_MSG(!lv_screenGetState()->gameViewHud[1].alive,
+                "slot 1 alive at the snapshot that has it dead");
+
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
 /* One log_PlayerJoined event: slot, 2-char country, account flags, reserved,
  * then the name as a pascal string (the layout screen.c's decode reads). */
 static void putPlayerJoined(LogBuf *b, uint8_t slot, const char *name) {

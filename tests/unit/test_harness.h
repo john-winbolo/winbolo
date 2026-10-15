@@ -1363,6 +1363,8 @@ int run_lv_hide_lobby_periodic_snapshot(void);
 /* Kill and death tallies across seeks (test_lv_calibration.c): a seek back
  * restores them with the snapshot, so a replayed stretch is not counted twice. */
 int run_lv_kill_tally_seek(void);
+/* A seek back to a snapshot with a tank off the map shows it dead. */
+int run_lv_alive_seek(void);
 
 /* Log viewer events panel list (test_lv_event_list.c): a replay after a seek
  * back adds no line twice, and pinned lines stay ahead of the timed ones. */

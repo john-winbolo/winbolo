@@ -5292,6 +5292,7 @@ set(_unit_test_names
     lv_hide_lobby_no_marker_anchor
     lv_hide_lobby_periodic_snapshot
     lv_kill_tally_seek
+    lv_alive_seek
     lv_event_list_replay
     lv_event_list_pinned
     lv_snapshot_index_lookup
