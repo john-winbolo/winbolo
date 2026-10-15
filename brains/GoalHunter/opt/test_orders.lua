@@ -6822,7 +6822,7 @@ do
     { "ORDER_GOTO_ARRIVE_BLOCKED_RING",   true, false },
     { "ORDER_GOTO_FALLBACK_STALL",        true, false },
     { "ORDER_GOTO_RETARGET_UNREACHABLE",  true, false },
-    { "GOTO_FAST_ARRIVE",                 true, false },
+    { "GOTO_FAST_ARRIVE",                 false, false },
     { "ORDER_GOTO_BLOCKED_RELEASE",       true, false },
     { "STUCK_COLLAPSE_ACCUM",             true, false },
     { "ORDER_BID_STOP_AWARE",             true, false },

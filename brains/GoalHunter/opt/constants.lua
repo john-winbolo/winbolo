@@ -4804,7 +4804,12 @@ M.ORDER_GOTO_RETARGET_UNREACHABLE = true   -- keel false
 -- on the square, the tank holds speed and brakes on the engine stop
 -- predictor instead of the distance-proportional approach brake (see
 -- steering.lua, "goto_fast").  false = the approach brake (keel).
-M.GOTO_FAST_ARRIVE = true   -- keel false
+-- OFF LIVE for now (2026-10-15): on in an 8-seed sweep it made
+-- pilltag_base_cap (seed 42 too), pilltag_fort_lead and pilltag_fort_trail
+-- fail more often than on main.  It is not wrong in itself: the bot holder
+-- reaches the script's go-there squares sooner, and those arenas then play
+-- out differently.  Andrew to decide; see PR #510.
+M.GOTO_FAST_ARRIVE = false  -- keel false
 -- 2026-10-15 (Andrew: "if it's blocked, just say you're there and move on to
 -- the next goal"): A BLOCKED SQUARE IS AN ARRIVAL WITH NO HOLD.  When
 -- ORDER_GOTO_ARRIVE_BLOCKED_RING arrives an order from the ring, the order
