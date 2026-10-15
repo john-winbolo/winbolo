@@ -92,7 +92,9 @@
 #define ZOOM_FACTOR_CUSTOM 0
 #endif
 #ifndef MENU_BAR_HEIGHT
-  #ifdef __APPLE__
+  /* macOS has the native menu bar; iOS draws the ImGui one (in the iPad's
+     desktop layout) as Windows and Linux do. */
+  #if defined(__APPLE__) && !defined(__IPHONEOS__)
     #define MENU_BAR_HEIGHT 0
   #else
     #define MENU_BAR_HEIGHT 22
@@ -1726,6 +1728,12 @@ bool sdl3DrawSetup(int zoomFactor) {
                                zoomFactor * SDL3_SCREEN_W,
                                zoomFactor * SDL3_SCREEN_H + MENU_BAR_HEIGHT,
                                0);
+#elif defined(__IPHONEOS__)
+    /* The iPad's desktop layout. An iOS window always fills the screen. No
+       high pixel density: the render output is then in points, as a desktop
+       window's is, so the menu bar, the game blit below it and the pointer
+       all share one coordinate space and the game is scaled up to fit. */
+    gWindow = SDL_CreateWindow("WinBolo", 0, 0, SDL_WINDOW_FULLSCREEN);
 #else
     /* Big Picture / Gamepad UI: launch maximised so the game fills the
        couch-mode surface.  Window size/position prefs are not persisted in
@@ -1897,8 +1905,9 @@ bool sdl3DrawSetup(int zoomFactor) {
                      gFallbackFontKD, gFallbackFontLabel,
                      gTankBarsTex, gBaseBarsTex);
 
-#if !defined(__ANDROID__) && !defined(__IPHONEOS__)
-  /* Desktop + wasm: create a render target for the game content.
+#if !defined(__ANDROID__)
+  /* Desktop, wasm and the iPad's desktop layout: create a render target for
+     the game content.
      The game is rendered at its logical size, then blitted scaled to the
      window below the menu bar. This allows the menu to stay at 1x size
      while the game scales, and gives windowToGameCoords a defined
@@ -2021,7 +2030,7 @@ void sdl3DrawCleanup(void) {
  * ------------------------------------------------------- */
 void sdl3DrawReconfigureZoom(int explicitZoom) {
   (void)explicitZoom;
-#if !defined(__ANDROID__) && !defined(__IPHONEOS__)
+#if !defined(__ANDROID__)
   if (!gRenderer || !gWindow) return;
   if (uiModeIsTablet()) return;
   /* Deck is fullscreen 1280x800 with logical presentation already set in

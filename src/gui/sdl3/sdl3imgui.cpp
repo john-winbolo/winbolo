@@ -184,7 +184,9 @@ extern "C" bool inputTouchGetAbsoluteSteering(void);
 #endif
 
 #ifndef MENU_BAR_HEIGHT
-  #ifdef __APPLE__
+  /* macOS has the native menu bar; iOS draws the ImGui one (in the iPad's
+     desktop layout) as Windows and Linux do. */
+  #if defined(__APPLE__) && !defined(__IPHONEOS__)
     #define MENU_BAR_HEIGHT 0
   #else
     #define MENU_BAR_HEIGHT 22
@@ -6925,11 +6927,27 @@ static void renderMenuBar(ClientSim *cs) {
             if (overviewSuppressed() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
 #endif
+#if defined(__APPLE__) && TARGET_OS_IOS
+            /* The iPad's desktop layout. There is no pop-out overview, so the
+               map is offered the one way iOS has it: over the whole screen. */
+            ImGui::Separator();
+            if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), nullptr,
+                                sdl3DrawIsOverviewInWindow(),
+                                cs != nullptr && clientSimIsRunning(cs) && !overviewSuppressed())) {
+                overviewInWindowChoose(!sdl3DrawIsOverviewInWindow());
+            }
+            if (overviewSuppressed() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
+#endif
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         }
 #endif
+#if !(defined(__APPLE__) && TARGET_OS_IOS)
+        /* An iOS app does not quit itself; File > New goes back to the menu. */
         ImGui::Separator();
-#ifndef __EMSCRIPTEN__
+#endif
+#if defined(__APPLE__) && TARGET_OS_IOS
+#elif !defined(__EMSCRIPTEN__)
         if (ImGui::MenuItem(langGetText(STR_MENU_EXIT)))                     windowSetQuitting();
 #else
         if (ImGui::MenuItem(langGetText(STR_MENU_LEAVE_GAME)))               windowLeaveGame();
@@ -9380,7 +9398,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
            carry touch wording there (tutorial_text.c). */
         renderTutorialOverlay(cs);
     } else {
-#ifndef __APPLE__
+    /* The in-window menu bar: everywhere but macOS, whose menus are native.
+       On iOS this is the iPad's desktop layout. */
+#if !defined(__APPLE__) || TARGET_OS_IOS
         /* Show the menu bar only when the player's last-used device is the
            keyboard/mouse.  A connected-but-idle controller doesn't hide it,
            and reaching for the mouse/keyboard brings it back; using the

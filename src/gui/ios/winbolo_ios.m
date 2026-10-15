@@ -10,6 +10,8 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #import <AVFoundation/AVFoundation.h>
+#import <UIKit/UIKit.h>
+#import <GameController/GameController.h>
 #ifdef HAVE_SENTRY
 @import Sentry;
 #endif
@@ -67,6 +69,47 @@ void iosCrashReportingSetEnabled(bool enabled) {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults setBool:enabled forKey:@"crash_reporting_enabled"];
     [defaults synchronize];
+}
+
+/* -------------------------------------------------------
+ * iPad layout (NSUserDefaults "ipad_layout")
+ *
+ * An iPad can run the desktop layout: the menu bar, the classic game screen
+ * scaled to fit, the desktop's panels drawn in the window, and the map
+ * overview over the whole screen, driven by a keyboard and a trackpad or
+ * mouse. The phone always runs the touch layout. The choice is read once,
+ * when the UI mode is first asked for, so a change applies at the next
+ * launch; Settings says so.
+ * ------------------------------------------------------- */
+
+bool iosDeviceIsPad(void) {
+    return [UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad;
+}
+
+int iosIpadLayoutGet(void) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:@"ipad_layout"] == nil) return IOS_IPAD_LAYOUT_AUTO;
+    int v = (int)[defaults integerForKey:@"ipad_layout"];
+    if (v < IOS_IPAD_LAYOUT_AUTO || v > IOS_IPAD_LAYOUT_DESKTOP) v = IOS_IPAD_LAYOUT_AUTO;
+    return v;
+}
+
+void iosIpadLayoutSet(int layout) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setInteger:layout forKey:@"ipad_layout"];
+    [defaults synchronize];
+}
+
+/* Asked by uiModeDetect. Automatic picks the desktop layout when a hardware
+   keyboard is attached at launch, since that is what the layout is driven
+   by; without one an iPad gets the touch layout, as a phone does. */
+bool iosUseDesktopLayout(void) {
+    if (!iosDeviceIsPad()) return false;
+    switch (iosIpadLayoutGet()) {
+    case IOS_IPAD_LAYOUT_DESKTOP: return true;
+    case IOS_IPAD_LAYOUT_TOUCH:   return false;
+    default:                      return GCKeyboard.coalescedKeyboard != nil;
+    }
 }
 
 /* -------------------------------------------------------
@@ -448,8 +491,6 @@ ios_game_start:
                             if (tw <= 0 || th <= 0) SDL_GetWindowSize(sdl3DrawGetWindow(), &tw, &th);
                             inputTouchProcessEvent(&ev, tw, th);
                         }
-                    } else {
-                        touchInputProcessEvent(&ev);
                     }
                     if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                         winboloQuit = TRUE;
@@ -473,9 +514,11 @@ ios_game_start:
                    tablet mode — ImGui buttons (build bar, etc.) use
                    inputTouchConsumeTapInRect for hit-testing, so the
                    touch system must see every event regardless of
-                   ImGui's WantCaptureMouse state.  Non-tablet mode
-                   still gates on WantCaptureMouse to avoid conflicts
-                   with dialog input. */
+                   ImGui's WantCaptureMouse state.  The desktop layout (an
+                   iPad with a keyboard) hands events to the game the way
+                   the desktop does: keys to windowKeyPressed and the raw
+                   event to sdl3DrawHandleEvent, which clicks build with,
+                   when ImGui is not using the pointer. */
                 if (uiModeIsTablet()) {
                     if (rawEv.type == SDL_EVENT_FINGER_DOWN || rawEv.type == SDL_EVENT_FINGER_UP || rawEv.type == SDL_EVENT_FINGER_MOTION ||
                         rawEv.type == SDL_EVENT_FINGER_CANCELED) {
@@ -484,8 +527,13 @@ ios_game_start:
                         if (tw <= 0 || th <= 0) SDL_GetWindowSize(sdl3DrawGetWindow(), &tw, &th);
                         inputTouchProcessEvent(&rawEv, tw, th);
                     }
-                } else if (!sdl3ImguiWantCaptureMouse()) {
-                    touchInputProcessEvent(&ev);
+                } else {
+                    if (rawEv.type == SDL_EVENT_KEY_DOWN && !rawEv.key.repeat) {
+                        windowKeyPressed(cs, (int)rawEv.key.scancode);
+                    }
+                    if (!sdl3ImguiWantCaptureMouse()) {
+                        sdl3DrawHandleEvent(cs, &rawEv);
+                    }
                 }
                 if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                     winboloQuit = TRUE;
@@ -537,13 +585,8 @@ ios_game_start:
         sdl3DrawFlushOverviewInWindow();
         dwSysFrame += (SDL_GetTicks() - tick);
 
-        /* Touch overlay (skip in tablet mode — ImGui overlay handles it) */
-        if (!uiModeIsTablet()) {
-            SDL_Renderer *ren = sdl3DrawGetRenderer();
-            if (ren) {
-                touchInputRender(ren);
-            }
-        }
+        /* The touch layout's overlay is drawn by sdl3ImguiPumpAndRender; the
+           desktop layout has none. */
         sdl3ImguiPumpAndRender(cs);
         {
             SDL_Renderer *ren = sdl3DrawGetRenderer();
@@ -826,11 +869,13 @@ void windowShowGameInfo(windowShowRequest req) { sdl3ImguiShowGameInfo(req == ws
 void windowShowSysInfo(windowShowRequest req) { sdl3ImguiShowSysInfo(req == wsrOpen); }
 void windowShowNetInfo(windowShowRequest req) { sdl3ImguiShowNetInfo(req == wsrOpen); }
 void windowShowSetPlayerName(windowShowRequest req) { (void)req; }
-void windowShowSendMessages(windowShowRequest req) { (void)req; }
-void windowShowSetKeys(windowShowRequest req) { (void)req; }
+void windowShowSendMessages(windowShowRequest req) { sdl3ImguiShowSendMsg(req == wsrOpen); }
+void windowShowSetKeys(windowShowRequest req) { if (req == wsrOpen) sdl3ImguiShowKeySetup(); }
 void windowShowAboutBox(void) {}
 
-bool windowShowAllianceRequest(void) { return FALSE; }
+/* Alliance requests from other players are shown, as on the desktop; FALSE
+   here had them answered "ignored" in every network game. */
+bool windowShowAllianceRequest(void) { return TRUE; }
 void windowDisableSound(void) { soundEffects = FALSE; useSoundKeepalive = FALSE; }
 bool windowGetBackgroundSound(void) { return backgroundSound; }
 
@@ -840,7 +885,21 @@ void windowRedrawAll(ClientSim *cs) {
     clientMutexRelease();
 }
 
-void windowSaveMap(ClientSim *cs) { (void)cs; }
+/* No save dialog on iOS: the map goes into Documents under a made-up name,
+   where the Files app and the map editor's Open both find it. */
+void windowSaveMap(ClientSim *cs) {
+    const char *docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+    if (!docs || !docs[0]) {
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBERR_SAVEMAP),
+                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+        return;
+    }
+    char dir[FILENAME_MAX];
+    SDL_strlcpy(dir, docs, sizeof(dir));
+    size_t n = strlen(dir);
+    while (n > 1 && dir[n - 1] == '/') dir[--n] = '\0';
+    clientFrontSaveMapAutoNamed(cs, dir);
+}
 
 void windowButtonAdd(int keyCode) { (void)keyCode; }
 void windowButtonRemove(int keyCode) { (void)keyCode; }
@@ -1052,7 +1111,15 @@ void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool
     sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
 }
 
-void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
+/* The auto-slowdown and auto-hide-gunsight prefs, from gamefront.c, as on
+   the desktop. */
+void frontEndApplyLocalTankPrefs(struct ClientSim *cs) {
+    extern bool useAutoslow;
+    extern bool useAutohide;
+    if (cs == NULL) return;
+    clientSimSetTankAutoSlowdown(cs, useAutoslow);
+    clientSimSetTankAutoHideGunsight(cs, useAutohide);
+}
 
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled) { (void)enabled; }
@@ -1081,7 +1148,9 @@ int winboloCC(void) { return 0; }
 void *dialogAllianceCreate(void) { return NULL; }
 void dialogAllianceDestroy(void *dlg) { (void)dlg; }
 void dialogAllianceSetName(char *playerName, BYTE playerNum) {
-    (void)playerName; (void)playerNum;
+    if (playerName != NULL) {
+        sdl3ImguiShowAllianceRequest(playerName, playerNum);
+    }
 }
 
 bool winUtilWBSubDirExist(char *subDirName) {

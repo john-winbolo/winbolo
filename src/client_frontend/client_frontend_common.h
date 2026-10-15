@@ -18,6 +18,12 @@ struct ClientSim;
  * none is registered yet (bootstrapping), so a callback goes ahead. */
 bool clientFrontIsActiveUiSim(const struct ClientSim *cs);
 
+/* Save the running game's map into dir, which is created if missing, under a
+ * name made from the map's name and the time (Everard_20261016_031500.map),
+ * and tell the player where it went or that it failed. For a player with no
+ * file dialog: the desktop under a controller, and iOS. */
+void clientFrontSaveMapAutoNamed(struct ClientSim *cs, const char *dir);
+
 #ifdef __cplusplus
 }
 #endif

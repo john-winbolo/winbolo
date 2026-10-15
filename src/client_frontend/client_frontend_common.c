@@ -26,6 +26,11 @@
 #include "server_sim.h"
 #include "tutorial.h"       /* tutorialSteps[] */
 #include "dialogs/imgui_tutorial_overlay.h"
+#include "dialogs/imgui_messagebox.h"
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include <SDL3/SDL.h>
 
 /* -------------------------------------------------------
  * Active-sim guard
@@ -40,6 +45,38 @@ static struct ClientSim *s_activeUiCs = NULL;
 
 bool clientFrontIsActiveUiSim(const struct ClientSim *cs) {
   return s_activeUiCs == NULL || cs == s_activeUiCs;
+}
+
+void clientFrontSaveMapAutoNamed(struct ClientSim *cs, const char *dir) {
+  char base[FILENAME_MAX];
+  char ts[32];
+  char fullPath[FILENAME_MAX];
+  const char *mapName = clientSimGetMapName(cs);
+  time_t now = time(NULL);
+
+  /* Filename base from the map name, minus any ".map" suffix; "map" when the
+     name is empty. */
+  if (mapName && mapName[0]) {
+    snprintf(base, sizeof(base), "%s", mapName);
+    size_t blen = strlen(base);
+    if (blen > 4 && strcmp(base + blen - 4, ".map") == 0) {
+      base[blen - 4] = '\0';
+    }
+  } else {
+    snprintf(base, sizeof(base), "map");
+  }
+  strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", localtime(&now));
+
+  SDL_CreateDirectory(dir);
+  snprintf(fullPath, sizeof(fullPath), "%s/%s_%s.map", dir, base, ts);
+
+  if (clientSaveMap(cs, fullPath) == FALSE) {
+    imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBERR_SAVEMAP),
+                      IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+  } else {
+    imguiMessageBoxEx(langGetText(STR_MENU_SAVE_MAP), fullPath,
+                      IMGUI_MSG_INFO, IMGUI_MSG_OK);
+  }
 }
 
 void frontEndSetActiveClientSim(struct ClientSim *cs) {

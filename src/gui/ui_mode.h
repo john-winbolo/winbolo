@@ -72,6 +72,20 @@ void uiModeSet(UIMode m);
 *********************************************************/
 bool uiModeIsTablet(void);
 
+#if defined(__IPHONEOS__)
+/* The iPad layout choice, kept in the iOS driver (winbolo_ios.m) and read by
+ * uiModeDetect once per launch: the touch layout a phone always has, or the
+ * desktop layout for a keyboard and a trackpad or mouse. Automatic is the
+ * desktop layout when a hardware keyboard is attached at launch. */
+#define IOS_IPAD_LAYOUT_AUTO    0
+#define IOS_IPAD_LAYOUT_TOUCH   1
+#define IOS_IPAD_LAYOUT_DESKTOP 2
+bool iosDeviceIsPad(void);
+int  iosIpadLayoutGet(void);
+void iosIpadLayoutSet(int layout);
+bool iosUseDesktopLayout(void);
+#endif
+
 /*********************************************************
 *NAME:          uiModeIsSteamDeck
 *PURPOSE:

@@ -156,6 +156,7 @@ extern "C" {
 #if defined(__IPHONEOS__)
   bool iosCrashReportingGetEnabled(void);
   void iosCrashReportingSetEnabled(bool enabled);
+  /* iosDeviceIsPad / iosIpadLayoutGet / iosIpadLayoutSet: ui_mode.h */
 #endif
 }
 
@@ -2642,6 +2643,23 @@ static void settingsShowLoop(bool inEditor) {
                 ImGui::TextWrapped("%s", langGetText(STR_DLGSETTINGS_CRASH_HELP));
                 ImGui::Spacing();
                 ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_CRASH_NEXTLAUNCH));
+
+                /* ---- iPad layout ---- */
+                if (iosDeviceIsPad()) {
+                    ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_IPAD_LAYOUT));
+                    static const langid kLayoutLabels[] = {
+                        STR_DLGSETTINGS_IPAD_LAYOUT_AUTO,     /* IOS_IPAD_LAYOUT_AUTO */
+                        STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH,    /* IOS_IPAD_LAYOUT_TOUCH */
+                        STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP,  /* IOS_IPAD_LAYOUT_DESKTOP */
+                    };
+                    int layout = iosIpadLayoutGet();
+                    for (int i = 0; i < 3; i++) {
+                        if (ImGui::RadioButton(langGetText(kLayoutLabels[i]), layout == i)) {
+                            iosIpadLayoutSet(i);
+                        }
+                    }
+                    ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_CRASH_NEXTLAUNCH));
+                }
 #endif
                 ImGui::EndChild();
                 ImGui::EndTabItem();

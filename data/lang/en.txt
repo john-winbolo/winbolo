@@ -2801,3 +2801,9 @@ STR_IOSREC_OPEN_FAILED=This recording could not be opened.
 STR_IOSREC_LAST_ROUND=Last single-player round
 STR_IOSREC_COPY_FAILED=The recording could not be copied to the Files app.
 
+# The iPad's choice of the touch or the desktop layout
+STR_DLGSETTINGS_IPAD_LAYOUT=iPad layout
+STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=Automatic: desktop when a keyboard is attached
+STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=Touch
+STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=Desktop: menu bar, keyboard and trackpad or mouse
+

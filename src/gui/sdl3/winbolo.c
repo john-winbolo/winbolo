@@ -1989,40 +1989,11 @@ void windowSaveMap(ClientSim *cs) {
       return;
     }
 
-    /* Filename base from the map name, minus any ".map" suffix; fall back
-       to "map" when the name is empty. */
-    const char *mapName = clientSimGetMapName(cs);
-    char base[FILENAME_MAX];
-    if (mapName && mapName[0]) {
-      snprintf(base, sizeof(base), "%s", mapName);
-      size_t blen = strlen(base);
-      if (blen > 4 && strcmp(base + blen - 4, ".map") == 0) {
-        base[blen - 4] = '\0';
-      }
-    } else {
-      snprintf(base, sizeof(base), "map");
-    }
-
-    char ts[32];
-    time_t now = time(NULL);
-    strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", localtime(&now));
-
+    /* The name and the save itself are shared with iOS. */
     char mapsDir[FILENAME_MAX];
     snprintf(mapsDir, sizeof(mapsDir), "%smaps", prefDir);
-    SDL_CreateDirectory(mapsDir);
-
-    char fullPath[FILENAME_MAX];
-    snprintf(fullPath, sizeof(fullPath), "%s/%s_%s.map", mapsDir, base, ts);
-
     SDL_free(prefDir);
-
-    if (clientSaveMap(cs, fullPath) == FALSE) {
-      imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBERR_SAVEMAP),
-                        IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-    } else {
-      imguiMessageBoxEx(langGetText(STR_MENU_SAVE_MAP), fullPath,
-                        IMGUI_MSG_INFO, IMGUI_MSG_OK);
-    }
+    clientFrontSaveMapAutoNamed(cs, mapsDir);
     return;
   }
 
