@@ -2231,6 +2231,7 @@ int main(int argc, char **argv) {
    * -memreportdeep turns it on. Matched without case, like argExist. */
   {
     bool given = false;
+    bool deep = (argExist(argc, argv, "memreportdeep") == TRUE);
     const char *value = NULL;
     char warn[256];
     double memMins;
@@ -2241,14 +2242,12 @@ int main(int argc, char **argv) {
         break;
       }
     }
-    memMins = serverMemReportPeriodFromArgs(
-        given, value, argExist(argc, argv, "memreportdeep") == TRUE,
-        warn, sizeof(warn));
+    memMins = serverMemReportPeriodFromArgs(given, value, deep,
+                                            warn, sizeof(warn));
     if (warn[0] != '\0') {
       fprintf(stderr, "%s\n", warn);
     }
-    serverMemReportConfigure(memMins,
-                             argExist(argc, argv, "memreportdeep") == TRUE);
+    serverMemReportConfigure(memMins, deep);
   }
 
   /* Empty reset configuration — on by default */

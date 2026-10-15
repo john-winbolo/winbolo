@@ -48,6 +48,7 @@
   #include <mach/mach.h>
 #endif
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -103,8 +104,18 @@ double serverMemReportPeriodFromArgs(bool given, const char *value, bool deep,
     if (value != NULL) {
       char *end = NULL;
       double parsed = strtod(value, &end);
-      if (end != value) {
-        /* "5m" parses as 5; 0 or less turns the report off. */
+      if (end != value && (!isfinite(parsed) || parsed < 0.0)) {
+        /* nan, inf, 1e999 and negatives are typing mistakes: like a
+         * value that is not a number, they must not turn the report off
+         * or set a period of a year. */
+        if (warn != NULL && warnSize > 0) {
+          snprintf(warn, warnSize,
+                   "Warning: -memreport '%s' is not a usable number; "
+                   "using %d minutes",
+                   value, SERVER_MEMREPORT_DEFAULT_MINUTES);
+        }
+      } else if (end != value) {
+        /* "5m" parses as 5; 0 turns the report off. */
         mins = parsed;
       } else if (value[0] != '-' && warn != NULL && warnSize > 0) {
         /* A following flag means a bare -memreport; anything else is a
@@ -115,7 +126,7 @@ double serverMemReportPeriodFromArgs(bool given, const char *value, bool deep,
       }
     }
   }
-  /* NaN fails every comparison: treat it as off, like 0. */
+  /* mins is finite and not negative here; clamp a very long period. */
   if (!(mins > 0.0)) {
     mins = 0.0;
   } else if (mins > MEMREPORT_MAX_MINUTES) {
