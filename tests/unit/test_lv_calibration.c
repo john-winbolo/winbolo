@@ -646,6 +646,17 @@ int run_lv_kill_tally_seek(void) {
   lv = loadSynthetic(&b, path);
   UT_ASSERT_MSG(lv != NULL, "synthetic kill log failed to build/load");
 
+  /* The load played the whole log once, so both snapshots are indexed, and
+     went back to the start without finishing it. */
+  UT_ASSERT_MSG(lv_snapshotCount(&lv->snap) == 2,
+                "the load indexed %d snapshots (want 2)", lv_snapshotCount(&lv->snap));
+  UT_ASSERT_MSG(lv_screenGetTimeRunning() == 0 && lv_screenIsPlaying() == TRUE,
+                "the load left playback at %u, playing %d",
+                lv_screenGetTimeRunning(), (int)lv_screenIsPlaying());
+  UT_ASSERT_MSG(lv->kills[2] == 0 && lv->deaths[1] == 0,
+                "the load left kills %u deaths %u (want 0 and 0)",
+                lv->kills[2], lv->deaths[1]);
+
   lv_screenSeekToTimeMs(3000);
   UT_ASSERT_MSG(lv_screenGetState()->kills[2] == 1 && lv_screenGetState()->deaths[1] == 1,
                 "after the kill: kills %u deaths %u (want 1 and 1)",

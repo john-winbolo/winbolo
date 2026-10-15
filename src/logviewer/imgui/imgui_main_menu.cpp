@@ -37,7 +37,6 @@ extern "C" {
     void lv_windowNeedRedraw(void);
     void lv_screenTankCentred(int enabled);
     int lv_dnsSetEnabled(int enabled);
-    void lv_imgui_events_clear(void);
     void lv_soundSetVolume(int pct);
 }
 
@@ -76,7 +75,6 @@ static void open_wbn_browser_modal(void) {
         lv_windowStop(0);
         if (lv_screenLoadMapFromMemory(res.memoryData, res.memorySize)) {
             s_lv->isLoaded = TRUE;
-            lv_imgui_events_clear();
             lv_windowNeedRedraw();
         }
         /* memoryData ownership transferred — don't free */

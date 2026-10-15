@@ -4117,6 +4117,21 @@ static void lv_screenParkAtWindowStart(void) {
   }
 }
 
+/* Play the whole log once at load and go back to its start. Playback indexes
+ * every snapshot it passes and posts every line it reads to the events panel,
+ * so afterwards a seek anywhere restores from the snapshot just before its
+ * target and the panel already holds the lines of any stretch it skips. It
+ * stops a tick short of the end: the tick that reads LOG_QUIT finishes the
+ * log, and the viewer must not open finished. */
+static void lv_screenPlayWholeLog(void) {
+  if (g_lv->totalTimeMs > 20) {
+    lv_screenSeekToAbsoluteMs(g_lv->totalTimeMs - 20);
+  }
+  if (g_lv->timeRunning > 0) {
+    lv_screenSeekToAbsoluteMs(0);
+  }
+}
+
 /* Scan one framed LOG_EVENT frame for base-ownership gains, counting matches of
  * (cell, owner) for the two anchors and latching each anchor's time when its
  * ordinal is reached. Base positions are static per round, so the cell is
@@ -4536,6 +4551,8 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize) {
   lv_screenSetup();
   /* Drop the previous log's names before anything can read them back. */
   memset(s_slotNames, 0, sizeof(s_slotNames));
+  /* And its event lines, before the load posts this one's. */
+  lv_windowRemoveEvents();
   returnValue = lv_logLoad(fileName, memoryBufferSize);
   if (returnValue == TRUE) {
     /* Decompress entire log so we know total size for the seek slider */
@@ -4553,6 +4570,7 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize) {
     g_lv->state = lv_lr_start;
     lv_rulesRefresh();
     lv_presRebuild(g_lv->timeRunning);
+    lv_screenPlayWholeLog();
     lv_screenParkAtWindowStart();
   } else {
     /* The last log's rules must not outlive it. */
@@ -4689,6 +4707,8 @@ bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen) {
   lv_screenSetup();
   /* Drop the previous log's names before anything can read them back. */
   memset(s_slotNames, 0, sizeof(s_slotNames));
+  /* And its event lines, before the load posts this one's. */
+  lv_windowRemoveEvents();
   returnValue = lv_logLoadFromMemory(zipData, zipLen);
   if (returnValue == TRUE) {
     lv_logDecompressAll();
@@ -4700,6 +4720,7 @@ bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen) {
     g_lv->state = lv_lr_start;
     lv_rulesRefresh();
     lv_presRebuild(g_lv->timeRunning);
+    lv_screenPlayWholeLog();
     lv_screenParkAtWindowStart();
   } else {
     /* The last log's rules must not outlive it. */
@@ -5472,27 +5493,28 @@ void lv_screenSeekToPosition(float ratio) {
 /* Seek playback to an absolute log time: restore the newest snapshot at or
  * before it, then fast-forward the decoder to the target.
  *
- * A forward seek skips the restore entirely. The decoder is a sequential state
+ * A forward seek restores only when that snapshot is ahead of the playhead.
+ * Otherwise it ticks on from where it is: the decoder is a sequential state
  * machine and its current state is already the replay of everything up to
  * timeRunning, so ticking on to a later target lands in exactly the state a
- * restore-and-replay would produce, for only the ticks in between. That
- * matters because a round carries essentially one snapshot, at its start: the
- * restore path re-decodes the whole round every time, at 20 ms of log per
- * tick, which is why scrubbing used to be affordable only once on release.
- * With this, dragging the recap's seek slider forward costs just the ticks the
- * handle crossed since the last frame. Backward seeks still rewind through the
- * snapshot — there is no way to un-tick — so callers throttle those. */
+ * restore-and-replay would produce, for only the ticks in between. The load
+ * plays the whole log once, so every snapshot is in the index and a seek
+ * either way decodes at most the few seconds after one. */
 static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
   size_t snapPos;
   uint32_t snapTime;
   BYTE key;
   BYTE *pTeams = NULL;
+  bool haveSnap;
 
-  if (targetTime >= g_lv->timeRunning && g_lv->logLoaded == TRUE) {
-    /* Already there: nothing to decode, and no state to disturb. */
-    if (targetTime == g_lv->timeRunning) {
-      return;
-    }
+  /* Already there: nothing to decode, and no state to disturb. */
+  if (targetTime == g_lv->timeRunning && g_lv->logLoaded == TRUE) {
+    return;
+  }
+  haveSnap = lv_snapshotFindByTime(&g_lv->snap, targetTime, &snapPos, &snapTime, &key, &pTeams);
+
+  if (targetTime > g_lv->timeRunning && g_lv->logLoaded == TRUE &&
+      !(haveSnap && snapTime > g_lv->timeRunning)) {
     g_lv->isPlaying = TRUE;
     /* A user scrub parks the live-DVR view in the past (consumed next frame),
        exactly as the restore path below does. */
@@ -5510,7 +5532,7 @@ static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
     return;
   }
 
-  if (lv_snapshotFindByTime(&g_lv->snap, targetTime, &snapPos, &snapTime, &key, &pTeams)) {
+  if (haveSnap) {
     g_lv->timeRunning = snapTime;
     lv_logSetPosition(snapPos);
     lv_blocksSetKey(key);

@@ -319,7 +319,6 @@ void lv_windowOpenFile(char *cmdLine) {
             g_lv->isLoaded = FALSE;
         } else {
             g_lv->isLoaded = TRUE;
-            lv_imgui_events_clear();
             lvStatsEmitRoundSummary();
             lv_windowNeedRedraw();
         }
@@ -1077,7 +1076,6 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
             g_lv->isLoaded = FALSE;
         } else {
             g_lv->isLoaded = TRUE;
-            lv_imgui_events_clear();
             lvStatsEmitRoundSummary();
             lv_windowNeedRedraw();
         }
