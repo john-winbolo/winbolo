@@ -4511,12 +4511,18 @@ void clientSimSyncViewState(ClientSim *cs) {
   if (kind == VIEW_KIND_TANK) {
     target = 0;
   }
-  if (kind == cs->lastSentViewKind && target == cs->lastSentViewTarget) {
+  if (cs->viewStateResendTicks < CLIENT_VIEW_STATE_RESEND_TICKS) {
+    cs->viewStateResendTicks++;
+  }
+  if (kind == cs->lastSentViewKind && target == cs->lastSentViewTarget &&
+      (kind == VIEW_KIND_TANK ||
+       cs->viewStateResendTicks < CLIENT_VIEW_STATE_RESEND_TICKS)) {
     return;
   }
   clientSimNetSendViewState(cs, kind, target);
   cs->lastSentViewKind = kind;
   cs->lastSentViewTarget = target;
+  cs->viewStateResendTicks = 0;
 }
 
 void clientSimResetViewStateReport(ClientSim *cs) {
