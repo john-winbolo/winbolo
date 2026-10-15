@@ -2761,3 +2761,34 @@ STR_DLGSYSINFO_MEM_BUILDING=建造
 STR_DLGSYSINFO_MEM_RUBBLE=瓦礫
 STR_DLGSYSINFO_MEM_SWAMP=沼澤
 STR_DLGSYSINFO_MEM_GRASS=草地
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=按鍵說話：按住遊戲畫面上的麥克風按鈕
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=你的檔案
+STR_MAPEDIT_IOS_BUILTIN=WinBolo 隨附的地圖
+STR_MAPEDIT_IOS_NOFILES=這裡還沒有內容。你儲存的檔案，以及放入「檔案」App 中 WinBolo 資料夾的檔案，都會顯示在這裡。
+STR_MAPEDIT_IOS_NAME=名稱
+STR_MAPEDIT_IOS_REPLACES=已有同名檔案。儲存將會取代它。
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=錄影
+STR_IOSREC_EMPTY=還沒有錄影。單人回合會錄製在這裡，放入「檔案」App 中 WinBolo 資料夾的 .wbv 檔案也會列在這裡。
+STR_IOSREC_COPY=複製到「檔案」
+STR_IOSREC_COPIED=已複製到「檔案」App 中的 WinBolo 資料夾。
+STR_IOSREC_OPEN_FAILED=無法開啟此錄影。
+STR_IOSREC_LAST_ROUND=上一個單人回合
+STR_IOSREC_COPY_FAILED=無法將錄影複製到「檔案」App。
+
+# The iPad's choice of the touch or the desktop layout
+STR_DLGSETTINGS_IPAD_LAYOUT=iPad 版面配置
+STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=自動：連接鍵盤時使用桌面配置
+STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=觸控
+STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=桌面：選單列、鍵盤和觸控式軌跡板或滑鼠
+STR_DLGCONNECTING_TITLE=正在連線到 {string1}...
+STR_DLGCONNECTING_PING=正在向伺服器詢問其遊戲...
+STR_DLGCONNECTING_JOINING=正在加入遊戲...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=無法讀取該錄影。

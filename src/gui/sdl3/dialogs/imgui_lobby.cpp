@@ -251,7 +251,7 @@ extern "C" void imguiLobbyFrameReset(void) {
      * past the lobby session. */
     lobbyReelEnd();
 #endif
-#if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
+#if !defined(__ANDROID__) && BOLO_RECAP_CLIP_GIF
     /* A clip export waiting on its save picker holds the whole encoded GIF,
      * and nothing polls it once the lobby is gone. Deliberately not folded
      * into lobbyReelEnd above: that also runs mid-session when the countdown
@@ -2879,7 +2879,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         voiceTick(cs);
 #endif
 
-#if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
+#if !defined(__ANDROID__) && BOLO_RECAP_CLIP_GIF
         /* Write out a clip export whose save picker has been answered. Here
          * rather than in the recap that started it: the picker is asynchronous
          * so this loop keeps ticking the transport underneath it, and a player

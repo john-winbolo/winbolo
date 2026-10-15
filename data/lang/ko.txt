@@ -2761,3 +2761,34 @@ STR_DLGSYSINFO_MEM_BUILDING=건설
 STR_DLGSYSINFO_MEM_RUBBLE=잔해
 STR_DLGSYSINFO_MEM_SWAMP=늪
 STR_DLGSYSINFO_MEM_GRASS=풀
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=눌러서 말하기: 게임 화면의 마이크 버튼을 길게 누르세요
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=내 파일
+STR_MAPEDIT_IOS_BUILTIN=WinBolo에 포함된 맵
+STR_MAPEDIT_IOS_NOFILES=아직 아무것도 없습니다. 저장한 파일과 파일 앱의 WinBolo 폴더에 넣은 파일이 여기에 표시됩니다.
+STR_MAPEDIT_IOS_NAME=이름
+STR_MAPEDIT_IOS_REPLACES=이 이름의 파일이 이미 있습니다. 저장하면 대체됩니다.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=녹화
+STR_IOSREC_EMPTY=아직 녹화가 없습니다. 싱글 플레이 라운드가 여기에 녹화되며, 파일 앱의 WinBolo 폴더에 넣은 .wbv 파일도 여기에 표시됩니다.
+STR_IOSREC_COPY=파일 앱으로 복사
+STR_IOSREC_COPIED=파일 앱의 WinBolo 폴더로 복사했습니다.
+STR_IOSREC_OPEN_FAILED=이 녹화를 열 수 없습니다.
+STR_IOSREC_LAST_ROUND=마지막 싱글 플레이 라운드
+STR_IOSREC_COPY_FAILED=녹화를 파일 앱으로 복사할 수 없습니다.
+
+# The iPad's choice of the touch or the desktop layout
+STR_DLGSETTINGS_IPAD_LAYOUT=iPad 레이아웃
+STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=자동: 키보드가 연결되면 데스크톱
+STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=터치
+STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=데스크톱: 메뉴 막대, 키보드와 트랙패드 또는 마우스
+STR_DLGCONNECTING_TITLE={string1}에 연결하는 중...
+STR_DLGCONNECTING_PING=서버에 게임 정보를 묻는 중...
+STR_DLGCONNECTING_JOINING=게임에 참가하는 중...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=그 녹화를 읽을 수 없습니다.

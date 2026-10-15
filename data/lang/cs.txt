@@ -2761,3 +2761,34 @@ STR_DLGSYSINFO_MEM_BUILDING=Stavba
 STR_DLGSYSINFO_MEM_RUBBLE=Trosky
 STR_DLGSYSINFO_MEM_SWAMP=Bažina
 STR_DLGSYSINFO_MEM_GRASS=Tráva
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Mluvení stiskem: podržte tlačítko mikrofonu na herní obrazovce
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Vaše soubory
+STR_MAPEDIT_IOS_BUILTIN=Mapy dodávané s WinBolo
+STR_MAPEDIT_IOS_NOFILES=Zatím tu nic není. Soubory, které uložíte, a soubory, které vložíte do složky WinBolo v aplikaci Soubory, se zobrazí zde.
+STR_MAPEDIT_IOS_NAME=Název
+STR_MAPEDIT_IOS_REPLACES=Soubor s tímto názvem už existuje. Uložením se nahradí.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Záznamy
+STR_IOSREC_EMPTY=Zatím žádné záznamy. Hry jednoho hráče se nahrávají sem a soubory .wbv vložené do složky WinBolo v aplikaci Soubory jsou zde také.
+STR_IOSREC_COPY=Kopírovat do Souborů
+STR_IOSREC_COPIED=Zkopírováno do složky WinBolo v aplikaci Soubory.
+STR_IOSREC_OPEN_FAILED=Tento záznam nelze otevřít.
+STR_IOSREC_LAST_ROUND=Poslední hra jednoho hráče
+STR_IOSREC_COPY_FAILED=Záznam se nepodařilo zkopírovat do aplikace Soubory.
+
+# The iPad's choice of the touch or the desktop layout
+STR_DLGSETTINGS_IPAD_LAYOUT=Rozvržení pro iPad
+STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=Automaticky: desktop, když je připojena klávesnice
+STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=Dotykové
+STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=Desktop: lišta nabídek, klávesnice a trackpad nebo myš
+STR_DLGCONNECTING_TITLE=Připojování k {string1}...
+STR_DLGCONNECTING_PING=Dotaz na hru serveru...
+STR_DLGCONNECTING_JOINING=Připojování ke hře...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Tento záznam nelze přečíst.

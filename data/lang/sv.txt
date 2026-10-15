@@ -2765,3 +2765,34 @@ STR_DLGSYSINFO_MEM_BUILDING=Byggnation
 STR_DLGSYSINFO_MEM_RUBBLE=Bråte
 STR_DLGSYSINFO_MEM_SWAMP=Träsk
 STR_DLGSYSINFO_MEM_GRASS=Gräs
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Tryck för att prata: håll ned mikrofonknappen på spelskärmen
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Dina filer
+STR_MAPEDIT_IOS_BUILTIN=Kartor som följer med WinBolo
+STR_MAPEDIT_IOS_NOFILES=Här finns inget ännu. Filer du sparar, och filer du lägger i WinBolo-mappen i appen Filer, visas här.
+STR_MAPEDIT_IOS_NAME=Namn
+STR_MAPEDIT_IOS_REPLACES=Det finns redan en fil med det här namnet. Om du sparar ersätts den.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Inspelningar
+STR_IOSREC_EMPTY=Inga inspelningar ännu. Omgångar för en spelare spelas in här, och .wbv-filer i WinBolo-mappen i appen Filer visas också här.
+STR_IOSREC_COPY=Kopiera till Filer
+STR_IOSREC_COPIED=Kopierad till WinBolo-mappen i appen Filer.
+STR_IOSREC_OPEN_FAILED=Inspelningen kunde inte öppnas.
+STR_IOSREC_LAST_ROUND=Senaste omgången för en spelare
+STR_IOSREC_COPY_FAILED=Inspelningen kunde inte kopieras till appen Filer.
+
+# The iPad's choice of the touch or the desktop layout
+STR_DLGSETTINGS_IPAD_LAYOUT=iPad-layout
+STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=Automatisk: skrivbord när ett tangentbord är anslutet
+STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=Pekskärm
+STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=Skrivbord: menyrad, tangentbord och styrplatta eller mus
+STR_DLGCONNECTING_TITLE=Ansluter till {string1}...
+STR_DLGCONNECTING_PING=Frågar servern om dess spel...
+STR_DLGCONNECTING_JOINING=Går med i spelet...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Den inspelningen kunde inte läsas.

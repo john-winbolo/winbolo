@@ -2765,3 +2765,34 @@ STR_DLGSYSINFO_MEM_BUILDING=Costruzione
 STR_DLGSYSINFO_MEM_RUBBLE=Macerie
 STR_DLGSYSINFO_MEM_SWAMP=Palude
 STR_DLGSYSINFO_MEM_GRASS=Erba
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Premi per parlare: tieni premuto il pulsante del microfono nella schermata di gioco
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=I tuoi file
+STR_MAPEDIT_IOS_BUILTIN=Mappe incluse in WinBolo
+STR_MAPEDIT_IOS_NOFILES=Qui non c'è ancora niente. I file che salvi, e quelli che metti nella cartella WinBolo dell'app File, compaiono qui.
+STR_MAPEDIT_IOS_NAME=Nome
+STR_MAPEDIT_IOS_REPLACES=Esiste già un file con questo nome. Salvando verrà sostituito.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Registrazioni
+STR_IOSREC_EMPTY=Ancora nessuna registrazione. Le partite in singolo vengono registrate qui, e anche i file .wbv messi nella cartella WinBolo dell'app File compaiono qui.
+STR_IOSREC_COPY=Copia in File
+STR_IOSREC_COPIED=Copiata nella cartella WinBolo dell'app File.
+STR_IOSREC_OPEN_FAILED=Impossibile aprire questa registrazione.
+STR_IOSREC_LAST_ROUND=Ultima partita in singolo
+STR_IOSREC_COPY_FAILED=Impossibile copiare la registrazione nell'app File.
+
+# The iPad's choice of the touch or the desktop layout
+STR_DLGSETTINGS_IPAD_LAYOUT=Layout iPad
+STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=Automatico: desktop quando è collegata una tastiera
+STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=Tocco
+STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=Desktop: barra dei menu, tastiera e trackpad o mouse
+STR_DLGCONNECTING_TITLE=Connessione a {string1}...
+STR_DLGCONNECTING_PING=Richiesta al server sulla sua partita...
+STR_DLGCONNECTING_JOINING=Ingresso nella partita...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Impossibile leggere quella registrazione.

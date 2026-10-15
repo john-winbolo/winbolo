@@ -1432,6 +1432,12 @@ target_sources(WinBoloIOS PRIVATE ${IOS_MAPEDITOR_SOURCES})
 target_compile_definitions(WinBoloIOS PRIVATE MAPEDITOR_WBN_OPEN=1)
 source_group("Map Editor" FILES ${IOS_MAPEDITOR_SOURCES})
 target_include_directories(WinBoloIOS PRIVATE src/third_party/ImGuiColorTextEdit)
+# The recap's clip GIF export and the encoder's one implementation TU. The
+# clip is written into Documents (lobby_clip_gif.cpp), as there is no save
+# dialog.
+target_sources(WinBoloIOS PRIVATE
+    src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
+    src/third_party/msf_gif/msf_gif_impl.c)
 bolo_grant_internal_source_access(WinBoloIOS
     src/mapeditor/mapeditor.c
     src/mapeditor/mapeditor_export.c

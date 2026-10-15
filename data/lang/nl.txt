@@ -2763,3 +2763,34 @@ STR_DLGSYSINFO_MEM_BUILDING=Bouw
 STR_DLGSYSINFO_MEM_RUBBLE=Puin
 STR_DLGSYSINFO_MEM_SWAMP=Moeras
 STR_DLGSYSINFO_MEM_GRASS=Gras
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Push-to-talk: houd de microfoonknop op het spelscherm ingedrukt
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Je bestanden
+STR_MAPEDIT_IOS_BUILTIN=Kaarten die bij WinBolo horen
+STR_MAPEDIT_IOS_NOFILES=Hier staat nog niets. Bestanden die je bewaart, en bestanden die je in de WinBolo-map in de Bestanden-app zet, verschijnen hier.
+STR_MAPEDIT_IOS_NAME=Naam
+STR_MAPEDIT_IOS_REPLACES=Er bestaat al een bestand met deze naam. Bewaren vervangt het.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Opnames
+STR_IOSREC_EMPTY=Nog geen opnames. Rondes voor één speler worden hier opgenomen, en .wbv-bestanden in de WinBolo-map in de Bestanden-app staan hier ook.
+STR_IOSREC_COPY=Kopieer naar Bestanden
+STR_IOSREC_COPIED=Gekopieerd naar de WinBolo-map in de Bestanden-app.
+STR_IOSREC_OPEN_FAILED=Deze opname kon niet worden geopend.
+STR_IOSREC_LAST_ROUND=Laatste ronde voor één speler
+STR_IOSREC_COPY_FAILED=De opname kon niet naar de Bestanden-app worden gekopieerd.
+
+# The iPad's choice of the touch or the desktop layout
+STR_DLGSETTINGS_IPAD_LAYOUT=iPad-indeling
+STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=Automatisch: desktop als er een toetsenbord is aangesloten
+STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=Aanraking
+STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=Desktop: menubalk, toetsenbord en trackpad of muis
+STR_DLGCONNECTING_TITLE=Verbinden met {string1}...
+STR_DLGCONNECTING_PING=De server naar zijn spel vragen...
+STR_DLGCONNECTING_JOINING=Deelnemen aan het spel...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Die opname kon niet worden gelezen.

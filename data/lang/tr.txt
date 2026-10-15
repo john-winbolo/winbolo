@@ -2763,3 +2763,34 @@ STR_DLGSYSINFO_MEM_BUILDING=İnşaat
 STR_DLGSYSINFO_MEM_RUBBLE=Moloz
 STR_DLGSYSINFO_MEM_SWAMP=Bataklık
 STR_DLGSYSINFO_MEM_GRASS=Çimen
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Bas-konuş: oyun ekranındaki mikrofon düğmesini basılı tut
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Dosyaların
+STR_MAPEDIT_IOS_BUILTIN=WinBolo ile gelen haritalar
+STR_MAPEDIT_IOS_NOFILES=Burada henüz bir şey yok. Kaydettiğin dosyalar ve Dosyalar uygulamasında WinBolo klasörüne koyduğun dosyalar burada görünür.
+STR_MAPEDIT_IOS_NAME=Ad
+STR_MAPEDIT_IOS_REPLACES=Bu adla bir dosya zaten var. Kaydetmek onu değiştirir.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Kayıtlar
+STR_IOSREC_EMPTY=Henüz kayıt yok. Tek oyunculu turlar buraya kaydedilir; Dosyalar uygulamasında WinBolo klasörüne konan .wbv dosyaları da burada listelenir.
+STR_IOSREC_COPY=Dosyalar'a kopyala
+STR_IOSREC_COPIED=Dosyalar uygulamasındaki WinBolo klasörüne kopyalandı.
+STR_IOSREC_OPEN_FAILED=Bu kayıt açılamadı.
+STR_IOSREC_LAST_ROUND=Son tek oyunculu tur
+STR_IOSREC_COPY_FAILED=Kayıt Dosyalar uygulamasına kopyalanamadı.
+
+# The iPad's choice of the touch or the desktop layout
+STR_DLGSETTINGS_IPAD_LAYOUT=iPad düzeni
+STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=Otomatik: klavye takılıyken masaüstü
+STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=Dokunmatik
+STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=Masaüstü: menü çubuğu, klavye ve izleme dörtgeni ya da fare
+STR_DLGCONNECTING_TITLE={string1} adresine bağlanılıyor...
+STR_DLGCONNECTING_PING=Sunucuya oyunu soruluyor...
+STR_DLGCONNECTING_JOINING=Oyuna katılınıyor...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Bu kayıt okunamadı.

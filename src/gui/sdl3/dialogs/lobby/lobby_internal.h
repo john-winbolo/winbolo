@@ -73,17 +73,14 @@
  *   (src/logviewer/lv_embed.c) it plays through. Out of the Android build
  *   only, which does not compile the log viewer's sources. iOS and the web
  *   client both link the reel host.
- * The clip export stays out of iOS as well as the web build: the GIF
- *   encoder's implementation TU is not in the iOS sources either, and SDL has
- *   no save dialog on iOS for the export to end in. */
+ * The clip export is in the iOS build: the GIF encoder's implementation TU is
+ *   in the iOS sources, and with no save dialog there the clip is written into
+ *   the app's Documents folder under a name of its own (lobby_clip_gif.cpp),
+ *   where the Files app shows it. */
 #if defined(__ANDROID__)
 #define BOLO_LOBBY_REEL 0
 #else
 #define BOLO_LOBBY_REEL 1
-#endif
-#if defined(__IPHONEOS__)
-#undef BOLO_RECAP_CLIP_GIF
-#define BOLO_RECAP_CLIP_GIF 0
 #endif
 
 /* The types below and the signatures further down name types that come from
@@ -760,7 +757,7 @@ void lobbyReelPinchEvent(const SDL_Event *ev);
 #endif
 
 /* clipgif */
-#if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
+#if !defined(__ANDROID__) && BOLO_RECAP_CLIP_GIF
 void lobbyClipGifReset(void);
 bool lobbyClipGifActive(void);
 void lobbyClipGifStartClip(const HighlightWindow *h, const char *mapName);

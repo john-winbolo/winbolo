@@ -2763,3 +2763,34 @@ STR_DLGSYSINFO_MEM_BUILDING=Будівництво
 STR_DLGSYSINFO_MEM_RUBBLE=Руїни
 STR_DLGSYSINFO_MEM_SWAMP=Болото
 STR_DLGSYSINFO_MEM_GRASS=Трава
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Рація: утримуйте кнопку мікрофона на ігровому екрані
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Ваші файли
+STR_MAPEDIT_IOS_BUILTIN=Мапи, що постачаються з WinBolo
+STR_MAPEDIT_IOS_NOFILES=Тут поки нічого немає. Тут з'являться файли, які ви збережете, і файли, які ви покладете в теку WinBolo в застосунку «Файли».
+STR_MAPEDIT_IOS_NAME=Назва
+STR_MAPEDIT_IOS_REPLACES=Файл із такою назвою вже існує. Збереження замінить його.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Записи
+STR_IOSREC_EMPTY=Записів поки немає. Одиночні раунди записуються сюди, а файли .wbv із теки WinBolo в застосунку «Файли» теж показуються тут.
+STR_IOSREC_COPY=Скопіювати у «Файли»
+STR_IOSREC_COPIED=Скопійовано в теку WinBolo в застосунку «Файли».
+STR_IOSREC_OPEN_FAILED=Не вдалося відкрити цей запис.
+STR_IOSREC_LAST_ROUND=Останній одиночний раунд
+STR_IOSREC_COPY_FAILED=Не вдалося скопіювати запис у застосунок «Файли».
+
+# The iPad's choice of the touch or the desktop layout
+STR_DLGSETTINGS_IPAD_LAYOUT=Розкладка для iPad
+STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=Автоматично: настільна, коли під'єднано клавіатуру
+STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=Сенсорна
+STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=Настільна: рядок меню, клавіатура і трекпад або миша
+STR_DLGCONNECTING_TITLE=Під'єднання до {string1}...
+STR_DLGCONNECTING_PING=Запит до сервера про його гру...
+STR_DLGCONNECTING_JOINING=Приєднання до гри...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Не вдалося прочитати цей запис.

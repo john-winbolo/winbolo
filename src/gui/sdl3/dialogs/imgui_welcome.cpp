@@ -390,8 +390,9 @@ extern "C" int imguiWelcomeShow(void) {
             }
 
             /* Transparent menu buttons below the logo */
-            const float miniBtnH = 30.0f * s;
-            const float miniBtnGap = 4.0f * s;
+            float miniBtnH = 30.0f * s;
+            float miniBtnGap = 4.0f * s;
+            float miniGroupGap = miniBtnH * 0.4f;  /* after the ways to play and after Settings */
 #if BOLO_MOBILE
             const float ghostBtnAlpha = 0.6f;
             const float ghostTextAlpha = 0.9f;
@@ -479,6 +480,59 @@ extern "C" int imguiWelcomeShow(void) {
 #endif
             };
             int miniCount = sizeof(miniModes) / sizeof(miniModes[0]);
+#ifdef __EMSCRIPTEN__
+            const int lastPlayRow = RESULT_INTERNET;
+#else
+            const int lastPlayRow = RESULT_LAN;
+#endif
+
+#if BOLO_MOBILE
+            /* Fit the column above the social icons and the version label in
+               the bottom-right corner. A tall column on a short screen (an
+               iPad in landscape has eight rows at a larger scale) ran the last
+               buttons in under them. The column's own gaps close up first,
+               then the gap under the logo, then the buttons themselves, down
+               to the height the button text needs. The desktop keeps its
+               fixed spacing. */
+            {
+                const float cornerMargin = 12.0f * s;
+                const float cornerH = SDL_max(27.5f * s, ImGui::GetTextLineHeight());
+                float limitY = (float)winH - cornerMargin - cornerH - 8.0f * s;
+                int rows = 0, groups = 0;
+                for (int i = 0; i < miniCount; i++) {
+                    if (!miniModes[i].show) continue;
+                    rows++;
+                    if (miniModes[i].code == lastPlayRow ||
+                        miniModes[i].code == RESULT_SETTINGS) groups++;
+                }
+                float need = rows * miniBtnH + (rows - 1) * miniBtnGap + groups * miniGroupGap;
+                if (rows > 0 && btnY + need > limitY) {
+                    /* The gaps first. */
+                    float gaps = (rows - 1) * miniBtnGap + groups * miniGroupGap;
+                    float over = btnY + need - limitY;
+                    float cut = SDL_min(over, gaps * 0.75f);
+                    if (gaps > 0.0f) {
+                        float f = 1.0f - cut / gaps;
+                        miniBtnGap *= f;
+                        miniGroupGap *= f;
+                    }
+                    over -= cut;
+                    /* Then the space under the logo, keeping a little. */
+                    if (over > 0.0f) {
+                        float logoGap = btnY - logoBottom;
+                        float take = SDL_min(over, SDL_max(0.0f, logoGap - 6.0f * s));
+                        btnY -= take;
+                        over -= take;
+                    }
+                    /* Then the buttons, no lower than the text needs. */
+                    if (over > 0.0f) {
+                        float minH = ImGui::GetTextLineHeight() + 4.0f * s;
+                        float h = miniBtnH - over / (float)rows;
+                        miniBtnH = SDL_max(h, minH);
+                    }
+                }
+            }
+#endif
 
             for (int i = 0; i < miniCount; i++) {
                 if (!miniModes[i].show) continue;
@@ -550,13 +604,8 @@ extern "C" int imguiWelcomeShow(void) {
                 btnY += miniBtnH + miniBtnGap;
                 /* Small visual gap after the ways to play (Local, or Internet
                    where there is no Local) and after Settings */
-#ifdef __EMSCRIPTEN__
-                const int lastPlayRow = RESULT_INTERNET;
-#else
-                const int lastPlayRow = RESULT_LAN;
-#endif
                 if (miniModes[i].code == lastPlayRow || miniModes[i].code == RESULT_SETTINGS) {
-                    btnY += miniBtnH * 0.4f;
+                    btnY += miniGroupGap;
                 }
             }
 

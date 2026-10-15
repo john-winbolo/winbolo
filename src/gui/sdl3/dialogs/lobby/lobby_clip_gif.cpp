@@ -46,14 +46,14 @@ extern "C" {
 #include "../../../lang.h"       /* langGetText / STR_CANCEL */
 }
 
-#if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
+#if !defined(__ANDROID__) && BOLO_RECAP_CLIP_GIF
 /* Single-header GIF encoder behind the recap's clip export; the one
  * implementation TU is src/third_party/msf_gif/msf_gif_impl.c. Carries its own
  * extern "C" guards, so it goes outside the block above. */
 #include "../../../../third_party/msf_gif/msf_gif.h"
 #endif
 
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)
 
 #if BOLO_RECAP_CLIP_GIF
 /* ── Clip GIF export ──────────────────────────────────────────────
@@ -467,6 +467,28 @@ static bool lobbyClipGifWriteFile(const char *path, const MsfGifResult *res) {
  * Takes the encoder's result by value and owns it from here: the desktop path
  * outlives this call, so the caller cannot free the bytes behind it. */
 static void lobbyClipGifSave(MsfGifResult res) {
+#if defined(__IPHONEOS__)
+    /* No save dialog on iOS: the clip goes into Documents under its own name,
+       where the Files app shows it, and the box reports the path. */
+    {
+        const char *docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+        char fullPath[FILENAME_MAX];
+        bool ok = false;
+        if (docs != NULL && docs[0] != '\0') {
+            size_t n = SDL_strlen(docs);
+            snprintf(fullPath, sizeof(fullPath), "%s%s%s.gif", docs,
+                     (n > 0 && docs[n - 1] == '/') ? "" : "/", s_clipGif.name);
+            ok = lobbyClipGifWriteFile(fullPath, &res);
+        } else {
+            SDL_strlcpy(fullPath, s_clipGif.name, sizeof(fullPath));
+        }
+        msf_gif_free(res);
+        imguiMessageBoxEx(CLIP_GIF_TITLE, fullPath,
+                          ok ? IMGUI_MSG_INFO : IMGUI_MSG_ERROR,
+                          IMGUI_MSG_OK);
+        return;
+    }
+#endif
     if (uiShouldUseControllerMode()) {
         char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
         if (prefDir == NULL) {
@@ -637,4 +659,4 @@ void lobbyClipGifRender(float s) {
     }
 }
 #endif /* BOLO_RECAP_CLIP_GIF */
-#endif /* !BOLO_MOBILE */
+#endif /* !__ANDROID__ */

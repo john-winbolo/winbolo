@@ -2763,3 +2763,34 @@ STR_DLGSYSINFO_MEM_BUILDING=Bau
 STR_DLGSYSINFO_MEM_RUBBLE=Trümmer
 STR_DLGSYSINFO_MEM_SWAMP=Sumpf
 STR_DLGSYSINFO_MEM_GRASS=Gras
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Push-to-Talk: Halte die Mikrofontaste auf dem Spielbildschirm gedrückt
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Deine Dateien
+STR_MAPEDIT_IOS_BUILTIN=Karten, die mit WinBolo geliefert werden
+STR_MAPEDIT_IOS_NOFILES=Hier ist noch nichts. Dateien, die du speicherst, und Dateien, die du in der Dateien-App in den WinBolo-Ordner legst, erscheinen hier.
+STR_MAPEDIT_IOS_NAME=Name
+STR_MAPEDIT_IOS_REPLACES=Eine Datei mit diesem Namen existiert bereits. Beim Speichern wird sie ersetzt.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Aufzeichnungen
+STR_IOSREC_EMPTY=Noch keine Aufzeichnungen. Einzelspieler-Runden werden hier aufgezeichnet, und .wbv-Dateien im WinBolo-Ordner der Dateien-App werden hier ebenfalls aufgeführt.
+STR_IOSREC_COPY=In Dateien kopieren
+STR_IOSREC_COPIED=In den WinBolo-Ordner der Dateien-App kopiert.
+STR_IOSREC_OPEN_FAILED=Diese Aufzeichnung konnte nicht geöffnet werden.
+STR_IOSREC_LAST_ROUND=Letzte Einzelspieler-Runde
+STR_IOSREC_COPY_FAILED=Die Aufzeichnung konnte nicht in die Dateien-App kopiert werden.
+
+# The iPad's choice of the touch or the desktop layout
+STR_DLGSETTINGS_IPAD_LAYOUT=iPad-Layout
+STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=Automatisch: Desktop, wenn eine Tastatur angeschlossen ist
+STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=Touch
+STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=Desktop: Menüleiste, Tastatur und Trackpad oder Maus
+STR_DLGCONNECTING_TITLE=Verbinde mit {string1}...
+STR_DLGCONNECTING_PING=Frage den Server nach seinem Spiel...
+STR_DLGCONNECTING_JOINING=Trete dem Spiel bei...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Diese Aufzeichnung konnte nicht gelesen werden.
