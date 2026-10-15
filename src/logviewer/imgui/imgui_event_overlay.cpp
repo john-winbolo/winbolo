@@ -112,6 +112,16 @@ static void overlay_save(void) {
     lv_platform_config_set_string("LOGVIEWER", k_pref, val);
 }
 
+void lv_event_overlay_standalone_default(void) {
+    char val[16];
+    overlay_load();
+    lv_platform_config_get_string("LOGVIEWER", k_pref, "", val, sizeof(val));
+    if (val[0] == '\0') {
+        s_mask = LV_OVERLAY_ALL_MASK;
+        s_built = false;
+    }
+}
+
 void lv_event_overlay_init(void) {
     s_loaded = false;
     s_built = false;

@@ -21,9 +21,11 @@ extern "C" {
 
 /* A sidebar is a strip along one edge of the window, under the menu bar, that
  * the panels (Controls, Game Information, ...) can be dragged into and out
- * of. There are four, one an edge, each a Windows menu option that is off
- * until asked for. The left and right ones run the full height under the menu
- * bar; the top and bottom ones sit between them. They only ever show in the
+ * of. There are four, one an edge, each a Windows menu option. A new user
+ * starts with the default arrangement (lv_dock_default.h): the left, right
+ * and bottom ones on, with the panels in them. The left and right ones run
+ * the full height under the menu bar; the top and bottom ones sit between
+ * them. They only ever show in the
  * standalone viewer's desktop layout: the live spectator host, the game view
  * and the tablet / Steam Deck layout never draw them. While any shows, the
  * map keeps to the rest of the window (lv_imgui_dock_margins).
@@ -63,8 +65,8 @@ void lv_imgui_dock_set_side_enabled(int side, int enabled);
 /* The option "Make unused sidebar portions transparent" of one sidebar. With
  * it on the sidebar's panels are packed from its start, each with a length
  * of its own and a grip on its far edge, and the rest of the sidebar is
- * clear: the map shows there (lv_dock_clear.h). Off for every sidebar until
- * the user turns it on. */
+ * clear: the map shows there (lv_dock_clear.h). On for the left sidebar of
+ * the default arrangement, off for the others until the user turns it on. */
 int  lv_imgui_dock_get_side_clear(int side);
 void lv_imgui_dock_set_side_clear(int side, int clear);
 
@@ -72,8 +74,10 @@ void lv_imgui_dock_set_side_clear(int side, int clear);
 int  lv_imgui_dock_get_enabled(void);
 void lv_imgui_dock_set_enabled(int enabled);
 
-/* Ask for every panel that is showing to be put in the right sidebar, one
- * above the other, the next time it draws. Turns the right sidebar on. */
+/* Ask for the default arrangement (lv_dock_default.h) before the next frame:
+ * the sidebars it has turned on at its sizes, the others off, and every
+ * panel that is showing put in its place in them. Which panels show is left
+ * as it is. */
 void lv_imgui_dock_request_layout(void);
 
 /* Bring each sidebar in or take it out to match its option and the mode the

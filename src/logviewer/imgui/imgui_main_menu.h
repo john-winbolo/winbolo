@@ -42,6 +42,13 @@ int lv_imgui_main_menu_bar(void);
 /* Initialize menu state from preferences */
 void lv_imgui_main_menu_init(struct LogViewerState *lv);
 
+/* The standalone viewer's defaults for the options a user never set: the
+ * Comments panel shown, Item Information hidden, Tank Bars and Tank Builder
+ * Status on, and every kind of event on the Controls panel's slider. Call
+ * after lv_imgui_main_menu_init and lv_imgui_controls_init. The spectator,
+ * which shares the preferences, does not call it and keeps the old ones. */
+void lv_imgui_main_menu_standalone_defaults(void);
+
 /* Save menu state to preferences */
 void lv_imgui_main_menu_save(void);
 

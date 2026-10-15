@@ -2361,8 +2361,10 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
         return;
     }
     /* Only this host has the sidebars; the spectator shares the setup above
-     * and leaves the answer at no. */
+     * and leaves the answer at no. The same for the defaults of the options
+     * a new user has not set. */
     lv_imgui_dock_set_standalone(1);
+    lv_imgui_main_menu_standalone_defaults();
     s_lvFirstViewHost = TRUE;
     s_lvJump.active = FALSE;
     s_lvJumpHost = TRUE;

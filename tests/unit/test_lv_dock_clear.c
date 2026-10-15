@@ -26,13 +26,21 @@
  *
  *   lv_dock_clear_prefs — the option of each sidebar and the lengths of its
  *       panels are read back as written; damaged text gives the defaults.
+ *
+ *   lv_dock_default_layout — the arrangement a new user starts with
+ *       (lv_dock_default.h): the sidebars that are on and their sizes, the
+ *       clear one and its panels' lengths, every panel in one sidebar with
+ *       one that takes the slack, and how a sidebar is shared out among
+ *       its panels.
  */
 
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 
 #include "lv_dock_clear.h"
+#include "lv_dock_default.h"
 #include "test_harness.h"
 
 int run_lv_dock_clear_layout(void) {
@@ -353,5 +361,80 @@ int run_lv_dock_clear_prefs(void) {
 
     UT_ASSERT_MSG(lvDockClearPanelIndex("###tank") == 3, "a panel by its ID");
     UT_ASSERT_MSG(lvDockClearPanelIndex("###nothing") == -1 && lvDockClearPanelIndex(NULL) == -1, "not a panel");
+    return 0;
+}
+
+int run_lv_dock_default_layout(void) {
+    LvDockSides sides;
+    LvDockDefaultStack stack;
+    int clear[LV_DOCK_SIDES], len[LV_DOCK_CLEAR_PANELS], seen[LV_DOCK_CLEAR_PANELS];
+    float fixed[6] = { 159.0f, 176.0f, 171.0f, 0.0f, 0.0f, 158.0f };
+    float weight[6] = { 0.0f, 0.0f, 0.0f, 2.0f, 5.0f, 0.0f };
+    float out[6];
+    char text[256];
+    int side, i;
+
+    /* The sidebars: left, right and bottom on at their sizes, top off. */
+    lvDockDefaultSides(&sides);
+    UT_ASSERT_MSG(lvDockSidesFormat(&sides, text, sizeof(text)) > 0, "the options are written");
+    UT_ASSERT_MSG(strcmp(text, "v1 R=1,407 L=1,209 T=0,220 B=1,161 I=1") == 0, "the default sidebars");
+
+    /* Only the left one is clear past its panels, with their lengths. */
+    for (side = 0; side < LV_DOCK_SIDES; side++) clear[side] = lvDockDefaultClear(side);
+    UT_ASSERT_MSG(lvDockClearFlagsFormat(clear, text, sizeof(text)) > 0, "the flags are written");
+    UT_ASSERT_MSG(strcmp(text, "v1 R=0 L=1 T=0 B=0") == 0, "the left sidebar is clear");
+    lvDockDefaultLens(LV_DOCK_LEFT, len);
+    UT_ASSERT_MSG(lvDockClearLensFormat(len, text, sizeof(text)) > 0, "the lengths are written");
+    UT_ASSERT_MSG(strcmp(text, "v1 HUD=545 Tank=223") == 0, "the HUD and Tank lengths");
+    lvDockDefaultLens(LV_DOCK_RIGHT, len);
+    UT_ASSERT_MSG(lvDockClearLensFormat(len, text, sizeof(text)) > 0 && strcmp(text, "v1") == 0,
+                  "a solid sidebar has no lengths");
+
+    /* Every panel is in exactly one sidebar, and each sidebar with panels
+     * has exactly one that takes the slack. */
+    for (i = 0; i < LV_DOCK_CLEAR_PANELS; i++) seen[i] = 0;
+    for (side = 0; side < LV_DOCK_SIDES; side++) {
+        int anchors = 0;
+        stack = lvDockDefaultStackOf(side);
+        UT_ASSERT_MSG((stack.count > 0) == (sides.enabled[side] != 0), "panels only in a sidebar that is on");
+        for (i = 0; i < stack.count; i++) {
+            int p = lvDockClearPanelIndex(stack.slot[i].id);
+            UT_ASSERT_MSG(p >= 0, "a panel the viewer has");
+            seen[p]++;
+            anchors += stack.slot[i].anchor ? 1 : 0;
+            UT_ASSERT_MSG(stack.slot[i].len >= 0, "no length below nothing");
+        }
+        UT_ASSERT_MSG(stack.count == 0 || anchors == 1, "one anchor a sidebar");
+    }
+    for (i = 0; i < LV_DOCK_CLEAR_PANELS; i++) UT_ASSERT_MSG(seen[i] == 1, "each panel once");
+
+    /* The right sidebar from the top, Events taking the slack. */
+    stack = lvDockDefaultStackOf(LV_DOCK_RIGHT);
+    UT_ASSERT_MSG(stack.count == 6, "six panels on the right");
+    UT_ASSERT_MSG(strcmp(stack.slot[0].id, "###gameinfo") == 0 && strcmp(stack.slot[1].id, "###lvscnpanel") == 0 &&
+                  strcmp(stack.slot[2].id, "###overview") == 0 && strcmp(stack.slot[3].id, "###iteminfo") == 0 &&
+                  strcmp(stack.slot[4].id, "###events") == 0 && strcmp(stack.slot[5].id, "###comments") == 0,
+                  "the order on the right");
+    UT_ASSERT_MSG(stack.slot[4].anchor, "Events takes the slack");
+    stack = lvDockDefaultStackOf(LV_DOCK_LEFT);
+    UT_ASSERT_MSG(stack.count == 2 && strcmp(stack.slot[0].id, "###hud") == 0 &&
+                  strcmp(stack.slot[1].id, "###tank") == 0, "the HUD over the Tank panel");
+    stack = lvDockDefaultStackOf(LV_DOCK_BOTTOM);
+    UT_ASSERT_MSG(stack.count == 1 && strcmp(stack.slot[0].id, "###controls") == 0, "the Controls panel at the bottom");
+    UT_ASSERT_MSG(lvDockDefaultStackOf(LV_DOCK_TOP).count == 0, "nothing at the top");
+
+    /* The lengths: the fixed ones kept, the rest shared by weight. */
+    lvDockStackLens(fixed, weight, 6, 1111.0f, out);
+    UT_ASSERT_MSG(out[0] == 159.0f && out[1] == 176.0f && out[2] == 171.0f && out[5] == 158.0f,
+                  "the fixed lengths kept");
+    UT_ASSERT_MSG(fabsf(out[3] - 447.0f * 2.0f / 7.0f) < 0.01f && fabsf(out[4] - 447.0f * 5.0f / 7.0f) < 0.01f,
+                  "the rest shared by weight");
+    /* The same panels in a taller sidebar: only the shared ones grow. */
+    lvDockStackLens(fixed, weight, 6, 2000.0f, out);
+    UT_ASSERT_MSG(out[0] == 159.0f && out[5] == 158.0f, "fixed lengths do not grow");
+    UT_ASSERT_MSG(fabsf(out[3] + out[4] - (2000.0f - 664.0f)) < 0.01f, "the shared ones take the rest");
+    /* Too short for the fixed lengths: an equal part each. */
+    lvDockStackLens(fixed, weight, 6, 600.0f, out);
+    for (i = 0; i < 6; i++) UT_ASSERT_MSG(out[i] == 100.0f, "an equal part each");
     return 0;
 }
