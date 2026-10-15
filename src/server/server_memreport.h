@@ -68,7 +68,8 @@ typedef struct {
   uint64_t peakRss;  /* high-water mark of rss */
   uint64_t priv;     /* private bytes (Windows) / VmData (Linux) /
                         phys_footprint (macOS) */
-  uint64_t virt;     /* virtual address space in use */
+  uint64_t virt;     /* virtual address space in use (Windows, Linux);
+                        n/a on macOS, where every process reads ~400 GB */
   bool haveRss;
   bool havePeakRss;
   bool havePriv;

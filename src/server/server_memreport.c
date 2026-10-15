@@ -224,12 +224,17 @@ bool serverMemReadProcess(ServerMemProcess *out) {
   }
 #elif defined(__APPLE__)
   {
-    /* MACH_TASK_BASIC_INFO gives resident (and its peak) and virtual.
-     * macOS has no "private bytes"; the nearest is phys_footprint from
-     * TASK_VM_INFO, the figure Activity Monitor shows as "Memory": dirty
-     * and compressed pages the process owns, which takes in every Lua
-     * heap. virtual_size takes in the shared system region, so it reads
-     * far bigger than on the other platforms. */
+    /* MACH_TASK_BASIC_INFO gives resident and its peak. macOS has no
+     * "private bytes"; the nearest is phys_footprint from TASK_VM_INFO,
+     * the figure Activity Monitor shows as "Memory": dirty and compressed
+     * pages the process owns, which takes in every Lua heap.
+     *
+     * Virtual stays n/a. virtual_size counts the shared library cache and
+     * the address ranges the kernel reserves in every process, so it reads
+     * about 400 GB for any process on Apple silicon (ps -o vsz says the
+     * same for a shell), and task_info has no committed-address-space
+     * figure like the Windows and Linux ones. A leak on a Mac shows in
+     * private. */
     mach_task_basic_info_data_t info;
     task_vm_info_data_t vm;
     mach_msg_type_number_t count;
@@ -240,8 +245,7 @@ bool serverMemReadProcess(ServerMemProcess *out) {
                   (task_info_t)&info, &count) == KERN_SUCCESS) {
       out->rss = info.resident_size;
       out->peakRss = info.resident_size_max;
-      out->virt = info.virtual_size;
-      out->haveRss = out->havePeakRss = out->haveVirt = true;
+      out->haveRss = out->havePeakRss = true;
       ok = true;
     }
     /* phys_footprint is in revision 1 of the struct and later; an older
