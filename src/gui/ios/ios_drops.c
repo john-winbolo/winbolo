@@ -47,6 +47,12 @@ static bool SDLCALL iosDropsWatch(void *userdata, SDL_Event *ev) {
         WB_LOG_INFO(WB_LOG_CAT_GUI, "[URL] Kept winbolo:// link for the menu: %s",
                     ev->drop.data);
     } else if (iosDropsIsWbv(ev->drop.data)) {
+        /* A newer file replaces one not yet read, which will now never be
+         * read: end the access ios_open_url.m started for it. Not when it is
+         * the same file again, whose access the new open has just started. */
+        if (s_dropLog[0] != '\0' && strcmp(s_dropLog, ev->drop.data) != 0) {
+            iosOpenUrlRelease(s_dropLog);
+        }
         SDL_strlcpy(s_dropLog, ev->drop.data, sizeof(s_dropLog));
         WB_LOG_INFO(WB_LOG_CAT_GUI, "Kept recording to play: %s", ev->drop.data);
     }

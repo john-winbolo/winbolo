@@ -488,8 +488,9 @@ into each frontend target rather than as a separate library:
 - **The voice settings** — `src/gui/sdl3/voice_settings.c` holds the one
   body of the `windowSetVoice*` / `windowGetVoice*` functions the dialogs
   and `gamefront.c` call. Not in `src/client_frontend/` because it sits
-  on the SDL3 voice backend; the desktop and iOS targets, which build
-  that backend, both compile it.
+  with the SDL3 status renderer that holds the tank-label microphone
+  setting (`sdl3draw_status.c`); the desktop, iOS and web targets all
+  compile it.
 - **The single-player lobby seeding** — `client_frontend_sp.c`
   (`clientFrontSeedBot`). One bot into one lobby slot: its mode and
   difficulty resolved through `serverSimResolveNewBotConfig` and written

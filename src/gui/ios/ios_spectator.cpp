@@ -44,7 +44,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "../sdl3/dialogs/imgui_dialog_utils.h"
-#include "../sdl3/dialogs/lobby/lobby_internal.h"
+#include "../sdl3/dialogs/lobby/lobby_reel.h"
 
 extern "C" {
 #include "../lang.h"

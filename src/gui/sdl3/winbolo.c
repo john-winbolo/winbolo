@@ -112,7 +112,6 @@ static void windowEnsureOnScreen(SDL_Window *win);
  * Globals declared by winbolo.h (extern in sdl3imgui.cpp)
  * ------------------------------------------------------- */
 
-void windowStartTutorial(void);
 bool isTutorial = FALSE;
 
 /* The frame rate */
@@ -196,9 +195,6 @@ static bool drawBusy = FALSE;
 
 /* Are we in a menu or not */
 bool isInMenu = FALSE;
-
-/* Tutorial flag */
-static bool doingTutorial = FALSE;
 
 /* Time to quit */
 static bool winboloQuit = FALSE;
@@ -904,7 +900,6 @@ int main(int argc, char *argv[]) {
 
     sdl3ImguiCleanup();
     gameFrontEnd(&keys, TRUE, winboloQuit);
-    doingTutorial = FALSE;
     frontEndTutorialReset();
 
     if (winboloQuit == FALSE) {
@@ -1031,10 +1026,9 @@ static void windowRunGameTick(ClientSim *cs) {
          path opens the overlay and engages the solo freeze, after which
          windowRunGameTick early-outs at the top until the message closes —
          which rebases oldTick so the paused interval isn't fast-forwarded.
-         Without this break the loop spins forever: the old blocking dialog
-         cleared doingTutorial before returning, but the in-loop overlay leaves
-         it set across frames, and oldTick only advances in the branch below. */
-      if (doingTutorial == TRUE || clientFrontTutorialStepShowing()) break;
+         Without this break the loop spins forever: the step stays showing
+         across frames, and oldTick only advances in the branch below. */
+      if (clientFrontTutorialStepShowing()) break;
       /* One keys/game/lobby half-step lives in the shared client-frontend tick
        * core (both desktop and web call it); the brain and per-second stat
        * rollover below stay here in the driver. Bot brains tick on the server
@@ -1137,7 +1131,7 @@ bool windowIsQuitting(void) {
    them.  Multiplayer (a joined client or a listen-server host) is never solo
    and must keep running. */
 static bool windowIsSoloSession(ClientSim *cs) {
-  return doingTutorial || clientFrontTutorialStepShowing() ||
+  return clientFrontTutorialStepShowing() ||
          (cs != NULL && clientSimIsSinglePlayer(cs));
 }
 
@@ -2040,10 +2034,6 @@ void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
   (void)xPos;
   (void)yPos;
   /* Building selection is handled by sdl3imgui.cpp building selection panel */
-}
-
-void windowStartTutorial(void) {
-  doingTutorial = TRUE;
 }
 
 /* -------------------------------------------------------

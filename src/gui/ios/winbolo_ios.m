@@ -917,7 +917,6 @@ void windowButtonRemove(int keyCode) { (void)keyCode; }
 void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
     (void)xWin; (void)yWin; (void)xPos; (void)yPos;
 }
-void windowStartTutorial(void) {}
 void windowAllowPlayerNameChange(bool allow) { (void)allow; }
 
 /* Window geometry hooks sdl3ImguiProcessEvents calls in the iPad's desktop

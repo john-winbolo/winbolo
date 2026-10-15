@@ -30,6 +30,9 @@
 
 #include <SDL3/SDL.h>
 #include <math.h>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 #include "global.h"
 #include "client_sim.h"
 #include "client_command.h"  /* VIEW_KIND_* — which view a view key drives */
@@ -206,10 +209,21 @@ static bool overviewOwnsScrollKeys(ClientSim *cs) {
 *  setKeys - Structure that holds the key settings
 *  active  - FALSE when this poll is not reading input
 *********************************************************/
+#if defined(WINBOLO_VOICE)
+/* Whether the tablet overlay's talk button is held. Only the iOS client shows
+ * that button; a desktop or web client in the tablet layout keeps its keys. */
+static bool inputTalkButtonHeld(void) {
+#if defined(__APPLE__) && TARGET_OS_IOS
+  return inputTouchIsButtonHeld(TOUCH_BTN_TALK);
+#else
+  return false;
+#endif
+}
+#endif
+
 void inputPushToTalkPoll(keyItems *setKeys, bool active) {
 #if defined(WINBOLO_VOICE)
-  bool touchHeld = voiceGetMode() == VOICE_MODE_PTT &&
-                   inputTouchIsButtonHeld(TOUCH_BTN_TALK);
+  bool touchHeld = voiceGetMode() == VOICE_MODE_PTT && inputTalkButtonHeld();
   voiceSetPushToTalkHeld(active &&
                          (KEY_DOWN(setKeys->kiPushToTalk) || touchHeld));
 #else
@@ -245,8 +259,7 @@ void inputPushToTalkPoll(keyItems *setKeys, bool active) {
 static void muteMicPoll(keyItems *setKeys, bool active) {
 #if defined(WINBOLO_VOICE)
   static bool prevDown = false;
-  bool touchDown = voiceGetMode() == VOICE_MODE_OPEN &&
-                   inputTouchIsButtonHeld(TOUCH_BTN_TALK);
+  bool touchDown = voiceGetMode() == VOICE_MODE_OPEN && inputTalkButtonHeld();
   bool down = active && (KEY_DOWN(setKeys->kiMuteMic) || touchDown);
   if (down && !prevDown) {
     voiceSetSelfMuted(!voiceIsSelfMuted());

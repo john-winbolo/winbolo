@@ -23,9 +23,9 @@
 *  The windowSetVoice* / windowGetVoice* functions the
 *  settings dialog, the lobby and the prefs code in
 *  gamefront.c call to change and read the voice settings.
-*  Shared by the desktop client (winbolo.c) and the iOS
-*  client (winbolo_ios.m), which both build the SDL3 voice
-*  backend, so the clamps are written once.
+*  Shared by the desktop client (winbolo.c), the iOS
+*  client (winbolo_ios.m) and the web client
+*  (main_wasm.c), so the clamps are written once.
 *
 *  The callers declare these themselves rather than through
 *  winbolo.h, so the voice build option does not reach the

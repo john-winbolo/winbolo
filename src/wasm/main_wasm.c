@@ -72,7 +72,6 @@ extern ClientSim *humanSim;
  * Globals declared by winbolo.h
  * ------------------------------------------------------- */
 
-void windowStartTutorial(void);
 bool isTutorial = FALSE;
 
 int frameRate = FRAME_RATE_30;
@@ -116,7 +115,6 @@ static DWORD dwSysBrainTotal = 0;
 static DWORD dwSysBrain = 0;
 
 static bool drawBusy = FALSE;
-static bool doingTutorial = FALSE;
 static bool winboloQuit = FALSE;
 static bool finishedLoop = FALSE;
 static bool showAllianceReq = TRUE;
@@ -234,8 +232,7 @@ static void windowRunGameTick(ClientSim *cs) {
 
   brainRunning = brainHandlerIsBrainRunning();
 
-  if (!clientSimHasTransport(cs) || doingTutorial ||
-      clientFrontTutorialStepShowing()) {
+  if (!clientSimHasTransport(cs) || clientFrontTutorialStepShowing()) {
     return;
   }
 
@@ -1167,7 +1164,6 @@ bool windowIsQuitting(void)   { return quitRequested; }
  * The tutorial step sequencer is reset by gameFrontWasmStart
  * (frontEndTutorialReset). */
 static void wasmGameStateReset(void) {
-  doingTutorial = FALSE;
   /* A step left showing by the last game would stop this one's ticks. */
   frontEndTutorialReset();
   s_connFailed = FALSE;
@@ -1544,7 +1540,6 @@ void windowButtonRemove(int keyCode) { (void)keyCode; }
 void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
   (void)xWin; (void)yWin; (void)xPos; (void)yPos;
 }
-void windowStartTutorial(void) { doingTutorial = TRUE; }
 
 /* Desktop-only window helpers — wasm has no native window position/size to
  * persist or aspect-correct, so these are no-ops. */

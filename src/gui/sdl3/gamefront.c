@@ -1338,6 +1338,10 @@ static bool gameFrontDialogs(void) {
        * gameFrontStart, so go back to the menu instead. Unhide the background
        * game the aborted start hid. */
       if (gameFrontSetDlgState(openFinished) == FALSE) {
+        /* The finishers fail without saying so; tell the player, as the web
+         * client does for the same failure. */
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_GAMEFRONTERR_STARTSERVER),
+                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
         bgGameSetHiddenByForeground(bgGameGetShared(), false);
         dlgState = openStart;
       }
@@ -1402,6 +1406,8 @@ static bool gameFrontDialogs(void) {
        * inside the dialog loop has to clear them here or the next
        * single-player start inherits the tutorial map and mode. */
       if (gameFrontSetDlgState(openFinished) == FALSE) {
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_GAMEFRONTERR_STARTSERVER),
+                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
         isTutorial = FALSE;
         fileName[0] = '\0';
         bgGameSetHiddenByForeground(bgGameGetShared(), false);

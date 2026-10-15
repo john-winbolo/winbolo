@@ -9051,7 +9051,9 @@ static void drainInGameNameReject(ClientSim *cs) {
    input gate suspends play and the solo-pause path freezes the sim while a
    message is up. Edge-detect open/close to toggle the freeze exactly once
    each way. Called from both the desktop and the tablet branch of the frame,
-   so the one edge state serves both. */
+   so the one edge state serves both. Not on Android, which does not compile
+   imgui_tutorial_overlay.cpp or define windowTutorialPause. */
+#if !defined(__ANDROID__)
 static void renderTutorialOverlay(ClientSim *cs) {
     static bool s_lastTutorialPause = false;
     tutorialOverlayRender(cs);
@@ -9061,6 +9063,7 @@ static void renderTutorialOverlay(ClientSim *cs) {
         s_lastTutorialPause = nowTutorialPause;
     }
 }
+#endif
 
 void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (!s_window || !s_renderer) return;
@@ -9403,9 +9406,14 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 
     if (uiModeIsTablet()) {
         sdl3ImguiTabletOverlay(cs);
-        /* The tutorial runs in the tablet layout too (iOS); its messages
-           carry touch wording there (tutorial_text.c). */
+        /* The tutorial runs in the tablet layout too; its messages carry
+           touch wording there (tutorial_text.c). On iOS, and on a desktop or
+           web client that a small touch screen puts in this layout, where the
+           tutorial used to stop on its first message because nothing drew it;
+           drawing it there is intended. */
+#if !defined(__ANDROID__)
         renderTutorialOverlay(cs);
+#endif
     } else {
     /* The in-window menu bar: everywhere but macOS, whose menus are native.
        On iOS this is the iPad's desktop layout. */
@@ -9484,7 +9492,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                 s_lastDeckPause = nowDeckPause;
             }
         }
+#if !defined(__ANDROID__)  /* see renderTutorialOverlay */
         renderTutorialOverlay(cs);
+#endif
         quickChatRender(cs);
         renderCtrlSendMsg(cs);
 
