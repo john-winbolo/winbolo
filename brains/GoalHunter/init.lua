@@ -8194,7 +8194,10 @@ function Brain.think(info)
           _ev.gunrange     = cur_sl
           _ev.gunrange_off = target_sl and math.abs(cur_sl - target_sl) or 99
           _ev.land_off_wu  = impact_off
-          local KILL_WU = 64  -- ½-tile-diameter circle around predicted LGM center
+          -- Fire when the burst lands within C.KILL_LGM_FIRE_WU of the
+          -- predicted man: the engine's full kill radius (128 wu).  KEEL
+          -- used 64, half of it, and held fire on shots that would kill.
+          local KILL_WU = C.KILL_LGM_FIRE_WU
           if los_blocked then
             _ev.status = "los_blocked"
           elseif impact_off > KILL_WU then
@@ -9375,7 +9378,7 @@ function Brain.think(info)
         local T  = elm.flight_ticks or 0
         local vx = elm.v_ema_x or 0
         local vy = elm.v_ema_y or 0
-        local LS = kill_lgm.LINEAR_LEAD_SCALE
+        local LS = kill_lgm.lead_scale()
         local sx = vx * T * LS
         local sy = vy * T * LS
         local lwx = elm.wx or 0
@@ -9406,9 +9409,9 @@ function Brain.think(info)
         viz.detail_text(did, string.format(
           "     T = flight_ticks(sl) = 4*sl - 5 (shells.c:133, post-PR-77) = %d sim-ticks", T))
         viz.detail_text(did, "")
-        viz.detail_text(did, "3) lead offset (scaled to land empirically on-target):")
+        viz.detail_text(did, "3) lead offset (KILL_LGM_LEAD_SCALE; 1.00 = textbook lead):")
         viz.detail_text(did, string.format(
-          "     Δ = v * T * LINEAR_LEAD_SCALE(%.2f)", LS))
+          "     Δ = v * T * KILL_LGM_LEAD_SCALE(%.2f)", LS))
         viz.detail_text(did, string.format(
           "       = (%.4f, %.4f) * %d * %.2f", vx, vy, T, LS))
         viz.detail_text(did, string.format(
@@ -9430,7 +9433,7 @@ function Brain.think(info)
       elseif tier == "dest_lock" then
         local D  = elm.predicted_dist_wu or 0
         local T  = elm.flight_ticks or 0
-        local DS = kill_lgm.DEST_LEAD_SCALE
+        local DS = kill_lgm.lead_scale()
         local sT = math.floor(T * DS + 0.5)
         viz.detail_text(did, "destination-locked engine sim:")
         viz.detail_text(did, string.format(
@@ -9439,7 +9442,7 @@ function Brain.think(info)
         viz.detail_text(did, string.format(
           "  T = flight_ticks(sightlen_for(D=%.0fwu)) = %d sim-ticks", D, T))
         viz.detail_text(did, string.format(
-          "  sim_T = round(T * DEST_LEAD_SCALE(%.2f)) = %d", DS, sT))
+          "  sim_T = round(T * KILL_LGM_LEAD_SCALE(%.2f)) = %d", DS, sT))
         viz.detail_text(did, "  sim_forward_to_dest steps from lgm toward dest,")
         viz.detail_text(did, "  each step: angle-to-dest * MAN_SPEED[tile], wall-slide on block")
       end

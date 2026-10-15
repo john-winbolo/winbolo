@@ -410,17 +410,18 @@ end
 -- Both use the same two-pass arrival-time refit on the OUTPUT to pick
 -- the final sightLen.
 -- --------------------------------------------------------------------------
--- Empirical scales on lead extrapolation.  predict_aim's T values are
--- sim-tick units (from flight_ticks).  Both the linear extrapolation
--- and the engine-sim path empirically over-lead in BrainTest by the
--- same factor — the brain↔sim tick ratio plus the engine's per-tick
--- motion budgets don't line up with the shell flight clock the way
--- the textbook math suggests.  Both scales tuned empirically (currently
--- 0.77) and kept separate so they can be tuned independently later.
-local LINEAR_LEAD_SCALE = 0.77
-local DEST_LEAD_SCALE   = 0.77
-M.LINEAR_LEAD_SCALE = LINEAR_LEAD_SCALE
-M.DEST_LEAD_SCALE   = DEST_LEAD_SCALE
+-- Lead scale on the extrapolation: C.KILL_LGM_LEAD_SCALE, read at each
+-- call so a cfg= override works.  It scales both tiers (the linear
+-- v*T step and the number of engine-sim steps on the dest_lock path).
+-- T (flight_ticks) and the man's velocity are now both in brain ticks,
+-- so the textbook lead is right and the scale is 1.00.  The old 0.77
+-- came from a time when the two clocks did not match; with today's
+-- units it under-led by exactly 23% (flight 43 brain ticks, man walks
+-- 16 wu per brain tick) and the shell landed behind the man.
+-- KEEL value 0.77 lives in PRESETS.keel.
+function M.lead_scale()
+  return C.KILL_LGM_LEAD_SCALE
+end
 
 function M.predict_aim(tank_wx, tank_wy, lgm, h)
   -- All math here is float-precision (Lua / always produces floats;
@@ -450,18 +451,19 @@ function M.predict_aim(tank_wx, tank_wy, lgm, h)
   local D  = math.sqrt(dx * dx + dy * dy)
   local T1 = M.flight_ticks(M.sightlen_for(D))
 
+  local LEAD = C.KILL_LGM_LEAD_SCALE
   local pos1_wx, pos1_wy
   if dest_wx then
-    -- Apply DEST_LEAD_SCALE by reducing the number of engine-sim
+    -- Apply the lead scale by reducing the number of engine-sim
     -- iterations rather than scaling the final position — keeps the
     -- trajectory shape (wall-slides, terrain transitions) intact, just
     -- predicts fewer ticks ahead.
-    local sT1 = math.floor(T1 * DEST_LEAD_SCALE + 0.5)
+    local sT1 = math.floor(T1 * LEAD + 0.5)
     if sT1 < 1 then sT1 = 1 end
     pos1_wx, pos1_wy = M.sim_forward_to_dest(lgm_wx, lgm_wy, dest_wx, dest_wy, sT1)
   else
-    pos1_wx = lgm_wx + vx * T1 * LINEAR_LEAD_SCALE
-    pos1_wy = lgm_wy + vy * T1 * LINEAR_LEAD_SCALE
+    pos1_wx = lgm_wx + vx * T1 * LEAD
+    pos1_wy = lgm_wy + vy * T1 * LEAD
   end
 
   local pdx = tank_wx - pos1_wx
@@ -472,13 +474,13 @@ function M.predict_aim(tank_wx, tank_wy, lgm, h)
   if T2 > T1 then
     local extra = T2 - T1
     if dest_wx then
-      local sExtra = math.floor(extra * DEST_LEAD_SCALE + 0.5)
+      local sExtra = math.floor(extra * LEAD + 0.5)
       if sExtra >= 1 then
         aim_wx, aim_wy = M.sim_forward_to_dest(pos1_wx, pos1_wy, dest_wx, dest_wy, sExtra)
       end
     else
-      aim_wx = pos1_wx + vx * extra * LINEAR_LEAD_SCALE
-      aim_wy = pos1_wy + vy * extra * LINEAR_LEAD_SCALE
+      aim_wx = pos1_wx + vx * extra * LEAD
+      aim_wy = pos1_wy + vy * extra * LEAD
     end
   end
 

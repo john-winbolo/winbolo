@@ -2234,6 +2234,16 @@ M.KILL_LGM_NAV_INSET   = 3   -- tiles: nav target sits this far INSIDE the engag
                              -- (engage trigger still fires at SHOOT_RANGE; only the
                              -- "where to drive to" target gets pulled in)
 
+-- 2026-10-15: lead and fire gate.  The shell flight time (flight_ticks)
+-- and the man's velocity are both in brain ticks now, so the textbook
+-- lead needs no scale: 0.77 under-led by exactly 23% (flight 43 brain
+-- ticks, man walks 16 wu per brain tick) and the shell landed behind
+-- him.  The fire gate is the engine's full kill radius, 128 wu; 64 held
+-- fire on shots that would kill.  pilltag_man_kill: 5/8 seeds -> 8/8.
+-- Both read at use time (kill_lgm.predict_aim, init.lua fire gate).
+M.KILL_LGM_LEAD_SCALE = 1.00  -- keel 0.77 (both tiers: linear v*T and dest_lock sim steps)
+M.KILL_LGM_FIRE_WU    = 128   -- keel 64 (burst must land this close to the predicted man)
+
 -- ── Capture-pill LGM hunt (2026-09-08) ────────────────────────────────────
 -- A hostile LGM standing on or beside the dead pill we are driving to grab is
 -- a builder rebuilding the corpse out from under us: the moment his repair
@@ -6043,6 +6053,11 @@ M.PRESETS = {
     --   2026-09-30: a reposition may run in the opening phase.  KEEL: the
     --   opening refused it.
     PILL_REPOSITION_IN_OPENING    = false,
+    --   2026-10-15: kill_lgm leads by the full textbook amount and fires
+    --   on the engine's 128 wu kill radius.  KEEL led 0.77 and fired only
+    --   inside 64 wu.
+    KILL_LGM_LEAD_SCALE           = 0.77,
+    KILL_LGM_FIRE_WU              = 64,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and

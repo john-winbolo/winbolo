@@ -6785,7 +6785,10 @@ function Brain.think(info)
           _ev.gunrange     = cur_sl
           _ev.gunrange_off = target_sl and math.abs(cur_sl - target_sl) or 99
           _ev.land_off_wu  = impact_off
-          local KILL_WU = 64  -- ½-tile-diameter circle around predicted LGM center
+          -- Fire when the burst lands within C.KILL_LGM_FIRE_WU of the
+          -- predicted man: the engine's full kill radius (128 wu).  KEEL
+          -- used 64, half of it, and held fire on shots that would kill.
+          local KILL_WU = C.KILL_LGM_FIRE_WU
           if los_blocked then
             _ev.status = "los_blocked"
           elseif impact_off > KILL_WU then
