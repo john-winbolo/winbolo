@@ -1360,6 +1360,10 @@ int run_lv_hide_lobby_no_lobby_fallback(void);
 int run_lv_hide_lobby_no_marker_anchor(void);
 int run_lv_hide_lobby_periodic_snapshot(void);
 
+/* Kill and death tallies across seeks (test_lv_calibration.c): a seek back
+ * restores them with the snapshot, so a replayed stretch is not counted twice. */
+int run_lv_kill_tally_seek(void);
+
 /* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
  * an index the size of a ten-day log. */
 int run_lv_snapshot_index_lookup(void);

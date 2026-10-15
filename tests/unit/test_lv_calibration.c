@@ -611,6 +611,68 @@ int run_lv_hide_lobby_periodic_snapshot(void) {
   return 0;
 }
 
+/*
+ * The kill and death tallies are counted as playback reads each
+ * log_KillPlayer, and no snapshot carries them, so a seek back restores them
+ * with the snapshot it restores from. Before that, a seek back left them as
+ * they were and playing the stretch again counted its kills a second time.
+ *
+ *   opening snapshot -> tick   0
+ *   NOEVENTS 50      -> tick  51
+ *   KillPlayer 1 by 2-> tick  52  (ms 1040)
+ *   NOEVENTS 50      -> tick 103
+ *   snapshot         -> tick 104  (ms 2080)
+ *   NOEVENTS 50      -> tick 155
+ *   LOG_QUIT         -> tick 156
+ */
+int run_lv_kill_tally_seek(void) {
+  const char *path = "lv_kill_tally_seek.wbv";
+  static const uint8_t kill[2] = {1, 2};   /* victim, killer */
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_KillPlayer, kill, 2);
+  putNoEvents(&b, 50);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic kill log failed to build/load");
+
+  lv_screenSeekToTimeMs(3000);
+  UT_ASSERT_MSG(lv_screenGetState()->kills[2] == 1 && lv_screenGetState()->deaths[1] == 1,
+                "after the kill: kills %u deaths %u (want 1 and 1)",
+                lv_screenGetState()->kills[2], lv_screenGetState()->deaths[1]);
+
+  lv_screenSeekToTimeMs(500);
+  UT_ASSERT_MSG(lv_screenGetState()->kills[2] == 0 && lv_screenGetState()->deaths[1] == 0,
+                "back before the kill: kills %u deaths %u (want 0 and 0)",
+                lv_screenGetState()->kills[2], lv_screenGetState()->deaths[1]);
+
+  lv_screenSeekToTimeMs(3000);
+  UT_ASSERT_MSG(lv_screenGetState()->kills[2] == 1 && lv_screenGetState()->deaths[1] == 1,
+                "played again: kills %u deaths %u (want 1 and 1)",
+                lv_screenGetState()->kills[2], lv_screenGetState()->deaths[1]);
+
+  /* Restoring the snapshot after the kill puts its tally back. */
+  lv_screenSeekToTimeMs(2100);
+  UT_ASSERT_MSG(lv_screenGetState()->kills[2] == 1 && lv_screenGetState()->deaths[1] == 1,
+                "from the later snapshot: kills %u deaths %u (want 1 and 1)",
+                lv_screenGetState()->kills[2], lv_screenGetState()->deaths[1]);
+
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
 /* One log_PlayerJoined event: slot, 2-char country, account flags, reserved,
  * then the name as a pascal string (the layout screen.c's decode reads). */
 static void putPlayerJoined(LogBuf *b, uint8_t slot, const char *name) {

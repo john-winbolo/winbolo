@@ -158,8 +158,11 @@ bool lv_snapshotExist(snapshot *value, size_t filePos, uint32_t time) {
 * time - Time in ticks this snapshot is at
 * key - Key at this snapshot
 * pteams - Player Teams to copy
+* kills  - Kill tallies to copy
+* deaths - Death tallies to copy
 *********************************************************/
-void lv_snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BYTE *pTeams) {
+void lv_snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BYTE *pTeams,
+                    const uint16_t *kills, const uint16_t *deaths) {
   snapshot s = *value;
   snapshotEntry *e;
   int i;
@@ -201,6 +204,8 @@ void lv_snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BY
   e->time = time;
   e->key = key;
   memcpy(e->pTeams, pTeams, MAX_TANKS);
+  memcpy(e->kills, kills, sizeof(e->kills));
+  memcpy(e->deaths, deaths, sizeof(e->deaths));
   s->count++;
 }
 
@@ -294,5 +299,21 @@ bool lv_snapshotBackwards(snapshot *value, size_t *filePos, uint32_t *time, BYTE
      when the time is the first snapshot's own. */
   i = lv_snapshotLowerBound(s, *time);
   lv_snapshotGet(s, (i > 0) ? i - 1 : 0, filePos, time, key, pTeams);
+  return TRUE;
+}
+
+bool lv_snapshotGetTallies(snapshot *value, uint32_t time, uint16_t *kills, uint16_t *deaths) {
+  snapshot s = *value;
+  int i;
+
+  if (s == NULL) {
+    return FALSE;
+  }
+  i = lv_snapshotLowerBound(s, time);
+  if (i >= s->count || s->items[i].time != time) {
+    return FALSE;
+  }
+  memcpy(kills, s->items[i].kills, sizeof(s->items[i].kills));
+  memcpy(deaths, s->items[i].deaths, sizeof(s->items[i].deaths));
   return TRUE;
 }

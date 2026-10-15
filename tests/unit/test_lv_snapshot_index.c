@@ -34,8 +34,15 @@
 
 static void addAt(snapshot *s, uint32_t time, BYTE team) {
   BYTE teams[MAX_TANKS];
+  uint16_t kills[MAX_TANKS];
+  uint16_t deaths[MAX_TANKS];
+  int i;
   memset(teams, team, sizeof(teams));
-  lv_snapshotAdd(s, (size_t)time * 10u, time, (BYTE)(time & 0xFF), teams);
+  for (i = 0; i < MAX_TANKS; i++) {
+    kills[i]  = (uint16_t)(team + i);
+    deaths[i] = (uint16_t)(team * 2 + i);
+  }
+  lv_snapshotAdd(s, (size_t)time * 10u, time, (BYTE)(time & 0xFF), teams, kills, deaths);
 }
 
 int run_lv_snapshot_index_lookup(void) {
@@ -88,6 +95,20 @@ int run_lv_snapshot_index_lookup(void) {
   time = 4000;
   UT_ASSERT_MSG(lv_snapshotForward(&s, &pos, &time, &key, &teams) == FALSE,
                 "forward from the last found a snapshot");
+
+  /* The tallies come back with the entry at exactly that time, including
+     one moved along by the out-of-order insert. */
+  {
+    uint16_t kills[MAX_TANKS];
+    uint16_t deaths[MAX_TANKS];
+    UT_ASSERT(lv_snapshotGetTallies(&s, 4000, kills, deaths) == TRUE);
+    UT_ASSERT_MSG(kills[0] == 3 && kills[5] == 8 && deaths[0] == 6,
+                  "tallies at 4000: kills %u,%u deaths %u", kills[0], kills[5], deaths[0]);
+    UT_ASSERT(lv_snapshotGetTallies(&s, 3000, kills, deaths) == TRUE);
+    UT_ASSERT_MSG(kills[0] == 4, "tallies at 3000: kills %u (want 4)", kills[0]);
+    UT_ASSERT_MSG(lv_snapshotGetTallies(&s, 3500, kills, deaths) == FALSE,
+                  "tallies found at a time with no snapshot");
+  }
 
   lv_snapshotDestroy(&s);
   UT_ASSERT_MSG(s == NULL && lv_snapshotCount(&s) == 0, "destroy left entries");

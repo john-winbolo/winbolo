@@ -5283,6 +5283,7 @@ set(_unit_test_names
     lv_hide_lobby_no_lobby_fallback
     lv_hide_lobby_no_marker_anchor
     lv_hide_lobby_periodic_snapshot
+    lv_kill_tally_seek
     lv_snapshot_index_lookup
     lv_snapshot_index_ten_days
     lv_load_walk_fixtures

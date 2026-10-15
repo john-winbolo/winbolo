@@ -3315,7 +3315,8 @@ bool lv_processSnapshot() {
      safe to run on whatever did load. Callers draw regardless of the return. */
   lv_playersRebuildTeams(!(s_firstWorldSnapKnown && snapPos == s_firstWorldSnapPos));
   lv_playersCopyPTeams(data);
-  lv_snapshotAdd(&g_lv->snap, snapPos, snapTime, snapKey, data);
+  lv_snapshotAdd(&g_lv->snap, snapPos, snapTime, snapKey, data,
+                 g_lv->kills, g_lv->deaths);
   return returnValue;
 }
 
@@ -5423,6 +5424,9 @@ void lv_screenRewind() {
     lv_logSetPosition(wantedPos);
     lv_blocksSetKey(key);
     lv_playersSetTeams(pTeams);
+    /* The tallies as playback had counted them here, so the stretch played
+       again is not counted twice. */
+    lv_snapshotGetTallies(&g_lv->snap, currentTime, g_lv->kills, g_lv->deaths);
     lv_processSnapshot();
     /* The snapshot carries no rules: read them again at its time. */
     lv_rulesRefresh();
@@ -5508,6 +5512,9 @@ static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
        appearing in the snapshot get a valid team assigned instead of being
        overwritten with NO_TEAM_SET from the pre-snapshot pTeams. */
     lv_playersSetTeams(pTeams);
+    /* The tallies as playback had counted them here, so the fast-forward
+       below does not count the kills before the target a second time. */
+    lv_snapshotGetTallies(&g_lv->snap, snapTime, g_lv->kills, g_lv->deaths);
     lv_processSnapshot();
     /* The snapshot carries no rules: read them again at its time, so the
        fast-forward below starts from the values in force there. */
