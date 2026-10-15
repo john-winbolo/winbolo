@@ -92,6 +92,15 @@ int iosDropsWelcomeResult(void) {
     return -1;
 }
 
+void iosDropsForgetLink(const char *link) {
+    if (link == NULL) return;
+    SDL_LockMutex(s_dropLock);
+    if (strcmp(s_dropLink, link) == 0) {
+        s_dropLink[0] = '\0';
+    }
+    SDL_UnlockMutex(s_dropLock);
+}
+
 bool iosDropsTakeLog(char *out, size_t size) {
     bool have;
     SDL_LockMutex(s_dropLock);

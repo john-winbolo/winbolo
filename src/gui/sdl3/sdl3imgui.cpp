@@ -33,6 +33,9 @@
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
 #endif
+#if defined(__APPLE__) && TARGET_OS_IOS
+#include "ios_drops.h"  /* iosDropsForgetLink: a link the game has handled */
+#endif
 
 /* SDL3 before bolo headers — see note above */
 #include <SDL3/SDL.h>
@@ -8358,7 +8361,14 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 break;
             case SDL_SCANCODE_O:
                 /* Same running-game condition as the File menu item. */
+#if defined(__APPLE__) && TARGET_OS_IOS
+                /* No pop-out on iOS: the overview there is the in-window one,
+                   as the File menu offers it. */
+                if (cs != nullptr && clientSimIsRunning(cs))
+                    sdl3ImguiShowOverviewInWindow(!sdl3ImguiIsOverviewInWindowOpen());
+#else
                 if (cs != nullptr && clientSimIsRunning(cs)) sdl3ImguiShowMapOverview(true);
+#endif
                 break;
             default:
                 shortcutTook = false;
@@ -8559,6 +8569,15 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             const char *url = ev.drop.data;
             if (strncmp(url, "winbolo://", 10) == 0) {
                 WB_LOG_INFO(WB_LOG_CAT_GUI, "[URL] Received winbolo:// link while running: %s", url);
+#if defined(__APPLE__) && TARGET_OS_IOS
+                /* iOS's drop watch (ios_drops.c) has kept this link for the
+                   welcome screen as well. The game handles it here, through
+                   the confirmation below or at once, and every way out of the
+                   confirmation (Join, Cancel, the close box) ends with it
+                   handled, so the kept copy goes now; otherwise the welcome
+                   screen would join it a second time. */
+                iosDropsForgetLink(url);
+#endif
                 if (cs && clientSimGetNetStatus(cs) == netRunning) {
                     /* In-game: show confirmation popup instead of switching immediately */
                     strncpy(s_joinConfirmUrl, url, sizeof(s_joinConfirmUrl) - 1);
@@ -8589,6 +8608,13 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
+#if defined(__APPLE__) && TARGET_OS_IOS
+        /* iOS ends the app with TERMINATING; quit the same way so main gets
+           to save the prefs, as the touch layout's own loop does. */
+        if (ev.type == SDL_EVENT_TERMINATING) {
+            windowSetQuitting();
+        }
+#endif
         if (ev.type == SDL_EVENT_QUIT) {
             windowSetQuitting();
         }

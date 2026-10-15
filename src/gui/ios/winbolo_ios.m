@@ -804,6 +804,21 @@ BYTE windowGetZoomFactor(void) { return zoomFactor; }
 void windowZoomChange(BYTE amount, bool fromDragResize) {
     (void)fromDragResize;  /* iOS doesn't use resize detection */
     if (amount == zoomFactor) return;
+    /* The iPad's desktop layout reaches this from the menu bar's Window Size
+       items. docs/ARCHITECTURE.md ("Renderer / window lifetime") forbids
+       recreating the window and renderer for a zoom change: other modules'
+       textures were made on the renderer and would be left pointing at a
+       destroyed one. So the desktop layout reconfigures in place, as the
+       desktop does. The touch layout keeps its rebuild below. */
+    if (!uiModeIsTablet()) {
+        drawBusy = TRUE;
+        clientMutexWaitFor();
+        sdl3DrawReconfigureZoom(amount);
+        clientMutexRelease();
+        drawBusy = FALSE;
+        windowSetZoomFactor(amount);
+        return;
+    }
     drawBusy = TRUE;
     clientMutexWaitFor();
     sdl3ImguiCleanup();

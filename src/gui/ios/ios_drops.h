@@ -75,6 +75,19 @@ int iosDropsWelcomeResult(void);
 bool iosDropsTakeLog(char *out, size_t size);
 
 /*********************************************************
+*NAME:          iosDropsForgetLink
+*PURPOSE:
+*  Drops the kept game link if it is this one. Called when
+*  the running game's own event loop has handled the link
+*  (the in-game join confirmation in the iPad's desktop
+*  layout), so the welcome screen does not join it again.
+*
+*ARGUMENTS:
+*  link - the winbolo:// link the game handled
+*********************************************************/
+void iosDropsForgetLink(const char *link);
+
+/*********************************************************
 *NAME:          iosOpenUrlRelease
 *PURPOSE:
 *  Ends the access to a file opened in place from another
