@@ -225,6 +225,21 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
     cfg->talkCenterX = spaceRight - cfg->talkRadius;
     cfg->talkCenterY = gsRowY;
   }
+#if defined(__IPHONEOS__)
+  /* A narrow gutter (an iPad in the touch layout has about 311 units) leaves
+     the gunsight row too little room, and the talk button came out about a
+     third of a gunsight button's width. There it gets a row of its own, at
+     the right edge just above the gunsight pair, at a gunsight button's
+     size; the scroll joystick zone ends above it (below), so a press on it
+     is the button's and not the joystick's. */
+  bool talkOwnRow = false;
+  if (cfg->talkRadius < cfg->gsIncRadius * 0.75f) {
+    cfg->talkRadius = cfg->gsIncRadius;
+    cfg->talkCenterX = rightEdge - pad - cfg->talkRadius;
+    cfg->talkCenterY = gsRowY - cfg->gsIncRadius - pad - cfg->talkRadius;
+    talkOwnRow = true;
+  }
+#endif
 
   /* Item views / Tank view — vertical stack in gap between viewport edge and
      mine button. Every button is here; tabletViewButtonsApplyPolicies drops
@@ -314,6 +329,22 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   /* --- Scroll joystick — in the gap between build/resource area and gunsight buttons --- */
   float scrollTop = buildRegionTop + buildGridH + pad * 2;
   float scrollBottom = gsRowY - cfg->gsIncRadius - pad * 2;
+#if defined(__IPHONEOS__)
+  if (talkOwnRow) {
+    scrollBottom = cfg->talkCenterY - cfg->talkRadius - pad * 2;
+  }
+  /* The resource bars are a fixed 280 units each, which on a phone ran the
+     base bars down past the scroll joystick zone's top and over the view
+     buttons (iPhone 17 Pro and SE-class screens alike). Shortened so both end
+     a pad above the zone; a screen with the room keeps 280. */
+  {
+    float fit = (scrollTop - pad - buildRegionTop + 16.0f) * 0.5f;
+    if (fit < cfg->barsH) {
+      cfg->barsH = fit;
+      cfg->baseBarsY = cfg->tankBarsY + cfg->barsH;
+    }
+  }
+#endif
   cfg->scrollJoyX = gutterLeft;
   cfg->scrollJoyY = scrollTop;
   cfg->scrollJoyW = gutterW;
