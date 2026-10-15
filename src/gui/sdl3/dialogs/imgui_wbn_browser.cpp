@@ -1370,7 +1370,12 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                             }
                             fclose(fp);
                         }
-                        if (data) {
+                        if (data && !running) {
+                            /* A download finished this same frame and is
+                             * already the result being handed back; the
+                             * picked file is dropped, not written over it. */
+                            free(data);
+                        } else if (data) {
                             finalResult.action = WBN_BROWSER_PLAY_MEMORY;
                             finalResult.memoryData = data;   /* the caller frees it */
                             finalResult.memorySize = size;
@@ -1427,9 +1432,12 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
     if (fetchThread.joinable())    fetchThread.join();
 
     /* Free a memory download that finished but was never consumed by the
-     * loop (closed the same frame it completed). When it is being returned
-     * (PLAY_MEMORY) ownership has passed to the caller, so leave it. */
-    if (downloadResult.memoryData && finalResult.action != WBN_BROWSER_PLAY_MEMORY) {
+     * loop (closed the same frame it completed). Only the buffer handed back
+     * in finalResult belongs to the caller now; any other one, including a
+     * download left over when the result is a file picked on iOS, is freed
+     * here. */
+    if (downloadResult.memoryData &&
+        downloadResult.memoryData != finalResult.memoryData) {
         free(downloadResult.memoryData);
         downloadResult.memoryData = nullptr;
     }

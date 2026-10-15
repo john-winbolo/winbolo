@@ -370,6 +370,10 @@ extern "C" int imguiUdpSetupShow(void) {
         /* --- Action buttons --- */
         float btnW = 80.0f * s;
 
+#if !defined(__IPHONEOS__)
+        /* New hosts a game. Not on iOS: a phone does not host (the iOS
+         * client links no UDP server), as the game browser's New Game is
+         * left off there too. */
         if (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD) {
             ImGui::TextUnformatted(langGetText(STR_DLGTCP_NEWBLURB));
         }
@@ -395,6 +399,7 @@ extern "C" int imguiUdpSetupShow(void) {
             }
         }
         imguiHandOnHover();
+#endif
 
         if (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD) {
             ImGui::TextUnformatted(langGetText(STR_DLGTCP_JOINBLURB));

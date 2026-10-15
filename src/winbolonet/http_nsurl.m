@@ -72,7 +72,8 @@
 *  - Paths and queries are percent-encoded before they are
 *    parsed, since NSURL refuses a space or other character
 *    a URL may not carry, which libcurl sends as it is. A
-*    "%XX" already in the text is kept.
+*    "%XX" already in the text, and the URL delimiters "#",
+*    "[" and "]", are kept.
 *  - A redirect to another scheme, host or port drops the
 *    Authorization header, as libcurl does by default.
 *********************************************************/
@@ -522,8 +523,8 @@ didReceiveResponse:(NSURLResponse *)response
 }
 
 /* A redirect is followed, as libcurl follows one here; the Authorization
- * header goes with it only to the same scheme, host and port, which is
- * what libcurl does with a header it was given. The signature and
+ * header goes with it only to the scheme, host and port the request was
+ * first sent to, which is what libcurl does with a header it was given. The signature and
  * timestamp headers go either way, as libcurl's other custom headers do;
  * they prove nothing without the signing key. */
 - (void)URLSession:(NSURLSession *)session
@@ -532,7 +533,10 @@ didReceiveResponse:(NSURLResponse *)response
                     newRequest:(NSURLRequest *)request
              completionHandler:(void (^)(NSURLRequest *))completionHandler {
   (void)session; (void)response;
-  NSURL *from = task.currentRequest.URL ?: task.originalRequest.URL;
+  /* Compared with where the request started, not with the previous hop,
+   * so a chain that passes through another host never counts as the same
+   * origin again. */
+  NSURL *from = task.originalRequest.URL;
   NSURL *to = request.URL;
   bool sameOrigin =
       from != nil && to != nil &&
@@ -672,11 +676,14 @@ static WbnRunResult wbnRunRequest(NSMutableURLRequest *req, WbnHttpTask *t,
 /* Percent-encodes every byte of url a URL may not carry as it is: a space,
  * a quote, a byte above 127 and the like. Letters, digits, the characters
  * RFC 3986 allows in a path or a query (including "/", "?", "&", "=" and
- * ":") and a "%" that already starts a "%XX" are kept, so a path a caller
+ * ":"), the URL delimiters "#", "[" and "]", and a "%" that already starts
+ * a "%XX" are kept, so a path a caller
  * has encoded itself is not encoded twice. Returns nil when the result does
  * not parse. */
 static NSURL *wbnUrlFromText(const char *url) {
-  static const char kKeep[] = "-._~!$&'()*+,;=:@/?";
+  /* "#" (a fragment), "[" and "]" (an IPv6 host) are kept too, as libcurl
+   * reads them. */
+  static const char kKeep[] = "-._~!$&'()*+,;=:@/?#[]";
   NSMutableString *enc = [NSMutableString stringWithCapacity:strlen(url) + 16];
   for (const unsigned char *p = (const unsigned char *)url; *p != '\0'; p++) {
     unsigned char c = *p;
@@ -1032,6 +1039,11 @@ bool httpSendLogFile(const char *fileName, char *key, bool wantFeedback) {
 *NAME:          httpGetBaseUrl
 *********************************************************/
 const char *httpGetBaseUrl(void) {
+  /* Empty until the first httpCreate has filled it, as http.c's is; read
+   * after the ready flag so a half-written URL is never returned. */
+  if (!atomic_load_explicit(&s_baseUrlReady, memory_order_acquire)) {
+    return "";
+  }
   return wbnBaseUrl;
 }
 

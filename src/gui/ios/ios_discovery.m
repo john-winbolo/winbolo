@@ -186,11 +186,21 @@ static void DNSSD_API iosDiscoveryBrowseReply(DNSServiceRef sdRef,
     WB_LOG_WARN(WB_LOG_CAT_NET, "ios discovery: browse error %d", (int)errorCode);
     return;
   }
-  if (search->stopped || (flags & kDNSServiceFlagsAdd) == 0 || serviceName == NULL) {
+  if (search->stopped || serviceName == NULL) {
     return;
   }
   NSString *instance = [NSString stringWithUTF8String:serviceName];
-  if (instance == nil || [search->seen containsObject:instance]) {
+  if (instance == nil) {
+    return;
+  }
+  if ((flags & kDNSServiceFlagsAdd) == 0) {
+    /* The instance has gone away: the end-of-search pass must not list it
+     * from its name. A row already delivered stays; the browser's callback
+     * only adds. If it comes back it is resolved again. */
+    [search->seen removeObject:instance];
+    return;
+  }
+  if ([search->seen containsObject:instance]) {
     return;
   }
   [search->seen addObject:instance];

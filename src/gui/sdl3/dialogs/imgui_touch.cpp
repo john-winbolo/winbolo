@@ -83,14 +83,14 @@ static void touchInstallImeHandler(void) {
 
 /* ---- Drag to scroll ----
  *
- * ImGui scrolls a window with a mouse wheel or its scrollbar, and a phone
- * has neither in practice: SDL makes a touch into a left mouse button and
- * sends no wheel events for it. Once a finger has moved further up or down
- * than across, by more than a tap's wobble, the nearest window under it
- * that can scroll follows the finger until it lifts. The widget the finger
+ * ImGui scrolls a window with a mouse wheel or its scrollbar, and a finger
+ * has neither: SDL makes a touch into a left mouse button and sends no
+ * wheel events for it. Once a finger has moved further up or down than
+ * across, by more than a tap's wobble, the nearest window under it that
+ * can scroll follows the finger until it lifts. The widget the finger
  * landed on is released, so lifting does not click it; a tap that does not
  * move still clicks. A drag that starts on the scrollbar, in a text field
- * or as a drag and drop is left alone. */
+ * or as a drag and drop is left alone, and so is a mouse or trackpad. */
 
 /* Movement, in ImGui units (points on iOS), before a press becomes a
  * scroll. */
@@ -126,6 +126,9 @@ static void touchDragScroll(void) {
     }
 
     if (s_scrollWindowId == 0) {
+        /* Fingers only: a mouse or trackpad on an iPad has a wheel and
+         * drags to select, as on the desktop. */
+        if (io.MouseSource != ImGuiMouseSource_TouchScreen) return;
         if (g.DragDropActive || g.MovingWindow != nullptr) return;
         ImVec2 d = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f);
         if (fabsf(d.y) < kTouchScrollThreshold || fabsf(d.y) < fabsf(d.x)) return;

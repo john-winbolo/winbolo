@@ -1899,8 +1899,13 @@ static bool gameFrontJoinFailedAskAgain(const char *failFallback) {
    * server sent the password it configured, so a reject there is an
    * error like any other. Cancel at the prompt ends the attempt without
    * an error box: the player already knows why. */
+  /* The active-sim pointer is cleared before each destroy, as everywhere
+   * else here: left pointing at the freed sim, the next ClientSim could be
+   * allocated at the same address and skip the roster clear that
+   * frontEndSetActiveClientSim does for a new one. */
   if (!spServerSimActive &&
       clientSimGetConnectErrorLangId(humanSim) == STR_REJECT_INCORRECT_PASSWORD) {
+    frontEndSetActiveClientSim(NULL);
     clientSimDestroy(humanSim);
     humanSim = NULL;
     if (gameFrontAskJoinPassword(TRUE)) return TRUE;
@@ -1909,6 +1914,7 @@ static bool gameFrontJoinFailedAskAgain(const char *failFallback) {
     imguiMessageBoxEx(DIALOG_BOX_TITLE,
                       (reason && reason[0]) ? reason : failFallback,
                       IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+    frontEndSetActiveClientSim(NULL);
     clientSimDestroy(humanSim);
     humanSim = NULL;
   }
@@ -2015,12 +2021,22 @@ static bool iosJoinWaitJob(IosJoinJob *job) {
 typedef struct {
   int waited;
   ClientFrontJoinStep result;
+  Uint64 lastStepMs;  /* when the join was last stepped; 0 before the first */
 } IosJoinWait;
+
+/* The step's contract is about one call every 20 ms, which is also what
+ * makes 1500 steps the blocking join's 30 s; the screen draws faster than
+ * that, so it steps only once 20 ms have passed. */
+#define IOS_JOIN_STEP_MS 20
 
 static ConnectingStep iosJoinAwaitStep(void *ctx, const char **stageOut,
                                        float *progressOut) {
   IosJoinWait *w = (IosJoinWait *)ctx;
-  w->result = clientFrontAwaitJoinStep(humanSim, &w->waited, 1500);
+  Uint64 now = SDL_GetTicks();
+  if (w->lastStepMs == 0 || now - w->lastStepMs >= IOS_JOIN_STEP_MS) {
+    w->lastStepMs = now;
+    w->result = clientFrontAwaitJoinStep(humanSim, &w->waited, 1500);
+  }
   /* A server with no lobby sends the map inside this wait; show how much
    * of it has come. */
   if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_DOWNLOADING_MAP) {
@@ -2038,6 +2054,7 @@ static ConnectingStep iosJoinAwaitStep(void *ctx, const char **stageOut,
  * back to the screen the join came from. */
 static bool iosJoinCancelled(openingStates prevState) {
   if (humanSim != NULL) {
+    frontEndSetActiveClientSim(NULL);
     clientSimDisconnect(humanSim);
     clientSimDestroy(humanSim);
     humanSim = NULL;
@@ -2122,6 +2139,7 @@ static bool gameFrontIosJoin(openingStates prevState) {
     } else {
       IosJoinWait w;
       w.waited = 0;
+      w.lastStepMs = 0;
       w.result = CLIENT_FRONT_JOIN_WAITING;
       if (!imguiConnectingRun(gameFrontUdpAddress, iosJoinAwaitStep, &w)) {
         return iosJoinCancelled(prevState);

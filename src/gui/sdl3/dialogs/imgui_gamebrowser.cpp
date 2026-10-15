@@ -888,6 +888,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
      * writing after the dialog function returns (avoids blocking on exit). */
     static std::atomic<bool> searching(false);
     static std::atomic<bool> searchDone(false);
+    /* Set by the mDNS worker when its window ends. A search is complete only
+     * once both workers are done, so the frame loop never waits on a join:
+     * where the broadcast fails at once (iOS without the multicast
+     * entitlement) the mDNS worker still has its whole window to run. */
+    static std::atomic<bool> mdnsDone(true);
 #ifndef __EMSCRIPTEN__
     static std::thread searchThread;
     /* LAN mDNS browse runs on its own thread alongside the broadcast worker
@@ -910,6 +915,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         searchDone = false;
         searching = false;
         if (searchThread.joinable()) searchThread.join();
+        if (!mdnsDone) discoveryAbortMdnsSearch();
         if (mdnsThread.joinable()) mdnsThread.join();
     }
 
@@ -1012,15 +1018,15 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         }
 #endif
 
-        /* Check if background search completed */
-        if (searchDone) {
+        /* Check if background search completed: the main worker and, for a
+         * LAN search, the mDNS worker too, so neither join below can block
+         * the frame. */
+        if (searchDone && mdnsDone) {
             searchDone = false;
 #ifndef __EMSCRIPTEN__
             if (searchThread.joinable()) {
                 searchThread.join();
             }
-            /* The mDNS worker (LAN searches) shares the 5s window and is
-             * effectively done too; join it so it doesn't linger. */
             if (mdnsThread.joinable()) {
                 mdnsThread.join();
             }
@@ -1426,6 +1432,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (searchThread.joinable()) {
                     searchThread.join();
                 }
+                /* An mDNS window still running is cut short rather than
+                 * waited out. */
+                if (!mdnsDone) discoveryAbortMdnsSearch();
                 if (mdnsThread.joinable()) {
                     mdnsThread.join();
                 }
@@ -1467,11 +1476,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                  * owns the searchDone/searchResultOk signal; this thread just
                  * contributes additional servers. */
                 if (!sp.tracker) {
+                    mdnsDone = false;
                     mdnsThread = std::thread([]() {
                         static BroadcastCbData mcbd;
                         mcbd.servers = &servers;
                         mcbd.serversMtx = &serversMtx;
                         discoveryFindMdnsGamesAsync(broadcastServerCallback, &mcbd);
+                        mdnsDone = true;
                     });
                 }
 #endif
