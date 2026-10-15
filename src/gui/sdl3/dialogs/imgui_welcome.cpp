@@ -440,7 +440,7 @@ extern "C" int imguiWelcomeShow(void) {
                 /* A browser tab cannot host or find a game on the LAN. */
                 { STR_DLGWELCOME_LOCAL,     RESULT_LAN,          true,             nullptr },
 #endif
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)  /* iOS builds the editor */
                 { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    showDesktopTools, nullptr },
 #endif
                 /* Android does not compile the log browser or the reel. */

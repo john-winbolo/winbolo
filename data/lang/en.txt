@@ -2785,3 +2785,10 @@ STR_DLGSYSINFO_MEM_GRASS=Grass
 # Voice settings on a touch screen, where the talk button is the key
 STR_DLGSETTINGS_VOICE_PTT_TOUCH=Push to talk: hold the microphone button on the game screen
 
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Your files
+STR_MAPEDIT_IOS_BUILTIN=Maps that come with WinBolo
+STR_MAPEDIT_IOS_NOFILES=Nothing here yet. Files you save, and files you put in WinBolo's folder in the Files app, show up here.
+STR_MAPEDIT_IOS_NAME=Name
+STR_MAPEDIT_IOS_REPLACES=A file with this name exists. Saving replaces it.
+

@@ -12,6 +12,10 @@
     <string>com.winbolo.ios</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>UIFileSharingEnabled</key>
+    <true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <true/>
     <key>CFBundleName</key>
     <string>$(PRODUCT_NAME)</string>
     <key>CFBundlePackageType</key>

@@ -101,11 +101,9 @@ bool geoLookupCountry(const char *ipStr, char countryCode[3]) {
 }
 bool geoLookupIsLoaded(void) { return false; }
 
-/* ---- map editor stubs (not available on iOS) ---- */
-
-void mapEditorRun(void *window, void *renderer, const char *mapPath, bool fromMainMenu) {
-    (void)window; (void)renderer; (void)mapPath; (void)fromMainMenu;
-}
+/* The map editor (mapEditorRun, mapEditorAppQuitRequested,
+   mapEditorSetSettingsHandler) is built on iOS; see the map editor block of
+   the iOS target in CMakeLists.txt. */
 
 /* ---- log viewer stubs (the modal viewer is not built on iOS) ----
  *
@@ -116,18 +114,10 @@ void logViewerRun(void *window, void *renderer, const char *logPath, bool fromMa
     (void)window; (void)renderer; (void)logPath; (void)fromMainMenu;
 }
 
-/* gamefront.c reads these after a map editor or log viewer run returns, to
- * learn whether the player quit the application from inside one. Neither
- * tool runs on iOS, so neither can have asked. */
+/* gamefront.c reads this after a log viewer run returns, to learn whether
+ * the player quit the application from inside it. The modal viewer does not
+ * run on iOS, so it cannot have asked. */
 bool logViewerAppQuitRequested(void) { return false; }
-bool mapEditorAppQuitRequested(void) { return false; }
-
-/* gamefront.c hands the embedded map editor the Settings dialog opener
- * before running it. No editor here to hand it to. The parameter is
- * mapeditor.h's MapEditorSettingsFn spelled out, because that header also
- * declares mapEditorRun with SDL types and the stub above takes void
- * pointers. */
-void mapEditorSetSettingsHandler(void (*fn)(void)) { (void)fn; }
 
 /* logViewerRunFromMemory, which the WinBolo.net log browser's downloads come
  * to, is in ios_log_player.cpp: it plays the game in the lobby's reel. */

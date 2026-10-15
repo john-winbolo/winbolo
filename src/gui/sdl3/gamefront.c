@@ -1424,8 +1424,8 @@ static bool gameFrontDialogs(void) {
       }
       break;
     }
-/* Compiled on iOS and Android as well, as it always has been, against their
-   stubs; their welcome screens offer none of these three. */
+/* Compiled on iOS and Android as well. iOS builds the map editor and its
+   welcome screen offers it; Android links stubs and offers none of these. */
 #if !defined(__EMSCRIPTEN__)
     case openMapEditor:
       mapEditorSetSettingsHandler(imguiSettingsShowInEditor);

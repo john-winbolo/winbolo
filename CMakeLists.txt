@@ -1383,6 +1383,38 @@ target_sources(WinBoloIOS PRIVATE
     src/gui/ios/ios_spectator.cpp
 )
 
+# The map editor, opened from the welcome screen as on the desktop. The same
+# sources as the desktop's CLIENT_SOURCES list, less mapgen_imgui.cpp (already
+# above, for the lobby) and the macOS menu bar shim: iOS draws the editor's
+# ImGui menu bar instead. The same three T2 grants as the desktop target.
+set(IOS_MAPEDITOR_SOURCES
+    src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp
+    src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c
+    src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c
+    src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c
+    src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c
+    src/mapeditor/mapeditor_export.c
+    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c
+    src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_pack.c
+    src/mapeditor/mapeditor_scenario_imgui.cpp
+    src/mapeditor/mapeditor_scenario_fndesc.c
+    src/mapeditor/mapeditor_scenario_fnscan.c
+    src/mapeditor/mapeditor_wbn_open.cpp
+    # SDL has no file dialogs on iOS; the editor's open and save go here.
+    src/mapeditor/mapeditor_ios_files.cpp
+    src/third_party/ImGuiColorTextEdit/TextEditor.cpp
+    src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
+)
+target_sources(WinBoloIOS PRIVATE ${IOS_MAPEDITOR_SOURCES})
+# File > Open from WinBolo.net, as in the desktop's embedded editor.
+target_compile_definitions(WinBoloIOS PRIVATE MAPEDITOR_WBN_OPEN=1)
+source_group("Map Editor" FILES ${IOS_MAPEDITOR_SOURCES})
+target_include_directories(WinBoloIOS PRIVATE src/third_party/ImGuiColorTextEdit)
+bolo_grant_internal_source_access(WinBoloIOS
+    src/mapeditor/mapeditor.c
+    src/mapeditor/mapeditor_export.c
+    src/mapeditor/mapeditor_validate.c)
+
 target_sources(WinBoloIOS PRIVATE src/steam/steam_wrapper_stub.c)
 target_sources(WinBoloIOS PRIVATE src/common/wb_log.c)
 target_sources(WinBoloIOS PRIVATE src/common/md5.c)

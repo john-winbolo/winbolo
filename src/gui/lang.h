@@ -3371,6 +3371,13 @@
 /* Voice settings on a touch screen, where the talk button is the key */
 #define STR_DLGSETTINGS_VOICE_PTT_TOUCH          2798
 
+/* Map editor file picker on iOS, which has no system open or save dialog */
+#define STR_MAPEDIT_IOS_YOURFILES                2799
+#define STR_MAPEDIT_IOS_BUILTIN                  2800
+#define STR_MAPEDIT_IOS_NOFILES                  2801
+#define STR_MAPEDIT_IOS_NAME                     2802
+#define STR_MAPEDIT_IOS_REPLACES                 2803
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */
