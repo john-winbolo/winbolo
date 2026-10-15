@@ -27,6 +27,7 @@
 #include "client_frontend_tick.h"
 #include "client_frontend_render.h"
 #include "client_frontend_tutorial.h"
+#include "client_frontend_common.h"
 #include "gui_message.h"
 #include "../../common/wb_log.h"
 #include "server_sim.h"
@@ -807,21 +808,9 @@ void windowTutorialPause(ClientSim *cs, bool active) {
  * Frontend callbacks (matching Android android_frontend.c)
  * ------------------------------------------------------- */
 
-/* The ClientSim that owns the visible player-list UI. Bot, background-game
-   and spectator sims also fire frontEnd* callbacks; registering the human's
-   sim here lets the ones that care tell them apart. */
-static ClientSim *s_activeUiCs = NULL;
-
-void frontEndSetActiveClientSim(ClientSim *cs) {
-    if (cs != s_activeUiCs) {
-        /* Drop the previous game's latched build target: it is the square a
-           tap builds at, and it outlives the ClientSim that set it, so
-           without this the first tap of the next game is dispatched to a
-           tile chosen in the last one. */
-        buildCursorReset();
-    }
-    s_activeUiCs = cs;
-}
+/* frontEndSetActiveClientSim and the active-sim test the callbacks here make
+   (clientFrontIsActiveUiSim) come from client_frontend_common.c, the one body
+   the desktop, web and iOS drivers call. */
 
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
@@ -846,7 +835,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
 
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
     BYTE fullShells, fullMines, fullArmour, fullTrees;
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     clientSimGetTankFullStats(cs, &fullShells, &fullMines, &fullArmour, &fullTrees);
     sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees,
                            fullShells, fullMines, fullArmour, fullTrees);
@@ -854,20 +843,20 @@ void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE a
 
 void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) {
     BYTE fullShells, fullMines, fullArmour;
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     clientSimGetBaseFullStats(cs, &fullShells, &fullMines, &fullArmour);
     sdl3DrawStatusBaseBars(0, 0, shells, mines, armour,
                            fullShells, fullMines, fullArmour, FALSE);
 }
 
 void frontEndPlaySound(ClientSim *cs, sndEffects value) {
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     if (soundEffects) soundPlayEffect(value);
 }
 
 void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
                           uint16_t gainL, uint16_t gainR) {
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     if (soundEffects) {
         /* The player has turned positional sound off, so every sound plays
            centred; the near/far variant is already chosen. */
@@ -884,42 +873,42 @@ void windowPlaySound(sndEffects value) {
 }
 
 void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     sdl3DrawStatusPillbox(pillNum, pb, showPillLabels);
     sdl3DrawCopyPillsStatus(0, 0);
 }
 
 void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     sdl3DrawStatusTank(tankNum, ts);
     sdl3DrawCopyTanksStatus(0, 0);
 }
 
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     sdl3DrawStatusBase(baseNum, bs, showBaseLabels);
     sdl3DrawCopyBasesStatus(0, 0);
 }
 
 void frontEndMessages(ClientSim *cs, char *top, char *bottom) {
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     if (drawBusy == FALSE) sdl3DrawMessages(0, 0, top, bottom);
 }
 
 void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     if (drawBusy == FALSE) sdl3DrawKillsDeaths(0, 0, kills, deaths);
 }
 
 void frontEndManStatus(ClientSim *cs, bool isDead, TURNTYPE angle) {
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     clientMutexWaitFor();
     sdl3DrawSetManStatus(0, 0, isDead, angle);
     clientMutexRelease();
 }
 
 void frontEndManClear(ClientSim *cs) {
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     clientMutexWaitFor();
     sdl3DrawSetManClear();
     sdl3DrawCopyManStatus(0, 0);
@@ -943,19 +932,19 @@ void frontEndAudioReturningToLobby(bool active) {
 }
 
 void frontEndGameOver(ClientSim *cs) {
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Game over (time limit expired)");
     finishedLoop = TRUE;
 }
 
 void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) {
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     sdl3ImguiClearPlayer((unsigned char)value);
 }
 
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) {
     char cc[3];
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     if (!clientSimIsRunning(cs)) {
         cc[0] = 'X'; cc[1] = 'X'; cc[2] = '\0';
         sdl3ImguiSetPlayer((unsigned char)value, str, cc);
@@ -969,7 +958,7 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
 }
 
 void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping) {
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     if (!clientSimIsRunning(cs)) return;
     sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
 }
@@ -978,12 +967,12 @@ void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping)
    list draws from is updated and nothing is drawn here. */
 void frontEndUpdatePlayerFlags(ClientSim *cs, playerNumbers value,
                                uint8_t clientType, uint8_t clientFlags) {
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     sdl3ImguiUpdatePlayerFlags((unsigned char)value, clientType, clientFlags);
 }
 
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
 }
 
@@ -993,7 +982,7 @@ void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled) { (void)enabled; }
 
 void frontEndShowGunsight(ClientSim *cs, bool isShown) {
-    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     showGunsight = !isShown;
     clientSimSetGunsight(cs, showGunsight);
 }

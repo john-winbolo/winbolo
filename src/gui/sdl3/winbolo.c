@@ -57,6 +57,7 @@
 #include "client_frontend_tick.h"
 #include "client_frontend_render.h"
 #include "client_frontend_tutorial.h"
+#include "client_frontend_common.h"
 #include "client_sim.h"
 #include "frontend.h"
 #include "tutorial.h"
@@ -263,14 +264,6 @@ static bool showAllianceReq = TRUE;
 /* Flags set by timer threads to request work on the main thread */
 static SDL_AtomicInt needsRedraw = { 0 };
 static SDL_AtomicInt needsGameTick = { 0 };
-
-/* The ClientSim that drives the visible player-list UI. Registered by
- * gamefront when humanSim is created; cleared on teardown. frontEnd*
- * calls whose cs argument doesn't match this pointer are suppressed,
- * so bot / bg_game / gym ClientSims can't pollute process-global
- * UI state (s_playerName, s_playerEnabled, ...).
- * NULL = no registration yet; calls fall through (bootstrapping). */
-static ClientSim *s_activeUiCs = NULL;
 
 /* Forward declarations */
 static Uint32 SDLCALL windowGameTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
@@ -2171,7 +2164,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
 
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
   DWORD tick = SDL_GetTicks();
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   BYTE fullShells, fullMines, fullArmour, fullTrees;
   clientSimGetTankFullStats(cs, &fullShells, &fullMines, &fullArmour, &fullTrees);
   sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees,
@@ -2185,7 +2178,7 @@ void frontEndPlaySound(ClientSim *cs, sndEffects value) {
 
 void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
                           uint16_t gainL, uint16_t gainR) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   if (soundEffects == TRUE) {
     /* The player has turned positional sound off, so every sound plays
        centred; the near/far variant is already chosen. */
@@ -2204,7 +2197,7 @@ void windowPlaySound(sndEffects value) {
 }
 
 void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   /* Redundant with the per-frame render pass, which repaints every pill icon
      from sim state on the render thread (sdl3DrawMainScreen). This callback
      also fires on the server-tick thread, where touching the renderer races
@@ -2215,7 +2208,7 @@ void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
 }
 
 void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   /* See frontEndStatusPillbox — repainted every frame from sim state; skip
      the direct draw when off the render thread. */
   if (!sdl3DrawOnRenderThread()) return;
@@ -2224,7 +2217,7 @@ void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
 }
 
 void frontEndMessages(ClientSim *cs, char *top, char *bottom) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   if (drawBusy == FALSE) {
     DWORD tick = SDL_GetTicks();
     sdl3DrawMessages(0, 0, top, bottom);
@@ -2233,7 +2226,7 @@ void frontEndMessages(ClientSim *cs, char *top, char *bottom) {
 }
 
 void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   if (drawBusy == FALSE) {
     DWORD tick = SDL_GetTicks();
     sdl3DrawKillsDeaths(0, 0, kills, deaths);
@@ -2242,7 +2235,7 @@ void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {
 }
 
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   /* Redundant with the per-frame render pass, which repaints every base icon
      from sim state on the render thread (sdl3DrawMainScreen). This callback
      also fires on the server-tick thread (e.g. base capture / alliance change
@@ -2255,7 +2248,7 @@ void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
 
 void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) {
   DWORD tick = SDL_GetTicks();
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   BYTE fullShells, fullMines, fullArmour;
   clientSimGetBaseFullStats(cs, &fullShells, &fullMines, &fullArmour);
   sdl3DrawStatusBaseBars(0, 0, shells, mines, armour,
@@ -2265,7 +2258,7 @@ void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE a
 
 void frontEndManStatus(ClientSim *cs, bool isDead, TURNTYPE angle) {
   DWORD tick = SDL_GetTicks();
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   clientMutexWaitFor();
   sdl3DrawSetManStatus(0, 0, isDead, angle);
   clientMutexRelease();
@@ -2274,7 +2267,7 @@ void frontEndManStatus(ClientSim *cs, bool isDead, TURNTYPE angle) {
 
 void frontEndManClear(ClientSim *cs) {
   DWORD tick = SDL_GetTicks();
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   clientMutexWaitFor();
   sdl3DrawSetManClear();
   sdl3DrawCopyManStatus(0, 0);
@@ -2303,7 +2296,7 @@ void frontEndAudioReturningToLobby(bool active) {
 }
 
 void frontEndGameOver(ClientSim *cs) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   SDL_RemoveTimer(timerFrameID);
   SDL_RemoveTimer(timerGameID);
   timerFrameID = 0;
@@ -2313,32 +2306,17 @@ void frontEndGameOver(ClientSim *cs) {
   winboloQuit = TRUE;
 }
 
-void frontEndSetActiveClientSim(struct ClientSim *cs) {
-  if (cs != s_activeUiCs) {
-    for (BYTE i = 0; i < MAX_TANKS; i++) {
-      sdl3ImguiClearPlayer(i);
-    }
-    /* Drop the previous game's newswire/kills text so it doesn't linger on
-       the message surface when the next game starts (it would otherwise stay
-       visible until the first message overwrites it). */
-    sdl3DrawResetCachedText();
-    /* Drop the previous game's latched build target for the same reason: it
-       is the square a click builds at, and it outlives the ClientSim that
-       set it, so without this the first click of the next game is dispatched
-       to a tile chosen in the last one. */
-    buildCursorReset();
-  }
-  s_activeUiCs = cs;
-}
+/* frontEndSetActiveClientSim and the active-sim test the callbacks here make
+   (clientFrontIsActiveUiSim) come from client_frontend_common.c. */
 
 void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   sdl3ImguiClearPlayer((unsigned char)value);
 }
 
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) {
   char cc[3];
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   if (!clientSimIsRunning(cs)) {
     cc[0] = 'X'; cc[1] = 'X'; cc[2] = '\0';
     sdl3ImguiSetPlayer((unsigned char)value, str, cc);
@@ -2357,19 +2335,19 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
 }
 
 void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   if (!clientSimIsRunning(cs)) return;
   sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
 }
 
 void frontEndUpdatePlayerFlags(ClientSim *cs, playerNumbers value,
                                uint8_t clientType, uint8_t clientFlags) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   sdl3ImguiUpdatePlayerFlags((unsigned char)value, clientType, clientFlags);
 }
 
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
 }
 
@@ -2429,7 +2407,7 @@ void frontEndEnableLeaveAllyMenu(bool enabled) {
  * frontEndShowGunsight — auto show/hide gunsight callback
  * ------------------------------------------------------- */
 void frontEndShowGunsight(ClientSim *cs, bool isShown) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   showGunsight = !isShown;
   clientSimSetGunsight(cs, showGunsight);
 }

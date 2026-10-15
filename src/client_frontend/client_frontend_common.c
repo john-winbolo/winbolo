@@ -17,12 +17,49 @@
 #include "sdl3draw.h"       /* sdl3Draw* status helpers */
 #include "sdl3draw_status.h"
 #include "winbolo.h"        /* window* decls, windowRedrawAll */
+#include "client_frontend_common.h"
 #include "client_frontend_tutorial.h"
+#include "build_cursor.h"
+#include "sdl3imgui.h"      /* sdl3ImguiClearPlayer */
 #include "clientmutex.h"
 #include "lang.h"           /* STR_TUTORIAL_RESPAWN1 */
 #include "server_sim.h"
 #include "tutorial.h"       /* tutorialSteps[] */
 #include "dialogs/imgui_tutorial_overlay.h"
+
+/* -------------------------------------------------------
+ * Active-sim guard
+ *
+ * The ClientSim that drives the visible player list and the other on-screen
+ * UI. gamefront registers the human's sim when it is created and clears it on
+ * teardown. frontEnd* calls whose cs is not this sim are dropped, so bot,
+ * background-game and gym sims cannot write into process-wide UI state.
+ * NULL = no registration yet; calls go ahead (bootstrapping).
+ * ------------------------------------------------------- */
+static struct ClientSim *s_activeUiCs = NULL;
+
+bool clientFrontIsActiveUiSim(const struct ClientSim *cs) {
+  return s_activeUiCs == NULL || cs == s_activeUiCs;
+}
+
+void frontEndSetActiveClientSim(struct ClientSim *cs) {
+  if (cs != s_activeUiCs) {
+    BYTE i;
+    for (i = 0; i < MAX_TANKS; i++) {
+      sdl3ImguiClearPlayer(i);
+    }
+    /* Drop the previous game's newswire/kills text so it doesn't linger on
+       the message surface when the next game starts (it would otherwise stay
+       visible until the first message overwrites it). */
+    sdl3DrawResetCachedText();
+    /* Drop the previous game's latched build target for the same reason: it
+       is the square a click or tap builds at, and it outlives the ClientSim
+       that set it, so without this the first build of the next game is
+       dispatched to a tile chosen in the last one. */
+    buildCursorReset();
+  }
+  s_activeUiCs = cs;
+}
 
 extern keyItems keys;
 extern bool showGunsight;

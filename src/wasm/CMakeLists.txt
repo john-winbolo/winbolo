@@ -416,6 +416,10 @@ set(WASM_SOURCES
     ${SRC_ROOT}/client_frontend/voice_core.c
     ${SRC_ROOT}/client_frontend/voice_client.c
     ${CMAKE_CURRENT_SOURCE_DIR}/voice_wasm.c
+    # The windowSetVoice* / windowGetVoice* settings functions, one body for
+    # the desktop, iOS and the web. WINBOLO_VOICE_AEC is not set here, so its
+    # echo-cancel half stays out.
+    ${SRC_ROOT}/gui/sdl3/voice_settings.c
 )
 
 ###

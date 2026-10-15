@@ -657,6 +657,9 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
   humanSim = clientSimAlloc();
   clientSimCreate(humanSim);
   frontEndSetActiveClientSim(humanSim);
+  /* The web has no desktop game loop to open the game view, so the view's
+     per-game reset runs as the sim is registered. */
+  sdl3ImguiNewGame(humanSim);
 
   if (urlNetType == netUdp) {
     /* ---- UDP multiplayer via new transport ---- */
@@ -763,6 +766,7 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
           humanSim = clientSimAlloc();
           clientSimCreate(humanSim);
           frontEndSetActiveClientSim(humanSim);
+          sdl3ImguiNewGame(humanSim);
           clientSimSetMyLastPlayerName(humanSim, gameFrontName);
           continue;
         }
