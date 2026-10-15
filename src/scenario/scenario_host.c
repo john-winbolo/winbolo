@@ -5713,7 +5713,7 @@ static bool scnChooseStart(void *ctx, BYTE player, BYTE *startIdx) {
        the start the round's opening placement reserved for the seat, the
        one the lobby's hand pick or team side chose. Read once, before any
        script is asked, so every script on the list is told the same thing.
-       A script that names another start spends the reservation in
+       A script that names another start still clears the reservation, in
        startsGetStart, so it is never left behind to block a later pick. */
     if (!serverSimGetLobbyStart(h->sim, player, &lobby)) {
         lobby = 0;

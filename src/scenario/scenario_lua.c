@@ -5535,7 +5535,7 @@ static const ScnLuaRow kScnLuaRows[] = {
       "lobby_start(p) — the start the round's opening placement reserved "
       "for seat p, counted from 1 as start counts: its lobby pick, else one "
       "on its team's side, else the engine's spread; nil once the seat's "
-      "first tank of the round has spent it, and for a seat that has none. "
+      "first tank of the round has used it, and for a seat that has none. "
       "The same number on_choose_start is handed.",
       SCN_OP_PARAMS(lobby_start), SCN_OP_READS },
     { "lobby_side", scnLuaLobbySide,

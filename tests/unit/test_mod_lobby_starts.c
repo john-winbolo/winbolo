@@ -57,8 +57,8 @@
  *   run_choose_start_lobby_arg_nil_without_reservation
  *       a seat joining a running round is told nil.
  *   run_choose_start_override_releases_reservation
- *       a script naming a third start wins; the seat's reservation is spent
- *       and its respawn is told nil; the other seat keeps its own.
+ *       a script naming a third start wins; the seat's reservation is
+ *       cleared and its respawn is told nil; the other seat keeps its own.
  *   run_choose_start_override_onto_other_reservation
  *       a script sending seat 0 to seat 1's reserved start: both tanks open
  *       by it on squares of their own, and no reservation is left over.
@@ -886,9 +886,9 @@ int run_choose_start_lobby_arg_hand_picked(void) {
     UT_ASSERT(mlsTankStart(gs, 0) == (int)west - 1);
     UT_ASSERT(mlsTankStart(gs, 1) == (int)east - 1);
 
-    /* The opening tanks spent the reservations: on_start reads nil for both
-       seats, and nil for an empty seat's start and side. on_start runs on
-       the round's first tick. */
+    /* Placing the opening tanks cleared the reservations: on_start reads
+       nil for both seats, and nil for an empty seat's start and side.
+       on_start runs on the round's first tick. */
     serverSimTick(sim);
     UT_ASSERT_MSG(strstr(mlsNote, "started nil nil nil nil\n") != NULL,
                   "on_start should read no lobby start for any seat:\n%s",
@@ -1019,8 +1019,8 @@ int run_choose_start_override_releases_reservation(void) {
                   mlsNote);
 
     /* The script's start wins over the lobby's, the seat's own reservation
-       is spent rather than left for a later spawn, and the other seat still
-       opens on its own pick. */
+       is cleared rather than left for a later spawn, and the other seat
+       still opens on its own pick. */
     UT_ASSERT_MSG(mlsTankStart(gs, 0) == other - 1,
                   "seat 0 opened nearest start %d, the mod named %d",
                   mlsTankStart(gs, 0) + 1, other);

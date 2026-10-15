@@ -2097,13 +2097,14 @@ typedef struct ServerSimRosterSlot {
 bool serverSimGetRosterSlot(ServerSim *sim, BYTE i, ServerSimRosterSlot *out);
 
 /* The start the round's opening placement reserved for seat p and has not
- * yet spent, 1-based as serverSimGetStartInfo counts, in *start. That
+ * yet used, 1-based as serverSimGetStartInfo counts, in *start. That
  * placement runs once as each round starts, over the seats being fielded:
  * a start the seat picked by hand in the lobby, else one on its team's
- * side, else the engine's spread of the field. The seat's first tank of the
- * round spends it, and so does a scenario naming another start for that
- * tank, so every later spawn, a seat fielded or joined after the round
- * started and a map with no live start all answer false. A reservation
+ * side, else the engine's spread of the field. The reservation is used
+ * once: placing the seat's first tank of the round clears it, and so does
+ * a scenario naming another start for that tank, so every later spawn, a
+ * seat fielded or joined after the round started and a map with no live
+ * start all answer false. A reservation
  * naming a start that has since been removed is not one a tank can use and
  * answers false too. *start is not touched on false. */
 bool serverSimGetLobbyStart(ServerSim *sim, BYTE p, BYTE *start);
