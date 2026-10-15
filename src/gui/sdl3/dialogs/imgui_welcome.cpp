@@ -213,6 +213,18 @@ extern "C" int imguiWelcomeShow(void) {
         logoW = nativeW * 0.75f;
         logoH = nativeH * 0.75f;
         if (s > 1.05f) { logoW *= s; logoH *= s; }
+#if BOLO_MOBILE
+        /* On a phone the scaled logo came out wider than the screen's
+           height, so it is kept to the menu column's width (miniBtnW below)
+           and the menu sits under it. The desktop keeps the wider logo. */
+        {
+            float maxW = 180.0f * s;
+            if (logoW > maxW) {
+                logoH *= maxW / logoW;
+                logoW = maxW;
+            }
+        }
+#endif
     }
 
     /* Use shared background game */

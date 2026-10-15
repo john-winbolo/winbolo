@@ -7729,7 +7729,31 @@ static void applyMainContextUiScale(void) {
        Scale proportionally to the logical coordinate space height.
        Reference: zoom 2 → 480px height → 1.0x pixel scale. */
     if (uiModeIsTablet()) {
-        float ps = (float)sdl3DrawGetZoomFactor() / 2.0f;
+        /* The scale was the zoom over 2, which sizes text as a fixed share of
+           the screen's height: on a phone, whose logical space is 1200 units
+           for 402 points, that gave 27-point text and the newswire 43.
+           Size it from the device's points instead: 17 points, the body text
+           size on iOS and Android, converted into logical units through the
+           window's pixel size and display scale (points on iOS, density
+           independent pixels on Android, points on a desktop). Never below
+           the old scale at 1, so a tablet or a desktop window in the touch
+           layout keeps the size it had. */
+        float ps = 1.0f;
+        {
+            int pxW = 0, pxH = 0;
+            int logW = 0, logH = 0;
+            SDL_RendererLogicalPresentation mode;
+            SDL_GetWindowSizeInPixels(s_window, &pxW, &pxH);
+            SDL_GetRenderLogicalPresentation(s_renderer, &logW, &logH, &mode);
+            if (logH <= 0) logH = pxH;
+            float displayScale = SDL_GetWindowDisplayScale(s_window);
+            if (displayScale <= 0.0f) displayScale = 1.0f;
+            float pointsH = (float)pxH / displayScale;
+            if (pointsH > 0.0f && logH > 0) {
+                float unitsPerPoint = (float)logH / pointsH;
+                ps = (17.0f * unitsPerPoint) / (18.0f * 1.8f);
+            }
+        }
         if (ps < 1.0f) ps = 1.0f;
         io.FontGlobalScale = 1.8f * ps;
         io.ConfigFlags |= ImGuiConfigFlags_IsTouchScreen;

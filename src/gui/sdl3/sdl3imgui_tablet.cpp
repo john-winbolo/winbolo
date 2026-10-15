@@ -47,6 +47,7 @@ extern "C" {
 #include "client_render.h"  /* clientRenderFrame */
 #include "../gamefront.h"
 #include "../tiles.h"
+#include "../positions.h"  /* STATUS_TANKS_WIDTH/HEIGHT: the status grid frames */
 #include "../ui_mode.h"
 #include "../lang.h"
 #include "input_touch.h"
@@ -308,14 +309,17 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->baseBarsY = cfg->tankBarsY + cfg->barsH;
 
   /* --- Status grids (left gutter) --- */
-  cfg->tanksGridX = cfg->safeLeft + 4.0f * pixelScale;
-  cfg->tanksGridY = cfg->safeTop + 4.0f * pixelScale;
-  float availW = (float)cfg->leftGutter - cfg->safeLeft - 8.0f * pixelScale;
-  cfg->statusGridScale = availW / (90.0f * pixelScale);
-  if (cfg->statusGridScale > 2.0f) cfg->statusGridScale = 2.0f;
-  if (cfg->statusGridScale < 0.5f) cfg->statusGridScale = 0.5f;
-  float gridH = 66.0f * pixelScale * cfg->statusGridScale;
-  float gridGap = 4.0f * pixelScale * cfg->statusGridScale;
+  /* The grids themselves are drawn by SDL in sdl3DrawMainScreen, at the
+     status panels' own size for the effective zoom (STATUS_TANKS_WIDTH x
+     STATUS_TANKS_HEIGHT times the zoom), 4 units in from the safe area with
+     4 units between them. The frames drawn here must sit on exactly those
+     rectangles, so the geometry is the same as sdl3draw.c's, not a scaled
+     design-space size. */
+  cfg->tanksGridX = cfg->safeLeft + 4.0f;
+  cfg->tanksGridY = cfg->safeTop + 4.0f;
+  cfg->statusGridScale = 1.0f;
+  float gridH = (float)(STATUS_TANKS_HEIGHT * effectiveZoom);
+  float gridGap = 4.0f;
   cfg->pillsGridX = cfg->tanksGridX;
   cfg->pillsGridY = cfg->tanksGridY + gridH + gridGap;
   cfg->basesGridX = cfg->tanksGridX;
@@ -431,24 +435,28 @@ static void renderTabletBackground(void) {
 
   /* --- Left gutter: status grids (tanks, pills, bases) --- */
   if (c.showStatusGrids) {
-    float gridW = 90.0f * ps * c.statusGridScale;
-    float gridH = 66.0f * ps * c.statusGridScale;
-    float gridPad = 2.0f * ps;
+    /* The grids were drawn by SDL before this list, so the frame's fill is
+       transparent: a black fill here is drawn over them and hides them,
+       which is what the phone showed. The frame is one border wide outside
+       the grid, so it covers no part of it. */
+    float gridW = (float)(STATUS_TANKS_WIDTH * c.effectiveZoom);
+    float gridH = (float)(STATUS_TANKS_HEIGHT * c.effectiveZoom);
+    ImU32 colNone = IM_COL32(0, 0, 0, 0);
 
     drawInsetRect(dl,
-      c.tanksGridX - gridPad - border, c.tanksGridY - gridPad - border,
-      gridW + (gridPad + border) * 2, gridH + (gridPad + border) * 2,
-      border, colLight, colDark, colBlack);
+      c.tanksGridX - border, c.tanksGridY - border,
+      gridW + border * 2, gridH + border * 2,
+      border, colLight, colDark, colNone);
 
     drawInsetRect(dl,
-      c.pillsGridX - gridPad - border, c.pillsGridY - gridPad - border,
-      gridW + (gridPad + border) * 2, gridH + (gridPad + border) * 2,
-      border, colLight, colDark, colBlack);
+      c.pillsGridX - border, c.pillsGridY - border,
+      gridW + border * 2, gridH + border * 2,
+      border, colLight, colDark, colNone);
 
     drawInsetRect(dl,
-      c.basesGridX - gridPad - border, c.basesGridY - gridPad - border,
-      gridW + (gridPad + border) * 2, gridH + (gridPad + border) * 2,
-      border, colLight, colDark, colBlack);
+      c.basesGridX - border, c.basesGridY - border,
+      gridW + border * 2, gridH + border * 2,
+      border, colLight, colDark, colNone);
   }
 
   /* --- Right gutter: top buttons row --- */
@@ -1464,7 +1472,10 @@ static void renderMessagesOverlay(void) {
   float y = s_cfg.msgOverlayY;
   float w = s_cfg.msgOverlayW;
 
-  float fontScale = 1.6f;
+  /* A quarter above the overlay font, which is already sized for reading on
+     the device (applyMainContextUiScale); 1.6 made two newswire lines take
+     a seventh of a phone's screen. */
+  float fontScale = 1.25f;
   float lineH = ImGui::GetTextLineHeight() * fontScale;
   float h = lineH * 2.0f + 12.0f;
 
