@@ -354,6 +354,26 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize);
 *********************************************************/
 bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen);
 
+/* The same loads a step at a time, so a host can draw between steps. Begin
+ * reads the header and opening snapshot and returns FALSE when the log will
+ * not open. Then call lv_screenLoadStep while it returns 1; each call does a
+ * few milliseconds of work. The call that finishes the load returns 0. -1 is
+ * no load in progress: none was begun, it has finished, or the log was closed
+ * part way (lv_screenCloseLog). lv_screenLoadMap and
+ * lv_screenLoadMapFromMemory are Begin followed by every step. */
+typedef enum {
+  LV_LOAD_UNZIP,   /* decompressing log.dat */
+  LV_LOAD_SCAN,    /* reading it for total time, names, rules and the rest */
+  LV_LOAD_PLAY     /* playing it through once to index every snapshot */
+} LvLoadStage;
+
+bool lv_screenLoadMapBegin(char *fileName, int memoryBufferSize);
+bool lv_screenLoadMapFromMemoryBegin(uint8_t *zipData, size_t zipLen);
+int  lv_screenLoadStep(void);
+
+/* The stage the load is at and how far through that stage it is, 0 to 1. */
+void lv_screenLoadProgress(LvLoadStage *stage, float *fraction);
+
 /* Loads the decoder from a plaintext (v2) byte stream: the caller supplies the
  * header + opening snapshot bytes, then appends more via lv_blocksAppendBytes
  * and steps lv_screenLogTick. Returns TRUE on success. */

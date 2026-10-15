@@ -1516,6 +1516,8 @@ scenario = {
                 "three seconds, and the first infected is quicker and " ..
                 "tougher.",
   api         = 1,
+  author      = "WinBolo",
+  updated     = "2026-10-14T11:55Z",
   kind        = "scenario",
   game        = "open",
 

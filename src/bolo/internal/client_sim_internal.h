@@ -47,6 +47,7 @@
 #include "input_packet.h"  /* PING_SPAM_MAX_30S — client render backstop ring */
 #include "control_event.h" /* LOBBY_SCENARIO_*_LEN — the scenario mirror below */
 #include "scenario_details.h" /* SCN_DETAILS_MAX — the details cache below */
+#include "scenario_identity.h" /* SCN_AUTHOR_LEN — the scenario mirror below */
 
 /* Internal helpers relocated from client_sim.h during the public-header
  * transitive-leak cleanup. These need GameSim's full layout, so they
@@ -754,6 +755,14 @@ struct ClientSim {
        Workshop item it came from, 0 for none. */
     uint8_t  lobbyScenarioListSource[LOBBY_SCENARIO_LIST_MAX];
     uint64_t lobbyScenarioListWorkshopId[LOBBY_SCENARIO_LIST_MAX];
+    /* Who wrote each row and when it last changed (scenario_identity.h), ""
+       for not stated, from the trailer of the chunk the row came in.
+       IdentityKnown is false for a row from a server that sends no
+       trailer. */
+    bool     lobbyScenarioListIdentityKnown[LOBBY_SCENARIO_LIST_MAX];
+    char     lobbyScenarioListAuthor[LOBBY_SCENARIO_LIST_MAX][SCN_AUTHOR_LEN];
+    char     lobbyScenarioListUpdated[LOBBY_SCENARIO_LIST_MAX]
+                                     [SCN_UPDATED_LEN];
     bool     lobbyScenarioListReady;    /* true once a response arrives */
     bool     lobbyScenarioListInFlight; /* true after send, false on response */
     /* False until the first chunk of the response in flight lands, which is
@@ -864,14 +873,22 @@ struct ClientSim {
         bool     settingsKnown;
         uint16_t settingsLen;
         uint8_t  settings[SCN_SETTINGS_BLOB_MAX];
+        /* Who wrote the file and when it last changed
+           (scenario_identity.h), which only a server that knows them
+           sends. identityKnown false is a server that did not say. */
+        bool     identityKnown;
+        char     author[SCN_AUTHOR_LEN];
+        char     updated[SCN_UPDATED_LEN];
     } lobbyScnDetails[LOBBY_SCN_DETAILS_SLOTS];
     /* The bulk receiver's landing buffer for one answer: the status byte,
-     * then the details, or for BULK_SCN_DETAILS_FOUND_V2 a details length,
-     * the details and the settings block. rxSlot is one more than the slot
-     * it is filling, and 0 for none, so a zeroed ClientSim starts with
+     * then the details; for BULK_SCN_DETAILS_FOUND_V2 a details length, the
+     * details and the settings block; for _V3 a settings length and an
+     * identity blob as well (bulk_transfer.h). rxSlot is one more than the
+     * slot it is filling, and 0 for none, so a zeroed ClientSim starts with
      * none. */
-    uint8_t  lobbyScnDetailsRx[1 + 2 + SCN_DETAILS_MAX +
-                               SCN_SETTINGS_BLOB_MAX];
+    uint8_t  lobbyScnDetailsRx[1 + 2 + SCN_DETAILS_MAX + 2 +
+                               SCN_SETTINGS_BLOB_MAX +
+                               SCN_IDENTITY_BLOB_MAX];
     int      lobbyScnDetailsRxSlot;
 
     /* Upload progress — driven by the Upload tab and the

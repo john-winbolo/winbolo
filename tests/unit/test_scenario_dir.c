@@ -774,6 +774,10 @@ int run_scenario_dir_merges_shipped_mods(void) {
  *   [final][count] then per entry
  *   [fileLen][file][nameLen][name][descLen][desc][maxPlayers][bots][bound]
  *   [keepsWinCondition][source][workshopId 8, most significant first]
+ * and after the last entry the identity trailer (scenario_identity.h): its
+ * tag, then [authorLen][author][updatedLen][updated] per entry, here two
+ * unstated pairs. The bytes in front of the tag are the wire from before
+ * the trailer, which is what an older client reads.
  *
  * Committed rather than computed: a round trip passes even when both halves
  * change together, and these bytes are what catches a wire change nobody
@@ -791,7 +795,10 @@ static const uint8_t kSdGolden[] = {
     0x06, 'S','e','c','o','n','d',
     0x00, 0x00, 0x01, 0x00,   /* maxPlayers, bots, bound, keepsWinCondition */
     0x00,                                   /* source = server           */
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00    /* workshopId = 0  */
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,   /* workshopId = 0  */
+    0x49,                                   /* identity trailer tag      */
+    0x00, 0x00,                             /* entry 0: none stated      */
+    0x00, 0x00                              /* entry 1: none stated      */
 };
 
 static void sdFill(ScnDirEntry *e, const char *file, const char *name,
@@ -986,7 +993,9 @@ int run_scenario_dir_entry_roundtrip(void) {
                                          &next);
     cs = sdFreshClientSim();
     UT_ASSERT(cs != NULL);
-    udpClientHandleLobbyScenarioListRsp(cs, buf, len - 1);
+    /* One byte short of the rows: the identity trailer behind them is the
+       tag and two unstated pairs, 5 bytes, and goes as well. */
+    udpClientHandleLobbyScenarioListRsp(cs, buf, len - 5 - 1);
     UT_ASSERT_MSG(cs->lobbyScenarioListCount == 1,
                   "a chunk one byte short read as %d entries, expected the "
                   "first alone", cs->lobbyScenarioListCount);

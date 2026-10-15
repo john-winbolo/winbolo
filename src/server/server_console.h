@@ -67,6 +67,10 @@ typedef struct {
    * so a field inserted above this one would quietly point every entry
    * after it at its neighbour's implementation. */
   bool (*reloadScenario)(char *msg, size_t msgLen);
+  /* mem / memdeep — write a memory report now; deep adds a walk of each
+   * bot's Lua tables. May be NULL, in which case the commands say the
+   * report is not available. Last, for the reason given above. */
+  void (*memReport)(bool deep);
 } ServerConsoleOps;
 
 /* Lower-case `s` in place. */
