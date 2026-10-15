@@ -17,7 +17,13 @@
 -- PASS: no hunter is frozen on the holder. In the 20 s after the build no
 -- hunter spends more than 8 s in a row alive, within 8 squares of the holder,
 -- within 2 squares of one spot and with no hit on the fort or the holder.
--- Every hunter's square is logged once a second.
+-- Breaking the walls round the fort and the holder counts the same as a hit:
+-- shooting a way in through the walls is real play. At the build the arena
+-- notes every wall square (building or half building) within 8 squares of
+-- the holder. Every 10 ticks, when one of them has changed and a hunter's
+-- shells have gone down since the last look, the hunter that fired and is
+-- nearest that square (8 squares at most) is busy. Every hunter's square is
+-- logged once a second.
 --
 -- The holder is put in the walled middle of the island, the way a person
 -- builds a fort among walls. With the script as it was, the order to attack
@@ -25,7 +31,8 @@
 -- squares from him for 10 to 15 s, unable to shoot through the walls, while
 -- the fort shot it.
 
-ARENA = { given = false, hit = {}, lines = {}, last = {}, anchor = {}, busy = {}, still = {} }
+ARENA = { given = false, hit = {}, lines = {}, last = {}, anchor = {}, busy = {}, still = {},
+          walls = nil, shells = {}, wall_said = {} }
 scenario.callbacks.on_tank_hit = "Arena: counts the hunters' hits on the holder."
 scenario.callbacks.pill_damage_scale = "Arena: counts the hunters' hits on the fort."
 
@@ -123,6 +130,20 @@ function on_tick(tick)
       end
     end
     game.log(string.format("ARENA fort up at %d,%d t=%d holder=%s", pb.x, pb.y, tick, tostring(holder)))
+    -- The wall squares round the holder, to see the hunters break them.
+    A.walls = {}
+    for y = A.hy - 8, A.hy + 8 do
+      for x = A.hx - 8, A.hx + 8 do
+        local t = game.map_tile(x, y)
+        if t == game.TERRAIN.building or t == game.TERRAIN.half_building then
+          A.walls[#A.walls + 1] = { x = x, y = y, t = t }
+        end
+      end
+    end
+    for p = 1, 3 do
+      local s = game.tank(p)
+      A.shells[p] = s and s.shells or 0
+    end
   end
   if A.ordered ~= nil and A.built == nil and tick > A.ordered + 1500 then
     verdict(false, "the fort never went up")
@@ -144,6 +165,38 @@ function on_tick(tick)
   -- the holder. The longest time each hunter spends not busy is its still
   -- time: sitting by the holder and his fort without a shot.
   local NEAR, STILL_MAX = 8, 800
+  -- A hunter that fired while a wall square near the holder changed broke
+  -- that wall: busy, the same as a hit.
+  if A.walls ~= nil and tick % 10 == 0 then
+    local fired = {}
+    for p = 1, 3 do
+      local s = game.tank(p)
+      local now = (s ~= nil and not s.dead) and s.shells or nil
+      if now ~= nil and A.shells[p] ~= nil and now < A.shells[p] then fired[p] = s end
+      A.shells[p] = now
+    end
+    for _, w in ipairs(A.walls) do
+      local t = game.map_tile(w.x, w.y)
+      if t ~= w.t then
+        w.t = t
+        local best, best_d = nil, nil
+        for p = 1, 3 do
+          local s = fired[p]
+          if s ~= nil then
+            local d = chebyshev(s.mx, s.my, w.x, w.y)
+            if d <= NEAR and (best_d == nil or d < best_d) then best, best_d = p, d end
+          end
+        end
+        if best ~= nil then
+          A.busy[best] = tick
+          if A.wall_said[best] == nil or tick - A.wall_said[best] >= 100 then
+            A.wall_said[best] = tick
+            game.log(string.format("ARENA p%d broke wall at %d,%d t=%d", best, w.x, w.y, tick))
+          end
+        end
+      end
+    end
+  end
   for p = 1, 3 do
     local s = game.tank(p)
     if s == nil or s.dead or s.mx == 0 then
