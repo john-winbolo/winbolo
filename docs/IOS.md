@@ -79,6 +79,28 @@ WinBoloDS -inbuilt -port <p> -gametype Open -nowinbolonet -notracker -mdns -quie
 Mac lists what the iOS Bonjour browser will see; `dns-sd -L <instance>
 _winbolo._udp local.` shows the port and TXT record it will resolve.
 
+### Scripts
+
+`tools/ios/` holds these steps as scripts, for macOS's `/bin/bash`. Each
+prints its options with `--help`.
+
+- `sim_run.sh`: boot, install, launch with the console kept, screenshot,
+  stop and shut down.
+- `sim_join.sh`: the same, with a WinBoloDS running on the Mac (fixed port
+  27512, `--port` to change it) and a `winbolo://` link to it.
+- `mdns_check.sh`: a WinBoloDS with `-mdns` (port 27520), then `dns-sd`
+  browse, resolve and address lookup.
+
+The simulator is `SIM_UDID` when set, otherwise the first available one
+named by `--device`, otherwise the first available iPhone. The app defaults
+to `build-ios-sim/WinBoloIOS.app` and the server to
+`cmake-build-debug/WinBoloDS`; `--app` and `--ds` change them. `WINBOLO_LOG`
+reaches the app as `SIMCTL_CHILD_WINBOLO_LOG` (default `*=info`). Logs and
+screenshots go to `--out`, or by default to a new directory under
+`build-ios-sim/tool-runs/` (`cmake-build-debug/tool-runs/` for
+`mdns_check.sh`). Each script stops everything it started when it exits,
+however it exits.
+
 ## What the iOS target is
 
 A client that plays single player against bots, joins Internet and LAN
@@ -138,6 +160,16 @@ editor's `mapeditor.c`, `mapeditor_export.c` and `mapeditor_validate.c`.
 - `CFBundleURLTypes` (`winbolo`): `winbolo://` game links.
 - `UIApplicationSupportsIndirectInputEvents`: a trackpad or mouse on an iPad
   reaches the app.
+- `CFBundleShortVersionString` and `CFBundleVersion`: filled in by CMake when
+  it configures the plist. The first is `WINBOLO_VERSION`
+  (`cmake/bolo_version.cmake`); the second, the build number, is the count of
+  commits on HEAD, read at configure time, so configure again before building
+  one to upload.
+
+The privacy manifest, `src/gui/ios/PrivacyInfo.xcprivacy`, is copied to the
+root of the bundle. It declares the user defaults, file timestamp and system
+boot time calls the app and SDL make, no tracking, and the crash reports
+Sentry sends when the build carries a DSN.
 
 ## Known limits on a device
 
