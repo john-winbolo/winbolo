@@ -135,11 +135,27 @@ static Uint64 lastFrameTime = 0;
 static bool s_tutorialPaused = FALSE;
 static bool s_tutorialPrevMuted = FALSE;
 
+/* A joined game over UDP survives a stay in the background only while the
+   server still holds the slot. The server drops a client it has heard
+   nothing from for CLIENT_TIMEOUT_TICKS (1000) of its 20 ms ticks, which is
+   20 s (bolo/internal/netpacks.h, transport_udp_server.c); a backgrounded
+   client sends nothing. A stay shorter than this keeps the game, which
+   carries on with the next tick's ping; a longer one goes straight back to
+   the menu on return instead of waiting out the client's own timeout in a
+   game that can no longer be played. The margin covers the time the radio
+   takes to come back. The stay is measured on the wall clock, because
+   SDL_GetTicks does not advance while the device sleeps and the server's
+   clock does. */
+#define IOS_BACKGROUND_KEEP_GAME_MS 15000
+static SDL_Time s_backgroundStartNs = 0;
+
 /* -------------------------------------------------------
  * Forward declarations
  * ------------------------------------------------------- */
 extern void sdl3MessageHandler(const char *message, const char *title);
 static void windowRunGameTick(ClientSim *cs);
+static void iosEnterBackground(void);
+static void iosResumeForeground(ClientSim *cs);
 void windowTutorialPause(ClientSim *cs, bool active);
 
 /* -------------------------------------------------------
@@ -339,6 +355,17 @@ ios_game_start:
         sdl3ImguiCleanup();
         const DialogBackend *db = dialogBackendGet();
         int lobbyResult = db->lobbyShow(cs);
+        if (lobbyResult == 0 && !windowIsQuitting()) {
+            /* The player left the lobby rather than quitting: back to the
+               menu, as the desktop does. No tank exists in the lobby, so the
+               game is ended as not played. */
+            WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Left lobby, returning to the menu");
+            gameFrontEnd(&keys, FALSE, FALSE);
+            if (gameFrontStart("", &keys, TRUE, NULL)) {
+                goto ios_game_start;
+            }
+            WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[iOS] gameFrontStart failed after leaving the lobby");
+        }
         if (lobbyResult == 0) {
             WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Left lobby, cleaning up");
             gameFrontEnd(&keys, FALSE, TRUE);
@@ -419,11 +446,7 @@ ios_game_start:
                     if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                         winboloQuit = TRUE;
                     } else if (ev.type == SDL_EVENT_WILL_ENTER_FOREGROUND) {
-                        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Resuming from background");
-                        paused = FALSE;
-                        lastFrameTime = SDL_GetTicks();
-                        gameTickAccum = 0.0;
-                        soundSetMuted(FALSE);
+                        iosResumeForeground(cs);
                     }
                 }
                 continue;
@@ -459,15 +482,9 @@ ios_game_start:
                 if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                     winboloQuit = TRUE;
                 } else if (ev.type == SDL_EVENT_DID_ENTER_BACKGROUND) {
-                    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Entering background, pausing");
-                    paused = TRUE;
-                    soundSetMuted(TRUE);
+                    iosEnterBackground();
                 } else if (ev.type == SDL_EVENT_WILL_ENTER_FOREGROUND) {
-                    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Resuming from background");
-                    paused = FALSE;
-                    lastFrameTime = SDL_GetTicks();
-                    gameTickAccum = 0.0;
-                    soundSetMuted(FALSE);
+                    iosResumeForeground(cs);
                 }
             }
         }
@@ -568,6 +585,57 @@ ios_game_start:
     serverSimBotPoolDestroy();
     SDL_Quit();
     return 0;
+}
+
+/* -------------------------------------------------------
+ * iosEnterBackground / iosResumeForeground — pause the game while the app
+ * is in the background, and on return either carry on or, for a joined game
+ * the server has dropped by now, go back to the menu at once
+ * ------------------------------------------------------- */
+static void iosEnterBackground(void) {
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Entering background, pausing");
+    paused = TRUE;
+    soundSetMuted(TRUE);
+    if (!SDL_GetCurrentTime(&s_backgroundStartNs)) {
+        s_backgroundStartNs = 0;
+    }
+}
+
+static void iosResumeForeground(ClientSim *cs) {
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Resuming from background");
+    paused = FALSE;
+    lastFrameTime = SDL_GetTicks();
+    gameTickAccum = 0.0;
+    soundSetMuted(FALSE);
+
+    /* Single player keeps its game: its server is in this process and was
+       paused with it. With no start time the client's own timeout still
+       ends a dead game within ten seconds. */
+    SDL_Time nowNs = 0;
+    if (cs == NULL || !clientSimHasTransport(cs) || gameFrontGetServerSim() != NULL ||
+        clientSimGetNetType(cs) != netUdp || s_backgroundStartNs == 0 ||
+        !SDL_GetCurrentTime(&nowNs)) {
+        s_backgroundStartNs = 0;
+        return;
+    }
+    Sint64 awayMs = (Sint64)((nowNs - s_backgroundStartNs) / SDL_NS_PER_MS);
+    s_backgroundStartNs = 0;
+    if (awayMs < IOS_BACKGROUND_KEEP_GAME_MS) {
+        WB_LOG_INFO(WB_LOG_CAT_PLATFORM,
+                    "[iOS] Back after %lld ms; keeping the network game",
+                    (long long)awayMs);
+        return;
+    }
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM,
+                "[iOS] Back after %lld ms; the server has dropped this client",
+                (long long)awayMs);
+    /* The same path as the lost-connection check in windowRunGameTick. */
+    clientSimConnectionLost(cs);
+    imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                      langGetText(NETERR_LOSTCONNECTION_RETURN_MENU),
+                      IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+    finishedLoop = TRUE;
+    winboloQuit = FALSE;
 }
 
 /* -------------------------------------------------------

@@ -803,6 +803,10 @@ extern "C" int imguiPasswordPrompt(const char *title, const char *message,
 
     if (iconTex) SDL_DestroyTexture(iconTex);
 
+    /* Put the on-screen keyboard away, as the other text dialogs do: the next
+     * dialog's backend never started it, so it would not stop it. A no-op
+     * off iOS. */
+    dialogDismissKeyboard(window);
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext(msgCtx);

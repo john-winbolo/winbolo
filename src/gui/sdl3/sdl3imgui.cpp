@@ -9239,6 +9239,10 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                    transportUdpClientDestroy still gets its graceful
                    PACKET_QUIT out over a live socket. */
                 windowLeaveGame();
+#elif defined(__IPHONEOS__)
+                /* The iOS driver's game loop ends on this and goes back to
+                   the menu, as it does when a game ends. */
+                windowNewGame();
 #endif
             }
             /* The lobby's copy of the Key Setup popup. This host draws the

@@ -25,6 +25,13 @@ bool clientFrontAwaitJoin(ClientSim *cs, int timeoutTicks) {
       break;
     }
     clientSimNetTick(cs);
+#if defined(__IPHONEOS__)
+    /* This wait runs on the main thread for up to its whole timeout. iOS
+     * delivers the app's lifecycle callbacks through the run loop that
+     * pumping events turns, and ends an app that leaves it unserviced too
+     * long; the events gathered stay queued for the caller. */
+    SDL_PumpEvents();
+#endif
     SDL_Delay(20);
     waited++;
   }

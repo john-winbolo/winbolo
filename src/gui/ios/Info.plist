@@ -28,6 +28,12 @@
     <true/>
     <key>UIApplicationSupportsIndirectInputEvents</key>
     <true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>WinBolo looks for games on your local network and connects to the games you join there.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_winbolo._udp</string>
+    </array>
     <key>NSMicrophoneUsageDescription</key>
     <string>WinBolo uses the microphone for voice chat with other players while voice chat is switched on.</string>
     <key>UILaunchScreen</key>
