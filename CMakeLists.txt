@@ -854,7 +854,6 @@ set(IOS_DATA_BMP
     ${CMAKE_SOURCE_DIR}/data/tanks.bmp
     ${CMAKE_SOURCE_DIR}/data/boats.bmp
     ${CMAKE_SOURCE_DIR}/data/items.bmp
-    ${CMAKE_SOURCE_DIR}/data/splash.bmp
     ${CMAKE_SOURCE_DIR}/data/logo.bmp
     ${CMAKE_SOURCE_DIR}/data/base.bmp
     ${CMAKE_SOURCE_DIR}/data/pillbox.bmp

@@ -917,7 +917,11 @@ static void lvHostRenderFrame(const char *overlay) {
     SDL_RenderClear(g_lv->renderer);
 
     if (g_lv->isLoaded == FALSE) {
-        lv_drawSplashForImGui();
+        /* No log, or one still opening: the window stays black under the
+           panels and the progress window. Draw to the window itself, not to
+           a render target the last log left current. */
+        SDL_SetRenderTarget(g_lv->renderer, NULL);
+        SDL_RenderClear(g_lv->renderer);
     } else {
         /* In game-view mode, recentre the camera on the spectated tank
          * BEFORE lv_screenUpdate runs so the tile renderer reads the
