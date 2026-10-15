@@ -11,13 +11,17 @@
 --
 -- Phase 1. Seat 0 gets the prize at tick 300. Seats 1 and 2 are put 4
 -- squares apart, and seat 0 8 squares north of them. Seat 0 is kept there
--- and kept at full armour; so are the hunters.
+-- and kept at full armour; so are the hunters. The script's hop and fort
+-- (a bot holder building the prize) are held off in phase 1, so seat 0 stays
+-- the holder: a hunter that shoots a built prize down and picks it up is the
+-- holder, and the other hunter is right to go for him.
 -- PASS phase 1: in 20 s, a hunter hits the holder or the prize, and neither
 -- hunter picks a fight with the other. Two kinds of hit are not a fight: a
 -- crossfire hit, where the hunter hit was within a square of the holder (the
 -- shell was for the holder; the hunters crowd him and can share his square),
 -- and a hit back on a hunter that hit this one in the 30 s before (the peace
--- list allows that).
+-- list allows that). The holder is the one at the time of the hit (the
+-- script's `holder`), and a hit on or by the holder is never a fight.
 --
 -- Phase 2. Seat 0 is put in a far corner of the island, out of sight, and
 -- kept there. A hunter hit in phase 1 (a crossfire hit, say) still holds the
@@ -40,14 +44,16 @@ function on_tank_hit(victim, attacker, cause, amount, n, scripted)
   local A = ARENA
   if cause ~= "shell" or attacker == nil or attacker == victim then return end
   local t = game.tick()
+  local hd = holder
   local cross = false
-  local v, h = game.tank(victim), game.tank(0)
-  if victim ~= 0 and v ~= nil and h ~= nil and not h.dead then
+  local v = game.tank(victim)
+  local h = hd ~= nil and game.tank(hd) or nil
+  if victim ~= hd and v ~= nil and h ~= nil and not h.dead then
     cross = chebyshev(v.mx, v.my, h.mx, h.my) <= 1
   end
-  A.hits[#A.hits + 1] = { t = t, from = attacker, to = victim, cross = cross }
-  A.lines[#A.lines + 1] = string.format("ARENA hit p%d -> p%d t=%d phase=%s%s",
-    attacker, victim, t, tostring(A.phase), cross and " crossfire" or "")
+  A.hits[#A.hits + 1] = { t = t, from = attacker, to = victim, cross = cross, holder = hd }
+  A.lines[#A.lines + 1] = string.format("ARENA hit p%d -> p%d t=%d phase=%s holder=%s%s",
+    attacker, victim, t, tostring(A.phase), tostring(hd), cross and " crossfire" or "")
 end
 
 function pill_damage_scale(attacker, n, cause, by_pill)
@@ -59,13 +65,15 @@ function pill_damage_scale(attacker, n, cause, by_pill)
   return 100
 end
 
--- Hunter-on-hunter hits in [t0, t1] that are a fight: not a crossfire hit
--- and not a hit back within 30 s (3000 ticks) of a hit the other way.
+-- Hunter-on-hunter hits in [t0, t1] that are a fight: not a crossfire hit,
+-- not a hit on or by the holder at that tick, and not a hit back within 30 s
+-- (3000 ticks) of a hit the other way.
 function ARENA.fights(t0, t1)
   local n = 0
   for i, h in ipairs(ARENA.hits) do
     if h.from >= 1 and h.from <= 2 and h.to >= 1 and h.to <= 2 and
-       h.t >= t0 and h.t <= t1 and not h.cross then
+       h.t >= t0 and h.t <= t1 and not h.cross and
+       h.from ~= h.holder and h.to ~= h.holder then
       local back = false
       for j = 1, i - 1 do
         local g = ARENA.hits[j]
@@ -136,10 +144,15 @@ end
 
 local arena_real_tick = on_tick
 function on_tick(tick)
-  arena_real_tick(tick)
   local A = ARENA
+  -- Phase 1: no hop or fort, so seat 0 keeps the prize in his tank.
+  if A.phase == nil or A.phase == 1 then
+    hop_after = game.tick() + 100
+  end
+  arena_real_tick(tick)
   for _, l in ipairs(A.lines) do game.log(l) end
   A.lines = {}
+  if A.phase == "done" then return end
   if pill == nil then return end
   if not A.given then
     if tick >= 300 then
@@ -148,6 +161,7 @@ function on_tick(tick)
       A.bx, A.by = standable_near(124, 126)
       if A.hx == nil or A.ax == nil or A.bx == nil then
         verdict(false, "no square for phase 1")
+        A.phase = "done"
         return
       end
       game.teleport(0, A.hx, A.hy, 128)
@@ -184,10 +198,12 @@ function on_tick(tick)
                            on_holder, tostring(first), tostring(A.prize_hit)))
     if fights > 0 then
       verdict(false, string.format("phase 1: the hunters fought each other (%d hits)", fights))
+      A.phase = "done"
       return
     end
     if on_holder == 0 and A.prize_hit == nil then
       verdict(false, "phase 1: no hunter hit the holder or the prize in 20 s")
+      A.phase = "done"
       return
     end
     A.p1_why = string.format("phase 1: no fight (%d stray hits), %d on the holder", hvh, on_holder)
@@ -197,6 +213,7 @@ function on_tick(tick)
     A.bx, A.by = standable_near(142, 110)
     if A.hx == nil or A.ax == nil or A.bx == nil then
       verdict(false, "no square for the wait")
+      A.phase = "done"
       return
     end
     local last = 0
@@ -222,6 +239,7 @@ function on_tick(tick)
     A.wait_to = nil
     if not A.face_to_face() then
       verdict(false, "no square for phase 2")
+      A.phase = "done"
       return
     end
     game.bot_init(1, { peace = "" })
@@ -251,6 +269,7 @@ function on_tick(tick)
     end
     if tick > A.t2 + 2000 then
       verdict(false, "phase 2: seat 1 did not hit seat 2 in 20 s")
+      A.phase = "done"
     end
     return
   end
@@ -271,13 +290,16 @@ function on_tick(tick)
                          late, a_cool))
   if back == 0 then
     verdict(false, "phase 2: seat 2 never hit seat 1 back")
+    A.phase = "done"
     return
   end
   if late > 0 then
     verdict(false, string.format("phase 2: seat 2 hit seat 1 %d times in the cooldown", late))
+    A.phase = "done"
     return
   end
   verdict(true, string.format("%s; phase 2: seat 2 hit back %d times, last %.1f s after the first hit, "
                               .. "then none in the cooldown (seat 1 hit it %d times there)",
                               A.p1_why, back, (last_back - A.ta) / 100, a_cool))
+  A.phase = "done"
 end
