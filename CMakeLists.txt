@@ -1148,6 +1148,36 @@ set_target_properties(WinBoloIOS PROPERTIES
     XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS "YES"
 )
 
+# The bundle's version, which CMake writes into Info.plist when it configures
+# it (the ${MACOSX_BUNDLE_*} entries there). The App Store reads
+# CFBundleShortVersionString as up to three numbers, so it takes
+# WINBOLO_VERSION, not the display version, which may carry a suffix.
+# CFBundleVersion, the build number, must rise with every upload of the same
+# version: it is the count of commits on HEAD, which rises with each commit
+# and is the same for every build of one commit. It is read when CMake
+# configures, so configure again before building one to upload.
+execute_process(
+    COMMAND git rev-list --count HEAD
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE IOS_BUILD_NUMBER
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+if(NOT IOS_BUILD_NUMBER MATCHES "^[0-9]+$")
+    set(IOS_BUILD_NUMBER "1")
+endif()
+set_target_properties(WinBoloIOS PROPERTIES
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${WINBOLO_VERSION}"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${IOS_BUILD_NUMBER}"
+)
+
+# The privacy manifest the App Store asks for, at the root of the bundle.
+# See the comments in the file for the calls each entry covers.
+set(IOS_PRIVACY_MANIFEST "${CMAKE_SOURCE_DIR}/src/gui/ios/PrivacyInfo.xcprivacy")
+target_sources(WinBoloIOS PRIVATE "${IOS_PRIVACY_MANIFEST}")
+set_source_files_properties("${IOS_PRIVACY_MANIFEST}" PROPERTIES
+    MACOSX_PACKAGE_LOCATION ""
+)
+
 target_include_directories(WinBoloIOS PRIVATE
     src/gui/sdl3
     src/gui/sdl3/dialogs

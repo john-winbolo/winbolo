@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The privacy manifest for WinBoloIOS, copied to the root of the app
+     bundle by CMakeLists.txt. Each accessed-API entry names the calls in the
+     app that need it. sentry-cocoa is linked as a static library, so its own
+     manifest does not reach the bundle and its use of the same three
+     categories is covered here. -->
+<plist version="1.0">
+<dict>
+    <key>NSPrivacyTracking</key>
+    <false/>
+    <key>NSPrivacyTrackingDomains</key>
+    <array/>
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array>
+        <!-- NSUserDefaults: the crash-reporting switch and the iPad layout
+             setting in src/gui/ios/winbolo_ios.m, read and written by the
+             app itself. -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>CA92.1</string>
+            </array>
+        </dict>
+        <!-- stat / fstat on files in the app's own container: SDL_GetPathInfo
+             (SDL's posix SDL_sysfsops.c) for the recordings list, the map
+             chooser and the map editor's file list; stat in
+             src/bolo/brain_list.c, src/gui/sdl3/luabrainshandler.c and
+             winbolo_ios.m; fstat in SDL_iostream.c and FreeType's
+             builds/unix/ftsystem.c. -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>C617.1</string>
+            </array>
+        </dict>
+        <!-- mach_absolute_time: SDL's clock (timer/unix/SDL_systimer.c),
+             used only to measure time between events in the app. -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>35F9.1</string>
+            </array>
+        </dict>
+    </array>
+    <key>NSPrivacyCollectedDataTypes</key>
+    <array>
+        <!-- Crash reports sent to Sentry when the build carries a DSN and the
+             player has not turned crash reporting off. Not linked to the
+             player, not used for tracking. -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeCrashData</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>
