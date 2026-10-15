@@ -124,9 +124,24 @@ void lv_gameViewGetInventory(BYTE slot, BYTE *shells, BYTE *mines, BYTE *armour,
   if (trees)  *trees  = g_lv->tankInv[slot].trees;
 }
 
-/* Pending memory-based log load (set by logViewerRunFromMemory) */
+/* Pending memory-based log load (set by logViewerRunFromMemory and
+   lv_windowOpenMemory) */
 static uint8_t *s_pendingZipData = NULL;
 static size_t   s_pendingZipLen  = 0;
+
+/* A file to open, recorded by lv_windowOpenFile. Opening happens at the top
+   of the next frame rather than in the middle of the menu that asked for it,
+   so the load can run over several frames and draw its progress. */
+static char s_pendingOpenPath[FILENAME_MAX];
+static bool s_pendingOpen = FALSE;
+
+/* A load in progress, and when it began: the progress window waits
+   LV_LOAD_PROGRESS_DELAY_MS before it shows, so a log that opens quickly
+   never flashes one. Each frame gives the load LV_LOAD_FRAME_MS of work. */
+#define LV_LOAD_PROGRESS_DELAY_MS 250
+#define LV_LOAD_FRAME_MS          30
+static bool   s_loading      = FALSE;
+static Uint64 s_loadStartMs  = 0;
 
 /* --------------------------------------------------------------------------
  * Helper: default team colour value for index
@@ -287,7 +302,6 @@ void lv_startOfLog(void) {
  * -------------------------------------------------------------------------- */
 void lv_windowOpenFile(char *cmdLine) {
     char fileName[FILENAME_MAX];
-    char memoryBuff[32];
     int  dlgResult;
 
     /* A live spectator must not tear down the delayed feed by opening another
@@ -312,17 +326,90 @@ void lv_windowOpenFile(char *cmdLine) {
     }
 
     if (dlgResult == PLATFORM_DIALOG_OK) {
+        snprintf(s_pendingOpenPath, sizeof(s_pendingOpenPath), "%s", fileName);
+        s_pendingOpen = TRUE;
+    }
+}
+
+/* Open a log held in memory (a WinBolo.net download) at the top of the next
+ * frame, as lv_windowOpenFile does a file. Takes ownership of zipData. */
+void lv_windowOpenMemory(uint8_t *zipData, size_t zipLen) {
+    lv_windowStop(FALSE);
+    free(s_pendingZipData);
+    s_pendingZipData = zipData;
+    s_pendingZipLen  = zipLen;
+}
+
+/* Begin the open lv_windowOpenFile or lv_windowOpenMemory asked for. */
+static void lvHostLoadBegin(void) {
+    char memoryBuff[32];
+    bool begun;
+
+    if (s_pendingOpen) {
+        s_pendingOpen = FALSE;
         lv_platform_config_get_string("LOGVIEWER", "Memory Buffer", "4",
                                    memoryBuff, sizeof(memoryBuff));
-        if (lv_screenLoadMap(fileName, atoi(memoryBuff)) == FALSE) {
+        begun = lv_screenLoadMapBegin(s_pendingOpenPath, atoi(memoryBuff));
+        if (begun == FALSE) {
             lv_platform_dialog_error(DIALOG_BOX_TITLE, "Could not open log file");
-            g_lv->isLoaded = FALSE;
-        } else {
+        }
+    } else if (s_pendingZipData != NULL) {
+        uint8_t *zipData = s_pendingZipData;
+        s_pendingZipData = NULL;
+        /* Takes ownership even on failure. */
+        begun = lv_screenLoadMapFromMemoryBegin(zipData, s_pendingZipLen);
+        s_pendingZipLen = 0;
+    } else {
+        return;
+    }
+    g_lv->isLoaded = FALSE;
+    s_loading = begun;
+    s_loadStartMs = SDL_GetTicks();
+}
+
+/* Give the load in progress this frame's share of work. The log is loaded
+ * once a step finishes it; a step with nothing to do means it was closed part
+ * way, and it stays unloaded. */
+static void lvHostLoadSteps(void) {
+    Uint64 until;
+    int    result;
+
+    if (!s_loading) {
+        return;
+    }
+    until = SDL_GetTicks() + LV_LOAD_FRAME_MS;
+    lv_clientMutexWaitFor();
+    do {
+        result = lv_screenLoadStep();
+    } while (result > 0 && SDL_GetTicks() < until);
+    lv_clientMutexRelease();
+    if (result <= 0) {
+        s_loading = FALSE;
+        if (result == 0) {
             g_lv->isLoaded = TRUE;
             lvStatsEmitRoundSummary();
             lv_windowNeedRedraw();
         }
     }
+}
+
+/* The progress window, once the load has run long enough to be worth one. */
+static void lvHostDrawLoadProgress(void) {
+    LvLoadStage stage;
+    float       fraction;
+    langid      text;
+
+    if (!s_loading || SDL_GetTicks() - s_loadStartMs < LV_LOAD_PROGRESS_DELAY_MS) {
+        return;
+    }
+    lv_screenLoadProgress(&stage, &fraction);
+    switch (stage) {
+    case LV_LOAD_UNZIP: text = STR_LV_LOAD_UNZIP; break;
+    case LV_LOAD_SCAN:  text = STR_LV_LOAD_SCAN;  break;
+    case LV_LOAD_PLAY:
+    default:            text = STR_LV_LOAD_PLAY;  break;
+    }
+    lv_imgui_load_progress(langGetText(text), (int)stage + 1, 3, fraction);
 }
 
 void lv_windowSaveMap(void) {
@@ -932,6 +1019,7 @@ static void lvHostRenderFrame(const char *overlay) {
         if (overlay != NULL) {
             lv_imgui_center_message(overlay);
         }
+        lvHostDrawLoadProgress();
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
     } else if (lv_screenSpecIsLiveMode()) {
@@ -952,6 +1040,7 @@ static void lvHostRenderFrame(const char *overlay) {
         if (overlay != NULL) {
             lv_imgui_center_message(overlay);
         }
+        lvHostDrawLoadProgress();
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
 
@@ -1020,6 +1109,7 @@ static void lvHostRenderFrame(const char *overlay) {
         if (compact) {
             lvMenuRender(g_lv);
         }
+        lvHostDrawLoadProgress();
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
 
@@ -1064,23 +1154,10 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
         return;
     }
 
-    /* Open file from command line / caller if provided */
+    /* Open file from command line / caller if provided. Like a pending
+     * memory buffer from logViewerRunFromMemory, it opens on the first frame. */
     if (logPath != NULL && strlen(logPath) > 0) {
         lv_windowOpenFile((char *)logPath);
-    }
-
-    /* Load from pending memory buffer if set (from logViewerRunFromMemory) */
-    if (s_pendingZipData != NULL) {
-        if (lv_screenLoadMapFromMemory(s_pendingZipData, s_pendingZipLen) == FALSE) {
-            /* lv_screenLoadMapFromMemory took ownership even on failure */
-            g_lv->isLoaded = FALSE;
-        } else {
-            g_lv->isLoaded = TRUE;
-            lvStatsEmitRoundSummary();
-            lv_windowNeedRedraw();
-        }
-        s_pendingZipData = NULL;
-        s_pendingZipLen  = 0;
     }
 
     /* -----------------------------------------------------------------------
@@ -1089,12 +1166,18 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     while (!g_lv->quit) {
         SDL_Event sdlEvent;
 
+        /* A log asked for since the last frame starts opening here. */
+        lvHostLoadBegin();
+
         /* Process SDL events */
         while (SDL_PollEvent(&sdlEvent)) {
             /* Game-view input (grave toggle / Tab cycle / 1-4 zoom / arrow pan
              * / ,-. seek), shared with spectatorRun. The viewer allows the
-             * toggle and the seek; the spectator host suppresses both. */
-            if (lvHostHandleGameViewKey(sdlEvent, /* allowToggle */ TRUE,
+             * toggle and the seek; the spectator host suppresses both. Not
+             * while a log is opening: a seek would move the decoder the load
+             * is reading through. */
+            if (!s_loading &&
+                lvHostHandleGameViewKey(sdlEvent, /* allowToggle */ TRUE,
                                         /* allowSeek */ TRUE)) {
                 continue;
             }
@@ -1162,6 +1245,9 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
                 }
             }
         }
+
+        /* This frame's share of opening a log. */
+        lvHostLoadSteps();
 
         /* Render the current mode (block-grid / game view) and present. */
         lvHostRenderFrame(NULL);

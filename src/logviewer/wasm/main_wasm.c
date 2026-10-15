@@ -212,6 +212,16 @@ void lv_windowOpenFile(char *cmdLine) {
     }
 }
 
+/* A log held in memory, from the WinBolo.net browser. The browser build opens
+ * it in one call, as it does a file. Takes ownership of zipData. */
+void lv_windowOpenMemory(uint8_t *zipData, size_t zipLen) {
+    lv_windowStop(FALSE);
+    if (lv_screenLoadMapFromMemory(zipData, zipLen)) {
+        g_lv->isLoaded = TRUE;
+        lv_windowNeedRedraw();
+    }
+}
+
 void lv_windowSaveMap(void) {
     /* Save not yet implemented in WASM build */
     lv_platform_dialog_message("WinBolo Log Viewer", "Save Map is not yet available in the web version.");

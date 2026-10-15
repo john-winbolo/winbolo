@@ -28,6 +28,7 @@ extern "C" {
     #include "../draw.h"
     #include "../../winbolonet/http.h"
     void lv_windowOpenFile(char *cmdLine);
+    void lv_windowOpenMemory(uint8_t *zipData, size_t zipLen);
     void lv_windowSaveMap(void);
     void lv_windowPlay(void);
     void lv_windowPause(void);
@@ -72,12 +73,9 @@ static void open_wbn_browser_modal(void) {
         lv_windowOpenFile(res.filePath);
         break;
     case WBN_BROWSER_PLAY_MEMORY:
-        lv_windowStop(0);
-        if (lv_screenLoadMapFromMemory(res.memoryData, res.memorySize)) {
-            s_lv->isLoaded = TRUE;
-            lv_windowNeedRedraw();
-        }
-        /* memoryData ownership transferred — don't free */
+        /* Opens at the top of the next frame; memoryData ownership
+           transferred — don't free */
+        lv_windowOpenMemory(res.memoryData, res.memorySize);
         break;
     case WBN_BROWSER_OPEN_LOCAL:
         lv_windowOpenFile(NULL);

@@ -782,6 +782,84 @@ int run_lv_alive_seek(void) {
   return 0;
 }
 
+/*
+ * The load a step at a time, as the viewer runs it to draw a progress bar: the
+ * stages come in order, each reports how far through it is, and the log ends
+ * up as the one-call load leaves it. Same log as run_lv_kill_tally_seek.
+ */
+int run_lv_load_steps(void) {
+  const char *path = "lv_load_steps.wbv";
+  static const uint8_t kill[2] = {1, 2};
+  LogBuf b;
+  LogViewerState *lv;
+  uint8_t *zipData;
+  size_t zipLen = 0;
+  LvLoadStage stage, lastStage = LV_LOAD_UNZIP;
+  float fraction;
+  int steps = 0;
+  bool sawScan = FALSE, sawPlay = FALSE;
+  int savedHide = lv_screenGetHideLobby();
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_KillPlayer, kill, 2);
+  putNoEvents(&b, 50);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  zipData = zipToMemory(&b, path, &zipLen);
+  UT_ASSERT_MSG(zipData != NULL, "synthetic log failed to build");
+  lv = lv_decoderCreate(false);
+  UT_ASSERT_MSG(lv != NULL, "lv_decoderCreate returned NULL");
+  lv_screenSetSizeX(30);
+  lv_screenSetSizeY(30);
+  UT_ASSERT_MSG(lv_screenLoadMapFromMemoryBegin(zipData, zipLen) == TRUE,
+                "the load did not begin");
+
+  while (lv_screenLoadStep() > 0) {
+    steps++;
+    UT_ASSERT_MSG(steps < 1000, "the load never finished");
+    lv_screenLoadProgress(&stage, &fraction);
+    UT_ASSERT_MSG(stage >= lastStage, "stage went from %d back to %d",
+                  (int)lastStage, (int)stage);
+    UT_ASSERT_MSG(fraction >= 0.0f && fraction <= 1.0f,
+                  "stage %d fraction %f", (int)stage, (double)fraction);
+    if (stage == LV_LOAD_SCAN) sawScan = TRUE;
+    if (stage == LV_LOAD_PLAY) sawPlay = TRUE;
+    lastStage = stage;
+  }
+  UT_ASSERT_MSG(sawScan && sawPlay, "stages seen: scan %d play %d",
+                (int)sawScan, (int)sawPlay);
+
+  UT_ASSERT_MSG(lv_screenGetState()->totalTimeMs == 3120,
+                "total %u (want 3120)", lv_screenGetState()->totalTimeMs);
+  UT_ASSERT_MSG(lv_snapshotCount(&lv->snap) == 2,
+                "the load indexed %d snapshots (want 2)", lv_snapshotCount(&lv->snap));
+  UT_ASSERT_MSG(lv_screenGetTimeRunning() == 0 && lv_screenIsPlaying() == TRUE,
+                "the load left playback at %u, playing %d",
+                lv_screenGetTimeRunning(), (int)lv_screenIsPlaying());
+  /* A step after the end does nothing. */
+  UT_ASSERT(lv_screenLoadStep() == -1);
+
+  /* Closing the log part way ends the load: the next step has nothing to do,
+     so a host does not take the closed log for a loaded one. */
+  zipData = zipToMemory(&b, path, &zipLen);
+  UT_ASSERT_MSG(zipData != NULL, "synthetic log failed to build again");
+  UT_ASSERT(lv_screenLoadMapFromMemoryBegin(zipData, zipLen) == TRUE);
+  UT_ASSERT(lv_screenLoadStep() == 1);
+  lv_screenCloseLog();
+  UT_ASSERT_MSG(lv_screenLoadStep() == -1, "a step after the close still ran");
+
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
 /* One log_PlayerJoined event: slot, 2-char country, account flags, reserved,
  * then the name as a pascal string (the layout screen.c's decode reads). */
 static void putPlayerJoined(LogBuf *b, uint8_t slot, const char *name) {

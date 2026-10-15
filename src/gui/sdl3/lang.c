@@ -1093,6 +1093,12 @@ static const LangEntry langTable[] = {
     /* Log viewer end-of-log marker */
     {1182, "End of Log File Reached"},
 
+    /* Log viewer progress window while a log opens */
+    {2775, "Opening log"},
+    {2776, "Unpacking"},
+    {2777, "Reading"},
+    {2778, "Indexing"},
+
     /* iOS Settings panel */
     {1183, "Zoom"},
     {1184, "Performance"},

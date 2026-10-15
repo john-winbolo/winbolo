@@ -1365,6 +1365,8 @@ int run_lv_hide_lobby_periodic_snapshot(void);
 int run_lv_kill_tally_seek(void);
 /* A seek back to a snapshot with a tank off the map shows it dead. */
 int run_lv_alive_seek(void);
+/* The load a step at a time, as the viewer runs it behind its progress bar. */
+int run_lv_load_steps(void);
 
 /* Log viewer events panel list (test_lv_event_list.c): a replay after a seek
  * back adds no line twice, and pinned lines stay ahead of the timed ones. */
