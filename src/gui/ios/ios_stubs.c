@@ -168,9 +168,11 @@ bool logViewerAppQuitRequested(void) { return false; }
 bool mapEditorAppQuitRequested(void) { return false; }
 
 /* gamefront.c hands the embedded map editor the Settings dialog opener
- * before running it. No editor here to hand it to. */
-#include "mapeditor.h"
-void mapEditorSetSettingsHandler(MapEditorSettingsFn fn) { (void)fn; }
+ * before running it. No editor here to hand it to. The parameter is
+ * mapeditor.h's MapEditorSettingsFn spelled out, because that header also
+ * declares mapEditorRun with SDL types and the stub above takes void
+ * pointers. */
+void mapEditorSetSettingsHandler(void (*fn)(void)) { (void)fn; }
 
 #include <stdint.h>
 #include <stddef.h>
