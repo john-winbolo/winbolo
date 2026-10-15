@@ -5596,10 +5596,56 @@ static void lv_screenFastForwardStart(void) {
   g_lv->fastForwarding = TRUE;
 }
 
+/* Take ticks of a wait in one go: what that many calls of lv_screenLogTick
+ * would do while the reader waits, which reads nothing from the log. The clock
+ * moves 20 ms a tick. The start delay counts down first, and the time limit
+ * counts down on every tick that leaves the delay at 0, the tick that takes it
+ * there included; a negative delay holds the limit. The shells are reset as
+ * every tick resets them. ticks is at least 1 and at most the wait left. */
+static void lv_screenSkipWaitTicks(uint32_t ticks) {
+  uint32_t limitTicks;
+
+  s_logTickAtLiveHead = FALSE;
+  g_lv->timeRunning += 20u * ticks;
+  if (g_lv->gmeStartDelay > 0) {
+    if (ticks >= (uint32_t)g_lv->gmeStartDelay) {
+      limitTicks = ticks - (uint32_t)g_lv->gmeStartDelay + 1u;
+      g_lv->gmeStartDelay = 0;
+    } else {
+      g_lv->gmeStartDelay -= (int32_t)ticks;
+      limitTicks = 0;
+    }
+  } else {
+    limitTicks = (g_lv->gmeStartDelay == 0) ? ticks : 0;
+  }
+  if (g_lv->gmeLength > 0) {
+    g_lv->gmeLength = (limitTicks >= (uint32_t)g_lv->gmeLength)
+                          ? 0 : g_lv->gmeLength - (int32_t)limitTicks;
+  }
+  lv_shellsDestroy(&g_lv->shs);
+  g_lv->shs = lv_shellsCreate();
+  g_lv->waitLen = (unsigned short)(g_lv->waitLen - ticks);
+  if (g_lv->waitLen == 0) {
+    g_lv->state = lv_lr_start;
+  }
+}
+
 static bool lv_screenFastForwardSome(uint32_t targetTime, uint32_t maxTicks) {
   uint32_t n = 0;
   while (g_lv->timeRunning < targetTime && g_lv->isPlaying == TRUE && n < maxTicks) {
-    lv_screenLogTick();
+    if ((g_lv->state == lv_lr_longwait || g_lv->state == lv_lr_shortwait) &&
+        g_lv->waitLen > 1) {
+      /* Nothing happens while the reader waits, so take the rest of the
+         wait, or as much as the target needs, in one go. */
+      uint32_t ticks = g_lv->waitLen;
+      uint32_t toTarget = (targetTime - g_lv->timeRunning + 19u) / 20u;
+      if (ticks > toTarget) {
+        ticks = toTarget;
+      }
+      lv_screenSkipWaitTicks(ticks);
+    } else {
+      lv_screenLogTick();
+    }
     n++;
   }
   return g_lv->timeRunning >= targetTime || g_lv->isPlaying == FALSE;

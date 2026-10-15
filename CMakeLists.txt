@@ -5293,6 +5293,7 @@ set(_unit_test_names
     lv_kill_tally_seek
     lv_alive_seek
     lv_load_steps
+    lv_fast_forward_waits
     lv_event_list_replay
     lv_event_list_pinned
     lv_snapshot_index_lookup

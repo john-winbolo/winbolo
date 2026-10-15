@@ -41,6 +41,7 @@
 #include "backend.h"
 #include "logviewer.h"
 #include "lv_log.h"
+#include "blocks.h"
 #include "test_harness.h"
 #include "zip.h"
 
@@ -853,6 +854,103 @@ int run_lv_load_steps(void) {
   UT_ASSERT(lv_screenLoadStep() == 1);
   lv_screenCloseLog();
   UT_ASSERT_MSG(lv_screenLoadStep() == -1, "a step after the close still ran");
+
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/* A running-round snapshot like putSnapshot(b, true) with a start delay and a
+ * time limit, in ticks, in its first eight bytes (big-endian). */
+static void putSnapshotTimes(LogBuf *b, int32_t delay, int32_t length) {
+  size_t at = b->len;
+  int i;
+  putSnapshot(b, true);
+  for (i = 0; i < 4; i++) {
+    b->buf[at + 1 + i] = (uint8_t)((uint32_t)delay >> (24 - 8 * i));
+    b->buf[at + 5 + i] = (uint8_t)((uint32_t)length >> (24 - 8 * i));
+  }
+}
+
+static void putNoEventsLong(LogBuf *b, uint16_t waitLen) {
+  putU8(b, LOG_NOEVENTS_LONG);
+  putU8(b, (uint8_t)(waitLen & 0xFF));   /* little-endian */
+  putU8(b, (uint8_t)(waitLen >> 8));
+}
+
+/*
+ * A forward seek fast-forwards through a wait in one go rather than a tick at
+ * a time. It must land exactly where ticking would: the same time, read
+ * position, reader state and wait left, and the same start delay and time
+ * limit, which count down a tick at a time and start the limit on the tick
+ * the delay reaches 0. The log has only its opening snapshot, so every seek
+ * forward from 0 fast-forwards. Targets fall inside waits, on their edges and
+ * either side of the delay running out.
+ */
+int run_lv_fast_forward_waits(void) {
+  const char *path = "lv_fast_forward_waits.wbv";
+  static const uint8_t kill[2] = {1, 2};
+  static const uint32_t targets[] = {
+    20, 40, 1000, 1980, 2000, 2020, 2040, 4000, 6020, 6040, 6060,
+    9000, 10060, 10080, 30000, 40000, 50000, 70000
+  };
+  LogBuf b;
+  LogViewerState *lv;
+  size_t i;
+  int savedHide = lv_screenGetHideLobby();
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshotTimes(&b, 100, 2000);   /* 2 s delay, then a 40 s limit */
+  putNoEventsLong(&b, 300);
+  putEventFrame(&b, log_KillPlayer, kill, 2);
+  putNoEvents(&b, 200);
+  putNoEventsLong(&b, 1000);
+  putEventFrame(&b, log_KillPlayer, kill, 2);
+  putNoEventsLong(&b, 2500);
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic wait log failed to build/load");
+
+  /* The snapshot's delay and limit are what the countdowns start from. */
+  lv_screenSeekToTimeMs(0);
+  UT_ASSERT_MSG(lv->gmeStartDelay == 100 && lv->gmeLength == 2000,
+                "at 0: delay %d limit %d (want 100 and 2000)",
+                lv->gmeStartDelay, lv->gmeLength);
+
+  for (i = 0; i < sizeof(targets) / sizeof(targets[0]); i++) {
+    uint32_t t = targets[i];
+    uint32_t tickedTime, tickedWait;
+    int32_t  tickedDelay, tickedLength;
+    size_t   tickedPos;
+    int      tickedState;
+
+    lv_screenSeekToTimeMs(0);
+    while (lv->timeRunning < t && lv->isPlaying == TRUE) {
+      lv_screenLogTick();
+    }
+    tickedTime   = lv->timeRunning;
+    tickedDelay  = lv->gmeStartDelay;
+    tickedLength = lv->gmeLength;
+    tickedPos    = lv_logGetCurrentPosition();
+    tickedState  = (int)lv->state;
+    tickedWait   = lv->waitLen;
+
+    lv_screenSeekToTimeMs(0);
+    lv_screenSeekToTimeMs(t);
+    UT_ASSERT_MSG(lv->timeRunning == tickedTime && lv->gmeStartDelay == tickedDelay &&
+                      lv->gmeLength == tickedLength &&
+                      lv_logGetCurrentPosition() == tickedPos &&
+                      (int)lv->state == tickedState && lv->waitLen == tickedWait,
+                  "seek to %u: time %u/%u delay %d/%d limit %d/%d pos %zu/%zu "
+                  "state %d/%d wait %u/%u (seek/ticked)",
+                  t, lv->timeRunning, tickedTime, lv->gmeStartDelay, tickedDelay,
+                  lv->gmeLength, tickedLength, lv_logGetCurrentPosition(), tickedPos,
+                  (int)lv->state, tickedState, (unsigned)lv->waitLen, tickedWait);
+  }
 
   lv_decoderDestroy(lv);
   lv_screenSetHideLobby(savedHide);

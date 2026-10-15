@@ -466,6 +466,20 @@ bool lv_blocksIsEOF() {
 int lv_blocksReadBytes(BYTE *buff, int len) {
   if (len <= 0) return -1;
 
+  /* Most reads are a byte or two of a log already decompressed, and v2 and
+     later logs are plaintext: copy them straight out. A snapshot's map is
+     read this way, a byte at a time, and the load reads one every few
+     seconds of log. */
+  if (blockKey == 0 && logPosition <= logSize && (size_t)len <= logSize - logPosition) {
+    if (len == 1) {
+      *buff = logData[logPosition];
+    } else {
+      memcpy(buff, logData + logPosition, (size_t)len);
+    }
+    logPosition += (size_t)len;
+    return len;
+  }
+
   decompressUpTo(logPosition + (size_t)len);
 
   size_t available = logSize > logPosition ? logSize - logPosition : 0;
