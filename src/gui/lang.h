@@ -3385,6 +3385,7 @@
 #define STR_IOSREC_COPIED                        2807
 #define STR_IOSREC_OPEN_FAILED                   2808
 #define STR_IOSREC_LAST_ROUND                    2809
+#define STR_IOSREC_COPY_FAILED                   2810
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

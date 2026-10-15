@@ -1202,6 +1202,7 @@ static const LangEntry langTable[] = {
     {2807, "Copied to the WinBolo folder in the Files app."},
     {2808, "This recording could not be opened."},
     {2809, "Last single-player round"},
+    {2810, "The recording could not be copied to the Files app."},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},

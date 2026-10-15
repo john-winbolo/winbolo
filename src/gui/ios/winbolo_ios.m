@@ -234,6 +234,14 @@ int main(int argc, char *argv[]) {
 
     SDL_Init(0);
 
+    /* Keep a recording or winbolo:// link the system hands over in any loop,
+       and at a cold launch, for the welcome screen (ios_drops.c). Before
+       anything pumps events. */
+    {
+        extern void iosDropsInstall(void);
+        iosDropsInstall();
+    }
+
     /* Logging is off unless WINBOLO_LOG is set in the environment, as on the
        desktop; with it set the file lands in the app's preferences
        directory as winbolo.log. Without this call nothing the WB_LOG

@@ -60,7 +60,7 @@ extern "C" {
 #include "../sdl3/dialogs/imgui_wbn_browser.h"
 }
 
-#include "ios_recordings.h"
+#include "ios_drops.h"
 
 /* Defined in ios_log_player.cpp; declared by gamefront.c without a header. */
 extern "C" void logViewerRunFromMemory(struct SDL_Window *window,
@@ -77,9 +77,6 @@ extern "C" void logViewerRun(struct SDL_Window *window,
 /* The last finished single-player round, shown under a name of its own. */
 #define IOS_REC_LAST_NAME  "singleplayer.wbv"
 
-/* A .wbv the system handed over, waiting for the recordings screen. */
-static char s_pendingPath[FILENAME_MAX];
-
 typedef struct {
     std::string path;      /* full path, for reading and copying */
     std::string name;      /* what the list shows */
@@ -87,24 +84,6 @@ typedef struct {
     SDL_Time    modified;
     bool        inPrefs;   /* in the preferences directory: offer the copy */
 } IosRecording;
-
-/* True when name ends in ".wbv", in any case. */
-static bool iosRecordingsIsWbv(const char *name) {
-    size_t len = strlen(name);
-    return len > 4 && SDL_strcasecmp(name + len - 4, ".wbv") == 0;
-}
-
-extern "C" bool iosRecordingsTakeDropEvent(const SDL_Event *ev) {
-    if (ev->type != SDL_EVENT_DROP_FILE || ev->drop.data == NULL) {
-        return false;
-    }
-    if (SDL_strncmp(ev->drop.data, "winbolo://", 10) == 0 ||
-        !iosRecordingsIsWbv(ev->drop.data)) {
-        return false;
-    }
-    SDL_strlcpy(s_pendingPath, ev->drop.data, sizeof(s_pendingPath));
-    return true;
-}
 
 /* Adds every .wbv in dir (which ends in a separator) to out. */
 static void iosRecordingsScanDir(const char *dir, bool inPrefs,
@@ -173,7 +152,10 @@ static bool iosRecordingsLoad(const char *path, uint8_t **outBuf, size_t *outLen
     *outBuf = NULL;
     *outLen = 0;
     SDL_IOStream *io = SDL_IOFromFile(path, "rb");
-    if (io == NULL) return false;
+    if (io == NULL) {
+        iosOpenUrlRelease(path);
+        return false;
+    }
     Sint64 len = SDL_GetIOSize(io);
     bool ok = false;
     if (len > 0 && (Uint64)len <= (Uint64)SIZE_MAX) {
@@ -189,6 +171,9 @@ static bool iosRecordingsLoad(const char *path, uint8_t **outBuf, size_t *outLen
         }
     }
     SDL_CloseIO(io);
+    /* A file opened in place from another provider was readable only for
+     * this; see ios_open_url.m. */
+    iosOpenUrlRelease(path);
     return ok;
 }
 
@@ -256,13 +241,13 @@ extern "C" void logViewerRun(struct SDL_Window *window,
         return;
     }
 
-    /* A file the system handed over while the welcome screen was up plays
-     * first, then the list comes up behind it. */
-    if (s_pendingPath[0] != '\0') {
+    /* A file the system handed over (ios_drops.c) plays first, then the list
+     * comes up behind it. */
+    {
         char path[FILENAME_MAX];
-        SDL_strlcpy(path, s_pendingPath, sizeof(path));
-        s_pendingPath[0] = '\0';
-        iosRecordingsPlay(window, renderer, path);
+        if (iosDropsTakeLog(path, sizeof(path))) {
+            iosRecordingsPlay(window, renderer, path);
+        }
     }
 
     int savedLogW = 0, savedLogH = 0;
@@ -299,9 +284,7 @@ extern "C" void logViewerRun(struct SDL_Window *window,
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
-            if (iosRecordingsTakeDropEvent(&ev)) {
-                continue;   /* played below */
-            }
+            /* A drop is kept by ios_drops.c's watch and played below. */
             /* Files may have been added through the Files app meanwhile. */
             if (ev.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
                 list = iosRecordingsScan();
@@ -386,7 +369,7 @@ extern "C" void logViewerRun(struct SDL_Window *window,
                     if (ImGui::SmallButton(langGetText(STR_IOSREC_COPY))) {
                         notice = iosRecordingsCopyToFiles(r)
                                      ? langGetText(STR_IOSREC_COPIED)
-                                     : langGetText(STR_IOSREC_OPEN_FAILED);
+                                     : langGetText(STR_IOSREC_COPY_FAILED);
                         list = iosRecordingsScan();
                         ImGui::PopID();
                         break;
@@ -410,11 +393,9 @@ extern "C" void logViewerRun(struct SDL_Window *window,
 
         /* The player and the browser each bring up and tear down their own
          * ImGui context and put this one back as current when they return. */
-        if (s_pendingPath[0] != '\0') {
-            char path[FILENAME_MAX];
-            SDL_strlcpy(path, s_pendingPath, sizeof(path));
-            s_pendingPath[0] = '\0';
-            iosRecordingsPlay(window, renderer, path);
+        char dropped[FILENAME_MAX];
+        if (iosDropsTakeLog(dropped, sizeof(dropped))) {
+            iosRecordingsPlay(window, renderer, dropped);
             list = iosRecordingsScan();
         } else if (playIndex >= 0 && playIndex < (int)list.size()) {
             std::string path = list[(size_t)playIndex].path;

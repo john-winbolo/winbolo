@@ -52,7 +52,7 @@ extern "C" {
 
 #include "imgui_about.h"   /* aboutPopupOpen / aboutPopupRender */
 #if defined(__IPHONEOS__)
-#include "../../ios/ios_recordings.h"  /* iosRecordingsTakeDropEvent */
+#include "../../ios/ios_drops.h"  /* iosDropsWelcomeResult */
 #endif
 #include "imgui_keyboard.h" /* keyboardUpdate */
 
@@ -242,6 +242,17 @@ extern "C" int imguiWelcomeShow(void) {
                 running = false;
             }
         }
+#if defined(__IPHONEOS__)
+        /* A recording or game link the system handed over, in whichever loop
+         * was running then or at a cold launch (ios_drops.c). */
+        if (running) {
+            int dropped = iosDropsWelcomeResult();
+            if (dropped >= 0) {
+                result = dropped;
+                running = false;
+            }
+        }
+#endif
 
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
@@ -306,8 +317,8 @@ extern "C" int imguiWelcomeShow(void) {
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
 #if defined(__IPHONEOS__)
-            /* A .wbv opened from Files or Mail plays on the recordings screen. */
-            if (iosRecordingsTakeDropEvent(&ev)) { result = (int)openLogViewer; running = false; continue; }
+            /* Kept by ios_drops.c's watch and acted on above. */
+            if (ev.type == SDL_EVENT_DROP_FILE) continue;
 #endif
             if (dialogHandleUrlDropEvent(&ev)) { result = (int)openInternetManual; running = false; continue; }
             if (dialogHandleQuitEvent(window, &ev)) {

@@ -1384,7 +1384,14 @@ target_sources(WinBoloIOS PRIVATE
     # The recordings on the phone, listed and played in the reel, in place
     # of the modal viewer's logViewerRun.
     src/gui/ios/ios_recordings.cpp
+    # Files and game links the system hands over, kept until the welcome
+    # screen runs, and the access to a file opened in place from another
+    # provider.
+    src/gui/ios/ios_drops.c
+    src/gui/ios/ios_open_url.m
 )
+set_source_files_properties(src/gui/ios/ios_open_url.m
+    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 
 # The map editor, opened from the welcome screen as on the desktop. The same
 # sources as the desktop's CLIENT_SOURCES list, less mapgen_imgui.cpp (already
