@@ -147,8 +147,16 @@ void sdl3MessageHandler(const char *message, const char *title) {
  * ------------------------------------------------------- */
 int main(int argc, char *argv[]) {
     DWORD tick;
-    (void)argc;
-    (void)argv;
+    /* A winbolo://host:port link on the command line joins that game from a
+       cold start, as it does on the desktop. Any other argument is ignored:
+       the map file the desktop accepts there has no meaning in a bundle. */
+    const char *cmdLine = "";
+    for (int i = 1; i < argc; i++) {
+        if (strncmp(argv[i], "winbolo://", 10) == 0) {
+            cmdLine = argv[i];
+            break;
+        }
+    }
 
     srand((unsigned int)(time(NULL) ^ getpid()));
 
@@ -239,7 +247,7 @@ int main(int argc, char *argv[]) {
     voiceInit();
 
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Starting gameFrontStart...");
-    if (gameFrontStart("", &keys, FALSE, NULL) == FALSE) {
+    if (gameFrontStart(cmdLine, &keys, FALSE, NULL) == FALSE) {
         WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[iOS] gameFrontStart FAILED");
         clientMutexDestroy();
         SDL_Quit();
