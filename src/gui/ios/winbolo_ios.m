@@ -173,17 +173,10 @@ time_t ticks = 0;
 static double gameTickAccum = 0.0;
 static Uint64 lastFrameTime = 0;
 
-/* The solo-game freezes, as on the desktop: while a tutorial message, the
-   pause overlay or the controller-disconnected dialog is up in a solo game,
-   the game ticks stop, the hosted server is paused and the sound is muted,
-   and the mute state found on the way in is put back on the way out. The
-   last two are drawn only in the iPad's desktop layout. */
-static bool s_tutorialPaused = FALSE;
-static bool s_tutorialPrevMuted = FALSE;
-static bool s_deckPaused = FALSE;
-static bool s_deckPrevMuted = FALSE;
-static bool s_controllerLostPaused = FALSE;
-static bool s_controllerLostPrevMuted = FALSE;
+/* The solo-game freezes (a tutorial message, the pause overlay, the
+   controller-disconnected dialog; the last two are drawn only in the iPad's
+   desktop layout) are held in client_frontend_common.c, one body with the
+   desktop: clientFrontSoloPause and clientFrontAnyPause. */
 
 /* A joined game over UDP survives a stay in the background only while the
    server still holds the slot. The server drops a client it has heard
@@ -204,7 +197,7 @@ static SDL_Time s_backgroundStartNs = 0;
  * ------------------------------------------------------- */
 extern void sdl3MessageHandler(const char *message, const char *title);
 static void windowRunGameTick(ClientSim *cs);
-static void iosEnterBackground(void);
+static void iosEnterBackground(ClientSim *cs);
 static void iosResumeForeground(ClientSim *cs);
 void windowTutorialPause(ClientSim *cs, bool active);
 void windowDeckPause(ClientSim *cs, bool active);
@@ -551,7 +544,7 @@ ios_game_start:
                 if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                     winboloQuit = TRUE;
                 } else if (ev.type == SDL_EVENT_DID_ENTER_BACKGROUND) {
-                    iosEnterBackground();
+                    iosEnterBackground(cs);
                 } else if (ev.type == SDL_EVENT_WILL_ENTER_FOREGROUND ||
                            ev.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
                     iosResumeForeground(cs);
@@ -570,8 +563,7 @@ ios_game_start:
                 /* A tutorial message is up, or the tick just run queued one:
                    stop here and drop the owed time, so the interval the
                    message is up is not fast-forwarded afterwards. */
-                if (s_tutorialPaused || s_deckPaused || s_controllerLostPaused ||
-                    clientFrontTutorialStepShowing()) {
+                if (clientFrontAnyPause() || clientFrontTutorialStepShowing()) {
                     gameTickAccum = 0.0;
                     break;
                 }
@@ -660,10 +652,13 @@ ios_game_start:
  * is in the background, and on return either carry on or, for a joined game
  * the server has dropped by now, go back to the menu at once
  * ------------------------------------------------------- */
-static void iosEnterBackground(void) {
+static void iosEnterBackground(ClientSim *cs) {
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Entering background, pausing");
     paused = TRUE;
-    soundSetMuted(TRUE);
+    /* The shared suspend (client_frontend_common.c), as on the desktop: in a
+       solo game the hosted server is paused too, and the sound is muted with
+       the state it had kept for the way back. */
+    clientFrontSuspend(cs);
     if (!SDL_GetCurrentTime(&s_backgroundStartNs)) {
         s_backgroundStartNs = 0;
     }
@@ -677,7 +672,11 @@ static void iosResumeForeground(ClientSim *cs) {
     paused = FALSE;
     lastFrameTime = SDL_GetTicks();
     gameTickAccum = 0.0;
-    soundSetMuted(FALSE);
+    /* The shared resume: the server pause is recomputed and the sound put
+       back as the suspend found it, so a pause freeze still up stays muted. */
+    if (clientFrontResumeBegin()) {
+        clientFrontResumeEnd(cs);
+    }
 
     /* Single player keeps its game: its server is in this process and was
        paused with it. With no start time the client's own timeout still
@@ -964,67 +963,38 @@ void windowComputeAspectCorrectSize(int actualW, int actualH, int actualX, int a
    in the iPad's desktop layout; the touch layout's own event loop above does
    the same on the events it reads. */
 void windowSuspendBackground(ClientSim *cs) {
-    (void)cs;
     if (paused) return;
     /* The same as the touch layout's: the time away starts here, for the
        network game check on the way back. */
-    iosEnterBackground();
+    iosEnterBackground(cs);
 }
 
 void windowResumeForeground(ClientSim *cs) {
     iosResumeForeground(cs);
 }
 
-/* A solo game: the tutorial or single player, with no remote players to keep
-   serving. */
-static bool iosSoloSession(ClientSim *cs) {
-    return clientFrontTutorialStepShowing() ||
-           (cs != NULL && clientSimIsSinglePlayer(cs));
-}
-
-/* The hosted server is paused while any of the freezes is on. */
-static void iosUpdateServerPause(void) {
-    gameFrontSetServerPaused(s_tutorialPaused || s_deckPaused ||
-                             s_controllerLostPaused);
-}
-
-/* One freeze's open or close edge. Closing drops the owed tick time, so a
-   held key or the press that closed the overlay does not run on into the
-   game. */
-static void iosSoloPause(ClientSim *cs, bool active, bool *flag, bool *prevMuted) {
-    if (active) {
-        if (*flag || !iosSoloSession(cs)) return;
-        *flag = TRUE;
-        iosUpdateServerPause();
-        *prevMuted = soundIsMuted();
-        soundSetMuted(TRUE);
-    } else {
-        if (!*flag) return;
-        *flag = FALSE;
-        iosUpdateServerPause();
+/* One solo freeze's open or close edge, through the shared body. Closing
+   drops the owed tick time, so a held key, a held touch or the press that
+   closed the overlay does not run on into the game. */
+static void iosSoloPause(ClientSim *cs, ClientFrontPause which, bool active) {
+    if (clientFrontSoloPause(cs, which, active)) {
         gameTickAccum = 0.0;
         lastFrameTime = SDL_GetTicks();
-        soundSetMuted(*prevMuted);
     }
 }
 
 /* Pause hooks driven from sdl3imgui.cpp: the controller-disconnected dialog
    and the pause overlay (Escape or a controller's Start), both drawn in the
-   iPad's desktop layout. */
+   iPad's desktop layout, and the tutorial message overlay, driven by its
+   open/close edge in the render path. Solo games only, as on the desktop. */
 void windowControllerLostPause(ClientSim *cs, bool active) {
-    iosSoloPause(cs, active, &s_controllerLostPaused, &s_controllerLostPrevMuted);
+    iosSoloPause(cs, CLIENT_FRONT_PAUSE_CONTROLLER_LOST, active);
 }
 void windowDeckPause(ClientSim *cs, bool active) {
-    iosSoloPause(cs, active, &s_deckPaused, &s_deckPrevMuted);
+    iosSoloPause(cs, CLIENT_FRONT_PAUSE_DECK, active);
 }
-
-/* Tutorial message overlay opened or closed, driven by its open/close edge in
-   the render path. Solo games only, as on the desktop: the main loop stops
-   ticking, the hosted server is paused and the sound muted while a message is
-   up. Closing drops the owed tick time, so a held touch or the tap that
-   dismissed the message does not run on into the game. */
 void windowTutorialPause(ClientSim *cs, bool active) {
-    iosSoloPause(cs, active, &s_tutorialPaused, &s_tutorialPrevMuted);
+    iosSoloPause(cs, CLIENT_FRONT_PAUSE_TUTORIAL, active);
 }
 
 /* -------------------------------------------------------
@@ -1154,22 +1124,20 @@ void frontEndAudioReturningToLobby(bool active) {
     soundSetReturningToLobby(active);
 }
 
-void frontEndGameOver(ClientSim *cs) {
-    if (clientSimIsBot(cs)) return;
-    if (!clientFrontIsActiveUiSim(cs)) return;
-    /* A round on a locally hosted server that the transport does not tick
-       ends in the lobby: the server holds game over and returns to the lobby
-       with the win message, and the player stays in the game loop. The web
-       makes the same test (main_wasm.c). */
-    ServerSim *srv = gameFrontGetServerSim();
-    if (srv != NULL && cs != NULL && !clientSimTransportTicksServer(cs)) {
-        return;
-    }
+/* frontEndGameOver is in client_frontend_common.c; these are this driver's
+   parts of it. As on the desktop, every time-limit game over leaves the game:
+   a single-player round on iOS connects passively, as on the desktop, so the
+   web's test for a practice round that ends in its lobby does not apply. */
+bool windowGameOverEndsGame(ClientSim *cs) {
+    (void)cs;
+    return TRUE;
+}
+
+void windowGameOverStopTicks(void) {
+}
+
+void windowGameOverLeave(void) {
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Game over (time limit expired)");
-    /* The time limit message the desktop and the web show; dismissing it
-       leaves the game. */
-    imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBTIMELIMIT_END),
-                      IMGUI_MSG_INFO, IMGUI_MSG_OK);
     finishedLoop = TRUE;
 }
 

@@ -1536,7 +1536,7 @@ void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
 
 /* Desktop-only window helpers — wasm has no native window position/size to
  * persist or aspect-correct, so these are no-ops. */
-void windowSmoothScrolling_toggle(void) { smoothScrollingEnabled = !smoothScrollingEnabled; }
+/* windowSmoothScrolling_toggle is in client_frontend_common.c. */
 void windowLetterboxBarsGray_toggle(void) {
   letterboxBarsGray = !letterboxBarsGray;
   gameFrontSaveCurrentPrefs();
@@ -1724,18 +1724,24 @@ void frontEndAudioReturningToLobby(bool active) {
   soundSetReturningToLobby(active);
 }
 
-void frontEndGameOver(ClientSim *cs) {
-  if (clientSimIsBot(cs)) return;
-  if (!clientFrontIsActiveUiSim(cs)) return;
+/* frontEndGameOver is in client_frontend_common.c; these are this driver's
+ * parts of it. */
+bool windowGameOverEndsGame(ClientSim *cs) {
+  if (clientSimIsBot(cs)) return false;
   /* A practice round ends in the lobby: the server holds game over, then
    * returns to the lobby with the win message, and the player stays in the
    * page's game loop. Only a game with no lobby leaves here. */
   ServerSim *srv = gameFrontGetServerSim();
   if (srv != NULL && cs != NULL && !clientSimTransportTicksServer(cs)) {
-    return;
+    return false;
   }
-  imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBTIMELIMIT_END),
-                    IMGUI_MSG_INFO, IMGUI_MSG_OK);
+  return true;
+}
+
+void windowGameOverStopTicks(void) {
+}
+
+void windowGameOverLeave(void) {
   finishedLoop = TRUE;
   /* Dismissing the dialog leaves the game. finishedLoop ends the game loop
    * after this frame; main then ends the game and shows the menu. */

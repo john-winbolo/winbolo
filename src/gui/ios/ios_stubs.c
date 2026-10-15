@@ -190,10 +190,9 @@ void windowGetCustomSize(int *w, int *h) {
     if (h) *h = 0;
 }
 void windowSetCustomSize(int w, int h) { (void)w; (void)h; }
-/* View > Smooth Scrolling, which the iPad's desktop layout shows: the arrow
-   keys of a hardware keyboard scroll smoothly, as on the desktop. */
-extern bool smoothScrollingEnabled;
-void windowSmoothScrolling_toggle(void) { smoothScrollingEnabled = !smoothScrollingEnabled; }
+/* View > Smooth Scrolling, which the iPad's desktop layout shows, is
+   windowSmoothScrolling_toggle in client_frontend_common.c, the desktop's
+   body, which also clears the sub-tile drag offset when turned off. */
 
 /* ---- winbolonet server stubs: lobby and map status ---- */
 

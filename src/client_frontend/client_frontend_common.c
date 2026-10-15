@@ -27,6 +27,7 @@
 #include "tutorial.h"       /* tutorialSteps[] */
 #include "dialogs/imgui_tutorial_overlay.h"
 #include "dialogs/imgui_messagebox.h"
+#include "../gui/sound.h"   /* soundIsMuted / soundSetMuted — the pause freezes */
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -370,3 +371,112 @@ void windowMenuNetworkDebug_toggle(ClientSim *cs) {
   showNetworkDebugMessages = !showNetworkDebugMessages;
   if (cs) clientSimShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
 }
+
+/* -------------------------------------------------------
+ * Smooth scrolling
+ * ------------------------------------------------------- */
+
+/* Each driver owns the flag; input.c reads it. */
+extern bool smoothScrollingEnabled;
+
+void windowSmoothScrolling_toggle(void) {
+  smoothScrollingEnabled = !smoothScrollingEnabled;
+  /* Clear any in-progress sub-tile offset so the view snaps cleanly
+     to a tile boundary when toggling off. */
+  if (!smoothScrollingEnabled) {
+    sdl3DrawSetDragOffset(0, 0);
+  }
+}
+
+/* -------------------------------------------------------
+ * Time-limit game over
+ * ------------------------------------------------------- */
+
+void frontEndGameOver(ClientSim *cs) {
+  if (!clientFrontIsActiveUiSim(cs)) return;
+  if (!windowGameOverEndsGame(cs)) return;
+  windowGameOverStopTicks();
+  imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBTIMELIMIT_END),
+                    IMGUI_MSG_INFO, IMGUI_MSG_OK);
+  windowGameOverLeave();
+}
+
+#if !defined(__EMSCRIPTEN__)
+/* -------------------------------------------------------
+ * Solo-game freezes and the background suspend
+ *
+ * Not in the web build: its pause hooks are no-ops, and it has no
+ * hosted-server pause gate (gameFrontSetServerPaused is gamefront.c's).
+ * ------------------------------------------------------- */
+
+static bool s_pauseOn[CLIENT_FRONT_PAUSE_COUNT];
+/* Mute state captured when each pause engaged, restored verbatim when it
+ * releases. A pause must hand audio back to whatever it found — not force it
+ * unmuted — so it doesn't clobber a user mute or another still-active pause's
+ * mute. One slot per pause because they can nest. */
+static bool s_pausePrevMuted[CLIENT_FRONT_PAUSE_COUNT];
+
+bool clientFrontIsSoloSession(ClientSim *cs) {
+  return clientFrontTutorialStepShowing() ||
+         (cs != NULL && clientSimIsSinglePlayer(cs));
+}
+
+bool clientFrontAnyPause(void) {
+  int i;
+  for (i = 0; i < CLIENT_FRONT_PAUSE_COUNT; i++) {
+    if (s_pauseOn[i]) return true;
+  }
+  return false;
+}
+
+/* Recompute the hosted-server pause gate.  The server tick only freezes for
+   a solo session: a listen-server host must keep serving remote players, so
+   multiplayer never pauses the server even when the host backgrounds the app
+   or opens the overlay. */
+static void clientFrontUpdateServerPause(ClientSim *cs) {
+  gameFrontSetServerPaused(clientFrontIsSoloSession(cs) && clientFrontAnyPause());
+}
+
+bool clientFrontSoloPause(ClientSim *cs, ClientFrontPause which, bool active) {
+  if (which < 0 || which >= CLIENT_FRONT_PAUSE_COUNT) return false;
+  if (active) {
+    /* Only a solo session pauses; multiplayer keeps running. */
+    if (!clientFrontIsSoloSession(cs)) return false;
+    if (s_pauseOn[which]) return false;          /* idempotent */
+    s_pauseOn[which] = true;
+    clientFrontUpdateServerPause(cs);
+    s_pausePrevMuted[which] = soundIsMuted();
+    soundSetMuted(TRUE);
+    return false;
+  }
+  /* Always clear on close — even if the mode changed while the pause was
+     up — so a stale pause can't freeze a later game. */
+  if (!s_pauseOn[which]) return false;
+  s_pauseOn[which] = false;
+  clientFrontUpdateServerPause(cs);
+  soundSetMuted(s_pausePrevMuted[which]);
+  return true;
+}
+
+bool clientFrontSuspend(ClientSim *cs) {
+  /* Idempotent — duplicate WILL_ENTER_BACKGROUND events from SDL are safe. */
+  if (s_pauseOn[CLIENT_FRONT_PAUSE_SUSPEND]) return false;
+  s_pauseOn[CLIENT_FRONT_PAUSE_SUSPEND] = true;
+  clientFrontUpdateServerPause(cs);
+  s_pausePrevMuted[CLIENT_FRONT_PAUSE_SUSPEND] = soundIsMuted();
+  soundSetMuted(TRUE);
+  return true;
+}
+
+bool clientFrontResumeBegin(void) {
+  if (!s_pauseOn[CLIENT_FRONT_PAUSE_SUSPEND]) return false;
+  s_pauseOn[CLIENT_FRONT_PAUSE_SUSPEND] = false;
+  return true;
+}
+
+void clientFrontResumeEnd(ClientSim *cs) {
+  clientFrontUpdateServerPause(cs);
+  soundSetMuted(s_pausePrevMuted[CLIENT_FRONT_PAUSE_SUSPEND]);
+}
+#endif
+

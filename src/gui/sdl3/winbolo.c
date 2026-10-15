@@ -202,51 +202,11 @@ static bool winboloQuit = FALSE;
 static bool quitRequested = FALSE;
 static bool finishedLoop = FALSE;
 
-/* Set on SDL_EVENT_WILL_ENTER_BACKGROUND, cleared by
- * windowResumeForeground.  See windowSuspendBackground for details. */
-static bool s_suspended = FALSE;
-
-/* Set while the Steam in-game overlay is open during a single-player
- * game.  Like s_suspended it freezes the local sim, but it is driven by
- * the Steam overlay callback (not SDL background events) and only ever
- * engages in single-player — multiplayer keeps running with the overlay
- * up.  See windowSteamOverlayActivated. */
-static bool s_overlayPaused = FALSE;
-
-/* Set while the "Controller Disconnected" dialog is up during a solo game.
- * Same freeze as s_overlayPaused, driven by the controller-lost handler.
- * Multiplayer keeps running (the dialog still shows).  See
- * windowControllerLostPause. */
-static bool s_controllerLostPaused = FALSE;
-
-/* Set while the controller pause overlay (Start button / Escape) is up during
- * a solo game.  Same freeze as s_overlayPaused, driven by the pause-menu
- * open/close edge.  Multiplayer keeps running (the menu still shows) so a
- * networked player isn't booted for going idle.  See windowDeckPause. */
-static bool s_deckPaused = FALSE;
-
-/* Set while a tutorial message overlay is up.  Same solo freeze as the pause
- * menu, driven by the overlay's open/close edge — so play is suspended and a
- * held turn or dismissing fire press can't leak into the game.  See
- * windowTutorialPause. */
-static bool s_tutorialPaused = FALSE;
-
-/* Set while the native save-map dialog is up during a solo game.  Same freeze
- * as s_overlayPaused, driven by windowSaveMap / windowSaveMapPoll.
- * Multiplayer keeps running — not blocking the main loop on that dialog is the
- * whole point of the poll.  See windowSaveDialogPause. */
-static bool s_saveDialogPaused = FALSE;
-
-/* Mute state captured when each pause path engaged, restored verbatim when it
- * releases.  A pause must hand audio back to whatever it found — not force it
- * unmuted — so it doesn't clobber a user mute or another still-active pause's
- * mute.  One slot per path because the paths can nest. */
-static bool s_suspendPrevMuted        = FALSE;
-static bool s_overlayPrevMuted        = FALSE;
-static bool s_controllerLostPrevMuted = FALSE;
-static bool s_deckPrevMuted           = FALSE;
-static bool s_tutorialPrevMuted       = FALSE;
-static bool s_saveDialogPrevMuted     = FALSE;
+/* The background suspend and the solo-game freezes (the Steam overlay, the
+ * controller-disconnected dialog, the pause menu, a tutorial message and the
+ * native save-map dialog) are held in client_frontend_common.c, one body
+ * with iOS: clientFrontSuspend / clientFrontSoloPause / clientFrontAnyPause.
+ * This driver keeps only its own tick clock, which each release rebases. */
 
 /* Tick counters */
 static DWORD oldTick = 0;
@@ -265,7 +225,6 @@ static SDL_AtomicInt needsGameTick = { 0 };
 static Uint32 SDLCALL windowGameTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
 static Uint32 SDLCALL windowFrameRateTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
 static void windowRunGameTick(ClientSim *cs);
-static void windowUpdateServerPause(ClientSim *cs);
 static void windowSteamOverlayActivated(ClientSim *cs, bool active);
 static void windowSaveDialogPause(ClientSim *cs, bool active);
 static void windowSaveMapPoll(ClientSim *cs);
@@ -990,8 +949,7 @@ static void windowRunGameTick(ClientSim *cs) {
      windowSteamOverlayActivated / windowControllerLostPause /
      windowDeckPause / windowSaveDialogPause) resets the wallclock baseline
      so we don't fast-forward the paused interval. */
-  if (s_suspended || s_overlayPaused || s_controllerLostPaused ||
-      s_deckPaused || s_tutorialPaused || s_saveDialogPaused)
+  if (clientFrontAnyPause())
     return;
 
   brainRunning = brainHandlerIsBrainRunning();
@@ -1124,44 +1082,21 @@ bool windowIsQuitting(void) {
  * Suspend / resume — Steam Deck Verified requirement.
  * Driven by SDL_EVENT_WILL_ENTER_BACKGROUND (sleep / home
  * button / overlay) and SDL_EVENT_DID_ENTER_FOREGROUND.
- * s_suspended declared near other main-loop state above.
+ * The suspend state, the solo-session test and the hosted-
+ * server pause gate are in client_frontend_common.c.
  * ------------------------------------------------------- */
-/* True for a local solo session — single-player or the tutorial.  Both run
-   the in-process server with no remote peers, so a pause can safely freeze
-   them.  Multiplayer (a joined client or a listen-server host) is never solo
-   and must keep running. */
-static bool windowIsSoloSession(ClientSim *cs) {
-  return clientFrontTutorialStepShowing() ||
-         (cs != NULL && clientSimIsSinglePlayer(cs));
-}
-
-/* Recompute the hosted-server pause gate.  The server tick only freezes for
-   a solo session: a listen-server host must keep serving remote players, so
-   multiplayer never pauses the server even when the host backgrounds the app
-   or opens the overlay. */
-static void windowUpdateServerPause(ClientSim *cs) {
-  gameFrontSetServerPaused(windowIsSoloSession(cs) &&
-                           (s_suspended || s_overlayPaused ||
-                            s_controllerLostPaused || s_deckPaused ||
-                            s_tutorialPaused || s_saveDialogPaused));
-}
 
 void windowSuspendBackground(ClientSim *cs) {
-  /* Pause local sim (windowRunGameTick early-outs on s_suspended) and
-     mute audio.  Network state is left as-is; UDP will time out on its
+  /* Pause local sim (windowRunGameTick early-outs on clientFrontAnyPause)
+     and mute audio.  Network state is left as-is; UDP will time out on its
      own.  In single-player we also freeze the server tick so the world
-     holds; a listen-server host keeps serving (see windowUpdateServerPause).
-     Idempotent — duplicate WILL_ENTER_BACKGROUND events from SDL are safe. */
-  if (s_suspended) return;
-  s_suspended = TRUE;
-  windowUpdateServerPause(cs);
-  s_suspendPrevMuted = soundIsMuted();
-  soundSetMuted(TRUE);
+     holds; a listen-server host keeps serving.  Idempotent — duplicate
+     WILL_ENTER_BACKGROUND events from SDL are safe. */
+  clientFrontSuspend(cs);
 }
 
 void windowResumeForeground(ClientSim *cs) {
-  if (!s_suspended) return;
-  s_suspended = FALSE;
+  if (!clientFrontResumeBegin()) return;
 
   if (cs != NULL && clientSimGetNetType(cs) == netUdp) {
     /* Network game: UDP timeout has almost certainly killed the
@@ -1184,8 +1119,7 @@ void windowResumeForeground(ClientSim *cs) {
     oldTick = SDL_GetTicks();
     ttick = oldTick;
   }
-  windowUpdateServerPause(cs);
-  soundSetMuted(s_suspendPrevMuted);
+  clientFrontResumeEnd(cs);
 }
 
 /* Steam in-game overlay opened/closed.  Solo sessions only (single-player or
@@ -1194,25 +1128,9 @@ void windowResumeForeground(ClientSim *cs) {
    duration in one burst.  Multiplayer is a no-op — a networked game keeps
    running with the overlay open. */
 static void windowSteamOverlayActivated(ClientSim *cs, bool active) {
-  if (active) {
-    /* Only a solo session pauses; multiplayer keeps running. */
-    if (!windowIsSoloSession(cs)) return;
-    if (s_overlayPaused) return;          /* idempotent */
-    s_overlayPaused = TRUE;
-    windowUpdateServerPause(cs);
-    s_overlayPrevMuted = soundIsMuted();
-    soundSetMuted(TRUE);
-  } else {
-    /* Always clear on close — even if the mode changed while the overlay
-       was up — so a stale pause can't freeze a later game. */
-    if (!s_overlayPaused) return;
-    s_overlayPaused = FALSE;
-    windowUpdateServerPause(cs);
-    /* Reset the catch-up baseline, mirroring the single-player branch of
-       windowResumeForeground. */
+  if (clientFrontSoloPause(cs, CLIENT_FRONT_PAUSE_OVERLAY, active)) {
     oldTick = SDL_GetTicks();
     ttick = oldTick;
-    soundSetMuted(s_overlayPrevMuted);
   }
 }
 
@@ -1222,20 +1140,9 @@ static void windowSteamOverlayActivated(ClientSim *cs, bool active) {
    windowSteamOverlayActivated.  Multiplayer is a no-op — the dialog still
    shows but the networked game keeps running. */
 void windowControllerLostPause(ClientSim *cs, bool active) {
-  if (active) {
-    if (!windowIsSoloSession(cs)) return;
-    if (s_controllerLostPaused) return;          /* idempotent */
-    s_controllerLostPaused = TRUE;
-    windowUpdateServerPause(cs);
-    s_controllerLostPrevMuted = soundIsMuted();
-    soundSetMuted(TRUE);
-  } else {
-    if (!s_controllerLostPaused) return;
-    s_controllerLostPaused = FALSE;
-    windowUpdateServerPause(cs);
+  if (clientFrontSoloPause(cs, CLIENT_FRONT_PAUSE_CONTROLLER_LOST, active)) {
     oldTick = SDL_GetTicks();
     ttick = oldTick;
-    soundSetMuted(s_controllerLostPrevMuted);
   }
 }
 
@@ -1245,20 +1152,9 @@ void windowControllerLostPause(ClientSim *cs, bool active) {
    windowControllerLostPause.  Multiplayer is a no-op — the menu still shows but
    the networked game keeps running, so the player isn't booted for idling. */
 void windowDeckPause(ClientSim *cs, bool active) {
-  if (active) {
-    if (!windowIsSoloSession(cs)) return;
-    if (s_deckPaused) return;          /* idempotent */
-    s_deckPaused = TRUE;
-    windowUpdateServerPause(cs);
-    s_deckPrevMuted = soundIsMuted();
-    soundSetMuted(TRUE);
-  } else {
-    if (!s_deckPaused) return;
-    s_deckPaused = FALSE;
-    windowUpdateServerPause(cs);
+  if (clientFrontSoloPause(cs, CLIENT_FRONT_PAUSE_DECK, active)) {
     oldTick = SDL_GetTicks();
     ttick = oldTick;
-    soundSetMuted(s_deckPrevMuted);
   }
 }
 
@@ -1270,20 +1166,9 @@ void windowDeckPause(ClientSim *cs, bool active) {
    the next game tick is one tick out, by which point a tapped button has lifted
    and the input gate has already swallowed everything while the message was up. */
 void windowTutorialPause(ClientSim *cs, bool active) {
-  if (active) {
-    if (!windowIsSoloSession(cs)) return;
-    if (s_tutorialPaused) return;          /* idempotent */
-    s_tutorialPaused = TRUE;
-    windowUpdateServerPause(cs);
-    s_tutorialPrevMuted = soundIsMuted();
-    soundSetMuted(TRUE);
-  } else {
-    if (!s_tutorialPaused) return;
-    s_tutorialPaused = FALSE;
-    windowUpdateServerPause(cs);
+  if (clientFrontSoloPause(cs, CLIENT_FRONT_PAUSE_TUTORIAL, active)) {
     oldTick = SDL_GetTicks();
     ttick = oldTick;
-    soundSetMuted(s_tutorialPrevMuted);
   }
 }
 
@@ -1293,22 +1178,9 @@ void windowTutorialPause(ClientSim *cs, bool active) {
    Multiplayer is a no-op — a networked game must keep running underneath the
    picker, which is exactly what the poll below makes possible. */
 static void windowSaveDialogPause(ClientSim *cs, bool active) {
-  if (active) {
-    if (!windowIsSoloSession(cs)) return;
-    if (s_saveDialogPaused) return;          /* idempotent */
-    s_saveDialogPaused = TRUE;
-    windowUpdateServerPause(cs);
-    s_saveDialogPrevMuted = soundIsMuted();
-    soundSetMuted(TRUE);
-  } else {
-    /* Always clear on close — even if the session changed while the picker
-       was up — so a stale pause can't freeze a later game. */
-    if (!s_saveDialogPaused) return;
-    s_saveDialogPaused = FALSE;
-    windowUpdateServerPause(cs);
+  if (clientFrontSoloPause(cs, CLIENT_FRONT_PAUSE_SAVE_DIALOG, active)) {
     oldTick = SDL_GetTicks();
     ttick = oldTick;
-    soundSetMuted(s_saveDialogPrevMuted);
   }
 }
 
@@ -1752,14 +1624,7 @@ void windowFullScreenChoose(bool on) {
   gameFrontSaveCurrentPrefs();
 }
 
-void windowSmoothScrolling_toggle(void) {
-  smoothScrollingEnabled = !smoothScrollingEnabled;
-  /* Clear any in-progress sub-tile offset so the view snaps cleanly
-     to a tile boundary when toggling off. */
-  if (!smoothScrollingEnabled) {
-    sdl3DrawSetDragOffset(0, 0);
-  }
-}
+/* windowSmoothScrolling_toggle is in client_frontend_common.c. */
 
 void windowSoundEffects_toggle(void) {
   soundEffects = !soundEffects;
@@ -2229,14 +2094,21 @@ void frontEndAudioReturningToLobby(bool active) {
   soundSetReturningToLobby(active);
 }
 
-void frontEndGameOver(ClientSim *cs) {
-  if (!clientFrontIsActiveUiSim(cs)) return;
+/* frontEndGameOver is in client_frontend_common.c; these are this driver's
+   parts of it. Every time-limit game over leaves the game here. */
+bool windowGameOverEndsGame(ClientSim *cs) {
+  (void)cs;
+  return TRUE;
+}
+
+void windowGameOverStopTicks(void) {
   SDL_RemoveTimer(timerFrameID);
   SDL_RemoveTimer(timerGameID);
   timerFrameID = 0;
   timerGameID = 0;
-  imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBTIMELIMIT_END),
-                    IMGUI_MSG_INFO, IMGUI_MSG_OK);
+}
+
+void windowGameOverLeave(void) {
   winboloQuit = TRUE;
 }
 
