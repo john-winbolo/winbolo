@@ -24,6 +24,9 @@
 -- shells have gone down since the last look, the hunter that fired and is
 -- nearest that square (8 squares at most) is busy. Every hunter's square is
 -- logged once a second.
+-- A hunter that has moved at least 1 square (256 world units) in a straight
+-- line over the last 2 s is busy too: travelling is real play, even when it
+-- stays within 2 squares of the spot it last stood on for a while.
 --
 -- The holder is put in the walled middle of the island, the way a person
 -- builds a fort among walls. With the script as it was, the order to attack
@@ -32,7 +35,15 @@
 -- the fort shot it.
 
 ARENA = { given = false, hit = {}, lines = {}, last = {}, anchor = {}, busy = {}, still = {},
-          walls = nil, shells = {}, wall_said = {} }
+          walls = nil, shells = {}, wall_said = {}, trail = {}, still_at = {} }
+
+-- Busy by moving: a hunter is busy at a tick when its position now is at
+-- least MOVE_MIN world units (1 square) in a straight line from its position
+-- MOVE_WINDOW ticks ago (2 s at 100 ticks a second). This is net
+-- displacement, not path length, so turning on the spot or jiggling back and
+-- forth does not count. Kept in ARENA, not as locals: the script and the
+-- arena are near Lua's 200 top-level locals in one chunk.
+ARENA.MOVE_MIN, ARENA.MOVE_WINDOW = 256, 200
 scenario.callbacks.on_tank_hit = "Arena: counts the hunters' hits on the holder."
 scenario.callbacks.pill_damage_scale = "Arena: counts the hunters' hits on the fort."
 
@@ -160,7 +171,8 @@ function on_tick(tick)
     game.log(string.format("ARENA t=%d +%.0fs %s", tick, (tick - A.built) / 100,
                            table.concat(parts, " | ")))
   end
-  -- A hunter is busy while it moves (2 squares from where it last stood),
+  -- A hunter is busy while it moves (2 squares from where it last stood, or
+  -- 1 square in a straight line over the last 2 s),
   -- hits the fort or the holder, is dead, or is more than NEAR squares from
   -- the holder. The longest time each hunter spends not busy is its still
   -- time: sitting by the holder and his fort without a shot.
@@ -197,10 +209,29 @@ function on_tick(tick)
       end
     end
   end
+  local MOVE_MIN, MOVE_WINDOW = A.MOVE_MIN, A.MOVE_WINDOW
   for p = 1, 3 do
     local s = game.tank(p)
+    -- One position a tick in a ring of MOVE_WINDOW slots: the slot for this
+    -- tick holds the position from MOVE_WINDOW ticks ago.
+    local moved = false
+    if s == nil or s.dead or s.mx == 0 then
+      A.trail[p] = {}
+    else
+      local ring = A.trail[p] or {}
+      A.trail[p] = ring
+      local slot = tick % MOVE_WINDOW
+      local old = ring[slot]
+      if old ~= nil and old.t == tick - MOVE_WINDOW then
+        local dx, dy = s.wx - old.wx, s.wy - old.wy
+        moved = dx * dx + dy * dy >= MOVE_MIN * MOVE_MIN
+      end
+      ring[slot] = { t = tick, wx = s.wx, wy = s.wy }
+    end
     if s == nil or s.dead or s.mx == 0 then
       A.busy[p], A.anchor[p] = tick, nil
+    elseif moved then
+      A.busy[p], A.anchor[p] = tick, { s.mx, s.my }
     elseif chebyshev(s.mx, s.my, A.hx, A.hy) > NEAR then
       A.busy[p], A.anchor[p] = tick, { s.mx, s.my }
     elseif A.anchor[p] == nil or
@@ -208,13 +239,15 @@ function on_tick(tick)
       A.busy[p], A.anchor[p] = tick, { s.mx, s.my }
     end
     local still = tick - (A.busy[p] or tick)
-    if still > (A.still[p] or 0) then A.still[p] = still end
+    if still > (A.still[p] or 0) then A.still[p], A.still_at[p] = still, A.busy[p] end
   end
   if not GATE_SAID and (tick >= A.built + 2000 or tick >= GATE_TICKS - 50) then
     local stuck, parts = {}, {}
     for p = 1, 3 do
       if (A.still[p] or 0) > STILL_MAX then stuck[#stuck + 1] = "p" .. p end
-      parts[#parts + 1] = string.format("p%d still %.1fs %s", p, (A.still[p] or 0) / 100,
+      local at = A.still_at[p]
+      parts[#parts + 1] = string.format("p%d still %.1fs%s %s", p, (A.still[p] or 0) / 100,
+        at and string.format(" (t=%d-%d)", at, at + A.still[p]) or "",
         A.hit[p] and string.format("first hit +%.1fs", (A.hit[p] - A.built) / 100) or "no hit")
     end
     game.log("ARENA " .. table.concat(parts, ", "))
