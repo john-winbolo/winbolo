@@ -4528,6 +4528,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Log viewer snapshot index: time lookups and a ten-day log's worth of
     # entries (test_lv_snapshot_index.c).
     tests/unit/test_lv_snapshot_index.c
+    # Log viewer load results pinned on the committed .wbv fixtures
+    # (test_lv_load_walk.c).
+    tests/unit/test_lv_load_walk.c
     # Replay camera range: the load's 127,127 default, a highlight jump, a
     # grid that grew and the raw setter all keep the view's far edge at 255
     # on a grid wider than half the map (test_lv_camera.c).
@@ -5282,6 +5285,7 @@ set(_unit_test_names
     lv_hide_lobby_periodic_snapshot
     lv_snapshot_index_lookup
     lv_snapshot_index_ten_days
+    lv_load_walk_fixtures
     lv_logged_name_from_join_event
     lv_game_settings_from_walk
     lv_game_settings_absent

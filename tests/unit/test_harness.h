@@ -1365,6 +1365,11 @@ int run_lv_hide_lobby_periodic_snapshot(void);
 int run_lv_snapshot_index_lookup(void);
 int run_lv_snapshot_index_ten_days(void);
 
+/* Log viewer load results (test_lv_load_walk.c): total time, game start,
+ * names, rule changes, server ticks and teams for each committed .wbv
+ * fixture, pinned together. */
+int run_lv_load_walk_fixtures(void);
+
 /* Load-time slot-name walk (test_lv_calibration.c): a player who joins after
  * the lobby marker is absent from the live roster at game start, where the
  * round summary is built, so lv_screenGetLoggedPlayerName reads the name from
