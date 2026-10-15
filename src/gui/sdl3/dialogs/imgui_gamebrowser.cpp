@@ -1504,6 +1504,27 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                        + spacingY     /* Spacing */
                        + frameH       /* button row */
                        + spacingY;    /* bottom padding */
+#if defined(__IPHONEOS__)
+        /* A phone is too narrow for the desktop's one row of fixed-width
+         * buttons: each button is as wide as its label needs, and Cancel goes
+         * to a second row when the first is full. Measured here so the list
+         * leaves room for that row. */
+        auto iosBtnW = [&](const char *label) {
+            float w = ImGui::CalcTextSize(label).x
+                    + ImGui::GetStyle().FramePadding.x * 2.0f;
+            return w > 90.0f * s ? w : 90.0f * s;
+        };
+        const float iosGap = ImGui::GetStyle().ItemSpacing.x;
+        const float iosRowW =
+            iosBtnW(langGetText(STR_DLGTCP_JOIN)) + iosGap +
+            iosBtnW(langGetText(STR_DLGTCP_REJOIN)) + iosGap +
+            iosBtnW(langGetText(STR_DLGBROWSER_PLAYER_NAME_BTN)) + iosGap +
+            iosBtnW(langGetText(STR_DLGBROWSER_MANUAL)) + iosGap +
+            iosBtnW(langGetText(STR_CANCEL));
+        const bool iosTwoRows =
+            iosRowW > panelW - ImGui::GetStyle().WindowPadding.x * 2.0f;
+        if (iosTwoRows) bottomH += frameH;
+#endif
 
         /* Status-dot colours, shared by the legend and the list rows. */
         const ImVec4 dotGreen (0.40f, 0.80f, 0.40f, 1.0f);  /* in lobby */
@@ -2362,7 +2383,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 #else
             if (!hasSelection) ImGui::BeginDisabled();
 
+#if defined(__IPHONEOS__)
+            if (ImGui::Button(langGetText(STR_DLGTCP_JOIN),
+                              ImVec2(iosBtnW(langGetText(STR_DLGTCP_JOIN)), btnH))) {
+#else
             if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, btnH))) {
+#endif
                 const ServerEntry &e = servers[selectedItem];
                 /* No version-equality gate — the pre-flight info-request
                  * inside gameFrontSetDlgState(openUdpJoin) surfaces a
@@ -2438,7 +2464,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             /* Rejoin */
             ImGui::SameLine();
             if (!hasSelection) ImGui::BeginDisabled();
+#if defined(__IPHONEOS__)
+            if (ImGui::Button(langGetText(STR_DLGTCP_REJOIN),
+                              ImVec2(iosBtnW(langGetText(STR_DLGTCP_REJOIN)), btnH))) {
+#else
             if (ImGui::Button(langGetText(STR_DLGTCP_REJOIN), ImVec2(btnW, btnH))) {
+#endif
                 const ServerEntry &e = servers[selectedItem];
                 char playerName[PLAYER_NAME_LEN];
                 gameFrontGetPlayerName(playerName);
@@ -2457,7 +2488,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             imguiHandOnHover();
             if (!hasSelection) ImGui::EndDisabled();
 
-            /* New Game */
+#if !defined(__IPHONEOS__)
+            /* New Game. Not on iOS: a phone does not host. */
             ImGui::SameLine();
             if (ImGui::Button(langGetText(STR_DLGBROWSER_NEWGAME), ImVec2(btnW, btnH))) {
                 char playerName[PLAYER_NAME_LEN];
@@ -2471,10 +2503,17 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             }
             imguiHandOnHover();
             if (useTracker) imguiHelpTooltip(langGetText(STR_DLGBROWSER_NEWGAME_PORTFWD_TIP));
+#endif
 
             /* Player Name */
+#if defined(__IPHONEOS__)
+            ImGui::SameLine();
+            if (ImGui::Button(langGetText(STR_DLGBROWSER_PLAYER_NAME_BTN),
+                              ImVec2(iosBtnW(langGetText(STR_DLGBROWSER_PLAYER_NAME_BTN)), btnH))) {
+#else
             ImGui::SameLine(0.0f, 20.0f);
             if (ImGui::Button(langGetText(STR_DLGBROWSER_PLAYER_NAME_BTN), ImVec2(btnW + 30.0f * s, btnH))) {
+#endif
                 gameFrontGetPlayerName(nameEditBuf);
                 ImGui::OpenPopup(setNamePopupId);
             }
@@ -2482,7 +2521,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
             /* Manual Connect */
             ImGui::SameLine();
+#if defined(__IPHONEOS__)
+            if (ImGui::Button(langGetText(STR_DLGBROWSER_MANUAL),
+                              ImVec2(iosBtnW(langGetText(STR_DLGBROWSER_MANUAL)), btnH))) {
+#else
             if (ImGui::Button(langGetText(STR_DLGBROWSER_MANUAL), ImVec2(btnW, btnH))) {
+#endif
                 /* Open the existing UDP setup dialog */
                 gameFrontSetDlgState(useTracker ? openInternetManual : openLanManual);
                 result = useTracker ? (int)openInternetManual : (int)openLanManual;
@@ -2497,10 +2541,27 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
              * exact position and the glyph fits beside it. */
             float cancelX = panelW - btnW - 16.0f * s;
             if (padLegend) cancelX -= glyphH + 4.0f;
+#if defined(__IPHONEOS__)
+            /* Right-aligned at its own width, on the next row when the first
+             * is full (see iosTwoRows above). */
+            const float iosCancelW = iosBtnW(langGetText(STR_CANCEL));
+            cancelX = panelW - iosCancelW - 16.0f * s;
+            if (padLegend) cancelX -= glyphH + 4.0f;
+            if (iosTwoRows) {
+                ImGui::SetCursorPosX(cancelX);
+            } else {
+                ImGui::SameLine(cancelX);
+            }
+#else
             ImGui::SameLine(cancelX);
+#endif
             glyphInline(SI_ACTION_MENU_CANCEL);
             WBUI::PushCancelStyle();
+#if defined(__IPHONEOS__)
+            bool cancelClicked = ImGui::Button(langGetText(STR_CANCEL), ImVec2(iosCancelW, btnH));
+#else
             bool cancelClicked = ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, btnH));
+#endif
             WBUI::PopCancelStyle();
             if (cancelClicked || WBUI::CancelKeyPressed()) {
                 gameFrontSetDlgState(openWelcome);

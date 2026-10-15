@@ -1552,6 +1552,17 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                      ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
                     wantLeaveConfirm = true;
                 }
+#if defined(__IPHONEOS__)
+                /* Ready stays disabled until the map has arrived, and the
+                 * progress is otherwise only on the Map tab, while the lobby
+                 * opens on Players. A phone has no hover to ask why. */
+                if (!spectator && !clientSimIsMapDownloadComplete(cs)) {
+                    float dlProgress = 0.0f;
+                    ImGui::SameLine(0, 12);
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextDisabled("%s", lobbyMapTransferLine(cs, &dlProgress));
+                }
+#endif
 
                 /* LT/RT switch tabs — the two trigger glyphs at the right of
                  * the same button row, no text label (no string fits). */

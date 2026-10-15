@@ -1699,15 +1699,21 @@ static void gameFrontValidateWbnBeforeJoin(void) {
   playerName[0] = '\0';
   errorMsg[0] = '\0';
 
-  if (winbolonetAuthValidate(token, playerName, &rank, &rankTotal, &stats, errorMsg)) {
+  bool tokenRejected = FALSE;
+  if (winbolonetAuthValidateEx(token, playerName, &rank, &rankTotal, &stats, errorMsg,
+                               &tokenRejected)) {
     gameFrontSetWinbolonetRank(rank, rankTotal);
     gameFrontSetWinbolonetStats(&stats);
     if (playerName[0] != '\0') {
       gameFrontSetPlayerName(playerName);
     }
-  } else {
+  } else if (tokenRejected) {
     fprintf(stderr, "[gameFront] WBN token validation failed: %s\n", errorMsg);
     gameFrontClearWinbolonetToken();
+  } else {
+    /* No answer from WinBolo.net: keep the token for the next try rather
+     * than signing the player out over a dropped connection. */
+    fprintf(stderr, "[gameFront] WBN token not checked: %s\n", errorMsg);
   }
 }
 

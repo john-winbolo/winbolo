@@ -120,6 +120,13 @@ bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut
   return FALSE;
 }
 
+/* Reports the token as turned down, so callers clear it as they always
+ * have here. */
+bool winbolonetAuthValidateEx(const char *token, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg, bool *tokenRejectedOut) {
+  if (tokenRejectedOut) *tokenRejectedOut = TRUE;
+  return winbolonetAuthValidate(token, playerNameOut, rankOut, rankTotalOut, statsOut, errorMsg);
+}
+
 void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills) {
   (void)mapName; (void)numBases; (void)numPills; (void)freeBases; (void)freePills;
 }

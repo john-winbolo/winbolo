@@ -283,6 +283,14 @@ extern "C" int imguiUdpSetupShow(void) {
          * hosting and rejoining being the deliberate choices of the three. */
         bool enterJoin = false;
 #if BOLO_MOBILE || defined(__IPHONEOS__)
+#if defined(__IPHONEOS__)
+        /* Return is the phone keyboard's "done" key, so on the address and
+         * port fields it only closes the field; the name field, last of the
+         * four, still joins. */
+        const ImGuiInputTextFlags enterJoinFlag = ImGuiInputTextFlags_None;
+#else
+        const ImGuiInputTextFlags enterJoinFlag = ImGuiInputTextFlags_EnterReturnsTrue;
+#endif
         /* On mobile, labels left, narrow inputs right-aligned on same line */
         float inputW = panelW * 0.225f;
         float labelW = panelW - inputW - 32.0f * s;
@@ -292,7 +300,7 @@ extern "C" int imguiUdpSetupShow(void) {
         ImGui::SetNextItemWidth(inputW);
         enterJoin |= ImGui::InputText("##address", address, FILENAME_MAX,
                          ImGuiInputTextFlags_CallbackEdit |
-                         ImGuiInputTextFlags_EnterReturnsTrue,
+                         enterJoinFlag,
                          udpAddressEditCallback, &addrCtx);
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_THEREUDP));
@@ -300,14 +308,14 @@ extern "C" int imguiUdpSetupShow(void) {
         ImGui::SetNextItemWidth(inputW);
         enterJoin |= ImGui::InputText("##targetPort", targetPortBuf, sizeof(targetPortBuf),
                          ImGuiInputTextFlags_CharsDecimal |
-                         ImGuiInputTextFlags_EnterReturnsTrue);
+                         enterJoinFlag);
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_USUDP));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
         enterJoin |= ImGui::InputText("##myPort", myPortBuf, sizeof(myPortBuf),
                          ImGuiInputTextFlags_CharsDecimal |
-                         ImGuiInputTextFlags_EnterReturnsTrue);
+                         enterJoinFlag);
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_NAME));
         ImGui::SameLine(labelW);

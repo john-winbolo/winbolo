@@ -122,6 +122,7 @@ struct WbnLoginWork {
     bool steamSilent;   /* isSteam: launch re-auth (true) vs visible button (false) */
     bool isRegister;
     bool success;
+    bool tokenRejected;  /* validate: WinBolo.net said the token is not valid */
     SDL_AtomicInt done;
 };
 
@@ -153,7 +154,7 @@ static int wbnLoginThreadFunc(void *data) {
                                          w->playerNameOut, &w->rankOut, &w->rankTotalOut,
                                          &w->statsOut, w->errorMsg);
     } else if (w->isValidate) {
-        w->success = winbolonetAuthValidate(w->token, w->playerNameOut, &w->rankOut, &w->rankTotalOut, &w->statsOut, w->errorMsg);
+        w->success = winbolonetAuthValidateEx(w->token, w->playerNameOut, &w->rankOut, &w->rankTotalOut, &w->statsOut, w->errorMsg, &w->tokenRejected);
     } else {
         w->success = winbolonetAuthLogin(w->username, w->password, w->tokenOut, w->expiryOut, w->playerNameOut, &w->rankOut, &w->rankTotalOut, &w->statsOut, w->errorMsg);
     }
@@ -390,7 +391,11 @@ static void wbnCheckThread(void) {
             if (!wbnWork.isValidate) {
                 wbnState = WBN_ERROR;
             } else {
-                gameFrontClearWinbolonetToken();
+                /* Only a token WinBolo.net turned down is dropped; one it
+                 * could not be asked about stays for the next check. */
+                if (wbnWork.tokenRejected) {
+                    gameFrontClearWinbolonetToken();
+                }
                 wbnState = WBN_IDLE;
             }
         }
