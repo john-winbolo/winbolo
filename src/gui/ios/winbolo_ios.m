@@ -175,6 +175,21 @@ int main(int argc, char *argv[]) {
 
     SDL_Init(0);
 
+    /* Logging is off unless WINBOLO_LOG is set in the environment, as on the
+       desktop; with it set the file lands in the app's preferences
+       directory as winbolo.log. Without this call nothing the WB_LOG
+       macros write reaches the console or a file. */
+    wb_log_init("WinBolo", "WinBolo", "winbolo.log");
+    atexit(wb_log_shutdown);
+
+    /* The bot brain worker pool, sized from the CPU cores as on the
+       desktop. Without it every brain thinks serially on the server tick
+       thread. */
+    if (!serverSimBotPoolInit(0)) {
+        WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[iOS] serverSimBotPoolInit failed");
+        return 1;
+    }
+
     /* Change working directory to the app bundle */
     const char *basePath = SDL_GetBasePath();
     if (basePath) {
@@ -280,6 +295,7 @@ ios_game_start:
             clientMutexDestroy();
             sdl3DrawCleanup();
             soundCleanup();
+            serverSimBotPoolDestroy();
             SDL_Quit();
             return 0;
         }
@@ -471,6 +487,7 @@ ios_game_start:
     clientMutexDestroy();
     sdl3DrawCleanup();
     soundCleanup();
+    serverSimBotPoolDestroy();
     SDL_Quit();
     return 0;
 }

@@ -857,7 +857,15 @@ set(IOS_DATA_BMP
     ${CMAKE_SOURCE_DIR}/data/logo.bmp
     ${CMAKE_SOURCE_DIR}/data/base.bmp
     ${CMAKE_SOURCE_DIR}/data/pillbox.bmp
+    # The gunsight image sdl3draw.c decodes, and the themed bot names the
+    # lobby's bot pools read; both are looked up as data/<name>.
+    ${CMAKE_SOURCE_DIR}/data/crosshairs_17x17.png
+    ${CMAKE_SOURCE_DIR}/data/bot_names.json
 )
+# The mods that ship with the build: scenario_host.c lists <base>/data/mods.
+file(GLOB IOS_DATA_MODS "${CMAKE_SOURCE_DIR}/data/mods/*.lua")
+# Country flags for the player list, drawn from the code the server sends.
+file(GLOB IOS_DATA_FLAGS "${CMAKE_SOURCE_DIR}/data/flags/*.svg")
 # Data files that go into the root of the bundle (next to the executable)
 set(IOS_DATA_ROOT
     ${CMAKE_SOURCE_DIR}/data/smalllogo.bmp
@@ -876,7 +884,11 @@ file(GLOB IOS_DATA_FONT
     "${CMAKE_SOURCE_DIR}/data/fonts/*.ttf"
     "${CMAKE_SOURCE_DIR}/data/fonts/*.otf"
 )
-file(GLOB IOS_DATA_MAPS "${CMAKE_SOURCE_DIR}/data/maps/*.map")
+# A scripted map carries its scenario as a .lua beside it, so both go.
+file(GLOB IOS_DATA_MAPS
+    "${CMAKE_SOURCE_DIR}/data/maps/*.map"
+    "${CMAKE_SOURCE_DIR}/data/maps/*.lua"
+)
 file(GLOB IOS_DATA_SOUNDS "${CMAKE_SOURCE_DIR}/data/sounds/*.wav")
 file(GLOB IOS_DATA_SVG "${CMAKE_SOURCE_DIR}/data/svg/*.png" "${CMAKE_SOURCE_DIR}/data/svg/*.svg")
 file(GLOB IOS_DATA_UI "${CMAKE_SOURCE_DIR}/data/ui/*.svg")
@@ -1047,6 +1059,8 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     ${IOS_DATA_ROOT}
     ${IOS_DATA_ROOT_MAPS}
     ${IOS_DATA_MAPS}
+    ${IOS_DATA_MODS}
+    ${IOS_DATA_FLAGS}
     ${IOS_DATA_FONT}
     ${IOS_BRAIN_SCRIPTS}
     ${IOS_DATA_SOUNDS}
@@ -1072,6 +1086,12 @@ set_source_files_properties(${IOS_DATA_FONT} PROPERTIES
 )
 set_source_files_properties(${IOS_DATA_MAPS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/maps"
+)
+set_source_files_properties(${IOS_DATA_MODS} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "data/mods"
+)
+set_source_files_properties(${IOS_DATA_FLAGS} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "data/flags"
 )
 set_source_files_properties(${IOS_BRAIN_SCRIPTS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "Brains/GoalHunter"
@@ -1105,7 +1125,7 @@ set_source_files_properties(${IOS_ASSET_CATALOG} PROPERTIES
 )
 
 # Organize in Xcode sidebar
-source_group("Resources" FILES ${IOS_INFO_PLIST} ${IOS_DATA_BMP} ${IOS_DATA_FONT} ${IOS_DATA_MAPS} ${IOS_DATA_SOUNDS} ${IOS_DATA_SVG} ${IOS_DATA_UI} ${IOS_DATA_UI_PING})
+source_group("Resources" FILES ${IOS_INFO_PLIST} ${IOS_DATA_BMP} ${IOS_DATA_FONT} ${IOS_DATA_MAPS} ${IOS_DATA_MODS} ${IOS_DATA_FLAGS} ${IOS_DATA_SOUNDS} ${IOS_DATA_SVG} ${IOS_DATA_UI} ${IOS_DATA_UI_PING})
 source_group("Brains" FILES ${IOS_BRAIN_SCRIPTS})
 source_group("Bolo Engine" FILES ${IOS_BOLO_SOURCES})
 source_group("Server" FILES ${IOS_SERVER_SOURCES})
