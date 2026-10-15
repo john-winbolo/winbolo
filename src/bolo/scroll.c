@@ -318,6 +318,38 @@ void scrollCenterObject(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE object
   ss->initialized = FALSE;
 }
 
+bool scrollCenterWorld(ScrollState *ss, BYTE *xValue, BYTE *yValue, WORLD worldX, WORLD worldY) {
+  /* The same framing scrollCenterObject gives a tank in the middle of its
+   * square, carried to the world unit: the drawn hull's top-left corner
+   * (worldX - TANK_SUBTRACT) lands on column SCROLL_CENTER. Not clamped to
+   * the map edge, so it agrees with scrollCenterObject wherever the two
+   * meet. */
+  int desiredSubX = (int)worldX - TANK_SUBTRACT - SCROLL_CENTER * AUTOSCROLL_SUB_PER_TILE;
+  int desiredSubY = (int)worldY - TANK_SUBTRACT - SCROLL_CENTER * AUTOSCROLL_SUB_PER_TILE;
+  int maxSub = 255 * AUTOSCROLL_SUB_PER_TILE;
+  BYTE newX;
+  BYTE newY;
+  bool moved;
+
+  if (desiredSubX < 0)      desiredSubX = 0;
+  if (desiredSubY < 0)      desiredSubY = 0;
+  if (desiredSubX > maxSub) desiredSubX = maxSub;
+  if (desiredSubY > maxSub) desiredSubY = maxSub;
+  newX = (BYTE)(desiredSubX / AUTOSCROLL_SUB_PER_TILE);
+  newY = (BYTE)(desiredSubY / AUTOSCROLL_SUB_PER_TILE);
+  moved = (bool)(newX != *xValue || newY != *yValue);
+  *xValue = newX;
+  *yValue = newY;
+  if (g_scrollSubTilePrecision) {
+    ss->subPosX = (int16_t)(desiredSubX - (int)newX * AUTOSCROLL_SUB_PER_TILE);
+    ss->subPosY = (int16_t)(desiredSubY - (int)newY * AUTOSCROLL_SUB_PER_TILE);
+  } else {
+    ss->subPosX = 0;
+    ss->subPosY = 0;
+  }
+  return moved;
+}
+
 /* Classic WinBolo autoscroll.
  *
  * When the crosshair (gunsight) touches a screen edge, push the view that

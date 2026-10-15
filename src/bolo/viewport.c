@@ -391,9 +391,31 @@ void viewportFollowTank(ViewPort *vp, ScrollState *scroll, tank myTank) {
 
 /* The pill and base index a square holds, as the 0-based number the server's
  * CMD_VIEW_STATE uses. Only ever called for a square a cycling helper has just
- * reported, so the not-found case is unreachable; 0 stands in for it. */
-static BYTE viewportPillIndexAt(struct GameSim *sim, BYTE mx, BYTE my) {
-  BYTE pillNum = pillsGetViewPillNum(&sim->pb, mx, my, FALSE, FALSE);
+ * reported, so the not-found case is unreachable; 0 stands in for it.
+ *
+ * A square can hold more than one pill record: the one a tank picked up, or
+ * one this client watched leave, keeps its old square. The pill index the
+ * view already holds wins while it is still a watchable pill on that square;
+ * otherwise the first watchable pill there that may be selected (eligible)
+ * does, so the view never names a carried or moved pill. */
+static BYTE viewportPillIndexAt(struct GameSim *sim, PlayerBitMap eligible,
+                                BYTE held, BYTE mx, BYTE my) {
+  BYTE count;   /* Looping variable */
+  BYTE pillNum; /* Fallback lookup */
+
+  if (held < sim->pb->numPills && sim->pb->item[held].x == mx &&
+      sim->pb->item[held].y == my &&
+      pillsCanView(sim, &sim->pb, held, sim->viewPlayer) == TRUE) {
+    return held;
+  }
+  for (count = 0; count < sim->pb->numPills; count++) {
+    if (sim->pb->item[count].x == mx && sim->pb->item[count].y == my &&
+        (eligible & ((PlayerBitMap)1 << count)) != 0 &&
+        pillsCanView(sim, &sim->pb, count, sim->viewPlayer) == TRUE) {
+      return count;
+    }
+  }
+  pillNum = pillsGetWatchPillNum(sim, &sim->pb, mx, my, sim->viewPlayer);
   return (BYTE)(pillNum == PILL_NOT_FOUND ? 0 : pillNum - 1);
 }
 
@@ -470,7 +492,8 @@ static bool viewportItemCheck(struct GameSim *sim, uint8_t kind,
     if (pillsCheckView(sim, &sim->pb, *x, *y) == FALSE) {
       return FALSE;
     }
-    *target = viewportPillIndexAt(sim, *x, *y);
+    *target = viewportPillIndexAt(sim, viewportEligibleMask(in, kind), *target,
+                                  *x, *y);
     return viewportItemEligible(in, kind, *target);
   case VIEW_KIND_BASE:
     if (basesCheckView(sim, &sim->bs, *x, *y) == FALSE) {
@@ -501,7 +524,8 @@ static bool viewportItemNext(struct GameSim *sim, uint8_t kind,
     result = pillsGetNextView(sim, &sim->pb, viewportEligibleMask(in, kind),
                               x, y, prev);
     if (result == TRUE) {
-      *target = viewportPillIndexAt(sim, *x, *y);
+      *target = viewportPillIndexAt(sim, viewportEligibleMask(in, kind),
+                                    PILL_NOT_FOUND, *x, *y);
     }
     return result;
   case VIEW_KIND_BASE:
@@ -535,7 +559,8 @@ static bool viewportItemMove(struct GameSim *sim, uint8_t kind,
     result = pillsMoveView(sim, &sim->pb, viewportEligibleMask(in, kind),
                            x, y, horz, vert);
     if (result == TRUE) {
-      *target = viewportPillIndexAt(sim, *x, *y);
+      *target = viewportPillIndexAt(sim, viewportEligibleMask(in, kind),
+                                    PILL_NOT_FOUND, *x, *y);
     }
     return result;
   case VIEW_KIND_BASE:

@@ -24,6 +24,8 @@
 #include "control_event.h"          /* ControlEvent / CTRL_VIEW_TARGET */
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* serverSimBuildViewports / ViewportRect / view state */
+#include "client_sim.h"
+#include "client_sim_internal.h"   /* the transport binding and viewport, set directly */
 #include "game_sim.h"
 #include "tank.h"
 #include "pillbox.h"
@@ -755,6 +757,72 @@ int run_view_cycle_pick_direction(void) {
                   "a not-found pick must not write its outputs (%u,%u,%u)",
                   (unsigned)t, (unsigned)mx, (unsigned)my);
 
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The server drops a view whose item stops qualifying back to the tank and
+ * does not tell the client. A client still watching the same item once it
+ * qualifies again has nothing new to report, so clientSimSyncViewState sends
+ * an unchanged item view again once CLIENT_VIEW_STATE_RESEND_TICKS have
+ * passed — and only then, and never for the tank view. */
+int run_view_state_resend(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL && pillsGetNumPills(&gs->pb) >= 1,
+                  "this case needs a pill");
+
+    ClientSim *cs = clientSimAlloc();
+    UT_ASSERT_MSG(cs != NULL, "clientSimAlloc returned NULL");
+    clientSimCreate(cs);
+    /* Bound in-process, so a report lands in the server straight away. */
+    cs->hasTransport   = true;
+    cs->isUdpTransport = false;
+    cs->boundServerSim = sim;
+    cs->myPlayerNum    = 0;
+
+    cs->viewport.viewKind   = VIEW_KIND_PILL;
+    cs->viewport.viewTarget = 0;
+    clientSimSyncViewState(cs);
+    UT_ASSERT_MSG(sim->viewKind[0] == VIEW_KIND_PILL && sim->viewTarget[0] == 0,
+                  "the first report did not reach the server (kind %u)",
+                  sim->viewKind[0]);
+
+    /* The server drops it, as serverSimValidateViewTargets does. */
+    sim->viewKind[0]   = VIEW_KIND_TANK;
+    sim->viewTarget[0] = 0;
+    {
+        int t;
+        for (t = 1; t < CLIENT_VIEW_STATE_RESEND_TICKS; t++) {
+            clientSimSyncViewState(cs);
+        }
+    }
+    UT_ASSERT_MSG(sim->viewKind[0] == VIEW_KIND_TANK,
+                  "the view was reported again before the resend interval");
+    clientSimSyncViewState(cs);
+    UT_ASSERT_MSG(sim->viewKind[0] == VIEW_KIND_PILL && sim->viewTarget[0] == 0,
+                  "the unchanged pill view was not reported again after %d "
+                  "ticks", CLIENT_VIEW_STATE_RESEND_TICKS);
+
+    /* The tank view is not repeated. */
+    cs->viewport.viewKind = VIEW_KIND_TANK;
+    clientSimSyncViewState(cs);
+    UT_ASSERT_MSG(sim->viewKind[0] == VIEW_KIND_TANK,
+                  "the change to the tank view was not reported");
+    sim->viewKind[0] = VIEW_KIND_BASE;   /* a marker the client must not touch */
+    {
+        int t;
+        for (t = 0; t < 3 * CLIENT_VIEW_STATE_RESEND_TICKS; t++) {
+            clientSimSyncViewState(cs);
+        }
+    }
+    UT_ASSERT_MSG(sim->viewKind[0] == VIEW_KIND_BASE,
+                  "the tank view was reported again with nothing changed");
+
+    cs->hasTransport   = false;
+    cs->boundServerSim = NULL;
+    clientSimDestroy(cs);
     serverSimDestroy(sim);
     return 0;
 }

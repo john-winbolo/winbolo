@@ -160,6 +160,12 @@ void            scrollSetSubTilePrecision(bool on);
 void scrollCreate(ScrollState *ss);
 void scrollSetScrollType(ScrollState *ss, bool isAuto);
 void scrollCenterObject(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY);
+/* Centres the view on a world position (256 to a square) the way
+ * scrollCenterObject centres it on a square, keeping the part of a square in
+ * subPosX/Y when sub-tile precision is on so a moving item is followed
+ * smoothly. Touches nothing else in the scroll state. Returns whether the
+ * whole-tile offset changed, so the caller knows to rebuild the view. */
+bool scrollCenterWorld(ScrollState *ss, BYTE *xValue, BYTE *yValue, WORLD worldX, WORLD worldY);
 /* ownRenderX/ownRenderY: the local tank's rendered (render-error-smoothed)
  * world position. The ENHANCED sub-tile autoscroll centres on it so the
  * camera tracks the drawn hull instead of shearing against it; the classic

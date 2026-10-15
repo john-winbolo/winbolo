@@ -366,6 +366,9 @@ void clientSimRenderPrepare(ClientSim *cs, uint32_t nowMs) {
   clientSimGetTimingStats(cs, NULL, &jitterMs, NULL, NULL);
   d = interpRenderControl(&cs->interpRenderCtl, (float)jitterMs, nowMs);
   clientSnapshotRenderInterp(cs, nowMs, d.extraDelayMs, d.discrete);
+  /* An ally view follows the tank where it is drawn this frame, which the
+   * interpolation above has only just worked out. */
+  clientSimFollowAllyView(cs);
 }
 
 /* === State queries === */
