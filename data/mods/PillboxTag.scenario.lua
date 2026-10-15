@@ -44,7 +44,8 @@
 -- a tank needs a boost only past some 144 squares and has it the whole way
 -- past some 161. Then it fades as a base's does. It goes to its fade early
 -- the moment the tank is within 50 squares, and it ends when the tank dies.
--- A base or a take during it replaces it. The holder never respawns holding.
+-- A base or a take during it replaces it. The holder never respawns holding,
+-- and one whose built prize still stands gets no boost back to it.
 -- All of those numbers are the host's to change in the lobby (see "Tweak
 -- these" below and boost_use).
 --
@@ -59,11 +60,16 @@
 -- The others shoot it down to nothing and drive over it, which makes the one
 -- who picks it up the new holder.
 --
--- If the holder dies while the prize is out of his tank, it is a dead
--- pillbox, free for anyone to take, and nobody holds it. Built, it goes to
--- nothing where it stands; shot down by him and not yet picked up, it is dead
--- already; in his man's hands, the man goes on and puts it down dead. In his
--- tank it drops with the tank, dead, as it always has.
+-- If the holder dies while his prize stands built, he keeps it: he is still
+-- the holder, it keeps its armour, and it scores nothing while it stands,
+-- so the others have to shoot it down to take it. He comes back as its
+-- holder, slow legs and all, and goes back for it (see
+-- walled.DEAD_HOLDER_KEEPS_BUILT; off, it goes to nothing where it stands
+-- and is anybody's). If he dies while the prize is otherwise out of his
+-- tank, it is a dead pillbox, free for anyone to take, and nobody holds it:
+-- shot down by him and not yet picked up, it is dead already; in his man's
+-- hands, the man goes on and puts it down dead. In his tank it drops with
+-- the tank, dead, as it always has.
 --
 -- A tank only picks up a dead pillbox, so the holder cannot take
 -- his own back up while it stands; it has to be shot down first (his own
@@ -213,6 +219,18 @@ local FORT_SECONDS        = 10  -- the longest a fort stands before the guard
                                 -- takes it back
 local FORT_REPAIR_BELOW   = 3   -- the guard holds one tree, for a repair, only
                                 -- while the fort has less armour than this
+local walled      = {}          -- the walled-in prize: watch, the watch on a
+                                -- standing prize or nil, and its helpers (see
+                                -- walled.update). Declared here so the knob
+                                -- below can sit with the FORT_ ones.
+-- A field, not a local: the file is at Lua's limit of top-level locals, and
+-- a gate arena joined to it must still fit (see wet_time).
+walled.DEAD_HOLDER_KEEPS_BUILT = true  -- keel false (old rule: the prize
+                                -- dies with the holder). true: a holder who
+                                -- dies while his prize stands built (armour
+                                -- over 0) stays the holder, and the prize
+                                -- keeps its armour; the hunters must shoot it
+                                -- down (see on_tank_killed)
 local LAST_SHOT_ARMOUR    = 1   -- a fort shot down to this armour is taken
                                 -- back by its guard before a hunter kills it
 local RUN_FROM_WITHIN     = 11  -- hunters this close are what a bot holder
@@ -394,7 +412,9 @@ end
 
 local plan        = nil         -- what a bot holder is doing with the prize:
                                 -- nil, or { kind = "hop" | "fort" | "take",
-                                -- x, y, at, built, dead_at, near }
+                                -- x, y, at, built, dead_at, near, died };
+                                -- died: his tank died while it stood built
+                                -- (see walled.DEAD_HOLDER_KEEPS_BUILT)
 local hop_after   = 0           -- the game.tick() a bot holder may next hop
 local man_was_out = false       -- whether the holder's man had the prize out
                                 -- last frame
@@ -405,9 +425,6 @@ local forfeit     = nil         -- { p, x, y }: the seat whose man still has
                                 -- dead
 local run_at      = nil         -- elapsed second of the holder's last run order
 local mine_at     = nil         -- elapsed second of the last mine laid behind
-local walled      = {}          -- the walled-in prize: watch, the watch on a
-                                -- standing prize or nil, and its helpers (see
-                                -- walled.update)
 
 local function whole(n)
   return math.floor(n + 0.5)
@@ -1744,7 +1761,8 @@ walled.FIGHT_MULT = 10          -- while the prize stands as a fort, what a
 
 -- Whether the prize stands as a fort the hunters are to shoot: built, with a
 -- holder, and not a bot holder's hop (a hop stands for a few seconds, and
--- the hunters stay on the holder through it).
+-- the hunters stay on the holder through it). A dead holder's hop is a take
+-- (see on_tank_killed), so it is the hunters' to shoot.
 function walled.fort_stands()
   if over or pill == nil or holder == nil or (plan ~= nil and plan.kind == "hop") then
     return false
@@ -2013,7 +2031,9 @@ local function aim_one(p)
   -- once, and the 30 s net (WALL_FALLBACK_SECONDS) is timed from then.
   --
   -- A bot holder's hop is left as it was: the prize stands for a few seconds
-  -- only, and he shoots it down and takes it back himself.
+  -- only, and he shoots it down and takes it back himself. A holder who dies
+  -- with it standing has it turned into a take (see on_tank_killed), so the
+  -- hunters are sent at it then.
   if standing(pb) then
     if plan ~= nil and plan.kind == "hop" then
       return
@@ -2490,12 +2510,21 @@ local function bot_holder_second()
   --   * when fewer hunters are near it than when it was ordered (counted
   --     round the same square then; see start_plan);
   --   * at LAST_SHOT_ARMOUR (in on_tick).
-  -- A guard who dies loses the prize (see on_tank_killed), so there is no
-  -- dead guard to ask for.
-  if plan ~= nil and plan.built and plan.kind == "fort" and standing(pb) then
+  -- With walled.DEAD_HOLDER_KEEPS_BUILT a guard who dies keeps his fort (see
+  -- on_tank_killed). While he is dead the fort's clock (built_at) and its
+  -- first count (plan.near) stay as they were, so the time keeps counting,
+  -- but nothing is taken back: there is no tank to do it. The first second
+  -- he is alive again the fort is taken back (he respawns away from it, so
+  -- he is no guard of it any more), and the take sends him back to shoot it
+  -- down and pick it up. With the knob off a guard who dies loses the prize,
+  -- so there is no dead guard.
+  if plan ~= nil and plan.built and plan.kind == "fort" and standing(pb) and
+     not me.dead then
     local near = hunters_near(holder, FORT_FREE_WITHIN,
                               { mx = pb.x, my = pb.y })
-    if #near == 0 then
+    if plan.died then
+      take_back("guard respawned")
+    elseif #near == 0 then
       take_back("no hunter near")
     elseif now - plan.built_at >= FORT_SECONDS * 100 and not holder_leads() then
       take_back("time")
@@ -2506,6 +2535,9 @@ local function bot_holder_second()
 
   -- A holder who dies with the prize out of his tank is no holder after
   -- on_tank_killed, and one who dies carrying it is none after the drop.
+  -- With walled.DEAD_HOLDER_KEEPS_BUILT one whose prize stands is still the
+  -- holder, and waits here until he is alive again: his plan (a fort, or a
+  -- hop turned take) goes on from there.
   if me.dead then
     return
   end
@@ -3157,8 +3189,11 @@ end
 
 -- A respawn far from the prize: boost_use.base[p] at this tick and the full
 -- part spawn_hold works out. The holder never spawns holding, but he is
--- skipped all the same. A boost running from before is replaced, not added
--- to; a base or a take later replaces this one the same way.
+-- skipped all the same: one whose built prize stands (see
+-- walled.DEAD_HOLDER_KEEPS_BUILT) respawns as its holder, with the holder's
+-- slow legs and no hunter's boost back to it. A boost running from before is
+-- replaced, not added to; a base or a take later replaces this one the same
+-- way.
 function boost_use.spawned(p, mx, my)
   if over or not running or not boost_use.spawn_on or p == holder then
     return
@@ -3374,13 +3409,21 @@ function on_pill_killed(n, by, scripted)
   aim_everybody()
 end
 
--- A holder who dies while the prize is out of his tank loses it, person or
--- bot: a prize standing on the map goes to nothing where it is, the way a
--- leaving holder's does, one he has shot down is dead already, and one in
--- his man's hands is put down dead when the man gets there (see forfeit in
--- on_pill_placed). Nobody holds it after, so nobody scores, and every hunter
--- is sent at it; the dead player comes back as a hunter. A prize in his tank
--- is left to the drop the death makes, which on_pill_placed already handles.
+-- A holder who dies while the prize is out of his tank, person or bot:
+--   * built and standing (armour over 0): with
+--     walled.DEAD_HOLDER_KEEPS_BUILT he stays the holder and it keeps its
+--     armour. Nobody scores while it stands (only carrying scores, see
+--     carrying), dead or alive. The
+--     hunters are sent at it to shoot it down, which makes it anybody's
+--     (on_pill_killed). He comes back as its holder. With the knob off, it
+--     goes to nothing where it is, the way a leaving holder's does, and he
+--     loses it as below;
+--   * shot down by him (armour 0): it is dead already, and he loses it;
+--   * in his man's hands: it is put down dead when the man gets there (see
+--     forfeit in on_pill_placed), and he loses it.
+-- A holder who loses it is no holder: nobody scores, every hunter is sent at
+-- it, and the dead player comes back as a hunter. A prize in his tank is
+-- left to the drop the death makes, which on_pill_placed already handles.
 --
 -- Any bot's orders go with its tank, holder or not: a brain forgets its
 -- order when its tank dies, so what this script last told that seat is
@@ -3417,6 +3460,30 @@ function on_tank_killed(victim, killer, cause, scripted)
   end
   local walking = man_out(victim)
   if pb.in_tank and not walking then
+    return
+  end
+  if walled.DEAD_HOLDER_KEEPS_BUILT and not walking and standing(pb) then
+    -- He stays the holder and the prize keeps its armour. His take's boost
+    -- and cover end with the tank. A bot's hop turns into a take back, so
+    -- the hunters are sent at it (they leave a hop alone) and he is sent
+    -- back for it once he respawns. A fort stays a fort while he is dead;
+    -- bot_holder_second takes it back once he is alive again (plan.died).
+    boost_from = nil
+    if invuln_seat == victim then
+      invuln_seat = nil
+    end
+    if plan ~= nil and plan.built then
+      plan.died = true
+      if plan.kind == "hop" then
+        plan.kind = "take"
+        plan.taken_at = game.tick()
+      end
+    end
+    game.log(string.format("Pillbox Tag: player %d died with the prize "
+                           .. "built at %d,%d; it is still his", victim,
+                           pb.x, pb.y))
+    tune_everybody()
+    aim_everybody()
     return
   end
   if walking then
@@ -3674,13 +3741,15 @@ function on_tick(tick)
   if over or holder == nil then
     return
   end
-  if plan ~= nil and plan.built and plan.kind == "fort" then
+  local t = game.tank(holder)
+  -- A dead guard cannot fire the last shot (see bot_holder_second).
+  if plan ~= nil and plan.built and plan.kind == "fort" and
+     t ~= nil and not t.dead then
     local pb = game.pill(pill)
     if standing(pb) and pb.armour <= LAST_SHOT_ARMOUR then
       take_back("last shot")
     end
   end
-  local t = game.tank(holder)
   if t == nil or t.dead then
     carry_start()
   else
@@ -3729,7 +3798,9 @@ scenario = {
                 "Carrying it scores a point a second, slows you, empties " ..
                 "your gun; a new holder gets a head start. Built or on " ..
                 "foot it scores nothing, your gun refills, three shells " ..
-                "kill it. Die while it is out and it is anyone's.",
+                "kill it. " .. (walled.DEAD_HOLDER_KEEPS_BUILT and
+                "Die and a built one stays yours." or
+                "Die while it is out and it is anyone's."),
                 math.floor(ROUND_SECONDS / 60)),
   api         = 1,
   kind        = "scenario",
@@ -3809,9 +3880,13 @@ scenario = {
     on_pill_picked_up = "Holder: 1 point/s (and team), slow, unarmed; " ..
                         "boost less on each take until death.",
     on_pill_killed = "A shot-down prize is anybody's (a bot's own hop aside).",
-    on_tank_killed = "Holder dies with the prize out of his tank: it is " ..
-                     "dead, free for anyone to take. A death resets " ..
-                     "the boost and deep water decay.",
+    on_tank_killed = walled.DEAD_HOLDER_KEEPS_BUILT and
+                     ("Holder dies: a built prize stays his, to shoot " ..
+                      "down; on foot it is dead, anyone's. A death resets " ..
+                      "the boost and deep water decay.") or
+                     ("Holder dies with the prize out of his tank: it is " ..
+                      "dead, free for anyone to take. A death resets " ..
+                      "the boost and deep water decay."),
     on_tank_spawned = "A far respawn gets a speed boost back.",
     on_pill_captured = "Only the holder may own a built prize.",
     on_built = "A repair stops at 3 armour.",
