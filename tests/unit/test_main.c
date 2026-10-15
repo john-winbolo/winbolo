@@ -673,6 +673,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_alive_seek",                           run_lv_alive_seek                           },
     { "lv_load_steps",                           run_lv_load_steps                           },
     { "lv_fast_forward_waits",                   run_lv_fast_forward_waits                   },
+    { "lv_same_map_runs",                        run_lv_same_map_runs                        },
     { "lv_event_list_replay",                    run_lv_event_list_replay                    },
     { "lv_event_list_pinned",                    run_lv_event_list_pinned                    },
     { "lv_snapshot_index_lookup",                run_lv_snapshot_index_lookup                },

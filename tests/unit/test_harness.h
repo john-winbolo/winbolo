@@ -1369,6 +1369,8 @@ int run_lv_alive_seek(void);
 int run_lv_load_steps(void);
 /* A forward seek through waits lands where ticking would. */
 int run_lv_fast_forward_waits(void);
+/* A snapshot repeating the last map is stepped over unless the map changed. */
+int run_lv_same_map_runs(void);
 
 /* Log viewer events panel list (test_lv_event_list.c): a replay after a seek
  * back adds no line twice, and pinned lines stay ahead of the timed ones. */

@@ -42,6 +42,7 @@
 #include "logviewer.h"
 #include "lv_log.h"
 #include "blocks.h"
+#include "lv_bolo_map.h"
 #include "test_harness.h"
 #include "zip.h"
 
@@ -951,6 +952,84 @@ int run_lv_fast_forward_waits(void) {
                   lv->gmeLength, tickedLength, lv_logGetCurrentPosition(), tickedPos,
                   (int)lv->state, tickedState, (unsigned)lv->waitLen, tickedWait);
   }
+
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/*
+ * A snapshot whose map runs match the last ones applied, with nothing written
+ * to the map since, is stepped over rather than applied again. One that
+ * matches byte for byte after a log_MapChange must still be applied, or the
+ * changed tile would outlive the snapshot that puts it back. putSnapshot's
+ * one run makes (0,0) and (1,0) grass.
+ *
+ *   opening snapshot              -> tick   0
+ *   NOEVENTS 50                   -> tick  51
+ *   the same snapshot             -> tick  52  (ms 1040, stepped over)
+ *   NOEVENTS 50                   -> tick 103
+ *   MapChange (0,0) to road       -> tick 104  (ms 2080)
+ *   NOEVENTS 50                   -> tick 155
+ *   the same snapshot             -> tick 156  (ms 3120, must apply)
+ *   NOEVENTS 50                   -> tick 207
+ *   LOG_QUIT                      -> tick 208
+ */
+int run_lv_same_map_runs(void) {
+  const char *path = "lv_same_map_runs.wbv";
+  static const uint8_t toRoad[3] = {0, 0, ROAD};
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_MapChange, toRoad, 3);
+  putNoEvents(&b, 50);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic map log failed to build/load");
+  UT_ASSERT_MSG(lv_snapshotCount(&lv->snap) == 3,
+                "the load indexed %d snapshots (want 3)", lv_snapshotCount(&lv->snap));
+
+  lv_screenSeekToTimeMs(1500);
+  UT_ASSERT_MSG(lv_mapGetPos(&lv->mp, 0, 0) == GRASS, "at 1500 (0,0) is %u (want grass)",
+                (unsigned)lv_mapGetPos(&lv->mp, 0, 0));
+  lv_screenSeekToTimeMs(2500);
+  UT_ASSERT_MSG(lv_mapGetPos(&lv->mp, 0, 0) == ROAD, "at 2500 (0,0) is %u (want road)",
+                (unsigned)lv_mapGetPos(&lv->mp, 0, 0));
+
+  /* Playing across the last snapshot puts the grass back... */
+  while (lv->timeRunning < 3500 && lv->isPlaying == TRUE) {
+    lv_screenLogTick();
+  }
+  UT_ASSERT_MSG(lv_mapGetPos(&lv->mp, 0, 0) == GRASS,
+                "played past 3120 (0,0) is %u (want grass)",
+                (unsigned)lv_mapGetPos(&lv->mp, 0, 0));
+
+  /* ...and so does a seek that restores from it, from the road. */
+  lv_screenSeekToTimeMs(2500);
+  UT_ASSERT(lv_mapGetPos(&lv->mp, 0, 0) == ROAD);
+  lv_screenSeekToTimeMs(3500);
+  UT_ASSERT_MSG(lv_mapGetPos(&lv->mp, 0, 0) == GRASS,
+                "seek to 3500 (0,0) is %u (want grass)",
+                (unsigned)lv_mapGetPos(&lv->mp, 0, 0));
+
+  /* Back to before the change, from a map nothing has touched since its last
+     snapshot: the restore steps over the same runs and the grass stays. */
+  lv_screenSeekToTimeMs(1500);
+  UT_ASSERT_MSG(lv_mapGetPos(&lv->mp, 0, 0) == GRASS && lv_mapGetPos(&lv->mp, 1, 0) == GRASS,
+                "back at 1500 (0,0) is %u and (1,0) %u (want grass)",
+                (unsigned)lv_mapGetPos(&lv->mp, 0, 0), (unsigned)lv_mapGetPos(&lv->mp, 1, 0));
 
   lv_decoderDestroy(lv);
   lv_screenSetHideLobby(savedHide);

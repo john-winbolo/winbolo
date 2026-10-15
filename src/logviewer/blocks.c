@@ -516,6 +516,18 @@ size_t lv_logExpectedSize(void) {
   return (logExpected < logMaxSize) ? logExpected : logMaxSize;
 }
 
+/* The bytes from the read position to the end of what has been decompressed,
+   without reading them, or NULL for an XOR'd (v0 or v1) log, whose bytes are
+   not the plaintext. Valid until the next read, position change or grow. */
+const BYTE *lv_blocksPeek(size_t *avail) {
+  if (blockKey != 0 || logData == NULL || logPosition > logSize) {
+    *avail = 0;
+    return NULL;
+  }
+  *avail = logSize - logPosition;
+  return logData + logPosition;
+}
+
 size_t lv_logGetTotalSize(void) {
   return logSize;
 }
