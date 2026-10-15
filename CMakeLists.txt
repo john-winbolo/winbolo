@@ -5505,6 +5505,8 @@ set(_unit_test_names
     view_pill_pos_reveal
     view_pill_update_event_fogged
     view_pill_pos_bot_advantage
+    view_pill_pos_allied
+    view_pill_reveal_full_sync
     tree_hide_enemy
     tree_hide_ally_option
     lgm_visibility_tank_in_trees
@@ -5513,6 +5515,7 @@ set(_unit_test_names
     view_state_bad_claims_degrade
     view_state_invalidation
     view_state_lifecycle
+    view_state_resend
     view_cycle_pick_order
     view_cycle_pick_policy
     view_cycle_pick_direction
@@ -5527,6 +5530,8 @@ set(_unit_test_names
     view_cycle_eligible_mask
     view_cycle_ally_stub
     view_cycle_stale_pill
+    view_cycle_moved_pill
+    view_cycle_ally_follow
     pill_pos_current_lookups
     pill_pos_current_num_split
     pill_pos_current_duplicate_square
@@ -5614,6 +5619,7 @@ set(_unit_test_names
     lgm_draw_centre_error_bounds
     jitter_buffer_grow
     shell_projection
+    shell_projection_match
     sim_rules_classic_defaults
     sim_rules_validate_ranges
     sim_rules_copies_follow
