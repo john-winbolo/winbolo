@@ -3396,6 +3396,9 @@
 #define STR_DLGCONNECTING_PING                   2816
 #define STR_DLGCONNECTING_JOINING                2817
 
+/* The log browser's Open File on iOS, when the picked file cannot be read */
+#define STR_DLGWBN_OPENFILE_FAILED               2818
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

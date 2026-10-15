@@ -172,11 +172,17 @@ time_t ticks = 0;
 static double gameTickAccum = 0.0;
 static Uint64 lastFrameTime = 0;
 
-/* Set while a tutorial message is up in a solo game, as on the desktop: the
-   game ticks stop, the hosted server is paused and the sound is muted, and
-   the mute state found on the way in is put back on the way out. */
+/* The solo-game freezes, as on the desktop: while a tutorial message, the
+   pause overlay or the controller-disconnected dialog is up in a solo game,
+   the game ticks stop, the hosted server is paused and the sound is muted,
+   and the mute state found on the way in is put back on the way out. The
+   last two are drawn only in the iPad's desktop layout. */
 static bool s_tutorialPaused = FALSE;
 static bool s_tutorialPrevMuted = FALSE;
+static bool s_deckPaused = FALSE;
+static bool s_deckPrevMuted = FALSE;
+static bool s_controllerLostPaused = FALSE;
+static bool s_controllerLostPrevMuted = FALSE;
 
 /* A joined game over UDP survives a stay in the background only while the
    server still holds the slot. The server drops a client it has heard
@@ -200,6 +206,8 @@ static void windowRunGameTick(ClientSim *cs);
 static void iosEnterBackground(void);
 static void iosResumeForeground(ClientSim *cs);
 void windowTutorialPause(ClientSim *cs, bool active);
+void windowDeckPause(ClientSim *cs, bool active);
+void windowControllerLostPause(ClientSim *cs, bool active);
 
 /* -------------------------------------------------------
  * SDL message handler
@@ -500,7 +508,14 @@ ios_game_start:
                 }
                 continue;
             }
-            while (SDL_PollEvent(&ev)) {
+            if (!uiModeIsTablet()) {
+                /* The iPad's desktop layout takes the desktop's event
+                   handling whole: menu shortcuts, the keys that act on a
+                   press, click to build, the wheel, Key Setup's capture, and
+                   the move to and from the background (windowSuspend-
+                   Background / windowResumeForeground below). */
+                sdl3ImguiProcessEvents(cs);
+            } else while (SDL_PollEvent(&ev)) {
                 SDL_Event rawEv = ev;
                 /* Convert coordinates to logical presentation space for ImGui */
                 SDL_Renderer *ren = sdl3DrawGetRenderer();
@@ -514,26 +529,13 @@ ios_game_start:
                    tablet mode — ImGui buttons (build bar, etc.) use
                    inputTouchConsumeTapInRect for hit-testing, so the
                    touch system must see every event regardless of
-                   ImGui's WantCaptureMouse state.  The desktop layout (an
-                   iPad with a keyboard) hands events to the game the way
-                   the desktop does: keys to windowKeyPressed and the raw
-                   event to sdl3DrawHandleEvent, which clicks build with,
-                   when ImGui is not using the pointer. */
-                if (uiModeIsTablet()) {
-                    if (rawEv.type == SDL_EVENT_FINGER_DOWN || rawEv.type == SDL_EVENT_FINGER_UP || rawEv.type == SDL_EVENT_FINGER_MOTION ||
-                        rawEv.type == SDL_EVENT_FINGER_CANCELED) {
-                        int tw = 0, th = 0;
-                        if (ren) { SDL_RendererLogicalPresentation m; SDL_GetRenderLogicalPresentation(ren, &tw, &th, &m); }
-                        if (tw <= 0 || th <= 0) SDL_GetWindowSize(sdl3DrawGetWindow(), &tw, &th);
-                        inputTouchProcessEvent(&rawEv, tw, th);
-                    }
-                } else {
-                    if (rawEv.type == SDL_EVENT_KEY_DOWN && !rawEv.key.repeat) {
-                        windowKeyPressed(cs, (int)rawEv.key.scancode);
-                    }
-                    if (!sdl3ImguiWantCaptureMouse()) {
-                        sdl3DrawHandleEvent(cs, &rawEv);
-                    }
+                   ImGui's WantCaptureMouse state. */
+                if (rawEv.type == SDL_EVENT_FINGER_DOWN || rawEv.type == SDL_EVENT_FINGER_UP || rawEv.type == SDL_EVENT_FINGER_MOTION ||
+                    rawEv.type == SDL_EVENT_FINGER_CANCELED) {
+                    int tw = 0, th = 0;
+                    if (ren) { SDL_RendererLogicalPresentation m; SDL_GetRenderLogicalPresentation(ren, &tw, &th, &m); }
+                    if (tw <= 0 || th <= 0) SDL_GetWindowSize(sdl3DrawGetWindow(), &tw, &th);
+                    inputTouchProcessEvent(&rawEv, tw, th);
                 }
                 if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                     winboloQuit = TRUE;
@@ -556,7 +558,8 @@ ios_game_start:
                 /* A tutorial message is up, or the tick just run queued one:
                    stop here and drop the owed time, so the interval the
                    message is up is not fast-forwarded afterwards. */
-                if (s_tutorialPaused || clientFrontTutorialStepShowing()) {
+                if (s_tutorialPaused || s_deckPaused || s_controllerLostPaused ||
+                    clientFrontTutorialStepShowing()) {
                     gameTickAccum = 0.0;
                     break;
                 }
@@ -619,6 +622,8 @@ ios_game_start:
     /* A step left showing, or its pause, would stop the next game's ticks. */
     frontEndTutorialReset();
     windowTutorialPause(NULL, false);
+    windowDeckPause(NULL, false);
+    windowControllerLostPause(NULL, false);
 
     if (!winboloQuit) {
         WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Returning to menu (windowNewGame)");
@@ -909,11 +914,89 @@ void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
 void windowStartTutorial(void) {}
 void windowAllowPlayerNameChange(bool allow) { (void)allow; }
 
-/* Pause hooks driven from sdl3imgui.cpp. The first two exist for desktop
-   situations iOS does not have: a Steam Deck pause menu and a lost
-   controller. The app already stops ticking when it is backgrounded. */
-void windowControllerLostPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
-void windowDeckPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
+/* Window geometry hooks sdl3ImguiProcessEvents calls in the iPad's desktop
+   layout. An iOS window always fills the screen: there is no full screen to
+   switch, no position to remember, and no size to correct. */
+void windowFullScreenChoose(bool on) { (void)on; }
+
+/* Gray or black bars beside the classic screen in the iPad's desktop
+   layout, from Settings; the web's body. */
+void windowLetterboxBarsGray_toggle(void) {
+    letterboxBarsGray = !letterboxBarsGray;
+    gameFrontSaveCurrentPrefs();
+}
+void windowSaveCurrentPosition(void) {}
+void windowComputeAspectCorrectSize(int actualW, int actualH, int actualX, int actualY,
+                                    int *outW, int *outH, int *outX, int *outY) {
+    *outW = actualW;
+    *outH = actualH;
+    *outX = actualX;
+    *outY = actualY;
+}
+
+/* The move to and from the background, as sdl3ImguiProcessEvents reports it
+   in the iPad's desktop layout; the touch layout's own event loop above does
+   the same on the events it reads. */
+void windowSuspendBackground(ClientSim *cs) {
+    (void)cs;
+    if (paused) return;
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Entering background, pausing");
+    paused = TRUE;
+    soundSetMuted(TRUE);
+}
+
+void windowResumeForeground(ClientSim *cs) {
+    (void)cs;
+    if (!paused) return;
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Resuming from background");
+    paused = FALSE;
+    lastFrameTime = SDL_GetTicks();
+    gameTickAccum = 0.0;
+    soundSetMuted(FALSE);
+}
+
+/* A solo game: the tutorial or single player, with no remote players to keep
+   serving. */
+static bool iosSoloSession(ClientSim *cs) {
+    return clientFrontTutorialStepShowing() ||
+           (cs != NULL && clientSimIsSinglePlayer(cs));
+}
+
+/* The hosted server is paused while any of the freezes is on. */
+static void iosUpdateServerPause(void) {
+    gameFrontSetServerPaused(s_tutorialPaused || s_deckPaused ||
+                             s_controllerLostPaused);
+}
+
+/* One freeze's open or close edge. Closing drops the owed tick time, so a
+   held key or the press that closed the overlay does not run on into the
+   game. */
+static void iosSoloPause(ClientSim *cs, bool active, bool *flag, bool *prevMuted) {
+    if (active) {
+        if (*flag || !iosSoloSession(cs)) return;
+        *flag = TRUE;
+        iosUpdateServerPause();
+        *prevMuted = soundIsMuted();
+        soundSetMuted(TRUE);
+    } else {
+        if (!*flag) return;
+        *flag = FALSE;
+        iosUpdateServerPause();
+        gameTickAccum = 0.0;
+        lastFrameTime = SDL_GetTicks();
+        soundSetMuted(*prevMuted);
+    }
+}
+
+/* Pause hooks driven from sdl3imgui.cpp: the controller-disconnected dialog
+   and the pause overlay (Escape or a controller's Start), both drawn in the
+   iPad's desktop layout. */
+void windowControllerLostPause(ClientSim *cs, bool active) {
+    iosSoloPause(cs, active, &s_controllerLostPaused, &s_controllerLostPrevMuted);
+}
+void windowDeckPause(ClientSim *cs, bool active) {
+    iosSoloPause(cs, active, &s_deckPaused, &s_deckPrevMuted);
+}
 
 /* Tutorial message overlay opened or closed, driven by its open/close edge in
    the render path. Solo games only, as on the desktop: the main loop stops
@@ -921,22 +1004,7 @@ void windowDeckPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
    up. Closing drops the owed tick time, so a held touch or the tap that
    dismissed the message does not run on into the game. */
 void windowTutorialPause(ClientSim *cs, bool active) {
-    if (active) {
-        bool solo = clientFrontTutorialStepShowing() ||
-                    (cs != NULL && clientSimIsSinglePlayer(cs));
-        if (!solo || s_tutorialPaused) return;
-        s_tutorialPaused = TRUE;
-        gameFrontSetServerPaused(TRUE);
-        s_tutorialPrevMuted = soundIsMuted();
-        soundSetMuted(TRUE);
-    } else {
-        if (!s_tutorialPaused) return;
-        s_tutorialPaused = FALSE;
-        gameFrontSetServerPaused(FALSE);
-        gameTickAccum = 0.0;
-        lastFrameTime = SDL_GetTicks();
-        soundSetMuted(s_tutorialPrevMuted);
-    }
+    iosSoloPause(cs, active, &s_tutorialPaused, &s_tutorialPrevMuted);
 }
 
 /* -------------------------------------------------------
@@ -1067,8 +1135,21 @@ void frontEndAudioReturningToLobby(bool active) {
 }
 
 void frontEndGameOver(ClientSim *cs) {
+    if (clientSimIsBot(cs)) return;
     if (!clientFrontIsActiveUiSim(cs)) return;
+    /* A round on a locally hosted server that the transport does not tick
+       ends in the lobby: the server holds game over and returns to the lobby
+       with the win message, and the player stays in the game loop. The web
+       makes the same test (main_wasm.c). */
+    ServerSim *srv = gameFrontGetServerSim();
+    if (srv != NULL && cs != NULL && !clientSimTransportTicksServer(cs)) {
+        return;
+    }
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Game over (time limit expired)");
+    /* The time limit message the desktop and the web show; dismissing it
+       leaves the game. */
+    imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBTIMELIMIT_END),
+                      IMGUI_MSG_INFO, IMGUI_MSG_OK);
     finishedLoop = TRUE;
 }
 

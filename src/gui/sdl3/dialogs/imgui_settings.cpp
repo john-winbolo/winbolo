@@ -495,7 +495,7 @@ extern "C" void imguiSettingsRenderLanguagePicker(LangFileEntry *entries,
  * gamepad scroll) are drawn inline by that shell.
  * ------------------------------------------------------- */
 extern "C" void imguiSettingsRenderControlsTab(SettingsRenderCtx *ctx) {
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)  /* iOS: the iPad's desktop layout, by the test below */
     if (!uiModeIsTablet()) {
         if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(120, 0))) {
             ctx->wantKeySetup = true;
@@ -900,9 +900,12 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
     }
 #endif
 
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)
+    /* On iOS only the iPad's desktop layout has the classic screen these
+       settings shape; the touch layout leaves them out, as before. */
+    if (!BOLO_MOBILE || !uiModeIsTablet()) {
     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_FULLSCREEN));
-#if !defined(__EMSCRIPTEN__)
+#if !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)  /* an iOS window is always full screen */
     /* ---- Full screen ---- */
     if (!uiModeIsTablet() && !uiModeIsSteamDeck() && !uiShouldUseControllerMode()) {
         /* Read the window itself rather than the preference, so the tick still
@@ -1003,6 +1006,7 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         imguiHelpTooltip(langGetText(STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP));
         ImGui::EndDisabled();
         ImGui::Unindent();
+    }
     }
 #endif
 
@@ -1715,9 +1719,10 @@ extern "C" void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx) {
         }
     }
 
-#if !BOLO_MOBILE
-    /* ---- Smooth scrolling ---- */
-    {
+#if !defined(__ANDROID__)
+    /* ---- Smooth scrolling ---- the arrow keys of a keyboard; on iOS only
+       the iPad's desktop layout has one. */
+    if (!BOLO_MOBILE || !uiModeIsTablet()) {
         bool ss = (bool)smoothScrollingEnabled;
         if (ImGui::Checkbox(langGetText(STR_MENU_SMOOTH_SCROLLING), &ss)) {
             windowSmoothScrolling_toggle();
@@ -2436,7 +2441,7 @@ static void settingsShowLoop(bool inEditor) {
     /* A quit taken while the editor's settings window was up (see the event
        loop); pushed again for the editor after the window closes. */
     bool quitForEditor = false;
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)  /* iOS: key setup from the iPad's desktop layout */
     bool showKeySetup = false;
     /* Full screen pick from the Display tab, applied after Present alongside
        key setup: -1 = nothing pending, 0 = leave full screen, 1 = enter it. */
@@ -2578,7 +2583,7 @@ static void settingsShowLoop(bool inEditor) {
 #else
         present[STAB_HOSTING] = true;
 #endif
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)  /* iOS: the iPad's desktop layout only, by the tablet test */
         present[STAB_CONTROLS] = !uiModeIsTablet() && !inEditor;
 #else
         present[STAB_CONTROLS] = false;
@@ -2680,7 +2685,7 @@ static void settingsShowLoop(bool inEditor) {
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)
             if (present[STAB_CONTROLS]) {
                 if (ImGui::BeginTabItem(langGetText(STR_LV_WIN_CONTROLS), nullptr,
                         s_pgForceTab == STAB_CONTROLS ? ImGuiTabItemFlags_SetSelected : 0)) {
@@ -2767,7 +2772,7 @@ static void settingsShowLoop(bool inEditor) {
         if (ctx.wantAtlasRebuild) pendingFontRebuild = true;
         /* Same deal for a skin change: the reload happens after Present. */
         if (ctx.wantSkinReload) pendingSkinReload = true;
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)
         /* The shared Controls tab requests key setup via the flag; honour it
            through the existing showKeySetup teardown below. */
         if (ctx.wantKeySetup) showKeySetup = true;
@@ -2843,7 +2848,7 @@ static void settingsShowLoop(bool inEditor) {
             gameFrontReloadSkins();
         }
 
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)
         /* Two things need the dialog's ImGui context torn down and rebuilt
            between Present and the next NewFrame: running key setup, which owns
            the context while it is up, and a full screen change, which lands the

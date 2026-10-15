@@ -56,6 +56,11 @@ extern "C" {
 #include "../../lang.h"
 #include "../../../winbolonet/http.h"
 #include "../../../winbolonet/winbolonet_client.h"
+#if defined(__IPHONEOS__)
+/* SDL's file dialogs are the dummy backend on iOS, so Open File asks through
+   the map editor's picker, which lists the files in Documents. */
+#include "../../../mapeditor/mapeditor_ios_files.h"
+#endif
 #include "../../../bolo/public/wire_limits.h"  /* ROUND_LOG_MAX_BYTES */
 #include "../../../winbolonet/wbn_comments.h"
 #include "cJSON.h"
@@ -1329,6 +1334,52 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                 }
                 imguiHandOnHover();
                 ImGui::SameLine();
+            }
+#elif defined(__IPHONEOS__)
+            /* A recording put in WinBolo's folder in the Files app. The reel
+               plays from memory on iOS, as it does for a download, so the
+               file is read here and handed over the same way. */
+            {
+                static bool s_iosPickerOpen = false;
+                if (ImGui::Button(langGetText(STR_DLGWBN_OPENFILE))) {
+                    meIosFilesBegin(false, "wbv", NULL);
+                    s_iosPickerOpen = true;
+                }
+                imguiHandOnHover();
+                ImGui::SameLine();
+                char picked[FILENAME_MAX];
+                if (s_iosPickerOpen && meIosFilesRender(picked, sizeof(picked))) {
+                    s_iosPickerOpen = false;
+                    if (picked[0] != '\0') {
+                        uint8_t *data = nullptr;
+                        size_t size = 0;
+                        FILE *fp = fopen(picked, "rb");
+                        if (fp) {
+                            if (fseek(fp, 0, SEEK_END) == 0) {
+                                long len = ftell(fp);
+                                if (len > 0 && (unsigned long)len <= (unsigned long)ROUND_LOG_MAX_BYTES &&
+                                    fseek(fp, 0, SEEK_SET) == 0) {
+                                    data = (uint8_t *)malloc((size_t)len);
+                                    if (data && fread(data, 1, (size_t)len, fp) == (size_t)len) {
+                                        size = (size_t)len;
+                                    } else {
+                                        free(data);
+                                        data = nullptr;
+                                    }
+                                }
+                            }
+                            fclose(fp);
+                        }
+                        if (data) {
+                            finalResult.action = WBN_BROWSER_PLAY_MEMORY;
+                            finalResult.memoryData = data;   /* the caller frees it */
+                            finalResult.memorySize = size;
+                            running = false;
+                        } else {
+                            statusText = langGetText(STR_DLGWBN_OPENFILE_FAILED);
+                        }
+                    }
+                }
             }
 #endif
 

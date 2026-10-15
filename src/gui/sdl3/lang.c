@@ -1210,6 +1210,7 @@ static const LangEntry langTable[] = {
     {2815, "Connecting to {string1}..."},
     {2816, "Asking the server about its game..."},
     {2817, "Joining the game..."},
+    {2818, "Could not read that recording."},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},

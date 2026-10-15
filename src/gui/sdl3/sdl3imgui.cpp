@@ -2456,10 +2456,16 @@ static void renderSendMsgContent(ClientSim *cs) {
         }
         s_sendMsgCooldownEnd = SDL_GetTicks() + SEND_MSG_WAIT_MS;
 #if BOLO_MOBILE
-        /* On mobile, close the dialog after sending via Enter */
-        if (pressedEnter) {
-            s_showSendMsg = false;
-            dialogDismissKeyboard(s_window);
+        /* On mobile's touch layout, close the dialog after sending via Enter.
+           The iPad's desktop layout keeps it open, as the desktop does. */
+        if (uiModeIsTablet()) {
+            if (pressedEnter) {
+                s_showSendMsg = false;
+                dialogDismissKeyboard(s_window);
+            }
+        } else {
+            s_sendMsgFocusInput = true;
+            s_sendMsgHideNav = true;
         }
 #else
         s_sendMsgFocusInput = true;
@@ -7851,7 +7857,7 @@ static bool turnTapsAccepted(ClientSim *cs) {
 
 void sdl3ImguiProcessEvents(ClientSim *cs) {
     if (!s_window) return;
-#ifdef __APPLE__
+#if defined(__APPLE__) && !TARGET_OS_IOS
     mac_menubar_set_clientsim(cs);
 #endif
     SDL_Event ev;
@@ -8276,8 +8282,11 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
-        /* Cmd+key shortcuts (non-macOS — macOS routes these through NSMenu in mac_menubar.mm) */
-#ifndef __APPLE__
+        /* Cmd+key shortcuts (non-macOS — macOS routes these through NSMenu in
+           mac_menubar.mm). iOS takes them here, for an iPad with a keyboard:
+           KMOD_PRIMARY is Cmd on Apple, as an iPad keyboard expects and as
+           the menus' "Cmd+" labels already say. */
+#if !defined(__APPLE__) || TARGET_OS_IOS
         if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
             ev.key.windowID == SDL_GetWindowID(s_window) &&
             (ev.key.mod & KMOD_PRIMARY) != 0) {
@@ -9920,8 +9929,12 @@ void sdl3ImguiShowSendMsg(bool open) {
         s_sendMsgFocusInput = true;
         s_closeMenuPopups = true;
 #if BOLO_MOBILE
-        s_showSettings = false;
-        s_showPlayersPanel = false;
+        /* The touch layout has room for one panel at a time; the iPad's
+           desktop layout keeps the others open, as the desktop does. */
+        if (uiModeIsTablet()) {
+            s_showSettings = false;
+            s_showPlayersPanel = false;
+        }
 #endif
     }
 }
@@ -10021,8 +10034,10 @@ void sdl3ImguiShowSettings(void) {
         s_closeMenuPopups = true;
         imguiSettingsSeedPlayerName();
 #if BOLO_MOBILE
-        s_showSendMsg = false;
-        s_showPlayersPanel = false;
+        if (uiModeIsTablet()) {  /* one panel at a time on the touch layout */
+            s_showSendMsg = false;
+            s_showPlayersPanel = false;
+        }
 #endif
     }
 }
@@ -10143,7 +10158,7 @@ void sdl3ImguiShowPlayersPanel(bool open) {
     s_showPlayersPanel = open;
     if (open) s_closeMenuPopups = true;
 #if BOLO_MOBILE
-    if (open) {
+    if (open && uiModeIsTablet()) {  /* one panel at a time on the touch layout */
         s_showSendMsg = false;
         s_showSettings = false;
     }
