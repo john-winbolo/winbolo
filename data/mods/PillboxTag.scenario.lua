@@ -1758,6 +1758,13 @@ walled.FIGHT_MULT = 10          -- while the prize stands as a fort, what a
                                 -- tile is rarely worth the detour. 1: as
                                 -- before. The brain drops it when its armour
                                 -- is critical.
+walled.FORCE_PRIZE_ATTACK = true -- keel false. true: a hunter's attack order
+                                -- on the built prize is forced (the hint's
+                                -- `force` key, GoalHunter's ORDER_HINT_FORCE):
+                                -- an enemy builder beside the prize, or low
+                                -- armour, does not make it drop the order and
+                                -- pick it again every few ticks; it goes on to
+                                -- its firing spot and shoots
 
 -- Whether the prize stands as a fort the hunters are to shoot: built, with a
 -- holder, and not a bot holder's hop (a hop stands for a few seconds, and
@@ -2039,7 +2046,8 @@ local function aim_one(p)
       return
     end
     local prize_attack = { key = "attack pill " .. pill, target = "pill " .. pill,
-                           hint = { verb = "attack", pill = pill } }
+                           hint = { verb = "attack", pill = pill,
+                                    force = walled.FORCE_PRIZE_ATTACK or nil } }
     local w = walled.watch
     -- A hunter sent to a line square is told to attack when the walls are to
     -- be shot through, and with walled.LINE_THEN_ATTACK once it is there.

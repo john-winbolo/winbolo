@@ -1949,6 +1949,14 @@ other moves that keep it alive. The same hint again keeps the order held for
 another minute. GoalHunter's `ORDER_HINT_ATTACK_PILL` switches the key off;
 the KEEL preset has it off, and then an `attack` with only `pill` is ignored.
 
+`force = true` on that `attack` makes the order forced. While the bot holds
+it, its attack on that pillbox is not given up for a preference: an enemy
+builder near the pillbox, or armour low against the pillbox's. The bot goes
+on to its firing spot and shoots. A take that cannot go on (no shells, the
+pillbox dead, no line to shoot it on, a stall) still ends. Only a script can
+force an order; no chat line or bot command can. GoalHunter's
+`ORDER_HINT_FORCE` switches the key off; the KEEL preset has it off.
+
 `release` is the way to call an order off. A `hold` is not: it is a `goto`
 to the square the bot is on, so it is a new order, and the bot holds it.
 After a `release` the bot's own goal choice runs at once, on the next think.

@@ -2449,6 +2449,9 @@ local function take_order(state, world, info, spec, cost, now, group, stolen, sw
     -- ping = it came from a bot-command ping.  Only a ping order on open
     -- ground can become a decoy hold (see GO-THERE DECOY HARD HOLD).
     ping = spec.ping,
+    -- force = a scenario hint forced it (C.ORDER_HINT_FORCE): attack.lua
+    -- keeps the attack_pill take through its preference aborts.
+    force = spec.force,
     -- group = two or more bots on ONE order. squad.lua reads it so an ordered
     -- pair on the same live pill runs the blitz instead of arriving one at a
     -- time.
@@ -3472,6 +3475,7 @@ local function hint_start(state, world, info, cmd, now)
     tid = tid, sender = HINT_SENDER, sender_name = "scenario",
     mx = cmd.target and cmd.target.mx, my = cmd.target and cmd.target.my,
     needs_shells = needs_shells, who = cmd.who, ping = cmd.ping,
+    force = cmd.force,
   }
   o.known[spec.oid] = { spec = spec, tick = now }
   note_last(o, HINT_SENDER, spec.oid)
@@ -3480,6 +3484,8 @@ local function hint_start(state, world, info, cmd, now)
   -- than restarting the job -- what a repeated chat line does.
   if o.held and o.held.oid == spec.oid then
     o.held.expiry = now + (C.ORDER_FOCUS_TICKS or 3000)
+    -- The newest hint says whether the order is forced.
+    o.held.force = spec.force
     return true
   end
   return start_order(state, world, info, spec, cmd.who, now)
@@ -3531,7 +3537,14 @@ local function hint_command(state, world, info, t)
       if not n or n ~= math.floor(n) or n < 1 or n > HINT_MAX_PILLS then
         return nil
       end
-      return { verb = "attack", who = who, target = { kind = "pill", id = n - 1 } }
+      -- `force = true` (C.ORDER_HINT_FORCE): the order is FORCED -- the
+      -- attack does not give the pill up for a preference (an enemy builder
+      -- near it, low armour; attack.lua M.order_forced).  Only the scenario
+      -- hint can set it: no chat line or bot command has the word.
+      local force = C.ORDER_HINT_FORCE
+                    and (t.force == "true" or t.force == "1" or t.force == true) or nil
+      return { verb = "attack", who = who, target = { kind = "pill", id = n - 1 },
+               force = force }
     end
     local pn = hint_num(t.player)
     if not pn or pn < 0 or pn >= ally_state.MAX_TANKS then return nil end

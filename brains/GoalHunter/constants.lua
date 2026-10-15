@@ -5360,6 +5360,18 @@ M.ORDER_RELEASE_HINT      = true  -- keel false (2026-10-14: Pillbox Tag)
 -- false = the `pill` key is not read: an attack hint names a `player` only,
 -- and one with only `pill` is ignored.
 M.ORDER_HINT_ATTACK_PILL  = true  -- keel false (2026-10-14: Pillbox Tag)
+-- A FORCED attack-pill SCENARIO HINT (2026-10-15): { verb = "attack",
+-- pill = N, force = true }.  While the bot holds that order, its attack on
+-- that pill does not give the take up for a preference: an enemy builder
+-- within PILL_DANGER_NEARBY_RADIUS of the pill (it holds and fires, as a
+-- committed blitz does) and the armour-vs-pill-HP floors at approach,
+-- build_walls and charge (as CHARGE NOW does).  Aborts where the take cannot
+-- go on (no shells, pill dead, no shot, a stall) still apply.  Pillbox Tag
+-- forces the hunters' attack on the built prize, which an enemy builder
+-- beside it otherwise made them pick and drop every few ticks.  Only the
+-- scenario hint has the key; chat and bot commands cannot force.
+-- false = the `force` key is not read.
+M.ORDER_HINT_FORCE        = true  -- keel false (2026-10-15: Pillbox Tag)
 -- FIGHT COST MULTIPLIER (2026-10-14): a script makes this bot's tank fights
 -- and hiding dearer with game.bot_init(p, { cfg = "FIGHT_COST_MULT=10" }).
 -- Every attack_tank, kill_lgm and take_cover row in the pool costs
@@ -5900,6 +5912,9 @@ M.PRESETS = {
     --   2026-10-14: the "attack" scenario hint takes `pill = N`. KEEL read
     --   `player` only.
     ORDER_HINT_ATTACK_PILL        = false,
+    --   2026-10-15: a scenario attack-pill hint can be forced. KEEL had no
+    --   `force` key.
+    ORDER_HINT_FORCE              = false,
     --   2026-10-14: a script can make attack_tank, kill_lgm and take_cover
     --   dearer with cfg=FIGHT_COST_MULT. KEEL had no such multiplier.
     FIGHT_COST_MULT_ENABLED       = false,

@@ -6762,6 +6762,59 @@ do
   C.ORDER_HINT_ATTACK_PILL = saved
 end
 
+-- A FORCED "attack" HINT (ORDER_HINT_FORCE): `force = true` marks the held
+-- attack_pill order, and attack.lua's M.order_forced reads it for that pill
+-- only.  No force, or the knob off (keel): the order is not forced.
+do
+  print("orders.lua — the attack hint with force = true is a forced order")
+  local saved_p, saved_f = C.ORDER_HINT_ATTACK_PILL, C.ORDER_HINT_FORCE
+  C.ORDER_HINT_ATTACK_PILL = true
+  local function hint(t, now)
+    local st, w, inf = ST(), W(), I()
+    ORD.on_scenario_hint(st, w, inf, t, now or 100)
+    ORD.update(st, w, inf, (now or 100) + 1)
+    return st, w, inf
+  end
+  C.ORDER_HINT_FORCE = true
+  local st, w, inf = hint({ verb = "attack", pill = "6", force = "true" })
+  local h = st.orders.held
+  check("force: the held order is forced",
+        h ~= nil and h.kind == "attack_pill" and h.tid == 5 and h.force == true,
+        tostring(h and h.force))
+  check("force: order_forced on the ordered pill",
+        ATTACK.order_forced(st, { kind = "attack_pill", target_id = 5 }) == true, "false")
+  check("force: not on another pill",
+        ATTACK.order_forced(st, { kind = "attack_pill", target_id = 4 }) == false, "true")
+  -- A repeat without force takes the force off.
+  ORD.on_scenario_hint(st, w, inf, { verb = "attack", pill = "6" }, 300)
+  check("force: a repeat without force ends it",
+        st.orders.held ~= nil and not st.orders.held.force
+        and ATTACK.order_forced(st, { kind = "attack_pill", target_id = 5 }) == false,
+        tostring(st.orders.held and st.orders.held.force))
+  st = hint({ verb = "attack", pill = "6" })
+  check("force: no key, not forced",
+        st.orders.held ~= nil and not st.orders.held.force, "forced")
+  st = hint({ verb = "attack", player = "7", force = "true" })
+  check("force: an attack on a tank is never forced",
+        st.orders.held ~= nil and not st.orders.held.force, "forced")
+  -- The armour floor is waived for a forced take, as for CHARGE NOW.
+  local low = { armour = 0 }
+  local hp = C.ATTACK_PILL_UNSAFE_HP_THRESHOLD
+  check("force: armour floor waived on a forced take",
+        ATTACK.armour_unsafe_for_pill_take(low, hp, false, { _order_forced = true }) == nil, "?")
+  check("force: armour floor still applies to a take that is not forced",
+        ATTACK.armour_unsafe_for_pill_take(low, hp, false, {}) ~= nil, "?")
+  -- KEEL: the key is not read.
+  C.ORDER_HINT_FORCE = false
+  st = hint({ verb = "attack", pill = "6", force = "true" })
+  check("ORDER_HINT_FORCE=false (keel): force is ignored",
+        st.orders.held ~= nil and not st.orders.held.force
+        and ATTACK.order_forced(st, { kind = "attack_pill", target_id = 5 }) == false, "forced")
+  check("keel preset carries ORDER_HINT_FORCE = false",
+        C.PRESETS.keel.ORDER_HINT_FORCE == false, tostring(C.PRESETS.keel.ORDER_HINT_FORCE))
+  C.ORDER_HINT_ATTACK_PILL, C.ORDER_HINT_FORCE = saved_p, saved_f
+end
+
 -- THE obq LONG FORM IS RANGE-CHECKED (PR #510 review item 5).  A field out
 -- of range drops the whole line: answered true, nothing queued.
 do

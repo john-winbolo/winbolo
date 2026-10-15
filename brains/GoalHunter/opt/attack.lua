@@ -617,6 +617,9 @@ local function armour_unsafe_for_pill_take(info, pill_hp, blitz_2plus, goal)
   -- CHARGE NOW IGNORES SAFETY: a person said go in; armour is not a reason
   -- to stop (C.CHARGE_NOW_IGNORE_SAFETY).
   if goal and goal._charge_now and C.CHARGE_NOW_IGNORE_SAFETY then return nil end
+  -- A FORCED scenario order (M.order_forced): armour is not a reason to
+  -- drop the take either, or the bot picks it, drops it and picks it again.
+  if goal and goal._order_forced then return nil end
   if not pill_hp or pill_hp < C.ATTACK_PILL_UNSAFE_HP_THRESHOLD then return nil end
   local arm = info and info.armour or 0
   if arm >= C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR then return nil end
@@ -625,6 +628,16 @@ local function armour_unsafe_for_pill_take(info, pill_hp, blitz_2plus, goal)
                        pill_hp, C.ATTACK_PILL_UNSAFE_HP_THRESHOLD)
 end
 M.armour_unsafe_for_pill_take = armour_unsafe_for_pill_take
+
+-- True while this bot holds a FORCED attack_pill order on this goal's pill:
+-- a scenario hint with `force` (orders.lua, C.ORDER_HINT_FORCE).  The order
+-- row is injected every think while it is held, so an abort for a preference
+-- only drops the goal for the order to pick it again a few ticks later.
+function M.order_forced(state, goal)
+  local o = state and state._order
+  return (o ~= nil and o.force and o.kind == "attack_pill" and goal ~= nil
+          and goal.target_id ~= nil and o.tid == goal.target_id) and true or false
+end
 
 -- True when our take's target pill is an ally's ACTIVE blitz call and we haven't
 -- been accepted into that blitz (and we don't command it). Gates plan_position ->
@@ -4806,6 +4819,9 @@ local function update_attack_substate_body(goal, state, world, info)
   -- _hardline_abort) the goal is NOT dropped: it falls back to the careful
   -- way (goal._charge_now_careful, which also keeps the 1-HP kill_hardline
   -- shortcuts off so it does not go back into the same dead end).
+  -- FORCED SCENARIO ORDER (C.ORDER_HINT_FORCE): read afresh every think, so
+  -- it ends the moment the order does.
+  goal._order_forced = M.order_forced(state, goal) or nil
   do
     local cn = state._charge_now
     if cn and cn.tid == goal.target_id and not goal._charge_now then
@@ -5066,6 +5082,15 @@ local function update_attack_substate_body(goal, state, world, info)
       -- branch, so nothing else in this block changes.)
       if not blitz_hold and state.is_pill_suicider and FIRING_SUBS[cur_sub] then
         blitz_hold = true
+      end
+      -- A FORCED scenario order (M.order_forced) holds the same way, in any
+      -- substate: the bot goes on to its firing spot and shoots, rather than
+      -- dropping the take for the order to pick it again next think.
+      if not blitz_hold and goal._order_forced then
+        blitz_hold = true
+        if goal._forced_hold_sub ~= cur_sub then
+          goal._forced_hold_sub = cur_sub
+        end
       end
       if FIRING_SUBS[cur_sub] and not blitz_hold then
         print(string.format(TAG ..
