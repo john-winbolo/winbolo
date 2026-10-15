@@ -6590,6 +6590,34 @@ do
   ORD.on_scenario_hint(st, w, inf, { verb = "release" }, 110)
   check("release: an avoid stays", st.orders.hint_avoid ~= nil, "gone")
 
+  -- A HANDOFF the bot was waiting on ends too (review, 2026-10-15): the new
+  -- order is offered on (obo, obd busy) and handoff_step does not take it.
+  st, w, inf = held_bot()
+  st.orders.handoff = { new_oid = 4242, old_oid = st.orders.held.oid, since = 110,
+                        spec = { oid = 4242, kind = "goto_tile", mx = 60, my = 60 } }
+  st.orders.out = {}
+  ORD.on_scenario_hint(st, w, inf, { verb = "release" }, 120)
+  local obo, obd = false, false
+  for _, m in ipairs(st.orders.out or {}) do
+    if m == "/info obo 4242" then obo = true end
+    if m == string.format("/info obd 4242 %d", ORD.BID_BUSY) then obd = true end
+  end
+  check("release: a pending handoff is cleared", st.orders.handoff == nil, "handoff")
+  check("release: the handoff's new order is offered on (obo + obd busy)",
+        obo and obd, tostring(obo) .. "/" .. tostring(obd))
+  ORD.update(st, w, inf, 121)
+  check("release: with a handoff, still no new order next think",
+        st.orders.held == nil and st._order == nil, "held")
+  -- A handoff alone (nothing held) is still a release that forces a replan.
+  st, w, inf = ST(), W(), I()
+  ORD.update(st, w, inf, 100)
+  st.orders.handoff = { new_oid = 4243, old_oid = 1, since = 100,
+                        spec = { oid = 4243, kind = "goto_tile", mx = 60, my = 60 } }
+  ORD.on_scenario_hint(st, w, inf, { verb = "release" }, 110)
+  check("release: a handoff alone is cleared and a replan is asked for",
+        st.orders.handoff == nil and st._force_replan_reason == "order_release",
+        tostring(st._force_replan_reason))
+
   -- Nothing held: answered, but no replan is forced.
   st, w, inf = ST(), W(), I()
   r = ORD.on_scenario_hint(st, w, inf, { verb = "release" }, 110)
@@ -6669,6 +6697,33 @@ do
   r, st = hint({ verb = "attack", pill = "x", player = "7" })
   check("attack pill: a bad pill does not fall back to player",
         r == false and st.orders.held == nil, tostring(r))
+  -- Only a whole number from 1 to 16 (review, 2026-10-15).
+  r, st = hint({ verb = "attack", pill = "6.7" })
+  check("attack pill: \"6.7\" is not floored to 6, no order",
+        r == false and st.orders.held == nil, tostring(r))
+  r, st = hint({ verb = "attack", pill = "17" })
+  check("attack pill: 17 (past the 16 pills) gives no order",
+        r == false and st.orders.held == nil, tostring(r))
+  r, st = hint({ verb = "attack", pill = "-2" })
+  check("attack pill: a negative number gives no order",
+        r == false and st.orders.held == nil, tostring(r))
+  r, st = hint({ verb = "attack", pill = "6.0" })
+  check("attack pill: \"6.0\" is a whole number, brain pill 5",
+        st.orders.held ~= nil and st.orders.held.tid == 5, tostring(r))
+  -- A hint that builds no order leaves a running patrol as it was.
+  do
+    local st2, w2, inf2 = ST(), W(), I()
+    ORD.on_scenario_hint(st2, w2, inf2,
+                         { verb = "patrol", x1 = "40", y1 = "40", x2 = "50", y2 = "50" }, 100)
+    local pat = st2.orders.hint_patrol
+    local r2 = ORD.on_scenario_hint(st2, w2, inf2, { verb = "attack", pill = "40" }, 110)
+    check("attack pill: an unknown pill leaves a patrol running",
+          r2 == false and st2.orders.hint_patrol ~= nil and st2.orders.hint_patrol == pat,
+          tostring(st2.orders.hint_patrol))
+    r2 = ORD.on_scenario_hint(st2, w2, inf2, { verb = "attack", pill = "6" }, 120)
+    check("attack pill: a good pill order ends the patrol",
+          r2 == true and st2.orders.hint_patrol == nil, tostring(st2.orders.hint_patrol))
+  end
   -- The same hint again refreshes the focus, not a new order.
   do
     local st2, w2, inf2 = ST(), W(), I()
@@ -7737,6 +7792,9 @@ do
   r = dbot(); r.inf.player_bots = 0x03; chk(r, 100)
   check("detect: an ally bot behind a wall, closer to the pill: the flag is set (bot)",
         flag(r) ~= nil and flag(r).pn == 0 and flag(r).bot == true, "?")
+  check("detect: an ally bot decoy gets no \"Staying wide of\" chat line",
+        not said(r, "^Staying wide of"),
+        table.concat(r.st.orders and r.st.orders.say or {}, " | "))
   r = dbot(15, 15, 17, 17); r.inf.player_bots = 0x03; chk(r, 100)
   check("detect: an ally bot farther from the pill than us: no flag", flag(r) == nil, "?")
   r = dbot(15, 15, 15, 15); r.inf.player_bots = 0x03; chk(r, 100)
@@ -8256,6 +8314,16 @@ do
   C.FIGHT_COST_MULT_ENABLED = C.PRESETS.keel.FIGHT_COST_MULT_ENABLED
   check("keel: set 10 is ignored, all three kinds x1", each(well, 1.0))
   C.FIGHT_COST_MULT_ENABLED = true
+
+  -- A bad value from a script counts as 1 (review, 2026-10-15).
+  local bad = { { "0", 0 }, { "-3", -3 }, { "0.5", 0.5 }, { "inf", math.huge },
+                { "nan", 0 / 0 } }
+  for _, b in ipairs(bad) do
+    C.FIGHT_COST_MULT = b[2]
+    check("set " .. b[1] .. ": counts as 1, all three kinds x1", each(well, 1.0))
+  end
+  C.FIGHT_COST_MULT = 1.5
+  check("set 1.5: a value above 1 is used, x1.5", each(well, 1.5))
 
   C.FIGHT_COST_MULT = 1
   check("reset to 1: all three kinds x1 again", each(well, 1.0))

@@ -1823,8 +1823,12 @@ function M.human_decoy_check(state, world, info, now)
             and bit.band(C.HUMAN_DECOY_TEST_HUMANS or 0, bit.lshift(1, ob.idnum or 0)) == 0
     if fresh then
       print2(human_decoy_line("HUMAN_DECOY_ON", f, now, f.bot and " ally=bot" or " ally=human"))
-      sayg(state, string.format("Staying wide of %s on pill #%s",
-                                player_name(info, f.pn), tostring(tid)))
+      -- Said for a human only.  A bot decoy (HUMAN_DECOY_ALLY_BOTS) reads
+      -- no chat, and the line would be bot-to-bot noise.
+      if not f.bot then
+        sayg(state, string.format("Staying wide of %s on pill #%s",
+                                  player_name(info, f.pn), tostring(tid)))
+      end
     end
   elseif f then
     -- The tests failed this think: keep the human's latest seen position,
@@ -3379,6 +3383,10 @@ end
 local HINT_SENDER = 255
 M.HINT_SENDER = HINT_SENDER
 
+-- The engine's pill count (MAX_PILLS in src/bolo/public/types.h).  A hint's
+-- 1-based pill number above it names no pill.
+local HINT_MAX_PILLS = 16
+
 -- A hint's numbers are decimal text.  nil for anything that is not a number.
 local function hint_num(v)
   local n = tonumber(v)
@@ -3532,8 +3540,13 @@ local function hint_command(state, world, info, t)
     -- hint; it does not fall back to `player`.  Knob off: the key is not
     -- read, and an attack with only `pill` is ignored as before.
     if C.ORDER_HINT_ATTACK_PILL and t.pill ~= nil then
-      local n = hint_num(t.pill)
-      if not n or n < 1 then return nil end
+      -- A whole number from 1 to the engine's pill count (MAX_PILLS, 16).
+      -- "2.7" is dropped, not floored to 2: the script meant some other
+      -- pill, or none.
+      local n = tonumber(t.pill)
+      if not n or n ~= math.floor(n) or n < 1 or n > HINT_MAX_PILLS then
+        return nil
+      end
       return { verb = "attack", who = who, target = { kind = "pill", id = n - 1 } }
     end
     local pn = hint_num(t.player)
@@ -3575,8 +3588,20 @@ end
 local function hint_release(state, info, now)
   local o = S(state)
   local had = o.held ~= nil or o.hint_patrol ~= nil or o.hint_escort ~= nil
+             or o.handoff ~= nil
   local oid = o.held and o.held.oid or 0
   o.hint_patrol, o.hint_escort = nil, nil
+  -- A HANDOFF this bot was waiting on ends too, the way a death ends it
+  -- (M.on_death): the new order was named to it but not taken, so it is
+  -- offered on (obo) for a free bot.  Left in place, handoff_step would take
+  -- the new order on the next think, and release gives no new order.
+  if o.handoff then
+    local nid = o.handoff.new_oid
+    o.handoff = nil
+    tx(state, string.format("/info obo %d", nid))
+    tx(state, string.format("/info obd %d %d", nid, M.BID_BUSY))
+    print2(string.format("ORDER_HANDOFF_ABORT t=%d new=%d why=release", now, nid))
+  end
   if o.held then release_held(state, info, nil, true, true) end
   if had then
     state._force_replan_reason = state._force_replan_reason or "order_release"
@@ -3649,9 +3674,6 @@ function M.on_scenario_hint(state, world, info, t, now)
 
   local cmd = hint_command(state, world, info, t)
   if not cmd then return false end
-  -- A one-off order replaces whatever standing instruction was running: the
-  -- script has said something newer about this bot.
-  o.hint_patrol, o.hint_escort = nil, nil
   -- AND IT MAY NOT BREAK THE AVOID.  A square inside the box the script told
   -- this bot to keep out of is the script contradicting itself, and the
   -- keep-out is the older and broader instruction, so the order is dropped.
@@ -3659,7 +3681,13 @@ function M.on_scenario_hint(state, world, info, t, now)
      and hint_inside(o.hint_avoid, cmd.target.mx, cmd.target.my) then
     return false
   end
-  return hint_start(state, world, info, cmd, now)
+  -- A one-off order replaces whatever standing instruction was running: the
+  -- script has said something newer about this bot.  Only once the order is
+  -- running: a hint that builds no order (a dead or unknown pill) leaves a
+  -- patrol or escort as it was.
+  local ok = hint_start(state, world, info, cmd, now)
+  if ok then o.hint_patrol, o.hint_escort = nil, nil end
+  return ok
 end
 
 -- =========================================================================

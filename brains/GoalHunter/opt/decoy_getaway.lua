@@ -1033,9 +1033,12 @@ end
 --   pill_gone / pill_alive / pill_owner / pill_moved / pill_uncounted:
 --             the cached pill is not in the pill table, died or came alive,
 --             changed owner, moved, or is not counted from (kx,ky) now
---   blocker   a square on the line is not the blocker kind it was (a wall
---             damaged, knocked down, built), or a pill of ours on it
---             changed armour
+--   blocker   a square already in the cached blocker list (bc.list) is
+--             not the blocker kind it was (a wall damaged or knocked
+--             down), or a pill of ours on it changed armour.  Only those
+--             squares are read: a wall built on another square of the
+--             line is seen at the next due check, up to every - 1
+--             thinks later
 --   due       (now + pn) % every == 0
 --   stale     the result is every or more thinks old and not due (the
 --             check was not run for a while: no chain then)

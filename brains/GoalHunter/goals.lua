@@ -16684,6 +16684,10 @@ end
 M.FIGHT_MULT_KINDS = { attack_tank = true, kill_lgm = true, take_cover = true }
 function M.fight_cost_mult(info, goal, cost)
   local m = C.FIGHT_COST_MULT or 1.0
+  -- A script sets this with cfg=, which checks only the type.  NaN, a value
+  -- below 1 (0 or negative would make a fight free or a gain) and infinity
+  -- are not a price: they count as 1.
+  if type(m) ~= "number" or m ~= m or m < 1 or m == math.huge then return 1.0 end
   if m == 1.0 or not C.FIGHT_COST_MULT_ENABLED or not goal then return 1.0 end
   if not M.FIGHT_MULT_KINDS[goal.kind] then return 1.0 end
   if goal._ordered or goal.km_ally_pn then return 1.0 end

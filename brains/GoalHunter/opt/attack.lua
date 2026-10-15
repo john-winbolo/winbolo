@@ -1230,6 +1230,8 @@ end
 function M.hd_ppt_skip(state, goal, pmx, pmy, pill_hp)
   if not (goal and goal._is_ppt and M.hd_no_blockers(state, goal)) then return false end
   goal._is_ppt = false
+  if _G._PRINT2_ENABLED then
+  end
   return true
 end
 
@@ -1237,6 +1239,8 @@ end
 -- Answers needs_build, why_no_build.
 function M.hd_wall_commit(state, goal, needs_build, why, npots)
   if not (needs_build and M.hd_no_blockers(state, goal)) then return needs_build, why end
+  if _G._PRINT2_ENABLED then
+  end
   return false, "decoy: no own blockers"
 end
 
@@ -1516,7 +1520,7 @@ end
 -- Samples multiple radii (max range down to max-2) so that if the ring at exactly
 -- shell range lands on walls, nearby passable tiles are still considered.
 -- Falls back to the closest candidate if none have finite scores (e.g. pill in open water).
-function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radius)
+function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radius, quiet)
   local R_MAX = standoff_override or C.ATTACK_PILL_STANDOFF
   local R_MIN = R_MAX   -- stay on the circle edge, don't go closer
   local N     = C.ATTACK_PLAN_DIRS
@@ -1627,6 +1631,8 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
   -- The ally rule and the hard rule: the best spot of the lowest level.
   if lvl_on and n_lvl > 0 then
     local b = (lvl_best[1].s and lvl_best[1]) or (lvl_best[2].s and lvl_best[2]) or nil
+    if _G._PRINT2_ENABLED and not quiet then
+    end
     if b then best_score, best_mx, best_my = b.s, b.mx, b.my end
   end
 
@@ -1637,12 +1643,14 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
   local smy = best_my or fb_clear_my or fallback_my
   -- HUMAN_DECOY_CAND summary: the spot picked and its human-decoy terms
   -- (worked out again for that one spot; the cost has no side effects).
-  if n_hd > 0 and _G._PRINT2_ENABLED then
+  if n_hd > 0 and _G._PRINT2_ENABLED and not quiet then
     local hc, hs, hb, d1, d2, d3
     if smx then hc, hs, hb, d1, d2, d3 = M.human_decoy_cost(state, pill.mx, pill.my, smx + 0.5, smy + 0.5) end
     local scored = best_mx ~= nil and best_score < math.huge
   end
-  if smx then
+  -- A probe (quiet: hd_repick_has_spot asks whether a spot exists) adopts
+  -- no plan, so it draws and prints nothing.
+  if smx and not quiet then
     if v_take then
       -- Overlay: mark chosen standoff with bright green circle
       -- Line from pill to chosen standoff (green)
@@ -2857,7 +2865,7 @@ local function hd_repick_has_spot(state, goal, world, info)
   if not (pill and info) then return false end
   local was = goal._hd_hard
   goal._hd_hard = true
-  local smx, smy = M.pick_standoff(world, info, pill, state)
+  local smx, smy = M.pick_standoff(world, info, pill, state, nil, nil, true)
   goal._hd_hard = was
   if not smx then return false end
   local d = M.hd_spot_dist(state, f.pmx, f.pmy, smx + 0.5, smy + 0.5)
@@ -2887,9 +2895,13 @@ local function human_decoy_repick(state, goal, world, info)
   if max > 0 then
     goal._hd_repicks = (goal._hd_repicks or 0) + 1
     if not hd_repick_has_spot(state, goal, world, info) then
+      if _G._PRINT2_ENABLED then
+      end
       return
     end
     goal._hd_hard = true
+  end
+  if _G._PRINT2_ENABLED then
   end
   goal._repick_pending = true
   reset_to_plan_position(state, goal)
@@ -3850,6 +3862,8 @@ function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
   end
 
   if n_ally > 0 and best_mx then
+    if _G._PRINT2_ENABLED then
+    end
     if ok_mx then best_cost, best_mx, best_my = ok_cost, ok_mx, ok_my end
   end
 
@@ -4405,6 +4419,8 @@ local function blitz_pick_from_scan(spots, state, tmx, tmy, wallset, pmx, pmy, w
           if e.lv <= lo_lv then keep[#keep + 1] = e else n_out = n_out + 1 end
         end
         if n_out > 0 then
+          if _G._PRINT2_ENABLED then
+          end
           elig = keep
         end
       end
@@ -5386,9 +5402,9 @@ local function update_attack_substate_body(goal, state, world, info)
                 n_out = n_out + 1
               end
             end
-            if n_out > 0 then
+            if n_out > 0 and _G._PRINT2_ENABLED then
             end
-          elseif goal._hd_hard then
+          elseif goal._hd_hard and _G._PRINT2_ENABLED then
           end
         end
       end
