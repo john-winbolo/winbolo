@@ -15,11 +15,12 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-/* The dedicated server's memory report: one line, every few minutes, that
- * says how much memory the process holds and where it sits (each bot's Lua
- * heap, the world's object lists), so a server that runs for days can show
- * which part grows. The operator console's "mem" asks for one now, and
- * "memdeep" adds a walk of each bot's Lua tables. */
+/* The dedicated server's memory report: one line that says how much
+ * memory the process holds and where it sits (each bot's Lua heap, the
+ * world's object lists), so a server that runs for days can show which
+ * part grows. The timed report is off unless -memreport (or
+ * -memreportdeep) turns it on. The operator console's "mem" asks for one
+ * now, and "memdeep" adds a walk of each bot's Lua tables. */
 
 #ifndef WINBOLO_SERVER_MEMREPORT_H
 #define WINBOLO_SERVER_MEMREPORT_H
@@ -30,8 +31,19 @@
 
 struct ServerSim;
 
-/* Default period of the timed report, in minutes. */
+/* Period of the timed report, in minutes, when a flag turns it on
+ * without giving one. */
 #define SERVER_MEMREPORT_DEFAULT_MINUTES 10
+
+/* Turn the command line into the timed report's period in minutes (0 =
+ * off, the default). `given` says whether -memreport appears; `value` is
+ * the argument after it, or NULL when it is the last one. A bare
+ * -memreport (last, or followed by another flag) means the default
+ * period. -memreportdeep (`deep`) turns the report on at the default
+ * period when -memreport is not given. Writes a one-line warning into
+ * `warn` when the flags need one, else an empty string. */
+double serverMemReportPeriodFromArgs(bool given, const char *value, bool deep,
+                                     char *warn, size_t warnSize);
 
 /* Set the period of the timed report (minutes; 0 turns the timed report
  * off — "mem" on the console still works) and whether every timed report

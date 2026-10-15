@@ -19,6 +19,7 @@
 #endif
 
 #include "server_console.h"
+#include "server_memreport.h"
 #include "test_harness.h"
 
 typedef struct {
@@ -407,6 +408,60 @@ int run_console_mem_report(void) {
                   "a NULL memReport must not be called (calls=%d)",
                   g_rec.memCalls);
     }
+    return 0;
+}
+
+/* The timed memory report is off unless a flag turns it on. A bare
+ * -memreport means the default period, a number sets it, 0 keeps it off,
+ * and -memreportdeep alone turns it on at the default period. */
+int run_memreport_flags(void) {
+    char warn[256];
+    double m;
+    const double def = (double)SERVER_MEMREPORT_DEFAULT_MINUTES;
+
+    m = serverMemReportPeriodFromArgs(false, NULL, false, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == 0.0 && warn[0] == '\0',
+                  "no flag should leave the report off (got %g '%s')", m, warn);
+
+    m = serverMemReportPeriodFromArgs(true, NULL, false, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == def && warn[0] == '\0',
+                  "a bare last -memreport should use the default (got %g)", m);
+
+    m = serverMemReportPeriodFromArgs(true, "-quiet", false, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == def && warn[0] == '\0',
+                  "-memreport before another flag should use the default "
+                  "(got %g '%s')", m, warn);
+
+    m = serverMemReportPeriodFromArgs(true, "2.5", false, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == 2.5 && warn[0] == '\0',
+                  "-memreport 2.5 should give 2.5 minutes (got %g)", m);
+
+    m = serverMemReportPeriodFromArgs(true, "0", false, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == 0.0 && warn[0] == '\0',
+                  "-memreport 0 should keep the report off (got %g)", m);
+
+    m = serverMemReportPeriodFromArgs(true, "abc", false, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == def && strstr(warn, "not a number") != NULL,
+                  "-memreport abc should warn and use the default "
+                  "(got %g '%s')", m, warn);
+
+    m = serverMemReportPeriodFromArgs(true, "nan", false, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == 0.0, "-memreport nan should read as off (got %g)", m);
+
+    m = serverMemReportPeriodFromArgs(false, NULL, true, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == def && warn[0] == '\0',
+                  "-memreportdeep alone should turn the report on at the "
+                  "default (got %g)", m);
+
+    m = serverMemReportPeriodFromArgs(true, "3", true, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == 3.0 && warn[0] == '\0',
+                  "-memreport 3 -memreportdeep should give 3 minutes "
+                  "(got %g)", m);
+
+    m = serverMemReportPeriodFromArgs(true, "0", true, warn, sizeof(warn));
+    UT_ASSERT_MSG(m == 0.0 && strstr(warn, "no effect") != NULL,
+                  "-memreport 0 -memreportdeep should stay off and warn "
+                  "(got %g '%s')", m, warn);
     return 0;
 }
 

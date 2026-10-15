@@ -931,17 +931,19 @@ void printArgs() {
   fprintf(stderr, "                for it, so their post-game recap plays. Omitted, the server\n");
   fprintf(stderr, "                serves unless it is registered with winbolo.net. Needs -log.\n");
   fprintf(stderr, "-statusFile   - Save list of unlocked players to a file.\n");
-  fprintf(stderr, "-memreport <M> - Write a memory report line every M minutes (default %d,\n", SERVER_MEMREPORT_DEFAULT_MINUTES);
-  fprintf(stderr, "                0 turns it off; decimals allowed). The line gives the\n");
-  fprintf(stderr, "                process's RSS / private / virtual memory, uptime, game\n");
-  fprintf(stderr, "                tick, rounds, each bot's Lua heap and its growth since the\n");
-  fprintf(stderr, "                last report, and the world's object list sizes. The\n");
-  fprintf(stderr, "                console commands mem and memdeep write one at once.\n");
+  fprintf(stderr, "-memreport [M] - Turn on the timed memory report: one line every M minutes\n");
+  fprintf(stderr, "                (default %d; decimals allowed; 0 keeps it off). Off when\n", SERVER_MEMREPORT_DEFAULT_MINUTES);
+  fprintf(stderr, "                not given. The line gives the process's RSS / private /\n");
+  fprintf(stderr, "                virtual memory, uptime, game tick, rounds, each bot's Lua\n");
+  fprintf(stderr, "                heap and its growth since the last report, and the world's\n");
+  fprintf(stderr, "                object list sizes. The console commands mem and memdeep\n");
+  fprintf(stderr, "                write one at once, with or without this flag.\n");
   fprintf(stderr, "-memreportdeep - Every timed memory report also walks each bot's Lua\n");
-  fprintf(stderr, "                tables and lists the biggest ones. Slow (it pauses the\n");
-  fprintf(stderr, "                game while it walks); for chasing a leak. The walk\n");
-  fprintf(stderr, "                allocates inside each bot's Lua state, so do not use it\n");
-  fprintf(stderr, "                in seeded repro runs.\n");
+  fprintf(stderr, "                tables and lists the biggest ones. Turns the timed report\n");
+  fprintf(stderr, "                on (every %d minutes unless -memreport gives M). Slow (it\n", SERVER_MEMREPORT_DEFAULT_MINUTES);
+  fprintf(stderr, "                pauses the game while it walks); for chasing a leak. The\n");
+  fprintf(stderr, "                walk allocates inside each bot's Lua state, so do not use\n");
+  fprintf(stderr, "                it in seeded repro runs.\n");
   fprintf(stderr, "-seed <N>     - Seed the RNG with N (64-bit unsigned) for reproducible runs.\n");
   fprintf(stderr, "                Seeds the C sim stream only; see -brain-lua-seed for Lua.\n");
   fprintf(stderr, "-brain-tier <1..10> - Pin every brain's capacity tier instead of deriving it\n");
@@ -2225,22 +2227,25 @@ int main(int argc, char **argv) {
     }
   }
 
-  /* Memory report: on by default every SERVER_MEMREPORT_DEFAULT_MINUTES. */
+  /* Memory report: the timed report is off unless -memreport or
+   * -memreportdeep turns it on. Matched without case, like argExist. */
   {
-    double memMins = (double)SERVER_MEMREPORT_DEFAULT_MINUTES;
-    int argNum = findArg(argc, argv, "memreport");
-    if (argNum != ARG_NOT_FOUND) {
-      /* A value that is not a number (another flag, say) must not read as
-       * 0 and turn the report off. "5m" parses as 5. */
-      char *end = NULL;
-      double parsed = strtod((char *)argv[argNum], &end);
-      if (end == (char *)argv[argNum]) {
-        fprintf(stderr,
-                "Warning: -memreport '%s' is not a number; using %d minutes\n",
-                (char *)argv[argNum], SERVER_MEMREPORT_DEFAULT_MINUTES);
-      } else {
-        memMins = parsed;
+    bool given = false;
+    const char *value = NULL;
+    char warn[256];
+    double memMins;
+    for (int i = 1; i < argc; i++) {
+      if (SDL_strcasecmp((char *)argv[i], "-memreport") == 0) {
+        given = true;
+        value = (i + 1 < argc) ? (const char *)argv[i + 1] : NULL;
+        break;
       }
+    }
+    memMins = serverMemReportPeriodFromArgs(
+        given, value, argExist(argc, argv, "memreportdeep") == TRUE,
+        warn, sizeof(warn));
+    if (warn[0] != '\0') {
+      fprintf(stderr, "%s\n", warn);
     }
     serverMemReportConfigure(memMins,
                              argExist(argc, argv, "memreportdeep") == TRUE);

@@ -46,6 +46,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -67,7 +68,7 @@ void serverMessageConsoleMessage(ServerSim *sim, char *msg);
 #define MEMREPORT_LINE 2048
 #define MEMREPORT_DEEP_TOP 20
 
-static Uint64 s_periodMs = (Uint64)SERVER_MEMREPORT_DEFAULT_MINUTES * 60u * 1000u;
+static Uint64 s_periodMs = 0;  /* off until -memreport turns it on */
 static bool   s_deepEvery = false;
 static Uint64 s_startMs = 0;
 static Uint64 s_lastMs = 0;
@@ -82,10 +83,59 @@ static bool     s_prevBotValid[MAX_TANKS];
 static uint64_t s_prevLuaTotal = 0;
 static uint64_t s_prevNonLua = 0;
 
+/* A year: far past any real period, and small enough to convert. */
+#define MEMREPORT_MAX_MINUTES (365.0 * 24.0 * 60.0)
+
+double serverMemReportPeriodFromArgs(bool given, const char *value, bool deep,
+                                     char *warn, size_t warnSize) {
+  double mins = 0.0;
+
+  if (warn != NULL && warnSize > 0) {
+    warn[0] = '\0';
+  }
+  if (given) {
+    mins = (double)SERVER_MEMREPORT_DEFAULT_MINUTES;
+    if (value != NULL) {
+      char *end = NULL;
+      double parsed = strtod(value, &end);
+      if (end != value) {
+        /* "5m" parses as 5; 0 or less turns the report off. */
+        mins = parsed;
+      } else if (value[0] != '-' && warn != NULL && warnSize > 0) {
+        /* A following flag means a bare -memreport; anything else is a
+         * mistyped period, which must not turn the report off. */
+        snprintf(warn, warnSize,
+                 "Warning: -memreport '%s' is not a number; using %d minutes",
+                 value, SERVER_MEMREPORT_DEFAULT_MINUTES);
+      }
+    }
+  }
+  /* NaN fails every comparison: treat it as off, like 0. */
+  if (!(mins > 0.0)) {
+    mins = 0.0;
+  } else if (mins > MEMREPORT_MAX_MINUTES) {
+    mins = MEMREPORT_MAX_MINUTES;
+  }
+  if (deep) {
+    if (!given) {
+      mins = (double)SERVER_MEMREPORT_DEFAULT_MINUTES;
+    } else if (mins == 0.0 && warn != NULL && warnSize > 0) {
+      snprintf(warn, warnSize,
+               "Warning: -memreportdeep has no effect; -memreport %s turns "
+               "the timed memory report off",
+               (value != NULL) ? value : "0");
+    }
+  }
+  return mins;
+}
+
 void serverMemReportConfigure(double periodMinutes, bool deepEveryReport) {
-  if (periodMinutes <= 0.0) {
+  if (!(periodMinutes > 0.0)) {
     s_periodMs = 0;
   } else {
+    if (periodMinutes > MEMREPORT_MAX_MINUTES) {
+      periodMinutes = MEMREPORT_MAX_MINUTES;
+    }
     s_periodMs = (Uint64)(periodMinutes * 60000.0);
     if (s_periodMs == 0) {
       s_periodMs = 1;
