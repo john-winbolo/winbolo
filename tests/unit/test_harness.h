@@ -1364,6 +1364,11 @@ int run_lv_hide_lobby_periodic_snapshot(void);
  * restores them with the snapshot, so a replayed stretch is not counted twice. */
 int run_lv_kill_tally_seek(void);
 
+/* Log viewer events panel list (test_lv_event_list.c): a replay after a seek
+ * back adds no line twice, and pinned lines stay ahead of the timed ones. */
+int run_lv_event_list_replay(void);
+int run_lv_event_list_pinned(void);
+
 /* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
  * an index the size of a ten-day log. */
 int run_lv_snapshot_index_lookup(void);

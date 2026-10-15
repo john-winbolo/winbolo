@@ -9,6 +9,7 @@
  */
 
 #include "imgui_events.h"
+#include "../lv_event_list.h"
 #include "imgui_main_menu.h"
 #include "imgui_context.h"
 #include "imgui.h"
@@ -17,7 +18,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <vector>
 #include <string>
 
 /* External function from backend */
@@ -28,44 +28,28 @@ extern "C" {
     void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY);
 }
 
-/* Event with associated playback timestamp, held in absolute log ms so the
- * displayed stamp can be rebuilt each frame against the presentation window.
- * Highlight clips also carry a seek target and a map cell so a click can jump
- * the scrubber and centre the view. */
-struct LogEvent {
-    std::string text;
-    uint32_t timeMs;
-    bool     showTime = false;  /* prefix the displayed line with its stamp */
-    bool     pinned   = false;  /* load-time summary: never hidden with the lobby */
-    bool     seekable = false;
-    uint32_t seekMs = 0;
-    int      mapX = 0;
-    int      mapY = 0;
-};
-
-/* Event list storage */
-static std::vector<LogEvent> s_events;
+/* Auto-scroll state */
 static bool s_auto_scroll = true;
 static bool s_scroll_to_bottom = false;
+/* The end of the shown lines last frame, so a seek that moves it scrolls
+   like a new line does. */
+static int s_last_shown_end = -1;
 
 /* Selection state for copy functionality */
 static int s_selected_index = -1;
 static bool s_select_all = false;
 
 void lv_imgui_events_init(void) {
-    s_events.clear();
+    lvEventListClear();
     s_auto_scroll = true;
     s_scroll_to_bottom = false;
+    s_last_shown_end = -1;
     s_selected_index = -1;
     s_select_all = false;
 }
 
 void lv_imgui_events_add(int eventType, const char *msg) {
-    LogEvent e;
-    e.text     = std::string(msg);
-    e.timeMs   = lv_screenGetTimeRunning();
-    e.showTime = (eventType == 0);
-    s_events.push_back(e);
+    lvEventListAdd(msg, lv_screenGetTimeRunning(), eventType == 0);
 
     /* Mark for auto-scroll */
     if (s_auto_scroll) {
@@ -75,15 +59,8 @@ void lv_imgui_events_add(int eventType, const char *msg) {
 
 void lv_imgui_events_add_highlight(const char *msg, uint32_t seekMs, int mapX,
                                    int mapY) {
-    LogEvent e;
-    e.text = std::string(msg);
-    e.timeMs = 0;   /* load-time summary line: never rewound away on a seek */
-    e.pinned = true;
-    e.seekable = true;
-    e.seekMs = seekMs;
-    e.mapX = mapX;
-    e.mapY = mapY;
-    s_events.push_back(e);
+    /* Load-time summary line: pinned, so never hidden by the playhead. */
+    lvEventListAddPinned(msg, true, seekMs, mapX, mapY);
 
     if (s_auto_scroll) {
         s_scroll_to_bottom = true;
@@ -91,14 +68,10 @@ void lv_imgui_events_add_highlight(const char *msg, uint32_t seekMs, int mapX,
 }
 
 /* Load-time round-summary line (awards, section headers): pinned above the feed
- * with no stamp of its own, so it is neither hidden with the lobby nor removed
- * by a rewind. */
+ * with no stamp of its own, so it is hidden neither with the lobby nor by the
+ * playhead. */
 void lv_imgui_events_add_summary(const char *msg) {
-    LogEvent e;
-    e.text   = std::string(msg);
-    e.timeMs = 0;
-    e.pinned = true;
-    s_events.push_back(e);
+    lvEventListAddPinned(msg, false, 0, 0, 0);
 
     if (s_auto_scroll) {
         s_scroll_to_bottom = true;
@@ -106,34 +79,28 @@ void lv_imgui_events_add_summary(const char *msg) {
 }
 
 void lv_imgui_events_clear(void) {
-    s_events.clear();
+    lvEventListClear();
+    s_last_shown_end = -1;
     s_selected_index = -1;
     s_select_all = false;
 }
 
-void lv_imgui_events_remove_after(unsigned int timeMs) {
-    /* Remove events with timestamp strictly after timeMs */
-    while (!s_events.empty() && s_events.back().timeMs > timeMs) {
-        s_events.pop_back();
-    }
-    if (s_selected_index >= (int)s_events.size()) {
-        s_selected_index = -1;
-        s_select_all = false;
-    }
+void lv_imgui_events_rewound(void) {
+    lvEventListRewound();
 }
 
 int lv_imgui_events_get_count(void) {
-    return (int)s_events.size();
+    return lvEventListCount();
 }
 
 const char *lv_imgui_events_get_text(int i) {
-    if (i < 0 || i >= (int)s_events.size()) return "";
-    return s_events[i].text.c_str();
+    const LvEvent *e = lvEventListAt(i);
+    return e != NULL ? e->text : "";
 }
 
 uint32_t lv_imgui_events_get_time(int i) {
-    if (i < 0 || i >= (int)s_events.size()) return 0;
-    return s_events[i].timeMs;
+    const LvEvent *e = lvEventListAt(i);
+    return e != NULL ? e->timeMs : 0;
 }
 
 /* Copy selected text to clipboard */
@@ -144,7 +111,7 @@ static void copy_to_clipboard(const char* text) {
 /* Build the line as displayed. Highlight clips read their stamp from the seek
  * target; ordinary timestamped lines from their own time. Both go through
  * lv_screenFormatTime, so the whole panel follows the presentation window. */
-static std::string compose_line(const LogEvent &e) {
+static std::string compose_line(const LvEvent &e) {
     char stamp[16];
     if (e.seekable) {
         lv_screenFormatTime(e.seekMs, stamp, sizeof(stamp));
@@ -157,11 +124,26 @@ static std::string compose_line(const LogEvent &e) {
     return e.text;
 }
 
-/* Lobby-period lines stay in the vector — un-ticking Hide Lobby brings them
- * straight back — but out of the panel, where they would sit at 00:00. */
-static bool event_is_hidden(const LogEvent &e) {
-    if (e.pinned) return false;
-    return e.timeMs < lv_screenWindowStartMs();
+/* The timed lines shown: from the start of the presentation window up to the
+ * playhead. Lobby-period lines stay in the list — un-ticking Hide Lobby brings
+ * them straight back — and so do lines ahead of the playhead, which come back
+ * as it reaches them. */
+static void shown_range(int *first, int *end) {
+    lvEventListRange(lv_screenWindowStartMs(), lv_screenGetTimeRunning(), first, end);
+}
+
+/* Every shown line, pinned first, one per line. */
+static std::string compose_all_shown(void) {
+    std::string all_events;
+    int first, end, i;
+    for (i = 0; i < lvEventListPinnedCount(); i++) {
+        all_events += compose_line(*lvEventListAt(i)) + "\r\n";
+    }
+    shown_range(&first, &end);
+    for (i = first; i < end; i++) {
+        all_events += compose_line(*lvEventListAt(i)) + "\r\n";
+    }
+    return all_events;
 }
 
 void lv_imgui_events_window(void) {
@@ -211,11 +193,31 @@ void lv_imgui_events_window(void) {
         /* List box for events */
         ImGui::BeginChild("EventsList", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
         
-        for (int i = 0; i < (int)s_events.size(); i++) {
-            if (event_is_hidden(s_events[i])) {
-                continue;
+        int shown_first, shown_end;
+        shown_range(&shown_first, &shown_end);
+        /* A seek moves the end of what is shown; follow it as a new line. */
+        if (shown_end != s_last_shown_end) {
+            if (s_auto_scroll) {
+                s_scroll_to_bottom = true;
             }
-            std::string composed = compose_line(s_events[i]);
+            s_last_shown_end = shown_end;
+        }
+
+        /* Pinned lines, then the timed ones the playhead has reached. */
+        int pinned = lvEventListPinnedCount();
+        bool seeked = false;
+        for (int i = 0; i < shown_end && !seeked; i++) {
+            if (i == pinned && i < shown_first) {
+                i = shown_first;
+                if (i >= shown_end) {
+                    break;
+                }
+            }
+            const LvEvent *e = lvEventListAt(i);
+            if (e == NULL) {
+                break;
+            }
+            std::string composed = compose_line(*e);
             const char* event_text = composed.c_str();
 
             /* Check if this item is selected */
@@ -236,30 +238,26 @@ void lv_imgui_events_window(void) {
                     s_selected_index = i;
                     s_select_all = false;
                     /* A plain click on a highlight clip jumps the scrubber to a
-                     * few seconds before the moment and centres the map on it. */
-                    if (s_events[i].seekable) {
-                        uint32_t target = s_events[i].seekMs > 5000u
-                                              ? s_events[i].seekMs - 5000u
-                                              : 0u;
-                        lv_windowSeekToHighlight(target, s_events[i].mapX,
-                                                 s_events[i].mapY);
+                     * few seconds before the moment and centres the map on it.
+                     * The seek posts lines into the list, so this frame's
+                     * range is stale after it and the loop stops. */
+                    if (e->seekable) {
+                        uint32_t target = e->seekMs > 5000u ? e->seekMs - 5000u : 0u;
+                        int mapX = e->mapX;
+                        int mapY = e->mapY;
+                        lv_windowSeekToHighlight(target, mapX, mapY);
+                        seeked = true;
                     }
                 }
             }
             
             /* Right-click context menu on item */
-            if (ImGui::BeginPopupContextItem()) {
+            if (!seeked && ImGui::BeginPopupContextItem()) {
                 if (ImGui::MenuItem(langGetText(STR_LV_COPY))) {
                     copy_to_clipboard(event_text);
                 }
                 if (ImGui::MenuItem(langGetText(STR_LV_COPY_ALL))) {
-                    /* Build string of all shown events */
-                    std::string all_events;
-                    for (const auto& e : s_events) {
-                        if (event_is_hidden(e)) continue;
-                        all_events += compose_line(e) + "\r\n";
-                    }
-                    copy_to_clipboard(all_events.c_str());
+                    copy_to_clipboard(compose_all_shown().c_str());
                 }
                 if (ImGui::MenuItem(langGetText(STR_MENU_SELECT_ALL))) {
                     s_select_all = true;
@@ -281,15 +279,10 @@ void lv_imgui_events_window(void) {
             if (ImGui::MenuItem(langGetText(STR_MENU_SELECT_ALL), NULL, s_select_all)) {
                 s_select_all = !s_select_all;
             }
-            if (ImGui::MenuItem(langGetText(STR_LV_COPY_ALL), NULL, false, !s_events.empty())) {
-                std::string all_events;
-                for (const auto& e : s_events) {
-                    if (event_is_hidden(e)) continue;
-                    all_events += compose_line(e) + "\r\n";
-                }
-                copy_to_clipboard(all_events.c_str());
+            if (ImGui::MenuItem(langGetText(STR_LV_COPY_ALL), NULL, false, lvEventListCount() > 0)) {
+                copy_to_clipboard(compose_all_shown().c_str());
             }
-            if (ImGui::MenuItem(langGetText(STR_LV_CLEAR_ALL), NULL, false, !s_events.empty())) {
+            if (ImGui::MenuItem(langGetText(STR_LV_CLEAR_ALL), NULL, false, lvEventListCount() > 0)) {
                 lv_imgui_events_clear();
             }
             ImGui::Separator();

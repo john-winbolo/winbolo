@@ -1758,6 +1758,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/labels.c
     src/logviewer/messages.c
     src/logviewer/game_settings_blob.c
+    src/logviewer/lv_event_list.c
     src/logviewer/imgui/imgui_context.cpp
     src/logviewer/imgui/imgui_main_menu.cpp
     src/logviewer/imgui/imgui_controls.cpp
@@ -4531,6 +4532,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Log viewer load results pinned on the committed .wbv fixtures
     # (test_lv_load_walk.c).
     tests/unit/test_lv_load_walk.c
+    # Log viewer events panel list: replays after a seek back and pinned
+    # lines (test_lv_event_list.c).
+    tests/unit/test_lv_event_list.c
     # Replay camera range: the load's 127,127 default, a highlight jump, a
     # grid that grew and the raw setter all keep the view's far edge at 255
     # on a grid wider than half the map (test_lv_camera.c).
@@ -4651,6 +4655,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # split out of imgui_game_info.cpp so test_game_settings_blob.c drives
     # the code the Game Information panel runs rather than a copy of it.
     src/logviewer/game_settings_blob.c
+    # The events panel's line list. Plain C with no ImGui headers, split out
+    # of imgui_events.cpp so test_lv_event_list.c drives the code the panel
+    # runs.
+    src/logviewer/lv_event_list.c
 )
 
 if(WB_NETDEBUG)
@@ -5284,6 +5292,8 @@ set(_unit_test_names
     lv_hide_lobby_no_marker_anchor
     lv_hide_lobby_periodic_snapshot
     lv_kill_tally_seek
+    lv_event_list_replay
+    lv_event_list_pinned
     lv_snapshot_index_lookup
     lv_snapshot_index_ten_days
     lv_load_walk_fixtures

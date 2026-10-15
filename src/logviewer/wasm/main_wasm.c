@@ -111,8 +111,8 @@ void lv_windowAddSummary(char *msg) {
     lv_imgui_events_add_summary(msg);
 }
 
-void lv_windowRemoveEventsAfter(uint32_t timeMs) {
-    lv_imgui_events_remove_after(timeMs);
+void lv_windowEventsRewound(void) {
+    lv_imgui_events_rewound();
 }
 
 void lv_windowRemoveEvents(void) {

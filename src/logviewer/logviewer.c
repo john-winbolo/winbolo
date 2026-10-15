@@ -190,9 +190,9 @@ void lv_windowAddSummary(char *msg) {
     lv_imgui_events_add_summary(msg);
 }
 
-/* Remove events that are ahead of the given playback time (during rewind/seek). */
-void lv_windowRemoveEventsAfter(uint32_t timeMs) {
-    lv_imgui_events_remove_after(timeMs);
+/* Playback restarts from a snapshot restore and posts its lines again. */
+void lv_windowEventsRewound(void) {
+    lv_imgui_events_rewound();
 }
 
 void lv_windowRemoveEvents(void) {

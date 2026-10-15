@@ -438,7 +438,7 @@ bool lv_logLoad(char *fileName, int memoryBufferSize);
 void lv_frontEndSetGameInformation(bool clear, BYTE versionMajor, BYTE versionMinor, BYTE versionRevision, char *mapName, BYTE gameType, bool hiddenMines, BYTE aiType, int32_t startDelay, int32_t timeLimit, BYTE *wbnKey, int32_t startTime);
 void lv_startOfLog();
 void lv_windowRemoveEvents();
-void lv_windowRemoveEventsAfter(uint32_t timeMs);
+void lv_windowEventsRewound(void);
 
 /*********************************************************
 *NAME:          lv_screenCalcSquare
@@ -5427,11 +5427,13 @@ void lv_screenRewind() {
     /* The tallies as playback had counted them here, so the stretch played
        again is not counted twice. */
     lv_snapshotGetTallies(&g_lv->snap, currentTime, g_lv->kills, g_lv->deaths);
+    /* Playback posts the lines from here again; the events panel already
+       holds them. */
+    lv_windowEventsRewound();
     lv_processSnapshot();
     /* The snapshot carries no rules: read them again at its time. */
     lv_rulesRefresh();
     lv_presRebuild(g_lv->timeRunning);
-    lv_windowRemoveEventsAfter(g_lv->timeRunning);
     g_lv->isPlaying = TRUE;
     g_lv->state = lv_lr_start;
     /* Rewinding parks the live-DVR view in the past (consumed next frame). */
@@ -5515,12 +5517,14 @@ static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
     /* The tallies as playback had counted them here, so the fast-forward
        below does not count the kills before the target a second time. */
     lv_snapshotGetTallies(&g_lv->snap, snapTime, g_lv->kills, g_lv->deaths);
+    /* Playback posts the lines from here again; the events panel already
+       holds them. */
+    lv_windowEventsRewound();
     lv_processSnapshot();
     /* The snapshot carries no rules: read them again at its time, so the
        fast-forward below starts from the values in force there. */
     lv_rulesRefresh();
     lv_presRebuild(g_lv->timeRunning);
-    lv_windowRemoveEventsAfter(snapTime);
     g_lv->isPlaying = TRUE;
     g_lv->state = lv_lr_start;
 
