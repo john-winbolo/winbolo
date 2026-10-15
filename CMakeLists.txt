@@ -1170,6 +1170,55 @@ bolo_grant_internal_source_access(WinBoloIOS
     src/gui/ios/ios_stubs.c)
 
 target_link_libraries(WinBoloIOS PRIVATE bolo_static scenario_static server_sim_static bot_brains_static threads_static)
+
+# WinBolo.net for iOS: winbolonet_core with http_nsurl.m (NSURLSession) in
+# place of http.c, since iOS has no libcurl, and winbolonet_client as on the
+# desktop. winbolonet_server is left out because a phone does not host; the
+# server-side symbols gamefront.c and the sim still reference are stubbed in
+# ios_stubs.c. The desktop defines these two libraries in the else() branch
+# below, so the names do not collide. tweetnacl.c is in the library here
+# because nothing else in WinBoloIOS signs.
+add_library(winbolonet_core STATIC
+    src/winbolonet/http_nsurl.m
+    src/winbolonet/winbolonetthread.c
+    src/winbolonet/winbolonetevents.c
+    src/winbolonet/winbolonet_core.c
+    src/winbolonet/wbn_bearer.c
+    src/winbolonet/wbn_country_cache.c
+    src/winbolonet/wbn_prefs_sync.c
+    src/winbolonet/wbn_serverlist.c
+    src/winbolonet/wbn_map.c
+    src/third_party/tweetnacl/tweetnacl.c
+)
+set_source_files_properties(src/winbolonet/http_nsurl.m
+    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+# Third-party source: the Xcode defaults warn on its 64-to-32 bit narrowing
+# and on its 16-byte constant written as a 16-character string. The MSVC
+# desktop build turns off its warnings the same way.
+set_source_files_properties(src/third_party/tweetnacl/tweetnacl.c
+    PROPERTIES COMPILE_OPTIONS
+    "-Wno-shorten-64-to-32;-Wno-unterminated-string-initialization")
+target_include_directories(winbolonet_core PRIVATE
+    ${cjson_SOURCE_DIR}
+    src/third_party/tweetnacl
+)
+target_link_libraries(winbolonet_core PRIVATE SDL3::SDL3 "-framework Foundation")
+bolo_apply_include_rules(winbolonet_core runtime_only)
+
+add_library(winbolonet_client STATIC
+    src/winbolonet/winbolonet_client.c
+    src/winbolonet/wbn_comments.cpp
+    src/winbolonet/wbn_news.cpp
+    src/winbolonet/wbn_news_parser.cpp
+)
+target_include_directories(winbolonet_client PRIVATE
+    ${cjson_SOURCE_DIR}
+)
+target_link_libraries(winbolonet_client PRIVATE SDL3::SDL3)
+bolo_apply_include_rules(winbolonet_client runtime_only)
+
+target_link_libraries(WinBoloIOS PRIVATE winbolonet_client winbolonet_core
+    "-framework Foundation")
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
     nanosvg stb_image utf8proc zlibstatic minizip cjson
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"

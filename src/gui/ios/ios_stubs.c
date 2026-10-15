@@ -5,7 +5,8 @@
 
 /*
  * ios_stubs.c — Stub implementations for modules not included
- * in the iOS target. Covers: winbolonet, geolookup, and cursor.
+ * in the iOS target. Covers: the server side of winbolonet, geolookup,
+ * and cursor.
  *
  * Most GUI modules (sdl3imgui, flags, input, dialogs, dns_lookups)
  * are now compiled directly from the shared sdl3 sources.
@@ -20,7 +21,6 @@
 #include "global.h"
 #include "client_sim.h"
 #include "../../winbolonet/winbolonet_server.h"
-#include "../../winbolonet/winbolonet_client.h"
 
 /* Portable RECT */
 #ifndef _WIN32
@@ -51,7 +51,12 @@ void cursorAnchorToView(int xOffset, int yOffset, int subPosX, int subPosY) {
 void cursorDropAnchor(void) {}
 void moveMousePointer(int value) { (void)value; }
 
-/* ---- winbolonet stubs (requires libcurl) ---- */
+/* ---- winbolonet server stubs ----
+ *
+ * winbolonet_core and winbolonet_client are linked (with http_nsurl.m for
+ * the transport). winbolonet_server is not, because a phone does not host
+ * games, so the server-side calls bolo, the sim, gamefront.c and
+ * winbolonet_core.c still reference get bodies here that do nothing. */
 
 bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
     (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines; (void)password;
@@ -59,39 +64,21 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
     return false;
 }
 
-void winbolonetDestroy(bool isServer) { (void)isServer; }
-
-void winboloNetGetServerKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
     (void)playerNum; (void)numPlayers; (void)freeBases; (void)freePills;
 }
-void winbolonetGoodbye(void) {}
 void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
     (void)array; (void)length; (void)numTeams;
-}
-void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
-    (void)eventType; (void)isServer; (void)playerA; (void)playerB; (void)aIsBot; (void)bIsBot;
 }
 void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePills, bool sendNow) {
     (void)numPlayers; (void)numFreeBases; (void)numFreePills; (void)sendNow;
 }
-bool winbolonetIsRunning(void) { return false; }
 bool winboloNetIsPlayerParticipant(BYTE playerNum) { (void)playerNum; return false; }
 void winboloNetSendLock(bool isLocked) { (void)isLocked; }
 bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter) {
     (void)playerKey; (void)playerName; (void)playerNum; (void)errorMsg;
     if (hasSteam)    *hasSteam    = false;
     if (isSupporter) *isSupporter = false;
-    return false;
-}
-bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, char *playerKeyOut, char *errorMsg) {
-    (void)apiToken; (void)serverKey; (void)errorMsg;
-    if (playerKeyOut) playerKeyOut[0] = '\0';
-    return false;
-}
-bool winbolonetClientJoinSpectatorSession(const char *apiToken, const char *serverKey, const char *playerName, char *spectatorKeyOut, char *errorMsg) {
-    (void)apiToken; (void)serverKey; (void)playerName; (void)errorMsg;
-    if (spectatorKeyOut) spectatorKeyOut[0] = '\0';
     return false;
 }
 bool winboloNetVerifySpectatorKey(const char *spectatorKey, const char *playerName, char *errorMsg, bool *isLoggedIn) {
@@ -101,41 +88,6 @@ bool winboloNetVerifySpectatorKey(const char *spectatorKey, const char *playerNa
 }
 void winboloNetSpectatorLeaveGame(const char *spectatorKey) {
     (void)spectatorKey;
-}
-bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg) {
-    (void)username; (void)password; (void)tokenOut; (void)expiryOut; (void)playerNameOut; (void)rankOut; (void)rankTotalOut; (void)statsOut; (void)errorMsg;
-    return false;
-}
-bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg) {
-    (void)steamTicketHex; (void)tokenOut; (void)expiryOut; (void)playerNameOut; (void)rankOut; (void)rankTotalOut; (void)statsOut; (void)errorMsg;
-    return false;
-}
-bool winbolonetAuthSteamRegister(const char *steamTicketHex, const char *username, const char *email, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg, char *errorCodeOut) {
-    (void)steamTicketHex; (void)username; (void)email; (void)tokenOut; (void)expiryOut; (void)playerNameOut; (void)rankOut; (void)rankTotalOut; (void)statsOut; (void)errorMsg; (void)errorCodeOut;
-    return false;
-}
-bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg) {
-    (void)token; (void)playerNameOut; (void)rankOut; (void)rankTotalOut; (void)statsOut; (void)errorMsg;
-    return false;
-}
-
-/* ---- winbolonet thread stubs ---- */
-
-bool winbolonetThreadCreate(void) { return true; }
-void winbolonetThreadDestroy(void) {}
-bool winbolonetThreadAddRequest(const char *ep, const char *jb) { (void)ep; (void)jb; return false; }
-
-/* ---- winbolonet events stubs ---- */
-
-void winbolonetEventsCreate(void) {}
-void winbolonetEventsDestroy(void) {}
-void winbolonetEventsAddItem(BYTE itemType, const char *keyA, const char *keyB, bool aIsBot, bool bIsBot) {
-    (void)itemType; (void)keyA; (void)keyB; (void)aIsBot; (void)bIsBot;
-}
-int winbolonetEventsGetSize(void) { return 0; }
-BYTE winbolonetEventsRemove(char *keyA, char *keyB, bool *aIsBot, bool *bIsBot) {
-    (void)keyA; (void)keyB; (void)aIsBot; (void)bIsBot;
-    return 0;
 }
 
 /* ---- geolookup stubs (requires libmaxminddb) ---- */
@@ -181,7 +133,7 @@ void logViewerRunFromMemory(void *window, void *renderer, uint8_t *zipData, size
     (void)window; (void)renderer; (void)zipData; (void)zipLen; (void)fromMainMenu;
 }
 
-/* ---- WBN browser stub (requires libcurl/cJSON, not built on iOS) ---- */
+/* ---- WBN browser stub (imgui_wbn_browser.cpp is not built on iOS) ---- */
 
 #include "../sdl3/dialogs/imgui_wbn_browser.h"
 
@@ -267,7 +219,7 @@ void windowGetCustomSize(int *w, int *h) {
 void windowSetCustomSize(int w, int h) { (void)w; (void)h; }
 void windowSmoothScrolling_toggle(void) {}
 
-/* ---- winbolonet map change stub ---- */
+/* ---- winbolonet server stubs: lobby and map status ---- */
 
 void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills) {
     (void)mapName; (void)numBases; (void)numPills; (void)freeBases; (void)freePills;
@@ -306,94 +258,12 @@ bool logCheckTankSame(BYTE playerNum, BYTE mx, BYTE my, BYTE pxy, BYTE opt) {
 void logSetLobbyMode(bool enabled) { (void)enabled; }
 void logAddMapName(ServerSim *ssim) { (void)ssim; }
 
-/* ---- WinBolo.net REST stubs (requires libcurl) ----
+/* ---- winbolonet server stub: session end ----
  *
- * gamefront.c, imgui_gamebrowser.cpp, wbn_map_source.cpp and
- * map_preview_fetch.cpp call the WinBolo.net REST layer unconditionally, but
- * iOS builds without libcurl: no account, no internet game list, no map fetch
- * by md5, no cloud prefs. Every entry point reports a clean transport failure
- * and writes each out-parameter, so callers that read or free one on the
- * failure path are safe. */
-
-#include "../../winbolonet/http.h"
-#include "../../winbolonet/winbolonet_core.h"
-#include "../../winbolonet/wbn_serverlist.h"
-#include "../../winbolonet/wbn_map.h"
-#include "../../winbolonet/wbn_prefs_sync.h"
-
-const char *httpGetBaseUrl(void) { return ""; }
-void httpSetLogUploadTimeout(long seconds) { (void)seconds; }
-
-int wbn_api_get(const char *path, char **response_out) {
-    (void)path;
-    if (response_out) *response_out = NULL;
-    return -1;  /* transport error */
-}
-
-int wbn_api_get_timeout(const char *path, char **response_out,
-                        long timeout_ms, long connect_timeout_ms) {
-    (void)path; (void)timeout_ms; (void)connect_timeout_ms;
-    if (response_out) *response_out = NULL;
-    return -1;  /* transport error */
-}
-
-int wbn_api_download_to_memory(const char *path, uint8_t **data_out, size_t *size_out) {
-    (void)path;
-    if (data_out) *data_out = NULL;
-    if (size_out) *size_out = 0;
-    return -1;
-}
-
-int wbn_api_download_to_memory_cancellable(const char *path, uint8_t **data_out,
-                                           size_t *size_out,
-                                           volatile int *cancel_flag) {
-    (void)path; (void)cancel_flag;
-    if (data_out) *data_out = NULL;
-    if (size_out) *size_out = 0;
-    return -1;
-}
-
-bool wbnFetchServerList(WbnServerList *out) {
-    /* Header contract on failure: leave *out zeroed and owning nothing, so
-       the caller's wbnServerListFree is a no-op. */
-    if (out) memset(out, 0, sizeof(*out));
-    return false;
-}
-
-void wbnServerListFree(WbnServerList *out) {
-    if (out == NULL) return;
-    free(out->servers);
-    memset(out, 0, sizeof(*out));
-}
-
-bool wbnMapFetchByMd5(const char *md5Hex, WbnMapResult *out) {
-    (void)md5Hex;
-    if (out) memset(out, 0, sizeof(*out));
-    return false;
-}
-
-void wbnMapResultFree(WbnMapResult *out) {
-    if (out == NULL) return;
-    free(out->mapData);
-    memset(out, 0, sizeof(*out));
-}
-
-WbnSyncOutcome wbnPrefsSyncOnce(const char *userToken, const char *uploadSnapshot,
-                                const char *deviceType,
-                                bool localDirty, const char *lastSynced) {
-    (void)userToken; (void)uploadSnapshot; (void)deviceType;
-    (void)localDirty; (void)lastSynced;
-    /* NOOP is the "nothing to apply" outcome; serverPrefs must be NULL so the
-       caller's free() on it is safe. */
-    WbnSyncOutcome out;
-    memset(&out, 0, sizeof(out));
-    out.kind = WBN_SYNC_OUT_NOOP;
-    return out;
-}
+ * gamefront.c ends a hosted session before it leaves; there is never one
+ * here. */
 
 void winbolonetEndSession(uint32_t drainMaxMs) { (void)drainMaxMs; }
-
-const char *winbolonetGetCountryCode(void) { return ""; }
 
 /* ---- dedicated-server round log stubs ----
  *

@@ -1861,6 +1861,7 @@ resolve the same symbol with a no-op stub.
 | `WinBoloDS` | yes | yes | yes¹ | |
 | `WinBoloHeadless` | yes | yes | yes¹ | SP via `cmd_stdin` |
 | `LogViewer` | yes | — | yes | Replay UI uses `http.c` + comments |
+| `WinBoloIOS` | yes² | — | yes | Server side stubbed in `gui/ios/ios_stubs.c` |
 
 ¹ DS and Headless link `winbolonet_client` only to satisfy
 `winbolonetClientJoinSession`, which `transport_udp_client.c`
@@ -1870,7 +1871,15 @@ that compiles it. Neither binary calls the auth functions —
 there is no UI to invoke them — so `winbolonetAuthLogin`,
 `winbolonetAuthSteam`, and `winbolonetAuthValidate` are dead
 code in these builds. See "Cross-tier dependency" below.
-| `WinBoloIOS`, `WinBoloAndroid`, `BrainTest`, `MapEditor`, `WinBoloUnitTests`, wasm, `Gym` | — | — | — | Stubbed. Each platform-class group has its own stub file: `android/winbolonet_stub.c`, `gui/ios/ios_stubs.c`, `wasm/winbolonet_wasm.c`, and `gym/winbolonet_stub.c`. Gym's lives in its own file because gym links `server_static`, which references the lifecycle-driven WBN surface (`winbolonetEndSession`, `winbolonetBeginSession`, `winbolonetSendLobbyStatus`) the other stub sets don't carry. `bolo/log.c`'s `winboloNetGetServerKey` call is satisfied by every stub, returning an empty string. |
+| `WinBoloAndroid`, `BrainTest`, `MapEditor`, `WinBoloUnitTests`, wasm, `Gym` | — | — | — | Stubbed. Each platform-class group has its own stub file: `android/winbolonet_stub.c`, `wasm/winbolonet_wasm.c`, and `gym/winbolonet_stub.c`. Gym's lives in its own file because gym links `server_static`, which references the lifecycle-driven WBN surface (`winbolonetEndSession`, `winbolonetBeginSession`, `winbolonetSendLobbyStatus`) the other stub sets don't carry. `bolo/log.c`'s `winboloNetGetServerKey` call is satisfied by every stub, returning an empty string. |
+
+² iOS has no libcurl, so its `winbolonet_core` is built with
+`http_nsurl.m` (NSURLSession) in place of `http.c`. It implements
+every function in `http.h` with the same return values, headers,
+signature and bearer rules; the differences NSURLSession forces are
+listed at the top of that file. `winbolonet_server` is not linked
+because a phone does not host, and `ios_stubs.c` keeps no-op bodies
+for the server-side calls the sim and `gamefront.c` reference.
 
 **Gym caveat.** Gym is an offline ML training harness with no
 business phoning home. It inherits the `server_static` runtime,
