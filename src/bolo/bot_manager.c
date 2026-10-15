@@ -1128,6 +1128,9 @@ static void botResetContextForBuild(ServerSim *sim, BotContext *bot,
     if (init != NULL) {
         bot->initTable = *init;
     }
+    /* And a second copy that game.bot_init never writes, which is what a
+     * round start puts initTable back to. */
+    bot->addedInit = bot->initTable;
 }
 
 /* Build the three things a runner is — the ClientSim with its transport and
@@ -2584,6 +2587,46 @@ bool botManagerSetBotInitTable(ServerSim *sim, BYTE playerNum,
                 "brain %d: init table replaced, the brain has no on_init",
                 (int)playerNum);
     return true;
+}
+
+/* Undo every game.bot_init at a round start.
+ *
+ * A table handed with game.bot_init is the scenario's, and it is for the
+ * round that scenario is playing. Nothing else ever took it back, so it
+ * outlived the scenario: the round-start reload builds each brain from
+ * initTable, and a bot handed the horde's orders in a Virus round played the
+ * next plain round on the same server still under them — it never went for
+ * a base and played the round with no shells.
+ *
+ * Put back to the table the bot was added with rather than emptied, because
+ * that one is not the scenario's: a -bot-init table given on the command
+ * line has to survive every round, scenario or not.
+ *
+ * Every round start, the same scenario's included. A scenario boots a fresh
+ * Lua state each round and keeps nothing of the last one, so a script that
+ * wants a bot on a table hands it again in the new round; the Virus script
+ * does this for every bot. A table kept from the last round would be one the
+ * new round's script never asked for.
+ *
+ * Only a bot on the field. Its brain is rebuilt at the reload that follows,
+ * from the table written here. A parked runner is released at the round end,
+ * and its VM, which has been told whatever it was told, is not touched here,
+ * so its record is not either. */
+void botManagerResetInitTablesToAdded(ServerSim *sim) {
+    BYTE i;
+
+    if (sim == NULL) return;
+    for (i = 0; i < MAX_TANKS; i++) {
+        BotContext *bot = &sim->botMgr.bots[i];
+        if (!bot->active) continue;
+        bot->initTable = bot->addedInit;
+    }
+}
+
+void botManagerForgetAddedInit(ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    if (!sim->botMgr.bots[playerNum].active) return;
+    scnTableClear(&sim->botMgr.bots[playerNum].addedInit);
 }
 
 const ScnTable *botManagerGetBotInitTable(ServerSim *sim, BYTE playerNum) {

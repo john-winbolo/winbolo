@@ -4179,6 +4179,8 @@ int run_bot_init_arg_text_to_table(void);
 int run_scenario_bot_init_lands(void);
 int run_scenario_bot_init_refusals(void);
 int run_scenario_bot_init_parked_seat(void);
+int run_scenario_bot_init_round_reset(void);
+int run_scenario_bot_init_free_seat_spawn(void);
 int run_brain_on_init_update(void);
 
 int run_console_kick_and_host(void);
