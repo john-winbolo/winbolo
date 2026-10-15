@@ -484,4 +484,30 @@ int wbn_api_download_to_memory_cancellable(const char *path,
 *********************************************************/
 void httpSetAltIpAddress(char *iptoset);
 
+#if defined(WBN_HTTP_NSURL)
+/*********************************************************
+*NAME:          httpGetUrlToMemory
+*PURPOSE:
+* NSURLSession build (http_nsurl.m) only; WBN_HTTP_NSURL is
+* defined by that build's winbolonet_core for everything
+* that links it. A plain GET of a full URL: no /api/v1/
+* prefix, no signature and no bearer. Follows redirects.
+* For a caller that would otherwise reach for libcurl
+* directly, such as the news popup's image cache. On a 200
+* answer *data_out / *size_out receive the body (caller
+* frees); otherwise they are left NULL/0. Returns the HTTP
+* status code, or -1 on a transport error, a malformed URL,
+* or a body larger than maxBytes.
+*
+*ARGUMENTS:
+* url        - Full http:// or https:// URL
+* data_out   - Receives heap-allocated buffer (caller frees)
+* size_out   - Receives buffer size in bytes
+* maxBytes   - Largest response to accept, or 0 for no limit
+* timeout_ms - Total time limit in milliseconds
+*********************************************************/
+int httpGetUrlToMemory(const char *url, uint8_t **data_out, size_t *size_out,
+                       size_t maxBytes, long timeout_ms);
+#endif
+
 #endif /* __HTTP_H */

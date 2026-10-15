@@ -45,7 +45,14 @@
  *********************************************************/
 
 #include <SDL3/SDL.h>
+#if defined(WBN_HTTP_NSURL)
+/* No libcurl on iOS: the fetch goes through the NSURLSession HTTP module. */
+extern "C" {
+#include "../../winbolonet/http.h"
+}
+#else
 #include <curl/curl.h>
+#endif
 
 #include "stb_image.h"
 
@@ -183,6 +190,7 @@ struct DynBuf {
     size_t         capacity = 0;
 };
 
+#if !defined(WBN_HTTP_NSURL)
 size_t dynWrite(char *ptr, size_t size, size_t nmemb, void *userdata) {
     DynBuf *buf = static_cast<DynBuf *>(userdata);
     size_t incoming = size * nmemb;
@@ -204,6 +212,7 @@ size_t dynWrite(char *ptr, size_t size, size_t nmemb, void *userdata) {
     buf->size += incoming;
     return incoming;
 }
+#endif
 
 /*********************************************************
  *  Worker thread body
@@ -219,6 +228,23 @@ void workerBody(std::string url) {
     bool success = false;
     long httpCode = 0;
 
+#if defined(WBN_HTTP_NSURL)
+    if (!g_shutdown.load(std::memory_order_acquire)) {
+        uint8_t *data = nullptr;
+        size_t   size = 0;
+        httpCode = httpGetUrlToMemory(url.c_str(), &data, &size,
+                                      kMaxDownloadBytes,
+                                      kHttpTimeoutSec * 1000L);
+        if (httpCode == 200 && data != nullptr && size > 0) {
+            buf.data     = data;
+            buf.size     = size;
+            buf.capacity = size;
+            success = true;
+        } else {
+            std::free(data);
+        }
+    }
+#else
     if (!g_shutdown.load(std::memory_order_acquire)) {
         CURL *curl = curl_easy_init();
         if (curl) {
@@ -240,6 +266,7 @@ void workerBody(std::string url) {
             curl_easy_cleanup(curl);
         }
     }
+#endif
 
     unsigned char *pixels = nullptr;
     int w = 0, h = 0, channels = 0;

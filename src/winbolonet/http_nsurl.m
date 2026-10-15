@@ -1246,6 +1246,51 @@ int wbn_api_download_to_memory_progress(const char *path,
 }
 
 /*********************************************************
+*NAME:          httpGetUrlToMemory
+*PURPOSE:
+* Unsigned GET of a full URL into memory. See http.h.
+*********************************************************/
+int httpGetUrlToMemory(const char *url, uint8_t **data_out, size_t *size_out,
+                       size_t maxBytes, long timeout_ms) {
+  if (data_out) *data_out = NULL;
+  if (size_out) *size_out = 0;
+  if (url == NULL) return -1;
+
+  @autoreleasepool {
+    NSString *s = [NSString stringWithUTF8String:url];
+    NSURL *nsurl = s ? [NSURL URLWithString:s] : nil;
+    if (nsurl == nil) {
+      WB_LOG_WARN(WB_LOG_CAT_NET, "httpGetUrlToMemory: malformed URL");
+      return -1;
+    }
+
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:nsurl];
+    req.HTTPMethod = @"GET";
+
+    WbnHttpTask *t = [[WbnHttpTask alloc] init];
+    if (![t initBuffer]) return -1;
+    t->limit = maxBytes;
+
+    NSString *reason = nil;
+    WbnRunResult res = wbnRunRequest(req, t,
+                                     timeout_ms > 0 ? timeout_ms : WBN_API_GET_TIMEOUT_MS,
+                                     0, NULL, &reason);
+    if (res != WBN_RUN_OK) {
+      WB_LOG_WARN(WB_LOG_CAT_NET, "httpGetUrlToMemory: request error: %s",
+                  reason ? reason.UTF8String : "unknown");
+      return -1;
+    }
+
+    if (t->status == 200 && data_out && size_out) {
+      size_t got = t->size;
+      *data_out = (uint8_t *)[t takeBuffer];
+      *size_out = got;
+    }
+    return (int)t->status;
+  }
+}
+
+/*********************************************************
 *NAME:          httpSetAltIpAddress
 *PURPOSE:
 * Stores the alternate local address. NSURLSession cannot

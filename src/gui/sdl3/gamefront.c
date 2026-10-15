@@ -719,7 +719,9 @@ extern bool isTutorial;
 extern int frameRate;
 extern bool showGunsight;
 extern bool soundEffects;
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+/* BOLO_MOBILE is defined in dialogs/imgui_dialog_utils.h, which this file
+   does not include, so the platform tests here name the platforms. */
+#if !defined(__EMSCRIPTEN__)
 extern bool positionalSound;
 #endif
 extern bool backgroundSound;
@@ -878,7 +880,9 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       }
     }
 
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+/* Compiled on iOS and Android as well, as it always has been; neither shows
+   the full screen setting. */
+#if !defined(__EMSCRIPTEN__)
     /* Full screen covers the menus and the lobby too, so the window goes
        full screen here rather than waiting for a game. The preferences are
        already read and the window is created hidden, so the first dialog is
@@ -900,7 +904,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     }
 #endif
 
-#if defined(__APPLE__) && !defined(BOLO_MOBILE)
+#if defined(__APPLE__) && !defined(__IPHONEOS__)
     /* Install only the Dock-icon menu now so it is live during the
      * welcome screen. The full menu bar comes later via
      * mac_menubar_install() from sdl3ImguiSetup when a game starts —
@@ -1420,7 +1424,9 @@ static bool gameFrontDialogs(void) {
       }
       break;
     }
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+/* Compiled on iOS and Android as well, as it always has been, against their
+   stubs; their welcome screens offer none of these three. */
+#if !defined(__EMSCRIPTEN__)
     case openMapEditor:
       mapEditorSetSettingsHandler(imguiSettingsShowInEditor);
       mapEditorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
@@ -4689,7 +4695,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   showGunsight = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Sound Effects", "Yes", buff, FILENAME_MAX);
   soundEffects = YESNO_TO_TRUEFALSE(buff[0]);
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !defined(__EMSCRIPTEN__)
   prefsGetString("MENU", "Positional Sound", "Yes", buff, FILENAME_MAX);
   positionalSound = YESNO_TO_TRUEFALSE(buff[0]);
 #endif
@@ -5201,7 +5207,7 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("MENU", "Frame Rate", buff);
   prefsSetString("MENU", "Show Gunsight", TRUEFALSE_TO_STR(showGunsight));
   prefsSetString("MENU", "Sound Effects", TRUEFALSE_TO_STR(soundEffects));
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !defined(__EMSCRIPTEN__)
   prefsSetString("MENU", "Positional Sound", TRUEFALSE_TO_STR(positionalSound));
 #endif
   prefsSetString("MENU", "Allow Background Sound", TRUEFALSE_TO_STR(backgroundSound));

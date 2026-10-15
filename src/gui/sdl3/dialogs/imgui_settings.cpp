@@ -2576,8 +2576,10 @@ static void settingsShowLoop(bool inEditor) {
 #else
         present[STAB_CONTROLS] = false;
 #endif
-        /* UPnP, NAT traversal and the news popup mean nothing in a browser. */
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+        /* UPnP, NAT traversal and the news popup mean nothing in a browser.
+           iOS shows the tab for the news popup alone; Android does not
+           compile imgui_news.cpp. */
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
         present[STAB_LAST]     = true;
 #else
         present[STAB_LAST]     = false;
@@ -2695,11 +2697,13 @@ static void settingsShowLoop(bool inEditor) {
                 ImGui::EndTabItem();
             }
 #endif
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)  /* see present[STAB_LAST] */
             if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_NETWORK), nullptr,
                     s_pgForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_LAST;
                 ImGui::BeginChild("##networkPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+#if !BOLO_MOBILE
+                /* Port mapping and NAT traversal are not built for iOS. */
                 ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_NET_HELP));
                 ImGui::Spacing();
                 {
@@ -2714,6 +2718,7 @@ static void settingsShowLoop(bool inEditor) {
                         gameFrontUseNatTraversal = b;
                     }
                 }
+#endif
                 {
                     const char *cur = newsPrefGetAutoShow();
                     /* "unset" and "show" both default the checkbox to

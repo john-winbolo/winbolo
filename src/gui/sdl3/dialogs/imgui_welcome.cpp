@@ -33,7 +33,9 @@
 #include "imgui_nav_outline.h"
 #include "imgui_controller_prompt.h"
 #include "../imgui_steam_nav.h"
-#if !BOLO_MOBILE
+/* The news popup: on iOS too, not on Android, which does not compile
+   imgui_news.cpp. */
+#if !defined(__ANDROID__)
 #include "imgui_news.h"
 #endif
 
@@ -338,7 +340,7 @@ extern "C" int imguiWelcomeShow(void) {
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
         /* Single kick per program run — newsPopupKickFetch is idempotent
          * but the static guard avoids the call entirely once we've kicked. */
         static bool sNewsKicked = false;
@@ -447,7 +449,7 @@ extern "C" int imguiWelcomeShow(void) {
                 { fullScreenLabel,          0,                   showFullScreenToggle,
                                                                  "FullScreen" },
 #endif
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
                 { STR_DLGWELCOME_NEWS,      0,                   true,             "News" },
 #endif
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
@@ -473,8 +475,8 @@ extern "C" int imguiWelcomeShow(void) {
                     : miniModes[i].rawLabel;
                 SDL_snprintf(miniLabel, sizeof(miniLabel), "%s##mini", labelText);
                 if (ImGui::Button(miniLabel, ImVec2(miniBtnW, miniBtnH))) {
-#if !BOLO_MOBILE
-#if !defined(__EMSCRIPTEN__)
+#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
                     if (miniModes[i].rawLabel &&
                         SDL_strcmp(miniModes[i].rawLabel, "FullScreen") == 0) {
                         /* Move the window, then come back in through the top
@@ -507,7 +509,7 @@ extern "C" int imguiWelcomeShow(void) {
                 if (miniModes[i].code == RESULT_SINGLEPLAYER) {
                     ImGui::SetItemDefaultFocus();
                 }
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
                 /* Unread dot on the News button when fresh items exist. */
                 if (miniModes[i].rawLabel &&
                     SDL_strcmp(miniModes[i].rawLabel, "News") == 0 &&
@@ -552,7 +554,7 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::EndGroup();
         }
 
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
         /* Drive the news popup state machine. Renders the consent dialog
          * or the news modal when either is open, otherwise polls the
          * fetch handle and decides whether to auto-open. */

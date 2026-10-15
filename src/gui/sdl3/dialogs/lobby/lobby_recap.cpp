@@ -894,7 +894,7 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
         renderAward(picks[i]);
     }
 
-#if !BOLO_MOBILE && BOLO_RECAP_WBN_RATING
+#if !defined(__ANDROID__) && BOLO_RECAP_WBN_RATING  /* Android does not compile lobby_rating.cpp */
     /* ── WinBolo.net rating & comments ───────────────────────────── */
     lobbyRenderRatingBlock(cs, st, s);
 #endif

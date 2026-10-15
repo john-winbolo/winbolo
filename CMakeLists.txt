@@ -1204,6 +1204,10 @@ target_include_directories(winbolonet_core PRIVATE
     src/third_party/tweetnacl
 )
 target_link_libraries(winbolonet_core PRIVATE SDL3::SDL3 "-framework Foundation")
+# Tells http.h, and the code that links this library, that the transport is
+# NSURLSession: http.h then declares httpGetUrlToMemory, which the news image
+# cache uses in place of libcurl.
+target_compile_definitions(winbolonet_core PUBLIC WBN_HTTP_NSURL=1)
 bolo_apply_include_rules(winbolonet_core runtime_only)
 
 add_library(winbolonet_client STATIC
@@ -1220,6 +1224,15 @@ bolo_apply_include_rules(winbolonet_client runtime_only)
 
 target_link_libraries(WinBoloIOS PRIVATE winbolonet_client winbolonet_core
     "-framework Foundation")
+
+# The WinBolo.net screens that need the libraries above: the news popup with
+# its image cache, and the recap's stars and comments.
+target_sources(WinBoloIOS PRIVATE
+    src/gui/sdl3/dialogs/imgui_news.cpp
+    src/gui/sdl3/news_image_cache.cpp
+    src/gui/sdl3/dialogs/imgui_star_rating.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_rating.cpp
+)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
     nanosvg stb_image utf8proc zlibstatic minizip cjson
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"

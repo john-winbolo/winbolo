@@ -747,7 +747,7 @@ void lobbyClipGifSaveAbandon(void);
 #endif
 
 /* rating */
-#if !BOLO_MOBILE && BOLO_RECAP_WBN_RATING
+#if !defined(__ANDROID__) && BOLO_RECAP_WBN_RATING  /* Android does not compile lobby_rating.cpp */
 void lobbyRatingReset(void);
 void lobbyRatingSyncKey(ClientSim *cs, const RoundStatsSummary *st);
 void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
