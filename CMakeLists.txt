@@ -5982,6 +5982,7 @@ set(_unit_test_names
     boat_exit_grass_unchanged
     boat_exit_parked_boat_pickup
     boat_exit_base_beside_water
+    boat_exit_wall_held
     tank_mod_pill_leads_half_speed_boat
     tank_mod_predicted_stop_matches_engine
     tank_modifiers_op_writes_set

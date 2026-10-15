@@ -1317,6 +1317,7 @@ static const UnitTestEntry s_tests[] = {
     { "boat_exit_grass_unchanged",               run_boat_exit_grass_unchanged               },
     { "boat_exit_parked_boat_pickup",            run_boat_exit_parked_boat_pickup            },
     { "boat_exit_base_beside_water",             run_boat_exit_base_beside_water             },
+    { "boat_exit_wall_held",                     run_boat_exit_wall_held                     },
     { "tank_mod_pill_leads_half_speed_boat",     run_tank_mod_pill_leads_half_speed_boat     },
     { "tank_mod_predicted_stop_matches_engine",  run_tank_mod_predicted_stop_matches_engine  },
     { "tank_modifiers_op_writes_set",            run_tank_modifiers_op_writes_set            },

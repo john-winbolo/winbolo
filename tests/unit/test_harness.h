@@ -2805,6 +2805,7 @@ int run_boat_exit_fast_onto_road_lands(void);
 int run_boat_exit_grass_unchanged(void);
 int run_boat_exit_parked_boat_pickup(void);
 int run_boat_exit_base_beside_water(void);
+int run_boat_exit_wall_held(void);
 int run_tank_mod_pill_leads_half_speed_boat(void);
 int run_tank_mod_predicted_stop_matches_engine(void);
 
