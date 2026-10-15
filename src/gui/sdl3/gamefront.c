@@ -1437,6 +1437,12 @@ static bool gameFrontDialogs(void) {
       dlgState = openWelcome;
       break;
     case openLogViewer: {
+#if defined(__IPHONEOS__)
+      /* iOS has no modal viewer: its logViewerRun with no path is the list of
+       * recordings on the phone (ios_recordings.cpp), which plays them in the
+       * reel and opens this browser from its My Games button. */
+      logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
+#else
       WbnBrowserResult wbnResult = imguiWbnBrowserShow(sdl3DrawGetWindow(),
                                                        sdl3DrawGetRenderer());
       /* The LogViewer NSMenu install/uninstall lives inside logViewerRun
@@ -1457,6 +1463,7 @@ static bool gameFrontDialogs(void) {
       default:
         break;
       }
+#endif
       /* Same as the editor above: the viewer owns the loop while it is up. */
       if (logViewerAppQuitRequested()) windowSetQuitting();
       dlgState = openWelcome;

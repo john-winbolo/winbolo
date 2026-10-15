@@ -1381,6 +1381,9 @@ target_sources(WinBoloIOS PRIVATE
     # The live spectator feed in the reel, in place of the modal viewer's
     # spectatorRun.
     src/gui/ios/ios_spectator.cpp
+    # The recordings on the phone, listed and played in the reel, in place
+    # of the modal viewer's logViewerRun.
+    src/gui/ios/ios_recordings.cpp
 )
 
 # The map editor, opened from the welcome screen as on the desktop. The same

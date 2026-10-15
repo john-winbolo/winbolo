@@ -2792,3 +2792,11 @@ STR_MAPEDIT_IOS_NOFILES=Nothing here yet. Files you save, and files you put in W
 STR_MAPEDIT_IOS_NAME=Name
 STR_MAPEDIT_IOS_REPLACES=A file with this name exists. Saving replaces it.
 
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Recordings
+STR_IOSREC_EMPTY=No recordings yet. Single-player rounds are recorded here, and .wbv files put in the WinBolo folder in the Files app are listed here too.
+STR_IOSREC_COPY=Copy to Files
+STR_IOSREC_COPIED=Copied to the WinBolo folder in the Files app.
+STR_IOSREC_OPEN_FAILED=This recording could not be opened.
+STR_IOSREC_LAST_ROUND=Last single-player round
+

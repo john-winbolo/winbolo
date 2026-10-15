@@ -107,12 +107,8 @@ bool geoLookupIsLoaded(void) { return false; }
 
 /* ---- log viewer stubs (the modal viewer is not built on iOS) ----
  *
- * The WinBolo.net log browser downloads to memory on mobile, so nothing on
- * iOS opens a log by path. */
-
-void logViewerRun(void *window, void *renderer, const char *logPath, bool fromMainMenu) {
-    (void)window; (void)renderer; (void)logPath; (void)fromMainMenu;
-}
+ * logViewerRun is in ios_recordings.cpp: the recordings on the phone, played
+ * in the reel. */
 
 /* gamefront.c reads this after a log viewer run returns, to learn whether
  * the player quit the application from inside it. The modal viewer does not

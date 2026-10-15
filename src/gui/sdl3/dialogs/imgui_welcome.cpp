@@ -51,6 +51,9 @@ extern "C" {
 }
 
 #include "imgui_about.h"   /* aboutPopupOpen / aboutPopupRender */
+#if defined(__IPHONEOS__)
+#include "../../ios/ios_recordings.h"  /* iosRecordingsTakeDropEvent */
+#endif
 #include "imgui_keyboard.h" /* keyboardUpdate */
 
 /* From winbolo.c */
@@ -302,6 +305,10 @@ extern "C" int imguiWelcomeShow(void) {
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
+#if defined(__IPHONEOS__)
+            /* A .wbv opened from Files or Mail plays on the recordings screen. */
+            if (iosRecordingsTakeDropEvent(&ev)) { result = (int)openLogViewer; running = false; continue; }
+#endif
             if (dialogHandleUrlDropEvent(&ev)) { result = (int)openInternetManual; running = false; continue; }
             if (dialogHandleQuitEvent(window, &ev)) {
                 result = RESULT_QUIT;

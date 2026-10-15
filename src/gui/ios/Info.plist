@@ -58,5 +58,46 @@
             </array>
         </dict>
     </array>
+
+    <!-- Game recordings (.wbv). The Documents directory shows in the Files
+         app and in Finder file sharing as the WinBolo folder, and a .wbv
+         opened from Files, Mail or another app launches WinBolo with it,
+         which plays it on the recordings screen (ios_recordings.cpp). -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>WinBolo Game Recording</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.winbolo.wbv</string>
+            </array>
+        </dict>
+    </array>
+    <key>UTImportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.winbolo.wbv</string>
+            <key>UTTypeDescription</key>
+            <string>WinBolo Game Recording</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+                <string>public.content</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>wbv</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
 </dict>
 </plist>

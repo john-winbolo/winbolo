@@ -3378,6 +3378,14 @@
 #define STR_MAPEDIT_IOS_NAME                     2802
 #define STR_MAPEDIT_IOS_REPLACES                 2803
 
+/* Recordings on the phone (iOS log viewer screen) */
+#define STR_IOSREC_TITLE                         2804
+#define STR_IOSREC_EMPTY                         2805
+#define STR_IOSREC_COPY                          2806
+#define STR_IOSREC_COPIED                        2807
+#define STR_IOSREC_OPEN_FAILED                   2808
+#define STR_IOSREC_LAST_ROUND                    2809
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */
