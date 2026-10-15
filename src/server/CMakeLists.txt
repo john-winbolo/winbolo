@@ -37,6 +37,9 @@
 #                        parsing servermain.c drives through
 #                        ServerConsoleOps) rides along here so the unit
 #                        tests can link it without servermain.c's main().
+#                        server_memreport.c (the memory report that
+#                        -memreport and the console's mem / memdeep
+#                        write) rides along for the same reason.
 #                        PUBLIC-links server_sim_static so consumers don't
 #                        have to list both. Linked by the four binaries
 #                        that run the real dedicated-server lifecycle:
@@ -133,6 +136,7 @@ target_link_libraries(server_round_log_static PUBLIC server_sim_static)
 add_library(server_static STATIC EXCLUDE_FROM_ALL
     geolookup.c
     server_console.c
+    server_memreport.c
     server_lifecycle.c
     transport_udp_server.c
     udp/udp_server_admin.c

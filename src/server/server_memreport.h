@@ -1,0 +1,87 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/* The dedicated server's memory report: one line that says how much
+ * memory the process holds and where it sits (each bot's Lua heap, the
+ * world's object lists), so a server that runs for days can show which
+ * part grows. The timed report is off unless -memreport (or
+ * -memreportdeep) turns it on. The operator console's "mem" asks for one
+ * now, and "memdeep" adds a walk of each bot's Lua tables. */
+
+#ifndef WINBOLO_SERVER_MEMREPORT_H
+#define WINBOLO_SERVER_MEMREPORT_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+struct ServerSim;
+
+/* Period of the timed report, in minutes, when a flag turns it on
+ * without giving one. */
+#define SERVER_MEMREPORT_DEFAULT_MINUTES 10
+
+/* Turn the command line into the timed report's period in minutes (0 =
+ * off, the default). `given` says whether -memreport appears; `value` is
+ * the argument after it, or NULL when it is the last one. A bare
+ * -memreport (last, or followed by another flag) means the default
+ * period. -memreportdeep (`deep`) turns the report on at the default
+ * period when -memreport is not given. Writes a one-line warning into
+ * `warn` when the flags need one, else an empty string. */
+double serverMemReportPeriodFromArgs(bool given, const char *value, bool deep,
+                                     char *warn, size_t warnSize);
+
+/* Set the period of the timed report (minutes; 0 turns the timed report
+ * off — "mem" on the console still works) and whether every timed report
+ * also does the deep walk. Call once at startup. */
+void serverMemReportConfigure(double periodMinutes, bool deepEveryReport);
+
+/* Ask for a report at the next tick. Safe from any thread: the console
+ * thread calls it, and the tick thread does the work. */
+void serverMemReportRequest(bool deep);
+
+/* Called by the tick driver after each serverInstanceTick, with the tick
+ * lock held and the server mutex NOT held. Writes a report when one is due
+ * or was asked for; otherwise costs one clock read. */
+void serverMemReportPoll(struct ServerSim *sim);
+
+/* The process's own memory, in bytes. Each figure has a have* flag; a
+ * figure the platform cannot give, or whose read failed, is 0 with its
+ * flag false, and the report prints it as "n/a". Returns false when
+ * nothing could be read. */
+typedef struct {
+  uint64_t rss;      /* resident set / working set */
+  uint64_t peakRss;  /* high-water mark of rss */
+  uint64_t priv;     /* private bytes (Windows) / VmData (Linux) /
+                        phys_footprint (macOS) */
+  uint64_t virt;     /* virtual address space in use (Windows, Linux);
+                        n/a on macOS, where every process reads ~400 GB */
+  bool haveRss;
+  bool havePeakRss;
+  bool havePriv;
+  bool haveVirt;
+} ServerMemProcess;
+
+bool serverMemReadProcess(ServerMemProcess *out);
+
+/* Write the report's process part ("process rss 12.3 MB (peak 14.0 MB),
+ * private ..., virtual ...") into buf, with "n/a" for each figure whose
+ * have* flag is false. Split out so a test can check it. */
+void serverMemFormatProcess(const ServerMemProcess *pm, char *buf,
+                            size_t bufSize);
+
+#endif /* WINBOLO_SERVER_MEMREPORT_H */

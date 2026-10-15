@@ -20,6 +20,7 @@ add_library(bolo_static STATIC
     bolo_map.c
     bolo_rand.c
     bot_manager.c
+    bot_mem_report.c
     bot_worker_pool.c
     brain_data.c
     brain_list.c
