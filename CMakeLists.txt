@@ -1233,6 +1233,18 @@ target_sources(WinBoloIOS PRIVATE
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/dialogs/lobby/lobby_rating.cpp
 )
+
+# GoalHunter's opt/ build: the same brain with its debug-only logging taken
+# out, which luabrainshandler.c loads in place of the full source whenever
+# brain debug mode is off. The desktop copies it with the rest of the brain
+# folder (cmake/copy_brains.cmake); without it iOS ran the full source, which
+# costs more per think.
+file(GLOB IOS_BRAIN_OPT_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/GoalHunter/opt/*.lua")
+target_sources(WinBoloIOS PRIVATE ${IOS_BRAIN_OPT_SCRIPTS})
+set_source_files_properties(${IOS_BRAIN_OPT_SCRIPTS} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "Brains/GoalHunter/opt"
+)
+source_group("Brains/opt" FILES ${IOS_BRAIN_OPT_SCRIPTS})
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
     nanosvg stb_image utf8proc zlibstatic minizip cjson
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
