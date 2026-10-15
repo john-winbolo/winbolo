@@ -33,11 +33,15 @@
 *  limits, response ceiling, progress reports and the
 *  multipart log upload.
 *
-*  Callers expect a blocking call, and they already run on
-*  worker threads, so each request starts an NSURLSession
-*  task and waits on a dispatch semaphore until the task
-*  completes. The wait wakes every 50 ms when the caller
-*  gave a cancel flag or a connect limit, to check them.
+*  Callers expect a blocking call, so each request starts an
+*  NSURLSession task and waits on a dispatch semaphore until
+*  the task completes. Most callers are on worker threads;
+*  the ones that are not (the sign-in calls a dialog makes
+*  directly) block the thread they are on, as with libcurl.
+*  On iOS the token check before a join runs on a thread of
+*  its own behind the Connecting screen. The wait wakes
+*  every 50 ms when the caller gave a cancel flag or a
+*  connect limit, to check them.
 *
 *  Built with ARC (see CMakeLists.txt).
 *
@@ -45,19 +49,32 @@
 *  - httpSetAltIpAddress stores the address but cannot bind
 *    to it: NSURLSession has no way to choose the local
 *    interface.
-*  - The connect limit is measured to the first sign of a
-*    live connection: request body bytes sent, or the
-*    response headers received. NSURLSession does not report
-*    the end of the connect phase on its own, so for a GET
-*    the limit also covers the server's time to answer.
+*  - The connect limit is measured to the first request
+*    body bytes sent, which shows the connection is up.
+*    NSURLSession does not report the end of the connect
+*    phase on its own, and a request with no body sends no
+*    body bytes, so a GET has only its total limit: a
+*    connect limit there would also cover the server's time
+*    to answer.
 *  - httpWorkerPoolBegin/End only record the worker thread
 *    for the slow-call log line. NSURLSession keeps its own
 *    pool of connections, shared by every thread.
 *  - Every request path starts the module on first use, as
-*    http.c's GET and prefs paths do. On the desktop the
-*    welcome screen's news fetch calls httpCreate before any
-*    other request; iOS has no news screen, and the sign-in
-*    calls run httpDestroy when they finish.
+*    http.c's GET and prefs paths do, because the sign-in
+*    calls run httpDestroy when they finish and the next
+*    request may come from any thread. The host is read from
+*    the preferences once, at the first httpCreate (on both
+*    platforms the welcome screen's news fetch, on the main
+*    thread), and kept: prefs.c has no lock, so a later
+*    httpCreate on a worker thread must not read it again.
+*    A Host changed in the preferences while the app runs
+*    takes effect at the next launch.
+*  - Paths and queries are percent-encoded before they are
+*    parsed, since NSURL refuses a space or other character
+*    a URL may not carry, which libcurl sends as it is. A
+*    "%XX" already in the text is kept.
+*  - A redirect to another scheme, host or port drops the
+*    Authorization header, as libcurl does by default.
 *********************************************************/
 
 #if !__has_feature(objc_arc)
@@ -76,7 +93,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
-#include <errno.h>
 #include <time.h>
 #include <stdatomic.h>
 #include <SDL3/SDL_thread.h>
@@ -99,6 +115,9 @@ void randombytes(unsigned char *buf, unsigned long long len) {
 #include "wbn_bearer.h"
 
 static bool httpStarted = false;
+/* Set, with release ordering, once wbnBaseUrl / wbnHostString have been
+ * filled; they never change after that. See httpCreate. */
+static atomic_bool s_baseUrlReady;
 static char wbnHostString[FILENAME_MAX]; /* hostname only, no scheme */
 static char wbnBaseUrl[FILENAME_MAX];    /* full base URL, e.g. https://wbn.winbolo.net */
 static char altIpAddress[FILENAME_MAX];
@@ -359,6 +378,8 @@ static NSURLSession *wbnSession(void) {
   size_t size;
   size_t capacity;
   size_t limit;      /* 0 = no ceiling */
+  size_t keepMax;    /* nonzero: keep only this many bytes, drop the rest
+                      * without failing the transfer */
 
   /* Response body to a file (when fp is non-NULL). */
   FILE  *fp;
@@ -445,6 +466,16 @@ didReceiveResponse:(NSURLResponse *)response
     return;
   }
 
+  if (useBuf && keepMax != 0) {
+    /* Keep the first keepMax bytes and let the rest go by. */
+    size_t room = (size < keepMax) ? keepMax - size : 0;
+    if (incoming > room) incoming = room;
+    if (incoming == 0) {
+      received += (int64_t)data.length;
+      return;
+    }
+  }
+
   if (useBuf) {
     size_t needed = size + incoming + 1;
     if (needed > capacity) {
@@ -459,10 +490,13 @@ didReceiveResponse:(NSURLResponse *)response
       buf = tmp;
       capacity = newcap;
     }
+    __block size_t left = incoming;
     [data enumerateByteRangesUsingBlock:^(const void *bytes, NSRange range, BOOL *stop) {
-      (void)stop;
-      memcpy(self->buf + self->size, bytes, range.length);
-      self->size += range.length;
+      size_t n = range.length < left ? range.length : left;
+      memcpy(self->buf + self->size, bytes, n);
+      self->size += n;
+      left -= n;
+      if (left == 0) *stop = YES;
     }];
     buf[size] = '\0';
   } else if (fp != NULL) {
@@ -481,10 +515,39 @@ didReceiveResponse:(NSURLResponse *)response
     }
   }
 
-  received += (int64_t)incoming;
+  received += (int64_t)data.length;
   if (progressFn) {
     progressFn(progressUser, received, expected);
   }
+}
+
+/* A redirect is followed, as libcurl follows one here; the Authorization
+ * header goes with it only to the same scheme, host and port, which is
+ * what libcurl does with a header it was given. The signature and
+ * timestamp headers go either way, as libcurl's other custom headers do;
+ * they prove nothing without the signing key. */
+- (void)URLSession:(NSURLSession *)session
+                          task:(NSURLSessionTask *)task
+    willPerformHTTPRedirection:(NSHTTPURLResponse *)response
+                    newRequest:(NSURLRequest *)request
+             completionHandler:(void (^)(NSURLRequest *))completionHandler {
+  (void)session; (void)response;
+  NSURL *from = task.currentRequest.URL ?: task.originalRequest.URL;
+  NSURL *to = request.URL;
+  bool sameOrigin =
+      from != nil && to != nil &&
+      [from.scheme caseInsensitiveCompare:to.scheme ?: @""] == NSOrderedSame &&
+      [from.host caseInsensitiveCompare:to.host ?: @""] == NSOrderedSame &&
+      ((from.port == nil && to.port == nil) ||
+       (from.port != nil && to.port != nil && [from.port isEqualToNumber:to.port]));
+  if (sameOrigin || [request valueForHTTPHeaderField:@"Authorization"] == nil) {
+    completionHandler(request);
+    return;
+  }
+  NSMutableURLRequest *stripped = [request mutableCopy];
+  [stripped setValue:nil forHTTPHeaderField:@"Authorization"];
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "redirect to another host: Authorization dropped");
+  completionHandler(stripped);
 }
 
 - (void)URLSession:(NSURLSession *)session
@@ -533,6 +596,13 @@ static WbnRunResult wbnRunRequest(NSMutableURLRequest *req, WbnHttpTask *t,
                 "on this platform; using the default route", altIpAddress);
   }
 
+  /* The connect limit is judged by request body bytes going out, so a
+   * request with no body has only its total limit; otherwise the limit
+   * would also cover the server's time to answer (see the file header). */
+  if (req.HTTPBody == nil || req.HTTPBody.length == 0) {
+    connectMs = 0;
+  }
+
   /* The idle limit of the request itself; the total is enforced below. */
   req.timeoutInterval = (NSTimeInterval)totalMs / 1000.0 + 1.0;
   /* Bodies arrive as the server sent them, as with libcurl here, so the
@@ -577,7 +647,7 @@ static WbnRunResult wbnRunRequest(NSMutableURLRequest *req, WbnHttpTask *t,
     }
     if (connectMs > 0 &&
         (long)(SDL_GetTicks() - startMs) >= connectMs &&
-        !atomic_load(&t->gotResponse) && task.countOfBytesSent == 0) {
+        task.countOfBytesSent == 0 && !atomic_load(&t->gotResponse)) {
       timedOut = true;
       break;
     }
@@ -599,18 +669,42 @@ static WbnRunResult wbnRunRequest(NSMutableURLRequest *req, WbnHttpTask *t,
   return WBN_RUN_ERROR;
 }
 
+/* Percent-encodes every byte of url a URL may not carry as it is: a space,
+ * a quote, a byte above 127 and the like. Letters, digits, the characters
+ * RFC 3986 allows in a path or a query (including "/", "?", "&", "=" and
+ * ":") and a "%" that already starts a "%XX" are kept, so a path a caller
+ * has encoded itself is not encoded twice. Returns nil when the result does
+ * not parse. */
+static NSURL *wbnUrlFromText(const char *url) {
+  static const char kKeep[] = "-._~!$&'()*+,;=:@/?";
+  NSMutableString *enc = [NSMutableString stringWithCapacity:strlen(url) + 16];
+  for (const unsigned char *p = (const unsigned char *)url; *p != '\0'; p++) {
+    unsigned char c = *p;
+    bool keep = isalnum(c) || (c != '\0' && strchr(kKeep, c) != NULL);
+    if (c == '%' && isxdigit(p[1]) && isxdigit(p[2])) {
+      keep = true;
+    }
+    if (keep) {
+      [enc appendFormat:@"%c", (char)c];
+    } else {
+      [enc appendFormat:@"%%%02X", (unsigned)c];
+    }
+  }
+  return [NSURL URLWithString:enc];
+}
+
 /* Builds <baseUrl>/api/v1/<path> as an NSURL, or nil when it does not
- * parse. */
+ * parse. urlOut keeps the text as given, for the log. */
 static NSURL *wbnApiUrl(const char *path, char *urlOut, size_t urlOutSize) {
   snprintf(urlOut, urlOutSize, "%s/api/v1/%s", wbnBaseUrl, path);
-  NSString *s = [NSString stringWithUTF8String:urlOut];
-  if (s == nil) return nil;
-  return [NSURL URLWithString:s];
+  return wbnUrlFromText(urlOut);
 }
 
 /* Starts the module when nothing has yet. See the file header. */
 static bool wbnEnsureStarted(void) {
-  if (!httpStarted) (void)httpCreate();
+  if (!httpStarted || !atomic_load_explicit(&s_baseUrlReady, memory_order_acquire)) {
+    (void)httpCreate();
+  }
   return httpStarted;
 }
 
@@ -633,17 +727,21 @@ bool httpCreate(void) {
   char iniValue[FILENAME_MAX];
 
   @synchronized ([WbnHttpTask class]) {
-    if (wbnHostOverride[0] != '\0') {
-      strncpy(iniValue, wbnHostOverride, sizeof(iniValue) - 1);
-      iniValue[sizeof(iniValue) - 1] = '\0';
-    } else {
-      iniValue[0] = '\0';
-      prefsGetString("WINBOLO.NET", "Host", "wbn.winbolo.net",
-                     iniValue, (unsigned int)sizeof(iniValue));
-      prefsSetString("WINBOLO.NET", "Host", iniValue);
+    /* The host is read once and kept (see the file header): the base URL
+     * is then never written again, so it can be read without the lock. */
+    if (!atomic_load_explicit(&s_baseUrlReady, memory_order_acquire)) {
+      if (wbnHostOverride[0] != '\0') {
+        strncpy(iniValue, wbnHostOverride, sizeof(iniValue) - 1);
+        iniValue[sizeof(iniValue) - 1] = '\0';
+      } else {
+        iniValue[0] = '\0';
+        prefsGetString("WINBOLO.NET", "Host", "wbn.winbolo.net",
+                       iniValue, (unsigned int)sizeof(iniValue));
+        prefsSetString("WINBOLO.NET", "Host", iniValue);
+      }
+      buildBaseUrl(iniValue);
+      atomic_store_explicit(&s_baseUrlReady, true, memory_order_release);
     }
-
-    buildBaseUrl(iniValue);
     httpStarted = true;
   }
   return true;
@@ -850,8 +948,7 @@ bool httpSendLogFile(const char *fileName, char *key, bool wantFeedback) {
     WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: POST %s/log.php?key=***", wbnBaseUrl);
     WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: file=%s", fileName);
 
-    NSString *nsurlString = [NSString stringWithUTF8String:url];
-    NSURL *nsurl = nsurlString ? [NSURL URLWithString:nsurlString] : nil;
+    NSURL *nsurl = wbnUrlFromText(url);
     if (nsurl == nil) {
       WB_LOG_WARN(WB_LOG_CAT_NET, "httpSendLogFile: malformed URL");
       return false;
@@ -860,10 +957,15 @@ bool httpSendLogFile(const char *fileName, char *key, bool wantFeedback) {
     /* libcurl reads the file during the transfer and fails it when the file
      * cannot be read; here it is read first, with the same outcome. */
     NSString *path = [NSString stringWithUTF8String:fileName];
-    NSData *fileData = path ? [NSData dataWithContentsOfFile:path] : nil;
+    NSError *readError = nil;
+    NSData *fileData = path ? [NSData dataWithContentsOfFile:path options:0
+                                                       error:&readError]
+                            : nil;
     if (fileData == nil) {
       WB_LOG_WARN(WB_LOG_CAT_NET, "httpSendLogFile: cannot open file '%s': %s",
-                  fileName, strerror(errno));
+                  fileName,
+                  readError ? readError.localizedDescription.UTF8String
+                            : "file name is not valid UTF-8");
       return false;
     }
     WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: file size=%ld bytes",
@@ -899,9 +1001,9 @@ bool httpSendLogFile(const char *fileName, char *key, bool wantFeedback) {
 
     WbnHttpTask *t = [[WbnHttpTask alloc] init];
     if (![t initBuffer]) return false;
-    /* http.c keeps the first 1024 bytes of the reply for its log line.
-     * The ceiling here would fail the upload instead, so the reply is
-     * collected whole and cut when logged. */
+    /* The reply is only logged; keep its first 1023 bytes, as http.c's
+     * fixed 1024-byte buffer does, and let the rest go by. */
+    t->keepMax = 1023;
 
     long timeoutS = s_logUploadTimeoutOverride > 0 ? s_logUploadTimeoutOverride
                                                    : WBN_UPLOAD_TIMEOUT_S;
@@ -917,9 +1019,6 @@ bool httpSendLogFile(const char *fileName, char *key, bool wantFeedback) {
       return false;
     }
 
-    if (t->size >= 1024) {
-      t->buf[1023] = '\0';
-    }
     {
       char respPrefix[64];
       snprintf(respPrefix, sizeof(respPrefix), "httpSendLogFile: HTTP %ld, response=", t->status);
@@ -1257,8 +1356,7 @@ int httpGetUrlToMemory(const char *url, uint8_t **data_out, size_t *size_out,
   if (url == NULL) return -1;
 
   @autoreleasepool {
-    NSString *s = [NSString stringWithUTF8String:url];
-    NSURL *nsurl = s ? [NSURL URLWithString:s] : nil;
+    NSURL *nsurl = wbnUrlFromText(url);
     if (nsurl == nil) {
       WB_LOG_WARN(WB_LOG_CAT_NET, "httpGetUrlToMemory: malformed URL");
       return -1;
