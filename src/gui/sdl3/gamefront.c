@@ -113,6 +113,9 @@ bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   void *cs, const char *serverHost, uint16_t serverPort);
 
 #include "dialogs/imgui_wbn_browser.h"
+#if defined(__IPHONEOS__)
+#include "dialogs/imgui_connecting.h"
+#endif
 #include "dialogs/imgui_onboarding.h"
 #include "dialogs/imgui_lobby.h"
 
@@ -1657,6 +1660,31 @@ void gameFrontApplySteamAuthResult(const char *token, const char *expiry,
 }
 
 /* -------------------------------------------------------
+ * gameFrontApplyWbnValidate — apply the answer of a token
+ * check made before a join: the rank, stats and name it
+ * returned, or clear a token WinBolo.net turned down.
+ * ------------------------------------------------------- */
+static void gameFrontApplyWbnValidate(bool ok, bool tokenRejected,
+                                      const char *playerName, int rank,
+                                      int rankTotal, WbnStats *stats,
+                                      const char *errorMsg) {
+  if (ok) {
+    gameFrontSetWinbolonetRank(rank, rankTotal);
+    gameFrontSetWinbolonetStats(stats);
+    if (playerName[0] != '\0') {
+      gameFrontSetPlayerName((char *)playerName);
+    }
+  } else if (tokenRejected) {
+    fprintf(stderr, "[gameFront] WBN token validation failed: %s\n", errorMsg);
+    gameFrontClearWinbolonetToken();
+  } else {
+    /* No answer from WinBolo.net: keep the token for the next try rather
+     * than signing the player out over a dropped connection. */
+    fprintf(stderr, "[gameFront] WBN token not checked: %s\n", errorMsg);
+  }
+}
+
+/* -------------------------------------------------------
  * gameFrontValidateWbnBeforeJoin — If a WBN token is stored,
  * validate it synchronously and update the player name from
  * the API response.  If the token is no longer valid, clear
@@ -1700,22 +1728,412 @@ static void gameFrontValidateWbnBeforeJoin(void) {
   errorMsg[0] = '\0';
 
   bool tokenRejected = FALSE;
-  if (winbolonetAuthValidateEx(token, playerName, &rank, &rankTotal, &stats, errorMsg,
-                               &tokenRejected)) {
-    gameFrontSetWinbolonetRank(rank, rankTotal);
-    gameFrontSetWinbolonetStats(&stats);
-    if (playerName[0] != '\0') {
-      gameFrontSetPlayerName(playerName);
+  bool ok = winbolonetAuthValidateEx(token, playerName, &rank, &rankTotal, &stats,
+                                     errorMsg, &tokenRejected);
+  gameFrontApplyWbnValidate(ok, tokenRejected, playerName, rank, rankTotal,
+                            &stats, errorMsg);
+}
+
+/* -------------------------------------------------------
+ * The steps of a join, shared by the blocking join below
+ * and the iOS join screen (gameFrontIosJoin), which waits
+ * for each without blocking.
+ * ------------------------------------------------------- */
+
+/* gameFrontJoinPreflight — after the server's info reply: refuse a
+ * version mismatch and ask for the password when the server wants one.
+ * Returns FALSE when the join ends here, having cleaned up. */
+static bool gameFrontJoinPreflight(const DiscoveryPingResult *dpr,
+                                   openingStates prevState) {
+  if (dpr->versionMajor    != BOLO_VERSION_MAJOR ||
+      dpr->versionMinor    != BOLO_VERSION_MINOR ||
+      dpr->versionRevision != BOLO_VERSION_REVISION) {
+    MessageArgs args;
+    memset(&args, 0, sizeof(args));
+    SDL_snprintf(args.string1, sizeof(args.string1), "%u.%u.%u",
+                 (unsigned)dpr->versionMajor,
+                 (unsigned)dpr->versionMinor,
+                 (unsigned)dpr->versionRevision);
+    SDL_snprintf(args.string2, sizeof(args.string2), "%u.%u.%u",
+                 (unsigned)BOLO_VERSION_MAJOR,
+                 (unsigned)BOLO_VERSION_MINOR,
+                 (unsigned)BOLO_VERSION_REVISION);
+    imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                      langGetTextFmt(STR_REJECT_VERSION_MISMATCH, &args),
+                      IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+    gameFrontShutdownServer();
+    dlgState = prevState;
+    s_joinAttemptFailed = TRUE;
+    return FALSE;
+  }
+  /* The password global is only meaningful for a host joining its own
+   * server (set by the game setup dialog and sent with the server
+   * config). For a remote join it starts empty, so a password entered
+   * for an earlier host or join never rides this JOIN_REQUEST. The
+   * same INFO reply that carried the version says whether the server
+   * wants a password: ask now, before the join, rather than sending an
+   * empty one and reading the reject. Cancel ends the attempt quietly,
+   * like the version and reachability failures above but with no
+   * error box. */
+  password[0] = '\0';
+  if (dpr->password && !gameFrontAskJoinPassword(FALSE)) {
+    gameFrontShutdownServer();
+    dlgState = prevState;
+    s_joinAttemptFailed = TRUE;
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/* gameFrontJoinStartClient — a fresh ClientSim for this attempt, with the
+ * UDP join to the chosen server started. */
+static void gameFrontJoinStartClient(void) {
+  humanSim = clientSimAlloc(); clientSimCreate(humanSim);
+  clientSimSetIsLanOnly(humanSim, s_isLanOnly);
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__) && !defined(__EMSCRIPTEN__)
+  /* A map picked from the Workshop directory is offered to the server
+     as "Workshop/<name>" first, so a server holding the same file loads
+     its own copy rather than taking an upload. Mobile has no Workshop. */
+  {
+    char workshopDir[FILENAME_MAX];
+    if (scenarioHostWorkshopDir(workshopDir, sizeof(workshopDir))) {
+      clientSimSetWorkshopMapDir(humanSim, workshopDir);
     }
-  } else if (tokenRejected) {
-    fprintf(stderr, "[gameFront] WBN token validation failed: %s\n", errorMsg);
-    gameFrontClearWinbolonetToken();
+  }
+#endif
+  frontEndSetActiveClientSim(humanSim);
+  if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
+  fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
+          gameFrontUdpAddress, (unsigned)gameFrontTargetUdp, (unsigned)gameFrontMyUdp);
+  fflush(stderr);
+
+  /* Create UDP client transport. The transport drives the JOIN
+   * handshake, map download + install, and inline snapshot apply
+   * by itself — the frontend only ticks it until the join state
+   * settles or inLobby flips true. */
+  /* Match the Internet-host config in gameFrontSetupServer: an Internet
+   * join turns the tracker on (NAT traversal + external-address
+   * resolution) and, if the player is signed in, sends the WBN identity
+   * token. LAN joins and SP/tutorial stay private — no tracker, no WBN.
+   * Gated on s_isLanOnly (false only for Internet games), not on the old
+   * buried default-off "Use Tracker" checkbox. WBN from the join side
+   * carries only the player's own identity — there is no server being
+   * registered here — so it follows the sign-in state. */
+  clientSimConnectUdp(humanSim, gameFrontUdpAddress,
+                      gameFrontTargetUdp,
+                      gameFrontName,
+                      winbolonetGetCountryCode(),
+                      password,
+                      (!s_isLanOnly && gameFrontWbnUse) ? gameFrontWbnToken : "",
+                      "",
+                      wantRejoin,
+                      !s_isLanOnly ? gameFrontTrackerAddr : "",
+                      gameFrontTrackerPort,
+                      /*spectator*/ false);
+}
+
+/* gameFrontJoinLanded — the join reached the lobby or a running game. */
+static void gameFrontJoinLanded(void) {
+  udpTransportActive = TRUE;
+
+  /* Store server address in ClientSim for brain info */
+  {
+    struct sockaddr_in saddr;
+    memset(&saddr, 0, sizeof(saddr));
+    saddr.sin_family = AF_INET;
+    saddr.sin_addr.s_addr = inet_addr(gameFrontUdpAddress);
+    if (saddr.sin_addr.s_addr == INADDR_NONE) {
+      bolo_resolve_ipv4(gameFrontUdpAddress, &saddr.sin_addr);
+    }
+    clientSimSetServerAddress(humanSim, saddr.sin_addr);
+    clientSimSetServerPort(humanSim, gameFrontTargetUdp);
+  }
+
+  clientSimSetChatSendFunc(humanSim, gameFrontChatSendCallback);
+  clientSimSetNameChangeSendFunc(humanSim, gameFrontNameChangeSendCallback);
+  clientSimSetAllianceRequestFunc(humanSim, gameFrontAllianceRequestCallback);
+  clientSimSetAllianceAcceptFunc(humanSim, gameFrontAllianceAcceptCallback);
+  clientSimSetAllianceLeaveFunc(humanSim, gameFrontAllianceLeaveCallback);
+  clientSimSetLockToggleSendFunc(humanSim, gameFrontLockToggleCallback);
+
+  /* The lobby landing (netLobby — lobby UI, map downloads in the
+   * background, ready button gated on the real mapDownloadComplete) is
+   * settled inside clientFrontAwaitJoin. Only the no-lobby path has extra
+   * work: the transport already installed the map inline on MAP_DOWNLOAD
+   * completion, and the first snapshot apply fires the viewport
+   * finalisation — update Steam presence now that we're in a game. */
+  if (!clientSimIsInLobby(humanSim)) {
+    gameFrontUpdateSteamPresence(humanSim);
+  }
+  /* Hosting our own game on a map with a scenario: seat the lobby the
+   * scenario asks for, now that the host's own join has landed. Its
+   * template reached the sim at the attach in gameFrontSetupServer,
+   * and the settings that go with it were applied there; the seating
+   * waits until here because a seat takes the first free slot and the
+   * host has to hold slot 0 — the lobby's host role starts there, and
+   * a seat sitting in it would leave the host unable to change a
+   * setting or start the game. spServerSimActive tells a host joining
+   * its own server from somebody joining another one — a single-player
+   * game sets it too, but never comes through openUdpJoin. Under the
+   * mutex: the host timer is already ticking the sim. */
+  if (spServerSimActive && spScenarioHost != NULL) {
+    threadsWaitForMutex();
+    serverSimScenarioSeatLobby(spServerSim);
+    threadsReleaseMutex();
+  }
+  dlgState = openFinished;
+}
+
+/* gameFrontJoinFailedAskAgain — the join failed. Returns TRUE when the
+ * player typed another password and the join should be tried again;
+ * otherwise the ClientSim is gone and the caller ends the attempt. */
+static bool gameFrontJoinFailedAskAgain(const char *failFallback) {
+  /* The join failed. An incorrect-password reject on a remote join asks
+   * again and retries with a fresh ClientSim; the host joining its own
+   * server sent the password it configured, so a reject there is an
+   * error like any other. Cancel at the prompt ends the attempt without
+   * an error box: the player already knows why. */
+  if (!spServerSimActive &&
+      clientSimGetConnectErrorLangId(humanSim) == STR_REJECT_INCORRECT_PASSWORD) {
+    clientSimDestroy(humanSim);
+    humanSim = NULL;
+    if (gameFrontAskJoinPassword(TRUE)) return TRUE;
   } else {
-    /* No answer from WinBolo.net: keep the token for the next try rather
-     * than signing the player out over a dropped connection. */
-    fprintf(stderr, "[gameFront] WBN token not checked: %s\n", errorMsg);
+    const char *reason = clientSimGetConnectErrorReason(humanSim);
+    imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                      (reason && reason[0]) ? reason : failFallback,
+                      IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+    clientSimDestroy(humanSim);
+    humanSim = NULL;
+  }
+  return FALSE;
+}
+
+#if defined(__IPHONEOS__)
+/* -------------------------------------------------------
+ * gameFrontIosJoin — the same join on iOS, where nothing
+ * may hold the main thread for long: the server's info
+ * reply and the WinBolo.net token check run on threads of
+ * their own, and the join is ticked once a frame, all
+ * behind the "Connecting to <host>..." screen
+ * (imgui_connecting.cpp), whose Cancel goes back to the
+ * screen the join came from.
+ * ------------------------------------------------------- */
+
+/* A background job the screen polls. Whichever of the job and the screen
+ * finishes with it last frees it: the job when the player cancelled first
+ * (it cannot be stopped mid-call), the screen otherwise. */
+enum { IOS_JOB_RUNNING = 0, IOS_JOB_DONE, IOS_JOB_ABANDONED };
+
+typedef struct {
+  SDL_AtomicInt state;
+  /* Server info reply */
+  char address[FILENAME_MAX];
+  unsigned short port;
+  DiscoveryPingResult dpr;
+  bool pingOk;
+  /* Token check */
+  char token[256];
+  char playerName[PLAYER_NAME_LEN];
+  char errorMsg[512];
+  int rank, rankTotal;
+  WbnStats stats;
+  bool validateOk, tokenRejected;
+} IosJoinJob;
+
+/* Called by the job when its work is done. */
+static void iosJoinJobFinish(IosJoinJob *job) {
+  if (!SDL_CompareAndSwapAtomicInt(&job->state, IOS_JOB_RUNNING, IOS_JOB_DONE)) {
+    SDL_free(job);  /* the screen gave up on it */
   }
 }
+
+/* Called by the screen when the player cancels while the job runs. */
+static void iosJoinJobAbandon(IosJoinJob *job) {
+  if (!SDL_CompareAndSwapAtomicInt(&job->state, IOS_JOB_RUNNING, IOS_JOB_ABANDONED)) {
+    SDL_free(job);  /* it had already finished */
+  }
+}
+
+static int SDLCALL iosJoinPingThread(void *data) {
+  IosJoinJob *job = (IosJoinJob *)data;
+  job->pingOk = discoveryPingServer(job->address, job->port, &job->dpr);
+  iosJoinJobFinish(job);
+  return 0;
+}
+
+static int SDLCALL iosJoinValidateThread(void *data) {
+  IosJoinJob *job = (IosJoinJob *)data;
+  job->validateOk = winbolonetAuthValidateEx(job->token, job->playerName,
+                                             &job->rank, &job->rankTotal,
+                                             &job->stats, job->errorMsg,
+                                             &job->tokenRejected);
+  iosJoinJobFinish(job);
+  return 0;
+}
+
+/* Starts fn on a thread with a fresh job; NULL if the thread would not
+ * start. */
+static IosJoinJob *iosJoinJobStart(SDL_ThreadFunction fn, const char *name,
+                                   IosJoinJob *job) {
+  SDL_SetAtomicInt(&job->state, IOS_JOB_RUNNING);
+  SDL_Thread *t = SDL_CreateThread(fn, name, job);
+  if (t == NULL) {
+    SDL_free(job);
+    return NULL;
+  }
+  SDL_DetachThread(t);
+  return job;
+}
+
+static ConnectingStep iosJoinWaitJobStep(void *ctx, const char **stageOut,
+                                         float *progressOut) {
+  IosJoinJob *job = (IosJoinJob *)ctx;
+  *stageOut = (job->token[0] != '\0') ? langGetText(STR_DLGWBN_CHECKING)
+                                       : langGetText(STR_DLGCONNECTING_PING);
+  *progressOut = -1.0f;
+  return (SDL_GetAtomicInt(&job->state) == IOS_JOB_DONE) ? CONNECTING_STEP_DONE
+                                                         : CONNECTING_STEP_WAITING;
+}
+
+/* Waits for job behind the screen. TRUE when it finished; FALSE when the
+ * player cancelled or quit, and the job then frees itself. */
+static bool iosJoinWaitJob(IosJoinJob *job) {
+  if (imguiConnectingRun(gameFrontUdpAddress, iosJoinWaitJobStep, job)) {
+    return TRUE;
+  }
+  iosJoinJobAbandon(job);
+  return FALSE;
+}
+
+typedef struct {
+  int waited;
+  ClientFrontJoinStep result;
+} IosJoinWait;
+
+static ConnectingStep iosJoinAwaitStep(void *ctx, const char **stageOut,
+                                       float *progressOut) {
+  IosJoinWait *w = (IosJoinWait *)ctx;
+  w->result = clientFrontAwaitJoinStep(humanSim, &w->waited, 1500);
+  /* A server with no lobby sends the map inside this wait; show how much
+   * of it has come. */
+  if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_DOWNLOADING_MAP) {
+    *stageOut = langGetText(STR_DLGLOBBY_DOWNLOADING);
+    *progressOut = (float)clientSimGetMapDownloadPercent(humanSim) / 100.0f;
+  } else {
+    *stageOut = langGetText(STR_DLGCONNECTING_JOINING);
+    *progressOut = -1.0f;
+  }
+  return (w->result == CLIENT_FRONT_JOIN_WAITING) ? CONNECTING_STEP_WAITING
+                                                  : CONNECTING_STEP_DONE;
+}
+
+/* The player cancelled, or quit, while the join waited: nothing to report,
+ * back to the screen the join came from. */
+static bool iosJoinCancelled(openingStates prevState) {
+  if (humanSim != NULL) {
+    clientSimDisconnect(humanSim);
+    clientSimDestroy(humanSim);
+    humanSim = NULL;
+  }
+  gameFrontShutdownServer();
+  dlgState = prevState;
+  s_joinAttemptFailed = TRUE;
+  return FALSE;
+}
+
+static bool gameFrontIosJoin(openingStates prevState) {
+  if (!spServerSimActive) {
+    IosJoinJob *job = (IosJoinJob *)SDL_calloc(1, sizeof(IosJoinJob));
+    if (job != NULL) {
+      SDL_strlcpy(job->address, gameFrontUdpAddress, sizeof(job->address));
+      job->port = gameFrontTargetUdp;
+      job = iosJoinJobStart(iosJoinPingThread, "JoinPing", job);
+    }
+    if (job != NULL && !iosJoinWaitJob(job)) {
+      return iosJoinCancelled(prevState);
+    }
+    DiscoveryPingResult dpr;
+    bool pingOk;
+    if (job != NULL) {
+      dpr = job->dpr;
+      pingOk = job->pingOk;
+      SDL_free(job);
+    } else {
+      /* No thread to run it on: ask in place, as the blocking join does. */
+      pingOk = discoveryPingServer(gameFrontUdpAddress, gameFrontTargetUdp, &dpr);
+    }
+    if (!pingOk) {
+      imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                        langGetText(NETERR_SERVERCONNECT),
+                        IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+      gameFrontShutdownServer();
+      dlgState = prevState;
+      s_joinAttemptFailed = TRUE;
+      return FALSE;
+    }
+    if (!gameFrontJoinPreflight(&dpr, prevState)) {
+      return FALSE;
+    }
+  }
+
+  prefsFlush();
+  {
+    /* With no token, gameFrontValidateWbnBeforeJoin only tries Steam, which
+     * iOS does not have, so it returns at once. */
+    char token[256], expiry[256];
+    gameFrontGetWinbolonetToken(token, expiry);
+    IosJoinJob *job = NULL;
+    if (token[0] != '\0') {
+      job = (IosJoinJob *)SDL_calloc(1, sizeof(IosJoinJob));
+    }
+    if (job == NULL) {
+      gameFrontValidateWbnBeforeJoin();
+    } else {
+      SDL_strlcpy(job->token, token, sizeof(job->token));
+      job->rank = -1;
+      job->stats.valid = FALSE;
+      job = iosJoinJobStart(iosJoinValidateThread, "JoinValidate", job);
+      if (job == NULL) {
+        gameFrontValidateWbnBeforeJoin();
+      } else if (!iosJoinWaitJob(job)) {
+        return iosJoinCancelled(prevState);
+      } else {
+        gameFrontApplyWbnValidate(job->validateOk, job->tokenRejected,
+                                  job->playerName, job->rank, job->rankTotal,
+                                  &job->stats, job->errorMsg);
+        SDL_free(job);
+      }
+    }
+  }
+
+  /* One pass per join attempt, as in the blocking join. */
+  for (;;) {
+    const char *failFallback = NULL;
+    gameFrontJoinStartClient();
+    if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
+      failFallback = langGetText(STR_GAMEFRONTERR_JOINGAME);
+    } else {
+      IosJoinWait w;
+      w.waited = 0;
+      w.result = CLIENT_FRONT_JOIN_WAITING;
+      if (!imguiConnectingRun(gameFrontUdpAddress, iosJoinAwaitStep, &w)) {
+        return iosJoinCancelled(prevState);
+      }
+      if (w.result == CLIENT_FRONT_JOIN_LANDED) {
+        gameFrontJoinLanded();
+        return TRUE;
+      }
+      failFallback = langGetText(NETERR_SERVERCONNECT);
+    }
+    if (gameFrontJoinFailedAskAgain(failFallback)) continue;
+    gameFrontShutdownServer();
+    dlgState = prevState;
+    s_joinAttemptFailed = TRUE;
+    return FALSE;
+  }
+}
+#endif /* __IPHONEOS__ */
 
 /* -------------------------------------------------------
  * gameFrontSetDlgState — dialog state machine transitions
@@ -1762,6 +2180,9 @@ bool gameFrontSetDlgState(openingStates newState) {
      * recurses into openUdpJoin, so it's only true on the self-host
      * path; every remote join (LAN finder Join, Manual Connect,
      * tracker Join) leaves it false and still pre-flights. */
+#if defined(__IPHONEOS__)
+    returnValue = gameFrontIosJoin(prevState);
+#else
     if (!spServerSimActive) {
       DiscoveryPingResult dpr;
       if (!discoveryPingServer(gameFrontUdpAddress, gameFrontTargetUdp, &dpr)) {
@@ -1773,41 +2194,7 @@ bool gameFrontSetDlgState(openingStates newState) {
         s_joinAttemptFailed = TRUE;
         return FALSE;
       }
-      if (dpr.versionMajor    != BOLO_VERSION_MAJOR ||
-          dpr.versionMinor    != BOLO_VERSION_MINOR ||
-          dpr.versionRevision != BOLO_VERSION_REVISION) {
-        MessageArgs args;
-        memset(&args, 0, sizeof(args));
-        SDL_snprintf(args.string1, sizeof(args.string1), "%u.%u.%u",
-                     (unsigned)dpr.versionMajor,
-                     (unsigned)dpr.versionMinor,
-                     (unsigned)dpr.versionRevision);
-        SDL_snprintf(args.string2, sizeof(args.string2), "%u.%u.%u",
-                     (unsigned)BOLO_VERSION_MAJOR,
-                     (unsigned)BOLO_VERSION_MINOR,
-                     (unsigned)BOLO_VERSION_REVISION);
-        imguiMessageBoxEx(DIALOG_BOX_TITLE,
-                          langGetTextFmt(STR_REJECT_VERSION_MISMATCH, &args),
-                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-        gameFrontShutdownServer();
-        dlgState = prevState;
-        s_joinAttemptFailed = TRUE;
-        return FALSE;
-      }
-      /* The password global is only meaningful for a host joining its own
-       * server (set by the game setup dialog and sent with the server
-       * config). For a remote join it starts empty, so a password entered
-       * for an earlier host or join never rides this JOIN_REQUEST. The
-       * same INFO reply that carried the version says whether the server
-       * wants a password: ask now, before the join, rather than sending an
-       * empty one and reading the reject. Cancel ends the attempt quietly,
-       * like the version and reachability failures above but with no
-       * error box. */
-      password[0] = '\0';
-      if (dpr.password && !gameFrontAskJoinPassword(FALSE)) {
-        gameFrontShutdownServer();
-        dlgState = prevState;
-        s_joinAttemptFailed = TRUE;
+      if (!gameFrontJoinPreflight(&dpr, prevState)) {
         return FALSE;
       }
     }
@@ -1820,48 +2207,7 @@ bool gameFrontSetDlgState(openingStates newState) {
     for (;;) {
       const char *failFallback = NULL;
       bool joined = FALSE;
-      humanSim = clientSimAlloc(); clientSimCreate(humanSim);
-      clientSimSetIsLanOnly(humanSim, s_isLanOnly);
-#if !defined(__ANDROID__) && !defined(__IPHONEOS__) && !defined(__EMSCRIPTEN__)
-      /* A map picked from the Workshop directory is offered to the server
-         as "Workshop/<name>" first, so a server holding the same file loads
-         its own copy rather than taking an upload. Mobile has no Workshop. */
-      {
-        char workshopDir[FILENAME_MAX];
-        if (scenarioHostWorkshopDir(workshopDir, sizeof(workshopDir))) {
-          clientSimSetWorkshopMapDir(humanSim, workshopDir);
-        }
-      }
-#endif
-      frontEndSetActiveClientSim(humanSim);
-      if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
-      fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
-              gameFrontUdpAddress, (unsigned)gameFrontTargetUdp, (unsigned)gameFrontMyUdp);
-      fflush(stderr);
-
-      /* Create UDP client transport. The transport drives the JOIN
-       * handshake, map download + install, and inline snapshot apply
-       * by itself — the frontend only ticks it until the join state
-       * settles or inLobby flips true. */
-      /* Match the Internet-host config in gameFrontSetupServer: an Internet
-       * join turns the tracker on (NAT traversal + external-address
-       * resolution) and, if the player is signed in, sends the WBN identity
-       * token. LAN joins and SP/tutorial stay private — no tracker, no WBN.
-       * Gated on s_isLanOnly (false only for Internet games), not on the old
-       * buried default-off "Use Tracker" checkbox. WBN from the join side
-       * carries only the player's own identity — there is no server being
-       * registered here — so it follows the sign-in state. */
-      clientSimConnectUdp(humanSim, gameFrontUdpAddress,
-                          gameFrontTargetUdp,
-                          gameFrontName,
-                          winbolonetGetCountryCode(),
-                          password,
-                          (!s_isLanOnly && gameFrontWbnUse) ? gameFrontWbnToken : "",
-                          "",
-                          wantRejoin,
-                          !s_isLanOnly ? gameFrontTrackerAddr : "",
-                          gameFrontTrackerPort,
-                          /*spectator*/ false);
+      gameFrontJoinStartClient();
       if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
         failFallback = langGetText(STR_GAMEFRONTERR_JOINGAME);
       } else {
@@ -1869,84 +2215,21 @@ bool gameFrontSetDlgState(openingStates newState) {
          * running game or entry into the server lobby — see clientFrontAwaitJoin. */
         if (clientFrontAwaitJoin(humanSim, 1500)) {
           joined = TRUE;
-          udpTransportActive = TRUE;
-
-          /* Store server address in ClientSim for brain info */
-          {
-            struct sockaddr_in saddr;
-            memset(&saddr, 0, sizeof(saddr));
-            saddr.sin_family = AF_INET;
-            saddr.sin_addr.s_addr = inet_addr(gameFrontUdpAddress);
-            if (saddr.sin_addr.s_addr == INADDR_NONE) {
-              bolo_resolve_ipv4(gameFrontUdpAddress, &saddr.sin_addr);
-            }
-            clientSimSetServerAddress(humanSim, saddr.sin_addr);
-            clientSimSetServerPort(humanSim, gameFrontTargetUdp);
-          }
-
-          clientSimSetChatSendFunc(humanSim, gameFrontChatSendCallback);
-          clientSimSetNameChangeSendFunc(humanSim, gameFrontNameChangeSendCallback);
-          clientSimSetAllianceRequestFunc(humanSim, gameFrontAllianceRequestCallback);
-          clientSimSetAllianceAcceptFunc(humanSim, gameFrontAllianceAcceptCallback);
-          clientSimSetAllianceLeaveFunc(humanSim, gameFrontAllianceLeaveCallback);
-          clientSimSetLockToggleSendFunc(humanSim, gameFrontLockToggleCallback);
-
-          /* The lobby landing (netLobby — lobby UI, map downloads in the
-           * background, ready button gated on the real mapDownloadComplete) is
-           * settled inside clientFrontAwaitJoin. Only the no-lobby path has extra
-           * work: the transport already installed the map inline on MAP_DOWNLOAD
-           * completion, and the first snapshot apply fires the viewport
-           * finalisation — update Steam presence now that we're in a game. */
-          if (!clientSimIsInLobby(humanSim)) {
-            gameFrontUpdateSteamPresence(humanSim);
-          }
-          /* Hosting our own game on a map with a scenario: seat the lobby the
-           * scenario asks for, now that the host's own join has landed. Its
-           * template reached the sim at the attach in gameFrontSetupServer,
-           * and the settings that go with it were applied there; the seating
-           * waits until here because a seat takes the first free slot and the
-           * host has to hold slot 0 — the lobby's host role starts there, and
-           * a seat sitting in it would leave the host unable to change a
-           * setting or start the game. spServerSimActive tells a host joining
-           * its own server from somebody joining another one — a single-player
-           * game sets it too, but never comes through openUdpJoin. Under the
-           * mutex: the host timer is already ticking the sim. */
-          if (spServerSimActive && spScenarioHost != NULL) {
-            threadsWaitForMutex();
-            serverSimScenarioSeatLobby(spServerSim);
-            threadsReleaseMutex();
-          }
-          dlgState = openFinished;
+          gameFrontJoinLanded();
         } else {
           failFallback = langGetText(NETERR_SERVERCONNECT);
         }
       }
       if (joined) break;
 
-      /* The join failed. An incorrect-password reject on a remote join asks
-       * again and retries with a fresh ClientSim; the host joining its own
-       * server sent the password it configured, so a reject there is an
-       * error like any other. Cancel at the prompt ends the attempt without
-       * an error box: the player already knows why. */
-      if (!spServerSimActive &&
-          clientSimGetConnectErrorLangId(humanSim) == STR_REJECT_INCORRECT_PASSWORD) {
-        clientSimDestroy(humanSim);
-        humanSim = NULL;
-        if (gameFrontAskJoinPassword(TRUE)) continue;
-      } else {
-        const char *reason = clientSimGetConnectErrorReason(humanSim);
-        imguiMessageBoxEx(DIALOG_BOX_TITLE,
-                          (reason && reason[0]) ? reason : failFallback,
-                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-        clientSimDestroy(humanSim);
-        humanSim = NULL;
-      }
+      if (gameFrontJoinFailedAskAgain(failFallback)) continue;
       gameFrontShutdownServer();
       dlgState = prevState;
       s_joinAttemptFailed = TRUE;
       returnValue = FALSE;
       break;
     }
+#endif
   } else if ((dlgState == openInternetManual || dlgState == openInternetSetup) &&
              newState == openWelcome) {
     dlgState = openInternet;

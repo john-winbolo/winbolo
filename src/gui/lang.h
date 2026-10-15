@@ -3392,6 +3392,9 @@
 #define STR_DLGSETTINGS_IPAD_LAYOUT_AUTO         2812
 #define STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH        2813
 #define STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP      2814
+#define STR_DLGCONNECTING_TITLE                  2815
+#define STR_DLGCONNECTING_PING                   2816
+#define STR_DLGCONNECTING_JOINING                2817
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

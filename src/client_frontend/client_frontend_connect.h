@@ -23,6 +23,21 @@ extern "C" {
  * contract has one implementation and cannot drift per platform. */
 bool clientFrontAwaitJoin(ClientSim *cs, int timeoutTicks);
 
+/* One step of the same wait, for a frontend that draws while it waits.
+ * Each call either reports a terminal landing (and settles it exactly as
+ * clientFrontAwaitJoin does) or ticks the transport once, counts the tick
+ * in *waitedTicks and returns CLIENT_FRONT_JOIN_WAITING. Call it about every
+ * 20ms; *waitedTicks starts at 0, and timeoutTicks counts calls.
+ * clientFrontAwaitJoin is this in a loop. */
+typedef enum {
+  CLIENT_FRONT_JOIN_WAITING = 0,
+  CLIENT_FRONT_JOIN_LANDED,
+  CLIENT_FRONT_JOIN_FAILED
+} ClientFrontJoinStep;
+
+ClientFrontJoinStep clientFrontAwaitJoinStep(ClientSim *cs, int *waitedTicks,
+                                             int timeoutTicks);
+
 #ifdef __cplusplus
 }
 #endif
