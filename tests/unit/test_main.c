@@ -439,6 +439,7 @@ static const UnitTestEntry s_tests[] = {
     { "wbn_serverlist_motd",                     run_wbn_serverlist_motd                     },
     { "wbn_serverlist_malformed",                run_wbn_serverlist_malformed                },
     { "wbn_serverlist_scripts",                  run_wbn_serverlist_scripts                  },
+    { "wbn_serverlist_server_text",              run_wbn_serverlist_server_text              },
     { "wbn_map_parse",                           run_wbn_map_parse                           },
     { "wbn_map_fetch_policy",                    run_wbn_map_fetch_policy                    },
     { "brain_crash_log_writes_file",             run_brain_crash_log_writes_file             },

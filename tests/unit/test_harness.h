@@ -532,6 +532,7 @@ int run_wbn_serverlist_players(void);
 int run_wbn_serverlist_motd(void);
 int run_wbn_serverlist_malformed(void);
 int run_wbn_serverlist_scripts(void);
+int run_wbn_serverlist_server_text(void);
 int run_wbn_map_parse(void);
 int run_wbn_map_fetch_policy(void);
 int run_brain_crash_log_writes_file(void);

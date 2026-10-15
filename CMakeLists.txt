@@ -5131,6 +5131,7 @@ set(_unit_test_names
     wbn_serverlist_motd
     wbn_serverlist_malformed
     wbn_serverlist_scripts
+    wbn_serverlist_server_text
     wbn_map_parse
     wbn_map_fetch_policy
     brain_crash_log_writes_file

@@ -200,11 +200,12 @@ struct ServerEntry {
     int  scenarioMaxPlayers;      /* human cap, 0 = none */
     int  modCount;
     char modNames[DISCOVERY_SCRIPT_MODS_MAX][DISCOVERY_SCRIPT_NAME_LEN];
-    /* The host's own short name and description for the server, from the
-     * server's reply. Empty when the host set none, the server predates
-     * them, or no reply has arrived yet (and always on the web build); the
-     * row then shows the address as before. Already sanitised by the
-     * reader. */
+    /* The host's own short name and description for the server. A tracker
+     * row fills them from WinBolo.net, with the description whole; a LAN
+     * row, or a tracker row WinBolo.net sent none for, fills them from the
+     * server's reply. Empty when the host set none or the server predates
+     * them; the row then shows the address as before. Already sanitised by
+     * the reader. */
     char serverName[DISCOVERY_SERVER_NAME_LEN];
     char serverDescription[DISCOVERY_SERVER_DESC_LEN];
     std::vector<std::string> players;   /* logged-in usernames, blanks already filtered */
@@ -216,6 +217,9 @@ static_assert(DISCOVERY_SCRIPT_NAME_LEN == WBN_SERVERLIST_NAME_LEN,
               "a tracker script name must fit ServerEntry's name buffers");
 static_assert(DISCOVERY_SCRIPT_MODS_MAX == WBN_SERVERLIST_MODS_MAX,
               "a tracker row's mods must fit ServerEntry's mod list");
+static_assert(DISCOVERY_SERVER_NAME_LEN == SERVER_NAME_LEN &&
+              DISCOVERY_SERVER_DESC_LEN == SERVER_DESC_LEN,
+              "a tracker row's server name and description must fit whole");
 
 /* Copy the scripts from a server's own reply into e, replacing whatever a
  * tracker row put there. The web build has no LAN search and no info ping,
@@ -232,9 +236,14 @@ static void serverEntrySetScripts(ServerEntry &e, const DiscoveryScripts &sc) {
     for (int m = 0; m < n; m++) {
         SDL_strlcpy(e.modNames[m], sc.modNames[m], sizeof(e.modNames[m]));
     }
-    SDL_strlcpy(e.serverName, sc.serverName, sizeof(e.serverName));
-    SDL_strlcpy(e.serverDescription, sc.serverDescription,
-                sizeof(e.serverDescription));
+    /* The reply cuts the description to the room left in the packet, and
+     * WinBolo.net has it whole, so a tracker row keeps what it was given.
+     * Both come from the host's one setting, so they do not disagree. */
+    if (e.serverName[0] == '\0' && e.serverDescription[0] == '\0') {
+        SDL_strlcpy(e.serverName, sc.serverName, sizeof(e.serverName));
+        SDL_strlcpy(e.serverDescription, sc.serverDescription,
+                    sizeof(e.serverDescription));
+    }
     e.hasScriptReply = true;
 }
 #endif
@@ -1096,6 +1105,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         for (int m = 0; m < e.modCount; m++) {
                             SDL_strlcpy(e.modNames[m], w.modNames[m], sizeof(e.modNames[m]));
                         }
+                        SDL_strlcpy(e.serverName, w.serverName, sizeof(e.serverName));
+                        SDL_strlcpy(e.serverDescription, w.serverDescription,
+                                    sizeof(e.serverDescription));
 
                         e.players.clear();
                         for (int p = 0; p < w.numPlayerNames; p++) {
@@ -2428,6 +2440,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     finderRowJoinable(servers[selectedItem]);
                 if (!canJoin) ImGui::BeginDisabled();
                 if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, btnH))) {
+                    /* The web join sends no pre-flight info request to name
+                     * the lobby's title from, so the tracker row names it. */
+                    SDL_strlcpy(gameFrontLobbyServerName,
+                                servers[selectedItem].serverName,
+                                sizeof(gameFrontLobbyServerName));
                     wasmFinderJoin(servers[selectedItem].serverKey);
                     result = (int)openUdpJoin;
                     running = false;
