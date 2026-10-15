@@ -79,6 +79,9 @@ bool backgroundSound = FALSE;
 bool useSoundKeepalive = FALSE;
 int  soundVolume = 50;         /* MENU / Sound Volume — the game sounds */
 int  windowMasterVolume = 100; /* MENU / Master Volume — sounds and voice */
+/* gamefront.c reads and writes this through the prefs on every platform;
+   the desktop defines it in winbolo.c. */
+bool positionalSound = TRUE;
 bool allowNewPlayers = TRUE;
 
 bool showNewswireMessages = TRUE;
@@ -122,12 +125,6 @@ time_t ticks = 0;
 /* Frame-based tick accumulator */
 static double gameTickAccum = 0.0;
 static Uint64 lastFrameTime = 0;
-
-/* True when the last shared tick step run was the game half.  The keys/game
-   cadence lives in client_frontend_tick.c and its counter is private, so this
-   is how windowRunGameTick knows which half comes next.  Cleared alongside
-   clientFrontTickReset so a restarted game starts in phase. */
-static bool prevStepWasGameTick = FALSE;
 
 /* -------------------------------------------------------
  * Forward declarations
@@ -209,7 +206,6 @@ ios_game_start:
        the lobby, so it covers both the first game and every game reached
        through the goto below. */
     clientFrontTickReset();
-    prevStepWasGameTick = FALSE;
 
     /* Set up ImGui and touch input */
     {
@@ -481,7 +477,7 @@ ios_game_start:
 
 /* -------------------------------------------------------
  * windowRunGameTick — one half-step of the shared client tick, plus the
- * driver-side work around it (disconnect check, bot brains, AI, stats)
+ * driver-side work around it (disconnect check, AI, stats)
  * ------------------------------------------------------- */
 static void windowRunGameTick(ClientSim *cs) {
     static bool inBrain = FALSE;
@@ -504,25 +500,6 @@ static void windowRunGameTick(ClientSim *cs) {
         return;
     }
 
-    /* Tick bot brains for a local game.  This binary links no server_static,
-     * so nothing else drives them and the client tick owns them here.
-     * serverSimBotTick queues a keys packet and a game packet per bot, so it
-     * belongs once per full frame, on the half-step that is about to be the
-     * game half: a step that returned false was the keys half (or a lobby
-     * step, which does not advance the cadence), so the next one is the game
-     * half.  Skipped in lobby and countdown for the same reason the shared
-     * step skips them — the server runs no half-steps there, so queued bot
-     * input would only pile up. */
-    if (prevStepWasGameTick == FALSE) {
-        netStatus ns = clientSimGetNetStatus(cs);
-        if (ns != netLobby && ns != netLobbyCountdown) {
-            ServerSim *serverSim = gameFrontGetServerSim();
-            if (serverSim != NULL && serverSimGetNumBots(serverSim) > 0) {
-                serverSimBotTick(serverSim, clientSimGetAiType(cs));
-            }
-        }
-    }
-
     /* One keys/game/lobby half-step lives in the shared client-frontend tick
      * core (desktop and web call the same one); the brain run and the
      * per-second stat rollover below stay here in the driver.  The main loop
@@ -532,9 +509,6 @@ static void windowRunGameTick(ClientSim *cs) {
         t2++;
         ticks++;
         used = TRUE;
-        prevStepWasGameTick = TRUE;
-    } else {
-        prevStepWasGameTick = FALSE;
     }
     dwSysGame += (SDL_GetTicks() - ttick);
 

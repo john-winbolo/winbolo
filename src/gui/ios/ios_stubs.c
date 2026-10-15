@@ -161,6 +161,17 @@ void logViewerRun(void *window, void *renderer, const char *logPath, bool fromMa
     (void)window; (void)renderer; (void)logPath; (void)fromMainMenu;
 }
 
+/* gamefront.c reads these after a map editor or log viewer run returns, to
+ * learn whether the player quit the application from inside one. Neither
+ * tool runs on iOS, so neither can have asked. */
+bool logViewerAppQuitRequested(void) { return false; }
+bool mapEditorAppQuitRequested(void) { return false; }
+
+/* gamefront.c hands the embedded map editor the Settings dialog opener
+ * before running it. No editor here to hand it to. */
+#include "mapeditor.h"
+void mapEditorSetSettingsHandler(MapEditorSettingsFn fn) { (void)fn; }
+
 #include <stdint.h>
 #include <stddef.h>
 
@@ -180,15 +191,52 @@ WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window,
     return r;
 }
 
-/* ---- server lifecycle stubs (dedicated-server-only on iOS) ---- */
+/* ---- server lifecycle (local-only) ----
+ *
+ * iOS links server_sim_static but not server_static, so the real
+ * serverInstanceStartup / Tick bodies in server_lifecycle.c are not on the
+ * link line. A phone does not host games, so everything those bodies do
+ * beyond the local case — UDP transport, WinBolo.net, tracker, NAT portmap,
+ * brain recording, free-disk checks — has nothing to drive here. What is
+ * left is the local-only subset, and single-player needs it:
+ * gameFrontStartServerSim refuses to arm the host timer unless startup
+ * returns true, and that timer is the only thing that ticks the sim.
+ *
+ * serverSimApplyInstanceConfig is what applies cfg's lobby / skipLobby
+ * state transition along with the bot brain path, AI type, password and
+ * view player; it is declared in bolo's internal server_sim_lifecycle.h,
+ * hence this file's per-file grant in CMakeLists.txt.
+ *
+ * src/wasm/server_stubs_wasm.c is the same shape and is the peer to keep
+ * this in step with. */
 
 #include "../../server/server_lifecycle.h"
+#include "server_sim_lifecycle.h"  /* serverSimApplyInstanceConfig,
+                                    * serverSimLocalTick */
 
 bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
-    (void)sim; (void)cfg;
-    return false;
+    if (sim == NULL || cfg == NULL) return false;
+    serverSimApplyInstanceConfig(sim, cfg);
+    return true;
 }
-void serverInstanceTick(ServerSim *sim) { (void)sim; }
+
+/* Ticks run, counted at the top of each call the way the UDP server counts
+ * its receive passes. The lobby-slot heartbeat reads it. */
+static uint32_t s_localTickCount = 0;
+
+/* One slice of the local server, driven by gamefront.c's host timer. That
+ * callback holds the threading mutex across the call, so nothing here takes
+ * it. The lobby and round sequence (bot tick, sim tick, the game-over,
+ * game-start, countdown and return-to-lobby edges, the slot heartbeat) has
+ * one body, serverSimLocalTick, shared with the dedicated server and the web
+ * client so the three cannot drift. No hooks: there is no network server
+ * around this one. */
+void serverInstanceTick(ServerSim *sim) {
+    if (sim == NULL) return;
+    s_localTickCount++;
+    serverSimLocalTick(sim, s_localTickCount, NULL, NULL);
+}
+
 void serverInstanceShutdown(ServerSim *sim) { (void)sim; }
 void serverInstanceGetPortmapInfo(ServerPortmapInfo *out) {
     if (out) {

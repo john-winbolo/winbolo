@@ -1141,9 +1141,12 @@ target_include_directories(WinBoloIOS PRIVATE
 bolo_apply_include_rules(WinBoloIOS gui)
 # bg_game.c: same grant as the desktop target — the dev-mode lobby
 # background assigns bot teams through server_sim_lifecycle.h.
+# ios_stubs.c's local-only serverInstanceStartup calls
+# serverSimApplyInstanceConfig, declared in internal/server_sim_lifecycle.h.
 bolo_grant_internal_source_access(WinBoloIOS
     src/bolo/transport_udp_client.c
-    src/gui/sdl3/bg_game.c)
+    src/gui/sdl3/bg_game.c
+    src/gui/ios/ios_stubs.c)
 
 target_link_libraries(WinBoloIOS PRIVATE bolo_static scenario_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
