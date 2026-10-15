@@ -6985,19 +6985,20 @@ do
   do
   -- ── 1d. NO ROUTE TO THE SQUARE: THE NEAREST SQUARE THAT HAS ONE ─────────
   -- Stub route search: slate 2 is a finished KIND_NORMAL slate started on
-  -- land at (10,10); COST holds the squares it reached.
+  -- land at (10,10) at tick STARTED; COST holds the squares it reached.  The
+  -- tank stands on (30,30), which the slate reaches unless a test says not.
   print("orders.lua -- bot order bids: an unreachable square is swapped for the nearest reachable one")
   local sv_st, sv_ca = cpf.dijkstra_status, cpf.dijkstra_cost_at
-  local COST, SRC, SB, DONE = {}, { 10, 10 }, 0, true
+  local COST, SRC, SB, DONE, STARTED = {}, { 10, 10 }, 0, true, 150
   cpf.dijkstra_status = function(sl)
     if sl ~= 2 then return false, false end
-    return false, DONE, cpf.KIND_NORMAL, 1, 1, 0, 0, SRC[1], SRC[2], SB, 1.0
+    return false, DONE, cpf.KIND_NORMAL, STARTED, STARTED, 0, 0, SRC[1], SRC[2], SB, 1.0
   end
   cpf.dijkstra_cost_at = function(sl, x, y)
     return (sl == 2 and COST[y * 256 + x]) or 1e30
   end
   local function reset(t)
-    COST, SRC, SB, DONE = {}, { 10, 10 }, 0, true
+    COST, SRC, SB, DONE, STARTED = { [30 * 256 + 30] = 60 }, { 10, 10 }, 0, true, 150
     for k, v in pairs(t or {}) do COST[k] = v end
   end
   local function tgt(bb) local h = bb.st.orders.held return h.mx .. "," .. h.my end
@@ -7040,6 +7041,40 @@ do
   DONE = true
   arrive(b, 220, 30, 30)
   check("slate finished: the order moves", tgt(b) == "23,25", tgt(b))
+  -- A slate started before the order may not have a map change the script
+  -- made: wait for a newer one.
+  reset({ [25 * 256 + 23] = 30 }); STARTED = 0
+  b = dbot(); arrive(b, 200, 30, 30)
+  check("slate started before the order: not checked yet",
+        tgt(b) == "22,24" and not b.st.orders.held.reach_checked, tgt(b))
+  STARTED = b.st.orders.held.since
+  arrive(b, 210, 30, 30)
+  check("slate started on the order's tick: the order moves", tgt(b) == "23,25", tgt(b))
+  -- A slate that does not reach the tank's own square is from other ground
+  -- (the tank was moved, or it is from before a death): it is not used.
+  reset({ [25 * 256 + 23] = 30 }); COST[30 * 256 + 30] = nil; SRC = { 5, 5 }
+  b = dbot(); arrive(b, 200, 30, 30)
+  check("slate does not reach the tank: not checked yet",
+        tgt(b) == "22,24" and not b.st.orders.held.reach_checked, tgt(b))
+  SRC = { 30, 30 }
+  arrive(b, 210, 30, 30)
+  check("slate started on the tank's square: used, the order moves",
+        tgt(b) == "23,25", tgt(b))
+  -- Only the long slates (2 and 3) are read: a short slate is land-only
+  -- for a tank on land, and a square across water reads as no route there.
+  reset({ [25 * 256 + 23] = 30 })
+  local sv_st2, sv_ca2 = cpf.dijkstra_status, cpf.dijkstra_cost_at
+  cpf.dijkstra_status = function(sl)
+    if sl ~= 0 then return false, false end
+    return false, true, cpf.KIND_NORMAL, STARTED, STARTED, 0, 0, SRC[1], SRC[2], SB, 1.0
+  end
+  cpf.dijkstra_cost_at = function(sl, x, y)
+    return (sl == 0 and COST[y * 256 + x]) or 1e30
+  end
+  b = dbot(); arrive(b, 200, 30, 30)
+  check("only a short slate has finished: not checked yet",
+        tgt(b) == "22,24" and not b.st.orders.held.reach_checked, tgt(b))
+  cpf.dijkstra_status, cpf.dijkstra_cost_at = sv_st2, sv_ca2
   C.ORDER_GOTO_RETARGET_UNREACHABLE = false
   reset({ [25 * 256 + 23] = 30 })
   b = dbot(); arrive(b, 200, 30, 30)

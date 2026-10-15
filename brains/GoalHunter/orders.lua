@@ -2190,25 +2190,39 @@ function M.goto_target_blocked(world, info, mx, my)
 end
 
 -- 2026-10-15: THE NEAREST SQUARE A ROUTE REACHES (ORDER_GOTO_RETARGET_
--- UNREACHABLE).  Reads the FINISHED KIND_NORMAL Dijkstra slates (the tank's
--- own route searches over the whole map; both have no cost cap) that were
--- started in the tank's current mode (afloat or not).  A square counts as
--- reached when any of them has a route to it.  Returns nx, ny, checked.
+-- UNREACHABLE).  Reads the FINISHED long-range KIND_NORMAL Dijkstra slates
+-- (slates 2 and 3: the tank's own route searches over the whole map, with
+-- boats allowed, as the bid's route is) that were started in the tank's
+-- current mode (afloat or not).  The short slates (0 and 1) are not read:
+-- they are land-only for a tank on land, so a square across water reads as
+-- "no route" there (pilltag_base_boost: a go-there to (129,129) was moved to
+-- (148,107), 20 squares off, and seat 0 lost the prize).  A slate is used only
+-- when it is up to date for this order and this tank: it started at or
+-- after `after` (the order's start, so a map change made before the order
+-- is in it), and it reaches the tank's own square (so its source is on the
+-- tank's ground: a tank moved by a script, or a slate from before a death,
+-- is not read as "no route").  A square counts as reached when any used
+-- slate has a route to it.  Returns nx, ny, checked.
 -- checked is false when no such slate has finished yet (ask again later).
 -- When (mx, my) is reached, nx is nil: nothing to change.  When it is not,
 -- nx, ny is the nearest square that is -- nearest by the larger of the two
 -- axes, then by route cost -- searched ring by ring out from the square
 -- (nil when no square on the map is reached).
 local COST_UNREACHED = 1e29
-function M.goto_reachable_near(info, mx, my)
+function M.goto_reachable_near(info, mx, my, after)
   if not (cpf.dijkstra_status and cpf.dijkstra_cost_at) then return nil, nil, true end
   local boat = (info and info.inboat) and 1 or 0
+  local tmx = info and info.tankx and bit.rshift(info.tankx, 8)
+  local tmy = info and info.tanky and bit.rshift(info.tanky, 8)
   -- A slate's own source square reads as unreached (brain_pathfinder.c),
   -- so it is counted as reached here by hand.
   local slates, srcs = {}, {}
-  for sl = 0, 3 do
-    local _, done, kind, _, _, _, _, sx, sy, sb = cpf.dijkstra_status(sl)
-    if done and kind == cpf.KIND_NORMAL and (sb or 0) == boat then
+  for sl = 2, 3 do
+    local _, done, kind, started, _, _, _, sx, sy, sb = cpf.dijkstra_status(sl)
+    if done and kind == cpf.KIND_NORMAL and (sb or 0) == boat
+       and (started or 0) >= (after or 0) and tmx
+       and ((sx == tmx and sy == tmy)
+            or cpf.dijkstra_cost_at(sl, tmx, tmy, boat) < COST_UNREACHED) then
       slates[#slates + 1] = sl
       srcs[#srcs + 1] = { sx, sy }
     end
@@ -5209,7 +5223,7 @@ function M.update(state, world, info, now)
       -- travel lock is pointed there.  ORDER_GOTO_RETARGET_UNREACHABLE, keel
       -- false (keel drives at the square until the order lapses).
       if C.ORDER_GOTO_RETARGET_UNREACHABLE and not h.reach_checked then
-        local nmx, nmy, checked = M.goto_reachable_near(info, h.mx, h.my)
+        local nmx, nmy, checked = M.goto_reachable_near(info, h.mx, h.my, h.since)
         if checked then h.reach_checked = true end
         if nmx then
           print2(string.format("ORDER_GOTO_RETARGET t=%d oid=%d tile=(%d,%d) -> (%d,%d) no route",
