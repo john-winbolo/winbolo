@@ -1360,6 +1360,11 @@ int run_lv_hide_lobby_no_lobby_fallback(void);
 int run_lv_hide_lobby_no_marker_anchor(void);
 int run_lv_hide_lobby_periodic_snapshot(void);
 
+/* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
+ * an index the size of a ten-day log. */
+int run_lv_snapshot_index_lookup(void);
+int run_lv_snapshot_index_ten_days(void);
+
 /* Load-time slot-name walk (test_lv_calibration.c): a player who joins after
  * the lobby marker is absent from the live roster at game start, where the
  * round summary is built, so lv_screenGetLoggedPlayerName reads the name from

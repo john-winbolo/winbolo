@@ -669,6 +669,8 @@ static const UnitTestEntry s_tests[] = {
     { "lv_hide_lobby_no_lobby_fallback",         run_lv_hide_lobby_no_lobby_fallback         },
     { "lv_hide_lobby_no_marker_anchor",          run_lv_hide_lobby_no_marker_anchor          },
     { "lv_hide_lobby_periodic_snapshot",         run_lv_hide_lobby_periodic_snapshot         },
+    { "lv_snapshot_index_lookup",                run_lv_snapshot_index_lookup                },
+    { "lv_snapshot_index_ten_days",              run_lv_snapshot_index_ten_days              },
     { "lv_logged_name_from_join_event",          run_lv_logged_name_from_join_event          },
     { "lv_game_settings_from_walk",              run_lv_game_settings_from_walk              },
     { "lv_game_settings_absent",                 run_lv_game_settings_absent                 },

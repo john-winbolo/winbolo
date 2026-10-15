@@ -31,14 +31,22 @@
 #define __SNAPSHOT_H
 
 
-/** Snapshot data structure */
-typedef struct snapshotObj *snapshot;
-struct snapshotObj {
-  snapshot next; /* Next snapshot to goto */
+/** One snapshot the decoder has passed */
+typedef struct {
   size_t filePos; /* Position in the decompressed stream */
   uint32_t time; /* Time in ticks in the game */
   BYTE pTeams[MAX_TANKS]; /* Team IDs */
   BYTE key; /* Decryption XOR key */
+} snapshotEntry;
+
+/** Snapshot data structure: the entries in time order. A server writes one
+ *  every few seconds, so a log that ran for days holds hundreds of thousands
+ *  and every lookup is a binary search. NULL until the first add. */
+typedef struct snapshotObj *snapshot;
+struct snapshotObj {
+  snapshotEntry *items;
+  int count;
+  int capacity;
 };
 
 
