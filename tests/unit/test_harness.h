@@ -1661,6 +1661,11 @@ int run_view_pill_pos_current(void);
 int run_view_pill_pos_reveal(void);
 int run_view_pill_update_event_fogged(void);
 int run_view_pill_pos_bot_advantage(void);
+/* Own and allied pills are always sent current to a human (a bot keeps the
+ * view-area rule); a pill that moved unseen asks for a full sync the tick it
+ * comes back into view. */
+int run_view_pill_pos_allied(void);
+int run_view_pill_reveal_full_sync(void);
 
 /* Server-side tree hide (test_tree_hide.c): serverSimBuildSnapshot ships a
  * tank standing in trees more than MIN_TREEHIDE_DIST from the recipient on
@@ -1690,6 +1695,9 @@ int run_view_state_key_grants_rect(void);
 int run_view_state_bad_claims_degrade(void);
 int run_view_state_invalidation(void);
 int run_view_state_lifecycle(void);
+/* An unchanged item view is reported again once a second, so a view the
+ * server dropped is taken up again; the tank view is never repeated. */
+int run_view_state_resend(void);
 
 /* Server-side ally picking (test_view_state.c): CMD_VIEW_CYCLE asks the server
  * which ally to watch, serverSimPickAlly answers from live state — next and
@@ -1740,6 +1748,13 @@ int run_view_cycle_decay_skip(void);
 int run_view_cycle_eligible_mask(void);
 int run_view_cycle_ally_stub(void);
 int run_view_cycle_stale_pill(void);
+/* A moved pill is stepped over and drops a view parked on it; a carried
+ * pill's record never names the view, and the held index wins on a shared
+ * square. */
+int run_view_cycle_moved_pill(void);
+/* scrollCenterWorld frames a mid-square tank as scrollCenterObject does and
+ * keeps the sub-square part, so the ally view glides. */
+int run_view_cycle_ally_follow(void);
 
 /* The per-pill position-current flag (test_pill_pos_current.c): the lookups
  * movement, turn rate and shell collision ask pass over a pill whose square
@@ -2083,6 +2098,9 @@ int run_lgm_unfield_drops_carried_pill(void);
  * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */
 int run_jitter_buffer_grow(void);
 int run_shell_projection(void);
+/* Projected shells re-anchor on owner and angle, pulled a quarter of the way
+ * toward the fresh projection. */
+int run_shell_projection_match(void);
 
 /* Shared shell list builder (test_screen_bullets_build.c): the classic
  * viewport list with the scroll origin and the overview's whole-map list with
