@@ -2794,3 +2794,30 @@ STR_DLGCONNECTING_JOINING=Connexion à la partie...
 
 # The log browser's Open File on iOS, when the picked file cannot be read
 STR_DLGWBN_OPENFILE_FAILED=Impossible de lire cet enregistrement.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Paramètre
+STR_DLGLOBBY_DETAILS_COL_VALUE=Valeur
+STR_DLGLOBBY_DETAILS_RULES=Règles :
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=Le serveur fixe cette valeur. Elle ne peut pas être modifiée.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=par {string1} · mis à jour {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=inconnu
+STR_MENU_INFO_OVERLAY=Superposition d'infos
+STR_SCNPANEL_POP_OUT=Détacher
+STR_SCNPANEL_POP_IN=Rattacher
+STR_SCNPANEL_CLOSE_TITLE=Fermer {string1} ?
+STR_SCNPANEL_CLOSE_BODY=Réactivez-le depuis {string1} > {string2}.
+STR_DLGLOBBY_SCENARIO_REQUIRED=Le serveur exécute toujours ce script. Il ne peut pas être retiré.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=Le serveur exécute toujours le scénario de cette manche
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=Le serveur fixe cette liste. Elle ne peut pas être modifiée.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Si les pillbox visent comme dans Mac Bolo. Les tanks en mouvement et non bloqués à environ une case font viser le pillbox loin dans leur direction. Les tanks à l'arrêt ou bloqués ne reçoivent aucune anticipation. Remplace pill_massage_range, pill_massage_cosine et pill_aim_iterations.
+STR_RULE_DESC_tank_collision_mac=Si les tanks utilisent les boîtes de sprite dépendant de la direction et les décalages au pixel de Mac Bolo contre les murs, les pillbox actifs et les bases ennemies. Permet de passer plus près d'un pillbox pour le « pill massage ».
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=À qui la mort d'un tank est attribuée, demandé à chaque mort ; une noyade désigne la victime sauf si un script désigne le tank qui l'a coulé.

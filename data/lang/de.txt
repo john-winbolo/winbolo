@@ -2794,3 +2794,30 @@ STR_DLGCONNECTING_JOINING=Trete dem Spiel bei...
 
 # The log browser's Open File on iOS, when the picked file cannot be read
 STR_DLGWBN_OPENFILE_FAILED=Diese Aufzeichnung konnte nicht gelesen werden.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Einstellung
+STR_DLGLOBBY_DETAILS_COL_VALUE=Wert
+STR_DLGLOBBY_DETAILS_RULES=Regeln:
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=Der Server legt diesen Wert fest. Er kann nicht geändert werden.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=von {string1} · aktualisiert {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=unbekannt
+STR_MENU_INFO_OVERLAY=Info-Einblendung
+STR_SCNPANEL_POP_OUT=Abdocken
+STR_SCNPANEL_POP_IN=Andocken
+STR_SCNPANEL_CLOSE_TITLE={string1} schließen?
+STR_SCNPANEL_CLOSE_BODY=Über {string1} > {string2} wieder einschalten.
+STR_DLGLOBBY_SCENARIO_REQUIRED=Der Server führt dieses Skript immer aus. Es kann nicht entfernt werden.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=Der Server führt immer das Szenario dieser Runde aus
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=Der Server legt diese Liste fest. Sie kann nicht geändert werden.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Ob Bunker wie in Mac Bolo zielen. Fahrende, freie Panzer innerhalb von etwa einem Feld lassen den Bunker weit entlang ihrer Fahrtrichtung zielen. Stehende oder blockierte Panzer bekommen keinen Vorhalt. Überschreibt pill_massage_range, pill_massage_cosine und pill_aim_iterations.
+STR_RULE_DESC_tank_collision_mac=Ob Panzer die richtungsabhängigen Sprite-Kästen und Pixel-Verschiebungen von Mac Bolo an Mauern, aktiven Bunkern und feindlichen Basen verwenden. Erlaubt engere Vorbeifahrten neben einem Bunker für die „Pill Massage“.
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=Wem der Tod eines Panzers angerechnet wird, abgefragt bei jedem Tod; ein Ertrinken nennt das Opfer, sofern kein Skript den Panzer nennt, der es versenkt hat.

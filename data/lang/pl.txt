@@ -2790,3 +2790,30 @@ STR_DLGCONNECTING_JOINING=Dołączanie do gry...
 
 # The log browser's Open File on iOS, when the picked file cannot be read
 STR_DLGWBN_OPENFILE_FAILED=Nie udało się odczytać tego nagrania.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Ustawienie
+STR_DLGLOBBY_DETAILS_COL_VALUE=Wartość
+STR_DLGLOBBY_DETAILS_RULES=Zasady:
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=Tę wartość ustala serwer. Nie można jej zmienić.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=autor: {string1} · aktualizacja: {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=nieznany
+STR_MENU_INFO_OVERLAY=Nakładka informacji
+STR_SCNPANEL_POP_OUT=Odłącz
+STR_SCNPANEL_POP_IN=Przyłącz
+STR_SCNPANEL_CLOSE_TITLE=Zamknąć {string1}?
+STR_SCNPANEL_CLOSE_BODY=Włącz go ponownie w {string1} > {string2}.
+STR_DLGLOBBY_SCENARIO_REQUIRED=Serwer zawsze uruchamia ten skrypt. Nie można go usunąć.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=Serwer zawsze uruchamia scenariusz z tej rundy
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=Tę listę ustala serwer. Nie można jej zmienić.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Czy bunkry celują jak w Mac Bolo. Jadące, niezasłonięte czołgi w odległości około jednego pola sprawiają, że bunkier celuje daleko wzdłuż ich kierunku. Czołgi stojące lub zablokowane nie dostają wyprzedzenia. Zastępuje pill_massage_range, pill_massage_cosine i pill_aim_iterations.
+STR_RULE_DESC_tank_collision_mac=Czy czołgi używają zależnych od kierunku ramek sprite'ów i przesunięć o piksel z Mac Bolo przy murach, aktywnych bunkrach i wrogich bazach. Pozwala przejeżdżać bliżej bunkra przy „pill massage”.
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=Komu przypisuje się zniszczenie czołgu, pytane przy każdym zniszczeniu; utonięcie wskazuje ofiarę, chyba że skrypt wskaże czołg, który go zatopił.

@@ -2794,3 +2794,30 @@ STR_DLGCONNECTING_JOINING=Deelnemen aan het spel...
 
 # The log browser's Open File on iOS, when the picked file cannot be read
 STR_DLGWBN_OPENFILE_FAILED=Die opname kon niet worden gelezen.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Instelling
+STR_DLGLOBBY_DETAILS_COL_VALUE=Waarde
+STR_DLGLOBBY_DETAILS_RULES=Regels:
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=De server bepaalt deze waarde. Die kan niet worden gewijzigd.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=door {string1} · bijgewerkt {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=onbekend
+STR_MENU_INFO_OVERLAY=Info-overlay
+STR_SCNPANEL_POP_OUT=Losmaken
+STR_SCNPANEL_POP_IN=Vastzetten
+STR_SCNPANEL_CLOSE_TITLE={string1} sluiten?
+STR_SCNPANEL_CLOSE_BODY=Zet het weer aan via {string1} > {string2}.
+STR_DLGLOBBY_SCENARIO_REQUIRED=De server voert dit script altijd uit. Het kan niet worden verwijderd.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=De server voert altijd het scenario van deze ronde uit
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=De server bepaalt deze lijst. Die kan niet worden gewijzigd.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Of bunkers richten zoals in Mac Bolo. Rijdende, vrije tanks binnen ongeveer één vak laten de bunker ver langs hun rijrichting richten. Stilstaande of geblokkeerde tanks krijgen geen voorhouden. Vervangt pill_massage_range, pill_massage_cosine en pill_aim_iterations.
+STR_RULE_DESC_tank_collision_mac=Of tanks de richtingsafhankelijke sprite-vakken en pixelverschuivingen van Mac Bolo gebruiken tegen muren, actieve bunkers en vijandige bases. Maakt dichtere passages langs een bunker mogelijk voor 'pill massage'.
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=Aan wie de dood van een tank wordt toegeschreven, gevraagd bij elke dood; een verdrinking noemt het slachtoffer, tenzij een script de tank noemt die hem liet zinken.

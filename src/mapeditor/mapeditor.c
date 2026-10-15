@@ -3726,11 +3726,8 @@ static int          s_touchCount = 0;
 static float        s_touchDownX, s_touchDownY;  /* where the first finger landed */
 static Uint64       s_touchDownTick = 0;
 static float        s_touchZoomAccum = 0.0f;
-/* While a press is held: how many frames ImGui has drawn since it landed
-   (its answer to "is the pointer over a panel" is a frame behind), whether
-   the finger has moved far enough to draw, and whether it has already
-   lifted, and where. */
-static int          s_touchFrames = 0;
+/* While a press is held: whether the finger has moved far enough to draw,
+   and whether it has already lifted, and where. */
 static bool         s_touchMoved = false;
 static bool         s_touchLifted = false;
 static float        s_touchLiftX, s_touchLiftY;
@@ -3776,14 +3773,23 @@ static void meTouchConfirm(void) {
     }
 }
 
-/* Once a frame, before the events, settle a held press once ImGui has had a
-   frame to see it: a press that moved, lifted or was held long enough goes to
-   the canvas (or to ImGui, over a panel). A tap that has already lifted gets
-   its release as well. */
+/* Back to no finger down, at the start of each editor run: a touch still
+   under way when the last run ended must not carry into this one. */
+static void meTouchReset(void) {
+    s_touchState = ME_TOUCH_IDLE;
+    s_touchCount = 0;
+    s_touchZoomAccum = 0.0f;
+    s_touchMoved = false;
+    s_touchLifted = false;
+}
+
+/* Once a frame, before the events, settle a held press: a press that moved,
+   lifted or was held long enough goes to the canvas (or to ImGui, over a
+   panel). A tap that has already lifted gets its release as well. Called
+   before the frame's events are read, so a press is first looked at here a
+   frame after it landed, by which time ImGui has had a frame to see it. */
 static void meTouchFrame(void) {
     if (s_touchState != ME_TOUCH_PENDING) return;
-    s_touchFrames++;
-    if (s_touchFrames < 1) return;
     if (!s_touchMoved && !s_touchLifted &&
         SDL_GetTicks() - s_touchDownTick < ME_TOUCH_HOLD_MS) {
         return;
@@ -3880,7 +3886,6 @@ static bool meTouchTakeEvent(MapEditorState *ed, const SDL_Event *ev, float pxSc
             s_touchDownX = x;
             s_touchDownY = y;
             s_touchDownTick = SDL_GetTicks();
-            s_touchFrames = 0;
             s_touchMoved = false;
             s_touchLifted = false;
         } else if (s_touchCount == 2 && s_touchState == ME_TOUCH_PENDING &&
@@ -3922,8 +3927,26 @@ static bool meTouchTakeEvent(MapEditorState *ed, const SDL_Event *ev, float pxSc
         return true;
     }
 
-    /* A finger lifted or was cancelled. A held press that lifts is a tap,
-       sent to the canvas press and release together at the next frame. */
+    /* A finger the system cancelled (a gesture of its own, an incoming call)
+       is not a tap: a held press is dropped, and a stroke under way is ended
+       where it is. Every finger still down is then ignored. */
+    if (ev->type == SDL_EVENT_FINGER_CANCELED) {
+        if (s_touchState == ME_TOUCH_DRAW && slot == 0) {
+            mePushTouchMouse(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
+        }
+        if (slot == 0 && s_touchCount == 2) {
+            s_touchId[0] = s_touchId[1];
+            s_touchX[0] = s_touchX[1];
+            s_touchY[0] = s_touchY[1];
+        }
+        s_touchCount--;
+        s_touchLifted = false;
+        s_touchState = (s_touchCount == 0) ? ME_TOUCH_IDLE : ME_TOUCH_IGNORE;
+        return true;
+    }
+
+    /* A finger lifted. A held press that lifts is a tap, sent to the canvas
+       press and release together at the next frame. */
     bool pendingTap = (s_touchState == ME_TOUCH_PENDING);
     if (pendingTap && slot == 0) {
         s_touchLifted = true;
@@ -3956,7 +3979,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     ed->renderer = renderer;
     ed->fromMainMenu = fromMainMenu;
 #if defined(__IPHONEOS__)
-    meIosPresentationOff(renderer);
+    meTouchReset();
 #endif
 
     {
@@ -4039,6 +4062,12 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         return;
     }
     SDL_SetTextureScaleMode(ed->tilesTex, SDL_SCALEMODE_NEAREST);
+#if defined(__IPHONEOS__)
+    /* After the two failure returns above, so neither leaves WinBolo's
+       presentation off; from here the run always ends at the restore in the
+       cleanup. */
+    meIosPresentationOff(renderer);
+#endif
 
     /* Load recent files from INI */
     meLoadRecentFiles(ed);
@@ -4786,6 +4815,18 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
             case SDL_EVENT_DROP_FILE: {
                 const char *dropPath = ev.drop.data;
+#if defined(__IPHONEOS__)
+                /* iOS's drop watch (src/gui/ios/ios_drops.c) has already kept
+                   a recording or a winbolo:// link for the welcome screen;
+                   neither is a map, so the editor leaves them alone. */
+                if (dropPath) {
+                    size_t dlen = SDL_strlen(dropPath);
+                    if (SDL_strncasecmp(dropPath, "winbolo://", 10) == 0 ||
+                        (dlen >= 4 && SDL_strcasecmp(dropPath + dlen - 4, ".wbv") == 0)) {
+                        dropPath = NULL;
+                    }
+                }
+#endif
                 if (dropPath) {
                     if (meAnythingDirty(ed)) {
                         SDL_strlcpy(ed->pendingOpenPath, dropPath, ME_PATH_MAX);

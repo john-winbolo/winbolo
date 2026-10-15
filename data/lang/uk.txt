@@ -2794,3 +2794,30 @@ STR_DLGCONNECTING_JOINING=Приєднання до гри...
 
 # The log browser's Open File on iOS, when the picked file cannot be read
 STR_DLGWBN_OPENFILE_FAILED=Не вдалося прочитати цей запис.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Параметр
+STR_DLGLOBBY_DETAILS_COL_VALUE=Значення
+STR_DLGLOBBY_DETAILS_RULES=Правила:
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=Це значення задає сервер. Його не можна змінити.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=автор {string1} · оновлено {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=невідомо
+STR_MENU_INFO_OVERLAY=Інформаційний шар
+STR_SCNPANEL_POP_OUT=Відкріпити
+STR_SCNPANEL_POP_IN=Закріпити
+STR_SCNPANEL_CLOSE_TITLE=Закрити {string1}?
+STR_SCNPANEL_CLOSE_BODY=Увімкніть знову через {string1} > {string2}.
+STR_DLGLOBBY_SCENARIO_REQUIRED=Сервер завжди запускає цей скрипт. Його не можна прибрати.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=Сервер завжди запускає сценарій цього раунду
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=Цей список задає сервер. Його не можна змінити.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Чи цілять бункери як у Mac Bolo. Рухомі танки без перешкод приблизно в межах однієї клітинки змушують бункер цілити далеко вперед за їхнім курсом. Танки, що стоять або заблоковані, упередження не отримують. Замінює pill_massage_range, pill_massage_cosine і pill_aim_iterations.
+STR_RULE_DESC_tank_collision_mac=Чи використовують танки залежні від напрямку рамки спрайтів і піксельні зсуви Mac Bolo біля стін, активних бункерів і ворожих баз. Дає змогу проїжджати ближче до бункера для «pill massage».
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=Кому зараховується загибель танка, питається при кожній загибелі; утоплення вказує жертву, якщо скрипт не назве танк, що її потопив.

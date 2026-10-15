@@ -2792,3 +2792,30 @@ STR_DLGCONNECTING_JOINING=正在加入遊戲...
 
 # The log browser's Open File on iOS, when the picked file cannot be read
 STR_DLGWBN_OPENFILE_FAILED=無法讀取該錄影。
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=設定
+STR_DLGLOBBY_DETAILS_COL_VALUE=值
+STR_DLGLOBBY_DETAILS_RULES=規則：
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=此值由伺服器設定，無法更改。
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=作者 {string1} · 更新於 {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=未知
+STR_MENU_INFO_OVERLAY=資訊疊加層
+STR_SCNPANEL_POP_OUT=彈出
+STR_SCNPANEL_POP_IN=收回
+STR_SCNPANEL_CLOSE_TITLE=關閉{string1}？
+STR_SCNPANEL_CLOSE_BODY=可在 {string1} > {string2} 中重新開啟。
+STR_DLGLOBBY_SCENARIO_REQUIRED=伺服器總是執行此腳本，無法移除。
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=伺服器總是執行本回合的場景
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=此清單由伺服器設定，無法更改。
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=碉堡是否使用 Mac Bolo 的瞄準方式。約一格內移動且無遮擋的坦克會讓碉堡沿其行進方向遠遠提前瞄準。停止或被阻擋的坦克不會被提前瞄準。會覆蓋 pill_massage_range、pill_massage_cosine 和 pill_aim_iterations。
+STR_RULE_DESC_tank_collision_mac=坦克在牆、運作中的碉堡和敵方基地旁是否使用 Mac Bolo 隨方向變化的精靈碰撞框和像素推移。可以為「pill massage」更貼近碉堡通過。
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=坦克被擊毀算作誰的戰績，每次擊毀時詢問；溺水算作受害者自己，除非腳本指明擊沉它的坦克。

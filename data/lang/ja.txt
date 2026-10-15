@@ -2794,3 +2794,30 @@ STR_DLGCONNECTING_JOINING=ゲームに参加中...
 
 # The log browser's Open File on iOS, when the picked file cannot be read
 STR_DLGWBN_OPENFILE_FAILED=その録画を読み込めませんでした。
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=設定
+STR_DLGLOBBY_DETAILS_COL_VALUE=値
+STR_DLGLOBBY_DETAILS_RULES=ルール：
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=この値はサーバーが決めています。変更できません。
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=作成者 {string1} · 更新 {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=不明
+STR_MENU_INFO_OVERLAY=情報オーバーレイ
+STR_SCNPANEL_POP_OUT=切り離す
+STR_SCNPANEL_POP_IN=戻す
+STR_SCNPANEL_CLOSE_TITLE={string1} を閉じますか？
+STR_SCNPANEL_CLOSE_BODY={string1} > {string2} から再びオンにできます。
+STR_DLGLOBBY_SCENARIO_REQUIRED=サーバーは常にこのスクリプトを実行します。削除できません。
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=サーバーは常にこのラウンドのシナリオを実行します
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=このリストはサーバーが決めています。変更できません。
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=トーチカが Mac Bolo と同じ照準をするかどうか。約1マス以内にいる、動いていて遮られていないタンクに対しては、その進行方向のずっと先を狙う。止まっている、または塞がれたタンクには先読みしない。pill_massage_range、pill_massage_cosine、pill_aim_iterations より優先される。
+STR_RULE_DESC_tank_collision_mac=タンクが壁、稼働中のトーチカ、敵の基地に対して、Mac Bolo の向きによって変わるスプライトの当たり枠とピクセル単位の押し戻しを使うかどうか。「ピルマッサージ」でトーチカのすぐ横を通れるようになる。
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=タンクの撃破を誰の手柄とするか。撃破のたびに問い合わせる。溺死は、沈めたタンクをスクリプトが指定しない限り犠牲者自身になる。

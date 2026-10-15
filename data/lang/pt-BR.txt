@@ -2794,3 +2794,30 @@ STR_DLGCONNECTING_JOINING=Entrando na partida...
 
 # The log browser's Open File on iOS, when the picked file cannot be read
 STR_DLGWBN_OPENFILE_FAILED=Não foi possível ler essa gravação.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Configuração
+STR_DLGLOBBY_DETAILS_COL_VALUE=Valor
+STR_DLGLOBBY_DETAILS_RULES=Regras:
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=O servidor define este valor. Ele não pode ser alterado.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=por {string1} · atualizado {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=desconhecido
+STR_MENU_INFO_OVERLAY=Sobreposição de informações
+STR_SCNPANEL_POP_OUT=Destacar
+STR_SCNPANEL_POP_IN=Encaixar
+STR_SCNPANEL_CLOSE_TITLE=Fechar {string1}?
+STR_SCNPANEL_CLOSE_BODY=Ative de novo em {string1} > {string2}.
+STR_DLGLOBBY_SCENARIO_REQUIRED=O servidor sempre executa este script. Ele não pode ser removido.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=O servidor sempre executa o cenário desta rodada
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=O servidor define esta lista. Ela não pode ser alterada.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Se os bunkers miram como no Mac Bolo. Tanques em movimento e desobstruídos a cerca de uma casa fazem o bunker mirar bem à frente na direção deles. Tanques parados ou bloqueados não recebem antecipação. Substitui pill_massage_range, pill_massage_cosine e pill_aim_iterations.
+STR_RULE_DESC_tank_collision_mac=Se os tanques usam as caixas de sprite dependentes da direção e os ajustes de pixel do Mac Bolo contra muros, bunkers ativos e bases inimigas. Permite passar mais perto de um bunker para o "pill massage".
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=A quem a morte de um tanque é atribuída, perguntado a cada morte; um afogamento aponta a vítima, a menos que um script aponte o tanque que o afundou.

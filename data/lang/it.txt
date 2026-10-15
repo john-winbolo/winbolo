@@ -2796,3 +2796,30 @@ STR_DLGCONNECTING_JOINING=Ingresso nella partita...
 
 # The log browser's Open File on iOS, when the picked file cannot be read
 STR_DLGWBN_OPENFILE_FAILED=Impossibile leggere quella registrazione.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Impostazione
+STR_DLGLOBBY_DETAILS_COL_VALUE=Valore
+STR_DLGLOBBY_DETAILS_RULES=Regole:
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=Il server stabilisce questo valore. Non può essere cambiato.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=di {string1} · aggiornato {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=sconosciuto
+STR_MENU_INFO_OVERLAY=Sovrapposizione informazioni
+STR_SCNPANEL_POP_OUT=Stacca
+STR_SCNPANEL_POP_IN=Aggancia
+STR_SCNPANEL_CLOSE_TITLE=Chiudere {string1}?
+STR_SCNPANEL_CLOSE_BODY=Riattivalo da {string1} > {string2}.
+STR_DLGLOBBY_SCENARIO_REQUIRED=Il server esegue sempre questo script. Non può essere rimosso.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=Il server esegue sempre lo scenario di questo round
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=Il server stabilisce questo elenco. Non può essere cambiato.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Se i bunker mirano come in Mac Bolo. I carri in movimento e senza ostacoli entro circa una casella fanno mirare il bunker molto avanti lungo la loro direzione. I carri fermi o bloccati non ricevono anticipo. Sostituisce pill_massage_range, pill_massage_cosine e pill_aim_iterations.
+STR_RULE_DESC_tank_collision_mac=Se i carri usano i riquadri degli sprite dipendenti dalla direzione e gli spostamenti di pixel di Mac Bolo contro muri, bunker attivi e basi nemiche. Consente passaggi più vicini a un bunker per il «pill massage».
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=A chi viene attribuita la morte di un carro, chiesto a ogni morte; un annegamento indica la vittima a meno che uno script non indichi il carro che l'ha affondato.
