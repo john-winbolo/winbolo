@@ -46,6 +46,7 @@
 #include "../sdl3/sdl3imgui.h"
 #include "../sdl3/luabrainshandler.h"
 #include "../sdl3/dialog_backend.h"
+#include "ios_discovery.h"
 #include "../sdl3/dialogs/imgui_messagebox.h"
 #include "../mobile/touch_input.h"
 #include "../ui_mode.h"
@@ -307,6 +308,11 @@ int main(int argc, char *argv[]) {
         WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[iOS] serverSimBotPoolInit failed");
         return 1;
     }
+
+    /* The LAN search browses through Bonjour here: iOS refuses the raw mDNS
+       socket the desktop uses unless the app holds Apple's multicast
+       entitlement. */
+    iosDiscoveryInstall();
 
     /* Change working directory to the app bundle */
     const char *basePath = SDL_GetBasePath();

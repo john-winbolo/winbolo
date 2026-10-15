@@ -1253,6 +1253,10 @@ target_sources(WinBoloIOS PRIVATE src/gui/sdl3/dialogs/imgui_touch.cpp)
 # The "Connecting to <host>..." screen gamefront.c shows on iOS while a join
 # waits on the network.
 target_sources(WinBoloIOS PRIVATE src/gui/sdl3/dialogs/imgui_connecting.cpp)
+# The LAN search through the system's Bonjour API (see ios_discovery.m).
+target_sources(WinBoloIOS PRIVATE src/gui/ios/ios_discovery.m)
+set_source_files_properties(src/gui/ios/ios_discovery.m
+    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
     nanosvg stb_image utf8proc zlibstatic minizip cjson
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"

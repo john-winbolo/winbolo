@@ -224,6 +224,31 @@ bool discoveryFindMdnsGamesAsync(DiscoveryServerCallback callback, void *userDat
  * thread, auto-cleared at the start of the next mDNS search. */
 void discoveryAbortMdnsSearch(void);
 
+/* A platform's own mDNS browser, for a system that keeps multicast to itself
+ * (iOS, where an app needs Apple's multicast entitlement for raw mDNS
+ * sockets but may browse through the system's Bonjour API). Once one is set,
+ * discoveryFindMdnsGamesAsync runs it in place of the raw-socket browser,
+ * under the same contract: block for the search window, call callback once
+ * per server found, return whether the search ran, and stop early once
+ * discoveryMdnsAbortRequested() is true. NULL restores the raw-socket
+ * browser. Set it once at startup, before any search. */
+typedef bool (*DiscoveryMdnsBrowser)(DiscoveryServerCallback callback, void *userData);
+void discoverySetMdnsBrowser(DiscoveryMdnsBrowser browser);
+
+/* True once discoveryAbortMdnsSearch has been called for the search in
+ * progress. For a platform browser's wait loop. */
+bool discoveryMdnsAbortRequested(void);
+
+/* Fill *out from what a platform browser resolved for one server: its IPv4
+ * address as text, its game port and its TXT record as count key/value
+ * pairs, read with the same key schema as the raw-socket browser so both
+ * paths fill the same fields. With no pairs (the record never arrived)
+ * hasRichInfo is false. Returns false, out untouched, when address does not
+ * parse. */
+bool discoveryServerFromMdns(const char *address, unsigned short port,
+                             const char *const *keys, const char *const *values,
+                             size_t count, DiscoveryServer *out);
+
 /* Send an info request to a single server and wait up to 5 seconds for
  * a response. On success fills *out (rttMs >= 0) and returns true; on
  * timeout / DNS failure / send failure returns false with out->rttMs
