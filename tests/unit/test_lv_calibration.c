@@ -357,11 +357,11 @@ int run_lv_walk_base_anchor_ordinal(void) {
  * follows flushes it. The anchor is the snapshot, so the window opens on the
  * round's first real frame rather than on the empty frame before it.
  *
- * The two walkers differ on that last frame: lv_walkComputeTotalTimeMs counts
- * LOG_QUIT as a tick and lv_walkComputeGameStartMs does not. That matches the
- * decoder, which advances timeRunning before reading the byte, so the tick
- * that consumes LOG_QUIT is the one that ends playback and the end of the log
- * is 182060, not the 182040 of the last wait.
+ * The two times differ on that last frame: the total counts LOG_QUIT as a
+ * tick and the game start does not. That matches the decoder, which advances
+ * timeRunning before reading the byte, so the tick that consumes LOG_QUIT is
+ * the one that ends playback and the end of the log is 182060, not the 182040
+ * of the last wait.
  *
  * Window [120020, 182060), length 62040. While it is on, progress, both seeks
  * and the clock run on the game's own 0..62040; the decoder's timeRunning and
