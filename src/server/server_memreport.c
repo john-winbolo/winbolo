@@ -34,20 +34,6 @@
  * walk lists that hold tens of items, so a report costs well under a
  * millisecond. */
 
-#ifdef _WIN32
-  #ifndef WIN32_LEAN_AND_MEAN
-    #define WIN32_LEAN_AND_MEAN
-  #endif
-  #include <windows.h>
-  /* Version 2 maps GetProcessMemoryInfo onto kernel32, so no psapi.lib. */
-  #ifndef PSAPI_VERSION
-    #define PSAPI_VERSION 2
-  #endif
-  #include <psapi.h>
-#elif defined(__APPLE__)
-  #include <mach/mach.h>
-#endif
-
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -174,96 +160,21 @@ void serverMemReportRequest(bool deep) {
 }
 
 bool serverMemReadProcess(ServerMemProcess *out) {
+  /* The platform code is the T1 reader in server_sim_memory.c, which the
+   * desktop client's System Info panel reads as well; this keeps the
+   * report's own struct for its format function and its tests. */
+  ServerSimProcessMemory pm;
+  bool ok = serverSimReadProcessMemory(&pm);
   memset(out, 0, sizeof(*out));
-#if defined(_WIN32)
-  {
-    PROCESS_MEMORY_COUNTERS_EX pmc;
-    MEMORYSTATUSEX ms;
-    bool ok = false;
-    memset(&pmc, 0, sizeof(pmc));
-    pmc.cb = sizeof(pmc);
-    if (GetProcessMemoryInfo(GetCurrentProcess(),
-                             (PROCESS_MEMORY_COUNTERS *)&pmc, sizeof(pmc))) {
-      out->rss = pmc.WorkingSetSize;
-      out->peakRss = pmc.PeakWorkingSetSize;
-      out->priv = pmc.PrivateUsage;
-      out->haveRss = out->havePeakRss = out->havePriv = true;
-      ok = true;
-    }
-    ms.dwLength = sizeof(ms);
-    if (GlobalMemoryStatusEx(&ms)) {
-      out->virt = ms.ullTotalVirtual - ms.ullAvailVirtual;
-      out->haveVirt = true;
-      ok = true;
-    }
-    return ok;
-  }
-#elif defined(__linux__)
-  {
-    /* /proc/self/status lines are "VmRSS:     12345 kB". */
-    FILE *fp = fopen("/proc/self/status", "r");
-    char line[256];
-    bool ok = false;
-    if (fp == NULL) {
-      return false;
-    }
-    while (fgets(line, sizeof(line), fp) != NULL) {
-      unsigned long long kb;
-      if (sscanf(line, "VmRSS: %llu", &kb) == 1) {
-        out->rss = kb * 1024ull; out->haveRss = true; ok = true;
-      } else if (sscanf(line, "VmHWM: %llu", &kb) == 1) {
-        out->peakRss = kb * 1024ull; out->havePeakRss = true; ok = true;
-      } else if (sscanf(line, "VmData: %llu", &kb) == 1) {
-        out->priv = kb * 1024ull; out->havePriv = true; ok = true;
-      } else if (sscanf(line, "VmSize: %llu", &kb) == 1) {
-        out->virt = kb * 1024ull; out->haveVirt = true; ok = true;
-      }
-    }
-    fclose(fp);
-    return ok;
-  }
-#elif defined(__APPLE__)
-  {
-    /* MACH_TASK_BASIC_INFO gives resident and its peak. macOS has no
-     * "private bytes"; the nearest is phys_footprint from TASK_VM_INFO,
-     * the figure Activity Monitor shows as "Memory": dirty and compressed
-     * pages the process owns, which takes in every Lua heap.
-     *
-     * Virtual stays n/a. virtual_size counts the shared library cache and
-     * the address ranges the kernel reserves in every process, so it reads
-     * about 400 GB for any process on Apple silicon (ps -o vsz says the
-     * same for a shell), and task_info has no committed-address-space
-     * figure like the Windows and Linux ones. A leak on a Mac shows in
-     * private. */
-    mach_task_basic_info_data_t info;
-    task_vm_info_data_t vm;
-    mach_msg_type_number_t count;
-    bool ok = false;
-
-    count = MACH_TASK_BASIC_INFO_COUNT;
-    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
-                  (task_info_t)&info, &count) == KERN_SUCCESS) {
-      out->rss = info.resident_size;
-      out->peakRss = info.resident_size_max;
-      out->haveRss = out->havePeakRss = true;
-      ok = true;
-    }
-    /* phys_footprint is in revision 1 of the struct and later; an older
-     * kernel fills fewer fields and says so in count. */
-    memset(&vm, 0, sizeof(vm));
-    count = TASK_VM_INFO_COUNT;
-    if (task_info(mach_task_self(), TASK_VM_INFO,
-                  (task_info_t)&vm, &count) == KERN_SUCCESS &&
-        count >= TASK_VM_INFO_REV1_COUNT) {
-      out->priv = vm.phys_footprint;
-      out->havePriv = true;
-      ok = true;
-    }
-    return ok;
-  }
-#else
-  return false;
-#endif
+  out->rss = pm.rss;
+  out->peakRss = pm.peakRss;
+  out->priv = pm.priv;
+  out->virt = pm.virt;
+  out->haveRss = pm.haveRss;
+  out->havePeakRss = pm.havePeakRss;
+  out->havePriv = pm.havePriv;
+  out->haveVirt = pm.haveVirt;
+  return ok;
 }
 
 /* Bounded append onto a line buffer. */

@@ -4447,6 +4447,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # with recording callbacks instead of a live server (server_console.c
     # itself comes in with server_static).
     tests/unit/test_server_console.c
+    # The T1 memory accessors on server_sim.h that the client's System Info
+    # panel reads: the process figures, each bot's Lua heap and the world
+    # list counts of a hosted sim.
+    tests/unit/test_memory_info.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -6046,6 +6050,9 @@ set(_unit_test_names
     memreport_flags
     memreport_process_na
     memreport_deep_walk_cap
+    memory_info_hosted_bots
+    memory_info_no_bots
+    memory_info_process_figures
     console_info_and_status
     console_savemap_path
     console_unknown_command_is_inert

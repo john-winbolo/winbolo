@@ -3334,6 +3334,32 @@
 #define STR_VOICE_EVERYONE_ON                    2757
 #define STR_VOICE_EVERYONE_OFF                   2758
 
+/* System Info panel — the Memory block */
+/* This process's memory figures and, when hosting, the bots' Lua heaps and
+ * the world-list counts the dedicated server's memory report prints. Bare
+ * nouns like the other System Info labels (no trailing colon, no format
+ * specifiers); colons and numbers stay in the C format strings. A figure
+ * that could not be read shows STR_DLGSKIN_NA. */
+#define STR_DLGSYSINFO_MEMORY                    2779
+#define STR_DLGSYSINFO_MEM_RESIDENT              2780
+#define STR_DLGSYSINFO_MEM_PEAK                  2781
+#define STR_DLGSYSINFO_MEM_PRIVATE               2782
+#define STR_DLGSYSINFO_MEM_VIRTUAL               2783
+#define STR_DLGSYSINFO_MEM_LUA                   2784
+#define STR_DLGSYSINFO_MEM_BOTS                  2785
+#define STR_DLGSYSINFO_MEM_BOT                   2786
+#define STR_DLGSYSINFO_MEM_SERVER_LISTS          2787
+#define STR_DLGSYSINFO_MEM_BOT_LISTS             2788
+#define STR_DLGSYSINFO_MEM_EXPLOSIONS            2789
+#define STR_DLGSYSINFO_MEM_TANK_EXPLOSIONS       2790
+#define STR_DLGSYSINFO_MEM_SHELLS                2791
+#define STR_DLGSYSINFO_MEM_MINE_EXPLOSIONS       2792
+#define STR_DLGSYSINFO_MEM_FLOOD_FILL            2793
+#define STR_DLGSYSINFO_MEM_BUILDING              2794
+#define STR_DLGSYSINFO_MEM_RUBBLE                2795
+#define STR_DLGSYSINFO_MEM_SWAMP                 2796
+#define STR_DLGSYSINFO_MEM_GRASS                 2797
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

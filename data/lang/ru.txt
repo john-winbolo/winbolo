@@ -2742,3 +2742,24 @@ STR_DLGBROWSER_MODS_MORE=+ моды ({number})
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=Голосовой чат теперь слышат все в игре
 STR_VOICE_EVERYONE_OFF=Голосовой чат теперь слышат только ваши союзники
+
+# System Info panel — the Memory block
+STR_DLGSYSINFO_MEMORY=Память
+STR_DLGSYSINFO_MEM_RESIDENT=Резидентная
+STR_DLGSYSINFO_MEM_PEAK=Пик
+STR_DLGSYSINFO_MEM_PRIVATE=Приватная
+STR_DLGSYSINFO_MEM_VIRTUAL=Виртуальная
+STR_DLGSYSINFO_MEM_LUA=Куча Lua
+STR_DLGSYSINFO_MEM_BOTS=Боты
+STR_DLGSYSINFO_MEM_BOT=Бот
+STR_DLGSYSINFO_MEM_SERVER_LISTS=Списки сервера
+STR_DLGSYSINFO_MEM_BOT_LISTS=Списки ботов
+STR_DLGSYSINFO_MEM_EXPLOSIONS=Взрывы
+STR_DLGSYSINFO_MEM_TANK_EXPLOSIONS=Взрывы танков
+STR_DLGSYSINFO_MEM_SHELLS=Снаряды
+STR_DLGSYSINFO_MEM_MINE_EXPLOSIONS=Взрывы мин
+STR_DLGSYSINFO_MEM_FLOOD_FILL=Заливка водой
+STR_DLGSYSINFO_MEM_BUILDING=Строительство
+STR_DLGSYSINFO_MEM_RUBBLE=Обломки
+STR_DLGSYSINFO_MEM_SWAMP=Болото
+STR_DLGSYSINFO_MEM_GRASS=Трава
