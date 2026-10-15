@@ -33,12 +33,12 @@ document is the stable reference for the rules themselves.
 | `src/headless/` | T1 + T3 + T4 | The headless runner. Not the same access as `src/server/` above: WinBoloHeadless is built under the `runtime_only` profile (`cmake/bolo_lib.cmake`), which puts `src/bolo/public/` on the include path and nothing else, so this directory has the desktop client's reach rather than the server's T2. Two things sit outside that. The target's one per-file T2 grant is for `src/bolo/transport_udp_client.c`, which is bolo's own translation unit compiled per-target rather than anything in this directory. And `headless_main.c` includes `../bolo/internal/server_sim_lifecycle.h` by relative path, which include directories cannot stop; a new reach into `internal/` from here wants a T1 accessor instead. |
 | `src/wasm/` | T1 + T3 + T4 | Web build of the desktop client — shares the `src/gui/sdl3/` ImGui UI and the shared sim-driving cores, forking only the driver: a blocking loop in `main` that waits on each browser animation frame through ASYNCIFY, in place of the SDL timer thread. The sim, the draw and the menus all run on the page's thread; bot brain thinks run on the bot worker pool's threads, as on desktop, which is why the build links with `-pthread` and the page must be cross-origin isolated. The menu and its dialogs run their own blocking loops on that same stack between games. Its practice game hosts a `ServerSim` in the page, ticked from that loop through `serverInstanceTick` in `server_stubs_wasm.c`, which runs the shared `serverSimLocalTick` sequence (see "Per-file T2 grants"), and records its rounds through `server_round_log_static`. See "Platform variants: share the logic, fork only the driver". |
 | `src/android/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
-| `src/ios/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
-| `src/client_frontend/` | T1 + T3 + T4 | The shared sim-driving cores every client platform calls instead of keeping its own copy: `client_frontend_tick.c` (the alternating keys/game tick step), `client_frontend_connect.c` (the post-connect join/landing wait), `client_frontend_common.c` (the sim-state-guarded `frontEnd*` bodies). Not a library — the sources compile directly inside each frontend target (WinBolo, WinBoloIOS, android `main`, wasm `winbolo`) under that target's `gui` profile, so they see only `public/`. See "Platform variants: share the logic, fork only the driver". |
-| `src/logviewer/` | T1 + T3 + T4 | Replays recorded games; uses T3 for the playback render path. The standalone `LogViewer` and the wasm log viewer compile `src/bolo/sim_rules.c` from source under a per-file T2 grant, since neither links `bolo_static`; that is the sim's own file rather than anything in this directory (see "Per-file T2 grants"). |
+| `src/gui/ios/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
+| `src/client_frontend/` | T1 + T3 + T4 | The shared sim-driving cores every client platform calls instead of keeping its own copy: `client_frontend_tick.c` (the alternating keys/game tick step), `client_frontend_connect.c` (the post-connect join/landing wait), `client_frontend_common.c` (the sim-state-guarded `frontEnd*` bodies, and the tutorial step sequencer behind `client_frontend_tutorial.h`), `client_frontend_sp.c` (the single-player lobby seeding). The voice runtime (`voice_*.c`) lives here too and is compiled by the targets that build voice. Not a library — the sources compile directly inside each frontend target (WinBolo, WinBoloIOS and wasm `winbolo` take all four cores; android `main` takes `client_frontend_connect.c` and `client_frontend_sp.c`) under that target's `gui` profile, so they see only `public/`. See "Platform variants: share the logic, fork only the driver". |
+| `src/logviewer/` | T1 + T3 + T4 | Replays recorded games; uses T3 for the playback render path. The standalone `LogViewer` and the wasm log viewer compile `src/bolo/sim_rules.c` from source under a per-file T2 grant, since neither links `bolo_static`; that is the sim's own file rather than anything in this directory (see "Per-file T2 grants"). The lobby's replay reel is the embedded host `lv_embed.c`, which the web client and WinBoloIOS compile with the decoder and renderer but without the modal viewer `logviewer.c`; `lv_embed_stubs.c` stubs what the left-out viewer would provide, for both. iOS drives the viewer's dialogs through `src/logviewer/ios/platform_dialogs_ios.c` in place of the desktop driver that shells out, and plays a game the WinBolo.net log browser downloads in the reel through `src/gui/ios/ios_log_player.cpp`. |
 | `src/winbolonet/winbolonet_core/` | T1 + T4 | Shared HTTP, async event queue, WBN key storage. Includes `server_sim.h` (T1) only. Linked by every WBN-aware binary. |
 | `src/winbolonet/winbolonet_server/` | T1 + T4 | Server tracker calls (`server/register`, `server/update`, lobby/map/teams/balance). Linked by binaries that run a server: WinBoloDS, WinBoloHeadless, SDL3 client (SP host). |
-| `src/winbolonet/winbolonet_client/` | T4 | User auth, comments. Linked by binaries with a UI: SDL3 client, LogViewer. |
+| `src/winbolonet/winbolonet_client/` | T4 | User auth, comments. Linked by binaries with a UI: SDL3 client, LogViewer, WinBoloIOS. |
 | `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. Also links fourteen leaf `src/gui/sdl3` files, which keep public-only access rather than borrowing this row's — see "Linked GUI sources" for the list and the rule a file has to meet. |
 | `tests/`, `tools/` | T1 + T3 + T4 (by default) | Not currently wired through a profile. Tests that legitimately need T2 belong inside `src/bolo/tests/` and link against bolo's own target. |
 
@@ -174,7 +174,7 @@ because the broken client did not run the same code path.
    its own header directory and a profile that sees `public/` plus
    that directory and nothing else, which is the shape a new door
    should take when the default answer will not do. `src/server/`,
-   `src/headless/`, `src/wasm/`, `src/android/`, and `src/ios/`
+   `src/headless/`, `src/wasm/`, `src/android/`, and `src/gui/ios/`
    all run the sim and all participate in this bug class. A new
    exception requires the same justification structure: bounded
    scope, a written note of what it rests on, and a reason the
@@ -182,7 +182,7 @@ because the broken client did not run the same code path.
    is still "add a T1 accessor".
 
 5. **Do not include T3 from non-renderer binaries.** `src/gui/`,
-   the mobile renderers (`src/android/`, `src/ios/`, `src/wasm/`),
+   the mobile renderers (`src/android/`, `src/gui/ios/`, `src/wasm/`),
    and `src/logviewer/` (for replay rendering) are the legitimate
    consumers of T3 headers. Server, headless, and gym should not
    reach for `screentank.h`, `viewport_types.h`, etc. — they don't
@@ -266,7 +266,7 @@ cross-thread.)
 
 A frontend is any binary outside `src/bolo/` that drives a `ClientSim`
 or `ServerSim` through the public T1 API. Existing frontends are
-`src/gui/sdl3/` (desktop), `src/android/` and `src/ios/` (mobile),
+`src/gui/sdl3/` (desktop), `src/android/` and `src/gui/ios/` (mobile),
 `src/wasm/` (web), `src/headless/` (no UI), `src/braintest/` (dev
 tool), `src/logviewer/` (replay viewer), and the dedicated-server
 binary built from `src/server/`. Note: the dedicated-server binary
@@ -417,7 +417,7 @@ clientSimDestroy(cs);   /* frees the ClientSim allocation itself */
 ### Platform variants: share the logic, fork only the driver
 
 The same client ships on several platforms — desktop (`src/gui/sdl3/`),
-web (`src/wasm/`), and mobile (`src/android/`, `src/ios/`). They differ
+web (`src/wasm/`), and mobile (`src/android/`, `src/gui/ios/`). They differ
 only in the *driver*: the mechanism that decides **when** to tick and
 how to block or pump. Desktop ticks from an SDL timer thread; web ticks
 from a blocking loop in `main` that waits on each browser animation
@@ -481,14 +481,24 @@ into each frontend target rather than as a separate library:
   active-`ClientSim` guard; the settings toggles persist through
   `gameFrontSaveCurrentPrefs`. These guards belong in shared code so a
   platform cannot silently omit one.
+- **The tutorial step sequencer** — also in `client_frontend_common.c`,
+  with the calls a driver makes each frame (the presented-frame count,
+  the respawn poll, whether a step's messages are up) declared in
+  `client_frontend_tutorial.h`. The desktop, web and iOS drivers call it.
+- **The voice settings** — `src/gui/sdl3/voice_settings.c` holds the one
+  body of the `windowSetVoice*` / `windowGetVoice*` functions the dialogs
+  and `gamefront.c` call. Not in `src/client_frontend/` because it sits
+  on the SDL3 voice backend; the desktop and iOS targets, which build
+  that backend, both compile it.
 - **The single-player lobby seeding** — `client_frontend_sp.c`
   (`clientFrontSeedBot`). One bot into one lobby slot: its mode and
   difficulty resolved through `serverSimResolveNewBotConfig` and written
   into the slot before the bot is made, so the brain loads with them; the
   bot created; the lobby's Bot Code dropdown pointed at the brain it runs;
-  its team sent through the player's `ClientSim`. The desktop's
-  single-player start calls it per configured bot and the web's practice
-  start once, for its one enemy bot.
+  its team sent through the player's `ClientSim`. The single-player
+  start in `gamefront.c`, which the desktop and iOS share, calls it per
+  configured bot and the web's practice start once, for its one enemy
+  bot.
 - **The local server tick sequence** — `serverSimLocalTick` in
   `src/server/sim/server_sim_lifecycle_local.c`. Not a client core but the
   same rule: the order and conditions of the lobby and round steps a
@@ -497,7 +507,8 @@ into each frontend target rather than as a separate library:
   the bot-config publishes) have one body. The dedicated server's
   `serverInstanceTick` calls it with its network work in the hooks it
   takes and after the edge it returns; the web client's
-  `server_stubs_wasm.c` calls it with no hooks.
+  `server_stubs_wasm.c` and the iOS client's `src/gui/ios/ios_stubs.c`
+  call it with no hooks.
 
 When adding or maintaining a platform variant, the review question is
 not "does it compile and mostly run?" but "does it call the shared core,
@@ -696,7 +707,7 @@ client subscribers → frontend callback. Variants:
 
 **What never changes.** A feature that adds a render path also adds
 implementations to every frontend binary that ships it — `src/gui/sdl3/`,
-`src/android/`, `src/ios/`, `src/wasm/`, `src/headless/` (stub),
+`src/android/`, `src/gui/ios/`, `src/wasm/`, `src/headless/` (stub),
 `src/braintest/` (stub), `src/server/` (stub). If you add a
 `frontEnd*` callback to `frontend.h`, every backend that links the
 sim must provide an implementation (even an empty one) or the link
@@ -1423,7 +1434,7 @@ doesn't override that ID.
 ### What gets localized
 
 In scope: every binary with a UI — desktop (`src/gui/sdl3/`), mobile
-(`src/android/`, `src/ios/`), wasm (`src/wasm/`), log viewer
+(`src/android/`, `src/gui/ios/`), wasm (`src/wasm/`), log viewer
 (`src/logviewer/`), map editor (`src/mapeditor/`), and the bolo sim's
 user-visible messages from `bases.c`, `lgm.c`, `pillbox.c`,
 `players.c`, `screen.c`, `tank.c`, `tankexp.c`.
@@ -1718,7 +1729,7 @@ ImGui `MenuItem` is enabled has a corresponding field on
 the LogViewer and MapEditor binaries — each has its own bridge,
 its own state struct, and its own refresh. They share the
 `LANG_STR()` convention with the SDL3 client. The mobile clients
-(`src/ios/`, `src/android/`) and the wasm build don't have a system
+(`src/gui/ios/`, `src/android/`) and the wasm build don't have a system
 menu bar; they ship only the ImGui in-window bar.
 
 ## Standalone ImGui dialogs — controller navigation and quit
@@ -1822,15 +1833,19 @@ link set, so binaries pick the subset they need.
 ### What each library is for
 
 **`winbolonet_core`** owns the shared HTTP transport (libcurl
-wrapper in `http.c`), the async event-delivery queue, WBN key
-storage, the in-memory server bearer-token state (`wbn_bearer.c`
-holds the `server_token` returned by `POST server/register` and
-the `Authorization: Bearer` setter/clearer/accessor that `http.c`
-reads), and the preferences-file path stored via
-`winbolonetCoreSetPreferencesPath` (called once at startup by each
-binary's `main()` before any WBN call). It is the hard dependency
-of the other two libraries and is linked into every binary that
-talks to WBN.
+wrapper in `http.c`; NSURLSession in `http_nsurl.m` on iOS), the
+async event-delivery queue, WBN key storage, and the in-memory server
+bearer-token state (`wbn_bearer.c` holds the `server_token` returned
+by `POST server/register` and the `Authorization: Bearer`
+setter/clearer/accessor that `http.c` reads). It reads its own
+settings, such as `[WINBOLO.NET] Host`, through the shared preferences
+module (`common/prefs.h`), whose file each binary loads at startup.
+`http.c` is not the only file that calls libcurl: the news popup's
+image cache, `src/gui/sdl3/news_image_cache.cpp`, fetches images from
+full URLs with libcurl directly on the desktop, and on iOS goes
+through `httpGetUrlToMemory`, which only `http_nsurl.m` provides.
+`winbolonet_core` is the hard dependency of the other two libraries
+and is linked into every binary that talks to WBN.
 
 **`winbolonet_server`** is the tracker-reporting surface a server
 runtime calls: `server/register` at boot, per-tick `server/update`,
@@ -1850,7 +1865,7 @@ WinBoloDS and WinBoloHeadless — those two pull it solely to
 satisfy `winbolonetClientJoinSession`, which the per-target
 `transport_udp_client.c` references unconditionally (see
 "Cross-tier dependency" below). The stub-set binaries
-(mobile / wasm / braintest / mapeditor / unit-tests / gym)
+(Android / wasm / braintest / mapeditor / unit-tests / gym)
 resolve the same symbol with a no-op stub.
 
 ### Per-binary link sets
@@ -2027,7 +2042,8 @@ defines as unauthenticated) use plain `wbn_api_call`. The narrow
 accessor `winboloNetGetServerToken` is declared in
 `wbn_bearer.h`, not on the general `winbolonet_core.h` surface —
 its only legitimate callers are `http.c`'s server-scoped call
-variants and the log upload.
+variants and the log upload, and the same two in `http_nsurl.m`
+on iOS.
 
 **Lobby re-keying contract.** WBN issues a fresh `server_key`
 for every pre-game / game cycle. When a server's
@@ -2070,9 +2086,9 @@ gets the allowance; nothing else in `src/bolo/` does.
 The transitive consequence: every binary linking `bolo_static`
 must resolve `winbolonetClientJoinSession`. WBN-aware binaries
 (WinBolo, WinBoloDS, WinBoloHeadless) get the real
-implementation from `winbolonet_client`; stub-set binaries
-(mobile, wasm, braintest, mapeditor, unit-tests, gym) get a
-no-op stub returning failure. Same pattern as
+implementation from `winbolonet_client`, and so does WinBoloIOS;
+stub-set binaries (Android, wasm, braintest, mapeditor, unit-tests,
+gym) get a no-op stub returning failure. Same pattern as
 `winboloNetGetServerKey` already follows.
 
 ### What not to do
@@ -2742,6 +2758,11 @@ the target deliberately doesn't link:
   server's tick runs, declared in `internal/server_sim_lifecycle.h`.
   The grant covers those two declarations; the stub reaches no sim
   state of its own.
+- `src/gui/ios/ios_stubs.c` — the same shape again for the iOS client,
+  which also links `server_sim_static` without `server_static`: its
+  `serverInstanceStartup` forwards to `serverSimApplyInstanceConfig` and
+  its `serverInstanceTick` calls `serverSimLocalTick` for the
+  single-player game.
 - WinBolo's embedded map editor TUs (`src/mapeditor/mapeditor.c`,
   `mapeditor_export.c`, `mapeditor_validate.c`) — sim-co-owner files
   from the editor that need T2 access regardless of which binary
