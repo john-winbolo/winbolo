@@ -228,6 +228,7 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
       end
     end
   end
+  -- Debug only: why the last check refused (read by the TANK_ENGAGE trace).
   if require_reach and not blocked and not reached then return false end
   return not blocked
 end
@@ -3449,6 +3450,8 @@ local function tank_combat_steer(state, world, info, goal)
     local reach_wu = steps * spd + 64
     _range_ok = U.wdist(info.tankx, info.tanky, pred_wx, pred_wy) <= reach_wu
   end
+  local _gate_why = (not _aim_ok and "aim") or (not _shells_ok and "shells")
+                    or (not _steady_ok and "steady") or (not _range_ok and "range") or nil
   if _aim_ok and _shells_ok and _steady_ok and _range_ok then
     local _clear = shot_path_clear(info, world, pred_wx, pred_wy,
                                    bit.rshift(math.floor(pred_wx), 8),
@@ -3469,6 +3472,14 @@ local function tank_combat_steer(state, world, info, goal)
       -- Blocked but we moved this tick — not stuck, reset.
       goal._engage_blocked_ticks = 0
     end
+  elseif C.TANK_COMBAT_STUCK_FIRE_HOLD and _stuck_in_place then
+    -- C.TANK_COMBAT_STUCK_FIRE_HOLD: a tick off the aim, steady or range gate
+    -- while we still sit on the same square keeps the blocked count. A target
+    -- behind a wall at 1-3 squares jitters, so its lead swings the aim off the
+    -- 3-brad gate on most ticks; resetting here kept the count under
+    -- TANK_COMBAT_STUCK_FIRE_TICKS for good and the tank never fired
+    -- (pilltag_human_fort s123 player 2: 10.9 s, max count 15 of 30).
+    -- Moving to a new square or a clear shot still resets it.
   else
     -- Not aimed yet (still turning) or out of shells: don't accrue stuck count.
     goal._engage_blocked_ticks = 0

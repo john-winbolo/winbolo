@@ -258,6 +258,11 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
       end
     end
   end
+  -- Debug only: why the last check refused (read by the TANK_ENGAGE trace).
+  if BRAIN_DEBUG_MODE then
+    M._spc_why = blocked and block_reason
+                 or ((require_reach and not reached) and "no_reach" or "clear")
+  end
   if require_reach and not blocked and not reached then return false end
   return not blocked
 end
@@ -3733,11 +3738,14 @@ local function tank_combat_steer(state, world, info, goal)
     local reach_wu = steps * spd + 64
     _range_ok = U.wdist(info.tankx, info.tanky, pred_wx, pred_wy) <= reach_wu
   end
+  local _gate_why = (not _aim_ok and "aim") or (not _shells_ok and "shells")
+                    or (not _steady_ok and "steady") or (not _range_ok and "range") or nil
   if _aim_ok and _shells_ok and _steady_ok and _range_ok then
     local _clear = shot_path_clear(info, world, pred_wx, pred_wy,
                                    bit.rshift(math.floor(pred_wx), 8),
                                    bit.rshift(math.floor(pred_wy), 8),
                                    nil, nil, nil, nil, km_pn)
+    if BRAIN_DEBUG_MODE then _gate_why = _clear and "ok" or ("path:" .. tostring(M._spc_why)) end
     if _clear and not U.fire_hold_block(state, C.FIRE_HOLD_TICKS) then
       keys = bit.bor(keys, KEY_SHOOT)
       if BRAIN_DEBUG_MODE then print2(string.format("TANK_FIRE t=%d id=%s ghost=%s @(%d,%d) dist=%.1f aim_corr=%.0f", now, tostring(target.id), tostring(target.ghost or false), target.mx, target.my, dist_tiles, aim_corr)) end
@@ -3754,6 +3762,14 @@ local function tank_combat_steer(state, world, info, goal)
       -- Blocked but we moved this tick — not stuck, reset.
       goal._engage_blocked_ticks = 0
     end
+  elseif C.TANK_COMBAT_STUCK_FIRE_HOLD and _stuck_in_place then
+    -- C.TANK_COMBAT_STUCK_FIRE_HOLD: a tick off the aim, steady or range gate
+    -- while we still sit on the same square keeps the blocked count. A target
+    -- behind a wall at 1-3 squares jitters, so its lead swings the aim off the
+    -- 3-brad gate on most ticks; resetting here kept the count under
+    -- TANK_COMBAT_STUCK_FIRE_TICKS for good and the tank never fired
+    -- (pilltag_human_fort s123 player 2: 10.9 s, max count 15 of 30).
+    -- Moving to a new square or a clear shot still resets it.
   else
     -- Not aimed yet (still turning) or out of shells: don't accrue stuck count.
     goal._engage_blocked_ticks = 0
@@ -3765,7 +3781,7 @@ local function tank_combat_steer(state, world, info, goal)
   if BRAIN_DEBUG_MODE then
     local _turn = (goal._aim_turn_dir == 1 and "CW") or (goal._aim_turn_dir == -1 and "CCW") or "-"
     local _lead = U.wdist(twx, twy, pred_wx, pred_wy) / 256.0
-    print2(string.format("TANK_ENGAGE t=%d tgt#%s%s perc=(%d,%d) d=%.1f v=(%.0f,%.0f) flight=%.1f lead=%.1f pred=(%d,%d) aimcorr=%+.0f turn=%s fire=%s", now, tostring(target.id), target.ghost and "G" or "", target.mx, target.my, dist_tiles, svx, svy, shell_travel_ticks, _lead, bit.rshift(math.floor(pred_wx), 8), bit.rshift(math.floor(pred_wy), 8), aim_corr, _turn, tostring((bit.band(keys, KEY_SHOOT)) ~= 0)))
+    print2(string.format("TANK_ENGAGE t=%d tgt#%s%s perc=(%d,%d) d=%.1f v=(%.0f,%.0f) flight=%.1f lead=%.1f pred=(%d,%d) aimcorr=%+.0f turn=%s fire=%s gate=%s stuck=%d", now, tostring(target.id), target.ghost and "G" or "", target.mx, target.my, dist_tiles, svx, svy, shell_travel_ticks, _lead, bit.rshift(math.floor(pred_wx), 8), bit.rshift(math.floor(pred_wy), 8), aim_corr, _turn, tostring((bit.band(keys, KEY_SHOOT)) ~= 0), _gate_why or "ok", goal._engage_blocked_ticks or 0))
   end
 
   -- Distance control: maintain optimal range with jinking

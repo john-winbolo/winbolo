@@ -2224,6 +2224,13 @@ M.ATTACK_TANK_HEAT_MAX_TICKS    = 150   -- hard ceiling on one volley (aim + fir
 -- sides of a wall don't sit there forever. Reset whenever a normal
 -- clear shot fires or we leave engage. ~30 ticks ??? 1s.
 M.TANK_COMBAT_STUCK_FIRE_TICKS  = 30
+-- STUCK-FIRE HOLD (2026-10-15, bot bug fix).  A tick that fails the aim,
+-- steady or range gate while the tank still sits on the same square keeps
+-- the stuck-fire count instead of zeroing it.  A target behind a wall at 1-3
+-- squares jitters, its lead swings the aim off the gate most ticks, and the
+-- zeroed count never reached 30: the hunter sat beside it and never fired.
+-- false = the old way (any gate miss zeroes the count).
+M.TANK_COMBAT_STUCK_FIRE_HOLD  = true  -- keel false (2026-10-15: engage beside a walled tank)
 
 -- Heading-stability fire gate (see steering.lua tank_combat_steer): only trust
 -- the lead once the target's heading has held steady, so we don't fire during a
@@ -5956,6 +5963,9 @@ M.PRESETS = {
     --   is a finish run (path in, shoot walls, fire on a clear line). KEEL
     --   had no finish run: plan_position, standoff and approach as usual.
     FINISH_RUN                    = false,
+    --   2026-10-15: an engage tick off the aim gate on the same square
+    --   keeps the stuck-fire count. KEEL zeroed it on any gate miss.
+    TANK_COMBAT_STUCK_FIRE_HOLD   = false,
     --   2026-10-15: a repeated hint in the hold phase sets the hold clock.
     --   KEEL set the 60 s focus, so a repeated "hold" never ended.
     ORDER_HINT_HOLD_EXPIRY_FIX    = false,
