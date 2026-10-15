@@ -33,6 +33,7 @@
 
 struct ServerSim;
 struct GameSim;
+struct lua_State;
 
 /* Items in a sim's world lists. Each is a linked list that grows while
  * things happen and shrinks as they expire, so the counts should stay
@@ -69,11 +70,23 @@ int botMemSumBotClientLists(struct ServerSim *sim, BotMemListCounts *out);
  * tables with the most entries to `emit`, one line each, as
  * "<entries> entries, <KB> KB of strings: <path>". Expensive: it visits
  * the whole heap and builds a visited set inside the bot's own state,
- * so it is for the on-demand deep report only. A walk that fails (out
- * of memory) writes one "walk failed: <message>" line instead. Returns
- * false when playerNum has no running brain. */
+ * so it is for the on-demand deep report only. The walk is capped (a
+ * few hundred thousand objects, and a budget for the paths it holds);
+ * when it hits the cap the summary line says it stopped early, and when
+ * a C allocation fails the line says "incomplete". Coroutine stacks are
+ * not walked, nor (on Lua 5.1 / LuaJIT) function environments. A walk
+ * that fails in Lua (out of memory) writes one "walk failed: <message>"
+ * line instead. Returns false when playerNum has no running brain. */
 bool botMemLuaDeepWalk(struct ServerSim *sim, BYTE playerNum, int topN,
                        void (*emit)(void *ctx, const char *line),
                        void *ctx);
+
+/* The same walk on any lua_State, labelled "p<playerNum>". maxObjs
+ * lowers the object cap (0 or less keeps the default); a test uses it
+ * to reach the cap with a small heap. */
+void botMemLuaDeepWalkState(struct lua_State *L, unsigned playerNum,
+                            int topN, int maxObjs,
+                            void (*emit)(void *ctx, const char *line),
+                            void *ctx);
 
 #endif /* BOT_MEM_REPORT_H */

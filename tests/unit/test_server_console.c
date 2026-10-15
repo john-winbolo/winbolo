@@ -11,15 +11,19 @@
  * and the command word is matched against the lower-cased copy.
  */
 
+#include <stdio.h>
 #include <string.h>
 
 #ifndef _WIN32
-  #include <stdio.h>
   #include <unistd.h>
 #endif
 
+#include <lua.h>
+#include <lauxlib.h>
+
 #include "server_console.h"
 #include "server_memreport.h"
+#include "bot_mem_report.h"
 #include "test_harness.h"
 
 typedef struct {
@@ -487,6 +491,67 @@ int run_memreport_process_na(void) {
                               "virtual 0.0 MB") == 0,
                   "read figures should print in MB and the rest n/a, got '%s'",
                   buf);
+    return 0;
+}
+
+/* Collects the deep walk's lines: the first (the summary) and whether
+ * any line names the big table. */
+typedef struct {
+    int  lines;
+    char summary[512];
+    bool sawBig;
+} MemDeepRec;
+
+static void memDeepRecEmit(void *ctx, const char *line) {
+    MemDeepRec *r = (MemDeepRec *)ctx;
+    if (r->lines == 0) {
+        snprintf(r->summary, sizeof(r->summary), "%s", line);
+    } else if (strstr(line, "200 entries") != NULL &&
+               strstr(line, ".big") != NULL) {
+        r->sawBig = true;
+    }
+    r->lines++;
+}
+
+/* The deep walk finds the biggest table, leaves the Lua stack as it was,
+ * and, when it reaches its object cap, says on the summary line that it
+ * stopped early rather than printing short counts as if whole. */
+int run_memreport_deep_walk_cap(void) {
+    lua_State *L = luaL_newstate();
+    MemDeepRec r;
+    int top;
+
+    UT_ASSERT_MSG(L != NULL, "could not create a Lua state");
+    lua_newtable(L);
+    for (int i = 1; i <= 200; i++) {
+        lua_newtable(L);
+        lua_pushinteger(L, i);
+        lua_setfield(L, -2, "n");
+        lua_rawseti(L, -2, i);
+    }
+    lua_setglobal(L, "big");
+    top = lua_gettop(L);
+
+    memset(&r, 0, sizeof(r));
+    botMemLuaDeepWalkState(L, 3, 5, 0, memDeepRecEmit, &r);
+    UT_ASSERT_MSG(lua_gettop(L) == top, "the walk should leave the stack "
+                  "as it was (%d, was %d)", lua_gettop(L), top);
+    UT_ASSERT_MSG(strncmp(r.summary, "[memdeep] bot p3: heap", 22) == 0,
+                  "the summary line should come first, got '%s'", r.summary);
+    UT_ASSERT_MSG(strstr(r.summary, "stopped early") == NULL &&
+                  strstr(r.summary, "incomplete") == NULL,
+                  "a small heap should be walked whole, got '%s'", r.summary);
+    UT_ASSERT_MSG(r.sawBig, "the 200-entry table should be listed");
+
+    memset(&r, 0, sizeof(r));
+    botMemLuaDeepWalkState(L, 3, 5, 50, memDeepRecEmit, &r);
+    UT_ASSERT_MSG(lua_gettop(L) == top, "a capped walk should leave the "
+                  "stack as it was (%d, was %d)", lua_gettop(L), top);
+    UT_ASSERT_MSG(strstr(r.summary, "stopped early at 50 objects") != NULL,
+                  "a walk that hits its cap should say so, got '%s'",
+                  r.summary);
+
+    lua_close(L);
     return 0;
 }
 

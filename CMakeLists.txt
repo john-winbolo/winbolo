@@ -5980,6 +5980,7 @@ set(_unit_test_names
     console_mem_report
     memreport_flags
     memreport_process_na
+    memreport_deep_walk_cap
     console_info_and_status
     console_savemap_path
     console_unknown_command_is_inert

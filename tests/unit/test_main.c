@@ -1309,6 +1309,7 @@ static const UnitTestEntry s_tests[] = {
     { "console_mem_report",                      run_console_mem_report                      },
     { "memreport_flags",                         run_memreport_flags                         },
     { "memreport_process_na",                    run_memreport_process_na                    },
+    { "memreport_deep_walk_cap",                 run_memreport_deep_walk_cap                 },
     { "console_info_and_status",                 run_console_info_and_status                 },
     { "console_savemap_path",                    run_console_savemap_path                    },
     { "console_unknown_command_is_inert",        run_console_unknown_command_is_inert        },

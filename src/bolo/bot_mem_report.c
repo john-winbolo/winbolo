@@ -18,6 +18,7 @@
 /* Memory figures for the dedicated server's memory report — see
  * bot_mem_report.h. */
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -143,11 +144,24 @@ int botMemSumBotClientLists(struct ServerSim *sim, BotMemListCounts *out) {
  * reaches it: "loaded.goals.cache" rather than the chain of upvalues a
  * depth-first walk happens to go down first. The queue of objects lives
  * in a Lua table inside the bot's own state (it must hold references so
- * the objects stay put); the paths live in C. */
+ * the objects stay put); the paths live in C.
+ *
+ * Two limits keep a huge heap (a brain built to be big, say) from costing
+ * the operator much memory: at most BOT_MEM_MAX_OBJS objects are queued,
+ * and the paths of queued objects not yet expanded hold at most
+ * BOT_MEM_PATH_BUDGET bytes. Together with the visited set and the queue
+ * that is some tens of MB at worst. A walk that hits either limit stops
+ * queueing, finishes what it has, and says it stopped early.
+ *
+ * Not followed: the stacks of coroutines (a table reachable only from a
+ * suspended coroutine's locals is not counted; the coroutine object
+ * itself is not queued) and, on Lua 5.1 / LuaJIT, function environments.
+ * Brains keep their state in module tables and upvalues, which are. */
 
-#define BOT_MEM_TOP_MAX   64
-#define BOT_MEM_PATH_LEN  256
-#define BOT_MEM_MAX_OBJS  4000000
+#define BOT_MEM_TOP_MAX      64
+#define BOT_MEM_PATH_LEN     256
+#define BOT_MEM_MAX_OBJS     250000
+#define BOT_MEM_PATH_BUDGET  (16u * 1024u * 1024u)
 
 #if LUA_VERSION_NUM >= 502
   #define BOT_MEM_LEN lua_rawlen
@@ -168,6 +182,10 @@ typedef struct {
   char     **paths;     /* paths[i] names queue entry i + 1 */
   int        count;     /* entries queued so far */
   int        cap;       /* room in paths */
+  int        maxObjs;   /* queue no more than this many */
+  size_t     pathBytes; /* bytes held by paths not yet expanded */
+  bool       stoppedEarly;  /* a limit stopped the queueing */
+  bool       incomplete;    /* a C allocation failed; objects lost */
   BotMemTop  top[BOT_MEM_TOP_MAX];
   int        topN;
   int        topCount;
@@ -207,9 +225,6 @@ static void botMemEnqueue(BotMemWalk *w, const char *path) {
   if (vt != LUA_TTABLE && vt != LUA_TFUNCTION && vt != LUA_TUSERDATA) {
     return;
   }
-  if (w->count >= BOT_MEM_MAX_OBJS) {
-    return;
-  }
   lua_pushvalue(L, -1);
   lua_rawget(L, w->visited);
   if (!lua_isnil(L, -1)) {
@@ -217,10 +232,21 @@ static void botMemEnqueue(BotMemWalk *w, const char *path) {
     return;
   }
   lua_pop(L, 1);
+  len = strlen(path);
+  if (w->count >= w->maxObjs ||
+      w->pathBytes + len + 1 > BOT_MEM_PATH_BUDGET) {
+    w->stoppedEarly = true;
+    return;
+  }
   if (w->count == w->cap) {
     int ncap = w->cap ? w->cap * 2 : 4096;
-    char **np = (char **)realloc(w->paths, (size_t)ncap * sizeof(char *));
+    char **np;
+    if (ncap > w->maxObjs) {
+      ncap = w->maxObjs;
+    }
+    np = (char **)realloc(w->paths, (size_t)ncap * sizeof(char *));
     if (np == NULL) {
+      w->incomplete = true;
       return;
     }
     /* NULL the new room: a failed walk frees every slot up to cap. */
@@ -228,12 +254,13 @@ static void botMemEnqueue(BotMemWalk *w, const char *path) {
     w->paths = np;
     w->cap = ncap;
   }
-  len = strlen(path);
   w->paths[w->count] = (char *)malloc(len + 1);
   if (w->paths[w->count] == NULL) {
+    w->incomplete = true;
     return;
   }
   memcpy(w->paths[w->count], path, len + 1);
+  w->pathBytes += len + 1;
   lua_pushvalue(L, -1);
   lua_pushboolean(L, 1);
   lua_rawset(L, w->visited);
@@ -357,6 +384,7 @@ static int botMemWalkBody(lua_State *L) {
     lua_rawgeti(L, w->queue, i + 1);
     botMemExpand(w, w->paths[i]);
     lua_settop(L, w->queue);
+    w->pathBytes -= strlen(w->paths[i]) + 1;
     free(w->paths[i]);
     w->paths[i] = NULL;
   }
@@ -367,23 +395,40 @@ bool botMemLuaDeepWalk(struct ServerSim *sim, BYTE playerNum, int topN,
                        void (*emit)(void *ctx, const char *line),
                        void *ctx) {
   lua_State *L = botMemState(sim, playerNum);
+  if (L == NULL || emit == NULL) {
+    return false;
+  }
+  botMemLuaDeepWalkState(L, (unsigned)playerNum, topN, 0, emit, ctx);
+  return true;
+}
+
+void botMemLuaDeepWalkState(lua_State *L, unsigned playerNum, int topN,
+                            int maxObjs,
+                            void (*emit)(void *ctx, const char *line),
+                            void *ctx) {
   BotMemWalk *w;
   int top;
   int status;
   size_t before, after;
-  char line[BOT_MEM_PATH_LEN + 96];
+  size_t n;
+  char line[BOT_MEM_PATH_LEN + 192];
 
   if (L == NULL || emit == NULL) {
-    return false;
+    return;
   }
   w = (BotMemWalk *)calloc(1, sizeof(BotMemWalk));
   if (w == NULL) {
-    return false;
+    snprintf(line, sizeof(line), "[memdeep] bot p%u: walk failed: "
+             "out of memory", playerNum);
+    emit(ctx, line);
+    return;
   }
   if (topN < 1) topN = 1;
   if (topN > BOT_MEM_TOP_MAX) topN = BOT_MEM_TOP_MAX;
+  if (maxObjs < 1 || maxObjs > BOT_MEM_MAX_OBJS) maxObjs = BOT_MEM_MAX_OBJS;
   w->L = L;
   w->topN = topN;
+  w->maxObjs = maxObjs;
 
   before = (size_t)lua_gc(L, LUA_GCCOUNT, 0) * 1024u +
            (size_t)lua_gc(L, LUA_GCCOUNTB, 0);
@@ -399,7 +444,7 @@ bool botMemLuaDeepWalk(struct ServerSim *sim, BYTE playerNum, int topN,
   if (status != 0) {
     const char *err = lua_tostring(L, -1);
     snprintf(line, sizeof(line), "[memdeep] bot p%u: walk failed: %s",
-             (unsigned)playerNum, (err != NULL) ? err : "unknown error");
+             playerNum, (err != NULL) ? err : "unknown error");
     lua_settop(L, top);
     emit(ctx, line);
     for (int i = 0; i < w->cap; i++) {
@@ -407,7 +452,7 @@ bool botMemLuaDeepWalk(struct ServerSim *sim, BYTE playerNum, int topN,
     }
     free(w->paths);
     free(w);
-    return true;
+    return;
   }
   lua_settop(L, top);
 
@@ -417,19 +462,30 @@ bool botMemLuaDeepWalk(struct ServerSim *sim, BYTE playerNum, int topN,
            "[memdeep] bot p%u: heap %.1f KB, %llu tables, %llu functions, "
            "%llu table entries, %.1f KB of strings in tables "
            "(walk itself used %.1f KB, freed at next GC)",
-           (unsigned)playerNum, before / 1024.0,
+           playerNum, before / 1024.0,
            (unsigned long long)w->tables, (unsigned long long)w->functions,
            (unsigned long long)w->entries, w->strBytes / 1024.0,
            (after > before) ? (after - before) / 1024.0 : 0.0);
+  /* The counts above are then lower bounds: say why. */
+  n = strlen(line);
+  if (w->stoppedEarly && n + 1 < sizeof(line)) {
+    snprintf(line + n, sizeof(line) - n,
+             "; stopped early at %d objects (walk limit reached), "
+             "the rest not counted", w->count);
+    n = strlen(line);
+  }
+  if (w->incomplete && n + 1 < sizeof(line)) {
+    snprintf(line + n, sizeof(line) - n,
+             "; incomplete (out of memory, some objects not counted)");
+  }
   emit(ctx, line);
   for (int i = 0; i < w->topCount; i++) {
     snprintf(line, sizeof(line),
              "[memdeep] bot p%u: %8u entries %9.1f KB str  %s",
-             (unsigned)playerNum, w->top[i].entries,
+             playerNum, w->top[i].entries,
              w->top[i].strBytes / 1024.0, w->top[i].path);
     emit(ctx, line);
   }
   free(w->paths);
   free(w);
-  return true;
 }

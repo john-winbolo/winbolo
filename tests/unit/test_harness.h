@@ -2784,6 +2784,7 @@ int run_console_lock_unlock(void);
 int run_console_mem_report(void);
 int run_memreport_flags(void);
 int run_memreport_process_na(void);
+int run_memreport_deep_walk_cap(void);
 int run_console_info_and_status(void);
 int run_console_savemap_path(void);
 int run_console_unknown_command_is_inert(void);
