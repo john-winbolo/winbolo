@@ -2880,12 +2880,14 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
    * into edgeX/Y as a fractional drag offset. See the comment block at
    * the top of this file. */
   if (cs != NULL) {
-    /* An item view is camera-locked on what it is watching and must stay
+    /* A pill or base view is camera-locked on a square and must stay
      * exactly centred — no sub-tile drift. scrollCenterObject already zeroes
      * subPos on entry / cycling / return-to-tank, but ignore it here too so
-     * the pill, base or allied tank can never render a fraction of a tile
-     * off centre regardless of what subPos last held. */
-    bool inItemView = clientSimIsInItemView(cs);
+     * the pill or base can never render a fraction of a tile off centre
+     * regardless of what subPos last held. An ally view keeps it: that is
+     * how the camera follows the tank smoothly (clientSimFollowAllyView). */
+    bool inItemView = clientSimIsInItemView(cs) &&
+                      clientSimGetViewKind(cs) != VIEW_KIND_ALLY;
     int subX    = inItemView ? 0 : clientSimGetSubPosX(cs);  /* 0..255, 1/256-tile units */
     int subY    = inItemView ? 0 : clientSimGetSubPosY(cs);
     int tileWpx = TILE_SIZE_X * gZoomFactor;

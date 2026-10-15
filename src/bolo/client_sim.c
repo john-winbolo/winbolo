@@ -4497,6 +4497,41 @@ void clientSimApplyAllyViewTarget(ClientSim *cs, BYTE target, BYTE mapX,
                         target, mapX, mapY);
 }
 
+void clientSimFollowAllyView(ClientSim *cs) {
+  ViewPort *vp;  /* The camera */
+  BYTE target;   /* The ally being watched */
+  WORLD wx;      /* Where it is drawn */
+  WORLD wy;
+
+  if (cs == NULL) {
+    return;
+  }
+  vp = &cs->viewport;
+  target = vp->viewTarget;
+  if (vp->viewKind != VIEW_KIND_ALLY || target >= MAX_TANKS ||
+      cs->sim.plyrs == NULL) {
+    return;
+  }
+  /* A hidden stub zeroes the entry; the upkeep parks on the last square. */
+  if ((*cs->sim.plyrs).item[target].mapX == 0 &&
+      (*cs->sim.plyrs).item[target].mapY == 0) {
+    return;
+  }
+  if (cs->fineTankPositions && (*cs->sim.plyrs).item[target].fineSet) {
+    wx = (*cs->sim.plyrs).item[target].fineX;
+    wy = (*cs->sim.plyrs).item[target].fineY;
+  } else {
+    wx = (WORLD)(((WORLD)(*cs->sim.plyrs).item[target].mapX << TANK_SHIFT_MAPSIZE) +
+                 ((WORLD)(*cs->sim.plyrs).item[target].pixelX << TANK_SHIFT_RIGHT2));
+    wy = (WORLD)(((WORLD)(*cs->sim.plyrs).item[target].mapY << TANK_SHIFT_MAPSIZE) +
+                 ((WORLD)(*cs->sim.plyrs).item[target].pixelY << TANK_SHIFT_RIGHT2));
+  }
+  if (scrollCenterWorld(&cs->scroll, &vp->xOffset, &vp->yOffset, wx, wy) ==
+      TRUE) {
+    viewportRecalc(vp);
+  }
+}
+
 void clientSimSyncViewState(ClientSim *cs) {
   uint8_t kind;
   uint8_t target;

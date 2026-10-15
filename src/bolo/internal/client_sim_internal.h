@@ -1299,6 +1299,14 @@ bool                    clientSimAllyViewAwaitingFirstData(const ClientSim *cs);
 void                    clientSimApplyAllyViewTarget(ClientSim *cs, BYTE target,
                                                      BYTE mapX, BYTE mapY);
 
+/* In an ally view, centre the camera on the ally where it is drawn this
+ * frame — the fine position in the Smooth animation mode, the game pixel
+ * otherwise — so the view glides with the tank instead of jumping a square
+ * at a time. Called once a frame after the render interpolation. Does
+ * nothing in any other view, or while the ally is a hidden stub; the
+ * per-tick upkeep's whole-square centring stands then. */
+void                    clientSimFollowAllyView(ClientSim *cs);
+
 /* Fills the view rules, clocks and camera state the overview's region build
  * takes. Declared here rather than reached through overview_map.h so this
  * header stays clear of the overview module. */
