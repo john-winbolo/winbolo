@@ -111,8 +111,8 @@ void lv_windowAddSummary(char *msg) {
     lv_imgui_events_add_summary(msg);
 }
 
-void lv_windowRemoveEventsAfter(uint32_t timeMs) {
-    lv_imgui_events_remove_after(timeMs);
+void lv_windowEventsRewound(void) {
+    lv_imgui_events_rewound();
 }
 
 void lv_windowRemoveEvents(void) {
@@ -207,9 +207,18 @@ void lv_windowOpenFile(char *cmdLine) {
             g_lv->isLoaded = FALSE;
         } else {
             g_lv->isLoaded = TRUE;
-            lv_imgui_events_clear();
             lv_windowNeedRedraw();
         }
+    }
+}
+
+/* A log held in memory, from the WinBolo.net browser. The browser build opens
+ * it in one call, as it does a file. Takes ownership of zipData. */
+void lv_windowOpenMemory(uint8_t *zipData, size_t zipLen) {
+    lv_windowStop(FALSE);
+    if (lv_screenLoadMapFromMemory(zipData, zipLen)) {
+        g_lv->isLoaded = TRUE;
+        lv_windowNeedRedraw();
     }
 }
 

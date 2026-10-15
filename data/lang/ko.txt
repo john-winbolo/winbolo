@@ -1115,6 +1115,10 @@ STR_LV_AUTO_SCROLL=자동 스크롤
 
 # Log viewer end-of-log marker
 STR_LV_END_OF_LOG=로그 파일의 끝에 도달했어요
+STR_LV_LOAD_TITLE=로그 여는 중
+STR_LV_LOAD_UNZIP=압축 해제 중
+STR_LV_LOAD_SCAN=읽는 중
+STR_LV_LOAD_PLAY=색인 생성 중
 
 # iOS Settings panel additions
 STR_DLGSETTINGS_ZOOM=확대
@@ -2534,7 +2538,7 @@ STR_RULE_DESC_lgm_gather_trees=건설자가 숲 한 칸에서 가져오는 목�
 STR_RULE_DESC_lgm_helicopter_speed=낙하산으로 내려오는 동안 건설자가 한 틱에 이동하는 거리예요.
 STR_RULE_DESC_lgm_arrive_tolerance=건설자가 "도착"으로 인정되려면 목표에 얼마나 가까워야 하는지예요.
 STR_RULE_DESC_lgm_return_tolerance=건설자가 "복귀"로 인정되려면 탱크에 얼마나 가까워야 하는지예요.
-STR_RULE_DESC_lgm_pill_drop_search=토치카 투하 지점을 찾을 때 한 열에서 살피는 칸 수예요.
+STR_RULE_DESC_lgm_pill_drop_search=폐지되어 아무 효과가 없어요.
 STR_RULE_DESC_lgm_boat_leave_offset=건설자가 보트에 오르기 위해 강기슭에서 나가는 거리예요.
 STR_RULE_DESC_lgm_boat_return_offset=건설자가 보트에서 돌아올 때 이동하는 거리예요.
 STR_RULE_DESC_pill_max_armour=토치카가 가질 수 있는 최대 장갑이자, 새로 지은 토치카의 시작 장갑이에요.
@@ -2736,3 +2740,24 @@ STR_DLGBROWSER_MODS_MORE=+모드 {number}개
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=이제 음성 채팅이 게임의 모든 플레이어에게 전달됩니다
 STR_VOICE_EVERYONE_OFF=이제 음성 채팅이 동맹에게만 전달됩니다
+
+# System Info panel — the Memory block
+STR_DLGSYSINFO_MEMORY=메모리
+STR_DLGSYSINFO_MEM_RESIDENT=상주
+STR_DLGSYSINFO_MEM_PEAK=최대
+STR_DLGSYSINFO_MEM_PRIVATE=전용
+STR_DLGSYSINFO_MEM_VIRTUAL=가상
+STR_DLGSYSINFO_MEM_LUA=Lua 힙
+STR_DLGSYSINFO_MEM_BOTS=봇
+STR_DLGSYSINFO_MEM_BOT=봇
+STR_DLGSYSINFO_MEM_SERVER_LISTS=서버 리스트
+STR_DLGSYSINFO_MEM_BOT_LISTS=봇 리스트
+STR_DLGSYSINFO_MEM_EXPLOSIONS=폭발
+STR_DLGSYSINFO_MEM_TANK_EXPLOSIONS=탱크 폭발
+STR_DLGSYSINFO_MEM_SHELLS=포탄
+STR_DLGSYSINFO_MEM_MINE_EXPLOSIONS=지뢰 폭발
+STR_DLGSYSINFO_MEM_FLOOD_FILL=침수
+STR_DLGSYSINFO_MEM_BUILDING=건설
+STR_DLGSYSINFO_MEM_RUBBLE=잔해
+STR_DLGSYSINFO_MEM_SWAMP=늪
+STR_DLGSYSINFO_MEM_GRASS=풀

@@ -340,7 +340,6 @@ void lvHostTeardownCommon(bool withImGui) {
         lv_imgui_comments_shutdown();
         lv_imgui_context_shutdown();
     }
-    lv_drawCleanupSplash();
     if (withImGui) {
         lv_soundCleanup();
     }

@@ -48,6 +48,8 @@
 #include "util.h"
 #include "allience.h"
 #include "mines.h"
+#include "explosions.h"     /* botDropDisplayExplosions */
+#include "tankexp.h"
 #include "client_sim.h"
 #include "client_net.h"
 #include "client_sim_internal.h"
@@ -794,7 +796,12 @@ static bool botManagerReloadBrain(ServerSim *sim, BotContext *bot,
         luaBrainInstanceDestroy(&bot->brain);
     }
 
-    SDL_strlcpy(bot->brainPath, brainPath, sizeof(bot->brainPath));
+    /* The round-start reload passes the bot's own buffer; strlcpy with the
+     * same source and destination trips the overlap check in a Debug build
+     * of SDL, so copy only when the path comes from elsewhere. */
+    if (brainPath != bot->brainPath) {
+        SDL_strlcpy(bot->brainPath, brainPath, sizeof(bot->brainPath));
+    }
 
     /* Hand the fresh brain the game clock so its own tick counter continues
      * the session instead of restarting at 0 (see BRAIN_START_ENGINE_TICK). */
@@ -1407,6 +1414,21 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     return true;
 }
 
+/* The snapshot's EXPLOSION and TK_EXPLOSION events add an explosion or a
+ * fireball to the ClientSim, for drawing. A player's ClientSim ages them
+ * away in clientUiOnTick, but nothing runs a display tick for a bot's
+ * ClientSim, so the two lists only grew: about 460 explosions a minute with
+ * 8 bots, each one a malloc that stayed until the round ended. Nothing reads
+ * the lists for a bot (the brain's world comes from the snapshot and the
+ * brain map; BrainTest draws its own GameSim), so drop them after each sync
+ * rather than animate them. tkExplosionUpdate is not the way: it also
+ * changes the ClientSim's map (trees, craters) as a fireball moves. */
+static void botDropDisplayExplosions(ClientSim *cs) {
+    GameSim *bgs = clientSimGetGameSim(cs);
+    explosionsDestroy(&bgs->expl);
+    tkExplosionDestroy(&bgs->tankExplosions);
+}
+
 /* Per-bot snapshot pull + ClientSim sync + brain-map refresh, run on
  * the worker thread. Reads the ServerSim (immutable during the brain
  * phase — serverSimTick already ran and inputs aren't applied until
@@ -1436,6 +1458,7 @@ static bool botSyncSnapshotForJob(BotJobCtx *j) {
                               j->pills, j->hdr.pillCount,
                               j->events, j->hdr.reliableEventCount,
                               bot->playerNum);
+    botDropDisplayExplosions(bot->cs);
 
     if (bot->ai == aiFull && bot->brain.isFirst) {
         /* Full map on first tick */

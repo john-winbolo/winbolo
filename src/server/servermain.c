@@ -68,6 +68,7 @@
 #include "../common/prefs.h"
 #include "../headless/cmd_stdin.h"
 #include "server_console.h"
+#include "server_memreport.h"
 #include "server_args.h"        /* the -mod flags and -setting */
 #include "wire_limits.h"
 #include "../scenario/scenario_host.h"
@@ -297,6 +298,12 @@ static bool consoleOpReloadScenario(char *msg, size_t msgLen) {
   return true;
 }
 
+/* mem / memdeep: the report reads the bots' lua_States, which only the tick
+   thread may touch, so the console only asks and the next tick answers. */
+static void consoleOpMemReport(bool deep) {
+  serverMemReportRequest(deep);
+}
+
 /* Positional, and the struct's own comment says why the newest entry goes
    last rather than beside a relative. */
 static const ServerConsoleOps serverConsoleOps = {
@@ -308,7 +315,8 @@ static const ServerConsoleOps serverConsoleOps = {
   consoleOpStatus,
   consoleOpKick,
   consoleOpSetHost,
-  consoleOpReloadScenario
+  consoleOpReloadScenario,
+  consoleOpMemReport
 };
 
 
@@ -535,6 +543,7 @@ static bool serverTickStep(void *ctx) {
     return false;
   }
   serverInstanceTick(serverSim);
+  serverMemReportPoll(serverSim);
   return true;
 }
 
@@ -596,6 +605,7 @@ static int SDLCALL serverAsapLoop(void *unused) {
       break;
     }
     serverInstanceTick(serverSim);
+    serverMemReportPoll(serverSim);
     ticks++;
     SDL_UnlockMutex(g_serverTickLock);
     /* The command loops (processKeys / processCmdStdin) and the shutdown
@@ -923,6 +933,19 @@ void printArgs() {
   fprintf(stderr, "                for it, so their post-game recap plays. Omitted, the server\n");
   fprintf(stderr, "                serves unless it is registered with winbolo.net. Needs -log.\n");
   fprintf(stderr, "-statusFile   - Save list of unlocked players to a file.\n");
+  fprintf(stderr, "-memreport [M] - Turn on the timed memory report: one line every M minutes\n");
+  fprintf(stderr, "                (default %d; decimals allowed; 0 keeps it off). Off when\n", SERVER_MEMREPORT_DEFAULT_MINUTES);
+  fprintf(stderr, "                not given. The line gives the process's RSS / private /\n");
+  fprintf(stderr, "                virtual memory, uptime, game tick, rounds, each bot's Lua\n");
+  fprintf(stderr, "                heap and its growth since the last report, and the world's\n");
+  fprintf(stderr, "                object list sizes. The console commands mem and memdeep\n");
+  fprintf(stderr, "                write one at once, with or without this flag.\n");
+  fprintf(stderr, "-memreportdeep - Every timed memory report also walks each bot's Lua\n");
+  fprintf(stderr, "                tables and lists the biggest ones. Turns the timed report\n");
+  fprintf(stderr, "                on (every %d minutes unless -memreport gives M). Slow (it\n", SERVER_MEMREPORT_DEFAULT_MINUTES);
+  fprintf(stderr, "                pauses the game while it walks); for chasing a leak. The\n");
+  fprintf(stderr, "                walk allocates inside each bot's Lua state, so do not use\n");
+  fprintf(stderr, "                it in seeded repro runs.\n");
   fprintf(stderr, "-seed <N>     - Seed the RNG with N (64-bit unsigned) for reproducible runs.\n");
   fprintf(stderr, "                Seeds the C sim stream only; see -brain-lua-seed for Lua.\n");
   fprintf(stderr, "-brain-tier <1..10> - Pin every brain's capacity tier instead of deriving it\n");
@@ -2232,6 +2255,29 @@ int main(int argc, char **argv) {
               "no snapshots will be written\n");
       optSnapJson[0] = '\0';
     }
+  }
+
+  /* Memory report: the timed report is off unless -memreport or
+   * -memreportdeep turns it on. Matched without case, like argExist. */
+  {
+    bool given = false;
+    bool deep = (argExist(argc, argv, "memreportdeep") == TRUE);
+    const char *value = NULL;
+    char warn[256];
+    double memMins;
+    for (int i = 1; i < argc; i++) {
+      if (SDL_strcasecmp((char *)argv[i], "-memreport") == 0) {
+        given = true;
+        value = (i + 1 < argc) ? (const char *)argv[i + 1] : NULL;
+        break;
+      }
+    }
+    memMins = serverMemReportPeriodFromArgs(given, value, deep,
+                                            warn, sizeof(warn));
+    if (warn[0] != '\0') {
+      fprintf(stderr, "%s\n", warn);
+    }
+    serverMemReportConfigure(memMins, deep);
   }
 
   /* Empty reset configuration — on by default */
