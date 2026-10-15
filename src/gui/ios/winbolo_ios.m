@@ -864,11 +864,12 @@ void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping)
     sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
 }
 
-/* Runs off the snapshot path, so it stays cheap. The badge cache is seeded by
-   frontEndSetPlayer above; refreshing it mid-game is desktop-only. */
+/* Runs off the snapshot path, so it stays cheap: the badge cache the player
+   list draws from is updated and nothing is drawn here. */
 void frontEndUpdatePlayerFlags(ClientSim *cs, playerNumbers value,
                                uint8_t clientType, uint8_t clientFlags) {
-    (void)cs; (void)value; (void)clientType; (void)clientFlags;
+    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    sdl3ImguiUpdatePlayerFlags((unsigned char)value, clientType, clientFlags);
 }
 
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
