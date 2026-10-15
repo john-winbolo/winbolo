@@ -268,6 +268,13 @@ local function clear_attack_goal(state, reason, no_urgent)
   local sub_was  = state.goal and state.goal.substate or nil
   local mx_was   = state.goal and state.goal.mx or nil
   local my_was   = state.goal and state.goal.my or nil
+  -- C.FINISH_RUN: a finish run that ends here (the pill died and the take
+  -- was cleared before finish_run_update saw it) still logs its exit.
+  if state.goal and state.goal._finish_run then
+    print2(string.format("FINISH_RUN_EXIT t=%d pill=#%s reason=goal_cleared fired=%d why=%s",
+      state.tick or 0, tostring(state.goal.target_id), state.goal._fr_fired or 0,
+      tostring(reason)))
+  end
   if state.goal then
     for k in pairs(state.goal) do
       if not CORE_GOAL_FIELDS[k] then state.goal[k] = nil end
@@ -4973,6 +4980,80 @@ local function effective_anger_wait_max(pill, info)
   return w
 end
 
+-- FINISH RUN (C.FINISH_RUN, 2026-10-15, Andrew: "if the pillbox is <= 4
+-- health ... path to the pill itself and then as soon as there's a clear line
+-- of fire, shoot").  A MODE, goal._finish_run, that rides the kill_hardline
+-- substate (the same way the ping suicide run does): no plan_position, no
+-- standoff, no approach spot, no shield.  steering.lua's kill_hardline block
+-- drives the path to a square beside the pill at top speed, shoots any wall
+-- that is the next square of that path (the path finder's wall-shoot edges),
+-- and the moment shot_path_clear says the shell line to the pill is clear and
+-- the pill is in shell reach it turns to the pill and fires, still driving in.
+--
+-- Enters when the take is a FORCED scenario attack order (M.order_forced:
+-- Pillbox Tag's hunters on the built prize) and the pill's known armour is
+-- 1..C.FINISH_RUN_MAX_ARMOUR.  Ends (FINISH_RUN_EXIT) when the pill dies (the
+-- goal goes; capture follows in the normal flow), its armour climbs over the
+-- cap, the forced order ends, or the knob goes off; for all but a dead pill
+-- the take goes back to plan_position.  No square beside the pill reachable:
+-- the bad-square memory is wiped at once and the run tries again, so the bot
+-- never sits in an abort.  Returns true when the caller must return.
+function M.finish_run_update(goal, state, world, info, now)
+  local pill = goal.target_id and world.pills[goal.target_id]
+  local hp = pill and pill.health or 0
+  local cap = C.FINISH_RUN_MAX_ARMOUR or 4
+  if goal._finish_run then
+    local why
+    if not pill or hp <= 0 or pill.in_tank or pill.owner == "friendly" then
+      why = "pill_dead"
+    elseif not C.FINISH_RUN then why = "knob_off"
+    elseif hp > cap then why = "armour_up"
+    elseif not M.order_forced(state, goal) then why = "order_over"
+    end
+    if why then
+      print2(string.format("FINISH_RUN_EXIT t=%d pill=#%s hp=%d reason=%s fired=%d",
+        now, tostring(goal.target_id), hp, why, goal._fr_fired or 0))
+      goal._finish_run = nil
+      goal._kill_rush, goal._kill_rush_decided = nil, nil
+      goal._hardline_abort, goal._hardline_bad = nil, nil
+      goal._hardline_mx, goal._hardline_my = nil, nil
+      if why == "pill_dead" then
+        clear_attack_goal(state, "finish run: pill dead")
+      else
+        goal._plan_position_cleared = nil
+        reset_to_plan_position(state, goal)
+      end
+      return true
+    end
+    goal.substate = "kill_hardline"
+    goal._order_forced = true
+    if goal._hardline_abort then
+      print2(string.format("FINISH_RUN_RETRY t=%d pill=#%s why=%s",
+        now, tostring(goal.target_id), tostring(goal._hardline_abort)))
+      goal._hardline_bad, goal._hardline_abort = nil, nil
+      goal._hardline_mx, goal._hardline_my = nil, nil
+    end
+    return true
+  end
+  if not C.FINISH_RUN or goal._ping_suicide then return false end
+  if not pill or hp <= 0 or hp > cap or pill.in_tank or pill.owner == "friendly" then
+    return false
+  end
+  if not M.order_forced(state, goal) then return false end
+  print2(string.format("FINISH_RUN_ENTER t=%d pill=#%s@(%d,%d) hp=%d cap=%d from=%s reason=forced_order_low_armour",
+    now, tostring(goal.target_id), goal.mx or -1, goal.my or -1, hp, cap,
+    tostring(goal.substate)))
+  goal._finish_run = true
+  goal._order_forced = true
+  goal.substate = "kill_hardline"
+  goal._kill_rush, goal._kill_rush_decided = true, true
+  goal._hardline_abort, goal._hardline_bad = nil, nil
+  goal._hardline_mx, goal._hardline_my = nil, nil
+  goal._aim_locked = nil
+  goal.wall_shield, goal.wall_mx, goal.wall_my = false, nil, nil
+  return true
+end
+
 local function update_attack_substate_body(goal, state, world, info)
   if goal.kind ~= "attack_pill" then return end
 
@@ -5101,6 +5182,9 @@ local function update_attack_substate_body(goal, state, world, info)
     end
     return
   end
+
+  -- FINISH RUN (C.FINISH_RUN; M.finish_run_update above).
+  if M.finish_run_update(goal, state, world, info, now) then return end
 
   -- ATTACK PING = "CHARGE NOW" (C.PING_ATTACK_CHARGE_NOW; orders.lua keeps
   -- state._charge_now).  Decided once per goal, on the first think that sees

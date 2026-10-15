@@ -5380,6 +5380,19 @@ M.ORDER_HINT_ATTACK_PILL  = true  -- keel false (2026-10-14: Pillbox Tag)
 -- scenario hint has the key; chat and bot commands cannot force.
 -- false = the `force` key is not read.
 M.ORDER_HINT_FORCE        = true  -- keel false (2026-10-15: Pillbox Tag)
+-- FINISH RUN (2026-10-15, Andrew: "if the pillbox is <= 4 health, ... path
+-- to the pill itself and then as soon as there's a clear line of fire,
+-- shoot").  A take on a FORCED scenario attack order (ORDER_HINT_FORCE:
+-- Pillbox Tag's hunters on the built prize) whose pill has 1 to
+-- FINISH_RUN_MAX_ARMOUR armour skips plan_position, the standoff and the
+-- approach spot: it rides kill_hardline (attack.lua M.finish_run_update),
+-- drives the path to a square beside the pill at top speed, shoots the walls
+-- on that path, and fires the moment the shell line to the pill is clear and
+-- in reach, until the pill dies.  Only a forced order starts it, so only a
+-- scenario that forces one (Pillbox Tag, walled.FINISH_RUN) gets it.
+-- false = the old way (plan_position, standoff, approach).
+M.FINISH_RUN              = true  -- keel false (2026-10-15: Pillbox Tag)
+M.FINISH_RUN_MAX_ARMOUR   = 4     -- keel 4 (moot while FINISH_RUN is off)
 -- A REPEATED HINT IN THE HOLD PHASE (2026-10-15).  The same hint again while
 -- the bot holds that go-there order on its square sets the hold clock
 -- (ORDER_GOTO_HOLD_TICKS), as a repeated chat line does.  false = it sets the
@@ -5939,6 +5952,10 @@ M.PRESETS = {
     --   2026-10-15: a scenario attack-pill hint can be forced. KEEL had no
     --   `force` key.
     ORDER_HINT_FORCE              = false,
+    --   2026-10-15: a forced attack order on a pill with 4 armour or less
+    --   is a finish run (path in, shoot walls, fire on a clear line). KEEL
+    --   had no finish run: plan_position, standoff and approach as usual.
+    FINISH_RUN                    = false,
     --   2026-10-15: a repeated hint in the hold phase sets the hold clock.
     --   KEEL set the 60 s focus, so a repeated "hold" never ended.
     ORDER_HINT_HOLD_EXPIRY_FIX    = false,

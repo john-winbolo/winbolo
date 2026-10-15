@@ -237,6 +237,15 @@ walled.PILL_DANGER_MULT = 0.01 -- keel 1.0. What every bot, in every part,
                                 -- count almost nothing, so a bot drives and
                                 -- picks its goals as if they were nearly
                                 -- harmless. 1.0: the brain's ordinary value.
+walled.FINISH_RUN = true       -- keel false. What every bot, in every part,
+                                -- has as the brain's FINISH_RUN (see SHARED).
+                                -- true: a hunter on its forced attack on the
+                                -- built prize (armour 4 or less, and the
+                                -- prize is held at BUILT_ARMOUR) drives the
+                                -- path to it, shooting the walls on the way,
+                                -- and fires the moment the line is clear,
+                                -- instead of picking a firing spot first.
+                                -- false: the brain's KEEL way.
 local LAST_SHOT_ARMOUR    = 1   -- a fort shot down to this armour is taken
                                 -- back by its guard before a hunter kills it
 local RUN_FROM_WITHIN     = 11  -- hunters this close are what a bot holder
@@ -1122,6 +1131,7 @@ local DEFAULTS = {
   ATTACK_PILL_WALL_FALLBACK            = false,
   FIGHT_COST_MULT                      = 1,
   PILL_DANGER_MULT                     = 1,
+  FINISH_RUN                           = true,
 }
 
 -- The flag words a brain keeps until it is told the opposite. GoalHunter puts
@@ -1161,6 +1171,7 @@ local SHARED = {
   REPOSITION_DISABLE_WITH_HUMAN_ALLIES = false,
   CAPTURE_PILL_BASE_COST               = 0,
   PILL_DANGER_MULT                     = walled.PILL_DANGER_MULT,
+  FINISH_RUN                           = walled.FINISH_RUN,
 }
 
 -- What a hunter (and a manhunt and a mate) adds to the cost of driving onto

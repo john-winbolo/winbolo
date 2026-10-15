@@ -8705,5 +8705,56 @@ do
         C.PRESETS.keel.PILL_DANGER_MULT == 1.0, tostring(C.PRESETS.keel.PILL_DANGER_MULT))
 end
 
+-- ─────────────────────────────────────────────────────────────────────────
+-- FINISH_RUN: a forced attack order on a pill with FINISH_RUN_MAX_ARMOUR
+-- armour or less rides kill_hardline (attack.lua M.finish_run_update).
+-- ─────────────────────────────────────────────────────────────────────────
+print("\n== FINISH_RUN ==")
+do
+  local saved_on, saved_cap = C.FINISH_RUN, C.FINISH_RUN_MAX_ARMOUR
+  check("default: FINISH_RUN is on", C.FINISH_RUN == true, tostring(C.FINISH_RUN))
+  check("default: FINISH_RUN_MAX_ARMOUR is 4", C.FINISH_RUN_MAX_ARMOUR == 4,
+        tostring(C.FINISH_RUN_MAX_ARMOUR))
+  check("keel preset carries FINISH_RUN = false",
+        C.PRESETS.keel.FINISH_RUN == false, tostring(C.PRESETS.keel.FINISH_RUN))
+  local function mk(hp, forced)
+    local goal = { kind = "attack_pill", target_id = 0, mx = 10, my = 10,
+                   substate = "plan_position" }
+    local state = { tick = 100, goal = goal,
+                    _order = forced and { force = true, kind = "attack_pill", tid = 0 } or nil }
+    local world = { pills = { [0] = { health = hp, mx = 10, my = 10, owner = "hostile" } } }
+    return goal, state, world
+  end
+  C.FINISH_RUN, C.FINISH_RUN_MAX_ARMOUR = true, 4
+  local g, st, w = mk(3, true)
+  local r = ATTACK.finish_run_update(g, st, w, {}, 100)
+  check("forced order, armour 3: enters", r == true and g._finish_run == true
+        and g.substate == "kill_hardline", tostring(g.substate))
+  g._hardline_abort = "no navigable tile beside pill"
+  g._hardline_bad = { [1] = true }
+  r = ATTACK.finish_run_update(g, st, w, {}, 101)
+  check("no square beside the pill: memory wiped, run goes on",
+        r == true and g._finish_run and g._hardline_abort == nil and g._hardline_bad == nil,
+        tostring(g._hardline_abort))
+  w.pills[0].health = 6
+  r = ATTACK.finish_run_update(g, st, w, {}, 102)
+  check("armour over the cap: exits to plan_position",
+        r == true and not g._finish_run and g.substate == "plan_position", tostring(g.substate))
+  g, st, w = mk(5, true)
+  r = ATTACK.finish_run_update(g, st, w, {}, 100)
+  check("armour 5: no finish run", r == false and not g._finish_run, tostring(r))
+  g, st, w = mk(3, false)
+  r = ATTACK.finish_run_update(g, st, w, {}, 100)
+  check("not a forced order: no finish run", r == false and not g._finish_run, tostring(r))
+  g, st, w = mk(0, true)
+  r = ATTACK.finish_run_update(g, st, w, {}, 100)
+  check("dead pill: no finish run", r == false and not g._finish_run, tostring(r))
+  C.FINISH_RUN = false
+  g, st, w = mk(3, true)
+  r = ATTACK.finish_run_update(g, st, w, {}, 100)
+  check("off (keel): no finish run", r == false and not g._finish_run, tostring(r))
+  C.FINISH_RUN, C.FINISH_RUN_MAX_ARMOUR = saved_on, saved_cap
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

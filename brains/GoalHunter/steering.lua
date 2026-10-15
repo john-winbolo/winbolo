@@ -2892,8 +2892,12 @@ local function attack_pill_steer(state, world, info, goal)
     -- the shell line must pass within SUICIDE_AIM_HIT_HALF_TILES of the pill
     -- centre at this distance (never looser than the old gate, never under
     -- 1 brad). With no shells, or no clear line, it follows the path as before.
+    -- A FINISH RUN (goal._finish_run, attack.lua M.finish_run_update) aims
+    -- the same way, whatever SUICIDE_AIM_AT_PILL says: the clear line to the
+    -- pill is the whole point of the run.
+    local finish = goal._finish_run and true or false
     local aim_mode = false
-    if (goal._ping_suicide or goal._charge_now) and C.SUICIDE_AIM_AT_PILL then
+    if finish or ((goal._ping_suicide or goal._charge_now) and C.SUICIDE_AIM_AT_PILL) then
       fire_w = (shoot_tiles + (C.SUICIDE_AIM_REACH_PAD_TILES or 0.5)) * 256.0
       -- info.tank_angle is the float angle the shell really flies along;
       -- info.direction is its floor (up to 1 brad off).
@@ -2919,9 +2923,13 @@ local function attack_pill_steer(state, world, info, goal)
     -- SUICIDE_HOLD_MARGIN_TILES). Out of aim_mode: the old cruise speed.
     -- Pacing only sets the throttle; it never touches the turn keys or the
     -- fire gate. The CHARGE NOW rush paces exactly the same way.
+    -- A FINISH RUN does not pace: it drives the path at top speed, and once
+    -- aiming it keeps driving in at the pill at cruise speed (it stops only
+    -- against the pillbox, still facing it and firing).
     local cap  = C.NAV_CRUISE_SPEED
     local pace = "off"
-    local ahead = (goal._ping_suicide or goal._charge_now)
+    if finish and not aim_mode then cap, pace = C.NAV_TOP_SPEED, "finish" end
+    local ahead = (goal._ping_suicide or goal._charge_now) and not finish
                   and (C.SUICIDE_PACE_AHEAD_TILES or 0) or 0
     if ahead > 0 then
       local hd
@@ -2976,6 +2984,43 @@ local function attack_pill_steer(state, world, info, goal)
       end
     else
       k, t = nav_turn_speed(mcorr, info.speed, cap, 4)
+      -- FINISH RUN wall: the path finder routes through walls (wall-shoot
+      -- edges), so when the next square of the path is a wall within 3
+      -- squares, turn to it, slow, and shoot it when lined up (the
+      -- tank_combat wall-clear shape).  A tank pushed against a wall square
+      -- straight ahead shoots it too.  Walls the tank will not shoot
+      -- (U.wall_shootable, C.WALL_SHOOT_LIFE_MAX) are left to the path.
+      if finish and not info.inboat and (info.shells or 0) > C.SHELL_RESERVE
+         and U.wall_shootable(info) then
+        local wx_, wy_
+        if nx and nx >= 0 then
+          local ntt = U.ttype(nx, ny)
+          if (ntt == C.T_BUILDING or ntt == C.T_HALFBUILD)
+             and U.wdist(info.tankx, info.tanky, U.m2w(nx), U.m2w(ny)) < 768 then
+            wx_, wy_ = nx, ny
+          end
+        end
+        if not wx_ and info.tank_obstructed then
+          local bx = bit.rshift(info.tankx + U.bsin(info.direction), 8)
+          local by = bit.rshift(info.tanky - U.bcos(info.direction), 8)
+          local btt = U.ttype(bx, by)
+          if btt == C.T_BUILDING or btt == C.T_HALFBUILD then wx_, wy_ = bx, by end
+        end
+        if wx_ then
+          local wcorr = U.adiff(info.direction,
+            U.aim_at(info.tankx, info.tanky, U.m2w(wx_), U.m2w(wy_)))
+          k = bit.band(k, bit.bnot(bit.bor(KEY_FASTER, KEY_TURNLEFT, KEY_TURNRIGHT)))
+          if info.speed > 0 then k = bit.bor(k, KEY_SLOWER) end
+          local h, tp = U.aim_turn_bits(wcorr, 6, 1)
+          k, t = bit.bor(k, h), tp
+          if math.abs(wcorr) < 8 then
+            t = bit.bor(t, KEY_SHOOT)
+            print2(string.format("FINISH_RUN_WALL t=%d tank=(%d,%d) wall=(%d,%d) corr=%d",
+              state.tick or 0, tmx, tmy, wx_, wy_, wcorr))
+          end
+          pace = "wall"
+        end
+      end
     end
     keys = bit.bor(keys, k)
     taps = bit.bor(taps, t)
@@ -2985,7 +3030,15 @@ local function attack_pill_steer(state, world, info, goal)
       if shot_clear == nil then
         shot_clear = shot_path_clear(info, world, pill_wx, pill_wy, pmx, pmy)
       end
-      if shot_clear then keys = bit.bor(keys, KEY_SHOOT) end
+      if shot_clear then
+        keys = bit.bor(keys, KEY_SHOOT)
+        if finish then
+          goal._fr_fired = (goal._fr_fired or 0) + 1
+          print2(string.format("FINISH_RUN_FIRE t=%d tank=(%d,%d) pill=(%d,%d) hp=%d dist=%.1f corr=%.1f",
+            state.tick or 0, tmx, tmy, pmx, pmy, pill.health or 0,
+            dist_to_pill / 256.0, fire_corr))
+        end
+      end
     end
     print2(string.format("HARDLINE_DRV t=%d tank=(%d,%d) inboat=%s spd=%d dir=%d look=(%d,%d) mdir=%d corr=%d next=(%s,%s) nextT=%s keys=%d taps=%d aim=%s fcorr=%.1f tol=%.1f dist=%.1f reach=%.1f pace=%s cap=%d",
       state.tick or 0, tmx, tmy, tostring(info.inboat), info.speed or -1, info.direction or -1,
