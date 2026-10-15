@@ -406,6 +406,13 @@ local function intentionally_stationary(goal, info, state)
   return false
 end
 
+-- The goals that end with the tank ON their square (see the
+-- C.STUCK_COLLAPSE_ACCUM note in stuck_recovery).  A goal that chases a
+-- tank or stands off from a target is not one of them.
+local COLLAPSE_ACCUM_KINDS = {
+  capture_pill = true, capture_base = true, goto_tile = true,
+}
+
 local function stuck_recovery(state, info, goal)
   local now = state.tick or 0
   local bl  = state.stuck_blacklist
@@ -488,23 +495,42 @@ local function stuck_recovery(state, info, goal)
       best_d  = cur_d,
       next_mx = pf.next_mx, next_my = pf.next_my,
       since   = now,
+      acc_best = cur_d, acc_since = now,
+      -- The step is the goal's own square: the last square of the drive.
+      -- A land square only: a step onto water keeps the old timing, and
+      -- so does a tank in a boat (checked each think; see the knob note).
+      final_step = goal ~= nil and COLLAPSE_ACCUM_KINDS[goal.kind]
+                   and goal.mx == pf.next_mx and goal.my == pf.next_my
+                   and not U.is_water(U.ttype(goal.mx, goal.my)),
     }
     return
   end
-  -- 2026-10-15: COUNT A SLOW DRIVE AS PROGRESS (C.STUCK_PROGRESS_ACCUM,
-  -- keel false).  The window above restarts when the tank gets STUCK_MOVE_WU
-  -- closer than its best, but the line below (knob off) moves the best to
-  -- the tank's distance every think, so only one think's movement counts.
-  -- No tank drives STUCK_MOVE_WU in one think (full speed is about 16), so
-  -- the window never restarted while the tank stayed on one square, and
-  -- after STUCK_LOOKAHEAD_COLLAPSE_TICKS the lookahead turned it back to its
-  -- own square.  pilltag_fort_last_shot seed 555: the guard, at rest one
-  -- square west of his dead pill, drove at it, was turned away 27 thinks
-  -- later still on his square, and circled until the hunter took the pill.
-  -- With this on, the best moves only when the window restarts, so the
-  -- distance driven since then is what counts; swinging back and forth
-  -- still cannot restart it.
-  if not C.STUCK_PROGRESS_ACCUM and cur_d < sp.best_d then sp.best_d = cur_d end
+  if cur_d < sp.best_d then sp.best_d = cur_d end
+  -- 2026-10-15: THE LOOKAHEAD COLLAPSE HAS ITS OWN CLOCK
+  -- (C.STUCK_COLLAPSE_ACCUM, keel false).  The window above restarts only
+  -- when the tank gets STUCK_MOVE_WU closer than its best in one think,
+  -- because the line above moves the best every think, and no tank drives
+  -- STUCK_MOVE_WU in one think (full speed is about 16).  So after
+  -- STUCK_LOOKAHEAD_COLLAPSE_TICKS on one path step the collapse turned the
+  -- tank back to its own square even while it drove onto the step.
+  -- pilltag_fort_last_shot seed 555: the guard, at rest one square west of
+  -- his dead pill, drove at it, was turned away 27 thinks later still on his
+  -- square, and circled until the hunter took the pill.  The collapse clock
+  -- (acc_since) restarts each time the tank is STUCK_MOVE_WU closer than at
+  -- the clock's last restart, so the distance driven since then counts;
+  -- swinging back and forth cannot restart it.  The recovery below keeps the
+  -- old window.  Only on the LAST step of a goal that ends on its square
+  -- (COLLAPSE_ACCUM_KINDS: a dead pill, a base, a go-there square), when
+  -- that square is land, and only for a tank on land, not in a boat (read
+  -- each think): an earlier
+  -- version on every step made sea_pills_B/D/E, lead_aim_boat_measured and
+  -- rule_roulette_multiply_off fail, and one on the last step afloat still
+  -- made sea_pills_B and lead_aim_boat_measured fail (attack_tank there
+  -- has the target tank's square as its goal square).
+  if C.STUCK_COLLAPSE_ACCUM and sp.final_step and not info.inboat
+     and (sp.acc_best - cur_d) > STUCK_MOVE_WU then
+    sp.acc_best, sp.acc_since = cur_d, now
+  end
 
   if (now - sp.since) < STUCK_TICKS then return end
 
@@ -1055,9 +1081,12 @@ local function path_lookahead_inner(state, info, nx, ny)
   -- gentler recovery first.
   do
     local sp = state.stuck_progress
-    if sp and (state.tick or 0) - sp.since >= STUCK_LOOKAHEAD_COLLAPSE_TICKS then
+    local since = sp and ((C.STUCK_COLLAPSE_ACCUM and sp.final_step
+                           and not info.inboat and sp.acc_since)
+                          or sp.since)
+    if sp and (state.tick or 0) - since >= STUCK_LOOKAHEAD_COLLAPSE_TICKS then
       sdbg("lookahead: STUCK collapse (%d ticks), return tank tile (%d,%d)",
-           (state.tick or 0) - sp.since, tmx, tmy)
+           (state.tick or 0) - since, tmx, tmy)
       return tmx, tmy
     end
   end

@@ -4812,13 +4812,20 @@ M.GOTO_FAST_ARRIVE = true   -- keel false
 -- and goal selection takes over.  false = the hold (or decoy hold) runs as
 -- after any arrival (keel).
 M.ORDER_GOTO_BLOCKED_RELEASE = true   -- keel false
--- 2026-10-15: A SLOW DRIVE IS PROGRESS.  The stuck tracker measures the
--- distance driven toward the next path step since its window started, not
--- one think's movement (never the 24 world units it asks for: full speed
--- is about 16 a think), so a tank that needs more than 30 thinks to cross
--- a square is not read as stuck and turned back to its own square by the
--- lookahead collapse.  false = one think's movement (keel).
-M.STUCK_PROGRESS_ACCUM = true   -- keel false
+-- 2026-10-15: A SLOW DRIVE IS NOT A STUCK TANK FOR THE LOOKAHEAD COLLAPSE.
+-- The stuck tracker's window only restarts on 24 world units of progress
+-- in ONE think (full speed is about 16), so after 30 thinks on one path
+-- step the lookahead collapse turned every tank back to its own square,
+-- even one that was driving onto the step.  With this on, the collapse
+-- has its own clock, which restarts each time the tank has driven 24
+-- world units closer to the step since the clock last restarted.  Only
+-- for the last step, the goal's own square, and for a tank on land (not
+-- in a boat).  The stuck recovery and its
+-- blacklist keep the old window, and so does the collapse on the way
+-- there (earlier versions that changed those made sea_pills, kill_me_C
+-- and others fail).
+-- false = the collapse uses the old window (keel).
+M.STUCK_COLLAPSE_ACCUM = true   -- keel false
 -- THE HOLD PHASE STILL FIGHTS.  While the hold runs the hard goto lock comes
 -- off and goal selection runs again, so attack_tank and kill_lgm can win --
 -- but the tank must not DRIVE anywhere: it was sent to that square.  These
@@ -5989,7 +5996,7 @@ M.PRESETS = {
     --   tracker counts the distance driven since its window started.  KEEL:
     --   neither.
     ORDER_GOTO_BLOCKED_RELEASE    = false,
-    STUCK_PROGRESS_ACCUM          = false,
+    STUCK_COLLAPSE_ACCUM          = false,
     --   2026-10-04: the bid prices in a refuel stop and a fight.  KEEL: the
     --   bid is the travel cost alone.
     ORDER_BID_STOP_AWARE          = false,
