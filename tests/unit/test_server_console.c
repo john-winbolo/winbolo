@@ -12,6 +12,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifndef _WIN32
@@ -449,8 +450,18 @@ int run_memreport_flags(void) {
                   "-memreport abc should warn and use the default "
                   "(got %g '%s')", m, warn);
 
-    m = serverMemReportPeriodFromArgs(true, "nan", false, warn, sizeof(warn));
-    UT_ASSERT_MSG(m == 0.0, "-memreport nan should read as off (got %g)", m);
+    /* Numbers that are not usable periods warn and use the default; a
+     * following flag ("-quiet" above) is still a bare -memreport. */
+    {
+        static const char *const bad[] = { "nan", "inf", "1e999", "-5" };
+        for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+            m = serverMemReportPeriodFromArgs(true, bad[i], false,
+                                              warn, sizeof(warn));
+            UT_ASSERT_MSG(m == def && strstr(warn, "not a usable number") != NULL,
+                          "-memreport %s should warn and use the default "
+                          "(got %g '%s')", bad[i], m, warn);
+        }
+    }
 
     m = serverMemReportPeriodFromArgs(false, NULL, true, warn, sizeof(warn));
     UT_ASSERT_MSG(m == def && warn[0] == '\0',
@@ -514,8 +525,11 @@ static void memDeepRecEmit(void *ctx, const char *line) {
 }
 
 /* The deep walk finds the biggest table, leaves the Lua stack as it was,
- * and, when it reaches its object cap, says on the summary line that it
- * stopped early rather than printing short counts as if whole. */
+ * and, when it reaches its object cap or its path budget, says on the
+ * summary line that it stopped early rather than printing short counts
+ * as if whole. Once stopped it queues nothing more, even as paths free
+ * up: each big[i] holds a table t that a walk which kept going would
+ * queue as big[i] is expanded. */
 int run_memreport_deep_walk_cap(void) {
     lua_State *L = luaL_newstate();
     MemDeepRec r;
@@ -527,13 +541,15 @@ int run_memreport_deep_walk_cap(void) {
         lua_newtable(L);
         lua_pushinteger(L, i);
         lua_setfield(L, -2, "n");
+        lua_newtable(L);
+        lua_setfield(L, -2, "t");
         lua_rawseti(L, -2, i);
     }
     lua_setglobal(L, "big");
     top = lua_gettop(L);
 
     memset(&r, 0, sizeof(r));
-    botMemLuaDeepWalkState(L, 3, 5, 0, memDeepRecEmit, &r);
+    botMemLuaDeepWalkState(L, 3, 5, 0, 0, memDeepRecEmit, &r);
     UT_ASSERT_MSG(lua_gettop(L) == top, "the walk should leave the stack "
                   "as it was (%d, was %d)", lua_gettop(L), top);
     UT_ASSERT_MSG(strncmp(r.summary, "[memdeep] bot p3: heap", 22) == 0,
@@ -544,12 +560,28 @@ int run_memreport_deep_walk_cap(void) {
     UT_ASSERT_MSG(r.sawBig, "the 200-entry table should be listed");
 
     memset(&r, 0, sizeof(r));
-    botMemLuaDeepWalkState(L, 3, 5, 50, memDeepRecEmit, &r);
+    botMemLuaDeepWalkState(L, 3, 5, 50, 0, memDeepRecEmit, &r);
     UT_ASSERT_MSG(lua_gettop(L) == top, "a capped walk should leave the "
                   "stack as it was (%d, was %d)", lua_gettop(L), top);
     UT_ASSERT_MSG(strstr(r.summary, "stopped early at 50 objects") != NULL,
                   "a walk that hits its cap should say so, got '%s'",
                   r.summary);
+
+    /* A 256-byte budget holds at most 25 paths of 10 bytes or more
+     * ("_G.big[1]" and longer) plus the three roots. */
+    memset(&r, 0, sizeof(r));
+    botMemLuaDeepWalkState(L, 3, 5, 0, 256, memDeepRecEmit, &r);
+    UT_ASSERT_MSG(lua_gettop(L) == top, "a budget-stopped walk should leave "
+                  "the stack as it was (%d, was %d)", lua_gettop(L), top);
+    {
+        const char *at = strstr(r.summary, "stopped early at ");
+        int n = -1;
+        UT_ASSERT_MSG(at != NULL, "a walk that hits its path budget should "
+                      "say so, got '%s'", r.summary);
+        n = atoi(at + strlen("stopped early at "));
+        UT_ASSERT_MSG(n > 3 && n <= 28, "a walk stopped by its budget should "
+                      "queue nothing more (stopped at %d objects)", n);
+    }
 
     lua_close(L);
     return 0;

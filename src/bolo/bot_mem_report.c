@@ -183,6 +183,7 @@ typedef struct {
   int        count;     /* entries queued so far */
   int        cap;       /* room in paths */
   int        maxObjs;   /* queue no more than this many */
+  size_t     pathBudget;  /* most bytes of unexpanded paths held */
   size_t     pathBytes; /* bytes held by paths not yet expanded */
   bool       stoppedEarly;  /* a limit stopped the queueing */
   bool       incomplete;    /* a C allocation failed; objects lost */
@@ -225,6 +226,12 @@ static void botMemEnqueue(BotMemWalk *w, const char *path) {
   if (vt != LUA_TTABLE && vt != LUA_TFUNCTION && vt != LUA_TUSERDATA) {
     return;
   }
+  /* Once a limit is hit, queue nothing more: paths free up as the queue
+   * is expanded, and queueing again would make the "stopped early at N"
+   * figure wrong and name objects by longer paths. */
+  if (w->stoppedEarly) {
+    return;
+  }
   lua_pushvalue(L, -1);
   lua_rawget(L, w->visited);
   if (!lua_isnil(L, -1)) {
@@ -234,13 +241,18 @@ static void botMemEnqueue(BotMemWalk *w, const char *path) {
   lua_pop(L, 1);
   len = strlen(path);
   if (w->count >= w->maxObjs ||
-      w->pathBytes + len + 1 > BOT_MEM_PATH_BUDGET) {
+      w->pathBytes + len + 1 > w->pathBudget) {
     w->stoppedEarly = true;
     return;
   }
   if (w->count == w->cap) {
-    int ncap = w->cap ? w->cap * 2 : 4096;
+    int ncap;
     char **np;
+    if (w->incomplete) {
+      /* A realloc already failed; do not try again for every object. */
+      return;
+    }
+    ncap = w->cap ? w->cap * 2 : 4096;
     if (ncap > w->maxObjs) {
       ncap = w->maxObjs;
     }
@@ -398,12 +410,12 @@ bool botMemLuaDeepWalk(struct ServerSim *sim, BYTE playerNum, int topN,
   if (L == NULL || emit == NULL) {
     return false;
   }
-  botMemLuaDeepWalkState(L, (unsigned)playerNum, topN, 0, emit, ctx);
+  botMemLuaDeepWalkState(L, (unsigned)playerNum, topN, 0, 0, emit, ctx);
   return true;
 }
 
 void botMemLuaDeepWalkState(lua_State *L, unsigned playerNum, int topN,
-                            int maxObjs,
+                            int maxObjs, size_t pathBudget,
                             void (*emit)(void *ctx, const char *line),
                             void *ctx) {
   BotMemWalk *w;
@@ -429,6 +441,8 @@ void botMemLuaDeepWalkState(lua_State *L, unsigned playerNum, int topN,
   w->L = L;
   w->topN = topN;
   w->maxObjs = maxObjs;
+  w->pathBudget = (pathBudget == 0 || pathBudget > BOT_MEM_PATH_BUDGET)
+                      ? BOT_MEM_PATH_BUDGET : pathBudget;
 
   before = (size_t)lua_gc(L, LUA_GCCOUNT, 0) * 1024u +
            (size_t)lua_gc(L, LUA_GCCOUNTB, 0);

@@ -82,10 +82,11 @@ bool botMemLuaDeepWalk(struct ServerSim *sim, BYTE playerNum, int topN,
                        void *ctx);
 
 /* The same walk on any lua_State, labelled "p<playerNum>". maxObjs
- * lowers the object cap (0 or less keeps the default); a test uses it
- * to reach the cap with a small heap. */
+ * lowers the object cap and pathBudget the path budget in bytes (0
+ * keeps each default); a test uses them to reach a limit with a small
+ * heap. */
 void botMemLuaDeepWalkState(struct lua_State *L, unsigned playerNum,
-                            int topN, int maxObjs,
+                            int topN, int maxObjs, size_t pathBudget,
                             void (*emit)(void *ctx, const char *line),
                             void *ctx);
 
