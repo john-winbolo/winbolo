@@ -112,6 +112,7 @@
 extern "C" {
 #endif
 #include "client_net.h"
+#include "spectator_drain.h" /* SpecDrainRecord — the embedded spectator's records */
 #include "brain_list.h"      /* BrainModes — cached per catalogue entry below */
 #include "types.h"
 #include "imgui_mapchooser.h"
@@ -748,6 +749,14 @@ void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
  * downloaded game in. lobbyReelEnd closes it. */
 bool lobbyReelOpenStandalone(uint8_t *zipData, size_t zipLen, ImVec2 rect);
 void lobbyReelRenderStandalone(ImVec2 rect);
+/* The live spectator feed in a reel, for a client with no modal viewer to
+ * host it. lobbyReelEnd closes it. */
+bool lobbyReelOpenSpectator(ImVec2 rect);
+void lobbyReelRenderSpectator(ImVec2 rect);
+#if defined(__IPHONEOS__)
+/* Hand every polled event over; the reel keeps the pinch ones for its zoom. */
+void lobbyReelPinchEvent(const SDL_Event *ev);
+#endif
 #endif
 
 /* clipgif */
@@ -902,6 +911,15 @@ void lvEmbedSeekToTime(uint32_t roundRelMs);
 bool lvEmbedFocusPlayerByName(const char *name);
 void lvEmbedStepTicks(int ticks);
 void lvEmbedSetSelfName(const char *name);
+/* The live spectator feed in the embed (lv_embed.c). SpecDrainRecord is
+ * spectator_drain.h's, a dependency-free seam header both worlds include, so
+ * no viewer type crosses here either. */
+bool lvEmbedSpecBegin(struct SDL_Window *window, struct SDL_Renderer *renderer,
+                      int viewW, int viewH);
+bool lvEmbedSpecSeed(const uint8_t *seed, uint32_t seedLen);
+bool lvEmbedSpecRecord(const SpecDrainRecord *rec);
+void lvEmbedSpecFrame(void);
+int  lvEmbedSpecPhase(void);
 #endif
 #if !BOLO_REEL_WBN_FETCH_CURL
 /* Round-log download for the reel's WinBolo.net source

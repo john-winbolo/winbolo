@@ -1338,6 +1338,7 @@ set(IOS_LOGVIEWER_SOURCES
     src/logviewer/screenlgm.c
     src/logviewer/screenbullet.c
     src/logviewer/spec_seed_load.c
+    src/logviewer/lv_spec_feed.c
     src/logviewer/players.c
     src/logviewer/shells.c
     src/logviewer/allience.c
@@ -1377,6 +1378,9 @@ target_link_libraries(WinBoloIOS PRIVATE server_round_log_static)
 target_sources(WinBoloIOS PRIVATE
     src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
     src/gui/ios/ios_log_player.cpp
+    # The live spectator feed in the reel, in place of the modal viewer's
+    # spectatorRun.
+    src/gui/ios/ios_spectator.cpp
 )
 
 target_sources(WinBoloIOS PRIVATE src/steam/steam_wrapper_stub.c)
@@ -1913,6 +1917,9 @@ set(LOGVIEWER_LIB_SOURCES
     # into the decoder. Includes spectator_replay.h, now a dep-free public
     # seam, so it builds into the client like any other decode TU.
     src/logviewer/spec_seed_load.c
+    # The spectator seed and record routing spectatorRun shares with the
+    # embedded spectator.
+    src/logviewer/lv_spec_feed.c
     src/logviewer/blocks.c
     src/logviewer/lv_attribution.c
     src/logviewer/lv_stats.c
@@ -2571,6 +2578,10 @@ list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/spectator_drain_stub\\.
 # seam for the standalone (which carries spectatorRun but links no gui-tier
 # gamepad module); the WinBolo client links the real src/gui/sdl3/spectator_input.c.
 list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/spectator_input_stub\\.c$")
+# lv_embed_stubs.c is for clients that embed only the reel (iOS, the web
+# client); the standalone viewer has the real bodies in logviewer.c and its
+# ImGui panels, so the stubs would collide with them.
+list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/lv_embed_stubs\\.c$")
 
 set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_context.cpp

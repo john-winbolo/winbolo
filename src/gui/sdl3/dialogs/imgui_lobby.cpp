@@ -2829,6 +2829,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
             }
             ImGui_ImplSDL3_ProcessEvent(&ev);
+#if defined(__IPHONEOS__)
+            lobbyReelPinchEvent(&ev);  /* two-finger zoom on the Last round reel */
+#endif
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             /* Position goes to gameFrontDialogX/Y (shared with every other

@@ -346,6 +346,9 @@ set(LOGVIEWER_SOURCES
     ${SRC_ROOT}/logviewer/screenlgm.c
     ${SRC_ROOT}/logviewer/screenbullet.c
     ${SRC_ROOT}/logviewer/spec_seed_load.c
+    # The spectator seed and record routing lv_embed.c's embedded spectator
+    # calls; nothing in the web client spectates, but lv_embed.c links it.
+    ${SRC_ROOT}/logviewer/lv_spec_feed.c
     # Replayed world model
     ${SRC_ROOT}/logviewer/players.c
     ${SRC_ROOT}/logviewer/shells.c

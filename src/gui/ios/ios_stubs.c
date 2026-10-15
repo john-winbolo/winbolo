@@ -255,15 +255,5 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
 void mac_menubar_install_dock_menu(void) {}
 void mac_menubar_refresh(const struct MacMenuState *s) { (void)s; }
 
-/* ---- spectator stub ----
- *
- * The live delayed spectator feed is hosted by logviewer.c, and the iOS
- * target links neither src/logviewer nor spectator_input.c. Returning false
- * is "the user left or the feed never loaded", which sends gamefront.c back
- * to the menu instead of into a live lobby. */
-
-bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
-                  void *cs, const char *serverHost, uint16_t serverPort) {
-    (void)window; (void)renderer; (void)cs; (void)serverHost; (void)serverPort;
-    return false;
-}
+/* spectatorRun, the live spectator feed, is in ios_spectator.cpp: it shows
+ * the feed in the lobby's reel. */

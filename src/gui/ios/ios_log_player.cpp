@@ -16,7 +16,7 @@
 *  spectator host. iOS builds only the viewer's embedded
 *  reel host (lv_embed.c), so the game plays through the
 *  same reel the lobby's recap shows - the picture with pan
-*  and zoom, play and pause, and the seek bar - and this
+*  and pinch zoom, play and pause, and the seek bar - and this
 *  file is only the screen around it: its own ImGui frame,
 *  a title row with Close, and the loop. The reel's drawing
 *  and input are lobby_reel.cpp's, called through
@@ -101,6 +101,7 @@ extern "C" void logViewerRunFromMemory(struct SDL_Window *window,
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
+            lobbyReelPinchEvent(&ev);  /* two-finger zoom */
             if (dialogHandleQuitEvent(window, &ev)) {
                 running = false;
             }

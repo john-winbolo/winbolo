@@ -134,6 +134,9 @@ list(FILTER LV_SOURCES EXCLUDE REGEX ".*clientmutex\\.c$")
 # game_view_stubs.c answers draw.c's calls, as it does in the wasm client.
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*logviewer/game_view\\.c$")
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*dns\\.c$")
+# lv_embed_stubs.c belongs to clients that embed only the reel; main_wasm.c
+# and the ImGui panels below define the same functions here.
+list(FILTER LV_SOURCES EXCLUDE REGEX ".*lv_embed_stubs\\.c$")
 
 # Exclude files not needed in LogViewer
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*memoryblock\\.c$")
