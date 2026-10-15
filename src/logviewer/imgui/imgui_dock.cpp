@@ -35,6 +35,7 @@ extern "C" {
     #include "../lv_dock_fit.h"
     #include "../lv_dock_layout.h"
     #include "../lv_dock_clear.h"
+    #include "../lv_dock_default.h"
 }
 
 /* How thick the strip on a sidebar's inner edge is that the user drags to
@@ -46,9 +47,9 @@ extern "C" {
  * is not this viewer's. */
 #define LV_DOCK_LAYOUT_MAX 32768
 
-/* The panels the sidebars know, in the order "Reset Window Positions into
- * Dock" stacks them from the top of the right sidebar. Each name is the part of the window's title that
- * makes its ID ("Controls###controls" and "###controls" are one window), so it
+/* The panels the sidebars know, in the order the right sidebar stacks them
+ * from the top the first time it shows for a user who had only that
+ * sidebar. Each name is the part of the window's title that makes its ID ("Controls###controls" and "###controls" are one window), so it
  * has to match the title the panel passes to Begin.
  *
  * A panel with fixedH takes that many points; the others share what is left
@@ -160,6 +161,17 @@ static bool s_right_laid_out = false;
 /* Build the stacked layout in the right sidebar the next time it draws. */
 static bool s_want_layout = false;
 
+/* No layout of the sidebars was ever saved: the standalone viewer starts
+ * with the default arrangement (lv_dock_default.h). */
+static bool s_fresh = false;
+
+/* Put the default arrangement in before the next frame. */
+static bool s_reset_default = false;
+
+/* Build the default arrangement's panels in each sidebar the next time it
+ * draws. */
+static bool s_want_default[LV_DOCK_SIDES] = { false, false, false, false };
+
 /* One bit a panel: it was in a sidebar when the sidebar went away and has not
  * yet been sent back to its default floating place. */
 static unsigned s_float_reset_mask = 0;
@@ -230,6 +242,8 @@ void lv_imgui_dock_init(struct LogViewerState *lv) {
     s_standalone = false;
     s_booted = false;
     s_want_layout = false;
+    s_fresh = false;
+    s_reset_default = false;
     s_float_reset_mask = 0;
     s_ini.clear();
     s_ini_is_legacy = false;
@@ -239,6 +253,7 @@ void lv_imgui_dock_init(struct LogViewerState *lv) {
         s_side[i].gripHeld = false;
         s_side[i].tree.clear();
         s_slot_drag[i] = false;
+        s_want_default[i] = false;
         s_used[i].x = s_used[i].y = s_used[i].w = s_used[i].h = 0;
     }
 
@@ -260,7 +275,10 @@ void lv_imgui_dock_init(struct LogViewerState *lv) {
 
     lv_platform_config_get_string("LOGVIEWER", "Dock.Sides", "", val, sizeof(val));
     bool have_sides = lvDockSidesParse(val, &sides) != 0;
+    bool have_any = val[0] != '\0';
     if (!have_sides) {
+        lv_platform_config_get_string("LOGVIEWER", "Dock.Enabled", "", val, sizeof(val));
+        have_any = have_any || val[0] != '\0';
         /* Preferences from before there were four sidebars: the right one's
          * option and width under their own names. */
         lv_platform_config_get_string("LOGVIEWER", "Dock.Enabled", "No", val, sizeof(val));
@@ -290,6 +308,9 @@ void lv_imgui_dock_init(struct LogViewerState *lv) {
         s_ini_is_legacy = true;
         s_right_laid_out = true;
     }
+    /* Nothing of the sidebars in the preferences, under the names of now or
+     * of before: a new user. */
+    s_fresh = !have_any && s_ini.empty();
 
     if (have_sides) {
         static LvDockTree parsed;
@@ -358,6 +379,10 @@ void lv_imgui_dock_save(void) {
 
 void lv_imgui_dock_set_standalone(int standalone) {
     s_standalone = standalone != 0;
+    /* Only the standalone viewer starts a new user with the default
+     * arrangement; the spectator never shows a sidebar. */
+    if (s_standalone && s_fresh) s_reset_default = true;
+    s_fresh = false;
 }
 
 int lv_imgui_dock_get_side_enabled(int side) {
@@ -389,9 +414,9 @@ void lv_imgui_dock_set_enabled(int enabled) {
 }
 
 void lv_imgui_dock_request_layout(void) {
-    /* The layout goes in the right sidebar, so asking for it turns that on. */
-    s_side[LV_DOCK_RIGHT].enabled = true;
-    s_want_layout = true;
+    /* Put in before the next frame (lv_imgui_dock_pre_frame), outside the
+     * frame the menu is drawn in. */
+    s_reset_default = true;
 }
 
 /* ---- A sidebar's arrangement, out of ImGui and back ------------------------ */
@@ -622,6 +647,35 @@ static void boot(bool mode_ok) {
     s_ini_is_legacy = false;
 }
 
+/* Put the default arrangement in: the sidebars' options and sizes, which of
+ * them are clear and the lengths of their panels, and the panels themselves,
+ * built in each sidebar the next time it draws. Every sidebar's dock space
+ * is taken away first, so no panel stays where the user had it. A panel the
+ * default does not dock (one that is hidden) goes to its default floating
+ * place when it next shows. */
+static void apply_default(void) {
+    LvDockSides sides;
+    lvDockDefaultSides(&sides);
+    s_reset_default = false;
+    s_want_layout = false;
+    s_right_laid_out = sides.rightLaidOut != 0;
+    for (int i = 0; i < LV_DOCK_SIDES; i++) {
+        LvDockSide &s = s_side[i];
+        ImGuiID     id = dock_space_id(i);
+        if (ImGui::DockBuilderGetNode(id) != nullptr) ImGui::DockBuilderRemoveNode(id);
+        s.tree.clear();
+        s.wantRebuild = false;
+        s.gripHeld = false;
+        s.enabled = sides.enabled[i] != 0;
+        s.size = sides.size[i];
+        s_clear[i] = lvDockDefaultClear(i) != 0;
+        lvDockDefaultLens(i, s_len[i]);
+        s_slot_drag[i] = false;
+        s_want_default[i] = s.enabled && lvDockDefaultStackOf(i).count > 0;
+    }
+    s_float_reset_mask = (1u << LV_DOCK_PANEL_COUNT) - 1u;
+}
+
 void lv_imgui_dock_pre_frame(void) {
     if (s_lv == nullptr || lv_imgui_context_get() == nullptr) return;
 
@@ -632,6 +686,10 @@ void lv_imgui_dock_pre_frame(void) {
     if (s_standalone && !s_booted) {
         ImGui::SetCurrentContext(lv_imgui_context_get());
         boot(mode_ok);
+    }
+    if (s_standalone && s_booted && s_reset_default) {
+        ImGui::SetCurrentContext(lv_imgui_context_get());
+        apply_default();
     }
 
     for (int i = 0; i < LV_DOCK_SIDES; i++) {
@@ -758,39 +816,51 @@ bool lv_imgui_dock_window_is_docked(const char *window_id) {
     return window != nullptr && window->DockIsActive;
 }
 
-/* Put every panel that is showing into the dock, one above the other, in the
- * order of k_panels. Called inside the right sidebar's host window, just
- * before the dock space is submitted for the frame.
+/* Put the panels of slot that are showing into a sidebar, one after the
+ * other from its start: down the left and right sidebars, across the top
+ * and bottom ones. Called inside the sidebar's host window, just before the
+ * dock space is submitted for the frame.
  *
- * The dock space is split once a panel. Splitting upward gives the new top
- * node to the panel and leaves the central node below; splitting downward
- * does the reverse. So the panels above the anchor are peeled off the top in
- * order, the ones below it off the bottom in reverse, and the anchor is
- * docked into what is left, which is the central node. A node keeps the
- * height it is given here; the central node takes whatever remains, then and
- * whenever the window changes height.
+ * The dock space is split once a panel. Splitting toward the start gives the
+ * new node to the panel and leaves the central node beyond it; splitting
+ * toward the end does the reverse. So the panels before the anchor are
+ * peeled off the start in order, the ones after it off the end in reverse,
+ * and the anchor is docked into what is left, which is the central node. A
+ * node keeps the length it is given here; the central node takes whatever
+ * remains, then and whenever the window changes size.
  *
- * A panel that is hidden is left out and gets no node, so there is no gap
- * for it. Nothing here forbids splitting or undocking: the user can still
- * drag a panel by its tab to another place in the dock or out of it. */
-static void build_layout(ImGuiID dockId, ImVec2 size) {
-    int   shown[LV_DOCK_PANEL_COUNT];
-    float height[LV_DOCK_PANEL_COUNT];
-    float fixed[LV_DOCK_PANEL_COUNT];
-    int   count = 0;
-    int   anchor = -1;
-    float fixedSum = 0.0f, weightSum = 0.0f;
+ * A panel's length is the slot's, or else its height for the sidebar's
+ * width (k_panels), or else a share by weight of what the others leave
+ * (lvDockStackLens). A panel that is hidden is left out and gets no node,
+ * so there is no gap for it. Nothing here forbids splitting or undocking:
+ * the user can still drag a panel by its tab to another place in the dock
+ * or out of it. */
+static void build_stack(int side, ImGuiID dockId, ImVec2 size,
+                        const LvDockDefaultSlot *slot, int slotCount) {
+    int         shown[LV_DOCK_PANEL_COUNT];
+    float       fixed[LV_DOCK_PANEL_COUNT];
+    float       weight[LV_DOCK_PANEL_COUNT];
+    float       length[LV_DOCK_PANEL_COUNT];
+    int         count = 0;
+    int         anchor = -1;
+    const bool  down = lvDockSideIsWide(side) != 0;
+    const float extent = down ? size.y : size.x;
 
     ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(dockId, size);
 
-    for (int i = 0; i < LV_DOCK_PANEL_COUNT; i++) {
-        if (!*k_panels[i].show) continue;
-        if (k_panels[i].anchor) anchor = count;
-        fixed[count] = k_panels[i].heightFor ? k_panels[i].heightFor(size.x)
-                                             : k_panels[i].fixedH;
-        fixedSum += fixed[count];
-        weightSum += k_panels[i].weight;
+    for (int k = 0; k < slotCount && count < LV_DOCK_PANEL_COUNT; k++) {
+        int i = panel_index(slot[k].id);
+        if (i < 0 || !*k_panels[i].show) continue;
+        if (slot[k].anchor) anchor = count;
+        if (slot[k].len > 0) {
+            fixed[count] = (float)slot[k].len;
+        } else if (down && k_panels[i].heightFor != nullptr) {
+            fixed[count] = k_panels[i].heightFor(size.x);
+        } else {
+            fixed[count] = k_panels[i].fixedH;
+        }
+        weight[count] = (fixed[count] > 0.0f) ? 0.0f : k_panels[i].weight;
         shown[count++] = i;
     }
     if (count == 0) {
@@ -800,41 +870,49 @@ static void build_layout(ImGuiID dockId, ImVec2 size) {
     /* With the anchor panel hidden the last one shown stands in for it. */
     if (anchor < 0) anchor = count - 1;
 
-    /* A dock too short for the fixed heights shares everything by weight. */
-    float spare = size.y - fixedSum;
-    for (int n = 0; n < count; n++) {
-        const LvDockPanel &p = k_panels[shown[n]];
-        if (spare > 0.0f && fixed[n] > 0.0f) {
-            height[n] = fixed[n];
-        } else if (spare > 0.0f && weightSum > 0.0f) {
-            height[n] = spare * p.weight / weightSum;
-        } else {
-            height[n] = size.y / (float)count;
-        }
-    }
+    lvDockStackLens(fixed, weight, count, extent, length);
 
+    const ImGuiDir toStart = down ? ImGuiDir_Up : ImGuiDir_Left;
+    const ImGuiDir toEnd = down ? ImGuiDir_Down : ImGuiDir_Right;
     ImGuiID rest = dockId;
-    float   restH = size.y;
+    float   restLen = extent;
     for (int n = 0; n < anchor; n++) {
         ImGuiID at = 0;
-        float ratio = (restH > 1.0f) ? height[n] / restH : 0.5f;
-        ImGui::DockBuilderSplitNode(rest, ImGuiDir_Up, ratio, &at, &rest);
+        float ratio = (restLen > 1.0f) ? length[n] / restLen : 0.5f;
+        ImGui::DockBuilderSplitNode(rest, toStart, ratio, &at, &rest);
         ImGui::DockBuilderDockWindow(k_panels[shown[n]].id, at);
-        restH -= height[n];
+        restLen -= length[n];
     }
     for (int n = count - 1; n > anchor; n--) {
         ImGuiID at = 0;
-        float ratio = (restH > 1.0f) ? height[n] / restH : 0.5f;
-        ImGui::DockBuilderSplitNode(rest, ImGuiDir_Down, ratio, &at, &rest);
+        float ratio = (restLen > 1.0f) ? length[n] / restLen : 0.5f;
+        ImGui::DockBuilderSplitNode(rest, toEnd, ratio, &at, &rest);
         ImGui::DockBuilderDockWindow(k_panels[shown[n]].id, at);
-        restH -= height[n];
+        restLen -= length[n];
     }
     ImGui::DockBuilderDockWindow(k_panels[shown[anchor]].id, rest);
 
     ImGui::DockBuilderFinish(dockId);
 
+    /* The panels docked here must not be sent to their floating places,
+     * which would take them straight out again. */
+    for (int n = 0; n < count; n++) s_float_reset_mask &= ~(1u << shown[n]);
+}
+
+/* Put every panel that is showing into the right sidebar, one above the
+ * other, in the order of k_panels: the first layout of a right sidebar for
+ * a user who had only that one. */
+static void build_layout(ImGuiID dockId, ImVec2 size) {
+    LvDockDefaultSlot slot[LV_DOCK_PANEL_COUNT];
+    for (int i = 0; i < LV_DOCK_PANEL_COUNT; i++) {
+        slot[i].id = k_panels[i].id;
+        slot[i].len = 0;
+        slot[i].anchor = k_panels[i].anchor ? 1 : 0;
+    }
+    build_stack(LV_DOCK_RIGHT, dockId, size, slot, LV_DOCK_PANEL_COUNT);
+
     /* Every panel showing is docked now; none is to be sent to its floating
-     * place, which would take it straight out again. */
+     * place. */
     s_float_reset_mask = 0;
 }
 
@@ -1019,7 +1097,8 @@ static void draw_side(int side, ImVec2 pos, ImVec2 size, int other, int extent) 
 
     ImGuiID        dockId = dock_space_id(side);
     ImGuiDockNode *root = ImGui::DockBuilderGetNode(dockId);
-    bool building = (side == LV_DOCK_RIGHT && s_want_layout) || s.wantRebuild;
+    bool building = (side == LV_DOCK_RIGHT && s_want_layout) || s.wantRebuild ||
+                    s_want_default[side];
 
     /* The panels and their lengths, when they are packed. */
     LvClearSlot     slots[LV_DOCK_CLEAR_SLOTS];
@@ -1132,7 +1211,12 @@ static void draw_side(int side, ImVec2 pos, ImVec2 size, int other, int extent) 
     s.gripHeld = edge_grip(side, gripPos, gripSize, pos, size, other, extent, true);
 
     if (dockSize.x > 1.0f && dockSize.y > 1.0f) {
-        if (side == LV_DOCK_RIGHT && s_want_layout) {
+        if (s_want_default[side]) {
+            LvDockDefaultStack stack = lvDockDefaultStackOf(side);
+            build_stack(side, dockId, dockSize, stack.slot, stack.count);
+            s_want_default[side] = false;
+            s.wantRebuild = false;
+        } else if (side == LV_DOCK_RIGHT && s_want_layout) {
             build_layout(dockId, dockSize);
             s_want_layout = false;
             s.wantRebuild = false;

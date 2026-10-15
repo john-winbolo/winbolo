@@ -4607,7 +4607,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lv_tank_pick.c
     # A sidebar of the viewer whose unused part is clear: where its panels
     # go, the clear part, the map under it and the preference text
-    # (lv_dock_clear.h, header only).
+    # (lv_dock_clear.h, header only), and the arrangement a new user starts
+    # with (lv_dock_default.h, header only).
     tests/unit/test_lv_dock_clear.c
     # The viewer's text dump of a recording around one tick (lv_dump.c): a
     # recorded round dumped with the production decoder.
@@ -6912,6 +6913,7 @@ set(_unit_test_names
     lv_dock_clear_rects
     lv_dock_clear_map
     lv_dock_clear_prefs
+    lv_dock_default_layout
     lv_dump_recorded_round
     lv_spmap_owner_table
     lv_spmap_reads_back

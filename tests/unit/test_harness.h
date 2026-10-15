@@ -4061,6 +4061,9 @@ int run_lv_dock_clear_layout(void);
 int run_lv_dock_clear_rects(void);
 int run_lv_dock_clear_map(void);
 int run_lv_dock_clear_prefs(void);
+/* The arrangement of the sidebars a new user starts with
+ * (test_lv_dock_clear.c, lv_dock_default.h). */
+int run_lv_dock_default_layout(void);
 /* The log viewer's text dump (test_lv_dump.c): a recorded round dumped
  * around one tick, a tick the round does not hold, and the event list. */
 int run_lv_dump_recorded_round(void);

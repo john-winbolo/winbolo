@@ -12,6 +12,7 @@
 #include "imgui_scenario_panel.h"
 #include "imgui_dock.h"
 #include "imgui_dialogs.h"
+#include "imgui_event_overlay.h"
 #include "imgui.h"
 #include "platform_config.h"
 #include "../../gui/lang.h"
@@ -203,6 +204,21 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     /* On until turned off. */
     lv_platform_config_get_string("LOGVIEWER", "Animate Jumps", "Yes", val, sizeof(val));
     s_jump_anim = !(val[0] == 'N' || val[0] == 'n');
+}
+
+/* True when the preference was never saved. */
+static bool pref_unset(const char *key) {
+    char val[8];
+    lv_platform_config_get_string("LOGVIEWER", key, "", val, sizeof(val));
+    return val[0] == '\0';
+}
+
+void lv_imgui_main_menu_standalone_defaults(void) {
+    if (pref_unset("Window.Comments.Visible")) lv_g_show_comments_window = true;
+    if (pref_unset("Window.ItemInformation.Visible")) lv_g_show_item_info_window = false;
+    if (pref_unset("Tank Bars")) lv_drawSetTankBars(1);
+    if (pref_unset("Tank Builder Status")) lv_drawSetBuilderStatus(1);
+    lv_event_overlay_standalone_default();
 }
 
 void lv_imgui_main_menu_save(void) {
@@ -764,7 +780,8 @@ int lv_imgui_main_menu_bar(void) {
                 lv_g_reset_window_positions = true;
                 clicked = 1;
             }
-            /* Stacks every panel in the right sidebar, which this turns on. */
+            /* Puts back the default arrangement of the sidebars and the
+             * panels in them (lv_dock_default.h). */
             if (ImGui::MenuItem(langGetText(STR_LV_RESET_WINDOWS_DOCK))) {
                 lv_imgui_dock_request_layout();
                 clicked = 1;

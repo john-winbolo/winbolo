@@ -2309,6 +2309,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_dock_clear_rects",                             run_lv_dock_clear_rects                             },
     { "lv_dock_clear_map",                               run_lv_dock_clear_map                               },
     { "lv_dock_clear_prefs",                             run_lv_dock_clear_prefs                             },
+    { "lv_dock_default_layout",                          run_lv_dock_default_layout                          },
     { "lv_dump_recorded_round",                          run_lv_dump_recorded_round                          },
     { "lv_spmap_owner_table",                            run_lv_spmap_owner_table                            },
     { "lv_spmap_reads_back",                             run_lv_spmap_reads_back                             },

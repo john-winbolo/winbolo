@@ -33,6 +33,10 @@
 /* Read the chosen kinds from the preferences. Call once at start-up. */
 void lv_event_overlay_init(void);
 
+/* The standalone viewer's default, for a user who never chose: every kind.
+ * Call after lv_event_overlay_init; a saved choice is kept. */
+void lv_event_overlay_standalone_default(void);
+
 /* The "Overlay events" list, as the next item of the line. With full it is
  * a combo that shows its name; without, only the arrow of one, with the
  * name as its tooltip, for a line with no room. */
