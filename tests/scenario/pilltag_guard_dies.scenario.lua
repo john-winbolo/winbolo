@@ -6,7 +6,7 @@
 -- down to take it.
 --
 -- Seat 0 gets the prize at tick 300 and is set up for a fort the way
--- pilltag_shoot_standing is: his armour is held at 15 (at or below
+-- pilltag_shoot_built_prize is: his armour is held at 15 (at or below
 -- FORT_ARMOUR_AT) and seat 1 is kept 7 squares behind him until he builds,
 -- then put 5 squares behind him, so the fort is not taken straight back.
 -- Seat 1's gun is kept empty and his tank whole while the fort stands, and

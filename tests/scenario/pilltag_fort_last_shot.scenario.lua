@@ -3,7 +3,7 @@
 -- Pillbox Tag, the fort's last shot.
 --
 -- Seat 0 gets the prize at tick 300 and is set up for a fort the way
--- pilltag_shoot_standing is (armour held at 15, seat 1 7 squares behind, then
+-- pilltag_shoot_built_prize is (armour held at 15, seat 1 7 squares behind, then
 -- 5 when the fort goes up). Once the fort stands, the arena sets it to
 -- LAST_SHOT_ARMOUR + 1, so the next hit on it, by anybody, brings it to
 -- LAST_SHOT_ARMOUR.

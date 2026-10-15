@@ -1,6 +1,6 @@
 -- GATE: ticks=6000 bots=2 script=data/mods/PillboxTag.scenario.lua
 --
--- Pillbox Tag, a hunter shoots a standing prize, and its guard does not.
+-- Pillbox Tag, a hunter shoots a built prize while it stands, and its guard does not.
 --
 -- Seat 0 gets the prize at tick 300. Until he builds, the arena holds his
 -- armour at 15 (at or below FORT_ARMOUR_AT, so he builds a fort, not a hop)
@@ -14,19 +14,24 @@
 -- When the fort goes up, seat 1 is put 5 squares behind the guard, so he is
 -- close enough that the guard does not take it straight back.
 --
--- PASS: seat 1 ends the fort while it stands: he hits it, or he kills its
--- guard (a guard who dies loses the prize, and the fort goes dead where it
--- stands). Decided when the fort is over.
--- A guard's own hit on his fort is logged, not failed: the guard role keeps
--- its gun for the hunters, and a shot at a hunter can catch the fort.
+-- PASS: once the prize is built, seat 1 hits it while it stands (alive, on
+-- the map), or kills its guard. Whatever the guard is doing with it counts:
+-- a hit after he has started to take it back (plan.kind "take") is still a
+-- hunter's hit on the built prize. Decided when the guard's built prize is
+-- over (taken back, shot down, or its guard dead).
+-- A guard's own hit on his prize is logged, not counted: the guard role
+-- keeps its gun for the hunters, and a shot at a hunter can catch it.
 
 ARENA = { given = false, hits = {} }
 scenario.callbacks.pill_damage_scale = "Arena: counts the hits on the fort."
 
 function pill_damage_scale(attacker, n, cause, by_pill)
   local A = ARENA
-  if n == pill and plan ~= nil and plan.built then
+  if n == pill and A.built_at ~= nil and plan ~= nil and plan.built then
     local key = tostring(attacker) .. ":" .. plan.kind
+    if attacker == 1 then
+      A.hunter_hits = (A.hunter_hits or 0) + 1
+    end
     A.hits[key] = (A.hits[key] or 0) + 1
     -- An ask hook may not write, so the line is logged from on_tick.
     A.lines = A.lines or {}
@@ -86,17 +91,19 @@ function on_tick(tick)
     local k = 5 / math.max(math.abs(fx), math.abs(fy))
     game.teleport(1, whole(me.mx - k * fx), whole(me.my - k * fy), me.dir)
   end
-  if ((A.hits["1:fort"] or 0) > 0 or A.guard_killed ~= nil) and
+  if ((A.hunter_hits or 0) > 0 or A.guard_killed ~= nil) and
      A.built_at ~= nil and (plan == nil or plan.kind ~= "fort") then
     -- Decided once the fort is over: taken back, shot down, or dead with
     -- its guard.
-    verdict(true, string.format("hunter hit the fort %d time(s), guard %d, "
+    verdict(true, string.format("hunter hit the built prize %d time(s) "
+                                .. "(%d while guarded), guard %d, "
                                 .. "hunter killed the guard: %s",
-                                A.hits["1:fort"] or 0, A.hits["0:fort"] or 0,
+                                A.hunter_hits or 0, A.hits["1:fort"] or 0,
+                                A.hits["0:fort"] or 0,
                                 tostring(A.guard_killed ~= nil)))
   end
   if tick >= GATE_TICKS - 100 then
     verdict(false, A.built_at == nil and "no fort" or
-                   "the hunter never hit the fort or killed its guard")
+                   "the hunter never hit the built prize or killed its guard")
   end
 end

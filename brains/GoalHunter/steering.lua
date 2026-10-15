@@ -5501,7 +5501,7 @@ local function steer_core(state, world, info, goal)
     -- 2026-10-15: A GO-THERE ORDER DRIVES ONTO ITS SQUARE AT SPEED
     -- (C.GOTO_FAST_ARRIVE, keel false).  The ordinary approach brake slows in
     -- proportion to the distance left to the square's CENTRE, so the last
-    -- square and a half was taken at crawl speed: on pilltag_shoot_standing
+    -- square and a half was taken at crawl speed: on pilltag_shoot_built_prize
     -- (seed 42) the tank crossed the last square in 50 thinks.  A go-there
     -- order arrives the moment the tank is ON the square, and the park
     -- branch above brakes it there, so only the stop point matters.  While
