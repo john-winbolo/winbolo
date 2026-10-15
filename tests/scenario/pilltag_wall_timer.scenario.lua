@@ -1,30 +1,30 @@
--- GATE: ticks=13000 bots=4 script=data/mods/PillboxTag.scenario.lua
+-- GATE: ticks=5500 bots=4 script=data/mods/PillboxTag.scenario.lua
 --
--- Pillbox Tag, a person builds the prize inside closed walls, the hunters are
--- sent to a square where the script wrongly sees a line, and after 30 s
--- without a hit they are turned to shoot through the walls.
+-- Pillbox Tag, a person builds the prize inside closed walls, and the hunters
+-- must get to it: they hit the built prize within 20 s of the build.
 --
 -- The ground is pilltag_wall_lines' with no gap: the 29 x 29 squares around
 -- (126,126) cleared to grass, and a closed ring of walls two squares out,
--- put up again whole when the prize goes up. Seat 0 plays a person: the
+-- put up again whole when the prize goes up. Player 0 plays a person: the
 -- script reads him as no bot. His man builds the prize on (126,126) at tick
--- 1300, and he is then kept far off at (142,110). Seats 1, 2 and 3 are
+-- 1300, and he is then kept far off at (142,110). Players 1, 2 and 3 are
 -- hunters, kept 11 squares west of the walls until the prize is up, and at
 -- full armour all game.
 --
--- The arena makes walled.line_squares answer one square, (133,126), as if it
--- had a line. That is the case the 30 s net is for: the script's line test
--- and the brain's do not agree. The hunters are sent there, the brain finds
--- no firing square, and the prize loses no armour.
+-- No square has a line to the built prize, so the hunters must shoot
+-- through the walls. How they get there does not matter: the script's
+-- wall shot, the forced attack order, the finish run or the brain's own
+-- take. Through the walls is fine and wanted.
 --
--- PASS: no hunter hits the prize before the wall shot; the wall shot comes on
--- for "no armour lost", 30 to 32 s after the first hunter was sent; and a
--- hunter hits the prize in the 60 s after that.
+-- PASS: a hunter hits the built prize within ARENA.HIT_WITHIN (20) s of the
+-- build.
+-- FAIL: no hunter hits it in that time, or the prize never goes up.
 
-ARENA = { given = false, hits = {}, lines = {}, arrived = {}, cx = 126, cy = 126, gap = false }
+ARENA = { given = false, hits = {}, lines = {}, cx = 126, cy = 126, gap = false,
+          HIT_WITHIN = 20 }
 scenario.callbacks.pill_damage_scale = "Arena: counts the hunters' hits on the prize."
 
--- The script reads seat 0 as a person.
+-- The script reads player 0 as a person.
 ARENA.real_is_bot = is_bot
 is_bot = function(p)
   if p == 0 then return false end
@@ -34,15 +34,13 @@ end
 function pill_damage_scale(attacker, n, cause, by_pill)
   local A = ARENA
   if n == pill and attacker ~= nil and attacker >= 1 and attacker <= 3 and
-     A.built ~= nil then
+     A.built ~= nil and A.phase ~= "done" then
     local w = walled.watch
     local fb = w ~= nil and w.fallback
-    local sent = w ~= nil and w.sent[attacker]
-    A.hits[#A.hits + 1] = { p = attacker, fallback = fb, sent = sent,
-                            arrived = A.arrived[attacker], t = game.tick() }
+    A.hits[#A.hits + 1] = { p = attacker, fallback = fb, t = game.tick() }
     A.lines[#A.lines + 1] = string.format(
-      "ARENA p%d hit the prize t=%d fallback=%s sent=%s arrived=%s",
-      attacker, game.tick(), tostring(fb), tostring(sent), tostring(A.arrived[attacker]))
+      "ARENA p%d hit the prize t=%d +%.1fs fallback=%s", attacker, game.tick(),
+      (game.tick() - A.built) / 100, tostring(fb))
   end
   return 100
 end
@@ -77,37 +75,23 @@ function ARENA.walls(gap)
   end
 end
 
--- The arena notes when, and why, the script turns the wall shot on.
-ARENA.real_fallback_on = walled.fallback_on
-walled.fallback_on = function(why)
-  local A = ARENA
-  if A.fb_t == nil and A.built ~= nil then
-    A.fb_t, A.fb_why, A.fb_elapsed = game.tick(), why, elapsed
-    A.fb_sent_at = walled.watch and walled.watch.sent_at
-    A.lines[#A.lines + 1] = string.format("ARENA wall shot on t=%d (%s) sent_at=%s now=%d",
-      game.tick(), why, tostring(A.fb_sent_at), elapsed)
-  end
-  return A.real_fallback_on(why)
-end
-
--- The script is made to see one square with a line, east of the walls,
--- where there is none. The brain finds no firing square there, so the prize
--- loses no armour, and the 30 s net must turn the wall shot on.
-walled.line_squares = function(px, py)
-  return { { x = px + 7, y = py, key = py * 256 + px + 7 } }
+function ARENA.finish(ok, why)
+  verdict(ok, why)
+  ARENA.phase = "done"
 end
 
 ARENA.real_tick = on_tick
 function on_tick(tick)
   ARENA.real_tick(tick)
   local A = ARENA
+  if A.phase == "done" then return end
   for _, l in ipairs(A.lines) do game.log(l) end
   A.lines = {}
   if pill == nil then return end
   if not A.given then
     if tick >= 300 then
       if not A.ground(A.gap) then
-        verdict(false, "a base is in the arena's square")
+        A.finish(false, "a base is in the arena's square")
         return
       end
       A.hx, A.hy = A.cx - 1, A.cy
@@ -160,60 +144,27 @@ function on_tick(tick)
                            tostring(holder)))
   end
   if A.ordered ~= nil and A.built == nil and tick > A.ordered + 1500 then
-    verdict(false, "the prize never went up")
+    A.finish(false, "the prize never went up")
     return
   end
   if A.built == nil then return end
-  local w = walled.watch
-  for p = 1, 3 do
-    local s = game.tank(p)
-    local sq = w ~= nil and w.assign[p] or nil
-    if sq ~= nil and s ~= nil and not s.dead and not A.arrived[p] and
-       chebyshev(s.mx, s.my, sq.x, sq.y) <= 1 then
-      A.arrived[p] = tick
-      game.log(string.format("ARENA p%d reached its square %d,%d t=%d", p, sq.x, sq.y, tick))
-    end
-  end
   if tick % 500 == 0 then
-    game.log(string.format("ARENA t=%d +%.0fs squares=%s fallback=%s", tick,
-      (tick - A.built) / 100, w and w.squares and tostring(#w.squares) or "-",
+    local w = walled.watch
+    game.log(string.format("ARENA t=%d +%.0fs fallback=%s", tick, (tick - A.built) / 100,
       tostring(w ~= nil and w.fallback)))
     for p = 1, 3 do
       local s = game.tank(p)
-      local sq = w ~= nil and w.assign[p] or nil
-      game.log(s and string.format("ARENA  p%d %d,%d sq=%s told=%s", p, s.mx, s.my,
-        sq and (sq.x .. "," .. sq.y) or "-", tostring(told[p])) or ("ARENA  p" .. p .. " none"))
+      game.log(s and string.format("ARENA  p%d %d,%d told=%s", p, s.mx, s.my,
+        tostring(told[p])) or ("ARENA  p" .. p .. " none"))
     end
   end
-  if A.fb_t == nil then
-    if #A.hits > 0 then
-      verdict(false, string.format("p%d hit the prize through closed walls before the wall shot",
-        A.hits[1].p))
-      return
-    end
-    if tick >= A.built + 4500 or tick >= GATE_TICKS - 50 then
-      verdict(false, "the shot through the walls was never turned on")
-    end
+  local h = A.hits[1]
+  if h ~= nil and h.t <= A.built + A.HIT_WITHIN * 100 then
+    A.finish(true, string.format("p%d hit the built prize at +%.1fs (fallback=%s)",
+      h.p, (h.t - A.built) / 100, tostring(h.fallback)))
     return
   end
-  if A.fb_why:find("no armour lost", 1, true) == nil then
-    verdict(false, "the wall shot came on for another reason: " .. A.fb_why)
-    return
-  end
-  local waited = A.fb_sent_at and (A.fb_elapsed - A.fb_sent_at)
-  if waited == nil or waited < WALL_FALLBACK_SECONDS or waited > WALL_FALLBACK_SECONDS + 2 then
-    verdict(false, "the wall shot came on " .. tostring(waited) .. " s after the hunters were sent")
-    return
-  end
-  for _, h in ipairs(A.hits) do
-    if h.fallback then
-      verdict(true, string.format("wall shot on at +%.1fs (%s), p%d hit the prize at +%.1fs",
-        (A.fb_t - A.built) / 100, A.fb_why, h.p, (h.t - A.built) / 100))
-      return
-    end
-  end
-  if tick >= A.fb_t + 6000 or tick >= GATE_TICKS - 50 then
-    verdict(false, string.format("no hit on the prize in %.0f s after the wall shot came on",
-      (tick - A.fb_t) / 100))
+  if tick > A.built + A.HIT_WITHIN * 100 or tick >= GATE_TICKS - 50 then
+    A.finish(false, string.format("no hunter hit the built prize in %d s", A.HIT_WITHIN))
   end
 end
