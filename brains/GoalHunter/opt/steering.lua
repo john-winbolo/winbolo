@@ -491,7 +491,20 @@ local function stuck_recovery(state, info, goal)
     }
     return
   end
-  if cur_d < sp.best_d then sp.best_d = cur_d end
+  -- 2026-10-15: COUNT A SLOW DRIVE AS PROGRESS (C.STUCK_PROGRESS_ACCUM,
+  -- keel false).  The window above restarts when the tank gets STUCK_MOVE_WU
+  -- closer than its best, but the line below (knob off) moves the best to
+  -- the tank's distance every think, so only one think's movement counts.
+  -- No tank drives STUCK_MOVE_WU in one think (full speed is about 16), so
+  -- the window never restarted while the tank stayed on one square, and
+  -- after STUCK_LOOKAHEAD_COLLAPSE_TICKS the lookahead turned it back to its
+  -- own square.  pilltag_fort_last_shot seed 555: the guard, at rest one
+  -- square west of his dead pill, drove at it, was turned away 27 thinks
+  -- later still on his square, and circled until the hunter took the pill.
+  -- With this on, the best moves only when the window restarts, so the
+  -- distance driven since then is what counts; swinging back and forth
+  -- still cannot restart it.
+  if not C.STUCK_PROGRESS_ACCUM and cur_d < sp.best_d then sp.best_d = cur_d end
 
   if (now - sp.since) < STUCK_TICKS then return end
 
@@ -4923,6 +4936,23 @@ local function steer_core(state, world, info, goal)
       _approach_brake_active = C.FAST_APPROACH
                                or _approach_sdist_wu < math.max(256, info.speed * C.NAV_BRAKE_MULT_PRECISE)
     end
+    -- 2026-10-15: A GO-THERE ORDER DRIVES ONTO ITS SQUARE AT SPEED
+    -- (C.GOTO_FAST_ARRIVE, keel false).  The ordinary approach brake slows in
+    -- proportion to the distance left to the square's CENTRE, so the last
+    -- square and a half was taken at crawl speed: on pilltag_shoot_standing
+    -- (seed 42) the tank crossed the last square in 50 thinks.  A go-there
+    -- order arrives the moment the tank is ON the square, and the park
+    -- branch above brakes it there, so only the stop point matters.  While
+    -- the tank is lined up on the square (the same 12-brad test the attack
+    -- approach uses) and the path's next point is the square itself, hold
+    -- speed and brake the tick the engine stop predictor (cpf.predict_stop)
+    -- says the tank would come to rest at the centre.  Not for a DECOY
+    -- GETAWAY step (it has its own diagonal rule) and not when the path turns.
+    local goto_fast = C.GOTO_FAST_ARRIVE and goal.kind == "goto_tile"
+                      and not goal._getaway and not lookahead_active
+                      and goal.mx and state._steer_lx == goal.mx
+                      and state._steer_ly == goal.my
+                      and abs_corr <= 12 and eff_dist < brake_dist
     -- Throttle-branch diagnostic.  Set by each branch below so the
     -- hud_throttle overlay can show which decision tier fired this
     -- tick + the key inputs that drove it.
@@ -5161,6 +5191,18 @@ local function steer_core(state, world, info, goal)
         elseif info.speed < desired and sdist_wu > 128 then
           keys = bit.bor(keys, KEY_FASTER)
         end
+      end
+    elseif goto_fast then
+      _throttle_branch = "goto_fast"
+      local tcap = (C.TERRAIN_SPEED and C.TERRAIN_SPEED[U.ttype(tmx, tmy)]) or 16
+      local ang_f = info.tank_angle or info.direction
+      local espeed = (info.speed or 0) / 4   -- info.speed is engine speed x4
+      local psx, psy = cpf.predict_stop(info.tankx, info.tanky, ang_f, espeed, tcap)
+      local stop_dist = U.wdist(info.tankx, info.tanky, psx, psy)
+      if stop_dist >= eff_dist or info.speed > turn_max_speed + 4 then
+        keys = bit.bor((bit.band(keys, bit.bnot(KEY_FASTER))), KEY_SLOWER)
+      elseif info.speed < turn_max_speed then
+        keys = bit.bor((bit.band(keys, bit.bnot(KEY_SLOWER))), KEY_FASTER)
       end
     elseif facing_away and C.FACING_AWAY_BRAKE_ENABLED then
       _throttle_branch = "facing_away"

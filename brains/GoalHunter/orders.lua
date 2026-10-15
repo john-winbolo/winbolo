@@ -2189,6 +2189,59 @@ function M.goto_target_blocked(world, info, mx, my)
   return nil
 end
 
+-- 2026-10-15: THE NEAREST SQUARE A ROUTE REACHES (ORDER_GOTO_RETARGET_
+-- UNREACHABLE).  Reads the FINISHED KIND_NORMAL Dijkstra slates (the tank's
+-- own route searches over the whole map; both have no cost cap) that were
+-- started in the tank's current mode (afloat or not).  A square counts as
+-- reached when any of them has a route to it.  Returns nx, ny, checked.
+-- checked is false when no such slate has finished yet (ask again later).
+-- When (mx, my) is reached, nx is nil: nothing to change.  When it is not,
+-- nx, ny is the nearest square that is -- nearest by the larger of the two
+-- axes, then by route cost -- searched ring by ring out from the square
+-- (nil when no square on the map is reached).
+local COST_UNREACHED = 1e29
+function M.goto_reachable_near(info, mx, my)
+  if not (cpf.dijkstra_status and cpf.dijkstra_cost_at) then return nil, nil, true end
+  local boat = (info and info.inboat) and 1 or 0
+  -- A slate's own source square reads as unreached (brain_pathfinder.c),
+  -- so it is counted as reached here by hand.
+  local slates, srcs = {}, {}
+  for sl = 0, 3 do
+    local _, done, kind, _, _, _, _, sx, sy, sb = cpf.dijkstra_status(sl)
+    if done and kind == cpf.KIND_NORMAL and (sb or 0) == boat then
+      slates[#slates + 1] = sl
+      srcs[#srcs + 1] = { sx, sy }
+    end
+  end
+  if #slates == 0 then return nil, nil, false end
+  local function cost(x, y)
+    local best = COST_UNREACHED
+    for k = 1, #slates do
+      if srcs[k][1] == x and srcs[k][2] == y then return 0 end
+      local c = cpf.dijkstra_cost_at(slates[k], x, y, boat)
+      if c < best then best = c end
+    end
+    return best
+  end
+  if cost(mx, my) < COST_UNREACHED then return nil, nil, true end
+  for r = 1, 255 do
+    local bx, by, bc = nil, nil, COST_UNREACHED
+    for dy = -r, r do
+      for dx = -r, r do
+        if dx == r or dx == -r or dy == r or dy == -r then
+          local x, y = mx + dx, my + dy
+          if U.in_map(x, y) then
+            local c = cost(x, y)
+            if c < bc then bx, by, bc = x, y, c end
+          end
+        end
+      end
+    end
+    if bx then return bx, by, true end
+  end
+  return nil, nil, true
+end
+
 -- The hold goal: the same goto_tile pick_goal hands back in a hold, marked
 -- so the end of the decoy can tell it from any other goto_tile.  A NEW
 -- table every call: clear_attack_goal wipes the live goal in place.
@@ -5147,8 +5200,26 @@ function M.update(state, world, info, now)
     -- shoot the square -> the order is over in silence (decoy_none); one or
     -- more can -> the hard hold, "decoying 10s".
     local decoy_none = false
+    local blocked_release = false
     if h.kind == "goto_tile" and h.mx and h.my and not h.arrived
        and info.tankx and info.tanky then
+      -- 2026-10-15: NO ROUTE TO THE SQUARE.  Once per order: if the tank's
+      -- finished route search cannot reach the square, the order's square
+      -- becomes the nearest one it can (M.goto_reachable_near), and the
+      -- travel lock is pointed there.  ORDER_GOTO_RETARGET_UNREACHABLE, keel
+      -- false (keel drives at the square until the order lapses).
+      if C.ORDER_GOTO_RETARGET_UNREACHABLE and not h.reach_checked then
+        local nmx, nmy, checked = M.goto_reachable_near(info, h.mx, h.my)
+        if checked then h.reach_checked = true end
+        if nmx then
+          print2(string.format("ORDER_GOTO_RETARGET t=%d oid=%d tile=(%d,%d) -> (%d,%d) no route",
+                 now, h.oid or 0, h.mx, h.my, nmx, nmy))
+          h.asked_mx, h.asked_my = h.mx, h.my
+          h.mx, h.my = nmx, nmy
+          h.near_since, h.near_best = nil, nil
+          goto_lock(state)
+        end
+      end
       local dx = tile_of(info.tankx) - h.mx
       local dy = tile_of(info.tanky) - h.my
       if dx < 0 then dx = -dx end
@@ -5169,10 +5240,12 @@ function M.update(state, world, info, now)
       -- being beside it is good enough: arrival happens now, with no timer.
       -- An open square keeps the rules above (the square itself, or the
       -- fallback timer).  ORDER_GOTO_ARRIVE_BLOCKED_RING, keel false.
+      local blocked_what = nil
       if not arrive and cheb == 1 and C.ORDER_GOTO_ARRIVE_BLOCKED_RING then
         local what = M.goto_target_blocked(world, info, h.mx, h.my)
         if what then
           arrive = true
+          blocked_what = what
           print2(string.format("ORDER_GOTO_BLOCKED t=%d oid=%d tile=(%d,%d) what=%s",
                  now, h.oid or 0, h.mx, h.my, what))
         end
@@ -5180,6 +5253,18 @@ function M.update(state, world, info, now)
       if not arrive then
         if fb > 0 and cheb <= 1 then
           h.near_since = h.near_since or now
+          -- 2026-10-15: ONLY TICKS WITHOUT PROGRESS COUNT
+          -- (ORDER_GOTO_FALLBACK_STALL, keel false).  Each think that brings
+          -- the tank closer to the centre of the square than it has been
+          -- since it came into the ring restarts the timer, so a tank still
+          -- rolling onto the square is never cut short.
+          if C.ORDER_GOTO_FALLBACK_STALL then
+            local d = U.wdist(info.tankx, info.tanky, U.m2w(h.mx), U.m2w(h.my))
+            if h.near_best == nil or d < h.near_best then
+              h.near_best = d
+              h.near_since = now
+            end
+          end
           if now - h.near_since >= fb then
             arrive = true
             print2(string.format("ORDER_GOTO_FALLBACK t=%d oid=%d tile=(%d,%d) off=%d near=%d",
@@ -5187,13 +5272,28 @@ function M.update(state, world, info, now)
           end
         else
           h.near_since = nil
+          h.near_best = nil
         end
       end
       if arrive then
         local hold = C.ORDER_GOTO_HOLD_TICKS or 500
         local npills = (C.ORDER_GOTO_DECOY and h.ping)
                        and decoy_pills(world, h.mx, h.my) or nil
-        if npills == 0 then
+        if blocked_what and C.ORDER_GOTO_BLOCKED_RELEASE then
+          -- 2026-10-15 (Andrew): "if it's blocked, just say you're there and
+          -- move on to the next goal".  A blocked square counts as arrived,
+          -- and the order is over on this think: no hold, no park beside it,
+          -- and goal selection takes over at once.  On pilltag_fort_last_shot
+          -- (seed 42) a go-there onto the guard's own dead prize pill held
+          -- beside it, then picked take_cover, and the pill was never picked
+          -- up; with the order gone capture_pill picks it up.
+          -- ORDER_GOTO_BLOCKED_RELEASE, keel false (hold beside the square,
+          -- or the decoy hold for a ping).
+          blocked_release = true
+          h.arrived = now
+          print2(string.format("ORDER_GOTO_BLOCKED_RELEASE t=%d oid=%d tile=(%d,%d) what=%s -- order over",
+                 now, h.oid or 0, h.mx, h.my, blocked_what))
+        elseif npills == 0 then
           decoy_none = true
           h.arrived  = now
           print2(string.format("ORDER_DECOY_NONE t=%d oid=%d tile=(%d,%d) -- no pill in range, order over",
@@ -5222,7 +5322,7 @@ function M.update(state, world, info, now)
       end
     end
     local done, why = false, nil
-    if decoy_none then
+    if decoy_none or blocked_release then
       -- Nothing to be a decoy for.  No "holding", no "order lapsed": the
       -- order simply ends and goal selection takes over.  The travel goal
       -- goes with it (an urgent replan), so the tank does not roll the last
@@ -5230,7 +5330,8 @@ function M.update(state, world, info, now)
       done, why = true, nil
       local g = state.goal
       if g and g.kind == "goto_tile" and g.mx == h.mx and g.my == h.my then
-        require("attack").clear_attack_goal(state, "decoy: no pill in range")
+        require("attack").clear_attack_goal(state, blocked_release
+          and "go-there: square blocked" or "decoy: no pill in range")
       end
     elseif now >= h.expiry then
       done, why = true, "order lapsed"

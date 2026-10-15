@@ -4783,6 +4783,42 @@ M.ORDER_GOTO_ARRIVE_FALLBACK_TICKS = 100   -- keel 0
 -- the square itself or the fallback timer.  Keel false: keel already
 -- arrives anywhere in the one-square ring.
 M.ORDER_GOTO_ARRIVE_BLOCKED_RING = true   -- keel false
+-- 2026-10-15: THE FALLBACK TIMER COUNTS ONLY TICKS WITHOUT PROGRESS.  With
+-- this on, the ORDER_GOTO_ARRIVE_FALLBACK_TICKS timer restarts every think
+-- the tank gets closer to the centre of the square than it has been since it
+-- came into the one-square ring.  A tank still driving onto the square is
+-- never cut short; a tank that is wedged, held off by something the blocked
+-- test cannot see, or swinging back and forth beside the square arrives
+-- once it has gone that many ticks without getting closer.  false = the
+-- timer runs from the first think in the ring (keel: no timer at all).
+M.ORDER_GOTO_FALLBACK_STALL = true   -- keel false
+-- 2026-10-15: A SQUARE NO PATH REACHES IS SWAPPED FOR THE NEAREST ONE THAT
+-- IS.  While a go-there order travels, once the tank's own route search
+-- (the KIND_NORMAL Dijkstra slate) has finished and has no route to the
+-- square (deep sea without a boat, an island, a square shut in by walls),
+-- the order's square becomes the nearest square the search did reach,
+-- nearest by the larger of the two axes, cheapest route on a tie.  Done
+-- once per order.  false = drive at the square until the order lapses.
+M.ORDER_GOTO_RETARGET_UNREACHABLE = true   -- keel false
+-- 2026-10-15: A GO-THERE ORDER DRIVES ONTO ITS SQUARE AT SPEED.  Lined up
+-- on the square, the tank holds speed and brakes on the engine stop
+-- predictor instead of the distance-proportional approach brake (see
+-- steering.lua, "goto_fast").  false = the approach brake (keel).
+M.GOTO_FAST_ARRIVE = true   -- keel false
+-- 2026-10-15 (Andrew: "if it's blocked, just say you're there and move on to
+-- the next goal"): A BLOCKED SQUARE IS AN ARRIVAL WITH NO HOLD.  When
+-- ORDER_GOTO_ARRIVE_BLOCKED_RING arrives an order from the ring, the order
+-- is over on that think: no hold, no park beside the square, no decoy hold,
+-- and goal selection takes over.  false = the hold (or decoy hold) runs as
+-- after any arrival (keel).
+M.ORDER_GOTO_BLOCKED_RELEASE = true   -- keel false
+-- 2026-10-15: A SLOW DRIVE IS PROGRESS.  The stuck tracker measures the
+-- distance driven toward the next path step since its window started, not
+-- one think's movement (never the 24 world units it asks for: full speed
+-- is about 16 a think), so a tank that needs more than 30 thinks to cross
+-- a square is not read as stuck and turned back to its own square by the
+-- lookahead collapse.  false = one think's movement (keel).
+M.STUCK_PROGRESS_ACCUM = true   -- keel false
 -- THE HOLD PHASE STILL FIGHTS.  While the hold runs the hard goto lock comes
 -- off and goal selection runs again, so attack_tank and kill_lgm can win --
 -- but the tank must not DRIVE anywhere: it was sent to that square.  These
@@ -5943,6 +5979,17 @@ M.PRESETS = {
     --   2026-10-14: a go-there order arrives from the one-square ring when
     --   a tank, a pill or a wall is on the square.  KEEL: no such check.
     ORDER_GOTO_ARRIVE_BLOCKED_RING = false,
+    --   2026-10-15: the fallback timer counts only thinks without progress,
+    --   an unreachable square is swapped for the nearest reachable one, and
+    --   the last square is driven at speed.  KEEL: none of the three.
+    ORDER_GOTO_FALLBACK_STALL     = false,
+    ORDER_GOTO_RETARGET_UNREACHABLE = false,
+    GOTO_FAST_ARRIVE              = false,
+    --   2026-10-15: a blocked square ends the order with no hold; the stuck
+    --   tracker counts the distance driven since its window started.  KEEL:
+    --   neither.
+    ORDER_GOTO_BLOCKED_RELEASE    = false,
+    STUCK_PROGRESS_ACCUM          = false,
     --   2026-10-04: the bid prices in a refuel stop and a fight.  KEEL: the
     --   bid is the travel cost alone.
     ORDER_BID_STOP_AWARE          = false,

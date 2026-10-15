@@ -358,6 +358,10 @@ _G.OBJECT_TANK    = 1
 _G.OBJECT_HOSTILE = 0x80
 local cpf = require("cpathfinder")
 cpf.smart_cost_dij_only = function() return nil end
+-- No route search has finished: a go-there order's reach check
+-- (ORDER_GOTO_RETARGET_UNREACHABLE) waits.  The retarget tests swap these.
+cpf.dijkstra_status  = function() return false, false end
+cpf.dijkstra_cost_at = function() return 1e30 end
 
 local function W()
   return {
@@ -6816,6 +6820,11 @@ do
     { "ORDER_GOTO_ARRIVE_TILES",          0,    1 },
     { "ORDER_GOTO_ARRIVE_FALLBACK_TICKS", 100,  0 },
     { "ORDER_GOTO_ARRIVE_BLOCKED_RING",   true, false },
+    { "ORDER_GOTO_FALLBACK_STALL",        true, false },
+    { "ORDER_GOTO_RETARGET_UNREACHABLE",  true, false },
+    { "GOTO_FAST_ARRIVE",                 true, false },
+    { "ORDER_GOTO_BLOCKED_RELEASE",       true, false },
+    { "STUCK_PROGRESS_ACCUM",             true, false },
     { "ORDER_BID_STOP_AWARE",             true, false },
     { "ORDER_BID_REFUEL_STOP_COST",       30,   0 },
     { "ORDER_BID_ENGAGED_COST",           30,   0 },
@@ -6876,31 +6885,32 @@ do
     table.insert(bb.inf.objects, { type = _G.OBJECT_TANK, idnum = pn,
       x = mx * 256 + 128, y = my * 256 + 128, info = 0x80 })
   end
+  local function ended(bb) return bb.st.orders.held == nil end
   local sv_gt, sv_tm = _G.get_terrain, _G.TERRAIN_MASK
   local TMAP = {}
   _G.TERRAIN_MASK = 0x0F
   _G.get_terrain = function(mx, my) return TMAP[my * 256 + mx] or C.T_GRASS end
   b = dbot(); tank_on(b, 7, 22, 24)
   arrive(b, 200, 23, 24)
-  check("ring + an enemy tank on the square: arrives at once", arrived(b), "no")
+  check("ring + an enemy tank on the square: arrives at once and the order is over", ended(b), "held")
   b = dbot(); tank_on(b, 2, 22, 24)
   arrive(b, 200, 23, 24)
-  check("ring + an ally tank on the square: arrives at once", arrived(b), "no")
+  check("ring + an ally tank on the square: arrives at once and the order is over", ended(b), "held")
   b = dbot(); tank_on(b, 1, 22, 24)
   arrive(b, 200, 23, 24)
   check("ring + an object with this bot's own number: not arrived", not arrived(b), "arrived")
   b = dbot(); b.w.pills[11] = { mx = 22, my = 24, owner = "friendly", health = 12 }
   arrive(b, 200, 23, 24)
-  check("ring + a pill on the square: arrives at once", arrived(b), "no")
+  check("ring + a pill on the square: arrives at once and the order is over", ended(b), "held")
   b = dbot(); b.w.pills[11] = { mx = 22, my = 24, owner = "friendly", health = 12, in_tank = true }
   arrive(b, 200, 23, 24)
   check("ring + a carried pill (no square): not arrived", not arrived(b), "arrived")
   TMAP[24 * 256 + 22] = C.T_BUILDING
   b = dbot(); arrive(b, 200, 23, 24)
-  check("ring + a wall on the square: arrives at once", arrived(b), "no")
+  check("ring + a wall on the square: arrives at once and the order is over", ended(b), "held")
   TMAP[24 * 256 + 22] = C.T_HALFBUILD
   b = dbot(); arrive(b, 200, 23, 24)
-  check("ring + a damaged wall on the square: arrives at once", arrived(b), "no")
+  check("ring + a damaged wall on the square: arrives at once and the order is over", ended(b), "held")
   TMAP[24 * 256 + 22] = nil
   b = dbot(); arrive(b, 200, 23, 24)
   check("ring + open grass: not arrived (timer only)", not arrived(b), "arrived")
@@ -6911,6 +6921,26 @@ do
   b = dbot(); tank_on(b, 7, 22, 24)
   arrive(b, 200, 24, 24)
   check("two squares off with a tank on the square: not arrived", not arrived(b), "arrived")
+  -- ORDER_GOTO_BLOCKED_RELEASE (2026-10-15, Andrew: "if it's blocked, just
+  -- say you're there and move on to the next goal").  A blocked arrival
+  -- ends the order on the same think: no hold, no "holding"/"decoying"
+  -- line, and the go-there travel goal is cleared.  Keel false: the
+  -- blocked arrival holds beside the square as before.
+  b = dbot(); tank_on(b, 7, 22, 24)
+  b.st.goal = { kind = "goto_tile", mx = 22, my = 24 }
+  arrive(b, 200, 23, 24)
+  check("blocked release: no hold is said",
+        not said(b, "^decoying") and not said(b, "^holding"),
+        table.concat(b.st.orders.say or {}, " | "))
+  check("blocked release: the go-there goal is cleared",
+        b.st.goal == nil or b.st.goal.kind ~= "goto_tile", tostring(b.st.goal and b.st.goal.kind))
+  C.ORDER_GOTO_BLOCKED_RELEASE = false
+  b = dbot(); tank_on(b, 7, 22, 24)
+  arrive(b, 200, 23, 24)
+  check("release knob off: a blocked arrival holds beside the square",
+        arrived(b) and b.st.orders.held.hold == true and said(b, "^decoying"),
+        table.concat(b.st.orders.say or {}, " | "))
+  C.ORDER_GOTO_BLOCKED_RELEASE = true
   C.ORDER_GOTO_ARRIVE_BLOCKED_RING = false
   b = dbot(); tank_on(b, 7, 22, 24)
   arrive(b, 200, 23, 24)
@@ -6920,6 +6950,103 @@ do
   check("knob off: the old fallback timer still arrives", arrived(b), "no")
   C.ORDER_GOTO_ARRIVE_BLOCKED_RING = true
   _G.get_terrain, _G.TERRAIN_MASK = sv_gt, sv_tm
+
+  do
+  -- ── 1c. THE FALLBACK COUNTS ONLY TICKS WITHOUT PROGRESS (2026-10-15) ───
+  -- The square is (22,24); its centre is x = 22*256+128.  The tank sits in
+  -- the ring on (23,24) at sub-square positions: wx is its world x.
+  print("orders.lua -- bot order bids: the fallback counts only ticks without progress")
+  local function at(bb, t, wx)
+    bb.inf.tankx, bb.inf.tanky = wx, 24 * 256 + 128
+    bb.st.orders.say = {}
+    bb.st.tick = t
+    ORD.update(bb.st, bb.w, bb.inf, t)
+  end
+  local FAR, MID, NEAR = 23 * 256 + 200, 23 * 256 + 128, 23 * 256 + 40
+  b = dbot()
+  at(b, 200, MID); at(b, 290, NEAR)
+  at(b, 300, NEAR)
+  check("closer at 290: the timer restarts, not arrived at 300", not arrived(b), "arrived")
+  at(b, 389, NEAR)
+  check("no progress since 290: not arrived at 389", not arrived(b), "arrived")
+  at(b, 390, NEAR)
+  check("no progress since 290: arrives at 390", arrived(b), "no")
+  b = dbot()
+  at(b, 200, MID); at(b, 250, FAR); at(b, 300, MID)
+  check("back and forth beside the square (no new closest): arrives at 300",
+        arrived(b), "no")
+  C.ORDER_GOTO_FALLBACK_STALL = false
+  b = dbot()
+  at(b, 200, MID); at(b, 290, NEAR); at(b, 300, NEAR)
+  check("knob off: the timer runs from the first think in the ring", arrived(b), "no")
+  C.ORDER_GOTO_FALLBACK_STALL = true
+
+  end
+  do
+  -- ── 1d. NO ROUTE TO THE SQUARE: THE NEAREST SQUARE THAT HAS ONE ─────────
+  -- Stub route search: slate 2 is a finished KIND_NORMAL slate started on
+  -- land at (10,10); COST holds the squares it reached.
+  print("orders.lua -- bot order bids: an unreachable square is swapped for the nearest reachable one")
+  local sv_st, sv_ca = cpf.dijkstra_status, cpf.dijkstra_cost_at
+  local COST, SRC, SB, DONE = {}, { 10, 10 }, 0, true
+  cpf.dijkstra_status = function(sl)
+    if sl ~= 2 then return false, false end
+    return false, DONE, cpf.KIND_NORMAL, 1, 1, 0, 0, SRC[1], SRC[2], SB, 1.0
+  end
+  cpf.dijkstra_cost_at = function(sl, x, y)
+    return (sl == 2 and COST[y * 256 + x]) or 1e30
+  end
+  local function reset(t)
+    COST, SRC, SB, DONE = {}, { 10, 10 }, 0, true
+    for k, v in pairs(t or {}) do COST[k] = v end
+  end
+  local function tgt(bb) local h = bb.st.orders.held return h.mx .. "," .. h.my end
+  -- (22,24) reached: nothing changes, and the check is done.
+  reset({ [24 * 256 + 22] = 40 })
+  b = dbot(); arrive(b, 200, 30, 30)
+  check("square reached: the order keeps (22,24)", tgt(b) == "22,24", tgt(b))
+  check("square reached: checked once", b.st.orders.held.reach_checked == true, "no")
+  -- (22,24) not reached; ring 1 has (21,24) cost 50 and (23,25) cost 30;
+  -- ring 2 has (20,24) cost 1.  The nearest ring wins, then the cheaper.
+  reset({ [24 * 256 + 21] = 50, [25 * 256 + 23] = 30, [24 * 256 + 20] = 1 })
+  b = dbot(); arrive(b, 200, 30, 30)
+  check("no route: the order moves to (23,25), nearest ring then cheapest",
+        tgt(b) == "23,25", tgt(b))
+  check("no route: the asked square is kept",
+        b.st.orders.held.asked_mx == 22 and b.st.orders.held.asked_my == 24, "?")
+  check("no route: the travel lock points at the new square",
+        b.st.goal.kind == "goto_tile" and b.st.goal.mx == 23 and b.st.goal.my == 25
+        and b.st.command_goal.mx == 23 and b.st.command_goal.my == 25,
+        tostring(b.st.goal.mx) .. "," .. tostring(b.st.goal.my))
+  COST[25 * 256 + 23] = nil
+  arrive(b, 210, 30, 30)
+  check("checked once: a later change in the search does not move it again",
+        tgt(b) == "23,25", tgt(b))
+  arrive(b, 220, 23, 25)
+  check("on the new square: arrived", b.st.orders.held.arrived ~= nil, "no")
+  -- The slate's own source square reads as unreached; it counts as reached.
+  reset(); SRC = { 22, 24 }
+  b = dbot(); arrive(b, 200, 30, 30)
+  check("the square is the search's source: kept", tgt(b) == "22,24", tgt(b))
+  -- No finished slate in this mode: wait, ask again on the next think.
+  reset({ [25 * 256 + 23] = 30 }); SB = 1
+  b = dbot(); arrive(b, 200, 30, 30)
+  check("slate started afloat, tank on land: not checked yet",
+        tgt(b) == "22,24" and not b.st.orders.held.reach_checked, tgt(b))
+  SB = 0; DONE = false
+  arrive(b, 210, 30, 30)
+  check("slate still running: not checked yet",
+        tgt(b) == "22,24" and not b.st.orders.held.reach_checked, tgt(b))
+  DONE = true
+  arrive(b, 220, 30, 30)
+  check("slate finished: the order moves", tgt(b) == "23,25", tgt(b))
+  C.ORDER_GOTO_RETARGET_UNREACHABLE = false
+  reset({ [25 * 256 + 23] = 30 })
+  b = dbot(); arrive(b, 200, 30, 30)
+  check("knob off: the order keeps its square", tgt(b) == "22,24", tgt(b))
+  C.ORDER_GOTO_RETARGET_UNREACHABLE = true
+  cpf.dijkstra_status, cpf.dijkstra_cost_at = sv_st, sv_ca
+  end
 
   -- ── 2. THE BID COUNTS A REFUEL STOP AND A FIGHT ─────────────────────────
   -- Me at (10,10).  Friendly base #4 at (50,50).  Target (20,70).  The cost
