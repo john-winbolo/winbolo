@@ -464,6 +464,52 @@ typedef struct {
                                  * (overrun-rate denominator) */
 } BotPoolStats;
 
+/* This process's own memory, in bytes, filled by serverSimReadProcessMemory.
+ * Each figure has a have* flag: a figure the platform cannot give, or whose
+ * read failed, is 0 with its flag false, and a display shows it as "n/a",
+ * never as 0. Virtual is n/a on macOS on purpose (every process there reads
+ * about 400 GB). POD; no allocations or ownership. */
+typedef struct {
+    uint64_t rss;         /* resident set / working set */
+    uint64_t peakRss;     /* high-water mark of rss */
+    uint64_t priv;        /* private bytes (Windows) / VmData (Linux) /
+                           * phys_footprint (macOS) */
+    uint64_t virt;        /* virtual address space in use (Windows, Linux) */
+    bool     haveRss;
+    bool     havePeakRss;
+    bool     havePriv;
+    bool     haveVirt;
+} ServerSimProcessMemory;
+
+/* Items in a sim's world lists: the figures the dedicated server's memory
+ * report prints. Each list grows while things happen and shrinks as they
+ * expire, so the counts should stay small in a long game. POD. */
+typedef struct {
+    uint32_t shells;
+    uint32_t explosions;
+    uint32_t tankExplosions;
+    uint32_t minesExplosions;
+    uint32_t floodFill;
+    uint32_t building;
+    uint32_t rubble;
+    uint32_t swamp;
+    uint32_t grass;
+} ServerSimListCounts;
+
+/* Memory snapshot filled by serverSimGetMemoryInfo. POD; no allocations
+ * or ownership. */
+typedef struct {
+    ServerSimProcessMemory process;
+    int      botCount;              /* bots with a running brain */
+    uint64_t luaTotalBytes;         /* sum of botLuaBytes over the valid slots */
+    uint64_t botLuaBytes[MAX_TANKS]; /* the slot's Lua heap (lua_gc counters) */
+    bool     botLuaValid[MAX_TANKS]; /* false where the slot has no running
+                                      * brain; botLuaBytes is 0 there */
+    ServerSimListCounts serverLists; /* the server sim's own world lists */
+    int      botListCount;          /* bots whose ClientSim lists were summed */
+    ServerSimListCounts botLists;   /* those bots' lists, added together */
+} ServerSimMemoryInfo;
+
 /* Max candidate count for BrainGoalInfo. */
 #define BRAIN_GOAL_MAX_CANDIDATES 32
 
@@ -586,6 +632,23 @@ void   serverSimSetPingMute(ServerSim *sim, BYTE muterSlot, BYTE targetPlayer,
 double serverSimGetBotLastThinkMs(ServerSim *sim, BYTE playerNum);
 bool   serverSimGetBotInfo(ServerSim *sim, BYTE playerNum, BotInfo *out);
 void   serverSimGetBotPoolStats(ServerSim *sim, BotPoolStats *out);
+
+/* === Memory figures === */
+/* Read this process's memory figures. Needs no sim: the desktop client
+ * calls it for a game joined on a remote server. Returns false when nothing
+ * could be read, in which case every have* flag is false. */
+bool   serverSimReadProcessMemory(ServerSimProcessMemory *out);
+
+/* Fill out with the process figures, each running bot's Lua heap and the
+ * world-list counts of the sim and of the bots' ClientSims: the figures of
+ * the dedicated server's memory report, without the deep walk. Takes the
+ * server mutex inside, so it is safe to call from the render thread while
+ * the hosted server ticks on another thread: the tick holds the same mutex
+ * for its whole length, and the bot think workers finish inside it, so no
+ * brain is running while this reads its Lua state. Reads only; changes no
+ * sim state. A NULL sim fills the process figures and leaves the rest 0. */
+void   serverSimGetMemoryInfo(ServerSim *sim, ServerSimMemoryInfo *out);
+
 bool   serverSimToggleAllBrainDebugMode(ServerSim *sim);
 int    serverSimGetActiveBotCount(ServerSim *sim);
 

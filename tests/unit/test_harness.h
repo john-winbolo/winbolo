@@ -2836,6 +2836,11 @@ int run_console_mem_report(void);
 int run_memreport_flags(void);
 int run_memreport_process_na(void);
 int run_memreport_deep_walk_cap(void);
+/* The T1 memory accessors on server_sim.h the client's System Info panel
+ * reads (test_memory_info.c). */
+int run_memory_info_hosted_bots(void);
+int run_memory_info_no_bots(void);
+int run_memory_info_process_figures(void);
 int run_console_info_and_status(void);
 int run_console_savemap_path(void);
 int run_console_unknown_command_is_inert(void);

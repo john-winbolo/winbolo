@@ -62,7 +62,8 @@ void serverMemReportPoll(struct ServerSim *sim);
 /* The process's own memory, in bytes. Each figure has a have* flag; a
  * figure the platform cannot give, or whose read failed, is 0 with its
  * flag false, and the report prints it as "n/a". Returns false when
- * nothing could be read. */
+ * nothing could be read. The figures come from serverSimReadProcessMemory
+ * on server_sim.h, which holds the platform code. */
 typedef struct {
   uint64_t rss;      /* resident set / working set */
   uint64_t peakRss;  /* high-water mark of rss */

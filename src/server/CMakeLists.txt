@@ -39,7 +39,10 @@
 #                        tests can link it without servermain.c's main().
 #                        server_memreport.c (the memory report that
 #                        -memreport and the console's mem / memdeep
-#                        write) rides along for the same reason.
+#                        write) rides along for the same reason; the
+#                        process reader it uses is sim/server_sim_memory.c
+#                        in server_sim_static, which the desktop client's
+#                        System Info panel reads through server_sim.h.
 #                        PUBLIC-links server_sim_static so consumers don't
 #                        have to list both. Linked by the four binaries
 #                        that run the real dedicated-server lifecycle:
@@ -99,9 +102,16 @@ add_library(server_sim_static STATIC
     sim/server_sim_control.c
     sim/server_sim_tick.c
     sim/server_sim_scenario.c
+    sim/server_sim_memory.c
 )
 
 bolo_apply_include_rules(server_sim_static sim_owner)
+
+# sim/server_sim_memory.c takes the server mutex, whose header threads.h
+# sits in this directory beside server_sim.c rather than under src/bolo/.
+# This directory on the path lets the sim/ files name it without a
+# relative include.
+target_include_directories(server_sim_static PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 set_target_properties(server_sim_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
