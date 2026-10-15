@@ -8692,5 +8692,18 @@ do
   C.ORDER_HINT_HOLD_EXPIRY_FIX = saved
 end
 
+-- ─────────────────────────────────────────────────────────────────────────
+-- PILL_DANGER_MULT: a script's multiplier on every pill's danger stamp
+-- (Pillbox Tag sets 0.01 on every bot).
+-- ─────────────────────────────────────────────────────────────────────────
+print("\n== PILL_DANGER_MULT ==")
+do
+  check("default: PILL_DANGER_MULT is 1.0", C.PILL_DANGER_MULT == 1.0, tostring(C.PILL_DANGER_MULT))
+  check("a number, so cfg=PILL_DANGER_MULT=0.01 is taken",
+        type(C.PILL_DANGER_MULT) == "number", type(C.PILL_DANGER_MULT))
+  check("keel preset carries PILL_DANGER_MULT = 1.0",
+        C.PRESETS.keel.PILL_DANGER_MULT == 1.0, tostring(C.PRESETS.keel.PILL_DANGER_MULT))
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

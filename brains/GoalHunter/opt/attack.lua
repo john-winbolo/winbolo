@@ -1393,8 +1393,10 @@ local function score_standoff(world, cx, cy, pill, info, orbit_radius)
       local d = U.mdist(cx, cy, pm.mx, pm.my)
       if d <= C.PILL_RANGE_MAP then
         local proximity = 1.0 - d / (C.PILL_RANGE_MAP + 1)
+        -- PILL_DANGER_MULT scales this as it scales the pill grid.
         crossfire = crossfire + (C.PILL_DANGER_BASE
                     + C.PILL_DANGER_ANGER * (pm.anger or 0)) * proximity * 8
+                    * (C.PILL_DANGER_MULT or 1.0)
       end
     end
   end

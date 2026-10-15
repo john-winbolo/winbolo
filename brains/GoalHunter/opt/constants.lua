@@ -149,6 +149,14 @@ M.TERRAIN_SPEED = {
 -- Pill danger zone tuning
 M.PILL_DANGER_BASE  = 8    -- cost penalty from a calm hostile pill at point-blank
 M.PILL_DANGER_ANGER = 200  -- additional penalty when fully angry (anger=1.0, quadratic)
+-- PILL DANGER MULTIPLIER (2026-10-15): every pill's danger stamp (the
+-- pill grid the pathfinder, the goal costs and the attack spot safety read)
+-- is multiplied by this, and so is the crossfire term attack.lua prices an
+-- attack spot with.  A script sets it with cfg=PILL_DANGER_MULT=<n>; a
+-- change on a running brain rebuilds the pill grid on the next think.
+-- Pillbox Tag sets 0.01 on every bot, so pills count almost nothing.
+-- 1.0 = no change (an ordinary game).
+M.PILL_DANGER_MULT  = 1.0  -- keel 1.0
 -- Radial falloff at the edge of PILL_RANGE_MAP. 0.5 = 50% drop, so the
 -- rim reads as 50% of point-blank danger. The whole disk is in the
 -- pill's actual fire range; the earlier 1-d/(R+1) curve dropped to
@@ -5940,6 +5948,9 @@ M.PRESETS = {
     --   2026-10-14: a script can make attack_tank, kill_lgm and take_cover
     --   dearer with cfg=FIGHT_COST_MULT. KEEL had no such multiplier.
     FIGHT_COST_MULT_ENABLED       = false,
+    --   2026-10-15: a script can scale every pill's danger stamp with
+    --   cfg=PILL_DANGER_MULT. KEEL had no such multiplier (1.0).
+    PILL_DANGER_MULT              = 1.0,
     --   2026-09-17: a bot attacking a pill with a HUMAN team-mate within 7
     --   tiles now skips the wall shield and goes straight in (the lobby docs
     --   promise it). KEEL never looked at where the humans were: 0 = off, so

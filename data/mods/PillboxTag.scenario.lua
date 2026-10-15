@@ -231,6 +231,12 @@ walled.DEAD_HOLDER_KEEPS_BUILT = true  -- keel false (old rule: the prize
                                 -- over 0) stays the holder, and the prize
                                 -- keeps its armour; the hunters must shoot it
                                 -- down (see on_tank_killed)
+walled.PILL_DANGER_MULT = 0.01 -- keel 1.0. What every bot, in every part,
+                                -- counts a pillbox's danger at: the brain's
+                                -- PILL_DANGER_MULT (see SHARED). 0.01: pills
+                                -- count almost nothing, so a bot drives and
+                                -- picks its goals as if they were nearly
+                                -- harmless. 1.0: the brain's ordinary value.
 local LAST_SHOT_ARMOUR    = 1   -- a fort shot down to this armour is taken
                                 -- back by its guard before a hunter kills it
 local RUN_FROM_WITHIN     = 11  -- hunters this close are what a bot holder
@@ -1115,6 +1121,7 @@ local DEFAULTS = {
   CAPTURE_BASE_EXTRA_FREE_DIST         = 0,
   ATTACK_PILL_WALL_FALLBACK            = false,
   FIGHT_COST_MULT                      = 1,
+  PILL_DANGER_MULT                     = 1,
 }
 
 -- The flag words a brain keeps until it is told the opposite. GoalHunter puts
@@ -1153,6 +1160,7 @@ local SHARED = {
   REPOSITION_VOTE_FAIL_COOLDOWN        = 0,
   REPOSITION_DISABLE_WITH_HUMAN_ALLIES = false,
   CAPTURE_PILL_BASE_COST               = 0,
+  PILL_DANGER_MULT                     = walled.PILL_DANGER_MULT,
 }
 
 -- What a hunter (and a manhunt and a mate) adds to the cost of driving onto
