@@ -26,6 +26,7 @@
 #include "input_packet.h"
 #include "client_frontend_tick.h"
 #include "client_frontend_render.h"
+#include "client_frontend_tutorial.h"
 #include "gui_message.h"
 #include "../../common/wb_log.h"
 #include "server_sim.h"
@@ -127,11 +128,18 @@ time_t ticks = 0;
 static double gameTickAccum = 0.0;
 static Uint64 lastFrameTime = 0;
 
+/* Set while a tutorial message is up in a solo game, as on the desktop: the
+   game ticks stop, the hosted server is paused and the sound is muted, and
+   the mute state found on the way in is put back on the way out. */
+static bool s_tutorialPaused = FALSE;
+static bool s_tutorialPrevMuted = FALSE;
+
 /* -------------------------------------------------------
  * Forward declarations
  * ------------------------------------------------------- */
 extern void sdl3MessageHandler(const char *message, const char *title);
 static void windowRunGameTick(ClientSim *cs);
+void windowTutorialPause(ClientSim *cs, bool active);
 
 /* -------------------------------------------------------
  * SDL message handler
@@ -471,6 +479,13 @@ ios_game_start:
             gameTickAccum += elapsed;
 
             while (gameTickAccum >= GAME_TICK_LENGTH) {
+                /* A tutorial message is up, or the tick just run queued one:
+                   stop here and drop the owed time, so the interval the
+                   message is up is not fast-forwarded afterwards. */
+                if (s_tutorialPaused || clientFrontTutorialStepShowing()) {
+                    gameTickAccum = 0.0;
+                    break;
+                }
                 gameTickAccum -= GAME_TICK_LENGTH;
                 windowRunGameTick(cs);
             }
@@ -508,6 +523,11 @@ ios_game_start:
             SDL_Renderer *ren = sdl3DrawGetRenderer();
             if (ren) SDL_RenderPresent(ren);
         }
+        /* Tutorial: count the presented frame (the intro waits for a few)
+           and show the respawn message the server may have flagged. Both do
+           nothing outside the tutorial. */
+        frontEndTutorialNotePresentedFrame();
+        clientFrontTutorialPollRespawn();
 
         /* Cap to 60 FPS */
         {
@@ -527,6 +547,9 @@ ios_game_start:
 
     sdl3ImguiCleanup();
     gameFrontEnd(&keys, TRUE, winboloQuit);
+    /* A step left showing, or its pause, would stop the next game's ticks. */
+    frontEndTutorialReset();
+    windowTutorialPause(NULL, false);
 
     if (!winboloQuit) {
         WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Returning to menu (windowNewGame)");
@@ -721,9 +744,10 @@ void windowNewGame(void) {
 }
 void windowQuit(void) {}
 
-void windowShowGameInfo(windowShowRequest req) { (void)req; }
-void windowShowSysInfo(windowShowRequest req) { (void)req; }
-void windowShowNetInfo(windowShowRequest req) { (void)req; }
+/* The Session Info panels, drawn in-window as the web's are. */
+void windowShowGameInfo(windowShowRequest req) { sdl3ImguiShowGameInfo(req == wsrOpen); }
+void windowShowSysInfo(windowShowRequest req) { sdl3ImguiShowSysInfo(req == wsrOpen); }
+void windowShowNetInfo(windowShowRequest req) { sdl3ImguiShowNetInfo(req == wsrOpen); }
 void windowShowSetPlayerName(windowShowRequest req) { (void)req; }
 void windowShowSendMessages(windowShowRequest req) { (void)req; }
 void windowShowSetKeys(windowShowRequest req) { (void)req; }
@@ -749,13 +773,35 @@ void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
 void windowStartTutorial(void) {}
 void windowAllowPlayerNameChange(bool allow) { (void)allow; }
 
-/* Pause hooks driven from sdl3imgui.cpp. All three exist for desktop
-   situations iOS does not have: a Steam Deck pause menu, a lost controller,
-   and the tutorial overlay's solo freeze. The app already stops ticking when
-   it is backgrounded, which is the only pause a phone has. */
+/* Pause hooks driven from sdl3imgui.cpp. The first two exist for desktop
+   situations iOS does not have: a Steam Deck pause menu and a lost
+   controller. The app already stops ticking when it is backgrounded. */
 void windowControllerLostPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
 void windowDeckPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
-void windowTutorialPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
+
+/* Tutorial message overlay opened or closed, driven by its open/close edge in
+   the render path. Solo games only, as on the desktop: the main loop stops
+   ticking, the hosted server is paused and the sound muted while a message is
+   up. Closing drops the owed tick time, so a held touch or the tap that
+   dismissed the message does not run on into the game. */
+void windowTutorialPause(ClientSim *cs, bool active) {
+    if (active) {
+        bool solo = clientFrontTutorialStepShowing() ||
+                    (cs != NULL && clientSimIsSinglePlayer(cs));
+        if (!solo || s_tutorialPaused) return;
+        s_tutorialPaused = TRUE;
+        gameFrontSetServerPaused(TRUE);
+        s_tutorialPrevMuted = soundIsMuted();
+        soundSetMuted(TRUE);
+    } else {
+        if (!s_tutorialPaused) return;
+        s_tutorialPaused = FALSE;
+        gameFrontSetServerPaused(FALSE);
+        gameTickAccum = 0.0;
+        lastFrameTime = SDL_GetTicks();
+        soundSetMuted(s_tutorialPrevMuted);
+    }
+}
 
 /* -------------------------------------------------------
  * Frontend callbacks (matching Android android_frontend.c)
@@ -956,12 +1002,9 @@ void frontEndShowAllianceRequest(char *playerName, BYTE playerNum) {
     sdl3ImguiShowAllianceRequest(playerName, playerNum);
 }
 
-bool frontEndTutorial(BYTE pos) {
-    (void)pos;
-    return FALSE;
-}
-
-void frontEndTutorialReset(void) { }
+/* frontEndTutorial and frontEndTutorialReset come from
+   client_frontend_common.c, the tutorial step sequencer every platform
+   calls. */
 
 /* -------------------------------------------------------
  * Misc required symbols

@@ -56,6 +56,7 @@
 #include "client_render.h"
 #include "client_frontend_tick.h"
 #include "client_frontend_render.h"
+#include "client_frontend_tutorial.h"
 #include "client_sim.h"
 #include "frontend.h"
 #include "tutorial.h"
@@ -274,9 +275,7 @@ static ClientSim *s_activeUiCs = NULL;
 /* Forward declarations */
 static Uint32 SDLCALL windowGameTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
 static Uint32 SDLCALL windowFrameRateTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
-void frontEndTutorialNotePresentedFrame(void);
 static void windowRunGameTick(ClientSim *cs);
-static void tutorialRespawnPoll(void);
 static void windowUpdateServerPause(ClientSim *cs);
 static void windowSteamOverlayActivated(ClientSim *cs, bool active);
 static void windowSaveDialogPause(ClientSim *cs, bool active);
@@ -856,7 +855,7 @@ int main(int argc, char *argv[]) {
           if (ren) SDL_RenderPresent(ren);
         }
         frontEndTutorialNotePresentedFrame();
-        tutorialRespawnPoll();
+        clientFrontTutorialPollRespawn();
         /* Pick up a native save-map dialog the player has answered. The
            dialog is asynchronous precisely so this loop — which is what
            pumps the client transport — keeps running while it is open. */
@@ -913,6 +912,7 @@ int main(int argc, char *argv[]) {
     sdl3ImguiCleanup();
     gameFrontEnd(&keys, TRUE, winboloQuit);
     doingTutorial = FALSE;
+    frontEndTutorialReset();
 
     if (winboloQuit == FALSE) {
       if (gameFrontStart(cmdLine, &keys, TRUE, &cs) == FALSE) {
@@ -1041,7 +1041,7 @@ static void windowRunGameTick(ClientSim *cs) {
          Without this break the loop spins forever: the old blocking dialog
          cleared doingTutorial before returning, but the in-loop overlay leaves
          it set across frames, and oldTick only advances in the branch below. */
-      if (doingTutorial == TRUE) break;
+      if (doingTutorial == TRUE || clientFrontTutorialStepShowing()) break;
       /* One keys/game/lobby half-step lives in the shared client-frontend tick
        * core (both desktop and web call it); the brain and per-second stat
        * rollover below stay here in the driver. Bot brains tick on the server
@@ -1144,7 +1144,8 @@ bool windowIsQuitting(void) {
    them.  Multiplayer (a joined client or a listen-server host) is never solo
    and must keep running. */
 static bool windowIsSoloSession(ClientSim *cs) {
-  return doingTutorial || (cs != NULL && clientSimIsSinglePlayer(cs));
+  return doingTutorial || clientFrontTutorialStepShowing() ||
+         (cs != NULL && clientSimIsSinglePlayer(cs));
 }
 
 /* Recompute the hosted-server pause gate.  The server tick only freezes for
@@ -2433,154 +2434,9 @@ void frontEndShowGunsight(ClientSim *cs, bool isShown) {
   clientSimSetGunsight(cs, showGunsight);
 }
 
-/* -------------------------------------------------------
- * frontEndTutorial — tutorial position-triggered messages
- * Uses imguiMessageBoxEx instead of Win32 MessageBoxA.
- * ------------------------------------------------------- */
-/* Step index and render-frame counter are file-static so
- * frontEndTutorialReset() / frontEndTutorialNotePresentedFrame() can
- * touch them. The frame counter gates the intro: the tutorial starts
- * on tick 1, but the first complete frame hasn't been rendered yet, so
- * imguiMessageBoxEx's captureBackbuffer would grab a grey buffer. We
- * require a few presented frames before firing the intro; by then the
- * game screen is on the backbuffer and the modal dims over it. */
-#define TUTORIAL_INTRO_MIN_FRAMES 3
-static int tutorialStepIdx = 0;
-static int tutorialFramesPresented = 0;
-static bool respawn1Shown = false;
-
-/* humanSim lives in gamefront.c; we need it so the tutorial can clear
- * sim->isTutorial on both sims when the final dialog closes, letting
- * the player drive around freely afterwards. */
-extern ClientSim *humanSim;
-
-void frontEndTutorialReset(void) {
-  tutorialStepIdx = 0;
-  tutorialFramesPresented = 0;
-  respawn1Shown = false;
-}
-
-/* Polled once per frame on the main thread (client mutex free on entry).
-   Shows the start-1 respawn message once per tutorial run. The flag is set
-   by the server thread in tankDeath; we take-and-clear it under the mutex,
-   then hand the message to the in-loop overlay, which freezes the sim
-   (windowTutorialPause) while it is up — no direct serverSimSetPaused. */
-static void tutorialRespawnPoll(void) {
-  if (isTutorial != TRUE || respawn1Shown) return;
-  if (tutorialOverlayIsOpen()) return;   /* don't stack on a step message */
-  ServerSim *srv = gameFrontGetServerSim();
-  if (!srv) return;
-  clientMutexWaitFor();
-  bool fire = serverSimTakeTutorialRespawn1(srv);
-  clientMutexRelease();
-  if (!fire) return;
-  respawn1Shown = true;
-  {
-    uint16_t ids[1];
-    ids[0] = STR_TUTORIAL_RESPAWN1;
-    tutorialOverlayShow(ids, 1, NULL);
-  }
-}
-
-/* Called from the main loop immediately after SDL_RenderPresent so we
- * can defer the intro until a real game frame is on screen. */
-void frontEndTutorialNotePresentedFrame(void) {
-  if (tutorialFramesPresented < TUTORIAL_INTRO_MIN_FRAMES) {
-    tutorialFramesPresented++;
-  }
-}
-
-/* Runs from the render path (tutorialOverlayRender) when the player dismisses
-   the last message of the current tutorial step.  Advances the step sequencer
-   and, on the final step, leaves tutorial mode.  The overlay's open/close edge
-   has already lifted the solo freeze (windowTutorialPause) by the time this
-   runs, and the client mutex is free, so sim mutations take it here. */
-static void tutorialStepComplete(void) {
-  bool finalStep = (tutorialStepIdx == tutorialStepCount - 1);
-
-  /* Final step: exit tutorial mode so the player can keep driving.  We clear
-   * the global client flag plus both sims' isTutorial so frontEndTutorial()
-   * no-ops on future ticks and the server stops auto-halting the tank at old
-   * trigger rows.  The game timer keeps running — the old implementation
-   * removed it, locking the player out of movement.  Also persist completion
-   * so the welcome menu stops offering it (re-enable from Settings). */
-  if (finalStep) {
-    isTutorial = FALSE;
-    clientMutexWaitFor();
-    if (humanSim) clientSimSetTutorial(humanSim, false);
-    {
-      ServerSim *srv = gameFrontGetServerSim();
-      if (srv) serverSimSetTutorial(srv, false);
-    }
-    clientMutexRelease();
-    gameFrontSetShowTutorialButton(false);
-  }
-
-  doingTutorial = FALSE;
-  tutorialStepIdx++;
-
-  /* Once the player passes the boat-building step (the tutorialSteps row
-     with pos == 66), respawn at start 1 (the far bank) instead of start 0
-     (out at sea). Found by scanning for the row, not a fixed index, so it
-     survives step-table edits. */
-  {
-    int boatStep = -1;
-    int s;
-    for (s = 0; s < tutorialStepCount; s++) {
-      if (tutorialSteps[s].pos == 66) { boatStep = s; break; }
-    }
-    clientMutexWaitFor();
-    {
-      ServerSim *srv = gameFrontGetServerSim();
-      if (srv && boatStep >= 0) {
-        serverSimSetTutorialStartIdx(srv, (tutorialStepIdx > boatStep) ? 1 : 0);
-      }
-    }
-    clientMutexRelease();
-  }
-}
-
-bool frontEndTutorial(BYTE pos) {
-  int i;
-  int count;
-
-  if (isTutorial != TRUE) {
-    tutorialStepIdx = 0;    /* Reset for the next tutorial run. */
-    return FALSE;
-  }
-  if (tutorialStepIdx >= tutorialStepCount) return FALSE;
-
-  /* A message is already up (or pending this frame): hold the tank but don't
-     re-trigger.  The overlay engages the solo freeze a frame after it opens,
-     after which the game tick stops running entirely; this guards that gap. */
-  if (tutorialOverlayIsOpen()) return TRUE;
-
-  {
-    BYTE stepPos = tutorialSteps[tutorialStepIdx].pos;
-    if (stepPos != TUTORIAL_POS_ANY && stepPos != pos) return FALSE;
-  }
-
-  /* Intro step only: defer until the game has rendered a frame, so the
-   * overlay opens over the map rather than a grey backbuffer. */
-  if (tutorialSteps[tutorialStepIdx].pos == TUTORIAL_POS_ANY &&
-      tutorialFramesPresented < TUTORIAL_INTRO_MIN_FRAMES) {
-    return FALSE;
-  }
-
-  doingTutorial = TRUE;
-  count = 0;
-  for (i = 0; i < TUTORIAL_MAX_MSGS; i++) {
-    if (tutorialSteps[tutorialStepIdx].msgs[i] == 0) break;
-    count++;
-  }
-  /* Hand the step's messages to the in-loop overlay.  Presentation, the solo
-     freeze, and the step-complete bookkeeping (tutorialStepComplete) all run
-     from the render path — this only enqueues, so it is safe to call under the
-     client mutex held by the game tick without blocking the server thread. */
-  tutorialOverlayShow(tutorialSteps[tutorialStepIdx].msgs, count,
-                      tutorialStepComplete);
-  return TRUE;
-}
+/* frontEndTutorial, frontEndTutorialReset and the rest of the tutorial step
+   sequencer come from client_frontend_common.c, the one body the desktop, web
+   and iOS drivers call; see "Platform variants" in docs/ARCHITECTURE.md. */
 
 /* -------------------------------------------------------
  * winboloCC — coin check (Win32-only anti-cheat).

@@ -1613,8 +1613,8 @@ static int      s_sysHistoryCount  = 0;
 static uint32_t s_sysLastSampleTick = 0;
 
 /* The Memory block's figures. Read every SYS_MEM_PERIOD_MS while the panel
- * is open and drawn from this cache between reads. Desktop only: the web
- * and mobile builds leave the block out. */
+ * is open and drawn from this cache between reads. The desktop and iOS show
+ * it; the web and Android builds leave the block out. */
 #define SYS_MEM_PERIOD_MS 2000
 static ServerSimMemoryInfo s_sysMem;
 static bool     s_sysMemValid    = false;  /* s_sysMem holds a read */
@@ -1633,14 +1633,13 @@ static void sysInfoGraphReset(void) {
     s_sysMemLastTick = 0;
 }
 
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && \
-    !(defined(__APPLE__) && TARGET_OS_IOS)
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__)
 /* Re-read the figures when the last read is older than the period, or when
  * the game changed between hosted and joined since it. The accessor takes
  * the server mutex itself, so the hosted server's tick on the timer thread
  * is not running while it reads. */
 static void sysInfoMemorySample(ServerSim *spSim) {
-    uint32_t now = SDL_GetTicks();
+    uint32_t now = (uint32_t)SDL_GetTicks();
     bool hosting = (spSim != NULL);
     if (s_sysMemValid && hosting == s_sysMemHosting &&
         now - s_sysMemLastTick < SYS_MEM_PERIOD_MS) return;
@@ -1749,8 +1748,7 @@ static void renderSysInfoContent(void) {
      * local listen-server); NULL for a game joined on a remote server. */
     ServerSim *spSim = gameFrontGetServerSim();
 
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && \
-    !(defined(__APPLE__) && TARGET_OS_IOS)
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__)
     /* Memory sits above the server telemetry because it is the smaller
      * block. */
     renderSysInfoMemory(spSim);
@@ -1876,12 +1874,39 @@ static void renderSysInfoContent(void) {
     }
 }
 
+/* Size and place one of the in-window Session Info panels. On iOS the panel
+ * opens centred and no bigger than nine tenths of the screen each way, so it
+ * fits a phone held in landscape and scrolls inside; elsewhere it opens at
+ * the given size on first use and is left where the player puts it. */
+static void infoPanelSizeNext(float w, float h) {
+#if defined(__APPLE__) && TARGET_OS_IOS
+    if (uiModeIsTablet()) {
+        ImGuiViewport *vp = ImGui::GetMainViewport();
+        float maxW = vp->Size.x * 0.9f;
+        float maxH = vp->Size.y * 0.9f;
+        float minW = 280 * s_uiScale;
+        float minH = 200 * s_uiScale;
+        if (w > maxW) w = maxW;
+        if (h > maxH) h = maxH;
+        if (minW > maxW) minW = maxW;
+        if (minH > maxH) minH = maxH;
+        ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f,
+                                       vp->Pos.y + vp->Size.y * 0.5f),
+                                ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Appearing);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(minW, minH), ImVec2(maxW, maxH));
+        return;
+    }
+#endif
+    ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
+                                        ImVec2(FLT_MAX, FLT_MAX));
+}
+
 static void renderSysInfoPanel(void) {
     if (!s_showSysInfo || s_popSysInfo.open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(440 * s_uiScale, 600 * s_uiScale), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
-                                        ImVec2(FLT_MAX, FLT_MAX));
+    infoPanelSizeNext(440 * s_uiScale, 600 * s_uiScale);
     char title[128];
     snprintf(title, sizeof(title), "%s###sysinfo", langGetText(STR_DLGSYSINFO_TITLE));
     if (!ImGui::Begin(title, &s_showSysInfo)) {
@@ -2107,9 +2132,7 @@ static void renderNetInfoContent(ClientSim *cs) {
 static void renderNetInfoPanel(ClientSim *cs) {
     if (!s_showNetInfo || s_popNetInfo.open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(360 * s_uiScale, 420 * s_uiScale), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
-                                        ImVec2(FLT_MAX, FLT_MAX));
+    infoPanelSizeNext(360 * s_uiScale, 420 * s_uiScale);
     char title[128];
     snprintf(title, sizeof(title), "%s###netinfo", langGetText(STR_DLGNETINFO_TITLE));
     if (!ImGui::Begin(title, &s_showNetInfo)) {
@@ -2226,9 +2249,7 @@ static void renderGameInfoContent(ClientSim *cs) {
 static void renderGameInfoPanel(ClientSim *cs) {
     if (!s_showGameInfo || s_popGameInfo.open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(320 * s_uiScale, 200 * s_uiScale), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
-                                        ImVec2(FLT_MAX, FLT_MAX));
+    infoPanelSizeNext(320 * s_uiScale, 200 * s_uiScale);
     char title[128];
     snprintf(title, sizeof(title), "%s###gameinfo", langGetText(STR_DLGGAMEINFO_TITLE));
     if (!ImGui::Begin(title, &s_showGameInfo)) {
@@ -6728,9 +6749,17 @@ static void renderSettingsPanel(ClientSim *cs) {
 
             /* ---- Info ---- */
             ImGui::Separator();
-            if (ImGui::Selectable(langGetText(STR_DLGGAMEINFO_TITLE), s_showGameInfo)) s_showGameInfo = !s_showGameInfo;
-            if (ImGui::Selectable(langGetText(STR_DLGSYSINFO_TITLE),  s_showSysInfo))  { if (!s_showSysInfo) sysInfoGraphReset(); s_showSysInfo = !s_showSysInfo; }
-            if (ImGui::Selectable(langGetText(STR_DLGNETINFO_TITLE),  s_showNetInfo))  { if (!s_showNetInfo) pingGraphReset();  s_showNetInfo = !s_showNetInfo; }
+            bool infoOpened = false;
+            if (ImGui::Selectable(langGetText(STR_DLGGAMEINFO_TITLE), s_showGameInfo)) { s_showGameInfo = !s_showGameInfo; infoOpened = s_showGameInfo; }
+            if (ImGui::Selectable(langGetText(STR_DLGSYSINFO_TITLE),  s_showSysInfo))  { if (!s_showSysInfo) sysInfoGraphReset(); s_showSysInfo = !s_showSysInfo; infoOpened = s_showSysInfo; }
+            if (ImGui::Selectable(langGetText(STR_DLGNETINFO_TITLE),  s_showNetInfo))  { if (!s_showNetInfo) pingGraphReset();  s_showNetInfo = !s_showNetInfo; infoOpened = s_showNetInfo; }
+#if defined(__APPLE__) && TARGET_OS_IOS
+            /* A phone has no room for Settings and a panel side by side, so
+               opening a panel puts Settings away. */
+            if (infoOpened && uiModeIsTablet()) s_showSettings = false;
+#else
+            (void)infoOpened;
+#endif
 
             /* ---- Brains ---- */
             if (clientSimGetAiType(cs) != aiNone) {
@@ -8991,6 +9020,21 @@ static void drainInGameNameReject(ClientSim *cs) {
     clientSimClearLobbyLastReject(cs);
 }
 
+/* Tutorial message overlay — same in-loop pattern as the pause menu, so the
+   input gate suspends play and the solo-pause path freezes the sim while a
+   message is up. Edge-detect open/close to toggle the freeze exactly once
+   each way. Called from both the desktop and the tablet branch of the frame,
+   so the one edge state serves both. */
+static void renderTutorialOverlay(ClientSim *cs) {
+    static bool s_lastTutorialPause = false;
+    tutorialOverlayRender(cs);
+    bool nowTutorialPause = tutorialOverlayIsOpen();
+    if (nowTutorialPause != s_lastTutorialPause) {
+        windowTutorialPause(cs, nowTutorialPause);
+        s_lastTutorialPause = nowTutorialPause;
+    }
+}
+
 void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (!s_window || !s_renderer) return;
 
@@ -9328,6 +9372,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 
     if (uiModeIsTablet()) {
         sdl3ImguiTabletOverlay(cs);
+        /* The tutorial runs in the tablet layout too (iOS); its messages
+           carry touch wording there (tutorial_text.c). */
+        renderTutorialOverlay(cs);
     } else {
 #ifndef __APPLE__
         /* Show the menu bar only when the player's last-used device is the
@@ -9404,19 +9451,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                 s_lastDeckPause = nowDeckPause;
             }
         }
-        /* Tutorial message overlay — same in-loop pattern as the pause
-           menu, so the input gate suspends play and the solo-pause path
-           freezes the sim while a message is up.  Edge-detect open/close
-           to toggle the freeze exactly once each way. */
-        tutorialOverlayRender(cs);
-        {
-            static bool s_lastTutorialPause = false;
-            bool nowTutorialPause = tutorialOverlayIsOpen();
-            if (nowTutorialPause != s_lastTutorialPause) {
-                windowTutorialPause(cs, nowTutorialPause);
-                s_lastTutorialPause = nowTutorialPause;
-            }
-        }
+        renderTutorialOverlay(cs);
         quickChatRender(cs);
         renderCtrlSendMsg(cs);
 

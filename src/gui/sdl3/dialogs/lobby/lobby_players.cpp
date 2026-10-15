@@ -3393,6 +3393,12 @@ static void renderOwnVoiceConfig(ClientSim *cs, float s, float contentW) {
         /* Which key push to talk is on, and the way to change it — Key Setup
            opens over the lobby, so the commonest reason voice does nothing can
            be fixed without leaving. */
+#if defined(__IPHONEOS__)
+        /* On a touch screen the talk button on the game screen is the key. */
+        if (voiceGetMode() == VOICE_MODE_PTT && uiModeIsTablet()) {
+            ImGui::TextWrapped("%s", langGetText(STR_DLGSETTINGS_VOICE_PTT_TOUCH));
+        } else
+#endif
         if (voiceGetMode() == VOICE_MODE_PTT) {
             keyItems pttKeys;
             windowGetKeys(&pttKeys);

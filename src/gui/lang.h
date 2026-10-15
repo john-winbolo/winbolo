@@ -3368,6 +3368,9 @@
 #define STR_DLGSYSINFO_MEM_SWAMP                 2796
 #define STR_DLGSYSINFO_MEM_GRASS                 2797
 
+/* Voice settings on a touch screen, where the talk button is the key */
+#define STR_DLGSETTINGS_VOICE_PTT_TOUCH          2798
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

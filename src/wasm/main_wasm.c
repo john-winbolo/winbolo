@@ -28,6 +28,7 @@
 #include "client_render.h"
 #include "client_frontend_tick.h"
 #include "client_frontend_render.h"
+#include "client_frontend_tutorial.h"
 #include "client_sim.h"
 #include "frontend.h"
 #include "client_net.h"
@@ -232,7 +233,8 @@ static void windowRunGameTick(ClientSim *cs) {
 
   brainRunning = brainHandlerIsBrainRunning();
 
-  if (!clientSimHasTransport(cs) || doingTutorial) {
+  if (!clientSimHasTransport(cs) || doingTutorial ||
+      clientFrontTutorialStepShowing()) {
     return;
   }
 
@@ -292,8 +294,6 @@ static void wasmTickLocalServer(ClientSim *cs) {
 /* -------------------------------------------------------
  * main_loop_iteration — one game frame, called by wasmRunGame
  * ------------------------------------------------------- */
-void frontEndTutorialNotePresentedFrame(void);
-static void tutorialRespawnPoll(void);
 
 /* Defined further down with the other winbolo.h entry points. */
 void windowLeaveGame(void);
@@ -453,7 +453,7 @@ static void main_loop_iteration(void) {
   /* Tutorial: count presented frames (gates the intro overlay) and poll the
    * server's once-per-run respawn message. No-ops outside tutorial mode. */
   frontEndTutorialNotePresentedFrame();
-  tutorialRespawnPoll();
+  clientFrontTutorialPollRespawn();
 
   /* Cloud prefs upload runs from gameFrontPumpDirty, which
    * sdl3ImguiProcessEvents calls at the top of this frame. */
@@ -1167,6 +1167,8 @@ bool windowIsQuitting(void)   { return quitRequested; }
  * (frontEndTutorialReset). */
 static void wasmGameStateReset(void) {
   doingTutorial = FALSE;
+  /* A step left showing by the last game would stop this one's ticks. */
+  frontEndTutorialReset();
   s_connFailed = FALSE;
   s_connErrorShown = FALSE;
   s_connReason[0] = '\0';
@@ -1863,114 +1865,9 @@ void frontEndShowAllianceRequest(char *playerName, BYTE playerNum) {
   }
 }
 
-/* -------------------------------------------------------
- * Tutorial step driver. Ported from gui/sdl3/winbolo.c — the WASM build
- * replaces that event loop with this file. The step DATA lives in
- * bolo/tutorial.c (tutorialSteps[]), the trigger is tank.c calling
- * frontEndTutorial(pos), and the overlay is imgui_tutorial_overlay.cpp drawn
- * from sdl3imgui.cpp. This drives the step sequence and intro gating.
- * Single-threaded under emscripten, so no client-mutex dance is needed.
- * ------------------------------------------------------- */
-#define TUTORIAL_INTRO_MIN_FRAMES 3
-static int  tutorialStepIdx = 0;
-static int  tutorialFramesPresented = 0;
-static bool respawn1Shown = false;
-
-void frontEndTutorialReset(void) {
-  tutorialStepIdx = 0;
-  tutorialFramesPresented = 0;
-  respawn1Shown = false;
-}
-
-/* Called once per frame after present so the intro defers until a real game
- * frame is on screen (the modal dims over the map, not a grey backbuffer). */
-void frontEndTutorialNotePresentedFrame(void) {
-  if (tutorialFramesPresented < TUTORIAL_INTRO_MIN_FRAMES) {
-    tutorialFramesPresented++;
-  }
-}
-
-/* Shows the respawn message once per run when the server flags a death. */
-static void tutorialRespawnPoll(void) {
-  if (isTutorial != TRUE || respawn1Shown) return;
-  if (tutorialOverlayIsOpen()) return;  /* don't stack on a step message */
-  ServerSim *srv = gameFrontGetServerSim();
-  if (!srv) return;
-  if (!serverSimTakeTutorialRespawn1(srv)) return;
-  respawn1Shown = true;
-  {
-    uint16_t ids[1];
-    ids[0] = STR_TUTORIAL_RESPAWN1;
-    tutorialOverlayShow(ids, 1, NULL);
-  }
-}
-
-/* Runs when the player dismisses the last message of the current step.
- * Advances the sequencer; on the final step, leaves tutorial mode so the
- * player can keep driving. */
-static void tutorialStepComplete(void) {
-  bool finalStep = (tutorialStepIdx == tutorialStepCount - 1);
-  if (finalStep) {
-    isTutorial = FALSE;
-    if (humanSim) clientSimSetTutorial(humanSim, false);
-    {
-      ServerSim *srv = gameFrontGetServerSim();
-      if (srv) serverSimSetTutorial(srv, false);
-    }
-    gameFrontSetShowTutorialButton(false);
-  }
-  doingTutorial = FALSE;
-  tutorialStepIdx++;
-
-  /* After the boat-building step (the row with pos == 66), respawn at start 1
-   * (the far bank) instead of start 0 (at sea). Scan for the row so it
-   * survives step-table edits. */
-  {
-    int boatStep = -1;
-    int s;
-    for (s = 0; s < tutorialStepCount; s++) {
-      if (tutorialSteps[s].pos == 66) { boatStep = s; break; }
-    }
-    ServerSim *srv = gameFrontGetServerSim();
-    if (srv && boatStep >= 0) {
-      serverSimSetTutorialStartIdx(srv, (tutorialStepIdx > boatStep) ? 1 : 0);
-    }
-  }
-}
-
-bool frontEndTutorial(BYTE pos) {
-  int i;
-  int count;
-
-  if (isTutorial != TRUE) {
-    tutorialStepIdx = 0;  /* reset for the next run */
-    return FALSE;
-  }
-  if (tutorialStepIdx >= tutorialStepCount) return FALSE;
-  /* A message is up (or pending this frame): hold the tank, don't re-trigger. */
-  if (tutorialOverlayIsOpen()) return TRUE;
-
-  {
-    BYTE stepPos = tutorialSteps[tutorialStepIdx].pos;
-    if (stepPos != TUTORIAL_POS_ANY && stepPos != pos) return FALSE;
-  }
-  /* Intro step: defer until a frame has rendered so the modal opens over the
-   * map rather than a grey backbuffer. */
-  if (tutorialSteps[tutorialStepIdx].pos == TUTORIAL_POS_ANY &&
-      tutorialFramesPresented < TUTORIAL_INTRO_MIN_FRAMES) {
-    return FALSE;
-  }
-
-  doingTutorial = TRUE;
-  count = 0;
-  for (i = 0; i < TUTORIAL_MAX_MSGS; i++) {
-    if (tutorialSteps[tutorialStepIdx].msgs[i] == 0) break;
-    count++;
-  }
-  tutorialOverlayShow(tutorialSteps[tutorialStepIdx].msgs, count,
-                      tutorialStepComplete);
-  return TRUE;
-}
+/* frontEndTutorial, frontEndTutorialReset and the rest of the tutorial step
+   sequencer come from client_frontend_common.c, the one body the desktop, web
+   and iOS drivers call; see "Platform variants" in docs/ARCHITECTURE.md. */
 
 /* -------------------------------------------------------
  * Misc required symbols

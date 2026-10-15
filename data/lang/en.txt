@@ -2782,3 +2782,6 @@ STR_DLGSYSINFO_MEM_RUBBLE=Rubble
 STR_DLGSYSINFO_MEM_SWAMP=Swamp
 STR_DLGSYSINFO_MEM_GRASS=Grass
 
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Push to talk: hold the microphone button on the game screen
+
