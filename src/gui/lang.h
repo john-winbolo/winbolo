@@ -3399,6 +3399,10 @@
 /* The log browser's Open File on iOS, when the picked file cannot be read */
 #define STR_DLGWBN_OPENFILE_FAILED               2818
 
+/* The recap's clip GIF on iOS, saved into the WinBolo folder in Files */
+#define STR_CLIPGIF_SAVED_IOS                    2819
+#define STR_CLIPGIF_SAVE_FAILED_IOS              2820
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

@@ -2821,3 +2821,7 @@ STR_RULE_DESC_tank_collision_mac=Of tanks de richtingsafhankelijke sprite-vakken
 
 # Scenario function descriptions
 STR_SCNFN_DESC_KILL_CREDIT=Aan wie de dood van een tank wordt toegeschreven, gevraagd bij elke dood; een verdrinking noemt het slachtoffer, tenzij een script de tank noemt die hem liet zinken.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} staat in de WinBolo-map in de Bestanden-app.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} kon niet worden bewaard.

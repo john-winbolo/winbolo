@@ -91,15 +91,7 @@
 #ifndef ZOOM_FACTOR_CUSTOM
 #define ZOOM_FACTOR_CUSTOM 0
 #endif
-#ifndef MENU_BAR_HEIGHT
-  /* macOS has the native menu bar; iOS draws the ImGui one (in the iPad's
-     desktop layout) as Windows and Linux do. */
-  #if defined(__APPLE__) && !defined(__IPHONEOS__)
-    #define MENU_BAR_HEIGHT 0
-  #else
-    #define MENU_BAR_HEIGHT 22
-  #endif
-#endif
+/* MENU_BAR_HEIGHT comes from winbolo.h, through gamefront.h. */
 
 static SDL_Window   *gWindow        = NULL;
 static SDL_Renderer *gRenderer      = NULL;
@@ -620,6 +612,32 @@ static void sdl3GetSafeAreaInsets(float *outLeft, float *outTop,
   if (outRight) *outRight = r;
   if (outBottom) *outBottom = b;
 }
+
+#if defined(__IPHONEOS__)
+/* The iPad's desktop layout: fit the game view's blit rect, aspect kept, into
+   the part of the screen below the menu bar that is also inside the safe
+   area, so the home indicator and any rounded corner do not sit on the game.
+   The desktop does not call this; a macOS window's safe area can exclude the
+   camera housing, and its layout is left as it was. */
+static void sdl3DrawFitSafeArea(float menuBarHeight, float aspect,
+                                float *x, float *y, float *w, float *h) {
+  float l = 0, t = 0, r = 0, b = 0;
+  int outW = 0, outH = 0;
+  sdl3GetSafeAreaInsets(&l, &t, &r, &b);
+  SDL_GetCurrentRenderOutputSize(gRenderer, &outW, &outH);
+  float ax = l;
+  float ay = menuBarHeight + t;
+  float aw = (float)outW - l - r;
+  float ah = (float)outH - menuBarHeight - t - b;
+  if (aw <= 0.0f || ah <= 0.0f || aspect <= 0.0f) return;
+  float fw = aw, fh = aw / aspect;
+  if (fh > ah) { fh = ah; fw = ah * aspect; }
+  *x = ax + (aw - fw) * 0.5f;
+  *y = ay + (ah - fh) * 0.5f;
+  *w = fw;
+  *h = fh;
+}
+#endif
 
 /* Source-rect lookup tables for tiles now live in mapview.c (mapViewPosX/Y). */
 
@@ -2392,6 +2410,17 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
      the rect's top from here on, as it carries the menu bar's height on the
      desktop. */
   bool inTablet = overviewInTabletView();
+#if defined(__IPHONEOS__)
+  if (!inTablet) {
+    /* The iPad's desktop layout: the map stays inside the safe area. */
+    float l = 0, t = 0, r = 0, b = 0;
+    sdl3GetSafeAreaInsets(&l, &t, &r, &b);
+    mapX           = l;
+    menuBarHeight += t;
+    w              = (int)((float)ww - l - r);
+    h              = (int)((float)wh - menuBarHeight - b);
+  }
+#endif
   if (inTablet) {
     mapX          = (float)gTabletVpX;
     menuBarHeight = (float)gTabletVpY;
@@ -3410,6 +3439,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     }
 
     /* Store for coordinate transformation */
+#if defined(__IPHONEOS__)
+    sdl3DrawFitSafeArea(menuBarHeight, gameAspect, &destX, &destY, &destW, &destH);
+#endif
     gGameDestRect.x = destX;
     gGameDestRect.y = destY;
     gGameDestRect.w = destW;
@@ -3552,6 +3584,9 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
       destY = menuBarHeight;
     }
 
+#if defined(__IPHONEOS__)
+    sdl3DrawFitSafeArea(menuBarHeight, gameAspect, &destX, &destY, &destW, &destH);
+#endif
     gGameDestRect.x = destX;
     gGameDestRect.y = destY;
     gGameDestRect.w = destW;
@@ -3603,6 +3638,9 @@ static void sdl3BlitGameRTToWindow(void) {
     destY = menuBarHeight;
   }
 
+#if defined(__IPHONEOS__)
+  sdl3DrawFitSafeArea(menuBarHeight, gameAspect, &destX, &destY, &destW, &destH);
+#endif
   gGameDestRect.x = destX;
   gGameDestRect.y = destY;
   gGameDestRect.w = destW;

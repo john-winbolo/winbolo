@@ -2821,3 +2821,7 @@ STR_RULE_DESC_tank_collision_mac=Используют ли танки завис
 
 # Scenario function descriptions
 STR_SCNFN_DESC_KILL_CREDIT=Кому засчитывается гибель танка, спрашивается при каждой гибели; при утоплении указывается жертва, если скрипт не назовёт танк, который её потопил.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} лежит в папке WinBolo в приложении «Файлы».
+STR_CLIPGIF_SAVE_FAILED_IOS=Не удалось сохранить {string1}.

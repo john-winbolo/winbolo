@@ -2819,3 +2819,7 @@ STR_RULE_DESC_tank_collision_mac=Zda tanky používají směrově závislé rám
 
 # Scenario function descriptions
 STR_SCNFN_DESC_KILL_CREDIT=Komu se připíše zničení tanku, dotazováno při každém zničení; utonutí uvádí oběť, pokud skript neuvede tank, který jej potopil.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} je ve složce WinBolo v aplikaci Soubory.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} se nepodařilo uložit.

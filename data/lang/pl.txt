@@ -2817,3 +2817,7 @@ STR_RULE_DESC_tank_collision_mac=Czy czołgi używają zależnych od kierunku ra
 
 # Scenario function descriptions
 STR_SCNFN_DESC_KILL_CREDIT=Komu przypisuje się zniszczenie czołgu, pytane przy każdym zniszczeniu; utonięcie wskazuje ofiarę, chyba że skrypt wskaże czołg, który go zatopił.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} jest w folderze WinBolo w aplikacji Pliki.
+STR_CLIPGIF_SAVE_FAILED_IOS=Nie udało się zapisać {string1}.

@@ -855,15 +855,22 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             langGetText(STR_MENU_CUSTOM_RESIZABLE),
         };
         BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_TRIPLE, ZOOM_FACTOR_QUAD, ZOOM_FACTOR_CUSTOM };
+#if defined(__IPHONEOS__)
+        /* An iOS window cannot be resized, so Custom (resizable) is left off
+           the iPad's desktop layout; it would only pick the zoom that fits. */
+        const int zoomCount = 4;
+#else
+        const int zoomCount = 5;
+#endif
         int curZoomIdx = 0;
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < zoomCount; i++) {
             if (zoomFactor == zoomValues[i]) { curZoomIdx = i; break; }
         }
         ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_WINDOWSIZE));
         ImGui::SameLine();
         ImGui::SetNextItemWidth(100);
         if (ImGui::BeginCombo("##windowsize", zoomLabels[curZoomIdx])) {
-            for (int i = 0; i < 5; i++) {
+            for (int i = 0; i < zoomCount; i++) {
                 bool selected = (curZoomIdx == i);
                 if (ImGui::Selectable(zoomLabels[i], selected)) {
                     ctx->pendingZoom = (unsigned char)zoomValues[i];
@@ -904,7 +911,11 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
     /* On iOS only the iPad's desktop layout has the classic screen these
        settings shape; the touch layout leaves them out, as before. */
     if (!BOLO_MOBILE || !uiModeIsTablet()) {
+#if !defined(__IPHONEOS__)
+    /* No full screen choice on iOS (below), so no heading for one there; the
+       letterbox bars follow the section before. */
     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_FULLSCREEN));
+#endif
 #if !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)  /* an iOS window is always full screen */
     /* ---- Full screen ---- */
     if (!uiModeIsTablet() && !uiModeIsSteamDeck() && !uiShouldUseControllerMode()) {

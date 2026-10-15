@@ -2821,3 +2821,7 @@ STR_RULE_DESC_tank_collision_mac=Чи використовують танки з
 
 # Scenario function descriptions
 STR_SCNFN_DESC_KILL_CREDIT=Кому зараховується загибель танка, питається при кожній загибелі; утоплення вказує жертву, якщо скрипт не назве танк, що її потопив.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} лежить у теці WinBolo в застосунку «Файли».
+STR_CLIPGIF_SAVE_FAILED_IOS=Не вдалося зберегти {string1}.

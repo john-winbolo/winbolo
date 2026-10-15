@@ -2823,3 +2823,7 @@ STR_RULE_DESC_tank_collision_mac=Se i carri usano i riquadri degli sprite dipend
 
 # Scenario function descriptions
 STR_SCNFN_DESC_KILL_CREDIT=A chi viene attribuita la morte di un carro, chiesto a ogni morte; un annegamento indica la vittima a meno che uno script non indichi il carro che l'ha affondato.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} si trova nella cartella WinBolo dell'app File.
+STR_CLIPGIF_SAVE_FAILED_IOS=Impossibile salvare {string1}.

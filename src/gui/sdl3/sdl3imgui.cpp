@@ -186,15 +186,7 @@ extern "C" bool inputTouchGetAbsoluteSteering(void);
 #define ZOOM_FACTOR_CUSTOM 0
 #endif
 
-#ifndef MENU_BAR_HEIGHT
-  /* macOS has the native menu bar; iOS draws the ImGui one (in the iPad's
-     desktop layout) as Windows and Linux do. */
-  #if defined(__APPLE__) && !defined(__IPHONEOS__)
-    #define MENU_BAR_HEIGHT 0
-  #else
-    #define MENU_BAR_HEIGHT 22
-  #endif
-#endif
+/* MENU_BAR_HEIGHT comes from winbolo.h, through gamefront.h. */
 
 /* -------------------------------------------------------
  * External C linkage: function + globals defined in
@@ -7022,8 +7014,12 @@ static void renderMenuBar(ClientSim *cs) {
             if (!fit4x && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 requiresTip(4);
             ImGui::EndDisabled();
+#if !(defined(__APPLE__) && TARGET_OS_IOS)
+            /* An iOS window cannot be resized; Custom (resizable) stays off
+               the iPad's desktop layout. */
             ImGui::Separator();
             if (ImGui::MenuItem(langGetText(STR_MENU_CUSTOM_RESIZABLE), nullptr, zoomFactor == ZOOM_FACTOR_CUSTOM)) s_pendingZoom = ZOOM_FACTOR_CUSTOM;
+#endif
             ImGui::EndMenu();
         }
 #endif

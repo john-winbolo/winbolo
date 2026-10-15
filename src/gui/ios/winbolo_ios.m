@@ -508,7 +508,12 @@ ios_game_start:
                     }
                     if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                         winboloQuit = TRUE;
-                    } else if (ev.type == SDL_EVENT_WILL_ENTER_FOREGROUND) {
+                    } else if (ev.type == SDL_EVENT_WILL_ENTER_FOREGROUND ||
+                               ev.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
+                        /* DID as well as WILL: a short interruption (Control
+                           Center, the notification shade, Slide Over, Siri)
+                           resigns active and comes back with DID alone, and
+                           the desktop layout pauses on that resign. */
                         iosResumeForeground(cs);
                     }
                 }
@@ -547,7 +552,8 @@ ios_game_start:
                     winboloQuit = TRUE;
                 } else if (ev.type == SDL_EVENT_DID_ENTER_BACKGROUND) {
                     iosEnterBackground();
-                } else if (ev.type == SDL_EVENT_WILL_ENTER_FOREGROUND) {
+                } else if (ev.type == SDL_EVENT_WILL_ENTER_FOREGROUND ||
+                           ev.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
                     iosResumeForeground(cs);
                 }
             }
@@ -664,6 +670,9 @@ static void iosEnterBackground(void) {
 }
 
 static void iosResumeForeground(ClientSim *cs) {
+    /* WILL and then DID both arrive after a full background; the second
+       finds nothing paused. */
+    if (!paused) return;
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Resuming from background");
     paused = FALSE;
     lastFrameTime = SDL_GetTicks();
@@ -876,12 +885,9 @@ void windowSetTankLabelLen(ClientSim *cs, labelLen newLen) {
     if (cs) clientSimSetLabelTankLabel(cs, labelTank);
 }
 
-void windowMenuAllowNewPlayers_toggle(void) { allowNewPlayers = !allowNewPlayers; }
-void windowMenuNewswire_toggle(ClientSim *cs) { showNewswireMessages = !showNewswireMessages; (void)cs; }
-void windowMenuAssistant_toggle(ClientSim *cs) { showAssistantMessages = !showAssistantMessages; (void)cs; }
-void windowMenuAI_toggle(ClientSim *cs) { showAIMessages = !showAIMessages; (void)cs; }
-void windowMenuNetwork_toggle(ClientSim *cs) { showNetworkStatusMessages = !showNetworkStatusMessages; (void)cs; }
-void windowMenuNetworkDebug_toggle(ClientSim *cs) { showNetworkDebugMessages = !showNetworkDebugMessages; (void)cs; }
+/* windowMenuAllowNewPlayers_toggle and the five message toggles are in
+   client_frontend_common.c: they also tell the running game, which these
+   copies did not. */
 
 void windowNewGame(void) {
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] windowNewGame: leaving game");
@@ -960,19 +966,13 @@ void windowComputeAspectCorrectSize(int actualW, int actualH, int actualX, int a
 void windowSuspendBackground(ClientSim *cs) {
     (void)cs;
     if (paused) return;
-    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Entering background, pausing");
-    paused = TRUE;
-    soundSetMuted(TRUE);
+    /* The same as the touch layout's: the time away starts here, for the
+       network game check on the way back. */
+    iosEnterBackground();
 }
 
 void windowResumeForeground(ClientSim *cs) {
-    (void)cs;
-    if (!paused) return;
-    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Resuming from background");
-    paused = FALSE;
-    lastFrameTime = SDL_GetTicks();
-    gameTickAccum = 0.0;
-    soundSetMuted(FALSE);
+    iosResumeForeground(cs);
 }
 
 /* A solo game: the tutorial or single player, with no remote players to keep

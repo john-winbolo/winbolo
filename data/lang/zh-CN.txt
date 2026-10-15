@@ -2819,3 +2819,7 @@ STR_RULE_DESC_tank_collision_mac=坦克在墙、运作中的碉堡和敌方基�
 
 # Scenario function descriptions
 STR_SCNFN_DESC_KILL_CREDIT=坦克被击毁算作谁的战绩，每次击毁时询问；溺水算作受害者自己，除非脚本指明击沉它的坦克。
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} 位于“文件”App 的 WinBolo 文件夹中。
+STR_CLIPGIF_SAVE_FAILED_IOS=无法保存 {string1}。

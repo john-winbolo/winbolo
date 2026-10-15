@@ -2821,3 +2821,7 @@ STR_RULE_DESC_tank_collision_mac=タンクが壁、稼働中のトーチカ、�
 
 # Scenario function descriptions
 STR_SCNFN_DESC_KILL_CREDIT=タンクの撃破を誰の手柄とするか。撃破のたびに問い合わせる。溺死は、沈めたタンクをスクリプトが指定しない限り犠牲者自身になる。
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} は「ファイル」アプリの WinBolo フォルダにあります。
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} を保存できませんでした。

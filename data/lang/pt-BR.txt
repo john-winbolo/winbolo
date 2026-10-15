@@ -2821,3 +2821,7 @@ STR_RULE_DESC_tank_collision_mac=Se os tanques usam as caixas de sprite dependen
 
 # Scenario function descriptions
 STR_SCNFN_DESC_KILL_CREDIT=A quem a morte de um tanque é atribuída, perguntado a cada morte; um afogamento aponta a vítima, a menos que um script aponte o tanque que o afundou.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} está na pasta do WinBolo no app Arquivos.
+STR_CLIPGIF_SAVE_FAILED_IOS=Não foi possível salvar {string1}.

@@ -469,7 +469,8 @@ static bool lobbyClipGifWriteFile(const char *path, const MsfGifResult *res) {
 static void lobbyClipGifSave(MsfGifResult res) {
 #if defined(__IPHONEOS__)
     /* No save dialog on iOS: the clip goes into Documents under its own name,
-       where the Files app shows it, and the box reports the path. */
+       where the Files app shows it, and the box names the file and says where
+       to find it; the sandbox path would mean nothing to the player. */
     {
         const char *docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
         char fullPath[FILENAME_MAX];
@@ -479,11 +480,13 @@ static void lobbyClipGifSave(MsfGifResult res) {
             snprintf(fullPath, sizeof(fullPath), "%s%s%s.gif", docs,
                      (n > 0 && docs[n - 1] == '/') ? "" : "/", s_clipGif.name);
             ok = lobbyClipGifWriteFile(fullPath, &res);
-        } else {
-            SDL_strlcpy(fullPath, s_clipGif.name, sizeof(fullPath));
         }
         msf_gif_free(res);
-        imguiMessageBoxEx(CLIP_GIF_TITLE, fullPath,
+        MessageArgs args = {};
+        snprintf(args.string1, sizeof(args.string1), "%s.gif", s_clipGif.name);
+        imguiMessageBoxEx(CLIP_GIF_TITLE,
+                          langGetTextFmt(ok ? STR_CLIPGIF_SAVED_IOS
+                                            : STR_CLIPGIF_SAVE_FAILED_IOS, &args),
                           ok ? IMGUI_MSG_INFO : IMGUI_MSG_ERROR,
                           IMGUI_MSG_OK);
         return;

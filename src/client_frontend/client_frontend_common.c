@@ -327,3 +327,46 @@ bool frontEndTutorial(BYTE pos) {
                       tutorialStepComplete);
   return TRUE;
 }
+
+/* -------------------------------------------------------
+ * Message and lobby toggles (the menu bar, Settings)
+ *
+ * The pref flips and, with a game running, the running game is told: one
+ * body for the desktop, web and iOS drivers, which own the flags.
+ * ------------------------------------------------------- */
+extern bool allowNewPlayers;
+extern bool showNewswireMessages;
+extern bool showAssistantMessages;
+extern bool showAIMessages;
+extern bool showNetworkStatusMessages;
+extern bool showNetworkDebugMessages;
+
+void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
+  allowNewPlayers = !allowNewPlayers;
+  clientSimSetAllowNewPlayers(cs, allowNewPlayers);
+}
+
+void windowMenuNewswire_toggle(ClientSim *cs) {
+  showNewswireMessages = !showNewswireMessages;
+  if (cs) clientSimShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
+}
+
+void windowMenuAssistant_toggle(ClientSim *cs) {
+  showAssistantMessages = !showAssistantMessages;
+  if (cs) clientSimShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
+}
+
+void windowMenuAI_toggle(ClientSim *cs) {
+  showAIMessages = !showAIMessages;
+  if (cs) clientSimShowMessages(cs, MSG_AI, showAIMessages);
+}
+
+void windowMenuNetwork_toggle(ClientSim *cs) {
+  showNetworkStatusMessages = !showNetworkStatusMessages;
+  if (cs) clientSimShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
+}
+
+void windowMenuNetworkDebug_toggle(ClientSim *cs) {
+  showNetworkDebugMessages = !showNetworkDebugMessages;
+  if (cs) clientSimShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
+}

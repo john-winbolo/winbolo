@@ -1211,6 +1211,8 @@ static const LangEntry langTable[] = {
     {2816, "Asking the server about its game..."},
     {2817, "Joining the game..."},
     {2818, "Could not read that recording."},
+    {2819, "{string1} is in the WinBolo folder in the Files app."},
+    {2820, "{string1} could not be saved."},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},

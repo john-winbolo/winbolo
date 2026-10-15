@@ -2823,3 +2823,7 @@ STR_RULE_DESC_tank_collision_mac=Om stridsvagnar använder Mac Bolos riktningsbe
 
 # Scenario function descriptions
 STR_SCNFN_DESC_KILL_CREDIT=Vem en stridsvagns död tillskrivs, frågat vid varje död; en drunkning anger offret om inte ett skript anger stridsvagnen som sänkte den.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} finns i WinBolo-mappen i appen Filer.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} kunde inte sparas.

@@ -2819,3 +2819,7 @@ STR_RULE_DESC_tank_collision_mac=탱크가 벽, 작동 중인 토치카, 적 기
 
 # Scenario function descriptions
 STR_SCNFN_DESC_KILL_CREDIT=탱크 파괴를 누구의 공으로 할지, 파괴될 때마다 묻습니다. 익사는 스크립트가 가라앉힌 탱크를 지정하지 않으면 희생자 자신이 됩니다.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1}은(는) 파일 앱의 WinBolo 폴더에 있어요.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1}을(를) 저장할 수 없습니다.

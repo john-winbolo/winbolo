@@ -2813,3 +2813,7 @@ STR_DLGCONNECTING_JOINING=Joining the game...
 # The log browser's Open File on iOS, when the picked file cannot be read
 STR_DLGWBN_OPENFILE_FAILED=Could not read that recording.
 
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} is in the WinBolo folder in the Files app.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} could not be saved.
+

@@ -61,8 +61,10 @@ struct ClientSim;
 #define ZOOM_FACTOR_QUAD 4
 #define ZOOM_FACTOR_CUSTOM 0  /* Resizable window, renders at ceiling integer zoom */
 
-/* Height of the ImGui menu bar rendered inside the client area */
-#ifdef __APPLE__
+/* Height of the ImGui menu bar rendered inside the client area. None on
+   macOS, whose menus are native; iOS draws the ImGui bar in the iPad's
+   desktop layout, as Windows and Linux do. */
+#if defined(__APPLE__) && !defined(__IPHONEOS__)
 #define MENU_BAR_HEIGHT 0
 #else
 #define MENU_BAR_HEIGHT 22

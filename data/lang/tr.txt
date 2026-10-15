@@ -2821,3 +2821,7 @@ STR_RULE_DESC_tank_collision_mac=Tankların duvarlara, etkin bunkerlere ve düş
 
 # Scenario function descriptions
 STR_SCNFN_DESC_KILL_CREDIT=Bir tankın ölümünün kime yazılacağı, her ölümde sorulur; bir boğulma, bir betik onu batıran tankı belirtmedikçe kurbanı gösterir.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1}, Dosyalar uygulamasındaki WinBolo klasöründe.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} kaydedilemedi.

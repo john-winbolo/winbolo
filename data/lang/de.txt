@@ -2821,3 +2821,7 @@ STR_RULE_DESC_tank_collision_mac=Ob Panzer die richtungsabhängigen Sprite-Käst
 
 # Scenario function descriptions
 STR_SCNFN_DESC_KILL_CREDIT=Wem der Tod eines Panzers angerechnet wird, abgefragt bei jedem Tod; ein Ertrinken nennt das Opfer, sofern kein Skript den Panzer nennt, der es versenkt hat.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} liegt im WinBolo-Ordner der Dateien-App.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} konnte nicht gespeichert werden.

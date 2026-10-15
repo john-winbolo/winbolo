@@ -2821,3 +2821,7 @@ STR_RULE_DESC_tank_collision_mac=Si les tanks utilisent les boîtes de sprite d�
 
 # Scenario function descriptions
 STR_SCNFN_DESC_KILL_CREDIT=À qui la mort d'un tank est attribuée, demandé à chaque mort ; une noyade désigne la victime sauf si un script désigne le tank qui l'a coulé.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} est dans le dossier WinBolo de l'app Fichiers.
+STR_CLIPGIF_SAVE_FAILED_IOS=Impossible d'enregistrer {string1}.
