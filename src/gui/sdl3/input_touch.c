@@ -125,6 +125,28 @@ static float        s_vpDragCurY     = 0.0f;
 static float        s_vpDragPrevX    = 0.0f;
 static float        s_vpDragPrevY    = 0.0f;
 static bool         s_vpDragMoved    = false; /* finger moved this frame */
+/* Every pixel the drag finger has moved since it went down or was last read,
+   summed over all its motion events. The delta above is only the last event
+   of the frame; the map overview pans by this instead so no movement is lost
+   when several events arrive between frames. Not summed during a pinch. */
+static float        s_vpDragTravelX  = 0.0f;
+static float        s_vpDragTravelY  = 0.0f;
+
+/* --- Viewport pinch state ---
+   A second finger down on the viewport while the drag finger is held. Off
+   unless the caller turns it on each frame (the map overview does), so the
+   classic view's touch handling is exactly as it was without it. */
+static bool         s_pinchEnabled   = false;
+static bool         s_pinchActive    = false;
+static SDL_FingerID s_pinchFingerID  = 0;
+static float        s_pinchX         = 0.0f;
+static float        s_pinchY         = 0.0f;
+static float        s_pinchRefDist   = 0.0f; /* finger spacing at the last read */
+
+/* Viewport tap position, in the same coordinates as the touch events, set
+   alongside s_viewportTapReady for a caller that maps it itself. */
+static float        s_viewportTapX   = 0.0f;
+static float        s_viewportTapY   = 0.0f;
 
 /* --- Setup / Cleanup --- */
 
@@ -134,6 +156,9 @@ void inputTouchSetup(void) {
   s_scrollZoneSet = false;
   s_vpDragTracking = false;
   s_vpDragActive = false;
+  s_vpDragTravelX = 0.0f;
+  s_vpDragTravelY = 0.0f;
+  s_pinchActive = false;
   s_buildSelectTap = -1;
   s_viewportTapReady = false;
   for (int i = 0; i < TOUCH_BTN_COUNT; i++) {
@@ -275,6 +300,8 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
               s_viewportTapReady = true;
               s_viewportTapTileX = (BYTE)tileX;
               s_viewportTapTileY = (BYTE)tileY;
+              s_viewportTapX = tx;
+              s_viewportTapY = ty;
             }
           }
         }
@@ -301,10 +328,16 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
     s_vpDragCurY     = fy;
     s_vpDragPrevX    = fx;
     s_vpDragPrevY    = fy;
+    s_vpDragTravelX  = 0.0f;
+    s_vpDragTravelY  = 0.0f;
     /* Don't return — let tap tracker also see this finger */
   }
   if (s_vpDragTracking && fid == s_vpDragFingerID) {
     if (isMotion) {
+      if (!s_pinchActive) {
+        s_vpDragTravelX += fx - s_vpDragCurX;
+        s_vpDragTravelY += fy - s_vpDragCurY;
+      }
       s_vpDragPrevX = s_vpDragCurX;
       s_vpDragPrevY = s_vpDragCurY;
       s_vpDragCurX = fx;
@@ -321,8 +354,50 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
       s_vpDragTracking = false;
       s_vpDragActive   = false;
       s_vpDragMoved    = false;
+      s_vpDragTravelX  = 0.0f;
+      s_vpDragTravelY  = 0.0f;
+      /* A pinch needs both fingers; the one left down does nothing more. */
+      s_pinchActive    = false;
     }
     if (s_vpDragActive) return; /* Claimed by drag — skip other handlers */
+  }
+
+  /* --- Viewport pinch (only while the caller has it turned on) --- */
+  if (s_pinchEnabled && isDown && s_vpDragTracking && !s_pinchActive &&
+      fid != s_vpDragFingerID && insideViewport) {
+    s_pinchActive   = true;
+    s_pinchFingerID = fid;
+    s_pinchX        = fx;
+    s_pinchY        = fy;
+    {
+      float ddx = fx - s_vpDragCurX;
+      float ddy = fy - s_vpDragCurY;
+      s_pinchRefDist = sqrtf(ddx * ddx + ddy * ddy);
+    }
+    /* Neither finger of a pinch is a tap, however briefly they touch. */
+    for (int i = 0; i < MAX_TAP_FINGERS; i++) {
+      if (s_tapTrackers[i].active &&
+          (s_tapTrackers[i].fingerID == fid ||
+           s_tapTrackers[i].fingerID == s_vpDragFingerID)) {
+        s_tapTrackers[i].active = false;
+      }
+    }
+    return;
+  }
+  if (s_pinchActive && fid == s_pinchFingerID) {
+    if (isMotion) {
+      s_pinchX = fx;
+      s_pinchY = fy;
+    } else if (isUp) {
+      s_pinchActive = false;
+      /* The drag finger carries on panning from where it now is, rather than
+         jumping by everything it moved during the pinch. */
+      s_vpDragPrevX   = s_vpDragCurX;
+      s_vpDragPrevY   = s_vpDragCurY;
+      s_vpDragTravelX = 0.0f;
+      s_vpDragTravelY = 0.0f;
+    }
+    return;
   }
 
   /* --- Joystick zone (left 40%, but not over the game viewport) --- */
@@ -481,6 +556,16 @@ void inputTouchSetViewportBounds(int vpX, int vpY, int vpW, int vpH, int zoom) {
   s_vpZoom = zoom;
 }
 
+bool inputTouchGetViewportTapPos(float *x, float *y) {
+  if (s_viewportTapReady) {
+    *x = s_viewportTapX;
+    *y = s_viewportTapY;
+    s_viewportTapReady = false;
+    return true;
+  }
+  return false;
+}
+
 bool inputTouchGetViewportTap(BYTE *tileX, BYTE *tileY) {
   if (s_viewportTapReady) {
     *tileX = s_viewportTapTileX;
@@ -594,6 +679,44 @@ bool inputTouchGetViewportDragDelta(float *deltaX, float *deltaY) {
   *deltaX = s_vpDragCurX - s_vpDragPrevX;
   *deltaY = s_vpDragCurY - s_vpDragPrevY;
   return true;
+}
+
+bool inputTouchConsumeViewportDragTravel(float *deltaX, float *deltaY) {
+  *deltaX = 0.0f;
+  *deltaY = 0.0f;
+  if (!s_vpDragActive || s_pinchActive) return false;
+  if (s_vpDragTravelX == 0.0f && s_vpDragTravelY == 0.0f) return false;
+  *deltaX = s_vpDragTravelX;
+  *deltaY = s_vpDragTravelY;
+  s_vpDragTravelX = 0.0f;
+  s_vpDragTravelY = 0.0f;
+  return true;
+}
+
+void inputTouchSetViewportPinchEnabled(bool enabled) {
+  s_pinchEnabled = enabled;
+  if (!enabled) s_pinchActive = false;
+}
+
+bool inputTouchConsumeViewportPinch(float *scale, float *centerX, float *centerY) {
+  *scale = 1.0f;
+  *centerX = 0.0f;
+  *centerY = 0.0f;
+  if (!s_pinchActive) return false;
+  float ddx = s_pinchX - s_vpDragCurX;
+  float ddy = s_pinchY - s_vpDragCurY;
+  float dist = sqrtf(ddx * ddx + ddy * ddy);
+  *centerX = (s_pinchX + s_vpDragCurX) * 0.5f;
+  *centerY = (s_pinchY + s_vpDragCurY) * 0.5f;
+  /* Fingers landing on the same spot give no spacing to measure against;
+     the next read starts from this one. */
+  if (s_pinchRefDist < 1.0f || dist < 1.0f) {
+    s_pinchRefDist = dist;
+    return false;
+  }
+  *scale = dist / s_pinchRefDist;
+  s_pinchRefDist = dist;
+  return *scale != 1.0f;
 }
 
 /* Legacy wrappers */

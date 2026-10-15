@@ -1541,7 +1541,9 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         bool se = (bool)soundEffects;
         if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_EFFECTS), &se)) windowSoundEffects_toggle();
     }
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    /* Android and the web client do not define positionalSound; iOS and the
+       desktop do. */
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
     {
         bool ps = (bool)positionalSound;
         if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_POSITIONAL_SOUND_CB), &ps)) windowPositionalSound_toggle();

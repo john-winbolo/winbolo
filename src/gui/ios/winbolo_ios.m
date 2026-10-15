@@ -482,10 +482,9 @@ ios_game_start:
         }
         clientMutexRelease();
         /* The in-window map overview draws from the snapshot the frame above
-           filled, now that the lock is off. Nothing on iOS turns that mode on
-           today — every path that does is compiled out here — but the call is
-           a no-op when no frame is waiting, and leaving it out is how the map
-           would silently stop drawing if one ever did. */
+           filled, now that the lock is off. The tablet overlay's map button
+           turns the mode on, and the map is drawn inside the game view. The
+           call is a no-op when no frame is waiting. */
         sdl3DrawFlushOverviewInWindow();
         dwSysFrame += (SDL_GetTicks() - tick);
 
@@ -669,6 +668,7 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
    every platform calls; see "Platform variants" in docs/ARCHITECTURE.md. */
 
 void windowSoundEffects_toggle(void) { soundEffects = !soundEffects; }
+void windowPositionalSound_toggle(void) { positionalSound = !positionalSound; }
 void windowBackgroundSoundChange_toggle(void) { backgroundSound = !backgroundSound; }
 void windowSoundKeepalive(void) { useSoundKeepalive = !useSoundKeepalive; }
 void windowSetSoundVolume(int pct) {
@@ -813,8 +813,16 @@ void frontEndPlaySound(ClientSim *cs, sndEffects value) {
 
 void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
                           uint16_t gainL, uint16_t gainR) {
-    (void)gainL; (void)gainR;
-    frontEndPlaySound(cs, value);
+    if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+    if (soundEffects) {
+        /* The player has turned positional sound off, so every sound plays
+           centred; the near/far variant is already chosen. */
+        if (!positionalSound) {
+            gainL = SOUND_GAIN_UNITY;
+            gainR = SOUND_GAIN_UNITY;
+        }
+        soundPlayEffectPan(value, gainL, gainR);
+    }
 }
 
 void windowPlaySound(sndEffects value) {

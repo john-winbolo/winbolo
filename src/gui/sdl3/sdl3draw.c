@@ -209,6 +209,10 @@ static bool               gOverviewPrepPending  = FALSE;
 static int                gOverviewPrepW        = 0;
 static int                gOverviewPrepH        = 0;
 static float              gOverviewPrepMenuBar  = 0.0f;
+/* The map rect's left edge. 0 everywhere but the iOS tablet layout, where the
+   map takes the place of the 15x15 game view and is drawn inside it. */
+static float              gOverviewPrepX        = 0.0f;
+static bool               gOverviewPrepInTablet = FALSE;
 static OverviewHudLayout  gOverviewPrepHud;
 static bool               gOverviewPrepDrawHud  = FALSE;
 /* The item view's caption, read from the sim by the first half so the second
@@ -522,6 +526,21 @@ bool sdl3DrawOnRenderThread(void) {
 static int          gTabletVpX = 0, gTabletVpY = 0;
 static int          gTabletVpW = 0, gTabletVpH = 0;
 static int          gTabletVpZoom = 0;
+
+/* True when the in-window map is drawn inside the tablet layout's game view
+   rather than over the whole window. iOS is the one platform where the tablet
+   layout turns the map on: the desktop and the web only turn it on outside
+   the tablet layout, and Android never does, so this is false for all three
+   and their frames are drawn exactly as before. On iOS the tablet controls,
+   status grids and newswire stay where they are and the map replaces only the
+   15x15 view, so the map's own HUD is not drawn there. */
+static bool overviewInTabletView(void) {
+#if defined(__IPHONEOS__)
+  return uiModeIsTablet();
+#else
+  return false;
+#endif
+}
 
 /* Drag scroll pixel offset — applied on top of engine edgeX/edgeY
    for smooth sub-tile scrolling from touch dragging. */
@@ -2358,6 +2377,18 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
   float menuBarHeight = uiShouldUseControllerMode() ? 0.0f : (float)MENU_BAR_HEIGHT;
   int w = ww;
   int h = (int)((float)wh - menuBarHeight);
+  float mapX = 0.0f;
+  /* The iOS tablet layout: the map takes the game view's rect, which the
+     classic frame drawn just before this one has set. menuBarHeight carries
+     the rect's top from here on, as it carries the menu bar's height on the
+     desktop. */
+  bool inTablet = overviewInTabletView();
+  if (inTablet) {
+    mapX          = (float)gTabletVpX;
+    menuBarHeight = (float)gTabletVpY;
+    w             = gTabletVpW;
+    h             = gTabletVpH;
+  }
   if (w < 1 || h < 1) return;
 
   /* The classic draw loads the atlas lazily on its way past; this branch
@@ -2396,7 +2427,9 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
      it comes back up on the next message, and a tank parked in the strip it
      covers would be behind it as soon as anyone said anything. */
   OverviewHudLayout hud;
-  bool haveHud = overviewHudLayout(w, h, voiceWanted, &hud);
+  /* The tablet layout has its own controls, status grids and newswire round
+     the game view, so the map there carries no HUD of its own. */
+  bool haveHud = !inTablet && overviewHudLayout(w, h, voiceWanted, &hud);
   if (haveHud) {
     overviewViewSetHudInsets(gOverviewView,
                              hud.buildX + hud.buildW,
@@ -2432,6 +2465,8 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
   gOverviewPrepW       = w;
   gOverviewPrepH       = h;
   gOverviewPrepMenuBar = menuBarHeight;
+  gOverviewPrepX       = mapX;
+  gOverviewPrepInTablet = inTablet;
   if (haveHud) gOverviewPrepHud = hud;
   gOverviewPrepDrawHud = drawHud;
   gOverviewPrepPending = TRUE;
@@ -2450,6 +2485,7 @@ void sdl3DrawFlushOverviewInWindow(void) {
   int   w             = gOverviewPrepW;
   int   h             = gOverviewPrepH;
   float menuBarHeight = gOverviewPrepMenuBar;
+  float mapX          = gOverviewPrepX;
   bool  drawHud       = gOverviewPrepDrawHud;
   bool  voiceWanted   = gOverviewPrepVoiceWanted;
   OverviewHudLayout hud = gOverviewPrepHud;
@@ -2490,12 +2526,17 @@ void sdl3DrawFlushOverviewInWindow(void) {
     gOverviewHudValid = TRUE;
   }
 
-  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
+  /* In the tablet layout the classic frame has already drawn the chrome and
+     the controls' backing round the game view, and the map covers the view,
+     so there is nothing to clear. */
+  if (!gOverviewPrepInTablet) {
+    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+    SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
+  }
 
   SDL_Texture *tex = overviewViewGetTexture(gOverviewView);
   if (tex) {
-    SDL_FRect dest = { 0.0f, menuBarHeight, (float)w, (float)h };
+    SDL_FRect dest = { mapX, menuBarHeight, (float)w, (float)h };
     /* BLENDMODE_NONE for the same reason the classic blit uses it: alpha
        below 255 left in a render target would composite semi-transparent. */
     SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
@@ -2507,7 +2548,7 @@ void sdl3DrawFlushOverviewInWindow(void) {
 
   if (drawHud) {
     /* The layout works in map-rect pixels; the rect starts below the menu bar. */
-    float originX = 0.0f;
+    float originX = mapX;
     float originY = menuBarHeight;
 
     /* Each panel's share of every colour it is drawn in: its setting, less
@@ -2712,7 +2753,7 @@ void sdl3DrawFlushOverviewInWindow(void) {
         bottom = menuBarHeight + hud.newswireY;
       }
       float ty = bottom - OVERVIEW_ITEM_LABEL_GAP - (float)textH;
-      float tx = ((float)w - (float)textW) * 0.5f;  /* the map rect starts at 0 */
+      float tx = mapX + ((float)w - (float)textW) * 0.5f;
 
       /* The text sits over terrain of any colour, so it gets the same
          translucent backing as the HUD panels and the zoom readout. */
@@ -2756,7 +2797,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   gLastPillLabels = showPillLabels;
   gLastBaseLabels = showBaseLabels;
 
-  if (gOverviewInWindow) {
+  if (gOverviewInWindow && !overviewInTabletView()) {
     sdl3DrawOverviewInWindowFrame(cs, showPillLabels, showBaseLabels);
     return;
   }
@@ -3376,6 +3417,14 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     SDL_SetTextureBlendMode(gGameRenderTarget, SDL_BLENDMODE_NONE);
     SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);
   }
+
+  /* The iOS tablet layout keeps the frame above, chrome and status grids
+     included, and puts the map over the game view it has just drawn. This is
+     the first half; sdl3DrawFlushOverviewInWindow draws it once the lock is
+     released, as it does for the whole-window map. */
+  if (gOverviewInWindow && overviewInTabletView()) {
+    sdl3DrawOverviewInWindowFrame(cs, showPillLabels, showBaseLabels);
+  }
 }
 
 void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
@@ -3711,8 +3760,10 @@ void sdl3DrawReturningToLobby(ClientSim *cs) {
      playfield, which is a different screen entirely — taking it while the
      overview owns the window swapped the whole picture out from under the
      player for the last moments of a round, in a window that is still full
-     screen. The map is what they have been looking at, so it stays. */
-  if (gOverviewInWindow) {
+     screen. The map is what they have been looking at, so it stays. The iOS
+     tablet layout takes the classic path below: its map sits inside the game
+     view, which that path draws round. */
+  if (gOverviewInWindow && !overviewInTabletView()) {
     const char *caption = langGetText(STR_RETURNING_TO_LOBBY);
     int textW = 0;
     int textH = 0;

@@ -144,6 +144,9 @@ bool inputTouchConsumeTapInRect(float x, float y, float w, float h);
 
 void inputTouchSetViewportBounds(int vpX, int vpY, int vpW, int vpH, int zoom);
 bool inputTouchGetViewportTap(BYTE *tileX, BYTE *tileY);
+/* The same tap as inputTouchGetViewportTap, as the touch position rather than
+   a 15x15 square; reading either one clears it. */
+bool inputTouchGetViewportTapPos(float *x, float *y);
 
 /*********************************************************
 *NAME:          inputTouchGetViewportDragScroll
@@ -163,6 +166,32 @@ bool inputTouchGetViewportDragScroll(int *scrollX, int *scrollY);
 *  Returns true if a drag motion occurred this frame.
 *********************************************************/
 bool inputTouchGetViewportDragDelta(float *deltaX, float *deltaY);
+
+/*********************************************************
+*NAME:          inputTouchConsumeViewportDragTravel
+*PURPOSE:       Everything the viewport drag finger has moved since the last
+*               read, in pixels, once the finger has moved past the tap
+*               distance. Returns false when there is none, or while a pinch
+*               is under way. Reading it clears it.
+*********************************************************/
+bool inputTouchConsumeViewportDragTravel(float *deltaX, float *deltaY);
+
+/*********************************************************
+*NAME:          inputTouchSetViewportPinchEnabled
+*PURPOSE:       Turn two-finger pinch tracking on the viewport on or off.
+*               Off by default; while off a second finger on the viewport is
+*               handled as it always was.
+*********************************************************/
+void inputTouchSetViewportPinchEnabled(bool enabled);
+
+/*********************************************************
+*NAME:          inputTouchConsumeViewportPinch
+*PURPOSE:       The pinch since the last read: scale is the new finger
+*               spacing over the old (above 1 spreading, below 1 closing) and
+*               the centre is the point between the fingers. Returns false
+*               when no pinch is under way or the spacing has not changed.
+*********************************************************/
+bool inputTouchConsumeViewportPinch(float *scale, float *centerX, float *centerY);
 
 /* Legacy API — now wrappers around button system */
 bool inputTouchIsFirePressed(void);

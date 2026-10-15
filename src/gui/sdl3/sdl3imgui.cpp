@@ -1467,6 +1467,20 @@ static void mapOverviewClose(void) {
     gameFrontShowMapOverview = false;
 }
 
+/* True when the in-window overview must leave the main window's size and the
+ * app full screen flag alone and switch the view only: a window the page sizes
+ * (the web canvas), where the flag means browser full screen, and iOS, where
+ * the window always fills the screen and the mode is only ever the player's
+ * own request. */
+static bool overviewLeavesWindowAlone(SDL_Window *win) {
+#if defined(__APPLE__) && TARGET_OS_IOS
+    (void)win;
+    return true;
+#else
+    return win && (SDL_GetWindowFlags(win) & SDL_WINDOW_FILL_DOCUMENT);
+#endif
+}
+
 /* Turn the in-window overview on or off. The mode takes the main window
  * fullscreen so the map gets the whole screen; leaving drops the window back
  * to windowed only when the app full screen flag is off, because with it on
@@ -1481,7 +1495,7 @@ static void overviewInWindowSet(bool on) {
     if (on != sdl3DrawIsOverviewInWindow()) {
         sdl3DrawSetOverviewInWindow(on);  /* hands the OS pointer back on the way out */
     }
-    if (win && !(SDL_GetWindowFlags(win) & SDL_WINDOW_FILL_DOCUMENT)) {
+    if (win && !overviewLeavesWindowAlone(win)) {
         SDL_SetWindowFullscreen(win, on || gameFrontFullScreen);
         /* SDL_SetWindowFullscreen is asynchronous on Wayland and X11 and the
            frame that follows reads the window geometry, so wait for the
@@ -1504,8 +1518,8 @@ static void overviewInWindowChoose(bool on) {
        player's own preference and must survive such a server. */
     if (on && overviewSuppressed()) return;
     SDL_Window *win = sdl3DrawGetWindow();
-    /* A window the page sizes: the flag there means browser full screen, which this mode does not touch. */
-    bool pageSized = win && (SDL_GetWindowFlags(win) & SDL_WINDOW_FILL_DOCUMENT);
+    /* A window the page sizes: the flag there means browser full screen, which this mode does not touch. iOS is treated the same way. */
+    bool pageSized = overviewLeavesWindowAlone(win);
     if (!pageSized) gameFrontFullScreen = on;
     overviewInWindowSet(on);
     /* The two views of the map never share the screen, so the pop-out swaps
@@ -1515,8 +1529,13 @@ static void overviewInWindowChoose(bool on) {
        geometry when this run never opened it. Only in a game: outside one
        the pop-out is already down and gameFrontShowMapOverview is what the
        next game reads. */
+#if defined(__APPLE__) && TARGET_OS_IOS
+    const bool hasPopOut = false;  /* iOS has no pop-out to hand back */
+#else
+    const bool hasPopOut = true;
+#endif
     if (on) mapOverviewHide();
-    else if (gameFrontShowMapOverview && s_overviewWasRunning) mapOverviewOpen();
+    else if (hasPopOut && gameFrontShowMapOverview && s_overviewWasRunning) mapOverviewOpen();
     /* The other five — Send Message, Players, and the three Session Info
      * panels — each have TWO forms, and which one is real depends on the mode
      * this call just changed. In classic mode each is a pop-out, a separate OS
@@ -2733,6 +2752,15 @@ static void renderOverviewInWindow(ClientSim *cs) {
        the hit-test cannot leave a panel stuck faded up under a pointer that
        has gone. */
     sdl3DrawSetHudPanelHover(false, false, false);
+
+#if defined(__APPLE__) && TARGET_OS_IOS
+    /* The iOS tablet layout draws the map inside its game view, and the tablet
+       overlay drives it by touch and draws its camera readout
+       (sdl3imgui_tablet.cpp). No pan item and no HUD hit-test here: every
+       touch also arrives as a left click, which the desktop input below would
+       turn into a build. */
+    if (uiModeIsTablet()) return;
+#endif
 
     ImGui::SetNextWindowPos(ImVec2(rx, ry));
     ImGui::SetNextWindowSize(ImVec2(rw, rh));
@@ -9566,7 +9594,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                draws the map itself: the in-window view when the app is full
                screen, the pop-out on its own flag when it is not. */
             /* On the web the full screen map is only ever the player's request, so a game starts in the normal view whatever the browser's full screen state. */
-            bool pageSized = s_window && (SDL_GetWindowFlags(s_window) & SDL_WINDOW_FILL_DOCUMENT);
+            bool pageSized = s_window && overviewLeavesWindowAlone(s_window);
             if (gameFrontFullScreen && !pageSized) sdl3ImguiShowOverviewInWindow(true);
             else if (gameFrontShowMapOverview) sdl3ImguiShowMapOverview(true);
         }
@@ -9888,15 +9916,21 @@ bool sdl3ImguiIsMapOverviewOpen(void) {
     return false;
 }
 /* The in-window mode is a desktop-window mode, so tablet has nothing to show
- * and nothing to report active. */
+ * and nothing to report active. iOS is the exception: it has no pop-out, so
+ * the in-window map is its one overview, drawn inside the tablet layout's game
+ * view (sdl3draw.c) and opened from the tablet overlay's map button. */
 void sdl3ImguiShowOverviewInWindow(bool active) {
-#if !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+#if defined(__APPLE__) && TARGET_OS_IOS
+    overviewInWindowChoose(active);
+#else
+#if !defined(__ANDROID__)
     if (!uiModeIsTablet()) {
         overviewInWindowChoose(active);
         return;
     }
 #endif
     (void)active;
+#endif
 }
 /* The one full screen command, shared by Alt+Enter and the macOS Window menu
  * so the two routes cannot drift. In a game it is the full screen map, which
@@ -9909,11 +9943,18 @@ void sdl3ImguiToggleFullScreen(struct ClientSim *cs) {
         windowFullScreenChoose(!gameFrontFullScreen);
     }
 }
+bool sdl3ImguiIsOverviewOffered(void) {
+    return !overviewSuppressed();
+}
 bool sdl3ImguiIsOverviewInWindowOpen(void) {
-#if !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+#if defined(__APPLE__) && TARGET_OS_IOS
+    return sdl3DrawIsOverviewInWindow();
+#else
+#if !defined(__ANDROID__)
     if (!uiModeIsTablet()) return sdl3DrawIsOverviewInWindow();
 #endif
     return false;
+#endif
 }
 void sdl3ImguiShowSettings(void) {
     s_showSettings = !s_showSettings;

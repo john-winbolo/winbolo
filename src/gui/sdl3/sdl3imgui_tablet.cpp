@@ -53,10 +53,13 @@ extern "C" {
 #include "sdl3draw.h"
 #include "build_cursor.h"
 #include "scenario_panel_slot.h"
+#include "../clientmutex.h"
 #if defined(WINBOLO_VOICE)
 #include "../voice.h"  /* the talk button: mode, enabled, muted, transmitting */
 #endif
 }
+
+#include "overview_view.h"
 
 #include "sdl3imgui.h"
 #include "sdl3imgui_tablet.h"
@@ -1520,6 +1523,195 @@ static void handleTapToBuild(ClientSim *cs) {
 }
 
 /* -------------------------------------------------------
+ * Map overview — the in-window map drawn inside the game
+ * view (sdl3draw.c), opened and closed by a button in the
+ * view's top-left corner. One finger drags the map, two
+ * pinch to zoom, a tap builds at the square under it, the
+ * scroll joystick pans and the Tank View button turns
+ * follow back on: the touch forms of the desktop's right
+ * drag, wheel, left click, scroll keys and follow key.
+ * ------------------------------------------------------- */
+
+/* The map button's icon, loaded on first use like the top bar's. */
+static SDL_Texture *s_iconMap = nullptr;
+static bool s_iconMapLoaded = false;
+
+/* Pinch travel not yet turned into a zoom step, as the log of the spacing
+   ratio. One step per 0.15, the threshold the map views use for the macOS
+   trackpad pinch. */
+#define OVERVIEW_PINCH_STEP 0.15f
+static float s_overviewPinchAccum = 0.0f;
+
+/* Scroll joystick pan speed on the map, in view pixels a frame. */
+#define OVERVIEW_JOY_PAN_PX 8.0f
+
+/* Where the map button sits: inside the game view's top-left corner, clear
+   of the scenario panel in the top-right and the newswire along the bottom. */
+static void overviewButtonRect(float *cx, float *cy, float *r) {
+  float ps = (float)s_cfg.screenH / 480.0f;
+  if (ps < 0.7f) ps = 0.7f;
+  *r  = 14.0f * ps;
+  *cx = (float)s_cfg.viewportX + 6.0f * ps + *r;
+  *cy = (float)s_cfg.viewportY + 6.0f * ps + *r;
+}
+
+/* Only in a running game, and not while the server withholds the overview;
+   the map stays closable whatever happens, so the button stays up while it
+   is open. iOS only: Android and a desktop in the tablet layout have no
+   in-window map to open (sdl3ImguiShowOverviewInWindow does nothing there). */
+static bool overviewButtonShown(ClientSim *cs) {
+#if defined(__APPLE__) && TARGET_OS_IOS
+  if (sdl3DrawIsOverviewInWindow()) return true;
+  return cs != nullptr && clientSimIsRunning(cs) && !clientSimIsInLobby(cs) &&
+         sdl3ImguiIsOverviewOffered();
+#else
+  (void)cs;
+  return false;
+#endif
+}
+
+/* Ahead of the tap handlers below: the button lies inside the game view, so a
+   tap on it is also a viewport tap, and that one is dropped here rather than
+   left to build under the button. */
+static void processOverviewButton(ClientSim *cs) {
+  if (!overviewButtonShown(cs)) return;
+  float cx, cy, r;
+  overviewButtonRect(&cx, &cy, &r);
+  if (inputTouchConsumeTapInRect(cx - r, cy - r, r * 2.0f, r * 2.0f)) {
+    float tx, ty;
+    (void)inputTouchGetViewportTapPos(&tx, &ty);
+    if (sdl3ImguiIsDialogOpen()) return;
+    sdl3ImguiShowOverviewInWindow(!sdl3ImguiIsOverviewInWindowOpen());
+  }
+}
+
+static void renderOverviewButton(ClientSim *cs) {
+  if (!overviewButtonShown(cs)) return;
+  float cx, cy, r;
+  overviewButtonRect(&cx, &cy, &r);
+  if (!s_iconMapLoaded) {
+    s_iconMapLoaded = true;
+    s_iconMap = imguiLoadSvgIconWhite(sdl3DrawGetRenderer(),
+                                      "data/ui/grid-view.svg", (int)(r * 4.0f));
+  }
+  bool on = sdl3DrawIsOverviewInWindow();
+  float alpha = on ? s_cfg.activeOpacity : s_cfg.topBtnOpacity;
+  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  dl->AddCircleFilled(ImVec2(cx, cy), r, scaleAlpha(IM_COL32(0, 0, 0, 200), alpha), 32);
+  /* Outlined like the view buttons: yellow while the map is up. */
+  ImU32 outline = on ? IM_COL32(255, 255, 100, 220) : IM_COL32(255, 255, 255, 220);
+  dl->AddCircle(ImVec2(cx, cy), r, scaleAlpha(outline, alpha), 32, 2.0f);
+  ImU32 tint = scaleAlpha(IM_COL32(255, 255, 255, 255), alpha);
+  float half = r * 0.6f;
+  if (s_iconMap) {
+    dl->AddImage((ImTextureID)s_iconMap, ImVec2(cx - half, cy - half),
+                 ImVec2(cx + half, cy + half), ImVec2(0, 0), ImVec2(1, 1), tint);
+  } else {
+    /* No icon file: four squares, a map grid. */
+    float gap = half * 0.2f;
+    for (int i = 0; i < 4; i++) {
+      float x0 = (i % 2 == 0) ? cx - half : cx + gap * 0.5f;
+      float y0 = (i < 2) ? cy - half : cy + gap * 0.5f;
+      float side = half - gap * 0.5f;
+      dl->AddRect(ImVec2(x0, y0), ImVec2(x0 + side, y0 + side), tint, 0.0f, 0, 1.5f);
+    }
+  }
+
+  /* The zoom and follow readout for a moment after either changes, beside
+     the button. No keys are passed, so it names no keyboard key. */
+  if (on) {
+    char status[96];
+    float noticeAlpha = 0.0f;
+    OverviewView *view = sdl3DrawOverviewInWindowView();
+    if (view && overviewViewCameraNotice(view, nullptr, status, sizeof(status),
+                                         &noticeAlpha)) {
+      const float pad = 4.0f;
+      ImVec2 textSize = ImGui::CalcTextSize(status);
+      ImVec2 boxMin(cx + r + pad * 2.0f, cy - textSize.y * 0.5f - pad);
+      ImVec2 boxMax(boxMin.x + textSize.x + pad * 2.0f,
+                    boxMin.y + textSize.y + pad * 2.0f);
+      dl->AddRectFilled(boxMin, boxMax,
+                        IM_COL32(0, 0, 0, (int)(160.0f * noticeAlpha)));
+      dl->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad),
+                  IM_COL32(230, 230, 230, (int)(255.0f * noticeAlpha)), status);
+    }
+  }
+}
+
+/* The map's input for this frame, in place of the classic view's tap to build
+   and drag scroll. Every way the camera changes here shows the zoom and follow
+   readout, as the desktop's input does. */
+static void processOverviewTouch(ClientSim *cs) {
+  OverviewView *view = sdl3DrawOverviewInWindowView();
+  OverviewCamera *cam = view ? overviewViewCamera(view) : nullptr;
+  float rx = 0.0f, ry = 0.0f, rw = 0.0f, rh = 0.0f;
+  float tx, ty;
+  if (!cam || !sdl3DrawGetOverviewInWindowRect(&rx, &ry, &rw, &rh)) {
+    /* Nothing drawn yet to map the touch onto, so the tap goes nowhere. */
+    (void)inputTouchGetViewportTapPos(&tx, &ty);
+    return;
+  }
+  int viewW = (int)rw;
+  int viewH = (int)rh;
+  int  zoomBefore   = cam->zoomIndex;
+  bool followBefore = cam->follow;
+
+  /* Negated: dragging right pulls the map right, which is the centre moving
+     left. */
+  float dx, dy;
+  if (inputTouchConsumeViewportDragTravel(&dx, &dy)) {
+    overviewCameraPan(cam, viewW, viewH, -dx, -dy);
+  }
+
+  int scrollX = 0, scrollY = 0;
+  if (inputTouchGetScrollDirection(&scrollX, &scrollY)) {
+    overviewCameraPan(cam, viewW, viewH, (float)scrollX * OVERVIEW_JOY_PAN_PX,
+                      (float)scrollY * OVERVIEW_JOY_PAN_PX);
+  }
+
+  /* Spreading the fingers zooms in, about the point between them. */
+  float scale, pcx, pcy;
+  if (inputTouchConsumeViewportPinch(&scale, &pcx, &pcy) && scale > 0.0f) {
+    s_overviewPinchAccum += logf(scale);
+    while (s_overviewPinchAccum >= OVERVIEW_PINCH_STEP) {
+      overviewCameraZoomAt(cam, viewW, viewH, pcx - rx, pcy - ry, 1);
+      s_overviewPinchAccum -= OVERVIEW_PINCH_STEP;
+    }
+    while (s_overviewPinchAccum <= -OVERVIEW_PINCH_STEP) {
+      overviewCameraZoomAt(cam, viewW, viewH, pcx - rx, pcy - ry, -1);
+      s_overviewPinchAccum += OVERVIEW_PINCH_STEP;
+    }
+  }
+
+  /* A tap builds at the square under it, as a left click does on the
+     desktop's map. Dropped under a dialog, as the classic tap is. */
+  if (inputTouchGetViewportTapPos(&tx, &ty) && !sdl3ImguiIsDialogOpen() && cs) {
+    int mx = 0, my = 0;
+    if (overviewCameraScreenToWorld(cam, viewW, viewH, tx - rx, ty - ry, &mx, &my)) {
+      clientMutexWaitFor();
+      clientSimManMoveToMap(cs, (BYTE)mx, (BYTE)my,
+                            clientSimGetCurrentBuildSelect(cs));
+      clientMutexRelease();
+      buildCursorSetTile((BYTE)mx, (BYTE)my);
+    }
+  }
+
+  if (cam->zoomIndex != zoomBefore || cam->follow != followBefore) {
+    overviewViewShowCameraNotice(view);
+  }
+}
+
+/* The Tank View button outside an item view: the map goes back to following
+   the tank, which is what the desktop's follow key does. */
+static void overviewFollowTank(void) {
+  OverviewView *view = sdl3DrawOverviewInWindowView();
+  OverviewCamera *cam = view ? overviewViewCamera(view) : nullptr;
+  if (!cam || cam->follow) return;
+  cam->follow = true;
+  overviewViewShowCameraNotice(view);
+}
+
+/* -------------------------------------------------------
  * Register buttons for hit-testing
  * ------------------------------------------------------- */
 
@@ -1622,12 +1814,27 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
   /* Update viewport bounds for tap detection */
   inputTouchSetViewportBounds(vpX, vpY, vpW, vpH, vpZoom);
 
-  /* Process tap-to-build */
-  handleTapToBuild(cs);
+  /* The map button first: its tap lies inside the game view. */
+  processOverviewButton(cs);
 
-  /* Process scrolling (joystick + viewport drag) */
-  processScrollJoystick(cs);
-  processViewportDragScroll(cs);
+  /* With the map up, the game view's touches drive the map; two fingers on it
+     pinch only then. iOS only, as for the button. */
+#if defined(__APPLE__) && TARGET_OS_IOS
+  bool overviewOn = sdl3DrawIsOverviewInWindow();
+#else
+  bool overviewOn = false;
+#endif
+  inputTouchSetViewportPinchEnabled(overviewOn);
+  if (overviewOn) {
+    processOverviewTouch(cs);
+  } else {
+    /* Process tap-to-build */
+    handleTapToBuild(cs);
+
+    /* Process scrolling (joystick + viewport drag) */
+    processScrollJoystick(cs);
+    processViewportDragScroll(cs);
+  }
 
   /* Damage detection — trigger haptic on armour decrease */
   {
@@ -1660,10 +1867,13 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
   if (inputTouchIsButtonTapped(TOUCH_BTN_TANK_VIEW)) {
     if (clientSimIsInItemView(cs)) {
       clientSimTankView(cs);
+    } else if (overviewOn) {
+      overviewFollowTank();
     }
   }
 
   renderScenarioSlot(cs);
+  renderOverviewButton(cs);
   renderJoystickOverlay();
   renderScrollJoystickOverlay();
   renderFireMineButtons();
