@@ -3644,8 +3644,8 @@ local function tank_combat_steer(state, world, info, goal)
                                    bit.rshift(math.floor(pred_wy), 8),
                                    nil, nil, nil, nil, km_pn)
     -- C.TANK_COMBAT_FIRE_CHECK_HEADING: the check above walks the line to the
-    -- AIM POINT, but the shell leaves along the GUN, which the aim gate lets sit
-    -- up to TANK_COMBAT_AIM_GATE_BRADS off that line. Next to a pill the two
+    -- AIM POINT, but the shell leaves along the GUN, and the bot fires with the
+    -- gun up to TANK_COMBAT_AIM_GATE_BRADS off that line. Next to a pill the two
     -- lines can fall on different tiles: heat_pill_F, tank (125.56,125.91),
     -- aim line 70.05 brads clips (126,126) and is clear, the gun at 68 runs
     -- flatter through our own pill on (126,125) and hits it. So also walk the

@@ -2107,9 +2107,10 @@ M.LEAD_CAP_USE_MEASURED          = false
 M.TANK_COMBAT_FIRE_MAX_FLIGHT    = false
 -- TANK_COMBAT_FIRE_CHECK_HEADING: in engage, the shot-path check also walks
 -- the line the GUN points along, not only the line to the aim point, and holds
--- fire while that line runs into a pill, base or wall. The aim gate lets the
--- gun sit a few brads off the aim line, and beside our own pill that is enough
--- to put the shell into it (tests/scenario/heat_pill_F). Off: the aim line only.
+-- fire while that line runs into a pill, base or wall. The bot fires with the
+-- gun up to TANK_COMBAT_AIM_GATE_BRADS off the aim line, and beside our own
+-- pill that is enough to put the shell into it (tests/scenario/heat_pill_F).
+-- Off: the aim line only.
 M.TANK_COMBAT_FIRE_CHECK_HEADING = true   -- keel false
 -- TANK_COMBAT_AIM_GATE_BRADS: in engage, fire when the gun is within this
 -- many brads of the lead point. 3 = the old gate.

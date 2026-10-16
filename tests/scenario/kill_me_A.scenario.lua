@@ -7,13 +7,15 @@
 --
 -- MEASURED 2026-10-16 on main's GoalHunter at b05ff93c3.  The arena now
 -- reaches its own precondition inside 10200 ticks: p0's top-up lands, the
--- gate is walled and the three pillboxes go aboard, and p0 then holds the
--- loaded, builder-less state well past LOADED_MIN.  At the gate seed (42)
--- the gate walls at t=784 and the state holds 2298 ticks.  Seeds 1, 2, 3,
--- 7, 13, 99, 123 and 777 all pass too: the gate walls between t=1400 and
--- t=2332 and the state holds 1282 to 5502 ticks.  The 2026-09-15
--- measurement -- no top-up inside 10200 ticks, and p0 dead 168 ticks after
--- the wall at 30200 -- no longer holds, so
+-- script walls the opening that cuts p0's man off (GATE_X, GATE_Y below),
+-- the three pillboxes go aboard, and p0 then holds the loaded, builder-less
+-- state well past LOADED_MIN.  With the default seed of
+-- tests/scenario/run_gate.py (42) the opening is walled at t=784 and the
+-- state holds 2298 ticks.
+-- Seeds 1, 2, 3, 7, 13, 99, 123 and 777 all pass too: the opening is walled
+-- between t=1400 and t=2332 and the state holds 1282 to 5502 ticks.  The
+-- 2026-09-15 measurement -- no top-up inside 10200 ticks, and p0 dead 168
+-- ticks after the wall at 30200 -- no longer holds, so
 -- this arena carries no expect=fail mark.  What made the top-up land is NOT
 -- TRACED: it was marked expect=fail when the arena was ported (f4d45e78f,
 -- #346), and the brain and the engine changed in many commits between that
