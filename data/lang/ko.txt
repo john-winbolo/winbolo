@@ -2823,3 +2823,8 @@ STR_SCNFN_DESC_KILL_CREDIT=탱크 파괴를 누구의 공으로 할지, 파괴�
 # The recap's clip GIF on iOS, saved into the WinBolo folder in Files
 STR_CLIPGIF_SAVED_IOS={string1}은(는) 파일 앱의 WinBolo 폴더에 있어요.
 STR_CLIPGIF_SAVE_FAILED_IOS={string1}을(를) 저장할 수 없습니다.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=맵이 화면을 채우고 조작 버튼은 그 위에 그려집니다.\n꺼두면 게임 화면은 정사각형으로 유지되고 조작 버튼은 그 옆에 놓입니다.\n다음에도 이 설정이 기억됩니다.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=전체 화면에서 건설 도구 사이로 맵이 얼마나 비쳐\n보이는지를 정합니다. 0%면 불투명하며, 슬라이더는\n90%까지만 움직여 완전히 투명해지지는 않습니다.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=전체 화면에서 탱크·토치카·기지 격자와 재고 바 사이로 맵이\n얼마나 비쳐 보이는지를 정합니다. 0%면 불투명하며, 슬라이더는\n90%까지만 움직여 완전히 투명해지지는 않습니다.

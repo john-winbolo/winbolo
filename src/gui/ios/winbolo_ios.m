@@ -954,10 +954,19 @@ void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
 }
 void windowAllowPlayerNameChange(bool allow) { (void)allow; }
 
+/* The touch layout's Full Screen choice, from Settings. An iOS window always
+   fills the screen, so there is no window to switch: the flag is the choice
+   alone, and with it on the in-window map fills the screen in place of the
+   game view's square (sdl3DrawIsTabletMapFullScreen). Bringing the map up
+   when it is chosen in a game is sdl3imgui.cpp's, after the frame. */
+void windowFullScreenChoose(bool on) {
+    gameFrontFullScreen = on;
+    gameFrontSaveCurrentPrefs();
+}
+
 /* Window geometry hooks sdl3ImguiProcessEvents calls in the iPad's desktop
-   layout. An iOS window always fills the screen: there is no full screen to
-   switch, no position to remember, and no size to correct. */
-void windowFullScreenChoose(bool on) { (void)on; }
+   layout. An iOS window always fills the screen: there is no position to
+   remember and no size to correct. */
 
 /* Gray or black bars beside the classic screen in the iPad's desktop
    layout, from Settings; the web's body. */

@@ -2825,3 +2825,8 @@ STR_SCNFN_DESC_KILL_CREDIT=Кому зараховується загибель 
 # The recap's clip GIF on iOS, saved into the WinBolo folder in Files
 STR_CLIPGIF_SAVED_IOS={string1} лежить у теці WinBolo в застосунку «Файли».
 STR_CLIPGIF_SAVE_FAILED_IOS=Не вдалося зберегти {string1}.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=Карта заповнює екран, а елементи керування малюються поверх неї.\nВимкнено — ігровий вигляд лишається квадратним, а елементи керування поруч.\nЗапам'ятовується для наступного разу.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Наскільки карта просвічує крізь інструменти побудови\nна весь екран. 0% означає повну непрозорість, а повзунок\nзупиняється на 90%, тож зробити їх невидимими не можна.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Наскільки карта просвічує крізь сітки танків, бункерів і баз\nта смужки запасів на весь екран. 0% означає повну непрозорість,\nа повзунок зупиняється на 90%, тож зробити їх невидимими не можна.

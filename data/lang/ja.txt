@@ -2825,3 +2825,8 @@ STR_SCNFN_DESC_KILL_CREDIT=タンクの撃破を誰の手柄とするか。撃�
 # The recap's clip GIF on iOS, saved into the WinBolo folder in Files
 STR_CLIPGIF_SAVED_IOS={string1} は「ファイル」アプリの WinBolo フォルダにあります。
 STR_CLIPGIF_SAVE_FAILED_IOS={string1} を保存できませんでした。
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=マップが画面全体に表示され、操作ボタンはその上に描画されます。\nオフにするとゲーム画面は正方形のままで、操作ボタンはその横に並びます。\n次回の起動でも記憶されます。
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=フルスクリーンで建設ツールから、マップがどれだけ\n透けて見えるかです。0%で不透明になり、スライダーは\n90%までしか動かないため透明にはなりません。
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=フルスクリーンでタンク・トーチカ・基地のグリッドと在庫バーから、\nマップがどれだけ透けて見えるかです。0%で不透明になり、\nスライダーは90%までしか動かないため透明にはなりません。

@@ -40,6 +40,7 @@
 #include "dialogs/imgui_dialog_utils.h"
 
 extern "C" {
+#include "../../common/wb_log.h"
 #include "global.h"
 #include "screentank.h"
 #include "client_sim.h"
@@ -70,11 +71,106 @@ static bool s_statusDrawerOpen = false;
 /* Static layout config, recomputed each frame */
 static TabletLayoutConfig s_cfg;
 
-/* Message fade state */
-static char s_lastMsgTop[512] = {0};
-static char s_lastMsgBottom[512] = {0};
-static Uint64 s_msgLastChangeTime = 0;
-static bool s_msgTimerInitialized = false;
+/* The touch layout's full screen (sdl3DrawIsTabletMapFullScreen), read once a
+   frame. The map then fills the screen and there is no gray chrome behind the
+   gutters, so the panels drawn there are laid over the map at the desktop
+   full screen HUD's transparency settings: the status grids and the stock
+   bars at the status panel's, the build bar at the builder tools', the
+   newswire at the newswire's. Each panel's pieces and its black backing take
+   separate alphas (sdl3DrawHudPanelAlphas). All six are 1 outside full screen,
+   where the panels look as they always have. */
+struct TabletPanelAlpha {
+  float piece;
+  float backing;
+};
+static bool             s_fullScreen = false;
+static TabletPanelAlpha s_statusAlpha = { 1.0f, 1.0f };
+static TabletPanelAlpha s_buildAlpha  = { 1.0f, 1.0f };
+static TabletPanelAlpha s_newsAlpha   = { 1.0f, 1.0f };
+
+static void tabletPanelAlphasUpdate(void) {
+  s_fullScreen = sdl3DrawIsTabletMapFullScreen();
+  if (!s_fullScreen) {
+    s_statusAlpha = s_buildAlpha = s_newsAlpha = { 1.0f, 1.0f };
+    return;
+  }
+  sdl3DrawHudPanelAlphas(sdl3DrawGetStatusPanelTransparency(),
+                         &s_statusAlpha.piece, &s_statusAlpha.backing);
+  sdl3DrawHudPanelAlphas(sdl3DrawGetBuildPanelTransparency(),
+                         &s_buildAlpha.piece, &s_buildAlpha.backing);
+  sdl3DrawHudPanelAlphas(sdl3DrawGetNewswireTransparency(),
+                         &s_newsAlpha.piece, &s_newsAlpha.backing);
+}
+
+/* The list every touch control is drawn on. ImGui's background list, which
+   is drawn over the game and under every ImGui window, so a dialog is always
+   on top of the controls; the foreground list they used to be on is drawn
+   over every window, dialogs included. */
+static ImDrawList *controlsDrawList(void) {
+  return ImGui::GetBackgroundDrawList();
+}
+
+/* Hand the touch input the rects of the open dialogs, so a finger that comes
+   down on one is the dialog's and not the control under it: every window up
+   last frame that takes input, other than the overlay's own panels, tooltips
+   and ImGui's implicit debug window. One frame behind, which a finger landing
+   cannot tell. */
+static void tabletBlockDialogTouches(void) {
+  static const char *const kOwnWindows[] = {
+    "##BuildBar", "##TankBars", "##BaseBars", "##ScenarioSlot", "Debug##Default",
+  };
+  ImGuiContext &g = *ImGui::GetCurrentContext();
+  SDL_FRect rects[16];
+  int n = 0;
+  for (ImGuiWindow *w : g.Windows) {
+    if (n >= (int)(sizeof(rects) / sizeof(rects[0]))) break;
+    if (!w->WasActive || w->Hidden) continue;
+    if (w->Flags & (ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_NoInputs |
+                    ImGuiWindowFlags_Tooltip)) {
+      continue;
+    }
+    if (w->Size.x <= 0.0f || w->Size.y <= 0.0f) continue;
+    bool own = false;
+    for (const char *name : kOwnWindows) {
+      if (strcmp(w->Name, name) == 0) { own = true; break; }
+    }
+    if (own) continue;
+    rects[n].x = w->Pos.x;
+    rects[n].y = w->Pos.y;
+    rects[n].w = w->Size.x;
+    rects[n].h = w->Size.y;
+    n++;
+  }
+  inputTouchSetBlockedRects(rects, n);
+
+  /* Which windows block, each time the set changes, for checking by eye. */
+  static int lastCount = -1;
+  if (n != lastCount) {
+    lastCount = n;
+    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "tablet: %d dialog rect(s) take touches", n);
+    for (ImGuiWindow *w : g.Windows) {
+      if (!w->WasActive || w->Hidden) continue;
+      WB_LOG_DEBUG(WB_LOG_CAT_GUI, "tablet:   window '%s' flags=0x%x %.0fx%.0f at %.0f,%.0f",
+                   w->Name, (unsigned)w->Flags, w->Size.x, w->Size.y, w->Pos.x, w->Pos.y);
+    }
+  }
+}
+
+static ImU32 scaleAlpha(ImU32 col, float alpha) {
+  int a = (int)((float)((col >> 24) & 0xFF) * alpha);
+  if (a < 0) a = 0;
+  if (a > 255) a = 255;
+  return (col & 0x00FFFFFF) | ((ImU32)a << 24);
+}
+
+/* Scale the alpha of every vertex added to dl since vtxStart, so a panel
+   drawn in colours of its own fades as one piece at its setting. */
+static void scaleDrawListAlphaSince(ImDrawList *dl, int vtxStart, float alpha) {
+  if (alpha >= 1.0f) return;
+  for (int i = vtxStart; i < dl->VtxBuffer.Size; i++) {
+    dl->VtxBuffer[i].col = scaleAlpha(dl->VtxBuffer[i].col, alpha);
+  }
+}
 
 /* Haptic state */
 static bool s_prevFirePressed = false;
@@ -170,10 +266,6 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->activeOpacity = 1.0f;
   cfg->topBtnOpacity = 0.6f;
   cfg->joyFadeOutMs = 1000;
-
-  /* Message fade */
-  cfg->msgFadeSeconds = 5.0f;
-  cfg->msgFadeDuration = 1.0f;
 
   /* --- Right-side layout: everything fits in the right gutter --- */
   float gutterLeft = (float)(viewportX + viewportW);  /* left edge of right gutter */
@@ -433,6 +525,20 @@ static void renderTabletBackground(void) {
 
   ImDrawList *dl = ImGui::GetBackgroundDrawList();
 
+  /* In full screen the panels lie over the map. A frame there is the bevel
+     alone, at its panel's piece alpha: the backing under each panel is its
+     own window's background, at the backing alpha, and a black fill here as
+     well would darken the map through it twice. The button groups (top row,
+     fire and mine, gunsight) and the newswire get no frame, since their
+     buttons and the newswire's window carry their own backing. */
+  ImU32 colNone = IM_COL32(0, 0, 0, 0);
+  ImU32 statusLight = scaleAlpha(colLight, s_statusAlpha.piece);
+  ImU32 statusDark  = scaleAlpha(colDark, s_statusAlpha.piece);
+  ImU32 statusFill  = s_fullScreen ? colNone : colBlack;
+  ImU32 buildLight  = scaleAlpha(colLight, s_buildAlpha.piece);
+  ImU32 buildDark   = scaleAlpha(colDark, s_buildAlpha.piece);
+  ImU32 buildFill   = s_fullScreen ? colNone : colBlack;
+
   /* --- Left gutter: status grids (tanks, pills, bases) --- */
   if (c.showStatusGrids) {
     /* The grids were drawn by SDL before this list, so the frame's fill is
@@ -441,26 +547,25 @@ static void renderTabletBackground(void) {
        the grid, so it covers no part of it. */
     float gridW = (float)(STATUS_TANKS_WIDTH * c.effectiveZoom);
     float gridH = (float)(STATUS_TANKS_HEIGHT * c.effectiveZoom);
-    ImU32 colNone = IM_COL32(0, 0, 0, 0);
 
     drawInsetRect(dl,
       c.tanksGridX - border, c.tanksGridY - border,
       gridW + border * 2, gridH + border * 2,
-      border, colLight, colDark, colNone);
+      border, statusLight, statusDark, colNone);
 
     drawInsetRect(dl,
       c.pillsGridX - border, c.pillsGridY - border,
       gridW + border * 2, gridH + border * 2,
-      border, colLight, colDark, colNone);
+      border, statusLight, statusDark, colNone);
 
     drawInsetRect(dl,
       c.basesGridX - border, c.basesGridY - border,
       gridW + border * 2, gridH + border * 2,
-      border, colLight, colDark, colNone);
+      border, statusLight, statusDark, colNone);
   }
 
   /* --- Right gutter: top buttons row --- */
-  {
+  if (!s_fullScreen) {
     float rowX = c.playersBtnX - 3.0f * ps;
     float rowY = c.topBtnY - 3.0f * ps;
     float rowW = (c.cogBtnX + c.topBtnSize) - c.playersBtnX + 6.0f * ps;
@@ -476,13 +581,13 @@ static void renderTabletBackground(void) {
     drawInsetRect(dl,
       c.tankBarsX - pad - border, c.tankBarsY - pad - border,
       c.topBtnSize + (pad + border) * 2, c.barsH + (pad + border) * 2,
-      border, colLight, colDark, colBlack);
+      border, statusLight, statusDark, statusFill);
 
     float baseH = c.barsH - 16.0f;
     drawInsetRect(dl,
       c.baseBarsX - pad - border, c.baseBarsY - pad - border,
       c.topBtnSize + (pad + border) * 2, baseH + (pad + border) * 2,
-      border, colLight, colDark, colBlack);
+      border, statusLight, statusDark, statusFill);
   }
 
   /* --- Right gutter: build bar area --- */
@@ -502,11 +607,11 @@ static void renderTabletBackground(void) {
       c.buildBarX - pad - border, c.buildBarY - pad - border,
       gridW + winPadX * 2 + (pad + border) * 2,
       gridH + winPadY * 2 + (pad + border) * 2,
-      border, colLight, colDark, colBlack);
+      border, buildLight, buildDark, buildFill);
   }
 
   /* --- Right gutter: fire/mine button area --- */
-  {
+  if (!s_fullScreen) {
     float pad = 3.0f * ps;
     /* Encompass fire, mine, pill view, and tank view buttons */
     float leftEdge = c.pillViewCenterX - c.pillViewRadius;
@@ -521,7 +626,7 @@ static void renderTabletBackground(void) {
   }
 
   /* --- Right gutter: gunsight +/- buttons --- */
-  {
+  if (!s_fullScreen) {
     float pad = 3.0f * ps;
     float leftEdge = c.gsDecCenterX - c.gsDecRadius;
     float topEdge = c.gsDecCenterY - c.gsDecRadius;
@@ -535,25 +640,16 @@ static void renderTabletBackground(void) {
   }
 
   /* --- Bottom: messages overlay area --- */
-  {
+  if (!s_fullScreen) {
     float pad = 3.0f * ps;
     float msgH = 76.0f * ps;  /* matches renderMessagesOverlay height */
+    /* The bevel alone: the strip SDL draws inside it carries its own
+       backing, and slides away to show the game view under it. */
     drawInsetRect(dl,
       c.msgOverlayX - pad - border, c.msgOverlayY - pad - border,
       c.msgOverlayW + (pad + border) * 2, msgH + (pad + border) * 2,
-      border, colLight, colDark, colBlack);
+      border, colLight, colDark, colNone);
   }
-}
-
-/* -------------------------------------------------------
- * Alpha helper
- * ------------------------------------------------------- */
-
-static ImU32 scaleAlpha(ImU32 col, float alpha) {
-  int a = (int)((float)((col >> 24) & 0xFF) * alpha);
-  if (a < 0) a = 0;
-  if (a > 255) a = 255;
-  return (col & 0x00FFFFFF) | ((ImU32)a << 24);
 }
 
 /* -------------------------------------------------------
@@ -578,7 +674,7 @@ static void renderJoystickOverlay(void) {
 
   if (alpha <= 0.0f) return;
 
-  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  ImDrawList *dl = controlsDrawList();
   dl->AddCircleFilled(ImVec2(ax, ay), s_cfg.joyOuterRadius,
                        scaleAlpha(IM_COL32(200, 200, 200, 80), alpha), 32);
   dl->AddCircle(ImVec2(ax, ay), s_cfg.joyOuterRadius,
@@ -611,7 +707,7 @@ static void renderScrollJoystickOverlay(void) {
 
   /* Draw zone hint (always visible at low opacity) */
   if (s_cfg.scrollJoyH > 10.0f) {
-    ImDrawList *dl = ImGui::GetForegroundDrawList();
+    ImDrawList *dl = controlsDrawList();
     float zoneAlpha = 0.15f;
     float cx = s_cfg.scrollJoyX + s_cfg.scrollJoyW * 0.5f;
     float cy = s_cfg.scrollJoyY + s_cfg.scrollJoyH * 0.5f;
@@ -652,7 +748,7 @@ static void renderScrollJoystickOverlay(void) {
 
   if (alpha <= 0.0f) return;
 
-  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  ImDrawList *dl = controlsDrawList();
   dl->AddCircleFilled(ImVec2(ax, ay), s_cfg.scrollJoyOuterRadius,
                        scaleAlpha(IM_COL32(100, 150, 200, 80), alpha), 32);
   dl->AddCircle(ImVec2(ax, ay), s_cfg.scrollJoyOuterRadius,
@@ -727,7 +823,7 @@ static void processViewportDragScroll(ClientSim *cs) {
  * ------------------------------------------------------- */
 
 static void renderFireMineButtons(void) {
-  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  ImDrawList *dl = controlsDrawList();
   bool fireActive = inputTouchIsButtonHeld(TOUCH_BTN_FIRE);
   bool mineActive = inputTouchIsButtonHeld(TOUCH_BTN_MINE);
 
@@ -816,7 +912,7 @@ static void renderFireMineButtons(void) {
  * ------------------------------------------------------- */
 
 static void renderGunsightButtons(void) {
-  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  ImDrawList *dl = controlsDrawList();
   bool decActive = inputTouchIsButtonHeld(TOUCH_BTN_GS_DECREASE);
   bool incActive = inputTouchIsButtonHeld(TOUCH_BTN_GS_INCREASE);
 
@@ -873,7 +969,7 @@ static void renderTalkButton(void) {
     return;
   }
 
-  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  ImDrawList *dl = controlsDrawList();
   float cx = s_cfg.talkCenterX;
   float cy = s_cfg.talkCenterY;
   float r = s_cfg.talkRadius;
@@ -955,7 +1051,7 @@ static TouchButtonID tabletSelectedViewButton(ClientSim *cs) {
 }
 
 static void renderViewButtons(ClientSim *cs) {
-  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  ImDrawList *dl = controlsDrawList();
   SDL_Texture *tilesTex = sdl3DrawGetTilesTexture();
   TouchButtonID selectedBtn = tabletSelectedViewButton(cs);
   TabletViewButton btns[4];
@@ -1018,12 +1114,18 @@ static void renderBuildSelectBar(ClientSim *cs) {
   ImGui::SetNextWindowSize(ImVec2(winW, winH));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 6));
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(spacing, spacing));
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.5f));
+  /* In full screen the background is the panel's backing over the map, and
+     everything drawn on it below takes the panel's piece alpha. */
+  ImGui::PushStyleColor(ImGuiCol_WindowBg,
+                        ImVec4(0.0f, 0.0f, 0.0f,
+                               s_fullScreen ? s_buildAlpha.backing : 0.5f));
 
   if (ImGui::Begin("##BuildBar", nullptr,
                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
                     ImGuiWindowFlags_NoScrollWithMouse)) {
+    ImDrawList *barDl = ImGui::GetWindowDrawList();
+    int barVtxStart = barDl->VtxBuffer.Size;
 
     buildSelect cur = clientSimGetCurrentBuildSelect(cs);
     const char *ids[] = { "##bsTree", "##bsRoad", "##bsWall", "##bsPill", "##bsMine" };
@@ -1103,6 +1205,7 @@ static void renderBuildSelectBar(ClientSim *cs) {
         }
       }
     }
+    scaleDrawListAlphaSince(barDl, barVtxStart, s_buildAlpha.piece);
   }
   ImGui::End();
   ImGui::PopStyleColor();
@@ -1114,7 +1217,7 @@ static void renderBuildSelectBar(ClientSim *cs) {
  * ------------------------------------------------------- */
 
 static void renderTopBarButtons(ClientSim *cs) {
-  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  ImDrawList *dl = controlsDrawList();
   float btnSize = s_cfg.topBtnSize;
   float btnY = s_cfg.topBtnY;
   float alpha = s_cfg.topBtnOpacity;
@@ -1226,10 +1329,15 @@ static void renderResourceBars(ClientSim *cs) {
     ImGui::SetNextWindowPos(ImVec2(x, y));
     ImGui::SetNextWindowSize(ImVec2(w, h));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(winPad, winPad));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.5f));
+    /* The stock bars are part of the status panel in full screen, as they
+       are in the desktop HUD's column. */
+    ImGui::PushStyleColor(ImGuiCol_WindowBg,
+                          ImVec4(0.0f, 0.0f, 0.0f,
+                                 s_fullScreen ? s_statusAlpha.backing : 0.5f));
 
     if (ImGui::Begin("##TankBars", nullptr, winFlags)) {
       ImDrawList *dl = ImGui::GetWindowDrawList();
+      int vtxStart = dl->VtxBuffer.Size;
       ImVec2 winPos = ImGui::GetWindowPos();
 
       /* 4 vertical bars: S M A T */
@@ -1253,6 +1361,7 @@ static void renderResourceBars(ClientSim *cs) {
         dl->AddRectFilled(ImVec2(bx, barTop + maxBarH - fillH),
                            ImVec2(bx + barW, barTop + maxBarH), barColor);
       }
+      scaleDrawListAlphaSince(dl, vtxStart, s_statusAlpha.piece);
     }
     ImGui::End();
     ImGui::PopStyleColor();
@@ -1272,10 +1381,13 @@ static void renderResourceBars(ClientSim *cs) {
     ImGui::SetNextWindowPos(ImVec2(x, y));
     ImGui::SetNextWindowSize(ImVec2(w, h));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(winPad, winPad));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, hasBase ? 0.5f : 0.25f));
+    float baseBack = s_fullScreen ? s_statusAlpha.backing : 0.5f;
+    ImGui::PushStyleColor(ImGuiCol_WindowBg,
+                          ImVec4(0.0f, 0.0f, 0.0f, hasBase ? baseBack : baseBack * 0.5f));
 
     if (ImGui::Begin("##BaseBars", nullptr, winFlags)) {
       ImDrawList *dl = ImGui::GetWindowDrawList();
+      int vtxStart = dl->VtxBuffer.Size;
       ImVec2 winPos = ImGui::GetWindowPos();
 
       float maxBarH = h - winPad * 2;
@@ -1298,6 +1410,7 @@ static void renderResourceBars(ClientSim *cs) {
         dl->AddRectFilled(ImVec2(bx, barTop + maxBarH - fillH),
                            ImVec2(bx + barW, barTop + maxBarH), barColor);
       }
+      scaleDrawListAlphaSince(dl, vtxStart, s_statusAlpha.piece);
     }
     ImGui::End();
     ImGui::PopStyleColor();
@@ -1425,120 +1538,27 @@ static void renderStatusDrawer(ClientSim *cs) {
  * Messages overlay (bottom center of viewport)
  * ------------------------------------------------------- */
 
+/* The newswire, along the bottom of the game view's square. SDL draws it
+   (sdl3DrawNewswireStrip), in the classic newswire's fixed-width face, so the
+   scroll moves at one speed and the lines stay in step, and under every ImGui
+   window. It slides on the shared slide (sdl3DrawNewswireSlideStep) that the
+   desktop's full screen map uses: the same hold time and auto-hide setting.
+   This hands the draw where the strip goes, the edge it slides off by (the
+   bottom of the square, or of the screen in full screen, where the map
+   carries on below the square), its size and its alphas; the draw uses them
+   from the next frame. */
 static void renderMessagesOverlay(void) {
-  const char *top = NULL, *bottom = NULL;
-  sdl3DrawGetCachedMessages(&top, &bottom);
-
-  bool hasContent = (top && top[0] != '\0') || (bottom && bottom[0] != '\0');
-  if (!hasContent && !s_msgTimerInitialized) return;
-
-  /* Detect message changes */
-  bool changed = false;
-  if (top && strcmp(top, s_lastMsgTop) != 0) {
-    strncpy(s_lastMsgTop, top, sizeof(s_lastMsgTop) - 1);
-    s_lastMsgTop[sizeof(s_lastMsgTop) - 1] = '\0';
-    changed = true;
-  } else if (!top && s_lastMsgTop[0] != '\0') {
-    s_lastMsgTop[0] = '\0';
-    changed = true;
-  }
-  if (bottom && strcmp(bottom, s_lastMsgBottom) != 0) {
-    strncpy(s_lastMsgBottom, bottom, sizeof(s_lastMsgBottom) - 1);
-    s_lastMsgBottom[sizeof(s_lastMsgBottom) - 1] = '\0';
-    changed = true;
-  } else if (!bottom && s_lastMsgBottom[0] != '\0') {
-    s_lastMsgBottom[0] = '\0';
-    changed = true;
-  }
-
-  if (changed || !s_msgTimerInitialized) {
-    s_msgLastChangeTime = SDL_GetTicks();
-    s_msgTimerInitialized = true;
-  }
-
-  float msgAlpha = 1.0f;
-  if (s_msgTimerInitialized) {
-    float elapsed = (float)(SDL_GetTicks() - s_msgLastChangeTime) / 1000.0f;
-    if (elapsed > s_cfg.msgFadeSeconds) {
-      float fadeProgress = (elapsed - s_cfg.msgFadeSeconds) / s_cfg.msgFadeDuration;
-      msgAlpha = 1.0f - fadeProgress;
-      if (msgAlpha < 0.0f) msgAlpha = 0.0f;
-    }
-  }
-
-  if (msgAlpha <= 0.0f || !hasContent) return;
-
-  float x = s_cfg.msgOverlayX;
-  float y = s_cfg.msgOverlayY;
-  float w = s_cfg.msgOverlayW;
-
+  float edge = s_fullScreen ? (float)s_cfg.screenH
+                            : (float)(s_cfg.viewportY + s_cfg.viewportH);
   /* A quarter above the overlay font, which is already sized for reading on
      the device (applyMainContextUiScale); 1.6 made two newswire lines take
      a seventh of a phone's screen. */
-  float fontScale = 1.25f;
-  float lineH = ImGui::GetTextLineHeight() * fontScale;
-  float h = lineH * 2.0f + 12.0f;
-
-  ImGui::SetNextWindowPos(ImVec2(x, y));
-  ImGui::SetNextWindowSize(ImVec2(w, h));
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 4));
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.5f * msgAlpha));
-
-  if (ImGui::Begin("##MsgOverlay", nullptr,
-                    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                    ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoInputs |
-                    ImGuiWindowFlags_NoFocusOnAppearing |
-                    ImGuiWindowFlags_NoBringToFrontOnFocus)) {
-
-    float origScale = ImGui::GetFont()->Scale;
-    ImGui::GetFont()->Scale *= fontScale;
-    ImGui::PushFont(ImGui::GetFont());
-
-    ImU32 textCol = scaleAlpha(IM_COL32(200, 200, 200, 220), msgAlpha);
-    float availW = w - 16.0f;
-    ImVec2 winPos = ImGui::GetWindowPos();
-
-    if (top && top[0] != '\0') {
-      const char *dispTop = top;
-      if (ImGui::CalcTextSize(top).x > availW) {
-        const char *p = top;
-        while (*p) {
-          if (ImGui::CalcTextSize(p).x <= availW) break;
-          if ((*p & 0x80) == 0) p++;
-          else if ((*p & 0xE0) == 0xC0) p += 2;
-          else if ((*p & 0xF0) == 0xE0) p += 3;
-          else p += 4;
-        }
-        dispTop = p;
-      }
-      ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
-        ImVec2(winPos.x + 8, winPos.y + 4), textCol, dispTop);
-    }
-
-    if (bottom && bottom[0] != '\0') {
-      const char *dispBot = bottom;
-      if (ImGui::CalcTextSize(bottom).x > availW) {
-        const char *p = bottom;
-        while (*p) {
-          if (ImGui::CalcTextSize(p).x <= availW) break;
-          if ((*p & 0x80) == 0) p++;
-          else if ((*p & 0xE0) == 0xC0) p += 2;
-          else if ((*p & 0xF0) == 0xE0) p += 3;
-          else p += 4;
-        }
-        dispBot = p;
-      }
-      ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
-        ImVec2(winPos.x + 8, winPos.y + 4 + lineH + 2), textCol, dispBot);
-    }
-
-    ImGui::PopFont();
-    ImGui::GetFont()->Scale = origScale;
-  }
-  ImGui::End();
-  ImGui::PopStyleColor();
-  ImGui::PopStyleVar();
+  int fontPx = (int)(ImGui::GetFontSize() * 1.25f + 0.5f);
+  float textAlpha = s_fullScreen ? s_newsAlpha.piece : 220.0f / 255.0f;
+  float backAlpha = s_fullScreen ? s_newsAlpha.backing : 0.5f;
+  sdl3DrawSetTabletNewswire(s_cfg.msgOverlayX, s_cfg.msgOverlayY,
+                            s_cfg.msgOverlayW, edge, fontPx, textAlpha,
+                            backAlpha);
 }
 
 /* -------------------------------------------------------
@@ -1639,7 +1659,7 @@ static void renderOverviewButton(ClientSim *cs) {
   }
   bool on = sdl3DrawIsOverviewInWindow();
   float alpha = on ? s_cfg.activeOpacity : s_cfg.topBtnOpacity;
-  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  ImDrawList *dl = controlsDrawList();
   dl->AddCircleFilled(ImVec2(cx, cy), r, scaleAlpha(IM_COL32(0, 0, 0, 200), alpha), 32);
   /* Outlined like the view buttons: yellow while the map is up. */
   ImU32 outline = on ? IM_COL32(255, 255, 100, 220) : IM_COL32(255, 255, 255, 220);
@@ -1814,10 +1834,6 @@ static void renderScenarioSlot(ClientSim *cs) {
 }
 
 void sdl3ImguiTabletNewGame(void) {
-  s_lastMsgTop[0] = '\0';
-  s_lastMsgBottom[0] = '\0';
-  s_msgLastChangeTime = 0;
-  s_msgTimerInitialized = false;
   s_prevArmour = 0;
   s_armourInitialized = false;
 }
@@ -1840,6 +1856,8 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
 
   /* Reconfigure layout each frame */
   tabletLayoutConfigure(&s_cfg, screenW, screenH, vpX, vpY, vpW, vpH, vpZoom);
+  tabletPanelAlphasUpdate();
+  tabletBlockDialogTouches();
   tabletViewButtonsApplyPolicies(&s_cfg, cs);
 
   /* Draw beveled chrome background behind everything */

@@ -2825,3 +2825,8 @@ STR_SCNFN_DESC_KILL_CREDIT=A quem a morte de um tanque é atribuída, perguntado
 # The recap's clip GIF on iOS, saved into the WinBolo folder in Files
 STR_CLIPGIF_SAVED_IOS={string1} está na pasta do WinBolo no app Arquivos.
 STR_CLIPGIF_SAVE_FAILED_IOS=Não foi possível salvar {string1}.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=O mapa preenche a tela e os controles são desenhados por cima dele.\nDesativado mantém a visão do jogo quadrada, com os controles ao lado.\nLembrado para a próxima vez.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Quanto do mapa aparece através das ferramentas de\nconstrução em tela cheia. 0% é sólido, e o controle deslizante\npara em 90% para que não possam ficar invisíveis.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Quanto do mapa aparece através das grades de tanques, bunkers\ne bases e das barras de estoque em tela cheia. 0% é sólido,\ne o controle deslizante para em 90% para que não possam ficar invisíveis.

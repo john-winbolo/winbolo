@@ -1478,6 +1478,20 @@ static bool overviewLeavesWindowAlone(SDL_Window *win) {
 #endif
 }
 
+/* True in the iOS touch layout, the one place the app full screen flag is the
+ * player's Full Screen choice for the in-window map: with it on, a game opens
+ * with the map up and the map fills the screen, with the touch controls over
+ * it (sdl3DrawIsTabletMapFullScreen), rather than the game view's square. The
+ * map button still opens and closes the map either way and leaves the choice
+ * alone. */
+static bool tabletFullScreenOffered(void) {
+#if defined(__APPLE__) && TARGET_OS_IOS
+    return uiModeIsTablet();
+#else
+    return false;
+#endif
+}
+
 /* Turn the in-window overview on or off. The mode takes the main window
  * fullscreen so the map gets the whole screen; leaving drops the window back
  * to windowed only when the app full screen flag is off, because with it on
@@ -8656,8 +8670,17 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
            the same way. The mode test keeps this from re-entering when the
            app asked for the transition itself: by then the mode is already
            off. Skipped on the tablet and the Deck, which are born full screen
-           — there the flag is not the player's preference to overwrite. */
-        if ((ev.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN ||
+           — there the flag is not the player's preference to overwrite. iOS
+           too, in either layout: its window is always full screen, and the
+           flag there is the touch layout's Full Screen choice, which the
+           iPad's desktop layout must not set from its window. */
+#if defined(__APPLE__) && TARGET_OS_IOS
+        const bool windowOwnsFlag = false;
+#else
+        const bool windowOwnsFlag = true;
+#endif
+        if (windowOwnsFlag &&
+            (ev.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN ||
              ev.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN) &&
             ev.window.windowID == SDL_GetWindowID(s_window) &&
             !uiModeIsTablet() && !uiModeIsSteamDeck()) {
@@ -9719,7 +9742,8 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                screen, the pop-out on its own flag when it is not. */
             /* On the web the full screen map is only ever the player's request, so a game starts in the normal view whatever the browser's full screen state. */
             bool pageSized = s_window && overviewLeavesWindowAlone(s_window);
-            if (gameFrontFullScreen && !pageSized) sdl3ImguiShowOverviewInWindow(true);
+            if (gameFrontFullScreen && (!pageSized || tabletFullScreenOffered()))
+                sdl3ImguiShowOverviewInWindow(true);
             else if (gameFrontShowMapOverview) sdl3ImguiShowMapOverview(true);
         }
         s_overviewWasRunning = overviewRunning;
@@ -9823,7 +9847,15 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (s_pendingFullScreen >= 0) {
         bool want = (s_pendingFullScreen != 0);
         s_pendingFullScreen = -1;
-        sdl3ImguiShowOverviewInWindow(want);
+        if (tabletFullScreenOffered()) {
+            /* The choice is the flag itself here, and the map follows it.
+               Turned on in a game, the map comes up so the change shows;
+               turned off, a map that is up stays up, back in the square. */
+            windowFullScreenChoose(want);
+            if (want && s_overviewWasRunning) sdl3ImguiShowOverviewInWindow(true);
+        } else {
+            sdl3ImguiShowOverviewInWindow(want);
+        }
     }
 
     /* Initialise WBN popup state on first settings open */

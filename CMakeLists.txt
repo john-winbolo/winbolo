@@ -942,6 +942,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/imgui_steam_nav.cpp
     src/gui/sdl3/sdl3imgui_tablet.cpp
     src/gui/sdl3/sdl3draw.c
+    src/gui/sdl3/newswire_slide.c
     src/gui/sdl3/sdl3draw_status.c
     src/gui/sdl3/tank_label.c
     src/gui/sdl3/mapview.c
@@ -1946,7 +1947,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/ping_marker.c
     src/gui/sdl3/ring_band.c
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/map_colours.c src/gui/sdl3/map_markers.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/map_colours.c src/gui/sdl3/map_markers.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/newswire_slide.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
     # spectatorRun reads the controller through it for overview pan/zoom. Reads
     # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
@@ -4376,6 +4377,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # comes in with gfx_settings.c above.
     tests/unit/test_fog_roads.c
     tests/unit/test_overview_hud_layout.cpp
+    tests/unit/test_newswire_slide.c
     tests/unit/test_sight.c
     tests/unit/test_sight_shadow.c
     tests/unit/test_sight_shadow_overflow.c
@@ -4763,6 +4765,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp
     src/gui/sdl3/sprite_positions.c
+    # newswire_slide.c qualifies too: stdint and stdbool, and arithmetic on
+    # the times it is given.
+    src/gui/sdl3/newswire_slide.c
     # map_colours.c qualifies on the same footing: its includes are SDL3 for
     # the colour types, tilenum.h and global.h for the tile numbers, and
     # skin_source.h to read a skin's [MapPalette] — whose skin_source.c this
@@ -5883,6 +5888,7 @@ set(_unit_test_names
     fog_road_edges
     fog_road_edge_masks
     overview_hud_layout
+    newswire_slide
     sight
     sight_shadow
     sight_shadow_cost

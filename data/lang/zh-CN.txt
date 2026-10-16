@@ -2823,3 +2823,8 @@ STR_SCNFN_DESC_KILL_CREDIT=坦克被击毁算作谁的战绩，每次击毁时�
 # The recap's clip GIF on iOS, saved into the WinBolo folder in Files
 STR_CLIPGIF_SAVED_IOS={string1} 位于“文件”App 的 WinBolo 文件夹中。
 STR_CLIPGIF_SAVE_FAILED_IOS=无法保存 {string1}。
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=地图铺满屏幕，操作控件绘制在地图上方。\n关闭此项会让游戏视图保持正方形，操作控件位于其旁边。\n下次会记住这个设置。
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=决定全屏时建造工具能透出多少地图内容。\n0% 为不透明，滑块最高只能到 90%，\n因此无法完全透明。
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=决定全屏时坦克、碉堡和基地网格以及库存条能透出\n多少地图内容。0% 为不透明，滑块最高只能到 90%，\n因此无法完全透明。

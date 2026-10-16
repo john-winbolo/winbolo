@@ -818,6 +818,60 @@ extern "C" void imguiSettingsVoiceMicTest(float barWidth) {
  * tile sheet and sound set rebuilt, which the shell does after the
  * frame off ctx->wantSkinReload.
  * ------------------------------------------------------- */
+/* The full screen map's panel settings: how see-through the newswire, the
+ * builder tools and the status panel are drawn, and the newswire's auto-hide.
+ * The desktop's full screen map and the iOS touch layout's full screen read
+ * the same four settings; touchLayout picks the transparency tooltips, since
+ * the builder tools and the status panel sit in different places there.
+ * Each slider is applied as it moves so the panel changes under it, and
+ * written to the preferences once it is let go. The web and Android show
+ * none of them. */
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__)
+static void renderFullScreenPanelSettings(bool touchLayout) {
+    int trans = sdl3DrawGetNewswireTransparency();
+    ImGui::SetNextItemWidth(200.0f);
+    if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_NEWS_TRANSPARENCY),
+                         &trans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
+                         "%d%%")) {
+        sdl3DrawSetNewswireTransparency(trans);
+    }
+    imguiHelpTooltip(langGetText(STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP));
+    if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
+
+    bool autoHide = sdl3DrawGetNewswireAutoHide();
+    if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_NEWS_AUTOHIDE),
+                        &autoHide)) {
+        sdl3DrawSetNewswireAutoHide(autoHide);
+        gameFrontSaveCurrentPrefs();
+    }
+    imguiHelpTooltip(langGetText(STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP));
+
+    int buildTrans = sdl3DrawGetBuildPanelTransparency();
+    ImGui::SetNextItemWidth(200.0f);
+    if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_BUILD_TRANSPARENCY),
+                         &buildTrans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
+                         "%d%%")) {
+        sdl3DrawSetBuildPanelTransparency(buildTrans);
+    }
+    imguiHelpTooltip(langGetText(touchLayout
+                                     ? STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP
+                                     : STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP));
+    if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
+
+    int statusTrans = sdl3DrawGetStatusPanelTransparency();
+    ImGui::SetNextItemWidth(200.0f);
+    if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_STATUS_TRANSPARENCY),
+                         &statusTrans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
+                         "%d%%")) {
+        sdl3DrawSetStatusPanelTransparency(statusTrans);
+    }
+    imguiHelpTooltip(langGetText(touchLayout
+                                     ? STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP
+                                     : STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP));
+    if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
+}
+#endif
+
 extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
     /* ---- Frame rate ---- */
     if (!uiModeIsTablet()) {
@@ -945,48 +999,9 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
 
 #if !defined(__EMSCRIPTEN__)
     /* ---- The full screen map's HUD panels ---- These follow the map view
-       they belong to, which is desktop and Deck only.  Each slider is applied
-       as it moves so the panel changes under it, and written to the
-       preferences once it is let go. */
-    if (!uiModeIsTablet()) {
-        int trans = sdl3DrawGetNewswireTransparency();
-        ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_NEWS_TRANSPARENCY),
-                             &trans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
-                             "%d%%")) {
-            sdl3DrawSetNewswireTransparency(trans);
-        }
-        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP));
-        if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
-
-        bool autoHide = sdl3DrawGetNewswireAutoHide();
-        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_NEWS_AUTOHIDE),
-                            &autoHide)) {
-            sdl3DrawSetNewswireAutoHide(autoHide);
-            gameFrontSaveCurrentPrefs();
-        }
-        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP));
-
-        int buildTrans = sdl3DrawGetBuildPanelTransparency();
-        ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_BUILD_TRANSPARENCY),
-                             &buildTrans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
-                             "%d%%")) {
-            sdl3DrawSetBuildPanelTransparency(buildTrans);
-        }
-        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP));
-        if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
-
-        int statusTrans = sdl3DrawGetStatusPanelTransparency();
-        ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_STATUS_TRANSPARENCY),
-                             &statusTrans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
-                             "%d%%")) {
-            sdl3DrawSetStatusPanelTransparency(statusTrans);
-        }
-        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP));
-        if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
-    }
+       they belong to: desktop and Deck here, and the iOS touch layout's own
+       full screen below. */
+    if (!uiModeIsTablet()) renderFullScreenPanelSettings(false);
 #endif
 
     /* ---- The simplified view ---- Both surfaces it covers are desktop and
@@ -1018,6 +1033,23 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         ImGui::EndDisabled();
         ImGui::Unindent();
     }
+    }
+#endif
+
+#if defined(__IPHONEOS__)
+    /* ---- Full screen, the touch layout's ---- The map fills the screen with
+       the controls over it (sdl3DrawIsTabletMapFullScreen). The tick reads
+       the preference, since an iOS window is full screen whatever it says,
+       and is applied after the frame like the desktop's, where it becomes the
+       flag and, in a game, brings the map up. */
+    if (uiModeIsTablet()) {
+        ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_FULLSCREEN));
+        bool fs = (bool)gameFrontFullScreen;
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_FULLSCREEN), &fs)) {
+            ctx->pendingFullScreen = fs ? 1 : 0;
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP));
+        renderFullScreenPanelSettings(true);
     }
 #endif
 

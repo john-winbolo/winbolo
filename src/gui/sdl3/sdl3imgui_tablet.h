@@ -99,10 +99,6 @@ typedef struct {
   float msgOverlayY;
   float msgOverlayW;
 
-  /* Message fade timing */
-  float msgFadeSeconds;
-  float msgFadeDuration;
-
   /* Top button idle opacity */
   float topBtnOpacity;
 

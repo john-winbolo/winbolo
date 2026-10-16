@@ -81,6 +81,17 @@ typedef struct {
 } TapTracker;
 static TapTracker   s_tapTrackers[MAX_TAP_FINGERS];
 
+/* The rects the open dialogs cover, set each frame by the tablet overlay, and
+   the fingers that came down inside one. Such a finger belongs to the dialog
+   for its whole life: no control, no map drag and no tap sees it, wherever it
+   moves to. A finger that came down outside keeps working as it would with
+   no dialog up, even when it moves over one. */
+#define TOUCH_MAX_BLOCKED_RECTS 16
+static SDL_FRect    s_blockedRects[TOUCH_MAX_BLOCKED_RECTS];
+static int          s_blockedRectCount = 0;
+static SDL_FingerID s_dialogFingers[MAX_TAP_FINGERS];
+static bool         s_dialogFingerActive[MAX_TAP_FINGERS];
+
 /* Gunsight change: +1 increase, -1 decrease, 0 none */
 static int          s_gunsightChange = 0;
 
@@ -169,7 +180,45 @@ void inputTouchSetup(void) {
   }
   for (int i = 0; i < MAX_TAP_FINGERS; i++) {
     s_tapTrackers[i].active = false;
+    s_dialogFingerActive[i] = false;
   }
+  s_blockedRectCount = 0;
+}
+
+void inputTouchSetBlockedRects(const SDL_FRect *rects, int count) {
+  if (count < 0) count = 0;
+  if (count > TOUCH_MAX_BLOCKED_RECTS) count = TOUCH_MAX_BLOCKED_RECTS;
+  for (int i = 0; i < count; i++) s_blockedRects[i] = rects[i];
+  s_blockedRectCount = count;
+}
+
+static bool pointInBlockedRect(float x, float y) {
+  for (int i = 0; i < s_blockedRectCount; i++) {
+    const SDL_FRect *r = &s_blockedRects[i];
+    if (x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h) return true;
+  }
+  return false;
+}
+
+/* True when the event's finger is a dialog's: one coming down inside a
+   dialog is claimed here, and one already claimed is let go when it lifts. */
+static bool fingerBelongsToDialog(SDL_FingerID fid, float x, float y,
+                                  bool isDown, bool isUp) {
+  for (int i = 0; i < MAX_TAP_FINGERS; i++) {
+    if (s_dialogFingerActive[i] && s_dialogFingers[i] == fid) {
+      if (isUp) s_dialogFingerActive[i] = false;
+      return true;
+    }
+  }
+  if (!isDown || !pointInBlockedRect(x, y)) return false;
+  for (int i = 0; i < MAX_TAP_FINGERS; i++) {
+    if (!s_dialogFingerActive[i]) {
+      s_dialogFingers[i]      = fid;
+      s_dialogFingerActive[i] = true;
+      break;
+    }
+  }
+  return true;
 }
 
 void inputTouchCleanup(void) {
@@ -258,6 +307,8 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
     default:
       return;
   }
+
+  if (fingerBelongsToDialog(fid, fx, fy, isDown, isUp)) return;
 
   /* --- Tap tracking (all fingers, for viewport tap detection) --- */
   if (isDown) {

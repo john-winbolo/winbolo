@@ -2825,3 +2825,8 @@ STR_SCNFN_DESC_KILL_CREDIT=Aan wie de dood van een tank wordt toegeschreven, gev
 # The recap's clip GIF on iOS, saved into the WinBolo folder in Files
 STR_CLIPGIF_SAVED_IOS={string1} staat in de WinBolo-map in de Bestanden-app.
 STR_CLIPGIF_SAVE_FAILED_IOS={string1} kon niet worden bewaard.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=De kaart vult het scherm en de bedieningselementen worden eroverheen getekend.\nUit houdt de spelweergave vierkant, met de bedieningselementen ernaast.\nWordt onthouden voor de volgende keer.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Hoeveel van de kaart doorschijnt via het bouwgereedschap\nin volledig scherm. 0% is ondoorzichtig, en de schuifregelaar\nstopt bij 90% zodat het niet onzichtbaar kan worden.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Hoeveel van de kaart doorschijnt via de tank-, bunker- en\nbasisrasters en de voorraadbalken in volledig scherm. 0% is ondoorzichtig,\nen de schuifregelaar stopt bij 90% zodat ze niet onzichtbaar kunnen worden.

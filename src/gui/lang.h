@@ -3403,6 +3403,11 @@
 #define STR_CLIPGIF_SAVED_IOS                    2819
 #define STR_CLIPGIF_SAVE_FAILED_IOS              2820
 
+/* The iOS touch layout's Full Screen choice and its panel tooltips */
+#define STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP          2821
+#define STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP  2822
+#define STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP 2823
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

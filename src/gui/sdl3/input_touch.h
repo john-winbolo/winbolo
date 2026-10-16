@@ -143,6 +143,17 @@ int inputTouchGetBuildSelect(void);
 bool inputTouchConsumeTapInRect(float x, float y, float w, float h);
 
 void inputTouchSetViewportBounds(int vpX, int vpY, int vpW, int vpH, int zoom);
+
+/*********************************************************
+*NAME:          inputTouchSetBlockedRects
+*PURPOSE:
+*  The rects the open dialogs cover, in the same space as
+*  the viewport bounds. A finger that comes down inside one
+*  belongs to the dialog until it lifts: no button, joystick,
+*  map drag or tap sees it. Fingers that come down outside
+*  work as normal. Up to 16 rects; zero clears them.
+*********************************************************/
+void inputTouchSetBlockedRects(const SDL_FRect *rects, int count);
 bool inputTouchGetViewportTap(BYTE *tileX, BYTE *tileY);
 /* The same tap as inputTouchGetViewportTap, as the touch position rather than
    a 15x15 square; reading either one clears it. */

@@ -2825,3 +2825,8 @@ STR_SCNFN_DESC_KILL_CREDIT=Wem der Tod eines Panzers angerechnet wird, abgefragt
 # The recap's clip GIF on iOS, saved into the WinBolo folder in Files
 STR_CLIPGIF_SAVED_IOS={string1} liegt im WinBolo-Ordner der Dateien-App.
 STR_CLIPGIF_SAVE_FAILED_IOS={string1} konnte nicht gespeichert werden.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=Die Karte füllt den Bildschirm, und die Bedienelemente werden darüber gezeichnet.\nAus lässt die Spielansicht quadratisch, mit den Bedienelementen daneben.\nWird für das nächste Mal gemerkt.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Wie viel von der Karte im Vollbild durch die Bauwerkzeuge\ndurchscheint. 0% ist undurchsichtig, und der Regler stoppt\nbei 90%, damit sie nicht unsichtbar werden können.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Wie viel von der Karte im Vollbild durch die Panzer-, Bunker-\nund Basisraster und die Vorratsbalken durchscheint. 0% ist\nundurchsichtig, und der Regler stoppt bei 90%, damit sie nicht unsichtbar werden können.

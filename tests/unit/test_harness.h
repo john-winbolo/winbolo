@@ -1966,6 +1966,12 @@ int run_sight_shadow_overflow(void);
  * legible column is refused without writing to the caller's layout. */
 int run_overview_hud_layout(void);
 
+/* Newswire slide (test_newswire_slide.c): it starts off screen, slides up at
+ * the slide rate on a message, holds for the hold time, slides off, stays up
+ * with auto-hide off, lands at once after a long gap with no steps, and never
+ * leaves the 0 to 1 range. */
+int run_newswire_slide(void);
+
 /* Overview dead tank (test_overview_map.c): a tank that is dead and waiting to
  * respawn holds its block on the square it died on — the corner it reads from
  * reveals nothing, the block keeps its tiles and goes on taking terrain
