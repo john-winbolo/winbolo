@@ -24,5 +24,14 @@
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
+    <!-- Voice chat opens the microphone through SDL's recording device.
+         Under the hardened runtime, macOS refuses microphone access to a
+         process that does not hold this entitlement, and it refuses it
+         silently: the permission prompt never appears, the device opens
+         and delivers silence, and SDL reports no error. An unsigned dev
+         build is not subject to the hardened runtime, which is why the
+         prompt appears there and not in the shipped build. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
 </dict>
 </plist>

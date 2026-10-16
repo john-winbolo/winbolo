@@ -3940,6 +3940,8 @@ scenario = {
                 "Die while it is out and it is anyone's."),
                 math.floor(ROUND_SECONDS / 60)),
   api         = 1,
+  author      = "WinBolo",
+  updated     = "2026-10-02T10:09Z",
   kind        = "scenario",
   game        = "open",
 

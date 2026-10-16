@@ -42,6 +42,26 @@
 bool logIsEOF();
 int logReadBytes(BYTE *buff, int len);
 
+/* The map runs of the last snapshot applied to the map, byte for byte, and
+ * whether anything has written to the map since. A server writes a snapshot
+ * every few seconds, each with the whole map, and while nobody builds or
+ * shoots anything they are all the same. Applying the same runs again to a
+ * map nothing has touched since changes nothing, so lv_mapReadRuns steps over
+ * them. Only a plaintext log's bytes can be compared. */
+static map     s_runsMap     = NULL;  /* the map they were applied to */
+static BYTE   *s_runs        = NULL;
+static size_t  s_runsLen     = 0;
+static size_t  s_runsCap     = 0;
+static int     s_runsCount   = 0;
+static bool    s_mapChanged  = TRUE;
+
+static void lv_mapForgetRuns(void) {
+  s_runsMap = NULL;
+  s_runsLen = 0;
+  s_runsCount = 0;
+  s_mapChanged = TRUE;
+}
+
 
 /*********************************************************
 *NAME:          lv_mapCreate
@@ -59,6 +79,7 @@ void lv_mapCreate(map *value) {
   int count;  /* Looping variable */
   int count2; /* Looping variable */
   New(*value);
+  lv_mapForgetRuns();
   for (count=0;count<MAP_ARRAY_SIZE ;count++) {
     for (count2=0;count2<MAP_ARRAY_SIZE;count2++) {
       ((*value)->mapItem[count][count2]) = DEEP_SEA;
@@ -78,6 +99,10 @@ void lv_mapCreate(map *value) {
 *  value - Pointer to the map file
 *********************************************************/
 void lv_mapDestroy(map *value) {
+  lv_mapForgetRuns();
+  free(s_runs);
+  s_runs = NULL;
+  s_runsCap = 0;
   Dispose(*value);
 }
 
@@ -117,6 +142,7 @@ BYTE lv_mapGetPos(map *value, BYTE xValue, BYTE yValue) {
 *********************************************************/
 void lv_mapSetPos(map *value, BYTE xValue, BYTE yValue, BYTE terrain) {
   (*value)->mapItem[xValue][yValue] = terrain;
+  s_mapChanged = TRUE;
 }
 
 /*********************************************************
@@ -290,10 +316,41 @@ bool lv_mapReadRuns(map *value, int *numRuns) {
   bool done;             /* Is all the runs read */
   bool ret;              /* Function return Value */
   int runs;              /* Non-terminator runs consumed */
+  const BYTE *peek;      /* The runs as they lie in the log */
+  size_t avail;
+  size_t blockLen = 0;   /* Their length, terminator included; 0 if unknown */
+  size_t startPos;
 
   returnValue = TRUE;
   done = FALSE;
   runs = 0;
+
+  /* Find where the runs end without reading them: each header gives its run's
+     length, header included, up to the terminator. */
+  startPos = lv_logGetCurrentPosition();
+  peek = lv_blocksPeek(&avail);
+  if (peek != NULL) {
+    size_t off = 0;
+    while (off + SIZEOFBMAP_RUN_HEADER <= avail) {
+      if (peek[off] == SIZEOFBMAP_RUN_HEADER && peek[off + 1] == MAP_ARRAY_LAST &&
+          peek[off + 2] == MAP_ARRAY_LAST && peek[off + 3] == MAP_ARRAY_LAST) {
+        blockLen = off + SIZEOFBMAP_RUN_HEADER;
+        break;
+      }
+      if (peek[off] < SIZEOFBMAP_RUN_HEADER) {
+        break;   /* malformed: leave it to the reader below */
+      }
+      off += peek[off];
+    }
+  }
+  if (blockLen > 0 && s_mapChanged == FALSE && s_runsMap == *value &&
+      s_runsLen == blockLen && memcmp(s_runs, peek, blockLen) == 0) {
+    lv_logSetPosition(startPos + blockLen);
+    if (numRuns != NULL) {
+      *numRuns = s_runsCount;
+    }
+    return TRUE;
+  }
 
 
   bytesRead = logReadBytes((BYTE *) &runHead, SIZEOFBMAP_RUN_HEADER);
@@ -323,6 +380,33 @@ bool lv_mapReadRuns(map *value, int *numRuns) {
 
   if (numRuns != NULL) {
     *numRuns = runs;
+  }
+
+  /* Keep these runs, applied in full, to compare the next snapshot's with.
+     The peek is stale now that the reader has moved, so copy from the log. */
+  s_runsMap = NULL;
+  if (returnValue == TRUE && blockLen > 0 &&
+      lv_logGetCurrentPosition() == startPos + blockLen) {
+    if (blockLen > s_runsCap) {
+      BYTE *grown = (BYTE *)realloc(s_runs, blockLen);
+      if (grown != NULL) {
+        s_runs = grown;
+        s_runsCap = blockLen;
+      }
+    }
+    if (blockLen <= s_runsCap) {
+      size_t now = lv_logGetCurrentPosition();
+      lv_logSetPosition(startPos);
+      peek = lv_blocksPeek(&avail);
+      if (peek != NULL && avail >= blockLen) {
+        memcpy(s_runs, peek, blockLen);
+        s_runsLen = blockLen;
+        s_runsCount = runs;
+        s_runsMap = *value;
+        s_mapChanged = FALSE;
+      }
+      lv_logSetPosition(now);
+    }
   }
   return returnValue;
 }
