@@ -356,6 +356,15 @@ extern "C" int imguiWelcomeShow(void) {
            off: the sign-in block, the version, the social icons, the
            play/pause button and the logo column all were. */
         const DialogSafeInsets safe = dialogGetSafeInsets(window);
+        /* How far in from each window edge the corner items sit: the screen's
+           own margin, or the safe inset where that is larger. The inset is
+           the clearance iOS asks for, so it is not added on top of the
+           margin; the sum left a 90-point band beside the Dynamic Island. */
+        const float edgeMargin = 12.0f * s;
+        const float edgeL = SDL_max(safe.left,   edgeMargin);
+        const float edgeT = SDL_max(safe.top,    edgeMargin);
+        const float edgeR = SDL_max(safe.right,  edgeMargin);
+        const float edgeB = SDL_max(safe.bottom, edgeMargin);
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
@@ -389,7 +398,6 @@ extern "C" int imguiWelcomeShow(void) {
 
         /* Top-right logo + ghost menu column. Logo is purely decorative. */
         {
-            const float restoreMargin = 12.0f * s;
             const float miniBtnW      = 180.0f * s;
 
             if (logoTex && logoW > 0.0f) {
@@ -399,11 +407,11 @@ extern "C" int imguiWelcomeShow(void) {
                  * sides equally — that's the intended look. Only clamp if
                  * the centred position would extend past the window's right
                  * edge entirely. */
-                float restoreX = (float)winW - safe.right - miniBtnW - restoreMargin
+                float restoreX = (float)winW - edgeR - miniBtnW
                                  + (miniBtnW - logoW) * 0.5f;
-                if (restoreX + logoW > (float)winW - safe.right)
-                    restoreX = (float)winW - safe.right - logoW;
-                float restoreY = restoreMargin + safe.top;
+                if (restoreX + logoW > (float)winW - edgeR)
+                    restoreX = (float)winW - edgeR - logoW;
+                float restoreY = edgeT;
                 ImGui::SetCursorPos(ImVec2(restoreX, restoreY));
                 ImGui::Image((ImTextureID)logoTex, ImVec2(logoW, logoH));
             }
@@ -421,8 +429,8 @@ extern "C" int imguiWelcomeShow(void) {
             const float ghostBtnAlpha = hasBg ? 0.15f : 0.6f;
             const float ghostTextAlpha = hasBg ? 0.75f : 0.9f;
 #endif
-            float logoBottom = safe.top + ((logoTex && logoW > 0.0f) ? restoreMargin + logoH : restoreMargin + 40.0f * s);
-            float btnX = (float)winW - safe.right - miniBtnW - restoreMargin;
+            float logoBottom = edgeT + ((logoTex && logoW > 0.0f) ? logoH : 40.0f * s);
+            float btnX = (float)winW - edgeR - miniBtnW;
             float btnY = logoBottom + 30.0f * s;
 
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f * s);
@@ -514,9 +522,8 @@ extern "C" int imguiWelcomeShow(void) {
                to the height the button text needs. The desktop keeps its
                fixed spacing. */
             {
-                const float cornerMargin = 12.0f * s;
                 const float cornerH = SDL_max(27.5f * s, ImGui::GetTextLineHeight());
-                float limitY = (float)winH - safe.bottom - cornerMargin - cornerH - 8.0f * s;
+                float limitY = (float)winH - edgeB - cornerH - 8.0f * s;
                 int rows = 0, groups = 0;
                 for (int i = 0; i < miniCount; i++) {
                     if (!miniModes[i].show) continue;
@@ -636,8 +643,7 @@ extern "C" int imguiWelcomeShow(void) {
          * state + Login/Logout, plus the 1v1 ladder rank when signed in.
          * Reuses the settings dialog's login popup and worker. */
         {
-            const float statusMargin = 12.0f * s;
-            ImGui::SetCursorPos(ImVec2(statusMargin + safe.left, statusMargin + safe.top));
+            ImGui::SetCursorPos(ImVec2(edgeL, edgeT));
             ImGui::BeginGroup();
             imguiWinbolonetDrawStatusBlock();
             ImGui::EndGroup();
@@ -653,14 +659,13 @@ extern "C" int imguiWelcomeShow(void) {
         /* Play/Pause button — bottom-left */
         if (hasBg) {
             const float ppSize = 30.0f * s;
-            const float ppMargin = 12.0f * s;
 #if BOLO_MOBILE
             const float ppBaseAlpha = 0.7f; /* Touch screens have no hover — keep visible */
 #else
             const float ppBaseAlpha = 0.15f;
 #endif
-            float ppX = ppMargin + safe.left;
-            float ppY = (float)winH - safe.bottom - ppSize - ppMargin;
+            float ppX = edgeL;
+            float ppY = (float)winH - edgeB - ppSize;
 
             ImGui::SetCursorPos(ImVec2(ppX, ppY));
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f * s);
@@ -720,15 +725,14 @@ extern "C" int imguiWelcomeShow(void) {
             const float icon   = 27.5f * s;
             const float gap    = 10.0f * s;   /* between adjacent icons         */
             const float pad    = 12.0f * s;   /* between the icons and the text */
-            const float margin = 12.0f * s;
 
             /* Mirror the version label's own placement so the icons tuck just
              * to its left and share its vertical centre. */
             char shortVer[32];
             SDL_snprintf(shortVer, sizeof(shortVer), "v%s", WINBOLO_DISPLAY_VERSION);
             ImVec2 verSize = ImGui::CalcTextSize(shortVer);
-            float verX = (float)winW - safe.right - verSize.x - margin;
-            float verY = (float)winH - safe.bottom - verSize.y - margin;
+            float verX = (float)winW - edgeR - verSize.x;
+            float verY = (float)winH - edgeB - verSize.y;
 
             const int nLinks = 3;
             float rowW  = icon * (float)nLinks + gap * (float)(nLinks - 1);
@@ -777,10 +781,9 @@ extern "C" int imguiWelcomeShow(void) {
             SDL_snprintf(shortVer, sizeof(shortVer), "v%s", WINBOLO_DISPLAY_VERSION);
 
             ImVec2 verSize = ImGui::CalcTextSize(shortVer);
-            const float margin = 12.0f * s;
 
-            ImGui::SetCursorPos(ImVec2((float)winW - safe.right - verSize.x - margin,
-                                       (float)winH - safe.bottom - verSize.y - margin));
+            ImGui::SetCursorPos(ImVec2((float)winW - edgeR - verSize.x,
+                                       (float)winH - edgeB - verSize.y));
             ImVec2 verScreen = ImGui::GetCursorScreenPos();
 
             /* Invisible button captures the click + drives hover state.
