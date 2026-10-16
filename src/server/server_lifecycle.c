@@ -913,7 +913,16 @@ void serverInstanceTick(ServerSim *sim) {
      * (deferred from startup so lobby/countdown time is excluded and the
      * timeline anchors at this game's tick 0). Runs before serverSimBotTick so
      * DEBUG_SESSION_DIR is set before any bot thinks / brainRecordTick fires. */
-    if (brainRecordIsEnabled() && !s_braindbgSessionOpen) {
+    /* A session dir the host already named wins, and the block machinery stays
+     * out of its way entirely. winbolods never sets one before this point —
+     * serverLifecycleOpenBraindbgBlock below is the only caller of
+     * brainRecordSetSessionDir it has — so this only holds off for a host that
+     * picked its own dir, such as a test recording one run into a named
+     * session. Naming the dir means owning the blocks and the low-disk stop
+     * as well; without this the first running tick renamed the session out
+     * from under such a host and its dir was left empty. */
+    if (brainRecordIsEnabled() && !s_braindbgSessionOpen &&
+        brainRecordGetSessionDir() == NULL) {
       /* First running tick of this game → open recording block 1, unless the
        * disk is already below the floor. */
       if (serverLifecycleFreeDiskBytes() < BRAINDBG_DISK_FLOOR_BYTES) {

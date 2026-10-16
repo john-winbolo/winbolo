@@ -2121,6 +2121,12 @@ int run_lgm_quit_drops_carried_pill(void);
  * of a seat that was not on the field. */
 int run_lgm_unfield_drops_carried_pill(void);
 
+/* Where a builder starts when he is sent out (test_lgm_start_offset.c): 16
+ * world units from the tank's centre towards the square he was sent to,
+ * worked out in whole numbers, and on the tank's centre when that square's
+ * centre is no further off than that. */
+int run_lgm_start_offset(void);
+
 /* Adaptive jitter buffer (test_jitter_buffer_grow.c): queue drains under
  * jitter deepen jitterTarget toward MAX, a steadily full queue shrinks it
  * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */
@@ -2254,6 +2260,12 @@ int run_error_smoothing(void);
  * client endpoint. Convergence-bounded, never exact-trace. */
 int run_loopback_join(void);
 int run_loopback_join_loss(void);
+/* The builder walled in behind his own tank while a heated pillbox shoots at
+ * it (test_lgm_under_fire.c). The player expects the tank body to shield the
+ * man; the lagged case is the bug report and fails today, the clean-link case
+ * is its control. */
+int run_lgm_wall_behind_tank_under_fire_lagged(void);
+int run_lgm_wall_behind_tank_under_fire_nolag(void);
 int run_loopback_password(void);
 int run_loopback_lobby_running_loss(void);
 /* Quiet-lobby reliable control delivery under loss with no input flowing:
