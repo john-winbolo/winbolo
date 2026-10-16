@@ -2088,6 +2088,10 @@ STR_DLGSETTINGS_HOSTING_VOICE_ON=Zapnuto
 STR_DLGSETTINGS_HOSTING_VOICE_OFF=Vypnuto
 STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Blízkost
 STR_DLGSETTINGS_HOSTING_VOICE_TIP=Vypnuto zahodí hlas, místo aby ho přeneslo komukoliv. Blízkost zatím není implementována a chová se stejně jako Zapnuto.
+STR_DLGSETTINGS_HOSTING_SERVERNAME=Název serveru
+STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=Hledač her zobrazuje tento název místo tvé adresy. Až 32 znaků (méně s diakritikou nebo jiným písmem). Nech prázdné pro zobrazení adresy.
+STR_DLGSETTINGS_HOSTING_SERVERDESC=Popis
+STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=Hledač her ho zobrazí, když hráč najede na tvou hru nebo ji vybere. Až 200 znaků (méně s diakritikou nebo jiným písmem).
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Hlas
@@ -2736,6 +2740,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Mody
 STR_DLGBROWSER_MODS_MORE=+ mody ({number})
+STR_DLGBROWSER_ADDRESS=Adresa
 
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=Hlasový chat teď slyší všichni ve hře
