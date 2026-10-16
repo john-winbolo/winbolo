@@ -4732,7 +4732,11 @@ end
 -- 1..C.FINISH_RUN_MAX_ARMOUR.  Ends (FINISH_RUN_EXIT) when the pill dies (the
 -- goal goes; capture follows in the normal flow), its armour climbs over the
 -- cap, the forced order ends, or the knob goes off; for all but a dead pill
--- the take goes back to plan_position.  No square beside the pill reachable:
+-- the take goes back to plan_position.  The armour exit cannot flap: a pill
+-- never heals by itself, and a repair adds 4 a tree (PILL_REPAIR_AMOUNT), so a
+-- repaired pill jumps well over the cap and stays out until it is shot back
+-- down.  Pillbox Tag holds its prize at 3 (BUILT_ARMOUR), so there this exit
+-- never fires.  No square beside the pill reachable:
 -- the bad-square memory is wiped at once and the run tries again, so the bot
 -- never sits in an abort.  Returns true when the caller must return.
 function M.finish_run_update(goal, state, world, info, now)

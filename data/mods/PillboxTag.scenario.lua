@@ -245,7 +245,12 @@ walled.FINISH_RUN = true       -- keel false. What every bot, in every part,
                                 -- path to it, shooting the walls on the way,
                                 -- and fires the moment the line is clear,
                                 -- instead of picking a firing spot first.
-                                -- false: the brain's KEEL way.
+                                -- false: the brain's KEEL way. true is also
+                                -- the brain's own value (DEFAULTS), so the
+                                -- script never sends it: like every knob
+                                -- here, it assumes the brain runs its own
+                                -- values, not preset=keel. On a preset=keel
+                                -- server the brain keeps FINISH_RUN false.
 local LAST_SHOT_ARMOUR    = 1   -- a fort shot down to this armour is taken
                                 -- back by its guard before a hunter kills it
 local RUN_FROM_WITHIN     = 11  -- hunters this close are what a bot holder
