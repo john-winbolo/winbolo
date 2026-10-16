@@ -1015,6 +1015,54 @@ end
 --   In boat: stop at any water/land boundary.  Cutting diagonals through
 --            a river corridor can clip a land tile and lose the boat.
 --            Also stop at BOAT tiles on water (transition point).
+-- The world table of the think in progress, for next_step_blocked (the
+-- lookahead is only given state and info).  Set at the top of M.steer.
+local _cur_world = nil
+
+-- C.STUCK_COLLAPSE_NEEDS_CLIP: is one square in the way of the tank?  A
+-- building, half building or deep sea square, a live pillbox, or another
+-- tank standing on it.
+local function step_square_blocked(info, mx, my)
+  if not U.in_map(mx, my) then return true end
+  if IMPASSABLE[U.ttype(mx, my)] then return true end
+  local plist = _cur_world and _cur_world.pill_at
+                and _cur_world.pill_at[my * 256 + mx]
+  if plist then
+    for i = 1, #plist do
+      local p = plist[i].pill
+      if p and (p.health or 0) > 0 then return true end
+    end
+  end
+  local ot = _G.OBJECT_TANK or 0
+  for _, ob in ipairs(info.objects or {}) do
+    if ob.type == ot and ob.idnum ~= info.player_number
+       and bit.rshift(ob.x, 8) == mx and bit.rshift(ob.y, 8) == my then
+      return true
+    end
+  end
+  return false
+end
+
+-- C.STUCK_COLLAPSE_NEEDS_CLIP: is the step from the tank's square to the
+-- path's next square really blocked?  The square itself (above), a land/
+-- water edge, a blocked corner square on a diagonal step, or the tank's
+-- off-centre body sweeping into a blocked side square.  An open step is not
+-- blocked, however slowly the tank is moving onto it.
+local function next_step_blocked(info, tmx, tmy, nx, ny)
+  if nx == tmx and ny == tmy then return true end   -- old behaviour
+  if step_square_blocked(info, nx, ny) then return true end
+  if (WATER_TT[U.ttype(tmx, tmy)] or false)
+     ~= (WATER_TT[U.ttype(nx, ny)] or false) then
+    return true
+  end
+  if nx ~= tmx and ny ~= tmy
+     and (step_square_blocked(info, nx, tmy)
+          or step_square_blocked(info, tmx, ny)) then
+    return true
+  end
+  return (corridor_path_clipped(info, tmx, tmy, nx, ny))
+end
+
 local function path_lookahead_inner(state, info, nx, ny)
   local pf = state.pf
   local chain = pf.path_chain
@@ -1113,9 +1161,18 @@ local function path_lookahead_inner(state, info, nx, ny)
                            and not info.inboat and sp.acc_since)
                           or sp.since)
     if sp and (state.tick or 0) - since >= STUCK_LOOKAHEAD_COLLAPSE_TICKS then
-      sdbg("lookahead: STUCK collapse (%d ticks), return tank tile (%d,%d)",
-           (state.tick or 0) - since, tmx, tmy)
-      return tmx, tmy
+      -- C.STUCK_COLLAPSE_NEEDS_CLIP (keel false): only on a blocked step.
+      -- On an open step the tank goes on driving at it; the stuck recovery
+      -- at STUCK_TICKS still runs as before.
+      if C.STUCK_COLLAPSE_NEEDS_CLIP
+         and not next_step_blocked(info, tmx, tmy, nx, ny) then
+        sdbg("lookahead: STUCK collapse skipped (%d ticks), step (%d,%d) is open",
+             (state.tick or 0) - since, nx, ny)
+      else
+        sdbg("lookahead: STUCK collapse (%d ticks), return tank tile (%d,%d)",
+             (state.tick or 0) - since, tmx, tmy)
+        return tmx, tmy
+      end
     end
   end
 
@@ -6039,6 +6096,7 @@ end
 -- pass through untouched and the tank keeps rotating out of trouble on the
 -- spot. Boats are exempt: deep sea is where they belong.
 function M.steer(state, world, info, goal)
+  _cur_world = world
   -- Close out an attack_tank heat volley whose goal was replaced under it (a
   -- replan, or the enemy tank dying). Runs BEFORE steer_core so the retry latch
   -- is stamped before tank_combat_steer could pick the same pill again this

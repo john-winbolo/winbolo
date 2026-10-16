@@ -4904,6 +4904,19 @@ M.STUCK_COLLAPSE_ACCUM = true   -- keel false
 -- and a new window starts when the shooting ends.
 -- false = the shooting phase counts toward the stuck clock (keel).
 M.STUCK_EXEMPT_REPOSITION_SHOOT = true   -- keel false
+-- 2026-10-15 (Andrew approved): THE LOOKAHEAD COLLAPSE NEEDS A BLOCKED STEP.
+-- The collapse turns the tank back to its own square 30 thinks after the
+-- path's next square last changed.  Its window restarts only when one think
+-- closes 24 world units, and a tank moves at most about 16 in one think, so
+-- a tank pushed back by shells or slowed on the way fired it on an open
+-- step (pilltag_hop_ahead seed 99, brain ticks 1192 and 1329).  With this
+-- on, the collapse fires only when the next step is really blocked: a
+-- building, half building or deep sea square, a live pillbox or another
+-- tank on it, a land/water edge, a blocked corner square on a diagonal
+-- step, or the tank's off-centre body sweeping into a blocked side square.
+-- The stuck recovery and its penalty at STUCK_TICKS do not change.
+-- false = the collapse fires on any step (keel).
+M.STUCK_COLLAPSE_NEEDS_CLIP = true   -- keel false
 -- THE HOLD PHASE STILL FIGHTS.  While the hold runs the hard goto lock comes
 -- off and goal selection runs again, so attack_tank and kill_lgm can win --
 -- but the tank must not DRIVE anywhere: it was sent to that square.  These
@@ -6172,6 +6185,9 @@ M.PRESETS = {
     --   2026-10-15: shooting our own pill down (reposition_shoot) does not
     --   run the stuck clock.  KEEL counted it as no progress.
     STUCK_EXEMPT_REPOSITION_SHOOT = false,
+    --   2026-10-15: the lookahead collapse fires only on a blocked next
+    --   step.  KEEL collapsed on any step after 30 thinks.
+    STUCK_COLLAPSE_NEEDS_CLIP     = false,
     --   2026-10-04: the bid prices in a refuel stop and a fight.  KEEL: the
     --   bid is the travel cost alone.
     ORDER_BID_STOP_AWARE          = false,
