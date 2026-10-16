@@ -32,11 +32,15 @@
  *    image_resize header is not vendored).
  *  - Total cache cap: 64 MB of decoded images, kept by
  *    NewsImageBudget, which never evicts an image drawn in this
- *    frame or the previous one (see news_image_budget.h). An image
- *    that cannot fit without that is marked Failed rather than
- *    shown. Pending and Failed entries are bounded (at most one
- *    Pending per URL; Failed entries persist permanently so we
- *    don't re-fetch known-bad URLs in the same process).
+ *    frame or the previous one (see news_image_budget.h). The news
+ *    window only asks for the images in view, so an image scrolled
+ *    out of view ages out and the cap is a least-recently-viewed
+ *    cache. An image that cannot fit without evicting one in view
+ *    is Deferred: its pixels are dropped and it is downloaded again
+ *    the next time it is in view and the budget has room for it.
+ *    Pending and Failed entries are bounded (at most one Pending per
+ *    URL; Failed entries persist permanently so we don't re-fetch
+ *    known-bad URLs in the same process).
  *  - Threading: each first-time validated URL spawns a std::thread,
  *    joined by the UI thread once it has finished, or at shutdown.
  *    The worker runs a plain libcurl GET into a DynBuf, decodes
@@ -93,18 +97,25 @@ const char *const kAllowedHosts[] = {
 enum class State : uint8_t {
     Pending,    /* worker running, no texture yet                      */
     Ready,      /* texture uploaded, held in g_budget                  */
+    Deferred,   /* decoded but refused for room; no worker, no pixels  */
     Failed,     /* rejected URL or transport/decode error — permanent  */
 };
 
 struct Entry {
     State        state         = State::Pending;
     SDL_Texture *texture       = nullptr;
+    int          w             = 0;   /* texture size, when Ready */
+    int          h             = 0;
 
     /* Worker → UI handoff: when set, the UI thread is responsible
      * for SDL_CreateTexture+SDL_UpdateTexture and freeing pixels. */
     unsigned char *pendingPixels = nullptr;
     int            pendingW      = 0;
     int            pendingH      = 0;
+
+    /* Decoded size of a Deferred image, so the budget can be asked
+     * whether it would fit before it is downloaded again. */
+    size_t         deferredBytes = 0;
 };
 
 /* A download thread and the flag it sets as its last act, so the UI
@@ -317,13 +328,15 @@ void drainPending_locked() {
 
         /* Make room first. The evicted entries are all Ready, so
          * erasing them never invalidates kv, the Pending entry this
-         * loop is on. */
+         * loop is on. No room means the images in view fill the
+         * budget; drop the pixels and try again when it is in view
+         * and the budget can take it (see newsImageGet). */
         const size_t bytes = (size_t)e.pendingW * (size_t)e.pendingH * 4;
         if (!g_budget.admit(kv.first, bytes, evicted)) {
             stbi_image_free(e.pendingPixels);
             e.pendingPixels = nullptr;
-            e.state = State::Failed;
-            g_failedCount++;
+            e.state         = State::Deferred;
+            e.deferredBytes = bytes;
             continue;
         }
         for (const std::string &url : evicted) evict_locked(url);
@@ -351,6 +364,8 @@ void drainPending_locked() {
         }
 
         e.texture = tex;
+        e.w       = e.pendingW;
+        e.h       = e.pendingH;
         e.state   = State::Ready;
     }
 }
@@ -367,6 +382,20 @@ void reapWorkers() {
     }
 }
 
+/* Starts the download of key, whose entry is already Pending. Called
+ * without g_mutex held; the worker captures the URL string by value
+ * so map-rehash invalidation doesn't bite. UI thread only. */
+void startWorker(const std::string &key) {
+    reapWorkers();
+    if (g_shutdown.load(std::memory_order_acquire)) return;
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    std::thread t([key, done]() {
+        workerBody(key);
+        done->store(true, std::memory_order_release);
+    });
+    g_workers.push_back(Worker{std::move(t), done});
+}
+
 }  /* namespace */
 
 /*********************************************************
@@ -377,17 +406,34 @@ SDL_Texture *newsImageGet(const char *url) {
     if (!url) return nullptr;
 
     std::unique_lock<std::mutex> lk(g_mutex);
-    drainPending_locked();
-
     const std::string key(url);
     auto it = g_cache.find(key);
+
+    /* A Ready image is touched before the drain below, so an arrival
+     * that needs room cannot take this image, which is about to be
+     * drawn. Draining only erases other, evictable entries, so `it`
+     * stays valid. */
+    if (it != g_cache.end() && it->second.state == State::Ready &&
+        it->second.texture) {
+        g_budget.touch(key);
+        drainPending_locked();
+        return it->second.texture;
+    }
+
+    drainPending_locked();
     if (it != g_cache.end()) {
         Entry &e = it->second;
         if (e.state == State::Ready && e.texture) {
-            g_budget.touch(key);
+            /* Arrived in that drain, which admitted it as drawn. */
             return e.texture;
         }
-        return nullptr;  /* Pending / Failed */
+        if (e.state == State::Deferred &&
+            g_budget.fits(key, e.deferredBytes)) {
+            e.state = State::Pending;
+            lk.unlock();
+            startWorker(key);
+        }
+        return nullptr;  /* Pending / Deferred / Failed */
     }
 
     /* First sighting. Validate before any network. */
@@ -399,23 +445,27 @@ SDL_Texture *newsImageGet(const char *url) {
         return nullptr;
     }
 
-    /* Insert as Pending and spawn a worker. The worker captures the
-     * URL string by value so map-rehash invalidation doesn't bite. */
     Entry e;
     e.state = State::Pending;
     g_cache.emplace(key, e);
     lk.unlock();
 
-    reapWorkers();
-    if (!g_shutdown.load(std::memory_order_acquire)) {
-        auto done = std::make_shared<std::atomic<bool>>(false);
-        std::thread t([key, done]() {
-            workerBody(key);
-            done->store(true, std::memory_order_release);
-        });
-        g_workers.push_back(Worker{std::move(t), done});
-    }
+    startWorker(key);
     return nullptr;
+}
+
+bool newsImagePeek(const char *url, SDL_Texture **tex, float *w, float *h) {
+    if (!url) return false;
+    std::lock_guard<std::mutex> lk(g_mutex);
+    auto it = g_cache.find(url);
+    if (it == g_cache.end() || it->second.state != State::Ready ||
+        !it->second.texture) {
+        return false;
+    }
+    if (tex) *tex = it->second.texture;
+    if (w) *w = (float)it->second.w;
+    if (h) *h = (float)it->second.h;
+    return true;
 }
 
 bool newsImageIsFailed(const char *url) {

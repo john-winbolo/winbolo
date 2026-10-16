@@ -6,6 +6,7 @@
  * again and the window flickered for as long as it was open.
  */
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -169,34 +170,173 @@ static int budget_readmit_forget_clear(void) {
     return 0;
 }
 
-/* Scrolling past a long post with a small budget: images drawn earlier
- * and no longer on screen give way, images on screen never do, and
- * each image is evicted at most once per pass. */
-static int budget_scrolling_window(void) {
-    const size_t img = 100;
-    NewsImageBudget b(4 * img);
+/* fits() gives admit()'s answer without changing anything. */
+static int budget_fits_is_a_dry_run(void) {
+    NewsImageBudget b(300);
     std::vector<std::string> evict;
-    int evictions = 0;
+    b.newFrame();                                     /* frame 1 */
+    b.admit("a", 100, evict);
+    b.admit("b", 100, evict);
+    b.newFrame();
+    b.newFrame();                                     /* frame 3 */
+    b.admit("c", 100, evict);                         /* a, b evictable; c pinned */
 
-    for (int top = 0; top < 30; top++) {
-        std::vector<std::string> onScreen;
-        for (int i = top; i < top + 3; i++) onScreen.push_back(url(i));
-        drawFrame(b, onScreen);
-        for (const auto &u : onScreen) {
-            if (b.contains(u)) continue;
-            UT_ASSERT_MSG(b.admit(u, img, evict), "top %d: %s refused", top,
-                          u.c_str());
+    UT_ASSERT_MSG(b.fits("d", 100), "d 100 should fit by evicting a");
+    UT_ASSERT_MSG(b.fits("d", 200), "d 200 should fit by evicting a and b");
+    UT_ASSERT_MSG(!b.fits("d", 250), "d 250 fits only by evicting c");
+    UT_ASSERT_MSG(!b.fits("d", 301), "d 301 is over the whole budget");
+    UT_ASSERT_MSG(b.fits("c", 300), "c 300 should fit by replacing c");
+    UT_ASSERT_MSG(b.count() == 3 && b.usedBytes() == 300 && b.contains("a") &&
+                  b.contains("b") && b.contains("c"),
+                  "fits changed the budget: count %zu used %zu", b.count(),
+                  b.usedBytes());
+
+    UT_ASSERT_MSG(b.admit("d", 200, evict), "admit disagrees with fits");
+    UT_ASSERT_MSG(evict.size() == 2 && evict[0] == "a" && evict[1] == "b",
+                  "expected a then b evicted, got %zu", evict.size());
+    return 0;
+}
+
+namespace {
+
+/* The news window scrolling through a long post, as its image callback
+ * drives the cache. Each frame, the downloads that have arrived are
+ * admitted first, since newsImageGet drains them before it touches
+ * anything; then every image in view is touched if it is loaded, or
+ * requested if it is not. A request arrives at the start of the next
+ * frame. Images out of view are neither touched nor requested. */
+struct ScrollModel {
+    NewsImageBudget          b;
+    int                      view;      /* images in view at once */
+    size_t                   img;       /* bytes per image */
+    std::vector<std::string> arriving;  /* requested last frame */
+    std::vector<int>         requests;  /* per image, this pass */
+    int refusals        = 0;
+    int evictions       = 0;
+    int inViewEvictions = 0;
+
+    ScrollModel(size_t budget, int view_, size_t img_, int images)
+        : b(budget), view(view_), img(img_), requests((size_t)images, 0) {}
+
+    void frame(int top) {
+        std::vector<std::string> inView;
+        for (int i = top; i < top + view; i++) inView.push_back(url(i));
+
+        b.newFrame();
+        std::vector<std::string> arrived;
+        arrived.swap(arriving);
+        std::vector<std::string> evict;
+        for (const auto &u : arrived) {
+            if (!b.admit(u, img, evict)) {
+                refusals++;
+                continue;
+            }
             for (const auto &e : evict) {
-                for (const auto &s : onScreen) {
-                    UT_ASSERT_MSG(e != s, "top %d: evicted on-screen %s", top,
-                                  e.c_str());
+                evictions++;
+                for (const auto &s : inView) {
+                    if (e == s) inViewEvictions++;
                 }
             }
-            evictions += (int)evict.size();
         }
-        UT_ASSERT_MSG(b.usedBytes() <= 4 * img, "top %d: over budget", top);
+        for (int i = top; i < top + view; i++) {
+            const std::string u = url(i);
+            if (b.contains(u)) {
+                b.touch(u);
+            } else {
+                requests[(size_t)i]++;
+                arriving.push_back(u);
+            }
+        }
     }
-    UT_ASSERT_MSG(evictions <= 32, "evicted %d times", evictions);
+
+    void newPass() { std::fill(requests.begin(), requests.end(), 0); }
+
+    /* How many images were requested more than once this pass: the
+     * flicker bug's signature, an image downloaded again while the
+     * window stays on it. */
+    int repeats() const {
+        int n = 0;
+        for (int r : requests) n += r > 1;
+        return n;
+    }
+    int requested() const {
+        int n = 0;
+        for (int r : requests) n += r > 0;
+        return n;
+    }
+};
+
+} /* anonymous namespace */
+
+/* Scrolling down through 30 images three at a time in view, with a
+ * budget of one screen plus the one image that enters it each frame:
+ * every image is downloaded once, none is refused, nothing in view is
+ * evicted, and the budget stays full rather than growing. Scrolling
+ * back up downloads the evicted images again, once each. */
+static int budget_scrolling_window(void) {
+    const int    images = 30, view = 3;
+    const size_t img    = 100;
+    ScrollModel  m((size_t)(view + 1) * img, view, img, images);
+
+    for (int top = 0; top + view <= images; top++) m.frame(top);
+    m.frame(images - view);                          /* arrivals settle */
+    UT_ASSERT_MSG(m.refusals == 0, "down: %d refused", m.refusals);
+    UT_ASSERT_MSG(m.inViewEvictions == 0, "down: %d in-view evictions",
+                  m.inViewEvictions);
+    UT_ASSERT_MSG(m.repeats() == 0, "down: %d images downloaded twice",
+                  m.repeats());
+    UT_ASSERT_MSG(m.requested() == images, "down: %d of %d requested",
+                  m.requested(), images);
+    UT_ASSERT_MSG(m.b.usedBytes() <= (size_t)(view + 1) * img, "over budget");
+    UT_ASSERT_MSG(m.evictions == images - view - 1, "down: %d evictions",
+                  m.evictions);
+
+    m.newPass();
+    for (int top = images - view; top >= 0; top--) m.frame(top);
+    m.frame(0);
+    UT_ASSERT_MSG(m.refusals == 0, "up: %d refused", m.refusals);
+    UT_ASSERT_MSG(m.inViewEvictions == 0, "up: %d in-view evictions",
+                  m.inViewEvictions);
+    UT_ASSERT_MSG(m.repeats() == 0, "up: %d images downloaded twice",
+                  m.repeats());
+    /* The images still held from the way down are not fetched again. */
+    UT_ASSERT_MSG(m.requested() == images - view - 1, "up: %d requested",
+                  m.requested());
+    return 0;
+}
+
+/* Scrolling two images a frame needs room for two arrivals beside the
+ * screen that was drawn last frame. With that, nothing is refused. */
+static int budget_scrolling_fast(void) {
+    const int    images = 40, view = 3, step = 2;
+    const size_t img    = 100;
+    ScrollModel  m((size_t)(view + step) * img, view, img, images);
+
+    for (int top = 0; top + view <= images; top += step) m.frame(top);
+    m.frame(images - view);
+    UT_ASSERT_MSG(m.refusals == 0, "%d refused", m.refusals);
+    UT_ASSERT_MSG(m.inViewEvictions == 0, "%d in-view evictions",
+                  m.inViewEvictions);
+    UT_ASSERT_MSG(m.repeats() == 0, "%d images downloaded twice", m.repeats());
+    return 0;
+}
+
+/* Staying put on one screen that needs more than the budget: the
+ * images that fit are kept and the rest are refused every frame, but
+ * nothing that is in view is ever evicted to make room for them, so
+ * the images that did load do not flicker. */
+static int budget_screen_over_budget_is_stable(void) {
+    const int    view = 5;
+    const size_t img  = 100;
+    ScrollModel  m(3 * img, view, img, view);
+
+    for (int frame = 0; frame < 50; frame++) m.frame(0);
+    UT_ASSERT_MSG(m.b.count() == 3, "held %zu images", m.b.count());
+    UT_ASSERT_MSG(m.evictions == 0, "%d evictions", m.evictions);
+    UT_ASSERT_MSG(m.refusals > 0, "nothing refused");
+    for (int i = 0; i < 3; i++) {
+        UT_ASSERT_MSG(m.b.contains(url(i)), "%s lost", url(i).c_str());
+    }
     return 0;
 }
 
@@ -208,6 +348,9 @@ extern "C" int run_news_image_budget(void) {
     rc = budget_refusal_changes_nothing();           if (rc) return rc;
     rc = budget_without_frames_is_a_hard_limit();    if (rc) return rc;
     rc = budget_readmit_forget_clear();              if (rc) return rc;
+    rc = budget_fits_is_a_dry_run();                 if (rc) return rc;
     rc = budget_scrolling_window();                  if (rc) return rc;
+    rc = budget_scrolling_fast();                    if (rc) return rc;
+    rc = budget_screen_over_budget_is_stable();      if (rc) return rc;
     return 0;
 }

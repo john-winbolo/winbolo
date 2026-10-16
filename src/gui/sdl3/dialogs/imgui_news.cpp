@@ -173,21 +173,45 @@ static ImGui::MarkdownImageData newsImageCallback(
 
     ImGui::MarkdownImageData out;
     out.useLinkCallback = linked;
-    SDL_Texture *tex = newsImageGet(url);
-    if (!tex) return out;
+
+    /* imgui_markdown asks for every image in a post on every frame,
+     * in view or not. Only an image ImGui will draw is asked for with
+     * newsImageGet, which pins it in the cache and starts its
+     * download. One scrolled out of view is only looked at: it keeps
+     * its size in the layout, so the scroll position does not jump,
+     * but the cache may drop it, and it is not downloaded until the
+     * player scrolls to it. ImGui::IsRectVisible is the clip test
+     * ImGui::Image itself makes before it adds anything to the draw
+     * list, so an image it says is out of view is never drawn. The
+     * callback runs inside the scroll child, with the cursor where
+     * imgui_markdown will place the image. */
+    SDL_Texture *tex = nullptr;
+    float w = 0.0f, h = 0.0f;
+    if (!newsImagePeek(url, &tex, &w, &h)) {
+        /* Not loaded: imgui_markdown prints a line of text in its
+         * place. Only a visible line starts the download. */
+        if (!ImGui::IsRectVisible(ImVec2(1.0f, ImGui::GetTextLineHeight()))) {
+            return out;
+        }
+        tex = newsImageGet(url);
+        if (!tex) return out;
+        SDL_GetTextureSize(tex, &w, &h);
+    }
 
     /* Shrink the image to the width left on its line and the height of
      * the scroll area, so a wide one doesn't run off the right edge and
-     * a tall one fits on screen. The callback runs inside the scroll
-     * child, with the cursor where imgui_markdown will place the image. */
-    float w = 0.0f, h = 0.0f;
-    SDL_GetTextureSize(tex, &w, &h);
+     * a tall one fits on screen. */
     const ImGuiStyle &style = ImGui::GetStyle();
     const float maxW = ImGui::GetWindowPos().x +
                        ImGui::GetWindowContentRegionMax().x -
                        ImGui::GetCursorScreenPos().x;
     const float maxH = ImGui::GetWindowHeight() - style.WindowPadding.y * 2.0f;
     newsImageFit(w, h, maxW, maxH, &w, &h);
+
+    if (ImGui::IsRectVisible(ImVec2(w, h))) {
+        tex = newsImageGet(url);
+        if (!tex) return out;
+    }
 
     out.isValid         = true;
     out.user_texture_id = (ImTextureID)tex;

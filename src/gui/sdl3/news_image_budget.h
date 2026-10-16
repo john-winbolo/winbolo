@@ -51,6 +51,15 @@ public:
     bool admit(const std::string &url, size_t bytes,
                std::vector<std::string> &evict);
 
+    /* The answer admit() would give right now for an image of `bytes`
+     * bytes, without admitting or evicting anything. The cache asks
+     * this before downloading an image again that was refused earlier,
+     * so an image that still has no room is not fetched just to be
+     * refused once more. */
+    bool fits(const std::string &url, size_t bytes) const {
+        return plan(url, bytes, nullptr);
+    }
+
     /* Removes url, if admitted, without anything else changing. */
     void forget(const std::string &url);
 
@@ -71,6 +80,13 @@ private:
     using List = std::list<Slot>; /* most recently drawn at the front */
 
     bool evictable(const Slot &s) const { return s.lastDrawn + 1 < m_frame; }
+
+    /* Works out whether an image of `bytes` bytes fits once the
+     * evictable images are dropped, least recently drawn first. Fills
+     * `victims` with the ones that would go, when it is given; changes
+     * nothing. */
+    bool plan(const std::string &url, size_t bytes,
+              std::vector<List::const_iterator> *victims) const;
 
     size_t   m_maxBytes;
     size_t   m_usedBytes = 0;

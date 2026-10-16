@@ -20,28 +20,34 @@ void NewsImageBudget::touch(const std::string &url) {
     m_lru.splice(m_lru.begin(), m_lru, it->second);
 }
 
-bool NewsImageBudget::admit(const std::string &url, size_t bytes,
-                            std::vector<std::string> &evict) {
-    evict.clear();
+bool NewsImageBudget::plan(const std::string &url, size_t bytes,
+                           std::vector<List::const_iterator> *victims) const {
     if (bytes > m_maxBytes) return false;
 
     /* Bytes the image already holds, if it is being replaced. */
-    size_t replaced = 0;
+    size_t used = m_usedBytes;
     auto existing = m_map.find(url);
-    if (existing != m_map.end()) replaced = existing->second->bytes;
+    if (existing != m_map.end()) used -= existing->second->bytes;
 
     /* Walk from the least recently drawn end, picking evictable images
-     * until the new one fits. Nothing is removed until it is known to
-     * fit, so a refusal leaves the budget as it was. */
-    size_t used = m_usedBytes - replaced;
-    std::vector<List::iterator> victims;
-    for (auto it = m_lru.end(); used + bytes > m_maxBytes && it != m_lru.begin();) {
+     * until the new one fits. */
+    for (auto it = m_lru.cend(); used + bytes > m_maxBytes && it != m_lru.cbegin();) {
         --it;
         if (it->url == url || !evictable(*it)) continue;
-        victims.push_back(it);
+        if (victims) victims->push_back(it);
         used -= it->bytes;
     }
-    if (used + bytes > m_maxBytes) return false;
+    return used + bytes <= m_maxBytes;
+}
+
+bool NewsImageBudget::admit(const std::string &url, size_t bytes,
+                            std::vector<std::string> &evict) {
+    evict.clear();
+
+    /* Nothing is removed until the image is known to fit, so a refusal
+     * leaves the budget as it was. */
+    std::vector<List::const_iterator> victims;
+    if (!plan(url, bytes, &victims)) return false;
 
     for (auto victim : victims) {
         evict.push_back(victim->url);
@@ -49,7 +55,7 @@ bool NewsImageBudget::admit(const std::string &url, size_t bytes,
         m_map.erase(victim->url);
         m_lru.erase(victim);
     }
-    if (existing != m_map.end()) forget(url);
+    if (m_map.find(url) != m_map.end()) forget(url);
 
     m_lru.push_front(Slot{url, bytes, m_frame});
     m_map[url] = m_lru.begin();
