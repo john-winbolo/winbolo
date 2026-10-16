@@ -36,6 +36,11 @@
 extern bool winboloNetRunning;
 extern char winboloNetServerKey[WINBOLONET_KEY_LEN];
 
+/* 118 bytes: past the room the info reply leaves beside a long name. */
+#define SCNFIELDS_LONG_DESC \
+  "Friday night games, all welcome. Teams are picked in the lobby; bring " \
+  "a friend and expect a long game on the big maps."
+
 /* No answer is held, so this only has to cover a worker sweep. */
 #define SCNFIELDS_DRAIN_MS 15000
 
@@ -154,6 +159,12 @@ bool wbnTestScenarioFields(void) {
   static const char *const kPlainNot[] = {
     "\"scenario\"",
     "\"scenario_max_players\"",
+    "\"server_name\"",
+    "\"server_description\"",
+  };
+  static const char *const kServerText[] = {
+    "\"server_name\":\"Andy's Den\"",
+    "\"server_description\":\"" SCNFIELDS_LONG_DESC "\"",
   };
   static const char *const kOdd[] = {
     SCNFIELDS_ODD_JSON,
@@ -209,6 +220,14 @@ bool wbnTestScenarioFields(void) {
   scnFieldsInfo(&info, NULL, 0, SCNFIELDS_ODD_NAME, NULL);
   ok = scnFieldsSend(&ln, &info, 5) && ok;
 
+  /* The host's server name, and a description longer than the info
+   * reply has room for, which goes whole. */
+  scnFieldsInfo(&info, NULL, 0, NULL, NULL);
+  snprintf(info.serverName, sizeof(info.serverName), "%s", "Andy's Den");
+  snprintf(info.serverDescription, sizeof(info.serverDescription), "%s",
+           SCNFIELDS_LONG_DESC);
+  ok = scnFieldsSend(&ln, &info, 6) && ok;
+
   winbolonetThreadDestroy();
   httpDestroy();
   httpClearServerBearerToken();
@@ -224,14 +243,17 @@ bool wbnTestScenarioFields(void) {
                       3, NULL, 0) && ok;
   ok = scnFieldsCheck(&ln, 1, "plain lobby_update",
                       "/api/v1/server/lobby_update", kPlainWant, 1, kPlainNot,
-                      2) && ok;
+                      4) && ok;
   ok = scnFieldsCheck(&ln, 2, "scenario and mods lobby_update",
                       "/api/v1/server/lobby_update", kFull, 3, NULL, 0) && ok;
   ok = scnFieldsCheck(&ln, 3, "mods off lobby_update",
                       "/api/v1/server/lobby_update", kScenarioNoMods, 3, NULL,
                       0) && ok;
   ok = scnFieldsCheck(&ln, 4, "escaped mod lobby_update",
-                      "/api/v1/server/lobby_update", kOdd, 1, kPlainNot, 2) &&
+                      "/api/v1/server/lobby_update", kOdd, 1, kPlainNot, 4) &&
+       ok;
+  ok = scnFieldsCheck(&ln, 5, "server name lobby_update",
+                      "/api/v1/server/lobby_update", kServerText, 2, NULL, 0) &&
        ok;
   return ok;
 }
