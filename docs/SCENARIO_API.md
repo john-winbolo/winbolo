@@ -1877,6 +1877,18 @@ teams, and change a bot's orders from `on_start` onwards.
 
 ---
 
+### Fair play: a bot sees only what its player sees
+
+A script is the referee and can read the whole game, but bots must not
+cheat. When a script sets a bot's init table, knobs, hints or orders, it may
+use only facts that bot's player could see in the game: the map, the
+pillboxes and bases on it, tanks in view, the score, and anything the script
+tells every player. It must never use another bot's goal, plan, path or other
+brain state. Two things that look the same on the map must get the same
+treatment. Example: in Pillbox Tag a hop prize and a built prize that stays
+built look alike, so the hunters are treated the same for both, whatever the
+holder means to do with it.
+
 ### Hints: telling one bot what to do
 
 | Call | What it does |
