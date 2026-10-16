@@ -41,6 +41,7 @@
 #include "view_policy.h"       /* ViewPolicy / ViewCategory — view-policy accessors below */
 #include "server_voice_mode.h" /* ServerVoiceMode — voice-mode accessors below */
 #include "upload_policy.h"     /* ScriptUploadPolicy — script-upload accessors below */
+#include "scenario_identity.h" /* SCN_AUTHOR_LEN — a scenario row's author below */
 
 /* MapGenConfig is defined in src/bolo/public/mapgen.h.
  * Forward-declared here so the public server_sim header doesn't
@@ -464,6 +465,52 @@ typedef struct {
                                  * (overrun-rate denominator) */
 } BotPoolStats;
 
+/* This process's own memory, in bytes, filled by serverSimReadProcessMemory.
+ * Each figure has a have* flag: a figure the platform cannot give, or whose
+ * read failed, is 0 with its flag false, and a display shows it as "n/a",
+ * never as 0. Virtual is n/a on macOS on purpose (every process there reads
+ * about 400 GB). POD; no allocations or ownership. */
+typedef struct {
+    uint64_t rss;         /* resident set / working set */
+    uint64_t peakRss;     /* high-water mark of rss */
+    uint64_t priv;        /* private bytes (Windows) / VmData (Linux) /
+                           * phys_footprint (macOS) */
+    uint64_t virt;        /* virtual address space in use (Windows, Linux) */
+    bool     haveRss;
+    bool     havePeakRss;
+    bool     havePriv;
+    bool     haveVirt;
+} ServerSimProcessMemory;
+
+/* Items in a sim's world lists: the figures the dedicated server's memory
+ * report prints. Each list grows while things happen and shrinks as they
+ * expire, so the counts should stay small in a long game. POD. */
+typedef struct {
+    uint32_t shells;
+    uint32_t explosions;
+    uint32_t tankExplosions;
+    uint32_t minesExplosions;
+    uint32_t floodFill;
+    uint32_t building;
+    uint32_t rubble;
+    uint32_t swamp;
+    uint32_t grass;
+} ServerSimListCounts;
+
+/* Memory snapshot filled by serverSimGetMemoryInfo. POD; no allocations
+ * or ownership. */
+typedef struct {
+    ServerSimProcessMemory process;
+    int      botCount;              /* bots with a running brain */
+    uint64_t luaTotalBytes;         /* sum of botLuaBytes over the valid slots */
+    uint64_t botLuaBytes[MAX_TANKS]; /* the slot's Lua heap (lua_gc counters) */
+    bool     botLuaValid[MAX_TANKS]; /* false where the slot has no running
+                                      * brain; botLuaBytes is 0 there */
+    ServerSimListCounts serverLists; /* the server sim's own world lists */
+    int      botListCount;          /* bots whose ClientSim lists were summed */
+    ServerSimListCounts botLists;   /* those bots' lists, added together */
+} ServerSimMemoryInfo;
+
 /* Max candidate count for BrainGoalInfo. */
 #define BRAIN_GOAL_MAX_CANDIDATES 32
 
@@ -586,6 +633,23 @@ void   serverSimSetPingMute(ServerSim *sim, BYTE muterSlot, BYTE targetPlayer,
 double serverSimGetBotLastThinkMs(ServerSim *sim, BYTE playerNum);
 bool   serverSimGetBotInfo(ServerSim *sim, BYTE playerNum, BotInfo *out);
 void   serverSimGetBotPoolStats(ServerSim *sim, BotPoolStats *out);
+
+/* === Memory figures === */
+/* Read this process's memory figures. Needs no sim: the desktop client
+ * calls it for a game joined on a remote server. Returns false when nothing
+ * could be read, in which case every have* flag is false. */
+bool   serverSimReadProcessMemory(ServerSimProcessMemory *out);
+
+/* Fill out with the process figures, each running bot's Lua heap and the
+ * world-list counts of the sim and of the bots' ClientSims: the figures of
+ * the dedicated server's memory report, without the deep walk. Takes the
+ * server mutex inside, so it is safe to call from the render thread while
+ * the hosted server ticks on another thread: the tick holds the same mutex
+ * for its whole length, and the bot think workers finish inside it, so no
+ * brain is running while this reads its Lua state. Reads only; changes no
+ * sim state. A NULL sim fills the process figures and leaves the rest 0. */
+void   serverSimGetMemoryInfo(ServerSim *sim, ServerSimMemoryInfo *out);
+
 bool   serverSimToggleAllBrainDebugMode(ServerSim *sim);
 int    serverSimGetActiveBotCount(ServerSim *sim);
 
@@ -2261,6 +2325,18 @@ const char *serverSimGetMapMd5Hex(const ServerSim *sim);
 const char *serverSimGetBotBrainPath(const ServerSim *sim);
 const char *serverSimGetServerMessageLogFile(const ServerSim *sim);
 
+/* The short name and the longer description the host gave this server
+ * (-name / -desc, or the client host's Hosting settings). The game finder
+ * shows the name in place of the server's address and the description beside
+ * it. The setters run the text through serverTextSanitize (server_text.h) and
+ * cut it to SERVER_NAME_MAX / SERVER_DESC_MAX bytes; NULL clears it. The
+ * getters return "" when none was given and for a NULL sim. Set at startup
+ * from ServerInstanceConfig; neither is a lobby setting. */
+void        serverSimSetServerName(ServerSim *sim, const char *name);
+const char *serverSimGetServerName(const ServerSim *sim);
+void        serverSimSetServerDescription(ServerSim *sim, const char *desc);
+const char *serverSimGetServerDescription(const ServerSim *sim);
+
 /* Indexed-array accessors (bounds-checked; out-of-range
  * returns NULL for pointer types, false/0 for scalars). */
 const LobbyPlayer *serverSimGetLobbyPlayer(const ServerSim *sim, BYTE n);
@@ -2303,6 +2379,24 @@ typedef struct ServerSimRosterSlot {
 /* Populate *out for seat i. Returns false (without touching *out) if
  * i >= MAX_TANKS or the seat is empty. */
 bool serverSimGetRosterSlot(ServerSim *sim, BYTE i, ServerSimRosterSlot *out);
+
+/* The start the round's opening placement reserved for seat p and has not
+ * yet used, 1-based as serverSimGetStartInfo counts, in *start. That
+ * placement runs once as each round starts, over the seats being fielded:
+ * a start the seat picked by hand in the lobby, else one on its team's
+ * side, else the engine's spread of the field. The reservation is used
+ * once: placing the seat's first tank of the round clears it, and so does
+ * a scenario naming another start for that tank, so every later spawn, a
+ * seat fielded or joined after the round started and a map with no live
+ * start all answer false. A reservation
+ * naming a start that has since been removed is not one a tank can use and
+ * answers false too. *start is not touched on false. */
+bool serverSimGetLobbyStart(ServerSim *sim, BYTE p, BYTE *start);
+
+/* The START_SIDE_* (start_sides.h) seat p's lobby team chose, or one the
+ * lobby filled in for it opposite the other team. START_SIDE_ANY for an
+ * empty seat, a seat on no team (0) and a team with no side. */
+BYTE serverSimGetLobbySide(ServerSim *sim, BYTE p);
 
 /* Whether seats a and b are allied in the game: the table every game rule
  * reads, which players change in play with an alliance request, accept and
@@ -2491,6 +2585,13 @@ typedef struct {
     uint64_t workshopAuthor;  /* the SteamID64 that published it, 0 for none.
                                  Filled by this computer's own listings and
                                  never by what a server sends. */
+    /* Who wrote it and when it last changed (scenario_identity.h), "" for
+       not stated. identityKnown is false for a row from a server too old to
+       send them, which a chooser shows as nothing rather than as unknown;
+       a listing this computer reads itself always knows. */
+    bool     identityKnown;
+    char     author[SCN_AUTHOR_LEN];
+    char     updated[SCN_UPDATED_LEN];
 } ServerScenarioEntry;
 
 int serverSimEnumerateScenarioDir(ServerSim *sim,
@@ -2547,6 +2648,16 @@ ServerScriptReadResult serverSimScriptFileRead(ServerSim *sim,
  * not fit cap). */
 int serverSimScenarioSettingsDecl(ServerSim *sim, const char *file,
                                   uint8_t *out, size_t cap);
+
+/* Who wrote one script file and when it last changed, as its manifest
+ * states them (scenario_identity.h), into author and updated, which hold
+ * authorCap and updatedCap bytes; each "" for not stated. Looked up the
+ * way serverSimScenarioDetails looks up the details: the committed map's
+ * own script first, then the scenarios directory's listing, read to the
+ * catalogue's cap. False, with both "", for a file neither place holds. */
+bool serverSimScenarioIdentity(ServerSim *sim, const char *file,
+                               char *author, size_t authorCap,
+                               char *updated, size_t updatedCap);
 
 /* How many values the server keeps for scripts' settings at once. A value
  * equal to its default is not kept, so this is values a host moved off the

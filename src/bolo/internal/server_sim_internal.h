@@ -39,6 +39,7 @@
 #include "scenario_defs.h"  /* ScenarioPolicy — the vtable pointer below */
 #include "scenario_details.h" /* SCN_DETAILS_MAX — the map script's details */
 #include "scenario_settings.h" /* SCN_SETTINGS_BLOB_MAX — its settings */
+#include "server_text.h"    /* SERVER_NAME_LEN / SERVER_DESC_LEN — the finder text below */
 
 /* PlayerRoundStats, NotableType, NotableEvent and NOTABLE_EVENTS_MAX are the
  * shared accumulator/timeline types, defined in round_stats.h (included above)
@@ -869,6 +870,11 @@ struct ServerSim {
     bool         hasPassword;             /* Server has a password set */
     char         password[MAP_STR_SIZE];  /* Runtime join-handshake password text */
 
+    /* What the game finder shows for this server: the host's short name and
+     * longer description, already sanitised. "" when not given. */
+    char         serverName[SERVER_NAME_LEN];
+    char         serverDescription[SERVER_DESC_LEN];
+
     /* WBN team balance proposal */
     BalanceProposal balanceProposal;
 
@@ -1500,7 +1506,11 @@ bool serverSimWarmOneHeldSeat(ServerSim *sim);
 /* Forget every queued roster change. The seats a queue names belong to the
  * round it was filled in, so a round that ends takes its queue with it
  * rather than spawning into the next one. Called at the game starts in
- * server_sim_round.c, beside the fill reset. */
+ * server_sim_round.c, beside the fill reset, and from serverSimResetGameWorld
+ * at the return to the lobby (server_sim_round.c) and the empty reset
+ * (server_lifecycle.c). Every bot's init table goes
+ * back to the one it was added with here too, so a game.bot_init from the
+ * round that is ending does not reach the next. */
 void serverSimScenarioResetRoster(ServerSim *sim);
 
 /* Forget what the scenario's ticks have cost so far. Called at the game starts

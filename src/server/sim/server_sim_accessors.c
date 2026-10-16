@@ -34,6 +34,7 @@
 #include "wire_limits.h"   /* LobbySettingType, LOBBY_LOCK_* for serverSimGetSettingLockBit */
 #include "server_sim_internal.h"
 #include "lobby_bot_pools.h"
+#include "start_sides.h"            /* START_SIDE_ANY, START_SIDE_COUNT for serverSimGetLobbySide */
 #include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange — the setters that clear ready state */
 
 /*********************************************************
@@ -318,6 +319,32 @@ bool serverSimGetRosterSlot(ServerSim *sim, BYTE i, ServerSimRosterSlot *out) {
         }
     }
     return true;
+}
+
+bool serverSimGetLobbyStart(ServerSim *sim, BYTE p, BYTE *start) {
+    BYTE idx;
+    if (sim == NULL || start == NULL || p >= MAX_TANKS) return false;
+    if (!serverSimIsPlayerConnected(sim, p)) return false;
+    /* The same test startsGetStart makes before it uses and clears the
+       slot, so a reservation is reported exactly when a tank would be put
+       on it. */
+    idx = sim->sim.pendingStartIdx[p];
+    if (idx >= startsGetNumStarts(&sim->sim.ss) ||
+        !startsIsActive(&sim->sim.ss, (BYTE)(idx + 1))) {
+        return false;
+    }
+    *start = (BYTE)(idx + 1);   /* 0-based engine -> 1-based public */
+    return true;
+}
+
+BYTE serverSimGetLobbySide(ServerSim *sim, BYTE p) {
+    BYTE team;
+    if (sim == NULL || p >= MAX_TANKS) return START_SIDE_ANY;
+    if (!serverSimIsPlayerConnected(sim, p)) return START_SIDE_ANY;
+    team = sim->lobbyPlayers[p].teamNumber;
+    if (team == 0 || team >= MAX_TANKS) return START_SIDE_ANY;
+    if (sim->teams[team].startSide >= START_SIDE_COUNT) return START_SIDE_ANY;
+    return sim->teams[team].startSide;
 }
 
 bool serverSimIsAllied(ServerSim *sim, BYTE a, BYTE b) {
@@ -996,6 +1023,26 @@ void serverSimSetVoiceMode(ServerSim *sim, ServerVoiceMode mode) {
 
 ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim) {
     return sim ? sim->voiceMode : serverVoiceOn;
+}
+
+void serverSimSetServerName(ServerSim *sim, const char *name) {
+    if (sim == NULL) return;
+    serverTextSanitize(name, sim->serverName, sizeof(sim->serverName),
+                       SERVER_NAME_MAX);
+}
+
+const char *serverSimGetServerName(const ServerSim *sim) {
+    return sim ? sim->serverName : "";
+}
+
+void serverSimSetServerDescription(ServerSim *sim, const char *desc) {
+    if (sim == NULL) return;
+    serverTextSanitize(desc, sim->serverDescription,
+                       sizeof(sim->serverDescription), SERVER_DESC_MAX);
+}
+
+const char *serverSimGetServerDescription(const ServerSim *sim) {
+    return sim ? sim->serverDescription : "";
 }
 
 bool serverSimGetScenarioVoiceEveryone(const ServerSim *sim) {

@@ -38,6 +38,8 @@ scenario = {
   name = "Base Restocking Rate",
   description = "Bases refill their own stock faster or slower: 25% to 1000% of stock, set in the lobby.",
   api = 1,
+  author = "WinBolo",
+  updated = "2026-10-02T17:42Z",
   kind = "mod",
   bound = false,
 

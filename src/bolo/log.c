@@ -762,6 +762,7 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     out[off++] = itemNum;
     break;
   case log_MapSkipApplied:
+  case log_MapName:
     /* event code + pascal string map name */
     out[off++] = itemNum;
     wordsLen = (unsigned short)((BYTE)words[0]) + 1;
@@ -1162,6 +1163,36 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
     memcpy(logSpectatorAcc + logSpectatorAccLen, event, (size_t)eventLen);
     logSpectatorAccLen += eventLen;
   }
+}
+
+/*********************************************************
+*NAME:          logAddMapName
+*PURPOSE:
+* Adds a log_MapName event naming the map the sim holds
+* now. See log.h.
+*
+*ARGUMENTS:
+* ssim - ServerSim whose map name is recorded
+*********************************************************/
+void logAddMapName(ServerSim *ssim) {
+  char pstr[256]; /* Pascal form: length byte then the name */
+  const char *name;
+  size_t nameLen;
+
+  if (ssim == NULL) {
+    return;
+  }
+  name = serverSimGetMapName(ssim);
+  if (name == NULL) {
+    return;
+  }
+  nameLen = strlen(name);
+  if (nameLen > 255) {
+    nameLen = 255;
+  }
+  pstr[0] = (char) nameLen;
+  memcpy(pstr + 1, name, nameLen);
+  logAddEvent(log_MapName, 0, 0, 0, 0, 0, pstr);
 }
 
 /*********************************************************

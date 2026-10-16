@@ -10,6 +10,7 @@ binaries (`WinBolo`, `WinBoloDS`, `LogViewer`, `MapEditor`, `WinBoloHeadless`,
 |------|---------------|
 | [`MakeTileTestMap`](#maketiletestmap) | Writes a `.map` exercising the terrain-shape lookups |
 | [`tools/dump_lang_en.py`](#toolsdump_lang_enpy) | Regenerates `data/lang/en.txt` and `lang_names.inc` |
+| [`tools/stamp_mod_updated.py`](#toolsstamp_mod_updatedpy) | Keeps the `updated` time of the shipped scenario scripts current |
 | [`tools/validate_lang.py`](#toolsvalidate_langpy) | Checks a translation against the English source |
 | [`tools/test_lang_roundtrip.py`](#toolstest_lang_roundtrippy) | Proves `en.txt` round-trips against `langTable[]` |
 | [`tools/gen_countries.py`](#toolsgen_countriespy) | One-shot generator for the country-name strings |
@@ -90,6 +91,47 @@ Run it after adding or renaming a `STR_*` id. The `unit.lang_name_table` test
 guards the generated table — it once shipped with `K_LANG_NAME_TABLE_SIZE` one
 larger than the real array, which walked `resolveName`'s `bsearch` off the end
 and crashed at startup for every non-English user.
+
+## tools/stamp_mod_updated.py
+
+Keeps the `updated` field of every shipped scenario script current. The
+shipped scripts are `data/mods/*.lua` and `data/maps/*.scenario.lua`;
+`tests/scenario` fixtures are never touched. The field and its form
+(`"YYYY-MM-DDTHH:MMZ"`, UTC) are described in
+[SCENARIO_API.md](SCENARIO_API.md#author-and-updated).
+
+```bash
+python3 tools/stamp_mod_updated.py           # stamp what changed vs HEAD
+python3 tools/stamp_mod_updated.py --check   # verify; exit 1 on a failure
+python3 tools/stamp_mod_updated.py --init    # add missing fields from git log
+```
+
+Run it before committing a change to a shipped script. Without a flag it
+writes the current UTC time into every shipped file that differs from HEAD,
+and adds the `updated` line (and an `author` line, `--author`, default
+`WinBolo`) after the `api` line where a file has none.
+
+`--check` needs no clock and no tolerance:
+
+1. Each shipped file states an author and a valid `updated` that is not more
+   than a day in the future.
+2. A file that differs from HEAD must change its `updated` line in that
+   same diff.
+3. Otherwise the last commit of any kind that touched the file, a merge
+   included, must have changed its `updated` line against its first parent.
+   So an edit made while resolving a merge is checked too.
+
+Only the `scenario` table is read, from its opening line to the first bare
+`}` at column 0, and only the keys at the table's own field indent (the
+`api` line's). An `updated = "..."` in a nested table or in code after the
+table is neither read nor restamped.
+
+File arguments are matched without regard to case on Windows.
+
+So a commit that edits a shipped script without restamping it fails from
+then on, until a later commit restamps it. Outside a git checkout the check
+passes, with nothing to compare against. It is not wired into CTest, as
+`dump_lang_en.py --check` is not.
 
 ## tools/validate_lang.py
 

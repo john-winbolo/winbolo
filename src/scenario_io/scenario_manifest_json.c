@@ -245,6 +245,91 @@ static uint64_t mjDecodeId(const cJSON *root, const char *key,
     return 0;
 }
 
+void scnManifestTakeIdentity(ScenarioManifest *m,
+                             ScnIdentitySeen authorSeen,
+                             const char *author, size_t authorLen,
+                             ScnIdentitySeen updatedSeen,
+                             const char *updated,
+                             ScnParseReport *rep) {
+    ScnValidateResult *sink = rep != NULL ? rep->sink : NULL;
+    char               shown[SCN_UPDATED_LEN + 24];
+    bool               same;
+
+    if (m == NULL) {
+        return;
+    }
+    m->author[0]  = '\0';
+    m->updated[0] = '\0';
+
+    if (authorSeen == scnIdentityAbsent) {
+        scnWarnAdd(sink, "author",
+                   "scenario: no author; the lobby shows unknown");
+    } else if (authorSeen == scnIdentityNotString) {
+        scnWarnAdd(sink, "author",
+                   "scenario: author is not a string; unknown used");
+    } else {
+        same = scnIdentityCleanAuthor(m->author, sizeof(m->author), author,
+                                      authorLen);
+        if (m->author[0] == '\0') {
+            scnWarnAdd(sink, "author",
+                       "scenario: author is empty; unknown used");
+        } else if (!same) {
+            scnWarnAdd(sink, "author",
+                       "scenario: author held control or invisible format "
+                       "characters, broken UTF-8, spaces at an end or more "
+                       "than %d bytes; '%s' used", SCN_AUTHOR_LEN - 1, m->author);
+        }
+    }
+
+    if (updatedSeen == scnIdentityAbsent) {
+        scnWarnAdd(sink, "updated",
+                   "scenario: no updated time; write the time the content "
+                   "last changed as YYYY-MM-DDTHH:MMZ in UTC");
+    } else if (updatedSeen == scnIdentityNotString) {
+        scnWarnAdd(sink, "updated",
+                   "scenario: updated is not a string, and an updated time "
+                   "is YYYY-MM-DDTHH:MMZ in UTC; unknown used");
+    } else if (scnIdentityUpdatedValid(updated)) {
+        mjCopyStr(m->updated, sizeof(m->updated), updated);
+    } else {
+        /* Cleaned before it is quoted: the value is the file's, not ours. */
+        (void)scnIdentityCleanAuthor(shown, sizeof(shown), updated,
+                                     updated != NULL ? strlen(updated) : 0);
+        scnWarnAdd(sink, "updated",
+                   "scenario: updated is '%s', and an updated time is "
+                   "YYYY-MM-DDTHH:MMZ in UTC naming a real minute; unknown "
+                   "used", shown);
+    }
+}
+
+/* author and updated off the root, through scnManifestTakeIdentity. A JSON
+ * null is the key left out. */
+static void mjDecodeIdentity(const cJSON *root, ScenarioManifest *m,
+                             ScnParseReport *rep) {
+    const cJSON    *a  = cJSON_GetObjectItemCaseSensitive(root, "author");
+    const cJSON    *u  = cJSON_GetObjectItemCaseSensitive(root, "updated");
+    ScnIdentitySeen as = scnIdentityAbsent;
+    ScnIdentitySeen us = scnIdentityAbsent;
+
+    if (cJSON_IsString(a) && a->valuestring != NULL) {
+        as = scnIdentityString;
+    } else if (a != NULL && !cJSON_IsNull(a)) {
+        as = scnIdentityNotString;
+    }
+    if (cJSON_IsString(u) && u->valuestring != NULL) {
+        us = scnIdentityString;
+    } else if (u != NULL && !cJSON_IsNull(u)) {
+        us = scnIdentityNotString;
+    }
+    scnManifestTakeIdentity(m, as,
+                            as == scnIdentityString ? a->valuestring : NULL,
+                            as == scnIdentityString ? strlen(a->valuestring)
+                                                    : 0,
+                            us,
+                            us == scnIdentityString ? u->valuestring : NULL,
+                            rep);
+}
+
 /* One pair of a team's init table, stored the way the Lua reader stores it.
  * A string is itself; a number is its digits, because that is what
  * lua_tostring makes of a script's number before it reaches the table. JSON
@@ -1282,6 +1367,7 @@ static bool mjDecode(ScnManifestDoc *d, ScnParseReport *rep,
     m->needsBots  = mjBool(d->root, "needs_bots", false);
     m->workshopId     = mjDecodeId(d->root, "workshop_id", rep);
     m->workshopAuthor = mjDecodeId(d->root, "workshop_author", rep);
+    mjDecodeIdentity(d->root, m, rep);
 
     mjDecodeLobby(d->root, &m->lobby, rep);
     mjDecodeRules(d->root, m, rep);
@@ -1479,6 +1565,16 @@ static void mjPutId(cJSON *obj, const char *key, uint64_t v) {
     }
     snprintf(digits, sizeof(digits), "%llu", (unsigned long long)v);
     mjPutString(obj, key, digits);
+}
+
+/* A string, or no key at all for "": author and updated left unstated are
+ * left out the way an id of 0 is. */
+static void mjPutStated(cJSON *obj, const char *key, const char *v) {
+    if (v == NULL || v[0] == '\0') {
+        cJSON_DeleteItemFromObjectCaseSensitive(obj, key);
+        return;
+    }
+    mjPutString(obj, key, v);
 }
 
 /* The object under key, made if it is not there and replaced if what is
@@ -1715,6 +1811,8 @@ static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
     mjPutTrue(root, "needs_bots", m->needsBots);
     mjPutId(root, "workshop_id", m->workshopId);
     mjPutId(root, "workshop_author", m->workshopAuthor);
+    mjPutStated(root, "author", m->author);
+    mjPutStated(root, "updated", m->updated);
 
     lobby = mjObjectFor(root, "lobby");
     if (lobby != NULL) {
@@ -2092,6 +2190,23 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
                         "%llu and the script's table says %llu",
                         (unsigned long long)fromJson->workshopAuthor,
                         (unsigned long long)fromLua->workshopAuthor);
+    }
+    /* The author and the updated time the way the workshop pair is: only
+       when the table states one, since a script that leaves its table to
+       the manifest reads back what the manifest pushed. */
+    if (fromLua->author[0] != '\0' &&
+        strcmp(fromLua->author, fromJson->author) != 0) {
+        return mjDiffer(key, keyLen, err, errLen, "author",
+                        "scenario: the manifest says the author is '%s' and "
+                        "the script's table says '%s'", fromJson->author,
+                        fromLua->author);
+    }
+    if (fromLua->updated[0] != '\0' &&
+        strcmp(fromLua->updated, fromJson->updated) != 0) {
+        return mjDiffer(key, keyLen, err, errLen, "updated",
+                        "scenario: the manifest says it was updated %s and "
+                        "the script's table says %s", fromJson->updated,
+                        fromLua->updated);
     }
     /* The settings are held to agreeing, unlike the callbacks: they are
        what the host is offered and what game.setting answers, so a package

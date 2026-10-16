@@ -26,6 +26,7 @@
 
 #ifdef _WIN32
   #include <WinSock2.h>
+  #include <shellapi.h>   /* CommandLineToArgvW - -name / -desc as UTF-8 */
   #include <process.h>
   #define getpid _getpid
 #else
@@ -54,6 +55,7 @@
 #include "mapgen.h"
 #include "log.h"
 #include "transport_udp.h"
+#include "transport_udp_server_internal.h"  /* infoReplyServerDescRoom */
 #include "net_impair.h"   /* WB_ENABLE_NETIMPAIR master switch */
 #include "bot_manager.h"
 #include "brain_list.h"  /* BrainModes, brainListLoadModesForPath — -mode */
@@ -68,6 +70,7 @@
 #include "../common/prefs.h"
 #include "../headless/cmd_stdin.h"
 #include "server_console.h"
+#include "server_memreport.h"
 #include "server_args.h"        /* the -mod flags and -setting */
 #include "wire_limits.h"
 #include "../scenario/scenario_host.h"
@@ -297,6 +300,12 @@ static bool consoleOpReloadScenario(char *msg, size_t msgLen) {
   return true;
 }
 
+/* mem / memdeep: the report reads the bots' lua_States, which only the tick
+   thread may touch, so the console only asks and the next tick answers. */
+static void consoleOpMemReport(bool deep) {
+  serverMemReportRequest(deep);
+}
+
 /* Positional, and the struct's own comment says why the newest entry goes
    last rather than beside a relative. */
 static const ServerConsoleOps serverConsoleOps = {
@@ -308,7 +317,8 @@ static const ServerConsoleOps serverConsoleOps = {
   consoleOpStatus,
   consoleOpKick,
   consoleOpSetHost,
-  consoleOpReloadScenario
+  consoleOpReloadScenario,
+  consoleOpMemReport
 };
 
 
@@ -535,6 +545,7 @@ static bool serverTickStep(void *ctx) {
     return false;
   }
   serverInstanceTick(serverSim);
+  serverMemReportPoll(serverSim);
   return true;
 }
 
@@ -596,6 +607,7 @@ static int SDLCALL serverAsapLoop(void *unused) {
       break;
     }
     serverInstanceTick(serverSim);
+    serverMemReportPoll(serverSim);
     ticks++;
     SDL_UnlockMutex(g_serverTickLock);
     /* The command loops (processKeys / processCmdStdin) and the shutdown
@@ -702,10 +714,12 @@ void printArgs() {
   fprintf(stderr, "                -scriptuploads off still refuses uploads. A script a player\n");
   fprintf(stderr, "                sends runs its top level the moment it lands, before any host\n");
   fprintf(stderr, "                picks it. Only for trusted content.\n");
-  fprintf(stderr, "-validate <File> - Check the scenario script beside a map and exit without\n");
-  fprintf(stderr, "                starting a server. Each problem is printed as\n");
-  fprintf(stderr, "                file:line: key: message. Exits 0 when the map is\n");
-  fprintf(stderr, "                playable, 1 when it is not.\n");
+  fprintf(stderr, "-validate <File> - Check the scenario script beside a map, or a .lua\n");
+  fprintf(stderr, "                script named directly, and exit without starting a\n");
+  fprintf(stderr, "                server. Each problem is printed as file:line: key:\n");
+  fprintf(stderr, "                message, and each warning (a missing author or updated\n");
+  fprintf(stderr, "                time, say) as file: warning: key: message. Exits 0 when\n");
+  fprintf(stderr, "                the script is playable, warnings or not, 1 when not.\n");
   fprintf(stderr, "-pack <File>  - Write the scenario script beside a map into the map file\n");
   fprintf(stderr, "                itself and exit without starting a server. The manifest\n");
   fprintf(stderr, "                comes from the script's own scenario table, and a\n");
@@ -725,6 +739,20 @@ void printArgs() {
   fprintf(stderr, "-limit <L>    - Specifies the game time limit (in minutes)\n");
   fprintf(stderr, "                \"-1\" for no time limit (none if not specified)\n");
   fprintf(stderr, "-password <P> - Game Password (none if not specified)\n");
+  fprintf(stderr, "-name <N>     - Short server name the game finder shows instead of this\n");
+  fprintf(stderr, "                server's address: up to 32 bytes of UTF-8, which is 32\n");
+  fprintf(stderr, "                plain letters and fewer accented ones. Quote it if it has\n");
+  fprintf(stderr, "                spaces. Without -name, [HOSTING] \"Server Name\" in the\n");
+  fprintf(stderr, "                WinBolo.json in the working directory; -name \"\" sets no\n");
+  fprintf(stderr, "                name and skips that file.\n");
+  fprintf(stderr, "-desc <D>     - Longer server description the game finder shows beside the\n");
+  fprintf(stderr, "                name: up to 200 bytes of UTF-8, less when a long scenario\n");
+  fprintf(stderr, "                and many mods fill the reply. With -nolobby a note at\n");
+  fprintf(stderr, "                startup says so; scripts picked later in a lobby are not\n");
+  fprintf(stderr, "                checked. Without -desc, [HOSTING] \"Server Description\" in\n");
+  fprintf(stderr, "                the same file; -desc \"\" sets none and skips it. Control\n");
+  fprintf(stderr, "                characters are removed from both. On Windows both are read\n");
+  fprintf(stderr, "                from the Unicode command line, so any letters work.\n");
 
   fprintf(stderr, "\nLobby & host:\n");
   fprintf(stderr, "-nolobby      - Skip lobby, start game immediately (backward-compatible mode)\n");
@@ -921,6 +949,19 @@ void printArgs() {
   fprintf(stderr, "                for it, so their post-game recap plays. Omitted, the server\n");
   fprintf(stderr, "                serves unless it is registered with winbolo.net. Needs -log.\n");
   fprintf(stderr, "-statusFile   - Save list of unlocked players to a file.\n");
+  fprintf(stderr, "-memreport [M] - Turn on the timed memory report: one line every M minutes\n");
+  fprintf(stderr, "                (default %d; decimals allowed; 0 keeps it off). Off when\n", SERVER_MEMREPORT_DEFAULT_MINUTES);
+  fprintf(stderr, "                not given. The line gives the process's RSS / private /\n");
+  fprintf(stderr, "                virtual memory, uptime, game tick, rounds, each bot's Lua\n");
+  fprintf(stderr, "                heap and its growth since the last report, and the world's\n");
+  fprintf(stderr, "                object list sizes. The console commands mem and memdeep\n");
+  fprintf(stderr, "                write one at once, with or without this flag.\n");
+  fprintf(stderr, "-memreportdeep - Every timed memory report also walks each bot's Lua\n");
+  fprintf(stderr, "                tables and lists the biggest ones. Turns the timed report\n");
+  fprintf(stderr, "                on (every %d minutes unless -memreport gives M). Slow (it\n", SERVER_MEMREPORT_DEFAULT_MINUTES);
+  fprintf(stderr, "                pauses the game while it walks); for chasing a leak. The\n");
+  fprintf(stderr, "                walk allocates inside each bot's Lua state, so do not use\n");
+  fprintf(stderr, "                it in seeded repro runs.\n");
   fprintf(stderr, "-seed <N>     - Seed the RNG with N (64-bit unsigned) for reproducible runs.\n");
   fprintf(stderr, "                Seeds the C sim stream only; see -brain-lua-seed for Lua.\n");
   fprintf(stderr, "-brain-tier <1..10> - Pin every brain's capacity tier instead of deriving it\n");
@@ -1062,6 +1103,39 @@ int findArg(int numArgs, char **argv, const char *argname) {
   return returnValue;
 }
 
+
+#ifdef _WIN32
+/* argv on Windows is in the ANSI code page, so most letters outside it are
+ * lost (an accented letter arrives as one byte the sanitiser drops). -name
+ * and -desc read their value again from the Unicode command line as UTF-8.
+ * argNum is an argv index; the wide parse must give the same count, else
+ * the indices may not line up. The value is cut to outSize - 1 bytes,
+ * which the sanitiser later trims to a whole character. False when the
+ * wide value can't be had, and the caller keeps argv's. */
+static bool serverArgUtf8(int argc, int argNum, char *out, size_t outSize) {
+  int     wargc = 0;
+  LPWSTR *wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
+  bool    ok = false;
+
+  if (wargv == NULL) {
+    return false;
+  }
+  if (wargc == argc && argNum >= 0 && argNum < wargc && outSize > 0) {
+    int need = WideCharToMultiByte(CP_UTF8, 0, wargv[argNum], -1, NULL, 0,
+                                   NULL, NULL);
+    char *utf8 = need > 0 ? (char *)malloc((size_t)need) : NULL;
+    if (utf8 != NULL &&
+        WideCharToMultiByte(CP_UTF8, 0, wargv[argNum], -1, utf8, need,
+                            NULL, NULL) == need) {
+      snprintf(out, outSize, "%s", utf8);
+      ok = true;
+    }
+    free(utf8);
+  }
+  LocalFree(wargv);
+  return ok;
+}
+#endif
 
 bool argExist(int numArgs, char **argv, char *argname) {
   bool returnValue; /* Value to return */
@@ -1484,10 +1558,12 @@ static const char *overviewWindowArgWord(OverviewWindow window) {
    not. Nothing else in the server is running by the time this is called, and
    nothing it does starts anything. */
 static int validateMapAndReport(char *mapPath) {
-  ServerSim *sim;
+  ServerSim *sim = NULL;
   ScnValidateResult *result;
   char script[SCN_SCRIPT_PATH_MAX];
   bool ok;
+  bool direct;
+  size_t pathLen;
   uint16_t i;
 
 #ifdef USING_SDL
@@ -1501,16 +1577,26 @@ static int validateMapAndReport(char *mapPath) {
      it. */
   setWriteToDebugFileStream(-1);
 
+  /* A .lua is a script named directly, a mod out of a scripts directory
+     say, and is checked as that directory checks it: with no map, so the
+     one check that reads a map is left out. Anything else is a map. */
+  pathLen = strlen(mapPath);
+  direct = pathLen > 4 && SDL_strcasecmp(mapPath + pathLen - 4, ".lua") == 0;
+
   /* What the issues are printed against. A path with no room for a script
      name is reported against the map's own name. */
-  if (scnScriptPath(mapPath, script, sizeof(script)) == FALSE) {
+  if (direct) {
+    snprintf(script, sizeof(script), "%s", mapPath);
+  } else if (scnScriptPath(mapPath, script, sizeof(script)) == FALSE) {
     snprintf(script, sizeof(script), "%s", mapPath);
   }
 
-  sim = serverSimCreate(mapPath, gameOpen, FALSE, 0, -1);
-  if (sim == NULL) {
-    fprintf(stderr, "%s: the map could not be loaded\n", mapPath);
-    return 1;
+  if (!direct) {
+    sim = serverSimCreate(mapPath, gameOpen, FALSE, 0, -1);
+    if (sim == NULL) {
+      fprintf(stderr, "%s: the map could not be loaded\n", mapPath);
+      return 1;
+    }
   }
 
   /* On the heap rather than the stack: a result carries the whole manifest and
@@ -1518,11 +1604,12 @@ static int validateMapAndReport(char *mapPath) {
   result = (ScnValidateResult *)malloc(sizeof(*result));
   if (result == NULL) {
     fprintf(stderr, "%s: out of memory reading the script\n", mapPath);
-    serverSimDestroy(sim);
+    if (sim != NULL) serverSimDestroy(sim);
     return 1;
   }
 
-  ok = scenarioValidateMap(sim, mapPath, result);
+  ok = direct ? scenarioValidateScript(NULL, mapPath, result)
+              : scenarioValidateMap(sim, mapPath, result);
 
   for (i = 0; i < result->count; i++) {
     const ScnValidateIssue *issue = &result->issues[i];
@@ -1534,8 +1621,16 @@ static int validateMapAndReport(char *mapPath) {
     }
   }
 
+  /* After the problems and apart from them: a warning stops nothing, so it
+     moves neither the summary below nor the exit code. */
+  for (i = 0; i < result->warnCount; i++) {
+    fprintf(stderr, "%s: warning: %s: %s\n", script, result->warnings[i].key,
+            result->warnings[i].message);
+  }
+
   if (result->haveManifest == FALSE && result->count == 0) {
-    fprintf(stderr, "%s: no scenario script beside it\n", mapPath);
+    fprintf(stderr, direct ? "%s: no such script\n"
+                           : "%s: no scenario script beside it\n", mapPath);
   } else if (ok == TRUE) {
     fprintf(stderr, "%s: no problems\n", script);
   } else if (result->dropped > 0) {
@@ -1546,8 +1641,15 @@ static int validateMapAndReport(char *mapPath) {
             (result->count == 1) ? "" : "s");
   }
 
+  /* A script named directly and nothing read from it is a path that names
+     no script, a typo say, and a check of a mod by its path must not pass
+     on one. A map with no script beside it is still a plain map, and 0. */
+  if (direct && result->haveManifest == FALSE && result->count == 0) {
+    ok = false;
+  }
+
   free(result);
-  serverSimDestroy(sim);
+  if (sim != NULL) serverSimDestroy(sim);
   return (ok == TRUE) ? 0 : 1;
 }
 
@@ -2204,6 +2306,29 @@ int main(int argc, char **argv) {
     }
   }
 
+  /* Memory report: the timed report is off unless -memreport or
+   * -memreportdeep turns it on. Matched without case, like argExist. */
+  {
+    bool given = false;
+    bool deep = (argExist(argc, argv, "memreportdeep") == TRUE);
+    const char *value = NULL;
+    char warn[256];
+    double memMins;
+    for (int i = 1; i < argc; i++) {
+      if (SDL_strcasecmp((char *)argv[i], "-memreport") == 0) {
+        given = true;
+        value = (i + 1 < argc) ? (const char *)argv[i + 1] : NULL;
+        break;
+      }
+    }
+    memMins = serverMemReportPeriodFromArgs(given, value, deep,
+                                            warn, sizeof(warn));
+    if (warn[0] != '\0') {
+      fprintf(stderr, "%s\n", warn);
+    }
+    serverMemReportConfigure(memMins, deep);
+  }
+
   /* Empty reset configuration — on by default */
   bool emptyResetEnabled = (argExist(argc, argv, "noemptyreset") == FALSE);
   {
@@ -2809,6 +2934,41 @@ int main(int argc, char **argv) {
         instCfg.voiceMode = serverVoiceOff;
       }
     }
+    /* -name / -desc: what the game finder shows for this server in place of
+     * its address. Without the flag, the same [HOSTING] keys a client host
+     * keeps in its WinBolo.json, so an operator can set them once in the
+     * file instead. The sim's setters sanitise and cut both; static because
+     * instCfg only points at them. */
+    {
+      static char serverNameBuf[256];
+      static char serverDescBuf[1024];
+      int nameNum = findArg(argc, argv, "name");
+      int descNum = findArg(argc, argv, "desc");
+      if (nameNum != ARG_NOT_FOUND) {
+#ifdef _WIN32
+        if (!serverArgUtf8(argc, nameNum, serverNameBuf,
+                           sizeof(serverNameBuf)))
+#endif
+        snprintf(serverNameBuf, sizeof(serverNameBuf), "%s",
+                 (char *)argv[nameNum]);
+      } else {
+        prefsGetString("HOSTING", "Server Name", "", serverNameBuf,
+                       sizeof(serverNameBuf));
+      }
+      if (descNum != ARG_NOT_FOUND) {
+#ifdef _WIN32
+        if (!serverArgUtf8(argc, descNum, serverDescBuf,
+                           sizeof(serverDescBuf)))
+#endif
+        snprintf(serverDescBuf, sizeof(serverDescBuf), "%s",
+                 (char *)argv[descNum]);
+      } else {
+        prefsGetString("HOSTING", "Server Description", "", serverDescBuf,
+                       sizeof(serverDescBuf));
+      }
+      instCfg.serverName        = serverNameBuf;
+      instCfg.serverDescription = serverDescBuf;
+    }
     /* A server that skips the lobby starts its round inside the startup
        below, so the scenario's own settings have to be in force before it:
        the round is built and the first tanks placed in there, and a game
@@ -2826,6 +2986,27 @@ int main(int argc, char **argv) {
       SDL_Quit();
 #endif
       return 0;
+    }
+    /* Say what the finder will show, after the sanitising, so an operator
+     * sees a name that came out shorter or cleaner than typed. */
+    if (serverSimGetServerName(serverSim)[0] != '\0') {
+      fprintf(stderr, "Server name: %s\n", serverSimGetServerName(serverSim));
+    }
+    if (serverSimGetServerDescription(serverSim)[0] != '\0') {
+      size_t descLen = strlen(serverSimGetServerDescription(serverSim));
+      size_t descRoom = infoReplyServerDescRoom(serverSim);
+      fprintf(stderr, "Server description: %s\n",
+              serverSimGetServerDescription(serverSim));
+      /* The reply is capped at one 1024-byte packet, and a long scenario
+       * and mod list leave less room for the description. Checked against
+       * the scripts this round starts with; a later pick can change it. */
+      if (descLen > descRoom) {
+        fprintf(stderr,
+                "Note: the game finder gets at most the first %u of the "
+                "description's %u bytes; the scenario and mod names fill "
+                "the rest of the reply.\n",
+                (unsigned)descRoom, (unsigned)descLen);
+      }
     }
 
 #if WB_ENABLE_NETIMPAIR

@@ -1181,6 +1181,10 @@ STR_LV_AUTO_SCROLL=Desplazamiento automático
 
 # Log viewer end-of-log marker
 STR_LV_END_OF_LOG=Fin del archivo de registro alcanzado
+STR_LV_LOAD_TITLE=Abriendo registro
+STR_LV_LOAD_UNZIP=Descomprimiendo
+STR_LV_LOAD_SCAN=Leyendo
+STR_LV_LOAD_PLAY=Indexando
 
 # iOS Settings panel additions
 STR_DLGSETTINGS_ZOOM=Zoom
@@ -2087,6 +2091,10 @@ STR_DLGSETTINGS_HOSTING_VOICE_ON=Activado
 STR_DLGSETTINGS_HOSTING_VOICE_OFF=Desactivado
 STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Proximidad
 STR_DLGSETTINGS_HOSTING_VOICE_TIP=Desactivado descarta la voz en lugar de transmitirla a alguien. Proximidad todavía no está implementada y se comporta igual que Activado.
+STR_DLGSETTINGS_HOSTING_SERVERNAME=Nombre del servidor
+STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=El buscador de partidas muestra este nombre en lugar de tu dirección. Hasta 32 caracteres (menos con letras acentuadas u otros alfabetos). Déjalo vacío para mostrar tu dirección.
+STR_DLGSETTINGS_HOSTING_SERVERDESC=Descripción
+STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=El buscador de partidas muestra esto cuando un jugador señala o selecciona tu partida. Hasta 200 caracteres (menos con letras acentuadas u otros alfabetos).
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Voz
@@ -2537,7 +2545,7 @@ STR_RULE_DESC_lgm_gather_trees=Árboles que trae el constructor de una casilla d
 STR_RULE_DESC_lgm_helicopter_speed=Cuánto avanza el constructor cada tick mientras desciende en paracaídas.
 STR_RULE_DESC_lgm_arrive_tolerance=A qué distancia de su destino debe estar el constructor para contar como llegado.
 STR_RULE_DESC_lgm_return_tolerance=A qué distancia del tanque debe estar el constructor para contar como de vuelta.
-STR_RULE_DESC_lgm_pill_drop_search=Casillas que recorre una columna de la búsqueda para soltar el búnker.
+STR_RULE_DESC_lgm_pill_drop_search=Eliminada, no hace nada.
 STR_RULE_DESC_lgm_boat_leave_offset=A qué distancia sale el constructor para subir a una barca.
 STR_RULE_DESC_lgm_boat_return_offset=A qué distancia se aleja el constructor al bajar de una barca.
 STR_RULE_DESC_pill_max_armour=El máximo de blindaje que tiene un búnker, y con el que empieza uno recién construido.
@@ -2736,7 +2744,29 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Mods
 STR_DLGBROWSER_MODS_MORE=+{number} mods
+STR_DLGBROWSER_ADDRESS=Dirección
 
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=El chat de voz ahora llega a todos en la partida
 STR_VOICE_EVERYONE_OFF=El chat de voz ahora solo llega a tus aliados
+
+# System Info panel — the Memory block
+STR_DLGSYSINFO_MEMORY=Memoria
+STR_DLGSYSINFO_MEM_RESIDENT=Residente
+STR_DLGSYSINFO_MEM_PEAK=Pico
+STR_DLGSYSINFO_MEM_PRIVATE=Privada
+STR_DLGSYSINFO_MEM_VIRTUAL=Virtual
+STR_DLGSYSINFO_MEM_LUA=Heap de Lua
+STR_DLGSYSINFO_MEM_BOTS=Bots
+STR_DLGSYSINFO_MEM_BOT=Bot
+STR_DLGSYSINFO_MEM_SERVER_LISTS=Listas del servidor
+STR_DLGSYSINFO_MEM_BOT_LISTS=Listas de bots
+STR_DLGSYSINFO_MEM_EXPLOSIONS=Explosiones
+STR_DLGSYSINFO_MEM_TANK_EXPLOSIONS=Explosiones de tanque
+STR_DLGSYSINFO_MEM_SHELLS=Obuses
+STR_DLGSYSINFO_MEM_MINE_EXPLOSIONS=Explosiones de mina
+STR_DLGSYSINFO_MEM_FLOOD_FILL=Inundación
+STR_DLGSYSINFO_MEM_BUILDING=Construcción
+STR_DLGSYSINFO_MEM_RUBBLE=Escombros
+STR_DLGSYSINFO_MEM_SWAMP=Pantano
+STR_DLGSYSINFO_MEM_GRASS=Hierba

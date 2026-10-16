@@ -1115,6 +1115,10 @@ STR_LV_AUTO_SCROLL=Défilement automatique
 
 # Log viewer end-of-log marker
 STR_LV_END_OF_LOG=Fin du fichier log atteinte
+STR_LV_LOAD_TITLE=Ouverture du log
+STR_LV_LOAD_UNZIP=Décompression
+STR_LV_LOAD_SCAN=Lecture
+STR_LV_LOAD_PLAY=Indexation
 
 # iOS Settings panel additions
 STR_DLGSETTINGS_ZOOM=Zoom
@@ -2086,6 +2090,10 @@ STR_DLGSETTINGS_HOSTING_VOICE_ON=Activé
 STR_DLGSETTINGS_HOSTING_VOICE_OFF=Désactivé
 STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Proximité
 STR_DLGSETTINGS_HOSTING_VOICE_TIP=Désactivé abandonne la voix au lieu de la transmettre à quiconque. Proximité n'est pas encore implémentée et se comporte comme Activé.
+STR_DLGSETTINGS_HOSTING_SERVERNAME=Nom du serveur
+STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=La recherche de partie affiche ce nom à la place de votre adresse. Jusqu'à 32 caractères (moins avec des caractères accentués ou d'autres écritures). Laissez-le vide pour afficher votre adresse.
+STR_DLGSETTINGS_HOSTING_SERVERDESC=Description
+STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=La recherche de partie affiche ceci quand un joueur désigne ou sélectionne votre partie. Jusqu'à 200 caractères (moins avec des caractères accentués ou d'autres écritures).
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Voix
@@ -2536,7 +2544,7 @@ STR_RULE_DESC_lgm_gather_trees=Arbres que rapporte le constructeur d'une case de
 STR_RULE_DESC_lgm_helicopter_speed=Quelle distance parcourt le constructeur à chaque tick pendant sa descente en parachute.
 STR_RULE_DESC_lgm_arrive_tolerance=À quelle distance de son objectif le constructeur doit se trouver pour compter comme arrivé.
 STR_RULE_DESC_lgm_return_tolerance=À quelle distance du tank le constructeur doit se trouver pour compter comme de retour.
-STR_RULE_DESC_lgm_pill_drop_search=Cases que parcourt une colonne de la recherche de dépose du pillbox.
+STR_RULE_DESC_lgm_pill_drop_search=Supprimée, ne fait rien.
 STR_RULE_DESC_lgm_boat_leave_offset=À quelle distance le constructeur s'avance pour monter à bord d'un bateau.
 STR_RULE_DESC_lgm_boat_return_offset=À quelle distance s'éloigne le constructeur en descendant d'un bateau.
 STR_RULE_DESC_pill_max_armour=Le maximum de blindage qu'a un pillbox, et celui avec lequel commence un pillbox tout juste construit.
@@ -2735,7 +2743,29 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Mods
 STR_DLGBROWSER_MODS_MORE=+{number} mods
+STR_DLGBROWSER_ADDRESS=Adresse
 
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=Le chat vocal est maintenant entendu par tous les joueurs
 STR_VOICE_EVERYONE_OFF=Le chat vocal n'est maintenant entendu que par vos alliés
+
+# System Info panel — the Memory block
+STR_DLGSYSINFO_MEMORY=Mémoire
+STR_DLGSYSINFO_MEM_RESIDENT=Résidente
+STR_DLGSYSINFO_MEM_PEAK=Pic
+STR_DLGSYSINFO_MEM_PRIVATE=Privée
+STR_DLGSYSINFO_MEM_VIRTUAL=Virtuelle
+STR_DLGSYSINFO_MEM_LUA=Tas Lua
+STR_DLGSYSINFO_MEM_BOTS=Bots
+STR_DLGSYSINFO_MEM_BOT=Bot
+STR_DLGSYSINFO_MEM_SERVER_LISTS=Listes du serveur
+STR_DLGSYSINFO_MEM_BOT_LISTS=Listes des bots
+STR_DLGSYSINFO_MEM_EXPLOSIONS=Explosions
+STR_DLGSYSINFO_MEM_TANK_EXPLOSIONS=Explosions de tank
+STR_DLGSYSINFO_MEM_SHELLS=Obus
+STR_DLGSYSINFO_MEM_MINE_EXPLOSIONS=Explosions de mines
+STR_DLGSYSINFO_MEM_FLOOD_FILL=Inondation
+STR_DLGSYSINFO_MEM_BUILDING=Construction
+STR_DLGSYSINFO_MEM_RUBBLE=Décombres
+STR_DLGSYSINFO_MEM_SWAMP=Marais
+STR_DLGSYSINFO_MEM_GRASS=Herbe

@@ -20,6 +20,7 @@ add_library(bolo_static STATIC
     bolo_map.c
     bolo_rand.c
     bot_manager.c
+    bot_mem_report.c
     bot_worker_pool.c
     brain_data.c
     brain_list.c
@@ -85,6 +86,7 @@ add_library(bolo_static STATIC
     screentank.c
     scroll.c
     scroll_item_list.c
+    server_text.c
     shells.c
     sight.c
     sim_rules.c

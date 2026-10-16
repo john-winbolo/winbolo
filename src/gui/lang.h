@@ -256,7 +256,7 @@
 #define STR_TUTORIAL21_CTRL                 1841
 #define STR_TUTORIAL_START04_CTRL           1842
 #define STR_TUTORIAL_RESPAWN1               1843
-#define STR_TUTORIAL_QUICK_BUILD_TOUCH      2775
+#define STR_TUTORIAL_QUICK_BUILD_TOUCH      2798
 
 /* LGM (little green man) messages */
 #define LGM_MAN_DEAD                        414
@@ -1349,6 +1349,12 @@
 /* Log viewer end-of-log marker */
 #define STR_LV_END_OF_LOG                   1182
 
+/* Log viewer progress window while a log opens */
+#define STR_LV_LOAD_TITLE                   2775
+#define STR_LV_LOAD_UNZIP                   2776
+#define STR_LV_LOAD_SCAN                    2777
+#define STR_LV_LOAD_PLAY                    2778
+
 /* iOS Settings panel additions */
 #define STR_DLGSETTINGS_ZOOM                1183
 #define STR_DLGSETTINGS_PERFORMANCE         1184
@@ -1838,6 +1844,10 @@
 #define STR_DLGSETTINGS_HOSTING_VOICE_OFF       2121
 #define STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY 2122
 #define STR_DLGSETTINGS_HOSTING_VOICE_TIP       2123
+#define STR_DLGSETTINGS_HOSTING_SERVERNAME      2763
+#define STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP  2764
+#define STR_DLGSETTINGS_HOSTING_SERVERDESC      2765
+#define STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP  2766
 
 /* Log viewer Options menu */
 #define STR_LV_HIDE_LOBBY                   1921
@@ -2469,6 +2479,14 @@
 #define STR_DLGLOBBY_SCENARIO_DETAILS_TITLE 2592
 #define STR_DLGLOBBY_MODS_ENABLED_CB        2609
 #define STR_DLGLOBBY_MODS_DETAILS_TIP       2610
+/* Who wrote a script and when its content last changed, as its manifest
+ * states them: the line under the file name in the details dialog and the
+ * tooltip on a chooser row's name. {string1} is the author, already cleaned
+ * of control characters, and {string2} the time as "2026-10-03 20:47 UTC";
+ * either is UNKNOWN where the manifest does not state it. A row from a
+ * server too old to send the two shows neither line. */
+#define STR_DLGLOBBY_SCENARIO_BY_UPDATED    2771
+#define STR_DLGLOBBY_SCENARIO_UNKNOWN       2772
 /* The note under the round column's heading, which says what the order of
  * that list means. A host can see the list is ordered and cannot see which
  * end of it wins, and the answer is not guessable: the round runs the files
@@ -3326,10 +3344,37 @@
  * scenario row and the Scenario filter entry reuse STR_DLGGAMEINFO_SCRIPTED. */
 #define STR_DLGBROWSER_MODS                      2713
 #define STR_DLGBROWSER_MODS_MORE                 2714
+#define STR_DLGBROWSER_ADDRESS                   2767
 
 /* In-game newswire — a scenario changed who hears a player's voice */
 #define STR_VOICE_EVERYONE_ON                    2757
 #define STR_VOICE_EVERYONE_OFF                   2758
+
+/* System Info panel — the Memory block */
+/* This process's memory figures and, when hosting, the bots' Lua heaps and
+ * the world-list counts the dedicated server's memory report prints. Bare
+ * nouns like the other System Info labels (no trailing colon, no format
+ * specifiers); colons and numbers stay in the C format strings. A figure
+ * that could not be read shows STR_DLGSKIN_NA. */
+#define STR_DLGSYSINFO_MEMORY                    2779
+#define STR_DLGSYSINFO_MEM_RESIDENT              2780
+#define STR_DLGSYSINFO_MEM_PEAK                  2781
+#define STR_DLGSYSINFO_MEM_PRIVATE               2782
+#define STR_DLGSYSINFO_MEM_VIRTUAL               2783
+#define STR_DLGSYSINFO_MEM_LUA                   2784
+#define STR_DLGSYSINFO_MEM_BOTS                  2785
+#define STR_DLGSYSINFO_MEM_BOT                   2786
+#define STR_DLGSYSINFO_MEM_SERVER_LISTS          2787
+#define STR_DLGSYSINFO_MEM_BOT_LISTS             2788
+#define STR_DLGSYSINFO_MEM_EXPLOSIONS            2789
+#define STR_DLGSYSINFO_MEM_TANK_EXPLOSIONS       2790
+#define STR_DLGSYSINFO_MEM_SHELLS                2791
+#define STR_DLGSYSINFO_MEM_MINE_EXPLOSIONS       2792
+#define STR_DLGSYSINFO_MEM_FLOOD_FILL            2793
+#define STR_DLGSYSINFO_MEM_BUILDING              2794
+#define STR_DLGSYSINFO_MEM_RUBBLE                2795
+#define STR_DLGSYSINFO_MEM_SWAMP                 2796
+#define STR_DLGSYSINFO_MEM_GRASS                 2797
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

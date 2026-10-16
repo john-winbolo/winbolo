@@ -1115,6 +1115,10 @@ STR_LV_AUTO_SCROLL=Automatisk rullning
 
 # Log viewer end-of-log marker
 STR_LV_END_OF_LOG=Slutet av loggfilen nått
+STR_LV_LOAD_TITLE=Öppnar loggfil
+STR_LV_LOAD_UNZIP=Packar upp
+STR_LV_LOAD_SCAN=Läser
+STR_LV_LOAD_PLAY=Indexerar
 
 # iOS Settings panel additions
 STR_DLGSETTINGS_ZOOM=Zoom
@@ -2086,6 +2090,10 @@ STR_DLGSETTINGS_HOSTING_VOICE_ON=På
 STR_DLGSETTINGS_HOSTING_VOICE_OFF=Av
 STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Närhet
 STR_DLGSETTINGS_HOSTING_VOICE_TIP=Av kastar bort rösten i stället för att skicka den till någon. Närhet är inte implementerad än och beter sig som På.
+STR_DLGSETTINGS_HOSTING_SERVERNAME=Servernamn
+STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=Spelfinnaren visar det här namnet istället för din adress. Upp till 32 tecken (färre med accenttecken eller andra skriftsystem). Lämna det tomt för att visa din adress.
+STR_DLGSETTINGS_HOSTING_SERVERDESC=Beskrivning
+STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=Spelfinnaren visar det här när en spelare pekar på eller väljer ditt spel. Upp till 200 tecken (färre med accenttecken eller andra skriftsystem).
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Röstchatt
@@ -2538,7 +2546,7 @@ STR_RULE_DESC_lgm_gather_trees=Träd byggaren tar med sig tillbaka från en ruta
 STR_RULE_DESC_lgm_helicopter_speed=Hur långt byggaren färdas varje tick medan han fallskärmshoppar in.
 STR_RULE_DESC_lgm_arrive_tolerance=Hur nära sitt mål byggaren måste vara för att räknas som anländ.
 STR_RULE_DESC_lgm_return_tolerance=Hur nära tanken byggaren måste vara för att räknas som tillbaka.
-STR_RULE_DESC_lgm_pill_drop_search=Rutor en kolumn av bunkersläppsökningen går igenom.
+STR_RULE_DESC_lgm_pill_drop_search=Borttagen, gör ingenting.
 STR_RULE_DESC_lgm_boat_leave_offset=Hur långt ut byggaren kliver för att gå ombord på en båt.
 STR_RULE_DESC_lgm_boat_return_offset=Hur långt byggaren kliver tillbaka när han lämnar en båt.
 STR_RULE_DESC_pill_max_armour=Det mesta pansar en bunker håller, och vad en nybyggd startar med.
@@ -2737,7 +2745,29 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Moddar
 STR_DLGBROWSER_MODS_MORE=+{number} moddar
+STR_DLGBROWSER_ADDRESS=Adress
 
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=Röstchatten hörs nu av alla i spelet
 STR_VOICE_EVERYONE_OFF=Röstchatten hörs nu bara av dina allierade
+
+# System Info panel — the Memory block
+STR_DLGSYSINFO_MEMORY=Minne
+STR_DLGSYSINFO_MEM_RESIDENT=Resident
+STR_DLGSYSINFO_MEM_PEAK=Topp
+STR_DLGSYSINFO_MEM_PRIVATE=Privat
+STR_DLGSYSINFO_MEM_VIRTUAL=Virtuellt
+STR_DLGSYSINFO_MEM_LUA=Lua-heap
+STR_DLGSYSINFO_MEM_BOTS=Bots
+STR_DLGSYSINFO_MEM_BOT=Bot
+STR_DLGSYSINFO_MEM_SERVER_LISTS=Serverlistor
+STR_DLGSYSINFO_MEM_BOT_LISTS=Botlistor
+STR_DLGSYSINFO_MEM_EXPLOSIONS=Explosioner
+STR_DLGSYSINFO_MEM_TANK_EXPLOSIONS=Tankexplosioner
+STR_DLGSYSINFO_MEM_SHELLS=Granater
+STR_DLGSYSINFO_MEM_MINE_EXPLOSIONS=Minexplosioner
+STR_DLGSYSINFO_MEM_FLOOD_FILL=Översvämning
+STR_DLGSYSINFO_MEM_BUILDING=Byggnation
+STR_DLGSYSINFO_MEM_RUBBLE=Bråte
+STR_DLGSYSINFO_MEM_SWAMP=Träsk
+STR_DLGSYSINFO_MEM_GRASS=Gräs
