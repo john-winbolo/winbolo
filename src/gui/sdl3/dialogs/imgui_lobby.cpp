@@ -791,26 +791,28 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             lobbyFormatTimeLimit(clientSimGetLobbyTimeLimit(cs), timeStr, sizeof(timeStr));
 
 #if BOLO_MOBILE
-            /* Stack labels vertically on mobile so the line wraps cleanly. */
+            /* The desktop's one line in two rows of four: one item a line
+               took eight lines and pushed the tabs into the lower third of a
+               phone's screen, and the line itself is wider than a phone. The
+               smart-ping rule, the mods and the view policies are host-only in
+               the settings panel, so this header is where a joiner or
+               spectator reads them, as on the desktop. */
             ImGui::TextUnformatted(langGetText(STR_DLGNETINFO_SERVER));
             ImGui::SameLine();
             renderServerValue();
+            ImGui::SameLine(0, 16);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_GAME_LBL), lobbyGameTypeStr(clientSimGetLobbyGameType(cs)));
+            ImGui::SameLine(0, 16);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MINES_LBL),
                         clientSimIsLobbyHiddenMines(cs) ? langGetText(STR_DLGLOBBY_HIDDEN) : langGetText(STR_DLGLOBBY_VISIBLE));
-            /* Own line like the labels around it — the smart-ping rule is
-             * host-only in the settings panel, so this is where a joiner or
-             * spectator reads it. */
-            lobbyRenderSmartPingSummary(cs, s);
-            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
+            ImGui::SameLine(0, 16);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
-            /* Own line again, and in the same place in the run as on the
-             * desktop: whether the round runs mods is a host-only setting
-             * everywhere else, so this is where a joiner or spectator is
-             * told, and the hover is where the names are. */
+            lobbyRenderSmartPingSummary(cs, s);
+            ImGui::SameLine(0, 16);
+            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
+            ImGui::SameLine(0, 16);
             lobbyRenderModsSummary(cs, s);
-            /* Own line, like the labels above it — the view policies are
-             * the one part of the settings a joiner or spectator can see. */
+            ImGui::SameLine(0, 16);
             lobbyRenderVisibilitySummary(cs, s);
 #else
             /* Leave button sits at the top-left, before the Server: line.
