@@ -72,9 +72,11 @@
 --   wall and A did a plain pill take.  Hence the near, late start, the
 --   thick wall and the decoy proof.
 --
--- order_human_decoy_off is the same arena with HUMAN_DECOY_ALLY_BOTS and
--- HUMAN_DECOY_NO_BLOCKERS off (A_CFG below): A does not read Boss as a decoy
--- and builds its own walls, and that arena is expected to fail.
+-- Two knob variants (A_CFG below), both expected to fail:
+--   * order_human_decoy_off: HUMAN_DECOY_ALLY_BOTS and HUMAN_DECOY_NO_BLOCKERS
+--     off.  A does not read Boss as a decoy and parks beside him.
+--   * order_human_decoy_walls: HUMAN_DECOY_NO_BLOCKERS off.  A parks wide
+--     but builds its own walls.
 --
 -- GATE: ticks=6000 bots=1 ai=yesfull gametype=open
 -- GATE: expect=fail with HUMAN_DECOY_ALLY_BOTS and HUMAN_DECOY_NO_BLOCKERS off, A does not take ally bot Boss as the decoy and parks beside him
