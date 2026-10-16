@@ -400,6 +400,8 @@ static void renderNewsModal(void) {
         s_modalOpenCalled  = true;
         s_seedScrollFocus  = true;
     }
+    newsImageCacheNewFrame();
+
     ImVec2 vp = ImGui::GetMainViewport()->Size;
     ImGui::SetNextWindowSize(ImVec2(vp.x * 0.8f, vp.y * 0.8f),
                              ImGuiCond_Appearing);

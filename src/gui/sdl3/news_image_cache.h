@@ -36,6 +36,12 @@ extern "C" {
  * immediately. Must be called only from the UI thread. */
 SDL_Texture *newsImageGet(const char *url);
 
+/* Starts a new frame for the cache's eviction rule: an image returned
+ * by newsImageGet in this frame or the previous one is never evicted.
+ * Call once per frame, before the frame's newsImageGet calls, while
+ * images are being drawn. UI-thread only. */
+void newsImageCacheNewFrame(void);
+
 /* Free all cache entries, textures, decoded-pixel buffers, and join
  * any in-flight worker threads. Idempotent. UI-thread only. */
 void newsImageCacheShutdown(void);

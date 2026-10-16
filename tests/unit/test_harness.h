@@ -514,6 +514,7 @@ int run_wbn_bearer_state(void);
 int run_wbn_rekey_codec(void);
 int run_wbn_news_parse(void);
 int run_wbn_news_markdown(void);
+int run_news_image_budget(void);
 
 /* News fetch lifetime regression (test_wbn_news_fetch.cpp): freeing the
  * fetch handle while the worker thread is still parked in the network GET

@@ -1658,6 +1658,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
+    src/gui/sdl3/news_image_budget.cpp
     # Copies subscribed Workshop items into <prefpath>Workshop. Desktop only:
     # winbolo.c, imgui_steam_nav.cpp and imgui_settings.cpp call it, and the
     # mobile and wasm builds leave those calls out rather than link it.
@@ -3976,6 +3977,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_news_parse.cpp
     # Unwrapping linked thumbnails in news bodies for imgui_markdown.
     tests/unit/test_wbn_news_markdown.cpp
+    # The news image cache's size limit and which images it may evict.
+    tests/unit/test_news_image_budget.cpp
     tests/unit/test_wbn_news_fetch.cpp
     tests/unit/test_wbn_country_cache.c
     tests/unit/test_wbn_prefs_sync.c
@@ -4494,6 +4497,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # target already builds for its own tests — and its functions are a tile
     # number in and a colour out. test_map_colours.c drives it directly.
     src/gui/sdl3/map_colours.c
+    # news_image_budget.cpp qualifies too: it is the news image cache's
+    # eviction rule over URLs, byte counts and frame numbers, with no SDL,
+    # no ImGui and no textures. test_news_image_budget.cpp drives it.
+    src/gui/sdl3/news_image_budget.cpp
     # The threaded news fetcher itself (not just the pure parser): the
     # free-during-fetch lifetime test drives its real worker thread. Its
     # network GET is reached through a test seam, so no libcurl is pulled in
@@ -5146,6 +5153,7 @@ set(_unit_test_names
     wbn_rekey_codec
     wbn_news_parse
     wbn_news_markdown
+    news_image_budget
     wbn_news_free_during_fetch
     wbn_country_cache
     wbn_prefs_parse_get

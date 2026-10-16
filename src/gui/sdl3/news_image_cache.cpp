@@ -30,12 +30,15 @@
  *  - Per-image decoded-dimension cap: 1024 px on either side.
  *    Oversized images are rejected (no downscaling — stb's
  *    image_resize header is not vendored).
- *  - Total cache cap: 16 Ready entries with LRU eviction. Pending
- *    and Failed entries are bounded (at most one Pending per URL;
- *    Failed entries persist permanently so we don't re-fetch known-
- *    bad URLs in the same process).
- *  - Threading: each first-time validated URL spawns a joined
- *    std::thread (collected in a vector and joined at shutdown).
+ *  - Total cache cap: 64 MB of decoded images, kept by
+ *    NewsImageBudget, which never evicts an image drawn in this
+ *    frame or the previous one (see news_image_budget.h). An image
+ *    that cannot fit without that is marked Failed rather than
+ *    shown. Pending and Failed entries are bounded (at most one
+ *    Pending per URL; Failed entries persist permanently so we
+ *    don't re-fetch known-bad URLs in the same process).
+ *  - Threading: each first-time validated URL spawns a std::thread,
+ *    joined by the UI thread once it has finished, or at shutdown.
  *    The worker runs a plain libcurl GET into a DynBuf, decodes
  *    via stbi_load_from_memory(..., 4), and hands the RGBA buffer
  *    + dims to the UI thread through a producer queue inside the
@@ -53,7 +56,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <list>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -65,6 +68,7 @@ extern "C" {
 #include "sdl3draw.h"
 }
 
+#include "news_image_budget.h"
 #include "news_image_cache.h"
 
 /*********************************************************
@@ -74,7 +78,7 @@ namespace {
 
 constexpr size_t kMaxDownloadBytes = 2 * 1024 * 1024;  /* 2 MB */
 constexpr int    kMaxDecodedSide   = 1024;
-constexpr size_t kMaxReadyEntries  = 16;
+constexpr size_t kMaxReadyBytes    = 64 * 1024 * 1024;  /* decoded RGBA */
 constexpr long   kHttpTimeoutSec   = 30L;
 
 /* WBN host allowlist — case-insensitive exact match, no subdomain
@@ -88,7 +92,7 @@ const char *const kAllowedHosts[] = {
 
 enum class State : uint8_t {
     Pending,    /* worker running, no texture yet                      */
-    Ready,      /* texture uploaded, eligible for LRU                  */
+    Ready,      /* texture uploaded, held in g_budget                  */
     Failed,     /* rejected URL or transport/decode error — permanent  */
 };
 
@@ -101,16 +105,19 @@ struct Entry {
     unsigned char *pendingPixels = nullptr;
     int            pendingW      = 0;
     int            pendingH      = 0;
+};
 
-    /* LRU iterator pointing at this entry's node in g_lru. Only
-     * meaningful when state == Ready. */
-    std::list<std::string>::iterator lruIt;
+/* A download thread and the flag it sets as its last act, so the UI
+ * thread can join it as soon as it has finished. */
+struct Worker {
+    std::thread                        thread;
+    std::shared_ptr<std::atomic<bool>> done;
 };
 
 std::mutex                                       g_mutex;
 std::unordered_map<std::string, Entry>           g_cache;
-std::list<std::string>                           g_lru;        /* MRU front, LRU back */
-std::vector<std::thread>                         g_workers;
+NewsImageBudget                                  g_budget(kMaxReadyBytes);
+std::vector<Worker>                              g_workers;    /* UI thread only */
 std::atomic<bool>                                g_shutdown{false};
 
 /* Guarantees the worker vector is empty by the time its static
@@ -282,12 +289,11 @@ void workerBody(std::string url) {
  *  UI-thread helpers (caller already holds g_mutex)
  *********************************************************/
 
-void evictOneLru_locked() {
-    /* Pop the back of the LRU list — that's the oldest Ready entry. */
-    if (g_lru.empty()) return;
-    const std::string victimUrl = g_lru.back();
-    g_lru.pop_back();
-    auto it = g_cache.find(victimUrl);
+/* Destroys the texture of an image the budget evicted and drops its
+ * entry, so a later sighting downloads it again. The budget only
+ * evicts images not drawn in this frame or the previous one. */
+void evict_locked(const std::string &url) {
+    auto it = g_cache.find(url);
     if (it == g_cache.end()) return;
     if (it->second.texture) {
         SDL_DestroyTexture(it->second.texture);
@@ -296,24 +302,28 @@ void evictOneLru_locked() {
     g_cache.erase(it);
 }
 
-size_t countReady_locked() { return g_lru.size(); }
-
-void touchLru_locked(Entry &e, const std::string &url) {
-    /* Move e's existing LRU node to the front. */
-    g_lru.erase(e.lruIt);
-    g_lru.push_front(url);
-    e.lruIt = g_lru.begin();
-}
-
 void drainPending_locked() {
     /* Walk the cache, finalising any entries the worker has
      * deposited pixels into. We hold g_mutex throughout — the SDL
      * calls themselves are not under contention with the worker
      * since the worker only touches pendingPixels/W/H. */
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
+    std::vector<std::string> evicted;
     for (auto &kv : g_cache) {
         Entry &e = kv.second;
         if (e.state != State::Pending || !e.pendingPixels) continue;
+
+        /* Make room first. The evicted entries are all Ready, so
+         * erasing them never invalidates kv, the Pending entry this
+         * loop is on. */
+        const size_t bytes = (size_t)e.pendingW * (size_t)e.pendingH * 4;
+        if (!g_budget.admit(kv.first, bytes, evicted)) {
+            stbi_image_free(e.pendingPixels);
+            e.pendingPixels = nullptr;
+            e.state = State::Failed;
+            continue;
+        }
+        for (const std::string &url : evicted) evict_locked(url);
 
         SDL_Texture *tex = nullptr;
         if (renderer) {
@@ -331,23 +341,25 @@ void drainPending_locked() {
         e.pendingPixels = nullptr;
 
         if (!tex) {
+            g_budget.forget(kv.first);
             e.state = State::Failed;
             continue;
         }
 
-        /* Enforce the Ready cap before inserting the new LRU node. */
-        while (countReady_locked() >= kMaxReadyEntries) {
-            evictOneLru_locked();
-            /* After eviction, kv may be invalidated if it was the
-             * victim — but we just inserted to pendingPixels above,
-             * so it can't be the LRU back unless we just made it Ready
-             * (which we haven't yet). Safe. */
-        }
-
         e.texture = tex;
         e.state   = State::Ready;
-        g_lru.push_front(kv.first);
-        e.lruIt   = g_lru.begin();
+    }
+}
+
+/* Joins the download threads that have finished. UI thread only. */
+void reapWorkers() {
+    for (auto it = g_workers.begin(); it != g_workers.end();) {
+        if (it->done->load(std::memory_order_acquire)) {
+            it->thread.join();
+            it = g_workers.erase(it);
+        } else {
+            ++it;
+        }
     }
 }
 
@@ -368,7 +380,7 @@ SDL_Texture *newsImageGet(const char *url) {
     if (it != g_cache.end()) {
         Entry &e = it->second;
         if (e.state == State::Ready && e.texture) {
-            touchLru_locked(e, key);
+            g_budget.touch(key);
             return e.texture;
         }
         return nullptr;  /* Pending / Failed */
@@ -389,10 +401,22 @@ SDL_Texture *newsImageGet(const char *url) {
     g_cache.emplace(key, e);
     lk.unlock();
 
+    reapWorkers();
     if (!g_shutdown.load(std::memory_order_acquire)) {
-        g_workers.emplace_back(workerBody, key);
+        auto done = std::make_shared<std::atomic<bool>>(false);
+        std::thread t([key, done]() {
+            workerBody(key);
+            done->store(true, std::memory_order_release);
+        });
+        g_workers.push_back(Worker{std::move(t), done});
     }
     return nullptr;
+}
+
+void newsImageCacheNewFrame(void) {
+    reapWorkers();
+    std::lock_guard<std::mutex> lk(g_mutex);
+    g_budget.newFrame();
 }
 
 void newsImageCacheShutdown(void) {
@@ -400,13 +424,13 @@ void newsImageCacheShutdown(void) {
 
     /* Join workers without holding g_mutex — workers grab it to
      * deposit results. They observe g_shutdown and bail quickly. */
-    std::vector<std::thread> workers;
+    std::vector<Worker> workers;
     {
         std::lock_guard<std::mutex> lk(g_mutex);
         workers.swap(g_workers);
     }
-    for (auto &t : workers) {
-        if (t.joinable()) t.join();
+    for (auto &w : workers) {
+        if (w.thread.joinable()) w.thread.join();
     }
 
     std::lock_guard<std::mutex> lk(g_mutex);
@@ -422,7 +446,7 @@ void newsImageCacheShutdown(void) {
         }
     }
     g_cache.clear();
-    g_lru.clear();
+    g_budget.clear();
 
     /* g_shutdown stays true after the join. A second
      * newsImageCacheShutdown() call is therefore a no-op, and any
