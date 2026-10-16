@@ -1176,6 +1176,22 @@ int run_starts_side_region_sweep(void);
 int run_starts_side_unsided_team_kept_off_chosen_side(void);
 int run_starts_side_two_team_lobby_mirrors(void);
 int run_starts_side_team_change_repicks_stale(void);
+/* A mod with on_choose_start leaves the opening placement to the lobby
+ * picks and team sides, and still names the starts after it. */
+int run_mod_lobby_starts_mac_bolo_keeps_opposite_sides(void);
+int run_mac_bolo_settings_defaults_play_old_rules(void);
+int run_mac_bolo_settings_each_part_off(void);
+int run_mac_bolo_settings_numbers(void);
+int run_mac_bolo_first_start_lobby_off_uses_mac_pick(void);
+int run_mac_bolo_spawn_starts_off_engine_picks(void);
+int run_mac_bolo_setting_changed_after_attach(void);
+int run_mac_bolo_setting_changed_between_rounds(void);
+int run_choose_start_lobby_arg_hand_picked(void);
+int run_choose_start_lobby_arg_team_side(void);
+int run_choose_start_lobby_arg_nil_without_reservation(void);
+int run_choose_start_override_releases_reservation(void);
+int run_choose_start_override_onto_other_reservation(void);
+int run_choose_start_script_ignoring_lobby_unchanged(void);
 
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
@@ -1359,6 +1375,33 @@ int run_lv_hide_lobby_window_mapping(void);
 int run_lv_hide_lobby_no_lobby_fallback(void);
 int run_lv_hide_lobby_no_marker_anchor(void);
 int run_lv_hide_lobby_periodic_snapshot(void);
+
+/* Kill and death tallies across seeks (test_lv_calibration.c): a seek back
+ * restores them with the snapshot, so a replayed stretch is not counted twice. */
+int run_lv_kill_tally_seek(void);
+/* A seek back to a snapshot with a tank off the map shows it dead. */
+int run_lv_alive_seek(void);
+/* The load a step at a time, as the viewer runs it behind its progress bar. */
+int run_lv_load_steps(void);
+/* A forward seek through waits lands where ticking would. */
+int run_lv_fast_forward_waits(void);
+/* A snapshot repeating the last map is stepped over unless the map changed. */
+int run_lv_same_map_runs(void);
+
+/* Log viewer events panel list (test_lv_event_list.c): a replay after a seek
+ * back adds no line twice, and pinned lines stay ahead of the timed ones. */
+int run_lv_event_list_replay(void);
+int run_lv_event_list_pinned(void);
+
+/* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
+ * an index the size of a ten-day log. */
+int run_lv_snapshot_index_lookup(void);
+int run_lv_snapshot_index_ten_days(void);
+
+/* Log viewer load results (test_lv_load_walk.c): total time, game start,
+ * names, rule changes, server ticks and teams for each committed .wbv
+ * fixture, pinned together. */
+int run_lv_load_walk_fixtures(void);
 
 /* Load-time slot-name walk (test_lv_calibration.c): a player who joins after
  * the lobby marker is absent from the live roster at game start, where the
@@ -2823,6 +2866,15 @@ int run_pascal_string_roundtrip(void);
 /* Dedicated-server operator console command parsing
  * (test_server_console.c). */
 int run_console_lock_unlock(void);
+int run_console_mem_report(void);
+int run_memreport_flags(void);
+int run_memreport_process_na(void);
+int run_memreport_deep_walk_cap(void);
+/* The T1 memory accessors on server_sim.h the client's System Info panel
+ * reads (test_memory_info.c). */
+int run_memory_info_hosted_bots(void);
+int run_memory_info_no_bots(void);
+int run_memory_info_process_figures(void);
 int run_console_info_and_status(void);
 int run_console_savemap_path(void);
 int run_console_unknown_command_is_inert(void);
@@ -2861,6 +2913,13 @@ int run_tank_mod_mine_damage_scales_with_layer(void);
 int run_mine_damage_fatal_reduction(void);
 int run_tank_mod_neutral_owner_deals_classic(void);
 int run_tank_mod_boat_exit_at_half_speed(void);
+/* test_boat_exit_road.c */
+int run_boat_exit_slow_onto_road_held(void);
+int run_boat_exit_fast_onto_road_lands(void);
+int run_boat_exit_grass_unchanged(void);
+int run_boat_exit_parked_boat_pickup(void);
+int run_boat_exit_base_beside_water(void);
+int run_boat_exit_wall_held(void);
 int run_tank_mod_pill_leads_half_speed_boat(void);
 int run_tank_mod_predicted_stop_matches_engine(void);
 
@@ -3813,6 +3872,19 @@ int run_scenario_details_fetch_give_up(void);
 int run_scenario_details_override_order(void);
 int run_scenario_details_reload_map_script(void);
 
+/* Who wrote a scenario script and when it last changed
+ * (test_scenario_identity.c): the cleaner and the one updated form, both
+ * manifest readers with their warnings, the blob, the scenario-list
+ * trailer against the old wire and an older server, the V3 details reply
+ * over the loopback transport, and every shipped script's pair. */
+int run_scenario_identity_clean(void);
+int run_scenario_identity_lua(void);
+int run_scenario_identity_json(void);
+int run_scenario_identity_blob(void);
+int run_scenario_identity_list_wire(void);
+int run_scenario_identity_details_fetch(void);
+int run_scenario_identity_shipped(void);
+
 /* A copy of one of the server's scripts (test_script_fetch.c): the request
  * body against committed hex, a .lua, a .scenario and a shipped mod fetched
  * whole over the loopback transport, each refusal the server answers, a
@@ -4125,6 +4197,8 @@ int run_bot_init_arg_text_to_table(void);
 int run_scenario_bot_init_lands(void);
 int run_scenario_bot_init_refusals(void);
 int run_scenario_bot_init_parked_seat(void);
+int run_scenario_bot_init_round_reset(void);
+int run_scenario_bot_init_free_seat_spawn(void);
 int run_brain_on_init_update(void);
 
 int run_console_kick_and_host(void);

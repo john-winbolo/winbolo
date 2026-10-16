@@ -1093,6 +1093,12 @@ static const LangEntry langTable[] = {
     /* Log viewer end-of-log marker */
     {1182, "End of Log File Reached"},
 
+    /* Log viewer progress window while a log opens */
+    {2775, "Opening log"},
+    {2776, "Unpacking"},
+    {2777, "Reading"},
+    {2778, "Indexing"},
+
     /* iOS Settings panel */
     {1183, "Zoom"},
     {1184, "Performance"},
@@ -1163,6 +1169,27 @@ static const LangEntry langTable[] = {
     {1236, "Simulation"},
     {1237, "Bot prep"},
     {1238, "Brain overruns"},
+
+    /* System Info panel — the Memory block */
+    {2779, "Memory"},
+    {2780, "Resident"},
+    {2781, "Peak"},
+    {2782, "Private"},
+    {2783, "Virtual"},
+    {2784, "Lua heap"},
+    {2785, "Bots"},
+    {2786, "Bot"},
+    {2787, "Server lists"},
+    {2788, "Bot lists"},
+    {2789, "Explosions"},
+    {2790, "Tank explosions"},
+    {2791, "Shells"},
+    {2792, "Mine explosions"},
+    {2793, "Flood fill"},
+    {2794, "Building"},
+    {2795, "Rubble"},
+    {2796, "Swamp"},
+    {2797, "Grass"},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},
@@ -2487,7 +2514,7 @@ static const LangEntry langTable[] = {
     {2510, "The fastest the builder may walk over a base."},
     {2511, "How near his goal the builder has to be to count as arrived."},
     {2512, "How near the tank the builder has to be to count as back."},
-    {2513, "Squares a column of the pillbox drop search walks."},
+    {2513, "Removed, does nothing."},
     {2514, "How far out the builder steps to board a boat."},
     {2515, "How far the builder steps coming back off a boat."},
     {2516, "Armour one shell takes off a pillbox."},
@@ -2705,6 +2732,8 @@ static const LangEntry langTable[] = {
     {2768, "The server always runs this script. It cannot be removed."},
     {2769, "The server always runs the scenario that is in this round"},
     {2770, "The server sets this list. It cannot be changed."},
+    {2771, "by {string1} · updated {string2}"},
+    {2772, "unknown"},
     {2773, "The server sets this value. It cannot be changed."},
     {2774, "Who a tank's death is credited to, asked at every death; a drowning names the victim unless a script names the tank that sank it."},
 };

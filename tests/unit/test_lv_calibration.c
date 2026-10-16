@@ -41,6 +41,8 @@
 #include "backend.h"
 #include "logviewer.h"
 #include "lv_log.h"
+#include "blocks.h"
+#include "lv_bolo_map.h"
 #include "test_harness.h"
 #include "zip.h"
 
@@ -357,11 +359,11 @@ int run_lv_walk_base_anchor_ordinal(void) {
  * follows flushes it. The anchor is the snapshot, so the window opens on the
  * round's first real frame rather than on the empty frame before it.
  *
- * The two walkers differ on that last frame: lv_walkComputeTotalTimeMs counts
- * LOG_QUIT as a tick and lv_walkComputeGameStartMs does not. That matches the
- * decoder, which advances timeRunning before reading the byte, so the tick
- * that consumes LOG_QUIT is the one that ends playback and the end of the log
- * is 182060, not the 182040 of the last wait.
+ * The two times differ on that last frame: the total counts LOG_QUIT as a
+ * tick and the game start does not. That matches the decoder, which advances
+ * timeRunning before reading the byte, so the tick that consumes LOG_QUIT is
+ * the one that ends playback and the end of the log is 182060, not the 182040
+ * of the last wait.
  *
  * Window [120020, 182060), length 62040. While it is on, progress, both seeks
  * and the clock run on the game's own 0..62040; the decoder's timeRunning and
@@ -604,6 +606,430 @@ int run_lv_hide_lobby_periodic_snapshot(void) {
                     onTotal == offTotal,
                 "the toggle moved a no-lobby log: %u/%u on, %u/%u off",
                 onTime, onTotal, offTime, offTotal);
+
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/*
+ * The kill and death tallies are counted as playback reads each
+ * log_KillPlayer, and no snapshot carries them, so a seek back restores them
+ * with the snapshot it restores from. Before that, a seek back left them as
+ * they were and playing the stretch again counted its kills a second time.
+ *
+ *   opening snapshot -> tick   0
+ *   NOEVENTS 50      -> tick  51
+ *   KillPlayer 1 by 2-> tick  52  (ms 1040)
+ *   NOEVENTS 50      -> tick 103
+ *   snapshot         -> tick 104  (ms 2080)
+ *   NOEVENTS 50      -> tick 155
+ *   LOG_QUIT         -> tick 156
+ */
+int run_lv_kill_tally_seek(void) {
+  const char *path = "lv_kill_tally_seek.wbv";
+  static const uint8_t kill[2] = {1, 2};   /* victim, killer */
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_KillPlayer, kill, 2);
+  putNoEvents(&b, 50);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic kill log failed to build/load");
+
+  /* The load played the whole log once, so both snapshots are indexed, and
+     went back to the start without finishing it. */
+  UT_ASSERT_MSG(lv_snapshotCount(&lv->snap) == 2,
+                "the load indexed %d snapshots (want 2)", lv_snapshotCount(&lv->snap));
+  UT_ASSERT_MSG(lv_screenGetTimeRunning() == 0 && lv_screenIsPlaying() == TRUE,
+                "the load left playback at %u, playing %d",
+                lv_screenGetTimeRunning(), (int)lv_screenIsPlaying());
+  UT_ASSERT_MSG(lv->kills[2] == 0 && lv->deaths[1] == 0,
+                "the load left kills %u deaths %u (want 0 and 0)",
+                lv->kills[2], lv->deaths[1]);
+
+  lv_screenSeekToTimeMs(3000);
+  UT_ASSERT_MSG(lv_screenGetState()->kills[2] == 1 && lv_screenGetState()->deaths[1] == 1,
+                "after the kill: kills %u deaths %u (want 1 and 1)",
+                lv_screenGetState()->kills[2], lv_screenGetState()->deaths[1]);
+
+  lv_screenSeekToTimeMs(500);
+  UT_ASSERT_MSG(lv_screenGetState()->kills[2] == 0 && lv_screenGetState()->deaths[1] == 0,
+                "back before the kill: kills %u deaths %u (want 0 and 0)",
+                lv_screenGetState()->kills[2], lv_screenGetState()->deaths[1]);
+
+  lv_screenSeekToTimeMs(3000);
+  UT_ASSERT_MSG(lv_screenGetState()->kills[2] == 1 && lv_screenGetState()->deaths[1] == 1,
+                "played again: kills %u deaths %u (want 1 and 1)",
+                lv_screenGetState()->kills[2], lv_screenGetState()->deaths[1]);
+
+  /* Restoring the snapshot after the kill puts its tally back. */
+  lv_screenSeekToTimeMs(2100);
+  UT_ASSERT_MSG(lv_screenGetState()->kills[2] == 1 && lv_screenGetState()->deaths[1] == 1,
+                "from the later snapshot: kills %u deaths %u (want 1 and 1)",
+                lv_screenGetState()->kills[2], lv_screenGetState()->deaths[1]);
+
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/* A running-round snapshot like putSnapshot(b, true), with slot 1 in use at
+ * map column mx (0 is the server's "not on the map": a dead tank). The player
+ * block is the layout lv_processSnapshot reads: two header bytes, mx, my,
+ * pixel nibbles, frame, onBoat, the builder's four, the name and location as
+ * pascal strings, no allies and the four stocks. */
+static void putSnapshotSlot1(LogBuf *b, uint8_t mx) {
+  static const uint8_t mapRun[5] = {5, 0, 0, 2, (8 << 4) | GRASS};
+  static const uint8_t mapTerminator[4] = {4, 255, 255, 255};
+  uint8_t player[19] = {0};
+  int i;
+
+  player[2] = mx;
+  player[3] = (mx != 0) ? 10 : 0;   /* my */
+  player[11] = 1;                   /* name length */
+  player[12] = 'P';
+  player[13] = 0;                   /* location length */
+  player[14] = 0;                   /* allies */
+  player[15] = 40;                  /* shells, mines, armour, trees */
+  player[16] = 0;
+  player[17] = 40;
+  player[18] = 0;
+
+  putU8(b, LOG_SNAPSHOT);
+  putZeros(b, 8);
+  putU8(b, 1); putU8(b, 0);          /* pills */
+  putU8(b, 1); putU8(b, 0);          /* bases */
+  putU8(b, 1); putU8(b, 0);          /* starts */
+  put(b, mapRun, sizeof(mapRun));
+  put(b, mapTerminator, 4);
+  for (i = 0; i < MAX_TANKS; i++) {
+    if (i == 1) {
+      putU8(b, (uint8_t)sizeof(player));
+      put(b, player, sizeof(player));
+    } else {
+      putU8(b, 2); putU8(b, 0); putU8(b, 0);
+    }
+  }
+}
+
+/*
+ * Whether a tank is alive is what the game view's death overlay reads. A
+ * snapshot marked a tank on the map alive but never marked one off it dead,
+ * so a seek back to a moment it was dead showed it alive.
+ *
+ *   opening snapshot, slot 1 on the map  -> tick   0
+ *   NOEVENTS 50                          -> tick  51
+ *   KillPlayer 1 by 2                    -> tick  52  (ms 1040)
+ *   NOEVENTS 50                          -> tick 103
+ *   snapshot, slot 1 off the map         -> tick 104  (ms 2080)
+ *   NOEVENTS 50                          -> tick 155
+ *   snapshot, slot 1 on the map          -> tick 156  (ms 3120)
+ *   NOEVENTS 50                          -> tick 207
+ *   LOG_QUIT                             -> tick 208
+ */
+int run_lv_alive_seek(void) {
+  const char *path = "lv_alive_seek.wbv";
+  static const uint8_t kill[2] = {1, 2};
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshotSlot1(&b, 10);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_KillPlayer, kill, 2);
+  putNoEvents(&b, 50);
+  putSnapshotSlot1(&b, 0);
+  putNoEvents(&b, 50);
+  putSnapshotSlot1(&b, 10);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic alive log failed to build/load");
+
+  lv_screenSeekToTimeMs(500);
+  UT_ASSERT_MSG(lv_screenGetState()->gameViewHud[1].alive,
+                "slot 1 not alive before the kill");
+  lv_screenSeekToTimeMs(1500);
+  UT_ASSERT_MSG(!lv_screenGetState()->gameViewHud[1].alive,
+                "slot 1 alive after the kill");
+  lv_screenSeekToTimeMs(3500);
+  UT_ASSERT_MSG(lv_screenGetState()->gameViewHud[1].alive,
+                "slot 1 not alive after the last snapshot");
+
+  /* Back to the snapshot that has it off the map. */
+  lv_screenSeekToTimeMs(2100);
+  UT_ASSERT_MSG(!lv_screenGetState()->gameViewHud[1].alive,
+                "slot 1 alive at the snapshot that has it dead");
+
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/*
+ * The load a step at a time, as the viewer runs it to draw a progress bar: the
+ * stages come in order, each reports how far through it is, and the log ends
+ * up as the one-call load leaves it. Same log as run_lv_kill_tally_seek.
+ */
+int run_lv_load_steps(void) {
+  const char *path = "lv_load_steps.wbv";
+  static const uint8_t kill[2] = {1, 2};
+  LogBuf b;
+  LogViewerState *lv;
+  uint8_t *zipData;
+  size_t zipLen = 0;
+  LvLoadStage stage, lastStage = LV_LOAD_UNZIP;
+  float fraction;
+  int steps = 0;
+  bool sawScan = FALSE, sawPlay = FALSE;
+  int savedHide = lv_screenGetHideLobby();
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_KillPlayer, kill, 2);
+  putNoEvents(&b, 50);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  zipData = zipToMemory(&b, path, &zipLen);
+  UT_ASSERT_MSG(zipData != NULL, "synthetic log failed to build");
+  lv = lv_decoderCreate(false);
+  UT_ASSERT_MSG(lv != NULL, "lv_decoderCreate returned NULL");
+  lv_screenSetSizeX(30);
+  lv_screenSetSizeY(30);
+  UT_ASSERT_MSG(lv_screenLoadMapFromMemoryBegin(zipData, zipLen) == TRUE,
+                "the load did not begin");
+
+  while (lv_screenLoadStep() > 0) {
+    steps++;
+    UT_ASSERT_MSG(steps < 1000, "the load never finished");
+    lv_screenLoadProgress(&stage, &fraction);
+    UT_ASSERT_MSG(stage >= lastStage, "stage went from %d back to %d",
+                  (int)lastStage, (int)stage);
+    UT_ASSERT_MSG(fraction >= 0.0f && fraction <= 1.0f,
+                  "stage %d fraction %f", (int)stage, (double)fraction);
+    if (stage == LV_LOAD_SCAN) sawScan = TRUE;
+    if (stage == LV_LOAD_PLAY) sawPlay = TRUE;
+    lastStage = stage;
+  }
+  UT_ASSERT_MSG(sawScan && sawPlay, "stages seen: scan %d play %d",
+                (int)sawScan, (int)sawPlay);
+
+  UT_ASSERT_MSG(lv_screenGetState()->totalTimeMs == 3120,
+                "total %u (want 3120)", lv_screenGetState()->totalTimeMs);
+  UT_ASSERT_MSG(lv_snapshotCount(&lv->snap) == 2,
+                "the load indexed %d snapshots (want 2)", lv_snapshotCount(&lv->snap));
+  UT_ASSERT_MSG(lv_screenGetTimeRunning() == 0 && lv_screenIsPlaying() == TRUE,
+                "the load left playback at %u, playing %d",
+                lv_screenGetTimeRunning(), (int)lv_screenIsPlaying());
+  /* A step after the end does nothing. */
+  UT_ASSERT(lv_screenLoadStep() == -1);
+
+  /* Closing the log part way ends the load: the next step has nothing to do,
+     so a host does not take the closed log for a loaded one. */
+  zipData = zipToMemory(&b, path, &zipLen);
+  UT_ASSERT_MSG(zipData != NULL, "synthetic log failed to build again");
+  UT_ASSERT(lv_screenLoadMapFromMemoryBegin(zipData, zipLen) == TRUE);
+  UT_ASSERT(lv_screenLoadStep() == 1);
+  lv_screenCloseLog();
+  UT_ASSERT_MSG(lv_screenLoadStep() == -1, "a step after the close still ran");
+
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/* A running-round snapshot like putSnapshot(b, true) with a start delay and a
+ * time limit, in ticks, in its first eight bytes (big-endian). */
+static void putSnapshotTimes(LogBuf *b, int32_t delay, int32_t length) {
+  size_t at = b->len;
+  int i;
+  putSnapshot(b, true);
+  for (i = 0; i < 4; i++) {
+    b->buf[at + 1 + i] = (uint8_t)((uint32_t)delay >> (24 - 8 * i));
+    b->buf[at + 5 + i] = (uint8_t)((uint32_t)length >> (24 - 8 * i));
+  }
+}
+
+static void putNoEventsLong(LogBuf *b, uint16_t waitLen) {
+  putU8(b, LOG_NOEVENTS_LONG);
+  putU8(b, (uint8_t)(waitLen & 0xFF));   /* little-endian */
+  putU8(b, (uint8_t)(waitLen >> 8));
+}
+
+/*
+ * A forward seek fast-forwards through a wait in one go rather than a tick at
+ * a time. It must land exactly where ticking would: the same time, read
+ * position, reader state and wait left, and the same start delay and time
+ * limit, which count down a tick at a time and start the limit on the tick
+ * the delay reaches 0. The log has only its opening snapshot, so every seek
+ * forward from 0 fast-forwards. Targets fall inside waits, on their edges and
+ * either side of the delay running out.
+ */
+int run_lv_fast_forward_waits(void) {
+  const char *path = "lv_fast_forward_waits.wbv";
+  static const uint8_t kill[2] = {1, 2};
+  static const uint32_t targets[] = {
+    20, 40, 1000, 1980, 2000, 2020, 2040, 4000, 6020, 6040, 6060,
+    9000, 10060, 10080, 30000, 40000, 50000, 70000
+  };
+  LogBuf b;
+  LogViewerState *lv;
+  size_t i;
+  int savedHide = lv_screenGetHideLobby();
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshotTimes(&b, 100, 2000);   /* 2 s delay, then a 40 s limit */
+  putNoEventsLong(&b, 300);
+  putEventFrame(&b, log_KillPlayer, kill, 2);
+  putNoEvents(&b, 200);
+  putNoEventsLong(&b, 1000);
+  putEventFrame(&b, log_KillPlayer, kill, 2);
+  putNoEventsLong(&b, 2500);
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic wait log failed to build/load");
+
+  /* The snapshot's delay and limit are what the countdowns start from. */
+  lv_screenSeekToTimeMs(0);
+  UT_ASSERT_MSG(lv->gmeStartDelay == 100 && lv->gmeLength == 2000,
+                "at 0: delay %d limit %d (want 100 and 2000)",
+                lv->gmeStartDelay, lv->gmeLength);
+
+  for (i = 0; i < sizeof(targets) / sizeof(targets[0]); i++) {
+    uint32_t t = targets[i];
+    uint32_t tickedTime, tickedWait;
+    int32_t  tickedDelay, tickedLength;
+    size_t   tickedPos;
+    int      tickedState;
+
+    lv_screenSeekToTimeMs(0);
+    while (lv->timeRunning < t && lv->isPlaying == TRUE) {
+      lv_screenLogTick();
+    }
+    tickedTime   = lv->timeRunning;
+    tickedDelay  = lv->gmeStartDelay;
+    tickedLength = lv->gmeLength;
+    tickedPos    = lv_logGetCurrentPosition();
+    tickedState  = (int)lv->state;
+    tickedWait   = lv->waitLen;
+
+    lv_screenSeekToTimeMs(0);
+    lv_screenSeekToTimeMs(t);
+    UT_ASSERT_MSG(lv->timeRunning == tickedTime && lv->gmeStartDelay == tickedDelay &&
+                      lv->gmeLength == tickedLength &&
+                      lv_logGetCurrentPosition() == tickedPos &&
+                      (int)lv->state == tickedState && lv->waitLen == tickedWait,
+                  "seek to %u: time %u/%u delay %d/%d limit %d/%d pos %zu/%zu "
+                  "state %d/%d wait %u/%u (seek/ticked)",
+                  t, lv->timeRunning, tickedTime, lv->gmeStartDelay, tickedDelay,
+                  lv->gmeLength, tickedLength, lv_logGetCurrentPosition(), tickedPos,
+                  (int)lv->state, tickedState, (unsigned)lv->waitLen, tickedWait);
+  }
+
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/*
+ * A snapshot whose map runs match the last ones applied, with nothing written
+ * to the map since, is stepped over rather than applied again. One that
+ * matches byte for byte after a log_MapChange must still be applied, or the
+ * changed tile would outlive the snapshot that puts it back. putSnapshot's
+ * one run makes (0,0) and (1,0) grass.
+ *
+ *   opening snapshot              -> tick   0
+ *   NOEVENTS 50                   -> tick  51
+ *   the same snapshot             -> tick  52  (ms 1040, stepped over)
+ *   NOEVENTS 50                   -> tick 103
+ *   MapChange (0,0) to road       -> tick 104  (ms 2080)
+ *   NOEVENTS 50                   -> tick 155
+ *   the same snapshot             -> tick 156  (ms 3120, must apply)
+ *   NOEVENTS 50                   -> tick 207
+ *   LOG_QUIT                      -> tick 208
+ */
+int run_lv_same_map_runs(void) {
+  const char *path = "lv_same_map_runs.wbv";
+  static const uint8_t toRoad[3] = {0, 0, ROAD};
+  LogBuf b;
+  LogViewerState *lv;
+  int savedHide = lv_screenGetHideLobby();
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_MapChange, toRoad, 3);
+  putNoEvents(&b, 50);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(0);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic map log failed to build/load");
+  UT_ASSERT_MSG(lv_snapshotCount(&lv->snap) == 3,
+                "the load indexed %d snapshots (want 3)", lv_snapshotCount(&lv->snap));
+
+  lv_screenSeekToTimeMs(1500);
+  UT_ASSERT_MSG(lv_mapGetPos(&lv->mp, 0, 0) == GRASS, "at 1500 (0,0) is %u (want grass)",
+                (unsigned)lv_mapGetPos(&lv->mp, 0, 0));
+  lv_screenSeekToTimeMs(2500);
+  UT_ASSERT_MSG(lv_mapGetPos(&lv->mp, 0, 0) == ROAD, "at 2500 (0,0) is %u (want road)",
+                (unsigned)lv_mapGetPos(&lv->mp, 0, 0));
+
+  /* Playing across the last snapshot puts the grass back... */
+  while (lv->timeRunning < 3500 && lv->isPlaying == TRUE) {
+    lv_screenLogTick();
+  }
+  UT_ASSERT_MSG(lv_mapGetPos(&lv->mp, 0, 0) == GRASS,
+                "played past 3120 (0,0) is %u (want grass)",
+                (unsigned)lv_mapGetPos(&lv->mp, 0, 0));
+
+  /* ...and so does a seek that restores from it, from the road. */
+  lv_screenSeekToTimeMs(2500);
+  UT_ASSERT(lv_mapGetPos(&lv->mp, 0, 0) == ROAD);
+  lv_screenSeekToTimeMs(3500);
+  UT_ASSERT_MSG(lv_mapGetPos(&lv->mp, 0, 0) == GRASS,
+                "seek to 3500 (0,0) is %u (want grass)",
+                (unsigned)lv_mapGetPos(&lv->mp, 0, 0));
+
+  /* Back to before the change, from a map nothing has touched since its last
+     snapshot: the restore steps over the same runs and the grass stays. */
+  lv_screenSeekToTimeMs(1500);
+  UT_ASSERT_MSG(lv_mapGetPos(&lv->mp, 0, 0) == GRASS && lv_mapGetPos(&lv->mp, 1, 0) == GRASS,
+                "back at 1500 (0,0) is %u and (1,0) %u (want grass)",
+                (unsigned)lv_mapGetPos(&lv->mp, 0, 0), (unsigned)lv_mapGetPos(&lv->mp, 1, 0));
 
   lv_decoderDestroy(lv);
   lv_screenSetHideLobby(savedHide);
