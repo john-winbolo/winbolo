@@ -255,8 +255,10 @@ function on_tick(tick)
       parts[#parts + 1] = string.format("p%d still %.1fs%s %s", p, (A.still[p] or 0) / 100,
         at and string.format(" (t=%d-%d)", at, at + A.still[p]) or "",
         A.hit[p] and string.format("first hit +%.1fs", (A.hit[p] - A.built) / 100) or "no hit")
+      -- One line a hunter: game.log drops a line over 128 bytes, and all
+      -- three on one line can reach about 150.
+      game.log("ARENA " .. parts[#parts])
     end
-    game.log("ARENA " .. table.concat(parts, ", "))
     verdict(#stuck == 0, (#stuck == 0 and "no hunter frozen" or
       ("frozen over 8 s: " .. table.concat(stuck, ", "))) ..
       " in the 20 s after the build: " .. table.concat(parts, ", "))
