@@ -37,7 +37,7 @@ void lv_startOfLog(void);
 void lv_updateItem(BYTE itemType, BYTE itemNumber, BYTE owner, BYTE x,
                    BYTE y, BYTE armour, BYTE shells, BYTE mines, bool inTank);
 void lv_windowRemoveEvents(void);
-void lv_windowRemoveEventsAfter(uint32_t timeMs);
+void lv_windowEventsRewound(void);
 void lv_drawResizeRenderTarget(void);
 void lv_messageCreate(void);
 void lv_messageDestroy(void);
@@ -76,7 +76,7 @@ void lv_updateItem(BYTE itemType, BYTE itemNumber, BYTE owner, BYTE x,
 
 void lv_windowRemoveEvents(void) {}
 
-void lv_windowRemoveEventsAfter(uint32_t timeMs) { (void)timeMs; }
+void lv_windowEventsRewound(void) {}
 
 /* Every newswire and status line lv_messageAdd posts arrives here. The count
  * lets a test tell how many lines a stretch of playback or a seek posted
