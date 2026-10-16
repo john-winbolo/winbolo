@@ -743,6 +743,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                      ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
+        /* Begin has taken the padding; popped here and not after End so the
+           bordered children inside (each team's cell in the Players tab)
+           keep the style's own padding. Left pushed, a phone's safe inset
+           became a 70-point pad on both sides of every cell. */
+        ImGui::PopStyleVar(); /* WindowPadding */
 
         bool wantLeaveConfirm = false;
 
@@ -1193,6 +1198,22 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     static float tabMapBelowH = 0.0f;
                     float tabMapBelowTopY = -1.0f;
 
+                    /* On a phone the tab is short and wide, and the preview
+                       stacked over its text came out 60 points across. The
+                       mobile layout puts the preview in a square on the left
+                       at the tab's full height, and the Choose Map button,
+                       the name, the scenario lines and the skip vote in a
+                       column on the right. */
+#if BOLO_MOBILE
+                    const bool mapTwoCol = true;
+#else
+                    const bool mapTwoCol = false;
+#endif
+                    if (mapTwoCol) {
+                        ImGui::BeginChild("##MapTabPreview", ImVec2(tabH, tabH),
+                                          ImGuiChildFlags_NavFlattened);
+                    }
+
                     /* "Choose Map" — opens the separate chooser window.
                      * Host / admin / openHost-allowed only; non-privileged
                      * clients never see the button. Server enforces the
@@ -1206,8 +1227,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                          & PLAYER_FLAG_ADMIN));
                     bool effHostMap = !spectator && (isHostLocal || isAdminLocal ||
                                       clientSimGetLobbyOpenHost(cs));
-                    if (effHostMap &&
-                        !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {
+                    const bool showChooseMap = effHostMap &&
+                        !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP);
+                    if (showChooseMap && !mapTwoCol) {
                         if (ImGui::Button(langGetText(STR_DLGLOBBY_CHOOSE_MAP_BTN))) {
                             lobbyChooseMapOpen(cs, renderer);
                         }
@@ -1261,7 +1283,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         float infoH = tabMapBelowH > 0.0f
                                     ? tabMapBelowH
                                     : ImGui::GetTextLineHeightWithSpacing() * 2;
-                        float previewMaxH = tabH - infoH;
+                        /* In two columns the text is beside the preview, not
+                           under it, so the square takes the whole height. */
+                        float previewMaxH = mapTwoCol ? tabH : tabH - infoH;
                         float previewMaxW = ImGui::GetContentRegionAvail().x;
                         float previewSize = previewMaxW < previewMaxH ? previewMaxW : previewMaxH;
                         if (previewSize < 10.0f) previewSize = 10.0f;
@@ -1336,6 +1360,17 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     } else {
                         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MAP_UNAVAILABLE));
                     }
+                    if (mapTwoCol) {
+                        ImGui::EndChild(); /* ##MapTabPreview */
+                        ImGui::SameLine();
+                        ImGui::BeginChild("##MapTabInfo", ImVec2(0, tabH),
+                                          ImGuiChildFlags_NavFlattened);
+                        if (showChooseMap) {
+                            if (ImGui::Button(langGetText(STR_DLGLOBBY_CHOOSE_MAP_BTN))) {
+                                lobbyChooseMapOpen(cs, renderer);
+                            }
+                        }
+                    }
                     ImGui::Spacing();
                     ImGui::Text("%s - %dP %dB %dS", clientSimGetMapName(cs), lobbyLivePillCount(cs), lobbyLiveBaseCount(cs), lobbyLiveStartCount(cs));
 
@@ -1351,8 +1386,14 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 
                     lobbyRenderMapSkipVote(cs, spectator, hasTransport, s, false);
 
-                    if (tabMapBelowTopY >= 0.0f) {
+                    /* Only the stacked layout needs the height of what sits
+                       under the preview; in two columns the two cursors are
+                       in different child windows. */
+                    if (tabMapBelowTopY >= 0.0f && !mapTwoCol) {
                         tabMapBelowH = ImGui::GetCursorPosY() - tabMapBelowTopY;
+                    }
+                    if (mapTwoCol) {
+                        ImGui::EndChild(); /* ##MapTabInfo */
                     }
 
                     ImGui::EndTabItem();
@@ -2422,7 +2463,6 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
         }
 
         ImGui::End(); /* ##LobbyBg */
-        ImGui::PopStyleVar(); /* WindowPadding */
 
         /* Scrim behind the map chooser: darkens + absorbs input over
          * the whole lobby, EXCEPT a hole over the chat block so the
