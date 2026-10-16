@@ -15,6 +15,10 @@ scenario script that steers bots, may reach into another bot's thoughts.
   that stays built look the same on the map, so the hunters must be treated
   the same for both. The holder's private plan must not change what they do.
 - The holder's own bot may use the holder's own plan.
+- Bots share what they know only through communication: chat, pings and
+  bot commands that a human could send and receive too. Communication works
+  only between allies. An enemy never gets another bot's thoughts by any
+  route.
 
 When you find a cheat, remove it outright. Do not put it behind a knob or a
 preset. When you write new bot or script logic, check that every input is

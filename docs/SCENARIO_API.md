@@ -1889,6 +1889,11 @@ treatment. Example: in Pillbox Tag a hop prize and a built prize that stays
 built look alike, so the hunters are treated the same for both, whatever the
 holder means to do with it.
 
+Bots share what they know only through communication (chat, pings and bot
+commands that a human could also send), and communication works only between
+allies. A script must not pass one bot's thoughts to another bot by a side
+route, and never to an enemy.
+
 ### Hints: telling one bot what to do
 
 | Call | What it does |
