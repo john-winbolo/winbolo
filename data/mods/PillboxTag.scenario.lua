@@ -1785,12 +1785,11 @@ walled.FORCE_PRIZE_ATTACK = true -- keel false. true: a hunter's attack order
                                 -- pick it again every few ticks; it goes on to
                                 -- its firing spot and shoots
 
--- Whether the prize stands as a fort the hunters are to shoot: built, with a
--- holder, and not a bot holder's hop (a hop stands for a few seconds, and
--- the hunters stay on the holder through it). A dead holder's hop is a take
--- (see on_tank_killed), so it is the hunters' to shoot.
+-- Whether the prize stands built with a holder, so the hunters are to shoot
+-- it. Only what every player sees on the map counts: a bot holder's hop and
+-- a prize built to stay look the same, so the hunters treat them the same.
 function walled.fort_stands()
-  if over or pill == nil or holder == nil or (plan ~= nil and plan.kind == "hop") then
+  if over or pill == nil or holder == nil then
     return false
   end
   return standing(game.pill(pill))
@@ -1941,7 +1940,7 @@ end
 -- Once a second.
 function walled.update()
   local pb = (pill ~= nil) and game.pill(pill) or nil
-  if not standing(pb) or holder == nil or (plan ~= nil and plan.kind == "hop") then
+  if not standing(pb) or holder == nil then
     if walled.watch ~= nil then
       walled.watch = nil
       tune_everybody()
@@ -2056,14 +2055,10 @@ local function aim_one(p)
   -- told to attack. With walled.LINE_GOTO off a hunter gets the attack at
   -- once, and the 30 s net (WALL_FALLBACK_SECONDS) is timed from then.
   --
-  -- A bot holder's hop is left as it was: the prize stands for a few seconds
-  -- only, and he shoots it down and takes it back himself. A holder who dies
-  -- with it standing has it turned into a take (see on_tank_killed), so the
-  -- hunters are sent at it then.
+  -- Every built prize gets these orders, a bot holder's hop too: a hop
+  -- looks the same as any other built prize, and a hunter only acts on what
+  -- it can see.
   if standing(pb) then
-    if plan ~= nil and plan.kind == "hop" then
-      return
-    end
     local prize_attack = { key = "attack pill " .. pill, target = "pill " .. pill,
                            hint = { verb = "attack", pill = pill,
                                     force = walled.FORCE_PRIZE_ATTACK or nil } }
@@ -3492,8 +3487,7 @@ function on_tank_killed(victim, killer, cause, scripted)
   if walled.DEAD_HOLDER_KEEPS_BUILT and not walking and standing(pb) then
     -- He stays the holder and the prize keeps its armour. His take's boost
     -- and cover end with the tank. A bot's hop turns into a take back, so
-    -- the hunters are sent at it (they leave a hop alone) and he is sent
-    -- back for it once he respawns. A fort stays a fort while he is dead;
+    -- he is sent back for it once he respawns. A fort stays a fort while he is dead;
     -- bot_holder_second takes it back once he is alive again (plan.died).
     boost_from = nil
     if invuln_seat == victim then
