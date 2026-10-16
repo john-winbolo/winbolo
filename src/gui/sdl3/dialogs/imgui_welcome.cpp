@@ -218,7 +218,7 @@ extern "C" int imguiWelcomeShow(void) {
            height, so it is kept to the menu column's width (miniBtnW below)
            and the menu sits under it. The desktop keeps the wider logo. */
         {
-            float maxW = 180.0f * s;
+            float maxW = 90.0f * s;  /* half the column: room for the rest */
             if (logoW > maxW) {
                 logoH *= maxW / logoW;
                 logoW = maxW;
@@ -349,6 +349,13 @@ extern "C" int imguiWelcomeShow(void) {
         /* Query actual window size each frame (handles resize) */
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
+        /* The screen's safe area, in the same window points: zero on the
+           desktop; on a phone the Dynamic Island's band on the left and right
+           in landscape and the home indicator's at the bottom. Everything
+           placed against an edge below sits inside it, or the phone cuts it
+           off: the sign-in block, the version, the social icons, the
+           play/pause button and the logo column all were. */
+        const DialogSafeInsets safe = dialogGetSafeInsets(window);
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
@@ -392,11 +399,11 @@ extern "C" int imguiWelcomeShow(void) {
                  * sides equally — that's the intended look. Only clamp if
                  * the centred position would extend past the window's right
                  * edge entirely. */
-                float restoreX = (float)winW - miniBtnW - restoreMargin
+                float restoreX = (float)winW - safe.right - miniBtnW - restoreMargin
                                  + (miniBtnW - logoW) * 0.5f;
-                if (restoreX + logoW > (float)winW)
-                    restoreX = (float)winW - logoW;
-                float restoreY = restoreMargin;
+                if (restoreX + logoW > (float)winW - safe.right)
+                    restoreX = (float)winW - safe.right - logoW;
+                float restoreY = restoreMargin + safe.top;
                 ImGui::SetCursorPos(ImVec2(restoreX, restoreY));
                 ImGui::Image((ImTextureID)logoTex, ImVec2(logoW, logoH));
             }
@@ -414,8 +421,8 @@ extern "C" int imguiWelcomeShow(void) {
             const float ghostBtnAlpha = hasBg ? 0.15f : 0.6f;
             const float ghostTextAlpha = hasBg ? 0.75f : 0.9f;
 #endif
-            float logoBottom = (logoTex && logoW > 0.0f) ? restoreMargin + logoH : restoreMargin + 40.0f * s;
-            float btnX = (float)winW - miniBtnW - restoreMargin;
+            float logoBottom = safe.top + ((logoTex && logoW > 0.0f) ? restoreMargin + logoH : restoreMargin + 40.0f * s);
+            float btnX = (float)winW - safe.right - miniBtnW - restoreMargin;
             float btnY = logoBottom + 30.0f * s;
 
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f * s);
@@ -509,7 +516,7 @@ extern "C" int imguiWelcomeShow(void) {
             {
                 const float cornerMargin = 12.0f * s;
                 const float cornerH = SDL_max(27.5f * s, ImGui::GetTextLineHeight());
-                float limitY = (float)winH - cornerMargin - cornerH - 8.0f * s;
+                float limitY = (float)winH - safe.bottom - cornerMargin - cornerH - 8.0f * s;
                 int rows = 0, groups = 0;
                 for (int i = 0; i < miniCount; i++) {
                     if (!miniModes[i].show) continue;
@@ -630,7 +637,7 @@ extern "C" int imguiWelcomeShow(void) {
          * Reuses the settings dialog's login popup and worker. */
         {
             const float statusMargin = 12.0f * s;
-            ImGui::SetCursorPos(ImVec2(statusMargin, statusMargin));
+            ImGui::SetCursorPos(ImVec2(statusMargin + safe.left, statusMargin + safe.top));
             ImGui::BeginGroup();
             imguiWinbolonetDrawStatusBlock();
             ImGui::EndGroup();
@@ -652,8 +659,8 @@ extern "C" int imguiWelcomeShow(void) {
 #else
             const float ppBaseAlpha = 0.15f;
 #endif
-            float ppX = ppMargin;
-            float ppY = (float)winH - ppSize - ppMargin;
+            float ppX = ppMargin + safe.left;
+            float ppY = (float)winH - safe.bottom - ppSize - ppMargin;
 
             ImGui::SetCursorPos(ImVec2(ppX, ppY));
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f * s);
@@ -720,8 +727,8 @@ extern "C" int imguiWelcomeShow(void) {
             char shortVer[32];
             SDL_snprintf(shortVer, sizeof(shortVer), "v%s", WINBOLO_DISPLAY_VERSION);
             ImVec2 verSize = ImGui::CalcTextSize(shortVer);
-            float verX = (float)winW - verSize.x - margin;
-            float verY = (float)winH - verSize.y - margin;
+            float verX = (float)winW - safe.right - verSize.x - margin;
+            float verY = (float)winH - safe.bottom - verSize.y - margin;
 
             const int nLinks = 3;
             float rowW  = icon * (float)nLinks + gap * (float)(nLinks - 1);
@@ -772,8 +779,8 @@ extern "C" int imguiWelcomeShow(void) {
             ImVec2 verSize = ImGui::CalcTextSize(shortVer);
             const float margin = 12.0f * s;
 
-            ImGui::SetCursorPos(ImVec2((float)winW - verSize.x - margin,
-                                       (float)winH - verSize.y - margin));
+            ImGui::SetCursorPos(ImVec2((float)winW - safe.right - verSize.x - margin,
+                                       (float)winH - safe.bottom - verSize.y - margin));
             ImVec2 verScreen = ImGui::GetCursorScreenPos();
 
             /* Invisible button captures the click + drives hover state.
