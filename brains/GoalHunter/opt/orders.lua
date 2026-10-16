@@ -1406,8 +1406,8 @@ M.forget_order = forget_order
 -- RETIRED ORDERS (ORDER_HANDOFF).  A bot forgets an order another bot still
 -- holds: a newer person's order retires it (clear_older_orders), or it ages
 -- out of o.known (the prune).  The holder may still ask for relief on it
--- (obq), and a bot that has forgotten it could not take it.  So the spec and
--- its holders are kept in o.retired, which nothing else reads: no auction,
+-- (obq), and a bot that has forgotten it could not take it.  So the spec, its
+-- want (how many bots it asks for) and its holders are kept in o.retired, which nothing else reads: no auction,
 -- steal or pickup ever sees it.  Only a relief brings it back into o.known.
 -- An entry ends when the order is cancelled (obx), or when its last holder
 -- releases it.  Knob off: plain forget_order, as before.
@@ -1422,7 +1422,7 @@ local function retire_order(o, oid, me)
   forget_order(o, oid)
   if keep then
     o.retired = o.retired or {}
-    o.retired[oid] = { spec = k.spec, holders = keep }
+    o.retired[oid] = { spec = k.spec, want = k.want, holders = keep }
   end
 end
 
@@ -4638,7 +4638,7 @@ function M.update(state, world, info, now)
       local rt = o.retired and o.retired[r.oid]
       if rt and r.relief and not o.known[r.oid] then
         o.retired[r.oid] = nil
-        o.known[r.oid] = { spec = rt.spec, tick = now }
+        o.known[r.oid] = { spec = rt.spec, want = rt.want, tick = now }
         o.gclaims[r.oid] = rt.holders
       elseif rt and not r.relief then
         rt.holders[r.from] = nil

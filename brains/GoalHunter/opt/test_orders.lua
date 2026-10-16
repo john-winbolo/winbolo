@@ -7396,15 +7396,25 @@ do
     -- first in this rig), then let the prune run.
     local FOC = 0
     b6.st.orders.known[xo].tick = 130 - (C.ORDER_FOCUS_TICKS or 3000) - 1
+    -- A group order: the bot count must outlive the retire.
+    b6.st.orders.known[xo].want = 2
     run(al, 131, 140)
     check("old job: B has forgotten A's pill order, and keeps it retired",
           held(a6) == xo and b6.st.orders.known[xo] == nil
           and b6.st.orders.retired and b6.st.orders.retired[xo] ~= nil
           and held(b6) == nil, tostring(b6.st.orders.known[xo]))
+    check("old job: the retired entry keeps the order's want",
+          b6.st.orders.retired and b6.st.orders.retired[xo]
+          and b6.st.orders.retired[xo].want == 2,
+          tostring(b6.st.orders.retired and b6.st.orders.retired[xo]
+                   and b6.st.orders.retired[xo].want))
     local zo = new_ping(al, 300 + FOC)
     run(al, 301 + FOC, 340 + FOC)
     check("old job: the relief brings it back, B takes it, A takes Z",
           held(b6) == xo and held(a6) == zo, tostring(held(b6)) .. "/" .. tostring(held(a6)))
+    check("old job: the order comes back with its want",
+          b6.st.orders.known[xo] and (b6.st.orders.known[xo].want or 1) >= 2,
+          tostring(b6.st.orders.known[xo] and b6.st.orders.known[xo].want))
     check("old job: the retired entry is gone",
           not (b6.st.orders.retired and b6.st.orders.retired[xo]), "kept")
   end
