@@ -3379,7 +3379,8 @@ end
 -- a STANDING instruction that outlives a single order -- patrol, escort and
 -- avoid -- so they are kept on the order state and M.hint_update carries
 -- them a step each think.  An eighth, `release`, gives no order: it ends the
--- one the bot holds (C.ORDER_RELEASE_HINT; see hint_release).  A verb
+-- one the bot holds (C.ORDER_RELEASE_HINT; see hint_release; no script
+-- sends it today, it is kept for a future one).  A verb
 -- somebody invented is ignored in silence: a brain is allowed not to know a
 -- word, and answering back would make every scenario written for another
 -- brain noisy here.
@@ -3605,11 +3606,15 @@ end
 -- parks on is gone, and the order is CANCELLED (obx), so no other bot picks
 -- it up.  A running patrol or escort ends too: either would raise its next
 -- leg on the next think.  An avoid is a keep-out, not an order, and stays.
--- It says nothing: there is no person to answer, and a script sends it to
--- every hunter at once.  Then the next think replans in full, so the goal
+-- It says nothing: there is no person to answer, and a script may send it
+-- to many bots at once.  Then the next think replans in full, so the goal
 -- pools pick the bot's own job at once rather than at the next replan timer.
 -- A suicide run is not touched: it takes no order, and only a person's
 -- cancel, a death or the pill's death ends it.
+-- NOT USED TODAY: no scenario sends "release" (Pillbox Tag sends a forced
+-- attack order on its prize instead).  It is kept, with its unit tests, for
+-- a future scenario that needs to end an order without giving a new one.
+-- A caution ping does not come here: ping_caution calls release_held itself.
 local function hint_release(state, info, now)
   local o = S(state)
   local had = o.held ~= nil or o.hint_patrol ~= nil or o.hint_escort ~= nil

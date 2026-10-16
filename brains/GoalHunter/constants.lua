@@ -5374,8 +5374,11 @@ M.ORDER_HINT_BUSY_SILENT  = true  -- keel false (2026-10-01: newswire spam)
 -- The "release" SCENARIO HINT (2026-10-14): ends whatever order the bot
 -- holds -- the held order, its travel lock and its hold phase, and a running
 -- patrol or escort -- and gives no new one, so goal selection runs on its
--- own at once.  Pillbox Tag sends it when the prize is set down, to call off
--- a chase order that would otherwise hold for up to ORDER_FOCUS_TICKS.
+-- own at once.  NO SCRIPT SENDS IT TODAY.  Pillbox Tag was written to send
+-- it when the prize went up, to call off a chase order that would otherwise
+-- hold for up to ORDER_FOCUS_TICKS, and then moved to a forced attack order
+-- on the prize instead (2026-10-15).  The verb is kept for a future scenario
+-- that needs to end an order without giving a new one.
 -- false = the verb is unknown and ignored in silence (the brain had no word
 -- that only ends an order; a script sent "hold", a goto to its own square).
 M.ORDER_RELEASE_HINT      = true  -- keel false (2026-10-14: Pillbox Tag)
