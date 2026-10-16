@@ -421,6 +421,14 @@ local function intentionally_stationary(goal, info, state)
      and (s == "lay_mine" or s == "detonate" or s == "build_boat") then
     return true
   end
+  -- REPOSITION SHOOT (C.STUCK_EXEMPT_REPOSITION_SHOOT, keel false): stopped
+  -- beside our own pill on purpose, firing until it is dead.  The same state
+  -- init.lua's stuck detector already exempts.  stuck_recovery clears the
+  -- window while this is true, so a new one starts when the shooting ends.
+  if C.STUCK_EXEMPT_REPOSITION_SHOOT and goal.kind == "capture_pill"
+     and goal.reposition and s == "reposition_shoot" then
+    return true
+  end
   -- Refueling: once parked ON (or right beside) the refuel base we sit still
   -- while the base tops us up — that's intentional, NOT stuck. (En route to the
   -- base it's still subject to normal stuck recovery.) Without this, the

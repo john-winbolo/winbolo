@@ -6878,6 +6878,7 @@ do
     { "GOTO_FAST_ARRIVE",                 false, false },
     { "ORDER_GOTO_BLOCKED_RELEASE",       true, false },
     { "STUCK_COLLAPSE_ACCUM",             true, false },
+    { "STUCK_EXEMPT_REPOSITION_SHOOT",    true, false },
     { "ORDER_BID_STOP_AWARE",             true, false },
     { "ORDER_BID_REFUEL_STOP_COST",       30,   0 },
     { "ORDER_BID_ENGAGED_COST",           30,   0 },

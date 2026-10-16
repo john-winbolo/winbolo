@@ -4856,6 +4856,17 @@ M.ORDER_GOTO_BLOCKED_RELEASE = true   -- keel false
 -- and others fail).
 -- false = the collapse uses the old window (keel).
 M.STUCK_COLLAPSE_ACCUM = true   -- keel false
+-- 2026-10-15 (Andrew: "Do not count shooting your own pill down as
+-- stuck"): SHOOTING OUR OWN PILL DOWN IS NOT A STUCK TANK.  In the
+-- reposition shoot phase of capture_pill (substate reposition_shoot) the
+-- tank stops beside its own pill on purpose and fires until the pill is
+-- dead.  The stuck recovery read that stop as no progress, so after
+-- STUCK_TICKS of shooting it put a penalty on the square between the tank
+-- and the built prize (pilltag_hop_ahead seed 99).  With this on, that
+-- phase counts as intentionally stationary: the stuck clock does not run,
+-- and a new window starts when the shooting ends.
+-- false = the shooting phase counts toward the stuck clock (keel).
+M.STUCK_EXEMPT_REPOSITION_SHOOT = true   -- keel false
 -- THE HOLD PHASE STILL FIGHTS.  While the hold runs the hard goto lock comes
 -- off and goal selection runs again, so attack_tank and kill_lgm can win --
 -- but the tank must not DRIVE anywhere: it was sent to that square.  These
@@ -6087,6 +6098,9 @@ M.PRESETS = {
     --   neither.
     ORDER_GOTO_BLOCKED_RELEASE    = false,
     STUCK_COLLAPSE_ACCUM          = false,
+    --   2026-10-15: shooting our own pill down (reposition_shoot) does not
+    --   run the stuck clock.  KEEL counted it as no progress.
+    STUCK_EXEMPT_REPOSITION_SHOOT = false,
     --   2026-10-04: the bid prices in a refuel stop and a fight.  KEEL: the
     --   bid is the travel cost alone.
     ORDER_BID_STOP_AWARE          = false,
