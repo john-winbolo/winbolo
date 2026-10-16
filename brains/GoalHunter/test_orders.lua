@@ -7166,6 +7166,17 @@ do
         t.total == t.path + t.detour + t.fill + t.engaged and c == t.total, ORD.bid_terms_str(t))
   check("detour = to_base + from_base - path",
         t.detour == t.to_base + t.from_base - t.path, ORD.bid_terms_str(t))
+  do
+    -- The base -> target leg is an estimate; a real path dearer than both
+    -- legs together must not make the stop pay the bot.
+    local sv_tc = ORD.travel_cost
+    ORD.travel_cost = function() return 1000 end
+    local c2, t2 = bid({ shells = 5 })
+    ORD.travel_cost = sv_tc
+    check("a stop never costs less than no stop: detour floored at 0",
+          t2.stop == "shells" and t2.detour == 0 and c2 == 1000 + t2.fill,
+          ORD.bid_terms_str(t2))
+  end
   local s = ORD.bid_terms_str(t)
   check("the log terms show every term",
         s:find("path=280", 1, true) and s:find("refuel=shells", 1, true)

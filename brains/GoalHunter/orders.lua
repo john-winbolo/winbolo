@@ -809,7 +809,10 @@ end
 -- THE BID (ORDER_BID_STOP_AWARE, 2026-10-04).  Answers the total and a table
 -- of every term, so a log line can show how the number was made:
 --   path    travel_cost, bot -> target (the old bid, unchanged)
---   detour  refuel stop only: (bot -> base) + (base -> target) - path
+--   detour  refuel stop only: (bot -> base) + (base -> target) - path,
+--           never under 0.  The base -> target leg is a straight-line
+--           estimate and can come in under the real path, which would make
+--           a stop cheaper than no stop.
 --   fill    refuel stop only: ORDER_BID_REFUEL_STOP_COST
 --   engaged goal is attack_tank or kill_lgm: ORDER_BID_ENGAGED_COST
 --   total = path + detour + fill + engaged
@@ -827,7 +830,7 @@ function M.bid_cost(state, world, info, spec)
       if b and mx then
         local from_base, est = base_to_target(b.mx, b.my, mx, my)
         t.stop, t.base, t.to_base, t.from_base, t.est = why, bid, to_base, from_base, est
-        t.detour = to_base + from_base - path
+        t.detour = math.max(0, to_base + from_base - path)
         t.fill = C.ORDER_BID_REFUEL_STOP_COST or 0
       else
         t.stop = why .. ",nobase"
