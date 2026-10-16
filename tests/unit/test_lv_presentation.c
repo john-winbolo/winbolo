@@ -2060,7 +2060,7 @@ static bool lvpAnimatedJump(bool back, uint32_t *target, int *stepsOut, bool *be
     if ((back ? lv_screenRewindTargetMs(&to) : lv_screenFastForwardTargetMs(&to)) != TRUE) {
         return false;
     }
-    steps = lvJumpAnimSteps(from, to, LV_JUMP_ANIM_STEPS);
+    steps = lvJumpAnimSteps(from, to, LV_JUMP_ANIM_STEPS, 0, UINT32_MAX);
     for (k = 1; k < steps; k++) {
         uint32_t want = lvJumpAnimStepMs(from, to, k, steps, 0, UINT32_MAX);
         uint32_t got;
@@ -2708,7 +2708,7 @@ int run_lv_save_name_scan(void) {
     lvpPutOpening(&b);
     lvpPutEvent(&b, log_LobbyEnter, NULL, 0);
     lvpPutJoin(&b, 0, "Canuck");
-    lvpPutJoin(&b, 1, "rooklift");
+    lvpPutJoin(&b, 1, "Maverick");
     lvpPutTeam(&b, 0, 1);
     lvpPutTeam(&b, 1, 2);
     lvpPutText(&b, log_MessageServer, "Map changed to First Choice");
@@ -2765,7 +2765,7 @@ int run_lv_save_name_scan(void) {
                   "the bot marks are %d %d %d, not 0 0 1", bots[0], bots[1],
                   bots[2]);
     UT_ASSERT_MSG(strcmp(fileName, "2026-10-13 14.05 Oil Rig - Canuck vs "
-                                   "rooklift, 1 Bot.wbv") == 0,
+                                   "Maverick, 1 Bot.wbv") == 0,
                   "the name is \"%s\"", fileName);
     return 0;
 }

@@ -528,7 +528,7 @@ static bool lvJumpAnimStart(bool back) {
     nowMs = lv_screenGetTimeRunning();
     known = back ? (lv_screenRewindTargetMs(&toMs) == TRUE && toMs < nowMs)
                  : (lv_screenFastForwardTargetMs(&toMs) == TRUE && toMs > nowMs);
-    steps = known ? lvJumpAnimSteps(nowMs, toMs, LV_JUMP_ANIM_STEPS) : 1;
+    steps = known ? lvJumpAnimSteps(nowMs, toMs, LV_JUMP_ANIM_STEPS, 0, UINT32_MAX) : 1;
     if (steps < 2) {
         lv_clientMutexRelease();
         return FALSE;
@@ -907,9 +907,15 @@ void lv_windowOpenSinglePlayer(void) {
     lv_clientMutexRelease();
     strncat(mapName, " - ", sizeof(mapName) - strlen(mapName) - 1);
     strncat(mapName, currentTime, sizeof(mapName) - strlen(mapName) - 1);
-    /* Nothing a file name cannot hold (the time has ':' in it). */
+    /* Nothing a file name cannot hold (the time has ':' in it). The game
+       opens the -spmap file with the C library's fopen, which on Windows
+       reads the path in the system's code page and not as UTF-8. So the
+       file name is ASCII only: each byte of a letter outside ASCII becomes
+       '_'. */
     for (i = 0; mapName[i] != '\0'; i++) {
-        if (strchr("\\/:*?\"<>|", mapName[i]) != NULL) {
+        if ((unsigned char)mapName[i] >= 0x80) {
+            mapName[i] = '_';
+        } else if (strchr("\\/:*?\"<>|", mapName[i]) != NULL) {
             mapName[i] = '.';
         }
     }

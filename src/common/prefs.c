@@ -260,6 +260,9 @@ void prefsShutdown(void) {
     prefsDocFree(g_doc);
     g_doc = NULL;
     prefsChangedClear();
+    free(s_changed);
+    s_changed = NULL;
+    s_changedCap = 0;
     s_mergeWhole = false;
     s_mergeMissing = false;
 }

@@ -2620,7 +2620,7 @@ void lv_drawEventFlashAt(float cx, float cy, float tilePx, const SDL_Rect *view)
    The game view draws the pings of the log with the game's own marker
    (gv_drawPings). The overview map does the same, over the blit: the marker
    is drawn at the size the map square has on the window, so it is sharp at
-   every zoom. lv_screenGetPing gives the pings that are on the map at the
+   every zoom. lv_screenGetPings gives the pings that are on the map at the
    playback's time now and the age of each, and the marker's animation is
    worked out from the age alone, so it is the game's at any playback speed,
    stands still when playback is paused, and is part way through after a
@@ -2667,7 +2667,8 @@ static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
     bool hadClip = FALSE;
     bool begun = FALSE;
-    int cap, i;
+    LvPingShown pings[LV_PING_SHOWN_MAX];
+    int count, i;
 
     if (sdlRenderer == NULL) return;
     if (src->w <= 0.0f || src->h <= 0.0f) return;
@@ -2675,16 +2676,15 @@ static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     zoomFactor = lv_windowGetZoomFactor();
     tilePx = (float)(zoomFactor * TILE_SIZE_X) * scale;
     lv_screenGetOffsets(&offX, &offY);
-    cap = lv_screenGetPingCapacity();
+    count = lv_screenGetPings(pings, LV_PING_SHOWN_MAX);
 
-    for (i = 0; i < cap; i++) {
-        BYTE sender = 0, kind = 0;
-        uint16_t wx = 0, wy = 0;
-        uint32_t ageMs = 0;
+    for (i = 0; i < count; i++) {
+        BYTE sender = pings[i].sender, kind = pings[i].kind;
+        uint16_t wx = pings[i].worldX, wy = pings[i].worldY;
+        uint32_t ageMs = pings[i].ageMs;
         char name[PLAYER_NAME_LEN];
         float cx, cy;
 
-        if (!lv_screenGetPing(i, &sender, &kind, &wx, &wy, &ageMs)) continue;
         if (!begun) {
             /* Only when there is a ping to draw: most frames have none. The
                marker stays on the map, and off the sidebars beside it. */

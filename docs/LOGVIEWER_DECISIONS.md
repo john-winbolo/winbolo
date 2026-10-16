@@ -1439,7 +1439,7 @@ The name offered was the log's own file name, which is often a key of
 letters and numbers, or the map name for a downloaded log. It is now made
 from the log, for both sources:
 
-`2026-10-13 14.05 Oil Rig - Canuck, Eryan vs rooklift, Bot1.wbv`
+`2026-10-13 14.05 Oil Rig - Canuck, Eryan vs Maverick, Bot1.wbv`
 
 The code is `lvSaveNameBuild` in `src/logviewer/lv_save_name.h` (no SDL, no
 decoder). `lvSaveLogDefaultName` in `logviewer.c` collects the inputs under
@@ -1501,7 +1501,7 @@ Calls made:
   in the roster row (`LvRosterRow.bot`, `lvRosterBot`). There is no second
   parser. A version 0 log has no flags, so its bots are named as people.
 - **Teams** are the people's. The ` vs ` rule looks at people only. The bot
-  count is one number for all sides: `Canuck, Eryan vs rooklift, 2 Bots`.
+  count is one number for all sides: `Canuck, Eryan vs Maverick, 2 Bots`.
 - **Roster and map are the log's own.** The WinBolo.net list names only some
   of a game's players. That list is not used for the name. The WinBolo.net
   browser has no save dialog: it puts the download in the cache as

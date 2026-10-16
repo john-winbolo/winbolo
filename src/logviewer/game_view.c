@@ -53,6 +53,7 @@
 #include "scenario_panel.h"           /* SCN_MARKERS_MAX */
 #include "lv_scripts.h"               /* lv_screenGetScripts -- no backend.h */
 #include "lv_region_rect.h"           /* lvRegionScreenRect */
+#include "lv_ping_view.h"             /* LvPingShown */
 
 #include "game_view.h"
 
@@ -64,10 +65,7 @@
 
 /* --- Logviewer-side accessors. Declared extern (no logviewer header
  *     include) so this TU stays on bolo types. --- */
-extern bool lv_screenGetPing(int index, unsigned char *sender,
-                             unsigned char *kind, uint16_t *worldX,
-                             uint16_t *worldY, uint32_t *ageMs);
-extern int  lv_screenGetPingCapacity(void);
+extern int  lv_screenGetPings(LvPingShown *out, int max);
 /* lv_presentation.h and draw.h: a scenario marker's square for the followed
    player, and the viewer's drawing of one. */
 extern bool lv_screenMarkerPlace(BYTE id, BYTE *mx, BYTE *my, BYTE *colour);
@@ -705,21 +703,21 @@ void lv_drawGameViewTeardown(void) {
 static void gv_drawPings(SDL_Renderer *renderer,
                          int originX, int originY, int tileW, int tileH,
                          int edgeX, int edgeY) {
-  int cap = lv_screenGetPingCapacity();
+  LvPingShown pings[LV_PING_SHOWN_MAX];
+  int count = lv_screenGetPings(pings, LV_PING_SHOWN_MAX);
   int i;
 
   pingIconsInit(renderer);
 
-  for (i = 0; i < cap; i++) {
-    unsigned char sender = 0;
-    unsigned char kind = 0;
-    uint16_t wx = 0, wy = 0;
-    uint32_t ageMs = 0;
+  for (i = 0; i < count; i++) {
+    unsigned char sender = pings[i].sender;
+    unsigned char kind = pings[i].kind;
+    uint16_t wx = pings[i].worldX, wy = pings[i].worldY;
+    uint32_t ageMs = pings[i].ageMs;
     float alpha, cx, cy;
     char senderName[PLAYER_NAME_LEN];
     PingMarkerLabel label;
 
-    if (!lv_screenGetPing(i, &sender, &kind, &wx, &wy, &ageMs)) continue;
     /* Expiry only; pingMarkerDraw does the blink, so a recording shows what
        the player was shown. */
     alpha = pingDisplayAlpha((int)ageMs);

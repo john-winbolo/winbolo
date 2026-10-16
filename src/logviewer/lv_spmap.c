@@ -26,8 +26,23 @@
 #include "lv_starts.h"
 #include "lv_players.h"
 #include "lv_spmap.h"
+#include "lv_utf8_path.h"
 
 #define SPMAP_STEP_MS 20u   /* one lv_screenLogTick of playback */
+
+/* Delete a map file that did not get written in full. The path is UTF-8,
+   as it is for lvFopenUtf8; on Windows the C library's remove would read
+   it in the system's code page. */
+static void lvSpmapRemove(const char *path) {
+#ifdef _WIN32
+  wchar_t wpath[LV_UTF8_PATH_WIDE_MAX];
+  if (lvUtf8ToWide(path, wpath, LV_UTF8_PATH_WIDE_MAX)) {
+    (void) _wremove(wpath);
+    return;
+  }
+#endif
+  (void) remove(path);
+}
 
 int lvSpmapWrite(const char *path, int self, LvSpmapInfo *info) {
   LogViewerState *lv = lv_screenGetState();
@@ -83,7 +98,7 @@ int lvSpmapWrite(const char *path, int self, LvSpmapInfo *info) {
   }
   lvSpmapOwnerTable(self, allied, owns, table);
 
-  fp = fopen(path, "wb");
+  fp = lvFopenUtf8(path, "wb");
   if (fp == NULL) {
     return 0;
   }
@@ -180,7 +195,7 @@ int lvSpmapWrite(const char *path, int self, LvSpmapInfo *info) {
     ok = FALSE;
   }
   if (!ok) {
-    remove(path);
+    lvSpmapRemove(path);
     return 0;
   }
   if (info != NULL) {

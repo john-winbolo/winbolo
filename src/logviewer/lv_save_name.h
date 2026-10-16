@@ -10,7 +10,7 @@
  * A log's own file name is often a key of letters and numbers. The name
  * offered for a saved copy is made from what the log says about the game:
  *
- *   2026-10-13 14.05 Oil Rig - Canuck, Eryan vs rooklift, 2 Bots.wbv
+ *   2026-10-13 14.05 Oil Rig - Canuck, Eryan vs Maverick, 2 Bots.wbv
  *
  * the date and time, the map, and the players: every person by name, by team
  * where the log gives each of them a team, and then how many bots there

@@ -17,7 +17,7 @@
 /* Every step of a jump: on a whole tick from the start, in order, between
    the two ends, and never the target's own tick before the last. */
 static int ja_check(uint32_t from, uint32_t to, int maxSteps) {
-    int steps = lvJumpAnimSteps(from, to, maxSteps);
+    int steps = lvJumpAnimSteps(from, to, maxSteps, 0, UINT32_MAX);
     uint32_t prev = from;
     int k;
 
@@ -52,16 +52,21 @@ int run_lv_jump_anim_steps(void) {
 
     /* How many: 12 at most, one for each tick of a short jump, and the jump
        alone when there is no tick between its ends. */
-    UT_ASSERT(lvJumpAnimSteps(1000, 3540, 12) == 12);
-    UT_ASSERT(lvJumpAnimSteps(3540, 1000, 12) == 12);
-    UT_ASSERT(lvJumpAnimSteps(1000, 1240, 12) == 12);
-    UT_ASSERT(lvJumpAnimSteps(1000, 1220, 12) == 11);
-    UT_ASSERT(lvJumpAnimSteps(1000, 1040, 12) == 2);
-    UT_ASSERT(lvJumpAnimSteps(1000, 1020, 12) == 1);
-    UT_ASSERT(lvJumpAnimSteps(1000, 1000, 12) == 1);
-    UT_ASSERT(lvJumpAnimSteps(1020, 1000, 12) == 1);
-    UT_ASSERT(lvJumpAnimSteps(1000, 3540, 0) == 1);
-    UT_ASSERT(lvJumpAnimSteps(0, UINT32_MAX, 12) == 12);
+    UT_ASSERT(lvJumpAnimSteps(1000, 3540, 12, 0, UINT32_MAX) == 12);
+    UT_ASSERT(lvJumpAnimSteps(3540, 1000, 12, 0, UINT32_MAX) == 12);
+    UT_ASSERT(lvJumpAnimSteps(1000, 1240, 12, 0, UINT32_MAX) == 12);
+    UT_ASSERT(lvJumpAnimSteps(1000, 1220, 12, 0, UINT32_MAX) == 11);
+    UT_ASSERT(lvJumpAnimSteps(1000, 1040, 12, 0, UINT32_MAX) == 2);
+    UT_ASSERT(lvJumpAnimSteps(1000, 1020, 12, 0, UINT32_MAX) == 1);
+    UT_ASSERT(lvJumpAnimSteps(1000, 1000, 12, 0, UINT32_MAX) == 1);
+    UT_ASSERT(lvJumpAnimSteps(1020, 1000, 12, 0, UINT32_MAX) == 1);
+    UT_ASSERT(lvJumpAnimSteps(1000, 3540, 0, 0, UINT32_MAX) == 1);
+    UT_ASSERT(lvJumpAnimSteps(0, UINT32_MAX, 12, 0, UINT32_MAX) == 12);
+    /* Both ends held inside 1000..5000, as the steps are: 4000 to 5000 is
+       50 ticks, not the 250 of 4000 to 9000; 4980 to 5000 is one tick. */
+    UT_ASSERT(lvJumpAnimSteps(4000, 9000, 100, 1000, 5000) == 50);
+    UT_ASSERT(lvJumpAnimSteps(4980, 9000, 12, 1000, 5000) == 1);
+    UT_ASSERT(lvJumpAnimSteps(500, 0, 12, 1000, 5000) == 1);
 
     /* By hand: forward from 1000 to 3400 in 12 steps is 200 ms a step. */
     UT_ASSERT(lvJumpAnimStepMs(1000, 3400, 1, 12, 0, UINT32_MAX) == 1200);
