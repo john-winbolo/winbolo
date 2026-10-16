@@ -867,7 +867,7 @@ void lv_windowOpenSinglePlayer(void) {
     int          wrote;
     int          n;
     int          attempt;
-    size_t       i;
+    size_t       i, j;
 
     if (lv_windowCanOpenSinglePlayer() == FALSE) {
         return;
@@ -910,15 +910,22 @@ void lv_windowOpenSinglePlayer(void) {
     /* Nothing a file name cannot hold (the time has ':' in it). The game
        opens the -spmap file with the C library's fopen, which on Windows
        reads the path in the system's code page and not as UTF-8. So the
-       file name is ASCII only: each byte of a letter outside ASCII becomes
-       '_'. */
-    for (i = 0; mapName[i] != '\0'; i++) {
-        if ((unsigned char)mapName[i] >= 0x80) {
-            mapName[i] = '_';
-        } else if (strchr("\\/:*?\"<>|", mapName[i]) != NULL) {
-            mapName[i] = '.';
+       file name is ASCII only: each letter outside ASCII becomes one '_'.
+       The lead byte of the letter gives the '_' and its continuation bytes
+       (0x80..0xBF) are dropped. */
+    for (i = 0, j = 0; mapName[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)mapName[i];
+        if (c >= 0x80 && c <= 0xBF) {
+            continue;
         }
+        if (c >= 0x80) {
+            c = '_';
+        } else if (strchr("\\/:*?\"<>|", (char)c) != NULL) {
+            c = '.';
+        }
+        mapName[j++] = (char)c;
     }
+    mapName[j] = '\0';
     /* A name no file has yet. The map name and the playback time are the
        same for two logs of one map, and for a second try at the same time;
        the game that was started on the first file may still have it open.

@@ -57,6 +57,7 @@ typedef struct {
   int      otherTeam; /* the team it was done to, or -1 */
   int      ping;      /* the kind of ping the line is, or -1 */
   int      player;    /* the player the line is about, or -1 */
+  bool     awayAdded; /* a lost builder's time away is on the text */
 } LvEvent;
 
 /* Drop every line. */

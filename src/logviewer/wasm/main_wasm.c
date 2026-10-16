@@ -31,6 +31,7 @@
 #include "tiles.h"
 #include "logviewer.h"
 #include "lv_host.h"
+#include "lv_stats.h"
 
 #include <SDL3/SDL.h>
 #include <emscripten.h>
@@ -119,9 +120,11 @@ void lv_windowRemoveEvents(void) {
     lv_imgui_events_clear();
 }
 
-/* The events panel holds every event of the loaded file, as on the desktop
- * viewer (logviewer.c has the full account). Only the WinBolo.net browser
- * path of imgui_main_menu.cpp calls it, which this page never reaches. */
+/* The events panel holds every event of the file just loaded: the load's
+ * play stage posted each line once. Called once per file load, after the
+ * load-time summary lines are in (lv_windowOpenFile, lv_windowOpenMemory).
+ * The panel is told the list is complete, so it lists the whole log from
+ * the first frame and playback only moves a "now" line through it. */
 void lv_windowCollectAllEvents(void) {
     lv_imgui_events_set_complete();
 }
@@ -253,6 +256,8 @@ void lv_windowOpenFile(char *cmdLine) {
             g_lv->isLoaded = FALSE;
         } else {
             g_lv->isLoaded = TRUE;
+            lvStatsEmitRoundSummary();
+            lv_windowCollectAllEvents();
             lv_windowNeedRedraw();
         }
     }
@@ -264,6 +269,8 @@ void lv_windowOpenMemory(uint8_t *zipData, size_t zipLen) {
     lv_windowStop(FALSE);
     if (lv_screenLoadMapFromMemory(zipData, zipLen)) {
         g_lv->isLoaded = TRUE;
+        lvStatsEmitRoundSummary();
+        lv_windowCollectAllEvents();
         lv_windowNeedRedraw();
     }
 }
