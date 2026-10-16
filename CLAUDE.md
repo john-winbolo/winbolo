@@ -20,6 +20,13 @@ scenario script that steers bots, may reach into another bot's thoughts.
   only between allies. An enemy never gets another bot's thoughts by any
   route.
 
+What the engine gives every bot is accepted and is not a cheat: the brain's
+view window (larger than a human screen), stock readings of bases it sees,
+sound positions, line of sight under the Sight preset, the AI advantage lobby
+modes, and the ally-only internal bot channel. The rule is about one bot, or a
+script, reaching into another bot's thoughts, or a script feeding a bot facts
+the bot itself could not see (for example a tank hidden in forest).
+
 When you find a cheat, remove it outright. Do not put it behind a knob or a
 preset. When you write new bot or script logic, check that every input is
 something that player could see.
