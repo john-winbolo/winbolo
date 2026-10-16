@@ -430,6 +430,7 @@ static const UnitTestEntry s_tests[] = {
     { "wbn_news_parse",                          run_wbn_news_parse                          },
     { "wbn_news_markdown",                       run_wbn_news_markdown                       },
     { "news_image_budget",                       run_news_image_budget                       },
+    { "news_image_fit",                          run_news_image_fit                          },
     { "wbn_news_free_during_fetch",              run_wbn_news_free_during_fetch              },
     { "wbn_country_cache",                       run_wbn_country_cache                       },
     { "wbn_prefs_parse_get",                     run_wbn_prefs_parse_get                     },

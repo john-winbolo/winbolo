@@ -3979,6 +3979,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_news_markdown.cpp
     # The news image cache's size limit and which images it may evict.
     tests/unit/test_news_image_budget.cpp
+    # The size the news window draws an image at (header-only maths).
+    tests/unit/test_news_image_fit.cpp
     tests/unit/test_wbn_news_fetch.cpp
     tests/unit/test_wbn_country_cache.c
     tests/unit/test_wbn_prefs_sync.c
@@ -5154,6 +5156,7 @@ set(_unit_test_names
     wbn_news_parse
     wbn_news_markdown
     news_image_budget
+    news_image_fit
     wbn_news_free_during_fetch
     wbn_country_cache
     wbn_prefs_parse_get

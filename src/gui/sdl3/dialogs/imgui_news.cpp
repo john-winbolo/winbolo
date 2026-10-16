@@ -24,6 +24,7 @@
 #include "imgui_nav_outline.h"
 
 #include "../news_image_cache.h"
+#include "../news_image_fit.h"
 
 extern "C" {
 #include "../../../winbolonet/http.h"
@@ -175,8 +176,19 @@ static ImGui::MarkdownImageData newsImageCallback(
     SDL_Texture *tex = newsImageGet(url);
     if (!tex) return out;
 
+    /* Shrink the image to the width left on its line and the height of
+     * the scroll area, so a wide one doesn't run off the right edge and
+     * a tall one fits on screen. The callback runs inside the scroll
+     * child, with the cursor where imgui_markdown will place the image. */
     float w = 0.0f, h = 0.0f;
     SDL_GetTextureSize(tex, &w, &h);
+    const ImGuiStyle &style = ImGui::GetStyle();
+    const float maxW = ImGui::GetWindowPos().x +
+                       ImGui::GetWindowContentRegionMax().x -
+                       ImGui::GetCursorScreenPos().x;
+    const float maxH = ImGui::GetWindowHeight() - style.WindowPadding.y * 2.0f;
+    newsImageFit(w, h, maxW, maxH, &w, &h);
+
     out.isValid         = true;
     out.user_texture_id = (ImTextureID)tex;
     out.size            = ImVec2(w, h);
