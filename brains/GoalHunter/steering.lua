@@ -3771,8 +3771,9 @@ local function tank_combat_steer(state, world, info, goal)
       goal._engage_blocked_ticks = 0
     end
   elseif C.TANK_COMBAT_STUCK_FIRE_HOLD and _stuck_in_place then
-    -- C.TANK_COMBAT_STUCK_FIRE_HOLD: a tick off the aim, steady or range gate
-    -- while we still sit on the same square keeps the blocked count. A target
+    -- C.TANK_COMBAT_STUCK_FIRE_HOLD: a tick off the aim, shells, steady or
+    -- range gate while we still sit on the same square keeps the blocked
+    -- count (any aim miss, small or large, and a tick with no shells). A target
     -- behind a wall at 1-3 squares jitters, so its lead swings the aim off the
     -- 3-brad gate on most ticks; resetting here kept the count under
     -- TANK_COMBAT_STUCK_FIRE_TICKS for good and the tank never fired

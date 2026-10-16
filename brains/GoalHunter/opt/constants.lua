@@ -2225,10 +2225,14 @@ M.ATTACK_TANK_HEAT_MAX_TICKS    = 150   -- hard ceiling on one volley (aim + fir
 -- clear shot fires or we leave engage. ~30 ticks ??? 1s.
 M.TANK_COMBAT_STUCK_FIRE_TICKS  = 30
 -- STUCK-FIRE HOLD (2026-10-15, bot bug fix).  A tick that fails the aim,
--- steady or range gate while the tank still sits on the same square keeps
--- the stuck-fire count instead of zeroing it.  A target behind a wall at 1-3
+-- shells, steady or range gate while the tank still sits on the same square
+-- keeps the stuck-fire count instead of zeroing it.  That is any aim miss,
+-- small or large, and also a tick with no shells.  A target behind a wall at 1-3
 -- squares jitters, its lead swings the aim off the gate most ticks, and the
 -- zeroed count never reached 30: the hunter sat beside it and never fired.
+-- A kept count can be at 30 when the gun next comes onto the aim (after a
+-- long turn, or after a reload on the same square); the shot still needs
+-- the aim and shells gates, so it fires only once the gun is on the target.
 -- false = the old way (any gate miss zeroes the count).
 M.TANK_COMBAT_STUCK_FIRE_HOLD  = true  -- keel false (2026-10-15: engage beside a walled tank)
 
