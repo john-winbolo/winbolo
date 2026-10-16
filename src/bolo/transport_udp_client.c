@@ -50,6 +50,7 @@
 #include "bolo_map_validate.h"
 #include "wire_limits.h"
 #include "upload_policy.h"             /* UPLOAD_KIND_MAP / _SCRIPT */
+#include "scenario_identity.h"         /* the scenario-list trailer and details V3 */
 #include "../common/md5.h"
 #include "../gui/lang.h"
 #include "../gui/winbolo.h"
@@ -778,6 +779,25 @@ static void udpClientDrainCommandQueue(TransportUdpClientCtx *c) {
     if (count > 0) udpClientSendTo(c, buf, (int)pos);
 }
 
+/* Per-tick send for the head of the outbound command queue: again if it was
+ * sent more than 80ms ago and is still unacked, or now if it has never been
+ * sent at all. A command submitted behind an unacked one waits unsent, and
+ * when the ACK that moves the head onto it lands outside CONNECTED (a lobby
+ * map change sends the re-join before its own ACK) the ACK handler's drain
+ * sends nothing. Without the never-sent case nothing else would ever send it,
+ * and every later command would queue behind it for good. */
+static void udpClientResendCommandHead(TransportUdpClientCtx *c) {
+    uint32_t now;
+    OutCmdEntry *head;
+
+    if (c->outHeadSeq == c->outTailSeq) return;
+    now = (uint32_t)SDL_GetTicks();
+    head = &c->outCmdQueue[c->outHeadSeq % OUT_CMD_QUEUE_CAP];
+    if (head->lastSentMs == 0 || (now - head->lastSentMs) > 80) {
+        udpClientDrainCommandQueue(c);
+    }
+}
+
 void transportUdpClientSubmitCommand(Transport *t, const ClientCommand *cmd) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     /* SPECTATING is admitted alongside CONNECTED so a spectator's CMD_CHAT
@@ -1021,6 +1041,8 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
     uint8_t finalFlag;
     uint8_t cnt;
     int     i;
+    int     firstIdx;
+    int     filled = 0;
 
     if (!cs) return;
     if (len < PACKET_HEADER_SIZE + 2) return;
@@ -1043,6 +1065,7 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
         cs->lobbyScenarioListCount   = 0;
         cs->lobbyScenarioListStarted = true;
     }
+    firstIdx = cs->lobbyScenarioListCount;
 
     for (i = 0; i < cnt; i++) {
         char file[LOBBY_SCENARIO_LIST_FILE_LEN];
@@ -1064,6 +1087,10 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
             continue;
         }
         idx = cs->lobbyScenarioListCount++;
+        filled++;
+        cs->lobbyScenarioListIdentityKnown[idx] = false;
+        cs->lobbyScenarioListAuthor[idx][0]     = '\0';
+        cs->lobbyScenarioListUpdated[idx][0]    = '\0';
         SDL_strlcpy(cs->lobbyScenarioListFiles[idx], file,
                     LOBBY_SCENARIO_LIST_FILE_LEN);
         SDL_strlcpy(cs->lobbyScenarioListNames[idx], name,
@@ -1079,6 +1106,33 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
             ((uint64_t)unpackU32(buf + pos) << 32) |
             (uint64_t)unpackU32(buf + pos + 4);
         pos += 8;
+    }
+
+    /* The identity trailer (scenario_identity.h), when the server sent one:
+       a tag after the last row and then a blob per row in row order. Read
+       only when every row was, since a blob is matched to its row by
+       position. A row past the cap above still has its blob walked. A blob
+       that does not parse ends the trailer and leaves the rows after it
+       unknown, which is what a server without the trailer gives too. */
+    if (i == cnt && cnt > 0 && pos < len && buf[pos] == SCN_LIST_IDENTITY_TAG) {
+        pos++;
+        for (i = 0; i < cnt; i++) {
+            char author[SCN_AUTHOR_LEN];
+            char updated[SCN_UPDATED_LEN];
+            int  took = scnIdentityBlobRead(buf + pos, (size_t)(len - pos),
+                                            author, sizeof(author), updated,
+                                            sizeof(updated));
+            int  idx  = firstIdx + i;
+
+            if (took < 0) break;
+            pos += took;
+            if (i >= filled) continue;
+            SDL_strlcpy(cs->lobbyScenarioListAuthor[idx], author,
+                        SCN_AUTHOR_LEN);
+            SDL_strlcpy(cs->lobbyScenarioListUpdated[idx], updated,
+                        SCN_UPDATED_LEN);
+            cs->lobbyScenarioListIdentityKnown[idx] = true;
+        }
     }
 
     if (finalFlag) {
@@ -1832,10 +1886,13 @@ static void udpClientSendScnDetailsReq(TransportUdpClientCtx *c, int slot) {
     packHeader(buf, PACKET_LOBBY_SCENARIO_DETAILS_REQ, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = (uint8_t)n;
     memcpy(buf + PACKET_HEADER_SIZE + 1, cs->lobbyScnDetails[slot].file, n);
-    /* The flags byte after the name asks for the settings block as well. An
-       older server reads the name by its length and never looks here, so it
-       answers as it always has. */
-    buf[PACKET_HEADER_SIZE + 1 + n] = BULK_SCN_DETAILS_WANT_SETTINGS;
+    /* The flags byte after the name asks for the settings block and the
+       file's identity as well. An older server reads the name by its length
+       and never looks here, so it answers as it always has; one that knows
+       settings and not identity ignores the bit it does not know. */
+    buf[PACKET_HEADER_SIZE + 1 + n] =
+        (uint8_t)(BULK_SCN_DETAILS_WANT_SETTINGS |
+                  BULK_SCN_DETAILS_WANT_IDENTITY);
     udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + 1 + n + 1));
     cs->lobbyScnDetails[slot].state = LOBBY_SCN_DETAILS_ASKED;
     cs->lobbyScnDetails[slot].tries++;
@@ -2572,6 +2629,47 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         if (slot < 0 || slot >= LOBBY_SCN_DETAILS_SLOTS) break;
         if (cs->lobbyScnDetails[slot].state != LOBBY_SCN_DETAILS_ASKED ||
             strcmp(cs->lobbyScnDetails[slot].file, h->path) != 0) {
+            break;
+        }
+        if (buf[0] == BULK_SCN_DETAILS_FOUND_V3) {
+            /* [status][detailsLen 2][details][settingsLen 2][settings]
+               [identity], bytes after the identity ignored. A length past
+               the blob makes the whole answer not-found; an identity that
+               does not parse leaves the details and settings standing and
+               the identity not known. */
+            size_t total = (size_t)h->totalSize;
+            size_t dLen;
+            size_t sLen;
+            size_t at;
+            char   author[SCN_AUTHOR_LEN];
+            char   updated[SCN_UPDATED_LEN];
+
+            if (total < 3) {
+                clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
+                break;
+            }
+            dLen = ((size_t)buf[1] << 8) | buf[2];
+            if (3 + dLen + 2 > total) {
+                clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
+                break;
+            }
+            at   = 3 + dLen;
+            sLen = ((size_t)buf[at] << 8) | buf[at + 1];
+            at  += 2;
+            if (at + sLen > total) {
+                clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
+                break;
+            }
+            clientSimLobbyScenarioDetailsPut(cs, h->path, true, buf + 3,
+                                             dLen);
+            clientSimLobbyScenarioSettingsPut(cs, h->path, buf + at, sLen);
+            at += sLen;
+            if (scnIdentityBlobRead(buf + at, total - at, author,
+                                    sizeof(author), updated,
+                                    sizeof(updated)) >= 0) {
+                clientSimLobbyScenarioIdentityPut(cs, h->path, author,
+                                                  updated);
+            }
             break;
         }
         if (buf[0] == BULK_SCN_DETAILS_FOUND_V2) {
@@ -4585,27 +4683,14 @@ static bool udpClientTick(void *ctx) {
             }
         }
 
-        /* Retransmit head of the outbound command queue if the head
-         * entry was sent more than 80ms ago and is still unacked. */
-        if (c->outHeadSeq != c->outTailSeq) {
-            uint32_t now = (uint32_t)SDL_GetTicks();
-            OutCmdEntry *head = &c->outCmdQueue[c->outHeadSeq % OUT_CMD_QUEUE_CAP];
-            if (head->lastSentMs != 0 && (now - head->lastSentMs) > 80) {
-                udpClientDrainCommandQueue(c);
-            }
-        }
+        udpClientResendCommandHead(c);
     }
 
     /* A spectator runs only the command-queue retransmit (its sole outbound
      * traffic is CMD_CHAT); the ping/timeout/upload pumps above are player-only.
      * Without this a spectator's chat would send once and never retry on loss. */
-    if (c->joinState == UDP_CLIENT_SPECTATING &&
-        c->outHeadSeq != c->outTailSeq) {
-        uint32_t now = (uint32_t)SDL_GetTicks();
-        OutCmdEntry *head = &c->outCmdQueue[c->outHeadSeq % OUT_CMD_QUEUE_CAP];
-        if (head->lastSentMs != 0 && (now - head->lastSentMs) > 80) {
-            udpClientDrainCommandQueue(c);
-        }
+    if (c->joinState == UDP_CLIENT_SPECTATING) {
+        udpClientResendCommandHead(c);
     }
 
     return true;

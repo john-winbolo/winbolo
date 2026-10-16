@@ -355,6 +355,26 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize);
 *********************************************************/
 bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen);
 
+/* The same loads a step at a time, so a host can draw between steps. Begin
+ * reads the header and opening snapshot and returns FALSE when the log will
+ * not open. Then call lv_screenLoadStep while it returns 1; each call does a
+ * few milliseconds of work. The call that finishes the load returns 0. -1 is
+ * no load in progress: none was begun, it has finished, or the log was closed
+ * part way (lv_screenCloseLog). lv_screenLoadMap and
+ * lv_screenLoadMapFromMemory are Begin followed by every step. */
+typedef enum {
+  LV_LOAD_UNZIP,   /* decompressing log.dat */
+  LV_LOAD_SCAN,    /* reading it for total time, names, rules and the rest */
+  LV_LOAD_PLAY     /* playing it through once to index every snapshot */
+} LvLoadStage;
+
+bool lv_screenLoadMapBegin(char *fileName, int memoryBufferSize);
+bool lv_screenLoadMapFromMemoryBegin(uint8_t *zipData, size_t zipLen);
+int  lv_screenLoadStep(void);
+
+/* The stage the load is at and how far through that stage it is, 0 to 1. */
+void lv_screenLoadProgress(LvLoadStage *stage, float *fraction);
+
 /* Loads the decoder from a plaintext (v2) byte stream: the caller supplies the
  * header + opening snapshot bytes, then appends more via lv_blocksAppendBytes
  * and steps lv_screenLogTick. Returns TRUE on success. */
@@ -740,7 +760,7 @@ int lv_screenPillAt(int xPos, int yPos, BYTE *owner, BYTE *armour, int *team);
 /* The time left, at the playback time, until the builder of a player's tank
  * is in the tank again after his death (lv_builder_status.h). Returns 1 with
  * the time in remainMs when there is one to show:
- *   - exact (approx 0), out of the table the load-time event scan fills:
+ *   - exact (approx 0), out of the table the load's play stage fills:
  *     from the builder's death until the tick the new builder is in the
  *     tank, his walk from where he landed included;
  *   - estimated (approx 1) when there is no table (a live feed, a viewer
@@ -848,17 +868,9 @@ int  lv_screenLandBox(int *x0, int *y0, int *x1, int *y1);
 /* Counts every request to move playback other than by playing. */
 uint32_t lv_screenSeekSerial(void);
 
-/* Event scan: decode the whole of a loaded file once so the host is posted
- * every event line (lv_windowAddEvent), then return to the start as the
- * loader left it. Run returns FALSE and does nothing for a live feed or when
- * no log is loaded; after a TRUE the host tells its events panel the list is
- * complete and then calls Restore. See screen.c. */
-bool lv_screenEventScanRun(void);
-void lv_screenEventScanRestore(void);
-
 /* For the name Save Log File offers (lv_save_name.h). The roster is every
  * player the loaded log has had, in the order they came, with the last team
- * each was on and whether it is a bot; the event scan fills it. Returns how many rows it wrote. The
+ * each was on and whether it is a bot; the load's play stage fills it. Returns how many rows it wrote. The
  * create time is the header's: the time the server that wrote the log was
  * started, in seconds since 1970, or 0. */
 int     lv_screenGetRoster(LvRosterRow *rows, int max);

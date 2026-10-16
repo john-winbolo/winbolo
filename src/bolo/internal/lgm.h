@@ -86,8 +86,11 @@ struct GameSim;
 #define LGM_TANKBOAT_LEAVE 144
 #define LGM_TANKBOAT_RETURN 160
 
-/* How far down a column the pill-drop search walks before stepping across
-   to the next one. Was a bare 10 in lgmAddPillRequest. */
+/* The classic value of the lgm_pill_drop_search rule, which nothing reads.
+   It was how far down a column the builder's pill-drop search walked before
+   stepping across to the next one, before his pill went down in the spiral
+   a dead tank's pills use (pillsDropSpiralFind). The rule is kept so a
+   script that names it still runs. */
 #define LGM_PILL_DROP_SEARCH 10
 
 /* Speed the helicpter flys at */
@@ -305,8 +308,9 @@ void lgmRecall(struct GameSim *sim, lgm *lgman);
 *NAME:          lgmDropCarriedPill
 *PURPOSE:
 *  Puts the pillbox the man is carrying down on the map and
-*  leaves him carrying nothing — on the first square at or
-*  below his feet that will hold one, dead and owned by him.
+*  leaves him carrying nothing — dead and owned by him, on
+*  the first square that will hold one in the spiral round
+*  his feet a dead tank's pills are put down with.
 *  Does nothing if he is carrying no pillbox. Dying does this
 *  (lgmKill calls it), and so must his player leaving while
 *  he is out: a pillbox in his hands is in no tank's carry

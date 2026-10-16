@@ -1115,6 +1115,10 @@ STR_LV_AUTO_SCROLL=Автопрокрутка
 
 # Log viewer end-of-log marker
 STR_LV_END_OF_LOG=Досягнуто кінець файлу журналу
+STR_LV_LOAD_TITLE=Відкриття журналу
+STR_LV_LOAD_UNZIP=Розпакування
+STR_LV_LOAD_SCAN=Читання
+STR_LV_LOAD_PLAY=Індексування
 
 # iOS Settings panel additions
 STR_DLGSETTINGS_ZOOM=Масштаб
@@ -2536,7 +2540,7 @@ STR_RULE_DESC_lgm_gather_trees=Скільки дерев чоловічок пр
 STR_RULE_DESC_lgm_helicopter_speed=Як далеко чоловічок переміщується за тік, поки спускається на парашуті.
 STR_RULE_DESC_lgm_arrive_tolerance=Як близько до цілі має бути чоловічок, щоб вважатися таким, що дістався.
 STR_RULE_DESC_lgm_return_tolerance=Як близько до танка має бути чоловічок, щоб вважатися таким, що повернувся.
-STR_RULE_DESC_lgm_pill_drop_search=Скільки клітинок проходить колонка пошуку місця для скидання бункера.
+STR_RULE_DESC_lgm_pill_drop_search=Вилучено, нічого не робить.
 STR_RULE_DESC_lgm_boat_leave_offset=Як далеко від берега відходить чоловічок, щоб сісти в човен.
 STR_RULE_DESC_lgm_boat_return_offset=Як далеко відходить чоловічок, виходячи з човна.
 STR_RULE_DESC_pill_max_armour=Найбільша броня, яку має бункер, і з якою починає щойно побудований.
@@ -2738,3 +2742,24 @@ STR_DLGBROWSER_MODS_MORE=+ моди ({number})
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=Голосовий чат тепер чують усі в грі
 STR_VOICE_EVERYONE_OFF=Голосовий чат тепер чують лише ваші союзники
+
+# System Info panel — the Memory block
+STR_DLGSYSINFO_MEMORY=Пам'ять
+STR_DLGSYSINFO_MEM_RESIDENT=Резидентна
+STR_DLGSYSINFO_MEM_PEAK=Пікова
+STR_DLGSYSINFO_MEM_PRIVATE=Приватна
+STR_DLGSYSINFO_MEM_VIRTUAL=Віртуальна
+STR_DLGSYSINFO_MEM_LUA=Купа Lua
+STR_DLGSYSINFO_MEM_BOTS=Боти
+STR_DLGSYSINFO_MEM_BOT=Бот
+STR_DLGSYSINFO_MEM_SERVER_LISTS=Списки сервера
+STR_DLGSYSINFO_MEM_BOT_LISTS=Списки ботів
+STR_DLGSYSINFO_MEM_EXPLOSIONS=Вибухи
+STR_DLGSYSINFO_MEM_TANK_EXPLOSIONS=Вибухи танків
+STR_DLGSYSINFO_MEM_SHELLS=Снаряди
+STR_DLGSYSINFO_MEM_MINE_EXPLOSIONS=Вибухи мін
+STR_DLGSYSINFO_MEM_FLOOD_FILL=Заливання водою
+STR_DLGSYSINFO_MEM_BUILDING=Будівництво
+STR_DLGSYSINFO_MEM_RUBBLE=Руїни
+STR_DLGSYSINFO_MEM_SWAMP=Болото
+STR_DLGSYSINFO_MEM_GRASS=Трава

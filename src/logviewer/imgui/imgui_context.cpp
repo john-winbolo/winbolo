@@ -201,6 +201,23 @@ void lv_imgui_center_message(const char* text) {
     ImGui::End();
 }
 
+void lv_imgui_load_progress(const char* stageText, int step, int steps, float fraction) {
+    if (!g_context || stageText == nullptr) return;
+    ImGui::SetCurrentContext(g_context);
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImVec2 centre(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f);
+    ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::Begin("##load_progress", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                 ImGuiWindowFlags_AlwaysAutoResize |
+                 ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::TextUnformatted(langGetText(STR_LV_LOAD_TITLE));
+    ImGui::Text("%s (%d/%d)", stageText, step, steps);
+    ImGui::ProgressBar(fraction, ImVec2(ImGui::GetFontSize() * 18.0f, 0.0f));
+    ImGui::End();
+}
+
 void lv_imgui_spectator_badge(int phase) {
     if (!g_context) return;
     const char* label;

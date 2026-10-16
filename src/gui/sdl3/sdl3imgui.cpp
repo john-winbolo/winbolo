@@ -1593,13 +1593,108 @@ static int      s_sysHistoryOffset = 0;
 static int      s_sysHistoryCount  = 0;
 static uint32_t s_sysLastSampleTick = 0;
 
+/* The Memory block's figures. Read every SYS_MEM_PERIOD_MS while the panel
+ * is open and drawn from this cache between reads. Desktop only: the web
+ * and mobile builds leave the block out. */
+#define SYS_MEM_PERIOD_MS 2000
+static ServerSimMemoryInfo s_sysMem;
+static bool     s_sysMemValid    = false;  /* s_sysMem holds a read */
+static bool     s_sysMemHosting  = false;  /* the read came from a hosted sim */
+static uint32_t s_sysMemLastTick = 0;
+
 static void sysInfoGraphReset(void) {
     memset(s_tickHistory, 0, sizeof(s_tickHistory));
     memset(s_brainHistory, 0, sizeof(s_brainHistory));
     s_sysHistoryOffset = 0;
     s_sysHistoryCount  = 0;
     s_sysLastSampleTick = 0;
+    memset(&s_sysMem, 0, sizeof(s_sysMem));
+    s_sysMemValid    = false;
+    s_sysMemHosting  = false;
+    s_sysMemLastTick = 0;
 }
+
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && \
+    !(defined(__APPLE__) && TARGET_OS_IOS)
+/* Re-read the figures when the last read is older than the period, or when
+ * the game changed between hosted and joined since it. The accessor takes
+ * the server mutex itself, so the hosted server's tick on the timer thread
+ * is not running while it reads. */
+static void sysInfoMemorySample(ServerSim *spSim) {
+    uint32_t now = SDL_GetTicks();
+    bool hosting = (spSim != NULL);
+    if (s_sysMemValid && hosting == s_sysMemHosting &&
+        now - s_sysMemLastTick < SYS_MEM_PERIOD_MS) return;
+    s_sysMemLastTick = now;
+    s_sysMemHosting  = hosting;
+    if (hosting) {
+        serverSimGetMemoryInfo(spSim, &s_sysMem);
+    } else {
+        memset(&s_sysMem, 0, sizeof(s_sysMem));
+        (void)serverSimReadProcessMemory(&s_sysMem.process);
+    }
+    s_sysMemValid = true;
+}
+
+/* One process figure as "12.3 MB", or the n/a text when it could not be
+ * read: a 0 there would read as a real figure. */
+static const char *sysInfoMemMB(char *buf, size_t bufSize, bool have,
+                                uint64_t bytes) {
+    if (!have) return langGetText(STR_DLGSKIN_NA);
+    snprintf(buf, bufSize, "%.1f MB", (double)bytes / (1024.0 * 1024.0));
+    return buf;
+}
+
+static void sysInfoMemLists(const ServerSimListCounts *c) {
+    ImGui::Text("    %s %u, %s %u, %s %u",
+                langGetText(STR_DLGSYSINFO_MEM_EXPLOSIONS), c->explosions,
+                langGetText(STR_DLGSYSINFO_MEM_TANK_EXPLOSIONS), c->tankExplosions,
+                langGetText(STR_DLGSYSINFO_MEM_SHELLS), c->shells);
+    ImGui::Text("    %s %u, %s %u, %s %u, %s %u, %s %u, %s %u",
+                langGetText(STR_DLGSYSINFO_MEM_MINE_EXPLOSIONS), c->minesExplosions,
+                langGetText(STR_DLGSYSINFO_MEM_FLOOD_FILL), c->floodFill,
+                langGetText(STR_DLGSYSINFO_MEM_BUILDING), c->building,
+                langGetText(STR_DLGSYSINFO_MEM_RUBBLE), c->rubble,
+                langGetText(STR_DLGSYSINFO_MEM_SWAMP), c->swamp,
+                langGetText(STR_DLGSYSINFO_MEM_GRASS), c->grass);
+}
+
+/* The Memory block. Process figures always; the Lua heaps and the list
+ * counts only when this process hosts the server. */
+static void renderSysInfoMemory(ServerSim *spSim) {
+    char a[32], b[32];
+    const ServerSimProcessMemory *pm = &s_sysMem.process;
+
+    sysInfoMemorySample(spSim);
+
+    ImGui::Separator();
+    ImGui::TextUnformatted(langGetText(STR_DLGSYSINFO_MEMORY));
+    ImGui::Text("  %s: %s (%s: %s)",
+                langGetText(STR_DLGSYSINFO_MEM_RESIDENT),
+                sysInfoMemMB(a, sizeof(a), pm->haveRss, pm->rss),
+                langGetText(STR_DLGSYSINFO_MEM_PEAK),
+                sysInfoMemMB(b, sizeof(b), pm->havePeakRss, pm->peakRss));
+    ImGui::Text("  %s: %s", langGetText(STR_DLGSYSINFO_MEM_PRIVATE),
+                sysInfoMemMB(a, sizeof(a), pm->havePriv, pm->priv));
+    ImGui::Text("  %s: %s", langGetText(STR_DLGSYSINFO_MEM_VIRTUAL),
+                sysInfoMemMB(a, sizeof(a), pm->haveVirt, pm->virt));
+    if (!s_sysMemHosting) return;
+
+    ImGui::Text("  %s: %s (%s: %d)", langGetText(STR_DLGSYSINFO_MEM_LUA),
+                sysInfoMemMB(a, sizeof(a), true, s_sysMem.luaTotalBytes),
+                langGetText(STR_DLGSYSINFO_MEM_BOTS), s_sysMem.botCount);
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (!s_sysMem.botLuaValid[i]) continue;
+        ImGui::Text("    %s %d: %u KB", langGetText(STR_DLGSYSINFO_MEM_BOT), i,
+                    (unsigned)(s_sysMem.botLuaBytes[i] / 1024u));
+    }
+    ImGui::Text("  %s:", langGetText(STR_DLGSYSINFO_MEM_SERVER_LISTS));
+    sysInfoMemLists(&s_sysMem.serverLists);
+    ImGui::Text("  %s (%d):", langGetText(STR_DLGSYSINFO_MEM_BOT_LISTS),
+                s_sysMem.botListCount);
+    sysInfoMemLists(&s_sysMem.botLists);
+}
+#endif
 
 /* Sample once per second. tickMs and brainPhaseMs are the
  * "last" values from server_lifecycle / bot_manager — already
@@ -1631,9 +1726,19 @@ static void renderSysInfoContent(void) {
     ImGui::Separator();
     ImGui::Text("  %s %.2f %%", langGetText(STR_DLGSYSINFO_TOTAL), totalPct);
 
+    /* The local server sim, when this process hosts one (single-player or
+     * local listen-server); NULL for a game joined on a remote server. */
+    ServerSim *spSim = gameFrontGetServerSim();
+
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && \
+    !(defined(__APPLE__) && TARGET_OS_IOS)
+    /* Memory sits above the server telemetry because it is the smaller
+     * block. */
+    renderSysInfoMemory(spSim);
+#endif
+
     /* Server-side bot/sim telemetry. Only present when a local
      * server sim is ticking (single-player or local listen-server). */
-    ServerSim *spSim = gameFrontGetServerSim();
     if (spSim != NULL) {
         BotPoolStats ps = {};
         BotInfo  botInfos[MAX_TANKS] = {};

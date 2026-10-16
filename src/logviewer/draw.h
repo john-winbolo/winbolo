@@ -243,24 +243,6 @@ struct SDL_Rect;
 void lv_drawEventFlashAt(float cx, float cy, float tilePx, const struct SDL_Rect *view);
 
 /*********************************************************
-*NAME:          lv_drawSplashForImGui
-*PURPOSE:
-*  Draws the splash screen for the ImGui rendering loop.
-*  This function clears the screen and draws the splash,
-*  but does NOT present. ImGui will present after drawing UI.
-*
-*  Called from the main loop BEFORE ImGui renders.
-*********************************************************/
-void lv_drawSplashForImGui(void);
-
-/*********************************************************
-*NAME:          lv_drawCleanupSplash
-*PURPOSE:
-*  Cleans up the cached splash texture
-*********************************************************/
-void lv_drawCleanupSplash(void);
-
-/*********************************************************
 *NAME:          lv_drawGetSDLWindow
 *AUTHOR:        ImGui Migration
 *PURPOSE:

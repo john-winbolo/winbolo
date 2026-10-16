@@ -254,6 +254,7 @@ bool logCheckTankSame(BYTE playerNum, BYTE mx, BYTE my, BYTE pxy, BYTE opt) {
     return true;
 }
 void logSetLobbyMode(bool enabled) { (void)enabled; }
+void logAddMapName(ServerSim *ssim) { (void)ssim; }
 
 /* ---- WinBolo.net REST stubs (requires libcurl) ----
  *
@@ -275,6 +276,13 @@ void httpSetLogUploadTimeout(long seconds) { (void)seconds; }
 
 int wbn_api_get(const char *path, char **response_out) {
     (void)path;
+    if (response_out) *response_out = NULL;
+    return -1;  /* transport error */
+}
+
+int wbn_api_get_timeout(const char *path, char **response_out,
+                        long timeout_ms, long connect_timeout_ms) {
+    (void)path; (void)timeout_ms; (void)connect_timeout_ms;
     if (response_out) *response_out = NULL;
     return -1;  /* transport error */
 }

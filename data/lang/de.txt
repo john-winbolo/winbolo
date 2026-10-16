@@ -1115,6 +1115,10 @@ STR_LV_AUTO_SCROLL=Automatisch scrollen
 
 # Log viewer end-of-log marker
 STR_LV_END_OF_LOG=Ende der Log-Datei erreicht
+STR_LV_LOAD_TITLE=Log-Datei wird geöffnet
+STR_LV_LOAD_UNZIP=Entpacken
+STR_LV_LOAD_SCAN=Lesen
+STR_LV_LOAD_PLAY=Indizieren
 
 # iOS Settings panel additions
 STR_DLGSETTINGS_ZOOM=Zoom
@@ -2536,7 +2540,7 @@ STR_RULE_DESC_lgm_gather_trees=Bäume, die der Bauarbeiter von einem Waldfeld zu
 STR_RULE_DESC_lgm_helicopter_speed=Wie weit der Bauarbeiter pro Tick zurücklegt, während er per Fallschirm einschwebt.
 STR_RULE_DESC_lgm_arrive_tolerance=Wie nahe der Bauarbeiter seinem Ziel sein muss, um als angekommen zu gelten.
 STR_RULE_DESC_lgm_return_tolerance=Wie nahe der Bauarbeiter dem Panzer sein muss, um als zurück zu gelten.
-STR_RULE_DESC_lgm_pill_drop_search=Felder, die eine Spalte der Bunker-Ablagesuche durchläuft.
+STR_RULE_DESC_lgm_pill_drop_search=Entfernt, bewirkt nichts.
 STR_RULE_DESC_lgm_boat_leave_offset=Wie weit hinaus der Bauarbeiter tritt, um ein Boot zu besteigen.
 STR_RULE_DESC_lgm_boat_return_offset=Wie weit der Bauarbeiter beim Verlassen eines Boots zurücktritt.
 STR_RULE_DESC_pill_max_armour=Die meiste Panzerung, die ein Bunker hält, und womit ein neu gebauter beginnt.
@@ -2738,3 +2742,24 @@ STR_DLGBROWSER_MODS_MORE=+{number} Mods
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=Sprachchat geht jetzt an alle im Spiel
 STR_VOICE_EVERYONE_OFF=Sprachchat geht jetzt nur an deine Verbündeten
+
+# System Info panel — the Memory block
+STR_DLGSYSINFO_MEMORY=Speicher
+STR_DLGSYSINFO_MEM_RESIDENT=Resident
+STR_DLGSYSINFO_MEM_PEAK=Spitze
+STR_DLGSYSINFO_MEM_PRIVATE=Privat
+STR_DLGSYSINFO_MEM_VIRTUAL=Virtuell
+STR_DLGSYSINFO_MEM_LUA=Lua-Heap
+STR_DLGSYSINFO_MEM_BOTS=Bots
+STR_DLGSYSINFO_MEM_BOT=Bot
+STR_DLGSYSINFO_MEM_SERVER_LISTS=Server-Listen
+STR_DLGSYSINFO_MEM_BOT_LISTS=Bot-Listen
+STR_DLGSYSINFO_MEM_EXPLOSIONS=Explosionen
+STR_DLGSYSINFO_MEM_TANK_EXPLOSIONS=Panzerexplosionen
+STR_DLGSYSINFO_MEM_SHELLS=Granaten
+STR_DLGSYSINFO_MEM_MINE_EXPLOSIONS=Minenexplosionen
+STR_DLGSYSINFO_MEM_FLOOD_FILL=Flutung
+STR_DLGSYSINFO_MEM_BUILDING=Bau
+STR_DLGSYSINFO_MEM_RUBBLE=Trümmer
+STR_DLGSYSINFO_MEM_SWAMP=Sumpf
+STR_DLGSYSINFO_MEM_GRASS=Gras

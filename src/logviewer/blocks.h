@@ -55,7 +55,10 @@ bool lv_blocksIsEOF();
 size_t lv_logGetCurrentPosition();
 void lv_logSetPosition(size_t pos);
 void lv_logDecompressAll();
+bool lv_logDecompressSome(size_t bytes);
+size_t lv_logExpectedSize(void);
 size_t lv_logGetTotalSize();
+const BYTE *lv_blocksPeek(size_t *avail);
 BYTE lv_blocksGetKey();
 void lv_blocksSetKey(BYTE key);
 

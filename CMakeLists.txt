@@ -854,7 +854,6 @@ set(IOS_DATA_BMP
     ${CMAKE_SOURCE_DIR}/data/tanks.bmp
     ${CMAKE_SOURCE_DIR}/data/boats.bmp
     ${CMAKE_SOURCE_DIR}/data/items.bmp
-    ${CMAKE_SOURCE_DIR}/data/splash.bmp
     ${CMAKE_SOURCE_DIR}/data/logo.bmp
     ${CMAKE_SOURCE_DIR}/data/base.bmp
     ${CMAKE_SOURCE_DIR}/data/pillbox.bmp
@@ -1764,6 +1763,7 @@ set(LOGVIEWER_LIB_SOURCES
     # The map File > Open map at this time in single player writes
     # (logviewer.c calls it).
     src/logviewer/lv_spmap.c
+    src/logviewer/lv_event_list.c
     src/logviewer/imgui/imgui_context.cpp
     src/logviewer/imgui/imgui_main_menu.cpp
     src/logviewer/imgui/imgui_controls.cpp
@@ -3669,6 +3669,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # against committed golden bytes and decoded back.
     tests/unit/test_scenario_dir.c
     tests/unit/test_scenario_callbacks.c
+    # Who wrote a script and when it last changed: both manifest readers,
+    # the list trailer and the V3 details reply, and the shipped scripts.
+    tests/unit/test_scenario_identity.c
     # A copy of one of the server's scripts, fetched by name over the
     # loopback transport, and each answer the server gives.
     tests/unit/test_script_fetch.c
@@ -3763,6 +3766,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The tank ops: the six arms, the refusals each one answers with, and the
     # records they leave through the functions a player's own action reaches.
     tests/unit/test_scenario_tank_arms.c
+    # Where a dead tank's pills land: Mac Bolo's spiral round the tank, the
+    # squares it passes over, the map edge, and a map built to have no room.
+    tests/unit/test_tank_drop_pills.c
     # The builder ops: the five arms, the refusals each one answers with, the
     # wood a dispatched order costs, and the loss a scripted death records.
     tests/unit/test_scenario_builder_arms.c
@@ -3934,6 +3940,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_tank_modifier_sites.c
     # A tank drawn on a diagonal stepping both axes in the same frame.
     tests/unit/test_tank_diagonal_step.c
+    # Leaving a boat needs the boat-exit speed on road and bases as on grass.
+    tests/unit/test_boat_exit_road.c
     tests/unit/test_visible_turn_taps.c
     tests/unit/test_md5.c
     tests/unit/test_rand_save_restore.c
@@ -3990,6 +3998,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_prefs_sync.c
     tests/unit/test_wbn_serverlist.c
     tests/unit/test_wbn_map.c
+    tests/unit/test_wbn_map_fetch_policy.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
@@ -4062,6 +4071,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_team_side_dispatch.c
     tests/unit/test_lobby_default_sides.c
     tests/unit/test_starts_side_integration.c
+    tests/unit/test_mod_lobby_starts.c
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
@@ -4091,6 +4101,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_view_policy_rects.c
     tests/unit/test_tree_hide.c
     tests/unit/test_lgm_visibility.c
+    tests/unit/test_lgm_draw_centre.c
     tests/unit/test_view_state.c
     tests/unit/test_view_target_codec.c
     tests/unit/test_view_target_apply.c
@@ -4169,6 +4180,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_lobby_running_loss.c
     tests/unit/test_loopback_quiet_lobby_control_loss.c
     tests/unit/test_loopback_command_liveness.c
+    tests/unit/test_loopback_command_rejoin.c
     tests/unit/test_loopback_channel.c
     # A server hitch and its catch-up burst, over an impaired path: the slot
     # it locks out has to start applying real inputs again and keep doing it.
@@ -4460,6 +4472,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # with recording callbacks instead of a live server (server_console.c
     # itself comes in with server_static).
     tests/unit/test_server_console.c
+    # The T1 memory accessors on server_sim.h that the client's System Info
+    # panel reads: the process figures, each bot's Lua heap and the world
+    # list counts of a hosted sim.
+    tests/unit/test_memory_info.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -4534,10 +4550,22 @@ set(WINBOLO_UNITTESTS_SOURCES
     # file holds the on-demand capture that rewrites those summaries.
     tests/unit/test_wbv_fixture_summaries.c
     tests/unit/test_attribution_reader.c
+    # The formats' little-endian fields (byte_order.h), pinned through their
+    # writers and readers.
+    tests/unit/test_byte_order.c
     # Calibration anchor walk: synthetic v2 logs prove the highlight
     # clip-time fit resolves base cells from the log's own snapshots
     # (test_lv_calibration.c).
     tests/unit/test_lv_calibration.c
+    # Log viewer snapshot index: time lookups and a ten-day log's worth of
+    # entries (test_lv_snapshot_index.c).
+    tests/unit/test_lv_snapshot_index.c
+    # Log viewer load results pinned on the committed .wbv fixtures
+    # (test_lv_load_walk.c).
+    tests/unit/test_lv_load_walk.c
+    # Log viewer events panel list: replays after a seek back and pinned
+    # lines (test_lv_event_list.c).
+    tests/unit/test_lv_event_list.c
     # Replay camera range: the load's 127,127 default, a highlight jump, a
     # grid that grew and the raw setter all keep the view's far edge at 255
     # on a grid wider than half the map (test_lv_camera.c).
@@ -4734,6 +4762,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The text dump "Log Viewer.exe -dump" writes, for test_lv_dump.c.
     src/logviewer/lv_dump.c
     src/logviewer/lv_spmap.c
+    # The events panel's line list. Plain C with no ImGui headers, split out
+    # of imgui_events.cpp so test_lv_event_list.c drives the code the panel
+    # runs.
+    src/logviewer/lv_event_list.c
 )
 
 if(WB_NETDEBUG)
@@ -5225,6 +5257,7 @@ set(_unit_test_names
     wbn_serverlist_malformed
     wbn_serverlist_scripts
     wbn_map_parse
+    wbn_map_fetch_policy
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_msgh_budget_kill_no_traceback
@@ -5328,6 +5361,7 @@ set(_unit_test_names
     log_roundtrip_snapshot_keeps_chain_synced
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
+    log_roundtrip_map_name_at_round_start
     log_roundtrip_ping
     log_roundtrip_snapshot_tank_stocks
     log_roundtrip_tank_stock_record
@@ -5356,6 +5390,14 @@ set(_unit_test_names
     attribution_reader_rejects_bad
     attribution_reader_old_wbv
     attribution_reader_clamps_slotcount
+    byte_order_helpers
+    byte_order_log_long_counts
+    byte_order_log_long_counts_viewer
+    byte_order_snapshot_base_time
+    byte_order_compressed_map_base_time
+    byte_order_attribution_member
+    byte_order_info_packet
+    byte_order_pathfinder_blob
     lv_walk_base_anchor_lobby_log
     lv_walk_base_anchor_opening_snapshot
     lv_walk_base_anchor_ordinal
@@ -5363,9 +5405,22 @@ set(_unit_test_names
     lv_hide_lobby_no_lobby_fallback
     lv_hide_lobby_no_marker_anchor
     lv_hide_lobby_periodic_snapshot
+    lv_kill_tally_seek
+    lv_alive_seek
+    lv_load_steps
+    lv_fast_forward_waits
+    lv_same_map_runs
+    lv_event_list_replay
+    lv_event_list_pinned
+    lv_snapshot_index_lookup
+    lv_snapshot_index_ten_days
+    lv_load_walk_fixtures
     lv_logged_name_from_join_event
     lv_game_settings_from_walk
     lv_game_settings_absent
+    lv_map_name_from_walk
+    lv_map_name_absent
+    lv_map_name_long_header
     lv_camera_load_fits_wide_grid
     lv_camera_centre_on_cell_stays_on_map
     lv_camera_resize_and_set_offset_clamp
@@ -5526,6 +5581,20 @@ set(_unit_test_names
     starts_side_unsided_kept_off_chosen_side
     starts_side_two_team_lobby_mirrors
     starts_side_team_change_repicks_stale
+    mod_lobby_starts_mac_bolo_keeps_opposite_sides
+    mac_bolo_settings_defaults_play_old_rules
+    mac_bolo_settings_each_part_off
+    mac_bolo_settings_numbers
+    mac_bolo_first_start_lobby_off_uses_mac_pick
+    mac_bolo_spawn_starts_off_engine_picks
+    mac_bolo_setting_changed_after_attach
+    mac_bolo_setting_changed_between_rounds
+    choose_start_lobby_arg_hand_picked
+    choose_start_lobby_arg_team_side
+    choose_start_lobby_arg_nil_without_reservation
+    choose_start_override_releases_reservation
+    choose_start_override_onto_other_reservation
+    choose_start_script_ignoring_lobby_unchanged
     input_redundancy
     bases_closest_for_player
     base_stock_visibility
@@ -5693,6 +5762,8 @@ set(_unit_test_names
     lgm_request_quiet
     lgm_quit_drops_carried_pill
     lgm_unfield_drops_carried_pill
+    lgm_draw_own_matches_wire
+    lgm_draw_centre_error_bounds
     jitter_buffer_grow
     shell_projection
     sim_rules_classic_defaults
@@ -5763,6 +5834,7 @@ set(_unit_test_names
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
     loopback_command_liveness
+    loopback_command_queued_behind_map_change
     loopback_channel
     loopback_hitch_recovers
     loopback_quit_keeps_peer
@@ -6082,6 +6154,13 @@ set(_unit_test_names
     pascal_string_viewer_copy_agrees
     pascal_string_roundtrip
     console_lock_unlock
+    console_mem_report
+    memreport_flags
+    memreport_process_na
+    memreport_deep_walk_cap
+    memory_info_hosted_bots
+    memory_info_no_bots
+    memory_info_process_figures
     console_info_and_status
     console_savemap_path
     console_unknown_command_is_inert
@@ -6109,6 +6188,12 @@ set(_unit_test_names
     mine_damage_fatal_reduction
     tank_mod_neutral_owner_deals_classic
     tank_mod_boat_exit_at_half_speed
+    boat_exit_slow_onto_road_held
+    boat_exit_fast_onto_road_lands
+    boat_exit_grass_unchanged
+    boat_exit_parked_boat_pickup
+    boat_exit_base_beside_water
+    boat_exit_wall_held
     tank_mod_pill_leads_half_speed_boat
     tank_mod_predicted_stop_matches_engine
     tank_modifiers_op_writes_set
@@ -6160,6 +6245,13 @@ set(_unit_test_names
     scenario_tank_drop_pill
     scenario_tank_arm_records
     scenario_tank_death_ticks_respawn
+    tank_drop_pills_spiral_order
+    tank_drop_pills_blocked
+    tank_drop_pills_map_edge
+    tank_drop_pills_hostile_map
+    tank_drop_pills_no_room
+    lgm_drop_pill_spiral
+    lgm_drop_pill_no_room
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill
@@ -6736,6 +6828,13 @@ set(_unit_test_names
     scenario_details_fetch_give_up
     scenario_details_override_order
     scenario_details_reload_map_script
+    scenario_identity_clean
+    scenario_identity_lua
+    scenario_identity_json
+    scenario_identity_blob
+    scenario_identity_list_wire
+    scenario_identity_details_fetch
+    scenario_identity_shipped
     script_fetch_req_golden
     script_fetch_found_lua
     script_fetch_found_package
@@ -7010,6 +7109,8 @@ set(_unit_test_names
     scenario_bot_init_lands
     scenario_bot_init_refusals
     scenario_bot_init_parked_seat
+    scenario_bot_init_round_reset
+    scenario_bot_init_free_seat_spawn
     brain_on_init_update
     editor_script_path
     editor_script_round_trip

@@ -1115,6 +1115,10 @@ STR_LV_AUTO_SCROLL=Scorrimento automatico
 
 # Log viewer end-of-log marker
 STR_LV_END_OF_LOG=Fine del file log raggiunta
+STR_LV_LOAD_TITLE=Apertura del log
+STR_LV_LOAD_UNZIP=Decompressione
+STR_LV_LOAD_SCAN=Lettura
+STR_LV_LOAD_PLAY=Indicizzazione
 
 # iOS Settings panel additions
 STR_DLGSETTINGS_ZOOM=Zoom
@@ -2538,7 +2542,7 @@ STR_RULE_DESC_lgm_gather_trees=Alberi che il costruttore riporta da una casella 
 STR_RULE_DESC_lgm_helicopter_speed=Quanto avanza il costruttore a ogni tick mentre scende col paracadute.
 STR_RULE_DESC_lgm_arrive_tolerance=A quale distanza dal suo obiettivo deve trovarsi il costruttore per contare come arrivato.
 STR_RULE_DESC_lgm_return_tolerance=A quale distanza dal tank deve trovarsi il costruttore per contare come rientrato.
-STR_RULE_DESC_lgm_pill_drop_search=Caselle che percorre una colonna della ricerca di rilascio del bunker.
+STR_RULE_DESC_lgm_pill_drop_search=Rimossa, non fa nulla.
 STR_RULE_DESC_lgm_boat_leave_offset=A quale distanza si sposta il costruttore per salire a bordo di una barca.
 STR_RULE_DESC_lgm_boat_return_offset=A quale distanza si allontana il costruttore scendendo da una barca.
 STR_RULE_DESC_pill_max_armour=Il massimo di corazza che ha un bunker, e con cui inizia uno appena costruito.
@@ -2740,3 +2744,24 @@ STR_DLGBROWSER_MODS_MORE=+{number} mod
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=La chat vocale ora arriva a tutti nella partita
 STR_VOICE_EVERYONE_OFF=La chat vocale ora arriva solo ai tuoi alleati
+
+# System Info panel — the Memory block
+STR_DLGSYSINFO_MEMORY=Memoria
+STR_DLGSYSINFO_MEM_RESIDENT=Residente
+STR_DLGSYSINFO_MEM_PEAK=Picco
+STR_DLGSYSINFO_MEM_PRIVATE=Privata
+STR_DLGSYSINFO_MEM_VIRTUAL=Virtuale
+STR_DLGSYSINFO_MEM_LUA=Heap Lua
+STR_DLGSYSINFO_MEM_BOTS=Bot
+STR_DLGSYSINFO_MEM_BOT=Bot
+STR_DLGSYSINFO_MEM_SERVER_LISTS=Liste del server
+STR_DLGSYSINFO_MEM_BOT_LISTS=Liste dei bot
+STR_DLGSYSINFO_MEM_EXPLOSIONS=Esplosioni
+STR_DLGSYSINFO_MEM_TANK_EXPLOSIONS=Esplosioni di tank
+STR_DLGSYSINFO_MEM_SHELLS=Proiettili
+STR_DLGSYSINFO_MEM_MINE_EXPLOSIONS=Esplosioni di mine
+STR_DLGSYSINFO_MEM_FLOOD_FILL=Allagamento
+STR_DLGSYSINFO_MEM_BUILDING=Costruzione
+STR_DLGSYSINFO_MEM_RUBBLE=Macerie
+STR_DLGSYSINFO_MEM_SWAMP=Palude
+STR_DLGSYSINFO_MEM_GRASS=Erba

@@ -34,6 +34,7 @@ extern "C" {
     #include "../lv_zoom_text.h"
     #include "../../winbolonet/http.h"
     void lv_windowOpenFile(char *cmdLine);
+    void lv_windowOpenMemory(uint8_t *zipData, size_t zipLen);
     void lv_windowSaveMap(void);
     bool lv_windowCanSaveLog(void);
     void lv_windowSaveLog(void);
@@ -47,7 +48,6 @@ extern "C" {
     void lv_windowNeedRedraw(void);
     void lv_screenTankCentred(int enabled);
     int lv_dnsSetEnabled(int enabled);
-    void lv_imgui_events_clear(void);
     void lv_soundSetVolume(int pct);
 }
 
@@ -83,15 +83,9 @@ static void open_wbn_browser_modal(void) {
         lv_windowOpenFile(res.filePath);
         break;
     case WBN_BROWSER_PLAY_MEMORY:
-        lv_windowStop(0);
-        if (lv_screenLoadMapFromMemory(res.memoryData, res.memorySize)) {
-            s_lv->isLoaded = TRUE;
-            lv_imgui_events_clear();
-            /* A downloaded log is a whole file too: list all its events. */
-            lv_windowCollectAllEvents();
-            lv_windowNeedRedraw();
-        }
-        /* memoryData ownership transferred — don't free */
+        /* Opens at the top of the next frame; memoryData ownership
+           transferred — don't free */
+        lv_windowOpenMemory(res.memoryData, res.memorySize);
         break;
     case WBN_BROWSER_OPEN_LOCAL:
         lv_windowOpenFile(NULL);

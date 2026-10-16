@@ -1168,112 +1168,77 @@ int run_lv_presentation_slot_team(void) {
     return 0;
 }
 
-/* ── 7b. The event scan ────────────────────────────────────────────── */
+/* ── 7b. The load plays the whole log ────────────────────────────── */
 
-/* The standalone viewer lists a whole log's events at load: it decodes the
- * log once (lv_screenEventScanRun) and returns to the start
- * (lv_screenEventScanRestore). On the log_TeamSet log above: the scan posts
- * the lines playback posts, the team's and the end-of-log's, once each; the
- * restore posts none and leaves the clock at 0, playback ready to run and
- * slot 1 on no team; playing from there posts the same lines again, so the
- * world the scan left is the one the loader left; and a live feed, which has
- * no end to read ahead to, is refused untouched. */
+/* The standalone viewer lists a whole log's events at load: the load's play
+ * stage decodes the log once (lv_screenLoadStep) and returns to the start.
+ * On the log_TeamSet log above: the load posts the team's line, but not the
+ * end-of-log's, because it stops a tick short of LOG_QUIT; it leaves the
+ * clock at 0, playback ready to run, not fast-forwarding, slot 1 on no team
+ * and no kills counted; playing from there posts the team's line and the
+ * end-of-log's, so the world the load left is the one a fresh start has. */
 int run_lv_event_scan_returns_to_start(void) {
     const char     *path = "lv_event_scan.wbv";
     static LvpLog   b;
     LogViewerState *lv;
     int             before;
-    int             linesScan, linesRestore, linesPlay, linesAgain;
-    bool            ran, ranLive, playingAtEnd, playingAfter, ffAfter;
-    bool            reachedEnd;
-    uint32_t        timeAtEnd, timeAfter, timeAgain, timeLive, timeEndAgain;
-    int             teamAtEnd, teamAfter;
+    int             linesLoad, linesPlay;
+    bool            playingAfter, ffAfter, reachedEnd;
+    uint32_t        timeAfter, timeEnd, timeEndAgain;
+    int             teamAfter, teamEnd;
     uint16_t        killsAfter;
 
     lvpPutOpening(&b);
     lvpPut(&b, kLvpTeamStream, sizeof(kLvpTeamStream));
+    before = g_lvStubEventsAdded;
     lv = lvpOpen(&b, path);
     if (lv == NULL) {
         remove(path);
         UT_FAIL("the hand-built log could not be loaded");
     }
-
-    /* A tally the decoder only ever adds to: the restore must clear it. */
-    lv->kills[1] = 7;
-
-    before       = g_lvStubEventsAdded;
-    ran          = lv_screenEventScanRun();
-    linesScan    = g_lvStubEventsAdded - before;
-    timeAtEnd    = lv_screenGetTimeRunning();
-    teamAtEnd    = lvpSlot1Team();
-    playingAtEnd = lv_screenIsPlaying() == TRUE;
-
-    before       = g_lvStubEventsAdded;
-    lv_screenEventScanRestore();
-    linesRestore = g_lvStubEventsAdded - before;
+    linesLoad    = g_lvStubEventsAdded - before;
     timeAfter    = lv_screenGetTimeRunning();
     teamAfter    = lvpSlot1Team();
     playingAfter = lv_screenIsPlaying() == TRUE;
     ffAfter      = lv->fastForwarding == TRUE;
     killsAfter   = lv->kills[1];
 
-    /* Playback from the restored start. */
+    /* Playback from the start the load left. */
     before     = g_lvStubEventsAdded;
     reachedEnd = lvpPlayToEnd();
     linesPlay  = g_lvStubEventsAdded - before;
+    timeEnd    = lv_screenGetTimeRunning();
+    teamEnd    = lvpSlot1Team();
 
     /* Ticks after the end read nothing and must not move the clock. */
     lv_screenLogTick();
     lv_screenLogTick();
     timeEndAgain = lv_screenGetTimeRunning();
 
-    /* A restore with no scan before it does nothing. */
-    before     = g_lvStubEventsAdded;
-    lv_screenEventScanRestore();
-    linesAgain = g_lvStubEventsAdded - before;
-    timeAgain  = lv_screenGetTimeRunning();
-
-    /* A live feed is refused, and not moved. */
-    lv_screenSeekToTimeMs(20);
-    lv_screenSpecSetLiveMode(true);
-    ranLive  = lv_screenEventScanRun();
-    timeLive = lv_screenGetTimeRunning();
-    lv_screenSpecSetLiveMode(false);
-
     lv_decoderDestroy(lv);
     remove(path);
 
-    UT_ASSERT_MSG(ran, "the scan refused a loaded file");
-    UT_ASSERT_MSG(linesScan == 2, "the scan posted %d lines (want the "
-                  "log_TeamSet's and the end-of-log's)", linesScan);
-    UT_ASSERT_MSG(timeAtEnd == 140, "the scan stopped at %u ms (want the "
-                  "end, 140)", (unsigned)timeAtEnd);
-    UT_ASSERT_MSG(teamAtEnd == 2, "after the scan slot 1's team is %d (want "
-                  "2: it read the whole log)", teamAtEnd);
-    UT_ASSERT_MSG(!playingAtEnd, "the scan ended with playback still running");
-    UT_ASSERT_MSG(linesRestore == 0, "the restore posted %d lines",
-                  linesRestore);
-    UT_ASSERT_MSG(timeAfter == 0, "the restore left the clock at %u ms",
+    UT_ASSERT_MSG(linesLoad == 1, "the load posted %d lines (want the "
+                  "log_TeamSet's only)", linesLoad);
+    UT_ASSERT_MSG(timeAfter == 0, "the load left the clock at %u ms",
                   (unsigned)timeAfter);
-    UT_ASSERT_MSG(playingAfter, "after the restore playback cannot run");
-    UT_ASSERT_MSG(!ffAfter, "after the restore the decoder is still "
+    UT_ASSERT_MSG(playingAfter, "after the load playback cannot run");
+    UT_ASSERT_MSG(!ffAfter, "after the load the decoder is still "
                   "fast-forwarding, so playback would be silent");
-    UT_ASSERT_MSG(teamAfter == -1, "after the restore slot 1's team is %d "
-                  "(want unknown, as at load)", teamAfter);
-    UT_ASSERT_MSG(killsAfter == 0, "the restore left a kill tally of %u",
+    UT_ASSERT_MSG(teamAfter == -1, "after the load slot 1's team is %d "
+                  "(want unknown, as at the start)", teamAfter);
+    UT_ASSERT_MSG(killsAfter == 0, "the load left a kill tally of %u",
                   (unsigned)killsAfter);
-    UT_ASSERT_MSG(reachedEnd, "playback after the restore did not reach "
+    UT_ASSERT_MSG(reachedEnd, "playback after the load did not reach "
                   "end-of-log");
-    UT_ASSERT_MSG(linesPlay == linesScan, "playback after the restore posted "
-                  "%d lines, the scan %d", linesPlay, linesScan);
+    UT_ASSERT_MSG(linesPlay == 2, "playback after the load posted %d lines "
+                  "(want the log_TeamSet's and the end-of-log's)", linesPlay);
+    UT_ASSERT_MSG(timeEnd == 140, "playback stopped at %u ms (want the end, "
+                  "140)", (unsigned)timeEnd);
+    UT_ASSERT_MSG(teamEnd == 2, "at the end slot 1's team is %d (want 2)",
+                  teamEnd);
     UT_ASSERT_MSG(timeEndAgain == 140, "two ticks after the end of the log "
                   "moved the clock to %u ms (want 140)", (unsigned)timeEndAgain);
-    UT_ASSERT_MSG(linesAgain == 0 && timeAgain == 140, "a restore with no "
-                  "scan moved playback (%d lines, clock %u ms)", linesAgain,
-                  (unsigned)timeAgain);
-    UT_ASSERT_MSG(!ranLive, "the scan ran on a live feed");
-    UT_ASSERT_MSG(timeLive == 20, "the refused scan moved the clock to %u ms",
-                  (unsigned)timeLive);
     return 0;
 }
 
@@ -1338,20 +1303,53 @@ static LvpBuilderAt lvpBuilderAt(uint32_t ms) {
     return a;
 }
 
-/* The countdown over a tank and on the Tank panel reads the table the event
- * scan fills. On the log above: with no scan the time is an estimate, and
- * only while the new builder flies; after the scan it is exact, to the tick
- * he is in the tank (160 ms), from the death through the flight and the walk;
- * a builder out who was not killed has no time; a builder in the tank has
- * none; a tick with no events leaves no builder out; and a new load drops
- * the table. */
+/* The same, played forward to ms rather than sought: a log loaded as a
+   stream has no length to seek in. */
+static LvpBuilderAt lvpBuilderPlayedTo(uint32_t ms) {
+    LvpBuilderAt a;
+    int          steps = 0;
+    memset(&a, 0, sizeof(a));
+    a.remain = -1;
+    a.approx = -1;
+    while (lv_screenIsPlaying() == TRUE && lv_screenGetTimeRunning() < ms &&
+           steps < 4096) {
+        lv_screenLogTick();
+        steps++;
+    }
+    a.has = lv_screenBuilderReturn(1, &a.remain, &a.approx);
+    lv_playersGetLgmStatus(1, &a.isOut, &a.isDead);
+    return a;
+}
+
+/* A decoder with b loaded as a stream, which has no load to play it: no
+   table of builder trips. NULL when it does not load. */
+static LogViewerState *lvpOpenStream(const LvpLog *b) {
+    LogViewerState *lv = lv_decoderCreate(false);
+    if (lv == NULL) return NULL;
+    lv_screenSetSizeX(30);
+    lv_screenSetSizeY(30);
+    if (lv_screenLoadFromStream(b->buf, b->len) != TRUE) {
+        lv_decoderDestroy(lv);
+        return NULL;
+    }
+    return lv;
+}
+
+/* The countdown over a tank and on the Tank panel reads the table the load
+ * fills as it plays the whole log. On the log above: loaded as a stream,
+ * which has no such load, the time is an estimate, and only while the new
+ * builder flies; loaded as a file it is exact, to the tick he is in the tank
+ * (160 ms), from the death through the flight and the walk; a builder out
+ * who was not killed has no time; a builder in the tank has none; a tick
+ * with no events leaves no builder out; and a later stream load drops the
+ * table. */
 int run_lv_builder_trips_scan(void) {
     const char     *path = "lv_builder_trips.wbv";
     static LvpLog   b;
     LogViewerState *lv;
     LvpBuilderAt    est40, est80, est120;
     LvpBuilderAt    at20, at40, at60, at80, at120, at140, at160, at200;
-    bool            ran, knownBefore, knownAfter, knownReload;
+    bool            loaded, knownBefore, knownAfter, knownReload;
     int             i;
 
     b.len = 0;
@@ -1365,20 +1363,24 @@ int run_lv_builder_trips_scan(void) {
         }
     }
     lvpPut(&b, kLvpBuilderStream, sizeof(kLvpBuilderStream));
+
+    /* A stream: no table, so the estimate. */
+    lv = lvpOpenStream(&b);
+    if (lv == NULL) {
+        UT_FAIL("the hand-built log could not be loaded as a stream");
+    }
+    knownBefore = lv_screenBuilderTripsKnown() != 0;
+    est40  = lvpBuilderPlayedTo(40);
+    est80  = lvpBuilderPlayedTo(80);
+    est120 = lvpBuilderPlayedTo(120);
+    lv_decoderDestroy(lv);
+
     lv = lvpOpen(&b, path);
     if (lv == NULL) {
         remove(path);
         UT_FAIL("the hand-built log could not be loaded");
     }
-
-    /* No scan yet: the estimate. */
-    knownBefore = lv_screenBuilderTripsKnown() != 0;
-    est40  = lvpBuilderAt(40);
-    est80  = lvpBuilderAt(80);
-    est120 = lvpBuilderAt(120);
-
-    ran = lv_screenEventScanRun();
-    lv_screenEventScanRestore();
+    loaded = TRUE;
     knownAfter = lv_screenBuilderTripsKnown() != 0;
     at20  = lvpBuilderAt(20);
     at40  = lvpBuilderAt(40);
@@ -1390,28 +1392,28 @@ int run_lv_builder_trips_scan(void) {
     at200 = lvpBuilderAt(200);
 
     lv_decoderDestroy(lv);
-    lv = lvpOpen(&b, path);
+    lv = lvpOpenStream(&b);
     knownReload = lv_screenBuilderTripsKnown() != 0;
     if (lv != NULL) lv_decoderDestroy(lv);
     remove(path);
 
-    UT_ASSERT_MSG(!knownBefore, "the table is known before any scan");
+    UT_ASSERT_MSG(!knownBefore, "the table is known on a stream");
     UT_ASSERT_MSG(est40.isOut && !est40.isDead && !est40.has,
-                  "no scan, builder out and alive at 40 ms: out %d dead %d "
+                  "a stream, builder out and alive at 40 ms: out %d dead %d "
                   "time %d", est40.isOut, est40.isDead, est40.has);
     /* Flying at 58,50, the tank at 50,50: 8 squares, 2048 world units, less
        the 16 that count as there, at 3 a tick: 678 ticks of 20 ms. */
     UT_ASSERT_MSG(est80.isDead && est80.has && est80.approx == 1 &&
                   est80.remain == 13560L,
-                  "no scan, flying at 80 ms: dead %d time %d approx %d "
+                  "a stream, flying at 80 ms: dead %d time %d approx %d "
                   "remain %ld (want an estimate of 13560)", est80.isDead,
                   est80.has, est80.approx, est80.remain);
     UT_ASSERT_MSG(est120.isOut && !est120.isDead && !est120.has,
-                  "no scan, landed at 120 ms: out %d dead %d time %d (an "
+                  "a stream, landed at 120 ms: out %d dead %d time %d (an "
                   "estimate is for the flight only)", est120.isOut,
                   est120.isDead, est120.has);
 
-    UT_ASSERT_MSG(ran && knownAfter, "the scan did not fill the table");
+    UT_ASSERT_MSG(loaded && knownAfter, "the load did not fill the table");
     UT_ASSERT_MSG(!at20.isOut && !at20.has, "at 20 ms the builder is in the "
                   "tank: out %d time %d", at20.isOut, at20.has);
     UT_ASSERT_MSG(at40.isOut && !at40.isDead && !at40.has, "at 40 ms the "
@@ -1434,7 +1436,7 @@ int run_lv_builder_trips_scan(void) {
                   "(want in the tank)", at160.isOut, at160.isDead, at160.has);
     UT_ASSERT_MSG(!at200.isOut && !at200.has, "at 200 ms: out %d time %d",
                   at200.isOut, at200.has);
-    UT_ASSERT_MSG(!knownReload, "a new load kept the old log's table");
+    UT_ASSERT_MSG(!knownReload, "a stream load kept the old log's table");
     return 0;
 }
 
@@ -1484,8 +1486,9 @@ static LogViewerState *lvpOpenBuilderLog(LvpLog *b, const char *path,
 /* The time after a "lost builder" line of the Events panel is out of the
  * same table. On the first log the builder is killed at 60 ms and the new
  * one is in the tank at 160 ms: 100 ms away, wherever playback is, and no
- * time before the scan. On the second the player leaves before the new
- * builder is in the tank: no time. */
+ * time when it is loaded as a stream, which has no load to play it. On the
+ * second the player leaves before the new builder is in the tank: no
+ * time. */
 int run_lv_builder_away_scan(void) {
     const char     *path = "lv_builder_away.wbv";
     static LvpLog   b;
@@ -1499,9 +1502,6 @@ int run_lv_builder_away_scan(void) {
         remove(path);
         UT_FAIL("the hand-built log could not be loaded");
     }
-    before = lv_screenBuilderAwayMs(1, 60, &away);
-    (void)lv_screenEventScanRun();
-    lv_screenEventScanRestore();
     after = lv_screenBuilderAwayMs(1, 60, &away);
     lv_screenSeekToTimeMs(20);
     atStart = lv_screenBuilderAwayMs(1, 60, &awayStart);
@@ -1512,20 +1512,24 @@ int run_lv_builder_away_scan(void) {
     early = lv_screenBuilderAwayMs(1, 20, NULL);
     lv_decoderDestroy(lv);
 
+    /* The same log as a stream. */
+    lv = lvpOpenStream(&b);
+    before = (lv != NULL) ? lv_screenBuilderAwayMs(1, 60, NULL) : -1;
+    if (lv != NULL) lv_decoderDestroy(lv);
+
     lv = lvpOpenBuilderLog(&b, path, kLvpBuilderLeftStream, sizeof(kLvpBuilderLeftStream));
     if (lv == NULL) {
         remove(path);
         UT_FAIL("the second hand-built log could not be loaded");
     }
-    leftRan = lv_screenEventScanRun() ? 1 : 0;
-    lv_screenEventScanRestore();
+    leftRan = 1;
     leftKnown = lv_screenBuilderTripsKnown();
     left = lv_screenBuilderAwayMs(1, 60, &awayLeft);
     lv_decoderDestroy(lv);
     remove(path);
 
-    UT_ASSERT_MSG(!before, "a time with no scan");
-    UT_ASSERT_MSG(after && away == 100, "after the scan: %d, %u ms (want 100)",
+    UT_ASSERT_MSG(before == 0, "a time on a stream: %d", before);
+    UT_ASSERT_MSG(after && away == 100, "after the load: %d, %u ms (want 100)",
                   after, (unsigned)away);
     UT_ASSERT_MSG(atStart && awayStart == 100 && atEnd && awayEnd == 100,
                   "the time moved with playback: %u ms at the start, %u ms at "
@@ -1533,7 +1537,7 @@ int run_lv_builder_away_scan(void) {
     UT_ASSERT_MSG(!otherSlot, "a player whose builder was not killed has a time");
     UT_ASSERT_MSG(noSlot == 0, "a slot that is no player has a time");
     UT_ASSERT_MSG(!early, "a time two ticks before the death");
-    UT_ASSERT_MSG(leftRan && leftKnown, "the scan of the second log did not run");
+    UT_ASSERT_MSG(leftRan && leftKnown, "the load of the second log did not fill the table");
     UT_ASSERT_MSG(!left && awayLeft == 7, "the player left before the builder "
                   "was back: %d, %u ms (want no time)", left, (unsigned)awayLeft);
     return 0;
@@ -2682,10 +2686,11 @@ static void lvpPutTeam(LvpLog *b, uint8_t slot, uint8_t team) {
 /* A log that opens in a lobby has the lobby's opening map in its header. The
  * host then chooses another, twice; the round is played; the server names
  * its next map before the log ends; a player leaves and a bot takes the
- * slot. After the scan the log's map is the last one the lobby chose, and
+ * slot. After the load the log's map is the last one the lobby chose, and
  * the roster has all three players with their teams, and knows which one is
  * the bot: the name has the two people and "1 Bot". The header here says
- * "Test". */
+ * "Test". A log with a log_MapName record takes the record's name: the
+ * lobby's text is only for older logs, which have none. */
 int run_lv_save_name_scan(void) {
     const char     *path = "lv_save_name_scan.wbv";
     static LvpLog   b;
@@ -2694,12 +2699,11 @@ int run_lv_save_name_scan(void) {
     const char     *names[LV_ROSTER_MAX];
     unsigned char   teams[LV_ROSTER_MAX];
     unsigned char   bots[LV_ROSTER_MAX];
-    char            mapBefore[64], mapAfter[64], mapReload[64];
+    char            mapAfter[64], mapRecord[64];
     char            fileName[200];
     const uint8_t   slot1[1] = {1};
     static const uint8_t tail[] = {0x01, 0x03, 0x00};
-    int             count, countReload, i;
-    bool            ran;
+    int             count, i;
 
     lvpPutOpening(&b);
     lvpPutEvent(&b, log_LobbyEnter, NULL, 0);
@@ -2722,9 +2726,6 @@ int run_lv_save_name_scan(void) {
         UT_FAIL("the hand-built log could not be loaded");
     }
 
-    lv_screenGetMapName(mapBefore);
-    ran = lv_screenEventScanRun();
-    lv_screenEventScanRestore();
     lv_screenGetMapName(mapAfter);
     count = lv_screenGetRoster(rows, LV_ROSTER_MAX);
     for (i = 0; i < count; i++) {
@@ -2735,24 +2736,30 @@ int run_lv_save_name_scan(void) {
     lvSaveNameBuild(fileName, sizeof(fileName), 2026, 10, 13, 14, 5, mapAfter,
                     names, teams, bots, count);
 
-    /* A second load starts again from the header and an empty roster. */
     lv_decoderDestroy(lv);
+
+    /* The same lobby with a log_MapName record after it. */
+    b.len = 0;
+    lvpPutOpening(&b);
+    lvpPutEvent(&b, log_LobbyEnter, NULL, 0);
+    lvpPutJoin(&b, 0, "Canuck");
+    lvpPutText(&b, log_MessageServer, "Map changed to Oil Rig");
+    lvpPutEvent(&b, log_LobbyExit, NULL, 0);
+    lvpPutText(&b, log_MapName, "Recorded Map");
+    lvpPut(&b, tail, sizeof(tail));
     lv = lvpOpen(&b, path);
-    mapReload[0] = '\0';
-    countReload  = -1;
+    mapRecord[0] = '\0';
     if (lv != NULL) {
-        lv_screenGetMapName(mapReload);
-        countReload = lv_screenGetRoster(rows, LV_ROSTER_MAX);
+        lv_screenGetMapName(mapRecord);
         lv_decoderDestroy(lv);
     }
     remove(path);
 
-    UT_ASSERT_MSG(ran, "the scan refused a loaded file");
-    UT_ASSERT_MSG(strcmp(mapBefore, "Test") == 0, "the header's map is \"%s\"",
-                  mapBefore);
     UT_ASSERT_MSG(strcmp(mapAfter, "Oil Rig") == 0,
-                  "the map after the scan is \"%s\", not the lobby's last",
+                  "the map after the load is \"%s\", not the lobby's last",
                   mapAfter);
+    UT_ASSERT_MSG(strcmp(mapRecord, "Recorded Map") == 0,
+                  "with a log_MapName record the map is \"%s\"", mapRecord);
     UT_ASSERT_MSG(count == 3, "the roster has %d players", count);
     UT_ASSERT_MSG(bots[0] == 0 && bots[1] == 0 && bots[2] == 1,
                   "the bot marks are %d %d %d, not 0 0 1", bots[0], bots[1],
@@ -2760,8 +2767,5 @@ int run_lv_save_name_scan(void) {
     UT_ASSERT_MSG(strcmp(fileName, "2026-10-13 14.05 Oil Rig - Canuck vs "
                                    "rooklift, 1 Bot.wbv") == 0,
                   "the name is \"%s\"", fileName);
-    UT_ASSERT_MSG(strcmp(mapReload, "Test") == 0 && countReload == 0,
-                  "a reload kept the last scan: map \"%s\", %d players",
-                  mapReload, countReload);
     return 0;
 }

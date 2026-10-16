@@ -111,24 +111,19 @@ void lv_windowAddSummary(char *msg) {
     lv_imgui_events_add_summary(msg);
 }
 
-void lv_windowRemoveEventsAfter(uint32_t timeMs) {
-    lv_imgui_events_remove_after(timeMs);
+void lv_windowEventsRewound(void) {
+    lv_imgui_events_rewound();
 }
 
 void lv_windowRemoveEvents(void) {
     lv_imgui_events_clear();
 }
 
-/* Fill the events panel with every event of the loaded file, as the desktop
- * viewer does (logviewer.c has the full account). Only the WinBolo.net
- * browser path of imgui_main_menu.cpp calls it, which this page never
- * reaches: a log opened here goes through lv_windowOpenFile below, which
- * leaves the panel collecting line by line as it always has. */
+/* The events panel holds every event of the loaded file, as on the desktop
+ * viewer (logviewer.c has the full account). Only the WinBolo.net browser
+ * path of imgui_main_menu.cpp calls it, which this page never reaches. */
 void lv_windowCollectAllEvents(void) {
-    if (lv_screenEventScanRun()) {
-        lv_imgui_events_set_complete();
-        lv_screenEventScanRestore();
-    }
+    lv_imgui_events_set_complete();
 }
 
 /* imgui_hud.cpp asks the game's status-panel code (sdl3draw_status.c) where
@@ -258,9 +253,18 @@ void lv_windowOpenFile(char *cmdLine) {
             g_lv->isLoaded = FALSE;
         } else {
             g_lv->isLoaded = TRUE;
-            lv_imgui_events_clear();
             lv_windowNeedRedraw();
         }
+    }
+}
+
+/* A log held in memory, from the WinBolo.net browser. The browser build opens
+ * it in one call, as it does a file. Takes ownership of zipData. */
+void lv_windowOpenMemory(uint8_t *zipData, size_t zipLen) {
+    lv_windowStop(FALSE);
+    if (lv_screenLoadMapFromMemory(zipData, zipLen)) {
+        g_lv->isLoaded = TRUE;
+        lv_windowNeedRedraw();
     }
 }
 

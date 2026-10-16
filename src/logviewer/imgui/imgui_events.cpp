@@ -15,6 +15,7 @@
 #include "imgui_context.h"
 #include "imgui.h"
 #include "platform_config.h"
+#include "../lv_event_list.h"
 #include "../lv_event_kind.h"
 #include "../lv_event_overlay.h"
 #include "../lv_builder_status.h"
@@ -44,48 +45,22 @@ extern "C" {
     int lv_screenBuilderAwayMs(int slot, uint32_t deathMs, uint32_t *awayMs);
 }
 
-/* Event with associated playback timestamp, held in absolute log ms so the
- * displayed stamp can be rebuilt each frame against the presentation window.
- * Highlight clips also carry a seek target and a map cell so a click can jump
- * the scrubber and centre the view; an ordinary line jumps to its own time,
- * and carries a cell when its call site knew one. */
-struct LogEvent {
-    std::string text;
-    uint32_t timeMs;
-    int      kind     = LV_EVK_GAME;  /* lvEventKind, for the filter */
-    bool     showTime = false;  /* prefix the displayed line with its stamp */
-    bool     pinned   = false;  /* load-time summary: never hidden with the lobby */
-    bool     seekable = false;
-    bool     hasCell  = false;  /* mapX/mapY name a real map cell */
-    uint32_t seekMs = 0;
-    int      mapX = 0;
-    int      mapY = 0;
-    /* The teams of the players the line is about, as they were when it
-     * happened (lv_messageTagPlayers), -1 for none. */
-    int      team = -1;
-    int      otherTeam = -1;
-    /* The kind of ping the line is (lv_messageTagPing), -1 for a line that
-     * is not a map ping. */
-    int      ping = -1;
-    /* The player the line is about (lv_screenEventPlayer), -1 for none. */
-    int      player = -1;
-};
-
-/* Event list storage */
-static std::vector<LogEvent> s_events;
+/* The lines are kept by lv_event_list.c, in display order: the pinned
+ * summary lines and highlight clips first, then the timed lines by time.
+ * Each line carries what the filter, the markers and a click need (kind,
+ * map cell, teams, ping). */
 static bool s_auto_scroll = true;
 static bool s_scroll_to_bottom = false;
 
 /* The list has two phases. While collecting, it grows as the decoder posts
- * lines and a seek back takes the later ones off again: it holds what
- * playback has passed, and that is all a live feed can ever have. Once a
- * host that read the whole file ahead calls lv_imgui_events_set_complete, the
- * list is the whole log and nothing adds to it or removes from it; playback
- * then only moves the "now" divider through it. Clearing the list (a new
- * load) goes back to collecting. */
+ * lines, and the panel shows those up to the playhead: that is all a live
+ * feed can ever have. Once a host that read the whole file ahead calls
+ * lv_imgui_events_set_complete, the list is the whole log and nothing adds
+ * to it; playback then only moves the "now" divider through it. Clearing the
+ * list (a new load) goes back to collecting. */
 static bool s_complete = false;
 
-/* Bumped on every change to s_events, so the shown-lines cache below knows
+/* Bumped on every change to the list, so the shown-lines cache below knows
  * when to rebuild. In the complete phase nothing bumps it, which is what
  * makes a seek cost the panel nothing however often the scrubber fires. */
 static unsigned s_version = 1;
@@ -109,10 +84,11 @@ static unsigned s_filter = LV_OVERLAY_ALL_MASK;
  * line is still shown. */
 static bool s_scroll_to_selected = false;
 
-/* The lines the panel shows, after the lobby hiding and the filter: indexes
- * into s_events in display order, and each line's time for the binary search
- * that places the "now" divider (a pinned line counts as time 0, so it is
- * always in the past). Rebuilt only when one of its inputs changes. */
+/* The lines the panel shows, after the lobby hiding, the playhead (while
+ * collecting) and the filter: indexes into the list in display order, and
+ * each line's time for the binary search that places the "now" divider (a
+ * pinned line counts as time 0, so it is always in the past). Rebuilt only
+ * when one of its inputs changes. */
 static std::vector<int>      s_view;
 static std::vector<uint32_t> s_view_time;
 static int      s_kind_count[LV_EVK_COUNT];  /* per kind, lobby hiding applied */
@@ -120,6 +96,7 @@ static int      s_total_count = 0;           /* every kind, lobby hiding applied
 static unsigned s_view_version = 0;          /* s_version the cache was built at */
 static uint32_t s_view_window_start = 0;
 static unsigned s_view_filter = LV_OVERLAY_ALL_MASK;
+static int      s_view_now_end = -1;         /* end of the lines up to the playhead */
 
 /* Row the "now" divider was last scrolled to, so auto scroll moves the list
  * only when the divider does and leaves hand scrolling alone in between. */
@@ -141,7 +118,7 @@ static void save_filter(void) {
 void lv_imgui_events_init(void) {
     char val[256];
     char old[32];
-    s_events.clear();
+    lvEventListClear();
     s_complete = false;
     s_version++;
     s_auto_scroll = true;
@@ -168,18 +145,18 @@ void lv_imgui_events_add(int eventType, int kind, int mapX, int mapY,
     if (s_complete) {
         return;
     }
-    LogEvent e;
-    e.text     = std::string(msg);
-    e.timeMs   = lv_screenGetTimeRunning();
-    e.kind     = (kind >= 0 && kind < LV_EVK_COUNT) ? kind : LV_EVK_GAME;
-    e.showTime = (eventType == 0);
-    e.hasCell  = (mapX >= 0 && mapY >= 0);
-    e.mapX     = mapX;
-    e.mapY     = mapY;
-    lv_screenEventTeams(&e.team, &e.otherTeam);
-    e.ping     = lv_screenEventPing();
-    e.player   = lv_screenEventPlayer();
-    s_events.push_back(e);
+    /* NULL for a line a replay after a seek back posts again. */
+    LvEvent *e = lvEventListAdd(msg, lv_screenGetTimeRunning(), eventType == 0);
+    if (e == nullptr) {
+        return;
+    }
+    e->kind    = (kind >= 0 && kind < LV_EVK_COUNT) ? kind : LV_EVK_GAME;
+    e->hasCell = (mapX >= 0 && mapY >= 0);
+    e->mapX    = mapX;
+    e->mapY    = mapY;
+    lv_screenEventTeams(&e->team, &e->otherTeam);
+    e->ping    = lv_screenEventPing();
+    e->player  = lv_screenEventPlayer();
     s_version++;
 
     /* Mark for auto-scroll */
@@ -188,45 +165,38 @@ void lv_imgui_events_add(int eventType, int kind, int mapX, int mapY,
     }
 }
 
-void lv_imgui_events_add_highlight(const char *msg, uint32_t seekMs, int mapX,
-                                   int mapY) {
-    LogEvent e;
-    e.text = std::string(msg);
-    e.timeMs = 0;   /* load-time summary line: never rewound away on a seek */
-    e.kind = LV_EVK_HIGHLIGHT;
-    e.pinned = true;
-    e.seekable = true;
-    e.hasCell = true;
-    e.seekMs = seekMs;
-    e.mapX = mapX;
-    e.mapY = mapY;
-    s_events.push_back(e);
+/* A pinned line's fields that are not the list's own. */
+static void pinned_fields(LvEvent *e, bool hasCell) {
+    if (e == nullptr) {
+        return;
+    }
+    e->kind      = LV_EVK_HIGHLIGHT;
+    e->hasCell   = hasCell;
+    e->team      = -1;
+    e->otherTeam = -1;
+    e->ping      = -1;
+    e->player    = -1;
     s_version++;
-
     if (s_auto_scroll) {
         s_scroll_to_bottom = true;
     }
+}
+
+void lv_imgui_events_add_highlight(const char *msg, uint32_t seekMs, int mapX,
+                                   int mapY) {
+    /* Load-time summary line: pinned, so never hidden by the playhead. */
+    pinned_fields(lvEventListAddPinned(msg, true, seekMs, mapX, mapY), true);
 }
 
 /* Load-time round-summary line (awards, section headers): pinned above the feed
- * with no stamp of its own, so it is neither hidden with the lobby nor removed
- * by a rewind. */
+ * with no stamp of its own, so it is hidden neither with the lobby nor by the
+ * playhead. */
 void lv_imgui_events_add_summary(const char *msg) {
-    LogEvent e;
-    e.text   = std::string(msg);
-    e.timeMs = 0;
-    e.kind   = LV_EVK_HIGHLIGHT;
-    e.pinned = true;
-    s_events.push_back(e);
-    s_version++;
-
-    if (s_auto_scroll) {
-        s_scroll_to_bottom = true;
-    }
+    pinned_fields(lvEventListAddPinned(msg, false, 0, 0, 0), false);
 }
 
 void lv_imgui_events_clear(void) {
-    s_events.clear();
+    lvEventListClear();
     s_complete = false;
     s_version++;
     s_selected_index = -1;
@@ -235,57 +205,37 @@ void lv_imgui_events_clear(void) {
     s_last_divider_row = -1;
 }
 
-void lv_imgui_events_remove_after(unsigned int timeMs) {
-    /* The whole log is listed and stays listed: a rewind moves the "now"
-     * divider back, it does not take the later lines away. */
-    if (s_complete) {
-        return;
-    }
-    /* Remove events with timestamp strictly after timeMs */
-    while (!s_events.empty() && s_events.back().timeMs > timeMs) {
-        s_events.pop_back();
-        s_version++;
-    }
-    if (s_selected_index >= (int)s_events.size()) {
-        s_selected_index = -1;
-        s_clicked_index = -1;
-        s_select_all = false;
-    }
+void lv_imgui_events_rewound(void) {
+    lvEventListRewound();
 }
 
 /* The line of a lost builder says how long he was away, "(0:42)", after
  * its text: from his death to the tick the new builder was in the tank. The
- * time is out of the table the scan of the whole log has just filled, so
- * every line has it from the load on, the lines still to come too, and
- * playback does not change it. A builder who was not back when the log
- * ended, or when his player left, has no time and the line is as it was.
+ * time is out of the table the load's play of the whole log has just
+ * filled, so every line has it from the load on, the lines still to come
+ * too, and playback does not change it. A builder who was not back when the
+ * log ended, or when his player left, has no time and the line is as it was.
  * The text is part of the line, so the marker over the seek bar and Copy
  * say it too. */
 static void add_builder_away_times(void) {
-    for (LogEvent &e : s_events) {
+    const int count = lvEventListCount();
+    for (int i = lvEventListPinnedCount(); i < count; i++) {
+        LvEvent *e = lvEventListEdit(i);
         uint32_t awayMs = 0;
         char     away[LV_BUILDER_AWAY_TEXT_MAX];
-        if (e.kind != LV_EVK_BUILDER_LOST || e.pinned || e.player < 0) continue;
-        if (!lv_screenBuilderAwayMs(e.player, e.timeMs, &awayMs)) continue;
+        if (e == nullptr || e->kind != LV_EVK_BUILDER_LOST || e->player < 0) continue;
+        if (!lv_screenBuilderAwayMs(e->player, e->timeMs, &awayMs)) continue;
         lvBuilderAwayText(true, awayMs, away, sizeof(away));
-        e.text += away;
+        lvEventListAppendText(i, away);
         /* Once only: the line has its time. */
-        e.player = -1;
+        e->player = -1;
     }
 }
 
 void lv_imgui_events_set_complete(void) {
     add_builder_away_times();
-    /* The divider is placed by a binary search on time, so the lines must be
-     * in time order with the pinned summary lines in front. The decoder posts
-     * them that way already; the stable sort then changes nothing, and it
-     * keeps the order of lines that share a tick. */
-    std::stable_sort(s_events.begin(), s_events.end(),
-                     [](const LogEvent &a, const LogEvent &b) {
-                         if (a.pinned != b.pinned) return a.pinned;
-                         if (a.pinned) return false;
-                         return a.timeMs < b.timeMs;
-                     });
+    /* The list keeps the pinned lines in front and the timed ones in time
+     * order, which the binary search that places the divider needs. */
     s_complete = true;
     s_version++;
     s_selected_index = -1;
@@ -296,17 +246,17 @@ void lv_imgui_events_set_complete(void) {
 }
 
 int lv_imgui_events_get_count(void) {
-    return (int)s_events.size();
+    return lvEventListCount();
 }
 
 const char *lv_imgui_events_get_text(int i) {
-    if (i < 0 || i >= (int)s_events.size()) return "";
-    return s_events[i].text.c_str();
+    const LvEvent *e = lvEventListAt(i);
+    return e != nullptr ? e->text : "";
 }
 
 uint32_t lv_imgui_events_get_time(int i) {
-    if (i < 0 || i >= (int)s_events.size()) return 0;
-    return s_events[i].timeMs;
+    const LvEvent *e = lvEventListAt(i);
+    return e != nullptr ? e->timeMs : 0;
 }
 
 unsigned lv_imgui_events_version(void) {
@@ -314,21 +264,21 @@ unsigned lv_imgui_events_version(void) {
 }
 
 bool lv_imgui_events_get_info(int i, LvEventInfo *out) {
-    if (out == nullptr || i < 0 || i >= (int)s_events.size()) return false;
-    const LogEvent &e = s_events[i];
+    const LvEvent *e = lvEventListAt(i);
+    if (out == nullptr || e == nullptr) return false;
     /* A summary line is about the whole round, not about a moment. */
-    if (e.pinned && !e.seekable) return false;
-    if (!e.pinned && !e.showTime) return false;
-    out->timeMs    = e.seekable ? e.seekMs : e.timeMs;
-    out->kind      = e.kind;
-    out->highlight = e.seekable ? 1 : 0;
-    out->hasCell   = e.hasCell ? 1 : 0;
-    out->mapX      = e.mapX;
-    out->mapY      = e.mapY;
-    out->team      = e.team;
-    out->otherTeam = e.otherTeam;
-    out->ping      = e.ping;
-    out->text      = e.text.c_str();
+    if (e->pinned && !e->seekable) return false;
+    if (!e->pinned && !e->showTime) return false;
+    out->timeMs    = e->seekable ? e->seekMs : e->timeMs;
+    out->kind      = e->kind;
+    out->highlight = e->seekable ? 1 : 0;
+    out->hasCell   = e->hasCell ? 1 : 0;
+    out->mapX      = e->mapX;
+    out->mapY      = e->mapY;
+    out->team      = e->team;
+    out->otherTeam = e->otherTeam;
+    out->ping      = e->ping;
+    out->text      = e->text;
     return true;
 }
 
@@ -337,27 +287,38 @@ static void copy_to_clipboard(const char* text) {
     ImGui::SetClipboardText(text);
 }
 
-/* Build the line as displayed. Highlight clips read their stamp from the seek
- * target; ordinary timestamped lines from their own time. Both go through
- * lv_screenFormatTime, so the whole panel follows the presentation window. */
-static std::string compose_line(const LogEvent &e) {
+/* The longest line compose_line writes whole; a longer one is cut. */
+#define EVENT_LINE_MAX 1024
+
+/* Build the line as displayed, into buf, and return it. Highlight clips read
+ * their stamp from the seek target; ordinary timestamped lines from their own
+ * time. Both go through lv_screenFormatTime, so the whole panel follows the
+ * presentation window. A line with no stamp is its own text, and buf is not
+ * used. Nothing is allocated: the panel calls this for every row it draws,
+ * every frame. */
+static const char *compose_line(const LvEvent &e, char *buf, size_t bufSize) {
     char stamp[16];
     if (e.seekable) {
         lv_screenFormatTime(e.seekMs, stamp, sizeof(stamp));
-        return std::string("Highlight ") + stamp + " \xe2\x80\x94 " + e.text;
+        snprintf(buf, bufSize, "Highlight %s \xe2\x80\x94 %s", stamp, e.text);
+        return buf;
     }
     if (e.showTime) {
         lv_screenFormatTime(e.timeMs, stamp, sizeof(stamp));
-        return std::string(stamp) + " - " + e.text;
+        snprintf(buf, bufSize, "%s - %s", stamp, e.text);
+        return buf;
     }
     return e.text;
 }
 
-/* Lobby-period lines stay in the vector — un-ticking Hide Lobby brings them
- * straight back — but out of the panel, where they would sit at 00:00. */
-static bool event_is_hidden(const LogEvent &e, uint32_t windowStart) {
+/* Lobby-period lines stay in the list (un-ticking Hide Lobby brings them
+ * straight back) but out of the panel, where they would sit at 00:00. While
+ * the list is collecting, the lines after the playhead are out of it too:
+ * a seek back keeps them, and they come back as the playhead reaches them. */
+static bool event_is_hidden(const LvEvent &e, uint32_t windowStart, uint32_t nowMs) {
     if (e.pinned) return false;
-    return e.timeMs < windowStart;
+    if (e.timeMs < windowStart) return true;
+    return !s_complete && e.timeMs > nowMs;
 }
 
 static langid kind_label_id(int kind) {
@@ -380,34 +341,50 @@ const char *lv_imgui_events_kind_label(int kind) {
     return langGetText(kind_label_id(kind));
 }
 
-/* Count the lines of each kind the lobby hiding leaves. The counts are the
- * numbers in the filter's list, so they are taken before the filter. */
-static void count_kinds(uint32_t windowStart) {
+/* Count the lines of each kind the lobby hiding (and, while collecting, the
+ * playhead) leaves. The counts are the numbers in the filter's list, so they
+ * are taken before the filter. */
+static void count_kinds(uint32_t windowStart, uint32_t nowMs) {
     memset(s_kind_count, 0, sizeof(s_kind_count));
     s_total_count = 0;
-    for (const LogEvent &e : s_events) {
-        if (event_is_hidden(e, windowStart)) continue;
-        s_kind_count[e.kind]++;
+    const int count = lvEventListCount();
+    for (int i = 0; i < count; i++) {
+        const LvEvent &e = *lvEventListAt(i);
+        if (event_is_hidden(e, windowStart, nowMs)) continue;
+        if (e.kind >= 0 && e.kind < LV_EVK_COUNT) s_kind_count[e.kind]++;
         s_total_count++;
     }
 }
 
 /* Bring the shown-lines cache up to date. Cheap to call every frame: it
- * rebuilds only when the list, the presentation window or the filter has
- * changed since the last build. */
+ * rebuilds only when the list, the presentation window, the filter or (while
+ * collecting) the last line the playhead has reached has changed since the
+ * last build. */
 static void refresh_view(void) {
     uint32_t windowStart = lv_screenWindowStartMs();
-    if (s_view_version != s_version || s_view_window_start != windowStart) {
-        count_kinds(windowStart);
+    uint32_t nowMs       = lv_screenGetTimeRunning();
+    int      nowEnd      = -1;
+    if (!s_complete) {
+        int first;
+        lvEventListRange(0, nowMs, &first, &nowEnd);
+    }
+    if (s_view_version != s_version || s_view_window_start != windowStart ||
+        s_view_now_end != nowEnd) {
+        /* A seek that moves the last line shown scrolls like a new line. */
+        if (s_view_now_end != nowEnd && s_auto_scroll) {
+            s_scroll_to_bottom = true;
+        }
+        count_kinds(windowStart, nowMs);
     } else if (s_view_filter == s_filter) {
         return;
     }
     const unsigned filter = s_filter;
+    const int      count  = lvEventListCount();
     s_view.clear();
     s_view_time.clear();
-    for (int i = 0; i < (int)s_events.size(); i++) {
-        const LogEvent &e = s_events[i];
-        if (event_is_hidden(e, windowStart)) continue;
+    for (int i = 0; i < count; i++) {
+        const LvEvent &e = *lvEventListAt(i);
+        if (event_is_hidden(e, windowStart, nowMs)) continue;
         if (!lvEventKindTicked(filter, e.kind)) continue;
         s_view.push_back(i);
         s_view_time.push_back(e.pinned ? 0u : e.timeMs);
@@ -415,6 +392,7 @@ static void refresh_view(void) {
     s_view_version      = s_version;
     s_view_window_start = windowStart;
     s_view_filter       = filter;
+    s_view_now_end      = nowEnd;
     /* The rows moved under the divider: let auto scroll find it again. */
     s_last_divider_row = -1;
 }
@@ -422,8 +400,10 @@ static void refresh_view(void) {
 /* Every shown line, one per row, as Copy All puts it on the clipboard. */
 static std::string shown_lines_text(void) {
     std::string all_events;
+    char        buf[EVENT_LINE_MAX];
     for (int idx : s_view) {
-        all_events += compose_line(s_events[idx]) + "\r\n";
+        all_events += compose_line(*lvEventListAt(idx), buf, sizeof(buf));
+        all_events += "\r\n";
     }
     return all_events;
 }
@@ -477,8 +457,8 @@ static void draw_filter_combo(void) {
          * its kind is still ticked. A line the filter now hides cannot stay
          * selected: nothing would show it. Select All covers the lines that
          * are shown, so it stays as it is. */
-        if (s_selected_index >= 0 && s_selected_index < (int)s_events.size() &&
-            lvEventKindTicked(s_filter, s_events[s_selected_index].kind)) {
+        if (lvEventListAt(s_selected_index) != nullptr &&
+            lvEventKindTicked(s_filter, lvEventListAt(s_selected_index)->kind)) {
             s_scroll_to_selected = true;
         } else {
             s_selected_index = -1;
@@ -582,8 +562,8 @@ void lv_imgui_events_window(void) {
         ImGui::Separator();
 
         /* A click that seeks is acted on after the list is drawn: while the
-         * list is still collecting, the seek itself takes lines off it and
-         * posts them again, under the loop that is drawing them. */
+         * list is still collecting, the seek itself posts lines into it,
+         * which moves the rows under the loop that is drawing them. */
         bool     jump          = false;
         bool     jumpHighlight = false;
         bool     jumpCentre    = false; /* a click on the selected line */
@@ -660,9 +640,9 @@ void lv_imgui_events_window(void) {
                 int  viewIdx  = (divider && row > past) ? row - 1 : row;
                 int  i        = s_view[viewIdx];
                 bool isFuture = divider && viewIdx >= past;
-                const LogEvent &ev = s_events[i];
-                std::string composed = compose_line(ev);
-                const char* event_text = composed.c_str();
+                const LvEvent &ev = *lvEventListAt(i);
+                char line_buf[EVENT_LINE_MAX];
+                const char* event_text = compose_line(ev, line_buf, sizeof(line_buf));
 
                 /* Check if this item is selected */
                 bool is_selected = (s_select_all) || (s_selected_index == i);
@@ -734,10 +714,10 @@ void lv_imgui_events_window(void) {
                         const LvEventClick pick = lvEventClickPick(
                             i, s_select_all ? -1 : s_selected_index, s_clicked_index,
                             ImGui::GetIO().MouseClickedLastCount[ImGuiMouseButton_Left],
-                            (int)s_events.size());
+                            lvEventListCount());
                         const bool twice = pick.centre != 0;
                         const int target = pick.target;
-                        const LogEvent &tev = s_events[target];
+                        const LvEvent &tev = *lvEventListAt(target);
                         s_selected_index = target;
                         s_clicked_index = target;
                         s_select_all = false;
@@ -813,7 +793,7 @@ void lv_imgui_events_window(void) {
              * whole-log list is filled once, at load, so there it would
              * only throw the log's events away until the next load. */
             if (ImGui::MenuItem(langGetText(STR_LV_CLEAR_ALL), NULL, false,
-                                !s_events.empty() && !s_complete)) {
+                                lvEventListCount() > 0 && !s_complete)) {
                 lv_imgui_events_clear();
                 jump = false;
             }
