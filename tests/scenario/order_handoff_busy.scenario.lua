@@ -3,8 +3,9 @@
 --
 -- SHOOTING A PILL IS BUSY (ORDER_HANDOFF).  The same field as
 -- order_handoff_relief, but A is already in the pill's fire and shooting it
--- when the new order comes, so A answers "no" (Busy, taking pill) and the
--- free bot B takes the new order.
+-- when the new order comes.  A counts itself busy (taking pill), so it does
+-- not bid for the new order, and the free bot B takes it.  The busy check
+-- is inside A and sends no chat line; B winning the bid is the proof.
 --
 --   A (seat 0) at (106,113), 7 squares south of pill #2 (106,106): inside
 --   its range.  B (seat 1) at (150,150).  The orders come from seat 2, an
