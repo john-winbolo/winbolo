@@ -31,6 +31,7 @@
 #include "gui_message.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
+#include "../server/threads.h"  /* threadsCreate / threadsDestroy */
 #include "../gui/draw.h"
 #include "../gui/gamefront.h"
 #include "../gui/input.h"
@@ -235,6 +236,19 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  /* The thread manager's mutex, as the desktop creates it right after the
+     client mutex (winbolo.c). Without it the handle is NULL, SDL_LockMutex
+     does nothing, and the lock the hosted server timer thread (gamefront.c)
+     and the main thread take around the local server is fictional: each
+     overwrites the owner, and the timer thread dies on
+     serverSimApplyCommand's assertion that it holds the mutex, at the first
+     bot command of a single-player game. Found and fixed on iOS first. */
+  if (threadsCreate(FALSE) == FALSE) {
+    WB_LOG_ERROR(WB_LOG_CAT_PLATFORM, "[Android] Failed to create the threads mutex");
+    clientMutexDestroy();
+    return 1;
+  }
+
   /* Auto-detect appropriate zoom level based on screen height */
   {
     SDL_DisplayID disp = SDL_GetPrimaryDisplay();
@@ -261,6 +275,7 @@ int main(int argc, char *argv[]) {
     WB_LOG_ERROR(WB_LOG_CAT_PLATFORM, "[Android] gameFrontStart FAILED");
     clientMutexDestroy();
     SDL_Quit();
+    threadsDestroy();
     return 1;
   }
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] gameFrontStart OK");
@@ -340,6 +355,7 @@ int main(int argc, char *argv[]) {
       sdl3DrawCleanup();
       soundCleanup();
       SDL_Quit();
+      threadsDestroy();
       return 0;
     }
     /* lobbyResult == 1: game started. The UDP transport's
@@ -500,5 +516,6 @@ int main(int argc, char *argv[]) {
   sdl3DrawCleanup();
   soundCleanup();
   SDL_Quit();
+  threadsDestroy();
   return 0;
 }
