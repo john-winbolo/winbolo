@@ -45,8 +45,11 @@ extern "C" {
 
 /* An item's body as handed to imgui_markdown: linked thumbnails
  * unwrapped into plain images (see newsUnwrapLinkedImages), with the
- * links they carried kept so a click on the image still opens them. */
+ * links they carried kept so a click on the image still opens them.
+ * `md` is `unwrapped` with each image that failed to load turned into
+ * a link (see refreshFailedImages). */
 struct NewsBody {
+    std::string                   unwrapped;
     std::string                   md;
     std::vector<WbnNewsImageLink> links;
 };
@@ -69,6 +72,7 @@ static bool                  s_autoShowDecided = false;
 static int                   s_maxId        = 0;
 static std::vector<WbnNewsItem> s_sortedItems; /* id-desc */
 static std::vector<NewsBody>    s_bodies;      /* parallel to s_sortedItems */
+static unsigned                 s_failedSeen = 0; /* newsImageFailedCount at the last rebuild */
 
 /* ================================================================
  * Prefs helpers — [NEWS] AutoShow and [NEWS] LastSeenId.
@@ -237,10 +241,11 @@ static void collectFetchResultOnce(void) {
         s_bodies.reserve(s_sortedItems.size());
         for (const auto &item : s_sortedItems) {
             NewsBody body;
-            body.md = newsUnwrapLinkedImages(
+            body.unwrapped = newsUnwrapLinkedImages(
                 item.body_md ? std::string(item.body_md) : std::string(),
                 body.links);
-            body.md.append("\n");
+            body.unwrapped.append("\n");
+            body.md = body.unwrapped;
             s_bodies.push_back(std::move(body));
         }
         /* Propagate the resolved country code to the SP / LAN /
@@ -249,6 +254,21 @@ static void collectFetchResultOnce(void) {
         winbolonetSetCountryCode(wbn_news_fetch_country_code(s_fetch));
     }
     s_resultCollected = true;
+}
+
+/* imgui_markdown draws an image it has no texture for as
+ * "( Image <url> not loaded )". Once an image has failed for good,
+ * rebuild the bodies with it as a link instead, so it can still be
+ * opened in the browser. Runs again only when another image fails. */
+static void refreshFailedImages(void) {
+    const unsigned failed = newsImageFailedCount();
+    if (failed == s_failedSeen) return;
+    s_failedSeen = failed;
+    for (NewsBody &body : s_bodies) {
+        body.md = newsLinkFailedImages(
+            body.unwrapped, body.links,
+            [](const std::string &url) { return newsImageIsFailed(url.c_str()); });
+    }
 }
 
 /* ================================================================
@@ -401,6 +421,7 @@ static void renderNewsModal(void) {
         s_seedScrollFocus  = true;
     }
     newsImageCacheNewFrame();
+    refreshFailedImages();
 
     ImVec2 vp = ImGui::GetMainViewport()->Size;
     ImGui::SetNextWindowSize(ImVec2(vp.x * 0.8f, vp.y * 0.8f),
@@ -530,6 +551,7 @@ extern "C" void newsPopupShutdown(void) {
     s_sortedItems.shrink_to_fit();
     s_bodies.clear();
     s_bodies.shrink_to_fit();
+    s_failedSeen = 0;
 }
 
 extern "C" void newsPopupTick(void) {

@@ -36,6 +36,17 @@ extern "C" {
  * immediately. Must be called only from the UI thread. */
 SDL_Texture *newsImageGet(const char *url);
 
+/* True once url's image has failed for good: refused by the host
+ * allowlist, a download, decode or size failure, or no room within the
+ * cache's size limit. Such a URL is never downloaded again in this
+ * process. UI-thread only. */
+bool newsImageIsFailed(const char *url);
+
+/* How many images have failed since startup. It only goes up, so a
+ * caller that saw a different value last time knows to look again
+ * with newsImageIsFailed. UI-thread only. */
+unsigned newsImageFailedCount(void);
+
 /* Starts a new frame for the cache's eviction rule: an image returned
  * by newsImageGet in this frame or the previous one is never evicted.
  * Call once per frame, before the frame's newsImageGet calls, while

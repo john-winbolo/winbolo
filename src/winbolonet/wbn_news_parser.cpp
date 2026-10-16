@@ -118,15 +118,13 @@ bool hasHttpScheme(const std::string &url) {
            SDL_strncasecmp(url.c_str(), "https://", 8) == 0;
 }
 
-/* Tries to read "[![alt](image)](href)" starting at md[pos], which is
- * known to hold "[![". On success returns true and sets the parts and
- * `next`, the index just past the final ')'. */
-bool readLinkedImage(const std::string &md, size_t pos,
-                     size_t &altStart, size_t &altEnd,
-                     size_t &imgStart, size_t &imgEnd,
-                     size_t &hrefStart, size_t &hrefEnd,
-                     size_t &next) {
-    size_t p = pos + 3;
+/* Tries to read "![alt](image)" starting at md[pos], which is known to
+ * hold "![". On success returns true and sets the parts and `next`, the
+ * index just past the ')'. */
+bool readImage(const std::string &md, size_t pos,
+               size_t &altStart, size_t &altEnd,
+               size_t &imgStart, size_t &imgEnd, size_t &next) {
+    size_t p = pos + 2;
     altStart = p;
     while (p < md.size() && md[p] != ']') {
         if (md[p] == '[') return false;
@@ -138,7 +136,22 @@ bool readLinkedImage(const std::string &md, size_t pos,
     if (p >= md.size() || md[p] != '(') return false;
     p++;
     if (!readUrl(md, p, imgStart, imgEnd)) return false;
-    p++; /* past ')' */
+    next = p + 1;
+    return true;
+}
+
+/* Tries to read "[![alt](image)](href)" starting at md[pos], which is
+ * known to hold "[![". On success returns true and sets the parts and
+ * `next`, the index just past the final ')'. */
+bool readLinkedImage(const std::string &md, size_t pos,
+                     size_t &altStart, size_t &altEnd,
+                     size_t &imgStart, size_t &imgEnd,
+                     size_t &hrefStart, size_t &hrefEnd,
+                     size_t &next) {
+    size_t p;
+    if (!readImage(md, pos + 1, altStart, altEnd, imgStart, imgEnd, p)) {
+        return false;
+    }
     if (p + 1 >= md.size() || md[p] != ']' || md[p + 1] != '(') return false;
     p += 2;
     if (!readUrl(md, p, hrefStart, hrefEnd)) return false;
@@ -183,6 +196,48 @@ std::string newsUnwrapLinkedImages(const std::string &md,
         if (hasHttpScheme(link.href)) {
             outLinks.push_back(std::move(link));
         }
+        pos = next;
+    }
+    return out;
+}
+
+std::string newsLinkFailedImages(
+    const std::string &md, const std::vector<WbnNewsImageLink> &links,
+    const std::function<bool(const std::string &)> &failed) {
+    std::string out;
+    out.reserve(md.size());
+    size_t pos = 0;
+    while (pos < md.size()) {
+        size_t hit = md.find("![", pos);
+        if (hit == std::string::npos) {
+            out.append(md, pos, std::string::npos);
+            break;
+        }
+        out.append(md, pos, hit - pos);
+
+        size_t altStart, altEnd, imgStart, imgEnd, next;
+        if (!readImage(md, hit, altStart, altEnd, imgStart, imgEnd, next) ||
+            !failed(md.substr(imgStart, imgEnd - imgStart))) {
+            out.push_back('!');
+            pos = hit + 1;
+            continue;
+        }
+
+        const char *href = newsFindImageLink(links, md.data() + imgStart,
+                                             imgEnd - imgStart);
+        out.push_back('[');
+        if (altEnd > altStart) {
+            out.append(md, altStart, altEnd - altStart);
+        } else {
+            out.append(md, imgStart, imgEnd - imgStart);
+        }
+        out.append("](");
+        if (href) {
+            out.append(href);
+        } else {
+            out.append(md, imgStart, imgEnd - imgStart);
+        }
+        out.push_back(')');
         pos = next;
     }
     return out;

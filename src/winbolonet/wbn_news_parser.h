@@ -26,6 +26,7 @@
 #ifndef WBN_NEWS_PARSER_H
 #define WBN_NEWS_PARSER_H
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -60,13 +61,25 @@ struct WbnNewsImageLink {
  * A construct is only rewritten when both URLs are 1 to
  * WBN_NEWS_MD_MAX_URL bytes with no whitespace, control characters,
  * '(', ')', '[', ']', '<' or '>', and the alt text is at most
- * WBN_NEWS_MD_MAX_ALT bytes with no '[' or ']'. Anything else is copied unchanged. The
- * outer link is only recorded in outLinks when it starts with http://
- * or https://; otherwise the image is unwrapped and the link dropped.
- * The image URL is not checked here: news_image_cache applies its own
- * host allowlist. */
+ * WBN_NEWS_MD_MAX_ALT bytes with no '[' or ']'. Anything else is
+ * copied unchanged. The outer link is only recorded in outLinks when
+ * it starts with http:// or https://; otherwise the image is unwrapped
+ * and the link dropped. The image URL is not checked here:
+ * news_image_cache applies its own host allowlist. */
 std::string newsUnwrapLinkedImages(const std::string &md,
                                    std::vector<WbnNewsImageLink> &outLinks);
+
+/* Replaces each image "![alt](image)" in md for which failed(image) is
+ * true with a link "[alt](target)", so an image that cannot be shown
+ * can still be opened in the browser. target is the href recorded in
+ * links for that image, or the image URL itself; the link text is the
+ * alt text, or the image URL when there is none. Images are read by
+ * the same rules as newsUnwrapLinkedImages, and anything else is
+ * copied unchanged. Clicks still go through the caller's own scheme
+ * check. */
+std::string newsLinkFailedImages(
+    const std::string &md, const std::vector<WbnNewsImageLink> &links,
+    const std::function<bool(const std::string &)> &failed);
 
 /* Returns the href recorded for the image URL image[0..imageLen), or
  * nullptr if that image had no outer link. The first entry wins when

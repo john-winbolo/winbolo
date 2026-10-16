@@ -1,8 +1,9 @@
 /*
  * Tests for newsUnwrapLinkedImages and newsFindImageLink — the rewrite
  * that turns the website's linked thumbnails, [![alt](thumb)](full),
- * into plain images imgui_markdown can draw, keeping the link aside.
- * The body comes from the network, so most cases here are malformed
+ * into plain images imgui_markdown can draw, keeping the link aside —
+ * and for newsLinkFailedImages, which turns an image that failed to
+ * load into a link to it. The body comes from the network, so most cases here are malformed
  * or hostile input that must come back unchanged.
  */
 
@@ -248,6 +249,102 @@ static int md_find_image_link(void) {
     return 0;
 }
 
+/* ---- newsLinkFailedImages ---------------------------------------- */
+
+namespace {
+
+/* Runs newsLinkFailedImages with every URL in `failed` failed. */
+std::string linkFailed(const std::string &md,
+                       const std::vector<WbnNewsImageLink> &links,
+                       const std::vector<std::string> &failed) {
+    return newsLinkFailedImages(md, links, [&](const std::string &u) {
+        for (const auto &f : failed) {
+            if (f == u) return true;
+        }
+        return false;
+    });
+}
+
+} /* anonymous namespace */
+
+/* The 2.1 post's path end to end: a linked GIF thumbnail that fails
+ * becomes a link to the picture it linked to; one that loads stays an
+ * image. */
+static int failed_linked_image_links_to_href(void) {
+    std::vector<WbnNewsImageLink> links;
+    std::string md = unwrap(
+        "A [![Shells](https://h/shells.gif)](https://h/shells-full.gif) "
+        "B [![Map](https://h/map.png)](https://h/map-full.png)",
+        links);
+    std::string out = linkFailed(md, links, {"https://h/shells.gif"});
+    UT_ASSERT_MSG(out == "A [Shells](https://h/shells-full.gif) "
+                         "B ![Map](https://h/map.png)",
+                  "got \"%s\"", out.c_str());
+    return 0;
+}
+
+/* A plain image that fails links to itself; with no alt text the URL
+ * is the link text. */
+static int failed_plain_image_links_to_itself(void) {
+    std::vector<WbnNewsImageLink> none;
+    std::string out = linkFailed(
+        "![Big](https://h/big.gif) and ![](https://h/x.png)", none,
+        {"https://h/big.gif", "https://h/x.png"});
+    UT_ASSERT_MSG(out == "[Big](https://h/big.gif) and "
+                         "[https://h/x.png](https://h/x.png)",
+                  "got \"%s\"", out.c_str());
+    return 0;
+}
+
+static int failed_nothing_failed_is_unchanged(void) {
+    std::vector<WbnNewsImageLink> none;
+    const std::string md =
+        "![a](https://h/1.png) text [link](https://h/) ![b](https://h/2.png)";
+    std::string out = linkFailed(md, none, {});
+    UT_ASSERT_MSG(out == md, "got \"%s\"", out.c_str());
+    out = linkFailed(md, none, {"https://h/other.png"});
+    UT_ASSERT_MSG(out == md, "unrelated failure changed it: \"%s\"", out.c_str());
+    return 0;
+}
+
+/* Images the rewrite cannot read are left for imgui_markdown as they
+ * were, even when their URL has failed, and the predicate is only
+ * asked about images it could read. */
+static int failed_malformed_left_alone(void) {
+    std::vector<WbnNewsImageLink> none;
+    const char *cases[] = {
+        "![a](https://h/i.png",
+        "![a] (https://h/i.png)",
+        "![a[b]](https://h/i.png)",
+        "![a](https://h/i png)",
+        "![a]()",
+        "!",
+        "![",
+    };
+    for (const char *md : cases) {
+        int asked = 0;
+        std::string out = newsLinkFailedImages(md, none,
+            [&](const std::string &) { asked++; return true; });
+        UT_ASSERT_MSG(out == md, "%s: got \"%s\"", md, out.c_str());
+        UT_ASSERT_MSG(asked == 0, "%s: predicate asked %d times", md, asked);
+    }
+    return 0;
+}
+
+/* Near-miss bodies come back unchanged, in linear time. */
+static int failed_hostile_bodies(void) {
+    std::vector<WbnNewsImageLink> none;
+    const char *units[] = { "![", "![a", "![a](", "![a](https://h/i.png" };
+    for (const char *unit : units) {
+        std::string md;
+        while (md.size() < 512 * 1024) md += unit;
+        std::string out = newsLinkFailedImages(md, none,
+            [](const std::string &) { return true; });
+        UT_ASSERT_MSG(out == md, "%s: changed", unit);
+    }
+    return 0;
+}
+
 extern "C" int run_wbn_news_markdown(void) {
     int rc;
     rc = md_unwraps_live_feed_shape();     if (rc) return rc;
@@ -262,5 +359,10 @@ extern "C" int run_wbn_news_markdown(void) {
     rc = md_alt_length_cap();              if (rc) return rc;
     rc = md_hostile_bodies();              if (rc) return rc;
     rc = md_find_image_link();             if (rc) return rc;
+    rc = failed_linked_image_links_to_href();  if (rc) return rc;
+    rc = failed_plain_image_links_to_itself(); if (rc) return rc;
+    rc = failed_nothing_failed_is_unchanged(); if (rc) return rc;
+    rc = failed_malformed_left_alone();        if (rc) return rc;
+    rc = failed_hostile_bodies();              if (rc) return rc;
     return 0;
 }

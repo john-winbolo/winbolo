@@ -119,6 +119,7 @@ std::unordered_map<std::string, Entry>           g_cache;
 NewsImageBudget                                  g_budget(kMaxReadyBytes);
 std::vector<Worker>                              g_workers;    /* UI thread only */
 std::atomic<bool>                                g_shutdown{false};
+unsigned                                         g_failedCount = 0; /* under g_mutex */
 
 /* Guarantees the worker vector is empty by the time its static
  * destructor runs. Without this, a process that never explicitly
@@ -277,6 +278,7 @@ void workerBody(std::string url) {
     }
     if (!pixels) {
         it->second.state = State::Failed;
+        g_failedCount++;
         return;
     }
     it->second.pendingPixels = pixels;
@@ -321,6 +323,7 @@ void drainPending_locked() {
             stbi_image_free(e.pendingPixels);
             e.pendingPixels = nullptr;
             e.state = State::Failed;
+            g_failedCount++;
             continue;
         }
         for (const std::string &url : evicted) evict_locked(url);
@@ -343,6 +346,7 @@ void drainPending_locked() {
         if (!tex) {
             g_budget.forget(kv.first);
             e.state = State::Failed;
+            g_failedCount++;
             continue;
         }
 
@@ -391,6 +395,7 @@ SDL_Texture *newsImageGet(const char *url) {
         Entry e;
         e.state = State::Failed;
         g_cache.emplace(key, e);
+        g_failedCount++;
         return nullptr;
     }
 
@@ -411,6 +416,18 @@ SDL_Texture *newsImageGet(const char *url) {
         g_workers.push_back(Worker{std::move(t), done});
     }
     return nullptr;
+}
+
+bool newsImageIsFailed(const char *url) {
+    if (!url) return false;
+    std::lock_guard<std::mutex> lk(g_mutex);
+    auto it = g_cache.find(url);
+    return it != g_cache.end() && it->second.state == State::Failed;
+}
+
+unsigned newsImageFailedCount(void) {
+    std::lock_guard<std::mutex> lk(g_mutex);
+    return g_failedCount;
 }
 
 void newsImageCacheNewFrame(void) {
@@ -447,6 +464,7 @@ void newsImageCacheShutdown(void) {
     }
     g_cache.clear();
     g_budget.clear();
+    g_failedCount = 0;
 
     /* g_shutdown stays true after the join. A second
      * newsImageCacheShutdown() call is therefore a no-op, and any
