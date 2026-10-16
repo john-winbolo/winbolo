@@ -1217,6 +1217,10 @@ local BASE_EXTRA = 3000
 -- at the prize: the brain's habit of turning to shoot at a man near a pillbox
 -- it is going to pick up is off, because a hunter's man near the prize had
 -- the tank turning to him and back to the prize, over and over, at range.
+-- It fights tanks the ordinary way (the brain's default), because its gun is
+-- filled while the prize stands. The move costs 1 and a tank fight 5 or
+-- more, so a fight wins only when the move is not on offer, such as when he
+-- has fewer than PILL_REPOSITION_MIN_SHELLS shells.
 --
 -- guard: the holder once a fort has put the prize down. It has shells again,
 -- so it fights, and it goes to the fort's defence as soon as the fort is
@@ -1271,7 +1275,6 @@ local ROLES = {
   hop = {
     flags = { "noblitz", "nosuicider", "ammoless" },
     cfg = {
-      TANK_COMBAT_ENABLED       = false,
       PILL_REPOSITION_ENABLED   = true,
       REPOSITION_SCORE_INTERVAL = 10,
       ORDER_GOTO_HOLD_TICKS     = RUN_PARK_TICKS,
