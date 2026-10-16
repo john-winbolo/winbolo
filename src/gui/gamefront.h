@@ -42,10 +42,10 @@
 
 
 /* Default keys — SDL_Scancode values (USB HID page 07) */
-#define DEFAULT_FORWARD      8    /* SDL_SCANCODE_E */
-#define DEFAULT_BACKWARD     7    /* SDL_SCANCODE_D */
-#define DEFAULT_LEFT         22   /* SDL_SCANCODE_S */
-#define DEFAULT_RIGHT        9    /* SDL_SCANCODE_F */
+#define DEFAULT_FORWARD      26   /* SDL_SCANCODE_W */
+#define DEFAULT_BACKWARD     22   /* SDL_SCANCODE_S */
+#define DEFAULT_LEFT         4    /* SDL_SCANCODE_A */
+#define DEFAULT_RIGHT        7    /* SDL_SCANCODE_D */
 #define DEFAULT_SHOOT        44   /* SDL_SCANCODE_SPACE */
 #define DEFAULT_LAY_MINE     225  /* SDL_SCANCODE_LSHIFT */
 
@@ -96,7 +96,7 @@
 #define DEFAULT_SCROLL_PILLVIEW     10   /* SDL_SCANCODE_G */
 
 /* Voice — both bound to nothing else, and both under the left hand. Q sits
-   beside the movement keys (E/D/S/F) because push to talk is held while
+   beside the movement keys (W/A/S/D) because push to talk is held while
    driving; Z is a corner away because the mute toggle is pressed once and
    wants to be hard to hit by accident. */
 #define DEFAULT_PUSHTOTALK   20   /* SDL_SCANCODE_Q */

@@ -619,6 +619,8 @@ end
 -- who ask for the same thing are asking for ONE job, so the second line is a
 -- repeat of the first (it refreshes the focus and gets the "Still on it."
 -- line) rather than a second order the bots would have to fight over.
+-- Every order id is a hash taken mod OID_MOD, so a good one is 0..OID_MOD-1.
+M.OID_MOD = 16777213
 function M.order_id(sender, cmd)
   local w = cmd.who or {}
   local wk = w.mode or "auto"
@@ -637,7 +639,7 @@ function M.order_id(sender, cmd)
   local key = string.format("%s|%s|%s|%s", cmd.verb or "",
                             wk, t.kind or "-", tostring(t.id or t.pn or "-"))
   local h = 5381
-  for i = 1, #key do h = (h * 33 + key:byte(i)) % 16777213 end
+  for i = 1, #key do h = (h * 33 + key:byte(i)) % M.OID_MOD end
   return h
 end
 
@@ -768,9 +770,19 @@ end
 
 -- The nearest friendly base by this bot's own path cost, and that cost.
 -- The Dijkstra slate first, as in travel_cost; Manhattan x ORDER_TILE_COST
--- when the slate has not reached the base.  A base last seen with nothing
--- in it at all is skipped.  Ties go to the lower base id.
-local function nearest_friendly_base(world, info)
+-- when the slate has not reached the base.  Ties go to the lower base id.
+-- The base rules are the refuel goal's own (U.refuel_base_verdict), with
+-- the stop's reason as the one resource we need (why = "shells" or
+-- "armour") and now = state.tick, the clock obs_tick is written with:
+--   empty      seen (any age) with 0 of that resource: skipped
+--   low_stock  seen within REFUEL_OBS_STALE with less than
+--              REFUEL_MIN_STOCK of it: skipped
+--   markup     the path cost x REFUEL_LOW_SHELLS_MULT / _ARMOUR_MULT for a
+--              fresh observation below REFUEL_MIN_STOCK.  With one need a
+--              base that low is skipped by low_stock first, so this only
+--              shows when now is 0.
+local function nearest_friendly_base(world, info, why, now)
+  local need_s, need_a = why == "shells", why == "armour"
   local boat = info.inboat and 1 or 0
   local tmx = bit.rshift(info.tankx or 0, 8)
   local tmy = bit.rshift(info.tanky or 0, 8)
@@ -780,13 +792,16 @@ local function nearest_friendly_base(world, info)
   table.sort(ids)
   for _, id in ipairs(ids) do
     local b = world.bases[id]
-    local empty = b.obs_tick and (b.obs_shells or 0) == 0 and (b.obs_armour or 0) == 0
-    if b.owner == "friendly" and b.mx and b.my and not empty then
-      local c = cpf.smart_cost_dij_only(cpf.KIND_NORMAL, b.mx, b.my, boat)
-      if not c or c >= 1e29 then
-        c = U.mdist(tmx, tmy, b.mx, b.my) * (C.ORDER_TILE_COST or 4)
+    if b.owner == "friendly" and b.mx and b.my then
+      local reject, mult = U.refuel_base_verdict(b, need_a, need_s, now)
+      if not reject then
+        local c = cpf.smart_cost_dij_only(cpf.KIND_NORMAL, b.mx, b.my, boat)
+        if not c or c >= 1e29 then
+          c = U.mdist(tmx, tmy, b.mx, b.my) * (C.ORDER_TILE_COST or 4)
+        end
+        c = c * mult
+        if not best or c < best then best, bid, bb = c, id, b end
       end
-      if not best or c < best then best, bid, bb = c, id, b end
     end
   end
   return bb, bid, best
@@ -807,7 +822,13 @@ end
 -- THE BID (ORDER_BID_STOP_AWARE, 2026-10-04).  Answers the total and a table
 -- of every term, so a log line can show how the number was made:
 --   path    travel_cost, bot -> target (the old bid, unchanged)
---   detour  refuel stop only: (bot -> base) + (base -> target) - path
+--   detour  refuel stop only: (bot -> base) + (base -> target) - path,
+--           never under 0.  The base -> target leg is a straight-line
+--           estimate and can come in under the real path, which would make
+--           a stop cheaper than no stop.  The base is the nearest friendly
+--           base that passes the refuel goal's base rules for the
+--           resource the stop is for (nearest_friendly_base), and bot ->
+--           base carries its low-stock markup.
 --   fill    refuel stop only: ORDER_BID_REFUEL_STOP_COST
 --   engaged goal is attack_tank or kill_lgm: ORDER_BID_ENGAGED_COST
 --   total = path + detour + fill + engaged
@@ -821,11 +842,11 @@ function M.bid_cost(state, world, info, spec)
     local stop, why = M.refuel_stop(info, spec)
     if stop then
       local mx, my = M.target_tile(world, state, spec)
-      local b, bid, to_base = nearest_friendly_base(world, info)
+      local b, bid, to_base = nearest_friendly_base(world, info, why, state.tick or 0)
       if b and mx then
         local from_base, est = base_to_target(b.mx, b.my, mx, my)
         t.stop, t.base, t.to_base, t.from_base, t.est = why, bid, to_base, from_base, est
-        t.detour = to_base + from_base - path
+        t.detour = math.max(0, to_base + from_base - path)
         t.fill = C.ORDER_BID_REFUEL_STOP_COST or 0
       else
         t.stop = why .. ",nobase"
@@ -1292,6 +1313,25 @@ function M.rx(sender, text, tick, state)
   -- (ORDER_HANDOFF_MAX_HOPS, see relief_msg); the bare form is hop 1, with
   -- the sender as the only bot in the chain and the one that asks.
   local qo, qh, qm, qr, qa = text:match("^/info obq (%d+) (%d+) (%d+) (%d+) (%d+)$")
+  -- A LONG FORM WITH A FIELD OUT OF RANGE IS DROPPED WHOLE (PR #510 review
+  -- item 5).  No bot sends one; a line typed by hand, or garbled, could
+  -- otherwise put a hop past the cap, an empty or oversized chain mask, a
+  -- root no order id can be, or an asker that is no seat into the relief.
+  -- It is still answered true, so nothing else parses it.
+  if qo then
+    local h, m = tonumber(qh), tonumber(qm)
+    local r, a = tonumber(qr), tonumber(qa)
+    local bad = nil
+    if h < 1 or h > (C.ORDER_HANDOFF_MAX_HOPS or 0) + 1 then bad = "hop"
+    elseif m == 0 or m >= 65536 then bad = "mask"
+    elseif r >= M.OID_MOD then bad = "root"
+    elseif a > 15 then bad = "asker" end
+    if bad then
+      print2(string.format("ORDER_RX_BAD obq from p%s field=%s line=%q t=%d",
+             tostring(sender), bad, text, tick))
+      return true
+    end
+  end
   oid = qo or text:match("^/info obq (%d+)$")
   if oid then
     local o = S(state)
@@ -1399,8 +1439,8 @@ M.forget_order = forget_order
 -- RETIRED ORDERS (ORDER_HANDOFF).  A bot forgets an order another bot still
 -- holds: a newer person's order retires it (clear_older_orders), or it ages
 -- out of o.known (the prune).  The holder may still ask for relief on it
--- (obq), and a bot that has forgotten it could not take it.  So the spec and
--- its holders are kept in o.retired, which nothing else reads: no auction,
+-- (obq), and a bot that has forgotten it could not take it.  So the spec, its
+-- want (how many bots it asks for) and its holders are kept in o.retired, which nothing else reads: no auction,
 -- steal or pickup ever sees it.  Only a relief brings it back into o.known.
 -- An entry ends when the order is cancelled (obx), or when its last holder
 -- releases it.  Knob off: plain forget_order, as before.
@@ -1415,7 +1455,7 @@ local function retire_order(o, oid, me)
   forget_order(o, oid)
   if keep then
     o.retired = o.retired or {}
-    o.retired[oid] = { spec = k.spec, holders = keep }
+    o.retired[oid] = { spec = k.spec, want = k.want, holders = keep }
   end
 end
 
@@ -1651,7 +1691,8 @@ end
 --
 -- state._human_decoy = { tid, pmx, pmy, pn, hx, hy (the human's last seen
 -- world position), since, last (last think the tests held), b, why (the
--- block), dh, dme (human / our distance to the pill, world units) }.
+-- block), dh, dme (human / our distance to the pill, world units), bot
+-- (true when the decoy is an ally bot, C.HUMAN_DECOY_ALLY_BOTS) }.
 -- init.lua calls M.human_decoy_check every think, before the human-near run
 -- and the charge-now rules read it.  attack.lua reads it for the standoff
 -- costs (attack.human_decoy_cost) and the re-pick.  With the master off it
@@ -1667,12 +1708,20 @@ local HUMAN_DECOY_BLOCKS = { wall = true, wall_damaged = true, pill = true }
 -- our tank.  The pill shoots the closest one, so that one is the answer
 -- (lowest player number on a tie).  Answers the object, its distance and
 -- ours to the pill centre in world units.
+--
+-- 2026-10-14 (Andrew): AN ALLY BOT DECOYS TOO (C.HUMAN_DECOY_ALLY_BOTS).
+-- With the knob on, a visible ally bot counts under the same tests as a
+-- human (in range, closer to the pill than us, the block test in
+-- human_decoy_check).  The test is strictly closer, so two bots never
+-- each take the other as the decoy.  Everything downstream reads the
+-- chosen ally from state._human_decoy (pn, hx, hy), human or bot.
 local function human_decoy_target(info, p)
   local OT = _G.OBJECT_TANK
   local OH = _G.OBJECT_HOSTILE or 0
   local allies, bots = info.allies or 0, info.player_bots or 0
   -- The gate's stand-in humans (C.HUMAN_DECOY_TEST_HUMANS, 0 in play).
   bots = bit.band(bots, bit.bnot(C.HUMAN_DECOY_TEST_HUMANS or 0))
+  if C.HUMAN_DECOY_ALLY_BOTS then bots = 0 end
   local me = info.player_number
   local R = C.PILL_FIRE_RANGE or 8
   local pwx, pwy = U.m2w(p.mx), U.m2w(p.my)
@@ -1789,10 +1838,16 @@ function M.human_decoy_check(state, world, info, now)
     end
     f.pn, f.hx, f.hy, f.last = ob.idnum, ob.x, ob.y, now
     f.b, f.why, f.dh, f.dme = b, bwhy, dh, dme
+    f.bot = bit.band(info.player_bots or 0, bit.lshift(1, ob.idnum or 0)) ~= 0
+            and bit.band(C.HUMAN_DECOY_TEST_HUMANS or 0, bit.lshift(1, ob.idnum or 0)) == 0
     if fresh then
-      print2(human_decoy_line("HUMAN_DECOY_ON", f, now, ""))
-      sayg(state, string.format("Staying wide of %s on pill #%s",
-                                player_name(info, f.pn), tostring(tid)))
+      print2(human_decoy_line("HUMAN_DECOY_ON", f, now, f.bot and " ally=bot" or " ally=human"))
+      -- Said for a human only.  A bot decoy (HUMAN_DECOY_ALLY_BOTS) reads
+      -- no chat, and the line would be bot-to-bot noise.
+      if not f.bot then
+        sayg(state, string.format("Staying wide of %s on pill #%s",
+                                  player_name(info, f.pn), tostring(tid)))
+      end
     end
   elseif f then
     -- The tests failed this think: keep the human's latest seen position,
@@ -2125,6 +2180,101 @@ local function decoy_pills(world, mx, my)
 end
 M.decoy_pills = decoy_pills
 
+-- 2026-10-14 (Andrew): WHAT IS STANDING ON A GO-THERE SQUARE.  A go-there
+-- order arrives on the square itself, but some squares cannot be driven
+-- onto: another tank is parked there (PillboxTag sends hunters onto a
+-- tank's square), a pillbox sits there, or it is a wall.  This returns
+-- "tank", "pill" or "wall" for such a square, else nil.  Any tank counts
+-- (any team) except this bot's own; any pill on the map counts (any owner;
+-- a carried pill holds no square); a wall is a building or damaged building
+-- square.  Called only while the tank is in the one-square ring and has not
+-- arrived, so the object and pill scans stay rare.
+function M.goto_target_blocked(world, info, mx, my)
+  local OT = _G.OBJECT_TANK
+  local me = info and info.player_number
+  for _, ob in ipairs((info and info.objects) or {}) do
+    if ob.type == OT and ob.idnum ~= me
+       and bit.rshift(ob.x or 0, 8) == mx and bit.rshift(ob.y or 0, 8) == my then
+      return "tank"
+    end
+  end
+  for _, p in pairs((world and world.pills) or {}) do
+    if not p.in_tank and p.mx == mx and p.my == my then return "pill" end
+  end
+  if _G.get_terrain then
+    local tt = U.ttype_peek(mx, my)
+    if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return "wall" end
+  end
+  return nil
+end
+
+-- 2026-10-15: THE NEAREST SQUARE A ROUTE REACHES (ORDER_GOTO_RETARGET_
+-- UNREACHABLE).  Reads the FINISHED long-range KIND_NORMAL Dijkstra slates
+-- (slates 2 and 3: the tank's own route searches over the whole map, with
+-- boats allowed, as the bid's route is) that were started in the tank's
+-- current mode (afloat or not).  The short slates (0 and 1) are not read:
+-- they are land-only for a tank on land, so a square across water reads as
+-- "no route" there (pilltag_base_boost: a go-there to (129,129) was moved to
+-- (148,107), 20 squares off, and seat 0 lost the prize).  A slate is used only
+-- when it is up to date for this order and this tank: it started at or
+-- after `after` (the order's start, so a map change made before the order
+-- is in it), and it reaches the tank's own square (so its source is on the
+-- tank's ground: a tank moved by a script, or a slate from before a death,
+-- is not read as "no route").  A square counts as reached when any used
+-- slate has a route to it.  Returns nx, ny, checked.
+-- checked is false when no such slate has finished yet (ask again later).
+-- When (mx, my) is reached, nx is nil: nothing to change.  When it is not,
+-- nx, ny is the nearest square that is -- nearest by the larger of the two
+-- axes, then by route cost -- searched ring by ring out from the square
+-- (nil when no square on the map is reached).
+local COST_UNREACHED = 1e29
+function M.goto_reachable_near(info, mx, my, after)
+  if not (cpf.dijkstra_status and cpf.dijkstra_cost_at) then return nil, nil, true end
+  local boat = (info and info.inboat) and 1 or 0
+  local tmx = info and info.tankx and bit.rshift(info.tankx, 8)
+  local tmy = info and info.tanky and bit.rshift(info.tanky, 8)
+  -- A slate's own source square reads as unreached (brain_pathfinder.c),
+  -- so it is counted as reached here by hand.
+  local slates, srcs = {}, {}
+  for sl = 2, 3 do
+    local _, done, kind, started, _, _, _, sx, sy, sb = cpf.dijkstra_status(sl)
+    if done and kind == cpf.KIND_NORMAL and (sb or 0) == boat
+       and (started or 0) >= (after or 0) and tmx
+       and ((sx == tmx and sy == tmy)
+            or cpf.dijkstra_cost_at(sl, tmx, tmy, boat) < COST_UNREACHED) then
+      slates[#slates + 1] = sl
+      srcs[#srcs + 1] = { sx, sy }
+    end
+  end
+  if #slates == 0 then return nil, nil, false end
+  local function cost(x, y)
+    local best = COST_UNREACHED
+    for k = 1, #slates do
+      if srcs[k][1] == x and srcs[k][2] == y then return 0 end
+      local c = cpf.dijkstra_cost_at(slates[k], x, y, boat)
+      if c < best then best = c end
+    end
+    return best
+  end
+  if cost(mx, my) < COST_UNREACHED then return nil, nil, true end
+  for r = 1, 255 do
+    local bx, by, bc = nil, nil, COST_UNREACHED
+    for dy = -r, r do
+      for dx = -r, r do
+        if dx == r or dx == -r or dy == r or dy == -r then
+          local x, y = mx + dx, my + dy
+          if U.in_map(x, y) then
+            local c = cost(x, y)
+            if c < bc then bx, by, bc = x, y, c end
+          end
+        end
+      end
+    end
+    if bx then return bx, by, true end
+  end
+  return nil, nil, true
+end
+
 -- The hold goal: the same goto_tile pick_goal hands back in a hold, marked
 -- so the end of the decoy can tell it from any other goto_tile.  A NEW
 -- table every call: clear_attack_goal wipes the live goal in place.
@@ -2370,6 +2520,9 @@ local function take_order(state, world, info, spec, cost, now, group, stolen, sw
     -- ping = it came from a bot-command ping.  Only a ping order on open
     -- ground can become a decoy hold (see GO-THERE DECOY HARD HOLD).
     ping = spec.ping,
+    -- force = a scenario hint forced it (C.ORDER_HINT_FORCE): attack.lua
+    -- keeps the attack_pill take through its preference aborts.
+    force = spec.force,
     -- group = two or more bots on ONE order. squad.lua reads it so an ordered
     -- pair on the same live pill runs the blitz instead of arriving one at a
     -- time.
@@ -2444,7 +2597,9 @@ local function take_order(state, world, info, spec, cost, now, group, stolen, sw
     end
   end
   if say_line and say_line ~= "" then sayg(state, say_line) end
-  if not terms then
+  -- The terms only feed the ORDER_TAKE log line below, so the bid is not
+  -- run again when print2 is off.
+  if not terms and _G._PRINT2_ENABLED then
     local _, t = M.bid_cost(state, world, info, spec)
     terms = t
   end
@@ -2980,6 +3135,12 @@ local function start_order(state, world, info, spec, who, now, want)
   o.auctions[spec.oid] = {
     spec = spec, open = now, bids = {}, answered = {}, want = want or 1,
   }
+  -- 2026-10-14 (PR #510 review item 2): the order line's slot count stays
+  -- on the known record after the auction settles, so an offer (obo) of a
+  -- count line ("4 attack 5") re-opens its auction for all of its slots.
+  -- A ping keeps its count on the anchor instead.
+  local kw = o.known[spec.oid]
+  if kw and (want or 1) > (kw.want or 1) then kw.want = want end
   M.merge_early_bids(o, spec.oid, now)
   local bid = cost and math.floor(math.min(cost, 999999))
               or (busy and M.BID_BUSY or -1)
@@ -3298,9 +3459,12 @@ end
 -- are one order and nothing more: goto, attack, defend and hold.  Three are
 -- a STANDING instruction that outlives a single order -- patrol, escort and
 -- avoid -- so they are kept on the order state and M.hint_update carries
--- them a step each think.  An eighth verb somebody invented is ignored in
--- silence: a brain is allowed not to know a word, and answering back would
--- make every scenario written for another brain noisy here.
+-- them a step each think.  An eighth, `release`, gives no order: it ends the
+-- one the bot holds (C.ORDER_RELEASE_HINT; see hint_release; no script
+-- sends it today, it is kept for a future one).  A verb
+-- somebody invented is ignored in silence: a brain is allowed not to know a
+-- word, and answering back would make every scenario written for another
+-- brain noisy here.
 -- =========================================================================
 
 -- The sender a hint is filed under.  Not a seat: player numbers run 0..15,
@@ -3308,6 +3472,10 @@ end
 -- their own order never takes a scripted one away by accident.
 local HINT_SENDER = 255
 M.HINT_SENDER = HINT_SENDER
+
+-- The engine's pill count (MAX_PILLS in src/bolo/public/types.h).  A hint's
+-- 1-based pill number above it names no pill.
+local HINT_MAX_PILLS = 16
 
 -- A hint's numbers are decimal text.  nil for anything that is not a number.
 local function hint_num(v)
@@ -3408,6 +3576,7 @@ local function hint_start(state, world, info, cmd, now)
     tid = tid, sender = HINT_SENDER, sender_name = "scenario",
     mx = cmd.target and cmd.target.mx, my = cmd.target and cmd.target.my,
     needs_shells = needs_shells, who = cmd.who, ping = cmd.ping,
+    force = cmd.force,
   }
   o.known[spec.oid] = { spec = spec, tick = now }
   note_last(o, HINT_SENDER, spec.oid)
@@ -3415,7 +3584,18 @@ local function hint_start(state, world, info, cmd, now)
   -- The same hint again, while it is still held, refreshes the focus rather
   -- than restarting the job -- what a repeated chat line does.
   if o.held and o.held.oid == spec.oid then
-    o.held.expiry = now + (C.ORDER_FOCUS_TICKS or 3000)
+    -- A go-there order in its HOLD phase gets the hold clock again, as the
+    -- repeated chat line does (on_chat, "the hold clock once it has
+    -- arrived").  The 60 s focus here made a "hold" hint sent every 500
+    -- ticks keep the bot on its square for ever.  ORDER_HINT_HOLD_EXPIRY_FIX,
+    -- keel false (the focus for every refresh, as before).
+    if o.held.hold and C.ORDER_HINT_HOLD_EXPIRY_FIX then
+      o.held.expiry = now + (C.ORDER_GOTO_HOLD_TICKS or 500)
+    else
+      o.held.expiry = now + (C.ORDER_FOCUS_TICKS or 3000)
+    end
+    -- The newest hint says whether the order is forced.
+    o.held.force = spec.force
     return true
   end
   print2(string.format("HINT_START t=%d verb=%s kind=%s tid=%s", now,
@@ -3455,6 +3635,29 @@ local function hint_command(state, world, info, t)
   end
 
   if v == "attack" then
+    -- `pill = N` (C.ORDER_HINT_ATTACK_PILL): the order a person gets with
+    -- "attack pill <id>".  N is the SCRIPT's number for the pillbox, which
+    -- is 1-based (game.pill(N)); the brain's pill ids are the engine's
+    -- 0-based slots, so the order is on pill N - 1.  A bad number drops the
+    -- hint; it does not fall back to `player`.  Knob off: the key is not
+    -- read, and an attack with only `pill` is ignored as before.
+    if C.ORDER_HINT_ATTACK_PILL and t.pill ~= nil then
+      -- A whole number from 1 to the engine's pill count (MAX_PILLS, 16).
+      -- "2.7" is dropped, not floored to 2: the script meant some other
+      -- pill, or none.
+      local n = tonumber(t.pill)
+      if not n or n ~= math.floor(n) or n < 1 or n > HINT_MAX_PILLS then
+        return nil
+      end
+      -- `force = true` (C.ORDER_HINT_FORCE): the order is FORCED -- the
+      -- attack does not give the pill up for a preference (an enemy builder
+      -- near it, low armour; attack.lua M.order_forced).  Only the scenario
+      -- hint can set it: no chat line or bot command has the word.
+      local force = C.ORDER_HINT_FORCE
+                    and (t.force == "true" or t.force == "1" or t.force == true) or nil
+      return { verb = "attack", who = who, target = { kind = "pill", id = n - 1 },
+               force = force }
+    end
     local pn = hint_num(t.player)
     if not pn or pn < 0 or pn >= ally_state.MAX_TANKS then return nil end
     return { verb = "attack", who = who, target = { kind = "tank", pn = pn } }
@@ -3478,6 +3681,48 @@ local function hint_command(state, world, info, t)
 
   return nil
 end
+
+-- RELEASE: END THE ORDER, GIVE NO NEW ONE (C.ORDER_RELEASE_HINT).  The bot
+-- lets go of whatever it holds -- a chat order, a ping, a hint -- the way a
+-- `cancel <bot>` does: the slot empties, the go-there lock comes off with it
+-- (release_held calls goto_lock), a hold phase ends because the slot it
+-- parks on is gone, and the order is CANCELLED (obx), so no other bot picks
+-- it up.  A running patrol or escort ends too: either would raise its next
+-- leg on the next think.  An avoid is a keep-out, not an order, and stays.
+-- It says nothing: there is no person to answer, and a script may send it
+-- to many bots at once.  Then the next think replans in full, so the goal
+-- pools pick the bot's own job at once rather than at the next replan timer.
+-- A suicide run is not touched: it takes no order, and only a person's
+-- cancel, a death or the pill's death ends it.
+-- NOT USED TODAY: no scenario sends "release" (Pillbox Tag sends a forced
+-- attack order on its prize instead).  It is kept, with its unit tests, for
+-- a future scenario that needs to end an order without giving a new one.
+-- A caution ping does not come here: ping_caution calls release_held itself.
+local function hint_release(state, info, now)
+  local o = S(state)
+  local had = o.held ~= nil or o.hint_patrol ~= nil or o.hint_escort ~= nil
+             or o.handoff ~= nil
+  local oid = o.held and o.held.oid or 0
+  o.hint_patrol, o.hint_escort = nil, nil
+  -- A HANDOFF this bot was waiting on ends too, the way a death ends it
+  -- (M.on_death): the new order was named to it but not taken, so it is
+  -- offered on (obo) for a free bot.  Left in place, handoff_step would take
+  -- the new order on the next think, and release gives no new order.
+  if o.handoff then
+    local nid = o.handoff.new_oid
+    o.handoff = nil
+    tx(state, string.format("/info obo %d", nid))
+    tx(state, string.format("/info obd %d %d", nid, M.BID_BUSY))
+    print2(string.format("ORDER_HANDOFF_ABORT t=%d new=%d why=release", now, nid))
+  end
+  if o.held then release_held(state, info, nil, true, true) end
+  if had then
+    state._force_replan_reason = state._force_replan_reason or "order_release"
+  end
+  print2(string.format("HINT_RELEASE t=%d oid=%d had=%s", now, oid, tostring(had)))
+  return true
+end
+M.hint_release = hint_release
 
 -- =========================================================================
 -- HINT ENTRY POINT — called from init.lua once per think for each hint the
@@ -3520,6 +3765,11 @@ function M.on_scenario_hint(state, world, info, t, now)
     return true
   end
 
+  if v == "release" then
+    if not C.ORDER_RELEASE_HINT then return false end
+    return hint_release(state, info, now)
+  end
+
   if v == "avoid" then
     local box = hint_box(t)
     if not box then return false end
@@ -3537,9 +3787,6 @@ function M.on_scenario_hint(state, world, info, t, now)
 
   local cmd = hint_command(state, world, info, t)
   if not cmd then return false end
-  -- A one-off order replaces whatever standing instruction was running: the
-  -- script has said something newer about this bot.
-  o.hint_patrol, o.hint_escort = nil, nil
   -- AND IT MAY NOT BREAK THE AVOID.  A square inside the box the script told
   -- this bot to keep out of is the script contradicting itself, and the
   -- keep-out is the older and broader instruction, so the order is dropped.
@@ -3547,7 +3794,13 @@ function M.on_scenario_hint(state, world, info, t, now)
      and hint_inside(o.hint_avoid, cmd.target.mx, cmd.target.my) then
     return false
   end
-  return hint_start(state, world, info, cmd, now)
+  -- A one-off order replaces whatever standing instruction was running: the
+  -- script has said something newer about this bot.  Only once the order is
+  -- running: a hint that builds no order (a dead or unknown pill) leaves a
+  -- patrol or escort as it was.
+  local ok = hint_start(state, world, info, cmd, now)
+  if ok then o.hint_patrol, o.hint_escort = nil, nil end
+  return ok
 end
 
 -- =========================================================================
@@ -4232,8 +4485,10 @@ end
 --      for Y".
 -- Every other way out:
 --   * OLD ends first (done, cancelled, lost a tiebreak): NEW is taken now.
---   * NEW is cancelled, or another bot claims it: the handoff is called off,
---     OLD is kept and claimed again (obc OLD), which closes the relief.
+--   * NEW is cancelled, or other bots' claims fill all of its slots: the
+--     handoff is called off, OLD is kept and claimed again (obc OLD), which
+--     closes the relief.  Other claims below the slot count (an order for
+--     several bots) are the other slots: this bot keeps waiting for cover.
 --   * busy when the wait runs out (a pill take began on OLD): called off the
 --     same way, and NEW is offered on (obo) for a free bot.
 --   * this bot dies: NEW is offered on (obo) and OLD is released as on any
@@ -4264,13 +4519,14 @@ end
 -- chain = nil for the bot that starts a chain, else the chain of the relief
 -- this bot won ({ hop, mask, root, asker } with hop and mask already
 -- counting this bot); cover_for = the asker's name for the line.
-function M.handoff_start(state, spec, cost, now, group, terms, chain, cover_for)
+-- want = the number of bots NEW is for (the auction's slot count; nil = 1).
+function M.handoff_start(state, spec, cost, now, group, terms, chain, cover_for, want)
   local o = S(state)
   local h = o.held
   local me = state.player_number
   local ch = chain or { hop = 1, mask = chain_bit(me), root = spec.oid }
   o.handoff = { new_oid = spec.oid, old_oid = h.oid, spec = spec, cost = cost,
-                since = now, group = group, terms = terms,
+                since = now, group = group, terms = terms, want = want or 1,
                 hop = ch.hop, mask = ch.mask, root = ch.root,
                 asker = chain and chain.asker or nil,
                 promised = chain and true or nil }
@@ -4319,6 +4575,24 @@ local function handoff_keep_old(state, why, now, offered)
          now, hf.new_oid, hf.old_oid, why))
 end
 
+-- How many OTHER bots claim NEW, and how many slots NEW has.  The bot that
+-- asked THIS bot for cover (a chain) still holds NEW until it hears the
+-- promise, so its claim is not counted.  The slot count is the largest of
+-- the auction's (kept on the handoff), the ping's (a repeat ping adds a
+-- slot later) and the order line's (o.known, a count line).
+function M.handoff_slots(o, hf, me)
+  local others = 0
+  for pn in pairs(o.gclaims[hf.new_oid] or {}) do
+    if pn ~= me and pn ~= hf.asker then others = others + 1 end
+  end
+  local want = hf.want or 1
+  local anc = o.anchors and o.anchors[hf.new_oid]
+  if anc and (anc.want or 1) > want then want = anc.want end
+  local k = o.known and o.known[hf.new_oid]
+  if k and (k.want or 1) > want then want = k.want end
+  return others, want
+end
+
 function M.handoff_step(state, world, info, now)
   local o = state.orders
   local hf = o and o.handoff
@@ -4326,12 +4600,14 @@ function M.handoff_step(state, world, info, now)
   local me = state.player_number
   local h  = o.held
   local k  = o.known[hf.new_oid]
-  local other = false
-  for pn in pairs(o.gclaims[hf.new_oid] or {}) do
-    -- The bot that asked THIS bot for cover still holds NEW until it hears
-    -- the promise: that claim is not a rival.
-    if pn ~= me and pn ~= hf.asker then other = true end
-  end
+  -- 2026-10-14 (Andrew, PR #510 review item 2): NEW IS TAKEN ONLY WHEN ITS
+  -- SLOTS ARE FULL.  An order for several bots ("4 attack 5", a repeat
+  -- ping) has the other winners claim the other slots while this bot waits
+  -- for cover.  Those claims are not rivals: NEW is taken only when the
+  -- other claims fill every slot.  Below that, this bot keeps waiting for
+  -- cover (and takes NEW when it is relieved).
+  local others, want = M.handoff_slots(o, hf, me)
+  local other = others >= want
   if not k or other then
     if hf.relieved and h and h.oid == hf.old_oid then
       -- Relieved, but NEW is gone: the bot that claimed OLD keeps it, and
@@ -4365,6 +4641,9 @@ function M.handoff_step(state, world, info, now)
   end
   if now - hf.since >= (C.ORDER_HANDOFF_WAIT_TICKS or 0) then
     if M.busy(state, info) then
+      -- NEW still has a free slot here (a full NEW ended the handoff
+      -- above), so it is offered on (obo) for a free bot.  offered = true:
+      -- a chained reliever's promise comes off with the obo, no obr.
       local nid = hf.new_oid
       handoff_keep_old(state, "busy at timeout", now, true)
       tx(state, string.format("/info obo %d", nid))
@@ -4514,7 +4793,7 @@ function M.update(state, world, info, now)
       local rt = o.retired and o.retired[r.oid]
       if rt and r.relief and not o.known[r.oid] then
         o.retired[r.oid] = nil
-        o.known[r.oid] = { spec = rt.spec, tick = now }
+        o.known[r.oid] = { spec = rt.spec, want = rt.want, tick = now }
         o.gclaims[r.oid] = rt.holders
       elseif rt and not r.relief then
         rt.holders[r.from] = nil
@@ -4594,7 +4873,7 @@ function M.update(state, world, info, now)
         end
         o.auctions[r.oid] = { spec = k.spec, open = now, bids = {},
                               answered = {},
-                              want = r.offer and anc and anc.want or nil,
+                              want = r.offer and ((anc and anc.want) or k.want) or nil,
                               relief = r.relief or nil, hand = hand,
                               terms = terms,
                               chain = r.relief and { hop = r.hop or 1,
@@ -4710,9 +4989,10 @@ function M.update(state, world, info, now)
               M.handoff_start(state, a.spec, rank[i].c, now, want > 1, a.terms,
                               { hop = ch.hop + 1, mask = bit.bor(ch.mask, chain_bit(me)),
                                 root = ch.root, asker = ch.asker },
-                              player_name(info, ch.asker))
+                              player_name(info, ch.asker), want)
             else
-              M.handoff_start(state, a.spec, rank[i].c, now, want > 1, a.terms)
+              M.handoff_start(state, a.spec, rank[i].c, now, want > 1, a.terms,
+                              nil, nil, want)
             end
           elseif M.holds_job(state) and o.held.oid ~= oid then
             offer = true
@@ -4980,8 +5260,26 @@ function M.update(state, world, info, now)
     -- shoot the square -> the order is over in silence (decoy_none); one or
     -- more can -> the hard hold, "decoying 10s".
     local decoy_none = false
+    local blocked_release = false
     if h.kind == "goto_tile" and h.mx and h.my and not h.arrived
        and info.tankx and info.tanky then
+      -- 2026-10-15: NO ROUTE TO THE SQUARE.  Once per order: if the tank's
+      -- finished route search cannot reach the square, the order's square
+      -- becomes the nearest one it can (M.goto_reachable_near), and the
+      -- travel lock is pointed there.  ORDER_GOTO_RETARGET_UNREACHABLE, keel
+      -- false (keel drives at the square until the order lapses).
+      if C.ORDER_GOTO_RETARGET_UNREACHABLE and not h.reach_checked then
+        local nmx, nmy, checked = M.goto_reachable_near(info, h.mx, h.my, h.since)
+        if checked then h.reach_checked = true end
+        if nmx then
+          print2(string.format("ORDER_GOTO_RETARGET t=%d oid=%d tile=(%d,%d) -> (%d,%d) no route",
+                 now, h.oid or 0, h.mx, h.my, nmx, nmy))
+          h.asked_mx, h.asked_my = h.mx, h.my
+          h.mx, h.my = nmx, nmy
+          h.near_since, h.near_best = nil, nil
+          goto_lock(state)
+        end
+      end
       local dx = tile_of(info.tankx) - h.mx
       local dy = tile_of(info.tanky) - h.my
       if dx < 0 then dx = -dx end
@@ -4996,9 +5294,37 @@ function M.update(state, world, info, now)
       local cheb = (dx > dy) and dx or dy
       local arrive = cheb <= (C.ORDER_GOTO_ARRIVE_TILES or 1)
       local fb = C.ORDER_GOTO_ARRIVE_FALLBACK_TICKS or 0
+      -- 2026-10-14 (Andrew): A BLOCKED SQUARE ARRIVES FROM THE RING.  On
+      -- every think in the one-square ring, look at the square itself.  If a
+      -- tank, a pill or a wall stands on it, the tank cannot get there, so
+      -- being beside it is good enough: arrival happens now, with no timer.
+      -- An open square keeps the rules above (the square itself, or the
+      -- fallback timer).  ORDER_GOTO_ARRIVE_BLOCKED_RING, keel false.
+      local blocked_what = nil
+      if not arrive and cheb == 1 and C.ORDER_GOTO_ARRIVE_BLOCKED_RING then
+        local what = M.goto_target_blocked(world, info, h.mx, h.my)
+        if what then
+          arrive = true
+          blocked_what = what
+          print2(string.format("ORDER_GOTO_BLOCKED t=%d oid=%d tile=(%d,%d) what=%s",
+                 now, h.oid or 0, h.mx, h.my, what))
+        end
+      end
       if not arrive then
         if fb > 0 and cheb <= 1 then
           h.near_since = h.near_since or now
+          -- 2026-10-15: ONLY TICKS WITHOUT PROGRESS COUNT
+          -- (ORDER_GOTO_FALLBACK_STALL, keel false).  Each think that brings
+          -- the tank closer to the centre of the square than it has been
+          -- since it came into the ring restarts the timer, so a tank still
+          -- rolling onto the square is never cut short.
+          if C.ORDER_GOTO_FALLBACK_STALL then
+            local d = U.wdist(info.tankx, info.tanky, U.m2w(h.mx), U.m2w(h.my))
+            if h.near_best == nil or d < h.near_best then
+              h.near_best = d
+              h.near_since = now
+            end
+          end
           if now - h.near_since >= fb then
             arrive = true
             print2(string.format("ORDER_GOTO_FALLBACK t=%d oid=%d tile=(%d,%d) off=%d near=%d",
@@ -5006,13 +5332,28 @@ function M.update(state, world, info, now)
           end
         else
           h.near_since = nil
+          h.near_best = nil
         end
       end
       if arrive then
         local hold = C.ORDER_GOTO_HOLD_TICKS or 500
         local npills = (C.ORDER_GOTO_DECOY and h.ping)
                        and decoy_pills(world, h.mx, h.my) or nil
-        if npills == 0 then
+        if blocked_what and C.ORDER_GOTO_BLOCKED_RELEASE then
+          -- 2026-10-15 (Andrew): "if it's blocked, just say you're there and
+          -- move on to the next goal".  A blocked square counts as arrived,
+          -- and the order is over on this think: no hold, no park beside it,
+          -- and goal selection takes over at once.  On pilltag_fort_last_shot
+          -- (seed 42) a go-there onto the guard's own dead prize pill held
+          -- beside it, then picked take_cover, and the pill was never picked
+          -- up; with the order gone capture_pill picks it up.
+          -- ORDER_GOTO_BLOCKED_RELEASE, keel false (hold beside the square,
+          -- or the decoy hold for a ping).
+          blocked_release = true
+          h.arrived = now
+          print2(string.format("ORDER_GOTO_BLOCKED_RELEASE t=%d oid=%d tile=(%d,%d) what=%s -- order over",
+                 now, h.oid or 0, h.mx, h.my, blocked_what))
+        elseif npills == 0 then
           decoy_none = true
           h.arrived  = now
           print2(string.format("ORDER_DECOY_NONE t=%d oid=%d tile=(%d,%d) -- no pill in range, order over",
@@ -5041,7 +5382,7 @@ function M.update(state, world, info, now)
       end
     end
     local done, why = false, nil
-    if decoy_none then
+    if decoy_none or blocked_release then
       -- Nothing to be a decoy for.  No "holding", no "order lapsed": the
       -- order simply ends and goal selection takes over.  The travel goal
       -- goes with it (an urgent replan), so the tank does not roll the last
@@ -5049,7 +5390,8 @@ function M.update(state, world, info, now)
       done, why = true, nil
       local g = state.goal
       if g and g.kind == "goto_tile" and g.mx == h.mx and g.my == h.my then
-        require("attack").clear_attack_goal(state, "decoy: no pill in range")
+        require("attack").clear_attack_goal(state, blocked_release
+          and "go-there: square blocked" or "decoy: no pill in range")
       end
     elseif now >= h.expiry then
       done, why = true, "order lapsed"

@@ -341,7 +341,7 @@ local function stamp_pill(pm)
   local pill_key = pm.my * 256 + pm.mx
   M.pill_contrib[pill_key] = gh_threat.stamp_pill(
     pm.mx, pm.my,
-    pm.anger or 0, pm.health or 0)
+    pm.anger or 0, pm.health or 0, C.PILL_DANGER_MULT or 1.0)
 end
 
 -- ── Precomputed Bresenham predecessor table ──
@@ -839,6 +839,12 @@ function M.update(state, world, info)
   end
   for idx = #tc, 1, -1 do tc[idx] = nil end
 
+  -- A script that changes PILL_DANGER_MULT (cfg=) on a running brain needs
+  -- the grid stamped again at the new scale.
+  if M._pill_danger_mult ~= (C.PILL_DANGER_MULT or 1.0) then
+    M._pill_danger_mult = C.PILL_DANGER_MULT or 1.0
+    M.pill_dirty = true
+  end
   -- Rebuild pill grid only when dirty
   if M.pill_dirty then
     metrics.inc("threat_rebuild")

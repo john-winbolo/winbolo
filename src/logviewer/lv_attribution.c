@@ -50,7 +50,7 @@ bool lvAttributionParseMember(const uint8_t *data, size_t len) {
         return false;
     }
 
-    memcpy(&s_track.header, data, sizeof(AttrTrackHeader));
+    attrTrackDecodeHeader(&s_track.header, data);
 
     /* slotCount is a uint16 off disk and the file is not ours — a log arrives
      * from wherever the user got it, and the client now loads them straight
@@ -72,7 +72,19 @@ bool lvAttributionParseMember(const uint8_t *data, size_t len) {
             lvAttributionClear();  /* OOM: stay absent, never crash */
             return false;
         }
-        memcpy(s_track.records, data + sizeof(AttrTrackHeader), recLen);
+        /* Copied whole, then each record the stream walks to decoded
+         * over its copy; the walkers stop where this does. */
+        const uint8_t *src = data + sizeof(AttrTrackHeader);
+        size_t off = 0;
+        memcpy(s_track.records, src, recLen);
+        while (off < recLen) {
+            size_t sz = attrTrackRecordSize(src[off]);
+            if (sz == 0 || off + sz > recLen) {
+                break;
+            }
+            attrTrackDecodeRecord(s_track.records + off, src + off);
+            off += sz;
+        }
     }
     s_track.recordLen   = recLen;
     s_track.recordCount = s_track.header.recordCount;

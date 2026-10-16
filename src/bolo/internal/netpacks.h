@@ -37,6 +37,8 @@
 #include "view_policy.h"   /* ViewPolicy — INFO_PACKET.view_policies helpers */
 #include "server_voice_mode.h"  /* ServerVoiceMode — INFO_PACKET.flags voice bits */
 #include "playername_validate.h"  /* playerNameValidate / playerNameCompare */
+#include "byte_order.h"    /* INFO_PACKET's little-endian numbers */
+#include <stddef.h>        /* offsetof */
 
 #define MAX_UDPPACKET_SIZE 1024
 #define MAX_TCPPACKET_SIZE 1024
@@ -108,6 +110,27 @@ typedef struct BOLO_PACK_ATTR {
 } INFO_PACKET;
 #pragma pack(pop)
 BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 113, INFO_PACKET_must_be_113_bytes);
+
+/* INFO_PACKET's multi-byte numbers - serverport, start_delay, time_limit,
+ * num_players, free_pills and free_bases - are little-endian on the wire, as
+ * every server and the tracker have always had them; start_time and
+ * serveraddress are in network order in the struct already. A sender puts a
+ * packet on the wire with infoPacketEncode, and a reader takes those six
+ * fields from the received bytes with INFO_PACKET_GET16 / INFO_PACKET_GET32
+ * rather than from the struct. */
+static inline void infoPacketEncode(BYTE *out, const INFO_PACKET *pkt) {
+  memcpy(out, pkt, sizeof(*pkt));   /* the byte fields, and the two in network order */
+  byteOrderPutLe16(out + offsetof(INFO_PACKET, gameid.serverport), pkt->gameid.serverport);
+  byteOrderPutLe32(out + offsetof(INFO_PACKET, start_delay), (uint32_t) pkt->start_delay);
+  byteOrderPutLe32(out + offsetof(INFO_PACKET, time_limit), (uint32_t) pkt->time_limit);
+  byteOrderPutLe16(out + offsetof(INFO_PACKET, num_players), pkt->num_players);
+  byteOrderPutLe16(out + offsetof(INFO_PACKET, free_pills), pkt->free_pills);
+  byteOrderPutLe16(out + offsetof(INFO_PACKET, free_bases), pkt->free_bases);
+}
+#define INFO_PACKET_GET16(bytes, field) \
+  byteOrderGetLe16((const BYTE *) (bytes) + offsetof(INFO_PACKET, field))
+#define INFO_PACKET_GET32(bytes, field) \
+  byteOrderGetLe32((const BYTE *) (bytes) + offsetof(INFO_PACKET, field))
 
 /* The scripts a round runs, appended to the reply to an info request (and to
  * that reply only: the tracker update stays sizeof(INFO_PACKET)). The bytes

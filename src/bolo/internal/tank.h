@@ -1018,16 +1018,17 @@ void tankCheckPillCapture(struct GameSim *sim, tank *value);
 *NAME:          tankDropPills
 *AUTHOR:        John Morrison
 *CREATION DATE: 16/1/99
-*LAST MODIFIED: 24/6/00
+*LAST MODIFIED: 12/10/26
 *PURPOSE:
-* Drops all the pillboxes at the tanks current location.
-* Called when tank dies
+* Drops all the pillboxes around the tank's current
+* location. Called when tank dies. Searches the tank's
+* square, then square rings of growing radius, each
+* starting due north of the tank and going clockwise, as
+* Mac Bolo does.
 *
 *ARGUMENTS:
+*  sim    - The game the tank belongs to
 *  value  - Pointer to the tank structure
-*  mp     - Pointer to the map structure
-*  pb     - Pointer to the pillbox structure
-*  bs     - Pointer to the bases structure
 *********************************************************/
 void tankDropPills(struct GameSim *sim, tank *value);
 

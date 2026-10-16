@@ -17,7 +17,20 @@
 -- PASS: no hunter is frozen on the holder. In the 20 s after the build no
 -- hunter spends more than 8 s in a row alive, within 8 squares of the holder,
 -- within 2 squares of one spot and with no hit on the fort or the holder.
--- Every hunter's square is logged once a second.
+-- Breaking the walls round the fort and the holder counts the same as a hit:
+-- shooting a way in through the walls is real play. At the build the arena
+-- notes every wall square (building or half building) within 8 squares of
+-- the holder. Every 10 ticks, when one of them has changed and a hunter's
+-- shells have gone down since the last look, the hunter that fired and is
+-- nearest that square (8 squares at most) is busy. Every hunter's square is
+-- logged once a second.
+-- A hunter that has moved at least 1 square (256 world units) in a straight
+-- line over the last 2 s is busy too: travelling is real play, even when it
+-- stays within 2 squares of the spot it last stood on for a while.
+-- A hunter whose order from the script is to attack a tank (told[p] is
+-- "attack <seat>", not "attack pill ...") is busy too: a hunter in a
+-- tank fight is busy (Andrew, 2026-10-15). No game API gives a bot's goal,
+-- so the arena reads the order the script last gave it.
 --
 -- The holder is put in the walled middle of the island, the way a person
 -- builds a fort among walls. With the script as it was, the order to attack
@@ -25,7 +38,16 @@
 -- squares from him for 10 to 15 s, unable to shoot through the walls, while
 -- the fort shot it.
 
-ARENA = { given = false, hit = {}, lines = {}, last = {}, anchor = {}, busy = {}, still = {} }
+ARENA = { given = false, hit = {}, lines = {}, last = {}, anchor = {}, busy = {}, still = {},
+          walls = nil, shells = {}, wall_said = {}, trail = {}, still_at = {} }
+
+-- Busy by moving: a hunter is busy at a tick when its position now is at
+-- least MOVE_MIN world units (1 square) in a straight line from its position
+-- MOVE_WINDOW ticks ago (2 s at 100 ticks a second). This is net
+-- displacement, not path length, so turning on the spot or jiggling back and
+-- forth does not count. Kept in ARENA, not as locals: the script and the
+-- arena are near Lua's 200 top-level locals in one chunk.
+ARENA.MOVE_MIN, ARENA.MOVE_WINDOW = 256, 200
 scenario.callbacks.on_tank_hit = "Arena: counts the hunters' hits on the holder."
 scenario.callbacks.pill_damage_scale = "Arena: counts the hunters' hits on the fort."
 
@@ -123,6 +145,20 @@ function on_tick(tick)
       end
     end
     game.log(string.format("ARENA fort up at %d,%d t=%d holder=%s", pb.x, pb.y, tick, tostring(holder)))
+    -- The wall squares round the holder, to see the hunters break them.
+    A.walls = {}
+    for y = A.hy - 8, A.hy + 8 do
+      for x = A.hx - 8, A.hx + 8 do
+        local t = game.map_tile(x, y)
+        if t == game.TERRAIN.building or t == game.TERRAIN.half_building then
+          A.walls[#A.walls + 1] = { x = x, y = y, t = t }
+        end
+      end
+    end
+    for p = 1, 3 do
+      local s = game.tank(p)
+      A.shells[p] = s and s.shells or 0
+    end
   end
   if A.ordered ~= nil and A.built == nil and tick > A.ordered + 1500 then
     verdict(false, "the fort never went up")
@@ -139,15 +175,69 @@ function on_tick(tick)
     game.log(string.format("ARENA t=%d +%.0fs %s", tick, (tick - A.built) / 100,
                            table.concat(parts, " | ")))
   end
-  -- A hunter is busy while it moves (2 squares from where it last stood),
+  -- A hunter is busy while it moves (2 squares from where it last stood, or
+  -- 1 square in a straight line over the last 2 s),
   -- hits the fort or the holder, is dead, or is more than NEAR squares from
   -- the holder. The longest time each hunter spends not busy is its still
   -- time: sitting by the holder and his fort without a shot.
   local NEAR, STILL_MAX = 8, 800
+  -- A hunter that fired while a wall square near the holder changed broke
+  -- that wall: busy, the same as a hit.
+  if A.walls ~= nil and tick % 10 == 0 then
+    local fired = {}
+    for p = 1, 3 do
+      local s = game.tank(p)
+      local now = (s ~= nil and not s.dead) and s.shells or nil
+      if now ~= nil and A.shells[p] ~= nil and now < A.shells[p] then fired[p] = s end
+      A.shells[p] = now
+    end
+    for _, w in ipairs(A.walls) do
+      local t = game.map_tile(w.x, w.y)
+      if t ~= w.t then
+        w.t = t
+        local best, best_d = nil, nil
+        for p = 1, 3 do
+          local s = fired[p]
+          if s ~= nil then
+            local d = chebyshev(s.mx, s.my, w.x, w.y)
+            if d <= NEAR and (best_d == nil or d < best_d) then best, best_d = p, d end
+          end
+        end
+        if best ~= nil then
+          A.busy[best] = tick
+          if A.wall_said[best] == nil or tick - A.wall_said[best] >= 100 then
+            A.wall_said[best] = tick
+            game.log(string.format("ARENA p%d broke wall at %d,%d t=%d", best, w.x, w.y, tick))
+          end
+        end
+      end
+    end
+  end
+  local MOVE_MIN, MOVE_WINDOW = A.MOVE_MIN, A.MOVE_WINDOW
   for p = 1, 3 do
     local s = game.tank(p)
+    -- One position a tick in a ring of MOVE_WINDOW slots: the slot for this
+    -- tick holds the position from MOVE_WINDOW ticks ago.
+    local moved = false
+    if s == nil or s.dead or s.mx == 0 then
+      A.trail[p] = {}
+    else
+      local ring = A.trail[p] or {}
+      A.trail[p] = ring
+      local slot = tick % MOVE_WINDOW
+      local old = ring[slot]
+      if old ~= nil and old.t == tick - MOVE_WINDOW then
+        local dx, dy = s.wx - old.wx, s.wy - old.wy
+        moved = dx * dx + dy * dy >= MOVE_MIN * MOVE_MIN
+      end
+      ring[slot] = { t = tick, wx = s.wx, wy = s.wy }
+    end
     if s == nil or s.dead or s.mx == 0 then
       A.busy[p], A.anchor[p] = tick, nil
+    elseif moved then
+      A.busy[p], A.anchor[p] = tick, { s.mx, s.my }
+    elseif type(told[p]) == "string" and told[p]:match("^attack %d+$") then
+      A.busy[p], A.anchor[p] = tick, { s.mx, s.my }
     elseif chebyshev(s.mx, s.my, A.hx, A.hy) > NEAR then
       A.busy[p], A.anchor[p] = tick, { s.mx, s.my }
     elseif A.anchor[p] == nil or
@@ -155,16 +245,20 @@ function on_tick(tick)
       A.busy[p], A.anchor[p] = tick, { s.mx, s.my }
     end
     local still = tick - (A.busy[p] or tick)
-    if still > (A.still[p] or 0) then A.still[p] = still end
+    if still > (A.still[p] or 0) then A.still[p], A.still_at[p] = still, A.busy[p] end
   end
   if not GATE_SAID and (tick >= A.built + 2000 or tick >= GATE_TICKS - 50) then
     local stuck, parts = {}, {}
     for p = 1, 3 do
       if (A.still[p] or 0) > STILL_MAX then stuck[#stuck + 1] = "p" .. p end
-      parts[#parts + 1] = string.format("p%d still %.1fs %s", p, (A.still[p] or 0) / 100,
+      local at = A.still_at[p]
+      parts[#parts + 1] = string.format("p%d still %.1fs%s %s", p, (A.still[p] or 0) / 100,
+        at and string.format(" (t=%d-%d)", at, at + A.still[p]) or "",
         A.hit[p] and string.format("first hit +%.1fs", (A.hit[p] - A.built) / 100) or "no hit")
+      -- One line a hunter: game.log drops a line over 128 bytes, and all
+      -- three on one line can reach about 150.
+      game.log("ARENA " .. parts[#parts])
     end
-    game.log("ARENA " .. table.concat(parts, ", "))
     verdict(#stuck == 0, (#stuck == 0 and "no hunter frozen" or
       ("frozen over 8 s: " .. table.concat(stuck, ", "))) ..
       " in the 20 s after the build: " .. table.concat(parts, ", "))

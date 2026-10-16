@@ -37,15 +37,21 @@ order_warmup_start) is the first with a second base:
     base #2 (112,128)      the arena gives it to an enemy seat, full armour:
                            "capture base 1".
 
-The human-decoy field (order_human_decoy) is the main field with a wall:
+The human-decoy field (order_human_decoy, order_human_decoy_off,
+order_human_decoy_walls) is the main field with a wall:
 
-    x=109..110, y=104..105 a 2x2 block of buildings between pill #2
-                           (106,106) and the stand-in human the arena parks
-                           at (112,104).  A shell from the pill to him stops
-                           in the wall, so decoy_getaway.block() says "wall".
-                           The block is small so it does not move the bot's
-                           own standoff choice: without the feature the bot
-                           parks at (113,105), beside the human.
+    x=108..110, y=103..105 a 3x3 block of buildings (9 squares) between
+                           pill #2 (106,106) and the stand-in human the arena
+                           parks at (112,104).  A shell from the pill to him
+                           stops in the wall, so decoy_getaway.block() says
+                           "wall".  It is 3 deep so the pill needs a long
+                           time to shoot a way through: the decoy holds for
+                           the whole time the bot chooses its spot and parks.
+                           It is no wider than 3 so it does not move the
+                           bot's own standoff choice: without the feature
+                           the bot parks at (113,105), beside the human.  (A
+                           4-wide block, y=103..106, moved that choice to
+                           (113,107) and the arena lost its teeth.)
 
 Usage:
     python tests/generate_order_bids_maps.py
@@ -82,7 +88,9 @@ BASE_ARENAS = [
     "order_warmup_start",
 ]
 
-DECOY_ARENA = "order_human_decoy"
+# order_human_decoy_off and order_human_decoy_walls play the same map with
+# knobs off.
+DECOY_ARENAS = ["order_human_decoy", "order_human_decoy_off", "order_human_decoy_walls"]
 
 PONDS = [(98, 98), (154, 154), (98, 154), (154, 126)]
 
@@ -125,10 +133,11 @@ def main():
     for name in BASE_ARENAS:
         write_bmap(str(out / (name + ".map")), terrain, pills, base_bases, starts)
     decoy_terrain = make_map()
-    for y in range(104, 106):
-        for x in range(109, 111):
+    for y in range(103, 106):
+        for x in range(108, 111):
             decoy_terrain[y][x] = BUILDING
-    write_bmap(str(out / (DECOY_ARENA + ".map")), decoy_terrain, pills, bases, starts)
+    for name in DECOY_ARENAS:
+        write_bmap(str(out / (name + ".map")), decoy_terrain, pills, bases, starts)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,13 @@
 -- his armour full (a hop, not a fort) and seat 2 7 squares behind him, the
 -- pilltag_hop_ahead set-up.
 --
+-- Seat 2 drives at a quarter of the classic speed all game. The hunter goes
+-- for a standing hop like any built prize, so at full speed he often shoots
+-- it down and takes it first. The test checks that the holder picks his own
+-- prize up again, not who wins the race to it. The speed is set again every
+-- tick, because the script's panel refresh clears a non-holder's speed
+-- modifier five times a second.
+--
 -- The mate plays with REPOSITION_VOTE_ENABLED off, so it casts no vote on
 -- the holder's pillbox move, and the move goes ahead on the holder's vote.
 --
@@ -41,6 +48,10 @@ function on_tick(tick)
       A.given = true
     end
     return
+  end
+  local hunter = game.tank(2)
+  if hunter ~= nil and hunter.mods.speed ~= 25 then
+    game.set_modifiers(2, { speed = 25 })
   end
   if A.escort == nil and told_for[1] == "escort 0" then
     A.escort = tick

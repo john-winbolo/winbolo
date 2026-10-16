@@ -40,6 +40,7 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
                                          const char *trackerAddr,
                                          unsigned short trackerPort) {
     INFO_PACKET pkt;
+    BYTE buf[sizeof(INFO_PACKET)];
     struct sockaddr_in dest;
     struct in_addr trackerIp;
 
@@ -54,8 +55,9 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
     dest.sin_port = htons(trackerPort);
 
     buildInfoPacket(sim, &pkt);
+    infoPacketEncode(buf, &pkt);
 
-    srvSendTo((const uint8_t *)&pkt, sizeof(pkt), &dest);
+    srvSendTo(buf, sizeof(buf), &dest);
 }
 
 void transportUdpServerSetPublicAddress(const char *externalIp,

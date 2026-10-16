@@ -79,10 +79,10 @@ int run_key_claims(void) {
      * the defaults. */
     {
         keyItems k;
-        k.kiForward      = 8;    /* SDL_SCANCODE_E      */
-        k.kiBackward     = 7;    /* SDL_SCANCODE_D      */
-        k.kiLeft         = 22;   /* SDL_SCANCODE_S      */
-        k.kiRight        = 9;    /* SDL_SCANCODE_F      */
+        k.kiForward      = 26;   /* SDL_SCANCODE_W      */
+        k.kiBackward     = 22;   /* SDL_SCANCODE_S      */
+        k.kiLeft         = 4;    /* SDL_SCANCODE_A      */
+        k.kiRight        = 7;    /* SDL_SCANCODE_D      */
         k.kiShoot        = 44;   /* SDL_SCANCODE_SPACE  */
         k.kiLayMine      = 225;  /* SDL_SCANCODE_LSHIFT */
         k.kiGunIncrease  = 87;   /* SDL_SCANCODE_KP_PLUS */

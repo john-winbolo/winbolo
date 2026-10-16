@@ -47,6 +47,7 @@
 #include "attribution_track.h"
 #include "scripts_record.h"
 #include "log_internal.h"
+#include "byte_order.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../common/wb_log.h"
 
@@ -235,7 +236,6 @@ void logCreate() {
 *********************************************************/
 void logWriteEmpty() {
   BYTE data[3];
-  unsigned short us;
   if (logIsRunning == TRUE) {
     if (logLastEvent > 0) {
       if (logLastEvent < LOG_SIZE_LONG_DIFF) {
@@ -243,10 +243,9 @@ void logWriteEmpty() {
         data[1] = (BYTE) logLastEvent;
         zipWriteInFileInZip(logFile, data, 2);
       } else {
-        us = htons(logLastEvent);
+        /* Little-endian, as every recording made so far has it */
         data[0] = LOG_NOEVENTS_LONG;
-        data[1] = (BYTE) (us >> 8);
-        data[2] = (BYTE) (us & 0xFF);
+        byteOrderPutLe16(data + 1, logLastEvent);
         zipWriteInFileInZip(logFile, data, 3);
       }
     }
@@ -383,7 +382,6 @@ bool logSnapshotWrittenThisTick(void) {
 *********************************************************/
 void logWriteEvents(BYTE key) {
   BYTE data[3];
-  unsigned short us;
 
   if (logNumEvents > 0) {
     if (logNumEvents < LOG_SIZE_LONG_DIFF) {
@@ -391,10 +389,9 @@ void logWriteEvents(BYTE key) {
       data[1] = (BYTE) logNumEvents;
       zipWriteInFileInZip(logFile, data, 2);
     } else {
-      us = htons(logNumEvents);
+      /* Little-endian, as every recording made so far has it */
       data[0] = LOG_EVENT_LONG;
-      data[1] = (BYTE) (us >> 8);
-      data[2] = (BYTE) (us & 0xFF);
+      byteOrderPutLe16(data + 1, logNumEvents);
       zipWriteInFileInZip(logFile, data, 3);
     }
     zipWriteInFileInZip(logFile, logMem, logMemSize);
@@ -443,9 +440,37 @@ void logStop() {
       if (zipOpenNewFileInZip(logFile, ATTRIBUTION_TRACK_MEMBER, &zi,
                               NULL, 0, NULL, 0, "",
                               Z_DEFLATED, Z_DEFAULT_COMPRESSION) == Z_OK) {
-        zipWriteInFileInZip(logFile, &hdr, (unsigned)sizeof hdr);
+        BYTE hbuf[sizeof hdr];
+        attrTrackEncodeHeader(hbuf, &hdr);
+        zipWriteInFileInZip(logFile, hbuf, (unsigned)sizeof hbuf);
         if (tbuf != NULL && tlen > 0) {
-          zipWriteInFileInZip(logFile, tbuf, (unsigned)tlen);
+          /* Encode a chunk of whole records at a time */
+          BYTE chunk[4096];
+          size_t off = 0;
+          size_t used = 0;
+          while (off < tlen) {
+            size_t sz = attrTrackRecordSize(tbuf[off]);
+            if (sz == 0 || off + sz > tlen) {
+              break;
+            }
+            if (used + sz > sizeof chunk) {
+              zipWriteInFileInZip(logFile, chunk, (unsigned)used);
+              used = 0;
+            }
+            attrTrackEncodeRecord(chunk + used, tbuf + off);
+            used += sz;
+            off += sz;
+          }
+          if (used > 0) {
+            zipWriteInFileInZip(logFile, chunk, (unsigned)used);
+          }
+          if (off != tlen) {
+            /* The header's recordCount is already written and counts the
+             * whole buffer; the member now holds fewer records than it says. */
+            WB_LOG_WARN(WB_LOG_CAT_SERVER,
+                        "attribution track: stopped at byte %zu of %zu on tag %u, %zu bytes dropped",
+                        off, tlen, (unsigned)tbuf[off], tlen - off);
+          }
         }
         zipCloseFileInZip(logFile);
         WB_LOG_INFO(WB_LOG_CAT_SERVER,

@@ -140,14 +140,13 @@ static int lqp_send_man_out(ServerSim *sim, BYTE *outPill, BYTE *outManX,
     return 0;
 }
 
-/* The pillbox is back on the map, dead, on or just past the square he was
+/* The pillbox is back on the map, dead, on or near the square he was
  * standing on, and no longer flagged as carried. Pre-fix inTank is still TRUE
  * and pillsExistPos finds nothing anywhere.
  *
- * The x window is one-sided and the y window is not: the drop searches down
- * and then east from the man's raw square, while lgmGetMY backs his position
- * off by two world units before shifting, so the square it names can sit one
- * below the one the search started from. */
+ * The drop spirals out from the man's raw square, while lgmGetMY backs his
+ * position off by two world units before shifting, so the square it names can
+ * sit one below the one the search started from. */
 static int lqp_assert_dropped(GameSim *gs, BYTE pillNum, BYTE manX, BYTE manY,
                               BYTE *outX, BYTE *outY) {
     pillbox p;
@@ -168,7 +167,7 @@ static int lqp_assert_dropped(GameSim *gs, BYTE pillNum, BYTE manX, BYTE manY,
                   (unsigned)pillNum, (unsigned)p.armour);
     dx = (int)p.x - (int)manX;
     dy = (int)p.y - (int)manY;
-    UT_ASSERT_MSG(dx >= 0 && dx <= 12 && dy >= -1 && dy <= 12,
+    UT_ASSERT_MSG(dx >= -12 && dx <= 12 && dy >= -13 && dy <= 12,
                   "pill %u landed at (%u,%u), nowhere near the square the "
                   "man was on (%u,%u)",
                   (unsigned)pillNum, (unsigned)p.x, (unsigned)p.y,

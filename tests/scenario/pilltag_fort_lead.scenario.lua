@@ -3,7 +3,7 @@
 -- Pillbox Tag, the leader's fort outlasts FORT_SECONDS.
 --
 -- Seat 0 gets the prize at tick 300 and is set up for a fort the way
--- pilltag_shoot_standing is (armour held at 15, seat 1 7 squares behind, then
+-- pilltag_shoot_built_prize is (armour held at 15, seat 1 7 squares behind, then
 -- 5 when the fort goes up). He has carried the prize for some seconds and
 -- seat 1 has none, so he is strictly top. Once the fort stands, both guns are
 -- kept empty (nobody hurts the fort) and seat 1 is kept within 5 squares of

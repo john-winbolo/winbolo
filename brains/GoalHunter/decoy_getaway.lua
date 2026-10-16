@@ -543,21 +543,65 @@ local function watch_part(world, sx, sy)
                        q and tostring(q.owner) or "-", q and (q.health or 0) or 0)
 end
 
+-- One watched square as numbers, written into the flat list a after
+-- position n: x, y, terrain, the owner of a live pill on it (-1 with no
+-- live pill, false for a live pill with no owner) and its health (0 with no
+-- live pill).  Returns the new end.  The same facts as watch_part, with no
+-- string built.
+local function watch_put(a, n, world, sx, sy)
+  local q = live_pill_at(world, sx, sy)
+  a[n + 1], a[n + 2], a[n + 3] = sx, sy, U.ttype(sx, sy)
+  if q then
+    local o = q.owner
+    if o == nil then o = false end
+    a[n + 4], a[n + 5] = o, q.health or 0
+  else
+    a[n + 4], a[n + 5] = -1, 0
+  end
+  return n + 5
+end
+
+-- True when two signatures (M.signature or M.watch_signature) hold the same
+-- values.  Each is a flat list with its length in .n; entries after .n are
+-- left over from an earlier, longer fill and are not read.
+function M.sig_same(a, b)
+  if not a or not b then return a == b end
+  local n = a.n
+  if n ~= b.n then return false end
+  for i = 1, n do
+    if a[i] ~= b[i] then return false end
+  end
+  return true
+end
+
 -- What M.update compares, every DECOY_GETAWAY_RESCAN_TICKS, to decide on a
 -- fresh scan: the tank's square, the counted pills (THE RECENTLY DEAD PILL
 -- included, at tick now), and every shield square of the chain (its terrain
--- and the health of a pill on it).
-function M.signature(world, h, ga, tx, ty, now)
-  local parts = { tx .. "," .. ty }
-  for _, pid in ipairs((counted_ids(world, h.mx, h.my, ga.alive, now))) do
-    parts[#parts + 1] = tostring(pid)
-  end
-  for _, c in ipairs(ga.path or {}) do
-    for _, tm in ipairs(c.terms or {}) do
-      if tm.sx then parts[#parts + 1] = watch_part(world, tm.sx, tm.sy) end
+-- and the health of a pill on it).  A flat list of numbers: tx, ty, the
+-- number of pill ids, the ids, then 5 entries per shield square
+-- (watch_put).  The count of ids keeps two different lists from reading
+-- the same.  out, when given, is filled and returned (no new table).
+function M.signature(world, h, ga, tx, ty, now, out)
+  local a = out or {}
+  local ids = (counted_ids(world, h.mx, h.my, ga.alive, now))
+  local k = #ids
+  a[1], a[2], a[3] = tx, ty, k
+  for i = 1, k do a[3 + i] = ids[i] end
+  local n = 3 + k
+  local path = ga.path
+  if path then
+    for i = 1, #path do
+      local terms = path[i].terms
+      if terms then
+        for j = 1, #terms do
+          local tm = terms[j]
+          if tm.sx then n = watch_put(a, n, world, tm.sx, tm.sy) end
+        end
+      end
     end
   end
-  return table.concat(parts, "|")
+  a.n = n
+  return a
 end
 
 -- THE BLOCKED WATCH (DECOY_GETAWAY_WATCH_BLOCKED): the square that stopped
@@ -565,15 +609,27 @@ end
 -- (ga.watch), so a wall shot away between a pill and the decoy square starts
 -- a fresh scan, with a chain or without one.  M.update compares it every
 -- DECOY_GETAWAY_WATCH_TICKS, apart from M.signature.  It reads the terrain
--- and the pill table only: no shell trace.  "" with the watch off.
-function M.watch_signature(world, ga)
-  if not C.DECOY_GETAWAY_WATCH_BLOCKED then return "" end
-  local parts = {}
-  for _, w in ipairs(ga.watch or {}) do
-    parts[#parts + 1] = watch_part(world, w.sx, w.sy)
+-- and the pill table only: no shell trace.  An empty list (n = 0) with the
+-- watch off.  Same list shape and out as M.signature.
+function M.watch_signature(world, ga, out)
+  local a = out or {}
+  local n = 0
+  if C.DECOY_GETAWAY_WATCH_BLOCKED then
+    local watch = ga.watch
+    if watch then
+      for i = 1, #watch do
+        local w = watch[i]
+        n = watch_put(a, n, world, w.sx, w.sy)
+      end
+    end
   end
-  return table.concat(parts, "|")
+  a.n = n
+  return a
 end
+
+-- Scratch lists for M.update's checks, filled in place each check.  Only
+-- compared, never kept, so all bots can share them.
+local sig_scratch, wsig_scratch = {}, {}
 
 -- A scan from (sx,sy) with `steps` left.  Writes ga.path (nil = no chain),
 -- ga.score and the overlay data, and logs DECOY_GETAWAY_SCAN.
@@ -634,8 +690,8 @@ function M.rescan(world, info, h, sx, sy, steps, now, why)
     end
   end
   ga.watch = watch
-  ga.sig = M.signature(world, h, ga, sx, sy, now)
-  ga.wsig, ga.wcheck = M.watch_signature(world, ga), now
+  ga.sig = M.signature(world, h, ga, sx, sy, now, ga.sig)
+  ga.wsig, ga.wcheck = M.watch_signature(world, ga, ga.wsig), now
   local pids = {}
   for i, tp in ipairs(P) do pids[i] = pid_txt(tp.id, tp.dead) end
   local spids = {}
@@ -914,6 +970,7 @@ local function park_on(ga, mx, my, arm)
   ga.hits, ga.arm = 0, arm
   ga.hit_tick = nil
   ga.led = {}   -- THE HIT LEDGER of this square
+  ga.bc = nil   -- THE BLOCKER CHECK CACHE: a new square checks at once
 end
 
 -- The last blocker's count as text: a wall first seen full "5-3=2", one
@@ -943,6 +1000,82 @@ function M.blk_txt(bk)
     return string.format("%d blockers, waiting", #bk.list)
   end
   return tostring(bk.why)
+end
+
+-- THE BLOCKER CHECK CACHE (DECOY_GETAWAY_BLOCKER_CHECK_EVERY, Oct 14).  The
+-- blocker kind on square (mx,my) as M.blockers sees it: "wall",
+-- "wall_damaged", "pill" (a live pill of ours or an ally's, and the pill),
+-- or nil.
+local function blk_kind_at(world, mx, my)
+  local tt = U.ttype(mx, my)
+  if tt == C.T_BUILDING then return "wall" end
+  if tt == C.T_HALFBUILD then return "wall_damaged" end
+  local q = live_pill_at(world, mx, my)
+  if q and (q.owner == "friendly" or q.owner == "allied") then return "pill", q end
+  return nil
+end
+
+-- A new cache entry from one check: the closest counted pill to the park
+-- square (kx,ky) and its blockers, with what the next thinks compare to
+-- see the result is still good (the pill's state, each blocker's kind and
+-- a pill blocker's armour).
+function M.blk_check(world, ga, kx, ky, now)
+  local pid, p = M.closest_pill(world, kx, ky, ga.alive, now)
+  local n, list, why
+  if p then n, list, why = M.blockers(world, p, kx, ky, nil) end
+  local bc = { pid = pid, n = n, list = list, why = why, kx = kx, ky = ky, t = now }
+  if p then
+    bc.palive = ((p.health or 0) > 0 and not p.in_tank) and true or false
+    bc.powner, bc.pmx, bc.pmy = p.owner, p.mx, p.my
+    bc.kinds, bc.arm = {}, {}
+    for i, b in ipairs(list) do
+      local kind, q = blk_kind_at(world, b.mx, b.my)
+      bc.kinds[i], bc.arm[i] = kind, q and q.health
+    end
+  end
+  return bc
+end
+
+-- Why the cache must be checked again this think, or nil to use it.
+-- every = DECOY_GETAWAY_BLOCKER_CHECK_EVERY, pn = our player number (the
+-- stagger).  The reasons:
+--   every     every <= 1: every think (the old rule)
+--   none      no result yet (a new hold, or new park square: park_on)
+--   park      the park square changed
+--   pill_gone / pill_alive / pill_owner / pill_moved / pill_uncounted:
+--             the cached pill is not in the pill table, died or came alive,
+--             changed owner, moved, or is not counted from (kx,ky) now
+--   blocker   a square already in the cached blocker list (bc.list) is
+--             not the blocker kind it was (a wall damaged or knocked
+--             down), or a pill of ours on it changed armour.  Only those
+--             squares are read: a wall built on another square of the
+--             line is seen at the next due check, up to every - 1
+--             thinks later
+--   due       (now + pn) % every == 0
+--   stale     the result is every or more thinks old and not due (the
+--             check was not run for a while: no chain then)
+function M.blk_recheck(world, ga, bc, kx, ky, now, every, pn)
+  if every <= 1 then return "every" end
+  if not bc then return "none" end
+  if bc.kx ~= kx or bc.ky ~= ky then return "park" end
+  if bc.pid then
+    local p = world.pills and world.pills[bc.pid]
+    if not p then return "pill_gone" end
+    local live = ((p.health or 0) > 0 and not p.in_tank) and true or false
+    if live ~= bc.palive then return "pill_alive" end
+    if p.owner ~= bc.powner then return "pill_owner" end
+    if p.mx ~= bc.pmx or p.my ~= bc.pmy then return "pill_moved" end
+    if not counted(p, kx, ky, dead_age(bc.pid, p, ga.alive, now)) then
+      return "pill_uncounted"
+    end
+    for i, b in ipairs(bc.list) do
+      local kind, q = blk_kind_at(world, b.mx, b.my)
+      if kind ~= bc.kinds[i] or (q and q.health) ~= bc.arm[i] then return "blocker" end
+    end
+  end
+  if (now + (pn or 0)) % every == 0 then return "due" end
+  if now - bc.t >= every or now < bc.t then return "stale" end
+  return nil
 end
 
 -- Every think of a standing decoy hold (orders.decoy_lock, after the
@@ -1001,14 +1134,14 @@ function M.update(state, world, info, h, now)
     if not scanned and C.DECOY_GETAWAY_WATCH_BLOCKED and ga.watch and #ga.watch > 0
        and now - (ga.wcheck or now) >= (C.DECOY_GETAWAY_WATCH_TICKS or 50) then
       ga.wcheck = now
-      if M.watch_signature(world, ga) ~= ga.wsig then
+      if not M.sig_same(M.watch_signature(world, ga, wsig_scratch), ga.wsig) then
         M.rescan(world, info, h, fx, fy, max_steps - ga.used, now, "watch")
         scanned = true
       end
     end
     if not scanned and now - (ga.check or now) >= (C.DECOY_GETAWAY_RESCAN_TICKS or 50) then
       ga.check = now
-      if M.signature(world, h, ga, fx, fy, now) ~= ga.sig then
+      if not M.sig_same(M.signature(world, h, ga, fx, fy, now, sig_scratch), ga.sig) then
         M.rescan(world, info, h, fx, fy, max_steps - ga.used, now, "changed")
       end
     end
@@ -1025,13 +1158,24 @@ function M.update(state, world, info, h, now)
       -- the tank really is, for the overlay.
       -- Before the first step the park square is the decoy square.
       local kx, ky = ga.park_mx or h.mx, ga.park_my or h.my
-      local pid, p = M.closest_pill(world, kx, ky, ga.alive, now)
+      -- THE BLOCKER CHECK CACHE: the closest pill and its shell trace run
+      -- every DECOY_GETAWAY_BLOCKER_CHECK_EVERY thinks (staggered by player
+      -- number), or at once when M.blk_recheck finds the result is wrong.
+      -- The sounds and the ledger count below still run every think.
+      local every = math.max(1, math.floor(C.DECOY_GETAWAY_BLOCKER_CHECK_EVERY or 1))
+      local chk = M.blk_recheck(world, ga, ga.bc, kx, ky, now, every,
+                                state and state.player_number)
+      if chk then
+        ga.bc = M.blk_check(world, ga, kx, ky, now)
+        ga.bc.chk = chk
+      end
+      local bc = ga.bc
+      local pid, n, list, why = bc.pid, bc.n, bc.list, bc.why
+      local p = pid and world.pills[pid]
       -- The last blocker first (no ledger yet), then its ledger entry, then
       -- the sounds of this think, then its count: a hit in the think the
       -- wall became the last blocker is not lost.
-      local n, list, why
       if p then
-        n, list, why = M.blockers(world, p, kx, ky, nil)
         if why == "last" and list[1].kind ~= "pill" then M.led_entry(ga.led, list[1]) end
       end
       if M.hear(ga.led, info.events, now) > 0 then
@@ -1046,7 +1190,8 @@ function M.update(state, world, info, h, now)
         if why == "last" and list[1].kind ~= "pill" then n = M.wall_shots(ga.led, list[1]) end
         ga.blk = { id = pid, mx = p.mx, my = p.my, shots = n, list = list,
                    why = why, tx = kx, ty = ky,
-                   twx = info.tankx, twy = info.tanky, off = (tx ~= kx or ty ~= ky) }
+                   twx = info.tankx, twy = info.tanky, off = (tx ~= kx or ty ~= ky),
+                   age = now - bc.t }
       end
     end
     local by_hit = ga.hits >= (C.DECOY_GETAWAY_HITS or 1)
@@ -1066,8 +1211,8 @@ function M.update(state, world, info, h, now)
       local t = ga.path[ga.idx]
       local bs = "-"
       if ga.blk then
-        bs = string.format("p%s(%d,%d):%s", tostring(ga.blk.id), ga.blk.mx,
-                           ga.blk.my, M.blk_txt(ga.blk))
+        bs = string.format("p%s(%d,%d):%s,age=%d", tostring(ga.blk.id), ga.blk.mx,
+                           ga.blk.my, M.blk_txt(ga.blk), ga.blk.age or 0)
         if ga.blk.off then
           local dx, dy = M.off_park(ga.blk)
           bs = bs .. string.format(",tank_off_park(%d,%d_wu)", dx, dy)

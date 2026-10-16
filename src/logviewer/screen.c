@@ -3312,7 +3312,6 @@ bool lv_screenLogTick() {
   BYTE code;
   BYTE top = 0;    /* stay 0 if the log runs out partway through a header */
   BYTE bottom = 0;
-  unsigned short us;
   unsigned short len = 0;
 
   bool process = FALSE;
@@ -3373,7 +3372,8 @@ bool lv_screenLogTick() {
         returnValue = TRUE;
         break;
       case LOG_NOEVENTS:
-        logReadBytes((BYTE *) &g_lv->waitLen, 1);
+        logReadBytes(&top, 1);
+        g_lv->waitLen = top;
         g_lv->state = lv_lr_shortwait;
         if (g_lv->waitLen == 0) {
           g_lv->waitLen = 1;
@@ -3386,9 +3386,8 @@ bool lv_screenLogTick() {
       case LOG_NOEVENTS_LONG:
         logReadBytes(&top, 1);
         logReadBytes(&bottom, 1);
-        us = top << 8;
-        us += bottom;
-        g_lv->waitLen = ntohs(us);
+        /* Little-endian: the first byte is the low one */
+        g_lv->waitLen = (unsigned short) (top | (bottom << 8));
 
         g_lv->state = lv_lr_longwait;
         if (g_lv->waitLen == 0) {
@@ -3407,9 +3406,7 @@ bool lv_screenLogTick() {
       case LOG_EVENT_LONG:
         logReadBytes(&top, 1);
         logReadBytes(&bottom, 1);
-        us = top << 8;
-        us += bottom;
-        len = ntohs(us);
+        len = (unsigned short) (top | (bottom << 8)); /* little-endian */
         process = TRUE;
         break;
       }
@@ -4177,7 +4174,6 @@ static uint32_t lv_walkComputeTotalTimeMs(void) {
   BYTE     code;
   BYTE     b1, b2;
   unsigned short waitLen, numEvents;
-  uint16_t us;
 
   s_walkSnapCount = 0;
   while (!done && !lv_blocksIsEOF()) {
@@ -4201,8 +4197,7 @@ static uint32_t lv_walkComputeTotalTimeMs(void) {
       case LOG_NOEVENTS_LONG:
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
         if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
-        us = (uint16_t)((b1 << 8) | b2);
-        waitLen = ntohs(us);
+        waitLen = (uint16_t)(b1 | (b2 << 8)); /* little-endian */
         if (waitLen == 0) waitLen = 1;
         ticks += 1 + (uint64_t)waitLen;
         break;
@@ -4215,8 +4210,7 @@ static uint32_t lv_walkComputeTotalTimeMs(void) {
       case LOG_EVENT_LONG:
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
         if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
-        us = (uint16_t)((b1 << 8) | b2);
-        numEvents = ntohs(us);
+        numEvents = (uint16_t)(b1 | (b2 << 8)); /* little-endian */
         if (!walkSkipEvents(numEvents)) { done = TRUE; break; }
         ticks++;
         break;
@@ -4269,7 +4263,6 @@ static uint32_t lv_walkComputeGameStartMs(void) {
   bool     done     = FALSE;
   BYTE     code, b1, b2;
   unsigned short waitLen, numEvents;
-  uint16_t us;
   uint32_t result = 0;
   int      numRuns;
 
@@ -4304,8 +4297,7 @@ static uint32_t lv_walkComputeGameStartMs(void) {
       case LOG_NOEVENTS_LONG:
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
         if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
-        us = (uint16_t)((b1 << 8) | b2);
-        waitLen = ntohs(us);
+        waitLen = (uint16_t)(b1 | (b2 << 8)); /* little-endian */
         if (waitLen == 0) waitLen = 1;
         ticks += 1 + (uint64_t)waitLen;
         break;
@@ -4318,8 +4310,7 @@ static uint32_t lv_walkComputeGameStartMs(void) {
       case LOG_EVENT_LONG:
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
         if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
-        us = (uint16_t)((b1 << 8) | b2);
-        numEvents = ntohs(us);
+        numEvents = (uint16_t)(b1 | (b2 << 8)); /* little-endian */
         if (!walkSkipEvents(numEvents)) { done = TRUE; break; }
         ticks++;
         break;
@@ -4441,7 +4432,6 @@ static void lv_walkCollectSlotNames(void) {
   bool   done     = FALSE;
   BYTE   code, b1, b2;
   unsigned short numEvents;
-  uint16_t us;
 
   lv_logSetPosition(s_walkStartPos);
 
@@ -4468,8 +4458,7 @@ static void lv_walkCollectSlotNames(void) {
       case LOG_EVENT_LONG:
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
         if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
-        us = (uint16_t)((b1 << 8) | b2);
-        numEvents = ntohs(us);
+        numEvents = (uint16_t)(b1 | (b2 << 8)); /* little-endian */
         if (!walkScanNames(numEvents)) done = TRUE;
         break;
       default:
@@ -4551,7 +4540,6 @@ static void lv_walkCollectRuleChanges(void) {
   bool     done     = FALSE;
   BYTE     code, b1, b2;
   unsigned short waitLen, numEvents;
-  uint16_t us;
 
   lv_ruleChangesClear();
   lv_logSetPosition(s_walkStartPos);
@@ -4574,8 +4562,7 @@ static void lv_walkCollectRuleChanges(void) {
       case LOG_NOEVENTS_LONG:
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
         if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
-        us = (uint16_t)((b1 << 8) | b2);
-        waitLen = ntohs(us);
+        waitLen = (uint16_t)(b1 | (b2 << 8)); /* little-endian */
         if (waitLen == 0) waitLen = 1;
         ticks += 1 + (uint64_t)waitLen;
         break;
@@ -4591,8 +4578,7 @@ static void lv_walkCollectRuleChanges(void) {
       case LOG_EVENT_LONG:
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
         if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
-        us = (uint16_t)((b1 << 8) | b2);
-        numEvents = ntohs(us);
+        numEvents = (uint16_t)(b1 | (b2 << 8)); /* little-endian */
         if (!walkScanRuleSets(numEvents, (uint32_t)((ticks + 1) * 20))) {
           done = TRUE;
           break;
@@ -4732,7 +4718,6 @@ static void lv_walkCollectPresentation(void) {
   bool     done     = FALSE;
   BYTE     code, b1, b2;
   unsigned short waitLen, numEvents;
-  uint16_t us;
 
   lv_presReset();
   s_presWalked = TRUE;
@@ -4760,8 +4745,7 @@ static void lv_walkCollectPresentation(void) {
       case LOG_NOEVENTS_LONG:
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
         if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
-        us = (uint16_t)((b1 << 8) | b2);
-        waitLen = ntohs(us);
+        waitLen = (uint16_t)(b1 | (b2 << 8)); /* little-endian */
         if (waitLen == 0) waitLen = 1;
         ticks += 1 + (uint64_t)waitLen;
         break;
@@ -4777,8 +4761,7 @@ static void lv_walkCollectPresentation(void) {
       case LOG_EVENT_LONG:
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
         if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
-        us = (uint16_t)((b1 << 8) | b2);
-        numEvents = ntohs(us);
+        numEvents = (uint16_t)(b1 | (b2 << 8)); /* little-endian */
         if (!walkScanPresentation(numEvents, (uint32_t)((ticks + 1) * 20))) {
           done = TRUE;
           break;
@@ -4839,7 +4822,6 @@ static void lv_walkCollectServerTicks(void) {
   bool     done     = FALSE;
   BYTE     code, b1, b2;
   unsigned short waitLen, numEvents;
-  uint16_t us;
 
   lv_serverTickReset();
   s_wtWalked = TRUE;
@@ -4870,8 +4852,7 @@ static void lv_walkCollectServerTicks(void) {
       case LOG_NOEVENTS_LONG:
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
         if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
-        us = (uint16_t)((b1 << 8) | b2);
-        waitLen = ntohs(us);
+        waitLen = (uint16_t)(b1 | (b2 << 8)); /* little-endian */
         if (waitLen == 0) waitLen = 1;
         lv_wtCountWait(ms, waitLen);
         ticks += 1 + (uint64_t)waitLen;
@@ -4884,8 +4865,7 @@ static void lv_walkCollectServerTicks(void) {
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
         if (code == LOG_EVENT_LONG) {
           if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
-          us = (uint16_t)((b1 << 8) | b2);
-          numEvents = ntohs(us);
+          numEvents = (uint16_t)(b1 | (b2 << 8)); /* little-endian */
         } else {
           numEvents = b1;
         }
@@ -5071,7 +5051,6 @@ bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t ownerE, int ordE,
   int      cntE = 0, cntL = 0;
   BYTE     code, b1, b2;
   unsigned short waitLen, numEvents;
-  uint16_t us;
   uint8_t  baseX[MAX_BASES], baseY[MAX_BASES];
   int      numBases = 0;
   int      i;
@@ -5113,8 +5092,7 @@ bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t ownerE, int ordE,
       case LOG_NOEVENTS_LONG:
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
         if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
-        us = (uint16_t)((b1 << 8) | b2);
-        waitLen = ntohs(us);
+        waitLen = (uint16_t)(b1 | (b2 << 8)); /* little-endian */
         if (waitLen == 0) waitLen = 1;
         ticks += 1 + (uint64_t)waitLen;
         break;
@@ -5131,8 +5109,7 @@ bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t ownerE, int ordE,
       case LOG_EVENT_LONG:
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
         if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
-        us = (uint16_t)((b1 << 8) | b2);
-        numEvents = ntohs(us);
+        numEvents = (uint16_t)(b1 | (b2 << 8)); /* little-endian */
         ticks++;
         if (!walkScanBaseOwners(numEvents, (uint32_t)(ticks * 20),
                                 baseX, baseY, numBases,

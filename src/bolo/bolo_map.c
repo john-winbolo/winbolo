@@ -53,6 +53,7 @@
 #include "../common/wb_log.h"
 #include "screenbrainmap.h"
 #include "bolo_map_validate.h"
+#include "byte_order.h"
 
 /* Map change callback — set by ServerSim during tick */
 static THREAD_LOCAL MapChangeCallback mapChangeCb = NULL;
@@ -1565,6 +1566,7 @@ int mapSaveCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE 
   BYTE header[MAP_COMPRESSED_HEADER_LEN]; /* bases | pillboxes | starts */
   z_stream z;
   int ret;
+  int i;
   int returnValue; /* Value to return */
 
   if (output == NULL || outputCap <= 0) {
@@ -1575,6 +1577,9 @@ int mapSaveCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE 
   memcpy(header, &(**bs), SIZEOF_BASES);
   memcpy(header + SIZEOF_BASES, &(**pb), SIZEOF_PILLS);
   memcpy(header + SIZEOF_BASES + SIZEOF_PILLS, &(**ss), SIZEOF_STARTS);
+  for (i = 0; i < MAX_BASES; i++) {
+    byteOrderPutLe32(header + BASE_WIRE_TIME_OFFSET(i), (uint32_t) (*bs)->item[i].baseTime);
+  }
 
   memset(&z, 0, sizeof(z));
   if (deflateInit(&z, Z_DEFAULT_COMPRESSION) != Z_OK) {

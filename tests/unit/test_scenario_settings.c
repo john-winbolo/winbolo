@@ -966,8 +966,8 @@ int run_scenario_settings_survival_decl(void) {
         ScnSetting mins   = ssRow("round_minutes", "Round length (minutes)", 1,
                                   10, 1, 4);
         ScnSetting rounds = ssRow("rounds", "Rounds", 1, 5, 1, 5);
-        ScnSetting deaths = ssRow("camp_deaths", "Start camp deaths", 0, 5,
-                                  1, 3);
+        ScnSetting deaths = ssRow("camp_deaths", "Start camp deaths", 0, 5, 1,
+                                  3);
         ScnSetting window = ssRow("camp_window_s", "Start camp window (s)", 5,
                                   60, 1, 18);
         UT_ASSERT(ssSame(&rows[0], &mins));

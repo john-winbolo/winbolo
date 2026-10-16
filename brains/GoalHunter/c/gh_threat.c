@@ -480,7 +480,7 @@ static int l_naThreatPillRebuildBegin(lua_State *L) {
     return 0;
 }
 
-/* gh_threat.stamp_pill(px, py, anger, hp) -> contrib_table
+/* gh_threat.stamp_pill(px, py, anger, hp [, mult]) -> contrib_table
  *
  * Stamps the pill at (px, py) directly into the C-side pill_grid_c and
  * cov_grid_c flat arrays (no Lua table I/O for pill_grid or coverage).
@@ -492,10 +492,15 @@ static int l_naThreatStampPill(lua_State *L) {
     int py    = (int)luaL_checkinteger(L, 2);
     float anger = (float)luaL_checknumber(L, 3);
     int hp    = (int)luaL_checkinteger(L, 4);
+    /* Optional 5th argument: C.PILL_DANGER_MULT, a multiplier on the whole
+     * stamp. Passed on every call rather than cached by configure(), so a
+     * scenario that changes it with cfg= on a running brain takes effect at
+     * the next pill-grid rebuild. Absent (an older brain) = 1.0. */
+    float mult  = (float)luaL_optnumber(L, 5, 1.0);
 
     if (!ctx->disk_built) build_disk(ctx);
 
-    float base = ctx->pill_danger_base + ctx->pill_danger_anger * anger;
+    float base = (ctx->pill_danger_base + ctx->pill_danger_anger * anger) * mult;
     /* Smooth HP scaling across the whole damage range. Formula:
      *   mult = floor + scale * (hp / max_hp)^exp
      * With defaults (floor=0.60, scale=0.40, exp=0.6) this gives:

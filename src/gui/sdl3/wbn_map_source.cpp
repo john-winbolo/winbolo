@@ -916,7 +916,8 @@ void wbnMapsListProvider(MapChooserState *state,
     }
     /* Looked at before the send below, so the last send is not reported
      * as given up on while it is still on its way. A listing that did
-     * arrive but is not the folder asked for leaves no error text. */
+     * arrive but is not the folder asked for clears the fetch error, so
+     * it is shown as a bad response. */
     if (!cacheMatches && !inFlight &&
         wbnMapsRetriesStopped(&s_wbnAsk.folderRetry,
                               s_wbnAsk.folderId == targetId)) {

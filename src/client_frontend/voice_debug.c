@@ -27,10 +27,8 @@
  *   the caller passes the clock reading in, so this file
  *   sees none of the backend's private header.
  *
- *   Sample data is written and read in host byte order,
- *   which is little-endian on every platform the game
- *   builds for; only the WAV header fields are placed byte
- *   by byte.
+ *   Header fields and samples alike are placed byte by
+ *   byte, little-endian, as WAV has them.
  *********************************************************/
 
 #if defined(WB_VOICEDEBUG)
@@ -291,11 +289,16 @@ static bool wavOpen(DebugWav *w, const char *path) {
 *  pcm - VOICE_FRAME_SAMPLES mono S16
 *********************************************************/
 static void wavWrite(DebugWav *w, const int16_t *pcm) {
+    uint8_t le[sizeof(int16_t) * VOICE_FRAME_SAMPLES];
+    int i;
+
     if (w->fp == NULL) {
         return;
     }
-    if (fwrite(pcm, sizeof(int16_t), VOICE_FRAME_SAMPLES, w->fp) !=
-        (size_t)VOICE_FRAME_SAMPLES) {
+    for (i = 0; i < VOICE_FRAME_SAMPLES; i++) {
+        putLe16(le + 2 * i, (uint16_t)pcm[i]);
+    }
+    if (fwrite(le, 1, sizeof(le), w->fp) != sizeof(le)) {
         return;
     }
     w->samples += VOICE_FRAME_SAMPLES;
@@ -869,6 +872,7 @@ bool voiceDebugInjectRead(int16_t *pcm) {
     const size_t frameBytes = sizeof(int16_t) * VOICE_FRAME_SAMPLES;
     size_t want;
     size_t got;
+    int i;
 
     if (injectFp == NULL || pcm == NULL) {
         return false;
@@ -886,6 +890,10 @@ bool voiceDebugInjectRead(int16_t *pcm) {
     injectBytesLeft -= (uint32_t)got;
     if (got < frameBytes) {
         memset((uint8_t *)pcm + got, 0, frameBytes - got);
+    }
+    /* The file's little-endian samples, decoded where they landed */
+    for (i = 0; i < VOICE_FRAME_SAMPLES; i++) {
+        pcm[i] = (int16_t)getLe16((const uint8_t *)pcm + 2 * i);
     }
     return true;
 }
