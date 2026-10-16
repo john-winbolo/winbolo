@@ -1500,7 +1500,11 @@ bool serverSimWarmOneHeldSeat(ServerSim *sim);
 /* Forget every queued roster change. The seats a queue names belong to the
  * round it was filled in, so a round that ends takes its queue with it
  * rather than spawning into the next one. Called at the game starts in
- * server_sim_round.c, beside the fill reset. */
+ * server_sim_round.c, beside the fill reset, and from serverSimResetGameWorld
+ * at the return to the lobby (server_sim_round.c) and the empty reset
+ * (server_lifecycle.c). Every bot's init table goes
+ * back to the one it was added with here too, so a game.bot_init from the
+ * round that is ending does not reach the next. */
 void serverSimScenarioResetRoster(ServerSim *sim);
 
 /* Forget what the scenario's ticks have cost so far. Called at the game starts

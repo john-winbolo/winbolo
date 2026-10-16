@@ -1115,6 +1115,10 @@ STR_LV_AUTO_SCROLL=Auto-przewijanie
 
 # Log viewer end-of-log marker
 STR_LV_END_OF_LOG=Osiągnięto koniec pliku logu
+STR_LV_LOAD_TITLE=Otwieranie logu
+STR_LV_LOAD_UNZIP=Rozpakowywanie
+STR_LV_LOAD_SCAN=Odczyt
+STR_LV_LOAD_PLAY=Indeksowanie
 
 # iOS Settings panel additions
 STR_DLGSETTINGS_ZOOM=Powiększenie
@@ -2532,7 +2536,7 @@ STR_RULE_DESC_lgm_gather_trees=Ile drzew budowniczy przynosi z jednego pola lasu
 STR_RULE_DESC_lgm_helicopter_speed=Jak daleko budowniczy przemieszcza się w każdym tiku, gdy opada na spadochronie.
 STR_RULE_DESC_lgm_arrive_tolerance=Jak blisko celu musi być budowniczy, aby uznać, że dotarł.
 STR_RULE_DESC_lgm_return_tolerance=Jak blisko czołgu musi być budowniczy, aby uznać, że wrócił.
-STR_RULE_DESC_lgm_pill_drop_search=Ile pól przechodzi kolumna przeszukiwania miejsca zrzutu bunkra.
+STR_RULE_DESC_lgm_pill_drop_search=Usunięta, nie robi nic.
 STR_RULE_DESC_lgm_boat_leave_offset=Jak daleko od brzegu budowniczy wychodzi, aby wsiąść do łodzi.
 STR_RULE_DESC_lgm_boat_return_offset=Jak daleko budowniczy odchodzi, wysiadając z łodzi.
 STR_RULE_DESC_pill_max_armour=Najwięcej pancerza, jaki ma bunkier, i z jakim zaczyna nowo postawiony.
@@ -2734,3 +2738,24 @@ STR_DLGBROWSER_MODS_MORE=+ mody ({number})
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=Czat głosowy słyszą teraz wszyscy w grze
 STR_VOICE_EVERYONE_OFF=Czat głosowy słyszą teraz tylko twoi sojusznicy
+
+# System Info panel — the Memory block
+STR_DLGSYSINFO_MEMORY=Pamięć
+STR_DLGSYSINFO_MEM_RESIDENT=Rezydentna
+STR_DLGSYSINFO_MEM_PEAK=Szczyt
+STR_DLGSYSINFO_MEM_PRIVATE=Prywatna
+STR_DLGSYSINFO_MEM_VIRTUAL=Wirtualna
+STR_DLGSYSINFO_MEM_LUA=Sterta Lua
+STR_DLGSYSINFO_MEM_BOTS=Boty
+STR_DLGSYSINFO_MEM_BOT=Bot
+STR_DLGSYSINFO_MEM_SERVER_LISTS=Listy serwera
+STR_DLGSYSINFO_MEM_BOT_LISTS=Listy botów
+STR_DLGSYSINFO_MEM_EXPLOSIONS=Eksplozje
+STR_DLGSYSINFO_MEM_TANK_EXPLOSIONS=Eksplozje czołgów
+STR_DLGSYSINFO_MEM_SHELLS=Pociski
+STR_DLGSYSINFO_MEM_MINE_EXPLOSIONS=Eksplozje min
+STR_DLGSYSINFO_MEM_FLOOD_FILL=Zalewanie
+STR_DLGSYSINFO_MEM_BUILDING=Budowa
+STR_DLGSYSINFO_MEM_RUBBLE=Gruz
+STR_DLGSYSINFO_MEM_SWAMP=Bagno
+STR_DLGSYSINFO_MEM_GRASS=Trawa

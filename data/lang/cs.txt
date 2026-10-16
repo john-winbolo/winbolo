@@ -1129,6 +1129,10 @@ STR_LV_AUTO_SCROLL=Automatické posouvání
 
 # Log viewer end-of-log marker
 STR_LV_END_OF_LOG=Dosažen konec souboru záznamu
+STR_LV_LOAD_TITLE=Otevírání záznamu
+STR_LV_LOAD_UNZIP=Rozbalování
+STR_LV_LOAD_SCAN=Čtení
+STR_LV_LOAD_PLAY=Indexování
 
 # iOS Settings panel additions
 STR_DLGSETTINGS_ZOOM=Přiblížení
@@ -2534,7 +2538,7 @@ STR_RULE_DESC_lgm_gather_trees=Kolik stromů stavitel přinese z jednoho pole le
 STR_RULE_DESC_lgm_helicopter_speed=Jak daleko stavitel urazí za jeden tick, když seskakuje na padáku.
 STR_RULE_DESC_lgm_arrive_tolerance=Jak blízko svému cíli musí stavitel být, aby se počítal jako dorazivší.
 STR_RULE_DESC_lgm_return_tolerance=Jak blízko tanku musí stavitel být, aby se počítal jako zpět.
-STR_RULE_DESC_lgm_pill_drop_search=Kolik polí projde jeden sloupec hledání místa pro shoz bunkru.
+STR_RULE_DESC_lgm_pill_drop_search=Odstraněno, nedělá nic.
 STR_RULE_DESC_lgm_boat_leave_offset=Jak daleko stavitel odstoupí, aby nastoupil na loď.
 STR_RULE_DESC_lgm_boat_return_offset=Jak daleko stavitel odstoupí při vystupování z lodi.
 STR_RULE_DESC_pill_max_armour=Nejvíce pancíře, který bunkr má, a s kolika začíná nově postavený.
@@ -2736,3 +2740,24 @@ STR_DLGBROWSER_MODS_MORE=+ mody ({number})
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=Hlasový chat teď slyší všichni ve hře
 STR_VOICE_EVERYONE_OFF=Hlasový chat teď slyší jen tví spojenci
+
+# System Info panel — the Memory block
+STR_DLGSYSINFO_MEMORY=Paměť
+STR_DLGSYSINFO_MEM_RESIDENT=Rezidentní
+STR_DLGSYSINFO_MEM_PEAK=Maximum
+STR_DLGSYSINFO_MEM_PRIVATE=Soukromá
+STR_DLGSYSINFO_MEM_VIRTUAL=Virtuální
+STR_DLGSYSINFO_MEM_LUA=Halda Lua
+STR_DLGSYSINFO_MEM_BOTS=Boti
+STR_DLGSYSINFO_MEM_BOT=Bot
+STR_DLGSYSINFO_MEM_SERVER_LISTS=Seznamy serveru
+STR_DLGSYSINFO_MEM_BOT_LISTS=Seznamy botů
+STR_DLGSYSINFO_MEM_EXPLOSIONS=Výbuchy
+STR_DLGSYSINFO_MEM_TANK_EXPLOSIONS=Výbuchy tanků
+STR_DLGSYSINFO_MEM_SHELLS=Granáty
+STR_DLGSYSINFO_MEM_MINE_EXPLOSIONS=Výbuchy min
+STR_DLGSYSINFO_MEM_FLOOD_FILL=Zaplavení
+STR_DLGSYSINFO_MEM_BUILDING=Stavba
+STR_DLGSYSINFO_MEM_RUBBLE=Trosky
+STR_DLGSYSINFO_MEM_SWAMP=Bažina
+STR_DLGSYSINFO_MEM_GRASS=Tráva

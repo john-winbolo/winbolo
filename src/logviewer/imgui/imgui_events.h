@@ -42,8 +42,9 @@ void lv_imgui_events_add_summary(const char *msg);
 /* Clear all events */
 void lv_imgui_events_clear(void);
 
-/* Remove events with timestamp strictly after the given time (ms) */
-void lv_imgui_events_remove_after(unsigned int timeMs);
+/* Playback restarts from a snapshot restore and posts its lines again; the
+   list keeps the ones it already holds rather than adding them twice. */
+void lv_imgui_events_rewound(void);
 
 /* Game-view newswire accessors. Lifetimes are valid only for the
  * current frame; callers must not retain the returned pointer. */
