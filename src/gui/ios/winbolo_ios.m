@@ -320,6 +320,18 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    /* The thread manager's mutex, as the desktop creates it right after the
+       client mutex (winbolo.c). Without it the handle is NULL, SDL_LockMutex
+       does nothing, and the lock the host timer thread and the main thread
+       take around the local server is fictional: each overwrites the owner,
+       and the timer thread died on serverSimApplyCommand's assertion that
+       it held the mutex, at the first bot command of a single-player game. */
+    if (threadsCreate(FALSE) == FALSE) {
+        WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[iOS] Failed to create the threads mutex");
+        clientMutexDestroy();
+        return 1;
+    }
+
     dialogBackendInit();
 
     /* Voice runs for the life of the process, as on the desktop: it comes up
@@ -334,6 +346,7 @@ int main(int argc, char *argv[]) {
         WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[iOS] gameFrontStart FAILED");
         clientMutexDestroy();
         SDL_Quit();
+        threadsDestroy();
         return 1;
     }
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] gameFrontStart OK");
@@ -433,6 +446,7 @@ ios_game_start:
             voiceCleanup();
             serverSimBotPoolDestroy();
             SDL_Quit();
+            threadsDestroy();
             return 0;
         }
         /* lobbyResult == 1: game started. The UDP transport's
@@ -644,6 +658,7 @@ ios_game_start:
     voiceCleanup();
     serverSimBotPoolDestroy();
     SDL_Quit();
+    threadsDestroy();
     return 0;
 }
 
