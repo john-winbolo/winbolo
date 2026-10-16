@@ -215,6 +215,10 @@ add_executable(logviewer
     # parser compile in directly. Both call nothing but libc.
     ${SRC_ROOT}/bolo/sim_rules.c
     ${SRC_ROOT}/bolo/scenario_panel.c
+    # The round summary (lv_stats.c, called after a load) rebuilds a round's
+    # stats, awards and highlights from the attribution track with these.
+    # Only the public round_stats headers and libc, as in the standalone.
+    ${SRC_ROOT}/bolo/round_stats_derive.c
     # The panel square's drawer, the game's own. It needs ImGui, the public
     # scenario_panel.h and sprite_positions.c above, and nothing else.
     ${SRC_ROOT}/gui/sdl3/scenario_panel_draw.cpp

@@ -868,6 +868,7 @@ void lv_windowOpenSinglePlayer(void) {
     int          n;
     int          attempt;
     size_t       i, j;
+    int          follow;
 
     if (lv_windowCanOpenSinglePlayer() == FALSE) {
         return;
@@ -911,14 +912,25 @@ void lv_windowOpenSinglePlayer(void) {
        opens the -spmap file with the C library's fopen, which on Windows
        reads the path in the system's code page and not as UTF-8. So the
        file name is ASCII only: each letter outside ASCII becomes one '_'.
-       The lead byte of the letter gives the '_' and its continuation bytes
-       (0x80..0xBF) are dropped. */
-    for (i = 0, j = 0; mapName[i] != '\0'; i++) {
+       The lead byte of the letter gives the '_' and the continuation bytes
+       (0x80..0xBF) that belong to it are dropped. A continuation byte with
+       no lead byte before it is not part of a letter, so it gives a '_' of
+       its own. */
+    for (i = 0, j = 0, follow = 0; mapName[i] != '\0'; i++) {
         unsigned char c = (unsigned char)mapName[i];
-        if (c >= 0x80 && c <= 0xBF) {
+        if (c >= 0x80 && c <= 0xBF && follow > 0) {
+            follow--;
             continue;
         }
+        follow = 0;
         if (c >= 0x80) {
+            if (c >= 0xC0 && c <= 0xDF) {
+                follow = 1;
+            } else if (c >= 0xE0 && c <= 0xEF) {
+                follow = 2;
+            } else if (c >= 0xF0 && c <= 0xF7) {
+                follow = 3;
+            }
             c = '_';
         } else if (strchr("\\/:*?\"<>|", (char)c) != NULL) {
             c = '.';
