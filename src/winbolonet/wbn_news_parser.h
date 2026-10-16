@@ -35,4 +35,43 @@ bool parseNewsResponse(const char *raw,
                        std::vector<WbnNewsItem> &outItems,
                        std::string &outCountryCode);
 
+/* Longest image or link URL newsUnwrapLinkedImages accepts, in bytes.
+ * imgui_news.cpp copies a URL into a 2048-byte buffer before using it. */
+#define WBN_NEWS_MD_MAX_URL 2047
+/* Longest alt text it accepts, in bytes. */
+#define WBN_NEWS_MD_MAX_ALT 1024
+
+/* The full-size picture a thumbnail in a news body linked to. */
+struct WbnNewsImageLink {
+    std::string image; /* the thumbnail URL, as it appears in the body */
+    std::string href;  /* the URL the thumbnail linked to; http(s) only */
+};
+
+/* imgui_markdown cannot draw an image inside a link, which is how the
+ * website writes a thumbnail that opens the full-size picture:
+ *
+ *   [![alt](thumb.png)](full.png)
+ *
+ * It draws "![alt" as link text and the rest as plain text instead.
+ * Returns md with each such construct replaced by the plain image
+ * "![alt](thumb.png)", and appends {thumb.png, full.png} to outLinks so
+ * the caller can still open full.png when the image is clicked.
+ *
+ * A construct is only rewritten when both URLs are 1 to
+ * WBN_NEWS_MD_MAX_URL bytes with no whitespace, control characters,
+ * '(', ')', '[', ']', '<' or '>', and the alt text is at most
+ * WBN_NEWS_MD_MAX_ALT bytes with no '[' or ']'. Anything else is copied unchanged. The
+ * outer link is only recorded in outLinks when it starts with http://
+ * or https://; otherwise the image is unwrapped and the link dropped.
+ * The image URL is not checked here: news_image_cache applies its own
+ * host allowlist. */
+std::string newsUnwrapLinkedImages(const std::string &md,
+                                   std::vector<WbnNewsImageLink> &outLinks);
+
+/* Returns the href recorded for the image URL image[0..imageLen), or
+ * nullptr if that image had no outer link. The first entry wins when
+ * the same thumbnail was linked twice. */
+const char *newsFindImageLink(const std::vector<WbnNewsImageLink> &links,
+                              const char *image, size_t imageLen);
+
 #endif /* WBN_NEWS_PARSER_H */

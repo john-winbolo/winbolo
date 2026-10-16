@@ -3974,6 +3974,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
+    # Unwrapping linked thumbnails in news bodies for imgui_markdown.
+    tests/unit/test_wbn_news_markdown.cpp
     tests/unit/test_wbn_news_fetch.cpp
     tests/unit/test_wbn_country_cache.c
     tests/unit/test_wbn_prefs_sync.c
@@ -5143,6 +5145,7 @@ set(_unit_test_names
     wbn_bearer_state
     wbn_rekey_codec
     wbn_news_parse
+    wbn_news_markdown
     wbn_news_free_during_fetch
     wbn_country_cache
     wbn_prefs_parse_get
