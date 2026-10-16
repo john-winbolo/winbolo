@@ -1897,6 +1897,14 @@ static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
         }
         return false;
     }
+    /* A bot on a free seat is not one of the scenario's held seats, so the
+       round end does not take it out and it plays on in later rounds. The
+       table it was spawned with is the scenario's, so it is not the table
+       the bot was added with: the next round start puts it on an empty one.
+       It keeps the spawn's table for the rest of this round. */
+    if (!wasHeld) {
+        botManagerForgetAddedInit(sim, slot);
+    }
     transportUdpServerSetBotName(slot, name);
     if (!wasHeld && team > 0 && team < MAX_TANKS) {
         /* One accept, with the first member found. An accept merges the two
@@ -2995,6 +3003,11 @@ void serverSimScenarioResetRoster(ServerSim *sim) {
     }
     sim->scenarioRosterHead = 0;
     sim->scenarioRosterCount = 0;
+    /* And the init tables the drained bot_init rows wrote. Those are the
+       ending round's too, and a bot still holding one would carry it into the
+       next round, scenario or not: its brain is rebuilt from it at the round
+       start. See botManagerResetInitTablesToAdded. */
+    botManagerResetInitTablesToAdded(sim);
 }
 
 /* ── Bots ──────────────────────────────────────────────────────────────── */

@@ -53,6 +53,10 @@ int lv_imgui_want_capture_mouse(void);
  * ("spectating begins in N" / "connecting" / "connection lost"). */
 void lv_imgui_center_message(const char* text);
 
+/* A centred window while a log opens: title, the stage it is at (step of
+ * steps) and a bar showing how far through that stage it is. */
+void lv_imgui_load_progress(const char* stageText, int step, int steps, float fraction);
+
 /* Draw a small, borderless, non-interactive phase badge ("Lobby" / "Live" /
  * "Game Over") in the top-right corner. Call between newframe and render in both
  * spectator modes (overview + game view). phase is a SPEC_PHASE_* value from

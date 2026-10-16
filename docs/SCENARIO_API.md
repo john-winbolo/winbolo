@@ -922,6 +922,8 @@ scenario = {
   name         = "Wave Defense",
   description  = "Hold the four pillboxes at the centre of the map.",
   api          = 1,
+  author       = "Jo Bloggs",
+  updated      = "2026-10-03T20:47Z",
   kind         = "scenario",
   game         = "open",
   bound        = true,
@@ -950,7 +952,57 @@ scenario = {
 | `callbacks` | table | What each of the script's callbacks does, one sentence each for a player, keyed by the callback's name: `callbacks = { on_start = "Lines the teams up.", can_die = "Builders cannot be killed." }`. The lobby's details dialog shows them under the rules table, headed "What this mod implements:" or "What this scenario implements:", as a table of Method (the callback's name), Type and High-level overview (the sentence). Type is Event for a hook whose return the engine ignores, Query for a policy whose answer it uses, and Trigger for a hook only a trigger's `when` defines. A script with no block shows no such section. Optional, and it changes nothing about how the round plays. At most 40 rows, each sentence cut at 159 bytes (at a UTF-8 character boundary), and 2048 bytes for the whole block packed (a type byte and two length bytes per row plus the name and the sentence, and one count byte) — about twenty lines of eighty letters. The load warns, and never refuses the file, for each callback the script defines that the block does not describe, for each name that is no callback the engine calls, and for each name the script never defines; those last two rows are dropped. The warnings go to the server console and `-validate` prints them. The names are the ones in the hook and policy tables below; a trigger's `when` counts as defining its hook. |
 | `workshop_id` | string | The Steam Workshop item the file was published as, written as a string of decimal digits (`"3301234567"`), because a Lua number cannot hold every digit of a 64-bit id. The game writes it into the file's manifest when you publish it; it is not meant to be set by hand. A script that declares its own `scenario` table need not repeat it: it is compared with the manifest only when the table states it, and a table that states a different id is refused. Anything that is not a string of digits is reported and read as none. |
 | `workshop_author` | string | The SteamID64 of the account that published the file, a string of decimal digits like `workshop_id`, and written by the game at the same time. The same rules apply: not meant to be set by hand, need not be repeated, and refused only when the table states a different one. |
+| `author` | string | Who wrote the file, as the lobby and the server log show it: up to 47 bytes of UTF-8. See [`author` and `updated`](#author-and-updated). |
+| `updated` | string | When the file's content last changed, in UTC to the minute: `"YYYY-MM-DDTHH:MMZ"`. See [`author` and `updated`](#author-and-updated). |
 | `settings` | table | Choices the host makes in the lobby details dialog, one dropdown each, read by the script with `game.setting(id)`. See [`scenario.settings`](#scenariosettings). Optional; a script with none shows no Settings section. |
+
+### `author` and `updated`
+
+Two editions of a mod can share a name. The author and the time the file last
+changed are what tell them apart, so the lobby shows both: on each row of the
+script chooser as a tooltip, "by Jo Bloggs · updated 2026-10-03 20:47 UTC",
+and on the same line under the file name in the details dialog. The server
+prints them on the line it writes for each script a round loads:
+
+```
+scenario: Mac Bolo Rules by WinBolo, updated 2026-10-03 (MacBoloRules.scenario.lua) loaded
+```
+
+`updated` is written in one form only, an ISO 8601 time in UTC to the minute
+with a `Z`: `"2026-10-03T20:47Z"`. No seconds, no offset, no other separator.
+It is the time the content changed, stated in the file, and not the file's
+modified time on disk, which a copy or a download moves. The form is checked
+as a real date: `"2026-02-30T10:00Z"` is not one.
+
+`author` is free text, cleaned as it is read: control characters are dropped,
+and so are invisible format characters (bidi controls, line and paragraph
+separators, zero-width characters), spaces at either end are trimmed, and
+the text is cut at 47 bytes on a UTF-8 character boundary. Invalid UTF-8 is
+dropped byte by byte. An author that is empty once cleaned reads as unknown.
+The lobby draws it as plain text, never as a format string.
+
+Both are optional. A file that leaves one out, or states one that is not a
+string, or an `updated` that is not in the form, reads as "unknown" there,
+and the file still loads and plays. Each of those is a warning, not a
+problem: `-validate` prints it as `file: warning: key: message` and exits 0
+all the same, and the round loads without a word. A cleaned author is a
+warning too, naming the text that was used.
+
+A package's `manifest.json` carries the same two keys, `"author"` and
+`"updated"`, with the same rules. A script that declares its own `scenario`
+table need not repeat them; when it does, they must match the manifest's, as
+`workshop_id` must.
+
+A server from before these keys sends no identity, and a newer lobby then
+shows nothing rather than "unknown". An older lobby ignores what a newer
+server sends.
+
+The shipped scripts (`data/mods/*.lua` and `data/maps/*.scenario.lua`) say
+`author = "WinBolo"`. `tools/stamp_mod_updated.py` keeps their `updated`
+current: run it before committing a change to one, and it stamps every
+shipped file that differs from git HEAD with the current UTC time.
+`--check` fails a shipped file whose last change did not also change its
+`updated` line; see [TOOLS.md](TOOLS.md#toolsstamp_mod_updatedpy).
 
 ### `scenario.lobby`
 
@@ -1343,11 +1395,39 @@ rather than left to misbehave quietly.
 | `can_hit(attacker, kind, n, pill)` | When a shell reaches a `"tank"` or a `"pill"` it would hit. `n` is the seat for a tank and the pillbox number for a pill. `attacker` is the seat that fired it, or `game.NEUTRAL` for a pillbox's shell, and `pill` is the pillbox that fired it, `nil` for a tank's shell — so a pillbox's side is `game.pill(pill).owner`. Pillbox shells reaching pillboxes are asked too. A shell is asked once about each target: once let through, it passes that target for the rest of its flight without asking again. | `false` lets the shell fly on as if the target were not there: no damage, no knockback, no boat lost, no angry pillbox and no hit sound, and it can still hit whatever is behind. Ordinary rule: yes. |
 | `can_die(kind, n, killer, cause, pill)` | When a blow would destroy a `"tank"`, a `"builder"` or a `"pill"`. `n` is the seat for a tank or its builder and the pillbox number for a pill. `cause` is `"shell"`, `"mine"`, `"deep_sea"` or `"script"` for a tank; `"shell"`, `"mine"` or `"explosion"` for a builder; `"shell"` or `"explosion"` for a pill; and `nil` when the engine could not name it. `"explosion"` is a dying tank's blast. `killer` is the seat that fired the shell (`game.NEUTRAL` for a pillbox's); for a builder caught by a mine it is the seat that laid it, and for a builder or a pill caught in a blast it is the seat whose tank blew up. Those two are named here and credited with nothing: `on_lgm_died` and `on_pill_killed` still name nobody for them. `pill` is the pillbox whose shell it was, and `nil` for anything else. | `false` leaves a tank at zero armour and alive, a builder untouched, a pillbox at one armour. Ordinary rule: yes. |
 | `can_ally(p, q)` | When seat `p` asks seat `q` for an alliance, and again when `q` accepts, so an answer that changed in between is the one that counts. `p` is always the seat that asked. Bots ask and accept the same way people do. A script's own `set_team`, a bot it spawns onto a team, and the seating in `scenario.lobby` are the script's decisions and are not asked. | `false` refuses the request, so `q` is never shown it, or refuses the accept. Ordinary rule: yes. |
-| `on_choose_start(p)` | When the engine is about to pick a start for seat `p`, at a spawn, a respawn or a teleport with no start named. A start the script named in the op itself is not asked about. | A start number, counted from 1 as `game.start` counts. A number that names no live start is reported and the engine picks. `nil` lets the engine pick. |
+| `on_choose_start(p, lobby)` | When the engine is about to pick a start for seat `p`, at a spawn, a respawn or a teleport with no start named. A start the script named in the op itself is not asked about. `lobby` is the start the lobby chose for this tank, counted as `game.start` counts, or `nil` when it chose none; it is what `game.lobby_start(p)` answers at that moment (see below). Every script on the list is told the same `lobby`. | A start number, counted from 1 as `game.start` counts. Return `lobby` to keep the lobby's start, or any other live start to override it. A number that names no live start is reported and the engine picks. `nil` lets the engine pick, and the engine's pick is `lobby` when there is one. |
 | `spawn_loadout(p)` | When seat `p`'s tank is created, unless the op that spawned it named a `loadout` of its own. A named one outranks the policy and is taken as it is read, so the policy is not asked for that tank and the named amounts are spent on it rather than held for the seat's next life. | `"open"`, `"tournament"` or `"strict"` for that game type's loadout, or a table of all four amounts, `{ shells = , mines = , armour = , trees = }`, each 0 to 255. A table short of one is reported and the ordinary loadout stands. |
 | `damage_scale(attacker, victim, cause, pill)` | On every hit a tank takes, with `cause` as `can_die` spells it for a tank. `attacker` is `game.NEUTRAL` for a pillbox's shell, and `pill` is that pillbox's number, `nil` for anything else. | A percent, 0 to 10000. 100 is the ordinary amount and 0 is a hit that costs nothing. Out of range is reported and 100 stands. |
 | `pill_damage_scale(attacker, n, cause, pill)` | On every blow pillbox `n` takes: a shell, with `cause` `"shell"`, and a dying tank's blast, with `cause` `"explosion"`. `attacker` is the seat that fired the shell (`game.NEUTRAL` for a pillbox's) or the seat whose tank blew up, and `pill` is the pillbox that fired the shell, `nil` for anything else. | A percent, 0 to 10000, of the armour the pillbox loses. 100 is the ordinary amount and 0 costs it nothing. Only the armour is scaled: the shell still stops there and the pillbox still turns angry. Out of range is reported and 100 stands. |
 | `kill_credit(victim, killer, cause, hit_by, hit_at)` | At every tank death, before it is reported to anyone. `killer` is the engine's own credit, and for a drowning that is the victim itself. `cause` is as `can_die` spells it for a tank. `hit_by` is the last seat not allied with the victim whose shell or mine hit it during this life, and `hit_at` is the `game.tick()` of that hit; both are `nil` when no such hit has landed. Scripts are asked from the top down and the first usable seat is taken. | A seat in play, who then takes the killer's place everywhere the death is reported: the kill event every client counts kills from (the HUD's kills), `on_tank_killed`, the game log and WinBolo.net. A number that names no seat in play is reported and the engine's killer stands. `nil` keeps the engine's killer. |
+
+**The lobby's start.** When a round starts, the engine places every seat
+being fielded in one pass and reserves a start for each: the start its
+player picked by hand in the lobby, else one on its team's side, else the
+engine's own spread of the field, which keeps teams together and rivals
+apart. That reservation is what `on_choose_start` is handed as `lobby`. It
+is used once: when the seat's first tank of the round is placed, the engine
+clears it, whatever the answer was. So `lobby` is a number only for the
+opening tank of a seat fielded when the round starts, and `nil` for every
+spawn after that, for a seat fielded or joined once the round is running,
+and on a map with no live start. A script that names a start other than
+`lobby` takes that start, and the reserved one is cleared, not kept for a
+later spawn. The one tank that does not clear it is one a `spawn` op builds
+without naming a start: that op leaves the reservation for the engine's own
+next placement of the seat. Other seats keep their own
+reservations: two tanks sent to one start are put on free squares beside it,
+as teammates sharing a start are. A script that names no second parameter is
+asked exactly as before. Mac Bolo Rules is the worked case: it returns
+`lobby` when there is one and makes its own pick otherwise.
+
+```lua
+function on_choose_start(p, lobby)
+  if lobby ~= nil then
+    return lobby          -- the opening tank: keep the lobby's start
+  end
+  return my_spawn_pick(p) -- a respawn: the lobby chose nothing
+end
+```
 
 `scenario.lobby.max_players` is the one decision that is a number rather than
 a function; it is applied by the lobby without asking.
@@ -1570,6 +1650,8 @@ starts comes due after about twice the seconds it asked for.
 | `game.tank(p)` | `{ mx, my, wx, wy, dir, armour, shells, mines, trees, pills, boat, dead, name, bot, kills, deaths, mods }`, or `nil` when the seat is empty or has no tank. `mx, my` are map squares and `wx, wy` world coordinates; `dir` is the full 0-255 facing, which is what `teleport` takes back. `mods` is `{ speed, accel, turn, reload, dealt, taken }`. |
 | `game.builder(p)` | `{ state, mx, my, wx, wy, job, trees, mines }`, or `nil` when the seat has none. `state` is `"in_tank"`, `"going"`, `"returning"`, `"parachuting"` or `"dead"`; `job` is an action word, or absent when he is on none. The square is tracked while he is out of the tank — in the tank he is wherever his tank is, which is why the state comes first. |
 | `game.lobby_slot(p)` | `{ connected, bot, team, name, ready, fielded, alive, team_pool }`, or `nil` for an empty seat. **`fielded` is the field that tells a held seat from one on the field.** `team_pool` is the label of the bot naming pool the seat's team draws bot names from, such as `"Famous Painters"`: the name the lobby shows in that team's pool dropdown. It is absent when the seat is on no team (0) or the team has no pool. A team has a pool once it is set up in the lobby; teams 1 and 2 start with the first pool, and a team the host never set up has none, so its seats read `nil` even when they hold bots. A dedicated server's `-bots` names its bots from one random pool without setting any team's pool, so there `team_pool` is the first pool's label, not the pool the bot names came from. The label comes from the server's own pools, so every client reads the same word. A script can label a team of bots only by it (see below). |
+| `game.lobby_start(p)` | The start the lobby reserved for seat `p` and has not yet used, counted from 1 as `game.start` counts, or `nil`. The same number `on_choose_start` is handed as `lobby`, so it is `nil` once the seat's first tank of the round is built (see **The lobby's start** under Policies). |
+| `game.lobby_side(p)` | The side seat `p`'s lobby team chose to start on, as `"north"`, `"east"`, `"south"` or `"west"`, or `nil` for an empty seat, a seat on no team (0) and a team with no side. A side the lobby filled in for a team, opposite the one other team's choice, reads the same as one a player chose. |
 | `game.allied(a, b)` | Whether seats `a` and `b` are on the same side in the game: `true` or `false`, `true` for a seat and itself, and `nil` when either seat is empty. This is the alliance table every game rule reads — who a pillbox fires at, which bases refuel whom — including alliances players made and left in play. **It can differ from `game.lobby_slot(p).team`:** two teammates where one has left the alliance share a team but are not allied, and players on different teams who allied share a side but not a team. |
 
 A seat the lobby is holding for a bot reads as connected, a bot, on its team,
@@ -2396,7 +2478,7 @@ rather than by having no speed.
 | `lgm_helicopter_speed` | 3 | 1 to 255 | How far the builder travels each tick while he parachutes in, so it is also how long he is in the air: the drop is the distance over this. The rule's name is the one the code has always carried for the drop; everything a player meets calls it a parachute, `game.builder_parachute` included. See the note below the table before you raise it. |
 | `lgm_arrive_tolerance` | 16 | 1 to 255 | How near his goal counts as arrived, as a half-width taken either way round it on both axes. The job itself is done on the square that was ordered, not the one he stopped on. |
 | `lgm_return_tolerance` | 128 | 1 to 65535 | The same, coming back to the tank. |
-| `lgm_pill_drop_search` | 10 | 1 to 255 | How many squares of a column the search for somewhere to put a pillbox down walks. |
+| `lgm_pill_drop_search` | 10 | 1 to 255 | Removed, does nothing. The name is still accepted, so a script that sets it still runs. |
 | `lgm_boat_leave_offset` | 144 | 0 to 255 | How far out he steps when he boards a boat. |
 | `lgm_boat_return_offset` | 160 | 0 to 255 | How far in he steps coming off one. |
 
@@ -2960,7 +3042,20 @@ maps/Wave Defense.scenario.lua:14: rules.tank_reload_ticks: tank_reload_ticks is
 ```
 
 on standard error, and the command exits 0 for a map that is playable and 1
-for one that is not. Problems the parse itself finds — a rule name that
+for one that is not. Warnings, such as a missing `author` or `updated`, are
+printed after the problems as `file: warning: key: message`, and do not change
+the exit code. A `.lua` file named directly, a mod say, is checked the same way
+with no map:
+
+```
+WinBoloDS -validate data/mods/MacBoloRules.scenario.lua
+```
+
+A `.lua` named directly that cannot be read, a misspelt path say, exits 1, so
+a script or a hook that checks a mod by name does not pass on a typo. A map
+with no script beside it still exits 0.
+
+Problems the parse itself finds — a rule name that
 spells nothing, a tag past what the map holds — are also written to standard
 output as the server would log them, so a run that captures one stream sees
 half the report. The map has to load before the script is looked at.

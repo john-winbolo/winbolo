@@ -92,8 +92,7 @@ void lv_windowAddEvent(int eventType, char *msg) {
     (void)eventType; (void)msg;
 }
 
-void lv_windowRemoveEventsAfter(uint32_t timeMs) {
-    (void)timeMs;
+void lv_windowEventsRewound(void) {
 }
 
 /* Called by lvEmbedBegin and lv_windowStop to empty the events list. Nothing
