@@ -36,7 +36,11 @@
 -- a plain pill take, not a decoy.
 --
 -- PASS when:
---   * A said "Staying wide of Boss on pill #1" (the detection),
+--   * (no chat check) Boss is a bot, and since 9ef22cb36 (John's review
+--     item "A bot decoy gets no 'Staying wide of' chat line") A says
+--     nothing for a bot decoy.  The detection shows in the park rules
+--     below; A's print2 log has HUMAN_DECOY_ON ... ally=bot.  If A does
+--     say "Staying wide", the decoy proof is still taken then,
 --   * A never said "Suicide run" or "Charging" (no rush),
 --   * the decoy stood (see above) when A said "Staying wide" and when A
 --     parked,
@@ -277,8 +281,8 @@ VERDICT_CHECK = function(g)
                             st.park and (st.park[1] .. "," .. st.park[2]) or "nil",
                             dj, dh, dp, hp, walls(st.wide_proof), walls(st.park_proof),
                             tostring(st.wide), tostring(st.rush))
-  -- The decoy must have stood when A chose (said "Staying wide") and when
-  -- it parked; otherwise this run measured a plain pill take.
+  -- The decoy must have stood when A parked (and when A said "Staying
+  -- wide", if it did); otherwise this run measured a plain pill take.
   local gone = nil
   if st.wide and not st.wide_proof.ok then
     gone = st.wide_proof.txt
@@ -299,6 +303,6 @@ VERDICT_CHECK = function(g)
   -- HDECOY_PROOF lines logged at the moment have the boss square too).
   g.log("HDECOY_DETAIL proof " .. (st.wide_proof and st.wide_proof.txt or "wide: none"))
   g.log("HDECOY_DETAIL proof " .. (st.park_proof and st.park_proof.txt or "park: none"))
-  return gone == nil and ob == nil and st.wide and not st.rush and st.park ~= nil
+  return gone == nil and ob == nil and not st.rush and st.park ~= nil
          and dj >= 2 and not ring and dp > hp, why
 end
