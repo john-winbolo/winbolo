@@ -798,8 +798,7 @@ bool pillsGetNextView(struct GameSim *sim, pillboxes *value, PlayerBitMap eligib
  * them (own pills are allied to themselves), it still has armour, it is not
  * being carried, and this client has not watched it leave the square it holds
  * for it (PILL_SQUARE_MOVED). FALSE for an index past the end of the array.
- * This is
- * the one pill-view predicate — pillsCheckView below answers it for
+ * This is the one pill-view predicate — pillsCheckView below answers it for
  * sim->viewPlayer, callers wanting another player ask directly. */
 bool pillsCanView(struct GameSim *sim, pillboxes *value, BYTE pillIdx, BYTE viewPlayer);
 

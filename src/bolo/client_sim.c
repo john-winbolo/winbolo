@@ -1276,6 +1276,40 @@ static void clientSimAddPredictedShellAt(ClientSim *cs, WORLD wx, WORLD wy, TURN
 }
 
 /*********************************************************
+ *NAME:          clientSimDrawnTankWorld
+ *PURPOSE:
+ *  Where tank p is drawn this frame, in world units. The
+ *  full position is used only when the front end draws it
+ *  (fineTankPositions, the Smooth mode); otherwise the tank
+ *  is drawn at its game pixel. Returns false, leaving wx/wy
+ *  alone, when the players list holds no position for p (a
+ *  hidden stub zeroes the entry).
+ *********************************************************/
+static bool clientSimDrawnTankWorld(const ClientSim *cs, BYTE p, WORLD *wx,
+                                    WORLD *wy) {
+  const player *row; /* Tank p's entry in the players list */
+
+  if (cs->sim.plyrs == NULL || p >= MAX_TANKS) {
+    return false;
+  }
+  row = &(*cs->sim.plyrs).item[p];
+  /* A hidden stub zeroes the entry: there is no drawn tank. */
+  if (row->mapX == 0 && row->mapY == 0) {
+    return false;
+  }
+  if (cs->fineTankPositions && row->fineSet) {
+    *wx = row->fineX;
+    *wy = row->fineY;
+  } else {
+    *wx = (WORLD)(((WORLD)row->mapX << TANK_SHIFT_MAPSIZE) +
+                  ((WORLD)row->pixelX << TANK_SHIFT_RIGHT2));
+    *wy = (WORLD)(((WORLD)row->mapY << TANK_SHIFT_MAPSIZE) +
+                  ((WORLD)row->pixelY << TANK_SHIFT_RIGHT2));
+  }
+  return true;
+}
+
+/*********************************************************
  *NAME:          clientShellVisualBlocked
  *PURPOSE:
  *  Shared visual collision short-circuit for client shells.
@@ -1326,24 +1360,14 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
     if (p == cs->interpCtx.localPlayer) continue;
     if (!interpIsAlive(&cs->interpCtx, p)) continue;
     /* A shell leaves from inside the tank that fired it; it cannot hit it. */
-    if (!cs->isBot && p == owner) continue;
+    if (p == owner) continue;
     if (interpGetPosition(&cs->interpCtx, p, 1.0f, &tkX, &tkY, &tkAngle, &tkOnBoat)) {
       /* A player sees the tank where it is drawn, which is behind the newest
        * sample by the display delay. Culling against the newest sample takes
        * a shell off the screen short of the hull it is flying at. A bot draws
        * nothing and keeps the newest sample. */
-      if (!cs->isBot && cs->sim.plyrs != NULL &&
-          ((*cs->sim.plyrs).item[p].mapX != 0 ||
-           (*cs->sim.plyrs).item[p].mapY != 0)) {
-        if ((*cs->sim.plyrs).item[p].fineSet) {
-          tkX = (*cs->sim.plyrs).item[p].fineX;
-          tkY = (*cs->sim.plyrs).item[p].fineY;
-        } else {
-          tkX = (WORLD)(((WORLD)(*cs->sim.plyrs).item[p].mapX << TANK_SHIFT_MAPSIZE) +
-                        ((WORLD)(*cs->sim.plyrs).item[p].pixelX << TANK_SHIFT_RIGHT2));
-          tkY = (WORLD)(((WORLD)(*cs->sim.plyrs).item[p].mapY << TANK_SHIFT_MAPSIZE) +
-                        ((WORLD)(*cs->sim.plyrs).item[p].pixelY << TANK_SHIFT_RIGHT2));
-        }
+      if (!cs->isBot) {
+        (void)clientSimDrawnTankWorld(cs, p, &tkX, &tkY);
       }
       /* Match the authoritative shell hit-zone (circle by default; square
        * under BOLO_LEGACY_SQUARE_COLLISION). See tank_hit_radius. */
@@ -4604,18 +4628,8 @@ void clientSimFollowAllyView(ClientSim *cs) {
     return;
   }
   /* A hidden stub zeroes the entry; the upkeep parks on the last square. */
-  if ((*cs->sim.plyrs).item[target].mapX == 0 &&
-      (*cs->sim.plyrs).item[target].mapY == 0) {
+  if (!clientSimDrawnTankWorld(cs, target, &wx, &wy)) {
     return;
-  }
-  if (cs->fineTankPositions && (*cs->sim.plyrs).item[target].fineSet) {
-    wx = (*cs->sim.plyrs).item[target].fineX;
-    wy = (*cs->sim.plyrs).item[target].fineY;
-  } else {
-    wx = (WORLD)(((WORLD)(*cs->sim.plyrs).item[target].mapX << TANK_SHIFT_MAPSIZE) +
-                 ((WORLD)(*cs->sim.plyrs).item[target].pixelX << TANK_SHIFT_RIGHT2));
-    wy = (WORLD)(((WORLD)(*cs->sim.plyrs).item[target].mapY << TANK_SHIFT_MAPSIZE) +
-                 ((WORLD)(*cs->sim.plyrs).item[target].pixelY << TANK_SHIFT_RIGHT2));
   }
   if (scrollCenterWorld(&cs->scroll, &vp->xOffset, &vp->yOffset, wx, wy) ==
       TRUE) {

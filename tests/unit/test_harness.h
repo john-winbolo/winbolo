@@ -1798,6 +1798,10 @@ int run_view_cycle_moved_pill(void);
 /* scrollCenterWorld frames a mid-square tank as scrollCenterObject does and
  * keeps the sub-square part, so the ally view glides. */
 int run_view_cycle_ally_follow(void);
+/* clientSimFollowAllyView on a ClientSim: a stub leaves the camera, Smooth on
+ * follows fineX/fineY, off follows the game pixel, and only a whole-square
+ * change asks for a recalc. */
+int run_view_cycle_ally_follow_clientsim(void);
 
 /* The per-pill position-current flag (test_pill_pos_current.c): the lookups
  * movement, turn rate and shell collision ask pass over a pill whose square
@@ -3156,6 +3160,7 @@ int run_survival_lobby_round_full(void);
 int run_survival_lobby_round_ds_order(void);
 int run_loopback_unfield_tank(void);
 int run_loopback_fine_tank_position(void);
+int run_loopback_shell_drawn_cull(void);
 int run_lobby_template_return_reconciles(void);
 int run_lobby_template_return_unfields(void);
 int run_lobby_template_reset_reseats(void);

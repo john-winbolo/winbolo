@@ -5579,6 +5579,7 @@ set(_unit_test_names
     view_cycle_stale_pill
     view_cycle_moved_pill
     view_cycle_ally_follow
+    view_cycle_ally_follow_clientsim
     pill_pos_current_lookups
     pill_pos_current_num_split
     pill_pos_current_duplicate_square
@@ -6226,6 +6227,7 @@ set(_unit_test_names
     survival_lobby_round_ds_order
     loopback_unfield_tank
     loopback_fine_tank_position
+    loopback_shell_drawn_cull
     lobby_template_return_reconciles
     lobby_template_return_unfields
     lobby_template_reset_reseats
