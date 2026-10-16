@@ -758,6 +758,27 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
   }
 }
 
+/* Whether this shell may hit the tank or pill it has reached, which the host
+ * is asked once per shell and target. A target it was let through is noted
+ * on the shell and left alone after that, so the question is not put again on
+ * every tick the two overlap and a script cannot change its mind halfway
+ * through a tank. index is the tank slot or the pill index; a number past the
+ * sixteen bits the notes hold is asked every time rather than noted. */
+static bool shellsMayHit(GameSim *sim, shells shell, BYTE kind, BYTE index) {
+	uint16_t *passed = (kind == HIT_KIND_TANK) ? &shell->passedTanks
+	                                           : &shell->passedPills;
+	uint16_t bit = (index < 16) ? (uint16_t) (1u << index) : 0;
+
+	if ((*passed & bit) != 0) {
+		return FALSE;
+	}
+	if (gameSimCanHit(sim, shell->owner, kind, index, shell->pill) == FALSE) {
+		*passed = (uint16_t) (*passed | bit);
+		return FALSE;
+	}
+	return TRUE;
+}
+
 /*********************************************************
 *NAME:          shellsCalcCollision
 *AUTHOR:        John Morrison
@@ -785,28 +806,6 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
 *             where the tank is now. May be NULL
 *  outSeenY - Y, as outSeenX
 *********************************************************/
-
-/* Whether this shell may hit the tank or pill it has reached, which the host
- * is asked once per shell and target. A target it was let through is noted
- * on the shell and left alone after that, so the question is not put again on
- * every tick the two overlap and a script cannot change its mind halfway
- * through a tank. index is the tank slot or the pill index; a number past the
- * sixteen bits the notes hold is asked every time rather than noted. */
-static bool shellsMayHit(GameSim *sim, shells shell, BYTE kind, BYTE index) {
-	uint16_t *passed = (kind == HIT_KIND_TANK) ? &shell->passedTanks
-	                                           : &shell->passedPills;
-	uint16_t bit = (index < 16) ? (uint16_t) (1u << index) : 0;
-
-	if ((*passed & bit) != 0) {
-		return FALSE;
-	}
-	if (gameSimCanHit(sim, shell->owner, kind, index, shell->pill) == FALSE) {
-		*passed = (uint16_t) (*passed | bit);
-		return FALSE;
-	}
-	return TRUE;
-}
-
 bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome, WORLD *outSeenX, WORLD *outSeenY) {
 	WORLD seenHitX = 0;   /* A rewound tank hit: the shell's point, on the */
 	WORLD seenHitY = 0;   /* shooter's screen, before it is carried */
@@ -962,6 +961,9 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 					seenHitX = *xValue;
 					seenHitY = *yValue;
 					seenHitSet = TRUE;
+					/* No NULL check on tk[count]: tankIsTankHitAtPosition
+					 * returns TH_MISSED for a NULL tank, so a hit means the
+					 * tank is there. */
 					tankGetWorld(&tk[count], &tankNowX, &tankNowY);
 					/* Signed, and held on the map: WORLD is 16 bits unsigned
 					 * and a sum past either edge would wrap to the far side. */
