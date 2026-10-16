@@ -3390,25 +3390,70 @@ int main(int argc, char **argv) {
           fprintf(stderr, "Warning: -bot-init given with no value; ignoring\n");
         }
       }
-      /* Draw themed names from one randomly-chosen pool so a -bots
-       * server gets varied names instead of "Bot 1..N". The name draws are
-       * wrapped in a bolo_rand save/restore so this cosmetic randomness leaves
-       * the deterministic game stream (tank placement, etc.) untouched for a
-       * given -seed — only the game sim should advance the shared PRNG. Names
-       * are picked up front, then the bots are added with them. usedStore
-       * backs the uniqueness list handed to lobbyBotPoolPick. (numBots is
-       * clamped to MAX_TANKS above, so botNames is always in bounds.) */
+      /* Draw themed names so a -bots server gets varied names instead of
+       * "Bot 1..N". Each team that gets bots draws a random pool of its
+       * own, one no other team holds (the lobby's rule), and the pool is
+       * stored on the team so the lobby's "Bot naming" label and Add Bot
+       * use the same pool as these names. Bots on no team share one random
+       * pool. The draws are wrapped in a bolo_rand save/restore so this
+       * cosmetic randomness leaves the deterministic game stream (tank
+       * placement, etc.) untouched for a given -seed — only the game sim
+       * should advance the shared PRNG. Names are picked up front, then the
+       * bots are added with them. usedStore backs the uniqueness list
+       * handed to lobbyBotPoolPick. (numBots is clamped to MAX_TANKS above,
+       * so botNames is always in bounds.) */
       char botNames[MAX_TANKS][64];
+      /* The team each bot is on once the placement below has run: the
+       * -allybots team, or the -teams block or round-robin team, which
+       * replaces it. The placement code below does the moves; this copy
+       * only tells the naming which pool to use. A team number past the
+       * last team becomes team 1, as serverSimSetTeamBatch does. */
+      int botTeam[MAX_TANKS];
+      for (i = 0; i < numBots; i++) {
+        botTeam[i] = allyTeam;
+      }
+      if (numTeamSizes > 0) {
+        int bot = 0;
+        for (int t = 0; t < numTeamSizes; t++) {
+          for (int k = 0; k < teamSizes[t] && bot < numBots; k++) {
+            botTeam[bot++] = t + 1;
+          }
+        }
+      } else if (numTeams >= 2) {
+        for (i = 0; i < numBots; i++) {
+          botTeam[i] = (i % numTeams) + 1;
+        }
+      }
+      for (i = 0; i < numBots; i++) {
+        if (botTeam[i] >= MAX_TANKS) botTeam[i] = 1;
+      }
       {
         static char usedStore[MAX_TANKS][64];
         const char *usedNames[MAX_TANKS];
         int usedCount = 0;
         BoloRandState rngBeforeNaming;
-        int botPool;
+        int teamPool[MAX_TANKS];
+        int noTeamPool = -1;
+        for (i = 0; i < MAX_TANKS; i++) {
+          teamPool[i] = -1;
+        }
         bolo_rand_save(&rngBeforeNaming);
-        botPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
         for (i = 0; i < numBots; i++) {
           char picked[64];
+          int team = botTeam[i];
+          int botPool;
+          if (team == 0) {
+            if (noTeamPool < 0) {
+              noTeamPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
+            }
+            botPool = noTeamPool;
+          } else {
+            if (teamPool[team] < 0) {
+              teamPool[team] = (int)serverSimPickTeamNamingPool(
+                  serverSim, (BYTE)team, bolo_rand_below(0x10000u));
+            }
+            botPool = teamPool[team];
+          }
           lobbyBotPoolPick(botPool, usedNames, usedCount, picked, sizeof(picked));
           if (picked[0] != '\0') {
             snprintf(botNames[i], sizeof(botNames[i]), "%s", picked);
