@@ -731,10 +731,16 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
         /* Full-screen host window with safe area padding */
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(ImVec2((float)winW, (float)winH));
+        /* The window padding pads both sides by the same amount, so padL
+           already keeps the right edge the left inset's distance in, and padT
+           the bottom edge the top inset's. padR and padB are only what the
+           right and bottom insets need beyond that; counting the whole right
+           inset again put the Players tab's cells 134 points in on the right
+           against 70 on the left. */
         float padL = ImGui::GetStyle().WindowPadding.x + safeInsets.left;
-        float padR = safeInsets.right;
+        float padR = SDL_max(0.0f, safeInsets.right - safeInsets.left);
         float padT = ImGui::GetStyle().WindowPadding.y + safeInsets.top;
-        float padB = safeInsets.bottom;
+        float padB = SDL_max(0.0f, safeInsets.bottom - safeInsets.top);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padL, padT));
         ImGui::Begin("##LobbyBg", nullptr,
                      ImGuiWindowFlags_NoTitleBar |
@@ -1352,6 +1358,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                                                    mapBounds.minX, mapBounds.minY,
                                                    mapBounds.maxX, mapBounds.maxY);
                         }
+                        /* The reserve above only moved the cursor; ImGui wants
+                           an item after such a move when it is the last thing
+                           in a window, which it is in the two-column child,
+                           and asserts otherwise. After the click check, which
+                           reads the last item and must still see the image. */
+                        ImGui::Dummy(ImVec2(0.0f, 0.0f));
                     } else if (!clientSimIsMapDownloadComplete(cs) || awaitingMapChangePacket) {
                         float progress = 0.0f;
                         ImGui::TextUnformatted(lobbyMapTransferLine(cs, &progress));
