@@ -65,6 +65,17 @@ extern "C" {
 size_t serverTextSanitize(const char *in, char *out, size_t outSize,
                           size_t maxBytes);
 
+/*
+ * Cut text that serverTextSanitize has already cleaned to maxBytes, the same
+ * way the sanitiser's own cut does: never inside a character and never
+ * between a character and its marks, with no space left at the end. It does
+ * not normalise and allocates nothing, so the info reply can cut the sim's
+ * stored text to the room left in the packet on every request. in may be
+ * NULL, which gives "". Same buffer rules and return as serverTextSanitize.
+ */
+size_t serverTextCut(const char *in, char *out, size_t outSize,
+                     size_t maxBytes);
+
 #ifdef __cplusplus
 }
 #endif

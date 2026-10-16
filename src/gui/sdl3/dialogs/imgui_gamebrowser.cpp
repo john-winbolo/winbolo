@@ -2440,11 +2440,6 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     finderRowJoinable(servers[selectedItem]);
                 if (!canJoin) ImGui::BeginDisabled();
                 if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, btnH))) {
-                    /* The web join sends no pre-flight info request to name
-                     * the lobby's title from, so the tracker row names it. */
-                    SDL_strlcpy(gameFrontLobbyServerName,
-                                servers[selectedItem].serverName,
-                                sizeof(gameFrontLobbyServerName));
                     wasmFinderJoin(servers[selectedItem].serverKey);
                     result = (int)openUdpJoin;
                     running = false;
