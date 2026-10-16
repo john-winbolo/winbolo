@@ -872,6 +872,7 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
             }
         } else {
             macOSPinchZoomConsume(); /* drain so it doesn't jump when data arrives */
+            mapPreviewViewTouchPinchConsume();
             ImGui::Text("Map preview loading...");
         }
 

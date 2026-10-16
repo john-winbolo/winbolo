@@ -2900,6 +2900,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
 #if defined(__IPHONEOS__)
             lobbyReelPinchEvent(&ev);  /* two-finger zoom on the Last round reel */
+            /* The same gesture on the Map tab's zoom popup and the chooser's
+               preview, which take their input through map_preview_view. */
+            mapPreviewViewTouchPinchEvent(&ev);
 #endif
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
