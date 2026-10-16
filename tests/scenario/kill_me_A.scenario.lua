@@ -5,17 +5,15 @@
 --
 -- GATE: ticks=10200 bots=0 ai=yesfull gametype=open limit=20
 --
--- MEASURED 2026-09-15 on main's GoalHunter, at the driver's own seed,
--- budget and pins.  Inside 10200 ticks p0's top-up never completes once, so
--- the pill never reads full and the gate is never walled: the arena does not
--- reach its own precondition.  Given 30200 ticks it does -- the wall goes up
--- at t=10544 and the three pillboxes go aboard -- and then p0 is dead 168
--- ticks later, which is the field incident the feature exists to stop rather
--- than the escape the driver's checks were written to see.  Arena B, which
--- differs from this one only in p0's pins (KEEL, and so
--- BUILDER_POOL_REPAIR_LINEAR back on), walls at t=2302 and holds the state
--- for 2448 ticks, so the top-up row is where the difference sits.
--- GATE: expect=fail the top-up never completes in 10200 ticks so the gate is never walled; at 30200 it walls at t=10544 and p0 dies 168 ticks later
+-- MEASURED 2026-10-16 on main's GoalHunter.  The arena now reaches its own
+-- precondition inside 10200 ticks: p0's top-up lands, the gate is walled and
+-- the three pillboxes go aboard, and p0 then holds the loaded, builder-less
+-- state well past LOADED_MIN.  At the gate seed (42) the gate walls at t=784
+-- and the state holds 2298 ticks.  Seeds 1, 2, 3, 7, 13, 99, 123 and 777 all
+-- pass too: the gate walls between t=1400 and t=2332 and the state holds
+-- 1282 to 5502 ticks.  The 2026-09-15 measurement -- no top-up inside 10200
+-- ticks, and p0 dead 168 ticks after the wall at 30200 -- no longer holds, so
+-- this arena carries no expect=fail mark.
 --
 -- WHAT THIS SCRIPT IS FOR: it puts player 0 into the LOADED, BUILDER-LESS
 -- state -- three pillboxes aboard and a builder who is never coming home --
