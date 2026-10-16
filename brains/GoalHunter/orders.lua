@@ -770,9 +770,19 @@ end
 
 -- The nearest friendly base by this bot's own path cost, and that cost.
 -- The Dijkstra slate first, as in travel_cost; Manhattan x ORDER_TILE_COST
--- when the slate has not reached the base.  A base last seen with nothing
--- in it at all is skipped.  Ties go to the lower base id.
-local function nearest_friendly_base(world, info)
+-- when the slate has not reached the base.  Ties go to the lower base id.
+-- The base rules are the refuel goal's own (U.refuel_base_verdict), with
+-- the stop's reason as the one resource we need (why = "shells" or
+-- "armour") and now = state.tick, the clock obs_tick is written with:
+--   empty      seen (any age) with 0 of that resource: skipped
+--   low_stock  seen within REFUEL_OBS_STALE with less than
+--              REFUEL_MIN_STOCK of it: skipped
+--   markup     the path cost x REFUEL_LOW_SHELLS_MULT / _ARMOUR_MULT for a
+--              fresh observation below REFUEL_MIN_STOCK.  With one need a
+--              base that low is skipped by low_stock first, so this only
+--              shows when now is 0.
+local function nearest_friendly_base(world, info, why, now)
+  local need_s, need_a = why == "shells", why == "armour"
   local boat = info.inboat and 1 or 0
   local tmx = bit.rshift(info.tankx or 0, 8)
   local tmy = bit.rshift(info.tanky or 0, 8)
@@ -782,13 +792,16 @@ local function nearest_friendly_base(world, info)
   table.sort(ids)
   for _, id in ipairs(ids) do
     local b = world.bases[id]
-    local empty = b.obs_tick and (b.obs_shells or 0) == 0 and (b.obs_armour or 0) == 0
-    if b.owner == "friendly" and b.mx and b.my and not empty then
-      local c = cpf.smart_cost_dij_only(cpf.KIND_NORMAL, b.mx, b.my, boat)
-      if not c or c >= 1e29 then
-        c = U.mdist(tmx, tmy, b.mx, b.my) * (C.ORDER_TILE_COST or 4)
+    if b.owner == "friendly" and b.mx and b.my then
+      local reject, mult = U.refuel_base_verdict(b, need_a, need_s, now)
+      if not reject then
+        local c = cpf.smart_cost_dij_only(cpf.KIND_NORMAL, b.mx, b.my, boat)
+        if not c or c >= 1e29 then
+          c = U.mdist(tmx, tmy, b.mx, b.my) * (C.ORDER_TILE_COST or 4)
+        end
+        c = c * mult
+        if not best or c < best then best, bid, bb = c, id, b end
       end
-      if not best or c < best then best, bid, bb = c, id, b end
     end
   end
   return bb, bid, best
@@ -812,7 +825,10 @@ end
 --   detour  refuel stop only: (bot -> base) + (base -> target) - path,
 --           never under 0.  The base -> target leg is a straight-line
 --           estimate and can come in under the real path, which would make
---           a stop cheaper than no stop.
+--           a stop cheaper than no stop.  The base is the nearest friendly
+--           base that passes the refuel goal's base rules for the
+--           resource the stop is for (nearest_friendly_base), and bot ->
+--           base carries its low-stock markup.
 --   fill    refuel stop only: ORDER_BID_REFUEL_STOP_COST
 --   engaged goal is attack_tank or kill_lgm: ORDER_BID_ENGAGED_COST
 --   total = path + detour + fill + engaged
@@ -826,7 +842,7 @@ function M.bid_cost(state, world, info, spec)
     local stop, why = M.refuel_stop(info, spec)
     if stop then
       local mx, my = M.target_tile(world, state, spec)
-      local b, bid, to_base = nearest_friendly_base(world, info)
+      local b, bid, to_base = nearest_friendly_base(world, info, why, state.tick or 0)
       if b and mx then
         local from_base, est = base_to_target(b.mx, b.my, mx, my)
         t.stop, t.base, t.to_base, t.from_base, t.est = why, bid, to_base, from_base, est

@@ -7208,6 +7208,66 @@ do
     c, t = ORD.bid_cost(st, w, inf, spec)
     check("a base seen empty is skipped", t.stop == "shells,nobase", ORD.bid_terms_str(t))
   end
+  do
+    -- THE REFUEL GOAL'S BASE RULES (U.refuel_base_verdict).  The stop's
+    -- reason is the one resource we need.  ST() is at tick 100; a base seen
+    -- at tick 50 is fresh (50 < REFUEL_OBS_STALE).  Base #4: to_base = 320.
+    local function seen(st_tick, sh, arm, obs_tick, why_extra, sp)
+      local st, w, inf = ST(), W(), I(why_extra or { shells = 5 })
+      st.tick = st_tick
+      w.bases[4].obs_tick, w.bases[4].obs_shells, w.bases[4].obs_armour = obs_tick or 50, sh, arm
+      return ORD.bid_cost(st, w, inf, sp or spec)
+    end
+    c, t = seen(100, 0, 40)
+    check("shells stop: a base seen with 0 shells but armour is skipped (empty)",
+          t.stop == "shells,nobase", ORD.bid_terms_str(t))
+    c, t = seen(1000, 0, 40)
+    check("shells stop: 0 shells is skipped even when the sighting is old",
+          t.stop == "shells,nobase", ORD.bid_terms_str(t))
+    c, t = seen(100, 0, 40, nil, { armour = C.ARMOUR_LOW }, nosh)
+    check("armour stop: a base with armour but 0 shells is used, no markup",
+          t.stop == "armour" and t.base == 4 and t.to_base == 320, ORD.bid_terms_str(t))
+    c, t = seen(100, 1, 40)
+    check("shells stop: a fresh 1-shell base is skipped (low_stock)",
+          t.stop == "shells,nobase", ORD.bid_terms_str(t))
+    c, t = seen(100, C.REFUEL_MIN_STOCK - 1, 40)
+    check("shells stop: a fresh base just under REFUEL_MIN_STOCK is skipped",
+          t.stop == "shells,nobase", ORD.bid_terms_str(t))
+    c, t = seen(100, C.REFUEL_MIN_STOCK, 40)
+    check("shells stop: a fresh base at REFUEL_MIN_STOCK is used, no markup",
+          t.stop == "shells" and t.base == 4 and t.to_base == 320, ORD.bid_terms_str(t))
+    c, t = seen(100, 14, 40)
+    check("shells stop: a fresh 14-shell base is used, no markup",
+          t.stop == "shells" and t.base == 4 and t.to_base == 320, ORD.bid_terms_str(t))
+    c, t = seen(100, 40, 1)
+    check("shells stop: low armour at the base does not matter (no skip, no markup)",
+          t.stop == "shells" and t.base == 4 and t.to_base == 320, ORD.bid_terms_str(t))
+    c, t = seen(100, 40, 1, nil, { armour = C.ARMOUR_LOW }, nosh)
+    check("armour stop: a fresh 1-armour base is skipped (low_stock)",
+          t.stop == "armour,nobase", ORD.bid_terms_str(t))
+    c, t = seen(50 + C.REFUEL_OBS_STALE, 1, 40)
+    check("shells stop: a 1-shell sighting REFUEL_OBS_STALE old is used, no markup",
+          t.stop == "shells" and t.base == 4 and t.to_base == 320, ORD.bid_terms_str(t))
+    c, t = seen(49 + C.REFUEL_OBS_STALE, 1, 40)
+    check("shells stop: one tick younger, it is still skipped",
+          t.stop == "shells,nobase", ORD.bid_terms_str(t))
+    -- Tick 0: low_stock waits for now > 0, the markup does not, the same as
+    -- the refuel goal.  The one way the markup shows with a single need.
+    c, t = seen(0, 1, 40, 0)
+    check("tick 0: a 1-shell base is not skipped but costs x REFUEL_LOW_SHELLS_MULT",
+          t.stop == "shells" and t.base == 4
+          and math.abs(t.to_base - 320 * C.REFUEL_LOW_SHELLS_MULT) < 1e-6, ORD.bid_terms_str(t))
+    -- Two friendly bases: the nearer one is skipped, the farther one wins.
+    local st, w, inf = ST(), W(), I({ shells = 5 })
+    w.bases[6] = { mx = 10, my = 40, owner = "friendly" }
+    c, t = ORD.bid_cost(st, w, inf, spec)
+    check("two bases: the nearer base #6 is the stop (to_base 120)",
+          t.base == 6 and t.to_base == 120, ORD.bid_terms_str(t))
+    w.bases[6].obs_tick, w.bases[6].obs_shells, w.bases[6].obs_armour = 50, 2, 40
+    c, t = ORD.bid_cost(st, w, inf, spec)
+    check("two bases: a fresh 2-shell #6 is skipped, the stop is #4",
+          t.base == 4 and t.to_base == 320, ORD.bid_terms_str(t))
+  end
   c, t = bid(nil, { kind = "attack_tank" })
   check("fighting a tank: + 30", c == 310 and t.engaged == 30, ORD.bid_terms_str(t))
   check("the log terms show engaged", ORD.bid_terms_str(t):find("engaged=30", 1, true), ORD.bid_terms_str(t))

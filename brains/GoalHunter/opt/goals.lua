@@ -410,32 +410,14 @@ end
 -- markup can never contradict the reject, whichever number is in there.
 --
 -- Returns mult, detail (detail carries the chip inputs for the panels).
+-- The rule itself is U.refuel_base_low_mult, shared with the order bid's
+-- refuel stop (orders.lua); this computes what we need and calls it.
 -- =========================================================================
 local function refuel_low_stock_mult(b, info, state, now)
-  local d = {
-    fresh = false, low_arm = false, low_sh = false,
-    need_arm = false, need_sh = false,
-    obs_sh = b.obs_shells, obs_arm = b.obs_armour,
-    age = b.obs_tick and (now - b.obs_tick) or nil,
-  }
-  if not d.age or d.age >= (C.REFUEL_OBS_STALE or 500) then
-    return 1.0, d
-  end
-  d.fresh = true
   local sh_t  = (state and state.shell_target)  or C.TANK_FULL_SHELLS
   local arm_t = (state and state.armour_target) or C.TANK_FULL_ARMOUR
-  d.need_arm = (info.armour or 0) < arm_t
-  d.need_sh  = (info.shells or 0) < sh_t
-  local mult = 1.0
-  if d.need_arm and (b.obs_armour or 0) < C.REFUEL_MIN_STOCK then
-    d.low_arm = true
-    mult = mult * (C.REFUEL_LOW_ARMOUR_MULT or 1.0)
-  end
-  if d.need_sh and (b.obs_shells or 0) < C.REFUEL_MIN_STOCK then
-    d.low_sh = true
-    mult = mult * (C.REFUEL_LOW_SHELLS_MULT or 1.0)
-  end
-  return mult, d
+  return U.refuel_base_low_mult(b, (info.armour or 0) < arm_t,
+                                (info.shells or 0) < sh_t, now)
 end
 
 -- One chip per markup so every log line / panel says the same thing: which
@@ -622,32 +604,27 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
           goto skip
         end
       end
-      -- Hard-skip bases that have zero of EVERYTHING we need, regardless
-      -- of observation age. This is the "isn't empty" filter — even a
-      -- stale "fully empty" observation is more reliable than driving
-      -- across the map and finding an empty base.
+      -- Rules 1 and 2 of U.refuel_base_verdict (util.lua), shared with the
+      -- order bid's refuel stop (orders.lua). Both need an observation.
+      -- 1 empty: hard-skip bases that have zero of EVERYTHING we need,
+      -- regardless of observation age. This is the "isn't empty" filter —
+      -- even a stale "fully empty" observation is more reliable than
+      -- driving across the map and finding an empty base.
+      -- 2 low_stock: skip bases with recently observed low stock (not worth
+      -- the trip). Observation expires after REFUEL_OBS_STALE ticks (base
+      -- regenerates).
       if b.obs_tick then
         local need_a = info.armour < state.armour_target
         local need_s = info.shells < state.shell_target
-        local has_a  = (b.obs_armour or 0) > 0
-        local has_s  = (b.obs_shells or 0) > 0
-        local helps  = (need_a and has_a) or (need_s and has_s)
-        if not helps then
+        local why = U.refuel_base_verdict(b, need_a, need_s, now)
+        if why == "empty" then
           candidates[#candidates + 1] = {
             id = id, mx = b.mx, my = b.my, own = b.owner, score = -1,
             reject = string.format("empty (sh=%d arm=%d)",
                      b.obs_shells or 0, b.obs_armour or 0),
           }
           goto skip
-        end
-      end
-      -- Skip bases with recently observed low stock (not worth the trip).
-      -- Observation expires after REFUEL_OBS_STALE ticks (base regenerates).
-      if b.obs_tick and now > 0 and (now - b.obs_tick) < C.REFUEL_OBS_STALE then
-        local obs_low = true
-        if info.armour < state.armour_target and (b.obs_armour or 0) >= C.REFUEL_MIN_STOCK then obs_low = false end
-        if info.shells < state.shell_target and (b.obs_shells or 0) >= C.REFUEL_MIN_STOCK then obs_low = false end
-        if obs_low then
+        elseif why == "low_stock" then
           candidates[#candidates + 1] = {
             id = id, mx = b.mx, my = b.my, own = b.owner, score = -1,
             reject = string.format("low stock (sh=%d arm=%d obs %dt ago)",
@@ -7490,15 +7467,15 @@ local function filter_refuel(obj, state, info)
      and (now - obj.last_seen) > C.STALE_SKIP_TICKS then
     return { reason = "stale", remaining = (now - obj.last_seen) - C.STALE_SKIP_TICKS }
   end
-  -- Recently observed depleted of what we actually need
-  if obj.obs_tick and now > 0 and (now - obj.obs_tick) < C.REFUEL_OBS_STALE then
-    local obs_low = true
-    if info.armour < C.TANK_FULL_ARMOUR and (obj.obs_armour or 0) >= C.REFUEL_MIN_STOCK then obs_low = false end
-    if info.shells < C.TANK_FULL_SHELLS and (obj.obs_shells or 0) >= C.REFUEL_MIN_STOCK then obs_low = false end
-    if obs_low then
-      return { reason = "depleted",
-               remaining = C.REFUEL_OBS_STALE - (now - obj.obs_tick) }
-    end
+  -- Recently observed depleted of what we actually need: rule 2
+  -- (low_stock) of the shared refuel base rules, U.refuel_base_low_stock.
+  -- This path counts a resource as needed below the FULL tank, not below
+  -- the shell/armour targets.
+  if obj.obs_tick
+     and U.refuel_base_low_stock(obj, info.armour < C.TANK_FULL_ARMOUR,
+                                 info.shells < C.TANK_FULL_SHELLS, now) then
+    return { reason = "depleted",
+             remaining = C.REFUEL_OBS_STALE - (now - obj.obs_tick) }
   end
   -- Danger is NOT a reject: it's already folded into the path cost via
   -- REFUEL_DANGER_WEIGHT (score = travel + danger * weight), so a risky
