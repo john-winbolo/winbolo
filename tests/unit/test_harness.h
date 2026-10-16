@@ -2127,6 +2127,18 @@ int run_lgm_unfield_drops_carried_pill(void);
  * centre is no further off than that. */
 int run_lgm_start_offset(void);
 
+/* Which position a shell tests its target at (test_shell_rewind_rules.c): a
+ * pill's shell tests a tank where it is now, a player's shell with rewind N
+ * tests a tank N ticks ago and a builder N-1 ticks ago. */
+int run_shell_rewind_pill_shell_tank_present(void);
+int run_shell_rewind_player_shell_tank_full(void);
+int run_shell_rewind_player_shell_builder_one_less(void);
+
+/* A -braindebug server records each round into its own session dir
+ * (test_braindbg_round_dir.c): the dir it named is cleared at game over, so
+ * round 2 does not record over round 1. */
+int run_braindbg_second_round_new_dir(void);
+
 /* Adaptive jitter buffer (test_jitter_buffer_grow.c): queue drains under
  * jitter deepen jitterTarget toward MAX, a steadily full queue shrinks it
  * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */
@@ -2262,8 +2274,8 @@ int run_loopback_join(void);
 int run_loopback_join_loss(void);
 /* The builder walled in behind his own tank while a heated pillbox shoots at
  * it (test_lgm_under_fire.c). The player expects the tank body to shield the
- * man; the lagged case is the bug report and fails today, the clean-link case
- * is its control. */
+ * man; the lagged case is the bug report and failed until pill shells stopped
+ * being rewound, the clean-link case is its control. */
 int run_lgm_wall_behind_tank_under_fire_lagged(void);
 int run_lgm_wall_behind_tank_under_fire_nolag(void);
 int run_loopback_password(void);
