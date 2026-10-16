@@ -32,9 +32,12 @@ FetchContent_Declare(
     URL      https://github.com/libsdl-org/SDL_ttf/archive/refs/tags/release-3.2.0.tar.gz
     SYSTEM
 )
+# The same release the desktop, iOS and web builds pin. The docking branch
+# head moves, and a fetch of a newer one drops names the shared ImGui code
+# still uses.
 FetchContent_Declare(
     imgui
-    URL      https://github.com/ocornut/imgui/archive/refs/heads/docking.tar.gz
+    URL      https://github.com/ocornut/imgui/archive/refs/tags/v1.92.9b-docking.tar.gz
     SYSTEM
 )
 FetchContent_Declare(
