@@ -5301,6 +5301,13 @@ local function update_attack_substate_body(goal, state, world, info)
   -- swerve -> plan_position) inherits the first attack's stale _wall_build_list /
   -- _is_ppt / _aim_locked / _shield_scan and the re-entry build_walls stalls.
   if goal.substate ~= "plan_position" then goal._plan_position_cleared = nil end
+  -- A re-pick (human_decoy_repick / ally_spot_repick) that left
+  -- plan_position without a standoff_picked call is over: drop its flags, so
+  -- a later pick from another cause is not counted as the re-pick.
+  if goal.substate ~= "plan_position" and goal._repick_pending then
+    goal._repick_pending = nil
+    goal._hd_hard = nil
+  end
 
   if goal.substate == "plan_position" then
     -- Fresh-entry cleanup: an earlier attack on this same pill (or any
@@ -5805,6 +5812,13 @@ local function update_attack_substate_body(goal, state, world, info)
       end
       end -- if spots (chunk done or cache hit)
     end -- if not goal.scan_spots (scan once)
+
+    -- The pick is done (scan_spots set) and found no standoff: a pending
+    -- re-pick ends here, with no spot.  Same clear as standoff_picked.
+    if goal.scan_spots and not goal.standoff_mx and goal._repick_pending then
+      goal._repick_pending = nil
+      goal._hd_hard = nil
+    end
 
     -- ── Deferred shield.scan ─────────────────────────────────────────
     -- Runs on the tick AFTER spot selection so the chunk-completion

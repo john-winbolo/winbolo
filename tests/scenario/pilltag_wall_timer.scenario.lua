@@ -19,6 +19,11 @@
 -- PASS: a hunter hits the built prize within ARENA.HIT_WITHIN (20) s of the
 -- build.
 -- FAIL: no hunter hits it in that time, or the prize never goes up.
+--
+-- Note: the name is older than the check. This arena does not time the
+-- script's 30 s wall-shot net (WALL_FALLBACK_SECONDS); it checks only that
+-- the prize is hit within 20 s, by any route. The 30 s net has no arena of
+-- its own.
 
 ARENA = { given = false, hits = {}, lines = {}, cx = 126, cy = 126, gap = false,
           HIT_WITHIN = 20 }

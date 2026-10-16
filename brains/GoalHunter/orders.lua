@@ -683,7 +683,8 @@ function M.goal_kind(cmd, world, info)
       -- be a reposition, which an order does not set up, and capture_pill
       -- on a live pill is dropped the tick it starts.  Turned down here, so
       -- no order is made.  A dead pill of ours is still picked up.
-      if p.owner == "friendly" and (p.health or 0) > 0 then
+      -- C.ORDER_GOAL_KIND_FIX = false (keel): no refusal, as before.
+      if C.ORDER_GOAL_KIND_FIX and p.owner == "friendly" and (p.health or 0) > 0 then
         return nil, false, nil, string.format("pill #%d is already ours", t.id)
       end
       return "capture_pill", ((p.health or 0) > 0), t.id

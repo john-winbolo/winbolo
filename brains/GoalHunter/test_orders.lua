@@ -8859,5 +8859,115 @@ do
   C.FINISH_RUN_RETRY_TICKS = saved_retry
 end
 
+-- ─────────────────────────────────────────────────────────────────────────
+-- ORDER_SKIPS_WARMUP and ORDER_GOAL_KIND_FIX (TEMPER review of PR #510,
+-- finding 1).  On (live): a held order skips warm-up and special_mode_goal,
+-- and the order's goal kind follows the target.  Off (keel): the old
+-- behaviour, checked here one change at a time.
+-- ─────────────────────────────────────────────────────────────────────────
+print("\n== ORDER_SKIPS_WARMUP / ORDER_GOAL_KIND_FIX ==")
+do
+  local G = require("goals")
+  local saved_skip, saved_fix = C.ORDER_SKIPS_WARMUP, C.ORDER_GOAL_KIND_FIX
+  check("ORDER_SKIPS_WARMUP live = true", C.ORDER_SKIPS_WARMUP == true, tostring(C.ORDER_SKIPS_WARMUP))
+  check("ORDER_SKIPS_WARMUP keel = false", C.PRESETS.keel.ORDER_SKIPS_WARMUP == false,
+        tostring(C.PRESETS.keel.ORDER_SKIPS_WARMUP))
+  check("ORDER_GOAL_KIND_FIX live = true", C.ORDER_GOAL_KIND_FIX == true, tostring(C.ORDER_GOAL_KIND_FIX))
+  check("ORDER_GOAL_KIND_FIX keel = false", C.PRESETS.keel.ORDER_GOAL_KIND_FIX == false,
+        tostring(C.PRESETS.keel.ORDER_GOAL_KIND_FIX))
+
+  -- (a) "capture pill 5" on live hostile pill 5.
+  local st, w, inf = ST(), W(), I()
+  local og = G.order_goal(st, w, inf, { kind = "capture_pill", tid = 5 })
+  check("fix on: capture order on a live enemy pill becomes attack_pill",
+        og and og.kind == "attack_pill", tostring(og and og.kind))
+  C.ORDER_GOAL_KIND_FIX = false
+  og = G.order_goal(st, w, inf, { kind = "capture_pill", tid = 5 })
+  check("fix off (keel): it stays capture_pill",
+        og and og.kind == "capture_pill", tostring(og and og.kind))
+  C.ORDER_GOAL_KIND_FIX = true
+
+  -- (b) base orders: a live hostile base and the neutral base 3.
+  w.bases[6] = { mx = 70, my = 70, owner = "hostile", health = 9 }
+  og = G.order_goal(st, w, inf, { kind = "capture_base", tid = 6 })
+  check("fix on: capture order on a live hostile base becomes attack_base",
+        og and og.kind == "attack_base", tostring(og and og.kind))
+  og = G.order_goal(st, w, inf, { kind = "attack_base", tid = 3 })
+  check("fix on: attack order on a neutral base becomes capture_base",
+        og and og.kind == "capture_base", tostring(og and og.kind))
+  C.ORDER_GOAL_KIND_FIX = false
+  og = G.order_goal(st, w, inf, { kind = "capture_base", tid = 6 })
+  check("fix off (keel): capture_base on a live hostile base is kept",
+        og and og.kind == "capture_base", tostring(og and og.kind))
+  og = G.order_goal(st, w, inf, { kind = "attack_base", tid = 3 })
+  check("fix off (keel): attack_base on a neutral base is kept",
+        og and og.kind == "attack_base", tostring(og and og.kind))
+  C.ORDER_GOAL_KIND_FIX = true
+
+  -- (d) "capture pill 9" on our own live pill 9.
+  local k, ns, tid, err = ORD.goal_kind({ verb = "capture", target = { kind = "pill", id = 9 } }, W(), I())
+  check("fix on: capture on our live pill is turned down",
+        k == nil and err == "pill #9 is already ours", tostring(err))
+  C.ORDER_GOAL_KIND_FIX = false
+  k, ns, tid, err = ORD.goal_kind({ verb = "capture", target = { kind = "pill", id = 9 } }, W(), I())
+  check("fix off (keel): capture on our live pill is a capture_pill order",
+        k == "capture_pill" and ns == true and tid == 9 and err == nil,
+        tostring(k) .. "/" .. tostring(ns) .. "/" .. tostring(err))
+  C.ORDER_GOAL_KIND_FIX = true
+
+  -- (c) pick_goal with a held order on pill 5.  warm_ready and
+  -- special_mode_goal are stubbed.  Goal selection's first call is
+  -- clock_us(); the stub counts it and stops pick_goal there (pcall), so
+  -- gs_calls says whether goal selection was reached.
+  local saved_warm, saved_sm = G.warm_ready, G.special_mode_goal
+  local saved_clock = rawget(_G, "clock_us")
+  local gs_calls = 0
+  rawset(_G, "clock_us", function() gs_calls = gs_calls + 1; error("stop: goal selection") end)
+  local sm_calls = 0
+  local SM = { kind = "special_mode_sentinel", mx = 0, my = 0 }
+  G.special_mode_goal = function() sm_calls = sm_calls + 1; return SM end
+  local WC = { kind = "capture_pill", target_id = 7, mx = 40, my = 40 }
+  local function pg_bot()
+    local b = BOT(1, 10, 10)
+    b.st._order = { kind = "attack_pill", tkind = "pill", tid = 5 }
+    b.st.pool_cache = { [4] = { goal = WC, cost = 1 } }
+    b.st.auto_explore = false
+    return b
+  end
+  local function run_pg(b)
+    gs_calls = 0
+    local ok, g = pcall(G.pick_goal, b.st, b.w, b.inf, true)
+    return ok and g or nil
+  end
+
+  -- Not warm: the cheap capture_pill from pool_cache[4] is the warm-up pick.
+  G.warm_ready = function() return false end
+  local g = run_pg(pg_bot())
+  check("skip on, not warm: no warm-up pick, goal selection runs",
+        g ~= WC and gs_calls == 1, tostring(g and g.kind) .. "/" .. gs_calls)
+  C.ORDER_SKIPS_WARMUP = false
+  g = run_pg(pg_bot())
+  check("skip off (keel), not warm: the held order waits (warm-up pick)",
+        g == WC and gs_calls == 0, tostring(g and g.kind) .. "/" .. gs_calls)
+  C.ORDER_SKIPS_WARMUP = true
+
+  -- Warm: special_mode_goal is skipped with an order held.
+  G.warm_ready = function() return true end
+  sm_calls = 0
+  g = run_pg(pg_bot())
+  check("skip on, warm: special_mode_goal is not asked, goal selection runs",
+        sm_calls == 0 and g ~= SM and gs_calls == 1, tostring(sm_calls) .. "/" .. gs_calls)
+  C.ORDER_SKIPS_WARMUP = false
+  sm_calls = 0
+  g = run_pg(pg_bot())
+  check("skip off (keel), warm: special_mode_goal runs and wins",
+        sm_calls == 1 and g == SM, tostring(sm_calls) .. "/" .. tostring(g and g.kind))
+  C.ORDER_SKIPS_WARMUP = true
+
+  G.warm_ready, G.special_mode_goal = saved_warm, saved_sm
+  rawset(_G, "clock_us", saved_clock)
+  C.ORDER_SKIPS_WARMUP, C.ORDER_GOAL_KIND_FIX = saved_skip, saved_fix
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

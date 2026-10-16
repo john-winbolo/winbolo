@@ -15896,7 +15896,9 @@ function M.order_goal(state, world, info, ord)
     -- installed, so the order looped (capture_pill, none, re-inject) and the
     -- bot never fired a shot.  A live pill is shot first: attack_pill, and
     -- the kill hands over to capture_pill the usual way.
-    if k == "capture_pill" and (p.health or 0) > 0 and not p.in_tank
+    -- C.ORDER_GOAL_KIND_FIX = false (keel): the order's kind is used as it is.
+    if C.ORDER_GOAL_KIND_FIX
+       and k == "capture_pill" and (p.health or 0) > 0 and not p.in_tank
        and p.owner ~= "friendly" then
       k = "attack_pill"
     end
@@ -15916,7 +15918,10 @@ function M.order_goal(state, world, info, ord)
     -- the way in.  Inject the kind that check would leave in place; the
     -- replan then re-picks the goal the bot is already running.  Same two
     -- conditions as init.lua's capture_base / attack_base validity.
-    if b.owner == "hostile" and (b.health or 0) > 0 then
+    -- C.ORDER_GOAL_KIND_FIX = false (keel): the order's kind is used as it is.
+    if not C.ORDER_GOAL_KIND_FIX then
+      -- keel: no change to k
+    elseif b.owner == "hostile" and (b.health or 0) > 0 then
       k = "attack_base"
     elseif b.owner == "neutral" or b.owner == "hostile" then
       k = "capture_base"
@@ -18333,8 +18338,10 @@ function M.pick_goal(state, world, info, quiet)
   -- the half-warmed pools do not have it yet.  Before this, an order given at
   -- the start of a game waited for warm-up (about 18 s on the release brain)
   -- while the bot drove to a dead pill or explored.  With no order held,
-  -- warm-up is exactly as it was.
-  local order_live = M.order_usable(state, world, info)
+  -- warm-up is exactly as it was.  C.ORDER_SKIPS_WARMUP = false (keel):
+  -- order_live is always false here, so a held order waits for warm-up and
+  -- special_mode_goal runs, as before.
+  local order_live = C.ORDER_SKIPS_WARMUP and M.order_usable(state, world, info)
   if not M.warm_ready(state) and not order_live then
     local pce = state.pool_cache and state.pool_cache[4]
     if pce and pce.goal and pce.goal.kind == "capture_pill"

@@ -2852,6 +2852,8 @@ local function attack_pill_steer(state, world, info, goal)
           k, t = bit.bor(k, h), tp
           if math.abs(wcorr) < 8 then
             t = bit.bor(t, KEY_SHOOT)
+            if _G._PRINT2_ENABLED then
+            end
           end
           pace = "wall"
         end
@@ -2869,6 +2871,8 @@ local function attack_pill_steer(state, world, info, goal)
         keys = bit.bor(keys, KEY_SHOOT)
         if finish then
           goal._fr_fired = (goal._fr_fired or 0) + 1
+          if _G._PRINT2_ENABLED then
+          end
         end
       end
     end

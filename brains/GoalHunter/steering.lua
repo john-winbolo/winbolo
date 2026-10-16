@@ -3028,8 +3028,10 @@ local function attack_pill_steer(state, world, info, goal)
           k, t = bit.bor(k, h), tp
           if math.abs(wcorr) < 8 then
             t = bit.bor(t, KEY_SHOOT)
-            print2(string.format("FINISH_RUN_WALL t=%d tank=(%d,%d) wall=(%d,%d) corr=%d",
-              state.tick or 0, tmx, tmy, wx_, wy_, wcorr))
+            if _G._PRINT2_ENABLED then
+              print2(string.format("FINISH_RUN_WALL t=%d tank=(%d,%d) wall=(%d,%d) corr=%d",
+                state.tick or 0, tmx, tmy, wx_, wy_, wcorr))
+            end
           end
           pace = "wall"
         end
@@ -3047,9 +3049,11 @@ local function attack_pill_steer(state, world, info, goal)
         keys = bit.bor(keys, KEY_SHOOT)
         if finish then
           goal._fr_fired = (goal._fr_fired or 0) + 1
-          print2(string.format("FINISH_RUN_FIRE t=%d tank=(%d,%d) pill=(%d,%d) hp=%d dist=%.1f corr=%.1f",
-            state.tick or 0, tmx, tmy, pmx, pmy, pill.health or 0,
-            dist_to_pill / 256.0, fire_corr))
+          if _G._PRINT2_ENABLED then
+            print2(string.format("FINISH_RUN_FIRE t=%d tank=(%d,%d) pill=(%d,%d) hp=%d dist=%.1f corr=%.1f",
+              state.tick or 0, tmx, tmy, pmx, pmy, pill.health or 0,
+              dist_to_pill / 256.0, fire_corr))
+          end
         end
       end
     end

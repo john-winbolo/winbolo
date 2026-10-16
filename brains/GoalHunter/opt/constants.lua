@@ -5008,6 +5008,21 @@ M.ORDER_HANDOFF_WAIT_TICKS = 100     -- keel 0
 -- FREE bots only.  A bot already in the chain (MASK) never bids on it.
 -- 0 or 1 = holders answer every relief "no" (single hop; keel).
 M.ORDER_HANDOFF_MAX_HOPS = 3         -- keel 0
+-- 2026-10-16: A HELD ORDER SKIPS THE WARM-UP.  pick_goal (goals.lua) runs
+-- goal selection from the first think a bot holds a usable order, and skips
+-- special_mode_goal (harasser / circle reinforce) while it holds one.
+-- false = a held order waits for warm-up and special_mode_goal runs (keel).
+M.ORDER_SKIPS_WARMUP = true          -- keel false
+-- 2026-10-16: THE ORDER'S GOAL KIND FOLLOWS THE TARGET.  Three fixes for
+-- order goal loops:
+--   * goals.order_goal: "capture pill N" on a live enemy or neutral pill
+--     becomes attack_pill (the kill hands over to capture_pill);
+--   * goals.order_goal: a base order becomes attack_base or capture_base
+--     from the base's state (the kind init.lua's validity check keeps);
+--   * orders.lua goal_kind: "capture pill N" on our own live pill is turned
+--     down with "pill #N is already ours".
+-- false = the order's own kind is used as it is, no refusal (keel).
+M.ORDER_GOAL_KIND_FIX = true         -- keel false
 -- 2026-10-05 (Andrew): THE HUMAN IS DECOYING FOR US.  A pill shoots the
 -- CLOSEST tank in its range; a wall does not stop it picking that tank.  So
 -- a human team-mate standing behind a blocker (a wall, or one of our pills)
@@ -6129,6 +6144,10 @@ M.PRESETS = {
     ORDER_HANDOFF_PENALTY         = 0,
     ORDER_HANDOFF_WAIT_TICKS      = 0,
     ORDER_HANDOFF_MAX_HOPS        = 0,
+    --   2026-10-16: a held order skips warm-up and special_mode_goal, and
+    --   the order's goal kind follows the target.  KEEL: neither.
+    ORDER_SKIPS_WARMUP            = false,
+    ORDER_GOAL_KIND_FIX           = false,
     --   2026-10-05: a human drawing a pill's fire into a blocker is read;
     --   the bot keeps wide of him and does not rush.  KEEL: not read.
     HUMAN_DECOY_AWARE             = false,
