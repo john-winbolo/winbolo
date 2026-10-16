@@ -19672,12 +19672,15 @@ M.sync_ally_claimed_rejects = sync_ally_claimed_rejects
 -- WARMUP_MIN_REAL_GOALS finite-cost (pickable, non-rejected) candidates exist
 -- in cost_cache. Latches once true (warmup only happens at the start of a life,
 -- or briefly after a death-wipe). Stores state._warm_count for the panel row.
-function M.warm_ready(state)
-  if state._warm_ready then return true end
-  -- Sparse-map escape: if the whole eval queue has been processed at least once
-  -- and we STILL have fewer than the target, there simply aren't that many
-  -- reachable goals — count what we have as warm rather than exploring forever.
-  if state._eval_swept then state._warm_ready = true; return true end
+--
+-- M.warm_count is the count alone and writes nothing: n (stops counting at
+-- need) and need. The pool panel asks it instead of warm_ready, because the
+-- panel runs every tick only while recording, and a warm_ready call there set
+-- the latch on ticks the production brain never asks. After a position jump
+-- (init.lua clears the latch) that let a -brain-debug bot leave warm-up
+-- earlier than the same bot in a plain game (pilltag_hop_ahead seed 99, player
+-- 0 split at tick 2106).
+function M.warm_count(state)
   local need = C.WARMUP_MIN_REAL_GOALS or 10
   local n = 0
   local cc = state.cost_cache
@@ -19696,6 +19699,16 @@ function M.warm_ready(state)
       end
     end
   end
+  return n, need
+end
+
+function M.warm_ready(state)
+  if state._warm_ready then return true end
+  -- Sparse-map escape: if the whole eval queue has been processed at least once
+  -- and we STILL have fewer than the target, there simply aren't that many
+  -- reachable goals — count what we have as warm rather than exploring forever.
+  if state._eval_swept then state._warm_ready = true; return true end
+  local n, need = M.warm_count(state)
   state._warm_count = n
   if n >= need then state._warm_ready = true end
   return state._warm_ready == true
@@ -20083,7 +20096,11 @@ function M.get_pool_breakdown_json(state)
     local sui = suicider_mult_for_pool(state, pname)
     local pwx = pw * sui * refuel_mult_for_pool(pname)
                    * squad.focus_mult(state, POOL_NAME_TO_KIND[pname] or pname)
-    local rows_raw = by_pool[idx] or {}
+    -- Sort a COPY. by_pool[2/8/13/14] are the brain's own lists
+    -- (state.defend_breakdown.rows, pool_cache[n].cands); sorting them in
+    -- place reordered them only in recorded games.
+    local rows_raw = {}
+    for i, r in ipairs(by_pool[idx] or {}) do rows_raw[i] = r end
     table.sort(rows_raw, function(a, b)
       local ac = (a.cost >= 0) and a.cost * pwx or math.huge
       local bc = (b.cost >= 0) and b.cost * pwx or math.huge
@@ -20588,9 +20605,15 @@ function M.get_pool_breakdown_json(state)
   -- it) and so isn't on the explore fallback this tick. Shown whenever not
   -- warm, regardless of current goal; marked active only when actually
   -- exploring. warm_ready latches once warm so this clears in steady state.
-  if state.goal and not M.warm_ready(state) then
-    local need = C.WARMUP_MIN_REAL_GOALS or 10
-    local n = state._warm_count or 0
+  -- The same test as warm_ready, but read-only (M.warm_count): this report
+  -- must not set the latch -- see M.warm_count.
+  local warm_n, warm_need = nil, nil
+  if state.goal and not state._warm_ready and not state._eval_swept then
+    warm_n, warm_need = M.warm_count(state)
+  end
+  if warm_n and warm_n < warm_need then
+    local need = warm_need
+    local n = warm_n
     local gmx, gmy = state.goal.mx or 0, state.goal.my or 0
     table.insert(winners, 1, {
       id = 0, src_pool = 0,
