@@ -888,6 +888,11 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 					rewindTicks = 0;
 				}
 
+				/* Unlike the builder, a tank the shooter's screen showed as dead
+				 * (posHistoryGet is FALSE for that) is tested where it is now, so
+				 * a shell can hit a tank that has just respawned before the
+				 * shooter saw it. This is on purpose: the case is rare and the
+				 * tank really is there. */
 				if (rewindTicks > 0 && sim->posHistoryPtr != NULL &&
 				    targetPlayer != NEUTRAL &&
 				    posHistoryGet(&sim->posHistoryPtr[targetPlayer],
