@@ -4114,6 +4114,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lgm_quit_pill.c
     tests/unit/test_lgm_start_offset.c
     tests/unit/test_lgm_absent_on_shooter_screen.c
+    tests/unit/test_braindbg_round_dir.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
     tests/unit/test_sim_rules.c
@@ -4195,8 +4196,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The rules table over the wire: a mid-round change reaching a connected
     # client, a joiner arriving on the changed table, a server-only rule
     # publishing nothing, and a new table clamping what the client holds.
-    tests/unit/test_lgm_under_fire.c
     tests/unit/test_loopback_sim_rules.c
+    # A builder walled in behind his own tank while a pillbox shoots at it,
+    # over a lagged link and a clean one.
+    tests/unit/test_lgm_under_fire.c
     # The client's own check of the rules table before it keeps one.
     tests/unit/test_sim_rules_client_check.c
     # The sixteen pillbox pictures against a pill armour cap above 15.
@@ -5688,6 +5691,7 @@ set(_unit_test_names
     lgm_kill_seen_out_tank_hit_blast
     lgm_kill_seen_out_dead_tank
     lgm_start_offset
+    braindbg_second_round_new_dir
     lgm_draw_own_matches_wire
     lgm_draw_centre_error_bounds
     jitter_buffer_grow

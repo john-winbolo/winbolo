@@ -819,12 +819,16 @@ static void serverLifecycleStartBrainDebugSession(ServerSim *sim) {
 
 /* Game ended → finalize this game's recording so the .btr is complete on
  * disk; clearing the flag makes the next game open a fresh dir (the
- * map-rotate restart re-enters running on a later tick). */
+ * map-rotate restart re-enters running on a later tick). The lifecycle named
+ * this dir, so it gives the name back as well: brainRecordEndGame keeps it,
+ * and a dir still set on the next game's first running tick reads as one the
+ * host named, which would leave that game recording over this one. */
 static void lifecycleBeforeGameOver(ServerSim *sim, void *ctx) {
   (void)sim;
   (void)ctx;
   if (s_braindbgSessionOpen) {
     brainRecordEndGame();
+    brainRecordSetSessionDir(NULL);
     s_braindbgSessionOpen = false;
   }
 }
@@ -912,11 +916,13 @@ void serverInstanceTick(ServerSim *sim) {
     /* First running tick of this game → open a fresh recording session
      * (deferred from startup so lobby/countdown time is excluded and the
      * timeline anchors at this game's tick 0). Runs before serverSimBotTick so
-     * DEBUG_SESSION_DIR is set before any bot thinks / brainRecordTick fires. */
-    /* A session dir the host already named wins, and the block machinery stays
+     * DEBUG_SESSION_DIR is set before any bot thinks / brainRecordTick fires.
+     *
+     * A session dir the host already named wins, and the block machinery stays
      * out of its way entirely. winbolods never sets one before this point —
      * serverLifecycleOpenBraindbgBlock below is the only caller of
-     * brainRecordSetSessionDir it has — so this only holds off for a host that
+     * brainRecordSetSessionDir it has, and the game-over hook and the low-disk
+     * stop clear the dir it set — so this only holds off for a host that
      * picked its own dir, such as a test recording one run into a named
      * session. Naming the dir means owning the blocks and the low-disk stop
      * as well; without this the first running tick renamed the session out
@@ -942,6 +948,7 @@ void serverInstanceTick(ServerSim *sim) {
           fprintf(stderr, "brain_record: LOW DISK (<50 GB free) — stopping recording\n");
           brainRecordEndGame();
           brainRecordSetEnabled(false);
+          brainRecordSetSessionDir(NULL);
           s_braindbgSessionOpen = false;
           for (int i = 0; i < MAX_TANKS; i++) {
             if (serverSimIsBot(sim, (BYTE)i)) {

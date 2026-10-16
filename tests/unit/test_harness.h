@@ -2148,6 +2148,11 @@ int run_lgm_kill_seen_out_already_dead(void);
 int run_lgm_kill_seen_out_tank_hit_blast(void);
 int run_lgm_kill_seen_out_dead_tank(void);
 
+/* A -braindebug server records each round into its own session dir
+ * (test_braindbg_round_dir.c): the dir it named is cleared at game over, so
+ * round 2 does not record over round 1. */
+int run_braindbg_second_round_new_dir(void);
+
 /* Adaptive jitter buffer (test_jitter_buffer_grow.c): queue drains under
  * jitter deepen jitterTarget toward MAX, a steadily full queue shrinks it
  * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */
@@ -2283,8 +2288,8 @@ int run_loopback_join(void);
 int run_loopback_join_loss(void);
 /* The builder walled in behind his own tank while a heated pillbox shoots at
  * it (test_lgm_under_fire.c). The player expects the tank body to shield the
- * man; the lagged case is the bug report and fails today, the clean-link case
- * is its control. */
+ * man; the lagged case is the bug report and failed until pill shells stopped
+ * being rewound, the clean-link case is its control. */
 int run_lgm_wall_behind_tank_under_fire_lagged(void);
 int run_lgm_wall_behind_tank_under_fire_nolag(void);
 int run_loopback_password(void);

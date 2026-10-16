@@ -1077,6 +1077,7 @@ static const UnitTestEntry s_tests[] = {
     { "lgm_kill_seen_out_already_dead",          run_lgm_kill_seen_out_already_dead          },
     { "lgm_kill_seen_out_tank_hit_blast",        run_lgm_kill_seen_out_tank_hit_blast        },
     { "lgm_kill_seen_out_dead_tank",             run_lgm_kill_seen_out_dead_tank             },
+    { "braindbg_second_round_new_dir",           run_braindbg_second_round_new_dir           },
     { "jitter_buffer_grow",                      run_jitter_buffer_grow                      },
     { "shell_projection",                        run_shell_projection                        },
     { "screen_bullets_build",                    run_screen_bullets_build                    },
