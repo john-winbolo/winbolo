@@ -4917,6 +4917,17 @@ M.STUCK_EXEMPT_REPOSITION_SHOOT = true   -- keel false
 -- The stuck recovery and its penalty at STUCK_TICKS do not change.
 -- false = the collapse fires on any step (keel).
 M.STUCK_COLLAPSE_NEEDS_CLIP = true   -- keel false
+-- 2026-10-15 (Andrew approved): BRAKE WHILE THE LOOKAHEAD IS COLLAPSED.
+-- When the collapse aims the tank at its own square, capture_pill and
+-- capture_base (and any "plow" goal) kept their plow-through speed, and so
+-- did a cruise far from the goal: the tank drove round its own square at
+-- turn speed and never settled on it.  With this on, while the steering
+-- target is the collapsed own square the throttle brakes to
+-- ORBIT_BRAKE_SPEED (the orbit brake's speed, for the same reason: a small
+-- turn radius), and starts again from a standstill only when the tank is
+-- not yet on the square's centre.
+-- false = plow-through / cruise speed as before (keel).
+M.STUCK_COLLAPSE_BRAKE = true   -- keel false
 -- THE HOLD PHASE STILL FIGHTS.  While the hold runs the hard goto lock comes
 -- off and goal selection runs again, so attack_tank and kill_lgm can win --
 -- but the tank must not DRIVE anywhere: it was sent to that square.  These
@@ -6188,6 +6199,9 @@ M.PRESETS = {
     --   2026-10-15: the lookahead collapse fires only on a blocked next
     --   step.  KEEL collapsed on any step after 30 thinks.
     STUCK_COLLAPSE_NEEDS_CLIP     = false,
+    --   2026-10-15: brake while the lookahead is collapsed to our own
+    --   square.  KEEL kept plow-through / cruise speed.
+    STUCK_COLLAPSE_BRAKE          = false,
     --   2026-10-04: the bid prices in a refuel stop and a fight.  KEEL: the
     --   bid is the travel cost alone.
     ORDER_BID_STOP_AWARE          = false,

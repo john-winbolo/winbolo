@@ -1171,6 +1171,7 @@ local function path_lookahead_inner(state, info, nx, ny)
       else
         sdbg("lookahead: STUCK collapse (%d ticks), return tank tile (%d,%d)",
              (state.tick or 0) - since, tmx, tmy)
+        state._collapse_tick = state.tick   -- C.STUCK_COLLAPSE_BRAKE
         return tmx, tmy
       end
     end
@@ -5362,6 +5363,21 @@ local function steer_core(state, world, info, goal)
       -- Init.lua's kill_lgm fire block handles the gunrange driver
       -- + fire trigger.
       if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
+    elseif C.STUCK_COLLAPSE_BRAKE and state._collapse_tick ~= nil
+           and state._collapse_tick == state.tick
+           and state._steer_lx == bit.rshift(info.tankx, 8)
+           and state._steer_ly == bit.rshift(info.tanky, 8) then
+      -- C.STUCK_COLLAPSE_BRAKE (keel false): the lookahead collapsed to our
+      -- own square this think.  No plow-through, no cruise: slow to the
+      -- orbit brake's speed so the turn is tight enough to settle on the
+      -- square's centre, and start again from a standstill only when not
+      -- yet there.
+      _throttle_branch = "collapse_brake"
+      if info.speed > C.ORBIT_BRAKE_SPEED then
+        keys = bit.bor(keys, KEY_SLOWER)
+      elseif info.speed == 0 and target_dist > center_tol then
+        keys = bit.bor(keys, KEY_FASTER)
+      end
     elseif _approach_brake_active then
       -- Aligned fast-path: when we're aimed straight at the approach point we
       -- can skip the slow proportional creep and drive at full speed, braking
