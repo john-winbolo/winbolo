@@ -2741,7 +2741,7 @@ static const LangEntry langTable[] = {
     {2772, "unknown"},
     {2773, "The server sets this value. It cannot be changed."},
     {2774, "Who a tank's death is credited to, asked at every death; a drowning names the victim unless a script names the tank that sank it."},
-    {2798, "the build buttons"},
+    {2811, "the build buttons"},
     {2810, "Whether a pillbox may pick a tank as its target."},
 };
 
