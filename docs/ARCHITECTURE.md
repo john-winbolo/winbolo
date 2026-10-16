@@ -39,7 +39,7 @@ document is the stable reference for the rules themselves.
 | `src/winbolonet/winbolonet_core/` | T1 + T4 | Shared HTTP, async event queue, WBN key storage. Includes `server_sim.h` (T1) only. Linked by every WBN-aware binary. |
 | `src/winbolonet/winbolonet_server/` | T1 + T4 | Server tracker calls (`server/register`, `server/update`, lobby/map/teams/balance). Linked by binaries that run a server: WinBoloDS, WinBoloHeadless, SDL3 client (SP host). |
 | `src/winbolonet/winbolonet_client/` | T4 | User auth, comments. Linked by binaries with a UI: SDL3 client, LogViewer. |
-| `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. Also links fourteen leaf `src/gui/sdl3` files, which keep public-only access rather than borrowing this row's — see "Linked GUI sources" for the list and the rule a file has to meet. |
+| `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. Also links fifteen leaf `src/gui/sdl3` files, which keep public-only access rather than borrowing this row's — see "Linked GUI sources" for the list and the rule a file has to meet. |
 | `tests/`, `tools/` | T1 + T3 + T4 (by default) | Not currently wired through a profile. Tests that legitimately need T2 belong inside `src/bolo/tests/` and link against bolo's own target. |
 
 **The enforced rule of thumb is two-tier**: outside `src/bolo/`, you get
@@ -2243,13 +2243,13 @@ releases with nothing coming off means the review has stopped, and
 the grant needs re-arguing rather than extending.
 
 **Linked GUI sources.** A second, narrower exception rides on the
-same target, and it is not a T2 grant. Fourteen `src/gui/sdl3` files
+same target, and it is not a T2 grant. Fifteen `src/gui/sdl3` files
 are compiled *into* `WinBoloUnitTests`, the only files from a
 renderer directory that are: `skin_source.c`, `tileloader.c`,
 `sdl_bmp.c`, `sound_variants.c`, `sound_mix.c`, `overview_camera.cpp`,
 `overview_fog.cpp`, `overview_hud_layout.cpp`, `sprite_positions.c`,
 `ring_band.c`, `dialogs/dialog_quit.cpp`, `workshop_sync.c`,
-`input_source.c` and `gfx_settings.c`.
+`input_source.c`, `news_image_budget.cpp` and `gfx_settings.c`.
 Between them they hold skin lookup, the tile sheet
 builder, the BMP sheet reader, the sound variant naming, the
 effects mixer's step that scales one slot's samples by its left and
@@ -2275,7 +2275,12 @@ controller driving should add auto-slowdown; it reads SDL events it is
 handed and two gamepad queries, which `tests/unit/test_stubs.c`
 answers from test-controllable flags, and
 `tests/unit/test_input_source.c` drives it.
-The first thirteen are each called directly by a test beside them;
+`news_image_budget.cpp` is the news image cache's eviction rule: how
+many bytes of decoded images it keeps and which of them it may drop,
+worked out from URLs, byte counts and frame numbers. The cache itself,
+which downloads with libcurl and creates the textures, stays out;
+`tests/unit/test_news_image_budget.cpp` drives the rule.
+The first fourteen are each called directly by a test beside them;
 `gfx_settings.c` is here because `tileloader.c` calls it, and is the
 one file on the list no test drives on its own.
 
@@ -2295,12 +2300,12 @@ The alternative, for the geometry files, was moving the maths into
 onto the sim purely to buy testability. Keeping them in the renderer
 and linking the leaf files is the smaller distortion of the two.
 
-**Rests on** each of the fourteen still meeting that rule, so it is
+**Rests on** each of the fifteen still meeting that rule, so it is
 checked per file rather than for the group. One that gains an ImGui
 include, or that opens a renderer or a device of its own, has left
 the category, and the answer is to split the leaf back out — the
 link break is the signal, not a build problem to route around by
-widening the test binary. A fifteenth file joins only on the same
+widening the test binary. A sixteenth file joins only on the same
 test: callable with no display attached, or it does not go in.
 
 Six `src/mapeditor` files ride the same rule from a different
