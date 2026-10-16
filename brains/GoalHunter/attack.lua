@@ -4999,9 +4999,11 @@ end
 -- never heals by itself, and a repair adds 4 a tree (PILL_REPAIR_AMOUNT), so a
 -- repaired pill jumps well over the cap and stays out until it is shot back
 -- down.  Pillbox Tag holds its prize at 3 (BUILT_ARMOUR), so there this exit
--- never fires.  No square beside the pill reachable:
--- the bad-square memory is wiped at once and the run tries again, so the bot
--- never sits in an abort.  Returns true when the caller must return.
+-- never fires.  No square beside the pill reachable: the take goes back to
+-- plan_position and the run may start again FINISH_RUN_RETRY_TICKS later
+-- (keel 0: the bad-square memory is wiped and the run tries again on the
+-- next think).  Either way the bot never sits in an abort.  Returns true
+-- when the caller must return.
 function M.finish_run_update(goal, state, world, info, now)
   local pill = goal.target_id and world.pills[goal.target_id]
   local hp = pill and pill.health or 0
@@ -5031,6 +5033,21 @@ function M.finish_run_update(goal, state, world, info, now)
     end
     goal.substate = "kill_hardline"
     goal._order_forced = true
+    local wait = C.FINISH_RUN_RETRY_TICKS or 0
+    if goal._hardline_abort and wait > 0 then
+      -- No square beside the pill: the old way for a while, then try again.
+      print2(string.format("FINISH_RUN_EXIT t=%d pill=#%s hp=%d reason=no_square why=%s retry_in=%d fired=%d",
+        now, tostring(goal.target_id), hp, tostring(goal._hardline_abort), wait,
+        goal._fr_fired or 0))
+      goal._fr_retry_at = now + wait
+      goal._finish_run = nil
+      goal._kill_rush, goal._kill_rush_decided = nil, nil
+      goal._hardline_abort, goal._hardline_bad = nil, nil
+      goal._hardline_mx, goal._hardline_my = nil, nil
+      goal._plan_position_cleared = nil
+      reset_to_plan_position(state, goal)
+      return true
+    end
     if goal._hardline_abort then
       print2(string.format("FINISH_RUN_RETRY t=%d pill=#%s why=%s",
         now, tostring(goal.target_id), tostring(goal._hardline_abort)))
@@ -5044,6 +5061,7 @@ function M.finish_run_update(goal, state, world, info, now)
     return false
   end
   if not M.order_forced(state, goal) then return false end
+  if goal._fr_retry_at and now < goal._fr_retry_at then return false end
   print2(string.format("FINISH_RUN_ENTER t=%d pill=#%s@(%d,%d) hp=%d cap=%d from=%s reason=forced_order_low_armour",
     now, tostring(goal.target_id), goal.mx or -1, goal.my or -1, hp, cap,
     tostring(goal.substate)))

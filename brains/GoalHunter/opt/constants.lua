@@ -5411,6 +5411,12 @@ M.ORDER_HINT_FORCE        = true  -- keel false (2026-10-15: Pillbox Tag)
 -- false = the old way (plan_position, standoff, approach).
 M.FINISH_RUN              = true  -- keel false (2026-10-15: Pillbox Tag)
 M.FINISH_RUN_MAX_ARMOUR   = 4     -- keel 4 (moot while FINISH_RUN is off)
+-- When no square beside the pill can be reached, the run gives way to the
+-- old way (plan_position) and may not start again on that goal for this many
+-- ticks.  0 = wipe the bad squares and try again on the very next think,
+-- which repeats a failed path search every think while the pill stays
+-- sealed off.
+M.FINISH_RUN_RETRY_TICKS  = 25    -- keel 0 (2026-10-16)
 -- A REPEATED HINT IN THE HOLD PHASE (2026-10-15).  The same hint again while
 -- the bot holds that go-there order on its square sets the hold clock
 -- (ORDER_GOTO_HOLD_TICKS), as a repeated chat line does.  false = it sets the
@@ -5974,6 +5980,10 @@ M.PRESETS = {
     --   is a finish run (path in, shoot walls, fire on a clear line). KEEL
     --   had no finish run: plan_position, standoff and approach as usual.
     FINISH_RUN                    = false,
+    --   2026-10-16: a finish run that finds no square beside the pill falls
+    --   back to plan_position for FINISH_RUN_RETRY_TICKS. KEEL retried on
+    --   the next think.
+    FINISH_RUN_RETRY_TICKS        = 0,
     --   2026-10-15: an engage tick off the aim gate on the same square
     --   keeps the stuck-fire count. KEEL zeroed it on any gate miss.
     TANK_COMBAT_STUCK_FIRE_HOLD   = false,

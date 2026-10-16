@@ -8724,6 +8724,12 @@ end
 print("\n== FINISH_RUN ==")
 do
   local saved_on, saved_cap = C.FINISH_RUN, C.FINISH_RUN_MAX_ARMOUR
+  local saved_retry = C.FINISH_RUN_RETRY_TICKS
+  check("default: FINISH_RUN_RETRY_TICKS is 25", C.FINISH_RUN_RETRY_TICKS == 25,
+        tostring(C.FINISH_RUN_RETRY_TICKS))
+  check("keel preset carries FINISH_RUN_RETRY_TICKS = 0",
+        C.PRESETS.keel.FINISH_RUN_RETRY_TICKS == 0,
+        tostring(C.PRESETS.keel.FINISH_RUN_RETRY_TICKS))
   check("default: FINISH_RUN is on", C.FINISH_RUN == true, tostring(C.FINISH_RUN))
   check("default: FINISH_RUN_MAX_ARMOUR is 4", C.FINISH_RUN_MAX_ARMOUR == 4,
         tostring(C.FINISH_RUN_MAX_ARMOUR))
@@ -8742,12 +8748,26 @@ do
   local r = ATTACK.finish_run_update(g, st, w, {}, 100)
   check("forced order, armour 3: enters", r == true and g._finish_run == true
         and g.substate == "kill_hardline", tostring(g.substate))
+  C.FINISH_RUN_RETRY_TICKS = 0
   g._hardline_abort = "no navigable tile beside pill"
   g._hardline_bad = { [1] = true }
   r = ATTACK.finish_run_update(g, st, w, {}, 101)
-  check("no square beside the pill: memory wiped, run goes on",
+  check("retry 0 (keel), no square beside the pill: memory wiped, run goes on",
         r == true and g._finish_run and g._hardline_abort == nil and g._hardline_bad == nil,
         tostring(g._hardline_abort))
+  C.FINISH_RUN_RETRY_TICKS = 25
+  g._hardline_abort = "no navigable tile beside pill"
+  g._hardline_bad = { [1] = true }
+  r = ATTACK.finish_run_update(g, st, w, {}, 101)
+  check("retry 25, no square beside the pill: back to plan_position",
+        r == true and not g._finish_run and g.substate == "plan_position"
+        and g._hardline_abort == nil and g._fr_retry_at == 126, tostring(g.substate))
+  r = ATTACK.finish_run_update(g, st, w, {}, 125)
+  check("retry 25: no new run before the wait is over",
+        r == false and not g._finish_run, tostring(r))
+  r = ATTACK.finish_run_update(g, st, w, {}, 126)
+  check("retry 25: the run starts again when the wait is over",
+        r == true and g._finish_run and g.substate == "kill_hardline", tostring(g.substate))
   w.pills[0].health = 6
   r = ATTACK.finish_run_update(g, st, w, {}, 102)
   check("armour over the cap: exits to plan_position",
@@ -8766,6 +8786,7 @@ do
   r = ATTACK.finish_run_update(g, st, w, {}, 100)
   check("off (keel): no finish run", r == false and not g._finish_run, tostring(r))
   C.FINISH_RUN, C.FINISH_RUN_MAX_ARMOUR = saved_on, saved_cap
+  C.FINISH_RUN_RETRY_TICKS = saved_retry
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
