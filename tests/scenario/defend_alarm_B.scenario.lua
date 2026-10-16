@@ -98,6 +98,9 @@ local foe_player  = nil
 local spawn_tried = false
 local last_hp     = nil
 local hits        = 0        -- the trace's `hp` rows, counted
+local our_pill_n  = nil      -- OUR_PILL's pillbox number, found in on_tick
+local foe_hits    = 0        -- blows on our pill from anyone but our bot
+local own_hits    = 0        -- ...and from our bot (heat-pill), not a failure
 local first_hit_t = nil
 local despawned   = false
 local despawn_t   = nil      -- ...its `despawn` row
@@ -178,6 +181,7 @@ function on_tick(g, tick)
   for i = 1, g.num_pills() do
     local p = g.pill(i)
     if p and p.x == OUR_PILL[1] and p.y == OUR_PILL[2] then
+      our_pill_n = i
       if last_hp ~= p.armour then
         if last_hp and p.armour < last_hp then
           hits = hits + 1
@@ -217,12 +221,28 @@ function on_tick(g, tick)
   end
 end
 
+-- Who hit our pill.  Our own bot may shoot it on purpose: heat-pill makes a
+-- pill fire faster at an enemy in its range by hitting it, and the parked
+-- enemy is in range.  That is not the waller firing, so it is counted apart.
+function pill_damage_scale(attacker, n, cause, by_pill)
+  if our_pill_n ~= nil and n == our_pill_n then
+    if attacker == our_player then
+      own_hits = own_hits + 1
+    else
+      foe_hits = foe_hits + 1
+    end
+  end
+  return 100
+end
+
 -- ── the verdict ─────────────────────────────────────────────────────────
 -- PORTED (2026-09-15) from tests/defend_alarm_test.py arena B, check B0 and
 -- the trigger-2a guard beside it -- the two the ENGINE answers.  The enemy's
 -- LGM left the tank and a wall really appeared on (126,122), inside the alarm's
 -- build stamp; and our pill was never hit, so trigger 2a can never have armed
--- and anything the alarm did here it did on the BUILD alone.  Those two are
+-- and anything the alarm did here it did on the BUILD alone.  "Never hit"
+-- means never hit by anyone but our own bot: our bot's heat-pill shots on
+-- its own pill (see pill_damage_scale) do not arm trigger 2a.  Those two are
 -- also what separates this arena from its control, where the man stays aboard
 -- and the wall is the script's -- so the pair still measures the thing its
 -- names claim, which the A/D pair no longer does.
@@ -237,9 +257,9 @@ end
 -- GATE: ticks=2800 bots=0 ai=yesfull gametype=open
 
 VERDICT_CHECK = function(g)
-  if hits > 0 then
-    return false, string.format("the pill took %d hit(s) -- the waller is not "
-                                .. "supposed to fire", hits)
+  if foe_hits > 0 then
+    return false, string.format("the pill took %d hit(s) not from our bot -- "
+                                .. "the waller is not supposed to fire", foe_hits)
   end
   if man_out_t == nil then
     return false, "the enemy never sent his man out -- nothing built"
@@ -248,6 +268,7 @@ VERDICT_CHECK = function(g)
     return false, string.format("man out t=%d but (%d,%d) never became a wall",
                                 man_out_t, FOE_WALL[1], FOE_WALL[2])
   end
-  return true, string.format("enemy man out t=%d, wall up t=%d, pill unhit",
-                             man_out_t, walled_t)
+  return true, string.format("enemy man out t=%d, wall up t=%d, no enemy hit, "
+                             .. "%d own hit(s)",
+                             man_out_t, walled_t, own_hits)
 end
