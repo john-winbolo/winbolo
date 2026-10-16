@@ -1563,9 +1563,115 @@ local function sign(n)
   return 0
 end
 
-local function in_forest(x, y)
+-- Forest and what a bot can see of other tanks (see below), in one table to
+-- keep the script's top-level locals under the gate's count.
+local sight = {}
+
+function sight.in_forest(x, y)
   local t = game.map_tile(x, y)
   return t == game.TERRAIN.forest or t == game.TERRAIN.mine_forest
+end
+
+-- What a bot's brain is told about other tanks, and nothing more. A script
+-- that steers a bot by where an enemy is must not know more than the bot
+-- itself could see.
+--
+-- The brain's tank list is the 29-square window round its own tank
+-- (brainDataMakeInfo): the window starts 14 squares left of and above the
+-- tank, is shifted to stay on the map, and the edge test is inclusive at
+-- start + 29, so it reaches 15 squares right and below. A team pill's view
+-- can add more; that is not counted here, so the script can know less than
+-- the bot, never more.
+sight.BACK = 14       -- squares the window reaches left and up
+sight.SPAN = 29       -- start + this is the far edge, inclusive
+sight.LAST = 227      -- the largest start the engine allows
+-- The server keeps a tank in trees off a player's screen, bots included,
+-- when it is MIN_TREEHIDE_DIST (768 world units, 3 squares) or more away
+-- on either axis (tankHiddenInTrees). The server uses the constant, not
+-- the tree_hide_distance rule. A tank that has just fired is shown in
+-- trees; the script cannot read that, so it counts the tank as hidden.
+sight.TREE_HIDE = 768
+
+function sight.window_start(m)
+  local s = (m > sight.BACK) and (m - sight.BACK) or 0
+  return (s > sight.LAST) and sight.LAST or s
+end
+
+-- A live pill on the ground or a live base on square (x, y): neither hides
+-- a tank (utilIsTankInTrees).
+function sight.pill_or_base_at(x, y)
+  for n = 1, game.num_pills() do
+    local pb = game.pill(n)
+    if pb ~= nil and not pb.in_tank and pb.x == x and pb.y == y then
+      return true
+    end
+  end
+  for n = 1, game.num_bases() do
+    local b = game.base(n)
+    if b ~= nil and b.x == x and b.y == y then
+      return true
+    end
+  end
+  return false
+end
+
+-- utilIsTankInTrees, line for line: the tank's square is forest with no pill
+-- or base on it, and so are the squares on the side of it the tank is
+-- leaning to. The engine checks pills and bases on some of those squares
+-- only, and so does this.
+function sight.tank_in_trees(wx, wy)
+  local bmx, bmy = math.floor(wx / 256), math.floor(wy / 256)
+  local sx, sy = wx % 256, wy % 256
+  local function f(x, y)
+    return sight.in_forest(x % 256, y % 256)
+  end
+  local function blocked(x, y)
+    return sight.pill_or_base_at(x % 256, y % 256)
+  end
+  if not f(bmx, bmy) or blocked(bmx, bmy) then
+    return false
+  end
+  if sx >= 128 then
+    if not f(bmx + 1, bmy) or blocked(bmx + 1, bmy) then
+      return false
+    end
+    local t, t2
+    if sy >= 128 then
+      t, t2 = f(bmx + 1, bmy + 1), f(bmx, bmy + 1)
+      if blocked(bmx + 1, bmy + 1) or blocked(bmx, bmy + 1) then
+        return false
+      end
+    else
+      t, t2 = f(bmx + 1, bmy - 1), f(bmx, bmy - 1)
+    end
+    return t and t2
+  end
+  if not f(bmx - 1, bmy) then
+    return false
+  end
+  if sy >= 128 then
+    return f(bmx - 1, bmy + 1) and f(bmx, bmy + 1)
+  end
+  return f(bmx - 1, bmy - 1) and f(bmx, bmy - 1)
+end
+
+-- Whether player p's bot could see tank s (a game.tank table) now: inside
+-- its brain's window and not hidden in trees. A dead viewer sees nothing.
+function sight.can_see(p, s)
+  local me = game.tank(p)
+  if me == nil or me.dead or s == nil or s.dead then
+    return false
+  end
+  local vx, vy = sight.window_start(me.mx), sight.window_start(me.my)
+  if s.mx < vx or s.mx > vx + sight.SPAN or
+     s.my < vy or s.my > vy + sight.SPAN then
+    return false
+  end
+  if math.abs(s.wx - me.wx) < sight.TREE_HIDE and
+     math.abs(s.wy - me.wy) < sight.TREE_HIDE then
+    return true
+  end
+  return not sight.tank_in_trees(s.wx, s.wy)
 end
 
 -- Somewhere a tank can be sent: on the map, not the sea, not a building.
@@ -1642,7 +1748,7 @@ local function order_for_tank(p, q, from)
     return nil
   end
   local d = chebyshev(from.x, from.y, s.mx, s.my)
-  local hidden = in_forest(s.mx, s.my) and d > hide_at
+  local hidden = sight.in_forest(s.mx, s.my) and d > hide_at
   local key = "attack " .. q
   local attack = { key = key, target = "tank " .. q,
                    hint = { verb = "attack", player = q } }
@@ -2126,7 +2232,8 @@ end
 -- tank it took the prize from, and a brain in a tank fight with a pillbox in
 -- the hold puts the pillbox down as a guard. Tuning the holder to not fight
 -- does not stop a fight it was ordered into, so that order is replaced with
--- a run: RUN_SQUARES off, straight away from the nearest other tank. A bot
+-- a run: RUN_SQUARES off, straight away from the nearest other tank it can
+-- see (sight.can_see), or where it stands when it sees none. A bot
 -- driving to a square it was sent to does nothing else on the way. An order
 -- to attack the prize itself is no tank fight, and is left alone: a hunter
 -- that shot the standing prize down and took it is not sent on a run.
@@ -2143,7 +2250,7 @@ local function stop_the_fight(p)
   local near, near_d = nil, nil
   for q = 0, game.max_tanks() - 1 do
     local s = game.tank(q)
-    if q ~= p and s ~= nil and not s.dead then
+    if q ~= p and sight.can_see(p, s) then
       local d = chebyshev(me.mx, me.my, s.mx, s.my)
       if near_d == nil or d < near_d then
         near, near_d = s, d
@@ -2262,7 +2369,8 @@ end
 -- Every live tank in the round that hunts seat p, within `within` squares of
 -- it, nearest first: everybody but p in a Free For All, everybody off p's team
 -- in a team round. Measured from p's tank, or from square `at` ({ mx, my })
--- when one is given, and then whether p's tank is alive or not.
+-- when one is given. Only tanks p's bot can see now count (sight.can_see),
+-- so a dead p has none, even with `at` given.
 local function hunters_near(p, within, at)
   local list = {}
   local me = game.tank(p)
@@ -2274,7 +2382,7 @@ local function hunters_near(p, within, at)
   for q = 0, game.max_tanks() - 1 do
     if q ~= p and in_round(q) and (side == nil or scoring_team(q) ~= side) then
       local s = game.tank(q)
-      if s ~= nil and not s.dead then
+      if sight.can_see(p, s) then
         local d = chebyshev(from.mx, from.my, s.mx, s.my)
         if d <= within then
           list[#list + 1] = { q = q, s = s, d = d }
