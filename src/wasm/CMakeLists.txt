@@ -47,9 +47,13 @@ FetchContent_Declare(sdl3_ttf
     GIT_REPOSITORY https://github.com/libsdl-org/SDL_ttf.git
     GIT_TAG        release-3.2.0
 )
+# The same release the desktop and iOS builds pin (CMakeLists.txt). The
+# docking branch head moves, and a reconfigure that fetched a newer one
+# dropped names the shared ImGui code still uses.
 FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        docking
+    GIT_TAG        v1.92.9b-docking
+    GIT_SHALLOW    TRUE
 )
 FetchContent_Declare(lua
     GIT_REPOSITORY https://github.com/walterschell/Lua.git
