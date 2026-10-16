@@ -9483,7 +9483,7 @@ function Brain.think(info)
         local dp, ray = elm.dest_pill, elm.dest_ray
         local D  = elm.predicted_dist_wu or 0
         local T  = elm.flight_ticks or 0
-        local DS = kill_lgm.DEST_LEAD_SCALE
+        local DS = kill_lgm.lead_scale()
         viz.detail_text(did, string.format("LGM_DEST_AIM: %s hostile pill on his heading (health %d):",
                                            dp.live and "live damaged" or "dead", dp.health or 0))
         viz.detail_text(did, string.format(

@@ -693,7 +693,7 @@ end
 --     where the arrive test passed (within 16 wu), so the real walk-off can
 --     be one step shorter or longer.  A tank that is dead when he is due to
 --     leave keeps him waiting on the tile (lgm.c:183-185): not counted.
--- Time units: flight ticks x DEST_LEAD_SCALE = man sim steps, the same
+-- Time units: flight ticks x M.lead_scale() = man sim steps, the same
 -- conversion predict_aim uses for the lead.
 -- --------------------------------------------------------------------------
 local DWELL_STEPS      = 20  -- lgm.h LGM_BUILD_TIME (sim_rules lgm_build_ticks)
@@ -809,9 +809,9 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
   local sl = M.sightlen_for(D)
   local T_full = M.flight_ticks(sl)
   local T_entry = M.shell_tile_entry_ticks(tank_wx, tank_wy, pill.mx, pill.my, T_full)
-  local s_full  = math.floor(T_full * DEST_LEAD_SCALE + 0.5)
+  local s_full  = math.floor(T_full * M.lead_scale() + 0.5)
   if s_full < 1 then s_full = 1 end
-  local s_entry = math.floor(T_entry * DEST_LEAD_SCALE + 0.5)
+  local s_entry = math.floor(T_entry * M.lead_scale() + 0.5)
   if s_entry < 1 then s_entry = 1 end
   local s_enter, s_arrive, stalled = M.dest_pill_timeline(lgm.wx, lgm.wy, pill, s_full)
   if stalled then return nil end
@@ -826,7 +826,7 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
       T_x, s_x = T_entry, s_entry
     else
       s_x = s_arrive
-      T_x = math.floor(s_arrive / DEST_LEAD_SCALE + 0.5)
+      T_x = math.floor(s_arrive / M.lead_scale() + 0.5)
     end
     how = "dead: repaired before the shell leaves the tile"
   else
@@ -955,7 +955,7 @@ function M.predict_dest_intercept(tank_wx, tank_wy, lgm, h, pill)
       end
     end
   end
-  local s_hit = math.floor(T * DEST_LEAD_SCALE + 0.5)
+  local s_hit = math.floor(T * M.lead_scale() + 0.5)
   if s_hit < 1 then s_hit = 1 end
   if h then
     local s_enter = M.dest_pill_timeline(lgm_wx, lgm_wy, pill, s_hit + 1)
