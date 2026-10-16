@@ -2090,6 +2090,10 @@ STR_DLGSETTINGS_HOSTING_VOICE_ON=Aan
 STR_DLGSETTINGS_HOSTING_VOICE_OFF=Uit
 STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Nabijheid
 STR_DLGSETTINGS_HOSTING_VOICE_TIP=Uit negeert spraak in plaats van deze naar iedereen door te sturen. Nabijheid is nog niet geïmplementeerd en gedraagt zich hetzelfde als Aan.
+STR_DLGSETTINGS_HOSTING_SERVERNAME=Servernaam
+STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=De spelzoeker toont deze naam in plaats van je adres. Tot 32 tekens (minder met tekens met accenten of andere schriftsystemen). Laat het leeg om je adres te tonen.
+STR_DLGSETTINGS_HOSTING_SERVERDESC=Beschrijving
+STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=De spelzoeker toont dit wanneer een speler naar je spel wijst of het selecteert. Tot 200 tekens (minder met tekens met accenten of andere schriftsystemen).
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Voicechat
@@ -2738,6 +2742,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Mods
 STR_DLGBROWSER_MODS_MORE=+{number} mods
+STR_DLGBROWSER_ADDRESS=Adres
 
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=Voicechat gaat nu naar iedereen in het spel

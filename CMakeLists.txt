@@ -1261,6 +1261,7 @@ target_link_libraries(WinBoloIOS PRIVATE winbolonet_client winbolonet_core
 target_sources(WinBoloIOS PRIVATE
     src/gui/sdl3/dialogs/imgui_news.cpp
     src/gui/sdl3/news_image_cache.cpp
+    src/gui/sdl3/news_image_budget.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/dialogs/lobby/lobby_rating.cpp
 )
@@ -1930,6 +1931,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
+    src/gui/sdl3/news_image_budget.cpp
     # Copies subscribed Workshop items into <prefpath>Workshop. Desktop only:
     # winbolo.c, imgui_steam_nav.cpp and imgui_settings.cpp call it, and the
     # mobile and wasm builds leave those calls out rather than link it.
@@ -2527,7 +2529,7 @@ if(WIN32)
         src/gui/sdl3/lang.c
         src/res/winbolods.rc
     )
-    target_link_libraries(WinBoloDS PRIVATE ws2_32 winmm)
+    target_link_libraries(WinBoloDS PRIVATE ws2_32 winmm shell32)
     target_compile_options(WinBoloDS PRIVATE -fcommon)
     if(MSVC)
         target_link_options(WinBoloDS PRIVATE "/SUBSYSTEM:CONSOLE,10.0")
@@ -4077,6 +4079,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The script bytes the reply to an info request carries after the
     # INFO_PACKET: the writer and the reader, each against literal bytes.
     tests/unit/test_info_script_tail.c
+    # The host's server name and description: the sanitiser, the sim's
+    # setters, and the bytes after the scripts in the info reply.
+    tests/unit/test_server_text.c
     # The policy a server holds for scripts players send it: the word it is
     # set from, its byte on the lobby-settings event, and the sim's and the
     # client's copies.
@@ -4252,6 +4257,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
+    # Unwrapping linked thumbnails in news bodies for imgui_markdown.
+    tests/unit/test_wbn_news_markdown.cpp
+    # The news image cache's size limit and which images it may evict.
+    tests/unit/test_news_image_budget.cpp
+    # The size the news window draws an image at (header-only maths).
+    tests/unit/test_news_image_fit.cpp
     tests/unit/test_wbn_news_fetch.cpp
     tests/unit/test_wbn_country_cache.c
     tests/unit/test_wbn_prefs_sync.c
@@ -4774,6 +4785,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # target already builds for its own tests — and its functions are a tile
     # number in and a colour out. test_map_colours.c drives it directly.
     src/gui/sdl3/map_colours.c
+    # news_image_budget.cpp qualifies too: it is the news image cache's
+    # eviction rule over URLs, byte counts and frame numbers, with no SDL,
+    # no ImGui and no textures. test_news_image_budget.cpp drives it.
+    src/gui/sdl3/news_image_budget.cpp
     # The threaded news fetcher itself (not just the pure parser): the
     # free-during-fetch lifetime test drives its real worker thread. Its
     # network GET is reached through a test seam, so no libcurl is pulled in
@@ -5425,6 +5440,9 @@ set(_unit_test_names
     wbn_bearer_state
     wbn_rekey_codec
     wbn_news_parse
+    wbn_news_markdown
+    news_image_budget
+    news_image_fit
     wbn_news_free_during_fetch
     wbn_country_cache
     wbn_prefs_parse_get
@@ -5436,6 +5454,7 @@ set(_unit_test_names
     wbn_serverlist_motd
     wbn_serverlist_malformed
     wbn_serverlist_scripts
+    wbn_serverlist_server_text
     wbn_map_parse
     wbn_map_fetch_policy
     brain_crash_log_writes_file
@@ -6561,6 +6580,10 @@ set(_unit_test_names
     wbn_lobby_info_scenario
     info_script_tail_golden
     info_script_tail_read
+    server_text_sanitize
+    server_text_sim
+    server_text_tail_golden
+    server_text_tail_read
     script_upload_policy_resolve
     script_upload_policy_word
     script_upload_policy_codec

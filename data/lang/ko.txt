@@ -2088,6 +2088,10 @@ STR_DLGSETTINGS_HOSTING_VOICE_ON=켜기
 STR_DLGSETTINGS_HOSTING_VOICE_OFF=끄기
 STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=근접
 STR_DLGSETTINGS_HOSTING_VOICE_TIP="끄기"를 선택하면 음성이 아무에게도 전달되지 않고 폐기돼요. "근접"은 아직 구현되지 않아 "켜기"와 동일하게 동작해요.
+STR_DLGSETTINGS_HOSTING_SERVERNAME=서버 이름
+STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=게임 찾기에서 주소 대신 이 이름을 보여줘요. 32바이트까지 쓸 수 있어요 (한글로 약 10자, 다른 문자는 더 적어요). 비워 두면 주소가 표시돼요.
+STR_DLGSETTINGS_HOSTING_SERVERDESC=설명
+STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=게임 찾기에서 플레이어가 게임을 가리키거나 선택하면 이 내용을 보여줘요. 200바이트까지 쓸 수 있어요 (한글로 약 66자, 다른 문자는 더 적어요).
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=음성
@@ -2736,6 +2740,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=창작마당
 # The game finder's scripts
 STR_DLGBROWSER_MODS=모드
 STR_DLGBROWSER_MODS_MORE=+모드 {number}개
+STR_DLGBROWSER_ADDRESS=주소
 
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=이제 음성 채팅이 게임의 모든 플레이어에게 전달됩니다

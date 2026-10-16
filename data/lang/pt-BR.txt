@@ -2088,6 +2088,10 @@ STR_DLGSETTINGS_HOSTING_VOICE_ON=Ativado
 STR_DLGSETTINGS_HOSTING_VOICE_OFF=Desativado
 STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Proximidade
 STR_DLGSETTINGS_HOSTING_VOICE_TIP=Desativado descarta a voz em vez de transmiti-la a alguém. Proximidade ainda não está implementada e se comporta como Ativado.
+STR_DLGSETTINGS_HOSTING_SERVERNAME=Nome do servidor
+STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=O localizador de jogos mostra esse nome em vez do seu endereço. Até 32 caracteres (menos com acentos ou outros alfabetos). Deixe em branco para mostrar o endereço.
+STR_DLGSETTINGS_HOSTING_SERVERDESC=Descrição
+STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=O localizador de jogos mostra isso quando um jogador aponta para o seu jogo ou o seleciona. Até 200 caracteres (menos com acentos ou outros alfabetos).
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Voz
@@ -2738,6 +2742,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Oficina
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Mods
 STR_DLGBROWSER_MODS_MORE=+{number} mods
+STR_DLGBROWSER_ADDRESS=Endereço
 
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=O chat de voz agora vai para todos na partida

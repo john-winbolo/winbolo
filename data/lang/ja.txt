@@ -2090,6 +2090,10 @@ STR_DLGSETTINGS_HOSTING_VOICE_ON=オン
 STR_DLGSETTINGS_HOSTING_VOICE_OFF=オフ
 STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=近接
 STR_DLGSETTINGS_HOSTING_VOICE_TIP=「オフ」にすると音声は誰にも届かず、そのまま破棄されます。「近接」はまだ実装されておらず、動作は「オン」と同じです。
+STR_DLGSETTINGS_HOSTING_SERVERNAME=サーバー名
+STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=ゲームファインダーには、アドレスの代わりにこの名前が表示されます。32 バイトまで（日本語で10文字程度、他の文字種ではさらに少なくなります）。空欄にすると、代わりにアドレスが表示されます。
+STR_DLGSETTINGS_HOSTING_SERVERDESC=説明
+STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=ゲームファインダーで、プレイヤーがあなたのゲームを指すか選択したときに表示されます。200 バイトまで（日本語で66文字程度、他の文字種ではさらに少なくなります）。
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=ボイス
@@ -2738,6 +2742,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=ワークショップ
 # The game finder's scripts
 STR_DLGBROWSER_MODS=MOD
 STR_DLGBROWSER_MODS_MORE=+MOD {number}個
+STR_DLGBROWSER_ADDRESS=アドレス
 
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=ボイスチャットはゲーム内の全員に聞こえるようになりました

@@ -2088,6 +2088,10 @@ STR_DLGSETTINGS_HOSTING_VOICE_ON=开启
 STR_DLGSETTINGS_HOSTING_VOICE_OFF=关闭
 STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=距离感应
 STR_DLGSETTINGS_HOSTING_VOICE_TIP=“关闭”不会把语音发送给任何人，而是直接丢弃。“距离感应”尚未实现，目前效果与“开启”相同。
+STR_DLGSETTINGS_HOSTING_SERVERNAME=服务器名称
+STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=游戏查找会显示此名称，而不是你的地址。最多 32 字节（约 10 个中文字符，其他文字可能更少）。留空则显示你的地址。
+STR_DLGSETTINGS_HOSTING_SERVERDESC=描述
+STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=当玩家指向或选中你的游戏时，游戏查找会显示这段内容。最多 200 字节（约 66 个中文字符，其他文字可能更少）。
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=语音
@@ -2736,6 +2740,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=创意工坊
 # The game finder's scripts
 STR_DLGBROWSER_MODS=MOD
 STR_DLGBROWSER_MODS_MORE=+{number} 个 MOD
+STR_DLGBROWSER_ADDRESS=地址
 
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=语音聊天现在会发送给游戏中的所有人

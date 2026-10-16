@@ -24,6 +24,7 @@
 #include "imgui_nav_outline.h"
 
 #include "../news_image_cache.h"
+#include "../news_image_fit.h"
 
 extern "C" {
 #include "../../../winbolonet/http.h"
@@ -40,6 +41,19 @@ extern "C" {
 #include <cstring>
 #include <string>
 #include <vector>
+
+#include "../../../winbolonet/wbn_news_parser.h"
+
+/* An item's body as handed to imgui_markdown: linked thumbnails
+ * unwrapped into plain images (see newsUnwrapLinkedImages), with the
+ * links they carried kept so a click on the image still opens them.
+ * `md` is `unwrapped` with each image that failed to load turned into
+ * a link (see refreshFailedImages). */
+struct NewsBody {
+    std::string                   unwrapped;
+    std::string                   md;
+    std::vector<WbnNewsImageLink> links;
+};
 
 /* ================================================================
  * Process-wide state.
@@ -58,6 +72,8 @@ static bool                  s_resultCollected = false;
 static bool                  s_autoShowDecided = false;
 static int                   s_maxId        = 0;
 static std::vector<WbnNewsItem> s_sortedItems; /* id-desc */
+static std::vector<NewsBody>    s_bodies;      /* parallel to s_sortedItems */
+static unsigned                 s_failedSeen = 0; /* newsImageFailedCount at the last rebuild */
 
 /* ================================================================
  * Prefs helpers — [NEWS] AutoShow and [NEWS] LastSeenId.
@@ -149,24 +165,84 @@ static ImGui::MarkdownImageData newsImageCallback(
     }
     char url[2048];
     copyLinkBuf(data, url, sizeof(url));
-    SDL_Texture *tex = newsImageGet(url);
-    if (!tex) return ImGui::MarkdownImageData{};
+    /* A thumbnail that was wrapped in a link is clickable, whether or
+     * not it has finished downloading. */
+    const NewsBody *body = static_cast<const NewsBody *>(data.userData);
+    const bool linked = body &&
+        newsFindImageLink(body->links, data.link, (size_t)data.linkLength);
 
-    float w = 0.0f, h = 0.0f;
-    SDL_GetTextureSize(tex, &w, &h);
     ImGui::MarkdownImageData out;
+    out.useLinkCallback = linked;
+
+    /* imgui_markdown asks for every image in a post on every frame,
+     * in view or not. Only an image ImGui will draw is asked for with
+     * newsImageGet, which pins it in the cache and starts its
+     * download. One scrolled out of view is only looked at: it keeps
+     * its size in the layout, so the scroll position does not jump,
+     * but the cache may drop it, and it is not downloaded until the
+     * player scrolls to it. ImGui::IsRectVisible is the clip test
+     * ImGui::Image itself makes before it adds anything to the draw
+     * list, so an image it says is out of view is never drawn. The
+     * callback runs inside the scroll child, with the cursor where
+     * imgui_markdown will place the image. */
+    SDL_Texture *tex = nullptr;
+    float w = 0.0f, h = 0.0f;
+    if (!newsImagePeek(url, &tex, &w, &h)) {
+        /* Not loaded: imgui_markdown prints a line of text in its
+         * place. Only a visible line starts the download. */
+        if (!ImGui::IsRectVisible(ImVec2(1.0f, ImGui::GetTextLineHeight()))) {
+            return out;
+        }
+        tex = newsImageGet(url);
+        if (!tex) return out;
+        SDL_GetTextureSize(tex, &w, &h);
+    }
+
+    /* Shrink the image to the width left on its line and the height of
+     * the scroll area, so a wide one doesn't run off the right edge and
+     * a tall one fits on screen. */
+    const ImGuiStyle &style = ImGui::GetStyle();
+    const float maxW = ImGui::GetWindowPos().x +
+                       ImGui::GetWindowContentRegionMax().x -
+                       ImGui::GetCursorScreenPos().x;
+    const float maxH = ImGui::GetWindowHeight() - style.WindowPadding.y * 2.0f;
+    newsImageFit(w, h, maxW, maxH, &w, &h);
+
+    if (ImGui::IsRectVisible(ImVec2(w, h))) {
+        tex = newsImageGet(url);
+        if (!tex) return out;
+    }
+
     out.isValid         = true;
-    out.useLinkCallback = false;
     out.user_texture_id = (ImTextureID)tex;
     out.size            = ImVec2(w, h);
     return out;
 }
 
+/* The full-size picture a clicked thumbnail linked to, or nullptr. */
+static const char *imageHref(const ImGui::MarkdownLinkCallbackData &data) {
+    const NewsBody *body = static_cast<const NewsBody *>(data.userData);
+    if (!body || data.linkLength <= 0) return nullptr;
+    return newsFindImageLink(body->links, data.link, (size_t)data.linkLength);
+}
+
 static void newsLinkCallback(ImGui::MarkdownLinkCallbackData data) {
-    if (data.isImage) return;
+    if (data.isImage) {
+        newsOpenUrlSchemeFiltered(imageHref(data));
+        return;
+    }
     char url[2048];
     copyLinkBuf(data, url, sizeof(url));
     newsOpenUrlSchemeFiltered(url);
+}
+
+/* imgui_markdown calls this while an image or link is hovered. Links
+ * get their hand cursor from newsMarkdownFormatCallback; this gives a
+ * clickable image the same. */
+static void newsTooltipCallback(ImGui::MarkdownTooltipCallbackData data) {
+    if (data.linkData.isImage && imageHref(data.linkData)) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
 }
 
 static void newsMarkdownFormatCallback(
@@ -197,12 +273,38 @@ static void collectFetchResultOnce(void) {
                       return a.id > b.id;
                   });
         s_maxId = s_sortedItems.front().id;
+        s_bodies.clear();
+        s_bodies.reserve(s_sortedItems.size());
+        for (const auto &item : s_sortedItems) {
+            NewsBody body;
+            body.unwrapped = newsUnwrapLinkedImages(
+                item.body_md ? std::string(item.body_md) : std::string(),
+                body.links);
+            body.unwrapped.append("\n");
+            body.md = body.unwrapped;
+            s_bodies.push_back(std::move(body));
+        }
         /* Propagate the resolved country code to the SP / LAN /
          * tutorial cache. Called once per program run, before the
          * AutoShow / consent decision. */
         winbolonetSetCountryCode(wbn_news_fetch_country_code(s_fetch));
     }
     s_resultCollected = true;
+}
+
+/* imgui_markdown draws an image it has no texture for as
+ * "( Image <url> not loaded )". Once an image has failed for good,
+ * rebuild the bodies with it as a link instead, so it can still be
+ * opened in the browser. Runs again only when another image fails. */
+static void refreshFailedImages(void) {
+    const unsigned failed = newsImageFailedCount();
+    if (failed == s_failedSeen) return;
+    s_failedSeen = failed;
+    for (NewsBody &body : s_bodies) {
+        body.md = newsLinkFailedImages(
+            body.unwrapped, body.links,
+            [](const std::string &url) { return newsImageIsFailed(url.c_str()); });
+    }
 }
 
 /* ================================================================
@@ -261,7 +363,7 @@ static void renderConsentDialog(void) {
     }
 }
 
-static void renderItem(const WbnNewsItem &item) {
+static void renderItem(const WbnNewsItem &item, const NewsBody &body) {
     /* Header band: filled background rect, scaled-up title, optional
      * dimmed date line beneath. Drawn manually rather than via
      * imgui_markdown's H1 so the band spans the full content width
@@ -314,15 +416,13 @@ static void renderItem(const WbnNewsItem &item) {
     ImGui::Dummy(ImVec2(0.0f, style.ItemSpacing.y * 1.5f));
 
     /* Body markdown — title is no longer embedded as an H1. */
-    std::string md;
-    if (item.body_md) md.assign(item.body_md);
-    md.append("\n");
-
     ImGui::MarkdownConfig cfg;
-    cfg.linkCallback   = &newsLinkCallback;
-    cfg.imageCallback  = &newsImageCallback;
-    cfg.formatCallback = &newsMarkdownFormatCallback;
-    ImGui::Markdown(md.c_str(), md.size(), cfg);
+    cfg.linkCallback    = &newsLinkCallback;
+    cfg.imageCallback   = &newsImageCallback;
+    cfg.tooltipCallback = &newsTooltipCallback;
+    cfg.formatCallback  = &newsMarkdownFormatCallback;
+    cfg.userData        = const_cast<NewsBody *>(&body);
+    ImGui::Markdown(body.md.c_str(), body.md.size(), cfg);
 
     /* Comments link — TextLink renders without auto-opening so we can
      * route the click through our scheme-filtered helper rather than
@@ -362,6 +462,9 @@ static void renderNewsModal(void) {
         s_modalOpenCalled  = true;
         s_seedScrollFocus  = true;
     }
+    newsImageCacheNewFrame();
+    refreshFailedImages();
+
     ImVec2 vp = ImGui::GetMainViewport()->Size;
 #if defined(__IPHONEOS__)
     /* Nearly the whole window on a phone: a fifth of a landscape phone's
@@ -404,14 +507,15 @@ static void renderNewsModal(void) {
         if (s_sortedItems.empty()) {
             ImGui::TextUnformatted(langGetText(STR_DLGNEWS_LOADING));
         } else {
-            for (const auto &item : s_sortedItems) {
+            for (size_t i = 0; i < s_sortedItems.size(); i++) {
+                const WbnNewsItem &item = s_sortedItems[i];
                 /* Scope IDs per item so the "Comments: N" TextLink (and any
                  * widget imgui_markdown emits internally) doesn't collide
                  * with the same widget on a sibling item that happens to
                  * share its visible label — e.g. two posts both with zero
                  * comments. */
                 ImGui::PushID(item.id);
-                renderItem(item);
+                renderItem(item, s_bodies[i]);
                 ImGui::PopID();
             }
         }
@@ -502,6 +606,9 @@ extern "C" void newsPopupShutdown(void) {
     s_maxId             = 0;
     s_sortedItems.clear();
     s_sortedItems.shrink_to_fit();
+    s_bodies.clear();
+    s_bodies.shrink_to_fit();
+    s_failedSeen = 0;
 }
 
 extern "C" void newsPopupTick(void) {

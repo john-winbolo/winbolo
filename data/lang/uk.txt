@@ -2090,6 +2090,10 @@ STR_DLGSETTINGS_HOSTING_VOICE_ON=Увімкнено
 STR_DLGSETTINGS_HOSTING_VOICE_OFF=Вимкнено
 STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Близькість
 STR_DLGSETTINGS_HOSTING_VOICE_TIP=Вимкнено відкидає голос замість того, щоб передавати його будь-кому. Близькість поки не реалізована і працює так само, як Увімкнено.
+STR_DLGSETTINGS_HOSTING_SERVERNAME=Ім'я сервера
+STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=Пошук гри показує цю назву замість твоєї адреси. До 32 знаків (менше з кирилицею або іншим письмом). Залиш порожнім, щоб показати адресу.
+STR_DLGSETTINGS_HOSTING_SERVERDESC=Опис
+STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=Пошук гри показує його, коли гравець наводиться на твою гру або вибирає її. До 200 знаків (менше з кирилицею або іншим письмом).
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Голос
@@ -2738,6 +2742,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Майстерня
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Моди
 STR_DLGBROWSER_MODS_MORE=+ моди ({number})
+STR_DLGBROWSER_ADDRESS=Адреса
 
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=Голосовий чат тепер чують усі в грі

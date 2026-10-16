@@ -41,6 +41,11 @@
 #define DISCOVERY_SCRIPT_NAME_LEN 64
 #define DISCOVERY_SCRIPT_DESC_LEN 201   /* WBN_SCENARIO_DESC_MAX + 1 */
 #define DISCOVERY_SCRIPT_MODS_MAX 9
+/* The server's own name and description: netpacks.h's INFO_SERVER_NAME_MAX
+ * and INFO_SERVER_DESC_MAX plus a NUL, the same as server_text.h's
+ * SERVER_NAME_LEN / SERVER_DESC_LEN. */
+#define DISCOVERY_SERVER_NAME_LEN 33
+#define DISCOVERY_SERVER_DESC_LEN 201
 typedef struct {
   bool hasScriptInfo;      /* the reply carried the script bytes, whole and well-formed */
   char scenarioName[DISCOVERY_SCRIPT_NAME_LEN];   /* "" when no scenario */
@@ -48,14 +53,24 @@ typedef struct {
   BYTE scenarioMaxPlayers;                        /* 0 = no cap */
   BYTE modCount;
   char modNames[DISCOVERY_SCRIPT_MODS_MAX][DISCOVERY_SCRIPT_NAME_LEN];
+  /* The name and description the host gave the server, from the optional
+   * bytes after the last mod. "" when the server sent none - it predates
+   * them or its host gave none - and the game finder then shows the
+   * server's address instead. Sanitised on read, so a hostile server cannot
+   * put control characters into the finder. */
+  char serverName[DISCOVERY_SERVER_NAME_LEN];
+  char serverDescription[DISCOVERY_SERVER_DESC_LEN];
 } DiscoveryScripts;
 
 /* Read the script bytes that follow the INFO_PACKET in an info reply. tail
  * points at the first byte after the INFO_PACKET and len is how many bytes
  * follow it. Always zeroes *out first. Returns false, leaving *out zeroed,
  * when a length is over its cap or a field runs past len; on success sets
- * hasScriptInfo and NUL-terminates every string. Bytes after the last mod are
- * ignored, so a later field can be appended. */
+ * hasScriptInfo and NUL-terminates every string. After the last mod it reads
+ * the server's name and description when they are there; when those bytes
+ * are malformed it leaves both "" and still returns true, because the
+ * scripts before them were whole. Bytes after the description are ignored,
+ * so a later field can be appended. */
 bool discoveryReadScriptTail(const uint8_t *tail, size_t len, DiscoveryScripts *out);
 
 /* Result of a single discoveryPingServer() call. rttMs is the round-trip
