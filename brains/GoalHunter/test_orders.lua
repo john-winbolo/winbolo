@@ -8860,7 +8860,7 @@ do
 end
 
 -- ─────────────────────────────────────────────────────────────────────────
--- ORDER_SKIPS_WARMUP and ORDER_GOAL_KIND_FIX (TEMPER review of PR #510,
+-- ORDER_SKIPS_WARMUP and ORDER_GOAL_KIND_FIX (review of PR #510,
 -- finding 1).  On (live): a held order skips warm-up and special_mode_goal,
 -- and the order's goal kind follows the target.  Off (keel): the old
 -- behaviour, checked here one change at a time.
