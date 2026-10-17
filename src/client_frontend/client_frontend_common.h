@@ -18,6 +18,15 @@ struct ClientSim;
  * none is registered yet (bootstrapping), so a callback goes ahead. */
 bool clientFrontIsActiveUiSim(const struct ClientSim *cs);
 
+/* Whether the player is in the lobby or its countdown: before a game, or
+ * after a round has handed the game back to the lobby (a vote to return, or
+ * a game over). A driver that shows the lobby as a screen of its own
+ * (imguiLobbyShow: the desktop and iOS) tests this before its game loop, and
+ * in the loop every frame, where a true answer ends the loop without drawing
+ * that frame and goes back to the lobby screen. The web client draws the
+ * lobby inside its game frame instead and does not use it. */
+bool clientFrontInLobbyPhase(struct ClientSim *cs);
+
 /* Save the running game's map into dir, which is created if missing, under a
  * name made from the map's name and the time (Everard_20261016_031500.map),
  * and tell the player where it went or that it failed. For a player with no

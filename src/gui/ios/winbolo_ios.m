@@ -420,8 +420,7 @@ ios_game_start:
     ClientSim *cs = humanSim;
 
     /* Handle lobby if server uses lobby mode */
-    if (cs && clientSimIsInLobby(cs) &&
-        (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown)) {
+    if (clientFrontInLobbyPhase(cs)) {
         WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Entering lobby");
         sdl3ImguiCleanup();
         const DialogBackend *db = dialogBackendGet();
@@ -495,6 +494,7 @@ ios_game_start:
 
     /* Main game loop */
 #define IOS_FRAME_CAP_MS 16
+    bool returnToLobby = FALSE;
     while (!winboloQuit && !finishedLoop) {
         Uint64 frameCapStart = SDL_GetTicks();
 
@@ -591,6 +591,17 @@ ios_game_start:
            of its own. */
         voiceTick(cs);
 
+        /* The round has handed the game back to the lobby (a vote to return,
+           or a game over): leave the loop before drawing, and show the lobby
+           screen from the top, as the desktop does. Drawn here instead, the
+           lobby would go through the game frame's in-game lobby (the web
+           client's), which in the touch layout sizes it in window points
+           inside the frame's larger logical units. */
+        if (clientFrontInLobbyPhase(cs)) {
+            returnToLobby = TRUE;
+            break;
+        }
+
         /* Render */
         tick = SDL_GetTicks();
         clientMutexWaitFor();
@@ -626,6 +637,15 @@ ios_game_start:
                 SDL_Delay((Uint32)(IOS_FRAME_CAP_MS - frameElapsed));
             }
         }
+    }
+
+    /* Back to the lobby screen: the game and its ClientSim stay, as on the
+       desktop. Not if the player quit in the same frame. */
+    if (returnToLobby && !winboloQuit && !windowIsQuitting()) {
+        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Round over, returning to the lobby");
+        gameFrontSaveTankPrefs(cs);
+        sdl3ImguiCleanup();
+        goto ios_game_start;
     }
 
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Main loop ended, cleaning up");

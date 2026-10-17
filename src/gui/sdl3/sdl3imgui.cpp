@@ -9274,10 +9274,11 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 
     /* In-game lobby (non-blocking host, e.g. the WASM client).
      *
-     * On desktop the lobby is a separate BLOCKING modal (imguiLobbyShow)
-     * with its own ImGui context, and this per-frame pump never runs while
-     * it is up — so clientSimIsInLobby(cs) is ALWAYS false here on desktop
-     * and every branch below is a no-op for it. On the WASM client this is
+     * On desktop and iOS the lobby is a separate BLOCKING modal
+     * (imguiLobbyShow) with its own ImGui context, and this per-frame pump
+     * never runs while it is up; their game loops leave before drawing a
+     * frame once clientFrontInLobbyPhase is true — so clientSimIsInLobby(cs)
+     * is ALWAYS false here for them and every branch below is a no-op. On the WASM client this is
      * the only loop, so build the lobby into the shared frame and skip the
      * in-game HUD / menu bar / panels, then close out the frame the same way
      * the normal tail does.

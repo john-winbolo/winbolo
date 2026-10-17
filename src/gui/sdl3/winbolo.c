@@ -526,8 +526,7 @@ int main(int argc, char *argv[]) {
   winboloQuit = FALSE;
   while (winboloQuit == FALSE) {
     /* Show lobby dialog if the server uses lobby mode */
-    if (cs && clientSimIsInLobby(cs) &&
-        (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown)) {
+    if (clientFrontInLobbyPhase(cs)) {
       const DialogBackend *db = dialogBackendGet();
       int lobbyResult = db->lobbyShow(cs);
       if (lobbyResult == 0) {
@@ -763,8 +762,7 @@ int main(int argc, char *argv[]) {
         voiceTick(cs);
 
         /* Detect game-over returning to lobby */
-        if (cs && clientSimIsInLobby(cs) &&
-            (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown)) {
+        if (clientFrontInLobbyPhase(cs)) {
           returnToLobby = TRUE;
           done = TRUE;
           /* Skip this iteration's render: inLobby is already true, so

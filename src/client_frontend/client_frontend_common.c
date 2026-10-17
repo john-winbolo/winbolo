@@ -99,6 +99,12 @@ void frontEndSetActiveClientSim(struct ClientSim *cs) {
   s_activeUiCs = cs;
 }
 
+bool clientFrontInLobbyPhase(ClientSim *cs) {
+  if (cs == NULL || !clientSimIsInLobby(cs)) return false;
+  return clientSimGetNetStatus(cs) == netLobby ||
+         clientSimGetNetStatus(cs) == netLobbyCountdown;
+}
+
 extern keyItems keys;
 extern bool showGunsight;
 extern bool autoScrollingEnabled;
