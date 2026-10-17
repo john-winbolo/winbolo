@@ -5,7 +5,8 @@
 
 /*
  * A script that moves a tank erases the tank's lag-compensation record
- * (test_teleport_clears_rewind.c).
+ * (test_teleport_clears_rewind.c). The file also tests the same erase when
+ * a player joins a seat and when a held seat comes back on the field.
  *
  * A player's shell tests a tank where it was on the shooter's screen: the
  * position history some entries back. The history holds 16 game ticks. A
