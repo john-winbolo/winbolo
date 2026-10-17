@@ -32,13 +32,15 @@
 --
 -- Nobody can hurt their own side. Friendly fire would otherwise be the quickest
 -- way to end the round, and a survivor shot by a survivor would join the horde
--- for it. What kills and turns a survivor is an infected tank's shell and
--- nothing else: drowning, a mine, a pillbox or any other death only kills
--- them, and they come back a survivor. The help below and deep sea turn a
--- survivor without a death.
+-- for it. A survivor killed by an infected tank's shell turns. A survivor who
+-- dies within the bite time (1 second by default) after an infected shell hit
+-- them also turns, whatever killed them. Any other death (drowning, a mine, a
+-- pillbox) only kills them, and they come back a survivor. The help below and
+-- deep sea turn a survivor without a death.
 --
--- The host can widen that in the lobby with two settings. "Drowning infects"
--- is off by default and "Bite time" is 1 second by default.
+-- The host can change that in the lobby with two settings. "Drowning infects"
+-- is off by default and "Bite time" is 1 second by default; a bite time of 0
+-- leaves an infected shell kill as the only death that turns a survivor.
 -- "Drowning infects" turns a survivor who drowns. The turn is credited to the
 -- infected tank whose shell last hit them, if that was in the last few seconds,
 -- and to nobody otherwise. "Bite time" makes every infected shell a bite: a
@@ -95,7 +97,7 @@ local TICKS_PER_SEC   = 100   -- game.tick() counts a hundred to the second
 local BOOM_SECONDS    = 3     -- from the last survivor's death to the end of
                               -- the round, so their explosion plays out
 
--- The defaults of three more lobby settings (scenario.settings at the bottom
+-- The defaults of five more lobby settings (scenario.settings at the bottom
 -- of the file declares them from these values). on_start puts the host's
 -- choice over them.
 local COMPASS_SECONDS    = 90   -- the tail of the round the horde has a compass
@@ -1163,8 +1165,9 @@ function on_start()
   end
   if BITE_SECONDS > 0 then
     game.message(string.format("Survivors: an infected shell bites for %d " ..
-                               "seconds. Die bitten and you are infected.",
-                               BITE_SECONDS))
+                               "%s. Die bitten and you are infected.",
+                               BITE_SECONDS,
+                               BITE_SECONDS == 1 and "second" or "seconds"))
   end
   game.timer(HEAD_START - WARNING_SECONDS, warn_zero)
   game.timer(HEAD_START, turn_zero)
@@ -1174,10 +1177,12 @@ function on_start()
   panel()
 end
 
--- Only an infected tank's shell turns you, unless the host has turned on one
--- of the two lobby settings below. Every other death is a hazard, not a
--- recruiter: dying to one costs a survivor their position and their pills and
--- nothing else, and the horde does not get to count a kill its gun did not make.
+-- An infected tank's shell kill turns you. So does any death while you are
+-- bitten (the bite time is 1 second by default, and 0 turns it off), and a
+-- drowning when the host has turned on "Drowning infects". Every other death
+-- is a hazard, not a recruiter: dying to one costs a survivor their position
+-- and their pills and nothing else, and the horde does not get to count a
+-- kill its gun did not make.
 --
 -- That covers drowning and your own mine (the dying tank is named as its own
 -- killer), a pillbox (the sim fires every pillbox shell with no owner on it, so
@@ -1518,7 +1523,7 @@ scenario = {
                 "tougher.",
   api         = 1,
   author      = "WinBolo",
-  updated     = "2026-10-17T14:25Z",
+  updated     = "2026-10-17T14:29Z",
   kind        = "scenario",
   game        = "open",
 
