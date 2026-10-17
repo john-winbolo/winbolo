@@ -3392,7 +3392,8 @@ int main(int argc, char **argv) {
       }
       /* Draw themed names so a -bots server gets varied names instead of
        * "Bot 1..N". Each team that gets bots draws a random pool of its
-       * own, one no other team holds (the lobby's rule), and the pool is
+       * own, one no other team holds where a free pool is left (the
+       * lobby's rule), and the pool is
        * stored on the team so the lobby's "Bot naming" label and Add Bot
        * use the same pool as these names. Bots on no team share one random
        * pool. The draws are wrapped in a bolo_rand save/restore so this
