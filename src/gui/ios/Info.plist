@@ -68,7 +68,8 @@
     <!-- Game recordings (.wbv). The Documents directory shows in the Files
          app and in Finder file sharing as the WinBolo folder, and a .wbv
          opened from Files, Mail or another app launches WinBolo with it,
-         which plays it on the recordings screen (ios_recordings.cpp). -->
+         which the Log Viewer entry plays in the reel before the log
+         browser opens (gamefront.c, ios_log_player.cpp). -->
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>

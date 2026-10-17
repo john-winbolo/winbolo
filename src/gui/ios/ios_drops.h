@@ -56,7 +56,8 @@ void iosDropsInstall(void);
 *  gameFrontHandleUrlOpen here and answers
 *  openInternetManual, as the desktop's welcome loop does
 *  for one it polls. A recording answers openLogViewer and
-*  stays kept for the recordings screen to take.
+*  stays kept for the Log Viewer entry in gamefront.c to
+*  take and play.
 *
 *ARGUMENTS:
 *  (none)

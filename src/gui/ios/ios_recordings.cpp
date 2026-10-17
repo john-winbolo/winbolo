@@ -16,7 +16,8 @@
 *  a path, or with no path on its own file dialog. iOS has
 *  neither, so with a path this reads the file and plays it,
 *  and with none it shows this screen. gamefront.c opens it
-*  for the welcome screen's Log Viewer entry.
+*  when the WinBolo.net log browser's Open File is pressed,
+*  and shows the browser again when it closes.
 *
 *  Where recordings are looked for:
 *  - the preferences directory, where gamefront.c writes
@@ -57,7 +58,6 @@
 extern "C" {
 #include "../lang.h"
 #include "../sdl3/dialogs/imgui_messagebox.h"
-#include "../sdl3/dialogs/imgui_wbn_browser.h"
 }
 
 #include "ios_drops.h"
@@ -277,9 +277,8 @@ extern "C" void logViewerRun(struct SDL_Window *window,
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
         /* What the frame asked for, done after the frame is presented: the
-         * player and the browser run loops and ImGui contexts of their own. */
+         * player runs a loop and an ImGui context of its own. */
         int playIndex = -1;
-        bool openMyGames = false;
 
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
@@ -311,22 +310,13 @@ extern "C" void logViewerRun(struct SDL_Window *window,
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoSavedSettings);
 
-        /* Top row: Close, the title, and My Games for the online ones. */
+        /* Top row: Close and the title. */
         if (ImGui::Button(langGetText(STR_CLOSE))) {
             running = false;
         }
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(langGetText(STR_IOSREC_TITLE));
-        {
-            const char *myGames = langGetText(STR_DLGWBN_TAB_MYGAMES);
-            float w = ImGui::CalcTextSize(myGames).x +
-                      ImGui::GetStyle().FramePadding.x * 2.0f;
-            ImGui::SameLine(ImGui::GetContentRegionMax().x - w);
-            if (ImGui::Button(myGames)) {
-                openMyGames = true;
-            }
-        }
         if (notice != NULL) {
             ImGui::TextDisabled("%s", notice);
         }
@@ -391,8 +381,8 @@ extern "C" void logViewerRun(struct SDL_Window *window,
 
         if (!running) break;
 
-        /* The player and the browser each bring up and tear down their own
-         * ImGui context and put this one back as current when they return. */
+        /* The player brings up and tears down its own ImGui context and
+         * puts this one back as current when it returns. */
         char dropped[FILENAME_MAX];
         if (iosDropsTakeLog(dropped, sizeof(dropped))) {
             iosRecordingsPlay(window, renderer, dropped);
@@ -401,12 +391,6 @@ extern "C" void logViewerRun(struct SDL_Window *window,
             std::string path = list[(size_t)playIndex].path;
             iosRecordingsPlay(window, renderer, path.c_str());
             list = iosRecordingsScan();
-        } else if (openMyGames) {
-            WbnBrowserResult r = imguiWbnBrowserShow(window, renderer);
-            ImGui::SetCurrentContext(ctx);
-            if (r.action == WBN_BROWSER_PLAY_MEMORY && r.memoryData != NULL) {
-                logViewerRunFromMemory(window, renderer, r.memoryData, r.memorySize, true);
-            }
         }
         ImGui::SetCurrentContext(ctx);
     }

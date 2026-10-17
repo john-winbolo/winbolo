@@ -116,6 +116,7 @@ bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
 #include "dialogs/imgui_wbn_browser.h"
 #if defined(__IPHONEOS__)
 #include "dialogs/imgui_connecting.h"
+#include "../ios/ios_drops.h"  /* iosDropsTakeLog */
 #endif
 #include "dialogs/imgui_onboarding.h"
 #include "dialogs/imgui_lobby.h"
@@ -1453,35 +1454,50 @@ static bool gameFrontDialogs(void) {
       dlgState = openWelcome;
       break;
     case openLogViewer: {
+      /* The browser opens again after the local viewer closes, so Open File
+       * is a step inside the browser. Only iOS returns OPEN_LOCAL: its
+       * logViewerRun with no path is the list of recordings on the phone
+       * (ios_recordings.cpp), in place of a file dialog. */
 #if defined(__IPHONEOS__)
-      /* iOS has no modal viewer: its logViewerRun with no path is the list of
-       * recordings on the phone (ios_recordings.cpp), which plays them in the
-       * reel and opens this browser from its My Games button. */
-      logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
-#else
-      WbnBrowserResult wbnResult = imguiWbnBrowserShow(sdl3DrawGetWindow(),
-                                                       sdl3DrawGetRenderer());
-      /* The LogViewer NSMenu install/uninstall lives inside logViewerRun
-       * itself — its save/restore stack swaps WinBolo's menu out on
-       * entry and restores it on exit, so no wrapping is needed here. */
-      switch (wbnResult.action) {
-      case WBN_BROWSER_PLAY_FILE:
-        logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), wbnResult.filePath, true);
-        break;
-      case WBN_BROWSER_PLAY_MEMORY:
-        logViewerRunFromMemory(sdl3DrawGetWindow(), sdl3DrawGetRenderer(),
-                               wbnResult.memoryData, wbnResult.memorySize, true);
-        break;
-      case WBN_BROWSER_OPEN_LOCAL:
-        logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
-        break;
-      case WBN_BROWSER_CLOSE:
-      default:
-        break;
+      /* A recording opened from Files or Mail plays first; the browser
+       * comes up when it closes. */
+      {
+        char dropped[FILENAME_MAX];
+        if (iosDropsTakeLog(dropped, sizeof(dropped))) {
+          logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), dropped, true);
+        }
       }
 #endif
-      /* Same as the editor above: the viewer owns the loop while it is up. */
-      if (logViewerAppQuitRequested()) windowSetQuitting();
+      bool reopenBrowser;
+      do {
+        reopenBrowser = false;
+        WbnBrowserResult wbnResult = imguiWbnBrowserShow(sdl3DrawGetWindow(),
+                                                         sdl3DrawGetRenderer());
+        /* The LogViewer NSMenu install/uninstall lives inside logViewerRun
+         * itself — its save/restore stack swaps WinBolo's menu out on
+         * entry and restores it on exit, so no wrapping is needed here. */
+        switch (wbnResult.action) {
+        case WBN_BROWSER_PLAY_FILE:
+          logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), wbnResult.filePath, true);
+          break;
+        case WBN_BROWSER_PLAY_MEMORY:
+          logViewerRunFromMemory(sdl3DrawGetWindow(), sdl3DrawGetRenderer(),
+                                 wbnResult.memoryData, wbnResult.memorySize, true);
+          break;
+        case WBN_BROWSER_OPEN_LOCAL:
+          logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
+          reopenBrowser = true;
+          break;
+        case WBN_BROWSER_CLOSE:
+        default:
+          break;
+        }
+        /* Same as the editor above: the viewer owns the loop while it is up. */
+        if (logViewerAppQuitRequested()) {
+          windowSetQuitting();
+          reopenBrowser = false;
+        }
+      } while (reopenBrowser);
       dlgState = openWelcome;
       break;
     }
