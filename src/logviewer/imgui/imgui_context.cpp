@@ -156,10 +156,49 @@ int lv_imgui_context_get_resize_delta(float* dx, float* dy) {
     return (s_resize_delta.x != 0.0f || s_resize_delta.y != 0.0f) ? 1 : 0;
 }
 
+void lv_imgui_keep_window_on_screen(void) {
+    if (ImGui::IsWindowDocked()) {
+        return;
+    }
+    /* A panel in the right or bottom half of the window moves with that
+     * edge when the window is resized. */
+    float dx, dy;
+    if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
+        ImVec2 pos      = ImGui::GetWindowPos();
+        ImVec2 vp       = ImGui::GetMainViewport()->Size;
+        float  old_vp_x = vp.x - dx;
+        float  old_vp_y = vp.y - dy;
+        ImVec2 size     = ImGui::GetWindowSize();
+        if (pos.x + size.x * 0.5f > old_vp_x * 0.5f) {
+            ImGui::SetWindowPos(ImVec2(pos.x + dx, pos.y + dy));
+        } else if (pos.y + size.y * 0.5f > old_vp_y * 0.5f) {
+            ImGui::SetWindowPos(ImVec2(pos.x, pos.y + dy));
+        }
+    }
+    /* All of the panel in the window. */
+    {
+        ImVec2 pos     = ImGui::GetWindowPos();
+        ImVec2 size    = ImGui::GetWindowSize();
+        ImVec2 vp      = ImGui::GetMainViewport()->Size;
+        ImVec2 new_pos = pos;
+        if (new_pos.x + size.x > vp.x) new_pos.x = vp.x - size.x;
+        if (new_pos.y + size.y > vp.y) new_pos.y = vp.y - size.y;
+        if (new_pos.x < 0) new_pos.x = 0;
+        if (new_pos.y < 0) new_pos.y = 0;
+        if (new_pos.x != pos.x || new_pos.y != pos.y) ImGui::SetWindowPos(new_pos);
+    }
+}
+
 int lv_imgui_want_capture_mouse(void) {
     if (!g_context) return 0;
     ImGui::SetCurrentContext(g_context);
     return ImGui::GetIO().WantCaptureMouse ? 1 : 0;
+}
+
+int lv_imgui_want_text_input(void) {
+    if (!g_context) return 0;
+    ImGui::SetCurrentContext(g_context);
+    return ImGui::GetIO().WantTextInput ? 1 : 0;
 }
 
 void lv_imgui_set_gamepad_nav(int enabled) {

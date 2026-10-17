@@ -202,6 +202,46 @@ void lv_drawSetTankLabelsInTarget(BYTE inTarget);
 
 void lv_drawDirtyScreen(void);
 
+/* The two small bars over each live tank on the map: its armour, and under
+ * that its shells (lv_tank_bars.h). Off until set. Drawn over the map in the
+ * viewer's own window only: not in the game view, not when the viewer is
+ * embedded, and not in an exported picture. */
+void lv_drawSetTankBars(BYTE on);
+BYTE lv_drawGetTankBars(void);
+
+/* The small marker over each live tank for its builder
+ * (lv_builder_status.h): nothing while he is in the tank, an arrow toward
+ * him while he is out, a parachute and the time until the new one is in the
+ * tank while he is dead. It sits above the bars when they are on. Off until
+ * set. Drawn where the bars are drawn, and only there. */
+void lv_drawSetBuilderStatus(BYTE on);
+BYTE lv_drawGetBuilderStatus(void);
+
+/* The number of each pillbox that stands on the map, beside it
+ * (lv_pill_numbers.h). On until set. Drawn where the bars are drawn: in the
+ * viewer's own window, not in the game view. */
+void lv_drawSetPillNumbers(BYTE on);
+BYTE lv_drawGetPillNumbers(void);
+
+/* The slot of the live tank drawn at a point of the window (in points, as
+ * the mouse is), or -1 for none. The box tested is the tank's picture, and
+ * never under 12 points a side; with two tanks under the point the nearer
+ * middle wins (lv_tank_pick.h). */
+int lv_drawTankAtPoint(float xPoints, float yPoints);
+
+/* The ring that flashes on the map round the place of an event the user went
+   to (lv_event_flash.h). Start: at a map square, in the colour of a team, or
+   white alone for team -1; call it after the jump. A ring that is running is
+   started again. Cancel ends it at once. Active: 1 while one is running. */
+void lv_drawEventFlashStart(int mapX, int mapY, int team);
+void lv_drawEventFlashCancel(void);
+int lv_drawEventFlashActive(void);
+/* For a host that draws a view of the map itself (the game view): the
+   ring's map square, and the ring or its edge arrow at a place on screen. */
+int lv_drawEventFlashCell(int *mapX, int *mapY);
+struct SDL_Rect;
+void lv_drawEventFlashAt(float cx, float cy, float tilePx, const struct SDL_Rect *view);
+
 /*********************************************************
 *NAME:          lv_drawGetSDLWindow
 *AUTHOR:        ImGui Migration
@@ -276,6 +316,43 @@ void lv_drawGetGameTargetSize(int *outW, int *outH);
 *********************************************************/
 struct SDL_Texture* lv_drawGetTilesTexture(void);
 int lv_drawGetSheetScale(void);
+
+/* The colour a panel draws a team in: the colour of palette entry `palette`
+ * (the team's entry, lv_screenTeamColour) as the map draws it, made lighter
+ * where it would be too dark to see on a dark panel. Channels are 0..1. */
+void lv_drawTeamPanelColour(int palette, float *r, float *g, float *b);
+
+/* The map's own picture of a pillbox (isBase 0, at full armour) or a base
+ * (isBase 1), for a panel to draw small: the sheet and the place in it, in
+ * pixels of the sheet. A team's number gives the picture in that team's
+ * colour, out of items.bmp, as the map draws it. A number under 0 gives the
+ * one no team holds, out of the tile atlas: the game's red pillbox, the
+ * game's neutral base. FALSE when the sheet is not there. */
+bool lv_drawItemPicture(int isBase, int team, struct SDL_Texture **tex, float *sx, float *sy,
+                        float *sw, float *sh);
+
+/* The map's own picture of a builder, for a panel: the sheet and the place
+ * in it. parachute 0 is the standing builder (3 by 4), 1 the tile of the
+ * builder who flies in after one died (16 by 16). FALSE when the sheet is
+ * not there. */
+bool lv_drawBuilderPicture(int parachute, struct SDL_Texture **tex, float *sx, float *sy,
+                           float *sw, float *sh);
+
+/*********************************************************
+*NAME:          lv_drawGetHudShapesTexture
+*PURPOSE:
+*  The strip of grey status shapes the HUD panel multiplies
+*  a team colour into: LV_HUD_SHAPE_COUNT cells in a row, in
+*  the order and with the padding lv_hud.h gives. Built from
+*  the tile atlas's status icons whenever the atlas is, and
+*  destroyed with it. NULL when there is none.
+*********************************************************/
+struct SDL_Texture* lv_drawGetHudShapesTexture(void);
+
+/* The game's background picture (data/background.bmp), which holds the well
+ * the game's four tank gauges stand in. Loaded on the first call; NULL when
+ * the renderer is not up yet or the file is missing. */
+struct SDL_Texture* lv_drawGetStatusBackgroundTexture(void);
 
 /*********************************************************
 *NAME:          lv_drawScnMarker
@@ -371,6 +448,16 @@ void lv_drawZoomOut(int mouseScreenX, int mouseScreenY);
 *  Returns the current zoom multiplier (1.0 == native).
 *********************************************************/
 float lv_drawGetZoomLevel(void);
+
+/*********************************************************
+*NAME:          lv_drawZoomPercent
+*PURPOSE:
+*  Returns the zoom of the map as a percentage. 100 is the
+*  game's own size: one map square on 16 points of the
+*  window, on a display of any density. In the game view it
+*  is that view's own zoom.
+*********************************************************/
+float lv_drawZoomPercent(void);
 
 /*********************************************************
 *NAME:          lv_drawGetZoomStepIndex

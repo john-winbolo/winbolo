@@ -117,6 +117,14 @@ int run_prefs_api_sync_dirty(void);
 int run_prefs_api_device_identity(void);
 int run_prefs_api_adopt_server(void);
 int run_prefs_api_mark_synced(void);
+int run_prefs_merge_game_then_viewer(void);
+int run_prefs_merge_viewer_then_game(void);
+int run_prefs_merge_fallback(void);
+int run_prefs_merge_one_write(void);
+int run_prefs_merge_reset_wins(void);
+int run_prefs_merge_idle_no_write(void);
+int run_prefs_merge_missing_retry(void);
+int run_prefs_merge_adopt_keeps_local(void);
 int run_join_running_phase_not_lobby(void);
 int run_lobby_settings_codec_and_apply(void);
 /* The scenario the settings event names, onto the ClientSim and back out
@@ -4147,6 +4155,163 @@ int run_lv_server_tick_live_feed(void);
 /* Where the log viewer draws a declared region (test_lv_region_rect.c): at the
  * overview's edges, off it, and on the game view at 2x with a pan. */
 int run_lv_region_rect_placement(void);
+/* How the log viewer's window is shared between the map and the sidebars
+ * (test_lv_dock_fit.c): squares across with and without a sidebar, the limits
+ * on a sidebar's size, the four margins and the map's part of the window;
+ * and the viewer's own text for the sidebar options and for the arrangement
+ * of a sidebar that is off, read back as written and safe on damaged text. */
+int run_lv_dock_fit_sums(void);
+int run_lv_dock_fit_margins(void);
+int run_lv_dock_layout_sides(void);
+int run_lv_dock_layout_tree(void);
+/* The log viewer's HUD panel (test_lv_hud.c): the icon of a base, pillbox and
+ * tank slot, the layout of the three grids, and the grey and colour sums. */
+int run_lv_hud_sums(void);
+/* The pictures of the pillboxes and bases on the log viewer's map
+ * (test_lv_hud.c, lv_team_sprite.h): the game's own tile for a thing nobody
+ * owns, a team's cell of the items sheet for one that is owned. */
+int run_lv_team_sprite_sums(void);
+/* Which palette entry the log viewer draws a team in (test_lv_hud.c,
+ * lv_team_colour.h): the default, the one the Team Colours dialog has, the
+ * Neutral entry for a number that is not a team. */
+int run_lv_team_colour_lookup(void);
+/* The table of the log viewer's Overview panel (test_lv_overview.c): the
+ * rows of the teams, which row a pillbox or a base is counted in, and the
+ * share a count is of the whole. */
+int run_lv_overview_sums(void);
+/* The chip of a bot in the log viewer's panels (test_lv_overview.c,
+ * lv_bot_chip.h): which chip a player has, and where each name of a team's
+ * row starts, so the chip goes in front of the bot's name. */
+int run_lv_overview_bots(void);
+int run_lv_overview_row_layout(void);
+int run_lv_overview_neutral_row(void);
+/* The log viewer's Tank panel (test_lv_tank_status.c): which tank is the
+ * selected one, and the height of a gauge against its cap. */
+int run_lv_tank_status_sums(void);
+/* The bars the log viewer draws over each tank (test_lv_tank_bars.c): their
+ * size and place for a size of map square, the filled part, the colours. */
+int run_lv_tank_bars_sums(void);
+/* A click on a tank on the log viewer's map (test_lv_tank_pick.c): which
+ * tank a point is on, and where the mark round the selected one goes. */
+int run_lv_tank_pick_sums(void);
+/* A double click on a tank on the map: when it turns that tank's view on. */
+int run_lv_map_double_click(void);
+int run_lv_name_header_sums(void);
+/* A sidebar of the log viewer whose unused part is clear
+ * (test_lv_dock_clear.c): the panels packed along it both ways, their
+ * rectangles and the clear one, the map under it, the preference text. */
+int run_lv_dock_clear_layout(void);
+int run_lv_dock_clear_rects(void);
+int run_lv_dock_clear_map(void);
+int run_lv_dock_clear_prefs(void);
+/* The arrangement of the sidebars a new user starts with
+ * (test_lv_dock_clear.c, lv_dock_default.h). */
+int run_lv_dock_default_layout(void);
+/* The log viewer's text dump (test_lv_dump.c): a recorded round dumped
+ * around one tick, a tick the round does not hold, and the event list. */
+int run_lv_dump_recorded_round(void);
+/* The map the log viewer writes for a single-player game (test_lv_spmap.c):
+ * the owner rules, and a recorded round read back with mapRead. */
+int run_lv_spmap_owner_table(void);
+int run_lv_spmap_reads_back(void);
+int run_lv_pill_get_in_tank(void);
+int run_lv_spmap_carried_pill_left_out(void);
+/* The log viewer's events panel (test_lv_event_kind.c): the saved name of
+ * each event kind, and where the "now" divider falls among the lines. */
+int run_lv_event_kind_sums(void);
+int run_lv_event_click_pick(void);
+int run_lv_event_jump_view(void);
+/* The map place of a captured or stolen pillbox's line and of a lost
+ * builder's line (test_lv_event_places.c). */
+int run_lv_event_pill_capture_place(void);
+int run_lv_event_builder_lost_place(void);
+/* The event markers of the log viewer's seek slider
+ * (test_lv_event_overlay.c): where a time is on the slider, which markers
+ * become one, and the saved list of chosen kinds. */
+int run_lv_event_overlay_slider(void);
+int run_lv_event_overlay_clusters(void);
+int run_lv_event_overlay_tip_columns(void);
+int run_lv_event_overlay_tip_place(void);
+int run_lv_event_overlay_marker_size(void);
+int run_lv_event_overlay_choice(void);
+int run_lv_event_overlay_picture(void);
+int run_lv_event_overlay_no_sign(void);
+/* The one list of ticked kinds of the Controls and Events panels, and the
+ * Events panel's saved choice. */
+int run_lv_event_kinds_filter(void);
+int run_lv_event_kinds_prefs(void);
+/* What the marker of one event is, for the lane, the list of kinds and the
+ * lines of the Events panel. */
+int run_lv_event_marker(void);
+int run_lv_ping_store(void);
+int run_lv_ping_marker(void);
+int run_lv_ping_phase(void);
+int run_lv_dump_ping(void);
+/* The log viewer's playback times as text and the ring flashed round an
+ * event's place (test_lv_time_fmt.c); and a jump to an event stopping on the
+ * event's own tick (test_lv_presentation.c). */
+int run_lv_time_fmt_sums(void);
+int run_lv_time_parse_sums(void);
+int run_lv_event_flash_sums(void);
+int run_lv_event_flash_arrow(void);
+int run_lv_event_centre_scroll(void);
+int run_lv_view_centre_scroll(void);
+int run_lv_first_view_box(void);
+int run_lv_first_view_zoom(void);
+int run_lv_first_view_place(void);
+int run_lv_event_jump_keeps_place_in_view(void);
+int run_lv_event_seek_exact(void);
+/* The builder marker over each tank on the log viewer's map
+ * (test_lv_builder_status.c), and the table of the times a builder was away
+ * as the event scan fills it (test_lv_presentation.c). */
+int run_lv_builder_status_sums(void);
+int run_lv_builder_countdown(void);
+int run_lv_builder_dead_text(void);
+int run_lv_builder_away_text(void);
+int run_lv_builder_away_scan(void);
+int run_lv_builder_trips(void);
+int run_lv_builder_trips_scan(void);
+/* The number of each pillbox on the log viewer's map and in its tooltips
+ * (test_lv_pill_numbers.c). */
+int run_lv_pill_numbers_sums(void);
+int run_lv_pill_numbers_list(void);
+int run_lv_pill_numbers_layout(void);
+int run_lv_pill_numbers_overview(void);
+/* Where the items of the log viewer's Controls panel go
+ * (test_lv_controls_layout.c). */
+int run_lv_controls_top_row(void);
+int run_lv_controls_bottom_row(void);
+int run_lv_controls_wheel_step(void);
+int run_lv_controls_fine_drag(void);
+/* The zoom of the log viewer's map as a percentage. */
+int run_lv_zoom_percent(void);
+int run_lv_fullscreen_key(void);
+/* The decode pass that lists a whole log's events at load
+ * (test_lv_presentation.c): it posts each line once, stores no snapshot, and
+ * leaves the world at the start as the loader did. */
+int run_lv_event_scan_returns_to_start(void);
+/* The file name the viewer's Save Log File offers (test_lv_save_name.c), and
+ * what the event scan keeps for it: the players of the whole log and the map
+ * the lobby chose (test_lv_presentation.c). */
+int run_lv_save_name_parts(void);
+int run_lv_save_name_bots(void);
+int run_lv_save_name_limits(void);
+int run_lv_save_name_long(void);
+int run_lv_save_name_roster(void);
+int run_lv_save_name_scan(void);
+/* File paths as UTF-8 on every system (test_lv_utf8_path.c). */
+int run_lv_utf8_path(void);
+/* Quoting for the shell and AppleScript (test_lv_shell_quote.c). */
+int run_lv_shell_quote(void);
+/* The kill and death tallies go back with a seek (test_lv_presentation.c). */
+int run_lv_kill_tally_seek_back(void);
+/* Whether a tank is alive goes back with a seek (test_lv_presentation.c). */
+int run_lv_alive_seek_back(void);
+int run_lv_death_time_seek_back(void);
+int run_lv_jump_targets(void);
+int run_lv_jump_anim_lands(void);
+int run_lv_jump_anim_steps(void);
+int run_lv_jump_anim_time(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

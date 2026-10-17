@@ -36,6 +36,8 @@
 #include "lv_screenbullet.h"
 #include "lv_pillbox.h"
 #include "lv_screentank.h"
+#include "lv_save_name.h"   /* LvRosterRow */
+#include "lv_ping_view.h"   /* LvPingShown */
 
 /* Defines */
 
@@ -597,26 +599,84 @@ void lv_screenSetOffset(BYTE x, BYTE y);
 void lv_screenGetSubOffset(int *x, int *y);
 void lv_screenSetSubOffset(int x, int y);
 
+/* How much of the view is under a sidebar whose unused part is clear, at
+ * each edge, in zoom-1 native pixels. The map is drawn there, but the middle
+ * of the VISIBLE map is the middle of the rest: everything that centres the
+ * view (the followed tank, centre-on-click, a jump to an event or an item)
+ * takes these off first. All 0 unless the host says otherwise. */
+void lv_screenSetViewInset(int left, int top, int right, int bottom);
+void lv_screenGetViewInset(int *left, int *top, int *right, int *bottom);
+
 /* Pan to an absolute view position measured in zoom-1 native pixels.
  * Decomposes into (xOffset,yOffset)+(subPxX,subPxY), clamps to the map
  * bounds, and triggers a redraw if the whole-tile component changed. */
 void lv_screenPanToTotalPixels(int totalPxX, int totalPxY);
 
-void lv_windowAddEvent(int eventType, char *msg);
+/* kind is an lvEventKind (lv_event_kind.h). mapX/mapY name the map cell the
+ * line is about, or are both -1 when it is about no one place. */
+void lv_windowAddEvent(int eventType, int kind, int mapX, int mapY, char *msg);
 /* Add a clickable highlight line: clicking it in the events panel seeks a few
  * seconds before seekMs and centres the game view on the (mapX,mapY) cell. */
 void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY);
 /* Add a load-time round-summary line: no stamp of its own, pinned above the
  * timeline feed so the presentation window never hides it. */
 void lv_windowAddSummary(char *msg);
+/* Events panel clicks. Both stop playback across the seek and hold the client
+ * lock, as the scrubber does. SeekToHighlight always centres the view on the
+ * cell; SeekToEvent only when hasCell is non-zero. */
+void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY);
+/* team: the team the event names, for the colour of the ring flashed round
+ * its place; -1 for none. */
+void lv_windowSeekToEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
+/* A plain click on a line of the Events panel: the same jump, with the view
+ * left where it is. A place (hasCell) is shown by the ring alone. */
+void lv_windowSeekToEventKeepView(uint32_t ms, int hasCell, int mapX, int mapY, int team);
+/* A double click on the same line or marker. The same jump, and the place
+ * goes to the middle of the map that shows whatever held the view: "Tank
+ * Centred" is turned off first. With no place (hasCell 0) it is
+ * lv_windowSeekToEvent. */
+void lv_windowCentreOnEvent(uint32_t ms, int hasCell, int mapX, int mapY, int team);
+/* Standalone viewer only: list every event of the file just loaded in the
+ * events panel (one decode pass, then back to the start). */
+void lv_windowCollectAllEvents(void);
 void lv_windowStop(int corruptLog);
 void lv_finished();
+
+/* A listener on the decoder, for the text dump (lv_dump.c). record is called
+ * for every log record before the decoder applies it, so the world it reads
+ * is still the one before the record. bytes holds the first len bytes of the
+ * record's payload and frameLen is the payload's whole length; an older file
+ * that does not frame its records gives bytes NULL and both lengths -1. event
+ * is called for every line that would go to the events panel. Either may be
+ * NULL.
+ *
+ * While a listener is set the decoder calls nothing in the host: no events
+ * panel line, no marquee, no end-of-log or corrupt-log callback, and no
+ * snapshot is kept for seeking. Set it before the load and clear it (NULL)
+ * before the decoder is used for anything else. */
+#define LV_OBSERVE_PAYLOAD_MAX 512
+typedef struct {
+  void (*record)(void *ctx, BYTE code, const BYTE *bytes, int len, int frameLen);
+  void (*event)(void *ctx, int kind, int mapX, int mapY, const char *text);
+  void *ctx;
+} LvDecodeObserver;
+void lv_screenSetObserver(const LvDecodeObserver *observer);
 
 bool lv_screenCloseLog();
 void lv_screenFastForward();
 void lv_screenRewind();
+/* Where each of the two would take playback, in the log's own time; FALSE
+ * when it would not move (screen.c). */
+bool lv_screenFastForwardTargetMs(uint32_t *ms);
+bool lv_screenRewindTargetMs(uint32_t *ms);
+/* The last move of an animated rewind: to the place lv_screenRewindTargetMs
+   gave before the animation moved playback. */
+void lv_screenRewindToMs(uint32_t ms);
+/* The playback time to the second, for a file name. dest: 16 characters or
+ * more. */
 void lv_screenGetTime(char *dest);
-/* Format an absolute log time as the displayed (window-relative) mm:ss. */
+/* Format an absolute log time as the displayed (window-relative) time to the
+ * hundredth of a second, "19:48.22" (lv_time_fmt.h). destSize: 16 or more. */
 void lv_screenFormatTime(uint32_t absMs, char *dest, size_t destSize);
 /* Playback position in absolute log ms (the decoder's own clock, not the
  * presented window). */
@@ -635,9 +695,116 @@ int  lv_screenGetHideLobby(void);
 /* Start of the presented window in absolute log ms; 0 when the window is the
  * whole file. Event lines below it belong to the hidden lobby. */
 uint32_t lv_screenWindowStartMs(void);
+/* Its length in ms; 0 when nothing is loaded. The seek slider goes from the
+ * start to the start plus this. */
+uint32_t lv_screenWindowLenMs(void);
+
+/* The teams of the players the line now being added is about
+ * (lv_messageTagPlayers), each 0..15, or -1 for none. For a host's
+ * lv_windowAddEvent to ask while it takes the line. */
+void lv_screenEventTeams(int *team, int *otherTeam);
+/* The map pings that are on the map at the playback's time now, for the
+ * view in use: every team's for the view of all teams, and for one player's
+ * view the pings that player was sent. Fills out with at most max of them
+ * (LV_PING_SHOWN_MAX at the most), the oldest first, and returns the number.
+ * worldX and worldY are 256 to a map square; ageMs is the time since the
+ * ping on the playback clock. Called once a frame by each drawer. */
+int lv_screenGetPings(LvPingShown *out, int max);
+/* The kind of ping the line now being added is (lv_messageTagPing,
+ * PING_KIND_*), or -1 for a line that is not a map ping. */
+int lv_screenEventPing(void);
+/* The first player the line now being added is about (the actor of
+ * lv_messageTagPlayers), 0..15, or -1 for none. */
+int lv_screenEventPlayer(void);
+/* The palette colour a team is drawn in (the tc[] row of the Team Colours
+ * dialog); the neutral colour for a number that is not a team. */
+unsigned char lv_screenTeamColour(int team);
 
 void lv_screenMouseCentreClick(int xPos, int yPos);
 void lv_screenMouseClick(int xPos, int yPos);
+
+/* Select a base (itemType 1) or a pillbox (itemType 2) by its number from 0,
+ * as an information click on it on the map does. Hold the client mutex. */
+void lv_screenSelectItem(BYTE itemType, BYTE itemNum);
+
+/* Copy out what the HUD panel draws (lv_hud.h). Hold the client mutex. */
+struct LvHudSnapshot;
+void lv_screenHudSnapshot(struct LvHudSnapshot *out);
+
+/* Copy out what the Overview panel shows (lv_overview.h): the pillboxes and
+ * bases each team owns at the playback time. Hold the client mutex. */
+struct LvOverview;
+void lv_screenOverviewSnapshot(struct LvOverview *out);
+
+/* Copy out what the Tank panel shows (lv_tank_status.h): the selected tank's
+ * shells, mines, armour and trees with their caps, its builder and the
+ * pillboxes it carries, at the playback time. Hold the client mutex. */
+struct LvTankStatus;
+void lv_screenTankStatusSnapshot(struct LvTankStatus *out);
+
+/* The pillboxes whose numbers the map shows (lv_pill_numbers.h): each one
+ * that stands on the map in the squares the view paints, its square in the
+ * view and its number. Writes at most max and returns how many. Hold the
+ * client mutex. */
+struct LvPillSpot;
+int lv_screenPillSpots(struct LvPillSpot *out, int max);
+
+/* The pillbox on the map square under a point of the view's picture, xPos,
+ * yPos pixels from its top left (the place a click on the map hands
+ * lv_screenMouseInformationClick). Returns its number, from 1, with its
+ * owner (NEUTRAL for none), its armour, and in team the owner's team (-1 for
+ * none); 0 when no pillbox stands there. Hold the client mutex. */
+int lv_screenPillAt(int xPos, int yPos, BYTE *owner, BYTE *armour, int *team);
+
+/* The time left, at the playback time, until the builder of a player's tank
+ * is in the tank again after his death (lv_builder_status.h). Returns 1 with
+ * the time in remainMs when there is one to show:
+ *   - exact (approx 0), out of the table the load's play stage fills:
+ *     from the builder's death until the tick the new builder is in the
+ *     tank, his walk from where he landed included;
+ *   - estimated (approx 1) when there is no table (a live feed, a viewer
+ *     that does not scan) or the log ends first: only while the new builder
+ *     flies, by the game's rule (his distance to the tank over
+ *     lgm_helicopter_speed), and only to his landing.
+ * Returns 0 for a builder in the tank, and for one out of it who was not
+ * killed. Hold the client mutex. */
+int lv_screenBuilderReturn(int slot, long *remainMs, int *approx);
+/* 1 when the table is filled for the loaded log. */
+int lv_screenBuilderTripsKnown(void);
+/* How long the builder of a player was away after the death at deathMs (the
+ * time of the "lost builder" line): from the death to the tick the new
+ * builder was in the tank, out of the same table. It is by the log's time,
+ * not the playback's, so it is the same wherever playback is. Returns 1
+ * with the time in awayMs. Returns 0, and there is no estimate, when there
+ * is no table, when the log ends before he is back, and when the player
+ * left the game before he was back. */
+int lv_screenBuilderAwayMs(int slot, uint32_t deathMs, uint32_t *awayMs);
+
+/* The selected tank: the one the Tank panel shows and the map marks. Select
+ * picks the tank in a slot and changes nothing else (not whose view the map
+ * shows); Deselect leaves none; Selected is its slot, or -1 for none or for
+ * a player who is not in the game at the playback time. Choose is a Select
+ * Team click on a tank's picture: "self" and the selection both go to it.
+ * Hold the client mutex. */
+void lv_screenSelectTank(int slot);
+void lv_screenDeselectTank(void);
+int lv_screenSelectedTank(void);
+void lv_screenChooseTank(int slot);
+/* 1 when the loaded recording holds tank stocks (a snapshot's player block
+   or a log_TankSetStock record gave some), 0 for a recording written before
+   they were recorded. The stocks of every slot read zero in that case, and
+   that is "not known", not "empty". */
+int lv_screenHasTankStock(void);
+
+/* The perspective: show the game as one player sees it. Toggle turns it on
+ * for the player in a slot, or off when that player has it already; Clear
+ * goes back to all teams; Check turns it off when its player is gone and
+ * returns TRUE when it did. Hold the client mutex, and mark the map for a
+ * redraw (lv_drawDirtyScreen) after a change. */
+void lv_screenTogglePerspective(BYTE playerNum);
+int  lv_screenPerspectivePlayer(void);
+void lv_screenClearPerspective(void);
+bool lv_screenCheckPerspective(void);
 
 void lv_screenCentreOnSelectedItem();
 
@@ -677,6 +844,39 @@ void lv_screenSeekToTimeMs(uint32_t ms);
 
 /* Centre the game view on a map cell (mapX,mapY). */
 void lv_screenCentreOnCell(int mapX, int mapY);
+/* The same only when the cell is outside the view or near its edge, and not
+ * at all with "Tank Centred" on. Returns 1 when the map moved. */
+int lv_screenShowCell(int mapX, int mapY, float viewPtsW, float viewPtsH, float zoom);
+/* Put a map pixel, or the middle of a cell, in the middle of a part of the
+ * view, with "Tank Centred" on or off. The part is given in points from the
+ * view's own start. Returns 1 when the view was placed (never in the game
+ * view). */
+int lv_screenCentrePxIn(float mapPxX, float mapPxY, float startPtX, float startPtY,
+                        float lenPtX, float lenPtY, float zoom);
+int lv_screenCentreCellIn(int mapX, int mapY, float startPtX, float startPtY,
+                          float lenPtX, float lenPtY, float zoom);
+/* The first view of a log (lv_first_view.h). Each load asks for one. Due
+ * says 1 when the host is to place it: not in the first frame it asks in,
+ * and not once the view has been placed by the host or moved by anything
+ * else (Cancel, which every pan, zoom and jump to a place calls).
+ * lv_screenLandBox gives the box round all that is not deep sea, in squares;
+ * 0 when there is nothing (the lobby, or a map of sea alone). */
+int  lv_screenFirstViewDue(void);
+void lv_screenFirstViewCancel(void);
+int  lv_screenLandBox(int *x0, int *y0, int *x1, int *y1);
+/* Counts every request to move playback other than by playing. */
+uint32_t lv_screenSeekSerial(void);
+
+/* For the name Save Log File offers (lv_save_name.h). The roster is every
+ * player the loaded log has had, in the order they came, with the last team
+ * each was on and whether it is a bot; the load's play stage fills it. Returns how many rows it wrote. The
+ * create time is the header's: the time the server that wrote the log was
+ * started, in seconds since 1970, or 0. */
+int     lv_screenGetRoster(LvRosterRow *rows, int max);
+/* The LvBotChip (lv_bot_chip.h) the panels draw in front of the name of the
+   player in a slot; 0 for a person. The caller holds the client mutex. */
+int     lv_screenBotChip(BYTE slot);
+int32_t lv_screenGetCreateTime(void);
 
 /* Spectator live-DVR (driven by spectatorRun). While live mode is on,
  * lv_screenStreamPump only appends the arriving bytes and never auto-advances to

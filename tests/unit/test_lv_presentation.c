@@ -31,6 +31,7 @@
 #include "zip.h"
 #include "replay_harness.h"
 #include "lv_scripts_fixture.h"
+#include "lv_jump_anim.h"
 #include "test_harness.h"
 
 /* ── Building a log.dat ────────────────────────────────────────────── */
@@ -1167,6 +1168,1016 @@ int run_lv_presentation_slot_team(void) {
     return 0;
 }
 
+/* ── 7b. The load plays the whole log ────────────────────────────── */
+
+/* The standalone viewer lists a whole log's events at load: the load's play
+ * stage decodes the log once (lv_screenLoadStep) and returns to the start.
+ * On the log_TeamSet log above: the load posts the team's line, but not the
+ * end-of-log's, because it stops a tick short of LOG_QUIT; it leaves the
+ * clock at 0, playback ready to run, not fast-forwarding, slot 1 on no team
+ * and no kills counted; playing from there posts the team's line and the
+ * end-of-log's, so the world the load left is the one a fresh start has. */
+int run_lv_event_scan_returns_to_start(void) {
+    const char     *path = "lv_event_scan.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    int             before;
+    int             linesLoad, linesPlay;
+    bool            playingAfter, ffAfter, reachedEnd;
+    uint32_t        timeAfter, timeEnd, timeEndAgain;
+    int             teamAfter, teamEnd;
+    uint16_t        killsAfter;
+
+    lvpPutOpening(&b);
+    lvpPut(&b, kLvpTeamStream, sizeof(kLvpTeamStream));
+    before = g_lvStubEventsAdded;
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+    linesLoad    = g_lvStubEventsAdded - before;
+    timeAfter    = lv_screenGetTimeRunning();
+    teamAfter    = lvpSlot1Team();
+    playingAfter = lv_screenIsPlaying() == TRUE;
+    ffAfter      = lv->fastForwarding == TRUE;
+    killsAfter   = lv->kills[1];
+
+    /* Playback from the start the load left. */
+    before     = g_lvStubEventsAdded;
+    reachedEnd = lvpPlayToEnd();
+    linesPlay  = g_lvStubEventsAdded - before;
+    timeEnd    = lv_screenGetTimeRunning();
+    teamEnd    = lvpSlot1Team();
+
+    /* Ticks after the end read nothing and must not move the clock. */
+    lv_screenLogTick();
+    lv_screenLogTick();
+    timeEndAgain = lv_screenGetTimeRunning();
+
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(linesLoad == 1, "the load posted %d lines (want the "
+                  "log_TeamSet's only)", linesLoad);
+    UT_ASSERT_MSG(timeAfter == 0, "the load left the clock at %u ms",
+                  (unsigned)timeAfter);
+    UT_ASSERT_MSG(playingAfter, "after the load playback cannot run");
+    UT_ASSERT_MSG(!ffAfter, "after the load the decoder is still "
+                  "fast-forwarding, so playback would be silent");
+    UT_ASSERT_MSG(teamAfter == -1, "after the load slot 1's team is %d "
+                  "(want unknown, as at the start)", teamAfter);
+    UT_ASSERT_MSG(killsAfter == 0, "the load left a kill tally of %u",
+                  (unsigned)killsAfter);
+    UT_ASSERT_MSG(reachedEnd, "playback after the load did not reach "
+                  "end-of-log");
+    UT_ASSERT_MSG(linesPlay == 2, "playback after the load posted %d lines "
+                  "(want the log_TeamSet's and the end-of-log's)", linesPlay);
+    UT_ASSERT_MSG(timeEnd == 140, "playback stopped at %u ms (want the end, "
+                  "140)", (unsigned)timeEnd);
+    UT_ASSERT_MSG(teamEnd == 2, "at the end slot 1's team is %d (want 2)",
+                  teamEnd);
+    UT_ASSERT_MSG(timeEndAgain == 140, "two ticks after the end of the log "
+                  "moved the clock to %u ms (want 140)", (unsigned)timeEndAgain);
+    return 0;
+}
+
+/* ── 7b2. The times a builder was away ─────────────────────────────── */
+
+/* The opening snapshot holds a player in slot 1 (the block of
+ * kLvpDeadPlayer, further down). After it:
+ *   tick 0    log_PlayerLocation: the tank at 50,50               20 ms
+ *   tick 1    log_LgmLocation: the builder out at 52,50           40 ms
+ *   tick 2    log_LostMan, and the new builder flying at 60,50    60 ms
+ *   tick 3    flying at 58,50                                     80 ms
+ *   tick 4    flying at 56,50                                    100 ms
+ *   tick 5    landed, walking at 52,50                           120 ms
+ *   tick 6    walking at 51,50                                   140 ms
+ *   ticks 7-10 NOEVENTS 3: he is in the tank                     160 ms
+ *   tick 11   LOG_QUIT                                           240 ms */
+static const uint8_t kLvpBuilderPlayer[] = {
+    0x0F,
+    0x01, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+    0x01, 0x41,
+    0x00,
+    0x00,
+};
+static const uint8_t kLvpBuilderStream[] = {
+    0x03, 0x01, 0x03, 0x00, 0x05,
+        0x01, 0x32, 0x32, 0x00, 0x00,
+    0x03, 0x01, 0x04, 0x00, 0x04,
+        0x10, 0x34, 0x32, 0x00,
+    0x03, 0x02, 0x20, 0x00, 0x01,
+        0x01,
+        0x04, 0x00, 0x04,
+        0x13, 0x3C, 0x32, 0x00,
+    0x03, 0x01, 0x04, 0x00, 0x04,
+        0x13, 0x3A, 0x32, 0x00,
+    0x03, 0x01, 0x04, 0x00, 0x04,
+        0x13, 0x38, 0x32, 0x00,
+    0x03, 0x01, 0x04, 0x00, 0x04,
+        0x10, 0x34, 0x32, 0x00,
+    0x03, 0x01, 0x04, 0x00, 0x04,
+        0x10, 0x33, 0x32, 0x00,
+    0x01, 0x03,
+    0x00,
+};
+
+typedef struct {
+    int  has;       /* lv_screenBuilderReturn's answer */
+    long remain;
+    int  approx;
+    bool isOut, isDead;
+} LvpBuilderAt;
+
+static LvpBuilderAt lvpBuilderAt(uint32_t ms) {
+    LvpBuilderAt a;
+    memset(&a, 0, sizeof(a));
+    a.remain = -1;
+    a.approx = -1;
+    lv_screenSeekToTimeMs(ms);
+    a.has = lv_screenBuilderReturn(1, &a.remain, &a.approx);
+    lv_playersGetLgmStatus(1, &a.isOut, &a.isDead);
+    return a;
+}
+
+/* The same, played forward to ms rather than sought: a log loaded as a
+   stream has no length to seek in. */
+static LvpBuilderAt lvpBuilderPlayedTo(uint32_t ms) {
+    LvpBuilderAt a;
+    int          steps = 0;
+    memset(&a, 0, sizeof(a));
+    a.remain = -1;
+    a.approx = -1;
+    while (lv_screenIsPlaying() == TRUE && lv_screenGetTimeRunning() < ms &&
+           steps < 4096) {
+        lv_screenLogTick();
+        steps++;
+    }
+    a.has = lv_screenBuilderReturn(1, &a.remain, &a.approx);
+    lv_playersGetLgmStatus(1, &a.isOut, &a.isDead);
+    return a;
+}
+
+/* A decoder with b loaded as a stream, which has no load to play it: no
+   table of builder trips. NULL when it does not load. */
+static LogViewerState *lvpOpenStream(const LvpLog *b) {
+    LogViewerState *lv = lv_decoderCreate(false);
+    if (lv == NULL) return NULL;
+    lv_screenSetSizeX(30);
+    lv_screenSetSizeY(30);
+    if (lv_screenLoadFromStream(b->buf, b->len) != TRUE) {
+        lv_decoderDestroy(lv);
+        return NULL;
+    }
+    return lv;
+}
+
+/* The countdown over a tank and on the Tank panel reads the table the load
+ * fills as it plays the whole log. On the log above: loaded as a stream,
+ * which has no such load, the time is an estimate, and only while the new
+ * builder flies; loaded as a file it is exact, to the tick he is in the tank
+ * (160 ms), from the death through the flight and the walk; a builder out
+ * who was not killed has no time; a builder in the tank has none; a tick
+ * with no events leaves no builder out; and a later stream load drops the
+ * table. */
+int run_lv_builder_trips_scan(void) {
+    const char     *path = "lv_builder_trips.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    LvpBuilderAt    est40, est80, est120;
+    LvpBuilderAt    at20, at40, at60, at80, at120, at140, at160, at200;
+    bool            loaded, knownBefore, knownAfter, knownReload;
+    int             i;
+
+    b.len = 0;
+    lvpPut(&b, kLvpHeader, sizeof(kLvpHeader));
+    lvpPut(&b, kLvpSnapshot, sizeof(kLvpSnapshot));
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (i == 1) {
+            lvpPut(&b, kLvpBuilderPlayer, sizeof(kLvpBuilderPlayer));
+        } else {
+            lvpPut(&b, kLvpEmptyPlayer, sizeof(kLvpEmptyPlayer));
+        }
+    }
+    lvpPut(&b, kLvpBuilderStream, sizeof(kLvpBuilderStream));
+
+    /* A stream: no table, so the estimate. */
+    lv = lvpOpenStream(&b);
+    if (lv == NULL) {
+        UT_FAIL("the hand-built log could not be loaded as a stream");
+    }
+    knownBefore = lv_screenBuilderTripsKnown() != 0;
+    est40  = lvpBuilderPlayedTo(40);
+    est80  = lvpBuilderPlayedTo(80);
+    est120 = lvpBuilderPlayedTo(120);
+    lv_decoderDestroy(lv);
+
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+    loaded = TRUE;
+    knownAfter = lv_screenBuilderTripsKnown() != 0;
+    at20  = lvpBuilderAt(20);
+    at40  = lvpBuilderAt(40);
+    at60  = lvpBuilderAt(60);
+    at80  = lvpBuilderAt(80);
+    at120 = lvpBuilderAt(120);
+    at140 = lvpBuilderAt(140);
+    at160 = lvpBuilderAt(160);
+    at200 = lvpBuilderAt(200);
+
+    lv_decoderDestroy(lv);
+    lv = lvpOpenStream(&b);
+    knownReload = lv_screenBuilderTripsKnown() != 0;
+    if (lv != NULL) lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(!knownBefore, "the table is known on a stream");
+    UT_ASSERT_MSG(est40.isOut && !est40.isDead && !est40.has,
+                  "a stream, builder out and alive at 40 ms: out %d dead %d "
+                  "time %d", est40.isOut, est40.isDead, est40.has);
+    /* Flying at 58,50, the tank at 50,50: 8 squares, 2048 world units, less
+       the 16 that count as there, at 3 a tick: 678 ticks of 20 ms. */
+    UT_ASSERT_MSG(est80.isDead && est80.has && est80.approx == 1 &&
+                  est80.remain == 13560L,
+                  "a stream, flying at 80 ms: dead %d time %d approx %d "
+                  "remain %ld (want an estimate of 13560)", est80.isDead,
+                  est80.has, est80.approx, est80.remain);
+    UT_ASSERT_MSG(est120.isOut && !est120.isDead && !est120.has,
+                  "a stream, landed at 120 ms: out %d dead %d time %d (an "
+                  "estimate is for the flight only)", est120.isOut,
+                  est120.isDead, est120.has);
+
+    UT_ASSERT_MSG(loaded && knownAfter, "the load did not fill the table");
+    UT_ASSERT_MSG(!at20.isOut && !at20.has, "at 20 ms the builder is in the "
+                  "tank: out %d time %d", at20.isOut, at20.has);
+    UT_ASSERT_MSG(at40.isOut && !at40.isDead && !at40.has, "at 40 ms the "
+                  "builder is out and was not killed: time %d", at40.has);
+    UT_ASSERT_MSG(at60.isDead && at60.has && at60.approx == 0 &&
+                  at60.remain == 100L, "at the death, 60 ms: dead %d time %d "
+                  "approx %d remain %ld (want exact, 100)", at60.isDead,
+                  at60.has, at60.approx, at60.remain);
+    UT_ASSERT_MSG(at80.isDead && at80.has && at80.approx == 0 &&
+                  at80.remain == 80L, "flying at 80 ms: remain %ld approx %d "
+                  "(want exact, 80)", at80.remain, at80.approx);
+    UT_ASSERT_MSG(at120.isOut && !at120.isDead && at120.has &&
+                  at120.approx == 0 && at120.remain == 40L, "landed at 120 "
+                  "ms: dead %d time %d remain %ld (want out, exact, 40)",
+                  at120.isDead, at120.has, at120.remain);
+    UT_ASSERT_MSG(at140.has && at140.remain == 20L, "walking at 140 ms: "
+                  "remain %ld (want 20)", at140.remain);
+    UT_ASSERT_MSG(!at160.isOut && !at160.isDead && !at160.has, "at 160 ms, "
+                  "the first tick with no events: out %d dead %d time %d "
+                  "(want in the tank)", at160.isOut, at160.isDead, at160.has);
+    UT_ASSERT_MSG(!at200.isOut && !at200.has, "at 200 ms: out %d time %d",
+                  at200.isOut, at200.has);
+    UT_ASSERT_MSG(!knownReload, "a stream load kept the old log's table");
+    return 0;
+}
+
+/* The same player, whose builder is killed and who then leaves the game
+ * with the new builder still on his way:
+ *   tick 0    log_PlayerLocation: the tank at 50,50               20 ms
+ *   tick 1    log_LgmLocation: the builder out at 52,50           40 ms
+ *   tick 2    log_LostMan, and the new builder flying at 60,50    60 ms
+ *   tick 3    flying at 58,50                                     80 ms
+ *   tick 4    log_PlayerQuit                                     100 ms
+ *   ticks 5-8 NOEVENTS 3                                         120 ms
+ *   tick 9    LOG_QUIT                                           200 ms */
+static const uint8_t kLvpBuilderLeftStream[] = {
+    0x03, 0x01, 0x03, 0x00, 0x05,
+        0x01, 0x32, 0x32, 0x00, 0x00,
+    0x03, 0x01, 0x04, 0x00, 0x04,
+        0x10, 0x34, 0x32, 0x00,
+    0x03, 0x02, 0x20, 0x00, 0x01,
+        0x01,
+        0x04, 0x00, 0x04,
+        0x13, 0x3C, 0x32, 0x00,
+    0x03, 0x01, 0x04, 0x00, 0x04,
+        0x13, 0x3A, 0x32, 0x00,
+    0x03, 0x01, 0x02, 0x00, 0x01,
+        0x01,
+    0x01, 0x03,
+    0x00,
+};
+
+static LogViewerState *lvpOpenBuilderLog(LvpLog *b, const char *path,
+                                         const uint8_t *stream, size_t streamLen) {
+    int i;
+    b->len = 0;
+    lvpPut(b, kLvpHeader, sizeof(kLvpHeader));
+    lvpPut(b, kLvpSnapshot, sizeof(kLvpSnapshot));
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (i == 1) {
+            lvpPut(b, kLvpBuilderPlayer, sizeof(kLvpBuilderPlayer));
+        } else {
+            lvpPut(b, kLvpEmptyPlayer, sizeof(kLvpEmptyPlayer));
+        }
+    }
+    lvpPut(b, stream, streamLen);
+    return lvpOpen(b, path);
+}
+
+/* The time after a "lost builder" line of the Events panel is out of the
+ * same table. On the first log the builder is killed at 60 ms and the new
+ * one is in the tank at 160 ms: 100 ms away, wherever playback is, and no
+ * time when it is loaded as a stream, which has no load to play it. On the
+ * second the player leaves before the new builder is in the tank: no
+ * time. */
+int run_lv_builder_away_scan(void) {
+    const char     *path = "lv_builder_away.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    uint32_t        away = 7, awayStart = 7, awayEnd = 7, awayLeft = 7;
+    int             before, after, atStart, atEnd, otherSlot, noSlot, early;
+    int             leftRan, left, leftKnown;
+
+    lv = lvpOpenBuilderLog(&b, path, kLvpBuilderStream, sizeof(kLvpBuilderStream));
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+    after = lv_screenBuilderAwayMs(1, 60, &away);
+    lv_screenSeekToTimeMs(20);
+    atStart = lv_screenBuilderAwayMs(1, 60, &awayStart);
+    lv_screenSeekToTimeMs(200);
+    atEnd = lv_screenBuilderAwayMs(1, 60, &awayEnd);
+    otherSlot = lv_screenBuilderAwayMs(0, 60, NULL);
+    noSlot = lv_screenBuilderAwayMs(-1, 60, NULL) + lv_screenBuilderAwayMs(MAX_TANKS, 60, NULL);
+    early = lv_screenBuilderAwayMs(1, 20, NULL);
+    lv_decoderDestroy(lv);
+
+    /* The same log as a stream. */
+    lv = lvpOpenStream(&b);
+    before = (lv != NULL) ? lv_screenBuilderAwayMs(1, 60, NULL) : -1;
+    if (lv != NULL) lv_decoderDestroy(lv);
+
+    lv = lvpOpenBuilderLog(&b, path, kLvpBuilderLeftStream, sizeof(kLvpBuilderLeftStream));
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the second hand-built log could not be loaded");
+    }
+    leftRan = 1;
+    leftKnown = lv_screenBuilderTripsKnown();
+    left = lv_screenBuilderAwayMs(1, 60, &awayLeft);
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(before == 0, "a time on a stream: %d", before);
+    UT_ASSERT_MSG(after && away == 100, "after the load: %d, %u ms (want 100)",
+                  after, (unsigned)away);
+    UT_ASSERT_MSG(atStart && awayStart == 100 && atEnd && awayEnd == 100,
+                  "the time moved with playback: %u ms at the start, %u ms at "
+                  "the end", (unsigned)awayStart, (unsigned)awayEnd);
+    UT_ASSERT_MSG(!otherSlot, "a player whose builder was not killed has a time");
+    UT_ASSERT_MSG(noSlot == 0, "a slot that is no player has a time");
+    UT_ASSERT_MSG(!early, "a time two ticks before the death");
+    UT_ASSERT_MSG(leftRan && leftKnown, "the load of the second log did not fill the table");
+    UT_ASSERT_MSG(!left && awayLeft == 7, "the player left before the builder "
+                  "was back: %d, %u ms (want no time)", left, (unsigned)awayLeft);
+    return 0;
+}
+
+/* ── 7c. A jump to an event lands on the event's own tick ──────────── */
+
+/* A click on a line of the Events panel seeks to the time the line was posted
+ * at. On the log_TeamSet log: the time of the line is the clock of the tick
+ * that posted it; a seek to that time, from before it and from after it,
+ * stops on that same tick with the event done (slot 1 is on its team) and
+ * posts the line once on the way; one tick earlier the event has not
+ * happened; a seek to where playback already is posts nothing and moves
+ * nothing; every seek moves the seek count, so the ring a jump starts can
+ * tell it was followed by another; and the time reads to the hundredth. */
+int run_lv_event_seek_exact(void) {
+    const char     *path = "lv_event_seek.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    int             before, steps = 0;
+    uint32_t        eventMs = 0;
+    bool            found = false;
+    uint32_t        timeBack, timeBefore, timeFwd, timeSame, timeFromEnd;
+    int             teamBack, teamBefore, teamFwd, teamFromEnd;
+    int             linesFwd, linesSame, linesFromEnd;
+    uint32_t        serial0, serial1, serial2;
+    char            stamp[16], stampTick[16];
+
+    lvpPutOpening(&b);
+    lvpPut(&b, kLvpTeamStream, sizeof(kLvpTeamStream));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    /* Play until the team's line is posted: the clock then is the time the
+       Events panel keeps for it. */
+    before = g_lvStubEventsAdded;
+    while (lv_screenIsPlaying() == TRUE && steps < 64) {
+        lv_screenLogTick();
+        steps++;
+        if (g_lvStubEventsAdded != before) {
+            eventMs = lv_screenGetTimeRunning();
+            found = true;
+            break;
+        }
+    }
+    if (!found || !lvpPlayToEnd()) {
+        lv_decoderDestroy(lv);
+        remove(path);
+        UT_FAIL("the log_TeamSet line was not posted, or the log did not end");
+    }
+
+    /* From the end, back to the event. */
+    before       = g_lvStubEventsAdded;
+    serial0      = lv_screenSeekSerial();
+    lv_screenSeekToTimeMs(eventMs);
+    serial1      = lv_screenSeekSerial();
+    linesFromEnd = g_lvStubEventsAdded - before;
+    timeFromEnd  = lv_screenGetTimeRunning();
+    teamFromEnd  = lvpSlot1Team();
+
+    /* One tick before it. */
+    lv_screenSeekToTimeMs(eventMs - 20u);
+    timeBefore = lv_screenGetTimeRunning();
+    teamBefore = lvpSlot1Team();
+
+    /* Forward one tick to it. */
+    before   = g_lvStubEventsAdded;
+    lv_screenSeekToTimeMs(eventMs);
+    linesFwd = g_lvStubEventsAdded - before;
+    timeFwd  = lv_screenGetTimeRunning();
+    teamFwd  = lvpSlot1Team();
+
+    /* To where playback already is. */
+    before    = g_lvStubEventsAdded;
+    serial2   = lv_screenSeekSerial();
+    lv_screenSeekToTimeMs(eventMs);
+    linesSame = g_lvStubEventsAdded - before;
+    timeSame  = lv_screenGetTimeRunning();
+
+    /* From the start. */
+    lv_screenSeekToTimeMs(0);
+    lv_screenSeekToTimeMs(eventMs);
+    timeBack = lv_screenGetTimeRunning();
+    teamBack = lvpSlot1Team();
+
+    lv_screenFormatTime(eventMs, stamp, sizeof(stamp));
+    lv_screenFormatTime(eventMs + 20u, stampTick, sizeof(stampTick));
+
+    {
+        bool serialMoved = lv_screenSeekSerial() != serial2;
+        lv_decoderDestroy(lv);
+        remove(path);
+        UT_ASSERT_MSG(serialMoved, "a seek to where playback is did not move "
+                      "the seek count");
+    }
+
+    UT_ASSERT_MSG(eventMs > 0 && eventMs % 20u == 0, "the line was posted at "
+                  "%u ms (want a whole tick)", (unsigned)eventMs);
+    UT_ASSERT_MSG(serial1 != serial0, "a seek did not move the seek count");
+    UT_ASSERT_MSG(timeFromEnd == eventMs, "from the end the seek stopped at "
+                  "%u ms (want %u)", (unsigned)timeFromEnd, (unsigned)eventMs);
+    UT_ASSERT_MSG(teamFromEnd == 2, "from the end, at the event's tick slot "
+                  "1's team is %d (want 2: the event is done)", teamFromEnd);
+    UT_ASSERT_MSG(linesFromEnd == 1, "the seek back to the event posted %d "
+                  "lines (want its one)", linesFromEnd);
+    UT_ASSERT_MSG(timeBefore == eventMs - 20u, "the seek to one tick before "
+                  "stopped at %u ms", (unsigned)timeBefore);
+    UT_ASSERT_MSG(teamBefore == -1, "one tick before the event slot 1's team "
+                  "is %d (want unknown)", teamBefore);
+    UT_ASSERT_MSG(timeFwd == eventMs && teamFwd == 2 && linesFwd == 1,
+                  "one tick forward: %u ms, team %d, %d lines (want %u, 2, 1)",
+                  (unsigned)timeFwd, teamFwd, linesFwd, (unsigned)eventMs);
+    UT_ASSERT_MSG(timeSame == eventMs && linesSame == 0, "a seek to where "
+                  "playback is moved it (%u ms, %d lines)", (unsigned)timeSame,
+                  linesSame);
+    UT_ASSERT_MSG(timeBack == eventMs && teamBack == 2, "from the start: %u "
+                  "ms, team %d (want %u, 2)", (unsigned)timeBack, teamBack,
+                  (unsigned)eventMs);
+    {
+        char want[16];
+        snprintf(want, sizeof(want), "00:00.%02u", (unsigned)(eventMs / 10u));
+        UT_ASSERT_MSG(strcmp(stamp, want) == 0, "the event's time reads "
+                      "\"%s\" (want \"%s\")", stamp, want);
+        UT_ASSERT_MSG(strcmp(stamp, stampTick) != 0, "the next tick reads the "
+                      "same time, \"%s\"", stamp);
+    }
+    return 0;
+}
+
+/* The kill and death tallies across a seek.
+ *
+ * After the opening:
+ *   ticks 0-1 NOEVENTS 1
+ *   tick 2    log_KillPlayer: slot 2 kills slot 1                 60 ms
+ *   tick 3    log_KillPlayer: slot 1 dies with no killer          80 ms
+ *   ticks 4-7 NOEVENTS 3
+ *   tick 8    LOG_QUIT                                           180 ms
+ *
+ * The decoder only ever adds to the tallies, and a seek back restores the
+ * opening snapshot and plays forward again. So the tallies have to go back
+ * to the snapshot's with it, or every step back counts the kills behind the
+ * playhead once more. */
+static const uint8_t kLvpKillStream[] = {
+    0x01, 0x01,
+    0x03, 0x01, 0x21, 0x00, 0x02,
+        0x01, 0x02,
+    0x03, 0x01, 0x21, 0x00, 0x02,
+        0x01, 0x01,
+    0x01, 0x03,
+    0x00,
+};
+
+typedef struct { unsigned kills2, deaths1, kills1; } LvpTally;
+
+static LvpTally lvpTally(const LogViewerState *lv) {
+    LvpTally t;
+    t.kills2  = lv->kills[2];
+    t.deaths1 = lv->deaths[1];
+    t.kills1  = lv->kills[1];
+    return t;
+}
+
+int run_lv_kill_tally_seek_back(void) {
+    const char     *path = "lv_kill_tally.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    LvpTally        at120, at20, at60, again120, stepBack, afterRewind, atEnd;
+    bool            reachedEnd;
+
+    lvpPutOpening(&b);
+    lvpPut(&b, kLvpKillStream, sizeof(kLvpKillStream));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    lv_screenSeekToTimeMs(120);     /* forward, past both deaths */
+    at120 = lvpTally(lv);
+    lv_screenSeekToTimeMs(20);      /* back, before both */
+    at20 = lvpTally(lv);
+    lv_screenSeekToTimeMs(60);      /* forward, between the two */
+    at60 = lvpTally(lv);
+    lv_screenSeekToTimeMs(120);     /* forward across the second */
+    again120 = lvpTally(lv);
+    lv_screenSeekToTimeMs(100);     /* one step back, both still behind */
+    stepBack = lvpTally(lv);
+    lv_screenRewind();              /* to the opening snapshot */
+    afterRewind = lvpTally(lv);
+    reachedEnd = lvpPlayToEnd();
+    atEnd = lvpTally(lv);
+
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(at120.kills2 == 1 && at120.deaths1 == 2 && at120.kills1 == 0,
+                  "played to 120 ms: slot 2 kills %u, slot 1 deaths %u, slot 1 "
+                  "kills %u (want 1, 2, 0)", at120.kills2, at120.deaths1,
+                  at120.kills1);
+    UT_ASSERT_MSG(at20.kills2 == 0 && at20.deaths1 == 0,
+                  "back before the kills: slot 2 kills %u, slot 1 deaths %u "
+                  "(want 0, 0)", at20.kills2, at20.deaths1);
+    UT_ASSERT_MSG(at60.kills2 == 1 && at60.deaths1 == 1,
+                  "between the two deaths: slot 2 kills %u, slot 1 deaths %u "
+                  "(want 1, 1)", at60.kills2, at60.deaths1);
+    UT_ASSERT_MSG(again120.kills2 == 1 && again120.deaths1 == 2,
+                  "forward across the kill again: slot 2 kills %u, slot 1 "
+                  "deaths %u (want 1, 2)", again120.kills2, again120.deaths1);
+    UT_ASSERT_MSG(stepBack.kills2 == 1 && stepBack.deaths1 == 2,
+                  "one step back counted the kills twice: slot 2 kills %u, "
+                  "slot 1 deaths %u (want 1, 2)", stepBack.kills2,
+                  stepBack.deaths1);
+    UT_ASSERT_MSG(afterRewind.kills2 == 0 && afterRewind.deaths1 == 0,
+                  "after the rewind: slot 2 kills %u, slot 1 deaths %u "
+                  "(want 0, 0)", afterRewind.kills2, afterRewind.deaths1);
+    UT_ASSERT_MSG(reachedEnd, "playback after the rewind did not reach "
+                  "end-of-log");
+    UT_ASSERT_MSG(atEnd.kills2 == 1 && atEnd.deaths1 == 2 && atEnd.kills1 == 0,
+                  "played to the end after the rewind: slot 2 kills %u, slot 1 "
+                  "deaths %u, slot 1 kills %u (want 1, 2, 0)", atEnd.kills2,
+                  atEnd.deaths1, atEnd.kills1);
+    return 0;
+}
+
+/* Whether a tank is alive, across a seek.
+ *
+ * The opening snapshot here has slot 1 in use with its tank destroyed (map
+ * column 0, which is what the recorder writes for a destroyed tank), and
+ * the stream after it:
+ *   tick 0    log_PlayerLocation: slot 1 at 50,50                 20 ms
+ *   ticks 1-4 NOEVENTS 3
+ *   tick 5    LOG_QUIT                                           120 ms
+ *
+ * A seek back restores the snapshot. The slot was dead there, so it has to
+ * read dead again, and a slot the snapshot holds no player for has to read
+ * dead whatever it was later. */
+static const uint8_t kLvpDeadPlayer[] = {
+    0x0F,
+    0x01, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+    0x01, 0x41,
+    0x00,
+    0x00,
+};
+static const uint8_t kLvpAliveStream[] = {
+    0x03, 0x01, 0x03, 0x00, 0x05,
+        0x01, 0x32, 0x32, 0x00, 0x00,
+    0x01, 0x03,
+    0x00,
+};
+
+int run_lv_alive_seek_back(void) {
+    const char     *path = "lv_alive_seek.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    bool            atLoad, at60, back, backEmpty, again60;
+    int             i;
+
+    b.len = 0;
+    lvpPut(&b, kLvpHeader, sizeof(kLvpHeader));
+    lvpPut(&b, kLvpSnapshot, sizeof(kLvpSnapshot));
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (i == 1) {
+            lvpPut(&b, kLvpDeadPlayer, sizeof(kLvpDeadPlayer));
+        } else {
+            lvpPut(&b, kLvpEmptyPlayer, sizeof(kLvpEmptyPlayer));
+        }
+    }
+    lvpPut(&b, kLvpAliveStream, sizeof(kLvpAliveStream));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    atLoad = lv->gameViewHud[1].alive;
+    lv_screenSeekToTimeMs(60);
+    at60 = lv->gameViewHud[1].alive;
+    /* A slot with no player in the snapshot, alive at the later time. */
+    lv->gameViewHud[3].alive = true;
+    lv_screenSeekToTimeMs(0);
+    back      = lv->gameViewHud[1].alive;
+    backEmpty = lv->gameViewHud[3].alive;
+    lv_screenSeekToTimeMs(60);
+    again60 = lv->gameViewHud[1].alive;
+
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(!atLoad, "a tank the opening snapshot holds destroyed reads "
+                  "alive at load");
+    UT_ASSERT_MSG(at60, "the tank reads dead after its first place on the map");
+    UT_ASSERT_MSG(!back, "after a seek back to the snapshot the destroyed tank "
+                  "still reads alive");
+    UT_ASSERT_MSG(!backEmpty, "after a seek back a slot with no player still "
+                  "reads alive");
+    UT_ASSERT_MSG(again60, "the tank reads dead after playing forward again");
+    return 0;
+}
+
+/* The time a tank died, across a seek.
+ *
+ * Slot 1 again, destroyed in the opening snapshot, then:
+ *   tick 0     log_PlayerLocation: slot 1 at 50,50                (alive)
+ *   tick 1     log_KillPlayer: slot 1 dies with no killer         (dead)
+ *   NOEVENTS 9
+ *   a second snapshot, slot 1 destroyed in it
+ *   NOEVENTS 9
+ *   log_PlayerLocation: slot 1 at 50,50                           (alive)
+ *   NOEVENTS 9
+ *   LOG_QUIT
+ *
+ * A seek from the end, where the tank is alive, back to between the second
+ * snapshot and the respawn restores that snapshot. The snapshot says the
+ * tank is destroyed but not since when. The death time has to be the one
+ * playback had when it first got there, not the snapshot's own time: the
+ * death static over the game view plays from it. */
+static const uint8_t kLvpDieStreamA[] = {
+    0x03, 0x01, 0x03, 0x00, 0x05,
+        0x01, 0x32, 0x32, 0x00, 0x00,
+    0x03, 0x01, 0x21, 0x00, 0x02,
+        0x01, 0x01,
+    0x01, 0x09,
+};
+static const uint8_t kLvpDieStreamB[] = {
+    0x01, 0x09,
+    0x03, 0x01, 0x03, 0x00, 0x05,
+        0x01, 0x32, 0x32, 0x00, 0x00,
+    0x01, 0x09,
+    0x00,
+};
+
+static void lvpPutSnapshotSlot1Dead(LvpLog *b) {
+    int i;
+
+    lvpPut(b, kLvpSnapshot, sizeof(kLvpSnapshot));
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (i == 1) {
+            lvpPut(b, kLvpDeadPlayer, sizeof(kLvpDeadPlayer));
+        } else {
+            lvpPut(b, kLvpEmptyPlayer, sizeof(kLvpEmptyPlayer));
+        }
+    }
+}
+
+int run_lv_death_time_seek_back(void) {
+    const char     *path = "lv_death_time_seek.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    bool            aliveFirst, deadMid, aliveEnd, deadBack;
+    uint32_t        diedAt, midTime, endTime, backTime, diedBack;
+
+    b.len = 0;
+    lvpPut(&b, kLvpHeader, sizeof(kLvpHeader));
+    lvpPutSnapshotSlot1Dead(&b);
+    lvpPut(&b, kLvpDieStreamA, sizeof(kLvpDieStreamA));
+    lvpPutSnapshotSlot1Dead(&b);
+    lvpPut(&b, kLvpDieStreamB, sizeof(kLvpDieStreamB));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    lv_screenSeekToTimeMs(20);          /* on the map */
+    aliveFirst = lv->gameViewHud[1].alive;
+    lv_screenSeekToTimeMs(350);         /* past the death and the snapshot */
+    deadMid  = !lv->gameViewHud[1].alive;
+    diedAt   = lv->gameViewHud[1].deathTimeMs;
+    midTime  = lv_screenGetTimeRunning();
+    lv_screenSeekToTimeMs(600);         /* past the respawn */
+    aliveEnd = lv->gameViewHud[1].alive;
+    endTime  = lv_screenGetTimeRunning();
+    lv_screenSeekToTimeMs(350);         /* back: the second snapshot again */
+    deadBack = !lv->gameViewHud[1].alive;
+    diedBack = lv->gameViewHud[1].deathTimeMs;
+    backTime = lv_screenGetTimeRunning();
+
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(aliveFirst, "the tank reads dead after its place on the map");
+    UT_ASSERT_MSG(deadMid, "the tank reads alive after its death (clock %u ms)",
+                  (unsigned)midTime);
+    UT_ASSERT_MSG(diedAt > 0 && diedAt < 100, "the death is at %u ms (want "
+                  "the kill record's time, under 100)", (unsigned)diedAt);
+    UT_ASSERT_MSG(aliveEnd, "the tank reads dead after its second place on "
+                  "the map (clock %u ms)", (unsigned)endTime);
+    UT_ASSERT_MSG(deadBack, "after the seek back the tank reads alive (clock "
+                  "%u ms)", (unsigned)backTime);
+    UT_ASSERT_MSG(diedBack == diedAt, "after the seek back the death is at %u "
+                  "ms (want %u, the time it really died)", (unsigned)diedBack,
+                  (unsigned)diedAt);
+    return 0;
+}
+
+/* Where Rewind and Fast Forward go, asked before they go there.
+ *
+ * The Controls panel states the jump of each button in its tooltip. The
+ * answer has to be the place the button really takes playback to.
+ *
+ *   ticks 0-99    NOEVENTS 99
+ *   tick 100      a snapshot                                    2020 ms
+ *   ticks 101-200 NOEVENTS 99
+ *   tick 201      a snapshot                                    4040 ms
+ *   ticks 202-251 NOEVENTS 49
+ *   tick 252      LOG_QUIT                                      5060 ms */
+static void lvpPutSnapshotEmpty(LvpLog *b) {
+    int i;
+
+    lvpPut(b, kLvpSnapshot, sizeof(kLvpSnapshot));
+    for (i = 0; i < MAX_TANKS; i++) {
+        lvpPut(b, kLvpEmptyPlayer, sizeof(kLvpEmptyPlayer));
+    }
+}
+
+int run_lv_jump_targets(void) {
+    const char     *path = "lv_jump_targets.wbv";
+    static LvpLog   b;
+    static const uint8_t wait99[] = {0x01, 0x63};
+    static const uint8_t tail[]   = {0x01, 0x31, 0x00};
+    LogViewerState *lv;
+    uint32_t        want[3] = {0, 0, 0}, got[3] = {0, 0, 0};
+    bool            known[3] = {false, false, false};
+    bool            atEndKnown, startKnown, atStartKnown;
+    uint32_t        unused = 0, backWant = 0, backGot = 0;
+    uint32_t        nearWant = 0, nearGot = 0, nearFrom = 0;
+    uint32_t        lastWant = 0, lastGot = 0;
+    bool            backKnown, nearKnown, lastKnown;
+    int             i;
+
+    lvpPutOpening(&b);
+    lvpPut(&b, wait99, sizeof(wait99));
+    lvpPutSnapshotEmpty(&b);
+    lvpPut(&b, wait99, sizeof(wait99));
+    lvpPutSnapshotEmpty(&b);
+    lvpPut(&b, tail, sizeof(tail));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    /* At the start there is nothing to rewind to. */
+    startKnown = lv_screenRewindTargetMs(&unused) == TRUE;
+
+    /* Forward three times: two snapshots, then the end of the log. */
+    for (i = 0; i < 3; i++) {
+        known[i] = lv_screenFastForwardTargetMs(&want[i]) == TRUE;
+        lv_screenFastForward();
+        got[i] = lv_screenGetTimeRunning();
+    }
+    atEndKnown = lv_screenFastForwardTargetMs(&unused) == TRUE;
+
+    /* Back from the end: the last snapshot, a second and more behind. */
+    backKnown = lv_screenRewindTargetMs(&backWant) == TRUE;
+    lv_screenRewind();
+    backGot = lv_screenGetTimeRunning();
+
+    /* Under a second after a snapshot Rewind goes to the one before it. */
+    lv_screenSeekToTimeMs(4500);
+    nearFrom  = lv_screenGetTimeRunning();
+    nearKnown = lv_screenRewindTargetMs(&nearWant) == TRUE;
+    lv_screenRewind();
+    nearGot = lv_screenGetTimeRunning();
+
+    /* And from the first snapshot to the start. */
+    lastKnown = lv_screenRewindTargetMs(&lastWant) == TRUE;
+    lv_screenRewind();
+    lastGot = lv_screenGetTimeRunning();
+    atStartKnown = lv_screenRewindTargetMs(&unused) == TRUE;
+
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(!startKnown, "a rewind target at the start of the log");
+    for (i = 0; i < 3; i++) {
+        UT_ASSERT_MSG(known[i], "fast forward %d: no target", i);
+        UT_ASSERT_MSG(want[i] == got[i], "fast forward %d: said %u ms, went to %u ms",
+                      i, (unsigned)want[i], (unsigned)got[i]);
+    }
+    UT_ASSERT_MSG(want[0] == 2020 && want[1] == 4040 && want[2] == 5060,
+                  "fast forward targets %u %u %u (want 2020 4040 5060)",
+                  (unsigned)want[0], (unsigned)want[1], (unsigned)want[2]);
+    UT_ASSERT_MSG(!atEndKnown, "a fast forward target at the end of the log");
+    UT_ASSERT_MSG(backKnown && backWant == backGot && backGot == 4040,
+                  "rewind from the end: said %u ms, went to %u ms (want 4040)",
+                  (unsigned)backWant, (unsigned)backGot);
+    UT_ASSERT_MSG(nearFrom == 4500, "the seek landed at %u ms (want 4500)", (unsigned)nearFrom);
+    UT_ASSERT_MSG(nearKnown && nearWant == nearGot && nearGot == 2020,
+                  "rewind from 4500: said %u ms, went to %u ms (want 2020)",
+                  (unsigned)nearWant, (unsigned)nearGot);
+    UT_ASSERT_MSG(lastKnown && lastWant == lastGot,
+                  "rewind from the first snapshot: said %u ms, went to %u ms",
+                  (unsigned)lastWant, (unsigned)lastGot);
+    UT_ASSERT_MSG(!atStartKnown || lastGot > 0,
+                  "a rewind target back at the start (clock %u ms)", (unsigned)lastGot);
+    return 0;
+}
+
+/* The animation of Rewind and Fast Forward ends where the button's jump
+ * ends.
+ *
+ * The animation (lv_jump_anim.h) seeks to moments between the time playback
+ * is at and the target, then makes the jump: lv_screenFastForward, or
+ * lv_screenRewindToMs with the target asked for before the first seek. On
+ * the log of lv_jump_targets (snapshots at 2020 and 4040 ms, the end at 5060)
+ * each animated jump is done step by step, as the host does it, and has to
+ * end on the tick the plain jump ends on. */
+static bool lvpAnimatedJump(bool back, uint32_t *target, int *stepsOut, bool *between) {
+    uint32_t from = lv_screenGetTimeRunning();
+    uint32_t to = 0;
+    int      steps, k;
+
+    *between = true;
+    if ((back ? lv_screenRewindTargetMs(&to) : lv_screenFastForwardTargetMs(&to)) != TRUE) {
+        return false;
+    }
+    steps = lvJumpAnimSteps(from, to, LV_JUMP_ANIM_STEPS, 0, UINT32_MAX);
+    for (k = 1; k < steps; k++) {
+        uint32_t want = lvJumpAnimStepMs(from, to, k, steps, 0, UINT32_MAX);
+        uint32_t got;
+        lv_screenSeekToTimeMs(want);
+        got = lv_screenGetTimeRunning();
+        /* Each moment is the one asked for, and short of the target. */
+        if (got != want || (back ? got <= to : got >= to)) *between = false;
+    }
+    if (back) {
+        lv_screenRewindToMs(to);
+    } else {
+        lv_screenFastForward();
+    }
+    *target = to;
+    *stepsOut = steps;
+    return true;
+}
+
+int run_lv_jump_anim_lands(void) {
+    const char     *path = "lv_jump_anim.wbv";
+    static LvpLog   b;
+    static const uint8_t wait99[] = {0x01, 0x63};
+    static const uint8_t tail[]   = {0x01, 0x31, 0x00};
+    LogViewerState *lv;
+    uint32_t        plainFwd[3] = {0, 0, 0}, plainBack[3] = {0, 0, 0};
+    uint32_t        animFwd[3] = {0, 0, 0}, animBack[3] = {0, 0, 0};
+    uint32_t        wantFwd[3] = {0, 0, 0}, wantBack[3] = {0, 0, 0};
+    bool            okFwd[3], okBack[3], betweenFwd[3], betweenBack[3];
+    bool            playingAfterBack = false, endedAfterFwd, noneAtEnd;
+    int             stepsFwd[3] = {0, 0, 0}, stepsBack[3] = {0, 0, 0};
+    uint32_t        unused = 0, serial0, serial1, same, midGot, midBack;
+    int             i;
+
+    lvpPutOpening(&b);
+    lvpPut(&b, wait99, sizeof(wait99));
+    lvpPutSnapshotEmpty(&b);
+    lvpPut(&b, wait99, sizeof(wait99));
+    lvpPutSnapshotEmpty(&b);
+    lvpPut(&b, tail, sizeof(tail));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    /* The plain jumps: forward to the end, back to the start. */
+    for (i = 0; i < 3; i++) {
+        lv_screenFastForward();
+        plainFwd[i] = lv_screenGetTimeRunning();
+    }
+    for (i = 0; i < 3; i++) {
+        lv_screenRewind();
+        plainBack[i] = lv_screenGetTimeRunning();
+    }
+
+    /* The same six, animated. */
+    for (i = 0; i < 3; i++) {
+        okFwd[i] = lvpAnimatedJump(false, &wantFwd[i], &stepsFwd[i], &betweenFwd[i]);
+        animFwd[i] = lv_screenGetTimeRunning();
+    }
+    endedAfterFwd = lv_screenIsPlaying() != TRUE;
+    noneAtEnd = lv_screenFastForwardTargetMs(&unused) != TRUE;
+    for (i = 0; i < 3; i++) {
+        okBack[i] = lvpAnimatedJump(true, &wantBack[i], &stepsBack[i], &betweenBack[i]);
+        animBack[i] = lv_screenGetTimeRunning();
+        if (i == 0) playingAfterBack = lv_screenIsPlaying() == TRUE;
+    }
+
+    /* lv_screenRewindToMs: a time playback is not after does nothing, and a
+       time with no snapshot at it is a seek to that time. */
+    lv_screenSeekToTimeMs(4500);
+    serial0 = lv_screenSeekSerial();
+    lv_screenRewindToMs(4500);
+    lv_screenRewindToMs(4800);
+    serial1 = lv_screenSeekSerial();
+    same = lv_screenGetTimeRunning();
+    lv_screenRewindToMs(3000);
+    midGot = lv_screenGetTimeRunning();
+    /* From 3000 the snapshot at 2020 is under a second back, so a plain
+       rewind would pick the one before it: the animated one still ends on
+       2020. */
+    lv_screenRewindToMs(2020);
+    midBack = lv_screenGetTimeRunning();
+
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(plainFwd[0] == 2020 && plainFwd[1] == 4040 && plainFwd[2] == 5060,
+                  "plain fast forward: %u %u %u", (unsigned)plainFwd[0], (unsigned)plainFwd[1],
+                  (unsigned)plainFwd[2]);
+    UT_ASSERT_MSG(plainBack[0] == 4040 && plainBack[1] == 2020,
+                  "plain rewind: %u %u %u", (unsigned)plainBack[0], (unsigned)plainBack[1],
+                  (unsigned)plainBack[2]);
+    for (i = 0; i < 3; i++) {
+        UT_ASSERT_MSG(okFwd[i] && wantFwd[i] == plainFwd[i] && animFwd[i] == plainFwd[i],
+                      "animated fast forward %d: target %u, ended at %u (the plain jump: %u)", i,
+                      (unsigned)wantFwd[i], (unsigned)animFwd[i], (unsigned)plainFwd[i]);
+        UT_ASSERT_MSG(betweenFwd[i], "animated fast forward %d: a step was not its moment", i);
+        UT_ASSERT_MSG(stepsFwd[i] == LV_JUMP_ANIM_STEPS, "animated fast forward %d: %d steps", i,
+                      stepsFwd[i]);
+        UT_ASSERT_MSG(okBack[i] && wantBack[i] == plainBack[i] && animBack[i] == plainBack[i],
+                      "animated rewind %d: target %u, ended at %u (the plain jump: %u)", i,
+                      (unsigned)wantBack[i], (unsigned)animBack[i], (unsigned)plainBack[i]);
+        UT_ASSERT_MSG(betweenBack[i], "animated rewind %d: a step was not its moment", i);
+        UT_ASSERT_MSG(stepsBack[i] == LV_JUMP_ANIM_STEPS, "animated rewind %d: %d steps", i,
+                      stepsBack[i]);
+    }
+    UT_ASSERT_MSG(endedAfterFwd && noneAtEnd, "after the animated jump to the end the log plays on");
+    UT_ASSERT_MSG(playingAfterBack, "after the animated rewind from the end nothing plays");
+    UT_ASSERT_MSG(serial1 == serial0 && same == 4500,
+                  "a rewind to a time playback is not after moved it (%u ms)", (unsigned)same);
+    UT_ASSERT_MSG(midGot == 3000, "a rewind to 3000, where no snapshot is: %u ms", (unsigned)midGot);
+    UT_ASSERT_MSG(midBack == 2020, "a rewind to the snapshot at 2020 from 3000: %u ms",
+                  (unsigned)midBack);
+    return 0;
+}
+
 /* ── 8. Announcements on the newswire ──────────────────────────────── */
 
 /* After the opening:
@@ -1633,5 +2644,128 @@ int run_lv_presentation_live_fast_forward(void) {
     UT_ASSERT_MSG(after >= before && after - before <= 200,
                   "fast forward at the head moved playback from %u to %u ms",
                   (unsigned)before, (unsigned)after);
+    return 0;
+}
+
+/* ── 7c. What the event scan keeps for the saved log's name ────────── */
+
+static void lvpPutText(LvpLog *b, uint8_t code, const char *text) {
+    uint8_t payload[256];
+    size_t  n = strlen(text);
+
+    payload[0] = (uint8_t)n;
+    memcpy(payload + 1, text, n);
+    lvpPutEvent(b, code, payload, n + 1);
+}
+
+/* flags is the join record's account flags: 0x20 marks a bot. */
+static void lvpPutJoinFlags(LvpLog *b, uint8_t slot, const char *name,
+                            uint8_t flags) {
+    uint8_t payload[262];
+    size_t  n = strlen(name);
+
+    payload[0] = slot;
+    payload[1] = 'X';
+    payload[2] = 'X';
+    payload[3] = flags;
+    payload[4] = 0;
+    payload[5] = (uint8_t)n;
+    memcpy(payload + 6, name, n);
+    lvpPutEvent(b, log_PlayerJoined, payload, n + 6);
+}
+
+static void lvpPutJoin(LvpLog *b, uint8_t slot, const char *name) {
+    lvpPutJoinFlags(b, slot, name, 0);
+}
+
+static void lvpPutTeam(LvpLog *b, uint8_t slot, uint8_t team) {
+    const uint8_t payload[2] = {slot, team};
+    lvpPutEvent(b, log_TeamSet, payload, 2);
+}
+
+/* A log that opens in a lobby has the lobby's opening map in its header. The
+ * host then chooses another, twice; the round is played; the server names
+ * its next map before the log ends; a player leaves and a bot takes the
+ * slot. After the load the log's map is the last one the lobby chose, and
+ * the roster has all three players with their teams, and knows which one is
+ * the bot: the name has the two people and "1 Bot". The header here says
+ * "Test". A log with a log_MapName record takes the record's name: the
+ * lobby's text is only for older logs, which have none. */
+int run_lv_save_name_scan(void) {
+    const char     *path = "lv_save_name_scan.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    LvRosterRow     rows[LV_ROSTER_MAX];
+    const char     *names[LV_ROSTER_MAX];
+    unsigned char   teams[LV_ROSTER_MAX];
+    unsigned char   bots[LV_ROSTER_MAX];
+    char            mapAfter[64], mapRecord[64];
+    char            fileName[200];
+    const uint8_t   slot1[1] = {1};
+    static const uint8_t tail[] = {0x01, 0x03, 0x00};
+    int             count, i;
+
+    lvpPutOpening(&b);
+    lvpPutEvent(&b, log_LobbyEnter, NULL, 0);
+    lvpPutJoin(&b, 0, "Canuck");
+    lvpPutJoin(&b, 1, "Maverick");
+    lvpPutTeam(&b, 0, 1);
+    lvpPutTeam(&b, 1, 2);
+    lvpPutText(&b, log_MessageServer, "Map changed to First Choice");
+    lvpPutText(&b, log_MessageServer, "Welcome");
+    lvpPutText(&b, log_MessageServer, "Map changed to Oil Rig");
+    lvpPutEvent(&b, log_LobbyExit, NULL, 0);
+    lvpPutText(&b, log_MessageServer, "Map changed to Next Round");
+    lvpPutEvent(&b, log_PlayerQuit, slot1, 1);
+    lvpPutJoinFlags(&b, 1, "Bot1", 0x20);
+    lvpPutTeam(&b, 1, 2);
+    lvpPut(&b, tail, sizeof(tail));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    lv_screenGetMapName(mapAfter);
+    count = lv_screenGetRoster(rows, LV_ROSTER_MAX);
+    for (i = 0; i < count; i++) {
+        names[i] = rows[i].name;
+        teams[i] = rows[i].team;
+        bots[i]  = rows[i].bot;
+    }
+    lvSaveNameBuild(fileName, sizeof(fileName), 2026, 10, 13, 14, 5, mapAfter,
+                    names, teams, bots, count);
+
+    lv_decoderDestroy(lv);
+
+    /* The same lobby with a log_MapName record after it. */
+    b.len = 0;
+    lvpPutOpening(&b);
+    lvpPutEvent(&b, log_LobbyEnter, NULL, 0);
+    lvpPutJoin(&b, 0, "Canuck");
+    lvpPutText(&b, log_MessageServer, "Map changed to Oil Rig");
+    lvpPutEvent(&b, log_LobbyExit, NULL, 0);
+    lvpPutText(&b, log_MapName, "Recorded Map");
+    lvpPut(&b, tail, sizeof(tail));
+    lv = lvpOpen(&b, path);
+    mapRecord[0] = '\0';
+    if (lv != NULL) {
+        lv_screenGetMapName(mapRecord);
+        lv_decoderDestroy(lv);
+    }
+    remove(path);
+
+    UT_ASSERT_MSG(strcmp(mapAfter, "Oil Rig") == 0,
+                  "the map after the load is \"%s\", not the lobby's last",
+                  mapAfter);
+    UT_ASSERT_MSG(strcmp(mapRecord, "Recorded Map") == 0,
+                  "with a log_MapName record the map is \"%s\"", mapRecord);
+    UT_ASSERT_MSG(count == 3, "the roster has %d players", count);
+    UT_ASSERT_MSG(bots[0] == 0 && bots[1] == 0 && bots[2] == 1,
+                  "the bot marks are %d %d %d, not 0 0 1", bots[0], bots[1],
+                  bots[2]);
+    UT_ASSERT_MSG(strcmp(fileName, "2026-10-13 14.05 Oil Rig - Canuck vs "
+                                   "Maverick, 1 Bot.wbv") == 0,
+                  "the name is \"%s\"", fileName);
     return 0;
 }

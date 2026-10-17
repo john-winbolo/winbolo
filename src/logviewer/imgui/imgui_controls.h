@@ -24,6 +24,10 @@ void lv_imgui_controls_window(void);
 /* Initialize controls state */
 void lv_imgui_controls_init(struct LogViewerState *lv);
 
+/* The height the window needs in the dock's built layout; it does not
+ * depend on the width. For imgui_dock.cpp. */
+float lv_imgui_controls_dock_height(float dockWidth);
+
 /* Update the speed display (called when speed changes) */
 void lv_imgui_controls_update_speed(void);
 

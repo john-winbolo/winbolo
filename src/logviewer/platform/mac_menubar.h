@@ -38,10 +38,22 @@ struct LvMenuState {
     bool showGameInfo;
     bool showItemInfo;
     bool showComments;
+    bool showHud;
+    bool showOverview;
+    bool showTank;
     bool showScenarioPanel;
+    bool tankBars;             /* Options > Tank Bars checkmark */
+    bool builderStatus;        /* Options > Tank Builder Status checkmark */
+    bool pillNumbers;          /* Options > Pillbox Numbers checkmark */
+    bool dockEnabled;          /* Windows > the right sidebar */
+    bool dockLeft;             /* Windows > the left sidebar */
+    bool dockTop;              /* Windows > the top sidebar */
+    bool dockBottom;           /* Windows > the bottom sidebar */
     int  zoomStepIndex;       /* current zoom step */
     int  zoomStepCount;        /* total zoom steps; >0 */
     bool fromMainMenu;         /* embedded — affects File menu's last item */
+    bool fullScreen;           /* Windows > Enter Full Screen checkmark */
+    bool canFullScreen;        /* the window can go into and out of full screen */
 };
 
 /* Build and install the native macOS NSMenu on NSApp.mainMenu. The
