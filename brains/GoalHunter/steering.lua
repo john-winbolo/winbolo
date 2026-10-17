@@ -3758,10 +3758,45 @@ local function tank_combat_steer(state, world, info, goal)
                                    bit.rshift(math.floor(pred_wy), 8),
                                    nil, nil, nil, nil, km_pn)
     if BRAIN_DEBUG_MODE then _gate_why = _clear and "ok" or ("path:" .. tostring(M._spc_why)) end
+    -- C.TANK_COMBAT_FIRE_CHECK_HEADING: the check above walks the line to the
+    -- AIM POINT, but the shell leaves along the GUN, and the bot fires with the
+    -- gun up to TANK_COMBAT_AIM_GATE_BRADS off that line. Next to a pill the two
+    -- lines can fall on different tiles: heat_pill_F, tank (125.56,125.91),
+    -- aim line 70.05 brads clips (126,126) and is clear, the gun at 68 runs
+    -- flatter through our own pill on (126,125) and hits it. So also walk the
+    -- gun's own line, out to the same distance. When only that line is blocked,
+    -- turn the gun onto the aim line and hold fire; it does not count towards
+    -- stuck-fire, which would send the shell into the pill anyway.
+    local _hdg_blocked = false
+    if _clear and C.TANK_COMBAT_FIRE_CHECK_HEADING then
+      local _ang = info.tank_angle or info.direction
+      local _d   = U.wdist(info.tankx, info.tanky, pred_wx, pred_wy)
+      local _rad = _ang * C.TWO_PI / 256
+      local _hx  = info.tankx + math.sin(_rad) * _d
+      local _hy  = info.tanky - math.cos(_rad) * _d
+      if not shot_path_clear(info, world, _hx, _hy,
+                             bit.rshift(math.floor(_hx), 8),
+                             bit.rshift(math.floor(_hy), 8),
+                             nil, nil, nil, nil, km_pn) then
+        _clear = false
+        _hdg_blocked = true
+        -- The readout above was written before this check ran and says "ok";
+        -- name the gun line and what it ran into instead.
+        if BRAIN_DEBUG_MODE then _gate_why = "heading:" .. tostring(M._spc_why) end
+      end
+    end
     if _clear and not U.fire_hold_block(state, C.FIRE_HOLD_TICKS) then
       keys = bit.bor(keys, KEY_SHOOT)
       if BRAIN_DEBUG_MODE then print2(string.format("TANK_FIRE t=%d id=%s ghost=%s @(%d,%d) dist=%.1f aim_corr=%.0f", now, tostring(target.id), tostring(target.ghost or false), target.mx, target.my, dist_tiles, aim_corr)) end
       goal._engage_blocked_ticks = 0
+    elseif _hdg_blocked then
+      local _fcorr = U.adiff(info.tank_angle or info.direction,
+                             U.aim_at_f(info.tankx, info.tanky, pred_wx, pred_wy))
+      keys = bit.band(keys, bit.bnot(bit.bor(KEY_TURNLEFT, KEY_TURNRIGHT)))
+      if _fcorr > 0 then keys = bit.bor(keys, KEY_TURNRIGHT)
+      elseif _fcorr < 0 then keys = bit.bor(keys, KEY_TURNLEFT) end
+      goal._engage_blocked_ticks = 0
+      if BRAIN_DEBUG_MODE then print2(string.format("TANK_FIRE_HDG_BLOCK t=%d id=%s @(%d,%d) gun=%.2f fcorr=%+.2f -> turn, hold fire", now, tostring(target.id), target.mx, target.my, info.tank_angle or info.direction, _fcorr)) end
     elseif _stuck_in_place then
       goal._engage_blocked_ticks = (goal._engage_blocked_ticks or 0) + 1
       if goal._engage_blocked_ticks >= C.TANK_COMBAT_STUCK_FIRE_TICKS then

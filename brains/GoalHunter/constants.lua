@@ -2113,6 +2113,13 @@ M.LEAD_CAP_USE_MEASURED          = false
 -- to the lead point is longer than the shell lives (live shell_life and the
 -- current gunsight). Off: fire whatever the range.
 M.TANK_COMBAT_FIRE_MAX_FLIGHT    = false
+-- TANK_COMBAT_FIRE_CHECK_HEADING: in engage, the shot-path check also walks
+-- the line the GUN points along, not only the line to the aim point, and holds
+-- fire while that line runs into a pill, base or wall. The bot fires with the
+-- gun up to TANK_COMBAT_AIM_GATE_BRADS off the aim line, and beside our own
+-- pill that is enough to put the shell into it (tests/scenario/heat_pill_F).
+-- Off: the aim line only.
+M.TANK_COMBAT_FIRE_CHECK_HEADING = true   -- keel false
 -- TANK_COMBAT_AIM_GATE_BRADS: in engage, fire when the gun is within this
 -- many brads of the lead point. 3 = the old gate.
 M.TANK_COMBAT_AIM_GATE_BRADS     = 3
@@ -6183,6 +6190,10 @@ M.PRESETS = {
     --   inside 64 wu.
     KILL_LGM_LEAD_SCALE           = 0.77,
     KILL_LGM_FIRE_WU              = 64,
+    --   2026-10-16: engage also checks the gun's own line before it fires, so
+    --   a gun a few brads off the aim line cannot shoot our own pill.  KEEL
+    --   checked the aim line only.
+    TANK_COMBAT_FIRE_CHECK_HEADING = false,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and
