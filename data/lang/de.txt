@@ -2090,6 +2090,10 @@ STR_DLGSETTINGS_HOSTING_VOICE_ON=An
 STR_DLGSETTINGS_HOSTING_VOICE_OFF=Aus
 STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Nahbereich
 STR_DLGSETTINGS_HOSTING_VOICE_TIP=Aus verwirft die Sprachübertragung, statt sie an alle weiterzuleiten. Nahbereich ist noch nicht implementiert und verhält sich wie An.
+STR_DLGSETTINGS_HOSTING_SERVERNAME=Servername
+STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=Die Spielsuche zeigt diesen Namen anstelle Ihrer Adresse an. Bis zu 32 Zeichen (weniger bei Zeichen mit Akzenten oder anderen Schriftsystemen). Leer lassen, um Ihre Adresse anzuzeigen.
+STR_DLGSETTINGS_HOSTING_SERVERDESC=Beschreibung
+STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=Die Spielsuche zeigt dies an, wenn ein Spieler auf Ihr Spiel zeigt oder es auswählt. Bis zu 200 Zeichen (weniger bei Zeichen mit Akzenten oder anderen Schriftsystemen).
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Sprachchat
@@ -2738,6 +2742,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Mods
 STR_DLGBROWSER_MODS_MORE=+{number} Mods
+STR_DLGBROWSER_ADDRESS=Adresse
 
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=Sprachchat geht jetzt an alle im Spiel

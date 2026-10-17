@@ -604,6 +604,82 @@ function M.fire_hold_block(state, hold_ticks)
   return false
 end
 
+-- =========================================================================
+-- REFUEL BASE RULES.  One set of rules for "is this base worth a refuel
+-- trip", shared by the refuel goal (goals.lua nearest_resupply_base and
+-- filter_refuel) and the order bid's refuel stop (orders.lua
+-- nearest_friendly_base).  need_a / need_s say which resources the caller
+-- needs; now is state.tick, the clock obs_tick is written with.
+--
+--   1. empty      the base was seen (obs_tick set, ANY age) holding 0 of
+--                 every resource we need.  A stale "empty" observation is
+--                 still more reliable than a trip to find out.
+--   2. low_stock  a fresh observation (now > 0 and now - obs_tick <
+--                 REFUEL_OBS_STALE) holds less than REFUEL_MIN_STOCK of
+--                 every resource we need.
+--   3. markup     a base that passes 1 and 2: cost x REFUEL_LOW_ARMOUR_MULT
+--                 / x REFUEL_LOW_SHELLS_MULT for each resource we need that
+--                 a fresh observation (now - obs_tick < REFUEL_OBS_STALE)
+--                 has below REFUEL_MIN_STOCK.  See refuel_low_stock_mult in
+--                 goals.lua for why, and for the obs_armour units note.
+-- =========================================================================
+
+-- Rule 1.  True when the base is seen holding 0 of everything we need.
+function M.refuel_base_empty(b, need_a, need_s)
+  if not b.obs_tick then return false end
+  local has_a = (b.obs_armour or 0) > 0
+  local has_s = (b.obs_shells or 0) > 0
+  return not ((need_a and has_a) or (need_s and has_s))
+end
+
+-- Rule 2.  True when a fresh observation is below REFUEL_MIN_STOCK for
+-- every resource we need.
+function M.refuel_base_low_stock(b, need_a, need_s, now)
+  if not (b.obs_tick and now > 0 and (now - b.obs_tick) < C.REFUEL_OBS_STALE) then
+    return false
+  end
+  if need_a and (b.obs_armour or 0) >= C.REFUEL_MIN_STOCK then return false end
+  if need_s and (b.obs_shells or 0) >= C.REFUEL_MIN_STOCK then return false end
+  return true
+end
+
+-- Rule 3.  Returns mult, detail.  detail carries the chip inputs for the
+-- panels: fresh, low_arm, low_sh, need_arm, need_sh (need_* are set only
+-- on a fresh observation), obs_sh, obs_arm, age.
+function M.refuel_base_low_mult(b, need_a, need_s, now)
+  local d = {
+    fresh = false, low_arm = false, low_sh = false,
+    need_arm = false, need_sh = false,
+    obs_sh = b.obs_shells, obs_arm = b.obs_armour,
+    age = b.obs_tick and (now - b.obs_tick) or nil,
+  }
+  if not d.age or d.age >= (C.REFUEL_OBS_STALE or 500) then
+    return 1.0, d
+  end
+  d.fresh = true
+  d.need_arm = need_a and true or false
+  d.need_sh  = need_s and true or false
+  local mult = 1.0
+  if d.need_arm and (b.obs_armour or 0) < C.REFUEL_MIN_STOCK then
+    d.low_arm = true
+    mult = mult * (C.REFUEL_LOW_ARMOUR_MULT or 1.0)
+  end
+  if d.need_sh and (b.obs_shells or 0) < C.REFUEL_MIN_STOCK then
+    d.low_sh = true
+    mult = mult * (C.REFUEL_LOW_SHELLS_MULT or 1.0)
+  end
+  return mult, d
+end
+
+-- All three rules in order.  Returns "empty" or "low_stock" when the base
+-- is skipped; else nil, mult, detail (rule 3).
+function M.refuel_base_verdict(b, need_a, need_s, now)
+  if M.refuel_base_empty(b, need_a, need_s) then return "empty" end
+  if M.refuel_base_low_stock(b, need_a, need_s, now) then return "low_stock" end
+  local mult, d = M.refuel_base_low_mult(b, need_a, need_s, now)
+  return nil, mult, d
+end
+
 -- Live game rules -> physics constants (see live_physics.lua). Reached
 -- through U so Brain.think needs no new upvalue.
 M.live_physics = require("live_physics")

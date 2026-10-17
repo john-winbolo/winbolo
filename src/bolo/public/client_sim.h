@@ -1627,7 +1627,9 @@ void         clientSimBaseView(ClientSim *cs, int horz, int vert);
 void         clientSimAllyView(ClientSim *cs, int horz, int vert);
 void         clientSimStepView(ClientSim *cs, int horz, int vert);
 /* Report the current view to the server (CMD_VIEW_STATE) when it has changed
- * since the last report. Called once per display tick.
+ * since the last report, and an unchanged item view again once a second, so
+ * a view the server has dropped is taken up again. Called once per display
+ * tick.
  * clientSimResetViewStateReport forgets what was last reported, so the next
  * tick sends again — used where the client resets its view for a new round or
  * a freshly installed map. */

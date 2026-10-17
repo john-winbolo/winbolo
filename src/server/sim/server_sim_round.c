@@ -729,6 +729,10 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     for (i = 0; i < scripts.modCount; i++) {
         memcpy(info.modNames[i], scripts.modNames[i], sizeof(info.modNames[i]));
     }
+    snprintf(info.serverName, sizeof(info.serverName), "%s",
+             serverSimGetServerName(sim));
+    snprintf(info.serverDescription, sizeof(info.serverDescription), "%s",
+             serverSimGetServerDescription(sim));
     winbolonetSetLobbyInfo(&info);
 }
 

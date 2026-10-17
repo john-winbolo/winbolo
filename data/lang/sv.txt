@@ -2090,6 +2090,10 @@ STR_DLGSETTINGS_HOSTING_VOICE_ON=På
 STR_DLGSETTINGS_HOSTING_VOICE_OFF=Av
 STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Närhet
 STR_DLGSETTINGS_HOSTING_VOICE_TIP=Av kastar bort rösten i stället för att skicka den till någon. Närhet är inte implementerad än och beter sig som På.
+STR_DLGSETTINGS_HOSTING_SERVERNAME=Servernamn
+STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=Spelfinnaren visar det här namnet istället för din adress. Upp till 32 tecken (färre med accenttecken eller andra skriftsystem). Lämna det tomt för att visa din adress.
+STR_DLGSETTINGS_HOSTING_SERVERDESC=Beskrivning
+STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=Spelfinnaren visar det här när en spelare pekar på eller väljer ditt spel. Upp till 200 tecken (färre med accenttecken eller andra skriftsystem).
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Röstchatt
@@ -2740,6 +2744,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Workshop
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Moddar
 STR_DLGBROWSER_MODS_MORE=+{number} moddar
+STR_DLGBROWSER_ADDRESS=Adress
 
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=Röstchatten hörs nu av alla i spelet

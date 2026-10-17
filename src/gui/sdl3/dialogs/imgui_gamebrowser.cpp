@@ -200,6 +200,14 @@ struct ServerEntry {
     int  scenarioMaxPlayers;      /* human cap, 0 = none */
     int  modCount;
     char modNames[DISCOVERY_SCRIPT_MODS_MAX][DISCOVERY_SCRIPT_NAME_LEN];
+    /* The host's own short name and description for the server. A tracker
+     * row fills them from WinBolo.net, with the description whole; a LAN
+     * row, or a tracker row WinBolo.net sent none for, fills them from the
+     * server's reply. Empty when the host set none or the server predates
+     * them; the row then shows the address as before. Already sanitised by
+     * the reader. */
+    char serverName[DISCOVERY_SERVER_NAME_LEN];
+    char serverDescription[DISCOVERY_SERVER_DESC_LEN];
     std::vector<std::string> players;   /* logged-in usernames, blanks already filtered */
 };
 
@@ -209,6 +217,9 @@ static_assert(DISCOVERY_SCRIPT_NAME_LEN == WBN_SERVERLIST_NAME_LEN,
               "a tracker script name must fit ServerEntry's name buffers");
 static_assert(DISCOVERY_SCRIPT_MODS_MAX == WBN_SERVERLIST_MODS_MAX,
               "a tracker row's mods must fit ServerEntry's mod list");
+static_assert(DISCOVERY_SERVER_NAME_LEN == SERVER_NAME_LEN &&
+              DISCOVERY_SERVER_DESC_LEN == SERVER_DESC_LEN,
+              "a tracker row's server name and description must fit whole");
 
 /* Copy the scripts from a server's own reply into e, replacing whatever a
  * tracker row put there. The web build has no LAN search and no info ping,
@@ -224,6 +235,14 @@ static void serverEntrySetScripts(ServerEntry &e, const DiscoveryScripts &sc) {
     e.modCount = n;
     for (int m = 0; m < n; m++) {
         SDL_strlcpy(e.modNames[m], sc.modNames[m], sizeof(e.modNames[m]));
+    }
+    /* The reply cuts the description to the room left in the packet, and
+     * WinBolo.net has it whole, so a tracker row keeps what it was given.
+     * Both come from the host's one setting, so they do not disagree. */
+    if (e.serverName[0] == '\0' && e.serverDescription[0] == '\0') {
+        SDL_strlcpy(e.serverName, sc.serverName, sizeof(e.serverName));
+        SDL_strlcpy(e.serverDescription, sc.serverDescription,
+                    sizeof(e.serverDescription));
     }
     e.hasScriptReply = true;
 }
@@ -1086,6 +1105,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         for (int m = 0; m < e.modCount; m++) {
                             SDL_strlcpy(e.modNames[m], w.modNames[m], sizeof(e.modNames[m]));
                         }
+                        SDL_strlcpy(e.serverName, w.serverName, sizeof(e.serverName));
+                        SDL_strlcpy(e.serverDescription, w.serverDescription,
+                                    sizeof(e.serverDescription));
 
                         e.players.clear();
                         for (int p = 0; p < w.numPlayerNames; p++) {
@@ -1569,6 +1591,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             }
             auto nameKey = [&](int idx) -> const char * {
                 const ServerEntry &e = servers[idx];
+                if (e.serverName[0] != '\0') return e.serverName;
                 return e.hostName[0] != '\0' ? e.hostName : e.address;
             };
             std::stable_sort(visible.begin(), visible.end(),
@@ -1702,19 +1725,54 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 float pingLeft = textRight - ImGui::CalcTextSize(pingStr).x;
 #endif
 
-                /* Name line — host name if known, else address:port. Clamp its
+                /* Name line — the host's server name if it set one, else
+                 * the host name if known, else address:port. Clamp its
                  * width to (pingLeft − gap) so a long reverse-DNS can't overlap
                  * the ping; binary-search the longest prefix that fits + "...". */
-                char name[288];
+                char where[288];
                 if (e.hostName[0] != '\0') {
-                    SDL_snprintf(name, sizeof(name), "%s", e.hostName);
+                    SDL_snprintf(where, sizeof(where), "%s", e.hostName);
                 } else {
-                    SDL_snprintf(name, sizeof(name), "%s:%u", e.address, e.port);
+                    SDL_snprintf(where, sizeof(where), "%s:%u", e.address, e.port);
                 }
+                char name[288];
+                SDL_snprintf(name, sizeof(name), "%s",
+                             e.serverName[0] != '\0' ? e.serverName : where);
                 browserClampText(name, sizeof(name),
                                  pingLeft - (8.0f * s) - textX);
                 dl->AddText(ImVec2(textX, p0.y + pad),
                             ImGui::GetColorU32(ImGuiCol_Text), name);
+                /* A named server hides its address on the row, so pointing
+                 * at the name shows the address and the description. Asked
+                 * of the name's own rectangle for the same reason as the
+                 * visibility label below. */
+                if (e.serverName[0] != '\0' || e.serverDescription[0] != '\0') {
+                    ImVec2 nMin(textX, p0.y + pad);
+                    ImVec2 nMax(textX + ImGui::CalcTextSize(name).x,
+                                nMin.y + lineH);
+                    if (ImGui::IsWindowHovered() &&
+                        ImGui::IsMouseHoveringRect(nMin, nMax)) {
+                        /* The full address, as the detail pane gives it:
+                         * a resolved host name alone would hide it. */
+                        char addr[sizeof(e.hostName) + sizeof(e.address) + 16];
+                        if (e.hostName[0] != '\0') {
+                            SDL_snprintf(addr, sizeof(addr), "%s (%s:%u)",
+                                         e.hostName, e.address, e.port);
+                        } else {
+                            SDL_snprintf(addr, sizeof(addr), "%s:%u",
+                                         e.address, e.port);
+                        }
+                        ImGui::BeginTooltip();
+                        ImGui::TextUnformatted(addr);
+                        if (e.serverDescription[0] != '\0') {
+                            ImGui::PushTextWrapPos(
+                                ImGui::GetFontSize() * 28.0f);
+                            ImGui::TextUnformatted(e.serverDescription);
+                            ImGui::PopTextWrapPos();
+                        }
+                        ImGui::EndTooltip();
+                    }
+                }
 
                 /* Game-type abbreviation, right-aligned under the ping, and
                    the name of the visibility set just left of it. The set is
@@ -1967,6 +2025,36 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 auto label = [&](const char *t) { ImGui::TextColored(accent, "%s", t); };
 
                 if (ImGui::BeginTable("##gbdetail", 2, ImGuiTableFlags_SizingFixedFit)) {
+                    /* Server — the host's name and, under it, the
+                     * description, wrapped like the scenario's. Only when
+                     * the host set either; then the address follows on its
+                     * own row, since the list row shows the name instead. */
+                    if (sel.serverName[0] != '\0' || sel.serverDescription[0] != '\0') {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_COL_SERVER));
+                        ImGui::TableSetColumnIndex(1);
+                        if (sel.serverName[0] != '\0') {
+                            ImGui::TextUnformatted(sel.serverName);
+                        }
+                        if (sel.serverDescription[0] != '\0') {
+                            ImGui::PushTextWrapPos(ImGui::GetWindowContentRegionMax().x);
+                            ImGui::TextUnformatted(sel.serverDescription);
+                            ImGui::PopTextWrapPos();
+                        }
+
+                        char addr[sizeof(sel.hostName) + sizeof(sel.address) + 16];
+                        if (sel.hostName[0] != '\0') {
+                            SDL_snprintf(addr, sizeof(addr), "%s (%s:%u)",
+                                         sel.hostName, sel.address, sel.port);
+                        } else {
+                            SDL_snprintf(addr, sizeof(addr), "%s:%u",
+                                         sel.address, sel.port);
+                        }
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_ADDRESS));
+                        ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(addr);
+                    }
+
                     /* Type */
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_COL_TYPE));

@@ -1896,6 +1896,23 @@ the brain logs them as unsupported and leaves them. It also says one line,
 a scenario that retunes its bots often would fill the newswire), so a script's
 `on_chat` can see the change land when another bot is on the same side.
 
+One GoalHunter constant is there for scripts: `FIGHT_COST_MULT` (1 by
+default). `cfg=FIGHT_COST_MULT=10` makes every fight the bot picks for itself
+with a tank (`attack_tank`) or a man on foot (`kill_lgm`), and every run for
+cover (`take_cover`), cost ten times as much, so it goes for other goals first
+and fights or hides only when that is far the best thing to do. An ordered
+goal is not made dearer, and nor is any of them while the bot's armour is
+critical, so a dying tank still fights back or gets to cover.
+Write `cfg=FIGHT_COST_MULT=1` to put it back: a constant stays where it was
+put. It is a round-scoped knob: only a running brain takes it, from
+`game.bot_init`. A new brain does not take it from the table it starts with,
+and every round starts every bot on a new brain, so each round starts it at 1
+even if the last round ended with it set. A script should still put it back
+before it ends the round, because the table it last handed a bot is what that
+bot's next brain is built from. Pillbox Tag sets it on its hunters while the
+prize stands as a fort and puts it back to 1 when the prize is picked up and
+just before it ends the round. A bot on `preset=keel` ignores it.
+
 A bot whose brain is not running yet still keeps the table: the record is what
 its next brain is built from, so nothing the script asked for is lost.
 
@@ -1996,6 +2013,41 @@ author and a script author can agree on words of their own.
 | `patrol` | `x1`, `y1`, `x2`, `y2`, … up to `x7`, `y7` | Walk the points in order, round and round |
 | `escort` | `player`, and optionally `distance` | Stay with that seat, within `distance` squares of it (3 by default) |
 | `avoid` | `x`, `y`, `w`, `h` | Keep out of that rectangle until told otherwise |
+
+Past the seven, GoalHunter knows one more word, and one more key:
+
+| `verb` | Keys | Means |
+|---|---|---|
+| `release` | none | End the order the bot holds and give it no new one |
+| `attack` | `pill` | Attack that pillbox: the order a person gives with `attack pill` |
+
+`attack` with `pill = n` names the pillbox the way a script does, 1-based
+(`game.pill(n)`). The bot gets the same order as from the chat line `attack
+pill <id>`, where the id is the brain's own pill number, `n - 1`. A dead
+pillbox is picked up instead, as in chat. With `pill` given, `player` is not
+read; a `pill` the bot does not know of yet gives no order. Under the order
+every goal of the bot's own loses, except its fight with a tank and the
+other moves that keep it alive. The same hint again keeps the order held for
+another minute. GoalHunter's `ORDER_HINT_ATTACK_PILL` switches the key off;
+the KEEL preset has it off, and then an `attack` with only `pill` is ignored.
+
+`force = true` on that `attack` makes the order forced. While the bot holds
+it, its attack on that pillbox is not given up for a preference: an enemy
+builder near the pillbox, or armour low against the pillbox's. The bot goes
+on to its firing spot and shoots. A take that cannot go on (no shells, the
+pillbox dead, no line to shoot it on, a stall) still ends. Only a script can
+force an order; no chat line or bot command can. GoalHunter's
+`ORDER_HINT_FORCE` switches the key off; the KEEL preset has it off.
+
+`release` is the way to call an order off. A `hold` is not: it is a `goto`
+to the square the bot is on, so it is a new order, and the bot holds it.
+After a `release` the bot's own goal choice runs at once, on the next think.
+It ends the held order whoever gave it, and a running `patrol` or `escort`.
+An `avoid` stays, because it is a keep-out and not an order. The bot says
+nothing, and no other bot takes the order up. A bot that holds no order is
+not changed. GoalHunter's `ORDER_RELEASE_HINT` switches the word off; the
+KEEL preset has it off, and then the verb is ignored like any other unknown
+word.
 
 There is no `region` key. A brain has no region table to look a name up in, so
 a script that wants a bot in a region reads the rectangle itself and sends the
