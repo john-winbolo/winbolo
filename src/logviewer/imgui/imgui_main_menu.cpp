@@ -325,6 +325,8 @@ void lv_imgui_toggle_tank_centred(void) {
 
 int lv_imgui_get_jump_anim(void) { return s_jump_anim ? 1 : 0; }
 
+void lv_imgui_toggle_jump_anim(void) { s_jump_anim = !s_jump_anim; }
+
 /* Sets it, so the menu's tick and the screen's flag stay the same thing. */
 void lv_imgui_set_tank_centred(int on) {
     s_tank_centred = on ? true : false;
@@ -381,7 +383,10 @@ static void handle_keyboard_shortcuts(int *clicked) {
         }
     }
 
-    bool ctrl = io.KeyCtrl;
+    /* Not with Super (Cmd on macOS) held: a Ctrl+Cmd key is a menu bar item
+     * there (Ctrl+Cmd+F is Full Screen, Cmd+6/7/8 the sidebars), and the
+     * menu bar has acted on it already. */
+    bool ctrl = io.KeyCtrl && !io.KeySuper;
     if (!ctrl) return;
 
     /* File */
