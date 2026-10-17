@@ -723,25 +723,38 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
         /* Query window size */
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
+        /* Read each frame: turning a phone from one landscape side to the
+           other moves the cutout without changing the window's size. */
+        safeInsets = dialogGetSafeInsets(window);
 
         /* Render popup tiles to offscreen texture before ImGui frame */
         mapPreviewPopupRenderOffscreen(renderer, winW, winH);
 
 
-        /* Full-screen host window with safe area padding */
-        ImGui::SetNextWindowPos(ImVec2(0, 0));
-        ImGui::SetNextWindowSize(ImVec2((float)winW, (float)winH));
-        /* The window padding pads both sides by the same amount, so padL
-           already keeps the right edge the left inset's distance in, and padT
-           the bottom edge the top inset's. padR and padB are only what the
-           right and bottom insets need beyond that; counting the whole right
-           inset again put the Players tab's cells 134 points in on the right
-           against 70 on the left. */
-        float padL = ImGui::GetStyle().WindowPadding.x + safeInsets.left;
-        float padR = SDL_max(0.0f, safeInsets.right - safeInsets.left);
+        /* Full-height host window between the left and right safe insets.
+           The window padding pads both sides by the same amount, so the
+           insets, which differ in landscape on a phone (the cutout's side
+           and the margin on the other, see dialogGetSafeInsets), set the
+           window's x and width instead. The strips beside it are drawn
+           black, as the cutout is. Vertically the padding still
+           carries the top inset, so padT keeps the bottom edge the top
+           inset's distance in, and padB is only what the bottom inset needs
+           beyond that. */
+        const float hostX = safeInsets.left;
+        const float hostW = (float)winW - safeInsets.left - safeInsets.right;
+        if (hostX > 0.0f || hostW < (float)winW) {
+            ImDrawList *bgList = ImGui::GetBackgroundDrawList();
+            const ImU32 bgCol = IM_COL32(0, 0, 0, 255);
+            bgList->AddRectFilled(ImVec2(0.0f, 0.0f), ImVec2(hostX, (float)winH), bgCol);
+            bgList->AddRectFilled(ImVec2(hostX + hostW, 0.0f),
+                                  ImVec2((float)winW, (float)winH), bgCol);
+        }
+        ImGui::SetNextWindowPos(ImVec2(hostX, 0));
+        ImGui::SetNextWindowSize(ImVec2(hostW, (float)winH));
         float padT = ImGui::GetStyle().WindowPadding.y + safeInsets.top;
         float padB = SDL_max(0.0f, safeInsets.bottom - safeInsets.top);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padL, padT));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                            ImVec2(ImGui::GetStyle().WindowPadding.x, padT));
         ImGui::Begin("##LobbyBg", nullptr,
                      ImGuiWindowFlags_NoTitleBar |
                      ImGuiWindowFlags_NoResize |
@@ -973,7 +986,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
         /* --- Main content (tabbed in controller mode, two-column for mouse;
          * useTabbedLobby computed above the shared settings panel) --- */
         if (useTabbedLobby) {
-            float availW = ImGui::GetContentRegionAvail().x - padR;
+            float availW = ImGui::GetContentRegionAvail().x;
             float btnAreaH = ImGui::GetTextLineHeightWithSpacing() * 2 + 16.0f * s;
 
             /* Detect new chat messages for unread indicator */
@@ -1639,7 +1652,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
         }
         else {
             /* --- Desktop: Players (left) + Map Preview (right) --- */
-            float availW = ImGui::GetContentRegionAvail().x - padR;
+            float availW = ImGui::GetContentRegionAvail().x;
             /* Total vertical content area before any rendering — used to
              * fill the lobby so the chat block's bottom sits flush with
              * the lobby's bottom edge (minus the bottom safe inset). */

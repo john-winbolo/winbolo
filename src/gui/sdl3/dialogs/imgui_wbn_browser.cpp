@@ -809,19 +809,32 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
 
         /* Main panel */
 #if BOLO_MOBILE
-        float panelW = (float)winW * 0.95f;
-        float panelH = (float)winH * 0.95f;
+        /* Each edge the margin or that edge's safe inset, whichever is
+         * larger, so the panel stays clear of the notch and the home bar. */
+        const DialogSafeInsets safe = dialogGetSafeInsets(window);
+        const float mX = (float)winW * DIALOG_EDGE_MARGIN_FRAC;
+        const float mY = (float)winH * DIALOG_EDGE_MARGIN_FRAC;
+        const float edgeL = SDL_max(safe.left, mX);
+        const float edgeR = SDL_max(safe.right, mX);
+        const float edgeT = SDL_max(safe.top, mY);
+        const float edgeB = SDL_max(safe.bottom, mY);
+        float panelW = (float)winW - edgeL - edgeR;
+        float panelH = (float)winH - edgeT - edgeB;
+        const float panelX = edgeL;
+        const float panelY = edgeT;
 #else
         const float margin = 40.0f;
         float panelW = (float)winW - margin * 2.0f;
         float panelH = (float)winH - margin * 2.0f;
         if (panelW < 700.0f) panelW = 700.0f;
         if (panelH < 500.0f) panelH = 500.0f;
-#endif
         if (panelW > (float)winW * 0.98f) panelW = (float)winW * 0.98f;
         if (panelH > (float)winH * 0.98f) panelH = (float)winH * 0.98f;
+        const float panelX = ((float)winW - panelW) * 0.5f;
+        const float panelY = ((float)winH - panelH) * 0.5f;
+#endif
 
-        ImGui::SetNextWindowPos(ImVec2(((float)winW - panelW) * 0.5f, ((float)winH - panelH) * 0.5f));
+        ImGui::SetNextWindowPos(ImVec2(panelX, panelY));
         ImGui::SetNextWindowSize(ImVec2(panelW, panelH));
         ImGui::SetNextWindowBgAlpha(0.90f);
         ImGui::Begin("##WbnBrowser", nullptr,

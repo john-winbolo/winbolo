@@ -756,10 +756,21 @@ static inline void dialogRestoreLogicalPresentation(SDL_Renderer *renderer,
 
 /* Query safe area insets for notch/Dynamic Island avoidance.
  * Returns insets in window-point coordinates (left, top, right, bottom).
- * On platforms without safe areas, all values are 0. */
+ * On platforms without safe areas, all values are 0.
+ *
+ * In landscape a phone with a notch or Dynamic Island reports the same inset
+ * on the left and the right, though the cutout is on one side only. Here the
+ * side away from it gets DIALOG_EDGE_MARGIN_FRAC of the window's width
+ * instead, which keeps clear of the screen's rounded corners. The cutout's
+ * side is found from the display orientation. A platform that reports the
+ * cutout on its own side (Android) has unequal insets and is left as it is. */
 struct DialogSafeInsets {
     float left, top, right, bottom;
 };
+
+/* The share of the window's width or height a mobile dialog keeps from an
+ * edge with no cutout: the log browser's margin. */
+#define DIALOG_EDGE_MARGIN_FRAC 0.025f
 
 static inline DialogSafeInsets dialogGetSafeInsets(SDL_Window *window) {
     DialogSafeInsets insets = {0, 0, 0, 0};
@@ -772,6 +783,19 @@ static inline DialogSafeInsets dialogGetSafeInsets(SDL_Window *window) {
         insets.top    = (float)safeRect.y;
         insets.right  = (float)(winW - (safeRect.x + safeRect.w));
         insets.bottom = (float)(winH - (safeRect.y + safeRect.h));
+    }
+    const float farMargin = (float)winW * DIALOG_EDGE_MARGIN_FRAC;
+    if (insets.left > farMargin && insets.left == insets.right) {
+        switch (SDL_GetCurrentDisplayOrientation(SDL_GetDisplayForWindow(window))) {
+        case SDL_ORIENTATION_LANDSCAPE:          /* cutout on the left */
+            insets.right = farMargin;
+            break;
+        case SDL_ORIENTATION_LANDSCAPE_FLIPPED:  /* cutout on the right */
+            insets.left = farMargin;
+            break;
+        default:
+            break;
+        }
     }
 #else
     (void)window;
