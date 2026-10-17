@@ -1079,7 +1079,7 @@ scenario = {
                 "every tank for itself or as lobby teams.",
   api         = 1,
   author      = "WinBolo",
-  updated     = "2026-10-02T15:08Z",
+  updated     = "2026-10-10T16:29Z",
   game        = "open",
 
   -- The script cuts the map's own starts into arcs of the ring.

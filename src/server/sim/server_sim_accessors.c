@@ -325,8 +325,9 @@ bool serverSimGetLobbyStart(ServerSim *sim, BYTE p, BYTE *start) {
     BYTE idx;
     if (sim == NULL || start == NULL || p >= MAX_TANKS) return false;
     if (!serverSimIsPlayerConnected(sim, p)) return false;
-    /* The same test startsGetStart makes before it spends the slot, so a
-       reservation is reported exactly when a tank would be put on it. */
+    /* The same test startsGetStart makes before it uses and clears the
+       slot, so a reservation is reported exactly when a tank would be put
+       on it. */
     idx = sim->sim.pendingStartIdx[p];
     if (idx >= startsGetNumStarts(&sim->sim.ss) ||
         !startsIsActive(&sim->sim.ss, (BYTE)(idx + 1))) {

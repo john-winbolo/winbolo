@@ -1517,7 +1517,7 @@ scenario = {
                 "tougher.",
   api         = 1,
   author      = "WinBolo",
-  updated     = "2026-10-11T06:05Z",
+  updated     = "2026-10-14T11:55Z",
   kind        = "scenario",
   game        = "open",
 

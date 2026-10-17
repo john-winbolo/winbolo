@@ -1115,6 +1115,10 @@ STR_LV_AUTO_SCROLL=Автопрокрутка
 
 # Log viewer end-of-log marker
 STR_LV_END_OF_LOG=Достигнут конец файла лога
+STR_LV_LOAD_TITLE=Открытие лога
+STR_LV_LOAD_UNZIP=Распаковка
+STR_LV_LOAD_SCAN=Чтение
+STR_LV_LOAD_PLAY=Индексирование
 
 # iOS Settings panel additions
 STR_DLGSETTINGS_ZOOM=Масштаб
@@ -2084,6 +2088,10 @@ STR_DLGSETTINGS_HOSTING_VOICE_ON=Включено
 STR_DLGSETTINGS_HOSTING_VOICE_OFF=Выключено
 STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Близость
 STR_DLGSETTINGS_HOSTING_VOICE_TIP=Выключено отбрасывает голос вместо того, чтобы передать его кому-либо. Близость пока не реализована и работает так же, как Включено.
+STR_DLGSETTINGS_HOSTING_SERVERNAME=Имя сервера
+STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=Поиск игр показывает это имя вместо твоего адреса. До 32 знаков (меньше при кириллице или другом письме). Оставь пустым, чтобы показывать адрес.
+STR_DLGSETTINGS_HOSTING_SERVERDESC=Описание
+STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=Поиск игр показывает его, когда игрок наводится на твою игру или выбирает её. До 200 знаков (меньше при кириллице или другом письме).
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Голос
@@ -2536,7 +2544,7 @@ STR_RULE_DESC_lgm_gather_trees=Сколько деревьев строител�
 STR_RULE_DESC_lgm_helicopter_speed=Как далеко строитель перемещается за тик, пока опускается на парашюте.
 STR_RULE_DESC_lgm_arrive_tolerance=Как близко к цели должен быть строитель, чтобы считаться прибывшим.
 STR_RULE_DESC_lgm_return_tolerance=Как близко к танку должен быть строитель, чтобы считаться вернувшимся.
-STR_RULE_DESC_lgm_pill_drop_search=Сколько клеток проходит колонка поиска места для сброса бункера.
+STR_RULE_DESC_lgm_pill_drop_search=Удалено, ничего не делает.
 STR_RULE_DESC_lgm_boat_leave_offset=Как далеко от берега отходит строитель, чтобы сесть в лодку.
 STR_RULE_DESC_lgm_boat_return_offset=Как далеко отходит строитель, выходя из лодки.
 STR_RULE_DESC_pill_max_armour=Наибольшая броня, которая есть у бункера, и с какой начинает только что построенный.
@@ -2735,7 +2743,29 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Мастерская
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Моды
 STR_DLGBROWSER_MODS_MORE=+ моды ({number})
+STR_DLGBROWSER_ADDRESS=Адрес
 
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=Голосовой чат теперь слышат все в игре
 STR_VOICE_EVERYONE_OFF=Голосовой чат теперь слышат только ваши союзники
+
+# System Info panel — the Memory block
+STR_DLGSYSINFO_MEMORY=Память
+STR_DLGSYSINFO_MEM_RESIDENT=Резидентная
+STR_DLGSYSINFO_MEM_PEAK=Пик
+STR_DLGSYSINFO_MEM_PRIVATE=Приватная
+STR_DLGSYSINFO_MEM_VIRTUAL=Виртуальная
+STR_DLGSYSINFO_MEM_LUA=Куча Lua
+STR_DLGSYSINFO_MEM_BOTS=Боты
+STR_DLGSYSINFO_MEM_BOT=Бот
+STR_DLGSYSINFO_MEM_SERVER_LISTS=Списки сервера
+STR_DLGSYSINFO_MEM_BOT_LISTS=Списки ботов
+STR_DLGSYSINFO_MEM_EXPLOSIONS=Взрывы
+STR_DLGSYSINFO_MEM_TANK_EXPLOSIONS=Взрывы танков
+STR_DLGSYSINFO_MEM_SHELLS=Снаряды
+STR_DLGSYSINFO_MEM_MINE_EXPLOSIONS=Взрывы мин
+STR_DLGSYSINFO_MEM_FLOOD_FILL=Заливка водой
+STR_DLGSYSINFO_MEM_BUILDING=Строительство
+STR_DLGSYSINFO_MEM_RUBBLE=Обломки
+STR_DLGSYSINFO_MEM_SWAMP=Болото
+STR_DLGSYSINFO_MEM_GRASS=Трава

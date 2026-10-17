@@ -433,3 +433,103 @@ static int scripts_parse(void) {
 int run_wbn_serverlist_scripts(void) {
     return scripts_parse();
 }
+
+/* -------------------------------------------------------------------- */
+
+/* The host's server name and description a row carries. */
+static int server_text_parse(void) {
+    WbnServerList list;
+    const WbnServerListEntry *s;
+
+    /* Absent, null and not a string all read as none. */
+    UT_ASSERT(wbnServerListParse(
+        "{\"servers\":[{\"address\":\"h\"},"
+        "{\"server_name\":null,\"server_description\":null},"
+        "{\"server_name\":7,\"server_description\":[\"x\"]}]}", &list));
+    UT_ASSERT_MSG(list.count == 3, "count=%d", list.count);
+    for (int i = 0; i < list.count; i++) {
+        s = &list.servers[i];
+        UT_ASSERT_MSG(s->serverName[0] == '\0', "row %d name=\"%s\"", i,
+                      s->serverName);
+        UT_ASSERT_MSG(s->serverDescription[0] == '\0', "row %d desc=\"%s\"",
+                      i, s->serverDescription);
+    }
+    wbnServerListFree(&list);
+
+    /* Both set, with UTF-8 kept. */
+    UT_ASSERT(wbnServerListParse(
+        "{\"servers\":[{\"server_name\":\"Andy's Den\","
+        "\"server_description\":\"Friday night games, all welcome. D\xc3\xa9j\xc3\xa0\"}]}",
+        &list));
+    s = &list.servers[0];
+    UT_ASSERT_MSG(strcmp(s->serverName, "Andy's Den") == 0, "name=\"%s\"",
+                  s->serverName);
+    UT_ASSERT_MSG(strcmp(s->serverDescription,
+                         "Friday night games, all welcome. D\xc3\xa9j\xc3\xa0") == 0,
+                  "desc=\"%s\"", s->serverDescription);
+    wbnServerListFree(&list);
+
+    /* Cleaned on read: a tab and newlines fold to one space, an RTL
+       override (U+202E) is dropped. */
+    UT_ASSERT(wbnServerListParse(
+        "{\"servers\":[{\"server_name\":\" a\\tb\\n\\nc \","
+        "\"server_description\":\"x\xe2\x80\xaey\"}]}", &list));
+    s = &list.servers[0];
+    UT_ASSERT_MSG(strcmp(s->serverName, "a b c") == 0, "name=\"%s\"",
+                  s->serverName);
+    UT_ASSERT_MSG(strcmp(s->serverDescription, "xy") == 0, "desc=\"%s\"",
+                  s->serverDescription);
+    wbnServerListFree(&list);
+
+    /* Over the caps: 40 bytes of name keep 32, and 210 bytes of
+       description keep 200, the whole of what the tracker may hold. */
+    {
+        char name[41];
+        char desc[211];
+        char body[400];
+        memset(name, 'n', 40);
+        name[40] = '\0';
+        memset(desc, 'd', 210);
+        desc[210] = '\0';
+        snprintf(body, sizeof(body),
+                 "{\"servers\":[{\"server_name\":\"%s\","
+                 "\"server_description\":\"%s\"}]}", name, desc);
+        UT_ASSERT(wbnServerListParse(body, &list));
+        s = &list.servers[0];
+        UT_ASSERT_MSG(strlen(s->serverName) == SERVER_NAME_MAX,
+                      "long name kept %zu bytes, expected %d",
+                      strlen(s->serverName), SERVER_NAME_MAX);
+        UT_ASSERT_MSG(strlen(s->serverDescription) == SERVER_DESC_MAX,
+                      "long desc kept %zu bytes, expected %d",
+                      strlen(s->serverDescription), SERVER_DESC_MAX);
+        wbnServerListFree(&list);
+    }
+
+    /* A name of 17 three-byte characters (51 bytes) is cut on a character
+       boundary: ten characters, 30 bytes. */
+    {
+        char name[52];
+        char body[128];
+        for (int i = 0; i < 17; i++) {
+            name[i * 3]     = (char)0xE6;   /* U+65E5 */
+            name[i * 3 + 1] = (char)0x97;
+            name[i * 3 + 2] = (char)0xA5;
+        }
+        name[51] = '\0';
+        snprintf(body, sizeof(body),
+                 "{\"servers\":[{\"server_name\":\"%s\"}]}", name);
+        UT_ASSERT(wbnServerListParse(body, &list));
+        s = &list.servers[0];
+        UT_ASSERT_MSG(strlen(s->serverName) == 30,
+                      "wide name kept %zu bytes, expected 30",
+                      strlen(s->serverName));
+        UT_ASSERT_MSG(memcmp(s->serverName, name, 30) == 0,
+                      "wide name's kept bytes differ");
+        wbnServerListFree(&list);
+    }
+    return 0;
+}
+
+int run_wbn_serverlist_server_text(void) {
+    return server_text_parse();
+}

@@ -198,10 +198,12 @@ static size_t infoScriptTailPutString(uint8_t *out, const char *str,
  * reply. The sim holds both already sanitised and within their caps; here
  * they are only cut, on a character boundary, to the room there is. The name
  * always fits whole beside the largest script bytes (netpacks.h asserts it),
- * so in practice only the description is ever cut. The cut goes through
- * serverTextSanitize, which leaves the already clean text alone and keeps a
- * letter whole with its combining marks. With fewer than 3 bytes of room
- * there is space for nothing but two empty lengths, so nothing is sent. */
+ * so in practice only the description is ever cut. The cut is
+ * serverTextCut, the sanitiser's own cut without its normalising: it
+ * allocates nothing, which matters because any address may send an info
+ * request, and it keeps a letter whole with its combining marks. With fewer
+ * than 3 bytes of room there is space for nothing but two empty lengths, so
+ * nothing is sent. */
 static size_t buildInfoServerText(ServerSim *sim, uint8_t *out, size_t room) {
     const char *nameIn = serverSimGetServerName(sim);
     const char *descIn = serverSimGetServerDescription(sim);
@@ -212,13 +214,13 @@ static size_t buildInfoServerText(ServerSim *sim, uint8_t *out, size_t room) {
     if ((nameIn[0] == '\0' && descIn[0] == '\0') || room < 3) {
         return 0;
     }
-    serverTextSanitize(nameIn, name, sizeof(name),
-                       room - 2 < INFO_SERVER_NAME_MAX ? room - 2
-                                                       : INFO_SERVER_NAME_MAX);
+    serverTextCut(nameIn, name, sizeof(name),
+                  room - 2 < INFO_SERVER_NAME_MAX ? room - 2
+                                                  : INFO_SERVER_NAME_MAX);
     pos += infoScriptTailPutString(out + pos, name, INFO_SERVER_NAME_MAX);
-    serverTextSanitize(descIn, desc, sizeof(desc),
-                       room - pos - 1 < INFO_SERVER_DESC_MAX
-                           ? room - pos - 1 : INFO_SERVER_DESC_MAX);
+    serverTextCut(descIn, desc, sizeof(desc),
+                  room - pos - 1 < INFO_SERVER_DESC_MAX
+                      ? room - pos - 1 : INFO_SERVER_DESC_MAX);
     pos += infoScriptTailPutString(out + pos, desc, INFO_SERVER_DESC_MAX);
     return pos;
 }

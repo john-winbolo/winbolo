@@ -606,8 +606,9 @@ The bundles and `WinBoloDS` are signed with the entitlements in `src/gui/sdl3/pl
 - `com.apple.security.network.server` — listening UDP socket for inbound peer traffic.
 - `com.apple.security.cs.allow-jit` — LuaJIT compiles bot brains to machine code at run time. Without it the process is killed on the first compiled trace.
 - `com.apple.security.cs.allow-dyld-environment-variables` and `com.apple.security.cs.disable-library-validation` — the Steam client loads its overlay library into the game through `DYLD_INSERT_LIBRARIES`, and that library is signed by Valve. Without both, the Steam overlay and rich presence do not work in a signed build.
+- `com.apple.security.device.audio-input` — voice chat records from the microphone. Under the hardened runtime, macOS refuses microphone access to a process without this entitlement and does so silently: the permission prompt never appears, the device delivers silence, and SDL reports no error. The usage string shown in the prompt comes from `NSMicrophoneUsageDescription` in `src/gui/sdl3/platform/Info.plist.in`. An unsigned development build is not subject to the hardened runtime, so the prompt appears there even without the entitlement.
 
-No audio-input or file-access entitlements are requested.
+No file-access entitlements are requested.
 
 ### Troubleshooting
 

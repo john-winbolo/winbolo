@@ -120,6 +120,17 @@ static void winbolonetAddLobbyInfoFields(cJSON *body) {
     }
     cJSON_AddItemToObject(body, "mods", mods);
   }
+  /* Sent only when the host set one, so a missing key is a server with no
+   * name. lobby_update is a whole snapshot, so WinBolo.net clears what a
+   * body leaves out. The description goes whole: the info reply cuts it to
+   * the room left in the packet, this does not. */
+  if (s_lobbyInfo.serverName[0] != '\0') {
+    cJSON_AddStringToObject(body, "server_name", s_lobbyInfo.serverName);
+  }
+  if (s_lobbyInfo.serverDescription[0] != '\0') {
+    cJSON_AddStringToObject(body, "server_description",
+                            s_lobbyInfo.serverDescription);
+  }
 }
 
 void winbolonetSendLobbyUpdate(void) {

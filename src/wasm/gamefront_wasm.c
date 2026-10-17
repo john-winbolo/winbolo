@@ -245,6 +245,10 @@ bool           gameFrontHostingServeReplays     = TRUE;
 int            gameFrontHostingVoiceMode        = serverVoiceOn;
 char           gameFrontHostingServerName[SERVER_NAME_LEN] = "";
 char           gameFrontHostingServerDesc[SERVER_DESC_LEN] = "";
+/* Defined here only because imgui_lobby.cpp, which the web client compiles,
+ * refers to it. The web client's lobby is drawn inside the page's frame
+ * (sdl3imgui.cpp) and has no window title to put a server name in, so
+ * nothing on the web sets or reads this; it stays "". */
 char           gameFrontLobbyServerName[SERVER_NAME_LEN]   = "";
 
 /* Visibility rules a hosted game starts with. Same story as the hosting

@@ -88,7 +88,172 @@ bool readItem(cJSON *o, WbnNewsItem &out) {
     return true;
 }
 
+/* True for a byte that may appear in a URL newsUnwrapLinkedImages
+ * rewrites. Spaces and control characters end a Markdown URL, and round
+ * brackets would confuse imgui_markdown's own bracket counting. Square
+ * brackets are refused too so a failed match never reads past the next
+ * '[', which keeps the whole pass linear in the body's length. */
+bool urlByteOk(unsigned char c) {
+    if (c <= 0x20 || c == 0x7f) return false;
+    return c != '(' && c != ')' && c != '<' && c != '>' &&
+           c != '[' && c != ']';
+}
+
+/* Reads a URL starting at md[pos] up to the closing ')'. On success
+ * returns true, stores the URL's [start, end) and leaves pos on the ')'. */
+bool readUrl(const std::string &md, size_t &pos, size_t &start, size_t &end) {
+    start = pos;
+    while (pos < md.size() && md[pos] != ')') {
+        if (!urlByteOk((unsigned char)md[pos])) return false;
+        if (pos - start >= WBN_NEWS_MD_MAX_URL) return false;
+        pos++;
+    }
+    if (pos >= md.size() || pos == start) return false;
+    end = pos;
+    return true;
+}
+
+bool hasHttpScheme(const std::string &url) {
+    return SDL_strncasecmp(url.c_str(), "http://", 7) == 0 ||
+           SDL_strncasecmp(url.c_str(), "https://", 8) == 0;
+}
+
+/* Tries to read "![alt](image)" starting at md[pos], which is known to
+ * hold "![". On success returns true and sets the parts and `next`, the
+ * index just past the ')'. */
+bool readImage(const std::string &md, size_t pos,
+               size_t &altStart, size_t &altEnd,
+               size_t &imgStart, size_t &imgEnd, size_t &next) {
+    size_t p = pos + 2;
+    altStart = p;
+    while (p < md.size() && md[p] != ']') {
+        if (md[p] == '[') return false;
+        if (p - altStart >= WBN_NEWS_MD_MAX_ALT) return false;
+        p++;
+    }
+    if (p >= md.size()) return false;
+    altEnd = p++;
+    if (p >= md.size() || md[p] != '(') return false;
+    p++;
+    if (!readUrl(md, p, imgStart, imgEnd)) return false;
+    next = p + 1;
+    return true;
+}
+
+/* Tries to read "[![alt](image)](href)" starting at md[pos], which is
+ * known to hold "[![". On success returns true and sets the parts and
+ * `next`, the index just past the final ')'. */
+bool readLinkedImage(const std::string &md, size_t pos,
+                     size_t &altStart, size_t &altEnd,
+                     size_t &imgStart, size_t &imgEnd,
+                     size_t &hrefStart, size_t &hrefEnd,
+                     size_t &next) {
+    size_t p;
+    if (!readImage(md, pos + 1, altStart, altEnd, imgStart, imgEnd, p)) {
+        return false;
+    }
+    if (p + 1 >= md.size() || md[p] != ']' || md[p + 1] != '(') return false;
+    p += 2;
+    if (!readUrl(md, p, hrefStart, hrefEnd)) return false;
+    next = p + 1;
+    return true;
+}
+
 } /* anonymous namespace */
+
+std::string newsUnwrapLinkedImages(const std::string &md,
+                                   std::vector<WbnNewsImageLink> &outLinks) {
+    std::string out;
+    out.reserve(md.size());
+    size_t pos = 0;
+    while (pos < md.size()) {
+        size_t hit = md.find("[![", pos);
+        if (hit == std::string::npos) {
+            out.append(md, pos, std::string::npos);
+            break;
+        }
+        out.append(md, pos, hit - pos);
+
+        size_t altStart, altEnd, imgStart, imgEnd, hrefStart, hrefEnd, next;
+        if (!readLinkedImage(md, hit, altStart, altEnd, imgStart, imgEnd,
+                             hrefStart, hrefEnd, next)) {
+            /* Not a linked image: keep the '[' and look again from the
+             * '!' so a well-formed construct straight after still works. */
+            out.push_back('[');
+            pos = hit + 1;
+            continue;
+        }
+
+        out.append("![");
+        out.append(md, altStart, altEnd - altStart);
+        out.append("](");
+        out.append(md, imgStart, imgEnd - imgStart);
+        out.push_back(')');
+
+        WbnNewsImageLink link;
+        link.image.assign(md, imgStart, imgEnd - imgStart);
+        link.href.assign(md, hrefStart, hrefEnd - hrefStart);
+        if (hasHttpScheme(link.href)) {
+            outLinks.push_back(std::move(link));
+        }
+        pos = next;
+    }
+    return out;
+}
+
+std::string newsLinkFailedImages(
+    const std::string &md, const std::vector<WbnNewsImageLink> &links,
+    const std::function<bool(const std::string &)> &failed) {
+    std::string out;
+    out.reserve(md.size());
+    size_t pos = 0;
+    while (pos < md.size()) {
+        size_t hit = md.find("![", pos);
+        if (hit == std::string::npos) {
+            out.append(md, pos, std::string::npos);
+            break;
+        }
+        out.append(md, pos, hit - pos);
+
+        size_t altStart, altEnd, imgStart, imgEnd, next;
+        if (!readImage(md, hit, altStart, altEnd, imgStart, imgEnd, next) ||
+            !failed(md.substr(imgStart, imgEnd - imgStart))) {
+            out.push_back('!');
+            pos = hit + 1;
+            continue;
+        }
+
+        const char *href = newsFindImageLink(links, md.data() + imgStart,
+                                             imgEnd - imgStart);
+        out.push_back('[');
+        if (altEnd > altStart) {
+            out.append(md, altStart, altEnd - altStart);
+        } else {
+            out.append(md, imgStart, imgEnd - imgStart);
+        }
+        out.append("](");
+        if (href) {
+            out.append(href);
+        } else {
+            out.append(md, imgStart, imgEnd - imgStart);
+        }
+        out.push_back(')');
+        pos = next;
+    }
+    return out;
+}
+
+const char *newsFindImageLink(const std::vector<WbnNewsImageLink> &links,
+                              const char *image, size_t imageLen) {
+    if (!image) return nullptr;
+    for (const auto &l : links) {
+        if (l.image.size() == imageLen &&
+            memcmp(l.image.data(), image, imageLen) == 0) {
+            return l.href.c_str();
+        }
+    }
+    return nullptr;
+}
 
 bool parseNewsResponse(const char *raw,
                        std::vector<WbnNewsItem> &outItems,

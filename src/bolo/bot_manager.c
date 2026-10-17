@@ -796,7 +796,12 @@ static bool botManagerReloadBrain(ServerSim *sim, BotContext *bot,
         luaBrainInstanceDestroy(&bot->brain);
     }
 
-    SDL_strlcpy(bot->brainPath, brainPath, sizeof(bot->brainPath));
+    /* The round-start reload passes the bot's own buffer; strlcpy with the
+     * same source and destination trips the overlap check in a Debug build
+     * of SDL, so copy only when the path comes from elsewhere. */
+    if (brainPath != bot->brainPath) {
+        SDL_strlcpy(bot->brainPath, brainPath, sizeof(bot->brainPath));
+    }
 
     /* Hand the fresh brain the game clock so its own tick counter continues
      * the session instead of restarting at 0 (see BRAIN_START_ENGINE_TICK). */

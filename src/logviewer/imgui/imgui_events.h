@@ -48,14 +48,14 @@ void lv_imgui_events_add_summary(const char *msg);
 /* Clear all events */
 void lv_imgui_events_clear(void);
 
-/* Remove events with timestamp strictly after the given time (ms). Does
- * nothing once the list is complete. */
-void lv_imgui_events_remove_after(unsigned int timeMs);
+/* Playback restarts from a snapshot restore and posts its lines again; the
+   list keeps the ones it already holds rather than adding them twice. */
+void lv_imgui_events_rewound(void);
 
 /* Tell the panel it now holds every event of the log. A host that has read
  * the whole file ahead (lv_windowCollectAllEvents) calls this once the lines
  * are in. From then until the next lv_imgui_events_clear the list is fixed:
- * add and remove_after do nothing, the lines after the playhead are drawn
+ * add does nothing, the lines after the playhead are drawn
  * dim, and a "now" divider marks the playhead. A host that never calls it (a
  * live feed, the web viewer) keeps the list that grows with playback. */
 void lv_imgui_events_set_complete(void);

@@ -5787,7 +5787,7 @@ static bool scnChooseStart(void *ctx, BYTE player, BYTE *startIdx) {
        the start the round's opening placement reserved for the seat, the
        one the lobby's hand pick or team side chose. Read once, before any
        script is asked, so every script on the list is told the same thing.
-       A script that names another start spends the reservation in
+       A script that names another start still clears the reservation, in
        startsGetStart, so it is never left behind to block a later pick. */
     if (!serverSimGetLobbyStart(h->sim, player, &lobby)) {
         lobby = 0;
@@ -9827,6 +9827,37 @@ static void scnPublishMapScript(ServerSim *sim, const ScenarioHost *h,
                                                  h->entry[which].manifest);
 
         serverSimSetMapScriptSettings(sim, settings, len);
+    }
+}
+
+/* One console line per script the round loads, in load order: its name, who
+ * wrote it and the day it last changed, as its manifest states them, and the
+ * file it came from. Two editions of a mod share a name, and the author and
+ * the date are what tell an operator which one this server is running.
+ * Either one the manifest leaves out reads "unknown". The file is the leaf
+ * and not the path, which keeps the line short enough to read in a rotation;
+ * the directory is the server's own and the operator knows it. */
+static void scnSayLoadedScripts(const ScenarioHost *h) {
+    int i;
+
+    for (i = 0; i < h->count && i < SCN_SCRIPTS_MAX; i++) {
+        const ScenarioManifest *m = h->entry[i].manifest;
+        const char             *name;
+        char                    day[11];
+
+        if (h->entry[i].script[0] == '\0') continue;
+        name = (m != NULL && m->name[0] != '\0')
+                   ? m->name
+                   : scnFileNameOf(h->entry[i].script);
+        if (m != NULL && scnIdentityUpdatedValid(m->updated)) {
+            memcpy(day, m->updated, 10);
+            day[10] = '\0';
+        } else {
+            snprintf(day, sizeof(day), "%s", "unknown");
+        }
+        scnSay(NULL, 0, "scenario: %s by %s, updated %s (%s) loaded", name,
+               (m != NULL && m->author[0] != '\0') ? m->author : "unknown",
+               day, scnFileNameOf(h->entry[i].script));
     }
 }
 

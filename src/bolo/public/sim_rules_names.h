@@ -197,6 +197,9 @@ typedef enum {
       SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                                  \
     X(lgm_arrive_tolerance, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
     X(lgm_return_tolerance, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
+    /* Read by nothing: see LGM_PILL_DROP_SEARCH. Kept rather than removed,  \
+       as a row's index names the rule on the wire and in a recording, and   \
+       game.rule raises on a name that is gone. */                           \
     X(lgm_pill_drop_search, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
     X(lgm_boat_leave_offset, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)        \
     X(lgm_boat_return_offset, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)       \

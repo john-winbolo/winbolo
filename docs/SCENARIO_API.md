@@ -1407,13 +1407,16 @@ rather than left to misbehave quietly.
 being fielded in one pass and reserves a start for each: the start its
 player picked by hand in the lobby, else one on its team's side, else the
 engine's own spread of the field, which keeps teams together and rivals
-apart. That reservation is what `on_choose_start` is handed as `lobby`, and
-the seat's first tank of the round spends it whatever the answer is. So
-`lobby` is a number only for the opening tank of a seat fielded when the
-round starts, and `nil` for every spawn after that, for a seat fielded or
-joined once the round is running, and on a map with no live start. A script
-that names a start other than `lobby` takes that start, and the reserved one
-is released, not kept for a later spawn. Other seats keep their own
+apart. That reservation is what `on_choose_start` is handed as `lobby`. It
+is used once: when the seat's first tank of the round is placed, the engine
+clears it, whatever the answer was. So `lobby` is a number only for the
+opening tank of a seat fielded when the round starts, and `nil` for every
+spawn after that, for a seat fielded or joined once the round is running,
+and on a map with no live start. A script that names a start other than
+`lobby` takes that start, and the reserved one is cleared, not kept for a
+later spawn. The one tank that does not clear it is one a `spawn` op builds
+without naming a start: that op leaves the reservation for the engine's own
+next placement of the seat. Other seats keep their own
 reservations: two tanks sent to one start are put on free squares beside it,
 as teammates sharing a start are. A script that names no second parameter is
 asked exactly as before. Mac Bolo Rules is the worked case: it returns
@@ -1652,7 +1655,7 @@ starts comes due after about twice the seconds it asked for.
 | `game.tank(p)` | `{ mx, my, wx, wy, dir, armour, shells, mines, trees, pills, sight, boat, dead, name, bot, kills, deaths, mods }`, or `nil` when the seat is empty or has no tank. `mx, my` are map squares and `wx, wy` world coordinates; `dir` is the full 0-255 facing, which is what `teleport` takes back. `sight` is the gun sight, the range a shell flies before it bursts, in half squares from the rule `gunsight_min` to `gunsight_max` (2 to 14 classic); a bot's or a human's alike. `mods` is `{ speed, accel, turn, reload, dealt, taken }`. |
 | `game.builder(p)` | `{ state, mx, my, wx, wy, job, trees, mines }`, or `nil` when the seat has none. `state` is `"in_tank"`, `"going"`, `"returning"`, `"parachuting"` or `"dead"`; `job` is an action word, or absent when he is on none. The square is tracked while he is out of the tank — in the tank he is wherever his tank is, which is why the state comes first. |
 | `game.lobby_slot(p)` | `{ connected, bot, team, name, ready, fielded, alive, team_pool }`, or `nil` for an empty seat. **`fielded` is the field that tells a held seat from one on the field.** `team_pool` is the label of the bot naming pool the seat's team draws bot names from, such as `"Famous Painters"`: the name the lobby shows in that team's pool dropdown. It is absent when the seat is on no team (0) or the team has no pool. A team has a pool once it is set up in the lobby; teams 1 and 2 start with the first pool, and a team the host never set up has none, so its seats read `nil` even when they hold bots. A dedicated server's `-bots` names its bots from one random pool without setting any team's pool, so there `team_pool` is the first pool's label, not the pool the bot names came from. The label comes from the server's own pools, so every client reads the same word. A script can label a team of bots only by it (see below). |
-| `game.lobby_start(p)` | The start the lobby reserved for seat `p` and has not yet spent, counted from 1 as `game.start` counts, or `nil`. The same number `on_choose_start` is handed as `lobby`, so it is `nil` once the seat's first tank of the round is built (see **The lobby's start** under Policies). |
+| `game.lobby_start(p)` | The start the lobby reserved for seat `p` and has not yet used, counted from 1 as `game.start` counts, or `nil`. The same number `on_choose_start` is handed as `lobby`, so it is `nil` once the seat's first tank of the round is built (see **The lobby's start** under Policies). |
 | `game.lobby_side(p)` | The side seat `p`'s lobby team chose to start on, as `"north"`, `"east"`, `"south"` or `"west"`, or `nil` for an empty seat, a seat on no team (0) and a team with no side. A side the lobby filled in for a team, opposite the one other team's choice, reads the same as one a player chose. |
 | `game.allied(a, b)` | Whether seats `a` and `b` are on the same side in the game: `true` or `false`, `true` for a seat and itself, and `nil` when either seat is empty. This is the alliance table every game rule reads — who a pillbox fires at, which bases refuel whom — including alliances players made and left in play. **It can differ from `game.lobby_slot(p).team`:** two teammates where one has left the alliance share a team but are not allied, and players on different teams who allied share a side but not a team. |
 
@@ -2592,7 +2595,7 @@ rather than by having no speed.
 | `lgm_helicopter_speed` | 3 | 1 to 255 | How far the builder travels each tick while he parachutes in, so it is also how long he is in the air: the drop is the distance over this. The rule's name is the one the code has always carried for the drop; everything a player meets calls it a parachute, `game.builder_parachute` included. See the note below the table before you raise it. |
 | `lgm_arrive_tolerance` | 16 | 1 to 255 | How near his goal counts as arrived, as a half-width taken either way round it on both axes. The job itself is done on the square that was ordered, not the one he stopped on. |
 | `lgm_return_tolerance` | 128 | 1 to 65535 | The same, coming back to the tank. |
-| `lgm_pill_drop_search` | 10 | 1 to 255 | How many squares of a column the search for somewhere to put a pillbox down walks. |
+| `lgm_pill_drop_search` | 10 | 1 to 255 | Removed, does nothing. The name is still accepted, so a script that sets it still runs. |
 | `lgm_boat_leave_offset` | 144 | 0 to 255 | How far out he steps when he boards a boat. |
 | `lgm_boat_return_offset` | 160 | 0 to 255 | How far in he steps coming off one. |
 

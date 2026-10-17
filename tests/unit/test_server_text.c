@@ -13,7 +13,10 @@
  *     noncharacters are dropped; an emoji is kept;
  *   - NFC, leading combining marks dropped, stacked marks capped;
  *   - the cut never falls inside a character or between a letter and its
- *     marks, and the output buffer size is honoured below maxBytes.
+ *     marks, and the output buffer size is honoured below maxBytes;
+ *   - serverTextCut, the cut alone for text already cleaned, which the
+ *     info reply uses: the same cut as the sanitiser's, and clean text
+ *     that fits passes through unchanged.
  *
  * run_server_text_sim — the sim's setters sanitise and cut, and the getters
  * give "" for a NULL sim.
@@ -67,6 +70,21 @@ static int stCheck(const char *in, size_t outSize, size_t maxBytes,
 
     memset(out, 0xAB, sizeof(out));
     n = serverTextSanitize(in, out, outSize, maxBytes);
+    UT_ASSERT_MSG(strcmp(out, want) == 0, "%s: got '%s', expected '%s'",
+                  what, out, want);
+    UT_ASSERT_MSG(n == strlen(want), "%s: returned %u, expected %u", what,
+                  (unsigned)n, (unsigned)strlen(want));
+    return 0;
+}
+
+/* Cut in (already clean) with the given caps and compare to want. */
+static int stCutCheck(const char *in, size_t outSize, size_t maxBytes,
+                      const char *want, const char *what) {
+    char   out[512];
+    size_t n;
+
+    memset(out, 0xAB, sizeof(out));
+    n = serverTextCut(in, out, outSize, maxBytes);
     UT_ASSERT_MSG(strcmp(out, want) == 0, "%s: got '%s', expected '%s'",
                   what, out, want);
     UT_ASSERT_MSG(n == strlen(want), "%s: returned %u, expected %u", what,
@@ -173,6 +191,21 @@ int run_server_text_sanitize(void) {
         return 1;
     if (stCheck("ab x\xCC\x81", 64, 6, "ab x\xCC\x81", "letter and mark fit"))
         return 1;
+
+    /* serverTextCut: the cut alone, on text the sanitiser has already
+       cleaned. The same rules as the sanitiser's cut, and clean text that
+       fits comes back unchanged. */
+    if (stCutCheck("Andy's Den", 64, 32, "Andy's Den", "cut: fits")) return 1;
+    if (stCutCheck(NULL, 64, 32, "", "cut: NULL")) return 1;
+    if (stCutCheck("caf\xC3\xA9 \xE2\x9C\x93", 64, 32, "caf\xC3\xA9 \xE2\x9C\x93",
+                   "cut: UTF-8 fits")) return 1;
+    if (stCutCheck("abc\xC3\xA9", 64, 4, "abc", "cut: before a character"))
+        return 1;
+    if (stCutCheck("abcd efg", 64, 5, "abcd", "cut: no trailing space"))
+        return 1;
+    if (stCutCheck("ab x\xCC\x81", 64, 5, "ab", "cut: letter and mark go together"))
+        return 1;
+    if (stCutCheck("abcdefgh", 4, 32, "abc", "cut: small buffer")) return 1;
     return 0;
 }
 

@@ -120,7 +120,7 @@ scenario = {
                 "off in the lobby.",
   api = 1,
   author = "WinBolo",
-  updated = "2026-10-03T00:40Z",
+  updated = "2026-10-15T15:09Z",
   kind = "mod",
   bound = false,
 

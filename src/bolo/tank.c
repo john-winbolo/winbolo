@@ -2155,13 +2155,11 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
        * adjacent parked boat) and at the tank's own boat-exit speed so
        * deliberate fast exits work.
        * BUILDING and HALFBUILDING are both solid walls (speed 0, and
-       * tankBuildingCollision stops the body at either), so the boat
-       * cannot get onto them whatever this clamp does. BUILDING is not
-       * skipped, so a slow boat stops the inset short of it. HALFBUILDING
-       * is skipped only because the clamp was first written with it on
-       * the same list as road; there is no wall-specific reason, and the
-       * collision stops the boat there instead. Neither choice lets a
-       * boat land on a wall. */
+       * tankBuildingCollision stops the body at either) and are held
+       * alike. The collision stops the body short of the inset, so the
+       * clamp never moves a tank at a wall; HALFBUILDING used to be
+       * skipped here only because the clamp was first written with it on
+       * the same list as road. */
       if ((*value)->speed < tankBoatExitSpeed(sim, *value) &&
           mapIsLand(mp, pb, bs, newbmx, newbmy) == FALSE) {
         WORLD rMinX = ((WORLD)newbmx) << TANK_SHIFT_MAPSIZE;
@@ -2171,25 +2169,25 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         BYTE adj;
         if (newbmx > 0 && mapIsLand(mp, pb, bs, newbmx - 1, newbmy)) {
           adj = mapGetPos(mp, newbmx - 1, newbmy);
-          if (adj != HALFBUILDING && adj != BOAT) {
+          if (adj != BOAT) {
             if ((*value)->x < rMinX + (WORLD) sim->rules.tank_boat_exit_inset) (*value)->x = rMinX + (WORLD) sim->rules.tank_boat_exit_inset;
           }
         }
         if (newbmx < 255 && mapIsLand(mp, pb, bs, newbmx + 1, newbmy)) {
           adj = mapGetPos(mp, newbmx + 1, newbmy);
-          if (adj != HALFBUILDING && adj != BOAT) {
+          if (adj != BOAT) {
             if ((*value)->x > rMaxX - (WORLD) sim->rules.tank_boat_exit_inset) (*value)->x = rMaxX - (WORLD) sim->rules.tank_boat_exit_inset;
           }
         }
         if (newbmy > 0 && mapIsLand(mp, pb, bs, newbmx, newbmy - 1)) {
           adj = mapGetPos(mp, newbmx, newbmy - 1);
-          if (adj != HALFBUILDING && adj != BOAT) {
+          if (adj != BOAT) {
             if ((*value)->y < rMinY + (WORLD) sim->rules.tank_boat_exit_inset) (*value)->y = rMinY + (WORLD) sim->rules.tank_boat_exit_inset;
           }
         }
         if (newbmy < 255 && mapIsLand(mp, pb, bs, newbmx, newbmy + 1)) {
           adj = mapGetPos(mp, newbmx, newbmy + 1);
-          if (adj != HALFBUILDING && adj != BOAT) {
+          if (adj != BOAT) {
             if ((*value)->y > rMaxY - (WORLD) sim->rules.tank_boat_exit_inset) (*value)->y = rMaxY - (WORLD) sim->rules.tank_boat_exit_inset;
           }
         }

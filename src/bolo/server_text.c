@@ -214,3 +214,23 @@ size_t serverTextSanitize(const char *in, char *out, size_t outSize,
     free(clean);
     return n;
 }
+
+size_t serverTextCut(const char *in, char *out, size_t outSize,
+                     size_t maxBytes) {
+    size_t limit;
+
+    if (out == NULL || outSize == 0) {
+        return 0;
+    }
+    out[0] = '\0';
+    if (in == NULL) {
+        return 0;
+    }
+    limit = maxBytes;
+    if (limit > outSize - 1) {
+        limit = outSize - 1;
+    }
+    /* The second pass alone: on clean text it only applies the cut, since
+     * there is nothing left for it to drop or fold. */
+    return serverTextPass(in, out, limit, true);
+}

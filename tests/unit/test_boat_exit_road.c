@@ -22,7 +22,9 @@
  *      tank that has just picked one up is then held off the road beyond;
  *   5. a base square beside the water reads as ROAD (map load forces ROAD
  *      under every base) and so is held and landed on like road, as the
- *      original code did for any land.
+ *      original code did for any land;
+ *   6. a wall beside the water, BUILDING or HALFBUILDING, holds a slow boat
+ *      at the same inset as any other land.
  */
 
 #include <stdint.h>
@@ -89,6 +91,10 @@ static void drive(ServerSim *sim, SPEEDTYPE cap) {
     }
 }
 
+/* Where the last assertHeld found the tank's centre, so a test can compare
+ * two runs. */
+static WORLD s_heldX;
+
 /* The tank is still afloat on the last river square, its centre no nearer
  * the bank than the clamp allows. */
 static int assertHeld(ServerSim *sim, const char *label) {
@@ -96,6 +102,7 @@ static int assertHeld(ServerSim *sim, const char *label) {
     WORLD limit = (WORLD) ((((WORLD) BANK_X + 1) << TANK_SHIFT_MAPSIZE) - 1 -
                            (WORLD) sim->sim.rules.tank_boat_exit_inset);
     tankGetWorld(&sim->sim.tanks[0], &x, &y);
+    s_heldX = x;
     UT_ASSERT_MSG(tankIsOnBoat(&sim->sim.tanks[0]) == TRUE,
                   "%s: a slow boat left its boat on square %d", label,
                   (int) (x >> TANK_SHIFT_MAPSIZE));
@@ -169,6 +176,27 @@ int run_boat_exit_grass_unchanged(void) {
         return 1;
     }
     return fastLands(GRASS, "grass, full speed");
+}
+
+/* A wall beside the water holds a slow boat short of the bank like any
+ * other land, and BUILDING and HALFBUILDING hold it at the same spot. A boat
+ * can never land on a wall, so there is no fast case. The clamp once skipped
+ * HALFBUILDING alone, a leftover from when it shared a list with road; the
+ * building collision stops the body before the inset either way, so this
+ * pins the two walls to one answer rather than a particular one. */
+int run_boat_exit_wall_held(void) {
+    WORLD buildingX;
+    if (slowHeld(BUILDING, "building, half speed") != 0) {
+        return 1;
+    }
+    buildingX = s_heldX;
+    if (slowHeld(HALFBUILDING, "half building, half speed") != 0) {
+        return 1;
+    }
+    UT_ASSERT_MSG(s_heldX == buildingX,
+                  "a half building held the boat at %d, a building at %d",
+                  (int) s_heldX, (int) buildingX);
+    return 0;
 }
 
 /* Driving onto a parked boat takes it at any speed: the tank on road at

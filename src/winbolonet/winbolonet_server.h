@@ -37,6 +37,7 @@
 #include <string.h>
 #include "global.h"
 #include "server_voice_mode.h"  /* ServerVoiceMode — the voiceMode field below */
+#include "server_text.h"        /* SERVER_NAME_LEN / SERVER_DESC_LEN */
 
 /* Forward declaration — defined in server_sim.h */
 #ifndef BALANCEPROPOSAL_TYPEDEF
@@ -106,6 +107,8 @@ typedef struct {
   BYTE     scenarioMaxPlayers;                   /* its human cap, 0 = none */
   BYTE     modCount;                             /* 0..WBN_MODS_MAX */
   char     modNames[WBN_MODS_MAX][WBN_SCENARIO_NAME_LEN]; /* in list order */
+  char     serverName[SERVER_NAME_LEN];          /* host's name; "" for none */
+  char     serverDescription[SERVER_DESC_LEN];   /* host's description; "" for none */
 } WbnLobbyInfo;
 
 /*********************************************************

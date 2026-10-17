@@ -249,6 +249,19 @@ static void parseServerEntry(const cJSON *src, WbnServerListEntry *dst) {
             dst->modCount++;
         }
     }
+
+    /* The host's name and description, cleaned by the same rule the info
+     * reply's reader applies, so a tracker row and a pinged row show the
+     * same text. Absent, null or not a string reads as none. */
+    const cJSON *serverName = cJSON_GetObjectItemCaseSensitive(src, "server_name");
+    serverTextSanitize(cJSON_IsString(serverName) ? serverName->valuestring : NULL,
+                       dst->serverName, sizeof(dst->serverName),
+                       SERVER_NAME_MAX);
+    const cJSON *serverDesc =
+        cJSON_GetObjectItemCaseSensitive(src, "server_description");
+    serverTextSanitize(cJSON_IsString(serverDesc) ? serverDesc->valuestring : NULL,
+                       dst->serverDescription, sizeof(dst->serverDescription),
+                       SERVER_DESC_MAX);
 }
 
 bool wbnServerListParse(const char *json, WbnServerList *out) {

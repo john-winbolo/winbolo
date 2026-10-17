@@ -520,6 +520,9 @@ int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
 int run_wbn_rekey_codec(void);
 int run_wbn_news_parse(void);
+int run_wbn_news_markdown(void);
+int run_news_image_budget(void);
+int run_news_image_fit(void);
 
 /* News fetch lifetime regression (test_wbn_news_fetch.cpp): freeing the
  * fetch handle while the worker thread is still parked in the network GET
@@ -539,6 +542,7 @@ int run_wbn_serverlist_players(void);
 int run_wbn_serverlist_motd(void);
 int run_wbn_serverlist_malformed(void);
 int run_wbn_serverlist_scripts(void);
+int run_wbn_serverlist_server_text(void);
 int run_wbn_map_parse(void);
 int run_wbn_map_fetch_policy(void);
 int run_brain_crash_log_writes_file(void);
@@ -1387,6 +1391,33 @@ int run_lv_hide_lobby_window_mapping(void);
 int run_lv_hide_lobby_no_lobby_fallback(void);
 int run_lv_hide_lobby_no_marker_anchor(void);
 int run_lv_hide_lobby_periodic_snapshot(void);
+
+/* Kill and death tallies across seeks (test_lv_calibration.c): a seek back
+ * restores them with the snapshot, so a replayed stretch is not counted twice. */
+int run_lv_kill_tally_seek(void);
+/* A seek back to a snapshot with a tank off the map shows it dead. */
+int run_lv_alive_seek(void);
+/* The load a step at a time, as the viewer runs it behind its progress bar. */
+int run_lv_load_steps(void);
+/* A forward seek through waits lands where ticking would. */
+int run_lv_fast_forward_waits(void);
+/* A snapshot repeating the last map is stepped over unless the map changed. */
+int run_lv_same_map_runs(void);
+
+/* Log viewer events panel list (test_lv_event_list.c): a replay after a seek
+ * back adds no line twice, and pinned lines stay ahead of the timed ones. */
+int run_lv_event_list_replay(void);
+int run_lv_event_list_pinned(void);
+
+/* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
+ * an index the size of a ten-day log. */
+int run_lv_snapshot_index_lookup(void);
+int run_lv_snapshot_index_ten_days(void);
+
+/* Log viewer load results (test_lv_load_walk.c): total time, game start,
+ * names, rule changes, server ticks and teams for each committed .wbv
+ * fixture, pinned together. */
+int run_lv_load_walk_fixtures(void);
 
 /* Load-time slot-name walk (test_lv_calibration.c): a player who joins after
  * the lobby marker is absent from the live roster at game start, where the
@@ -2943,6 +2974,11 @@ int run_console_mem_report(void);
 int run_memreport_flags(void);
 int run_memreport_process_na(void);
 int run_memreport_deep_walk_cap(void);
+/* The T1 memory accessors on server_sim.h the client's System Info panel
+ * reads (test_memory_info.c). */
+int run_memory_info_hosted_bots(void);
+int run_memory_info_no_bots(void);
+int run_memory_info_process_figures(void);
 int run_console_info_and_status(void);
 int run_console_savemap_path(void);
 int run_console_unknown_command_is_inert(void);
@@ -2988,6 +3024,7 @@ int run_boat_exit_fast_onto_road_lands(void);
 int run_boat_exit_grass_unchanged(void);
 int run_boat_exit_parked_boat_pickup(void);
 int run_boat_exit_base_beside_water(void);
+int run_boat_exit_wall_held(void);
 int run_tank_mod_pill_leads_half_speed_boat(void);
 int run_tank_mod_predicted_stop_matches_engine(void);
 

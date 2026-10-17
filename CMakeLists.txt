@@ -854,7 +854,6 @@ set(IOS_DATA_BMP
     ${CMAKE_SOURCE_DIR}/data/tanks.bmp
     ${CMAKE_SOURCE_DIR}/data/boats.bmp
     ${CMAKE_SOURCE_DIR}/data/items.bmp
-    ${CMAKE_SOURCE_DIR}/data/splash.bmp
     ${CMAKE_SOURCE_DIR}/data/logo.bmp
     ${CMAKE_SOURCE_DIR}/data/base.bmp
     ${CMAKE_SOURCE_DIR}/data/pillbox.bmp
@@ -1660,6 +1659,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
+    src/gui/sdl3/news_image_budget.cpp
     # Copies subscribed Workshop items into <prefpath>Workshop. Desktop only:
     # winbolo.c, imgui_steam_nav.cpp and imgui_settings.cpp call it, and the
     # mobile and wasm builds leave those calls out rather than link it.
@@ -1766,6 +1766,7 @@ set(LOGVIEWER_LIB_SOURCES
     # The map File > Open map at this time in single player writes
     # (logviewer.c calls it).
     src/logviewer/lv_spmap.c
+    src/logviewer/lv_event_list.c
     src/logviewer/imgui/imgui_context.cpp
     src/logviewer/imgui/imgui_main_menu.cpp
     src/logviewer/imgui/imgui_controls.cpp
@@ -4001,6 +4002,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
+    # Unwrapping linked thumbnails in news bodies for imgui_markdown.
+    tests/unit/test_wbn_news_markdown.cpp
+    # The news image cache's size limit and which images it may evict.
+    tests/unit/test_news_image_budget.cpp
+    # The size the news window draws an image at (header-only maths).
+    tests/unit/test_news_image_fit.cpp
     tests/unit/test_wbn_news_fetch.cpp
     tests/unit/test_wbn_country_cache.c
     tests/unit/test_wbn_prefs_sync.c
@@ -4495,6 +4502,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # with recording callbacks instead of a live server (server_console.c
     # itself comes in with server_static).
     tests/unit/test_server_console.c
+    # The T1 memory accessors on server_sim.h that the client's System Info
+    # panel reads: the process figures, each bot's Lua heap and the world
+    # list counts of a hosted sim.
+    tests/unit/test_memory_info.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -4530,6 +4541,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # target already builds for its own tests — and its functions are a tile
     # number in and a colour out. test_map_colours.c drives it directly.
     src/gui/sdl3/map_colours.c
+    # news_image_budget.cpp qualifies too: it is the news image cache's
+    # eviction rule over URLs, byte counts and frame numbers, with no SDL,
+    # no ImGui and no textures. test_news_image_budget.cpp drives it.
+    src/gui/sdl3/news_image_budget.cpp
     # The threaded news fetcher itself (not just the pure parser): the
     # free-during-fetch lifetime test drives its real worker thread. Its
     # network GET is reached through a test seam, so no libcurl is pulled in
@@ -4576,6 +4591,15 @@ set(WINBOLO_UNITTESTS_SOURCES
     # clip-time fit resolves base cells from the log's own snapshots
     # (test_lv_calibration.c).
     tests/unit/test_lv_calibration.c
+    # Log viewer snapshot index: time lookups and a ten-day log's worth of
+    # entries (test_lv_snapshot_index.c).
+    tests/unit/test_lv_snapshot_index.c
+    # Log viewer load results pinned on the committed .wbv fixtures
+    # (test_lv_load_walk.c).
+    tests/unit/test_lv_load_walk.c
+    # Log viewer events panel list: replays after a seek back and pinned
+    # lines (test_lv_event_list.c).
+    tests/unit/test_lv_event_list.c
     # Replay camera range: the load's 127,127 default, a highlight jump, a
     # grid that grew and the raw setter all keep the view's far edge at 255
     # on a grid wider than half the map (test_lv_camera.c).
@@ -4772,6 +4796,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The text dump "Log Viewer.exe -dump" writes, for test_lv_dump.c.
     src/logviewer/lv_dump.c
     src/logviewer/lv_spmap.c
+    # The events panel's line list. Plain C with no ImGui headers, split out
+    # of imgui_events.cpp so test_lv_event_list.c drives the code the panel
+    # runs.
+    src/logviewer/lv_event_list.c
 )
 
 if(WB_NETDEBUG)
@@ -5261,6 +5289,9 @@ set(_unit_test_names
     wbn_bearer_state
     wbn_rekey_codec
     wbn_news_parse
+    wbn_news_markdown
+    news_image_budget
+    news_image_fit
     wbn_news_free_during_fetch
     wbn_country_cache
     wbn_prefs_parse_get
@@ -5272,6 +5303,7 @@ set(_unit_test_names
     wbn_serverlist_motd
     wbn_serverlist_malformed
     wbn_serverlist_scripts
+    wbn_serverlist_server_text
     wbn_map_parse
     wbn_map_fetch_policy
     brain_crash_log_writes_file
@@ -5424,6 +5456,16 @@ set(_unit_test_names
     lv_hide_lobby_no_lobby_fallback
     lv_hide_lobby_no_marker_anchor
     lv_hide_lobby_periodic_snapshot
+    lv_kill_tally_seek
+    lv_alive_seek
+    lv_load_steps
+    lv_fast_forward_waits
+    lv_same_map_runs
+    lv_event_list_replay
+    lv_event_list_pinned
+    lv_snapshot_index_lookup
+    lv_snapshot_index_ten_days
+    lv_load_walk_fixtures
     lv_logged_name_from_join_event
     lv_game_settings_from_walk
     lv_game_settings_absent
@@ -6227,6 +6269,9 @@ set(_unit_test_names
     memreport_flags
     memreport_process_na
     memreport_deep_walk_cap
+    memory_info_hosted_bots
+    memory_info_no_bots
+    memory_info_process_figures
     console_info_and_status
     console_savemap_path
     console_unknown_command_is_inert
@@ -6259,6 +6304,7 @@ set(_unit_test_names
     boat_exit_grass_unchanged
     boat_exit_parked_boat_pickup
     boat_exit_base_beside_water
+    boat_exit_wall_held
     tank_mod_pill_leads_half_speed_boat
     tank_mod_predicted_stop_matches_engine
     tank_modifiers_op_writes_set
