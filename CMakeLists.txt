@@ -4978,6 +4978,7 @@ set(_unit_test_names
     prefs_merge_reset_wins
     prefs_merge_idle_no_write
     prefs_merge_missing_retry
+    prefs_merge_adopt_keeps_local
     join_running_phase_not_lobby
     lobby_settings_codec_and_apply
     lobby_settings_scenario_apply

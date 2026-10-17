@@ -1074,7 +1074,12 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
      position on every resize/move. Calling it here would overwrite the corrected
      position (e.g. centered within maximized bounds) with the actual position. */
   gameFrontPutPrefs(keys);
-  prefsFlush();
+  /* With merge-on-save a flush that finds no file (another program between
+     its remove and its rename) waits for the next flush and writes nothing.
+     This is the last flush, so it is tried twice, as the Log Viewer does. */
+  if (!prefsFlush()) {
+    prefsFlush();
+  }
   if (humanSim != NULL) {
     frontEndSetActiveClientSim(NULL);
     netDestroy(humanSim);

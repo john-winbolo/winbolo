@@ -28,6 +28,10 @@
  *                                   waits; the file back = a merge, still
  *                                   gone = the whole document; shutdown
  *                                   does both tries
+ *   - prefs_merge_adopt_keeps_local: the game adopts the server document;
+ *                                   the viewer's device-local sections
+ *                                   on the file stay as the viewer wrote
+ *                                   them
  *
  * Portable on purpose (stdio only): these run on Windows too.
  */
@@ -502,6 +506,76 @@ int run_prefs_merge_missing_retry(void) {
     prefsShutdown();
     diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
     UT_ASSERT_MSG(strcmp(got, "350") == 0, "shutdown did not write: %s", got);
+
+    endTest(path);
+    return 0;
+}
+
+/* The game adopts the server's prefs document (cloud sync) while the
+ * viewer runs beside it. The synced sections come from the server, but the
+ * device-local ones on the file (the viewer's layout and window) must stay
+ * as the viewer wrote them, not go back to the game's old copy. */
+int run_prefs_merge_adopt_keeps_local(void) {
+    char path[1024];
+    char got[256];
+    const char *server =
+        "{\"_version\":1,"
+        "\"SETTINGS\":{\"Player Name\":\"Server\"},"
+        "\"KEYS\":{\"Forward\":\"99\"},"
+        "\"LOGVIEWER\":{\"Window.X\":\"999\"}}";
+
+    UT_ASSERT(utScratchPath(path, sizeof(path), "WinBolo.json"));
+    remove(path);
+    UT_ASSERT(seedFile(path));
+
+    /* prefs.c is the game here; the second document is the viewer. */
+    prefsInit(path);
+    prefsSetMergeOnSave(true);
+    UT_ASSERT(gameStart(path));
+
+    /* The viewer moves its window and changes its layout. */
+    UT_ASSERT(gameSet(path, "LOGVIEWER", "Window.X", "250"));
+    UT_ASSERT(gameSet(path, "LOGVIEWER", "Dock.Ini", "viewer layout"));
+    UT_ASSERT(gameSet(path, "WINDOW", "Width", "1024"));
+
+    /* The game changes one device-local key of its own, then adopts. */
+    UT_ASSERT(prefsSetString("HOSTING", "Port", "27500") == 1);
+    UT_ASSERT(prefsAdoptServerDocument(server) == PREFS_ADOPT_OK);
+    UT_ASSERT(prefsFlush() == 1);
+    UT_ASSERT(!prefsIsDirty());
+
+    /* The synced sections are the server's. */
+    diskGet(path, "SETTINGS", "Player Name", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "Server") == 0, "server value not written: %s", got);
+    diskGet(path, "KEYS", "Forward", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "99") == 0, "server section not written: %s", got);
+
+    /* The viewer's device-local sections are as the viewer wrote them. */
+    diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "250") == 0, "viewer window lost: %s", got);
+    diskGet(path, "LOGVIEWER", "Dock.Ini", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "viewer layout") == 0, "viewer layout lost: %s", got);
+    diskGet(path, "WINDOW", "Width", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "1024") == 0, "WINDOW section lost: %s", got);
+
+    /* The game's own device-local change and the sync state are written. */
+    diskGet(path, "HOSTING", "Port", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "27500") == 0, "game's own change lost: %s", got);
+    diskGet(path, "DEVICE", "SyncDirty", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "No") == 0, "sync state not written: %s", got);
+
+    /* The game now reads the viewer's values. */
+    prefsGetString("LOGVIEWER", "Window.X", "", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "250") == 0, "game copy stale: %s", got);
+
+    /* The next write is a key merge again: a later viewer change stays. */
+    UT_ASSERT(gameSet(path, "LOGVIEWER", "Window.X", "300"));
+    UT_ASSERT(prefsSetString("SETTINGS", "Player Name", "Game") == 1);
+    UT_ASSERT(prefsFlush() == 1);
+    diskGet(path, "LOGVIEWER", "Window.X", got, sizeof(got));
+    UT_ASSERT_MSG(strcmp(got, "300") == 0, "later viewer change lost: %s", got);
+    diskGet(path, "SETTINGS", "Player Name", got, sizeof(got));
+    UT_ASSERT(strcmp(got, "Game") == 0);
 
     endTest(path);
     return 0;

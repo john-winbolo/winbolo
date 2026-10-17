@@ -64,7 +64,8 @@ void prefsSetAutosaveDebounce(unsigned intervalMs);
 /* Debounced mode only: call frequently (e.g. once per frame) with a
  * monotonic millisecond clock. Flushes the document once intervalMs has
  * elapsed since the most recent change. No-op in immediate mode or when
- * not dirty. Returns true exactly when it performed a flush this call
+ * not dirty. A write that fails is tried again 2 s later at the earliest,
+ * not on every call. Returns true exactly when it performed a flush this call
  * (false otherwise, including immediate mode, not-dirty, or when the
  * interval has not yet elapsed). */
 bool prefsPumpAutosave(uint64_t nowMs);
