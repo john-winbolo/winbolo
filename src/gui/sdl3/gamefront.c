@@ -402,6 +402,12 @@ int   gameFrontScnPanelY = -1;
 int   gameFrontScnPanelScale = -1;
 int   gameFrontScnPanelAlpha = -1;
 bool  gameFrontScnPanelCloseAsk = TRUE;
+int   gameFrontScnTextX = -1;
+int   gameFrontScnTextY = -1;
+int   gameFrontScnTextW = -1;
+int   gameFrontScnTextH = -1;
+int   gameFrontScnTextAlpha = -1;
+bool  gameFrontScnTextShown = TRUE;
 float gameFrontOverviewZoom = 2.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
@@ -4884,6 +4890,32 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     }
   }
 
+  /* The Scenario Text window's place, size, opacity and shown flag. The
+     size is checked again against the display when the window is drawn;
+     here a value below -1 is read as never set, and the alpha is clamped,
+     for the reason given above. */
+  prefsGetString("WINDOW", "Scenario Text X", "-1", buff, FILENAME_MAX);
+  gameFrontScnTextX = atoi(buff);
+  prefsGetString("WINDOW", "Scenario Text Y", "-1", buff, FILENAME_MAX);
+  gameFrontScnTextY = atoi(buff);
+  prefsGetString("WINDOW", "Scenario Text Width", "-1", buff, FILENAME_MAX);
+  gameFrontScnTextW = atoi(buff);
+  if (gameFrontScnTextW < -1) gameFrontScnTextW = -1;
+  prefsGetString("WINDOW", "Scenario Text Height", "-1", buff, FILENAME_MAX);
+  gameFrontScnTextH = atoi(buff);
+  if (gameFrontScnTextH < -1) gameFrontScnTextH = -1;
+  prefsGetString("WINDOW", "Scenario Text Alpha", "-1", buff, FILENAME_MAX);
+  gameFrontScnTextAlpha = atoi(buff);
+  if (gameFrontScnTextAlpha != -1) {
+    if (gameFrontScnTextAlpha < 0) {
+      gameFrontScnTextAlpha = 0;
+    } else if (gameFrontScnTextAlpha > 100) {
+      gameFrontScnTextAlpha = 100;
+    }
+  }
+  prefsGetString("WINDOW", "Scenario Text Shown", "Yes", buff, FILENAME_MAX);
+  gameFrontScnTextShown = scnPanelYesNoParse(buff, true) ? TRUE : FALSE;
+
   prefsGetString("MENU", "Message Label Size", "1", buff, FILENAME_MAX);
   labelMsg = atoi(buff);
   prefsGetString("MENU", "Tank Label Size", "1", buff, FILENAME_MAX);
@@ -5386,6 +5418,19 @@ void gameFrontFlushWindowSettings(void) {
   prefsSetString("WINDOW", "Scenario Panel Scale", buff);
   intToStr(gameFrontScnPanelAlpha, buff, sizeof(buff));
   prefsSetString("WINDOW", "Scenario Panel Alpha", buff);
+
+  intToStr(gameFrontScnTextX, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Text X", buff);
+  intToStr(gameFrontScnTextY, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Text Y", buff);
+  intToStr(gameFrontScnTextW, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Text Width", buff);
+  intToStr(gameFrontScnTextH, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Text Height", buff);
+  intToStr(gameFrontScnTextAlpha, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Text Alpha", buff);
+  prefsSetString("WINDOW", "Scenario Text Shown",
+                 scnPanelYesNoWord(gameFrontScnTextShown));
 
   s_windowSettingsDirty = false;
 }

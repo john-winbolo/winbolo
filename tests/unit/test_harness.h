@@ -4063,6 +4063,9 @@ int run_scenario_panel_timer_text(void);
 int run_scenario_announce_remaining(void);
 int run_scenario_announce_position(void);
 int run_scenario_status_line(void);
+/* The Scenario Text window's fit: the source rectangle scaled into the
+ * window with one factor for both axes and centred. */
+int run_scenario_text_fit(void);
 /* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
  * quarter of the screen's shorter side in the game view's top-right, on a
  * phone, a tablet, and views too small for the full side. */

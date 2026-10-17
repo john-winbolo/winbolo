@@ -190,167 +190,103 @@ static inline bool scnAnnounceRemaining(const char *text, uint32_t arrivedTick,
     return true;
 }
 
-/* A rectangle in screen pixels, x0/y0 the top-left corner and x1/y1 the
- * bottom-right one. */
-typedef struct ScnAnnounceRect {
-    float x0, y0, x1, y1;
-} ScnAnnounceRect;
-
-/*********************************************************
- *NAME:          scnStatusPlace
- *PURPOSE:
- *  Where the status line's top-left corner goes: at the
- *  top of the game view, centred over it, and clear of the
- *  things already drawn up there (the scenario panel, the
- *  vote widgets, the HUD column of the full screen map).
+/* -------------------------------------------------------
+ * The Scenario Text window
  *
- *  The line stays on the top row when it can. If a thing
- *  is in the way it moves sideways, as little as it has
- *  to, into the free space beside it. If the line does not
- *  fit beside it, the line drops to just below it and the
- *  same search runs again on that row. The line never
- *  drops past floorY, which the caller puts just above the
- *  player's own tank in the middle of the view: a line
- *  over the tank is worse than a line over a panel. When
- *  no row above the floor fits, the line goes centred on
- *  the top row, over whatever is there.
+ * The status line and the announcement are drawn in one
+ * window of their own, the Scenario Text window, and not at
+ * a place on the game view. The lines are laid out in a
+ * fixed source rectangle measured in panel units, and that
+ * rectangle is scaled into the window with one factor for
+ * both axes, as large as the window allows, and centred in
+ * it. The text is never stretched.
  *
- *  A line wider than the view is centred over the view and
- *  runs out past both of its edges.
- *
- *ARGUMENTS:
- *  view      - the game view
- *  textW     - the line's width, outline included
- *  textH     - the line's height, outline included
- *  inset     - the space above the line on the top row
- *  gap       - the space kept between the line and a thing
- *  floorY    - the lowest the line's bottom edge may go
- *  obstacles - the things to keep clear of; may be NULL
- *  count     - how many there are
- *  outX/outY - receive the line's top-left corner
- *********************************************************/
-static inline void scnStatusPlace(ScnAnnounceRect view, float textW,
-                                  float textH, float inset, float gap,
-                                  float floorY,
-                                  const ScnAnnounceRect *obstacles,
-                                  int count, float *outX, float *outY) {
-    const float centreX = (view.x0 + view.x1) * 0.5f;
-    const float topY    = view.y0 + inset;
-    float spanX0 = view.x0;
-    float spanX1 = view.x1;
-    float lowestY;
-    float y;
-    int   pass;
+ * The source rectangle is the width of the classic game
+ * view at zoom 1 (15 squares of 16 units), so the share
+ * across the view that an announcement's position names is
+ * a share across this width. It has one row for each kind
+ * of line the round has used so far: the status line on
+ * top, the announcement below it. The rows are counted
+ * over the whole round and not frame by frame, so the text
+ * does not change size when a line comes and goes. A line
+ * wider than the source rectangle is made smaller, by
+ * itself, until it fits across it.
+ * ------------------------------------------------------- */
 
-    if (textW > spanX1 - spanX0) {
-        spanX0 = centreX - textW * 0.5f;
-        spanX1 = centreX + textW * 0.5f;
-    }
-    lowestY = view.y1 - textH;
-    if (floorY - textH < lowestY) lowestY = floorY - textH;
-    if (lowestY < topY) lowestY = topY;
-    if (obstacles == NULL) count = 0;
+/* The source rectangle's width, in panel units. */
+#define SCN_TEXT_SRC_W_UNITS 240.0f
 
-    y = topY;
-    /* Each pass either places the line or drops below one more thing, so
-     * one pass more than there are things always finishes. */
-    for (pass = 0; pass <= count && y <= lowestY; pass++) {
-        float bestX    = 0.0f;
-        float bestDist = -1.0f;
-        float nextY    = 0.0f;
-        bool  haveNext = false;
-        int   c;
-        int   i;
+/* A line's letters, in panel units: the height the announcement was always
+ * drawn at. */
+#define SCN_TEXT_LINE_UNITS 20.0f
 
-        /* The places the line could go on this row: centred, and just
-         * either side of each thing. */
-        for (c = -1; c < 2 * count; c++) {
-            float x;
-            float dist;
-            bool  clear = true;
+/* How far the outline reaches past the letters on each side, in panel units. */
+#define SCN_TEXT_OUTLINE_UNITS 1.0f
 
-            if (c < 0) {
-                x = centreX - textW * 0.5f;
-            } else if ((c & 1) == 0) {
-                x = obstacles[c / 2].x0 - gap - textW;
-            } else {
-                x = obstacles[c / 2].x1 + gap;
-            }
-            if (x < spanX0) x = spanX0;
-            if (x > spanX1 - textW) x = spanX1 - textW;
+/* The space kept between the lines and the edges of the source rectangle,
+ * and between the two rows, in panel units. */
+#define SCN_TEXT_PAD_UNITS 2.0f
 
-            for (i = 0; i < count; i++) {
-                const ScnAnnounceRect *o = &obstacles[i];
-                if (x < o->x1 + gap && x + textW > o->x0 - gap &&
-                    y < o->y1 + gap && y + textH > o->y0 - gap) {
-                    clear = false;
-                    break;
-                }
-            }
-            if (!clear) continue;
+/* The height of one row: the letters and the outline above and below them. */
+#define SCN_TEXT_ROW_UNITS (SCN_TEXT_LINE_UNITS + 2.0f * SCN_TEXT_OUTLINE_UNITS)
 
-            dist = (x + textW * 0.5f) - centreX;
-            if (dist < 0.0f) dist = -dist;
-            if (bestDist < 0.0f || dist < bestDist) {
-                bestDist = dist;
-                bestX    = x;
-            }
-        }
+/* The most rows there are: the status line and the announcement. */
+#define SCN_TEXT_MAX_ROWS 2
 
-        if (bestDist >= 0.0f) {
-            if (outX != NULL) *outX = bestX;
-            if (outY != NULL) *outY = y;
-            return;
-        }
-
-        /* Nothing fits on this row: drop to just below the highest bottom
-         * edge of the things on it. */
-        for (i = 0; i < count; i++) {
-            const ScnAnnounceRect *o = &obstacles[i];
-            if (y < o->y1 + gap && y + textH > o->y0 - gap) {
-                const float below = o->y1 + gap;
-                if (!haveNext || below < nextY) {
-                    nextY    = below;
-                    haveNext = true;
-                }
-            }
-        }
-        if (!haveNext || nextY <= y) break;
-        y = nextY;
-    }
-
-    if (outX != NULL) *outX = centreX - textW * 0.5f;
-    if (outY != NULL) *outY = topY;
+/* The source rectangle's height for a number of rows. Fewer than one row
+ * counts as one, and more than SCN_TEXT_MAX_ROWS as that many. */
+static inline float scnTextSourceHeight(int rows) {
+    if (rows < 1) rows = 1;
+    if (rows > SCN_TEXT_MAX_ROWS) rows = SCN_TEXT_MAX_ROWS;
+    return 2.0f * SCN_TEXT_PAD_UNITS + (float)rows * SCN_TEXT_ROW_UNITS +
+           (float)(rows - 1) * SCN_TEXT_PAD_UNITS;
 }
 
-/* How far down the game view an announcement with no position has the top
- * of its letters, as a share of the view's height. This is where every
- * announcement went before a script could say where: in the upper third,
- * clear of the player's own tank in the middle. */
-#define SCN_ANNOUNCE_DOWN 0.28f
+/* The top of a row in the source rectangle, row 0 at the top. */
+static inline float scnTextRowTop(int row) {
+    if (row < 0) row = 0;
+    return SCN_TEXT_PAD_UNITS +
+           (float)row * (SCN_TEXT_ROW_UNITS + SCN_TEXT_PAD_UNITS);
+}
+
+/* How the source rectangle lands in the window: screen pixels for one
+ * source unit, and the screen point the source rectangle's top-left corner
+ * goes to. */
+typedef struct ScnTextFit {
+    float scale;
+    float originX, originY;
+} ScnTextFit;
 
 /*********************************************************
- *NAME:          scnAnnounceDefaultPlace
+ *NAME:          scnTextFitRect
  *PURPOSE:
- *  Where an announcement with no position goes: centred
- *  across the view, with the top of its letters
- *  SCN_ANNOUNCE_DOWN of the way down. Nothing moves it. A
- *  line wider than the view runs out past both edges.
+ *  Scales a source rectangle into a window rectangle as
+ *  large as it goes with one factor for both axes, so the
+ *  shape of the text is kept, and centres it in the window.
+ *  The spare space is on the left and right when the window
+ *  is wider than the source, and above and below when it is
+ *  taller. A source or window with no area gives a scale of
+ *  0 at the window's top-left corner.
  *
  *ARGUMENTS:
- *  view      - the game view
- *  boxW      - the line's width, outline included
- *  outline   - how far the outline reaches past the letters
- *  outX/outY - receive the box's top-left corner; the
- *              letters go one outline in from it
+ *  srcW/srcH - the source rectangle's size, in units
+ *  winX/winY - the window's top-left corner, in pixels
+ *  winW/winH - the window's size, in pixels
  *********************************************************/
-static inline void scnAnnounceDefaultPlace(ScnAnnounceRect view, float boxW,
-                                           float outline, float *outX,
-                                           float *outY) {
-    if (outX != NULL) *outX = (view.x0 + view.x1) * 0.5f - boxW * 0.5f;
-    if (outY != NULL) {
-        *outY = view.y0 + (view.y1 - view.y0) * SCN_ANNOUNCE_DOWN - outline;
+static inline ScnTextFit scnTextFitRect(float srcW, float srcH, float winX,
+                                        float winY, float winW, float winH) {
+    ScnTextFit fit;
+    fit.scale   = 0.0f;
+    fit.originX = winX;
+    fit.originY = winY;
+    if (srcW <= 0.0f || srcH <= 0.0f || winW <= 0.0f || winH <= 0.0f) {
+        return fit;
     }
+    fit.scale = winW / srcW;
+    if (winH / srcH < fit.scale) fit.scale = winH / srcH;
+    fit.originX = winX + (winW - srcW * fit.scale) * 0.5f;
+    fit.originY = winY + (winH - srcH * fit.scale) * 0.5f;
+    return fit;
 }
 
 /* A position byte as a share of the view, 0 to 1. A byte past
@@ -360,64 +296,44 @@ static inline float scnAnnouncePosShare(uint8_t b) {
     return (float)b / (float)SCN_ANNOUNCE_POS_MAX;
 }
 
-/* One axis of scnAnnounceAt: the box's low edge with its centre at
- * lo + share * (hi - lo), kept inset inside lo..hi. A box too big for the
- * room is centred on it. */
-static inline float scnAnnounceAxis(float lo, float hi, float share,
-                                    float size, float inset) {
-    const float minEdge = lo + inset;
-    const float maxEdge = hi - inset - size;
-    float       edge    = lo + share * (hi - lo) - size * 0.5f;
-
-    if (maxEdge < minEdge) return (lo + hi) * 0.5f - size * 0.5f;
-    if (edge < minEdge) edge = minEdge;
-    if (edge > maxEdge) edge = maxEdge;
-    return edge;
-}
-
 /*********************************************************
- *NAME:          scnAnnounceAt
+ *NAME:          scnTextLineAcross
  *PURPOSE:
- *  Where an announcement with a position goes: its centre
- *  on the point the script named, as shares of the view
- *  across and down, then moved the least it takes to keep
- *  the whole box inset inside the view, so no edge of the
- *  line is cut off. A line too wide for the view is
- *  centred across it.
- *
- *  The one thing it keeps clear of is the status line,
- *  which also sits at the top: a box that comes within one
- *  gap of the status line's band drops to one gap below it.
- *  The caller hands the band the full width of the view, so
- *  this happens wherever the box sits across it. It does
- *  not move for panels or windows, and it may sit on the
- *  player's tank; the script chose the spot.
+ *  Where one line goes across the source rectangle, and
+ *  how much smaller it is drawn. The line's centre goes at
+ *  the share across that the script named, then the line
+ *  is moved the least it takes to keep it one pad inside
+ *  the edges. A line too wide for the room between the pads
+ *  is made smaller by itself, keeping its shape, until it
+ *  fits that room exactly.
  *
  *ARGUMENTS:
- *  view       - the game view
- *  boxW/boxH  - the line's size, outline included
- *  posX/posY  - the centre as position bytes
- *  inset      - the space kept from the view's edges
- *  statusBand - the status line's band, or NULL for none
- *  gap        - the space kept below the status line
- *  outX/outY  - receive the box's top-left corner
+ *  srcW      - the source rectangle's width, in units
+ *  lineW     - the line's width at full size, outline
+ *              included, in units
+ *  share     - the centre's share across, 0 to 1
+ *  outX      - receives the line's left edge, in units
+ *  outShrink - receives the factor the line is drawn at,
+ *              1 for full size
  *********************************************************/
-static inline void scnAnnounceAt(ScnAnnounceRect view, float boxW,
-                                 float boxH, uint8_t posX, uint8_t posY,
-                                 float inset,
-                                 const ScnAnnounceRect *statusBand,
-                                 float gap, float *outX, float *outY) {
-    const float x = scnAnnounceAxis(view.x0, view.x1,
-                                    scnAnnouncePosShare(posX), boxW, inset);
-    float       y = scnAnnounceAxis(view.y0, view.y1,
-                                    scnAnnouncePosShare(posY), boxH, inset);
+static inline void scnTextLineAcross(float srcW, float lineW, float share,
+                                     float *outX, float *outShrink) {
+    const float room   = srcW - 2.0f * SCN_TEXT_PAD_UNITS;
+    float       shrink = 1.0f;
+    float       w      = lineW;
+    float       x;
 
-    if (statusBand != NULL && y < statusBand->y1 + gap &&
-        y + boxH > statusBand->y0 - gap) {
-        y = statusBand->y1 + gap;
+    if (share < 0.0f) share = 0.0f;
+    if (share > 1.0f) share = 1.0f;
+    if (lineW > room && lineW > 0.0f && room > 0.0f) {
+        shrink = room / lineW;
+        w      = room;
     }
+    x = share * srcW - w * 0.5f;
+    if (x > srcW - SCN_TEXT_PAD_UNITS - w) x = srcW - SCN_TEXT_PAD_UNITS - w;
+    if (x < SCN_TEXT_PAD_UNITS) x = SCN_TEXT_PAD_UNITS;
     if (outX != NULL) *outX = x;
-    if (outY != NULL) *outY = y;
+    if (outShrink != NULL) *outShrink = shrink;
 }
 
 /*********************************************************

@@ -2319,6 +2319,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_panel_timer_text",                       run_scenario_panel_timer_text                       },
     { "scenario_announce_remaining",                     run_scenario_announce_remaining                     },
     { "scenario_announce_position",                      run_scenario_announce_position                      },
+    { "scenario_text_fit",                               run_scenario_text_fit                               },
     { "scenario_status_line",                            run_scenario_status_line                            },
     { "scenario_panel_slot_rect",                        run_scenario_panel_slot_rect                        },
     { "lv_rule_names_and_panel_parse",                   run_lv_rule_names_and_panel_parse                   },

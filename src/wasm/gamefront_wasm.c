@@ -211,6 +211,15 @@ int gameFrontScnPanelScale = -1;
 int gameFrontScnPanelAlpha = -1;
 bool gameFrontScnPanelCloseAsk = TRUE;
 
+/* The Scenario Text window's place, size, opacity and shown flag, for the
+ * same reason as the scenario panel's above. */
+int gameFrontScnTextX = -1;
+int gameFrontScnTextY = -1;
+int gameFrontScnTextW = -1;
+int gameFrontScnTextH = -1;
+int gameFrontScnTextAlpha = -1;
+bool gameFrontScnTextShown = TRUE;
+
 bool isServer = FALSE;
 bool useAutoslow;
 bool useAutohide;

@@ -3373,6 +3373,11 @@
 #define STR_DLGSYSINFO_MEM_SWAMP                 2796
 #define STR_DLGSYSINFO_MEM_GRASS                 2797
 
+/* The Scenario Text window: the status line and the announcement a
+ * scenario or mod shows, in a window the player moves and resizes. */
+#define STR_SCNTEXT_TITLE                        2798
+#define STR_SCNTEXT_OPACITY_LINE                 2799
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */
