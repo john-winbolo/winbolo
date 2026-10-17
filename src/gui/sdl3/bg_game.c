@@ -558,7 +558,17 @@ void bgGameTogglePause(BgGame *bg) {
     bg->mapNameFadeStartMs = now;
 }
 
+void bgGameSetMapNameAnchor(BgGame *bg, float x, float centreY) {
+    bg->nameAnchored = true;
+    bg->nameX = x;
+    bg->nameCentreY = centreY;
+}
+
 static void bgGameRenderMapName(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) {
+    /* The anchor is for this render only, drawn or not. */
+    const bool  anchored = bg->nameAnchored;
+    const float anchorX = bg->nameX, anchorCentreY = bg->nameCentreY;
+    bg->nameAnchored = false;
     if (!serverSimGetMapName(bg->sim)[0]) return;
 
     Uint8 alpha = bgGameMapNameAlpha(bg, SDL_GetTicks());
@@ -587,6 +597,10 @@ static void bgGameRenderMapName(BgGame *bg, SDL_Renderer *renderer, int screenW,
     float textW = (float)SDL_strlen(label) * charW;
     float textXpx = 56.0f;
     float textYpx = (float)screenH - 12.0f - 30.0f + (30.0f - charH) * 0.5f;
+    if (anchored) {
+        textXpx = anchorX;
+        textYpx = anchorCentreY - charH * 0.5f;
+    }
 
     /* Faint dark background pill behind the text */
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);

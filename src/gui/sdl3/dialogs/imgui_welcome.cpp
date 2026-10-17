@@ -693,6 +693,9 @@ extern "C" int imguiWelcomeShow(void) {
             ImVec2 ppMax = ImGui::GetItemRectMax();
             float cx = (ppMin.x + ppMax.x) * 0.5f;
             float cy = (ppMin.y + ppMax.y) * 0.5f;
+            /* The map name the background game draws goes to the right of
+               this button, wherever the scale and the safe insets put it. */
+            bgGameSetMapNameAnchor(bg, ppMax.x + 14.0f * s, cy);
             float effectiveAlpha = ppHovered ? 1.0f : ppBaseAlpha;
             ImU32 iconCol = IM_COL32(200, 200, 200, (int)(220 * effectiveAlpha));
             ImDrawList *dl = ImGui::GetWindowDrawList();
