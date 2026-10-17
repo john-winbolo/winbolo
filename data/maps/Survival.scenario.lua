@@ -86,7 +86,7 @@ scenario = {
     .. "dead pillboxes, fort up in the forest.",
   api  = 1,
   author  = "WinBolo",
-  updated = "2026-10-17T00:00Z",
+  updated = "2026-10-17T00:04Z",
   -- This file ends its own round, from on_tick, when the last wave is beaten
   -- or the defenders are wiped out, so it is a scenario rather than a mod.
   -- Written out rather than left to the default, because the default is what
@@ -365,13 +365,15 @@ scenario.lobby.teams[2].init = {
 local function wave_init(w, n_attackers)
   -- A blitz can only form from the wave's own attackers, and a short roster
   -- fields fewer than ten. Lower the blitz minimum to the number of
-  -- attackers, but not below WAVE_BLITZ_MIN (the brain's own floor). If the
+  -- attackers, but not below WAVE_BLITZ_MIN (this script's own floor). If the
   -- wave still has fewer attackers than that minimum, no blitz can form, so
   -- the wave is not made blitz-only: its attackers would never attack a pill.
   local blitz_min = WAVE_BLITZ_MIN_BY_WAVE[w] or WAVE_BLITZ_MIN
   if blitz_min > n_attackers then
     blitz_min = math.max(n_attackers, WAVE_BLITZ_MIN)
   end
+  -- The brain ignores a blitz= token whose minimum is above its maximum.
+  blitz_min = math.min(blitz_min, WAVE_BLITZ_MAX)
   local t = {
     portfolio   = WAVE_PORTFOLIO,
     blitz       = string.format("%d/%d", blitz_min, WAVE_BLITZ_MAX),
@@ -386,8 +388,8 @@ local function wave_init(w, n_attackers)
   if WAVE_NOCLAIM[w]   then t.noclaimdead = "1" end
   if WAVE_BLITZ_ONLY[w] and n_attackers >= blitz_min then t.blitzonly = "1" end
   -- The loadout policy below is what mainly keeps an attacker from going
-  -- home: it fills the tank rather than pricing the errand. The refuel
-  -- token above only tilts a wave on top of that.
+  -- home: it fills the tank, so the attacker has no reason to go back for
+  -- supplies. The refuel token above only changes that cost for one wave.
   return t
 end
 
