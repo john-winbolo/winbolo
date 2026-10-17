@@ -8821,12 +8821,6 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         }
         s_gameInputHadFocus = hasFocus;
     }
-
-    /* Consume the window-settings dirty flag: the throttle in
-     * gameFrontSaveWindowSettings drops moves/resizes that arrive inside
-     * its 500ms window. Pumping each frame guarantees the trailing
-     * event in a drag burst eventually flushes once idle. */
-    gameFrontPumpDirty();
 }
 
 void sdl3ImguiForwardEvent(const void *event) {
@@ -9135,6 +9129,16 @@ static void renderTutorialOverlay(ClientSim *cs) {
 #endif
 
 void sdl3ImguiPumpAndRender(ClientSim *cs) {
+    /* The preferences' trailing write and the window-settings dirty flag,
+     * once a frame in a game. Here and not in sdl3ImguiProcessEvents because
+     * every driver's game loop calls this, and the touch layouts (iOS,
+     * Android) handle their own events: from there a setting changed in a
+     * game reached the disk only when the game ended. The throttle in
+     * gameFrontSaveWindowSettings drops moves/resizes that arrive inside its
+     * 500ms window, so pumping each frame also flushes the trailing event in
+     * a drag burst once idle. */
+    gameFrontPumpDirty();
+
     if (!s_window || !s_renderer) return;
 
     /* One read a frame, ahead of the menu bars and the suppression points

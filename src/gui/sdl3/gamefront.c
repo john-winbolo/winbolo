@@ -774,6 +774,25 @@ static void longToStr(long val, char *buf, int bufSize) {
  * but gameFrontStart calls it during the one-shot init block. */
 static bool pickRandomMap(char *out, size_t outLen);
 
+/* Writes the preferences when the app is going to the background or being
+ * ended. A phone ends a backgrounded app without telling it, and the 15 s
+ * trailing write or the one at the end of a game may not have run by then,
+ * so a setting changed just before was lost. A watch, not an event in a
+ * loop, so it runs inside the system's own notification whichever screen is
+ * up. Only on the main thread, where every preference is changed: prefs.c
+ * has no lock, and Android sends these events from its Java thread (iOS
+ * sends them on the main thread). */
+static bool SDLCALL gameFrontPrefsLifecycleWatch(void *userdata, SDL_Event *ev) {
+  (void)userdata;
+  if ((ev->type == SDL_EVENT_WILL_ENTER_BACKGROUND ||
+       ev->type == SDL_EVENT_DID_ENTER_BACKGROUND ||
+       ev->type == SDL_EVENT_TERMINATING) &&
+      SDL_IsMainThread()) {
+    prefsFlush();
+  }
+  return true;
+}
+
 /* -------------------------------------------------------
  * gameFrontStart — initialise game subsystems
  * ------------------------------------------------------- */
@@ -791,8 +810,15 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   prefsInit(getPreferenceFilePath());
   /* Coalesce bursts of pref edits (multi-key rebind, slider drag) into a
    * single trailing disk write, driven from gameFrontPumpDirty and flushed
-   * before each join and at shutdown. */
+   * before each join, at shutdown and when the app goes to the background
+   * (gameFrontPrefsLifecycleWatch). */
   prefsSetAutosaveDebounce(15000);
+  {
+    static bool s_prefsWatchAdded = false;
+    if (!s_prefsWatchAdded) {
+      s_prefsWatchAdded = SDL_AddEventWatch(gameFrontPrefsLifecycleWatch, NULL);
+    }
+  }
 
   langSetup();
 
