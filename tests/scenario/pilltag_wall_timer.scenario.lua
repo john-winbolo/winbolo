@@ -19,6 +19,11 @@
 -- PASS: a hunter hits the built prize within ARENA.HIT_WITHIN (20) s of the
 -- build.
 -- FAIL: no hunter hits it in that time, or the prize never goes up.
+--
+-- Note: the name is older than the check. This arena does not time the
+-- script's 30 s wall-shot net (WALL_FALLBACK_SECONDS); it checks only that
+-- the prize is hit within 20 s, by any route. The 30 s net has no arena of
+-- its own.
 
 -- Played as a Free For All (TEAMS.vs_it = false, as the "Teams" setting
 -- would), the round this arena was written for. Seat 0 stands in for a
