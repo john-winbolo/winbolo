@@ -585,6 +585,9 @@ int run_bolo_rand_golden_sequence(void);
 int run_pf_dijkstra_no_solid_corner_cut(void);
 int run_pf_astar_no_solid_corner_cut(void);
 int run_pf_costto_no_solid_corner_cut(void);
+/* Bench, a no-op unless WB_BENCH=1 (test_bench_decoy_step.c): the per-think
+ * cost of decoy_getaway's blocker step on the decoy square. */
+int run_bench_decoy_step_first(void);
 int run_pf_tail_reaches_radius_and_stops(void);
 int run_pf_tail_blocked_by_wall_and_sea(void);
 int run_pf_tail_neutral_zone_slows(void);

@@ -3998,6 +3998,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_bolo_rand.c
     tests/unit/test_pf_corner_cut.c
     tests/unit/test_pf_influence_tail.c
+    # Bench (does nothing unless WB_BENCH=1): the decoy-square blocker step.
+    tests/unit/test_bench_decoy_step.c
     # BrainTest Load Session next/prev-segment lookup. The finder is plain C
     # and ImGui-free precisely so it can be linked here; the rest of the
     # browser (braintest_loadbrowser.cpp) is not part of this target.
@@ -5198,6 +5200,7 @@ set(_unit_test_names
     pf_dijkstra_no_solid_corner_cut
     pf_astar_no_solid_corner_cut
     pf_costto_no_solid_corner_cut
+    bench_decoy_step_first
     pf_tail_reaches_radius_and_stops
     pf_tail_blocked_by_wall_and_sea
     pf_tail_neutral_zone_slows

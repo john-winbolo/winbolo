@@ -415,32 +415,14 @@ end
 -- markup can never contradict the reject, whichever number is in there.
 --
 -- Returns mult, detail (detail carries the chip inputs for the panels).
+-- The rule itself is U.refuel_base_low_mult, shared with the order bid's
+-- refuel stop (orders.lua); this computes what we need and calls it.
 -- =========================================================================
 local function refuel_low_stock_mult(b, info, state, now)
-  local d = {
-    fresh = false, low_arm = false, low_sh = false,
-    need_arm = false, need_sh = false,
-    obs_sh = b.obs_shells, obs_arm = b.obs_armour,
-    age = b.obs_tick and (now - b.obs_tick) or nil,
-  }
-  if not d.age or d.age >= (C.REFUEL_OBS_STALE or 500) then
-    return 1.0, d
-  end
-  d.fresh = true
   local sh_t  = (state and state.shell_target)  or C.TANK_FULL_SHELLS
   local arm_t = (state and state.armour_target) or C.TANK_FULL_ARMOUR
-  d.need_arm = (info.armour or 0) < arm_t
-  d.need_sh  = (info.shells or 0) < sh_t
-  local mult = 1.0
-  if d.need_arm and (b.obs_armour or 0) < C.REFUEL_MIN_STOCK then
-    d.low_arm = true
-    mult = mult * (C.REFUEL_LOW_ARMOUR_MULT or 1.0)
-  end
-  if d.need_sh and (b.obs_shells or 0) < C.REFUEL_MIN_STOCK then
-    d.low_sh = true
-    mult = mult * (C.REFUEL_LOW_SHELLS_MULT or 1.0)
-  end
-  return mult, d
+  return U.refuel_base_low_mult(b, (info.armour or 0) < arm_t,
+                                (info.shells or 0) < sh_t, now)
 end
 
 -- One chip per markup so every log line / panel says the same thing: which
@@ -628,17 +610,20 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
           goto skip
         end
       end
-      -- Hard-skip bases that have zero of EVERYTHING we need, regardless
-      -- of observation age. This is the "isn't empty" filter — even a
-      -- stale "fully empty" observation is more reliable than driving
-      -- across the map and finding an empty base.
+      -- Rules 1 and 2 of U.refuel_base_verdict (util.lua), shared with the
+      -- order bid's refuel stop (orders.lua). Both need an observation.
+      -- 1 empty: hard-skip bases that have zero of EVERYTHING we need,
+      -- regardless of observation age. This is the "isn't empty" filter —
+      -- even a stale "fully empty" observation is more reliable than
+      -- driving across the map and finding an empty base.
+      -- 2 low_stock: skip bases with recently observed low stock (not worth
+      -- the trip). Observation expires after REFUEL_OBS_STALE ticks (base
+      -- regenerates).
       if b.obs_tick then
         local need_a = info.armour < state.armour_target
         local need_s = info.shells < state.shell_target
-        local has_a  = (b.obs_armour or 0) > 0
-        local has_s  = (b.obs_shells or 0) > 0
-        local helps  = (need_a and has_a) or (need_s and has_s)
-        if not helps then
+        local why = U.refuel_base_verdict(b, need_a, need_s, now)
+        if why == "empty" then
           candidates[#candidates + 1] = {
             id = id, mx = b.mx, my = b.my, own = b.owner, score = -1,
             reject = string.format("empty (sh=%d arm=%d)",
@@ -651,15 +636,7 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
             tostring(need_a), info.armour or 0, state.armour_target or 0,
             tostring(need_s), info.shells or 0, state.shell_target or 0, C.REFUEL_MIN_STOCK))
           goto skip
-        end
-      end
-      -- Skip bases with recently observed low stock (not worth the trip).
-      -- Observation expires after REFUEL_OBS_STALE ticks (base regenerates).
-      if b.obs_tick and now > 0 and (now - b.obs_tick) < C.REFUEL_OBS_STALE then
-        local obs_low = true
-        if info.armour < state.armour_target and (b.obs_armour or 0) >= C.REFUEL_MIN_STOCK then obs_low = false end
-        if info.shells < state.shell_target and (b.obs_shells or 0) >= C.REFUEL_MIN_STOCK then obs_low = false end
-        if obs_low then
+        elseif why == "low_stock" then
           candidates[#candidates + 1] = {
             id = id, mx = b.mx, my = b.my, own = b.owner, score = -1,
             reject = string.format("low stock (sh=%d arm=%d obs %dt ago)",
@@ -669,8 +646,8 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
             id, b.mx, b.my, tostring(b.owner), tostring(b.health), tostring(b.last_health),
             tostring(b.obs_shells), tostring(b.obs_armour), tostring(b.obs_tick), now - (b.obs_tick or now),
             tostring(b.last_seen), now - (b.last_seen or now),
-            tostring(info.armour < state.armour_target), info.armour or 0, state.armour_target or 0,
-            tostring(info.shells < state.shell_target), info.shells or 0, state.shell_target or 0, C.REFUEL_MIN_STOCK))
+            tostring(need_a), info.armour or 0, state.armour_target or 0,
+            tostring(need_s), info.shells or 0, state.shell_target or 0, C.REFUEL_MIN_STOCK))
           goto skip
         end
       end
@@ -7847,15 +7824,15 @@ local function filter_refuel(obj, state, info)
      and (now - obj.last_seen) > C.STALE_SKIP_TICKS then
     return { reason = "stale", remaining = (now - obj.last_seen) - C.STALE_SKIP_TICKS }
   end
-  -- Recently observed depleted of what we actually need
-  if obj.obs_tick and now > 0 and (now - obj.obs_tick) < C.REFUEL_OBS_STALE then
-    local obs_low = true
-    if info.armour < C.TANK_FULL_ARMOUR and (obj.obs_armour or 0) >= C.REFUEL_MIN_STOCK then obs_low = false end
-    if info.shells < C.TANK_FULL_SHELLS and (obj.obs_shells or 0) >= C.REFUEL_MIN_STOCK then obs_low = false end
-    if obs_low then
-      return { reason = "depleted",
-               remaining = C.REFUEL_OBS_STALE - (now - obj.obs_tick) }
-    end
+  -- Recently observed depleted of what we actually need: rule 2
+  -- (low_stock) of the shared refuel base rules, U.refuel_base_low_stock.
+  -- This path counts a resource as needed below the FULL tank, not below
+  -- the shell/armour targets.
+  if obj.obs_tick
+     and U.refuel_base_low_stock(obj, info.armour < C.TANK_FULL_ARMOUR,
+                                 info.shells < C.TANK_FULL_SHELLS, now) then
+    return { reason = "depleted",
+             remaining = C.REFUEL_OBS_STALE - (now - obj.obs_tick) }
   end
   -- Danger is NOT a reject: it's already folded into the path cost via
   -- REFUEL_DANGER_WEIGHT (score = travel + danger * weight), so a risky
@@ -16556,6 +16533,38 @@ end
 -- No danger check anywhere: "if the user says it, that's it."
 -- Returns a goal table, or nil when the target cannot be located at all.
 -- =========================================================================
+-- =========================================================================
+-- M.order_usable — does this bot hold an order it can work on THIS think?
+-- The tests Override 3c (CHAT ORDER) applies before it hands the order to
+-- the pool's reject pass; pick_goal asks the same question so a held order
+-- is not held up by the warm-up gate or the circle-reinforce override.
+-- =========================================================================
+function M.order_usable(state, world, info)
+  if not C.BOT_COMMANDS_ENABLED or not state._order then return false end
+  local ordq = state._order
+  -- Target gone = nothing to do; orders.lua clears the slot on its own next
+  -- think, we just stop rejecting rows for it now.
+  if ordq.tkind == "pill" and ordq.tid and not world.pills[ordq.tid] then return false end
+  if ordq.tkind == "base" and ordq.tid and not world.bases[ordq.tid] then return false end
+  -- A DEFEND ORDER ON A PILL THAT IS NO LONGER OURS is finished: there is
+  -- nothing left to guard.  orders.lua clears the slot on its next think
+  -- and says so; this stops the reject pass a tick earlier, so the bot
+  -- cannot spend even one think with every strategic row rejected for a
+  -- pill the enemy now owns.  That idle tick is what Andrew watched turn
+  -- into a bot sitting beside a captured pill doing nothing.
+  if ordq.kind == "defend_pill" and ordq.tid then
+    local dp = world.pills[ordq.tid]
+    if not dp or dp.owner ~= "friendly" or (dp.health or 0) == 0
+       or dp.in_tank then
+      return false
+    end
+  end
+  -- Armour below the escape line PAUSES every order (a pause, not an exit:
+  -- orders.lua keeps the 60 s timer running).
+  if (info.armour or 0) <= C.ARMOUR_CRITICAL then return false end
+  return true
+end
+
 function M.order_goal(state, world, info, ord)
   local k = ord.kind
   if k == "defend_pill" then
@@ -16567,12 +16576,41 @@ function M.order_goal(state, world, info, ord)
   elseif k == "attack_pill" or k == "capture_pill" then
     local p = world.pills[ord.tid]
     if not p then return nil end
+    -- "capture pill N" on a LIVE enemy or neutral pill: capture_pill only
+    -- picks up a dead pill, and init.lua drops it the tick after it is
+    -- installed, so the order looped (capture_pill, none, re-inject) and the
+    -- bot never fired a shot.  A live pill is shot first: attack_pill, and
+    -- the kill hands over to capture_pill the usual way.
+    -- C.ORDER_GOAL_KIND_FIX = false (keel): the order's kind is used as it is.
+    if C.ORDER_GOAL_KIND_FIX
+       and k == "capture_pill" and (p.health or 0) > 0 and not p.in_tank
+       and p.owner ~= "friendly" then
+      k = "attack_pill"
+    end
     return { kind = k, mx = p.mx, my = p.my,
              wx = U.m2w(p.mx), wy = U.m2w(p.my), target_id = ord.tid,
              _ordered = true }
   elseif k == "capture_base" or k == "attack_base" then
     local b = world.bases[ord.tid]
     if not b then return nil end
+    -- ONE BASE, TWO GOAL KINDS.  A live hostile base is shot down
+    -- (attack_base); a neutral one, or a hostile one at zero armour, is
+    -- driven over (capture_base).  The goal-validity check in init.lua
+    -- switches between the two the tick after a goal is installed, so
+    -- injecting the order's own kind regardless made a loop: every replan
+    -- installed capture_base, the next tick switched it to attack_base and
+    -- cleared the path, and the bot re-planned its route every replan on
+    -- the way in.  Inject the kind that check would leave in place; the
+    -- replan then re-picks the goal the bot is already running.  Same two
+    -- conditions as init.lua's capture_base / attack_base validity.
+    -- C.ORDER_GOAL_KIND_FIX = false (keel): the order's kind is used as it is.
+    if not C.ORDER_GOAL_KIND_FIX then
+      -- keel: no change to k
+    elseif b.owner == "hostile" and (b.health or 0) > 0 then
+      k = "attack_base"
+    elseif b.owner == "neutral" or b.owner == "hostile" then
+      k = "capture_base"
+    end
     return { kind = k, mx = b.mx, my = b.my,
              wx = U.m2w(b.mx), wy = U.m2w(b.my), target_id = ord.tid,
              _ordered = true }
@@ -16613,6 +16651,53 @@ function M.order_goal(state, world, info, ord)
              _tc_trigger = "order", _tc_margin = 0, _ordered = true }
   end
   return nil
+end
+
+-- A DEAD PILL BESIDE A BOT ON AN ORDER (C.ORDER_NEAR_DEAD_PILL_CAPTURE).
+-- true when `goal` is capture_pill for a pill that is dead (health 0), not
+-- carried, and within C.ORDER_NEAR_DEAD_PILL_RADIUS squares (Chebyshev) of
+-- the tank's square.  Any owner: our own team's dead prize is picked up too.
+-- The order reject pass leaves such a row at its normal cost, and the hold
+-- phase of a go-there order lets it win as it lets a fight win.  false when
+-- the knob is off (keel).
+function M.order_near_dead_pill(world, info, goal)
+  if not C.ORDER_NEAR_DEAD_PILL_CAPTURE then return false end
+  if not (goal and goal.kind == "capture_pill" and goal.target_id ~= nil) then
+    return false
+  end
+  if not (info and info.tankx and info.tanky) then return false end
+  local p = world and world.pills and world.pills[goal.target_id]
+  if not (p and p.mx and p.my) or p.in_tank or (p.health or 1) ~= 0 then
+    return false
+  end
+  local dx = math.abs(bit.rshift(info.tankx, 8) - p.mx)
+  local dy = math.abs(bit.rshift(info.tanky, 8) - p.my)
+  return math.max(dx, dy) <= (C.ORDER_NEAR_DEAD_PILL_RADIUS or 2)
+end
+
+-- What one pool row pays for C.FIGHT_COST_MULT, the multiplier a script sets
+-- with cfg= to make tank fights and hiding dearer (Pillbox Tag: on its
+-- hunters while the prize stands as a fort).  attack_tank, kill_lgm and
+-- take_cover only.  1.0 when the knob is off (keel) or at 1, for an ordered
+-- row and the "kill me" delivery row, for a reject sentinel row (cost at or
+-- above TAKE_COVER_REJECT_COST: a display value, not a score), and while
+-- armour is at or below ARMOUR_CRITICAL: the line where every order pauses,
+-- so a dying tank still fights back or hides at the normal price.
+-- `cost` is optional (the row's cost, to spot a sentinel).
+-- (A field, not a file local: goals.lua's main chunk is at the 200-local cap.)
+M.FIGHT_MULT_KINDS = { attack_tank = true, kill_lgm = true, take_cover = true }
+function M.fight_cost_mult(info, goal, cost)
+  local m = C.FIGHT_COST_MULT or 1.0
+  -- A script sets this with cfg=, which checks only the type.  NaN, a value
+  -- below 1 (0 or negative would make a fight free or a gain) and infinity
+  -- are not a price: they count as 1.
+  if type(m) ~= "number" or m ~= m or m < 1 or m == math.huge then return 1.0 end
+  if m == 1.0 or not C.FIGHT_COST_MULT_ENABLED or not goal then return 1.0 end
+  if not M.FIGHT_MULT_KINDS[goal.kind] then return 1.0 end
+  if goal._ordered or goal.km_ally_pn then return 1.0 end
+  if cost and cost >= (C.TAKE_COVER_REJECT_COST or 1e8) then return 1.0 end
+  if ((info and info.armour) or 0) <= C.ARMOUR_CRITICAL then return 1.0 end
+  return m
 end
 
 local function goal_selection(state, world, info, quiet)
@@ -17055,36 +17140,13 @@ local function goal_selection(state, world, info, quiet)
   -- tick and hand the pool pass what it needs.
   -- ════════════════════════════════════════════════════════════════════
   state._order_reject = nil
-  if C.BOT_COMMANDS_ENABLED and not result and state._order then
+  if not result and M.order_usable(state, world, info) then
     local ordq = state._order
-    local okq  = true
-    -- Target gone = nothing to do; orders.lua clears the slot on its own next
-    -- think, we just stop rejecting rows for it now.
-    if ordq.tkind == "pill" and ordq.tid and not world.pills[ordq.tid] then okq = false end
-    if ordq.tkind == "base" and ordq.tid and not world.bases[ordq.tid] then okq = false end
-    -- A DEFEND ORDER ON A PILL THAT IS NO LONGER OURS is finished: there is
-    -- nothing left to guard.  orders.lua clears the slot on its next think
-    -- and says so; this stops the reject pass a tick earlier, so the bot
-    -- cannot spend even one think with every strategic row rejected for a
-    -- pill the enemy now owns.  That idle tick is what Andrew watched turn
-    -- into a bot sitting beside a captured pill doing nothing.
-    if ordq.kind == "defend_pill" and ordq.tid then
-      local dp = world.pills[ordq.tid]
-      if not dp or dp.owner ~= "friendly" or (dp.health or 0) == 0
-         or dp.in_tank then
-        okq = false
-      end
-    end
-    -- Armour below the escape line PAUSES every order (a pause, not an exit:
-    -- orders.lua keeps the 60 s timer running).
-    if (info.armour or 0) <= C.ARMOUR_CRITICAL then okq = false end
-    if okq then
-      state._order_reject = ordq
-      if not quiet and BRAIN_DEBUG_MODE then
-        print2(string.format("ORDER_ACTIVE t=%d %s#%s from=%s left=%d",
-               state.tick or 0, ordq.kind, tostring(ordq.tid),
-               tostring(ordq.sender_name), (ordq.expiry or 0) - (state.tick or 0)))
-      end
+    state._order_reject = ordq
+    if not quiet and BRAIN_DEBUG_MODE then
+      print2(string.format("ORDER_ACTIVE t=%d %s#%s from=%s left=%d",
+             state.tick or 0, ordq.kind, tostring(ordq.tid),
+             tostring(ordq.sender_name), (ordq.expiry or 0) - (state.tick or 0)))
     end
   end
 
@@ -17683,6 +17745,12 @@ local function goal_selection(state, world, info, quiet)
              and (info.armour or 0) > C.ARMOUR_LOW then
             rej = true
           end
+          -- A dead pill within ORDER_NEAR_DEAD_PILL_RADIUS squares of the
+          -- tank is picked up at its normal cost: one or two squares of
+          -- driving, and nobody else's pill to take for the asking.
+          if rej and ck == "capture_pill" and M.order_near_dead_pill(world, info, c.goal) then
+            rej = false
+          end
           if rej then
             c.cost = C.POOL_REJECT_COST or 1e30
             c._order_reject = ordr
@@ -17859,6 +17927,25 @@ local function goal_selection(state, world, info, quiet)
            and c.cost and c.cost > 0 and not c._reject_sentinel then
           c.cost = c.cost * C.BEHIND_ATTACK_MULT
           c._ahead_mult = C.BEHIND_ATTACK_MULT
+        end
+      end
+    end
+
+    -- ── Scenario fight multiplier (FIGHT_COST_MULT) ──
+    -- A script makes attack_tank, kill_lgm and take_cover dearer with
+    -- cfg=FIGHT_COST_MULT (see M.fight_cost_mult for what is left out).
+    -- Same selection layer as the passes above: after the influence
+    -- scaling, before hysteresis.
+    -- No-op at the 1.0 default and with the knob off (keel). _fight_mult is
+    -- stashed for FINAL_SCORES (fight=) and the WINNERS-row reconciliation.
+    if C.FIGHT_COST_MULT_ENABLED and C.FIGHT_COST_MULT ~= 1.0 then
+      for _, c in ipairs(pool) do
+        if c.cost and c.cost > 0 and not c._reject_sentinel then
+          local fm = M.fight_cost_mult(info, c.goal, c.cost)
+          if fm ~= 1.0 then
+            c.cost = c.cost * fm
+            c._fight_mult = fm
+          end
         end
       end
     end
@@ -18289,6 +18376,7 @@ local function goal_selection(state, world, info, quiet)
         refuel_mult   = c._refuel_mult or 1.0,
         focus_mult    = c._focus_mult or 1.0,
         ahead_mult    = c._ahead_mult or 1.0,
+        fight_mult    = c._fight_mult or 1.0,
         -- LOADED, BUILDER-LESS surcharge (ATTACK_NO_BUILDER_MULT) and the
         -- escape-row hysteresis waiver, both needed for the WINNERS row to
         -- reconcile to its own total.
@@ -18798,13 +18886,15 @@ local function goal_selection(state, world, info, quiet)
         --   inf     — the territory-influence x0.5/x2 scale
         --   nobuild — ATTACK_NO_BUILDER_MULT, the LOADED, BUILDER-LESS
         --             surcharge on the four "drive at a fight" kinds
+        --   fight   — FIGHT_COST_MULT, a script's surcharge on attack_tank,
+        --             kill_lgm and take_cover
         print2(string.format(
-          "  [%d] %s@%d,%d total=%.1f base=%.1f pen=%.1f inf=%.2f nobuild=%.1f hyst=%s sw=%.1f cmt=%.1f histT=%s histK=%s wsim=%.1f dens=%.2f pickup=%.1f desc=%s",
+          "  [%d] %s@%d,%d total=%.1f base=%.1f pen=%.1f inf=%.2f nobuild=%.1f fight=%.2f hyst=%s sw=%.1f cmt=%.1f histT=%s histK=%s wsim=%.1f dens=%.2f pickup=%.1f desc=%s",
           i,
           c.goal and c.goal.kind or "?",
           c.goal and c.goal.mx or 0, c.goal and c.goal.my or 0,
           c.cost or 0, base, penalty,
-          c._inf_mult or 1.0, c._nobuild_mult or 1.0,
+          c._inf_mult or 1.0, c._nobuild_mult or 1.0, c._fight_mult or 1.0,
           tostring(c.hysteresis or "-"),
           c.switch_flat or 0, c.commit_val or 0,
           tostring(c.hist_target or 0), tostring(c.hist_kind or 0),
@@ -19230,6 +19320,12 @@ function M.pick_goal(state, world, info, quiet)
     -- undoes them every think anyway; turning them down here keeps the
     -- goal from flickering between a replan and the lock.
     local ok = g and g.kind and g.kind ~= "none" and g.kind ~= "goto_tile" and rk[g.kind]
+    -- A dead pill within ORDER_NEAR_DEAD_PILL_RADIUS (the one strategic row
+    -- the reject pass lets through) wins here as a fight does: the bot
+    -- picks it up, and the hold goal takes it back to the square on the
+    -- next replan.  A decoy hold turns it down below (decoy_allows: fights
+    -- only), since it must not leave the square.
+    if not ok and g and M.order_near_dead_pill(world, info, g) then ok = true end
     if ok and ord.decoy then
       ok = require("orders").decoy_allows(state, info, g)
     end
@@ -19264,7 +19360,18 @@ function M.pick_goal(state, world, info, quiet)
   -- unreachable for the rest of the game. The nearest-candidate eval has
   -- already priced it via the current slate (boat or land), so the cost is a
   -- real travel cost, not a guess.
-  if not M.warm_ready(state) then
+  --
+  -- A HELD ORDER SKIPS THE WARM-UP.  A person's order says what the goal is,
+  -- so there is no poor pick to lock onto: goal selection runs from the first
+  -- think the order is held, and its reject pass injects the ordered goal if
+  -- the half-warmed pools do not have it yet.  Before this, an order given at
+  -- the start of a game waited for warm-up (about 18 s on the release brain)
+  -- while the bot drove to a dead pill or explored.  With no order held,
+  -- warm-up is exactly as it was.  C.ORDER_SKIPS_WARMUP = false (keel):
+  -- order_live is always false here, so a held order waits for warm-up and
+  -- special_mode_goal runs, as before.
+  local order_live = C.ORDER_SKIPS_WARMUP and M.order_usable(state, world, info)
+  if not M.warm_ready(state) and not order_live then
     local pce = state.pool_cache and state.pool_cache[4]
     if pce and pce.goal and pce.goal.kind == "capture_pill"
        and (pce.cost or math.huge) <= (C.WARMUP_CAPTURE_MAX_COST or 150) then
@@ -19277,11 +19384,14 @@ function M.pick_goal(state, world, info, quiet)
     end
   end
 
-  if M.warm_ready(state) then
+  if M.warm_ready(state) or order_live then
     -- R4 harasser mission + R3 circle reinforcement (flag-gated). Preempts
     -- routine goals but yields to refuel/attack_tank/kill_lgm (restricted set)
     -- and to command_goal above. No-op unless a flag is set.
-    do
+    -- It pulls UNCOMMITTED bots only, and a bot holding a person's order is
+    -- committed: with an order held it is skipped, or it would drive the bot
+    -- to the circle and the order would never run.
+    if not order_live then
       local ov = M.special_mode_goal(state, world, info)
       if ov then return ov end
     end
@@ -19546,12 +19656,15 @@ M.sync_ally_claimed_rejects = sync_ally_claimed_rejects
 -- WARMUP_MIN_REAL_GOALS finite-cost (pickable, non-rejected) candidates exist
 -- in cost_cache. Latches once true (warmup only happens at the start of a life,
 -- or briefly after a death-wipe). Stores state._warm_count for the panel row.
-function M.warm_ready(state)
-  if state._warm_ready then return true end
-  -- Sparse-map escape: if the whole eval queue has been processed at least once
-  -- and we STILL have fewer than the target, there simply aren't that many
-  -- reachable goals — count what we have as warm rather than exploring forever.
-  if state._eval_swept then state._warm_ready = true; return true end
+--
+-- M.warm_count is the count alone and writes nothing: n (stops counting at
+-- need) and need. The pool panel asks it instead of warm_ready, because the
+-- panel runs every tick only while recording, and a warm_ready call there set
+-- the latch on ticks the production brain never asks. After a position jump
+-- (init.lua clears the latch) that let a -brain-debug bot leave warm-up
+-- earlier than the same bot in a plain game (pilltag_hop_ahead seed 99, player
+-- 0 split at tick 2106).
+function M.warm_count(state)
   local need = C.WARMUP_MIN_REAL_GOALS or 10
   local n = 0
   local cc = state.cost_cache
@@ -19570,6 +19683,16 @@ function M.warm_ready(state)
       end
     end
   end
+  return n, need
+end
+
+function M.warm_ready(state)
+  if state._warm_ready then return true end
+  -- Sparse-map escape: if the whole eval queue has been processed at least once
+  -- and we STILL have fewer than the target, there simply aren't that many
+  -- reachable goals — count what we have as warm rather than exploring forever.
+  if state._eval_swept then state._warm_ready = true; return true end
+  local n, need = M.warm_count(state)
   state._warm_count = n
   if n >= need then state._warm_ready = true end
   return state._warm_ready == true
@@ -19957,7 +20080,11 @@ function M.get_pool_breakdown_json(state)
     local sui = suicider_mult_for_pool(state, pname)
     local pwx = pw * sui * refuel_mult_for_pool(pname)
                    * squad.focus_mult(state, POOL_NAME_TO_KIND[pname] or pname)
-    local rows_raw = by_pool[idx] or {}
+    -- Sort a COPY. by_pool[2/8/13/14] are the brain's own lists
+    -- (state.defend_breakdown.rows, pool_cache[n].cands); sorting them in
+    -- place reordered them only in recorded games.
+    local rows_raw = {}
+    for i, r in ipairs(by_pool[idx] or {}) do rows_raw[i] = r end
     table.sort(rows_raw, function(a, b)
       local ac = (a.cost >= 0) and a.cost * pwx or math.huge
       local bc = (b.cost >= 0) and b.cost * pwx or math.huge
@@ -20234,6 +20361,15 @@ function M.get_pool_breakdown_json(state)
           state.strength or 0, C.AHEAD_PILL_FRAC, state.base_strength or 0, C.AHEAD_BASE_FRAC, ahead_mult_d)
       end
 
+      -- Scenario fight multiplier, same layer again.
+      local fight_mult_d = (gc and gc.fight_mult) or 1.0
+      if fight_mult_d ~= 1.0 then
+        detail_formula = string.format("%s * fight{x%.2f}", detail_formula, fight_mult_d)
+        detail_map[#detail_map + 1] = string.format(
+          "fight:a script set FIGHT_COST_MULT (cfg=) -> this attack_tank / kill_lgm / take_cover row costs x%.2f (not on an ordered row, the kill-me row, a reject sentinel, or at armour <= ARMOUR_CRITICAL %d)",
+          fight_mult_d, C.ARMOUR_CRITICAL)
+      end
+
       if w.imminent then
         detail_map[#detail_map + 1] = string.format("imminent:cost_forced_to_floor(%.0f) because neutral and close", C.IMMINENT_CAPTURE_FLOOR)
       end
@@ -20317,6 +20453,10 @@ function M.get_pool_breakdown_json(state)
       local refuel_mult = (gc and gc.refuel_mult) or 1.0
       if refuel_mult ~= 1.0 then
         row_summary = row_summary .. " x " .. M.refuel_mult_label()
+      end
+      local fight_mult = (gc and gc.fight_mult) or 1.0
+      if fight_mult ~= 1.0 then
+        row_summary = row_summary .. string.format(" x fight{%.2f}", fight_mult)
       end
 
       if penalty > 0 or wsim_add > 0 or w.imminent then
@@ -20449,9 +20589,15 @@ function M.get_pool_breakdown_json(state)
   -- it) and so isn't on the explore fallback this tick. Shown whenever not
   -- warm, regardless of current goal; marked active only when actually
   -- exploring. warm_ready latches once warm so this clears in steady state.
-  if state.goal and not M.warm_ready(state) then
-    local need = C.WARMUP_MIN_REAL_GOALS or 10
-    local n = state._warm_count or 0
+  -- The same test as warm_ready, but read-only (M.warm_count): this report
+  -- must not set the latch -- see M.warm_count.
+  local warm_n, warm_need = nil, nil
+  if state.goal and not state._warm_ready and not state._eval_swept then
+    warm_n, warm_need = M.warm_count(state)
+  end
+  if warm_n and warm_n < warm_need then
+    local need = warm_need
+    local n = warm_n
     local gmx, gmy = state.goal.mx or 0, state.goal.my or 0
     table.insert(winners, 1, {
       id = 0, src_pool = 0,
