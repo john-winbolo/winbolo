@@ -321,9 +321,11 @@ void scrollCenterObject(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE object
 bool scrollCenterWorld(ScrollState *ss, BYTE *xValue, BYTE *yValue, WORLD worldX, WORLD worldY) {
   /* The same framing scrollCenterObject gives a tank in the middle of its
    * square, carried to the world unit: the drawn hull's top-left corner
-   * (worldX - TANK_SUBTRACT) lands on column SCROLL_CENTER. Not clamped to
-   * the map edge, so it agrees with scrollCenterObject wherever the two
-   * meet. */
+   * (worldX - TANK_SUBTRACT) lands on column SCROLL_CENTER. The offset is
+   * clamped to 0..255 squares. scrollCenterObject lets the BYTE wrap
+   * instead, so for a tank in squares 0..7 on either axis the two put the
+   * camera in different places. Those squares are the outer edge of the map
+   * and are rarely driven, so the difference is left as is. */
   int desiredSubX = (int)worldX - TANK_SUBTRACT - SCROLL_CENTER * AUTOSCROLL_SUB_PER_TILE;
   int desiredSubY = (int)worldY - TANK_SUBTRACT - SCROLL_CENTER * AUTOSCROLL_SUB_PER_TILE;
   int maxSub = 255 * AUTOSCROLL_SUB_PER_TILE;

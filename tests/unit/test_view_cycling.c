@@ -997,7 +997,6 @@ int run_view_cycle_moved_pill(void) {
     UT_ASSERT_MSG(viewportUpdateItemView(&vp, gs, &scroll, &in) == TRUE &&
                       vp.viewTarget == 1,
                   "the view should keep pill 1, got %u", vp.viewTarget);
-    (void)p0y;
 
     serverSimDestroy(sim);
     return 0;
@@ -1049,5 +1048,104 @@ int run_view_cycle_ally_follow(void) {
                   bx, b.subPosX);
 
     scrollSetSubTilePrecision(saved);
+    return 0;
+}
+
+/* clientSimFollowAllyView on a ClientSim in the ally view. A zeroed stub entry
+ * leaves the camera where it is. With fine tank positions on (Smooth) the
+ * camera follows fineX/fineY; off, it follows mapX/pixelX. The tile grid is
+ * recalculated only when the whole-square offset changes. */
+int run_view_cycle_ally_follow_clientsim(void) {
+    const BYTE target = 3;  /* The ally being watched */
+    ClientSim *cs = clientSimAlloc();
+    player *row;
+    ViewPort *vp;
+    bool saved = scrollGetSubTilePrecision();
+
+    UT_ASSERT_MSG(cs != NULL, "clientSimAlloc returned NULL");
+    UT_ASSERT_MSG(clientSimCreate(cs) == TRUE, "clientSimCreate failed");
+    UT_ASSERT_MSG(cs->sim.plyrs != NULL, "the ClientSim has no players list");
+    scrollSetSubTilePrecision(TRUE);
+
+    row = &(*cs->sim.plyrs).item[target];
+    vp = &cs->viewport;
+    vp->viewKind   = VIEW_KIND_ALLY;
+    vp->viewTarget = target;
+    vp->xOffset    = 40;
+    vp->yOffset    = 40;
+    vp->needRecalc = FALSE;
+
+    /* A hidden stub: the entry is zeroed, so the camera stays put. */
+    row->mapX = 0;
+    row->mapY = 0;
+    row->pixelX = 0;
+    row->pixelY = 0;
+    row->fineSet = false;
+    clientSimSetFineTankPositions(cs, true);
+    clientSimFollowAllyView(cs);
+    UT_ASSERT_MSG(vp->xOffset == 40 && vp->yOffset == 40 && !vp->needRecalc,
+                  "a stub entry moved the camera to (%u,%u) recalc %d",
+                  vp->xOffset, vp->yOffset, (int)vp->needRecalc);
+
+    /* Square (100,80), middle pixel; the full position a quarter square
+     * right of it. 100 - SCROLL_CENTER is tile 92, 80 - SCROLL_CENTER 72. */
+    row->mapX = 100;
+    row->mapY = 80;
+    row->pixelX = 8;
+    row->pixelY = 8;
+    row->fineX = (WORLD)(vc_world(100) + 64);
+    row->fineY = vc_world(80);
+    row->fineSet = true;
+
+    /* Fine on: the full position, a quarter square in subPos. */
+    clientSimFollowAllyView(cs);
+    UT_ASSERT_MSG(vp->xOffset == 92 && vp->yOffset == 72 &&
+                      cs->scroll.subPosX == 64 && cs->scroll.subPosY == 0,
+                  "fine on: expected tile (92,72) sub (64,0), got (%u,%u) "
+                  "sub (%d,%d)", vp->xOffset, vp->yOffset, cs->scroll.subPosX,
+                  cs->scroll.subPosY);
+    UT_ASSERT_MSG(vp->needRecalc, "a whole-square change did not ask for a "
+                                  "recalc");
+
+    /* Fine off: the game pixel, the middle of the square, sub 0. Same tile,
+     * so no recalc. */
+    vp->needRecalc = FALSE;
+    clientSimSetFineTankPositions(cs, false);
+    clientSimFollowAllyView(cs);
+    UT_ASSERT_MSG(vp->xOffset == 92 && vp->yOffset == 72 &&
+                      cs->scroll.subPosX == 0 && cs->scroll.subPosY == 0,
+                  "fine off: expected tile (92,72) sub (0,0), got (%u,%u) "
+                  "sub (%d,%d)", vp->xOffset, vp->yOffset, cs->scroll.subPosX,
+                  cs->scroll.subPosY);
+    UT_ASSERT_MSG(!vp->needRecalc, "a move inside the square asked for a "
+                                   "recalc");
+
+    /* Fine on again, a part of a square only: still no recalc. */
+    clientSimSetFineTankPositions(cs, true);
+    row->fineX = (WORLD)(vc_world(100) + 100);
+    clientSimFollowAllyView(cs);
+    UT_ASSERT_MSG(vp->xOffset == 92 && cs->scroll.subPosX == 100 &&
+                      !vp->needRecalc,
+                  "a part-square move: tile %u sub %d recalc %d", vp->xOffset,
+                  cs->scroll.subPosX, (int)vp->needRecalc);
+
+    /* Into the next square: the tile moves and a recalc is asked for. */
+    row->fineX = (WORLD)(vc_world(101) + 8);
+    clientSimFollowAllyView(cs);
+    UT_ASSERT_MSG(vp->xOffset == 93 && cs->scroll.subPosX == 8 &&
+                      vp->needRecalc,
+                  "the next square: tile %u sub %d recalc %d", vp->xOffset,
+                  cs->scroll.subPosX, (int)vp->needRecalc);
+
+    /* Not in the ally view: nothing moves. */
+    vp->needRecalc = FALSE;
+    vp->viewKind = VIEW_KIND_TANK;
+    row->fineX = vc_world(150);
+    clientSimFollowAllyView(cs);
+    UT_ASSERT_MSG(vp->xOffset == 93 && !vp->needRecalc,
+                  "the tank view was moved by the ally follow");
+
+    scrollSetSubTilePrecision(saved);
+    clientSimDestroy(cs);
     return 0;
 }

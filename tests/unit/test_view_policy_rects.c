@@ -812,6 +812,23 @@ int run_view_pill_reveal_full_sync(void) {
     UT_ASSERT_MSG(!sim->clientPillRevealDue[0][1],
                   "a pill that did not move must not be marked for reveal");
 
+    /* Carried back unseen to the square the player holds: no reveal due.
+     * The tank goes over to pill 1 first so 55,55 is out of its view. */
+    vp_place_tank(gs, 0, 120, 120);
+    gs->pb->item[0].x = 55;
+    gs->pb->item[0].y = 55;
+    serverSimPillShadowTick(sim);
+    UT_ASSERT_MSG(!sim->clientPillRevealDue[0][0],
+                  "a pill back on the square the player holds should not "
+                  "stay marked for reveal");
+
+    /* Out again: marked again. */
+    gs->pb->item[0].x = 200;
+    gs->pb->item[0].y = 200;
+    serverSimPillShadowTick(sim);
+    UT_ASSERT_MSG(sim->clientPillRevealDue[0][0],
+                  "a pill that moved unseen again should be marked again");
+
     /* Drive over to the pill that never moved: no full sync. */
     sim->lastFullSyncTick[0] = 77;
     vp_place_tank(gs, 0, 120, 120);

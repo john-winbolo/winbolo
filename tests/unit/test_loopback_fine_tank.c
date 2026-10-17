@@ -22,7 +22,12 @@
  *   - with the flag on the entry's square and world offset are the full
  *     position, and its pixel is that offset's pixel.
  *
+ * A second case uses the same held bot for the client's shell cull: a shell
+ * is taken off the screen where it meets the tank as drawn, not the newest
+ * sample, and never against the tank that fired it.
+ *
  * run_loopback_fine_tank_position
+ * run_loopback_shell_drawn_cull
  */
 
 #include <stdint.h>
@@ -116,88 +121,111 @@ static bool lfEntry(ClientSim *cs, BYTE *mx, BYTE *my, BYTE *px, BYTE *py,
     return found;
 }
 
-int run_loopback_fine_tank_position(void) {
-    LoopbackHarness h;
-    uint32_t        tick = 1;
+/* Start the harness, field the bot seat two squares right of the viewer on
+   open grass, and hold it still until the client's players row has its full
+   position. On failure the harness is stopped and *err says why. */
+static bool lfFieldHeldBot(LoopbackHarness *h, uint32_t *tick, WORLD *outX,
+                           WORLD *outY, char *err, size_t errLen) {
     int             i, dx, dy;
     WORLD           vx = 0, vy = 0;
     BYTE            smx, smy;
     WORLD           holdX, holdY;
-    int             snapX, snapY;
     bool            arrived = false;
-    BYTE            mx = 0, my = 0, px = 0, py = 0, wx = 0, wy = 0;
 
-    memset(&h, 0, sizeof(h));
-    UT_ASSERT_MSG(loopbackHarnessStart(&h, "Viewer", /*lobbyMode*/ false,
-                                       /*impairSpec*/ NULL,
-                                       /*seed*/ 0xF1E5u),
-                  "harness start failed");
+    memset(h, 0, sizeof(*h));
+    if (!loopbackHarnessStart(h, "Viewer", /*lobbyMode*/ false,
+                              /*impairSpec*/ NULL, /*seed*/ 0xF1E5u)) {
+        snprintf(err, errLen, "harness start failed");
+        return false;
+    }
 
-    if (loopbackHarnessPumpUntil(&h, LF_CONNECT_MAX, lfConnected, NULL) < 0) {
-        loopbackHarnessStop(&h);
-        UT_FAIL("the client never reached a running game");
+    if (loopbackHarnessPumpUntil(h, LF_CONNECT_MAX, lfConnected, NULL) < 0) {
+        loopbackHarnessStop(h);
+        snprintf(err, errLen, "the client never reached a running game");
+        return false;
     }
 
     ut_brain_stub_arm(true);
-    serverSimSetBotAiType(h.sim, aiFull);
-    if (!serverSimAddUnfieldedSeat(h.sim, LF_SEAT, "Glider", LF_TEAM) ||
-        !serverSimAddBot(h.sim, LF_SEAT, &(ServerSimBotConfig){
+    serverSimSetBotAiType(h->sim, aiFull);
+    if (!serverSimAddUnfieldedSeat(h->sim, LF_SEAT, "Glider", LF_TEAM) ||
+        !serverSimAddBot(h->sim, LF_SEAT, &(ServerSimBotConfig){
                              .brainPath   = "brains/GoalHunter/init.lua",
                              .brainName   = "Glider",
                              .ai          = aiFull,
                              .gameType    = gameOpen,
                              .hiddenMines = false,
                              .teamNumber  = LF_TEAM }) ||
-        h.sim->sim.tanks[LF_SEAT] == NULL) {
-        loopbackHarnessStop(&h);
-        UT_FAIL("the bot seat could not be fielded");
+        h->sim->sim.tanks[LF_SEAT] == NULL) {
+        loopbackHarnessStop(h);
+        snprintf(err, errLen, "the bot seat could not be fielded");
+        return false;
     }
 
     /* Two squares right of the viewer, well inside its view, with open
        grass round both tanks so nothing hides the bot. */
-    tankGetWorld(&h.sim->sim.tanks[clientSimGetMyPlayerNum(h.cs)], &vx, &vy);
+    tankGetWorld(&h->sim->sim.tanks[clientSimGetMyPlayerNum(h->cs)], &vx, &vy);
     smx = (BYTE)((vx >> TANK_SHIFT_MAPSIZE) + 2);
     smy = (BYTE)(vy >> TANK_SHIFT_MAPSIZE);
     for (dy = -3; dy <= 3; dy++) {
         for (dx = -5; dx <= 3; dx++) {
-            mapSetPos(&h.sim->sim, &h.sim->sim.mp, (BYTE)(smx + dx),
+            mapSetPos(&h->sim->sim, &h->sim->sim.mp, (BYTE)(smx + dx),
                       (BYTE)(smy + dy), GRASS, FALSE, FALSE);
         }
     }
     holdX = (WORLD)((smx << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE + LF_OFF_X);
     holdY = (WORLD)((smy << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE + LF_OFF_Y);
 
-    /* What the pixel path stores: the NE snap, then the game pixel. */
-    snapX = (int)holdX;
-    snapY = (int)holdY;
-    tankDiagonalSnap(utilGetDir((TURNTYPE)BRADIANS_NEAST), &snapX, &snapY);
-    UT_ASSERT_MSG(snapX != (int)holdX || snapY != (int)holdY,
-                  "the held spot (%d,%d) is already on the NE lattice, so "
-                  "this case cannot tell the two paths apart",
-                  (int)holdX, (int)holdY);
-
     for (i = 0; i < LF_SETTLE && !arrived; i++) {
-        lfHold(h.sim, holdX, holdY);
-        tick = lfFeed(&h, tick);
-        loopbackHarnessPump(&h);
+        lfHold(h->sim, holdX, holdY);
+        *tick = lfFeed(h, *tick);
+        loopbackHarnessPump(h);
         /* The per-frame seam a human client runs before each draw: it is
            what moves other tanks into the players list. */
-        clientSimRenderPrepare(h.cs, (uint32_t)SDL_GetTicks());
+        clientSimRenderPrepare(h->cs, (uint32_t)SDL_GetTicks());
         {
-            player *row = &h.cs->sim.plyrs->item[LF_SEAT];
+            player *row = &h->cs->sim.plyrs->item[LF_SEAT];
             arrived = row->fineSet && row->fineX == holdX &&
                       row->fineY == holdY;
         }
     }
     if (!arrived) {
         /* Read the row before the stop frees it. */
-        const player *row = &h.cs->sim.plyrs->item[LF_SEAT];
+        const player *row = &h->cs->sim.plyrs->item[LF_SEAT];
         int fineSet = (int)row->fineSet;
         int fineX = (int)row->fineX, fineY = (int)row->fineY;
+        loopbackHarnessStop(h);
+        snprintf(err, errLen,
+                 "the client never held the bot's full position (%d,%d); "
+                 "players row has fineSet %d at (%d,%d)",
+                 (int)holdX, (int)holdY, fineSet, fineX, fineY);
+        return false;
+    }
+    *outX = holdX;
+    *outY = holdY;
+    return true;
+}
+
+int run_loopback_fine_tank_position(void) {
+    LoopbackHarness h;
+    uint32_t        tick = 1;
+    WORLD           holdX = 0, holdY = 0;
+    int             snapX, snapY;
+    BYTE            mx = 0, my = 0, px = 0, py = 0, wx = 0, wy = 0;
+    char            err[256];
+
+    if (!lfFieldHeldBot(&h, &tick, &holdX, &holdY, err, sizeof(err))) {
+        UT_FAIL("%s", err);
+    }
+
+    /* What the pixel path stores: the NE snap, then the game pixel. */
+    snapX = (int)holdX;
+    snapY = (int)holdY;
+    tankDiagonalSnap(utilGetDir((TURNTYPE)BRADIANS_NEAST), &snapX, &snapY);
+    if (snapX == (int)holdX && snapY == (int)holdY) {
         loopbackHarnessStop(&h);
-        UT_FAIL("the client never held the bot's full position (%d,%d); "
-                "players row has fineSet %d at (%d,%d)",
-                (int)holdX, (int)holdY, fineSet, fineX, fineY);
+        UT_FAIL("the held spot (%d,%d) is already on the NE lattice, so "
+                "this case cannot tell the two paths apart",
+                (int)holdX, (int)holdY);
     }
 
     /* Flag off: the snapped game pixel, exactly the old entry. */
@@ -230,6 +258,96 @@ int run_loopback_fine_tank_position(void) {
                       "(%d,%d)", px, py, wx, wy);
     }
 
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
+/* Advance one projected shell from (x - step, y) by step to (x, y) and say
+   whether the client's cull kept it. */
+static bool lfShellSurvives(ClientSim *cs, WORLD x, WORLD y, uint8_t owner) {
+    const float step = 16.0f;
+    ProjectedShell *ps = &cs->projectedShells[0];
+
+    memset(ps, 0, sizeof(*ps));
+    ps->fx     = (float)x - step;
+    ps->fy     = (float)y;
+    ps->vx     = step;
+    ps->vy     = 0.0f;
+    ps->owner  = owner;
+    ps->length = 40;
+    ps->active = true;
+    cs->projectedShellCount = 1;
+    clientSimAdvanceProjectedShells(cs);
+    return cs->projectedShellCount == 1;
+}
+
+/* The client's shell cull meets the tank where it is drawn. The bot is held
+   still, so the newest interpolation sample sits on the held spot; the drawn
+   position is then put two hit radii to the right of it, the way the display
+   delay leaves the drawn hull apart from the newest sample. A shell on the
+   newest sample but clear of the drawn hull stays on the screen; one on the
+   drawn hull is culled; and a shell the bot fired is never culled against the
+   bot. */
+int run_loopback_shell_drawn_cull(void) {
+    LoopbackHarness h;
+    uint32_t        tick = 1;
+    WORLD           holdX = 0, holdY = 0;
+    WORLD           nx = 0, ny = 0;     /* The newest sample */
+    WORLD           drawnX;
+    TURNTYPE        angle = 0;
+    bool            onBoat = false;
+    int             hitR;
+    uint8_t         other;              /* A shooter that is neither tank */
+    player         *row;
+    char            err[256];
+
+    if (!lfFieldHeldBot(&h, &tick, &holdX, &holdY, err, sizeof(err))) {
+        UT_FAIL("%s", err);
+    }
+    if (h.cs->isBot ||
+        !interpIsAlive(&h.cs->interpCtx, LF_SEAT) ||
+        !interpGetPosition(&h.cs->interpCtx, LF_SEAT, 1.0f, &nx, &ny, &angle,
+                           &onBoat)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client holds no live sample for the bot");
+    }
+    if (nx != holdX || ny != holdY) {
+        int gx = (int)nx, gy = (int)ny;
+        loopbackHarnessStop(&h);
+        UT_FAIL("the newest sample (%d,%d) is not the held spot (%d,%d)", gx,
+                gy, (int)holdX, (int)holdY);
+    }
+
+    hitR   = (int)h.cs->sim.rules.tank_hit_radius;
+    drawnX = (WORLD)((int)nx + 2 * hitR + 16);
+    other  = (uint8_t)((LF_SEAT + 1) % MAX_TANKS);
+    if (other == clientSimGetMyPlayerNum(h.cs)) {
+        other = (uint8_t)((other + 1) % MAX_TANKS);
+    }
+
+    /* The drawn position, the way the Smooth draw reads it. Nothing pumps
+       between here and the checks, so nothing writes the row over. */
+    clientSimSetFineTankPositions(h.cs, true);
+    row = &h.cs->sim.plyrs->item[LF_SEAT];
+    row->fineX   = drawnX;
+    row->fineY   = ny;
+    row->fineSet = true;
+
+    if (!lfShellSurvives(h.cs, nx, ny, other)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("a shell on the newest sample, %d units short of the drawn "
+                "hull, was culled", 2 * hitR + 16);
+    }
+    if (lfShellSurvives(h.cs, drawnX, ny, other)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("a shell on the drawn hull was not culled");
+    }
+    if (!lfShellSurvives(h.cs, drawnX, ny, (uint8_t)LF_SEAT)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("a shell was culled against the tank that fired it");
+    }
+
+    h.cs->projectedShellCount = 0;
     loopbackHarnessStop(&h);
     return 0;
 }

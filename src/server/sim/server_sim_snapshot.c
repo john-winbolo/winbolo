@@ -542,8 +542,8 @@ bool serverSimPillPosVisible(ServerSim *sim, BYTE slot, BYTE pillIdx,
     }
     /* A player always knows where their own and their allies' pills are: the
      * pill view cycles through them, and a camera parked on a square the pill
-     * has left shows nothing. Bots keep the view-area rule, so what a brain
-     * is told does not change. */
+     * has left shows nothing. Server-side bots keep the view-area rule, so
+     * what their brains are told does not change. */
     if (!serverSimIsBot(sim, slot) &&
         playersIsAllie(&sim->sim.plyrs, (*sim->sim.pb).item[pillIdx].owner,
                        slot) == TRUE) {
@@ -598,11 +598,12 @@ void serverSimPillShadowTick(ServerSim *sim) {
             BYTE liveX = (*sim->sim.pb).item[p].x;
             BYTE liveY = (*sim->sim.pb).item[p].y;
             if (!serverSimPillPosVisible(sim, slot, p, vps, numVps)) {
-                /* Moved out of sight: what this slot holds is now wrong. */
-                if (sim->clientKnownPillX[slot][p] != liveX ||
-                    sim->clientKnownPillY[slot][p] != liveY) {
-                    sim->clientPillRevealDue[slot][p] = true;
-                }
+                /* Out of sight: a reveal is due only while the square this
+                 * slot holds is wrong. A pill carried back to that square
+                 * needs none. */
+                sim->clientPillRevealDue[slot][p] =
+                    (sim->clientKnownPillX[slot][p] != liveX ||
+                     sim->clientKnownPillY[slot][p] != liveY);
                 continue;
             }
             /* Back in sight after moving unseen. A pill update event only goes
