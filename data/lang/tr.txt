@@ -2090,6 +2090,10 @@ STR_DLGSETTINGS_HOSTING_VOICE_ON=Açık
 STR_DLGSETTINGS_HOSTING_VOICE_OFF=Kapalı
 STR_DLGSETTINGS_HOSTING_VOICE_PROXIMITY=Yakınlık
 STR_DLGSETTINGS_HOSTING_VOICE_TIP=Kapalı, sesi herhangi birine iletmek yerine atar. Yakınlık henüz uygulanmadı ve Açık ile aynı şekilde davranır.
+STR_DLGSETTINGS_HOSTING_SERVERNAME=Sunucu Adı
+STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=Oyun Bulucu, adresiniz yerine bu adı gösterir. En fazla 32 karakter (aksanlı karakterlerde veya başka yazı sistemlerinde daha az). Adresinizi göstermek için boş bırakın.
+STR_DLGSETTINGS_HOSTING_SERVERDESC=Açıklama
+STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=Oyun Bulucu, bir oyuncu oyununuzu işaret ettiğinde veya seçtiğinde bunu gösterir. En fazla 200 karakter (aksanlı karakterlerde veya başka yazı sistemlerinde daha az).
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Sesli Sohbet
@@ -2738,6 +2742,7 @@ STR_DLGLOBBY_SCENARIO_TAG_WORKSHOP=Atölye
 # The game finder's scripts
 STR_DLGBROWSER_MODS=Modlar
 STR_DLGBROWSER_MODS_MORE=+{number} mod
+STR_DLGBROWSER_ADDRESS=Adres
 
 # In-game newswire — a scenario changed who hears a player's voice
 STR_VOICE_EVERYONE_ON=Sesli sohbet artık oyundaki herkese gidiyor

@@ -27,7 +27,7 @@ ARENAS = [
     "pilltag_man_out",
     "pilltag_man_kill",
     "pilltag_drive_over",
-    "pilltag_shoot_standing",
+    "pilltag_shoot_built_prize",
     "pilltag_fort_last_shot",
     "pilltag_team_hop",
 ]

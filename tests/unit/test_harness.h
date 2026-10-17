@@ -513,6 +513,9 @@ int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
 int run_wbn_rekey_codec(void);
 int run_wbn_news_parse(void);
+int run_wbn_news_markdown(void);
+int run_news_image_budget(void);
+int run_news_image_fit(void);
 
 /* News fetch lifetime regression (test_wbn_news_fetch.cpp): freeing the
  * fetch handle while the worker thread is still parked in the network GET
@@ -532,6 +535,7 @@ int run_wbn_serverlist_players(void);
 int run_wbn_serverlist_motd(void);
 int run_wbn_serverlist_malformed(void);
 int run_wbn_serverlist_scripts(void);
+int run_wbn_serverlist_server_text(void);
 int run_wbn_map_parse(void);
 int run_wbn_map_fetch_policy(void);
 int run_brain_crash_log_writes_file(void);
@@ -581,6 +585,9 @@ int run_bolo_rand_golden_sequence(void);
 int run_pf_dijkstra_no_solid_corner_cut(void);
 int run_pf_astar_no_solid_corner_cut(void);
 int run_pf_costto_no_solid_corner_cut(void);
+/* Bench, a no-op unless WB_BENCH=1 (test_bench_decoy_step.c): the per-think
+ * cost of decoy_getaway's blocker step on the decoy square. */
+int run_bench_decoy_step_first(void);
 int run_pf_tail_reaches_radius_and_stops(void);
 int run_pf_tail_blocked_by_wall_and_sea(void);
 int run_pf_tail_neutral_zone_slows(void);
@@ -1704,6 +1711,11 @@ int run_view_pill_pos_current(void);
 int run_view_pill_pos_reveal(void);
 int run_view_pill_update_event_fogged(void);
 int run_view_pill_pos_bot_advantage(void);
+/* Own and allied pills are always sent current to a human (a bot keeps the
+ * view-area rule); a pill that moved unseen asks for a full sync the tick it
+ * comes back into view. */
+int run_view_pill_pos_allied(void);
+int run_view_pill_reveal_full_sync(void);
 
 /* Server-side tree hide (test_tree_hide.c): serverSimBuildSnapshot ships a
  * tank standing in trees more than MIN_TREEHIDE_DIST from the recipient on
@@ -1733,6 +1745,9 @@ int run_view_state_key_grants_rect(void);
 int run_view_state_bad_claims_degrade(void);
 int run_view_state_invalidation(void);
 int run_view_state_lifecycle(void);
+/* An unchanged item view is reported again once a second, so a view the
+ * server dropped is taken up again; the tank view is never repeated. */
+int run_view_state_resend(void);
 
 /* Server-side ally picking (test_view_state.c): CMD_VIEW_CYCLE asks the server
  * which ally to watch, serverSimPickAlly answers from live state — next and
@@ -1783,6 +1798,17 @@ int run_view_cycle_decay_skip(void);
 int run_view_cycle_eligible_mask(void);
 int run_view_cycle_ally_stub(void);
 int run_view_cycle_stale_pill(void);
+/* A moved pill is stepped over and drops a view parked on it; a carried
+ * pill's record never names the view, and the held index wins on a shared
+ * square. */
+int run_view_cycle_moved_pill(void);
+/* scrollCenterWorld frames a mid-square tank as scrollCenterObject does and
+ * keeps the sub-square part, so the ally view glides. */
+int run_view_cycle_ally_follow(void);
+/* clientSimFollowAllyView on a ClientSim: a stub leaves the camera, Smooth on
+ * follows fineX/fineY, off follows the game pixel, and only a whole-square
+ * change asks for a recalc. */
+int run_view_cycle_ally_follow_clientsim(void);
 
 /* The per-pill position-current flag (test_pill_pos_current.c): the lookups
  * movement, turn rate and shell collision ask pass over a pill whose square
@@ -2126,6 +2152,9 @@ int run_lgm_unfield_drops_carried_pill(void);
  * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */
 int run_jitter_buffer_grow(void);
 int run_shell_projection(void);
+/* Projected shells re-anchor on owner and angle, pulled a quarter of the way
+ * toward the fresh projection. */
+int run_shell_projection_match(void);
 
 /* Shared shell list builder (test_screen_bullets_build.c): the classic
  * viewport list with the scroll origin and the overview's whole-map list with
@@ -3114,6 +3143,14 @@ int run_wbn_lobby_info_scenario(void);
 int run_info_script_tail_golden(void);
 int run_info_script_tail_read(void);
 
+/* The host's server name and description (test_server_text.c): the
+ * sanitiser, the sim's setters, and the bytes the info reply carries after
+ * the scripts, written and read, old layout and malformed. */
+int run_server_text_sanitize(void);
+int run_server_text_sim(void);
+int run_server_text_tail_golden(void);
+int run_server_text_tail_read(void);
+
 /* The policy a server holds for scripts players send it
  * (test_script_upload_policy.c): the word it is set from and the legacy flag
  * that stands for off, the spelling a preference is written in, its byte on
@@ -3138,6 +3175,7 @@ int run_survival_lobby_round_full(void);
 int run_survival_lobby_round_ds_order(void);
 int run_loopback_unfield_tank(void);
 int run_loopback_fine_tank_position(void);
+int run_loopback_shell_drawn_cull(void);
 int run_lobby_template_return_reconciles(void);
 int run_lobby_template_return_unfields(void);
 int run_lobby_template_reset_reseats(void);

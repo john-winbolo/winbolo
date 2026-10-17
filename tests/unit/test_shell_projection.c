@@ -16,10 +16,12 @@
 
 #include <math.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "global.h"        /* BRADIANS_EAST */
 #include "sim_rules.h"     /* simRulesClassic — the speed under test */
 #include "client_sim.h"    /* clientShellProject, clientShellProjectAgeTicks, PROJECTION_MAX_TICKS */
+#include "client_sim_internal.h" /* the shell arrays, written directly */
 #include "test_harness.h"
 
 static float vmag(float vx, float vy) { return sqrtf(vx * vx + vy * vy); }
@@ -123,5 +125,70 @@ int run_shell_projection(void) {
                   fx1, fx2);
   }
 
+  return 0;
+}
+
+/* Re-anchoring a projected shell on the next snapshot. Two shells from one
+ * owner — two pills of one player, side by side — pass close to each other.
+ * Matching on owner and distance alone hands each incoming shell the other's
+ * carried position; the angle keeps each on its own. The carried position is
+ * pulled a quarter of the way toward the fresh projection, so an age error
+ * cannot build up. */
+int run_shell_projection_match(void) {
+  ClientSim *cs = clientSimAlloc();
+  UT_ASSERT_MSG(cs != NULL, "clientSimAlloc returned NULL");
+  clientSimCreate(cs);
+  UT_ASSERT_MSG(cs->sim.rules.shell_speed > 0, "the rules carry no shell speed");
+
+  /* Carried from the last snapshot: A flies east at 10000, B flies south
+   * 10 units to its right. */
+  cs->projectedShellCount = 2;
+  cs->projectedShells[0].fx = 10000.0f;
+  cs->projectedShells[0].fy = 20000.0f;
+  cs->projectedShells[0].angle = 0;
+  cs->projectedShells[0].owner = 4;
+  cs->projectedShells[0].length = 20;
+  cs->projectedShells[0].active = true;
+  cs->projectedShells[1] = cs->projectedShells[0];
+  cs->projectedShells[1].fx = 10010.0f;
+  cs->projectedShells[1].angle = 64;
+
+  /* The new snapshot has them crossed over: B's angle where A was, A's angle
+   * where B was. Owner and distance alone would pair each with the wrong one. */
+  memset(cs->serverShellSnaps, 0, sizeof(cs->serverShellSnaps));
+  cs->serverShellCount = 2;
+  cs->serverShellSnaps[0].worldX = 10000;
+  cs->serverShellSnaps[0].worldY = 20000;
+  cs->serverShellSnaps[0].angle  = 64;
+  cs->serverShellSnaps[0].owner  = 4;
+  cs->serverShellSnaps[0].length = 19;
+  cs->serverShellSnaps[1] = cs->serverShellSnaps[0];
+  cs->serverShellSnaps[1].worldX = 10010;
+  cs->serverShellSnaps[1].angle  = 0;
+
+  /* Zero ping: the projection is the snapshot square itself. */
+  clientSimRebuildProjectedShells(cs, 0);
+  UT_ASSERT_MSG(cs->projectedShellCount == 2, "%d shells after the rebuild",
+                cs->projectedShellCount);
+  /* Incoming angle 64 keeps B (10010) and moves a quarter toward 10000. */
+  UT_ASSERT_MSG(fabsf(cs->projectedShells[0].fx - 10007.5f) < 0.01f,
+                "the angle-64 shell sits at %.2f, expected B's 10010 pulled "
+                "to 10007.5", cs->projectedShells[0].fx);
+  /* Incoming angle 0 keeps A (10000) and moves a quarter toward 10010. */
+  UT_ASSERT_MSG(fabsf(cs->projectedShells[1].fx - 10002.5f) < 0.01f,
+                "the angle-0 shell sits at %.2f, expected A's 10000 pulled "
+                "to 10002.5", cs->projectedShells[1].fx);
+
+  /* A shell with no carried partner of its angle anchors fresh. */
+  cs->serverShellCount = 1;
+  cs->serverShellSnaps[0].worldX = 10004;
+  cs->serverShellSnaps[0].angle  = 128;
+  clientSimRebuildProjectedShells(cs, 0);
+  UT_ASSERT_MSG(cs->projectedShellCount == 1 &&
+                    fabsf(cs->projectedShells[0].fx - 10004.0f) < 0.01f,
+                "a shell of a new angle should anchor at 10004, got %.2f",
+                cs->projectedShells[0].fx);
+
+  clientSimDestroy(cs);
   return 0;
 }

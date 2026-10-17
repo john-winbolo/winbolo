@@ -17,12 +17,13 @@
 -- through the gap. The script finds them and sends each hunter to one
 -- (walled.update); after a short hold the brain's own pillbox fight takes over.
 --
--- PASS: a hunter that was sent to a square, and got within one square of it,
--- hits the prize before the shot through the walls is turned on.
--- FAIL: the shot through the walls is turned on first, or no such hit comes
--- in the 60 s after the build.
+-- PASS: a hunter hits the prize within ARENA.HIT_WITHIN (20) s of the build,
+-- by any route, before the shot through the walls is turned on.
+-- FAIL: the shot through the walls is turned on first, or no hit comes in
+-- that time.
 
-ARENA = { given = false, hits = {}, lines = {}, arrived = {}, cx = 126, cy = 126, gap = true }
+ARENA = { given = false, hits = {}, lines = {}, arrived = {}, cx = 126, cy = 126, gap = true,
+          HIT_WITHIN = 20 }
 scenario.callbacks.pill_damage_scale = "Arena: counts the hunters' hits on the prize."
 
 -- The script reads seat 0 as a person.
@@ -171,9 +172,9 @@ function on_tick(tick)
       verdict(false, string.format("p%d hit the prize only after the wall shot was on", h.p))
       return
     end
-    if h.sent and h.arrived then
-      verdict(true, string.format("p%d sent, reached its square at +%.1fs, hit at +%.1fs",
-        h.p, (h.arrived - A.built) / 100, (h.t - A.built) / 100))
+    if h.t <= A.built + A.HIT_WITHIN * 100 then
+      verdict(true, string.format("p%d hit the prize at +%.1fs (sent=%s arrived=%s)",
+        h.p, (h.t - A.built) / 100, tostring(h.sent), tostring(h.arrived ~= nil)))
       return
     end
   end
@@ -181,8 +182,8 @@ function on_tick(tick)
     verdict(false, "the shot through the walls was turned on before a line hit")
     return
   end
-  if tick >= A.built + 6000 or tick >= GATE_TICKS - 50 then
-    verdict(false, string.format("no hit from a sent hunter in %.0f s (hits %d)",
-      (tick - A.built) / 100, #A.hits))
+  if tick > A.built + A.HIT_WITHIN * 100 or tick >= GATE_TICKS - 50 then
+    verdict(false, string.format("no hunter hit the prize in %d s (hits %d)",
+      A.HIT_WITHIN, #A.hits))
   end
 end

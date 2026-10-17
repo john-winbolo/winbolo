@@ -149,6 +149,14 @@ M.TERRAIN_SPEED = {
 -- Pill danger zone tuning
 M.PILL_DANGER_BASE  = 8    -- cost penalty from a calm hostile pill at point-blank
 M.PILL_DANGER_ANGER = 200  -- additional penalty when fully angry (anger=1.0, quadratic)
+-- PILL DANGER MULTIPLIER (2026-10-15): every pill's danger stamp (the
+-- pill grid the pathfinder, the goal costs and the attack spot safety read)
+-- is multiplied by this, and so is the crossfire term attack.lua prices an
+-- attack spot with.  A script sets it with cfg=PILL_DANGER_MULT=<n>; a
+-- change on a running brain rebuilds the pill grid on the next think.
+-- Pillbox Tag sets 0.01 on every bot, so pills count almost nothing.
+-- 1.0 = no change (an ordinary game).
+M.PILL_DANGER_MULT  = 1.0  -- keel 1.0
 -- Radial falloff at the edge of PILL_RANGE_MAP. 0.5 = 50% drop, so the
 -- rim reads as 50% of point-blank danger. The whole disk is in the
 -- pill's actual fire range; the earlier 1-d/(R+1) curve dropped to
@@ -2223,6 +2231,17 @@ M.ATTACK_TANK_HEAT_MAX_TICKS    = 150   -- hard ceiling on one volley (aim + fir
 -- sides of a wall don't sit there forever. Reset whenever a normal
 -- clear shot fires or we leave engage. ~30 ticks ??? 1s.
 M.TANK_COMBAT_STUCK_FIRE_TICKS  = 30
+-- STUCK-FIRE HOLD (2026-10-15, bot bug fix).  A tick that fails the aim,
+-- shells, steady or range gate while the tank still sits on the same square
+-- keeps the stuck-fire count instead of zeroing it.  That is any aim miss,
+-- small or large, and also a tick with no shells.  A target behind a wall at 1-3
+-- squares jitters, its lead swings the aim off the gate most ticks, and the
+-- zeroed count never reached 30: the hunter sat beside it and never fired.
+-- A kept count can be at 30 when the gun next comes onto the aim (after a
+-- long turn, or after a reload on the same square); the shot still needs
+-- the aim and shells gates, so it fires only once the gun is on the target.
+-- false = the old way (any gate miss zeroes the count).
+M.TANK_COMBAT_STUCK_FIRE_HOLD  = true  -- keel false (2026-10-15: engage beside a walled tank)
 
 -- Heading-stability fire gate (see steering.lua tank_combat_steer): only trust
 -- the lead once the target's heading has held steady, so we don't fire during a
@@ -2240,6 +2259,16 @@ M.KILL_LGM_NAV_INSET   = 3   -- tiles: nav target sits this far INSIDE the engag
                              -- so tank crosses into engage range with forward momentum
                              -- (engage trigger still fires at SHOOT_RANGE; only the
                              -- "where to drive to" target gets pulled in)
+
+-- 2026-10-15: lead and fire gate.  The shell flight time (flight_ticks)
+-- and the man's velocity are both in brain ticks now, so the textbook
+-- lead needs no scale: 0.77 under-led by exactly 23% (flight 43 brain
+-- ticks, man walks 16 wu per brain tick) and the shell landed behind
+-- him.  The fire gate is the engine's full kill radius, 128 wu; 64 held
+-- fire on shots that would kill.  pilltag_man_kill: 5/8 seeds -> 8/8.
+-- Both read at use time (kill_lgm.predict_aim, init.lua fire gate).
+M.KILL_LGM_LEAD_SCALE = 1.00  -- keel 0.77 (both tiers: linear v*T and dest_lock sim steps)
+M.KILL_LGM_FIRE_WU    = 128   -- keel 64 (burst must land this close to the predicted man)
 
 -- ── Capture-pill LGM hunt (2026-09-08) ────────────────────────────────────
 -- A hostile LGM standing on or beside the dead pill we are driving to grab is
@@ -4770,6 +4799,85 @@ M.ORDER_FOCUS_TICKS     = 3000   -- keel 3000 (moot; master off)
 -- whatever is left of a minute.  500 ticks = 10 s at 50 ticks/s.  The bot
 -- says the number when it arrives, so this knob is what it promises.
 M.ORDER_GOTO_HOLD_TICKS = 500    -- keel 500 (moot; master off)
+-- 2026-10-04: A GO-THERE ORDER REACHES THE SQUARE ITSELF.  The order counts
+-- as arrived (the hold starts) when the tank is within this many squares of
+-- the target, measured as the larger of the two axes.  0 = on the square.
+-- 1 = on it or on any of the eight round it (keel: the old arrival test).
+M.ORDER_GOTO_ARRIVE_TILES = 0    -- keel 1
+-- The way out when the square cannot be reached (a wall, a pill on it,
+-- another tank parked there): once the tank is within one square, a timer
+-- starts, and after this many ticks the order counts as arrived anyway.  The
+-- timer resets when the tank leaves the one-square ring.  A bot that arrives
+-- this way parks where it is, because the hold park (orders.hold_parked) and
+-- steering still use the one-square test.  0 = no fallback (keel).
+M.ORDER_GOTO_ARRIVE_FALLBACK_TICKS = 100   -- keel 0
+-- 2026-10-14 (Andrew): A BLOCKED SQUARE ARRIVES FROM THE RING.  While the
+-- tank is in the one-square ring and has not arrived, every think looks at
+-- the target square.  If another tank (any team), a pillbox (any owner) or a
+-- wall (building or damaged building) is on it, the order arrives at once,
+-- with no timer.  An open square keeps the two rules above.  false = only
+-- the square itself or the fallback timer.  Keel false: keel already
+-- arrives anywhere in the one-square ring.
+M.ORDER_GOTO_ARRIVE_BLOCKED_RING = true   -- keel false
+-- 2026-10-15: THE FALLBACK TIMER COUNTS ONLY TICKS WITHOUT PROGRESS.  With
+-- this on, the ORDER_GOTO_ARRIVE_FALLBACK_TICKS timer restarts every think
+-- the tank gets closer to the centre of the square than it has been since it
+-- came into the one-square ring.  A tank still driving onto the square is
+-- never cut short; a tank that is wedged, held off by something the blocked
+-- test cannot see, or swinging back and forth beside the square arrives
+-- once it has gone that many ticks without getting closer.  false = the
+-- timer runs from the first think in the ring (keel: no timer at all).
+M.ORDER_GOTO_FALLBACK_STALL = true   -- keel false
+-- 2026-10-15: A SQUARE NO PATH REACHES IS SWAPPED FOR THE NEAREST ONE THAT
+-- IS.  While a go-there order travels, once the tank's own route search
+-- (the KIND_NORMAL Dijkstra slate) has finished and has no route to the
+-- square (deep sea without a boat, an island, a square shut in by walls),
+-- the order's square becomes the nearest square the search did reach,
+-- nearest by the larger of the two axes, cheapest route on a tie.  Done
+-- once per order.  false = drive at the square until the order lapses.
+M.ORDER_GOTO_RETARGET_UNREACHABLE = true   -- keel false
+-- 2026-10-15: A GO-THERE ORDER DRIVES ONTO ITS SQUARE AT SPEED.  Lined up
+-- on the square, the tank holds speed and brakes on the engine stop
+-- predictor instead of the distance-proportional approach brake (see
+-- steering.lua, "goto_fast").  false = the approach brake (keel).
+-- OFF LIVE for now (2026-10-15): on in an 8-seed sweep it made
+-- pilltag_base_cap (seed 42 too), pilltag_fort_lead and pilltag_fort_trail
+-- fail more often than on main.  It is not wrong in itself: the bot holder
+-- reaches the script's go-there squares sooner, and those arenas then play
+-- out differently.  Andrew to decide; see PR #510.
+M.GOTO_FAST_ARRIVE = false  -- keel false
+-- 2026-10-15 (Andrew: "if it's blocked, just say you're there and move on to
+-- the next goal"): A BLOCKED SQUARE IS AN ARRIVAL WITH NO HOLD.  When
+-- ORDER_GOTO_ARRIVE_BLOCKED_RING arrives an order from the ring, the order
+-- is over on that think: no hold, no park beside the square, no decoy hold,
+-- and goal selection takes over.  false = the hold (or decoy hold) runs as
+-- after any arrival (keel).
+M.ORDER_GOTO_BLOCKED_RELEASE = true   -- keel false
+-- 2026-10-15: A SLOW DRIVE IS NOT A STUCK TANK FOR THE LOOKAHEAD COLLAPSE.
+-- The stuck tracker's window only restarts on 24 world units of progress
+-- in ONE think (full speed is about 16), so after 30 thinks on one path
+-- step the lookahead collapse turned every tank back to its own square,
+-- even one that was driving onto the step.  With this on, the collapse
+-- has its own clock, which restarts each time the tank has driven 24
+-- world units closer to the step since the clock last restarted.  Only
+-- for the last step, the goal's own square, and for a tank on land (not
+-- in a boat).  The stuck recovery and its
+-- blacklist keep the old window, and so does the collapse on the way
+-- there (earlier versions that changed those made sea_pills, kill_me_C
+-- and others fail).
+-- false = the collapse uses the old window (keel).
+M.STUCK_COLLAPSE_ACCUM = true   -- keel false
+-- 2026-10-15 (Andrew: "Do not count shooting your own pill down as
+-- stuck"): SHOOTING OUR OWN PILL DOWN IS NOT A STUCK TANK.  In the
+-- reposition shoot phase of capture_pill (substate reposition_shoot) the
+-- tank stops beside its own pill on purpose and fires until the pill is
+-- dead.  The stuck recovery read that stop as no progress, so after
+-- STUCK_TICKS of shooting it put a penalty on the square between the tank
+-- and the built prize (pilltag_hop_ahead seed 99).  With this on, that
+-- phase counts as intentionally stationary: the stuck clock does not run,
+-- and a new window starts when the shooting ends.
+-- false = the shooting phase counts toward the stuck clock (keel).
+M.STUCK_EXEMPT_REPOSITION_SHOOT = true   -- keel false
 -- THE HOLD PHASE STILL FIGHTS.  While the hold runs the hard goto lock comes
 -- off and goal selection runs again, so attack_tank and kill_lgm can win --
 -- but the tank must not DRIVE anywhere: it was sent to that square.  These
@@ -4874,6 +4982,148 @@ M.ORDER_LAND_REPEAT_ADDS = false  -- keel true
 -- never to a bot that already holds that order.  false = nobody goes: one
 -- bot says "All bots busy" and the order waits for a bot to come free.
 M.ORDER_NO_FREE_TAKES_LOWEST = true  -- keel false
+-- 2026-10-04: THE BID PRICES IN A REFUEL STOP AND A FIGHT.  A bot that will
+-- stop at a base on the way (shells < SHELLS_LOW on an order that needs
+-- shells -- any order when ORDER_REFUEL_SKIP_NO_SHELLS is off -- or armour
+-- <= ARMOUR_LOW) bids path(bot -> nearest friendly base) + estimate(base ->
+-- target) + ORDER_BID_REFUEL_STOP_COST instead of its straight path.  A bot
+-- whose goal is attack_tank or kill_lgm adds ORDER_BID_ENGAGED_COST.  The
+-- terms add.  Every term is on the ORDER_BID and ORDER_TAKE debug lines.
+-- false = the bid is the travel cost alone (keel).
+M.ORDER_BID_STOP_AWARE = true        -- keel false
+M.ORDER_BID_REFUEL_STOP_COST = 30    -- keel 0
+M.ORDER_BID_ENGAGED_COST = 30        -- keel 0
+-- 2026-10-04: A BOT SHOOTING A PILL IS BUSY, AND A HOLDER CAN HAND OFF.
+-- Master switch.  With it on:
+--   * a bot on attack_pill in a shooting phase (see orders.SHOOTING_PILL)
+--     is busy for new orders ("Busy (taking pill)"), its own pick or an order;
+--   * a bot on a person's job (ORDER_HOLDER_KEEPS_JOB) that is not busy bids
+--     a NORMAL bid + ORDER_HANDOFF_PENALTY on a new auction.  If it wins, it
+--     keeps working its old job and asks the team to take that one (obq).  A
+--     free bot that claims the old job lets it go to the new one at once; with
+--     no claim in ORDER_HANDOFF_WAIT_TICKS it drops the old job and goes.
+-- false = holders bid "no" (or the ORDER_NO_FREE_TAKES_LOWEST switch cost),
+-- and shooting a pill is not busy (keel).
+M.ORDER_HANDOFF = true               -- keel false
+M.ORDER_HANDOFF_PENALTY = 15         -- keel 0
+M.ORDER_HANDOFF_WAIT_TICKS = 100     -- keel 0
+-- CHAINED HANDOFFS (2026-10-04).  The relief auction for a holder's old job
+-- is an order auction too, so another holder that is not shooting a pill may
+-- win it (with ORDER_HANDOFF_PENALTY) and ask for relief of ITS old job in
+-- turn: a 2-3 bot hop toward nearer jobs.  The hop count travels with the
+-- relief (obq OLD HOP MASK ROOT ASKER); a relief at hop >= this value takes
+-- FREE bots only.  A bot already in the chain (MASK) never bids on it.
+-- 0 or 1 = holders answer every relief "no" (single hop; keel).
+M.ORDER_HANDOFF_MAX_HOPS = 3         -- keel 0
+-- 2026-10-16: A HELD ORDER SKIPS THE WARM-UP.  pick_goal (goals.lua) runs
+-- goal selection from the first think a bot holds a usable order, and skips
+-- special_mode_goal (harasser / circle reinforce) while it holds one.
+-- false = a held order waits for warm-up and special_mode_goal runs (keel).
+M.ORDER_SKIPS_WARMUP = true          -- keel false
+-- 2026-10-16: THE ORDER'S GOAL KIND FOLLOWS THE TARGET.  Three fixes for
+-- order goal loops:
+--   * goals.order_goal: "capture pill N" on a live enemy or neutral pill
+--     becomes attack_pill (the kill hands over to capture_pill);
+--   * goals.order_goal: a base order becomes attack_base or capture_base
+--     from the base's state (the kind init.lua's validity check keeps);
+--   * orders.lua goal_kind: "capture pill N" on our own live pill is turned
+--     down with "pill #N is already ours".
+-- false = the order's own kind is used as it is, no refusal (keel).
+M.ORDER_GOAL_KIND_FIX = true         -- keel false
+-- 2026-10-05 (Andrew): THE HUMAN IS DECOYING FOR US.  A pill shoots the
+-- CLOSEST tank in its range; a wall does not stop it picking that tank.  So
+-- a human team-mate standing behind a blocker (a wall, or one of our pills)
+-- that sits between him and an enemy pill draws that pill's fire into the
+-- blocker.  The bot attacking that pill reads it (orders.human_decoy_check,
+-- every think) when ALL of these hold:
+--   * its goal is attack_pill on that pill (its own pick or an order);
+--   * a visible human ally (util.human_ally_near's filter) is within
+--     PILL_FIRE_RANGE of the pill (Euclidean tiles);
+--   * that human is closer to the pill than our tank (he is its target).
+--     With several, the one closest to the pill;
+--   * decoy_getaway.block() at the human's square says "wall",
+--     "wall_damaged" or "pill" with a value >= HUMAN_DECOY_MIN_BLOCK.
+-- The flag stays HUMAN_DECOY_HOLD_TICKS (150 = 3 s) after the tests last
+-- held.  It drops at once when the goal is something else, the pill is
+-- dead / ours / carried, or the tank dies.  While it stands:
+--   * standoff choice (attack.human_decoy_cost): + HUMAN_DECOY_SPACING_COST
+--     per tile the spot is inside HUMAN_DECOY_MIN_TILES of the human, and
+--     + HUMAN_DECOY_BEHIND_COST per tile the spot is closer to the pill than
+--     (the human's distance + HUMAN_DECOY_BEHIND_MARGIN).  Costs, not rules:
+--     with every spot close, the bot still attacks;
+--   * the human walks to within HUMAN_DECOY_MIN_TILES of the chosen spot: a
+--     fresh spot, at most once per HUMAN_DECOY_REPICK_TICKS;
+-- 2026-10-14 (Andrew, PR #510 review item 3): the spot-to-human distance
+-- above is a PROJECTED distance (HUMAN_DECOY_PROJECTED).  The spot and the
+-- human are both pushed out from the pill centre onto the circle of radius
+-- PILL_FIRE_RANGE, and the distance is the chord between the two points
+-- (2 R sin(dtheta / 2)).  Only the angle round the pill counts: a spot
+-- straight behind the human or in front of him is distance 0.  So
+-- HUMAN_DECOY_MIN_TILES is 2 (was 5 straight tiles).  false = the straight
+-- spot-to-human distance, as before.
+--   * HUMAN_DECOY_REPICK_MAX re-picks per standoff (1).  On that re-pick a
+--     spot within HUMAN_DECOY_MIN_TILES of the human is not a choice (a
+--     rule, not a cost).  If no spot is left, the bot keeps its spot and
+--     takes the pill as usual.  No more re-picks until a new goal or a new
+--     standoff from another cause.  0 = no limit, as before.  Why: a human
+--     standing still beside the only arc made the bot re-pick every
+--     HUMAN_DECOY_REPICK_TICKS and never shoot.
+--   * no human-near suicide run and no charge now (attack ping or human
+--     shooting); a running one ends.  The bot-command + attack ping pair is
+--     a person's direct order and still starts the run.
+-- Why: the bot rushing in, or parking beside the human, takes the pill's
+-- fire off the blocker and onto a tank.
+-- false = exactly the old behaviour (no new state is touched).
+M.HUMAN_DECOY_AWARE         = true   -- keel false
+M.HUMAN_DECOY_MIN_BLOCK     = 0.5    -- keel 0.5 (moot; master off)
+M.HUMAN_DECOY_HOLD_TICKS    = 150    -- keel 150 (moot)
+M.HUMAN_DECOY_MIN_TILES     = 2      -- keel 5 (moot)
+M.HUMAN_DECOY_SPACING_COST  = 10     -- keel 10 (moot)
+M.HUMAN_DECOY_BEHIND_COST   = 20     -- keel 20 (moot)
+M.HUMAN_DECOY_BEHIND_MARGIN = 0.5    -- keel 0.5 (moot)
+M.HUMAN_DECOY_REPICK_TICKS  = 50     -- keel 50 (moot)
+M.HUMAN_DECOY_PROJECTED     = true   -- keel false
+M.HUMAN_DECOY_REPICK_MAX    = 1      -- keel 0
+-- 2026-10-14 (Andrew, PR #510 review item 3): THE STANDOFF IS NEVER ON AN
+-- ALLY.  Every standoff pick (pill takes: pick_standoff, the blitz spot pick,
+-- plan_position; tank attacks: evaluate_tank_standoff), decoy or not:
+--   * no spot on a human ally's square or within STANDOFF_AVOID_HUMAN_TILES
+--     squares of it (Chebyshev; 1 = his square and the 8 round it);
+--   * no spot on an ally bot's square (STANDOFF_AVOID_ALLY_BOT; the square
+--     only).
+-- Enemy tanks: no rule.  Allies are the visible ally tanks (the
+-- util.human_ally_near filter).  If every spot breaks the rule, the pick
+-- is as before (the bot still attacks).  A human who stops on or next to
+-- the chosen spot after the pick (the same position two thinks running)
+-- makes one re-pick per standoff.  On a decoy pill that re-pick counts
+-- toward HUMAN_DECOY_REPICK_MAX.  0 / false = no rule, as before.
+M.STANDOFF_AVOID_HUMAN_TILES = 1     -- keel 0
+M.STANDOFF_AVOID_ALLY_BOT   = true   -- keel false
+-- Test seam: a bitmask of seats the detection reads as human even though
+-- the engine flags them as bots.  The scenario gate has no human seat, so
+-- its arena (tests/scenario/order_human_decoy) sets this with bot_init.
+-- It touches the detection only (orders.human_decoy_check), never the
+-- human-near run or charge now.  0 = no seat.
+M.HUMAN_DECOY_TEST_HUMANS   = 0      -- keel 0
+-- 2026-10-14 (Andrew): AN ALLY BOT DECOYS TOO.  true = the detection
+-- (orders.human_decoy_check) takes a visible ally BOT as the decoy under the
+-- same tests as a human: in the pill's range, strictly closer to the pill
+-- than us, and decoy_getaway.block() at its square >= HUMAN_DECOY_MIN_BLOCK.
+-- Strictly closer means two bots never each take the other as the decoy.
+-- Every decoy rule (stay wide, no rush, the projected spacing, the re-pick,
+-- the stopped-ally re-pick, the standoff ring) then uses that ally.
+-- false = humans only (and HUMAN_DECOY_TEST_HUMANS seats).
+M.HUMAN_DECOY_ALLY_BOTS     = true   -- keel false
+-- 2026-10-14 (Andrew): NO OWN BLOCKERS ON A DECOY PILL.  While the decoy
+-- flag stands on the goal's pill, the take is not a protected (PPT) take
+-- (PPT_SKIP reason=human_decoy) and the wall commit builds no wall
+-- ("decoy: no own blockers"), so a flag that comes after the plan counts
+-- too.  The ally's blocker is the cover.  false = walls as before.
+M.HUMAN_DECOY_NO_BLOCKERS   = true   -- keel false
+-- HUMAN_DECOY_CAND logging.  Each standoff pick on a decoy pill logs one
+-- line: the winner, its terms and how many spots had human-decoy costs.
+-- true prints every candidate row; logging only, no behaviour.
+M.HUMAN_DECOY_CAND_LOG      = false
 -- DECOY GETAWAY (Andrew, 2026-09-24).  A decoy hold (ORDER_GOTO_DECOY) looks
 -- for a way out the moment it starts: a chain of up to
 -- DECOY_GETAWAY_MAX_STEPS squares, each one ring further out from the start
@@ -4897,6 +5147,38 @@ M.DECOY_GETAWAY_MAX_STEPS    = 5      -- keel 5 (moot; master off)
 M.DECOY_GETAWAY_HITS         = 1      -- keel 1 (moot)
 M.DECOY_GETAWAY_LAST_WEIGHT  = 2.0    -- keel 2.0 (moot)
 M.DECOY_GETAWAY_RESCAN_TICKS = 50     -- keel 50 (moot)
+-- 2026-10-05: WATCH THE WALLS THAT BLOCK A COUNTED PILL.  A counted pill
+-- whose shell does not reach the decoy square is not in P, and the scan
+-- remembers the square that stopped its shell (a wall, or a pill of ours).
+-- The look-again check also watches those squares (their terrain, and the
+-- owner and health of a pill on them), so a wall shot away mid-hold starts
+-- a fresh scan.  Before this, a hold with no chain watched only the tank
+-- square and the counted pill ids: a pill whose wall fell kept shooting a
+-- bot that never looked again (recorded game 20261005_232149, bot4).
+-- false = only the chain's own shield squares are watched (as before).
+M.DECOY_GETAWAY_WATCH_BLOCKED = true  -- keel false
+-- 2026-10-05: A HIT WITH NO CHAIN LOOKS AGAIN AT ONCE.  Parked with no
+-- chain, an armour loss starts a fresh scan in the same think, without the
+-- DECOY_GETAWAY_RESCAN_TICKS wait.  If that scan finds a chain, the hit is
+-- kept as the hit that moves the bot, so it steps at once.  (A chain found
+-- by any other scan still waits for a fresh hit, as before.)  false = a hit
+-- with no chain does nothing until the next look-again check (as before).
+M.DECOY_GETAWAY_HIT_RESCAN    = true  -- keel false
+-- 2026-10-06: THE FAST BLOCKED WATCH.  The blocked-pill squares above are
+-- checked every this many brain ticks, apart from the look-again check
+-- (DECOY_GETAWAY_RESCAN_TICKS, which keeps the tank square, the counted
+-- pills and the chain's shields).  The check reads terrain only; a scan runs
+-- only when a watched square changed.  Recorded game 20261005_232149: the
+-- wall fell at t=1956 and the next look came at t=1980.
+M.DECOY_GETAWAY_WATCH_TICKS   = 1     -- keel 50
+-- 2026-10-06: THE RECENTLY DEAD PILL.  A pill that died this many brain
+-- ticks ago or less still counts for the getaway (the counted pills, P,
+-- the chain search, the blocker step's closest pill): its shells are still
+-- in flight.  The hold's own pill count (orders.decoy_pills) is not
+-- changed.  Recorded game 20261006_002825 (bot2): pill 4 died at t=3152,
+-- the t=3169 scan dropped it and drove the chain down its line, and its
+-- shells in flight hit the bot three times.  0 = a dead pill never counts.
+M.DECOY_GETAWAY_DEAD_PILL_TICKS = 40  -- keel 0
 -- 2026-09-26: THE MOVE TIMEOUT.  A getaway move that has not reached its
 -- square after this many ticks (the square still drivable, but an enemy tank
 -- on it or a long pathfinder detour) parks on the square the tank is on and
@@ -4927,6 +5209,41 @@ M.DECOY_GETAWAY_PROX_WEIGHT  = 0.5    -- keel 0
 -- summed.)  false = hits only.
 M.DECOY_GETAWAY_BLOCKER_STEP  = true  -- keel false
 M.DECOY_GETAWAY_BLOCKER_SHOTS = 2     -- keel 2 (not used: the step is off)
+-- 2026-10-06 (Andrew): THE BLOCKER STEP also runs while parked on the decoy
+-- square itself, before the first step, by the same rule (closest counted
+-- pill, its last blocker, shots left <= DECOY_GETAWAY_BLOCKER_SHOTS: step to
+-- the chain's first square).  A hit still moves it too.  Recorded game
+-- 20261006_011834 (bot0): the wall between pill 12 and the decoy square was
+-- damaged at t=5482 and the bot waited for a hit until t=5529.
+-- false = the first step waits for a hit.
+M.DECOY_GETAWAY_BLOCKER_STEP_FIRST = true  -- keel false
+-- 2026-10-14 (Andrew, PR #510 review item 4): THE BLOCKER CHECK CADENCE.
+-- THE BLOCKER STEP's check (the closest counted pill and its shell trace to
+-- the park square, M.closest_pill + M.blockers) runs every Nth think, not
+-- every think.  Between checks the last result is used again.  The bots are
+-- staggered: a bot checks when (tick + player number) % N == 0.  A check
+-- runs at once (whatever the tick) when there is no result yet, the park
+-- square changed, the result is N or more thinks old, the pill is gone,
+-- died, came alive, moved, changed owner or is not counted any more, or a
+-- blocker on the line changed (a wall damaged or gone, a pill of ours
+-- changed armour).  The wall-hit sounds are still heard every think and the
+-- last wall's shots are worked out again from the hit ledger every think,
+-- so a hit counts at once.  1 = every think.
+M.DECOY_GETAWAY_BLOCKER_CHECK_EVERY = 4  -- keel 1
+-- 2026-10-06 (Andrew): THE SHIELDED CHAIN.  With no counted pill able to
+-- reach the decoy square (P empty), the scan still builds a chain against
+-- the counted pills blocked only by a blocker (a full or damaged wall, a
+-- live pill of ours or an ally's), as if they could reach, scored the same
+-- way.  So a chain is ready before the wall falls and the blocker step has
+-- a square to step to.  The SCAN line names them Ps=[..].  false = no
+-- chain while P is empty.
+M.DECOY_GETAWAY_SHIELDED_CHAIN = true  -- keel false
+-- 2026-10-06 (Andrew): STAY THE CLOSEST.  Every chain square must be
+-- strictly closer (edist, square centres) to each pill the chain is
+-- against than every visible human ally tank within PILL_FIRE_RANGE of
+-- that pill, so the pill keeps shooting the bot, not the human.  A square
+-- that fails is not used.  false = humans are not looked at.
+M.DECOY_GETAWAY_STAY_CLOSEST = true    -- keel false
 -- The engine rules the shots left are worked out from.  The brain cannot
 -- read them, so these are the engine defaults: building_life
 -- (BUILDING_LIFE, src/bolo/internal/building.h) and pill_shell_damage
@@ -5080,6 +5397,100 @@ M.BOT_INIT_LINE_TO_HUMANS = false -- keel true (2026-10-01: newswire spam)
 -- so true drops the line; a hint a busy bot cannot take is refused in
 -- silence, as a hint that cannot be built already is.  false = say it.
 M.ORDER_HINT_BUSY_SILENT  = true  -- keel false (2026-10-01: newswire spam)
+-- The "release" SCENARIO HINT (2026-10-14): ends whatever order the bot
+-- holds -- the held order, its travel lock and its hold phase, and a running
+-- patrol or escort -- and gives no new one, so goal selection runs on its
+-- own at once.  NO SCRIPT SENDS IT TODAY.  Pillbox Tag was written to send
+-- it when the prize went up, to call off a chase order that would otherwise
+-- hold for up to ORDER_FOCUS_TICKS, and then moved to a forced attack order
+-- on the prize instead (2026-10-15).  The verb is kept for a future scenario
+-- that needs to end an order without giving a new one.
+-- false = the verb is unknown and ignored in silence (the brain had no word
+-- that only ends an order; a script sent "hold", a goto to its own square).
+M.ORDER_RELEASE_HINT      = true  -- keel false (2026-10-14: Pillbox Tag)
+-- The "attack" SCENARIO HINT takes `pill = N` (2026-10-14): the same
+-- attack_pill order a person gets with "attack pill <id>".  N is the
+-- script's 1-based pillbox number, so the order is on the brain's pill N - 1.
+-- Pillbox Tag sends it to each hunter when the prize is set down.
+-- false = the `pill` key is not read: an attack hint names a `player` only,
+-- and one with only `pill` is ignored.
+M.ORDER_HINT_ATTACK_PILL  = true  -- keel false (2026-10-14: Pillbox Tag)
+-- A FORCED attack-pill SCENARIO HINT (2026-10-15): { verb = "attack",
+-- pill = N, force = true }.  While the bot holds that order, its attack on
+-- that pill does not give the take up for a preference: an enemy builder
+-- within PILL_DANGER_NEARBY_RADIUS of the pill (it holds and fires, as a
+-- committed blitz does) and the armour-vs-pill-HP floors at approach,
+-- build_walls and charge (as CHARGE NOW does).  Aborts where the take cannot
+-- go on (no shells, pill dead, no shot, a stall) still apply.  Pillbox Tag
+-- forces the hunters' attack on the built prize, which an enemy builder
+-- beside it otherwise made them pick and drop every few ticks.  Only the
+-- scenario hint has the key; chat and bot commands cannot force.
+-- false = the `force` key is not read.
+M.ORDER_HINT_FORCE        = true  -- keel false (2026-10-15: Pillbox Tag)
+-- FINISH RUN (2026-10-15, Andrew: "if the pillbox is <= 4 health, ... path
+-- to the pill itself and then as soon as there's a clear line of fire,
+-- shoot").  A take on a FORCED scenario attack order (ORDER_HINT_FORCE:
+-- Pillbox Tag's hunters on the built prize) whose pill has 1 to
+-- FINISH_RUN_MAX_ARMOUR armour skips plan_position, the standoff and the
+-- approach spot: it rides kill_hardline (attack.lua M.finish_run_update),
+-- drives the path to a square beside the pill at top speed, shoots the walls
+-- on that path, and fires the moment the shell line to the pill is clear and
+-- in reach, until the pill dies.  Only a forced order starts it, so only a
+-- scenario that forces one (Pillbox Tag, walled.FINISH_RUN) gets it.
+-- false = the old way (plan_position, standoff, approach).
+M.FINISH_RUN              = true  -- keel false (2026-10-15: Pillbox Tag)
+M.FINISH_RUN_MAX_ARMOUR   = 4     -- keel 4 (moot while FINISH_RUN is off)
+-- When no square beside the pill can be reached, the run gives way to the
+-- old way (plan_position) and may not start again on that goal for this many
+-- ticks.  0 = wipe the bad squares and try again on the very next think,
+-- which repeats a failed path search every think while the pill stays
+-- sealed off.
+M.FINISH_RUN_RETRY_TICKS  = 25    -- keel 0 (2026-10-16)
+-- A REPEATED HINT IN THE HOLD PHASE (2026-10-15).  The same hint again while
+-- the bot holds that go-there order on its square sets the hold clock
+-- (ORDER_GOTO_HOLD_TICKS), as a repeated chat line does.  false = it sets the
+-- 60 s focus (ORDER_FOCUS_TICKS), so a "hold" hint sent every 500 ticks kept
+-- the hold for ever.
+M.ORDER_HINT_HOLD_EXPIRY_FIX = true  -- keel false
+-- A DEAD PILL BESIDE A BOT ON AN ORDER (2026-10-15).  While an order is held,
+-- capture_pill for a dead pill (health 0, not carried, any owner, our own
+-- team's too) within ORDER_NEAR_DEAD_PILL_RADIUS squares (Chebyshev, from the
+-- tank's square) is NOT given the "order" reject: it competes at its normal
+-- cost.  In a go-there hold it can win as a fight would, so the bot picks
+-- the pill up and then goes back to the held square.  On human_fort seed 1
+-- player 0 sat 8.7 s on a "hold" beside his own team's dead prize.
+-- false = every capture_pill is rejected under an order, as before.
+M.ORDER_NEAR_DEAD_PILL_CAPTURE = true  -- keel false
+M.ORDER_NEAR_DEAD_PILL_RADIUS  = 2     -- keel 2 (moot; the bool is off)
+-- FIGHT COST MULTIPLIER (2026-10-14): a script makes this bot's tank fights
+-- and hiding dearer with game.bot_init(p, { cfg = "FIGHT_COST_MULT=10" }).
+-- Every attack_tank, kill_lgm and take_cover row in the pool costs
+-- FIGHT_COST_MULT times as much, after the influence scaling and before
+-- hysteresis (FINAL_SCORES prints it as fight=).  Pillbox Tag sets it on the
+-- hunters while the prize stands as a fort, so the fort is the target and an
+-- enemy tank or a safe tile is only rarely worth the detour, and puts it
+-- back to 1 when the prize is picked up.
+-- Not applied:
+--   * to an ordered row (a person or a script asked for that goal), or to
+--     the "kill me" delivery row (an attack_tank on an ALLY);
+--   * to a reject sentinel row (cost at or above TAKE_COVER_REJECT_COST);
+--   * while armour is at or below ARMOUR_CRITICAL, the line where every
+--     order pauses: a dying tank fights back or hides at the normal price.
+-- 1.0 = no change (the default: nothing in an ordinary game sets it).
+M.FIGHT_COST_MULT         = 1.0
+-- false = FIGHT_COST_MULT is not read: a script that sets it changes nothing.
+M.FIGHT_COST_MULT_ENABLED = true  -- keel false (2026-10-14: Pillbox Tag)
+-- ROUND-SCOPED cfg= KNOBS (2026-10-14): constants a RUNNING brain takes from
+-- game.bot_init (Brain.on_init), but a NEW brain does not take from the init
+-- table it starts with.  Every round starts every bot on a fresh brain built
+-- from the last table the script handed it, so a knob a script set for one
+-- moment of a round (Pillbox Tag's x10 while the prize stands as a fort)
+-- would otherwise come back on at the next round's first tick, even on
+-- another map or with no script at all, and the script, which starts the new
+-- round believing the knob is at its default, would never put it back.  At
+-- start-up such a token is refused (logged, IGNORED) and the knob stays at
+-- its constants.lua value.  A table, so cfg= cannot change the list.
+M.CFG_RUNTIME_ONLY = { FIGHT_COST_MULT = true }
 -- Shortest gap between two ATTACK markers from the SAME bot about the SAME
 -- target.  A bot re-plans the same goal often, and without this every replan
 -- would put another marker on the same pill.  1500 ticks is 30 s.
@@ -5585,6 +5996,38 @@ M.PRESETS = {
     BOT_CHAT_DEFAULT              = true,
     BOT_INIT_LINE_TO_HUMANS       = true,
     ORDER_HINT_BUSY_SILENT        = false,
+    --   2026-10-14: the "release" scenario hint ends a held order. KEEL
+    --   had no such verb: an unknown verb, ignored.
+    ORDER_RELEASE_HINT            = false,
+    --   2026-10-14: the "attack" scenario hint takes `pill = N`. KEEL read
+    --   `player` only.
+    ORDER_HINT_ATTACK_PILL        = false,
+    --   2026-10-15: a scenario attack-pill hint can be forced. KEEL had no
+    --   `force` key.
+    ORDER_HINT_FORCE              = false,
+    --   2026-10-15: a forced attack order on a pill with 4 armour or less
+    --   is a finish run (path in, shoot walls, fire on a clear line). KEEL
+    --   had no finish run: plan_position, standoff and approach as usual.
+    FINISH_RUN                    = false,
+    --   2026-10-16: a finish run that finds no square beside the pill falls
+    --   back to plan_position for FINISH_RUN_RETRY_TICKS. KEEL retried on
+    --   the next think.
+    FINISH_RUN_RETRY_TICKS        = 0,
+    --   2026-10-15: an engage tick off the aim gate on the same square
+    --   keeps the stuck-fire count. KEEL zeroed it on any gate miss.
+    TANK_COMBAT_STUCK_FIRE_HOLD   = false,
+    --   2026-10-15: a repeated hint in the hold phase sets the hold clock.
+    --   KEEL set the 60 s focus, so a repeated "hold" never ended.
+    ORDER_HINT_HOLD_EXPIRY_FIX    = false,
+    --   2026-10-15: under an order, capture_pill for a dead pill within 2
+    --   squares is not rejected. KEEL rejected every capture_pill.
+    ORDER_NEAR_DEAD_PILL_CAPTURE  = false,
+    --   2026-10-14: a script can make attack_tank, kill_lgm and take_cover
+    --   dearer with cfg=FIGHT_COST_MULT. KEEL had no such multiplier.
+    FIGHT_COST_MULT_ENABLED       = false,
+    --   2026-10-15: a script can scale every pill's danger stamp with
+    --   cfg=PILL_DANGER_MULT. KEEL had no such multiplier (1.0).
+    PILL_DANGER_MULT              = 1.0,
     --   2026-09-17: a bot attacking a pill with a HUMAN team-mate within 7
     --   tiles now skips the wall shield and goes straight in (the lobby docs
     --   promise it). KEEL never looked at where the humans were: 0 = off, so
@@ -5641,12 +6084,20 @@ M.PRESETS = {
     DECOY_GETAWAY_HITS            = 1,
     DECOY_GETAWAY_LAST_WEIGHT     = 2.0,
     DECOY_GETAWAY_RESCAN_TICKS    = 50,
+    DECOY_GETAWAY_WATCH_BLOCKED   = false,
+    DECOY_GETAWAY_HIT_RESCAN      = false,
+    DECOY_GETAWAY_WATCH_TICKS     = 50,
+    DECOY_GETAWAY_DEAD_PILL_TICKS = 0,
     DECOY_GETAWAY_MOVE_TICKS      = 300,
     DECOY_GETAWAY_WALL_FULL       = 1.0,
     DECOY_GETAWAY_WALL_DAMAGED    = 0.5,
     DECOY_GETAWAY_PROX_WEIGHT     = 0,
     DECOY_GETAWAY_BLOCKER_STEP    = false,
     DECOY_GETAWAY_BLOCKER_SHOTS   = 2,
+    DECOY_GETAWAY_BLOCKER_STEP_FIRST = false,
+    DECOY_GETAWAY_BLOCKER_CHECK_EVERY = 1,
+    DECOY_GETAWAY_SHIELDED_CHAIN  = false,
+    DECOY_GETAWAY_STAY_CLOSEST    = false,
     DECOY_GETAWAY_WALL_LIFE       = 4,
     DECOY_GETAWAY_PILL_SHELL_DAMAGE = 1,
     DECOY_GETAWAY_DIAGONAL        = false,
@@ -5668,6 +6119,64 @@ M.PRESETS = {
     --   2026-09-25: with no free bot, the cheapest bot on a person's job
     --   switched to the new order.  KEEL: holders never bid.
     ORDER_NO_FREE_TAKES_LOWEST    = false,
+    --   2026-10-04: a go-there order arrives on the square itself, with a
+    --   timer for a square it cannot reach.  KEEL: within one square, no timer.
+    ORDER_GOTO_ARRIVE_TILES       = 1,
+    ORDER_GOTO_ARRIVE_FALLBACK_TICKS = 0,
+    --   2026-10-14: a go-there order arrives from the one-square ring when
+    --   a tank, a pill or a wall is on the square.  KEEL: no such check.
+    ORDER_GOTO_ARRIVE_BLOCKED_RING = false,
+    --   2026-10-15: the fallback timer counts only thinks without progress,
+    --   an unreachable square is swapped for the nearest reachable one, and
+    --   the last square is driven at speed.  KEEL: none of the three.
+    ORDER_GOTO_FALLBACK_STALL     = false,
+    ORDER_GOTO_RETARGET_UNREACHABLE = false,
+    GOTO_FAST_ARRIVE              = false,
+    --   2026-10-15: a blocked square ends the order with no hold; the stuck
+    --   tracker counts the distance driven since its window started.  KEEL:
+    --   neither.
+    ORDER_GOTO_BLOCKED_RELEASE    = false,
+    STUCK_COLLAPSE_ACCUM          = false,
+    --   2026-10-15: shooting our own pill down (reposition_shoot) does not
+    --   run the stuck clock.  KEEL counted it as no progress.
+    STUCK_EXEMPT_REPOSITION_SHOOT = false,
+    --   2026-10-04: the bid prices in a refuel stop and a fight.  KEEL: the
+    --   bid is the travel cost alone.
+    ORDER_BID_STOP_AWARE          = false,
+    ORDER_BID_REFUEL_STOP_COST    = 0,
+    ORDER_BID_ENGAGED_COST        = 0,
+    --   2026-10-04: shooting a pill is busy, and a holder may win a new
+    --   order and hand its old one off.  KEEL: holders bid "no".
+    ORDER_HANDOFF                 = false,
+    ORDER_HANDOFF_PENALTY         = 0,
+    ORDER_HANDOFF_WAIT_TICKS      = 0,
+    ORDER_HANDOFF_MAX_HOPS        = 0,
+    --   2026-10-16: a held order skips warm-up and special_mode_goal, and
+    --   the order's goal kind follows the target.  KEEL: neither.
+    ORDER_SKIPS_WARMUP            = false,
+    ORDER_GOAL_KIND_FIX           = false,
+    --   2026-10-05: a human drawing a pill's fire into a blocker is read;
+    --   the bot keeps wide of him and does not rush.  KEEL: not read.
+    HUMAN_DECOY_AWARE             = false,
+    HUMAN_DECOY_MIN_BLOCK         = 0.5,
+    HUMAN_DECOY_HOLD_TICKS        = 150,
+    HUMAN_DECOY_MIN_TILES         = 5,
+    HUMAN_DECOY_SPACING_COST      = 10,
+    HUMAN_DECOY_BEHIND_COST       = 20,
+    HUMAN_DECOY_BEHIND_MARGIN     = 0.5,
+    HUMAN_DECOY_REPICK_TICKS      = 50,
+    HUMAN_DECOY_TEST_HUMANS       = 0,
+    --   2026-10-14: projected spot-to-human distance, one re-pick per
+    --   standoff, and no standoff on an ally.  KEEL: straight distance,
+    --   no limit, no ally rule.
+    HUMAN_DECOY_PROJECTED         = false,
+    HUMAN_DECOY_REPICK_MAX        = 0,
+    STANDOFF_AVOID_HUMAN_TILES    = 0,
+    STANDOFF_AVOID_ALLY_BOT       = false,
+    --   2026-10-14: an ally bot can be the decoy, and a decoy pill gets no
+    --   walls of our own.  KEEL: humans only, walls as before.
+    HUMAN_DECOY_ALLY_BOTS         = false,
+    HUMAN_DECOY_NO_BLOCKERS       = false,
     --   FOCUS_OTHER_COST_MULT is the one stage-2 knob that is NOT covered by
     --   the master switch: the focus multiplier sits inside the cost
     --   competition, so its keel value has to be the identity, 1.0, for the
@@ -5676,6 +6185,11 @@ M.PRESETS = {
     --   2026-09-30: a reposition may run in the opening phase.  KEEL: the
     --   opening refused it.
     PILL_REPOSITION_IN_OPENING    = false,
+    --   2026-10-15: kill_lgm leads by the full textbook amount and fires
+    --   on the engine's 128 wu kill radius.  KEEL led 0.77 and fired only
+    --   inside 64 wu.
+    KILL_LGM_LEAD_SCALE           = 0.77,
+    KILL_LGM_FIRE_WU              = 64,
     --   2026-10-16: engage also checks the gun's own line before it fires, so
     --   a gun a few brads off the aim line cannot shoot our own pill.  KEEL
     --   checked the aim line only.

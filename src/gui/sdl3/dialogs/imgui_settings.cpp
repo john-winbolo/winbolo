@@ -1897,6 +1897,52 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         }
     }
 
+    /* ---- Server name and description ----
+     * What the game finder shows for a game hosted from here: the name in
+     * place of this host's address, the description when a player points
+     * at or selects the game. Same shape as the directory fields below: the
+     * buffer follows the setting until the field is being edited, and the
+     * edit is committed on Enter or when the field loses focus. The setters
+     * sanitise, so what the field shows afterwards is what goes out. The
+     * buffers hold the wire caps (32 / 200 bytes) plus the NUL, so ImGui
+     * stops typing at the cap. */
+    {
+        static char nameBuf[sizeof(gameFrontHostingServerName)];
+        static char descBuf[sizeof(gameFrontHostingServerDesc)];
+        static bool nameEditing = false;
+        static bool descEditing = false;
+        if (!nameEditing) {
+            SDL_strlcpy(nameBuf, gameFrontHostingServerName, sizeof(nameBuf));
+        }
+        if (!descEditing) {
+            SDL_strlcpy(descBuf, gameFrontHostingServerDesc, sizeof(descBuf));
+        }
+        hostingLabel(STR_DLGSETTINGS_HOSTING_SERVERNAME);
+        bool nameCommit = ImGui::InputText("##hostingservername", nameBuf,
+                                           sizeof(nameBuf),
+                                           ImGuiInputTextFlags_EnterReturnsTrue);
+        nameEditing = ImGui::IsItemActive();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s",
+                              langGetText(STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP));
+        }
+        if (nameCommit || ImGui::IsItemDeactivatedAfterEdit()) {
+            gameFrontSetHostingServerName(nameBuf);
+        }
+        hostingLabel(STR_DLGSETTINGS_HOSTING_SERVERDESC);
+        bool descCommit = ImGui::InputText("##hostingserverdesc", descBuf,
+                                           sizeof(descBuf),
+                                           ImGuiInputTextFlags_EnterReturnsTrue);
+        descEditing = ImGui::IsItemActive();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s",
+                              langGetText(STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP));
+        }
+        if (descCommit || ImGui::IsItemDeactivatedAfterEdit()) {
+            gameFrontSetHostingServerDesc(descBuf);
+        }
+    }
+
     /* ---- Spectators ---- */
     {
         bool allow = gameFrontHostingAllowSpec;

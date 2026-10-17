@@ -349,7 +349,20 @@ local function _apply_cfg_tokens(a, source, runtime)
     elseif raw == "false" then v = false
     elseif tonumber(raw) then v = tonumber(raw)
     else v = raw end
-    _cfg_set(name, v, source)
+    -- A round-scoped knob (C.CFG_RUNTIME_ONLY) is taken from game.bot_init
+    -- on a running brain only, never from the table a new brain starts
+    -- with: that table is the last one of the PREVIOUS round, and a fresh
+    -- round must start the knob at its default (Pillbox Tag's x10).
+    -- (Quiet when the value is the one already there: a script's "put it
+    -- back to 1" is the usual last table, and there is nothing to refuse.)
+    if not runtime and C.CFG_RUNTIME_ONLY and C.CFG_RUNTIME_ONLY[name] then
+      if v ~= C[name] then
+        _cfg_warn_add("[cfg] '%s'=%s (%s) is round-scoped: only a running brain takes it (game.bot_init), a new brain starts it at its default; IGNORED.",
+                      tostring(name), tostring(raw), source)
+      end
+    else
+      _cfg_set(name, v, source)
+    end
   end
 end
 
@@ -7357,8 +7370,12 @@ function Brain.think(info)
   -- gone (PING_ATTACK_CHARGE_NOW).  human_shooting_charge starts the same
   -- charge for a human seen shooting the pill (HUMAN_SHOOTING_CHARGE_NOW),
   -- after human_near_suicide so the suicide run wins.
+  -- human_decoy_check (HUMAN_DECOY_AWARE) reads a human drawing the goal
+  -- pill's fire into a blocker; while it stands the two rules after it do not
+  -- start a run or a charge, and a running human-near run or charge ends.
   ORD.decoy_lock(state, world, info, now)
   ORD.note_human_shooting(state, world, info, now)
+  ORD.human_decoy_check(state, world, info, now)
   if not state._suicide then ORD.human_near_suicide(state, world, info, now) end
   if state._suicide then ORD.suicide_lock(state, world, info, now) end
   ORD.human_shooting_charge(state, world, info, now)
@@ -8177,7 +8194,10 @@ function Brain.think(info)
           _ev.gunrange     = cur_sl
           _ev.gunrange_off = target_sl and math.abs(cur_sl - target_sl) or 99
           _ev.land_off_wu  = impact_off
-          local KILL_WU = 64  -- ½-tile-diameter circle around predicted LGM center
+          -- Fire when the burst lands within C.KILL_LGM_FIRE_WU of the
+          -- predicted man: the engine's full kill radius (128 wu).  KEEL
+          -- used 64, half of it, and held fire on shots that would kill.
+          local KILL_WU = C.KILL_LGM_FIRE_WU
           if los_blocked then
             _ev.status = "los_blocked"
           elseif impact_off > KILL_WU then
@@ -9358,7 +9378,7 @@ function Brain.think(info)
         local T  = elm.flight_ticks or 0
         local vx = elm.v_ema_x or 0
         local vy = elm.v_ema_y or 0
-        local LS = kill_lgm.LINEAR_LEAD_SCALE
+        local LS = kill_lgm.lead_scale()
         local sx = vx * T * LS
         local sy = vy * T * LS
         local lwx = elm.wx or 0
@@ -9389,9 +9409,9 @@ function Brain.think(info)
         viz.detail_text(did, string.format(
           "     T = flight_ticks(sl) = 4*sl - 5 (shells.c:133, post-PR-77) = %d sim-ticks", T))
         viz.detail_text(did, "")
-        viz.detail_text(did, "3) lead offset (scaled to land empirically on-target):")
+        viz.detail_text(did, "3) lead offset (KILL_LGM_LEAD_SCALE; 1.00 = textbook lead):")
         viz.detail_text(did, string.format(
-          "     Δ = v * T * LINEAR_LEAD_SCALE(%.2f)", LS))
+          "     Δ = v * T * KILL_LGM_LEAD_SCALE(%.2f)", LS))
         viz.detail_text(did, string.format(
           "       = (%.4f, %.4f) * %d * %.2f", vx, vy, T, LS))
         viz.detail_text(did, string.format(
@@ -9413,7 +9433,7 @@ function Brain.think(info)
       elseif tier == "dest_lock" then
         local D  = elm.predicted_dist_wu or 0
         local T  = elm.flight_ticks or 0
-        local DS = kill_lgm.DEST_LEAD_SCALE
+        local DS = kill_lgm.lead_scale()
         local sT = math.floor(T * DS + 0.5)
         viz.detail_text(did, "destination-locked engine sim:")
         viz.detail_text(did, string.format(
@@ -9422,7 +9442,7 @@ function Brain.think(info)
         viz.detail_text(did, string.format(
           "  T = flight_ticks(sightlen_for(D=%.0fwu)) = %d sim-ticks", D, T))
         viz.detail_text(did, string.format(
-          "  sim_T = round(T * DEST_LEAD_SCALE(%.2f)) = %d", DS, sT))
+          "  sim_T = round(T * KILL_LGM_LEAD_SCALE(%.2f)) = %d", DS, sT))
         viz.detail_text(did, "  sim_forward_to_dest steps from lgm toward dest,")
         viz.detail_text(did, "  each step: angle-to-dest * MAN_SPEED[tile], wall-slide on block")
       end

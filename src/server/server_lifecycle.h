@@ -102,6 +102,13 @@ typedef struct {
                                      serverVoiceOn; the dedicated server sets
                                      serverVoiceOff from -no-voice. */
 
+  /* What the game finder shows for this server in place of its address:
+   * a short name and a longer description. NULL or "" = none, and the
+   * finder falls back to the address. Sanitised and cut to
+   * SERVER_NAME_MAX / SERVER_DESC_MAX bytes by the sim's setters. */
+  const char    *serverName;
+  const char    *serverDescription;
+
   /* Operator-controlled handling for client-pushed map uploads.
    * Zero-init = ALLOW + transport defaults (64 files / 8 MiB), so the GUI
    * host-and-play path needs no explicit plumbing. */
