@@ -2666,6 +2666,7 @@ STR_SCNFN_DESC_CAN_ALLY=Bir oyuncunun başka bir oyuncuyla ittifak kurup kuramay
 STR_SCNFN_DESC_TANK_HIT=Bir tank mermi ya da mayın yedi; gerçekte kaybettiği zırh da verilir.
 STR_SCNFN_DESC_CAN_HIT=Bir merminin ulaştığı tankı ya da sığınağı vurup vuramayacağı.
 STR_SCNFN_DESC_PILL_DAMAGE_SCALE=Bir sığınağa isabetin değeri; aldığı her mermide ve patlamada sorulur.
+STR_SCNFN_DESC_CAN_TARGET=Bir sığınağın bir tankı hedef olarak seçip seçemeyeceği.
 STR_MAPEDIT_SCENARIO_KIND=Neye karar verebilir
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Senaryo — turu bitirebilir ve kimin kazandığını söyleyebilir
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — oyunun nasıl oynandığını değiştirir ve kazanmayı olduğu gibi bırakır

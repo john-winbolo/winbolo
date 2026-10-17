@@ -5179,12 +5179,13 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
  * fresh one, so the lookup goes to whichever state is current. */
 
 /* How the answers of a list of scripts are read, now that every one of them
- * is asked. The fourteen sites below each hold the arbitration for their own
+ * is asked. The fifteen sites below each hold the arbitration for their own
  * row, because what the answers mean differs by row:
  *
- *   the eight predicates
+ *   the nine predicates
  *     allow_extra_teams, can_respawn, can_build, can_capture, announce,
- *     can_hit, can_die and can_ally. Asked in list order, any false wins, and
+ *     can_target, can_hit, can_die and can_ally. Asked in list order, any
+ *     false wins, and
  *     the first no stops
  *     the asking. A predicate is a veto — false takes something out of the
  *     round — so a script that says no is not something a later script may
@@ -5704,6 +5705,31 @@ static bool scnCanHit(void *ctx, BYTE attacker, BYTE kind, BYTE index,
         }
         scnPushItemIndex(h, pill, MAX_PILLS);
         may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_HIT], 4,
+                            true);
+    }
+    scnLockLeave(&h->lock);
+    return may;
+}
+
+/* May this pillbox pick this seat's tank as its target? Asked by the pillbox
+ * update of a tank it would otherwise take, and of no other. A no has the
+ * pillbox pass over the tank as if it were not there. */
+static bool scnCanTarget(void *ctx, BYTE pill, BYTE player) {
+    ScenarioHost *h   = (ScenarioHost *)ctx;
+    bool          may = true;
+    int           i;
+
+    if (h == NULL) {
+        return true;
+    }
+    scnLockEnter(&h->lock);
+    for (i = 0; i < h->count && may; i++) {
+        if (!scnPolicyBegin(h, i, kScnPolicyNames[SCN_POLICY_CAN_TARGET])) {
+            continue;
+        }
+        scnPushItemIndex(h, pill, MAX_PILLS);
+        lua_pushinteger(h->L, (lua_Integer)player);
+        may = scnPolicyBool(h, i, kScnPolicyNames[SCN_POLICY_CAN_TARGET], 2,
                             true);
     }
     scnLockLeave(&h->lock);
@@ -7000,6 +7026,7 @@ typedef struct {
     ScnDirStamp *stamps;
     int          stampCount;
     Uint64       stampTicks; /* SDL_GetTicks() when stamps were walked */
+    uint64_t     used;       /* scnDirCacheUseCount when last looked up */
 } ScnDirCache;
 
 #define SCN_DIR_CACHE_SLOTS (SCN_MOD_DIRS_MAX + 1)
@@ -7007,6 +7034,9 @@ typedef struct {
 static ScnVmLock   scnDirCacheLock;   /* m is NULL until the lister is
                                          registered; guards every slot */
 static ScnDirCache scnDirCache[SCN_DIR_CACHE_SLOTS];
+/* Counts slot lookups, so a full table gives up the slot used longest ago
+   (scnDirCacheSlot). Guarded by scnDirCacheLock. */
+static uint64_t    scnDirCacheUseCount;
 
 static void scnDirCacheDrop(ScnDirCache *c) {
     free(c->rows);
@@ -7144,12 +7174,22 @@ static int scnDirCacheCopyRows(const ScnDirCache *c, ScnDirEntry *out,
 }
 
 /* Which slot this directory is kept in: its own if it has one, otherwise an
-   empty slot, otherwise slot 0. Called with the lock held. */
+   empty slot, otherwise the slot looked up longest ago. Not always slot 0:
+   once every slot holds some other directory (a host whose mod directories
+   changed, or a process that has listed many), the directories of one
+   listing would each take slot 0 from the one before and none would stay
+   kept. A slot is marked used when it is found for its own directory and
+   when it is filled, not when it is only picked to be filled: a lookup that
+   is answered without filling the slot leaves it the oldest, so the next
+   lookup picks that same slot rather than another directory's. Called with
+   the lock held. */
 static ScnDirCache *scnDirCacheSlot(const char *dir) {
-    int i;
+    ScnDirCache *c;
+    int          i;
 
     for (i = 0; i < SCN_DIR_CACHE_SLOTS; i++) {
         if (scnDirCache[i].valid && strcmp(scnDirCache[i].dir, dir) == 0) {
+            scnDirCache[i].used = ++scnDirCacheUseCount;
             return &scnDirCache[i];
         }
     }
@@ -7158,7 +7198,13 @@ static ScnDirCache *scnDirCacheSlot(const char *dir) {
             return &scnDirCache[i];
         }
     }
-    return &scnDirCache[0];
+    c = &scnDirCache[0];
+    for (i = 1; i < SCN_DIR_CACHE_SLOTS; i++) {
+        if (scnDirCache[i].used < c->used) {
+            c = &scnDirCache[i];
+        }
+    }
+    return c;
 }
 
 /* scnDirList, with the last answer kept under the rule above. details, when
@@ -7254,6 +7300,7 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
             c->stampCount = stampCount;
             c->stampTicks = now;
             stamps        = NULL;
+            c->used       = ++scnDirCacheUseCount;
             c->valid      = true;
         }
     }
@@ -9217,6 +9264,7 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
     h->policy.announce        = scnAnnounce;
     h->policy.canDie          = scnCanDie;
     h->policy.canHit          = scnCanHit;
+    h->policy.canTarget       = scnCanTarget;
     h->policy.pillDamageScale = scnPillDamageScale;
     h->policy.killCredit      = scnKillCredit;
     h->policy.canAlly         = scnCanAlly;

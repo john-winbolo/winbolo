@@ -170,6 +170,20 @@ typedef enum {
  * a server tick, and this one is never reached. */
 #define SCN_STATUS_NO_COUNTDOWN 0xFFFFFFFFu
 
+/* The longest popup text, in bytes and not counting a terminator. A popup
+ * (game.popup) is a message box the player closes, so it holds more than a
+ * chat line: four or five sentences. It rides one control segment, which
+ * carries CHANNEL_CONTROL_SEG (1024) bytes less the channel frame's three,
+ * so 511 is well inside it. The script layer, the server arm, the encoder
+ * and the decoder all hold a text to this figure, and a text past it is
+ * refused rather than cut. */
+#define SCN_POPUP_TEXT_MAX 511
+
+/* How many popups a client keeps waiting behind the one on screen. A popup
+ * that arrives with the queue full is dropped, so a script that sends a
+ * burst shows the first few rather than a backlog. */
+#define SCN_POPUP_QUEUE_MAX 4
+
 /* A map marker's shape. SQUARE marks a map square, FOLLOW rides a
  * player slot, and CLEAR removes the id the event names. These sit
  * beside the panel's own enums because a frontend draws both from the

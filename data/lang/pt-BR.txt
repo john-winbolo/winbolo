@@ -2666,6 +2666,7 @@ STR_SCNFN_DESC_CAN_ALLY=Se um jogador pode se aliar a outro.
 STR_SCNFN_DESC_TANK_HIT=Um tanque levou um projétil ou uma mina, com a blindagem que realmente perdeu.
 STR_SCNFN_DESC_CAN_HIT=Se um projétil pode atingir o tanque ou a casamata que alcançou.
 STR_SCNFN_DESC_PILL_DAMAGE_SCALE=Quanto vale um acerto em uma casamata, perguntado a cada projétil e explosão que ela recebe.
+STR_SCNFN_DESC_CAN_TARGET=Se uma casamata pode escolher um tanque como alvo.
 STR_MAPEDIT_SCENARIO_KIND=O que ele pode decidir
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Cenário — pode terminar a rodada e dizer quem venceu
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — muda como a partida é jogada e não interfere em quem vence

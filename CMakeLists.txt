@@ -962,6 +962,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/build_cursor.c
     src/gui/sdl3/input_source.c
     src/gui/sdl3/tutorial_text.c
+    src/gui/sdl3/tutorial_tokens.c
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
     src/gui/scn_panel_prefs.c
@@ -1683,6 +1684,7 @@ set(CLIENT_SOURCES
     # spectator_input_stub.c instead.
     src/gui/sdl3/spectator_input.c
     src/gui/sdl3/tutorial_text.c
+    src/gui/sdl3/tutorial_tokens.c
     src/gui/sdl3/lang.c src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/sound.c src/gui/sdl3/sound_variants.c
     src/gui/sdl3/sound_mix.c
@@ -4075,6 +4077,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
     tests/unit/test_voice_everyone_codec.c
+    # game.popup: the body codec, the client's queue and the {QUICK_*}
+    # tokens the popup text may carry.
+    tests/unit/test_scenario_popup.c
+    src/gui/sdl3/tutorial_tokens.c
     tests/unit/test_voice_talking_set.c
     # The rules event's body codec: every carried rule round-trips field by
     # field, rates a fixed-point scale could not carry survive, and the
@@ -5544,6 +5550,13 @@ set(_unit_test_names
     voice_flags_snapshot_masking
     voice_talking_codec
     voice_everyone_codec
+    scenario_popup_codec
+    scenario_popup_client_queue
+    scenario_popup_round_over
+    tutorial_tokens_quick_build
+    scenario_status_tokens_expand
+    tutorial_tokens_long_key_names
+    scenario_announce_waits_for_popup
     sim_rules_codec_roundtrip
     sim_rules_codec_golden
     voice_talking_stops_in_countdown
@@ -6142,6 +6155,7 @@ set(_unit_test_names
     scenario_funnel_host_ops_uncounted
     scenario_funnel_prelude_refusal_uncounted
     scenario_funnel_set_tile_spends_tile_budget
+    scenario_funnel_set_tile_resets_wall_damage
     scenario_read_roster_slot
     scenario_read_pill_info
     scenario_read_base_info
@@ -6426,6 +6440,7 @@ set(_unit_test_names
     scenario_allied_read
     scenario_can_hit_tank
     scenario_can_hit_pill
+    scenario_can_target
     scenario_pill_shell_names_pill
     scenario_pill_damage_scale
     scenario_blast_names_tank
@@ -6578,6 +6593,8 @@ set(_unit_test_names
     scenario_lua_presentation_targets
     scenario_lua_score_and_announce
     scenario_lua_announce_position
+    scenario_lua_popup
+    scenario_lua_wall_shots
     scenario_lua_acting_rows_refuse_a_check
     scenario_sandbox_removed_names_are_nil
     scenario_sandbox_bytecode_chunk_refused
@@ -6740,6 +6757,10 @@ set(_unit_test_names
     scenario_details_fetch_dir_mod
     scenario_details_fetch_survival
     scenario_details_fetch_soccer
+    scenario_details_fetch_tutorial
+    scenario_details_fetch_joust
+    scenario_details_fetch_respawn_loadout
+    scenario_details_fetch_mods
     scenario_details_fetch_not_found
     scenario_details_fetch_retry
     scenario_details_fetch_give_up
@@ -6859,8 +6880,10 @@ set(_unit_test_names
     scenario_announce_remaining
     scenario_announce_position
     scenario_status_line
+    scenario_announce_stack
     scn_status_codec_and_client
     scn_announce_position_codec
+    scn_announce_stack_client
     scn_arm_status_and_position
     scn_arm_status_overlap
     scenario_panel_slot_rect

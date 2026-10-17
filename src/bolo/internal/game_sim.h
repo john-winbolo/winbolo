@@ -230,6 +230,10 @@ typedef struct GameSimCallbacks {
      * tank at zero armour and alive, a builder untouched and a pill at one.
      * canHit: whether a shell may hit the tank or pill it has reached. kind
      * is a HIT_KIND_*. False lets the shell fly on as if nothing were there.
+     * canTarget: whether a pillbox may pick a tank as its target. pill is
+     * the pill index and player the tank's slot. False has the pillbox pass
+     * over the tank as if it were not there. Asked only of a tank the pillbox
+     * would otherwise take.
      * pillDamageScale: the percent of the armour one blow takes off a pill,
      * 100 being the classic amount. cause is DMG_SRC_SHELL or
      * DMG_SRC_EXPLOSION.
@@ -253,6 +257,7 @@ typedef struct GameSimCallbacks {
                    BYTE pill);
     bool (*canHit)(void *ctx, BYTE attacker, BYTE kind, BYTE index,
                    BYTE pill);
+    bool (*canTarget)(void *ctx, BYTE pill, BYTE player);
     int  (*pillDamageScale)(void *ctx, BYTE attacker, BYTE index, BYTE cause,
                             BYTE pill);
     void *ctx;  /* opaque pointer: ClientSim* or ServerSim* */
@@ -502,6 +507,14 @@ static inline bool gameSimCanHit(GameSim *sim, BYTE attacker, BYTE kind,
   }
   return sim->callbacks.canHit(sim->callbacks.ctx, attacker, kind, index,
                                pill);
+}
+
+/* Whether a pillbox may pick this tank as its target. */
+static inline bool gameSimCanTarget(GameSim *sim, BYTE pill, BYTE player) {
+  if (sim == NULL || sim->callbacks.canTarget == NULL) {
+    return TRUE;
+  }
+  return sim->callbacks.canTarget(sim->callbacks.ctx, pill, player);
 }
 
 /* The start the host names for a player, or FALSE for the engine's pick. */

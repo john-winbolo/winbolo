@@ -115,6 +115,7 @@ extern "C" {
 #include "dialogs/imgui_dialog_utils.h"
 #include "dialogs/imgui_deck_pause.h"
 #include "dialogs/imgui_tutorial_overlay.h"
+#include "tutorial_text.h"   /* tutorialExpandTextPlain */
 #include "dialogs/imgui_keyboard.h"
 #include "dialogs/imgui_quickchat.h"
 #include "dialogs/imgui_controller_prompt.h"
@@ -230,6 +231,10 @@ extern "C" void windowResumeForeground(struct ClientSim *cs);
 extern "C" void windowControllerLostPause(struct ClientSim *cs, bool active);
 extern "C" void windowDeckPause(struct ClientSim *cs, bool active);
 extern "C" void windowTutorialPause(struct ClientSim *cs, bool active);
+/* The tutorial overlay's open state as windowTutorialPause last heard it:
+   the render path's edge-detect, and the round-end close, which lifts the
+   pause itself. */
+static bool s_lastTutorialPause = false;
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
@@ -5561,6 +5566,9 @@ static void renderScnPanelMenuItems(bool afterBrains) {
 /* The line's height in panel units, so it scales with the game's zoom the
    same way the panel's own text does. */
 #define SCN_ANNOUNCE_UNITS 20.0f
+/* The same in the classic 15 by 15 view, which is far smaller than the full
+   screen map. */
+#define SCN_ANNOUNCE_CLASSIC_UNITS 13.0f
 
 /* The space the status line keeps from anything it has to move clear of, and
    the space an announcement with a position keeps below the status line, in
@@ -5618,20 +5626,42 @@ static void scnAnnounceAddHudRect(float mapX, float mapY, float x, float y,
 /* Draws one outlined line at (px, py): the line in near-black one stroke out
    in each of the eight directions, so the letters keep an edge whichever way
    the terrain under them happens to run, then the line in white. */
-static void scnDrawOutlinedLine(ImDrawList *dl, ImFont *font, float height,
-                                float px, float py, float o, int alpha,
-                                const char *text) {
+static void scnDrawOutlinedRow(ImDrawList *dl, ImFont *font, float height,
+                               float px, float py, float o, int alpha,
+                               const char *text, const char *textEnd) {
     const ImU32 edge = IM_COL32(0, 0, 0, alpha);
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
             if (dx == 0 && dy == 0) continue;
             dl->AddText(font, height,
                         ImVec2(px + (float)dx * o, py + (float)dy * o),
-                        edge, text);
+                        edge, text, textEnd);
         }
     }
     dl->AddText(font, height, ImVec2(px, py),
-                IM_COL32(255, 255, 255, alpha), text);
+                IM_COL32(255, 255, 255, alpha), text, textEnd);
+}
+
+/* Draws an outlined line that may hold newlines: each row centred across
+   innerW, the width of the widest row, with its left edge at px. A script
+   splits a line too wide for the view with "\n". */
+static void scnDrawOutlinedLine(ImDrawList *dl, ImFont *font, float height,
+                                float px, float py, float innerW, float o,
+                                int alpha, const char *text) {
+    const char *row = text;
+    float       y   = py;
+    for (;;) {
+        const char *end = strchr(row, '\n');
+        if (end == nullptr) end = row + strlen(row);
+        const ImVec2 rowSize =
+            font->CalcTextSizeA(height, FLT_MAX, 0.0f, row, end);
+        scnDrawOutlinedRow(dl, font, height,
+                           px + (innerW - rowSize.x) * 0.5f, y, o, alpha,
+                           row, end);
+        if (*end == '\0') break;
+        row = end + 1;
+        y  += height;
+    }
 }
 
 /* The status line and the announcement share a view, a scale, a font and the
@@ -5642,21 +5672,47 @@ static void renderScenarioAnnounce(ClientSim *cs) {
 
     const uint32_t now = clientSimGetLastServerTick(cs);
 
+    /* Never white text and a popup at once. While the popup overlay is open
+       (a scenario's game.popup or a tutorial message) the status line and
+       the announcements are not drawn, and the announcements' clocks stand
+       still: a line sent in the same tick as a popup, or while it is open,
+       gets its whole time after the popup closes. Called after
+       tutorialOverlayRender, so a popup closed this frame lets the lines
+       back this frame. */
+    clientSimScnAnnounceHold(cs, tutorialOverlayIsOpen(), now);
+    if (clientSimScnAnnounceIsHeld(cs)) return;
+
     /* The status line, with its countdown worked out on this client's own
        clock. */
+    /* Both lines may carry the popup's key tokens ({ACCEL}, {QUICK_ROAD}
+       and the rest), written out here as the key or control in words. A
+       name is longer than its token, so the buffers have room past the
+       128 bytes a line may be. */
     uint32_t    statusEndsAt = SCN_STATUS_NO_COUNTDOWN;
-    const char *statusRaw    = clientSimGetScnStatus(cs, &statusEndsAt);
-    char        status[SCN_STATUS_LINE_MAX];
+    const char *statusWire   = clientSimGetScnStatus(cs, &statusEndsAt);
+    char        statusRaw[256];
+    if (statusWire != nullptr) {
+        tutorialExpandTextPlain(statusWire, statusRaw, sizeof(statusRaw));
+    }
+    char        status[SCN_STATUS_LINE_MAX + 128];
     const bool  haveStatus =
-        scnStatusLineText(statusRaw, statusEndsAt, now, status,
-                          sizeof(status));
+        scnStatusLineText(statusWire != nullptr ? statusRaw : nullptr,
+                          statusEndsAt, now, status, sizeof(status));
 
-    uint16_t    ticks       = 0;
-    uint32_t    arrivedTick = 0;
-    const char *text        = clientSimGetScnAnnounce(cs, &ticks, &arrivedTick);
-    uint32_t    left        = 0;
-    const bool  haveAnnounce =
-        scnAnnounceRemaining(text, arrivedTick, ticks, now, &left);
+    /* Every announcement still up, oldest first. A scenario may put a
+       second line up while the first is showing; both are drawn, each with
+       its own countdown, the newest lowest. */
+    const int heldCount = clientSimGetScnAnnounceCount(cs);
+    bool      haveAnnounce = false;
+    for (int i = 0; i < heldCount; i++) {
+        const ClientScnAnnounce *a = clientSimGetScnAnnounceAt(cs, i);
+        if (a != nullptr &&
+            scnAnnounceRemaining(a->text, a->arrivedTick, a->ticks, now,
+                                 nullptr)) {
+            haveAnnounce = true;
+            break;
+        }
+    }
     if (!haveStatus && !haveAnnounce) return;
 
     /* The same zoom the panel window scales by, so the two agree about what
@@ -5733,7 +5789,11 @@ static void renderScenarioAnnounce(ClientSim *cs) {
     ImDrawList *dl = ImGui::GetForegroundDrawList();
     if (dl == nullptr) return;
 
-    float height = SCN_ANNOUNCE_UNITS * scale;
+    /* The classic 15 by 15 view is the small one: 240 units high, where a
+       20-unit line and its status line take a fifth of the view between
+       them. Both lines are drawn smaller there. */
+    float height = ((tankView && !tablet) ? SCN_ANNOUNCE_CLASSIC_UNITS
+                                           : SCN_ANNOUNCE_UNITS) * scale;
     if (height < 8.0f) height = 8.0f;
 
     /* The outline reaches one stroke past the letters on every side, so the
@@ -5763,8 +5823,8 @@ static void renderScenarioAnnounce(ClientSim *cs) {
         float boxX = 0.0f, boxY = 0.0f;
         scnStatusPlace(view, boxW, boxH, SCN_STATUS_INSET_UNITS * scale,
                        inset, floorY, obstacles, count, &boxX, &boxY);
-        scnDrawOutlinedLine(dl, font, height, boxX + o, boxY + o, o, 255,
-                            status);
+        scnDrawOutlinedLine(dl, font, height, boxX + o, boxY + o, measured.x,
+                            o, 255, status);
         statusBand.x0 = view.x0;
         statusBand.y0 = boxY;
         statusBand.x1 = view.x1;
@@ -5774,31 +5834,58 @@ static void renderScenarioAnnounce(ClientSim *cs) {
 
     if (!haveAnnounce) return;
 
-    const ImVec2 measured = font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
-    const float  boxW     = measured.x + 2.0f * o;
-    const float  boxH     = measured.y + 2.0f * o;
-    float   boxX = 0.0f, boxY = 0.0f;
-    uint8_t posX = 0, posY = 0;
-    if (clientSimGetScnAnnouncePos(cs, &posX, &posY)) {
-        /* Where the script said, kept inside the view by the status line's
-           inset and below the status line. */
-        scnAnnounceAt(view, boxW, boxH, posX, posY,
-                      SCN_STATUS_INSET_UNITS * scale,
-                      haveBand ? &statusBand : nullptr, inset, &boxX, &boxY);
-    } else {
-        /* Where announcements have always gone. */
-        scnAnnounceDefaultPlace(view, boxW, o, &boxX, &boxY);
-    }
+    /* The lines drawn so far, and the status line's band first, so no
+       announcement sits on the status line either. */
+    ScnAnnounceRect placed[SCN_ANNOUNCE_STACK_MAX + 1];
+    int             placedCount = 0;
+    if (haveBand) placed[placedCount++] = statusBand;
+    for (int i = 0; i < heldCount; i++) {
+        const ClientScnAnnounce *a = clientSimGetScnAnnounceAt(cs, i);
+        if (a == nullptr) continue;
+        uint32_t left = 0;
+        char     text[256];
+        tutorialExpandTextPlain(a->text, text, sizeof(text));
+        if (!scnAnnounceRemaining(text, a->arrivedTick, a->ticks, now,
+                                  &left)) {
+            continue;
+        }
 
-    /* Full strength until the last stretch, then out. */
-    float fade = 1.0f;
-    if (left < SCN_ANNOUNCE_FADE_TICKS) {
-        fade = (float)left / (float)SCN_ANNOUNCE_FADE_TICKS;
-    }
-    const int alpha = (int)(255.0f * fade);
-    if (alpha <= 0) return;
+        const ImVec2 measured =
+            font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
+        const float  boxW = measured.x + 2.0f * o;
+        const float  boxH = measured.y + 2.0f * o;
+        float boxX = 0.0f, boxY = 0.0f;
+        if (a->hasPos != 0) {
+            /* Where the script said, kept inside the view by the status
+               line's inset and below the status line. */
+            scnAnnounceAt(view, boxW, boxH, a->posX, a->posY,
+                          SCN_STATUS_INSET_UNITS * scale,
+                          haveBand ? &statusBand : nullptr, inset, &boxX,
+                          &boxY);
+        } else {
+            /* Where announcements have always gone. */
+            scnAnnounceDefaultPlace(view, boxW, o, &boxX, &boxY);
+        }
+        /* Below any line already drawn that it would overlap, so two lines
+           up at once are both read. */
+        boxY = scnAnnounceStackBelow(boxX, boxY, boxW, boxH, placed,
+                                     placedCount, inset);
+        placed[placedCount].x0 = boxX;
+        placed[placedCount].y0 = boxY;
+        placed[placedCount].x1 = boxX + boxW;
+        placed[placedCount].y1 = boxY + boxH;
+        placedCount++;
 
-    scnDrawOutlinedLine(dl, font, height, boxX + o, boxY + o, o, alpha, text);
+        /* Full strength until the last stretch, then out. */
+        float fade = 1.0f;
+        if (left < SCN_ANNOUNCE_FADE_TICKS) {
+            fade = (float)left / (float)SCN_ANNOUNCE_FADE_TICKS;
+        }
+        const int alpha = (int)(255.0f * fade);
+        if (alpha <= 0) continue;
+        scnDrawOutlinedLine(dl, font, height, boxX + o, boxY + o, measured.x,
+                            o, alpha, text);
+    }
 }
 
 /* About modal + linked markdown popups live in dialogs/imgui_about.cpp so
@@ -9101,6 +9188,22 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
        Input controller input does not, so poll it here. */
     inputSourceTick();
 
+    /* The round has ended (the game-over hold, the lobby or the countdown):
+       close a tutorial message or scenario popup still showing. The
+       round-end screen and the lobby take the window over and never draw
+       it, so left open it would sit frozen under them where the player can
+       neither read nor dismiss it, and its solo pause would hold. Done
+       ahead of the lobby seam below, which returns before the overlay's
+       own render, and the pause is lifted here for the same reason. */
+    if (cs && clientSimIsRoundOver(cs) && tutorialOverlayIsOpen()) {
+        tutorialOverlayClose();
+        tutorialOverlayRender(cs);   /* takes the popup off ImGui's stack */
+        if (s_lastTutorialPause) {
+            windowTutorialPause(cs, false);
+            s_lastTutorialPause = false;
+        }
+    }
+
     /* In-game lobby (non-blocking host, e.g. the WASM client).
      *
      * On desktop the lobby is a separate BLOCKING modal (imguiLobbyShow)
@@ -9379,10 +9482,22 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         /* Tutorial message overlay — same in-loop pattern as the pause
            menu, so the input gate suspends play and the solo-pause path
            freezes the sim while a message is up.  Edge-detect open/close
-           to toggle the freeze exactly once each way. */
+           to toggle the freeze exactly once each way.
+
+           A scenario's popup (game.popup) waits in the client sim's queue
+           until the overlay is free, then takes the overlay like a tutorial
+           message does, so one popup shows at a time and pauses a solo
+           game the same way. None is taken once the round is over: the
+           close above would only shut it again. */
+        if (cs != NULL && !tutorialOverlayIsOpen() &&
+            !clientSimIsRoundOver(cs)) {
+            static char s_popupText[SCN_POPUP_TEXT_MAX + 1];
+            if (clientSimTakeScnPopup(cs, s_popupText, sizeof(s_popupText))) {
+                tutorialOverlayShowText(s_popupText);
+            }
+        }
         tutorialOverlayRender(cs);
         {
-            static bool s_lastTutorialPause = false;
             bool nowTutorialPause = tutorialOverlayIsOpen();
             if (nowTutorialPause != s_lastTutorialPause) {
                 windowTutorialPause(cs, nowTutorialPause);

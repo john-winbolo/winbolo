@@ -2668,6 +2668,7 @@ STR_SCNFN_DESC_CAN_ALLY=Om en spelare får ingå en allians med en annan.
 STR_SCNFN_DESC_TANK_HIT=En stridsvagn träffades av en granat eller en mina, med pansaret den faktiskt förlorade.
 STR_SCNFN_DESC_CAN_HIT=Om en granat får träffa stridsvagnen eller bunkern den har nått.
 STR_SCNFN_DESC_PILL_DAMAGE_SCALE=Vad en träff på en bunker är värd, frågas vid varje granat och explosion den tar.
+STR_SCNFN_DESC_CAN_TARGET=Om en bunker får välja en stridsvagn som mål.
 STR_MAPEDIT_SCENARIO_KIND=Vad det får avgöra
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=Scenario — det kan avsluta omgången och säga vem som vann
 STR_MAPEDIT_SCENARIO_KIND_MOD=Modd — den ändrar hur spelet går till och lämnar segern orörd

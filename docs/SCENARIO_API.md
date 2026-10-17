@@ -38,6 +38,7 @@ bug worth reporting.
   - [Hints: telling one bot what to do](#hints-telling-one-bot-what-to-do)
 - [Talking to players, and ending the round](#talking-to-players-and-ending-the-round)
 - [Showing things on a client](#showing-things-on-a-client)
+  - [Popups](#popups)
   - [The panel](#the-panel)
 - [Settings](#settings)
 - [Rules](#rules)
@@ -1392,6 +1393,7 @@ rather than left to misbehave quietly.
 | `can_build(p, action, x, y, n)` | Before a builder order goes ahead. `action` is the order as given — `"trees"`, `"road"`, `"building"`, `"pill"`, `"mine"` or `"boat"` — before the engine decides whether the square makes it a repair. `n` is the pillbox for a pill order and `nil` otherwise. | `false` refuses the order. Ordinary rule: yes. |
 | `can_capture(kind, n, p)` | When seat `p` would take `"pill"` or `"base"` number `n`. | `false` leaves it where it is and does not stop the tank. Ordinary rule: yes. |
 | `announce(kind, subject, actor)` | Before a newswire line is shown. `kind` is `"joined"`, `"left"`, `"base_captured"`, `"pill_captured"`, `"builder_lost"`, `"name_changed"`, `"alliance"` or `"vote"`. `subject` is the base or pillbox number for a capture and a seat otherwise; `actor` is the seat that did it. | `false` keeps the line off every client's newswire. The fact still happens. Ordinary rule: shown. |
+| `can_target(pill, p)` | When pillbox `pill` is loaded and seat `p`'s tank is one it would otherwise shoot at: not its owner's or an ally's, alive, in range and not hidden in trees. It is asked only of a tank that would become the target — the nearest so far in seat order — so a tank farther off than one already accepted is not asked about, and a pillbox that is reloading asks nothing. A loaded pillbox with only a refused tank in range asks about it every tick. Pillboxes aim at tanks only, never at a builder, so there is no question for a builder. | `false` has the pillbox pass over the tank as if it were not there and take the next nearest: it does not aim at it, fire at it or wait for it, and with nobody else in range it stands idle. Shells already in the air, and shells aimed at another tank, still hit it; `can_hit` is the question for those. A pillbox the refused tank shoots still turns angry and fires faster at whoever it may target. Ordinary rule: yes. |
 | `can_hit(attacker, kind, n, pill)` | When a shell reaches a `"tank"` or a `"pill"` it would hit. `n` is the seat for a tank and the pillbox number for a pill. `attacker` is the seat that fired it, or `game.NEUTRAL` for a pillbox's shell, and `pill` is the pillbox that fired it, `nil` for a tank's shell — so a pillbox's side is `game.pill(pill).owner`. Pillbox shells reaching pillboxes are asked too. A shell is asked once about each target: once let through, it passes that target for the rest of its flight without asking again. | `false` lets the shell fly on as if the target were not there: no damage, no knockback, no boat lost, no angry pillbox and no hit sound, and it can still hit whatever is behind. Ordinary rule: yes. |
 | `can_die(kind, n, killer, cause, pill)` | When a blow would destroy a `"tank"`, a `"builder"` or a `"pill"`. `n` is the seat for a tank or its builder and the pillbox number for a pill. `cause` is `"shell"`, `"mine"`, `"deep_sea"` or `"script"` for a tank; `"shell"`, `"mine"` or `"explosion"` for a builder; `"shell"` or `"explosion"` for a pill; and `nil` when the engine could not name it. `"explosion"` is a dying tank's blast. `killer` is the seat that fired the shell (`game.NEUTRAL` for a pillbox's); for a builder caught by a mine it is the seat that laid it, and for a builder or a pill caught in a blast it is the seat whose tank blew up. Those two are named here and credited with nothing: `on_lgm_died` and `on_pill_killed` still name nobody for them. `pill` is the pillbox whose shell it was, and `nil` for anything else. | `false` leaves a tank at zero armour and alive, a builder untouched, a pillbox at one armour. Ordinary rule: yes. |
 | `can_ally(p, q)` | When seat `p` asks seat `q` for an alliance, and again when `q` accepts, so an answer that changed in between is the one that counts. `p` is always the seat that asked. Bots ask and accept the same way people do. A script's own `set_team`, a bot it spawns onto a team, and the seating in `scenario.lobby` are the script's decisions and are not asked. | `false` refuses the request, so `q` is never shown it, or refuses the accept. Ordinary rule: yes. |
@@ -1630,6 +1632,7 @@ starts comes due after about twice the seconds it asked for.
 | `game.map_name()` | What the map is called. |
 | `game.map_tile(x, y)` | The terrain code at a square, or `nil` for a square off the map. |
 | `game.is_mine(x, y)` | Whether a square holds a mine. |
+| `game.wall_shots(x, y)` | The shells a wall square still takes before it falls to rubble: one more than `building_life` for a wall no shell has touched (5 on the classic table), what is left for a damaged one, and 0 for a square that is not a wall or is off the map. |
 | `game.terrain()` | Every square as one 65,536-byte string, the square at `(x, y)` at byte `y * 256 + x + 1`. One call instead of 65,536 — and a fresh 64 KiB string each time, so read it where you need the whole map, not from `on_tick`. |
 
 ### Entities
@@ -1647,7 +1650,7 @@ starts comes due after about twice the seconds it asked for.
 
 | Call | Answers |
 |---|---|
-| `game.tank(p)` | `{ mx, my, wx, wy, dir, armour, shells, mines, trees, pills, boat, dead, name, bot, kills, deaths, mods }`, or `nil` when the seat is empty or has no tank. `mx, my` are map squares and `wx, wy` world coordinates; `dir` is the full 0-255 facing, which is what `teleport` takes back. `mods` is `{ speed, accel, turn, reload, dealt, taken }`. |
+| `game.tank(p)` | `{ mx, my, wx, wy, dir, armour, shells, mines, trees, pills, sight, boat, dead, name, bot, kills, deaths, mods }`, or `nil` when the seat is empty or has no tank. `mx, my` are map squares and `wx, wy` world coordinates; `dir` is the full 0-255 facing, which is what `teleport` takes back. `sight` is the gun sight, the range a shell flies before it bursts, in half squares from the rule `gunsight_min` to `gunsight_max` (2 to 14 classic); a bot's or a human's alike. `mods` is `{ speed, accel, turn, reload, dealt, taken }`. |
 | `game.builder(p)` | `{ state, mx, my, wx, wy, job, trees, mines }`, or `nil` when the seat has none. `state` is `"in_tank"`, `"going"`, `"returning"`, `"parachuting"` or `"dead"`; `job` is an action word, or absent when he is on none. The square is tracked while he is out of the tank — in the tank he is wherever his tank is, which is why the state comes first. |
 | `game.lobby_slot(p)` | `{ connected, bot, team, name, ready, fielded, alive, team_pool }`, or `nil` for an empty seat. **`fielded` is the field that tells a held seat from one on the field.** `team_pool` is the label of the bot naming pool the seat's team draws bot names from, such as `"Famous Painters"`: the name the lobby shows in that team's pool dropdown. It is absent when the seat is on no team (0) or the team has no pool. A team has a pool once it is set up in the lobby; teams 1 and 2 start with the first pool, and a team the host never set up has none, so its seats read `nil` even when they hold bots. A dedicated server's `-bots` names its bots from one random pool without setting any team's pool, so there `team_pool` is the first pool's label, not the pool the bot names came from. The label comes from the server's own pools, so every client reads the same word. A script can label a team of bots only by it (see below). |
 | `game.lobby_start(p)` | The start the lobby reserved for seat `p` and has not yet used, counted from 1 as `game.start` counts, or `nil`. The same number `on_choose_start` is handed as `lobby`, so it is `nil` once the seat's first tank of the round is built (see **The lobby's start** under Policies). |
@@ -1749,7 +1752,7 @@ refused with `SCN_OP_BAD_SQUARE`, the same answer as a square off the map.
 | `game.set_boat(p, on)` | Puts a tank on a boat or takes it off one. The square under it has to be water. |
 | `game.give_pill(p, n)` | Puts a pillbox into a tank, however armoured and whoever held it. |
 | `game.drop_pill(p, n[, x, y])` | Puts a carried pillbox back on the map, on a square or under the tank. |
-| `game.set_modifiers(p, t)` | Replaces a tank's `speed`, `accel`, `turn`, `reload`, `dealt` and `taken` percentages. A field the table leaves out goes back to the classic tank: the whole set is replaced, not merged. `speed` goes from 0 to 2000 and the others from 0 to 255; past that the call is refused with `SCN_OP_RANGE`. `speed` scales the ground's speed cap, so 534 puts a river's 3 at a road's 16. However high it is set, the engine holds the tank's scaled cap to 160 world units a frame, the most the byte-sized modifier could give on the fastest speed rule. |
+| `game.set_modifiers(p, t)` | Replaces a tank's `speed`, `accel`, `turn`, `reload`, `dealt` and `taken` percentages. A field the table leaves out goes back to the classic tank: the whole set is replaced, not merged. `speed` goes from 0 to 2000 and the others from 0 to 255; past that the call is refused with `SCN_OP_RANGE`. **0 is read as the classic 100**, not as nothing, so 0 does not stop a tank; 1 is the smallest a modifier goes, and a `speed` of 1 holds a tank nearly still. `speed` scales the ground's speed cap, so 534 puts a river's 3 at a road's 16. However high it is set, the engine holds the tank's scaled cap to 160 world units a frame, the most the byte-sized modifier could give on the fastest speed rule. |
 
 ### The builder
 
@@ -1758,7 +1761,7 @@ refused with `SCN_OP_BAD_SQUARE`, the same answer as a square off the map.
 | `game.builder_order(p, action, x, y)` | Sends a builder out to do one of `"trees"`, `"road"`, `"building"`, `"pill"`, `"mine"` or `"boat"` on a square. The engine repairs rather than builds where the square already holds one. |
 | `game.builder_recall(p)` | Calls a builder back to the tank. |
 | `game.kill_lgm(p[, killer])` | Kills a builder. `killer` is a seat. |
-| `game.builder_parachute(p[, x, y])` | Drops a dead builder back in, on a square or at the tank. |
+| `game.builder_parachute(p[, x, y[, from]])` | Drops a dead builder back in, on a square or at the tank. A death starts his flight on a random start, which can be most of a minute away; this moves the start to the nearest map edge on the line in. `from` (0 to 32, default 0) starts him only that many squares short of the landing square on the same line instead, unless the edge is nearer; call it from `on_lgm_died` to land a new man beside his tank within a few seconds (at the classic `lgm_helicopter_speed` of 3, about 85 ticks a square). |
 | `game.set_builder_carried(p[, trees[, mines]])` | What a builder is carrying. A count left out is left alone. |
 
 ### Pillboxes and bases
@@ -1798,7 +1801,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 
 | Call | What it does |
 |---|---|
-| `game.set_tile(x, y, t)` | Writes one square's terrain, by a `game.TERRAIN` code. `set_tile` and `fill_rect` share 256 changed squares a frame; a `set_tile` past that answers `nil, "SCN_OP_RATE"` and writes nothing. |
+| `game.set_tile(x, y, t)` | Writes one square's terrain, by a `game.TERRAIN` code. `set_tile` and `fill_rect` share 256 changed squares a frame; a `set_tile` past that answers `nil, "SCN_OP_RATE"` and writes nothing. A square written this way loses any damage a wall stood on it had, so a wall a script puts back takes its full count of shells again (`game.wall_shots`). |
 | `game.fill_rect(x0, y0, x1, y1, t)` | Writes a rectangle of terrain. One too big for a frame's budget answers `true, "queued"` and finishes over the frames after it. Only one fill may be in progress: a second asked for while one is still landing is refused with `SCN_OP_RATE`, not queued behind it, so test the answer when you write several. |
 | `game.place_mine(x, y[, owner[, visible]])` | Lays a mine on a square. `visible` shows it to everyone rather than to its owner's side. |
 | `game.remove_mine(x, y)` | Takes a mine off a square without setting it off. |
@@ -2120,6 +2123,7 @@ exist.
 | `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
 | `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. A round that scores both teams and seats gets a grouped recap table: a row for each scored team, best team score first, with its members (by lobby team) under it, best own score first; seats on no scored team follow. A round that scores only one of the two keeps the plain table of players. |
 | `game.announce(text[, seconds[, target[, position]]])` | A big line across the game view for that many seconds. Left out, `position` puts the line where it has always gone, centred in the upper third of the view. Give `"top"`, `"center"` or `{ x = , y = }` to put the centre of the line somewhere else. Empty text takes the line away. |
+| `game.popup(text[, target])` | A message box the player reads and closes, drawn the way the built-in tutorial's are. While it is up a local game is paused, as the tutorial pauses it. See [Popups](#popups). |
 | `game.status(text[, countdown_to[, target]])` | The status line: one line at the very top of the game view, centred, that stays until it is changed or cleared. `countdown_to` is a tick on `game.tick()`'s clock; the client shows the time left to it after the text. Empty text takes the line away. |
 | `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
 | `game.marker_follow(id, p[, colour[, target]])` | Puts mark `id` on seat `p`, where it rides the tank rather than the ground. |
@@ -2206,6 +2210,26 @@ players around it see. A replay shows it too. A `countdown_to` below 0 or
 past 4294967294, or a seat or team outside the game, is refused with
 `SCN_OP_RANGE`.
 
+**Two lines at once.** An announcement does not take the place of one that
+is still up. Each line keeps its own countdown, and a client holds up to four:
+a fifth pushes the oldest out. A new line with the same text as one still up
+replaces that one and starts its time again. An empty line takes them all
+away. Lines are drawn in the order they arrived, and a line that would overlap
+one already drawn drops to just below it, so the newest is lowest.
+
+**Line breaks.** A status line or an announcement may hold `"\n"`. Each part
+is drawn on its own row, centred in one box, and the countdown of a status
+line goes after the last row. The byte limits count the `"\n"` as one byte.
+
+**Key tokens.** A status line or an announcement may carry the popup key
+tokens: `{ACCEL}`, `{BRAKE}`, `{LEFT}`, `{RIGHT}`, `{FIRE}`, `{MINE}`,
+`{SCROLL_UP}`, `{SCROLL_DOWN}`, `{SCROLL_LEFT}`, `{SCROLL_RIGHT}`, `{DISMISS}`,
+`{BUILD_MODE}`, `{BUILD_PLACE}`, `{BUILD_TOOL}`, `{QUICK_TREE}`, `{QUICK_ROAD}`,
+`{QUICK_WALL}`, `{QUICK_PILL}`, `{QUICK_MINE}`, `{GUN_UP}` and `{GUN_DOWN}`. The
+client writes each one out as the name of the bound key on a keyboard, a word
+for the control on a controller, or the touch wording on a touch screen. The
+128-byte cap (125 with a position) applies to the text as sent, tokens and all.
+
 ```lua
 game.status(string.format("Wave %d/%d", wave, waves), wave_ends_at)
 game.announce("Wave 3 - they come from the north", 5, nil, "center")
@@ -2231,6 +2255,45 @@ whole list, so a second update to the same panel for the same audience in the
 same tick is refused with `SCN_OP_RATE` rather than queued — the one it would
 have replaced was never going to be seen. Giving each of sixteen players their
 own copy of panel 0 in one tick is fine: the audience is part of the key.
+
+### Popups
+
+`game.popup` puts up a box of text that stays until the player closes it. It
+is for a sentence or two the player has to read before going on, where
+`announce` would be gone too soon. A client queues up to four, and shows the
+next when one is closed. A popup is not kept: a player who joins after it
+was sent does not see it.
+
+A popup belongs to its round. When the round ends (`game.end_round`, the time
+limit, or a return to the lobby) the client closes a popup that is still up
+and drops the ones waiting, so a script that wants its last popup read must
+not end the round until the player has had time to close it.
+
+Announcements and the status line wait behind a popup. While a popup is
+open the client draws no `game.announce` line and no status line, and the
+lines' clocks stand still: a line sent in the same tick as a popup, or while
+it is open, is shown for its whole time once the popup is closed, and a line
+that was already up keeps the time it had left. The player never has white
+text and a popup on screen at once. A script need not space them out.
+
+The text is laid out the way the tutorial's is: a single `\n` is read as a
+space, so a script can break long lines in its source, and a blank line
+(`\n\n`) starts a new paragraph. It may be up to 511 bytes.
+
+Key tokens in the text show as the keys the player has bound, or as the
+control a controller or touch screen uses:
+
+`{ACCEL}`, `{BRAKE}`, `{LEFT}`, `{RIGHT}`, `{FIRE}`, `{MINE}`, `{SCROLL_UP}`,
+`{SCROLL_DOWN}`, `{SCROLL_LEFT}`, `{SCROLL_RIGHT}`, `{DISMISS}`,
+`{BUILD_MODE}`, `{BUILD_PLACE}`, `{BUILD_TOOL}`, and the five quick-build
+keys `{QUICK_TREE}`, `{QUICK_ROAD}`, `{QUICK_WALL}`, `{QUICK_PILL}` and
+`{QUICK_MINE}`, and the two gunsight range keys `{GUN_UP}` (longer) and
+`{GUN_DOWN}` (shorter).
+
+```lua
+game.popup("{ACCEL} forward, {BRAKE} slow down.\n\n"
+  .. "Build a road with {QUICK_ROAD}.", p)
+```
 
 ### The panel
 
@@ -2994,6 +3057,7 @@ The `code` a refused write answers, as a string.
 | Regions | 64, declared and defined together; names 31 bytes |
 | Timers waiting at once | 64 |
 | A line of text | 128 bytes |
+| A popup's text | 511 bytes |
 | Primitives in one panel list | 128 |
 | Bytes in one panel list | 1017 |
 | A panel text primitive | 48 bytes |

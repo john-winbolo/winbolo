@@ -507,6 +507,25 @@ int run_scenario_lgm_parachute(void) {
                   "started at (%u,%u), which is on no edge",
                   (unsigned)lgmGetMX(l), (unsigned)lgmGetMY(l));
 
+    /* A short drop: `from` squares out on the same line in, not the edge. */
+    op.u.lgmParachute.x = near_x;
+    op.u.lgmParachute.y = near_y;
+    op.u.lgmParachute.from = 2;
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
+    UT_ASSERT_MSG(lgmGetMX(l) == near_x - 2 && lgmGetMY(l) == near_y,
+                  "short drop started at (%u,%u), wanted (%u,%u)",
+                  (unsigned)lgmGetMX(l), (unsigned)lgmGetMY(l),
+                  (unsigned)(near_x - 2), (unsigned)near_y);
+    /* Farther out than the edge itself: the edge, as before. */
+    op.u.lgmParachute.from = 30;
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK);
+    UT_ASSERT_MSG(lgmGetMX(l) == MAP_MINE_EDGE_LEFT,
+                  "long drop started at column %u, wanted the left edge",
+                  (unsigned)lgmGetMX(l));
+    op.u.lgmParachute.from = 0;
+    op.u.lgmParachute.x = SCN_NONE;
+    op.u.lgmParachute.y = SCN_NONE;
+
     /* Not while the round is not running. */
     sim->state = serverStateLobby;
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_WRONG_STATE);

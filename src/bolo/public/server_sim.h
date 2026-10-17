@@ -3139,6 +3139,8 @@ void serverSimSetPaused(ServerSim *sim, bool paused);
 
 BYTE         serverSimGetMapTerrain(const ServerSim *sim, BYTE x, BYTE y);
 bool         serverSimMapIsMine(const ServerSim *sim, BYTE x, BYTE y);
+/* Shots a wall square still takes before it is rubble; 0 for a non-wall. */
+int          serverSimWallShotsLeft(const ServerSim *sim, BYTE x, BYTE y);
 bool         serverSimPillExistsAt(const ServerSim *sim, BYTE x, BYTE y);
 BYTE         serverSimPillGetScreenHealthAt(ServerSim *sim, BYTE x, BYTE y, BYTE viewPlayer);
 bool         serverSimBaseExistsAt(const ServerSim *sim, BYTE x, BYTE y);
@@ -3280,6 +3282,10 @@ typedef struct TankInfo {
     BYTE  armour;
     BYTE  trees;
     BYTE  pills;     /* How many pills the tank is carrying */
+    BYTE  sight;     /* Gun sight range in half squares, from the rules
+                        gunsight_min to gunsight_max. The server's copy:
+                        it follows the owner's crosshair once their
+                        input reaches the server. */
     bool  is_bot;
     TankModifiers mods; /* Per-tank percentages; a zeroed set is classic */
 } TankInfo;

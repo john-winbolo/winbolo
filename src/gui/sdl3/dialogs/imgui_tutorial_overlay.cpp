@@ -14,8 +14,10 @@
  *********************************************************/
 
 #include <cfloat>
+#include <cstring>
 
 #include "imgui.h"
+#include "imgui_internal.h"  /* ClosePopupToLevel */
 #include "imgui_tutorial_overlay.h"
 #include "imgui_messagebox.h"
 #include "../sdl3imgui.h"    /* sdl3ImguiGetUiScale */
@@ -36,6 +38,15 @@ static bool     s_open        = false;
 static bool     s_pendingOpen = false;
 static bool     s_focusFirst  = false;
 static void   (*s_onComplete)(void) = nullptr;
+/* A text message (tutorialOverlayShowText) in place of the id sequence:
+   s_isText says which one is up. Sized past SCN_POPUP_TEXT_MAX with room. */
+static char     s_text[1024];
+static bool     s_isText      = false;
+/* Set by tutorialOverlayClose while the ImGui popup is open: the next render
+   takes it off ImGui's popup stack before anything else. */
+static bool     s_closePopup  = false;
+
+#define TUTORIAL_POPUP_ID DIALOG_BOX_TITLE "###TutorialMsg"
 
 void tutorialOverlayShow(const uint16_t *ids, int count,
                          void (*onComplete)(void)) {
@@ -46,6 +57,21 @@ void tutorialOverlayShow(const uint16_t *ids, int count,
     s_count       = count;
     s_idx         = 0;
     s_onComplete  = onComplete;
+    s_isText      = false;
+    s_pendingOpen = true;
+}
+
+void tutorialOverlayShowText(const char *text) {
+    if (s_open || s_pendingOpen) return;   /* already showing — ignore */
+    if (!text || !*text) return;
+    size_t len = strlen(text);
+    if (len >= sizeof(s_text)) len = sizeof(s_text) - 1;
+    memcpy(s_text, text, len);
+    s_text[len]   = '\0';
+    s_count       = 1;
+    s_idx         = 0;
+    s_onComplete  = nullptr;
+    s_isText      = true;
     s_pendingOpen = true;
 }
 
@@ -61,12 +87,35 @@ void tutorialOverlayReset(void) {
     s_pendingOpen = false;
     s_focusFirst  = false;
     s_onComplete  = nullptr;
+    s_isText      = false;
+    s_text[0]     = '\0';
+}
+
+/* The round ended under the message (see the header). A popup only asked for
+   (s_pendingOpen) never reached ImGui, so only an open one needs closing. */
+void tutorialOverlayClose(void) {
+    if (s_open) s_closePopup = true;
+    tutorialOverlayReset();
 }
 
 void tutorialOverlayRender(struct ClientSim *cs) {
     (void)cs;
+    if (s_closePopup) {
+        /* Close it here, inside a frame and with the same ID stack the
+           OpenPopup below used, rather than letting BeginPopupModal draw it
+           once more. ClosePopupToLevel also drops any popup opened over it. */
+        s_closePopup = false;
+        ImGuiContext &g = *GImGui;
+        ImGuiID id = ImGui::GetID(TUTORIAL_POPUP_ID);
+        for (int i = 0; i < g.OpenPopupStack.Size; ++i) {
+            if (g.OpenPopupStack[i].PopupId == id) {
+                ImGui::ClosePopupToLevel(i, true);
+                break;
+            }
+        }
+    }
     if (s_pendingOpen) {
-        ImGui::OpenPopup(DIALOG_BOX_TITLE "###TutorialMsg");
+        ImGui::OpenPopup(TUTORIAL_POPUP_ID);
         ImGui::SetNavCursorVisible(true);
         s_pendingOpen = false;
         s_open        = true;
@@ -78,9 +127,12 @@ void tutorialOverlayRender(struct ClientSim *cs) {
        in a static buffer reused on the next call, so resolve-then-render in
        one shot and never re-resolve before drawing. */
     TutorialSeg segs[TUTORIAL_SEG_MAX];
-    int nSegs = (s_idx < s_count)
-                    ? tutorialResolveSegments(s_ids[s_idx], segs, TUTORIAL_SEG_MAX)
-                    : 0;
+    int nSegs = 0;
+    if (s_idx < s_count) {
+        nSegs = s_isText
+                    ? tutorialResolveText(s_text, segs, TUTORIAL_SEG_MAX)
+                    : tutorialResolveSegments(s_ids[s_idx], segs, TUTORIAL_SEG_MAX);
+    }
 
     /* The body reflows now (single '\n' is a space, blank lines are paragraph
        breaks), so width is a free readability choice rather than something we
@@ -106,7 +158,7 @@ void tutorialOverlayRender(struct ClientSim *cs) {
                              ImGuiWindowFlags_NoMove |
                              ImGuiWindowFlags_AlwaysAutoResize;
 
-    if (ImGui::BeginPopupModal(DIALOG_BOX_TITLE "###TutorialMsg",
+    if (ImGui::BeginPopupModal(TUTORIAL_POPUP_ID,
                                nullptr, flags)) {
         bool dismissed = imguiRichSegmentsBody(segs, nSegs, &s_focusFirst);
         if (dismissed) {

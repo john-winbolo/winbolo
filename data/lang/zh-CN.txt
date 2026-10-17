@@ -2664,6 +2664,7 @@ STR_SCNFN_DESC_CAN_ALLY=一名玩家能否与另一名玩家结成联盟。
 STR_SCNFN_DESC_TANK_HIT=一辆坦克被炮弹或地雷击中，并附上它实际损失的装甲。
 STR_SCNFN_DESC_CAN_HIT=炮弹能否击中它所到达的坦克或碉堡。
 STR_SCNFN_DESC_PILL_DAMAGE_SCALE=一次命中对碉堡的分量，每次它受到炮弹或爆炸时都会询问。
+STR_SCNFN_DESC_CAN_TARGET=碉堡能否把坦克选为目标。
 STR_MAPEDIT_SCENARIO_KIND=可以决定的内容
 STR_MAPEDIT_SCENARIO_KIND_SCENARIO=场景 — 可以结束回合并宣布获胜者
 STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — 只改变游戏的进行方式，不影响胜负
