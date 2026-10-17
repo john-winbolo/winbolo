@@ -43,6 +43,8 @@
  *       turn, not only the first;
  *  (16) the host picking the side a default team already shows names it,
  *       so a map change keeps the pair; a pool pick does not.
+ *  (17) the dedicated server's -bots start-up gives each team with bots
+ *       a naming pool no other team holds, and keeps its side.
  *
  * Everard Island is wider than tall, so tests (1) to (11), (14) to (16) make it
  * tall first (make_map_tall: two grass squares out in the sea, the island
@@ -69,6 +71,7 @@
                                     * CmdResult */
 #include "control_event.h"         /* ControlEvent, CTRL_LOBBY_TEAM_META */
 #include "everard_map.h"
+#include "lobby_bot_pools.h"         /* lobbyBotPoolCount */
 #include "starts.h"                /* startsGetNumStarts, startsGetMaxs */
 #include "start_sides.h"           /* START_SIDE_*, startSideMaskFor */
 #include "tank.h"                  /* tankGetWorld */
@@ -1176,6 +1179,77 @@ int run_lobby_default_sides_same_side_pick_kept(void) {
     UT_ASSERT_MSG(sides_are(sim, START_SIDE_E, START_SIDE_W),
                   "after a pool pick the default must still follow a wide map "
                   "(got %u/%u)", sim->teams[1].startSide, sim->teams[2].startSide);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* (17) The dedicated server's -bots start-up gives each team with bots a
+ *      naming pool of its own through serverSimPickTeamNamingPool: the
+ *      pool is one no other team holds, it is stored on the team and
+ *      carried in the team's CTRL_LOBBY_TEAM_META, and the write keeps the
+ *      team's colour, name and filled-in side. A team not in use yet is
+ *      marked in use with the lobby's default colour and "Team N" name. */
+int run_lobby_ds_bot_team_naming_pools(void) {
+    ControlEvent evt;
+    uint8_t      p1;
+    uint8_t      p2;
+    uint8_t      p3;
+    ServerSim   *sim = make_sim();
+    UT_ASSERT(sim != NULL);
+    boot_sim(sim, false, false);   /* the DS config: neither flag */
+    UT_ASSERT_MSG(lobbyBotPoolCount() >= 4, "setup: at least four naming pools");
+    UT_ASSERT_MSG(sim->teams[1].namingPool == 0 && sim->teams[2].namingPool == 0,
+                  "setup: teams 1 and 2 open on pool 0");
+
+    /* Team 2 holds pool 0, so the first free pool for team 1 is pool 1. */
+    p1 = serverSimPickTeamNamingPool(sim, 1, 0);
+    UT_ASSERT_MSG(p1 == 1 && sim->teams[1].namingPool == 1,
+                  "team 1 must take the first pool team 2 does not hold (got %u)",
+                  (unsigned)p1);
+
+    /* For team 2 the free pools are 0, 2, 3, ...; choice 1 selects pool 2. */
+    p2 = serverSimPickTeamNamingPool(sim, 2, 1);
+    UT_ASSERT_MSG(p2 == 2 && sim->teams[2].namingPool == 2,
+                  "team 2 must take the second pool team 1 does not hold (got %u)",
+                  (unsigned)p2);
+    UT_ASSERT_MSG(p1 != p2, "two teams must not share a naming pool");
+
+    /* Colour, name and the filled-in default side are kept. */
+    UT_ASSERT(sim->teams[1].color == 0 && sim->teams[2].color == 1);
+    UT_ASSERT(strcmp(sim->teams[1].name, "Team 1") == 0);
+    UT_ASSERT(strcmp(sim->teams[2].name, "Team 2") == 0);
+    UT_ASSERT_MSG(sides_are(sim, START_SIDE_N, START_SIDE_S),
+                  "a pool pick must keep the default sides (got %u/%u)",
+                  sim->teams[1].startSide, sim->teams[2].startSide);
+    UT_ASSERT_MSG(sim->teams[1].sideAutoFilled && sim->teams[2].sideAutoFilled,
+                  "a pool pick must keep both sides filled in");
+
+    /* Picking the pool a team already has writes nothing. */
+    p2 = serverSimPickTeamNamingPool(sim, 2, 1);
+    UT_ASSERT_MSG(p2 == 2 && sim->teams[2].sideAutoFilled,
+                  "a repeat pick must leave team 2 as it was");
+
+    /* Team 3 is not in use: it is marked in use with the lobby defaults
+     * and takes the first pool that teams 1 and 2 do not hold. */
+    UT_ASSERT_MSG(!sim->teams[3].in_use, "setup: team 3 starts not in use");
+    p3 = serverSimPickTeamNamingPool(sim, 3, 0);
+    UT_ASSERT_MSG(p3 == 0 && sim->teams[3].namingPool == 0,
+                  "team 3 must take pool 0 (got %u)", (unsigned)p3);
+    UT_ASSERT(sim->teams[3].in_use);
+    UT_ASSERT(sim->teams[3].color == 2);
+    UT_ASSERT(strcmp(sim->teams[3].name, "Team 3") == 0);
+    UT_ASSERT(sim->teams[3].startSide == START_SIDE_ANY);
+
+    /* What a joiner is told about team 3. */
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbyTeamMetaEvent(sim, 3, &evt);
+    UT_ASSERT(evt.type == CTRL_LOBBY_TEAM_META);
+    UT_ASSERT_MSG(evt.u.lobbyTeamMeta.in_use && evt.u.lobbyTeamMeta.namingPool == p3,
+                  "the join replay must carry team 3's pool");
+
+    /* Team 0 and out-of-range teams are not written. */
+    UT_ASSERT(serverSimPickTeamNamingPool(sim, 0, 5) == 0);
+    UT_ASSERT(serverSimPickTeamNamingPool(sim, MAX_TANKS, 5) == 0);
     serverSimDestroy(sim);
     return 0;
 }

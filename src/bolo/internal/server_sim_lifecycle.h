@@ -210,6 +210,18 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
                            uint8_t startSide,
                            const uint8_t *name, uint8_t nameLen);
 
+/* Give a team a bot naming pool that no other in-use team holds, and
+ * return the pool the team then has. choice selects one of the free
+ * pools (choice modulo the number of free pools), so a caller passes a
+ * random number to get a random free pool. The write goes through
+ * serverSimSetTeamMeta with the team's own colour, side and name, so
+ * clients get the pool in CTRL_LOBBY_TEAM_META; a team not in use yet is
+ * marked in use with the default colour and "Team N" name. A team that
+ * already has the selected pool is not written. Caller: the dedicated
+ * server's -bots start-up, which names each team's bots from the
+ * returned pool. Returns 0 for team 0 or an out-of-range team. */
+uint8_t serverSimPickTeamNamingPool(ServerSim *sim, BYTE teamId, uint32_t choice);
+
 /* Clear a team's metadata back to zero (in_use=0, color=0, pool=0,
  * empty name), publish CTRL_LOBBY_TEAM_META, and clear humans' ready
  * state. Callers (UDP PACKET_LOBBY_TEAM_CLEAR handler, SP-host
