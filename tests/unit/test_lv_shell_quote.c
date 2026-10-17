@@ -42,6 +42,14 @@ int run_lv_shell_quote(void) {
     SQ_EXPECT(lvShellQuote, "back\\slash", "'back\\slash'");
     SQ_EXPECT(lvShellQuote, "say \"hi\"", "'say \"hi\"'");
     SQ_EXPECT(lvShellQuote, "''", "''\\'''\\'''");
+    SQ_EXPECT(lvShellQuote, "-x.wbv", "'-x.wbv'");
+
+    /* A file name that is an argument of its own: "./" before a leading
+       '-', and the rest quoted as before. */
+    SQ_EXPECT(lvShellQuoteFileArg, "-x.wbv", "'./-x.wbv'");
+    SQ_EXPECT(lvShellQuoteFileArg, "--help O'Brien.wbv", "'./--help O'\\''Brien.wbv'");
+    SQ_EXPECT(lvShellQuoteFileArg, "a-b.wbv", "'a-b.wbv'");
+    SQ_EXPECT(lvShellQuoteFileArg, "", "''");
 
     /* AppleScript: in double quotes; a backslash and a double quote come
        after a backslash. A single quote, a backquote and $ are plain text

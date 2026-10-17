@@ -297,7 +297,9 @@ static int build_kdialog_save_cmd(char *buf, size_t buf_size,
     if (!lvShellQuote(qtitle, sizeof(qtitle), title) ||
         !lvShellQuote(qfilter, sizeof(qfilter), filter_ext)) return 0;
     if (default_name && default_name[0]) {
-        if (!lvShellQuote(qname, sizeof(qname), default_name)) return 0;
+        /* The name is kdialog's start path, an argument of its own: a name
+           that starts with '-' would be read as an option. */
+        if (!lvShellQuoteFileArg(qname, sizeof(qname), default_name)) return 0;
         return fits(snprintf(buf, buf_size,
                              "kdialog --getsavefilename %s %s --title %s 2>/dev/null",
                              qname, qfilter, qtitle), buf_size);

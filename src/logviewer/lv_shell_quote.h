@@ -20,6 +20,8 @@
  *   lvShellQuote - the text as one shell word: in single quotes, with each
  *       single quote in it written as '\''. Inside single quotes the shell
  *       gives no other character a special meaning ($, `, \, ").
+ *   lvShellQuoteFileArg - lvShellQuote for a file name that is an argument
+ *       of its own: a name that starts with '-' gets "./" in front.
  *   lvAppleScriptQuote - the text as one AppleScript string: in double
  *       quotes, with each backslash and double quote after a backslash.
  *
@@ -34,7 +36,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-static inline bool lvShellQuote(char *out, size_t size, const char *text) {
+/* lvShellQuote with prefix put in front of the text, inside the quotes. */
+static inline bool lvShellQuotePrefixed(char *out, size_t size, const char *prefix,
+                                        const char *text) {
     size_t n = 0;
     if (!out || size == 0) return false;
     if (!text) text = "";
@@ -44,6 +48,9 @@ static inline bool lvShellQuote(char *out, size_t size, const char *text) {
         out[n++] = (ch);                                                       \
     } while (0)
     LV_SQ_PUT('\'');
+    for (const char *p = prefix; p && *p; p++) {
+        LV_SQ_PUT(*p);
+    }
     for (const char *p = text; *p; p++) {
         if (*p == '\'') {
             /* End the quoted part, put a quote after a backslash, start a
@@ -60,6 +67,18 @@ static inline bool lvShellQuote(char *out, size_t size, const char *text) {
 #undef LV_SQ_PUT
     out[n] = '\0';
     return true;
+}
+
+static inline bool lvShellQuote(char *out, size_t size, const char *text) {
+    return lvShellQuotePrefixed(out, size, NULL, text);
+}
+
+/* A file name given to a program as an argument of its own (kdialog's
+ * start path): as lvShellQuote, but a name that starts with '-' gets "./"
+ * in front, so the program does not read it as an option. */
+static inline bool lvShellQuoteFileArg(char *out, size_t size, const char *text) {
+    return lvShellQuotePrefixed(out, size, (text && text[0] == '-') ? "./" : NULL,
+                                text);
 }
 
 static inline bool lvAppleScriptQuote(char *out, size_t size, const char *text) {
