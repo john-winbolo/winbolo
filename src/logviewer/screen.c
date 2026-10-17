@@ -4525,7 +4525,11 @@ static bool lv_walkLoadStep(size_t maxBytes) {
 }
 
 static void lv_walkLoadEnd(void) {
-  g_lv->totalTimeMs = (uint32_t)(s_walk.ticks * 20);
+  {
+    const uint64_t totalMs = s_walk.ticks * 20u;
+    g_lv->totalTimeMs = (totalMs > LV_TOTAL_TIME_MAX_MS) ? LV_TOTAL_TIME_MAX_MS
+                                                         : (uint32_t)totalMs;
+  }
   s_gameStartMs = s_walk.startMs;
   if (s_walk.w.framed) {
     lv_presIndexByKey();

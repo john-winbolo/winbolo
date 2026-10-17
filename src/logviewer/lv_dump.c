@@ -621,20 +621,22 @@ static void dumpState(DumpCtx *c, bool full) {
 }
 
 /* Split the log into rounds by the tick: it only goes down where a new round
- * starts it again. A log with no server tick is one round. */
+ * starts it again. A log with no server tick is one round. The step counters
+ * in this file are 64 bits wide, so a total near the end of a uint32_t
+ * cannot make "ms += DUMP_STEP_MS" go back to 0 and the loop run for ever. */
 static int dumpFindRounds(uint32_t totalMs, DumpRound *rounds) {
-  uint32_t ms;
+  uint64_t ms;
   uint32_t prev = 0;
   int      n = 0;
 
   for (ms = DUMP_STEP_MS; ms <= totalMs; ms += DUMP_STEP_MS) {
-    uint32_t tick = dumpTickAt(ms);
+    uint32_t tick = dumpTickAt((uint32_t)ms);
     if (n == 0 || (tick < prev && n < DUMP_ROUNDS_MAX)) {
-      rounds[n].startMs   = ms;
+      rounds[n].startMs   = (uint32_t)ms;
       rounds[n].firstTick = tick;
       n++;
     }
-    rounds[n - 1].endMs    = ms;
+    rounds[n - 1].endMs    = (uint32_t)ms;
     rounds[n - 1].lastTick = tick;
     prev = tick;
   }
@@ -644,11 +646,11 @@ static int dumpFindRounds(uint32_t totalMs, DumpRound *rounds) {
 /* The first step of the round at or past tick, or 0 when the round ends
  * before it. */
 static uint32_t dumpStepAtTick(const DumpRound *r, uint32_t tick) {
-  uint32_t ms;
+  uint64_t ms;
 
   for (ms = r->startMs; ms <= r->endMs; ms += DUMP_STEP_MS) {
-    if (dumpTickAt(ms) >= tick) {
-      return ms;
+    if (dumpTickAt((uint32_t)ms) >= tick) {
+      return (uint32_t)ms;
     }
   }
   return 0;
@@ -656,12 +658,12 @@ static uint32_t dumpStepAtTick(const DumpRound *r, uint32_t tick) {
 
 /* The last step of the round at or before tick. */
 static uint32_t dumpLastStepAtTick(const DumpRound *r, uint32_t tick) {
-  uint32_t ms;
+  uint64_t ms;
   uint32_t found = r->startMs;
 
   for (ms = r->startMs; ms <= r->endMs; ms += DUMP_STEP_MS) {
-    if (dumpTickAt(ms) <= tick) {
-      found = ms;
+    if (dumpTickAt((uint32_t)ms) <= tick) {
+      found = (uint32_t)ms;
     } else {
       break;
     }
@@ -897,7 +899,7 @@ int lvDumpRun(const LvDumpOptions *o) {
     fprintf(ctx.out, "dump mode=events\n");
   }
 
-  while (lv->isPlaying == TRUE && lv->timeRunning + DUMP_STEP_MS <= endMs) {
+  while (lv->isPlaying == TRUE && (uint64_t)lv->timeRunning + DUMP_STEP_MS <= endMs) {
     uint32_t ms = lv->timeRunning + DUMP_STEP_MS;
     bool     in = window && ms >= fromMs;
     bool     first = in && ctx.inWindow == FALSE;
