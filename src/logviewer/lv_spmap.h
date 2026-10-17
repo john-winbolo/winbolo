@@ -108,6 +108,14 @@ typedef struct {
  * the file was written. */
 int lvSpmapWrite(const char *path, int self, LvSpmapInfo *info);
 
+/* lvSpmapWriteNew returns this when a file of that name is there already. */
+#define LV_SPMAP_EXISTS (-1)
+
+/* As lvSpmapWrite, but never writes over a file: the file is made by the
+ * open itself, and when a file of that name is there the result is
+ * LV_SPMAP_EXISTS and that file is not touched. */
+int lvSpmapWriteNew(const char *path, int self, LvSpmapInfo *info);
+
 /* The same for a log on disk, with no window: decode logPath up to ms of
  * playback and write the world there. A self that is not in the game at
  * that time counts as none. Returns 1 when the file was written. */

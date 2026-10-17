@@ -419,33 +419,7 @@ void lv_imgui_controls_window(void) {
     char ctrl_title[128];
     snprintf(ctrl_title, sizeof(ctrl_title), "%s###controls", langGetText(STR_LV_WIN_CONTROLS));
     if (ImGui::Begin(ctrl_title, &lv_g_show_controls_window, ImGuiWindowFlags_NoCollapse)) {
-        /* In the dock the dock places the window; moving it here would pull
-         * it straight back out. */
-        if (!ImGui::IsWindowDocked()) {
-            /* Reposition window relative to right/bottom edge when viewport is resized */
-            float dx, dy;
-            if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
-                ImVec2 pos = ImGui::GetWindowPos();
-                ImVec2 vp_old = ImGui::GetMainViewport()->Size;
-                float old_vp_x = vp_old.x - dx;
-                float old_vp_y = vp_old.y - dy;
-                ImVec2 size = ImGui::GetWindowSize();
-                if (pos.x + size.x * 0.5f > old_vp_x * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x + dx, pos.y + dy));
-                else if (pos.y + size.y * 0.5f > old_vp_y * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x, pos.y + dy));
-            }
-            /* Always clamp to keep fully on screen */
-            {
-                ImVec2 pos = ImGui::GetWindowPos();
-                ImVec2 size = ImGui::GetWindowSize();
-                ImVec2 vp = ImGui::GetMainViewport()->Size;
-                ImVec2 new_pos = pos;
-                if (new_pos.x + size.x > vp.x) new_pos.x = vp.x - size.x;
-                if (new_pos.y + size.y > vp.y) new_pos.y = vp.y - size.y;
-                if (new_pos.x < 0) new_pos.x = 0;
-                if (new_pos.y < 0) new_pos.y = 0;
-                if (new_pos.x != pos.x || new_pos.y != pos.y) ImGui::SetWindowPos(new_pos);
-            }
-        }
+        lv_imgui_keep_window_on_screen();
 
         /* The top row: the playback buttons (back to the last snapshot,
          * play, pause, on to the next snapshot, and on a live feed back to

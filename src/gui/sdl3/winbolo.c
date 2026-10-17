@@ -99,6 +99,9 @@
 #include "tutorial_text.h"
 #include "../../common/sentry_integration.h"
 #include "../../common/crash_handler.h"
+#ifdef _WIN32
+#include "../../logviewer/lv_utf8_path.h"
+#endif
 
 /* humanSim is owned by gamefront.c; declared up here so the timer
  * callback and main game-tick path can pass it to clientSim* wrappers. */
@@ -337,6 +340,58 @@ static void steamJoinRequested(const char *connect_str) {
   }
 }
 
+#ifdef _WIN32
+/* As <windows.h> has it; see lv_utf8_path.h for why it is written out. */
+__declspec(dllimport) unsigned long __stdcall GetShortPathNameW(const wchar_t *lpszLongPath,
+                                                                wchar_t *lpszShortPath,
+                                                                unsigned long cchBuffer);
+
+#define WINBOLO_CP_ACP 0u                    /* CP_ACP */
+#define WINBOLO_NO_BEST_FIT 0x00000400ul     /* WC_NO_BEST_FIT_CHARS */
+
+/* The -spmap path in a form the game's file code opens. SDL gives argv as
+ * UTF-8, but the game opens the map (mapRead, the map's checksum, a
+ * scenario beside it) with the C library's fopen, which reads a path in the
+ * system's code page. The Log Viewer writes the map in the user's profile
+ * folder, and that folder can have letters outside ASCII. So a path that is
+ * not ASCII is changed to the code page form when every letter is in the
+ * code page, else to the short (8.3) form of the path, which is ASCII when
+ * the volume makes short names. Otherwise the path is given as it is. out
+ * holds the result when it is not utf8 itself. */
+static const char *winboloSpMapPath(const char *utf8, char *out, size_t outSize) {
+  static wchar_t wide[LV_UTF8_PATH_WIDE_MAX];
+  static wchar_t shortWide[LV_UTF8_PATH_WIDE_MAX];
+  const char    *p;
+  unsigned long  shortLen;
+  int            usedDefault = 0;
+  int            n;
+
+  for (p = utf8; *p != '\0' && (unsigned char)*p < 0x80; p++) {
+  }
+  if (*p == '\0' || outSize == 0 || outSize > 0x7FFFFFFFu) {
+    return utf8; /* ASCII is the same in every code page */
+  }
+  if (!lvUtf8ToWide(utf8, wide, LV_UTF8_PATH_WIDE_MAX)) {
+    return utf8; /* not UTF-8: a code page path already */
+  }
+  n = WideCharToMultiByte(WINBOLO_CP_ACP, WINBOLO_NO_BEST_FIT, wide, -1, out, (int)outSize,
+                          NULL, &usedDefault);
+  if (n > 0 && !usedDefault) {
+    return out;
+  }
+  shortLen = GetShortPathNameW(wide, shortWide, LV_UTF8_PATH_WIDE_MAX);
+  if (shortLen > 0 && shortLen < LV_UTF8_PATH_WIDE_MAX) {
+    usedDefault = 0;
+    n = WideCharToMultiByte(WINBOLO_CP_ACP, WINBOLO_NO_BEST_FIT, shortWide, -1, out,
+                            (int)outSize, NULL, &usedDefault);
+    if (n > 0 && !usedDefault) {
+      return out;
+    }
+  }
+  return utf8;
+}
+#endif
+
 /* -------------------------------------------------------
  * main — SDL3 entry point
  * ------------------------------------------------------- */
@@ -346,6 +401,9 @@ int main(int argc, char *argv[]) {
   bool joinedViaSteam = FALSE;
   ClientSim *cs = NULL;
   bool spMapStart = FALSE;
+#ifdef _WIN32
+  static char spMapPath[FILENAME_MAX];
+#endif
 #if defined(WB_VOICEDEBUG)
   const char *voiceRecordDir = NULL;
   const char *voiceInjectPath = NULL;
@@ -423,7 +481,11 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "-spmap needs a map file\n");
         continue;
       }
+#ifdef _WIN32
+      cmdLine = winboloSpMapPath(argv[i + 1], spMapPath, sizeof(spMapPath));
+#else
       cmdLine = argv[i + 1];
+#endif
       spMapStart = TRUE;
       i++;
       continue;

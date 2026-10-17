@@ -658,32 +658,7 @@ void lv_imgui_game_info_window(void) {
     char gi_title[128];
     snprintf(gi_title, sizeof(gi_title), "%s###gameinfo", langGetText(STR_LV_WIN_GAMEINFO));
     if (ImGui::Begin(gi_title, &lv_g_show_game_info_window, ImGuiWindowFlags_NoCollapse)) {
-        /* In the dock the dock places the window; moving it here would pull
-         * it straight back out. */
-        if (!ImGui::IsWindowDocked()) {
-            /* Reposition window relative to right/bottom edge when viewport is resized */
-            float dx, dy;
-            if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
-                ImVec2 pos = ImGui::GetWindowPos();
-                float old_vp_x = ImGui::GetMainViewport()->Size.x - dx;
-                float old_vp_y = ImGui::GetMainViewport()->Size.y - dy;
-                ImVec2 size = ImGui::GetWindowSize();
-                if (pos.x + size.x * 0.5f > old_vp_x * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x + dx, pos.y + dy));
-                else if (pos.y + size.y * 0.5f > old_vp_y * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x, pos.y + dy));
-            }
-            /* Always clamp to keep fully on screen */
-            {
-                ImVec2 pos = ImGui::GetWindowPos();
-                ImVec2 size = ImGui::GetWindowSize();
-                ImVec2 vp = ImGui::GetMainViewport()->Size;
-                ImVec2 new_pos = pos;
-                if (new_pos.x + size.x > vp.x) new_pos.x = vp.x - size.x;
-                if (new_pos.y + size.y > vp.y) new_pos.y = vp.y - size.y;
-                if (new_pos.x < 0) new_pos.x = 0;
-                if (new_pos.y < 0) new_pos.y = 0;
-                if (new_pos.x != pos.x || new_pos.y != pos.y) ImGui::SetWindowPos(new_pos);
-            }
-        }
+        lv_imgui_keep_window_on_screen();
 
         /* The lobby settings the recording carries. A loaded file has them
          * from the load-time walk and a live feed picks them up as they

@@ -910,8 +910,10 @@ void lv_windowOpenSinglePlayer(void) {
     strncat(mapName, currentTime, sizeof(mapName) - strlen(mapName) - 1);
     /* Nothing a file name cannot hold (the time has ':' in it). The game
        opens the -spmap file with the C library's fopen, which on Windows
-       reads the path in the system's code page and not as UTF-8. So the
-       file name is ASCII only: each letter outside ASCII becomes one '_'.
+       reads the path in the system's code page and not as UTF-8. The game
+       changes the folder part to a form that fopen opens (winboloSpMapPath
+       in src/gui/sdl3/winbolo.c), and to make that sure the file name is
+       ASCII only: each letter outside ASCII becomes one '_'.
        The lead byte of the letter gives the '_' and the continuation bytes
        (0x80..0xBF) that belong to it are dropped. A continuation byte with
        no lead byte before it is not part of a letter, so it gives a '_' of
@@ -941,7 +943,16 @@ void lv_windowOpenSinglePlayer(void) {
     /* A name no file has yet. The map name and the playback time are the
        same for two logs of one map, and for a second try at the same time;
        the game that was started on the first file may still have it open.
-       So a file is never written over: the second gets " (2)", and so on. */
+       So a file is never written over: the second gets " (2)", and so on.
+       The file is made by the open itself (lvSpmapWriteNew), which fails
+       when a file of that name is there, so no other program can make the
+       file between a check and the write.
+
+       The selected player (the perspective the HUD or Select Team set) is
+       the side the user takes. With none, nothing is the user's. */
+    wrote = 0;
+    lv_clientMutexWaitFor();
+    self = lv_playersHasPerspective() ? (int)lv_playersGetSelf() : -1;
     for (attempt = 1; attempt <= 9999; attempt++) {
         if (attempt == 1) {
             n = snprintf(mapPath, sizeof(mapPath), "%slogviewer-maps/%.200s.map",
@@ -951,27 +962,17 @@ void lv_windowOpenSinglePlayer(void) {
                          prefDir, mapName, attempt);
         }
         if (n <= 0 || (size_t)n >= sizeof(mapPath)) {
-            attempt = 10000;
             break;
         }
-        if (!SDL_GetPathInfo(mapPath, NULL)) {
+        wrote = lvSpmapWriteNew(mapPath, self, &info);
+        if (wrote != LV_SPMAP_EXISTS) {
             break;
         }
     }
-    SDL_free(prefDir);
-    if (attempt > 9999) {
-        lv_platform_dialog_error(DIALOG_BOX_TITLE, "Error Saving Map File");
-        return;
-    }
-
-    /* The selected player (the perspective the HUD or Select Team set) is
-       the side the user takes. With none, nothing is the user's. */
-    lv_clientMutexWaitFor();
-    self  = lv_playersHasPerspective() ? (int)lv_playersGetSelf() : -1;
-    wrote = lvSpmapWrite(mapPath, self, &info);
     lv_clientMutexRelease();
-    if (!wrote) {
-        lv_platform_dialog_error(DIALOG_BOX_TITLE, "Error Saving Map File");
+    SDL_free(prefDir);
+    if (wrote != 1) {
+        lv_platform_dialog_error(DIALOG_BOX_TITLE, langGetText(STR_LV_ERR_SAVE_MAP));
         return;
     }
 
@@ -1824,10 +1825,11 @@ static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
      * decoder takes. A step leaves playback paused, so the moment stepped to
      * stays on the screen; a jump carries on playing if it was.
      *
-     * SDL3 reports key.key as the unmodified keycode by default, so
-     * Shift+',' arrives as SDLK_COMMA with the shift modifier set; a layout
-     * that sends SDLK_LESS itself is taken as shifted too. A text box that
-     * has the keyboard keeps the key.
+     * The keys are matched by scancode, the place of the key on the
+     * keyboard, so the two keys right of M on a US keyboard do this on
+     * every layout, also where those places give other characters. Shift
+     * on either one is the jump. A text box that has the keyboard keeps
+     * the key.
      *
      * In game view a jump re-centres the camera, because 10 s can leave the
      * followed tank far outside the viewport and the dead-zone tracker
@@ -1836,15 +1838,12 @@ static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
     if (allowSeek && sdlEvent.type == SDL_EVENT_KEY_DOWN &&
         g_lv->isLoaded && !lv_imgui_want_text_input() &&
         (sdlEvent.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
-        (sdlEvent.key.key == SDLK_COMMA  || sdlEvent.key.key == SDLK_LESS ||
-         sdlEvent.key.key == SDLK_PERIOD || sdlEvent.key.key == SDLK_GREATER)) {
+        (sdlEvent.key.scancode == SDL_SCANCODE_COMMA ||
+         sdlEvent.key.scancode == SDL_SCANCODE_PERIOD)) {
         const uint32_t kTickMs = 20;
         const uint32_t kJumpMs = 10000;
-        bool back = (sdlEvent.key.key == SDLK_COMMA ||
-                     sdlEvent.key.key == SDLK_LESS);
-        bool jump = ((sdlEvent.key.mod & SDL_KMOD_SHIFT) != 0 ||
-                     sdlEvent.key.key == SDLK_LESS ||
-                     sdlEvent.key.key == SDLK_GREATER);
+        bool back = (sdlEvent.key.scancode == SDL_SCANCODE_COMMA);
+        bool jump = ((sdlEvent.key.mod & SDL_KMOD_SHIFT) != 0);
         uint32_t stepMs = jump ? kJumpMs : kTickMs;
         /* Absolute log time: a 20 ms step is too fine to send through the
          * slider's 0..1 ratio. lv_screenSeekToTimeMs clamps to the log. */
@@ -1969,8 +1968,21 @@ static void lvHostHandleResize(const SDL_Event *e) {
  * Game view sets its own fixed size and puts the overview's
  * back when it ends; it is left alone, and the comparison catches up
  * afterwards.
+ *
+ * On a live feed the timer thread decodes into the same screen, so the
+ * view inset and the grid size are changed under the client mutex. The
+ * lock is held only for these few calls, and most frames change nothing.
  * -------------------------------------------------------------------------- */
+static void lvHostDockSyncLocked(void);
+
 static void lvHostDockSync(void) {
+    lv_imgui_dock_pre_frame();
+    lv_clientMutexWaitFor();
+    lvHostDockSyncLocked();
+    lv_clientMutexRelease();
+}
+
+static void lvHostDockSyncLocked(void) {
     LvDockMargins dock = { 0, 0, 0, 0 };
     LvDockMargins full = { 0, 0, 0, 0 };
     LvDockMargins was;
@@ -1980,7 +1992,6 @@ static void lvHostDockSync(void) {
     int oldSubX = 0, oldSubY = 0;
     float zoom;
 
-    lv_imgui_dock_pre_frame();
     if (g_lv->gameView) {
         lv_screenSetViewInset(0, 0, 0, 0);
         return;
@@ -2601,7 +2612,8 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
          * (merge-on-save, main.c). Whatever was set this frame by code that
          * does not save for itself (the Events filter, the shared network
          * code) goes to the file here, in one write. Nothing was set: no
-         * write. Inside the game this does nothing. */
+         * write. A write that fails waits two seconds before the next try.
+         * Inside the game this does nothing; the game writes. */
         lv_platform_config_save();
     }
 

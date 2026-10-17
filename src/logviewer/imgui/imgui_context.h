@@ -42,6 +42,12 @@ struct ImGuiContext* lv_imgui_context_get(void);
  * dx/dy are set to the pixel change in width/height. */
 int lv_imgui_context_get_resize_delta(float* dx, float* dy);
 
+/* Call between ImGui::Begin and ImGui::End of a panel. A floating panel
+ * keeps its place by the right or bottom edge when the window is resized,
+ * and is kept wholly in the window. A docked panel is left alone: the dock
+ * places it, and a move here would pull it out of the dock. */
+void lv_imgui_keep_window_on_screen(void);
+
 /* Returns 1 if ImGui currently wants to capture mouse input
  * (cursor over an ImGui window/widget), 0 otherwise. Reflects the
  * state set during the last NewFrame, so it's safe to call at any

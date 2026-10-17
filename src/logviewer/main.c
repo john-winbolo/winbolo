@@ -78,8 +78,11 @@ int main(int argc, char *argv[]) {
         prefsInit(prefsJsonPath);
         /* The game may be running beside the viewer and keeps the same
          * file. Write only the keys the viewer changed, onto a fresh read
-         * of the file, so neither program wipes the other's changes. */
+         * of the file. The game does the same (gameFrontStart in
+         * src/gui/sdl3/gamefront.c), so neither program wipes the other's
+         * changes. */
         prefsSetMergeOnSave(true);
+        lv_platform_config_set_own_writes(1);
     }
 
     /* "-dump <log> ..." writes the recording out as text and ends: no window,
