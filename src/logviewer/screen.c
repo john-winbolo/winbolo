@@ -443,7 +443,6 @@ const LvScripts *lv_screenGetScripts(void) {
  *
  * With the view of all teams every team's pings show. With one player's
  * view, the pings that player was sent (lvPingSeen). */
-#define LV_MAX_PINGS 16
 
 /* The kinds lv_ping_view.h counts are the game's. */
 typedef char lv_ping_kinds_match[(LV_PING_KINDS == PING_KIND_COUNT) ? 1 : -1];
@@ -479,37 +478,38 @@ static bool lv_pingInView(const LvPingRec *p) {
              ? TRUE : FALSE;
 }
 
-/* Read out one ping that is on the map now. `index` walks 0..LV_MAX_PINGS-1
- * from the oldest, so drawing in order puts the newest on top; an index past
- * the last returns false and the caller moves on. When more than
- * LV_MAX_PINGS are on the map at once the newest are the ones given. ageMs
- * is measured on the playback clock. `sender` is the slot that sent it,
+/* The pings that are on the map now, for the view in use, in one pass over
+ * the store. out gets at most max of them (and never more than
+ * LV_PING_SHOWN_MAX), the oldest first, so drawing in order puts the newest
+ * on top. When more are on the map, the newest are the ones given. The
+ * return is the number written. `sender` is the slot that sent each one,
  * which is how the drawer names the marker. */
-bool lv_screenGetPing(int index, BYTE *sender, BYTE *kind, uint16_t *worldX,
-                      uint16_t *worldY, uint32_t *ageMs) {
-  int first = 0, n, i, inView = 0, want;
-  if (index < 0 || index >= LV_MAX_PINGS) return FALSE;
+int lv_screenGetPings(LvPingShown *out, int max) {
+  LvPingShown ring[LV_PING_SHOWN_MAX];
+  int first = 0, n, i, inView = 0, start, count;
+  if (out == NULL || max <= 0) return 0;
+  if (max > LV_PING_SHOWN_MAX) max = LV_PING_SHOWN_MAX;
   n = lvPingStoreShown(&s_pingStore, g_lv->timeRunning, (uint32_t)PING_DISPLAY_MS, &first);
   for (i = 0; i < n; i++) {
-    if (lv_pingInView(&s_pingStore.rec[first + i])) inView++;
-  }
-  want = index + ((inView > LV_MAX_PINGS) ? inView - LV_MAX_PINGS : 0);
-  if (want >= inView) return FALSE;
-  for (i = 0; i < n; i++) {
     const LvPingRec *p = &s_pingStore.rec[first + i];
+    LvPingShown     *r;
     if (!lv_pingInView(p)) continue;
-    if (want-- > 0) continue;
-    if (sender) *sender = p->sender;
-    if (kind)   *kind   = p->kind;
-    if (worldX) *worldX = p->worldX;
-    if (worldY) *worldY = p->worldY;
-    if (ageMs)  *ageMs  = g_lv->timeRunning - p->timeMs;
-    return TRUE;
+    /* A ring of the last `max` in view: a newer one takes the oldest's place. */
+    r = &ring[inView % max];
+    r->sender = p->sender;
+    r->kind   = p->kind;
+    r->worldX = p->worldX;
+    r->worldY = p->worldY;
+    r->ageMs  = g_lv->timeRunning - p->timeMs;
+    inView++;
   }
-  return FALSE;
+  count = (inView < max) ? inView : max;
+  start = (inView > max) ? inView % max : 0;
+  for (i = 0; i < count; i++) {
+    out[i] = ring[(start + i) % max];
+  }
+  return count;
 }
-
-int lv_screenGetPingCapacity(void) { return LV_MAX_PINGS; }
 
 /* Store a slot's tank stocks. The recording is the only source: the four
  * values arrive either on the end of a snapshot's player block or in a

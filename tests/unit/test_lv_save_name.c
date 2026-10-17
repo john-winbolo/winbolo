@@ -41,7 +41,7 @@
     } while (0)
 
 int run_lv_save_name_parts(void) {
-    static const char *const   four[]      = {"Canuck", "rooklift", "Eryan", "Bot1"};
+    static const char *const   four[]      = {"Canuck", "Maverick", "Eryan", "Bot1"};
     static const unsigned char fourTeams[] = {1, 2, 1, 2};
     static const unsigned char oneTeam[]   = {3, 3, 3, 3};
     static const unsigned char oneNone[]   = {1, 2, 1, 0};
@@ -49,13 +49,13 @@ int run_lv_save_name_parts(void) {
 
     /* Everything: date, time, map, the players by team, lowest team first,
        each team in the order its players came. */
-    SN_EXPECT("2026-10-13 14.05 Oil Rig - Canuck, Eryan vs rooklift, Bot1.wbv",
+    SN_EXPECT("2026-10-13 14.05 Oil Rig - Canuck, Eryan vs Maverick, Bot1.wbv",
               2026, 10, 13, 14, 5, "Oil Rig", four, fourTeams, NULL, 4);
     /* A date with no time of day. */
-    SN_EXPECT("2026-10-13 Oil Rig - Canuck, Eryan vs rooklift, Bot1.wbv",
+    SN_EXPECT("2026-10-13 Oil Rig - Canuck, Eryan vs Maverick, Bot1.wbv",
               2026, 10, 13, -1, 0, "Oil Rig", four, fourTeams, NULL, 4);
     /* No date: the name starts with the map. */
-    SN_EXPECT("Oil Rig - Canuck, Eryan vs rooklift, Bot1.wbv",
+    SN_EXPECT("Oil Rig - Canuck, Eryan vs Maverick, Bot1.wbv",
               0, 0, 0, -1, 0, "Oil Rig", four, fourTeams, NULL, 4);
     /* No players: nothing after the map. */
     SN_EXPECT("2026-10-13 14.05 Oil Rig.wbv",
@@ -63,25 +63,25 @@ int run_lv_save_name_parts(void) {
     SN_EXPECT("2026-10-13 14.05 Oil Rig.wbv",
               2026, 10, 13, 14, 5, "Oil Rig", four, fourTeams, NULL, 0);
     /* No map: the players follow the date. */
-    SN_EXPECT("2026-10-13 14.05 - Canuck, Eryan vs rooklift, Bot1.wbv",
+    SN_EXPECT("2026-10-13 14.05 - Canuck, Eryan vs Maverick, Bot1.wbv",
               2026, 10, 13, 14, 5, "", four, fourTeams, NULL, 4);
-    SN_EXPECT("2026-10-13 14.05 - Canuck, Eryan vs rooklift, Bot1.wbv",
+    SN_EXPECT("2026-10-13 14.05 - Canuck, Eryan vs Maverick, Bot1.wbv",
               2026, 10, 13, 14, 5, NULL, four, fourTeams, NULL, 4);
     /* Players alone, map alone, date alone. */
-    SN_EXPECT("Canuck, Eryan vs rooklift, Bot1.wbv",
+    SN_EXPECT("Canuck, Eryan vs Maverick, Bot1.wbv",
               0, 0, 0, -1, 0, NULL, four, fourTeams, NULL, 4);
     SN_EXPECT("Oil Rig.wbv", 0, 0, 0, -1, 0, "Oil Rig", NULL, NULL, NULL, 0);
     SN_EXPECT("2026-10-13.wbv", 2026, 10, 13, -1, 0, NULL, NULL, NULL, NULL, 0);
     /* One team only, no teams given, and a player with no team: one list,
        in the order the players came, and no "vs". */
-    SN_EXPECT("Oil Rig - Canuck, rooklift, Eryan, Bot1.wbv",
+    SN_EXPECT("Oil Rig - Canuck, Maverick, Eryan, Bot1.wbv",
               0, 0, 0, -1, 0, "Oil Rig", four, oneTeam, NULL, 4);
-    SN_EXPECT("Oil Rig - Canuck, rooklift, Eryan, Bot1.wbv",
+    SN_EXPECT("Oil Rig - Canuck, Maverick, Eryan, Bot1.wbv",
               0, 0, 0, -1, 0, "Oil Rig", four, NULL, NULL, 4);
-    SN_EXPECT("Oil Rig - Canuck, rooklift, Eryan, Bot1.wbv",
+    SN_EXPECT("Oil Rig - Canuck, Maverick, Eryan, Bot1.wbv",
               0, 0, 0, -1, 0, "Oil Rig", four, oneNone, NULL, 4);
     /* Three teams. */
-    SN_EXPECT("Oil Rig - rooklift, Bot1 vs Canuck vs Eryan.wbv",
+    SN_EXPECT("Oil Rig - Maverick, Bot1 vs Canuck vs Eryan.wbv",
               0, 0, 0, -1, 0, "Oil Rig", four, three, NULL, 4);
     /* Nothing at all. */
     SN_EXPECT("log.wbv", 0, 0, 0, -1, 0, NULL, NULL, NULL, NULL, 0);
@@ -101,7 +101,7 @@ int run_lv_save_name_bots(void) {
                                               "b1", "b2", "b3"};
     static const unsigned char eightTeams[] = {1, 1, 1, 1, 1, 2, 2, 2};
     /* Two people on team 1, one on team 2, a bot on each team. */
-    static const char *const   sides[]     = {"Canuck", "Eryan", "rooklift",
+    static const char *const   sides[]     = {"Canuck", "Eryan", "Maverick",
                                               "Hal", "Marvin"};
     static const unsigned char sidesTeams[] = {1, 1, 2, 2, 1};
     static const unsigned char sidesBots[]  = {0, 0, 0, 1, 1};
@@ -145,13 +145,13 @@ int run_lv_save_name_bots(void) {
 
     /* Teams are the people's: the bots are one count at the end, whichever
        side each was on. */
-    SN_EXPECT("Oil Rig - Canuck, Eryan vs rooklift, 2 Bots.wbv",
+    SN_EXPECT("Oil Rig - Canuck, Eryan vs Maverick, 2 Bots.wbv",
               0, 0, 0, -1, 0, "Oil Rig", sides, sidesTeams, sidesBots, 5);
     /* The people are all one side, so there is no "vs". */
-    SN_EXPECT("Oil Rig - Canuck, Eryan, rooklift, 2 Bots.wbv",
+    SN_EXPECT("Oil Rig - Canuck, Eryan, Maverick, 2 Bots.wbv",
               0, 0, 0, -1, 0, "Oil Rig", sides, vsBotsTeams, vsBotsBots, 5);
     /* A bot with no team does not take the "vs" from the people. */
-    SN_EXPECT("Oil Rig - Canuck, Eryan vs rooklift, 2 Bots.wbv",
+    SN_EXPECT("Oil Rig - Canuck, Eryan vs Maverick, 2 Bots.wbv",
               0, 0, 0, -1, 0, "Oil Rig", sides, looseTeams, sidesBots, 5);
     return 0;
 }
@@ -400,12 +400,12 @@ int run_lv_save_name_roster(void) {
     /* Joins in order; a team for a slot is that player's. */
     lvRosterClear(&r);
     lvRosterJoin(&r, 0, "Canuck");
-    lvRosterJoin(&r, 1, "rooklift");
+    lvRosterJoin(&r, 1, "Maverick");
     lvRosterTeam(&r, 0, 1);
     lvRosterTeam(&r, 1, 2);
     UT_ASSERT(r.count == 2);
     UT_ASSERT(strcmp(r.row[0].name, "Canuck") == 0 && r.row[0].team == 1);
-    UT_ASSERT(strcmp(r.row[1].name, "rooklift") == 0 && r.row[1].team == 2);
+    UT_ASSERT(strcmp(r.row[1].name, "Maverick") == 0 && r.row[1].team == 2);
     /* Nobody is a bot until the log says so. */
     UT_ASSERT(r.row[0].bot == 0 && r.row[1].bot == 0);
     /* A new name is the same player; leaving a team keeps the side. */
@@ -484,7 +484,7 @@ int run_lv_save_name_roster(void) {
                               &mi));
     UT_ASSERT_MSG(y == 2026 && mo == 10 && d == 13 && h == 14 && mi == 5,
                   "%d-%d-%d %d.%d", y, mo, d, h, mi);
-    UT_ASSERT(!lvSaveNameStamp("rooklift 08b799de0a0868f4a4e685c8d421e78f.wbv",
+    UT_ASSERT(!lvSaveNameStamp("Maverick 08b799de0a0868f4a4e685c8d421e78f.wbv",
                                &y, &mo, &d, &h, &mi));
     UT_ASSERT(!lvSaveNameStamp("20261013t140559.wbv", &y, &mo, &d, &h, &mi));
     UT_ASSERT(!lvSaveNameStamp("20261313t140559_x.wbv", &y, &mo, &d, &h, &mi));

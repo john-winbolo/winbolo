@@ -528,7 +528,7 @@ static bool lvJumpAnimStart(bool back) {
     nowMs = lv_screenGetTimeRunning();
     known = back ? (lv_screenRewindTargetMs(&toMs) == TRUE && toMs < nowMs)
                  : (lv_screenFastForwardTargetMs(&toMs) == TRUE && toMs > nowMs);
-    steps = known ? lvJumpAnimSteps(nowMs, toMs, LV_JUMP_ANIM_STEPS) : 1;
+    steps = known ? lvJumpAnimSteps(nowMs, toMs, LV_JUMP_ANIM_STEPS, 0, UINT32_MAX) : 1;
     if (steps < 2) {
         lv_clientMutexRelease();
         return FALSE;
@@ -867,7 +867,8 @@ void lv_windowOpenSinglePlayer(void) {
     int          wrote;
     int          n;
     int          attempt;
-    size_t       i;
+    size_t       i, j;
+    int          follow;
 
     if (lv_windowCanOpenSinglePlayer() == FALSE) {
         return;
@@ -907,12 +908,36 @@ void lv_windowOpenSinglePlayer(void) {
     lv_clientMutexRelease();
     strncat(mapName, " - ", sizeof(mapName) - strlen(mapName) - 1);
     strncat(mapName, currentTime, sizeof(mapName) - strlen(mapName) - 1);
-    /* Nothing a file name cannot hold (the time has ':' in it). */
-    for (i = 0; mapName[i] != '\0'; i++) {
-        if (strchr("\\/:*?\"<>|", mapName[i]) != NULL) {
-            mapName[i] = '.';
+    /* Nothing a file name cannot hold (the time has ':' in it). The game
+       opens the -spmap file with the C library's fopen, which on Windows
+       reads the path in the system's code page and not as UTF-8. So the
+       file name is ASCII only: each letter outside ASCII becomes one '_'.
+       The lead byte of the letter gives the '_' and the continuation bytes
+       (0x80..0xBF) that belong to it are dropped. A continuation byte with
+       no lead byte before it is not part of a letter, so it gives a '_' of
+       its own. */
+    for (i = 0, j = 0, follow = 0; mapName[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)mapName[i];
+        if (c >= 0x80 && c <= 0xBF && follow > 0) {
+            follow--;
+            continue;
         }
+        follow = 0;
+        if (c >= 0x80) {
+            if (c >= 0xC0 && c <= 0xDF) {
+                follow = 1;
+            } else if (c >= 0xE0 && c <= 0xEF) {
+                follow = 2;
+            } else if (c >= 0xF0 && c <= 0xF7) {
+                follow = 3;
+            }
+            c = '_';
+        } else if (strchr("\\/:*?\"<>|", (char)c) != NULL) {
+            c = '.';
+        }
+        mapName[j++] = (char)c;
     }
+    mapName[j] = '\0';
     /* A name no file has yet. The map name and the playback time are the
        same for two logs of one map, and for a second try at the same time;
        the game that was started on the first file may still have it open.

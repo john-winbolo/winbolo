@@ -52,10 +52,18 @@ static inline uint32_t lvJumpAnimClamp(uint32_t ms, uint32_t loMs, uint32_t hiMs
 /* How many steps a jump from fromMs to toMs has, the target counted. One
    for each tick when the jump is fewer ticks than maxSteps, so no two steps
    are the same moment. 1 is the jump alone, with nothing to show before it:
-   a jump of under two ticks. */
-static inline int lvJumpAnimSteps(uint32_t fromMs, uint32_t toMs, int maxSteps) {
-    uint32_t span = (toMs > fromMs) ? (toMs - fromMs) : (fromMs - toMs);
-    uint32_t ticks = span / LV_JUMP_ANIM_TICK_MS;
+   a jump of under two ticks.
+
+   loMs and hiMs are the start and the end of what the log shows. Both ends
+   of the jump are held inside them, as lvJumpAnimStepMs holds them, so the
+   count is of the ticks the steps really cross. */
+static inline int lvJumpAnimSteps(uint32_t fromMs, uint32_t toMs, int maxSteps,
+                                  uint32_t loMs, uint32_t hiMs) {
+    uint32_t span, ticks;
+    fromMs = lvJumpAnimClamp(fromMs, loMs, hiMs);
+    toMs = lvJumpAnimClamp(toMs, loMs, hiMs);
+    span = (toMs > fromMs) ? (toMs - fromMs) : (fromMs - toMs);
+    ticks = span / LV_JUMP_ANIM_TICK_MS;
     if (maxSteps < 1) maxSteps = 1;
     if (ticks < 2) return 1;
     if (ticks < (uint32_t)maxSteps) return (int)ticks;

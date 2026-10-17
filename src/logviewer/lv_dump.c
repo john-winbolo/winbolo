@@ -47,7 +47,7 @@
 /* The longest state line kept for the changed-since-last-step check. */
 #define DUMP_BODY_LEN     512
 /* A whole-log run stops this long after the log's measured end, as the
-   event scan does, so a log the decoder cannot finish does not hang. */
+   load does, so a log the decoder cannot finish does not hang. */
 #define DUMP_END_SLACK_MS 60000u
 
 typedef struct {
@@ -179,6 +179,7 @@ static const char *dumpRecordName(BYTE code) {
     DUMP_REC(RuleSet);          DUMP_REC(ScnPanel);        DUMP_REC(ScnScore);
     DUMP_REC(ScnAnnounce);      DUMP_REC(ScnMarker);       DUMP_REC(ScnHint);
     DUMP_REC(ServerTick);       DUMP_REC(ScnStatus);       DUMP_REC(VoiceEveryone);
+    DUMP_REC(MapName);
 #undef DUMP_REC
     default: return "Unknown";
   }
@@ -329,6 +330,14 @@ static void dumpRecordFields(DumpCtx *c, BYTE code, const BYTE *b, int len) {
         fprintf(out, " slot=%u", b[0]);
         dumpPascal(out, "name", b, len, 1);
       }
+      break;
+    case log_VoiceEveryone:
+      if (len >= 1) {
+        fprintf(out, " everyone=%u", b[0]);
+      }
+      break;
+    case log_MapName:
+      dumpPascal(out, "name", b, len, 0);
       break;
     case log_MessageAll:
       if (len >= 1) {

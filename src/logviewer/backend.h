@@ -37,6 +37,7 @@
 #include "lv_pillbox.h"
 #include "lv_screentank.h"
 #include "lv_save_name.h"   /* LvRosterRow */
+#include "lv_ping_view.h"   /* LvPingShown */
 
 /* Defines */
 
@@ -702,15 +703,13 @@ uint32_t lv_screenWindowLenMs(void);
  * (lv_messageTagPlayers), each 0..15, or -1 for none. For a host's
  * lv_windowAddEvent to ask while it takes the line. */
 void lv_screenEventTeams(int *team, int *otherTeam);
-/* One map ping that is on the map at the playback's time now, for the view
- * in use: every team's for the view of all teams, and for one player's view
- * the pings that player was sent. index is 0 .. lv_screenGetPingCapacity()
- * - 1, the oldest first; false for an index with no ping. worldX and worldY
- * are 256 to a map square; ageMs is the time since the ping on the playback
- * clock. */
-bool lv_screenGetPing(int index, BYTE *sender, BYTE *kind, uint16_t *worldX,
-                      uint16_t *worldY, uint32_t *ageMs);
-int lv_screenGetPingCapacity(void);
+/* The map pings that are on the map at the playback's time now, for the
+ * view in use: every team's for the view of all teams, and for one player's
+ * view the pings that player was sent. Fills out with at most max of them
+ * (LV_PING_SHOWN_MAX at the most), the oldest first, and returns the number.
+ * worldX and worldY are 256 to a map square; ageMs is the time since the
+ * ping on the playback clock. Called once a frame by each drawer. */
+int lv_screenGetPings(LvPingShown *out, int max);
 /* The kind of ping the line now being added is (lv_messageTagPing,
  * PING_KIND_*), or -1 for a line that is not a map ping. */
 int lv_screenEventPing(void);
@@ -760,7 +759,7 @@ int lv_screenPillAt(int xPos, int yPos, BYTE *owner, BYTE *armour, int *team);
 /* The time left, at the playback time, until the builder of a player's tank
  * is in the tank again after his death (lv_builder_status.h). Returns 1 with
  * the time in remainMs when there is one to show:
- *   - exact (approx 0), out of the table the load-time event scan fills:
+ *   - exact (approx 0), out of the table the load's play stage fills:
  *     from the builder's death until the tick the new builder is in the
  *     tank, his walk from where he landed included;
  *   - estimated (approx 1) when there is no table (a live feed, a viewer
@@ -868,17 +867,9 @@ int  lv_screenLandBox(int *x0, int *y0, int *x1, int *y1);
 /* Counts every request to move playback other than by playing. */
 uint32_t lv_screenSeekSerial(void);
 
-/* Event scan: decode the whole of a loaded file once so the host is posted
- * every event line (lv_windowAddEvent), then return to the start as the
- * loader left it. Run returns FALSE and does nothing for a live feed or when
- * no log is loaded; after a TRUE the host tells its events panel the list is
- * complete and then calls Restore. See screen.c. */
-bool lv_screenEventScanRun(void);
-void lv_screenEventScanRestore(void);
-
 /* For the name Save Log File offers (lv_save_name.h). The roster is every
  * player the loaded log has had, in the order they came, with the last team
- * each was on and whether it is a bot; the event scan fills it. Returns how many rows it wrote. The
+ * each was on and whether it is a bot; the load's play stage fills it. Returns how many rows it wrote. The
  * create time is the header's: the time the server that wrote the log was
  * started, in seconds since 1970, or 0. */
 int     lv_screenGetRoster(LvRosterRow *rows, int max);

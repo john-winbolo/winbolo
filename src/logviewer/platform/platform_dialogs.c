@@ -148,7 +148,7 @@ static int win_file_dialog(int save,
         chosen = GetOpenFileNameW(&ofn);
     }
     if (!chosen) {
-        if (!save) out_path[0] = '\0';
+        out_path[0] = '\0';
         return PLATFORM_DIALOG_CANCEL;
     }
     wpath[LV_UTF8_PATH_WIDE_MAX - 1] = L'\0';

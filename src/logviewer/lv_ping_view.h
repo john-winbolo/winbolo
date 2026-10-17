@@ -51,6 +51,20 @@ typedef struct {
   uint16_t worldY;
 } LvPingRec;
 
+/* The most pings on the map at one time that the viewer draws. When more
+ * are on the map, the newest are drawn. */
+#define LV_PING_SHOWN_MAX 16
+
+/* One ping on the map at the playback's time now, as lv_screenGetPings
+ * gives it. ageMs is the time since the ping on the playback clock. */
+typedef struct {
+  uint8_t  sender;
+  uint8_t  kind;
+  uint16_t worldX;
+  uint16_t worldY;
+  uint32_t ageMs;
+} LvPingShown;
+
 typedef struct {
   LvPingRec rec[LV_PING_STORE_MAX]; /* in the order of their times */
   int       count;

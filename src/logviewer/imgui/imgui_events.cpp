@@ -223,12 +223,15 @@ static void add_builder_away_times(void) {
         LvEvent *e = lvEventListEdit(i);
         uint32_t awayMs = 0;
         char     away[LV_BUILDER_AWAY_TEXT_MAX];
-        if (e == nullptr || e->kind != LV_EVK_BUILDER_LOST || e->player < 0) continue;
+        if (e == nullptr || e->kind != LV_EVK_BUILDER_LOST || e->player < 0 ||
+            e->awayAdded) {
+            continue;
+        }
         if (!lv_screenBuilderAwayMs(e->player, e->timeMs, &awayMs)) continue;
         lvBuilderAwayText(true, awayMs, away, sizeof(away));
         lvEventListAppendText(i, away);
         /* Once only: the line has its time. */
-        e->player = -1;
+        e->awayAdded = true;
     }
 }
 
