@@ -508,7 +508,11 @@ void lv_imgui_controls_window(void) {
             lv_windowPlay();
         }
         ImGui::EndDisabled();
-        controls_key_tip(langGetText(STR_LV_PLAY), "Ctrl+P, Space", tip, sizeof(tip));
+        {
+            char keys[64];
+            snprintf(keys, sizeof(keys), "Ctrl+P, %s", langGetText(STR_OSK_SPACE));
+            controls_key_tip(langGetText(STR_LV_PLAY), keys, tip, sizeof(tip));
+        }
         controls_tooltip(tip, loaded && !playing && !atEnd);
 
         /* Pause holds playback where it is; nothing moves the playhead and
@@ -520,7 +524,11 @@ void lv_imgui_controls_window(void) {
             lv_windowPause();
         }
         ImGui::EndDisabled();
-        controls_key_tip(langGetText(STR_LV_PAUSE), "Ctrl+U, Space", tip, sizeof(tip));
+        {
+            char keys[64];
+            snprintf(keys, sizeof(keys), "Ctrl+U, %s", langGetText(STR_OSK_SPACE));
+            controls_key_tip(langGetText(STR_LV_PAUSE), keys, tip, sizeof(tip));
+        }
         controls_tooltip(tip, playing);
 
         controls_place(topX, &topLine, top.btnLine[3], top.btnX[3]);

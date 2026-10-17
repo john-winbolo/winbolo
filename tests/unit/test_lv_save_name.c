@@ -11,7 +11,7 @@
  *       with no team, and nothing at all.
  *   lv_save_name_bots   — every person is named and the bots are counted:
  *       people only, people and bots, bots only, one bot, and bots beside
- *       people who are in teams.
+ *       people who are in teams; then the words in another language.
  *   lv_save_name_limits — characters a file name cannot hold, a dot or a
  *       space at the end, a name Windows keeps for a device, a map or a
  *       player name too long, and a UTF-8 character at a cut.
@@ -153,6 +153,44 @@ int run_lv_save_name_bots(void) {
     /* A bot with no team does not take the "vs" from the people. */
     SN_EXPECT("Oil Rig - Canuck, Eryan vs Maverick, 2 Bots.wbv",
               0, 0, 0, -1, 0, "Oil Rig", sides, looseTeams, sidesBots, 5);
+
+    /* The words come from the language the user chose. */
+    {
+        char                  got[300];
+        const LvSaveNameWords german = {"gegen", "+ {number} weitere",
+                                        "{number} Roboter",
+                                        "{number} Roboter (viele)",
+                                        "Aufzeichnung"};
+        /* A word with a character a file name cannot hold, and words with
+           nothing in them, which give the English word. */
+        const LvSaveNameWords odd = {"a:b", "", NULL, "Bots", "  "};
+
+        lvSaveNameBuildWords(got, sizeof(got), 0, 0, 0, -1, 0, "Oil Rig",
+                             sides, sidesTeams, sidesBots, 5, &german);
+        UT_ASSERT_MSG(strcmp(got, "Oil Rig - Canuck, Eryan gegen Maverick, "
+                                  "2 Roboter (viele).wbv") == 0,
+                      "got \"%s\"", got);
+        lvSaveNameBuildWords(got, sizeof(got), 0, 0, 0, -1, 0, "Chew Toy 3",
+                             mixed, NULL, mixedBots, 2, &german);
+        UT_ASSERT_MSG(strcmp(got, "Chew Toy 3 - Canuck, 1 Roboter.wbv") == 0,
+                      "got \"%s\"", got);
+        lvSaveNameBuildWords(got, sizeof(got), 0, 0, 0, -1, 0, NULL, NULL,
+                             NULL, NULL, 0, &german);
+        UT_ASSERT_MSG(strcmp(got, "Aufzeichnung.wbv") == 0, "got \"%s\"", got);
+        lvSaveNameBuildWords(got, sizeof(got), 0, 0, 0, -1, 0, "CON", NULL,
+                             NULL, NULL, 0, &german);
+        UT_ASSERT_MSG(strcmp(got, "Aufzeichnung CON.wbv") == 0, "got \"%s\"",
+                      got);
+
+        lvSaveNameBuildWords(got, sizeof(got), 0, 0, 0, -1, 0, "Oil Rig",
+                             sides, sidesTeams, sidesBots, 5, &odd);
+        UT_ASSERT_MSG(strcmp(got, "Oil Rig - Canuck, Eryan a.b Maverick, "
+                                  "Bots.wbv") == 0,
+                      "got \"%s\"", got);
+        lvSaveNameBuildWords(got, sizeof(got), 0, 0, 0, -1, 0, NULL, NULL,
+                             NULL, NULL, 0, &odd);
+        UT_ASSERT_MSG(strcmp(got, "log.wbv") == 0, "got \"%s\"", got);
+    }
     return 0;
 }
 

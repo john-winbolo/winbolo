@@ -782,7 +782,7 @@ void lv_windowSaveMap(void) {
 
     if (dlgResult == PLATFORM_DIALOG_OK) {
         if (lv_screenSaveMap(fileName, FALSE) == FALSE) {
-            lv_platform_dialog_error(DIALOG_BOX_TITLE, "Error Saving Map File");
+            lv_platform_dialog_error(DIALOG_BOX_TITLE, langGetText(STR_LV_ERR_SAVE_MAP));
         }
     }
 }
@@ -879,7 +879,7 @@ void lv_windowOpenSinglePlayer(void) {
        map file. */
     if (!lvFindGameExe(exePath, sizeof(exePath))) {
         lv_platform_dialog_error(DIALOG_BOX_TITLE,
-                                 "Could not find the WinBolo game beside the Log Viewer");
+                                 langGetText(STR_LV_ERR_NO_GAME));
         return;
     }
 
@@ -888,7 +888,7 @@ void lv_windowOpenSinglePlayer(void) {
        the map's and the time, so the game's lobby says what it is. */
     prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
     if (prefDir == NULL) {
-        lv_platform_dialog_error(DIALOG_BOX_TITLE, "Error Saving Map File");
+        lv_platform_dialog_error(DIALOG_BOX_TITLE, langGetText(STR_LV_ERR_SAVE_MAP));
         return;
     }
     n = snprintf(mapPath, sizeof(mapPath), "%slogviewer-maps", prefDir);
@@ -896,7 +896,7 @@ void lv_windowOpenSinglePlayer(void) {
     if (n <= 0 || (size_t)n >= sizeof(mapPath) || !SDL_CreateDirectory(mapPath)) {
         SDL_free(prefDir);
         lv_platform_dialog_error(DIALOG_BOX_TITLE,
-                                 "Could not make the folder for the map file");
+                                 langGetText(STR_LV_ERR_MAP_FOLDER));
         return;
     }
 
@@ -994,7 +994,7 @@ void lv_windowOpenSinglePlayer(void) {
         SDL_DestroyProperties(props);
     }
     if (game == NULL) {
-        lv_platform_dialog_error(DIALOG_BOX_TITLE, "Could not start the WinBolo game");
+        lv_platform_dialog_error(DIALOG_BOX_TITLE, langGetText(STR_LV_ERR_START_GAME));
         return;
     }
     /* Lets go of our handle on it; the game runs on. */
@@ -1058,6 +1058,7 @@ static void lvSaveLogDefaultName(const char *srcPath, char *out, size_t outSize)
     const char        *p;
     int                year = 0, month = 0, day = 0, hour = -1, minute = 0;
     int                count, i;
+    LvSaveNameWords    words;
     int32_t            created;
 
     for (p = srcPath; *p != '\0'; p++) {
@@ -1097,8 +1098,13 @@ static void lvSaveLogDefaultName(const char *srcPath, char *out, size_t outSize)
         teams[i] = rows[i].team;
         bots[i]  = rows[i].bot;
     }
-    lvSaveNameBuild(out, outSize, year, month, day, hour, minute, mapName,
-                    names, teams, bots, count);
+    words.vs   = langGetText(STR_LV_SAVE_NAME_VS);
+    words.more = langGetText(STR_LV_SAVE_NAME_MORE);
+    words.bot  = langGetText(STR_LV_SAVE_NAME_BOT);
+    words.bots = langGetText(STR_LV_SAVE_NAME_BOTS);
+    words.log  = langGetText(STR_LV_SAVE_NAME_LOG);
+    lvSaveNameBuildWords(out, outSize, year, month, day, hour, minute,
+                         mapName, names, teams, bots, count, &words);
 }
 
 void lv_windowSaveLog(void) {
@@ -1114,7 +1120,7 @@ void lv_windowSaveLog(void) {
     int            source;
     int            dlgResult;
     bool           ok;
-    const char    *failed = "Error Saving Log File";
+    const char    *failed = langGetText(STR_LV_ERR_SAVE_LOG);
 
     if (lv_windowCanSaveLog() == FALSE) {
         return;
@@ -1162,7 +1168,8 @@ void lv_windowSaveLog(void) {
        into the other. */
     prefDir   = SDL_GetPrefPath("WinBolo", "WinBolo");
     dlgResult = lv_platform_dialog_save_file(
-        "Save Log File...", "WinBolo Log Files", "*.wbv", "wbv",
+        langGetText(STR_LV_SAVE_LOG_TITLE), langGetText(STR_DLGWBN_FILEFILTER),
+        "*.wbv", "wbv",
         defaultName, fileName, sizeof(fileName), prefDir);
     SDL_free(prefDir);
     if (dlgResult != PLATFORM_DIALOG_OK) {
@@ -1197,8 +1204,7 @@ void lv_windowSaveLog(void) {
             fclose(fp);
         }
         if (!ok) {
-            failed = "The log's own file could not be read. "
-                     "It may have been moved or deleted since it was opened.";
+            failed = langGetText(STR_LV_ERR_LOG_GONE);
         }
     }
     if (ok) {
