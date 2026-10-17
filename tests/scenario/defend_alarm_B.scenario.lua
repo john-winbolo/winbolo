@@ -72,8 +72,13 @@ local FOE_BRAIN = "../tests/brains/park_and_wall.lua"
 -- CAPTURE_PILL_BASE_COST prices the capture out so the bot stays an observer;
 -- PILL_REPOSITION_ENABLED off stops the reposition pool bidding to shoot our
 -- own pill down and move it, which would put our own shells on the pill the
--- alarm is counting hits on.
+-- alarm is counting hits on.  ATTACK_TANK_HEAT_PILL off for the same reason:
+-- heat-pill shoots our own pill so it fires faster at the parked enemy, and a
+-- hit on our pill with an enemy tank near it is counted for trigger 2a whoever
+-- fired it.  This token is not in defend_alarm_test.py; the driver predates
+-- heat-pill.
 local OUR_TOKENS = "cfg=CAPTURE_PILL_BASE_COST=1e30;cfg=PILL_REPOSITION_ENABLED=false"
+                .. ";cfg=ATTACK_TANK_HEAT_PILL=false"
 
 local OUR_SLOT, FOE_SLOT = 0, 1
 local OUR_START, FOE_START = 1, 4
@@ -96,9 +101,9 @@ local B2_SETTILE_TICK = 1400
 local our_player  = OUR_SLOT
 local foe_player  = nil
 local spawn_tried = false
-local last_hp     = nil
-local hits        = 0        -- the trace's `hp` rows, counted
-local first_hit_t = nil
+local our_pill_n  = nil      -- OUR_PILL's pillbox number, found in on_tick
+local foe_hits    = 0        -- blows on our pill from anyone but our bot
+local own_hits    = 0        -- ...and from our bot, which must also be zero
 local despawned   = false
 local despawn_t   = nil      -- ...its `despawn` row
 local settiled    = false
@@ -173,18 +178,11 @@ function on_tick(g, tick)
   end
   if spawn_tried and tick < 120 then own_everything(g, our_player) end
 
-  -- Our pill's armour, on every change.  The `hp` rows were read for the tick
-  -- of the first DROP, which is what times arena A's despawn.
+  -- Our pill's number, for pill_damage_scale to count the blows on it.
   for i = 1, g.num_pills() do
     local p = g.pill(i)
     if p and p.x == OUR_PILL[1] and p.y == OUR_PILL[2] then
-      if last_hp ~= p.armour then
-        if last_hp and p.armour < last_hp then
-          hits = hits + 1
-          first_hit_t = first_hit_t or tick
-        end
-        last_hp = p.armour
-      end
+      our_pill_n = i
       break
     end
   end
@@ -217,12 +215,29 @@ function on_tick(g, tick)
   end
 end
 
+-- Who hit our pill.  Both counts must stay zero.  They are kept apart so a
+-- failure says whose shell it was: the waller's, or our own bot's (heat-pill
+-- is off in OUR_TOKENS, so an own hit means something else shot it).
+function pill_damage_scale(attacker, n, cause, by_pill)
+  if our_pill_n ~= nil and n == our_pill_n then
+    if attacker == our_player then
+      own_hits = own_hits + 1
+    else
+      foe_hits = foe_hits + 1
+    end
+  end
+  return 100
+end
+
 -- ── the verdict ─────────────────────────────────────────────────────────
 -- PORTED (2026-09-15) from tests/defend_alarm_test.py arena B, check B0 and
 -- the trigger-2a guard beside it -- the two the ENGINE answers.  The enemy's
 -- LGM left the tank and a wall really appeared on (126,122), inside the alarm's
 -- build stamp; and our pill was never hit, so trigger 2a can never have armed
--- and anything the alarm did here it did on the BUILD alone.  Those two are
+-- and anything the alarm did here it did on the BUILD alone.  "Never hit"
+-- means never hit by anyone, our own bot included: a hit on our pill with an
+-- enemy tank near it arms trigger 2a whoever fired the shell, which is why
+-- OUR_TOKENS turns heat-pill off.  Those two are
 -- also what separates this arena from its control, where the man stays aboard
 -- and the wall is the script's -- so the pair still measures the thing its
 -- names claim, which the A/D pair no longer does.
@@ -237,9 +252,13 @@ end
 -- GATE: ticks=2800 bots=0 ai=yesfull gametype=open
 
 VERDICT_CHECK = function(g)
-  if hits > 0 then
-    return false, string.format("the pill took %d hit(s) -- the waller is not "
-                                .. "supposed to fire", hits)
+  if foe_hits > 0 then
+    return false, string.format("the pill took %d hit(s) not from our bot -- "
+                                .. "the waller is not supposed to fire", foe_hits)
+  end
+  if own_hits > 0 then
+    return false, string.format("the pill took %d hit(s) from our own bot -- "
+                                .. "any hit can arm trigger 2a", own_hits)
   end
   if man_out_t == nil then
     return false, "the enemy never sent his man out -- nothing built"
