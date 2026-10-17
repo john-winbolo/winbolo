@@ -677,3 +677,186 @@ int run_view_pill_pos_bot_advantage(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* 10. A player is always told where their own and their allies' pills are,
+ *     in view or not; an enemy pill keeps the view-area rule, and so does
+ *     every pill for a bot, so what a brain is told does not change. */
+int run_view_pill_pos_allied(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+    serverSimAddPlayer(sim, 1, "P1", false);
+    serverSimAddPlayer(sim, 2, "P2", false);
+
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
+    UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 3,
+                  "the map carries %u pills; this case needs three",
+                  (unsigned)pillsGetNumPills(&gs->pb));
+    UT_ASSERT_MSG(gs->tanks[0] != NULL && gs->tanks[1] != NULL &&
+                      gs->tanks[2] != NULL,
+                  "slots 0-2 need tanks for positioning");
+
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 1, TRUE);
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, 0, 1) == TRUE,
+                  "players 0 and 1 should be allied for this case");
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, 0, 2) != TRUE,
+                  "players 0 and 2 must stay un-allied for the enemy pill");
+
+    /* Every pill starts on slot 0's screen, so the records hold them. */
+    vp_clear_owners(gs);
+    vp_place_tank(gs, 0, 50, 50);
+    vp_place_tank(gs, 1, 50, 50);
+    vp_place_tank(gs, 2, 50, 50);
+    vp_place_pill(gs, 0, 0, 52, 52);   /* slot 0's own */
+    vp_place_pill(gs, 1, 1, 54, 54);   /* its ally's */
+    vp_place_pill(gs, 2, 2, 56, 56);   /* its enemy's */
+    serverSimPillShadowTick(sim);
+
+    /* All three are carried far off slot 0's screen. */
+    gs->pb->item[0].x = 200; gs->pb->item[0].y = 200;
+    gs->pb->item[1].x = 202; gs->pb->item[1].y = 202;
+    gs->pb->item[2].x = 204; gs->pb->item[2].y = 204;
+    serverSimPillShadowTick(sim);
+
+    SnapshotHeader hdr;
+    PillSnapshot po[MAX_SNAPSHOT_PILLS];
+    GameEvent ev[MAX_SNAPSHOT_EVENTS];
+
+    vp_build_snapshot(sim, 0, &hdr, po, ev);
+    UT_ASSERT_MSG(po[0].x == 200 && po[0].y == 200 &&
+                      pillPosCurrentFromByte(po[0].pillFlags),
+                  "the player's own pill reports %u,%u — it should be the real "
+                  "square 200,200, marked current",
+                  (unsigned)po[0].x, (unsigned)po[0].y);
+    UT_ASSERT_MSG(po[1].x == 202 && po[1].y == 202 &&
+                      pillPosCurrentFromByte(po[1].pillFlags),
+                  "the ally's pill reports %u,%u — it should be the real "
+                  "square 202,202, marked current",
+                  (unsigned)po[1].x, (unsigned)po[1].y);
+    UT_ASSERT_MSG(po[2].x == 56 && po[2].y == 56 &&
+                      !pillPosCurrentFromByte(po[2].pillFlags),
+                  "the enemy's pill reports %u,%u — it should still be the "
+                  "withheld 56,56", (unsigned)po[2].x, (unsigned)po[2].y);
+
+    /* The pill update event is rewritten by the same rule. */
+    {
+        GameEvent move;
+        move.type = EVENT_PILL_UPDATE;
+        memset(move.data, 0, sizeof(move.data));
+        move.data[0] = 1;
+        move.data[1] = 202;
+        move.data[2] = 202;
+        move.data[3] = 1;
+        move.data[4] = pillSetInTank(0, false);
+        move.data[5] = PILLS_MAX_ARMOUR;
+        serverSimFogPillUpdateEvent(sim, 0, &move, NULL, 0);
+        UT_ASSERT_MSG(move.data[1] == 202 && move.data[2] == 202 &&
+                          pillPosCurrentFromByte(move.data[4]),
+                      "the ally's pill event carries %u,%u, not its real "
+                      "square marked current",
+                      (unsigned)move.data[1], (unsigned)move.data[2]);
+    }
+
+    /* Slot 1, a plain computer player allied to slot 0, keeps the old rule:
+     * slot 0's pill is out of its view areas, so its square stays withheld. */
+    sim->botMgr.bots[1].active = true;
+    sim->botMgr.bots[1].ai     = aiYes;
+    UT_ASSERT_MSG(serverSimIsBot(sim, 1), "slot 1 is not seen as a bot");
+    vp_place_tank(gs, 1, 20, 20);
+    gs->pb->item[0].x = 210; gs->pb->item[0].y = 210;
+    serverSimPillShadowTick(sim);
+    vp_build_snapshot(sim, 1, &hdr, po, ev);
+    UT_ASSERT_MSG(!pillPosCurrentFromByte(po[0].pillFlags) &&
+                      !(po[0].x == 210 && po[0].y == 210),
+                  "a bot was shown its ally's out-of-view pill at %u,%u",
+                  (unsigned)po[0].x, (unsigned)po[0].y);
+
+    sim->botMgr.bots[1].active = false;
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* 11. A pill that moved while out of a player's view areas asks for a full
+ *     sync the tick it comes back into view, so the client is handed the new
+ *     square at once. A pill that never moved does not, and neither does a
+ *     bot's view. */
+int run_view_pill_reveal_full_sync(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+    serverSimAddPlayer(sim, 1, "Bot", false);
+
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
+    UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 2, "this case needs two pills");
+    UT_ASSERT_MSG(gs->tanks[0] != NULL && gs->tanks[1] != NULL,
+                  "slots 0/1 need tanks for positioning");
+    sim->botMgr.bots[1].active = true;
+    sim->botMgr.bots[1].ai     = aiYes;
+
+    vp_clear_owners(gs);
+    vp_place_tank(gs, 0, 50, 50);
+    vp_place_tank(gs, 1, 50, 50);
+    vp_place_pill(gs, 0, NEUTRAL, 55, 55);
+    vp_place_pill(gs, 1, NEUTRAL, 120, 120);   /* never in view, never moves */
+    /* The squares the case just laid out are where each player starts. */
+    serverSimPillShadowSeed(sim, 0);
+    serverSimPillShadowSeed(sim, 1);
+    serverSimPillShadowTick(sim);
+
+    /* Pill 0 is carried away out of sight. */
+    gs->pb->item[0].x = 200;
+    gs->pb->item[0].y = 200;
+    serverSimPillShadowTick(sim);
+    UT_ASSERT_MSG(sim->clientPillRevealDue[0][0],
+                  "a pill that moved unseen should be marked for reveal");
+    UT_ASSERT_MSG(!sim->clientPillRevealDue[0][1],
+                  "a pill that did not move must not be marked for reveal");
+
+    /* Carried back unseen to the square the player holds: no reveal due.
+     * The tank goes over to pill 1 first so 55,55 is out of its view. */
+    vp_place_tank(gs, 0, 120, 120);
+    gs->pb->item[0].x = 55;
+    gs->pb->item[0].y = 55;
+    serverSimPillShadowTick(sim);
+    UT_ASSERT_MSG(!sim->clientPillRevealDue[0][0],
+                  "a pill back on the square the player holds should not "
+                  "stay marked for reveal");
+
+    /* Out again: marked again. */
+    gs->pb->item[0].x = 200;
+    gs->pb->item[0].y = 200;
+    serverSimPillShadowTick(sim);
+    UT_ASSERT_MSG(sim->clientPillRevealDue[0][0],
+                  "a pill that moved unseen again should be marked again");
+
+    /* Drive over to the pill that never moved: no full sync. */
+    sim->lastFullSyncTick[0] = 77;
+    vp_place_tank(gs, 0, 120, 120);
+    serverSimPillShadowTick(sim);
+    UT_ASSERT_MSG(sim->lastFullSyncTick[0] == 77,
+                  "a pill seen again on the square the player holds forced "
+                  "a full sync");
+
+    /* Drive over to the moved one: the full sync is asked for once. */
+    sim->lastFullSyncTick[1] = 77;
+    vp_place_tank(gs, 0, 200, 200);
+    vp_place_tank(gs, 1, 200, 200);
+    serverSimPillShadowTick(sim);
+    UT_ASSERT_MSG(sim->lastFullSyncTick[0] == 0,
+                  "the moved pill came back into view and no full sync was "
+                  "asked for (lastFullSyncTick %u)",
+                  (unsigned)sim->lastFullSyncTick[0]);
+    UT_ASSERT_MSG(!sim->clientPillRevealDue[0][0],
+                  "the reveal mark should clear once the square is sent");
+    UT_ASSERT_MSG(sim->lastFullSyncTick[1] == 77,
+                  "a bot's view forced a full sync");
+
+    sim->lastFullSyncTick[0] = 88;
+    serverSimPillShadowTick(sim);
+    UT_ASSERT_MSG(sim->lastFullSyncTick[0] == 88,
+                  "a pill sitting in view asked for a full sync again");
+
+    sim->botMgr.bots[1].active = false;
+    serverSimDestroy(sim);
+    return 0;
+}

@@ -4280,6 +4280,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_bolo_rand.c
     tests/unit/test_pf_corner_cut.c
     tests/unit/test_pf_influence_tail.c
+    # Bench (does nothing unless WB_BENCH=1): the decoy-square blocker step.
+    tests/unit/test_bench_decoy_step.c
     # BrainTest Load Session next/prev-segment lookup. The finder is plain C
     # and ImGui-free precisely so it can be linked here; the rest of the
     # browser (braintest_loadbrowser.cpp) is not part of this target.
@@ -5484,6 +5486,7 @@ set(_unit_test_names
     pf_dijkstra_no_solid_corner_cut
     pf_astar_no_solid_corner_cut
     pf_costto_no_solid_corner_cut
+    bench_decoy_step_first
     pf_tail_reaches_radius_and_stops
     pf_tail_blocked_by_wall_and_sea
     pf_tail_neutral_zone_slows
@@ -5856,6 +5859,8 @@ set(_unit_test_names
     view_pill_pos_reveal
     view_pill_update_event_fogged
     view_pill_pos_bot_advantage
+    view_pill_pos_allied
+    view_pill_reveal_full_sync
     tree_hide_enemy
     tree_hide_ally_option
     lgm_visibility_tank_in_trees
@@ -5864,6 +5869,7 @@ set(_unit_test_names
     view_state_bad_claims_degrade
     view_state_invalidation
     view_state_lifecycle
+    view_state_resend
     view_cycle_pick_order
     view_cycle_pick_policy
     view_cycle_pick_direction
@@ -5878,6 +5884,9 @@ set(_unit_test_names
     view_cycle_eligible_mask
     view_cycle_ally_stub
     view_cycle_stale_pill
+    view_cycle_moved_pill
+    view_cycle_ally_follow
+    view_cycle_ally_follow_clientsim
     pill_pos_current_lookups
     pill_pos_current_num_split
     pill_pos_current_duplicate_square
@@ -5966,6 +5975,7 @@ set(_unit_test_names
     lgm_draw_centre_error_bounds
     jitter_buffer_grow
     shell_projection
+    shell_projection_match
     sim_rules_classic_defaults
     sim_rules_validate_ranges
     sim_rules_copies_follow
@@ -6525,6 +6535,7 @@ set(_unit_test_names
     survival_lobby_round_ds_order
     loopback_unfield_tank
     loopback_fine_tank_position
+    loopback_shell_drawn_cull
     lobby_template_return_reconciles
     lobby_template_return_unfields
     lobby_template_reset_reseats
