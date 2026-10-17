@@ -714,32 +714,31 @@ int run_scenario_announce_remaining(void) {
     return 0;
 }
 
-/* Two floats the same to within a hundredth of a pixel: the default place is
- * a share of the view, which a float holds only to its last bit. */
+/* Two floats the same to within a hundredth of a pixel. */
 static bool scnNear(float a, float b) {
     float d = a - b;
     if (d < 0.0f) d = -d;
     return d < 0.01f;
 }
 
-/* Where an announcement goes.
+/* Where an announcement goes across the Scenario Text window's source
+ * rectangle.
  *
- * With no position it goes where announcements always went: centred across
- * the view, the top of its letters 0.28 of the way down, moved by nothing.
- * The letters sit one outline in from the box this places, so the box is
- * checked against the letter position the older drawer worked out itself.
+ * Its centre goes at the share across the view that the script named, as
+ * a share across the source rectangle's width, and the line is then moved
+ * the least it takes to stay one pad inside the edges. A line too wide for
+ * the room between the pads is made smaller by itself until it fits.
  *
- * With a position its centre goes on the point the script named, as shares
- * of the view, kept inset inside the view, and dropped below the status
- * line when it would touch it.
- *
- * The view is the classic one at zoom 1: 240 x 240 pixels at (81, 18). The
- * line is 100 x 20 with its outline, the inset 1 and the gap 4. */
+ * The source rectangle is SCN_TEXT_SRC_W_UNITS (240) wide and the pad is
+ * SCN_TEXT_PAD_UNITS (2), so the room for a line is 236. */
 int run_scenario_announce_position(void) {
-    const ScnAnnounceRect view = { 81.0f, 18.0f, 321.0f, 258.0f };
-    const ScnAnnounceRect band = { 81.0f, 19.0f, 321.0f, 39.0f };
-    float x = -1.0f;
-    float y = -1.0f;
+    const float srcW = SCN_TEXT_SRC_W_UNITS;
+    const float pad  = SCN_TEXT_PAD_UNITS;
+    float x      = -1.0f;
+    float shrink = -1.0f;
+
+    UT_ASSERT(srcW == 240.0f);
+    UT_ASSERT(pad == 2.0f);
 
     /* The shares: 127 is exactly the middle, 254 the far edge, and 255
        reads as 254. */
@@ -748,91 +747,142 @@ int run_scenario_announce_position(void) {
     UT_ASSERT(scnAnnouncePosShare((uint8_t)SCN_ANNOUNCE_POS_MAX) == 1.0f);
     UT_ASSERT(scnAnnouncePosShare(255) == 1.0f);
 
-    /* ── no position ── the letters land where the older drawer put them:
-       px = view centre - text width / 2, py = top + height * 0.28. Text 96
-       wide with an outline of 2 is a box 100 wide. */
-    {
-        const float outline = 2.0f;
-        const float textW   = 96.0f;
-        const float mainPx  = (view.x0 + view.x1) * 0.5f - textW * 0.5f;
-        const float mainPy  = view.y0 + (view.y1 - view.y0) * 0.28f;
-        scnAnnounceDefaultPlace(view, textW + 2.0f * outline, outline, &x,
-                                &y);
-        UT_ASSERT_MSG(scnNear(x + outline, mainPx) &&
-                          scnNear(y + outline, mainPy),
-                      "the default line's letters are at (%.2f, %.2f), "
-                      "main put them at (%.2f, %.2f)", x + outline,
-                      y + outline, mainPx, mainPy);
-        UT_ASSERT(scnNear(y + outline, 85.2f));
-    }
-    /* A line wider than the view still runs out past both edges, as it
-       always has. */
-    scnAnnounceDefaultPlace(view, 300.0f, 2.0f, &x, &y);
-    UT_ASSERT(x == 51.0f);
+    /* The middle: a 100 wide line centred at 120 starts at 70, full size. */
+    scnTextLineAcross(srcW, 100.0f, 0.5f, &x, &shrink);
+    UT_ASSERT_MSG(x == 70.0f && shrink == 1.0f,
+                  "the centred line is at %.2f, drawn at %.2f", x, shrink);
 
-    /* ── a position ── the middle of the view. */
-    scnAnnounceAt(view, 100.0f, 20.0f, 127, 127, 1.0f, NULL, 4.0f, &x, &y);
-    UT_ASSERT_MSG(x == 151.0f && y == 128.0f,
-                  "the centred line is at (%.2f, %.2f)", x, y);
+    /* The left edge: the centre at 0 would put half the line outside, so it
+       is moved in to the pad. */
+    scnTextLineAcross(srcW, 100.0f, 0.0f, &x, &shrink);
+    UT_ASSERT(x == pad && shrink == 1.0f);
 
-    /* "top": y 0 would put half the line above the view, so it is moved
-       down to the inset. */
-    scnAnnounceAt(view, 100.0f, 20.0f, 127, 0, 1.0f, NULL, 4.0f, &x, &y);
-    UT_ASSERT(x == 151.0f);
-    UT_ASSERT_MSG(y == 19.0f, "the top line is at y %.2f", y);
+    /* The right edge: one pad in from the far edge. */
+    scnTextLineAcross(srcW, 100.0f, 1.0f, &x, &shrink);
+    UT_ASSERT_MSG(x == srcW - pad - 100.0f, "the right line is at %.2f", x);
+    UT_ASSERT(shrink == 1.0f);
 
-    /* The corners: kept whole inside the view, one inset from its edges. */
-    scnAnnounceAt(view, 100.0f, 20.0f, 0, 0, 1.0f, NULL, 4.0f, &x, &y);
-    UT_ASSERT(x == 82.0f && y == 19.0f);
-    scnAnnounceAt(view, 100.0f, 20.0f, 254, 254, 1.0f, NULL, 4.0f, &x, &y);
-    UT_ASSERT_MSG(x == 220.0f && y == 237.0f,
-                  "the bottom-right line is at (%.2f, %.2f)", x, y);
-    /* A byte of 255 is the same as 254. */
-    scnAnnounceAt(view, 100.0f, 20.0f, 255, 255, 1.0f, NULL, 4.0f, &x, &y);
-    UT_ASSERT(x == 220.0f && y == 237.0f);
+    /* A point well inside is not moved: three quarters across. */
+    scnTextLineAcross(srcW, 100.0f, 0.75f, &x, &shrink);
+    UT_ASSERT(scnNear(x, 180.0f - 50.0f));
 
-    /* A point well inside is not moved: three quarters across and down. */
-    {
-        const float wantX = view.x0 + 240.0f * (190.0f / 254.0f) - 50.0f;
-        const float wantY = view.y0 + 240.0f * (190.0f / 254.0f) - 10.0f;
-        scnAnnounceAt(view, 100.0f, 20.0f, 190, 190, 1.0f, NULL, 4.0f, &x,
-                      &y);
-        UT_ASSERT(scnNear(x, wantX) && scnNear(y, wantY));
-    }
+    /* A share outside 0 to 1 is held to the edges. */
+    scnTextLineAcross(srcW, 100.0f, -3.0f, &x, &shrink);
+    UT_ASSERT(x == pad);
+    scnTextLineAcross(srcW, 100.0f, 7.0f, &x, &shrink);
+    UT_ASSERT(x == srcW - pad - 100.0f);
 
-    /* A line wider than the view is centred across it. */
-    scnAnnounceAt(view, 300.0f, 20.0f, 0, 127, 1.0f, NULL, 4.0f, &x, &y);
-    UT_ASSERT(x == 51.0f);
+    /* A line exactly the room wide is not made smaller and fills it. */
+    scnTextLineAcross(srcW, srcW - 2.0f * pad, 0.5f, &x, &shrink);
+    UT_ASSERT(x == pad && shrink == 1.0f);
 
-    /* ── the status line ── a line that would touch its band drops one gap
-       below it; one clear of it stays put. */
-    scnAnnounceAt(view, 100.0f, 20.0f, 127, 0, 1.0f, &band, 4.0f, &x, &y);
-    UT_ASSERT_MSG(y == 43.0f, "the top line under the status line is at "
-                  "y %.2f", y);
-    scnAnnounceAt(view, 100.0f, 20.0f, 127, 25, 1.0f, &band, 4.0f, &x, &y);
-    UT_ASSERT(y == 43.0f);
-    scnAnnounceAt(view, 100.0f, 20.0f, 127, 127, 1.0f, &band, 4.0f, &x, &y);
-    UT_ASSERT(y == 128.0f);
+    /* A line twice the room wide is drawn at half size, filling the room
+       from pad to pad wherever the script asked for it. */
+    scnTextLineAcross(srcW, 2.0f * (srcW - 2.0f * pad), 0.5f, &x, &shrink);
+    UT_ASSERT_MSG(scnNear(shrink, 0.5f) && scnNear(x, pad),
+                  "the wide line is at %.2f, drawn at %.2f", x, shrink);
+    scnTextLineAcross(srcW, 2.0f * (srcW - 2.0f * pad), 0.0f, &x, &shrink);
+    UT_ASSERT(scnNear(shrink, 0.5f) && scnNear(x, pad));
+    scnTextLineAcross(srcW, 2.0f * (srcW - 2.0f * pad), 1.0f, &x, &shrink);
+    UT_ASSERT(scnNear(shrink, 0.5f) && scnNear(x, pad));
+
+    /* NULL outputs are allowed. */
+    scnTextLineAcross(srcW, 100.0f, 0.5f, NULL, NULL);
 
     return 0;
 }
 
-/* The status line's text, and where it goes.
+/* The Scenario Text window's fit: the source rectangle scaled into the
+ * window by one factor for both axes, as large as it goes, and centred.
  *
- * The text is the script's line, and with a countdown four spaces and the
- * time left as a panel countdown shows it.
- *
- * It goes at the top of the game view, centred, and clear of the things
- * drawn up there, but never moved down onto the player's tank. The view is
- * the classic one at zoom 1: 240 x 240 pixels at (81, 18), so the tank's
- * square starts 8 pixels above the middle, at y 130, and that is the floor.
- * The line is 100 x 20, the inset and the gap are 4 unless a case says. */
+ * The source rectangle is 240 units wide. With one row it is 2 + 22 + 2 =
+ * 26 units high, and with two rows 2 + 22 + 2 + 22 + 2 = 50. */
+int run_scenario_text_fit(void) {
+    const float srcW = SCN_TEXT_SRC_W_UNITS;
+    ScnTextFit  fit;
+
+    /* The rows. */
+    UT_ASSERT(SCN_TEXT_ROW_UNITS == 22.0f);
+    UT_ASSERT(scnTextSourceHeight(1) == 26.0f);
+    UT_ASSERT(scnTextSourceHeight(2) == 50.0f);
+    /* Fewer than one row is one, and more than two is two, so a round with
+       no line yet and a wrong count both give a usable rectangle. */
+    UT_ASSERT(scnTextSourceHeight(0) == 26.0f);
+    UT_ASSERT(scnTextSourceHeight(-4) == 26.0f);
+    UT_ASSERT(scnTextSourceHeight(9) == 50.0f);
+    UT_ASSERT(scnTextRowTop(0) == 2.0f);
+    UT_ASSERT(scnTextRowTop(1) == 26.0f);
+    UT_ASSERT(scnTextRowTop(-1) == 2.0f);
+    /* The second row ends one pad above the bottom. */
+    UT_ASSERT(scnTextRowTop(1) + SCN_TEXT_ROW_UNITS + SCN_TEXT_PAD_UNITS ==
+              scnTextSourceHeight(2));
+
+    /* A window the same shape as the source, twice the size: scale 2, no
+       spare space. */
+    fit = scnTextFitRect(srcW, 50.0f, 10.0f, 20.0f, 480.0f, 100.0f);
+    UT_ASSERT(fit.scale == 2.0f);
+    UT_ASSERT(fit.originX == 10.0f && fit.originY == 20.0f);
+
+    /* A window wider than the source's shape: the height sets the scale,
+       and the spare width is split evenly left and right. 100 high over 50
+       units is 2; 480 wide is used, 1000 - 480 = 520 spare, 260 a side. */
+    fit = scnTextFitRect(srcW, 50.0f, 0.0f, 0.0f, 1000.0f, 100.0f);
+    UT_ASSERT(fit.scale == 2.0f);
+    UT_ASSERT_MSG(fit.originX == 260.0f && fit.originY == 0.0f,
+                  "the wide window's origin is (%.2f, %.2f)", fit.originX,
+                  fit.originY);
+
+    /* A window taller than the source's shape: the width sets the scale,
+       and the spare height is split evenly above and below. 240 wide is
+       scale 1, 50 high used of 150, 50 a side. */
+    fit = scnTextFitRect(srcW, 50.0f, 5.0f, 5.0f, 240.0f, 150.0f);
+    UT_ASSERT(fit.scale == 1.0f);
+    UT_ASSERT(fit.originX == 5.0f && fit.originY == 55.0f);
+
+    /* The shape is kept: one scale for both axes, so the source drawn at
+       that scale fits inside the window on both axes and fills it on at
+       least one. */
+    {
+        static const float sizes[][2] = {
+            { 64.0f, 24.0f }, { 333.0f, 41.0f }, { 1920.0f, 60.0f },
+            { 90.0f, 700.0f }, { 481.0f, 99.0f }, { 240.0f, 26.0f },
+        };
+        size_t i;
+        for (i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+            const float w = sizes[i][0];
+            const float h = sizes[i][1];
+            const float srcH = scnTextSourceHeight((int)(i % 2) + 1);
+            const float usedW = srcW * scnTextFitRect(srcW, srcH, 0.0f, 0.0f,
+                                                      w, h).scale;
+            const float usedH = srcH * scnTextFitRect(srcW, srcH, 0.0f, 0.0f,
+                                                      w, h).scale;
+            fit = scnTextFitRect(srcW, srcH, 0.0f, 0.0f, w, h);
+            UT_ASSERT_MSG(usedW <= w + 0.01f && usedH <= h + 0.01f,
+                          "%gx%g: the text runs outside the window", w, h);
+            UT_ASSERT_MSG(scnNear(usedW, w) || scnNear(usedH, h),
+                          "%gx%g: the text does not fill the window", w, h);
+            /* Centred: the spare space on each side is the same. */
+            UT_ASSERT(scnNear(fit.originX, w - (fit.originX + usedW)));
+            UT_ASSERT(scnNear(fit.originY, h - (fit.originY + usedH)));
+        }
+    }
+
+    /* Nothing to fit into, or nothing to fit: scale 0 at the window's
+       corner, so the caller draws nothing. */
+    fit = scnTextFitRect(srcW, 50.0f, 7.0f, 8.0f, 0.0f, 100.0f);
+    UT_ASSERT(fit.scale == 0.0f && fit.originX == 7.0f && fit.originY == 8.0f);
+    fit = scnTextFitRect(srcW, 50.0f, 7.0f, 8.0f, 100.0f, -1.0f);
+    UT_ASSERT(fit.scale == 0.0f);
+    fit = scnTextFitRect(0.0f, 50.0f, 7.0f, 8.0f, 100.0f, 100.0f);
+    UT_ASSERT(fit.scale == 0.0f);
+
+    return 0;
+}
+
+/* The status line's text: the script's line, and with a countdown four
+ * spaces and the time left as a panel countdown shows it. */
 int run_scenario_status_line(void) {
-    const ScnAnnounceRect view = { 81.0f, 18.0f, 321.0f, 258.0f };
-    const float floorY = 130.0f;
     char  out[SCN_STATUS_LINE_MAX];
-    float x = -1.0f;
-    float y = -1.0f;
 
     /* With a countdown: 2:44 left. */
     UT_ASSERT(scnStatusLineText("Wave 3/10", 1000 + 164 * TICKS_PER_SEC, 1000,
@@ -864,91 +914,6 @@ int run_scenario_status_line(void) {
                                     sizeof(out)));
         UT_ASSERT(strlen(out) == sizeof(big) - 1 + 4 + 5);
         UT_ASSERT(strcmp(out + sizeof(big) - 1, "    90:00") == 0);
-    }
-
-    /* The status line on the top row, one unit (here 1 px) below the top. */
-    scnStatusPlace(view, 100.0f, 20.0f, 1.0f, 4.0f, floorY, NULL, 0, &x, &y);
-    UT_ASSERT(x == 151.0f);
-    UT_ASSERT(y == 19.0f);
-
-    /* Nothing in the way, inset 4: centred, one inset below the top. */
-    scnStatusPlace(view, 100.0f, 20.0f, 4.0f, 4.0f, floorY, NULL, 0, &x, &y);
-    UT_ASSERT(x == 151.0f);
-    UT_ASSERT(y == 22.0f);
-
-    /* A small panel in the top-right corner leaves room beside it: the line
-       stays on the top row and moves left only as far as the gap needs. */
-    {
-        const ScnAnnounceRect panel[1] = { { 250.0f, 22.0f, 317.0f, 89.0f } };
-        scnStatusPlace(view, 100.0f, 20.0f, 4.0f, 4.0f, floorY, panel, 1,
-                       &x, &y);
-        UT_ASSERT(x == 146.0f);
-        UT_ASSERT(y == 22.0f);
-    }
-
-    /* A wide, short panel leaves 104 pixels beside it, too few for a 120
-       wide line: the line drops to one gap below the panel, centred again. */
-    {
-        const ScnAnnounceRect panel[1] = { { 189.0f, 22.0f, 317.0f, 70.0f } };
-        scnStatusPlace(view, 120.0f, 20.0f, 4.0f, 4.0f, floorY, panel, 1,
-                       &x, &y);
-        UT_ASSERT(x == 141.0f);
-        UT_ASSERT(y == 74.0f);
-    }
-
-    /* The full size panel, 128 square: below it is past the floor, so the
-       line stays centred on the top row, over the panel. */
-    {
-        const ScnAnnounceRect panel[1] = { { 189.0f, 22.0f, 317.0f, 150.0f } };
-        scnStatusPlace(view, 120.0f, 20.0f, 4.0f, 4.0f, floorY, panel, 1,
-                       &x, &y);
-        UT_ASSERT(x == 141.0f);
-        UT_ASSERT(y == 22.0f);
-    }
-
-    /* A thing off to the side of the view is not in the way. */
-    {
-        const ScnAnnounceRect vote[1] = { { 330.0f, 0.0f, 440.0f, 60.0f } };
-        scnStatusPlace(view, 100.0f, 20.0f, 4.0f, 4.0f, floorY, vote, 1,
-                       &x, &y);
-        UT_ASSERT(x == 151.0f);
-        UT_ASSERT(y == 22.0f);
-    }
-
-    /* A line wider than the view is centred over it and runs past both
-       edges; a thing beside the view that it would cross pushes it down. */
-    scnStatusPlace(view, 300.0f, 20.0f, 4.0f, 4.0f, floorY, NULL, 0, &x, &y);
-    UT_ASSERT(x == 51.0f);
-    UT_ASSERT(y == 22.0f);
-    {
-        const ScnAnnounceRect vote[1] = { { 330.0f, 0.0f, 440.0f, 60.0f } };
-        scnStatusPlace(view, 300.0f, 20.0f, 4.0f, 4.0f, floorY, vote, 1,
-                       &x, &y);
-        UT_ASSERT(x == 51.0f);
-        UT_ASSERT(y == 64.0f);
-    }
-
-    /* Two things stacked: the line drops below the first, finds the second
-       in the way on that row too, and drops below that. */
-    {
-        const ScnAnnounceRect stack[2] = {
-            { 81.0f, 18.0f, 321.0f, 60.0f },
-            { 81.0f, 60.0f, 321.0f, 100.0f },
-        };
-        scnStatusPlace(view, 100.0f, 20.0f, 4.0f, 4.0f, floorY, stack, 2,
-                       &x, &y);
-        UT_ASSERT(x == 151.0f);
-        UT_ASSERT(y == 104.0f);
-    }
-
-    /* A view with no free row at all: back to the top, centred, on top of
-       whatever is there, rather than out of sight. */
-    {
-        const ScnAnnounceRect wall[1] = { { 0.0f, 0.0f, 500.0f, 500.0f } };
-        scnStatusPlace(view, 100.0f, 20.0f, 4.0f, 4.0f, floorY, wall, 1,
-                       &x, &y);
-        UT_ASSERT(x == 151.0f);
-        UT_ASSERT(y == 22.0f);
     }
 
     return 0;

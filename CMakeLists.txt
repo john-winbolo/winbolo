@@ -6869,6 +6869,7 @@ set(_unit_test_names
     scenario_panel_timer_text
     scenario_announce_remaining
     scenario_announce_position
+    scenario_text_fit
     scenario_status_line
     scn_status_codec_and_client
     scn_announce_position_codec
