@@ -168,8 +168,12 @@ editor's `mapeditor.c`, `mapeditor_export.c` and `mapeditor_validate.c`.
 
 The privacy manifest, `src/gui/ios/PrivacyInfo.xcprivacy`, is copied to the
 root of the bundle. It declares the user defaults, file timestamp and system
-boot time calls the app and SDL make, no tracking, and the crash reports
-Sentry sends when the build carries a DSN.
+boot time calls the app and SDL make, no tracking, and what Sentry sends with
+its default options when the build carries a DSN and the player has left crash
+reporting on: crash reports (crash data), app hang reports (performance data),
+and session starts and ends, reports of iOS ending the app and counts of
+dropped events (other diagnostic data). None of it is linked to the player.
+The App Store Connect privacy answers have to say the same.
 
 ## Known limits on a device
 
