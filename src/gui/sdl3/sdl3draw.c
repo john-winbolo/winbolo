@@ -80,6 +80,7 @@
 #include "screenlgm.h"
 #include "client_render.h"
 #include "macos_pinch.h"
+#include "safe_insets.h"     /* the black strips beside the touch layout */
 #include "../lang.h"
 #if defined(WINBOLO_VOICE)
 #include "../voice.h"        /* own mute state and level for the mic indicator */
@@ -3127,6 +3128,28 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
     SDL_FRect fullScr = { 0, 0, (float)scrW, (float)scrH };
     SDL_RenderFillRect(gRenderer, &fullScr);
+
+    /* Black beyond the left and right safe insets, the cutout's side and
+       the margin on the other, as the lobby draws them. The insets are in
+       window points; this is drawn in the logical units. */
+    if (gWindow) {
+      int winW = 0, winH = 0;
+      SDL_GetWindowSize(gWindow, &winW, &winH);
+      if (winW > 0) {
+        const SafeInsets safe = safeInsetsGet(gWindow);
+        const float toLog = (float)scrW / (float)winW;
+        SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+        if (safe.left > 0.0f) {
+          SDL_FRect l = { 0, 0, safe.left * toLog, (float)scrH };
+          SDL_RenderFillRect(gRenderer, &l);
+        }
+        if (safe.right > 0.0f) {
+          SDL_FRect r = { (float)scrW - safe.right * toLog, 0,
+                          safe.right * toLog, (float)scrH };
+          SDL_RenderFillRect(gRenderer, &r);
+        }
+      }
+    }
 
     /* Inset bevel around the game viewport */
     float gamePixW = (float)(MAIN_SCREEN_SIZE_X * TILE_SIZE_X * effectiveZoom);

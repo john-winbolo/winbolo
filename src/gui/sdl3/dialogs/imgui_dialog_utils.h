@@ -33,6 +33,7 @@
 #include "dialog_quit.h"
 #include "../../imgui_fonts.h"
 #include "../../../common/wb_log.h"
+#include "../safe_insets.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 /* Tile-atlas geometry for imguiDrawTileIcon() below. tiles.h is a
@@ -756,50 +757,20 @@ static inline void dialogRestoreLogicalPresentation(SDL_Renderer *renderer,
 
 /* Query safe area insets for notch/Dynamic Island avoidance.
  * Returns insets in window-point coordinates (left, top, right, bottom).
- * On platforms without safe areas, all values are 0.
- *
- * In landscape a phone with a notch or Dynamic Island reports the same inset
- * on the left and the right, though the cutout is on one side only. Here the
- * side away from it gets DIALOG_EDGE_MARGIN_FRAC of the window's width
- * instead, which keeps clear of the screen's rounded corners. The cutout's
- * side is found from the display orientation. A platform that reports the
- * cutout on its own side (Android) has unequal insets and is left as it is. */
+ * On platforms without safe areas, all values are 0. The rule, including the
+ * narrower margin on the side away from a phone's cutout in landscape, is
+ * safeInsetsGet in safe_insets.h, which the touch layout's chrome uses too. */
 struct DialogSafeInsets {
     float left, top, right, bottom;
 };
 
 /* The share of the window's width or height a mobile dialog keeps from an
  * edge with no cutout: the log browser's margin. */
-#define DIALOG_EDGE_MARGIN_FRAC 0.025f
+#define DIALOG_EDGE_MARGIN_FRAC SAFE_INSETS_EDGE_MARGIN_FRAC
 
 static inline DialogSafeInsets dialogGetSafeInsets(SDL_Window *window) {
-    DialogSafeInsets insets = {0, 0, 0, 0};
-#if BOLO_MOBILE
-    SDL_Rect safeRect;
-    int winW = 0, winH = 0;
-    SDL_GetWindowSize(window, &winW, &winH);
-    if (winW > 0 && winH > 0 && SDL_GetWindowSafeArea(window, &safeRect)) {
-        insets.left   = (float)safeRect.x;
-        insets.top    = (float)safeRect.y;
-        insets.right  = (float)(winW - (safeRect.x + safeRect.w));
-        insets.bottom = (float)(winH - (safeRect.y + safeRect.h));
-    }
-    const float farMargin = (float)winW * DIALOG_EDGE_MARGIN_FRAC;
-    if (insets.left > farMargin && insets.left == insets.right) {
-        switch (SDL_GetCurrentDisplayOrientation(SDL_GetDisplayForWindow(window))) {
-        case SDL_ORIENTATION_LANDSCAPE:          /* cutout on the left */
-            insets.right = farMargin;
-            break;
-        case SDL_ORIENTATION_LANDSCAPE_FLIPPED:  /* cutout on the right */
-            insets.left = farMargin;
-            break;
-        default:
-            break;
-        }
-    }
-#else
-    (void)window;
-#endif
+    const SafeInsets s = safeInsetsGet(window);
+    DialogSafeInsets insets = { s.left, s.top, s.right, s.bottom };
     return insets;
 }
 
