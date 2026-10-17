@@ -1523,7 +1523,7 @@ scenario = {
                 "tougher.",
   api         = 1,
   author      = "WinBolo",
-  updated     = "2026-10-17T14:29Z",
+  updated     = "2026-10-17T14:30Z",
   kind        = "scenario",
   game        = "open",
 
@@ -1545,7 +1545,7 @@ scenario = {
     { id = "zero_human", label = "First infected is a person",
       type = "choice", choices = { "No", "Yes", "Random" },
       default = ZERO_HUMAN },
-    -- Off is the classic rule: only an infected shell kill turns a survivor.
+    -- Off: a drowning turns a survivor only when they drown while bitten.
     { id = "drown_infects", label = "Drowning infects", type = "bool",
       default = DROWN_INFECTS },
     -- 0 is no bite. A survivor who dies while bitten turns, drowning
@@ -1597,7 +1597,7 @@ scenario = {
 
   rules = {
     -- Three seconds rather than five. Mostly the horde's number: a survivor
-    -- only respawns as one after a death that was not an infected shell. It
+    -- only respawns as one after a death that did not turn them. It
     -- is what decides how much a fight bought the player who won it.
     tank_death_ticks = 150,
 
