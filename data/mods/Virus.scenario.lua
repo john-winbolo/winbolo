@@ -37,7 +37,8 @@
 -- them, and they come back a survivor. The help below and deep sea turn a
 -- survivor without a death.
 --
--- The host can widen that in the lobby with two settings, both off unless set.
+-- The host can widen that in the lobby with two settings. "Drowning infects"
+-- is off by default and "Bite time" is 1 second by default.
 -- "Drowning infects" turns a survivor who drowns. The turn is credited to the
 -- infected tank whose shell last hit them, if that was in the last few seconds,
 -- and to nobody otherwise. "Bite time" makes every infected shell a bite: a
@@ -105,7 +106,7 @@ local ZERO_HUMAN         = "No" -- who turns first, the lobby's choice:
                                 -- a bot when one is playing; "Random" any
                                 -- seat, person or bot.
 local DROWN_INFECTS      = false -- a survivor who drowns turns
-local BITE_SECONDS       = 0    -- how long an infected shell's bite lasts;
+local BITE_SECONDS       = 1    -- how long an infected shell's bite lasts;
                                 -- 0 is no bite. A bitten survivor who dies
                                 -- turns, drowning included, even with
                                 -- DROWN_INFECTS off: the bite wins.
@@ -1517,7 +1518,7 @@ scenario = {
                 "tougher.",
   api         = 1,
   author      = "WinBolo",
-  updated     = "2026-10-14T11:55Z",
+  updated     = "2026-10-17T14:25Z",
   kind        = "scenario",
   game        = "open",
 
