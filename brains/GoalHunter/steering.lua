@@ -3780,6 +3780,9 @@ local function tank_combat_steer(state, world, info, goal)
                              nil, nil, nil, nil, km_pn) then
         _clear = false
         _hdg_blocked = true
+        -- The readout above was written before this check ran and says "ok";
+        -- name the gun line and what it ran into instead.
+        if BRAIN_DEBUG_MODE then _gate_why = "heading:" .. tostring(M._spc_why) end
       end
     end
     if _clear and not U.fire_hold_block(state, C.FIRE_HOLD_TICKS) then
