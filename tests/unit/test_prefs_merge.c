@@ -1,10 +1,13 @@
 /*
  * Tests for merge-on-save in src/common/prefs.c: the mode the standalone
- * log viewer turns on because the game may be running beside it and keeps
- * the same WinBolo.json.
+ * log viewer and the game both turn on, because the two may run side by
+ * side and keep the same WinBolo.json.
  *
- * "The game" here is a second, separate document loaded from the same
- * file, changed and saved whole, which is what the game client does.
+ * prefs.c holds one document per process, so the viewer is prefs.c itself
+ * and "the game" is a second document here that does what the game's
+ * prefs.c does: it loads the file once when the game starts and keeps that
+ * document; each write reads the file again, puts onto it only the key the
+ * game changed and keeps the result (gameStart, gameSet).
  *
  *   - prefs_merge_game_then_viewer: the game writes after the viewer
  *                                   loaded; the viewer's save keeps the
@@ -50,15 +53,36 @@ static void diskGet(const char *path, const char *section, const char *key,
     }
 }
 
-/* The other program: load the file, change one key, write it all back. */
+/* The game's document: loaded once, when the game starts. */
+static PrefsDoc *s_game = NULL;
+
+static int gameStart(const char *path) {
+    prefsDocFree(s_game);
+    s_game = prefsDocLoad(path);
+    return s_game != NULL;
+}
+
+/* The game changes one key and writes, with merge-on-save on: a fresh read
+ * of the file, only this key put onto it, and the result kept as the
+ * game's document. It does not load the file again before the change. */
 static int gameSet(const char *path, const char *section, const char *key,
                    const char *value) {
-    PrefsDoc *doc = prefsDocLoad(path);
+    PrefsDoc *disk;
+    int existed = 0;
     int ok;
-    if (!doc) return 0;
-    ok = prefsDocSetString(doc, section, key, value) &&
-         prefsDocSave(doc, path);
-    prefsDocFree(doc);
+    if (!s_game || !prefsDocSetString(s_game, section, key, value)) return 0;
+    disk = prefsDocLoadFile(path, &existed);
+    if (!disk) {
+        /* No file, or not JSON: the whole document, as prefs.c does. */
+        return prefsDocSave(s_game, path);
+    }
+    ok = prefsDocCopyKey(disk, s_game, section, key) && prefsDocSave(disk, path);
+    if (ok) {
+        prefsDocFree(s_game);
+        s_game = disk;
+    } else {
+        prefsDocFree(disk);
+    }
     return ok;
 }
 
@@ -79,6 +103,8 @@ static void endTest(const char *path) {
     char corrupt[1100];
     prefsShutdown();
     prefsSetMergeOnSave(false);
+    prefsDocFree(s_game);
+    s_game = NULL;
     remove(path);
     snprintf(corrupt, sizeof(corrupt), "%s.corrupt", path);
     remove(corrupt);
@@ -94,6 +120,7 @@ int run_prefs_merge_game_then_viewer(void) {
 
     prefsInit(path);
     prefsSetMergeOnSave(true);
+    UT_ASSERT(gameStart(path));
 
     /* The game changes its own key and one viewer key the viewer does
      * not change afterwards. */
@@ -138,13 +165,16 @@ int run_prefs_merge_viewer_then_game(void) {
 
     prefsInit(path);
     prefsSetMergeOnSave(true);
+    UT_ASSERT(gameStart(path));
 
     /* Viewer first. */
     UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "250") == 1);
     UT_ASSERT(prefsFlush() == 1);
 
-    /* Then the game, which read the file after the viewer's write. It
-     * also changes a viewer key (the viewer inside the game does this). */
+    /* Then the game, which loaded the file before the viewer's write (it
+     * was running all the time). Its writes must not take the viewer's
+     * change away. It also changes a viewer key (the viewer inside the
+     * game does this). */
     UT_ASSERT(gameSet(path, "SETTINGS", "Player Name", "Game"));
     UT_ASSERT(gameSet(path, "LOGVIEWER", "Speed", "7"));
 
@@ -192,6 +222,7 @@ int run_prefs_merge_fallback(void) {
 
     prefsInit(path);
     prefsSetMergeOnSave(true);
+    UT_ASSERT(gameStart(path));
 
     /* The file is gone, and stays gone: the first flush waits, the second
      * writes the whole document in memory. */
@@ -240,6 +271,7 @@ int run_prefs_merge_one_write(void) {
     UT_ASSERT(!prefsMergeOnSave());
     prefsSetMergeOnSave(true);
     UT_ASSERT(prefsMergeOnSave());
+    UT_ASSERT(gameStart(path));
 
     /* Sets do not reach the file ... */
     UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "1") == 1);
@@ -329,6 +361,7 @@ int run_prefs_merge_reset_wins(void) {
 
     prefsInit(path);
     prefsSetMergeOnSave(true);
+    UT_ASSERT(gameStart(path));
 
     UT_ASSERT(gameSet(path, "LOGVIEWER", "Window.X", "999"));
     UT_ASSERT(gameSet(path, "SETTINGS", "Player Name", "Game"));
@@ -372,6 +405,7 @@ int run_prefs_merge_idle_no_write(void) {
 
     prefsInit(path);
     prefsSetMergeOnSave(true);
+    UT_ASSERT(gameStart(path));
     UT_ASSERT(prefsSetString("LOGVIEWER", "Window.X", "250") == 1);
     UT_ASSERT(prefsFlush() == 1);
 
@@ -419,6 +453,7 @@ int run_prefs_merge_missing_retry(void) {
 
     prefsInit(path);
     prefsSetMergeOnSave(true);
+    UT_ASSERT(gameStart(path));
 
     /* The game, part one: it has its new document and takes the file away. */
     game = prefsDocLoad(path);

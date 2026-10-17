@@ -783,6 +783,11 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   /* Load the process-global preferences document (WinBolo.json) before any
    * prefs access. */
   prefsInit(getPreferenceFilePath());
+  /* The standalone Log Viewer may be running beside the game and keeps the
+   * same file. Write only the keys the game changed, onto a fresh read of
+   * the file, so the game's writes do not take away the viewer's changes
+   * (the viewer does the same in src/logviewer/main.c). */
+  prefsSetMergeOnSave(true);
   /* Coalesce bursts of pref edits (multi-key rebind, slider drag) into a
    * single trailing disk write, driven from gameFrontPumpDirty and flushed
    * before each join and at shutdown. */

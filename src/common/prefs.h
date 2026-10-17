@@ -70,7 +70,8 @@ void prefsSetAutosaveDebounce(unsigned intervalMs);
 bool prefsPumpAutosave(uint64_t nowMs);
 
 /* Merge-on-save, for a program that shares the file with another running
- * program (the log viewer beside the game). Off by default.
+ * program (the log viewer beside the game). Off by default; the game and
+ * the standalone log viewer both turn it on.
  *
  * On: prefsSetString only marks the document dirty and remembers the key,
  * even when the value is the one the document already holds (the file may

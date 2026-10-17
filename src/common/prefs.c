@@ -140,53 +140,59 @@ static void prefsChangedNote(const char *section, const char *key) {
 /* Every write of the document goes through here. 1 ok / 0 fail. */
 static int prefsWrite(void) {
     if (!g_doc) return 0;
-    if (s_merge && !s_mergeWhole && !prefsFileExists(g_path) &&
-        !s_mergeMissing) {
-        /* No file. The other program may be between taking the old file
-         * away and putting its new one in place, which is a moment only.
-         * Writing the whole document now would put this program's old copy
-         * of the other program's keys over that new file. So this write is
-         * not done: the document stays dirty and the next flush tries
-         * again. A file still gone then is really gone, and is written
-         * whole below. */
-        s_mergeMissing = true;
-        return 0;
-    }
-    if (s_merge && !s_mergeWhole && prefsFileExists(g_path)) {
-        PrefsDoc *disk = prefsDocLoad(g_path);
-        s_mergeMissing = false;
-        bool grafted = (disk != NULL);
-        for (size_t i = 0; grafted && i < s_changedCount; i++) {
-            if (!prefsDocCopyKey(disk, g_doc, s_changed[i].section,
-                                 s_changed[i].key)) {
-                grafted = false;
+    if (s_merge && !s_mergeWhole) {
+        /* One open of the file says both whether it is there and what it
+         * holds. A check first and a read after would leave a moment
+         * between them in which the other program's remove() and rename()
+         * can take the file away. */
+        int existed = 0;
+        PrefsDoc *disk = prefsDocLoadFile(g_path, &existed);
+        if (!existed && !s_mergeMissing) {
+            /* No file. The other program may be between taking the old
+             * file away and putting its new one in place, which is a
+             * moment only. Writing the whole document now would put this
+             * program's old copy of the other program's keys over that new
+             * file. So this write is not done: the document stays dirty
+             * and the next flush tries again. A file still gone then is
+             * really gone, and is written whole below. */
+            s_mergeMissing = true;
+            return 0;
+        }
+        if (existed) {
+            s_mergeMissing = false;
+            bool grafted = (disk != NULL);
+            for (size_t i = 0; grafted && i < s_changedCount; i++) {
+                if (!prefsDocCopyKey(disk, g_doc, s_changed[i].section,
+                                     s_changed[i].key)) {
+                    grafted = false;
+                }
             }
-        }
-        if (grafted && !prefsDocIsDirty(disk)) {
-            /* The file already holds every value this program set (a
-             * save that sets all its keys again, with nothing moved): no
-             * write. What was read is still taken, so later reads here
-             * see the other programs' changes. */
-            prefsDocFree(g_doc);
-            g_doc = disk;
-            prefsChangedClear();
-            return 1;
-        }
-        if (grafted) {
-            if (!prefsDocSave(disk, g_path)) {
-                /* Not written: keep the document and the list as they
-                 * are, so the next flush tries again. */
-                prefsDocFree(disk);
-                return 0;
+            if (grafted && !prefsDocIsDirty(disk)) {
+                /* The file already holds every value this program set (a
+                 * save that sets all its keys again, with nothing moved): no
+                 * write. What was read is still taken, so later reads here
+                 * see the other programs' changes. */
+                prefsDocFree(g_doc);
+                g_doc = disk;
+                prefsChangedClear();
+                return 1;
             }
-            prefsDocFree(g_doc);
-            g_doc = disk;
-            prefsChangedClear();
-            return 1;
+            if (grafted) {
+                if (!prefsDocSave(disk, g_path)) {
+                    /* Not written: keep the document and the list as they
+                     * are, so the next flush tries again. */
+                    prefsDocFree(disk);
+                    return 0;
+                }
+                prefsDocFree(g_doc);
+                g_doc = disk;
+                prefsChangedClear();
+                return 1;
+            }
+            /* The file does not parse, or a key could not be copied: write
+             * the document in memory, as without the merge. */
+            prefsDocFree(disk);
         }
-        /* The file does not parse, or a key could not be copied: write
-         * the document in memory, as without the merge. */
-        prefsDocFree(disk);
     }
     if (!prefsDocSave(g_doc, g_path)) return 0;
     prefsChangedClear();
