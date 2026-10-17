@@ -251,20 +251,8 @@ bool loopbackHarnessStartPrepared(LoopbackHarness *h, const char *playerName,
 bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
                           bool lobbyMode, const char *impairSpec,
                           uint64_t seed) {
-    if (h == NULL) return false;
-    memset(h, 0, sizeof(*h));
-
-    if (!loopbackBringUpServer(h, lobbyMode)) {
-        return false;
-    }
-    if (!loopbackConnectClient(h, playerName, impairSpec, /*spectator*/ false)) {
-        return false;
-    }
-
-    /* Seed last so the pump phase's impairment + sim draws are reproducible
-     * regardless of any randomness consumed during setup above. */
-    bolo_srand(seed);
-    return true;
+    return loopbackHarnessStartPrepared(h, playerName, lobbyMode, impairSpec,
+                                        seed, NULL, NULL);
 }
 
 bool loopbackHarnessStartSpectator(LoopbackHarness *h, const char *playerName,

@@ -536,7 +536,6 @@ static int luf_run(const LufConfig *cfg) {
     BYTE     buildX = 0, buildY = 0;
     BYTE     pillSpeed = 0, pillArmour = 0;
     uint16_t pingMs = 0;
-    uint8_t  compTicks = 0;
     bool     manDied = false, manReturned = false, wallBuilt = false;
     int      shotsFired = 0, pillHits = 0;
     BYTE     prevArmour = 0;
@@ -632,12 +631,8 @@ static int luf_run(const LufConfig *cfg) {
         luf_restock(&h, slot);
     }
 
-    pingMs    = h.sim->playerPing[slot];
-    compTicks = 0; /* a pill shell is not rewound */
-    fprintf(stderr, "  after settle: server ping=%ums  lag-comp rewind=%u "
-            "frames (%d world units of man walk)\n",
-            (unsigned)pingMs, (unsigned)compTicks,
-            (int)compTicks * MAP_MANSPEED_TGRASS);
+    pingMs = h.sim->playerPing[slot];
+    fprintf(stderr, "  after settle: server ping=%ums\n", (unsigned)pingMs);
 
     /* Phase 1 - drive at the pill, shooting it until it is fully angry. The
      * pill halves its own shot interval on every hit it takes, down to
@@ -745,7 +740,6 @@ static int luf_run(const LufConfig *cfg) {
     pillSpeed     = gs->pb->item[0].speed;
     pillArmour    = gs->pb->item[0].armour;
     pingMs        = h.sim->playerPing[slot];
-    compTicks     = 0; /* a pill shell is not rewound */
 
     shellsDebugHitLogClear();
     luf_send_frame(&h, slot, &inTick, INPUT_BTN_ACCEL, 0,
@@ -820,7 +814,7 @@ static int luf_run(const LufConfig *cfg) {
             "    server tank: world (%d,%d) map (%u,%u) angle %.1f bradians\n"
             "    client tank: map (%u,%u)   %s\n"
             "    wall ordered on map (%u,%u)\n"
-            "    pill: speed=%u armour=%u   ping=%ums  rewind=%u frames\n",
+            "    pill: speed=%u armour=%u   ping=%ums\n",
             (unsigned)dispatchTick, dispatchTankX, dispatchTankY,
             (unsigned)dispatchSrvMX, (unsigned)dispatchSrvMY, dispatchAngle,
             (unsigned)dispatchCliMX, (unsigned)dispatchCliMY,
@@ -828,8 +822,7 @@ static int luf_run(const LufConfig *cfg) {
                 ? "(agrees with the server)"
                 : "(AHEAD OF / BEHIND the server's tank)",
             (unsigned)buildX, (unsigned)buildY,
-            (unsigned)pillSpeed, (unsigned)pillArmour, (unsigned)pingMs,
-            (unsigned)compTicks);
+            (unsigned)pillSpeed, (unsigned)pillArmour, (unsigned)pingMs);
 
     fprintf(stderr, "    man, frame by frame (frame: world x,y state wait "
                     "inTank dead):\n");
