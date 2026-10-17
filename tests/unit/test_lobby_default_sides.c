@@ -44,7 +44,8 @@
  *  (16) the host picking the side a default team already shows names it,
  *       so a map change keeps the pair; a pool pick does not.
  *  (17) the dedicated server's -bots start-up gives each team with bots
- *       a naming pool no other team holds, and keeps its side.
+ *       a naming pool no other team holds, and keeps its side;
+ *  (18) the -bots start-up team table for -allybots and -teams.
  *
  * Everard Island is wider than tall, so tests (1) to (11), (14) to (16) make it
  * tall first (make_map_tall: two grass squares out in the sea, the island
@@ -1251,5 +1252,101 @@ int run_lobby_ds_bot_team_naming_pools(void) {
     UT_ASSERT(serverSimPickTeamNamingPool(sim, 0, 5) == 0);
     UT_ASSERT(serverSimPickTeamNamingPool(sim, MAX_TANKS, 5) == 0);
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* Fill out[] with a value no rule writes, so a slot past numBots that
+ * serverSimStartBotTeams wrote by mistake shows up. */
+static void start_teams_clear(int *out) {
+    for (int i = 0; i < MAX_TANKS; i++) out[i] = -7;
+}
+
+/* Whether out[0..n-1] equals want[0..n-1] and the slots past n are
+ * untouched. */
+static bool start_teams_are(const int *out, const int *want, int n) {
+    for (int i = 0; i < MAX_TANKS; i++) {
+        int expect = (i < n) ? want[i] : -7;
+        if (out[i] != expect) return false;
+    }
+    return true;
+}
+
+/* (18) serverSimStartBotTeams, the team table the dedicated server's
+ *      -bots start-up uses both to name its bots and to place them. The
+ *      inputs are the values after the command line is parsed: -teams
+ *      sets allyTeam to 0 when both flags are given. */
+int run_lobby_ds_bot_start_teams(void) {
+    int out[MAX_TANKS];
+
+    /* -allybots 3 with 4 bots: every bot on team 3. */
+    {
+        const int want[4] = { 3, 3, 3, 3 };
+        start_teams_clear(out);
+        serverSimStartBotTeams(4, 3, NULL, 0, 0, out);
+        UT_ASSERT_MSG(start_teams_are(out, want, 4), "-allybots 3: all bots on team 3");
+    }
+
+    /* -teams 2,1 with 5 bots: blocks of 2 and 1, the last two bots on no
+     * team. */
+    {
+        const int sizes[2] = { 2, 1 };
+        const int want[5] = { 1, 1, 2, 0, 0 };
+        start_teams_clear(out);
+        serverSimStartBotTeams(5, 0, sizes, 2, 2, out);
+        UT_ASSERT_MSG(start_teams_are(out, want, 5),
+                      "-teams 2,1: blocks, then no team (got %d %d %d %d %d)",
+                      out[0], out[1], out[2], out[3], out[4]);
+    }
+
+    /* -teams 3 with 7 bots: round-robin over teams 1-3. */
+    {
+        const int want[7] = { 1, 2, 3, 1, 2, 3, 1 };
+        start_teams_clear(out);
+        serverSimStartBotTeams(7, 0, NULL, 0, 3, out);
+        UT_ASSERT_MSG(start_teams_are(out, want, 7), "-teams 3: round-robin");
+    }
+
+    /* -teams 1: no split, and -teams has set allyTeam to 0, so every bot
+     * is on no team. */
+    {
+        const int want[3] = { 0, 0, 0 };
+        start_teams_clear(out);
+        serverSimStartBotTeams(3, 0, NULL, 0, 1, out);
+        UT_ASSERT_MSG(start_teams_are(out, want, 3), "-teams 1: all bots on no team");
+    }
+
+    /* -teams 0: no split, and allyTeam is kept. With -allybots 2 every bot
+     * is on team 2; without it every bot is on no team. */
+    {
+        const int wantAlly[3] = { 2, 2, 2 };
+        const int wantNone[3] = { 0, 0, 0 };
+        start_teams_clear(out);
+        serverSimStartBotTeams(3, 2, NULL, 0, 0, out);
+        UT_ASSERT_MSG(start_teams_are(out, wantAlly, 3),
+                      "-teams 0 -allybots 2: all bots on team 2");
+        start_teams_clear(out);
+        serverSimStartBotTeams(3, 0, NULL, 0, 0, out);
+        UT_ASSERT_MSG(start_teams_are(out, wantNone, 3),
+                      "-teams 0: all bots on no team");
+    }
+
+    /* Team 16 becomes team 1: -allybots 16, and the sixteenth bot of
+     * -teams 16 round-robin. */
+    {
+        const int want[2] = { 1, 1 };
+        start_teams_clear(out);
+        serverSimStartBotTeams(2, 16, NULL, 0, 0, out);
+        UT_ASSERT_MSG(start_teams_are(out, want, 2), "-allybots 16: team 1");
+        start_teams_clear(out);
+        serverSimStartBotTeams(MAX_TANKS, 0, NULL, 0, 16, out);
+        UT_ASSERT_MSG(out[0] == 1 && out[14] == 15 && out[MAX_TANKS - 1] == 1,
+                      "-teams 16: the sixteenth bot goes on team 1 (got %d)",
+                      out[MAX_TANKS - 1]);
+    }
+
+    /* No bots: nothing is written. */
+    start_teams_clear(out);
+    serverSimStartBotTeams(0, 3, NULL, 0, 0, out);
+    UT_ASSERT(start_teams_are(out, NULL, 0));
     return 0;
 }
