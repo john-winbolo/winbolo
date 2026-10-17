@@ -363,6 +363,8 @@ void serverSimPillShadowSeed(ServerSim *sim, BYTE slot) {
      * seed binds its handle first: every path that can reach a slot's record
      * goes through a seed, so the slot is never left looking unseeded. */
     sim->clientKnownPillValid[slot] = true;
+    memset(sim->clientPillRevealDue[slot], 0,
+           sizeof(sim->clientPillRevealDue[slot]));
     if (sim->sim.pb == NULL) return;
     np = pillsGetNumPills(&sim->sim.pb);
     for (p = 0; p < np && p < MAX_PILLS; p++) {
@@ -435,6 +437,8 @@ void serverSimPillShadowSeedRoundStart(ServerSim *sim, BYTE slot) {
         return;
     }
     sim->clientKnownPillValid[slot] = true;
+    memset(sim->clientPillRevealDue[slot], 0,
+           sizeof(sim->clientPillRevealDue[slot]));
     for (p = 0; p < sim->roundStartPillCount && p < MAX_PILLS; p++) {
         sim->clientKnownPillX[slot][p] = sim->roundStartPillX[p];
         sim->clientKnownPillY[slot][p] = sim->roundStartPillY[p];
@@ -536,6 +540,15 @@ bool serverSimPillPosVisible(ServerSim *sim, BYTE slot, BYTE pillIdx,
          sim->botMgr.bots[slot].ai == aiFull)) {
         return true;
     }
+    /* A player always knows where their own and their allies' pills are: the
+     * pill view cycles through them, and a camera parked on a square the pill
+     * has left shows nothing. Server-side bots keep the view-area rule, so
+     * what their brains are told does not change. */
+    if (!serverSimIsBot(sim, slot) &&
+        playersIsAllie(&sim->sim.plyrs, (*sim->sim.pb).item[pillIdx].owner,
+                       slot) == TRUE) {
+        return true;
+    }
     return inAnyViewport(vps, numVps, (*sim->sim.pb).item[pillIdx].x,
                          (*sim->sim.pb).item[pillIdx].y);
 }
@@ -582,9 +595,31 @@ void serverSimPillShadowTick(ServerSim *sim) {
         }
         numVps = serverSimBuildViewports(sim, slot, vps, MAX_VIEWPORTS);
         for (p = 0; p < np; p++) {
-            if (!serverSimPillPosVisible(sim, slot, p, vps, numVps)) continue;
-            sim->clientKnownPillX[slot][p] = (*sim->sim.pb).item[p].x;
-            sim->clientKnownPillY[slot][p] = (*sim->sim.pb).item[p].y;
+            BYTE liveX = (*sim->sim.pb).item[p].x;
+            BYTE liveY = (*sim->sim.pb).item[p].y;
+            if (!serverSimPillPosVisible(sim, slot, p, vps, numVps)) {
+                /* Out of sight: a reveal is due only while the square this
+                 * slot holds is wrong. A pill carried back to that square
+                 * needs none. */
+                sim->clientPillRevealDue[slot][p] =
+                    (sim->clientKnownPillX[slot][p] != liveX ||
+                     sim->clientKnownPillY[slot][p] != liveY);
+                continue;
+            }
+            /* Back in sight after moving unseen. A pill update event only goes
+             * out when the pill itself changes, so nothing would carry the new
+             * square until the next full sync — ask for one now. Only the
+             * square the slot was holding wrong triggers it, so a pill sitting
+             * on the edge of a view area does not. Bots take their snapshots
+             * on their own cadence and are left to it. */
+            if (sim->clientPillRevealDue[slot][p]) {
+                sim->clientPillRevealDue[slot][p] = false;
+                if (!serverSimIsBot(sim, slot)) {
+                    sim->lastFullSyncTick[slot] = 0;
+                }
+            }
+            sim->clientKnownPillX[slot][p] = liveX;
+            sim->clientKnownPillY[slot][p] = liveY;
         }
     }
 }

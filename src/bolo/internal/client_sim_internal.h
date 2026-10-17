@@ -1155,6 +1155,12 @@ struct ClientSim {
      * of every round, which resets them) always reports. */
     uint8_t lastSentViewKind;
     uint8_t lastSentViewTarget;
+    /* Display ticks since the last report. The server drops a view it finds
+     * no longer qualifies back to the tank without telling the client, and
+     * the client can be left watching the same item once it qualifies again;
+     * so an item view is reported again every CLIENT_VIEW_STATE_RESEND_TICKS
+     * even when nothing has changed. */
+    uint16_t viewStateResendTicks;
 
     /* Pending alliance request from another player. 0xFF when none.
      * Set by the CTRL_ALLIANCE_REQUEST arm when toPlayer == myPlayerNum;
@@ -1243,6 +1249,9 @@ PlayerBitMap            clientSimAllyViewMask(const ClientSim *cs);
  * out as the same stretch of real time. */
 #define CLIENT_VIEW_DECAY_TICKS_SEC GAME_NUMGAMETICKS_SEC
 
+/* How often an unchanged item view is reported again — once a second. */
+#define CLIENT_VIEW_STATE_RESEND_TICKS GAME_NUMGAMETICKS_SEC
+
 /* Advances the clock and re-stamps every item the local tank is within
  * VIEW_DECAY_NEAR_TILES of, for the categories on viewPolicyDecay. Proximity
  * and nothing else: alliance, armour and the rest are the region build's
@@ -1306,6 +1315,14 @@ bool                    clientSimAllyViewAwaitingFirstData(const ClientSim *cs);
  * into the viewport itself. */
 void                    clientSimApplyAllyViewTarget(ClientSim *cs, BYTE target,
                                                      BYTE mapX, BYTE mapY);
+
+/* In an ally view, centre the camera on the ally where it is drawn this
+ * frame — the fine position in the Smooth animation mode, the game pixel
+ * otherwise — so the view glides with the tank instead of jumping a square
+ * at a time. Called once a frame after the render interpolation. Does
+ * nothing in any other view, or while the ally is a hidden stub; the
+ * per-tick upkeep's whole-square centring stands then. */
+void                    clientSimFollowAllyView(ClientSim *cs);
 
 /* Fills the view rules, clocks and camera state the overview's region build
  * takes. Declared here rather than reached through overview_map.h so this

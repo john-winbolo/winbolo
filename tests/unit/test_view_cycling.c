@@ -909,3 +909,243 @@ int run_view_cycle_stale_pill(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* A pill this client watched get carried off and put down out of sight
+ * (PILL_SQUARE_MOVED) is not on the square the client holds for it, so
+ * there is nothing to look through: the cycle steps over it and a view
+ * parked on it drops. A carried pill leaves its record on the square it was
+ * lifted from; a view on that square names the pill that is really there, not
+ * the carried one. And while the pill the view already names is still a
+ * watchable pill on its square, the view keeps naming it. */
+int run_view_cycle_moved_pill(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
+    gs->viewPlayer = 0;
+
+    vc_set_pills(gs, 0, 3);
+    BYTE p0x = gs->pb->item[0].x, p0y = gs->pb->item[0].y;
+    BYTE p1x = gs->pb->item[1].x, p1y = gs->pb->item[1].y;
+    BYTE p2x = gs->pb->item[2].x, p2y = gs->pb->item[2].y;
+    pillsSetPosState(&gs->pb, 1, PILL_SQUARE_MOVED);
+
+    UT_ASSERT_MSG(pillsCanView(gs, &gs->pb, 1, 0) == FALSE,
+                  "a moved pill must not be viewable");
+    UT_ASSERT_MSG(pillsCheckView(gs, &gs->pb, p1x, p1y) == FALSE,
+                  "a view on a moved pill's old square must not pass");
+
+    /* Cycling from pill 0 steps over the moved pill to pill 2. */
+    BYTE mx = p0x, my = p0y;
+    UT_ASSERT_MSG(pillsGetNextView(gs, &gs->pb, VC_ALL_ELIGIBLE, &mx, &my,
+                                   TRUE) == TRUE,
+                  "cycling from pill 0 should find pill 2");
+    UT_ASSERT_MSG(mx == p2x && my == p2y,
+                  "the cycle landed on (%u,%u), expected pill 2 at (%u,%u)",
+                  mx, my, p2x, p2y);
+
+    mx = p0x; my = p0y;
+    UT_ASSERT_MSG(pillsMoveView(gs, &gs->pb, VC_ALL_ELIGIBLE, &mx, &my, 1, 0) ==
+                      TRUE,
+                  "the step right should find pill 2");
+    UT_ASSERT_MSG(mx == p2x,
+                  "the step right took x=%u, expected pill 2 at x=%u", mx, p2x);
+
+    /* A view parked on the moved pill drops back. */
+    ViewPort vp;
+    ScrollState scroll;
+    ViewCycleInputs in;
+    memset(&vp, 0, sizeof(vp));
+    memset(&scroll, 0, sizeof(scroll));
+    viewCycleInputsDefaults(&in);
+    vp.viewKind   = VIEW_KIND_PILL;
+    vp.viewTarget = 1;
+    vp.viewX      = p1x;
+    vp.viewY      = p1y;
+    UT_ASSERT_MSG(viewportUpdateItemView(&vp, gs, &scroll, &in) == FALSE,
+                  "a view on a moved pill should drop");
+
+    /* Pill 1 is picked up and carried; its record keeps pill 2's square. A
+     * view on that square names pill 2, the one standing there. */
+    pillsSetPosState(&gs->pb, 1, PILL_SQUARE_CONFIRMED);
+    gs->pb->item[1].inTank = TRUE;
+    gs->pb->item[1].x = p2x;
+    gs->pb->item[1].y = p2y;
+    UT_ASSERT_MSG(pillsGetWatchPillNum(gs, &gs->pb, p2x, p2y, 0) == 3,
+                  "the lookup on pill 2's square should give pill 2 (3), got %u",
+                  pillsGetWatchPillNum(gs, &gs->pb, p2x, p2y, 0));
+    vp.viewKind   = VIEW_KIND_PILL;
+    vp.viewTarget = 1;
+    vp.viewX      = p2x;
+    vp.viewY      = p2y;
+    UT_ASSERT_MSG(viewportUpdateItemView(&vp, gs, &scroll, &in) == TRUE,
+                  "the view on pill 2's square should stay");
+    UT_ASSERT_MSG(vp.viewTarget == 2,
+                  "the view should name pill 2, not the carried pill; got %u",
+                  vp.viewTarget);
+
+    /* Pill 1 is put down unseen but this client only remembers it on pill
+     * 2's square: both are watchable there. The view already names pill 2
+     * and keeps it; one that names pill 1 keeps pill 1. */
+    gs->pb->item[1].inTank = FALSE;
+    pillsSetPosState(&gs->pb, 1, PILL_SQUARE_REMEMBERED);
+    UT_ASSERT_MSG(viewportUpdateItemView(&vp, gs, &scroll, &in) == TRUE &&
+                      vp.viewTarget == 2,
+                  "the view should keep pill 2, got %u", vp.viewTarget);
+    vp.viewTarget = 1;
+    UT_ASSERT_MSG(viewportUpdateItemView(&vp, gs, &scroll, &in) == TRUE &&
+                      vp.viewTarget == 1,
+                  "the view should keep pill 1, got %u", vp.viewTarget);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The ally view follows the tank where it is drawn. scrollCenterWorld frames a
+ * tank in the middle of its square exactly as scrollCenterObject frames the
+ * square, and keeps the part of a square in subPos as the tank moves, so the
+ * camera glides instead of stepping a square at a time. */
+int run_view_cycle_ally_follow(void) {
+    ScrollState a;
+    ScrollState b;
+    BYTE ax = 0, ay = 0, bx = 0, by = 0;
+    bool saved = scrollGetSubTilePrecision();
+
+    memset(&a, 0, sizeof(a));
+    memset(&b, 0, sizeof(b));
+    scrollSetSubTilePrecision(TRUE);
+
+    scrollCenterObject(&a, &ax, &ay, 100, 80);
+    scrollCenterWorld(&b, &bx, &by, vc_world(100), vc_world(80));
+    UT_ASSERT_MSG(ax == bx && ay == by && b.subPosX == 0 && b.subPosY == 0,
+                  "a tank mid-square should frame as its square: (%u,%u) vs "
+                  "(%u,%u) sub (%d,%d)", ax, ay, bx, by, b.subPosX, b.subPosY);
+
+    /* A quarter square to the right: same tile, a quarter in subPos. */
+    UT_ASSERT_MSG(scrollCenterWorld(&b, &bx, &by,
+                                    (WORLD)(vc_world(100) + 64),
+                                    vc_world(80)) == FALSE,
+                  "a quarter-square move should not change the tile offset");
+    UT_ASSERT_MSG(bx == ax && b.subPosX == 64 && b.subPosY == 0,
+                  "expected tile %u sub 64, got tile %u sub %d", ax, bx,
+                  b.subPosX);
+
+    /* Three quarters further: the next tile, a square's remainder kept. */
+    UT_ASSERT_MSG(scrollCenterWorld(&b, &bx, &by,
+                                    (WORLD)(vc_world(100) + 256 + 16),
+                                    vc_world(80)) == TRUE,
+                  "crossing a square should change the tile offset");
+    UT_ASSERT_MSG(bx == (BYTE)(ax + 1) && b.subPosX == 16,
+                  "expected tile %u sub 16, got tile %u sub %d",
+                  (BYTE)(ax + 1), bx, b.subPosX);
+
+    /* With sub-tile precision off the view stays on whole squares. */
+    scrollSetSubTilePrecision(FALSE);
+    scrollCenterWorld(&b, &bx, &by, (WORLD)(vc_world(100) + 64), vc_world(80));
+    UT_ASSERT_MSG(bx == ax && b.subPosX == 0,
+                  "precision off: expected tile %u sub 0, got %u sub %d", ax,
+                  bx, b.subPosX);
+
+    scrollSetSubTilePrecision(saved);
+    return 0;
+}
+
+/* clientSimFollowAllyView on a ClientSim in the ally view. A zeroed stub entry
+ * leaves the camera where it is. With fine tank positions on (Smooth) the
+ * camera follows fineX/fineY; off, it follows mapX/pixelX. The tile grid is
+ * recalculated only when the whole-square offset changes. */
+int run_view_cycle_ally_follow_clientsim(void) {
+    const BYTE target = 3;  /* The ally being watched */
+    ClientSim *cs = clientSimAlloc();
+    player *row;
+    ViewPort *vp;
+    bool saved = scrollGetSubTilePrecision();
+
+    UT_ASSERT_MSG(cs != NULL, "clientSimAlloc returned NULL");
+    UT_ASSERT_MSG(clientSimCreate(cs) == TRUE, "clientSimCreate failed");
+    UT_ASSERT_MSG(cs->sim.plyrs != NULL, "the ClientSim has no players list");
+    scrollSetSubTilePrecision(TRUE);
+
+    row = &(*cs->sim.plyrs).item[target];
+    vp = &cs->viewport;
+    vp->viewKind   = VIEW_KIND_ALLY;
+    vp->viewTarget = target;
+    vp->xOffset    = 40;
+    vp->yOffset    = 40;
+    vp->needRecalc = FALSE;
+
+    /* A hidden stub: the entry is zeroed, so the camera stays put. */
+    row->mapX = 0;
+    row->mapY = 0;
+    row->pixelX = 0;
+    row->pixelY = 0;
+    row->fineSet = false;
+    clientSimSetFineTankPositions(cs, true);
+    clientSimFollowAllyView(cs);
+    UT_ASSERT_MSG(vp->xOffset == 40 && vp->yOffset == 40 && !vp->needRecalc,
+                  "a stub entry moved the camera to (%u,%u) recalc %d",
+                  vp->xOffset, vp->yOffset, (int)vp->needRecalc);
+
+    /* Square (100,80), middle pixel; the full position a quarter square
+     * right of it. 100 - SCROLL_CENTER is tile 92, 80 - SCROLL_CENTER 72. */
+    row->mapX = 100;
+    row->mapY = 80;
+    row->pixelX = 8;
+    row->pixelY = 8;
+    row->fineX = (WORLD)(vc_world(100) + 64);
+    row->fineY = vc_world(80);
+    row->fineSet = true;
+
+    /* Fine on: the full position, a quarter square in subPos. */
+    clientSimFollowAllyView(cs);
+    UT_ASSERT_MSG(vp->xOffset == 92 && vp->yOffset == 72 &&
+                      cs->scroll.subPosX == 64 && cs->scroll.subPosY == 0,
+                  "fine on: expected tile (92,72) sub (64,0), got (%u,%u) "
+                  "sub (%d,%d)", vp->xOffset, vp->yOffset, cs->scroll.subPosX,
+                  cs->scroll.subPosY);
+    UT_ASSERT_MSG(vp->needRecalc, "a whole-square change did not ask for a "
+                                  "recalc");
+
+    /* Fine off: the game pixel, the middle of the square, sub 0. Same tile,
+     * so no recalc. */
+    vp->needRecalc = FALSE;
+    clientSimSetFineTankPositions(cs, false);
+    clientSimFollowAllyView(cs);
+    UT_ASSERT_MSG(vp->xOffset == 92 && vp->yOffset == 72 &&
+                      cs->scroll.subPosX == 0 && cs->scroll.subPosY == 0,
+                  "fine off: expected tile (92,72) sub (0,0), got (%u,%u) "
+                  "sub (%d,%d)", vp->xOffset, vp->yOffset, cs->scroll.subPosX,
+                  cs->scroll.subPosY);
+    UT_ASSERT_MSG(!vp->needRecalc, "a move inside the square asked for a "
+                                   "recalc");
+
+    /* Fine on again, a part of a square only: still no recalc. */
+    clientSimSetFineTankPositions(cs, true);
+    row->fineX = (WORLD)(vc_world(100) + 100);
+    clientSimFollowAllyView(cs);
+    UT_ASSERT_MSG(vp->xOffset == 92 && cs->scroll.subPosX == 100 &&
+                      !vp->needRecalc,
+                  "a part-square move: tile %u sub %d recalc %d", vp->xOffset,
+                  cs->scroll.subPosX, (int)vp->needRecalc);
+
+    /* Into the next square: the tile moves and a recalc is asked for. */
+    row->fineX = (WORLD)(vc_world(101) + 8);
+    clientSimFollowAllyView(cs);
+    UT_ASSERT_MSG(vp->xOffset == 93 && cs->scroll.subPosX == 8 &&
+                      vp->needRecalc,
+                  "the next square: tile %u sub %d recalc %d", vp->xOffset,
+                  cs->scroll.subPosX, (int)vp->needRecalc);
+
+    /* Not in the ally view: nothing moves. */
+    vp->needRecalc = FALSE;
+    vp->viewKind = VIEW_KIND_TANK;
+    row->fineX = vc_world(150);
+    clientSimFollowAllyView(cs);
+    UT_ASSERT_MSG(vp->xOffset == 93 && !vp->needRecalc,
+                  "the tank view was moved by the ally follow");
+
+    scrollSetSubTilePrecision(saved);
+    clientSimDestroy(cs);
+    return 0;
+}
