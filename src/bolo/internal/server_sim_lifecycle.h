@@ -222,6 +222,22 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
  * returned pool. Returns 0 for team 0 or an out-of-range team. */
 uint8_t serverSimPickTeamNamingPool(ServerSim *sim, BYTE teamId, uint32_t choice);
 
+/* The team each of the dedicated server's -bots start bots goes on,
+ * written to botTeam[0..numBots-1] (numBots is clamped to MAX_TANKS).
+ * The inputs are the parsed command-line values. allyTeam is the
+ * -allybots team (0 = none). teamSizes[0..numTeamSizes-1] are the
+ * -teams a,b,c block sizes. numTeams is the -teams N count. Rules:
+ * every bot starts on allyTeam; with block sizes, the first
+ * teamSizes[0] bots go on team 1, the next teamSizes[1] on team 2, and
+ * the bots past the listed total keep allyTeam; else with numTeams >= 2
+ * bot i goes on team (i % numTeams) + 1. A team number of MAX_TANKS or
+ * more becomes team 1, as serverSimSetTeamBatch does. The start-up
+ * code uses this one table both to name the bots and to place them on
+ * their teams. Uses no ServerSim and draws no random numbers. */
+void serverSimStartBotTeams(int numBots, int allyTeam,
+                            const int *teamSizes, int numTeamSizes,
+                            int numTeams, int *botTeam);
+
 /* Clear a team's metadata back to zero (in_use=0, color=0, pool=0,
  * empty name), publish CTRL_LOBBY_TEAM_META, and clear humans' ready
  * state. Callers (UDP PACKET_LOBBY_TEAM_CLEAR handler, SP-host

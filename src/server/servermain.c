@@ -3403,30 +3403,13 @@ int main(int argc, char **argv) {
        * handed to lobbyBotPoolPick. (numBots is clamped to MAX_TANKS above,
        * so botNames is always in bounds.) */
       char botNames[MAX_TANKS][64];
-      /* The team each bot is on once the placement below has run: the
-       * -allybots team, or the -teams block or round-robin team, which
-       * replaces it. The placement code below does the moves; this copy
-       * only tells the naming which pool to use. A team number past the
-       * last team becomes team 1, as serverSimSetTeamBatch does. */
+      /* The team each bot goes on: the -allybots team, or the -teams
+       * block or round-robin team, which replaces it. This one table
+       * tells the naming which pool to use and tells the placement below
+       * which team to put each bot on. */
       int botTeam[MAX_TANKS];
-      for (i = 0; i < numBots; i++) {
-        botTeam[i] = allyTeam;
-      }
-      if (numTeamSizes > 0) {
-        int bot = 0;
-        for (int t = 0; t < numTeamSizes; t++) {
-          for (int k = 0; k < teamSizes[t] && bot < numBots; k++) {
-            botTeam[bot++] = t + 1;
-          }
-        }
-      } else if (numTeams >= 2) {
-        for (i = 0; i < numBots; i++) {
-          botTeam[i] = (i % numTeams) + 1;
-        }
-      }
-      for (i = 0; i < numBots; i++) {
-        if (botTeam[i] >= MAX_TANKS) botTeam[i] = 1;
-      }
+      serverSimStartBotTeams(numBots, allyTeam, teamSizes, numTeamSizes,
+                             numTeams, botTeam);
       {
         static char usedStore[MAX_TANKS][64];
         const char *usedNames[MAX_TANKS];
@@ -3495,7 +3478,7 @@ int main(int argc, char **argv) {
            * pass converts matching teamNumber into alliances, and the lobby
            * protocol already broadcasts teamNumber to clients so the lobby
            * UI shows the bots on this team. */
-          serverSimSetTeamBatch(serverSim, (BYTE)i, (uint8_t)allyTeam);
+          serverSimSetTeamBatch(serverSim, (BYTE)i, (uint8_t)botTeam[i]);
         }
       }
       if (numBots <= 0) {
@@ -3504,12 +3487,10 @@ int main(int argc, char **argv) {
       } else if (numTeamSizes > 0) {
         /* Explicit per-team sizes: contiguous blocks. First teamSizes[0] bots
          * -> team 1, next teamSizes[1] -> team 2, etc. Bots past the listed
-         * total stay on team 0 (FFA). */
-        int bot = 0;
-        for (int t = 0; t < numTeamSizes; t++) {
-          for (int k = 0; k < teamSizes[t] && bot < numBots; k++) {
-            serverSimSetTeamBatch(serverSim, (BYTE)bot, (BYTE)(t + 1));
-            bot++;
+         * total stay on team 0 (FFA); botTeam[] holds 0 for them. */
+        for (i = 0; i < numBots; i++) {
+          if (botTeam[i] > 0) {
+            serverSimSetTeamBatch(serverSim, (BYTE)i, (BYTE)botTeam[i]);
           }
         }
         serverSimReapplyTeamAlliances(serverSim);
@@ -3520,7 +3501,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, ")\n");
       } else if (numTeams >= 2) {
         for (i = 0; i < numBots; i++) {
-          serverSimSetTeamBatch(serverSim, (BYTE)i, (BYTE)((i % numTeams) + 1));
+          serverSimSetTeamBatch(serverSim, (BYTE)i, (BYTE)botTeam[i]);
         }
         serverSimReapplyTeamAlliances(serverSim);
         fprintf(stderr, "Added %d bot(s) with brain '%s' (%d teams, round-robin)\n",

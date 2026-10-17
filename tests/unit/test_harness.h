@@ -1171,6 +1171,7 @@ int run_lobby_default_sides_map_change(void);
 int run_lobby_default_sides_map_change_repeated(void);
 int run_lobby_default_sides_same_side_pick_kept(void);
 int run_lobby_ds_bot_team_naming_pools(void);
+int run_lobby_ds_bot_start_teams(void);
 
 /* Team start sides end to end (test_starts_side_integration.c): lobby
  * reservations, the batch's side table and the spawn scatter put a north
