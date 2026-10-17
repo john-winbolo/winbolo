@@ -86,7 +86,7 @@ scenario = {
     .. "dead pillboxes, fort up in the forest.",
   api  = 1,
   author  = "WinBolo",
-  updated = "2026-10-14T11:47Z",
+  updated = "2026-10-17T00:04Z",
   -- This file ends its own round, from on_tick, when the last wave is beaten
   -- or the defenders are wiped out, so it is a scenario rather than a mod.
   -- Written out rather than left to the default, because the default is what
@@ -290,7 +290,9 @@ local CAMP = {
 --    readily, or effectively never. An attacker that comes back with forty
 --    of everything has nothing to go back for, so the multiplier has nothing
 --    left to do — and this is the honest way round, because it changes the
---    world rather than lying to the brain about a price.
+--    world rather than lying to the brain about a price. A per-wave
+--    `refuel` token is still available for testing (WAVE_REFUEL_BY_WAVE
+--    below); it is off by default and sends 1.00, the brain's default.
 --
 -- 2. THE TOKENS. Everything else the old host told a wave bot still reaches
 --    it. spawn_bot's `init` table arrives in the brain as the BRAIN_INIT
@@ -313,6 +315,14 @@ local WAVE_NOCLAIM = { [1] = true, [2] = true }  -- ignore allies' dead-pill cla
 -- brain's "blitzonly" flag). Dead-pill grabs are not affected. Empty = off;
 -- { [1] = true } makes wave 1 blitz-only.
 local WAVE_BLITZ_ONLY = {}
+
+-- Per-wave refuel cost multiplier: the brain's refuel=X token, which scales
+-- the whole refuel goal group (refuel_at_base + flee_to_base). 2 = the bot
+-- goes home for supplies less readily. Every wave sends the token, 1.0 when
+-- not listed, because the brain does not reset it between waves: a resumed
+-- runner would otherwise carry wave 2's value into wave 3. Empty = off (1.0
+-- on every wave); { [2] = 2.0 } doubles the cost on wave 2.
+local WAVE_REFUEL_BY_WAVE = {}
 
 -- Waves fielded entirely as pill suiciders. Empty on purpose: waves 2 and 4
 -- used to be, and it made those two rounds play as one long pill rush
@@ -347,28 +357,39 @@ scenario.lobby.teams[2].init = {
 }
 
 -- The orders for one wave, handed to an attacker through game.bot_init the
--- tick after it lands. Every wave sends the WHOLE set, the bare flags
--- included by their absence: the brain resets the ones it owns before it
--- applies a runtime table, so a flag left out here is a flag turned off
--- rather than one left standing from the last wave.
-local function wave_init(w)
+-- tick after it lands. n_attackers is the size of the wave's roster. Every
+-- wave sends the WHOLE set, the bare flags included by their absence: the
+-- brain resets the ones it owns before it applies a runtime table, so a flag
+-- left out here is a flag turned off rather than one left standing from the
+-- last wave.
+local function wave_init(w, n_attackers)
+  -- A blitz can only form from the wave's own attackers, and a short roster
+  -- fields fewer than ten. Lower the blitz minimum to the number of
+  -- attackers, but not below WAVE_BLITZ_MIN (this script's own floor). If the
+  -- wave still has fewer attackers than that minimum, no blitz can form, so
+  -- the wave is not made blitz-only: its attackers would never attack a pill.
+  local blitz_min = WAVE_BLITZ_MIN_BY_WAVE[w] or WAVE_BLITZ_MIN
+  if blitz_min > n_attackers then
+    blitz_min = math.max(n_attackers, WAVE_BLITZ_MIN)
+  end
+  -- The brain ignores a blitz= token whose minimum is above its maximum.
+  blitz_min = math.min(blitz_min, WAVE_BLITZ_MAX)
   local t = {
     portfolio   = WAVE_PORTFOLIO,
-    blitz       = string.format("%d/%d",
-                    WAVE_BLITZ_MIN_BY_WAVE[w] or WAVE_BLITZ_MIN,
-                    WAVE_BLITZ_MAX),
+    blitz       = string.format("%d/%d", blitz_min, WAVE_BLITZ_MAX),
     blitzsuiciders = tostring(WAVE_BLITZ_MIN_SUICIDERS_BY_WAVE[w]
                               or WAVE_BLITZ_MIN_SUICIDERS),
+    refuel      = string.format("%.2f", WAVE_REFUEL_BY_WAVE[w] or 1.0),
   }
   -- "1" is how a bare flag is written: the brain turns it into the word its
   -- parser matches, and a flag left out is off.
   if SUICIDER_WAVES[w] then t.suicider    = "1" end
   if WAVE_NOBLITZ[w]   then t.noblitz     = "1" end
   if WAVE_NOCLAIM[w]   then t.noclaimdead = "1" end
-  if WAVE_BLITZ_ONLY[w] then t.blitzonly  = "1" end
-  -- No `refuel` token. The loadout policy below is what keeps an attacker
-  -- from going home, and it does it by filling the tank rather than by
-  -- pricing the errand.
+  if WAVE_BLITZ_ONLY[w] and n_attackers >= blitz_min then t.blitzonly = "1" end
+  -- The loadout policy below is what mainly keeps an attacker from going
+  -- home: it fills the tank, so the attacker has no reason to go back for
+  -- supplies. The refuel token above only changes that cost for one wave.
   return t
 end
 
@@ -1296,7 +1317,7 @@ local function pump_spawn_queue(tick)
     -- The wave's orders, queued right behind the spawn. Both are roster ops
     -- and the sim drains one a tick, so this lands the tick after the bot
     -- does — by which time it is on the field, which is what bot_init needs.
-    game.bot_init(p, wave_init(wave))
+    game.bot_init(p, wave_init(wave, #seats))
     wave_bots[p] = true
     spawned[#spawned + 1] = p
     -- The first attacker ashore takes the wave's whole estate and keeps it
