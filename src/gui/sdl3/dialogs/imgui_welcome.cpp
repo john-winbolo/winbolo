@@ -486,7 +486,9 @@ extern "C" int imguiWelcomeShow(void) {
                 /* A browser tab cannot host or find a game on the LAN. */
                 { STR_DLGWELCOME_LOCAL,     RESULT_LAN,          true,             nullptr },
 #endif
-#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)  /* iOS builds the editor */
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)
+                /* iOS builds the editor, but its touch input is not usable
+                   yet, so the entry is hidden there until it is. */
                 { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    showDesktopTools, nullptr },
 #endif
                 /* Android does not compile the log browser or the reel. */
