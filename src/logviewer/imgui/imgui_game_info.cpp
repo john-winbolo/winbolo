@@ -41,6 +41,8 @@ extern "C" {
     bool lv_playersIsInUse(unsigned char playerNumber);
     bool lv_screenGetLoggedPlayerName(unsigned char slot, char *dest, size_t destSize);
     int  lv_screenBotChip(unsigned char slot);
+    void lv_clientMutexWaitFor(void);
+    void lv_clientMutexRelease(void);
 }
 
 /* Game info state */
@@ -533,7 +535,10 @@ static void game_info_draw_scripts(void) {
         simRulesPhrase(ch->index, ch->value, phrase, sizeof(phrase));
 
         MessageArgs args = {};
+        /* A live feed adds to the tick table on the timer thread. */
+        lv_clientMutexWaitFor();
         args.number = (int)lv_screenServerTickAt(ch->ms);
+        lv_clientMutexRelease();
         /* The phrase comes from the translation table, so it can hold
            characters of more than one byte: cut both where a character
            ends. */

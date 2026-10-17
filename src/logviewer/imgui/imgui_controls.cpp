@@ -749,9 +749,13 @@ void lv_imgui_controls_window(void) {
                  * older recording has none: then 20 ms steps from the start
                  * of the log, the step of the , and . keys. */
                 {
+                    /* A live feed adds to the tick table on the timer
+                     * thread, so the table is read under the mutex. */
+                    lv_clientMutexWaitFor();
                     uint32_t ms = lv_screenGetTimeRunning();
                     uint32_t tick = lv_screenHasServerTick() ? lv_screenServerTickAt(ms)
                                                              : ms / 20u;
+                    lv_clientMutexRelease();
                     snprintf(part[2], sizeof(part[2]), "%s %u",
                              langGetText(STR_DLGSYSINFO_TICK), (unsigned)tick);
                 }
