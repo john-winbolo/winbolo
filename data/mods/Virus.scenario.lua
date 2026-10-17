@@ -75,8 +75,8 @@
 -- down, and leaving the deep sea starts the count again. The host can change
 -- the ten in the lobby. Every start is on deep sea, so a survivor who has just
 -- respawned is not counted until they first reach land, or until twenty
--- seconds have gone by, whichever comes first: a death that was not an
--- infected shell must not turn them by the back door.
+-- seconds have gone by, whichever comes first: a death that did not turn
+-- them must not lead to a deep sea turn straight after the respawn.
 --
 -- Nothing here names a square, a pillbox or a base, so it plays over whatever
 -- map the host has committed.
@@ -610,12 +610,14 @@ end
 -- Before the first one turns there is no horde, so nothing here can end the
 -- round and nobody is the last survivor yet.
 --
--- shot is true when the last one turned by being shot dead. Their tank is
--- going up, and the round waits for that: a fireball runs 40 steps of 4 ticks
+-- shot is true when the last one turned with a death that named who did it:
+-- an infected shell kill, a death while bitten, or a credited drowning. Their
+-- tank is going up, and the round waits for that: a fireball runs 40 steps of 4 ticks
 -- (tank_explosion_length, tank_explosion_update_ticks, on the sim's 50 a
 -- second), then bursts for 8 frames of 6 ticks, about 2.1 s in all, the same
 -- big or small. BOOM_SECONDS is that and some room for the client to draw it.
--- Any other turn (deep sea, the help, a leave) has no explosion to wait for.
+-- After a drowning there is no explosion, and the wait does no harm. Any
+-- other turn (deep sea, the help, a leave) has no explosion to wait for.
 local function check_the_end(shot)
   if over or not running or not loose then
     return
@@ -828,7 +830,7 @@ local function infect(p, by)
   -- A bot is handed the horde's word straight away rather than on the next
   -- pass, so it comes back from its three seconds dead not looking for a base.
   hand_word(p)
-  -- Only a shell kill names who did it, so by says the tank is going up.
+  -- by is set only for a death that named who did it (see check_the_end).
   check_the_end(by ~= nil)
 end
 
@@ -1149,7 +1151,7 @@ function on_start()
     end
   end
 
-  -- Three lines, because a player who has not read the scenario has to be able
+  -- Several lines, because a player who has not read the scenario has to be able
   -- to play it from what the newswire tells them in the first ten seconds.
   game.message("Virus: one of you is infected in ten seconds. " ..
                "Everyone they kill is infected too.")
@@ -1523,7 +1525,7 @@ scenario = {
                 "tougher.",
   api         = 1,
   author      = "WinBolo",
-  updated     = "2026-10-17T14:30Z",
+  updated     = "2026-10-17T14:32Z",
   kind        = "scenario",
   game        = "open",
 
