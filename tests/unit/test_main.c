@@ -879,6 +879,8 @@ static const UnitTestEntry s_tests[] = {
     { "lobby_default_sides_map_change", run_lobby_default_sides_map_change },
     { "lobby_default_sides_map_change_repeated", run_lobby_default_sides_map_change_repeated },
     { "lobby_default_sides_same_side_pick_kept", run_lobby_default_sides_same_side_pick_kept },
+    { "lobby_ds_bot_team_naming_pools", run_lobby_ds_bot_team_naming_pools },
+    { "lobby_ds_bot_start_teams", run_lobby_ds_bot_start_teams },
     { "starts_side_end_to_end_four_v_twelve",    run_starts_side_end_to_end_four_v_twelve    },
     { "starts_side_region_sweep",                run_starts_side_region_sweep                },
     { "starts_side_unsided_kept_off_chosen_side",

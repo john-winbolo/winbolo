@@ -3390,25 +3390,53 @@ int main(int argc, char **argv) {
           fprintf(stderr, "Warning: -bot-init given with no value; ignoring\n");
         }
       }
-      /* Draw themed names from one randomly-chosen pool so a -bots
-       * server gets varied names instead of "Bot 1..N". The name draws are
-       * wrapped in a bolo_rand save/restore so this cosmetic randomness leaves
-       * the deterministic game stream (tank placement, etc.) untouched for a
-       * given -seed — only the game sim should advance the shared PRNG. Names
-       * are picked up front, then the bots are added with them. usedStore
-       * backs the uniqueness list handed to lobbyBotPoolPick. (numBots is
-       * clamped to MAX_TANKS above, so botNames is always in bounds.) */
+      /* Draw themed names so a -bots server gets varied names instead of
+       * "Bot 1..N". Each team that gets bots draws a random pool of its
+       * own, one no other team holds (the lobby's rule), and the pool is
+       * stored on the team so the lobby's "Bot naming" label and Add Bot
+       * use the same pool as these names. Bots on no team share one random
+       * pool. The draws are wrapped in a bolo_rand save/restore so this
+       * cosmetic randomness leaves the deterministic game stream (tank
+       * placement, etc.) untouched for a given -seed — only the game sim
+       * should advance the shared PRNG. Names are picked up front, then the
+       * bots are added with them. usedStore backs the uniqueness list
+       * handed to lobbyBotPoolPick. (numBots is clamped to MAX_TANKS above,
+       * so botNames is always in bounds.) */
       char botNames[MAX_TANKS][64];
+      /* The team each bot goes on: the -allybots team, or the -teams
+       * block or round-robin team, which replaces it. This one table
+       * tells the naming which pool to use and tells the placement below
+       * which team to put each bot on. */
+      int botTeam[MAX_TANKS];
+      serverSimStartBotTeams(numBots, allyTeam, teamSizes, numTeamSizes,
+                             numTeams, botTeam);
       {
         static char usedStore[MAX_TANKS][64];
         const char *usedNames[MAX_TANKS];
         int usedCount = 0;
         BoloRandState rngBeforeNaming;
-        int botPool;
+        int teamPool[MAX_TANKS];
+        int noTeamPool = -1;
+        for (i = 0; i < MAX_TANKS; i++) {
+          teamPool[i] = -1;
+        }
         bolo_rand_save(&rngBeforeNaming);
-        botPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
         for (i = 0; i < numBots; i++) {
           char picked[64];
+          int team = botTeam[i];
+          int botPool;
+          if (team == 0) {
+            if (noTeamPool < 0) {
+              noTeamPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
+            }
+            botPool = noTeamPool;
+          } else {
+            if (teamPool[team] < 0) {
+              teamPool[team] = (int)serverSimPickTeamNamingPool(
+                  serverSim, (BYTE)team, bolo_rand_below(0x10000u));
+            }
+            botPool = teamPool[team];
+          }
           lobbyBotPoolPick(botPool, usedNames, usedCount, picked, sizeof(picked));
           if (picked[0] != '\0') {
             snprintf(botNames[i], sizeof(botNames[i]), "%s", picked);
@@ -3450,7 +3478,7 @@ int main(int argc, char **argv) {
            * pass converts matching teamNumber into alliances, and the lobby
            * protocol already broadcasts teamNumber to clients so the lobby
            * UI shows the bots on this team. */
-          serverSimSetTeamBatch(serverSim, (BYTE)i, (uint8_t)allyTeam);
+          serverSimSetTeamBatch(serverSim, (BYTE)i, (uint8_t)botTeam[i]);
         }
       }
       if (numBots <= 0) {
@@ -3459,12 +3487,10 @@ int main(int argc, char **argv) {
       } else if (numTeamSizes > 0) {
         /* Explicit per-team sizes: contiguous blocks. First teamSizes[0] bots
          * -> team 1, next teamSizes[1] -> team 2, etc. Bots past the listed
-         * total stay on team 0 (FFA). */
-        int bot = 0;
-        for (int t = 0; t < numTeamSizes; t++) {
-          for (int k = 0; k < teamSizes[t] && bot < numBots; k++) {
-            serverSimSetTeamBatch(serverSim, (BYTE)bot, (BYTE)(t + 1));
-            bot++;
+         * total stay on team 0 (FFA); botTeam[] holds 0 for them. */
+        for (i = 0; i < numBots; i++) {
+          if (botTeam[i] > 0) {
+            serverSimSetTeamBatch(serverSim, (BYTE)i, (BYTE)botTeam[i]);
           }
         }
         serverSimReapplyTeamAlliances(serverSim);
@@ -3475,7 +3501,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, ")\n");
       } else if (numTeams >= 2) {
         for (i = 0; i < numBots; i++) {
-          serverSimSetTeamBatch(serverSim, (BYTE)i, (BYTE)((i % numTeams) + 1));
+          serverSimSetTeamBatch(serverSim, (BYTE)i, (BYTE)botTeam[i]);
         }
         serverSimReapplyTeamAlliances(serverSim);
         fprintf(stderr, "Added %d bot(s) with brain '%s' (%d teams, round-robin)\n",
