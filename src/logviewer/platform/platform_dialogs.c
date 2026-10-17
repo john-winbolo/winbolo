@@ -205,6 +205,7 @@ int lv_platform_dialog_question(const char* title, const char* message) {
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include "../lv_shell_quote.h"
 
 /* Try to run a command via popen and read one line of output.
  * Returns 1 if a non-empty line was read, 0 otherwise. */
@@ -230,52 +231,80 @@ static int command_exists(const char *cmd) {
     return system(buf) == 0;
 }
 
+/* The command builders below put each piece of text into the command
+ * through lvShellQuote (and, for osascript, lvAppleScriptQuote first), so
+ * that a name such as O'Brien, or one holding $(...) or a backquote, is
+ * only text to the shell. Each gives false when the command does not fit
+ * in the buffer; the caller then does not run it. */
+
+/* Quoted text: a piece of up to LV_DIALOG_TEXT_MAX bytes can grow four
+ * times (each ' becomes '\''), plus the quotes. */
+#define LV_DIALOG_TEXT_MAX 1024
+#define LV_DIALOG_QUOTED_MAX (LV_DIALOG_TEXT_MAX * 4 + 3)
+#define LV_DIALOG_CMD_MAX (LV_DIALOG_QUOTED_MAX * 3 + 256)
+
+static int fits(int written, size_t buf_size) {
+    return written >= 0 && (size_t)written < buf_size;
+}
+
 /* Build a zenity open-file command */
-static void build_zenity_open_cmd(char *buf, size_t buf_size,
-                                  const char *title, const char *filter_ext) {
+static int build_zenity_open_cmd(char *buf, size_t buf_size,
+                                 const char *title, const char *filter_ext) {
+    char qtitle[LV_DIALOG_QUOTED_MAX], qfilter[LV_DIALOG_QUOTED_MAX];
+    if (!lvShellQuote(qtitle, sizeof(qtitle), title) ||
+        !lvShellQuote(qfilter, sizeof(qfilter), filter_ext)) return 0;
     /* filter_ext comes in as "*.WBV" — zenity wants the bare pattern */
-    snprintf(buf, buf_size,
-             "zenity --file-selection --title=\"%s\" --file-filter=\"%s\" 2>/dev/null",
-             title, filter_ext);
+    return fits(snprintf(buf, buf_size,
+                         "zenity --file-selection --title=%s --file-filter=%s 2>/dev/null",
+                         qtitle, qfilter), buf_size);
 }
 
 /* Build a zenity save-file command */
-static void build_zenity_save_cmd(char *buf, size_t buf_size,
-                                  const char *title, const char *default_name) {
+static int build_zenity_save_cmd(char *buf, size_t buf_size,
+                                 const char *title, const char *default_name) {
+    char qtitle[LV_DIALOG_QUOTED_MAX], qname[LV_DIALOG_QUOTED_MAX];
+    if (!lvShellQuote(qtitle, sizeof(qtitle), title)) return 0;
     if (default_name && default_name[0]) {
-        snprintf(buf, buf_size,
-                 "zenity --file-selection --save --confirm-overwrite"
-                 " --title=\"%s\" --filename=\"%s\" 2>/dev/null",
-                 title, default_name);
-    } else {
-        snprintf(buf, buf_size,
-                 "zenity --file-selection --save --confirm-overwrite"
-                 " --title=\"%s\" 2>/dev/null",
-                 title);
+        if (!lvShellQuote(qname, sizeof(qname), default_name)) return 0;
+        return fits(snprintf(buf, buf_size,
+                             "zenity --file-selection --save --confirm-overwrite"
+                             " --title=%s --filename=%s 2>/dev/null",
+                             qtitle, qname), buf_size);
     }
+    return fits(snprintf(buf, buf_size,
+                         "zenity --file-selection --save --confirm-overwrite"
+                         " --title=%s 2>/dev/null",
+                         qtitle), buf_size);
 }
 
 /* Build a kdialog open-file command */
-static void build_kdialog_open_cmd(char *buf, size_t buf_size,
-                                   const char *title, const char *filter_ext) {
-    snprintf(buf, buf_size,
-             "kdialog --getopenfilename . \"%s\" --title \"%s\" 2>/dev/null",
-             filter_ext, title);
+static int build_kdialog_open_cmd(char *buf, size_t buf_size,
+                                  const char *title, const char *filter_ext) {
+    char qtitle[LV_DIALOG_QUOTED_MAX], qfilter[LV_DIALOG_QUOTED_MAX];
+    if (!lvShellQuote(qtitle, sizeof(qtitle), title) ||
+        !lvShellQuote(qfilter, sizeof(qfilter), filter_ext)) return 0;
+    return fits(snprintf(buf, buf_size,
+                         "kdialog --getopenfilename . %s --title %s 2>/dev/null",
+                         qfilter, qtitle), buf_size);
 }
 
 /* Build a kdialog save-file command */
-static void build_kdialog_save_cmd(char *buf, size_t buf_size,
-                                   const char *title, const char *filter_ext,
-                                   const char *default_name) {
+static int build_kdialog_save_cmd(char *buf, size_t buf_size,
+                                  const char *title, const char *filter_ext,
+                                  const char *default_name) {
+    char qtitle[LV_DIALOG_QUOTED_MAX], qfilter[LV_DIALOG_QUOTED_MAX];
+    char qname[LV_DIALOG_QUOTED_MAX];
+    if (!lvShellQuote(qtitle, sizeof(qtitle), title) ||
+        !lvShellQuote(qfilter, sizeof(qfilter), filter_ext)) return 0;
     if (default_name && default_name[0]) {
-        snprintf(buf, buf_size,
-                 "kdialog --getsavefilename \"%s\" \"%s\" --title \"%s\" 2>/dev/null",
-                 default_name, filter_ext, title);
-    } else {
-        snprintf(buf, buf_size,
-                 "kdialog --getsavefilename . \"%s\" --title \"%s\" 2>/dev/null",
-                 filter_ext, title);
+        if (!lvShellQuote(qname, sizeof(qname), default_name)) return 0;
+        return fits(snprintf(buf, buf_size,
+                             "kdialog --getsavefilename %s %s --title %s 2>/dev/null",
+                             qname, qfilter, qtitle), buf_size);
     }
+    return fits(snprintf(buf, buf_size,
+                         "kdialog --getsavefilename . %s --title %s 2>/dev/null",
+                         qfilter, qtitle), buf_size);
 }
 
 #ifdef __APPLE__
@@ -290,29 +319,44 @@ static void strip_glob_ext(const char *filter_ext, char *out, size_t size) {
     out[i] = '\0';
 }
 
-static void build_osascript_open_cmd(char *buf, size_t buf_size,
-                                     const char *title, const char *filter_ext) {
-    char ext[32];
-    strip_glob_ext(filter_ext, ext, sizeof(ext));
-    snprintf(buf, buf_size,
-             "osascript -e 'POSIX path of"
-             " (choose file of type {\"%s\"} with prompt \"%s\")' 2>/dev/null",
-             ext, title);
+/* Run an AppleScript: the script is one shell word after -e. */
+static int build_osascript_cmd(char *buf, size_t buf_size, const char *script) {
+    char qscript[LV_DIALOG_QUOTED_MAX * 2];
+    if (!lvShellQuote(qscript, sizeof(qscript), script)) return 0;
+    return fits(snprintf(buf, buf_size, "osascript -e %s 2>/dev/null", qscript),
+                buf_size);
 }
 
-static void build_osascript_save_cmd(char *buf, size_t buf_size,
-                                     const char *title, const char *default_name) {
+static int build_osascript_open_cmd(char *buf, size_t buf_size,
+                                    const char *title, const char *filter_ext) {
+    char ext[32];
+    char aext[LV_DIALOG_QUOTED_MAX], atitle[LV_DIALOG_QUOTED_MAX];
+    char script[LV_DIALOG_QUOTED_MAX * 2];
+    strip_glob_ext(filter_ext, ext, sizeof(ext));
+    if (!lvAppleScriptQuote(aext, sizeof(aext), ext) ||
+        !lvAppleScriptQuote(atitle, sizeof(atitle), title)) return 0;
+    if (!fits(snprintf(script, sizeof(script),
+                       "POSIX path of (choose file of type {%s} with prompt %s)",
+                       aext, atitle), sizeof(script))) return 0;
+    return build_osascript_cmd(buf, buf_size, script);
+}
+
+static int build_osascript_save_cmd(char *buf, size_t buf_size,
+                                    const char *title, const char *default_name) {
+    char atitle[LV_DIALOG_QUOTED_MAX], aname[LV_DIALOG_QUOTED_MAX];
+    char script[LV_DIALOG_QUOTED_MAX * 2];
+    if (!lvAppleScriptQuote(atitle, sizeof(atitle), title)) return 0;
     if (default_name && default_name[0]) {
-        snprintf(buf, buf_size,
-                 "osascript -e 'POSIX path of"
-                 " (choose file name default name \"%s\" with prompt \"%s\")' 2>/dev/null",
-                 default_name, title);
+        if (!lvAppleScriptQuote(aname, sizeof(aname), default_name)) return 0;
+        if (!fits(snprintf(script, sizeof(script),
+                           "POSIX path of (choose file name default name %s with prompt %s)",
+                           aname, atitle), sizeof(script))) return 0;
     } else {
-        snprintf(buf, buf_size,
-                 "osascript -e 'POSIX path of"
-                 " (choose file name with prompt \"%s\")' 2>/dev/null",
-                 title);
+        if (!fits(snprintf(script, sizeof(script),
+                           "POSIX path of (choose file name with prompt %s)",
+                           atitle), sizeof(script))) return 0;
     }
+    return build_osascript_cmd(buf, buf_size, script);
 }
 #endif /* __APPLE__ */
 
@@ -396,25 +440,25 @@ int lv_platform_dialog_open_file(const char* title,
     (void)default_ext; (void)initial_dir;
     if (!g_initialized) return PLATFORM_DIALOG_ERROR;
 
-    char cmd[1024];
+    static char cmd[LV_DIALOG_CMD_MAX];
 
 #ifdef __APPLE__
-    build_osascript_open_cmd(cmd, sizeof(cmd), title, filter_ext);
-    if (run_popen_dialog(cmd, out_path, out_size))
+    if (build_osascript_open_cmd(cmd, sizeof(cmd), title, filter_ext) &&
+        run_popen_dialog(cmd, out_path, out_size))
         return PLATFORM_DIALOG_OK;
     return PLATFORM_DIALOG_CANCEL;
 #else
     if (command_exists("zenity")) {
-        build_zenity_open_cmd(cmd, sizeof(cmd), title, filter_ext);
-        if (run_popen_dialog(cmd, out_path, out_size))
+        if (build_zenity_open_cmd(cmd, sizeof(cmd), title, filter_ext) &&
+            run_popen_dialog(cmd, out_path, out_size))
             return PLATFORM_DIALOG_OK;
         /* zenity ran but user cancelled */
         return PLATFORM_DIALOG_CANCEL;
     }
 
     if (command_exists("kdialog")) {
-        build_kdialog_open_cmd(cmd, sizeof(cmd), title, filter_ext);
-        if (run_popen_dialog(cmd, out_path, out_size))
+        if (build_kdialog_open_cmd(cmd, sizeof(cmd), title, filter_ext) &&
+            run_popen_dialog(cmd, out_path, out_size))
             return PLATFORM_DIALOG_OK;
         return PLATFORM_DIALOG_CANCEL;
     }
@@ -447,25 +491,25 @@ int lv_platform_dialog_save_file(const char* title,
         out_path[0] = '\0';
     }
 
-    char cmd[1024];
+    static char cmd[LV_DIALOG_CMD_MAX];
 
 #ifdef __APPLE__
-    build_osascript_save_cmd(cmd, sizeof(cmd), title, out_path[0] ? out_path : default_name);
-    if (run_popen_dialog(cmd, out_path, out_size))
+    if (build_osascript_save_cmd(cmd, sizeof(cmd), title, out_path[0] ? out_path : default_name) &&
+        run_popen_dialog(cmd, out_path, out_size))
         return PLATFORM_DIALOG_OK;
     return PLATFORM_DIALOG_CANCEL;
 #else
     if (command_exists("zenity")) {
-        build_zenity_save_cmd(cmd, sizeof(cmd), title, out_path[0] ? out_path : default_name);
-        if (run_popen_dialog(cmd, out_path, out_size))
+        if (build_zenity_save_cmd(cmd, sizeof(cmd), title, out_path[0] ? out_path : default_name) &&
+            run_popen_dialog(cmd, out_path, out_size))
             return PLATFORM_DIALOG_OK;
         return PLATFORM_DIALOG_CANCEL;
     }
 
     if (command_exists("kdialog")) {
-        build_kdialog_save_cmd(cmd, sizeof(cmd), title, filter_ext,
-                               out_path[0] ? out_path : default_name);
-        if (run_popen_dialog(cmd, out_path, out_size))
+        if (build_kdialog_save_cmd(cmd, sizeof(cmd), title, filter_ext,
+                                   out_path[0] ? out_path : default_name) &&
+            run_popen_dialog(cmd, out_path, out_size))
             return PLATFORM_DIALOG_OK;
         return PLATFORM_DIALOG_CANCEL;
     }

@@ -4300,6 +4300,8 @@ int run_lv_save_name_roster(void);
 int run_lv_save_name_scan(void);
 /* File paths as UTF-8 on every system (test_lv_utf8_path.c). */
 int run_lv_utf8_path(void);
+/* Quoting for the shell and AppleScript (test_lv_shell_quote.c). */
+int run_lv_shell_quote(void);
 /* The kill and death tallies go back with a seek (test_lv_presentation.c). */
 int run_lv_kill_tally_seek_back(void);
 /* Whether a tank is alive goes back with a seek (test_lv_presentation.c). */
