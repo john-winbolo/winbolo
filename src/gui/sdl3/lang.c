@@ -2733,6 +2733,8 @@ static const LangEntry langTable[] = {
     {2764, "The game finder shows this name instead of your address. Up to 32 letters (fewer with accented letters or other scripts). Leave it empty to show your address."},
     {2765, "Description"},
     {2766, "The game finder shows this when a player points at or selects your game. Up to 200 letters (fewer with accented letters or other scripts)."},
+    {2798, "Spectator Delay (seconds)"},
+    {2799, "How many seconds behind the game spectators watch, so they cannot tell players where everyone is. 0 shows the game live. Up to 600."},
     {2767, "Address"},
     {2768, "The server always runs this script. It cannot be removed."},
     {2769, "The server always runs the scenario that is in this round"},

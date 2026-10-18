@@ -648,6 +648,10 @@ int run_spectator_replay(void);
  * -specdelay flow through ServerInstanceConfig into the sim and back via the
  * getters, with seconds->ticks conversion and the no-fallback zero semantics. */
 int run_spectator_config(void);
+/* The desktop host's [HOSTING] "Spectator Delay" preference
+ * (test_spectator_config.c): hostingSpecDelayResolve's range and fallbacks,
+ * and the 30 second default reaching the sim. */
+int run_spectator_delay_pref(void);
 
 /* Spectator JOIN handshake (test_spectator_join.c): a JOIN_FLAG_SPECTATOR
  * join registers a tankless viewer (slot 0xFF, no tank slot), honours the
