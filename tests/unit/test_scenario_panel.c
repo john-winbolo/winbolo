@@ -1016,6 +1016,53 @@ int run_scenario_text_pointer_on_handle(void) {
     return 0;
 }
 
+/* When the desktop Scenario Text window is up: while the player has it
+ * shown and the round lists it, with or without a line; while there is a
+ * line; and while the player is busy with it. Never while it is closed. */
+int run_scenario_text_window_shown(void) {
+    /* Listed with no line and not busy: up, empty, so it can be moved. */
+    UT_ASSERT(scnTextWindowShown(true, true, false, false));
+    /* Listed with a line. */
+    UT_ASSERT(scnTextWindowShown(true, true, true, false));
+    /* Not listed and no line: not up (outside a scenario round). */
+    UT_ASSERT(!scnTextWindowShown(true, false, false, false));
+    /* A line or the player busy with it keeps it up. */
+    UT_ASSERT(scnTextWindowShown(true, false, true, false));
+    UT_ASSERT(scnTextWindowShown(true, false, false, true));
+    /* Closed by the player: never up. */
+    UT_ASSERT(!scnTextWindowShown(false, true, true, true));
+    UT_ASSERT(!scnTextWindowShown(false, true, false, false));
+    UT_ASSERT(!scnTextWindowShown(false, false, true, false));
+    return 0;
+}
+
+/* The faint edge: with a line, only when there is a backing; with no line,
+ * only while the handles show, at any background opacity. */
+int run_scenario_text_edge_shown(void) {
+    UT_ASSERT(scnTextEdgeShown(true, 50, false));
+    UT_ASSERT(scnTextEdgeShown(true, 1, true));
+    UT_ASSERT(!scnTextEdgeShown(true, 0, false));
+    UT_ASSERT(!scnTextEdgeShown(true, 0, true));
+    UT_ASSERT(scnTextEdgeShown(false, 0, true));
+    UT_ASSERT(scnTextEdgeShown(false, 100, true));
+    UT_ASSERT(!scnTextEdgeShown(false, 0, false));
+    UT_ASSERT(!scnTextEdgeShown(false, 100, false));
+    return 0;
+}
+
+/* When the place is written: a drag always; a window moved before also
+ * while it has a line; a window with no line never by itself. */
+int run_scenario_text_save_place(void) {
+    UT_ASSERT(scnTextSavePlace(true, false, false));
+    UT_ASSERT(scnTextSavePlace(true, true, false));
+    UT_ASSERT(scnTextSavePlace(true, false, true));
+    UT_ASSERT(scnTextSavePlace(false, true, true));
+    UT_ASSERT(!scnTextSavePlace(false, true, false));
+    UT_ASSERT(!scnTextSavePlace(false, false, true));
+    UT_ASSERT(!scnTextSavePlace(false, false, false));
+    return 0;
+}
+
 /* The status line's text: the script's line, and with a countdown four
  * spaces and the time left as a panel countdown shows it. */
 int run_scenario_status_line(void) {

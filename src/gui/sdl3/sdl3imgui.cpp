@@ -5631,9 +5631,24 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * position named, and the share down is not used: it is
  * always on its own row, under the status line.
  *
- * The window shows only while there is a line to show,
- * which is how the scenario panel behaves, and stays up
- * while it is being dragged or its settings are open.
+ * In a round that lists the window in the menu (the round
+ * has a scenario or a mod, or has shown a line), the window
+ * stays up while the player has it shown, also when there
+ * is no line to show, so the player can move and resize it
+ * at any time (scnTextWindowShown in scenario_panel_draw.h).
+ * With no line it draws nothing: no lines, no backing and
+ * no edge, so the game view looks as it does with no
+ * window. While the pointer is on it, the bar, the gear,
+ * the X, the grip and the faint edge show, at any
+ * background opacity, so the player can see its size
+ * (scnTextEdgeShown). Its size with no line is the saved
+ * size, or with none saved, the size for the rows the round
+ * has used so far, or for one row when it has used none. A
+ * window with no line never saves its size or its place by
+ * itself (scnTextSavePlace). Outside such a round the
+ * window shows only while there is a line to show. In all
+ * rounds it stays up while it is being dragged or its
+ * settings are open.
  *
  * Tablet mode has no windows to drag: there the same
  * layout is drawn in a fixed rectangle at the top middle of
@@ -5891,14 +5906,17 @@ static void renderScenarioText(ClientSim *cs) {
         return;
     }
 
-    /* Up while there is a line to show, and while the player is busy with
-       it, so a drag or the opacity sliders are not cut off when a line
-       goes. */
+    /* Up while the round lists the window in the menu, with or without a
+       line, so the player can move and resize it when no line is on
+       screen; while there is a line to show; and while the player is busy
+       with it, so a drag or the opacity sliders are not cut off when a
+       line goes (scnTextWindowShown). */
+    const bool haveText = haveStatus || haveAnnounce;
     const bool busy = s_scnText.moving || s_scnText.resizing ||
                       s_scnText.settingsOpen ||
                       s_scnCloseAskOwner == SCN_TEXT_OWNER;
     const bool shown = gameFrontScnTextShown || !scnPanelCanReopen();
-    if (!shown || (!haveStatus && !haveAnnounce && !busy)) {
+    if (!scnTextWindowShown(shown, s_scnText.menuListed, haveText, busy)) {
         s_scnText.placed       = false;
         s_scnText.moving       = false;
         s_scnText.resizing     = false;
@@ -5908,7 +5926,10 @@ static void renderScenarioText(ClientSim *cs) {
 
     /* The game's own zoom, as the pixels it comes out at on screen, which
        sets the size the window has before the player resizes it: the text
-       at the size the announcement was always drawn at. */
+       at the size the announcement was always drawn at. srcH is for the
+       rows the round has used so far, and for one row when it has used
+       none (scnTextSourceHeight), so a window with no line has the size it
+       will have when the first line comes. */
     int rawZoom = sdl3DrawGetZoomFactor();
     if (rawZoom < 1) rawZoom = 1;
     float gameScale = 1.0f;
@@ -6032,13 +6053,15 @@ static void renderScenarioText(ClientSim *cs) {
 
     /* As the panel's window: no padding and no border, so the window's rect
        is the rectangle the lines are fitted into, and a backing that is
-       black at the player's background opacity. The bar and
+       black at the player's background opacity while there is a line to
+       show. With no line there is no backing. The bar and
        the grip are the only things that move or resize it. */
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleColor(
         ImGuiCol_WindowBg,
-        IM_COL32(0, 0, 0, scnBackingAlpha(s_scnText.bgPct)));
+        IM_COL32(0, 0, 0,
+                 haveText ? scnBackingAlpha(s_scnText.bgPct) : 0));
     const bool open = ImGui::Begin("##scenariotext", nullptr,
                                    ImGuiWindowFlags_NoTitleBar |
                                    ImGuiWindowFlags_NoResize |
@@ -6123,7 +6146,9 @@ static void renderScenarioText(ClientSim *cs) {
         /* Kept inside the main window. The place is saved, through the
            debounced window-settings path, once the player has moved the
            window: a window never moved keeps following the game view's top
-           middle. */
+           middle. With no line to show, only a drag saves it
+           (scnTextSavePlace), so a window with no line never changes the
+           saved place by itself. */
         const ImVec2 moved = ImGui::GetWindowPos();
         float keepX = moved.x, keepY = moved.y;
         if (keepX > display.x - w) keepX = display.x - w;
@@ -6139,7 +6164,7 @@ static void renderScenarioText(ClientSim *cs) {
            place as a move does. */
         const bool everMoved = gameFrontScnTextX >= 0 || gameFrontScnTextY >= 0;
         const bool dragging  = moveActive || resizeActive;
-        if ((dragging || everMoved) &&
+        if (scnTextSavePlace(dragging, everMoved, haveText) &&
             ((int)keepX != gameFrontScnTextX || (int)keepY != gameFrontScnTextY)) {
             gameFrontScnTextX = (int)keepX;
             gameFrontScnTextY = (int)keepY;
@@ -6167,9 +6192,12 @@ static void renderScenarioText(ClientSim *cs) {
                          haveStatus, text, haveAnnounce, announceShare,
                          announceFade);
 
-        /* The faint edge only when there is a backing: at 0% background
-           opacity the text stands on the map with no frame round it. */
-        if (s_scnText.bgPct > 0) {
+        /* The faint edge (scnTextEdgeShown). With a line, only when there
+           is a backing: at 0% background opacity the text stands on the map
+           with no frame round it. With no line, only while the handles
+           show, at any background opacity, so the player can see the
+           window's size. */
+        if (scnTextEdgeShown(haveText, s_scnText.bgPct, handlesVisible)) {
             dl->AddRect(pos, ImVec2(pos.x + w - 1.0f, pos.y + h - 1.0f),
                         IM_COL32(255, 255, 255, 40));
         }

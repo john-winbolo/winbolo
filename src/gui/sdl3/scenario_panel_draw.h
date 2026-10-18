@@ -388,6 +388,74 @@ static inline bool scnTextPointerOnHandle(float x, float y, float w, float h,
     return false;
 }
 
+/*********************************************************
+ *NAME:          scnTextWindowShown
+ *PURPOSE:
+ *  Whether the desktop Scenario Text window is up this
+ *  frame. It is up while the player has it shown and the
+ *  round lists it in the menu (the round has a scenario or
+ *  a mod, or has shown a line), with or without a line to
+ *  show, so the player can move and resize it when no line
+ *  is on screen. It is also up while the player is busy
+ *  with it (a drag, its settings, its close confirm), so
+ *  that is not cut off. A line to show also keeps it up.
+ *
+ *ARGUMENTS:
+ *  shown      - the player has the window shown
+ *  menuListed - the round lists the window in the menu
+ *  haveText   - there is a status line or an announcement
+ *  busy       - the player is busy with the window
+ *********************************************************/
+static inline bool scnTextWindowShown(bool shown, bool menuListed,
+                                      bool haveText, bool busy) {
+    return shown && (menuListed || haveText || busy);
+}
+
+/*********************************************************
+ *NAME:          scnTextEdgeShown
+ *PURPOSE:
+ *  Whether the Scenario Text window draws its faint edge.
+ *  With a line to show, the edge is drawn when there is a
+ *  backing (background opacity above 0%): at 0% the text
+ *  stands on the map with no frame round it. With no line,
+ *  the window draws no backing, and the edge is drawn only
+ *  while the bar and the grip show, at any background
+ *  opacity, so the player can see the window's size while
+ *  the pointer is on it.
+ *
+ *ARGUMENTS:
+ *  haveText       - there is a status line or an
+ *                   announcement
+ *  bgPct          - the background opacity, 0 to 100
+ *  handlesVisible - the bar and the grip show
+ *********************************************************/
+static inline bool scnTextEdgeShown(bool haveText, int bgPct,
+                                    bool handlesVisible) {
+    if (haveText) return bgPct > 0;
+    return handlesVisible;
+}
+
+/*********************************************************
+ *NAME:          scnTextSavePlace
+ *PURPOSE:
+ *  Whether the Scenario Text window writes its place to
+ *  the preferences this frame, when the place differs from
+ *  the saved one. A move or a resize drag saves it. A
+ *  window the player has moved before also saves the place
+ *  it is pushed to when it is kept inside the main window,
+ *  but only while it has a line to show: a window with no
+ *  line never changes the saved place by itself.
+ *
+ *ARGUMENTS:
+ *  dragging  - the bar or the grip is being dragged
+ *  everMoved - a place has been saved before
+ *  haveText  - there is a status line or an announcement
+ *********************************************************/
+static inline bool scnTextSavePlace(bool dragging, bool everMoved,
+                                    bool haveText) {
+    return dragging || (everMoved && haveText);
+}
+
 /* A position byte as a share of the view, 0 to 1. A byte past
  * SCN_ANNOUNCE_POS_MAX reads as the far edge. */
 static inline float scnAnnouncePosShare(uint8_t b) {
