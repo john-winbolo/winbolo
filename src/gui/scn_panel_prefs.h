@@ -187,6 +187,27 @@ bool scnPanelRescueRect(const ScnPanelRect *win, const ScnPanelRect *displays,
 #define SCN_TEXT_PREFS_TEXT_KEY      "Scenario Text Text Opacity"
 #define SCN_TEXT_PREFS_OLD_KEY       "Scenario Text Alpha"
 
+/* The [WINDOW] key the Scenario Text window's pop-out is kept under. Its
+ * value is the same "open,x,y,w,h" row a panel's pop-out has
+ * (scnPanelPopoutParse), and the key is device-local as all of [WINDOW]
+ * is. The default size is for the text's own shape, 240 units across and
+ * 50 down with two rows, at twice the 1x size. */
+#define SCN_TEXT_PREFS_POPOUT_KEY    "Scenario Text Popout"
+#define SCN_TEXT_POPOUT_DEFAULT_W    480
+#define SCN_TEXT_POPOUT_DEFAULT_H    100
+
+/*********************************************************
+ *NAME:          scnTextPopoutLoad
+ *PURPOSE:
+ *  The Scenario Text window's pop-out from its [WINDOW]
+ *  row ("" when the key is not in the file). A row that
+ *  scnPanelPopoutParse reads is used as it reads. Any other
+ *  row gives the defaults: not popped out, no position
+ *  (-1, -1), and SCN_TEXT_POPOUT_DEFAULT_W by
+ *  SCN_TEXT_POPOUT_DEFAULT_H.
+ *********************************************************/
+void scnTextPopoutLoad(const char *row, ScnPanelPopout *out);
+
 /*********************************************************
  *NAME:          scnOpacityClamp
  *PURPOSE:

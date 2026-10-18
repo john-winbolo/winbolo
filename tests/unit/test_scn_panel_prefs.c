@@ -28,6 +28,13 @@
  *       opacities, clamps them, reads an old "x,y,scale,alpha" row by
  *       migrating its one opacity, and refuses any other row.
  *
+ *   run_scn_text_popout_row
+ *       the Scenario Text window's pop-out row: a missing or bad row loads
+ *       as not popped out at the default size, a good row loads as it
+ *       reads, and the row goes through the real preferences file under
+ *       [WINDOW] "Scenario Text Popout", survives a reload, and is kept
+ *       out of the cloud upload.
+ *
  *   run_scn_opacity_migration
  *       the rule that turns one old opacity into the two new ones:
  *       text = old, background = round(old * 43 / 100), -1 stays -1; the
@@ -85,6 +92,87 @@ int run_scn_panel_popout_row(void) {
     UT_ASSERT(!scnPanelPopoutParse("yes,0,0,300,300", &out));
     UT_ASSERT(!scnPanelPopoutParse(NULL, &out));
     UT_ASSERT(out.x == 1234);
+    return 0;
+}
+
+int run_scn_text_popout_row(void) {
+    char           jsonPath[1024];
+    char           corrupt[1100];
+    char           buf[80];
+    char          *body;
+    PrefsDoc      *up;
+    ScnPanelPopout in, out;
+
+    /* No row, or a row that does not read: the defaults. */
+    memset(&out, 0x55, sizeof(out));
+    scnTextPopoutLoad("", &out);
+    UT_ASSERT(!out.open && out.x == -1 && out.y == -1);
+    UT_ASSERT(out.w == SCN_TEXT_POPOUT_DEFAULT_W &&
+              out.h == SCN_TEXT_POPOUT_DEFAULT_H);
+    memset(&out, 0x55, sizeof(out));
+    scnTextPopoutLoad(NULL, &out);
+    UT_ASSERT(!out.open && out.x == -1 && out.y == -1 &&
+              out.w == SCN_TEXT_POPOUT_DEFAULT_W);
+    memset(&out, 0x55, sizeof(out));
+    scnTextPopoutLoad("1,2,3", &out);
+    UT_ASSERT(!out.open && out.x == -1 &&
+              out.h == SCN_TEXT_POPOUT_DEFAULT_H);
+    scnTextPopoutLoad("", NULL);   /* no output: nothing to do */
+
+    /* The default size is one a pop-out row may hold. */
+    UT_ASSERT(SCN_TEXT_POPOUT_DEFAULT_W >= SCN_PANEL_POPOUT_MIN_PX &&
+              SCN_TEXT_POPOUT_DEFAULT_W <= SCN_PANEL_POPOUT_MAX_PX);
+    UT_ASSERT(SCN_TEXT_POPOUT_DEFAULT_H >= SCN_PANEL_POPOUT_MIN_PX &&
+              SCN_TEXT_POPOUT_DEFAULT_H <= SCN_PANEL_POPOUT_MAX_PX);
+
+    /* A good row reads as it is, sizes clamped as a panel's are. */
+    scnTextPopoutLoad("1,-1700,30,600,120", &out);
+    UT_ASSERT(out.open && out.x == -1700 && out.y == 30 && out.w == 600 &&
+              out.h == 120);
+    scnTextPopoutLoad("0,10,20,5,99999", &out);
+    UT_ASSERT(!out.open && out.x == 10 && out.y == 20);
+    UT_ASSERT(out.w == SCN_PANEL_POPOUT_MIN_PX &&
+              out.h == SCN_PANEL_POPOUT_MAX_PX);
+
+    /* Through the real preferences file, the way gamefront.c writes and
+       reads it. */
+    UT_ASSERT(utScratchPath(jsonPath, sizeof(jsonPath),
+                            "scn_text_popout.json"));
+    snprintf(corrupt, sizeof(corrupt), "%s.corrupt", jsonPath);
+    remove(jsonPath);
+    remove(corrupt);
+    prefsInit(jsonPath);
+
+    in.open = true;
+    in.x = 200;
+    in.y = -40;
+    in.w = 520;
+    in.h = 110;
+    scnPanelPopoutFormat(&in, buf, sizeof(buf));
+    UT_ASSERT(prefsSetString("WINDOW", SCN_TEXT_PREFS_POPOUT_KEY, buf));
+    prefsShutdown();
+    prefsInit(jsonPath);
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_POPOUT_KEY, "", buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "1,200,-40,520,110") == 0, "row is '%s'", buf);
+    scnTextPopoutLoad(buf, &out);
+    UT_ASSERT(out.open && out.x == 200 && out.y == -40 && out.w == 520 &&
+              out.h == 110);
+
+    /* The row holds this machine's desktop place, so it never syncs. */
+    body = prefsSerializeForUpload();
+    UT_ASSERT(body != NULL);
+    up = prefsDocParseJson(body);
+    free(body);
+    UT_ASSERT(up != NULL);
+    prefsDocGetString(up, "WINDOW", SCN_TEXT_PREFS_POPOUT_KEY, "<absent>",
+                      buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "<absent>") == 0,
+                  "the pop-out row leaked into the upload: '%s'", buf);
+    prefsDocFree(up);
+
+    prefsShutdown();
+    remove(jsonPath);
+    remove(corrupt);
     return 0;
 }
 
