@@ -2259,7 +2259,6 @@ STR_DLGLOBBY_MODS_TIP_OFF=Mods/Scenario is switched off. These are picked for th
 STR_DLGLOBBY_MODS_TIP_NONE=No mods are loaded for this round.
 STR_DLGLOBBY_MODS_OFF_NOTE=(switched off, will not run)
 STR_SCNPANEL_SETTINGS_TITLE=Scenario Panel
-STR_SCNPANEL_OPACITY_LBL=Opacity
 STR_SCNPANEL_OPACITY_LINE1=Fades what the panel draws.
 STR_SCNPANEL_OPACITY_LINE2=Empty parts of it stay clear.
 STR_MENU_INFO_OVERLAY=Info Overlay
@@ -2787,5 +2786,6 @@ STR_DLGSYSINFO_MEM_RUBBLE=Rubble
 STR_DLGSYSINFO_MEM_SWAMP=Swamp
 STR_DLGSYSINFO_MEM_GRASS=Grass
 STR_SCNTEXT_TITLE=Scenario Text
-STR_SCNTEXT_OPACITY_LINE=Fades the backing and the text together.
+STR_SCN_BG_OPACITY_LBL=Background opacity
+STR_SCN_TEXT_OPACITY_LBL=Text opacity
 

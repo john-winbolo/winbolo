@@ -2212,7 +2212,6 @@ STR_DLGLOBBY_MODS_TIP_OFF=Mods/Cenário está desativado. Estes foram escolhidos
 STR_DLGLOBBY_MODS_TIP_NONE=Nenhum mod está carregado para esta rodada.
 STR_DLGLOBBY_MODS_OFF_NOTE=(desativado, não será executado)
 STR_SCNPANEL_SETTINGS_TITLE=Painel de cenário
-STR_SCNPANEL_OPACITY_LBL=Opacidade
 STR_SCNPANEL_OPACITY_LINE1=Esmaece o que o painel desenha.
 STR_SCNPANEL_OPACITY_LINE2=As partes vazias dele permanecem transparentes.
 STR_DLGLOBBY_SCENARIO_UNSAFE=Este servidor executa scripts de cenário com a biblioteca Lua completa e sem limites.

@@ -4214,31 +4214,20 @@ static void renderPlayersPanel(ClientSim *cs) {
    down to SCN_PANEL_MIN_PX still has panel under its bar. */
 #define SCN_PANEL_BAR_PX 20.0f
 
-/* The panel's opacity for a player who has never opened the settings window,
-   as a percent. 43 percent of 255 is 110, which is the alpha the backing was
-   drawn with before the setting existed.
-
-   The percent is a multiplier over the panel's own look rather than a
-   replacement for it, which is what lets the default be a hundred and still
-   be the panel everybody already had. The backing has always been dim and
-   the writing on it has always been full strength; at a hundred both are
-   exactly that, and the slider takes the pair of them down together. */
-#define SCN_PANEL_ALPHA_DEFAULT 100
-
-/* The backing's own alpha at full opacity, out of 255. This is the value the
-   panel was drawn with before there was a slider: dim enough that the map
-   under it stays readable, solid enough that the writing on it has something
-   to sit on. The slider scales it; it does not replace it, so a panel left
-   alone looks the way it always did. */
-#define SCN_PANEL_BACKING_ALPHA 110
+/* The two opacities each window has, background and text, are percents
+   with the defaults and rules in scn_panel_prefs.h: SCN_BG_OPACITY_DEFAULT
+   is 43, which scnBackingAlpha turns into 110 of 255, the backing these
+   windows had before there was a setting, and SCN_TEXT_OPACITY_DEFAULT is
+   100, the drawing at full strength. The background percent is the
+   backing's real alpha, so 100 is opaque black. */
 
 /* How far off the gear the settings window first appears, in screen pixels.
    Clear of the panel rather than on top of it: the whole point of the window
-   is to watch the panel change while the opacity slider moves, and a window
+   is to watch the panel change while the opacity sliders move, and a window
    sitting over the square would hide the thing being adjusted. */
 #define SCN_PANEL_DIALOG_GAP 6.0f
 
-/* How wide the opacity slider is drawn, in screen pixels. Set rather than
+/* How wide each opacity slider is drawn, in screen pixels. Set rather than
    left to ImGui, which gives an auto-resizing window's item the whole
    remaining content width: with one short row that comes out as a stubby
    grab that is hard to place a percent with. */
@@ -4282,7 +4271,8 @@ void sdl3ImguiScnPanelDraw(struct ClientSim *cs, float originX, float originY,
         ImGui::GetWindowDrawList()->AddRectFilled(
             ImVec2(originX, originY), ImVec2(originX + side, originY + side),
             IM_COL32(0, 0, 0,
-                     (int)lroundf(alpha * (float)SCN_PANEL_BACKING_ALPHA)));
+                     (int)lroundf(alpha * (float)scnBackingAlpha(
+                                              SCN_BG_OPACITY_DEFAULT))));
     }
 
     ScnPanelDrawEnv env;
@@ -4346,11 +4336,12 @@ struct ScnPanelView {
     /* The Brains > Info Overlay toggle. */
     bool   shown;
 
-    /* The in-game layout, same meaning as gameFrontScnPanelX/Y/Scale/Alpha:
-       -1 is "never set". alphaPct is the live opacity the settings slider
-       edits; alpha is the stored one. */
-    int    x, y, scale, alpha;
-    int    alphaPct;
+    /* The in-game layout, same meaning as gameFrontScnPanelX/Y/Scale and
+       the two gameFrontScnPanel*Alpha opacities: -1 is "never set". bgPct
+       and textPct are the live opacities the settings sliders edit;
+       bgAlpha and textAlpha are the stored ones. */
+    int    x, y, scale, bgAlpha, textAlpha;
+    int    bgPct, textPct;
 
     /* ImGui is holding a position for the window. */
     bool   placed;
@@ -4387,12 +4378,12 @@ struct ScnTextView {
     bool   moving;
     bool   resizing;
     float  rawW, rawH;
-    /* The settings window the gear opens, and the live opacity its slider
-       edits. alphaLoaded is false until alphaPct is read from the
-       preference. */
+    /* The settings window the gear opens, and the live opacities its
+       sliders edit. alphaLoaded is false until bgPct and textPct are read
+       from the preferences. */
     bool   settingsOpen;
     bool   alphaLoaded;
-    int    alphaPct;
+    int    bgPct, textPct;
     /* The bar, the gear and the X stay up until this SDL tick. */
     Uint64 chromeUntil;
     /* The kinds of line the round has shown so far. Each one has a row in
@@ -4496,10 +4487,12 @@ static void scnPanelPersistLayout(const ScnPanelView &v) {
     gameFrontScnPanelX     = v.x;
     gameFrontScnPanelY     = v.y;
     gameFrontScnPanelScale = v.scale;
-    gameFrontScnPanelAlpha = v.alpha;
+    gameFrontScnPanelBgAlpha   = v.bgAlpha;
+    gameFrontScnPanelTextAlpha = v.textAlpha;
     gameFrontSaveWindowSettings();
     if (v.key[0] != '\0') {
-        gameFrontSetScnPanelLayout(v.key, v.x, v.y, v.scale, v.alpha);
+        gameFrontSetScnPanelLayout(v.key, v.x, v.y, v.scale, v.bgAlpha,
+                                   v.textAlpha);
     }
 }
 
@@ -4531,24 +4524,28 @@ static void scnPanelViewLoad(int owner, const char *key, const char *name) {
     v.shown = (key[0] != '\0') ? gameFrontGetScnPanelShown(key) : true;
 
     /* A script with no layout row of its own takes the [WINDOW] size and
-       opacity, which is the layout the player last chose. The position too
+       opacities, which is the layout the player last chose. The position too
        for the round's first script, as before; the others open at the
        default corner, stacked, so two new panels do not land on each other. */
-    int sx, sy, ss, sa;
-    if (key[0] != '\0' && gameFrontGetScnPanelLayout(key, &sx, &sy, &ss, &sa)) {
+    int sx, sy, ss, sbg, stext;
+    if (key[0] != '\0' &&
+        gameFrontGetScnPanelLayout(key, &sx, &sy, &ss, &sbg, &stext)) {
         v.x = sx;
         v.y = sy;
         v.scale = ss;
-        v.alpha = sa;
+        v.bgAlpha = sbg;
+        v.textAlpha = stext;
     } else {
-        v.x     = (owner == 0) ? gameFrontScnPanelX : -1;
-        v.y     = (owner == 0) ? gameFrontScnPanelY : -1;
-        v.scale = gameFrontScnPanelScale;
-        v.alpha = gameFrontScnPanelAlpha;
+        v.x         = (owner == 0) ? gameFrontScnPanelX : -1;
+        v.y         = (owner == 0) ? gameFrontScnPanelY : -1;
+        v.scale     = gameFrontScnPanelScale;
+        v.bgAlpha   = gameFrontScnPanelBgAlpha;
+        v.textAlpha = gameFrontScnPanelTextAlpha;
     }
-    v.alphaPct = (v.alpha >= 0) ? v.alpha : SCN_PANEL_ALPHA_DEFAULT;
-    if (v.alphaPct < 0) v.alphaPct = 0;
-    if (v.alphaPct > 100) v.alphaPct = 100;
+    v.bgPct   = scnOpacityClamp(v.bgAlpha);
+    v.textPct = scnOpacityClamp(v.textAlpha);
+    if (v.bgPct < 0) v.bgPct = SCN_BG_OPACITY_DEFAULT;
+    if (v.textPct < 0) v.textPct = SCN_TEXT_OPACITY_DEFAULT;
 
     bool open;
     int px, py, pw, ph;
@@ -5031,14 +5028,32 @@ static void renderScnPanelCloseConfirm(bool inPopout, int ctxOwner) {
     }
 }
 
+/* One opacity slider of a settings window, 0 to 100 percent. live is the
+   value the window draws with every frame, so the slider is live; stored
+   is the saved value, -1 for never set. Returns true when a drag has just
+   finished on a value that is not the stored one, which the caller then
+   stores and saves: only the value a drag finishes on reaches the
+   preferences file. */
+static bool scnOpacitySlider(const char *label, const char *id, int *live,
+                             int stored) {
+    char sliderLbl[128];
+    SDL_snprintf(sliderLbl, sizeof(sliderLbl), "%s###%s", label, id);
+    ImGui::SetNextItemWidth(SCN_PANEL_DIALOG_SLIDER_W);
+    ImGui::SliderInt(sliderLbl, live, 0, 100, "%d%%");
+    if (!ImGui::IsItemDeactivatedAfterEdit()) return false;
+    if (*live < 0) *live = 0;
+    if (*live > 100) *live = 100;
+    return *live != stored;
+}
+
 /* One view's settings window, opened by its gear. A window rather than a
    popup, because a popup closes the moment the pointer goes anywhere else
    and the whole point of an opacity control is to watch the panel while it
    moves. Submitted after the panel's End, since one ImGui window cannot be
    opened inside another.
 
-   The view reads alphaPct every frame, so the slider is live, and only the
-   value a drag finishes on reaches the preferences file. */
+   Two sliders: the background opacity is the backing's real alpha, and the
+   text opacity fades what the script drew. */
 static void renderScenarioPanelSettings(int owner, float gearX, float gearY) {
     ScnPanelView &v = s_scnViews[owner];
     if (!v.settingsOpen) return;
@@ -5081,23 +5096,20 @@ static void renderScenarioPanelSettings(int owner, float gearX, float gearY) {
             ImGui::Spacing();
         }
 
-        char sliderLbl[128];
-        SDL_snprintf(sliderLbl, sizeof(sliderLbl), "%s###scnAlpha",
-                     langGetText(STR_SCNPANEL_OPACITY_LBL));
-        ImGui::SetNextItemWidth(SCN_PANEL_DIALOG_SLIDER_W);
-        ImGui::SliderInt(sliderLbl, &v.alphaPct, 0, 100, "%d%%");
-        if (ImGui::IsItemDeactivatedAfterEdit()) {
-            if (v.alphaPct < 0) v.alphaPct = 0;
-            if (v.alphaPct > 100) v.alphaPct = 100;
-            if (v.alphaPct != v.alpha) {
-                v.alpha = v.alphaPct;
-                scnPanelPersistLayout(v);
-            }
+        if (scnOpacitySlider(langGetText(STR_SCN_BG_OPACITY_LBL),
+                             "scnBgAlpha", &v.bgPct, v.bgAlpha)) {
+            v.bgAlpha = v.bgPct;
+            scnPanelPersistLayout(v);
         }
-        /* It is everything the panel draws, backing and drawing together,
-           and nothing else: empty parts stay clear, and the border, the
-           buttons and the grips keep their own alpha so a panel taken to
-           zero can still be found. */
+        if (scnOpacitySlider(langGetText(STR_SCN_TEXT_OPACITY_LBL),
+                             "scnTextAlpha", &v.textPct, v.textAlpha)) {
+            v.textAlpha = v.textPct;
+            scnPanelPersistLayout(v);
+        }
+        /* The text opacity is everything the script draws, and nothing
+           else: empty parts stay clear, and the border, the buttons and the
+           grips keep their own alpha so a panel taken to zero on both
+           sliders can still be found. */
         ImGui::TextDisabled("%s", langGetText(STR_SCNPANEL_OPACITY_LINE1));
         ImGui::TextDisabled("%s", langGetText(STR_SCNPANEL_OPACITY_LINE2));
     }
@@ -5189,16 +5201,14 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
     float gearY = 0.0f;
 
     /* No padding and no border, so the window's rect is the square the list
-       is drawn in; the backing is the player's opacity times the dim
-       SCN_PANEL_BACKING_ALPHA. NoMove and NoResize: the bar and the corner
+       is drawn in; the backing is black at the player's background
+       opacity. NoMove and NoResize: the bar and the corner
        grip are the only things that move or resize it. */
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleColor(
         ImGuiCol_WindowBg,
-        IM_COL32(0, 0, 0,
-                 (int)lroundf((float)v.alphaPct *
-                              (float)SCN_PANEL_BACKING_ALPHA / 100.0f)));
+        IM_COL32(0, 0, 0, scnBackingAlpha(v.bgPct)));
     char winId[32];
     SDL_snprintf(winId, sizeof(winId), "##scenariopanel%d", owner);
     const bool open = ImGui::Begin(winId, nullptr,
@@ -5306,7 +5316,7 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
         }
 
         /* The script's drawing, at the side the square is on screen and the
-           player's opacity. No backing from the drawer: the window
+           player's text opacity. No backing from the drawer: the window
            background above is this panel's backing. */
         const ScnPanelList *list = scnPanelListOf(cs, owner);
         if (list != nullptr && list->count > 0) {
@@ -5315,7 +5325,7 @@ static void renderScenarioPanelView(ClientSim *cs, int owner, int stack) {
             env.ctx        = nullptr;
             env.tick       = clientSimGetLastServerTick(cs);
             env.scale      = side / (float)SCN_PANEL_UNITS;
-            env.alpha      = (float)v.alphaPct / 100.0f;
+            env.alpha      = (float)v.textPct / 100.0f;
             env.tiles      = (void *)sdl3DrawGetTilesTexture();
             scnPanelDraw(list, pos.x, pos.y, &env);
         }
@@ -5694,7 +5704,8 @@ static void scnTextDrawLine(ImDrawList *dl, ImFont *font, const ScnTextFit &fit,
 }
 
 /* The two lines, scaled into the rectangle at (x, y) of size w by h. alpha
-   is the player's opacity, 0 to 1. */
+   is the player's text opacity, 0 to 1, and fades the text and its
+   outline. */
 static void scnTextDrawLines(ImDrawList *dl, ImFont *font, float x, float y,
                              float w, float h, float alpha,
                              const char *status, bool haveStatus,
@@ -5716,8 +5727,8 @@ static void scnTextDrawLines(ImDrawList *dl, ImFont *font, float x, float y,
     }
 }
 
-/* The Scenario Text window's settings, opened by its gear: the opacity
-   slider, as a script's panel has. */
+/* The Scenario Text window's settings, opened by its gear: the background
+   and text opacity sliders, as a script's panel has. */
 static void renderScenarioTextSettings(float gearX, float gearY) {
     if (!s_scnText.settingsOpen) return;
 
@@ -5747,20 +5758,18 @@ static void renderScenarioTextSettings(float gearX, float gearY) {
             ImGui::SetWindowPos(ImVec2(keepX, keepY));
         }
 
-        char sliderLbl[128];
-        SDL_snprintf(sliderLbl, sizeof(sliderLbl), "%s###scnTextAlpha",
-                     langGetText(STR_SCNPANEL_OPACITY_LBL));
-        ImGui::SetNextItemWidth(SCN_PANEL_DIALOG_SLIDER_W);
-        ImGui::SliderInt(sliderLbl, &s_scnText.alphaPct, 0, 100, "%d%%");
-        if (ImGui::IsItemDeactivatedAfterEdit()) {
-            if (s_scnText.alphaPct < 0) s_scnText.alphaPct = 0;
-            if (s_scnText.alphaPct > 100) s_scnText.alphaPct = 100;
-            if (s_scnText.alphaPct != gameFrontScnTextAlpha) {
-                gameFrontScnTextAlpha = s_scnText.alphaPct;
-                gameFrontSaveWindowSettings();
-            }
+        if (scnOpacitySlider(langGetText(STR_SCN_BG_OPACITY_LBL),
+                             "scnTextBgAlpha", &s_scnText.bgPct,
+                             gameFrontScnTextBgAlpha)) {
+            gameFrontScnTextBgAlpha = s_scnText.bgPct;
+            gameFrontSaveWindowSettings();
         }
-        ImGui::TextDisabled("%s", langGetText(STR_SCNTEXT_OPACITY_LINE));
+        if (scnOpacitySlider(langGetText(STR_SCN_TEXT_OPACITY_LBL),
+                             "scnTextTextAlpha", &s_scnText.textPct,
+                             gameFrontScnTextTextAlpha)) {
+            gameFrontScnTextTextAlpha = s_scnText.textPct;
+            gameFrontSaveWindowSettings();
+        }
     }
     ImGui::End();
 }
@@ -5811,10 +5820,12 @@ static void renderScenarioText(ClientSim *cs) {
     if (font == nullptr) return;
 
     if (!s_scnText.alphaLoaded) {
-        s_scnText.alphaPct = (gameFrontScnTextAlpha >= 0)
-                                 ? gameFrontScnTextAlpha
-                                 : SCN_PANEL_ALPHA_DEFAULT;
-        if (s_scnText.alphaPct > 100) s_scnText.alphaPct = 100;
+        s_scnText.bgPct   = scnOpacityClamp(gameFrontScnTextBgAlpha);
+        s_scnText.textPct = scnOpacityClamp(gameFrontScnTextTextAlpha);
+        if (s_scnText.bgPct < 0) s_scnText.bgPct = SCN_BG_OPACITY_DEFAULT;
+        if (s_scnText.textPct < 0) {
+            s_scnText.textPct = SCN_TEXT_OPACITY_DEFAULT;
+        }
         s_scnText.alphaLoaded = true;
     }
 
@@ -5846,7 +5857,8 @@ static void renderScenarioText(ClientSim *cs) {
         ImDrawList *dl = ImGui::GetForegroundDrawList();
         if (dl == nullptr) return;
         dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h),
-                          IM_COL32(0, 0, 0, SCN_PANEL_BACKING_ALPHA));
+                          IM_COL32(0, 0, 0,
+                                   scnBackingAlpha(SCN_BG_OPACITY_DEFAULT)));
         scnTextDrawLines(dl, font, x, y, w, h, 1.0f, status, haveStatus, text,
                          haveAnnounce, announceShare, announceFade);
         return;
@@ -5927,16 +5939,14 @@ static void renderScenarioText(ClientSim *cs) {
     float gearY = 0.0f;
 
     /* As the panel's window: no padding and no border, so the window's rect
-       is the rectangle the lines are fitted into, and a backing that is the
-       player's opacity times the dim SCN_PANEL_BACKING_ALPHA. The bar and
+       is the rectangle the lines are fitted into, and a backing that is
+       black at the player's background opacity. The bar and
        the grip are the only things that move or resize it. */
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleColor(
         ImGuiCol_WindowBg,
-        IM_COL32(0, 0, 0,
-                 (int)lroundf((float)s_scnText.alphaPct *
-                              (float)SCN_PANEL_BACKING_ALPHA / 100.0f)));
+        IM_COL32(0, 0, 0, scnBackingAlpha(s_scnText.bgPct)));
     const bool open = ImGui::Begin("##scenariotext", nullptr,
                                    ImGuiWindowFlags_NoTitleBar |
                                    ImGuiWindowFlags_NoResize |
@@ -6056,9 +6066,10 @@ static void renderScenarioText(ClientSim *cs) {
             s_scnText.placed = false;
         }
 
-        /* The lines, fitted into the window at the player's opacity. */
+        /* The lines, fitted into the window at the player's text
+           opacity. */
         scnTextDrawLines(dl, font, keepX, keepY, w, h,
-                         (float)s_scnText.alphaPct / 100.0f, status,
+                         (float)s_scnText.textPct / 100.0f, status,
                          haveStatus, text, haveAnnounce, announceShare,
                          announceFade);
 

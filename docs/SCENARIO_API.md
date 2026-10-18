@@ -2197,15 +2197,15 @@ it asked for.
 drawn in one window of their own, the Scenario Text window, and not on the
 game view. A script cannot put text anywhere else on the screen. The window
 is built the same way as the scenario panel's window: it has no title bar, a
-see-through backing, a bar along its top to move it, a gear that opens an
-opacity setting, an X that closes it, and a grip in its bottom-right corner
+see-through backing, a bar along its top to move it, a gear that opens two
+opacity settings, an X that closes it, and a grip in its bottom-right corner
 to resize it. Unlike the panel, it is a rectangle and it can take any shape.
 It shows only while there is a line to draw.
 
 By default the window sits at the top middle of the game view, sized so the
 text is as large as announcements were before: 240 units times the game's
 zoom. Once the player moves or resizes it, it stays where they put it,
-and its place, size, opacity and whether it is shown are kept in the
+and its place, size, opacities and whether it is shown are kept in the
 preferences file. A player who closes it opens it again from **Brains > Info
 Overlay > Scenario Text**. In tablet mode there is no window: the same
 layout is drawn in a fixed band at the top middle of tablet mode's game view.
@@ -2225,7 +2225,12 @@ largest that fits the window, and centred in the window. The letters keep
 their shape at every window size. A window wider than the text's shape has
 empty space left and right; a taller one has empty space above and below.
 A line too wide for the 236 units between the gaps is made smaller by itself
-until it fits. The opacity setting fades the backing and the text together.
+until it fits. The gear has two sliders. **Background opacity** is the alpha
+of the black backing: 100% is opaque black and 0% is no backing. It starts
+at 43%, the see-through backing the window has always had. **Text opacity**
+fades the text and its outline, and starts at 100%. A scenario panel's gear
+has the same two sliders, and there the text opacity fades everything the
+script draws in the panel.
 
 `position` keeps only its share across. Give a table `{ x = across, y =
 down }`, each from 0 to 1, or one of two words:

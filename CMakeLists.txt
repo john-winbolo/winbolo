@@ -5086,6 +5086,8 @@ set(_unit_test_names
     scn_panel_yes_no
     scn_panel_rescue
     scn_panel_prefs_sections
+    scn_panel_layout_row
+    scn_opacity_migration
     client_scn_panel_owners
     scn_arm_panel_owners
     info_packet_preset_round_trip

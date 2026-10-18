@@ -399,6 +399,8 @@ int run_scn_panel_popout_row(void);
 int run_scn_panel_yes_no(void);
 int run_scn_panel_rescue(void);
 int run_scn_panel_prefs_sections(void);
+int run_scn_panel_layout_row(void);
+int run_scn_opacity_migration(void);
 int run_client_scn_panel_owners(void);
 int run_scn_arm_panel_owners(void);
 int run_info_packet_view_policy_layout(void);

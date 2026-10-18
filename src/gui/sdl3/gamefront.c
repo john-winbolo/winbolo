@@ -400,13 +400,15 @@ int   gameFrontOverviewY = -1;
 int   gameFrontScnPanelX = -1;
 int   gameFrontScnPanelY = -1;
 int   gameFrontScnPanelScale = -1;
-int   gameFrontScnPanelAlpha = -1;
+int   gameFrontScnPanelBgAlpha = -1;
+int   gameFrontScnPanelTextAlpha = -1;
 bool  gameFrontScnPanelCloseAsk = TRUE;
 int   gameFrontScnTextX = -1;
 int   gameFrontScnTextY = -1;
 int   gameFrontScnTextW = -1;
 int   gameFrontScnTextH = -1;
-int   gameFrontScnTextAlpha = -1;
+int   gameFrontScnTextBgAlpha = -1;
+int   gameFrontScnTextTextAlpha = -1;
 bool  gameFrontScnTextShown = TRUE;
 float gameFrontOverviewZoom = 2.0f;
 bool  gameFrontOverviewFollow = TRUE;
@@ -3539,32 +3541,36 @@ void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) {
 }
 
 /* Per-scenario scenario-panel layout, kept under "SCENARIO PANEL" / the
- * scenario as one "x,y,scale,alpha" row. One row rather than four keys keeps
- * a scenario's numbers together and keeps the file short enough to read, and
- * the scenario is the whole key so a player scanning the section sees the
- * scenarios they have played by name.
+ * scenario as one "x,y,scale,bg,text" row (scnPanelLayoutParse). One row
+ * rather than five keys keeps a scenario's numbers together and keeps the
+ * file short enough to read, and the scenario is the whole key so a player
+ * scanning the section sees the scenarios they have played by name.
  *
  * The key rule (scnPanelPrefsKey) turns a control character into an
  * underscore, and the read and the write share it. */
 bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
-                                int *scale, int *alpha) {
+                                int *scale, int *bgAlpha, int *textAlpha) {
   char key[SCN_PANEL_SCENARIO_LEN], buff[64];
-  int rx, ry, rscale, ralpha;
-  if (!scenario || !scenario[0] || !x || !y || !scale || !alpha) return false;
+  int rx, ry, rscale, rbg, rtext;
+  if (!scenario || !scenario[0] || !x || !y || !scale || !bgAlpha ||
+      !textAlpha) {
+    return false;
+  }
   scnPanelPrefsKey(scenario, key, sizeof(key));
   prefsGetString("SCENARIO PANEL", key, "", buff, sizeof(buff));
-  /* All four or none: a half-written row says nothing about where the panel
+  /* All or none: a half-written row says nothing about where the panel
      belongs, and the caller's fallback is a whole layout of its own rather
-     than something to fill the gaps in this one with. */
-  if (SDL_sscanf(buff, "%d,%d,%d,%d", &rx, &ry, &rscale, &ralpha) != 4) {
+     than something to fill the gaps in this one with. The parse clamps the
+     opacities and reads an old four-number row. */
+  if (!scnPanelLayoutParse(buff, &rx, &ry, &rscale, &rbg, &rtext)) {
     return false;
   }
   /* Clamped the way the [WINDOW] load clamps, and for the same reason: a
      scale out of range would open the panel bigger than the screen or too
-     small to get a pointer onto a corner of. -1 is not a size or an opacity,
-     it is "never touched", so it passes through. The coordinates pass
-     through too — the panel clamps a position against the window it is
-     restored into, which is the only place the screen size is known. */
+     small to get a pointer onto a corner of. -1 is not a size, it is "never
+     touched", so it passes through. The coordinates pass through too — the
+     panel clamps a position against the window it is restored into, which
+     is the only place the screen size is known. */
   if (rscale != -1) {
     if (rscale < SCN_PANEL_SCALE_MIN) {
       rscale = SCN_PANEL_SCALE_MIN;
@@ -3572,33 +3578,28 @@ bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
       rscale = SCN_PANEL_SCALE_MAX;
     }
   }
-  if (ralpha != -1) {
-    if (ralpha < 0) {
-      ralpha = 0;
-    } else if (ralpha > 100) {
-      ralpha = 100;
-    }
-  }
   *x = rx;
   *y = ry;
   *scale = rscale;
-  *alpha = ralpha;
+  *bgAlpha = rbg;
+  *textAlpha = rtext;
   return true;
 }
 
 void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
-                                int scale, int alpha) {
+                                int scale, int bgAlpha, int textAlpha) {
   char key[SCN_PANEL_SCENARIO_LEN], val[64];
   if (!scenario || !scenario[0]) return;
   scnPanelPrefsKey(scenario, key, sizeof(key));
-  SDL_snprintf(val, sizeof(val), "%d,%d,%d,%d", x, y, scale, alpha);
+  scnPanelLayoutFormat(x, y, scale, bgAlpha, textAlpha, val, sizeof(val));
   prefsSetString("SCENARIO PANEL", key, val);
 }
 
 /* The script's shown flag and pop-out row live in sections of their own
- * rather than as more numbers on the layout row: an old client reading a
- * five- or six-number layout row would drop the whole row. Same key rule
- * as the layout row, so the three rows of one script line up by eye. */
+ * rather than as more numbers on the layout row: the pop-out row is this
+ * machine's desktop place and is never uploaded, and the shown flag is a
+ * yes or no rather than a number. Same key rule as the layout row, so the
+ * three rows of one script line up by eye. */
 bool gameFrontGetScnPanelShown(const char *script) {
   char key[SCN_PANEL_SCENARIO_LEN], buff[16];
   if (!script || !script[0]) return TRUE;
@@ -4856,13 +4857,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   gameFrontOverviewFollow = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* The scenario panel's place inside the main window, the size the player
-     has dragged it to and how opaque its backing is. -1 for either
-     coordinate means it has never been moved, so it opens at the top-right
-     of the game view; -1 for the scale or the alpha means that one has never
-     been touched, so the panel opens at the size the game's zoom alone gives
-     it and at the backing it has always had.
+     has dragged it to, and how opaque its backing and its drawing are. -1
+     for either coordinate means it has never been moved, so it opens at the
+     top-right of the game view; -1 for the scale or an opacity means that
+     one has never been touched, so the panel opens at the size the game's
+     zoom alone gives it, at the backing it has always had and with its
+     drawing at full strength.
 
-     The scale and the alpha are clamped here and not only on the drag that
+     The scale and the opacities are clamped here and not only on the drag that
      writes them. The preferences file is a text file a player can edit, and a
      scale out of range would open the panel bigger than the screen or too
      small to get a pointer onto a corner of, neither of which leaves anything
@@ -4880,20 +4882,24 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
       gameFrontScnPanelScale = SCN_PANEL_SCALE_MAX;
     }
   }
-  prefsGetString("WINDOW", "Scenario Panel Alpha", "-1", buff, FILENAME_MAX);
-  gameFrontScnPanelAlpha = atoi(buff);
-  if (gameFrontScnPanelAlpha != -1) {
-    if (gameFrontScnPanelAlpha < 0) {
-      gameFrontScnPanelAlpha = 0;
-    } else if (gameFrontScnPanelAlpha > 100) {
-      gameFrontScnPanelAlpha = 100;
-    }
+  /* The two opacities, or the old single one for a file written before
+     there were two (scnOpacityFromPrefs), clamped there. */
+  {
+    char bgBuff[32], textBuff[32], oldBuff[32];
+    prefsGetString("WINDOW", SCN_PANEL_PREFS_BG_KEY, "", bgBuff,
+                   sizeof(bgBuff));
+    prefsGetString("WINDOW", SCN_PANEL_PREFS_TEXT_KEY, "", textBuff,
+                   sizeof(textBuff));
+    prefsGetString("WINDOW", SCN_PANEL_PREFS_OLD_KEY, "", oldBuff,
+                   sizeof(oldBuff));
+    scnOpacityFromPrefs(bgBuff, textBuff, oldBuff, &gameFrontScnPanelBgAlpha,
+                        &gameFrontScnPanelTextAlpha);
   }
 
-  /* The Scenario Text window's place, size, opacity and shown flag. The
-     size is checked again against the display when the window is drawn;
-     here a value below -1 is read as never set, and the alpha is clamped,
-     for the reason given above. */
+  /* The Scenario Text window's place, size, two opacities and shown flag.
+     The size is checked again against the display when the window is
+     drawn; here a value below -1 is read as never set, and the opacities
+     are clamped, for the reason given above. */
   prefsGetString("WINDOW", "Scenario Text X", "-1", buff, FILENAME_MAX);
   gameFrontScnTextX = atoi(buff);
   prefsGetString("WINDOW", "Scenario Text Y", "-1", buff, FILENAME_MAX);
@@ -4904,14 +4910,16 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("WINDOW", "Scenario Text Height", "-1", buff, FILENAME_MAX);
   gameFrontScnTextH = atoi(buff);
   if (gameFrontScnTextH < -1) gameFrontScnTextH = -1;
-  prefsGetString("WINDOW", "Scenario Text Alpha", "-1", buff, FILENAME_MAX);
-  gameFrontScnTextAlpha = atoi(buff);
-  if (gameFrontScnTextAlpha != -1) {
-    if (gameFrontScnTextAlpha < 0) {
-      gameFrontScnTextAlpha = 0;
-    } else if (gameFrontScnTextAlpha > 100) {
-      gameFrontScnTextAlpha = 100;
-    }
+  {
+    char bgBuff[32], textBuff[32], oldBuff[32];
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_BG_KEY, "", bgBuff,
+                   sizeof(bgBuff));
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_TEXT_KEY, "", textBuff,
+                   sizeof(textBuff));
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_OLD_KEY, "", oldBuff,
+                   sizeof(oldBuff));
+    scnOpacityFromPrefs(bgBuff, textBuff, oldBuff, &gameFrontScnTextBgAlpha,
+                        &gameFrontScnTextTextAlpha);
   }
   prefsGetString("WINDOW", "Scenario Text Shown", "Yes", buff, FILENAME_MAX);
   gameFrontScnTextShown = scnPanelYesNoParse(buff, true) ? TRUE : FALSE;
@@ -5416,8 +5424,10 @@ void gameFrontFlushWindowSettings(void) {
   prefsSetString("WINDOW", "Scenario Panel Y", buff);
   intToStr(gameFrontScnPanelScale, buff, sizeof(buff));
   prefsSetString("WINDOW", "Scenario Panel Scale", buff);
-  intToStr(gameFrontScnPanelAlpha, buff, sizeof(buff));
-  prefsSetString("WINDOW", "Scenario Panel Alpha", buff);
+  intToStr(gameFrontScnPanelBgAlpha, buff, sizeof(buff));
+  prefsSetString("WINDOW", SCN_PANEL_PREFS_BG_KEY, buff);
+  intToStr(gameFrontScnPanelTextAlpha, buff, sizeof(buff));
+  prefsSetString("WINDOW", SCN_PANEL_PREFS_TEXT_KEY, buff);
 
   intToStr(gameFrontScnTextX, buff, sizeof(buff));
   prefsSetString("WINDOW", "Scenario Text X", buff);
@@ -5427,8 +5437,10 @@ void gameFrontFlushWindowSettings(void) {
   prefsSetString("WINDOW", "Scenario Text Width", buff);
   intToStr(gameFrontScnTextH, buff, sizeof(buff));
   prefsSetString("WINDOW", "Scenario Text Height", buff);
-  intToStr(gameFrontScnTextAlpha, buff, sizeof(buff));
-  prefsSetString("WINDOW", "Scenario Text Alpha", buff);
+  intToStr(gameFrontScnTextBgAlpha, buff, sizeof(buff));
+  prefsSetString("WINDOW", SCN_TEXT_PREFS_BG_KEY, buff);
+  intToStr(gameFrontScnTextTextAlpha, buff, sizeof(buff));
+  prefsSetString("WINDOW", SCN_TEXT_PREFS_TEXT_KEY, buff);
   prefsSetString("WINDOW", "Scenario Text Shown",
                  scnPanelYesNoWord(gameFrontScnTextShown));
 
