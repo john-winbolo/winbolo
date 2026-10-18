@@ -7031,6 +7031,7 @@ set(_unit_test_names
     lv_presentation_live_seek
     lv_presentation_live_fast_forward
     lv_presentation_live_hold
+    lv_presentation_live_segment_reset_drops_hold
     lv_server_tick_recorded
     lv_server_tick_anchors
     lv_server_tick_hostile

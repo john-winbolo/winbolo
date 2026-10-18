@@ -4147,6 +4147,7 @@ int run_lv_presentation_marker_visible(void);
 int run_lv_presentation_live_seek(void);
 int run_lv_presentation_live_fast_forward(void);
 int run_lv_presentation_live_hold(void);
+int run_lv_presentation_live_segment_reset_drops_hold(void);
 /* The server's game tick at the playhead (test_lv_server_tick.c): a recorded
  * round's tick at end-of-log, hand-written anchors either side of a snapshot
  * and across a new round's run, records of the wrong length, a recording from

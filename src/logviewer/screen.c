@@ -7162,6 +7162,11 @@ void lv_screenSpecResetSegment(void) {
   /* The old round's pings are not the new round's. */
   lv_pingReset();
   s_firstWorldSnapKnown = FALSE;
+  /* An animation of Rewind or Fast Forward that was running is a seek into
+     the old segment: moving the serial drops it on its next frame, and the
+     hold it put on playback ends now so this frame follows the new head. */
+  s_seekSerial++;
+  s_specHold        = false;
   s_specFollowLive  = true;
   s_specSeekPark    = false;
   s_specHeadTick    = 0;

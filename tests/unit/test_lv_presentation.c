@@ -2688,6 +2688,48 @@ int run_lv_presentation_live_hold(void) {
     return 0;
 }
 
+/* A new segment (a new lobby or map) while an animation of Rewind or Fast
+   Forward holds playback: the reset moves the seek serial, which is what
+   makes the animation let go on its next frame, and ends the hold itself,
+   so the first frame after the reset follows the new head again. */
+int run_lv_presentation_live_segment_reset_drops_hold(void) {
+    static LvpLog   b;
+    LogViewerState *lv;
+    uint32_t        serialBefore;
+    uint32_t        serialAfter;
+    uint32_t        parked;
+    uint32_t        after;
+    bool            playing;
+    bool            live;
+
+    lv = lvpOpenLive(&b);
+    UT_ASSERT_MSG(lv != NULL, "the feed could not be loaded");
+
+    lv_screenSeekToTimeMs(20);
+    parked = lv_screenGetTimeRunning();
+    lv_screenSpecSetHold(true);
+    lv_screenSpecFrameUpdate(1000u);
+    serialBefore = lv_screenSeekSerial();
+
+    lv_screenSpecResetSegment();
+    serialAfter = lv_screenSeekSerial();
+    lv_screenSpecFrameUpdate(1100u);
+    after   = lv_screenGetTimeRunning();
+    playing = lv_screenIsPlaying() == TRUE;
+    live    = lv_screenSpecIsLiveMode();
+    lvpCloseLive(lv);
+
+    UT_ASSERT_MSG(live, "the segment reset left live mode");
+    UT_ASSERT_MSG(serialAfter != serialBefore,
+                  "the segment reset did not move the seek serial (%u)",
+                  (unsigned)serialAfter);
+    UT_ASSERT_MSG(playing, "the feed was not playing after the segment reset");
+    UT_ASSERT_MSG(after > parked,
+                  "the feed stayed held at %u ms after the segment reset (%u ms)",
+                  (unsigned)parked, (unsigned)after);
+    return 0;
+}
+
 /* ── 7c. What the event scan keeps for the saved log's name ────────── */
 
 static void lvpPutText(LvpLog *b, uint8_t code, const char *text) {

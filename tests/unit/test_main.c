@@ -2369,6 +2369,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_presentation_live_seek",                       run_lv_presentation_live_seek                       },
     { "lv_presentation_live_fast_forward",               run_lv_presentation_live_fast_forward               },
     { "lv_presentation_live_hold",                       run_lv_presentation_live_hold                       },
+    { "lv_presentation_live_segment_reset_drops_hold",   run_lv_presentation_live_segment_reset_drops_hold   },
     { "lv_server_tick_recorded",                         run_lv_server_tick_recorded                         },
     { "lv_server_tick_anchors",                          run_lv_server_tick_anchors                          },
     { "lv_server_tick_hostile",                          run_lv_server_tick_hostile                          },
