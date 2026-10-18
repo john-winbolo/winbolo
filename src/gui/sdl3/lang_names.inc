@@ -1489,6 +1489,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_LV_HUD_ALL_TEAMS", STR_LV_HUD_ALL_TEAMS },
     { "STR_LV_HUD_DEAD", STR_LV_HUD_DEAD },
     { "STR_LV_HUD_NAME_TEAM", STR_LV_HUD_NAME_TEAM },
+    { "STR_LV_HUD_REL_ALLIED", STR_LV_HUD_REL_ALLIED },
     { "STR_LV_HUD_REL_HOSTILE", STR_LV_HUD_REL_HOSTILE },
     { "STR_LV_HUD_REL_OWN", STR_LV_HUD_REL_OWN },
     { "STR_LV_HUD_TIP_OWNER", STR_LV_HUD_TIP_OWNER },
@@ -2559,4 +2560,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2546
+#define K_LANG_NAME_TABLE_SIZE  2547
