@@ -2668,6 +2668,7 @@ static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     bool hadClip = FALSE;
     bool begun = FALSE;
     LvPingShown pings[LV_PING_SHOWN_MAX];
+    char names[LV_PING_SHOWN_MAX][PLAYER_NAME_LEN];
     int count, i;
 
     if (sdlRenderer == NULL) return;
@@ -2675,14 +2676,22 @@ static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     scale = dst->w / src->w;
     zoomFactor = lv_windowGetZoomFactor();
     tilePx = (float)(zoomFactor * TILE_SIZE_X) * scale;
+    /* Playback writes the ping store and the player names on the timer
+       thread, under the client mutex. Copy them out under the same mutex
+       (recursive, as the tank bars above say) and draw from the copy. */
+    lv_clientMutexWaitFor();
     lv_screenGetOffsets(&offX, &offY);
     count = lv_screenGetPings(pings, LV_PING_SHOWN_MAX);
+    for (i = 0; i < count; i++) {
+        names[i][0] = '\0';
+        lv_playersGetPlayerName(pings[i].sender, names[i], sizeof(names[i]));
+    }
+    lv_clientMutexRelease();
 
     for (i = 0; i < count; i++) {
         BYTE sender = pings[i].sender, kind = pings[i].kind;
         uint16_t wx = pings[i].worldX, wy = pings[i].worldY;
         uint32_t ageMs = pings[i].ageMs;
-        char name[PLAYER_NAME_LEN];
         float cx, cy;
 
         if (!begun) {
@@ -2704,9 +2713,8 @@ static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
         cy = ((float)((int)(wy >> 8) - (int)offY) + 0.5f) * (float)(zoomFactor * TILE_SIZE_Y);
         cx = dst->x + (cx - src->x) * scale;
         cy = dst->y + (cy - src->y) * scale;
-        name[0] = '\0';
-        lv_playersGetPlayerName(sender, name, sizeof(name));
-        lv_drawOverviewPing(cx, cy, tilePx, kind, sender, name, ageMs, lvPingNameFont());
+        lv_drawOverviewPing(cx, cy, tilePx, kind, sender, names[i], ageMs,
+                            lvPingNameFont());
     }
     if (begun) {
         SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);

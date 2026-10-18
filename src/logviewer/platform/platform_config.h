@@ -70,9 +70,16 @@ int lv_platform_config_get_bool(const char* section, const char* key, int defaul
  * value - 1 for true, 0 for false */
 void lv_platform_config_set_bool(const char* section, const char* key, int value);
 
-/* Save configuration to disk
- * Returns 1 on success, 0 on failure */
+/* Save configuration to disk, when this program writes its own preferences
+ * (lv_platform_config_set_own_writes) and something changed. A failed write
+ * is tried again two seconds later at the earliest.
+ * Returns 1 on success or nothing to do, 0 on failure or a write not yet
+ * tried again */
 int lv_platform_config_save(void);
+
+/* Not 0: lv_platform_config_save writes the preferences. The standalone
+ * viewer sets this; inside the game it stays 0, and the game writes. */
+void lv_platform_config_set_own_writes(int on);
 
 /* Get the configuration file path
  * out - Buffer to store path

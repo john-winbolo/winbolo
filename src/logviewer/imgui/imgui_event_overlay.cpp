@@ -40,6 +40,8 @@ extern "C" {
     uint32_t lv_screenWindowLenMs(void);
     uint32_t lv_screenServerTickAt(uint32_t ms);
     bool lv_screenHasServerTick(void);
+    void lv_clientMutexWaitFor(void);
+    void lv_clientMutexRelease(void);
     bool lv_screenSpecIsLiveMode(void);
     unsigned char lv_screenTeamColour(int team);
     void lv_drawTeamPanelColour(int palette, float *r, float *g, float *b);
@@ -467,7 +469,11 @@ static void overlay_draw_count(ImDrawList *dl, const OverlayMarker &m, ImVec2 p0
  * time and the tick of playback. */
 static void overlay_format_when(uint32_t ms, char *out, size_t outSize) {
     char stamp[24];
+    /* A live feed adds to the tick table on the timer thread, so the table
+     * is read under the mutex. */
+    lv_clientMutexWaitFor();
     const uint32_t tick = lv_screenHasServerTick() ? lv_screenServerTickAt(ms) : ms / 20u;
+    lv_clientMutexRelease();
     lv_screenFormatTime(ms, stamp, sizeof(stamp));
     snprintf(out, outSize, "%s  %s %u", stamp, langGetText(STR_DLGSYSINFO_TICK), (unsigned)tick);
 }

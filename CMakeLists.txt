@@ -4725,6 +4725,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # File paths as UTF-8 on every system: what the viewer's file dialogs
     # give back and how the viewer opens it (lv_utf8_path.h, header only).
     tests/unit/test_lv_utf8_path.c
+    # The quoting around text the macOS and Linux file dialogs give to the
+    # shell and to AppleScript (lv_shell_quote.h, header only).
+    tests/unit/test_lv_shell_quote.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -5007,6 +5010,7 @@ set(_unit_test_names
     prefs_merge_reset_wins
     prefs_merge_idle_no_write
     prefs_merge_missing_retry
+    prefs_merge_adopt_keeps_local
     join_running_phase_not_lobby
     lobby_settings_codec_and_apply
     lobby_settings_scenario_apply
@@ -7211,6 +7215,7 @@ set(_unit_test_names
     lv_save_name_roster
     lv_save_name_scan
     lv_utf8_path
+    lv_shell_quote
     lv_kill_tally_seek_back
     lv_alive_seek_back
     lv_death_time_seek_back

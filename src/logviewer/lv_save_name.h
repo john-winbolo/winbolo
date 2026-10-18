@@ -293,6 +293,43 @@ static inline size_t lvSaveNameAddRaw(char *buf, size_t size, size_t len,
   return len;
 }
 
+/* The words the name uses, in the language the user chose. Each is UTF-8
+ * text; "{number}" in more, bot and bots is where the count goes. A NULL
+ * pointer for the whole struct, or for one word, gives the English word.
+ * The code that has the language files fills this; the tests can leave it
+ * NULL. */
+typedef struct {
+  const char *vs;   /* between the teams: "vs" */
+  const char *more; /* the people not named: "+ {number} more" */
+  const char *bot;  /* one bot: "{number} Bot" */
+  const char *bots; /* two bots or more: "{number} Bots" */
+  const char *log;  /* the name when there is nothing else, and the word put
+                       in front of a device name: "log" */
+} LvSaveNameWords;
+
+#define LV_SAVE_NAME_WORD_BYTES 96
+
+/* One word made fit for a file name (as lvSaveNameAddClean does), with the
+ * first "{number}" in it replaced by n. fallback is used when word is NULL
+ * or has nothing left once it is made fit. */
+static inline void lvSaveNameWord(char *out, size_t size, const char *word,
+                                  const char *fallback, int n) {
+  char        clean[LV_SAVE_NAME_WORD_BYTES];
+  const char *mark;
+  size_t      len = lvSaveNameAddClean(clean, sizeof(clean), 0,
+                                       (word != NULL) ? word : fallback);
+  if (len == 0) {
+    lvSaveNameAddClean(clean, sizeof(clean), 0, fallback);
+  }
+  mark = strstr(clean, "{number}");
+  if (mark == NULL) {
+    snprintf(out, size, "%s", clean);
+  } else {
+    snprintf(out, size, "%.*s%d%s", (int)(mark - clean), clean, n,
+             mark + strlen("{number}"));
+  }
+}
+
 /* The name offered for a saved log, ".wbv" and all.
  *   year, month, day   the game's date; year 0 or less is no date
  *   hour, minute       its time of day; hour below 0 is no time
@@ -313,12 +350,19 @@ static inline size_t lvSaveNameAddRaw(char *buf, size_t size, size_t len,
  * " + N more" counts the rest of them. No name is ever cut short. The name
  * has no character Windows refuses, no dot or space before ".wbv", and is
  * not a name Windows keeps for a device. With nothing to make a name of it
- * is "log.wbv". */
-static inline void lvSaveNameBuild(char *out, size_t outSize, int year,
-                                   int month, int day, int hour, int minute,
-                                   const char *mapName, const char *const *names,
-                                   const unsigned char *teams,
-                                   const unsigned char *bots, int nameCount) {
+ * is "log.wbv". The words ("vs", "more", "Bots", "log") come from words,
+ * which may be NULL for the English words. */
+static inline void lvSaveNameBuildWords(char *out, size_t outSize, int year,
+                                        int month, int day, int hour,
+                                        int minute, const char *mapName,
+                                        const char *const *names,
+                                        const unsigned char *teams,
+                                        const unsigned char *bots,
+                                        int nameCount,
+                                        const LvSaveNameWords *words) {
+  const LvSaveNameWords english = {NULL, NULL, NULL, NULL, NULL};
+  char   vsWord[LV_SAVE_NAME_WORD_BYTES];
+  char   logWord[LV_SAVE_NAME_WORD_BYTES];
   char   buf[LV_SAVE_NAME_MAX_BYTES + LV_ROSTER_NAME_LEN + 80];
   char   mapClean[LV_SAVE_NAME_MAP_BYTES + 1];
   char   clean[LV_ROSTER_MAX][LV_ROSTER_NAME_LEN]; /* the people, made fit */
@@ -336,6 +380,11 @@ static inline void lvSaveNameBuild(char *out, size_t outSize, int year,
   if (out == NULL || outSize == 0) {
     return;
   }
+  if (words == NULL) {
+    words = &english;
+  }
+  lvSaveNameWord(vsWord, sizeof(vsWord), words->vs, "vs", 0);
+  lvSaveNameWord(logWord, sizeof(logWord), words->log, "log", 0);
   buf[0] = '\0';
 
   if (year > 0) {
@@ -433,7 +482,9 @@ static inline void lvSaveNameBuild(char *out, size_t outSize, int year,
           continue;
         }
         if (firstName && !firstTeam) {
-          len = lvSaveNameAddRaw(buf, sizeof(buf), len, " vs ");
+          len = lvSaveNameAddRaw(buf, sizeof(buf), len, " ");
+          len = lvSaveNameAddRaw(buf, sizeof(buf), len, vsWord);
+          len = lvSaveNameAddRaw(buf, sizeof(buf), len, " ");
         } else if (!firstName) {
           len = lvSaveNameAddRaw(buf, sizeof(buf), len, ", ");
         }
@@ -443,14 +494,24 @@ static inline void lvSaveNameBuild(char *out, size_t outSize, int year,
       }
     }
     if (left > 0) {
-      char rest[32];
-      snprintf(rest, sizeof(rest), "%s+ %d more", (k > 0) ? " " : "", left);
+      char rest[LV_SAVE_NAME_WORD_BYTES];
+      lvSaveNameWord(rest, sizeof(rest), words->more, "+ {number} more", left);
+      if (k > 0) {
+        len = lvSaveNameAddRaw(buf, sizeof(buf), len, " ");
+      }
       len = lvSaveNameAddRaw(buf, sizeof(buf), len, rest);
     }
     if (botCount > 0) {
-      char count[32];
-      snprintf(count, sizeof(count), "%s%d %s", (k > 0 || left > 0) ? ", " : "",
-               botCount, (botCount == 1) ? "Bot" : "Bots");
+      char count[LV_SAVE_NAME_WORD_BYTES];
+      if (botCount == 1) {
+        lvSaveNameWord(count, sizeof(count), words->bot, "{number} Bot", 1);
+      } else {
+        lvSaveNameWord(count, sizeof(count), words->bots, "{number} Bots",
+                       botCount);
+      }
+      if (k > 0 || left > 0) {
+        len = lvSaveNameAddRaw(buf, sizeof(buf), len, ", ");
+      }
       len = lvSaveNameAddRaw(buf, sizeof(buf), len, count);
     }
     if (len <= LV_SAVE_NAME_STEM_BYTES || k <= 1) {
@@ -459,9 +520,13 @@ static inline void lvSaveNameBuild(char *out, size_t outSize, int year,
   }
 
   if (lvSaveNameIsDevice(buf)) {
-    memmove(buf + 4, buf, len + 1);
-    memcpy(buf, "log ", 4);
-    len += 4;
+    size_t add = strlen(logWord) + 1; /* the word and a space */
+    if (len + add < sizeof(buf)) {
+      memmove(buf + add, buf, len + 1);
+      memcpy(buf, logWord, add - 1);
+      buf[add - 1] = ' ';
+      len += add;
+    }
   }
   /* The date, the map and one name are always less than the limit, so this
      cut is for nothing the viewer gives: it only keeps the promise. */
@@ -473,9 +538,19 @@ static inline void lvSaveNameBuild(char *out, size_t outSize, int year,
   }
   buf[len] = '\0';
   if (len == 0) {
-    snprintf(buf, sizeof(buf), "log");
+    snprintf(buf, sizeof(buf), "%s", logWord);
   }
   snprintf(out, outSize, "%s%s", buf, LV_SAVE_NAME_EXT);
+}
+
+/* lvSaveNameBuildWords with the English words. */
+static inline void lvSaveNameBuild(char *out, size_t outSize, int year,
+                                   int month, int day, int hour, int minute,
+                                   const char *mapName, const char *const *names,
+                                   const unsigned char *teams,
+                                   const unsigned char *bots, int nameCount) {
+  lvSaveNameBuildWords(out, outSize, year, month, day, hour, minute, mapName,
+                       names, teams, bots, nameCount, NULL);
 }
 
 #endif /* LV_SAVE_NAME_H */

@@ -120,6 +120,12 @@ typedef struct {
 #define LV_SPEED_TENTH   12  /* 0.1x  */
 #define LV_SPEED_MAX     12
 
+/* The longest log playback holds: 1000 hours. Playback time is a uint32_t
+ * count of ms, which ends at about 1193 hours; a log that states more ticks
+ * than this (only a damaged or a made-up one) is played to this time only,
+ * so no count of ms goes past the end of a uint32_t. */
+#define LV_TOTAL_TIME_MAX_MS 3600000000u
+
 typedef struct LogViewerState {
   /* The rules this recording is drawn against. */
   LvRules      rules;

@@ -14,6 +14,7 @@
  * decoder's.
  */
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -44,7 +45,11 @@ static void lvSpmapRemove(const char *path) {
   (void) remove(path);
 }
 
-int lvSpmapWrite(const char *path, int self, LvSpmapInfo *info) {
+/* lvSpmapWrite and lvSpmapWriteNew. onlyNew opens the file with "x", so the
+   open itself fails when a file of that name is there: no other program can
+   make the file between a check and the open. */
+static int lvSpmapWriteMode(const char *path, int self, LvSpmapInfo *info,
+                            int onlyNew) {
   LogViewerState *lv = lv_screenGetState();
   unsigned char   allied[LV_SPMAP_SLOTS];
   unsigned char   owns[LV_SPMAP_SLOTS];
@@ -98,9 +103,12 @@ int lvSpmapWrite(const char *path, int self, LvSpmapInfo *info) {
   }
   lvSpmapOwnerTable(self, allied, owns, table);
 
-  fp = lvFopenUtf8(path, "wb");
+  errno = 0;
+  fp = lvFopenUtf8(path, onlyNew ? "wbx" : "wb");
   if (fp == NULL) {
-    return 0;
+    /* Nothing was written, so nothing is removed: with onlyNew the file
+       that is there is another one's. */
+    return (onlyNew && errno == EEXIST) ? LV_SPMAP_EXISTS : 0;
   }
   ok = fputs(MAP_HEADER, fp) != EOF && fputc(CURRENT_MAP_VERSION, fp) != EOF;
   /* The three counts are known only after the items are written: an item
@@ -202,6 +210,14 @@ int lvSpmapWrite(const char *path, int self, LvSpmapInfo *info) {
     *info = done;
   }
   return 1;
+}
+
+int lvSpmapWrite(const char *path, int self, LvSpmapInfo *info) {
+  return lvSpmapWriteMode(path, self, info, 0);
+}
+
+int lvSpmapWriteNew(const char *path, int self, LvSpmapInfo *info) {
+  return lvSpmapWriteMode(path, self, info, 1);
 }
 
 int lvSpmapWriteFromLog(const char *logPath, uint32_t ms, int self,

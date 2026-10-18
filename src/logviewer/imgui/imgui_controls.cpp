@@ -419,33 +419,7 @@ void lv_imgui_controls_window(void) {
     char ctrl_title[128];
     snprintf(ctrl_title, sizeof(ctrl_title), "%s###controls", langGetText(STR_LV_WIN_CONTROLS));
     if (ImGui::Begin(ctrl_title, &lv_g_show_controls_window, ImGuiWindowFlags_NoCollapse)) {
-        /* In the dock the dock places the window; moving it here would pull
-         * it straight back out. */
-        if (!ImGui::IsWindowDocked()) {
-            /* Reposition window relative to right/bottom edge when viewport is resized */
-            float dx, dy;
-            if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
-                ImVec2 pos = ImGui::GetWindowPos();
-                ImVec2 vp_old = ImGui::GetMainViewport()->Size;
-                float old_vp_x = vp_old.x - dx;
-                float old_vp_y = vp_old.y - dy;
-                ImVec2 size = ImGui::GetWindowSize();
-                if (pos.x + size.x * 0.5f > old_vp_x * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x + dx, pos.y + dy));
-                else if (pos.y + size.y * 0.5f > old_vp_y * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x, pos.y + dy));
-            }
-            /* Always clamp to keep fully on screen */
-            {
-                ImVec2 pos = ImGui::GetWindowPos();
-                ImVec2 size = ImGui::GetWindowSize();
-                ImVec2 vp = ImGui::GetMainViewport()->Size;
-                ImVec2 new_pos = pos;
-                if (new_pos.x + size.x > vp.x) new_pos.x = vp.x - size.x;
-                if (new_pos.y + size.y > vp.y) new_pos.y = vp.y - size.y;
-                if (new_pos.x < 0) new_pos.x = 0;
-                if (new_pos.y < 0) new_pos.y = 0;
-                if (new_pos.x != pos.x || new_pos.y != pos.y) ImGui::SetWindowPos(new_pos);
-            }
-        }
+        lv_imgui_keep_window_on_screen();
 
         /* The top row: the playback buttons (back to the last snapshot,
          * play, pause, on to the next snapshot, and on a live feed back to
@@ -508,7 +482,11 @@ void lv_imgui_controls_window(void) {
             lv_windowPlay();
         }
         ImGui::EndDisabled();
-        controls_key_tip(langGetText(STR_LV_PLAY), "Ctrl+P, Space", tip, sizeof(tip));
+        {
+            char keys[64];
+            snprintf(keys, sizeof(keys), "Ctrl+P, %s", langGetText(STR_OSK_SPACE));
+            controls_key_tip(langGetText(STR_LV_PLAY), keys, tip, sizeof(tip));
+        }
         controls_tooltip(tip, loaded && !playing && !atEnd);
 
         /* Pause holds playback where it is; nothing moves the playhead and
@@ -520,7 +498,11 @@ void lv_imgui_controls_window(void) {
             lv_windowPause();
         }
         ImGui::EndDisabled();
-        controls_key_tip(langGetText(STR_LV_PAUSE), "Ctrl+U, Space", tip, sizeof(tip));
+        {
+            char keys[64];
+            snprintf(keys, sizeof(keys), "Ctrl+U, %s", langGetText(STR_OSK_SPACE));
+            controls_key_tip(langGetText(STR_LV_PAUSE), keys, tip, sizeof(tip));
+        }
         controls_tooltip(tip, playing);
 
         controls_place(topX, &topLine, top.btnLine[3], top.btnX[3]);
@@ -749,9 +731,13 @@ void lv_imgui_controls_window(void) {
                  * older recording has none: then 20 ms steps from the start
                  * of the log, the step of the , and . keys. */
                 {
+                    /* A live feed adds to the tick table on the timer
+                     * thread, so the table is read under the mutex. */
+                    lv_clientMutexWaitFor();
                     uint32_t ms = lv_screenGetTimeRunning();
                     uint32_t tick = lv_screenHasServerTick() ? lv_screenServerTickAt(ms)
                                                              : ms / 20u;
+                    lv_clientMutexRelease();
                     snprintf(part[2], sizeof(part[2]), "%s %u",
                              langGetText(STR_DLGSYSINFO_TICK), (unsigned)tick);
                 }

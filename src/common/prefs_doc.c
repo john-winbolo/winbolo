@@ -132,6 +132,18 @@ PrefsDoc *prefsDocLoad(const char *path) {
     return prefsDocNew();
 }
 
+PrefsDoc *prefsDocLoadFile(const char *path, int *existed) {
+    int there = 0;
+    char *content = path ? prefsDocReadFile(path, &there) : NULL;
+    PrefsDoc *doc = NULL;
+    if (existed) *existed = there;
+    if (content) {
+        doc = prefsDocParseJson(content);
+        free(content);
+    }
+    return doc;
+}
+
 char *prefsDocSerialize(const PrefsDoc *doc) {
     if (!doc) return NULL;
     return cJSON_PrintUnformatted(doc->root);

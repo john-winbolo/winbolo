@@ -51,6 +51,15 @@ PrefsDoc *prefsDocParseJson(const char *jsonText);
  * file, or if an existing JSON file does not parse. */
 PrefsDoc *prefsDocLoad(const char *path);
 
+/* Load the JSON document at path, and say whether the file was there.
+ * *existed is 0 when the file could not be opened; the result is then NULL,
+ * not an empty document, so a caller can tell "no file" from "an empty
+ * file". *existed is 1 when the file opened; the result is then the
+ * document, or NULL on a read error, on OOM or when the JSON does not
+ * parse. One open of the file answers both, so no other program can take
+ * the file away between a check and the read. */
+PrefsDoc *prefsDocLoadFile(const char *path, int *existed);
+
 /* Serialize to a newly malloc'd JSON string (caller frees). NULL on OOM. */
 char *prefsDocSerialize(const PrefsDoc *doc);
 

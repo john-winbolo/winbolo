@@ -75,17 +75,31 @@ extern "C" {
  * first log, and at the start of a log, before its first player is in. */
 #define OVERVIEW_DEFAULT_ROWS 2
 
-/* How many rows the table has now (lvOverviewTableRows), read under the
- * decoder's lock. The dock asks for a height before the window is drawn in
- * it, so the count is read for the dock too, and not kept from the last
- * drawing: a count that was kept was the last log's for one frame after
- * another log was loaded. With no team yet it is OVERVIEW_DEFAULT_ROWS
- * teams and the Neutral row. */
+/* The pillboxes, bases and players for this frame, copied out under the
+ * decoder's lock (playback writes them on the decode timer). The copy is
+ * taken once a frame, the first time the dock or the window asks for it,
+ * and the dock and the window both use that copy. A new frame takes a new
+ * copy, so a log loaded since the last frame is seen at once. */
+static const LvOverview &overview_snapshot(void) {
+    static LvOverview s_ov;
+    static int        s_frame = -1;
+    int               frame   = ImGui::GetFrameCount();
+    if (frame != s_frame) {
+        lv_clientMutexWaitFor();
+        lv_screenOverviewSnapshot(&s_ov);
+        lv_clientMutexRelease();
+        s_frame = frame;
+    }
+    return s_ov;
+}
+
+/* How many rows the table has now (lvOverviewTableRows). The dock asks for
+ * a height before the window is drawn in it, so the count comes from this
+ * frame's copy, not from the last drawing: a count that was kept was the
+ * last log's for one frame after another log was loaded. With no team yet
+ * it is OVERVIEW_DEFAULT_ROWS teams and the Neutral row. */
 static int overview_rows_now(void) {
-    LvOverview ov;
-    lv_clientMutexWaitFor();
-    lv_screenOverviewSnapshot(&ov);
-    lv_clientMutexRelease();
+    const LvOverview &ov = overview_snapshot();
     if (ov.rowCount <= 0) return lvOverviewTableRows(OVERVIEW_DEFAULT_ROWS, true);
     return lvOverviewTableRows(ov.rowCount, lvOverviewHasNeutral(&ov));
 }
@@ -503,13 +517,9 @@ void lv_imgui_overview_window(void) {
         return;
     }
 
-    /* Playback writes the pillboxes, bases and players on the decode timer,
-     * so what is drawn is copied out under its lock, every frame: the copy
-     * is then right while playing, scrubbing and stepping. */
-    LvOverview ov;
-    lv_clientMutexWaitFor();
-    lv_screenOverviewSnapshot(&ov);
-    lv_clientMutexRelease();
+    /* This frame's copy (overview_snapshot): right while playing,
+     * scrubbing and stepping. */
+    const LvOverview &ov = overview_snapshot();
 
     {
         /* A panel that sat in the dock when the dock was turned off goes
@@ -528,32 +538,7 @@ void lv_imgui_overview_window(void) {
     char title[128];
     snprintf(title, sizeof(title), "%s###overview", langGetText(STR_LV_WIN_OVERVIEW));
     if (ImGui::Begin(title, &lv_g_show_overview_window, ImGuiWindowFlags_NoCollapse)) {
-        /* In the dock the dock places the window; moving it here would pull
-         * it straight back out. */
-        if (!ImGui::IsWindowDocked()) {
-            /* Reposition window relative to right/bottom edge when viewport is resized */
-            float dx, dy;
-            if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
-                ImVec2 pos = ImGui::GetWindowPos();
-                float old_vp_x = ImGui::GetMainViewport()->Size.x - dx;
-                float old_vp_y = ImGui::GetMainViewport()->Size.y - dy;
-                ImVec2 size = ImGui::GetWindowSize();
-                if (pos.x + size.x * 0.5f > old_vp_x * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x + dx, pos.y + dy));
-                else if (pos.y + size.y * 0.5f > old_vp_y * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x, pos.y + dy));
-            }
-            /* Always clamp to keep fully on screen */
-            {
-                ImVec2 pos = ImGui::GetWindowPos();
-                ImVec2 size = ImGui::GetWindowSize();
-                ImVec2 vp = ImGui::GetMainViewport()->Size;
-                ImVec2 new_pos = pos;
-                if (new_pos.x + size.x > vp.x) new_pos.x = vp.x - size.x;
-                if (new_pos.y + size.y > vp.y) new_pos.y = vp.y - size.y;
-                if (new_pos.x < 0) new_pos.x = 0;
-                if (new_pos.y < 0) new_pos.y = 0;
-                if (new_pos.x != pos.x || new_pos.y != pos.y) ImGui::SetWindowPos(new_pos);
-            }
-        }
+        lv_imgui_keep_window_on_screen();
 
         const ImGuiStyle &style = ImGui::GetStyle();
         float availW = ImGui::GetContentRegionAvail().x;

@@ -133,6 +133,10 @@ list(FILTER LV_SOURCES EXCLUDE REGEX ".*clientmutex\\.c$")
 # The game view is the desktop viewer's; main_wasm.c has no key to enter it.
 # game_view_stubs.c answers draw.c's calls, as it does in the wasm client.
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*logviewer/game_view\\.c$")
+# lv_fullscreen_game.c is client-only: it calls the game's full screen
+# command, which the web viewer does not have. main_wasm.c replaces
+# logviewer.c, the one caller of lvGameFullScreenChoose.
+list(FILTER LV_SOURCES EXCLUDE REGEX ".*logviewer/lv_fullscreen_game\\.c$")
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*dns\\.c$")
 
 # Exclude files not needed in LogViewer

@@ -901,18 +901,23 @@ static void build_stack(int side, ImGuiID dockId, ImVec2 size,
 
 /* Put every panel that is showing into the right sidebar, one above the
  * other, in the order of k_panels: the first layout of a right sidebar for
- * a user who had only that one. */
+ * a user who had only that one. It runs only while the right sidebar has no
+ * dock space yet, so a panel that is docked is in another sidebar: it stays
+ * there (panel_is_free), as rebuild_side leaves it. */
 static void build_layout(ImGuiID dockId, ImVec2 size) {
     LvDockDefaultSlot slot[LV_DOCK_PANEL_COUNT];
+    int count = 0;
     for (int i = 0; i < LV_DOCK_PANEL_COUNT; i++) {
-        slot[i].id = k_panels[i].id;
-        slot[i].len = 0;
-        slot[i].anchor = k_panels[i].anchor ? 1 : 0;
+        if (!panel_is_free(k_panels[i].id)) continue;
+        slot[count].id = k_panels[i].id;
+        slot[count].len = 0;
+        slot[count].anchor = k_panels[i].anchor ? 1 : 0;
+        count++;
     }
-    build_stack(LV_DOCK_RIGHT, dockId, size, slot, LV_DOCK_PANEL_COUNT);
+    build_stack(LV_DOCK_RIGHT, dockId, size, slot, count);
 
-    /* Every panel showing is docked now; none is to be sent to its floating
-     * place. */
+    /* Every panel showing is docked now, here or in another sidebar; none
+     * is to be sent to its floating place. */
     s_float_reset_mask = 0;
 }
 

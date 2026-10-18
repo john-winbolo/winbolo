@@ -64,6 +64,7 @@ static NSMenuItem *s_lv_regionsItem        = nil;
 static NSMenuItem *s_lv_tankBarsItem       = nil;
 static NSMenuItem *s_lv_builderStatusItem  = nil;
 static NSMenuItem *s_lv_pillNumbersItem    = nil;
+static NSMenuItem *s_lv_jumpAnimItem       = nil;
 static NSMenuItem *s_lv_soundEffectsItem   = nil;
 static NSMenu     *s_lv_volumeMenu         = nil;
 static NSMenuItem *s_lv_dnsLookupsItem     = nil;
@@ -80,6 +81,7 @@ static NSMenuItem *s_lv_dockEnabledItem    = nil;
 static NSMenuItem *s_lv_dockLeftItem       = nil;
 static NSMenuItem *s_lv_dockTopItem        = nil;
 static NSMenuItem *s_lv_dockBottomItem     = nil;
+static NSMenu     *s_lv_dockClearMenu      = nil;
 static NSMenuItem *s_lv_resetIntoDockItem  = nil;
 static NSMenuItem *s_lv_fullScreenItem     = nil;
 
@@ -118,6 +120,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleTankBars:(id)sender;
 - (void)onToggleBuilderStatus:(id)sender;
 - (void)onTogglePillNumbers:(id)sender;
+- (void)onToggleJumpAnim:(id)sender;
 - (void)onToggleSoundEffects:(id)sender;
 - (void)onSetSoundVolume:(id)sender;
 - (void)onToggleDnsLookups:(id)sender;
@@ -135,6 +138,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleDockLeft:(id)sender;
 - (void)onToggleDockTop:(id)sender;
 - (void)onToggleDockBottom:(id)sender;
+- (void)onToggleDockClear:(id)sender;
 - (void)onResetWindows:(id)sender;
 - (void)onToggleFullScreen:(id)sender;
 - (void)onResetWindowsIntoDock:(id)sender;
@@ -216,6 +220,7 @@ static void lv_push_sdl_quit(void) {
     lv_drawSetPillNumbers(lv_drawGetPillNumbers() ? 0 : 1);
     lv_windowNeedRedraw();
 }
+- (void)onToggleJumpAnim:(id)sender { (void)sender; lv_imgui_toggle_jump_anim(); }
 - (void)onToggleSoundEffects:(id)sender {
     (void)sender;
     if (s_lv_state) s_lv_state->isSoundsPlaying = s_lv_state->isSoundsPlaying ? false : true;
@@ -243,6 +248,12 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleDockLeft:(id)sender { (void)sender; lv_imgui_dock_set_side_enabled(LV_DOCK_LEFT, !lv_imgui_dock_get_side_enabled(LV_DOCK_LEFT)); }
 - (void)onToggleDockTop:(id)sender { (void)sender; lv_imgui_dock_set_side_enabled(LV_DOCK_TOP, !lv_imgui_dock_get_side_enabled(LV_DOCK_TOP)); }
 - (void)onToggleDockBottom:(id)sender { (void)sender; lv_imgui_dock_set_side_enabled(LV_DOCK_BOTTOM, !lv_imgui_dock_get_side_enabled(LV_DOCK_BOTTOM)); }
+/* Window > Make Unused Sidebar Portions Transparent > <side>: the item's tag
+ * is the side. */
+- (void)onToggleDockClear:(id)sender {
+    int side = (int)[(NSMenuItem *)sender tag];
+    lv_imgui_dock_set_side_clear(side, !lv_imgui_dock_get_side_clear(side));
+}
 - (void)onResetWindows:(id)sender { (void)sender; lv_g_reset_window_positions = true; }
 - (void)onToggleFullScreen:(id)sender { (void)sender; lv_windowToggleFullScreen(); }
 - (void)onResetWindowsIntoDock:(id)sender { (void)sender; lv_imgui_dock_request_layout(); }
@@ -575,6 +586,15 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [optionsMenu addItem:pillNumbers];
     s_lv_pillNumbersItem = pillNumbers;
 
+    /* Animate Rewind and Fast Forward, in the in-window menu's place. */
+    NSMenuItem *jumpAnim = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_JUMP_ANIM)
+        action:@selector(onToggleJumpAnim:)
+        keyEquivalent:@""];
+    [jumpAnim setTarget:s_lv_bridge];
+    [optionsMenu addItem:jumpAnim];
+    s_lv_jumpAnimItem = jumpAnim;
+
     NSMenuItem *soundEffects = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_SOUND_EFFECTS)
         action:@selector(onToggleSoundEffects:)
@@ -739,6 +759,32 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [winMenu addItem:dockBottom];
     s_lv_dockBottomItem = dockBottom;
 
+    /* The option of each sidebar, as the in-window menu has it: the part of
+     * the sidebar past its panels is clear and shows the map. */
+    {
+        static const struct { int side; int label; } kClearSides[] = {
+            { LV_DOCK_RIGHT,  STR_LV_DOCK_ENABLED },
+            { LV_DOCK_LEFT,   STR_LV_DOCK_LEFT },
+            { LV_DOCK_TOP,    STR_LV_DOCK_TOP },
+            { LV_DOCK_BOTTOM, STR_LV_DOCK_BOTTOM },
+        };
+        NSMenuItem *clearRoot = [winMenu addItemWithTitle:LANG_STR(STR_LV_DOCK_TRANSPARENT)
+                                                   action:nil
+                                            keyEquivalent:@""];
+        NSMenu *clearMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_LV_DOCK_TRANSPARENT)];
+        [clearRoot setSubmenu:clearMenu];
+        for (size_t i = 0; i < sizeof(kClearSides) / sizeof(kClearSides[0]); i++) {
+            NSMenuItem *item = [[NSMenuItem alloc]
+                initWithTitle:LANG_STR(kClearSides[i].label)
+                action:@selector(onToggleDockClear:)
+                keyEquivalent:@""];
+            [item setTag:kClearSides[i].side];
+            [item setTarget:s_lv_bridge];
+            [clearMenu addItem:item];
+        }
+        s_lv_dockClearMenu = clearMenu;
+    }
+
     [winMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *resetWindows = [[NSMenuItem alloc]
@@ -845,6 +891,7 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_tankBarsItem = nil;
     s_lv_builderStatusItem = nil;
     s_lv_pillNumbersItem = nil;
+    s_lv_jumpAnimItem = nil;
     s_lv_soundEffectsItem = nil;
     s_lv_volumeMenu = nil;
     s_lv_dnsLookupsItem = nil;
@@ -861,6 +908,7 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_dockLeftItem = nil;
     s_lv_dockTopItem = nil;
     s_lv_dockBottomItem = nil;
+    s_lv_dockClearMenu = nil;
     s_lv_resetIntoDockItem = nil;
     s_lv_fullScreenItem = nil;
     s_lv_zoomStepsBuilt = -1;
@@ -897,6 +945,7 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (s_lv_tankBarsItem) [s_lv_tankBarsItem setState:(s->tankBars ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_builderStatusItem) [s_lv_builderStatusItem setState:(s->builderStatus ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_pillNumbersItem) [s_lv_pillNumbersItem setState:(s->pillNumbers ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_jumpAnimItem) [s_lv_jumpAnimItem setState:(lv_imgui_get_jump_anim() ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_soundEffectsItem) [s_lv_soundEffectsItem setState:(s->soundEffects ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_volumeMenu) {
         for (NSMenuItem *item in [s_lv_volumeMenu itemArray]) {
@@ -918,6 +967,12 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (s_lv_dockLeftItem) [s_lv_dockLeftItem setState:(s->dockLeft ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_dockTopItem) [s_lv_dockTopItem setState:(s->dockTop ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_dockBottomItem) [s_lv_dockBottomItem setState:(s->dockBottom ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_dockClearMenu) {
+        for (NSMenuItem *item in [s_lv_dockClearMenu itemArray]) {
+            const int side = (int)[item tag];
+            [item setState:(lv_imgui_dock_get_side_clear(side) ? NSControlStateValueOn : NSControlStateValueOff)];
+        }
+    }
     if (s_lv_resetIntoDockItem) [s_lv_resetIntoDockItem setEnabled:(s->dockEnabled ? YES : NO)];
     if (s_lv_fullScreenItem) {
         [s_lv_fullScreenItem setState:(s->fullScreen ? NSControlStateValueOn : NSControlStateValueOff)];

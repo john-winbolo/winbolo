@@ -47,7 +47,23 @@ int lv_drawGameViewGetZoom(void) {
   return 0;
 }
 
+int lv_drawGameViewPixelZoom(void) {
+  return 0;
+}
+
 void lv_drawGameViewFrame(void *screenView, void *mineView,
                           void *tanks, void *bullets, void *lgms) {
   (void)screenView; (void)mineView; (void)tanks; (void)bullets; (void)lgms;
+}
+
+/* Where the game's ping marker code is not linked, the overview map draws
+ * no ping markers. */
+void lv_drawOverviewPing(float cx, float cy, float tilePx, unsigned char kind,
+                         unsigned char sender, const char *name,
+                         unsigned int ageMs, void *font) {
+  (void)cx; (void)cy; (void)tilePx; (void)kind; (void)sender; (void)name;
+  (void)ageMs; (void)font;
+}
+
+void lv_drawOverviewPingsFlush(void) {
 }
