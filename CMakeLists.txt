@@ -7094,6 +7094,9 @@ set(_unit_test_names
     scenario_text_fit
     scenario_text_tablet_band
     scenario_text_pointer_on_handle
+    scenario_text_window_shown
+    scenario_text_edge_shown
+    scenario_text_save_place
     scenario_status_line
     scenario_announce_stack
     scn_status_codec_and_client
