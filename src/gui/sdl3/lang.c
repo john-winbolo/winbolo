@@ -1278,6 +1278,8 @@ static const LangEntry langTable[] = {
     {2795, "Rubble"},
     {2796, "Swamp"},
     {2797, "Grass"},
+    {2905, "Scenario Text"},
+    {2906, "Fades the backing and the text together."},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},

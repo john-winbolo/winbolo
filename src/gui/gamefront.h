@@ -1044,6 +1044,23 @@ extern int   gameFrontScnPanelY;
 extern int   gameFrontScnPanelScale;    /* percent, -1 = never resized */
 extern int   gameFrontScnPanelAlpha;    /* percent, -1 = never set */
 
+/* The Scenario Text window: the one window the status line and the
+ * announcement of a scenario or mod are drawn in ([WINDOW] "Scenario Text
+ * X", "Y", "Width", "Height", "Alpha" and "Shown"). X and Y are its place
+ * inside the main window, -1 for never moved, which puts it at the top
+ * middle of the game view. Width and height are in screen pixels, -1 for
+ * never resized, which gives it the size the game's zoom gives the text.
+ * Alpha is the percent opacity of its backing and its text, -1 for never
+ * set, which is 100. Shown is the Brains > Info Overlay > Scenario Text
+ * checkbox, which the window's X turns off. Written through the debounced
+ * gameFrontSaveWindowSettings path as each drag ends. */
+extern int   gameFrontScnTextX;         /* -1 = never moved */
+extern int   gameFrontScnTextY;
+extern int   gameFrontScnTextW;         /* pixels, -1 = never resized */
+extern int   gameFrontScnTextH;
+extern int   gameFrontScnTextAlpha;     /* percent, -1 = never set */
+extern bool  gameFrontScnTextShown;
+
 /* The longest scenario string the pair below is asked to key a row on. The
  * caller passes the scenario's file name where there is one, because two
  * scenarios can carry the same display name and the file name is what the

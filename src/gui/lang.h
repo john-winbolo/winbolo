@@ -3493,6 +3493,12 @@
 #define STR_DLGSYSINFO_MEM_SWAMP                 2796
 #define STR_DLGSYSINFO_MEM_GRASS                 2797
 
+/* The Scenario Text window: the status line and the announcement a
+ * scenario or mod shows, in a window the player moves and resizes.
+ * 2798 to 2904 are used by open pull requests, so these start at 2905. */
+#define STR_SCNTEXT_TITLE                        2905
+#define STR_SCNTEXT_OPACITY_LINE                 2906
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */
