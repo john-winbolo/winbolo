@@ -610,6 +610,13 @@ static const LangEntry langTable[] = {
     {1940, "This server does not share replays"},
     {1941, "No replay available for this round"},
     {1942, "The round was too long to send"},
+    /* Lobby "Last round" panel — the reel's "Spawn in log viewer" button. */
+    {2909, "Spawn in log viewer"},
+    {2910, "Open this round in the Log Viewer, in a window of its own"},
+    {2911, "There is no log of this round to open"},
+    {2912, "Could not find the Log Viewer beside WinBolo"},
+    {2913, "Could not save a copy of the round's log for the Log Viewer"},
+    {2914, "Could not start the Log Viewer"},
     {757,  "WinBolo - Set Player Name"},
     {758,  "Your player name is set by WinBolo.net."},
     {759,  "Please enter your player name."},

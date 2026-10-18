@@ -57,16 +57,22 @@
  * BOLO_RECAP_CLIP_GIF      — the clip export. The GIF encoder's implementation
  *   TU (third_party/msf_gif/msf_gif_impl.c) is not in the wasm target's
  *   sources, and the save path ends in a native file dialog the browser has
- *   no equivalent of. */
+ *   no equivalent of.
+ * BOLO_REEL_SPAWN_VIEWER   — the reel's "Spawn in log viewer" button, which
+ *   starts the separate Log Viewer program. A browser page cannot start a
+ *   program. (Tablet mode, which can start one but has no place for a second
+ *   window, hides the button at run time.) */
 #define BOLO_REEL_WBN_FETCH 1
 #ifdef __EMSCRIPTEN__
 #define BOLO_REEL_WBN_FETCH_CURL 0
 #define BOLO_RECAP_WBN_RATING    0
 #define BOLO_RECAP_CLIP_GIF      0
+#define BOLO_REEL_SPAWN_VIEWER   0
 #else
 #define BOLO_REEL_WBN_FETCH_CURL 1
 #define BOLO_RECAP_WBN_RATING    1
 #define BOLO_RECAP_CLIP_GIF      1
+#define BOLO_REEL_SPAWN_VIEWER   1
 #endif
 
 /* The types below and the signatures further down name types that come from
@@ -362,6 +368,22 @@ typedef struct LobbyReelState {
      * keeps the request to one send per summary. Read by the recap so it can
      * say what is happening in place of a reel it has no bytes for yet. A
      * process replaying its own recording never asks, and leaves these idle. */
+#if BOLO_REEL_SPAWN_VIEWER
+    /* A copy of the bytes the reel was given, for "Spawn in log viewer": the
+     * viewer embed takes the reel's own buffer and frees it, so this is the
+     * only whole copy of the log this side still has. Always a complete log:
+     * the file this process recorded is read only after the recording is
+     * closed, and a download is handed over only once every byte is here.
+     * SDL_malloc'd, freed by lobbyReelEnd. NULL when the copy could not be
+     * made, which keeps the button disabled. */
+    uint8_t *spawnBytes = nullptr;
+    size_t   spawnLen   = 0;
+    /* The last spawn's failure, as a lang id (0 for none), and the SDL tick
+     * it stops being shown. */
+    int      spawnMsg       = 0;
+    Uint64   spawnMsgUntilMs = 0;
+#endif
+
     bool    logAsked   = false;
     int     logState   = CLIENT_ROUND_LOG_IDLE;
     uint8_t logPercent = 0;

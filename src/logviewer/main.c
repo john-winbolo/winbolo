@@ -50,9 +50,17 @@ bool lvGameFullScreenChoose(bool on) {
 }
 
 #ifdef _WIN32
+/* SDL_MAIN_HANDLED above: this declares SDL_RunApp and adds no entry point. */
+#include <SDL3/SDL_main.h>
+
+/* SDL_RunApp with no argv reads the command line as UTF-16 and gives main
+ * UTF-8, the form every path in the viewer is opened as (lv_utf8_path.h).
+ * __argv is in the system's code page instead, so a log path with a letter
+ * outside it — the game's "Spawn in log viewer" passes one under the user's
+ * own folder — did not open. */
 int __stdcall WinMain(void *hInst, void *hPrev, char *lpCmd, int nShow) {
     (void)hInst; (void)hPrev; (void)lpCmd; (void)nShow;
-    return main(__argc, __argv);
+    return SDL_RunApp(0, NULL, main, NULL);
 }
 #endif
 
