@@ -1232,6 +1232,9 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
      * not shuffle everything below the reel up and down. */
     ImGui::SetCursorPosY(blockTopY + rect.y);
     if (!transport) {
+        /* ImGui asserts at End() on a cursor moved past the window's content
+           with no item after it; the transport row is that item otherwise. */
+        ImGui::Dummy(ImVec2(0.0f, 0.0f));
         s_reel.drawn = true;
         return;
     }
