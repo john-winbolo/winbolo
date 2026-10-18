@@ -19,6 +19,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include <stdio.h>
+#include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
 
 static ImGuiContext* g_context = nullptr;
 static SDL_Window* g_window = nullptr;
@@ -117,22 +118,15 @@ void lv_imgui_context_newframe(void) {
     ImGui_ImplSDLRenderer3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
 
-    /* The scale ImGui draws at is the drawable's own, read now. The SDL
-       backend takes SDL's stored display scale, which SDL sets when the
-       window is made and again on a resize; for a window made behind a
-       full-screen program on a Retina display that can still be 1 while the
-       drawable is at 2. The world blit reads the density fresh each frame
-       (lvDrawPixelScale), so the two disagreed: every sidebar and panel was
-       drawn at half size into the window's top-left quarter. */
-    {
-        int ww = 0, wh = 0, ow = 0, oh = 0;
-        if (g_window != nullptr && g_renderer != nullptr &&
-            SDL_GetWindowSize(g_window, &ww, &wh) &&
-            SDL_GetRenderOutputSize(g_renderer, &ow, &oh) &&
-            ww > 0 && wh > 0 && ow > 0 && oh > 0) {
-            ImGui::GetIO().DisplayFramebufferScale =
-                ImVec2((float)ow / (float)ww, (float)oh / (float)wh);
-        }
+    /* As the game's dialogs do (imgui_dialog_utils.h): on a window with
+       SDL_WINDOW_HIGH_PIXEL_DENSITY the renderer draws in pixels, and ImGui
+       lays out in points, so lv_imgui_context_render puts a point-space
+       logical presentation on while it draws, and the scale ImGui would
+       apply on top of that is set back to 1 here. Without the two, on a
+       Retina display every sidebar and panel was drawn one point per pixel,
+       at half size, into the window's top-left quarter. */
+    if (g_renderer != nullptr) {
+        dialogOverrideFramebufferScale(g_renderer);
     }
     ImGui::NewFrame();
 
@@ -154,7 +148,13 @@ void lv_imgui_context_render(void) {
     ImGui::SetCurrentContext(g_context);
     dialogDrawNavOutline();
     ImGui::Render();
+    /* Draw in points: see lv_imgui_context_newframe. The world blit before
+       this draws in pixels, so the presentation is put back afterwards. */
+    int                            savedW = 0, savedH = 0;
+    SDL_RendererLogicalPresentation savedMode = SDL_LOGICAL_PRESENTATION_DISABLED;
+    dialogSaveLogicalPresentation(g_renderer, &savedW, &savedH, &savedMode);
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), g_renderer);
+    dialogRestoreLogicalPresentation(g_renderer, savedW, savedH, savedMode);
 }
 
 int lv_imgui_context_handle_event(SDL_Event* event) {
