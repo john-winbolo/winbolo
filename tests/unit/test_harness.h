@@ -4301,6 +4301,10 @@ int run_lv_save_name_roster(void);
 int run_lv_save_name_scan(void);
 /* File paths as UTF-8 on every system (test_lv_utf8_path.c). */
 int run_lv_utf8_path(void);
+/* Where the recap's "Spawn in log viewer" looks for the Log Viewer, and
+ * the name of the log copy it opens (test_logviewer_spawn.c). */
+int run_logviewer_spawn_paths(void);
+int run_logviewer_spawn_names(void);
 /* Quoting for the shell and AppleScript (test_lv_shell_quote.c). */
 int run_lv_shell_quote(void);
 /* The kill and death tallies go back with a seek (test_lv_presentation.c). */

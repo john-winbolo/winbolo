@@ -720,6 +720,14 @@ STR_DLGLOBBY_REEL_DISABLED=This server does not share replays
 STR_DLGLOBBY_REEL_NONE=No replay available for this round
 STR_DLGLOBBY_REEL_TOO_LARGE=The round was too long to send
 
+# Lobby "Last round" panel — the reel's "Spawn in log viewer" button.
+STR_DLGLOBBY_REEL_SPAWN_LV=Spawn in log viewer
+STR_DLGLOBBY_REEL_SPAWN_LV_TIP=Open this round in the Log Viewer, in a window of its own
+STR_DLGLOBBY_REEL_SPAWN_NO_LOG=There is no log of this round to open
+STR_DLGLOBBY_REEL_SPAWN_NO_VIEWER=Could not find the Log Viewer beside WinBolo
+STR_DLGLOBBY_REEL_SPAWN_SAVE_FAILED=Could not save a copy of the round's log for the Log Viewer
+STR_DLGLOBBY_REEL_SPAWN_START_FAILED=Could not start the Log Viewer
+
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Set Player Name
 STR_DLGSETNAME_WBN_LOCKED=Your player name is set by WinBolo.net.

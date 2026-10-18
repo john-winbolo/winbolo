@@ -4703,6 +4703,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # File paths as UTF-8 on every system: what the viewer's file dialogs
     # give back and how the viewer opens it (lv_utf8_path.h, header only).
     tests/unit/test_lv_utf8_path.c
+    # Where the round recap's "Spawn in log viewer" looks for the Log
+    # Viewer, the name of the log copy it opens and the argument list
+    # (logviewer_spawn.h, header only).
+    tests/unit/test_logviewer_spawn.c
     # The quoting around text the macOS and Linux file dialogs give to the
     # shell and to AppleScript (lv_shell_quote.h, header only).
     tests/unit/test_lv_shell_quote.c
@@ -7111,6 +7115,8 @@ set(_unit_test_names
     lv_save_name_roster
     lv_save_name_scan
     lv_utf8_path
+    logviewer_spawn_paths
+    logviewer_spawn_names
     lv_shell_quote
     lv_kill_tally_seek_back
     lv_alive_seek_back

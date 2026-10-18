@@ -2456,6 +2456,8 @@ static const UnitTestEntry s_tests[] = {
     { "lv_save_name_roster",                             run_lv_save_name_roster                             },
     { "lv_save_name_scan",                               run_lv_save_name_scan                               },
     { "lv_utf8_path",                                    run_lv_utf8_path                                    },
+    { "logviewer_spawn_paths",                           run_logviewer_spawn_paths                           },
+    { "logviewer_spawn_names",                           run_logviewer_spawn_names                           },
     { "lv_shell_quote",                                  run_lv_shell_quote                                  },
     { "lv_kill_tally_seek_back",                         run_lv_kill_tally_seek_back                         },
     { "lv_alive_seek_back",                              run_lv_alive_seek_back                              },

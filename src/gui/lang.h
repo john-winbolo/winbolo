@@ -766,6 +766,13 @@
 #define STR_DLGLOBBY_REEL_DISABLED           1940
 #define STR_DLGLOBBY_REEL_NONE               1941
 #define STR_DLGLOBBY_REEL_TOO_LARGE          1942
+/* Lobby "Last round" panel — the reel's "Spawn in log viewer" button. */
+#define STR_DLGLOBBY_REEL_SPAWN_LV           2909
+#define STR_DLGLOBBY_REEL_SPAWN_LV_TIP       2910
+#define STR_DLGLOBBY_REEL_SPAWN_NO_LOG       2911
+#define STR_DLGLOBBY_REEL_SPAWN_NO_VIEWER    2912
+#define STR_DLGLOBBY_REEL_SPAWN_SAVE_FAILED  2913
+#define STR_DLGLOBBY_REEL_SPAWN_START_FAILED 2914
 
 /* SetName dialog additions */
 #define STR_DLGSETNAME_WINTITLE             757
