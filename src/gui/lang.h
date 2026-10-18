@@ -2098,6 +2098,8 @@
 #define STR_LV_SPEC_CONNECTION_LOST         1859
 #define STR_LV_SPEC_BEGINS_NOW              1860
 #define STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT  1861
+/* The File menu of a live game watched from the game: its one item. */
+#define STR_LV_MENU_LEAVE_SPECTATING        2915
 
 /* Volume — slider label and Mac preset submenu items */
 #define STR_MENU_VOLUME                     1402

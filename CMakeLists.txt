@@ -4673,6 +4673,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # slider, which markers become one, and the saved list of chosen kinds
     # (lv_event_overlay.h, header only).
     tests/unit/test_lv_event_overlay.c
+    # Which parts of the viewer a frame of the overview draws, for a log
+    # file and for a live feed (lv_panel_set.h, header only).
+    tests/unit/test_lv_panel_set.c
     # The viewer's playback times as text, to the hundredth of a second, and
     # the ring flashed on the map round an event's place (lv_time_fmt.h,
     # lv_event_flash.h, header only).
@@ -7026,6 +7029,7 @@ set(_unit_test_names
     lv_presentation_marker_visible
     lv_presentation_live_seek
     lv_presentation_live_fast_forward
+    lv_presentation_live_hold
     lv_server_tick_recorded
     lv_server_tick_anchors
     lv_server_tick_hostile
@@ -7069,6 +7073,8 @@ set(_unit_test_names
     lv_event_overlay_choice
     lv_event_overlay_picture
     lv_event_overlay_no_sign
+    lv_event_overlay_live_rebuild
+    lv_panel_set_live
     lv_event_kinds_filter
     lv_event_kinds_prefs
     lv_event_marker

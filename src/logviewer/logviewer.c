@@ -72,6 +72,7 @@
 #include "lv_utf8_path.h"   /* lvFopenUtf8: the dialogs' paths are UTF-8 */
 #include "lv_first_view.h"  /* where the map is when a log is first shown */
 #include "lv_jump_anim.h"   /* the animation of Rewind and Fast Forward */
+#include "lv_panel_set.h"   /* the panels a frame of the overview draws */
 #include "lv_fullscreen_game.h"
 #include "imgui/imgui_game_view.h"
 #include "imgui/imgui_logviewer_menu.h"
@@ -308,6 +309,24 @@ static void lvHostVisibleMap(float *startX, float *startY, float *lenX, float *l
     if (*lenY < 1.0f) *lenY = 1.0f;
 }
 
+/* The part of the window the map shows in, in window pixels: below the menu
+ * bar and inside the sidebars that are open. The spectator's badge and its
+ * "connection lost" message go here, so no sidebar is over them. */
+static void lvHostMapArea(float *x, float *y, float *w, float *h) {
+    LvDockMargins open = { 0, 0, 0, 0 };
+    int winW = 0, winH = 0;
+    int menuH = (int)lv_imgui_get_menu_bar_height();
+
+    SDL_GetWindowSize(g_lv->window, &winW, &winH);
+    lv_imgui_dock_open_margins(&open.left, &open.top, &open.right, &open.bottom);
+    *x = (float)open.left;
+    *y = (float)(menuH + open.top);
+    *w = (float)(winW - open.left - open.right);
+    *h = (float)(winH - menuH - open.top - open.bottom);
+    if (*w < 1.0f) *w = 1.0f;
+    if (*h < 1.0f) *h = 1.0f;
+}
+
 /* What a jump does to the view when the event has a place. */
 typedef enum {
     LV_JUMP_VIEW_KEEP = 0, /* the view stays; the ring (or its edge arrow) shows the place */
@@ -407,7 +426,9 @@ void lv_windowCentreOnEvent(uint32_t ms, int hasCell, int mapX, int mapY, int te
     lvWindowJumpToEvent(ms, hasCell, mapX, mapY, team, LV_JUMP_VIEW_CENTRE);
 }
 
-/* Fast Forward with no animation: on to the next snapshot, or the end. */
+/* Fast Forward with no animation: on to the next snapshot, or the end. On a
+ * live feed it is on to the head, where the next frame follows the feed
+ * again (lv_screenSpecFrameUpdate). */
 static void lvWindowFastForwardNow(void) {
     lv_clientMutexWaitFor();
     lv_drawDirtyScreen();
@@ -512,22 +533,38 @@ static void lvJumpAnimFinish(void) {
     }
 }
 
+/* Where Fast Forward goes on a live feed: the head, the newest moment the
+ * feed has. lv_screenFastForwardTargetMs has no answer there, because the
+ * next snapshot is not written yet, but lv_screenFastForward plays on to the
+ * head. The caller holds the decoder's mutex. */
+static bool lvJumpLiveHeadMs(uint32_t nowMs, uint32_t *toMs) {
+    if (!lv_screenSpecIsLiveMode() || g_lv->totalTimeMs <= nowMs) {
+        return FALSE;
+    }
+    *toMs = g_lv->totalTimeMs;
+    return TRUE;
+}
+
 /* Start one for a press of Rewind (back) or Fast Forward. FALSE when the
- * press is to jump: the option is off, a live feed, nowhere to go, or a
- * jump with no tick between its ends. */
+ * press is to jump: the option is off, nowhere to go, or a jump with no
+ * tick between its ends. On a live feed Fast Forward goes to the head. */
 static bool lvJumpAnimStart(bool back) {
     uint32_t nowMs, toMs = 0;
     bool known;
     int steps;
 
-    if (!s_lvJumpHost || !lv_imgui_get_jump_anim() || g_lv->isLoaded == FALSE ||
-        lv_screenSpecIsLiveMode()) {
+    if (!s_lvJumpHost || !lv_imgui_get_jump_anim() || g_lv->isLoaded == FALSE) {
         return FALSE;
     }
     lv_clientMutexWaitFor();
     nowMs = lv_screenGetTimeRunning();
-    known = back ? (lv_screenRewindTargetMs(&toMs) == TRUE && toMs < nowMs)
-                 : (lv_screenFastForwardTargetMs(&toMs) == TRUE && toMs > nowMs);
+    if (back) {
+        known = (lv_screenRewindTargetMs(&toMs) == TRUE && toMs < nowMs);
+    } else if (lv_screenSpecIsLiveMode()) {
+        known = lvJumpLiveHeadMs(nowMs, &toMs);
+    } else {
+        known = (lv_screenFastForwardTargetMs(&toMs) == TRUE && toMs > nowMs);
+    }
     steps = known ? lvJumpAnimSteps(nowMs, toMs, LV_JUMP_ANIM_STEPS, 0, UINT32_MAX) : 1;
     if (steps < 2) {
         lv_clientMutexRelease();
@@ -634,9 +671,9 @@ void lv_windowOpenFile(char *cmdLine) {
     int  dlgResult;
 
     /* A live spectator must not tear down the delayed feed by opening another
-       log. On macOS the native menu still dispatches File > Open even though the
-       in-window menu is suppressed in live mode, so guard at the action itself.
-       Standalone playback and the command-line open are never in live mode. */
+       log. The menus have no Open in live mode and Ctrl+O does nothing there,
+       but the check is kept at the action itself as well. Standalone playback
+       and the command-line open are never in live mode. */
     if (lv_screenSpecIsLiveMode()) {
         return;
     }
@@ -751,9 +788,10 @@ void lv_windowSaveMap(void) {
     int  count = 0;
     int  len;
 
-    /* The live spectator never saves the delayed feed to a .wbv. The native
-       macOS menu can still fire File > Save Map, so no-op in live mode (it would
-       otherwise freeze the feed via the pause below). Standalone is unaffected. */
+    /* The live spectator never saves the delayed feed to a .wbv. The menus
+       have no Save Map in live mode, and this does nothing there as well (it
+       would otherwise freeze the feed via the pause below). Standalone is
+       unaffected. */
     if (lv_screenSpecIsLiveMode()) {
         return;
     }
@@ -1700,10 +1738,10 @@ static void lvHostHandleFullScreenChange(const SDL_Event *e) {
  * lvHostHandleGameViewKey -- Shared game-view input: grave-key game-view
  * toggle, Tab camera cycle, 1-4 zoom, arrow-key pan, ,-. time step. Returns
  * TRUE if the event was consumed (the caller should skip its other handlers).
- * allowToggle gates the grave-key on/off toggle and allowSeek gates the ,-.
- * seek; the spectator host (always game-view, live feed) suppresses both.
- * Pure extraction from logViewerRun (the two gates are the only additions;
- * the viewer passes both TRUE, preserving its behaviour). */
+ * allowToggle turns on the grave-key on/off toggle and allowSeek turns on the
+ * ,-. seek. Both hosts, the viewer and the spectator, pass TRUE for both: a
+ * live feed can change between the views and step through time as a log
+ * file can. */
 static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
                                     bool allowSeek) {
     /* Game-view-mode toggle. Must run BEFORE ImGui sees the event so
@@ -1834,7 +1872,8 @@ static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
      * In game view a jump re-centres the camera, because 10 s can leave the
      * followed tank far outside the viewport and the dead-zone tracker
      * would otherwise scroll one tile per frame to catch up.
-     * Suppressed (allowSeek=FALSE) on the live spectator feed. */
+     * On the live spectator feed a step parks the view in the past, as the
+     * seek bar does. */
     if (allowSeek && sdlEvent.type == SDL_EVENT_KEY_DOWN &&
         g_lv->isLoaded && !lv_imgui_want_text_input() &&
         (sdlEvent.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
@@ -1892,8 +1931,8 @@ static void lvHostHandleResize(const SDL_Event *e) {
     float tilePxX = (float)TILE_SIZE_X * zoom;
     float tilePxY = (float)TILE_SIZE_Y * zoom;
     /* The sidebars that show take the edges of the window; the map is
-     * fitted to what is left. All zero in the live spectator and whenever
-     * every sidebar is off, which leaves every sum below as it was. */
+     * fitted to what is left. All zero whenever every sidebar is off, which
+     * leaves every sum below as it was. */
     /* A sidebar whose unused part is clear takes nothing from the map. */
     LvDockMargins dock = { 0, 0, 0, 0 };
     lv_imgui_dock_map_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
@@ -1954,8 +1993,8 @@ static void lvHostHandleResize(const SDL_Event *e) {
  *
  * The window itself is left alone here (the user did not resize it), so the
  * fit rounds up: the last square may run under a sidebar's edge by less than
- * a square. The live spectator never has a sidebar and so never gets past
- * the comparison.
+ * a square. The live spectator has the same sidebars as the viewer, so this
+ * runs for both.
  *
  * A sidebar whose unused part is clear takes nothing from the map: the map
  * is fitted as if that sidebar were not there and is drawn under it. How
@@ -2064,9 +2103,9 @@ static void lvHostDockSyncLocked(void) {
     g_lv->wantScreenUpdate = TRUE;
 }
 
-/* TRUE in the log viewer's own run (logViewerRun), which is the one host that
- * places the first view of a log. The live spectator and the reel in the
- * game keep the view the load gave them. */
+/* TRUE in the hosts that place the first view of a log: the log viewer's own
+ * run (logViewerRun) and the live spectator (spectatorRun). The reel in the
+ * game keeps the view the load gave it. */
 static bool s_lvFirstViewHost = FALSE;
 
 /* --------------------------------------------------------------------------
@@ -2093,7 +2132,7 @@ static void lvHostFirstView(void) {
     if (!s_lvFirstViewHost || g_lv->isLoaded == FALSE) {
         return;
     }
-    if (g_lv->gameView || lv_screenSpecIsLiveMode()) {
+    if (g_lv->gameView) {
         lv_screenFirstViewCancel();
         return;
     }
@@ -2145,17 +2184,20 @@ static void lvHostFirstView(void) {
  * presents. Pure extraction of logViewerRun's frame body, shared with
  * spectatorRun.
  *
- * overlay, when non-NULL, is drawn centred just before the ImGui render (the
- * live spectator's "connection lost" message); the standalone viewer passes
- * NULL.
+ * overlay, when non-NULL, is drawn centred on the map just before the ImGui
+ * render (the live spectator's "connection lost" message); the standalone
+ * viewer passes NULL.
  *
- * Live-spectator additions are gated on lv_screenSpecIsLiveMode(), which only
- * spectatorRun ever sets: the DVR scrubber is kept reachable in the game view,
- * and the block-grid pass renders a safe scrubber + event-feed + game-info
- * subset instead of the viewer's menu bar and full panel set -- the menu bar's
- * File/Action items (and Ctrl shortcuts) would tear down the live session, and
- * the comments panel needs a finished log's WBN key. The viewer is never in
- * live mode, so its behaviour is unchanged. */
+ * A live feed (lv_screenSpecIsLiveMode, which only spectatorRun sets) draws
+ * the same overview as a log file: the menu bar, the sidebars and every
+ * panel, each as its own Windows menu option says (lvPanelSetDesktop). The
+ * differences:
+ *   - the menu bar has only the items that cannot end the feed
+ *     (imgui_main_menu.cpp);
+ *   - the Comments panel is not drawn, because a feed has no WinBolo.net log;
+ *   - the badge with the phase of the game is drawn in the corner of the map.
+ * In the game view a live feed also keeps the Controls panel, so the feed
+ * can be moved through in time there too. */
 static void lvHostRenderFrame(const char *overlay) {
     lvHostDockSync();
     lvHostFirstView();
@@ -2273,6 +2315,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.fromMainMenu     = g_lv->fromMainMenu ? true : false;
         lvms.fullScreen       = lv_windowIsFullScreen() ? true : false;
         lvms.canFullScreen    = lv_windowCanFullScreen() ? true : false;
+        lvms.live             = lv_screenSpecIsLiveMode() ? true : false;
         lv_mac_menubar_refresh(&lvms);
     }
 #endif
@@ -2282,11 +2325,15 @@ static void lvHostRenderFrame(const char *overlay) {
         /* The camera tank's panel, as its player saw it. */
         lv_imgui_scenario_panel_window(g_lv->isLoaded ? true : false);
         lv_imgui_scenario_status(g_lv->isLoaded ? true : false);
-        /* Live spectator keeps the DVR scrubber reachable in game view; the
-         * standalone viewer's game view shows no scrubber (never live mode). */
+        /* A live feed keeps the Controls panel in the game view, so the feed
+         * can be moved through in time there; the viewer's game view has
+         * none. The option is put back after, so the forced value is never
+         * saved. */
         if (lv_screenSpecIsLiveMode()) {
+            bool save_ctrl = lv_g_show_controls_window;
             lv_g_show_controls_window = true;
             lv_imgui_controls_window();
+            lv_g_show_controls_window = save_ctrl;
             lv_imgui_spectator_badge(g_lv->gamePhase);
         }
         lv_g_reset_window_positions = false;
@@ -2297,33 +2344,9 @@ static void lvHostRenderFrame(const char *overlay) {
         lvHostDrawLoadProgress();
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
-    } else if (lv_screenSpecIsLiveMode()) {
-        /* Live spectator block-grid overview: DVR scrubber + live event feed +
-         * game info (map name / type / settings, decoded from the seed). The
-         * viewer's menu bar and comments panel stay gated off (see the function
-         * banner). */
-        lv_g_show_controls_window = true;
-        lv_imgui_controls_window();
-        lv_g_show_events_window = true;
-        lv_imgui_events_window();
-        lv_g_show_game_info_window = true;
-        lv_imgui_game_info_window();
-        lv_imgui_scenario_panel_window(g_lv->isLoaded ? true : false);
-        lv_imgui_scenario_status(g_lv->isLoaded ? true : false);
-        lv_imgui_spectator_badge(g_lv->gamePhase);
-        lv_g_reset_window_positions = false;
-        if (overlay != NULL) {
-            lv_imgui_center_message(overlay);
-        }
-        lv_imgui_zoom_label();
-        lv_imgui_game_viewport_hover();
-        lvHostDrawLoadProgress();
-        lv_imgui_dialogs_render();
-        lv_imgui_context_render();
-
-        lv_imgui_game_viewport_process_input();
     } else {
         bool compact = (uiModeIsTablet() || uiModeIsSteamDeck());
+        const unsigned panels = lvPanelSetDesktop(lv_screenSpecIsLiveMode() ? 1 : 0);
         if (compact) {
             /* Start opens the popup menu — replaces the desktop top
              * menu bar in tablet/Deck compact mode. */
@@ -2337,17 +2360,23 @@ static void lvHostRenderFrame(const char *overlay) {
             bool save_gi    = lv_g_show_game_info_window;
             bool save_ii    = lv_g_show_item_info_window;
             bool save_cmt   = lv_g_show_comments_window;
+            /* A live feed has no Comments panel (lvPanelSetDesktop): the
+             * Events panel is up in its place. */
+            LvCompactPanel active = lvCompactGetActivePanel();
+            if (active == LV_PANEL_COMMENTS && !(panels & LV_PANEL_SET_COMMENTS)) {
+                active = LV_PANEL_EVENTS;
+            }
             lv_g_show_controls_window  = true;
-            lv_g_show_events_window    = (lvCompactGetActivePanel() == LV_PANEL_EVENTS);
-            lv_g_show_game_info_window = (lvCompactGetActivePanel() == LV_PANEL_GAME_INFO);
-            lv_g_show_item_info_window = (lvCompactGetActivePanel() == LV_PANEL_ITEM_INFO);
-            lv_g_show_comments_window  = (lvCompactGetActivePanel() == LV_PANEL_COMMENTS);
+            lv_g_show_events_window    = (active == LV_PANEL_EVENTS);
+            lv_g_show_game_info_window = (active == LV_PANEL_GAME_INFO);
+            lv_g_show_item_info_window = (active == LV_PANEL_ITEM_INFO);
+            lv_g_show_comments_window  = (active == LV_PANEL_COMMENTS);
 
             /* Toolbar (controls window) is always visible in compact;
              * it IS the toolbar (playback + speed + seek). */
             lv_imgui_controls_window();
             /* Single content panel, switched via the popup menu. */
-            switch (lvCompactGetActivePanel()) {
+            switch (active) {
                 case LV_PANEL_GAME_INFO: lv_imgui_game_info_window(); break;
                 case LV_PANEL_ITEM_INFO: lv_imgui_item_info_window(); break;
                 case LV_PANEL_COMMENTS:  lv_imgui_comments_window();  break;
@@ -2385,9 +2414,23 @@ static void lvHostRenderFrame(const char *overlay) {
             lv_imgui_game_info_window();
             lv_imgui_events_window();
             lv_imgui_item_info_window();
-            lv_imgui_comments_window();
+            if (panels & LV_PANEL_SET_COMMENTS) {
+                lv_imgui_comments_window();
+            }
             lv_imgui_scenario_panel_window(g_lv->isLoaded ? true : false);
             lv_imgui_scenario_status(g_lv->isLoaded ? true : false);
+        }
+        /* The live feed's badge and message go on the map, not under a
+         * sidebar or the menu bar. */
+        if ((panels & LV_PANEL_SET_SPEC_BADGE) || overlay != NULL) {
+            float mapX, mapY, mapW, mapH;
+            lvHostMapArea(&mapX, &mapY, &mapW, &mapH);
+            if (panels & LV_PANEL_SET_SPEC_BADGE) {
+                lv_imgui_spectator_badge_at(g_lv->gamePhase, mapX + mapW, mapY);
+            }
+            if (overlay != NULL) {
+                lv_imgui_center_message_at(overlay, mapX, mapY, mapW, mapH);
+            }
         }
         lv_g_reset_window_positions = false;
         /* Popup stacks over panels, under blocking modal dialogs. */
@@ -2489,9 +2532,9 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     if (lvHostSetup(window, renderer, fromMainMenu) == FALSE) {
         return;
     }
-    /* Only this host has the sidebars; the spectator shares the setup above
-     * and leaves the answer at no. The same for the defaults of the options
-     * a new user has not set. */
+    /* The sidebars, and the defaults of the options a new user has not set.
+     * The spectator (spectatorRun) does the same, so the two share one saved
+     * layout. */
     lv_imgui_dock_set_standalone(1);
     lv_imgui_main_menu_standalone_defaults();
     s_lvFirstViewHost = TRUE;
@@ -2525,10 +2568,9 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
                 lvHostHandleFullScreenChange(&sdlEvent);
             }
             /* Game-view input (grave toggle / Tab cycle / 1-4 zoom / arrow pan
-             * / ,-. seek), shared with spectatorRun. The viewer allows the
-             * toggle and the seek; the spectator host suppresses both. Not
-             * while a log is opening: a seek would move the decoder the load
-             * is reading through. */
+             * / ,-. seek), shared with spectatorRun. Both hosts allow the
+             * toggle and the seek. Not while a log is opening: a seek would
+             * move the decoder the load is reading through. */
             if (!s_loading &&
                 lvHostHandleGameViewKey(sdlEvent, /* allowToggle */ TRUE,
                                         /* allowSeek */ TRUE)) {
@@ -2745,10 +2787,15 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
     if (lvHostSetup(window, renderer, /* fromMainMenu */ TRUE) == FALSE) {
         return false;
     }
-    s_lvFirstViewHost = FALSE;
-    /* A live feed has no animation of Rewind and Fast Forward. */
+    /* The same as the viewer (logViewerRun): the sidebars, the defaults of
+     * the options a new user has not set, the first view on the land, and
+     * the animation of Rewind and Fast Forward. The two share one saved
+     * layout. The window is the game's, so its place is not restored. */
+    lv_imgui_dock_set_standalone(1);
+    lv_imgui_main_menu_standalone_defaults();
+    s_lvFirstViewHost = TRUE;
     s_lvJump.active = FALSE;
-    s_lvJumpHost = FALSE;
+    s_lvJumpHost = TRUE;
 
     /* Stalled-feed watchdog. A spectator sends no input, so the transport's
      * normal liveness timeout never fires — the host times the wait itself.
@@ -2957,10 +3004,9 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
                 lvHostHandleResize(&sdlEvent);
             }
             /* Mouse-wheel zoom for the block-grid overview, anchored on the
-             * cursor — the spectator's menu-bar zoom path is gated off, so the
-             * wheel is the overview's only zoom. Skipped while ImGui owns the
-             * mouse (cursor over the scrubber) and in game view (fixed size;
-             * 1-4 keys zoom there). Mirrors logViewerRun's wheel handling. */
+             * cursor, as in logViewerRun. Skipped while ImGui owns the mouse
+             * (cursor over a panel) and in game view (fixed size; 1-4 keys
+             * zoom there). */
             if (sdlEvent.type == SDL_EVENT_MOUSE_WHEEL) {
                 if (!lv_imgui_want_capture_mouse() && !g_lv->gameView) {
                     int mx = (int)sdlEvent.wheel.mouse_x;
@@ -3142,11 +3188,15 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
         g_lv->wantScreenUpdate = TRUE;
 
         /* Render the current mode via the shared dispatch. In game view it
-         * keeps the DVR scrubber; in the block-grid overview it renders the
-         * scrubber + live event feed (the live-mode gate suppresses the
-         * viewer's menu bar and game-info / comments panels). A stalled feed
-         * overlays "connection lost" on the frozen last frame until exit. */
+         * keeps the Controls panel; in the block-grid overview it draws the
+         * viewer's menu bar, sidebars and panels (see lvHostRenderFrame). A
+         * stalled feed shows "connection lost" on the frozen last frame until
+         * exit. */
         lvHostRenderFrame(connectionLost ? langGetText(STR_LV_SPEC_CONNECTION_LOST) : NULL);
+
+        /* Keep the saved layout no more than a moment behind the screen, as
+         * the viewer does. */
+        lvHostAutosave();
     }
 
     /* Leave live-DVR mode so the stream pump / transport revert to standalone
@@ -3166,6 +3216,9 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
         g_lv->useTeamColours = g_lv->savedUseTeamColours;
         g_lv->gameView = FALSE;
     }
+    /* The layout and the options, as the viewer writes them when it closes.
+     * After the game view is gone, so its fixed size is not saved. */
+    savePreferences();
     lvHostTeardown();
     lv_specSeedControlClear();
     return liveResumed;

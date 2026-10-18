@@ -14,6 +14,7 @@
 #include "imgui.h"
 #include "imgui_logviewer_menu.h"
 #include "imgui_main_menu.h"
+#include "imgui_dialogs.h"
 #include "../../gui/lang.h"
 #include <SDL3/SDL.h>
 
@@ -21,6 +22,7 @@ extern "C" {
     #include "logviewer.h"
     #include "../../gui/ui_mode.h"
     void lv_windowOpenFile(char *cmdLine);
+    bool lv_screenSpecIsLiveMode(void);
 }
 
 static bool           s_open        = false;
@@ -92,6 +94,9 @@ void lvMenuRender(struct LogViewerState *lv) {
 
         const bool isLoaded     = (lv != nullptr && lv->isLoaded);
         const bool fromMainMenu = (lv != nullptr && lv->fromMainMenu);
+        /* A live game watched from the game (spectatorRun): no Comments
+         * panel, no other log to open, and leaving asks first, as Esc does. */
+        const bool live         = lv_screenSpecIsLiveMode();
 
         if (isLoaded) {
             if (ImGui::Button("View Events", btnSize)) {
@@ -109,7 +114,7 @@ void lvMenuRender(struct LogViewerState *lv) {
                 ImGui::CloseCurrentPopup();
                 s_open = false;
             }
-            if (ImGui::Button("View Comments", btnSize)) {
+            if (!live && ImGui::Button("View Comments", btnSize)) {
                 s_activePanel = LV_PANEL_COMMENTS;
                 ImGui::CloseCurrentPopup();
                 s_open = false;
@@ -117,7 +122,13 @@ void lvMenuRender(struct LogViewerState *lv) {
             ImGui::Separator();
         }
 
-        if (ImGui::Button("Open log file from WinBolo.net", btnSize)) {
+        if (live) {
+            if (ImGui::Button(langGetText(STR_LV_MENU_LEAVE_SPECTATING), btnSize)) {
+                lv_imgui_spectator_leave_request();
+                ImGui::CloseCurrentPopup();
+                s_open = false;
+            }
+        } else if (ImGui::Button("Open log file from WinBolo.net", btnSize)) {
             lv_imgui_open_wbn_browser();
             ImGui::CloseCurrentPopup();
             s_open = false;
@@ -126,7 +137,7 @@ void lvMenuRender(struct LogViewerState *lv) {
            doesn't exist on mobile — Deck and tablet users get the
            WBN list above as the only entry point. */
 #if !defined(__ANDROID__) && !defined(__IPHONEOS__)
-        if (!uiModeIsSteamDeck()) {
+        if (!live && !uiModeIsSteamDeck()) {
             if (ImGui::Button("Open from file system", btnSize)) {
                 lv_windowOpenFile(NULL);
                 ImGui::CloseCurrentPopup();
@@ -134,7 +145,9 @@ void lvMenuRender(struct LogViewerState *lv) {
             }
         }
 #endif
-        if (fromMainMenu) {
+        if (live) {
+            /* Leave spectating, above, is the way out. */
+        } else if (fromMainMenu) {
             if (ImGui::Button(langGetText(STR_LV_RETURN_MAIN_MENU), btnSize)) {
                 push_quit();
                 ImGui::CloseCurrentPopup();

@@ -98,6 +98,7 @@ static float    s_built_grab = 0.0f;
 static float    s_built_gap = 0.0f;
 static uint32_t s_built_start = 0;
 static uint32_t s_built_len = 0;
+static uint32_t s_built_at_ms = 0; /* SDL_GetTicks when the lane was last made */
 
 static void overlay_load(void) {
     char def[256], val[256];
@@ -180,16 +181,23 @@ static ImU32 overlay_u32(ImVec4 c, float alpha) {
 
 /* Bring what the lane draws up to date for a slider `width` wide. Cheap to
  * call every frame: it reads the list only when the list, the ticked
- * kinds, the shown stretch of the log or the width has changed. */
+ * kinds, the shown stretch of the log or the width has changed. A live
+ * feed grows every frame; its lane is made again at once for a new event,
+ * and for the growth alone at most four times a second
+ * (lvOverlayRebuildDue). */
 static void overlay_refresh(float width, float grabMin, float minGap) {
     const unsigned version = lv_imgui_events_version();
     const uint32_t start = lv_screenWindowStartMs();
     const uint32_t len = lv_screenWindowLenMs();
-    if (s_built && s_built_version == version && s_built_mask == s_mask &&
-        s_built_width == width && s_built_grab == grabMin && s_built_gap == minGap &&
-        s_built_start == start && s_built_len == len) {
+    const uint32_t nowMs = (uint32_t)SDL_GetTicks();
+    const bool other = !s_built || s_built_version != version || s_built_mask != s_mask ||
+                       s_built_width != width || s_built_grab != grabMin ||
+                       s_built_gap != minGap || s_built_start != start;
+    if (!lvOverlayRebuildDue(lv_screenSpecIsLiveMode() ? 1 : 0, other ? 1 : 0,
+                             s_built_len != len ? 1 : 0, nowMs, s_built_at_ms)) {
         return;
     }
+    s_built_at_ms = nowMs;
     s_built = true;
     s_built_version = version;
     s_built_mask = s_mask;
@@ -699,9 +707,8 @@ void lv_event_overlay_lane(void) {
     const OverlayMarker m = s_markers[hot];
     overlay_tooltip(m);
     /* A click goes to the event, as a click on its line of the Events panel
-     * does; and as there, not on a live feed, where a stray click would
-     * throw the viewer off the live head. */
-    if (lv_screenSpecIsLiveMode()) return;
+     * does. On a live feed the click parks the view in the past, and the
+     * Live button (or End or L) goes back to the head. */
     imguiHandOnHover();
     if (pressed) {
         LvEventInfo info;

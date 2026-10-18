@@ -223,7 +223,14 @@ void lv_imgui_center_message(const char* text) {
     if (!g_context || text == nullptr) return;
     ImGui::SetCurrentContext(g_context);
     const ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImVec2 centre(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f);
+    lv_imgui_center_message_at(text, 0.0f, 0.0f, vp->Size.x, vp->Size.y);
+}
+
+void lv_imgui_center_message_at(const char* text, float x, float y, float w, float h) {
+    if (!g_context || text == nullptr) return;
+    ImGui::SetCurrentContext(g_context);
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImVec2 centre(vp->Pos.x + x + w * 0.5f, vp->Pos.y + y + h * 0.5f);
     ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::Begin("##spec_overlay", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
@@ -253,6 +260,15 @@ void lv_imgui_load_progress(const char* stageText, int step, int steps, float fr
 
 void lv_imgui_spectator_badge(int phase) {
     if (!g_context) return;
+    ImGui::SetCurrentContext(g_context);
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    /* Top-right corner, nudged below any menu bar so the game-view menu doesn't
+     * cover it. */
+    lv_imgui_spectator_badge_at(phase, vp->Size.x, 22.0f);
+}
+
+void lv_imgui_spectator_badge_at(int phase, float right, float top) {
+    if (!g_context) return;
     const char* label;
     ImU32 col;
     switch (phase) {
@@ -264,9 +280,8 @@ void lv_imgui_spectator_badge(int phase) {
     }
     ImGui::SetCurrentContext(g_context);
     const ImGuiViewport* vp = ImGui::GetMainViewport();
-    /* Top-right corner, nudged below any menu bar so the game-view menu doesn't
-     * cover it. Pivot on the badge's top-right edge. */
-    ImVec2 pos(vp->Pos.x + vp->Size.x - 8.0f, vp->Pos.y + 30.0f);
+    /* 8 pixels in from the corner. Pivot on the badge's top-right edge. */
+    ImVec2 pos(vp->Pos.x + right - 8.0f, vp->Pos.y + top + 8.0f);
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
     ImGui::SetNextWindowBgAlpha(0.55f);
     ImGui::Begin("##spec_badge", nullptr,

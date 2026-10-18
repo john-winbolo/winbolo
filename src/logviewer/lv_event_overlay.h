@@ -562,4 +562,23 @@ static inline LvEventMarker lvEventMarker(int kind, int team) {
   return lvEventMarkerFor(kind, team, -1);
 }
 
+/* How long a live feed keeps the lane as it is while only the length of the
+ * feed has grown: a quarter of a second, so at most four new lanes a second. */
+#define LV_OVERLAY_LIVE_REBUILD_MS 250u
+
+/* Whether the lane is to be made again this frame. other is not 0 when
+ * something other than the length of the log changed (the list of events,
+ * the ticked kinds, the width, the start); lenChanged when the length did.
+ * A log file is made again at once for any change. On a live feed (live
+ * not 0) the length grows every frame, so a change of the length alone
+ * waits until LV_OVERLAY_LIVE_REBUILD_MS has gone by since the last build
+ * (nowMs and builtMs, in milliseconds); any other change is at once. */
+static inline int lvOverlayRebuildDue(int live, int other, int lenChanged,
+                                      uint32_t nowMs, uint32_t builtMs) {
+  if (other) return 1;
+  if (!lenChanged) return 0;
+  if (!live) return 1;
+  return (nowMs - builtMs) >= LV_OVERLAY_LIVE_REBUILD_MS ? 1 : 0;
+}
+
 #endif /* LV_EVENT_OVERLAY_H */

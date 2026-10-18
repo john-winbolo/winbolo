@@ -4142,6 +4142,7 @@ int run_lv_presentation_announce_position(void);
 int run_lv_presentation_marker_visible(void);
 int run_lv_presentation_live_seek(void);
 int run_lv_presentation_live_fast_forward(void);
+int run_lv_presentation_live_hold(void);
 /* The server's game tick at the playhead (test_lv_server_tick.c): a recorded
  * round's tick at end-of-log, hand-written anchors either side of a snapshot
  * and across a new round's run, records of the wrong length, a recording from
@@ -4236,6 +4237,10 @@ int run_lv_event_overlay_marker_size(void);
 int run_lv_event_overlay_choice(void);
 int run_lv_event_overlay_picture(void);
 int run_lv_event_overlay_no_sign(void);
+int run_lv_event_overlay_live_rebuild(void);
+/* Which parts of the viewer a frame of the overview draws, for a log file
+ * and for a live feed (test_lv_panel_set.c). */
+int run_lv_panel_set_live(void);
 /* The one list of ticked kinds of the Controls and Events panels, and the
  * Events panel's saved choice. */
 int run_lv_event_kinds_filter(void);

@@ -63,6 +63,11 @@ int lv_imgui_want_text_input(void);
  * ("spectating begins in N" / "connecting" / "connection lost"). */
 void lv_imgui_center_message(const char* text);
 
+/* The same label, centred on a part of the window: x, y, w, h in window
+ * pixels. The spectator's overview passes the part the map shows in, so the
+ * label is not under a sidebar. */
+void lv_imgui_center_message_at(const char* text, float x, float y, float w, float h);
+
 /* A centred window while a log opens: title, the stage it is at (step of
  * steps) and a bar showing how far through that stage it is. */
 void lv_imgui_load_progress(const char* stageText, int step, int steps, float fraction);
@@ -72,6 +77,12 @@ void lv_imgui_load_progress(const char* stageText, int step, int steps, float fr
  * spectator modes (overview + game view). phase is a SPEC_PHASE_* value from
  * spectator_drain.h; SPEC_PHASE_UNKNOWN draws nothing. */
 void lv_imgui_spectator_badge(int phase);
+
+/* The same badge, in the top-right corner of a part of the window: right is
+ * that part's right edge and top its top edge, in window pixels. The
+ * spectator's overview passes the part the map shows in, so the badge is not
+ * under a sidebar or the menu bar. */
+void lv_imgui_spectator_badge_at(int phase, float right, float top);
 
 /* Enable (non-zero) or disable (0) ImGui's gamepad UI-focus navigation. The
  * spectator overview disables it so the stick/d-pad drive map pan rather than

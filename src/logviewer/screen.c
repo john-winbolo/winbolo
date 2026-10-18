@@ -837,7 +837,8 @@ void lv_screenSetup() {
   g_lv->subPxX  = 0;
   g_lv->subPxY  = 0;
   /* Where the view opens until the host places it (lv_first_view.h). The
-   * embedded reel and the live spectator never do, and keep this. */
+   * viewer and the live spectator place it; the embedded reel never does,
+   * and keeps this. */
   s_firstViewPending = TRUE;
   s_firstViewAsked = 0;
   /* Every load runs through here after the host has sized the tile grid, and
@@ -5494,6 +5495,7 @@ static uint32_t s_specHeadTick    = 0;     /* latest drained forward-record game
 static uint32_t s_specAnchorTick  = 0;     /* head tick captured at the last follow-live re-anchor */
 static uint32_t s_specAnchorMs    = 0;     /* timeRunning captured at the last follow-live re-anchor */
 static uint32_t s_specPaceLastMs  = 0;     /* wall-clock anchor for the parked 20ms pacing accumulator */
+static bool     s_specHold        = false; /* an animation of Rewind or Fast Forward moves playback */
 static int32_t  s_specPaceAccumMs = 0;
 
 bool lv_screenStreamPump(const uint8_t *bytes, size_t len) {
@@ -7109,6 +7111,7 @@ void lv_screenSpecSetLiveMode(bool on) {
   s_specLiveMode    = on;
   s_specFollowLive  = true;
   s_specSeekPark    = false;
+  s_specHold        = false;
   s_specHeadTick    = 0;
   s_specAnchorTick  = 0;
   s_specAnchorMs    = 0;
@@ -7173,10 +7176,17 @@ void lv_screenSpecJumpToLive(void) {
   if (!s_specLiveMode) {
     return;
   }
+  /* A seek like any other: it wins over a running animation of Rewind or
+     Fast Forward, which lets go of playback where it is. */
+  s_seekSerial++;
   lv_specAdvanceToHead();
   lv_specReanchorAtHead();
   s_specFollowLive = true;
   s_specSeekPark   = false;
+}
+
+void lv_screenSpecSetHold(bool on) {
+  s_specHold = on;
 }
 
 void lv_screenSpecFrameUpdate(uint32_t nowMs) {
@@ -7191,6 +7201,17 @@ void lv_screenSpecFrameUpdate(uint32_t nowMs) {
     s_specFollowLive  = false;
     s_specPaceLastMs  = nowMs;
     s_specPaceAccumMs = 0;
+  }
+
+  /* An animation of Rewind or Fast Forward is moving playback, one step a
+     frame: play nothing, or each step would be followed by a slam to the head
+     or by paced ticks. The slider's end still follows the growing head, and
+     the pace starts again from now when the hold ends. */
+  if (s_specHold) {
+    lv_specHeadTimeFromDelta();
+    s_specPaceLastMs  = nowMs;
+    s_specPaceAccumMs = 0;
+    return;
   }
 
   playing = (g_lv->playIsPlaying == TRUE);

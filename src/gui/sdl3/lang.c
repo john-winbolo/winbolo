@@ -2108,6 +2108,7 @@ static const LangEntry langTable[] = {
     {1859, "Connection lost"},
     {1860, "Spectating begins now"},
     {1861, "WinBolo - Spectating {string1}:{number}{string3}"},
+    {2915, "Leave spectating"},
 
     /* Menu item to re-open a closed in-game vote widget. */
     {1862, "Show: {string1}"},

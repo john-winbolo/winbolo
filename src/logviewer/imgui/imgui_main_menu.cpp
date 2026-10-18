@@ -62,6 +62,9 @@ static void open_wbn_browser_modal(void);
 extern "C" void lv_imgui_open_wbn_browser(void) { open_wbn_browser_modal(); }
 static void open_wbn_browser_modal(void) {
     if (!s_lv || !s_lv->window || !s_lv->renderer) return;
+    /* A live feed is not given up for another log: the menus have no Open
+     * there, and this does nothing there as well. */
+    if (lv_screenSpecIsLiveMode()) return;
 
     ImGuiContext *saved_ctx = ImGui::GetCurrentContext();
 
@@ -389,8 +392,12 @@ static void handle_keyboard_shortcuts(int *clicked) {
     bool ctrl = io.KeyCtrl && !io.KeySuper;
     if (!ctrl) return;
 
+    /* A live game watched from the game (spectatorRun). Open, Stop and the
+     * Comments panel are not in its menus, and their keys do nothing. */
+    const bool live = lv_screenSpecIsLiveMode();
+
     /* File */
-    if (ImGui::IsKeyPressed(ImGuiKey_O, false)) {
+    if (!live && ImGui::IsKeyPressed(ImGuiKey_O, false)) {
         lv_windowOpenFile(NULL);
         *clicked = 1;
     }
@@ -410,7 +417,7 @@ static void handle_keyboard_shortcuts(int *clicked) {
     if (ImGui::IsKeyPressed(ImGuiKey_U, false)) {
         if (s_lv->isLoaded && s_lv->playIsPlaying) { lv_windowPause(); *clicked = 1; }
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+    if (!live && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
         if (s_lv->isLoaded) { lv_windowStop(0); *clicked = 1; }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F, false)) {
@@ -444,7 +451,7 @@ static void handle_keyboard_shortcuts(int *clicked) {
         lv_g_show_item_info_window = !lv_g_show_item_info_window;
         *clicked = 1;
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_5, false)) {
+    if (!live && ImGui::IsKeyPressed(ImGuiKey_5, false)) {
         lv_g_show_comments_window = !lv_g_show_comments_window;
         *clicked = 1;
     }
@@ -468,9 +475,20 @@ int lv_imgui_main_menu_bar(void) {
     handle_keyboard_shortcuts(&clicked);
 
 #ifndef __APPLE__
+    /* A live game watched from the game (spectatorRun) has the same menu
+     * bar, less the items that would end the feed or need a log file: Open,
+     * Save, Open in single player, Stop, Hide Lobby and the Comments panel.
+     * Its File menu has one item, which asks to leave. */
+    const bool live = lv_screenSpecIsLiveMode();
     if (ImGui::BeginMainMenuBar()) {
         /* File Menu */
-        if (ImGui::BeginMenu(langGetText(STR_MENU_FILE))) {
+        if (live && ImGui::BeginMenu(langGetText(STR_MENU_FILE))) {
+            if (ImGui::MenuItem(langGetText(STR_LV_MENU_LEAVE_SPECTATING))) {
+                lv_imgui_spectator_leave_request();
+                clicked = 1;
+            }
+            ImGui::EndMenu();
+        } else if (!live && ImGui::BeginMenu(langGetText(STR_MENU_FILE))) {
             if (ImGui::MenuItem(langGetText(STR_LV_MENU_OPEN_WBN))) {
                 lv_imgui_open_wbn_browser();
                 clicked = 1;
@@ -532,7 +550,8 @@ int lv_imgui_main_menu_bar(void) {
                 lv_windowPause();
                 clicked = 1;
             }
-            if (ImGui::MenuItem(langGetText(STR_LV_STOP), "Ctrl+S", false, s_lv->isLoaded != 0)) {
+            if (!live &&
+                ImGui::MenuItem(langGetText(STR_LV_STOP), "Ctrl+S", false, s_lv->isLoaded != 0)) {
                 lv_windowStop(0);
                 clicked = 1;
             }
@@ -611,8 +630,8 @@ int lv_imgui_main_menu_bar(void) {
                 lv_screenTankCentred(s_tank_centred ? 1 : 0);
                 clicked = 1;
             }
-            if (ImGui::MenuItem(langGetText(STR_LV_HIDE_LOBBY), NULL,
-                                lv_screenGetHideLobby() != 0)) {
+            if (!live && ImGui::MenuItem(langGetText(STR_LV_HIDE_LOBBY), NULL,
+                                         lv_screenGetHideLobby() != 0)) {
                 lv_imgui_toggle_hide_lobby();
                 clicked = 1;
             }
@@ -718,7 +737,8 @@ int lv_imgui_main_menu_bar(void) {
                 lv_g_show_item_info_window = !lv_g_show_item_info_window;
                 clicked = 1;
             }
-            if (ImGui::MenuItem(langGetText(STR_LV_WIN_COMMENTS), "Ctrl+5", lv_g_show_comments_window)) {
+            if (!live &&
+                ImGui::MenuItem(langGetText(STR_LV_WIN_COMMENTS), "Ctrl+5", lv_g_show_comments_window)) {
                 lv_g_show_comments_window = !lv_g_show_comments_window;
                 clicked = 1;
             }
