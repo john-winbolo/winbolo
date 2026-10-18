@@ -30,7 +30,8 @@ static char g_path[FILENAME_MAX];
  * microphone and speakers, which are named per machine — the rest of VOICE
  * does sync) and SCENARIO PANEL POPOUT (where each popped-out scenario
  * panel's window sat, in this machine's desktop coordinates, as WINDOW is).
- * SCENARIO PANEL SHOWN is a choice, not a place, so it syncs. This
+ * SCENARIO PANEL SHOWN is a choice, not a place, so it syncs, and so does
+ * SCENARIO PANEL BG, the background opacity of each [SCENARIO PANEL] row. This
  * array is the single source of truth for "never synced" — both the upload
  * serializer and the sync-dirty trigger consult it. */
 static const char *const kDeviceLocalSections[] = { "WINBOLO.NET", "DEVICE",

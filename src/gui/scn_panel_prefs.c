@@ -189,9 +189,19 @@ int scnBackingAlpha(int bgPct) {
     return (v * 255 + 50) / 100;
 }
 
-bool scnPanelLayoutParse(const char *row, int *x, int *y, int *scale,
-                         int *bgPct, int *textPct) {
-    int  rx, ry, rscale, a, b;
+/* One whole number and nothing after it. */
+static bool scnReadWhole(const char *s, int *out) {
+    int  v;
+    char tail;
+    if (s == NULL || s[0] == '\0') return false;
+    if (sscanf(s, "%d%c", &v, &tail) != 1) return false;
+    *out = v;
+    return true;
+}
+
+bool scnPanelLayoutParse(const char *row, const char *bgRow, int *x, int *y,
+                         int *scale, int *bgPct, int *textPct) {
+    int  rx, ry, rscale, a, b, bgv;
     char tail;
     int  n;
     if (row == NULL || x == NULL || y == NULL || scale == NULL ||
@@ -202,12 +212,21 @@ bool scnPanelLayoutParse(const char *row, int *x, int *y, int *scale,
        is not a row this code or the code before it wrote. */
     n = sscanf(row, "%d,%d,%d,%d,%d%c", &rx, &ry, &rscale, &a, &b, &tail);
     if (n == 5) {
+        /* An earlier build of this change: both opacities on the row. */
         *bgPct   = scnOpacityClamp(a);
         *textPct = scnOpacityClamp(b);
     } else if (n == 4 &&
                sscanf(row, "%d,%d,%d,%d%c", &rx, &ry, &rscale, &a, &tail) ==
                    4) {
-        scnOpacityMigrate(a, bgPct, textPct);
+        if (scnReadWhole(bgRow, &bgv)) {
+            /* This code's row: the text opacity, and the background kept
+               in its own section. */
+            *bgPct   = scnOpacityClamp(bgv);
+            *textPct = scnOpacityClamp(a);
+        } else {
+            /* The row main and 2.1 write: one opacity for both. */
+            scnOpacityMigrate(a, bgPct, textPct);
+        }
     } else {
         return false;
     }
@@ -217,8 +236,13 @@ bool scnPanelLayoutParse(const char *row, int *x, int *y, int *scale,
     return true;
 }
 
-void scnPanelLayoutFormat(int x, int y, int scale, int bgPct, int textPct,
-                          char *buf, size_t bufSz) {
+void scnPanelLayoutFormat(int x, int y, int scale, int textPct, char *buf,
+                          size_t bufSz) {
     if (buf == NULL || bufSz == 0) return;
-    snprintf(buf, bufSz, "%d,%d,%d,%d,%d", x, y, scale, bgPct, textPct);
+    snprintf(buf, bufSz, "%d,%d,%d,%d", x, y, scale, textPct);
+}
+
+void scnPanelLayoutBgFormat(int bgPct, char *buf, size_t bufSz) {
+    if (buf == NULL || bufSz == 0) return;
+    snprintf(buf, bufSz, "%d", bgPct);
 }

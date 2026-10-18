@@ -289,6 +289,73 @@ static inline ScnTextFit scnTextFitRect(float srcW, float srcH, float winX,
     return fit;
 }
 
+/* A rectangle in screen pixels. */
+typedef struct ScnTextBand {
+    float x, y, w, h;
+} ScnTextBand;
+
+/*********************************************************
+ *NAME:          scnTextTabletBand
+ *PURPOSE:
+ *  Where tablet mode draws the scenario text: a band at
+ *  the top middle of its game view, inset from the top
+ *  edge. The band is the source rectangle at the zoom's
+ *  scale. A band wider than the room it has is made
+ *  smaller, keeping its shape, until it fits.
+ *
+ *  The room is the view's width. When the scenario panel's
+ *  square is shown in the view's top-right corner, the room
+ *  ends one inset left of the square, and the band is
+ *  centred in what is left, so it never covers the square.
+ *  A square outside the view's width does not change the
+ *  room.
+ *
+ *  A band with no room, or a view or source with no area,
+ *  has a width and height of 0.
+ *
+ *ARGUMENTS:
+ *  viewX/viewY - the game view's top-left, in pixels
+ *  viewW       - the game view's width, in pixels
+ *  srcW/srcH   - the source rectangle, in units
+ *  scale       - pixels per unit at the zoom
+ *  inset       - the space from the top edge, and kept
+ *                from the square, in pixels
+ *  haveSlot    - the panel's square is shown
+ *  slotX       - the square's left edge, in pixels
+ *********************************************************/
+static inline ScnTextBand scnTextTabletBand(float viewX, float viewY,
+                                            float viewW, float srcW,
+                                            float srcH, float scale,
+                                            float inset, bool haveSlot,
+                                            float slotX) {
+    ScnTextBand band;
+    float       right = viewX + viewW;
+    float       room;
+
+    if (inset < 0.0f) inset = 0.0f;
+    band.x = viewX;
+    band.y = viewY + inset;
+    band.w = 0.0f;
+    band.h = 0.0f;
+    if (viewW <= 0.0f || srcW <= 0.0f || srcH <= 0.0f || scale <= 0.0f) {
+        return band;
+    }
+    if (haveSlot && slotX > viewX && slotX < right) {
+        right = slotX - inset;
+    }
+    room = right - viewX;
+    if (room <= 0.0f) return band;
+
+    band.w = srcW * scale;
+    band.h = srcH * scale;
+    if (band.w > room) {
+        band.h *= room / band.w;
+        band.w  = room;
+    }
+    band.x = viewX + (room - band.w) * 0.5f;
+    return band;
+}
+
 /* A position byte as a share of the view, 0 to 1. A byte past
  * SCN_ANNOUNCE_POS_MAX reads as the far edge. */
 static inline float scnAnnouncePosShare(uint8_t b) {

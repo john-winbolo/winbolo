@@ -7092,6 +7092,7 @@ set(_unit_test_names
     scenario_announce_remaining
     scenario_announce_position
     scenario_text_fit
+    scenario_text_tablet_band
     scenario_status_line
     scenario_announce_stack
     scn_status_codec_and_client
