@@ -1316,8 +1316,8 @@
 #define STR_LV_HUD_VIEW_AS                  2890
 #define STR_LV_HUD_ALL_TEAMS                2891
 #define STR_LV_HUD_REL_OWN                  2892
-#define STR_LV_HUD_REL_ALLIED               2905
-#define STR_LV_HUD_REL_HOSTILE              2906
+#define STR_LV_HUD_REL_ALLIED               2917
+#define STR_LV_HUD_REL_HOSTILE              2918
 #define STR_LV_SAVE_NAME_VS                 2893
 #define STR_LV_SAVE_NAME_MORE               2894
 #define STR_LV_SAVE_NAME_BOT                2895
