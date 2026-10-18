@@ -230,6 +230,7 @@ unsigned short gameFrontHostingPort             = 27500;
 bool           gameFrontHostingAllowSpec        = TRUE;
 bool           gameFrontHostingScripts          = TRUE;
 int            gameFrontHostingMaxSpec          = 16;
+int            gameFrontHostingSpecDelay        = HOSTING_SPEC_DELAY_DEFAULT_SECS;
 int            gameFrontHostingUploadPolicy     = UPLOAD_POLICY_ALLOW;
 int            gameFrontHostingUploadMaxFiles   = 64;
 int            gameFrontHostingUploadMaxStorage = 8;
@@ -1334,6 +1335,7 @@ void gameFrontSetHostingScripts(bool allow) {
 }
 
 void gameFrontSetHostingMaxSpec(int maxSpec)         { gameFrontHostingMaxSpec = maxSpec; }
+void gameFrontSetHostingSpecDelay(int seconds)       { gameFrontHostingSpecDelay = seconds; }
 void gameFrontSetHostingUploadPolicy(int policy)     { gameFrontHostingUploadPolicy = policy; }
 void gameFrontSetHostingUploadMaxFiles(int maxFiles) { gameFrontHostingUploadMaxFiles = maxFiles; }
 void gameFrontSetHostingLogging(bool logging)        { gameFrontHostingLogging = logging; }

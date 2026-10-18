@@ -1316,8 +1316,8 @@
 #define STR_LV_HUD_VIEW_AS                  2890
 #define STR_LV_HUD_ALL_TEAMS                2891
 #define STR_LV_HUD_REL_OWN                  2892
-#define STR_LV_HUD_REL_ALLIED               2798
-#define STR_LV_HUD_REL_HOSTILE              2799
+#define STR_LV_HUD_REL_ALLIED               2905
+#define STR_LV_HUD_REL_HOSTILE              2906
 #define STR_LV_SAVE_NAME_VS                 2893
 #define STR_LV_SAVE_NAME_MORE               2894
 #define STR_LV_SAVE_NAME_BOT                2895
@@ -1971,6 +1971,8 @@
 #define STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP  2764
 #define STR_DLGSETTINGS_HOSTING_SERVERDESC      2765
 #define STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP  2766
+#define STR_DLGSETTINGS_HOSTING_SPECDELAY       2798
+#define STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP   2799
 
 /* Log viewer Options menu */
 #define STR_LV_HIDE_LOBBY                   1921

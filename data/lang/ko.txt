@@ -2092,6 +2092,8 @@ STR_DLGSETTINGS_HOSTING_SERVERNAME=서버 이름
 STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=게임 찾기에서 주소 대신 이 이름을 보여줘요. 32바이트까지 쓸 수 있어요 (한글로 약 10자, 다른 문자는 더 적어요). 비워 두면 주소가 표시돼요.
 STR_DLGSETTINGS_HOSTING_SERVERDESC=설명
 STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=게임 찾기에서 플레이어가 게임을 가리키거나 선택하면 이 내용을 보여줘요. 200바이트까지 쓸 수 있어요 (한글로 약 66자, 다른 문자는 더 적어요).
+STR_DLGSETTINGS_HOSTING_SPECDELAY=관전자 지연 (초)
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=관전자가 보는 게임은 설정한 초만큼 늦게 보여서, 모두가 어디 있는지 플레이어에게 알려줄 수 없어요. 0이면 게임을 실시간으로 보여줘요. 600까지 설정할 수 있어요.
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=음성

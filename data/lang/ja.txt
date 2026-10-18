@@ -2094,6 +2094,8 @@ STR_DLGSETTINGS_HOSTING_SERVERNAME=サーバー名
 STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=ゲームファインダーには、アドレスの代わりにこの名前が表示されます。32 バイトまで（日本語で10文字程度、他の文字種ではさらに少なくなります）。空欄にすると、代わりにアドレスが表示されます。
 STR_DLGSETTINGS_HOSTING_SERVERDESC=説明
 STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=ゲームファインダーで、プレイヤーがあなたのゲームを指すか選択したときに表示されます。200 バイトまで（日本語で66文字程度、他の文字種ではさらに少なくなります）。
+STR_DLGSETTINGS_HOSTING_SPECDELAY=観戦者遅延（秒）
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=観戦者が見る試合は指定した秒数だけ遅れて表示されるため、誰がどこにいるかをプレイヤーに伝えられません。0 にすると試合がライブで表示されます。600 まで設定できます。
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=ボイス

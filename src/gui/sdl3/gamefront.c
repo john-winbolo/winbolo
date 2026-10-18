@@ -263,6 +263,7 @@ unsigned short gameFrontHostingPort            = DEFAULT_UDP_PORT;
 bool           gameFrontHostingAllowSpec       = TRUE;
 bool           gameFrontHostingScripts         = TRUE;
 int            gameFrontHostingMaxSpec         = 16;
+int            gameFrontHostingSpecDelay       = HOSTING_SPEC_DELAY_DEFAULT_SECS;
 int            gameFrontHostingUploadPolicy    = UPLOAD_POLICY_ALLOW;
 int            gameFrontHostingUploadMaxFiles  = 64;
 int            gameFrontHostingUploadMaxStorage = 8;
@@ -2555,6 +2556,13 @@ void gameFrontSetHostingMaxSpec(int maxSpec) {
   prefsSetString("HOSTING", "Max Spectators", buf);
 }
 
+void gameFrontSetHostingSpecDelay(int seconds) {
+  gameFrontHostingSpecDelay = seconds;
+  char buf[16];
+  intToStr(seconds, buf, sizeof(buf));
+  prefsSetString("HOSTING", "Spectator Delay", buf);
+}
+
 void gameFrontSetHostingUploadPolicy(int policy) {
   gameFrontHostingUploadPolicy = policy;
   const char *str = (policy == UPLOAD_POLICY_OFF)     ? "Off"
@@ -3789,7 +3797,7 @@ bool gameFrontSetupServer(void) {
                                        : gameFrontHostingMaxSpec > 32 ? 32
                                        : gameFrontHostingMaxSpec)
                               : 0;
-  cfg.specDelaySeconds    = 0;  /* client hosts run live */
+  cfg.specDelaySeconds    = (uint16_t)gameFrontHostingSpecDelay;
   cfg.uploadPolicy        = (UploadPolicy)gameFrontHostingUploadPolicy;
   cfg.uploadMaxFiles      = (uint8_t)gameFrontHostingUploadMaxFiles;
   cfg.uploadMaxStorageBytes =
@@ -4021,6 +4029,9 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     if (m > 32) m = 32;
     gameFrontHostingMaxSpec = m;
   }
+  intToStr(HOSTING_SPEC_DELAY_DEFAULT_SECS, def, sizeof(def));
+  prefsGetString("HOSTING", "Spectator Delay", def, buff, FILENAME_MAX);
+  gameFrontHostingSpecDelay = hostingSpecDelayResolve(buff);
   prefsGetString("HOSTING", "Upload Policy", "Allow", buff, FILENAME_MAX);
   if (strcmp(buff, "Off") == 0) {
     gameFrontHostingUploadPolicy = UPLOAD_POLICY_OFF;
@@ -4997,6 +5008,8 @@ void gameFrontPutPrefs(keyItems *keys) {
                             TRUEFALSE_TO_STR(gameFrontHostingScripts));
   intToStr(gameFrontHostingMaxSpec, buff, sizeof(buff));
   prefsSetString("HOSTING", "Max Spectators", buff);
+  intToStr(gameFrontHostingSpecDelay, buff, sizeof(buff));
+  prefsSetString("HOSTING", "Spectator Delay", buff);
   prefsSetString("HOSTING", "Upload Policy",
                  gameFrontHostingUploadPolicy == UPLOAD_POLICY_OFF     ? "Off"
                  : gameFrontHostingUploadPolicy == UPLOAD_POLICY_PERSIST ? "Persist"

@@ -2092,6 +2092,8 @@ STR_DLGSETTINGS_HOSTING_SERVERNAME=Název serveru
 STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=Hledač her zobrazuje tento název místo tvé adresy. Až 32 znaků (méně s diakritikou nebo jiným písmem). Nech prázdné pro zobrazení adresy.
 STR_DLGSETTINGS_HOSTING_SERVERDESC=Popis
 STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=Hledač her ho zobrazí, když hráč najede na tvou hru nebo ji vybere. Až 200 znaků (méně s diakritikou nebo jiným písmem).
+STR_DLGSETTINGS_HOSTING_SPECDELAY=Zpoždění diváků (sekundy)
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=Kolik sekund za hrou diváci vidí, aby nemohli hráčům prozradit, kde všichni jsou. 0 zobrazí hru naživo. Až 600.
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Hlas

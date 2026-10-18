@@ -510,6 +510,7 @@ static const UnitTestEntry s_tests[] = {
     { "spectator_ring_nolog_tick_anchors",       run_spectator_ring_nolog_tick_anchors       },
     { "spectator_replay",                        run_spectator_replay                        },
     { "spectator_config",                        run_spectator_config                        },
+    { "spectator_delay_pref",                    run_spectator_delay_pref                    },
     { "spectator_join",                          run_spectator_join                          },
     { "spectator_roster_publish",                run_spectator_roster_publish                },
     { "spectator_slot_codec",                    run_spectator_slot_codec                    },

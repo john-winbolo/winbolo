@@ -1139,6 +1139,10 @@ extern char           gameFrontHostingScriptUploadDir[FILENAME_MAX];
 extern int            gameFrontHostingScriptUploadMaxFiles;   /* 1-255, default 32 */
 extern int            gameFrontHostingScriptUploadMaxStorage; /* MB, 1-4095, default 64 */
 extern int            gameFrontHostingMaxSpec;         /* 1-32,  default 16 */
+extern int            gameFrontHostingSpecDelay;       /* seconds, 0-600, default 30 */
+                              /* How far behind the game spectators watch;
+                               * 0 = live. Reaches the server as
+                               * ServerInstanceConfig.specDelaySeconds. */
 extern int            gameFrontHostingUploadPolicy;    /* default ALLOW (0) */
 extern int            gameFrontHostingUploadMaxFiles;  /* 1-255, default 64 */
 extern int            gameFrontHostingUploadMaxStorage;/* MB, 1-4095, default 8 */
@@ -1180,6 +1184,7 @@ void gameFrontSetHostingPort(unsigned short port);
 void gameFrontSetHostingAllowSpec(bool allow);
 void gameFrontSetHostingScripts(bool allow);
 void gameFrontSetHostingMaxSpec(int maxSpec);
+void gameFrontSetHostingSpecDelay(int seconds);
 void gameFrontSetHostingUploadPolicy(int policy);
 void gameFrontSetHostingUploadMaxFiles(int maxFiles);
 void gameFrontSetHostingUploadMaxStorage(int maxStorageMb);
