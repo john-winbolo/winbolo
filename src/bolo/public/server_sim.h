@@ -41,6 +41,7 @@
 #include "view_policy.h"       /* ViewPolicy / ViewCategory — view-policy accessors below */
 #include "server_voice_mode.h" /* ServerVoiceMode — voice-mode accessors below */
 #include "upload_policy.h"     /* ScriptUploadPolicy — script-upload accessors below */
+#include "spec_delay.h"        /* HOSTING_SPEC_DELAY_* — hostingSpecDelayResolve below */
 #include "scenario_identity.h" /* SCN_AUTHOR_LEN — a scenario row's author below */
 
 /* MapGenConfig is defined in src/bolo/public/mapgen.h.
@@ -2904,6 +2905,13 @@ ScriptUploadPolicy scriptUploadPolicyResolve(const char *word);
 /* The preference spelling of a policy: "Off", "Allow" or "Persist".
  * Anything out of range reads as "Allow". */
 const char        *scriptUploadPolicyWord(ScriptUploadPolicy p);
+
+/* Read the "Spectator Delay" preference: whole seconds, 0 = live. A number
+ * above HOSTING_SPEC_DELAY_MAX_SECS reads as the maximum; a negative number,
+ * a word that is not a number, NULL or empty reads as
+ * HOSTING_SPEC_DELAY_DEFAULT_SECS, so a damaged preference never turns the
+ * delay off. */
+uint16_t           hostingSpecDelayResolve(const char *word);
 
 /* openHost — when true, any connected player has host-level edit
  * authority on lobby state (see lobbyClientMayEdit). */

@@ -768,12 +768,12 @@
 #define STR_DLGLOBBY_REEL_NONE               1941
 #define STR_DLGLOBBY_REEL_TOO_LARGE          1942
 /* Lobby "Last round" panel — the reel's "Spawn in log viewer" button. */
-#define STR_DLGLOBBY_REEL_SPAWN_LV           2909
 #define STR_DLGLOBBY_REEL_SPAWN_LV_TIP       2910
 #define STR_DLGLOBBY_REEL_SPAWN_NO_LOG       2911
 #define STR_DLGLOBBY_REEL_SPAWN_NO_VIEWER    2912
 #define STR_DLGLOBBY_REEL_SPAWN_SAVE_FAILED  2913
 #define STR_DLGLOBBY_REEL_SPAWN_START_FAILED 2914
+#define STR_DLGLOBBY_REEL_SPAWN_STARTED      2916
 
 /* SetName dialog additions */
 #define STR_DLGSETNAME_WINTITLE             757
@@ -1317,8 +1317,8 @@
 #define STR_LV_HUD_VIEW_AS                  2890
 #define STR_LV_HUD_ALL_TEAMS                2891
 #define STR_LV_HUD_REL_OWN                  2892
-#define STR_LV_HUD_REL_ALLIED               2798
-#define STR_LV_HUD_REL_HOSTILE              2799
+#define STR_LV_HUD_REL_ALLIED               2905
+#define STR_LV_HUD_REL_HOSTILE              2906
 #define STR_LV_SAVE_NAME_VS                 2893
 #define STR_LV_SAVE_NAME_MORE               2894
 #define STR_LV_SAVE_NAME_BOT                2895
@@ -1972,6 +1972,8 @@
 #define STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP  2764
 #define STR_DLGSETTINGS_HOSTING_SERVERDESC      2765
 #define STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP  2766
+#define STR_DLGSETTINGS_HOSTING_SPECDELAY       2798
+#define STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP   2799
 
 /* Log viewer Options menu */
 #define STR_LV_HIDE_LOBBY                   1921

@@ -52,6 +52,7 @@ extern "C" {
 #include "upload_policy.h"  /* UploadPolicy, ScriptUploadPolicy — upload combos */
 #include "view_policy.h"  /* ViewPolicy — hosting visibility rows */
 #include "server_voice_mode.h"  /* ServerVoiceMode — hosting voice combo */
+#include "spec_delay.h"  /* HOSTING_SPEC_DELAY_MAX_SECS — hosting spectator delay */
 #include "playername_validate.h"
 #include "../bg_game.h"
 #include "../skin_source.h"
@@ -1958,6 +1959,20 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
             if (maxSpec < 1)  maxSpec = 1;
             if (maxSpec > 32) maxSpec = 32;
             gameFrontSetHostingMaxSpec(maxSpec);
+        }
+        /* Seconds behind the game that spectators watch; 0 is live. */
+        int specDelay = gameFrontHostingSpecDelay;
+        hostingLabel(STR_DLGSETTINGS_HOSTING_SPECDELAY);
+        if (ImGui::InputInt("##hostingspecdelay", &specDelay, 5, 30)) {
+            if (specDelay < 0) specDelay = 0;
+            if (specDelay > HOSTING_SPEC_DELAY_MAX_SECS) {
+                specDelay = HOSTING_SPEC_DELAY_MAX_SECS;
+            }
+            gameFrontSetHostingSpecDelay(specDelay);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s",
+                              langGetText(STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP));
         }
         ImGui::EndDisabled();
     }

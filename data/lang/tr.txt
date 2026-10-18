@@ -2094,6 +2094,8 @@ STR_DLGSETTINGS_HOSTING_SERVERNAME=Sunucu Adı
 STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=Oyun Bulucu, adresiniz yerine bu adı gösterir. En fazla 32 karakter (aksanlı karakterlerde veya başka yazı sistemlerinde daha az). Adresinizi göstermek için boş bırakın.
 STR_DLGSETTINGS_HOSTING_SERVERDESC=Açıklama
 STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=Oyun Bulucu, bir oyuncu oyununuzu işaret ettiğinde veya seçtiğinde bunu gösterir. En fazla 200 karakter (aksanlı karakterlerde veya başka yazı sistemlerinde daha az).
+STR_DLGSETTINGS_HOSTING_SPECDELAY=Seyirci Gecikmesi (saniye)
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=Seyircilerin oyunu kaç saniye geriden izlediğini belirler; böylece oyunculara herkesin nerede olduğunu söyleyemezler. 0, oyunu canlı gösterir. 600'e kadar.
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Sesli Sohbet

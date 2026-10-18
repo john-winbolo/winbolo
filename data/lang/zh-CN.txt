@@ -2092,6 +2092,8 @@ STR_DLGSETTINGS_HOSTING_SERVERNAME=服务器名称
 STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=游戏查找会显示此名称，而不是你的地址。最多 32 字节（约 10 个中文字符，其他文字可能更少）。留空则显示你的地址。
 STR_DLGSETTINGS_HOSTING_SERVERDESC=描述
 STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=当玩家指向或选中你的游戏时，游戏查找会显示这段内容。最多 200 字节（约 66 个中文字符，其他文字可能更少）。
+STR_DLGSETTINGS_HOSTING_SPECDELAY=观战者延迟（秒）
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=观战者看到的画面会延迟设定的秒数，这样他们就不能把所有人的位置告诉玩家。0 表示实时显示游戏。最多可设为 600。
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=语音

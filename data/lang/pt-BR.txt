@@ -2092,6 +2092,8 @@ STR_DLGSETTINGS_HOSTING_SERVERNAME=Nome do servidor
 STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=O localizador de jogos mostra esse nome em vez do seu endereço. Até 32 caracteres (menos com acentos ou outros alfabetos). Deixe em branco para mostrar o endereço.
 STR_DLGSETTINGS_HOSTING_SERVERDESC=Descrição
 STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=O localizador de jogos mostra isso quando um jogador aponta para o seu jogo ou o seleciona. Até 200 caracteres (menos com acentos ou outros alfabetos).
+STR_DLGSETTINGS_HOSTING_SPECDELAY=Atraso dos espectadores (segundos)
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=Quantos segundos de atraso os espectadores veem o jogo, para que não consigam dizer aos jogadores onde todos estão. 0 mostra o jogo ao vivo. Até 600.
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Voz

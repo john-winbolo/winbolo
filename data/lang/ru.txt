@@ -2092,6 +2092,8 @@ STR_DLGSETTINGS_HOSTING_SERVERNAME=Имя сервера
 STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=Поиск игр показывает это имя вместо твоего адреса. До 32 знаков (меньше при кириллице или другом письме). Оставь пустым, чтобы показывать адрес.
 STR_DLGSETTINGS_HOSTING_SERVERDESC=Описание
 STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=Поиск игр показывает его, когда игрок наводится на твою игру или выбирает её. До 200 знаков (меньше при кириллице или другом письме).
+STR_DLGSETTINGS_HOSTING_SPECDELAY=Задержка зрителей (секунды)
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=С какой задержкой в секундах зрители видят игру, чтобы не могли подсказать игрокам, где все находятся. 0 показывает игру в эфире. До 600.
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Голос

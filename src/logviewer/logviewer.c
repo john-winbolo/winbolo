@@ -1364,29 +1364,33 @@ static void savePreferences(void) {
      * A maximized or fullscreen window is not a size to start the next run
      * at: the sizes saved before it was maximized stay as they are, so the
      * window that is maximized again at the next start (Window.Maximized)
-     * has its own size to go back to. */
+     * has its own size to go back to.
+     *
+     * Only the viewer's own window is a size to start it at. The viewer
+     * inside the game (Watch a Log, spectating) draws in the game's window,
+     * whose size is the game's; written here it would be the size the
+     * standalone viewer opens at next time. */
     {
         SDL_WindowFlags wflags = SDL_GetWindowFlags(g_lv->window);
         bool big = (wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) != 0;
         bool placed = g_lv->ownsWindow && !big && !(wflags & SDL_WINDOW_MINIMIZED);
 
-        if (!(g_lv->ownsWindow && big)) {
+        if (g_lv->ownsWindow && !big) {
+            /* The next launch makes the window sizeX * TILE_SIZE_X points
+             * wide (draw.c), at zoom 1, so the count saved is the window's
+             * in whole squares at zoom 1. The grid itself
+             * (lv_screenGetSizeX) is not that: it is sized against the
+             * zoom, so at 50% it holds twice the squares the window has. */
             int sizeX = lv_screenGetSizeX();
             int sizeY = lv_screenGetSizeY();
-            int dockL = 0, dockT = 0, dockR = 0, dockB = 0;
-            lv_imgui_dock_margins(&dockL, &dockT, &dockR, &dockB);
-            if (dockL + dockT + dockR + dockB > 0) {
-                int winW = 0, winH = 0;
-                int menuH = (int)lv_imgui_get_menu_bar_height();
-                float zoom = lv_drawGetZoomLevel();
-                if (zoom <= 0.0f) zoom = 1.0f;
-                SDL_GetWindowSize(g_lv->window, &winW, &winH);
-                if (winW > 0 && dockL + dockR > 0) {
-                    sizeX = lvFitTilesNearest(winW, (float)TILE_SIZE_X * zoom);
-                }
-                if (winH > menuH && dockT + dockB > 0) {
-                    sizeY = lvFitTilesNearest(winH - menuH, (float)TILE_SIZE_Y * zoom);
-                }
+            int winW = 0, winH = 0;
+            int menuH = (int)lv_imgui_get_menu_bar_height();
+            SDL_GetWindowSize(g_lv->window, &winW, &winH);
+            if (winW > 0) {
+                sizeX = lvFitTilesNearest(winW, (float)TILE_SIZE_X);
+            }
+            if (winH > menuH) {
+                sizeY = lvFitTilesNearest(winH - menuH, (float)TILE_SIZE_Y);
             }
             snprintf(line, sizeof(line), "%d", sizeX);
             lv_platform_config_set_string("LOGVIEWER", "ScreenSizeX", line);

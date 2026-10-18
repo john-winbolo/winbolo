@@ -722,12 +722,12 @@ STR_DLGLOBBY_REEL_NONE=No replay available for this round
 STR_DLGLOBBY_REEL_TOO_LARGE=The round was too long to send
 
 # Lobby "Last round" panel — the reel's "Spawn in log viewer" button.
-STR_DLGLOBBY_REEL_SPAWN_LV=Spawn in log viewer
 STR_DLGLOBBY_REEL_SPAWN_LV_TIP=Open this round in the Log Viewer, in a window of its own
 STR_DLGLOBBY_REEL_SPAWN_NO_LOG=There is no log of this round to open
 STR_DLGLOBBY_REEL_SPAWN_NO_VIEWER=Could not find the Log Viewer beside WinBolo
 STR_DLGLOBBY_REEL_SPAWN_SAVE_FAILED=Could not save a copy of the round's log for the Log Viewer
 STR_DLGLOBBY_REEL_SPAWN_START_FAILED=Could not start the Log Viewer
+STR_DLGLOBBY_REEL_SPAWN_STARTED=Log Viewer started
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Set Player Name
@@ -1242,7 +1242,6 @@ STR_LV_HUD_DEAD=Dead
 STR_LV_HUD_VIEW_AS=View of {string1}
 STR_LV_HUD_ALL_TEAMS=All teams
 STR_LV_HUD_REL_OWN=own
-STR_LV_HUD_REL_ALLIED=allied
 STR_LV_HUD_REL_HOSTILE=hostile
 STR_LV_SAVE_NAME_VS=vs
 STR_LV_SAVE_NAME_MORE=+ {number} more
@@ -1831,6 +1830,8 @@ STR_DLGSETTINGS_HOSTING_SERVERNAME=Server name
 STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=The game finder shows this name instead of your address. Up to 32 letters (fewer with accented letters or other scripts). Leave it empty to show your address.
 STR_DLGSETTINGS_HOSTING_SERVERDESC=Description
 STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=The game finder shows this when a player points at or selects your game. Up to 200 letters (fewer with accented letters or other scripts).
+STR_DLGSETTINGS_HOSTING_SPECDELAY=Spectator Delay (seconds)
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=How many seconds behind the game spectators watch, so they cannot tell players where everyone is. 0 shows the game live. Up to 600.
 
 # Log viewer Options menu
 STR_LV_HIDE_LOBBY=Hide Lobby

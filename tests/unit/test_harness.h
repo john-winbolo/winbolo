@@ -661,6 +661,10 @@ int run_spectator_replay(void);
  * -specdelay flow through ServerInstanceConfig into the sim and back via the
  * getters, with seconds->ticks conversion and the no-fallback zero semantics. */
 int run_spectator_config(void);
+/* The desktop host's [HOSTING] "Spectator Delay" preference
+ * (test_spectator_config.c): hostingSpecDelayResolve's range and fallbacks,
+ * and the 30 second default reaching the sim. */
+int run_spectator_delay_pref(void);
 
 /* Spectator JOIN handshake (test_spectator_join.c): a JOIN_FLAG_SPECTATOR
  * join registers a tankless viewer (slot 0xFF, no tank slot), honours the
@@ -4274,6 +4278,7 @@ int run_lv_presentation_marker_visible(void);
 int run_lv_presentation_live_seek(void);
 int run_lv_presentation_live_fast_forward(void);
 int run_lv_presentation_live_hold(void);
+int run_lv_presentation_live_segment_reset_drops_hold(void);
 /* The server's game tick at the playhead (test_lv_server_tick.c): a recorded
  * round's tick at end-of-log, hand-written anchors either side of a snapshot
  * and across a new round's run, records of the wrong length, a recording from

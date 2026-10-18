@@ -225,13 +225,60 @@ static inline int lvSpawnIsCopyName(const char *name) {
     return strcmp(name + len - 4, ".wbv") == 0;
 }
 
-/* The argument list for the new process into out: the program, the log,
- * then NULL. */
-static inline void lvSpawnArgs(const char *exePath, const char *logPath,
-                               const char *out[3]) {
-    out[0] = exePath;
-    out[1] = logPath;
-    out[2] = NULL;
+/* The program that starts a macOS bundle the way the Finder does. A program
+ * run straight from inside its bundle is not made the active application on
+ * macOS 14 and later (SDL leaves that to Launch Services there), so its
+ * window stays behind the game. "open" goes through Launch Services. */
+#define LV_SPAWN_OPEN_MACOS "/usr/bin/open"
+/* The most entries lvSpawnArgs sets, with the NULL at the end. */
+#define LV_SPAWN_ARGS_MAX 7
+/* The part of a program's path that puts it inside a macOS bundle. */
+#define LV_SPAWN_BUNDLE_PROGRAM_DIR "/Contents/MacOS/"
+
+/* The argument list for the new process into out, which holds
+ * LV_SPAWN_ARGS_MAX entries. Gives how many are set before the NULL end.
+ *
+ * On macOS a program inside a bundle ("<name>.app/Contents/MacOS/<name>") is
+ * started through open: "open -n -a <name>.app --args <log>". -n starts a new
+ * copy each time, in place of bringing the copy already running to the
+ * front. The bundle's path goes into bundleOut, which the list points at.
+ * Everywhere else, and for a macOS program that is in no bundle: the program,
+ * the log. No shell reads the list, so spaces and letters outside ASCII in
+ * the paths need no quotes. */
+static inline int lvSpawnArgs(int os, const char *exePath, const char *logPath,
+                              char *bundleOut, size_t bundleSize,
+                              const char *out[LV_SPAWN_ARGS_MAX]) {
+    const char *inBundle = NULL;
+    int         n = 0;
+    if (out == NULL) return 0;
+    out[0] = NULL;
+    if (exePath == NULL || logPath == NULL) return 0;
+    if (os == LV_SPAWN_OS_MACOS) {
+        /* The last "/Contents/MacOS/": the one of the program's own bundle. */
+        const char *p = exePath;
+        while ((p = strstr(p, LV_SPAWN_BUNDLE_PROGRAM_DIR)) != NULL) {
+            inBundle = p;
+            p++;
+        }
+    }
+    if (inBundle != NULL && bundleOut != NULL &&
+        (size_t)(inBundle - exePath) + 1 <= bundleSize) {
+        const size_t len = (size_t)(inBundle - exePath);
+        memcpy(bundleOut, exePath, len);
+        bundleOut[len] = '\0';
+        out[n++] = LV_SPAWN_OPEN_MACOS;
+        out[n++] = "-n";
+        out[n++] = "-a";
+        out[n++] = bundleOut;
+        out[n++] = "--args";
+        out[n++] = logPath;
+        out[n]   = NULL;
+        return n;
+    }
+    out[n++] = exePath;
+    out[n++] = logPath;
+    out[n]   = NULL;
+    return n;
 }
 
 #endif /* LOGVIEWER_SPAWN_H */
