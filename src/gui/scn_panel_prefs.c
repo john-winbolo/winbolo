@@ -143,3 +143,82 @@ bool scnPanelRescueRect(const ScnPanelRect *win, const ScnPanelRect *displays,
     *out = r;
     return true;
 }
+
+int scnOpacityClamp(int pct) {
+    if (pct == -1) return -1;
+    if (pct < 0) return 0;
+    if (pct > 100) return 100;
+    return pct;
+}
+
+void scnOpacityMigrate(int oldPct, int *bgPct, int *textPct) {
+    int v = scnOpacityClamp(oldPct);
+    if (v == -1) {
+        if (bgPct != NULL) *bgPct = -1;
+        if (textPct != NULL) *textPct = -1;
+        return;
+    }
+    if (bgPct != NULL) *bgPct = (v * SCN_BG_OPACITY_DEFAULT + 50) / 100;
+    if (textPct != NULL) *textPct = v;
+}
+
+/* One saved percent from its string: "" or a string that does not start
+   with a whole number is -1, never set. */
+static int scnOpacityRead(const char *s) {
+    int v;
+    if (s == NULL || s[0] == '\0') return -1;
+    if (sscanf(s, "%d", &v) != 1) return -1;
+    return scnOpacityClamp(v);
+}
+
+void scnOpacityFromPrefs(const char *bgStr, const char *textStr,
+                         const char *oldStr, int *bgPct, int *textPct) {
+    const bool haveBg   = (bgStr != NULL && bgStr[0] != '\0');
+    const bool haveText = (textStr != NULL && textStr[0] != '\0');
+    if (!haveBg && !haveText) {
+        scnOpacityMigrate(scnOpacityRead(oldStr), bgPct, textPct);
+        return;
+    }
+    if (bgPct != NULL) *bgPct = scnOpacityRead(bgStr);
+    if (textPct != NULL) *textPct = scnOpacityRead(textStr);
+}
+
+int scnBackingAlpha(int bgPct) {
+    int v = scnOpacityClamp(bgPct);
+    if (v == -1) v = SCN_BG_OPACITY_DEFAULT;
+    return (v * 255 + 50) / 100;
+}
+
+bool scnPanelLayoutParse(const char *row, int *x, int *y, int *scale,
+                         int *bgPct, int *textPct) {
+    int  rx, ry, rscale, a, b;
+    char tail;
+    int  n;
+    if (row == NULL || x == NULL || y == NULL || scale == NULL ||
+        bgPct == NULL || textPct == NULL) {
+        return false;
+    }
+    /* The trailing %c catches a row with more after the last number, which
+       is not a row this code or the code before it wrote. */
+    n = sscanf(row, "%d,%d,%d,%d,%d%c", &rx, &ry, &rscale, &a, &b, &tail);
+    if (n == 5) {
+        *bgPct   = scnOpacityClamp(a);
+        *textPct = scnOpacityClamp(b);
+    } else if (n == 4 &&
+               sscanf(row, "%d,%d,%d,%d%c", &rx, &ry, &rscale, &a, &tail) ==
+                   4) {
+        scnOpacityMigrate(a, bgPct, textPct);
+    } else {
+        return false;
+    }
+    *x     = rx;
+    *y     = ry;
+    *scale = rscale;
+    return true;
+}
+
+void scnPanelLayoutFormat(int x, int y, int scale, int bgPct, int textPct,
+                          char *buf, size_t bufSz) {
+    if (buf == NULL || bufSz == 0) return;
+    snprintf(buf, bufSz, "%d,%d,%d,%d,%d", x, y, scale, bgPct, textPct);
+}

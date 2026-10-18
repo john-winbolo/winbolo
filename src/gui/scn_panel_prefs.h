@@ -158,6 +158,88 @@ bool scnPanelRescueRect(const ScnPanelRect *win, const ScnPanelRect *displays,
                         int n, const ScnPanelRect *primaryUsable,
                         ScnPanelRect *out);
 
+/* The two opacities a scenario panel and the Scenario Text window each keep,
+ * as percents. -1 in a saved value means the player never set it.
+ *
+ * Background opacity is the black backing's real alpha: 100 is fully
+ * opaque black, 0 is no backing, and the percent maps straight onto the
+ * alpha (scnBackingAlpha). The default is 43, which is 110 of 255, the
+ * backing these windows had before there was a setting.
+ *
+ * Text opacity fades what the scenario or mod draws in the window, and not
+ * the backing. 100 draws it at full strength, which is the default. */
+#define SCN_BG_OPACITY_DEFAULT    43
+#define SCN_TEXT_OPACITY_DEFAULT  100
+
+/* The [WINDOW] keys the two opacities are kept under. The old single key of
+ * each window is read only to fill the two new ones the first time a player
+ * with it loads (scnOpacityFromPrefs), and is not written any more. */
+#define SCN_PANEL_PREFS_BG_KEY       "Scenario Panel Background Opacity"
+#define SCN_PANEL_PREFS_TEXT_KEY     "Scenario Panel Text Opacity"
+#define SCN_PANEL_PREFS_OLD_KEY      "Scenario Panel Alpha"
+#define SCN_TEXT_PREFS_BG_KEY        "Scenario Text Background Opacity"
+#define SCN_TEXT_PREFS_TEXT_KEY      "Scenario Text Text Opacity"
+#define SCN_TEXT_PREFS_OLD_KEY       "Scenario Text Alpha"
+
+/*********************************************************
+ *NAME:          scnOpacityClamp
+ *PURPOSE:
+ *  A saved opacity held to 0..100. -1, never set, passes
+ *  through, and any other value below 0 becomes 0.
+ *********************************************************/
+int scnOpacityClamp(int pct);
+
+/*********************************************************
+ *NAME:          scnOpacityMigrate
+ *PURPOSE:
+ *  The two opacities that give the same look as one old
+ *  single opacity. The old value faded the backing (110 of
+ *  255 at 100) and the drawing together, so the text gets
+ *  the old value and the background gets
+ *  round(old * 43 / 100). An old -1, never set, gives -1
+ *  for both, which is the defaults.
+ *********************************************************/
+void scnOpacityMigrate(int oldPct, int *bgPct, int *textPct);
+
+/*********************************************************
+ *NAME:          scnOpacityFromPrefs
+ *PURPOSE:
+ *  The two opacities from the strings the [WINDOW] keys
+ *  hold, "" for a key that is not in the file. When both
+ *  new keys are missing the old key is migrated with
+ *  scnOpacityMigrate; when either new key is there the old
+ *  one is not read. A missing or bad value is -1. Both
+ *  results are clamped with scnOpacityClamp.
+ *********************************************************/
+void scnOpacityFromPrefs(const char *bgStr, const char *textStr,
+                         const char *oldStr, int *bgPct, int *textPct);
+
+/*********************************************************
+ *NAME:          scnBackingAlpha
+ *PURPOSE:
+ *  The backing's alpha out of 255 for a background
+ *  opacity: pct * 255 / 100, rounded. -1 gives the
+ *  default's alpha.
+ *********************************************************/
+int scnBackingAlpha(int bgPct);
+
+/*********************************************************
+ *NAME:          scnPanelLayoutParse / scnPanelLayoutFormat
+ *PURPOSE:
+ *  A scenario's own panel layout row under "SCENARIO
+ *  PANEL": "x,y,scale,bg,text". A row of four numbers,
+ *  "x,y,scale,alpha", is the row written before there were
+ *  two opacities, and its alpha is migrated with
+ *  scnOpacityMigrate. Any other row returns false and
+ *  leaves the outputs alone. The opacities are clamped with
+ *  scnOpacityClamp; the scale and the position pass
+ *  through for the caller to check.
+ *********************************************************/
+bool scnPanelLayoutParse(const char *row, int *x, int *y, int *scale,
+                         int *bgPct, int *textPct);
+void scnPanelLayoutFormat(int x, int y, int scale, int bgPct, int textPct,
+                          char *buf, size_t bufSz);
+
 #ifdef __cplusplus
 }
 #endif

@@ -2214,7 +2214,6 @@ STR_DLGLOBBY_MODS_TIP_OFF=Mods/Scenario is uitgeschakeld. Deze zijn gekozen voor
 STR_DLGLOBBY_MODS_TIP_NONE=Voor deze ronde zijn geen mods geladen.
 STR_DLGLOBBY_MODS_OFF_NOTE=(uitgeschakeld, wordt niet uitgevoerd)
 STR_SCNPANEL_SETTINGS_TITLE=Scenariopaneel
-STR_SCNPANEL_OPACITY_LBL=Dekking
 STR_SCNPANEL_OPACITY_LINE1=Vervaagt wat het paneel tekent.
 STR_SCNPANEL_OPACITY_LINE2=Lege delen ervan blijven doorzichtig.
 STR_DLGLOBBY_SCENARIO_UNSAFE=Deze server voert scenarioscripts uit met de volledige Lua-bibliotheek en zonder beperkingen.

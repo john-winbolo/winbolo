@@ -19,9 +19,23 @@
  *       in the taskbar band is lost.
  *
  *   run_scn_panel_prefs_sections
- *       the shown flag and the pop-out row go through the real
- *       preferences file under their sections and keys, survive a
- *       reload, and only the shown flag is put in the cloud upload.
+ *       the shown flag, the pop-out row and the layout row go through
+ *       the real preferences file under their sections and keys, survive
+ *       a reload, and the pop-out row is kept out of the cloud upload.
+ *
+ *   run_scn_panel_layout_row
+ *       the "x,y,scale,bg,text" layout row round-trips with both
+ *       opacities, clamps them, reads an old "x,y,scale,alpha" row by
+ *       migrating its one opacity, and refuses any other row.
+ *
+ *   run_scn_opacity_migration
+ *       the rule that turns one old opacity into the two new ones:
+ *       text = old, background = round(old * 43 / 100), -1 stays -1; the
+ *       background percent maps straight onto the backing's alpha, with
+ *       the default 43 giving the 110 of 255 the backing always had; and
+ *       a preferences file with only the old [WINDOW] key of each window
+ *       loads both new values from it, while a file with the new keys
+ *       does not read the old one.
  */
 
 #include <stdio.h>
@@ -232,6 +246,8 @@ int run_scn_panel_prefs_sections(void) {
     in.h = 280;
     scnPanelPopoutFormat(&in, buf, sizeof(buf));
     UT_ASSERT(prefsSetString(SCN_PANEL_PREFS_POPOUT_SECTION, popKey, buf));
+    scnPanelLayoutFormat(40, 50, 150, 70, 80, buf, sizeof(buf));
+    UT_ASSERT(prefsSetString("SCENARIO PANEL", key, buf));
     prefsShutdown();
 
     /* Reload and read them back. */
@@ -246,6 +262,14 @@ int run_scn_panel_prefs_sections(void) {
                   "pop-out row '%s' did not read after a reload", buf);
     UT_ASSERT(got.open && got.x == -1500 && got.y == 60 && got.w == 320 &&
               got.h == 280);
+    {
+        int lx = 0, ly = 0, ls = 0, lbg = 0, ltext = 0;
+        prefsGetString("SCENARIO PANEL", key, "", buf, sizeof(buf));
+        UT_ASSERT_MSG(scnPanelLayoutParse(buf, &lx, &ly, &ls, &lbg, &ltext),
+                      "layout row '%s' did not read after a reload", buf);
+        UT_ASSERT(lx == 40 && ly == 50 && ls == 150 && lbg == 70 &&
+                  ltext == 80);
+    }
 
     /* The upload carries the shown flag and never the desktop position. */
     body = prefsSerializeForUpload();
@@ -262,6 +286,154 @@ int run_scn_panel_prefs_sections(void) {
     UT_ASSERT_MSG(strcmp(buf, "<absent>") == 0,
                   "the pop-out position leaked into the upload: '%s'", buf);
     prefsDocFree(up);
+
+    prefsShutdown();
+    remove(jsonPath);
+    remove(corrupt);
+    return 0;
+}
+
+int run_scn_panel_layout_row(void) {
+    char buf[80];
+    int  x, y, scale, bg, text;
+
+    /* A new row round-trips both opacities. */
+    scnPanelLayoutFormat(-1, 200, 125, 43, 100, buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "-1,200,125,43,100") == 0, "row is '%s'", buf);
+    x = y = scale = bg = text = 0;
+    UT_ASSERT(scnPanelLayoutParse(buf, &x, &y, &scale, &bg, &text));
+    UT_ASSERT(x == -1 && y == 200 && scale == 125 && bg == 43 && text == 100);
+
+    /* Never set stays never set; out of range is clamped. */
+    UT_ASSERT(scnPanelLayoutParse("10,20,-1,-1,-1", &x, &y, &scale, &bg,
+                                  &text));
+    UT_ASSERT(scale == -1 && bg == -1 && text == -1);
+    UT_ASSERT(scnPanelLayoutParse("10,20,100,250,-7", &x, &y, &scale, &bg,
+                                  &text));
+    UT_ASSERT_MSG(bg == 100 && text == 0, "clamped to %d,%d", bg, text);
+
+    /* An old four-number row: its one opacity gives both, so the panel
+       looks as it did. */
+    UT_ASSERT(scnPanelLayoutParse("30,40,100,100", &x, &y, &scale, &bg,
+                                  &text));
+    UT_ASSERT(x == 30 && y == 40 && scale == 100);
+    UT_ASSERT_MSG(bg == 43 && text == 100, "old 100 gave %d,%d", bg, text);
+    UT_ASSERT(scnPanelLayoutParse("30,40,100,60", &x, &y, &scale, &bg,
+                                  &text));
+    UT_ASSERT_MSG(bg == 26 && text == 60, "old 60 gave %d,%d", bg, text);
+    UT_ASSERT(scnPanelLayoutParse("30,40,100,-1", &x, &y, &scale, &bg,
+                                  &text));
+    UT_ASSERT(bg == -1 && text == -1);
+
+    /* Any other row is refused and the outputs are left alone. */
+    x = y = scale = bg = text = 7;
+    UT_ASSERT(!scnPanelLayoutParse("", &x, &y, &scale, &bg, &text));
+    UT_ASSERT(!scnPanelLayoutParse("1,2,3", &x, &y, &scale, &bg, &text));
+    UT_ASSERT(!scnPanelLayoutParse("1,2,3,4,x", &x, &y, &scale, &bg, &text));
+    UT_ASSERT(!scnPanelLayoutParse("1,2,3,4,5,6", &x, &y, &scale, &bg,
+                                   &text));
+    UT_ASSERT(!scnPanelLayoutParse("1,2,3,4,5 junk", &x, &y, &scale, &bg,
+                                   &text));
+    UT_ASSERT(x == 7 && y == 7 && scale == 7 && bg == 7 && text == 7);
+    return 0;
+}
+
+int run_scn_opacity_migration(void) {
+    char jsonPath[1024];
+    char corrupt[1100];
+    char bgBuf[32], textBuf[32], oldBuf[32];
+    int  bg, text, v;
+
+    /* The rule, for every old value: text keeps it, background is
+       round(old * 43 / 100). */
+    for (v = 0; v <= 100; v++) {
+        bg = text = -5;
+        scnOpacityMigrate(v, &bg, &text);
+        UT_ASSERT_MSG(text == v, "old %d gave text %d", v, text);
+        UT_ASSERT_MSG(bg == (int)((v * 43.0) / 100.0 + 0.5),
+                      "old %d gave background %d", v, bg);
+    }
+    scnOpacityMigrate(100, &bg, &text);
+    UT_ASSERT(bg == SCN_BG_OPACITY_DEFAULT && text == SCN_TEXT_OPACITY_DEFAULT);
+    scnOpacityMigrate(50, &bg, &text);
+    UT_ASSERT_MSG(bg == 22 && text == 50, "old 50 gave %d,%d", bg, text);
+    scnOpacityMigrate(-1, &bg, &text);
+    UT_ASSERT(bg == -1 && text == -1);
+    scnOpacityMigrate(250, &bg, &text);
+    UT_ASSERT(bg == 43 && text == 100);
+
+    /* The background percent is the backing's real alpha. The default is
+       the 110 of 255 the backing had before there was a setting, and an
+       old value migrated keeps the backing within one step of what the
+       old rule (old * 110 / 100) drew. */
+    UT_ASSERT(scnBackingAlpha(100) == 255);
+    UT_ASSERT(scnBackingAlpha(0) == 0);
+    UT_ASSERT_MSG(scnBackingAlpha(SCN_BG_OPACITY_DEFAULT) == 110,
+                  "default backing alpha is %d",
+                  scnBackingAlpha(SCN_BG_OPACITY_DEFAULT));
+    UT_ASSERT(scnBackingAlpha(-1) == 110);
+    for (v = 0; v <= 100; v++) {
+        int oldAlpha = (v * 110 + 50) / 100;
+        scnOpacityMigrate(v, &bg, &text);
+        UT_ASSERT_MSG(abs(scnBackingAlpha(bg) - oldAlpha) <= 2,
+                      "old %d: backing %d, was %d", v, scnBackingAlpha(bg),
+                      oldAlpha);
+    }
+
+    /* From the strings the [WINDOW] keys hold. */
+    scnOpacityFromPrefs("", "", "60", &bg, &text);
+    UT_ASSERT_MSG(bg == 26 && text == 60, "old key 60 gave %d,%d", bg, text);
+    scnOpacityFromPrefs("", "", "", &bg, &text);
+    UT_ASSERT(bg == -1 && text == -1);
+    scnOpacityFromPrefs("", "", "-1", &bg, &text);
+    UT_ASSERT(bg == -1 && text == -1);
+    scnOpacityFromPrefs("90", "", "60", &bg, &text);
+    UT_ASSERT_MSG(bg == 90 && text == -1, "new key ignored: %d,%d", bg, text);
+    scnOpacityFromPrefs("-1", "35", "60", &bg, &text);
+    UT_ASSERT(bg == -1 && text == 35);
+    scnOpacityFromPrefs("120", "-3", "", &bg, &text);
+    UT_ASSERT(bg == 100 && text == 0);
+
+    /* Through the real preferences file: a player with only the old key of
+       each window gets both new values from it after a reload. */
+    UT_ASSERT(utScratchPath(jsonPath, sizeof(jsonPath),
+                            "scn_opacity_migration.json"));
+    snprintf(corrupt, sizeof(corrupt), "%s.corrupt", jsonPath);
+    remove(jsonPath);
+    remove(corrupt);
+    prefsInit(jsonPath);
+    UT_ASSERT(prefsSetString("WINDOW", SCN_PANEL_PREFS_OLD_KEY, "100"));
+    UT_ASSERT(prefsSetString("WINDOW", SCN_TEXT_PREFS_OLD_KEY, "60"));
+    prefsShutdown();
+
+    prefsInit(jsonPath);
+    prefsGetString("WINDOW", SCN_PANEL_PREFS_BG_KEY, "", bgBuf, sizeof(bgBuf));
+    prefsGetString("WINDOW", SCN_PANEL_PREFS_TEXT_KEY, "", textBuf,
+                   sizeof(textBuf));
+    prefsGetString("WINDOW", SCN_PANEL_PREFS_OLD_KEY, "", oldBuf,
+                   sizeof(oldBuf));
+    scnOpacityFromPrefs(bgBuf, textBuf, oldBuf, &bg, &text);
+    UT_ASSERT_MSG(bg == 43 && text == 100, "panel gave %d,%d", bg, text);
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_BG_KEY, "", bgBuf, sizeof(bgBuf));
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_TEXT_KEY, "", textBuf,
+                   sizeof(textBuf));
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_OLD_KEY, "", oldBuf,
+                   sizeof(oldBuf));
+    scnOpacityFromPrefs(bgBuf, textBuf, oldBuf, &bg, &text);
+    UT_ASSERT_MSG(bg == 26 && text == 60, "text window gave %d,%d", bg, text);
+
+    /* Once the new keys are written, they are what is read. */
+    UT_ASSERT(prefsSetString("WINDOW", SCN_TEXT_PREFS_BG_KEY, "80"));
+    UT_ASSERT(prefsSetString("WINDOW", SCN_TEXT_PREFS_TEXT_KEY, "90"));
+    prefsShutdown();
+    prefsInit(jsonPath);
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_BG_KEY, "", bgBuf, sizeof(bgBuf));
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_TEXT_KEY, "", textBuf,
+                   sizeof(textBuf));
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_OLD_KEY, "", oldBuf,
+                   sizeof(oldBuf));
+    scnOpacityFromPrefs(bgBuf, textBuf, oldBuf, &bg, &text);
+    UT_ASSERT_MSG(bg == 80 && text == 90, "new keys gave %d,%d", bg, text);
 
     prefsShutdown();
     remove(jsonPath);
