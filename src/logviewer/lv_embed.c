@@ -128,11 +128,13 @@ Uint32 SDLCALL lv_windowFrameTimer(void *userdata, SDL_TimerID timerID, Uint32 i
 /* Set while the host moves playback itself over a few frames (the animation
  * of Rewind and Fast Forward, lv_jump_anim.h). The timer goes on but plays
  * nothing, so Play and Pause stay what the user set. Written and read with
- * the client mutex held. */
+ * the client mutex held. A live feed has no timer: its frame update plays
+ * nothing while the hold is on (lv_screenSpecSetHold). */
 static bool s_tickHold = false;
 
 void lv_windowSetTickHold(bool on) {
     s_tickHold = on;
+    lv_screenSpecSetHold(on);
 }
 
 Uint32 SDLCALL lv_windowTimer(void *userdata, SDL_TimerID timerID, Uint32 interval) {
@@ -211,6 +213,7 @@ void lv_windowPause(void) {
 void lv_windowStop(int corruptLog) {
     /* Nothing holds the timer of a log that is stopped. */
     s_tickHold = false;
+    lv_screenSpecSetHold(false);
     /* Spectator: the panel's Stop button freezes the feed rather than closing the
        live log out from under the foreground host loop. */
     if (lv_screenSpecIsLiveMode()) {

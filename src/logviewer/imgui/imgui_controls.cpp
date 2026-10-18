@@ -160,7 +160,7 @@ static bool seek_rel_drag_update(ImGuiID seek_id) {
     const uint32_t lenMs = lv_screenWindowLenMs();
     const bool active = ImGui::GetActiveID() == seek_id;
 
-    if (lenMs == 0 || lv_screenSpecIsLiveMode()) {
+    if (lenMs == 0) {
         s_rel_drag = false;
         return false;
     }
@@ -233,7 +233,7 @@ static float s_wheel_carry = 0.0f;
 
 static void seek_wheel_step(const ImVec2 &a, const ImVec2 &b) {
     const ImGuiIO &io = ImGui::GetIO();
-    if (!io.KeyShift || s_is_seeking || lv_screenSpecIsLiveMode() ||
+    if (!io.KeyShift || s_is_seeking ||
         !ImGui::IsWindowHovered() || !ImGui::IsMouseHoveringRect(a, b)) {
         s_wheel_carry = 0.0f;
         return;

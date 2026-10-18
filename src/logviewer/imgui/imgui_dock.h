@@ -25,9 +25,9 @@ extern "C" {
  * starts with the default arrangement (lv_dock_default.h): the left, right
  * and bottom ones on, with the panels in them. The left and right ones run
  * the full height under the menu bar; the top and bottom ones sit between
- * them. They only ever show in the
- * standalone viewer's desktop layout: the live spectator host, the game view
- * and the tablet / Steam Deck layout never draw them. While any shows, the
+ * them. They show in the desktop layout of the viewer and of the live
+ * spectator (lvPanelSetSidebarsOn): the game view and the tablet / Steam Deck
+ * layout never draw them. While any shows, the
  * map keeps to the rest of the window (lv_imgui_dock_margins).
  *
  * A side is one of LV_DOCK_RIGHT, LV_DOCK_LEFT, LV_DOCK_TOP, LV_DOCK_BOTTOM
@@ -52,10 +52,10 @@ void lv_imgui_dock_init(struct LogViewerState *lv);
  * while the ImGui context still exists. */
 void lv_imgui_dock_save(void);
 
-/* Say whether this host is the standalone viewer. lv_imgui_dock_init sets it
- * to no, so a host that says nothing (the spectator, which shares the
- * viewer's code and preferences) never shows a sidebar and never writes the
- * settings. */
+/* Say whether this host has sidebars: the viewer and the live spectator say
+ * yes. lv_imgui_dock_init sets it to no, so a host that says nothing (the
+ * reel in the game, which shares the viewer's code and preferences) never
+ * shows a sidebar and never writes the settings. */
 void lv_imgui_dock_set_standalone(int standalone);
 
 /* A sidebar's menu option, whether or not sidebars can show right now. */

@@ -27,6 +27,7 @@ void lv_windowStop(int corruptLog);
 void lv_windowRewind(void);
 void lv_windowFastForward(void);
 void lv_windowNeedRedraw(void);
+bool lv_screenSpecIsLiveMode(void);
 }
 
 #define LANG_STR(id) ([NSString stringWithUTF8String:langGetText(id)])
@@ -43,10 +44,14 @@ static NSMenu             *s_lv_hostAppSubmenu  = nil;
 
 /* Cached references walked by lv_mac_menubar_refresh(). Submenus cache
  * the NSMenu so refresh can iterate items by tag. */
+static NSMenuItem *s_lv_openWbnItem    = nil;
+static NSMenuItem *s_lv_openItem       = nil;
 static NSMenuItem *s_lv_saveMapItem    = nil;
 static NSMenuItem *s_lv_saveLogItem    = nil;
 static NSMenuItem *s_lv_openSpItem     = nil;
 static NSMenuItem *s_lv_returnItem     = nil;   /* embedded only: File > Return to Main Menu */
+static NSMenuItem *s_lv_fileSepItem    = nil;   /* embedded only: the line above Return */
+static NSMenuItem *s_lv_leaveItem      = nil;   /* a live feed only: File > Leave spectating */
 static NSMenuItem *s_lv_playItem       = nil;
 static NSMenuItem *s_lv_pauseItem      = nil;
 static NSMenuItem *s_lv_stopItem       = nil;
@@ -103,6 +108,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onSaveLog:(id)sender;
 - (void)onOpenSinglePlayer:(id)sender;
 - (void)onReturn:(id)sender;
+- (void)onLeaveSpectating:(id)sender;
 - (void)onPlay:(id)sender;
 - (void)onPause:(id)sender;
 - (void)onStop:(id)sender;
@@ -154,9 +160,28 @@ static void lv_push_sdl_quit(void) {
     (void)sender;
     if (s_lv_state && s_lv_state->isLoaded) lv_windowSaveMap();
 }
-- (void)onSaveLog:(id)sender { (void)sender; lv_windowSaveLog(); }
-- (void)onOpenSinglePlayer:(id)sender { (void)sender; lv_windowOpenSinglePlayer(); }
-- (void)onReturn:(id)sender { (void)sender; lv_push_sdl_quit(); }
+- (void)onSaveLog:(id)sender {
+    (void)sender;
+    if (lv_windowCanSaveLog()) lv_windowSaveLog();
+}
+- (void)onOpenSinglePlayer:(id)sender {
+    (void)sender;
+    if (lv_windowCanOpenSinglePlayer()) lv_windowOpenSinglePlayer();
+}
+/* A live feed is left only after the user says yes, as Esc does. Return is
+ * hidden there; this is in case its key still reaches it. */
+- (void)onReturn:(id)sender {
+    (void)sender;
+    if (lv_screenSpecIsLiveMode()) {
+        lv_imgui_spectator_leave_request();
+    } else {
+        lv_push_sdl_quit();
+    }
+}
+- (void)onLeaveSpectating:(id)sender {
+    (void)sender;
+    if (lv_screenSpecIsLiveMode()) lv_imgui_spectator_leave_request();
+}
 - (void)onPlay:(id)sender {
     (void)sender;
     if (s_lv_state && s_lv_state->isLoaded && !s_lv_state->playIsPlaying) lv_windowPlay();
@@ -167,6 +192,8 @@ static void lv_push_sdl_quit(void) {
 }
 - (void)onStop:(id)sender {
     (void)sender;
+    /* A live feed has no Stop (the item is hidden there). */
+    if (lv_screenSpecIsLiveMode()) return;
     if (s_lv_state && s_lv_state->isLoaded) lv_windowStop(0);
 }
 - (void)onFastForward:(id)sender {
@@ -198,7 +225,11 @@ static void lv_push_sdl_quit(void) {
     }
 }
 - (void)onToggleTankCentred:(id)sender { (void)sender; lv_imgui_toggle_tank_centred(); }
-- (void)onToggleHideLobby:(id)sender { (void)sender; lv_imgui_toggle_hide_lobby(); }
+- (void)onToggleHideLobby:(id)sender {
+    (void)sender;
+    /* A live feed has no lobby to hide (the item is hidden there). */
+    if (!lv_screenSpecIsLiveMode()) lv_imgui_toggle_hide_lobby();
+}
 - (void)onToggleRegions:(id)sender {
     (void)sender;
     if (lv_imgui_has_regions()) lv_imgui_toggle_regions();
@@ -239,7 +270,11 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleEvents:(id)sender { (void)sender; lv_g_show_events_window = !lv_g_show_events_window; }
 - (void)onToggleGameInfo:(id)sender { (void)sender; lv_g_show_game_info_window = !lv_g_show_game_info_window; }
 - (void)onToggleItemInfo:(id)sender { (void)sender; lv_g_show_item_info_window = !lv_g_show_item_info_window; }
-- (void)onToggleComments:(id)sender { (void)sender; lv_g_show_comments_window = !lv_g_show_comments_window; }
+- (void)onToggleComments:(id)sender {
+    (void)sender;
+    /* A live feed has no Comments panel (the item is hidden there). */
+    if (!lv_screenSpecIsLiveMode()) lv_g_show_comments_window = !lv_g_show_comments_window;
+}
 - (void)onToggleHud:(id)sender { (void)sender; lv_g_show_hud_window = !lv_g_show_hud_window; }
 - (void)onToggleOverview:(id)sender { (void)sender; lv_g_show_overview_window = !lv_g_show_overview_window; }
 - (void)onToggleTank:(id)sender { (void)sender; lv_g_show_tank_window = !lv_g_show_tank_window; }
@@ -372,6 +407,7 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
         keyEquivalent:@""];
     [openWbnItem setTarget:s_lv_bridge];
     [fileMenu addItem:openWbnItem];
+    s_lv_openWbnItem = openWbnItem;
 
     NSMenuItem *openItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_LV_MENU_OPEN)
@@ -379,6 +415,7 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
         keyEquivalent:@"o"];
     [openItem setTarget:s_lv_bridge];
     [fileMenu addItem:openItem];
+    s_lv_openItem = openItem;
 
     NSMenuItem *saveMapItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_SAVE_MAP)
@@ -410,7 +447,9 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     /* Embedded gets a "Return to Main Menu" entry in the File menu;
      * standalone gets no File-menu quit (Quit lives in the app menu). */
     if (embedded) {
-        [fileMenu addItem:[NSMenuItem separatorItem]];
+        NSMenuItem *fileSep = [NSMenuItem separatorItem];
+        [fileMenu addItem:fileSep];
+        s_lv_fileSepItem = fileSep;
         NSMenuItem *returnItem = [[NSMenuItem alloc]
             initWithTitle:LANG_STR(STR_MAPEDIT_MENU_RETURN)
             action:@selector(onReturn:)
@@ -420,7 +459,20 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
         s_lv_returnItem = returnItem;
     } else {
         s_lv_returnItem = nil;
+        s_lv_fileSepItem = nil;
     }
+
+    /* A live game watched from the game (spectatorRun) has one File item,
+     * which asks to leave. It is hidden, and the other File items shown,
+     * whenever the feed is not live (lv_mac_menubar_refresh). */
+    NSMenuItem *leaveItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_MENU_LEAVE_SPECTATING)
+        action:@selector(onLeaveSpectating:)
+        keyEquivalent:@""];
+    [leaveItem setTarget:s_lv_bridge];
+    [leaveItem setHidden:YES];
+    [fileMenu addItem:leaveItem];
+    s_lv_leaveItem = leaveItem;
 
     /* Action menu */
     NSMenuItem *actionItem = [mainMenu addItemWithTitle:LANG_STR(STR_LV_MENU_ACTION) action:nil keyEquivalent:@""];
@@ -870,6 +922,10 @@ void lv_mac_menubar_uninstall(void) {
     }
     s_lv_savedMainMenu = nil;
     s_lv_state = NULL;
+    s_lv_openWbnItem = nil;
+    s_lv_openItem = nil;
+    s_lv_fileSepItem = nil;
+    s_lv_leaveItem = nil;
     s_lv_saveMapItem = nil;
     s_lv_saveLogItem = nil;
     s_lv_openSpItem  = nil;
@@ -917,13 +973,47 @@ void lv_mac_menubar_uninstall(void) {
 void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (!s) return;
 
-    if (s_lv_saveMapItem) [s_lv_saveMapItem setEnabled:(s->isLoaded ? YES : NO)];
-    if (s_lv_saveLogItem) [s_lv_saveLogItem setEnabled:(lv_windowCanSaveLog() ? YES : NO)];
-    if (s_lv_openSpItem)  [s_lv_openSpItem  setEnabled:(lv_windowCanOpenSinglePlayer() ? YES : NO)];
+    /* A live game watched from the game (s->live): the same menus as the
+     * in-window menu bar has there. The File menu has only Leave spectating,
+     * and Stop, Hide Lobby and the Comments panel are not there. A hidden
+     * item is also turned off, so its key does nothing. */
+    const BOOL live = s->live ? YES : NO;
+    if (s_lv_openWbnItem) {
+        [s_lv_openWbnItem setHidden:live];
+        [s_lv_openWbnItem setEnabled:!live];
+    }
+    if (s_lv_openItem) {
+        [s_lv_openItem setHidden:live];
+        [s_lv_openItem setEnabled:!live];
+    }
+    if (s_lv_saveMapItem) {
+        [s_lv_saveMapItem setHidden:live];
+        [s_lv_saveMapItem setEnabled:((s->isLoaded && !live) ? YES : NO)];
+    }
+    if (s_lv_saveLogItem) {
+        [s_lv_saveLogItem setHidden:live];
+        [s_lv_saveLogItem setEnabled:(lv_windowCanSaveLog() ? YES : NO)];
+    }
+    if (s_lv_openSpItem) {
+        [s_lv_openSpItem setHidden:live];
+        [s_lv_openSpItem setEnabled:(lv_windowCanOpenSinglePlayer() ? YES : NO)];
+    }
+    if (s_lv_fileSepItem) [s_lv_fileSepItem setHidden:live];
+    if (s_lv_returnItem) {
+        [s_lv_returnItem setHidden:live];
+        [s_lv_returnItem setEnabled:!live];
+    }
+    if (s_lv_leaveItem) {
+        [s_lv_leaveItem setHidden:!live];
+        [s_lv_leaveItem setEnabled:live];
+    }
 
     if (s_lv_playItem)        [s_lv_playItem        setEnabled:((s->isLoaded && !s->playIsPlaying) ? YES : NO)];
     if (s_lv_pauseItem)       [s_lv_pauseItem       setEnabled:((s->isLoaded &&  s->playIsPlaying) ? YES : NO)];
-    if (s_lv_stopItem)        [s_lv_stopItem        setEnabled:(s->isLoaded ? YES : NO)];
+    if (s_lv_stopItem) {
+        [s_lv_stopItem setHidden:live];
+        [s_lv_stopItem setEnabled:((s->isLoaded && !live) ? YES : NO)];
+    }
     if (s_lv_fastForwardItem) [s_lv_fastForwardItem setEnabled:(s->isLoaded ? YES : NO)];
     if (s_lv_rewindItem)      [s_lv_rewindItem      setEnabled:(s->isLoaded ? YES : NO)];
 
@@ -937,7 +1027,11 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
         [s_lv_useTeamColoursItem setEnabled:(s->gameViewActive ? NO : YES)];
     }
     if (s_lv_tankCentredItem)  [s_lv_tankCentredItem  setState:(s->tankCentred  ? NSControlStateValueOn : NSControlStateValueOff)];
-    if (s_lv_hideLobbyItem)    [s_lv_hideLobbyItem    setState:(s->hideLobby    ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_hideLobbyItem) {
+        [s_lv_hideLobbyItem setState:(s->hideLobby ? NSControlStateValueOn : NSControlStateValueOff)];
+        [s_lv_hideLobbyItem setHidden:live];
+        [s_lv_hideLobbyItem setEnabled:!live];
+    }
     if (s_lv_regionsItem) {
         [s_lv_regionsItem setState:(s->showRegions ? NSControlStateValueOn : NSControlStateValueOff)];
         [s_lv_regionsItem setEnabled:(s->hasRegions ? YES : NO)];
@@ -958,7 +1052,11 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     if (s_lv_winEventsItem)   [s_lv_winEventsItem   setState:(s->showEvents   ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winGameInfoItem) [s_lv_winGameInfoItem setState:(s->showGameInfo ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winItemInfoItem) [s_lv_winItemInfoItem setState:(s->showItemInfo ? NSControlStateValueOn : NSControlStateValueOff)];
-    if (s_lv_winCommentsItem) [s_lv_winCommentsItem setState:(s->showComments ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_winCommentsItem) {
+        [s_lv_winCommentsItem setState:(s->showComments ? NSControlStateValueOn : NSControlStateValueOff)];
+        [s_lv_winCommentsItem setHidden:live];
+        [s_lv_winCommentsItem setEnabled:!live];
+    }
     if (s_lv_winHudItem) [s_lv_winHudItem setState:(s->showHud ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winOverviewItem) [s_lv_winOverviewItem setState:(s->showOverview ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_winTankItem) [s_lv_winTankItem setState:(s->showTank ? NSControlStateValueOn : NSControlStateValueOff)];

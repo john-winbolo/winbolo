@@ -891,6 +891,10 @@ uint32_t lv_screenSpecHeadTick(void);              /* current tracked head tick 
 void lv_screenSpecFrameUpdate(uint32_t nowMs);     /* once per frame: advance per follow/parked + pause; track head time */
 void lv_screenSpecJumpToLive(void);                /* advance to the head and resume following */
 void lv_screenSpecResetSegment(void);              /* world reset (new lobby/map): drop the seek index + restart head tracking */
+/* The hold of the animation of Rewind and Fast Forward (lv_windowSetTickHold).
+ * While it is on, lv_screenSpecFrameUpdate plays nothing: the animation moves
+ * playback itself, one step a frame. The head time still follows the feed. */
+void lv_screenSpecSetHold(bool on);
 
 /* Returns the slot the camera is currently following (cameraSlot), 0 when no
  * log is loaded. */

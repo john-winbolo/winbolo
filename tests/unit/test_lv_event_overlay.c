@@ -1026,3 +1026,28 @@ int run_lv_event_overlay_no_sign(void) {
     }
     return 0;
 }
+
+/* When the lane of markers is built again. Anything other than the log's
+   length builds it at once. A longer log builds it at once from a file, and
+   on a live feed (which grows each frame) at most once in 250 ms. */
+int run_lv_event_overlay_live_rebuild(void) {
+    UT_ASSERT_MSG(lvOverlayRebuildDue(0, 1, 0, 0u, 0u) == 1, "a file, other change");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(1, 1, 0, 10u, 0u) == 1, "live, other change");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(1, 1, 1, 10u, 0u) == 1,
+                  "live, other change and a longer log");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(0, 0, 0, 1000u, 0u) == 0, "a file, no change");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(1, 0, 0, 1000u, 0u) == 0, "live, no change");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(0, 0, 1, 10u, 0u) == 1, "a file, a longer log");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(1, 0, 1, 1000u, 1000u) == 0,
+                  "live, a longer log at once");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(1, 0, 1, 1249u, 1000u) == 0,
+                  "live, a longer log after 249 ms");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(1, 0, 1, 1250u, 1000u) == 1,
+                  "live, a longer log after 250 ms");
+    /* SDL_GetTicks wraps after 49 days: the difference is still right. */
+    UT_ASSERT_MSG(lvOverlayRebuildDue(1, 0, 1, 100u, 0xFFFFFF00u) == 1,
+                  "live, a longer log across the wrap");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(1, 0, 1, 10u, 0xFFFFFFF0u) == 0,
+                  "live, a longer log 26 ms across the wrap");
+    return 0;
+}

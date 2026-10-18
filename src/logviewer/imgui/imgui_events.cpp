@@ -565,9 +565,10 @@ void lv_imgui_events_window(void) {
                                ? lvEventPastCount(s_view_time.data(), shown, nowMs)
                                : shown;
         int      rows    = shown + (divider ? 1 : 0);
-        /* Ordinary lines seek on a click, except on a live feed, where a
-         * stray click would throw the viewer off the live head. */
-        bool     linesSeek = !lv_screenSpecIsLiveMode();
+        /* Ordinary lines seek on a click, on a live feed too: the click parks
+         * the view in the past, and the Live button (or End or L) goes back
+         * to the head. */
+        bool     linesSeek = true;
 
         /* Same hue as a past line, most of the way to transparent. */
         ImVec4 futureCol = ImGui::GetStyleColorVec4(ImGuiCol_Text);

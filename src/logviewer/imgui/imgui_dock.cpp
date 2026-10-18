@@ -36,6 +36,7 @@ extern "C" {
     #include "../lv_dock_layout.h"
     #include "../lv_dock_clear.h"
     #include "../lv_dock_default.h"
+    #include "../lv_panel_set.h"
 }
 
 /* How thick the strip on a sidebar's inner edge is that the user drags to
@@ -136,9 +137,9 @@ static LvDockRect s_used[LV_DOCK_SIDES];
 static bool  s_slot_drag[LV_DOCK_SIDES] = { false, false, false, false };
 static float s_slot_grab = 0.0f;
 
-/* Whether this host may show sidebars at all. Only the standalone viewer
- * says yes; the spectator host shares this code and the same preferences and
- * must stay as it was. */
+/* Whether this host may show sidebars at all. The viewer (logViewerRun) and
+ * the live spectator (spectatorRun) both say yes, and share the same saved
+ * layout. The reel in the game says no. */
 static bool s_standalone = false;
 
 /* ImGui's settings text: where every floating panel is and how every sidebar
@@ -379,8 +380,8 @@ void lv_imgui_dock_save(void) {
 
 void lv_imgui_dock_set_standalone(int standalone) {
     s_standalone = standalone != 0;
-    /* Only the standalone viewer starts a new user with the default
-     * arrangement; the spectator never shows a sidebar. */
+    /* A host with sidebars starts a new user with the default
+     * arrangement. */
     if (s_standalone && s_fresh) s_reset_default = true;
     s_fresh = false;
 }
@@ -679,9 +680,8 @@ static void apply_default(void) {
 void lv_imgui_dock_pre_frame(void) {
     if (s_lv == nullptr || lv_imgui_context_get() == nullptr) return;
 
-    bool mode_ok = s_standalone && !s_lv->gameView &&
-                   !lv_screenSpecIsLiveMode() &&
-                   !(uiModeIsTablet() || uiModeIsSteamDeck());
+    bool mode_ok = lvPanelSetSidebarsOn(s_standalone ? 1 : 0, s_lv->gameView ? 1 : 0,
+                                        (uiModeIsTablet() || uiModeIsSteamDeck()) ? 1 : 0) != 0;
 
     if (s_standalone && !s_booted) {
         ImGui::SetCurrentContext(lv_imgui_context_get());

@@ -2647,6 +2647,47 @@ int run_lv_presentation_live_fast_forward(void) {
     return 0;
 }
 
+/* While an animation of Rewind or Fast Forward holds a live feed, the frame
+ * update plays nothing: playback stays where the last step put it, however
+ * much time goes by. When the hold ends, the parked feed plays on from there
+ * at the game's pace, and the hold is off again after live mode ends. */
+int run_lv_presentation_live_hold(void) {
+    static LvpLog   b;
+    LogViewerState *lv;
+    uint32_t        parked;
+    uint32_t        held;
+    uint32_t        after;
+    bool            playing;
+
+    lv = lvpOpenLive(&b);
+    UT_ASSERT_MSG(lv != NULL, "the feed could not be loaded");
+
+    /* A step of the animation: a seek back, which parks the feed. */
+    lv_screenSeekToTimeMs(20);
+    parked = lv_screenGetTimeRunning();
+    lv_screenSpecSetHold(true);
+    lv_screenSpecFrameUpdate(1000u);
+    lv_screenSpecFrameUpdate(1100u);
+    lv_screenSpecFrameUpdate(1200u);
+    held = lv_screenGetTimeRunning();
+
+    /* The hold ends: the next frames play at the game's pace. */
+    lv_screenSpecSetHold(false);
+    lv_screenSpecFrameUpdate(1300u);
+    lv_screenSpecFrameUpdate(1400u);
+    after   = lv_screenGetTimeRunning();
+    playing = lv_screenIsPlaying() == TRUE;
+    lvpCloseLive(lv);
+
+    UT_ASSERT_MSG(held == parked,
+                  "the frame update moved a held feed from %u to %u ms",
+                  (unsigned)parked, (unsigned)held);
+    UT_ASSERT_MSG(!playing || after > held,
+                  "a parked feed did not play on after the hold (%u ms)",
+                  (unsigned)after);
+    return 0;
+}
+
 /* ── 7c. What the event scan keeps for the saved log's name ────────── */
 
 static void lvpPutText(LvpLog *b, uint8_t code, const char *text) {

@@ -54,6 +54,7 @@ struct LvMenuState {
     bool fromMainMenu;         /* embedded — affects File menu's last item */
     bool fullScreen;           /* Windows > Enter Full Screen checkmark */
     bool canFullScreen;        /* the window can go into and out of full screen */
+    bool live;                 /* a live game watched from the game: File has only Leave spectating */
 };
 
 /* Build and install the native macOS NSMenu on NSApp.mainMenu. The
