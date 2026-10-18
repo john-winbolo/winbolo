@@ -2623,8 +2623,6 @@ static const LangEntry langTable[] = {
     {2616, "No mods are loaded for this round."},
     {2617, "(switched off, will not run)"},
     {2618, "Scenario Panel"},
-    {2620, "Fades what the panel draws."},
-    {2621, "Empty parts of it stay clear."},
     {2634, "Scripts from Players"},
     {2635, "Allow this session"},
     {2636, "Allow and keep"},

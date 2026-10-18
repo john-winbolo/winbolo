@@ -42,6 +42,7 @@
 #include "../gui/gamefront.h"
 #include "../gui/input.h"
 #include "../gui/lang.h"
+#include "../gui/scn_panel_prefs.h"
 #include "../gui/sound.h"
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
@@ -221,6 +222,13 @@ int gameFrontScnTextH = -1;
 int gameFrontScnTextBgAlpha = -1;
 int gameFrontScnTextTextAlpha = -1;
 bool gameFrontScnTextShown = TRUE;
+/* The web has no pop-outs, so this is never set, but the shared code reads
+ * it. */
+bool gameFrontScnTextPopped = FALSE;
+int gameFrontScnTextPopX = -1;
+int gameFrontScnTextPopY = -1;
+int gameFrontScnTextPopW = SCN_TEXT_POPOUT_DEFAULT_W;
+int gameFrontScnTextPopH = SCN_TEXT_POPOUT_DEFAULT_H;
 
 bool isServer = FALSE;
 bool useAutoslow;

@@ -929,10 +929,19 @@ static PopOutWindow s_popGameInfo    = {};
 static PopOutWindow s_popSendMsg     = {};
 static PopOutWindow s_popPlayers     = {};
 static PopOutWindow s_popMapOverview = {};
+/* The Scenario Text window (renderScenarioText) takes the owner number one
+   past the last script's, so its pop-out, the X's confirm and the native
+   menu's rows can name it the way they name a script's panel. */
+#define SCN_TEXT_OWNER SCN_PANEL_OWNERS
+/* How many scenario windows can be popped out: one per script's panel, and
+   the Scenario Text window. */
+#define SCN_POP_OWNERS (SCN_PANEL_OWNERS + 1)
+
 /* One per script of the round's list, for that script's scenario panel
-   (SCN_PANEL_OWNERS, scenario_panel.h). Indexed by the script's position on
-   the list, the same owner the panel byte carries. */
-static PopOutWindow s_popScnPanel[SCN_PANEL_OWNERS] = {};
+   (SCN_PANEL_OWNERS, scenario_panel.h), and one for the Scenario Text
+   window at SCN_TEXT_OWNER. A panel's is indexed by the script's position
+   on the list, the same owner the panel byte carries. */
+static PopOutWindow s_popScnPanel[SCN_POP_OWNERS] = {};
 
 /* Every site that treats the pop-outs as a set — event routing, the
  * focus/mute check, cleanup — walks this table, so adding a pop-out means
@@ -944,14 +953,15 @@ static PopOutWindow *const s_popOuts[] = {
     &s_popScnPanel[0], &s_popScnPanel[1], &s_popScnPanel[2],
     &s_popScnPanel[3], &s_popScnPanel[4], &s_popScnPanel[5],
     &s_popScnPanel[6], &s_popScnPanel[7], &s_popScnPanel[8],
-    &s_popScnPanel[9]
+    &s_popScnPanel[9], &s_popScnPanel[SCN_TEXT_OWNER]
 };
 static_assert(SCN_PANEL_OWNERS == 10,
               "s_popOuts lists one scenario panel pop-out per owner");
 
-/* Whether a pop-out is one of the scenario panels', and which owner's. */
+/* Whether a pop-out is one of the scenario windows', and which owner's:
+   a script's panel, or SCN_TEXT_OWNER for the Scenario Text window. */
 static int popOutScnPanelOwner(const PopOutWindow *pw) {
-    for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+    for (int i = 0; i < SCN_POP_OWNERS; i++) {
         if (pw == &s_popScnPanel[i]) return i;
     }
     return -1;
@@ -4360,15 +4370,16 @@ struct ScnPanelView {
     int    popX, popY, popW, popH;
     Uint64 popChromeUntil;
 };
-static ScnPanelView s_scnViews[SCN_PANEL_OWNERS];
-
-/* The Scenario Text window (renderScenarioText) takes the owner number one
-   past the last script's, so the X's confirm and the native menu's rows can
-   name it the way they name a script's panel. */
-#define SCN_TEXT_OWNER SCN_PANEL_OWNERS
+/* The entry at SCN_TEXT_OWNER is the Scenario Text window's, and only its
+   name and pop-out fields (popped, popX..popH, popChromeUntil) are used:
+   that window keeps the rest of its state in ScnTextView. Sharing the
+   entry lets the pop-out code and the event routing treat both windows'
+   pop-outs the same way. scnPanelSavePopout keeps its pop-out fields in
+   [WINDOW], and scnTextPopLoad reads them back. */
+static ScnPanelView s_scnViews[SCN_POP_OWNERS];
 
 /* The Scenario Text window's state for this run of the game. Its place,
-   size, two opacities (background and text) and shown flag are the
+   size, two opacities (background and text), shown flag and pop-out are the
    gameFrontScnText* preferences; this
    holds what lasts only as long as the window is up or the round runs. */
 struct ScnTextView {
@@ -4399,6 +4410,9 @@ struct ScnTextView {
     /* The round has a scenario or a mod, or has shown a line: the
        Brains > Info Overlay > Scenario Text row is listed. */
     bool   menuListed;
+    /* The pop-out fields of s_scnViews[SCN_TEXT_OWNER] have been read from
+       the preferences (scnTextPopLoad). */
+    bool   popLoaded;
 };
 static ScnTextView s_scnText;
 
@@ -4407,7 +4421,8 @@ static void scnTextSetShown(bool shown);
 /* A texture only draws through the renderer that made it, and every pop-out
    has a renderer of its own. The shared ICON_SLOT_POPOUT slot and
    activeTilesTexture belong to one pop-out at a time, so a scenario panel
-   pop-out keeps its own copies here. Outside ScnPanelView because a view is
+   pop-out keeps its own copies here. The Scenario Text window's pop-out
+   uses only the gear. Outside ScnPanelView because a view is
    reset when its script changes, and these live as long as the renderer. */
 struct ScnPanelPopTex {
     SDL_Texture  *tiles;
@@ -4416,13 +4431,13 @@ struct ScnPanelPopTex {
     SDL_Texture  *gear;
     SDL_Renderer *gearRenderer;
 };
-static ScnPanelPopTex s_scnPopTex[SCN_PANEL_OWNERS];
+static ScnPanelPopTex s_scnPopTex[SCN_POP_OWNERS];
 
 /* "Pop in" and "hide" chosen inside a pop-out's own frame, done once that
    frame ends: hiding a window in the middle of its own frame would leave the
    frame half drawn to a window that is gone. */
-static bool s_scnPopInReq[SCN_PANEL_OWNERS];
-static bool s_scnHideReq[SCN_PANEL_OWNERS];
+static bool s_scnPopInReq[SCN_POP_OWNERS];
+static bool s_scnHideReq[SCN_POP_OWNERS];
 
 /* The X's confirm. One at a time: the owner it is for (-1 for none), whether
    it is up in that owner's pop-out or in the game window, a request to open
@@ -4501,8 +4516,21 @@ static void scnPanelPersistLayout(const ScnPanelView &v) {
     }
 }
 
+/* Where a view's pop-out choice and its OS window's place reach the
+   preferences file: a script's panel under its own row, and the Scenario
+   Text window in [WINDOW] (gameFrontScnTextPop*), through the debounced
+   window-settings path. */
 static void scnPanelSavePopout(int owner) {
     const ScnPanelView &v = s_scnViews[owner];
+    if (owner == SCN_TEXT_OWNER) {
+        gameFrontScnTextPopped = v.popped;
+        gameFrontScnTextPopX   = v.popX;
+        gameFrontScnTextPopY   = v.popY;
+        gameFrontScnTextPopW   = v.popW;
+        gameFrontScnTextPopH   = v.popH;
+        gameFrontSaveWindowSettings();
+        return;
+    }
     if (v.key[0] == '\0') return;
     gameFrontSetScnPanelPopout(v.key, 0, v.popped, v.popX, v.popY, v.popW,
                                v.popH);
@@ -4598,7 +4626,14 @@ static void scnPanelViewsRetireAll(void) {
     for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
         if (s_scnViews[i].keyed || s_popScnPanel[i].open) scnPanelViewRetire(i);
     }
-    /* The Scenario Text window's rows and menu row belong to the round. */
+    /* The Scenario Text window's rows and menu row belong to the round. Its
+       pop-out is put away with the round's panels, and its popped choice is
+       kept, so it comes back popped out in the next round. */
+    if (s_popScnPanel[SCN_TEXT_OWNER].open) {
+        popOutHideQuiet(&s_popScnPanel[SCN_TEXT_OWNER]);
+    }
+    s_scnPopInReq[SCN_TEXT_OWNER] = false;
+    s_scnHideReq[SCN_TEXT_OWNER]  = false;
     if (s_scnCloseAskOwner == SCN_TEXT_OWNER) s_scnCloseAskCancel = true;
     s_scnText.placed       = false;
     s_scnText.moving       = false;
@@ -4634,12 +4669,10 @@ static void scnPanelSetShown(int owner, bool shown) {
 /* The X, and the confirm's Close: from a pop-out's own frame the hide waits
    for that frame to end. */
 static void scnPanelHideFrom(int owner, bool inPopout) {
-    if (owner == SCN_TEXT_OWNER) {
-        scnTextSetShown(false);
-        return;
-    }
     if (inPopout) {
         s_scnHideReq[owner] = true;
+    } else if (owner == SCN_TEXT_OWNER) {
+        scnTextSetShown(false);
     } else {
         scnPanelSetShown(owner, false);
     }
@@ -4663,7 +4696,20 @@ static void scnPanelPopOut(int owner) {
     v.popped       = true;
     v.settingsOpen = false;
     scnPanelSavePopout(owner);
-    /* The panel pass opens the window on the next frame. */
+    /* The panel pass, or for the Scenario Text window renderScenarioText,
+       opens the window on the next frame. */
+}
+
+/* The first item of both gear windows, the panel's and the Scenario Text
+   window's: the button that moves the window into an OS window of its own,
+   which can go to another display. Only where pop-outs are available. */
+static void scnPopOutButton(int owner) {
+    if (!scnPanelPopOutAvailable()) return;
+    if (ImGui::Button(langGetText(STR_SCNPANEL_POP_OUT))) {
+        scnPanelPopOut(owner);
+    }
+    imguiHandOnHover();
+    ImGui::Spacing();
 }
 
 static void scnPanelPopIn(int owner) {
@@ -4796,6 +4842,25 @@ static bool scnPanelPopOutShow(int owner) {
                 (unsigned long long)SDL_GetWindowFlags(pw->window));
     scnPanelSavePopout(owner);
     return true;
+}
+
+/* Opens or hides a view's pop-out so that it is up exactly when want is
+   true. An open that fails takes the view back into the game window, and
+   that is saved. Every hide the player asks for (menu, X, Pop in) has
+   closed the window before this runs, so a hide here is automatic: the
+   script's list went, the window's text is not to be up, tablet mode, or
+   the pop-out became unavailable. Returns whether the pop-out is up. */
+static bool scnPopOutSync(int owner, bool want) {
+    PopOutWindow *pw = &s_popScnPanel[owner];
+    if (want && !pw->open) {
+        if (!scnPanelPopOutShow(owner)) {
+            s_scnViews[owner].popped = false;
+            scnPanelSavePopout(owner);
+        }
+    } else if (!want && pw->open) {
+        popOutHideQuiet(pw);
+    }
+    return pw->open;
 }
 
 /* The pop-out's tile sheet, on its own renderer, rebuilt when the skin or
@@ -4971,9 +5036,9 @@ static void renderScnPanelCloseConfirm(bool inPopout, int ctxOwner) {
 
     /* One fade per ImGui context: the game window's, and each pop-out's,
        so two confirms never share a counter. */
-    static float s_fadeScnClose[SCN_PANEL_OWNERS + 1] = {};
+    static float s_fadeScnClose[SCN_POP_OWNERS + 1] = {};
     const int fadeIdx = (inPopout && ctxOwner >= 0 &&
-                         ctxOwner < SCN_PANEL_OWNERS) ? ctxOwner + 1 : 0;
+                         ctxOwner < SCN_POP_OWNERS) ? ctxOwner + 1 : 0;
     bool keep = true;
     bool began = ImGui::BeginPopupModal(title, &keep,
                                         ImGuiWindowFlags_AlwaysAutoResize |
@@ -5057,8 +5122,11 @@ static bool scnOpacitySlider(const char *label, const char *id, int *live,
    moves. Submitted after the panel's End, since one ImGui window cannot be
    opened inside another.
 
-   Two sliders: the background opacity is the backing's real alpha, and the
-   text opacity fades what the script drew. */
+   Pop out (where pop-outs are available), then two sliders: the background
+   opacity is the backing's real alpha, and the text opacity fades
+   everything the script drew and nothing else. Empty parts stay clear, and
+   the border, the buttons and the grips keep their own alpha, so a panel
+   taken to zero on both sliders can still be found. */
 static void renderScenarioPanelSettings(int owner, float gearX, float gearY) {
     ScnPanelView &v = s_scnViews[owner];
     if (!v.settingsOpen) return;
@@ -5092,14 +5160,9 @@ static void renderScenarioPanelSettings(int owner, float gearX, float gearY) {
             ImGui::SetWindowPos(ImVec2(keepX, keepY));
         }
 
-        /* Into an OS window of its own, which can go to another display. */
-        if (scnPanelPopOutAvailable()) {
-            if (ImGui::Button(langGetText(STR_SCNPANEL_POP_OUT))) {
-                scnPanelPopOut(owner);
-            }
-            imguiHandOnHover();
-            ImGui::Spacing();
-        }
+        /* The same items in the same order as the Scenario Text window's
+           settings (renderScenarioTextSettings). */
+        scnPopOutButton(owner);
 
         if (scnOpacitySlider(langGetText(STR_SCN_BG_OPACITY_LBL),
                              "scnBgAlpha", &v.bgPct, v.bgAlpha)) {
@@ -5111,12 +5174,6 @@ static void renderScenarioPanelSettings(int owner, float gearX, float gearY) {
             v.textAlpha = v.textPct;
             scnPanelPersistLayout(v);
         }
-        /* The text opacity is everything the script draws, and nothing
-           else: empty parts stay clear, and the border, the buttons and the
-           grips keep their own alpha so a panel taken to zero on both
-           sliders can still be found. */
-        ImGui::TextDisabled("%s", langGetText(STR_SCNPANEL_OPACITY_LINE1));
-        ImGui::TextDisabled("%s", langGetText(STR_SCNPANEL_OPACITY_LINE2));
     }
     ImGui::End();
 }
@@ -5418,18 +5475,7 @@ static void renderScenarioPanels(ClientSim *cs) {
         /* A pop-out stays up while the script has a list at all, even an
            empty one, so a script that clears and redraws its panel does not
            make an OS window blink. */
-        const bool wantPop = shown && v.popped && scnPanelPopOutAvailable();
-        if (wantPop && !pw->open) {
-            if (!scnPanelPopOutShow(i)) {
-                v.popped = false;
-                scnPanelSavePopout(i);
-            }
-        } else if (!wantPop && pw->open) {
-            /* Every player hide (menu, X, Pop in) has already closed the
-               window by now, so what reaches here is automatic: the list
-               went, tablet mode, or the pop-out became unavailable. */
-            popOutHideQuiet(pw);
-        }
+        scnPopOutSync(i, shown && v.popped && scnPanelPopOutAvailable());
 
         /* In the game window, only while there is something to draw, which
            is how the single panel always behaved. */
@@ -5446,13 +5492,57 @@ static void renderScenarioPanels(ClientSim *cs) {
     renderScnPanelCloseConfirm(false, -1);
 }
 
+/* The gear and the X of a pop-out, the scenario panel's or the Scenario
+   Text window's, in the top-right corner of the rectangle at pos that is
+   width across. shortSide is that rectangle's shorter side, which sets the
+   buttons' size. They show while the pointer is on the window and a while
+   after, and while the gear's menu or the X's confirm is up. The gear
+   opens a menu with Pop in, which is the way back into the game window.
+   Also draws the X's confirm when it was asked from this pop-out. */
+static void scnPopOutButtons(int owner, ImVec2 pos, float width,
+                            float shortSide, SDL_Texture *gear) {
+    ScnPanelView &v = s_scnViews[owner];
+    ImDrawList *dl  = ImGui::GetWindowDrawList();
+
+    const float btn       = scnPanelButtonSide(shortSide);
+    const bool  withClose = scnPanelCanReopen();
+    const ScnPanelButtons b = scnPanelSubmitButtons(pos, width, btn, withClose);
+    if (b.gearClicked) ImGui::OpenPopup("##scnpopmenu");
+    if (b.closeClicked) scnPanelRequestClose(owner, true);
+
+    const Uint64 now = SDL_GetTicks();
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem |
+                               ImGuiHoveredFlags_AllowWhenBlockedByPopup)) {
+        v.popChromeUntil = now + SCN_PANEL_CHROME_LINGER_MS;
+    }
+    const bool menuUp = ImGui::IsPopupOpen("##scnpopmenu");
+    if (now < v.popChromeUntil || menuUp || s_scnCloseAskOwner == owner) {
+        /* A plate under the buttons, since there is no bar here for them to
+           sit on and the script may have drawn anything under them. */
+        const float btnsW = withClose ? btn * 2.0f : btn;
+        dl->AddRectFilled(ImVec2(pos.x + width - 1.0f - btnsW, pos.y),
+                          ImVec2(pos.x + width - 1.0f, pos.y + btn),
+                          IM_COL32(40, 40, 40, 200));
+        scnPanelDrawButtons(dl, pos, width, btn, withClose, gear, b, menuUp);
+    }
+
+    /* The gear's settings here are the way back in. */
+    if (ImGui::BeginPopup("##scnpopmenu")) {
+        if (ImGui::MenuItem(langGetText(STR_SCNPANEL_POP_IN))) {
+            s_scnPopInReq[owner] = true;
+        }
+        ImGui::EndPopup();
+    }
+
+    renderScnPanelCloseConfirm(true, owner);
+}
+
 /* One view's pop-out frame: the square as large as the window allows,
    centred with black bars on the long side, drawn the way the game window
    draws it but at full opacity, with the gear and the X in its top-right
    corner. */
 static void renderScenarioPanelPopOut(ClientSim *cs, int owner) {
     PopOutWindow *pw = &s_popScnPanel[owner];
-    ScnPanelView &v  = s_scnViews[owner];
     if (!pw->open || !pw->window) return;
 
     /* Ahead of the ImGui frame, like the overview's sheet: both are built on
@@ -5489,55 +5579,32 @@ static void renderScenarioPanelPopOut(ClientSim *cs, int owner) {
                     IM_COL32(255, 255, 255, 40));
     }
 
-    const float btn       = scnPanelButtonSide(side);
-    const bool  withClose = scnPanelCanReopen();
-    const ScnPanelButtons b = scnPanelSubmitButtons(pos, side, btn, withClose);
-    if (b.gearClicked) ImGui::OpenPopup("##scnpopmenu");
-    if (b.closeClicked) scnPanelRequestClose(owner, true);
-
-    const Uint64 now = SDL_GetTicks();
-    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem |
-                               ImGuiHoveredFlags_AllowWhenBlockedByPopup)) {
-        v.popChromeUntil = now + SCN_PANEL_CHROME_LINGER_MS;
-    }
-    const bool menuUp = ImGui::IsPopupOpen("##scnpopmenu");
-    if (now < v.popChromeUntil || menuUp || s_scnCloseAskOwner == owner) {
-        /* A plate under the buttons, since there is no bar here for them to
-           sit on and the script may have drawn anything under them. */
-        const float btnsW = withClose ? btn * 2.0f : btn;
-        dl->AddRectFilled(ImVec2(pos.x + side - 1.0f - btnsW, pos.y),
-                          ImVec2(pos.x + side - 1.0f, pos.y + btn),
-                          IM_COL32(40, 40, 40, 200));
-        scnPanelDrawButtons(dl, pos, side, btn, withClose, gear, b, menuUp);
-    }
-
-    /* The gear's settings here are the way back in. */
-    if (ImGui::BeginPopup("##scnpopmenu")) {
-        if (ImGui::MenuItem(langGetText(STR_SCNPANEL_POP_IN))) {
-            s_scnPopInReq[owner] = true;
-        }
-        ImGui::EndPopup();
-    }
-
-    renderScnPanelCloseConfirm(true, owner);
+    scnPopOutButtons(owner, pos, side, side, gear);
 
     popOutEndContent(pw);
     popOutEndFrame(pw);
 }
 
+static void renderScenarioTextPopOut(ClientSim *cs);
+
+/* Every scenario pop-out's frame, the panels' and the Scenario Text
+   window's, then the hides and Pop ins chosen inside them. */
 static void renderScenarioPanelPopOuts(ClientSim *cs) {
     for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
         renderScenarioPanelPopOut(cs, i);
     }
-    for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+    renderScenarioTextPopOut(cs);
+    for (int i = 0; i < SCN_POP_OWNERS; i++) {
+        const bool live = (i == SCN_TEXT_OWNER) || s_scnViews[i].keyed;
         if (s_scnHideReq[i]) {
             s_scnHideReq[i]  = false;
             s_scnPopInReq[i] = false;
-            if (s_scnViews[i].keyed) scnPanelSetShown(i, false);
+            if (i == SCN_TEXT_OWNER) scnTextSetShown(false);
+            else if (live) scnPanelSetShown(i, false);
         }
         if (s_scnPopInReq[i]) {
             s_scnPopInReq[i] = false;
-            if (s_scnViews[i].keyed) scnPanelPopIn(i);
+            if (live) scnPanelPopIn(i);
         }
     }
 }
@@ -5545,7 +5612,7 @@ static void renderScenarioPanelPopOuts(ClientSim *cs) {
 /* The pop-outs' textures go before the renderers they were made on, and the
    views with the game. Called from sdl3ImguiCleanup ahead of popOutDestroy. */
 static void scnPanelViewsCleanup(void) {
-    for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+    for (int i = 0; i < SCN_POP_OWNERS; i++) {
         ScnPanelPopTex &t = s_scnPopTex[i];
         if (t.tiles) SDL_DestroyTexture(t.tiles);
         if (t.gear) SDL_DestroyTexture(t.gear);
@@ -5650,6 +5717,20 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * rounds it stays up while it is being dragged or its
  * settings are open.
  *
+ * The gear's settings have Pop out first, as a panel's do,
+ * which moves the window into an OS window of its own. That
+ * window is built as a panel's pop-out is (s_popScnPanel at
+ * SCN_TEXT_OWNER, scnPanelPopOutShow, scnPopOutButtons): the
+ * lines fitted into the whole OS window the same way, at the
+ * player's background and text opacity, up by the same rule
+ * as the window here (scnTextWindowShown) and blank with no
+ * line, and a gear with Pop in and an X in its top-right
+ * corner. While it is up, the window here is not drawn.
+ * Closing the OS window is a Pop in. Round end, a disconnect,
+ * tablet mode and the web put it away and keep the choice,
+ * as they do for a panel. The choice and the OS window's
+ * place are kept in [WINDOW] "Scenario Text Popout".
+ *
  * Tablet mode has no windows to drag: there the same
  * layout is drawn in a fixed rectangle at the top middle of
  * tablet mode's own game view, the size the zoom gives it.
@@ -5669,7 +5750,10 @@ static void renderScnPanelMenuItems(bool afterBrains) {
    this is a third of one. */
 #define SCN_ANNOUNCE_FADE_TICKS 33u
 
-/* The menu toggle, and what the X's confirm does. */
+/* The menu toggle, and what the X's confirm does. Hiding takes the window
+   off screen in both forms, as a panel's hide does (scnPanelSetShown). The
+   popped choice is kept, so turning it back on brings it back the way it
+   was. */
 static void scnTextSetShown(bool shown) {
     gameFrontScnTextShown = shown;
     gameFrontSaveWindowSettings();
@@ -5678,7 +5762,40 @@ static void scnTextSetShown(bool shown) {
         s_scnText.moving       = false;
         s_scnText.resizing     = false;
         s_scnText.settingsOpen = false;
+        if (s_popScnPanel[SCN_TEXT_OWNER].open) {
+            popOutHide(&s_popScnPanel[SCN_TEXT_OWNER]);
+        }
     }
+}
+
+/* The Scenario Text window's pop-out choice and its OS window's place, read
+   from [WINDOW] (gameFrontScnTextPop*) into s_scnViews[SCN_TEXT_OWNER] the
+   first time the window is drawn. gamefront.c has already turned a missing
+   or bad row into the defaults (scnTextPopoutLoad). */
+static void scnTextPopLoad(void) {
+    ScnPanelView &v = s_scnViews[SCN_TEXT_OWNER];
+    v.popped = gameFrontScnTextPopped;
+    v.popX   = gameFrontScnTextPopX;
+    v.popY   = gameFrontScnTextPopY;
+    v.popW   = gameFrontScnTextPopW;
+    v.popH   = gameFrontScnTextPopH;
+    s_scnText.popLoaded = true;
+}
+
+/* Whether the Scenario Text window's pop-out is to be up: the player chose
+   it and pop-outs are available, and the window would be up in the game
+   window by the same rule (scnTextWindowShown), so an empty OS window is
+   up in a scenario round as the empty in-game window is. busy is only the
+   X's confirm asked from the pop-out: a drag and the settings belong to
+   the in-game window. */
+static bool scnTextPopOutWanted(bool haveText) {
+    if (!s_scnViews[SCN_TEXT_OWNER].popped || !scnPanelPopOutAvailable()) {
+        return false;
+    }
+    const bool shown = gameFrontScnTextShown || !scnPanelCanReopen();
+    const bool busy  = s_scnCloseAskOwner == SCN_TEXT_OWNER &&
+                       s_scnCloseAskPopout;
+    return scnTextWindowShown(shown, s_scnText.menuListed, haveText, busy);
 }
 
 /* Whether the round has a scenario or a mod: a list of scripts, or, from an
@@ -5758,8 +5875,10 @@ static void scnTextDrawLines(ImDrawList *dl, ImFont *font, float x, float y,
     }
 }
 
-/* The Scenario Text window's settings, opened by its gear: the background
-   and text opacity sliders, as a script's panel has. */
+/* The Scenario Text window's settings, opened by its gear: the same items
+   in the same order as a script's panel's settings
+   (renderScenarioPanelSettings): Pop out (where pop-outs are available),
+   then the background and text opacity sliders. */
 static void renderScenarioTextSettings(float gearX, float gearY) {
     if (!s_scnText.settingsOpen) return;
 
@@ -5789,6 +5908,8 @@ static void renderScenarioTextSettings(float gearX, float gearY) {
             ImGui::SetWindowPos(ImVec2(keepX, keepY));
         }
 
+        scnPopOutButton(SCN_TEXT_OWNER);
+
         if (scnOpacitySlider(langGetText(STR_SCN_BG_OPACITY_LBL),
                              "scnTextBgAlpha", &s_scnText.bgPct,
                              gameFrontScnTextBgAlpha)) {
@@ -5805,10 +5926,14 @@ static void renderScenarioTextSettings(float gearX, float gearY) {
     ImGui::End();
 }
 
-/* The status line and the announcement, in the Scenario Text window. */
-static void renderScenarioText(ClientSim *cs) {
+/* The status line and the announcement, in the Scenario Text window.
+   inPopout is false for the game window's pass, which also opens and hides
+   the window's pop-out, and true inside the pop-out's own frame
+   (renderScenarioTextPopOut), which draws the lines into the OS window. */
+static void renderScenarioText(ClientSim *cs, bool inPopout) {
     if (cs == nullptr) {
         s_scnText.menuListed = false;
+        if (!inPopout) scnPopOutSync(SCN_TEXT_OWNER, false);
         return;
     }
 
@@ -5858,6 +5983,40 @@ static void renderScenarioText(ClientSim *cs) {
             s_scnText.textPct = SCN_TEXT_OPACITY_DEFAULT;
         }
         s_scnText.alphaLoaded = true;
+    }
+    if (!s_scnText.popLoaded) scnTextPopLoad();
+
+    /* In the pop-out's own frame: the lines fitted into the whole OS window
+       the way the game window fits them (scnTextFitRect), on a black
+       backing at the player's background opacity, at the player's text
+       opacity. With no line it draws nothing, as the game window does. */
+    if (inPopout) {
+        if (!haveStatus && !haveAnnounce) return;
+        const ImVec2 ds  = ImGui::GetIO().DisplaySize;
+        ImDrawList  *pdl = ImGui::GetWindowDrawList();
+        pdl->AddRectFilled(ImVec2(0.0f, 0.0f), ds,
+                           IM_COL32(0, 0, 0, scnBackingAlpha(s_scnText.bgPct)));
+        scnTextDrawLines(pdl, font, 0.0f, 0.0f, ds.x, ds.y,
+                         (float)s_scnText.textPct / 100.0f, status,
+                         haveStatus, text, haveAnnounce, announceShare,
+                         announceFade);
+        return;
+    }
+
+    /* Popped out: the OS window draws the lines in its own frame, and the
+       window here is not drawn, as a popped-out panel's is not
+       (renderScenarioPanels). The pop-out is hidden in tablet mode and
+       wherever pop-outs are not available, and the window comes back here. */
+    SDL_snprintf(s_scnViews[SCN_TEXT_OWNER].name,
+                 sizeof(s_scnViews[SCN_TEXT_OWNER].name), "%s",
+                 langGetText(STR_SCNTEXT_TITLE));
+    if (scnPopOutSync(SCN_TEXT_OWNER,
+                      scnTextPopOutWanted(haveStatus || haveAnnounce))) {
+        s_scnText.placed       = false;
+        s_scnText.moving       = false;
+        s_scnText.resizing     = false;
+        s_scnText.settingsOpen = false;
+        return;
     }
 
     const int   rows = (s_scnText.usedStatus ? 1 : 0) +
@@ -6234,6 +6393,36 @@ static void renderScenarioText(ClientSim *cs) {
     ImGui::PopStyleVar(2);
 
     renderScenarioTextSettings(gearX, gearY);
+}
+
+/* The Scenario Text window's pop-out frame: the lines fitted into the whole
+   OS window (renderScenarioText with inPopout true), with the gear and the
+   X in its top-right corner, as a panel's pop-out has them
+   (scnPopOutButtons). The OS window's own clear colour is under the
+   backing. */
+static void renderScenarioTextPopOut(ClientSim *cs) {
+    PopOutWindow *pw = &s_popScnPanel[SCN_TEXT_OWNER];
+    if (!pw->open || !pw->window) return;
+
+    /* Ahead of the ImGui frame: built on this pop-out's renderer. */
+    SDL_Texture *gear = scnPopEnsureGear(SCN_TEXT_OWNER, pw->renderer);
+
+    if (!popOutBeginFrame(pw)) return;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
+    popOutBeginContent();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+
+    renderScenarioText(cs, true);
+
+    const ImVec2 ds = ImGui::GetIO().DisplaySize;
+    scnPopOutButtons(SCN_TEXT_OWNER, ImVec2(0.0f, 0.0f), floorf(ds.x),
+                    floorf(ImMin(ds.x, ds.y)), gear);
+
+    popOutEndContent(pw);
+    popOutEndFrame(pw);
 }
 
 /* About modal + linked markdown popups live in dialogs/imgui_about.cpp so
@@ -8324,7 +8513,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             if (s_popMapOverview.open) {
                 popOutRescueWindow(s_popMapOverview.window);
             }
-            for (int i = 0; i < SCN_PANEL_OWNERS; i++) {
+            for (int i = 0; i < SCN_POP_OWNERS; i++) {
                 PopOutWindow *pw = &s_popScnPanel[i];
                 if (!pw->open || !pw->window) continue;
                 if (popOutRescueWindow(pw->window)) {
@@ -9868,7 +10057,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     renderSendMsgPanel(cs);
     renderPlayersPanel(cs);
     renderScenarioPanels(cs);
-    renderScenarioText(cs);
+    renderScenarioText(cs, false);
 
     /* Modal dialogs */
     aboutPopupRender();

@@ -57,6 +57,16 @@ void scnPanelPopoutFormat(const ScnPanelPopout *in, char *buf, size_t bufSz) {
              in->w, in->h);
 }
 
+void scnTextPopoutLoad(const char *row, ScnPanelPopout *out) {
+    if (out == NULL) return;
+    if (scnPanelPopoutParse(row, out)) return;
+    out->open = false;
+    out->x    = -1;
+    out->y    = -1;
+    out->w    = SCN_TEXT_POPOUT_DEFAULT_W;
+    out->h    = SCN_TEXT_POPOUT_DEFAULT_H;
+}
+
 bool scnPanelYesNoParse(const char *word, bool fallback) {
     if (word == NULL) return fallback;
     switch (word[0]) {

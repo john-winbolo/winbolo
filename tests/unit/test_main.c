@@ -334,6 +334,7 @@ static const UnitTestEntry s_tests[] = {
     { "scn_panel_prefs_sections",                run_scn_panel_prefs_sections                },
     { "scn_panel_layout_row",                    run_scn_panel_layout_row                    },
     { "scn_opacity_migration",                   run_scn_opacity_migration                   },
+    { "scn_text_popout_row",                     run_scn_text_popout_row                     },
     { "client_scn_panel_owners",                 run_client_scn_panel_owners                 },
     { "scn_arm_panel_owners",                    run_scn_arm_panel_owners                    },
     { "info_packet_preset_round_trip",           run_info_packet_preset_round_trip           },

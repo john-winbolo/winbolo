@@ -1068,6 +1068,19 @@ extern int   gameFrontScnTextBgAlpha;   /* percent, -1 = never set */
 extern int   gameFrontScnTextTextAlpha; /* percent, -1 = never set */
 extern bool  gameFrontScnTextShown;
 
+/* The Scenario Text window's pop-out: whether the player put it in an OS
+ * window of its own, and where that window sits, in desktop coordinates
+ * ([WINDOW] "Scenario Text Popout", the "open,x,y,w,h" row a scenario
+ * panel's pop-out has). X and Y are -1 when no place was ever saved. A
+ * missing or bad row loads as not popped out at the default size
+ * (scnTextPopoutLoad in scn_panel_prefs.h). Written through the debounced
+ * gameFrontSaveWindowSettings path. */
+extern bool  gameFrontScnTextPopped;
+extern int   gameFrontScnTextPopX;
+extern int   gameFrontScnTextPopY;
+extern int   gameFrontScnTextPopW;
+extern int   gameFrontScnTextPopH;
+
 /* The longest scenario string the pair below is asked to key a row on. The
  * caller passes the scenario's file name where there is one, because two
  * scenarios can carry the same display name and the file name is what the

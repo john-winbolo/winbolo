@@ -410,6 +410,11 @@ int   gameFrontScnTextH = -1;
 int   gameFrontScnTextBgAlpha = -1;
 int   gameFrontScnTextTextAlpha = -1;
 bool  gameFrontScnTextShown = TRUE;
+bool  gameFrontScnTextPopped = FALSE;
+int   gameFrontScnTextPopX = -1;
+int   gameFrontScnTextPopY = -1;
+int   gameFrontScnTextPopW = SCN_TEXT_POPOUT_DEFAULT_W;
+int   gameFrontScnTextPopH = SCN_TEXT_POPOUT_DEFAULT_H;
 float gameFrontOverviewZoom = 2.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
@@ -4934,6 +4939,17 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   }
   prefsGetString("WINDOW", "Scenario Text Shown", "Yes", buff, FILENAME_MAX);
   gameFrontScnTextShown = scnPanelYesNoParse(buff, true) ? TRUE : FALSE;
+  {
+    ScnPanelPopout pop;
+    prefsGetString("WINDOW", SCN_TEXT_PREFS_POPOUT_KEY, "", buff,
+                   FILENAME_MAX);
+    scnTextPopoutLoad(buff, &pop);
+    gameFrontScnTextPopped = pop.open ? TRUE : FALSE;
+    gameFrontScnTextPopX   = pop.x;
+    gameFrontScnTextPopY   = pop.y;
+    gameFrontScnTextPopW   = pop.w;
+    gameFrontScnTextPopH   = pop.h;
+  }
 
   prefsGetString("MENU", "Message Label Size", "1", buff, FILENAME_MAX);
   labelMsg = atoi(buff);
@@ -5454,6 +5470,16 @@ void gameFrontFlushWindowSettings(void) {
   prefsSetString("WINDOW", SCN_TEXT_PREFS_TEXT_KEY, buff);
   prefsSetString("WINDOW", "Scenario Text Shown",
                  scnPanelYesNoWord(gameFrontScnTextShown));
+  {
+    ScnPanelPopout pop;
+    pop.open = gameFrontScnTextPopped ? true : false;
+    pop.x    = gameFrontScnTextPopX;
+    pop.y    = gameFrontScnTextPopY;
+    pop.w    = gameFrontScnTextPopW;
+    pop.h    = gameFrontScnTextPopH;
+    scnPanelPopoutFormat(&pop, buff, sizeof(buff));
+    prefsSetString("WINDOW", SCN_TEXT_PREFS_POPOUT_KEY, buff);
+  }
 
   s_windowSettingsDirty = false;
 }

@@ -2526,16 +2526,8 @@
 /* The settings window opened off the scenario panel's gear. TITLE names the
  * panel the window belongs to rather than the setting it holds, because the
  * window is placed beside the gear it was opened from and has to say which
- * panel that was once two are on screen.
- *
- * LINE1 and LINE2 are the two lines under the Text opacity slider
- * (STR_SCN_TEXT_OPACITY_LBL), kept apart so each wraps on its own: the first
- * says what the number fades and the second says what it leaves alone, and a
- * language that needs two lines for either still gets a break in the same
- * place. */
+ * panel that was once two are on screen. */
 #define STR_SCNPANEL_SETTINGS_TITLE         2618
-#define STR_SCNPANEL_OPACITY_LINE1          2620
-#define STR_SCNPANEL_OPACITY_LINE2          2621
 
 /* One item per script with a panel goes under Brains > INFO_OVERLAY, a
  * checkbox that shows or hides that script's panel. POP_OUT and POP_IN are
