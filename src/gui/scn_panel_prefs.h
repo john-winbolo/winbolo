@@ -269,7 +269,13 @@ int scnBackingAlpha(int bgPct);
  *  Note: an older client on another machine writes a
  *  four-number row with its one opacity and leaves the
  *  background value as it was. That row is then read as the
- *  text opacity with the older background value.
+ *  text opacity with the older background value. When this
+ *  client adopts a synced file from an older client that
+ *  never had SCN_PANEL_PREFS_BG_SECTION, the adopt removes
+ *  the section, so every row is read as a main or 2.1 row
+ *  and migrated once: each background becomes
+ *  round(n * 43 / 100), where n is the row's fourth number,
+ *  which is 43 when n is 100.
  *********************************************************/
 bool scnPanelLayoutParse(const char *row, const char *bgRow, int *x, int *y,
                          int *scale, int *bgPct, int *textPct);
