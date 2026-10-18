@@ -378,10 +378,14 @@ typedef struct LobbyReelState {
      * made, which keeps the button disabled. */
     uint8_t *spawnBytes = nullptr;
     size_t   spawnLen   = 0;
-    /* The last spawn's failure, as a lang id (0 for none), and the SDL tick
-     * it stops being shown. */
+    /* What the last spawn came to, as a lang id (0 for none): that the viewer
+     * started, or what went wrong. And the SDL tick it stops being shown. */
     int      spawnMsg       = 0;
     Uint64   spawnMsgUntilMs = 0;
+    /* The SDL tick the button works again after a viewer was started, so
+     * that a press whose window takes a moment to appear is not pressed
+     * again and again, each press starting another viewer. */
+    Uint64   spawnAgainAtMs = 0;
 #endif
 
     bool    logAsked   = false;

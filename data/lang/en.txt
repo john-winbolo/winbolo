@@ -727,6 +727,7 @@ STR_DLGLOBBY_REEL_SPAWN_NO_LOG=There is no log of this round to open
 STR_DLGLOBBY_REEL_SPAWN_NO_VIEWER=Could not find the Log Viewer beside WinBolo
 STR_DLGLOBBY_REEL_SPAWN_SAVE_FAILED=Could not save a copy of the round's log for the Log Viewer
 STR_DLGLOBBY_REEL_SPAWN_START_FAILED=Could not start the Log Viewer
+STR_DLGLOBBY_REEL_SPAWN_STARTED=Log Viewer started
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Set Player Name

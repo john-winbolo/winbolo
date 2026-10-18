@@ -863,6 +863,8 @@ static void lobbyReelZoomInput(bool hovered, ImVec2 imgMin) {
 
 /* How long a spawn failure stays on the line under the reel. */
 static const Uint64 REEL_SPAWN_MSG_MS = 8000;
+/* How long the button stays off after a viewer was started. */
+static const Uint64 REEL_SPAWN_AGAIN_MS = 4000;
 
 /* Take a copy of the bytes about to go to the viewer embed, which frees its
  * own buffer. A failed allocation leaves no copy, and the button disabled. */
@@ -1023,36 +1025,46 @@ static int lobbyReelSpawnViewer(const char *mapName) {
 
 /* The button, on the transport row, for a reel that is up. Hidden in tablet
  * mode, which has no place for a second window. Disabled when there is no
- * copy of the log to give the viewer. */
+ * copy of the log to give the viewer, and for a few seconds after a viewer
+ * was started: its window can take a moment to appear, and a press for each
+ * of those moments would start a viewer each. */
 static void lobbyReelSpawnButton(ClientSim *cs) {
     if (uiModeIsTablet()) return;
     ImGui::SameLine();
-    const bool haveLog = s_reel.spawnBytes != nullptr;
-    if (!haveLog) ImGui::BeginDisabled();
+    const Uint64 nowMs    = SDL_GetTicks();
+    const bool   haveLog  = s_reel.spawnBytes != nullptr;
+    const bool   starting = nowMs < s_reel.spawnAgainAtMs;
+    const bool   disabled = !haveLog || starting;
+    if (disabled) ImGui::BeginDisabled();
     if (ImGui::Button(langGetText(STR_DLGLOBBY_REEL_SPAWN_LV))) {
-        s_reel.spawnMsg = lobbyReelSpawnViewer(clientSimGetMapName(cs));
-        s_reel.spawnMsgUntilMs = SDL_GetTicks() + REEL_SPAWN_MSG_MS;
+        const int failed = lobbyReelSpawnViewer(clientSimGetMapName(cs));
+        s_reel.spawnMsg        = failed ? failed : STR_DLGLOBBY_REEL_SPAWN_STARTED;
+        s_reel.spawnMsgUntilMs = nowMs + REEL_SPAWN_MSG_MS;
+        if (!failed) s_reel.spawnAgainAtMs = nowMs + REEL_SPAWN_AGAIN_MS;
     }
-    if (!haveLog) ImGui::EndDisabled();
+    if (disabled) ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip |
                              ImGuiHoveredFlags_AllowWhenDisabled)) {
-        ImGui::SetTooltip("%s", langGetText(haveLog ? STR_DLGLOBBY_REEL_SPAWN_LV_TIP
-                                                    : STR_DLGLOBBY_REEL_SPAWN_NO_LOG));
+        const int tip = !haveLog  ? STR_DLGLOBBY_REEL_SPAWN_NO_LOG
+                        : starting ? STR_DLGLOBBY_REEL_SPAWN_STARTED
+                                   : STR_DLGLOBBY_REEL_SPAWN_LV_TIP;
+        ImGui::SetTooltip("%s", langGetText((langid)tip));
     }
 }
 
-/* The last spawn's failure, on a line of its own under the transport row, in
- * the colour the lobby's other refusals use, until it times out or is
- * closed. */
+/* What the last spawn came to, on a line of its own under the transport row,
+ * until it times out or is closed. A failure is in the colour the lobby's
+ * other refusals use; that the viewer started is in the ordinary colour. */
 static void lobbyReelSpawnMessage(void) {
     if (s_reel.spawnMsg == 0) return;
     if (SDL_GetTicks() >= s_reel.spawnMsgUntilMs) {
         s_reel.spawnMsg = 0;
         return;
     }
-    ImGui::PushStyleColor(ImGuiCol_Text, wbThemeColor(g_theme->lockBadge));
+    const bool failed = s_reel.spawnMsg != STR_DLGLOBBY_REEL_SPAWN_STARTED;
+    if (failed) ImGui::PushStyleColor(ImGuiCol_Text, wbThemeColor(g_theme->lockBadge));
     ImGui::TextUnformatted(langGetText((langid)s_reel.spawnMsg));
-    ImGui::PopStyleColor();
+    if (failed) ImGui::PopStyleColor();
     ImGui::SameLine();
     if (ImGui::SmallButton("X##reelspawnmsg")) {
         s_reel.spawnMsg = 0;

@@ -617,6 +617,7 @@ static const LangEntry langTable[] = {
     {2912, "Could not find the Log Viewer beside WinBolo"},
     {2913, "Could not save a copy of the round's log for the Log Viewer"},
     {2914, "Could not start the Log Viewer"},
+    {2916, "Log Viewer started"},
     {757,  "WinBolo - Set Player Name"},
     {758,  "Your player name is set by WinBolo.net."},
     {759,  "Please enter your player name."},
