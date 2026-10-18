@@ -3776,6 +3776,7 @@ local function tank_combat_steer(state, world, info, goal)
                                    bit.rshift(math.floor(pred_wx), 8),
                                    bit.rshift(math.floor(pred_wy), 8),
                                    nil, nil, nil, nil, km_pn)
+    if BRAIN_DEBUG_MODE then _gate_why = _clear and "ok" or ("path:" .. tostring(M._spc_why)) end
     -- C.TANK_COMBAT_FIRE_CHECK_HEADING: the check above walks the line to the
     -- AIM POINT, but the shell leaves along the GUN, and the bot fires with the
     -- gun up to TANK_COMBAT_AIM_GATE_BRADS off that line. Next to a pill the two
@@ -3798,9 +3799,11 @@ local function tank_combat_steer(state, world, info, goal)
                              nil, nil, nil, nil, km_pn) then
         _clear = false
         _hdg_blocked = true
+        -- The readout above was written before this check ran and says "ok";
+        -- name the gun line and what it ran into instead.
+        if BRAIN_DEBUG_MODE then _gate_why = "heading:" .. tostring(M._spc_why) end
       end
     end
-    if BRAIN_DEBUG_MODE then _gate_why = _clear and "ok" or ("path:" .. tostring(M._spc_why)) end
     if _clear and not U.fire_hold_block(state, C.FIRE_HOLD_TICKS) then
       keys = bit.bor(keys, KEY_SHOOT)
       if BRAIN_DEBUG_MODE then print2(string.format("TANK_FIRE t=%d id=%s ghost=%s @(%d,%d) dist=%.1f aim_corr=%.0f", now, tostring(target.id), tostring(target.ghost or false), target.mx, target.my, dist_tiles, aim_corr)) end
