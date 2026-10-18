@@ -2789,12 +2789,6 @@ STR_IOSREC_COPIED=Copiata nella cartella WinBolo dell'app File.
 STR_IOSREC_OPEN_FAILED=Impossibile aprire questa registrazione.
 STR_IOSREC_LAST_ROUND=Ultima partita in singolo
 STR_IOSREC_COPY_FAILED=Impossibile copiare la registrazione nell'app File.
-
-# The iPad's choice of the touch or the desktop layout
-STR_DLGSETTINGS_IPAD_LAYOUT=Layout iPad
-STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=Automatico: desktop quando è collegata una tastiera
-STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=Tocco
-STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=Desktop: barra dei menu, tastiera e trackpad o mouse
 STR_DLGCONNECTING_TITLE=Connessione a {string1}...
 STR_DLGCONNECTING_PING=Richiesta al server sulla sua partita...
 STR_DLGCONNECTING_JOINING=Ingresso nella partita...

@@ -2787,12 +2787,6 @@ STR_IOSREC_COPIED=Скопійовано в теку WinBolo в застосун
 STR_IOSREC_OPEN_FAILED=Не вдалося відкрити цей запис.
 STR_IOSREC_LAST_ROUND=Останній одиночний раунд
 STR_IOSREC_COPY_FAILED=Не вдалося скопіювати запис у застосунок «Файли».
-
-# The iPad's choice of the touch or the desktop layout
-STR_DLGSETTINGS_IPAD_LAYOUT=Розкладка для iPad
-STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=Автоматично: настільна, коли під'єднано клавіатуру
-STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=Сенсорна
-STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=Настільна: рядок меню, клавіатура і трекпад або миша
 STR_DLGCONNECTING_TITLE=Під'єднання до {string1}...
 STR_DLGCONNECTING_PING=Запит до сервера про його гру...
 STR_DLGCONNECTING_JOINING=Приєднання до гри...

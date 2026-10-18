@@ -2783,12 +2783,6 @@ STR_IOSREC_COPIED=Skopiowano do folderu WinBolo w aplikacji Pliki.
 STR_IOSREC_OPEN_FAILED=Nie udało się otworzyć tego nagrania.
 STR_IOSREC_LAST_ROUND=Ostatnia runda jednoosobowa
 STR_IOSREC_COPY_FAILED=Nie udało się skopiować nagrania do aplikacji Pliki.
-
-# The iPad's choice of the touch or the desktop layout
-STR_DLGSETTINGS_IPAD_LAYOUT=Układ iPada
-STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=Automatyczny: pulpit, gdy podłączona jest klawiatura
-STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=Dotykowy
-STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=Pulpit: pasek menu, klawiatura i gładzik lub mysz
 STR_DLGCONNECTING_TITLE=Łączenie z {string1}...
 STR_DLGCONNECTING_PING=Pytanie serwera o jego grę...
 STR_DLGCONNECTING_JOINING=Dołączanie do gry...

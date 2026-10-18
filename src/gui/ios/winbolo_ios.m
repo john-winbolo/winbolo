@@ -11,7 +11,6 @@
 #include <SDL3/SDL_main.h>
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
-#import <GameController/GameController.h>
 #ifdef HAVE_SENTRY
 @import Sentry;
 #endif
@@ -73,44 +72,12 @@ void iosCrashReportingSetEnabled(bool enabled) {
 }
 
 /* -------------------------------------------------------
- * iPad layout (NSUserDefaults "ipad_layout")
- *
- * An iPad can run the desktop layout: the menu bar, the classic game screen
- * scaled to fit, the desktop's panels drawn in the window, and the map
- * overview over the whole screen, driven by a keyboard and a trackpad or
- * mouse. The phone always runs the touch layout. The choice is read once,
- * when the UI mode is first asked for, so a change applies at the next
- * launch; Settings says so.
+ * iPad: the desktop layout, the classic game screen with the menu bar,
+ * scaled to fit. The phone always runs the touch layout. See uiModeDetect.
  * ------------------------------------------------------- */
 
 bool iosDeviceIsPad(void) {
     return [UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad;
-}
-
-int iosIpadLayoutGet(void) {
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    if ([defaults objectForKey:@"ipad_layout"] == nil) return IOS_IPAD_LAYOUT_AUTO;
-    int v = (int)[defaults integerForKey:@"ipad_layout"];
-    if (v < IOS_IPAD_LAYOUT_AUTO || v > IOS_IPAD_LAYOUT_DESKTOP) v = IOS_IPAD_LAYOUT_AUTO;
-    return v;
-}
-
-void iosIpadLayoutSet(int layout) {
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    [defaults setInteger:layout forKey:@"ipad_layout"];
-    [defaults synchronize];
-}
-
-/* Asked by uiModeDetect. Automatic picks the desktop layout when a hardware
-   keyboard is attached at launch, since that is what the layout is driven
-   by; without one an iPad gets the touch layout, as a phone does. */
-bool iosUseDesktopLayout(void) {
-    if (!iosDeviceIsPad()) return false;
-    switch (iosIpadLayoutGet()) {
-    case IOS_IPAD_LAYOUT_DESKTOP: return true;
-    case IOS_IPAD_LAYOUT_TOUCH:   return false;
-    default:                      return GCKeyboard.coalescedKeyboard != nil;
-    }
 }
 
 /* -------------------------------------------------------

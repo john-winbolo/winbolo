@@ -2785,12 +2785,6 @@ STR_IOSREC_COPIED=Zkopírováno do složky WinBolo v aplikaci Soubory.
 STR_IOSREC_OPEN_FAILED=Tento záznam nelze otevřít.
 STR_IOSREC_LAST_ROUND=Poslední hra jednoho hráče
 STR_IOSREC_COPY_FAILED=Záznam se nepodařilo zkopírovat do aplikace Soubory.
-
-# The iPad's choice of the touch or the desktop layout
-STR_DLGSETTINGS_IPAD_LAYOUT=Rozvržení pro iPad
-STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=Automaticky: desktop, když je připojena klávesnice
-STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=Dotykové
-STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=Desktop: lišta nabídek, klávesnice a trackpad nebo myš
 STR_DLGCONNECTING_TITLE=Připojování k {string1}...
 STR_DLGCONNECTING_PING=Dotaz na hru serveru...
 STR_DLGCONNECTING_JOINING=Připojování ke hře...

@@ -2787,12 +2787,6 @@ STR_IOSREC_COPIED=Gekopieerd naar de WinBolo-map in de Bestanden-app.
 STR_IOSREC_OPEN_FAILED=Deze opname kon niet worden geopend.
 STR_IOSREC_LAST_ROUND=Laatste ronde voor één speler
 STR_IOSREC_COPY_FAILED=De opname kon niet naar de Bestanden-app worden gekopieerd.
-
-# The iPad's choice of the touch or the desktop layout
-STR_DLGSETTINGS_IPAD_LAYOUT=iPad-indeling
-STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=Automatisch: desktop als er een toetsenbord is aangesloten
-STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=Aanraking
-STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=Desktop: menubalk, toetsenbord en trackpad of muis
 STR_DLGCONNECTING_TITLE=Verbinden met {string1}...
 STR_DLGCONNECTING_PING=De server naar zijn spel vragen...
 STR_DLGCONNECTING_JOINING=Deelnemen aan het spel...

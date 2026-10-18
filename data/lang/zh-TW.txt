@@ -2785,12 +2785,6 @@ STR_IOSREC_COPIED=已複製到「檔案」App 中的 WinBolo 資料夾。
 STR_IOSREC_OPEN_FAILED=無法開啟此錄影。
 STR_IOSREC_LAST_ROUND=上一個單人回合
 STR_IOSREC_COPY_FAILED=無法將錄影複製到「檔案」App。
-
-# The iPad's choice of the touch or the desktop layout
-STR_DLGSETTINGS_IPAD_LAYOUT=iPad 版面配置
-STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=自動：連接鍵盤時使用桌面配置
-STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=觸控
-STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=桌面：選單列、鍵盤和觸控式軌跡板或滑鼠
 STR_DLGCONNECTING_TITLE=正在連線到 {string1}...
 STR_DLGCONNECTING_PING=正在向伺服器詢問其遊戲...
 STR_DLGCONNECTING_JOINING=正在加入遊戲...

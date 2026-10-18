@@ -2787,12 +2787,6 @@ STR_IOSREC_COPIED=「ファイル」アプリの WinBolo フォルダにコピ�
 STR_IOSREC_OPEN_FAILED=この録画を開けませんでした。
 STR_IOSREC_LAST_ROUND=最後のシングルプレイのラウンド
 STR_IOSREC_COPY_FAILED=録画を「ファイル」アプリにコピーできませんでした。
-
-# The iPad's choice of the touch or the desktop layout
-STR_DLGSETTINGS_IPAD_LAYOUT=iPad のレイアウト
-STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=自動：キーボード接続時はデスクトップ
-STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=タッチ
-STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=デスクトップ：メニューバー、キーボード、トラックパッドまたはマウス
 STR_DLGCONNECTING_TITLE={string1} に接続中...
 STR_DLGCONNECTING_PING=サーバーにゲームの情報を問い合わせ中...
 STR_DLGCONNECTING_JOINING=ゲームに参加中...

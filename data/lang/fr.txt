@@ -2787,12 +2787,6 @@ STR_IOSREC_COPIED=Copié dans le dossier WinBolo de l'app Fichiers.
 STR_IOSREC_OPEN_FAILED=Impossible d'ouvrir cet enregistrement.
 STR_IOSREC_LAST_ROUND=Dernière partie en solo
 STR_IOSREC_COPY_FAILED=Impossible de copier l'enregistrement dans l'app Fichiers.
-
-# The iPad's choice of the touch or the desktop layout
-STR_DLGSETTINGS_IPAD_LAYOUT=Disposition iPad
-STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=Automatique : bureau quand un clavier est branché
-STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=Tactile
-STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=Bureau : barre de menus, clavier et trackpad ou souris
 STR_DLGCONNECTING_TITLE=Connexion à {string1}...
 STR_DLGCONNECTING_PING=Interrogation du serveur sur sa partie...
 STR_DLGCONNECTING_JOINING=Connexion à la partie...

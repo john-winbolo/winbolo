@@ -2787,12 +2787,6 @@ STR_IOSREC_COPIED=Dosyalar uygulamasındaki WinBolo klasörüne kopyalandı.
 STR_IOSREC_OPEN_FAILED=Bu kayıt açılamadı.
 STR_IOSREC_LAST_ROUND=Son tek oyunculu tur
 STR_IOSREC_COPY_FAILED=Kayıt Dosyalar uygulamasına kopyalanamadı.
-
-# The iPad's choice of the touch or the desktop layout
-STR_DLGSETTINGS_IPAD_LAYOUT=iPad düzeni
-STR_DLGSETTINGS_IPAD_LAYOUT_AUTO=Otomatik: klavye takılıyken masaüstü
-STR_DLGSETTINGS_IPAD_LAYOUT_TOUCH=Dokunmatik
-STR_DLGSETTINGS_IPAD_LAYOUT_DESKTOP=Masaüstü: menü çubuğu, klavye ve izleme dörtgeni ya da fare
 STR_DLGCONNECTING_TITLE={string1} adresine bağlanılıyor...
 STR_DLGCONNECTING_PING=Sunucuya oyunu soruluyor...
 STR_DLGCONNECTING_JOINING=Oyuna katılınıyor...
