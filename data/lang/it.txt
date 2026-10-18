@@ -2096,6 +2096,8 @@ STR_DLGSETTINGS_HOSTING_SERVERNAME=Nome server
 STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=Il browser delle partite mostra questo nome al posto del tuo indirizzo. Fino a 32 caratteri (meno con lettere accentate o altri alfabeti). Lascialo vuoto per mostrare il tuo indirizzo.
 STR_DLGSETTINGS_HOSTING_SERVERDESC=Descrizione
 STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=Il browser delle partite mostra questo quando un giocatore indica o seleziona la tua partita. Fino a 200 caratteri (meno con lettere accentate o altri alfabeti).
+STR_DLGSETTINGS_HOSTING_SPECDELAY=Ritardo spettatori (secondi)
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=Quanti secondi di ritardo rispetto alla partita vedono gli spettatori, così non possono rivelare ai giocatori dove si trova ognuno. 0 mostra la partita dal vivo. Fino a 600.
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Voce

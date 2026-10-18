@@ -5879,6 +5879,7 @@ set(_unit_test_names
     spectator_ring_nolog_tick_anchors
     spectator_replay
     spectator_config
+    spectator_delay_pref
     spectator_join
     spectator_roster_publish
     spectator_slot_codec
