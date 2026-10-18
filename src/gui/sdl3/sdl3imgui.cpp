@@ -6073,9 +6073,13 @@ static void renderScenarioText(ClientSim *cs) {
                          haveStatus, text, haveAnnounce, announceShare,
                          announceFade);
 
-        dl->AddRect(ImVec2(keepX, keepY),
-                    ImVec2(keepX + w - 1.0f, keepY + h - 1.0f),
-                    IM_COL32(255, 255, 255, 40));
+        /* The faint edge only when there is a backing: at 0% background
+           opacity the text stands on the map with no frame round it. */
+        if (s_scnText.bgPct > 0) {
+            dl->AddRect(ImVec2(keepX, keepY),
+                        ImVec2(keepX + w - 1.0f, keepY + h - 1.0f),
+                        IM_COL32(255, 255, 255, 40));
+        }
 
         if (handlesVisible) {
             const ImVec2 at(keepX, keepY);
