@@ -181,6 +181,7 @@ typedef struct LobbyIconCache {
     SDL_Texture  *picture;
     SDL_Texture  *play;
     SDL_Texture  *pause;
+    SDL_Texture  *openWindow;
     bool          attempted;
     /* The renderer instance the icons above were created against. SDL_Texture
      * is tied to the renderer that created it, so if the renderer instance

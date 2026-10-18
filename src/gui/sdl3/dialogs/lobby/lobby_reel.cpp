@@ -1035,20 +1035,41 @@ static void lobbyReelSpawnButton(ClientSim *cs) {
     const bool   haveLog  = s_reel.spawnBytes != nullptr;
     const bool   starting = nowMs < s_reel.spawnAgainAtMs;
     const bool   disabled = !haveLog || starting;
+    const int tip = !haveLog  ? STR_DLGLOBBY_REEL_SPAWN_NO_LOG
+                    : starting ? STR_DLGLOBBY_REEL_SPAWN_STARTED
+                               : STR_DLGLOBBY_REEL_SPAWN_LV_TIP;
+    const char *tipText = langGetText((langid)tip);
+    /* A glyph the same size as the play/pause one beside it, with the same
+     * hover. When the icon did not load, a text button that says "Log
+     * Viewer", so the feature still works. */
+    SDL_Texture *icon = lobbyIcons()->openWindow;
     if (disabled) ImGui::BeginDisabled();
-    if (ImGui::Button(langGetText(STR_DLGLOBBY_REEL_SPAWN_LV))) {
+    bool clicked;
+    if (icon) {
+        clicked = ImGui::ImageButton(
+            "##reelspawn", (ImTextureID)icon,
+            ImVec2(ImGui::GetTextLineHeight(), ImGui::GetTextLineHeight()),
+            ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0),
+            ImGui::GetStyleColorVec4(ImGuiCol_Text));
+    } else {
+        clicked = ImGui::Button(langGetText(STR_DLGWELCOME_LOGVIEWER));
+    }
+    if (clicked) {
         const int failed = lobbyReelSpawnViewer(clientSimGetMapName(cs));
         s_reel.spawnMsg        = failed ? failed : STR_DLGLOBBY_REEL_SPAWN_STARTED;
         s_reel.spawnMsgUntilMs = nowMs + REEL_SPAWN_MSG_MS;
         if (!failed) s_reel.spawnAgainAtMs = nowMs + REEL_SPAWN_AGAIN_MS;
     }
     if (disabled) ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip |
-                             ImGuiHoveredFlags_AllowWhenDisabled)) {
-        const int tip = !haveLog  ? STR_DLGLOBBY_REEL_SPAWN_NO_LOG
-                        : starting ? STR_DLGLOBBY_REEL_SPAWN_STARTED
-                                   : STR_DLGLOBBY_REEL_SPAWN_LV_TIP;
-        ImGui::SetTooltip("%s", langGetText((langid)tip));
+    /* imguiHelpTooltip skips a disabled item, and a disabled button is the one
+     * that most needs to say why. */
+    if (disabled) {
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip |
+                                 ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("%s", tipText);
+        }
+    } else {
+        imguiHelpTooltip(tipText);
     }
 }
 
