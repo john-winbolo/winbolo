@@ -4071,6 +4071,9 @@ int run_scenario_text_fit(void);
 /* Tablet mode's scenario text band: centred at the top of the view, and
  * kept left of the scenario panel's square when that is shown. */
 int run_scenario_text_tablet_band(void);
+/* The Scenario Text window's bar and grip, the only places it takes the
+ * mouse: a point on the text body is on neither. */
+int run_scenario_text_pointer_on_handle(void);
 /* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
  * quarter of the screen's shorter side in the game view's top-right, on a
  * phone, a tablet, and views too small for the full side. */

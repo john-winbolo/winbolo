@@ -5608,11 +5608,13 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * rectangle, and the grip changes its width and its height
  * separately.
  *
- * The window takes mouse input only while the bar, the
- * buttons and the grip show, or while one of them is being
- * dragged. The rest of the time it is NoInputs, so a click
- * on it goes through to the game view under it, as the
- * tablet's ##ScenarioSlot does.
+ * The window takes mouse input only while the pointer is
+ * on the bar or the grip, while one of them is being
+ * dragged, or while the settings or the close confirm are
+ * up. The rest of the time it is NoInputs, so a click or
+ * the wheel on the text goes through to the game view
+ * under it, as the tablet's ##ScenarioSlot does, also
+ * while the handles show.
  *
  * The X turns off Brains > Info Overlay > Scenario Text,
  * and that menu item turns it back on. Its place, size,
@@ -5963,28 +5965,64 @@ static void renderScenarioText(ClientSim *cs) {
     }
     ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
 
+    /* The bar's height and the grip's side. Both come from this frame's
+       w and h only, so they are known before Begin. */
+    const float shortSide = ImMin(w, h);
+    const float handle    = ImMin(SCN_PANEL_HANDLE_PX, shortSide * 0.25f);
+    const float btn       = scnPanelButtonSide(shortSide);
+
+    /* Some other ImGui window (a scenario panel, the settings, a menu) is
+       under the pointer and in front of this one. g.HoveredWindow is the
+       window ImGui chose in this frame's NewFrame, and it skips a NoInputs
+       window, so it can be a window behind this one: IsWindowAbove tells
+       the two cases apart. When this window is the hovered window, its
+       root is itself and nothing covers it. */
+    bool covered = false;
+    {
+        ImGuiContext &g     = *GImGui;
+        ImGuiWindow  *self  = ImGui::FindWindowByName("##scenariotext");
+        ImGuiWindow  *other = g.HoveredWindow ? g.HoveredWindow->RootWindow
+                                              : nullptr;
+        covered = self != nullptr && other != nullptr && other != self &&
+                  ImGui::IsWindowAbove(other, self);
+    }
+
     /* The bar, the buttons and the grip show while the pointer is on the
-       window, for a while after it leaves (a touch has no hover), while
-       one of them is being dragged, and while the settings or the close
-       confirm are up. The window takes input only while they show: the
+       window and no other window covers it there, for a while after it
+       leaves (a touch has no hover), while one of them is being dragged,
+       and while the settings or the close confirm are up.
+       The window takes input only while the pointer is on the bar (which
+       holds the gear and the X) or on the grip, while one of them is being
+       dragged, and while the settings or the close confirm are up. The
        rest of the time it is NoInputs, so it is never the hovered window,
-       io.WantCaptureMouse stays false over it, and a click or the wheel
-       there goes through to the game view under it, as it did when the
-       lines were drawn on the view. The hover is tested on the window's
-       rect with IsMouseHoveringRect for this reason: IsWindowHovered is
-       never true for a NoInputs window.
+       io.WantCaptureMouse stays false over it, and a click or the wheel on
+       the text goes through to the game view under it, as it did when the
+       lines were drawn on the view. This holds while the handles show: the
+       handles showing does not make the window take input.
+       The pointer is tested with plain rectangle tests on last frame's
+       place and this frame's size, for this reason: IsWindowHovered is
+       never true for a NoInputs window. scnTextPointerOnHandle in
+       scenario_panel_draw.h has the bar and grip rectangles.
        ImGui works out the hovered window in NewFrame, from the flags of the
        last Begin, so the window takes input from the frame after the
-       pointer first comes onto it. A press on the bar then makes the bar
-       the active item that frame, and the drag holds the input until the
-       button is let go. */
-    const Uint64 nowMs = SDL_GetTicks();
-    if (ImGui::IsMouseHoveringRect(
+       pointer first comes onto the bar or the grip. A press on the bar then
+       makes the bar the active item that frame, and the drag holds the
+       input until the button is let go. A touch that lands on the bar with
+       no hover before it goes through to the game; the touch after it,
+       with the pointer still there, is taken. */
+    const Uint64 nowMs  = SDL_GetTicks();
+    const ImVec2 mouse  = ImGui::GetIO().MousePos;
+    const bool   onRect = !covered &&
+        ImGui::IsMouseHoveringRect(
             ImVec2(s_scnText.atX, s_scnText.atY),
-            ImVec2(s_scnText.atX + w, s_scnText.atY + h), false)) {
+            ImVec2(s_scnText.atX + w, s_scnText.atY + h), false);
+    if (onRect) {
         s_scnText.chromeUntil = nowMs + SCN_PANEL_CHROME_LINGER_MS;
     }
-    const bool takesInput = nowMs < s_scnText.chromeUntil ||
+    const bool onHandle = onRect &&
+        scnTextPointerOnHandle(s_scnText.atX, s_scnText.atY, w, h, btn,
+                               handle, mouse.x, mouse.y);
+    const bool takesInput = onHandle ||
                             s_scnText.moving || s_scnText.resizing ||
                             s_scnText.settingsOpen ||
                             s_scnCloseAskOwner == SCN_TEXT_OWNER;
@@ -6017,9 +6055,6 @@ static void renderScenarioText(ClientSim *cs) {
         const ImVec2 pos = ImGui::GetWindowPos();
         ImDrawList *dl   = ImGui::GetWindowDrawList();
 
-        const float shortSide = ImMin(w, h);
-        const float handle    = ImMin(SCN_PANEL_HANDLE_PX, shortSide * 0.25f);
-        const float btn       = scnPanelButtonSide(shortSide);
         const bool  withClose = scnPanelCanReopen();
         const float btnsW     = withClose ? btn * 2.0f : btn;
 
@@ -6079,9 +6114,11 @@ static void renderScenarioText(ClientSim *cs) {
         }
         s_scnText.resizing = resizeActive;
 
-        /* The handles show exactly while the window takes input (see above
-           Begin), and while a drag that began this frame is active. */
-        const bool handlesVisible = takesInput || moveActive || resizeActive;
+        /* The handles show while the pointer is on the window or has just
+           left it, while the window takes input (see above Begin), and
+           while a drag that began this frame is active. */
+        const bool handlesVisible = nowMs < s_scnText.chromeUntil ||
+                                    takesInput || moveActive || resizeActive;
 
         /* Kept inside the main window. The place is saved, through the
            debounced window-settings path, once the player has moved the

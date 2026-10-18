@@ -356,6 +356,38 @@ static inline ScnTextBand scnTextTabletBand(float viewX, float viewY,
     return band;
 }
 
+/*********************************************************
+ *NAME:          scnTextPointerOnHandle
+ *PURPOSE:
+ *  Whether a point is on the Scenario Text window's bar or
+ *  on its resize grip: the two places where the window
+ *  takes the mouse. The bar is the strip across the top of
+ *  the window, the full width and barH high, and it holds
+ *  the gear and the X. The grip is the gripSide square in
+ *  the bottom-right corner. Each rectangle includes its
+ *  top and left edges and not its bottom and right edges,
+ *  as ImGui's own rectangle test does. A window with no
+ *  area has no bar and no grip.
+ *
+ *ARGUMENTS:
+ *  x/y      - the window's top-left corner, in pixels
+ *  w/h      - the window's size, in pixels
+ *  barH     - the bar's height, in pixels
+ *  gripSide - the grip's side, in pixels
+ *  px/py    - the point, in pixels
+ *********************************************************/
+static inline bool scnTextPointerOnHandle(float x, float y, float w, float h,
+                                          float barH, float gripSide,
+                                          float px, float py) {
+    if (w <= 0.0f || h <= 0.0f) return false;
+    if (px < x || px >= x + w || py < y || py >= y + h) return false;
+    if (barH > 0.0f && py < y + barH) return true;
+    if (gripSide > 0.0f && px >= x + w - gripSide && py >= y + h - gripSide) {
+        return true;
+    }
+    return false;
+}
+
 /* A position byte as a share of the view, 0 to 1. A byte past
  * SCN_ANNOUNCE_POS_MAX reads as the far edge. */
 static inline float scnAnnouncePosShare(uint8_t b) {

@@ -6873,6 +6873,7 @@ set(_unit_test_names
     scenario_announce_position
     scenario_text_fit
     scenario_text_tablet_band
+    scenario_text_pointer_on_handle
     scenario_status_line
     scn_status_codec_and_client
     scn_announce_position_codec
