@@ -1647,6 +1647,7 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_sp.c
     src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
+    src/gui/sdl3/dialogs/wbn_browser_sort.c
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
     src/gui/sdl3/map_preview_view.cpp
@@ -2443,6 +2444,7 @@ set(LOGVIEWER_IMGUI_SOURCES
 # LOGVIEWER_LIB_SOURCES because the WinBolo client already links its own copy.
 set(LOGVIEWER_WBN_BROWSER_SOURCES
     src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
+    src/gui/sdl3/dialogs/wbn_browser_sort.c
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
@@ -4582,6 +4584,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Log viewer events panel list: replays after a seek back and pinned
     # lines (test_lv_event_list.c).
     tests/unit/test_lv_event_list.c
+    # WinBolo.net log browser table sort rule (test_wbn_browser_sort.c).
+    tests/unit/test_wbn_browser_sort.c
     # Replay camera range: the load's 127,127 default, a highlight jump, a
     # grid that grew and the raw setter all keep the view's far edge at 255
     # on a grid wider than half the map (test_lv_camera.c).
@@ -4792,6 +4796,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # of imgui_events.cpp so test_lv_event_list.c drives the code the panel
     # runs.
     src/logviewer/lv_event_list.c
+    # The WinBolo.net log browser's sort rule, for test_wbn_browser_sort.c.
+    src/gui/sdl3/dialogs/wbn_browser_sort.c
 )
 
 if(WB_NETDEBUG)
@@ -5444,6 +5450,7 @@ set(_unit_test_names
     lv_same_map_runs
     lv_event_list_replay
     lv_event_list_pinned
+    wbn_browser_sort
     lv_snapshot_index_lookup
     lv_snapshot_index_ten_days
     lv_load_walk_fixtures

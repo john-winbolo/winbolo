@@ -1412,6 +1412,10 @@ int run_lv_same_map_runs(void);
 int run_lv_event_list_replay(void);
 int run_lv_event_list_pinned(void);
 
+/* WinBolo.net log browser table sort (test_wbn_browser_sort.c): each column's
+ * key in both directions, ties and no sort in the server's order. */
+int run_wbn_browser_sort(void);
+
 /* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
  * an index the size of a ten-day log. */
 int run_lv_snapshot_index_lookup(void);

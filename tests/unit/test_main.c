@@ -690,6 +690,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_same_map_runs",                        run_lv_same_map_runs                        },
     { "lv_event_list_replay",                    run_lv_event_list_replay                    },
     { "lv_event_list_pinned",                    run_lv_event_list_pinned                    },
+    { "wbn_browser_sort",                        run_wbn_browser_sort                        },
     { "lv_snapshot_index_lookup",                run_lv_snapshot_index_lookup                },
     { "lv_snapshot_index_ten_days",              run_lv_snapshot_index_ten_days              },
     { "lv_load_walk_fixtures",                   run_lv_load_walk_fixtures                   },
