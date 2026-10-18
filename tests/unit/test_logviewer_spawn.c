@@ -107,7 +107,8 @@ int run_logviewer_spawn_paths(void) {
 
 int run_logviewer_spawn_names(void) {
     char        name[128];
-    const char *args[3];
+    const char *args[LV_SPAWN_ARGS_MAX];
+    char        bundle[LV_SPAWN_PATH_MAX];
 
     /* The time and the map. */
     UT_ASSERT(lvSpawnCopyName(name, sizeof(name), 2026, 10, 18, 9, 5, 7, 0, "Everard"));
@@ -160,10 +161,48 @@ int run_logviewer_spawn_names(void) {
 
     /* The argument list: the program, the log, the end. Paths with spaces
      * go in as they are, with no quotes. */
-    lvSpawnArgs("C:\\Program Files\\WinBolo\\Log Viewer.exe",
-                "C:\\Users\\Zo\xC3\xAB\\a b.wbv", args);
+    UT_ASSERT(lvSpawnArgs(LV_SPAWN_OS_WINDOWS, "C:\\Program Files\\WinBolo\\Log Viewer.exe",
+                          "C:\\Users\\Zo\xC3\xAB\\a b.wbv", bundle, sizeof(bundle), args) == 2);
     UT_ASSERT(strcmp(args[0], "C:\\Program Files\\WinBolo\\Log Viewer.exe") == 0);
     UT_ASSERT(strcmp(args[1], "C:\\Users\\Zo\xC3\xAB\\a b.wbv") == 0);
     UT_ASSERT(args[2] == NULL);
+    UT_ASSERT(lvSpawnArgs(LV_SPAWN_OS_OTHER, "/opt/winbolo/Log Viewer", "/tmp/a b.wbv",
+                          bundle, sizeof(bundle), args) == 2);
+    UT_ASSERT(strcmp(args[0], "/opt/winbolo/Log Viewer") == 0);
+    UT_ASSERT(args[2] == NULL);
+
+    /* macOS, the program inside its bundle: open starts the bundle, with -n
+     * for a new copy, and the log after --args. The bundle is the path up
+     * to the last "/Contents/MacOS/", so a folder of that name higher up is
+     * left alone. */
+    UT_ASSERT_MSG(lvSpawnArgs(LV_SPAWN_OS_MACOS,
+                              "/Users/Zo\xC3\xAB/Contents/MacOS/Games/Log Viewer.app/Contents/MacOS/Log Viewer",
+                              "/Users/Zo\xC3\xAB/a b.wbv", bundle, sizeof(bundle), args) == 6,
+                  "macOS bundle gave the wrong count");
+    UT_ASSERT(strcmp(args[0], "/usr/bin/open") == 0);
+    UT_ASSERT(strcmp(args[1], "-n") == 0);
+    UT_ASSERT(strcmp(args[2], "-a") == 0);
+    UT_ASSERT_MSG(strcmp(args[3], "/Users/Zo\xC3\xAB/Contents/MacOS/Games/Log Viewer.app") == 0,
+                  "bundle: \"%s\"", args[3]);
+    UT_ASSERT(strcmp(args[4], "--args") == 0);
+    UT_ASSERT(strcmp(args[5], "/Users/Zo\xC3\xAB/a b.wbv") == 0);
+    UT_ASSERT(args[6] == NULL);
+
+    /* macOS, a plain program in no bundle: run as it is. */
+    UT_ASSERT(lvSpawnArgs(LV_SPAWN_OS_MACOS, "/opt/winbolo/Log Viewer", "/tmp/a.wbv",
+                          bundle, sizeof(bundle), args) == 2);
+    UT_ASSERT(strcmp(args[0], "/opt/winbolo/Log Viewer") == 0);
+    UT_ASSERT(args[2] == NULL);
+
+    /* A bundle path that does not fit: run the program as it is rather than
+     * give open a cut path. */
+    {
+        char small[8];
+        UT_ASSERT(lvSpawnArgs(LV_SPAWN_OS_MACOS, "/Applications/Log Viewer.app/Contents/MacOS/Log Viewer",
+                              "/tmp/a.wbv", small, sizeof(small), args) == 2);
+        UT_ASSERT(strcmp(args[0], "/Applications/Log Viewer.app/Contents/MacOS/Log Viewer") == 0);
+    }
+    UT_ASSERT(lvSpawnArgs(LV_SPAWN_OS_MACOS, NULL, "/tmp/a.wbv", bundle, sizeof(bundle), args) == 0);
+    UT_ASSERT(args[0] == NULL);
     return 0;
 }

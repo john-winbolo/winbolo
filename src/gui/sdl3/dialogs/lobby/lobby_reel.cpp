@@ -991,11 +991,14 @@ static int lobbyReelSpawnViewer(const char *mapName) {
     }
 
     /* An argument list and no shell, so the spaces and letters outside ASCII
-     * in either path need no quotes. In the background: SDL then does not
-     * keep the program tied to the game, and SDL_DestroyProcess below only
-     * lets go of it; it does not stop it. */
-    const char *args[3];
-    lvSpawnArgs(exePath, logPath, args);
+     * in either path need no quotes. On macOS the list starts "open", so the
+     * viewer comes to the front (logviewer_spawn.h). In the background: SDL
+     * then does not keep the program tied to the game, and SDL_DestroyProcess
+     * below only lets go of it; it does not stop it. */
+    const char *args[LV_SPAWN_ARGS_MAX];
+    char        bundlePath[LV_SPAWN_PATH_MAX];
+    lvSpawnArgs(LV_SPAWN_OS_THIS, exePath, logPath, bundlePath,
+                sizeof(bundlePath), args);
     SDL_PropertiesID props = SDL_CreateProperties();
     SDL_Process     *proc  = nullptr;
     if (props != 0) {
