@@ -1364,13 +1364,18 @@ static void savePreferences(void) {
      * A maximized or fullscreen window is not a size to start the next run
      * at: the sizes saved before it was maximized stay as they are, so the
      * window that is maximized again at the next start (Window.Maximized)
-     * has its own size to go back to. */
+     * has its own size to go back to.
+     *
+     * Only the viewer's own window is a size to start it at. The viewer
+     * inside the game (Watch a Log, spectating) draws in the game's window,
+     * whose size is the game's; written here it would be the size the
+     * standalone viewer opens at next time. */
     {
         SDL_WindowFlags wflags = SDL_GetWindowFlags(g_lv->window);
         bool big = (wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) != 0;
         bool placed = g_lv->ownsWindow && !big && !(wflags & SDL_WINDOW_MINIMIZED);
 
-        if (!(g_lv->ownsWindow && big)) {
+        if (g_lv->ownsWindow && !big) {
             int sizeX = lv_screenGetSizeX();
             int sizeY = lv_screenGetSizeY();
             int dockL = 0, dockT = 0, dockR = 0, dockB = 0;
