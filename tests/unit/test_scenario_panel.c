@@ -27,6 +27,7 @@
 #include "scenario_panel_draw.h" /* scnPanelTimerText — the drawer's one
                                   * piece of arithmetic, which is plain C
                                   * and needs no renderer behind it */
+#include "scenario_panel_slot.h" /* scnPanelSlotRect, for the tablet band */
 #include "scenario_defs.h"   /* SCN_PANEL_MAX — the byte cap one list rides in */
 #include "test_harness.h"
 
@@ -875,6 +876,92 @@ int run_scenario_text_fit(void) {
     UT_ASSERT(fit.scale == 0.0f);
     fit = scnTextFitRect(0.0f, 50.0f, 7.0f, 8.0f, 100.0f, 100.0f);
     UT_ASSERT(fit.scale == 0.0f);
+
+    return 0;
+}
+
+/* Tablet mode's scenario text band: the source rectangle at the zoom's
+ * scale, at the top middle of the view, made smaller to fit, and kept one
+ * inset left of the scenario panel's square when that is shown. */
+int run_scenario_text_tablet_band(void) {
+    const float srcW = SCN_TEXT_SRC_W_UNITS;
+    const float srcH = 26.0f;
+    ScnTextBand b;
+
+    /* No square: 240 x 26 at scale 3 is 720 x 78, centred in a 960 wide
+       view, (960 - 720) / 2 = 120 from its left, one inset (12) down. */
+    b = scnTextTabletBand(0.0f, 0.0f, 960.0f, srcW, srcH, 3.0f, 12.0f, false,
+                          0.0f);
+    UT_ASSERT_MSG(b.x == 120.0f && b.y == 12.0f && b.w == 720.0f &&
+                      b.h == 78.0f,
+                  "no square: %.2f,%.2f %.2fx%.2f", b.x, b.y, b.w, b.h);
+    /* The square's place is not read when it is not shown. */
+    b = scnTextTabletBand(0.0f, 0.0f, 960.0f, srcW, srcH, 3.0f, 12.0f, false,
+                          500.0f);
+    UT_ASSERT(b.x == 120.0f && b.w == 720.0f);
+
+    /* A square at 800: the room ends at 800 - 12 = 788, and the band is
+       centred in it, (788 - 720) / 2 = 34 from the left. */
+    b = scnTextTabletBand(0.0f, 0.0f, 960.0f, srcW, srcH, 3.0f, 12.0f, true,
+                          800.0f);
+    UT_ASSERT_MSG(b.x == 34.0f && b.w == 720.0f && b.h == 78.0f,
+                  "square at 800: %.2f %.2fx%.2f", b.x, b.w, b.h);
+
+    /* A square at 700: the room is 688, less than 720, so the band is made
+       smaller to 688 wide and keeps its shape, 78 * 688 / 720 high. */
+    b = scnTextTabletBand(0.0f, 0.0f, 960.0f, srcW, srcH, 3.0f, 12.0f, true,
+                          700.0f);
+    UT_ASSERT_MSG(b.x == 0.0f && b.w == 688.0f &&
+                      scnNear(b.h, 78.0f * 688.0f / 720.0f),
+                  "square at 700: %.2f %.2fx%.2f", b.x, b.w, b.h);
+
+    /* A view that does not start at 0, with the square where the tablet
+       layout puts it on a phone: the band's right edge stays one inset left
+       of the square. 2400 x 1080 gives a side of 270, at
+       200 + 1800 - 16 - 270 = 1714. */
+    {
+        float sx = 0.0f, sy = 0.0f, side = 0.0f;
+        UT_ASSERT(scnPanelSlotRect(2400, 1080, 200.0f, 0.0f, 1800.0f, 1080.0f,
+                                   16.0f, &sx, &sy, &side));
+        UT_ASSERT(sx == 1714.0f && side == 270.0f);
+        b = scnTextTabletBand(200.0f, 0.0f, 1800.0f, srcW, srcH, 4.0f, 16.0f,
+                              true, sx);
+        UT_ASSERT_MSG(b.x + b.w <= sx - 16.0f + 0.01f,
+                      "the band reaches %.2f, the square is at %.2f",
+                      b.x + b.w, sx);
+        UT_ASSERT_MSG(b.x == 469.0f && b.w == 960.0f,
+                      "phone: %.2f %.2f", b.x, b.w);
+        /* A narrow phone view: the band is made smaller and still stops
+           short of the square. */
+        b = scnTextTabletBand(200.0f, 0.0f, 800.0f, srcW, srcH, 4.0f, 16.0f,
+                              true, 200.0f + 800.0f - 16.0f - 270.0f);
+        UT_ASSERT(b.x == 200.0f && b.w == 800.0f - 16.0f - 270.0f - 16.0f);
+        UT_ASSERT(b.x + b.w <= 200.0f + 800.0f - 16.0f - 270.0f - 16.0f);
+    }
+
+    /* A square outside the view's width does not change the room. */
+    b = scnTextTabletBand(0.0f, 0.0f, 960.0f, srcW, srcH, 3.0f, 12.0f, true,
+                          960.0f);
+    UT_ASSERT(b.x == 120.0f && b.w == 720.0f);
+    b = scnTextTabletBand(100.0f, 0.0f, 960.0f, srcW, srcH, 3.0f, 12.0f, true,
+                          50.0f);
+    UT_ASSERT(b.x == 220.0f && b.w == 720.0f);
+
+    /* No room left of the square, or nothing to draw: no band. */
+    b = scnTextTabletBand(0.0f, 0.0f, 960.0f, srcW, srcH, 3.0f, 12.0f, true,
+                          10.0f);
+    UT_ASSERT(b.w == 0.0f && b.h == 0.0f);
+    b = scnTextTabletBand(0.0f, 0.0f, 0.0f, srcW, srcH, 3.0f, 12.0f, false,
+                          0.0f);
+    UT_ASSERT(b.w == 0.0f && b.h == 0.0f);
+    b = scnTextTabletBand(0.0f, 0.0f, 960.0f, srcW, srcH, 0.0f, 12.0f, false,
+                          0.0f);
+    UT_ASSERT(b.w == 0.0f && b.h == 0.0f);
+
+    /* A negative inset counts as none. */
+    b = scnTextTabletBand(0.0f, 5.0f, 960.0f, srcW, srcH, 3.0f, -4.0f, true,
+                          800.0f);
+    UT_ASSERT(b.y == 5.0f && b.x == 40.0f);
 
     return 0;
 }

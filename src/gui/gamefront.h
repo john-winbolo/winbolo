@@ -1056,6 +1056,7 @@ extern int   gameFrontScnPanelTextAlpha; /* percent, -1 = never set */
  * percent, -1 for never set, which is 43; the text opacity fades the text
  * and its outline, -1 for never set, which is 100. A file with only the old
  * single "Scenario Text Alpha" key fills both from it, as the panel's does.
+ * That key never was on main: an earlier build of this change wrote it.
  * Shown is the Brains > Info Overlay > Scenario Text
  * checkbox, which the window's X turns off. Written through the debounced
  * gameFrontSaveWindowSettings path as each drag ends. */
@@ -1076,14 +1077,17 @@ extern bool  gameFrontScnTextShown;
 #define SCN_PANEL_SCENARIO_LEN 128
 
 /* One scenario's own scenario-panel layout, kept under "SCENARIO PANEL" /
- * the scenario ("Survival.scenario.lua") as "x,y,scale,bg,text" (see
+ * the scenario ("Survival.scenario.lua") as "x,y,scale,text", with the
+ * background opacity under "SCENARIO PANEL BG" / the same key (see
  * scnPanelLayoutParse in scn_panel_prefs.h), so each scenario remembers where
  * its overlay sat, how big it was and how opaque. The five numbers mean
  * exactly what the globals above mean, -1 and all, and are clamped on the way
  * out of the file the same way those are: the preferences file is a text
  * file a player can edit, and a bad row must not open the panel off screen or
- * too small to get a pointer onto. A four-number row from before there were
- * two opacities is read, and its one opacity gives both.
+ * too small to get a pointer onto. A four-number row with no background
+ * value, from main or 2.1, is read, and its one opacity gives both. A
+ * five-number row "x,y,scale,bg,text", from an earlier build of this change,
+ * is read too.
  *
  * Get returns false, and leaves all five alone, when no row is remembered
  * yet or when the row does not read — the caller keeps the [WINDOW] fallback

@@ -3541,16 +3541,20 @@ void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) {
 }
 
 /* Per-scenario scenario-panel layout, kept under "SCENARIO PANEL" / the
- * scenario as one "x,y,scale,bg,text" row (scnPanelLayoutParse). One row
- * rather than five keys keeps a scenario's numbers together and keeps the
+ * scenario as one "x,y,scale,text" row, with the background opacity under
+ * SCN_PANEL_PREFS_BG_SECTION / the same key (scnPanelLayoutParse). One row
+ * rather than four keys keeps a scenario's numbers together and keeps the
  * file short enough to read, and the scenario is the whole key so a player
- * scanning the section sees the scenarios they have played by name.
+ * scanning the section sees the scenarios they have played by name. The
+ * background is in a section of its own and not a fifth number on the row
+ * so that an older client, which reads the first four numbers, gets the
+ * text opacity as its one opacity (scn_panel_prefs.h says more).
  *
  * The key rule (scnPanelPrefsKey) turns a control character into an
  * underscore, and the read and the write share it. */
 bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
                                 int *scale, int *bgAlpha, int *textAlpha) {
-  char key[SCN_PANEL_SCENARIO_LEN], buff[64];
+  char key[SCN_PANEL_SCENARIO_LEN], buff[64], bgBuff[32];
   int rx, ry, rscale, rbg, rtext;
   if (!scenario || !scenario[0] || !x || !y || !scale || !bgAlpha ||
       !textAlpha) {
@@ -3558,11 +3562,12 @@ bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
   }
   scnPanelPrefsKey(scenario, key, sizeof(key));
   prefsGetString("SCENARIO PANEL", key, "", buff, sizeof(buff));
+  prefsGetString(SCN_PANEL_PREFS_BG_SECTION, key, "", bgBuff, sizeof(bgBuff));
   /* All or none: a half-written row says nothing about where the panel
      belongs, and the caller's fallback is a whole layout of its own rather
      than something to fill the gaps in this one with. The parse clamps the
-     opacities and reads an old four-number row. */
-  if (!scnPanelLayoutParse(buff, &rx, &ry, &rscale, &rbg, &rtext)) {
+     opacities and reads the older rows too. */
+  if (!scnPanelLayoutParse(buff, bgBuff, &rx, &ry, &rscale, &rbg, &rtext)) {
     return false;
   }
   /* Clamped the way the [WINDOW] load clamps, and for the same reason: a
@@ -3591,7 +3596,11 @@ void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
   char key[SCN_PANEL_SCENARIO_LEN], val[64];
   if (!scenario || !scenario[0]) return;
   scnPanelPrefsKey(scenario, key, sizeof(key));
-  scnPanelLayoutFormat(x, y, scale, bgAlpha, textAlpha, val, sizeof(val));
+  /* The background first, so the four-number row is never in the file
+     without it and read as an old row. */
+  scnPanelLayoutBgFormat(bgAlpha, val, sizeof(val));
+  prefsSetString(SCN_PANEL_PREFS_BG_SECTION, key, val);
+  scnPanelLayoutFormat(x, y, scale, textAlpha, val, sizeof(val));
   prefsSetString("SCENARIO PANEL", key, val);
 }
 
@@ -4910,6 +4919,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("WINDOW", "Scenario Text Height", "-1", buff, FILENAME_MAX);
   gameFrontScnTextH = atoi(buff);
   if (gameFrontScnTextH < -1) gameFrontScnTextH = -1;
+  /* The old single key here is from an earlier build of this change, not
+     from main (scn_panel_prefs.h). */
   {
     char bgBuff[32], textBuff[32], oldBuff[32];
     prefsGetString("WINDOW", SCN_TEXT_PREFS_BG_KEY, "", bgBuff,

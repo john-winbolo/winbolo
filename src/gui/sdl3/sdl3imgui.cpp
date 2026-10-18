@@ -4368,7 +4368,8 @@ static ScnPanelView s_scnViews[SCN_PANEL_OWNERS];
 #define SCN_TEXT_OWNER SCN_PANEL_OWNERS
 
 /* The Scenario Text window's state for this run of the game. Its place,
-   size, opacity and shown flag are the gameFrontScnText* preferences; this
+   size, two opacities (background and text) and shown flag are the
+   gameFrontScnText* preferences; this
    holds what lasts only as long as the window is up or the round runs. */
 struct ScnTextView {
     /* ImGui is holding a position for the window. */
@@ -4386,6 +4387,10 @@ struct ScnTextView {
     int    bgPct, textPct;
     /* The bar, the gear and the X stay up until this SDL tick. */
     Uint64 chromeUntil;
+    /* Where the window's top-left corner is, on screen, as the last frame
+       left it: the hover test runs before the window is submitted, to
+       choose whether it takes input this frame. */
+    float  atX, atY;
     /* The kinds of line the round has shown so far. Each one has a row in
        the window from then until the round ends, so the text does not
        change size each time a line comes or goes. */
@@ -5597,14 +5602,21 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * the game view. The window is built the way a script's
  * scenario panel window is: no title bar, a grey bar across
  * the top while the pointer is on it to drag it by, a gear
- * that opens an opacity slider, an X that hides it (with
- * the same confirm), and a grip in the bottom-right corner.
- * Unlike the panel it is a rectangle, and the grip changes
- * its width and its height separately.
+ * that opens two opacity sliders (background and text), an
+ * X that hides it (with the same confirm), and a grip in
+ * the bottom-right corner. Unlike the panel it is a
+ * rectangle, and the grip changes its width and its height
+ * separately.
+ *
+ * The window takes mouse input only while the bar, the
+ * buttons and the grip show, or while one of them is being
+ * dragged. The rest of the time it is NoInputs, so a click
+ * on it goes through to the game view under it, as the
+ * tablet's ##ScenarioSlot does.
  *
  * The X turns off Brains > Info Overlay > Scenario Text,
  * and that menu item turns it back on. Its place, size,
- * opacity and shown flag are kept in [WINDOW] in the
+ * two opacities and shown flag are kept in [WINDOW] in the
  * preferences file (gameFrontScnText*). With no place kept
  * it opens at the top middle of the game view.
  *
@@ -5629,9 +5641,11 @@ static void renderScnPanelMenuItems(bool afterBrains) {
  * ------------------------------------------------------- */
 
 /* The smallest the window is ever drawn, in screen pixels: room for the
-   bar's two buttons and the grip. */
+   bar's two buttons and the grip. 32 high is the scenario panel's own
+   smallest side, so the buttons (scnPanelButtonSide) are no smaller than
+   the panel's. */
 #define SCN_TEXT_MIN_W_PX 64.0f
-#define SCN_TEXT_MIN_H_PX 24.0f
+#define SCN_TEXT_MIN_H_PX 32.0f
 
 /* The last of an announcement's life spent fading, in ticks. Long enough to
    read as going rather than as cut off; ticks run at a hundred a second, so
@@ -5835,7 +5849,10 @@ static void renderScenarioText(ClientSim *cs) {
     const float srcH = scnTextSourceHeight(rows);
 
     /* Tablet mode: no window, the same layout at the top middle of its own
-       game view, at the size its zoom gives the text. */
+       game view, at the size its zoom gives the text, and left of the
+       scenario panel's square when that is shown (scnTextTabletBand). The
+       square's window, ##ScenarioSlot, is submitted earlier in the frame by
+       the tablet overlay, so Active is this frame's. */
     if (uiModeIsTablet()) {
         s_scnText.placed       = false;
         s_scnText.moving       = false;
@@ -5846,26 +5863,35 @@ static void renderScenarioText(ClientSim *cs) {
         sdl3DrawGetTabletViewport(&tvX, &tvY, &tvW, &tvH, &tvZoom);
         if (tvW <= 0 || tvH <= 0) return;   /* no view drawn yet */
         const float scale = (float)((tvZoom < 1) ? 1 : tvZoom);
-        float w = srcW * scale;
-        float h = srcH * scale;
-        if (w > (float)tvW) {
-            h *= (float)tvW / w;
-            w  = (float)tvW;
+        bool  haveSlot = false;
+        float slotX    = 0.0f;
+        {
+            ImGuiWindow *slot = ImGui::FindWindowByName("##ScenarioSlot");
+            if (slot != nullptr && slot->Active && !slot->Hidden &&
+                slot->Size.x > 0.0f) {
+                haveSlot = true;
+                slotX    = slot->Pos.x;
+            }
         }
-        const float x = (float)tvX + ((float)tvW - w) * 0.5f;
-        const float y = (float)tvY + SCN_PANEL_DEFAULT_INSET * scale;
+        const ScnTextBand band = scnTextTabletBand(
+            (float)tvX, (float)tvY, (float)tvW, srcW, srcH, scale,
+            SCN_PANEL_DEFAULT_INSET * scale, haveSlot, slotX);
+        if (band.w <= 0.0f || band.h <= 0.0f) return;
         ImDrawList *dl = ImGui::GetForegroundDrawList();
         if (dl == nullptr) return;
-        dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h),
+        dl->AddRectFilled(ImVec2(band.x, band.y),
+                          ImVec2(band.x + band.w, band.y + band.h),
                           IM_COL32(0, 0, 0,
                                    scnBackingAlpha(SCN_BG_OPACITY_DEFAULT)));
-        scnTextDrawLines(dl, font, x, y, w, h, 1.0f, status, haveStatus, text,
-                         haveAnnounce, announceShare, announceFade);
+        scnTextDrawLines(dl, font, band.x, band.y, band.w, band.h, 1.0f,
+                         status, haveStatus, text, haveAnnounce,
+                         announceShare, announceFade);
         return;
     }
 
     /* Up while there is a line to show, and while the player is busy with
-       it, so a drag or the opacity slider is not cut off when a line goes. */
+       it, so a drag or the opacity sliders are not cut off when a line
+       goes. */
     const bool busy = s_scnText.moving || s_scnText.resizing ||
                       s_scnText.settingsOpen ||
                       s_scnCloseAskOwner == SCN_TEXT_OWNER;
@@ -5932,8 +5958,36 @@ static void renderScenarioText(ClientSim *cs) {
     if (!s_scnText.placed) {
         ImGui::SetNextWindowPos(ImVec2(wantX, wantY), ImGuiCond_Always);
         s_scnText.placed = true;
+        s_scnText.atX    = wantX;
+        s_scnText.atY    = wantY;
     }
     ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
+
+    /* The bar, the buttons and the grip show while the pointer is on the
+       window, for a while after it leaves (a touch has no hover), while
+       one of them is being dragged, and while the settings or the close
+       confirm are up. The window takes input only while they show: the
+       rest of the time it is NoInputs, so it is never the hovered window,
+       io.WantCaptureMouse stays false over it, and a click or the wheel
+       there goes through to the game view under it, as it did when the
+       lines were drawn on the view. The hover is tested on the window's
+       rect with IsMouseHoveringRect for this reason: IsWindowHovered is
+       never true for a NoInputs window.
+       ImGui works out the hovered window in NewFrame, from the flags of the
+       last Begin, so the window takes input from the frame after the
+       pointer first comes onto it. A press on the bar then makes the bar
+       the active item that frame, and the drag holds the input until the
+       button is let go. */
+    const Uint64 nowMs = SDL_GetTicks();
+    if (ImGui::IsMouseHoveringRect(
+            ImVec2(s_scnText.atX, s_scnText.atY),
+            ImVec2(s_scnText.atX + w, s_scnText.atY + h), false)) {
+        s_scnText.chromeUntil = nowMs + SCN_PANEL_CHROME_LINGER_MS;
+    }
+    const bool takesInput = nowMs < s_scnText.chromeUntil ||
+                            s_scnText.moving || s_scnText.resizing ||
+                            s_scnText.settingsOpen ||
+                            s_scnCloseAskOwner == SCN_TEXT_OWNER;
 
     float gearX = 0.0f;
     float gearY = 0.0f;
@@ -5957,7 +6011,8 @@ static void renderScenarioText(ClientSim *cs) {
                                    ImGuiWindowFlags_NoSavedSettings |
                                    ImGuiWindowFlags_NoFocusOnAppearing |
                                    ImGuiWindowFlags_NoDocking |
-                                   ImGuiWindowFlags_NoNav);
+                                   ImGuiWindowFlags_NoNav |
+                                   (takesInput ? 0 : ImGuiWindowFlags_NoInputs));
     if (open) {
         const ImVec2 pos = ImGui::GetWindowPos();
         ImDrawList *dl   = ImGui::GetWindowDrawList();
@@ -6024,18 +6079,9 @@ static void renderScenarioText(ClientSim *cs) {
         }
         s_scnText.resizing = resizeActive;
 
-        /* The bar, the buttons and the grip show while the pointer is on the
-           window, for a while after it leaves (a touch has no hover), while
-           one of them is being dragged, and while the settings are up. */
-        const Uint64 nowMs = SDL_GetTicks();
-        if (ImGui::IsWindowHovered(
-                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
-            s_scnText.chromeUntil = nowMs + SCN_PANEL_CHROME_LINGER_MS;
-        }
-        const bool handlesVisible = nowMs < s_scnText.chromeUntil ||
-                                    moveActive || resizeActive ||
-                                    s_scnText.settingsOpen ||
-                                    s_scnCloseAskOwner == SCN_TEXT_OWNER;
+        /* The handles show exactly while the window takes input (see above
+           Begin), and while a drag that began this frame is active. */
+        const bool handlesVisible = takesInput || moveActive || resizeActive;
 
         /* Kept inside the main window. The place is saved, through the
            debounced window-settings path, once the player has moved the
@@ -6050,6 +6096,8 @@ static void renderScenarioText(ClientSim *cs) {
         if (keepX != moved.x || keepY != moved.y) {
             ImGui::SetWindowPos(ImVec2(keepX, keepY));
         }
+        s_scnText.atX = keepX;
+        s_scnText.atY = keepY;
         /* A resize keeps the top-left corner where it is, so it fixes the
            place as a move does. */
         const bool everMoved = gameFrontScnTextX >= 0 || gameFrontScnTextY >= 0;
@@ -6066,9 +6114,18 @@ static void renderScenarioText(ClientSim *cs) {
             s_scnText.placed = false;
         }
 
+        /* Everything below is drawn at pos, where Begin put the window this
+           frame, and not at keepX/keepY. SetWindowPos moves the window at
+           once, but the draw list keeps the clip rect Begin worked out at
+           pos, so a drag would put the content one drag step past the clip
+           rect and cut off its trailing edge. The move shows from the next
+           frame, as the scenario panel's does (renderScenarioPanelView).
+           keepX/keepY are only for the clamp, the save and the next frame's
+           hover test. */
+
         /* The lines, fitted into the window at the player's text
            opacity. */
-        scnTextDrawLines(dl, font, keepX, keepY, w, h,
+        scnTextDrawLines(dl, font, pos.x, pos.y, w, h,
                          (float)s_scnText.textPct / 100.0f, status,
                          haveStatus, text, haveAnnounce, announceShare,
                          announceFade);
@@ -6076,13 +6133,12 @@ static void renderScenarioText(ClientSim *cs) {
         /* The faint edge only when there is a backing: at 0% background
            opacity the text stands on the map with no frame round it. */
         if (s_scnText.bgPct > 0) {
-            dl->AddRect(ImVec2(keepX, keepY),
-                        ImVec2(keepX + w - 1.0f, keepY + h - 1.0f),
+            dl->AddRect(pos, ImVec2(pos.x + w - 1.0f, pos.y + h - 1.0f),
                         IM_COL32(255, 255, 255, 40));
         }
 
         if (handlesVisible) {
-            const ImVec2 at(keepX, keepY);
+            const ImVec2 at = pos;
             const ImU32 barCol = (moveHot || moveActive)
                                      ? IM_COL32(150, 150, 150, 235)
                                      : IM_COL32(112, 112, 112, 205);

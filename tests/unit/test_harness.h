@@ -4068,6 +4068,9 @@ int run_scenario_status_line(void);
 /* The Scenario Text window's fit: the source rectangle scaled into the
  * window with one factor for both axes and centred. */
 int run_scenario_text_fit(void);
+/* Tablet mode's scenario text band: centred at the top of the view, and
+ * kept left of the scenario panel's square when that is shown. */
+int run_scenario_text_tablet_band(void);
 /* The tablet UI's scenario panel square (test_scenario_panel_slot.c): a
  * quarter of the screen's shorter side in the game view's top-right, on a
  * phone, a tablet, and views too small for the full side. */

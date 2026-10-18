@@ -173,7 +173,13 @@ bool scnPanelRescueRect(const ScnPanelRect *win, const ScnPanelRect *displays,
 
 /* The [WINDOW] keys the two opacities are kept under. The old single key of
  * each window is read only to fill the two new ones the first time a player
- * with it loads (scnOpacityFromPrefs), and is not written any more. */
+ * with it loads (scnOpacityFromPrefs), and is not written any more.
+ *
+ * "Scenario Panel Alpha" is the key main and the 2.1 build write.
+ * "Scenario Text Alpha" never was on main: only an earlier build of this
+ * change, the one that first drew the Scenario Text window, wrote it. Those
+ * builds were played, so real preferences files hold it, and it is read the
+ * same way. */
 #define SCN_PANEL_PREFS_BG_KEY       "Scenario Panel Background Opacity"
 #define SCN_PANEL_PREFS_TEXT_KEY     "Scenario Panel Text Opacity"
 #define SCN_PANEL_PREFS_OLD_KEY      "Scenario Panel Alpha"
@@ -223,22 +229,63 @@ void scnOpacityFromPrefs(const char *bgStr, const char *textStr,
  *********************************************************/
 int scnBackingAlpha(int bgPct);
 
+/* The section that holds each scenario's background opacity, one value per
+ * key, with the same key as the scenario's [SCENARIO PANEL] layout row. It
+ * syncs, as the layout row does.
+ *
+ * The background opacity is not a fifth number on the layout row because
+ * [SCENARIO PANEL] syncs to the player's other machines, and an older
+ * client there (main, or the 2.1 build) reads the row as "x,y,scale,alpha"
+ * with "%d,%d,%d,%d": it takes the first four numbers and ignores the rest.
+ * A five-number row "x,y,scale,bg,text" would give it the background
+ * percent as its one opacity, so its panel would draw at 43% and not at
+ * 100%. The four-number row "x,y,scale,text" gives it the text opacity,
+ * which is the old look. */
+#define SCN_PANEL_PREFS_BG_SECTION "SCENARIO PANEL BG"
+
 /*********************************************************
- *NAME:          scnPanelLayoutParse / scnPanelLayoutFormat
+ *NAME:          scnPanelLayoutParse
  *PURPOSE:
- *  A scenario's own panel layout row under "SCENARIO
- *  PANEL": "x,y,scale,bg,text". A row of four numbers,
- *  "x,y,scale,alpha", is the row written before there were
- *  two opacities, and its alpha is migrated with
- *  scnOpacityMigrate. Any other row returns false and
- *  leaves the outputs alone. The opacities are clamped with
- *  scnOpacityClamp; the scale and the position pass
- *  through for the caller to check.
+ *  A scenario's own panel layout, from its row under
+ *  "SCENARIO PANEL" and its value under
+ *  SCN_PANEL_PREFS_BG_SECTION ("" when that key is not in
+ *  the file). Three kinds of row are read:
+ *
+ *  - "x,y,scale,text" with a background value: the row this
+ *    code writes. The background is that value.
+ *  - "x,y,scale,alpha" with no background value: the row
+ *    main and 2.1 write. Its one opacity is migrated with
+ *    scnOpacityMigrate.
+ *  - "x,y,scale,bg,text": the row an earlier build of this
+ *    change wrote. Both opacities are its own, and the
+ *    background value is not read.
+ *
+ *  A background value that is not a whole number counts as
+ *  missing. Any other row returns false and leaves the
+ *  outputs alone. The opacities are clamped with
+ *  scnOpacityClamp; the scale and the position pass through
+ *  for the caller to check.
+ *
+ *  Note: an older client on another machine writes a
+ *  four-number row with its one opacity and leaves the
+ *  background value as it was. That row is then read as the
+ *  text opacity with the older background value.
  *********************************************************/
-bool scnPanelLayoutParse(const char *row, int *x, int *y, int *scale,
-                         int *bgPct, int *textPct);
-void scnPanelLayoutFormat(int x, int y, int scale, int bgPct, int textPct,
-                          char *buf, size_t bufSz);
+bool scnPanelLayoutParse(const char *row, const char *bgRow, int *x, int *y,
+                         int *scale, int *bgPct, int *textPct);
+
+/*********************************************************
+ *NAME:          scnPanelLayoutFormat / scnPanelLayoutBgFormat
+ *PURPOSE:
+ *  Write the two rows scnPanelLayoutParse reads: the
+ *  layout row "x,y,scale,text", and the background value
+ *  under SCN_PANEL_PREFS_BG_SECTION. Both are written each
+ *  time, -1 included, so the parse can tell this row from
+ *  an old one.
+ *********************************************************/
+void scnPanelLayoutFormat(int x, int y, int scale, int textPct, char *buf,
+                          size_t bufSz);
+void scnPanelLayoutBgFormat(int bgPct, char *buf, size_t bufSz);
 
 #ifdef __cplusplus
 }
