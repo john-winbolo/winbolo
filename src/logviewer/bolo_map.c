@@ -37,6 +37,7 @@
 #include "lv_starts.h"
 #include "lv_bases.h"
 #include "blocks.h"
+#include "lv_utf8_path.h"
 
 /* Prototypes */
 bool logIsEOF();
@@ -441,7 +442,8 @@ bool lv_mapWrite(char *fileName, map *value, pillboxes *pb, bases *bs, starts *s
   numBases = lv_basesGetNumBases(bs);
   numStarts = lv_startsGetNumStarts(ss);
 
-  fp = fopen(fileName,"wb");
+  /* Save Map's path comes from the file dialog: UTF-8, on Windows too. */
+  fp = lvFopenUtf8(fileName,"wb");
   if (fp == NULL) {
     returnValue = FALSE;
   }

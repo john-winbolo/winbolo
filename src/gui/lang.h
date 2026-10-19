@@ -672,6 +672,8 @@
 #define STR_DLGWBN_COL_DATE                 727
 #define STR_DLGWBN_PLAYERS_LBL              728
 #define STR_DLGWBN_NUMPLAYERS_FMT           729
+#define STR_DLGWBN_PLAYERS_OTHERS_FMT       2860
+#define STR_DLGWBN_PLAYERS_OTHER_ONE        2861
 #define STR_DLGWBN_DURATION                 730
 #define STR_DLGWBN_RATING                   731
 #define STR_DLGWBN_DOWNLOADS_FMT            732
@@ -764,6 +766,13 @@
 #define STR_DLGLOBBY_REEL_DISABLED           1940
 #define STR_DLGLOBBY_REEL_NONE               1941
 #define STR_DLGLOBBY_REEL_TOO_LARGE          1942
+/* Lobby "Last round" panel — the reel's "Spawn in log viewer" button. */
+#define STR_DLGLOBBY_REEL_SPAWN_LV_TIP       2910
+#define STR_DLGLOBBY_REEL_SPAWN_NO_LOG       2911
+#define STR_DLGLOBBY_REEL_SPAWN_NO_VIEWER    2912
+#define STR_DLGLOBBY_REEL_SPAWN_SAVE_FAILED  2913
+#define STR_DLGLOBBY_REEL_SPAWN_START_FAILED 2914
+#define STR_DLGLOBBY_REEL_SPAWN_STARTED      2916
 
 /* SetName dialog additions */
 #define STR_DLGSETNAME_WINTITLE             757
@@ -1278,6 +1287,121 @@
 #define STR_LV_WIN_GAMEINFO                 1125
 #define STR_LV_WIN_ITEMINFO                 1126
 #define STR_LV_RESET_WINDOWS                1127
+#define STR_LV_DOCK_ENABLED                 2871
+#define STR_LV_RESET_WINDOWS_DOCK           2872
+#define STR_LV_EVT_FILTER_ALL               2873
+#define STR_LV_EVT_KIND_PILL_CAPTURED       2874
+#define STR_LV_EVT_KIND_PILL_STOLEN         2875
+#define STR_LV_EVT_KIND_BASE_CAPTURED       2876
+#define STR_LV_EVT_KIND_BASE_STOLEN         2877
+#define STR_LV_EVT_KIND_BUILDER_LOST        2878
+#define STR_LV_EVT_KIND_TANK_KILLED         2879
+#define STR_LV_EVT_KIND_PLAYER              2880
+#define STR_LV_EVT_KIND_CHAT                2881
+#define STR_LV_EVT_KIND_GAME                2882
+#define STR_LV_EVT_KIND_HIGHLIGHT           2883
+#define STR_LV_EVT_NOW                      2884
+/* The Log Viewer's HUD panel: its name in the Windows menu and on its title
+   bar, and the tooltip of one icon. string1 of the two tips is the item
+   ("Pillbox #4"); string2 is its owner, or "Neutral" or "Dead". NAME_TEAM
+   joins a player's name to the colour of the player's team. VIEW_AS is the
+   line that names the player whose view the panel shows (string1), and
+   ALL_TEAMS the button beside it that goes back. TIP_REL adds what the item
+   is to that player (string2: own, allied or hostile) to a tip (string1). */
+#define STR_LV_WIN_HUD                      2885
+#define STR_LV_HUD_TIP_OWNER                2886
+#define STR_LV_HUD_TIP_STATE                2887
+#define STR_LV_HUD_NAME_TEAM                2888
+#define STR_LV_HUD_DEAD                     2889
+#define STR_LV_HUD_VIEW_AS                  2890
+#define STR_LV_HUD_ALL_TEAMS                2891
+#define STR_LV_HUD_REL_OWN                  2892
+#define STR_LV_HUD_REL_ALLIED               2917
+#define STR_LV_HUD_REL_HOSTILE              2918
+#define STR_LV_SAVE_NAME_VS                 2893
+#define STR_LV_SAVE_NAME_MORE               2894
+#define STR_LV_SAVE_NAME_BOT                2895
+#define STR_LV_SAVE_NAME_BOTS               2896
+#define STR_LV_SAVE_NAME_LOG                2897
+#define STR_LV_ERR_NO_GAME                  2898
+#define STR_LV_ERR_SAVE_MAP                 2899
+#define STR_LV_ERR_MAP_FOLDER               2900
+#define STR_LV_ERR_START_GAME               2901
+#define STR_LV_ERR_SAVE_LOG                 2902
+#define STR_LV_SAVE_LOG_TITLE               2903
+#define STR_LV_ERR_LOG_GONE                 2904
+#define STR_LV_HUD_TIP_REL                  2800
+#define STR_LV_MENU_OPEN_SP                 2801
+#define STR_LV_MENU_OPEN_SP_TIP             2802
+#define STR_LV_MENU_SAVE_LOG                2803
+#define STR_LV_DOCK_LEFT                    2804
+#define STR_LV_DOCK_TOP                     2805
+#define STR_LV_DOCK_BOTTOM                  2806
+#define STR_LV_DOCK_EMPTY_HINT              2807
+/* The viewer's Overview panel: its name in the Windows menu and its title
+   bar, the name of the row of totals, and the label of a team with more
+   players than there is room to name: the first one (string1) and how many
+   more there are (number). */
+#define STR_LV_WIN_OVERVIEW                 2820
+#define STR_LV_OVERVIEW_TOTAL               2821
+#define STR_LV_OVERVIEW_MORE                2822
+#define STR_LV_OVERVIEW_BAR_PILL            2862
+#define STR_LV_OVERVIEW_BAR_PILLS           2863
+#define STR_LV_OVERVIEW_BAR_BASE            2864
+#define STR_LV_OVERVIEW_BAR_BASES           2865
+/* The viewer's Tank panel: its name, the hint with no tank selected, a
+   gauge as numbers (string1 its name, number what the tank holds, number2
+   the most it can hold), the three states of the builder, the pillboxes the
+   tank carries (number), and the line for a recording with no stocks. */
+#define STR_LV_WIN_TANK                     2823
+#define STR_LV_TANK_HINT                    2824
+#define STR_LV_TANK_STOCK_FMT               2825
+#define STR_LV_TANK_BUILDER_IN              2826
+#define STR_LV_TANK_BUILDER_OUT             2827
+#define STR_LV_TANK_BUILDER_DEAD            2828
+#define STR_LV_TANK_PILLS                   2829
+#define STR_LV_TANK_NO_STOCK                2830
+/* The viewer's Options menu: the two bars over each tank, and the item's
+   tooltip. */
+#define STR_LV_TANK_BARS                    2831
+#define STR_LV_TANK_BARS_TIP                2832
+/* Log viewer Controls panel: what each button does, for its tooltip. {string1} of the two jumps is a number of seconds ("2.5", "12"); KEY_FMT puts a button's shortcut key after its name. */
+#define STR_LV_TIP_BACK_SECS                2833
+#define STR_LV_TIP_FWD_SECS                 2834
+#define STR_LV_TIP_KEY_FMT                  2835
+#define STR_LV_TIP_LIVE                     2836
+/* Log viewer: the X at the end of a panel's name line */
+#define STR_LV_TIP_DESELECT                 2837
+#define STR_LV_TIP_ALL_TEAMS                2838
+/* 2839 was the tooltip of the gear each sidebar had ("Sidebar options"); the
+ * gear is gone and the number is not used again. */
+/* Log viewer: the option of a sidebar, in the Windows menu */
+#define STR_LV_DOCK_TRANSPARENT             2840
+/* Log viewer: the event markers over the seek bar of the Controls panel */
+#define STR_LV_OVERLAY_EVENTS               2841
+#define STR_LV_OVERLAY_TIP                  2842
+#define STR_LV_OVERLAY_COUNT                2843
+#define STR_LV_OVERLAY_MORE                 2844
+/* Log viewer: the builder marker over each tank (Options), and the time left on the Tank panel's builder line */
+#define STR_LV_BUILDER_STATUS               2845
+#define STR_LV_BUILDER_STATUS_TIP           2846
+#define STR_LV_TANK_BUILDER_BACK            2847
+/* Log viewer: the filter of the Events panel, a list of ticked kinds */
+#define STR_LV_EVT_FILTER_SOME              2848
+#define STR_LV_EVT_FILTER_EMPTY             2849
+#define STR_LV_EVT_FILTER_TIP               2850
+/* Log viewer: the zoom of the map as a percentage */
+#define STR_LV_ZOOM_TIP                     2851
+/* Log viewer Options menu: Rewind and Fast Forward go to the new place in a short animation, not a jump */
+#define STR_LV_JUMP_ANIM                    2852
+/* Log viewer: the number of each pillbox on the map (Options), the list of
+   pillbox numbers in a tooltip (string1, "1, 4, 7"), and the Events panel's
+   lines for a pillbox taken, with its number (number) */
+#define STR_LV_PILL_NUMBERS                 2866
+#define STR_LV_PILL_NUMBERS_TIP             2867
+#define STR_LV_PILL_NUMBERS_LIST            2868
+#define STR_LV_MSG_PILL_CAPTURED            2869
+#define STR_LV_MSG_PILL_STOLEN              2870
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128
@@ -1976,6 +2100,8 @@
 #define STR_LV_SPEC_CONNECTION_LOST         1859
 #define STR_LV_SPEC_BEGINS_NOW              1860
 #define STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT  1861
+/* The File menu of a live game watched from the game: its one item. */
+#define STR_LV_MENU_LEAVE_SPECTATING        2915
 
 /* Volume — slider label and Mac preset submenu items */
 #define STR_MENU_VOLUME                     1402

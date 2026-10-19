@@ -10,6 +10,8 @@
 
 #include "imgui_game_viewport.h"
 #include "imgui_main_menu.h"
+#include "imgui_dock.h"
+#include "imgui_item_info.h"
 #include "imgui.h"
 
 #include <cstdio>
@@ -21,8 +23,18 @@
  * pulls in bolo headers with conflicting type definitions. */
 extern "C" {
     #include "logviewer.h"
+    #include "../lv_dock_fit.h"
+    #include "../lv_tank_pick.h"
     void lv_screenMouseInformationClick(int xPos, int yPos);
     void lv_screenMouseClick(int xPos, int yPos);
+    void lv_screenSelectTank(int slot);
+    void lv_screenChooseTank(int slot);
+    void lv_screenTogglePerspective(unsigned char playerNum);
+    int lv_screenPerspectivePlayer(void);
+    void lv_screenClearPerspective(void);
+    int lv_drawTankAtPoint(float xPoints, float yPoints);
+    void lv_clientMutexWaitFor(void);
+    void lv_clientMutexRelease(void);
     void lv_drawDirtyScreen(void);
     struct SDL_Texture *lv_drawGetGameTexture(void);
     void lv_drawZoomIn(int mouseScreenX, int mouseScreenY);
@@ -49,6 +61,12 @@ static LogViewerState *s_lv = nullptr;
  * so the drag handler can pan smoothly at sub-tile granularity instead of
  * snapping to whole tiles. */
 static bool s_is_dragging = false;
+/* The tank the last click on the map was on, -1 for none: the second click
+ * of a double click must be on the same tank. */
+static int s_last_click_tank = -1;
+/* The player whose view was shown before the first click of a pair did
+ * anything, -1 for all teams: what the second click of the pair decides on. */
+static int s_view_before_pair = -1;
 static bool s_is_mouse_down = false;
 static float s_drag_start_x = 0.0f;
 static float s_drag_start_y = 0.0f;
@@ -103,8 +121,25 @@ static int screen_to_game_coords(float screen_x, float screen_y,
     int subPxX = 0, subPxY = 0;
     lv_screenGetSubOffset(&subPxX, &subPxY);
 
-    *game_x = (int)(screen_x / zoom) + subPxX;
-    *game_y = (int)((screen_y - menu_bar_height) / zoom) + subPxY;
+    /* The map starts under the menu bar, past the left and top sidebars. */
+    LvDockMargins full = { 0, 0, 0, 0 };
+    LvDockMargins dock = { 0, 0, 0, 0 };
+    lv_imgui_dock_margins(&full.left, &full.top, &full.right, &full.bottom);
+    /* The map goes under a sidebar whose unused part is clear, so it starts
+     * at the window's edge there. */
+    lv_imgui_dock_map_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
+
+    /* A sidebar's part of the window is not map, even where the map's last
+     * square runs a little way under the sidebar's edge. The clear part of a
+     * sidebar is map; its panels are not. */
+    if (full.left + full.top + full.right + full.bottom > 0 &&
+        !lv_imgui_dock_point_on_map(screen_x, screen_y)) {
+        *game_x = *game_y = 0;
+        return 0;
+    }
+
+    *game_x = (int)((screen_x - (float)dock.left) / zoom) + subPxX;
+    *game_y = (int)((screen_y - menu_bar_height - (float)dock.top) / zoom) + subPxY;
 
     /* Check if coordinates are within game texture bounds */
     if (*game_x < 0 || *game_y < 0) {
@@ -120,6 +155,35 @@ static int screen_to_game_coords(float screen_x, float screen_y,
     }
 
     return 1;
+}
+
+void lv_imgui_game_viewport_hover(void) {
+    ImGuiIO& io = ImGui::GetIO();
+    int game_x, game_y;
+    int number, team = -1, colour = -1;
+    unsigned char owner = NEUTRAL, armour = 0;
+    char name[PLAYER_NAME_LEN];
+
+    /* Only over the map of the overview, with nothing of ImGui's under the
+     * mouse, and not while the map is dragged. */
+    if (s_lv == nullptr || s_lv->isLoaded == 0 || s_lv->gameView) return;
+    if (io.WantCaptureMouse || s_is_dragging || !ImGui::IsMousePosValid()) return;
+    if (!screen_to_game_coords(io.MousePos.x, io.MousePos.y, &game_x, &game_y)) return;
+
+    name[0] = '\0';
+    lv_clientMutexWaitFor();
+    number = lv_screenPillAt(game_x, game_y, &owner, &armour, &team);
+    if (number > 0 && owner != NEUTRAL) {
+        lv_screenGetPlayerName(name, owner, sizeof(name));
+        if (name[0] == '\0') snprintf(name, sizeof(name), "%d", (int)owner);
+    }
+    if (team >= 0) colour = lv_screenTeamColour(team);
+    lv_clientMutexRelease();
+
+    if (number > 0) {
+        lv_imgui_item_info_pill_tooltip(number, (owner != NEUTRAL) ? name : nullptr, colour,
+                                        armour);
+    }
 }
 
 int lv_imgui_game_viewport_process_input(void) {
@@ -206,11 +270,65 @@ int lv_imgui_game_viewport_process_input(void) {
                 /* Click without drag - handle as selection */
                 int game_x, game_y;
                 if (screen_to_game_coords(io.MousePos.x, io.MousePos.y, &game_x, &game_y)) {
-                    /* Check mode to determine which click function to use */
+                    /* A click on a tank's picture selects that tank: the
+                     * Tank panel shows it and the map marks it. In
+                     * Information mode that is all it does to the players,
+                     * and the square under the click still gets its
+                     * information. In Select Team mode the tank is also the
+                     * team picked, as a click on its square was before. */
+                    int tank = lv_drawTankAtPoint(io.MousePos.x, io.MousePos.y);
+                    /* Which click in a row this is (ImGui counts them by
+                     * its double click time and distance). */
+                    const int clicks = (int)io.MouseClickedLastCount[ImGuiMouseButton_Left];
+                    const int prevTank = (clicks >= 2) ? s_last_click_tank : -1;
+                    s_last_click_tank = tank;
+                    /* The view as it is before the first click of a pair
+                     * (the 1st, the 3rd... click of a row) does anything. */
+                    if ((clicks % 2) != 0) {
+                        lv_clientMutexWaitFor();
+                        s_view_before_pair = lv_screenPerspectivePlayer();
+                        lv_clientMutexRelease();
+                    }
                     if (lv_imgui_get_mode_information()) {
+                        if (tank >= 0) {
+                            lv_clientMutexWaitFor();
+                            lv_screenSelectTank(tank);
+                            lv_clientMutexRelease();
+                        }
                         lv_screenMouseInformationClick(game_x, game_y);
+                    } else if (tank >= 0) {
+                        lv_clientMutexWaitFor();
+                        lv_screenChooseTank(tank);
+                        lv_clientMutexRelease();
+                        lv_drawDirtyScreen();
                     } else {
                         lv_screenMouseClick(game_x, game_y);
+                    }
+                    /* A double click on a tank also changes whose view is
+                     * shown, in either mode: the view of that tank's player
+                     * comes on, or goes off again when it was on before the
+                     * double click. The click itself did all a single click
+                     * does, just above; in Select Team mode that can have
+                     * moved a view that was on to this tank, so the state to
+                     * end in is set here, whatever the first click did. */
+                    if (tank >= 0) {
+                        const LvMapClickView view =
+                            lvMapClickViewsTank(clicks, tank, prevTank, s_view_before_pair);
+                        if (view != LV_MAP_VIEW_KEEP) {
+                            lv_clientMutexWaitFor();
+                            const int now = lv_screenPerspectivePlayer();
+                            if (view == LV_MAP_VIEW_OFF && now >= 0) {
+                                /* The HUD panel's X. The tank stays selected. */
+                                lv_screenClearPerspective();
+                                lv_drawDirtyScreen();
+                            } else if (view == LV_MAP_VIEW_ON && now != tank) {
+                                /* The HUD panel's call for a click on a tank
+                                 * whose view is not on. */
+                                lv_screenTogglePerspective((unsigned char)tank);
+                                lv_drawDirtyScreen();
+                            }
+                            lv_clientMutexRelease();
+                        }
                     }
                     input_processed = 1;
                 }

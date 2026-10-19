@@ -88,8 +88,8 @@ void lv_updateItem(BYTE itemType, BYTE itemNumber, BYTE owner, BYTE x, BYTE y,
     (void)armour; (void)shells; (void)mines; (void)inTank;
 }
 
-void lv_windowAddEvent(int eventType, char *msg) {
-    (void)eventType; (void)msg;
+void lv_windowAddEvent(int eventType, int kind, int mapX, int mapY, char *msg) {
+    (void)eventType; (void)kind; (void)mapX; (void)mapY; (void)msg;
 }
 
 void lv_windowEventsRewound(void) {
@@ -118,4 +118,25 @@ void lv_imgui_context_shutdown(void) {
  * menu bar would report. */
 float lv_imgui_get_menu_bar_height(void) {
     return 0.0f;
+}
+
+/* draw.c keeps the map clear of the standalone viewer's sidebars. The
+ * browser build has none, so nothing is ever reserved for one. */
+void lv_imgui_dock_margins(int *left, int *top, int *right, int *bottom) {
+    if (left != NULL) *left = 0;
+    if (top != NULL) *top = 0;
+    if (right != NULL) *right = 0;
+    if (bottom != NULL) *bottom = 0;
+}
+
+/* The same for what bounds the map as it is drawn, and every point is on
+ * the map. */
+void lv_imgui_dock_map_margins(int *left, int *top, int *right, int *bottom) {
+    lv_imgui_dock_margins(left, top, right, bottom);
+}
+
+int lv_imgui_dock_point_on_map(float px, float py) {
+    (void)px;
+    (void)py;
+    return 1;
 }

@@ -113,6 +113,19 @@ typedef struct {
   int  pillMaxArmour;
 } LvRules;
 
+/* Speed values. 1 is real time and 2 to 9 are faster, up to as fast as the
+ * decoder runs. The three below are slower than real time. */
+#define LV_SPEED_HALF    10  /* 0.5x  */
+#define LV_SPEED_QUARTER 11  /* 0.25x */
+#define LV_SPEED_TENTH   12  /* 0.1x  */
+#define LV_SPEED_MAX     12
+
+/* The longest log playback holds: 1000 hours. Playback time is a uint32_t
+ * count of ms, which ends at about 1193 hours; a log that states more ticks
+ * than this (only a damaged or a made-up one) is played to this time only,
+ * so no count of ms goes past the end of a uint32_t. */
+#define LV_TOTAL_TIME_MAX_MS 3600000000u
+
 typedef struct LogViewerState {
   /* The rules this recording is drawn against. */
   LvRules      rules;
@@ -241,6 +254,13 @@ void logViewerRequestAppQuit(void);
 /* Did the run that just returned end because the player quit?  Only the
  * embedded caller asks; it hands the answer to windowSetQuitting(). */
 bool logViewerAppQuitRequested(void);
+
+/* Full screen for the viewer's window: can it be turned on and off here
+ * (not on a Steam Deck or a tablet), is it on, and the command itself, which
+ * Alt+Enter and the Full Screen item of the Windows menu both give. */
+bool lv_windowCanFullScreen(void);
+bool lv_windowIsFullScreen(void);
+void lv_windowToggleFullScreen(void);
 
 /* Entry point for loading from an in-memory zip buffer (mobile).
  * Takes ownership of zipData. */

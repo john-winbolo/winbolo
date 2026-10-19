@@ -1,0 +1,1053 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/*
+ * The sums behind the event markers of the log viewer's seek slider
+ * (lv_event_overlay.h).
+ *
+ *   lv_event_overlay_slider — a time is put where the slider's handle is
+ *       when playback is at that time: at both ends, in the middle, with
+ *       the lobby hidden, and in a slider too narrow for its handle.
+ *   lv_event_overlay_clusters — markers nearer than one marker width become
+ *       one; the one a point is on; the team most of a marker's events name.
+ *   lv_event_overlay_tip_place — the tooltip of a marker of several events
+ *       is all in the window wherever the mouse is: under the mouse, over
+ *       it, or moved up and to the side; and its lines are drawn smaller
+ *       when they are too many for columns.
+ *   lv_event_overlay_choice — the chosen kinds go to the preferences text
+ *       and back; a name no build knows is ignored; an empty choice stays
+ *       empty.
+ *   lv_event_overlay_picture — a pillbox event and a base event have the
+ *       map's own picture, by kind and team: which sheet, which cell; the
+ *       picture of a marker of several events; when it is drawn sharp.
+ *   lv_event_marker — what the marker of one event is (picture or icon, and
+ *       the team whose colour it has): the one answer the lane, the list of
+ *       kinds and each line of the Events panel draw from.
+ */
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+#include "lv_event_overlay.h"
+#include "lv_team_sprite.h"
+#include "lv_ping_view.h"
+#include "ping_kinds.h"   /* the game's kinds of ping, their icons, names and animation */
+#include "test_harness.h"
+
+static bool ovl_near(float a, float b) {
+    float d = a - b;
+    if (d < 0.0f) d = -d;
+    return d < 0.001f;
+}
+
+int run_lv_event_overlay_slider(void) {
+    /* A slider frame from 100 to 500 with ImGui's default 12 px handle: the
+       middle of the handle moves from 100 + 2 + 6 to 500 - 2 - 6. */
+    const float x0 = 100.0f, x1 = 500.0f, grab = 12.0f;
+
+    UT_ASSERT_MSG(ovl_near(lvOverlayGrabSize(x0, x1, grab), 12.0f), "handle width");
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(x0, x1, grab, 0.0f), 108.0f),
+                  "start: %f", lvOverlaySliderX(x0, x1, grab, 0.0f));
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(x0, x1, grab, 1.0f), 492.0f),
+                  "end: %f", lvOverlaySliderX(x0, x1, grab, 1.0f));
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(x0, x1, grab, 0.5f), 300.0f),
+                  "middle: %f", lvOverlaySliderX(x0, x1, grab, 0.5f));
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(x0, x1, grab, 0.25f), 204.0f),
+                  "quarter: %f", lvOverlaySliderX(x0, x1, grab, 0.25f));
+    /* A value off the slider is held at its end. */
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(x0, x1, grab, -2.0f), 108.0f), "under 0");
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(x0, x1, grab, 7.0f), 492.0f), "over 1");
+
+    /* A frame with no room for the handle: the handle is what fits, and
+       every time is in the middle of the frame. */
+    UT_ASSERT_MSG(ovl_near(lvOverlayGrabSize(0.0f, 10.0f, grab), 6.0f), "cut handle");
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(0.0f, 10.0f, grab, 0.0f), 5.0f), "narrow, start");
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(0.0f, 10.0f, grab, 1.0f), 5.0f), "narrow, end");
+    UT_ASSERT_MSG(ovl_near(lvOverlayGrabSize(0.0f, 3.0f, grab), 0.0f), "no room at all");
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(0.0f, 3.0f, grab, 0.5f), 1.5f), "3 px frame");
+
+    /* The value of a time: the whole file. */
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(0, 0, 60000), 0.0f), "first ms");
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(60000, 0, 60000), 1.0f), "last ms");
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(30000, 0, 60000), 0.5f), "half way");
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(90000, 0, 60000), 1.0f), "past the end");
+    /* With the lobby hidden the shown stretch starts at the game start. */
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(20000, 20000, 40000), 0.0f), "game start");
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(5000, 20000, 40000), 0.0f), "in the lobby");
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(40000, 20000, 40000), 0.5f), "half the game");
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(60000, 20000, 40000), 1.0f), "end of the game");
+    /* Nothing loaded. */
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(500, 0, 0), 0.0f), "no length");
+    /* A log of more than 24 days still gives a value in 0..1. */
+    UT_ASSERT_MSG(ovl_near(lvOverlayRatio(0xFFFFFFFFu, 0, 0xFFFFFFFFu), 1.0f), "longest log");
+
+    /* The two together: an event half way through is under the handle at
+       half way. */
+    UT_ASSERT_MSG(ovl_near(lvOverlaySliderX(x0, x1, grab, lvOverlayRatio(40000, 20000, 40000)),
+                       300.0f), "time to x");
+    return 0;
+}
+
+int run_lv_event_overlay_clusters(void) {
+    LvOverlayCluster c[8];
+    int n;
+
+    /* No events. */
+    UT_ASSERT_MSG(lvOverlayClusters(NULL, 0, 13.0f, c, 8) == 0, "no list");
+    {
+        static const float none[1] = {0.0f};
+        UT_ASSERT_MSG(lvOverlayClusters(none, 0, 13.0f, c, 8) == 0, "empty list");
+    }
+
+    /* Far apart: one marker each. */
+    {
+        static const float xs[] = {10.0f, 40.0f, 80.0f};
+        n = lvOverlayClusters(xs, 3, 13.0f, c, 8);
+        UT_ASSERT_MSG(n == 3, "apart: %d", n);
+        UT_ASSERT_MSG(c[1].first == 1 && c[1].count == 1 && ovl_near(c[1].x, 40.0f), "apart, second");
+    }
+
+    /* Three in one marker width, then one exactly a width from the first
+       (not nearer than a width: its own marker), then two together. */
+    {
+        static const float xs[] = {10.0f, 10.0f, 22.9f, 23.0f, 100.0f, 104.0f};
+        n = lvOverlayClusters(xs, 6, 13.0f, c, 8);
+        UT_ASSERT_MSG(n == 3, "mixed: %d", n);
+        UT_ASSERT_MSG(c[0].first == 0 && c[0].count == 3 && ovl_near(c[0].x, 10.0f), "first marker");
+        UT_ASSERT_MSG(c[1].first == 3 && c[1].count == 1 && ovl_near(c[1].x, 23.0f), "second marker");
+        UT_ASSERT_MSG(c[2].first == 4 && c[2].count == 2 && ovl_near(c[2].x, 100.0f), "third marker");
+        /* No two markers are nearer than a width. */
+        UT_ASSERT_MSG(c[1].x - c[0].x >= 13.0f && c[2].x - c[1].x >= 13.0f, "markers overlap");
+    }
+
+    /* A chain of events 5 apart is not one long marker: each marker takes
+       a width's worth. */
+    {
+        float xs[20];
+        int i, total = 0;
+        for (i = 0; i < 20; i++) xs[i] = 5.0f * (float)i;
+        n = lvOverlayClusters(xs, 20, 13.0f, c, 8);
+        UT_ASSERT_MSG(n == 7, "chain: %d", n);
+        for (i = 0; i < n; i++) total += c[i].count;
+        UT_ASSERT_MSG(total == 20, "chain holds %d events", total);
+        UT_ASSERT_MSG(c[0].count == 3 && c[6].count == 2, "chain sizes");
+        /* No room for all the markers: the first ones are kept. */
+        n = lvOverlayClusters(xs, 20, 13.0f, c, 2);
+        UT_ASSERT_MSG(n == 2 && c[1].first == 3, "cut list: %d", n);
+    }
+
+    /* Everything at one place (a slider with no room). */
+    {
+        static const float xs[] = {5.0f, 5.0f, 5.0f, 5.0f};
+        n = lvOverlayClusters(xs, 4, 13.0f, c, 8);
+        UT_ASSERT_MSG(n == 1 && c[0].count == 4, "one place: %d", n);
+    }
+
+    /* The marker a point is on. */
+    {
+        static const LvOverlayCluster m[] = {{10.0f, 0, 1}, {23.0f, 1, 2}, {100.0f, 3, 1}};
+        UT_ASSERT_MSG(lvOverlayHit(m, 3, 10.0f, 6.5f) == 0, "on the first");
+        UT_ASSERT_MSG(lvOverlayHit(m, 3, 3.5f, 6.5f) == 0, "its left edge");
+        UT_ASSERT_MSG(lvOverlayHit(m, 3, 3.0f, 6.5f) == -1, "left of it");
+        /* Between two that touch: the nearer one. */
+        UT_ASSERT_MSG(lvOverlayHit(m, 3, 16.0f, 6.5f) == 0, "nearer the first");
+        UT_ASSERT_MSG(lvOverlayHit(m, 3, 17.0f, 6.5f) == 1, "nearer the second");
+        UT_ASSERT_MSG(lvOverlayHit(m, 3, 60.0f, 6.5f) == -1, "in a gap");
+        UT_ASSERT_MSG(lvOverlayHit(m, 3, 106.0f, 6.5f) == 2, "on the last");
+        UT_ASSERT_MSG(lvOverlayHit(m, 0, 10.0f, 6.5f) == -1, "no markers");
+        UT_ASSERT_MSG(lvOverlayHit(NULL, 3, 10.0f, 6.5f) == -1, "no list");
+    }
+
+    /* The team of a marker. */
+    {
+        int counts[LV_OVERLAY_TEAMS];
+        memset(counts, 0, sizeof(counts));
+        UT_ASSERT_MSG(lvOverlayMajorityTeam(counts) == -1, "no events");
+        counts[LV_OVERLAY_TEAMS - 1] = 9;
+        UT_ASSERT_MSG(lvOverlayMajorityTeam(counts) == -1, "only events with no team");
+        counts[4] = 1;
+        UT_ASSERT_MSG(lvOverlayMajorityTeam(counts) == 4, "one team");
+        counts[2] = 3;
+        UT_ASSERT_MSG(lvOverlayMajorityTeam(counts) == 2, "the larger team");
+        counts[4] = 3;
+        UT_ASSERT_MSG(lvOverlayMajorityTeam(counts) == 2, "level: the lower number");
+        UT_ASSERT_MSG(lvOverlayMajorityTeam(NULL) == -1, "no counts");
+    }
+    return 0;
+}
+
+/* The size of a marker of the lane, and what follows it: how near two
+   events are put together, where the mouse is on a marker, how high the
+   lane is. */
+int run_lv_event_overlay_marker_size(void) {
+    float text;
+    LvOverlayCluster c[8];
+    int n;
+
+    /* 80% of a line of text, cut to a whole point. The viewer's text is 18
+       points: the marker was 18 and is 14. */
+    UT_ASSERT_MSG(lvOverlayMarkerSide(18.0f) == 14.0f, "text of 18: %g",
+                  (double)lvOverlayMarkerSide(18.0f));
+    UT_ASSERT_MSG(lvOverlayMarkerSide(20.0f) == 16.0f, "text of 20");
+    UT_ASSERT_MSG(lvOverlayMarkerSide(15.0f) == 12.0f, "text of 15");
+    UT_ASSERT_MSG(lvOverlayMarkerSide(13.0f) == 10.0f, "text of 13");
+    UT_ASSERT_MSG(lvOverlayMarkerSide(32.4f) == 25.0f, "text of 32.4 (a tablet)");
+    /* Never so small that the builder is cut: 8 has 4 points inside its
+       edge, the builder's height at 1 time. */
+    UT_ASSERT_MSG(lvOverlayMarkerSide(9.0f) == 8.0f, "text of 9: the least");
+    UT_ASSERT_MSG(lvOverlayMarkerSide(0.0f) == 8.0f, "no text height: the least");
+    for (text = 8.0f; text <= 60.0f; text += 0.5f) {
+        const float side = lvOverlayMarkerSide(text);
+        const float room = side - 4.0f; /* 2 points of edge on each side */
+        const int times = lvMarkerBuilderScale(room);
+        UT_ASSERT_MSG(side == (float)(int)side, "text %g: a whole point", (double)text);
+        UT_ASSERT_MSG(side <= text * 0.8f + 0.001f || side == LV_OVERLAY_MARKER_MIN,
+                      "text %g: not over 80%%", (double)text);
+        UT_ASSERT_MSG(times >= 1 && (float)(times * LV_MARKER_BUILDER_H) <= room,
+                      "text %g: the builder goes in whole", (double)text);
+    }
+
+    /* The distance events are put together at is the marker's side: it
+       gets smaller with the marker. */
+    UT_ASSERT_MSG(lvOverlayMergeGap(lvOverlayMarkerSide(18.0f)) == 14.0f, "gap at text of 18");
+    UT_ASSERT_MSG(lvOverlayMergeGap(lvOverlayMarkerSide(20.0f)) == 16.0f, "gap at text of 20");
+    UT_ASSERT_MSG(lvOverlayMergeGap(lvOverlayMarkerSide(13.0f)) ==
+                      lvOverlayMarkerSide(13.0f), "the gap is the side");
+    {
+        /* Events 15 apart were one marker in two at the old size (18) and
+           are a marker each at the new one. */
+        static const float xs[] = {10.0f, 25.0f, 40.0f, 55.0f};
+        n = lvOverlayClusters(xs, 4, 18.0f, c, 8);
+        UT_ASSERT_MSG(n == 2, "at the old size: %d", n);
+        n = lvOverlayClusters(xs, 4, lvOverlayMergeGap(lvOverlayMarkerSide(18.0f)), c, 8);
+        UT_ASSERT_MSG(n == 4, "at the new size: %d", n);
+        /* Markers that are drawn never overlap: no two nearer than a side. */
+        UT_ASSERT_MSG(c[1].x - c[0].x >= lvOverlayMarkerSide(18.0f), "markers overlap");
+    }
+    {
+        /* Events 13 apart are still put together: nearer than a side. */
+        static const float xs[] = {10.0f, 23.0f, 36.0f};
+        n = lvOverlayClusters(xs, 3, lvOverlayMergeGap(lvOverlayMarkerSide(18.0f)), c, 8);
+        UT_ASSERT_MSG(n == 2 && c[0].count == 2, "13 apart: %d", n);
+    }
+
+    /* The mouse is on a marker over the whole width that is drawn. */
+    UT_ASSERT_MSG(lvOverlayHitHalf(14.0f) * 2.0f == 14.0f, "as wide as the marker");
+    {
+        static const LvOverlayCluster m[] = {{50.0f, 0, 1}};
+        UT_ASSERT(lvOverlayHit(m, 1, 43.0f, lvOverlayHitHalf(14.0f)) == 0);
+        UT_ASSERT(lvOverlayHit(m, 1, 57.0f, lvOverlayHitHalf(14.0f)) == 0);
+        UT_ASSERT(lvOverlayHit(m, 1, 42.5f, lvOverlayHitHalf(14.0f)) == -1);
+    }
+
+    /* The lane: the marker and 3 points under it. */
+    UT_ASSERT_MSG(lvOverlayLaneHeight(14.0f) == 17.0f, "lane of a marker of 14");
+    UT_ASSERT_MSG(lvOverlayLaneHeight(lvOverlayMarkerSide(18.0f)) < 18.0f + 3.0f,
+                  "the lane is lower than it was");
+    return 0;
+}
+
+/* The lines of the tooltip of a marker that stands for several events: one
+   line an event, none left out, in columns when they are too many for the
+   height. */
+int run_lv_event_overlay_tip_columns(void) {
+    LvOverlayTipColumns g;
+    int col, row, k;
+
+    /* Lines 17 high in a room 170 high: 10 to a column. */
+    g = lvOverlayTipColumns(3, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 3 && g.fits, "3 lines: one column of 3");
+    g = lvOverlayTipColumns(6, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 6 && g.fits, "6 lines: over the old 5, all shown");
+    g = lvOverlayTipColumns(10, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 10 && g.fits, "10 lines: the column is full");
+    g = lvOverlayTipColumns(11, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 2 && g.rows == 10 && g.fits, "11 lines: a second column");
+    g = lvOverlayTipColumns(50, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 5 && g.rows == 10 && g.fits, "50 lines: 5 columns fill the width");
+    /* A room a little under a whole line more: still 10 to a column. */
+    g = lvOverlayTipColumns(11, 17.0f, 186.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 2 && g.rows == 10, "186 high is 10 lines");
+
+    /* More than the room holds: as many columns as go in the width, and
+       every line is still there. The columns are then higher than the room. */
+    g = lvOverlayTipColumns(51, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 5 && g.rows == 11 && !g.fits, "51 lines: 5 columns of 11");
+    UT_ASSERT_MSG(g.cols * g.rows >= 51, "no line is left out");
+    g = lvOverlayTipColumns(300, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 5 && g.rows == 60 && !g.fits, "300 lines: 5 columns of 60");
+
+    /* A room smaller than one line or one column: one of each at least. */
+    g = lvOverlayTipColumns(4, 17.0f, 5.0f, 200.0f, 50.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 4 && !g.fits, "no room: one column, all lines");
+    g = lvOverlayTipColumns(1, 17.0f, 5.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 1 && !g.fits, "a line higher than the room");
+
+    /* Nothing to show, and sizes that are not sizes. */
+    g = lvOverlayTipColumns(0, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 0 && g.rows == 0 && g.fits, "no lines");
+    g = lvOverlayTipColumns(3, 0.0f, 170.0f, 0.0f, 1000.0f);
+    UT_ASSERT_MSG(g.cols == 1 && g.rows == 3, "no line height given");
+
+    /* Down the first column, then the next. */
+    lvOverlayTipCell(0, 10, &col, &row);
+    UT_ASSERT(col == 0 && row == 0);
+    lvOverlayTipCell(9, 10, &col, &row);
+    UT_ASSERT(col == 0 && row == 9);
+    lvOverlayTipCell(10, 10, &col, &row);
+    UT_ASSERT(col == 1 && row == 0);
+    lvOverlayTipCell(25, 10, &col, &row);
+    UT_ASSERT(col == 2 && row == 5);
+    /* Every event of a full grid has a cell inside it. */
+    g = lvOverlayTipColumns(47, 17.0f, 170.0f, 200.0f, 1000.0f);
+    for (k = 0; k < 47; k++) {
+        lvOverlayTipCell(k, g.rows, &col, &row);
+        UT_ASSERT_MSG(col >= 0 && col < g.cols && row >= 0 && row < g.rows, "event %d", k);
+    }
+    lvOverlayTipCell(3, 0, &col, &row);
+    UT_ASSERT(col == 3 && row == 0);
+    return 0;
+}
+
+/* Where the tooltip of a marker goes, and how much smaller its lines are
+   drawn when they are too many for columns: all of it is in the window. */
+int run_lv_event_overlay_tip_place(void) {
+    /* The window: 1000 by 600, with a border of 4 kept free. */
+    const float x0 = 4.0f, y0 = 4.0f, x1 = 996.0f, y1 = 596.0f, gap = 16.0f;
+    LvOverlayTipPos p;
+    LvOverlayTipColumns g;
+    float s;
+    int mx, my, w, h;
+
+    /* Room everywhere: under the mouse and to the right of it. */
+    p = lvOverlayTipPlace(300.0f, 200.0f, 200.0f, 100.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.x, 316.0f) && ovl_near(p.y, 216.0f), "free: %f %f", (double)p.x,
+                  (double)p.y);
+    /* Just in at the bottom stays under the mouse. */
+    p = lvOverlayTipPlace(300.0f, 480.0f, 200.0f, 100.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.y, 496.0f), "just in: %f", (double)p.y);
+    /* The lane is at the bottom of the window: no room under the mouse, so
+       the tooltip goes over it. */
+    p = lvOverlayTipPlace(300.0f, 560.0f, 200.0f, 100.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.x, 316.0f) && ovl_near(p.y, 444.0f), "over the mouse: %f %f",
+                  (double)p.x, (double)p.y);
+    /* No room to the right: it moves left until its right edge is in. */
+    p = lvOverlayTipPlace(950.0f, 560.0f, 200.0f, 100.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.x, 796.0f) && ovl_near(p.y, 444.0f), "at the right edge: %f %f",
+                  (double)p.x, (double)p.y);
+    /* A long list, higher than the room over the mouse and than the room
+       under it: it moves up until its bottom edge is in, beside the mouse. */
+    p = lvOverlayTipPlace(300.0f, 400.0f, 200.0f, 450.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.x, 316.0f) && ovl_near(p.y, 146.0f), "long: %f %f", (double)p.x,
+                  (double)p.y);
+    /* The same at the right edge: beside the mouse on its left. */
+    p = lvOverlayTipPlace(900.0f, 400.0f, 200.0f, 450.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.x, 684.0f) && ovl_near(p.y, 146.0f), "long, on the left: %f %f",
+                  (double)p.x, (double)p.y);
+    /* Too wide for either side of the mouse: its right edge is in. */
+    p = lvOverlayTipPlace(500.0f, 400.0f, 800.0f, 450.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.x, 196.0f) && ovl_near(p.y, 146.0f), "long and wide: %f %f",
+                  (double)p.x, (double)p.y);
+    /* As big as the room: it fills it. */
+    p = lvOverlayTipPlace(500.0f, 560.0f, 992.0f, 592.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.x, 4.0f) && ovl_near(p.y, 4.0f), "the whole room: %f %f",
+                  (double)p.x, (double)p.y);
+    /* Bigger than the room: it starts at the top and at the left edge. */
+    p = lvOverlayTipPlace(500.0f, 560.0f, 1500.0f, 900.0f, x0, y0, x1, y1, gap);
+    UT_ASSERT_MSG(ovl_near(p.x, 4.0f) && ovl_near(p.y, 4.0f), "too big: %f %f", (double)p.x,
+                  (double)p.y);
+
+    /* Every tooltip that is no bigger than the room is all in the room,
+       wherever the mouse is. */
+    for (w = 50; w <= 992; w += 157) {
+        for (h = 20; h <= 592; h += 143) {
+            for (mx = 0; mx <= 1000; mx += 50) {
+                for (my = 0; my <= 600; my += 50) {
+                    p = lvOverlayTipPlace((float)mx, (float)my, (float)w, (float)h, x0, y0, x1,
+                                          y1, gap);
+                    UT_ASSERT_MSG(p.x >= x0 && p.y >= y0 && p.x + (float)w <= x1 &&
+                                      p.y + (float)h <= y1,
+                                  "%d by %d, mouse %d %d: at %f %f", w, h, mx, my, (double)p.x,
+                                  (double)p.y);
+                }
+            }
+        }
+    }
+    /* Sizes that are not sizes. */
+    p = lvOverlayTipPlace(300.0f, 200.0f, -5.0f, -5.0f, x0, y0, x1, y1, -3.0f);
+    UT_ASSERT_MSG(ovl_near(p.x, 300.0f) && ovl_near(p.y, 200.0f), "no size: %f %f", (double)p.x,
+                  (double)p.y);
+
+    /* The lines at their own size while they go in, in one column or more. */
+    s = lvOverlayTipScale(3, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(ovl_near(s, 1.0f), "3 lines: %f", (double)s);
+    s = lvOverlayTipScale(50, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(ovl_near(s, 1.0f), "50 lines fill the room: %f", (double)s);
+    s = lvOverlayTipScale(0, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(ovl_near(s, 1.0f), "no lines: %f", (double)s);
+    /* One line too many. One step smaller is still 10 lines in each of 5
+       columns; two steps are 11 lines, and then they all go in. */
+    s = lvOverlayTipScale(51, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(ovl_near(s, 0.90f), "51 lines: %f", (double)s);
+    g = lvOverlayTipColumns(51, 17.0f * s, 170.0f, 200.0f * s, 1000.0f);
+    UT_ASSERT_MSG(g.fits && g.cols * g.rows >= 51 && (float)g.rows * 17.0f * s <= 170.0f &&
+                      (float)g.cols * 200.0f * s <= 1000.0f,
+                  "51 lines at %f: %d columns of %d", (double)s, g.cols, g.rows);
+    /* Many more: as much smaller as it takes, and no smaller. */
+    s = lvOverlayTipScale(120, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(s < 0.95f && s > LV_OVERLAY_TIP_SCALE_MIN, "120 lines: %f", (double)s);
+    g = lvOverlayTipColumns(120, 17.0f * s, 170.0f, 200.0f * s, 1000.0f);
+    UT_ASSERT_MSG(g.fits && g.cols * g.rows >= 120, "120 lines at %f: %d columns of %d",
+                  (double)s, g.cols, g.rows);
+    g = lvOverlayTipColumns(120, 17.0f * (s + LV_OVERLAY_TIP_SCALE_STEP), 170.0f,
+                            200.0f * (s + LV_OVERLAY_TIP_SCALE_STEP), 1000.0f);
+    UT_ASSERT_MSG(!g.fits, "120 lines do not go in one step bigger than %f", (double)s);
+    /* More than can be read at any size: the least size, and every line is
+       still in the columns. */
+    s = lvOverlayTipScale(5000, 17.0f, 170.0f, 200.0f, 1000.0f);
+    UT_ASSERT_MSG(ovl_near(s, LV_OVERLAY_TIP_SCALE_MIN), "5000 lines: %f", (double)s);
+    g = lvOverlayTipColumns(5000, 17.0f * s, 170.0f, 200.0f * s, 1000.0f);
+    UT_ASSERT_MSG(g.cols * g.rows >= 5000, "5000 lines: %d columns of %d", g.cols, g.rows);
+    return 0;
+}
+
+int run_lv_event_overlay_choice(void) {
+    char text[256];
+    int kind;
+
+    /* Each kind alone, and every set of kinds, comes back as it went. */
+    for (kind = 0; kind < LV_EVK_COUNT; kind++) {
+        lvOverlayMaskToText(1u << kind, text, sizeof(text));
+        UT_ASSERT_MSG(strcmp(text, lvEventKindKey(kind)) == 0, "kind %d is \"%s\"", kind, text);
+        UT_ASSERT_MSG(lvOverlayMaskFromText(text) == (1u << kind), "kind %d reads back", kind);
+    }
+    {
+        unsigned mask;
+        for (mask = 0; mask <= LV_OVERLAY_ALL_MASK; mask++) {
+            lvOverlayMaskToText(mask, text, sizeof(text));
+            UT_ASSERT_MSG(lvOverlayMaskFromText(text) == mask, "set %u is \"%s\"", mask, text);
+        }
+    }
+
+    /* The default: what changes the score. */
+    lvOverlayMaskToText(LV_OVERLAY_DEFAULT_MASK, text, sizeof(text));
+    UT_ASSERT_MSG(strcmp(text, "pill_captured,pill_stolen,base_captured,base_stolen,"
+                               "builder_lost,tank_killed") == 0, "default is \"%s\"", text);
+
+    /* An empty choice has a name of its own and stays empty. */
+    lvOverlayMaskToText(0, text, sizeof(text));
+    UT_ASSERT_MSG(strcmp(text, LV_OVERLAY_KEY_NONE) == 0, "empty is \"%s\"", text);
+    UT_ASSERT_MSG(lvOverlayMaskFromText(LV_OVERLAY_KEY_NONE) == 0, "none reads as a kind");
+    UT_ASSERT_MSG(lvOverlayMaskFromText("") == 0, "empty text");
+    UT_ASSERT_MSG(lvOverlayMaskFromText(NULL) == 0, "no text");
+
+    /* Names from a newer build are ignored; the ones known are kept. */
+    UT_ASSERT_MSG(lvOverlayMaskFromText("chat,pill_placed,tank_killed") ==
+                  ((1u << LV_EVK_CHAT) | (1u << LV_EVK_TANK_KILLED)), "unknown name");
+    UT_ASSERT_MSG(lvOverlayMaskFromText("pill_placed") == 0, "only an unknown name");
+    /* "all" is the Events panel's filter, not a kind. */
+    UT_ASSERT_MSG(lvOverlayMaskFromText("all") == 0, "all reads as a kind");
+    /* Spaces, empty parts and a name twice. */
+    UT_ASSERT_MSG(lvOverlayMaskFromText(" chat , ,game,,chat,") ==
+                  ((1u << LV_EVK_CHAT) | (1u << LV_EVK_GAME)), "untidy text");
+    /* A part of a name is not the name. */
+    UT_ASSERT_MSG(lvOverlayMaskFromText("cha,tank") == 0, "half a name");
+    /* A name longer than any kind's. */
+    UT_ASSERT_MSG(lvOverlayMaskFromText("a_very_long_name_that_no_kind_of_event_has_at_all,chat") ==
+                  (1u << LV_EVK_CHAT), "long name");
+
+    /* A buffer too small holds whole names only. */
+    {
+        char tight[14];
+        lvOverlayMaskToText((1u << LV_EVK_CHAT) | (1u << LV_EVK_GAME) | (1u << LV_EVK_PLAYER),
+                            tight, sizeof(tight));
+        UT_ASSERT_MSG(strcmp(tight, "player,chat") == 0, "small buffer: \"%s\"", tight);
+        lvOverlayMaskToText(1u << LV_EVK_PILL_CAPTURED, tight, 4);
+        UT_ASSERT_MSG(strcmp(tight, "non") == 0 || tight[0] == '\0', "tiny buffer: \"%s\"", tight);
+    }
+    return 0;
+}
+
+/* The sheet and the cell of the marker of an event of this kind, done by a
+   team with this palette entry (hasTeam false: no team). */
+static LvMapItemSprite eo_marker(int kind, bool hasTeam, int palette) {
+    return lvPanelItemSprite(lvOverlayKindPicture(kind) == LV_OVERLAY_PIC_BASE, hasTeam, palette);
+}
+
+int run_lv_event_overlay_picture(void) {
+    LvMapItemSprite s;
+    int kind, palette;
+
+    /* Which kinds have a picture. */
+    UT_ASSERT_MSG(lvOverlayKindPicture(LV_EVK_PILL_CAPTURED) == LV_OVERLAY_PIC_PILL, "pill captured");
+    UT_ASSERT_MSG(lvOverlayKindPicture(LV_EVK_PILL_STOLEN) == LV_OVERLAY_PIC_PILL, "pill stolen");
+    UT_ASSERT_MSG(lvOverlayKindPicture(LV_EVK_BASE_CAPTURED) == LV_OVERLAY_PIC_BASE, "base captured");
+    UT_ASSERT_MSG(lvOverlayKindPicture(LV_EVK_BASE_STOLEN) == LV_OVERLAY_PIC_BASE, "base stolen");
+    for (kind = LV_EVK_BUILDER_LOST; kind < LV_EVK_COUNT; kind++) {
+        UT_ASSERT_MSG(lvOverlayKindPicture(kind) == LV_OVERLAY_PIC_NONE, "the others keep an icon");
+    }
+    UT_ASSERT_MSG(lvOverlayKindPicture(-1) == LV_OVERLAY_PIC_NONE, "no kind: no picture");
+
+    /* A team's pillbox: its row of items.bmp, the column of full armour. */
+    for (palette = 0; palette < LV_TEAM_SHEET_ROWS; palette++) {
+        int row = palette;
+        s = eo_marker(LV_EVK_PILL_CAPTURED, true, palette);
+        UT_ASSERT_MSG(!s.fromAtlas && s.col == 15 && s.row == row, "a team's pillbox, whole");
+        s = eo_marker(LV_EVK_PILL_STOLEN, true, palette);
+        UT_ASSERT_MSG(!s.fromAtlas && s.col == 15 && s.row == row, "stolen: the same picture");
+        s = eo_marker(LV_EVK_BASE_CAPTURED, true, palette);
+        UT_ASSERT_MSG(!s.fromAtlas && s.col == LV_ITEMS_COL_BASE && s.row == row, "a team's base");
+        s = eo_marker(LV_EVK_BASE_STOLEN, true, palette);
+        UT_ASSERT_MSG(!s.fromAtlas && s.col == LV_ITEMS_COL_BASE && s.row == row, "stolen: the same");
+        /* The same cell the map draws for that team. */
+        UT_ASSERT_MSG(s.row == lvMapBaseSprite(false, palette).row, "the map's own row");
+    }
+    /* A red team is red here as on the map. */
+    s = eo_marker(LV_EVK_PILL_CAPTURED, true, LV_TEAM_PALETTE_RED);
+    UT_ASSERT_MSG(s.row == LV_TEAM_PALETTE_RED, "a red team is not in the red row");
+
+    /* No team: the game's own tiles. The red pillbox, the neutral base. */
+    s = eo_marker(LV_EVK_PILL_CAPTURED, false, 3);
+    UT_ASSERT_MSG(s.fromAtlas && s.tile == LV_TILE_PILL_EVIL_15, "the game's red pillbox, whole");
+    s = eo_marker(LV_EVK_BASE_CAPTURED, false, 3);
+    UT_ASSERT_MSG(s.fromAtlas && s.tile == LV_TILE_BASE_NEUTRAL, "the game's neutral base");
+
+    /* A marker of several events. */
+    {
+        int pills[3] = { LV_EVK_PILL_CAPTURED, LV_EVK_PILL_STOLEN, LV_EVK_PILL_CAPTURED };
+        int bases[2] = { LV_EVK_BASE_STOLEN, LV_EVK_BASE_CAPTURED };
+        int mixed[2] = { LV_EVK_PILL_CAPTURED, LV_EVK_BASE_CAPTURED };
+        int other[2] = { LV_EVK_PILL_CAPTURED, LV_EVK_CHAT };
+        int chat[2] = { LV_EVK_CHAT, LV_EVK_CHAT };
+        UT_ASSERT_MSG(lvOverlayClusterPicture(pills, 3) == LV_OVERLAY_PIC_PILL, "only pillboxes");
+        UT_ASSERT_MSG(lvOverlayClusterPicture(bases, 2) == LV_OVERLAY_PIC_BASE, "only bases");
+        UT_ASSERT_MSG(lvOverlayClusterPicture(mixed, 2) == LV_OVERLAY_PIC_NONE, "both: none");
+        UT_ASSERT_MSG(lvOverlayClusterPicture(other, 2) == LV_OVERLAY_PIC_NONE, "with chat: none");
+        UT_ASSERT_MSG(lvOverlayClusterPicture(chat, 2) == LV_OVERLAY_PIC_NONE, "no picture kinds");
+        UT_ASSERT_MSG(lvOverlayClusterPicture(pills, 0) == LV_OVERLAY_PIC_NONE, "none at all");
+    }
+
+    /* Sharp at a whole number of times 16 pixels, blended at any other. */
+    UT_ASSERT_MSG(lvItemPictureSharp(16.0f) && lvItemPictureSharp(32.0f) && lvItemPictureSharp(48.0f),
+                  "16, 32, 48: sharp");
+    UT_ASSERT_MSG(!lvItemPictureSharp(12.0f) && !lvItemPictureSharp(13.0f) && !lvItemPictureSharp(24.0f) &&
+                  !lvItemPictureSharp(26.0f) && !lvItemPictureSharp(8.0f) && !lvItemPictureSharp(19.5f),
+                  "any other size: blended");
+    return 0;
+}
+
+/* The one list of ticked kinds the Controls panel ("Overlay events") and
+   the Events panel (its filter) both use: which events a choice shows. */
+int run_lv_event_kinds_filter(void) {
+    int counts[LV_EVK_COUNT];
+    int kind;
+    unsigned mask;
+
+    /* One bit a kind, in the order of the list. */
+    for (kind = 0; kind < LV_EVK_COUNT; kind++) {
+        UT_ASSERT_MSG(lvEventKindTicked(LV_OVERLAY_ALL_MASK, kind), "all: kind %d is shown", kind);
+        UT_ASSERT_MSG(!lvEventKindTicked(0u, kind), "none: kind %d is not", kind);
+        UT_ASSERT_MSG(lvEventKindTicked(1u << kind, kind), "its own bit: kind %d", kind);
+        UT_ASSERT_MSG(!lvEventKindTicked(LV_OVERLAY_ALL_MASK & ~(1u << kind), kind),
+                      "every kind but %d", kind);
+    }
+    UT_ASSERT_MSG(LV_EVK_COUNT == 10, "ten kinds (%d)", (int)LV_EVK_COUNT);
+    /* A kind out of range is never shown, whatever the bits say. */
+    UT_ASSERT_MSG(!lvEventKindTicked(0xFFFFFFFFu, -1), "kind -1");
+    UT_ASSERT_MSG(!lvEventKindTicked(0xFFFFFFFFu, LV_EVK_COUNT), "one past the last kind");
+    UT_ASSERT_MSG(!lvEventKindTicked(0xFFFFFFFFu, 40), "past the bits of the mask");
+
+    /* A list of events through a choice: the rows of the Events panel, the
+       markers of the lane. */
+    {
+        const int events[8] = { LV_EVK_GAME, LV_EVK_TANK_KILLED, LV_EVK_CHAT, LV_EVK_TANK_KILLED,
+                                LV_EVK_PILL_CAPTURED, LV_EVK_CHAT, LV_EVK_HIGHLIGHT, LV_EVK_TANK_KILLED };
+        int shown[8];
+        int n = 0, i;
+        mask = (1u << LV_EVK_TANK_KILLED) | (1u << LV_EVK_PILL_CAPTURED);
+        for (i = 0; i < 8; i++) {
+            if (lvEventKindTicked(mask, events[i])) shown[n++] = i;
+        }
+        UT_ASSERT_MSG(n == 4 && shown[0] == 1 && shown[1] == 3 && shown[2] == 4 && shown[3] == 7,
+                      "tank kills and pillboxes, in the order of the list (%d)", n);
+        memset(counts, 0, sizeof(counts));
+        for (i = 0; i < 8; i++) counts[events[i]]++;
+        UT_ASSERT_MSG(lvEventKindsTickedCount(mask, counts) == 4, "the number on the closed list");
+        UT_ASSERT_MSG(lvEventKindsTickedCount(LV_OVERLAY_ALL_MASK, counts) == 8, "all of them");
+        UT_ASSERT_MSG(lvEventKindsTickedCount(0u, counts) == 0, "none ticked");
+        UT_ASSERT_MSG(lvEventKindsTickedCount(1u << LV_EVK_PLAYER, counts) == 0,
+                      "a kind the log has no event of: an empty list");
+        UT_ASSERT_MSG(lvEventKindsTickedCount(mask, NULL) == 0, "no counts");
+    }
+
+    /* What the closed filter says in the room it has: a combo adds 8 of
+       padding and an arrow of 19 to its text. "All events (412)" is 112
+       wide, "(412)" 35. */
+    UT_ASSERT_MSG(lvEventsLabelPick(139.0f, 112.0f, 35.0f, 27.0f) == LV_EVENTS_LABEL_FULL, "exact fit");
+    UT_ASSERT_MSG(lvEventsLabelPick(138.0f, 112.0f, 35.0f, 27.0f) == LV_EVENTS_LABEL_COUNT, "one short");
+    UT_ASSERT_MSG(lvEventsLabelPick(94.0f, 112.0f, 35.0f, 27.0f) == LV_EVENTS_LABEL_COUNT,
+                  "the narrowest sidebar (110 less its padding)");
+    UT_ASSERT_MSG(lvEventsLabelPick(62.0f, 112.0f, 35.0f, 27.0f) == LV_EVENTS_LABEL_COUNT, "the number, exact");
+    UT_ASSERT_MSG(lvEventsLabelPick(61.0f, 112.0f, 35.0f, 27.0f) == LV_EVENTS_LABEL_ARROW, "the arrow alone");
+    UT_ASSERT_MSG(lvEventsLabelPick(0.0f, 112.0f, 35.0f, 27.0f) == LV_EVENTS_LABEL_ARROW, "no room");
+    return 0;
+}
+
+/* The Events panel's own choice in the preferences ("Events.Kinds"), and the
+   old one-kind filter ("Events.Filter") taken over when no list was saved. */
+int run_lv_event_kinds_prefs(void) {
+    char text[256];
+    unsigned mask;
+    int kind;
+
+    /* Written and read back: every choice of one kind, all, none, a mix. */
+    for (kind = 0; kind < LV_EVK_COUNT; kind++) {
+        lvOverlayMaskToText(1u << kind, text, sizeof(text));
+        UT_ASSERT_MSG(lvEventsMaskFromPrefs(text, "all") == (1u << kind), "kind %d alone (%s)", kind, text);
+    }
+    lvOverlayMaskToText(LV_OVERLAY_ALL_MASK, text, sizeof(text));
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs(text, "chat") == LV_OVERLAY_ALL_MASK, "all, read back");
+    mask = (1u << LV_EVK_TANK_KILLED) | (1u << LV_EVK_CHAT) | (1u << LV_EVK_HIGHLIGHT);
+    lvOverlayMaskToText(mask, text, sizeof(text));
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs(text, "all") == mask, "a mix, read back (%s)", text);
+    /* None is a choice too, and is kept: it is not "nothing saved". */
+    lvOverlayMaskToText(0u, text, sizeof(text));
+    UT_ASSERT_MSG(strcmp(text, "none") == 0, "none is written as a word");
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs(text, "all") == 0u, "none, read back");
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs(text, lvEventKindKey(LV_EVK_CHAT)) == 0u,
+                  "a saved list wins over the old filter");
+
+    /* Nothing saved: every kind, the default. */
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs("", "all") == LV_OVERLAY_ALL_MASK, "a new install");
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs(NULL, NULL) == LV_OVERLAY_ALL_MASK, "no text at all");
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs("", "") == LV_OVERLAY_ALL_MASK, "an empty old filter");
+    /* Nothing saved but the old filter: its one kind alone. */
+    for (kind = 0; kind < LV_EVK_COUNT; kind++) {
+        UT_ASSERT_MSG(lvEventsMaskFromPrefs("", lvEventKindKey(kind)) == (1u << kind),
+                      "the old filter of kind %d", kind);
+        UT_ASSERT_MSG(lvEventsMaskFromPrefs(NULL, lvEventKindKey(kind)) == (1u << kind),
+                      "the old filter of kind %d, no list", kind);
+    }
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs("", "a_newer_kind") == LV_OVERLAY_ALL_MASK,
+                  "an old filter this build does not know: all");
+
+    /* The panel's choice and the one of "Overlay events" are two texts: one
+       does not read as the other's default. */
+    UT_ASSERT_MSG(lvEventsMaskFromPrefs("", "all") != LV_OVERLAY_DEFAULT_MASK,
+                  "the panel's default is all, not the lane's six");
+    return 0;
+}
+
+/* The sheet and the cell the marker of an event is drawn from, as the draw
+   function gets to it: the marker first, then the picture of that marker. */
+static LvMapItemSprite eo_row_sprite(int kind, int team, int palette) {
+    LvEventMarker m = lvEventMarker(kind, team);
+    return lvPanelItemSprite(m.picture == LV_OVERLAY_PIC_BASE, m.team >= 0, palette);
+}
+
+int run_lv_event_marker(void) {
+    LvEventMarker m;
+    LvMapItemSprite a, b;
+    int kind, team;
+
+    /* A line of the Events panel: a pillbox captured by team 3. The picture
+       is the pillbox, in the colour of team 3, the new owner. */
+    m = lvEventMarker(LV_EVK_PILL_CAPTURED, 3);
+    UT_ASSERT_MSG(m.picture == LV_OVERLAY_PIC_PILL, "pill captured: the pillbox");
+    UT_ASSERT(m.kind == LV_EVK_PILL_CAPTURED);
+    UT_ASSERT(m.team == 3);
+    m = lvEventMarker(LV_EVK_PILL_STOLEN, 0);
+    UT_ASSERT_MSG(m.picture == LV_OVERLAY_PIC_PILL, "pill stolen: the pillbox");
+    UT_ASSERT(m.team == 0);
+
+    /* A pillbox event that names no team: the game's red pillbox. */
+    m = lvEventMarker(LV_EVK_PILL_CAPTURED, -1);
+    UT_ASSERT_MSG(m.picture == LV_OVERLAY_PIC_PILL, "no team: still the pillbox");
+    UT_ASSERT(m.team == -1);
+
+    /* A base: the base of the new owner, or the neutral base. */
+    m = lvEventMarker(LV_EVK_BASE_CAPTURED, 15);
+    UT_ASSERT_MSG(m.picture == LV_OVERLAY_PIC_BASE, "base captured: the base");
+    UT_ASSERT(m.team == 15);
+    m = lvEventMarker(LV_EVK_BASE_STOLEN, -1);
+    UT_ASSERT_MSG(m.picture == LV_OVERLAY_PIC_BASE, "base stolen: the base");
+    UT_ASSERT(m.team == -1);
+
+    /* How each is drawn: the two pictures of the map, the builder with an
+       X for a builder lost (with or with no team), the icon for the rest. */
+    UT_ASSERT(lvEventMarker(LV_EVK_PILL_CAPTURED, 3).drawing == LV_MARKER_PILL);
+    UT_ASSERT(lvEventMarker(LV_EVK_PILL_STOLEN, -1).drawing == LV_MARKER_PILL);
+    UT_ASSERT(lvEventMarker(LV_EVK_BASE_CAPTURED, 3).drawing == LV_MARKER_BASE);
+    UT_ASSERT(lvEventMarker(LV_EVK_BASE_STOLEN, -1).drawing == LV_MARKER_BASE);
+    UT_ASSERT_MSG(lvEventMarker(LV_EVK_BUILDER_LOST, 3).drawing == LV_MARKER_BUILDER_LOST,
+                  "builder lost: the builder with an X");
+    UT_ASSERT_MSG(lvEventMarker(LV_EVK_BUILDER_LOST, -1).drawing == LV_MARKER_BUILDER_LOST,
+                  "builder lost, no team: the same");
+    UT_ASSERT_MSG(lvEventMarker(LV_EVK_BUILDER_LOST, 3).team == 3,
+                  "builder lost keeps the team for the line round it");
+    for (kind = 0; kind < LV_EVK_COUNT; kind++) {
+        if (kind == LV_EVK_BUILDER_LOST || lvOverlayKindPicture(kind) != LV_OVERLAY_PIC_NONE) continue;
+        UT_ASSERT_MSG(lvEventMarker(kind, 2).drawing == LV_MARKER_ICON, "kind %d: its icon", kind);
+    }
+    UT_ASSERT_MSG(lvEventMarker(-1, 2).drawing == LV_MARKER_ICON, "unknown kind: the game icon");
+
+    /* The builder is drawn a whole number of times his 3 by 4 pixels, the
+       most that go in the room inside the marker's edge, and never wider or
+       higher than that room once it holds him at all. */
+    UT_ASSERT(lvMarkerBuilderScale(9.0f) == 2);   /* a marker of 13 */
+    UT_ASSERT(lvMarkerBuilderScale(10.0f) == 2);  /* a marker of 14 */
+    UT_ASSERT(lvMarkerBuilderScale(8.0f) == 2);
+    UT_ASSERT(lvMarkerBuilderScale(7.9f) == 1);
+    UT_ASSERT(lvMarkerBuilderScale(12.0f) == 3);  /* a marker of 16 */
+    UT_ASSERT(lvMarkerBuilderScale(22.0f) == 5);  /* a marker of 26 */
+    UT_ASSERT(lvMarkerBuilderScale(2.0f) == 1);
+    UT_ASSERT(lvMarkerBuilderScale(0.0f) == 1);
+    {
+        float room;
+        for (room = 4.0f; room <= 40.0f; room += 0.5f) {
+            int n = lvMarkerBuilderScale(room);
+            UT_ASSERT_MSG((float)(n * LV_MARKER_BUILDER_H) <= room &&
+                          (float)(n * LV_MARKER_BUILDER_W) <= room,
+                          "room %g: %d times goes in", (double)room, n);
+            UT_ASSERT_MSG((float)((n + 1) * LV_MARKER_BUILDER_H) > room,
+                          "room %g: %d times is the most", (double)room, n);
+        }
+    }
+
+    /* Every other kind: its own icon, with the team for the line round it. */
+    for (kind = LV_EVK_BUILDER_LOST; kind < LV_EVK_COUNT; kind++) {
+        m = lvEventMarker(kind, 5);
+        UT_ASSERT_MSG(m.picture == LV_OVERLAY_PIC_NONE, "kind %d: an icon", kind);
+        UT_ASSERT(m.kind == kind);
+        UT_ASSERT(m.team == 5);
+        m = lvEventMarker(kind, -1);
+        UT_ASSERT(m.kind == kind);
+        UT_ASSERT(m.team == -1);
+    }
+
+    /* Two lines of one kind with two teams are two markers; the list of
+       kinds asks with no team, and the answer has the same picture. */
+    for (kind = 0; kind < LV_EVK_COUNT; kind++) {
+        LvEventMarker row1 = lvEventMarker(kind, 1);
+        LvEventMarker row2 = lvEventMarker(kind, 2);
+        LvEventMarker key = lvEventMarker(kind, -1);
+        UT_ASSERT_MSG(row1.team != row2.team, "kind %d: the team is the line's own", kind);
+        UT_ASSERT_MSG(row1.picture == key.picture && row2.picture == key.picture &&
+                      row1.kind == key.kind && row2.kind == key.kind,
+                      "kind %d: line, lane and list of kinds agree", kind);
+    }
+
+    /* A kind no build knows is a game event, as the Events panel files it;
+       a team that is not one of the 16 is no team. */
+    m = lvEventMarker(-1, 2);
+    UT_ASSERT(m.kind == LV_EVK_GAME);
+    UT_ASSERT_MSG(m.picture == LV_OVERLAY_PIC_NONE, "unknown kind: an icon");
+    UT_ASSERT(m.team == 2);
+    m = lvEventMarker(LV_EVK_COUNT, 2);
+    UT_ASSERT(m.kind == LV_EVK_GAME);
+    for (team = 16; team < 20; team++) {
+        m = lvEventMarker(LV_EVK_PILL_CAPTURED, team);
+        UT_ASSERT(m.team == -1);
+    }
+    m = lvEventMarker(LV_EVK_CHAT, -7);
+    UT_ASSERT(m.team == -1);
+
+    /* Down to the cell of the sheet: a pillbox taken by a team is not the
+       red pillbox, a base taken by a team is not the neutral base, and a
+       pillbox is never a base. */
+    a = eo_row_sprite(LV_EVK_PILL_CAPTURED, 3, 3);
+    b = eo_row_sprite(LV_EVK_PILL_CAPTURED, -1, 0);
+    UT_ASSERT_MSG(a.fromAtlas != b.fromAtlas || a.tile != b.tile || a.col != b.col || a.row != b.row,
+                  "an owned pillbox is not the red one");
+    a = eo_row_sprite(LV_EVK_BASE_STOLEN, 3, 3);
+    b = eo_row_sprite(LV_EVK_BASE_STOLEN, -1, 0);
+    UT_ASSERT_MSG(a.fromAtlas != b.fromAtlas || a.tile != b.tile || a.col != b.col || a.row != b.row,
+                  "an owned base is not the neutral one");
+    a = eo_row_sprite(LV_EVK_PILL_STOLEN, 3, 3);
+    b = eo_row_sprite(LV_EVK_BASE_STOLEN, 3, 3);
+    UT_ASSERT_MSG(a.fromAtlas != b.fromAtlas || a.tile != b.tile || a.col != b.col || a.row != b.row,
+                  "a pillbox is not a base");
+    return 0;
+}
+
+/* ---- Map pings ------------------------------------------------------------ */
+
+/* The store keeps the kind and the place of every ping, in the order of
+   their times, keeps a ping the decoder passes twice only once, and says
+   which pings are on the map at a time. */
+int run_lv_ping_store(void) {
+    static LvPingStore st;
+    int first = -1, n, i;
+
+    lvPingStoreClear(&st);
+    UT_ASSERT(lvPingStoreShown(&st, 5000u, PING_DISPLAY_MS, &first) == 0);
+
+    /* Three pings, given out of order as a seek back gives them. */
+    UT_ASSERT(lvPingStoreAdd(&st, 20000u, 3, PING_KIND_ATTACK, 0x1234, 0xABCD));
+    UT_ASSERT(lvPingStoreAdd(&st, 30000u, 1, PING_KIND_ON_MY_WAY, 0x0A80, 0x6F10));
+    UT_ASSERT(lvPingStoreAdd(&st, 10000u, 7, PING_KIND_CAUTION, 0x8000, 0x0100));
+    UT_ASSERT(st.count == 3);
+    UT_ASSERT(st.rec[0].timeMs == 10000u && st.rec[1].timeMs == 20000u && st.rec[2].timeMs == 30000u);
+    /* Kind and place as given: every byte, neither swapped nor cut. */
+    UT_ASSERT_MSG(st.rec[1].sender == 3 && st.rec[1].kind == PING_KIND_ATTACK &&
+                      st.rec[1].worldX == 0x1234 && st.rec[1].worldY == 0xABCD,
+                  "the attack ping: sender %u kind %u at %04x,%04x", st.rec[1].sender,
+                  st.rec[1].kind, st.rec[1].worldX, st.rec[1].worldY);
+    UT_ASSERT(st.rec[0].sender == 7 && st.rec[0].kind == PING_KIND_CAUTION &&
+              st.rec[0].worldX == 0x8000 && st.rec[0].worldY == 0x0100);
+    UT_ASSERT(st.rec[2].sender == 1 && st.rec[2].kind == PING_KIND_ON_MY_WAY &&
+              st.rec[2].worldX == 0x0A80 && st.rec[2].worldY == 0x6F10);
+    /* The map square is the high byte of each. */
+    UT_ASSERT((st.rec[1].worldX >> 8) == 0x12 && (st.rec[1].worldY >> 8) == 0xAB);
+
+    /* The same record again (a seek, the pass that lists the events): not
+       kept twice, at the same time or a little off it, before or after. */
+    UT_ASSERT(!lvPingStoreAdd(&st, 20000u, 3, PING_KIND_ATTACK, 0x1234, 0xABCD));
+    UT_ASSERT(!lvPingStoreAdd(&st, 20020u, 3, PING_KIND_ATTACK, 0x1234, 0xABCD));
+    UT_ASSERT(!lvPingStoreAdd(&st, 19980u, 3, PING_KIND_ATTACK, 0x1234, 0xABCD));
+    UT_ASSERT(!lvPingStoreAdd(&st, 20000u + LV_PING_SAME_MS - 1u, 3, PING_KIND_ATTACK, 0x1234, 0xABCD));
+    UT_ASSERT(st.count == 3);
+    /* Another sender, kind or place at the same time is another ping, and
+       so is the same ping sent again later. */
+    UT_ASSERT(lvPingStoreAdd(&st, 20000u, 4, PING_KIND_ATTACK, 0x1234, 0xABCD));
+    UT_ASSERT(lvPingStoreAdd(&st, 20000u, 3, PING_KIND_ASSIST, 0x1234, 0xABCD));
+    UT_ASSERT(lvPingStoreAdd(&st, 20000u, 3, PING_KIND_ATTACK, 0x1334, 0xABCD));
+    UT_ASSERT(lvPingStoreAdd(&st, 20000u + LV_PING_SAME_MS, 3, PING_KIND_ATTACK, 0x1234, 0xABCD));
+    UT_ASSERT(st.count == 7);
+    for (i = 1; i < st.count; i++) {
+        UT_ASSERT_MSG(st.rec[i - 1].timeMs <= st.rec[i].timeMs, "out of order at %d", i);
+    }
+
+    /* What is on the map at a time: the pings of the five seconds before
+       it. The one at 10000 from 10000 to 14999. */
+    UT_ASSERT(lvPingStoreShown(&st, 9999u, PING_DISPLAY_MS, &first) == 0);
+    UT_ASSERT(lvPingStoreShown(&st, 10000u, PING_DISPLAY_MS, &first) == 1 && first == 0);
+    UT_ASSERT(lvPingStoreShown(&st, 14999u, PING_DISPLAY_MS, &first) == 1 && first == 0);
+    UT_ASSERT(lvPingStoreShown(&st, 15000u, PING_DISPLAY_MS, &first) == 0);
+    /* The four at 20000 and the one just after it, the oldest first. */
+    n = lvPingStoreShown(&st, 20200u, PING_DISPLAY_MS, &first);
+    UT_ASSERT_MSG(n == 5 && first == 1, "at 20200: %d from %d", n, first);
+    UT_ASSERT(st.rec[first + n - 1].timeMs == 20000u + LV_PING_SAME_MS);
+    /* A seek back to before them: none, and they are still kept. */
+    UT_ASSERT(lvPingStoreShown(&st, 19000u, PING_DISPLAY_MS, &first) == 0);
+    UT_ASSERT(st.count == 7);
+    UT_ASSERT(lvPingStoreShown(&st, 32000u, PING_DISPLAY_MS, &first) == 1 && first == 6);
+
+    /* A full store drops its oldest, and stays in order. */
+    lvPingStoreClear(&st);
+    for (i = 0; i < LV_PING_STORE_MAX; i++) {
+        UT_ASSERT(lvPingStoreAdd(&st, 1000u * (uint32_t)(i + 1), 2, PING_KIND_STANDARD,
+                                 (uint16_t)i, (uint16_t)(i * 3)));
+    }
+    UT_ASSERT(st.count == LV_PING_STORE_MAX);
+    UT_ASSERT(lvPingStoreAdd(&st, 1000u * (uint32_t)(LV_PING_STORE_MAX + 1), 2, PING_KIND_ATTACK, 9, 9));
+    UT_ASSERT(st.count == LV_PING_STORE_MAX);
+    UT_ASSERT(st.rec[0].timeMs == 2000u && st.rec[0].worldX == 1);
+    UT_ASSERT(st.rec[LV_PING_STORE_MAX - 1].kind == PING_KIND_ATTACK);
+    /* One older than all of a full store is not taken. */
+    UT_ASSERT(!lvPingStoreAdd(&st, 500u, 2, PING_KIND_ATTACK, 9, 9));
+
+    /* Who sees a ping. The view of all teams: every one. */
+    UT_ASSERT(lvPingSeen(false, 3, 5, false, 0, 0));
+    UT_ASSERT(lvPingSeen(false, 3, 5, false, 1, 2));
+    /* One player's view: its own, an ally's, and its lobby team's. */
+    UT_ASSERT(lvPingSeen(true, 5, 5, false, 0, 0));
+    UT_ASSERT(lvPingSeen(true, 3, 5, true, 0, 0));
+    UT_ASSERT(lvPingSeen(true, 3, 5, true, 1, 2));
+    UT_ASSERT(lvPingSeen(true, 3, 5, false, 2, 2));
+    /* Not another team's, and "no team" (0) is not a team two players share. */
+    UT_ASSERT(!lvPingSeen(true, 3, 5, false, 1, 2));
+    UT_ASSERT(!lvPingSeen(true, 3, 5, false, 0, 0));
+    UT_ASSERT(!lvPingSeen(true, 3, 5, false, 0, 2));
+    UT_ASSERT(!lvPingSeen(true, 3, 5, false, 2, 0));
+    return 0;
+}
+
+/* A chat event that is a ping has the game's icon for its kind: one picture
+   for each of the game's kinds, each with its own colour and name. */
+int run_lv_ping_marker(void) {
+    static const char *const files[PING_KIND_COUNT] = {
+        "standard.svg", "caution.svg", "assist.svg", "attack.svg", "onmyway.svg", "botcommand.svg"
+    };
+    LvEventMarker m;
+    int k, j;
+
+    /* The viewer's two counts of the kinds are the game's. */
+    UT_ASSERT_MSG(LV_MARKER_PING_KINDS == PING_KIND_COUNT && LV_PING_KINDS == PING_KIND_COUNT,
+                  "the game has %d kinds of ping", (int)PING_KIND_COUNT);
+    UT_ASSERT(PING_KIND_STANDARD == 0 && PING_KIND_CAUTION == 1 && PING_KIND_ASSIST == 2 &&
+              PING_KIND_ATTACK == 3 && PING_KIND_ON_MY_WAY == 4 && PING_KIND_BOT_COMMAND == 5);
+
+    for (k = 0; k < PING_KIND_COUNT; k++) {
+        m = lvEventMarkerFor(LV_EVK_CHAT, 4, k);
+        UT_ASSERT_MSG(m.drawing == LV_MARKER_PING, "ping kind %d: a ping marker", k);
+        UT_ASSERT_MSG(m.ping == k, "ping kind %d: its own icon, not %d", k, m.ping);
+        UT_ASSERT_MSG(m.team == 4, "ping kind %d: the sender's team for the line round it", k);
+        UT_ASSERT(m.kind == LV_EVK_CHAT && m.picture == LV_OVERLAY_PIC_NONE);
+        UT_ASSERT(lvEventMarkerFor(LV_EVK_CHAT, -1, k).team == -1);
+        UT_ASSERT(lvPingDrawnKind(k) == k);
+        /* The picture is the game's file for the kind, and no two kinds
+           share a file, a colour or a name. */
+        UT_ASSERT_MSG(strcmp(pingKindStyle((unsigned char)m.ping)->iconFile, files[k]) == 0,
+                      "ping kind %d: file %s", k, pingKindStyle((unsigned char)m.ping)->iconFile);
+        for (j = 0; j < k; j++) {
+            const PingKindStyle *a = pingKindStyle((unsigned char)k);
+            const PingKindStyle *b = pingKindStyle((unsigned char)j);
+            UT_ASSERT_MSG(strcmp(a->iconFile, b->iconFile) != 0, "kinds %d and %d: one file", k, j);
+            UT_ASSERT_MSG(a->r != b->r || a->g != b->g || a->b != b->b, "kinds %d and %d: one colour", k, j);
+            UT_ASSERT_MSG(pingKindNameId((unsigned char)k) != pingKindNameId((unsigned char)j),
+                          "kinds %d and %d: one name", k, j);
+            UT_ASSERT_MSG(pingKindMessageId((unsigned char)k) != pingKindMessageId((unsigned char)j),
+                          "kinds %d and %d: one line", k, j);
+        }
+    }
+    UT_ASSERT(pingKindNameId(PING_KIND_ATTACK) == STR_PING_ATTACK);
+    UT_ASSERT(pingKindMessageId(PING_KIND_ATTACK) == MESSAGE_PING_ATTACK);
+
+    /* A kind this build does not know: the plain ping, as the game draws it. */
+    m = lvEventMarkerFor(LV_EVK_CHAT, 2, PING_KIND_COUNT);
+    UT_ASSERT(m.drawing == LV_MARKER_PING && m.ping == PING_KIND_STANDARD);
+    m = lvEventMarkerFor(LV_EVK_CHAT, 2, 255);
+    UT_ASSERT(m.drawing == LV_MARKER_PING && m.ping == PING_KIND_STANDARD);
+    UT_ASSERT(lvPingDrawnKind(PING_KIND_COUNT) == PING_KIND_STANDARD && lvPingDrawnKind(-1) == 0);
+
+    /* A chat line that is not a ping keeps the speech bubble, and so does
+       the row for chat in the list of kinds. */
+    m = lvEventMarkerFor(LV_EVK_CHAT, 2, -1);
+    UT_ASSERT_MSG(m.drawing == LV_MARKER_ICON && m.ping == -1, "a chat line is not a ping");
+    m = lvEventMarker(LV_EVK_CHAT, 2);
+    UT_ASSERT(m.drawing == LV_MARKER_ICON && m.ping == -1);
+
+    /* The number means nothing on an event of another kind. */
+    for (k = 0; k < LV_EVK_COUNT; k++) {
+        LvEventMarker plain = lvEventMarker(k, 1);
+        if (k == LV_EVK_CHAT) continue;
+        m = lvEventMarkerFor(k, 1, PING_KIND_ATTACK);
+        UT_ASSERT_MSG(m.drawing == plain.drawing && m.ping == -1 && m.picture == plain.picture,
+                      "kind %d is not a ping", k);
+    }
+    return 0;
+}
+
+/* The animation of a ping on the map is the game's, and the only thing it is
+   worked out from is the playback clock's time less the time of the ping. So
+   it is the same however that time was reached: played at any speed, paused,
+   or jumped to. */
+int run_lv_ping_phase(void) {
+    static LvPingStore st;
+    const uint32_t at = 61000u;
+    uint32_t now;
+    int first = 0, n;
+
+    /* The game's numbers this test is written against. */
+    UT_ASSERT(PING_DISPLAY_MS == 5000 && PING_FADE_MS == 1000 && PING_BLINK_PERIOD_MS == 1000 &&
+              PING_BLINK_FIRST_ON_MS == 500 && PING_BLINK_ON_MS == 250 && PING_BLINK_COUNT == 3);
+
+    /* Not on the map before it is sent, or five seconds after. */
+    UT_ASSERT(lvPingAgeMs(at - 1u, at, PING_DISPLAY_MS) == -1);
+    UT_ASSERT(lvPingAgeMs(0u, at, PING_DISPLAY_MS) == -1);
+    UT_ASSERT(lvPingAgeMs(at, at, PING_DISPLAY_MS) == 0);
+    UT_ASSERT(lvPingAgeMs(at + 4999u, at, PING_DISPLAY_MS) == 4999);
+    UT_ASSERT(lvPingAgeMs(at + 5000u, at, PING_DISPLAY_MS) == -1);
+    UT_ASSERT(lvPingAgeMs(at + 600000u, at, PING_DISPLAY_MS) == -1);
+
+    /* The age is the difference of the two times and nothing else: the same
+       ping at another time of the log has the same ages. */
+    for (now = 0u; now < 6000u; now += 20u) {
+        UT_ASSERT(lvPingAgeMs(at + now, at, PING_DISPLAY_MS) ==
+                  lvPingAgeMs(1000u + now, 1000u, PING_DISPLAY_MS));
+    }
+
+    /* A click on the ping's event seeks to its time: age 0, where the game's
+       marker is full on, with its ring just starting to close. */
+    UT_ASSERT(pingWorldMarkerAlpha(lvPingAgeMs(at, at, PING_DISPLAY_MS)) == 1.0f);
+    UT_ASSERT(pingDisplayAlpha(lvPingAgeMs(at, at, PING_DISPLAY_MS)) == 1.0f);
+    /* A jump into the middle of it, or a pause there: the marker is where
+       the game has it at that age. Dark between the flashes... */
+    UT_ASSERT(pingWorldMarkerAlpha(lvPingAgeMs(at + 600u, at, PING_DISPLAY_MS)) == 0.0f);
+    UT_ASSERT(pingWorldMarkerAlpha(lvPingAgeMs(at + 1500u, at, PING_DISPLAY_MS)) == 0.0f);
+    /* ...on in the second and third flash... */
+    UT_ASSERT(pingWorldMarkerAlpha(lvPingAgeMs(at + 1120u, at, PING_DISPLAY_MS)) == 1.0f);
+    UT_ASSERT(pingWorldMarkerAlpha(lvPingAgeMs(at + 2120u, at, PING_DISPLAY_MS)) == 1.0f);
+    /* ...and no fourth flash, while the sender's name stays to the end. */
+    UT_ASSERT(pingWorldMarkerAlpha(lvPingAgeMs(at + 3120u, at, PING_DISPLAY_MS)) == 0.0f);
+    UT_ASSERT(pingDisplayAlpha(lvPingAgeMs(at + 3120u, at, PING_DISPLAY_MS)) == 1.0f);
+    UT_ASSERT(pingDisplayAlpha(lvPingAgeMs(at + 4500u, at, PING_DISPLAY_MS)) == 0.5f);
+    /* Paused: the same time gives the same marker, however often asked. */
+    UT_ASSERT(pingWorldMarkerAlpha(lvPingAgeMs(at + 460u, at, PING_DISPLAY_MS)) ==
+              pingWorldMarkerAlpha(lvPingAgeMs(at + 460u, at, PING_DISPLAY_MS)));
+    /* Past its time and before it: the game draws nothing for an age of -1. */
+    UT_ASSERT(pingDisplayAlpha(lvPingAgeMs(at + 5000u, at, PING_DISPLAY_MS)) == 0.0f);
+    UT_ASSERT(pingDisplayAlpha(lvPingAgeMs(at - 20u, at, PING_DISPLAY_MS)) == 0.0f);
+    UT_ASSERT(pingWorldMarkerAlpha(lvPingAgeMs(at - 20u, at, PING_DISPLAY_MS)) == 0.0f);
+
+    /* The store and the age agree on when a ping is on the map, for every
+       step of playback across its life and a little each side. */
+    lvPingStoreClear(&st);
+    UT_ASSERT(lvPingStoreAdd(&st, at, 0, PING_KIND_ATTACK, 0x4040, 0x5050));
+    for (now = at - 200u; now <= at + 5200u; now += 20u) {
+        n = lvPingStoreShown(&st, now, PING_DISPLAY_MS, &first);
+        UT_ASSERT_MSG((n == 1) == (lvPingAgeMs(now, at, PING_DISPLAY_MS) >= 0), "at %u", (unsigned)now);
+        UT_ASSERT_MSG((n == 1) == (pingDisplayAlpha((int)now - (int)at) > 0.0f), "game, at %u",
+                      (unsigned)now);
+    }
+    return 0;
+}
+
+/* The "no" sign of a lost builder: the ring fills the marker and the
+   builder goes inside the ring whole, at every size a marker can be. */
+int run_lv_event_overlay_no_sign(void) {
+    float text;
+    /* The marker of the viewer's text of 18 is 14; the line is 1.5. */
+    UT_ASSERT_MSG(lvMarkerNoSignRadius(14.0f, 1.5f) == 6.25f, "radius at 14: %g",
+                  (double)lvMarkerNoSignRadius(14.0f, 1.5f));
+    UT_ASSERT_MSG(lvMarkerNoSignBuilderScale(14.0f, 1.5f) == 2, "builder at 14: %d",
+                  lvMarkerNoSignBuilderScale(14.0f, 1.5f));
+    UT_ASSERT_MSG(lvMarkerNoSignBuilderScale(8.0f, 1.5f) == 1, "builder at the least");
+    UT_ASSERT_MSG(lvMarkerNoSignRadius(1.0f, 4.0f) == 0.0f, "never under 0");
+    UT_ASSERT_MSG(lvMarkerNoSignBuilderScale(1.0f, 4.0f) == 1, "never under 1");
+    for (text = 8.0f; text <= 60.0f; text += 0.5f) {
+        const float side = lvOverlayMarkerSide(text);
+        const float r = lvMarkerNoSignRadius(side, 1.5f);
+        const int n = lvMarkerNoSignBuilderScale(side, 1.5f);
+        const float inner = side * 0.5f - 1.5f;
+        UT_ASSERT_MSG(r + 0.75f <= side * 0.5f + 0.001f, "text %g: ring in the marker",
+                      (double)text);
+        UT_ASSERT_MSG(r + 0.75f >= side * 0.5f - 0.001f, "text %g: ring as big as the marker",
+                      (double)text);
+        UT_ASSERT_MSG(n >= 1 && (float)n * 2.5f <= inner + 0.001f,
+                      "text %g: the builder inside the ring", (double)text);
+        UT_ASSERT_MSG((float)(n + 1) * 2.5f > inner, "text %g: the builder as big as goes in",
+                      (double)text);
+    }
+    return 0;
+}
+
+/* When the lane of markers is built again. Anything other than the log's
+   length builds it at once. A longer log builds it at once from a file, and
+   on a live feed (which grows each frame) at most once in 250 ms. */
+int run_lv_event_overlay_live_rebuild(void) {
+    UT_ASSERT_MSG(lvOverlayRebuildDue(0, 1, 0, 0u, 0u) == 1, "a file, other change");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(1, 1, 0, 10u, 0u) == 1, "live, other change");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(1, 1, 1, 10u, 0u) == 1,
+                  "live, other change and a longer log");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(0, 0, 0, 1000u, 0u) == 0, "a file, no change");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(1, 0, 0, 1000u, 0u) == 0, "live, no change");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(0, 0, 1, 10u, 0u) == 1, "a file, a longer log");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(1, 0, 1, 1000u, 1000u) == 0,
+                  "live, a longer log at once");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(1, 0, 1, 1249u, 1000u) == 0,
+                  "live, a longer log after 249 ms");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(1, 0, 1, 1250u, 1000u) == 1,
+                  "live, a longer log after 250 ms");
+    /* SDL_GetTicks wraps after 49 days: the difference is still right. */
+    UT_ASSERT_MSG(lvOverlayRebuildDue(1, 0, 1, 100u, 0xFFFFFF00u) == 1,
+                  "live, a longer log across the wrap");
+    UT_ASSERT_MSG(lvOverlayRebuildDue(1, 0, 1, 10u, 0xFFFFFFF0u) == 0,
+                  "live, a longer log 26 ms across the wrap");
+    return 0;
+}

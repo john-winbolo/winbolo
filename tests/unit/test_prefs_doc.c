@@ -178,7 +178,9 @@ int run_prefs_doc_save_atomic(void) {
     char tmpSibling[1100];
 
     UT_ASSERT(utScratchPath(jsonPath, sizeof(jsonPath), "prefs.json"));
-    snprintf(tmpSibling, sizeof(tmpSibling), "%s.tmp", jsonPath);
+    /* The temp file carries the writer's process id (prefs_doc.c). */
+    snprintf(tmpSibling, sizeof(tmpSibling), "%s.%lu.tmp", jsonPath,
+             (unsigned long)getpid());
 
     unlink(jsonPath);
     unlink(tmpSibling);

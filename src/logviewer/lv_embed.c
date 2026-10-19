@@ -90,6 +90,11 @@ void lv_updateSpeed(BYTE spd, int updateSlider) {
     case 7: ts =  8; break;
     case 8: ts =  6; break;
     case 9: ts =  1; break;
+    /* Slower than real time. These sit after the fast values so a speed
+     * saved by an older viewer still means what it did. */
+    case LV_SPEED_HALF:    ts =  40; break;
+    case LV_SPEED_QUARTER: ts =  80; break;
+    case LV_SPEED_TENTH:   ts = 200; break;
     default:
         ts = 20;
         spd = 1;
@@ -120,13 +125,27 @@ Uint32 SDLCALL lv_windowFrameTimer(void *userdata, SDL_TimerID timerID, Uint32 i
     return 0;
 }
 
+/* Set while the host moves playback itself over a few frames (the animation
+ * of Rewind and Fast Forward, lv_jump_anim.h). The timer goes on but plays
+ * nothing, so Play and Pause stay what the user set. Written and read with
+ * the client mutex held. A live feed has no timer: its frame update plays
+ * nothing while the hold is on (lv_screenSpecSetHold). */
+static bool s_tickHold = false;
+
+void lv_windowSetTickHold(bool on) {
+    s_tickHold = on;
+    lv_screenSpecSetHold(on);
+}
+
 Uint32 SDLCALL lv_windowTimer(void *userdata, SDL_TimerID timerID, Uint32 interval) {
     (void)userdata; (void)timerID; (void)interval;
     lv_clientMutexWaitFor();
-    lv_screenLogTick();
-    if (g_lv->doubleSpeed == TRUE) {
+    if (!s_tickHold) {
         lv_screenLogTick();
-        lv_screenLogTick();
+        if (g_lv->doubleSpeed == TRUE) {
+            lv_screenLogTick();
+            lv_screenLogTick();
+        }
     }
     lv_clientMutexRelease();
     if (g_lv->playIsPlaying == TRUE) {
@@ -154,6 +173,14 @@ void lv_windowPlay(void) {
        the orthogonal play/freeze flag the loop reads. */
     if (lv_screenSpecIsLiveMode()) {
         g_lv->playIsPlaying = TRUE;
+        return;
+    }
+    /* At the end of the log there is nothing to play: the timers would tick
+       a decoder that reads nothing, with the Pause button showing. A seek
+       or a rewind sets the decoder going again, and Play works after it.
+       Not for the viewer the game embeds (the recap reel): the game drives
+       that one, and what it sees from a Play at the end stays as it was. */
+    if (!lvEmbedIsActive() && g_lv->isLoaded && g_lv->isPlaying == FALSE) {
         return;
     }
     if (g_lv->playIsPlaying == FALSE) {
@@ -184,6 +211,9 @@ void lv_windowPause(void) {
 }
 
 void lv_windowStop(int corruptLog) {
+    /* Nothing holds the timer of a log that is stopped. */
+    s_tickHold = false;
+    lv_screenSpecSetHold(false);
     /* Spectator: the panel's Stop button freezes the feed rather than closing the
        live log out from under the foreground host loop. */
     if (lv_screenSpecIsLiveMode()) {

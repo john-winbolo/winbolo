@@ -33,6 +33,7 @@
 
 #include "lv_global.h"
 #include "../gui/lang.h"
+#include "lv_event_kind.h"
 
 #define IsEmpty(list) ((list) ==NULL)
 #define NonEmpty(list) (!IsEmpty(list))
@@ -166,6 +167,9 @@ void serverMessageAdd(messageType msgType, char *top, char *bottom);
 *  rendered body to the events panel via lv_windowAddEvent.
 *
 *ARGUMENTS:
+*  kind    - What the line reports (lv_event_kind.h). The call
+*            site states it, so the events panel can filter
+*            by kind without reading the rendered text.
 *  msgType - The type of the message (newswire, assistant, ...)
 *  topId   - Lang ID for the "channel" header (currently unused
 *            by the events panel; reserved for parity with
@@ -173,8 +177,66 @@ void serverMessageAdd(messageType msgType, char *top, char *bottom);
 *  bodyId  - Lang ID for the message body
 *  args    - Substitution args, or NULL
 *********************************************************/
-void lv_messageAdd(messageType msgType, langid topId, langid bodyId,
-                   const MessageArgs *args);
+void lv_messageAdd(lvEventKind kind, messageType msgType, langid topId,
+                   langid bodyId, const MessageArgs *args);
+
+/*********************************************************
+*NAME:          lv_messageAddAt
+*PURPOSE:
+*  lv_messageAdd for a line about something at a known place
+*  on the map (a pillbox, a base, the tank that died). The
+*  events panel keeps the cell and centres the view on it
+*  when the line is clicked.
+*
+*ARGUMENTS:
+*  kind    - What the line reports (lv_event_kind.h)
+*  mapX    - Map cell X of the event
+*  mapY    - Map cell Y of the event. Cell (0,0) is where the
+*            decoder parks things that are off the map (a
+*            pillbox being carried, a tank not yet placed),
+*            so it is taken as "no place".
+*  msgType - The type of the message (newswire, assistant, ...)
+*  topId   - Lang ID for the "channel" header
+*  bodyId  - Lang ID for the message body
+*  args    - Substitution args, or NULL
+*********************************************************/
+void lv_messageAddAt(lvEventKind kind, int mapX, int mapY,
+                     messageType msgType, langid topId, langid bodyId,
+                     const MessageArgs *args);
+
+/*********************************************************
+*NAME:          lv_messageTagPlayers
+*PURPOSE:
+*  Says which players the next lv_messageAdd or
+*  lv_messageAddAt line is about, so the host can show the
+*  line in the colour of a team (the event markers of the
+*  seek slider do). Call it just before the line is added;
+*  the line takes the tag with it, and a line added with
+*  no call before it has none.
+*
+*ARGUMENTS:
+*  actor - The player that did it: the new owner of a
+*          pillbox or base, the killer of a tank. For a
+*          death with no killer, the player that died.
+*          -1 or NEUTRAL for none.
+*  other - The player it was done to (the old owner, the
+*          tank that was killed), or -1 or NEUTRAL for none
+*********************************************************/
+void lv_messageTagPlayers(int actor, int other);
+
+/*********************************************************
+*NAME:          lv_messageTagPing
+*PURPOSE:
+*  Says that the next lv_messageAddAt line is a map ping
+*  and of which kind, so the host can show the game's icon
+*  for that kind beside the line. Call it just before the
+*  line is added, as lv_messageTagPlayers; a line added
+*  with no call before it is not a ping.
+*
+*ARGUMENTS:
+*  pingKind - PING_KIND_*, as the log record has it
+*********************************************************/
+void lv_messageTagPing(int pingKind);
 
 /*********************************************************
 *NAME:          lv_messageAddItem

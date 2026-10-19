@@ -784,6 +784,11 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   /* Load the process-global preferences document (WinBolo.json) before any
    * prefs access. */
   prefsInit(getPreferenceFilePath());
+  /* The standalone Log Viewer may be running beside the game and keeps the
+   * same file. Write only the keys the game changed, onto a fresh read of
+   * the file, so the game's writes do not take away the viewer's changes
+   * (the viewer does the same in src/logviewer/main.c). */
+  prefsSetMergeOnSave(true);
   /* Coalesce bursts of pref edits (multi-key rebind, slider drag) into a
    * single trailing disk write, driven from gameFrontPumpDirty and flushed
    * before each join and at shutdown. */
@@ -1070,7 +1075,12 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
      position on every resize/move. Calling it here would overwrite the corrected
      position (e.g. centered within maximized bounds) with the actual position. */
   gameFrontPutPrefs(keys);
-  prefsFlush();
+  /* With merge-on-save a flush that finds no file (another program between
+     its remove and its rename) waits for the next flush and writes nothing.
+     This is the last flush, so it is tried twice, as the Log Viewer does. */
+  if (!prefsFlush()) {
+    prefsFlush();
+  }
   if (humanSim != NULL) {
     frontEndSetActiveClientSim(NULL);
     netDestroy(humanSim);
