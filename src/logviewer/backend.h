@@ -38,6 +38,7 @@
 #include "lv_screentank.h"
 #include "lv_save_name.h"   /* LvRosterRow */
 #include "lv_ping_view.h"   /* LvPingShown */
+#include "lv_lag.h"         /* LvPlayerLag */
 
 /* Defines */
 
@@ -805,6 +806,29 @@ void lv_screenTogglePerspective(BYTE playerNum);
 int  lv_screenPerspectivePlayer(void);
 void lv_screenClearPerspective(void);
 bool lv_screenCheckPerspective(void);
+
+/* Each player's network lag, from the recording's log_PlayerLag records.
+ * Recorded is TRUE when the recording has any. Now gives slot's round-trip
+ * time and how far behind the present its player's screen was (the rewind
+ * the server used, in ms) at the playhead; FALSE when that player has no
+ * record yet. Snapshot fills what the Tank panel shows of slot's lag. Hold
+ * the client mutex. */
+bool lv_screenLagRecorded(void);
+bool lv_screenPlayerLagNow(int slot, int *rttMs, int *behindMs);
+void lv_screenPlayerLagSnapshot(int slot, LvPlayerLag *out);
+
+/* The lag view ("see what this player saw"): the map draws the other tanks,
+ * the builders and the shells as far behind as slot's player's screen was,
+ * and that player's own tank at the present. Set turns it on for slot, or
+ * off for -1. Slot gives the chosen slot, -1 when off; a view whose player
+ * is no longer in the slot is turned off. Status gives the chosen player's
+ * name, the delay at the playhead, and whether the map draws the delayed
+ * places (FALSE while the history has no frame that old); FALSE when the
+ * view is off. Hold the client mutex, and mark the map for a redraw
+ * (lv_drawDirtyScreen) after a change. */
+void lv_screenLagViewSet(int slot);
+int  lv_screenLagViewSlot(void);
+bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *drawn);
 
 void lv_screenCentreOnSelectedItem();
 

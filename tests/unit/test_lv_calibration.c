@@ -1418,3 +1418,133 @@ int run_lv_game_settings_absent(void) {
   remove(withoutPath);
   return 0;
 }
+
+/*
+ * The viewer reads log_PlayerLag records into each player's track, and the
+ * value at the playhead is the last record at or before it. A record longer
+ * than four bytes (from a later writer) is read for its first four.
+ */
+int run_lv_player_lag_read(void) {
+  const char *path = "lv_player_lag.wbv";
+  static const uint8_t first[4] = {2, 0x01, 0x2C, 5};          /* 300 ms, 5 */
+  static const uint8_t second[6] = {2, 0x00, 0x28, 1, 9, 9};   /* 40 ms, 1 */
+  LogBuf b;
+  LogViewerState *lv;
+  int rtt = -1;
+  int behind = -1;
+  int i;
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_PlayerLag, first, 4);
+  putNoEvents(&b, 100);
+  putEventFrame(&b, log_PlayerLag, second, 6);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic lag log failed to build/load");
+
+  UT_ASSERT_MSG(lv_screenLagRecorded(), "the load did not see the records");
+  UT_ASSERT_MSG(!lv_screenPlayerLagNow(2, &rtt, &behind),
+                "player 2 has a value before the first record");
+  UT_ASSERT_MSG(!lv_screenPlayerLagNow(1, &rtt, &behind),
+                "player 1 has a value with no record");
+
+  for (i = 0; i < 80; i++) {
+    lv_screenLogTick();
+  }
+  UT_ASSERT_MSG(lv_screenPlayerLagNow(2, &rtt, &behind),
+                "player 2 has no value after the first record");
+  UT_ASSERT_MSG(rtt == 300 && behind == 100,
+                "after the first record: rtt %d behind %d (want 300, 100)",
+                rtt, behind);
+
+  for (i = 0; i < 120; i++) {
+    lv_screenLogTick();
+  }
+  UT_ASSERT_MSG(lv_screenPlayerLagNow(2, &rtt, &behind),
+                "player 2 has no value after the second record");
+  UT_ASSERT_MSG(rtt == 40 && behind == 20,
+                "after the second record: rtt %d behind %d (want 40, 20)",
+                rtt, behind);
+
+  lv_decoderDestroy(lv);
+  remove(path);
+  return 0;
+}
+
+/* A track keeps its records in time order, finds the one in effect at a
+ * time, and takes a second read at one time as the same record. */
+int run_lv_lag_track(void) {
+  LvLagTrack t;
+  const LvLagRecord *r;
+
+  memset(&t, 0, sizeof(t));
+  UT_ASSERT(lv_lagTrackAt(&t, 100) == NULL);
+  UT_ASSERT(lv_lagTrackAdd(&t, 200, 50, 2, true));
+  UT_ASSERT(lv_lagTrackAdd(&t, 1000, 90, 4, true));
+  UT_ASSERT(lv_lagTrackAdd(&t, 600, 70, 3, true));   /* read out of order */
+  UT_ASSERT(t.count == 3);
+  UT_ASSERT(lv_lagTrackAt(&t, 199) == NULL);
+  r = lv_lagTrackAt(&t, 200);
+  UT_ASSERT(r != NULL && r->rttMs == 50);
+  r = lv_lagTrackAt(&t, 999);
+  UT_ASSERT(r != NULL && r->rttMs == 70 && r->rewind == 3);
+  r = lv_lagTrackAt(&t, 5000);
+  UT_ASSERT(r != NULL && r->rttMs == 90);
+
+  /* A seek back reads the record at 600 again: no second record. */
+  UT_ASSERT(lv_lagTrackAdd(&t, 600, 75, 3, true));
+  UT_ASSERT(t.count == 3);
+  r = lv_lagTrackAt(&t, 600);
+  UT_ASSERT(r != NULL && r->rttMs == 75);
+
+  /* Without unlessPresent a second record goes after the first. */
+  UT_ASSERT(lv_lagTrackAdd(&t, 600, 80, 3, false));
+  UT_ASSERT(t.count == 4);
+  r = lv_lagTrackAt(&t, 600);
+  UT_ASSERT(r != NULL && r->rttMs == 80);
+
+  lv_lagTrackClear(&t);
+  UT_ASSERT(t.count == 0 && t.recs == NULL);
+  return 0;
+}
+
+/* The history ring finds the newest frame at or before a time, keeps only
+ * LV_LAG_FRAMES frames, and starts again when playback goes back. */
+int run_lv_lag_ring(void) {
+  static LvLagRing r;
+  const LvLagFrame *f;
+  int i;
+
+  lv_lagRingClear(&r);
+  UT_ASSERT(lv_lagRingFind(&r, 100) == NULL);
+  for (i = 1; i <= LV_LAG_FRAMES + 8; i++) {
+    LvLagFrame *n = lv_lagRingPush(&r, (uint32_t)i * LV_LAG_ENTRY_MS);
+    n->shellCount = i;
+  }
+  UT_ASSERT(r.count == LV_LAG_FRAMES);
+
+  /* The newest. */
+  f = lv_lagRingFind(&r, (uint32_t)(LV_LAG_FRAMES + 8) * LV_LAG_ENTRY_MS);
+  UT_ASSERT(f != NULL && f->shellCount == LV_LAG_FRAMES + 8);
+  /* Five entries back, and a time between two entries. */
+  f = lv_lagRingFind(&r, (uint32_t)(LV_LAG_FRAMES + 3) * LV_LAG_ENTRY_MS);
+  UT_ASSERT(f != NULL && f->shellCount == LV_LAG_FRAMES + 3);
+  f = lv_lagRingFind(&r, (uint32_t)(LV_LAG_FRAMES + 3) * LV_LAG_ENTRY_MS + 7);
+  UT_ASSERT(f != NULL && f->shellCount == LV_LAG_FRAMES + 3);
+  /* The oldest held, and one before it, which the ring no longer has. */
+  f = lv_lagRingFind(&r, 9u * LV_LAG_ENTRY_MS);
+  UT_ASSERT(f != NULL && f->shellCount == 9);
+  UT_ASSERT(lv_lagRingFind(&r, 8u * LV_LAG_ENTRY_MS) == NULL);
+
+  /* A seek back: the frames held are of a later time. */
+  f = lv_lagRingPush(&r, 5u * LV_LAG_ENTRY_MS);
+  UT_ASSERT(r.count == 1 && f->shellCount == 0);
+  UT_ASSERT(lv_lagRingFind(&r, 4u * LV_LAG_ENTRY_MS) == NULL);
+  UT_ASSERT(lv_lagRingFind(&r, 6u * LV_LAG_ENTRY_MS) == f);
+  return 0;
+}

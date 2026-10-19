@@ -35,6 +35,7 @@
 #include "lv_allience.h"
 #include "lv_screentank.h"
 #include "lv_screenlgm.h"
+#include "lv_lag.h"
 
 /* Defines */
 
@@ -424,6 +425,17 @@ void lv_playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my , BYTE *px, B
 *  onBoat    - Whether the tank is on a boat
 *********************************************************/
 void lv_playersGetTankDetails(BYTE playerNumber, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, bool *onBoat);
+
+/* The lag view ("see what this player saw"). lv_playersLagCapture notes where
+ * each tank and builder is now into one frame of the view's history.
+ * lv_playersSetLagFrame makes lv_playersMakeScreenTanks and
+ * lv_playersMakeScreenLgm draw from frame, every tank but liveSlot's and
+ * every builder; NULL draws the present again. lv_playersGetDrawnTankDetails
+ * gives the place the map draws slot's tank at, so a label sits on it;
+ * FALSE when no tank is drawn. */
+void lv_playersLagCapture(LvLagFrame *frame);
+void lv_playersSetLagFrame(const LvLagFrame *frame, int liveSlot);
+bool lv_playersGetDrawnTankDetails(BYTE slot, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, bool *onBoat);
 
 
 /*********************************************************
