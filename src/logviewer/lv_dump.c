@@ -179,7 +179,7 @@ static const char *dumpRecordName(BYTE code) {
     DUMP_REC(RuleSet);          DUMP_REC(ScnPanel);        DUMP_REC(ScnScore);
     DUMP_REC(ScnAnnounce);      DUMP_REC(ScnMarker);       DUMP_REC(ScnHint);
     DUMP_REC(ServerTick);       DUMP_REC(ScnStatus);       DUMP_REC(VoiceEveryone);
-    DUMP_REC(MapName);
+    DUMP_REC(MapName);          DUMP_REC(PlayerLag);
 #undef DUMP_REC
     default: return "Unknown";
   }
@@ -338,6 +338,12 @@ static void dumpRecordFields(DumpCtx *c, BYTE code, const BYTE *b, int len) {
       break;
     case log_MapName:
       dumpPascal(out, "name", b, len, 0);
+      break;
+    case log_PlayerLag:
+      if (len >= 4) {
+        fprintf(out, " slot=%u rtt_ms=%u rewind=%u behind_ms=%u", b[0],
+                ((unsigned)b[1] << 8) | b[2], b[3], (unsigned)b[3] * 20u);
+      }
       break;
     case log_MessageAll:
       if (len >= 1) {

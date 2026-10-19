@@ -1365,6 +1365,25 @@
    tooltip. */
 #define STR_LV_TANK_BARS                    2831
 #define STR_LV_TANK_BARS_TIP                2832
+/* The viewer's player lag (log_PlayerLag): the Tank panel's line (number the
+   round-trip time in ms, number2 how far behind the present the player's
+   screen was), its line for a player with no record yet, the tooltip of its
+   graph (number the highest time), the "see what this player saw" check box
+   and its tooltip, the banner over the map while that view is on (string1 the
+   player), the banner while the view has no history for the time yet, the
+   banner's button, the HUD panel's tank tooltip with the time after it
+   (string1 the tooltip), and the View menu's item and tooltip. */
+#define STR_LV_LAG_LINE                     2919
+#define STR_LV_LAG_NONE                     2920
+#define STR_LV_LAG_GRAPH_TIP                2921
+#define STR_LV_LAG_VIEW                     2922
+#define STR_LV_LAG_VIEW_TIP                 2923
+#define STR_LV_LAG_BANNER                   2924
+#define STR_LV_LAG_BANNER_WAIT              2925
+#define STR_LV_LAG_OFF                      2926
+#define STR_LV_LAG_HUD_TIP                  2927
+#define STR_LV_LAG_MENU                     2928
+#define STR_LV_LAG_MENU_TIP                 2929
 /* Log viewer Controls panel: what each button does, for its tooltip. {string1} of the two jumps is a number of seconds ("2.5", "12"); KEY_FMT puts a button's shortcut key after its name. */
 #define STR_LV_TIP_BACK_SECS                2833
 #define STR_LV_TIP_FWD_SECS                 2834

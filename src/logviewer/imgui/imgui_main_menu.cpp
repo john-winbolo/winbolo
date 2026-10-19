@@ -49,6 +49,8 @@ extern "C" {
     void lv_screenTankCentred(int enabled);
     int lv_dnsSetEnabled(int enabled);
     void lv_soundSetVolume(int pct);
+    void lv_clientMutexWaitFor(void);
+    void lv_clientMutexRelease(void);
 }
 
 static LogViewerState *s_lv = nullptr;
@@ -672,6 +674,32 @@ int lv_imgui_main_menu_bar(void) {
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", langGetText(STR_LV_PILL_NUMBERS_TIP));
+            }
+            {
+                /* The lag view for the selected tank's player: ticked while
+                 * it is that player's. A click turns it on for the selected
+                 * player, or off when it is on for that player or no tank is
+                 * selected. Only a recording with lag records has it. */
+                int sel, viewSlot;
+                bool recorded;
+                lv_clientMutexWaitFor();
+                sel = lv_screenSelectedTank();
+                viewSlot = lv_screenLagViewSlot();
+                recorded = lv_screenLagRecorded();
+                lv_clientMutexRelease();
+                const bool on = (viewSlot >= 0 && viewSlot == sel);
+                if (ImGui::MenuItem(langGetText(STR_LV_LAG_MENU), NULL, on,
+                                    s_lv->isLoaded != 0 && recorded &&
+                                        (sel >= 0 || viewSlot >= 0))) {
+                    lv_clientMutexWaitFor();
+                    lv_screenLagViewSet(on ? -1 : sel);
+                    lv_clientMutexRelease();
+                    lv_windowNeedRedraw();
+                    clicked = 1;
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::SetTooltip("%s", langGetText(STR_LV_LAG_MENU_TIP));
+                }
             }
 #ifndef __EMSCRIPTEN__
             /* The browser build's Rewind and Fast Forward jump: it has no

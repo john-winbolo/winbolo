@@ -56,6 +56,7 @@ extern "C" {
     #include "../lv_tank_status.h"
     #include "../lv_builder_status.h"
     #include "../lv_pill_numbers.h"
+    #include "../lv_lag.h"
     #include "../../gui/positions.h"
     #include "../../gui/tiles.h"
     #include "../../gui/sdl3/map_colours.h"  /* mapColourTeam */
@@ -67,6 +68,12 @@ extern "C" {
     void lv_clientMutexRelease(void);
     void lv_screenTankStatusSnapshot(LvTankStatus *out);
     void lv_screenDeselectTank(void);
+    bool lv_screenLagRecorded(void);
+    void lv_screenPlayerLagSnapshot(int slot, LvPlayerLag *out);
+    void lv_screenLagViewSet(int slot);
+    int  lv_screenLagViewSlot(void);
+    bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *drawn);
+    void lv_drawDirtyScreen(void);
     SDL_Texture *lv_drawGetStatusBackgroundTexture(void);
     void lv_drawTeamPanelColour(int palette, float *r, float *g, float *b);
     SDL_Texture *lv_drawGetTilesTexture(void);
@@ -206,12 +213,27 @@ static bool tank_text_beside(float availW) {
                          ImGui::GetStyle().ItemSpacing.x * 2.0f + tank_text_w();
 }
 
+/* The lag section under the gauges: its line, its graph and its check box.
+ * Only a recording with lag records has it. */
+static float tank_lag_graph_h(void) {
+    return ceilf(ImGui::GetTextLineHeight() * 2.0f);
+}
+
+static float tank_lag_h(void) {
+    const ImGuiStyle &style = ImGui::GetStyle();
+    return style.ItemSpacing.y + ImGui::GetTextLineHeight() + style.ItemSpacing.y +
+           tank_lag_graph_h() + style.ItemSpacing.y + ImGui::GetFrameHeight();
+}
+
 float lv_imgui_tank_dock_height(float dockWidth) {
     const ImGuiStyle &style = ImGui::GetStyle();
     float availW = dockWidth - style.WindowPadding.x * 2.0f;
     float h = tank_header_h() + (float)(TANK_DEFAULT_SCALE * TANK_SLICE_H) + 2.0f;
     if (!tank_text_beside(availW)) {
         h += style.ItemSpacing.y + tank_text_h();
+    }
+    if (lv_screenLagRecorded()) {
+        h += tank_lag_h();
     }
     /* One more: the heights are whole pixels and the text's may not be. */
     return ceilf(h) + 1.0f + style.WindowPadding.y * 2.0f + ImGui::GetFrameHeight();
@@ -780,6 +802,101 @@ static LvTankRoom tank_room(const LvTankStatus &st, ImVec2 avail) {
     return r;
 }
 
+/* The selected player's lag: the round-trip time and how far behind the
+ * present the player's screen was, the round-trip time across the recording
+ * with a line at the playhead, and the check box that shows the map as that
+ * player's screen showed it. */
+static void tank_lag(const LvTankStatus &st, const LvPlayerLag &lag, int viewSlot) {
+    const ImGuiStyle &style = ImGui::GetStyle();
+    const float graphH = tank_lag_graph_h();
+    const float w = ImGui::GetContentRegionAvail().x;
+    MessageArgs args = {};
+
+    if (lag.has) {
+        args.number = lag.rttMs;
+        args.number2 = lag.behindMs;
+        ImGui::TextUnformatted(langGetTextFmt(STR_LV_LAG_LINE, &args));
+    } else {
+        ImGui::TextDisabled("%s", langGetText(STR_LV_LAG_NONE));
+    }
+
+    if (lag.has && w > 0.0f) {
+        ImVec2 g0 = ImGui::GetCursorScreenPos();
+        ImGui::PlotLines("##lag_graph", lag.graph, LV_LAG_GRAPH_SAMPLES, 0, nullptr, 0.0f,
+                         lag.graphMax, ImVec2(w, graphH));
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+            args = {};
+            args.number = (int)lag.graphMax;
+            ImGui::SetTooltip("%s", langGetTextFmt(STR_LV_LAG_GRAPH_TIP, &args));
+        }
+        /* The playhead, across the plot's inner box. */
+        float x = g0.x + style.FramePadding.x +
+                  lag.playhead * (w - style.FramePadding.x * 2.0f);
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(floorf(x) + 0.5f, g0.y + style.FramePadding.y),
+                                            ImVec2(floorf(x) + 0.5f,
+                                                   g0.y + graphH - style.FramePadding.y),
+                                            IM_COL32(255, 255, 255, 200));
+    } else {
+        ImGui::Dummy(ImVec2(w > 0.0f ? w : 1.0f, graphH));
+    }
+
+    bool on = (viewSlot >= 0 && viewSlot == (int)st.slot);
+    if (ImGui::Checkbox(langGetText(STR_LV_LAG_VIEW), &on)) {
+        lv_clientMutexWaitFor();
+        lv_screenLagViewSet(on ? (int)st.slot : -1);
+        lv_clientMutexRelease();
+        lv_drawDirtyScreen();
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+        ImGui::SetTooltip("%s", langGetText(STR_LV_LAG_VIEW_TIP));
+    }
+}
+
+void lv_imgui_lag_banner_at(float x, float y, float w) {
+    char name[LANG_MSGARG_STRING_LEN];
+    int behind = 0;
+    bool drawn = false;
+    bool on;
+
+    lv_clientMutexWaitFor();
+    on = lv_screenLagViewStatus(name, sizeof(name), &behind, &drawn);
+    lv_clientMutexRelease();
+    if (!on) {
+        return;
+    }
+
+    MessageArgs args = {};
+    snprintf(args.string1, sizeof(args.string1), "%s", name);
+    args.number = behind;
+    char text[LANG_MSGARG_STRING_LEN * 2];
+    snprintf(text, sizeof(text), "%s",
+             langGetTextFmt(drawn ? STR_LV_LAG_BANNER : STR_LV_LAG_BANNER_WAIT, &args));
+
+    /* At the top of the map, in the middle, 8 pixels down. */
+    const ImGuiViewport *vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + x + w * 0.5f, vp->Pos.y + y + 8.0f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.75f);
+    if (ImGui::Begin("##lag_banner", nullptr,
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoDocking)) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 210, 90, 255));
+        ImGui::TextUnformatted(text);
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        if (ImGui::SmallButton(langGetText(STR_LV_LAG_OFF))) {
+            lv_clientMutexWaitFor();
+            lv_screenLagViewSet(-1);
+            lv_clientMutexRelease();
+            lv_drawDirtyScreen();
+        }
+    }
+    ImGui::End();
+}
+
 void lv_imgui_tank_window(void) {
     if (!lv_g_show_tank_window) {
         return;
@@ -809,8 +926,12 @@ void lv_imgui_tank_window(void) {
         /* Playback writes the players on the decode timer, so what is drawn
          * is copied out under its lock, every frame. */
         LvTankStatus st;
+        LvPlayerLag lag;
+        int lagViewSlot;
         lv_clientMutexWaitFor();
         lv_screenTankStatusSnapshot(&st);
+        lv_screenPlayerLagSnapshot(st.selected ? (int)st.slot : -1, &lag);
+        lagViewSlot = lv_screenLagViewSlot();
         lv_clientMutexRelease();
 
         if (!st.selected) {
@@ -849,7 +970,12 @@ void lv_imgui_tank_window(void) {
             /* What the room under the name has space for: the text with
              * words, with the small pictures, or none of it; beside the
              * well or under it; and the scale of the well. */
-            const LvTankRoom room = tank_room(st, ImGui::GetContentRegionAvail());
+            /* The lag section keeps its room under the rest. */
+            ImVec2 avail = ImGui::GetContentRegionAvail();
+            if (lag.recorded) {
+                avail.y -= tank_lag_h();
+            }
+            const LvTankRoom room = tank_room(st, avail);
             const LvTankLayout lay = lvTankLayoutPick(&room);
             const bool icons = (lay.text == LV_TANK_TEXT_ICONS);
 
@@ -865,6 +991,9 @@ void lv_imgui_tank_window(void) {
                 ImGui::EndGroup();
             } else {
                 tank_text(st, icons);
+            }
+            if (lag.recorded) {
+                tank_lag(st, lag, lagViewSlot);
             }
         }
     }

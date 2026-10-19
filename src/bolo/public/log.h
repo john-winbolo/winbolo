@@ -151,7 +151,8 @@ log_ScnHint,         // an order a scenario gave one bot: opt1=slot, then the hi
 log_ServerTick,      // the server's game tick at this entry, as a big-endian u32 across opt1..opt4. Written at the round's first entry, at every entry that carries a snapshot and every FULL_SYNC_INTERVAL ticks (layout in docs/replay-format.md)
 log_ScnStatus,       // a scenario's status line at the top of the view: opt1=destTeam, opt2=destPlayer, then the countdown's end tick as a big-endian u32 (0xFFFFFFFF = no countdown) and the text as a pascal string. An empty text is the clear (layout in docs/replay-format.md)
 log_VoiceEveryone,   // whether a scenario sent the round's voice to every player rather than to allies alone: opt1=1 for everyone, 0 for allies only. Written when the value changes
-log_MapName          // the name of the map the round is played on, as a pascal string. Written when the round starts; the header's name is the map loaded when the log opened, which a lobby can change (layout in docs/replay-format.md)
+log_MapName,         // the name of the map the round is played on, as a pascal string. Written when the round starts; the header's name is the map loaded when the log opened, which a lobby can change (layout in docs/replay-format.md)
+log_PlayerLag        // one player's network lag: opt1=player, short1=round-trip time in ms, opt2=the tank-shell rewind the server used for that player in 20 ms entries. Written about once a second, when a value changes by a clear amount, at the round's first entry and at each snapshot (layout in docs/replay-format.md)
 } logitem;
 
 typedef struct {

@@ -167,6 +167,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 68 | `log_ScnStatus` | A scenario's status line at the top of the view (below) |
 | 69 | `log_VoiceEveryone` | Who a scenario sent the round's voice to: `on:u8`, 1 for every player and 0 for the talker's allies alone. Written when the value changes |
 | 70 | `log_MapName` | Pascal-form name of the map the round is played on. Written when the round starts. A log that opens in the lobby writes its header before the host chooses the map, so the header can name the previous round's map; a reader shows this name in its place |
+| 71 | `log_PlayerLag` | One player's network lag: RTT and the rewind the server used (below) |
 
 ### `log_GameSettings` payload
 
@@ -618,6 +619,42 @@ viewer counts them and collects the anchors as playback first reads them.
 
 A recording made before this record existed has no anchors, and the viewer
 falls back to playback time: `ms / 10`.
+
+### `log_PlayerLag` payload
+
+One player's network lag. Four bytes, no Pascal string:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Player | Player slot |
+| 1–2 | RTT | Big-endian `u16`, in ms. The server's measure of the round trip to that player's client (`pingMs`, `src/server/udp/udp_server_send.c`) |
+| 3 | Rewind | `u8`, in 20 ms entries. The rewind the server used for that player's last tank-shell input (`serverSimComputeLagCompTicks`, `src/server/sim/server_sim_tick.c`), at most `LAG_COMP_MAX_TICKS` (14, 280 ms) |
+
+The rewind is the age of the world that player's screen showed when they
+fired, as the server measures it. The server rewinds the other tanks by that
+many entries when it tests that player's tank shells. A viewer that draws the
+other tanks, builders and shells that many entries back from the present
+shows the round about as that player saw it on their own screen.
+
+Written by the server's per-tick log pass (`serverSimLogTick`,
+`src/server/sim/server_sim_tick.c`) in a running round, after the snapshot and
+the `log_ServerTick` record, so it lands in that tick's own `LOG_EVENT` block.
+Each connected player gets a record (`serverSimLagLogDue`):
+
+- at the first entry after the player connects,
+- at the round's first entry and at every entry where a snapshot was written,
+- when `LAG_LOG_INTERVAL_TICKS` (100 ticks, 1 s) passed since the last record,
+- when the RTT moved by `LAG_LOG_RTT_STEP_MS` (20 ms) or more, or the rewind
+  by `LAG_LOG_REWIND_STEP` (2 entries) or more, since the last record.
+
+Bots are written the same way. Their RTT is 0, and their rewind is what the
+server used for them, which is 0 or close to it.
+
+A value stays in effect until the next record for the same player. A reader
+takes the four bytes it knows and skips the rest by the framed length, so a
+later version can add fields after these. A record shorter than four bytes is
+consumed and ignored. A viewer made before this record skips it by its framed
+length, the same as any other event it does not know.
 
 ## Snapshot body
 

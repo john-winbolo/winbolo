@@ -34,6 +34,7 @@
 #include "input_packet.h"   /* PING_KIND_* — log_Ping's kind byte */
 #include "log.h"
 #include "server_sim.h"
+#include "server_sim_internal.h"  /* serverSimLagLogDue, playerPing, statLastRewindTicks */
 #include "game_sim.h"       /* GameSim.tanks — set the stocks a snapshot records */
 #include "tank.h"           /* tankSetShells / tankSetMines / ... */
 #include "unzip.h"
@@ -101,6 +102,7 @@ static int eventFixedBytesAfterCode(uint8_t code) {
         case log_Ping:             return 6;   /* sender, kind, x (BE u16), y (BE u16) */
         case log_TankSetStock:     return 5;   /* player, shells, mines, armour, trees */
         case log_MapName:          return -1;  /* 0 + pstr */
+        case log_PlayerLag:        return 4;   /* player, RTT (BE u16), rewind */
         default:                   return -2;  /* unknown */
     }
 }
@@ -249,6 +251,11 @@ typedef struct {
  * [payload]; the length field alone drives the advance, and the per-type
  * table is used as a cross-check that the framed length matches the payload
  * the writer's switch produces for known types. */
+/* When true, walkLog skips an event the table does not know by its framed
+ * length, as the reader does, instead of failing. For a test that walks a
+ * whole recorded round, which holds events this file has no table entry for. */
+static bool walkAllowUnknown = false;
+
 static int walkLog(const uint8_t *buf, size_t len, size_t startPos,
                    uint8_t *eventCodes, int *outEventCount, int maxCodes,
                    int *outSnapshotCount, eventPayloadCapture *capture) {
@@ -296,8 +303,10 @@ static int walkLog(const uint8_t *buf, size_t len, size_t startPos,
 
                 /* Cross-check the framed length against the per-type table. */
                 int fixed = eventFixedBytesAfterCode((uint8_t)ev);
-                if (fixed == -2) return -6;            /* unknown event type */
-                if (fixed >= 0) {
+                if (fixed == -2) {
+                    if (!walkAllowUnknown) return -6;  /* unknown event type */
+                    /* else trust the framed length, as the reader does */
+                } else if (fixed >= 0) {
                     if (plen != fixed) return -7;      /* length disagrees */
                 } else {
                     int pref = variableEventPrefixBytes((uint8_t)ev);
@@ -880,6 +889,161 @@ int run_log_roundtrip_map_name_at_round_start(void) {
     UT_ASSERT_MSG(strcmp(info.mapName, kRoundMap) == 0,
                   "the viewer reports map '%s' (want '%s')", info.mapName,
                   kRoundMap);
+    return 0;
+}
+
+/* log_PlayerLag is a fixed four-byte record: the player, the RTT as a
+ * big-endian u16, and the rewind in 20 ms entries. This writes one through
+ * logAddEvent the way serverSimLogTick does, reads the bytes back, and
+ * checks the viewer still decodes the file. */
+int run_log_roundtrip_player_lag(void) {
+    char fname[64];
+    mkTempPath(fname, sizeof(fname), "playerlag");
+    remove(fname);
+
+    ServerSim *sim = ut_make_running_sim("Tester");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim failed");
+
+    logCreate();
+    UT_ASSERT_MSG(logStart(fname, sim, 0, MAX_TANKS, FALSE),
+                  "logStart failed");
+    logAddEvent(log_PlayerLag, 3, 7, 0, 0, 0x0123, NULL);
+    logWriteTick();
+    logStop();
+    logDestroy();
+    serverSimDestroy(sim);
+
+    uint8_t *buf = NULL;
+    size_t   blen = 0;
+    UT_ASSERT_MSG(extractLogDat(fname, &buf, &blen), "extractLogDat failed");
+
+    size_t  blockStart = 0;
+    uint8_t version    = 0;
+    UT_ASSERT_MSG(locateSnapshotMarker(buf, blen, &blockStart, &version),
+                  "header parse failed");
+
+    uint8_t got[64];
+    int     nGot  = 0;
+    int     nSnap = 0;
+    eventPayloadCapture lag;
+    lag.code = log_PlayerLag;
+    lag.len  = -1;
+    int rc = walkLog(buf, blen, blockStart, got, &nGot, (int)sizeof(got),
+                     &nSnap, &lag);
+    free(buf);
+
+    UT_ASSERT_MSG(rc == 0, "walkLog rc=%d", rc);
+    UT_ASSERT_MSG(lag.len == 4, "log_PlayerLag payload is %d bytes (want 4)",
+                  lag.len);
+    UT_ASSERT_MSG(lag.bytes[0] == 3, "player byte is %u (want 3)", lag.bytes[0]);
+    UT_ASSERT_MSG(lag.bytes[1] == 0x01 && lag.bytes[2] == 0x23,
+                  "RTT bytes are %02x %02x (want 01 23)", lag.bytes[1],
+                  lag.bytes[2]);
+    UT_ASSERT_MSG(lag.bytes[3] == 7, "rewind byte is %u (want 7)", lag.bytes[3]);
+
+    ReplayWorld    *world = (ReplayWorld *)malloc(sizeof(*world));
+    ReplayFileInfo  info;
+    UT_ASSERT_MSG(world != NULL, "out of memory");
+    bool decoded = replayHarnessDecodeFile(fname, world, &info);
+    free(world);
+    remove(fname);
+    UT_ASSERT_MSG(decoded, "the viewer could not decode the file");
+    return 0;
+}
+
+/* A recorded round writes each player's lag on its own: the first recorded
+ * tick of the round has a record for the player, with the RTT and the rewind
+ * the server holds for that player. */
+int run_log_roundtrip_player_lag_recorded(void) {
+    ReplayHarness h;
+    memset(&h, 0, sizeof(h));
+    UT_ASSERT_MSG(replayHarnessStartRecording(&h, "playerLagRecorded", "Tester"),
+                  "replayHarnessStartRecording failed");
+    replayHarnessTick(&h, 20);
+    uint16_t wantRtt    = h.sim->playerPing[0];
+    uint8_t  wantRewind = h.sim->statLastRewindTicks[0];
+    UT_ASSERT_MSG(replayHarnessStopRecording(&h),
+                  "replayHarnessStopRecording failed");
+
+    uint8_t *buf = NULL;
+    size_t   blen = 0;
+    bool extracted = extractLogDat(h.path, &buf, &blen);
+    if (!extracted) {
+        replayHarnessStop(&h);
+    }
+    UT_ASSERT_MSG(extracted, "extractLogDat failed");
+
+    size_t  blockStart = 0;
+    uint8_t version    = 0;
+    bool located = locateSnapshotMarker(buf, blen, &blockStart, &version);
+    uint8_t got[1024];
+    int     nGot  = 0;
+    int     nSnap = 0;
+    int     nLag  = 0;
+    int     rc    = -100;
+    eventPayloadCapture lag;
+    lag.code = log_PlayerLag;
+    lag.len  = -1;
+    if (located) {
+        walkAllowUnknown = true;
+        rc = walkLog(buf, blen, blockStart, got, &nGot, (int)sizeof(got),
+                     &nSnap, &lag);
+        walkAllowUnknown = false;
+    }
+    free(buf);
+    replayHarnessStop(&h);
+
+    UT_ASSERT_MSG(located, "header parse failed");
+    UT_ASSERT_MSG(rc == 0, "walkLog rc=%d", rc);
+    for (int i = 0; i < nGot; i++) {
+        if (got[i] == log_PlayerLag) {
+            nLag++;
+        }
+    }
+    /* Twenty sim ticks are ten recorded ticks, far less than a second, and
+     * nothing changes: one record. */
+    UT_ASSERT_MSG(nLag == 1, "%d log_PlayerLag records (want 1)", nLag);
+    UT_ASSERT_MSG(lag.len == 4, "log_PlayerLag payload is %d bytes (want 4)",
+                  lag.len);
+    UT_ASSERT_MSG(lag.bytes[0] == 0, "player byte is %u (want 0)", lag.bytes[0]);
+    UT_ASSERT_MSG(((lag.bytes[1] << 8) | lag.bytes[2]) == wantRtt,
+                  "RTT is %d (want %u)", (lag.bytes[1] << 8) | lag.bytes[2],
+                  (unsigned)wantRtt);
+    UT_ASSERT_MSG(lag.bytes[3] == wantRewind, "rewind is %u (want %u)",
+                  lag.bytes[3], (unsigned)wantRewind);
+    return 0;
+}
+
+/* When the server writes a player's lag again: when it has none yet, at the
+ * round start or a snapshot, a second after the last one, or when the RTT
+ * moves by 20 ms or the rewind by 2 entries. */
+int run_server_lag_log_due(void) {
+    /* No record yet, and an anchor, always write. */
+    UT_ASSERT(serverSimLagLogDue(false, 0, 0, 0, 500, 0, 0, false));
+    UT_ASSERT(serverSimLagLogDue(true, 500, 80, 4, 510, 80, 4, true));
+    /* Nothing changed and under a second: no write. */
+    UT_ASSERT(!serverSimLagLogDue(true, 500, 80, 4, 510, 80, 4, false));
+    UT_ASSERT(!serverSimLagLogDue(true, 500, 80, 4,
+                                  500 + LAG_LOG_INTERVAL_TICKS - 1, 80, 4, false));
+    /* A second later. */
+    UT_ASSERT(serverSimLagLogDue(true, 500, 80, 4,
+                                 500 + LAG_LOG_INTERVAL_TICKS, 80, 4, false));
+    /* The tick went back (a new round's count). */
+    UT_ASSERT(serverSimLagLogDue(true, 500, 80, 4, 400, 80, 4, false));
+    /* The RTT moves: under the step no, at the step yes, both ways. */
+    UT_ASSERT(!serverSimLagLogDue(true, 500, 80, 4, 510,
+                                  80 + LAG_LOG_RTT_STEP_MS - 1, 4, false));
+    UT_ASSERT(serverSimLagLogDue(true, 500, 80, 4, 510,
+                                 80 + LAG_LOG_RTT_STEP_MS, 4, false));
+    UT_ASSERT(serverSimLagLogDue(true, 500, 80, 4, 510,
+                                 80 - LAG_LOG_RTT_STEP_MS, 4, false));
+    /* The rewind moves. */
+    UT_ASSERT(!serverSimLagLogDue(true, 500, 80, 4, 510, 80,
+                                  4 + LAG_LOG_REWIND_STEP - 1, false));
+    UT_ASSERT(serverSimLagLogDue(true, 500, 80, 4, 510, 80,
+                                 4 + LAG_LOG_REWIND_STEP, false));
+    UT_ASSERT(serverSimLagLogDue(true, 500, 80, 4, 510, 80,
+                                 4 - LAG_LOG_REWIND_STEP, false));
     return 0;
 }
 

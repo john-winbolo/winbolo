@@ -1306,6 +1306,7 @@ void serverSimResetGameWorld(ServerSim *sim) {
         sim->statDroppedStaleInputs[i] = 0;
         sim->statCatchupTicks[i] = 0;
         sim->statLastRewindTicks[i] = 0;
+        sim->lagLogWritten[i] = false;
     }
 
     /* 9. Reset full sync tracking */

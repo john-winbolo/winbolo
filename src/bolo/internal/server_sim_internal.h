@@ -690,6 +690,15 @@ struct ServerSim {
                                                  * post-dequeue depth > jitterTarget + 1 */
     uint8_t  statLastRewindTicks[MAX_TANKS];    /* gauge: most recent lag-comp rewind */
 
+    /* The last log_PlayerLag record written for each slot, so the log gets a
+     * new one only when it is due (serverSimLagLogDue). lagLogWritten is
+     * false until the first record after the slot connects. Reads only;
+     * never gate sim behaviour on these. */
+    bool     lagLogWritten[MAX_TANKS];
+    uint32_t lagLogTick[MAX_TANKS];             /* sim->tick of the last record */
+    uint16_t lagLogRttMs[MAX_TANKS];            /* RTT the last record carried */
+    uint8_t  lagLogRewind[MAX_TANKS];           /* rewind the last record carried */
+
 #ifdef WB_NETDEBUG
     /* Net-debug rig: sim-executed turn half-steps and mine lays per
      * player. Test-only — never compiled into production builds. */
@@ -1902,6 +1911,20 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
  * test can include and drive it directly. */
 uint8_t serverSimComputeLagCompTicks(uint32_t simTick, uint32_t viewTick,
                                      uint16_t pingMs);
+
+/* log_PlayerLag write policy. A slot gets a record about once a second
+ * (LAG_LOG_INTERVAL_TICKS server ticks), when its RTT moves by
+ * LAG_LOG_RTT_STEP_MS or more, when its rewind moves by LAG_LOG_REWIND_STEP
+ * entries or more, and at every anchor (the round's first entry and each
+ * entry that carries a snapshot). written is false when the slot has no
+ * record since it connected, which makes a record due. T2 so the unit test
+ * can drive it directly. */
+#define LAG_LOG_INTERVAL_TICKS 100  /* 1 s of 10 ms server ticks */
+#define LAG_LOG_RTT_STEP_MS    20
+#define LAG_LOG_REWIND_STEP    2
+bool serverSimLagLogDue(bool written, uint32_t lastTick, uint16_t lastRttMs,
+                        uint8_t lastRewind, uint32_t tick, uint16_t rttMs,
+                        uint8_t rewind, bool anchor);
 
 /* Test/inspection accessor: pointer to slot's round stats, or NULL if
  * slot >= MAX_TANKS. */

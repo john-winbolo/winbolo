@@ -60,6 +60,7 @@ extern "C" {
     void lv_screenClearPerspective(void);
     void lv_screenDeselectTank(void);
     bool lv_screenCheckPerspective(void);
+    bool lv_screenPlayerLagNow(int slot, int *rttMs, int *behindMs);
     void lv_drawDirtyScreen(void);
     void lv_drawTeamPanelColour(int palette, float *r, float *g, float *b);
     SDL_Texture *lv_drawGetTilesTexture(void);
@@ -288,6 +289,21 @@ static void hud_slot_tooltip(int grid, int index, const LvHudSlot &slot) {
                              slot.relation == LV_HUD_REL_ALLIED ? STR_LV_HUD_REL_ALLIED :
                                                                   STR_LV_HUD_REL_HOSTILE));
         snprintf(tip, sizeof(tip), "%s", langGetTextFmt(STR_LV_HUD_TIP_REL, &args));
+    }
+    /* A tank's round-trip time after the rest, when the recording has
+     * one for its player at the playhead. */
+    if (grid == HUD_GRID_TANKS && slot.icon != LV_HUD_ICON_NEUTRAL) {
+        int rtt = 0;
+        bool has;
+        lv_clientMutexWaitFor();
+        has = lv_screenPlayerLagNow(index, &rtt, nullptr);
+        lv_clientMutexRelease();
+        if (has) {
+            args = {};
+            snprintf(args.string1, sizeof(args.string1), "%s", tip);
+            args.number = rtt;
+            snprintf(tip, sizeof(tip), "%s", langGetTextFmt(STR_LV_LAG_HUD_TIP, &args));
+        }
     }
     /* A tank that a bot drives has the game's chip in front of the line. */
     if (grid == HUD_GRID_TANKS && lv_bot_chip_width(slot.chip) > 0.0f) {
