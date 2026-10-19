@@ -40,6 +40,7 @@
 #include "lv_players.h"
 #include "lv_bolo_map.h"
 #include "lv_messages.h"
+#include "lv_lag.h"
 #include "../gui/lang.h"
 
 
@@ -64,6 +65,85 @@ static char perspectiveName[PLAYER_NAME_LEN];
  * not joined yet) stays selected and shows as no tank until the player is
  * there again. */
 static int selectedTank = -1;
+
+/* The lag view's frame: when set, the map draws every tank but lagLiveSlot's
+ * and every builder at the place this frame holds, which is where the chosen
+ * player's screen showed them. NULL draws the present. */
+static const LvLagFrame *lagFrame = NULL;
+static int lagLiveSlot = -1;
+
+void lv_playersSetLagFrame(const LvLagFrame *frame, int liveSlot) {
+  lagFrame = frame;
+  lagLiveSlot = liveSlot;
+}
+
+/* Note where each tank and each builder is drawn now, into one frame of the
+ * lag view's history. The tests are the ones lv_playersMakeScreenTanks and
+ * lv_playersMakeScreenLgm make, so a frame holds what the map drew. */
+void lv_playersLagCapture(LvLagFrame *frame) {
+  BYTE count;
+  for (count = 0; count < MAX_TANKS && count < LV_LAG_SLOTS; count++) {
+    LvLagTank *t = &frame->tank[count];
+    LvLagLgm *l = &frame->lgm[count];
+    t->on = (plrs.item[count].inUse == TRUE &&
+             (plrs.item[count].mapX != 0 || plrs.item[count].mapY != 0 ||
+              plrs.item[count].pixelX != 0 || plrs.item[count].pixelY != 0));
+    t->mx = plrs.item[count].mapX;
+    t->my = plrs.item[count].mapY;
+    t->px = plrs.item[count].pixelX;
+    t->py = plrs.item[count].pixelY;
+    t->frame = plrs.item[count].frame;
+    t->onBoat = (plrs.item[count].onBoat == TRUE);
+    l->out = (plrs.item[count].inUse == TRUE && plrs.item[count].lgmIsOut == TRUE &&
+              (plrs.item[count].lgmMapX != 0 || plrs.item[count].lgmMapY != 0));
+    l->mx = plrs.item[count].lgmMapX;
+    l->my = plrs.item[count].lgmMapY;
+    l->px = plrs.item[count].lgmPixelX;
+    l->py = plrs.item[count].lgmPixelY;
+    l->frame = plrs.item[count].lgmFrame;
+  }
+}
+
+/* Where the map draws slot's tank: the lag view's frame for every slot but
+ * the live one while the view is on, else the present. Returns FALSE when no
+ * tank is drawn for the slot. */
+static bool playersDrawnTank(BYTE slot, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, bool *onBoat) {
+  if (plrs.item[slot].inUse == FALSE) {
+    return FALSE;
+  }
+  if (lagFrame != NULL && (int) slot != lagLiveSlot && slot < LV_LAG_SLOTS) {
+    const LvLagTank *t = &lagFrame->tank[slot];
+    if (!t->on) {
+      return FALSE;
+    }
+    *mx = t->mx;
+    *my = t->my;
+    *px = t->px;
+    *py = t->py;
+    *frame = t->frame;
+    *onBoat = t->onBoat ? TRUE : FALSE;
+    return TRUE;
+  }
+  /* Never a tank at the (0,0) map/pixel origin; see lv_playersMakeScreenTanks. */
+  if (plrs.item[slot].mapX == 0 && plrs.item[slot].mapY == 0 &&
+      plrs.item[slot].pixelX == 0 && plrs.item[slot].pixelY == 0) {
+    return FALSE;
+  }
+  *mx = plrs.item[slot].mapX;
+  *my = plrs.item[slot].mapY;
+  *px = plrs.item[slot].pixelX;
+  *py = plrs.item[slot].pixelY;
+  *frame = plrs.item[slot].frame;
+  *onBoat = plrs.item[slot].onBoat;
+  return TRUE;
+}
+
+bool lv_playersGetDrawnTankDetails(BYTE slot, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, bool *onBoat) {
+  if (slot >= MAX_TANKS) {
+    return FALSE;
+  }
+  return playersDrawnTank(slot, mx, my, px, py, frame, onBoat);
+}
 
 void lv_playersSetSelected(int slot) {
   selectedTank = (slot >= 0 && slot < MAX_TANKS) ? slot : -1;
@@ -653,6 +733,12 @@ void lv_playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, 
   BYTE my;
   BYTE px;
   BYTE py;
+  BYTE drawMx;                   /* Where the tank is drawn: the present, or */
+  BYTE drawMy;                   /* the lag view's frame */
+  BYTE drawPx;
+  BYTE drawPy;
+  BYTE drawFrame;
+  bool drawOnBoat;
   //char str[256];
 
   
@@ -665,20 +751,21 @@ void lv_playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, 
          — e.g. a lobby-only player injected for chat-name resolution, or a
          momentary post-join/pre-location slot — and must not render (the
          coordinate conversion below would otherwise place it at the (255,255)
-         corner). Mirrors the (0,0) sentinel the LGM path already uses. */
-      if (plrs.item[count].mapX == 0 && plrs.item[count].mapY == 0 &&
-          plrs.item[count].pixelX == 0 && plrs.item[count].pixelY == 0) {
+         corner). Mirrors the (0,0) sentinel the LGM path already uses.
+         playersDrawnTank makes that test, and with the lag view on it gives
+         the place the chosen player's screen showed. */
+      if (!playersDrawnTank(count, &drawMx, &drawMy, &drawPx, &drawPy, &drawFrame, &drawOnBoat)) {
         continue;
       }
       playerName[0] = '\0';
       /* Extract fixed map co-ordinates */
 
-      conv = (plrs.item[count].mapX << 8) + (plrs.item[count].pixelX << 4);
+      conv = (drawMx << 8) + (drawPx << 4);
       conv -= 128;
       mx = (conv >> 8);
       px = (conv & 0xF0) >> 4;
 
-      conv2 = (plrs.item[count].mapY << 8) + (plrs.item[count].pixelY << 4);
+      conv2 = (drawMy << 8) + (drawPy << 4);
       conv2 -= 128;
       my = (conv2 >> 8);
       py = (conv2 & 0xF0) >> 4;
@@ -688,8 +775,8 @@ void lv_playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, 
       if (mx >= leftPos && mx <= rightPos && my >= top && my <= bottom) {
         /* Extract player screen name */
         lv_playersMakeScreenName(count, playerName);
-        frame = plrs.item[count].frame;
-        if (plrs.item[count].onBoat == TRUE) {
+        frame = drawFrame;
+        if (drawOnBoat == TRUE) {
           frame += TANK_BOAT_ADD;
         }
         if (myPlayerNum != count) {
@@ -711,9 +798,9 @@ void lv_playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, 
         /* The log only carries a 4 bit pixel offset and a 16 step
            facing, so the sub-square offsets and the angle are those
            values scaled back up to world units and to 0-255. */
-        lv_screenTanksAddItem(value,(BYTE) (mx - leftPos), (BYTE) (my - top), px, py, frame, plrs.item[count].team, plrs.item[count].frame, plrs.item[count].onBoat, playerName,
+        lv_screenTanksAddItem(value,(BYTE) (mx - leftPos), (BYTE) (my - top), px, py, frame, plrs.item[count].team, drawFrame, drawOnBoat, playerName,
                               (BYTE) (px << TANK_SHIFT_RIGHT2), (BYTE) (py << TANK_SHIFT_RIGHT2),
-                              (BYTE) (plrs.item[count].frame << 4));
+                              (BYTE) (drawFrame << 4));
         lv_screenTanksSetLastSlot(value, count);
       } else if (count == 0) {
 /*        sprintf(playerName, "NIF: mx=%d, my=%d, l=%d, r=%d, t=%d, b=%d", mx, my, leftPos, rightPos, top, bottom);
@@ -747,6 +834,24 @@ void lv_playersMakeScreenLgm(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE
   WORLD wx;
   WORLD wy;
   BYTE count;                    /* Looping variable */
+
+  if (lagFrame != NULL) {
+    /* The lag view: every builder at the place the frame holds, the chosen
+       player's own one too, since his place comes from the server as the
+       others' do. The frame made the tests below when it was noted. */
+    for (count = 0; count < MAX_TANKS && count < LV_LAG_SLOTS; count++) {
+      const LvLagLgm *l = &lagFrame->lgm[count];
+      if (plrs.item[count].inUse == TRUE && l->out &&
+          l->mx >= leftPos && l->mx <= rightPos && l->my >= top && l->my <= bottom) {
+        wx = l->mx << TANK_SHIFT_MAPSIZE;
+        wx += l->px << TANK_SHIFT_RIGHT2;
+        wy = l->my << TANK_SHIFT_MAPSIZE;
+        wy += l->py << TANK_SHIFT_RIGHT2;
+        lv_screenLgmAddItem(value, (BYTE) (l->mx - leftPos), (BYTE) (l->my - top), l->px, l->py, l->frame, (BYTE) wx, (BYTE) wy);
+      }
+    }
+    return;
+  }
 
   for (count=0;count<MAX_TANKS;count++) {
     /* Only draw a man who is out of his tank, and never from the (0,0)

@@ -75,6 +75,7 @@
 #include "lv_save_name.h"        /* the players of the whole log, the lobby's map */
 #include "lv_first_view.h"       /* the box round everything that is not deep sea */
 #include "lv_pill_numbers.h"     /* the number of each pillbox on the map */
+#include "lv_lag.h"              /* each player's lag and the lag view's history */
 
 /* The middle of the visible map from the start of the view (defined with
  * lv_screenSetViewInset). */
@@ -86,6 +87,220 @@ static LogViewerState *g_lv = NULL;
 
 void lv_screenSetState(LogViewerState *lv) { g_lv = lv; }
 LogViewerState *lv_screenGetState(void) { return g_lv; }
+
+/* --- Player lag ---------------------------------------------------------
+ * Each player's network lag, as the recording's log_PlayerLag records state
+ * it, and the history the lag view ("see what this player saw") draws from.
+ *
+ * A loaded file's walk collects every record at the time playback reads it,
+ * and playback adds what it reads too, which on a live feed is the only
+ * collector. A record at a time the track already holds changes nothing more.
+ * The value at a time is the last record at or before it, so a seek in either
+ * direction finds it.
+ *
+ * The history is a ring of where the map drew each tank, each builder and
+ * each shell, one frame for each entry playback plays (lv_screenLogTick).
+ * With the view on, the map draws the frame that is the chosen player's
+ * rewind older than the playhead: the server rewinds the other tanks by that
+ * much when it tests that player's tank shells, so it is the world that
+ * player's screen showed. The chosen player's own tank is drawn at the
+ * present, where that player's own screen had it. A seek back starts its
+ * decode far enough before the target to fill the ring
+ * (lv_screenSeekToAbsoluteMs). Where the ring has no frame for the time, the
+ * map draws the present and the banner says so. */
+#define LV_LAG_HISTORY_MS ((uint32_t) LV_LAG_FRAMES * LV_LAG_ENTRY_MS)
+static LvLagTrack s_lagTracks[LV_LAG_SLOTS];
+static bool       s_lagAny      = FALSE;  /* some record was read */
+static LvLagRing  s_lagRing;
+static int        s_lagViewSlot = -1;     /* the chosen player, -1 for off */
+/* The name the chosen player had when chosen, so a slot that a different
+   player later sits in is not taken for the one that was picked. */
+static char       s_lagViewName[PLAYER_NAME_LEN];
+
+/* Drop the records, the history and the view, as every load and close
+   does. */
+static void lv_lagReset(void) {
+  int i;
+  for (i = 0; i < LV_LAG_SLOTS; i++) {
+    lv_lagTrackClear(&s_lagTracks[i]);
+  }
+  s_lagAny = FALSE;
+  lv_lagRingClear(&s_lagRing);
+  s_lagViewSlot = -1;
+  s_lagViewName[0] = '\0';
+}
+
+/* Take one log_PlayerLag payload's first four bytes (the player, the RTT as
+   a big-endian u16 and the rewind) into its player's track at ms. */
+static void lv_lagRecordRead(uint32_t ms, const BYTE *b) {
+  BYTE slot = b[0];
+  if (slot >= LV_LAG_SLOTS || slot >= MAX_TANKS) {
+    return;
+  }
+  if (lv_lagTrackAdd(&s_lagTracks[slot], ms,
+                     (uint16_t) (((unsigned) b[1] << 8) | b[2]), b[3], TRUE)) {
+    s_lagAny = TRUE;
+  }
+}
+
+/* Note where the map draws everything at this entry, as the history's
+   newest frame. */
+static void lv_lagCaptureTick(void) {
+  LvLagFrame *f = lv_lagRingPush(&s_lagRing, g_lv->timeRunning);
+  shells q;
+
+  lv_playersLagCapture(f);
+  for (q = g_lv->shs; q != NULL && f->shellCount < LV_LAG_SHELLS_MAX; q = q->next) {
+    LvLagShell *sh = &f->shells[f->shellCount++];
+    sh->mx = q->mx;
+    sh->my = q->my;
+    sh->px = q->px;
+    sh->py = q->py;
+    sh->frame = q->frame;
+  }
+}
+
+/* TRUE while the chosen player is still the one in the slot. */
+static bool lv_lagViewPlayerHere(void) {
+  char name[PLAYER_NAME_LEN];
+
+  if (s_lagViewSlot < 0 || s_lagViewSlot >= MAX_TANKS ||
+      lv_playersIsInUse((BYTE) s_lagViewSlot) == FALSE) {
+    return FALSE;
+  }
+  name[0] = '\0';
+  lv_playersGetPlayerName((BYTE) s_lagViewSlot, name, sizeof(name));
+  return strcmp(name, s_lagViewName) == 0;
+}
+
+/* The frame the lag view draws at the playhead, or NULL to draw the present:
+   the view is off, its player has no record yet, or the history holds no
+   frame that old. */
+static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs) {
+  const LvLagRecord *rec;
+  uint32_t behind;
+
+  if (behindMs != NULL) {
+    *behindMs = 0;
+  }
+  if (g_lv == NULL || !lv_lagViewPlayerHere()) {
+    return NULL;
+  }
+  rec = lv_lagTrackAt(&s_lagTracks[s_lagViewSlot], g_lv->timeRunning);
+  if (rec == NULL) {
+    return NULL;
+  }
+  behind = (uint32_t) rec->rewind * LV_LAG_ENTRY_MS;
+  if (behindMs != NULL) {
+    *behindMs = behind;
+  }
+  /* The newest frame must be the playhead's own: a frame noted before a
+     seek is of another time. */
+  if (s_lagRing.count == 0 ||
+      s_lagRing.frames[s_lagRing.newest].ms != g_lv->timeRunning ||
+      behind > g_lv->timeRunning) {
+    return NULL;
+  }
+  return lv_lagRingFind(&s_lagRing, g_lv->timeRunning - behind);
+}
+
+bool lv_screenLagRecorded(void) {
+  return s_lagAny;
+}
+
+bool lv_screenPlayerLagNow(int slot, int *rttMs, int *behindMs) {
+  const LvLagRecord *rec;
+
+  if (g_lv == NULL || slot < 0 || slot >= LV_LAG_SLOTS) {
+    return FALSE;
+  }
+  rec = lv_lagTrackAt(&s_lagTracks[slot], g_lv->timeRunning);
+  if (rec == NULL) {
+    return FALSE;
+  }
+  if (rttMs != NULL) *rttMs = rec->rttMs;
+  if (behindMs != NULL) *behindMs = (int) rec->rewind * LV_LAG_ENTRY_MS;
+  return TRUE;
+}
+
+void lv_screenPlayerLagSnapshot(int slot, LvPlayerLag *out) {
+  uint32_t total;
+  int i;
+
+  if (out == NULL) {
+    return;
+  }
+  memset(out, 0, sizeof(*out));
+  out->graphMax = 1.0f;
+  if (g_lv == NULL || g_lv->logLoaded == FALSE) {
+    return;
+  }
+  out->recorded = s_lagAny;
+  out->has = lv_screenPlayerLagNow(slot, &out->rttMs, &out->behindMs);
+  if (!out->has) {
+    return;
+  }
+  /* The RTT across the whole recording, so a spike shows wherever the
+     playhead is. A live feed's end is its head, which moves on. */
+  total = g_lv->totalTimeMs;
+  if (total < g_lv->timeRunning) {
+    total = g_lv->timeRunning;
+  }
+  if (total == 0) {
+    total = 1;
+  }
+  for (i = 0; i < LV_LAG_GRAPH_SAMPLES; i++) {
+    uint32_t ms = (uint32_t) (((uint64_t) total * (uint64_t) i) /
+                              (uint64_t) (LV_LAG_GRAPH_SAMPLES - 1));
+    const LvLagRecord *rec = lv_lagTrackAt(&s_lagTracks[slot], ms);
+    out->graph[i] = (rec != NULL) ? (float) rec->rttMs : 0.0f;
+    if (out->graph[i] > out->graphMax) {
+      out->graphMax = out->graph[i];
+    }
+  }
+  out->playhead = (float) g_lv->timeRunning / (float) total;
+  if (out->playhead > 1.0f) {
+    out->playhead = 1.0f;
+  }
+}
+
+void lv_screenLagViewSet(int slot) {
+  if (g_lv == NULL || slot < 0 || slot >= MAX_TANKS || slot >= LV_LAG_SLOTS ||
+      lv_playersIsInUse((BYTE) slot) == FALSE) {
+    s_lagViewSlot = -1;
+    s_lagViewName[0] = '\0';
+    return;
+  }
+  s_lagViewSlot = slot;
+  lv_playersGetPlayerName((BYTE) slot, s_lagViewName, sizeof(s_lagViewName));
+}
+
+int lv_screenLagViewSlot(void) {
+  /* A view whose player is no longer in the slot is turned off here, which
+     the panels call between decoder steps: a seek empties and refills the
+     slots on its way, and that must not count. */
+  if (s_lagViewSlot >= 0 && !lv_lagViewPlayerHere()) {
+    s_lagViewSlot = -1;
+    s_lagViewName[0] = '\0';
+  }
+  return s_lagViewSlot;
+}
+
+bool lv_screenLagViewStatus(char *name, size_t nameSize, int *behindMs, bool *drawn) {
+  uint32_t behind = 0;
+  const LvLagFrame *f;
+
+  if (lv_screenLagViewSlot() < 0) {
+    return FALSE;
+  }
+  f = lv_lagViewFrame(&behind);
+  if (name != NULL && nameSize > 0) {
+    snprintf(name, nameSize, "%s", s_lagViewName);
+  }
+  if (behindMs != NULL) *behindMs = (int) behind;
+  if (drawn != NULL) *drawn = (f != NULL);
+  return TRUE;
+}
 
 /* The lobby settings the recording carries, as the raw log_GameSettings
  * payload (layout in docs/replay-format.md). Length 0 means no settings,
@@ -944,6 +1159,8 @@ void lv_screenUpdate(updateType value) {
   screenTanks st;
   screenBullets sb;
   screenLgm sl;
+  const LvLagFrame *lagFrame; /* the lag view's frame; NULL draws the present */
+  shells lagShells = NULL;
 
 
   lv_screenLgmCreate(&sl);
@@ -955,16 +1172,34 @@ void lv_screenUpdate(updateType value) {
   }
 
   lv_screenUpdateView(value);
+  lagFrame = lv_lagViewFrame(NULL);
+  if (lagFrame != NULL) {
+    /* The lag view: the other tanks, the builders and the shells where the
+       chosen player's screen showed them. */
+    int i;
+    lv_playersSetLagFrame(lagFrame, s_lagViewSlot);
+    lagShells = lv_shellsCreate();
+    for (i = 0; i < lagFrame->shellCount; i++) {
+      const LvLagShell *sh = &lagFrame->shells[i];
+      lv_shellsAddItem(&lagShells, sh->mx, sh->my, sh->px, sh->py, sh->frame);
+    }
+  }
   {
     int rightEdge = (int)g_lv->xOffset + lv_screenGetSizeX();
     int bottomEdge = (int)g_lv->yOffset + lv_screenGetSizeY();
     if (rightEdge > 255) rightEdge = 255;
     if (bottomEdge > 255) bottomEdge = 255;
     lv_playersMakeScreenLgm(&sl, g_lv->xOffset, (BYTE) rightEdge, g_lv->yOffset, (BYTE) bottomEdge);
-    lv_shellsCalcScreenBullets(&g_lv->shs, &sb, g_lv->xOffset, (BYTE) rightEdge, g_lv->yOffset, (BYTE) bottomEdge);
+    lv_shellsCalcScreenBullets(lagFrame != NULL ? &lagShells : &g_lv->shs, &sb, g_lv->xOffset, (BYTE) rightEdge, g_lv->yOffset, (BYTE) bottomEdge);
     lv_playersMakeScreenTanks(&st, g_lv->xOffset, (BYTE) rightEdge, g_lv->yOffset, (BYTE) bottomEdge);
   }
   lv_frontEndDrawMainScreen(&g_lv->view, &g_lv->mineView, &st, NULL, &sb, &sl, 0, FALSE, 0, 0);
+  if (lagFrame != NULL) {
+    /* The game view's tank names read the frame while it draws, so it is
+       put back only after. */
+    lv_playersSetLagFrame(NULL, -1);
+    lv_shellsDestroy(&lagShells);
+  }
   lv_screenTanksDestroy(&st);
   lv_screenBulletsDestroy(&sb);
   lv_screenLgmDestroy(&sl);
@@ -1826,8 +2061,10 @@ static void lv_tickAnchorsTruncate(void) {
   s_tickAnchorsTruncated = TRUE;
 }
 
-/* Drop the spans and the anchors, as every load and close does. */
+/* Drop the spans and the anchors, as every load and close does. The lag
+   records ride the same walk and go with them. */
 static void lv_serverTickReset(void) {
+  lv_lagReset();
   free(s_wtSpans);
   s_wtSpans              = NULL;
   s_wtSpanCount          = 0;
@@ -2768,6 +3005,22 @@ void lv_screenProcessLog(unsigned short numEvents) {
         logReadBytes(t, 4);
       }
       break;
+    case log_PlayerLag:
+      /* One player's lag: the player, the RTT and the rewind. Read when the
+         record holds the four bytes; the bytes after them are a later
+         version's, and the frame's length below skips them. */
+      if (isV2) {
+        BYTE b[4];
+        if (evLen >= 4 && logReadBytes(b, 4) == 4) {
+          lv_lagRecordRead(g_lv->timeRunning, b);
+        }
+      } else {
+        /* Never written to an unframed file. Four bytes, as the byte walker
+           sizes it. */
+        BYTE b[4];
+        logReadBytes(b, 4);
+      }
+      break;
     case log_BaseSetOwner:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
@@ -3316,6 +3569,9 @@ bool lv_screenLogTick() {
   BYTE top = 0;    /* stay 0 if the log runs out partway through a header */
   BYTE bottom = 0;
   unsigned short len = 0;
+  /* The tick moves the playhead on, so the lag view's history takes a frame
+     at its end. The text dump and the load only read ahead and take none. */
+  const bool lagCapture = (g_lv->isPlaying == TRUE && !s_eventScan && !s_scanGathers);
 
   bool process = FALSE;
   s_logTickAtLiveHead = FALSE;
@@ -3437,6 +3693,9 @@ bool lv_screenLogTick() {
         lv_screenFollowCentredTank();
       }
     }
+  }
+  if (lagCapture) {
+    lv_lagCaptureTick();
   }
   return returnValue;
 }
@@ -3897,9 +4156,11 @@ static int walkSkipEventBody(BYTE code) {
     case log_Shell:
     case log_GameTimeSet:
     case log_ServerTick:
-      /* log_ServerTick's four bytes are the server tick as a big-endian u32.
-         Only a v2 log can carry one; the v1 walker is given the case anyway,
-         for the reason it is given one for log_Ping. */
+    case log_PlayerLag:
+      /* log_ServerTick's four bytes are the server tick as a big-endian u32,
+         and log_PlayerLag's are the player, the RTT and the rewind. Only a v2
+         log can carry either; the v1 walker is given the case anyway, for the
+         reason it is given one for log_Ping. */
       { BYTE b[4]; if (logReadBytes(b, 4) != 4) return -1; }
       return 4;
     case log_PlayerLocation:
@@ -4306,6 +4567,7 @@ typedef struct {
   bool     rules;      /* log_RuleSet into the rule change list */
   bool     pres;       /* scenario presentation index; framed files only */
   bool     wt;         /* server tick count and anchors; framed files only */
+  bool     lag;        /* log_PlayerLag into the lag tracks; framed files only */
   /* Set by walkScanEvents for the block it read, for the server tick count:
      whether it held log_EntityMasks, and its first four-byte log_ServerTick. */
   bool     masks;
@@ -4348,6 +4610,14 @@ static bool walkScanEvents(LvLoadWalk *w, unsigned short numEvents, uint32_t ms)
       }
       if (w->rules && code == log_RuleSet && !walkReadRuleSet(ms)) {
         w->rules = FALSE;
+      }
+      if (w->lag && code == log_PlayerLag && evLen >= 4) {
+        BYTE b[4];
+        if (logReadBytes(b, 4) != 4) {
+          w->lag = FALSE;
+        } else {
+          lv_lagRecordRead(ms, b);
+        }
       }
       if (w->pres &&
           (code == log_ScnPanel || code == log_ScnScore ||
@@ -4438,6 +4708,7 @@ static void lv_walkLoadBegin(void) {
   s_walk.w.rules   = TRUE;
   s_walk.w.pres    = s_walk.w.framed;
   s_walk.w.wt      = s_walk.w.framed;
+  s_walk.w.lag     = s_walk.w.framed;
 
   lv_ruleChangesClear();
   lv_presReset();
@@ -7011,7 +7282,13 @@ static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
   if (targetTime == g_lv->timeRunning && g_lv->logLoaded == TRUE) {
     return;
   }
-  haveSnap = lv_snapshotFindByTime(&g_lv->snap, targetTime, &snapPos, &snapTime, &key, &pTeams);
+  /* A recording with lag records starts the decode a history's length
+     before the target, so the lag view has its frames when the seek ends,
+     whether or not the view is on yet. */
+  haveSnap = lv_snapshotFindByTime(&g_lv->snap,
+                                   (s_lagAny && targetTime > LV_LAG_HISTORY_MS)
+                                       ? targetTime - LV_LAG_HISTORY_MS : targetTime,
+                                   &snapPos, &snapTime, &key, &pTeams);
 
   if (targetTime > g_lv->timeRunning && g_lv->logLoaded == TRUE &&
       !(haveSnap && snapTime > g_lv->timeRunning)) {

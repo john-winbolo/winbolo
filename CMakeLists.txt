@@ -5400,6 +5400,12 @@ set(_unit_test_names
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
     log_roundtrip_map_name_at_round_start
+    log_roundtrip_player_lag
+    log_roundtrip_player_lag_recorded
+    server_lag_log_due
+    lv_player_lag_read
+    lv_lag_track
+    lv_lag_ring
     log_roundtrip_ping
     log_roundtrip_snapshot_tank_stocks
     log_roundtrip_tank_stock_record
