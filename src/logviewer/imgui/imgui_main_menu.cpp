@@ -10,13 +10,17 @@
 
 #include "imgui_main_menu.h"
 #include "imgui_scenario_panel.h"
+#include "imgui_dock.h"
 #include "imgui_dialogs.h"
+#include "imgui_event_overlay.h"
 #include "imgui.h"
 #include "platform_config.h"
 #include "../../gui/lang.h"
 #include "../../gui/sdl3/dialogs/imgui_wbn_browser.h"
 #include <SDL3/SDL.h>
 
+#include <cfloat>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -26,10 +30,16 @@ extern "C" {
     #include "logviewer.h"
     #include "../backend.h"
     #include "../draw.h"
+    #include "../lv_dock_fit.h"
+    #include "../lv_zoom_text.h"
     #include "../../winbolonet/http.h"
     void lv_windowOpenFile(char *cmdLine);
     void lv_windowOpenMemory(uint8_t *zipData, size_t zipLen);
     void lv_windowSaveMap(void);
+    bool lv_windowCanSaveLog(void);
+    void lv_windowSaveLog(void);
+    bool lv_windowCanOpenSinglePlayer(void);
+    void lv_windowOpenSinglePlayer(void);
     void lv_windowPlay(void);
     void lv_windowPause(void);
     void lv_windowStop(int corruptLog);
@@ -52,6 +62,9 @@ static void open_wbn_browser_modal(void);
 extern "C" void lv_imgui_open_wbn_browser(void) { open_wbn_browser_modal(); }
 static void open_wbn_browser_modal(void) {
     if (!s_lv || !s_lv->window || !s_lv->renderer) return;
+    /* A live feed is not given up for another log: the menus have no Open
+     * there, and this does nothing there as well. */
+    if (lv_screenSpecIsLiveMode()) return;
 
     ImGuiContext *saved_ctx = ImGui::GetCurrentContext();
 
@@ -95,6 +108,9 @@ bool lv_g_show_comments_window = false;  /* Opt-in: WBN comments are noisy if yo
 /* The scenario panel only draws while a recording has a list for it, so a
    plain recording never shows it whatever this says. */
 bool lv_g_show_scenario_panel_window = true;
+bool lv_g_show_hud_window = true;
+bool lv_g_show_overview_window = true;
+bool lv_g_show_tank_window = true;
 bool lv_g_reset_window_positions = false;
 /* Off until asked for: the outlines sit over the map a recording is watched
    for. */
@@ -102,6 +118,8 @@ bool lv_g_show_regions = false;
 
 /* Options state */
 static bool s_tank_centred = false;
+/* Options > Animate Rewind and Fast Forward (lv_jump_anim.h). */
+static bool s_jump_anim = true;
 static bool s_dns_lookups = false;
 static bool s_mode_information = true;  /* true = Information, false = Select Team */
 
@@ -111,6 +129,9 @@ static void show_about_dialog(void);
 
 void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     s_lv = lv;
+    /* The sidebars keep their own preferences; they load and save with the
+     * menu's so the hosts have one call each to make. */
+    lv_imgui_dock_init(lv);
     /* Load preferences from config */
     char val[256];
     
@@ -145,6 +166,15 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     lv_platform_config_get_string("LOGVIEWER", "Window.ScenarioPanel.Visible", "Yes", val, sizeof(val));
     lv_g_show_scenario_panel_window = (val[0] == 'Y' || val[0] == 'y');
 
+    lv_platform_config_get_string("LOGVIEWER", "Window.HUD.Visible", "Yes", val, sizeof(val));
+    lv_g_show_hud_window = (val[0] == 'Y' || val[0] == 'y');
+
+    lv_platform_config_get_string("LOGVIEWER", "Window.Overview.Visible", "Yes", val, sizeof(val));
+    lv_g_show_overview_window = (val[0] == 'Y' || val[0] == 'y');
+
+    lv_platform_config_get_string("LOGVIEWER", "Window.Tank.Visible", "Yes", val, sizeof(val));
+    lv_g_show_tank_window = (val[0] == 'Y' || val[0] == 'y');
+
     /* The panel's side in whole pixels. A value that is not a whole number
        keeps the default; the panel raises one under its smallest side and
        keeps one past the screen inside it. */
@@ -159,9 +189,37 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
 
     lv_platform_config_get_string("LOGVIEWER", "Show Regions", "No", val, sizeof(val));
     lv_g_show_regions = (val[0] == 'Y' || val[0] == 'y');
+
+    /* Off until asked for: the bars sit over the map. */
+    lv_platform_config_get_string("LOGVIEWER", "Tank Bars", "No", val, sizeof(val));
+    lv_drawSetTankBars((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
+    lv_platform_config_get_string("LOGVIEWER", "Tank Builder Status", "No", val, sizeof(val));
+    lv_drawSetBuilderStatus((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
+    /* On until turned off: a number is small and hides nothing. */
+    lv_platform_config_get_string("LOGVIEWER", "Pillbox Numbers", "Yes", val, sizeof(val));
+    lv_drawSetPillNumbers((val[0] == 'N' || val[0] == 'n') ? 0 : 1);
+    /* On until turned off. */
+    lv_platform_config_get_string("LOGVIEWER", "Animate Jumps", "Yes", val, sizeof(val));
+    s_jump_anim = !(val[0] == 'N' || val[0] == 'n');
+}
+
+/* True when the preference was never saved. */
+static bool pref_unset(const char *key) {
+    char val[8];
+    lv_platform_config_get_string("LOGVIEWER", key, "", val, sizeof(val));
+    return val[0] == '\0';
+}
+
+void lv_imgui_main_menu_standalone_defaults(void) {
+    if (pref_unset("Window.Comments.Visible")) lv_g_show_comments_window = true;
+    if (pref_unset("Window.ItemInformation.Visible")) lv_g_show_item_info_window = false;
+    if (pref_unset("Tank Bars")) lv_drawSetTankBars(1);
+    if (pref_unset("Tank Builder Status")) lv_drawSetBuilderStatus(1);
+    lv_event_overlay_standalone_default();
 }
 
 void lv_imgui_main_menu_save(void) {
+    lv_imgui_dock_save();
     lv_platform_config_set_string("LOGVIEWER", "Tank Centred", s_tank_centred ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Hide Lobby",
                                   lv_screenGetHideLobby() ? "Yes" : "No");
@@ -173,21 +231,89 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Window.ItemInformation.Visible", lv_g_show_item_info_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Comments.Visible", lv_g_show_comments_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.ScenarioPanel.Visible", lv_g_show_scenario_panel_window ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Window.HUD.Visible", lv_g_show_hud_window ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Window.Overview.Visible", lv_g_show_overview_window ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Window.Tank.Visible", lv_g_show_tank_window ? "Yes" : "No");
     {
         char side[16];
         snprintf(side, sizeof(side), "%d", lv_imgui_scenario_panel_side());
         lv_platform_config_set_string("LOGVIEWER", "Window.ScenarioPanel.Size", side);
     }
     lv_platform_config_set_string("LOGVIEWER", "Show Regions", lv_g_show_regions ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Tank Bars", lv_drawGetTankBars() ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Tank Builder Status",
+                                  lv_drawGetBuilderStatus() ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Pillbox Numbers",
+                                  lv_drawGetPillNumbers() ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Animate Jumps", s_jump_anim ? "Yes" : "No");
 }
 
 static void zoom_at_center(int stepIndex) {
     int w = 0, h = 0;
     if (s_lv && s_lv->window) SDL_GetWindowSize(s_lv->window, &w, &h);
-    lv_drawSetZoomStep(stepIndex, w / 2, h / 2);
+    /* The middle of the map's part of the window: what the sidebars and the
+     * menu bar leave. */
+    LvDockMargins dock = { 0, 0, 0, 0 };
+    int menuH = (int)lv_imgui_get_menu_bar_height();
+    int mapX = 0, mapY = 0, mapW = 0, mapH = 0;
+    lv_imgui_dock_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
+    if (dock.left + dock.top + dock.right + dock.bottom == 0) menuH = 0;  /* as it always was */
+    lvDockMapRect(&dock, w, h, menuH, &mapX, &mapY, &mapW, &mapH);
+    lv_drawSetZoomStep(stepIndex, mapX + mapW / 2, mapY + mapH / 2);
 }
 
 void lv_imgui_zoom_at_center(int stepIndex) { zoom_at_center(stepIndex); }
+
+/* The zoom on the map itself: "Zoom 150%" in the bottom left corner of the
+ * map's part of the window, for a moment after the zoom changes. So the
+ * change shows also with the Controls panel closed, and whatever changed
+ * it (the wheel, a pinch, a key, the menu, a controller). It is drawn
+ * behind the panels, white with a dark edge as the scenario's status line
+ * is. Nothing shows for the zoom the viewer starts with. */
+void lv_imgui_zoom_label(void) {
+    static float s_lastPercent = -1.0f;
+    static double s_changedAt = -1000.0;
+    const float percent = lv_drawZoomPercent();
+    const double now = ImGui::GetTime();
+    if (s_lastPercent < 0.0f) {
+        s_lastPercent = percent;
+        return;
+    }
+    if (fabsf(percent - s_lastPercent) > 0.01f) {
+        s_lastPercent = percent;
+        s_changedAt = now;
+    }
+    const float alpha = lvZoomLabelAlpha((float)(now - s_changedAt));
+    if (alpha <= 0.0f) return;
+
+    ImDrawList *dl = ImGui::GetBackgroundDrawList();
+    ImFont *font = ImGui::GetFont();
+    if (dl == nullptr || font == nullptr) return;
+    char pct[24], text[96];
+    lvZoomPercentText(percent, pct, sizeof(pct));
+    snprintf(text, sizeof(text), "%s %s", langGetText(STR_LV_ZOOM), pct);
+
+    /* The map's part of the window: what the sidebars and the menu bar
+     * leave, so the label moves with the sidebars. */
+    const ImGuiViewport *vp = ImGui::GetMainViewport();
+    LvDockMargins dock = { 0, 0, 0, 0 };
+    int menuH = (int)lv_imgui_get_menu_bar_height();
+    int mapX = 0, mapY = 0, mapW = 0, mapH = 0;
+    lv_imgui_dock_margins(&dock.left, &dock.top, &dock.right, &dock.bottom);
+    lvDockMapRect(&dock, (int)vp->Size.x, (int)vp->Size.y, menuH, &mapX, &mapY, &mapW, &mapH);
+    const float height = ImGui::GetFontSize() * 1.25f;
+    const ImVec2 size = font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
+    const float px = floorf(vp->Pos.x + (float)mapX + 8.0f);
+    const float py = floorf(vp->Pos.y + (float)(mapY + mapH) - size.y - 8.0f);
+    const ImU32 edge = IM_COL32(0, 0, 0, (int)(255.0f * alpha));
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            dl->AddText(font, height, ImVec2(px + (float)dx, py + (float)dy), edge, text);
+        }
+    }
+    dl->AddText(font, height, ImVec2(px, py), IM_COL32(255, 255, 255, (int)(255.0f * alpha)), text);
+}
 
 void lv_imgui_set_mode_information(int isInformation) {
     s_mode_information = isInformation ? true : false;
@@ -197,6 +323,16 @@ int lv_imgui_get_tank_centred(void) { return s_tank_centred ? 1 : 0; }
 
 void lv_imgui_toggle_tank_centred(void) {
     s_tank_centred = !s_tank_centred;
+    lv_screenTankCentred(s_tank_centred ? 1 : 0);
+}
+
+int lv_imgui_get_jump_anim(void) { return s_jump_anim ? 1 : 0; }
+
+void lv_imgui_toggle_jump_anim(void) { s_jump_anim = !s_jump_anim; }
+
+/* Sets it, so the menu's tick and the screen's flag stay the same thing. */
+void lv_imgui_set_tank_centred(int on) {
+    s_tank_centred = on ? true : false;
     lv_screenTankCentred(s_tank_centred ? 1 : 0);
 }
 
@@ -250,23 +386,38 @@ static void handle_keyboard_shortcuts(int *clicked) {
         }
     }
 
-    bool ctrl = io.KeyCtrl;
+    /* Not with Super (Cmd on macOS) held: a Ctrl+Cmd key is a menu bar item
+     * there (Ctrl+Cmd+F is Full Screen, Cmd+6/7/8 the sidebars), and the
+     * menu bar has acted on it already. */
+    bool ctrl = io.KeyCtrl && !io.KeySuper;
     if (!ctrl) return;
 
+    /* A live game watched from the game (spectatorRun). Open, Stop and the
+     * Comments panel are not in its menus, and their keys do nothing. */
+    const bool live = lv_screenSpecIsLiveMode();
+
     /* File */
-    if (ImGui::IsKeyPressed(ImGuiKey_O, false)) {
+    if (!live && ImGui::IsKeyPressed(ImGuiKey_O, false)) {
         lv_windowOpenFile(NULL);
         *clicked = 1;
     }
 
     /* Action */
     if (ImGui::IsKeyPressed(ImGuiKey_P, false)) {
-        if (s_lv->isLoaded && !s_lv->playIsPlaying) { lv_windowPlay(); *clicked = 1; }
+        if (io.KeyShift) {
+            /* Ctrl+Shift+P: Options > Pillbox Numbers. */
+            lv_drawSetPillNumbers(lv_drawGetPillNumbers() ? 0 : 1);
+            lv_windowNeedRedraw();
+            *clicked = 1;
+        } else if (s_lv->isLoaded && !s_lv->playIsPlaying) {
+            lv_windowPlay();
+            *clicked = 1;
+        }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_U, false)) {
         if (s_lv->isLoaded && s_lv->playIsPlaying) { lv_windowPause(); *clicked = 1; }
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+    if (!live && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
         if (s_lv->isLoaded) { lv_windowStop(0); *clicked = 1; }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F, false)) {
@@ -300,8 +451,20 @@ static void handle_keyboard_shortcuts(int *clicked) {
         lv_g_show_item_info_window = !lv_g_show_item_info_window;
         *clicked = 1;
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_5, false)) {
+    if (!live && ImGui::IsKeyPressed(ImGuiKey_5, false)) {
         lv_g_show_comments_window = !lv_g_show_comments_window;
+        *clicked = 1;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_6, false)) {
+        lv_g_show_hud_window = !lv_g_show_hud_window;
+        *clicked = 1;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_7, false)) {
+        lv_g_show_overview_window = !lv_g_show_overview_window;
+        *clicked = 1;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_8, false)) {
+        lv_g_show_tank_window = !lv_g_show_tank_window;
         *clicked = 1;
     }
 }
@@ -312,9 +475,20 @@ int lv_imgui_main_menu_bar(void) {
     handle_keyboard_shortcuts(&clicked);
 
 #ifndef __APPLE__
+    /* A live game watched from the game (spectatorRun) has the same menu
+     * bar, less the items that would end the feed or need a log file: Open,
+     * Save, Open in single player, Stop, Hide Lobby and the Comments panel.
+     * Its File menu has one item, which asks to leave. */
+    const bool live = lv_screenSpecIsLiveMode();
     if (ImGui::BeginMainMenuBar()) {
         /* File Menu */
-        if (ImGui::BeginMenu(langGetText(STR_MENU_FILE))) {
+        if (live && ImGui::BeginMenu(langGetText(STR_MENU_FILE))) {
+            if (ImGui::MenuItem(langGetText(STR_LV_MENU_LEAVE_SPECTATING))) {
+                lv_imgui_spectator_leave_request();
+                clicked = 1;
+            }
+            ImGui::EndMenu();
+        } else if (!live && ImGui::BeginMenu(langGetText(STR_MENU_FILE))) {
             if (ImGui::MenuItem(langGetText(STR_LV_MENU_OPEN_WBN))) {
                 lv_imgui_open_wbn_browser();
                 clicked = 1;
@@ -326,6 +500,27 @@ int lv_imgui_main_menu_bar(void) {
             if (ImGui::MenuItem(langGetText(STR_MENU_SAVE_MAP), NULL, false, s_lv->isLoaded != 0)) {
                 lv_windowSaveMap();
                 clicked = 1;
+            }
+            /* A copy of the open log's own file. Off for a log with no whole
+               file behind it (a live feed). */
+            if (ImGui::MenuItem(langGetText(STR_LV_MENU_SAVE_LOG), NULL, false,
+                                lv_windowCanSaveLog())) {
+                lv_windowSaveLog();
+                clicked = 1;
+            }
+            /* The world at the playhead as a single-player game. Only the
+               Log Viewer run as its own program can start the game. */
+            if (ImGui::MenuItem(langGetText(STR_LV_MENU_OPEN_SP), NULL, false,
+                                lv_windowCanOpenSinglePlayer())) {
+                lv_windowOpenSinglePlayer();
+                clicked = 1;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+                ImGui::TextUnformatted(langGetText(STR_LV_MENU_OPEN_SP_TIP));
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
             }
             ImGui::Separator();
             if (s_lv->fromMainMenu) {
@@ -355,7 +550,8 @@ int lv_imgui_main_menu_bar(void) {
                 lv_windowPause();
                 clicked = 1;
             }
-            if (ImGui::MenuItem(langGetText(STR_LV_STOP), "Ctrl+S", false, s_lv->isLoaded != 0)) {
+            if (!live &&
+                ImGui::MenuItem(langGetText(STR_LV_STOP), "Ctrl+S", false, s_lv->isLoaded != 0)) {
                 lv_windowStop(0);
                 clicked = 1;
             }
@@ -377,6 +573,14 @@ int lv_imgui_main_menu_bar(void) {
             if (ImGui::BeginMenu(langGetText(STR_LV_ZOOM))) {
                 int curStep = lv_drawGetZoomStepIndex();
                 int stepCount = lv_drawGetZoomStepCount();
+                /* The zoom as it is now, as a percentage: a line to read,
+                 * not one to click. */
+                {
+                    char pct[24];
+                    lvZoomPercentText(lv_drawZoomPercent(), pct, sizeof(pct));
+                    ImGui::MenuItem(pct, NULL, false, false);
+                    ImGui::Separator();
+                }
                 for (int i = 0; i < stepCount; i++) {
                     float val = lv_drawGetZoomStepValue(i);
                     char label[32];
@@ -426,8 +630,8 @@ int lv_imgui_main_menu_bar(void) {
                 lv_screenTankCentred(s_tank_centred ? 1 : 0);
                 clicked = 1;
             }
-            if (ImGui::MenuItem(langGetText(STR_LV_HIDE_LOBBY), NULL,
-                                lv_screenGetHideLobby() != 0)) {
+            if (!live && ImGui::MenuItem(langGetText(STR_LV_HIDE_LOBBY), NULL,
+                                         lv_screenGetHideLobby() != 0)) {
                 lv_imgui_toggle_hide_lobby();
                 clicked = 1;
             }
@@ -440,6 +644,43 @@ int lv_imgui_main_menu_bar(void) {
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                 ImGui::SetTooltip("%s", langGetText(STR_LV_REGIONS_TIP));
             }
+            if (ImGui::MenuItem(langGetText(STR_LV_TANK_BARS), NULL, lv_drawGetTankBars() != 0)) {
+                /* Drawn over the map each time it is put on the screen, so
+                 * the frame is asked for now rather than at the next tick of
+                 * a paused replay. */
+                lv_drawSetTankBars(lv_drawGetTankBars() ? 0 : 1);
+                lv_windowNeedRedraw();
+                clicked = 1;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", langGetText(STR_LV_TANK_BARS_TIP));
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_BUILDER_STATUS), NULL,
+                                lv_drawGetBuilderStatus() != 0)) {
+                lv_drawSetBuilderStatus(lv_drawGetBuilderStatus() ? 0 : 1);
+                lv_windowNeedRedraw();
+                clicked = 1;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", langGetText(STR_LV_BUILDER_STATUS_TIP));
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_PILL_NUMBERS), "Ctrl+Shift+P",
+                                lv_drawGetPillNumbers() != 0)) {
+                lv_drawSetPillNumbers(lv_drawGetPillNumbers() ? 0 : 1);
+                lv_windowNeedRedraw();
+                clicked = 1;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", langGetText(STR_LV_PILL_NUMBERS_TIP));
+            }
+#ifndef __EMSCRIPTEN__
+            /* The browser build's Rewind and Fast Forward jump: it has no
+             * animation to turn off. */
+            if (ImGui::MenuItem(langGetText(STR_LV_JUMP_ANIM), NULL, s_jump_anim)) {
+                s_jump_anim = !s_jump_anim;
+                clicked = 1;
+            }
+#endif
             if (ImGui::MenuItem(langGetText(STR_MENU_SOUND_EFFECTS), NULL, s_lv->isSoundsPlaying != 0)) {
                 s_lv->isSoundsPlaying = s_lv->isSoundsPlaying ? 0 : 1;
                 clicked = 1;
@@ -496,8 +737,21 @@ int lv_imgui_main_menu_bar(void) {
                 lv_g_show_item_info_window = !lv_g_show_item_info_window;
                 clicked = 1;
             }
-            if (ImGui::MenuItem(langGetText(STR_LV_WIN_COMMENTS), "Ctrl+5", lv_g_show_comments_window)) {
+            if (!live &&
+                ImGui::MenuItem(langGetText(STR_LV_WIN_COMMENTS), "Ctrl+5", lv_g_show_comments_window)) {
                 lv_g_show_comments_window = !lv_g_show_comments_window;
+                clicked = 1;
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_WIN_HUD), "Ctrl+6", lv_g_show_hud_window)) {
+                lv_g_show_hud_window = !lv_g_show_hud_window;
+                clicked = 1;
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_WIN_OVERVIEW), "Ctrl+7", lv_g_show_overview_window)) {
+                lv_g_show_overview_window = !lv_g_show_overview_window;
+                clicked = 1;
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_WIN_TANK), "Ctrl+8", lv_g_show_tank_window)) {
+                lv_g_show_tank_window = !lv_g_show_tank_window;
                 clicked = 1;
             }
             if (ImGui::MenuItem(langGetText(STR_SCNPANEL_SETTINGS_TITLE), NULL, lv_g_show_scenario_panel_window)) {
@@ -505,9 +759,62 @@ int lv_imgui_main_menu_bar(void) {
                 clicked = 1;
             }
             ImGui::Separator();
+            /* A sidebar is a strip along one edge of the window that the
+             * panels can be dragged into. Turning the right one on for the
+             * first time puts every panel in it; the others start empty.
+             * After that each comes back as it was left. */
+            {
+                static const struct { int side; int label; } k_sidebars[] = {
+                    { LV_DOCK_RIGHT,  STR_LV_DOCK_ENABLED },
+                    { LV_DOCK_LEFT,   STR_LV_DOCK_LEFT },
+                    { LV_DOCK_TOP,    STR_LV_DOCK_TOP },
+                    { LV_DOCK_BOTTOM, STR_LV_DOCK_BOTTOM },
+                };
+                for (const auto &sb : k_sidebars) {
+                    bool on = lv_imgui_dock_get_side_enabled(sb.side) != 0;
+                    if (ImGui::MenuItem(langGetText(sb.label), NULL, on)) {
+                        lv_imgui_dock_set_side_enabled(sb.side, !on);
+                        clicked = 1;
+                    }
+                }
+                /* The option of each sidebar, set here and nowhere else: the
+                 * part of the sidebar past its panels is clear and shows the
+                 * map. */
+                if (ImGui::BeginMenu(langGetText(STR_LV_DOCK_TRANSPARENT))) {
+                    for (const auto &sb : k_sidebars) {
+                        bool on = lv_imgui_dock_get_side_clear(sb.side) != 0;
+                        if (ImGui::MenuItem(langGetText(sb.label), NULL, on)) {
+                            lv_imgui_dock_set_side_clear(sb.side, !on);
+                            clicked = 1;
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+            }
+            ImGui::Separator();
+            /* Floats every panel at its default place. A docked panel leaves
+             * the dock: the panels set their position unconditionally on a
+             * reset, and ImGui undocks a window that is told where to be. */
             if (ImGui::MenuItem(langGetText(STR_LV_RESET_WINDOWS))) {
                 lv_g_reset_window_positions = true;
                 clicked = 1;
+            }
+            /* Puts back the default arrangement of the sidebars and the
+             * panels in them (lv_dock_default.h). */
+            if (ImGui::MenuItem(langGetText(STR_LV_RESET_WINDOWS_DOCK))) {
+                lv_imgui_dock_request_layout();
+                clicked = 1;
+            }
+            /* Full screen, on and off: the same command as Alt+Enter. Left
+             * out where the window cannot leave full screen (a Steam Deck, a
+             * tablet, a browser). */
+            if (lv_windowCanFullScreen()) {
+                ImGui::Separator();
+                if (ImGui::MenuItem(langGetText(STR_DLGSETTINGS_FULLSCREEN), "Alt+Enter",
+                                    lv_windowIsFullScreen())) {
+                    lv_windowToggleFullScreen();
+                    clicked = 1;
+                }
             }
             ImGui::EndMenu();
         }

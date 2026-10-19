@@ -57,16 +57,22 @@
  * BOLO_RECAP_CLIP_GIF      — the clip export. The GIF encoder's implementation
  *   TU (third_party/msf_gif/msf_gif_impl.c) is not in the wasm target's
  *   sources, and the save path ends in a native file dialog the browser has
- *   no equivalent of. */
+ *   no equivalent of.
+ * BOLO_REEL_SPAWN_VIEWER   — the reel's "Spawn in log viewer" button, which
+ *   starts the separate Log Viewer program. A browser page cannot start a
+ *   program. (Tablet mode, which can start one but has no place for a second
+ *   window, hides the button at run time.) */
 #define BOLO_REEL_WBN_FETCH 1
 #ifdef __EMSCRIPTEN__
 #define BOLO_REEL_WBN_FETCH_CURL 0
 #define BOLO_RECAP_WBN_RATING    0
 #define BOLO_RECAP_CLIP_GIF      0
+#define BOLO_REEL_SPAWN_VIEWER   0
 #else
 #define BOLO_REEL_WBN_FETCH_CURL 1
 #define BOLO_RECAP_WBN_RATING    1
 #define BOLO_RECAP_CLIP_GIF      1
+#define BOLO_REEL_SPAWN_VIEWER   1
 #endif
 
 /* BOLO_LOBBY_REEL — the recap's replay reel and the embedded log viewer
@@ -192,6 +198,7 @@ typedef struct LobbyIconCache {
     SDL_Texture  *picture;
     SDL_Texture  *play;
     SDL_Texture  *pause;
+    SDL_Texture  *openWindow;
     bool          attempted;
     /* The renderer instance the icons above were created against. SDL_Texture
      * is tied to the renderer that created it, so if the renderer instance
@@ -379,6 +386,26 @@ typedef struct LobbyReelState {
      * keeps the request to one send per summary. Read by the recap so it can
      * say what is happening in place of a reel it has no bytes for yet. A
      * process replaying its own recording never asks, and leaves these idle. */
+#if BOLO_REEL_SPAWN_VIEWER
+    /* A copy of the bytes the reel was given, for "Spawn in log viewer": the
+     * viewer embed takes the reel's own buffer and frees it, so this is the
+     * only whole copy of the log this side still has. Always a complete log:
+     * the file this process recorded is read only after the recording is
+     * closed, and a download is handed over only once every byte is here.
+     * SDL_malloc'd, freed by lobbyReelEnd. NULL when the copy could not be
+     * made, which keeps the button disabled. */
+    uint8_t *spawnBytes = nullptr;
+    size_t   spawnLen   = 0;
+    /* What the last spawn came to, as a lang id (0 for none): that the viewer
+     * started, or what went wrong. And the SDL tick it stops being shown. */
+    int      spawnMsg       = 0;
+    Uint64   spawnMsgUntilMs = 0;
+    /* The SDL tick the button works again after a viewer was started, so
+     * that a press whose window takes a moment to appear is not pressed
+     * again and again, each press starting another viewer. */
+    Uint64   spawnAgainAtMs = 0;
+#endif
+
     bool    logAsked   = false;
     int     logState   = CLIENT_ROUND_LOG_IDLE;
     uint8_t logPercent = 0;

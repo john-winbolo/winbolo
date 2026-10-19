@@ -32,12 +32,15 @@
 --
 -- Nobody can hurt their own side. Friendly fire would otherwise be the quickest
 -- way to end the round, and a survivor shot by a survivor would join the horde
--- for it. What kills and turns a survivor is an infected tank's shell and
--- nothing else: drowning, a mine, a pillbox or any other death only kills
--- them, and they come back a survivor. The help below and deep sea turn a
--- survivor without a death.
+-- for it. A survivor killed by an infected tank's shell turns. A survivor who
+-- dies within the bite time (1 second by default) after an infected shell hit
+-- them also turns, whatever killed them. Any other death (drowning, a mine, a
+-- pillbox) only kills them, and they come back a survivor. The help below and
+-- deep sea turn a survivor without a death.
 --
--- The host can widen that in the lobby with two settings, both off unless set.
+-- The host can change that in the lobby with two settings. "Drowning infects"
+-- is off by default and "Bite time" is 1 second by default; a bite time of 0
+-- leaves an infected shell kill as the only death that turns a survivor.
 -- "Drowning infects" turns a survivor who drowns. The turn is credited to the
 -- infected tank whose shell last hit them, if that was in the last few seconds,
 -- and to nobody otherwise. "Bite time" makes every infected shell a bite: a
@@ -72,8 +75,8 @@
 -- down, and leaving the deep sea starts the count again. The host can change
 -- the ten in the lobby. Every start is on deep sea, so a survivor who has just
 -- respawned is not counted until they first reach land, or until twenty
--- seconds have gone by, whichever comes first: a death that was not an
--- infected shell must not turn them by the back door.
+-- seconds have gone by, whichever comes first: a death that did not turn
+-- them must not lead to a deep sea turn straight after the respawn.
 --
 -- Nothing here names a square, a pillbox or a base, so it plays over whatever
 -- map the host has committed.
@@ -94,7 +97,7 @@ local TICKS_PER_SEC   = 100   -- game.tick() counts a hundred to the second
 local BOOM_SECONDS    = 3     -- from the last survivor's death to the end of
                               -- the round, so their explosion plays out
 
--- The defaults of three more lobby settings (scenario.settings at the bottom
+-- The defaults of five more lobby settings (scenario.settings at the bottom
 -- of the file declares them from these values). on_start puts the host's
 -- choice over them.
 local COMPASS_SECONDS    = 90   -- the tail of the round the horde has a compass
@@ -105,7 +108,7 @@ local ZERO_HUMAN         = "No" -- who turns first, the lobby's choice:
                                 -- a bot when one is playing; "Random" any
                                 -- seat, person or bot.
 local DROWN_INFECTS      = false -- a survivor who drowns turns
-local BITE_SECONDS       = 0    -- how long an infected shell's bite lasts;
+local BITE_SECONDS       = 1    -- how long an infected shell's bite lasts;
                                 -- 0 is no bite. A bitten survivor who dies
                                 -- turns, drowning included, even with
                                 -- DROWN_INFECTS off: the bite wins.
@@ -607,12 +610,14 @@ end
 -- Before the first one turns there is no horde, so nothing here can end the
 -- round and nobody is the last survivor yet.
 --
--- shot is true when the last one turned by being shot dead. Their tank is
--- going up, and the round waits for that: a fireball runs 40 steps of 4 ticks
+-- shot is true when the last one turned with a death that named who did it:
+-- an infected shell kill, a death while bitten, or a credited drowning. Their
+-- tank is going up, and the round waits for that: a fireball runs 40 steps of 4 ticks
 -- (tank_explosion_length, tank_explosion_update_ticks, on the sim's 50 a
 -- second), then bursts for 8 frames of 6 ticks, about 2.1 s in all, the same
 -- big or small. BOOM_SECONDS is that and some room for the client to draw it.
--- Any other turn (deep sea, the help, a leave) has no explosion to wait for.
+-- After a drowning there is no explosion, and the wait does no harm. Any
+-- other turn (deep sea, the help, a leave) has no explosion to wait for.
 local function check_the_end(shot)
   if over or not running or not loose then
     return
@@ -825,7 +830,7 @@ local function infect(p, by)
   -- A bot is handed the horde's word straight away rather than on the next
   -- pass, so it comes back from its three seconds dead not looking for a base.
   hand_word(p)
-  -- Only a shell kill names who did it, so by says the tank is going up.
+  -- by is set only for a death that named who did it (see check_the_end).
   check_the_end(by ~= nil)
 end
 
@@ -1146,7 +1151,7 @@ function on_start()
     end
   end
 
-  -- Three lines, because a player who has not read the scenario has to be able
+  -- Several lines, because a player who has not read the scenario has to be able
   -- to play it from what the newswire tells them in the first ten seconds.
   game.message("Virus: one of you is infected in ten seconds. " ..
                "Everyone they kill is infected too.")
@@ -1162,8 +1167,9 @@ function on_start()
   end
   if BITE_SECONDS > 0 then
     game.message(string.format("Survivors: an infected shell bites for %d " ..
-                               "seconds. Die bitten and you are infected.",
-                               BITE_SECONDS))
+                               "%s. Die bitten and you are infected.",
+                               BITE_SECONDS,
+                               BITE_SECONDS == 1 and "second" or "seconds"))
   end
   game.timer(HEAD_START - WARNING_SECONDS, warn_zero)
   game.timer(HEAD_START, turn_zero)
@@ -1173,10 +1179,12 @@ function on_start()
   panel()
 end
 
--- Only an infected tank's shell turns you, unless the host has turned on one
--- of the two lobby settings below. Every other death is a hazard, not a
--- recruiter: dying to one costs a survivor their position and their pills and
--- nothing else, and the horde does not get to count a kill its gun did not make.
+-- An infected tank's shell kill turns you. So does any death while you are
+-- bitten (the bite time is 1 second by default, and 0 turns it off), and a
+-- drowning when the host has turned on "Drowning infects". Every other death
+-- is a hazard, not a recruiter: dying to one costs a survivor their position
+-- and their pills and nothing else, and the horde does not get to count a
+-- kill its gun did not make.
 --
 -- That covers drowning and your own mine (the dying tank is named as its own
 -- killer), a pillbox (the sim fires every pillbox shell with no owner on it, so
@@ -1517,7 +1525,7 @@ scenario = {
                 "tougher.",
   api         = 1,
   author      = "WinBolo",
-  updated     = "2026-10-14T11:55Z",
+  updated     = "2026-10-17T14:32Z",
   kind        = "scenario",
   game        = "open",
 
@@ -1539,7 +1547,7 @@ scenario = {
     { id = "zero_human", label = "First infected is a person",
       type = "choice", choices = { "No", "Yes", "Random" },
       default = ZERO_HUMAN },
-    -- Off is the classic rule: only an infected shell kill turns a survivor.
+    -- Off: a drowning turns a survivor only when they drown while bitten.
     { id = "drown_infects", label = "Drowning infects", type = "bool",
       default = DROWN_INFECTS },
     -- 0 is no bite. A survivor who dies while bitten turns, drowning
@@ -1591,7 +1599,7 @@ scenario = {
 
   rules = {
     -- Three seconds rather than five. Mostly the horde's number: a survivor
-    -- only respawns as one after a death that was not an infected shell. It
+    -- only respawns as one after a death that did not turn them. It
     -- is what decides how much a fight bought the player who won it.
     tank_death_ticks = 150,
 

@@ -349,8 +349,10 @@ void sdl3RenderCachedText(void) {
  * Helper: look up (dstX, dstY) within a status panel for
  * item number n (1-based) using the positions.h grid.
  * type: 0=base, 1=pill, 2=tank
+ * Not static: the log viewer's HUD panel places its icons with
+ * it too (declared in sdl3draw_status.h).
  *--------------------------------------------------------*/
-static void sdl3StatusItemPos(int n, int type, int *outX, int *outY) {
+void sdl3StatusItemPos(int n, int type, int *outX, int *outY) {
   /* All three panels share the same grid layout */
   int startX, startY, gapX, gapY, itemW;
   (void)type;

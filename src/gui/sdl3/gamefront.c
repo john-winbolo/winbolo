@@ -267,6 +267,7 @@ unsigned short gameFrontHostingPort            = DEFAULT_UDP_PORT;
 bool           gameFrontHostingAllowSpec       = TRUE;
 bool           gameFrontHostingScripts         = TRUE;
 int            gameFrontHostingMaxSpec         = 16;
+int            gameFrontHostingSpecDelay       = HOSTING_SPEC_DELAY_DEFAULT_SECS;
 int            gameFrontHostingUploadPolicy    = UPLOAD_POLICY_ALLOW;
 int            gameFrontHostingUploadMaxFiles  = 64;
 int            gameFrontHostingUploadMaxStorage = 8;
@@ -808,6 +809,11 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   /* Load the process-global preferences document (WinBolo.json) before any
    * prefs access. */
   prefsInit(getPreferenceFilePath());
+  /* The standalone Log Viewer may be running beside the game and keeps the
+   * same file. Write only the keys the game changed, onto a fresh read of
+   * the file, so the game's writes do not take away the viewer's changes
+   * (the viewer does the same in src/logviewer/main.c). */
+  prefsSetMergeOnSave(true);
   /* Coalesce bursts of pref edits (multi-key rebind, slider drag) into a
    * single trailing disk write, driven from gameFrontPumpDirty and flushed
    * before each join, at shutdown and when the app goes to the background
@@ -1103,7 +1109,12 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
      position on every resize/move. Calling it here would overwrite the corrected
      position (e.g. centered within maximized bounds) with the actual position. */
   gameFrontPutPrefs(keys);
-  prefsFlush();
+  /* With merge-on-save a flush that finds no file (another program between
+     its remove and its rename) waits for the next flush and writes nothing.
+     This is the last flush, so it is tried twice, as the Log Viewer does. */
+  if (!prefsFlush()) {
+    prefsFlush();
+  }
   if (humanSim != NULL) {
     frontEndSetActiveClientSim(NULL);
     netDestroy(humanSim);
@@ -2933,6 +2944,13 @@ void gameFrontSetHostingMaxSpec(int maxSpec) {
   prefsSetString("HOSTING", "Max Spectators", buf);
 }
 
+void gameFrontSetHostingSpecDelay(int seconds) {
+  gameFrontHostingSpecDelay = seconds;
+  char buf[16];
+  intToStr(seconds, buf, sizeof(buf));
+  prefsSetString("HOSTING", "Spectator Delay", buf);
+}
+
 void gameFrontSetHostingUploadPolicy(int policy) {
   gameFrontHostingUploadPolicy = policy;
   const char *str = (policy == UPLOAD_POLICY_OFF)     ? "Off"
@@ -4167,7 +4185,7 @@ bool gameFrontSetupServer(void) {
                                        : gameFrontHostingMaxSpec > 32 ? 32
                                        : gameFrontHostingMaxSpec)
                               : 0;
-  cfg.specDelaySeconds    = 0;  /* client hosts run live */
+  cfg.specDelaySeconds    = (uint16_t)gameFrontHostingSpecDelay;
   cfg.uploadPolicy        = (UploadPolicy)gameFrontHostingUploadPolicy;
   cfg.uploadMaxFiles      = (uint8_t)gameFrontHostingUploadMaxFiles;
   cfg.uploadMaxStorageBytes =
@@ -4399,6 +4417,9 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     if (m > 32) m = 32;
     gameFrontHostingMaxSpec = m;
   }
+  intToStr(HOSTING_SPEC_DELAY_DEFAULT_SECS, def, sizeof(def));
+  prefsGetString("HOSTING", "Spectator Delay", def, buff, FILENAME_MAX);
+  gameFrontHostingSpecDelay = hostingSpecDelayResolve(buff);
   prefsGetString("HOSTING", "Upload Policy", "Allow", buff, FILENAME_MAX);
   if (strcmp(buff, "Off") == 0) {
     gameFrontHostingUploadPolicy = UPLOAD_POLICY_OFF;
@@ -5375,6 +5396,8 @@ void gameFrontPutPrefs(keyItems *keys) {
                             TRUEFALSE_TO_STR(gameFrontHostingScripts));
   intToStr(gameFrontHostingMaxSpec, buff, sizeof(buff));
   prefsSetString("HOSTING", "Max Spectators", buff);
+  intToStr(gameFrontHostingSpecDelay, buff, sizeof(buff));
+  prefsSetString("HOSTING", "Spectator Delay", buff);
   prefsSetString("HOSTING", "Upload Policy",
                  gameFrontHostingUploadPolicy == UPLOAD_POLICY_OFF     ? "Off"
                  : gameFrontHostingUploadPolicy == UPLOAD_POLICY_PERSIST ? "Persist"

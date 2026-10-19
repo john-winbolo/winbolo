@@ -360,6 +360,9 @@ void lv_pillsGetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
     item->owner = ((*value)->item[pillNum]).owner;
     item->armour = ((*value)->item[pillNum]).armour;
     item->speed = ((*value)->item[pillNum]).speed;
+    /* A carried pillbox keeps the place it was picked up at: a caller that
+       wants the pillboxes on the map has to be able to tell. */
+    item->inTank = ((*value)->item[pillNum]).inTank;
   }
 }
 
@@ -514,6 +517,8 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
   char ownerName[FILENAME_MAX];
   char oldOwner[FILENAME_MAX];
   BYTE returnValue; /* Value to return */
+  int pillX;        /* Map cell of the pillbox; (0,0) when it has none */
+  int pillY;
 
   ownerName[0] = '\0';
   oldOwner[0] = '\0';
@@ -524,23 +529,36 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
   }
   returnValue = (*value)->item[pillNum].owner;
   (*value)->item[pillNum].owner = owner;
+  /* Where the pillbox is taken, for the events panel's click-to-jump. A
+     capture or a steal is a pickup: the game writes log_PillSetInTank (in
+     the tank) and then this owner change, with no log_PillSetPlace between,
+     so the pillbox is in the tank here and its x and y are still the square
+     it was picked up from. A pillbox that was never put on the map has
+     (0,0), which lv_messageAddAt takes as no place. */
+  pillX = (*value)->item[pillNum].x;
+  pillY = (*value)->item[pillNum].y;
   /* Make the message if required */
   if (returnValue == NEUTRAL && migrate == FALSE) {
-    /* Neutral pill — normalized to MESSAGE_CAPTURE_PILL ("Neutral Pillbox"). */
+    /* Neutral pill: the game's MESSAGE_CAPTURE_PILL ("Neutral Pillbox") with
+       the pillbox's number, from 1 as the game's own pillbox list counts. */
     MessageArgs args = {0};
     lv_playersMakeMessageName(owner, ownerName);
     snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, ownerName);
-    lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
+    args.number = pillNum + 1;
+    lv_messageTagPlayers(owner, -1);
+    lv_messageAddAt(LV_EVK_PILL_CAPTURED, pillX, pillY, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_PILL_CAPTURED, &args);
   } else if (owner == NEUTRAL) {
     /* Do nothing */
   } else if (lv_playersIsAllie(returnValue, owner) == FALSE && migrate == FALSE) {
-    /* Stole pill */
+    /* Stole pill: the game's MESSAGE_STOLE_PILL with the pillbox's number. */
     MessageArgs args = {0};
     lv_playersMakeMessageName(owner, ownerName);
     snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, ownerName);
     lv_playersGetPlayerName(returnValue, oldOwner, sizeof(oldOwner));
     snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, oldOwner);
-    lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
+    args.number = pillNum + 1;
+    lv_messageTagPlayers(owner, returnValue);
+    lv_messageAddAt(LV_EVK_PILL_STOLEN, pillX, pillY, newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_PILL_STOLEN, &args);
   }
   (*value)->item[pillNum].owner = owner;
 //    frontEndStatusPillbox(pillNum, (pillsGetAllianceNum(value, pillNum)));

@@ -53,6 +53,7 @@
 #include "scenario_panel.h"           /* SCN_MARKERS_MAX */
 #include "lv_scripts.h"               /* lv_screenGetScripts -- no backend.h */
 #include "lv_region_rect.h"           /* lvRegionScreenRect */
+#include "lv_ping_view.h"             /* LvPingShown */
 
 #include "game_view.h"
 
@@ -64,10 +65,7 @@
 
 /* --- Logviewer-side accessors. Declared extern (no logviewer header
  *     include) so this TU stays on bolo types. --- */
-extern bool lv_screenGetPing(int index, unsigned char *sender,
-                             unsigned char *kind, uint16_t *worldX,
-                             uint16_t *worldY, uint32_t *ageMs);
-extern int  lv_screenGetPingCapacity(void);
+extern int  lv_screenGetPings(LvPingShown *out, int max);
 /* lv_presentation.h and draw.h: a scenario marker's square for the followed
    player, and the viewer's drawing of one. */
 extern bool lv_screenMarkerPlace(BYTE id, BYTE *mx, BYTE *my, BYTE *colour);
@@ -120,6 +118,9 @@ extern SDL_Window   *lv_drawGetSDLWindow(void);
 extern SDL_Renderer *lv_drawGetSDLRenderer(void);
 extern SDL_Texture  *lv_drawGetTilesTexture(void);
 extern int           lv_drawGetSheetScale(void);
+/* draw.h: the ring round the place of an event the user went to. */
+extern int  lv_drawEventFlashCell(int *mapX, int *mapY);
+extern void lv_drawEventFlashAt(float cx, float cy, float tilePx, const SDL_Rect *view);
 
 extern bool  lv_playersIsInUse(BYTE playerNumber);
 extern void  lv_playersGetTankDetails(BYTE playerNumber, BYTE *mx, BYTE *my,
@@ -544,6 +545,10 @@ int lv_drawGameViewGetZoom(void) {
   return s_displayZoom;
 }
 
+int lv_drawGameViewPixelZoom(void) {
+  return (s_displayZoom > 0) ? s_zoom : 0;
+}
+
 void lv_drawGameViewSetup(int zoomFactor) {
   SDL_Window   *window   = lv_drawGetSDLWindow();
   SDL_Renderer *renderer = lv_drawGetSDLRenderer();
@@ -698,21 +703,21 @@ void lv_drawGameViewTeardown(void) {
 static void gv_drawPings(SDL_Renderer *renderer,
                          int originX, int originY, int tileW, int tileH,
                          int edgeX, int edgeY) {
-  int cap = lv_screenGetPingCapacity();
+  LvPingShown pings[LV_PING_SHOWN_MAX];
+  int count = lv_screenGetPings(pings, LV_PING_SHOWN_MAX);
   int i;
 
   pingIconsInit(renderer);
 
-  for (i = 0; i < cap; i++) {
-    unsigned char sender = 0;
-    unsigned char kind = 0;
-    uint16_t wx = 0, wy = 0;
-    uint32_t ageMs = 0;
+  for (i = 0; i < count; i++) {
+    unsigned char sender = pings[i].sender;
+    unsigned char kind = pings[i].kind;
+    uint16_t wx = pings[i].worldX, wy = pings[i].worldY;
+    uint32_t ageMs = pings[i].ageMs;
     float alpha, cx, cy;
     char senderName[PLAYER_NAME_LEN];
     PingMarkerLabel label;
 
-    if (!lv_screenGetPing(i, &sender, &kind, &wx, &wy, &ageMs)) continue;
     /* Expiry only; pingMarkerDraw does the blink, so a recording shows what
        the player was shown. */
     alpha = pingDisplayAlpha((int)ageMs);
@@ -746,6 +751,34 @@ static void gv_drawPings(SDL_Renderer *renderer,
     pingMarkerDraw(renderer, kind, cx, cy, (float)tileW, (float)tileH,
                    ageMs, &label);
   }
+}
+
+/* The names under the overview map's ping markers: a cache of their own,
+ * as the game view's (s_pingNameCache), since the two are drawn in different
+ * fonts and the cache is keyed on the player slot. */
+static TankLabelCache s_overviewPingNames;
+
+void lv_drawOverviewPing(float cx, float cy, float tilePx, unsigned char kind,
+                         unsigned char sender, const char *name,
+                         unsigned int ageMs, void *font) {
+  SDL_Renderer *renderer = lv_drawGetSDLRenderer();
+  PingMarkerLabel label;
+
+  if (renderer == NULL) return;
+  /* Expiry only, as gv_drawPings: pingMarkerDraw does the flashes. */
+  if (pingDisplayAlpha((int)ageMs) <= 0.0f) return;
+  /* It loads once for a renderer; after that the call does nothing. */
+  pingIconsInit(renderer);
+  label.cache = &s_overviewPingNames;
+  label.font  = (TTF_Font *)font;
+  label.name  = (name != NULL) ? name : "";
+  label.slot  = sender;
+  label.scale = 1.0f;
+  pingMarkerDraw(renderer, kind, cx, cy, tilePx, tilePx, ageMs, &label);
+}
+
+void lv_drawOverviewPingsFlush(void) {
+  tankLabelCacheFlush(&s_overviewPingNames);
 }
 
 /* --- Scenario map markers -----------------------------------------
@@ -940,6 +973,29 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
                        MAIN_SCREEN_SIZE_X * tileW,
                        MAIN_SCREEN_SIZE_Y * tileH,
                        SDL_GetTicks() / GAME_TICK_LENGTH);
+  }
+
+  /* The ring round the place of an event the user went to (draw.c). The
+   * view here is the followed tank's and does not move to the event, so a
+   * place it does not show gets the arrow at the view's edge. Same
+   * arithmetic as a ping's square above. */
+  {
+    int flashX = 0, flashY = 0;
+    if (lv_drawEventFlashCell(&flashX, &flashY)) {
+      SDL_Rect view = {
+        originX, originY,
+        MAIN_SCREEN_SIZE_X * tileW,
+        MAIN_SCREEN_SIZE_Y * tileH
+      };
+      float cx = (float)originX
+               + ((float)flashX + 0.5f - (float)(lv_screenGetXOffset() + 1)) * (float)tileW
+               - (float)edgeX;
+      float cy = (float)originY
+               + ((float)flashY + 0.5f - (float)(lv_screenGetYOffset() + 1)) * (float)tileH
+               - (float)edgeY;
+      lv_drawEventFlashAt(cx, cy, (float)tileW, &view);
+      /* lv_drawEventFlashAt puts back the clip it found: the view's. */
+    }
   }
 
   SDL_SetRenderClipRect(renderer, NULL);

@@ -137,6 +137,10 @@ list(FILTER LV_SOURCES EXCLUDE REGEX ".*clientmutex\\.c$")
 # The game view is the desktop viewer's; main_wasm.c has no key to enter it.
 # game_view_stubs.c answers draw.c's calls, as it does in the wasm client.
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*logviewer/game_view\\.c$")
+# lv_fullscreen_game.c is client-only: it calls the game's full screen
+# command, which the web viewer does not have. main_wasm.c replaces
+# logviewer.c, the one caller of lvGameFullScreenChoose.
+list(FILTER LV_SOURCES EXCLUDE REGEX ".*logviewer/lv_fullscreen_game\\.c$")
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*dns\\.c$")
 # lv_embed_stubs.c belongs to clients that embed only the reel; main_wasm.c
 # and the ImGui panels below define the same functions here.
@@ -158,10 +162,21 @@ set(LV_IMGUI_SOURCES
     ${LV_ROOT}/imgui/imgui_controls.cpp
     ${LV_ROOT}/imgui/imgui_game_info.cpp
     ${LV_ROOT}/imgui/imgui_events.cpp
+    ${LV_ROOT}/imgui/imgui_event_overlay.cpp
     ${LV_ROOT}/imgui/imgui_item_info.cpp
     ${LV_ROOT}/imgui/imgui_dialogs.cpp
     ${LV_ROOT}/imgui/imgui_game_viewport.cpp
     ${LV_ROOT}/imgui/imgui_scenario_panel.cpp
+    # The sidebars and the HUD, Overview and Tank panels. This page draws
+    # none of them (main_wasm.c), but imgui_main_menu.cpp, draw.c and the
+    # panels above call into imgui_dock.cpp, and its panel table names the
+    # other three.
+    ${LV_ROOT}/imgui/imgui_dock.cpp
+    ${LV_ROOT}/imgui/imgui_hud.cpp
+    ${LV_ROOT}/imgui/imgui_overview.cpp
+    ${LV_ROOT}/imgui/imgui_tank.cpp
+    # The icons the panels draw (the Controls panel's buttons).
+    ${LV_ROOT}/imgui/imgui_lv_icons.cpp
 )
 
 # WASM replacement files
@@ -211,6 +226,10 @@ add_executable(logviewer
     # parser compile in directly. Both call nothing but libc.
     ${SRC_ROOT}/bolo/sim_rules.c
     ${SRC_ROOT}/bolo/scenario_panel.c
+    # The round summary (lv_stats.c, called after a load) rebuilds a round's
+    # stats, awards and highlights from the attribution track with these.
+    # Only the public round_stats headers and libc, as in the standalone.
+    ${SRC_ROOT}/bolo/round_stats_derive.c
     # The panel square's drawer, the game's own. It needs ImGui, the public
     # scenario_panel.h and sprite_positions.c above, and nothing else.
     ${SRC_ROOT}/gui/sdl3/scenario_panel_draw.cpp

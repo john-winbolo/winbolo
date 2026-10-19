@@ -60,6 +60,7 @@ extern "C" {
 #include "../../../winbolonet/wbn_comments.h"
 #include "cJSON.h"
 #include "imgui_wbn_browser.h"
+#include "wbn_browser_sort.h"
 #include "imgui_keyboard.h"
 #include "imgui_winbolonet.h"
 #include "../input_gamepad.h"
@@ -98,6 +99,9 @@ struct LogEntry {
     float rating;
     int num_ratings;
     int num_downloads;
+    /* The row's place in the page the server sent. A sort with no column
+       chosen puts the rows back in this order. */
+    int serverIndex;
 
     /* Detail fields (populated on detail fetch) */
     bool detailLoaded;
@@ -130,6 +134,12 @@ struct TabState {
     bool fetching;
     bool fetched;
     const char *error;
+    /* The column sort the rows are in (a wbnSortKey and its direction).
+       sortValid is false when a new page arrives, so the table sorts it on
+       the next draw with the sort the player chose. */
+    int sortKey;
+    bool sortDesc;
+    bool sortValid;
 };
 
 /* ---- JSON parsing ---- */
@@ -235,6 +245,31 @@ static void formatTimestamp(int ts, char *buf, size_t bufSize) {
         strftime(buf, bufSize, "%b %d, %Y %H:%M", tm);
     else
         SDL_strlcpy(buf, langGetText(STR_UNKNOWN), bufSize);
+}
+
+/* ---- Column sort ---- */
+static wbnSortRow sortRowOf(const LogEntry &e) {
+    wbnSortRow r;
+    r.map         = e.map;
+    r.gameType    = e.game_type;
+    r.numPlayers  = e.num_players;
+    r.rating      = e.rating;
+    r.numRatings  = e.num_ratings;
+    r.logSize     = e.log_size;
+    r.startTime   = e.start_time;
+    r.serverIndex = e.serverIndex;
+    return r;
+}
+
+/* Sorts one tab's page of rows on a column. WBN_SORT_NONE puts them back in
+   the order the server sent. */
+static void sortLogs(std::vector<LogEntry> &logs, wbnSortKey key, bool desc) {
+    std::stable_sort(logs.begin(), logs.end(),
+                     [key, desc](const LogEntry &a, const LogEntry &b) {
+                         wbnSortRow ra = sortRowOf(a);
+                         wbnSortRow rb = sortRowOf(b);
+                         return wbnSortCompare(&ra, &rb, key, desc) < 0;
+                     });
 }
 
 /* ---- Async fetch state ---- */
@@ -698,6 +733,10 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             tabs[tab].fetched = true;
             if (fetchResult.success) {
                 tabs[tab].logs = std::move(fetchResult.logs);
+                for (int i = 0; i < (int)tabs[tab].logs.size(); i++) {
+                    tabs[tab].logs[i].serverIndex = i;
+                }
+                tabs[tab].sortValid = false;
                 tabs[tab].page = fetchResult.page;
                 tabs[tab].total = fetchResult.total;
                 tabs[tab].totalPages = fetchResult.totalPages;
@@ -1006,15 +1045,59 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                 if (!tab.logs.empty()) {
                     ImGuiTableFlags tableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
                                                  ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp |
-                                                 ImGuiTableFlags_BordersOuter;
+                                                 ImGuiTableFlags_BordersOuter |
+                                                 ImGuiTableFlags_Sortable | ImGuiTableFlags_SortTristate;
+                    /* A header click sorts the page on that column; a third
+                       click puts the server's order back. SortTristate also
+                       stops ImGui sorting on the first column at the start,
+                       so each tab opens in the server's order (Top Rated by
+                       rating, Recent by date). One table id per tab, so each
+                       tab keeps its own sort. */
+                    ImGui::PushID((int)currentTab);
                     if (ImGui::BeginTable("##LogsTable", 6, tableFlags, ImVec2(0, tableH))) {
-                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_MAP),     0, 3.0f);
-                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_TYPE),    0, 1.0f);
-                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_PLAYERS), 0, 1.0f);
-                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_RATING),  0, 1.5f);
-                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_SIZE),    0, 1.0f);
-                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_DATE),    0, 2.0f);
+                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_MAP),     0, 3.0f, WBN_SORT_MAP);
+                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_TYPE),    0, 1.0f, WBN_SORT_TYPE);
+                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_PLAYERS), 0, 1.0f, WBN_SORT_PLAYERS);
+                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_RATING),  0, 1.5f, WBN_SORT_RATING);
+                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_SIZE),    0, 1.0f, WBN_SORT_SIZE);
+                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_DATE),    0, 2.0f, WBN_SORT_DATE);
                         ImGui::TableHeadersRow();
+
+                        /* Sort when the player changes the sort, and when a
+                           new page arrives (sortValid false), so the new page
+                           takes the sort the player chose. */
+                        if (ImGuiTableSortSpecs *specs = ImGui::TableGetSortSpecs()) {
+                            wbnSortKey key = WBN_SORT_NONE;
+                            bool desc = false;
+                            if (specs->SpecsCount > 0) {
+                                key  = (wbnSortKey)specs->Specs[0].ColumnUserID;
+                                desc = (specs->Specs[0].SortDirection == ImGuiSortDirection_Descending);
+                            }
+                            if (specs->SpecsDirty || !tab.sortValid ||
+                                tab.sortKey != (int)key || tab.sortDesc != desc) {
+                                /* The selection is an index into the rows. Note
+                                   the selected log's server index and find it
+                                   again after the sort, so the detail pane and
+                                   View Log stay on the log the player chose. */
+                                int selServerIndex = -1;
+                                if (selectedItem >= 0 && selectedItem < (int)tab.logs.size())
+                                    selServerIndex = tab.logs[selectedItem].serverIndex;
+                                sortLogs(tab.logs, key, desc);
+                                if (selServerIndex >= 0) {
+                                    selectedItem = -1;
+                                    for (int i = 0; i < (int)tab.logs.size(); i++) {
+                                        if (tab.logs[i].serverIndex == selServerIndex) {
+                                            selectedItem = i;
+                                            break;
+                                        }
+                                    }
+                                }
+                                tab.sortKey   = (int)key;
+                                tab.sortDesc  = desc;
+                                tab.sortValid = true;
+                                specs->SpecsDirty = false;
+                            }
+                        }
 
                         for (int i = 0; i < (int)tab.logs.size(); i++) {
                             LogEntry &e = tab.logs[i];
@@ -1027,7 +1110,9 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                             bool isSelected = (selectedItem == i);
                             ImGui::TableNextColumn();
                             char selectId[128];
-                            SDL_snprintf(selectId, sizeof(selectId), "%s##log%d", e.map, i);
+                            /* The id follows the log, not its row, so the
+                               nav focus stays on the same log after a sort. */
+                            SDL_snprintf(selectId, sizeof(selectId), "%s##log%d", e.map, e.serverIndex);
                             /* Selection only — live-updates the detail pane. The
                                primary action lives on the View Log button, which
                                A reaches by nav; there is no activate-to-download. */
@@ -1068,6 +1153,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
 
                         ImGui::EndTable();
                     }
+                    ImGui::PopID();
                 }
 
                 /* Pagination under the list */
@@ -1147,6 +1233,17 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                     MessageArgs args = {};
                     args.number = e.num_players;
                     ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_NUMPLAYERS_FMT, &args));
+                }
+                else if (e.num_players > (int)e.players.size()) {
+                    /* The server names only some of the players (those it has
+                     * an account for). Say how many more were in the game. */
+                    int others = e.num_players - (int)e.players.size();
+                    MessageArgs args = {};
+                    args.number = others;
+                    ImGui::SameLine();
+                    ImGui::TextUnformatted(langGetTextFmt(
+                        others == 1 ? STR_DLGWBN_PLAYERS_OTHER_ONE : STR_DLGWBN_PLAYERS_OTHERS_FMT,
+                        &args));
                 }
 
                 /* Stats */

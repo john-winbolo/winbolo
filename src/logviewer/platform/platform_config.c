@@ -80,9 +80,39 @@ void lv_platform_config_set_bool(const char *section, const char *key, int value
     lv_platform_config_set_string(section, key, value ? "Yes" : "No");
 }
 
+/* The standalone viewer writes its own preferences (main.c sets this).
+ * Inside the game the document is the game's, which the game writes on its
+ * own timer, so the viewer does not write it. */
+static int s_ownWrites = 0;
+
+/* A write that failed is not tried again before this time (SDL_GetTicks),
+ * so a file that cannot be written is not read and written on every
+ * frame. */
+static Uint64 s_retryAtMs = 0;
+#define LV_CONFIG_RETRY_MS 2000
+
+void lv_platform_config_set_own_writes(int on) {
+    s_ownWrites = on;
+    s_retryAtMs = 0;
+}
+
 int lv_platform_config_save(void) {
-    /* prefsSetString flushes the document on every write — nothing to do. */
-    return 1;
+    Uint64 now;
+    /* The standalone viewer has merge-on-save on (main.c): its sets only
+     * mark the document, and this is the one write for all of them. */
+    if (!s_ownWrites || !prefsIsDirty()) {
+        return 1;
+    }
+    now = SDL_GetTicks();
+    if (now < s_retryAtMs) {
+        return 0;
+    }
+    if (prefsFlush()) {
+        s_retryAtMs = 0;
+        return 1;
+    }
+    s_retryAtMs = now + LV_CONFIG_RETRY_MS;
+    return 0;
 }
 
 void lv_platform_config_get_path(char *out, size_t out_size) {

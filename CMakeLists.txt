@@ -1421,6 +1421,7 @@ target_link_libraries(WinBoloIOS PRIVATE server_round_log_static)
 # is already in the news and ratings block above.
 target_sources(WinBoloIOS PRIVATE
     src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
+    src/gui/sdl3/dialogs/wbn_browser_sort.c
     src/gui/ios/ios_log_player.cpp
     # The live spectator feed in the reel, in place of the modal viewer's
     # spectatorRun.
@@ -1920,6 +1921,7 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_sp.c
     src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
+    src/gui/sdl3/dialogs/wbn_browser_sort.c
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
     src/gui/sdl3/map_preview_view.cpp
@@ -2001,6 +2003,9 @@ endif()
 set(LOGVIEWER_LIB_SOURCES
     src/logviewer/logviewer.c
     src/logviewer/lv_embed.c
+    # Alt+Enter in the viewer while it has the game's window: asks the game
+    # for full screen. Client only; the standalone's body is in main.c.
+    src/logviewer/lv_fullscreen_game.c
     src/logviewer/screen.c
     src/logviewer/draw.c
     src/logviewer/sound.c
@@ -2035,16 +2040,25 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/labels.c
     src/logviewer/messages.c
     src/logviewer/game_settings_blob.c
+    # The map File > Open map at this time in single player writes
+    # (logviewer.c calls it).
+    src/logviewer/lv_spmap.c
     src/logviewer/lv_event_list.c
     src/logviewer/imgui/imgui_context.cpp
     src/logviewer/imgui/imgui_main_menu.cpp
     src/logviewer/imgui/imgui_controls.cpp
     src/logviewer/imgui/imgui_game_info.cpp
     src/logviewer/imgui/imgui_events.cpp
+    src/logviewer/imgui/imgui_event_overlay.cpp
     src/logviewer/imgui/imgui_item_info.cpp
     src/logviewer/imgui/imgui_dialogs.cpp
     src/logviewer/imgui/imgui_game_viewport.cpp
     src/logviewer/imgui/imgui_scenario_panel.cpp
+    src/logviewer/imgui/imgui_dock.cpp
+    src/logviewer/imgui/imgui_hud.cpp
+    src/logviewer/imgui/imgui_overview.cpp
+    src/logviewer/imgui/imgui_tank.cpp
+    src/logviewer/imgui/imgui_lv_icons.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
@@ -2662,6 +2676,9 @@ list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/game_view_stubs\\.c$")
 # game-view render island's screenTanksGetItem to lv_screenTanksGetItem.
 # The standalone uses bolo_shim.c for that, so drop the adapter from the glob.
 list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/render_island_screentank_adapter\\.c$")
+# lv_fullscreen_game.c is client-only: it calls the game's full screen
+# command. The standalone has no game; its body of the function is in main.c.
+list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/lv_fullscreen_game\\.c$")
 # spectator_drain_stub.c is added explicitly to the LogViewer target below;
 # drop it from the glob so it is listed once. It stubs the spectator_drain.h
 # seam for the standalone (which carries spectatorRun but links no bolo sim).
@@ -2682,10 +2699,16 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_controls.cpp
     src/logviewer/imgui/imgui_game_info.cpp
     src/logviewer/imgui/imgui_events.cpp
+    src/logviewer/imgui/imgui_event_overlay.cpp
     src/logviewer/imgui/imgui_item_info.cpp
     src/logviewer/imgui/imgui_dialogs.cpp
     src/logviewer/imgui/imgui_game_viewport.cpp
     src/logviewer/imgui/imgui_scenario_panel.cpp
+    src/logviewer/imgui/imgui_dock.cpp
+    src/logviewer/imgui/imgui_hud.cpp
+    src/logviewer/imgui/imgui_overview.cpp
+    src/logviewer/imgui/imgui_tank.cpp
+    src/logviewer/imgui/imgui_lv_icons.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
@@ -2704,6 +2727,7 @@ set(LOGVIEWER_IMGUI_SOURCES
 # LOGVIEWER_LIB_SOURCES because the WinBolo client already links its own copy.
 set(LOGVIEWER_WBN_BROWSER_SOURCES
     src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
+    src/gui/sdl3/dialogs/wbn_browser_sort.c
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
@@ -3839,6 +3863,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_prefs_roundtrip.c
     tests/unit/test_prefs_doc.c
     tests/unit/test_prefs_api.c
+    tests/unit/test_prefs_merge.c
     src/common/prefs_doc.c
     src/common/prefs.c
     tests/unit/test_join_running_phase.c
@@ -4846,6 +4871,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Log viewer events panel list: replays after a seek back and pinned
     # lines (test_lv_event_list.c).
     tests/unit/test_lv_event_list.c
+    # WinBolo.net log browser table sort rule (test_wbn_browser_sort.c).
+    tests/unit/test_wbn_browser_sort.c
     # Replay camera range: the load's 127,127 default, a highlight jump, a
     # grid that grew and the raw setter all keep the view's far edge at 255
     # on a grid wider than half the map (test_lv_camera.c).
@@ -4894,6 +4921,89 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Where the viewer draws a declared region on the overview and the game
     # view (lv_region_rect.h, header only).
     tests/unit/test_lv_region_rect.c
+    # How the viewer's window is shared between the map and the sidebars
+    # (lv_dock_fit.h), and the text the sidebar layout is saved as
+    # (lv_dock_layout.h). Both header only.
+    tests/unit/test_lv_dock_fit.c
+    # Which icon a slot of the viewer's HUD panel shows, how its three grids
+    # are laid out, and its colour sums (lv_hud.h, header only).
+    tests/unit/test_lv_hud.c
+    # The table of the viewer's Overview panel: which team's row a pillbox
+    # or a base is counted in (lv_overview.h, header only).
+    tests/unit/test_lv_overview.c
+    # The viewer's Tank panel: which tank it shows and how tall a gauge is
+    # drawn (lv_tank_status.h, header only).
+    tests/unit/test_lv_tank_status.c
+    # The bars the viewer draws over each tank: where they go, how full
+    # they are and their colours (lv_tank_bars.h, header only).
+    tests/unit/test_lv_tank_bars.c
+    # A click on a tank on the viewer's map: which tank a point is on and
+    # the mark round the selected one (lv_tank_pick.h, header only).
+    tests/unit/test_lv_tank_pick.c
+    # A sidebar of the viewer whose unused part is clear: where its panels
+    # go, the clear part, the map under it and the preference text
+    # (lv_dock_clear.h, header only), and the arrangement a new user starts
+    # with (lv_dock_default.h, header only).
+    tests/unit/test_lv_dock_clear.c
+    # The viewer's text dump of a recording around one tick (lv_dump.c): a
+    # recorded round dumped with the production decoder.
+    tests/unit/test_lv_dump.c
+    # The map the viewer writes for a single-player game (lv_spmap.c): the
+    # owner rules, and a recorded round read back with mapRead.
+    tests/unit/test_lv_spmap.c
+    # A pillbox a tank carries: the getter says so, and the single-player
+    # map leaves it out (pillbox.c, lv_spmap.c).
+    tests/unit/test_lv_pill_carried.c
+    # The map place of a captured or stolen pillbox's line and of a lost
+    # builder's line (pillbox.c, players.c).
+    tests/unit/test_lv_event_places.c
+    # The events panel's kind names and the search that places its "now"
+    # divider (lv_event_kind.h, header only).
+    tests/unit/test_lv_event_kind.c
+    # The event markers of the viewer's seek slider: where a time is on the
+    # slider, which markers become one, and the saved list of chosen kinds
+    # (lv_event_overlay.h, header only).
+    tests/unit/test_lv_event_overlay.c
+    # Which parts of the viewer a frame of the overview draws, for a log
+    # file and for a live feed (lv_panel_set.h, header only).
+    tests/unit/test_lv_panel_set.c
+    # The viewer's playback times as text, to the hundredth of a second, and
+    # the ring flashed on the map round an event's place (lv_time_fmt.h,
+    # lv_event_flash.h, header only).
+    tests/unit/test_lv_time_fmt.c
+    # Where the viewer's map is when a log is first shown: the box round
+    # everything that is not deep sea, and the zoom it is shown at
+    # (lv_first_view.h, header only).
+    tests/unit/test_lv_first_view.c
+    # The schedule of the animation of the viewer's Rewind and Fast Forward:
+    # how many steps, the log time of each and which is due when
+    # (lv_jump_anim.h, header only).
+    tests/unit/test_lv_jump_anim.c
+    # The builder marker over each tank on the viewer's map: where it goes,
+    # the arrow's direction, the countdown and the table of the times a
+    # builder was away (lv_builder_status.h, header only).
+    tests/unit/test_lv_builder_status.c
+    # The number of each pillbox on the viewer's map and in its tooltips:
+    # which pillboxes have one, where it goes, the square under the mouse and
+    # a list of numbers as text (lv_pill_numbers.h, header only).
+    tests/unit/test_lv_pill_numbers.c
+    # Where the items of the log viewer's Controls panel go
+    # (lv_controls_layout.h, header only).
+    tests/unit/test_lv_controls_layout.c
+    # The file name the viewer's Save Log File offers: date, map, the people
+    # by name and the bots as a count
+    # (lv_save_name.h, header only).
+    tests/unit/test_lv_save_name.c
+    # File paths as UTF-8 on every system: what the viewer's file dialogs
+    # give back and how the viewer opens it (lv_utf8_path.h, header only).
+    tests/unit/test_lv_utf8_path.c
+    # Where the round recap's "Spawn in log viewer" looks for the Log
+    # Viewer, the name of the log copy it opens and the argument list
+    # (logviewer_spawn.h, header only).
+    tests/unit/test_logviewer_spawn.c
+    # The quoting around text the macOS and Linux file dialogs give to the
+    # shell and to AppleScript (lv_shell_quote.h, header only).
+    tests/unit/test_lv_shell_quote.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -4966,10 +5076,15 @@ set(WINBOLO_UNITTESTS_SOURCES
     # split out of imgui_game_info.cpp so test_game_settings_blob.c drives
     # the code the Game Information panel runs rather than a copy of it.
     src/logviewer/game_settings_blob.c
+    # The text dump "Log Viewer.exe -dump" writes, for test_lv_dump.c.
+    src/logviewer/lv_dump.c
+    src/logviewer/lv_spmap.c
     # The events panel's line list. Plain C with no ImGui headers, split out
     # of imgui_events.cpp so test_lv_event_list.c drives the code the panel
     # runs.
     src/logviewer/lv_event_list.c
+    # The WinBolo.net log browser's sort rule, for test_wbn_browser_sort.c.
+    src/gui/sdl3/dialogs/wbn_browser_sort.c
 )
 
 if(WB_NETDEBUG)
@@ -5156,6 +5271,14 @@ set(_unit_test_names
     prefs_api_device_identity
     prefs_api_adopt_server
     prefs_api_mark_synced
+    prefs_merge_game_then_viewer
+    prefs_merge_viewer_then_game
+    prefs_merge_fallback
+    prefs_merge_one_write
+    prefs_merge_reset_wins
+    prefs_merge_idle_no_write
+    prefs_merge_missing_retry
+    prefs_merge_adopt_keeps_local
     join_running_phase_not_lobby
     lobby_settings_codec_and_apply
     lobby_settings_scenario_apply
@@ -5614,6 +5737,7 @@ set(_unit_test_names
     lv_same_map_runs
     lv_event_list_replay
     lv_event_list_pinned
+    wbn_browser_sort
     lv_snapshot_index_lookup
     lv_snapshot_index_ten_days
     lv_load_walk_fixtures
@@ -6166,6 +6290,7 @@ set(_unit_test_names
     spectator_ring_nolog_tick_anchors
     spectator_replay
     spectator_config
+    spectator_delay_pref
     spectator_join
     spectator_roster_publish
     spectator_slot_codec
@@ -7200,6 +7325,8 @@ set(_unit_test_names
     lv_presentation_marker_visible
     lv_presentation_live_seek
     lv_presentation_live_fast_forward
+    lv_presentation_live_hold
+    lv_presentation_live_segment_reset_drops_hold
     lv_server_tick_recorded
     lv_server_tick_anchors
     lv_server_tick_hostile
@@ -7207,6 +7334,100 @@ set(_unit_test_names
     lv_server_tick_alternating
     lv_server_tick_live_feed
     lv_region_rect_placement
+    lv_dock_fit_sums
+    lv_dock_fit_margins
+    lv_dock_layout_sides
+    lv_dock_layout_tree
+    lv_hud_sums
+    lv_team_sprite_sums
+    lv_team_colour_lookup
+    lv_overview_sums
+    lv_overview_bots
+    lv_overview_row_layout
+    lv_overview_neutral_row
+    lv_tank_status_sums
+    lv_tank_bars_sums
+    lv_tank_pick_sums
+    lv_map_double_click
+    lv_name_header_sums
+    lv_dock_clear_layout
+    lv_dock_clear_rects
+    lv_dock_clear_map
+    lv_dock_clear_prefs
+    lv_dock_default_layout
+    lv_dump_recorded_round
+    lv_spmap_owner_table
+    lv_spmap_reads_back
+    lv_pill_get_in_tank
+    lv_spmap_carried_pill_left_out
+    lv_event_kind_sums
+    lv_event_click_pick
+    lv_event_overlay_slider
+    lv_event_overlay_clusters
+    lv_event_overlay_tip_columns
+    lv_event_overlay_tip_place
+    lv_event_overlay_marker_size
+    lv_event_overlay_choice
+    lv_event_overlay_picture
+    lv_event_overlay_no_sign
+    lv_event_overlay_live_rebuild
+    lv_panel_set_live
+    lv_event_kinds_filter
+    lv_event_kinds_prefs
+    lv_event_marker
+    lv_ping_store
+    lv_ping_marker
+    lv_ping_phase
+    lv_dump_ping
+    lv_time_fmt_sums
+    lv_time_parse_sums
+    lv_event_flash_sums
+    lv_event_flash_arrow
+    lv_event_centre_scroll
+    lv_view_centre_scroll
+    lv_first_view_box
+    lv_first_view_zoom
+    lv_first_view_place
+    lv_event_jump_keeps_place_in_view
+    lv_event_seek_exact
+    lv_event_jump_view
+    lv_event_pill_capture_place
+    lv_event_builder_lost_place
+    lv_builder_status_sums
+    lv_builder_countdown
+    lv_builder_dead_text
+    lv_builder_away_text
+    lv_builder_away_scan
+    lv_builder_trips
+    lv_builder_trips_scan
+    lv_pill_numbers_sums
+    lv_pill_numbers_list
+    lv_pill_numbers_layout
+    lv_pill_numbers_overview
+    lv_controls_top_row
+    lv_controls_bottom_row
+    lv_controls_wheel_step
+    lv_controls_fine_drag
+    lv_zoom_percent
+    lv_fullscreen_key
+    lv_event_scan_returns_to_start
+    lv_save_name_parts
+    lv_save_name_bots
+    lv_save_name_limits
+    lv_save_name_long
+    lv_save_name_roster
+    lv_save_name_scan
+    lv_utf8_path
+    logviewer_spawn_paths
+    logviewer_spawn_names
+    lv_shell_quote
+    lv_kill_tally_seek_back
+    lv_alive_seek_back
+    lv_death_time_seek_back
+    lv_jump_targets
+    lv_jump_anim_lands
+    lv_jump_anim_steps
+    lv_jump_anim_time
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast

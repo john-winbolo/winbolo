@@ -117,7 +117,7 @@ void lvEventListRewound(void) {
   lvEventPassReset();
 }
 
-void lvEventListAdd(const char *text, uint32_t timeMs, bool showTime) {
+LvEvent *lvEventListAdd(const char *text, uint32_t timeMs, bool showTime) {
   int      first;
   int      end;
   int      posted = 1;
@@ -127,7 +127,7 @@ void lvEventListAdd(const char *text, uint32_t timeMs, bool showTime) {
   LvEvent *e;
 
   if (text == NULL) {
-    return;
+    return NULL;
   }
   if (!s_passValid || s_passMs != timeMs) {
     lvEventPassReset();
@@ -143,14 +143,14 @@ void lvEventListAdd(const char *text, uint32_t timeMs, bool showTime) {
     int    cap = (s_passCap == 0) ? 8 : s_passCap * 2;
     char **grown = (char **)realloc(s_passTexts, (size_t)cap * sizeof(*grown));
     if (grown == NULL) {
-      return;
+      return NULL;
     }
     s_passTexts = grown;
     s_passCap = cap;
   }
   copy = lvEventDupText(text);
   if (copy == NULL) {
-    return;
+    return NULL;
   }
   s_passTexts[s_passCount++] = copy;
 
@@ -162,39 +162,40 @@ void lvEventListAdd(const char *text, uint32_t timeMs, bool showTime) {
     }
   }
   if (posted <= held) {
-    return;   /* a replay of a line already held */
+    return NULL;   /* a replay of a line already held */
   }
 
   copy = lvEventDupText(text);
   if (copy == NULL) {
-    return;
+    return NULL;
   }
   e = lvEventArrayInsert(&s_timed, end);
   if (e == NULL) {
     free(copy);
-    return;
+    return NULL;
   }
   e->text = copy;
   e->timeMs = timeMs;
   e->showTime = showTime;
+  return e;
 }
 
-void lvEventListAddPinned(const char *text, bool seekable, uint32_t seekMs,
-                          int mapX, int mapY) {
+LvEvent *lvEventListAddPinned(const char *text, bool seekable, uint32_t seekMs,
+                              int mapX, int mapY) {
   char    *copy;
   LvEvent *e;
 
   if (text == NULL) {
-    return;
+    return NULL;
   }
   copy = lvEventDupText(text);
   if (copy == NULL) {
-    return;
+    return NULL;
   }
   e = lvEventArrayInsert(&s_pinned, s_pinned.count);
   if (e == NULL) {
     free(copy);
-    return;
+    return NULL;
   }
   e->text = copy;
   e->pinned = true;
@@ -202,6 +203,7 @@ void lvEventListAddPinned(const char *text, bool seekable, uint32_t seekMs,
   e->seekMs = seekMs;
   e->mapX = mapX;
   e->mapY = mapY;
+  return e;
 }
 
 int lvEventListCount(void) {
@@ -220,6 +222,30 @@ const LvEvent *lvEventListAt(int i) {
     return &s_timed.items[i];
   }
   return NULL;
+}
+
+LvEvent *lvEventListEdit(int i) {
+  return (LvEvent *)lvEventListAt(i);
+}
+
+bool lvEventListAppendText(int i, const char *suffix) {
+  LvEvent *e = lvEventListEdit(i);
+  size_t   len;
+  size_t   add;
+  char    *grown;
+
+  if (e == NULL || suffix == NULL) {
+    return false;
+  }
+  len = strlen(e->text);
+  add = strlen(suffix);
+  grown = (char *)realloc(e->text, len + add + 1);
+  if (grown == NULL) {
+    return false;
+  }
+  memcpy(grown + len, suffix, add + 1);
+  e->text = grown;
+  return true;
 }
 
 int lvEventListPinnedCount(void) {

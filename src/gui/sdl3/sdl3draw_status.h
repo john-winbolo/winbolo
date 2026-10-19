@@ -108,6 +108,12 @@ void sdl3DrawSetPillsStatusClear(void);
 void sdl3DrawStatusPillbox(BYTE pillNum, pillAlliance pa, bool labels);
 void sdl3DrawCopyPillsStatus(int x, int y);
 
+/* Where slot n (1..16) sits inside a status panel, in panel pixels at zoom 1.
+ * All three panels share the grid, so type (0 base, 1 pill, 2 tank) does not
+ * change the answer. Public so the log viewer's HUD panel, which draws the
+ * same grids through ImGui, puts its icons where these renderers do. */
+void sdl3StatusItemPos(int n, int type, int *outX, int *outY);
+
 void sdl3DrawSetTanksStatusClear(void);
 void sdl3DrawStatusTank(BYTE tankNum, tankAlliance ta);
 void sdl3DrawCopyTanksStatus(int x, int y);

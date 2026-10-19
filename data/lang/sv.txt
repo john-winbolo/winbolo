@@ -2094,6 +2094,8 @@ STR_DLGSETTINGS_HOSTING_SERVERNAME=Servernamn
 STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=Spelfinnaren visar det här namnet istället för din adress. Upp till 32 tecken (färre med accenttecken eller andra skriftsystem). Lämna det tomt för att visa din adress.
 STR_DLGSETTINGS_HOSTING_SERVERDESC=Beskrivning
 STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=Spelfinnaren visar det här när en spelare pekar på eller väljer ditt spel. Upp till 200 tecken (färre med accenttecken eller andra skriftsystem).
+STR_DLGSETTINGS_HOSTING_SPECDELAY=Åskådarfördröjning (sekunder)
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=Hur många sekunder bakom spelet åskådarna ligger, så att de inte kan avslöja för spelarna var alla är. 0 visar spelet live. Upp till 600.
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Röstchatt

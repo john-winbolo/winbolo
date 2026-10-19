@@ -2094,6 +2094,8 @@ STR_DLGSETTINGS_HOSTING_SERVERNAME=Nom du serveur
 STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=La recherche de partie affiche ce nom à la place de votre adresse. Jusqu'à 32 caractères (moins avec des caractères accentués ou d'autres écritures). Laissez-le vide pour afficher votre adresse.
 STR_DLGSETTINGS_HOSTING_SERVERDESC=Description
 STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=La recherche de partie affiche ceci quand un joueur désigne ou sélectionne votre partie. Jusqu'à 200 caractères (moins avec des caractères accentués ou d'autres écritures).
+STR_DLGSETTINGS_HOSTING_SPECDELAY=Délai des spectateurs (secondes)
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=Nombre de secondes de retard sur la partie que voient les spectateurs, afin qu'ils ne puissent pas révéler aux joueurs où se trouve tout le monde. 0 affiche la partie en direct. Jusqu'à 600.
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Voix

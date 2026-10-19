@@ -36,6 +36,14 @@ void lv_imgui_item_info_update(unsigned char itemType, unsigned char itemNumber,
                             unsigned char x, unsigned char y, unsigned char armour, unsigned char shells, 
                             unsigned char mines, int inTank);
 
+/* The tooltip of a pillbox on the map, for the mouse over it: its number
+ * (from 1, as the game's own pillbox list counts), its owner and its armour.
+ * ownerName is NULL for a pillbox nobody owns; teamColour is the palette
+ * entry of the owner's team, -1 when the owner is in no team. Call it in
+ * the ImGui frame, before the frame is drawn. */
+void lv_imgui_item_info_pill_tooltip(int number, const char *ownerName, int teamColour,
+                                     int armour);
+
 #ifdef __cplusplus
 }
 #endif

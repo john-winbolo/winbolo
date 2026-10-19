@@ -628,6 +628,8 @@ STR_DLGWBN_COL_SIZE=Size
 STR_DLGWBN_COL_DATE=Date
 STR_DLGWBN_PLAYERS_LBL=Players: 
 STR_DLGWBN_NUMPLAYERS_FMT={number} player(s)
+STR_DLGWBN_PLAYERS_OTHERS_FMT=+ {number} others
+STR_DLGWBN_PLAYERS_OTHER_ONE=+ 1 other
 STR_DLGWBN_DURATION=Duration: {string1}
 STR_DLGWBN_RATING=Rating: {string1}/10 ({number})
 STR_DLGWBN_DOWNLOADS_FMT=Downloads: {number}
@@ -717,6 +719,14 @@ STR_DLGLOBBY_REEL_DOWNLOADING=Downloading replay... {number}%
 STR_DLGLOBBY_REEL_DISABLED=This server does not share replays
 STR_DLGLOBBY_REEL_NONE=No replay available for this round
 STR_DLGLOBBY_REEL_TOO_LARGE=The round was too long to send
+
+# Lobby "Last round" panel — the reel's "Spawn in log viewer" button.
+STR_DLGLOBBY_REEL_SPAWN_LV_TIP=Open this round in the Log Viewer, in a window of its own
+STR_DLGLOBBY_REEL_SPAWN_NO_LOG=There is no log of this round to open
+STR_DLGLOBBY_REEL_SPAWN_NO_VIEWER=Could not find the Log Viewer beside WinBolo
+STR_DLGLOBBY_REEL_SPAWN_SAVE_FAILED=Could not save a copy of the round's log for the Log Viewer
+STR_DLGLOBBY_REEL_SPAWN_START_FAILED=Could not start the Log Viewer
+STR_DLGLOBBY_REEL_SPAWN_STARTED=Log Viewer started
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Set Player Name
@@ -1209,6 +1219,101 @@ STR_LV_WIN_EVENTS=Events
 STR_LV_WIN_GAMEINFO=Game Information
 STR_LV_WIN_ITEMINFO=Item Information
 STR_LV_RESET_WINDOWS=Reset Window Positions
+STR_LV_DOCK_ENABLED=Right sidebar
+STR_LV_RESET_WINDOWS_DOCK=Reset Window Positions into Dock
+STR_LV_EVT_FILTER_ALL=All events
+STR_LV_EVT_KIND_PILL_CAPTURED=Pillbox captured
+STR_LV_EVT_KIND_PILL_STOLEN=Pillbox stolen
+STR_LV_EVT_KIND_BASE_CAPTURED=Base captured
+STR_LV_EVT_KIND_BASE_STOLEN=Base stolen
+STR_LV_EVT_KIND_BUILDER_LOST=Builder lost
+STR_LV_EVT_KIND_TANK_KILLED=Tank killed
+STR_LV_EVT_KIND_PLAYER=Players and teams
+STR_LV_EVT_KIND_CHAT=Chat and pings
+STR_LV_EVT_KIND_GAME=Game and server
+STR_LV_EVT_KIND_HIGHLIGHT=Highlights
+STR_LV_EVT_NOW=Now
+STR_LV_WIN_HUD=HUD
+STR_LV_HUD_TIP_OWNER={string1} - owner: {string2}
+STR_LV_HUD_TIP_STATE={string1} - {string2}
+STR_LV_HUD_NAME_TEAM={string1} ({string2})
+STR_LV_HUD_DEAD=Dead
+STR_LV_HUD_VIEW_AS=View of {string1}
+STR_LV_HUD_ALL_TEAMS=All teams
+STR_LV_HUD_REL_OWN=own
+STR_LV_HUD_REL_ALLIED=allied
+STR_LV_HUD_REL_HOSTILE=hostile
+STR_LV_SAVE_NAME_VS=vs
+STR_LV_SAVE_NAME_MORE=+ {number} more
+STR_LV_SAVE_NAME_BOT={number} Bot
+STR_LV_SAVE_NAME_BOTS={number} Bots
+STR_LV_SAVE_NAME_LOG=log
+STR_LV_ERR_NO_GAME=Could not find the WinBolo game beside the Log Viewer
+STR_LV_ERR_SAVE_MAP=Error Saving Map File
+STR_LV_ERR_MAP_FOLDER=Could not make the folder for the map file
+STR_LV_ERR_START_GAME=Could not start the WinBolo game
+STR_LV_ERR_SAVE_LOG=Error Saving Log File
+STR_LV_SAVE_LOG_TITLE=Save Log File...
+STR_LV_ERR_LOG_GONE=The log's own file could not be read. It may have been moved or deleted since it was opened.
+STR_LV_HUD_TIP_REL={string1} [{string2}]
+STR_LV_MENU_OPEN_SP=Open map at this time in single player
+STR_LV_MENU_OPEN_SP_TIP=Starts a single-player game on the map as it is at this time. You take the selected player's side: that player's and the allies' pillboxes and bases become yours, and your tank starts where that player's tank is. With no player selected, nothing is yours.
+STR_LV_MENU_SAVE_LOG=Save log file to disk...
+STR_LV_DOCK_LEFT=Left sidebar
+STR_LV_DOCK_TOP=Top sidebar
+STR_LV_DOCK_BOTTOM=Bottom sidebar
+STR_LV_DOCK_EMPTY_HINT=Drag a panel here
+STR_LV_WIN_OVERVIEW=Overview
+STR_LV_OVERVIEW_TOTAL=Total
+STR_LV_OVERVIEW_MORE={string1} +{number}
+STR_LV_OVERVIEW_BAR_PILL=1 pillbox
+STR_LV_OVERVIEW_BAR_PILLS={number} pillboxes
+STR_LV_OVERVIEW_BAR_BASE=1 base
+STR_LV_OVERVIEW_BAR_BASES={number} bases
+STR_LV_WIN_TANK=Tank
+STR_LV_TANK_HINT=Click a tank on the map or in the HUD panel to select it. Double-click a tank on the map to see the game as its player sees it; double-click it again to go back to all teams
+STR_LV_TANK_STOCK_FMT={string1}: {number} / {number2}
+STR_LV_TANK_BUILDER_IN=Builder: in tank
+STR_LV_TANK_BUILDER_OUT=Builder: out
+STR_LV_TANK_BUILDER_DEAD=Builder: dead
+STR_LV_TANK_PILLS=Pillboxes carried: {number}
+STR_LV_TANK_NO_STOCK=This recording does not hold tank resources
+STR_LV_TANK_BARS=Tank Armour and Shells Bars
+STR_LV_TANK_BARS_TIP=Two small bars over each tank: armour on top, shells under it
+STR_LV_TIP_BACK_SECS=Back {string1} seconds
+STR_LV_TIP_FWD_SECS=Forward {string1} seconds
+STR_LV_TIP_KEY_FMT={string1} ({string2})
+STR_LV_TIP_LIVE=Jump to live
+
+# Log viewer: the X at the end of a panel's name line
+STR_LV_TIP_DESELECT=Deselect tank
+STR_LV_TIP_ALL_TEAMS=Back to all teams
+
+# Log viewer: the option of a sidebar, in the Windows menu
+STR_LV_DOCK_TRANSPARENT=Make unused sidebar portions transparent
+
+# Log viewer: the event markers over the seek bar of the Controls panel
+STR_LV_OVERLAY_EVENTS=Overlay events
+STR_LV_OVERLAY_TIP=Show a marker over the seek bar for each event of the ticked kinds
+STR_LV_OVERLAY_COUNT={string1} events
+STR_LV_OVERLAY_MORE=+{string1} more
+STR_LV_BUILDER_STATUS=Tank Builder Status
+STR_LV_BUILDER_STATUS_TIP=Over each tank on the map: an arrow toward its builder when he is out of the tank, and a parachute with the time until the new builder is in the tank when he is dead
+STR_LV_TANK_BUILDER_BACK=Builder: dead, back in {string1}
+
+# Log viewer: the filter of the Events panel, a list of ticked kinds
+STR_LV_EVT_FILTER_SOME={string1} of {string2} events
+STR_LV_EVT_FILTER_EMPTY=No events of the selected kinds
+STR_LV_EVT_FILTER_TIP=Show only the events of the ticked kinds
+
+# Log viewer: the zoom of the map as a percentage
+STR_LV_ZOOM_TIP=Map zoom. 100% is the game's own size. Change it with + and -, the mouse wheel, or Options > Zoom
+STR_LV_JUMP_ANIM=Animate Rewind and Fast Forward
+STR_LV_PILL_NUMBERS=Pillbox Numbers
+STR_LV_PILL_NUMBERS_TIP=The number of each pillbox beside it on the map, the number the game's own pillbox list gives it
+STR_LV_PILL_NUMBERS_LIST=Numbers: {string1}
+STR_LV_MSG_PILL_CAPTURED={player} captured Neutral Pillbox {number}
+STR_LV_MSG_PILL_STOLEN={player} just stole pillbox {number} from {other}
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:
@@ -1725,6 +1830,8 @@ STR_DLGSETTINGS_HOSTING_SERVERNAME=Server name
 STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=The game finder shows this name instead of your address. Up to 32 letters (fewer with accented letters or other scripts). Leave it empty to show your address.
 STR_DLGSETTINGS_HOSTING_SERVERDESC=Description
 STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=The game finder shows this when a player points at or selects your game. Up to 200 letters (fewer with accented letters or other scripts).
+STR_DLGSETTINGS_HOSTING_SPECDELAY=Spectator Delay (seconds)
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=How many seconds behind the game spectators watch, so they cannot tell players where everyone is. 0 shows the game live. Up to 600.
 
 # Log viewer Options menu
 STR_LV_HIDE_LOBBY=Hide Lobby
@@ -1834,6 +1941,9 @@ STR_LV_SPEC_CONNECTING=Connecting...
 STR_LV_SPEC_CONNECTION_LOST=Connection lost
 STR_LV_SPEC_BEGINS_NOW=Spectating begins now
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Spectating {string1}:{number}{string3}
+
+# The File menu of a live game watched from the game: its one item.
+STR_LV_MENU_LEAVE_SPECTATING=Leave spectating
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Volume
