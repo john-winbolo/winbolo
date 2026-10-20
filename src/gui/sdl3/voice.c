@@ -45,6 +45,9 @@
 #include "global.h"
 #include "voice_core.h"
 #include "voice_backend.h"
+#if defined(__ANDROID__)
+#include "../../android/android_voice.h"  /* androidVoiceMicPermitted */
+#endif
 
 #define VOICE_FRAME_BYTES ((int)(VOICE_FRAME_SAMPLES * sizeof(int16_t)))
 
@@ -399,6 +402,16 @@ bool voiceBackendCaptureStart(void) {
     SDL_AudioSpec spec;
 
     if (!captureStream) {
+#if defined(__ANDROID__)
+        /* The microphone needs a permission the system asks the player for.
+         * SDL's own open asks and spins this thread until the answer, so it
+         * is asked for here first and the open waits for a grant; until then,
+         * and after a refusal, there is no device to open and this attempt
+         * fails like one. The runtime asks again on its retry cadence. */
+        if (!androidVoiceMicPermitted()) {
+            return false;
+        }
+#endif
         SDL_zero(spec);
         spec.format = SDL_AUDIO_S16;
         spec.channels = 1;

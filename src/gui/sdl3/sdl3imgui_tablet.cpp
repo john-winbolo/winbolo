@@ -1104,10 +1104,11 @@ static void renderGunsightButtons(void) {
    anyone.  That leaves it off in single player, on a server started with
    voice off, and for a viewer.  What the button does is decided in input.c
    with the keys it stands in for: held in push-to-talk mode, and the mute
-   toggle in open mic mode. iOS only: a desktop or web client on a small
-   touch screen also takes this layout, and keeps its own talk key there. */
+   toggle in open mic mode. iOS and Android only: a desktop or web client on
+   a small touch screen also takes this layout, and keeps its own talk key
+   there. */
 static bool tabletTalkButtonShown(void) {
-#if defined(WINBOLO_VOICE) && defined(__APPLE__) && TARGET_OS_IOS
+#if defined(WINBOLO_VOICE) && ((defined(__APPLE__) && TARGET_OS_IOS) || defined(__ANDROID__))
   return s_cfg.talkRadius > 0.0f && voiceIsEnabled() &&
          voiceGetMode() != VOICE_MODE_OFF && voiceConnectionCarriesVoice();
 #else

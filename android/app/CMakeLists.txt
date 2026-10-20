@@ -140,6 +140,37 @@ set(PLUM_WARNINGS_AS_ERRORS OFF CACHE INTERNAL "")
 FetchContent_MakeAvailable(libplum)
 set_target_properties(plum PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# Voice chat's codec and echo canceller: the same repositories, tags and
+# switches as the root CMakeLists.txt (copied, since its lines read its own
+# variables). Both static; BUILD_SHARED_LIBS is already OFF above. Opus
+# builds none of its tests, programs or install rules here. SpeexDSP's CMake
+# build is on its main branch only (the newest tag ships autotools), so it
+# is pinned to a commit, which rules out a shallow clone; its one option
+# picks fixed- over floating-point arithmetic and every ABI here has an FPU.
+FetchContent_Declare(
+    opus
+    GIT_REPOSITORY https://github.com/xiph/opus.git
+    GIT_TAG        v1.5.2
+    GIT_SHALLOW    TRUE
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
+FetchContent_Declare(
+    speexdsp
+    GIT_REPOSITORY https://github.com/xiph/speexdsp.git
+    GIT_TAG        ba75b509fb1c5940ea07fa2ba5552e44f3a3576b
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
+set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(opus)
+set(USE_FIXED_POINT OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(speexdsp)
+
 # ---------------------------------------------------------------------------
 # minizip (from zlib contrib)
 # ---------------------------------------------------------------------------
@@ -235,6 +266,9 @@ set(ANDROID_SOURCES
     # over ConnectivityManager), for the mobile-data warning before an
     # Internet game is hosted.
     ${PROJ_ROOT}/src/android/android_netpath.c
+    # The RECORD_AUDIO permission voice.c asks for before it opens the
+    # microphone (SDL_RequestAndroidPermission, answered on another thread).
+    ${PROJ_ROOT}/src/android/android_voice.c
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_welcome.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_mapchooser.cpp
     # Shared mobile UI (touch input, legacy players panel), as iOS compiles.
@@ -402,6 +436,19 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/sound_variants.c
     ${PROJ_ROOT}/src/gui/sdl3/sound_mix.c
 
+    # Voice chat: the shared runtime in src/client_frontend and the SDL3
+    # device half in src/gui/sdl3/voice.c, which captures and plays through
+    # SDL audio streams, so it runs here as it does on iOS. The same sources
+    # and definitions as the WinBoloIOS target (WINBOLO_VOICE and
+    # WINBOLO_VOICE_AEC below). SDL's AAudio driver declares the game chat
+    # role, so voiceBackendOsCancelsEcho answers true at run time and Speex
+    # stays idle; it is compiled all the same, as on every platform.
+    ${PROJ_ROOT}/src/client_frontend/voice_core.c
+    ${PROJ_ROOT}/src/client_frontend/voice_client.c
+    ${PROJ_ROOT}/src/client_frontend/voice_aec.c
+    ${PROJ_ROOT}/src/gui/sdl3/voice.c
+    ${PROJ_ROOT}/src/gui/sdl3/voice_settings.c
+
     # Shared map-gen controls used by the map chooser dialog (not the
     # full map editor — this file matches what the iOS build pulls in).
     ${PROJ_ROOT}/src/mapeditor/mapgen_imgui.cpp
@@ -463,6 +510,9 @@ target_link_libraries(main PRIVATE
     cjson
     # Port mapping for a hosted Internet game (nat_portmap.c).
     LibPlum::LibPlum
+    # Voice chat's codec (voice_core.c) and echo canceller (voice_aec.c).
+    Opus::opus
+    speexdsp
     m
     log
     android
@@ -491,6 +541,10 @@ target_compile_definitions(main PRIVATE
     WBN_HTTP_JNI=1
     # nat_portmap.c compiles its libplum body rather than its no-op stubs.
     BOLO_PORTMAP
+    # Voice chat and its echo canceller, as the desktop and iOS targets
+    # define them: the settings, lobby and status code test these.
+    WINBOLO_VOICE=1
+    WINBOLO_VOICE_AEC=1
 )
 
 target_compile_options(main PRIVATE

@@ -32,6 +32,7 @@
 #include "../gui/input.h"
 #include "../gui/lang.h"
 #include "../gui/sound.h"
+#include "../gui/voice.h"
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/build_cursor.h"
@@ -180,11 +181,14 @@ void windowSetSoundVolume(int pct) {
   soundVolume = pct;
   soundSetEffectsVolume(pct);
 }
+/* Master reaches the mixer and the voice module separately: voice has its own
+ * streams and its own gain, and nothing downstream of here covers both. */
 void windowSetMasterVolume(int pct) {
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
   windowMasterVolume = pct;
   soundSetMasterVolume(pct);
+  voiceSetMasterVolume((float)pct / 100.0f);
 }
 void windowLabelOwnTank_toggle(ClientSim *cs)    { labelSelf = !labelSelf; if (cs) clientSimSetLabelOwnTank(cs, labelSelf); }
 void windowSetMessageLabelLen(ClientSim *cs, labelLen n){ labelMsg = n; if (cs) clientSimSetLabelMessage(cs, labelMsg); }

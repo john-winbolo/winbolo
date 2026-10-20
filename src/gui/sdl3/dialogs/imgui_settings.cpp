@@ -1699,7 +1699,7 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
     imguiSettingsVoiceModeCombo(dialogFontW(140.0f));
     /* The binding itself is set in Key Setup; showing it here is so the
        player can see which key push to talk is on without leaving. */
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     /* On a touch screen the talk button on the game screen is the key. */
     if (voiceGetMode() == VOICE_MODE_PTT && uiModeIsTablet()) {
         ImGui::TextWrapped("%s", langGetText(STR_DLGSETTINGS_VOICE_PTT_TOUCH));

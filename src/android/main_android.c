@@ -37,6 +37,7 @@
 #include "../gui/input.h"
 #include "../gui/lang.h"
 #include "../gui/sound.h"
+#include "../gui/voice.h"
 #include "../gui/ui_mode.h"
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
@@ -724,6 +725,14 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  /* Voice runs for the life of the process, as on the desktop and iOS: it
+     comes up before gameFrontStart, which applies the saved voice settings
+     to it and whose pre-game dialogs expect it to exist. It opens the
+     playback side only; the microphone waits until a connection carries
+     voice, which is also when the permission is asked for (android_voice.c).
+     A device that will not open is not fatal - voice stays disabled. */
+  voiceInit();
+
   dialogBackendInit();
 
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Starting gameFrontStart...");
@@ -822,6 +831,7 @@ android_game_start:
       clientMutexDestroy();
       sdl3DrawCleanup();
       soundCleanup();
+      voiceCleanup();
       SDL_Quit();
       threadsDestroy();
       return 0;
@@ -949,6 +959,11 @@ android_game_start:
       }
     }
 
+    /* Voice encode/decode runs here, on the main thread, beside the game
+       tick, once a frame as on the desktop - the codec state has no lock
+       of its own. */
+    voiceTick(cs);
+
     /* The round has handed the game back to the lobby (a vote to return,
        or a game over): leave the loop before drawing, and show the lobby
        screen from the top, as the desktop does. */
@@ -992,6 +1007,11 @@ android_game_start:
   }
 
   s_lifecycleCs = NULL;
+
+  /* Release the remote talkers with the game they belong to - player
+     numbers are handed out afresh next time, so a stale decoder would be
+     fed someone else's voice. */
+  voiceReset();
 
   /* A game that ends in the background leaves the pause on, and nothing
      else clears it: the lobby, the shutdown and the menu would run as if
@@ -1051,6 +1071,7 @@ android_game_start:
   clientMutexDestroy();
   sdl3DrawCleanup();
   soundCleanup();
+  voiceCleanup();
   SDL_Quit();
   threadsDestroy();
   return 0;
