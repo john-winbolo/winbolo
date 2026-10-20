@@ -617,20 +617,22 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
  * nearest burst can kill him for as long as it does; on grass it falls
  * behind and the window is 2 ticks. A scenario script's order is applied
  * after the shells move, so he takes his first step in the next tick, after
- * the tank has moved again. Starting him on the centre, as WinBolo 1.17 and
- * 2.1 did, gives the same 2 ticks for a still tank under this order and the
- * same open window for a tank that keeps pace, so this is close to the
- * long-standing behaviour. The first import of this server ran lgmUpdate
- * before lgmAddRequest, so he did not step in the order tick and a centre
- * start gave 3. An offset of 64 would keep him clear in all three cases. A
- * pillbox shell is not rewound, so the target's lag does not make the
- * window longer. The offset is kept small so the head start it gives is
- * small: one walking step where a builder walks 16 a tick (grass, road, a
- * boat, a base he can use), two on forest and four on swamp, crater and
- * rubble. He is given it only where he could have walked it: off a boat, or
- * when he can walk on the tank's own square and on each square the move
- * enters, not counting the blessed square of a boat or river road order.
- * See lgmApplyStartOffset. */
+ * the tank has moved again. WinBolo 1.17 and 2.1 started him on the centre.
+ * Both gave a still tank 3 ticks, the third only at the nearest burst, and
+ * the same open window for a tank that keeps pace. 1.17 hit with a 128 box,
+ * and he took his first step one tick after the order. 2.1 had today's
+ * order and the 112 circle. So an offset of 16 is close to the
+ * long-standing behaviour: 2 ticks now against 3 then. An offset of 64
+ * would keep him clear in all three cases. 2.1 rewound a pillbox shell by
+ * the target's lag, so its window was longer on a lagged link. A pillbox
+ * shell is no longer rewound, so lag does not make the window longer. The
+ * offset is kept small so the head start it gives is small: one walking
+ * step where a builder walks 16 a tick (grass, road, a boat, a base he can
+ * use), two on forest and four on swamp, crater and rubble. He is given it
+ * only where he could have walked it: off a boat, or when he can walk on
+ * the tank's own square and on each square the move enters, not counting
+ * the blessed square of a boat or river road order. See
+ * lgmApplyStartOffset. */
 #define LGM_START_OFFSET 16
 
 /*********************************************************
