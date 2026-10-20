@@ -454,7 +454,7 @@ static void main_loop_iteration(void) {
   clientFrontTutorialPollRespawn();
 
   /* Cloud prefs upload runs from gameFrontPumpDirty, which
-   * sdl3ImguiProcessEvents calls at the top of this frame. */
+   * sdl3ImguiPumpAndRender calls at the top of this frame. */
 }
 
 /* Wait for the browser's next animation frame. This paces the game loop at

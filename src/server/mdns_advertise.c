@@ -102,10 +102,16 @@ typedef struct {
 
 /*---------------------------------------------------------
  * Local LAN address discovery (single interface, v1).
- * Mirrors discovery.c's broadcast-interface selection.
- * Multi-interface advertising (one socket per usable iface)
- * is a follow-up. ifNameOut gets the interface's name where
- * the system reports one, "" otherwise.
+ * Picks one IPv4 interface that is up and not loopback.
+ * Unlike discovery.c, which broadcasts on every up,
+ * broadcast-capable interface, it also passes over
+ * point-to-point interfaces (utun, ppp, tun, wg, pdp_ip)
+ * and takes one of those only when no other interface is
+ * up. The Windows branch takes the first up, non-loopback
+ * interface. Multi-interface advertising (one socket per
+ * usable iface) is a follow-up. ifNameOut gets the
+ * interface's name where the system reports one, ""
+ * otherwise.
  *---------------------------------------------------------*/
 static bool mdnsFindLocalAddr(struct in_addr *out, char *ifNameOut,
                               size_t ifNameCap) {

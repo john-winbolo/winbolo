@@ -23,8 +23,8 @@
 *  lobbyReelOpenStandalone / lobbyReelRenderStandalone.
 *
 *  The browser on mobile always downloads to memory
-*  (imgui_wbn_browser.cpp), so logViewerRun, the file path
-*  entry point, stays a stub in ios_stubs.c.
+*  (imgui_wbn_browser.cpp). logViewerRun, the file path
+*  entry point, is in ios_recordings.cpp.
 *********************************************************/
 
 #include <SDL3/SDL.h>

@@ -13,9 +13,9 @@
     <array/>
     <key>NSPrivacyAccessedAPITypes</key>
     <array>
-        <!-- NSUserDefaults: the crash-reporting switch and the iPad layout
-             setting in src/gui/ios/winbolo_ios.m, read and written by the
-             app itself. -->
+        <!-- NSUserDefaults: the crash-reporting switch in
+             src/gui/ios/winbolo_ios.m, read and written by the app
+             itself. -->
         <dict>
             <key>NSPrivacyAccessedAPIType</key>
             <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
