@@ -328,8 +328,16 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
 *  pb       - Pointer to the pillboxes structure
 *  tk       - Pointer to an array of tank structures
 *  bs       - Pointer to the bases structure
-*  xValue   - X position
-*  yValue   - Y position
+*  xValue   - X position of the shell. On a collision it is
+*             set to where the effects go: the middle of
+*             the square for a pillbox, base or terrain
+*             hit. For a tank hit it is the point on the
+*             hull the shell reached, carried to where the
+*             tank is now: the tank's present position plus
+*             the shell's offset from the position the hit
+*             was tested against. A hit that was not
+*             rewound leaves it the shell's own point
+*  yValue   - Y position, as xValue
 *  shell    - The shell, for its angle, owner, boat flag,
 *             lag compensation, firing pill and the
 *             targets can_hit has already let it pass
@@ -337,8 +345,17 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
 *  outOutcome - NULL-tolerant out-param; on a collision, set to the
 *               SHELL_OUTCOME_* describing what was hit (TANK_HIT /
 *               TANK_KILL / IMPACT). Untouched when no collision occurs.
+*  outSeenX - NULL-tolerant out-param; on a collision, the X of the
+*             blast as the shooter's screen had it. It is what the
+*             builder test uses, and only that. The same as xValue
+*             except for a rewound tank hit, where it is the shell's
+*             own point: where it reached the hull of the tank at
+*             the place the hit was tested against, before that
+*             point is carried to where the tank is now. Untouched
+*             when no collision occurs.
+*  outSeenY - Y, as outSeenX
 *********************************************************/
-bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome);
+bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome, WORLD *outSeenX, WORLD *outSeenY);
 
 /*********************************************************
 *NAME:          shellsCheckRoad

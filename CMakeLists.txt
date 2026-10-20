@@ -4484,6 +4484,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_build_harvest_stale.c
     tests/unit/test_lgm_request_valid.c
     tests/unit/test_lgm_quit_pill.c
+    tests/unit/test_lgm_start_offset.c
+    tests/unit/test_lgm_absent_on_shooter_screen.c
+    tests/unit/test_braindbg_round_dir.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
     tests/unit/test_sim_rules.c
@@ -4566,6 +4569,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # client, a joiner arriving on the changed table, a server-only rule
     # publishing nothing, and a new table clamping what the client holds.
     tests/unit/test_loopback_sim_rules.c
+    # A builder walled in behind his own tank while a pillbox shoots at it,
+    # over a lagged link and a clean one.
+    tests/unit/test_lgm_under_fire.c
     # The client's own check of the rules table before it keeps one.
     tests/unit/test_sim_rules_client_check.c
     # The sixteen pillbox pictures against a pill armour cap above 15.
@@ -4772,6 +4778,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tkExplosionUpdate's lgm/tank index pairing over the compacted per-player
     # arrays, plus the small-explosion sweep's off-by-one.
     tests/unit/test_tkexp_lgm_pairing.c
+    # A shell that hits a tank blows up at the hit tank's present position
+    # plus the shell's offset from the rewound hit point, not at the shell,
+    # which a lag-compensated test leaves behind the tank.
+    tests/unit/test_tank_blast_at_tank.c
+    tests/unit/test_teleport_clears_rewind.c
+    tests/unit/test_shell_rewind_rules.c
     tests/unit/test_input_gate.c
     tests/unit/test_input_source.c
     src/gui/sdl3/input_source.c
@@ -5185,6 +5197,16 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # path. scratch_dir.c adds a pid and the test name beneath it and sweeps
     # its own subtree at exit.
     WB_TEST_SCRATCH_DIR="${CMAKE_BINARY_DIR}/test-scratch"
+    # Where a test that records a .wbv replay of its own run puts the file.
+    # Unlike the scratch root above it is NOT swept at exit and carries no pid:
+    # the whole point is that a person can open the last run in the LogViewer.
+    WB_TEST_REPLAY_DIR="${CMAKE_BINARY_DIR}/replays"
+    # Where a test that records a brain-debug session of its own run puts the
+    # session dir. BrainTest's Load Session browser globs "debug_sessions/*"
+    # relative to its working directory, and that is this same build dir, so a
+    # session written here is one the browser lists. Like the replay dir it is
+    # NOT swept at exit: the point is that a person can step through the run.
+    WB_TEST_DEBUG_SESSION_DIR="${CMAKE_BINARY_DIR}/debug_sessions"
     # Committed v1 .wbv fixture directory: the reader gate loads from here and
     # the on-demand capture (re)writes spectator_v1.wbv into it.
     WB_WBV_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wbv"
@@ -5954,6 +5976,8 @@ set(_unit_test_names
     lobby_default_sides_map_change
     lobby_default_sides_map_change_repeated
     lobby_default_sides_same_side_pick_kept
+    lobby_ds_bot_team_naming_pools
+    lobby_ds_bot_start_teams
     starts_side_end_to_end_four_v_twelve
     starts_side_region_sweep
     starts_side_unsided_kept_off_chosen_side
@@ -6147,6 +6171,20 @@ set(_unit_test_names
     lgm_request_quiet
     lgm_quit_drops_carried_pill
     lgm_unfield_drops_carried_pill
+    position_history_lookup
+    lgm_kill_absent_on_shooter_screen
+    lgm_kill_rewound_position
+    lgm_kill_pill_shell_present
+    lgm_kill_short_history
+    lgm_kill_seen_out_back_in_tank
+    lgm_kill_seen_out_outside_blast
+    lgm_kill_seen_out_pill_shell
+    lgm_kill_seen_out_no_record
+    lgm_kill_seen_out_already_dead
+    lgm_kill_seen_out_tank_hit_blast
+    lgm_kill_seen_out_dead_tank
+    lgm_start_offset
+    braindbg_second_round_new_dir
     lgm_draw_own_matches_wire
     lgm_draw_centre_error_bounds
     jitter_buffer_grow
@@ -6214,8 +6252,37 @@ set(_unit_test_names
     ping_kick_defers_teardown
     ping_kick_clears_strikes_on_disconnect
     tkexp_lgm_pairing
+    tank_blast_rewound_hit_at_present_tank
+    tank_blast_kill_starts_at_present_tank
+    tank_blast_zero_rewind_unchanged
+    tank_blast_hit_decision_unchanged
+    tank_blast_builder_on_shooter_screen
+    tank_blast_absent_builder_lives
+    tank_blast_builder_back_in_tank
+    tank_blast_pill_shell_builder_now
+    tank_blast_no_record_builder_now
+    shell_blast_pill_hit_on_shooter_screen
+    teleport_erases_tank_rewind_record
+    teleport_shell_hits_new_place
+    teleport_rewind_refills
+    teleport_builder_rewind_record
+    teleport_parachute_erases_builder_record
+    slot_join_erases_tank_rewind_record
+    slot_join_shell_hits_new_tank
+    slot_join_rewind_refills
+    slot_join_erases_builder_rewind_record
+    slot_refield_erases_rewind_records
+    shell_rewind_pill_shell_tank_present
+    shell_rewind_tank_full_comp
+    shell_rewind_builder_one_less
     loopback_join
     loopback_join_loss
+    # The builder walled in behind his own tank under pillbox fire. The
+    # lagged case was the bug report written as a test: it died every run
+    # until pill shells stopped being rewound, and one run in three until he
+    # started 64 units out. The nolag case is its control.
+    lgm_wall_behind_tank_under_fire_lagged
+    lgm_wall_behind_tank_under_fire_nolag
     loopback_password
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
@@ -6643,6 +6710,7 @@ set(_unit_test_names
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill
+    scenario_lgm_kill_force
     scenario_lgm_parachute
     scenario_lgm_set_carried
     scenario_lgm_kill_record
@@ -7044,6 +7112,7 @@ set(_unit_test_names
     scenario_lua_queued_answers_queued
     scenario_lua_shape_raises_refusal_does_not
     scenario_lua_detail_carries_the_number
+    scenario_lua_kill_lgm_force
     scenario_lua_teleport_start_refuses_bad_index
     scenario_lua_spawn_bot_refuses_bad_start
     scenario_lua_game_type_resolves_scripted

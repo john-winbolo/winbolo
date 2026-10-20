@@ -41,8 +41,22 @@ typedef struct {
     uint8_t count;   /* how many valid entries (up to POSITION_HISTORY_SIZE) */
 } PosHistory;
 
+/* What the history holds for one frame in the past. */
+typedef enum {
+    POS_HISTORY_NO_RECORD = 0,  /* nothing that old has been recorded yet */
+    POS_HISTORY_ABSENT,         /* a record that old exists and says "not alive":
+                                   a tank that was dead, a builder that was dead
+                                   or inside his tank */
+    POS_HISTORY_PRESENT         /* a record that old exists and has a position */
+} PosHistoryLookup;
+
 void posHistoryInit(PosHistory *h);
 void posHistoryRecord(PosHistory *h, WORLD x, WORLD y, bool alive);
+/* The record made ticksAgo frames before the newest one (0 is the newest).
+ * outX and outY are written only for POS_HISTORY_PRESENT. */
+PosHistoryLookup posHistoryLookup(const PosHistory *h, uint8_t ticksAgo, WORLD *outX, WORLD *outY);
+/* TRUE only for POS_HISTORY_PRESENT. FALSE does not say which of the other
+ * two it was; a caller that must tell them apart uses posHistoryLookup. */
 bool posHistoryGet(const PosHistory *h, uint8_t ticksAgo, WORLD *outX, WORLD *outY);
 
 #endif /* POSITION_HISTORY_H */
