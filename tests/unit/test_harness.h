@@ -2709,6 +2709,11 @@ int run_bot_difficulty_names(void);
  * inLobby/locked flags, every TXT field, and two-instance resolution. */
 int run_mdns_discovery(void);
 
+/* The platform advertiser's strings (test_mdns_discovery.c): the instance
+ * label and TXT pairs iOS registers with Bonjour match the raw-socket
+ * advertiser's records and read back to the same server. */
+int run_mdns_platform_pairs(void);
+
 /* The mDNS view TXT key (test_mdns_view_txt.c): the server's visibility
  * rules through the browser's parse seam, and what an absent or
  * malformed value reports. */

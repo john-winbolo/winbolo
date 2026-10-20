@@ -31,6 +31,14 @@
  *  search window is still listed, from its name alone,
  *  without the details the TXT record would add.
  *
+ *  The same file advertises a game this device hosts, for
+ *  the same reason: mdns_advertise.c answers queries from
+ *  its own multicast socket, so on iOS the server hands its
+ *  instance name, port and TXT pairs to DNSServiceRegister
+ *  instead (mdnsAdvertiseSetPlatform). The system then
+ *  answers for the game with this device's own host name
+ *  and address records.
+ *
  *  Built with ARC (see CMakeLists.txt).
  *********************************************************/
 
@@ -40,11 +48,13 @@
 
 #import <Foundation/Foundation.h>
 #include <dns_sd.h>
+#include <net/if.h>
 #include <stdio.h>
 #include <string.h>
 #include <SDL3/SDL.h>
 
 #include "discovery.h"
+#include "mdns_advertise.h"
 #include "ios_discovery.h"
 #include "../../common/wb_log.h"
 
@@ -297,6 +307,134 @@ static bool iosDiscoveryBrowse(DiscoveryServerCallback callback, void *userData)
   return true;
 }
 
+/* ---- Advertising a hosted game ----
+ *
+ * One registration at a time, as the server runs one advertiser. Every
+ * DNSService call on it runs on its serial queue; the hooks are called from
+ * the server tick on the host timer thread, which waits for the queue on
+ * start and stop and hands it a copy of the record on update. */
+
+static dispatch_queue_t s_advertiseQueue;
+static DNSServiceRef s_advertiseRef;
+
+/* The TXT record from the server's pairs, as DNS-SD bytes. NULL when a
+ * pair does not fit. */
+static NSData *iosAdvertiseTxt(const char *const *keys, const char *const *values,
+                               size_t count) {
+  TXTRecordRef txt;
+  TXTRecordCreate(&txt, 0, NULL);
+  for (size_t i = 0; i < count; i++) {
+    size_t len = strlen(values[i]);
+    if (len > 255 ||
+        TXTRecordSetValue(&txt, keys[i], (uint8_t)len, values[i]) !=
+            kDNSServiceErr_NoError) {
+      TXTRecordDeallocate(&txt);
+      return nil;
+    }
+  }
+  NSData *data = [NSData dataWithBytes:TXTRecordGetBytesPtr(&txt)
+                                length:TXTRecordGetLength(&txt)];
+  TXTRecordDeallocate(&txt);
+  return data;
+}
+
+static void DNSSD_API iosAdvertiseRegisterReply(DNSServiceRef sdRef,
+                                                DNSServiceFlags flags,
+                                                DNSServiceErrorType errorCode,
+                                                const char *name,
+                                                const char *regtype,
+                                                const char *domain,
+                                                void *context) {
+  (void)sdRef; (void)flags; (void)regtype; (void)domain; (void)context;
+  if (errorCode == kDNSServiceErr_NoError) {
+    WB_LOG_INFO(WB_LOG_CAT_NET, "ios advertise: registered '%s'",
+                name != NULL ? name : "");
+  } else {
+    WB_LOG_WARN(WB_LOG_CAT_NET, "ios advertise: registration failed (%d)",
+                (int)errorCode);
+  }
+}
+
+static bool iosAdvertiseStart(const char *instance, unsigned short port,
+                              const char *ifName, const char *const *keys,
+                              const char *const *values, size_t count) {
+  NSData *txt = iosAdvertiseTxt(keys, values, count);
+  if (txt == nil || instance == NULL) {
+    WB_LOG_WARN(WB_LOG_CAT_NET, "ios advertise: the TXT record did not fit");
+    return false;
+  }
+  /* On the interface the advertised address belongs to, so the address in
+   * the instance name and the one the system answers with agree. */
+  uint32_t ifIndex = (ifName != NULL && ifName[0] != '\0') ? if_nametoindex(ifName) : 0;
+  if (s_advertiseQueue == NULL) {
+    s_advertiseQueue = dispatch_queue_create("WinBolo LAN advertise",
+                                             DISPATCH_QUEUE_SERIAL);
+  }
+  __block bool started = false;
+  dispatch_sync(s_advertiseQueue, ^{
+    if (s_advertiseRef != NULL) {
+      DNSServiceRefDeallocate(s_advertiseRef);
+      s_advertiseRef = NULL;
+    }
+    DNSServiceRef ref = NULL;
+    /* No auto-rename: the name carries the address and port the LAN search
+     * reads, and a renamed instance would not parse. */
+    DNSServiceErrorType err = DNSServiceRegister(
+        &ref, kDNSServiceFlagsNoAutoRename, ifIndex, instance, "_winbolo._udp",
+        NULL, NULL, htons(port), (uint16_t)txt.length, txt.bytes,
+        iosAdvertiseRegisterReply, NULL);
+    if (err == kDNSServiceErr_NoError &&
+        DNSServiceSetDispatchQueue(ref, s_advertiseQueue) == kDNSServiceErr_NoError) {
+      s_advertiseRef = ref;
+      started = true;
+    } else {
+      WB_LOG_WARN(WB_LOG_CAT_NET, "ios advertise: DNSServiceRegister failed (%d)",
+                  (int)err);
+      if (ref != NULL) DNSServiceRefDeallocate(ref);
+    }
+  });
+  return started;
+}
+
+static void iosAdvertiseUpdate(const char *const *keys, const char *const *values,
+                               size_t count) {
+  NSData *txt = iosAdvertiseTxt(keys, values, count);
+  if (txt == nil || s_advertiseQueue == NULL) {
+    return;
+  }
+  dispatch_async(s_advertiseQueue, ^{
+    if (s_advertiseRef == NULL) {
+      return;
+    }
+    /* NULL record: the registration's own TXT record. */
+    DNSServiceErrorType err = DNSServiceUpdateRecord(
+        s_advertiseRef, NULL, 0, (uint16_t)txt.length, txt.bytes, 0);
+    if (err != kDNSServiceErr_NoError) {
+      WB_LOG_WARN(WB_LOG_CAT_NET, "ios advertise: TXT update failed (%d)", (int)err);
+    }
+  });
+}
+
+static void iosAdvertiseStop(void) {
+  if (s_advertiseQueue == NULL) {
+    return;
+  }
+  dispatch_sync(s_advertiseQueue, ^{
+    if (s_advertiseRef != NULL) {
+      DNSServiceRefDeallocate(s_advertiseRef);
+      s_advertiseRef = NULL;
+      WB_LOG_INFO(WB_LOG_CAT_NET, "ios advertise: stopped");
+    }
+  });
+}
+
+static const MdnsPlatformAdvertiser kIosAdvertiser = {
+  iosAdvertiseStart,
+  iosAdvertiseUpdate,
+  iosAdvertiseStop,
+};
+
 void iosDiscoveryInstall(void) {
   discoverySetMdnsBrowser(iosDiscoveryBrowse);
+  mdnsAdvertiseSetPlatform(&kIosAdvertiser);
 }

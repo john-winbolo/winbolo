@@ -6380,6 +6380,7 @@ set(_unit_test_names
     screencalc_river_arms_of_road_centred_cross
     screencalc_river_copies_agree
     mdns_discovery
+    mdns_platform_pairs
     mdns_view_txt_roundtrip
     client_type_matches_platform
     client_type_name_round_trips
