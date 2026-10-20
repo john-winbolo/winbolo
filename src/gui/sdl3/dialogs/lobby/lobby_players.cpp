@@ -1342,7 +1342,10 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                  + kSpacingX
                                  + kColGearW;
 #endif
-        const float kColPingW    = 50.0f * s;
+        /* Wide enough for a three-digit ping in the font in use: at a
+         * larger font (the iPad's) 50 points was too narrow and the text
+         * ran under the start dropdown beside it. */
+        const float kColPingW    = ImMax(50.0f * s, ImGui::CalcTextSize("999ms").x);
         const float kColReadyW   = 80.0f * s;
         const float kColXW       = 44.0f * s;
         /* The spacer column exists to hold the start dropdown, so what it

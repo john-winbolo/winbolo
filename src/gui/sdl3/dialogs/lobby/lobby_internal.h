@@ -755,6 +755,9 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
 
 /* status */
 void lobbyRenderConnectivityBadge(SDL_Renderer *renderer, float s);
+/* The width the badge needs (icon, gap and short text), or 0 when it shows
+ * nothing, for a header that has to decide which row it goes on. */
+float lobbyConnectivityBadgeWidth(float s);
 void lobbyRenderRejectToast(ClientSim *cs, float s);
 
 /* recap */

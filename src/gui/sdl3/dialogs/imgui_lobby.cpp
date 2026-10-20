@@ -815,29 +815,83 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             lobbyFormatTimeLimit(clientSimGetLobbyTimeLimit(cs), timeStr, sizeof(timeStr));
 
 #if BOLO_MOBILE
-            /* The desktop's one line in two rows of four: one item a line
-               took eight lines and pushed the tabs into the lower third of a
-               phone's screen, and the line itself is wider than a phone. The
-               smart-ping rule, the mods and the view policies are host-only in
-               the settings panel, so this header is where a joiner or
-               spectator reads them, as on the desktop. */
-            ImGui::TextUnformatted(langGetText(STR_DLGNETINFO_SERVER));
-            ImGui::SameLine();
-            renderServerValue();
-            ImGui::SameLine(0, 16);
-            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_GAME_LBL), lobbyGameTypeStr(clientSimGetLobbyGameType(cs)));
-            ImGui::SameLine(0, 16);
-            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MINES_LBL),
-                        clientSimIsLobbyHiddenMines(cs) ? langGetText(STR_DLGLOBBY_HIDDEN) : langGetText(STR_DLGLOBBY_VISIBLE));
-            ImGui::SameLine(0, 16);
-            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
-            lobbyRenderSmartPingSummary(cs, s);
-            ImGui::SameLine(0, 16);
-            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
-            ImGui::SameLine(0, 16);
-            lobbyRenderModsSummary(cs, s);
-            ImGui::SameLine(0, 16);
-            lobbyRenderVisibilitySummary(cs, s);
+            /* The desktop's one line, wrapped: an item that would pass the
+               right edge starts a new row. The line is wider than a phone,
+               one item a row pushed the tabs into the lower third of its
+               screen, and fixed rows ran off the edge when the server's
+               address resolves to a long host name. The smart-ping rule, the
+               mods and the view policies are host-only in the settings
+               panel, so this header is where a joiner or spectator reads
+               them, as on the desktop.
+
+               The text items are measured before they are drawn. The three
+               summaries draw themselves, so each is measured as it is drawn
+               and placed by that width the next frame; until then it is
+               taken as 0. The connectivity badge goes last, on the last row
+               if it fits there, and right-aligns itself on its row. */
+            static float s_hdrSummaryW[3];
+            const float hdrGap   = 16.0f;
+            const float hdrRight = ImGui::GetCursorScreenPos().x +
+                                   ImGui::GetContentRegionAvail().x;
+            bool hdrFirst = true;
+            auto hdrPlace = [&](float w) {
+                if (hdrFirst) {
+                    hdrFirst = false;
+                    return;
+                }
+                ImGui::SameLine(0, hdrGap);
+                if (ImGui::GetCursorScreenPos().x + w > hdrRight) {
+                    ImGui::NewLine();
+                }
+            };
+            auto hdrText = [&](const char *text) {
+                hdrPlace(ImGui::CalcTextSize(text).x);
+                ImGui::TextUnformatted(text);
+            };
+            auto hdrSummary = [&](int i, void (*draw)(ClientSim *, float)) {
+                hdrPlace(s_hdrSummaryW[i]);
+                ImGui::BeginGroup();
+                draw(cs, s);
+                ImGui::EndGroup();
+                s_hdrSummaryW[i] = ImGui::GetItemRectSize().x;
+            };
+            char hdrBuf[320];
+
+            /* Server: and its value stay together. */
+            {
+                char token[320];
+                guiServerAddressToken(cs, dispIp, dispPort, token, sizeof(token));
+                const char *value = showServerLink
+                    ? token
+                    : langGetText(clientSimIsSinglePlayer(cs)
+                                      ? STR_DLGLOBBY_SERVERDISP_SP
+                                      : STR_DLGLOBBY_SERVERDISP_INTERNET);
+                hdrPlace(ImGui::CalcTextSize(langGetText(STR_DLGNETINFO_SERVER)).x +
+                         ImGui::GetStyle().ItemSpacing.x +
+                         ImGui::CalcTextSize(value).x);
+                ImGui::TextUnformatted(langGetText(STR_DLGNETINFO_SERVER));
+                ImGui::SameLine();
+                renderServerValue();
+            }
+            SDL_snprintf(hdrBuf, sizeof(hdrBuf), "%s %s", langGetText(STR_DLGLOBBY_GAME_LBL),
+                         lobbyGameTypeStr(clientSimGetLobbyGameType(cs)));
+            hdrText(hdrBuf);
+            SDL_snprintf(hdrBuf, sizeof(hdrBuf), "%s %s", langGetText(STR_DLGLOBBY_MINES_LBL),
+                         clientSimIsLobbyHiddenMines(cs) ? langGetText(STR_DLGLOBBY_HIDDEN)
+                                                         : langGetText(STR_DLGLOBBY_VISIBLE));
+            hdrText(hdrBuf);
+            SDL_snprintf(hdrBuf, sizeof(hdrBuf), "%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
+            hdrText(hdrBuf);
+            hdrSummary(0, lobbyRenderSmartPingSummary);
+            SDL_snprintf(hdrBuf, sizeof(hdrBuf), "%s %s", langGetText(STR_DLGLOBBY_AI_LBL),
+                         lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
+            hdrText(hdrBuf);
+            hdrSummary(1, lobbyRenderModsSummary);
+            hdrSummary(2, lobbyRenderVisibilitySummary);
+            if (serverInstanceIsNatPunchActive()) {
+                hdrPlace(lobbyConnectivityBadgeWidth(s));
+                lobbyRenderConnectivityBadge(renderer, s);
+            }
 #else
             /* Leave button sits at the top-left, before the Server: line.
              * Escape key also opens the leave confirmation popup. Rendered as
@@ -907,13 +961,13 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * badge, which right-aligns into whatever space is left. */
             ImGui::SameLine(0, 16);
             lobbyRenderVisibilitySummary(cs, s);
-#endif
 
             /* Layout A — connectivity badge in the top-right corner.
              * Only meaningful when this client is also hosting AND
              * the host instance is actively NAT-punching (i.e. not
              * passed -no-natpunch / LAN-only). Skipping it covers SP,
-             * LAN-only hosts, and non-hosting clients in one check. */
+             * LAN-only hosts, and non-hosting clients in one check.
+             * The mobile header above places its own. */
             if (serverInstanceIsNatPunchActive()) {
                 /* lobbyRenderConnectivityBadge right-aligns itself within the
                  * remaining horizontal space, so we just SameLine onto
@@ -921,6 +975,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 ImGui::SameLine();
                 lobbyRenderConnectivityBadge(renderer, s);
             }
+#endif
         }
 
         ImGui::Spacing();
