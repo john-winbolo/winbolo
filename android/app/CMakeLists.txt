@@ -208,6 +208,9 @@ set(ANDROID_SOURCES
     # Android entry point and frontend
     ${PROJ_ROOT}/src/android/main_android.c
     ${PROJ_ROOT}/src/android/android_frontend.c
+    # The winbolo:// link or .wbv recording another app hands over while the
+    # app runs, kept for the welcome screen (WinBoloActivity.onNewIntent).
+    ${PROJ_ROOT}/src/android/android_drops.c
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_welcome.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_mapchooser.cpp
     # Shared mobile UI (touch input, legacy players panel), as iOS compiles.

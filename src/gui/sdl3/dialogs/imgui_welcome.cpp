@@ -50,6 +50,8 @@ extern "C" {
 #include "imgui_about.h"   /* aboutPopupOpen / aboutPopupRender */
 #if defined(__IPHONEOS__)
 #include "../../ios/ios_drops.h"  /* iosDropsWelcomeResult */
+#elif defined(__ANDROID__)
+#include "../../../android/android_drops.h"  /* androidDropsWelcomeResult */
 #endif
 #include "imgui_keyboard.h" /* keyboardUpdate */
 
@@ -251,11 +253,15 @@ extern "C" int imguiWelcomeShow(void) {
                 running = false;
             }
         }
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
         /* A recording or game link the system handed over, in whichever loop
-         * was running then or at a cold launch (ios_drops.c). */
+         * was running then or at a cold launch (ios_drops.c, android_drops.c). */
         if (running) {
+#if defined(__IPHONEOS__)
             int dropped = iosDropsWelcomeResult();
+#else
+            int dropped = androidDropsWelcomeResult();
+#endif
             if (dropped >= 0) {
                 result = dropped;
                 running = false;

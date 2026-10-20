@@ -119,6 +119,8 @@ bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
 #endif
 #if defined(__IPHONEOS__)
 #include "../ios/ios_drops.h"  /* iosDropsTakeLog */
+#elif defined(__ANDROID__)
+#include "../../android/android_drops.h"  /* androidDropsTakeLog */
 #endif
 #include "dialogs/imgui_onboarding.h"
 #include "dialogs/imgui_lobby.h"
@@ -1365,6 +1367,13 @@ static bool gameFrontDialogs(void) {
       openingStates prev = dlgState;
       s_isLanOnly = (dlgState == openLanManual);
       db->udpSetupShow();
+      /* A winbolo:// link that gameFrontHandleUrlOpen kept in fileName for a
+       * restart has now been offered by this dialog; the address globals
+       * carry it from here. Left in fileName, a cancelled join would hand
+       * the link to Single Player as its map name. */
+      if (strncmp(fileName, "winbolo://", 10) == 0) {
+        fileName[0] = '\0';
+      }
       /* dlgState already updated by gameFrontSetDlgState inside the dialog
        * (OnJoin/OnNew/OnCancel all call gameFrontSetDlgState before EndModal).
        * If the dialog stub didn't change state, fall back to welcome
@@ -1508,12 +1517,17 @@ static bool gameFrontDialogs(void) {
        * is a step inside the browser. Only iOS returns OPEN_LOCAL: its
        * logViewerRun with no path is the list of recordings on the phone
        * (ios_recordings.cpp), in place of a file dialog. */
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
       /* A recording opened from Files or Mail plays first; the browser
        * comes up when it closes. */
       {
         char dropped[FILENAME_MAX];
-        if (iosDropsTakeLog(dropped, sizeof(dropped))) {
+#if defined(__IPHONEOS__)
+        bool haveDropped = iosDropsTakeLog(dropped, sizeof(dropped));
+#else
+        bool haveDropped = androidDropsTakeLog(dropped, sizeof(dropped));
+#endif
+        if (haveDropped) {
           logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), dropped, true);
         }
       }

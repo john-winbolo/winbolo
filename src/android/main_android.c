@@ -50,6 +50,7 @@
 #include "../gui/sdl3/dialog_backend.h"
 #include "../gui/sdl3/dialogs/imgui_messagebox.h"
 #include "../winbolonet/http_jni.h"
+#include "android_drops.h"
 #include "touch_input.h"
 
 extern ClientSim *humanSim;
@@ -450,14 +451,28 @@ int main(int argc, char *argv[]) {
 
   bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
 
-  /* Check for winbolo:// URL passed via intent (see WinBoloActivity.getArguments) */
+#if !defined(NDEBUG)
+  /* A debug build echoes every category at INFO to logcat. SDL's own
+     default leaves the categories this code logs under at ERROR, which hides
+     the lines a tester reads a run by. */
+  SDL_SetLogPriorities(SDL_LOG_PRIORITY_INFO);
+#endif
+
+  SDL_Init(0);
+  androidDropsInstall();
+
+  /* The one argument a cold launch through a VIEW intent carries (see
+     WinBoloActivity.getArguments): a winbolo:// link goes to gameFrontStart
+     as the command line, as on the desktop; a recording's path is kept for
+     the welcome screen, which opens it as a link arriving later would be. */
   for (int i = 1; i < argc; i++) {
-    if (cmdLine[0] == '\0') {
+    size_t len = strlen(argv[i]);
+    if (len > 4 && SDL_strcasecmp(argv[i] + len - 4, ".wbv") == 0) {
+      androidDropsKeepRecording(argv[i]);
+    } else if (cmdLine[0] == '\0') {
       cmdLine = argv[i];
     }
   }
-
-  SDL_Init(0);
 
   /* The data and brain trees as files, and the working directory they are
      relative to (see androidExtractAssets). A failed extraction is logged

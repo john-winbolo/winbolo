@@ -18,6 +18,7 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"
+#include "../common/wb_log.h"
 
 /* ---- map editor stubs ---- */
 
@@ -32,8 +33,12 @@ void mapEditorSetSettingsHandler(void (*fn)(void)) { (void)fn; }
 
 /* ---- log viewer stubs ---- */
 
+/* A recording handed over by another app reaches this through the welcome
+   screen's kept-drop path (android_drops.c); the line says it got here. */
 void logViewerRun(void *window, void *renderer, const char *logPath, bool fromMainMenu) {
-  (void)window; (void)renderer; (void)logPath; (void)fromMainMenu;
+  (void)window; (void)renderer; (void)fromMainMenu;
+  WB_LOG_INFO(WB_LOG_CAT_GUI, "[Android] Log viewer not carried yet; asked to play %s",
+              logPath ? logPath : "(no file)");
 }
 
 void logViewerRunFromMemory(void *window, void *renderer, uint8_t *zipData, size_t zipLen, bool fromMainMenu) {

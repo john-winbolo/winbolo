@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
     <application
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
@@ -10,12 +12,17 @@
         <meta-data android:name="io.sentry.dsn" android:value="${sentryDsn}" />
         <meta-data android:name="io.sentry.release" android:value="WinBolo-Android@1.18" />
         <meta-data android:name="io.sentry.tags.executable" android:value="WinBolo-Android" />
+        <!-- One instance, so a link or recording opened while the app runs
+             reaches onNewIntent; with the default launch mode Android starts
+             a second activity instance for a VIEW intent instead, and the
+             SDL activity ends the process when that happens. -->
         <activity
             android:name=".WinBoloActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:screenOrientation="sensorLandscape"
             android:windowLayoutInDisplayCutoutMode="shortEdges"
             android:keepScreenOn="true"
+            android:launchMode="singleTask"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -26,6 +33,32 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="winbolo"/>
+            </intent-filter>
+            <!-- A .wbv recording from another app. Providers report a
+                 recording as application/octet-stream, so that type is taken
+                 whatever the path (a Downloads document URI carries no
+                 name); a file manager that reports no type is matched on
+                 the extension instead. The path is tested in both forms
+                 because pathPattern's glob does not match a name with more
+                 than one dot and pathSuffix is only read from API 31. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:scheme="content"/>
+                <data android:scheme="file"/>
+                <data android:mimeType="application/octet-stream"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:scheme="content"/>
+                <data android:scheme="file"/>
+                <data android:host="*"/>
+                <data android:mimeType="*/*"/>
+                <data android:pathPattern=".*\\.wbv"/>
+                <data android:pathPattern=".*\\..*\\.wbv"/>
+                <data android:pathPattern=".*\\..*\\..*\\.wbv"/>
+                <data android:pathSuffix=".wbv"/>
             </intent-filter>
         </activity>
     </application>
