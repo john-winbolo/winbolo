@@ -26,11 +26,13 @@
  * He starts LGM_START_OFFSET (16) out towards his square. A shell is tested
  * against the hull after it has moved its 32 units for the tick, so a hit
  * bursts up to 32 units inside the TANK_HIT_RADIUS circle, more by the
- * tank's speed when it is driving at the pill, between 68 and 112 units
- * from the tank's centre on the pill's side. On the far side he is 16, 32
- * and then 48 out in his first ticks, so a hit on the tank in about his
- * first 3 ticks on grass still has him within MAP_SQUARE_MIDDLE (128) of
- * the burst. That short window is the same one WinBolo 1.17 and 2.1 had.
+ * tank's speed when it is driving at the pill, between 64 and 112 units
+ * from the tank's centre on the pill's side (64 when the tank drives 16 a
+ * tick on a road, 68 at 12 a tick on grass). On the far side he is 16, 32,
+ * 48 and then 64 out in his first ticks, so a hit on the tank in about his
+ * first 3 ticks (tank on grass) or 4 ticks (tank on a road) still has him
+ * within MAP_SQUARE_MIDDLE (128) of the burst. That short window is close
+ * to the one WinBolo 1.17 and 2.1 had.
  * The cases pass because the script's order does not land in it: in the
  * runs made when the offset went back to 16 the nearest burst was 215 from
  * him on the lagged link and 268 on the clean one.
