@@ -2835,3 +2835,13 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=地圖佔滿螢幕，狀態、建造和新�
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=此裝置正在使用行動數據。以行動數據主持的網際網路遊戲很可能無法正常進行：\n行動網路很少讓其他玩家連線到此裝置。使用 Wi-Fi 成功的機會大得多。\n\n仍要主持嗎？
+
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=分享
+STR_ANDROIDREC_EMPTY=還沒有錄影。單人回合會錄製在這裡，從其他 App 開啟的 .wbv 錄影也會列在這裡。
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1} 已儲存。接下來請選擇要分享到的 App。
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=這裡還沒有內容。你在這裡或在遊戲中儲存的地圖都會顯示在這裡。

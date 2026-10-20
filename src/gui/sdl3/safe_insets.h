@@ -15,13 +15,14 @@
  *
  *  In landscape a phone with a notch or Dynamic Island
  *  reports the same inset on the left and the right,
- *  though the cutout is on one side only. Here the side
- *  away from it gets SAFE_INSETS_EDGE_MARGIN_FRAC of the
- *  window's width instead, which keeps clear of the
- *  screen's rounded corners. The cutout's side is found
- *  from the display orientation. A platform that reports
- *  the cutout on its own side (Android) has unequal insets
- *  and is left as it is. Zero everywhere off mobile.
+ *  though the cutout is on one side only; an Android
+ *  phone with gesture navigation reports equal side
+ *  insets too. Here the side away from the cutout gets
+ *  SAFE_INSETS_EDGE_MARGIN_FRAC of the window's width
+ *  instead, which keeps clear of the screen's rounded
+ *  corners. The cutout's side is found from the display
+ *  orientation. Unequal insets are left as they are. Zero
+ *  everywhere off mobile.
  *********************************************************/
 
 #ifndef SAFE_INSETS_H

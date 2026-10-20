@@ -20,6 +20,31 @@ val sentryDsn: String = providers.environmentVariable("SENTRY_DSN").orNull
     }
 
 // ---------------------------------------------------------------------------
+// The version, from the same file every other build reads. versionName is
+// WINBOLO_VERSION with WINBOLO_VERSION_SUFFIX appended (the display
+// version; the native build derives the protocol bytes from the numeric part
+// itself). versionCode must rise with every upload of the same version to
+// Play, so it is the count of commits on HEAD, as the iOS build number is:
+// it rises with each commit and is the same for every build of one commit.
+// Without git (a source archive) it falls back to 1.
+// ---------------------------------------------------------------------------
+val versionCmake = rootProject.file("../cmake/bolo_version.cmake").readText()
+fun cmakeSet(name: String): String =
+    Regex("""set\($name\s+"([^"]*)"""").find(versionCmake)?.groupValues?.get(1)
+        ?: throw GradleException("$name not found in cmake/bolo_version.cmake")
+val winboloVersionName: String = cmakeSet("WINBOLO_VERSION") + cmakeSet("WINBOLO_VERSION_SUFFIX")
+val winboloVersionCode: Int = try {
+    val proc = ProcessBuilder("git", "rev-list", "--count", "HEAD")
+        .directory(rootProject.projectDir)
+        .redirectErrorStream(true)
+        .start()
+    val out = proc.inputStream.bufferedReader().readText().trim()
+    if (proc.waitFor() == 0 && out.matches(Regex("\\d+"))) out.toInt() else 1
+} catch (e: Exception) {
+    1
+}
+
+// ---------------------------------------------------------------------------
 // Download SDL3 Java sources (SDLActivity etc.) for the Android build
 // ---------------------------------------------------------------------------
 val sdlVersion = "release-3.4.14"
@@ -82,18 +107,26 @@ tasks.configureEach {
 
 android {
     namespace = "com.winbolo.android"
-    compileSdk = 34
+    compileSdk = 36
     ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "com.winbolo.android"
+        // Android 8.0. Bionic declares getrandom only from API 28, which is
+        // why udp_server_join.c carries a syscall branch for this build.
         minSdk = 26
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        // Android 16: edge-to-edge drawing (the SDL activity handles it and
+        // the driver reads the safe area), and on screens of 600 dp and
+        // wider the system ignores the manifest's orientation lock, so a
+        // tablet turns to portrait and the layout stacks for it.
+        targetSdk = 36
+        versionCode = winboloVersionCode
+        versionName = winboloVersionName
 
-        // Inject the DSN into AndroidManifest's io.sentry.dsn meta-data.
+        // Inject the DSN into AndroidManifest's io.sentry.dsn meta-data, and
+        // the release Sentry files crashes under, from the same version.
         manifestPlaceholders["sentryDsn"] = sentryDsn
+        manifestPlaceholders["sentryRelease"] = "WinBolo-Android@$winboloVersionName"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
@@ -122,6 +155,12 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Read whether or not minification is on, so turning it on cannot
+            // strip the classes native code finds by name (proguard-rules.pro).
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 

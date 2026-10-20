@@ -2837,3 +2837,13 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Die Karte füllt den Bildschirm, mit den Sta
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=Dieses Gerät nutzt mobile Daten. Ein Internetspiel über mobile Daten\nzu hosten, wird wahrscheinlich nicht funktionieren: Mobilfunknetze lassen\nandere Spieler selten zum Gerät durch. Mit WLAN klappt es viel eher.\n\nTrotzdem hosten?
+
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=Teilen
+STR_ANDROIDREC_EMPTY=Noch keine Aufzeichnungen. Einzelspieler-Runden werden hier aufgezeichnet, und .wbv-Aufzeichnungen, die aus einer anderen App geöffnet wurden, werden hier ebenfalls aufgeführt.
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1} wurde gespeichert. Wähle als Nächstes eine App, mit der du sie teilen möchtest.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Hier ist noch nichts. Karten, die du speicherst, hier oder aus einem Spiel, erscheinen hier.

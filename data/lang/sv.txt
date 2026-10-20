@@ -2839,3 +2839,13 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Kartan fyller skärmen, med status-, bygg- o
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=Den här enheten använder mobildata. Ett internetspel som körs över\nmobildata kommer troligen inte att fungera: mobilnät låter sällan andra\nspelare nå enheten. Med wifi är chansen mycket större.\n\nVara värd ändå?
+
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=Dela
+STR_ANDROIDREC_EMPTY=Inga inspelningar ännu. Omgångar för en spelare spelas in här, och .wbv-inspelningar som öppnats från en annan app visas också här.
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1} har sparats. Välj sedan en app att dela den med.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Här finns inget ännu. Kartor du sparar, här eller från ett spel, visas här.

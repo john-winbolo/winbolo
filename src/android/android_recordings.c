@@ -69,9 +69,8 @@ bool mobileRecordingsPlatformExportShown(bool inPrefs) {
   return true;
 }
 
-/* The map editor's export label, until the language file has a share one. */
 const char *mobileRecordingsPlatformExportLabel(void) {
-  return langGetText(STR_MAPEDIT_EXPORT_BTN);
+  return langGetText(STR_ANDROIDREC_SHARE);
 }
 
 bool mobileRecordingsPlatformExport(const char *path, SDL_Time modified) {

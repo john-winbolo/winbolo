@@ -3541,6 +3541,16 @@
 /* Asked before an Internet game is hosted on mobile data (Yes / No) */
 #define STR_GAMEFRONTERR_HOST_MOBILE_DATA        2942
 
+/* The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder */
+#define STR_ANDROIDREC_SHARE                     2943
+#define STR_ANDROIDREC_EMPTY                     2944
+
+/* The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet */
+#define STR_CLIPGIF_SAVED_ANDROID                2945
+
+/* The map editor's file picker on Android, whose Maps folder is the app's own */
+#define STR_MAPEDIT_ANDROID_NOFILES              2946
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

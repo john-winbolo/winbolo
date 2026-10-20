@@ -2936,4 +2936,10 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=The map fills the screen, with the status, b
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=This device is on mobile data. An Internet game hosted on mobile\ndata will probably not work: mobile networks rarely let other\nplayers reach the device. Wi-Fi is much more likely to work.\n\nHost anyway?
+STR_ANDROIDREC_SHARE=Share
+STR_ANDROIDREC_EMPTY=No recordings yet. Single-player rounds are recorded here, and .wbv recordings opened from another app are listed here too.
+STR_CLIPGIF_SAVED_ANDROID={string1} has been saved. Choose an app to share it with next.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Nothing here yet. Maps you save, here or from a game, show up here.
 

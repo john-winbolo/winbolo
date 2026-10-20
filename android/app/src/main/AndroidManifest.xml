@@ -13,7 +13,9 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:hasCode="true">
         <meta-data android:name="io.sentry.dsn" android:value="${sentryDsn}" />
-        <meta-data android:name="io.sentry.release" android:value="WinBolo-Android@1.18" />
+        <!-- The release Sentry files crashes under: WinBolo-Android@<versionName>,
+             set by build.gradle.kts from cmake/bolo_version.cmake. -->
+        <meta-data android:name="io.sentry.release" android:value="${sentryRelease}" />
         <meta-data android:name="io.sentry.tags.executable" android:value="WinBolo-Android" />
         <!-- One instance, so a link or recording opened while the app runs
              reaches onNewIntent; with the default launch mode Android starts

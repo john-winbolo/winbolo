@@ -203,7 +203,13 @@ bool meMobileFilesRender(char *outPath, size_t outCap) {
         ImGui::BeginChild("##meMobileOpenList");
         ImGui::SeparatorText(langGetText(STR_MAPEDIT_IOS_YOURFILES));
         if (s_userRows.empty()) {
+            /* The iOS folder is also filled through the Files app; the
+               Android one only by saving. */
+#if defined(__ANDROID__)
+            ImGui::TextWrapped("%s", langGetText(STR_MAPEDIT_ANDROID_NOFILES));
+#else
             ImGui::TextWrapped("%s", langGetText(STR_MAPEDIT_IOS_NOFILES));
+#endif
         }
         for (size_t i = 0; i < s_userRows.size() && !done; i++) {
             if (meMobileFilesRow(s_userRows[i], (int)i)) {

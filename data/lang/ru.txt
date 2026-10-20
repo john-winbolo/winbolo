@@ -2837,3 +2837,13 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Карта занимает весь экр�
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=Это устройство использует мобильные данные. Интернет-игра, созданная\nчерез мобильные данные, скорее всего, не заработает: мобильные сети редко\nпозволяют другим игрокам подключиться к устройству. Через Wi-Fi шансов\nнамного больше.\n\nВсё равно создать игру?
+
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=Поделиться
+STR_ANDROIDREC_EMPTY=Записей пока нет. Одиночные раунды записываются сюда, а записи .wbv, открытые из другого приложения, тоже показываются здесь.
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1} сохранён. Теперь выберите приложение, чтобы поделиться им.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Здесь пока ничего нет. Здесь появятся карты, которые вы сохраните здесь или из игры.

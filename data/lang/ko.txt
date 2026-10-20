@@ -2835,3 +2835,13 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=지도가 화면을 채우고, 상태·건�
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=이 기기는 모바일 데이터를 사용 중입니다. 모바일 데이터로 호스트한\n인터넷 게임은 아마 작동하지 않을 것입니다. 모바일 네트워크에서는 다른\n플레이어가 이 기기에 접속할 수 있는 경우가 드뭅니다. Wi-Fi에서는\n작동할 가능성이 훨씬 높습니다.\n\n그래도 호스트하시겠습니까?
+
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=공유
+STR_ANDROIDREC_EMPTY=아직 녹화가 없습니다. 싱글 플레이 라운드가 여기에 녹화되며, 다른 앱에서 연 .wbv 녹화도 여기에 표시됩니다.
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1}을(를) 저장했어요. 다음으로 공유할 앱을 선택하세요.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=아직 아무것도 없습니다. 여기서 또는 게임에서 저장한 맵이 여기에 표시됩니다.

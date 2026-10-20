@@ -494,9 +494,10 @@ static void lobbyClipGifSave(MsfGifResult res) {
     }
 #elif defined(__ANDROID__)
     /* No save dialog on Android either: the clip goes into the app's files
-       directory (the pref path) under its own name, the box names the file,
-       and the share sheet then offers it to another app, which is the only
-       way out of the app's private storage. */
+       directory (the pref path) under its own name, the box names the file
+       and says the share sheet comes next, and the share sheet then offers
+       it to another app, which is the only way out of the app's private
+       storage. */
     {
         char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
         char fullPath[FILENAME_MAX];
@@ -510,8 +511,9 @@ static void lobbyClipGifSave(MsfGifResult res) {
         MessageArgs args = {};
         snprintf(args.string1, sizeof(args.string1), "%s.gif", s_clipGif.name);
         if (ok) {
-            imguiMessageBoxEx(CLIP_GIF_TITLE, args.string1, IMGUI_MSG_INFO,
-                              IMGUI_MSG_OK);
+            imguiMessageBoxEx(CLIP_GIF_TITLE,
+                              langGetTextFmt(STR_CLIPGIF_SAVED_ANDROID, &args),
+                              IMGUI_MSG_INFO, IMGUI_MSG_OK);
             androidShareFile(fullPath, "image/gif");
         } else {
             imguiMessageBoxEx(CLIP_GIF_TITLE,

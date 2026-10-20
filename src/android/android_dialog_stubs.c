@@ -4,11 +4,12 @@
  */
 
 /*
- * android_dialog_stubs.c - Stub implementations for dialog functions not
- * yet carried on Android.
+ * android_dialog_stubs.c - The no-op bodies for what the desktop client has
+ * and Android does not: the modal log viewer's quit question and the
+ * desktop's window-position persistence.
  *
- * Mirrors the platform-stub set in src/gui/ios/ios_stubs.c — Android also
- * skips the modal log viewer and desktop window-position persistence.
+ * The same set src/gui/ios/ios_stubs.c carries for iOS, which leaves out
+ * the same two things.
  */
 
 #include <stdbool.h>
@@ -17,10 +18,6 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"
-
-/* The map editor (mapEditorRun, mapEditorAppQuitRequested,
-   mapEditorSetSettingsHandler) is built on Android; see the map editor
-   block of android/app/CMakeLists.txt. */
 
 /* ---- log viewer stubs (the modal viewer is not built on Android) ----
  *

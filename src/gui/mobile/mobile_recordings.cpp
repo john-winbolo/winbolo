@@ -290,7 +290,13 @@ extern "C" void logViewerRun(struct SDL_Window *window,
         ImGui::Separator();
 
         if (list.empty()) {
+            /* Where a recording can come from differs: the Files app's
+               WinBolo folder on iOS, another app's hand-over on Android. */
+#if defined(__ANDROID__)
+            ImGui::TextWrapped("%s", langGetText(STR_ANDROIDREC_EMPTY));
+#else
             ImGui::TextWrapped("%s", langGetText(STR_IOSREC_EMPTY));
+#endif
         } else if (ImGui::BeginTable("##MobileRecordingsList", 4,
                                      ImGuiTableFlags_ScrollY |
                                      ImGuiTableFlags_RowBg |
