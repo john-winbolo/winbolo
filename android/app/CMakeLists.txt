@@ -213,9 +213,40 @@ set(ANDROID_SOURCES
     # Shared mobile UI (touch input, legacy players panel), as iOS compiles.
     ${PROJ_ROOT}/src/gui/mobile/touch_input.c
     ${PROJ_ROOT}/src/gui/mobile/players_panel.cpp
-    ${PROJ_ROOT}/src/android/winbolonet_stub.c
-    ${PROJ_ROOT}/src/android/android_wbn_map_stubs.cpp
     ${PROJ_ROOT}/src/android/android_dialog_stubs.c
+
+    # WinBolo.net: the same winbolonet_core, winbolonet_client and
+    # winbolonet_server sources the iOS target compiles, with the HTTP
+    # transport over Java's HttpURLConnection (WinBoloHttp.java, called
+    # through JNI) in place of http.c, since Android has no libcurl.
+    ${PROJ_ROOT}/src/winbolonet/http_jni.c
+    ${PROJ_ROOT}/src/winbolonet/winbolonetthread.c
+    ${PROJ_ROOT}/src/winbolonet/winbolonetevents.c
+    ${PROJ_ROOT}/src/winbolonet/winbolonet_core.c
+    ${PROJ_ROOT}/src/winbolonet/wbn_bearer.c
+    ${PROJ_ROOT}/src/winbolonet/wbn_country_cache.c
+    ${PROJ_ROOT}/src/winbolonet/wbn_prefs_sync.c
+    ${PROJ_ROOT}/src/winbolonet/wbn_serverlist.c
+    ${PROJ_ROOT}/src/winbolonet/wbn_map.c
+    ${PROJ_ROOT}/src/winbolonet/winbolonet_client.c
+    ${PROJ_ROOT}/src/winbolonet/winbolonet_server.c
+    ${PROJ_ROOT}/src/winbolonet/wbn_comments.cpp
+    ${PROJ_ROOT}/src/winbolonet/wbn_news.cpp
+    ${PROJ_ROOT}/src/winbolonet/wbn_news_parser.cpp
+    # The Ed25519 signer the transport signs every API request with.
+    ${PROJ_ROOT}/src/third_party/tweetnacl/tweetnacl.c
+    # The WinBolo.net screens: the news popup with its image cache, the
+    # recap's stars and comments, the log browser, and the map chooser's
+    # WinBolo.net catalogue with the stored-map preview fetch.
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_news.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/news_image_cache.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/news_image_budget.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_star_rating.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_rating.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/wbn_browser_sort.c
+    ${PROJ_ROOT}/src/gui/sdl3/map_preview_fetch.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/wbn_map_source.cpp
     ${PROJ_ROOT}/src/steam/steam_wrapper_stub.c
 
     # Per-target bolo source (HAVE_STEAM-divergent).
@@ -352,6 +383,13 @@ set(ANDROID_SOURCES
 
 add_library(main SHARED ${ANDROID_SOURCES})
 
+# Third-party source: the same warnings the root CMakeLists.txt turns off
+# for it on the Apple targets, its 64-to-32 bit narrowing and its 16-byte
+# constant written as a 16-character string.
+set_source_files_properties(${PROJ_ROOT}/src/third_party/tweetnacl/tweetnacl.c
+    PROPERTIES COMPILE_OPTIONS
+    "-Wno-shorten-64-to-32;-Wno-unterminated-string-initialization;-Wno-unknown-warning-option")
+
 target_include_directories(main PRIVATE
     ${PROJ_ROOT}/src/gui/sdl3
     ${PROJ_ROOT}/src/gui/sdl3/dialogs
@@ -364,6 +402,8 @@ target_include_directories(main PRIVATE
     # cJSON.h for prefs_doc.c and lobby_bot_pools_json.c; the cjson target
     # does not export its directory.
     ${cjson_SOURCE_DIR}
+    # tweetnacl.h for the WinBolo.net transport's request signing.
+    ${PROJ_ROOT}/src/third_party/tweetnacl
 )
 bolo_apply_include_rules(main gui)
 # bg_game.c takes the same per-file grant the desktop and iOS targets give
@@ -417,6 +457,10 @@ target_compile_definitions(main PRIVATE
     # macro in an #if before net_impair.h supplies its default, and this
     # target compiles with -Werror=undef.
     WB_ENABLE_NETIMPAIR=0
+    # Tells http.h, and the code that links the transport, that it is the
+    # JNI one: http.h then declares httpGetUrlToMemory, which the news image
+    # cache uses in place of libcurl, as WBN_HTTP_NSURL does on iOS.
+    WBN_HTTP_JNI=1
 )
 
 target_compile_options(main PRIVATE

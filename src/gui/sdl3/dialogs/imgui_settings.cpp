@@ -2722,9 +2722,8 @@ static void settingsShowLoop(bool inEditor) {
         present[STAB_CONTROLS] = false;
 #endif
         /* UPnP, NAT traversal and the news popup mean nothing in a browser.
-           iOS shows the tab for the news popup alone; Android does not
-           compile imgui_news.cpp. */
-#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+           iOS and Android show the tab for the news popup alone. */
+#if !defined(__EMSCRIPTEN__)
         present[STAB_LAST]     = true;
 #else
         present[STAB_LAST]     = false;
@@ -2842,7 +2841,7 @@ static void settingsShowLoop(bool inEditor) {
                 ImGui::EndTabItem();
             }
 #endif
-#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)  /* see present[STAB_LAST] */
+#if !defined(__EMSCRIPTEN__)  /* see present[STAB_LAST] */
             if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_NETWORK), nullptr,
                     s_pgForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_LAST;

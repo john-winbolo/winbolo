@@ -259,7 +259,7 @@ extern "C" void imguiLobbyFrameReset(void) {
      * still naming. */
     lobbyClipGifSaveAbandon();
 #endif
-#if !defined(__ANDROID__) && BOLO_RECAP_WBN_RATING  /* Android does not compile lobby_rating.cpp */
+#if BOLO_RECAP_WBN_RATING
     /* Release the rating fetch and everything it filled in. The star textures
      * stay: they belong to the WBN browser as much as to the recap, and the
      * loader rebuilds them on demand. */
@@ -425,7 +425,7 @@ static void lobbyBotAnnouncePoll(ClientSim *cs) {
 extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
     if (!s_lf.active) { lobbyFrameInitState(cs); s_lf.active = true; }
 
-#if !defined(__ANDROID__) && BOLO_RECAP_WBN_RATING  /* Android does not compile lobby_rating.cpp */
+#if BOLO_RECAP_WBN_RATING
     /* Before anything draws, so a round that has ended takes its rating and
      * comments with it whether or not the recap is the view on screen. */
     lobbyRatingSyncKey(cs, cs ? clientSimGetLastRoundStats(cs) : NULL);

@@ -33,11 +33,8 @@
 #include "imgui_nav_outline.h"
 #include "imgui_controller_prompt.h"
 #include "../imgui_steam_nav.h"
-/* The news popup: on iOS too, not on Android, which does not compile
-   imgui_news.cpp. */
-#if !defined(__ANDROID__)
+/* The news popup, on every platform. */
 #include "imgui_news.h"
-#endif
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -391,7 +388,6 @@ extern "C" int imguiWelcomeShow(void) {
                      ImGuiWindowFlags_NoScrollWithMouse |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
         /* Single kick per program run — newsPopupKickFetch is idempotent
          * but the static guard avoids the call entirely once we've kicked. */
         static bool sNewsKicked = false;
@@ -399,7 +395,6 @@ extern "C" int imguiWelcomeShow(void) {
             newsPopupKickFetch();
             sNewsKicked = true;
         }
-#endif
 
         /* Top-right logo + ghost menu column. Logo is purely decorative. */
         {
@@ -496,8 +491,7 @@ extern "C" int imguiWelcomeShow(void) {
                    yet, so the entry is hidden there until it is. */
                 { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    showDesktopTools, nullptr },
 #endif
-                /* Android does not compile the log browser or the reel. */
-#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+#if !defined(__EMSCRIPTEN__)
                 { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    showDesktopTools, nullptr },
 #endif
                 { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true,             nullptr },
@@ -505,9 +499,7 @@ extern "C" int imguiWelcomeShow(void) {
                 { fullScreenLabel,          0,                   showFullScreenToggle,
                                                                  "FullScreen" },
 #endif
-#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
                 { STR_DLGWELCOME_NEWS,      0,                   true,             "News" },
-#endif
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
                 /* A page has nothing to quit to; the player closes the tab. */
                 { STR_DLGOPENING_BUTTON2,   RESULT_QUIT,         true,             nullptr },
@@ -583,7 +575,6 @@ extern "C" int imguiWelcomeShow(void) {
                     : miniModes[i].rawLabel;
                 SDL_snprintf(miniLabel, sizeof(miniLabel), "%s##mini", labelText);
                 if (ImGui::Button(miniLabel, ImVec2(miniBtnW, miniBtnH))) {
-#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
                     if (miniModes[i].rawLabel &&
                         SDL_strcmp(miniModes[i].rawLabel, "FullScreen") == 0) {
@@ -605,7 +596,6 @@ extern "C" int imguiWelcomeShow(void) {
                         newsPopupOpenManual();
 #endif
                     } else
-#endif
                     {
                         result = miniModes[i].code;
                         running = false;
@@ -617,7 +607,6 @@ extern "C" int imguiWelcomeShow(void) {
                 if (miniModes[i].code == RESULT_SINGLEPLAYER) {
                     ImGui::SetItemDefaultFocus();
                 }
-#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
                 /* Unread dot on the News button when fresh items exist. */
                 if (miniModes[i].rawLabel &&
                     SDL_strcmp(miniModes[i].rawLabel, "News") == 0 &&
@@ -630,7 +619,6 @@ extern "C" int imguiWelcomeShow(void) {
                     ImGui::GetWindowDrawList()->AddCircleFilled(
                         dotCenter, dotR, IM_COL32(220, 60, 60, 230));
                 }
-#endif
                 if (hovered) {
                     ImGui::PopStyleColor();
                 }
@@ -656,12 +644,10 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::EndGroup();
         }
 
-#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
         /* Drive the news popup state machine. Renders the consent dialog
          * or the news modal when either is open, otherwise polls the
          * fetch handle and decides whether to auto-open. */
         newsPopupTick();
-#endif
 
         /* Play/Pause button — bottom-left */
         if (hasBg) {

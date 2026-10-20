@@ -8,7 +8,7 @@
  * yet carried on Android.
  *
  * Mirrors the platform-stub set in src/gui/ios/ios_stubs.c — Android also
- * skips the map editor, log viewer, WBN browser and desktop window-position
+ * skips the map editor, log viewer and desktop window-position
  * persistence.
  */
 
@@ -50,18 +50,6 @@ bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   void *cs, const char *serverHost, uint16_t serverPort) {
   (void)window; (void)renderer; (void)cs; (void)serverHost; (void)serverPort;
   return false;
-}
-
-/* ---- WBN browser stub (requires libcurl/cJSON) ---- */
-
-#include "../gui/sdl3/dialogs/imgui_wbn_browser.h"
-
-WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window,
-                                     struct SDL_Renderer *renderer) {
-  (void)window; (void)renderer;
-  WbnBrowserResult r = {0};
-  r.action = WBN_BROWSER_CLOSE;
-  return r;
 }
 
 /* ---- window state stubs (desktop-only persistence in sdl3/winbolo.c) ---- */

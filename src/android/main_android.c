@@ -49,6 +49,7 @@
 #include "../gui/sdl3/luabrainshandler.h"
 #include "../gui/sdl3/dialog_backend.h"
 #include "../gui/sdl3/dialogs/imgui_messagebox.h"
+#include "../winbolonet/http_jni.h"
 #include "touch_input.h"
 
 extern ClientSim *humanSim;
@@ -474,6 +475,13 @@ int main(int argc, char *argv[]) {
         WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Working directory: %s", appDir);
       }
     }
+  }
+
+  /* The WinBolo.net transport's Java class, found from this thread, whose
+     class loader can see it; the worker threads that make the requests
+     cannot find it themselves. */
+  if (!httpAndroidInit()) {
+    WB_LOG_ERROR(WB_LOG_CAT_PLATFORM, "[Android] WinBolo.net HTTP transport not bound");
   }
 
   /* The move to and from the background reaches the game only through an
