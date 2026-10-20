@@ -2827,3 +2827,6 @@ STR_CLIPGIF_SAVE_FAILED_IOS=Nie udało się zapisać {string1}.
 STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=Mapa wypełnia ekran, a elementy sterowania są rysowane na niej.\nWyłączone zostawia kwadratowy widok gry z elementami sterowania obok.\nZapamiętywane na następny raz.
 STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Ile mapy prześwituje przez narzędzia budowy w trybie\npełnoekranowym. 0% oznacza pełne krycie, a suwak zatrzymuje\nsię na 90%, więc nie można ich zrobić niewidocznymi.
 STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Ile mapy prześwituje przez siatki czołgów, bunkrów i baz oraz\npaski zapasów w trybie pełnoekranowym. 0% oznacza pełne krycie,\na suwak zatrzymuje się na 90%, więc nie można ich zrobić niewidocznymi.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Mapa wypełnia ekran, a panele stanu, budowy i wiadomości są na niej,\nwraz ze sterowaniem dotykowym, gdy grasz dotykiem.\nWyłączone pokazuje klasyczny ekran. Zapamiętywane na następny raz.

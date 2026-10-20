@@ -2829,3 +2829,6 @@ STR_CLIPGIF_SAVE_FAILED_IOS={string1}을(를) 저장할 수 없습니다.
 STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=맵이 화면을 채우고 조작 버튼은 그 위에 그려집니다.\n꺼두면 게임 화면은 정사각형으로 유지되고 조작 버튼은 그 옆에 놓입니다.\n다음에도 이 설정이 기억됩니다.
 STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=전체 화면에서 건설 도구 사이로 맵이 얼마나 비쳐\n보이는지를 정합니다. 0%면 불투명하며, 슬라이더는\n90%까지만 움직여 완전히 투명해지지는 않습니다.
 STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=전체 화면에서 탱크·토치카·기지 격자와 재고 바 사이로 맵이\n얼마나 비쳐 보이는지를 정합니다. 0%면 불투명하며, 슬라이더는\n90%까지만 움직여 완전히 투명해지지는 않습니다.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=지도가 화면을 채우고, 상태·건설·뉴스 패널이 그 위에 표시되며\n터치로 플레이할 때는 터치 컨트롤도 함께 표시됩니다.\n끄면 클래식 화면이 표시됩니다. 다음에도 기억됩니다.

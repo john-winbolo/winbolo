@@ -159,10 +159,20 @@ static float        s_pinchRefDist   = 0.0f; /* finger spacing at the last read 
    alongside s_viewportTapReady for a caller that maps it itself. */
 static float        s_viewportTapX   = 0.0f;
 static float        s_viewportTapY   = 0.0f;
+static bool         s_viewportTapPosReady = false;
 
 /* --- Touch controls on the classic screen --- */
 static bool         s_classicOffered = false; /* the platform offers them */
 static bool         s_lastInputTouch = false; /* the last input was a finger */
+/* For the fade: whether a finger was on the screen at the last look, and
+   when the last one lifted. */
+static bool         s_hadFingers     = false;
+static Uint64       s_lastLiftMs     = 0;
+
+/* The classic screen's controls stay at full strength this long after the
+   last finger lifts, then fade out over the next stretch. */
+#define CLASSIC_FADE_DELAY_MS 2000
+#define CLASSIC_FADE_MS       1000
 
 /* The stick's zone when the layout sets one; unset, the left 40% rule. */
 static bool         s_joyZoneSet = false;
@@ -187,6 +197,7 @@ void inputTouchSetup(void) {
   s_pinchActive = false;
   s_buildSelectTap = -1;
   s_viewportTapReady = false;
+  s_viewportTapPosReady = false;
   for (int i = 0; i < TOUCH_BTN_COUNT; i++) {
     s_buttons[i].registered = false;
     s_buttons[i].held = false;
@@ -279,6 +290,31 @@ static bool hitTestButton(TouchButton *btn, float px, float py) {
   }
 }
 
+/* On the classic screen's full screen map the controls sit over the game
+   view: a finger that lands on one is the control's, never a map drag, pinch
+   or tap. Only where the layout sets the stick's zone (the classic screen);
+   the touch layout keeps its controls beside the game view. */
+static bool pointInRect(float x, float y, float rx, float ry, float rw, float rh) {
+  return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
+}
+
+static bool classicControlAt(float x, float y) {
+  if (!s_joyZoneSet) return false;
+  if (pointInRect(x, y, s_joyZoneX, s_joyZoneY, s_joyZoneW, s_joyZoneH)) return true;
+  if (s_scrollZoneSet &&
+      pointInRect(x, y, s_scrollZoneX, s_scrollZoneY, s_scrollZoneW, s_scrollZoneH)) {
+    return true;
+  }
+  for (int i = 0; i < TOUCH_BTN_COUNT; i++) {
+    if (hitTestButton(&s_buttons[i], x, y)) return true;
+  }
+  for (int i = 0; i < s_controlRectCount; i++) {
+    const SDL_FRect *r = &s_controlRects[i];
+    if (pointInRect(x, y, r->x, r->y, r->w, r->h)) return true;
+  }
+  return false;
+}
+
 /* --- Event processing --- */
 
 void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
@@ -359,15 +395,19 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
           /* Check if tap is inside viewport bounds */
           if (tx >= (float)s_vpX && tx < (float)(s_vpX + s_vpW) &&
               ty >= (float)s_vpY && ty < (float)(s_vpY + s_vpH) &&
-              s_vpZoom > 0) {
+              s_vpZoom > 0 && !classicControlAt(tx, ty)) {
             int tileX = (int)((tx - (float)s_vpX) / (16.0f * (float)s_vpZoom)) + 1;
             int tileY = (int)((ty - (float)s_vpY) / (16.0f * (float)s_vpZoom)) + 1;
+            /* The position is any tap in the view (the iPad's full screen map
+               is far wider than 15 squares); the square only one in the
+               classic 15x15 view. */
+            s_viewportTapPosReady = true;
+            s_viewportTapX = tx;
+            s_viewportTapY = ty;
             if (tileX >= 1 && tileX <= 15 && tileY >= 1 && tileY <= 15) {
               s_viewportTapReady = true;
               s_viewportTapTileX = (BYTE)tileX;
               s_viewportTapTileY = (BYTE)tileY;
-              s_viewportTapX = tx;
-              s_viewportTapY = ty;
             }
           }
         }
@@ -382,7 +422,7 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
   /* --- Viewport drag-to-scroll --- */
   bool insideViewport = (fx >= (float)s_vpX && fx < (float)(s_vpX + s_vpW) &&
                          fy >= (float)s_vpY && fy < (float)(s_vpY + s_vpH) &&
-                         s_vpW > 0 && s_vpH > 0);
+                         s_vpW > 0 && s_vpH > 0 && !classicControlAt(fx, fy));
   if (isDown && !s_vpDragTracking && insideViewport) {
     s_vpDragFingerID = fid;
     s_vpDragTracking = true;
@@ -628,9 +668,10 @@ void inputTouchSetViewportBounds(int vpX, int vpY, int vpW, int vpH, int zoom) {
 }
 
 bool inputTouchGetViewportTapPos(float *x, float *y) {
-  if (s_viewportTapReady) {
+  if (s_viewportTapPosReady) {
     *x = s_viewportTapX;
     *y = s_viewportTapY;
+    s_viewportTapPosReady = false;
     s_viewportTapReady = false;
     return true;
   }
@@ -638,10 +679,12 @@ bool inputTouchGetViewportTapPos(float *x, float *y) {
 }
 
 bool inputTouchGetViewportTap(BYTE *tileX, BYTE *tileY) {
-  if (s_viewportTapReady) {
+  bool ready = s_viewportTapReady;
+  s_viewportTapReady = false;
+  s_viewportTapPosReady = false;
+  if (ready) {
     *tileX = s_viewportTapTileX;
     *tileY = s_viewportTapTileY;
-    s_viewportTapReady = false;
     return true;
   }
   return false;
@@ -707,6 +750,44 @@ bool inputTouchControlsShown(void) {
   return uiModeIsTablet() || (s_classicOffered && s_lastInputTouch);
 }
 
+/* Fingers on the screen now, from SDL itself rather than counted from
+   events, so a finger that lifted while a dialog ran its own event loop is
+   not left counted. */
+static int fingersOnScreen(void) {
+  int devCount = 0, n = 0;
+  SDL_TouchID *devs = SDL_GetTouchDevices(&devCount);
+  if (!devs) return 0;
+  for (int i = 0; i < devCount; i++) {
+    int count = 0;
+    SDL_Finger **fingers = SDL_GetTouchFingers(devs[i], &count);
+    if (fingers) {
+      n += count;
+      SDL_free(fingers);
+    }
+  }
+  SDL_free(devs);
+  return n;
+}
+
+float inputTouchClassicControlsAlpha(void) {
+  if (!s_classicOffered || !s_lastInputTouch) return 0.0f;
+  Uint64 now = SDL_GetTicks();
+  if (fingersOnScreen() > 0) {
+    s_hadFingers = true;
+    return 1.0f;
+  }
+  if (s_hadFingers) {
+    s_hadFingers = false;
+    s_lastLiftMs = now;
+  }
+  if (s_lastLiftMs == 0) return 1.0f;
+  Uint64 since = now - s_lastLiftMs;
+  if (since <= CLASSIC_FADE_DELAY_MS) return 1.0f;
+  since -= CLASSIC_FADE_DELAY_MS;
+  if (since >= CLASSIC_FADE_MS) return 0.0f;
+  return 1.0f - (float)since / (float)CLASSIC_FADE_MS;
+}
+
 void inputTouchSetJoystickZone(float x, float y, float w, float h) {
   s_joyZoneSet = (w > 0.0f && h > 0.0f);
   s_joyZoneX = x;
@@ -724,22 +805,12 @@ void inputTouchSetControlRects(const SDL_FRect *rects, int count) {
 
 bool inputTouchPointOnControl(float x, float y) {
   if (pointInBlockedRect(x, y)) return false;
-  if (s_joyZoneSet && x >= s_joyZoneX && x < s_joyZoneX + s_joyZoneW &&
-      y >= s_joyZoneY && y < s_joyZoneY + s_joyZoneH) {
-    return true;
-  }
-  if (s_scrollZoneSet && x >= s_scrollZoneX && x < s_scrollZoneX + s_scrollZoneW &&
-      y >= s_scrollZoneY && y < s_scrollZoneY + s_scrollZoneH) {
-    return true;
-  }
-  for (int i = 0; i < TOUCH_BTN_COUNT; i++) {
-    if (hitTestButton(&s_buttons[i], x, y)) return true;
-  }
-  for (int i = 0; i < s_controlRectCount; i++) {
-    const SDL_FRect *r = &s_controlRects[i];
-    if (x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h) return true;
-  }
-  return false;
+  if (classicControlAt(x, y)) return true;
+  /* The game view while the touch input owns it: the full screen map, which
+     the classic screen's controls pan, pinch and tap themselves. Unset (zero
+     size) over the classic screen, whose taps are the mouse's. */
+  return s_vpW > 0 && s_vpH > 0 &&
+         pointInRect(x, y, (float)s_vpX, (float)s_vpY, (float)s_vpW, (float)s_vpH);
 }
 
 bool inputTouchGetScrollDirection(int *scrollX, int *scrollY) {

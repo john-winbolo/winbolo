@@ -2833,3 +2833,6 @@ STR_CLIPGIF_SAVE_FAILED_IOS={string1} kunde inte sparas.
 STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=Kartan fyller skärmen och kontrollerna ritas ovanpå den.\nAv håller spelvyn kvadratisk, med kontrollerna bredvid.\nSparas till nästa gång.
 STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Hur mycket av kartan som syns genom byggverktygen\ni helskärm. 0% är heltäckande, och reglaget stannar\nvid 90% så de inte kan göras osynliga.
 STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Hur mycket av kartan som syns genom tank-, bunker- och\nbasrutnäten och förrådsstaplarna i helskärm. 0% är heltäckande,\noch reglaget stannar vid 90% så de inte kan göras osynliga.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Kartan fyller skärmen, med status-, bygg- och nyhetspanelerna ovanpå,\noch pekkontrollerna när du spelar med pekskärmen.\nAv visar den klassiska skärmen. Sparas till nästa gång.

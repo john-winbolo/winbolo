@@ -1307,6 +1307,7 @@ static const LangEntry langTable[] = {
     {2938, "The map fills the screen and the controls are drawn over it.\nOff keeps the game view square, with the controls beside it.\nRemembered for next time."},
     {2939, "How much of the map shows through the builder tools\nin full screen. 0% is solid, and the slider stops at\n90% so they cannot be made invisible."},
     {2940, "How much of the map shows through the tank, pillbox and\nbase grids and the stock bars in full screen. 0% is solid,\nand the slider stops at 90% so they cannot be made invisible."},
+    {2941, "The map fills the screen, with the status, build and newswire\npanels over it, and the touch controls when you play by touch.\nOff shows the classic screen. Remembered for next time."},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},

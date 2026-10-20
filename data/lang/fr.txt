@@ -2831,3 +2831,6 @@ STR_CLIPGIF_SAVE_FAILED_IOS=Impossible d'enregistrer {string1}.
 STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=La carte remplit l'écran et les commandes sont dessinées par-dessus.\nDésactivé garde la vue de jeu carrée, avec les commandes à côté.\nMémorisé pour la prochaine fois.
 STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Quelle part de la carte apparaît à travers les outils de\nconstruction en plein écran. 0% est opaque, et le curseur\ns'arrête à 90% pour qu'ils ne soient jamais invisibles.
 STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Quelle part de la carte apparaît à travers les grilles des tanks,\npillbox et bases et les jauges de stock en plein écran. 0% est\nopaque, et le curseur s'arrête à 90% pour qu'ils ne soient jamais invisibles.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=La carte remplit l'écran, avec les panneaux d'état, de construction et de nouvelles\npar-dessus, et les commandes tactiles quand vous jouez au toucher.\nDésactivé affiche l'écran classique. Mémorisé pour la prochaine fois.

@@ -2831,3 +2831,6 @@ STR_CLIPGIF_SAVE_FAILED_IOS={string1} kaydedilemedi.
 STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=Harita ekranı kaplar ve kontroller onun üzerine çizilir.\nKapalıyken oyun görünümü kare kalır, kontroller yanında durur.\nBir sonraki sefer için hatırlanır.
 STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Tam ekranda inşaat araçlarının ardından haritanın\nne kadarı göründüğü. 0% tam opak demektir, kaydırıcı ise\n90% noktasında durur; böylece tamamen görünmez yapılamazlar.
 STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Tam ekranda tank, bunker ve üs ızgaralarının ve stok çubuklarının\nardından haritanın ne kadarı göründüğü. 0% tam opak demektir,\nkaydırıcı ise 90% noktasında durur; böylece tamamen görünmez yapılamazlar.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Harita ekranı doldurur; durum, inşa ve haber panelleri üstünde,\ndokunarak oynadığınızda dokunmatik kontroller de üstünde gösterilir.\nKapalıyken klasik ekran gösterilir. Bir sonraki sefer için hatırlanır.

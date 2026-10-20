@@ -62,6 +62,7 @@ extern "C" {
 }
 
 #include "overview_view.h"
+#include "overview_hud_layout.h"
 
 #include "sdl3imgui.h"
 #include "sdl3imgui_tablet.h"
@@ -115,13 +116,19 @@ static ImDrawList *controlsDrawList(void) {
    last frame that takes input, other than the overlay's own panels, tooltips
    and ImGui's implicit debug window. One frame behind, which a finger landing
    cannot tell. */
-static void tabletBlockDialogTouches(void) {
+static void tabletBlockDialogTouches(const SDL_FRect *extra, int extraCount) {
+  /* "##OverviewInWindow" is the full screen map's own host window on the
+     classic screen, which the controls drive. */
   static const char *const kOwnWindows[] = {
     "##BuildBar", "##TankBars", "##BaseBars", "##ScenarioSlot", "Debug##Default",
+    "##OverviewInWindow",
   };
   ImGuiContext &g = *ImGui::GetCurrentContext();
   SDL_FRect rects[16];
   int n = 0;
+  for (int i = 0; i < extraCount && n < (int)(sizeof(rects) / sizeof(rects[0])); i++) {
+    rects[n++] = extra[i];
+  }
   for (ImGuiWindow *w : g.Windows) {
     if (n >= (int)(sizeof(rects) / sizeof(rects[0]))) break;
     if (!w->WasActive || w->Hidden) continue;
@@ -242,6 +249,8 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   tabletSafeInsets(cfg, screenW, screenH);
   /* The touch input's own stick rule: the left 40% outside the game view. */
   cfg->joyZoneX = cfg->joyZoneY = cfg->joyZoneW = cfg->joyZoneH = 0.0f;
+  /* The map button at the game view's top left (overviewButtonRect). */
+  cfg->mapBtnX = cfg->mapBtnY = cfg->mapBtnR = 0.0f;
 
   /* Gutters */
   cfg->leftGutter = viewportX;
@@ -461,7 +470,8 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
 }
 
 void tabletLayoutConfigureClassic(TabletLayoutConfig *cfg, int screenW, int screenH,
-                                  float gameX, float gameY, float gameW, float gameH) {
+                                  float gameX, float gameY, float gameW, float gameH,
+                                  bool mapUp, const OverviewHudLayout *hudIn) {
   memset(cfg, 0, sizeof(*cfg));
   cfg->screenW = screenW;
   cfg->screenH = screenH;
@@ -492,25 +502,41 @@ void tabletLayoutConfigureClassic(TabletLayoutConfig *cfg, int screenW, int scre
       cfg->allyViewRadius = cfg->tankViewRadius = 18.0f * u;
   cfg->viewBtnGap = pad;
   cfg->topBtnSize = 24.0f * u;
-  /* No drawer: the classic screen has its own status panels. */
+  /* No drawer: the classic screen and the map's HUD have status panels. */
   cfg->showStatusGrids = true;
+  float side = 2.6f * cfg->joyOuterRadius;
 
-  /* The area the controls go in: the band below the classic screen when it
-     has room for the fire button, the gunsight row above it and the talk row
-     above that; otherwise the whole safe area, over the screen. */
-  float areaL = cfg->safeLeft;
-  float areaR = (float)screenW - cfg->safeRight;
-  float areaB = (float)screenH - cfg->safeBottom;
-  float bandT = gameY + gameH;
-  float clusterH = 2.0f * (cfg->fireRadius + cfg->gsIncRadius + cfg->talkRadius) + 4.0f * pad;
-  bool inBand = (areaB - bandT) >= clusterH;
-  float areaT = inBand ? bandT : cfg->safeTop;
+  /* The safe area, and the box each group of controls goes in. */
+  float safeL = cfg->safeLeft;
+  float safeT = cfg->safeTop;
+  float safeR = (float)screenW - cfg->safeRight;
+  float safeB = (float)screenH - cfg->safeBottom;
+  float clusterR = safeR;   /* fire cluster: right and bottom edges */
+  float clusterB = safeB;
+  float topT = safeT;       /* top buttons: top and right edges */
+  float topR = safeR;
+  bool inBand = false;
+  OverviewHudLayout hud;
+  bool haveHud = mapUp && hudIn != nullptr;
+  if (haveHud) hud = *hudIn;
+
+  if (mapUp) {
+    /* The full screen map: the cluster keeps the screen's bottom right corner,
+       over the status column and the newswire, which have nothing to press. */
+  } else {
+    /* The band below the classic screen, when it has room for the fire
+       button, the gunsight row above it and the talk row above that. */
+    float bandT = gameY + gameH;
+    float clusterH = 2.0f * (cfg->fireRadius + cfg->gsIncRadius + cfg->talkRadius) + 4.0f * pad;
+    inBand = (safeB - bandT) >= clusterH;
+    if (inBand) topT = bandT;
+  }
 
   /* Bottom right: fire, mine to its left, the gunsight pair above them, the
      talk button above the gunsight increase, and the view buttons in a column
      to the left of mine, stacked up from fire's row. */
-  cfg->fireCenterX = areaR - pad - cfg->fireRadius;
-  cfg->fireCenterY = areaB - pad - cfg->fireRadius;
+  cfg->fireCenterX = clusterR - pad - cfg->fireRadius;
+  cfg->fireCenterY = clusterB - pad - cfg->fireRadius;
   cfg->mineCenterX = cfg->fireCenterX - cfg->fireRadius - pad - cfg->mineRadius;
   cfg->mineCenterY = cfg->fireCenterY;
   float gsRowY = cfg->fireCenterY - cfg->fireRadius - pad - cfg->gsIncRadius;
@@ -533,36 +559,45 @@ void tabletLayoutConfigureClassic(TabletLayoutConfig *cfg, int screenW, int scre
   }
 
   /* Top right: messages, players, Settings, left to right, as in the touch
-     layout (its field names have the first two the other way round). */
-  cfg->topBtnY = areaT + pad;
-  cfg->cogBtnX = areaR - pad - cfg->topBtnSize;
+     layout (its field names have the first two the other way round), and
+     the map button left of them. */
+  cfg->topBtnY = topT + pad;
+  cfg->cogBtnX = topR - pad - cfg->topBtnSize;
   cfg->msgBtnX = cfg->cogBtnX - pad - cfg->topBtnSize;
   cfg->playersBtnX = cfg->msgBtnX - pad - cfg->topBtnSize;
+  cfg->mapBtnR = cfg->topBtnSize * 0.5f;
+  cfg->mapBtnX = cfg->playersBtnX - pad - cfg->mapBtnR;
+  cfg->mapBtnY = cfg->topBtnY + cfg->mapBtnR;
 
-  /* The stick. In the band, its left half. Over the screen, the corner below
-     the build column's last icon, where the classic screen's chrome has
-     nothing to press, so choosing what to build still works. The stick
-     follows the finger out of either. Its resting ring sits in the bottom
-     left corner of the zone. */
-  float side = 2.6f * cfg->joyOuterRadius;
+  /* The stick. In the band, its left half. Over the classic screen, the
+     corner below the build column's last icon, where the chrome has nothing
+     to press, so choosing what to build still works; over the map, the corner
+     below the build tools and left of the newswire. The stick follows the
+     finger out of either. Its resting ring sits in the zone's bottom left. */
   if (inBand) {
-    cfg->joyZoneX = areaL;
-    cfg->joyZoneY = areaT;
-    cfg->joyZoneW = (areaR - areaL) * 0.5f;
-    cfg->joyZoneH = areaB - areaT;
+    cfg->joyZoneX = safeL;
+    cfg->joyZoneY = topT;
+    cfg->joyZoneW = (safeR - safeL) * 0.5f;
+    cfg->joyZoneH = safeB - topT;
   } else {
-    float buildColR = gameX + (float)MAIN_OFFSET_X * gameW / (float)SDL3_SCREEN_W;
-    float buildColB = gameY + (float)(BS_MINE_OFFSET_Y + BS_ITEM_SIZE_Y) * gameH /
-                      (float)SDL3_SCREEN_H;
-    cfg->joyZoneX = areaL;
-    cfg->joyZoneW = buildColR - areaL > side ? buildColR - areaL : side;
-    cfg->joyZoneY = buildColB < areaB - side ? buildColB : areaB - side;
-    cfg->joyZoneH = areaB - cfg->joyZoneY;
+    float colR, colB;
+    if (haveHud) {
+      colR = gameX + hud.newswireX - pad;
+      colB = gameY + hud.buildY + hud.buildH + pad;
+    } else {
+      colR = gameX + (float)MAIN_OFFSET_X * gameW / (float)SDL3_SCREEN_W;
+      colB = gameY + (float)(BS_MINE_OFFSET_Y + BS_ITEM_SIZE_Y) * gameH /
+             (float)SDL3_SCREEN_H;
+    }
+    cfg->joyZoneX = safeL;
+    cfg->joyZoneW = colR - safeL > side ? colR - safeL : side;
+    cfg->joyZoneY = colB < safeB - side ? colB : safeB - side;
+    cfg->joyZoneH = safeB - cfg->joyZoneY;
   }
 
   /* The scroll stick: right of the view buttons and above the talk button,
-     up to a square of the same size as the stick's, or to the messages row
-     when that is nearer. */
+     up to a square the size of the stick's, or to the top buttons when they
+     are nearer. Over the map it pans the map, as a drag does. */
   cfg->scrollJoyOuterRadius = 40.0f * u;
   cfg->scrollJoyInnerRadius = cfg->scrollJoyOuterRadius * 0.42f;
   {
@@ -570,7 +605,7 @@ void tabletLayoutConfigureClassic(TabletLayoutConfig *cfg, int screenW, int scre
     float top = cfg->topBtnY + cfg->topBtnSize + pad;
     if (bottom - top > side) top = bottom - side;
     cfg->scrollJoyX = cfg->mineCenterX - cfg->mineRadius;
-    cfg->scrollJoyW = areaR - cfg->scrollJoyX;
+    cfg->scrollJoyW = clusterR - cfg->scrollJoyX;
     cfg->scrollJoyY = top;
     cfg->scrollJoyH = bottom > top ? bottom - top : 0.0f;
   }
@@ -1731,6 +1766,12 @@ static float s_overviewPinchAccum = 0.0f;
 /* Where the map button sits: inside the game view's top-left corner, clear
    of the scenario panel in the top-right and the newswire along the bottom. */
 static void overviewButtonRect(float *cx, float *cy, float *r) {
+  if (s_cfg.mapBtnR > 0.0f) {  /* the classic screen's, beside the top buttons */
+    *cx = s_cfg.mapBtnX;
+    *cy = s_cfg.mapBtnY;
+    *r  = s_cfg.mapBtnR;
+    return;
+  }
   float ps = (float)s_cfg.screenH / 480.0f;
   if (ps < 0.7f) ps = 0.7f;
   *r  = 14.0f * ps;
@@ -1824,7 +1865,10 @@ static void renderOverviewButton(ClientSim *cs) {
 /* The map's input for this frame, in place of the classic view's tap to build
    and drag scroll. Every way the camera changes here shows the zoom and follow
    readout, as the desktop's input does. */
-static void processOverviewTouch(ClientSim *cs) {
+/* scrollPansMap: the scroll stick pans the map (the touch layout); false on
+   the classic screen's full screen map, where it moves the tank's view as it
+   does over the classic screen (processScrollJoystick). */
+static void processOverviewTouch(ClientSim *cs, bool scrollPansMap) {
   OverviewView *view = sdl3DrawOverviewInWindowView();
   OverviewCamera *cam = view ? overviewViewCamera(view) : nullptr;
   float rx = 0.0f, ry = 0.0f, rw = 0.0f, rh = 0.0f;
@@ -1847,7 +1891,7 @@ static void processOverviewTouch(ClientSim *cs) {
   }
 
   int scrollX = 0, scrollY = 0;
-  if (inputTouchGetScrollDirection(&scrollX, &scrollY)) {
+  if (scrollPansMap && inputTouchGetScrollDirection(&scrollX, &scrollY)) {
     overviewCameraPan(cam, viewW, viewH, (float)scrollX * OVERVIEW_JOY_PAN_PX,
                       (float)scrollY * OVERVIEW_JOY_PAN_PX);
   }
@@ -2013,6 +2057,28 @@ static void renderJoystickZoneHint(void) {
   dl->AddCircleFilled(c, s_cfg.joyInnerRadius, scaleAlpha(IM_COL32(220, 220, 220, 255), s_cfg.idleOpacity * 0.4f), 24);
 }
 
+/* A dark round backing under the scroll stick's marker on the classic
+   screen while no finger holds it, at the buttons' idle strength. The marker alone is drawn for the
+   touch layout's gray chrome and cannot be seen over the classic screen's
+   panels or the map's status column. */
+static void renderScrollZoneBacking(void) {
+  if (s_cfg.scrollJoyH <= 10.0f) return;
+  /* While a finger holds the stick, its own rings show where it is. */
+  {
+    float ax, ay, tx, ty;
+    bool active;
+    Uint64 releaseTime;
+    inputTouchGetScrollJoystickState(&ax, &ay, &tx, &ty, &active, &releaseTime);
+    if (active) return;
+  }
+  ImDrawList *dl = controlsDrawList();
+  ImVec2 c(s_cfg.scrollJoyX + s_cfg.scrollJoyW * 0.5f,
+           s_cfg.scrollJoyY + s_cfg.scrollJoyH * 0.5f);
+  float r = s_cfg.scrollJoyOuterRadius;
+  dl->AddCircleFilled(c, r, scaleAlpha(IM_COL32(0, 0, 0, 200), s_cfg.idleOpacity), 32);
+  dl->AddCircle(c, r, scaleAlpha(IM_COL32(255, 255, 255, 220), s_cfg.idleOpacity), 32, 2.0f);
+}
+
 /* The touch controls on the classic screen (the desktop layout), where the
    platform offers them: the iPad. Laid out and registered every frame of a
    game, so the touch that brings them back lands on a control rather than
@@ -2024,41 +2090,94 @@ static void tabletClassicOverlay(ClientSim *cs) {
   ImGuiIO &io = ImGui::GetIO();
   int screenW = (int)io.DisplaySize.x;
   int screenH = (int)io.DisplaySize.y;
-  float gx = 0.0f, gy = 0.0f, gw = 0.0f, gh = 0.0f;
-  sdl3DrawGetGameRect(&gx, &gy, &gw, &gh, NULL);
-  if (screenW <= 0 || screenH <= 0 || gw <= 0.0f || gh <= 0.0f) return;
+  if (screenW <= 0 || screenH <= 0) return;
 
-  tabletLayoutConfigureClassic(&s_cfg, screenW, screenH, gx, gy, gw, gh);
-  tabletBlockDialogTouches();
+  /* The full screen map when it is up, in its own rect; otherwise the
+     classic screen's. */
+  bool mapUp = sdl3DrawIsOverviewInWindow();
+  float gx = 0.0f, gy = 0.0f, gw = 0.0f, gh = 0.0f;
+  if (mapUp) {
+    if (!sdl3DrawGetOverviewInWindowRect(&gx, &gy, &gw, &gh)) mapUp = false;
+  }
+  if (!mapUp) sdl3DrawGetGameRect(&gx, &gy, &gw, &gh, NULL);
+  if (gw <= 0.0f || gh <= 0.0f) return;
+
+  /* The HUD as the map drew it, voice row and all. */
+  OverviewHudLayout hud;
+  bool haveHud = mapUp && sdl3DrawGetOverviewHudLayout(&hud);
+  tabletLayoutConfigureClassic(&s_cfg, screenW, screenH, gx, gy, gw, gh, mapUp,
+                               haveHud ? &hud : nullptr);
+
+  /* Over the map, the build tools are the mouse's, like a dialog: a tap on
+     one reaches the desktop's click, and no finger there pans. The status
+     column and the newswire have nothing to press, and the controls are laid
+     over them, so they are not. */
+  SDL_FRect hudRects[1];
+  int hudCount = 0;
+  if (haveHud) {
+    hudRects[hudCount++] = { gx + hud.buildX, gy + hud.buildY, hud.buildW, hud.buildH };
+  }
+  tabletBlockDialogTouches(hudRects, hudCount);
   tabletViewButtonsApplyPolicies(&s_cfg, cs);
   registerTouchButtons();
   inputTouchSetJoystickZone(s_cfg.joyZoneX, s_cfg.joyZoneY, s_cfg.joyZoneW, s_cfg.joyZoneH);
   inputTouchSetScrollJoystickZone(s_cfg.scrollJoyX, s_cfg.scrollJoyY,
                                   s_cfg.scrollJoyW, s_cfg.scrollJoyH);
   {
-    SDL_FRect top = { s_cfg.playersBtnX, s_cfg.topBtnY,
-                      s_cfg.cogBtnX + s_cfg.topBtnSize - s_cfg.playersBtnX,
-                      s_cfg.topBtnSize };
-    inputTouchSetControlRects(&top, 1);
+    SDL_FRect ctl[2];
+    int n = 0;
+    ctl[n++] = { s_cfg.playersBtnX, s_cfg.topBtnY,
+                 s_cfg.cogBtnX + s_cfg.topBtnSize - s_cfg.playersBtnX, s_cfg.topBtnSize };
+    if (overviewButtonShown(cs)) {
+      ctl[n++] = { s_cfg.mapBtnX - s_cfg.mapBtnR, s_cfg.mapBtnY - s_cfg.mapBtnR,
+                   s_cfg.mapBtnR * 2.0f, s_cfg.mapBtnR * 2.0f };
+    }
+    inputTouchSetControlRects(ctl, n);
   }
-  /* No touch game view: a tap there is the classic screen's mouse click. */
-  inputTouchSetViewportBounds(0, 0, 0, 0, 1);
-  inputTouchSetViewportPinchEnabled(false);
+  /* The map is the touch input's: drag pans, pinch zooms, a tap builds, as in
+     the touch layout. Over the classic screen there is no touch game view: a
+     tap there is the classic screen's mouse click. */
+  if (mapUp) {
+    inputTouchSetViewportBounds((int)gx, (int)gy, (int)gw, (int)gh, 1);
+  } else {
+    inputTouchSetViewportBounds(0, 0, 0, 0, 1);
+  }
+  inputTouchSetViewportPinchEnabled(mapUp);
+
+  /* The map button first: a tap on it is not a tap on the map. */
+  processOverviewButton(cs);
+  if (mapUp) {
+    processOverviewTouch(cs, false);
+  } else {
+    /* Nothing reads the viewport's taps over the classic screen; clear any. */
+    float tx, ty;
+    (void)inputTouchGetViewportTapPos(&tx, &ty);
+  }
 
   if (!inputTouchControlsShown()) return;
 
   tabletDamageHaptic();
-  tabletViewButtonTaps(cs, false);
+  tabletViewButtonTaps(cs, mapUp);
   processScrollJoystick(cs);
+
+  /* Drawn at the fade's strength: full while touched, gone a few seconds
+     after the last finger lifts (inputTouchClassicControlsAlpha). */
+  float fade = inputTouchClassicControlsAlpha();
+  if (fade <= 0.0f) return;
+  ImDrawList *dl = controlsDrawList();
+  int vtxStart = dl->VtxBuffer.Size;
 
   renderJoystickZoneHint();
   renderJoystickOverlay();
+  renderScrollZoneBacking();
   renderScrollJoystickOverlay();
   renderFireMineButtons();
   renderGunsightButtons();
   renderTalkButton();
   renderViewButtons(cs);
   renderTopBarButtons(cs);
+  renderOverviewButton(cs);
+  scaleDrawListAlphaSince(dl, vtxStart, fade);
 }
 
 /* -------------------------------------------------------
@@ -2083,7 +2202,7 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
   /* Reconfigure layout each frame */
   tabletLayoutConfigure(&s_cfg, screenW, screenH, vpX, vpY, vpW, vpH, vpZoom);
   tabletPanelAlphasUpdate();
-  tabletBlockDialogTouches();
+  tabletBlockDialogTouches(nullptr, 0);
   tabletViewButtonsApplyPolicies(&s_cfg, cs);
 
   /* Draw beveled chrome background behind everything */
@@ -2114,7 +2233,7 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
 #endif
   inputTouchSetViewportPinchEnabled(overviewOn);
   if (overviewOn) {
-    processOverviewTouch(cs);
+    processOverviewTouch(cs, true);
   } else {
     /* Process tap-to-build */
     handleTapToBuild(cs);

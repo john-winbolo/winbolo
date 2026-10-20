@@ -1492,6 +1492,22 @@ static bool tabletFullScreenOffered(void) {
 #endif
 }
 
+/* True where the app full screen flag is the player's full screen map choice,
+ * which the map toggle records and a game opens with: the desktop, where it
+ * also takes the window full screen, and the iPad's classic screen, whose
+ * window always fills the screen. Not on the web canvas, where the flag means
+ * the browser's full screen, nor in iOS's touch layout, where the choice is
+ * Settings' alone and the map button leaves it as it is
+ * (tabletFullScreenOffered). */
+static bool fullScreenFlagIsMapChoice(SDL_Window *win) {
+#if defined(__APPLE__) && TARGET_OS_IOS
+    (void)win;
+    return !uiModeIsTablet();
+#else
+    return !overviewLeavesWindowAlone(win);
+#endif
+}
+
 /* Turn the in-window overview on or off. The mode takes the main window
  * fullscreen so the map gets the whole screen; leaving drops the window back
  * to windowed only when the app full screen flag is off, because with it on
@@ -1529,9 +1545,8 @@ static void overviewInWindowChoose(bool on) {
        player's own preference and must survive such a server. */
     if (on && overviewSuppressed()) return;
     SDL_Window *win = sdl3DrawGetWindow();
-    /* A window the page sizes: the flag there means browser full screen, which this mode does not touch. iOS is treated the same way. */
-    bool pageSized = overviewLeavesWindowAlone(win);
-    if (!pageSized) gameFrontFullScreen = on;
+    const bool flagIsChoice = fullScreenFlagIsMapChoice(win);
+    if (flagIsChoice) gameFrontFullScreen = on;
     overviewInWindowSet(on);
     /* The two views of the map never share the screen, so the pop-out swaps
        with the mode. Going full screen puts it away without forgetting it;
@@ -1585,7 +1600,7 @@ static void overviewInWindowChoose(bool on) {
        windowFullScreenChoose makes for the same flag on the screens outside
        a game. The auto-exit and the cleanup path call overviewInWindowSet
        directly and deliberately never reach this. */
-    if (!pageSized) gameFrontSaveCurrentPrefs();
+    if (flagIsChoice) gameFrontSaveCurrentPrefs();
 }
 
 /* True while the info panels and Send Message are drawn in the main window
@@ -9773,8 +9788,8 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                draws the map itself: the in-window view when the app is full
                screen, the pop-out on its own flag when it is not. */
             /* On the web the full screen map is only ever the player's request, so a game starts in the normal view whatever the browser's full screen state. */
-            bool pageSized = s_window && overviewLeavesWindowAlone(s_window);
-            if (gameFrontFullScreen && (!pageSized || tabletFullScreenOffered()))
+            if (gameFrontFullScreen &&
+                (fullScreenFlagIsMapChoice(s_window) || tabletFullScreenOffered()))
                 sdl3ImguiShowOverviewInWindow(true);
             else if (gameFrontShowMapOverview) sdl3ImguiShowMapOverview(true);
         }

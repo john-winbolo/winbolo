@@ -2829,3 +2829,6 @@ STR_CLIPGIF_SAVE_FAILED_IOS=无法保存 {string1}。
 STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=地图铺满屏幕，操作控件绘制在地图上方。\n关闭此项会让游戏视图保持正方形，操作控件位于其旁边。\n下次会记住这个设置。
 STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=决定全屏时建造工具能透出多少地图内容。\n0% 为不透明，滑块最高只能到 90%，\n因此无法完全透明。
 STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=决定全屏时坦克、碉堡和基地网格以及库存条能透出\n多少地图内容。0% 为不透明，滑块最高只能到 90%，\n因此无法完全透明。
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=地图占满屏幕，状态、建造和新闻面板显示在其上，\n用触摸游玩时触控按钮也显示在其上。\n关闭则显示经典画面。下次启动时仍会记住。

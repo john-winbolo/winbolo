@@ -2831,3 +2831,6 @@ STR_CLIPGIF_SAVE_FAILED_IOS={string1} を保存できませんでした。
 STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=マップが画面全体に表示され、操作ボタンはその上に描画されます。\nオフにするとゲーム画面は正方形のままで、操作ボタンはその横に並びます。\n次回の起動でも記憶されます。
 STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=フルスクリーンで建設ツールから、マップがどれだけ\n透けて見えるかです。0%で不透明になり、スライダーは\n90%までしか動かないため透明にはなりません。
 STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=フルスクリーンでタンク・トーチカ・基地のグリッドと在庫バーから、\nマップがどれだけ透けて見えるかです。0%で不透明になり、\nスライダーは90%までしか動かないため透明にはなりません。
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=マップが画面全体に表示され、ステータス・建設・ニュースのパネルがその上に、\nタッチで遊ぶときはタッチ操作も重ねて表示されます。\nオフにするとクラシック画面になります。次回の起動でも記憶されます。

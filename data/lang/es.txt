@@ -2832,3 +2832,6 @@ STR_CLIPGIF_SAVE_FAILED_IOS=No se pudo guardar {string1}.
 STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=El mapa llena la pantalla y los controles se dibujan encima.\nDesactivado mantiene la vista de juego cuadrada, con los controles al lado.\nSe recuerda para la próxima vez.
 STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Cuánto se ve el mapa a través de las herramientas de\nconstrucción en pantalla completa. 0% es opaco, y el deslizador\nse detiene en 90% para que no puedan hacerse invisibles.
 STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Cuánto se ve el mapa a través de las cuadrículas de tanques,\nbúnkeres y bases y las barras de reservas en pantalla completa.\n0% es opaco, y el deslizador se detiene en 90% para que no puedan hacerse invisibles.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=El mapa llena la pantalla, con los paneles de estado, construcción y noticias\nencima, y los controles táctiles cuando juegas tocando la pantalla.\nDesactivado muestra la pantalla clásica. Se recuerda para la próxima vez.

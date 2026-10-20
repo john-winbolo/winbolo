@@ -3535,6 +3535,8 @@
 #define STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP          2938
 #define STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP  2939
 #define STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP 2940
+/* The iPad's Full Screen choice: the full screen map or the classic screen */
+#define STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP      2941
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

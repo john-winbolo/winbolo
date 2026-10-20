@@ -965,10 +965,20 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
     /* On iOS only the iPad's desktop layout has the classic screen these
        settings shape; the touch layout leaves them out, as before. */
     if (!BOLO_MOBILE || !uiModeIsTablet()) {
-#if !defined(__IPHONEOS__)
-    /* No full screen choice on iOS (below), so no heading for one there; the
-       letterbox bars follow the section before. */
     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_FULLSCREEN));
+#if defined(__IPHONEOS__)
+    /* ---- Full screen, the iPad's ---- An iOS window always fills the
+       screen, so the choice is the full screen map or the classic screen, as
+       the desktop's is in a game. The tick reads the preference and is applied
+       after the frame, like the desktop's: in a game it brings the map up or
+       takes it down, outside one it is the choice the next game opens with. */
+    {
+        bool fs = (bool)gameFrontFullScreen;
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_FULLSCREEN), &fs)) {
+            ctx->pendingFullScreen = fs ? 1 : 0;
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP));
+    }
 #endif
 #if !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)  /* an iOS window is always full screen */
     /* ---- Full screen ---- */

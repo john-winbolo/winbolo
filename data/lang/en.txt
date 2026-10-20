@@ -2931,3 +2931,6 @@ STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=The map fills the screen and the controls a
 STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=How much of the map shows through the builder tools\nin full screen. 0% is solid, and the slider stops at\n90% so they cannot be made invisible.
 STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=How much of the map shows through the tank, pillbox and\nbase grids and the stock bars in full screen. 0% is solid,\nand the slider stops at 90% so they cannot be made invisible.
 
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=The map fills the screen, with the status, build and newswire\npanels over it, and the touch controls when you play by touch.\nOff shows the classic screen. Remembered for next time.
+

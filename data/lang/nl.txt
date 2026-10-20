@@ -2831,3 +2831,6 @@ STR_CLIPGIF_SAVE_FAILED_IOS={string1} kon niet worden bewaard.
 STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=De kaart vult het scherm en de bedieningselementen worden eroverheen getekend.\nUit houdt de spelweergave vierkant, met de bedieningselementen ernaast.\nWordt onthouden voor de volgende keer.
 STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Hoeveel van de kaart doorschijnt via het bouwgereedschap\nin volledig scherm. 0% is ondoorzichtig, en de schuifregelaar\nstopt bij 90% zodat het niet onzichtbaar kan worden.
 STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Hoeveel van de kaart doorschijnt via de tank-, bunker- en\nbasisrasters en de voorraadbalken in volledig scherm. 0% is ondoorzichtig,\nen de schuifregelaar stopt bij 90% zodat ze niet onzichtbaar kunnen worden.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=De kaart vult het scherm, met de status-, bouw- en nieuwspanelen erover,\nen de aanraakbediening wanneer je met aanraken speelt.\nUit toont het klassieke scherm. Onthouden voor de volgende keer.

@@ -155,8 +155,9 @@ void inputTouchSetViewportBounds(int vpX, int vpY, int vpW, int vpH, int zoom);
 *********************************************************/
 void inputTouchSetBlockedRects(const SDL_FRect *rects, int count);
 bool inputTouchGetViewportTap(BYTE *tileX, BYTE *tileY);
-/* The same tap as inputTouchGetViewportTap, as the touch position rather than
-   a 15x15 square; reading either one clears it. */
+/* The tap as its touch position rather than a square: any tap in the game
+   view, where inputTouchGetViewportTap has only one inside the classic 15x15
+   view. Reading either one clears it. */
 bool inputTouchGetViewportTapPos(float *x, float *y);
 
 /*********************************************************
@@ -230,6 +231,17 @@ void inputTouchNoteInput(const SDL_Event *ev);
 bool inputTouchControlsShown(void);
 
 /*********************************************************
+*NAME:          inputTouchClassicControlsAlpha
+*PURPOSE:       How strongly the classic screen's touch controls are drawn,
+*               0 to 1: full while a finger is on the screen and for two
+*               seconds after the last one lifts, then fading out over a
+*               second, and 0 while they are not shown at all. They work
+*               faded: a touch on one's place still takes it, and brings
+*               them back.
+*********************************************************/
+float inputTouchClassicControlsAlpha(void);
+
+/*********************************************************
 *NAME:          inputTouchSetJoystickZone
 *PURPOSE:       The rect a finger must come down in to take the stick. A
 *               width or height of 0 gives the touch layout's rule: the left
@@ -248,12 +260,12 @@ void inputTouchSetControlRects(const SDL_FRect *rects, int count);
 /*********************************************************
 *NAME:          inputTouchPointOnControl
 *PURPOSE:       True when a finger at (x, y) lands on a touch control: the
-*               stick's zone, the scroll stick's zone, a registered button or
-*               a control rect, and not
-*               on an open dialog. SDL sends the mouse events it makes from a
-*               finger before the finger event itself, so this is how the
-*               classic screen tells a finger meant for a control from a
-*               click on the game.
+*               stick's zone, the scroll stick's zone, a registered button,
+*               a control rect, or the game view while the touch input owns
+*               it (the full screen map), and not on an open dialog. SDL
+*               sends the mouse events it makes from a finger before the
+*               finger event itself, so this is how the classic screen tells
+*               a finger meant for a control from a click on the game.
 *********************************************************/
 bool inputTouchPointOnControl(float x, float y);
 

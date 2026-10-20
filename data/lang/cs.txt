@@ -2829,3 +2829,6 @@ STR_CLIPGIF_SAVE_FAILED_IOS={string1} se nepodařilo uložit.
 STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=Mapa vyplní obrazovku a ovládací prvky se kreslí přes ni.\nVypnuto ponechá herní pohled čtvercový s ovládacími prvky vedle něj.\nZapamatuje se pro příště.
 STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Kolik z mapy prosvítá skrz stavební nástroje\nna celé obrazovce. 0% je neprůhledné a posuvník se\nzastaví na 90%, aby nemohly zmizet úplně.
 STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Kolik z mapy prosvítá skrz mřížky tanků, bunkrů a\nzákladen a ukazatele zásob na celé obrazovce. 0% je\nneprůhledné a posuvník se zastaví na 90%, aby nemohly zmizet úplně.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Mapa vyplní obrazovku a panely stavu, stavění a zpráv jsou přes ni,\nspolu s dotykovým ovládáním, když hrajete dotykem.\nVypnuto zobrazí klasickou obrazovku. Zapamatováno pro příště.

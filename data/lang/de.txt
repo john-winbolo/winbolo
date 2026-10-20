@@ -2831,3 +2831,6 @@ STR_CLIPGIF_SAVE_FAILED_IOS={string1} konnte nicht gespeichert werden.
 STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=Die Karte füllt den Bildschirm, und die Bedienelemente werden darüber gezeichnet.\nAus lässt die Spielansicht quadratisch, mit den Bedienelementen daneben.\nWird für das nächste Mal gemerkt.
 STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Wie viel von der Karte im Vollbild durch die Bauwerkzeuge\ndurchscheint. 0% ist undurchsichtig, und der Regler stoppt\nbei 90%, damit sie nicht unsichtbar werden können.
 STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Wie viel von der Karte im Vollbild durch die Panzer-, Bunker-\nund Basisraster und die Vorratsbalken durchscheint. 0% ist\nundurchsichtig, und der Regler stoppt bei 90%, damit sie nicht unsichtbar werden können.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Die Karte füllt den Bildschirm, mit den Status-, Bau- und Nachrichtenfeldern\ndarüber und der Touch-Steuerung, wenn du per Berührung spielst.\nAus zeigt den klassischen Bildschirm. Wird für das nächste Mal gespeichert.
