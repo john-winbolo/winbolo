@@ -98,6 +98,8 @@ static bool paused = FALSE;
 bool winboloQuit = FALSE;
 bool finishedLoop = FALSE;
 bool showAllianceReq = TRUE;
+bool positionalSound = TRUE;     /* MENU / Positional Sound — sounds carry a side */
+bool letterboxBarsGray = FALSE;  /* gray vs black letterbox bars (sdl3draw) */
 
 DWORD oldTick = 0;
 DWORD ttick = 0;

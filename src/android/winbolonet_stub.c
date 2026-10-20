@@ -13,10 +13,15 @@
 
 #include <stdint.h>
 
+#include <string.h>
+
 #include "global.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../winbolonet/winbolonet_server.h"
 #include "../winbolonet/winbolonet_client.h"
+#include "../winbolonet/wbn_serverlist.h"
+#include "../winbolonet/wbn_prefs_sync.h"
+#include "../winbolonet/http.h"
 
 bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
   (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines; (void)password;
@@ -143,3 +148,31 @@ bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize,
   (void)outProposal;
   return FALSE;
 }
+
+void winbolonetEndSession(uint32_t drainMaxMs) { (void)drainMaxMs; }
+
+const char *winbolonetGetCountryCode(void) { return ""; }
+
+/* The internet game list: no list, so the finder shows none. */
+bool wbnFetchServerList(WbnServerList *out) {
+  if (out) memset(out, 0, sizeof(*out));
+  return FALSE;
+}
+
+void wbnServerListFree(WbnServerList *out) {
+  if (out) memset(out, 0, sizeof(*out));
+}
+
+/* Cloud preferences: nothing changed, so the local document stands. */
+WbnSyncOutcome wbnPrefsSyncOnce(const char *userToken, const char *uploadSnapshot,
+                                const char *deviceType,
+                                bool localDirty, const char *lastSynced) {
+  (void)userToken; (void)uploadSnapshot; (void)deviceType;
+  (void)localDirty; (void)lastSynced;
+  WbnSyncOutcome out;
+  memset(&out, 0, sizeof(out));
+  out.kind = WBN_SYNC_OUT_NOOP;
+  return out;
+}
+
+void httpSetLogUploadTimeout(long seconds) { (void)seconds; }

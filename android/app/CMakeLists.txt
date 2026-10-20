@@ -141,6 +141,17 @@ target_include_directories(nanosvg PUBLIC ${PROJ_ROOT}/src/third_party/nanosvg)
 target_compile_options(nanosvg PRIVATE -Wno-unused-function)
 
 # ---------------------------------------------------------------------------
+# mdns — header-only mDNS/DNS-SD library (vendored, public domain). Every
+# function is static inline, so an INTERFACE target carries the include
+# directory and nothing else. bolo_static (discovery_mdns.c) and
+# server_static (mdns_advertise.c) link it PRIVATE by this name, the same
+# target the root CMakeLists.txt declares.
+# ---------------------------------------------------------------------------
+
+add_library(mdns INTERFACE)
+target_include_directories(mdns SYSTEM INTERFACE ${PROJ_ROOT}/src/third_party/mdns)
+
+# ---------------------------------------------------------------------------
 # stb_image — header-only image loader (vendored)
 # ---------------------------------------------------------------------------
 
@@ -205,13 +216,24 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_mapchooser.cpp
     ${PROJ_ROOT}/src/android/players_panel.cpp
     ${PROJ_ROOT}/src/android/winbolonet_stub.c
+    ${PROJ_ROOT}/src/android/android_wbn_map_stubs.cpp
     ${PROJ_ROOT}/src/android/android_dialog_stubs.c
     ${PROJ_ROOT}/src/steam/steam_wrapper_stub.c
 
     # Per-target bolo source (HAVE_STEAM-divergent).
     ${PROJ_ROOT}/src/bolo/transport_udp_client.c
+    # The lobby's default bot naming pools, read from data/bot_names.json.
+    ${PROJ_ROOT}/src/bolo/lobby_bot_pools_json.c
 
     ${PROJ_ROOT}/src/common/md5.c
+    # The preferences document (WinBolo.json) the game front reads and
+    # writes, and the multiplayer diagnostic log the UDP client writes.
+    ${PROJ_ROOT}/src/common/prefs.c
+    ${PROJ_ROOT}/src/common/prefs_doc.c
+    ${PROJ_ROOT}/src/common/mp_diag_log.c
+    # PNG writer for the map chooser's thumbnail cache. The stb_image
+    # target compiles only the reader; the writer is a separate impl TU.
+    ${PROJ_ROOT}/src/third_party/stb/stb_image_write_impl.c
 
     # SDL3 GUI (rendering, sound, input, etc.)
     ${PROJ_ROOT}/src/gui/ui_mode.c
@@ -249,6 +271,12 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_quickchat.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_onboarding.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_winbolonet.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_about.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/dialog_footer.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_controller_prompt.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/dialog_quit.cpp
     ${PROJ_ROOT}/src/gui/sdl3/map_preview_popup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/lobby_start_list.cpp
@@ -257,7 +285,10 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/overview_fog.cpp
     ${PROJ_ROOT}/src/gui/sdl3/overview_hud_layout.cpp
     ${PROJ_ROOT}/src/gui/sdl3/overview_view.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/map_stars.cpp
     ${PROJ_ROOT}/src/gui/sdl3/wb_theme.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/map_colours.c
+    ${PROJ_ROOT}/src/gui/sdl3/map_markers.c
     ${PROJ_ROOT}/src/gui/sdl3/minimap_render.c
     ${PROJ_ROOT}/src/gui/sdl3/luabrainshandler.c
     ${PROJ_ROOT}/src/gui/sdl3/cursor.c
@@ -282,6 +313,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/input_touch.c
     ${PROJ_ROOT}/src/gui/sdl3/input_joystick.c
     ${PROJ_ROOT}/src/gui/sdl3/input_gamepad.c
+    ${PROJ_ROOT}/src/gui/sdl3/input_source.c
     ${PROJ_ROOT}/src/gui/sdl3/glyphs.c
     # Smart-ping pie menu and markers, and the icon loader they share with
     # the log viewer's replay draw. sdl3draw.c calls into both.
@@ -305,7 +337,6 @@ set(ANDROID_SOURCES
     # come from server_sim_static; threads.c comes from threads_static.
     ${PROJ_ROOT}/src/server/geolookup.c
     ${PROJ_ROOT}/src/server/server_stubs.c
-    ${PROJ_ROOT}/src/server/posix_stubs.c
 )
 
 add_library(main SHARED ${ANDROID_SOURCES})
@@ -316,10 +347,19 @@ target_include_directories(main PRIVATE
     ${PROJ_ROOT}/src/gui
     ${PROJ_ROOT}/src/server
     ${PROJ_ROOT}/src/client_frontend
+    # imgui_markdown.h for the WinBolo.net dialog's news bodies.
+    ${PROJ_ROOT}/src/third_party/imgui_markdown
+    # cJSON.h for prefs_doc.c and lobby_bot_pools_json.c; the cjson target
+    # does not export its directory.
+    ${cjson_SOURCE_DIR}
 )
 bolo_apply_include_rules(main gui)
+# bg_game.c takes the same per-file grant the desktop and iOS targets give
+# it: the menu's background game assigns bot teams through setTeam in
+# server_sim_lifecycle.h.
 bolo_grant_internal_source_access(main
-    ${PROJ_ROOT}/src/bolo/transport_udp_client.c)
+    ${PROJ_ROOT}/src/bolo/transport_udp_client.c
+    ${PROJ_ROOT}/src/gui/sdl3/bg_game.c)
 
 target_link_libraries(main PRIVATE bolo_static scenario_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(main PRIVATE
@@ -349,6 +389,15 @@ target_compile_definitions(main PRIVATE
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+    # The About box's build line, from the same bolo_version.cmake.
+    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
+    # The network-impairment hooks stay out of this build, as they do in
+    # every shipping target. Said outright because transport_udp.h tests the
+    # macro in an #if before net_impair.h supplies its default, and this
+    # target compiles with -Werror=undef.
+    WB_ENABLE_NETIMPAIR=0
 )
 
 target_compile_options(main PRIVATE

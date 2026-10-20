@@ -257,6 +257,22 @@ void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
 void windowStartTutorial(void) { }
 void windowAllowPlayerNameChange(bool allow) { (void)allow; }
 
+/* The Full Screen choice from the settings dialog. An Android window
+   always fills the screen, so only the preference is recorded. */
+void windowFullScreenChoose(bool on) {
+  gameFrontFullScreen = on;
+  gameFrontSaveCurrentPrefs();
+}
+
+/* App lifecycle and solo-pause hooks the shared dialogs call. The game
+   loop in main_android.c handles going to the background and coming back
+   itself, and the touch layout has no Deck pause and no controller to
+   lose, so these take no action here. */
+void windowSuspendBackground(ClientSim *cs) { (void)cs; }
+void windowResumeForeground(ClientSim *cs) { (void)cs; }
+void windowControllerLostPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
+void windowDeckPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
+
 /* Active-cs gate — see desktop frontend in src/gui/sdl3/winbolo.c for
  * the rationale. NULL = no registration yet; calls fall through. */
 static ClientSim *s_activeUiCs = NULL;

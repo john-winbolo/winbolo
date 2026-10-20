@@ -28,11 +28,16 @@ int imguiTrackerSetupShow(void) {
   return 0;
 }
 
-/* ---- map editor stub ---- */
+/* ---- map editor stubs ---- */
 
 void mapEditorRun(void *window, void *renderer, const char *mapPath, bool fromMainMenu) {
   (void)window; (void)renderer; (void)mapPath; (void)fromMainMenu;
 }
+
+/* The editor never runs here, so it cannot have asked to quit the app and
+   has no Settings menu item to hand a handler to. */
+bool mapEditorAppQuitRequested(void) { return false; }
+void mapEditorSetSettingsHandler(void (*fn)(void)) { (void)fn; }
 
 /* ---- log viewer stubs ---- */
 
@@ -42,6 +47,18 @@ void logViewerRun(void *window, void *renderer, const char *logPath, bool fromMa
 
 void logViewerRunFromMemory(void *window, void *renderer, uint8_t *zipData, size_t zipLen, bool fromMainMenu) {
   (void)window; (void)renderer; (void)zipData; (void)zipLen; (void)fromMainMenu;
+}
+
+/* Same as the editor: the modal viewer does not run here, so it cannot
+   have asked to quit the app. */
+bool logViewerAppQuitRequested(void) { return false; }
+
+/* The live spectator feed. Returns false, "the user left", so the caller
+   goes back to the welcome screen. */
+bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
+                  void *cs, const char *serverHost, uint16_t serverPort) {
+  (void)window; (void)renderer; (void)cs; (void)serverHost; (void)serverPort;
+  return false;
 }
 
 /* ---- WBN browser stub (requires libcurl/cJSON) ---- */
@@ -76,6 +93,25 @@ void serverInstanceGetPortmapInfo(ServerPortmapInfo *out) {
 }
 void serverInstanceTriggerManualProbe(void) {}
 ManualProbeState serverInstanceGetManualProbeState(void) { return MANUAL_PROBE_IDLE; }
+bool serverInstanceIsNatPunchActive(void) { return false; }
+
+/* ---- round recorder stubs (server_round_log_static is not linked) ----
+ *
+ * gamefront.c installs the recorder on the single-player server and stashes
+ * and flushes the round at game over. No round is recorded here, so there is
+ * never one waiting to upload. */
+
+#include "../server/server_dedicated_log.h"
+
+void serverDedicatedLogInstall(struct ServerSim *sim, bool dontSendLog) {
+  (void)sim; (void)dontSendLog;
+}
+void serverDedicatedLogUninstall(void) {}
+void serverDedicatedLogSetCompletedPath(const char *path) { (void)path; }
+void serverDedicatedLogSetServeMode(int mode) { (void)mode; }
+void serverDedicatedLogStashCurrentRound(void) {}
+void serverDedicatedLogFlushPendingUpload(void) {}
+bool serverDedicatedLogHasPendingUpload(void) { return false; }
 
 /* ---- window state stubs (desktop-only persistence in sdl3/winbolo.c) ---- */
 
