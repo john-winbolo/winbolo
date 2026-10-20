@@ -2095,6 +2095,7 @@ static bool iosJoinWaitJob(IosJoinJob *job) {
 typedef struct {
   int waited;
   ClientFrontJoinStep result;
+  Uint64 startMs;     /* when the join was first stepped */
   Uint64 lastStepMs;  /* when the join was last stepped; 0 before the first */
 } IosJoinWait;
 
@@ -2102,14 +2103,31 @@ typedef struct {
  * makes 1500 steps the blocking join's 30 s; the screen draws faster than
  * that, so it steps only once 20 ms have passed. */
 #define IOS_JOIN_STEP_MS 20
+#define IOS_JOIN_STEP_LIMIT 1500
+/* The join also gives up after this many milliseconds on the clock. It is
+ * IOS_JOIN_STEP_LIMIT x IOS_JOIN_STEP_MS, the blocking join's 30 s. Frames
+ * can come further apart than IOS_JOIN_STEP_MS (an old phone, or the app
+ * briefly in the background), and then the step count alone would let the
+ * wait run well past 30 s. Whichever of the two is reached first ends it. */
+#define IOS_JOIN_TIMEOUT_MS (IOS_JOIN_STEP_LIMIT * IOS_JOIN_STEP_MS)
 
 static ConnectingStep iosJoinAwaitStep(void *ctx, const char **stageOut,
                                        float *progressOut) {
   IosJoinWait *w = (IosJoinWait *)ctx;
   Uint64 now = SDL_GetTicks();
-  if (w->lastStepMs == 0 || now - w->lastStepMs >= IOS_JOIN_STEP_MS) {
+  if (w->lastStepMs == 0) {
+    w->startMs = now;
+  }
+  if (w->result == CLIENT_FRONT_JOIN_WAITING &&
+      now - w->startMs >= IOS_JOIN_TIMEOUT_MS) {
+    /* Out of time: a limit equal to the steps already taken makes the step
+     * settle the landing now, as it does when the step limit is reached. */
     w->lastStepMs = now;
-    w->result = clientFrontAwaitJoinStep(humanSim, &w->waited, 1500);
+    w->result = clientFrontAwaitJoinStep(humanSim, &w->waited, w->waited);
+  } else if (w->lastStepMs == 0 || now - w->lastStepMs >= IOS_JOIN_STEP_MS) {
+    w->lastStepMs = now;
+    w->result = clientFrontAwaitJoinStep(humanSim, &w->waited,
+                                         IOS_JOIN_STEP_LIMIT);
   }
   /* A server with no lobby sends the map inside this wait; show how much
    * of it has come. */
@@ -2213,6 +2231,7 @@ static bool gameFrontIosJoin(openingStates prevState) {
     } else {
       IosJoinWait w;
       w.waited = 0;
+      w.startMs = 0;
       w.lastStepMs = 0;
       w.result = CLIENT_FRONT_JOIN_WAITING;
       if (!imguiConnectingRun(gameFrontUdpAddress, iosJoinAwaitStep, &w)) {
