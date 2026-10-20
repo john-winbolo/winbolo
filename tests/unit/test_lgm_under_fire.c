@@ -34,8 +34,10 @@
  * can still have him within MAP_SQUARE_MIDDLE (128) of the burst in his
  * first 2 ticks when the tank is still or drives at the pill, and for as
  * long as a tank driving away from the pill on a road, a boat or a base
- * keeps pace with him. WinBolo 1.17 and 2.1 had the same shape of window.
- * An offset of 64 would keep him clear in all three cases.
+ * keeps pace with him. The second tick, and each tick of that open window,
+ * kills him only at the nearest burst exactly. WinBolo 1.17 and 2.1 had the
+ * same shape of window. An offset of 64 would keep him clear in all three
+ * cases.
  * The cases pass because the script's order does not land in it: in the
  * runs made when the offset went back to 16 the nearest burst was 215 from
  * him on the lagged link and 268 on the clean one.
