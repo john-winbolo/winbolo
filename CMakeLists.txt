@@ -927,7 +927,9 @@ add_subdirectory(brains)
 # server_sim.c + servermessages.c now come from server_sim_static;
 # threads.c comes from threads_static.
 set(IOS_SERVER_SOURCES
-    src/server/server_stubs.c
+    # No BOLO_PORTMAP on iOS (no libplum), so the port mapping wrapper
+    # compiles to its no-op half.
+    src/bolo/nat_portmap.c
     src/mapeditor/mapgen_imgui.cpp
 )
 
@@ -1197,20 +1199,24 @@ target_include_directories(WinBoloIOS PRIVATE
 bolo_apply_include_rules(WinBoloIOS gui)
 # bg_game.c: same grant as the desktop target — the dev-mode lobby
 # background assigns bot teams through server_sim_lifecycle.h.
-# ios_stubs.c's local-only serverInstanceStartup calls
-# serverSimApplyInstanceConfig, declared in internal/server_sim_lifecycle.h.
 bolo_grant_internal_source_access(WinBoloIOS
     src/bolo/transport_udp_client.c
-    src/gui/sdl3/bg_game.c
-    src/gui/ios/ios_stubs.c)
+    src/gui/sdl3/bg_game.c)
 
-target_link_libraries(WinBoloIOS PRIVATE bolo_static scenario_static server_sim_static bot_brains_static threads_static)
+# server_static is the server runtime the desktop hosts with: the UDP server,
+# server_lifecycle.c and geolookup.c (its stub half, as iOS has no
+# maxminddb). Single player starts and ticks through the same lifecycle.
+# Apple's linker resolves the server_static / server_sim_static cycle
+# without a link group (see SERVER_LINK_GROUP below).
+target_link_libraries(WinBoloIOS PRIVATE bolo_static scenario_static
+    server_static server_sim_static server_round_log_static
+    bot_brains_static threads_static)
 
 # WinBolo.net for iOS: winbolonet_core with http_nsurl.m (NSURLSession) in
-# place of http.c, since iOS has no libcurl, and winbolonet_client as on the
-# desktop. winbolonet_server is left out because a phone does not host; the
-# server-side symbols gamefront.c and the sim still reference are stubbed in
-# ios_stubs.c. The desktop defines these two libraries in the else() branch
+# place of http.c, since iOS has no libcurl, and winbolonet_client and
+# winbolonet_server as on the desktop. server_static calls the server side;
+# a LAN game and single player leave WinBolo.net off, so it registers
+# nothing. The desktop defines these three libraries in the else() branch
 # below, so the names do not collide. tweetnacl.c is in the library here
 # because nothing else in WinBoloIOS signs.
 add_library(winbolonet_core STATIC
@@ -1256,8 +1262,22 @@ target_include_directories(winbolonet_client PRIVATE
 target_link_libraries(winbolonet_client PRIVATE SDL3::SDL3)
 bolo_apply_include_rules(winbolonet_client runtime_only)
 
-target_link_libraries(WinBoloIOS PRIVATE winbolonet_client winbolonet_core
-    "-framework Foundation")
+add_library(winbolonet_server STATIC
+    src/winbolonet/winbolonet_server.c
+)
+target_include_directories(winbolonet_server PRIVATE
+    ${cjson_SOURCE_DIR}
+)
+target_link_libraries(winbolonet_server PRIVATE SDL3::SDL3)
+target_compile_definitions(winbolonet_server PRIVATE
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
+bolo_apply_include_rules(winbolonet_server runtime_only)
+
+target_link_libraries(WinBoloIOS PRIVATE winbolonet_server winbolonet_client
+    winbolonet_core "-framework Foundation")
 
 # The WinBolo.net screens that need the libraries above: the news popup with
 # its image cache, and the recap's stars and comments.
