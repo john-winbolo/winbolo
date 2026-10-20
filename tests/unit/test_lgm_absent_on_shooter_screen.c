@@ -77,10 +77,10 @@
  * life (the shell is given no life left and explodes where it is), and a
  * collision (the shell is put 8 world units west of the builder's own tank,
  * moving east, and hits it; the blast is on the tank's centre and the
- * builder is 16 away, well inside the half square that kills).
+ * builder is 64 away, inside the half square that kills).
  *
  * The game is not ticked. The builder is sent out with a real harvest order,
- * which puts him 16 world units from the tank, and the history is written
+ * which puts him 64 world units from the tank, and the history is written
  * directly, oldest frame first, the way serverSimTick's recording loop
  * writes it (the newest record is the present frame, because that loop runs
  * before shellsUpdate in the same tick).
@@ -267,8 +267,8 @@ static void las_close(LasFix *f) {
 }
 
 /* Put the tank on its square and send the builder out of it to harvest the
- * square LAS_FAR to the east. He starts 16 world units east of the tank's
- * centre. Also undoes a kill from the case before, so one game serves
+ * square LAS_FAR to the east. He starts 64 world units east of the tank's
+ * centre (LGM_START_OFFSET). Also undoes a kill from the case before, so one game serves
  * several cases. */
 static int las_send_out(LasFix *f) {
     GameSim *gs = f->gs;
@@ -287,8 +287,8 @@ static int las_send_out(LasFix *f) {
                   (*man)->isDead == FALSE,
                   "the harvest order never sent the man out (state %u)",
                   (unsigned)(*man)->state);
-    UT_ASSERT_MSG((*man)->x == (WORLD)(f->midX + 16) && (*man)->y == f->midY,
-                  "the man is not 16 east of the tank: he is at (%u,%u), the "
+    UT_ASSERT_MSG((*man)->x == (WORLD)(f->midX + 64) && (*man)->y == f->midY,
+                  "the man is not 64 east of the tank: he is at (%u,%u), the "
                   "tank at (%u,%u)", (unsigned)(*man)->x, (unsigned)(*man)->y,
                   (unsigned)f->midX, (unsigned)f->midY);
     /* The tank test of a player's shell has its own history. Left empty, the
@@ -479,7 +479,7 @@ int run_lgm_kill_rewound_position(void) {
     }
 
     /* A blast only where he is now: at the end of a shell's life, and on his
-     * own tank, which the shell hits 16 from him. Neither kills: the shooter
+     * own tank, which the shell hits 64 from him. Neither kills: the shooter
      * saw him two squares away. What the shell hit makes no difference. */
     for (s = LAS_SITE_EXPIRY; s <= LAS_SITE_COLLISION && rc == 0; s++) {
         LasSite site = (LasSite)s;
