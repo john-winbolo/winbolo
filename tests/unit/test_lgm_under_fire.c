@@ -17,19 +17,23 @@
  *   lgm_wall_behind_tank_under_fire_nolag   — the same script on a clean
  *       link, the single-player control.
  *
- * Both cases assert that the man lives, builds the wall and comes home. Two
- * things make that hold. A pill's shell is no longer tested against the
- * tank, or the man, at the position each held a ping's worth of frames ago,
- * which is what killed him every run on the lagged link: the burst and the
- * kill were decided somewhere he was not. And he now starts LGM_START_OFFSET
- * (64) out towards his square. A shell is tested against the hull after it
- * has moved its 32 units for the tick, so a hit bursts up to 32 units
- * inside the TANK_HIT_RADIUS circle, more by the tank's speed when it is
- * driving at the pill, between 68 and 112 units from the tank's centre on
- * the pill's side. With a 16-unit start he was 32 out on the far side when
- * the first shell could arrive, 103 from the burst in a recorded run and
- * inside MAP_SQUARE_MIDDLE (128), so whether he lived turned on which tick
- * the order landed in; with 64 he is 80 out and 148 from the nearest burst.
+ * Both cases assert that the man lives, builds the wall and comes home. A
+ * pill's shell is no longer tested against the tank, or the man, at the
+ * position each held a ping's worth of frames ago, which is what killed him
+ * every run on the lagged link: the burst and the kill were decided
+ * somewhere he was not.
+ *
+ * He starts LGM_START_OFFSET (16) out towards his square. A shell is tested
+ * against the hull after it has moved its 32 units for the tick, so a hit
+ * bursts up to 32 units inside the TANK_HIT_RADIUS circle, more by the
+ * tank's speed when it is driving at the pill, between 68 and 112 units
+ * from the tank's centre on the pill's side. On the far side he is 16, 32
+ * and then 48 out in his first ticks, so a hit on the tank in about his
+ * first 3 ticks on grass still has him within MAP_SQUARE_MIDDLE (128) of
+ * the burst. That short window is the same one WinBolo 1.17 and 2.1 had.
+ * The cases pass because the script's order does not land in it: in the
+ * runs made when the offset went back to 16 the nearest burst was 215 from
+ * him on the lagged link and 268 on the clean one.
  *
  * The blast list records every burst with his position as it found him, so
  * a failure says which shell caught him and from how far. If the control
@@ -1012,7 +1016,7 @@ static int luf_run(const LufConfig *cfg) {
     /* The blast list above says which shell caught him and from how far. A
      * death with no burst within MAP_SQUARE_MIDDLE of where he stood is a
      * kill decided at a position he did not hold, the rewind bug; one with
-     * a burst in reach means the start offset did not put him clear. */
+     * a burst in reach means the tank was hit in his first few ticks out. */
     UT_ASSERT_MSG(!manDied,
                   "%s: the builder was killed walling the square behind his own "
                   "tank (%s) - the tank body was between him and the pillbox "
