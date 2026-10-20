@@ -48,6 +48,7 @@
 #include "alliance_enums.h"
 #include "tilenum.h"
 #include "tank_label.h"      /* the shared name + flag / brain-icon drawer */
+#include "newswire_slide.h"  /* newswireSuffixStart */
 
 /* Local copies of constants that sdl3draw.c keeps as file-local
  * #defines. Duplicating them is the simplest way to keep this
@@ -208,11 +209,28 @@ static void sdl3UpdateTextCache(TTF_Font *font, const char *text,
   SDL_strlcpy(prevStr, text, prevSize);
 }
 
+/* The font and width newswireSuffixFits measures against. */
+typedef struct NewswireMeasure {
+  TTF_Font *font;
+  int       maxW;
+} NewswireMeasure;
+
+/* Whether all n bytes of s fit in the width: TTF_MeasureString reports how
+   many bytes fit, and the suffix fits when that is all of them. */
+static bool newswireSuffixFits(const char *s, size_t n, void *user) {
+  const NewswireMeasure *m = (const NewswireMeasure *)user;
+  size_t fit = 0;
+  if (!TTF_MeasureString(m->font, s, n, m->maxW, NULL, &fit)) return false;
+  return fit == n;
+}
+
 /* Draw one newswire line at (x, y): the rightmost characters of text that fit
    in maxW, which is how a line scrolling in from the right reads in a box too
    narrow for all of it. The font is the fixed-width Sarasa Mono, so each
    character the newswire scrolls by moves the line the same distance and the
-   two lines stay in step. An empty text drops the texture. */
+   two lines stay in step. CJK characters there are two cells wide and more
+   than one byte long, so the part shown is found by measuring suffixes, not
+   by counting from the start. An empty text drops the texture. */
 static void newswireLineDraw(TTF_Font *font, const char *text, float x,
                              float y, float maxW, Uint8 alpha,
                              NewswireLineCache *c) {
@@ -223,7 +241,8 @@ static void newswireLineDraw(TTF_Font *font, const char *text, float x,
     size_t fit = 0;
     TTF_MeasureString(font, text, len, (int)maxW, NULL, &fit);
     if (fit < len) {
-      shown = text + (len - fit);
+      NewswireMeasure m = { font, (int)maxW };
+      shown = text + newswireSuffixStart(text, len, newswireSuffixFits, &m);
       /* The cut is counted in bytes; start on a whole character. */
       while ((*shown & 0xC0) == 0x80) shown++;
     }

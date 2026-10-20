@@ -11,13 +11,15 @@
  *                desktop's full screen map and the touch
  *                layout. Arithmetic only, with no SDL and no
  *                clock of its own, so a test can drive it with
- *                made-up times.
+ *                made-up times. Also the search for how much
+ *                of a newswire line fits, given a measure.
  *********************************************************/
 
 #ifndef NEWSWIRE_SLIDE_H
 #define NEWSWIRE_SLIDE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -48,6 +50,41 @@ typedef struct NewswireSlide {
    one frame moves it once. Times are in milliseconds on any one clock. */
 float newswireSlideStep(NewswireSlide *slide, uint64_t now,
                         uint64_t lastMessageTick, bool autoHide);
+
+/* Returns the byte offset of the start of the longest suffix of text (len
+   bytes) that fits, where fits(text + off, len - off, user) says whether a
+   suffix fits. The offset is always on a UTF-8 character start. Returns len
+   when nothing fits and 0 when all of it fits.
+
+   A binary search over character starts: a byte offset is moved forward past
+   continuation bytes to the next character start, and since a longer suffix
+   is never narrower, fits is true for every offset past the answer and false
+   for every offset before it. It calls fits about log2(len) times and never
+   on the empty suffix.
+
+   Defined here rather than in newswire_slide.c because sdl3draw_status.c
+   calls it and the log viewer links that file but not newswire_slide.c. */
+static inline size_t newswireSuffixStart(const char *text, size_t len,
+                                         bool (*fits)(const char *s, size_t n,
+                                                      void *user),
+                                         void *user) {
+    size_t lo = 0;
+    size_t hi = len;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        size_t start = mid;
+        while (start < len && ((unsigned char)text[start] & 0xC0) == 0x80) {
+            start++;
+        }
+        if (start == len || fits(text + start, len - start, user)) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    while (lo < len && ((unsigned char)text[lo] & 0xC0) == 0x80) lo++;
+    return lo;
+}
 
 #ifdef __cplusplus
 }
