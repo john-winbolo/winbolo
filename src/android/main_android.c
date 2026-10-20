@@ -50,7 +50,9 @@
 #include "../gui/sdl3/dialog_backend.h"
 #include "../gui/sdl3/dialogs/imgui_messagebox.h"
 #include "../winbolonet/http_jni.h"
+#include "../winbolonet/http.h"  /* httpSetDeadline for a shutdown in the background */
 #include "android_drops.h"
+#include "android_netpath.h"
 #include "touch_input.h"
 
 extern ClientSim *humanSim;
@@ -114,6 +116,74 @@ time_t ticks = 0;
 static double gameTickAccum = 0.0;
 static Uint64 lastFrameTime = 0;
 
+/* The game loop's own pause while the app is in the background, set by
+   windowSuspendBackground and cleared by windowResumeForeground. */
+static bool paused = FALSE;
+
+/* A game this device hosts for other players keeps running in the
+   background: the server ticks on its own timer thread (gamefront.c's
+   hostedServerTimerCb, through serverInstanceTick under the threads mutex,
+   the one path into the sim), and the main loop keeps ticking the host's
+   own client, without drawing, so the server does not drop the host after
+   20 s of silence (CLIENT_TIMEOUT_TICKS). For that the main thread must not
+   stop in SDL's event pump when the activity pauses, which is SDL's default
+   on Android: SDL_HINT_ANDROID_BLOCK_ON_PAUSE is set to 0 before SDL_Init.
+   SDL destroys the window's surface while the activity is paused, so a
+   frame drawn then has nowhere to go: the game loop below draws nothing
+   while paused. The shared dialog loops, which keep drawing and know
+   nothing of the background, are covered by SDL itself: it marks every
+   window minimized on the way to the background and restored on the way
+   back (SDL_OnApplicationWillEnterBackground), and on Android its renderer
+   sends nothing to the GPU and presents nothing for a minimized window
+   (SDL_render.c, DONT_DRAW_WHILE_HIDDEN). The pump waits up to 100 ms for
+   a lifecycle event on every poll while paused, so a background loop runs
+   at about ten frames a second. Android gives no time limit and no warning.
+   With no foreground service, Android 15 and later put the app's traffic
+   behind the background firewall chain about five seconds after the
+   activity stops, and some time later freeze the whole process, server
+   thread included; both lift on the return. So the loop keeps the host's
+   place for a short stay (a notification, a quick look elsewhere); through
+   a longer one the other players lose the game to their own timeouts.
+   Ending the process (onDestroy, TERMINATING) shuts the server
+   down through the normal end, with a deadline on its WinBolo.net calls so
+   an unreachable WinBolo.net does not hold onDestroy. */
+static bool s_hostBackgroundActive = false;
+static bool s_quitInBackground = false;
+#define ANDROID_HOST_SHUTDOWN_HTTP_MS 5000
+/* Tick time owed after a long freeze is dropped beyond this: the server
+   kept its own time on its thread, and the host's client only has to catch
+   up with the present, not replay the gap. */
+#define ANDROID_HOST_CATCHUP_MAX_MS 1000.0
+/* A line in the log this often while hosting in the background, so a
+   logcat read shows the loop running. */
+#define ANDROID_HOST_LOG_INTERVAL_MS 5000
+static Uint64 s_hostBackgroundLogAt = 0;
+static unsigned s_hostBackgroundTicks = 0;
+
+/* Between the background pair and the foreground pair of lifecycle events. */
+static bool s_inBackground = false;
+/* The menu's and the dialogs' own background pause: nothing of theirs
+   knows about the background, so the sound is muted for them here and put
+   back as it was found. */
+static bool s_menuMuteHeld = false;
+static bool s_menuMutedBefore = false;
+
+static void androidMenuBackgroundBegin(void) {
+  paused = TRUE;
+  s_menuMutedBefore = soundIsMuted();
+  s_menuMuteHeld = true;
+  soundSetMuted(TRUE);
+  WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Entering background outside a game");
+}
+
+static void androidMenuBackgroundEnd(void) {
+  paused = FALSE;
+  if (s_menuMuteHeld) {
+    s_menuMuteHeld = false;
+    soundSetMuted(s_menuMutedBefore);
+  }
+}
+
 /* -------------------------------------------------------
  * Forward declarations
  * ------------------------------------------------------- */
@@ -124,17 +194,20 @@ void windowDeckPause(ClientSim *cs, bool active);
 void windowControllerLostPause(ClientSim *cs, bool active);
 void windowSuspendBackground(ClientSim *cs);
 void windowResumeForeground(ClientSim *cs);
+static void androidTouchSpace(int *tw, int *th);
+#define ANDROID_FRAME_CAP_MS 16
 
 /* SDL never queues the app lifecycle events (SDL_SendAppEvent hands them to
    event watches only), so the game loop's own event handling never sees
-   them. This watch acts on them while a game is up (s_lifecycleCs). Android
-   sends the background pair from the main thread inside the event pump, and
-   then holds the main thread in the pump until the app comes back; the
-   foreground pair arrives the same way on the return, and posts
-   s_resumeEventType, which the loop turns into the resume on its own
-   stack, where the resume's message box may run. Ending the process
-   (TERMINATING, from onDestroy) ends the loop the way Quit does; the
-   preferences are written by gamefront.c's own watch. */
+   them. This watch acts on them. Android sends the background pair from the
+   main thread inside the event pump; the foreground pair arrives the same
+   way on the return, and posts s_resumeEventType, which the loop turns into
+   the resume on its own stack, where the resume's message box may run.
+   While a game is up (s_lifecycleCs) the shared suspend and resume run;
+   outside one, where no loop knows about the background, the sound is
+   muted here and put back on the return. Ending the process (TERMINATING,
+   from onDestroy) ends the loop the way Quit does; the preferences are
+   written by gamefront.c's own watch. */
 static ClientSim *s_lifecycleCs = NULL;
 static Uint32 s_resumeEventType = 0;
 
@@ -143,15 +216,29 @@ static bool SDLCALL androidLifecycleWatch(void *userdata, SDL_Event *ev) {
   switch (ev->type) {
   case SDL_EVENT_WILL_ENTER_BACKGROUND:
   case SDL_EVENT_DID_ENTER_BACKGROUND:
-    if (s_lifecycleCs != NULL) windowSuspendBackground(s_lifecycleCs);
+    /* WILL and then DID: the second finds everything done. */
+    if (s_inBackground) break;
+    s_inBackground = true;
+    if (s_lifecycleCs != NULL) {
+      windowSuspendBackground(s_lifecycleCs);
+    } else {
+      androidMenuBackgroundBegin();
+    }
     break;
   case SDL_EVENT_WILL_ENTER_FOREGROUND:
   case SDL_EVENT_DID_ENTER_FOREGROUND:
-    if (s_lifecycleCs != NULL && s_resumeEventType != 0) {
-      SDL_Event resume;
-      SDL_zero(resume);
-      resume.type = s_resumeEventType;
-      SDL_PushEvent(&resume);
+    if (!s_inBackground) break;
+    s_inBackground = false;
+    if (s_lifecycleCs != NULL) {
+      if (s_resumeEventType != 0) {
+        SDL_Event resume;
+        SDL_zero(resume);
+        resume.type = s_resumeEventType;
+        SDL_PushEvent(&resume);
+      }
+    } else {
+      androidMenuBackgroundEnd();
+      WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Back in the foreground outside a game");
     }
     break;
   case SDL_EVENT_TERMINATING:
@@ -195,19 +282,104 @@ void windowTutorialPause(ClientSim *cs, bool active) {
 /* The move to and from the background. The shared suspend pauses a solo
    game's hosted server and mutes the sound with the state it had kept for
    the way back; the resume recomputes the server pause and puts the sound
-   back, and drops the tick time owed for the time away. */
+   back, and drops the tick time owed for the time away. A game hosted for
+   other players is kept running instead (see s_hostBackgroundActive): the
+   suspend still mutes, but the server, which only pauses for a solo
+   session, carries on, and the loop keeps ticking the host's client. */
 void windowSuspendBackground(ClientSim *cs) {
-  if (clientFrontSuspend(cs)) {
-    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Entering background, pausing");
+  if (paused) return;
+  WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Entering background, pausing");
+  paused = TRUE;
+  clientFrontSuspend(cs);
+  if (gameFrontHasLocalServer() && !clientFrontIsSoloSession(cs)) {
+    s_hostBackgroundActive = true;
+    lastFrameTime = SDL_GetTicks();
+    gameTickAccum = 0.0;
+    s_hostBackgroundLogAt = lastFrameTime;
+    s_hostBackgroundTicks = 0;
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM,
+                "[Android] Hosting: keeping the game running in the background");
   }
 }
 
-void windowResumeForeground(ClientSim *cs) {
-  if (!clientFrontResumeBegin()) return;
-  WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Resuming from background");
+/* Undoes windowSuspendBackground: clears the pause and the background
+   hosting, drops the owed tick time and runs the shared resume. Used by
+   windowResumeForeground and by the main loop's exit. */
+static void androidClearBackgroundPause(ClientSim *cs) {
+  paused = FALSE;
+  s_hostBackgroundActive = false;
   lastFrameTime = SDL_GetTicks();
   gameTickAccum = 0.0;
-  clientFrontResumeEnd(cs);
+  if (clientFrontResumeBegin()) {
+    clientFrontResumeEnd(cs);
+  }
+  /* A pause the menu began before this game loop started is over too. */
+  androidMenuBackgroundEnd();
+}
+
+void windowResumeForeground(ClientSim *cs) {
+  /* WILL and then DID both post a resume; the second finds nothing paused. */
+  if (!paused) return;
+  WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Resuming from background");
+  androidClearBackgroundPause(cs);
+}
+
+/* One of the loop's events while paused: the quit, the resume, and a
+   finger's release or cancel so a touch held at the moment the app left
+   does not read as held on the way back. */
+static void androidPausedEvent(ClientSim *cs, SDL_Event *ev) {
+  if (ev->type == SDL_EVENT_QUIT || ev->type == SDL_EVENT_TERMINATING) {
+    winboloQuit = TRUE;
+    s_quitInBackground = true;
+  } else if (ev->type == s_resumeEventType) {
+    windowResumeForeground(cs);
+  } else if (ev->type == SDL_EVENT_FINGER_DOWN || ev->type == SDL_EVENT_FINGER_UP ||
+             ev->type == SDL_EVENT_FINGER_MOTION || ev->type == SDL_EVENT_FINGER_CANCELED) {
+    int tw = 0, th = 0;
+    androidTouchSpace(&tw, &th);
+    inputTouchProcessEvent(ev, tw, th);
+  }
+}
+
+/* One frame of a hosted game in the background: the events that matter, and
+   the host's own client ticks so its connection to the server stays alive.
+   Nothing is drawn. The shared pause test the foreground loop makes before a
+   tick is skipped on purpose: the suspend is one of those pauses, and here
+   the game is meant to run through it. */
+static void androidHostBackgroundFrame(ClientSim *cs) {
+  SDL_Event ev;
+  Uint64 now;
+  while (SDL_PollEvent(&ev)) {
+    androidPausedEvent(cs, &ev);
+  }
+  if (!paused || winboloQuit) return;
+  now = SDL_GetTicks();
+  gameTickAccum += (double)(now - lastFrameTime);
+  lastFrameTime = now;
+  if (gameTickAccum > ANDROID_HOST_CATCHUP_MAX_MS) {
+    gameTickAccum = ANDROID_HOST_CATCHUP_MAX_MS;
+  }
+  while (gameTickAccum >= GAME_TICK_LENGTH && !winboloQuit && !finishedLoop) {
+    gameTickAccum -= GAME_TICK_LENGTH;
+    windowRunGameTick(cs);
+    s_hostBackgroundTicks++;
+  }
+  if (now - s_hostBackgroundLogAt >= ANDROID_HOST_LOG_INTERVAL_MS) {
+    s_hostBackgroundLogAt = now;
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM,
+                "[Android] Hosting in the background: %u client ticks run so far",
+                s_hostBackgroundTicks);
+  }
+  SDL_Delay(ANDROID_FRAME_CAP_MS);
+}
+
+/* The background without a hosted game: nothing ticks and nothing is
+   drawn; the loop waits for the resume or the quit. */
+static void androidPausedWait(ClientSim *cs) {
+  SDL_Event ev;
+  if (SDL_WaitEventTimeout(&ev, 100)) {
+    androidPausedEvent(cs, &ev);
+  }
 }
 
 /* -------------------------------------------------------
@@ -458,6 +630,11 @@ int main(int argc, char *argv[]) {
   SDL_SetLogPriorities(SDL_LOG_PRIORITY_INFO);
 #endif
 
+  /* The main thread keeps running while the activity is paused, for a game
+     hosted for other players (see s_hostBackgroundActive). Read once, at
+     SDL's video start, so it is set before anything of SDL is up. */
+  SDL_SetHint(SDL_HINT_ANDROID_BLOCK_ON_PAUSE, "0");
+
   SDL_Init(0);
   androidDropsInstall();
 
@@ -497,6 +674,13 @@ int main(int argc, char *argv[]) {
      cannot find it themselves. */
   if (!httpAndroidInit()) {
     WB_LOG_ERROR(WB_LOG_CAT_PLATFORM, "[Android] WinBolo.net HTTP transport not bound");
+  }
+
+  /* The kind of network the phone is on, for the warning before an
+     Internet game is hosted on mobile data. Bound from this thread for the
+     same reason. Without it the game front asks nothing. */
+  if (!androidNetPathInstall()) {
+    WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[Android] network kind not available");
   }
 
   /* The move to and from the background reaches the game only through an
@@ -688,11 +872,27 @@ android_game_start:
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Starting main loop");
 
   /* Main game loop */
-#define ANDROID_FRAME_CAP_MS 16
   bool returnToLobby = FALSE;
   s_lifecycleCs = cs;
+  if (paused) {
+    /* The app went to the background before this loop began (a hosted
+       lobby's game started while the host was away): the menu's pause
+       becomes the game's own, which decides about hosting on. */
+    androidMenuBackgroundEnd();
+    windowSuspendBackground(cs);
+  }
   while (!winboloQuit && !finishedLoop) {
     Uint64 frameCapStart = SDL_GetTicks();
+    /* In the background: no drawing, and no ticking unless this device
+       hosts the game for other players. */
+    if (paused) {
+      if (s_hostBackgroundActive) {
+        androidHostBackgroundFrame(cs);
+      } else {
+        androidPausedWait(cs);
+      }
+      continue;
+    }
     /* Process SDL events */
     {
       SDL_Event ev;
@@ -793,13 +993,18 @@ android_game_start:
 
   s_lifecycleCs = NULL;
 
-  /* A game that ends in the background leaves the suspend on, and nothing
-     else clears it: the lobby, the shutdown and the menu would run muted
-     with the next game's server paused. The watch does nothing from here
-     on, so clear it now. */
-  if (clientFrontResumeBegin()) {
-    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Game ended while in the background; clearing the suspend");
-    clientFrontResumeEnd(cs);
+  /* A game that ends in the background leaves the pause on, and nothing
+     else clears it: the lobby, the shutdown and the menu would run as if
+     in the background, muted and with the next game's server paused. The
+     watch treats the game as over from here on, so clear it now. */
+  if (paused) {
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Game ended while in the background; clearing the pause");
+    androidClearBackgroundPause(cs);
+    /* Still in the background: what runs next is the lobby or the menu,
+       which take the pause the watch gives them outside a game. */
+    if (s_inBackground) {
+      androidMenuBackgroundBegin();
+    }
   }
 
   /* Back to the lobby screen: the game and its ClientSim stay, as on the
@@ -814,7 +1019,19 @@ android_game_start:
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Main loop ended, cleaning up");
 
   sdl3ImguiCleanup();
+  /* The process is being ended while the game ran in the background: the
+     hosted server's shutdown (its WinBolo.net session quit and round-log
+     upload) runs inside onDestroy, which waits for this thread, so its
+     calls get a deadline rather than their full time limits. */
+  if (s_quitInBackground) {
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Ending in the background; shutting the game down");
+    httpSetDeadline(ANDROID_HOST_SHUTDOWN_HTTP_MS);
+  }
   gameFrontEnd(&keys, TRUE, winboloQuit);
+  if (s_quitInBackground) {
+    httpClearDeadline();
+    s_quitInBackground = false;
+  }
   /* A step left showing, or its pause, would stop the next game's ticks. */
   frontEndTutorialReset();
   windowTutorialPause(NULL, false);

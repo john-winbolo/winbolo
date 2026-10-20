@@ -120,6 +120,26 @@ set(ENABLE_CJSON_UNINSTALL OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(sdl3 sdl3_ttf imgui lua zlib libmaxminddb cjson)
 
+# libplum: UPnP, NAT-PMP and PCP port mapping for an Internet game hosted on
+# the phone. The same repository, tag and switches as the root's
+# bolo_fetch_libplum macro (copied, since the macro reads the root's own
+# variables). BUILD_SHARED_LIBS is already OFF above, so plum is static and
+# no extra shared library ships. UPnP finds the router by SSDP multicast,
+# which the Wi-Fi multicast lock WinBoloActivity holds lets through, so
+# every method stays on.
+FetchContent_Declare(
+    libplum
+    GIT_REPOSITORY https://github.com/paullouisageneau/libplum.git
+    GIT_TAG        v0.5.3
+    GIT_SHALLOW    TRUE
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
+set(PLUM_NO_EXAMPLE         ON  CACHE INTERNAL "")
+set(PLUM_WARNINGS_AS_ERRORS OFF CACHE INTERNAL "")
+FetchContent_MakeAvailable(libplum)
+set_target_properties(plum PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # ---------------------------------------------------------------------------
 # minizip (from zlib contrib)
 # ---------------------------------------------------------------------------
@@ -211,6 +231,10 @@ set(ANDROID_SOURCES
     # The winbolo:// link or .wbv recording another app hands over while the
     # app runs, kept for the welcome screen (WinBoloActivity.onNewIntent).
     ${PROJ_ROOT}/src/android/android_drops.c
+    # The kind of network the phone's traffic goes out on (WinBoloNet.java
+    # over ConnectivityManager), for the mobile-data warning before an
+    # Internet game is hosted.
+    ${PROJ_ROOT}/src/android/android_netpath.c
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_welcome.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_mapchooser.cpp
     # Shared mobile UI (touch input, legacy players panel), as iOS compiles.
@@ -254,9 +278,8 @@ set(ANDROID_SOURCES
 
     # Per-target bolo source (HAVE_STEAM-divergent).
     ${PROJ_ROOT}/src/bolo/transport_udp_client.c
-    # The port mapping wrapper server_lifecycle.c calls. BOLO_PORTMAP is not
-    # defined here, so it compiles to the no-op stubs, as it does on every
-    # target built without libplum.
+    # The port mapping wrapper server_lifecycle.c calls, over libplum
+    # (BOLO_PORTMAP below), as the desktop and iOS targets compile it.
     ${PROJ_ROOT}/src/bolo/nat_portmap.c
     # The lobby's default bot naming pools, read from data/bot_names.json.
     ${PROJ_ROOT}/src/bolo/lobby_bot_pools_json.c
@@ -438,6 +461,8 @@ target_link_libraries(main PRIVATE
     # scenario_static reads manifest.json through cJSON and links it PRIVATE,
     # so the symbols land here the way minizip's and Lua's do.
     cjson
+    # Port mapping for a hosted Internet game (nat_portmap.c).
+    LibPlum::LibPlum
     m
     log
     android
@@ -464,6 +489,8 @@ target_compile_definitions(main PRIVATE
     # JNI one: http.h then declares httpGetUrlToMemory, which the news image
     # cache uses in place of libcurl, as WBN_HTTP_NSURL does on iOS.
     WBN_HTTP_JNI=1
+    # nat_portmap.c compiles its libplum body rather than its no-op stubs.
+    BOLO_PORTMAP
 )
 
 target_compile_options(main PRIVATE
