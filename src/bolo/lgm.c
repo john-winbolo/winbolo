@@ -599,6 +599,128 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
   return why;
 }
 
+/* How far from the tank's centre a builder starts, towards the square he
+ * was sent to: a quarter of a square. A shell that hits the tank explodes
+ * inside the hull on the side it came from, and the builder dies within
+ * MAP_SQUARE_MIDDLE of that. The shell is tested against the hull after its
+ * move for the tick, so the burst is up to the shell's speed inside the
+ * TANK_HIT_RADIUS circle, and further by the tank's own speed when it is
+ * driving at the shooter: with the defaults, between 68 and 112 from the
+ * centre. A builder sent out the far side has taken one step by the time a
+ * shell is next tested, so he stands LGM_START_OFFSET plus his speed from
+ * the centre, 80 on open ground, and 148 from the nearest such burst. That
+ * is what makes the tank's body shelter him from a pillbox on the other
+ * side, the move players make. Started on the centre, or 16 out, he was
+ * inside the blast whichever side he left on. With the default speeds the
+ * offset is four walking steps where a builder walks 16 a tick (grass, road,
+ * a boat, a base he can use), eight on forest and sixteen on swamp, crater
+ * and rubble. He is given it only where he could have walked it: off a boat,
+ * or when he can walk on the tank's own square and on each square the move
+ * enters, not counting the blessed square of a boat or river road order.
+ * See lgmApplyStartOffset. */
+#define LGM_START_OFFSET 64
+
+/*********************************************************
+*NAME:          lgmApplyStartOffset
+*AUTHOR:        Andrew Roth
+*CREATION DATE: 12/10/26
+*LAST MODIFIED: 16/10/26
+*PURPOSE:
+*  Moves a builder who has just been put on his tank's
+*  centre LGM_START_OFFSET towards his destination. A
+*  destination no further off than that leaves him on the
+*  tank's centre: he reaches it in his first step anyway,
+*  and standing exactly on it would give lgmMoveAway no
+*  direction to work an angle from. Whole numbers only so
+*  every build walks him the same way.
+*
+*  The move is not made when it would cross into a map
+*  square he could not have stepped onto. A tank can sit
+*  within LGM_START_OFFSET of the edge of a square it can
+*  drive on and a builder cannot walk on, which by default
+*  is deep sea or river. Put down in there, lgmMoveAway
+*  finds no speed under him, moves him nowhere and turns
+*  him back the same tick. Left on the tank he does what he
+*  always did: his step into that square is refused and he
+*  slides along its edge. The squares asked about are the
+*  two lgmMoveAway asks about for one step, in its order:
+*  the one the y part enters, then the one the x part
+*  enters from there.
+*
+*  The blessed square is not counted as walkable here. This
+*  runs before lgmNewPrimaryRequest sets blessX/blessY, so
+*  for a boat order, or a road order on a river square, with
+*  the tank within LGM_START_OFFSET of that square's edge,
+*  the river square has no speed and the offset is refused,
+*  although lgmMoveAway would let him step onto it
+*  (lgmCheckBlessedSquare). He then starts on the tank's
+*  centre as he did before there was an offset. That is the
+*  safe direction: he loses at most the head start, and is
+*  never put somewhere he could not have walked to.
+*
+*  Nor is it made when he cannot walk on the tank's own
+*  square, which is a tank in a river with no boat. He has
+*  no speed there and turns back the same tick, and the
+*  move could lift him over the bank onto land he could not
+*  have reached. He starts on the tank's centre, as he did
+*  before there was an offset.
+*
+*  A tank on a boat is the exception to all of these.
+*  lgmMoveAway lets a builder near his boat walk at base
+*  speed over any square (lgmCheckTankBoat), so no square
+*  is asked about and he always gets the offset.
+*
+*ARGUMENTS:
+*  sim   - Pointer to the game sim structure
+*  lgman - Pointer to the lgm structure, already on the
+*          tank's centre with destX/destY set
+*  tnk   - Pointer to the tank structure
+*********************************************************/
+static void lgmApplyStartOffset(GameSim *sim, lgm *lgman, tank *tnk) {
+  int dx = (int) (*lgman)->destX - (int) (*lgman)->x;
+  int dy = (int) (*lgman)->destY - (int) (*lgman)->y;
+  /* The square of a WORLD distance can pass 2^32, so it alone is held in
+   * 64 bits. */
+  uint64_t distSquared = (uint64_t) ((int64_t) dx * dx) + (uint64_t) ((int64_t) dy * dy);
+  int dist = 0; /* whole part of the square root of distSquared */
+  int bit;
+
+  /* Built one bit at a time from the top, keeping each bit that does not
+   * take the square past distSquared. Both ends are WORLD values, so the
+   * distance is under 2^17 and seventeen bits cover it. */
+  for (bit = 1 << 16; bit != 0; bit >>= 1) {
+    uint64_t trial = (uint64_t) (dist | bit);
+    if (trial * trial <= distSquared) {
+      dist |= bit;
+    }
+  }
+  if (dist > LGM_START_OFFSET) {
+    WORLD newX = (WORLD) ((int) (*lgman)->x + dx * LGM_START_OFFSET / dist);
+    WORLD newY = (WORLD) ((int) (*lgman)->y + dy * LGM_START_OFFSET / dist);
+    BYTE bmx = (BYTE) ((*lgman)->x >> TANK_SHIFT_MAPSIZE);
+    BYTE bmy = (BYTE) ((*lgman)->y >> TANK_SHIFT_MAPSIZE);
+    BYTE newbmx = (BYTE) (newX >> TANK_SHIFT_MAPSIZE);
+    BYTE newbmy = (BYTE) (newY >> TANK_SHIFT_MAPSIZE);
+    bool canWalk = TRUE;
+
+    if (lgmCheckTankBoat(lgman, tnk, (WORLD) sim->rules.lgm_boat_leave_offset) == FALSE) {
+      if (mapGetManSpeed(sim, &sim->mp, &sim->pb, &sim->bs, bmx, bmy, (*lgman)->playerNum) == 0) {
+        canWalk = FALSE;
+      }
+      if (newbmy != bmy && mapGetManSpeed(sim, &sim->mp, &sim->pb, &sim->bs, bmx, newbmy, (*lgman)->playerNum) == 0) {
+        canWalk = FALSE;
+      }
+      if (newbmx != bmx && mapGetManSpeed(sim, &sim->mp, &sim->pb, &sim->bs, newbmx, newbmy, (*lgman)->playerNum) == 0) {
+        canWalk = FALSE;
+      }
+    }
+    if (canWalk == TRUE) {
+      (*lgman)->x = newX;
+      (*lgman)->y = newY;
+    }
+  }
+}
+
 /*********************************************************
 *NAME:          lgmNewPrimaryRequest
 *AUTHOR:        John Morrison
@@ -643,6 +765,10 @@ void lgmNewPrimaryRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE m
       (*lgman)->destX += MAP_SQUARE_MIDDLE;
       (*lgman)->destY += MAP_SQUARE_MIDDLE;
       tankGetWorld(tnk, &((*lgman)->x), &((*lgman)->y));
+      /* Before blessX/blessY are set below on purpose: the blessed river
+       * square of a boat or road order does not count as walkable, so the
+       * offset is refused next to it and he keeps the old start. */
+      lgmApplyStartOffset(sim, lgman, tnk);
       (*lgman)->state = LGM_STATE_GOING;
       (*lgman)->action = action;
       (*lgman)->inTank = FALSE;

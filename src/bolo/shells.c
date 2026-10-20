@@ -305,6 +305,40 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   }
 }
 
+/* A player's shell rewinds its targets to the view that player fired at.
+ * The rewind is measured from the second-newest snapshot his client has
+ * applied, which is the one it draws tanks at. Builders are not drawn at
+ * that one: his client draws every builder, his own and other players',
+ * from the newest snapshot it has applied, which is a snapshot (one game
+ * tick) later. So against any builder the rewind is this much shorter. The
+ * tank test in shellsCalcCollision keeps the full rewind.
+ *
+ * The one tick assumes the newest and second-newest applied snapshots are
+ * one game tick apart. A lost snapshot widens that gap, and the builder
+ * rewind is then one tick too far. That is what every builder rewind was
+ * before this rule, so a lost snapshot makes it no worse than it was.
+ *
+ * It is taken off only a rewind longer than one tick, so it never takes a
+ * rewind down to nothing. Single player sends no view tick and has no ping,
+ * so its rewind is always one and single player is unchanged. A bot is the
+ * same: view tick 0 and ping 0 give (0 + 20) / 20 = 1, so every bot shell is
+ * rewound one tick against tanks and builders, although the bot reads the
+ * server's present state. That is older than this rule and not changed
+ * here. A rewind measured as exactly one, a client on a LAN, also keeps its
+ * one against builders.
+ *
+ * Known small gap: a networked client that has not yet applied two snapshots
+ * sends no view tick the server can use, and the server falls back to its
+ * ping estimate (serverSimComputeLagCompTicks), which is two or more from
+ * 40 ms of ping. The tick is taken off that estimate too, though it was not
+ * measured from a snapshot. This happens when a client joins and again at
+ * the start of each round, because a new round starts the server's tick
+ * count from zero. It lasts until the client has applied two snapshots.
+ *
+ * A pill's shell is not rewound at all. It carries no rewind (owner NEUTRAL,
+ * compensationTicks 0) and tests tanks and builders where they are now. */
+#define SHELL_LGM_REWIND_LESS 1
+
 /*********************************************************
 *NAME:          shellsUpdate
 *AUTHOR:        John Morrison
@@ -463,9 +497,14 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 
 						if (position->compensationTicks > 0) {
 							rewindTicks = position->compensationTicks;
-						} else if (sim->isServer && position->owner == NEUTRAL) {
-							rewindTicks = sim->perPlayerCompTicks[lgmOwner];
+							/* Any builder: the shooter's client draws builders from the newest
+							 * snapshot, one newer than the one the rewind was measured from. */
+							if (rewindTicks > SHELL_LGM_REWIND_LESS) {
+								rewindTicks -= SHELL_LGM_REWIND_LESS;
+							}
 						} else {
+							/* A pill's shell (owner NEUTRAL, compensationTicks 0) tests the
+							 * builder where he is now. */
 							rewindTicks = 0;
 						}
 
@@ -550,9 +589,14 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 
 					if (position->compensationTicks > 0) {
 						rewindTicks = position->compensationTicks;
-					} else if (sim->isServer && position->owner == NEUTRAL) {
-						rewindTicks = sim->perPlayerCompTicks[lgmOwner];
+						/* Any builder: the shooter's client draws builders from the newest
+						 * snapshot, one newer than the one the rewind was measured from. */
+						if (rewindTicks > SHELL_LGM_REWIND_LESS) {
+							rewindTicks -= SHELL_LGM_REWIND_LESS;
+						}
 					} else {
+						/* A pill's shell (owner NEUTRAL, compensationTicks 0) tests the
+						 * builder where he is now. */
 						rewindTicks = 0;
 					}
 
@@ -797,10 +841,9 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 				if (compensationTicks > 0) {
 					/* Player shell: rewind target by shooter's delay */
 					rewindTicks = compensationTicks;
-				} else if (sim->isServer && owner == NEUTRAL) {
-					/* Pill shell: rewind target by the target's own delay */
-					rewindTicks = sim->perPlayerCompTicks[targetPlayer];
 				} else {
+					/* A pill's shell (owner NEUTRAL, compensationTicks 0) tests
+					 * the tank where it is now. */
 					rewindTicks = 0;
 				}
 

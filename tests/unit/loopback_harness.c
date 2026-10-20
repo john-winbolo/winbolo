@@ -221,14 +221,22 @@ bool loopbackHarnessAddClient(LoopbackHarness *h, const char *playerName) {
                                      &h->client2Up);
 }
 
-bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
-                          bool lobbyMode, const char *impairSpec,
-                          uint64_t seed) {
+bool loopbackHarnessStartPrepared(LoopbackHarness *h, const char *playerName,
+                                  bool lobbyMode, const char *impairSpec,
+                                  uint64_t seed, LoopbackSimSetup setup,
+                                  void *user) {
     if (h == NULL) return false;
     memset(h, 0, sizeof(*h));
 
     if (!loopbackBringUpServer(h, lobbyMode)) {
         return false;
+    }
+    /* Shape the world before anyone joins, so the joiner's map download
+     * carries the shaped map rather than a stream of map events. */
+    if (setup != NULL) {
+        threadsWaitForMutex();
+        setup(h, user);
+        threadsReleaseMutex();
     }
     if (!loopbackConnectClient(h, playerName, impairSpec, /*spectator*/ false)) {
         return false;
@@ -238,6 +246,13 @@ bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
      * regardless of any randomness consumed during setup above. */
     bolo_srand(seed);
     return true;
+}
+
+bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
+                          bool lobbyMode, const char *impairSpec,
+                          uint64_t seed) {
+    return loopbackHarnessStartPrepared(h, playerName, lobbyMode, impairSpec,
+                                        seed, NULL, NULL);
 }
 
 bool loopbackHarnessStartSpectator(LoopbackHarness *h, const char *playerName,
@@ -316,6 +331,34 @@ static bool loopbackPumpHandshaking(LoopbackHarness *h) {
     return false;
 }
 
+void loopbackHarnessSetPumpInterval(LoopbackHarness *h, uint32_t ms) {
+    if (h == NULL) return;
+    h->pumpIntervalMs = ms;
+    h->nextPumpAtMs   = (ms > 0) ? (uint64_t)SDL_GetTicks() : 0;
+}
+
+/* Hold the server tick of this pump to the paced deadline. It runs after the
+ * client has ticked and before the server does, so the wait is also the time
+ * the client's datagram has to reach the server's recv queue: paced that way,
+ * every pump's datagram is drained by this pump's server tick, and the pacing
+ * adds no delay of its own to the link. A pump that has already overrun (the
+ * machine was busy) does not try to win the time back — the deadline is
+ * re-anchored to now, so a late pump costs one late pump rather than a burst
+ * of unpaced ones. */
+static void loopbackPumpPace(LoopbackHarness *h) {
+    uint64_t now;
+    if (h->pumpIntervalMs == 0) return;
+    h->nextPumpAtMs += h->pumpIntervalMs;
+    now = (uint64_t)SDL_GetTicks();
+    if (now > h->nextPumpAtMs) {
+        h->nextPumpAtMs = now;
+        return;
+    }
+    while ((uint64_t)SDL_GetTicks() < h->nextPumpAtMs) {
+        SDL_Delay(1);
+    }
+}
+
 void loopbackHarnessPump(LoopbackHarness *h) {
     if (h == NULL) return;
     loopbackAdvanceVirtualClock();
@@ -354,6 +397,10 @@ void loopbackHarnessPump(LoopbackHarness *h) {
     } else {
         SDL_Delay(1);
     }
+    /* The pace wait sits here, after the client's send and before the
+     * server's drain, so the datagram's trip to the recv queue happens inside
+     * the wait rather than being pushed into the next pump. */
+    loopbackPumpPace(h);
     if (h->serverUp) serverInstanceTick(h->sim);
 }
 

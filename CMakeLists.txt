@@ -4148,6 +4148,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_build_harvest_stale.c
     tests/unit/test_lgm_request_valid.c
     tests/unit/test_lgm_quit_pill.c
+    tests/unit/test_lgm_start_offset.c
+    tests/unit/test_shell_rewind_rules.c
+    tests/unit/test_braindbg_round_dir.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
     tests/unit/test_sim_rules.c
@@ -4230,6 +4233,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # client, a joiner arriving on the changed table, a server-only rule
     # publishing nothing, and a new table clamping what the client holds.
     tests/unit/test_loopback_sim_rules.c
+    # A builder walled in behind his own tank while a pillbox shoots at it,
+    # over a lagged link and a clean one.
+    tests/unit/test_lgm_under_fire.c
     # The client's own check of the rules table before it keeps one.
     tests/unit/test_sim_rules_client_check.c
     # The sixteen pillbox pictures against a pill armour cap above 15.
@@ -4846,6 +4852,16 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # path. scratch_dir.c adds a pid and the test name beneath it and sweeps
     # its own subtree at exit.
     WB_TEST_SCRATCH_DIR="${CMAKE_BINARY_DIR}/test-scratch"
+    # Where a test that records a .wbv replay of its own run puts the file.
+    # Unlike the scratch root above it is NOT swept at exit and carries no pid:
+    # the whole point is that a person can open the last run in the LogViewer.
+    WB_TEST_REPLAY_DIR="${CMAKE_BINARY_DIR}/replays"
+    # Where a test that records a brain-debug session of its own run puts the
+    # session dir. BrainTest's Load Session browser globs "debug_sessions/*"
+    # relative to its working directory, and that is this same build dir, so a
+    # session written here is one the browser lists. Like the replay dir it is
+    # NOT swept at exit: the point is that a person can step through the run.
+    WB_TEST_DEBUG_SESSION_DIR="${CMAKE_BINARY_DIR}/debug_sessions"
     # Committed v1 .wbv fixture directory: the reader gate loads from here and
     # the on-demand capture (re)writes spectator_v1.wbv into it.
     WB_WBV_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wbv"
@@ -5809,6 +5825,11 @@ set(_unit_test_names
     lgm_request_quiet
     lgm_quit_drops_carried_pill
     lgm_unfield_drops_carried_pill
+    lgm_start_offset
+    shell_rewind_pill_shell_tank_present
+    shell_rewind_player_shell_tank_full
+    shell_rewind_player_shell_builder_one_less
+    braindbg_second_round_new_dir
     lgm_draw_own_matches_wire
     lgm_draw_centre_error_bounds
     jitter_buffer_grow
@@ -5878,6 +5899,12 @@ set(_unit_test_names
     tkexp_lgm_pairing
     loopback_join
     loopback_join_loss
+    # The builder walled in behind his own tank under pillbox fire. The
+    # lagged case was the bug report written as a test: it died every run
+    # until pill shells stopped being rewound, and one run in three until he
+    # started 64 units out. The nolag case is its control.
+    lgm_wall_behind_tank_under_fire_lagged
+    lgm_wall_behind_tank_under_fire_nolag
     loopback_password
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
