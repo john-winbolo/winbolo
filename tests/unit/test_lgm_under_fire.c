@@ -9,18 +9,32 @@
  * stands between the man and every shell, so the man walks out, builds, and
  * walks back. That is what happens in single player.
  *
- * Online, with a normal amount of lag, the same move used to kill the man.
- * This test writes down the player's expectation — the man lives — and runs the move
- * twice over the real loopback transport:
+ * Online, with a normal amount of lag, the same move used to kill the man
+ * every time. This test runs the move twice over the real loopback transport:
  *
  *   lgm_wall_behind_tank_under_fire_lagged  — delay=80,jitter=20, which the
  *       server measures as a round trip of about 220ms.
  *   lgm_wall_behind_tank_under_fire_nolag   — the same script on a clean
  *       link, the single-player control.
  *
- * The lagged case was written as the bug report and failed until pill shells
- * stopped being rewound; both cases now pass. If the control ever fails, lag
- * is not the cause and the two failures should be read together.
+ * Both cases assert that the man lives, builds the wall and comes home. Two
+ * things make that hold. A pill's shell is no longer tested against the
+ * tank, or the man, at the position each held a ping's worth of frames ago,
+ * which is what killed him every run on the lagged link: the burst and the
+ * kill were decided somewhere he was not. And he now starts LGM_START_OFFSET
+ * (64) out towards his square. A shell is tested against the hull after it
+ * has moved its 32 units for the tick, so a hit bursts up to 32 units
+ * inside the TANK_HIT_RADIUS circle, more by the tank's speed when it is
+ * driving at the pill, between 68 and 112 units from the tank's centre on
+ * the pill's side. With a 16-unit start he was 32 out on the far side when
+ * the first shell could arrive, 103 from the burst in a recorded run and
+ * inside MAP_SQUARE_MIDDLE (128), so whether he lived turned on which tick
+ * the order landed in; with 64 he is 80 out and 148 from the nearest burst.
+ *
+ * The blast list records every burst with his position as it found him, so
+ * a failure says which shell caught him and from how far. If the control
+ * ever fails, lag is not the cause and the two failures should be read
+ * together.
  *
  * What the script drives, and what it does not:
  *   - Every tank key, every shot and the build order itself go through the
@@ -29,9 +43,8 @@
  *     split server_sim_tick.c keys on; see luf_send_frame for the rate.
  *   - The build square is worked out from what the CLIENT can see of its own
  *     tank (clientSimGetMyTankMapPos), because that is what a player aims
- *     with. Both runs print the client's square beside the server's, and in
- *     both of them the two agree — so the lagged man is not being sent
- *     somewhere else, he is being sent to the same square and killed on it.
+ *     with. Both runs print the client's square beside the server's so a
+ *     failure can be read as a lag problem or an aiming problem.
  *   - Pumps are paced to one 20ms frame of wall clock each
  *     (loopbackHarnessSetPumpInterval), so the delay the impairment layer
  *     holds a datagram for and the delay the server reads off its own ping
@@ -64,7 +77,6 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 
 #include <SDL3/SDL.h>
 
@@ -96,9 +108,10 @@
 #define WB_TEST_REPLAY_DIR "replays"
 #endif
 
-/* Where the brain-debug session of each run is written: one dir per run under
- * <build dir>/debug_sessions, which is the folder BrainTest's Load Session
- * browser globs. Same fallback reasoning as the replay dir above. */
+/* Where the brain-debug session of each run is written: one dir per test
+ * under <build dir>/debug_sessions, which is the folder BrainTest's Load
+ * Session browser globs. Each run overwrites its own dir, as each run
+ * overwrites its own replay. Same fallback reasoning as the replay dir. */
 #ifndef WB_TEST_DEBUG_SESSION_DIR
 #define WB_TEST_DEBUG_SESSION_DIR "debug_sessions"
 #endif
@@ -116,10 +129,9 @@
  * (imgui_main_menu.cpp). lv_playersMakeScreenTanks (src/logviewer/players.c)
  * then adds a tank to the draw list only when its square is inside that box.
  *
- * So a replay of a fight outside the box shows an island and no tank, which is
- * exactly what the first recording of this test did: its arena was in open sea
- * at square (45,29). The arena is therefore placed inside the box, with a
- * square to spare on every side of the tank's drive. */
+ * So a replay of a fight outside the box shows an island and no tank. The
+ * arena is therefore placed inside the box, with a square to spare on every
+ * side of the tank's drive. */
 #define LUF_VIEW_X0     127   /* the box's top-left map square              */
 #define LUF_VIEW_SIZE    30   /* and its width and height, in squares       */
 #define LUF_VIEW_MID    (LUF_VIEW_X0 + LUF_VIEW_SIZE / 2)
@@ -134,7 +146,7 @@
 #define LUF_WATCH_MAX   130   /* the man's whole trip, with slack           */
 
 #define LUF_PUMP_MS      20   /* one pump = one 20ms frame of wall clock    */
-#define LUF_TRAIL_MAX   600   /* man-position samples kept for the printout */
+#define LUF_TRAIL_MAX   LUF_WATCH_MAX /* one man-position sample per watch frame */
 #define LUF_IMPACT_MAX   64   /* shell impacts kept for the printout        */
 
 typedef struct {
@@ -147,11 +159,121 @@ typedef struct {
 
 typedef struct {
     int   frame;              /* pumps since the build order was sent      */
-    int   manX, manY;         /* world position                            */
+    int   manX, manY;         /* the man as the blast found him            */
     int   impactX, impactY;   /* world position of the shell that landed   */
-    int   dist;               /* to the man, world units                   */
+    int   dist;               /* to the man, world units; -1 in the tank   */
+    int   tankX, tankY;       /* the tank as the blast found it            */
     BYTE  owner;
+    uint8_t outcome;          /* SHELL_OUTCOME_*: what the shell ended on  */
 } LufImpact;
+
+/* Every blast the server's shells made, taken from the sim's own shellDeath
+ * callback rather than from a guess at the shell list: the collision branch
+ * and the end-of-life branch of shellsUpdate both raise it, so a shell that
+ * flew past the tank and blew up at the end of its range is here beside the
+ * ones that hit. The callback is installed on the harness's ServerSim for the
+ * run and the one the UDP server had is called after it, so the owning client
+ * still hears its shell end. One ring for the process: the test runs one
+ * harness at a time. */
+#define LUF_BLAST_MAX 128
+typedef struct {
+    WORLD   x, y;
+    BYTE    owner;
+    uint8_t outcome;
+    /* The man and the tank as they stood when the shell ended, read inside
+     * the callback: shellsUpdate raises it before it runs the builder death
+     * test, so this is the position that test is about to use. */
+    WORLD   manX, manY;
+    bool    manOut;           /* out of the tank and alive                 */
+    WORLD   tankX, tankY;
+} LufBlast;
+static LufBlast s_lufBlasts[LUF_BLAST_MAX];
+static int      s_lufBlastCount;
+static lgm     *s_lufMan;     /* the builder the run watches               */
+static tank    *s_lufTank;    /* and his tank                              */
+static void (*s_lufPrevShellDeath)(void *ctx, uint32_t fireTick,
+                                   uint32_t serverFireTick, BYTE owner,
+                                   WORLD impactWX, WORLD impactWY,
+                                   uint8_t outcome);
+
+/* The builder's death, from the sim's lgmDied callback: the square he died
+ * on and who is credited. Set once; the watch stops on the first death. */
+static bool s_lufDeathSeen;
+static BYTE s_lufDeathMX, s_lufDeathMY, s_lufDeathKiller;
+static void (*s_lufPrevLgmDied)(void *ctx, BYTE victim, BYTE killer,
+                                BYTE mapX, BYTE mapY);
+
+static void luf_on_shell_death(void *ctx, uint32_t fireTick,
+                               uint32_t serverFireTick, BYTE owner,
+                               WORLD impactWX, WORLD impactWY,
+                               uint8_t outcome) {
+    if (s_lufBlastCount < LUF_BLAST_MAX) {
+        LufBlast *b = &s_lufBlasts[s_lufBlastCount];
+        memset(b, 0, sizeof(*b));
+        b->x       = impactWX;
+        b->y       = impactWY;
+        b->owner   = owner;
+        b->outcome = outcome;
+        if (s_lufMan != NULL && *s_lufMan != NULL) {
+            b->manX   = (*s_lufMan)->x;
+            b->manY   = (*s_lufMan)->y;
+            b->manOut = !(*s_lufMan)->inTank && !(*s_lufMan)->isDead;
+        }
+        if (s_lufTank != NULL && *s_lufTank != NULL) {
+            tankGetWorld(s_lufTank, &b->tankX, &b->tankY);
+        }
+        s_lufBlastCount++;
+    }
+    if (s_lufPrevShellDeath != NULL) {
+        s_lufPrevShellDeath(ctx, fireTick, serverFireTick, owner, impactWX,
+                            impactWY, outcome);
+    }
+}
+
+static void luf_on_lgm_died(void *ctx, BYTE victim, BYTE killer, BYTE mapX,
+                            BYTE mapY) {
+    if (!s_lufDeathSeen) {
+        s_lufDeathSeen   = true;
+        s_lufDeathMX     = mapX;
+        s_lufDeathMY     = mapY;
+        s_lufDeathKiller = killer;
+    }
+    if (s_lufPrevLgmDied != NULL) {
+        s_lufPrevLgmDied(ctx, victim, killer, mapX, mapY);
+    }
+}
+
+static void luf_spies_install(GameSim *gs, BYTE slot) {
+    s_lufBlastCount = 0;
+    s_lufDeathSeen  = false;
+    s_lufMan  = &gs->lgmen[slot];
+    s_lufTank = &gs->tanks[slot];
+    s_lufPrevShellDeath    = gs->callbacks.shellDeath;
+    s_lufPrevLgmDied       = gs->callbacks.lgmDied;
+    gs->callbacks.shellDeath = luf_on_shell_death;
+    gs->callbacks.lgmDied    = luf_on_lgm_died;
+}
+
+static void luf_spies_remove(GameSim *gs) {
+    s_lufMan  = NULL;
+    s_lufTank = NULL;
+    if (gs->callbacks.shellDeath == luf_on_shell_death) {
+        gs->callbacks.shellDeath = s_lufPrevShellDeath;
+    }
+    if (gs->callbacks.lgmDied == luf_on_lgm_died) {
+        gs->callbacks.lgmDied = s_lufPrevLgmDied;
+    }
+}
+
+static const char *luf_outcome_name(uint8_t outcome) {
+    switch (outcome) {
+    case SHELL_OUTCOME_EXPIRED:   return "end of range";
+    case SHELL_OUTCOME_IMPACT:    return "ground/building";
+    case SHELL_OUTCOME_TANK_HIT:  return "TANK HIT";
+    case SHELL_OUTCOME_TANK_KILL: return "TANK KILL";
+    default:                      return "?";
+    }
+}
 
 typedef struct {
     int  frame;
@@ -179,13 +301,8 @@ static bool luf_rect_base_free(GameSim *gs, int x0, int y0) {
 /* The arena's west end IS a start square, so the tank spawns where the move
  * begins and the parking below is a nudge rather than a jump across the sea.
  * The strip runs east from the start and is centred on its row, so the origin
- * is (startX, startY - height/2).
- *
- * An earlier version took the first base-free rectangle anywhere on the map.
- * On Everard Island that is open sea at square (45,29), miles from every
- * start: the tank had to be teleported there, and what the replay showed was
- * an island with a tank that appeared and then went somewhere nobody could
- * find. Building round a start fixes the picture as well as the test. */
+ * is (startX, startY - height/2). Building round a start also keeps the fight
+ * near the Log Viewer's opening box; see LUF_VIEW_X0. */
 static bool luf_rect_fits(int x0, int y0) {
     return x0 > 1 && y0 > 1 &&
            x0 + LUF_ARENA_W + 1 < MAP_ARRAY_SIZE &&
@@ -403,7 +520,9 @@ typedef struct {
 
 /* ── recording the run as a brain-debug session ──────────────────────────── */
 
-/* Open a BrainTest session for this run: debug_sessions/<tag>_<timestamp>/.
+/* Open a BrainTest session for this run: debug_sessions/<tag>/. The dir is
+ * one per test, not per run, and the files a previous run left in it are
+ * removed first, so a build dir holds the last run of each test and no more.
  *
  * There is no bot in this test and the recorder does not need one. It resolves
  * its output dir from a bot's Lua DEBUG_SESSION_DIR only when no dir was set
@@ -417,23 +536,17 @@ typedef struct {
  * server runs only when the game has bots. So this test drives the recorder
  * itself, once per pump, from luf_pump below. */
 static void luf_session_start(const LufConfig *cfg, char *dirOut, size_t cap) {
-    time_t    now = time(NULL);
-    struct tm tmv;
-    char      stamp[32];
+    char path[600];
 
-    dirOut[0] = '\0';
-#ifdef _WIN32
-    if (localtime_s(&tmv, &now) != 0) {
-        return;
-    }
-#else
-    if (localtime_r(&now, &tmv) == NULL) {
-        return;
-    }
-#endif
-    strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", &tmv);
-    snprintf(dirOut, cap, "%s/%s_%s", WB_TEST_DEBUG_SESSION_DIR,
-             cfg->sessionTag, stamp);
+    snprintf(dirOut, cap, "%s/%s", WB_TEST_DEBUG_SESSION_DIR, cfg->sessionTag);
+
+    /* The last run's files, if any. SDL_RemovePath takes a file or an empty
+     * dir, so the files go first; a dir that is not there is not an error. */
+    snprintf(path, sizeof(path), "%s/brainrec.btr", dirOut);
+    SDL_RemovePath(path);
+    snprintf(path, sizeof(path), "%s/braindbg_perf.log", dirOut);
+    SDL_RemovePath(path);
+    SDL_RemovePath(dirOut);
 
     SDL_CreateDirectory(WB_TEST_DEBUG_SESSION_DIR);  /* fine if it exists */
     if (!SDL_CreateDirectory(dirOut)) {
@@ -483,6 +596,10 @@ static void luf_record_start(LoopbackHarness *h, const LufConfig *cfg,
     snprintf(pathOut, pathCap, "%s/%s", WB_TEST_REPLAY_DIR, cfg->replayLeaf);
     SDL_CreateDirectory(WB_TEST_REPLAY_DIR);   /* fine if it already exists */
 
+    /* Process-wide, and FALSE is its resting value: the lobby log path sets
+     * it TRUE itself on entering a lobby (handleLobbyEnter, log.c) and the
+     * harness here runs with no lobby, so nothing is left changed for the
+     * tests that run after this one. */
     logSetLobbyMode(FALSE);
     if (logStart(pathOut, h->sim, 0, MAX_TANKS, FALSE) != TRUE) {
         fprintf(stderr, "  replay: COULD NOT open %s — the run goes on "
@@ -505,9 +622,11 @@ static void luf_record_stop(const char *path) {
 }
 
 /* Close the replay, then tear the harness down. Used on every path out of
- * luf_run, including the ones that fail. */
+ * luf_run, including the ones that fail. The spies come off first: the
+ * harness's own callbacks go back before the sim is destroyed. */
 #define LUF_STOP()                                                          \
     do {                                                                    \
+        if (h.sim != NULL) luf_spies_remove(&h.sim->sim);                   \
         luf_record_stop(replayPath);                                        \
         luf_session_stop(sessionDir);                                        \
         loopbackHarnessStop(&h);                                            \
@@ -537,7 +656,8 @@ static int luf_run(const LufConfig *cfg) {
     BYTE     pillSpeed = 0, pillArmour = 0;
     uint16_t pingMs = 0;
     bool     manDied = false, manReturned = false, wallBuilt = false;
-    int      shotsFired = 0, pillHits = 0;
+    bool     blastInReach = false;  /* some burst within kill range of him */
+    int      shotsFired = 0, pillHits = 0, pillImpacts = 0;
     BYTE     prevArmour = 0;
 
     memset(&arena, 0, sizeof(arena));
@@ -550,10 +670,14 @@ static int luf_run(const LufConfig *cfg) {
             (cfg->impair != NULL) ? cfg->impair : "clean",
             (unsigned long long)cfg->seed);
 
-    UT_ASSERT_MSG(loopbackHarnessStartPrepared(&h, "Builder", /*lobbyMode*/ false,
-                                               cfg->impair, cfg->seed,
-                                               luf_build_arena, &arena),
-                  "harness start failed (%s)", cfg->label);
+    if (!loopbackHarnessStartPrepared(&h, "Builder", /*lobbyMode*/ false,
+                                      cfg->impair, cfg->seed,
+                                      luf_build_arena, &arena)) {
+        /* A failed start may have brought the server and the threads up
+         * before it gave up; loopbackHarnessStop takes the partial state. */
+        LUF_STOP();
+        UT_FAIL("harness start failed (%s)", cfg->label);
+    }
     if (!arena.ok) {
         LUF_STOP();
         UT_FAIL("no start on the map has room for a %dx%d strip beside it",
@@ -577,8 +701,12 @@ static int luf_run(const LufConfig *cfg) {
     /* From here on one pump costs one frame of wall clock, so the impairment
      * spec's milliseconds and the server's ping arithmetic mean the same
      * number of frames. The join above ran unpaced: it has no frame clock to
-     * agree with, and pacing it would cost seconds for nothing. */
-    loopbackHarnessSetPumpInterval(&h, LUF_PUMP_MS);
+     * agree with, and pacing it would cost seconds for nothing. The clean
+     * control has no impairment to agree with either, so it stays unpaced
+     * throughout, as every other loopback test is. */
+    if (cfg->impair != NULL) {
+        loopbackHarnessSetPumpInterval(&h, LUF_PUMP_MS);
+    }
 
     slot = clientSimGetMyPlayerNum(h.cs);
     gs   = &h.sim->sim;
@@ -586,6 +714,7 @@ static int luf_run(const LufConfig *cfg) {
         LUF_STOP();
         UT_FAIL("no tank for the joined slot %u", (unsigned)slot);
     }
+    luf_spies_install(gs, slot);
     man = &gs->lgmen[slot];
 
     /* Face the tank at the pill, and stock it. The arena's west end is the
@@ -682,6 +811,13 @@ static int luf_run(const LufConfig *cfg) {
         UT_FAIL("%s: the pillbox was destroyed on the approach - nothing is "
                 "left to shoot at the man", cfg->label);
     }
+    if (pillHits < LUF_HEAT_HITS) {
+        LUF_STOP();
+        UT_FAIL("%s: the pillbox took %d hits in %d frames, %d needed to heat "
+                "it - the move is sending the man out under a heated pill's "
+                "fire, so an unheated one proves nothing", cfg->label,
+                pillHits, LUF_APPROACH_MAX, LUF_HEAT_HITS);
+    }
 
     /* Phase 2 - soak. Keep the throttle down and take shells from the heated
      * pill, but stop closing before the tank is pressed against it: the move
@@ -715,7 +851,6 @@ static int luf_run(const LufConfig *cfg) {
         }
     }
 
-
     /* Phase 3 — send the man to wall the square behind the tank. "Behind" is
      * read off the client's own view of its tank, which is what the player
      * aims with: one square back along the line to the pill, i.e. west. */
@@ -741,7 +876,8 @@ static int luf_run(const LufConfig *cfg) {
     pillArmour    = gs->pb->item[0].armour;
     pingMs        = h.sim->playerPing[slot];
 
-    shellsDebugHitLogClear();
+    s_lufBlastCount = 0;
+    s_lufDeathSeen  = false;
     luf_send_frame(&h, slot, &inTick, INPUT_BTN_ACCEL, 0,
                    (uint8_t)(LGM_BUILDING_REQUEST + 1), buildX, buildY);
     luf_pump(&h);
@@ -750,16 +886,10 @@ static int luf_run(const LufConfig *cfg) {
     /* Phase 4 — watch him. Every frame: where he is, and any shell that has
      * just landed, with its distance to him. */
     for (i = 1; i <= LUF_WATCH_MAX; i++) {
-        int logCount;
-        /* Where the man stood going INTO this frame. The shell that kills him
-         * lands inside it, and death moves his record off the square he was
-         * standing on, so the distance that decided his fate is the one to the
-         * position he held when the shell arrived — not the one he holds after
-         * it. A man still in the tank has no position of his own at all. */
-        bool preLive = !(*man)->inTank && !(*man)->isDead;
-        int  preManX = (int)(*man)->x;
-        int  preManY = (int)(*man)->y;
-
+        /* The man's position beside each blast is the one the shellDeath
+         * spy read as the shell ended, which is the position the builder
+         * death test is about to use: death moves his record off the square
+         * he stood on, so a position read after the pump would be wrong. */
         luf_send_frame(&h, slot, &inTick, INPUT_BTN_ACCEL, 0, 0, 0, 0);
         luf_pump(&h);
         luf_restock(&h, slot);
@@ -775,24 +905,24 @@ static int luf_run(const LufConfig *cfg) {
             trailCount++;
         }
 
-        logCount = shellsDebugHitLogCount();
-        while (impactCount < logCount && impactCount < LUF_IMPACT_MAX) {
-            int wx = 0, wy = 0;
-            uint32_t t = 0;
-            uint8_t owner = 0;
-            if (shellsDebugHitLogGet(impactCount, &wx, &wy, &t, &owner) <= 0) {
-                break;
-            }
+        while (impactCount < s_lufBlastCount && impactCount < LUF_IMPACT_MAX) {
+            const LufBlast *b = &s_lufBlasts[impactCount];
             impacts[impactCount].frame   = i;
-            impacts[impactCount].manX    = preManX;
-            impacts[impactCount].manY    = preManY;
-            impacts[impactCount].impactX = wx;
-            impacts[impactCount].impactY = wy;
-            impacts[impactCount].dist    = preLive
-                ? luf_dist(wx, wy, preManX, preManY)
+            impacts[impactCount].manX    = (int)b->manX;
+            impacts[impactCount].manY    = (int)b->manY;
+            impacts[impactCount].impactX = (int)b->x;
+            impacts[impactCount].impactY = (int)b->y;
+            impacts[impactCount].dist    = b->manOut
+                ? luf_dist((int)b->x, (int)b->y, (int)b->manX, (int)b->manY)
                 : -1;
-            impacts[impactCount].owner   = owner;
+            impacts[impactCount].tankX   = (int)b->tankX;
+            impacts[impactCount].tankY   = (int)b->tankY;
+            impacts[impactCount].owner   = b->owner;
+            impacts[impactCount].outcome = b->outcome;
             impactCount++;
+            if (b->owner == NEUTRAL) {
+                pillImpacts++;
+            }
         }
 
         if ((*man)->isDead) {
@@ -838,34 +968,65 @@ static int luf_run(const LufConfig *cfg) {
             MAP_SQUARE_MIDDLE);
     for (i = 0; i < impactCount; i++) {
         if (impacts[i].dist < 0) {
-            fprintf(stderr, "      %3d: %5d,%5d owner=%u -> man in the tank\n",
+            fprintf(stderr, "      %3d: %5d,%5d owner=%u %-15s -> man in the "
+                            "tank (tank at %5d,%5d)\n",
                     impacts[i].frame, impacts[i].impactX,
-                    impacts[i].impactY, (unsigned)impacts[i].owner);
+                    impacts[i].impactY, (unsigned)impacts[i].owner,
+                    luf_outcome_name(impacts[i].outcome),
+                    impacts[i].tankX, impacts[i].tankY);
             continue;
         }
-        fprintf(stderr, "      %3d: %5d,%5d owner=%u -> %4d (man at %5d,%5d) "
-                        "%s\n",
+        fprintf(stderr, "      %3d: %5d,%5d owner=%u %-15s -> %4d (man at "
+                        "%5d,%5d, tank at %5d,%5d) %s\n",
                 impacts[i].frame, impacts[i].impactX, impacts[i].impactY,
-                (unsigned)impacts[i].owner, impacts[i].dist,
-                impacts[i].manX, impacts[i].manY,
+                (unsigned)impacts[i].owner, luf_outcome_name(impacts[i].outcome),
+                impacts[i].dist, impacts[i].manX, impacts[i].manY,
+                impacts[i].tankX, impacts[i].tankY,
                 (impacts[i].dist <= MAP_SQUARE_MIDDLE) ? "<= KILL RADIUS" : "");
     }
+    if (s_lufDeathSeen) {
+        fprintf(stderr, "    death record: the man died on square (%u,%u), "
+                        "credited to %s\n",
+                (unsigned)s_lufDeathMX, (unsigned)s_lufDeathMY,
+                (s_lufDeathKiller == NEUTRAL) ? "the pillbox (NEUTRAL)"
+                                              : "a player");
+    }
+    for (i = 0; i < impactCount; i++) {
+        if (impacts[i].dist >= 0 && impacts[i].dist <= MAP_SQUARE_MIDDLE) {
+            blastInReach = true;
+        }
+    }
     fprintf(stderr, "    outcome: %s (wall built: %s)\n",
-            manDied ? "THE MAN DIED" :
+            manDied ? (blastInReach ? "THE MAN DIED, to a burst in reach"
+                                    : "THE MAN DIED with no burst in reach") :
             (manReturned ? "the man built and came home" :
                            "still out when the watch ran out"),
             wallBuilt ? "yes" : "no");
 
     LUF_STOP();
 
+    UT_ASSERT_MSG(pillImpacts > 0,
+                  "%s: no pillbox shell landed while the builder was out - "
+                  "the move is a builder under a heated pill's fire, so a "
+                  "quiet pill proves nothing", cfg->label);
+    /* The blast list above says which shell caught him and from how far. A
+     * death with no burst within MAP_SQUARE_MIDDLE of where he stood is a
+     * kill decided at a position he did not hold, the rewind bug; one with
+     * a burst in reach means the start offset did not put him clear. */
     UT_ASSERT_MSG(!manDied,
                   "%s: the builder was killed walling the square behind his own "
-                  "tank — the tank body was between him and the pillbox and the "
-                  "player expects him to live", cfg->label);
-    UT_ASSERT_MSG(wallBuilt || manReturned,
-                  "%s: the builder neither died nor did the work — the script "
-                  "did not reproduce the move, so the run proves nothing",
-                  cfg->label);
+                  "tank (%s) - the tank body was between him and the pillbox "
+                  "and the player expects him to live", cfg->label,
+                  blastInReach ? "a burst within reach of where he stood"
+                               : "NO burst within reach of where he stood");
+    UT_ASSERT_MSG(wallBuilt,
+                  "%s: the builder neither died nor built the wall in %d "
+                  "frames - the script did not reproduce the move, so the "
+                  "run proves nothing", cfg->label, LUF_WATCH_MAX);
+    UT_ASSERT_MSG(manReturned,
+                  "%s: the builder built the wall but was still out when the "
+                  "watch ran out - the walk home is under the same fire and "
+                  "is part of the move", cfg->label);
     return 0;
 }
 

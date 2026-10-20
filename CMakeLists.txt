@@ -4453,8 +4453,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tkExplosionUpdate's lgm/tank index pairing over the compacted per-player
     # arrays, plus the small-explosion sweep's off-by-one.
     tests/unit/test_tkexp_lgm_pairing.c
-    # A shell that hits a tank blows up at the hit tank's present centre, not
-    # at the shell, which a lag-compensated test leaves behind the tank.
+    # A shell that hits a tank blows up at the hit tank's present position
+    # plus the shell's offset from the rewound hit point, not at the shell,
+    # which a lag-compensated test leaves behind the tank.
     tests/unit/test_tank_blast_at_tank.c
     tests/unit/test_teleport_clears_rewind.c
     tests/unit/test_shell_rewind_rules.c
@@ -5954,6 +5955,7 @@ set(_unit_test_names
     teleport_shell_hits_new_place
     teleport_rewind_refills
     teleport_builder_rewind_record
+    teleport_parachute_erases_builder_record
     slot_join_erases_tank_rewind_record
     slot_join_shell_hits_new_tank
     slot_join_rewind_refills
@@ -5964,12 +5966,13 @@ set(_unit_test_names
     shell_rewind_builder_one_less
     loopback_join
     loopback_join_loss
-    loopback_password
     # The builder walled in behind his own tank under pillbox fire. The
-    # lagged case was the bug report written as a test: it failed until pill
-    # shells stopped being rewound. The nolag case is its control.
+    # lagged case was the bug report written as a test: it died every run
+    # until pill shells stopped being rewound, and one run in three until he
+    # started 64 units out. The nolag case is its control.
     lgm_wall_behind_tank_under_fire_lagged
     lgm_wall_behind_tank_under_fire_nolag
+    loopback_password
     # The server rewinding a builder when a shell goes off near him: a lagged
     # shooter, its clean-link control, the rewind window's bound, and the
     # pill shell's rewind by the man owner's lag.

@@ -28,6 +28,9 @@
 #include "global.h"
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* returnToLobbyTicks, countdownTicks */
+#include "client_sim.h"            /* clientSimIsInLobby */
+#include "client_net.h"            /* clientSimGetConnectState */
+#include "client_connect_state.h"
 #include "brain_record.h"
 #include "threads.h"
 #include "test_harness.h"
@@ -70,11 +73,29 @@ static void brdRemoveBlock(const char *dir) {
     SDL_RemovePath(dir);
 }
 
+static bool brdIsConnected(LoopbackHarness *h, void *user) {
+    (void)user;
+    return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED ||
+           clientSimIsInLobby(h->cs);
+}
+
 static void brdRecorderOff(void) {
     brainRecordEndGame();
     brainRecordSetEnabled(false);
     brainRecordSetSessionDir(NULL);
 }
+
+/* Every way out of the case, the failing ones included: the recorder is
+ * process-wide and every other test in this binary runs in the same process,
+ * so it is disarmed, the harness is torn down, and the block dirs this case
+ * made are removed. */
+#define BRD_STOP()                                                          \
+    do {                                                                    \
+        brdRecorderOff();                                                   \
+        loopbackHarnessStop(&h);                                            \
+        brdRemoveBlock(dir1);                                               \
+        if (strcmp(dir1, dir2) != 0) brdRemoveBlock(dir2);                  \
+    } while (0)
 
 int run_braindbg_second_round_new_dir(void) {
     LoopbackHarness h;
@@ -84,56 +105,79 @@ int run_braindbg_second_round_new_dir(void) {
     int i;
 
     memset(&h, 0, sizeof(h));
-    UT_ASSERT(loopbackHarnessStart(&h, "Recorder", /*lobbyMode*/ true, NULL,
-                                   /*seed*/ 5151));
-    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, 400, NULL, NULL) > 0,
-                  "the client never finished joining");
+    if (!loopbackHarnessStart(&h, "Recorder", /*lobbyMode*/ true, NULL,
+                              /*seed*/ 5151)) {
+        BRD_STOP();
+        UT_FAIL("harness start failed");
+    }
+    if (loopbackHarnessPumpUntil(&h, 400, brdIsConnected, NULL) < 0) {
+        BRD_STOP();
+        UT_FAIL("the client never finished joining");
+    }
 
     /* Armed with no dir named: the lifecycle owns the blocks. */
     brainRecordSetSessionDir(NULL);
     brainRecordSetEnabled(true);
 
     /* Round 1. */
-    UT_ASSERT_MSG(loopbackHarnessTriggerGameStart(&h),
-                  "the client's slot was never ready for game start");
-    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, 600, brdIsRunning, NULL) > 0,
-                  "round 1 never reached the running state");
+    if (!loopbackHarnessTriggerGameStart(&h)) {
+        BRD_STOP();
+        UT_FAIL("the client's slot was never ready for game start");
+    }
+    if (loopbackHarnessPumpUntil(&h, 600, brdIsRunning, NULL) < 0) {
+        BRD_STOP();
+        UT_FAIL("round 1 never reached the running state");
+    }
     for (i = 0; i < 2; i++) loopbackHarnessPump(&h);
 
     dir = brainRecordGetSessionDir();
     if (dir == NULL && !brainRecordIsEnabled()) {
         fprintf(stderr, "  less than 50 GB free: the lifecycle did not start "
                         "a recording, nothing to check\n");
-        brdRecorderOff();
-        loopbackHarnessStop(&h);
+        BRD_STOP();
         return 0;
     }
-    UT_ASSERT_MSG(dir != NULL, "round 1 opened no recording block");
+    if (dir == NULL) {
+        BRD_STOP();
+        UT_FAIL("round 1 opened no recording block");
+    }
     SDL_strlcpy(dir1, dir, sizeof(dir1));
 
     brdEndRound(&h);
-    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, 200, brdIsNotRunning, NULL) > 0,
-                  "round 1 never ended");
+    if (loopbackHarnessPumpUntil(&h, 200, brdIsNotRunning, NULL) < 0) {
+        BRD_STOP();
+        UT_FAIL("round 1 never ended");
+    }
     dir = brainRecordGetSessionDir();
-    UT_ASSERT_MSG(dir == NULL,
-                  "round 1's dir %s is still set after game over: round 2 "
-                  "will take it for a dir the host named and record over "
-                  "round 1", dir ? dir : "");
+    if (dir != NULL) {
+        BRD_STOP();
+        UT_FAIL("round 1's dir %s is still set after game over: round 2 "
+                "will take it for a dir the host named and record over "
+                "round 1", dir1);
+    }
 
+    /* The hold in game over counts down on countdownTicks
+     * (serverSimHandleGameOver, server_sim_tick.c); one tick ends it. */
     threadsWaitForMutex();
     h.sim->countdownTicks = 1;
     threadsReleaseMutex();
-    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, 240, brdIsLobby, NULL) > 0,
-                  "round 1 never returned to the lobby");
+    if (loopbackHarnessPumpUntil(&h, 240, brdIsLobby, NULL) < 0) {
+        BRD_STOP();
+        UT_FAIL("round 1 never returned to the lobby");
+    }
 
     /* The block name has one-second resolution. */
     SDL_Delay(1100);
 
     /* Round 2. */
-    UT_ASSERT_MSG(loopbackHarnessTriggerGameStart(&h),
-                  "the client's slot was never ready for the second start");
-    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, 600, brdIsRunning, NULL) > 0,
-                  "round 2 never reached the running state");
+    if (!loopbackHarnessTriggerGameStart(&h)) {
+        BRD_STOP();
+        UT_FAIL("the client's slot was never ready for the second start");
+    }
+    if (loopbackHarnessPumpUntil(&h, 600, brdIsRunning, NULL) < 0) {
+        BRD_STOP();
+        UT_FAIL("round 2 never reached the running state");
+    }
     for (i = 0; i < 2; i++) loopbackHarnessPump(&h);
 
     dir = brainRecordGetSessionDir();
@@ -142,11 +186,12 @@ int run_braindbg_second_round_new_dir(void) {
     /* Close round 2 the same way, so the lifecycle's block state is back
      * where it started for whatever runs next in this process. */
     brdEndRound(&h);
-    loopbackHarnessPumpUntil(&h, 200, brdIsNotRunning, NULL);
-    brdRecorderOff();
-    loopbackHarnessStop(&h);
-    brdRemoveBlock(dir1);
-    if (strcmp(dir1, dir2) != 0) brdRemoveBlock(dir2);
+    if (loopbackHarnessPumpUntil(&h, 200, brdIsNotRunning, NULL) < 0) {
+        BRD_STOP();
+        UT_FAIL("round 2 never ended: the lifecycle's block flag stays set "
+                "for the rest of this process");
+    }
+    BRD_STOP();
 
     UT_ASSERT_MSG(dir2[0] != '\0', "round 2 opened no recording block");
     UT_ASSERT_MSG(strcmp(dir1, dir2) != 0,

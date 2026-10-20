@@ -42,6 +42,29 @@
         }                                                                   \
     } while (0)
 
+/* UT_ASSERT and UT_ASSERT_MSG for a test that has a sim open and one `done:`
+ * label that tears it down: a failure sets rc to 1 and jumps there instead of
+ * returning past the cleanup. The function must declare `int rc = 0`. */
+#define UT_CHECK(cond)                                                      \
+    do {                                                                    \
+        if (!(cond)) {                                                      \
+            fprintf(stderr, "FAIL %s:%d: assertion failed: %s\n",           \
+                    __FILE__, __LINE__, #cond);                             \
+            rc = 1;                                                         \
+            goto done;                                                      \
+        }                                                                   \
+    } while (0)
+
+#define UT_CHECK_MSG(cond, fmt, ...)                                        \
+    do {                                                                    \
+        if (!(cond)) {                                                      \
+            fprintf(stderr, "FAIL %s:%d: %s — " fmt "\n",                   \
+                    __FILE__, __LINE__, #cond, ##__VA_ARGS__);              \
+            rc = 1;                                                         \
+            goto done;                                                      \
+        }                                                                   \
+    } while (0)
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -2195,7 +2218,7 @@ int run_lgm_quit_drops_carried_pill(void);
  * of a seat that was not on the field. */
 int run_lgm_unfield_drops_carried_pill(void);
 
-/* Where a builder starts when he is sent out (test_lgm_start_offset.c): 16
+/* Where a builder starts when he is sent out (test_lgm_start_offset.c): 64
  * world units from the tank's centre towards the square he was sent to,
  * worked out in whole numbers, and on the tank's centre when that square's
  * centre is no further off than that. */
@@ -2363,13 +2386,13 @@ int run_error_smoothing(void);
  * client endpoint. Convergence-bounded, never exact-trace. */
 int run_loopback_join(void);
 int run_loopback_join_loss(void);
-int run_loopback_password(void);
 /* The builder walled in behind his own tank while a heated pillbox shoots at
  * it (test_lgm_under_fire.c). The player expects the tank body to shield the
  * man; the lagged case is the bug report and failed until pill shells stopped
  * being rewound, the clean-link case is its control. */
 int run_lgm_wall_behind_tank_under_fire_lagged(void);
 int run_lgm_wall_behind_tank_under_fire_nolag(void);
+int run_loopback_password(void);
 /* The server rewinding a builder to where the firing side saw him when a
  * shell goes off near him (test_lgm_kill_rewind.c): a lagged shooter, its
  * clean-link control, the rewind window's bound, and a pill shell rewound by
@@ -2834,9 +2857,9 @@ int run_ping_kick_clears_strikes_on_disconnect(void);
  * (test_tkexp_lgm_pairing.c). */
 int run_tkexp_lgm_pairing(void);
 
-/* A shell that hits a tank blows up at the hit tank's present centre, not at
- * the shell, which a lag-compensated test leaves behind the tank
- * (test_tank_blast_at_tank.c). */
+/* A shell that hits a tank blows up at the hit tank's present position plus
+ * the shell's offset from the rewound hit point, not at the shell, which a
+ * lag-compensated test leaves behind the tank (test_tank_blast_at_tank.c). */
 int run_tank_blast_rewound_hit_at_present_tank(void);
 int run_tank_blast_kill_starts_at_present_tank(void);
 int run_tank_blast_zero_rewind_unchanged(void);
@@ -2853,6 +2876,7 @@ int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
 int run_teleport_rewind_refills(void);
 int run_teleport_builder_rewind_record(void);
+int run_teleport_parachute_erases_builder_record(void);
 int run_slot_join_erases_tank_rewind_record(void);
 int run_slot_join_shell_hits_new_tank(void);
 int run_slot_join_rewind_refills(void);
