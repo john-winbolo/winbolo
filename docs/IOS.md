@@ -103,15 +103,23 @@ however it exits.
 
 ## What the iOS target is
 
-A client that plays single player against bots, joins Internet and LAN
-games, records and replays rounds, and edits maps. It links:
+A client that plays single player against bots, joins and hosts Internet
+and LAN games, and records and replays rounds. It also carries the map
+editor, whose button is hidden on iOS until its touch input works. It
+links:
 
 - the sim and its runtime: `bolo_static`, `scenario_static`,
   `server_sim_static`, `server_round_log_static`, `bot_brains_static`,
   `threads_static`;
+- the server runtime the desktop hosts with, `server_static`: the UDP
+  server and `server_lifecycle.c`, through which single player runs too;
 - WinBolo.net: `winbolonet_core` built with `src/winbolonet/http_nsurl.m`
-  (NSURLSession) in place of `http.c`, since iOS has no libcurl, and
-  `winbolonet_client`;
+  (NSURLSession) in place of `http.c`, since iOS has no libcurl,
+  `winbolonet_client` and `winbolonet_server`. Requests are signed with the
+  key in `src/winbolonet/wbn_signing_key.h`. The committed file is a
+  placeholder, so WinBolo.net refuses a build's writes (HTTP 401 "Invalid
+  signature") unless the real file has been put in its place locally, in
+  each checkout or worktree;
 - voice: Opus and SpeexDSP, with the same `WINBOLO_VOICE` switches as the
   desktop;
 - libplum for NAT port mapping (`BOLO_PORTMAP`), as on the desktop. On iOS
@@ -125,17 +133,48 @@ games, records and replays rounds, and edits maps. It links:
 What it does not have, on purpose:
 
 - no Steam (`src/steam/steam_wrapper_stub.c`);
-- no hosting of network games: `server_static` and `winbolonet_server` are
-  not linked, and `src/gui/ios/ios_stubs.c` gives the server-side calls the
-  sim and `gamefront.c` still make bodies that do nothing. Its
-  `serverInstanceStartup` and `serverInstanceTick` run the local
-  single-player server through `serverSimLocalTick`;
-- no GeoIP country flags (the `geoLookup*` calls are stubbed).
+- no local GeoIP lookup: `geolookup.c` builds its stub half, as iOS has no
+  maxminddb, so LAN rows in the game finder have no country flag (the
+  desktop's have none either: the database has no country for private
+  addresses). Internet rows and players in a game take theirs from the
+  tracker and WinBolo.net;
+- no desktop windowing: `src/gui/ios/ios_stubs.c` gives the saved window
+  position and size, the macOS menu bar and the modal log viewer's quit
+  question bodies that do nothing.
 
 Per-file T2 grants on `WinBoloIOS` (see "Per-file T2 grants" in
 `docs/ARCHITECTURE.md`): `src/bolo/transport_udp_client.c`,
-`src/gui/sdl3/bg_game.c`, `src/gui/ios/ios_stubs.c`, and the embedded map
-editor's `mapeditor.c`, `mapeditor_export.c` and `mapeditor_validate.c`.
+`src/gui/sdl3/bg_game.c`, and the embedded map editor's `mapeditor.c`,
+`mapeditor_export.c` and `mapeditor_validate.c`.
+
+## Hosting a game on iOS
+
+New Game on either tab of the game finder hosts a game, through the same
+`gameFrontSetupServer` and lobby as the desktop. The host joins its own
+server at 127.0.0.1. The plan and its record are `plans/ios-hosting.md`,
+kept outside git. What differs on iOS:
+
+- The LAN advertisement goes through Bonjour: `mdns_advertise.c` hands the
+  instance name, port and TXT pairs to `DNSServiceRegister` in
+  `ios_discovery.m` (`mdnsAdvertiseSetPlatform`), since its own multicast
+  socket needs the entitlement.
+- An Internet game registers on WinBolo.net and the tracker at once, as on
+  the desktop. On mobile data the host is first asked whether to host
+  anyway (`gameFrontNetPath`, filled from `NWPathMonitor` in
+  `ios_netpath.m`). The lobby's reachability badge says whether players can
+  reach the game.
+- Port mapping: see libplum above. Where nothing maps a port, players reach
+  the game through the tracker's hole punch.
+- The Hosting tab in Settings has no folder rows; uploads, mods, map
+  uploads and logs go in the default folders in the app's storage.
+- In the background the app asks iOS for extra time and keeps the game
+  running for the other players. With 5 s left the server is shut down
+  (`IOS_HOST_BACKGROUND_END_S`), and its WinBolo.net calls get a deadline
+  1.5 s before the time runs out (`httpSetDeadline`), so a slow WinBolo.net
+  leaves the session open instead of iOS ending the app. The Simulator
+  never limits background time.
+- Every hosted game has been tried only in the Simulator so far, which
+  shares the Mac's network and does not apply iOS's local network rules.
 
 ## Files on the phone
 
