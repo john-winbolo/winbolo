@@ -38,7 +38,7 @@
  * kills him only at the nearest burst exactly. WinBolo 1.17 and 2.1 had the
  * same shape of window. An offset of 64 would keep him clear in all three
  * cases.
- * The cases pass because the script's order does not land in it: in the
+ * The cases pass because the test's order does not land in it: in the
  * runs made when the offset went back to 16 the nearest burst was 215 from
  * him on the lagged link and 268 on the clean one.
  *
