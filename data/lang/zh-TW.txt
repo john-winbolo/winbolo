@@ -2832,3 +2832,6 @@ STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=決定全螢幕時坦克、碉堡�
 
 # The iPad's Full Screen choice: the full screen map or the classic screen
 STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=地圖佔滿螢幕，狀態、建造和新聞面板顯示在其上，\n用觸控遊玩時觸控按鈕也顯示在其上。\n關閉則顯示經典畫面。下次啟動時仍會記住。
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=此裝置正在使用行動數據。以行動數據主持的網際網路遊戲很可能無法正常進行：\n行動網路很少讓其他玩家連線到此裝置。使用 Wi-Fi 成功的機會大得多。\n\n仍要主持嗎？

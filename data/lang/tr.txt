@@ -2834,3 +2834,6 @@ STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Tam ekranda tank, bunker ve üs ı
 
 # The iPad's Full Screen choice: the full screen map or the classic screen
 STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Harita ekranı doldurur; durum, inşa ve haber panelleri üstünde,\ndokunarak oynadığınızda dokunmatik kontroller de üstünde gösterilir.\nKapalıyken klasik ekran gösterilir. Bir sonraki sefer için hatırlanır.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=Bu cihaz mobil veri kullanıyor. Mobil veriyle barındırılan bir İnternet\noyunu büyük olasılıkla çalışmaz: mobil ağlar diğer oyuncuların cihaza\nulaşmasına nadiren izin verir. Wi-Fi ile çalışma olasılığı çok daha yüksektir.\n\nYine de barındırılsın mı?

@@ -2836,3 +2836,6 @@ STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Hur mycket av kartan som syns geno
 
 # The iPad's Full Screen choice: the full screen map or the classic screen
 STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Kartan fyller skärmen, med status-, bygg- och nyhetspanelerna ovanpå,\noch pekkontrollerna när du spelar med pekskärmen.\nAv visar den klassiska skärmen. Sparas till nästa gång.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=Den här enheten använder mobildata. Ett internetspel som körs över\nmobildata kommer troligen inte att fungera: mobilnät låter sällan andra\nspelare nå enheten. Med wifi är chansen mycket större.\n\nVara värd ändå?

@@ -2832,3 +2832,6 @@ STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Kolik z mapy prosvítá skrz mří
 
 # The iPad's Full Screen choice: the full screen map or the classic screen
 STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Mapa vyplní obrazovku a panely stavu, stavění a zpráv jsou přes ni,\nspolu s dotykovým ovládáním, když hrajete dotykem.\nVypnuto zobrazí klasickou obrazovku. Zapamatováno pro příště.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=Toto zařízení je na mobilních datech. Internetová hra hostovaná přes mobilní\ndata pravděpodobně nebude fungovat: mobilní sítě ostatním hráčům jen zřídka\numožní se k zařízení připojit. S Wi-Fi je mnohem větší šance.\n\nPřesto hostovat?

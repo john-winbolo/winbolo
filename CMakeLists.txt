@@ -1372,11 +1372,17 @@ target_sources(WinBoloIOS PRIVATE src/gui/sdl3/dialogs/imgui_connecting.cpp)
 target_sources(WinBoloIOS PRIVATE src/gui/ios/ios_discovery.m)
 set_source_files_properties(src/gui/ios/ios_discovery.m
     PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+# Which network the device is on (NWPathMonitor), for gamefront.c's warning
+# before an Internet game is hosted on mobile data.
+target_sources(WinBoloIOS PRIVATE src/gui/ios/ios_netpath.m)
+set_source_files_properties(src/gui/ios/ios_netpath.m
+    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
     nanosvg stb_image utf8proc zlibstatic minizip cjson
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
     "-framework AVFoundation"
     "-framework GameController"
+    "-framework Network"
 )
 
 target_compile_options(WinBoloIOS PRIVATE -fcommon)

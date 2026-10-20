@@ -2832,3 +2832,6 @@ STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=전체 화면에서 탱크·토치
 
 # The iPad's Full Screen choice: the full screen map or the classic screen
 STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=지도가 화면을 채우고, 상태·건설·뉴스 패널이 그 위에 표시되며\n터치로 플레이할 때는 터치 컨트롤도 함께 표시됩니다.\n끄면 클래식 화면이 표시됩니다. 다음에도 기억됩니다.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=이 기기는 모바일 데이터를 사용 중입니다. 모바일 데이터로 호스트한\n인터넷 게임은 아마 작동하지 않을 것입니다. 모바일 네트워크에서는 다른\n플레이어가 이 기기에 접속할 수 있는 경우가 드뭅니다. Wi-Fi에서는\n작동할 가능성이 훨씬 높습니다.\n\n그래도 호스트하시겠습니까?

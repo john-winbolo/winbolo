@@ -47,6 +47,7 @@
 #include "../sdl3/luabrainshandler.h"
 #include "../sdl3/dialog_backend.h"
 #include "ios_discovery.h"
+#include "ios_netpath.h"
 #include "../sdl3/dialogs/imgui_messagebox.h"
 #include "../mobile/touch_input.h"
 #include "../ui_mode.h"
@@ -345,6 +346,9 @@ int main(int argc, char *argv[]) {
        socket the desktop uses unless the app holds Apple's multicast
        entitlement. */
     iosDiscoveryInstall();
+    /* Which network the device is on, so the host is warned before hosting
+       an Internet game on mobile data. */
+    iosNetPathInstall();
     /* The move to and from the background reaches the game only through an
        event watch (see iosLifecycleWatch). */
     s_resumeEventType = SDL_RegisterEvents(1);

@@ -457,6 +457,17 @@ static bool s_isLanOnly = FALSE;
  * moment the outer loop notices it. */
 static bool s_joinAttemptFailed = FALSE;
 
+/* The platform's network kind query (gamefront.h). NULL: unknown. */
+static GameFrontNetPathQuery s_netPathQuery = NULL;
+
+void gameFrontSetNetPathQuery(GameFrontNetPathQuery query) {
+  s_netPathQuery = query;
+}
+
+GameFrontNetPath gameFrontNetPath(void) {
+  return s_netPathQuery != NULL ? s_netPathQuery() : GAMEFRONT_NET_PATH_UNKNOWN;
+}
+
 /* Ask the player for the password of the game being joined and store it in
  * the password global that clientSimConnectUdp sends. wrongBefore adds the
  * incorrect-password line above the request, for a retry after the server
@@ -2332,6 +2343,17 @@ bool gameFrontSetDlgState(openingStates newState) {
   } else if ((dlgState == openLanManual || dlgState == openLanSetup) &&
              newState == openWelcome) {
     dlgState = openLan;
+  } else if ((dlgState == openUdpSetup || dlgState == openInternetSetup ||
+              dlgState == openLanSetup) && newState == openFinished &&
+             !s_isLanOnly && gameFrontNetPath() == GAMEFRONT_NET_PATH_CELLULAR &&
+             imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                               langGetText(STR_GAMEFRONTERR_HOST_MOBILE_DATA),
+                               IMGUI_MSG_WARNING, IMGUI_MSG_YES_NO) != IMGUI_MSG_RESULT_YES) {
+    /* An Internet game hosted on mobile data will probably not be reachable,
+     * so the host is warned first. No (or closing the box) starts no
+     * server and goes back to where New was chosen; Yes falls through to
+     * the next branch and hosts as usual. */
+    dlgState = (dlgState == openInternetSetup) ? openInternet : openInternetManual;
   } else if ((dlgState == openUdpSetup || dlgState == openInternetSetup ||
               dlgState == openLanSetup) && newState == openFinished) {
     /* Host joins its own server via loopback UDP — same JOIN_REQUEST

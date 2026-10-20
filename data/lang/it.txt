@@ -2836,3 +2836,6 @@ STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Quanto della mappa si vede attrave
 
 # The iPad's Full Screen choice: the full screen map or the classic screen
 STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=La mappa riempie lo schermo, con i pannelli di stato, costruzione e notizie\nsopra, e i comandi touch quando giochi toccando lo schermo.\nDisattivato mostra la schermata classica. Ricordato per la prossima volta.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=Questo dispositivo usa i dati mobili. Una partita su Internet ospitata\ncon i dati mobili probabilmente non funzionerà: le reti mobili raramente\nlasciano che gli altri giocatori raggiungano il dispositivo. Con il Wi-Fi\nè molto più probabile che funzioni.\n\nOspitare comunque?

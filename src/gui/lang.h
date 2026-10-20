@@ -3538,6 +3538,9 @@
 /* The iPad's Full Screen choice: the full screen map or the classic screen */
 #define STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP      2941
 
+/* Asked before an Internet game is hosted on mobile data (Yes / No) */
+#define STR_GAMEFRONTERR_HOST_MOBILE_DATA        2942
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

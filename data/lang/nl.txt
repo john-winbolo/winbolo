@@ -2834,3 +2834,6 @@ STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Hoeveel van de kaart doorschijnt v
 
 # The iPad's Full Screen choice: the full screen map or the classic screen
 STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=De kaart vult het scherm, met de status-, bouw- en nieuwspanelen erover,\nen de aanraakbediening wanneer je met aanraken speelt.\nUit toont het klassieke scherm. Onthouden voor de volgende keer.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=Dit apparaat gebruikt mobiele data. Een internetspel hosten via mobiele\ndata werkt waarschijnlijk niet: mobiele netwerken laten andere spelers\nzelden bij het apparaat komen. Met wifi is de kans veel groter.\n\nToch hosten?

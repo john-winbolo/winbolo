@@ -2834,3 +2834,6 @@ STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=フルスクリーンでタンク�
 
 # The iPad's Full Screen choice: the full screen map or the classic screen
 STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=マップが画面全体に表示され、ステータス・建設・ニュースのパネルがその上に、\nタッチで遊ぶときはタッチ操作も重ねて表示されます。\nオフにするとクラシック画面になります。次回の起動でも記憶されます。
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=このデバイスはモバイルデータ通信を使用しています。モバイルデータで\nホストしたインターネットゲームはおそらく動作しません。モバイル回線では\n他のプレイヤーがこのデバイスに接続できることはまれです。Wi-Fi のほうが\nはるかに動作する可能性が高くなります。\n\nそれでもホストしますか？
