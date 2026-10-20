@@ -2171,12 +2171,26 @@ int run_lgm_unfield_drops_carried_pill(void);
  * centre is no further off than that. */
 int run_lgm_start_offset(void);
 
-/* Which position a shell tests its target at (test_shell_rewind_rules.c): a
- * pill's shell tests a tank where it is now, a player's shell with rewind N
- * tests a tank N ticks ago and a builder N-1 ticks ago. */
-int run_shell_rewind_pill_shell_tank_present(void);
-int run_shell_rewind_player_shell_tank_full(void);
-int run_shell_rewind_player_shell_builder_one_less(void);
+/* A player's shell against a builder, where the shooter's screen decides
+ * (test_lgm_absent_on_shooter_screen.c): the three answers of
+ * posHistoryLookup; no kill when the frame the shooter saw has the builder
+ * in his tank; the rewound position when he was out on it; a pill's shell
+ * and a history too short for the rewind test him where he is now. The
+ * seen_out cases have him out on the frame the shooter saw and back in his
+ * tank now: a blast of a player's shell where the shooter saw him kills him
+ * on the tank, and nothing else does. */
+int run_position_history_lookup(void);
+int run_lgm_kill_absent_on_shooter_screen(void);
+int run_lgm_kill_rewound_position(void);
+int run_lgm_kill_pill_shell_present(void);
+int run_lgm_kill_short_history(void);
+int run_lgm_kill_seen_out_back_in_tank(void);
+int run_lgm_kill_seen_out_outside_blast(void);
+int run_lgm_kill_seen_out_pill_shell(void);
+int run_lgm_kill_seen_out_no_record(void);
+int run_lgm_kill_seen_out_already_dead(void);
+int run_lgm_kill_seen_out_tank_hit_blast(void);
+int run_lgm_kill_seen_out_dead_tank(void);
 
 /* A -braindebug server records each round into its own session dir
  * (test_braindbg_round_dir.c): the dir it named is cleared at game over, so
@@ -2782,6 +2796,34 @@ int run_ping_kick_clears_strikes_on_disconnect(void);
  * (test_tkexp_lgm_pairing.c). */
 int run_tkexp_lgm_pairing(void);
 
+/* A shell that hits a tank blows up at the hit tank's present centre, not at
+ * the shell, which a lag-compensated test leaves behind the tank
+ * (test_tank_blast_at_tank.c). */
+int run_tank_blast_rewound_hit_at_present_tank(void);
+int run_tank_blast_kill_starts_at_present_tank(void);
+int run_tank_blast_zero_rewind_unchanged(void);
+int run_tank_blast_hit_decision_unchanged(void);
+/* Whether that blast kills a builder is decided on the shooter's screen, not
+ * by where it is drawn (the same file). */
+int run_tank_blast_builder_on_shooter_screen(void);
+int run_tank_blast_absent_builder_lives(void);
+int run_tank_blast_builder_back_in_tank(void);
+int run_tank_blast_pill_shell_builder_now(void);
+int run_tank_blast_no_record_builder_now(void);
+int run_shell_blast_pill_hit_on_shooter_screen(void);
+int run_teleport_erases_tank_rewind_record(void);
+int run_teleport_shell_hits_new_place(void);
+int run_teleport_rewind_refills(void);
+int run_teleport_builder_rewind_record(void);
+int run_slot_join_erases_tank_rewind_record(void);
+int run_slot_join_shell_hits_new_tank(void);
+int run_slot_join_rewind_refills(void);
+int run_slot_join_erases_builder_rewind_record(void);
+int run_slot_refield_erases_rewind_records(void);
+int run_shell_rewind_pill_shell_tank_present(void);
+int run_shell_rewind_tank_full_comp(void);
+int run_shell_rewind_builder_one_less(void);
+
 /* In-game input gate taxonomy (test_input_gate.c). gameInputSuspended()
  * suspends the polled in-game readers only for blocking surfaces (text
  * input, a focus-stealing modal, a popup/menu on the stack, a defocused
@@ -3040,6 +3082,7 @@ int run_lgm_drop_pill_no_room(void);
 int run_scenario_lgm_dispatch(void);
 int run_scenario_lgm_recall(void);
 int run_scenario_lgm_kill(void);
+int run_scenario_lgm_kill_force(void);
 int run_scenario_lgm_parachute(void);
 int run_scenario_lgm_set_carried(void);
 int run_scenario_lgm_kill_record(void);
@@ -3662,6 +3705,7 @@ int run_scenario_lua_add_answers_its_index(void);
 int run_scenario_lua_queued_answers_queued(void);
 int run_scenario_lua_shape_raises_refusal_does_not(void);
 int run_scenario_lua_detail_carries_the_number(void);
+int run_scenario_lua_kill_lgm_force(void);
 int run_scenario_lua_teleport_start_refuses_bad_index(void);
 int run_scenario_lua_spawn_bot_refuses_bad_start(void);
 int run_scenario_lua_game_type_resolves_scripted(void);

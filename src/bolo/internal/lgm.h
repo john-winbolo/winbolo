@@ -515,6 +515,65 @@ void lgmDeathCheck(struct GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE own
 void lgmDeathCheckAtPosition(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk);
 
 /*********************************************************
+*NAME:          lgmDeathCheckSeenOut
+*AUTHOR:        John Morrison
+*CREATION DATE: 13/10/26
+*LAST MODIFIED: 13/10/26
+*PURPOSE:
+*  Like lgmDeathCheckAtPosition, for a man the attacker's
+*  screen showed out of his tank at the supplied position.
+*  A man the explosion caught there dies even if he is back
+*  inside his tank now: he dies on the tank's present
+*  centre, through lgmKill. A man who is out now, or dead,
+*  goes through lgmDeathCheckAtPosition unchanged. A man
+*  inside a tank that is itself dead is left alone. The
+*  man's place and the explosion's place are both as the
+*  attacker's screen had them, whatever the shell hit.
+*
+*ARGUMENTS:
+*  sim    - Pointer to the game sim structure
+*  lgman  - Pointer to the lgm pointer
+*  lgmWorldX - Where the attacker's screen showed him, X
+*  lgmWorldY - Where the attacker's screen showed him, Y
+*  wx     - X World co ord of the explosion, as the
+*           attacker's screen had it
+*  wy     - Y World co ord of the explosion, likewise
+*  owner  - Who is credited with the kill
+*  attacker - Who the can_die question names
+*  cause  - The DMG_SRC_* the can_die question is handed
+*  pill   - The pill index whose shell it was, or
+*           DMG_NO_PILL
+*  tnk    - Pointer to the tank
+*********************************************************/
+void lgmDeathCheckSeenOut(struct GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk);
+
+/*********************************************************
+*NAME:          lgmKillInTank
+*AUTHOR:        John Morrison
+*CREATION DATE: 13/10/26
+*LAST MODIFIED: 13/10/26
+*PURPOSE:
+*  Kills a man who is inside his tank: he is put out of it
+*  on the tank's present centre and dies there through
+*  lgmKill, so the tank has no man until he has flown in and
+*  walked back. The one in-tank death path, shared by
+*  lgmDeathCheckSeenOut and the scenario kill that is told
+*  to force it. The can_die question is the caller's to ask.
+*
+*  Returns TRUE if he died. Returns FALSE, with nothing
+*  changed, for a man who is not in his tank or is dead, on
+*  a client, and for a tank that is itself dead or waiting
+*  to come back.
+*
+*ARGUMENTS:
+*  sim    - Pointer to the game sim structure
+*  lgman  - Pointer to the lgm pointer
+*  tnk    - Pointer to the tank
+*  owner  - Who is credited with the kill, or NEUTRAL
+*********************************************************/
+bool lgmKillInTank(struct GameSim *sim, lgm *lgman, tank *tnk, BYTE owner);
+
+/*********************************************************
 *NAME:          lgmParchutingIn
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/1/99
