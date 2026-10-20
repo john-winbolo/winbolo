@@ -697,7 +697,8 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   if (tb == TNONE && inputGamepadIsConnected()) {
     tb = inputGamepadGetMovement(clientSimGetTank256Dir(cs));
   }
-  if (tb == TNONE && uiModeIsTablet()) {
+  /* Touch: the touch layout, or the touch controls on the classic screen. */
+  if (tb == TNONE && inputTouchControlsShown()) {
     inputTouchSetTankAngle(clientSimGetTank256Dir(cs));
     tb = inputTouchGetMovement();
   }
@@ -1002,10 +1003,10 @@ void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
 *********************************************************/
 bool inputIsFireKeyPressed(keyItems *setKeys, bool isMenu) {
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
-    return uiModeIsTablet() ? inputTouchIsFirePressed() : FALSE;
+    return inputTouchControlsShown() ? inputTouchIsFirePressed() : FALSE;
   }
   return KEY_DOWN(setKeys->kiShoot)
-      || (uiModeIsTablet() && inputTouchIsFirePressed())
+      || (inputTouchControlsShown() && inputTouchIsFirePressed())
       || (inputGamepadIsConnected() && inputGamepadIsFireHeld());
 }
 
@@ -1023,10 +1024,10 @@ bool inputIsFireKeyPressed(keyItems *setKeys, bool isMenu) {
 *********************************************************/
 bool inputIsMineKeyPressed(keyItems *setKeys, bool isMenu) {
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
-    return uiModeIsTablet() ? inputTouchIsMinePressed() : FALSE;
+    return inputTouchControlsShown() ? inputTouchIsMinePressed() : FALSE;
   }
 
-  bool touchMine   = uiModeIsTablet() ? inputTouchIsMinePressed() : false;
+  bool touchMine   = inputTouchControlsShown() ? inputTouchIsMinePressed() : false;
   bool gamepadMine = inputGamepadIsConnected() ? inputGamepadIsMineHeld() : false;
   return KEY_DOWN(setKeys->kiLayMine) || touchMine || gamepadMine;
 }
@@ -1078,7 +1079,7 @@ uint8_t inputConsumeGunsightAdj(void) {
      read them separately. inputTouchGetGunsightChange is consuming, so only
      take it when nothing is already pending — otherwise a wheel bump and a
      button tap in the same tick would drop one of the two. */
-  if (lastGunsightAdj == 0 && uiModeIsTablet()) {
+  if (lastGunsightAdj == 0 && inputTouchControlsShown()) {
     int gs = inputTouchGetGunsightChange();
     if (gs > 0) {
       lastGunsightAdj = 1;

@@ -205,6 +205,10 @@ int main(int argc, char *argv[]) {
     if (iosDeviceIsPad()) {
         SDL_SetHint(SDL_HINT_ORIENTATIONS,
                     "LandscapeLeft LandscapeRight Portrait PortraitUpsideDown");
+        /* The iPad's classic screen has no menu bar and is played by touch:
+           the touch controls come up when it is touched and go when a key
+           is pressed (input_touch.c). */
+        inputTouchSetClassicControlsOffered(true);
     }
 
     /* Initialize Sentry crash reporting if the user hasn't opted out */

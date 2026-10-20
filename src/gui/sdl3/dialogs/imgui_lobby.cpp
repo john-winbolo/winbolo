@@ -945,12 +945,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
         /* Tabbed (controller) vs two-column (mouse) layout. Computed here so
          * the shared settings panel below renders only on the mouse path —
          * the tabbed layout shows settings in its own Settings tab instead. */
-#if defined(__ANDROID__)
+#if BOLO_MOBILE
+        /* Android and iOS, the iPad included: the two-column layout left the
+           iPad's map preview small, and has no Leave button for a finger
+           (its back arrow is the desktop header's). */
         const bool useTabbedLobby = true;
-#elif BOLO_MOBILE
-        /* iOS: tabbed in the touch layout, two columns in the iPad's desktop
-           layout, as on the desktop. */
-        const bool useTabbedLobby = uiModeIsTablet() || uiShouldUseControllerMode();
 #else
         const bool useTabbedLobby = uiShouldUseControllerMode();
 #endif

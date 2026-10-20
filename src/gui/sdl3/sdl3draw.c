@@ -657,9 +657,11 @@ static void sdl3GetSafeAreaInsets(float *outLeft, float *outTop,
 }
 
 #if defined(__IPHONEOS__)
-/* The iPad's desktop layout: fit the game view's blit rect, aspect kept, into
-   the part of the screen below the menu bar that is also inside the safe
-   area, so the home indicator and any rounded corner do not sit on the game.
+/* The iPad's classic screen: fit the game view's blit rect, aspect kept, into
+   the part of the screen inside the safe area, so the home indicator and any
+   rounded corner do not sit on the game. Centred across and placed at the top,
+   so the height it leaves is one band below it, where the touch controls go
+   in portrait (tabletLayoutConfigureClassic).
    The desktop does not call this; a macOS window's safe area can exclude the
    camera housing, and its layout is left as it was. */
 static void sdl3DrawFitSafeArea(float menuBarHeight, float aspect,
@@ -676,7 +678,7 @@ static void sdl3DrawFitSafeArea(float menuBarHeight, float aspect,
   float fw = aw, fh = aw / aspect;
   if (fh > ah) { fh = ah; fw = ah * aspect; }
   *x = ax + (aw - fw) * 0.5f;
-  *y = ay + (ah - fh) * 0.5f;
+  *y = ay;
   *w = fw;
   *h = fh;
 }
@@ -1394,6 +1396,63 @@ bool sdl3DrawGetMainViewGameRect(float *outX, float *outY,
   return true;
 }
 
+/* The pointer at window (winX, winY) over the classic screen: the shared
+   build cursor follows it into the game view and the square under it is what a
+   click builds at. handMoved is false for an event that only reports where the
+   pointer is (a focus change with no movement): it then moves nothing. A warp
+   echo (cursorFollowView carrying the pointer with the map) is not the player
+   moving it either. */
+static void classicPointerAt(ClientSim *cs, float winX, float winY, bool handMoved) {
+  /* Transform window coords to game coords */
+  float gameX, gameY;
+  if (!windowToGameCoords(winX, winY, &gameX, &gameY)) {
+    /* Off the game area (letterbox) is out of the view as far as the
+       cursor is concerned, or the scroll follow would pull the pointer
+       back in from there. */
+    cursorLeaveWindow();
+    clientSimSetCursorPos(cs, 0, 0);
+    return;
+  }
+  /* The pointer following the map (cursorFollowView) is not the player
+     moving it, and must not re-pick the square it was keeping on. */
+  bool moved = handMoved && !cursorIsWarpEcho(winX, winY);
+  cursorMove((int)gameX, (int)gameY);
+  BYTE cx = 0, cy = 0;
+  if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
+    /* The mouse is just another way to drive the ONE shared build cursor:
+       moving the pointer in the view repositions it whether or not cursor
+       mode is active, so toggling build mode picks up exactly where the
+       pointer is (no jump between a separate mouse reticle and the gamepad
+       cursor).  Only on real movement (skip zero-delta focus events) and
+       only while the pointer is in the view (handled by cursorPos) — so
+       the pointer leaving the window leaves the gamepad in control.
+       cx/cy are 1-based screen tiles; absolute map tile = offset + tile.
+
+       This latch is the selection: it is what the reticle draws and what a
+       click builds at, and hand movement is the only thing that moves it.
+       The view scrolling under a resting hand must not change it, so the
+       pointer is pinned to the same world point and carried along with
+       the map, keeping it over the selection. */
+    if (moved) {
+      buildCursorSetTile((BYTE)((int)clientSimGetXOffset(cs) + (int)cx),
+                         (BYTE)((int)clientSimGetYOffset(cs) + (int)cy));
+      cursorAnchorToView(clientSimGetXOffset(cs), clientSimGetYOffset(cs),
+                         clientSimGetSubPosX(cs), clientSimGetSubPosY(cs));
+    }
+    if (cx > 16 || cy > 16) cx = 100;
+    clientSimSetCursorPos(cs, cx, cy);
+  } else {
+    /* The hand has put the pointer somewhere with no square under it —
+       off the view, or the partly drawn column/row past the 15th — so it
+       is no longer on the point it was anchored to, and the next scroll
+       must not carry it back there. */
+    if (moved) {
+      cursorDropAnchor();
+    }
+    clientSimSetCursorPos(cs, 0, 0);
+  }
+}
+
 /* The smart-ping pie is not offered events here. It gets them at the top of
    sdl3ImguiProcessEvents, ahead of ImGui itself, because the map overview's
    pan item would otherwise take the chord press first and the capture-flag
@@ -1402,66 +1461,26 @@ bool sdl3DrawGetMainViewGameRect(float *outX, float *outY,
 void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
   if (!ev) return;
   switch (ev->type) {
-    case SDL_EVENT_MOUSE_MOTION: {
+    case SDL_EVENT_MOUSE_MOTION:
       /* The classic 15x15 mapping means nothing while the overview owns the
          window, and the overview drives the shared build cursor itself. */
       if (gOverviewInWindow) break;
-      /* Transform window coords to game coords */
-      float gameX, gameY;
-      if (!windowToGameCoords(ev->motion.x, ev->motion.y, &gameX, &gameY)) {
-        /* Off the game area (letterbox) is out of the view as far as the
-           cursor is concerned, or the scroll follow would pull the pointer
-           back in from there. */
-        cursorLeaveWindow();
-        clientSimSetCursorPos(cs, 0, 0);
-        break;
-      }
-      /* The pointer following the map (cursorFollowView) is not the player
-         moving it, and must not re-pick the square it was keeping on. */
-      bool warpEcho = cursorIsWarpEcho(ev->motion.x, ev->motion.y);
-      cursorMove((int)gameX, (int)gameY);
-      BYTE cx = 0, cy = 0;
-      if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
-        /* The mouse is just another way to drive the ONE shared build cursor:
-           moving the pointer in the view repositions it whether or not cursor
-           mode is active, so toggling build mode picks up exactly where the
-           pointer is (no jump between a separate mouse reticle and the gamepad
-           cursor).  Only on real movement (skip zero-delta focus events) and
-           only while the pointer is in the view (handled by cursorPos) — so
-           the pointer leaving the window leaves the gamepad in control.
-           cx/cy are 1-based screen tiles; absolute map tile = offset + tile.
-
-           This latch is the selection: it is what the reticle draws and what a
-           click builds at, and hand movement is the only thing that moves it.
-           The view scrolling under a resting hand must not change it, so the
-           pointer is pinned to the same world point and carried along with
-           the map, keeping it over the selection. */
-        if (!warpEcho && (ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f)) {
-          buildCursorSetTile((BYTE)((int)clientSimGetXOffset(cs) + (int)cx),
-                             (BYTE)((int)clientSimGetYOffset(cs) + (int)cy));
-          cursorAnchorToView(clientSimGetXOffset(cs), clientSimGetYOffset(cs),
-                             clientSimGetSubPosX(cs), clientSimGetSubPosY(cs));
-        }
-        if (cx > 16 || cy > 16) cx = 100;
-        clientSimSetCursorPos(cs, cx, cy);
-      } else {
-        /* The hand has put the pointer somewhere with no square under it —
-           off the view, or the partly drawn column/row past the 15th — so it
-           is no longer on the point it was anchored to, and the next scroll
-           must not carry it back there. */
-        if (!warpEcho && (ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f)) {
-          cursorDropAnchor();
-        }
-        clientSimSetCursorPos(cs, 0, 0);
-      }
+      classicPointerAt(cs, ev->motion.x, ev->motion.y,
+                       ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f);
       break;
-    }
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
       /* A click that arrives before ImGui's capture flag catches up would
          build twice — once at the overview's square, once at the classic
          cursor — and the build-select hit-test would fire at chrome
          positions that are not on screen in this mode. */
       if (gOverviewInWindow) break;
+      /* A finger has no resting position for the view to scroll under, so a
+         press it makes (SDL's mouse press from a touch) points at its square
+         and builds there at once: the press is also the hand moving to it.
+         A real mouse keeps the square it last moved to, below. */
+      if (ev->button.which == SDL_TOUCH_MOUSEID) {
+        classicPointerAt(cs, ev->button.x, ev->button.y, true);
+      }
       if (ev->button.button == SDL_BUTTON_LEFT) {
         BYTE xVal = 0, yVal = 0;
         if (cursorPos(NULL, &xVal, &yVal, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {

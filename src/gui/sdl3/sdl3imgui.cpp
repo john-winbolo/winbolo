@@ -6942,18 +6942,6 @@ static void renderMenuBar(ClientSim *cs) {
             if (overviewSuppressed() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
 #endif
-#if defined(__APPLE__) && TARGET_OS_IOS
-            /* The iPad's desktop layout. There is no pop-out overview, so the
-               map is offered the one way iOS has it: over the whole screen. */
-            ImGui::Separator();
-            if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), nullptr,
-                                sdl3DrawIsOverviewInWindow(),
-                                cs != nullptr && clientSimIsRunning(cs) && !overviewSuppressed())) {
-                overviewInWindowChoose(!sdl3DrawIsOverviewInWindow());
-            }
-            if (overviewSuppressed() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
-#endif
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         }
 #endif
@@ -7913,6 +7901,33 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
          * whether the event is later swallowed by ImGui, a popup or the
          * ping pie below. */
         inputSourceUpdate(&ev);
+        /* Touch or not, for the touch controls on the classic screen. */
+        inputTouchNoteInput(&rawEv);
+
+        /* Where the classic screen offers touch controls, the mouse press SDL
+           makes from a finger that lands on a control is not a click on the
+           game or a dialog, and nor is anything that finger's mouse does until
+           it lifts. SDL sends it ahead of the finger event, so the position is
+           the test. The controls' places are laid out while they are hidden
+           too, so the touch that brings them back is not a click either. The
+           touch layout has no such click to drop: its touch handling is the
+           finger events below. */
+        if (!uiModeIsTablet() && inputTouchClassicControlsOffered() &&
+            (((ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+               ev.type == SDL_EVENT_MOUSE_BUTTON_UP) &&
+              ev.button.which == SDL_TOUCH_MOUSEID) ||
+             (ev.type == SDL_EVENT_MOUSE_MOTION &&
+              ev.motion.which == SDL_TOUCH_MOUSEID))) {
+            static bool s_touchMouseOnControl = false;
+            if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+                inputTouchPointOnControl(ev.button.x, ev.button.y)) {
+                s_touchMouseOnControl = true;
+            }
+            if (s_touchMouseOnControl) {
+                if (ev.type == SDL_EVENT_MOUSE_BUTTON_UP) s_touchMouseOnControl = false;
+                continue;
+            }
+        }
 
         /* The smart-ping chord gets first refusal, ahead of ImGui itself.
            It has to: the map overview lays an InvisibleButton over its
@@ -8266,12 +8281,16 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
            When a dialog/panel is open, only pass finger-up events so that
            active joystick/button state gets properly released, but don't
            start new joystick/button interactions behind the overlay. */
-        if (uiModeIsTablet() &&
+        /* The classic screen's touch controls take the same events. A
+           cancel (the OS taking the touch away) releases like a lift. */
+        if ((uiModeIsTablet() || inputTouchClassicControlsOffered()) &&
             (rawEv.type == SDL_EVENT_FINGER_DOWN ||
              rawEv.type == SDL_EVENT_FINGER_UP ||
-             rawEv.type == SDL_EVENT_FINGER_MOTION)) {
+             rawEv.type == SDL_EVENT_FINGER_MOTION ||
+             rawEv.type == SDL_EVENT_FINGER_CANCELED)) {
             bool dialogOpen = sdl3ImguiIsDialogOpen();
-            if (!dialogOpen || rawEv.type == SDL_EVENT_FINGER_UP) {
+            if (!dialogOpen || rawEv.type == SDL_EVENT_FINGER_UP ||
+                rawEv.type == SDL_EVENT_FINGER_CANCELED) {
                 int tw = 0, th = 0;
                 SDL_RendererLogicalPresentation logMode;
                 SDL_GetRenderLogicalPresentation(s_renderer, &tw, &th, &logMode);
@@ -9489,9 +9508,10 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         renderTutorialOverlay(cs);
 #endif
     } else {
-    /* The in-window menu bar: everywhere but macOS, whose menus are native.
-       On iOS this is the iPad's desktop layout. */
-#if !defined(__APPLE__) || TARGET_OS_IOS
+    /* The in-window menu bar: everywhere but macOS, whose menus are native,
+       and iOS, where no app draws a menu bar of its own: the iPad's classic
+       screen has the touch controls' buttons in its place (below). */
+#if !defined(__APPLE__)
         /* Show the menu bar only when the player's last-used device is the
            keyboard/mouse.  A connected-but-idle controller doesn't hide it,
            and reaching for the mouse/keyboard brings it back; using the
@@ -9509,6 +9529,13 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             renderMenuBar(cs);
         }
 #endif
+        /* The touch controls on the classic screen, where the platform offers
+           them (the iPad): laid out every frame of a game, drawn while the
+           last input was a finger. */
+        if (inputTouchClassicControlsOffered() && cs != nullptr &&
+            clientSimIsRunning(cs)) {
+            sdl3ImguiTabletOverlay(cs);
+        }
         /* DEBUG overlay: left-stick / turn / build-cursor magnitudes (0..1).
            Gated on WB_CONTROLLER_DEBUG (input_gamepad.h). */
         if (WB_CONTROLLER_DEBUG &&
@@ -10971,6 +10998,15 @@ void sdl3ImguiCleanup(void) {
        Left latched, the second game of a session came up windowed-view inside
        a still-full-screen window, and the pop-out did not come back either. */
     s_overviewWasRunning = false;
+    /* The classic screen's touch controls are laid out each frame of a game
+       only; their places go with it, so a finger on the next screen is not
+       taken for one. */
+    if (inputTouchClassicControlsOffered()) {
+        inputTouchClearButtons();
+        inputTouchSetJoystickZone(0.0f, 0.0f, 0.0f, 0.0f);
+        inputTouchSetScrollJoystickZone(0.0f, 0.0f, 0.0f, 0.0f);
+        inputTouchSetControlRects(nullptr, 0);
+    }
     /* The five two-form panels go with the game as well. popOutDestroy below
        clears the pop-out half, but the in-window half is a plain flag that
        nothing here was resetting, and this path reaches overviewInWindowSet

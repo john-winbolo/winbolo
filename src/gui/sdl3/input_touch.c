@@ -19,6 +19,7 @@
 #include "input_touch.h"
 #include "input_joystick.h"
 #include "input_gamepad.h"
+#include "../ui_mode.h"
 
 /* Joystick deadzone in pixels */
 #define JOYSTICK_DEADZONE 20.0f
@@ -158,6 +159,20 @@ static float        s_pinchRefDist   = 0.0f; /* finger spacing at the last read 
    alongside s_viewportTapReady for a caller that maps it itself. */
 static float        s_viewportTapX   = 0.0f;
 static float        s_viewportTapY   = 0.0f;
+
+/* --- Touch controls on the classic screen --- */
+static bool         s_classicOffered = false; /* the platform offers them */
+static bool         s_lastInputTouch = false; /* the last input was a finger */
+
+/* The stick's zone when the layout sets one; unset, the left 40% rule. */
+static bool         s_joyZoneSet = false;
+static float        s_joyZoneX = 0.0f, s_joyZoneY = 0.0f;
+static float        s_joyZoneW = 0.0f, s_joyZoneH = 0.0f;
+
+/* Controls that are not registered buttons, for inputTouchPointOnControl. */
+#define TOUCH_MAX_CONTROL_RECTS 8
+static SDL_FRect    s_controlRects[TOUCH_MAX_CONTROL_RECTS];
+static int          s_controlRectCount = 0;
 
 /* --- Setup / Cleanup --- */
 
@@ -451,8 +466,13 @@ void inputTouchProcessEvent(SDL_Event *ev, int windowW, int windowH) {
     return;
   }
 
-  /* --- Joystick zone (left 40%, but not over the game viewport) --- */
-  if (isDown && !s_joyActive && normX < JOYSTICK_ZONE_RIGHT && !insideViewport) {
+  /* --- Joystick zone: the layout's rect, or the left 40% outside the game
+     viewport --- */
+  bool inJoyZone = s_joyZoneSet
+      ? (fx >= s_joyZoneX && fx < s_joyZoneX + s_joyZoneW &&
+         fy >= s_joyZoneY && fy < s_joyZoneY + s_joyZoneH)
+      : (normX < JOYSTICK_ZONE_RIGHT && !insideViewport);
+  if (isDown && !s_joyActive && inJoyZone) {
     s_joyFingerID = fid;
     s_joyActive   = true;
     s_joyAnchorX  = fx;
@@ -650,7 +670,76 @@ void inputTouchSetScrollJoystickZone(float x, float y, float w, float h) {
   s_scrollZoneY = y;
   s_scrollZoneW = w;
   s_scrollZoneH = h;
-  s_scrollZoneSet = true;
+  /* A zero size clears it, as the classic screen's controls do at game end. */
+  s_scrollZoneSet = (w > 0.0f && h > 0.0f);
+}
+
+/* --- Touch controls on the classic screen --- */
+
+void inputTouchSetClassicControlsOffered(bool offered) {
+  s_classicOffered = offered;
+}
+
+bool inputTouchClassicControlsOffered(void) {
+  return s_classicOffered;
+}
+
+void inputTouchNoteInput(const SDL_Event *ev) {
+  switch (ev->type) {
+    case SDL_EVENT_FINGER_DOWN:
+      s_lastInputTouch = true;
+      break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+      /* The press SDL makes from a finger arrives ahead of the finger event,
+         and the classic screen's click test reads this. */
+      if (ev->button.which == SDL_TOUCH_MOUSEID) s_lastInputTouch = true;
+      break;
+    case SDL_EVENT_KEY_DOWN:
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+      s_lastInputTouch = false;
+      break;
+    default:
+      break;
+  }
+}
+
+bool inputTouchControlsShown(void) {
+  return uiModeIsTablet() || (s_classicOffered && s_lastInputTouch);
+}
+
+void inputTouchSetJoystickZone(float x, float y, float w, float h) {
+  s_joyZoneSet = (w > 0.0f && h > 0.0f);
+  s_joyZoneX = x;
+  s_joyZoneY = y;
+  s_joyZoneW = w;
+  s_joyZoneH = h;
+}
+
+void inputTouchSetControlRects(const SDL_FRect *rects, int count) {
+  if (count < 0) count = 0;
+  if (count > TOUCH_MAX_CONTROL_RECTS) count = TOUCH_MAX_CONTROL_RECTS;
+  for (int i = 0; i < count; i++) s_controlRects[i] = rects[i];
+  s_controlRectCount = count;
+}
+
+bool inputTouchPointOnControl(float x, float y) {
+  if (pointInBlockedRect(x, y)) return false;
+  if (s_joyZoneSet && x >= s_joyZoneX && x < s_joyZoneX + s_joyZoneW &&
+      y >= s_joyZoneY && y < s_joyZoneY + s_joyZoneH) {
+    return true;
+  }
+  if (s_scrollZoneSet && x >= s_scrollZoneX && x < s_scrollZoneX + s_scrollZoneW &&
+      y >= s_scrollZoneY && y < s_scrollZoneY + s_scrollZoneH) {
+    return true;
+  }
+  for (int i = 0; i < TOUCH_BTN_COUNT; i++) {
+    if (hitTestButton(&s_buttons[i], x, y)) return true;
+  }
+  for (int i = 0; i < s_controlRectCount; i++) {
+    const SDL_FRect *r = &s_controlRects[i];
+    if (x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h) return true;
+  }
+  return false;
 }
 
 bool inputTouchGetScrollDirection(int *scrollX, int *scrollY) {

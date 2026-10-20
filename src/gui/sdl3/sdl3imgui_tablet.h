@@ -41,6 +41,10 @@ typedef struct {
   float joyOuterRadius;
   float joyInnerRadius;
   float joyZoneRight;
+  /* The rect a finger takes the stick in. Zero size in the touch layout,
+     which keeps the touch input's own rule (the left 40% outside the game
+     view); the classic screen sets one. */
+  float joyZoneX, joyZoneY, joyZoneW, joyZoneH;
 
   /* Action buttons — lower right */
   float fireRadius;
@@ -118,6 +122,23 @@ typedef struct {
 void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
                            int viewportX, int viewportY, int viewportW, int viewportH,
                            int effectiveZoom);
+
+/*********************************************************
+*NAME:          tabletLayoutConfigureClassic
+*PURPOSE:
+*  Lays the touch controls out for the classic screen (the
+*  desktop layout), which is drawn in the window at
+*  gameX/Y/W/H. With a band below it tall enough, the
+*  controls go in the band; otherwise over the screen: the
+*  stick at the bottom left of the game view, clear of the
+*  build column, and the buttons at the bottom right. The
+*  messages, players and Settings buttons sit at the top
+*  right of the band or of the screen. Sets the fields
+*  the classic overlay reads; the touch layout's build bar,
+*  bars, grids and scroll stick are left unset.
+*********************************************************/
+void tabletLayoutConfigureClassic(TabletLayoutConfig *cfg, int screenW, int screenH,
+                                  float gameX, float gameY, float gameW, float gameH);
 
 /*********************************************************
 *NAME:          sdl3ImguiTabletOverlay

@@ -5,8 +5,9 @@
 
 /*
  * ios_stubs.c — Stub implementations for modules not included
- * in the iOS target. Covers: the server side of winbolonet, geolookup,
- * and cursor.
+ * in the iOS target. Covers: the server side of winbolonet and geolookup.
+ * The cursor is the shared cursor.c: the iPad's classic screen maps a tap to
+ * its square through it.
  *
  * Most GUI modules (sdl3imgui, flags, input, dialogs, dns_lookups)
  * are now compiled directly from the shared sdl3 sources.
@@ -29,27 +30,6 @@
 typedef struct { long left, top, right, bottom; } RECT;
 #endif
 #endif
-
-/* ---- cursor stubs ---- */
-
-bool cursorSetup(void) { return true; }
-void cursorCleanup(void) {}
-void cursorSetCursor(bool normalCurs) { (void)normalCurs; }
-void cursorMove(int mouseX, int mouseY) { (void)mouseX; (void)mouseY; }
-bool cursorPos(RECT *rcWindow, BYTE *xValue, BYTE *yValue,
-               int subPosX, int subPosY) {
-    (void)rcWindow; (void)xValue; (void)yValue;
-    (void)subPosX; (void)subPosY;
-    return false;
-}
-void cursorAcquireCursor(void) {}
-void cursorLeaveWindow(void) {}
-bool cursorIsWarpEcho(float winX, float winY) { (void)winX; (void)winY; return false; }
-void cursorAnchorToView(int xOffset, int yOffset, int subPosX, int subPosY) {
-    (void)xOffset; (void)yOffset; (void)subPosX; (void)subPosY;
-}
-void cursorDropAnchor(void) {}
-void moveMousePointer(int value) { (void)value; }
 
 /* ---- winbolonet server stubs ----
  *

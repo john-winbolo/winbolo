@@ -1040,6 +1040,9 @@ file(GLOB IOS_BRAIN_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/GoalHunter/*.lua")
 add_executable(WinBoloIOS MACOSX_BUNDLE
     src/gui/ios/winbolo_ios.m
     src/gui/ios/ios_stubs.c
+    # The pointer over the classic screen: which square a tap on the iPad
+    # points at and builds on.
+    src/gui/sdl3/cursor.c
     src/gui/ios/imgui_ios.cpp
     src/gui/sdl3/gamefront.c
     src/client_frontend/client_frontend_connect.c
