@@ -176,6 +176,14 @@ static inline float dialogComputeScale(int screenW, int screenH) {
     return scale;
 }
 
+/* A control width given for the desktop's 18-unit dialog font, scaled to
+ * the font in use. Every surface loads that font at 18 for a scale of 1, so
+ * the width is unchanged there; a fixed width left as it was while the text
+ * grew with the scale cut off labels and drop-down values on the iPad. */
+static inline float dialogFontW(float widthAt18) {
+    return widthAt18 * ImGui::GetFontSize() / 18.0f;
+}
+
 /* Load font data via SDL_IOFromFile (works on Android assets and desktop).
  * Returns buffer allocated with IM_ALLOC (ImGui takes ownership). */
 static inline unsigned char *dialogLoadFontData(const char *path, int *outSize) {

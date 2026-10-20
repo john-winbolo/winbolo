@@ -247,7 +247,7 @@ extern "C" void imguiSettingsRenderGeneralTab(SettingsRenderCtx *ctx) {
     }
     ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_PLAYERNAME));
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(200);
+    ImGui::SetNextItemWidth(dialogFontW(200.0f));
     if (wbnActive) ImGui::BeginDisabled();
     if (ImGui::InputText("##playerName", s_playerNameBuf, PLAYER_NAME_LEN,
                          ImGuiInputTextFlags_EnterReturnsTrue)) {
@@ -364,7 +364,7 @@ extern "C" void imguiSettingsRenderLanguagePicker(LangFileEntry *entries,
     ImGui::Spacing();
     ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_LANGUAGE_LBL));
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(220);
+    ImGui::SetNextItemWidth(dialogFontW(220.0f));
     const char *curLangLabel =
         (curLangIdx >= 0 && curLangIdx < count &&
          entries[curLangIdx].meta.name[0] != '\0')
@@ -497,7 +497,7 @@ extern "C" void imguiSettingsRenderLanguagePicker(LangFileEntry *entries,
 extern "C" void imguiSettingsRenderControlsTab(SettingsRenderCtx *ctx) {
 #if !defined(__ANDROID__)  /* iOS: the iPad's desktop layout, by the test below */
     if (!uiModeIsTablet()) {
-        if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(120, 0))) {
+        if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(dialogFontW(120.0f), 0))) {
             ctx->wantKeySetup = true;
         }
         imguiHandOnHover();
@@ -829,7 +829,7 @@ extern "C" void imguiSettingsVoiceMicTest(float barWidth) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__)
 static void renderFullScreenPanelSettings(bool touchLayout) {
     int trans = sdl3DrawGetNewswireTransparency();
-    ImGui::SetNextItemWidth(200.0f);
+    ImGui::SetNextItemWidth(dialogFontW(200.0f));
     if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_NEWS_TRANSPARENCY),
                          &trans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
                          "%d%%")) {
@@ -847,7 +847,7 @@ static void renderFullScreenPanelSettings(bool touchLayout) {
     imguiHelpTooltip(langGetText(STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP));
 
     int buildTrans = sdl3DrawGetBuildPanelTransparency();
-    ImGui::SetNextItemWidth(200.0f);
+    ImGui::SetNextItemWidth(dialogFontW(200.0f));
     if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_BUILD_TRANSPARENCY),
                          &buildTrans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
                          "%d%%")) {
@@ -859,7 +859,7 @@ static void renderFullScreenPanelSettings(bool touchLayout) {
     if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
 
     int statusTrans = sdl3DrawGetStatusPanelTransparency();
-    ImGui::SetNextItemWidth(200.0f);
+    ImGui::SetNextItemWidth(dialogFontW(200.0f));
     if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_STATUS_TRANSPARENCY),
                          &statusTrans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
                          "%d%%")) {
@@ -884,7 +884,7 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         }
         ImGui::TextUnformatted(langGetText(STR_DLGSYSINFO_FRAMERATE));
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(80);
+        ImGui::SetNextItemWidth(dialogFontW(80.0f));
         if (ImGui::BeginCombo("##framerate", frLabels[curFrIdx])) {
             for (int i = 0; i < 7; i++) {
                 bool selected = (curFrIdx == i);
@@ -922,7 +922,7 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         }
         ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_WINDOWSIZE));
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(100);
+        ImGui::SetNextItemWidth(dialogFontW(100.0f));
         if (ImGui::BeginCombo("##windowsize", zoomLabels[curZoomIdx])) {
             for (int i = 0; i < zoomCount; i++) {
                 bool selected = (curZoomIdx == i);
@@ -1636,7 +1636,7 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         int vol = windowMasterVolume;
         ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_MASTER_VOLUME));
         ImGui::SameLine(volSliderX);
-        ImGui::SetNextItemWidth(200.0f);
+        ImGui::SetNextItemWidth(dialogFontW(200.0f));
         /* Empty format, and a ## id, so the slider draws neither the value
            inside itself nor a label after it; both go beside it instead. */
         if (ImGui::SliderInt("##mastervolume", &vol, 0, 100, "")) windowSetMasterVolume(vol);
@@ -1647,7 +1647,7 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         int vol = soundVolume;
         ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_EFFECTS_VOLUME));
         ImGui::SameLine(volSliderX);
-        ImGui::SetNextItemWidth(200.0f);
+        ImGui::SetNextItemWidth(dialogFontW(200.0f));
         if (ImGui::SliderInt("##effectsvolume", &vol, 0, 100, "")) windowSetSoundVolume(vol);
         ImGui::SameLine();
         ImGui::Text("%d%%", vol);
@@ -1664,7 +1664,7 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         if (!voiceOnForVolume) ImGui::BeginDisabled();
         ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_VOLUME));
         ImGui::SameLine(volSliderX);
-        ImGui::SetNextItemWidth(200.0f);
+        ImGui::SetNextItemWidth(dialogFontW(200.0f));
         if (ImGui::SliderFloat("##voicevolume", &vol, 0.0f, 2.0f, "")) {
             windowSetVoiceVolume(vol);
         }
@@ -1696,7 +1696,7 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_VOICE_SERVER_OFF));
     }
     if (!voiceOn) ImGui::BeginDisabled();
-    imguiSettingsVoiceModeCombo(140.0f);
+    imguiSettingsVoiceModeCombo(dialogFontW(140.0f));
     /* The binding itself is set in Key Setup; showing it here is so the
        player can see which key push to talk is on without leaving. */
 #if defined(__IPHONEOS__)
@@ -1717,11 +1717,11 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         ImGui::SameLine();
         ImGui::TextUnformatted(pttName);
     }
-    imguiSettingsVoiceDeviceCombo(true, 240.0f);
-    imguiSettingsVoiceDeviceCombo(false, 240.0f);
-    imguiSettingsVoiceMicGainSlider(200.0f);
-    imguiSettingsVoiceLevelMeter(200.0f);
-    imguiSettingsVoiceMicTest(200.0f);
+    imguiSettingsVoiceDeviceCombo(true, dialogFontW(240.0f));
+    imguiSettingsVoiceDeviceCombo(false, dialogFontW(240.0f));
+    imguiSettingsVoiceMicGainSlider(dialogFontW(200.0f));
+    imguiSettingsVoiceLevelMeter(dialogFontW(200.0f));
+    imguiSettingsVoiceMicTest(dialogFontW(200.0f));
 #if defined(WINBOLO_VOICE_AEC)
     {
         /* Three states, and the checkbox shows the saved preference in all
@@ -2737,7 +2737,7 @@ static void settingsShowLoop(bool inEditor) {
                 /* ---- Tutorial ---- */
                 if (!inEditor) {
                     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_TUTORIAL));
-                    if (ImGui::Button(langGetText(STR_DLGSETTINGS_PLAY_TUTORIAL), ImVec2(140, 0))) {
+                    if (ImGui::Button(langGetText(STR_DLGSETTINGS_PLAY_TUTORIAL), ImVec2(dialogFontW(140.0f), 0))) {
                         gameFrontRequestPlayTutorial();
                         running = false;  /* Close settings; openSettings handler routes to openTutorial. */
                     }

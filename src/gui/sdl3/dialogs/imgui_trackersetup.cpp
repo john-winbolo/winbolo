@@ -192,7 +192,7 @@ extern "C" int imguiTrackerSetupShow(void) {
             {
                 char okBuf[64];
                 snprintf(okBuf, sizeof(okBuf), "%s##err", langGetText(STR_OK));
-                if (ImGui::Button(okBuf, ImVec2(80, 0))) {
+                if (ImGui::Button(okBuf, ImVec2(dialogFontW(80.0f), 0))) {
                     ImGui::CloseCurrentPopup();
                 }
                 imguiHandOnHover();

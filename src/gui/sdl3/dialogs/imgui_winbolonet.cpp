@@ -930,7 +930,7 @@ extern "C" void imguiWinbolonetDrawStatsDialog(void) {
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(dialogFontW(420.0f), 0), ImGuiCond_Appearing);
     /* Translucent panel matching the Local game finder. */
     ImGui::SetNextWindowBgAlpha(0.85f);
 

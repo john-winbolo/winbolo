@@ -2294,7 +2294,7 @@ static void renderGameInfoPanel(ClientSim *cs) {
 static void renderBrainSettingsWindow(void) {
     if (!s_brainSettingsOpen) return;
 
-    ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(dialogFontW(380.0f), 0), ImGuiCond_Always);
     char title[128];
     snprintf(title, sizeof(title), "%s###brainsettings", langGetText(STR_BRAINSETTINGS_TITLE));
     if (!ImGui::Begin(title, &s_brainSettingsOpen,
@@ -2574,7 +2574,7 @@ static void renderCtrlSendMsg(ClientSim *cs) {
             ImGui::SetKeyboardFocusHere();
             wantSelectAll = true;
         }
-        ImGui::SetNextItemWidth(340.0f);
+        ImGui::SetNextItemWidth(dialogFontW(340.0f));
         bool pressedEnter = ImGui::InputText("##ctrlmsg", s_sendMsgBuf, sizeof(s_sendMsgBuf),
                                              ImGuiInputTextFlags_EnterReturnsTrue);
         if (wantSelectAll) {
@@ -4167,12 +4167,12 @@ static void renderPlayersContent(ClientSim *cs) {
             char yLbl[40]; snprintf(yLbl, sizeof(yLbl), "%s##vy%u", langGetText(STR_YES), (unsigned)vkind);
             char nLbl[40]; snprintf(nLbl, sizeof(nLbl), "%s##vn%u", langGetText(STR_NO),  (unsigned)vkind);
             if (vMyYes) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.6f, 0.0f, 1.0f));
-            if (ImGui::Button(yLbl, ImVec2(80, 0)))
+            if (ImGui::Button(yLbl, ImVec2(dialogFontW(80.0f), 0)))
                 clientSimNetSendGameVoteToggle(cs, vkind, GAME_VOTE_TOGGLE_YES);
             if (vMyYes) ImGui::PopStyleColor();
             imguiHandOnHover();
             ImGui::SameLine();
-            if (ImGui::Button(nLbl, ImVec2(80, 0)))
+            if (ImGui::Button(nLbl, ImVec2(dialogFontW(80.0f), 0)))
                 clientSimNetSendGameVoteToggle(cs, vkind, GAME_VOTE_TOGGLE_NO);
             imguiHandOnHover();
         }
@@ -5952,7 +5952,7 @@ static void renderChangeNameModal(ClientSim *cs) {
         if (s_closeAllPopups) { ImGui::PopStyleVar(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
         ImGui::TextUnformatted(langGetText(STR_DLGSETNAME_BLURB));
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(0);
-        ImGui::SetNextItemWidth(300);
+        ImGui::SetNextItemWidth(dialogFontW(300.0f));
         bool enter = ImGui::InputText("##name", s_changeNameBuf,
                                       sizeof(s_changeNameBuf),
                                       ImGuiInputTextFlags_EnterReturnsTrue);
@@ -6342,13 +6342,13 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
             bool myYes = (me < 16) && ((snap->votes >> me) & 1u);
 
             if (myYes) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.6f, 0.0f, 1.0f));
-            if (ImGui::Button(langGetText(STR_YES), ImVec2(80, 0))) {
+            if (ImGui::Button(langGetText(STR_YES), ImVec2(dialogFontW(80.0f), 0))) {
                 clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_YES);
             }
             if (myYes) ImGui::PopStyleColor();
 
             ImGui::SameLine();
-            if (ImGui::Button(langGetText(STR_NO), ImVec2(80, 0))) {
+            if (ImGui::Button(langGetText(STR_NO), ImVec2(dialogFontW(80.0f), 0))) {
                 clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_NO);
             }
         }
@@ -6415,13 +6415,13 @@ static void renderAllianceRequest(ClientSim *cs) {
             renderControllerActionHint(SI_ACTION_VIEW_PLAYERS,
                                        langGetText(STR_ALLIANCE_RESPOND_IN_PLAYERS));
         } else {
-            if (ImGui::Button(langGetText(STR_DLGALLIANCE_ACCEPT), ImVec2(80, 0))) {
+            if (ImGui::Button(langGetText(STR_DLGALLIANCE_ACCEPT), ImVec2(dialogFontW(80.0f), 0))) {
                 clientSimAllianceAccept(cs, s_alliancePlayerNum);
                 s_allianceVisible = false;
             }
             imguiHandOnHover();
             ImGui::SameLine();
-            if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(80, 0))) {
+            if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(dialogFontW(80.0f), 0))) {
                 s_allianceVisible = false;
             }
             imguiHandOnHover();

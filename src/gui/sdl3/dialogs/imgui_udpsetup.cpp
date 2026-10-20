@@ -460,7 +460,7 @@ extern "C" int imguiUdpSetupShow(void) {
                                 imguiPopupFadeAlpha(&s_fadeUdpErr));
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
-            if (ImGui::Button(langGetText(STR_OK), ImVec2(80, 0))) {
+            if (ImGui::Button(langGetText(STR_OK), ImVec2(dialogFontW(80.0f), 0))) {
                 ImGui::CloseCurrentPopup();
             }
             imguiHandOnHover();
