@@ -146,8 +146,16 @@ static std::vector<IosRecording> iosRecordingsScan(void) {
     return list;
 }
 
+/* The largest recording read into memory. A recording is a compressed stream
+ * of ticks and a long round is a few megabytes, so 64 MB is well above any
+ * real one. The file can come from another app through Files, Mail or
+ * AirDrop; without a limit a file of several gigabytes would be read whole
+ * into memory and iOS would end the app. */
+#define IOS_REC_MAX_BYTES  (64 * 1024 * 1024)
+
 /* Reads a whole file into a malloc'd buffer: malloc, not SDL_malloc, because
- * the reel releases it with free() and owns it from the call on. */
+ * the reel releases it with free() and owns it from the call on. A file that
+ * is empty, of unknown size or larger than IOS_REC_MAX_BYTES is refused. */
 static bool iosRecordingsLoad(const char *path, uint8_t **outBuf, size_t *outLen) {
     *outBuf = NULL;
     *outLen = 0;
@@ -158,7 +166,10 @@ static bool iosRecordingsLoad(const char *path, uint8_t **outBuf, size_t *outLen
     }
     Sint64 len = SDL_GetIOSize(io);
     bool ok = false;
-    if (len > 0 && (Uint64)len <= (Uint64)SIZE_MAX) {
+    /* len is negative when SDL cannot tell the size. The limit is far below
+     * SIZE_MAX, so the size_t conversion below cannot wrap. */
+    if (len > 0 && (Uint64)len <= (Uint64)IOS_REC_MAX_BYTES &&
+        (Uint64)len <= (Uint64)SIZE_MAX) {
         uint8_t *buf = (uint8_t *)malloc((size_t)len);
         if (buf != NULL) {
             if (SDL_ReadIO(io, buf, (size_t)len) == (size_t)len) {
