@@ -9551,46 +9551,6 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             clientSimIsRunning(cs)) {
             sdl3ImguiTabletOverlay(cs);
         }
-        /* DEBUG overlay: left-stick / turn / build-cursor magnitudes (0..1).
-           Gated on WB_CONTROLLER_DEBUG (input_gamepad.h). */
-        if (WB_CONTROLLER_DEBUG &&
-            inputGamepadIsConnected() && cs && !clientSimIsInLobby(cs)) {
-            ImGuiViewport *vp = ImGui::GetMainViewport();
-            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - 8.0f,
-                                           vp->WorkPos.y + 8.0f),
-                                    ImGuiCond_Always, ImVec2(1.0f, 0.0f));
-            ImGui::SetNextWindowBgAlpha(0.55f);
-            if (ImGui::Begin("##stickdbg", nullptr,
-                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                    ImGuiWindowFlags_NoSavedSettings |
-                    ImGuiWindowFlags_AlwaysAutoResize |
-                    ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav)) {
-                /* Scroll-method selector (experiment). Picking manual turns
-                   autoscroll off; the others turn it on. */
-                static const char *kScrollNames[4] = {
-                    "winbolo v1 manual", "winbolo v1 autoscroll",
-                    "enhanced autoscroll", "enhanced autoscroll, Canuck's"
-                };
-                int mech = clientSimGetScrollMechanism();
-                ImGui::SetNextItemWidth(200);
-                if (ImGui::Combo("scroll", &mech, kScrollNames, 4)) {
-                    clientSimSetScrollMechanism(mech);
-                    clientSimSetAutoScroll(cs, mech != 0);
-                }
-                ImGui::Separator();
-                ImGui::Text("stick mag: %.2f", g_dbgStickMag);
-                ImGui::ProgressBar(g_dbgStickMag, ImVec2(160, 0));
-                ImGui::Text("turn  mag: %.2f", g_dbgTurnMag);
-                ImGui::ProgressBar(g_dbgTurnMag, ImVec2(160, 0));
-                ImGui::Separator();
-                ImGui::Text("cursor stick: %.2f", g_dbgCursorStickMag);
-                ImGui::ProgressBar(g_dbgCursorStickMag, ImVec2(160, 0));
-                ImGui::Text("cursor move : %.2f", g_dbgCursorMoveMag);
-                ImGui::ProgressBar(g_dbgCursorMoveMag, ImVec2(160, 0));
-            }
-            ImGui::End();
-        }
-
         /* Pause overlay + quick-chat overlay (no-ops when closed). */
         deckPauseRender(cs);
         /* Freeze a solo game while the pause overlay is up — single-player /

@@ -498,8 +498,6 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
      build cursor is active the right stick steers the cursor instead
      of scrolling — buildCursorTick handles its own camera follow, so
      the scroll path gets no contribution from the stick that frame. */
-  g_dbgCursorStickMag = 0.0f;
-  g_dbgCursorMoveMag  = 0.0f;
   if (inputGamepadIsConnected()) {
     float fdx = 0.0f, fdy = 0.0f;
     if (inputGamepadGetScrollDirection(&fdx, &fdy)) {
@@ -512,14 +510,6 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
                                : g_gamepadScrollSensitivity;
       int gx = (int)(fdx * (float)step * sens);
       int gy = (int)(fdy * (float)step * sens);
-      if (buildActive) {
-        /* DEBUG: right-stick reach and the resulting cursor move speed
-           (reach * sensitivity), both clamped to 0..1. */
-        float reach = sqrtf(fdx * fdx + fdy * fdy);
-        float mv    = reach * g_gamepadBuildCursorSensitivity;
-        g_dbgCursorStickMag = reach > 1.0f ? 1.0f : reach;
-        g_dbgCursorMoveMag  = mv > 1.0f ? 1.0f : mv;
-      }
       /* Min 1px nudge so deadzone-grazing input still moves. */
       if (gx == 0 && fdx >  0.0f) gx =  1;
       if (gx == 0 && fdx <  0.0f) gx = -1;
