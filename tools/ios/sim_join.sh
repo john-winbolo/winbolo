@@ -2,7 +2,7 @@
 # Run a dedicated server on this Mac, launch WinBoloIOS in a simulator with a
 # winbolo:// link to it so the app opens the join dialog for that server,
 # keep the console for a number of seconds, take a screenshot, then stop the
-# app, the simulator and the server.
+# app and the server, and shut the simulator down if this script booted it.
 #
 # Usage: tools/ios/sim_join.sh [--device NAME] [--app PATH] [--ds PATH]
 #                              [--port P] [--out DIR] [--seconds N]
@@ -62,7 +62,7 @@ cleanup() {
     wait "$LPID" 2>/dev/null
     LPID=""
   fi
-  xcrun simctl shutdown "$UDID" >/dev/null 2>&1
+  sim_shutdown "$UDID"
   if [ -n "$DSPID" ]; then
     kill "$DSPID" 2>/dev/null
     wait "$DSPID" 2>/dev/null

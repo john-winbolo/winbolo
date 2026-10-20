@@ -1,7 +1,7 @@
 #!/bin/bash
 # Boot an iOS simulator without opening its window, install and launch
 # WinBoloIOS, keep its console for a number of seconds, take a screenshot,
-# then stop the app and shut the simulator down.
+# then stop the app and shut the simulator down if this script booted it.
 #
 # Usage: tools/ios/sim_run.sh [--device NAME] [--app PATH] [--out DIR]
 #                             [--seconds N]
@@ -48,7 +48,7 @@ cleanup() {
     wait "$LPID" 2>/dev/null
     LPID=""
   fi
-  xcrun simctl shutdown "$UDID" >/dev/null 2>&1
+  sim_shutdown "$UDID"
 }
 trap cleanup EXIT INT TERM
 
