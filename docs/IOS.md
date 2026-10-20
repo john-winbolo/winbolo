@@ -114,6 +114,10 @@ games, records and replays rounds, and edits maps. It links:
   `winbolonet_client`;
 - voice: Opus and SpeexDSP, with the same `WINBOLO_VOICE` switches as the
   desktop;
+- libplum for NAT port mapping (`BOLO_PORTMAP`), as on the desktop. On iOS
+  it finds no routing table and takes the router to be `a.b.c.1` on the
+  device's subnet, and without the multicast entitlement its UPnP search
+  cannot be sent, so only PCP and NAT-PMP to that address can map a port;
 - the log viewer's decoder, renderer and embedded reel host, the set the web
   client links (`IOS_LOGVIEWER_SOURCES` in `CMakeLists.txt`), and the map
   editor sources.
@@ -126,7 +130,6 @@ What it does not have, on purpose:
   sim and `gamefront.c` still make bodies that do nothing. Its
   `serverInstanceStartup` and `serverInstanceTick` run the local
   single-player server through `serverSimLocalTick`;
-- no NAT port mapping (`BOLO_PORTMAP` is off for iOS);
 - no GeoIP country flags (the `geoLookup*` calls are stubbed).
 
 Per-file T2 grants on `WinBoloIOS` (see "Per-file T2 grants" in

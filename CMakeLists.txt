@@ -829,6 +829,53 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     endif()
 endif()
 
+# libplum — automatic UPnP / NAT-PMP / PCP port mapping for hosted servers.
+# When OFF, src/bolo/nat_portmap.c compiles to no-op stubs.
+option(BOLO_PORTMAP "Enable UPnP/NAT-PMP automatic port mapping" ON)
+
+# Fetches libplum and sets HAVE_LIBPLUM. A macro so the fetched variables and
+# HAVE_LIBPLUM land in the caller's scope. Called from both branches below
+# rather than here: the desktop branch adds compile options first (the fuzz
+# build's sanitizers) that plum must also get. Skipped on Emscripten (wasm),
+# where the wrapper compiles to no-op stubs. Built static so no extra shared
+# library ships.
+macro(bolo_fetch_libplum)
+    set(HAVE_LIBPLUM FALSE)
+    if(BOLO_PORTMAP AND NOT EMSCRIPTEN)
+        FetchContent_Declare(
+            libplum
+            GIT_REPOSITORY https://github.com/paullouisageneau/libplum.git
+            GIT_TAG        v0.5.3
+            GIT_SHALLOW    TRUE
+            SYSTEM
+            EXCLUDE_FROM_ALL
+        )
+        set(PLUM_NO_EXAMPLE         ON  CACHE INTERNAL "")
+        set(PLUM_WARNINGS_AS_ERRORS OFF CACHE INTERNAL "")
+        set(BUILD_SHARED_LIBS_SAVE_PLUM "${BUILD_SHARED_LIBS}")
+        set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(libplum)
+        set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE_PLUM}" CACHE BOOL "" FORCE)
+        # PIC so the static lib can also link into shared targets (winbolo_gym).
+        if(TARGET plum)
+            set_target_properties(plum PROPERTIES POSITION_INDEPENDENT_CODE ON)
+            # libplum uses a zero-sized array (C4200) and assignments in
+            # conditions (C4706, also diagnosed during LTCG). Allow these in
+            # the dependency. Older Windows SDK headers also trigger C5105.
+            # Keep this suppression private to plum for all MSVC generators,
+            # including Ninja where the Visual Studio generator's
+            # selected-SDK variable is unavailable.
+            if(MSVC)
+                target_compile_options(plum PRIVATE /wd4200 /wd4706 /wd5105)
+            endif()
+        endif()
+        set(HAVE_LIBPLUM TRUE)
+        message(STATUS "libplum enabled — automatic NAT port mapping")
+    else()
+        message(STATUS "libplum disabled — nat_portmap wrapper compiles to no-ops")
+    endif()
+endmacro()
+
 # ===========================================================================
 # Platform targets: iOS vs Desktop
 # ===========================================================================
@@ -927,8 +974,8 @@ add_subdirectory(brains)
 # server_sim.c + servermessages.c now come from server_sim_static;
 # threads.c comes from threads_static.
 set(IOS_SERVER_SOURCES
-    # No BOLO_PORTMAP on iOS (no libplum), so the port mapping wrapper
-    # compiles to its no-op half.
+    # The port mapping wrapper: libplum when BOLO_PORTMAP is on (see the
+    # libplum link below), its no-op half otherwise.
     src/bolo/nat_portmap.c
     src/mapeditor/mapgen_imgui.cpp
 )
@@ -1279,6 +1326,19 @@ bolo_apply_include_rules(winbolonet_server runtime_only)
 target_link_libraries(WinBoloIOS PRIVATE winbolonet_server winbolonet_client
     winbolonet_core "-framework Foundation")
 
+# libplum port mapping for an internet game hosted on iOS. Without the
+# multicast entitlement only PCP and NAT-PMP can work (UPnP finds the router
+# by SSDP multicast), and with no routing table on iOS libplum takes the
+# router to be a.b.c.1 on the device's own subnet (net.c).
+bolo_fetch_libplum()
+if(HAVE_LIBPLUM)
+    # Third-party source: the Xcode defaults warn on its ssize_t-to-int
+    # narrowing, as they do on tweetnacl's above.
+    target_compile_options(plum PRIVATE -Wno-shorten-64-to-32)
+    target_compile_definitions(WinBoloIOS PRIVATE BOLO_PORTMAP)
+    target_link_libraries(WinBoloIOS PRIVATE LibPlum::LibPlum)
+endif()
+
 # The WinBolo.net screens that need the libraries above: the news popup with
 # its image cache, and the recap's stars and comments.
 target_sources(WinBoloIOS PRIVATE
@@ -1603,10 +1663,6 @@ if(WB_FUZZ)
     add_link_options(-fsanitize=address)
 endif()
 
-# libplum — automatic UPnP / NAT-PMP / PCP port mapping for hosted servers.
-# When OFF, src/bolo/nat_portmap.c compiles to no-op stubs.
-option(BOLO_PORTMAP "Enable UPnP/NAT-PMP automatic port mapping" ON)
-
 # wb_log compile-time level. Calls below this level expand to ((void)0)
 # and are stripped by the compiler. Empty = wb_log.h decides (DEBUG in
 # Debug builds, INFO in Release).
@@ -1798,42 +1854,9 @@ else()
     message(STATUS "Sentry crash reporting disabled")
 endif()
 
-# libplum — UPnP / NAT-PMP / PCP port mapping for hosted servers.
-# Skipped on iOS (mobile) and Emscripten (wasm); the wrapper compiles to
-# no-op stubs there.  Build static so we don't ship an extra shared library.
-set(HAVE_LIBPLUM FALSE)
-if(BOLO_PORTMAP AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
-    FetchContent_Declare(
-        libplum
-        GIT_REPOSITORY https://github.com/paullouisageneau/libplum.git
-        GIT_TAG        v0.5.3
-        GIT_SHALLOW    TRUE
-        SYSTEM
-        EXCLUDE_FROM_ALL
-    )
-    set(PLUM_NO_EXAMPLE         ON  CACHE INTERNAL "")
-    set(PLUM_WARNINGS_AS_ERRORS OFF CACHE INTERNAL "")
-    set(BUILD_SHARED_LIBS_SAVE_PLUM "${BUILD_SHARED_LIBS}")
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(libplum)
-    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE_PLUM}" CACHE BOOL "" FORCE)
-    # PIC so the static lib can also link into shared targets (winbolo_gym).
-    if(TARGET plum)
-        set_target_properties(plum PROPERTIES POSITION_INDEPENDENT_CODE ON)
-        # libplum uses a zero-sized array (C4200) and assignments in conditions
-        # (C4706, also diagnosed during LTCG). Allow these in the dependency.
-        # Older Windows SDK headers also trigger C5105. Keep this suppression
-        # private to plum for all MSVC generators, including Ninja where the
-        # Visual Studio generator's selected-SDK variable is unavailable.
-        if(MSVC)
-            target_compile_options(plum PRIVATE /wd4200 /wd4706 /wd5105)
-        endif()
-    endif()
-    set(HAVE_LIBPLUM TRUE)
-    message(STATUS "libplum enabled — automatic NAT port mapping")
-else()
-    message(STATUS "libplum disabled — nat_portmap wrapper compiles to no-ops")
-endif()
+# libplum — UPnP / NAT-PMP / PCP port mapping for hosted servers
+# (bolo_fetch_libplum, defined before the iOS / desktop split).
+bolo_fetch_libplum()
 
 # ---------------------------------------------------------------------------
 # bolo_static / server_sim_static / server_static — the bulk of the sim
