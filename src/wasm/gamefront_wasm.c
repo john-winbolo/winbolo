@@ -771,6 +771,10 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
         bool wrongBefore = (password[0] != '\0');
         if (wasmAskJoinPassword(wrongBefore)) {
           clientSimDisconnect(humanSim);
+          /* Clear the active sim first: the new ClientSim can be allocated
+           * at the same address, and frontEndSetActiveClientSim only resets
+           * the roster and build cursor when the pointer changes. */
+          frontEndSetActiveClientSim(NULL);
           clientSimDestroy(humanSim);
           humanSim = clientSimAlloc();
           clientSimCreate(humanSim);
@@ -856,7 +860,9 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
       }
       if (wasmServerSim == NULL) {
         printf("[WASM] Failed to create ServerSim\n");
+        frontEndSetActiveClientSim(NULL);
         clientSimDestroy(humanSim);
+        humanSim = NULL;
         return FALSE;
       }
     }
@@ -941,7 +947,9 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
         wasmScenarioHost = NULL;
         serverSimDestroy(wasmServerSim);
         wasmServerSim = NULL;
+        frontEndSetActiveClientSim(NULL);
         clientSimDestroy(humanSim);
+        humanSim = NULL;
         return FALSE;
       }
     }
@@ -991,7 +999,9 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
       serverDedicatedLogUninstall();
       serverSimDestroy(wasmServerSim);
       wasmServerSim = NULL;
+      frontEndSetActiveClientSim(NULL);
       clientSimDestroy(humanSim);
+      humanSim = NULL;
       return FALSE;
     }
     wasmTransportActive = TRUE;
@@ -1727,7 +1737,7 @@ void gameFrontRequestPlayTutorial(void) {
 void gameFrontSaveWindowSettings(void) {
 }
 
-/* Called every frame by the game frame (sdl3ImguiProcessEvents) and the
+/* Called every frame by the game frame (top of sdl3ImguiPumpAndRender) and the
  * shared dialog loops: push any setting changed this session, debounced.
  * No-op when not signed in or when nothing is sync-dirty. */
 void gameFrontPumpDirty(void) {
