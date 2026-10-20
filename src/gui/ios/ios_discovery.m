@@ -66,6 +66,12 @@
 /* Most TXT pairs kept from one record; the advertiser writes 23. */
 #define IOS_DISCOVERY_TXT_MAX 32
 
+/* Most resolves started in one search. Each resolve is its own connection
+ * to mDNSResponder, so without a limit one device announcing thousands of
+ * instance names would use up file descriptors and memory. A LAN has far
+ * fewer WinBolo games than this. */
+#define IOS_DISCOVERY_RESOLVE_MAX 64
+
 /* One search. Touched only on its serial queue, except stopped, which the
  * waiting thread sets inside a dispatch_sync on that queue. */
 @interface IosDiscoverySearch : NSObject {
@@ -78,6 +84,8 @@
   DiscoveryServerCallback callback;
   void *userData;
   bool stopped;
+  int resolveCount;      /* resolves started, up to IOS_DISCOVERY_RESOLVE_MAX */
+  bool resolveCapLogged;
 }
 @end
 
@@ -213,7 +221,19 @@ static void DNSSD_API iosDiscoveryBrowseReply(DNSServiceRef sdRef,
   if ([search->seen containsObject:instance]) {
     return;
   }
+  if (search->resolveCount >= IOS_DISCOVERY_RESOLVE_MAX) {
+    /* Not added to seen either, so the end-of-search pass does not list
+     * it from its name. */
+    if (!search->resolveCapLogged) {
+      WB_LOG_INFO(WB_LOG_CAT_NET,
+                  "ios discovery: reached the limit of %d resolves, ignoring "
+                  "further instances in this search", IOS_DISCOVERY_RESOLVE_MAX);
+      search->resolveCapLogged = true;
+    }
+    return;
+  }
   [search->seen addObject:instance];
+  search->resolveCount++;
 
   IosResolveCtx *rc = (IosResolveCtx *)SDL_calloc(1, sizeof(IosResolveCtx));
   if (rc == NULL) {
@@ -251,6 +271,8 @@ static bool iosDiscoveryBrowse(DiscoveryServerCallback callback, void *userData)
   search->callback = callback;
   search->userData = userData;
   search->stopped = false;
+  search->resolveCount = 0;
+  search->resolveCapLogged = false;
 
   __block bool started = false;
   dispatch_sync(search->queue, ^{
