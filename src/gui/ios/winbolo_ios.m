@@ -188,6 +188,7 @@ extern void sdl3MessageHandler(const char *message, const char *title);
 static void windowRunGameTick(ClientSim *cs);
 static void iosEnterBackground(ClientSim *cs);
 static void iosResumeForeground(ClientSim *cs);
+static void iosClearBackgroundPause(ClientSim *cs);
 static void iosHostBackgroundFrame(ClientSim *cs);
 void windowSuspendBackground(ClientSim *cs);
 
@@ -693,6 +694,17 @@ ios_game_start:
 
     s_lifecycleCs = NULL;
 
+    /* A hosted game that ends in the background (a time limit, say) leaves
+       the loop still paused, and nothing else clears the pause: the lobby,
+       the shutdown and the menu would run as if in the background, and the
+       next game's first frame would wait in SDL_WaitEvent. The lifecycle
+       watch does nothing from here on, so clear it now. */
+    if (paused) {
+        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Game ended while in the background; clearing the pause");
+        iosClearBackgroundPause(cs);
+        s_backgroundStartNs = 0;
+    }
+
     /* Back to the lobby screen: the game and its ClientSim stay, as on the
        desktop. Not if the player quit in the same frame. */
     if (returnToLobby && !winboloQuit && !windowIsQuitting()) {
@@ -832,13 +844,11 @@ static void iosHostBackgroundFrame(ClientSim *cs) {
     SDL_Delay(IOS_FRAME_CAP_MS);
 }
 
-static void iosResumeForeground(ClientSim *cs) {
-    /* WILL and then DID both arrive after a full background; the second
-       finds nothing paused. */
-    if (!paused) return;
-    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Resuming from background");
+/* Undoes iosEnterBackground: clears the pause, hands any background time
+   back without shutting the server down, and runs the shared resume. Used by
+   iosResumeForeground and by the main loop's exit. */
+static void iosClearBackgroundPause(ClientSim *cs) {
     paused = FALSE;
-    /* Back in time: the hosted game carries on; hand the time back. */
     iosHostBackgroundEnd(false);
     lastFrameTime = SDL_GetTicks();
     gameTickAccum = 0.0;
@@ -847,6 +857,15 @@ static void iosResumeForeground(ClientSim *cs) {
     if (clientFrontResumeBegin()) {
         clientFrontResumeEnd(cs);
     }
+}
+
+static void iosResumeForeground(ClientSim *cs) {
+    /* WILL and then DID both arrive after a full background; the second
+       finds nothing paused. */
+    if (!paused) return;
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Resuming from background");
+    /* Back in time: the hosted game carries on; hand the time back. */
+    iosClearBackgroundPause(cs);
 
     /* Single player keeps its game: its server is in this process and was
        paused with it. With no start time the client's own timeout still
