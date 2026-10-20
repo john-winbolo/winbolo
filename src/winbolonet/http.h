@@ -199,6 +199,27 @@ bool httpSendLogFile(const char *fileName, char *key, bool wantFeedback);
 void httpSetLogUploadTimeout(long seconds);
 
 /*********************************************************
+*NAME:          httpSetDeadline / httpClearDeadline
+*PURPOSE:
+* Sets a time by which every WinBolo.net request, on any
+* thread, has to be over, for a shutdown that must finish
+* within a fixed time (an iOS app whose background time is
+* running out). A request started afterwards gets at most
+* the time left, and one started past the deadline fails at
+* once. With NSURLSession (http_nsurl.m) such a request is
+* not sent at all, and a request already waiting is also
+* stopped at the deadline; with libcurl (http.c) only
+* requests started after the call are limited.
+* httpClearDeadline removes the limit.
+*
+*ARGUMENTS:
+* msFromNow - Milliseconds from now; 0 or less means the
+*             deadline has already passed
+*********************************************************/
+void httpSetDeadline(long msFromNow);
+void httpClearDeadline(void);
+
+/*********************************************************
 *NAME:          wbn_api_get
 *PURPOSE:
 * Low-level GET request to a WinBolo.net API endpoint.

@@ -96,6 +96,7 @@
 #include <ctype.h>
 #include <time.h>
 #include <stdatomic.h>
+#include <SDL3/SDL_atomic.h>
 #include <SDL3/SDL_thread.h>
 #include <SDL3/SDL_timer.h>
 #include "tweetnacl.h"
@@ -127,6 +128,20 @@ static char wbnHostOverride[FILENAME_MAX]; /* command-line override for WBN host
 /* Per-call override for the log-upload total timeout, in seconds. 0 selects
  * the default. */
 static long s_logUploadTimeoutOverride = 0;
+
+/* httpSetDeadline: the SDL_GetTicks value every request has to be over by,
+ * or 0 for none. Under the spinlock because the worker thread reads it while
+ * another thread sets it. */
+static SDL_SpinLock s_deadlineLock = 0;
+static Uint64       s_deadlineMs   = 0;
+
+static Uint64 wbnDeadlineGet(void) {
+  Uint64 deadline;
+  SDL_LockSpinlock(&s_deadlineLock);
+  deadline = s_deadlineMs;
+  SDL_UnlockSpinlock(&s_deadlineLock);
+  return deadline;
+}
 
 /* The thread that called httpWorkerPoolBegin, for the slow-call log line. */
 static SDL_ThreadID s_workerThread = 0;
@@ -607,6 +622,20 @@ static WbnRunResult wbnRunRequest(NSMutableURLRequest *req, WbnHttpTask *t,
     connectMs = 0;
   }
 
+  /* Past the deadline (httpSetDeadline) nothing is sent; before it, the
+   * total is cut to the time left. */
+  Uint64 deadline = wbnDeadlineGet();
+  if (deadline != 0) {
+    Uint64 now = SDL_GetTicks();
+    if (now >= deadline) {
+      if (reasonOut) *reasonOut = @"past the shutdown deadline";
+      return WBN_RUN_ERROR;
+    }
+    if ((Uint64)totalMs > deadline - now) {
+      totalMs = (long)(deadline - now);
+    }
+  }
+
   /* The idle limit of the request itself; the total is enforced below. */
   req.timeoutInterval = (NSTimeInterval)totalMs / 1000.0 + 1.0;
   /* Bodies arrive as the server sent them, as with libcurl here, so the
@@ -621,15 +650,18 @@ static WbnRunResult wbnRunRequest(NSMutableURLRequest *req, WbnHttpTask *t,
   Uint64 startMs = SDL_GetTicks();
   [task resume];
 
-  bool slice = (cancel_flag != NULL || connectMs > 0);
+  /* Always in slices, so a deadline set while this request waits stops it
+   * within one slice. */
   for (;;) {
     Uint64 elapsed = SDL_GetTicks() - startMs;
     long remaining = totalMs - (long)elapsed;
-    if (remaining <= 0) {
+    Uint64 deadlineNow = wbnDeadlineGet();
+    if (remaining <= 0 ||
+        (deadlineNow != 0 && SDL_GetTicks() >= deadlineNow)) {
       timedOut = true;
       break;
     }
-    long waitMs = (slice && remaining > WBN_WAIT_SLICE_MS) ? WBN_WAIT_SLICE_MS : remaining;
+    long waitMs = (remaining > WBN_WAIT_SLICE_MS) ? WBN_WAIT_SLICE_MS : remaining;
     if (dispatch_semaphore_wait(t->done,
             dispatch_time(DISPATCH_TIME_NOW, (int64_t)waitMs * (int64_t)NSEC_PER_MSEC)) == 0) {
       /* Completed. */
@@ -925,6 +957,26 @@ int wbn_api_call_bearer(const char *endpoint, cJSON *body, const char *bearerTok
 *********************************************************/
 void httpSetLogUploadTimeout(long seconds) {
   s_logUploadTimeoutOverride = seconds;
+}
+
+/*********************************************************
+*NAME:          httpSetDeadline / httpClearDeadline
+*PURPOSE:
+* See http.h. wbnRunRequest checks the deadline before it
+* sends and on every slice while it waits.
+*********************************************************/
+void httpSetDeadline(long msFromNow) {
+  Uint64 now = SDL_GetTicks();
+  SDL_LockSpinlock(&s_deadlineLock);
+  /* At least 1 so a deadline already passed is not read as none. */
+  s_deadlineMs = msFromNow > 0 ? now + (Uint64)msFromNow : (now > 0 ? now : 1);
+  SDL_UnlockSpinlock(&s_deadlineLock);
+}
+
+void httpClearDeadline(void) {
+  SDL_LockSpinlock(&s_deadlineLock);
+  s_deadlineMs = 0;
+  SDL_UnlockSpinlock(&s_deadlineLock);
 }
 
 /*********************************************************

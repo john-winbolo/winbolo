@@ -48,6 +48,7 @@
 #include "../sdl3/dialog_backend.h"
 #include "ios_discovery.h"
 #include "ios_netpath.h"
+#include "../../winbolonet/http.h"
 #include "../sdl3/dialogs/imgui_messagebox.h"
 #include "../mobile/touch_input.h"
 #include "../ui_mode.h"
@@ -171,6 +172,12 @@ static SDL_Time s_backgroundStartNs = 0;
    host's return then goes to the menu through the check in
    iosResumeForeground. A return before then carries on. */
 #define IOS_HOST_BACKGROUND_END_S 5.0
+/* The shutdown's WinBolo.net calls (the session's quit, the round-log
+   upload) run on the main thread and wait for their replies, up to 30 s
+   each. In the background they get a deadline this many seconds before the
+   time runs out (httpSetDeadline), so a slow or unreachable WinBolo.net
+   leaves the session open instead of iOS ending the app. */
+#define IOS_HOST_SHUTDOWN_MARGIN_S 1.5
 static UIBackgroundTaskIdentifier s_hostBackgroundTask;
 static bool s_hostBackgroundActive = false;  /* s_hostBackgroundTask is held */
 
@@ -739,9 +746,20 @@ ios_game_start:
 static void iosHostBackgroundEnd(bool endGame) {
     if (!s_hostBackgroundActive) return;
     if (endGame && gameFrontHasLocalServer()) {
+        /* The Simulator reports no limit (DBL_MAX): no deadline there. */
+        double left = [UIApplication sharedApplication].backgroundTimeRemaining;
+        bool limited = (left < 1e9);
+        if (limited) {
+            httpSetDeadline((long)((left - IOS_HOST_SHUTDOWN_MARGIN_S) * 1000.0));
+        }
         WB_LOG_INFO(WB_LOG_CAT_PLATFORM,
-                    "[iOS] Background time nearly out; ending the hosted game");
+                    "[iOS] Background time nearly out; ending the hosted game "
+                    "(%.1f s left)", limited ? left : -1.0);
         gameFrontShutdownServer();
+        if (limited) {
+            httpClearDeadline();
+        }
+        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Hosted game ended");
     }
     [[UIApplication sharedApplication] endBackgroundTask:s_hostBackgroundTask];
     s_hostBackgroundActive = false;
