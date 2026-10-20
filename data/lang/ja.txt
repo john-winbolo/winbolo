@@ -2770,3 +2770,70 @@ STR_DLGSYSINFO_MEM_BUILDING=建設
 STR_DLGSYSINFO_MEM_RUBBLE=瓦礫
 STR_DLGSYSINFO_MEM_SWAMP=沼地
 STR_DLGSYSINFO_MEM_GRASS=草地
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=プッシュ・トゥ・トーク：ゲーム画面のマイクボタンを押し続けてください
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=あなたのファイル
+STR_MAPEDIT_IOS_BUILTIN=WinBolo に付属のマップ
+STR_MAPEDIT_IOS_NOFILES=まだ何もありません。保存したファイルと、「ファイル」アプリの WinBolo フォルダに入れたファイルがここに表示されます。
+STR_MAPEDIT_IOS_NAME=名前
+STR_MAPEDIT_IOS_REPLACES=この名前のファイルは既にあります。保存すると置き換えられます。
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=録画
+STR_IOSREC_EMPTY=まだ録画はありません。シングルプレイのラウンドはここに録画され、「ファイル」アプリの WinBolo フォルダに入れた .wbv ファイルもここに表示されます。
+STR_IOSREC_COPY=「ファイル」にコピー
+STR_IOSREC_COPIED=「ファイル」アプリの WinBolo フォルダにコピーしました。
+STR_IOSREC_OPEN_FAILED=この録画を開けませんでした。
+STR_IOSREC_LAST_ROUND=最後のシングルプレイのラウンド
+STR_IOSREC_COPY_FAILED=録画を「ファイル」アプリにコピーできませんでした。
+STR_DLGCONNECTING_TITLE={string1} に接続中...
+STR_DLGCONNECTING_PING=サーバーにゲームの情報を問い合わせ中...
+STR_DLGCONNECTING_JOINING=ゲームに参加中...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=その録画を読み込めませんでした。
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=設定
+STR_DLGLOBBY_DETAILS_COL_VALUE=値
+STR_DLGLOBBY_DETAILS_RULES=ルール：
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=この値はサーバーが決めています。変更できません。
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=作成者 {string1} · 更新 {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=不明
+STR_MENU_INFO_OVERLAY=情報オーバーレイ
+STR_SCNPANEL_POP_OUT=切り離す
+STR_SCNPANEL_POP_IN=戻す
+STR_SCNPANEL_CLOSE_TITLE={string1} を閉じますか？
+STR_SCNPANEL_CLOSE_BODY={string1} > {string2} から再びオンにできます。
+STR_DLGLOBBY_SCENARIO_REQUIRED=サーバーは常にこのスクリプトを実行します。削除できません。
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=サーバーは常にこのラウンドのシナリオを実行します
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=このリストはサーバーが決めています。変更できません。
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=トーチカが Mac Bolo と同じ照準をするかどうか。約1マス以内にいる、動いていて遮られていないタンクに対しては、その進行方向のずっと先を狙う。止まっている、または塞がれたタンクには先読みしない。pill_massage_range、pill_massage_cosine、pill_aim_iterations より優先される。
+STR_RULE_DESC_tank_collision_mac=タンクが壁、稼働中のトーチカ、敵の基地に対して、Mac Bolo の向きによって変わるスプライトの当たり枠とピクセル単位の押し戻しを使うかどうか。「ピルマッサージ」でトーチカのすぐ横を通れるようになる。
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=タンクの撃破を誰の手柄とするか。撃破のたびに問い合わせる。溺死は、沈めたタンクをスクリプトが指定しない限り犠牲者自身になる。
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} は「ファイル」アプリの WinBolo フォルダにあります。
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} を保存できませんでした。
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=マップが画面全体に表示され、操作ボタンはその上に描画されます。\nオフにするとゲーム画面は正方形のままで、操作ボタンはその横に並びます。\n次回の起動でも記憶されます。
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=フルスクリーンで建設ツールから、マップがどれだけ\n透けて見えるかです。0%で不透明になり、スライダーは\n90%までしか動かないため透明にはなりません。
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=フルスクリーンでタンク・トーチカ・基地のグリッドと在庫バーから、\nマップがどれだけ透けて見えるかです。0%で不透明になり、\nスライダーは90%までしか動かないため透明にはなりません。
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=マップが画面全体に表示され、ステータス・建設・ニュースのパネルがその上に、\nタッチで遊ぶときはタッチ操作も重ねて表示されます。\nオフにするとクラシック画面になります。次回の起動でも記憶されます。
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=このデバイスはモバイルデータ通信を使用しています。モバイルデータで\nホストしたインターネットゲームはおそらく動作しません。モバイル回線では\n他のプレイヤーがこのデバイスに接続できることはまれです。Wi-Fi のほうが\nはるかに動作する可能性が高くなります。\n\nそれでもホストしますか？

@@ -26,7 +26,7 @@
 #include "mapeditor_export.h"
 #include "mapeditor_wbn_open.h"  /* meWbnOpen* — empty unless MAPEDITOR_WBN_OPEN (WinBolo client build) */
 #include "macos_pinch.h"
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(__IPHONEOS__)  /* macOS menu bar; iOS draws the ImGui one */
 #include "platform/mac_menubar.h"
 #endif
 
@@ -35,6 +35,9 @@
 #endif
 #include "mapeditor_validate.h"
 #include "mapeditor_stats.h"
+#if defined(__IPHONEOS__)
+#include "mapeditor_ios_files.h"  /* in place of SDL's file dialogs */
+#endif
 #include "mapeditor_scenario_check.h" /* MapEditorState holds a check by value */
 #include "mapeditor_scenario_form.h" /* MapEditorState holds a form by value */
 #include "mapeditor_scenario_pack.h" /* the container a map's scenario is read
@@ -2631,6 +2634,7 @@ static void meDoNew(MapEditorState *ed) {
 /* -------------------------------------------------------
  * SDL3 async file dialog callbacks
  * ------------------------------------------------------- */
+#if !defined(__IPHONEOS__)  /* iOS asks through mapeditor_ios_files.cpp */
 static void SDLCALL meFileDialogCallback(void *userdata,
                                           const char *const *filelist,
                                           int filter) {
@@ -2643,6 +2647,7 @@ static void SDLCALL meFileDialogCallback(void *userdata,
     ed->fileDialogGotResult = true;
     ed->fileDialogPending = false;
 }
+#endif
 
 static void meShowOpenDialog(MapEditorState *ed, FileOp op) {
     SDL_DialogFileFilter filters[] = {
@@ -2652,7 +2657,12 @@ static void meShowOpenDialog(MapEditorState *ed, FileOp op) {
     ed->pendingFileOp = op;
     ed->fileDialogPending = true;
     ed->fileDialogGotResult = false;
+#if defined(__IPHONEOS__)
+    (void)filters;
+    meIosFilesBegin(false, "map", NULL);
+#else
     SDL_ShowOpenFileDialog(meFileDialogCallback, ed, ed->window, filters, 2, NULL, false);
+#endif
 }
 
 static void meShowSaveDialog(MapEditorState *ed, FileOp op) {
@@ -2662,7 +2672,13 @@ static void meShowSaveDialog(MapEditorState *ed, FileOp op) {
     ed->pendingFileOp = op;
     ed->fileDialogPending = true;
     ed->fileDialogGotResult = false;
+#if defined(__IPHONEOS__)
+    (void)filters;
+    /* The map's own name is offered, so saving a built-in map keeps it. */
+    meIosFilesBegin(true, "map", ed->currentFilePath);
+#else
     SDL_ShowSaveFileDialog(meFileDialogCallback, ed, ed->window, filters, 1, NULL);
+#endif
 }
 
 /* The same dialog for the other kind of file the editor writes: a scenario
@@ -2682,8 +2698,25 @@ static void meShowSaveModDialog(MapEditorState *ed) {
     ed->pendingFileOp = FILE_OP_SAVE_SCENARIO_MOD;
     ed->fileDialogPending = true;
     ed->fileDialogGotResult = false;
+#if defined(__IPHONEOS__)
+    (void)filters;
+    meIosFilesBegin(true, "scenario", suggested);
+#else
     SDL_ShowSaveFileDialog(meFileDialogCallback, ed, ed->window, filters, 1,
                            suggested[0] != '\0' ? suggested : NULL);
+#endif
+}
+
+/* True when Save can write straight to the map's own path. On iOS a map
+ * opened from the app bundle has a path that cannot be written, so Save
+ * asks for a name in Documents as Save As does. */
+static bool meCanSaveInPlace(const MapEditorState *ed) {
+    if (!ed->currentFilePath[0]) return false;
+#if defined(__IPHONEOS__)
+    return meIosFilesIsWritable(ed->currentFilePath);
+#else
+    return true;
+#endif
 }
 
 /* -------------------------------------------------------
@@ -3124,7 +3157,7 @@ static void meActionOpenWbn(MapEditorState *ed) {
 
 /* Begin "Save" — saves to current path or falls through to Save As. */
 static void meActionSave(MapEditorState *ed) {
-    if (ed->currentFilePath[0]) {
+    if (meCanSaveInPlace(ed)) {
         meSaveToPath(ed, ed->currentFilePath);
     } else {
         meShowSaveDialog(ed, FILE_OP_SAVE_AS);
@@ -3393,7 +3426,7 @@ static void meHandleUnsavedChoice(MapEditorState *ed, int choice) {
 
     if (choice == 1) {
         /* Yes — save first */
-        if (ed->currentFilePath[0]) {
+        if (meCanSaveInPlace(ed)) {
             /* The map and, when the forms hold edits, the manifest with it. */
             if (!meSaveAndPackForm(ed, ed->currentFilePath)) return;
             /* Save succeeded, now do the deferred action */
@@ -3637,6 +3670,306 @@ static void meCenterMapContents(MapEditorState *ed) {
     meSetStatus(ed, "Centered map (shifted %+d, %+d)", dx, dy);
 }
 
+#if defined(__IPHONEOS__)
+/* WinBolo's tablet layout draws through a logical presentation. The editor
+ * draws in render pixels and reads pointer positions in window points, as it
+ * does on the desktop, so on iOS it turns the presentation off while it runs
+ * and puts WinBolo's back whenever WinBolo draws: around the Settings dialog
+ * and on the way out. */
+static int s_iosLogW = 0;
+static int s_iosLogH = 0;
+static SDL_RendererLogicalPresentation s_iosLogMode = SDL_LOGICAL_PRESENTATION_DISABLED;
+
+static void meIosPresentationOff(SDL_Renderer *renderer) {
+    SDL_GetRenderLogicalPresentation(renderer, &s_iosLogW, &s_iosLogH, &s_iosLogMode);
+    SDL_SetRenderLogicalPresentation(renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
+}
+
+static void meIosPresentationRestore(SDL_Renderer *renderer) {
+    SDL_SetRenderLogicalPresentation(renderer, s_iosLogW, s_iosLogH, s_iosLogMode);
+}
+
+/* -------------------------------------------------------
+ * Touch on the canvas (iOS)
+ *
+ * SDL turns the first finger into a left mouse button, which ImGui and the
+ * canvas both read. On the canvas the editor holds that press back for a
+ * moment to see whether a second finger follows:
+ *   - one finger: the held press goes to the canvas as a left click, so a
+ *     tap paints with the current tool and a drag draws, as the mouse does;
+ *   - two fingers: nothing is painted; moving them pans the map and
+ *     spreading or closing them zooms it, the touch forms of the desktop's
+ *     right or middle drag and the wheel.
+ * A touch that starts on an ImGui panel or menu is left to ImGui.
+ *
+ * The canvas is handed its press as mouse events carrying ME_TOUCH_MOUSE_ID,
+ * pushed back onto SDL's queue; the event loop sends those to the canvas
+ * only, since ImGui has already seen the touch.
+ * ------------------------------------------------------- */
+#define ME_TOUCH_MOUSE_ID   ((SDL_MouseID)0x4D45u)  /* a mouse id SDL never uses */
+#define ME_TOUCH_HOLD_MS    90      /* how long a press waits for a second finger */
+#define ME_TOUCH_MOVE_PX    12.0f   /* window points a finger moves before it draws */
+#define ME_TOUCH_ZOOM_STEP  0.15f   /* log spacing ratio per zoom step, as the pinch */
+
+typedef enum {
+    ME_TOUCH_IDLE,      /* no finger down */
+    ME_TOUCH_PENDING,   /* one finger down, waiting to see what it is */
+    ME_TOUCH_DRAW,      /* one finger drawing on the canvas */
+    ME_TOUCH_GESTURE,   /* two fingers panning and zooming */
+    ME_TOUCH_IGNORE     /* the touch belongs to ImGui, or a gesture ended */
+} MeTouchState;
+
+static MeTouchState s_touchState = ME_TOUCH_IDLE;
+static SDL_FingerID s_touchId[2];
+static float        s_touchX[2], s_touchY[2];   /* window points */
+static int          s_touchCount = 0;
+static float        s_touchDownX, s_touchDownY;  /* where the first finger landed */
+static Uint64       s_touchDownTick = 0;
+static float        s_touchZoomAccum = 0.0f;
+/* While a press is held: whether the finger has moved far enough to draw,
+   and whether it has already lifted, and where. */
+static bool         s_touchMoved = false;
+static bool         s_touchLifted = false;
+static float        s_touchLiftX, s_touchLiftY;
+
+static void mePushTouchMouse(Uint32 type, float x, float y) {
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = type;
+    if (type == SDL_EVENT_MOUSE_MOTION) {
+        e.motion.which = ME_TOUCH_MOUSE_ID;
+        e.motion.state = SDL_BUTTON_LMASK;
+        e.motion.x = x;
+        e.motion.y = y;
+    } else {
+        e.button.which = ME_TOUCH_MOUSE_ID;
+        e.button.button = SDL_BUTTON_LEFT;
+        e.button.down = (type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+        e.button.clicks = 1;
+        e.button.x = x;
+        e.button.y = y;
+    }
+    SDL_PushEvent(&e);
+}
+
+static bool meTouchIsCanvasEvent(const SDL_Event *ev) {
+    return (ev->type == SDL_EVENT_MOUSE_MOTION && ev->motion.which == ME_TOUCH_MOUSE_ID) ||
+           ((ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+             ev->type == SDL_EVENT_MOUSE_BUTTON_UP) &&
+            ev->button.which == ME_TOUCH_MOUSE_ID);
+}
+
+/* The held press decided: to the canvas when ImGui does not want the
+   pointer, which by now it has had a frame to see. */
+static void meTouchConfirm(void) {
+    if (mapEditorImguiWantMouse()) {
+        s_touchState = ME_TOUCH_IGNORE;
+        return;
+    }
+    s_touchState = ME_TOUCH_DRAW;
+    mePushTouchMouse(SDL_EVENT_MOUSE_BUTTON_DOWN, s_touchDownX, s_touchDownY);
+    if (s_touchX[0] != s_touchDownX || s_touchY[0] != s_touchDownY) {
+        mePushTouchMouse(SDL_EVENT_MOUSE_MOTION, s_touchX[0], s_touchY[0]);
+    }
+}
+
+/* Back to no finger down, at the start of each editor run: a touch still
+   under way when the last run ended must not carry into this one. */
+static void meTouchReset(void) {
+    s_touchState = ME_TOUCH_IDLE;
+    s_touchCount = 0;
+    s_touchZoomAccum = 0.0f;
+    s_touchMoved = false;
+    s_touchLifted = false;
+}
+
+/* Once a frame, before the events, settle a held press: a press that moved,
+   lifted or was held long enough goes to the canvas (or to ImGui, over a
+   panel). A tap that has already lifted gets its release as well. Called
+   before the frame's events are read, so a press is first looked at here a
+   frame after it landed, by which time ImGui has had a frame to see it. */
+static void meTouchFrame(void) {
+    if (s_touchState != ME_TOUCH_PENDING) return;
+    if (!s_touchMoved && !s_touchLifted &&
+        SDL_GetTicks() - s_touchDownTick < ME_TOUCH_HOLD_MS) {
+        return;
+    }
+    meTouchConfirm();
+    if (s_touchLifted) {
+        if (s_touchState == ME_TOUCH_DRAW) {
+            mePushTouchMouse(SDL_EVENT_MOUSE_BUTTON_UP, s_touchLiftX, s_touchLiftY);
+        }
+        s_touchState = (s_touchCount == 0) ? ME_TOUCH_IDLE : ME_TOUCH_IGNORE;
+    }
+}
+
+static int meTouchSlot(SDL_FingerID id) {
+    for (int i = 0; i < s_touchCount; i++) {
+        if (s_touchId[i] == id) return i;
+    }
+    return -1;
+}
+
+static float meTouchSpacing(void) {
+    float dx = s_touchX[1] - s_touchX[0];
+    float dy = s_touchY[1] - s_touchY[0];
+    return SDL_sqrtf(dx * dx + dy * dy);
+}
+
+/* Pan by a move of the two fingers' midpoint and zoom by the change in their
+   spacing, both measured in window points. */
+static void meTouchGesture(MapEditorState *ed, float pxScale, float oldMidX,
+                           float oldMidY, float oldSpacing) {
+    float midX = (s_touchX[0] + s_touchX[1]) * 0.5f;
+    float midY = (s_touchY[0] + s_touchY[1]) * 0.5f;
+    float tilePixelsF = meScreenTilePixels(ed);
+    int cx = (int)ed->viewCenterX - (int)((midX - oldMidX) * pxScale * 256.0f / tilePixelsF);
+    int cy = (int)ed->viewCenterY - (int)((midY - oldMidY) * pxScale * 256.0f / tilePixelsF);
+    if (cx < 0) cx = 0;
+    if (cy < 0) cy = 0;
+    if (cx > 65535) cx = 65535;
+    if (cy > 65535) cy = 65535;
+    ed->viewCenterX = (WORLD)cx;
+    ed->viewCenterY = (WORLD)cy;
+
+    float spacing = meTouchSpacing();
+    if (oldSpacing >= 1.0f && spacing >= 1.0f) {
+        s_touchZoomAccum += SDL_logf(spacing / oldSpacing);
+        bool changed = false;
+        while (s_touchZoomAccum >= ME_TOUCH_ZOOM_STEP) {
+            if (ed->zoomStepIndex < (int)ZOOM_STEP_COUNT - 1) ed->zoomStepIndex++;
+            s_touchZoomAccum -= ME_TOUCH_ZOOM_STEP;
+            changed = true;
+        }
+        while (s_touchZoomAccum <= -ME_TOUCH_ZOOM_STEP) {
+            if (ed->zoomStepIndex > 0) ed->zoomStepIndex--;
+            s_touchZoomAccum += ME_TOUCH_ZOOM_STEP;
+            changed = true;
+        }
+        if (changed) {
+            ed->zoomLevel = zoomSteps[ed->zoomStepIndex];
+            ed->zoomFactor = meRenderZoom(ed, pxScale);
+        }
+    }
+}
+
+/* Read one event for the touch handling. True when the canvas must not see
+   it: SDL's mouse made from a finger (the canvas gets its own, above) and the
+   finger events themselves. ImGui has already been given the event. */
+static bool meTouchTakeEvent(MapEditorState *ed, const SDL_Event *ev, float pxScale) {
+    if ((ev->type == SDL_EVENT_MOUSE_MOTION && ev->motion.which == SDL_TOUCH_MOUSEID) ||
+        ((ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev->type == SDL_EVENT_MOUSE_BUTTON_UP) &&
+         ev->button.which == SDL_TOUCH_MOUSEID)) {
+        return true;
+    }
+    if (ev->type != SDL_EVENT_FINGER_DOWN && ev->type != SDL_EVENT_FINGER_MOTION &&
+        ev->type != SDL_EVENT_FINGER_UP && ev->type != SDL_EVENT_FINGER_CANCELED) {
+        return false;
+    }
+
+    int winW = 0, winH = 0;
+    SDL_GetWindowSize(ed->window, &winW, &winH);
+    float x = ev->tfinger.x * (float)winW;
+    float y = ev->tfinger.y * (float)winH;
+    int slot = meTouchSlot(ev->tfinger.fingerID);
+
+    if (ev->type == SDL_EVENT_FINGER_DOWN) {
+        if (slot < 0 && s_touchCount < 2) {
+            slot = s_touchCount++;
+            s_touchId[slot] = ev->tfinger.fingerID;
+        }
+        if (slot < 0) return true;
+        s_touchX[slot] = x;
+        s_touchY[slot] = y;
+        if (s_touchCount == 1 && s_touchState == ME_TOUCH_IDLE) {
+            s_touchState = ME_TOUCH_PENDING;
+            s_touchDownX = x;
+            s_touchDownY = y;
+            s_touchDownTick = SDL_GetTicks();
+            s_touchMoved = false;
+            s_touchLifted = false;
+        } else if (s_touchCount == 2 && s_touchState == ME_TOUCH_PENDING &&
+                   !s_touchLifted) {
+            /* The held press is dropped: two fingers never paint. */
+            s_touchState = ME_TOUCH_GESTURE;
+            s_touchZoomAccum = 0.0f;
+        }
+        return true;
+    }
+
+    if (slot < 0) return true;
+
+    if (ev->type == SDL_EVENT_FINGER_MOTION) {
+        float oldMidX = (s_touchX[0] + s_touchX[1]) * 0.5f;
+        float oldMidY = (s_touchY[0] + s_touchY[1]) * 0.5f;
+        float oldSpacing = (s_touchCount == 2) ? meTouchSpacing() : 0.0f;
+        s_touchX[slot] = x;
+        s_touchY[slot] = y;
+        switch (s_touchState) {
+        case ME_TOUCH_PENDING: {
+            float dx = x - s_touchDownX;
+            float dy = y - s_touchDownY;
+            if (dx * dx + dy * dy >= ME_TOUCH_MOVE_PX * ME_TOUCH_MOVE_PX) {
+                /* Decided at the next frame, in meTouchFrame. */
+                s_touchMoved = true;
+            }
+            break;
+        }
+        case ME_TOUCH_DRAW:
+            if (slot == 0) mePushTouchMouse(SDL_EVENT_MOUSE_MOTION, x, y);
+            break;
+        case ME_TOUCH_GESTURE:
+            if (s_touchCount == 2) meTouchGesture(ed, pxScale, oldMidX, oldMidY, oldSpacing);
+            break;
+        default:
+            break;
+        }
+        return true;
+    }
+
+    /* A finger the system cancelled (a gesture of its own, an incoming call)
+       is not a tap: a held press is dropped, and a stroke under way is ended
+       where it is. Every finger still down is then ignored. */
+    if (ev->type == SDL_EVENT_FINGER_CANCELED) {
+        if (s_touchState == ME_TOUCH_DRAW && slot == 0) {
+            mePushTouchMouse(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
+        }
+        if (slot == 0 && s_touchCount == 2) {
+            s_touchId[0] = s_touchId[1];
+            s_touchX[0] = s_touchX[1];
+            s_touchY[0] = s_touchY[1];
+        }
+        s_touchCount--;
+        s_touchLifted = false;
+        s_touchState = (s_touchCount == 0) ? ME_TOUCH_IDLE : ME_TOUCH_IGNORE;
+        return true;
+    }
+
+    /* A finger lifted. A held press that lifts is a tap, sent to the canvas
+       press and release together at the next frame. */
+    bool pendingTap = (s_touchState == ME_TOUCH_PENDING);
+    if (pendingTap && slot == 0) {
+        s_touchLifted = true;
+        s_touchLiftX = x;
+        s_touchLiftY = y;
+    } else if (s_touchState == ME_TOUCH_DRAW && slot == 0) {
+        mePushTouchMouse(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
+    }
+    /* Close up the slots; whatever the touch was, it is over once the first
+       finger lifts, and the rest are ignored until every finger is up. */
+    if (slot == 0 && s_touchCount == 2) {
+        s_touchId[0] = s_touchId[1];
+        s_touchX[0] = s_touchX[1];
+        s_touchY[0] = s_touchY[1];
+    }
+    s_touchCount--;
+    if (!pendingTap) {
+        s_touchState = (s_touchCount == 0) ? ME_TOUCH_IDLE : ME_TOUCH_IGNORE;
+    }
+    return true;
+}
+#endif
+
 /* -------------------------------------------------------
  * Main editor loop
  * ------------------------------------------------------- */
@@ -3645,6 +3978,9 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     ed->window = window;
     ed->renderer = renderer;
     ed->fromMainMenu = fromMainMenu;
+#if defined(__IPHONEOS__)
+    meTouchReset();
+#endif
 
     {
         int winW = 0, winH = 0, outW = 0, outH = 0;
@@ -3726,6 +4062,12 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         return;
     }
     SDL_SetTextureScaleMode(ed->tilesTex, SDL_SCALEMODE_NEAREST);
+#if defined(__IPHONEOS__)
+    /* After the two failure returns above, so neither leaves WinBolo's
+       presentation off; from here the run always ends at the restore in the
+       cleanup. */
+    meIosPresentationOff(renderer);
+#endif
 
     /* Load recent files from INI */
     meLoadRecentFiles(ed);
@@ -3771,7 +4113,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     /* Initialize ImGui */
     mapEditorImguiInit(window, renderer);
 
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(__IPHONEOS__)  /* macOS menu bar; iOS draws the ImGui one */
     /* Install the native NSMenu after ImGui + window are up. The shim
      * saves any previously-installed mainMenu so embedded entry from
      * WinBolo (which has its own NSMenu installed) restores cleanly on
@@ -3807,8 +4149,20 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
         /* Process events */
         SDL_Event ev;
+#if defined(__IPHONEOS__)
+        meTouchFrame();
+#endif
         while (SDL_PollEvent(&ev)) {
+#if defined(__IPHONEOS__)
+            /* The canvas's own mouse made from a touch skips ImGui, which
+               saw the touch itself; the touch is read for the canvas here. */
+            if (!meTouchIsCanvasEvent(&ev)) {
+                mapEditorImguiProcessEvent(&ev);
+                if (meTouchTakeEvent(ed, &ev, pxScale)) continue;
+            }
+#else
             mapEditorImguiProcessEvent(&ev);
+#endif
 
             switch (ev.type) {
             case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
@@ -4461,6 +4815,18 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
             case SDL_EVENT_DROP_FILE: {
                 const char *dropPath = ev.drop.data;
+#if defined(__IPHONEOS__)
+                /* iOS's drop watch (src/gui/ios/ios_drops.c) has already kept
+                   a recording or a winbolo:// link for the welcome screen;
+                   neither is a map, so the editor leaves them alone. */
+                if (dropPath) {
+                    size_t dlen = SDL_strlen(dropPath);
+                    if (SDL_strncasecmp(dropPath, "winbolo://", 10) == 0 ||
+                        (dlen >= 4 && SDL_strcasecmp(dropPath + dlen - 4, ".wbv") == 0)) {
+                        dropPath = NULL;
+                    }
+                }
+#endif
                 if (dropPath) {
                     if (meAnythingDirty(ed)) {
                         SDL_strlcpy(ed->pendingOpenPath, dropPath, ME_PATH_MAX);
@@ -4656,7 +5022,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
         /* Menu bar */
         MapEditorMenuAction menuAction;
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(__IPHONEOS__)  /* macOS menu bar; iOS draws the ImGui one */
         /* On macOS the menu lives in the system menu bar via the
          * NSMenu shim. Push state in (enable gates, checkmarks,
          * Recent/Zoom contents, scope labels) and drain any clicks
@@ -4945,6 +5311,15 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                 ed->statsDirty = true;
             }
         }
+
+#if defined(__IPHONEOS__)
+        /* No Delete key on a touch screen: a selected base, pill or start
+           gets a button instead. */
+        if (ed->selectedObjKind != ME_SEL_NONE && ed->selectedObjIndex >= 0 &&
+            meIosObjectDeleteButton()) {
+            meDeleteSelectedObj(ed);
+        }
+#endif
 
         /* Object list panel */
         if (ed->showObjects) {
@@ -5412,13 +5787,29 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
         mapEditorImguiStatusBar(hoverMX, hoverMY, ed->zoomLevel, ed->dirty, startInfoPtr);
 
+#if defined(__IPHONEOS__)
+        /* The file picker that stands in for SDL's dialogs. Its answer is
+           handled at the top of the next frame, where a dialog's would be. */
+        if (ed->fileDialogPending &&
+            meIosFilesRender(ed->fileDialogResult, ME_PATH_MAX)) {
+            ed->fileDialogGotResult = true;
+            ed->fileDialogPending = false;
+        }
+#endif
+
         mapEditorImguiRender();
         SDL_RenderPresent(renderer);
 
         if (ed->wantSettings) {
             ed->wantSettings = false;
+#if defined(__IPHONEOS__)
+            meIosPresentationRestore(renderer);
             mapEditorImguiRunOutside(s_settingsFn);
-#ifdef __APPLE__
+            meIosPresentationOff(renderer);
+#else
+            mapEditorImguiRunOutside(s_settingsFn);
+#endif
+#if defined(__APPLE__) && !defined(__IPHONEOS__)  /* macOS menu bar; iOS draws the ImGui one */
             /* The menu bar stayed live while the settings window was up; a
              * second pick of Settings there would open it again at once. */
             me_mac_menubar_drop_settings_request();
@@ -5438,7 +5829,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
      * the editor — the client goes back to the welcome screen. */
     meWbnOpenShutdown();
 #endif
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(__IPHONEOS__)  /* macOS menu bar; iOS draws the ImGui one */
     /* Restore the previously-installed NSMenu (WinBolo's, when embedded;
      * empty stub when standalone since the process is exiting). */
     me_mac_menubar_uninstall();
@@ -5451,5 +5842,8 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     if (ed->tilesTex) SDL_DestroyTexture(ed->tilesTex);
     meFreeMapData(ed);
     free(ed->brushSeen);
+#if defined(__IPHONEOS__)
+    meIosPresentationRestore(renderer);
+#endif
     free(ed);
 }

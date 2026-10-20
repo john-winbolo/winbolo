@@ -2770,3 +2770,70 @@ STR_DLGSYSINFO_MEM_BUILDING=Construção
 STR_DLGSYSINFO_MEM_RUBBLE=Escombros
 STR_DLGSYSINFO_MEM_SWAMP=Pântano
 STR_DLGSYSINFO_MEM_GRASS=Grama
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Apertar para falar: mantenha pressionado o botão do microfone na tela do jogo
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Seus arquivos
+STR_MAPEDIT_IOS_BUILTIN=Mapas que vêm com o WinBolo
+STR_MAPEDIT_IOS_NOFILES=Nada aqui ainda. Os arquivos que você salvar, e os que colocar na pasta do WinBolo no app Arquivos, aparecem aqui.
+STR_MAPEDIT_IOS_NAME=Nome
+STR_MAPEDIT_IOS_REPLACES=Já existe um arquivo com este nome. Salvar vai substituí-lo.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Gravações
+STR_IOSREC_EMPTY=Nenhuma gravação ainda. As partidas de um jogador são gravadas aqui, e os arquivos .wbv colocados na pasta do WinBolo no app Arquivos também aparecem aqui.
+STR_IOSREC_COPY=Copiar para Arquivos
+STR_IOSREC_COPIED=Copiado para a pasta do WinBolo no app Arquivos.
+STR_IOSREC_OPEN_FAILED=Não foi possível abrir esta gravação.
+STR_IOSREC_LAST_ROUND=Última partida de um jogador
+STR_IOSREC_COPY_FAILED=Não foi possível copiar a gravação para o app Arquivos.
+STR_DLGCONNECTING_TITLE=Conectando a {string1}...
+STR_DLGCONNECTING_PING=Perguntando ao servidor sobre a partida...
+STR_DLGCONNECTING_JOINING=Entrando na partida...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Não foi possível ler essa gravação.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Configuração
+STR_DLGLOBBY_DETAILS_COL_VALUE=Valor
+STR_DLGLOBBY_DETAILS_RULES=Regras:
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=O servidor define este valor. Ele não pode ser alterado.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=por {string1} · atualizado {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=desconhecido
+STR_MENU_INFO_OVERLAY=Sobreposição de informações
+STR_SCNPANEL_POP_OUT=Destacar
+STR_SCNPANEL_POP_IN=Encaixar
+STR_SCNPANEL_CLOSE_TITLE=Fechar {string1}?
+STR_SCNPANEL_CLOSE_BODY=Ative de novo em {string1} > {string2}.
+STR_DLGLOBBY_SCENARIO_REQUIRED=O servidor sempre executa este script. Ele não pode ser removido.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=O servidor sempre executa o cenário desta rodada
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=O servidor define esta lista. Ela não pode ser alterada.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Se os bunkers miram como no Mac Bolo. Tanques em movimento e desobstruídos a cerca de uma casa fazem o bunker mirar bem à frente na direção deles. Tanques parados ou bloqueados não recebem antecipação. Substitui pill_massage_range, pill_massage_cosine e pill_aim_iterations.
+STR_RULE_DESC_tank_collision_mac=Se os tanques usam as caixas de sprite dependentes da direção e os ajustes de pixel do Mac Bolo contra muros, bunkers ativos e bases inimigas. Permite passar mais perto de um bunker para o "pill massage".
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=A quem a morte de um tanque é atribuída, perguntado a cada morte; um afogamento aponta a vítima, a menos que um script aponte o tanque que o afundou.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} está na pasta do WinBolo no app Arquivos.
+STR_CLIPGIF_SAVE_FAILED_IOS=Não foi possível salvar {string1}.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=O mapa preenche a tela e os controles são desenhados por cima dele.\nDesativado mantém a visão do jogo quadrada, com os controles ao lado.\nLembrado para a próxima vez.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Quanto do mapa aparece através das ferramentas de\nconstrução em tela cheia. 0% é sólido, e o controle deslizante\npara em 90% para que não possam ficar invisíveis.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Quanto do mapa aparece através das grades de tanques, bunkers\ne bases e das barras de estoque em tela cheia. 0% é sólido,\ne o controle deslizante para em 90% para que não possam ficar invisíveis.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=O mapa preenche a tela, com os painéis de status, construção e notícias\npor cima, e os controles de toque quando você joga pelo toque.\nDesligado mostra a tela clássica. Lembrado para a próxima vez.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=Este aparelho está usando dados móveis. Uma partida pela Internet\nhospedada com dados móveis provavelmente não vai funcionar: as redes\nmóveis raramente deixam outros jogadores alcançarem o aparelho. No Wi-Fi\na chance é muito maior.\n\nHospedar mesmo assim?

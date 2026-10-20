@@ -34,6 +34,7 @@ typedef enum {
   TOUCH_BTN_BASE_VIEW,
   TOUCH_BTN_ALLY_VIEW,
   TOUCH_BTN_TANK_VIEW,
+  TOUCH_BTN_TALK,  /* voice: hold to talk, or tap to mute in open mic mode */
   TOUCH_BTN_COUNT
 } TouchButtonID;
 
@@ -142,7 +143,22 @@ int inputTouchGetBuildSelect(void);
 bool inputTouchConsumeTapInRect(float x, float y, float w, float h);
 
 void inputTouchSetViewportBounds(int vpX, int vpY, int vpW, int vpH, int zoom);
+
+/*********************************************************
+*NAME:          inputTouchSetBlockedRects
+*PURPOSE:
+*  The rects the open dialogs cover, in the same space as
+*  the viewport bounds. A finger that comes down inside one
+*  belongs to the dialog until it lifts: no button, joystick,
+*  map drag or tap sees it. Fingers that come down outside
+*  work as normal. Up to 16 rects; zero clears them.
+*********************************************************/
+void inputTouchSetBlockedRects(const SDL_FRect *rects, int count);
 bool inputTouchGetViewportTap(BYTE *tileX, BYTE *tileY);
+/* The tap as its touch position rather than a square: any tap in the game
+   view, where inputTouchGetViewportTap has only one inside the classic 15x15
+   view. Reading either one clears it. */
+bool inputTouchGetViewportTapPos(float *x, float *y);
 
 /*********************************************************
 *NAME:          inputTouchGetViewportDragScroll
@@ -162,6 +178,96 @@ bool inputTouchGetViewportDragScroll(int *scrollX, int *scrollY);
 *  Returns true if a drag motion occurred this frame.
 *********************************************************/
 bool inputTouchGetViewportDragDelta(float *deltaX, float *deltaY);
+
+/*********************************************************
+*NAME:          inputTouchConsumeViewportDragTravel
+*PURPOSE:       Everything the viewport drag finger has moved since the last
+*               read, in pixels, once the finger has moved past the tap
+*               distance. Returns false when there is none, or while a pinch
+*               is under way. Reading it clears it.
+*********************************************************/
+bool inputTouchConsumeViewportDragTravel(float *deltaX, float *deltaY);
+
+/*********************************************************
+*NAME:          inputTouchSetViewportPinchEnabled
+*PURPOSE:       Turn two-finger pinch tracking on the viewport on or off.
+*               Off by default; while off a second finger on the viewport is
+*               handled as it always was.
+*********************************************************/
+void inputTouchSetViewportPinchEnabled(bool enabled);
+
+/*********************************************************
+*NAME:          inputTouchConsumeViewportPinch
+*PURPOSE:       The pinch since the last read: scale is the new finger
+*               spacing over the old (above 1 spreading, below 1 closing) and
+*               the centre is the point between the fingers. Returns false
+*               when no pinch is under way or the spacing has not changed.
+*********************************************************/
+bool inputTouchConsumeViewportPinch(float *scale, float *centerX, float *centerY);
+
+/*********************************************************
+*NAME:          inputTouchSetClassicControlsOffered
+*PURPOSE:       The platform says the classic screen (the desktop layout)
+*               gets the touch controls when it is touched: the iPad does.
+*               Off by default, so a desktop or web client is unchanged.
+*********************************************************/
+void inputTouchSetClassicControlsOffered(bool offered);
+bool inputTouchClassicControlsOffered(void);
+
+/*********************************************************
+*NAME:          inputTouchNoteInput
+*PURPOSE:       Called with every SDL event. A finger coming down makes
+*               touch the last input; a key or gamepad button press makes it
+*               something else. Mouse and trackpad input leave it alone.
+*********************************************************/
+void inputTouchNoteInput(const SDL_Event *ev);
+
+/*********************************************************
+*NAME:          inputTouchControlsShown
+*PURPOSE:       True when the touch controls are up and drive the tank:
+*               always in the touch layout, and on the classic screen where
+*               the platform offers them while the last input was a finger.
+*********************************************************/
+bool inputTouchControlsShown(void);
+
+/*********************************************************
+*NAME:          inputTouchClassicControlsAlpha
+*PURPOSE:       How strongly the classic screen's touch controls are drawn,
+*               0 to 1: full while a finger is on the screen and for two
+*               seconds after the last one lifts, then fading out over a
+*               second, and 0 while they are not shown at all. They work
+*               faded: a touch on one's place still takes it, and brings
+*               them back.
+*********************************************************/
+float inputTouchClassicControlsAlpha(void);
+
+/*********************************************************
+*NAME:          inputTouchSetJoystickZone
+*PURPOSE:       The rect a finger must come down in to take the stick. A
+*               width or height of 0 gives the touch layout's rule: the left
+*               40% of the screen outside the game view.
+*********************************************************/
+void inputTouchSetJoystickZone(float x, float y, float w, float h);
+
+/*********************************************************
+*NAME:          inputTouchSetControlRects
+*PURPOSE:       Rects of touch controls that are not registered buttons
+*               (the messages, players and Settings buttons), for
+*               inputTouchPointOnControl. Up to 8; zero clears them.
+*********************************************************/
+void inputTouchSetControlRects(const SDL_FRect *rects, int count);
+
+/*********************************************************
+*NAME:          inputTouchPointOnControl
+*PURPOSE:       True when a finger at (x, y) lands on a touch control: the
+*               stick's zone, the scroll stick's zone, a registered button,
+*               a control rect, or the game view while the touch input owns
+*               it (the full screen map), and not on an open dialog. SDL
+*               sends the mouse events it makes from a finger before the
+*               finger event itself, so this is how the classic screen tells
+*               a finger meant for a control from a click on the game.
+*********************************************************/
+bool inputTouchPointOnControl(float x, float y);
 
 /* Legacy API — now wrappers around button system */
 bool inputTouchIsFirePressed(void);

@@ -3501,6 +3501,46 @@
 #define STR_DLGSYSINFO_MEM_SWAMP                 2796
 #define STR_DLGSYSINFO_MEM_GRASS                 2797
 
+/* Voice settings on a touch screen, where the talk button is the key */
+#define STR_DLGSETTINGS_VOICE_PTT_TOUCH          2919
+
+/* Map editor file picker on iOS, which has no system open or save dialog */
+#define STR_MAPEDIT_IOS_YOURFILES                2920
+#define STR_MAPEDIT_IOS_BUILTIN                  2921
+#define STR_MAPEDIT_IOS_NOFILES                  2922
+#define STR_MAPEDIT_IOS_NAME                     2923
+#define STR_MAPEDIT_IOS_REPLACES                 2924
+
+/* Recordings on the phone (iOS log viewer screen) */
+#define STR_IOSREC_TITLE                         2925
+#define STR_IOSREC_EMPTY                         2926
+#define STR_IOSREC_COPY                          2927
+#define STR_IOSREC_COPIED                        2928
+#define STR_IOSREC_OPEN_FAILED                   2929
+#define STR_IOSREC_LAST_ROUND                    2930
+#define STR_IOSREC_COPY_FAILED                   2931
+
+#define STR_DLGCONNECTING_TITLE                  2932
+#define STR_DLGCONNECTING_PING                   2933
+#define STR_DLGCONNECTING_JOINING                2934
+
+/* The log browser's Open File on iOS, when the picked file cannot be read */
+#define STR_DLGWBN_OPENFILE_FAILED               2935
+
+/* The recap's clip GIF on iOS, saved into the WinBolo folder in Files */
+#define STR_CLIPGIF_SAVED_IOS                    2936
+#define STR_CLIPGIF_SAVE_FAILED_IOS              2937
+
+/* The iOS touch layout's Full Screen choice and its panel tooltips */
+#define STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP          2938
+#define STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP  2939
+#define STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP 2940
+/* The iPad's Full Screen choice: the full screen map or the classic screen */
+#define STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP      2941
+
+/* Asked before an Internet game is hosted on mobile data (Yes / No) */
+#define STR_GAMEFRONTERR_HOST_MOBILE_DATA        2942
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

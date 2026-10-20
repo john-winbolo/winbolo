@@ -2768,3 +2768,70 @@ STR_DLGSYSINFO_MEM_BUILDING=建造
 STR_DLGSYSINFO_MEM_RUBBLE=瓦礫
 STR_DLGSYSINFO_MEM_SWAMP=沼澤
 STR_DLGSYSINFO_MEM_GRASS=草地
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=按鍵說話：按住遊戲畫面上的麥克風按鈕
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=你的檔案
+STR_MAPEDIT_IOS_BUILTIN=WinBolo 隨附的地圖
+STR_MAPEDIT_IOS_NOFILES=這裡還沒有內容。你儲存的檔案，以及放入「檔案」App 中 WinBolo 資料夾的檔案，都會顯示在這裡。
+STR_MAPEDIT_IOS_NAME=名稱
+STR_MAPEDIT_IOS_REPLACES=已有同名檔案。儲存將會取代它。
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=錄影
+STR_IOSREC_EMPTY=還沒有錄影。單人回合會錄製在這裡，放入「檔案」App 中 WinBolo 資料夾的 .wbv 檔案也會列在這裡。
+STR_IOSREC_COPY=複製到「檔案」
+STR_IOSREC_COPIED=已複製到「檔案」App 中的 WinBolo 資料夾。
+STR_IOSREC_OPEN_FAILED=無法開啟此錄影。
+STR_IOSREC_LAST_ROUND=上一個單人回合
+STR_IOSREC_COPY_FAILED=無法將錄影複製到「檔案」App。
+STR_DLGCONNECTING_TITLE=正在連線到 {string1}...
+STR_DLGCONNECTING_PING=正在向伺服器詢問其遊戲...
+STR_DLGCONNECTING_JOINING=正在加入遊戲...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=無法讀取該錄影。
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=設定
+STR_DLGLOBBY_DETAILS_COL_VALUE=值
+STR_DLGLOBBY_DETAILS_RULES=規則：
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=此值由伺服器設定，無法更改。
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=作者 {string1} · 更新於 {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=未知
+STR_MENU_INFO_OVERLAY=資訊疊加層
+STR_SCNPANEL_POP_OUT=彈出
+STR_SCNPANEL_POP_IN=收回
+STR_SCNPANEL_CLOSE_TITLE=關閉{string1}？
+STR_SCNPANEL_CLOSE_BODY=可在 {string1} > {string2} 中重新開啟。
+STR_DLGLOBBY_SCENARIO_REQUIRED=伺服器總是執行此腳本，無法移除。
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=伺服器總是執行本回合的場景
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=此清單由伺服器設定，無法更改。
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=碉堡是否使用 Mac Bolo 的瞄準方式。約一格內移動且無遮擋的坦克會讓碉堡沿其行進方向遠遠提前瞄準。停止或被阻擋的坦克不會被提前瞄準。會覆蓋 pill_massage_range、pill_massage_cosine 和 pill_aim_iterations。
+STR_RULE_DESC_tank_collision_mac=坦克在牆、運作中的碉堡和敵方基地旁是否使用 Mac Bolo 隨方向變化的精靈碰撞框和像素推移。可以為「pill massage」更貼近碉堡通過。
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=坦克被擊毀算作誰的戰績，每次擊毀時詢問；溺水算作受害者自己，除非腳本指明擊沉它的坦克。
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} 位於「檔案」App 的 WinBolo 資料夾中。
+STR_CLIPGIF_SAVE_FAILED_IOS=無法儲存 {string1}。
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=地圖鋪滿螢幕，操作控制項繪製在地圖上方。\n關閉此項會讓遊戲檢視保持正方形，操作控制項位於其旁邊。\n下次會記住這個設定。
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=決定全螢幕時建造工具能透出多少地圖內容。\n0% 為不透明，滑桿最高只能到 90%，\n因此無法完全透明。
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=決定全螢幕時坦克、碉堡和基地網格以及庫存條能透出\n多少地圖內容。0% 為不透明，滑桿最高只能到 90%，\n因此無法完全透明。
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=地圖佔滿螢幕，狀態、建造和新聞面板顯示在其上，\n用觸控遊玩時觸控按鈕也顯示在其上。\n關閉則顯示經典畫面。下次啟動時仍會記住。
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=此裝置正在使用行動數據。以行動數據主持的網際網路遊戲很可能無法正常進行：\n行動網路很少讓其他玩家連線到此裝置。使用 Wi-Fi 成功的機會大得多。\n\n仍要主持嗎？

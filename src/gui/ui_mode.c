@@ -81,6 +81,16 @@ UIMode uiModeDetect(void) {
   mode = UI_MODE_TABLET;
 #elif defined(__APPLE__) && (TARGET_OS_IOS || TARGET_OS_TV)
   mode = UI_MODE_TABLET;
+#if defined(__IPHONEOS__)
+  /* An iPad always has the desktop layout: the classic screen fits it. Decided
+     here and nowhere else: the Steam Deck and small-touch-screen checks below
+     are for desktop systems, not for an iPad. */
+  if (iosDeviceIsPad()) {
+    s_currentMode = UI_MODE_DESKTOP;
+    s_initialized = true;
+    return s_currentMode;
+  }
+#endif
 #endif
 
   if (mode == UI_MODE_DESKTOP) {

@@ -2770,3 +2770,70 @@ STR_DLGSYSINFO_MEM_BUILDING=Bau
 STR_DLGSYSINFO_MEM_RUBBLE=Trümmer
 STR_DLGSYSINFO_MEM_SWAMP=Sumpf
 STR_DLGSYSINFO_MEM_GRASS=Gras
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Push-to-Talk: Halte die Mikrofontaste auf dem Spielbildschirm gedrückt
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Deine Dateien
+STR_MAPEDIT_IOS_BUILTIN=Karten, die mit WinBolo geliefert werden
+STR_MAPEDIT_IOS_NOFILES=Hier ist noch nichts. Dateien, die du speicherst, und Dateien, die du in der Dateien-App in den WinBolo-Ordner legst, erscheinen hier.
+STR_MAPEDIT_IOS_NAME=Name
+STR_MAPEDIT_IOS_REPLACES=Eine Datei mit diesem Namen existiert bereits. Beim Speichern wird sie ersetzt.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Aufzeichnungen
+STR_IOSREC_EMPTY=Noch keine Aufzeichnungen. Einzelspieler-Runden werden hier aufgezeichnet, und .wbv-Dateien im WinBolo-Ordner der Dateien-App werden hier ebenfalls aufgeführt.
+STR_IOSREC_COPY=In Dateien kopieren
+STR_IOSREC_COPIED=In den WinBolo-Ordner der Dateien-App kopiert.
+STR_IOSREC_OPEN_FAILED=Diese Aufzeichnung konnte nicht geöffnet werden.
+STR_IOSREC_LAST_ROUND=Letzte Einzelspieler-Runde
+STR_IOSREC_COPY_FAILED=Die Aufzeichnung konnte nicht in die Dateien-App kopiert werden.
+STR_DLGCONNECTING_TITLE=Verbinde mit {string1}...
+STR_DLGCONNECTING_PING=Frage den Server nach seinem Spiel...
+STR_DLGCONNECTING_JOINING=Trete dem Spiel bei...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Diese Aufzeichnung konnte nicht gelesen werden.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Einstellung
+STR_DLGLOBBY_DETAILS_COL_VALUE=Wert
+STR_DLGLOBBY_DETAILS_RULES=Regeln:
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=Der Server legt diesen Wert fest. Er kann nicht geändert werden.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=von {string1} · aktualisiert {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=unbekannt
+STR_MENU_INFO_OVERLAY=Info-Einblendung
+STR_SCNPANEL_POP_OUT=Abdocken
+STR_SCNPANEL_POP_IN=Andocken
+STR_SCNPANEL_CLOSE_TITLE={string1} schließen?
+STR_SCNPANEL_CLOSE_BODY=Über {string1} > {string2} wieder einschalten.
+STR_DLGLOBBY_SCENARIO_REQUIRED=Der Server führt dieses Skript immer aus. Es kann nicht entfernt werden.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=Der Server führt immer das Szenario dieser Runde aus
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=Der Server legt diese Liste fest. Sie kann nicht geändert werden.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Ob Bunker wie in Mac Bolo zielen. Fahrende, freie Panzer innerhalb von etwa einem Feld lassen den Bunker weit entlang ihrer Fahrtrichtung zielen. Stehende oder blockierte Panzer bekommen keinen Vorhalt. Überschreibt pill_massage_range, pill_massage_cosine und pill_aim_iterations.
+STR_RULE_DESC_tank_collision_mac=Ob Panzer die richtungsabhängigen Sprite-Kästen und Pixel-Verschiebungen von Mac Bolo an Mauern, aktiven Bunkern und feindlichen Basen verwenden. Erlaubt engere Vorbeifahrten neben einem Bunker für die „Pill Massage“.
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=Wem der Tod eines Panzers angerechnet wird, abgefragt bei jedem Tod; ein Ertrinken nennt das Opfer, sofern kein Skript den Panzer nennt, der es versenkt hat.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} liegt im WinBolo-Ordner der Dateien-App.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} konnte nicht gespeichert werden.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=Die Karte füllt den Bildschirm, und die Bedienelemente werden darüber gezeichnet.\nAus lässt die Spielansicht quadratisch, mit den Bedienelementen daneben.\nWird für das nächste Mal gemerkt.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Wie viel von der Karte im Vollbild durch die Bauwerkzeuge\ndurchscheint. 0% ist undurchsichtig, und der Regler stoppt\nbei 90%, damit sie nicht unsichtbar werden können.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Wie viel von der Karte im Vollbild durch die Panzer-, Bunker-\nund Basisraster und die Vorratsbalken durchscheint. 0% ist\nundurchsichtig, und der Regler stoppt bei 90%, damit sie nicht unsichtbar werden können.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Die Karte füllt den Bildschirm, mit den Status-, Bau- und Nachrichtenfeldern\ndarüber und der Touch-Steuerung, wenn du per Berührung spielst.\nAus zeigt den klassischen Bildschirm. Wird für das nächste Mal gespeichert.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=Dieses Gerät nutzt mobile Daten. Ein Internetspiel über mobile Daten\nzu hosten, wird wahrscheinlich nicht funktionieren: Mobilfunknetze lassen\nandere Spieler selten zum Gerät durch. Mit WLAN klappt es viel eher.\n\nTrotzdem hosten?

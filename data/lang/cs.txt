@@ -2768,3 +2768,70 @@ STR_DLGSYSINFO_MEM_BUILDING=Stavba
 STR_DLGSYSINFO_MEM_RUBBLE=Trosky
 STR_DLGSYSINFO_MEM_SWAMP=Bažina
 STR_DLGSYSINFO_MEM_GRASS=Tráva
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Mluvení stiskem: podržte tlačítko mikrofonu na herní obrazovce
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Vaše soubory
+STR_MAPEDIT_IOS_BUILTIN=Mapy dodávané s WinBolo
+STR_MAPEDIT_IOS_NOFILES=Zatím tu nic není. Soubory, které uložíte, a soubory, které vložíte do složky WinBolo v aplikaci Soubory, se zobrazí zde.
+STR_MAPEDIT_IOS_NAME=Název
+STR_MAPEDIT_IOS_REPLACES=Soubor s tímto názvem už existuje. Uložením se nahradí.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Záznamy
+STR_IOSREC_EMPTY=Zatím žádné záznamy. Hry jednoho hráče se nahrávají sem a soubory .wbv vložené do složky WinBolo v aplikaci Soubory jsou zde také.
+STR_IOSREC_COPY=Kopírovat do Souborů
+STR_IOSREC_COPIED=Zkopírováno do složky WinBolo v aplikaci Soubory.
+STR_IOSREC_OPEN_FAILED=Tento záznam nelze otevřít.
+STR_IOSREC_LAST_ROUND=Poslední hra jednoho hráče
+STR_IOSREC_COPY_FAILED=Záznam se nepodařilo zkopírovat do aplikace Soubory.
+STR_DLGCONNECTING_TITLE=Připojování k {string1}...
+STR_DLGCONNECTING_PING=Dotaz na hru serveru...
+STR_DLGCONNECTING_JOINING=Připojování ke hře...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Tento záznam nelze přečíst.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Nastavení
+STR_DLGLOBBY_DETAILS_COL_VALUE=Hodnota
+STR_DLGLOBBY_DETAILS_RULES=Pravidla:
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=Tuto hodnotu určuje server. Nelze ji změnit.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=autor {string1} · aktualizováno {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=neznámý
+STR_MENU_INFO_OVERLAY=Informační překryv
+STR_SCNPANEL_POP_OUT=Oddělit
+STR_SCNPANEL_POP_IN=Připojit
+STR_SCNPANEL_CLOSE_TITLE=Zavřít {string1}?
+STR_SCNPANEL_CLOSE_BODY=Znovu jej zapnete v {string1} > {string2}.
+STR_DLGLOBBY_SCENARIO_REQUIRED=Server tento skript spouští vždy. Nelze jej odebrat.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=Server vždy spouští scénář, který je v tomto kole
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=Tento seznam určuje server. Nelze jej změnit.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Zda bunkry míří jako v Mac Bolo. Jedoucí, nezakryté tanky do vzdálenosti asi jednoho pole přimějí bunkr mířit daleko ve směru jejich jízdy. Stojící nebo zablokované tanky předsazení nedostávají. Přepisuje pill_massage_range, pill_massage_cosine a pill_aim_iterations.
+STR_RULE_DESC_tank_collision_mac=Zda tanky používají směrově závislé rámečky spritů a pixelové posuny z Mac Bolo u zdí, aktivních bunkrů a nepřátelských základen. Umožňuje projet blíže kolem bunkru při „pill massage“.
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=Komu se připíše zničení tanku, dotazováno při každém zničení; utonutí uvádí oběť, pokud skript neuvede tank, který jej potopil.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} je ve složce WinBolo v aplikaci Soubory.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} se nepodařilo uložit.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=Mapa vyplní obrazovku a ovládací prvky se kreslí přes ni.\nVypnuto ponechá herní pohled čtvercový s ovládacími prvky vedle něj.\nZapamatuje se pro příště.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Kolik z mapy prosvítá skrz stavební nástroje\nna celé obrazovce. 0% je neprůhledné a posuvník se\nzastaví na 90%, aby nemohly zmizet úplně.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Kolik z mapy prosvítá skrz mřížky tanků, bunkrů a\nzákladen a ukazatele zásob na celé obrazovce. 0% je\nneprůhledné a posuvník se zastaví na 90%, aby nemohly zmizet úplně.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Mapa vyplní obrazovku a panely stavu, stavění a zpráv jsou přes ni,\nspolu s dotykovým ovládáním, když hrajete dotykem.\nVypnuto zobrazí klasickou obrazovku. Zapamatováno pro příště.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=Toto zařízení je na mobilních datech. Internetová hra hostovaná přes mobilní\ndata pravděpodobně nebude fungovat: mobilní sítě ostatním hráčům jen zřídka\numožní se k zařízení připojit. S Wi-Fi je mnohem větší šance.\n\nPřesto hostovat?

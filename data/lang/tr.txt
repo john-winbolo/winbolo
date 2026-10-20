@@ -2770,3 +2770,70 @@ STR_DLGSYSINFO_MEM_BUILDING=İnşaat
 STR_DLGSYSINFO_MEM_RUBBLE=Moloz
 STR_DLGSYSINFO_MEM_SWAMP=Bataklık
 STR_DLGSYSINFO_MEM_GRASS=Çimen
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Bas-konuş: oyun ekranındaki mikrofon düğmesini basılı tut
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Dosyaların
+STR_MAPEDIT_IOS_BUILTIN=WinBolo ile gelen haritalar
+STR_MAPEDIT_IOS_NOFILES=Burada henüz bir şey yok. Kaydettiğin dosyalar ve Dosyalar uygulamasında WinBolo klasörüne koyduğun dosyalar burada görünür.
+STR_MAPEDIT_IOS_NAME=Ad
+STR_MAPEDIT_IOS_REPLACES=Bu adla bir dosya zaten var. Kaydetmek onu değiştirir.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Kayıtlar
+STR_IOSREC_EMPTY=Henüz kayıt yok. Tek oyunculu turlar buraya kaydedilir; Dosyalar uygulamasında WinBolo klasörüne konan .wbv dosyaları da burada listelenir.
+STR_IOSREC_COPY=Dosyalar'a kopyala
+STR_IOSREC_COPIED=Dosyalar uygulamasındaki WinBolo klasörüne kopyalandı.
+STR_IOSREC_OPEN_FAILED=Bu kayıt açılamadı.
+STR_IOSREC_LAST_ROUND=Son tek oyunculu tur
+STR_IOSREC_COPY_FAILED=Kayıt Dosyalar uygulamasına kopyalanamadı.
+STR_DLGCONNECTING_TITLE={string1} adresine bağlanılıyor...
+STR_DLGCONNECTING_PING=Sunucuya oyunu soruluyor...
+STR_DLGCONNECTING_JOINING=Oyuna katılınıyor...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Bu kayıt okunamadı.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Ayar
+STR_DLGLOBBY_DETAILS_COL_VALUE=Değer
+STR_DLGLOBBY_DETAILS_RULES=Kurallar:
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=Bu değeri sunucu belirler. Değiştirilemez.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED={string1} tarafından · güncellendi {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=bilinmiyor
+STR_MENU_INFO_OVERLAY=Bilgi katmanı
+STR_SCNPANEL_POP_OUT=Ayır
+STR_SCNPANEL_POP_IN=Yerleştir
+STR_SCNPANEL_CLOSE_TITLE={string1} kapatılsın mı?
+STR_SCNPANEL_CLOSE_BODY={string1} > {string2} üzerinden yeniden aç.
+STR_DLGLOBBY_SCENARIO_REQUIRED=Sunucu bu betiği her zaman çalıştırır. Kaldırılamaz.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=Sunucu her zaman bu turdaki senaryoyu çalıştırır
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=Bu listeyi sunucu belirler. Değiştirilemez.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Bunkerlerin Mac Bolo gibi nişan alıp almadığı. Yaklaşık bir kare içindeki hareket eden, önü açık tanklar bunkerin onların gidiş yönünde çok ileriye nişan almasını sağlar. Duran ya da engellenen tanklara öncü verilmez. pill_massage_range, pill_massage_cosine ve pill_aim_iterations ayarlarını geçersiz kılar.
+STR_RULE_DESC_tank_collision_mac=Tankların duvarlara, etkin bunkerlere ve düşman üslerine karşı Mac Bolo'nun yöne bağlı sprite kutularını ve piksel itmelerini kullanıp kullanmadığı. "Pill massage" için bir bunkerin yanından daha yakın geçişlere izin verir.
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=Bir tankın ölümünün kime yazılacağı, her ölümde sorulur; bir boğulma, bir betik onu batıran tankı belirtmedikçe kurbanı gösterir.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1}, Dosyalar uygulamasındaki WinBolo klasöründe.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} kaydedilemedi.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=Harita ekranı kaplar ve kontroller onun üzerine çizilir.\nKapalıyken oyun görünümü kare kalır, kontroller yanında durur.\nBir sonraki sefer için hatırlanır.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Tam ekranda inşaat araçlarının ardından haritanın\nne kadarı göründüğü. 0% tam opak demektir, kaydırıcı ise\n90% noktasında durur; böylece tamamen görünmez yapılamazlar.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Tam ekranda tank, bunker ve üs ızgaralarının ve stok çubuklarının\nardından haritanın ne kadarı göründüğü. 0% tam opak demektir,\nkaydırıcı ise 90% noktasında durur; böylece tamamen görünmez yapılamazlar.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Harita ekranı doldurur; durum, inşa ve haber panelleri üstünde,\ndokunarak oynadığınızda dokunmatik kontroller de üstünde gösterilir.\nKapalıyken klasik ekran gösterilir. Bir sonraki sefer için hatırlanır.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=Bu cihaz mobil veri kullanıyor. Mobil veriyle barındırılan bir İnternet\noyunu büyük olasılıkla çalışmaz: mobil ağlar diğer oyuncuların cihaza\nulaşmasına nadiren izin verir. Wi-Fi ile çalışma olasılığı çok daha yüksektir.\n\nYine de barındırılsın mı?

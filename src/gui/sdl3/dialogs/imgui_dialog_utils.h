@@ -33,6 +33,7 @@
 #include "dialog_quit.h"
 #include "../../imgui_fonts.h"
 #include "../../../common/wb_log.h"
+#include "../safe_insets.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 /* Tile-atlas geometry for imguiDrawTileIcon() below. tiles.h is a
@@ -112,6 +113,19 @@ static inline ImVec4 imguiPingBandColor(PingBand band) {
  * or the user taps outside a text field. */
 #if defined(__IPHONEOS__)
 static inline void dialogResetTextInputArea(SDL_Window *window) {
+    /* Except for a field in the lower half of the window, which the keyboard
+     * would cover in landscape: its area is left as the backend set it, so
+     * SDL lifts the view by just enough to keep the field in sight, and puts
+     * it back when the keyboard goes. */
+    SDL_Rect cur;
+    int cursor = 0;
+    if (SDL_TextInputActive(window) && SDL_GetTextInputArea(window, &cur, &cursor)) {
+        int w = 0, h = 0;
+        SDL_GetWindowSize(window, &w, &h);
+        if (h > 0 && cur.h > 0 && cur.y + cur.h > h / 2) {
+            return;
+        }
+    }
     SDL_Rect r = {0, 0, 1, 0};
     SDL_SetTextInputArea(window, &r, 0);
 }
@@ -160,6 +174,14 @@ static inline float dialogComputeScale(int screenW, int screenH) {
         scale *= dialogDeckFontMul();
     }
     return scale;
+}
+
+/* A control width given for the desktop's 18-unit dialog font, scaled to
+ * the font in use. Every surface loads that font at 18 for a scale of 1, so
+ * the width is unchanged there; a fixed width left as it was while the text
+ * grew with the scale cut off labels and drop-down values on the iPad. */
+static inline float dialogFontW(float widthAt18) {
+    return widthAt18 * ImGui::GetFontSize() / 18.0f;
 }
 
 /* Load font data via SDL_IOFromFile (works on Android assets and desktop).
@@ -683,8 +705,19 @@ static inline void dialogOverrideFramebufferScale(SDL_Renderer *renderer) {
  * Call after ImGui::CreateContext() and before the first NewFrame().
  * Always loads the TTF font; on mobile also applies touch-friendly styling. */
 static inline void dialogApplyScaling(float uiScale) {
+#if defined(__IPHONEOS__)
+    /* A finger lands less precisely than a mouse: a double tap's two taps
+     * rarely fall within ImGui's 6 px. */
+    ImGui::GetIO().MouseDoubleClickMaxDist = 24.0f;
+#endif
     if (uiScale <= 1.05f) {
         imguiLoadBoloFont(18.0f);
+#if defined(__IPHONEOS__)
+        /* An iPhone in landscape is about 390 pt tall, which gives a scale
+         * of 1 and so skips the touch padding below; its buttons still need
+         * it. */
+        ImGui::GetStyle().TouchExtraPadding = ImVec2(8.0f, 8.0f);
+#endif
         return;
     }
 
@@ -732,26 +765,20 @@ static inline void dialogRestoreLogicalPresentation(SDL_Renderer *renderer,
 
 /* Query safe area insets for notch/Dynamic Island avoidance.
  * Returns insets in window-point coordinates (left, top, right, bottom).
- * On platforms without safe areas, all values are 0. */
+ * On platforms without safe areas, all values are 0. The rule, including the
+ * narrower margin on the side away from a phone's cutout in landscape, is
+ * safeInsetsGet in safe_insets.h, which the touch layout's chrome uses too. */
 struct DialogSafeInsets {
     float left, top, right, bottom;
 };
 
+/* The share of the window's width or height a mobile dialog keeps from an
+ * edge with no cutout: the log browser's margin. */
+#define DIALOG_EDGE_MARGIN_FRAC SAFE_INSETS_EDGE_MARGIN_FRAC
+
 static inline DialogSafeInsets dialogGetSafeInsets(SDL_Window *window) {
-    DialogSafeInsets insets = {0, 0, 0, 0};
-#if BOLO_MOBILE
-    SDL_Rect safeRect;
-    int winW = 0, winH = 0;
-    SDL_GetWindowSize(window, &winW, &winH);
-    if (winW > 0 && winH > 0 && SDL_GetWindowSafeArea(window, &safeRect)) {
-        insets.left   = (float)safeRect.x;
-        insets.top    = (float)safeRect.y;
-        insets.right  = (float)(winW - (safeRect.x + safeRect.w));
-        insets.bottom = (float)(winH - (safeRect.y + safeRect.h));
-    }
-#else
-    (void)window;
-#endif
+    const SafeInsets s = safeInsetsGet(window);
+    DialogSafeInsets insets = { s.left, s.top, s.right, s.bottom };
     return insets;
 }
 

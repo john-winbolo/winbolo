@@ -2770,3 +2770,70 @@ STR_DLGSYSINFO_MEM_BUILDING=Construction
 STR_DLGSYSINFO_MEM_RUBBLE=Décombres
 STR_DLGSYSINFO_MEM_SWAMP=Marais
 STR_DLGSYSINFO_MEM_GRASS=Herbe
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Appuyer pour parler : maintenez le bouton du micro sur l'écran de jeu
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Vos fichiers
+STR_MAPEDIT_IOS_BUILTIN=Cartes fournies avec WinBolo
+STR_MAPEDIT_IOS_NOFILES=Rien ici pour l'instant. Les fichiers que vous enregistrez, et ceux que vous placez dans le dossier WinBolo de l'app Fichiers, apparaissent ici.
+STR_MAPEDIT_IOS_NAME=Nom
+STR_MAPEDIT_IOS_REPLACES=Un fichier de ce nom existe. L'enregistrement le remplace.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Enregistrements
+STR_IOSREC_EMPTY=Aucun enregistrement pour l'instant. Les parties en solo sont enregistrées ici, et les fichiers .wbv placés dans le dossier WinBolo de l'app Fichiers apparaissent aussi ici.
+STR_IOSREC_COPY=Copier dans Fichiers
+STR_IOSREC_COPIED=Copié dans le dossier WinBolo de l'app Fichiers.
+STR_IOSREC_OPEN_FAILED=Impossible d'ouvrir cet enregistrement.
+STR_IOSREC_LAST_ROUND=Dernière partie en solo
+STR_IOSREC_COPY_FAILED=Impossible de copier l'enregistrement dans l'app Fichiers.
+STR_DLGCONNECTING_TITLE=Connexion à {string1}...
+STR_DLGCONNECTING_PING=Interrogation du serveur sur sa partie...
+STR_DLGCONNECTING_JOINING=Connexion à la partie...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Impossible de lire cet enregistrement.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Paramètre
+STR_DLGLOBBY_DETAILS_COL_VALUE=Valeur
+STR_DLGLOBBY_DETAILS_RULES=Règles :
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=Le serveur fixe cette valeur. Elle ne peut pas être modifiée.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=par {string1} · mis à jour {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=inconnu
+STR_MENU_INFO_OVERLAY=Superposition d'infos
+STR_SCNPANEL_POP_OUT=Détacher
+STR_SCNPANEL_POP_IN=Rattacher
+STR_SCNPANEL_CLOSE_TITLE=Fermer {string1} ?
+STR_SCNPANEL_CLOSE_BODY=Réactivez-le depuis {string1} > {string2}.
+STR_DLGLOBBY_SCENARIO_REQUIRED=Le serveur exécute toujours ce script. Il ne peut pas être retiré.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=Le serveur exécute toujours le scénario de cette manche
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=Le serveur fixe cette liste. Elle ne peut pas être modifiée.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Si les pillbox visent comme dans Mac Bolo. Les tanks en mouvement et non bloqués à environ une case font viser le pillbox loin dans leur direction. Les tanks à l'arrêt ou bloqués ne reçoivent aucune anticipation. Remplace pill_massage_range, pill_massage_cosine et pill_aim_iterations.
+STR_RULE_DESC_tank_collision_mac=Si les tanks utilisent les boîtes de sprite dépendant de la direction et les décalages au pixel de Mac Bolo contre les murs, les pillbox actifs et les bases ennemies. Permet de passer plus près d'un pillbox pour le « pill massage ».
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=À qui la mort d'un tank est attribuée, demandé à chaque mort ; une noyade désigne la victime sauf si un script désigne le tank qui l'a coulé.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} est dans le dossier WinBolo de l'app Fichiers.
+STR_CLIPGIF_SAVE_FAILED_IOS=Impossible d'enregistrer {string1}.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=La carte remplit l'écran et les commandes sont dessinées par-dessus.\nDésactivé garde la vue de jeu carrée, avec les commandes à côté.\nMémorisé pour la prochaine fois.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Quelle part de la carte apparaît à travers les outils de\nconstruction en plein écran. 0% est opaque, et le curseur\ns'arrête à 90% pour qu'ils ne soient jamais invisibles.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Quelle part de la carte apparaît à travers les grilles des tanks,\npillbox et bases et les jauges de stock en plein écran. 0% est\nopaque, et le curseur s'arrête à 90% pour qu'ils ne soient jamais invisibles.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=La carte remplit l'écran, avec les panneaux d'état, de construction et de nouvelles\npar-dessus, et les commandes tactiles quand vous jouez au toucher.\nDésactivé affiche l'écran classique. Mémorisé pour la prochaine fois.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=Cet appareil utilise les données mobiles. Une partie Internet hébergée\nsur données mobiles ne fonctionnera probablement pas : les réseaux mobiles\nlaissent rarement les autres joueurs joindre l'appareil. Le Wi-Fi a bien\nplus de chances de fonctionner.\n\nHéberger quand même ?

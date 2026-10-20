@@ -2897,3 +2897,43 @@ STR_DLGSYSINFO_MEM_RUBBLE=Rubble
 STR_DLGSYSINFO_MEM_SWAMP=Swamp
 STR_DLGSYSINFO_MEM_GRASS=Grass
 
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Push to talk: hold the microphone button on the game screen
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Your files
+STR_MAPEDIT_IOS_BUILTIN=Maps that come with WinBolo
+STR_MAPEDIT_IOS_NOFILES=Nothing here yet. Files you save, and files you put in WinBolo's folder in the Files app, show up here.
+STR_MAPEDIT_IOS_NAME=Name
+STR_MAPEDIT_IOS_REPLACES=A file with this name exists. Saving replaces it.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Recordings
+STR_IOSREC_EMPTY=No recordings yet. Single-player rounds are recorded here, and .wbv files put in the WinBolo folder in the Files app are listed here too.
+STR_IOSREC_COPY=Copy to Files
+STR_IOSREC_COPIED=Copied to the WinBolo folder in the Files app.
+STR_IOSREC_OPEN_FAILED=This recording could not be opened.
+STR_IOSREC_LAST_ROUND=Last single-player round
+STR_IOSREC_COPY_FAILED=The recording could not be copied to the Files app.
+STR_DLGCONNECTING_TITLE=Connecting to {string1}...
+STR_DLGCONNECTING_PING=Asking the server about its game...
+STR_DLGCONNECTING_JOINING=Joining the game...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Could not read that recording.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} is in the WinBolo folder in the Files app.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} could not be saved.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=The map fills the screen and the controls are drawn over it.\nOff keeps the game view square, with the controls beside it.\nRemembered for next time.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=How much of the map shows through the builder tools\nin full screen. 0% is solid, and the slider stops at\n90% so they cannot be made invisible.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=How much of the map shows through the tank, pillbox and\nbase grids and the stock bars in full screen. 0% is solid,\nand the slider stops at 90% so they cannot be made invisible.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=The map fills the screen, with the status, build and newswire\npanels over it, and the touch controls when you play by touch.\nOff shows the classic screen. Remembered for next time.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=This device is on mobile data. An Internet game hosted on mobile\ndata will probably not work: mobile networks rarely let other\nplayers reach the device. Wi-Fi is much more likely to work.\n\nHost anyway?
+

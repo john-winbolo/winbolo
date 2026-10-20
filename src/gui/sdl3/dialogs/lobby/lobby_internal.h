@@ -75,6 +75,20 @@
 #define BOLO_REEL_SPAWN_VIEWER   1
 #endif
 
+/* BOLO_LOBBY_REEL — the recap's replay reel and the embedded log viewer
+ *   (src/logviewer/lv_embed.c) it plays through. Out of the Android build
+ *   only, which does not compile the log viewer's sources. iOS and the web
+ *   client both link the reel host.
+ * The clip export is in the iOS build: the GIF encoder's implementation TU is
+ *   in the iOS sources, and with no save dialog there the clip is written into
+ *   the app's Documents folder under a name of its own (lobby_clip_gif.cpp),
+ *   where the Files app shows it. */
+#if defined(__ANDROID__)
+#define BOLO_LOBBY_REEL 0
+#else
+#define BOLO_LOBBY_REEL 1
+#endif
+
 /* The types below and the signatures further down name types that come from
  * elsewhere. They are pulled in here rather than left to each source to
  * include first, so this header parses on its own wherever it appears in an
@@ -110,6 +124,9 @@ extern "C" {
 #ifdef __cplusplus
 }
 #endif
+/* The reel's public calls and the embed calls a screen outside the lobby
+ * uses; the rest of the reel is declared below. */
+#include "lobby_reel.h"
 
 /* Sizes shared between the cluster that owns the widget and the ones that
  * measure against it. The player row's badge run used to be here as a flat
@@ -304,7 +321,7 @@ typedef struct LobbyChooserState {
     ClientSim *cs               = NULL;
 } LobbyChooserState;
 
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
 /* Everything the reel holds belongs to one round's recap — what is playing,
  * how it is being scrubbed, the optional crop frame over it, where a round
  * still on its way from the server stands, the slack the body hands back and
@@ -567,7 +584,7 @@ void lobbyChatDocsRenderModal(ClientSim *cs);
 void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
                                  BYTE myPlayerNum, bool hasTransport,
                                  float s, BYTE destPlayer);
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
 void lobbyChatInputAppendTime(uint32_t curMs);
 #endif
 
@@ -738,6 +755,9 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
 
 /* status */
 void lobbyRenderConnectivityBadge(SDL_Renderer *renderer, float s);
+/* The width the badge needs (icon, gap and short text), or 0 when it shows
+ * nothing, for a header that has to decide which row it goes on. */
+float lobbyConnectivityBadgeWidth(float s);
 void lobbyRenderRejectToast(ClientSim *cs, float s);
 
 /* recap */
@@ -749,15 +769,15 @@ void lobbyRenderMapSkipVote(ClientSim *cs, bool spectator, bool hasTransport,
                             float s, bool sameLine);
 
 /* reel */
-#if !BOLO_MOBILE
-void lobbyReelEnd(void);
+#if BOLO_LOBBY_REEL
+/* lobbyReelEnd and the reels outside the lobby are in lobby_reel.h. */
 void lobbyReelDropRoundLog(ClientSim *cs);
 void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
                      float s);
 #endif
 
 /* clipgif */
-#if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
+#if !defined(__ANDROID__) && BOLO_RECAP_CLIP_GIF
 void lobbyClipGifReset(void);
 bool lobbyClipGifActive(void);
 void lobbyClipGifStartClip(const HighlightWindow *h, const char *mapName);
@@ -774,7 +794,7 @@ void lobbyClipGifSaveAbandon(void);
 #endif
 
 /* rating */
-#if !BOLO_MOBILE && BOLO_RECAP_WBN_RATING
+#if !defined(__ANDROID__) && BOLO_RECAP_WBN_RATING  /* Android does not compile lobby_rating.cpp */
 void lobbyRatingReset(void);
 void lobbyRatingSyncKey(ClientSim *cs, const RoundStatsSummary *st);
 void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
@@ -839,7 +859,7 @@ LobbyMapPreviewState *lobbyMapPreview(void);
 /* s_chooser, owned by chooser. Read by core for the window's visibility and
  * focus edge, and by wbnmaps to flag a fired preview. */
 LobbyChooserState    *lobbyChooser(void);
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
 /* s_reel, owned by reel. Read by core for what is playing, by recap for the
  * slack it hands back, and by clipgif for the crop frame and last slice. */
 LobbyReelState       *lobbyReel(void);
@@ -882,11 +902,11 @@ extern "C" {
  * gamefront.c documents. Scalars and void * only, so no viewer type crosses
  * the seam. Must stay inside this extern "C" block or the calls compile and
  * then fail to link on a mangled symbol. */
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
 bool lvEmbedBegin(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   uint8_t *zipData, size_t zipLen, int viewW, int viewH);
 void lvEmbedEnd(void);
-bool lvEmbedIsActive(void);
+/* lvEmbedIsActive is in lobby_reel.h. */
 void lvEmbedSetViewportSize(int viewW, int viewH);
 bool lvEmbedFrameTexture(void **outTexture, int *outTexW, int *outTexH,
                          int *outSrcX, int *outSrcY, int *outSrcW, int *outSrcH);
@@ -908,6 +928,7 @@ void lvEmbedSeekToTime(uint32_t roundRelMs);
 bool lvEmbedFocusPlayerByName(const char *name);
 void lvEmbedStepTicks(int ticks);
 void lvEmbedSetSelfName(const char *name);
+/* The live spectator feed's calls (lvEmbedSpec*) are in lobby_reel.h. */
 #endif
 #if !BOLO_REEL_WBN_FETCH_CURL
 /* Round-log download for the reel's WinBolo.net source

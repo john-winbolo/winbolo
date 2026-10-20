@@ -60,6 +60,12 @@ extern "C" {
 #include "../map_stars.h"
 }
 #include "../../../mapeditor/mapeditor_imgui.h"
+#if defined(__IPHONEOS__)
+/* SDL's file dialogs are the dummy backend on iOS, so "Load from device"
+   asks through the map editor's picker: the maps in Documents and the
+   bundled ones. */
+#include "../../../mapeditor/mapeditor_ios_files.h"
+#endif
 
 extern "C" {
 #include "../../../third_party/stb/stb_image_write.h"
@@ -589,6 +595,7 @@ static SDL_Texture *buildEverardPreview(SDL_Renderer *renderer,
     return NULL;
 }
 
+#if !defined(__IPHONEOS__)
 static void SDLCALL mapChooserFileDialogCallback(void *userdata, const char *const *filelist, int filter) {
     MapChooserState *state = (MapChooserState *)userdata;
     (void)filter;
@@ -599,6 +606,7 @@ static void SDLCALL mapChooserFileDialogCallback(void *userdata, const char *con
     state->fileDialogGotResult = true;
     state->fileDialogPending = false;
 }
+#endif
 
 /* Helpers — check if a path is a directory using SDL3's path-info API. */
 static bool pathIsDirectory(const char *path) {
@@ -1715,6 +1723,16 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
      * when nothing's pending. */
     mapPreviewCachePollDisk(renderer);
 
+#if defined(__IPHONEOS__)
+    /* The picker standing in for the file dialog; its answer is handled
+       just below, where the dialog's would be. */
+    if (state->fileDialogPending &&
+        meIosFilesRender(state->fileDialogResult, FILENAME_MAX)) {
+        state->fileDialogGotResult = true;
+        state->fileDialogPending = false;
+    }
+#endif
+
     /* Handle file dialog result */
     if (state->fileDialogGotResult) {
         state->fileDialogGotResult = false;
@@ -1848,7 +1866,13 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                     };
                     state->fileDialogPending = true;
                     state->fileDialogGotResult = false;
+#if defined(__IPHONEOS__)
+                    (void)window;
+                    (void)filters;
+                    meIosFilesBegin(false, "map", NULL);
+#else
                     SDL_ShowOpenFileDialog(mapChooserFileDialogCallback, state, window, filters, 2, NULL, false);
+#endif
                 }
                 if (disabled) ImGui::EndDisabled();
             }

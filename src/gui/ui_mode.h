@@ -72,6 +72,13 @@ void uiModeSet(UIMode m);
 *********************************************************/
 bool uiModeIsTablet(void);
 
+#if defined(__IPHONEOS__)
+/* True on an iPad, from the iOS driver (winbolo_ios.m). uiModeDetect gives an
+ * iPad the desktop layout, the classic screen with the menu bar, and a phone
+ * the touch layout. */
+bool iosDeviceIsPad(void);
+#endif
+
 /*********************************************************
 *NAME:          uiModeIsSteamDeck
 *PURPOSE:

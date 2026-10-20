@@ -32,9 +32,12 @@ FetchContent_Declare(
     URL      https://github.com/libsdl-org/SDL_ttf/archive/refs/tags/release-3.2.0.tar.gz
     SYSTEM
 )
+# The same release the desktop, iOS and web builds pin. The docking branch
+# head moves, and a fetch of a newer one drops names the shared ImGui code
+# still uses.
 FetchContent_Declare(
     imgui
-    URL      https://github.com/ocornut/imgui/archive/refs/heads/docking.tar.gz
+    URL      https://github.com/ocornut/imgui/archive/refs/tags/v1.92.9b-docking.tar.gz
     SYSTEM
 )
 FetchContent_Declare(
@@ -268,6 +271,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/mapview_overlay.c
     ${PROJ_ROOT}/src/gui/sdl3/sprite_positions.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3draw.c
+    ${PROJ_ROOT}/src/gui/sdl3/newswire_slide.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3draw_status.c
     ${PROJ_ROOT}/src/gui/sdl3/tank_label.c
     ${PROJ_ROOT}/src/gui/sdl3/tileloader.c

@@ -824,7 +824,10 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
                  * wheel to zoom, so overlay two focusable zoom buttons. "+"/"-"
                  * are punctuation, not localizable captions. Hidden in mouse
                  * mode (wheel zoom) and in the controller list view above. */
-                if (uiShouldUseControllerMode() && !g_startPickerCs) {
+                /* The touch layout has no wheel either, and iOS gives no
+                   pinch through the macOS path, so it gets the same pair. */
+                if ((uiShouldUseControllerMode() && !g_startPickerCs) ||
+                    (BOLO_MOBILE && uiModeIsTablet())) {
                     /* Placing the buttons moves the cursor to the image
                      * top-left; save it first and restore it last so the
                      * footer below still lays out at the bottom (where the
@@ -869,6 +872,7 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
             }
         } else {
             macOSPinchZoomConsume(); /* drain so it doesn't jump when data arrives */
+            mapPreviewViewTouchPinchConsume();
             ImGui::Text("Map preview loading...");
         }
 
