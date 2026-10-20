@@ -160,6 +160,19 @@ static Uint64 lastFrameTime = 0;
 #define IOS_BACKGROUND_KEEP_GAME_MS 15000
 static SDL_Time s_backgroundStartNs = 0;
 
+/* A game this device hosts for other players keeps running in the background
+   for as long as iOS lets the app run: the server ticks on its own timer
+   thread, and the main loop keeps ticking the host's own client, without
+   drawing, so the server does not drop the host after 20 s of silence. iOS
+   gives about 30 s once asked (beginBackgroundTask). With
+   IOS_HOST_BACKGROUND_END_S seconds left the server is shut down, which
+   tells every player the game has ended, and the time is handed back; the
+   host's return then goes to the menu through the check in
+   iosResumeForeground. A return before then carries on. */
+#define IOS_HOST_BACKGROUND_END_S 5.0
+static UIBackgroundTaskIdentifier s_hostBackgroundTask;
+static bool s_hostBackgroundActive = false;  /* s_hostBackgroundTask is held */
+
 /* -------------------------------------------------------
  * Forward declarations
  * ------------------------------------------------------- */
@@ -167,6 +180,46 @@ extern void sdl3MessageHandler(const char *message, const char *title);
 static void windowRunGameTick(ClientSim *cs);
 static void iosEnterBackground(ClientSim *cs);
 static void iosResumeForeground(ClientSim *cs);
+static void iosHostBackgroundFrame(ClientSim *cs);
+void windowSuspendBackground(ClientSim *cs);
+
+/* SDL never queues the app lifecycle events (SDL_SendAppEvent hands them to
+   event watches only, so they are handled before iOS's call returns), so
+   the game loop's own event handling never sees them. This watch acts on
+   them while a game is up (s_lifecycleCs). Going to the background is
+   handled here, so the next frame is not drawn. The iPad and the iPhone
+   both stop as soon as the app stops being active (Control Center, the
+   notification shade, Slide Over, Siri), not only once it is in the
+   background: a solo game freezes, a network game carries on without this
+   screen. Coming back posts s_resumeEventType, which wakes
+   the paused loop on the main thread and resumes there, where the resume's
+   message box may run. SDL sends each event twice here; both handlers
+   ignore the second. */
+static ClientSim *s_lifecycleCs = NULL;
+static Uint32 s_resumeEventType = 0;
+
+static bool SDLCALL iosLifecycleWatch(void *userdata, SDL_Event *ev) {
+    (void)userdata;
+    if (s_lifecycleCs == NULL) return true;
+    switch (ev->type) {
+    case SDL_EVENT_WILL_ENTER_BACKGROUND:
+    case SDL_EVENT_DID_ENTER_BACKGROUND:
+        windowSuspendBackground(s_lifecycleCs);
+        break;
+    case SDL_EVENT_WILL_ENTER_FOREGROUND:
+    case SDL_EVENT_DID_ENTER_FOREGROUND:
+        if (s_resumeEventType != 0) {
+            SDL_Event resume;
+            SDL_zero(resume);
+            resume.type = s_resumeEventType;
+            SDL_PushEvent(&resume);
+        }
+        break;
+    default:
+        break;
+    }
+    return true;
+}
 void windowTutorialPause(ClientSim *cs, bool active);
 void windowDeckPause(ClientSim *cs, bool active);
 void windowControllerLostPause(ClientSim *cs, bool active);
@@ -292,6 +345,10 @@ int main(int argc, char *argv[]) {
        socket the desktop uses unless the app holds Apple's multicast
        entitlement. */
     iosDiscoveryInstall();
+    /* The move to and from the background reaches the game only through an
+       event watch (see iosLifecycleWatch). */
+    s_resumeEventType = SDL_RegisterEvents(1);
+    SDL_AddEventWatch(iosLifecycleWatch, NULL);
 
     /* Change working directory to the app bundle */
     const char *basePath = SDL_GetBasePath();
@@ -481,12 +538,17 @@ ios_game_start:
     /* Main game loop */
 #define IOS_FRAME_CAP_MS 16
     bool returnToLobby = FALSE;
+    s_lifecycleCs = cs;
     while (!winboloQuit && !finishedLoop) {
         Uint64 frameCapStart = SDL_GetTicks();
 
         /* Process SDL events */
         {
             SDL_Event ev;
+            if (paused && s_hostBackgroundActive) {
+                iosHostBackgroundFrame(cs);
+                continue;
+            }
             if (paused) {
                 if (SDL_WaitEvent(&ev)) {
                     if (uiModeIsTablet()) {
@@ -501,12 +563,11 @@ ios_game_start:
                     }
                     if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                         winboloQuit = TRUE;
-                    } else if (ev.type == SDL_EVENT_WILL_ENTER_FOREGROUND ||
-                               ev.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
-                        /* DID as well as WILL: a short interruption (Control
-                           Center, the notification shade, Slide Over, Siri)
-                           resigns active and comes back with DID alone, and
-                           the desktop layout pauses on that resign. */
+                    } else if (ev.type == s_resumeEventType) {
+                        /* Posted by iosLifecycleWatch on WILL or DID enter
+                           foreground: a short interruption (Control Center,
+                           the notification shade, Slide Over, Siri) comes
+                           back with DID alone. */
                         iosResumeForeground(cs);
                     }
                 }
@@ -515,9 +576,8 @@ ios_game_start:
             if (!uiModeIsTablet()) {
                 /* The iPad's desktop layout takes the desktop's event
                    handling whole: menu shortcuts, the keys that act on a
-                   press, click to build, the wheel, Key Setup's capture, and
-                   the move to and from the background (windowSuspend-
-                   Background / windowResumeForeground below). */
+                   press, click to build, the wheel and Key Setup's capture.
+                   The move to and from the background is iosLifecycleWatch's. */
                 sdl3ImguiProcessEvents(cs);
             } else while (SDL_PollEvent(&ev)) {
                 SDL_Event rawEv = ev;
@@ -543,11 +603,6 @@ ios_game_start:
                 }
                 if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                     winboloQuit = TRUE;
-                } else if (ev.type == SDL_EVENT_DID_ENTER_BACKGROUND) {
-                    iosEnterBackground(cs);
-                } else if (ev.type == SDL_EVENT_WILL_ENTER_FOREGROUND ||
-                           ev.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
-                    iosResumeForeground(cs);
                 }
             }
         }
@@ -625,6 +680,8 @@ ios_game_start:
         }
     }
 
+    s_lifecycleCs = NULL;
+
     /* Back to the lobby screen: the game and its ClientSim stay, as on the
        desktop. Not if the player quit in the same frame. */
     if (returnToLobby && !winboloQuit && !windowIsQuitting()) {
@@ -673,6 +730,19 @@ ios_game_start:
  * is in the background, and on return either carry on or, for a joined game
  * the server has dropped by now, go back to the menu at once
  * ------------------------------------------------------- */
+/* Ends the background time asked for a hosted game. endGame shuts the
+   server down first, which sends every player the server's shutdown. */
+static void iosHostBackgroundEnd(bool endGame) {
+    if (!s_hostBackgroundActive) return;
+    if (endGame && gameFrontHasLocalServer()) {
+        WB_LOG_INFO(WB_LOG_CAT_PLATFORM,
+                    "[iOS] Background time nearly out; ending the hosted game");
+        gameFrontShutdownServer();
+    }
+    [[UIApplication sharedApplication] endBackgroundTask:s_hostBackgroundTask];
+    s_hostBackgroundActive = false;
+}
+
 static void iosEnterBackground(ClientSim *cs) {
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Entering background, pausing");
     paused = TRUE;
@@ -683,6 +753,61 @@ static void iosEnterBackground(ClientSim *cs) {
     if (!SDL_GetCurrentTime(&s_backgroundStartNs)) {
         s_backgroundStartNs = 0;
     }
+    /* Hosting for other players: ask for background time (see
+       IOS_HOST_BACKGROUND_END_S). The expiry handler is the fallback for a
+       loop that did not get round to ending the game itself. */
+    if (!s_hostBackgroundActive &&
+        gameFrontHasLocalServer() && !clientFrontIsSoloSession(cs)) {
+        s_hostBackgroundTask = [[UIApplication sharedApplication]
+            beginBackgroundTaskWithName:@"WinBolo hosted game"
+                      expirationHandler:^{ iosHostBackgroundEnd(true); }];
+        s_hostBackgroundActive = (s_hostBackgroundTask != UIBackgroundTaskInvalid);
+        if (s_hostBackgroundActive) {
+            /* Unlimited while the app is still only resigning active, and
+               always in the Simulator. */
+            double left = [UIApplication sharedApplication].backgroundTimeRemaining;
+            if (left > 1e9) {
+                WB_LOG_INFO(WB_LOG_CAT_PLATFORM,
+                            "[iOS] Hosting: keeping the game running in the background (no limit reported)");
+            } else {
+                WB_LOG_INFO(WB_LOG_CAT_PLATFORM,
+                            "[iOS] Hosting: keeping the game running in the background (%.0f s)",
+                            left);
+            }
+            lastFrameTime = SDL_GetTicks();
+            gameTickAccum = 0.0;
+        }
+    }
+}
+
+/* One frame of a hosted game in the background: the events that matter, and
+   the host's own client ticks so its connection to the server stays alive.
+   Nothing is drawn; iOS ends an app that uses the GPU in the background. */
+static void iosHostBackgroundFrame(ClientSim *cs) {
+    SDL_Event ev;
+    while (SDL_PollEvent(&ev)) {
+        if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
+            winboloQuit = TRUE;
+        } else if (ev.type == s_resumeEventType) {
+            iosResumeForeground(cs);
+        }
+    }
+    if (!paused || winboloQuit) return;
+    /* The Simulator never limits background time (it reports DBL_MAX), so
+       there the game runs on until the host comes back. */
+    if ([UIApplication sharedApplication].backgroundTimeRemaining <
+        IOS_HOST_BACKGROUND_END_S) {
+        iosHostBackgroundEnd(true);
+        return;
+    }
+    Uint64 now = SDL_GetTicks();
+    gameTickAccum += (double)(now - lastFrameTime);
+    lastFrameTime = now;
+    while (gameTickAccum >= GAME_TICK_LENGTH) {
+        gameTickAccum -= GAME_TICK_LENGTH;
+        windowRunGameTick(cs);
+    }
+    SDL_Delay(IOS_FRAME_CAP_MS);
 }
 
 static void iosResumeForeground(ClientSim *cs) {
@@ -691,6 +816,8 @@ static void iosResumeForeground(ClientSim *cs) {
     if (!paused) return;
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Resuming from background");
     paused = FALSE;
+    /* Back in time: the hosted game carries on; hand the time back. */
+    iosHostBackgroundEnd(false);
     lastFrameTime = SDL_GetTicks();
     gameTickAccum = 0.0;
     /* The shared resume: the server pause is recomputed and the sound put
