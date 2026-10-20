@@ -337,10 +337,14 @@ void loopbackHarnessSetPumpInterval(LoopbackHarness *h, uint32_t ms) {
     h->nextPumpAtMs   = (ms > 0) ? (uint64_t)SDL_GetTicks() : 0;
 }
 
-/* Hold the start of this pump to the paced deadline. A pump that has already
- * overrun (the machine was busy) does not try to win the time back — the
- * deadline is re-anchored to now, so a late pump costs one late pump rather
- * than a burst of unpaced ones. */
+/* Hold the server tick of this pump to the paced deadline. It runs after the
+ * client has ticked and before the server does, so the wait is also the time
+ * the client's datagram has to reach the server's recv queue: paced that way,
+ * every pump's datagram is drained by this pump's server tick, and the pacing
+ * adds no delay of its own to the link. A pump that has already overrun (the
+ * machine was busy) does not try to win the time back — the deadline is
+ * re-anchored to now, so a late pump costs one late pump rather than a burst
+ * of unpaced ones. */
 static void loopbackPumpPace(LoopbackHarness *h) {
     uint64_t now;
     if (h->pumpIntervalMs == 0) return;
@@ -357,7 +361,6 @@ static void loopbackPumpPace(LoopbackHarness *h) {
 
 void loopbackHarnessPump(LoopbackHarness *h) {
     if (h == NULL) return;
-    loopbackPumpPace(h);
     loopbackAdvanceVirtualClock();
     if (h->clientUp) clientSimNetTick(h->cs);
     /* Second client (when one was added) ticks in the same phase as the
@@ -391,9 +394,13 @@ void loopbackHarnessPump(LoopbackHarness *h) {
             SDL_Delay(1);
             waited++;
         }
-    } else if (h->pumpIntervalMs == 0) {
+    } else {
         SDL_Delay(1);
     }
+    /* The pace wait sits here, after the client's send and before the
+     * server's drain, so the datagram's trip to the recv queue happens inside
+     * the wait rather than being pushed into the next pump. */
+    loopbackPumpPace(h);
     if (h->serverUp) serverInstanceTick(h->sim);
 }
 

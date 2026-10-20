@@ -7,27 +7,27 @@
  * Where a builder starts when he is sent out.
  *
  * lgmNewPrimaryRequest (lgm.c) puts him on the tank's centre and then
- * lgmApplyStartOffset moves him LGM_START_OFFSET (16 world units) towards the
+ * lgmApplyStartOffset moves him LGM_START_OFFSET (64 world units) towards the
  * centre of the square he was sent to. The step is worked out in whole
  * numbers: the distance is the whole part of the square root, and each axis
- * is dx * 16 / distance with the fraction dropped. A square no further off
- * than 16 leaves him on the tank's centre.
+ * is dx * 64 / distance with the fraction dropped. A square no further off
+ * than 64 leaves him on the tank's centre.
  *
- * run_lgm_start_offset — straight east, west, north and south give exactly 16
- *                        along the axis; the four diagonals give (11,11) with
- *                        the signs of the direction; a square centre 16 or
- *                        less away leaves him on the tank; one 17 away moves
- *                        him the full 16; a tank 5 from the edge of a deep
+ * run_lgm_start_offset — straight east, west, north and south give exactly 64
+ *                        along the axis; the four diagonals give (45,45) with
+ *                        the signs of the direction; a square centre 64 or
+ *                        less away leaves him on the tank; one 65 away moves
+ *                        him the full 64; a tank 5 from the edge of a deep
  *                        sea square, sent beyond it, leaves him on the tank,
- *                        and the same with grass there moves him the full 16
+ *                        and the same with grass there moves him the full 64
  *                        across the edge; with the tank's own square turned
  *                        to river or deep sea he stays on the tank though
  *                        the square across the edge is grass; with the tank
- *                        on a boat he moves the full 16 whatever is there.
+ *                        on a boat he moves the full 64 whatever is there.
  *
  * Every case sends him to harvest a forest square. A harvest costs nothing
  * and is allowed on the tank's own square, which is the only way a square
- * centre can be within 16 of the tank. The squares are turned to forest
+ * centre can be within 64 of the tank. The squares are turned to forest
  * here, and the tank's own square to grass, so the case does not depend on
  * what the map has there. Calls
  * lgmNewPrimaryRequest directly on ut_make_running_sim (slot 0): it places
@@ -143,39 +143,40 @@ int run_lgm_start_offset(void) {
      * squares decide, and put back on for the two boat cases at the end. */
     tankSetOnBoat(&gs->tanks[LSO_SLOT], FALSE);
 
-    /* Straight along an axis: the whole 16, the other axis untouched. */
-    if (rc == 0) rc = lso_case(sim, "east", midX, midY, (BYTE)(cx + LSO_FAR), cy, 16, 0);
-    if (rc == 0) rc = lso_case(sim, "west", midX, midY, (BYTE)(cx - LSO_FAR), cy, -16, 0);
-    if (rc == 0) rc = lso_case(sim, "south", midX, midY, cx, (BYTE)(cy + LSO_FAR), 0, 16);
-    if (rc == 0) rc = lso_case(sim, "north", midX, midY, cx, (BYTE)(cy - LSO_FAR), 0, -16);
+    /* Straight along an axis: the whole 64, the other axis untouched. */
+    if (rc == 0) rc = lso_case(sim, "east", midX, midY, (BYTE)(cx + LSO_FAR), cy, 64, 0);
+    if (rc == 0) rc = lso_case(sim, "west", midX, midY, (BYTE)(cx - LSO_FAR), cy, -64, 0);
+    if (rc == 0) rc = lso_case(sim, "south", midX, midY, cx, (BYTE)(cy + LSO_FAR), 0, 64);
+    if (rc == 0) rc = lso_case(sim, "north", midX, midY, cx, (BYTE)(cy - LSO_FAR), 0, -64);
 
     /* Diagonals: 2560 each way is 3620 away once the fraction is dropped,
-     * and 2560 * 16 / 3620 is 11 with the fraction dropped. The same size in
+     * and 2560 * 64 / 3620 is 45 with the fraction dropped. The same size in
      * all four directions, because C division drops towards zero. */
-    if (rc == 0) rc = lso_case(sim, "south-east", midX, midY, (BYTE)(cx + LSO_FAR), (BYTE)(cy + LSO_FAR), 11, 11);
-    if (rc == 0) rc = lso_case(sim, "north-west", midX, midY, (BYTE)(cx - LSO_FAR), (BYTE)(cy - LSO_FAR), -11, -11);
-    if (rc == 0) rc = lso_case(sim, "north-east", midX, midY, (BYTE)(cx + LSO_FAR), (BYTE)(cy - LSO_FAR), 11, -11);
-    if (rc == 0) rc = lso_case(sim, "south-west", midX, midY, (BYTE)(cx - LSO_FAR), (BYTE)(cy + LSO_FAR), -11, 11);
+    if (rc == 0) rc = lso_case(sim, "south-east", midX, midY, (BYTE)(cx + LSO_FAR), (BYTE)(cy + LSO_FAR), 45, 45);
+    if (rc == 0) rc = lso_case(sim, "north-west", midX, midY, (BYTE)(cx - LSO_FAR), (BYTE)(cy - LSO_FAR), -45, -45);
+    if (rc == 0) rc = lso_case(sim, "north-east", midX, midY, (BYTE)(cx + LSO_FAR), (BYTE)(cy - LSO_FAR), 45, -45);
+    if (rc == 0) rc = lso_case(sim, "south-west", midX, midY, (BYTE)(cx - LSO_FAR), (BYTE)(cy + LSO_FAR), -45, 45);
 
-    /* The tank's own square, its centre 16 or less away: he stays on the
-     * tank. (10,-5) from the centre is 11 away; (16,0) is exactly 16. */
+    /* The tank's own square, its centre 64 or less away: he stays on the
+     * tank. (10,-5) from the centre is 11 away; (64,0) is exactly 64. */
     if (rc == 0) rc = lso_case(sim, "own square, 11 away", (WORLD)(midX + 10), (WORLD)(midY - 5), cx, cy, 0, 0);
-    if (rc == 0) rc = lso_case(sim, "own square, 16 away", (WORLD)(midX + 16), midY, cx, cy, 0, 0);
+    if (rc == 0) rc = lso_case(sim, "own square, 64 away", (WORLD)(midX + 64), midY, cx, cy, 0, 0);
     if (rc == 0) rc = lso_case(sim, "own square, on the centre", midX, midY, cx, cy, 0, 0);
 
-    /* One past that: he moves the full 16, which leaves him 1 short. */
-    if (rc == 0) rc = lso_case(sim, "own square, 17 east of centre", (WORLD)(midX + 17), midY, cx, cy, -16, 0);
-    if (rc == 0) rc = lso_case(sim, "own square, 17 north of centre", midX, (WORLD)(midY - 17), cx, cy, 0, 16);
+    /* One past that: he moves the full 64, which leaves him 1 short. The
+     * tank is still inside its own square, whose edge is 128 out. */
+    if (rc == 0) rc = lso_case(sim, "own square, 65 east of centre", (WORLD)(midX + 65), midY, cx, cy, -64, 0);
+    if (rc == 0) rc = lso_case(sim, "own square, 65 north of centre", midX, (WORLD)(midY - 65), cx, cy, 0, 64);
 
-    /* The tank 5 short of its square's east edge, sent far east: the 16
-     * would put him 11 into the next square. A builder cannot walk on deep
+    /* The tank 5 short of its square's east edge, sent far east: the 64
+     * would put him 59 into the next square. A builder cannot walk on deep
      * sea, so he stays on the tank, where his first step is refused the way
-     * it always was. With grass there he can, and gets the full 16. */
+     * it always was. With grass there he can, and gets the full 64. */
     edgeX = (WORLD)((((WORLD)cx + 1) << TANK_SHIFT_MAPSIZE) - 5);
     mapSetPos(gs, &gs->mp, (BYTE)(cx + 1), cy, DEEP_SEA, FALSE, FALSE);
     if (rc == 0) rc = lso_case(sim, "deep sea across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 0, 0);
     mapSetPos(gs, &gs->mp, (BYTE)(cx + 1), cy, GRASS, FALSE, FALSE);
-    if (rc == 0) rc = lso_case(sim, "grass across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 16, 0);
+    if (rc == 0) rc = lso_case(sim, "grass across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 64, 0);
 
     /* The same place and the same grass across the edge, but the tank's own
      * square is one a builder cannot walk on. He has no speed there and
@@ -187,12 +188,12 @@ int run_lgm_start_offset(void) {
     if (rc == 0) rc = lso_case(sim, "tank in deep sea, grass across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 0, 0);
 
     /* The same deep sea square with the tank on a boat. A builder near his
-     * boat walks over any square, so he gets the full 16, onto the grass
+     * boat walks over any square, so he gets the full 64, onto the grass
      * and onto deep sea alike. */
     tankSetOnBoat(&gs->tanks[LSO_SLOT], TRUE);
-    if (rc == 0) rc = lso_case(sim, "tank on a boat, grass across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 16, 0);
+    if (rc == 0) rc = lso_case(sim, "tank on a boat, grass across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 64, 0);
     mapSetPos(gs, &gs->mp, (BYTE)(cx + 1), cy, DEEP_SEA, FALSE, FALSE);
-    if (rc == 0) rc = lso_case(sim, "tank on a boat, deep sea across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 16, 0);
+    if (rc == 0) rc = lso_case(sim, "tank on a boat, deep sea across the edge", edgeX, midY, (BYTE)(cx + LSO_FAR), cy, 64, 0);
     tankSetOnBoat(&gs->tanks[LSO_SLOT], FALSE);
 
     serverSimDestroy(sim);
