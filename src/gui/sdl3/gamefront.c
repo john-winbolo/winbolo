@@ -5201,6 +5201,13 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
                  gameFrontOnboardingComplete() ? "1" : "2", buff, FILENAME_MAX);
 #endif
   zoomFactor = atoi(buff);
+#if defined(__IPHONEOS__)
+  /* An iOS window always fills the screen and turns with it, so the classic
+     screen's render zoom follows the window, as the desktop's resizable mode
+     does (sdl3DrawAdaptRenderTarget, every frame). A saved fixed size drew the
+     iPad's classic screen at zoom 1 and stretched it about five times. */
+  zoomFactor = ZOOM_FACTOR_CUSTOM;
+#endif
   /* Custom window size (for ZOOM_FACTOR_CUSTOM mode) */
   prefsGetString("WINDOW", "Custom Width", "0", buff, FILENAME_MAX);
   {
