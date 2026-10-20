@@ -268,6 +268,7 @@ int run_shell_rewind_pill_shell_tank_present(void) {
     BYTE       armourBefore;
     WORLD      hx = 0, hy = 0;
     int        diedOn;
+    int        rc = 0;
 
     /* (a) Every frame of the record but the present one has the tank on the
        lane. The tank is north of it now. A pill's shell down the lane goes
@@ -289,17 +290,17 @@ int run_shell_rewind_pill_shell_tank_present(void) {
         srrPlace(sim, SRR_TARGET, x, offY);
     }
     /* Not vacuous: there is a record SRR_COMP back, and it is on the lane. */
-    UT_ASSERT(posHistoryGet(&sim->posHistory[SRR_TARGET], SRR_COMP, &hx, &hy));
-    UT_ASSERT(hy == srrMiddle(ly));
+    UT_CHECK(posHistoryGet(&sim->posHistory[SRR_TARGET], SRR_COMP, &hx, &hy));
+    UT_CHECK(hy == srrMiddle(ly));
     armourBefore = tankGetArmour(&gs->tanks[SRR_TARGET]);
     srrFireLane(sim, lx, ly, true, 0);
-    UT_ASSERT(gs->shs != NULL && gs->shs->compensationTicks == 0 &&
-              gs->shs->owner == NEUTRAL);
+    UT_CHECK(gs->shs != NULL && gs->shs->compensationTicks == 0 &&
+             gs->shs->owner == NEUTRAL);
     diedOn = srrFly(sim);
-    UT_ASSERT_MSG(tankGetArmour(&gs->tanks[SRR_TARGET]) == armourBefore,
-                  "a pill's shell hit the tank at the place its record has, "
-                  "not where it is (shell ended on game tick %d)", diedOn);
-    UT_ASSERT(srrDeaths == 1 && srrDeathOutcome == SHELL_OUTCOME_EXPIRED);
+    UT_CHECK_MSG(tankGetArmour(&gs->tanks[SRR_TARGET]) == armourBefore,
+                 "a pill's shell hit the tank at the place its record has, "
+                 "not where it is (shell ended on game tick %d)", diedOn);
+    UT_CHECK(srrDeaths == 1 && srrDeathOutcome == SHELL_OUTCOME_EXPIRED);
     srrEnd(sim);
 
     /* (b) The other way round: the tank is on the lane now and every older
@@ -309,20 +310,21 @@ int run_shell_rewind_pill_shell_tank_present(void) {
     UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
     gs = &sim->sim;
     srrTankHistory(sim, lx, ly, 0);
-    UT_ASSERT(posHistoryGet(&sim->posHistory[SRR_TARGET], SRR_COMP, &hx, &hy));
-    UT_ASSERT(hy != srrMiddle(ly));
+    UT_CHECK(posHistoryGet(&sim->posHistory[SRR_TARGET], SRR_COMP, &hx, &hy));
+    UT_CHECK(hy != srrMiddle(ly));
     armourBefore = tankGetArmour(&gs->tanks[SRR_TARGET]);
     srrFireLane(sim, lx, ly, true, 0);
     diedOn = srrFly(sim);
-    UT_ASSERT_MSG(tankGetArmour(&gs->tanks[SRR_TARGET]) ==
-                      (BYTE)(armourBefore - gs->rules.shell_damage),
-                  "a pill's shell missed the tank where it is now");
-    UT_ASSERT(srrDeaths == 1 && srrDeathOutcome == SHELL_OUTCOME_TANK_HIT);
-    UT_ASSERT_MSG(diedOn == SRR_HIT_TICK, "hit on game tick %d, expected %d",
-                  diedOn, SRR_HIT_TICK);
+    UT_CHECK_MSG(tankGetArmour(&gs->tanks[SRR_TARGET]) ==
+                     (BYTE)(armourBefore - gs->rules.shell_damage),
+                 "a pill's shell missed the tank where it is now");
+    UT_CHECK(srrDeaths == 1 && srrDeathOutcome == SHELL_OUTCOME_TANK_HIT);
+    UT_CHECK_MSG(diedOn == SRR_HIT_TICK, "hit on game tick %d, expected %d",
+                 diedOn, SRR_HIT_TICK);
+done:
     srrEnd(sim);
 
-    return 0;
+    return rc;
 }
 
 /* ================================================================
@@ -344,6 +346,7 @@ int run_shell_rewind_tank_full_comp(void) {
     };
     BYTE lx = 0, ly = 0;
     int  c;
+    int  rc = 0;
 
     for (c = 0; c < (int)(sizeof(cases) / sizeof(cases[0])); c++) {
         ServerSim *sim = srrSim(&lx, &ly);
@@ -356,22 +359,26 @@ int run_shell_rewind_tank_full_comp(void) {
         srrTankHistory(sim, lx, ly, cases[c].onLane);
         armourBefore = tankGetArmour(&gs->tanks[SRR_TARGET]);
         srrFireLane(sim, lx, ly, false, SRR_COMP);
-        UT_ASSERT(gs->shs != NULL && gs->shs->compensationTicks == SRR_COMP);
+        UT_CHECK(gs->shs != NULL && gs->shs->compensationTicks == SRR_COMP);
         diedOn = srrFly(sim);
         if (cases[c].hit) {
-            UT_ASSERT_MSG(tankGetArmour(&gs->tanks[SRR_TARGET]) ==
-                              (BYTE)(armourBefore - gs->rules.shell_damage),
-                          "a shell that rewinds %d did not hit the tank at "
-                          "the frame %d back", SRR_COMP, cases[c].onLane);
-            UT_ASSERT(srrDeathOutcome == SHELL_OUTCOME_TANK_HIT);
-            UT_ASSERT(diedOn == SRR_HIT_TICK);
+            UT_CHECK_MSG(tankGetArmour(&gs->tanks[SRR_TARGET]) ==
+                             (BYTE)(armourBefore - gs->rules.shell_damage),
+                         "a shell that rewinds %d did not hit the tank at "
+                         "the frame %d back", SRR_COMP, cases[c].onLane);
+            UT_CHECK(srrDeathOutcome == SHELL_OUTCOME_TANK_HIT);
+            UT_CHECK(diedOn == SRR_HIT_TICK);
         } else {
-            UT_ASSERT_MSG(tankGetArmour(&gs->tanks[SRR_TARGET]) == armourBefore,
-                          "a shell that rewinds %d hit the tank at the frame "
-                          "%d back", SRR_COMP, cases[c].onLane);
-            UT_ASSERT(srrDeathOutcome == SHELL_OUTCOME_EXPIRED);
+            UT_CHECK_MSG(tankGetArmour(&gs->tanks[SRR_TARGET]) == armourBefore,
+                         "a shell that rewinds %d hit the tank at the frame "
+                         "%d back", SRR_COMP, cases[c].onLane);
+            UT_CHECK(srrDeathOutcome == SHELL_OUTCOME_EXPIRED);
         }
+done:
         srrEnd(sim);
+        if (rc != 0) {
+            return rc;
+        }
     }
     return 0;
 }
@@ -407,6 +414,7 @@ int run_shell_rewind_builder_one_less(void) {
     };
     BYTE lx = 0, ly = 0;
     int  c;
+    int  rc = 0;
 
     UT_ASSERT(SRR_MAN_STEP > 2 * MAP_SQUARE_MIDDLE);
 
@@ -446,7 +454,7 @@ int run_shell_rewind_builder_one_less(void) {
 
         bx = (WORLD)(x0 + SRR_MAN_STEP * cases[c].blastAt);
         /* The blast is on the lane's road, so it is not a blast on a wall. */
-        UT_ASSERT((bx >> TANK_SHIFT_MAPSIZE) <= (WORLD)(lx + SRR_LANE_LEN));
+        UT_CHECK((bx >> TANK_SHIFT_MAPSIZE) <= (WORLD)(lx + SRR_LANE_LEN));
 
         srrDeaths       = 0;
         srrDeathOutcome = 0;
@@ -454,7 +462,7 @@ int run_shell_rewind_builder_one_less(void) {
                       (TURNTYPE)SRR_SHELL_LEN, SRR_SHOOTER, NEUTRAL,
                       DMG_NO_PILL, FALSE);
         q = gs->shs;
-        UT_ASSERT(q != NULL);
+        UT_CHECK(q != NULL);
         q->compensationTicks = cases[c].comp;
         q->x = bx;
         q->y = y0;
@@ -470,23 +478,27 @@ int run_shell_rewind_builder_one_less(void) {
             }
         }
         shellsUpdate(gs, tanks, n, lgms, &gs->ss);
-        UT_ASSERT_MSG(srrDeaths == 1 && srrDeathOutcome == SHELL_OUTCOME_EXPIRED,
-                      "setup: the shell did not explode at the end of its "
-                      "life (deaths %d, outcome %u)", srrDeaths,
-                      (unsigned)srrDeathOutcome);
+        UT_CHECK_MSG(srrDeaths == 1 && srrDeathOutcome == SHELL_OUTCOME_EXPIRED,
+                     "setup: the shell did not explode at the end of its "
+                     "life (deaths %d, outcome %u)", srrDeaths,
+                     (unsigned)srrDeathOutcome);
 
         if (cases[c].dies) {
-            UT_ASSERT_MSG(man->isDead == TRUE,
-                          "a shell that carries a rewind of %u did not kill "
-                          "the builder at his place %d frames back",
-                          (unsigned)cases[c].comp, cases[c].blastAt);
+            UT_CHECK_MSG(man->isDead == TRUE,
+                         "a shell that carries a rewind of %u did not kill "
+                         "the builder at his place %d frames back",
+                         (unsigned)cases[c].comp, cases[c].blastAt);
         } else {
-            UT_ASSERT_MSG(man->isDead == FALSE,
-                          "a shell that carries a rewind of %u killed the "
-                          "builder at his place %d frames back",
-                          (unsigned)cases[c].comp, cases[c].blastAt);
+            UT_CHECK_MSG(man->isDead == FALSE,
+                         "a shell that carries a rewind of %u killed the "
+                         "builder at his place %d frames back",
+                         (unsigned)cases[c].comp, cases[c].blastAt);
         }
+done:
         srrEnd(sim);
+        if (rc != 0) {
+            return rc;
+        }
     }
     return 0;
 }

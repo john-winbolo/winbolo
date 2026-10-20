@@ -4442,8 +4442,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tkExplosionUpdate's lgm/tank index pairing over the compacted per-player
     # arrays, plus the small-explosion sweep's off-by-one.
     tests/unit/test_tkexp_lgm_pairing.c
-    # A shell that hits a tank blows up at the hit tank's present centre, not
-    # at the shell, which a lag-compensated test leaves behind the tank.
+    # A shell that hits a tank blows up at the hit tank's present position
+    # plus the shell's offset from the rewound hit point, not at the shell,
+    # which a lag-compensated test leaves behind the tank.
     tests/unit/test_tank_blast_at_tank.c
     tests/unit/test_teleport_clears_rewind.c
     tests/unit/test_shell_rewind_rules.c
@@ -5925,6 +5926,7 @@ set(_unit_test_names
     teleport_shell_hits_new_place
     teleport_rewind_refills
     teleport_builder_rewind_record
+    teleport_parachute_erases_builder_record
     slot_join_erases_tank_rewind_record
     slot_join_shell_hits_new_tank
     slot_join_rewind_refills

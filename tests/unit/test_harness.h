@@ -42,6 +42,29 @@
         }                                                                   \
     } while (0)
 
+/* UT_ASSERT and UT_ASSERT_MSG for a test that has a sim open and one `done:`
+ * label that tears it down: a failure sets rc to 1 and jumps there instead of
+ * returning past the cleanup. The function must declare `int rc = 0`. */
+#define UT_CHECK(cond)                                                      \
+    do {                                                                    \
+        if (!(cond)) {                                                      \
+            fprintf(stderr, "FAIL %s:%d: assertion failed: %s\n",           \
+                    __FILE__, __LINE__, #cond);                             \
+            rc = 1;                                                         \
+            goto done;                                                      \
+        }                                                                   \
+    } while (0)
+
+#define UT_CHECK_MSG(cond, fmt, ...)                                        \
+    do {                                                                    \
+        if (!(cond)) {                                                      \
+            fprintf(stderr, "FAIL %s:%d: %s — " fmt "\n",                   \
+                    __FILE__, __LINE__, #cond, ##__VA_ARGS__);              \
+            rc = 1;                                                         \
+            goto done;                                                      \
+        }                                                                   \
+    } while (0)
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -2796,9 +2819,9 @@ int run_ping_kick_clears_strikes_on_disconnect(void);
  * (test_tkexp_lgm_pairing.c). */
 int run_tkexp_lgm_pairing(void);
 
-/* A shell that hits a tank blows up at the hit tank's present centre, not at
- * the shell, which a lag-compensated test leaves behind the tank
- * (test_tank_blast_at_tank.c). */
+/* A shell that hits a tank blows up at the hit tank's present position plus
+ * the shell's offset from the rewound hit point, not at the shell, which a
+ * lag-compensated test leaves behind the tank (test_tank_blast_at_tank.c). */
 int run_tank_blast_rewound_hit_at_present_tank(void);
 int run_tank_blast_kill_starts_at_present_tank(void);
 int run_tank_blast_zero_rewind_unchanged(void);
@@ -2815,6 +2838,7 @@ int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
 int run_teleport_rewind_refills(void);
 int run_teleport_builder_rewind_record(void);
+int run_teleport_parachute_erases_builder_record(void);
 int run_slot_join_erases_tank_rewind_record(void);
 int run_slot_join_shell_hits_new_tank(void);
 int run_slot_join_rewind_refills(void);

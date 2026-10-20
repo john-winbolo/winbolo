@@ -406,13 +406,14 @@ int run_tank_blast_zero_rewind_unchanged(void) {
     GameSim   *gs;
     WORLD      tx, ty, bx, by;
     BYTE       armourBefore;
+    int        rc = 0;
 
     UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
     gs = &sim->sim;
-    UT_ASSERT(gs->lgmen[TBT_SHOOTER] != NULL && gs->lgmen[TBT_TARGET] != NULL);
-    UT_ASSERT(TBT_NEAR_WEST - TBT_SHELL_STOP_SHORT <= MAP_SQUARE_MIDDLE);
-    UT_ASSERT(TBT_FAR_EAST + TBT_SHELL_STOP_SHORT > MAP_SQUARE_MIDDLE);
-    UT_ASSERT(TBT_FAR_EAST <= MAP_SQUARE_MIDDLE);
+    UT_CHECK(gs->lgmen[TBT_SHOOTER] != NULL && gs->lgmen[TBT_TARGET] != NULL);
+    UT_CHECK(TBT_NEAR_WEST - TBT_SHELL_STOP_SHORT <= MAP_SQUARE_MIDDLE);
+    UT_CHECK(TBT_FAR_EAST + TBT_SHELL_STOP_SHORT > MAP_SQUARE_MIDDLE);
+    UT_CHECK(TBT_FAR_EAST <= MAP_SQUARE_MIDDLE);
 
     /* (a) A hit. The blast point is the shell's point: on the lane, 96 short
        of the tank's centre, on the west side of the hull. */
@@ -432,22 +433,23 @@ int run_tank_blast_zero_rewind_unchanged(void) {
                (WORLD)(tx - TBT_NEAR_WEST), ty, (WORLD)(tx + TBT_FAR_EAST), ty);
 
     tbtFire(sim, lx, ly, 0);
-    UT_ASSERT_MSG(tbtFly(sim) == TBT_HIT_TICK,
-                  "the zero-rewind hit moved off game tick %d", TBT_HIT_TICK);
-    UT_ASSERT(tankGetArmour(&gs->tanks[TBT_TARGET]) ==
-              (BYTE)(armourBefore - gs->rules.shell_damage));
+    UT_CHECK_MSG(tbtFly(sim) == TBT_HIT_TICK,
+                 "the zero-rewind hit moved off game tick %d", TBT_HIT_TICK);
+    UT_CHECK(tankGetArmour(&gs->tanks[TBT_TARGET]) ==
+             (BYTE)(armourBefore - gs->rules.shell_damage));
     if (tbtCheckBlast(sim, bx, by, SHELL_OUTCOME_TANK_HIT) != 0) {
-        return 1;
+        rc = 1;
+        goto done;
     }
     /* Not the tank's centre: that is 6 of a square's 16 pixels further on. */
-    UT_ASSERT(!tbtExplosionAt(tbtOnlyEvent(sim, EVENT_EXPLOSION), tx, ty));
-    UT_ASSERT(gs->tankExplosions == NULL);
-    UT_ASSERT_MSG(gs->lgmen[TBT_SHOOTER]->isDead == TRUE,
-                  "a builder 100 units from the shell's point, on the hit side "
-                  "of the tank, survived");
-    UT_ASSERT_MSG(gs->lgmen[TBT_TARGET]->isDead == FALSE,
-                  "a builder on the far side of the tank, 144 units from the "
-                  "shell's point, was killed");
+    UT_CHECK(!tbtExplosionAt(tbtOnlyEvent(sim, EVENT_EXPLOSION), tx, ty));
+    UT_CHECK(gs->tankExplosions == NULL);
+    UT_CHECK_MSG(gs->lgmen[TBT_SHOOTER]->isDead == TRUE,
+                 "a builder 100 units from the shell's point, on the hit side "
+                 "of the tank, survived");
+    UT_CHECK_MSG(gs->lgmen[TBT_TARGET]->isDead == FALSE,
+                 "a builder on the far side of the tank, 144 units from the "
+                 "shell's point, was killed");
     tbtEnd(sim);
 
     /* (b) A kill. The dead tank's explosion starts at the shell's point too. */
@@ -461,14 +463,16 @@ int run_tank_blast_zero_rewind_unchanged(void) {
     tbtPlace(sim, TBT_TARGET, tx, ty);
     (*gs->tanks[TBT_TARGET]).armour = 0;
     tbtFire(sim, lx, ly, 0);
-    UT_ASSERT(tbtFly(sim) == TBT_HIT_TICK);
-    UT_ASSERT(tankIsDestroyed(&gs->tanks[TBT_TARGET]));
+    UT_CHECK(tbtFly(sim) == TBT_HIT_TICK);
+    UT_CHECK(tankIsDestroyed(&gs->tanks[TBT_TARGET]));
     if (tbtCheckBlast(sim, bx, by, SHELL_OUTCOME_TANK_KILL) != 0 ||
         tbtCheckTankExplosion(sim, bx, by) != 0) {
-        return 1;
+        rc = 1;
+        goto done;
     }
+done:
     tbtEnd(sim);
-    return 0;
+    return rc;
 }
 
 /* ================================================================
@@ -482,6 +486,7 @@ int run_tank_blast_rewound_hit_at_present_tank(void) {
     BYTE       armourBefore;
     int        diedOn;
     const GameEvent *ev;
+    int        rc = 0;
 
     UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
     gs = &sim->sim;
@@ -492,7 +497,7 @@ int run_tank_blast_rewound_hit_at_present_tank(void) {
     oldY = tbtMiddle(ly);
     nowX = oldX;
     nowY = (WORLD)(oldY - TBT_MOVED);
-    UT_ASSERT((nowY >> TANK_SHIFT_MAPSIZE) != (oldY >> TANK_SHIFT_MAPSIZE));
+    UT_CHECK((nowY >> TANK_SHIFT_MAPSIZE) != (oldY >> TANK_SHIFT_MAPSIZE));
     /* The shell stops on the lane, 96 west of the record it was tested
        against. The blast is the present tank plus that offset: 96 west of
        the present tank. */
@@ -500,7 +505,7 @@ int run_tank_blast_rewound_hit_at_present_tank(void) {
     shellY = oldY;
     bx = (WORLD)((int)nowX + ((int)shellX - (int)oldX));
     by = (WORLD)((int)nowY + ((int)shellY - (int)oldY));
-    UT_ASSERT(bx == (WORLD)(nowX - TBT_SHELL_STOP_SHORT) && by == nowY);
+    UT_CHECK(bx == (WORLD)(nowX - TBT_SHELL_STOP_SHORT) && by == nowY);
     tbtPlace(sim, TBT_TARGET, nowX, nowY);
     tbtHistory(&sim->posHistory[TBT_TARGET], oldX, oldY, nowX, nowY);
     armourBefore = tankGetArmour(&gs->tanks[TBT_TARGET]);
@@ -508,28 +513,30 @@ int run_tank_blast_rewound_hit_at_present_tank(void) {
     tbtFire(sim, lx, ly, TBT_COMP);
     diedOn = tbtFly(sim);
 
-    UT_ASSERT_MSG(tankGetArmour(&gs->tanks[TBT_TARGET]) ==
-                      (BYTE)(armourBefore - gs->rules.shell_damage),
-                  "setup: the rewound shell did not hit (armour %d, was %d)",
-                  (int)tankGetArmour(&gs->tanks[TBT_TARGET]), (int)armourBefore);
-    UT_ASSERT(diedOn == TBT_HIT_TICK);
+    UT_CHECK_MSG(tankGetArmour(&gs->tanks[TBT_TARGET]) ==
+                     (BYTE)(armourBefore - gs->rules.shell_damage),
+                 "setup: the rewound shell did not hit (armour %d, was %d)",
+                 (int)tankGetArmour(&gs->tanks[TBT_TARGET]), (int)armourBefore);
+    UT_CHECK(diedOn == TBT_HIT_TICK);
 
     /* The shell death, the hit explosion and the hit sound agree on it. */
     if (tbtCheckBlast(sim, bx, by, SHELL_OUTCOME_TANK_HIT) != 0) {
-        return 1;
+        rc = 1;
+        goto done;
     }
     /* It is not where the shell stopped, not the rewound record, and not the
        present tank's centre. */
     ev = tbtOnlyEvent(sim, EVENT_EXPLOSION);
-    UT_ASSERT(!tbtExplosionAt(ev, shellX, shellY));
-    UT_ASSERT(!tbtExplosionAt(ev, oldX, oldY));
-    UT_ASSERT(!tbtExplosionAt(ev, nowX, nowY));
+    UT_CHECK(!tbtExplosionAt(ev, shellX, shellY));
+    UT_CHECK(!tbtExplosionAt(ev, oldX, oldY));
+    UT_CHECK(!tbtExplosionAt(ev, nowX, nowY));
 
     /* A hit that does not kill starts no tank explosion. */
-    UT_ASSERT(gs->tankExplosions == NULL);
+    UT_CHECK(gs->tankExplosions == NULL);
 
+done:
     tbtEnd(sim);
-    return 0;
+    return rc;
 }
 
 /* ================================================================
@@ -540,6 +547,7 @@ int run_tank_blast_kill_starts_at_present_tank(void) {
     ServerSim *sim = tbtSim(&lx, &ly);
     GameSim   *gs;
     WORLD      oldX, oldY, nowX, nowY, bx, by;
+    int        rc = 0;
 
     UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
     gs = &sim->sim;
@@ -556,21 +564,23 @@ int run_tank_blast_kill_starts_at_present_tank(void) {
     (*gs->tanks[TBT_TARGET]).armour = 0;
 
     tbtFire(sim, lx, ly, TBT_COMP);
-    UT_ASSERT(tbtFly(sim) == TBT_HIT_TICK);
+    UT_CHECK(tbtFly(sim) == TBT_HIT_TICK);
 
-    UT_ASSERT_MSG(tankIsDestroyed(&gs->tanks[TBT_TARGET]),
-                  "setup: the shell did not kill the tank");
+    UT_CHECK_MSG(tankIsDestroyed(&gs->tanks[TBT_TARGET]),
+                 "setup: the shell did not kill the tank");
     /* The hit explosion, the sound, the shell death and the moving explosion
        of the dead tank are all at the one point. */
     if (tbtCheckBlast(sim, bx, by, SHELL_OUTCOME_TANK_KILL) != 0 ||
         tbtCheckTankExplosion(sim, bx, by) != 0) {
-        return 1;
+        rc = 1;
+        goto done;
     }
     /* Not left behind on the lane, where the rewound record is. */
-    UT_ASSERT(gs->tankExplosions->y != oldY);
+    UT_CHECK(gs->tankExplosions->y != oldY);
 
+done:
     tbtEnd(sim);
-    return 0;
+    return rc;
 }
 
 /* ================================================================
@@ -586,6 +596,7 @@ int run_tank_blast_hit_decision_unchanged(void) {
     WORLD      laneX, laneY, offY;
     BYTE       armourBefore;
     int        diedOn;
+    int        rc = 0;
 
     /* (a) Record on the lane, tank off it: a hit, on the tick a tank
        standing on the record would be hit. */
@@ -600,19 +611,19 @@ int run_tank_blast_hit_decision_unchanged(void) {
     armourBefore = tankGetArmour(&gs->tanks[TBT_TARGET]);
     /* The present tank is out of the shell's reach all the way down the
        lane, so only the record can account for a hit. */
-    UT_ASSERT(TBT_MOVED >= gs->rules.tank_hit_radius);
+    UT_CHECK(TBT_MOVED >= gs->rules.tank_hit_radius);
     tbtFire(sim, lx, ly, TBT_COMP);
     diedOn = tbtFly(sim);
-    UT_ASSERT_MSG(tankGetArmour(&gs->tanks[TBT_TARGET]) ==
-                      (BYTE)(armourBefore - gs->rules.shell_damage),
-                  "a shell through the rewound record must hit");
-    UT_ASSERT_MSG(diedOn == TBT_HIT_TICK,
-                  "rewound hit on game tick %d, expected %d", diedOn,
-                  TBT_HIT_TICK);
-    UT_ASSERT(tbtDeaths == 1 && tbtDeathOutcome == SHELL_OUTCOME_TANK_HIT);
+    UT_CHECK_MSG(tankGetArmour(&gs->tanks[TBT_TARGET]) ==
+                     (BYTE)(armourBefore - gs->rules.shell_damage),
+                 "a shell through the rewound record must hit");
+    UT_CHECK_MSG(diedOn == TBT_HIT_TICK,
+                 "rewound hit on game tick %d, expected %d", diedOn,
+                 TBT_HIT_TICK);
+    UT_CHECK(tbtDeaths == 1 && tbtDeathOutcome == SHELL_OUTCOME_TANK_HIT);
     /* The tank is where it was: a hit does not move it at once. */
-    UT_ASSERT((*gs->tanks[TBT_TARGET]).x == laneX &&
-              (*gs->tanks[TBT_TARGET]).y == offY);
+    UT_CHECK((*gs->tanks[TBT_TARGET]).x == laneX &&
+             (*gs->tanks[TBT_TARGET]).y == offY);
     tbtEnd(sim);
 
     /* (b) The other way round: the tank stands on the lane now, and its
@@ -628,13 +639,13 @@ int run_tank_blast_hit_decision_unchanged(void) {
     armourBefore = tankGetArmour(&gs->tanks[TBT_TARGET]);
     tbtFire(sim, lx, ly, TBT_COMP);
     diedOn = tbtFly(sim);
-    UT_ASSERT_MSG(tankGetArmour(&gs->tanks[TBT_TARGET]) == armourBefore,
-                  "a shell that misses the rewound record must miss");
-    UT_ASSERT(tbtDeaths == 1 && tbtDeathOutcome == SHELL_OUTCOME_EXPIRED);
-    UT_ASSERT(diedOn > TBT_HIT_TICK);
-    UT_ASSERT(tbtOnlyEvent(sim, EVENT_SOUND_TANK_HIT) == NULL);
+    UT_CHECK_MSG(tankGetArmour(&gs->tanks[TBT_TARGET]) == armourBefore,
+                 "a shell that misses the rewound record must miss");
+    UT_CHECK(tbtDeaths == 1 && tbtDeathOutcome == SHELL_OUTCOME_EXPIRED);
+    UT_CHECK(diedOn > TBT_HIT_TICK);
+    UT_CHECK(tbtOnlyEvent(sim, EVENT_SOUND_TANK_HIT) == NULL);
     /* A shell that ran out blows up where the shell is, east of the tank. */
-    UT_ASSERT(tbtDeathY == laneY && tbtDeathX > laneX);
+    UT_CHECK(tbtDeathY == laneY && tbtDeathX > laneX);
     tbtEnd(sim);
 
     /* (c) The same shell with no rewind and the tank on the lane: the hit
@@ -646,12 +657,13 @@ int run_tank_blast_hit_decision_unchanged(void) {
              tbtMiddle(ly));
     armourBefore = tankGetArmour(&gs->tanks[TBT_TARGET]);
     tbtFire(sim, lx, ly, 0);
-    UT_ASSERT(tbtFly(sim) == TBT_HIT_TICK);
-    UT_ASSERT(tankGetArmour(&gs->tanks[TBT_TARGET]) ==
-              (BYTE)(armourBefore - gs->rules.shell_damage));
+    UT_CHECK(tbtFly(sim) == TBT_HIT_TICK);
+    UT_CHECK(tankGetArmour(&gs->tanks[TBT_TARGET]) ==
+             (BYTE)(armourBefore - gs->rules.shell_damage));
+done:
     tbtEnd(sim);
 
-    return 0;
+    return rc;
 }
 
 /* ================================================================
@@ -697,7 +709,9 @@ static void tbtRewoundHit(ServerSim *sim, BYTE lx, BYTE ly, TbtHit *g) {
    so the record that many entries back is the shooter's screen: it and every
    older one say the "seen" state, and the TBT_COMP - 1 newer ones, the
    present included, say the "now" state. Out is on the ground and alive; not
-   out is inside his tank. */
+   out is inside his tank. The frames are not a walk the game would record:
+   the "seen" and "now" places can be squares apart with no steps between.
+   The code reads one frame, so only that frame matters. */
 static void tbtBuilder(ServerSim *sim, BYTE slot,
                        bool seenOut, WORLD seenX, WORLD seenY,
                        bool nowOut, WORLD nowX, WORLD nowY) {
@@ -755,8 +769,12 @@ static int tbtCheckRewoundHit(const TbtHit *g, int diedOn, uint8_t outcome) {
 /* ================================================================
  * 5. After a rewound hit the shooter's screen decides who the blast kills.
  *
- * Under the rule this replaced (the builder where he is now against the
- * drawn blast) every one of the four builders here has the other fate.
+ * The four builders are placed so that the blast as the shooter's screen
+ * had it (the shell's own point) and the blast as it is drawn (carried to
+ * the present tank) give opposite answers, which checks that the builder
+ * test is handed the seen point and not the drawn one. Before this branch
+ * the two points were the same, so this case passed on the old code too;
+ * what it guards is that the carry does not reach the builder test.
  * ================================================================ */
 int run_tank_blast_builder_on_shooter_screen(void) {
     BYTE       lx = 0, ly = 0;
@@ -764,6 +782,7 @@ int run_tank_blast_builder_on_shooter_screen(void) {
     GameSim   *gs;
     TbtHit     g;
     int        pass;
+    int        rc = 0;
 
     UT_ASSERT(TBT_IN_BLAST <= MAP_SQUARE_MIDDLE);
     UT_ASSERT(TBT_OUT_BLAST > MAP_SQUARE_MIDDLE);
@@ -776,8 +795,8 @@ int run_tank_blast_builder_on_shooter_screen(void) {
         sim = tbtSim(&lx, &ly);
         UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
         gs = &sim->sim;
-        UT_ASSERT(gs->lgmen[TBT_SHOOTER] != NULL &&
-                  gs->lgmen[TBT_TARGET] != NULL);
+        UT_CHECK(gs->lgmen[TBT_SHOOTER] != NULL &&
+                 gs->lgmen[TBT_TARGET] != NULL);
         tbtRewoundHit(sim, lx, ly, &g);
 
         if (pass == 0) {
@@ -808,27 +827,32 @@ int run_tank_blast_builder_on_shooter_screen(void) {
 
         tbtFire(sim, lx, ly, TBT_COMP);
         if (tbtCheckRewoundHit(&g, tbtFly(sim), SHELL_OUTCOME_TANK_HIT) != 0) {
-            return 1;
+            rc = 1;
+            goto done;
         }
 
         if (pass == 0) {
-            UT_ASSERT_MSG(gs->lgmen[TBT_TARGET]->isDead == TRUE,
-                          "the shooter's screen showed the builder 100 from "
-                          "where the shell hit, and he lived");
-            UT_ASSERT_MSG(gs->lgmen[TBT_SHOOTER]->isDead == TRUE,
-                          "the shooter's screen showed his own builder 100 "
-                          "from where the shell hit, and he lived");
+            UT_CHECK_MSG(gs->lgmen[TBT_TARGET]->isDead == TRUE,
+                         "the shooter's screen showed the builder 100 from "
+                         "where the shell hit, and he lived");
+            UT_CHECK_MSG(gs->lgmen[TBT_SHOOTER]->isDead == TRUE,
+                         "the shooter's screen showed his own builder 100 "
+                         "from where the shell hit, and he lived");
         } else {
-            UT_ASSERT_MSG(gs->lgmen[TBT_TARGET]->isDead == FALSE,
-                          "the shooter's screen showed the builder 300 from "
-                          "where the shell hit, but he was killed because he "
-                          "stands by the drawn blast now");
-            UT_ASSERT_MSG(gs->lgmen[TBT_SHOOTER]->isDead == FALSE,
-                          "the shooter's screen showed his own builder 300 "
-                          "from where the shell hit, but he was killed because "
-                          "he stands by the drawn blast now");
+            UT_CHECK_MSG(gs->lgmen[TBT_TARGET]->isDead == FALSE,
+                         "the shooter's screen showed the builder 300 from "
+                         "where the shell hit, but he was killed because he "
+                         "stands by the drawn blast now");
+            UT_CHECK_MSG(gs->lgmen[TBT_SHOOTER]->isDead == FALSE,
+                         "the shooter's screen showed his own builder 300 "
+                         "from where the shell hit, but he was killed because "
+                         "he stands by the drawn blast now");
         }
+done:
         tbtEnd(sim);
+        if (rc != 0) {
+            return rc;
+        }
     }
     return 0;
 }
@@ -844,6 +868,7 @@ int run_tank_blast_absent_builder_lives(void) {
     WORLD      oldX, oldY, nowX, nowY, bx, by, manX;
     PosHistory *h;
     int        pass, i;
+    int        rc = 0;
 
     /* A player's shell rewinds a builder one entry less than a tank. */
     UT_ASSERT(TBT_COMP - 1 >= 2);
@@ -852,7 +877,7 @@ int run_tank_blast_absent_builder_lives(void) {
         sim = tbtSim(&lx, &ly);
         UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
         gs = &sim->sim;
-        UT_ASSERT(gs->lgmen[TBT_TARGET] != NULL);
+        UT_CHECK(gs->lgmen[TBT_TARGET] != NULL);
 
         oldX = tbtMiddle((BYTE)(lx + TBT_AT_TARGET));
         oldY = tbtMiddle(ly);
@@ -891,20 +916,24 @@ int run_tank_blast_absent_builder_lives(void) {
         }
 
         tbtFire(sim, lx, ly, TBT_COMP);
-        UT_ASSERT(tbtFly(sim) == TBT_HIT_TICK);
-        UT_ASSERT(tbtDeaths == 1 && tbtDeathOutcome == SHELL_OUTCOME_TANK_HIT);
-        UT_ASSERT(tbtDeathX == bx && tbtDeathY == by);
+        UT_CHECK(tbtFly(sim) == TBT_HIT_TICK);
+        UT_CHECK(tbtDeaths == 1 && tbtDeathOutcome == SHELL_OUTCOME_TANK_HIT);
+        UT_CHECK(tbtDeathX == bx && tbtDeathY == by);
 
         if (pass == 0) {
-            UT_ASSERT_MSG(gs->lgmen[TBT_TARGET]->isDead == FALSE,
-                          "the shooter's screen showed no builder, but the "
-                          "blast on his tank killed him");
+            UT_CHECK_MSG(gs->lgmen[TBT_TARGET]->isDead == FALSE,
+                         "the shooter's screen showed no builder, but the "
+                         "blast on his tank killed him");
         } else {
-            UT_ASSERT_MSG(gs->lgmen[TBT_TARGET]->isDead == TRUE,
-                          "the shooter's screen showed the builder out, 100 "
-                          "units from where the shell hit, and he lived");
+            UT_CHECK_MSG(gs->lgmen[TBT_TARGET]->isDead == TRUE,
+                         "the shooter's screen showed the builder out, 100 "
+                         "units from where the shell hit, and he lived");
         }
+done:
         tbtEnd(sim);
+        if (rc != 0) {
+            return rc;
+        }
     }
     return 0;
 }
@@ -920,6 +949,7 @@ int run_tank_blast_builder_back_in_tank(void) {
     GameEvent  ev;
     lgm        man;
     int        pass;
+    int        rc = 0;
 
     /* Pass 0: seen out inside the blast, the tank survives the hit. He dies,
                on the tank.
@@ -936,7 +966,7 @@ int run_tank_blast_builder_back_in_tank(void) {
         sim = tbtSim(&lx, &ly);
         UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
         gs = &sim->sim;
-        UT_ASSERT(gs->lgmen[TBT_TARGET] != NULL);
+        UT_CHECK(gs->lgmen[TBT_TARGET] != NULL);
         man = gs->lgmen[TBT_TARGET];
         tbtRewoundHit(sim, lx, ly, &g);
         if (kills) {
@@ -951,61 +981,66 @@ int run_tank_blast_builder_back_in_tank(void) {
         tbtBuilder(sim, TBT_TARGET, true, seenManX, g.seenY,
                    outNow, outNow ? (WORLD)(g.seenX + TBT_OUT_BLAST) : g.nowX,
                    outNow ? g.seenY : g.nowY);
-        UT_ASSERT(man->isDead == FALSE && man->inTank == (outNow ? FALSE : TRUE));
+        UT_CHECK(man->isDead == FALSE && man->inTank == (outNow ? FALSE : TRUE));
         sim->eventCount = 0;
 
         tbtFire(sim, lx, ly, TBT_COMP);
         if (tbtCheckRewoundHit(&g, tbtFly(sim),
                                kills ? SHELL_OUTCOME_TANK_KILL
                                      : SHELL_OUTCOME_TANK_HIT) != 0) {
-            return 1;
+            rc = 1;
+            goto done;
         }
-        UT_ASSERT(tankIsDestroyed(&gs->tanks[TBT_TARGET]) ==
-                  (kills ? TRUE : FALSE));
+        UT_CHECK(tankIsDestroyed(&gs->tanks[TBT_TARGET]) ==
+                 (kills ? TRUE : FALSE));
 
         memset(&ev, 0, sizeof(ev));
         if (pass == 0) {
-            UT_ASSERT_MSG(man->isDead == TRUE,
-                          "the shooter's screen showed the hit tank's builder "
-                          "out, 100 from where the shell hit, and he lived "
-                          "because he is back in the tank");
-            UT_ASSERT_MSG(man->inTank == FALSE,
-                          "the dead builder still reads as in the tank");
-            UT_ASSERT_MSG(tbtLostEvents(sim, &ev) == 1,
-                          "%d builder losses were sent, expected 1",
-                          tbtLostEvents(sim, NULL));
-            UT_ASSERT_MSG(ev.data[0] == TBT_TARGET && ev.data[1] == TBT_SHOOTER,
-                          "the loss names victim %u and killer %u",
-                          (unsigned)ev.data[0], (unsigned)ev.data[1]);
+            UT_CHECK_MSG(man->isDead == TRUE,
+                         "the shooter's screen showed the hit tank's builder "
+                         "out, 100 from where the shell hit, and he lived "
+                         "because he is back in the tank");
+            UT_CHECK_MSG(man->inTank == FALSE,
+                         "the dead builder still reads as in the tank");
+            UT_CHECK_MSG(tbtLostEvents(sim, &ev) == 1,
+                         "%d builder losses were sent, expected 1",
+                         tbtLostEvents(sim, NULL));
+            UT_CHECK_MSG(ev.data[0] == TBT_TARGET && ev.data[1] == TBT_SHOOTER,
+                         "the loss names victim %u and killer %u",
+                         (unsigned)ev.data[0], (unsigned)ev.data[1]);
             /* He dies on the tank, where it is now. */
-            UT_ASSERT_MSG(ev.data[3] == (BYTE)(g.nowX >> TANK_SHIFT_MAPSIZE) &&
-                              ev.data[4] == (BYTE)(g.nowY >> TANK_SHIFT_MAPSIZE),
-                          "the loss is on square (%u,%u); the tank is on "
-                          "(%u,%u) now", (unsigned)ev.data[3],
-                          (unsigned)ev.data[4],
-                          (unsigned)(g.nowX >> TANK_SHIFT_MAPSIZE),
-                          (unsigned)(g.nowY >> TANK_SHIFT_MAPSIZE));
-            UT_ASSERT_MSG(man->destX == g.nowX && man->destY == g.nowY,
-                          "the helicopter is not flying to the tank");
+            UT_CHECK_MSG(ev.data[3] == (BYTE)(g.nowX >> TANK_SHIFT_MAPSIZE) &&
+                             ev.data[4] == (BYTE)(g.nowY >> TANK_SHIFT_MAPSIZE),
+                         "the loss is on square (%u,%u); the tank is on "
+                         "(%u,%u) now", (unsigned)ev.data[3],
+                         (unsigned)ev.data[4],
+                         (unsigned)(g.nowX >> TANK_SHIFT_MAPSIZE),
+                         (unsigned)(g.nowY >> TANK_SHIFT_MAPSIZE));
+            UT_CHECK_MSG(man->destX == g.nowX && man->destY == g.nowY,
+                         "the helicopter is not flying to the tank");
         } else if (pass == 1) {
-            UT_ASSERT_MSG(man->isDead == FALSE && man->inTank == TRUE,
-                          "the shooter's screen showed the builder 300 from "
-                          "where the shell hit, but the blast on his tank "
-                          "killed him inside it");
-            UT_ASSERT(tbtLostEvents(sim, NULL) == 0);
+            UT_CHECK_MSG(man->isDead == FALSE && man->inTank == TRUE,
+                         "the shooter's screen showed the builder 300 from "
+                         "where the shell hit, but the blast on his tank "
+                         "killed him inside it");
+            UT_CHECK(tbtLostEvents(sim, NULL) == 0);
         } else if (pass == 2) {
-            UT_ASSERT_MSG(man->isDead == FALSE && man->inTank == TRUE,
-                          "the shell that killed the tank also killed the "
-                          "builder inside it");
-            UT_ASSERT(tbtLostEvents(sim, NULL) == 0);
+            UT_CHECK_MSG(man->isDead == FALSE && man->inTank == TRUE,
+                         "the shell that killed the tank also killed the "
+                         "builder inside it");
+            UT_CHECK(tbtLostEvents(sim, NULL) == 0);
         } else {
-            UT_ASSERT_MSG(man->isDead == TRUE,
-                          "the shooter's screen showed the builder out, 100 "
-                          "from where the shell hit, he is still out, and he "
-                          "lived because the shell also killed his tank");
-            UT_ASSERT(tbtLostEvents(sim, NULL) == 1);
+            UT_CHECK_MSG(man->isDead == TRUE,
+                         "the shooter's screen showed the builder out, 100 "
+                         "from where the shell hit, he is still out, and he "
+                         "lived because the shell also killed his tank");
+            UT_CHECK(tbtLostEvents(sim, NULL) == 1);
         }
+done:
         tbtEnd(sim);
+        if (rc != 0) {
+            return rc;
+        }
     }
     return 0;
 }
@@ -1029,6 +1064,7 @@ int run_tank_blast_pill_shell_builder_now(void) {
     WORLD      tx, ty, bx, by;
     lgm        man;
     int        pass;
+    int        rc = 0;
 
     /* Pass 0: the record has him out 300 from the blast, he is 100 from it
                now. He dies.
@@ -1041,7 +1077,7 @@ int run_tank_blast_pill_shell_builder_now(void) {
         sim = tbtSim(&lx, &ly);
         UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
         gs = &sim->sim;
-        UT_ASSERT(gs->lgmen[TBT_TARGET] != NULL);
+        UT_CHECK(gs->lgmen[TBT_TARGET] != NULL);
         man = gs->lgmen[TBT_TARGET];
 
         /* The tank stands on the lane now. Its record says it was north of
@@ -1072,22 +1108,26 @@ int run_tank_blast_pill_shell_builder_now(void) {
         }
 
         tbtFirePill(sim, lx, ly);
-        UT_ASSERT_MSG(tbtFly(sim) == TBT_HIT_TICK,
-                      "setup: the pill's shell did not hit the tank where it "
-                      "is now");
-        UT_ASSERT(tbtDeaths == 1 && tbtDeathOutcome == SHELL_OUTCOME_TANK_HIT);
-        UT_ASSERT(tbtDeathX == bx && tbtDeathY == by);
+        UT_CHECK_MSG(tbtFly(sim) == TBT_HIT_TICK,
+                     "setup: the pill's shell did not hit the tank where it "
+                     "is now");
+        UT_CHECK(tbtDeaths == 1 && tbtDeathOutcome == SHELL_OUTCOME_TANK_HIT);
+        UT_CHECK(tbtDeathX == bx && tbtDeathY == by);
 
         if (pass == 1) {
-            UT_ASSERT_MSG(man->isDead == FALSE,
-                          "a pill's shell killed a builder who is 300 from "
-                          "its blast now");
+            UT_CHECK_MSG(man->isDead == FALSE,
+                         "a pill's shell killed a builder who is 300 from "
+                         "its blast now");
         } else {
-            UT_ASSERT_MSG(man->isDead == TRUE,
-                          "pass %d: a pill's shell did not kill a builder who "
-                          "is 100 from its blast now", pass);
+            UT_CHECK_MSG(man->isDead == TRUE,
+                         "pass %d: a pill's shell did not kill a builder who "
+                         "is 100 from its blast now", pass);
         }
+done:
         tbtEnd(sim);
+        if (rc != 0) {
+            return rc;
+        }
     }
     return 0;
 }
@@ -1105,6 +1145,7 @@ int run_tank_blast_no_record_builder_now(void) {
     PosHistory *h;
     lgm         man;
     int         pass, i;
+    int         rc = 0;
 
     /* Pass 0: he stands, and every record he has stands, on the point the
                shell stopped at. That is 224 from the drawn blast: he lives.
@@ -1119,7 +1160,7 @@ int run_tank_blast_no_record_builder_now(void) {
         sim = tbtSim(&lx, &ly);
         UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
         gs = &sim->sim;
-        UT_ASSERT(gs->lgmen[TBT_TARGET] != NULL);
+        UT_CHECK(gs->lgmen[TBT_TARGET] != NULL);
         man = gs->lgmen[TBT_TARGET];
         tbtRewoundHit(sim, lx, ly, &g);
 
@@ -1144,25 +1185,30 @@ int run_tank_blast_no_record_builder_now(void) {
 
         tbtFire(sim, lx, ly, TBT_COMP);
         if (tbtCheckRewoundHit(&g, tbtFly(sim), SHELL_OUTCOME_TANK_HIT) != 0) {
-            return 1;
+            rc = 1;
+            goto done;
         }
 
         if (pass == 0) {
-            UT_ASSERT_MSG(man->isDead == FALSE,
-                          "with no record as old as the shooter's screen, a "
-                          "builder 224 from the drawn blast was killed: he "
-                          "was tested against the point the shell stopped at");
+            UT_CHECK_MSG(man->isDead == FALSE,
+                         "with no record as old as the shooter's screen, a "
+                         "builder 224 from the drawn blast was killed: he "
+                         "was tested against the point the shell stopped at");
         } else if (pass == 1) {
-            UT_ASSERT_MSG(man->isDead == TRUE,
-                          "with no record as old as the shooter's screen, a "
-                          "builder 100 from the drawn blast lived");
+            UT_CHECK_MSG(man->isDead == TRUE,
+                         "with no record as old as the shooter's screen, a "
+                         "builder 100 from the drawn blast lived");
         } else {
-            UT_ASSERT_MSG(man->isDead == FALSE,
-                          "the oldest record is the shooter's screen and has "
-                          "the builder 300 from where the shell hit, but he "
-                          "was killed");
+            UT_CHECK_MSG(man->isDead == FALSE,
+                         "the oldest record is the shooter's screen and has "
+                         "the builder 300 from where the shell hit, but he "
+                         "was killed");
         }
+done:
         tbtEnd(sim);
+        if (rc != 0) {
+            return rc;
+        }
     }
     return 0;
 }
@@ -1183,6 +1229,7 @@ int run_shell_blast_pill_hit_on_shooter_screen(void) {
     WORLD      onX, onY, offX, offY;
     lgm        man;
     int        pass;
+    int        rc = 0;
 
     /* Pass 0: the shooter's screen showed him on the pillbox's square; he is
                two squares east of it now. He dies.
@@ -1192,21 +1239,21 @@ int run_shell_blast_pill_hit_on_shooter_screen(void) {
         sim = tbtSim(&lx, &ly);
         UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
         gs = &sim->sim;
-        UT_ASSERT(gs->lgmen[TBT_TARGET] != NULL);
+        UT_CHECK(gs->lgmen[TBT_TARGET] != NULL);
         man = gs->lgmen[TBT_TARGET];
 
         /* The map's first pillbox, moved onto the lane. */
         px = (BYTE)(lx + TBT_AT_TARGET);
         py = ly;
-        UT_ASSERT(pillsGetNumPills(&gs->pb) >= 1);
+        UT_CHECK(pillsGetNumPills(&gs->pb) >= 1);
         pillsGetPill(&gs->pb, &item, 1);
         item.x = px;
         item.y = py;
         item.inTank = FALSE;
         pillsSetPill(gs, &gs->pb, &item, 1);
-        UT_ASSERT_MSG(pillsExistPos(&gs->pb, px, py) == TRUE &&
-                          pillsGetArmourPos(&gs->pb, px, py) > 0,
-                      "setup: no live pillbox on the lane");
+        UT_CHECK_MSG(pillsExistPos(&gs->pb, px, py) == TRUE &&
+                         pillsGetArmourPos(&gs->pb, px, py) > 0,
+                     "setup: no live pillbox on the lane");
 
         /* The target tank is off the lane and has not moved. */
         tbtPlace(sim, TBT_TARGET, tbtMiddle((BYTE)(lx + TBT_LANE_LEN - 1)),
@@ -1229,26 +1276,30 @@ int run_shell_blast_pill_hit_on_shooter_screen(void) {
 
         tbtFire(sim, lx, ly, TBT_COMP);
         (void)tbtFly(sim);
-        UT_ASSERT_MSG(tbtDeaths == 1 && tbtDeathOutcome == SHELL_OUTCOME_IMPACT,
-                      "setup: the shell did not hit the pillbox (deaths %d, "
-                      "outcome %u)", tbtDeaths, (unsigned)tbtDeathOutcome);
-        UT_ASSERT_MSG(tbtDeathX == tbtMiddle(px) && tbtDeathY == tbtMiddle(py),
-                      "the blast is at (%u,%u), not the middle of the "
-                      "pillbox's square", (unsigned)tbtDeathX,
-                      (unsigned)tbtDeathY);
+        UT_CHECK_MSG(tbtDeaths == 1 && tbtDeathOutcome == SHELL_OUTCOME_IMPACT,
+                     "setup: the shell did not hit the pillbox (deaths %d, "
+                     "outcome %u)", tbtDeaths, (unsigned)tbtDeathOutcome);
+        UT_CHECK_MSG(tbtDeathX == tbtMiddle(px) && tbtDeathY == tbtMiddle(py),
+                     "the blast is at (%u,%u), not the middle of the "
+                     "pillbox's square", (unsigned)tbtDeathX,
+                     (unsigned)tbtDeathY);
 
         if (pass == 0) {
-            UT_ASSERT_MSG(man->isDead == TRUE,
-                          "the shooter's screen showed the builder on the "
-                          "pillbox's square when the shell hit it, and he "
-                          "lived");
+            UT_CHECK_MSG(man->isDead == TRUE,
+                         "the shooter's screen showed the builder on the "
+                         "pillbox's square when the shell hit it, and he "
+                         "lived");
         } else {
-            UT_ASSERT_MSG(man->isDead == FALSE,
-                          "the shooter's screen showed the builder two "
-                          "squares from the pillbox, but he was killed "
-                          "because he is on its square now");
+            UT_CHECK_MSG(man->isDead == FALSE,
+                         "the shooter's screen showed the builder two "
+                         "squares from the pillbox, but he was killed "
+                         "because he is on its square now");
         }
+done:
         tbtEnd(sim);
+        if (rc != 0) {
+            return rc;
+        }
     }
     return 0;
 }

@@ -435,12 +435,12 @@ int run_lgm_kill_absent_on_shooter_screen(void) {
                          LAS_COMP, &died);
         if (rc != 0) break;
         /* Before the rule this fell back to where he is now and killed him. */
-        UT_ASSERT_MSG(!died,
-                      "%s: the shooter's screen showed no builder, but the "
-                      "shell killed him", las_site_name(site));
-        UT_ASSERT_MSG(man->inTank == FALSE && man->state == LGM_STATE_GOING,
-                      "%s: the builder who lived was disturbed (state %u)",
-                      las_site_name(site), (unsigned)man->state);
+        UT_CHECK_MSG(!died,
+                     "%s: the shooter's screen showed no builder, but the "
+                     "shell killed him", las_site_name(site));
+        UT_CHECK_MSG(man->inTank == FALSE && man->state == LGM_STATE_GOING,
+                     "%s: the builder who lived was disturbed (state %u)",
+                     las_site_name(site), (unsigned)man->state);
 
         /* The same game one frame of rewind shorter: that frame has him out,
          * right where the blast is, and he dies. So the case above is one
@@ -448,11 +448,12 @@ int run_lgm_kill_absent_on_shooter_screen(void) {
         rc = las_explode(&f, site, man->x, man->y, LAS_SHOOTER, DMG_NO_PILL,
                          (uint8_t)(LAS_COMP - 1), &died);
         if (rc != 0) break;
-        UT_ASSERT_MSG(died,
-                      "%s: the builder was out, under the blast, on the frame "
-                      "the shooter saw, and lived", las_site_name(site));
+        UT_CHECK_MSG(died,
+                     "%s: the builder was out, under the blast, on the frame "
+                     "the shooter saw, and lived", las_site_name(site));
     }
 
+done:
     las_close(&f);
     return rc;
 }
@@ -465,7 +466,7 @@ int run_lgm_kill_rewound_position(void) {
     int s;
 
     /* Out on both frames: at the old place, two squares east, on the frame
-     * the shooter saw, and 16 from the tank now. A blast at the old place
+     * the shooter saw, and 64 from the tank now. A blast at the old place
      * kills him, though he is nearly two squares from it now. */
     if (rc == 0) rc = las_send_out(&f);
     if (rc == 0) {
@@ -474,8 +475,8 @@ int run_lgm_kill_rewound_position(void) {
                          DMG_NO_PILL, LAS_COMP, &died);
     }
     if (rc == 0) {
-        UT_ASSERT_MSG(died, "a blast where the shooter saw the builder did "
-                            "not kill him");
+        UT_CHECK_MSG(died, "a blast where the shooter saw the builder did "
+                           "not kill him");
     }
 
     /* A blast only where he is now: at the end of a shell's life, and on his
@@ -490,12 +491,13 @@ int run_lgm_kill_rewound_position(void) {
         rc = las_explode(&f, site, man->x, man->y, LAS_SHOOTER, DMG_NO_PILL,
                          LAS_COMP, &died);
         if (rc != 0) break;
-        UT_ASSERT_MSG(!died,
-                      "%s: a blast where the builder is now killed him, "
-                      "but the shooter saw him two squares away",
-                      las_site_name(site));
+        UT_CHECK_MSG(!died,
+                     "%s: a blast where the builder is now killed him, "
+                     "but the shooter saw him two squares away",
+                     las_site_name(site));
     }
 
+done:
     las_close(&f);
     return rc;
 }
@@ -518,11 +520,12 @@ int run_lgm_kill_pill_shell_present(void) {
         las_history(&f, POSITION_HISTORY_SIZE - 1, 0, 1);
         rc = las_explode(&f, site, man->x, man->y, NEUTRAL, 0, 0, &died);
         if (rc != 0) break;
-        UT_ASSERT_MSG(died,
-                      "%s: a pill's shell on top of a builder who has just "
-                      "left the tank did not kill him", las_site_name(site));
+        UT_CHECK_MSG(died,
+                     "%s: a pill's shell on top of a builder who has just "
+                     "left the tank did not kill him", las_site_name(site));
     }
 
+done:
     las_close(&f);
     return rc;
 }
@@ -548,10 +551,10 @@ int run_lgm_kill_short_history(void) {
         rc = las_explode(&f, site, man->x, man->y, LAS_SHOOTER, DMG_NO_PILL,
                          LAS_COMP, &died);
         if (rc != 0) break;
-        UT_ASSERT_MSG(died,
-                      "%s: with no record as old as the shooter's screen the "
-                      "builder was not tested where he is now",
-                      las_site_name(site));
+        UT_CHECK_MSG(died,
+                     "%s: with no record as old as the shooter's screen the "
+                     "builder was not tested where he is now",
+                     las_site_name(site));
 
         /* One record more. Now there is a record LAS_REWIND frames back and
          * it says he was in the tank: he lives. */
@@ -562,12 +565,13 @@ int run_lgm_kill_short_history(void) {
         rc = las_explode(&f, site, man->x, man->y, LAS_SHOOTER, DMG_NO_PILL,
                          LAS_COMP, &died);
         if (rc != 0) break;
-        UT_ASSERT_MSG(!died,
-                      "%s: the oldest record is the frame the shooter saw and "
-                      "says the builder was in the tank, but he was killed",
-                      las_site_name(site));
+        UT_CHECK_MSG(!died,
+                     "%s: the oldest record is the frame the shooter saw and "
+                     "says the builder was in the tank, but he was killed",
+                     las_site_name(site));
     }
 
+done:
     las_close(&f);
     return rc;
 }
@@ -601,7 +605,9 @@ static void las_put_in_tank(LasFix *f) {
 
 /* Start the builder history again and write `atOld` frames with him out at
  * the old place, then `inTank` frames with him in the tank. The last one
- * written is the present frame. */
+ * written is the present frame. This is not a walk the game would record:
+ * he is two squares out on one frame and inside the tank on the next. The
+ * code reads one frame, so only that frame matters. */
 static void las_history_back_in(LasFix *f, int atOld, int inTank) {
     PosHistory *h = &f->sim->lgmPosHistory[LAS_BUILDER];
     int i;
@@ -672,83 +678,84 @@ int run_lgm_kill_seen_out_back_in_tank(void) {
         rc = las_explode(&f, LAS_SITE_EXPIRY, f.oldX, f.oldY, LAS_SHOOTER,
                          DMG_NO_PILL, LAS_COMP, &died);
         if (rc == 0) {
-            UT_ASSERT_MSG(died, "the builder was out, under the blast, on the "
-                                "frame the shooter saw, and lived because he "
-                                "is back in the tank");
+            UT_CHECK_MSG(died, "the builder was out, under the blast, on the "
+                               "frame the shooter saw, and lived because he "
+                               "is back in the tank");
 
             /* Dead the way any builder is dead: out of the tank, in the
              * helicopter, at a place that reads as a real square, flying to
              * where the tank is. */
-            UT_ASSERT_MSG(man->inTank == FALSE && lgmIsOut(&gs->lgmen[LAS_BUILDER]),
-                          "the dead builder still reads as in the tank");
-            UT_ASSERT_MSG(man->frame == LGM_HELICOPTER_FRAME,
-                          "the dead builder is not in the helicopter frame "
-                          "(frame %u)", (unsigned)man->frame);
-            UT_ASSERT_MSG(lgmGetMX(&gs->lgmen[LAS_BUILDER]) != 0 &&
-                          lgmGetMY(&gs->lgmen[LAS_BUILDER]) != 0,
-                          "the dead builder's position reads as square (0,0)");
-            UT_ASSERT_MSG(man->action != LGM_IDLE,
-                          "the dead builder reads as free for an order");
-            UT_ASSERT_MSG(man->nextAction == LGM_IDLE, "an order is queued");
-            UT_ASSERT_MSG(man->destX == f.midX && man->destY == f.midY,
-                          "the helicopter is not flying to the tank: to "
-                          "(%u,%u), the tank is at (%u,%u)",
-                          (unsigned)man->destX, (unsigned)man->destY,
-                          (unsigned)f.midX, (unsigned)f.midY);
+            UT_CHECK_MSG(man->inTank == FALSE && lgmIsOut(&gs->lgmen[LAS_BUILDER]),
+                         "the dead builder still reads as in the tank");
+            UT_CHECK_MSG(man->frame == LGM_HELICOPTER_FRAME,
+                         "the dead builder is not in the helicopter frame "
+                         "(frame %u)", (unsigned)man->frame);
+            UT_CHECK_MSG(lgmGetMX(&gs->lgmen[LAS_BUILDER]) != 0 &&
+                         lgmGetMY(&gs->lgmen[LAS_BUILDER]) != 0,
+                         "the dead builder's position reads as square (0,0)");
+            UT_CHECK_MSG(man->action != LGM_IDLE,
+                         "the dead builder reads as free for an order");
+            UT_CHECK_MSG(man->nextAction == LGM_IDLE, "an order is queued");
+            UT_CHECK_MSG(man->destX == f.midX && man->destY == f.midY,
+                         "the helicopter is not flying to the tank: to "
+                         "(%u,%u), the tank is at (%u,%u)",
+                         (unsigned)man->destX, (unsigned)man->destY,
+                         (unsigned)f.midX, (unsigned)f.midY);
 
             /* One loss, the shooter's, on the square the tank is on now. */
             memset(&ev, 0, sizeof(ev));
-            UT_ASSERT_MSG(las_lost_events(&f, &ev) == 1,
-                          "%d builder losses were sent, expected 1",
-                          las_lost_events(&f, NULL));
-            UT_ASSERT_MSG(ev.data[0] == LAS_BUILDER && ev.data[1] == LAS_SHOOTER,
-                          "the loss names victim %u and killer %u, expected "
-                          "%u and %u", (unsigned)ev.data[0], (unsigned)ev.data[1],
-                          (unsigned)LAS_BUILDER, (unsigned)LAS_SHOOTER);
-            UT_ASSERT_MSG(ev.data[3] == f.cx && ev.data[4] == f.cy,
-                          "the loss is on square (%u,%u), the tank is on "
-                          "(%u,%u)", (unsigned)ev.data[3], (unsigned)ev.data[4],
-                          (unsigned)f.cx, (unsigned)f.cy);
+            UT_CHECK_MSG(las_lost_events(&f, &ev) == 1,
+                         "%d builder losses were sent, expected 1",
+                         las_lost_events(&f, NULL));
+            UT_CHECK_MSG(ev.data[0] == LAS_BUILDER && ev.data[1] == LAS_SHOOTER,
+                         "the loss names victim %u and killer %u, expected "
+                         "%u and %u", (unsigned)ev.data[0], (unsigned)ev.data[1],
+                         (unsigned)LAS_BUILDER, (unsigned)LAS_SHOOTER);
+            UT_CHECK_MSG(ev.data[3] == f.cx && ev.data[4] == f.cy,
+                         "the loss is on square (%u,%u), the tank is on "
+                         "(%u,%u)", (unsigned)ev.data[3], (unsigned)ev.data[4],
+                         (unsigned)f.cx, (unsigned)f.cy);
 
             /* He was in the tank, so he had nothing with him: the tank keeps
              * all it had and is not moved. */
             tankGetWorld(tnk, &tx, &ty);
-            UT_ASSERT_MSG(tx == f.midX && ty == f.midY, "the tank was moved");
-            UT_ASSERT_MSG(tankGetShells(tnk) == shellsHad &&
-                          tankGetMines(tnk) == minesHad &&
-                          tankGetTrees(tnk) == treesHad &&
-                          tankGetNumCarriedPills(tnk) == pillsHad,
-                          "the tank's stores changed with the builder's death");
+            UT_CHECK_MSG(tx == f.midX && ty == f.midY, "the tank was moved");
+            UT_CHECK_MSG(tankGetShells(tnk) == shellsHad &&
+                         tankGetMines(tnk) == minesHad &&
+                         tankGetTrees(tnk) == treesHad &&
+                         tankGetNumCarriedPills(tnk) == pillsHad,
+                         "the tank's stores changed with the builder's death");
 
             /* The flight in and the walk back are the usual ones: he lands,
              * walks, and is in the tank again, idle. */
             for (ticks = 0; ticks < 60000 && man->isDead == TRUE; ticks++) {
                 lgmUpdate(gs, &gs->lgmen[LAS_BUILDER], tnk);
             }
-            UT_ASSERT_MSG(man->isDead == FALSE,
-                          "the helicopter never landed in %d ticks", ticks);
-            UT_ASSERT_MSG(ticks > 1, "the builder was back the tick he died");
-            UT_ASSERT_MSG(man->inTank == FALSE && man->state == LGM_STATE_RETURN,
-                          "the landed builder is not walking back (in tank "
-                          "%d, state %u)", (int)man->inTank,
-                          (unsigned)man->state);
+            UT_CHECK_MSG(man->isDead == FALSE,
+                         "the helicopter never landed in %d ticks", ticks);
+            UT_CHECK_MSG(ticks > 1, "the builder was back the tick he died");
+            UT_CHECK_MSG(man->inTank == FALSE && man->state == LGM_STATE_RETURN,
+                         "the landed builder is not walking back (in tank "
+                         "%d, state %u)", (int)man->inTank,
+                         (unsigned)man->state);
             for (ticks = 0; ticks < 2000 && man->inTank == FALSE; ticks++) {
                 lgmUpdate(gs, &gs->lgmen[LAS_BUILDER], tnk);
             }
-            UT_ASSERT_MSG(man->inTank == TRUE && man->state == LGM_STATE_IDLE &&
-                          man->action == LGM_IDLE && man->isDead == FALSE,
-                          "the builder never got back into the tank (in tank "
-                          "%d, state %u, action %u)", (int)man->inTank,
-                          (unsigned)man->state, (unsigned)man->action);
-            UT_ASSERT_MSG(tankGetShells(tnk) == shellsHad &&
-                          tankGetMines(tnk) == minesHad &&
-                          tankGetTrees(tnk) == treesHad &&
-                          tankGetNumCarriedPills(tnk) == pillsHad,
-                          "the tank's stores changed when the builder got "
-                          "back in");
+            UT_CHECK_MSG(man->inTank == TRUE && man->state == LGM_STATE_IDLE &&
+                         man->action == LGM_IDLE && man->isDead == FALSE,
+                         "the builder never got back into the tank (in tank "
+                         "%d, state %u, action %u)", (int)man->inTank,
+                         (unsigned)man->state, (unsigned)man->action);
+            UT_CHECK_MSG(tankGetShells(tnk) == shellsHad &&
+                         tankGetMines(tnk) == minesHad &&
+                         tankGetTrees(tnk) == treesHad &&
+                         tankGetNumCarriedPills(tnk) == pillsHad,
+                         "the tank's stores changed when the builder got "
+                         "back in");
         }
     }
 
+done:
     las_close(&f);
     return rc;
 }
@@ -767,8 +774,8 @@ int run_lgm_kill_seen_out_outside_blast(void) {
                          LAS_SHOOTER, DMG_NO_PILL, LAS_COMP, &died);
     }
     if (rc == 0) {
-        UT_ASSERT_MSG(!died, "a blast 200 from where the shooter saw the "
-                             "builder killed him in his tank");
+        UT_CHECK_MSG(!died, "a blast 200 from where the shooter saw the "
+                            "builder killed him in his tank");
         rc = las_check_untouched(&f, "blast out of reach");
     }
 
@@ -781,11 +788,12 @@ int run_lgm_kill_seen_out_outside_blast(void) {
                          DMG_NO_PILL, LAS_COMP, &died);
     }
     if (rc == 0) {
-        UT_ASSERT_MSG(!died, "a blast on the tank killed the builder inside "
-                             "it, but the shooter saw him two squares away");
+        UT_CHECK_MSG(!died, "a blast on the tank killed the builder inside "
+                            "it, but the shooter saw him two squares away");
         rc = las_check_untouched(&f, "blast on the tank");
     }
 
+done:
     las_close(&f);
     return rc;
 }
@@ -805,11 +813,12 @@ int run_lgm_kill_seen_out_pill_shell(void) {
                          &died);
     }
     if (rc == 0) {
-        UT_ASSERT_MSG(!died, "a pill's shell killed a builder who is in his "
-                             "tank");
+        UT_CHECK_MSG(!died, "a pill's shell killed a builder who is in his "
+                            "tank");
         rc = las_check_untouched(&f, "pill's shell");
     }
 
+done:
     las_close(&f);
     return rc;
 }
@@ -829,8 +838,8 @@ int run_lgm_kill_seen_out_no_record(void) {
                          DMG_NO_PILL, LAS_COMP, &died);
     }
     if (rc == 0) {
-        UT_ASSERT_MSG(!died, "with no record as old as the shooter's screen "
-                             "the builder in his tank was killed");
+        UT_CHECK_MSG(!died, "with no record as old as the shooter's screen "
+                            "the builder in his tank was killed");
         rc = las_check_untouched(&f, "no record that old");
     }
 
@@ -843,11 +852,12 @@ int run_lgm_kill_seen_out_no_record(void) {
                          DMG_NO_PILL, LAS_COMP, &died);
     }
     if (rc == 0) {
-        UT_ASSERT_MSG(died, "the oldest record is the frame the shooter saw "
-                            "and has the builder out under the blast, but he "
-                            "lived");
+        UT_CHECK_MSG(died, "the oldest record is the frame the shooter saw "
+                           "and has the builder out under the blast, but he "
+                           "lived");
     }
 
+done:
     las_close(&f);
     return rc;
 }
@@ -866,8 +876,8 @@ int run_lgm_kill_seen_out_already_dead(void) {
         rc = las_explode(&f, LAS_SITE_EXPIRY, f.oldX, f.oldY, LAS_SHOOTER,
                          DMG_NO_PILL, LAS_COMP, &died);
         if (rc == 0) {
-            UT_ASSERT_MSG(died, "the first blast did not kill the builder");
-            UT_ASSERT(las_lost_events(&f, NULL) == 1);
+            UT_CHECK_MSG(died, "the first blast did not kill the builder");
+            UT_CHECK(las_lost_events(&f, NULL) == 1);
         }
 
         /* The same blast again, and the history still has him out under it
@@ -879,16 +889,17 @@ int run_lgm_kill_seen_out_already_dead(void) {
                              DMG_NO_PILL, LAS_COMP, &died);
         }
         if (rc == 0) {
-            UT_ASSERT_MSG(las_lost_events(&f, NULL) == 1,
-                          "a builder who was already dead was lost again (%d "
-                          "losses)", las_lost_events(&f, NULL));
-            UT_ASSERT_MSG(died && man->x == x && man->y == y &&
-                          man->destX == destX && man->destY == destY &&
-                          man->frame == LGM_HELICOPTER_FRAME,
-                          "the second blast disturbed the flight back");
+            UT_CHECK_MSG(las_lost_events(&f, NULL) == 1,
+                         "a builder who was already dead was lost again (%d "
+                         "losses)", las_lost_events(&f, NULL));
+            UT_CHECK_MSG(died && man->x == x && man->y == y &&
+                         man->destX == destX && man->destY == destY &&
+                         man->frame == LGM_HELICOPTER_FRAME,
+                         "the second blast disturbed the flight back");
         }
     }
 
+done:
     las_close(&f);
     return rc;
 }
@@ -908,9 +919,9 @@ int run_lgm_kill_seen_out_tank_hit_blast(void) {
                          DMG_NO_PILL, LAS_COMP, &died);
     }
     if (rc == 0) {
-        UT_ASSERT_MSG(!died, "a blast on the hit tank killed the builder "
-                             "inside it, but the shooter saw him two squares "
-                             "away");
+        UT_CHECK_MSG(!died, "a blast on the hit tank killed the builder "
+                            "inside it, but the shooter saw him two squares "
+                            "away");
         rc = las_check_untouched(&f, "blast on the hit tank, seen far off");
     }
 
@@ -930,19 +941,19 @@ int run_lgm_kill_seen_out_tank_hit_blast(void) {
         GameEvent ev;
 
         memset(&ev, 0, sizeof(ev));
-        UT_ASSERT_MSG(died, "the shooter's screen showed the builder out, 16 "
-                            "from where the shell hit his tank, and he lived "
-                            "because he is back in the tank");
-        UT_ASSERT_MSG(man->inTank == FALSE,
-                      "the dead builder still reads as in the tank");
-        UT_ASSERT_MSG(las_lost_events(&f, &ev) == 1,
-                      "%d builder losses were sent, expected 1",
-                      las_lost_events(&f, NULL));
-        UT_ASSERT_MSG(ev.data[0] == LAS_BUILDER && ev.data[1] == LAS_SHOOTER &&
-                      ev.data[3] == f.cx && ev.data[4] == f.cy,
-                      "the loss names victim %u, killer %u, square (%u,%u)",
-                      (unsigned)ev.data[0], (unsigned)ev.data[1],
-                      (unsigned)ev.data[3], (unsigned)ev.data[4]);
+        UT_CHECK_MSG(died, "the shooter's screen showed the builder out, 16 "
+                           "from where the shell hit his tank, and he lived "
+                           "because he is back in the tank");
+        UT_CHECK_MSG(man->inTank == FALSE,
+                     "the dead builder still reads as in the tank");
+        UT_CHECK_MSG(las_lost_events(&f, &ev) == 1,
+                     "%d builder losses were sent, expected 1",
+                     las_lost_events(&f, NULL));
+        UT_CHECK_MSG(ev.data[0] == LAS_BUILDER && ev.data[1] == LAS_SHOOTER &&
+                     ev.data[3] == f.cx && ev.data[4] == f.cy,
+                     "the loss names victim %u, killer %u, square (%u,%u)",
+                     (unsigned)ev.data[0], (unsigned)ev.data[1],
+                     (unsigned)ev.data[3], (unsigned)ev.data[4]);
     }
 
     /* A pill's shell that hits the tank, with the same history: it is not
@@ -953,11 +964,12 @@ int run_lgm_kill_seen_out_tank_hit_blast(void) {
         rc = las_explode(&f, LAS_SITE_COLLISION, 0, 0, NEUTRAL, 0, 0, &died);
     }
     if (rc == 0) {
-        UT_ASSERT_MSG(!died, "a pill's shell on the hit tank killed the "
-                             "builder inside it");
+        UT_CHECK_MSG(!died, "a pill's shell on the hit tank killed the "
+                            "builder inside it");
         rc = las_check_untouched(&f, "pill's shell on the hit tank");
     }
 
+done:
     las_close(&f);
     return rc;
 }
@@ -983,11 +995,12 @@ int run_lgm_kill_seen_out_dead_tank(void) {
         rc = las_explode(&f, LAS_SITE_EXPIRY, f.oldX, f.oldY, LAS_SHOOTER,
                          DMG_NO_PILL, LAS_COMP, &died);
         if (rc != 0) break;
-        UT_ASSERT_MSG(!died, "pass %d: the builder of a dead tank was killed",
-                      pass);
+        UT_CHECK_MSG(!died, "pass %d: the builder of a dead tank was killed",
+                     pass);
         rc = las_check_untouched(&f, "dead tank");
     }
 
+done:
     /* Leave the tank as it was for the teardown. */
     if (f.sim != NULL) {
         tankSetDestroyed(&f.gs->tanks[LAS_BUILDER], FALSE);
