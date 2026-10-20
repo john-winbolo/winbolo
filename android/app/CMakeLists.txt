@@ -469,9 +469,47 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/voice.c
     ${PROJ_ROOT}/src/gui/sdl3/voice_settings.c
 
-    # Shared map-gen controls used by the map chooser dialog (not the
-    # full map editor — this file matches what the iOS build pulls in).
+    # Shared map-gen controls used by the map chooser dialog, listed apart
+    # from the editor below as the iOS target lists them (the lobby needs
+    # them with or without the editor).
     ${PROJ_ROOT}/src/mapeditor/mapgen_imgui.cpp
+
+    # The map editor, the same sources the root CMakeLists.txt's
+    # IOS_MAPEDITOR_SOURCES list compiles into WinBoloIOS: the desktop's
+    # editor less mapgen_imgui.cpp (above) and the macOS menu bar shim, as
+    # the editor draws its ImGui menu bar here. Its touch input (a tap
+    # paints, a drag draws, two fingers pan and pinch) is the iOS one. The
+    # welcome screen does not offer it yet (imgui_welcome.cpp).
+    ${PROJ_ROOT}/src/mapeditor/mapeditor.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_imgui.cpp
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_undo.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_validate.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_symmetry.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_text.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_fonts.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_stats.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_image.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_stamp.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_export.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_scenario.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_scenario_form.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_scenario_check.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_scenario_pack.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_scenario_imgui.cpp
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_scenario_fndesc.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_scenario_fnscan.c
+    # File > Open from WinBolo.net (MAPEDITOR_WBN_OPEN below).
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_wbn_open.cpp
+    # SDL has no file dialogs on Android; the editor's open and save, and
+    # the map chooser's Load from device, go through the picker iOS shares.
+    # Its Android half lists the Maps folder under the preferences path,
+    # where the in-game Save Map writes, and the bundled maps under the
+    # working directory.
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_mobile_files.cpp
+    ${PROJ_ROOT}/src/android/android_mapeditor_files.c
+    # The scenario script pane's text editor widget.
+    ${PROJ_ROOT}/src/third_party/ImGuiColorTextEdit/TextEditor.cpp
+    ${PROJ_ROOT}/src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
 
     # The lobby's replay reel and the rounds it plays. The log viewer's
     # decoder, renderer and embedded reel host (lv_embed.c) are the set the
@@ -531,6 +569,12 @@ set_source_files_properties(
     ${PROJ_ROOT}/src/third_party/msf_gif/msf_gif_impl.c
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
     PROPERTIES COMPILE_OPTIONS "-Wno-undef")
+# ImGuiColorTextEdit: the same two warnings the root CMakeLists.txt turns
+# off for it, so the vendored widget stays as upstream wrote it.
+set_source_files_properties(
+    ${PROJ_ROOT}/src/third_party/ImGuiColorTextEdit/TextEditor.cpp
+    ${PROJ_ROOT}/src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
+    PROPERTIES COMPILE_OPTIONS "-Wno-unused-variable;-Wno-logical-op-parentheses")
 
 target_include_directories(main PRIVATE
     ${PROJ_ROOT}/src/gui/sdl3
@@ -546,6 +590,10 @@ target_include_directories(main PRIVATE
     ${cjson_SOURCE_DIR}
     # tweetnacl.h for the WinBolo.net transport's request signing.
     ${PROJ_ROOT}/src/third_party/tweetnacl
+    # The map editor's headers, and the text editor widget its scenario
+    # pane draws with, as the iOS target adds them.
+    ${PROJ_ROOT}/src/mapeditor
+    ${PROJ_ROOT}/src/third_party/ImGuiColorTextEdit
 )
 # After src/gui, so a GUI source's "tiles.h" / "positions.h" still resolves
 # to its own; the log viewer's sources reach their copies through their own
@@ -562,6 +610,13 @@ bolo_apply_include_rules(main gui)
 bolo_grant_internal_source_access(main
     ${PROJ_ROOT}/src/bolo/transport_udp_client.c
     ${PROJ_ROOT}/src/gui/sdl3/bg_game.c)
+# The embedded map editor's three sim-co-owner files take the same per-file
+# grant the desktop and iOS targets give them (docs/ARCHITECTURE.md,
+# "Privileged exceptions"); the rest of the target keeps the gui profile.
+bolo_grant_internal_source_access(main
+    ${PROJ_ROOT}/src/mapeditor/mapeditor.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_export.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_validate.c)
 
 # server_static is the server runtime the desktop hosts with: the UDP server,
 # server_lifecycle.c and geolookup.c. Single player starts and ticks through
@@ -622,6 +677,9 @@ target_compile_definitions(main PRIVATE
     # define them: the settings, lobby and status code test these.
     WINBOLO_VOICE=1
     WINBOLO_VOICE_AEC=1
+    # The map editor's File > Open from WinBolo.net, as in the desktop's
+    # and iOS's embedded editor.
+    MAPEDITOR_WBN_OPEN=1
 )
 
 target_compile_options(main PRIVATE

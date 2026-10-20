@@ -492,9 +492,9 @@ extern "C" int imguiWelcomeShow(void) {
                 /* A browser tab cannot host or find a game on the LAN. */
                 { STR_DLGWELCOME_LOCAL,     RESULT_LAN,          true,             nullptr },
 #endif
-#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)
-                /* iOS builds the editor, but its touch input is not usable
-                   yet, so the entry is hidden there until it is. */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+                /* iOS and Android build the editor, but its touch input is
+                   not usable yet, so the entry is hidden there until it is. */
                 { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    showDesktopTools, nullptr },
 #endif
 #if !defined(__EMSCRIPTEN__)

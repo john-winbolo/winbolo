@@ -8,8 +8,7 @@
  * yet carried on Android.
  *
  * Mirrors the platform-stub set in src/gui/ios/ios_stubs.c — Android also
- * skips the map editor, the modal log viewer and desktop window-position
- * persistence.
+ * skips the modal log viewer and desktop window-position persistence.
  */
 
 #include <stdbool.h>
@@ -19,16 +18,9 @@
 
 #include "global.h"
 
-/* ---- map editor stubs ---- */
-
-void mapEditorRun(void *window, void *renderer, const char *mapPath, bool fromMainMenu) {
-  (void)window; (void)renderer; (void)mapPath; (void)fromMainMenu;
-}
-
-/* The editor never runs here, so it cannot have asked to quit the app and
-   has no Settings menu item to hand a handler to. */
-bool mapEditorAppQuitRequested(void) { return false; }
-void mapEditorSetSettingsHandler(void (*fn)(void)) { (void)fn; }
+/* The map editor (mapEditorRun, mapEditorAppQuitRequested,
+   mapEditorSetSettingsHandler) is built on Android; see the map editor
+   block of android/app/CMakeLists.txt. */
 
 /* ---- log viewer stubs (the modal viewer is not built on Android) ----
  *

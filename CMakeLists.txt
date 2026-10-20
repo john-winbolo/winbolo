@@ -1547,7 +1547,10 @@ set(IOS_MAPEDITOR_SOURCES
     src/mapeditor/mapeditor_scenario_fndesc.c
     src/mapeditor/mapeditor_scenario_fnscan.c
     src/mapeditor/mapeditor_wbn_open.cpp
-    # SDL has no file dialogs on iOS; the editor's open and save go here.
+    # SDL has no file dialogs on iOS; the editor's open and save go through
+    # the picker Android shares, with the Documents folder and the bundle's
+    # maps as its iOS half.
+    src/mapeditor/mapeditor_mobile_files.cpp
     src/mapeditor/mapeditor_ios_files.cpp
     src/third_party/ImGuiColorTextEdit/TextEditor.cpp
     src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp

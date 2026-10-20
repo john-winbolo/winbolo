@@ -35,8 +35,8 @@
 #endif
 #include "mapeditor_validate.h"
 #include "mapeditor_stats.h"
-#if defined(__IPHONEOS__)
-#include "mapeditor_ios_files.h"  /* in place of SDL's file dialogs */
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+#include "mapeditor_mobile_files.h"  /* in place of SDL's file dialogs */
 #endif
 #include "mapeditor_scenario_check.h" /* MapEditorState holds a check by value */
 #include "mapeditor_scenario_form.h" /* MapEditorState holds a form by value */
@@ -2634,7 +2634,7 @@ static void meDoNew(MapEditorState *ed) {
 /* -------------------------------------------------------
  * SDL3 async file dialog callbacks
  * ------------------------------------------------------- */
-#if !defined(__IPHONEOS__)  /* iOS asks through mapeditor_ios_files.cpp */
+#if !defined(__IPHONEOS__) && !defined(__ANDROID__)  /* iOS and Android ask through mapeditor_mobile_files.cpp */
 static void SDLCALL meFileDialogCallback(void *userdata,
                                           const char *const *filelist,
                                           int filter) {
@@ -2657,9 +2657,9 @@ static void meShowOpenDialog(MapEditorState *ed, FileOp op) {
     ed->pendingFileOp = op;
     ed->fileDialogPending = true;
     ed->fileDialogGotResult = false;
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     (void)filters;
-    meIosFilesBegin(false, "map", NULL);
+    meMobileFilesBegin(false, "map", NULL);
 #else
     SDL_ShowOpenFileDialog(meFileDialogCallback, ed, ed->window, filters, 2, NULL, false);
 #endif
@@ -2672,10 +2672,10 @@ static void meShowSaveDialog(MapEditorState *ed, FileOp op) {
     ed->pendingFileOp = op;
     ed->fileDialogPending = true;
     ed->fileDialogGotResult = false;
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     (void)filters;
     /* The map's own name is offered, so saving a built-in map keeps it. */
-    meIosFilesBegin(true, "map", ed->currentFilePath);
+    meMobileFilesBegin(true, "map", ed->currentFilePath);
 #else
     SDL_ShowSaveFileDialog(meFileDialogCallback, ed, ed->window, filters, 1, NULL);
 #endif
@@ -2698,22 +2698,22 @@ static void meShowSaveModDialog(MapEditorState *ed) {
     ed->pendingFileOp = FILE_OP_SAVE_SCENARIO_MOD;
     ed->fileDialogPending = true;
     ed->fileDialogGotResult = false;
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     (void)filters;
-    meIosFilesBegin(true, "scenario", suggested);
+    meMobileFilesBegin(true, "scenario", suggested);
 #else
     SDL_ShowSaveFileDialog(meFileDialogCallback, ed, ed->window, filters, 1,
                            suggested[0] != '\0' ? suggested : NULL);
 #endif
 }
 
-/* True when Save can write straight to the map's own path. On iOS a map
- * opened from the app bundle has a path that cannot be written, so Save
- * asks for a name in Documents as Save As does. */
+/* True when Save can write straight to the map's own path. On iOS and
+ * Android a map opened from the bundled set has a path that cannot be
+ * written, so Save asks for a name in the player's folder as Save As does. */
 static bool meCanSaveInPlace(const MapEditorState *ed) {
     if (!ed->currentFilePath[0]) return false;
-#if defined(__IPHONEOS__)
-    return meIosFilesIsWritable(ed->currentFilePath);
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+    return meMobileFilesIsWritable(ed->currentFilePath);
 #else
     return true;
 #endif
@@ -3670,12 +3670,12 @@ static void meCenterMapContents(MapEditorState *ed) {
     meSetStatus(ed, "Centered map (shifted %+d, %+d)", dx, dy);
 }
 
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
 /* WinBolo's tablet layout draws through a logical presentation. The editor
  * draws in render pixels and reads pointer positions in window points, as it
- * does on the desktop, so on iOS it turns the presentation off while it runs
- * and puts WinBolo's back whenever WinBolo draws: around the Settings dialog
- * and on the way out. */
+ * does on the desktop, so on iOS and Android it turns the presentation off
+ * while it runs and puts WinBolo's back whenever WinBolo draws: around the
+ * Settings dialog and on the way out. */
 static int s_iosLogW = 0;
 static int s_iosLogH = 0;
 static SDL_RendererLogicalPresentation s_iosLogMode = SDL_LOGICAL_PRESENTATION_DISABLED;
@@ -3690,7 +3690,7 @@ static void meIosPresentationRestore(SDL_Renderer *renderer) {
 }
 
 /* -------------------------------------------------------
- * Touch on the canvas (iOS)
+ * Touch on the canvas (iOS and Android)
  *
  * SDL turns the first finger into a left mouse button, which ImGui and the
  * canvas both read. On the canvas the editor holds that press back for a
@@ -3978,7 +3978,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     ed->window = window;
     ed->renderer = renderer;
     ed->fromMainMenu = fromMainMenu;
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     meTouchReset();
 #endif
 
@@ -4062,7 +4062,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         return;
     }
     SDL_SetTextureScaleMode(ed->tilesTex, SDL_SCALEMODE_NEAREST);
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     /* After the two failure returns above, so neither leaves WinBolo's
        presentation off; from here the run always ends at the restore in the
        cleanup. */
@@ -4149,11 +4149,11 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
         /* Process events */
         SDL_Event ev;
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
         meTouchFrame();
 #endif
         while (SDL_PollEvent(&ev)) {
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
             /* The canvas's own mouse made from a touch skips ImGui, which
                saw the touch itself; the touch is read for the canvas here. */
             if (!meTouchIsCanvasEvent(&ev)) {
@@ -5312,11 +5312,11 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             }
         }
 
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
         /* No Delete key on a touch screen: a selected base, pill or start
            gets a button instead. */
         if (ed->selectedObjKind != ME_SEL_NONE && ed->selectedObjIndex >= 0 &&
-            meIosObjectDeleteButton()) {
+            meMobileObjectDeleteButton()) {
             meDeleteSelectedObj(ed);
         }
 #endif
@@ -5787,11 +5787,11 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
         mapEditorImguiStatusBar(hoverMX, hoverMY, ed->zoomLevel, ed->dirty, startInfoPtr);
 
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
         /* The file picker that stands in for SDL's dialogs. Its answer is
            handled at the top of the next frame, where a dialog's would be. */
         if (ed->fileDialogPending &&
-            meIosFilesRender(ed->fileDialogResult, ME_PATH_MAX)) {
+            meMobileFilesRender(ed->fileDialogResult, ME_PATH_MAX)) {
             ed->fileDialogGotResult = true;
             ed->fileDialogPending = false;
         }
@@ -5802,7 +5802,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
         if (ed->wantSettings) {
             ed->wantSettings = false;
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
             meIosPresentationRestore(renderer);
             mapEditorImguiRunOutside(s_settingsFn);
             meIosPresentationOff(renderer);
@@ -5842,7 +5842,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     if (ed->tilesTex) SDL_DestroyTexture(ed->tilesTex);
     meFreeMapData(ed);
     free(ed->brushSeen);
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     meIosPresentationRestore(renderer);
 #endif
     free(ed);
