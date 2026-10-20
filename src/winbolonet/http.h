@@ -521,7 +521,9 @@ void httpSetAltIpAddress(char *iptoset);
 * or a body larger than maxBytes.
 *
 *ARGUMENTS:
-* url        - Full http:// or https:// URL
+* url        - Full https:// URL (the iOS module refuses any
+*              other scheme; the desktop's ATS-free libcurl
+*              path is never given one)
 * data_out   - Receives heap-allocated buffer (caller frees)
 * size_out   - Receives buffer size in bytes
 * maxBytes   - Largest response to accept, or 0 for no limit

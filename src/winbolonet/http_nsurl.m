@@ -75,7 +75,9 @@
 *    "%XX" already in the text, and the URL delimiters "#",
 *    "[" and "]", are kept.
 *  - A redirect to another scheme, host or port drops the
-*    Authorization header, as libcurl does by default.
+*    Authorization header, as libcurl does by default. Such
+*    a redirect of a request with a body (a POST or PUT) is
+*    refused, so the body is never sent to the new host.
 *********************************************************/
 
 #if !__has_feature(objc_arc)
@@ -116,7 +118,10 @@ void randombytes(unsigned char *buf, unsigned long long len) {
 #include "winbolonet_core.h"
 #include "wbn_bearer.h"
 
-static bool httpStarted = false;
+/* Atomic because httpDestroy clears it on the sign-in thread while workers
+ * read it. A request path does not read it after its own httpCreate: it
+ * goes by httpCreate's return value (see wbnEnsureStarted). */
+static atomic_bool httpStarted = false;
 /* Set, with release ordering, once wbnBaseUrl / wbnHostString have been
  * filled; they never change after that. See httpCreate. */
 static atomic_bool s_baseUrlReady;
@@ -540,8 +545,11 @@ didReceiveResponse:(NSURLResponse *)response
 /* A redirect is followed, as libcurl follows one here; the Authorization
  * header goes with it only to the scheme, host and port the request was
  * first sent to, which is what libcurl does with a header it was given. The signature and
- * timestamp headers go either way, as libcurl's other custom headers do;
- * they prove nothing without the signing key. */
+ * timestamp headers go either way on a request with no body, as libcurl's
+ * other custom headers do; they prove nothing without the signing key.
+ * A request with a body is not redirected to another scheme, host or port
+ * at all: a 307 or 308 sends the body again, and bodies carry secrets (the
+ * API token in auth/validate, the password in login). */
 - (void)URLSession:(NSURLSession *)session
                           task:(NSURLSessionTask *)task
     willPerformHTTPRedirection:(NSHTTPURLResponse *)response
@@ -559,6 +567,21 @@ didReceiveResponse:(NSURLResponse *)response
       [from.host caseInsensitiveCompare:to.host ?: @""] == NSOrderedSame &&
       ((from.port == nil && to.port == nil) ||
        (from.port != nil && to.port != nil && [from.port isEqualToNumber:to.port]));
+  if (!sameOrigin) {
+    NSURLRequest *orig = task.originalRequest;
+    NSString *method = orig.HTTPMethod ?: @"GET";
+    bool hasBody = orig.HTTPBody != nil || orig.HTTPBodyStream != nil ||
+                   [method caseInsensitiveCompare:@"POST"] == NSOrderedSame ||
+                   [method caseInsensitiveCompare:@"PUT"] == NSOrderedSame;
+    if (hasBody) {
+      /* Refused: the task completes with the 3xx response, which every
+       * caller treats as a failure. */
+      WB_LOG_WARN(WB_LOG_CAT_NET,
+                  "redirect to another host refused: the request has a body");
+      completionHandler(nil);
+      return;
+    }
+  }
   if (sameOrigin || [request valueForHTTPHeaderField:@"Authorization"] == nil) {
     completionHandler(request);
     return;
@@ -739,12 +762,16 @@ static NSURL *wbnApiUrl(const char *path, char *urlOut, size_t urlOutSize) {
   return wbnUrlFromText(urlOut);
 }
 
-/* Starts the module when nothing has yet. See the file header. */
+/* Starts the module when nothing has yet. See the file header. The flag is
+ * read once; when httpCreate runs, its return value decides, because an
+ * httpDestroy on another thread may clear the flag again before a second
+ * read. */
 static bool wbnEnsureStarted(void) {
-  if (!httpStarted || !atomic_load_explicit(&s_baseUrlReady, memory_order_acquire)) {
-    (void)httpCreate();
+  bool started = atomic_load(&httpStarted);
+  if (started && atomic_load_explicit(&s_baseUrlReady, memory_order_acquire)) {
+    return true;
   }
-  return httpStarted;
+  return httpCreate();
 }
 
 /*********************************************************
@@ -781,8 +808,10 @@ bool httpCreate(void) {
       buildBaseUrl(iniValue);
       atomic_store_explicit(&s_baseUrlReady, true, memory_order_release);
     }
-    httpStarted = true;
+    atomic_store(&httpStarted, true);
   }
+  /* TRUE on success, as http.h says; the caller goes by this rather than
+   * reading httpStarted again. */
   return true;
 }
 
@@ -793,7 +822,7 @@ bool httpCreate(void) {
 * connections stay for the next httpCreate.
 *********************************************************/
 void httpDestroy(void) {
-  httpStarted = false;
+  atomic_store(&httpStarted, false);
 }
 
 /*********************************************************
@@ -995,7 +1024,7 @@ bool httpSendLogFile(const char *fileName, char *key, bool wantFeedback) {
 
   if (fileName == NULL || key == NULL || !wbnEnsureStarted()) {
     WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: skipped (httpStarted=%d, fileName=%s, key=%s)",
-            httpStarted, fileName ? fileName : "NULL", key ? "(set)" : "NULL");
+            (int)atomic_load(&httpStarted), fileName ? fileName : "NULL", key ? "(set)" : "NULL");
     return false;
   }
 
@@ -1423,6 +1452,13 @@ int httpGetUrlToMemory(const char *url, uint8_t **data_out, size_t *size_out,
     NSURL *nsurl = wbnUrlFromText(url);
     if (nsurl == nil) {
       WB_LOG_WARN(WB_LOG_CAT_NET, "httpGetUrlToMemory: malformed URL");
+      return -1;
+    }
+    /* The URL comes from the news JSON, so only https is fetched. ATS would
+     * refuse http anyway; this also keeps file: and data: URLs out. */
+    if (nsurl.scheme == nil ||
+        [nsurl.scheme caseInsensitiveCompare:@"https"] != NSOrderedSame) {
+      WB_LOG_WARN(WB_LOG_CAT_NET, "httpGetUrlToMemory: refused, scheme is not https");
       return -1;
     }
 
