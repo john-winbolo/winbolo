@@ -371,9 +371,8 @@ extern "C" int imguiUdpSetupShow(void) {
         float btnW = 80.0f * s;
 
 #if !defined(__IPHONEOS__)
-        /* New hosts a game. Not on iOS: a phone does not host (the iOS
-         * client links no UDP server), as the game browser's New Game is
-         * left off there too. */
+        /* New hosts a game. Not on iOS, where the game finder's New Game
+         * on each tab hosts instead. */
         if (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD) {
             ImGui::TextUnformatted(langGetText(STR_DLGTCP_NEWBLURB));
         }

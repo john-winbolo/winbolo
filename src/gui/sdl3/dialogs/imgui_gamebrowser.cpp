@@ -1589,8 +1589,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         };
         const bool iosBtnShown[IOS_BTN_COUNT] = {
             true, true, uiShouldUseControllerMode(), true,
-            !useTracker,  /* New Game: LAN only on iOS */
-            true, true, true
+            true, true, true, true
         };
         bool iosBreak[IOS_BTN_COUNT] = {};
         const float iosGap = ImGui::GetStyle().ItemSpacing.x;
@@ -2691,34 +2690,26 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             imguiHandOnHover();
             if (!hasSelection) ImGui::EndDisabled();
 
-            /* New Game. iOS hosts LAN games only, so there it is on the
-               Local tab and the Internet tab stays join-only. */
+            /* New Game, on both tabs. */
 #if defined(__IPHONEOS__)
-            const bool showNewGame = !useTracker;
             const float newGameW = iosBtnW(langGetText(STR_DLGBROWSER_NEWGAME));
+            iosPlace(IOS_BTN_NEWGAME);
 #else
-            const bool showNewGame = true;
             const float newGameW = btnW;
+            ImGui::SameLine();
 #endif
-            if (showNewGame) {
-#if defined(__IPHONEOS__)
-                iosPlace(IOS_BTN_NEWGAME);
-#else
-                ImGui::SameLine();
-#endif
-                if (ImGui::Button(langGetText(STR_DLGBROWSER_NEWGAME), ImVec2(newGameW, btnH))) {
-                    char playerName[PLAYER_NAME_LEN];
-                    gameFrontGetPlayerName(playerName);
-                    gameFrontSetUdpOptions(playerName, (char *)"",
-                                           gameFrontHostingPort, gameFrontHostingPort);
-                    openingStates setupState = useTracker ? openInternetSetup : openLanSetup;
-                    gameFrontSetDlgState(setupState);
-                    result = (int)setupState;
-                    running = false;
-                }
-                imguiHandOnHover();
-                if (useTracker) imguiHelpTooltip(langGetText(STR_DLGBROWSER_NEWGAME_PORTFWD_TIP));
+            if (ImGui::Button(langGetText(STR_DLGBROWSER_NEWGAME), ImVec2(newGameW, btnH))) {
+                char playerName[PLAYER_NAME_LEN];
+                gameFrontGetPlayerName(playerName);
+                gameFrontSetUdpOptions(playerName, (char *)"",
+                                       gameFrontHostingPort, gameFrontHostingPort);
+                openingStates setupState = useTracker ? openInternetSetup : openLanSetup;
+                gameFrontSetDlgState(setupState);
+                result = (int)setupState;
+                running = false;
             }
+            imguiHandOnHover();
+            if (useTracker) imguiHelpTooltip(langGetText(STR_DLGBROWSER_NEWGAME_PORTFWD_TIP));
 
             /* Player Name */
 #if defined(__IPHONEOS__)
