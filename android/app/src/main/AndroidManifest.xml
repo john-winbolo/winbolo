@@ -64,5 +64,18 @@
                 <data android:pathSuffix=".wbv"/>
             </intent-filter>
         </activity>
+        <!-- Serves a recording or a clip GIF from the app's files or cache
+             directory (res/xml/file_paths.xml) to the app the share sheet
+             picks (WinBoloActivity.shareFile), which gets a one-off read
+             grant on the content URI; nothing else can reach the provider. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"/>
+        </provider>
     </application>
 </manifest>

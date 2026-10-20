@@ -8,7 +8,7 @@
  * yet carried on Android.
  *
  * Mirrors the platform-stub set in src/gui/ios/ios_stubs.c — Android also
- * skips the map editor, log viewer and desktop window-position
+ * skips the map editor, the modal log viewer and desktop window-position
  * persistence.
  */
 
@@ -18,7 +18,6 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"
-#include "../common/wb_log.h"
 
 /* ---- map editor stubs ---- */
 
@@ -31,31 +30,16 @@ void mapEditorRun(void *window, void *renderer, const char *mapPath, bool fromMa
 bool mapEditorAppQuitRequested(void) { return false; }
 void mapEditorSetSettingsHandler(void (*fn)(void)) { (void)fn; }
 
-/* ---- log viewer stubs ---- */
+/* ---- log viewer stubs (the modal viewer is not built on Android) ----
+ *
+ * logViewerRun, logViewerRunFromMemory and spectatorRun are the mobile
+ * screens in src/gui/mobile (the recordings list, the reel player and the
+ * live spectator feed), as on iOS. */
 
-/* A recording handed over by another app reaches this through the welcome
-   screen's kept-drop path (android_drops.c); the line says it got here. */
-void logViewerRun(void *window, void *renderer, const char *logPath, bool fromMainMenu) {
-  (void)window; (void)renderer; (void)fromMainMenu;
-  WB_LOG_INFO(WB_LOG_CAT_GUI, "[Android] Log viewer not carried yet; asked to play %s",
-              logPath ? logPath : "(no file)");
-}
-
-void logViewerRunFromMemory(void *window, void *renderer, uint8_t *zipData, size_t zipLen, bool fromMainMenu) {
-  (void)window; (void)renderer; (void)zipData; (void)zipLen; (void)fromMainMenu;
-}
-
-/* Same as the editor: the modal viewer does not run here, so it cannot
-   have asked to quit the app. */
+/* gamefront.c reads this after a log viewer run returns, to learn whether
+   the player quit the application from inside it. The modal viewer does not
+   run on Android, so it cannot have asked (the same body as ios_stubs.c). */
 bool logViewerAppQuitRequested(void) { return false; }
-
-/* The live spectator feed. Returns false, "the user left", so the caller
-   goes back to the welcome screen. */
-bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
-                  void *cs, const char *serverHost, uint16_t serverPort) {
-  (void)window; (void)renderer; (void)cs; (void)serverHost; (void)serverPort;
-  return false;
-}
 
 /* ---- window state stubs (desktop-only persistence in sdl3/winbolo.c) ---- */
 

@@ -54,6 +54,7 @@
 #include "../winbolonet/http.h"  /* httpSetDeadline for a shutdown in the background */
 #include "android_drops.h"
 #include "android_netpath.h"
+#include "android_share.h"
 #include "touch_input.h"
 
 extern ClientSim *humanSim;
@@ -682,6 +683,12 @@ int main(int argc, char *argv[]) {
      same reason. Without it the game front asks nothing. */
   if (!androidNetPathInstall()) {
     WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[Android] network kind not available");
+  }
+
+  /* The share sheet a recording or a clip GIF leaves the phone through.
+     Bound from this thread for the same reason. */
+  if (!androidShareInstall()) {
+    WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[Android] share sheet not available");
   }
 
   /* The move to and from the background reaches the game only through an

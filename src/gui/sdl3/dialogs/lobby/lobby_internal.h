@@ -76,18 +76,16 @@
 #endif
 
 /* BOLO_LOBBY_REEL — the recap's replay reel and the embedded log viewer
- *   (src/logviewer/lv_embed.c) it plays through. Out of the Android build
- *   only, which does not compile the log viewer's sources. iOS and the web
- *   client both link the reel host.
- * The clip export is in the iOS build: the GIF encoder's implementation TU is
- *   in the iOS sources, and with no save dialog there the clip is written into
- *   the app's Documents folder under a name of its own (lobby_clip_gif.cpp),
- *   where the Files app shows it. */
-#if defined(__ANDROID__)
-#define BOLO_LOBBY_REEL 0
-#else
+ *   (src/logviewer/lv_embed.c) it plays through. On for every build: the
+ *   desktop links the whole viewer, and iOS, Android and the web client link
+ *   the reel host.
+ * The clip export is in the iOS and Android builds: the GIF encoder's
+ *   implementation TU is in both source lists, and with no save dialog there
+ *   the clip is written under a name of its own (lobby_clip_gif.cpp), into
+ *   the app's Documents folder on iOS, where the Files app shows it, and into
+ *   the app's files directory on Android, from where the share sheet offers
+ *   it. */
 #define BOLO_LOBBY_REEL 1
-#endif
 
 /* The types below and the signatures further down name types that come from
  * elsewhere. They are pulled in here rather than left to each source to
@@ -777,7 +775,7 @@ void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
 #endif
 
 /* clipgif */
-#if !defined(__ANDROID__) && BOLO_RECAP_CLIP_GIF
+#if BOLO_RECAP_CLIP_GIF
 void lobbyClipGifReset(void);
 bool lobbyClipGifActive(void);
 void lobbyClipGifStartClip(const HighlightWindow *h, const char *mapName);

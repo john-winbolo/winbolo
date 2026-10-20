@@ -366,7 +366,7 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
                 ImGui::TextUnformatted(
                     langGetTextFmt(lastRoundHighlightLabel(h), &args));
 
-#if !defined(__ANDROID__) && BOLO_RECAP_CLIP_GIF
+#if BOLO_RECAP_CLIP_GIF
                 /* Export control, right-aligned so the rows keep a column of them
                  * however long the sentences run. Sized to one text line, so the
                  * row stays the height the selectable underneath was given: the
@@ -899,7 +899,7 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
     lobbyRenderRatingBlock(cs, st, s);
 #endif
 
-#if !defined(__ANDROID__) && BOLO_RECAP_CLIP_GIF
+#if BOLO_RECAP_CLIP_GIF
     /* A clip export in progress. Drawn after the rows that start it, and after
      * the rest of the body: it is a popup, so it costs the layout nothing and
      * the slack measurement below still sees what the body really used. */

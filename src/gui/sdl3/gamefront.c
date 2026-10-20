@@ -1514,9 +1514,9 @@ static bool gameFrontDialogs(void) {
       break;
     case openLogViewer: {
       /* The browser opens again after the local viewer closes, so Open File
-       * is a step inside the browser. Only iOS returns OPEN_LOCAL: its
-       * logViewerRun with no path is the list of recordings on the phone
-       * (ios_recordings.cpp), in place of a file dialog. */
+       * is a step inside the browser. Only iOS and Android return OPEN_LOCAL:
+       * their logViewerRun with no path is the list of recordings on the
+       * phone (mobile_recordings.cpp), in place of a file dialog. */
 #if defined(__IPHONEOS__) || defined(__ANDROID__)
       /* A recording opened from Files or Mail plays first; the browser
        * comes up when it closes. */

@@ -269,11 +269,26 @@ set(ANDROID_SOURCES
     # The RECORD_AUDIO permission voice.c asks for before it opens the
     # microphone (SDL_RequestAndroidPermission, answered on another thread).
     ${PROJ_ROOT}/src/android/android_voice.c
+    # The share sheet (WinBoloActivity.shareFile over JNI), which is how a
+    # recording or a clip GIF leaves the app's private storage.
+    ${PROJ_ROOT}/src/android/android_share.c
+    # The Android half of the recordings screen: the directories it lists
+    # and the share sheet as its export.
+    ${PROJ_ROOT}/src/android/android_recordings.c
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_welcome.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_mapchooser.cpp
     # Shared mobile UI (touch input, legacy players panel), as iOS compiles.
     ${PROJ_ROOT}/src/gui/mobile/touch_input.c
     ${PROJ_ROOT}/src/gui/mobile/players_panel.cpp
+    # The mobile replay screens, as iOS compiles them: a downloaded game
+    # played in the reel (in place of the modal viewer), the live spectator
+    # feed in the reel (in place of the modal viewer's spectatorRun), and
+    # the recordings on the phone listed and played in the reel (in place of
+    # the modal viewer's logViewerRun; its platform half is
+    # android_recordings.c above).
+    ${PROJ_ROOT}/src/gui/mobile/mobile_log_player.cpp
+    ${PROJ_ROOT}/src/gui/mobile/mobile_spectator.cpp
+    ${PROJ_ROOT}/src/gui/mobile/mobile_recordings.cpp
     ${PROJ_ROOT}/src/android/android_dialog_stubs.c
 
     # WinBolo.net: the same winbolonet_core, winbolonet_client and
@@ -363,6 +378,11 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_commands.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_recap.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
+    # The recap's clip GIF export and the encoder's one implementation TU.
+    # The clip is written into the app's files directory (lobby_clip_gif.cpp),
+    # as there is no save dialog, and offered through the share sheet.
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
+    ${PROJ_ROOT}/src/third_party/msf_gif/msf_gif_impl.c
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
@@ -452,6 +472,48 @@ set(ANDROID_SOURCES
     # Shared map-gen controls used by the map chooser dialog (not the
     # full map editor — this file matches what the iOS build pulls in).
     ${PROJ_ROOT}/src/mapeditor/mapgen_imgui.cpp
+
+    # The lobby's replay reel and the rounds it plays. The log viewer's
+    # decoder, renderer and embedded reel host (lv_embed.c) are the set the
+    # iOS target lists (IOS_LOGVIEWER_SOURCES in the root CMakeLists.txt, and
+    # the "Never add here" list of src/wasm/CMakeLists.txt applies here too),
+    # with the desktop's platform drivers in place of the wasm ones, except
+    # the dialogs, which have an Android driver. The modal viewer,
+    # logviewer.c, is not built; the WinBolo.net log browser opens a game in
+    # the reel instead. Rounds are recorded by server_round_log_static.
+    ${PROJ_ROOT}/src/logviewer/lv_embed.c
+    ${PROJ_ROOT}/src/logviewer/lv_embed_stubs.c
+    ${PROJ_ROOT}/src/logviewer/blocks.c
+    ${PROJ_ROOT}/src/logviewer/lv_attribution.c
+    ${PROJ_ROOT}/src/logviewer/snapshot.c
+    ${PROJ_ROOT}/src/logviewer/screen.c
+    ${PROJ_ROOT}/src/logviewer/screencalc.c
+    ${PROJ_ROOT}/src/logviewer/screentank.c
+    ${PROJ_ROOT}/src/logviewer/screenlgm.c
+    ${PROJ_ROOT}/src/logviewer/screenbullet.c
+    ${PROJ_ROOT}/src/logviewer/spec_seed_load.c
+    ${PROJ_ROOT}/src/logviewer/lv_spec_feed.c
+    ${PROJ_ROOT}/src/logviewer/players.c
+    ${PROJ_ROOT}/src/logviewer/shells.c
+    ${PROJ_ROOT}/src/logviewer/allience.c
+    ${PROJ_ROOT}/src/logviewer/pillbox.c
+    ${PROJ_ROOT}/src/logviewer/bases.c
+    ${PROJ_ROOT}/src/logviewer/bolo_map.c
+    ${PROJ_ROOT}/src/logviewer/starts.c
+    ${PROJ_ROOT}/src/logviewer/labels.c
+    ${PROJ_ROOT}/src/logviewer/messages.c
+    ${PROJ_ROOT}/src/logviewer/sounddist.c
+    ${PROJ_ROOT}/src/logviewer/global.c
+    ${PROJ_ROOT}/src/logviewer/util.c
+    ${PROJ_ROOT}/src/logviewer/draw.c
+    ${PROJ_ROOT}/src/logviewer/game_view_stubs.c
+    ${PROJ_ROOT}/src/logviewer/clientmutex.c
+    ${PROJ_ROOT}/src/logviewer/dns.c
+    ${PROJ_ROOT}/src/logviewer/platform/platform_config.c
+    # platform/platform_dialogs.c runs its file pickers through system() and
+    # popen(), which Android does not have; the message boxes go through the
+    # client's ImGui message box.
+    ${PROJ_ROOT}/src/logviewer/android/platform_dialogs_android.c
 )
 
 add_library(main SHARED ${ANDROID_SOURCES})
@@ -462,6 +524,13 @@ add_library(main SHARED ${ANDROID_SOURCES})
 set_source_files_properties(${PROJ_ROOT}/src/third_party/tweetnacl/tweetnacl.c
     PROPERTIES COMPILE_OPTIONS
     "-Wno-shorten-64-to-32;-Wno-unterminated-string-initialization;-Wno-unknown-warning-option")
+# msf_gif.h tests the MSVC-only _M_IX86_FP in an #if, which this target's
+# -Werror=undef (below) refuses on the ABIs where __SSE2__ does not settle
+# the test first; the two files that include it are let off that one.
+set_source_files_properties(
+    ${PROJ_ROOT}/src/third_party/msf_gif/msf_gif_impl.c
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
+    PROPERTIES COMPILE_OPTIONS "-Wno-undef")
 
 target_include_directories(main PRIVATE
     ${PROJ_ROOT}/src/gui/sdl3
@@ -477,6 +546,14 @@ target_include_directories(main PRIVATE
     ${cjson_SOURCE_DIR}
     # tweetnacl.h for the WinBolo.net transport's request signing.
     ${PROJ_ROOT}/src/third_party/tweetnacl
+)
+# After src/gui, so a GUI source's "tiles.h" / "positions.h" still resolves
+# to its own; the log viewer's sources reach their copies through their own
+# directory. The same three the iOS target adds.
+target_include_directories(main PRIVATE
+    ${PROJ_ROOT}/src/logviewer
+    ${PROJ_ROOT}/src/logviewer/imgui
+    ${PROJ_ROOT}/src/logviewer/platform
 )
 bolo_apply_include_rules(main gui)
 # bg_game.c takes the same per-file grant the desktop and iOS targets give

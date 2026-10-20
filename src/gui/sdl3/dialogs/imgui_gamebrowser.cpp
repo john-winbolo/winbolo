@@ -2597,15 +2597,14 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             if (!hasSelection) ImGui::EndDisabled();
 #endif
 
-            /* Android does not compile the log viewer's sources. */
-#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+#if !defined(__EMSCRIPTEN__)
             /* Spectate — beside Join. Enabled only when the selected server
              * advertises spectator support. Unlike Join it needs no player
              * name: a spectator is tankless and read-only, so the name guard
              * is deliberately skipped. The spectator host is logviewer-side:
-             * the modal viewer on the desktop, the reel on iOS
-             * (ios_spectator.cpp). The web client has neither, which matches
-             * the openSpectate case. */
+             * the modal viewer on the desktop, the reel on iOS and Android
+             * (mobile_spectator.cpp). The web client has neither, which
+             * matches the openSpectate case. */
 #if BOLO_MOBILE
             iosPlace(IOS_BTN_SPECTATE);
             const float spectateW = iosBtnW(langGetText(STR_DLGBROWSER_SPECTATE));

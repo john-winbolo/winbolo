@@ -141,6 +141,9 @@ android {
 dependencies {
     implementation("io.sentry:sentry-android:7.18.0")
     implementation("io.sentry:sentry-android-ndk:7.18.0")
+    // FileProvider, which serves a recording or a clip GIF from the app's
+    // private storage to the app the share sheet picks.
+    implementation("androidx.core:core:1.13.1")
 }
 
 // ---------------------------------------------------------------------------

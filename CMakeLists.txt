@@ -1506,17 +1506,20 @@ target_include_directories(WinBoloIOS PRIVATE
 target_link_libraries(WinBoloIOS PRIVATE server_round_log_static)
 # The WinBolo.net log browser ("My Games" and the welcome screen's Log Viewer
 # entry) and the screen that plays a game it downloads in the reel
-# (ios_log_player.cpp, in place of the modal viewer). Its star rating widget
+# (src/gui/mobile/mobile_log_player.cpp, in place of the modal viewer; the
+# mobile screens are shared with the Android client). Its star rating widget
 # is already in the news and ratings block above.
 target_sources(WinBoloIOS PRIVATE
     src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
     src/gui/sdl3/dialogs/wbn_browser_sort.c
-    src/gui/ios/ios_log_player.cpp
+    src/gui/mobile/mobile_log_player.cpp
     # The live spectator feed in the reel, in place of the modal viewer's
     # spectatorRun.
-    src/gui/ios/ios_spectator.cpp
+    src/gui/mobile/mobile_spectator.cpp
     # The recordings on the phone, listed and played in the reel, in place
-    # of the modal viewer's logViewerRun.
+    # of the modal viewer's logViewerRun; the directories it lists and the
+    # Copy to Files export are the iOS half, ios_recordings.cpp.
+    src/gui/mobile/mobile_recordings.cpp
     src/gui/ios/ios_recordings.cpp
     # Files and game links the system hands over, kept until the welcome
     # screen runs, and the access to a file opened in place from another

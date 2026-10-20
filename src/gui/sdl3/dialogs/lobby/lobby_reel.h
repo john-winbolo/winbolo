@@ -10,8 +10,8 @@
 *  The replay reel's public face: the calls a screen outside
 *  the lobby uses to show a reel of its own, and the part of
 *  the embedded log viewer (src/logviewer/lv_embed.c) such a
-*  screen drives directly. The iOS log player and spectator
-*  (src/gui/ios) are those screens. Everything else about
+*  screen drives directly. The mobile log player and spectator
+*  (src/gui/mobile) are those screens. Everything else about
 *  the reel belongs to the lobby and stays in
 *  lobby_internal.h, which includes this header.
 *
