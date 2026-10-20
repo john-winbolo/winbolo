@@ -378,12 +378,17 @@ extern "C" int imguiWelcomeShow(void) {
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(ImVec2((float)winW, (float)winH));
         ImGui::SetNextWindowBgAlpha(0.0f);
+        /* The corner items sit at the window's bottom edge, so the window
+           padding puts the content a few units past it. Without
+           NoScrollWithMouse a wheel, or a finger dragged on iOS, scrolled
+           the whole screen by that much. */
         ImGui::Begin("##WelcomeBg", nullptr,
                      ImGuiWindowFlags_NoTitleBar |
                      ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoScrollbar |
+                     ImGuiWindowFlags_NoScrollWithMouse |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
 #if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
