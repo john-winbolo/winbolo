@@ -197,6 +197,16 @@ int main(int argc, char *argv[]) {
 
     srand((unsigned int)(time(NULL) ^ getpid()));
 
+    /* The iPad turns to portrait as well as landscape (Info.plist allows it
+       there only). Without the hint SDL keeps a window that is not resizable
+       in the orientation it was created in, and iPadOS then shrinks the
+       landscape app into the portrait screen. Every screen reads the window
+       size each frame, so a turn only changes the size. */
+    if (iosDeviceIsPad()) {
+        SDL_SetHint(SDL_HINT_ORIENTATIONS,
+                    "LandscapeLeft LandscapeRight Portrait PortraitUpsideDown");
+    }
+
     /* Initialize Sentry crash reporting if the user hasn't opted out */
 #ifdef HAVE_SENTRY
     if (iosCrashReportingGetEnabled()) {
