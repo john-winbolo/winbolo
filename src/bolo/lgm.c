@@ -606,21 +606,26 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
  * after its move for the tick, so the burst is up to the shell's speed
  * inside the TANK_HIT_RADIUS circle, and further by the tank's own speed
  * when it is driving at the shooter: with the defaults, between 64 and 112
- * from the centre (64 when the tank drives 16 a tick on a road, 68 at 12 a
- * tick on grass). A builder sent out the far side from the shooter stands
- * LGM_START_OFFSET plus one step a tick from the centre, so for his first
- * few ticks out a hit on the tank can still kill him: about 3 ticks when
- * the tank is on grass, 4 on a road. WinBolo 1.17 and 2.1 started him on
- * the centre and had a similar short window, 2 to 3 ticks, so this is
- * close to the long-standing behaviour. A
- * pillbox shell is not rewound, so the target's lag does not make that
- * window longer. The offset is kept small so the head start it gives is
- * small: one walking step where a builder walks 16 a tick (grass, road, a
- * boat, a base he can use), two on forest and four on swamp, crater and
- * rubble. He is given it only where he could have walked it: off a boat,
- * or when he can walk on the tank's own square and on each square the move
- * enters, not counting the blessed square of a boat or river road order.
- * See lgmApplyStartOffset. */
+ * from the centre (64 when the tank drives 16 a tick on a road, a boat or
+ * a base, 68 at 12 a tick on grass). Each tick the tank moves, then the
+ * builder steps, then the shells move. A builder sent out the far side
+ * from the shooter is put LGM_START_OFFSET out and takes his first step in
+ * the same tick, so a hit can kill him in his first 2 ticks when the tank
+ * is still or drives at the shooter (the second only at the nearest
+ * burst). A tank that drives away from the shooter on a road, a boat or a
+ * base keeps pace with him, and its nearest burst can kill him for as long
+ * as it does; on grass it falls behind and the window is 2 ticks. Starting
+ * him on the centre, as WinBolo 1.17 and 2.1 did, gives one tick more for
+ * a still tank and the same open window for a tank that keeps pace, so
+ * this is close to the long-standing behaviour. An offset of 64 would keep
+ * him clear in all three cases. A pillbox shell is not rewound, so the
+ * target's lag does not make the window longer. The offset is kept small
+ * so the head start it gives is small: one walking step where a builder
+ * walks 16 a tick (grass, road, a boat, a base he can use), two on forest
+ * and four on swamp, crater and rubble. He is given it only where he could
+ * have walked it: off a boat, or when he can walk on the tank's own square
+ * and on each square the move enters, not counting the blessed square of a
+ * boat or river road order. See lgmApplyStartOffset. */
 #define LGM_START_OFFSET 16
 
 /*********************************************************

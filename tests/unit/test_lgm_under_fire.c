@@ -28,11 +28,14 @@
  * bursts up to 32 units inside the TANK_HIT_RADIUS circle, more by the
  * tank's speed when it is driving at the pill, between 64 and 112 units
  * from the tank's centre on the pill's side (64 when the tank drives 16 a
- * tick on a road, 68 at 12 a tick on grass). On the far side he is 16, 32,
- * 48 and then 64 out in his first ticks, so a hit on the tank in about his
- * first 3 ticks (tank on grass) or 4 ticks (tank on a road) still has him
- * within MAP_SQUARE_MIDDLE (128) of the burst. That short window is close
- * to the one WinBolo 1.17 and 2.1 had.
+ * tick on a road, a boat or a base, 68 at 12 a tick on grass). The tank
+ * moves, then he steps, then the shells move, so he takes his first step
+ * in the tick he is put out and is 32 out at the first shell test. A hit
+ * can still have him within MAP_SQUARE_MIDDLE (128) of the burst in his
+ * first 2 ticks when the tank is still or drives at the pill, and for as
+ * long as a tank driving away from the pill on a road, a boat or a base
+ * keeps pace with him. WinBolo 1.17 and 2.1 had the same shape of window.
+ * An offset of 64 would keep him clear in all three cases.
  * The cases pass because the script's order does not land in it: in the
  * runs made when the offset went back to 16 the nearest burst was 215 from
  * him on the lagged link and 268 on the clean one.
