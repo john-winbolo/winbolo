@@ -1,7 +1,7 @@
 #!/bin/bash
 # Boot an iOS simulator without opening its window, install and launch
 # WinBoloIOS, keep its console for a number of seconds, take a screenshot,
-# then stop the app and shut the simulator down. See docs/IOS.md.
+# then stop the app and shut the simulator down.
 #
 # Usage: tools/ios/sim_run.sh [--device NAME] [--app PATH] [--out DIR]
 #                             [--seconds N]

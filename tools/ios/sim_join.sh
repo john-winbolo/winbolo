@@ -2,7 +2,7 @@
 # Run a dedicated server on this Mac, launch WinBoloIOS in a simulator with a
 # winbolo:// link to it so the app opens the join dialog for that server,
 # keep the console for a number of seconds, take a screenshot, then stop the
-# app, the simulator and the server. See docs/IOS.md.
+# app, the simulator and the server.
 #
 # Usage: tools/ios/sim_join.sh [--device NAME] [--app PATH] [--ds PATH]
 #                              [--port P] [--out DIR] [--seconds N]

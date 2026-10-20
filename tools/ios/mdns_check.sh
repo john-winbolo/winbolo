@@ -3,7 +3,7 @@
 # system's dns-sd tool, which goes through the same Bonjour service the iOS
 # client's LAN search uses (src/gui/ios/ios_discovery.m): browse for
 # _winbolo._udp, resolve the instance to its port and TXT record, and look up
-# the host's address. See docs/IOS.md.
+# the host's address.
 #
 # Usage: tools/ios/mdns_check.sh [--ds PATH] [--port P] [--out DIR]
 #                                [-- extra WinBoloDS arguments]
