@@ -47,18 +47,18 @@ Mechanics the brain relies on (src/bolo/lgm.c, tank.c):
     line only confirms he really pinned at the wall.
   * WHERE HE STARTS.  lgmNewPrimaryRequest puts him on the tank's world
     position (tankGetWorld) and lgmApplyStartOffset then moves him
-    LGM_START_OFFSET (64 wu) towards the centre of his target square, in
-    whole numbers: each axis is d * 64 / dist with the fraction dropped,
+    LGM_START_OFFSET (16 wu) towards the centre of his target square, in
+    whole numbers: each axis is d * 16 / dist with the fraction dropped,
     dist being the whole part of the distance.  Here the target centre is
     about 2600 wu north and 128-383 wu west of the tank (the tank is on its
     own column, the target one column west), so dist is always more than
-    |dy| and never as much as |dy| * 64 / 63: the y part is always -63 and
-    the x part is 3 to 9 wu west.  He starts walking from start_y - 63, so
-        pin residue = (start_y - START_DY) mod 16,   START_DY = 63.
+    |dy| and never as much as |dy| * 16 / 15: the y part is always -15 and
+    the x part is 0 to 2 wu west.  He starts walking from start_y - 15, so
+        pin residue = (start_y - START_DY) mod 16,   START_DY = 15.
     An engine from before the start offset puts him exactly on the tank;
     for one of those pass --start-dy 0 (residue = start_y mod 16), which is
     what an unpatched --expect-death engine normally is.
-    NOT RE-RUN since the start offset went in: the 63 is worked out from
+    NOT RE-RUN since the start offset went in: the 15 is worked out from
     lgmApplyStartOffset by hand, not measured.  The check is the MAN lines of
     one report: his quantized y steps down 16 a tick, and a trial whose res
     is 0 must show the pinned man in the wall row (y == BOUNDARY - 16).
@@ -113,8 +113,8 @@ REPORT = "lgm_wallshot_report.txt"
 TICKS = 12000             # engine ticks (2 per brain frame): park + 12 trials plus repairs
 TRIALS_PER_GAME = 12      # the 6 wu creep visits all 8 residues of the start
                           # parity in 8 trials; ~1 shell a trial from 40
-START_DY = 63             # how far north of the tank the man starts walking:
-                          # the y part of the 64 wu start offset (see header)
+START_DY = 15             # how far north of the tank the man starts walking:
+                          # the y part of the 16 wu start offset (see header)
 K = 1                     # harvest target one tile WEST: the man slides
 LETHAL = {0, 1}           # pin residues (man_y - BOUNDARY) the old check kills
 
@@ -443,7 +443,7 @@ def main():
     ap.add_argument("--ticks", type=int, default=TICKS)
     ap.add_argument("--start-dy", type=int, default=START_DY,
                     help="how far north of the tank the man starts walking "
-                         f"(default {START_DY}: the 64 wu start offset); pass 0 "
+                         f"(default {START_DY}: the 16 wu start offset); pass 0 "
                          "for an engine from before the start offset")
     ap.add_argument("--exe", default=None,
                     help="WinBoloDS.exe to run instead of <exe-root>/build/WinBoloDS.exe "
