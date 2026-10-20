@@ -36,15 +36,6 @@
 -- as a circle of radius 7 with the edge left out, so a pillbox exactly 7
 -- away, or at 5 across and 5 down, stays calm.
 --
--- Builder walk. The builder slows by the terrain he walks over, by the
--- round's man_speed_* rules, everywhere but the square he is going to build
--- on. On that square WinBolo always walks him up to its centre at the
--- refuelling base speed, so a wall or pillbox put on swamp, crater or rubble
--- is reached at full speed. Mac Bolo slows him there too.
--- man_bless_tile_terrain_speed turns the Mac Bolo walk on. A square with no
--- walking speed, such as a river, a wall to repair or a live pillbox, keeps
--- the refuelling base speed. The walk back to the tank is not changed.
---
 -- Starts. The engine tells on_choose_start which start the lobby put the
 -- seat on: the start its player picked by hand, else one on the team's
 -- side, else the engine's own spread of the field. That start is the
@@ -88,7 +79,6 @@
 --   pill_aim            pillbox aiming and massage (pill_aim_mac).
 --   base_defence        base defence circle (pill_base_defend_shape).
 --   base_defence_radius its radius (pill_base_defend_range, 7).
---   builder_walk        builder walk (man_bless_tile_terrain_speed).
 --   spawn_starts        the Mac Bolo start pick for spawns.
 --   first_start_lobby   "Override first start to what was chosen in lobby".
 --                       On (the default): a tank the lobby has a start
@@ -115,12 +105,12 @@
 scenario = {
   name = "Mac Bolo Rules",
   description = "Plays the Mac Bolo shell pushback, pillbox shell cap, " ..
-                "tank clearance, pillbox massage, base defence circle, " ..
-                "builder walk and spawn starts. Each part can be turned " ..
-                "off in the lobby.",
+                "tank clearance, pillbox massage, base defence circle " ..
+                "and spawn starts. Each part can be turned off in the " ..
+                "lobby.",
   api = 1,
   author = "WinBolo",
-  updated = "2026-10-15T15:09Z",
+  updated = "2026-10-20T17:19Z",
   kind = "mod",
   bound = false,
 
@@ -165,10 +155,6 @@ scenario = {
     { id = "base_defence_radius", label = "Base defence circle radius",
       type = "int", min = 1, max = 30, step = 1, default = 7 },
 
-    -- Builder walk: the square he builds on slows him by its terrain.
-    { id = "builder_walk", label = "Mac Bolo builder walk", type = "bool",
-      default = true },
-
     -- Starts: the two-pass Mac Bolo pick for spawns.
     { id = "spawn_starts", label = "Mac Bolo spawn starts", type = "bool",
       default = true },
@@ -198,7 +184,6 @@ local SHELL_CAP         = game.setting("shell_cap")
 local TANK_BOXES        = game.setting("tank_boxes")
 local PILL_AIM          = game.setting("pill_aim")
 local BASE_DEFENCE      = game.setting("base_defence")
-local BUILDER_WALK      = game.setting("builder_walk")
 local SPAWN_STARTS      = game.setting("spawn_starts")
 local FIRST_START_LOBBY = game.setting("first_start_lobby")
 
@@ -240,11 +225,6 @@ if BASE_DEFENCE then
   rules.pill_base_defend_shape = 1
   -- A radius, with the edge left out (7 by default).
   rules.pill_base_defend_range = game.setting("base_defence_radius")
-end
-
-if BUILDER_WALK then
-  -- Cross the square he builds on at its terrain speed.
-  rules.man_bless_tile_terrain_speed = 1
 end
 
 scenario.rules = rules
