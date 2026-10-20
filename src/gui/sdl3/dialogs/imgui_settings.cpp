@@ -820,13 +820,13 @@ extern "C" void imguiSettingsVoiceMicTest(float barWidth) {
  * ------------------------------------------------------- */
 /* The full screen map's panel settings: how see-through the newswire, the
  * builder tools and the status panel are drawn, and the newswire's auto-hide.
- * The desktop's full screen map and the iOS touch layout's full screen read
+ * The desktop's full screen map and the touch layout's full screen read
  * the same four settings; touchLayout picks the transparency tooltips, since
  * the builder tools and the status panel sit in different places there.
  * Each slider is applied as it moves so the panel changes under it, and
- * written to the preferences once it is let go. The web and Android show
- * none of them. */
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__)
+ * written to the preferences once it is let go. The web shows none of
+ * them. */
+#if !defined(__EMSCRIPTEN__)
 static void renderFullScreenPanelSettings(bool touchLayout) {
     int trans = sdl3DrawGetNewswireTransparency();
     ImGui::SetNextItemWidth(dialogFontW(200.0f));
@@ -980,7 +980,7 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         imguiHelpTooltip(langGetText(STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP));
     }
 #endif
-#if !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)  /* an iOS window is always full screen */
+#if !defined(__EMSCRIPTEN__) && !BOLO_MOBILE  /* a mobile window is always full screen */
     /* ---- Full screen ---- */
     if (!uiModeIsTablet() && !uiModeIsSteamDeck() && !uiShouldUseControllerMode()) {
         /* Read the window itself rather than the preference, so the tick still
@@ -1046,7 +1046,7 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
     }
 #endif
 
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
     /* ---- Full screen, the touch layout's ---- The map fills the screen with
        the controls over it (sdl3DrawIsTabletMapFullScreen). The tick reads
        the preference, since an iOS window is full screen whatever it says,
@@ -1599,9 +1599,9 @@ extern "C" void imguiSettingsRenderSoundTab(SettingsRenderCtx *ctx) {
         bool se = (bool)soundEffects;
         if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_EFFECTS), &se)) windowSoundEffects_toggle();
     }
-    /* Android and the web client do not define positionalSound; iOS and the
-       desktop do. */
-#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+    /* The web client does not define positionalSound; the desktop, iOS and
+       Android do. */
+#if !defined(__EMSCRIPTEN__)
     {
         bool ps = (bool)positionalSound;
         if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_POSITIONAL_SOUND_CB), &ps)) windowPositionalSound_toggle();
@@ -1845,7 +1845,7 @@ extern "C" void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx) {
  * via the write-through setter.  The editable InputText remains the primary
  * input and the fallback on platforms without a native folder dialog.
  * iOS shows none of the folder fields, so it has none of this glue. */
-#if !defined(__IPHONEOS__)
+#if !BOLO_MOBILE
 static char s_hostingPickedDir[FILENAME_MAX];
 static bool s_hostingDirPicked = false;
 
@@ -2101,7 +2101,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                 /* Not on iOS: it has no folder picker, and its folders are
                    always the defaults in the app's own storage
                    (gamefront.c). */
-#if !defined(__IPHONEOS__)
+#if !BOLO_MOBILE
                 static char scriptDirBuf[FILENAME_MAX];
                 static bool scriptDirEditing = false;
                 if (s_hostingScriptDirPicked) {
@@ -2176,7 +2176,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
          * Browse filling it in. Not on iOS: it has no folder picker, and its
          * folders are always the defaults in the app's own storage
          * (gamefront.c). */
-#if !defined(__IPHONEOS__)
+#if !BOLO_MOBILE
         static char scnDirBuf[FILENAME_MAX];
         static bool scnDirEditing = false;
         if (s_hostingScnDirPicked) {
@@ -2238,7 +2238,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
              * it via SDL_ShowOpenFolderDialog. Not on iOS: it has no folder
              * picker, and its folders are always the defaults in the app's
              * own storage (gamefront.c). */
-#if !defined(__IPHONEOS__)
+#if !BOLO_MOBILE
             static char dirBuf[FILENAME_MAX];
             static bool dirEditing = false;
             /* Apply a folder chosen on a previous frame. */
@@ -2299,7 +2299,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
              * it via SDL_ShowOpenFolderDialog. Not on iOS: it has no folder
              * picker, and its folders are always the defaults in the app's
              * own storage (gamefront.c). */
-#if !defined(__IPHONEOS__)
+#if !BOLO_MOBILE
             static char logDirBuf[FILENAME_MAX];
             static bool logDirEditing = false;
             /* Apply a folder chosen on a previous frame. */

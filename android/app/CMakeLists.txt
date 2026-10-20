@@ -193,9 +193,6 @@ target_link_libraries(imgui_backends PUBLIC SDL3::SDL3)
 
 # bolo_static covers the bulk of the bolo source set; only the
 # HAVE_STEAM-divergent transport_udp_client.c stays per-target here.
-# client_mapload.c and nat_portmap.c are not referenced in this build —
-# android calls into the sim through its own android_gamesetup path
-# and has no NAT-PMP / UPnP wrapper.
 # Version string and network protocol bytes come from the shared module so
 # Android stays in lock-step with the desktop/server builds — one source of
 # truth (cmake/bolo_version.cmake) drives WINBOLO_VERSION, the display suffix,
@@ -211,10 +208,11 @@ set(ANDROID_SOURCES
     # Android entry point and frontend
     ${PROJ_ROOT}/src/android/main_android.c
     ${PROJ_ROOT}/src/android/android_frontend.c
-    ${PROJ_ROOT}/src/android/touch_input.c
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_welcome.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_mapchooser.cpp
-    ${PROJ_ROOT}/src/android/players_panel.cpp
+    # Shared mobile UI (touch input, legacy players panel), as iOS compiles.
+    ${PROJ_ROOT}/src/gui/mobile/touch_input.c
+    ${PROJ_ROOT}/src/gui/mobile/players_panel.cpp
     ${PROJ_ROOT}/src/android/winbolonet_stub.c
     ${PROJ_ROOT}/src/android/android_wbn_map_stubs.cpp
     ${PROJ_ROOT}/src/android/android_dialog_stubs.c
@@ -222,6 +220,10 @@ set(ANDROID_SOURCES
 
     # Per-target bolo source (HAVE_STEAM-divergent).
     ${PROJ_ROOT}/src/bolo/transport_udp_client.c
+    # The port mapping wrapper server_lifecycle.c calls. BOLO_PORTMAP is not
+    # defined here, so it compiles to the no-op stubs, as it does on every
+    # target built without libplum.
+    ${PROJ_ROOT}/src/bolo/nat_portmap.c
     # The lobby's default bot naming pools, read from data/bot_names.json.
     ${PROJ_ROOT}/src/bolo/lobby_bot_pools_json.c
 
@@ -249,6 +251,15 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_udpsetup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_gamebrowser.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_setname.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_trackersetup.cpp
+    # Touch handling every ImGui context needs on a phone: the keyboard
+    # without auto-capitalisation or autocorrect, and drag to scroll. Run
+    # from dialogDrawNavOutline, so it reaches every dialog and the in-game
+    # frame.
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_touch.cpp
+    # The "Connecting to <host>..." screen gamefront.c shows on mobile while
+    # a join waits on the network.
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_connecting.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_messagebox.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keycap.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_lobby.cpp
@@ -295,7 +306,12 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/flags.c
     ${PROJ_ROOT}/src/gui/sdl3/dns_lookups.c
     ${PROJ_ROOT}/src/gui/sdl3/gamefront.c
+    # The shared sim-driving cores every client platform calls: the
+    # keys/game tick step, the join wait, the guarded frontEnd* bodies with
+    # the tutorial sequencer, and the single-player lobby seeding.
     ${PROJ_ROOT}/src/client_frontend/client_frontend_connect.c
+    ${PROJ_ROOT}/src/client_frontend/client_frontend_tick.c
+    ${PROJ_ROOT}/src/client_frontend/client_frontend_common.c
     ${PROJ_ROOT}/src/client_frontend/client_frontend_sp.c
     ${PROJ_ROOT}/src/gui/sdl3/bg_game.c
     ${PROJ_ROOT}/src/gui/sdl3/mapview.c
@@ -332,11 +348,6 @@ set(ANDROID_SOURCES
     # Shared map-gen controls used by the map chooser dialog (not the
     # full map editor — this file matches what the iOS build pulls in).
     ${PROJ_ROOT}/src/mapeditor/mapgen_imgui.cpp
-
-    # Server (for single-player). server_sim.c + servermessages.c
-    # come from server_sim_static; threads.c comes from threads_static.
-    ${PROJ_ROOT}/src/server/geolookup.c
-    ${PROJ_ROOT}/src/server/server_stubs.c
 )
 
 add_library(main SHARED ${ANDROID_SOURCES})
@@ -345,6 +356,7 @@ target_include_directories(main PRIVATE
     ${PROJ_ROOT}/src/gui/sdl3
     ${PROJ_ROOT}/src/gui/sdl3/dialogs
     ${PROJ_ROOT}/src/gui
+    ${PROJ_ROOT}/src/gui/mobile
     ${PROJ_ROOT}/src/server
     ${PROJ_ROOT}/src/client_frontend
     # imgui_markdown.h for the WinBolo.net dialog's news bodies.
@@ -361,7 +373,14 @@ bolo_grant_internal_source_access(main
     ${PROJ_ROOT}/src/bolo/transport_udp_client.c
     ${PROJ_ROOT}/src/gui/sdl3/bg_game.c)
 
-target_link_libraries(main PRIVATE bolo_static scenario_static server_sim_static bot_brains_static threads_static)
+# server_static is the server runtime the desktop hosts with: the UDP server,
+# server_lifecycle.c and geolookup.c. Single player starts and ticks through
+# the same lifecycle. The same link line and order as WinBoloIOS in the root
+# CMakeLists.txt; lld resolves the server_static / server_sim_static cycle
+# without a link group.
+target_link_libraries(main PRIVATE bolo_static scenario_static
+    server_static server_sim_static server_round_log_static
+    bot_brains_static threads_static)
 target_link_libraries(main PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf

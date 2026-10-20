@@ -331,7 +331,7 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
     cfg->talkCenterX = spaceRight - cfg->talkRadius;
     cfg->talkCenterY = gsRowY;
   }
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
   /* A narrow gutter (an iPad in the touch layout has about 311 units) leaves
      the gunsight row too little room, and the talk button came out about a
      third of a gunsight button's width. There it gets a row of its own, at
@@ -438,7 +438,7 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   /* --- Scroll joystick — in the gap between build/resource area and gunsight buttons --- */
   float scrollTop = buildRegionTop + buildGridH + pad * 2;
   float scrollBottom = gsRowY - cfg->gsIncRadius - pad * 2;
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
   if (talkOwnRow) {
     scrollBottom = cfg->talkCenterY - cfg->talkRadius - pad * 2;
   }
@@ -1781,10 +1781,10 @@ static void overviewButtonRect(float *cx, float *cy, float *r) {
 
 /* Only in a running game, and not while the server withholds the overview;
    the map stays closable whatever happens, so the button stays up while it
-   is open. iOS only: Android and a desktop in the tablet layout have no
-   in-window map to open (sdl3ImguiShowOverviewInWindow does nothing there). */
+   is open. Mobile only: a desktop in the tablet layout has no in-window map
+   to open (sdl3ImguiShowOverviewInWindow does nothing there). */
 static bool overviewButtonShown(ClientSim *cs) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if (defined(__APPLE__) && TARGET_OS_IOS) || defined(__ANDROID__)
   if (sdl3DrawIsOverviewInWindow()) return true;
   return cs != nullptr && clientSimIsRunning(cs) && !clientSimIsInLobby(cs) &&
          sdl3ImguiIsOverviewOffered();
@@ -2225,8 +2225,8 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
   processOverviewButton(cs);
 
   /* With the map up, the game view's touches drive the map; two fingers on it
-     pinch only then. iOS only, as for the button. */
-#if defined(__APPLE__) && TARGET_OS_IOS
+     pinch only then. Mobile only, as for the button. */
+#if (defined(__APPLE__) && TARGET_OS_IOS) || defined(__ANDROID__)
   bool overviewOn = sdl3DrawIsOverviewInWindow();
 #else
   bool overviewOn = false;

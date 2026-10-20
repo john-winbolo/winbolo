@@ -520,7 +520,7 @@ extern "C" int imguiWelcomeShow(void) {
             const int lastPlayRow = RESULT_LAN;
 #endif
 
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             /* Fit the column above the social icons and the version label in
                the bottom-right corner. A tall column on a short screen (an
                iPad in landscape has eight rows at a larger scale) ran the last

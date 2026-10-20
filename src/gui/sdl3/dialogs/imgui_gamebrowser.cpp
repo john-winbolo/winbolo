@@ -1563,7 +1563,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                        + spacingY     /* Spacing */
                        + frameH       /* button row */
                        + spacingY;    /* bottom padding */
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
         /* iOS is too narrow for the desktop's one row of fixed-width buttons,
          * and the status legend can run off the right edge too. Each button
          * is as wide as its label needs, and every button and legend entry
@@ -2475,19 +2475,19 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 ImGui::SameLine(0.0f, 4.0f);
                 ImGui::TextDisabled("%s", txt);
             };
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             iosLegPlace(IOS_LEG_LOBBY);
 #else
             ImGui::SameLine(0.0f, 16.0f * s);
 #endif
             legendDot(dotGreen,  true,  langGetText(STR_DLGBROWSER_ST_LOBBY));
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             iosLegPlace(IOS_LEG_INGAME);
 #else
             ImGui::SameLine(0.0f, 16.0f * s);
 #endif
             legendDot(dotOrange, true,  langGetText(STR_DLGBROWSER_ST_INGAME));
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             iosLegPlace(IOS_LEG_LOCKED);
 #else
             ImGui::SameLine(0.0f, 16.0f * s);
@@ -2496,7 +2496,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             /* A grey dot is a server that did not answer the ping, which the
              * web never sends. */
 #ifndef __EMSCRIPTEN__
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             iosLegPlace(IOS_LEG_NORESP);
 #else
             ImGui::SameLine(0.0f, 16.0f * s);
@@ -2569,7 +2569,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 #else
             if (!hasSelection) ImGui::BeginDisabled();
 
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             if (ImGui::Button(langGetText(STR_DLGTCP_JOIN),
                               ImVec2(iosBtnW(langGetText(STR_DLGTCP_JOIN)), btnH))) {
 #else
@@ -2606,7 +2606,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
              * the modal viewer on the desktop, the reel on iOS
              * (ios_spectator.cpp). The web client has neither, which matches
              * the openSpectate case. */
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             iosPlace(IOS_BTN_SPECTATE);
             const float spectateW = iosBtnW(langGetText(STR_DLGBROWSER_SPECTATE));
 #else
@@ -2636,7 +2636,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
              * first-class footer action. Disabled until the selected server has
              * a loaded preview. */
             if (uiShouldUseControllerMode()) {
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
                 iosPlace(IOS_BTN_ENLARGE);
                 const float enlargeW = iosBtnW(langGetText(STR_DLGBROWSER_ENLARGE_BTN));
 #else
@@ -2660,13 +2660,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
              * rejoin nor the name set here would reach it. */
 #ifndef __EMSCRIPTEN__
             /* Rejoin */
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             iosPlace(IOS_BTN_REJOIN);
 #else
             ImGui::SameLine();
 #endif
             if (!hasSelection) ImGui::BeginDisabled();
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             if (ImGui::Button(langGetText(STR_DLGTCP_REJOIN),
                               ImVec2(iosBtnW(langGetText(STR_DLGTCP_REJOIN)), btnH))) {
 #else
@@ -2691,7 +2691,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             if (!hasSelection) ImGui::EndDisabled();
 
             /* New Game, on both tabs. */
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             const float newGameW = iosBtnW(langGetText(STR_DLGBROWSER_NEWGAME));
             iosPlace(IOS_BTN_NEWGAME);
 #else
@@ -2712,7 +2712,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             if (useTracker) imguiHelpTooltip(langGetText(STR_DLGBROWSER_NEWGAME_PORTFWD_TIP));
 
             /* Player Name */
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             iosPlace(IOS_BTN_NAME);
             if (ImGui::Button(langGetText(STR_DLGBROWSER_PLAYER_NAME_BTN),
                               ImVec2(iosBtnW(langGetText(STR_DLGBROWSER_PLAYER_NAME_BTN)), btnH))) {
@@ -2726,12 +2726,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             imguiHandOnHover();
 
             /* Manual Connect */
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             iosPlace(IOS_BTN_MANUAL);
 #else
             ImGui::SameLine();
 #endif
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             if (ImGui::Button(langGetText(STR_DLGBROWSER_MANUAL),
                               ImVec2(iosBtnW(langGetText(STR_DLGBROWSER_MANUAL)), btnH))) {
 #else
@@ -2751,7 +2751,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
              * exact position and the glyph fits beside it. */
             float cancelX = panelW - btnW - 16.0f * s;
             if (padLegend) cancelX -= glyphH + 4.0f;
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             /* Right-aligned at its own width, on a row of its own when the
              * last row is full (see iosBreak above). */
             const float iosCancelW = iosBtnW(langGetText(STR_CANCEL));
@@ -2767,7 +2767,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 #endif
             glyphInline(SI_ACTION_MENU_CANCEL);
             WBUI::PushCancelStyle();
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
             bool cancelClicked = ImGui::Button(langGetText(STR_CANCEL), ImVec2(iosCancelW, btnH));
 #else
             bool cancelClicked = ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, btnH));

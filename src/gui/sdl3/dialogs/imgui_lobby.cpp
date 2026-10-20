@@ -1678,7 +1678,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                      ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
                     wantLeaveConfirm = true;
                 }
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
                 /* Ready stays disabled until the map has arrived, and the
                  * progress is otherwise only on the Map tab, while the lobby
                  * opens on Players. A phone has no hover to ask why. */
@@ -2974,8 +2974,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
             }
             ImGui_ImplSDL3_ProcessEvent(&ev);
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
+#if BOLO_LOBBY_REEL
             lobbyReelPinchEvent(&ev);  /* two-finger zoom on the Last round reel */
+#endif
             /* The same gesture on the Map tab's zoom popup and the chooser's
                preview, which take their input through map_preview_view. */
             mapPreviewViewTouchPinchEvent(&ev);

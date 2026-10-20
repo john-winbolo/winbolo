@@ -21,6 +21,7 @@
 #include "../winbolonet/winbolonet_client.h"
 #include "../winbolonet/wbn_serverlist.h"
 #include "../winbolonet/wbn_prefs_sync.h"
+#include "../winbolonet/winbolonetthread.h"
 #include "../winbolonet/http.h"
 
 bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
@@ -176,3 +177,77 @@ WbnSyncOutcome wbnPrefsSyncOnce(const char *userToken, const char *uploadSnapsho
 }
 
 void httpSetLogUploadTimeout(long seconds) { (void)seconds; }
+
+/* The lifecycle-driven server surface server_static calls: the session
+ * register and quit, the queued key and join-code checks, the lobby status
+ * line, and the round-log upload. Nothing is queued, so no result ever
+ * arrives and every check reports the player as not verified. */
+bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
+  (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines; (void)password;
+  (void)numBases; (void)numPills; (void)freeBases; (void)freePills; (void)numPlayers;
+  return FALSE;
+}
+
+uint32_t winbolonetQueueBeginSession(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
+  (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines; (void)password;
+  (void)numBases; (void)numPills; (void)freeBases; (void)freePills; (void)numPlayers;
+  return 0;
+}
+
+bool winbolonetApplyRegisterResult(int status, const char *response) {
+  (void)status; (void)response;
+  return FALSE;
+}
+
+bool winbolonetQueueEndSession(void) { return FALSE; }
+
+void winbolonetSendLobbyStatus(bool inLobby) { (void)inLobby; }
+
+uint32_t winbolonetQueueVerifyClientKey(const char *playerKey, const char *playerName) {
+  (void)playerKey; (void)playerName;
+  return 0;
+}
+
+bool winbolonetApplyVerifyResult(int status, const char *response,
+                                 const char *playerKey, BYTE playerNum,
+                                 char *errorMsg, bool *hasSteam,
+                                 bool *isSupporter) {
+  (void)status; (void)response; (void)playerKey; (void)playerNum;
+  if (errorMsg)    errorMsg[0]  = '\0';
+  if (hasSteam)    *hasSteam    = FALSE;
+  if (isSupporter) *isSupporter = FALSE;
+  return FALSE;
+}
+
+uint32_t winbolonetQueueVerifyJoinCode(const char *joinCode) {
+  (void)joinCode;
+  return 0;
+}
+
+bool winbolonetApplyVerifyJoinCodeResult(int status, const char *response,
+                                         char *playerNameOut,
+                                         bool *isLoggedInOut,
+                                         char *countryOut, int *userIdOut,
+                                         char *errorMsg) {
+  (void)status; (void)response;
+  if (playerNameOut) playerNameOut[0] = '\0';
+  if (isLoggedInOut) *isLoggedInOut   = FALSE;
+  if (countryOut)    countryOut[0]    = '\0';
+  if (userIdOut)     *userIdOut       = -1;
+  if (errorMsg)      errorMsg[0]      = '\0';
+  return FALSE;
+}
+
+uint32_t winbolonetThreadAddUpload(const char *fileName, const char *key) {
+  (void)fileName; (void)key;
+  return 0;
+}
+
+void winbolonetThreadDrainResults(WbnResultHandler handler, void *ctx) {
+  (void)handler; (void)ctx;
+}
+
+bool httpSendLogFile(const char *fileName, char *key, bool wantFeedback) {
+  (void)fileName; (void)key; (void)wantFeedback;
+  return FALSE;
+}

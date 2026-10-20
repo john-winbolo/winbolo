@@ -1470,7 +1470,7 @@ static void mapOverviewClose(void) {
  * the window always fills the screen and the mode is only ever the player's
  * own request. */
 static bool overviewLeavesWindowAlone(SDL_Window *win) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     (void)win;
     return true;
 #else
@@ -1485,7 +1485,7 @@ static bool overviewLeavesWindowAlone(SDL_Window *win) {
  * map button still opens and closes the map either way and leaves the choice
  * alone. */
 static bool tabletFullScreenOffered(void) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     return uiModeIsTablet();
 #else
     return false;
@@ -1500,7 +1500,7 @@ static bool tabletFullScreenOffered(void) {
  * Settings' alone and the map button leaves it as it is
  * (tabletFullScreenOffered). */
 static bool fullScreenFlagIsMapChoice(SDL_Window *win) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     (void)win;
     return !uiModeIsTablet();
 #else
@@ -1555,7 +1555,7 @@ static void overviewInWindowChoose(bool on) {
        geometry when this run never opened it. Only in a game: outside one
        the pop-out is already down and gameFrontShowMapOverview is what the
        next game reads. */
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     const bool hasPopOut = false;  /* iOS has no pop-out to hand back */
 #else
     const bool hasPopOut = true;
@@ -1905,7 +1905,7 @@ static void renderSysInfoContent(void) {
  * fits a phone held in landscape and scrolls inside; elsewhere it opens at
  * the given size on first use and is left where the player puts it. */
 static void infoPanelSizeNext(float w, float h) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     if (uiModeIsTablet()) {
         ImGuiViewport *vp = ImGui::GetMainViewport();
         float maxW = vp->Size.x * 0.9f;
@@ -2806,7 +2806,7 @@ static void renderOverviewInWindow(ClientSim *cs) {
        has gone. */
     sdl3DrawSetHudPanelHover(false, false, false);
 
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     /* The iOS tablet layout draws the map inside its game view, and the tablet
        overlay drives it by touch and draws its camera readout
        (sdl3imgui_tablet.cpp). No pan item and no HUD hit-test here: every
@@ -6785,7 +6785,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             if (ImGui::Selectable(langGetText(STR_DLGGAMEINFO_TITLE), s_showGameInfo)) { s_showGameInfo = !s_showGameInfo; infoOpened = s_showGameInfo; }
             if (ImGui::Selectable(langGetText(STR_DLGSYSINFO_TITLE),  s_showSysInfo))  { if (!s_showSysInfo) sysInfoGraphReset(); s_showSysInfo = !s_showSysInfo; infoOpened = s_showSysInfo; }
             if (ImGui::Selectable(langGetText(STR_DLGNETINFO_TITLE),  s_showNetInfo))  { if (!s_showNetInfo) pingGraphReset();  s_showNetInfo = !s_showNetInfo; infoOpened = s_showNetInfo; }
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
             /* A phone has no room for Settings and a panel side by side, so
                opening a panel puts Settings away. */
             if (infoOpened && uiModeIsTablet()) s_showSettings = false;
@@ -8429,7 +8429,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 break;
             case SDL_SCANCODE_O:
                 /* Same running-game condition as the File menu item. */
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
                 /* No pop-out on iOS: the overview there is the in-window one,
                    as the File menu offers it. */
                 if (cs != nullptr && clientSimIsRunning(cs))
@@ -8708,7 +8708,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
            too, in either layout: its window is always full screen, and the
            flag there is the touch layout's Full Screen choice, which the
            iPad's desktop layout must not set from its window. */
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
         const bool windowOwnsFlag = false;
 #else
         const bool windowOwnsFlag = true;
@@ -9148,9 +9148,7 @@ static void drainInGameNameReject(ClientSim *cs) {
    input gate suspends play and the solo-pause path freezes the sim while a
    message is up. Edge-detect open/close to toggle the freeze exactly once
    each way. Called from both the desktop and the tablet branch of the frame,
-   so the one edge state serves both. Not on Android, which does not compile
-   imgui_tutorial_overlay.cpp or define windowTutorialPause. */
-#if !defined(__ANDROID__)
+   so the one edge state serves both. */
 static void renderTutorialOverlay(ClientSim *cs) {
     static bool s_lastTutorialPause = false;
     tutorialOverlayRender(cs);
@@ -9160,7 +9158,6 @@ static void renderTutorialOverlay(ClientSim *cs) {
         s_lastTutorialPause = nowTutorialPause;
     }
 }
-#endif
 
 void sdl3ImguiPumpAndRender(ClientSim *cs) {
     /* The preferences' trailing write and the window-settings dirty flag,
@@ -9377,7 +9374,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                    transportUdpClientDestroy still gets its graceful
                    PACKET_QUIT out over a live socket. */
                 windowLeaveGame();
-#elif defined(__IPHONEOS__)
+#elif BOLO_MOBILE
                 /* The iOS driver's game loop ends on this and goes back to
                    the menu, as it does when a game ends. */
                 windowNewGame();
@@ -9519,9 +9516,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
            web client that a small touch screen puts in this layout, where the
            tutorial used to stop on its first message because nothing drew it;
            drawing it there is intended. */
-#if !defined(__ANDROID__)
         renderTutorialOverlay(cs);
-#endif
     } else {
     /* The in-window menu bar: everywhere but macOS, whose menus are native,
        and iOS, where no app draws a menu bar of its own: the iPad's classic
@@ -9568,9 +9563,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                 s_lastDeckPause = nowDeckPause;
             }
         }
-#if !defined(__ANDROID__)  /* see renderTutorialOverlay */
         renderTutorialOverlay(cs);
-#endif
         quickChatRender(cs);
         renderCtrlSendMsg(cs);
 
@@ -10083,19 +10076,17 @@ bool sdl3ImguiIsMapOverviewOpen(void) {
     return false;
 }
 /* The in-window mode is a desktop-window mode, so tablet has nothing to show
- * and nothing to report active. iOS is the exception: it has no pop-out, so
+ * and nothing to report active. Mobile is the exception: it has no pop-out, so
  * the in-window map is its one overview, drawn inside the tablet layout's game
  * view (sdl3draw.c) and opened from the tablet overlay's map button. */
 void sdl3ImguiShowOverviewInWindow(bool active) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     overviewInWindowChoose(active);
 #else
-#if !defined(__ANDROID__)
     if (!uiModeIsTablet()) {
         overviewInWindowChoose(active);
         return;
     }
-#endif
     (void)active;
 #endif
 }
@@ -10114,12 +10105,10 @@ bool sdl3ImguiIsOverviewOffered(void) {
     return !overviewSuppressed();
 }
 bool sdl3ImguiIsOverviewInWindowOpen(void) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     return sdl3DrawIsOverviewInWindow();
 #else
-#if !defined(__ANDROID__)
     if (!uiModeIsTablet()) return sdl3DrawIsOverviewInWindow();
-#endif
     return false;
 #endif
 }

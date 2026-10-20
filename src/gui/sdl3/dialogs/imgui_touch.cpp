@@ -9,7 +9,7 @@
  *                See imgui_touch.h.
  *********************************************************/
 
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
 
 #include <math.h>
 #include <SDL3/SDL.h>
@@ -160,4 +160,4 @@ extern "C" void imguiTouchFrame(void) {
     touchDragScroll();
 }
 
-#endif /* __IPHONEOS__ */
+#endif /* __IPHONEOS__ || __ANDROID__ */

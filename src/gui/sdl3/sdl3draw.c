@@ -538,7 +538,7 @@ static int          gTabletVpZoom = 0;
    status grids and newswire stay where they are and the map replaces only the
    15x15 view, so the map's own HUD is not drawn there. */
 static bool overviewInTabletView(void) {
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
   return uiModeIsTablet();
 #else
   return false;
@@ -3311,7 +3311,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
                 (clientSimGetMyTankLastDeath(cs) == LAST_DEATH_BY_MINES   && clientSimGetMyTankDeathWait(cs) < STATIC_ON_TICKS_MINES))) {
       /* Tank died and is waiting to respawn — draw Bolo-style pixel static noise */
       /* On iOS use half-res texture so static dots appear larger */
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
       int staticW = gameW / 2;
       int staticH = gameH / 2;
 #else

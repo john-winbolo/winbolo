@@ -111,7 +111,7 @@ static inline ImVec4 imguiPingBandColor(PingBand band) {
  *
  * Also call SDL_StopTextInput() to dismiss the keyboard when a dialog closes
  * or the user taps outside a text field. */
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
 static inline void dialogResetTextInputArea(SDL_Window *window) {
     /* Except for a field in the lower half of the window, which the keyboard
      * would cover in landscape: its area is left as the backend set it, so
@@ -705,14 +705,14 @@ static inline void dialogOverrideFramebufferScale(SDL_Renderer *renderer) {
  * Call after ImGui::CreateContext() and before the first NewFrame().
  * Always loads the TTF font; on mobile also applies touch-friendly styling. */
 static inline void dialogApplyScaling(float uiScale) {
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
     /* A finger lands less precisely than a mouse: a double tap's two taps
      * rarely fall within ImGui's 6 px. */
     ImGui::GetIO().MouseDoubleClickMaxDist = 24.0f;
 #endif
     if (uiScale <= 1.05f) {
         imguiLoadBoloFont(18.0f);
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
         /* An iPhone in landscape is about 390 pt tall, which gives a scale
          * of 1 and so skips the touch padding below; its buttons still need
          * it. */

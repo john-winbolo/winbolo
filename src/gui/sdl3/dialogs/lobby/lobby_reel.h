@@ -48,7 +48,7 @@ void lobbyReelRenderStandalone(ImVec2 rect);
 bool lobbyReelOpenSpectator(ImVec2 rect);
 void lobbyReelRenderSpectator(ImVec2 rect);
 
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
 /* Hand every polled event over; the reel keeps the pinch ones for its zoom. */
 void lobbyReelPinchEvent(const SDL_Event *ev);
 #endif

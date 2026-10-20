@@ -114,8 +114,10 @@ bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   void *cs, const char *serverHost, uint16_t serverPort);
 
 #include "dialogs/imgui_wbn_browser.h"
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
 #include "dialogs/imgui_connecting.h"
+#endif
+#if defined(__IPHONEOS__)
 #include "../ios/ios_drops.h"  /* iosDropsTakeLog */
 #endif
 #include "dialogs/imgui_onboarding.h"
@@ -1813,7 +1815,7 @@ static void gameFrontValidateWbnBeforeJoin(void) {
 
 /* -------------------------------------------------------
  * The steps of a join, shared by the blocking join below
- * and the iOS join screen (gameFrontIosJoin), which waits
+ * and the iOS join screen (gameFrontMobileJoin), which waits
  * for each without blocking.
  * ------------------------------------------------------- */
 
@@ -1995,9 +1997,9 @@ static bool gameFrontJoinFailedAskAgain(const char *failFallback) {
   return FALSE;
 }
 
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
 /* -------------------------------------------------------
- * gameFrontIosJoin — the same join on iOS, where nothing
+ * gameFrontMobileJoin — the same join on mobile, where nothing
  * may hold the main thread for long: the server's info
  * reply and the WinBolo.net token check run on threads of
  * their own, and the join is ticked once a frame, all
@@ -2009,7 +2011,7 @@ static bool gameFrontJoinFailedAskAgain(const char *failFallback) {
 /* A background job the screen polls. Whichever of the job and the screen
  * finishes with it last frees it: the job when the player cancelled first
  * (it cannot be stopped mid-call), the screen otherwise. */
-enum { IOS_JOB_RUNNING = 0, IOS_JOB_DONE, IOS_JOB_ABANDONED };
+enum { MOBILE_JOB_RUNNING = 0, MOBILE_JOB_DONE, MOBILE_JOB_ABANDONED };
 
 typedef struct {
   SDL_AtomicInt state;
@@ -2025,44 +2027,44 @@ typedef struct {
   int rank, rankTotal;
   WbnStats stats;
   bool validateOk, tokenRejected;
-} IosJoinJob;
+} MobileJoinJob;
 
 /* Called by the job when its work is done. */
-static void iosJoinJobFinish(IosJoinJob *job) {
-  if (!SDL_CompareAndSwapAtomicInt(&job->state, IOS_JOB_RUNNING, IOS_JOB_DONE)) {
+static void mobileJoinJobFinish(MobileJoinJob *job) {
+  if (!SDL_CompareAndSwapAtomicInt(&job->state, MOBILE_JOB_RUNNING, MOBILE_JOB_DONE)) {
     SDL_free(job);  /* the screen gave up on it */
   }
 }
 
 /* Called by the screen when the player cancels while the job runs. */
-static void iosJoinJobAbandon(IosJoinJob *job) {
-  if (!SDL_CompareAndSwapAtomicInt(&job->state, IOS_JOB_RUNNING, IOS_JOB_ABANDONED)) {
+static void mobileJoinJobAbandon(MobileJoinJob *job) {
+  if (!SDL_CompareAndSwapAtomicInt(&job->state, MOBILE_JOB_RUNNING, MOBILE_JOB_ABANDONED)) {
     SDL_free(job);  /* it had already finished */
   }
 }
 
-static int SDLCALL iosJoinPingThread(void *data) {
-  IosJoinJob *job = (IosJoinJob *)data;
+static int SDLCALL mobileJoinPingThread(void *data) {
+  MobileJoinJob *job = (MobileJoinJob *)data;
   job->pingOk = discoveryPingServer(job->address, job->port, &job->dpr);
-  iosJoinJobFinish(job);
+  mobileJoinJobFinish(job);
   return 0;
 }
 
-static int SDLCALL iosJoinValidateThread(void *data) {
-  IosJoinJob *job = (IosJoinJob *)data;
+static int SDLCALL mobileJoinValidateThread(void *data) {
+  MobileJoinJob *job = (MobileJoinJob *)data;
   job->validateOk = winbolonetAuthValidateEx(job->token, job->playerName,
                                              &job->rank, &job->rankTotal,
                                              &job->stats, job->errorMsg,
                                              &job->tokenRejected);
-  iosJoinJobFinish(job);
+  mobileJoinJobFinish(job);
   return 0;
 }
 
 /* Starts fn on a thread with a fresh job; NULL if the thread would not
  * start. */
-static IosJoinJob *iosJoinJobStart(SDL_ThreadFunction fn, const char *name,
-                                   IosJoinJob *job) {
-  SDL_SetAtomicInt(&job->state, IOS_JOB_RUNNING);
+static MobileJoinJob *mobileJoinJobStart(SDL_ThreadFunction fn, const char *name,
+                                   MobileJoinJob *job) {
+  SDL_SetAtomicInt(&job->state, MOBILE_JOB_RUNNING);
   SDL_Thread *t = SDL_CreateThread(fn, name, job);
   if (t == NULL) {
     SDL_free(job);
@@ -2072,23 +2074,23 @@ static IosJoinJob *iosJoinJobStart(SDL_ThreadFunction fn, const char *name,
   return job;
 }
 
-static ConnectingStep iosJoinWaitJobStep(void *ctx, const char **stageOut,
+static ConnectingStep mobileJoinWaitJobStep(void *ctx, const char **stageOut,
                                          float *progressOut) {
-  IosJoinJob *job = (IosJoinJob *)ctx;
+  MobileJoinJob *job = (MobileJoinJob *)ctx;
   *stageOut = (job->token[0] != '\0') ? langGetText(STR_DLGWBN_CHECKING)
                                        : langGetText(STR_DLGCONNECTING_PING);
   *progressOut = -1.0f;
-  return (SDL_GetAtomicInt(&job->state) == IOS_JOB_DONE) ? CONNECTING_STEP_DONE
+  return (SDL_GetAtomicInt(&job->state) == MOBILE_JOB_DONE) ? CONNECTING_STEP_DONE
                                                          : CONNECTING_STEP_WAITING;
 }
 
 /* Waits for job behind the screen. TRUE when it finished; FALSE when the
  * player cancelled or quit, and the job then frees itself. */
-static bool iosJoinWaitJob(IosJoinJob *job) {
-  if (imguiConnectingRun(gameFrontUdpAddress, iosJoinWaitJobStep, job)) {
+static bool mobileJoinWaitJob(MobileJoinJob *job) {
+  if (imguiConnectingRun(gameFrontUdpAddress, mobileJoinWaitJobStep, job)) {
     return TRUE;
   }
-  iosJoinJobAbandon(job);
+  mobileJoinJobAbandon(job);
   return FALSE;
 }
 
@@ -2097,37 +2099,37 @@ typedef struct {
   ClientFrontJoinStep result;
   Uint64 startMs;     /* when the join was first stepped */
   Uint64 lastStepMs;  /* when the join was last stepped; 0 before the first */
-} IosJoinWait;
+} MobileJoinWait;
 
 /* The step's contract is about one call every 20 ms, which is also what
  * makes 1500 steps the blocking join's 30 s; the screen draws faster than
  * that, so it steps only once 20 ms have passed. */
-#define IOS_JOIN_STEP_MS 20
-#define IOS_JOIN_STEP_LIMIT 1500
+#define MOBILE_JOIN_STEP_MS 20
+#define MOBILE_JOIN_STEP_LIMIT 1500
 /* The join also gives up after this many milliseconds on the clock. It is
- * IOS_JOIN_STEP_LIMIT x IOS_JOIN_STEP_MS, the blocking join's 30 s. Frames
- * can come further apart than IOS_JOIN_STEP_MS (an old phone, or the app
+ * MOBILE_JOIN_STEP_LIMIT x MOBILE_JOIN_STEP_MS, the blocking join's 30 s. Frames
+ * can come further apart than MOBILE_JOIN_STEP_MS (an old phone, or the app
  * briefly in the background), and then the step count alone would let the
  * wait run well past 30 s. Whichever of the two is reached first ends it. */
-#define IOS_JOIN_TIMEOUT_MS (IOS_JOIN_STEP_LIMIT * IOS_JOIN_STEP_MS)
+#define MOBILE_JOIN_TIMEOUT_MS (MOBILE_JOIN_STEP_LIMIT * MOBILE_JOIN_STEP_MS)
 
-static ConnectingStep iosJoinAwaitStep(void *ctx, const char **stageOut,
+static ConnectingStep mobileJoinAwaitStep(void *ctx, const char **stageOut,
                                        float *progressOut) {
-  IosJoinWait *w = (IosJoinWait *)ctx;
+  MobileJoinWait *w = (MobileJoinWait *)ctx;
   Uint64 now = SDL_GetTicks();
   if (w->lastStepMs == 0) {
     w->startMs = now;
   }
   if (w->result == CLIENT_FRONT_JOIN_WAITING &&
-      now - w->startMs >= IOS_JOIN_TIMEOUT_MS) {
+      now - w->startMs >= MOBILE_JOIN_TIMEOUT_MS) {
     /* Out of time: a limit equal to the steps already taken makes the step
      * settle the landing now, as it does when the step limit is reached. */
     w->lastStepMs = now;
     w->result = clientFrontAwaitJoinStep(humanSim, &w->waited, w->waited);
-  } else if (w->lastStepMs == 0 || now - w->lastStepMs >= IOS_JOIN_STEP_MS) {
+  } else if (w->lastStepMs == 0 || now - w->lastStepMs >= MOBILE_JOIN_STEP_MS) {
     w->lastStepMs = now;
     w->result = clientFrontAwaitJoinStep(humanSim, &w->waited,
-                                         IOS_JOIN_STEP_LIMIT);
+                                         MOBILE_JOIN_STEP_LIMIT);
   }
   /* A server with no lobby sends the map inside this wait; show how much
    * of it has come. */
@@ -2144,7 +2146,7 @@ static ConnectingStep iosJoinAwaitStep(void *ctx, const char **stageOut,
 
 /* The player cancelled, or quit, while the join waited: nothing to report,
  * back to the screen the join came from. */
-static bool iosJoinCancelled(openingStates prevState) {
+static bool mobileJoinCancelled(openingStates prevState) {
   if (humanSim != NULL) {
     frontEndSetActiveClientSim(NULL);
     clientSimDisconnect(humanSim);
@@ -2157,16 +2159,16 @@ static bool iosJoinCancelled(openingStates prevState) {
   return FALSE;
 }
 
-static bool gameFrontIosJoin(openingStates prevState) {
+static bool gameFrontMobileJoin(openingStates prevState) {
   if (!spServerSimActive) {
-    IosJoinJob *job = (IosJoinJob *)SDL_calloc(1, sizeof(IosJoinJob));
+    MobileJoinJob *job = (MobileJoinJob *)SDL_calloc(1, sizeof(MobileJoinJob));
     if (job != NULL) {
       SDL_strlcpy(job->address, gameFrontUdpAddress, sizeof(job->address));
       job->port = gameFrontTargetUdp;
-      job = iosJoinJobStart(iosJoinPingThread, "JoinPing", job);
+      job = mobileJoinJobStart(mobileJoinPingThread, "JoinPing", job);
     }
-    if (job != NULL && !iosJoinWaitJob(job)) {
-      return iosJoinCancelled(prevState);
+    if (job != NULL && !mobileJoinWaitJob(job)) {
+      return mobileJoinCancelled(prevState);
     }
     DiscoveryPingResult dpr;
     bool pingOk;
@@ -2195,12 +2197,12 @@ static bool gameFrontIosJoin(openingStates prevState) {
   prefsFlush();
   {
     /* With no token, gameFrontValidateWbnBeforeJoin only tries Steam, which
-     * iOS does not have, so it returns at once. */
+     * mobile does not have, so it returns at once. */
     char token[256], expiry[256];
     gameFrontGetWinbolonetToken(token, expiry);
-    IosJoinJob *job = NULL;
+    MobileJoinJob *job = NULL;
     if (token[0] != '\0') {
-      job = (IosJoinJob *)SDL_calloc(1, sizeof(IosJoinJob));
+      job = (MobileJoinJob *)SDL_calloc(1, sizeof(MobileJoinJob));
     }
     if (job == NULL) {
       gameFrontValidateWbnBeforeJoin();
@@ -2208,11 +2210,11 @@ static bool gameFrontIosJoin(openingStates prevState) {
       SDL_strlcpy(job->token, token, sizeof(job->token));
       job->rank = -1;
       job->stats.valid = FALSE;
-      job = iosJoinJobStart(iosJoinValidateThread, "JoinValidate", job);
+      job = mobileJoinJobStart(mobileJoinValidateThread, "JoinValidate", job);
       if (job == NULL) {
         gameFrontValidateWbnBeforeJoin();
-      } else if (!iosJoinWaitJob(job)) {
-        return iosJoinCancelled(prevState);
+      } else if (!mobileJoinWaitJob(job)) {
+        return mobileJoinCancelled(prevState);
       } else {
         gameFrontApplyWbnValidate(job->validateOk, job->tokenRejected,
                                   job->playerName, job->rank, job->rankTotal,
@@ -2229,13 +2231,13 @@ static bool gameFrontIosJoin(openingStates prevState) {
     if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
       failFallback = langGetText(STR_GAMEFRONTERR_JOINGAME);
     } else {
-      IosJoinWait w;
+      MobileJoinWait w;
       w.waited = 0;
       w.startMs = 0;
       w.lastStepMs = 0;
       w.result = CLIENT_FRONT_JOIN_WAITING;
-      if (!imguiConnectingRun(gameFrontUdpAddress, iosJoinAwaitStep, &w)) {
-        return iosJoinCancelled(prevState);
+      if (!imguiConnectingRun(gameFrontUdpAddress, mobileJoinAwaitStep, &w)) {
+        return mobileJoinCancelled(prevState);
       }
       if (w.result == CLIENT_FRONT_JOIN_LANDED) {
         gameFrontJoinLanded();
@@ -2250,7 +2252,7 @@ static bool gameFrontIosJoin(openingStates prevState) {
     return FALSE;
   }
 }
-#endif /* __IPHONEOS__ */
+#endif /* __IPHONEOS__ || __ANDROID__ */
 
 /* -------------------------------------------------------
  * gameFrontSetDlgState — dialog state machine transitions
@@ -2306,8 +2308,8 @@ bool gameFrontSetDlgState(openingStates newState) {
     } else {
       gameFrontLobbyServerName[0] = '\0';
     }
-#if defined(__IPHONEOS__)
-    returnValue = gameFrontIosJoin(prevState);
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+    returnValue = gameFrontMobileJoin(prevState);
 #else
     if (!spServerSimActive) {
       DiscoveryPingResult dpr;
@@ -4494,7 +4496,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     } else {
       snprintf(def, FILENAME_MAX, "%s", "uploads");
     }
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     /* iOS always uses the default. The saved value is a full path, and an
      * iOS app's storage moves when it is reinstalled or updated, so a saved
      * path can point outside it; the host would then refuse to start, and
@@ -4530,7 +4532,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     } else {
       snprintf(def, FILENAME_MAX, "%s", "uploads/Scripts");
     }
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     SDL_strlcpy(gameFrontHostingScriptUploadDir, def, FILENAME_MAX);  /* as Upload Dir */
 #else
     prefsGetString("HOSTING", "Script Upload Dir", def,
@@ -4567,7 +4569,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     } else {
       snprintf(def, FILENAME_MAX, "%s", "Mods");
     }
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     (void)old;
     SDL_strlcpy(gameFrontHostingScenarioDir, def, FILENAME_MAX);  /* as Upload Dir */
 #else
@@ -4601,7 +4603,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     } else {
       snprintf(def, FILENAME_MAX, "%s", ".");
     }
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     SDL_strlcpy(gameFrontHostingLogDir, def, FILENAME_MAX);  /* as Upload Dir */
 #else
     prefsGetString("HOSTING", "Log Dir", def, gameFrontHostingLogDir,

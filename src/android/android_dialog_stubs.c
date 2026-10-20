@@ -4,16 +4,12 @@
  */
 
 /*
- * android_dialog_stubs.c - Stub implementations for dialog/host functions
- * not applicable on Android.
- *
- * The ImGui dialog backend (dialog_backend.c) is used with Android-specific
- * implementations of imguiWelcomeShow and imguiGameSetupShow provided by
- * android_welcome.cpp and android_gamesetup.cpp respectively.
+ * android_dialog_stubs.c - Stub implementations for dialog functions not
+ * yet carried on Android.
  *
  * Mirrors the platform-stub set in src/gui/ios/ios_stubs.c — Android also
- * skips the map editor, log viewer, WBN browser, hosted-server lifecycle,
- * and desktop window-position persistence.
+ * skips the map editor, log viewer, WBN browser and desktop window-position
+ * persistence.
  */
 
 #include <stdbool.h>
@@ -22,11 +18,6 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"
-
-/* Tracker setup stub — not applicable on Android */
-int imguiTrackerSetupShow(void) {
-  return 0;
-}
 
 /* ---- map editor stubs ---- */
 
@@ -73,46 +64,6 @@ WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window,
   return r;
 }
 
-/* ---- server lifecycle stubs (no hosted server on Android) ---- */
-
-#include "../server/server_lifecycle.h"
-
-bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
-  (void)sim; (void)cfg;
-  return false;
-}
-void serverInstanceTick(ServerSim *sim) { (void)sim; }
-void serverInstanceShutdown(ServerSim *sim) { (void)sim; }
-void serverInstanceGetPortmapInfo(ServerPortmapInfo *out) {
-  if (out) {
-    out->status = SERVER_PORTMAP_DISABLED;
-    out->externalIp[0] = '\0';
-    out->externalPort = 0;
-    out->internalPort = 0;
-  }
-}
-void serverInstanceTriggerManualProbe(void) {}
-ManualProbeState serverInstanceGetManualProbeState(void) { return MANUAL_PROBE_IDLE; }
-bool serverInstanceIsNatPunchActive(void) { return false; }
-
-/* ---- round recorder stubs (server_round_log_static is not linked) ----
- *
- * gamefront.c installs the recorder on the single-player server and stashes
- * and flushes the round at game over. No round is recorded here, so there is
- * never one waiting to upload. */
-
-#include "../server/server_dedicated_log.h"
-
-void serverDedicatedLogInstall(struct ServerSim *sim, bool dontSendLog) {
-  (void)sim; (void)dontSendLog;
-}
-void serverDedicatedLogUninstall(void) {}
-void serverDedicatedLogSetCompletedPath(const char *path) { (void)path; }
-void serverDedicatedLogSetServeMode(int mode) { (void)mode; }
-void serverDedicatedLogStashCurrentRound(void) {}
-void serverDedicatedLogFlushPendingUpload(void) {}
-bool serverDedicatedLogHasPendingUpload(void) { return false; }
-
 /* ---- window state stubs (desktop-only persistence in sdl3/winbolo.c) ---- */
 
 void windowGetSavedPosition(int *x, int *y) {
@@ -126,7 +77,6 @@ void windowGetCustomSize(int *w, int *h) {
 }
 void windowSetCustomSize(int w, int h) { (void)w; (void)h; }
 void windowSaveCurrentPosition(void) {}
-void windowSmoothScrolling_toggle(void) {}
 void windowComputeAspectCorrectSize(int actualW, int actualH, int actualX, int actualY,
                                      int *outW, int *outH, int *outX, int *outY) {
   if (outW) *outW = actualW;

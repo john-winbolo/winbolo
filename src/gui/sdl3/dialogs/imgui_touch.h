@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
 
 /* Once per frame, after the widgets and before ImGui::Render(). Puts the
  * keyboard handler on the current context if it is not there yet, and
