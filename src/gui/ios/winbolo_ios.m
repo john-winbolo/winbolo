@@ -22,6 +22,7 @@
 
 #include "frontend.h"
 #include "client_sim.h"
+#include "bolo_rand.h"
 #include "client_net.h"
 #include "client_render.h"
 #include "input_packet.h"
@@ -195,7 +196,11 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    srand((unsigned int)(time(NULL) ^ getpid()));
+    /* The game's random numbers come from bolo_rand, not the C library's
+       rand(), so it is bolo_rand that needs the seed, as on the desktop.
+       Left unseeded its state is all zero and every draw is 0: every Open
+       respawn took the same start. */
+    bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
 
     /* The iPad turns to portrait as well as landscape (Info.plist allows it
        there only). Without the hint SDL keeps a window that is not resizable
