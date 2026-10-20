@@ -1843,7 +1843,9 @@ extern "C" void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx) {
  * SDL folder dialog is async — its callback (may fire on another thread)
  * stashes the chosen path and a flag, and the next render frame applies it
  * via the write-through setter.  The editable InputText remains the primary
- * input and the fallback on platforms without a native folder dialog. */
+ * input and the fallback on platforms without a native folder dialog.
+ * iOS shows none of the folder fields, so it has none of this glue. */
+#if !defined(__IPHONEOS__)
 static char s_hostingPickedDir[FILENAME_MAX];
 static bool s_hostingDirPicked = false;
 
@@ -1906,6 +1908,7 @@ static void SDLCALL hostingLogDirDialogCallback(void *userdata,
         s_hostingLogDirPicked = true;
     }
 }
+#endif
 
 /* One visibility row: the category label, a 4-way policy combo, and — only
  * while that combo reads Decay — the decay-seconds box.  The combo index is
@@ -2095,6 +2098,10 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
             /* Directory and caps only bite on Persist (Off/Allow never keep
              * a script past the session). */
             if (gameFrontHostingScriptUploadPolicy == SCRIPT_UPLOAD_PERSIST) {
+                /* Not on iOS: it has no folder picker, and its folders are
+                   always the defaults in the app's own storage
+                   (gamefront.c). */
+#if !defined(__IPHONEOS__)
                 static char scriptDirBuf[FILENAME_MAX];
                 static bool scriptDirEditing = false;
                 if (s_hostingScriptDirPicked) {
@@ -2126,6 +2133,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                                              NULL, win, loc, false);
                 }
                 ImGui::PopID();
+#endif
 
                 int scriptMaxFiles = gameFrontHostingScriptUploadMaxFiles;
                 hostingLabel(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXFILES);
@@ -2165,7 +2173,10 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
          * map — what the lobby's mod chooser lists. Same shape as the Upload
          * Directory field below: an editable field that is the primary input
          * and the fallback where there is no native folder dialog, with
-         * Browse filling it in. */
+         * Browse filling it in. Not on iOS: it has no folder picker, and its
+         * folders are always the defaults in the app's own storage
+         * (gamefront.c). */
+#if !defined(__IPHONEOS__)
         static char scnDirBuf[FILENAME_MAX];
         static bool scnDirEditing = false;
         if (s_hostingScnDirPicked) {
@@ -2196,6 +2207,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                                      win, loc, false);
         }
         ImGui::PopID();
+#endif
     }
 
     /* ---- Map uploads ---- */
@@ -2223,7 +2235,10 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         if (gameFrontHostingUploadPolicy == UPLOAD_POLICY_PERSIST) {
             /* Upload directory — editable text field is the primary input and
              * the fallback where no native folder dialog exists; Browse fills
-             * it via SDL_ShowOpenFolderDialog. */
+             * it via SDL_ShowOpenFolderDialog. Not on iOS: it has no folder
+             * picker, and its folders are always the defaults in the app's
+             * own storage (gamefront.c). */
+#if !defined(__IPHONEOS__)
             static char dirBuf[FILENAME_MAX];
             static bool dirEditing = false;
             /* Apply a folder chosen on a previous frame. */
@@ -2252,6 +2267,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                 SDL_ShowOpenFolderDialog(hostingUploadDirDialogCallback, NULL,
                                          win, loc, false);
             }
+#endif
 
             int maxFiles = gameFrontHostingUploadMaxFiles;
             hostingLabel(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXFILES);
@@ -2280,7 +2296,10 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         if (gameFrontHostingLogging) {
             /* Log directory — editable text field is the primary input and
              * the fallback where no native folder dialog exists; Browse fills
-             * it via SDL_ShowOpenFolderDialog. */
+             * it via SDL_ShowOpenFolderDialog. Not on iOS: it has no folder
+             * picker, and its folders are always the defaults in the app's
+             * own storage (gamefront.c). */
+#if !defined(__IPHONEOS__)
             static char logDirBuf[FILENAME_MAX];
             static bool logDirEditing = false;
             /* Apply a folder chosen on a previous frame. */
@@ -2313,6 +2332,7 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                                          win, loc, false);
             }
             ImGui::PopID();
+#endif
 
             /* Hand the finished round's log to players who ask for it, so
              * their post-game recap plays. Nested under logging because

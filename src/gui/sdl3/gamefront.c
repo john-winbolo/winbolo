@@ -4453,8 +4453,17 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     } else {
       snprintf(def, FILENAME_MAX, "%s", "uploads");
     }
+#if defined(__IPHONEOS__)
+    /* iOS always uses the default. The saved value is a full path, and an
+     * iOS app's storage moves when it is reinstalled or updated, so a saved
+     * path can point outside it; the host would then refuse to start, and
+     * iOS shows no folder field to put it right. The same holds for the
+     * script upload, mod and log folders below. */
+    SDL_strlcpy(gameFrontHostingUploadDir, def, FILENAME_MAX);
+#else
     prefsGetString("HOSTING", "Upload Dir", def, gameFrontHostingUploadDir,
                    FILENAME_MAX);
+#endif
   }
   prefsGetString("HOSTING", "Script Upload Max Files", "32", buff, FILENAME_MAX);
   {
@@ -4480,8 +4489,12 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     } else {
       snprintf(def, FILENAME_MAX, "%s", "uploads/Scripts");
     }
+#if defined(__IPHONEOS__)
+    SDL_strlcpy(gameFrontHostingScriptUploadDir, def, FILENAME_MAX);  /* as Upload Dir */
+#else
     prefsGetString("HOSTING", "Script Upload Dir", def,
                    gameFrontHostingScriptUploadDir, FILENAME_MAX);
+#endif
   }
   /* The mod directory, defaulted under the writable prefs path for the
    * reason the upload dir is: the app's own data directory is inside the
@@ -4513,9 +4526,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     } else {
       snprintf(def, FILENAME_MAX, "%s", "Mods");
     }
+#if defined(__IPHONEOS__)
+    (void)old;
+    SDL_strlcpy(gameFrontHostingScenarioDir, def, FILENAME_MAX);  /* as Upload Dir */
+#else
     prefsGetString("HOSTING", "Scenario Dir", def, old, FILENAME_MAX);
     prefsGetString("HOSTING", "Mod Dir", old,
                    gameFrontHostingScenarioDir, FILENAME_MAX);
+#endif
     /* Made if it is not there, unlike the directories above it: this is the
      * one a player is told to drop files into, and a folder that has to be
      * created before it can be used is a folder most players never find. It
@@ -4542,8 +4560,12 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     } else {
       snprintf(def, FILENAME_MAX, "%s", ".");
     }
+#if defined(__IPHONEOS__)
+    SDL_strlcpy(gameFrontHostingLogDir, def, FILENAME_MAX);  /* as Upload Dir */
+#else
     prefsGetString("HOSTING", "Log Dir", def, gameFrontHostingLogDir,
                    FILENAME_MAX);
+#endif
   }
   prefsGetString("HOSTING", "Serve Replays", "Yes", buff, FILENAME_MAX);
   gameFrontHostingServeReplays = YESNO_TO_TRUEFALSE(buff[0]);
