@@ -2194,7 +2194,7 @@ int run_lgm_quit_drops_carried_pill(void);
  * of a seat that was not on the field. */
 int run_lgm_unfield_drops_carried_pill(void);
 
-/* Where a builder starts when he is sent out (test_lgm_start_offset.c): 64
+/* Where a builder starts when he is sent out (test_lgm_start_offset.c): 16
  * world units from the tank's centre towards the square he was sent to,
  * worked out in whole numbers, and on the tank's centre when that square's
  * centre is no further off than that. */

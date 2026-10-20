@@ -605,12 +605,14 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
  * within MAP_SQUARE_MIDDLE of that. The shell is tested against the hull
  * after its move for the tick, so the burst is up to the shell's speed
  * inside the TANK_HIT_RADIUS circle, and further by the tank's own speed
- * when it is driving at the shooter: with the defaults, between 68 and 112
- * from the centre. A builder sent out the far side from the shooter stands
+ * when it is driving at the shooter: with the defaults, between 64 and 112
+ * from the centre (64 when the tank drives 16 a tick on a road, 68 at 12 a
+ * tick on grass). A builder sent out the far side from the shooter stands
  * LGM_START_OFFSET plus one step a tick from the centre, so for his first
- * few ticks out a hit on the tank can still kill him: about 3 ticks on
- * grass. WinBolo 1.17 and 2.1 started him on the centre and had the same
- * short window, 2 to 3 ticks, so this is the long-standing behaviour. A
+ * few ticks out a hit on the tank can still kill him: about 3 ticks when
+ * the tank is on grass, 4 on a road. WinBolo 1.17 and 2.1 started him on
+ * the centre and had a similar short window, 2 to 3 ticks, so this is
+ * close to the long-standing behaviour. A
  * pillbox shell is not rewound, so the target's lag does not make that
  * window longer. The offset is kept small so the head start it gives is
  * small: one walking step where a builder walks 16 a tick (grass, road, a
