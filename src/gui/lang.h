@@ -2651,19 +2651,11 @@
 #define STR_DLGLOBBY_MODS_TIP_NONE          2616
 #define STR_DLGLOBBY_MODS_OFF_NOTE          2617
 
-/* The settings window opened off the scenario panel's gear, and the one row
- * in it. TITLE names the panel the window belongs to rather than the setting
- * it holds, because the window is placed beside the gear it was opened from
- * and has to say which panel that was once two are on screen.
- *
- * OPACITY_LBL labels the slider. LINE1 and LINE2 are the two lines under it,
- * kept apart so each wraps on its own: the first says what the number fades
- * and the second says what it leaves alone, and a language that needs two
- * lines for either still gets a break in the same place. */
+/* The settings window opened off the scenario panel's gear. TITLE names the
+ * panel the window belongs to rather than the setting it holds, because the
+ * window is placed beside the gear it was opened from and has to say which
+ * panel that was once two are on screen. */
 #define STR_SCNPANEL_SETTINGS_TITLE         2618
-#define STR_SCNPANEL_OPACITY_LBL            2619
-#define STR_SCNPANEL_OPACITY_LINE1          2620
-#define STR_SCNPANEL_OPACITY_LINE2          2621
 
 /* One item per script with a panel goes under Brains > INFO_OVERLAY, a
  * checkbox that shows or hides that script's panel. POP_OUT and POP_IN are
@@ -3500,6 +3492,18 @@
 #define STR_DLGSYSINFO_MEM_RUBBLE                2795
 #define STR_DLGSYSINFO_MEM_SWAMP                 2796
 #define STR_DLGSYSINFO_MEM_GRASS                 2797
+
+/* The Scenario Text window: the status line and the announcement a
+ * scenario or mod shows, in a window the player moves and resizes.
+ * 2798 to 2904 are used by open pull requests, so these start at 2905. */
+#define STR_SCNTEXT_TITLE                        2905
+
+/* The two sliders in the gear of a scenario panel and of the Scenario Text
+ * window. BG_OPACITY sets the black backing's alpha, from none to opaque;
+ * TEXT_OPACITY fades what the scenario or mod draws in the window. 2906 was
+ * a line under the old single slider and is free. */
+#define STR_SCN_BG_OPACITY_LBL                   2907
+#define STR_SCN_TEXT_OPACITY_LBL                 2908
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

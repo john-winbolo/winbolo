@@ -5230,6 +5230,9 @@ set(_unit_test_names
     scn_panel_yes_no
     scn_panel_rescue
     scn_panel_prefs_sections
+    scn_panel_layout_row
+    scn_opacity_migration
+    scn_text_popout_row
     client_scn_panel_owners
     scn_arm_panel_owners
     info_packet_preset_round_trip
@@ -7062,6 +7065,12 @@ set(_unit_test_names
     scenario_panel_timer_text
     scenario_announce_remaining
     scenario_announce_position
+    scenario_text_fit
+    scenario_text_tablet_band
+    scenario_text_pointer_on_handle
+    scenario_text_window_shown
+    scenario_text_edge_shown
+    scenario_text_save_place
     scenario_status_line
     scn_status_codec_and_client
     scn_announce_position_codec
