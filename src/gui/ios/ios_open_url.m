@@ -39,7 +39,9 @@
 *********************************************************/
 
 #import <UIKit/UIKit.h>
+#include <stdbool.h>
 #include <string.h>
+#include <strings.h>
 
 #include "ios_drops.h"
 
@@ -55,10 +57,26 @@ API_AVAILABLE(ios(13.0))
 /* File URLs whose access was started and is not yet ended. */
 static NSMutableArray<NSURL *> *s_accessedUrls = nil;
 
-/* Starts the access to a file URL that needs it and keeps the URL to end it
- * later. A URL inside the app's own sandbox answers NO and needs nothing. */
+/* True when path ends in ".wbv", in any case. This is the same test as
+ * iosDropsIsWbv in ios_drops.c, which decides which drops are kept as a
+ * recording; keep the two identical. Only a kept recording is ever passed to
+ * iosOpenUrlRelease, so access started for any other file would never end. */
+static bool wbIsWbv(const char *path) {
+    size_t len = strlen(path);
+    return len > 4 && strcasecmp(path + len - 4, ".wbv") == 0;
+}
+
+/* Starts the access to a .wbv file URL that needs it and keeps the URL to end
+ * it later. A URL inside the app's own sandbox answers NO and needs nothing.
+ * Any other file is left alone: its access is not started and its URL is not
+ * kept. */
 static void wbStartAccess(NSURL *url) {
     if (url == nil || !url.isFileURL) {
+        return;
+    }
+    /* SDL sends url.filePathURL.path as the drop; test the same form. */
+    NSString *urlPath = url.filePathURL.path;
+    if (urlPath == nil || !wbIsWbv(urlPath.UTF8String)) {
         return;
     }
     if ([url startAccessingSecurityScopedResource]) {
