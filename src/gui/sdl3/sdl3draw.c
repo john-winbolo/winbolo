@@ -656,12 +656,13 @@ static void sdl3GetSafeAreaInsets(float *outLeft, float *outTop,
   if (outBottom) *outBottom = b;
 }
 
-#if defined(__IPHONEOS__)
-/* The iPad's classic screen: fit the game view's blit rect, aspect kept, into
-   the part of the screen inside the safe area, so the home indicator and any
-   rounded corner do not sit on the game. Centred across and placed at the top,
-   so the height it leaves is one band below it, where the touch controls go
-   in portrait (tabletLayoutConfigureClassic).
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+/* The iPad's and the Android tablet's classic screen: fit the game view's
+   blit rect, aspect kept, into the part of the screen inside the safe area,
+   so the home indicator, a cutout and any rounded corner do not sit on the
+   game. Centred across and placed at the top, so the height it leaves is one
+   band below it, where the touch controls go in portrait
+   (tabletLayoutConfigureClassic).
    The desktop does not call this; a macOS window's safe area can exclude the
    camera housing, and its layout is left as it was. */
 static void sdl3DrawFitSafeArea(float menuBarHeight, float aspect,
@@ -1206,15 +1207,6 @@ void sdl3DrawRestoreLogicalPresentation(void) {
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
     return;
   }
-#ifdef __ANDROID__
-  if (!uiModeIsTablet()) {
-    SDL_SetRenderLogicalPresentation(gRenderer,
-                                     gZoomFactor * SDL3_SCREEN_W,
-                                     gZoomFactor * SDL3_SCREEN_H,
-                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
-    return;
-  }
-#endif
 #if defined(__IPHONEOS__) || defined(__ANDROID__)
   if (uiModeIsTablet()) {
     /* Re-apply the mobile tablet logical presentation (same logic as setup).
@@ -1885,16 +1877,17 @@ bool sdl3DrawSetup(int zoomFactor) {
     gWindow = SDL_CreateWindow("WinBolo", 0, 0,
                                SDL_WINDOW_FULLSCREEN | SDL_WINDOW_HIGH_PIXEL_DENSITY);
   } else {
-#if defined(__EMSCRIPTEN__) || defined(__ANDROID__)
+#if defined(__EMSCRIPTEN__)
     gWindow = SDL_CreateWindow("WinBolo",
                                zoomFactor * SDL3_SCREEN_W,
                                zoomFactor * SDL3_SCREEN_H + MENU_BAR_HEIGHT,
                                0);
-#elif defined(__IPHONEOS__)
-    /* The iPad's desktop layout. An iOS window always fills the screen. No
-       high pixel density: the render output is then in points, as a desktop
-       window's is, so the menu bar, the game blit below it and the pointer
-       all share one coordinate space and the game is scaled up to fit. */
+#elif defined(__IPHONEOS__) || defined(__ANDROID__)
+    /* The iPad's and the Android tablet's desktop layout. A mobile window
+       always fills the screen. No high pixel density: the render output is
+       then in points, as a desktop window's is, so the menu bar, the game
+       blit below it and the pointer all share one coordinate space and the
+       game is scaled up to fit. */
     gWindow = SDL_CreateWindow("WinBolo", 0, 0, SDL_WINDOW_FULLSCREEN);
 #else
     /* Big Picture / Gamepad UI: launch maximised so the game fills the
@@ -1963,17 +1956,6 @@ bool sdl3DrawSetup(int zoomFactor) {
      and start trackpad pinch-to-zoom monitoring. */
   macOSDisablePressAndHold();
   macOSPinchZoomInit();
-
-#ifdef __ANDROID__
-  if (!uiModeIsTablet()) {
-    /* On Android with desktop mode: set a logical presentation so SDL3
-       scales our fixed-size layout to fit the screen. */
-    SDL_SetRenderLogicalPresentation(gRenderer,
-                                     zoomFactor * SDL3_SCREEN_W,
-                                     zoomFactor * SDL3_SCREEN_H,
-                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
-  }
-#endif
 
 #if defined(__IPHONEOS__) || defined(__ANDROID__)
   if (uiModeIsTablet()) {
@@ -2067,9 +2049,8 @@ bool sdl3DrawSetup(int zoomFactor) {
                      gFallbackFontKD, gFallbackFontLabel,
                      gTankBarsTex, gBaseBarsTex);
 
-#if !defined(__ANDROID__)
-  /* Desktop, wasm and the iPad's desktop layout: create a render target for
-     the game content.
+  /* Desktop, wasm and the mobile tablets' desktop layout: create a render
+     target for the game content.
      The game is rendered at its logical size, then blitted scaled to the
      window below the menu bar. This allows the menu to stay at 1x size
      while the game scales, and gives windowToGameCoords a defined
@@ -2089,7 +2070,6 @@ bool sdl3DrawSetup(int zoomFactor) {
       WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawSetup: created game render target %dx%d", gGameRTWidth, gGameRTHeight);
     }
   }
-#endif
 
   return TRUE;
 }
@@ -2195,7 +2175,6 @@ void sdl3DrawCleanup(void) {
  * ------------------------------------------------------- */
 void sdl3DrawReconfigureZoom(int explicitZoom) {
   (void)explicitZoom;
-#if !defined(__ANDROID__)
   if (!gRenderer || !gWindow) return;
   if (uiModeIsTablet()) return;
   /* Deck is fullscreen 1280x800 with logical presentation already set in
@@ -2288,7 +2267,6 @@ void sdl3DrawReconfigureZoom(int explicitZoom) {
     SDL_SetTextureScaleMode(gGameRenderTarget, SDL_SCALEMODE_LINEAR);
     WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawAdaptRenderTarget: created render target %dx%d", gGameRTWidth, gGameRTHeight);
   }
-#endif
 }
 
 /* Per-frame entry: only rebuilds in Custom zoom mode, deriving the
@@ -2632,9 +2610,10 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
      desktop. */
   bool inTablet = overviewInTabletView();
   bool tabletMapFull = inTablet && sdl3DrawIsTabletMapFullScreen();
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
   if (!inTablet) {
-    /* The iPad's desktop layout: the map stays inside the safe area. */
+    /* The mobile tablets' desktop layout: the map stays inside the safe
+       area. */
     float l = 0, t = 0, r = 0, b = 0;
     sdl3GetSafeAreaInsets(&l, &t, &r, &b);
     mapX           = l;
@@ -3699,7 +3678,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     }
 
     /* Store for coordinate transformation */
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     sdl3DrawFitSafeArea(menuBarHeight, gameAspect, &destX, &destY, &destW, &destH);
 #endif
     gGameDestRect.x = destX;
@@ -3844,7 +3823,7 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
       destY = menuBarHeight;
     }
 
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     sdl3DrawFitSafeArea(menuBarHeight, gameAspect, &destX, &destY, &destW, &destH);
 #endif
     gGameDestRect.x = destX;
@@ -3898,7 +3877,7 @@ static void sdl3BlitGameRTToWindow(void) {
     destY = menuBarHeight;
   }
 
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
   sdl3DrawFitSafeArea(menuBarHeight, gameAspect, &destX, &destY, &destW, &destH);
 #endif
   gGameDestRect.x = destX;

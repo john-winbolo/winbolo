@@ -266,6 +266,9 @@ set(ANDROID_SOURCES
     # over ConnectivityManager), for the mobile-data warning before an
     # Internet game is hosted.
     ${PROJ_ROOT}/src/android/android_netpath.c
+    # The phone or tablet decision (WinBoloActivity.smallestWidthDp over JNI)
+    # ui_mode.c reads, and the on-screen keyboard's height for the dialogs.
+    ${PROJ_ROOT}/src/android/android_device.c
     # The RECORD_AUDIO permission voice.c asks for before it opens the
     # microphone (SDL_RequestAndroidPermission, answered on another thread).
     ${PROJ_ROOT}/src/android/android_voice.c

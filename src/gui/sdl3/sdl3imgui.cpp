@@ -35,6 +35,8 @@
 #endif
 #if defined(__APPLE__) && TARGET_OS_IOS
 #include "ios_drops.h"  /* iosDropsForgetLink: a link the game has handled */
+#elif defined(__ANDROID__)
+#include "../../android/android_drops.h"  /* androidDropsForgetLink: the same */
 #endif
 
 /* SDL3 before bolo headers — see note above */
@@ -7671,14 +7673,22 @@ static float desktopWindowFitScale(SDL_Window *window) {
     int w = 0, h = 0;
     SDL_GetWindowSize(window, &w, &h);
     if (w <= 0 || h <= 0) return 1.0f;
-    float fitW = (float)w / (float)SDL3_SCREEN_W;
-    float availH = (float)h - (float)MENU_BAR_HEIGHT;
+    float density = 1.0f;
+#if defined(__ANDROID__)
+    /* An Android window is in pixels, not points: the fit and its cap are
+       measured in points, as dialogComputeScale measures the preference, and
+       the pixels come back in at the end. */
+    density = SDL_GetWindowDisplayScale(window);
+    if (density < 1.0f) density = 1.0f;
+#endif
+    float fitW = (float)w / density / (float)SDL3_SCREEN_W;
+    float availH = (float)h / density - (float)MENU_BAR_HEIGHT;
     float fitH = (availH > 0.0f) ? availH / (float)SDL3_SCREEN_H : fitW;
     float fit = SDL_min(fitW, fitH);
     fit = (float)((int)(fit * 4.0f)) / 4.0f;   /* floor to 0.25 steps */
     if (fit < 1.0f) fit = 1.0f;
     if (fit > 2.0f) fit = 2.0f;   /* cap at the Large preset; never exceed it */
-    return fit;
+    return fit * density;
 }
 
 /* (Re)apply the main ImGui context's font atlas, style, and window minimum
@@ -8645,6 +8655,9 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                    handled, so the kept copy goes now; otherwise the welcome
                    screen would join it a second time. */
                 iosDropsForgetLink(url);
+#elif defined(__ANDROID__)
+                /* The same for Android's kept link (android_drops.c). */
+                androidDropsForgetLink(url);
 #endif
                 if (cs && clientSimGetNetStatus(cs) == netRunning) {
                     /* In-game: show confirmation popup instead of switching immediately */
@@ -8676,9 +8689,9 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
-#if defined(__APPLE__) && TARGET_OS_IOS
-        /* iOS ends the app with TERMINATING; quit the same way so main gets
-           to save the prefs, as the touch layout's own loop does. */
+#if (defined(__APPLE__) && TARGET_OS_IOS) || defined(__ANDROID__)
+        /* iOS and Android end the app with TERMINATING; quit the same way so
+           main gets to save the prefs, as the touch layout's own loop does. */
         if (ev.type == SDL_EVENT_TERMINATING) {
             windowSetQuitting();
         }
@@ -9519,9 +9532,10 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         renderTutorialOverlay(cs);
     } else {
     /* The in-window menu bar: everywhere but macOS, whose menus are native,
-       and iOS, where no app draws a menu bar of its own: the iPad's classic
-       screen has the touch controls' buttons in its place (below). */
-#if !defined(__APPLE__)
+       and iOS and Android, where no app draws a menu bar of its own: the
+       tablets' classic screen has the touch controls' buttons in its place
+       (below). */
+#if !defined(__APPLE__) && !defined(__ANDROID__)
         /* Show the menu bar only when the player's last-used device is the
            keyboard/mouse.  A connected-but-idle controller doesn't hide it,
            and reaching for the mouse/keyboard brings it back; using the

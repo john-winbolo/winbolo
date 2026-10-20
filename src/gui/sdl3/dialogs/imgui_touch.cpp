@@ -33,6 +33,15 @@ static void (*s_backendSetImeData)(ImGuiContext *ctx, ImGuiViewport *viewport,
 static bool s_passwordWanted = false;
 static bool s_activeIsPassword = false;
 
+#if defined(__ANDROID__)
+/* The Back key hides the Android keyboard and leaves SDL's text input on,
+ * so a field focused after that would get no keyboard: the backend starts
+ * text input only when none is active. Seen per frame (touchKeyboardLift),
+ * acted on in the handler below. */
+static bool s_keyboardWasUp = false;      /* up since this text input began */
+static bool s_keyboardDismissed = false;  /* then hidden with the input still on */
+#endif
+
 extern "C" void imguiTouchSetPasswordInput(bool password) {
     s_passwordWanted = password;
 }
@@ -47,6 +56,20 @@ static void touchSetImeData(ImGuiContext *ctx, ImGuiViewport *viewport,
         if (SDL_TextInputActive(window) && s_activeIsPassword != s_passwordWanted) {
             SDL_StopTextInput(window);
         }
+#if defined(__ANDROID__)
+        /* A keyboard the Back key hid, with the text input still on: a tap
+         * on a field asks for it again. Only a tap: the window moving back
+         * when the keyboard went changes the field's position and brings
+         * this handler here too, and a request made during the hide is
+         * dropped. Ending and starting the text input instead posts a hide
+         * and a show together, which Android drops as well. */
+        if (SDL_TextInputActive(window) && s_keyboardDismissed &&
+            ImGui::GetIO().MouseClicked[0]) {
+            androidDeviceShowKeyboard();
+            s_keyboardDismissed = false;
+            s_keyboardWasUp = false;
+        }
+#endif
         if (!SDL_TextInputActive(window)) {
             SDL_PropertiesID props = SDL_CreateProperties();
             if (props != 0) {
@@ -154,10 +177,92 @@ static void touchDragScroll(void) {
     ImGui::SetScrollY(w, w->Scroll.y - io.MouseDelta.y);
 }
 
+#if defined(__ANDROID__)
+/* ---- The field above the keyboard ----
+ *
+ * On iOS SDL lifts its view when the keyboard would cover the text input
+ * area (dialogResetTextInputArea leaves the area set for a lower field).
+ * On Android nothing is lifted: a full-screen window is neither panned nor
+ * resized for the keyboard, which simply covers the lower part of it. So
+ * the window holding the field being typed in is moved up by what the
+ * keyboard covers of the field, and moved back when the keyboard goes or
+ * the typing ends. The keyboard's height comes from the driver in window
+ * pixels; ImGui's units are the renderer's when a logical presentation is
+ * set, so it is scaled through the display size. */
+
+/* The window moved up, by ID, and how far, so it can be put back. */
+static ImGuiID s_liftWindowId = 0;
+static float   s_liftAmount = 0.0f;
+
+static void touchLiftRestore(ImGuiWindow *w) {
+    if (w != nullptr && s_liftAmount > 0.0f) {
+        ImGui::SetWindowPos(w, ImVec2(w->Pos.x, w->Pos.y + s_liftAmount),
+                            ImGuiCond_Always);
+    }
+    s_liftWindowId = 0;
+    s_liftAmount = 0.0f;
+}
+
+static void touchKeyboardLift(void) {
+    ImGuiContext &g = *GImGui;
+    ImGuiWindow *lifted =
+        (s_liftWindowId != 0) ? ImGui::FindWindowByID(s_liftWindowId) : nullptr;
+    if (s_liftWindowId != 0 && lifted == nullptr) {
+        /* The window closed mid-lift; nothing to put back. */
+        s_liftWindowId = 0;
+        s_liftAmount = 0.0f;
+    }
+
+    /* The keyboard's height: 0 while it is down, below 0 where Android does
+     * not report it (before Android 11), in which case nothing here moves. */
+    SDL_Window *window = SDL_GetKeyboardFocus();
+    const int keyboardPx = androidDeviceKeyboardHeight();
+    if (window == nullptr || !SDL_TextInputActive(window)) {
+        s_keyboardWasUp = false;
+        s_keyboardDismissed = false;
+    } else if (keyboardPx > 0) {
+        s_keyboardWasUp = true;
+        s_keyboardDismissed = false;
+    } else if (keyboardPx == 0 && s_keyboardWasUp) {
+        s_keyboardDismissed = true;
+    }
+
+    const bool typing = g.PlatformImeData.WantVisible && g.ActiveId != 0 &&
+                        g.ActiveIdWindow != nullptr;
+    if (!typing || keyboardPx <= 0) {
+        touchLiftRestore(lifted);
+        return;
+    }
+
+    ImGuiWindow *root = g.ActiveIdWindow->RootWindow;
+    if (lifted != nullptr && lifted != root) {
+        touchLiftRestore(lifted);
+    }
+
+    int pxW = 0, pxH = 0;
+    SDL_GetWindowSizeInPixels(window, &pxW, &pxH);
+    if (pxH <= 0) return;
+    const ImGuiIO &io = g.IO;
+    const float keyboardTop = io.DisplaySize.y - (float)keyboardPx * io.DisplaySize.y / (float)pxH;
+    const float fieldBottom = g.PlatformImeData.InputPos.y +
+                              g.PlatformImeData.InputLineHeight +
+                              g.Style.FramePadding.y + g.Style.ItemSpacing.y;
+    const float overlap = fieldBottom - keyboardTop;
+    if (overlap <= 0.0f) return;
+    ImGui::SetWindowPos(root, ImVec2(root->Pos.x, root->Pos.y - overlap),
+                        ImGuiCond_Always);
+    s_liftWindowId = root->ID;
+    s_liftAmount += overlap;
+}
+#endif /* __ANDROID__ */
+
 extern "C" void imguiTouchFrame(void) {
     if (ImGui::GetCurrentContext() == nullptr) return;
     touchInstallImeHandler();
     touchDragScroll();
+#if defined(__ANDROID__)
+    touchKeyboardLift();
+#endif
 }
 
 #endif /* __IPHONEOS__ || __ANDROID__ */

@@ -495,14 +495,13 @@ extern "C" void imguiSettingsRenderLanguagePicker(LangFileEntry *entries,
  * gamepad scroll) are drawn inline by that shell.
  * ------------------------------------------------------- */
 extern "C" void imguiSettingsRenderControlsTab(SettingsRenderCtx *ctx) {
-#if !defined(__ANDROID__)  /* iOS: the iPad's desktop layout, by the test below */
+    /* On mobile only the tablets' desktop layout, by the test below. */
     if (!uiModeIsTablet()) {
         if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(dialogFontW(120.0f), 0))) {
             ctx->wantKeySetup = true;
         }
         imguiHandOnHover();
     }
-#endif
 }
 
 /* Source tag shown beside a skin's name in the picker. */
@@ -896,7 +895,6 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         }
     }
 
-#ifndef __ANDROID__
     /* The web canvas follows the page, so it has no window size to pick. */
 #ifndef __EMSCRIPTEN__
     /* ---- Window size — desktop, in-game only ---- */
@@ -909,9 +907,10 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             langGetText(STR_MENU_CUSTOM_RESIZABLE),
         };
         BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_TRIPLE, ZOOM_FACTOR_QUAD, ZOOM_FACTOR_CUSTOM };
-#if defined(__IPHONEOS__)
-        /* An iOS window cannot be resized, so Custom (resizable) is left off
-           the iPad's desktop layout; it would only pick the zoom that fits. */
+#if BOLO_MOBILE
+        /* A mobile window cannot be resized, so Custom (resizable) is left
+           off the tablets' desktop layout; it would only pick the zoom that
+           fits. */
         const int zoomCount = 4;
 #else
         const int zoomCount = 5;
@@ -959,15 +958,13 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             ImGui::EndCombo();
         }
     }
-#endif
 
-#if !defined(__ANDROID__)
-    /* On iOS only the iPad's desktop layout has the classic screen these
-       settings shape; the touch layout leaves them out, as before. */
+    /* On mobile only the tablets' desktop layout has the classic screen
+       these settings shape; the touch layout leaves them out, as before. */
     if (!BOLO_MOBILE || !uiModeIsTablet()) {
     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_FULLSCREEN));
-#if defined(__IPHONEOS__)
-    /* ---- Full screen, the iPad's ---- An iOS window always fills the
+#if BOLO_MOBILE
+    /* ---- Full screen, the tablets' ---- A mobile window always fills the
        screen, so the choice is the full screen map or the classic screen, as
        the desktop's is in a game. The tick reads the preference and is applied
        after the frame, like the desktop's: in a game it brings the map up or
@@ -1044,7 +1041,6 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         ImGui::Unindent();
     }
     }
-#endif
 
 #if BOLO_MOBILE
     /* ---- Full screen, the touch layout's ---- The map fills the screen with
@@ -1273,6 +1269,10 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             }
         }
 
+#if !BOLO_MOBILE
+        /* A phone has no file manager to open the folder in: skins reach it
+           by other means, so the button is left off, as the folder pickers
+           are. */
         if (ImGui::Button(langGetText(STR_DLGSKIN_OPENFOLDER))) {
             /* SDL_GetPrefPath already ends in a separator. */
             const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
@@ -1293,6 +1293,7 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             }
         }
         imguiHandOnHover();
+#endif
 
         /* Runtime check, not an #ifdef: the stub build answers false, so the
            button simply isn't there when Steam isn't running. Browsing the
@@ -1772,16 +1773,14 @@ extern "C" void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx) {
         }
     }
 
-#if !defined(__ANDROID__)
-    /* ---- Smooth scrolling ---- the arrow keys of a keyboard; on iOS only
-       the iPad's desktop layout has one. */
+    /* ---- Smooth scrolling ---- the arrow keys of a keyboard; on mobile only
+       the tablets' desktop layout has one. */
     if (!BOLO_MOBILE || !uiModeIsTablet()) {
         bool ss = (bool)smoothScrollingEnabled;
         if (ImGui::Checkbox(langGetText(STR_MENU_SMOOTH_SCROLLING), &ss)) {
             windowSmoothScrolling_toggle();
         }
     }
-#endif
 
     /* ---- Show gunsight ---- */
     {

@@ -156,6 +156,20 @@ static inline float dialogComputeScale(int screenW, int screenH) {
 #if BOLO_MOBILE
     scale = (float)screenH / 540.0f;
     if (scale < 1.0f) scale = 1.0f;
+#if defined(__ANDROID__)
+    /* An Android window is in pixels where an iOS window is in points, so
+       the height is read in points (density-independent pixels, the
+       display's content scale) and the scale is then applied to the pixels:
+       the text is the same size on a phone of either kind. */
+    {
+        float density = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+        if (density > 1.0f) {
+            scale = (float)screenH / density / 540.0f;
+            if (scale < 1.0f) scale = 1.0f;
+            scale *= density;
+        }
+    }
+#endif
 #else
     if (uiModeIsTablet()) {
         (void)screenH;

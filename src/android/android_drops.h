@@ -55,6 +55,19 @@ void androidDropsInstall(void);
 void androidDropsKeepRecording(const char *path);
 
 /*********************************************************
+*NAME:          androidDropsForgetLink
+*PURPOSE:
+*  Drops the kept link when it is the one given: the game
+*  has handled it itself (a tablet's classic screen takes
+*  the desktop's event handling, which sees the link in a
+*  game), so the welcome screen does not join it again.
+*
+*ARGUMENTS:
+*  link - the winbolo:// link the game handled
+*********************************************************/
+void androidDropsForgetLink(const char *link);
+
+/*********************************************************
 *NAME:          androidDropsWelcomeResult
 *PURPOSE:
 *  What the welcome screen should open for a kept item, or

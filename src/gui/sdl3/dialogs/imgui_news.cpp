@@ -480,9 +480,15 @@ static void renderNewsModal(void) {
                             ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 
     bool open = true;
-    if (!ImGui::BeginPopupModal(title, &open,
-                                ImGuiWindowFlags_NoCollapse |
-                                ImGuiWindowFlags_NoSavedSettings)) {
+    ImGuiWindowFlags popupFlags = ImGuiWindowFlags_NoCollapse |
+                                  ImGuiWindowFlags_NoSavedSettings;
+#if defined(__ANDROID__) || defined(__IPHONEOS__)
+    /* A finger dragged on the body scrolls the articles (imgui_touch.cpp);
+       without this the drag moved the popup instead, since ImGui takes a
+       drag on a window's background as a move. */
+    popupFlags |= ImGuiWindowFlags_NoMove;
+#endif
+    if (!ImGui::BeginPopupModal(title, &open, popupFlags)) {
         /* ImGui has already torn the popup down (e.g. the title-bar X
          * was clicked on a previous frame and BeginPopupModal flipped
          * `open` to false then auto-dismissed). Finalise our state so

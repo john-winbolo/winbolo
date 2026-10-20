@@ -39,6 +39,7 @@
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/luabrainshandler.h"
 #include "../gui/sdl3/dialogs/imgui_messagebox.h"
+#include "../gui/ui_mode.h"
 #include "client_frontend_common.h"
 
 /* -------------------------------------------------------
@@ -134,6 +135,21 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
   (void)fromDragResize;  /* Android doesn't use resize detection */
   if (amount == zoomFactor) return;
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] windowZoomChange: %d -> %d", zoomFactor, amount);
+  /* A tablet's classic screen reaches this from the settings' Window Size
+     choice. docs/ARCHITECTURE.md ("Renderer / window lifetime") forbids
+     recreating the window and renderer for a zoom change: other modules'
+     textures were made on the renderer and would be left pointing at a
+     destroyed one. So the desktop layout reconfigures in place, as the
+     desktop and the iPad do. The touch layout keeps its rebuild below. */
+  if (!uiModeIsTablet()) {
+    drawBusy = TRUE;
+    clientMutexWaitFor();
+    sdl3DrawReconfigureZoom(amount);
+    clientMutexRelease();
+    drawBusy = FALSE;
+    windowSetZoomFactor(amount);
+    return;
+  }
   drawBusy = TRUE;
   clientMutexWaitFor();
   sdl3ImguiCleanup();

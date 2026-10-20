@@ -73,6 +73,15 @@ void androidDropsInstall(void) {
   }
 }
 
+void androidDropsForgetLink(const char *link) {
+  if (link == NULL) return;
+  SDL_LockMutex(s_dropLock);
+  if (strcmp(s_dropLink, link) == 0) {
+    s_dropLink[0] = '\0';
+  }
+  SDL_UnlockMutex(s_dropLock);
+}
+
 int androidDropsWelcomeResult(void) {
   char link[sizeof(s_dropLink)];
   bool haveLog;

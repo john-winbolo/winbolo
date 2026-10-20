@@ -4,8 +4,12 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.View;
+import android.view.WindowInsets;
+import android.view.inputmethod.InputMethodManager;
 import androidx.core.content.FileProvider;
 import org.libsdl.app.SDLActivity;
 
@@ -30,6 +34,14 @@ public class WinBoloActivity extends SDLActivity {
        hosted game's mDNS queries are dropped before they reach a socket. */
     private WifiManager.MulticastLock mMulticastLock;
 
+    /* The on-screen keyboard's height in pixels while it is up, 0 while it
+       is down, from the window's insets; Android 11 and later report them
+       to a full-screen window, and older ones leave this at -1 (unknown).
+       Read by native code (android_device.c) on SDL's thread, written on
+       the main thread. */
+    private static volatile int sImeHeightPx =
+        (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) ? 0 : -1;
+
     @Override
     protected String[] getLibraries() {
         return new String[]{
@@ -50,6 +62,63 @@ public class WinBoloActivity extends SDLActivity {
         } else {
             Log.w(TAG, "No WifiManager; multicast lock not acquired");
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            /* The decor view keeps its own handling: the listener only reads
+               the keyboard's inset on the way through. */
+            getWindow().getDecorView().setOnApplyWindowInsetsListener(
+                new View.OnApplyWindowInsetsListener() {
+                    @Override
+                    public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+                        sImeHeightPx = insets.isVisible(WindowInsets.Type.ime())
+                            ? insets.getInsets(WindowInsets.Type.ime()).bottom : 0;
+                        return v.onApplyWindowInsets(insets);
+                    }
+                });
+        }
+    }
+
+    /* The configuration's smallest width in dp, the figure Android itself
+       draws its large-screen line at (600): the phone or tablet decision in
+       android_device.c. 0 without a context. */
+    public static int smallestWidthDp() {
+        Context ctx = getContext();
+        if (ctx == null) {
+            return 0;
+        }
+        return ctx.getResources().getConfiguration().smallestScreenWidthDp;
+    }
+
+    /* The on-screen keyboard's height in pixels while it is up, 0 while it
+       is down, -1 where it is not known. */
+    public static int imeHeightPx() {
+        return sImeHeightPx;
+    }
+
+    /* Shows the keyboard again for SDL's text field after the Back key hid
+       it: the field keeps the focus and SDL's text input stays on, and a
+       hide and a show posted together from SDL cancel each other, so the
+       input method is asked directly. Called from native (android_device.c)
+       on SDL's thread. */
+    public static void showKeyboardAgain() {
+        final Context ctx = getContext();
+        if (ctx == null || mSingleton == null) {
+            return;
+        }
+        mSingleton.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (mTextEdit == null) {
+                    return;
+                }
+                mTextEdit.setVisibility(View.VISIBLE);
+                mTextEdit.requestFocus();
+                InputMethodManager imm =
+                    (InputMethodManager) ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
+                if (imm != null) {
+                    imm.showSoftInput(mTextEdit, 0);
+                }
+            }
+        });
     }
 
     @Override

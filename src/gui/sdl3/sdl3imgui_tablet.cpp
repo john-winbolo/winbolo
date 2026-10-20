@@ -305,9 +305,32 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
     cfg->mineCenterX = gutterLeft + pad + cfg->mineRadius;
   }
 
+  /* --- Top bar buttons — spread across gutter --- */
+  cfg->topBtnSize = gutterW * 0.25f;
+  if (cfg->topBtnSize < 30.0f * pixelScale) cfg->topBtnSize = 30.0f * pixelScale;
+  if (cfg->topBtnSize > 52.0f * pixelScale) cfg->topBtnSize = 52.0f * pixelScale;
+  cfg->topBtnY = topEdge + pad;
+
   /* Gunsight +/- — row above fire/mine, as circles */
   cfg->gsIncRadius = gutterW * 0.10f;
   if (cfg->gsIncRadius < 16.0f * pixelScale) cfg->gsIncRadius = 16.0f * pixelScale;
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  /* The gunsight pair, the talk button and the view column take this size,
+     and the column stands on the fire row and reaches up four buttons. The
+     size comes from the gutter's width, and a gutter can be too short for
+     it: Android keeps the top gesture zone clear (about 48 dp) where iOS
+     keeps nothing at the top in landscape, and the column then reached into
+     the resource bars above it. So it is capped by the room between the
+     bars, at 80 reference units for the pair, and the fire row: three
+     steps of a button and a gap, then the tank view's upper half. */
+  {
+    float barsTop = cfg->topBtnY + cfg->topBtnSize + pad * 2;
+    float room = cfg->fireCenterY - barsTop - pad - 80.0f * pixelScale;
+    float fitR = (room - 3.0f * pad) / 7.0f;
+    if (fitR < 16.0f * pixelScale) fitR = 16.0f * pixelScale;
+    if (cfg->gsIncRadius > fitR) cfg->gsIncRadius = fitR;
+  }
+#endif
   cfg->gsDecRadius = cfg->gsIncRadius;
   float gsRowY = cfg->fireCenterY - cfg->fireRadius - pad - cfg->gsIncRadius;
   float gsGap = pad * 2;
@@ -373,11 +396,7 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
     cfg->tankViewCenterY = cfg->allyViewCenterY - step;
   }
 
-  /* --- Top bar buttons — spread across gutter --- */
-  cfg->topBtnSize = gutterW * 0.25f;
-  if (cfg->topBtnSize < 30.0f * pixelScale) cfg->topBtnSize = 30.0f * pixelScale;
-  if (cfg->topBtnSize > 52.0f * pixelScale) cfg->topBtnSize = 52.0f * pixelScale;
-  cfg->topBtnY = topEdge + pad;
+  /* --- Top bar buttons, across the gutter (sized above) --- */
   float topBtnGap = (gutterW - pad * 2 - cfg->topBtnSize * 3) / 2.0f;
   if (topBtnGap < pad) topBtnGap = pad;
   cfg->playersBtnX = gutterLeft + pad;
@@ -389,15 +408,40 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   float buildBarLeft = cfg->playersBtnX + cfg->topBtnSize + pad;
   float buildAvailW = rightEdge - buildBarLeft - pad;  /* space to right edge */
   float buildBtnPad = 16.0f;
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  /* The buttons are ImGui image buttons, which take the style's frame
+     padding on each side, and the touch style sets that from the screen
+     (12 units times its scale), not the 8 a side assumed above: measured
+     short, the bar reached under the gunsight row on a phone. */
+  buildBtnPad = ImGui::GetStyle().FramePadding.y * 2.0f;
+#endif
   /* Size icons to fit 2 columns + spacing + window padding within available width */
   float maxIconFromSpace = (buildAvailW - 12.0f - cfg->buildSpacing - buildBtnPad * 2) / 2.0f;
   cfg->buildIconSize = gutterW * 0.18f;
   if (cfg->buildIconSize < 24.0f * pixelScale) cfg->buildIconSize = 24.0f * pixelScale;
   if (cfg->buildIconSize > 48.0f * pixelScale) cfg->buildIconSize = 48.0f * pixelScale;
   if (cfg->buildIconSize > maxIconFromSpace) cfg->buildIconSize = maxIconFromSpace;
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  /* And to fit the bar's three rows, with its window padding, above the
+     gunsight row with the scroll stick's smallest zone between, on a short
+     gutter (see the gunsight size above); never below the smallest icon. */
+  {
+    float barTop = cfg->topBtnY + cfg->topBtnSize + pad * 2;
+    float gsRowTop = cfg->fireCenterY - cfg->fireRadius - pad - cfg->gsIncRadius * 2.0f;
+    float room = gsRowTop - pad * 2 - (2.0f * 20.0f * pixelScale) - pad * 2 - barTop;
+    float fromHeight = (room - 12.0f - cfg->buildSpacing * 2 - buildBtnPad * 3) / 3.0f;
+    if (fromHeight < 24.0f * pixelScale) fromHeight = 24.0f * pixelScale;
+    if (cfg->buildIconSize > fromHeight) cfg->buildIconSize = fromHeight;
+  }
+#endif
   float buildBtnSize = cfg->buildIconSize + buildBtnPad;
   float buildGridW = buildBtnSize * 2 + cfg->buildSpacing;
   float buildGridH = buildBtnSize * 3 + cfg->buildSpacing * 2;
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  /* The bar's window pads the grid by 6 units each side
+     (renderBuildSelectBar), so the scroll zone below starts under that. */
+  buildGridH += 12.0f;
+#endif
   cfg->buildBarX = buildBarLeft;
   /* Align top with tank stock bars */
   float buildRegionTop = cfg->topBtnY + cfg->topBtnSize + pad * 2;
@@ -448,6 +492,11 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
      a pad above the zone; a screen with the room keeps 280. */
   {
     float fit = (scrollTop - pad - buildRegionTop + 16.0f) * 0.5f;
+    /* And above the view column, which shares the bars' side of the gutter
+       (its size is capped above so that this leaves the bars some height). */
+    float viewTop = cfg->tankViewCenterY - cfg->tankViewRadius;
+    float fitView = (viewTop - pad - buildRegionTop + 16.0f) * 0.5f;
+    if (fitView < fit) fit = fitView;
     if (fit < cfg->barsH) {
       cfg->barsH = fit;
       cfg->baseBarsY = cfg->tankBarsY + cfg->barsH;
@@ -749,6 +798,10 @@ static void renderTabletBackground(void) {
   {
     float iconSize = c.buildIconSize;
     float btnPad = 8.0f;
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+    /* The frame padding the image buttons take (tabletLayoutConfigure). */
+    btnPad = ImGui::GetStyle().FramePadding.y;
+#endif
     float btnSize = iconSize + btnPad * 2;
     float spacing = c.buildSpacing;
     int cols = 2, rows = 3;
@@ -1254,18 +1307,30 @@ static void renderBuildSelectBar(ClientSim *cs) {
 
   float iconSize = s_cfg.buildIconSize;
   float btnPad = 8.0f;
-  float btnSize = iconSize + btnPad * 2;
   float spacing = s_cfg.buildSpacing;
   int cols = 2;
   int rows = 3;  /* 5 items in a 2x3 grid (last cell empty) */
-  float gridW = btnSize * cols + spacing * (cols - 1);
-  float gridH = btnSize * rows + spacing * (rows - 1);
   float startX = s_cfg.buildBarX;
   float startY = s_cfg.buildBarY;
 
   ImVec2 framePad = ImGui::GetStyle().FramePadding;
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  /* Each image button is its icon plus the frame padding on each side; the
+     window is the grid plus its own 6-unit padding and no more, so it ends
+     where tabletLayoutConfigure measured it to. */
+  btnPad = framePad.y;
+  float btnSize = iconSize + btnPad * 2;
+  float gridW = btnSize * cols + spacing * (cols - 1);
+  float gridH = btnSize * rows + spacing * (rows - 1);
+  float winW = gridW + 12;
+  float winH = gridH + 12;
+#else
+  float btnSize = iconSize + btnPad * 2;
+  float gridW = btnSize * cols + spacing * (cols - 1);
+  float gridH = btnSize * rows + spacing * (rows - 1);
   float winW = gridW + 12 + framePad.x * 4;  /* account for ImGui frame padding on each button */
   float winH = gridH + 12 + framePad.y * 6;  /* frame padding on each row of buttons */
+#endif
   ImGui::SetNextWindowPos(ImVec2(startX, startY));
   ImGui::SetNextWindowSize(ImVec2(winW, winH));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 6));

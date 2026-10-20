@@ -43,6 +43,7 @@
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/input_touch.h"
+#include "../gui/sdl3/safe_insets.h"
 #include "client_frontend_render.h"
 #include "client_frontend_common.h"
 #include "client_frontend_tick.h"
@@ -52,6 +53,7 @@
 #include "../gui/sdl3/dialogs/imgui_messagebox.h"
 #include "../winbolonet/http_jni.h"
 #include "../winbolonet/http.h"  /* httpSetDeadline for a shutdown in the background */
+#include "android_device.h"
 #include "android_drops.h"
 #include "android_netpath.h"
 #include "android_share.h"
@@ -691,6 +693,18 @@ int main(int argc, char *argv[]) {
     WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[Android] share sheet not available");
   }
 
+  /* Phone or tablet, from the configuration's smallest width, before the
+     UI mode is first asked (uiModeDetect reads it). A tablet's classic
+     screen has no menu bar and is played by touch, as the iPad's is: the
+     touch controls come up when it is touched and go when a key is pressed
+     (input_touch.c). */
+  if (!androidDeviceInit()) {
+    WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[Android] device size not available; phone assumed");
+  }
+  if (androidDeviceIsTablet()) {
+    inputTouchSetClassicControlsOffered(true);
+  }
+
   /* The move to and from the background reaches the game only through an
      event watch (see androidLifecycleWatch). */
   s_resumeEventType = SDL_RegisterEvents(1);
@@ -775,29 +789,23 @@ android_game_start:
       int tw = 0, th = 0;
       androidTouchSpace(&tw, &th);
 
-      /* Query safe area to handle display cutouts (notches, punch-holes).
-         Compute insets relative to the full window so touch controls
-         stay inside the safe region. */
+      /* The safe area, for display cutouts (notches, punch-holes), as every
+         mobile screen reads it (safeInsetsGet), scaled from window
+         coordinates to the touch coordinate space so the touch controls
+         stay inside it. */
       int safeLeft = 0, safeTop = 0, safeRight = 0, safeBottom = 0;
       {
-        SDL_Rect safeRect;
+        const SafeInsets safe = safeInsetsGet(win);
         int winW = 0, winH = 0;
         SDL_GetWindowSize(win, &winW, &winH);
-        if (SDL_GetWindowSafeArea(win, &safeRect)) {
-          safeLeft   = safeRect.x;
-          safeTop    = safeRect.y;
-          safeRight  = winW - (safeRect.x + safeRect.w);
-          safeBottom = winH - (safeRect.y + safeRect.h);
-          /* Scale insets from window coords to logical coords */
-          if (winW > 0 && winH > 0) {
-            safeLeft   = safeLeft   * tw / winW;
-            safeTop    = safeTop    * th / winH;
-            safeRight  = safeRight  * tw / winW;
-            safeBottom = safeBottom * th / winH;
-          }
-          WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Safe area insets: L=%d T=%d R=%d B=%d",
-                  safeLeft, safeTop, safeRight, safeBottom);
+        if (winW > 0 && winH > 0) {
+          safeLeft   = (int)(safe.left   * (float)tw / (float)winW);
+          safeTop    = (int)(safe.top    * (float)th / (float)winH);
+          safeRight  = (int)(safe.right  * (float)tw / (float)winW);
+          safeBottom = (int)(safe.bottom * (float)th / (float)winH);
         }
+        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Safe area insets: L=%d T=%d R=%d B=%d",
+                    safeLeft, safeTop, safeRight, safeBottom);
       }
 
       touchInputSetup(tw, th, safeLeft, safeTop, safeRight, safeBottom);
@@ -913,7 +921,14 @@ android_game_start:
     /* Process SDL events */
     {
       SDL_Event ev;
-      while (SDL_PollEvent(&ev)) {
+      if (!uiModeIsTablet()) {
+        /* A tablet's classic screen takes the desktop's event handling
+           whole, as the iPad's does: the keys that act on a press, click to
+           build, the wheel, and the finger events for the touch controls
+           over it. The move to and from the background is
+           androidLifecycleWatch's. */
+        sdl3ImguiProcessEvents(cs);
+      } else while (SDL_PollEvent(&ev)) {
         SDL_Event rawEv = ev;
         /* Convert coordinates to logical presentation space for ImGui */
         SDL_Renderer *ren = sdl3DrawGetRenderer();
