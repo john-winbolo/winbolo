@@ -18,6 +18,7 @@
  */
 
 #include "../platform/platform_dialogs.h"
+#include "../../gui/lang.h"
 
 #include <SDL3/SDL.h>
 
@@ -76,8 +77,8 @@ int lv_platform_dialog_error(const char *title, const char *message) {
 
 int lv_platform_dialog_question(const char *title, const char *message) {
     const SDL_MessageBoxButtonData buttons[] = {
-        { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Yes" },
-        { SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "No"  },
+        { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, langGetText(STR_YES) },
+        { SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, langGetText(STR_NO)  },
     };
     const SDL_MessageBoxData data = {
         SDL_MESSAGEBOX_INFORMATION, g_window,
