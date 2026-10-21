@@ -82,6 +82,35 @@ static bool terrainCombo(const char *label, int *terrain) {
     return changed;
 }
 
+/* Map Maker preset names, in the order of the preset table in
+ * src/bolo/mapgen_maker.c. */
+static const langid s_presetNameIds[] = {
+    STR_MAPGEN_PRESET_BERSERKIR,
+    STR_MAPGEN_PRESET_SLUGGO_TOURNAMENT,
+    STR_MAPGEN_PRESET_SLUGDEATH,
+    STR_MAPGEN_PRESET_SLUGFEST,
+    STR_MAPGEN_PRESET_SLUGGO_ADVENTUROUS,
+    STR_MAPGEN_PRESET_SLUGGO_SYMMETRIC,
+    STR_MAPGEN_PRESET_STOOGEFEST,
+    STR_MAPGEN_PRESET_BLACK_LIGHTNING,
+    STR_MAPGEN_PRESET_BL_ISLANDS,
+    STR_MAPGEN_PRESET_DEATHHAND,
+    STR_MAPGEN_PRESET_MEGAWATT_TC,
+    STR_MAPGEN_PRESET_MEGAWATT_ISLANDS,
+    STR_MAPGEN_PRESET_MOSH_PIT,
+    STR_MAPGEN_PRESET_PALPATINE,
+    STR_MAPGEN_PRESET_CHEW_TOY,
+};
+#define NUM_PRESET_NAMES ((int)(sizeof(s_presetNameIds) / sizeof(s_presetNameIds[0])))
+
+static const char *presetLabel(int preset) {
+    if (preset >= 0 && preset < NUM_PRESET_NAMES) {
+        return langGetText(s_presetNameIds[preset]);
+    }
+    const char *name = mapGenPresetName(preset);
+    return name ? name : "?";
+}
+
 /* --- SVG icon helpers --- */
 
 static SDL_Texture *genLoadSvgIcon(const char *path, int sizePx) {
@@ -216,6 +245,26 @@ static void restoreLockedFractalParams(MapGenConfig *cfg,
     if (lk & MAPGEN_LOCK_F_MINES)     f.mineDensityPct = s.mineDensityPct;
 }
 
+static void restoreLockedMakerParams(MapGenConfig *cfg,
+                                     const MapGenConfig *saved) {
+    uint64_t lk = cfg->locks;
+    auto &k = cfg->params.maker;
+    const auto &s = saved->params.maker;
+    if (lk & MAPGEN_LOCK_K_OUTLINE)  k.outline = s.outline;
+    if (lk & MAPGEN_LOCK_K_SYMMETRY) k.symmetry = s.symmetry;
+    if (lk & MAPGEN_LOCK_K_WATER)    k.waterPct = s.waterPct;
+    if (lk & MAPGEN_LOCK_K_FOREST)   k.forestPct = s.forestPct;
+    if (lk & MAPGEN_LOCK_K_ROAD)     k.roadPct = s.roadPct;
+    if (lk & MAPGEN_LOCK_K_BUILDING) k.buildingPct = s.buildingPct;
+    if (lk & MAPGEN_LOCK_K_ISLANDS)  k.islands = s.islands;
+    if (lk & MAPGEN_LOCK_K_MINES)    k.mineDensityPct = s.mineDensityPct;
+    if (lk & MAPGEN_LOCK_K_DETAIL)   k.detail = s.detail;
+    if (lk & MAPGEN_LOCK_BASES)  cfg->bases = saved->bases;
+    if (lk & MAPGEN_LOCK_PILLS)  cfg->pills = saved->pills;
+    if (lk & MAPGEN_LOCK_STARTS) cfg->starts = saved->starts;
+    if (lk & MAPGEN_LOCK_SIZE)   cfg->size = saved->size;
+}
+
 #ifdef _MSC_VER
 #pragma warning(suppress: 4505)
 #endif
@@ -225,6 +274,7 @@ static void restoreLockedParams(MapGenConfig *cfg,
     if (lk & MAPGEN_LOCK_BASES)  cfg->bases = saved->bases;
     if (lk & MAPGEN_LOCK_PILLS)  cfg->pills = saved->pills;
     if (lk & MAPGEN_LOCK_STARTS) cfg->starts = saved->starts;
+    if (lk & MAPGEN_LOCK_SIZE)   cfg->size = saved->size;
 
     if (cfg->genType == MAPGEN_TOURNAMENT)
         restoreLockedTournamentParams(cfg, saved);
@@ -234,6 +284,8 @@ static void restoreLockedParams(MapGenConfig *cfg,
         restoreLockedMazeParams(cfg, saved);
     else if (cfg->genType == MAPGEN_FRACTAL)
         restoreLockedFractalParams(cfg, saved);
+    else if (cfg->genType == MAPGEN_MAKER)
+        restoreLockedMakerParams(cfg, saved);
 }
 
 /* --- Main controls function --- */
@@ -299,12 +351,13 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         langGetText(STR_MAPGEN_TYPE_NATURAL),
         langGetText(STR_MAPGEN_TYPE_MAZE),
         langGetText(STR_MAPGEN_TYPE_FRACTAL),
+        langGetText(STR_MAPGEN_TYPE_MAKER),
     };
     ImGui::Combo(langGetText(STR_MAPGEN_GENERATOR), &cfg->genType, s_genTypeNames, MAPGEN_TYPE_COUNT);
     lockButton("lk_gentype", &cfg->locks, MAPGEN_LOCK_GENTYPE);
     if (cfg->genType != prevGenType) {
         static MapGenConfig savedConfigs[MAPGEN_TYPE_COUNT];
-        static bool hasSaved[MAPGEN_TYPE_COUNT] = {false, false, false, false};
+        static bool hasSaved[MAPGEN_TYPE_COUNT] = {};
         savedConfigs[prevGenType] = *cfg;
         savedConfigs[prevGenType].genType = prevGenType;
         hasSaved[prevGenType] = true;
@@ -314,6 +367,7 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         int savedBases = cfg->bases;
         int savedPills = cfg->pills;
         int savedStarts = cfg->starts;
+        int savedSize = cfg->size;
         int savedX1 = cfg->x1, savedY1 = cfg->y1;
         int savedX2 = cfg->x2, savedY2 = cfg->y2;
 
@@ -327,6 +381,7 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         cfg->bases = savedBases;
         cfg->pills = savedPills;
         cfg->starts = savedStarts;
+        cfg->size = savedSize;
         cfg->x1 = savedX1; cfg->y1 = savedY1;
         cfg->x2 = savedX2; cfg->y2 = savedY2;
     }
@@ -419,6 +474,17 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
             if (f.rivers) f.lakes = (mapGenXorshift32(&rng) & 1) != 0;
             if (!f.rivers) f.lakes = false;
             if (!(lk & MAPGEN_LOCK_F_MINES))     f.mineDensityPct = (int)(mapGenXorshift32(&rng) % 4);
+        } else if (cfg->genType == MAPGEN_MAKER) {
+            /* A new preset brings its own style values, size and
+             * counts; locked values are then put back. The other
+             * values keep the preset's numbers so that the map stays
+             * in that maker's style. */
+            if (!(lk & MAPGEN_LOCK_K_PRESET)) {
+                MapGenConfig saved = *cfg;
+                int preset = (int)(mapGenXorshift32(&rng) % (uint32_t)mapGenPresetCount());
+                mapGenApplyPreset(preset, cfg);
+                restoreLockedMakerParams(cfg, &saved);
+            }
         }
         mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
         generated = true;
@@ -622,6 +688,88 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         ImGui::Spacing();
         ImGui::SliderInt(langGetText(STR_MAPGEN_MINE_DENSITY), &f.mineDensityPct, 0, 5);
         lockButton("lk_fmines", &cfg->locks, MAPGEN_LOCK_F_MINES);
+
+    } else if (cfg->genType == MAPGEN_MAKER) {
+        auto &k = cfg->params.maker;
+
+        int presetCount = mapGenPresetCount();
+        if (ImGui::BeginCombo(langGetText(STR_MAPGEN_PRESET), presetLabel(k.preset))) {
+            for (int i = 0; i < presetCount; i++) {
+                bool selected = (i == k.preset);
+                if (ImGui::Selectable(presetLabel(i), selected) && !selected) {
+                    MapGenConfig saved = *cfg;
+                    mapGenApplyPreset(i, cfg);
+                    restoreLockedMakerParams(cfg, &saved);
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", langGetText(STR_MAPGEN_PRESET_TIP));
+        }
+        lockButton("lk_kpreset", &cfg->locks, MAPGEN_LOCK_K_PRESET);
+
+        const char *s_outlineNames[MAPGEN_OUTLINE_COUNT] = {
+            langGetText(STR_MAPGEN_OUTLINE_BOX),
+            langGetText(STR_MAPGEN_OUTLINE_OCTAGON),
+            langGetText(STR_MAPGEN_OUTLINE_ROUND),
+            langGetText(STR_MAPGEN_OUTLINE_DIAMOND),
+            langGetText(STR_MAPGEN_OUTLINE_CROSS),
+            langGetText(STR_MAPGEN_OUTLINE_CLOVER),
+            langGetText(STR_MAPGEN_OUTLINE_ISLAND),
+            langGetText(STR_MAPGEN_OUTLINE_VARIED),
+        };
+        ImGui::Combo(langGetText(STR_MAPGEN_OUTLINE), &k.outline, s_outlineNames, MAPGEN_OUTLINE_COUNT);
+        lockButton("lk_koutline", &cfg->locks, MAPGEN_LOCK_K_OUTLINE);
+
+        const char *s_msymNames[MAPGEN_MSYM_COUNT] = {
+            langGetText(STR_MAPGEN_MSYM_NONE),
+            langGetText(STR_MAPGEN_MSYM_MIRROR),
+            langGetText(STR_MAPGEN_MSYM_ROT2),
+            langGetText(STR_MAPGEN_MSYM_MIRROR4),
+            langGetText(STR_MAPGEN_MSYM_ROT4),
+        };
+        ImGui::Combo(langGetText(STR_MAPGEN_SYMMETRY), &k.symmetry, s_msymNames, MAPGEN_MSYM_COUNT);
+        lockButton("lk_ksym", &cfg->locks, MAPGEN_LOCK_K_SYMMETRY);
+
+        ImGui::Spacing();
+        ImGui::SliderInt(langGetText(STR_MAPGEN_WATER_PCT), &k.waterPct, 0, 100);
+        lockButton("lk_kwater", &cfg->locks, MAPGEN_LOCK_K_WATER);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_FOREST_PCT), &k.forestPct, 0, 100);
+        lockButton("lk_kforest", &cfg->locks, MAPGEN_LOCK_K_FOREST);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_ROAD_PCT), &k.roadPct, 0, 100);
+        lockButton("lk_kroad", &cfg->locks, MAPGEN_LOCK_K_ROAD);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_BUILDING_PCT), &k.buildingPct, 0, 100);
+        lockButton("lk_kbldg", &cfg->locks, MAPGEN_LOCK_K_BUILDING);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_ISLANDS), &k.islands, 1, 8);
+        lockButton("lk_kislands", &cfg->locks, MAPGEN_LOCK_K_ISLANDS);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_MINE_DENSITY), &k.mineDensityPct, 0, 5);
+        lockButton("lk_kmines", &cfg->locks, MAPGEN_LOCK_K_MINES);
+        ImGui::SliderInt(langGetText(STR_MAPGEN_DETAIL), &k.detail, 0, 10);
+        lockButton("lk_kdetail", &cfg->locks, MAPGEN_LOCK_K_DETAIL);
+    }
+
+    /* Size, for every generator type. The slider's lowest stop, one
+     * below the smallest square, stands for Full (the whole region). */
+    ImGui::Spacing();
+    ImGui::Separator();
+    {
+        int sizeVal = (cfg->size == MAPGEN_SIZE_FULL) ? MAPGEN_SIZE_MAX + 1 : cfg->size;
+        char sizeFmt[32];
+        if (sizeVal > MAPGEN_SIZE_MAX) {
+            SDL_snprintf(sizeFmt, sizeof(sizeFmt), "%s", langGetText(STR_MAPGEN_SIZE_FULL));
+        } else {
+            SDL_snprintf(sizeFmt, sizeof(sizeFmt), "%%d");
+        }
+        if (ImGui::SliderInt(langGetText(STR_MAPGEN_SIZE), &sizeVal,
+                             MAPGEN_SIZE_MIN, MAPGEN_SIZE_MAX + 1, sizeFmt)) {
+            cfg->size = (sizeVal > MAPGEN_SIZE_MAX) ? MAPGEN_SIZE_FULL : sizeVal;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", langGetText(STR_MAPGEN_SIZE_TIP));
+        }
+        lockButton("lk_size", &cfg->locks, MAPGEN_LOCK_SIZE);
     }
 
     /* Shared bases/pills/starts */

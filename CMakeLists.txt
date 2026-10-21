@@ -4745,6 +4745,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # length, strict bsearch sort order, and name round-trips — pins the
     # off-by-one that crashed resolveName's bsearch on startup.
     tests/unit/test_lang_name_table.c
+    # Random map Size control and the Map Maker presets: Size bounds and
+    # seed suffix, same map for the same seed, counts, bounds and reach.
+    tests/unit/test_mapgen_maker.c
     # What a quit inside a dialog means, and where it goes. The same
     # decision is made in eleven dialog poll loops with nothing to check
     # that a new one makes it; telling a real close request from the one
@@ -6471,6 +6474,12 @@ set(_unit_test_names
     game_settings_blob
     ping_network
     lang_name_table
+    mapgen_size_bounds
+    mapgen_legacy_seed_unchanged
+    mapgen_maker_seed_roundtrip
+    mapgen_maker_deterministic
+    mapgen_maker_valid
+    mapgen_size_all_types
     dialog_quit
     screencalc_river_road_counts_as_water
     screencalc_river_arms_of_road_centred_cross

@@ -669,7 +669,16 @@ void printArgs() {
   fprintf(stderr, "                -randommap tournament|natural|maze|fractal — specific generator type.\n");
   fprintf(stderr, "                -randommap <seed> — reproduce a specific map from its seed.\n");
   fprintf(stderr, "                -randommap tournament <seed> — type with specific seed.\n");
+  fprintf(stderr, "                -randommap maker — a map in the style of a classic map\n");
+  fprintf(stderr, "                maker; the server picks one of the presets.\n");
+  fprintf(stderr, "                -randommap <preset> — one Map Maker preset: berserkir,\n");
+  fprintf(stderr, "                sluggo-tournament, slugdeath, slugfest, sluggo-adventurous,\n");
+  fprintf(stderr, "                sluggo-symmetric, stoogefest, black-lightning, bl-islands,\n");
+  fprintf(stderr, "                deathhand, megawatt-tc, megawatt-islands, mosh-pit,\n");
+  fprintf(stderr, "                palpatine or chew-toy.\n");
   fprintf(stderr, "                Map name shown as 'rand_<seed>' in server info.\n");
+  fprintf(stderr, "-randommapsize <N> - Side in tiles of the square of land a random map\n");
+  fprintf(stderr, "                uses, from 24 to 215, or 0 for the whole map (the default).\n");
   fprintf(stderr, "-moddir <Dir> - Directory of mods and scenarios this server offers on their\n");
   fprintf(stderr, "                own, independently of any map: .scenario packages and loose\n");
   fprintf(stderr, "                .lua scripts. Read on top of the mods that ship with the\n");
@@ -1188,7 +1197,9 @@ bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, 
       strncpy(lower, arg1, sizeof(lower) - 1);
       lower[sizeof(lower) - 1] = '\0';
       strlower(lower);
-      if (strcmp(lower, "tournament") == 0 || strcmp(lower, "natural") == 0 || strcmp(lower, "maze") == 0) {
+      if (strcmp(lower, "tournament") == 0 || strcmp(lower, "natural") == 0 ||
+          strcmp(lower, "maze") == 0 || strcmp(lower, "fractal") == 0 ||
+          strcmp(lower, "maker") == 0 || mapGenPresetFromKey(lower) >= 0) {
         /* Type specified — check for seed after it */
         snprintf(mapName, 2048, "-randommap %s", lower);
         if (argNum + 1 < numArgs && argv[argNum + 1][0] != '-') {
@@ -1956,7 +1967,14 @@ int main(int argc, char **argv) {
       if (strcmp(typeStr, "natural") == 0) genType = MAPGEN_NATURAL;
       else if (strcmp(typeStr, "maze") == 0) genType = MAPGEN_MAZE;
       else if (strcmp(typeStr, "fractal") == 0) genType = MAPGEN_FRACTAL;
+      else if (strcmp(typeStr, "maker") == 0) genType = MAPGEN_MAKER;
       cfg = mapGenDefaultConfig(genType);
+      if (genType == MAPGEN_MAKER) {
+        /* "maker" alone: the server picks one of the presets */
+        mapGenApplyPreset((int)bolo_rand_below((uint32_t)mapGenPresetCount()), &cfg);
+      } else if (mapGenPresetFromKey(typeStr) >= 0) {
+        mapGenApplyPreset(mapGenPresetFromKey(typeStr), &cfg);
+      }
 
       if (seedStr[0] != '\0') {
         /* Type + seed */
@@ -1975,6 +1993,20 @@ int main(int argc, char **argv) {
       cfg.bases = 16;
       cfg.pills = 16;
       cfg.starts = 16;
+    }
+
+    /* -randommapsize overrides the size from the preset or the seed */
+    int randomMapSize = -1;
+    {
+      int sizeArg = findArg(argc, argv, "randommapsize");
+      if (sizeArg != ARG_NOT_FOUND) {
+        randomMapSize = atoi(argv[sizeArg]);
+        if (randomMapSize < 0) randomMapSize = MAPGEN_SIZE_FULL;
+      }
+    }
+    if (randomMapSize >= 0) {
+      cfg.size = randomMapSize;
+      mapGenClampConfig(&cfg);
     }
 
     /* Generate a random seed if none was provided */
