@@ -25,6 +25,21 @@ extern "C" {
 
 #define MAKER_MAX_OBJECTS 16
 
+/* Terrain codes used by Map Maker. They match types.h; mapgen.c checks
+ * this at compile time. */
+#define MAKER_TERRAIN_BUILDING     0
+#define MAKER_TERRAIN_RIVER        1
+#define MAKER_TERRAIN_SWAMP        2
+#define MAKER_TERRAIN_CRATER       3
+#define MAKER_TERRAIN_ROAD         4
+#define MAKER_TERRAIN_FOREST       5
+#define MAKER_TERRAIN_RUBBLE       6
+#define MAKER_TERRAIN_GRASS        7
+#define MAKER_TERRAIN_HALFBUILDING 8
+#define MAKER_TERRAIN_BOAT         9
+#define MAKER_TERRAIN_DEEP_SEA     0xFF
+#define MAKER_TERRAIN_MINE_ADD     8
+
 typedef struct MakerParams {
     /* Region to generate into, already reduced by Size. */
     int x1, y1, x2, y2;

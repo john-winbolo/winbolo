@@ -6481,6 +6481,7 @@ set(_unit_test_names
     mapgen_maker_valid
     mapgen_size_all_types
     mapgen_maker_room_kinds
+    mapgen_maker_hashes
     dialog_quit
     screencalc_river_road_counts_as_water
     screencalc_river_arms_of_road_centred_cross

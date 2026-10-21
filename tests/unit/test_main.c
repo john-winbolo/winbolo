@@ -1322,6 +1322,7 @@ static const UnitTestEntry s_tests[] = {
     { "mapgen_maker_valid",                      run_mapgen_maker_valid                      },
     { "mapgen_size_all_types",                   run_mapgen_size_all_types                   },
     { "mapgen_maker_room_kinds",                 run_mapgen_maker_room_kinds                 },
+    { "mapgen_maker_hashes",                     run_mapgen_maker_hashes                     },
     { "dialog_quit",                             run_dialog_quit                             },
     { "bot_init_arg_difficulty_token",           run_bot_init_arg_difficulty_token           },
     { "bot_init_arg_mode_tokens",                run_bot_init_arg_mode_tokens                },
