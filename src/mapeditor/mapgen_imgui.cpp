@@ -739,6 +739,120 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     /* Matched with the pushControlWidth above. */
     ImGui::PopItemWidth();
 
+    /* ---- The style panel, for Map Maker only: the choices the seed
+     * makes for each map of the preset. Each one is From seed or a
+     * value the preset allows. Randomize style, Lock all and Unlock
+     * all act only on the controls in it. ---- */
+    if (cfg->genType == MAPGEN_MAKER) {
+        auto &k = cfg->params.maker;
+        bool anyShown = false;
+        /* A lever the panel does not show cannot change the map: keep
+         * it at From seed, so that the seed does not hold it. */
+        for (int lever = 0; lever < MAPGEN_KSTYLE_COUNT; lever++) {
+            if (styleLeverShown(cfg, lever)) {
+                anyShown = true;
+            } else {
+                k.style[lever] = 0;
+            }
+        }
+
+        ImGui::Spacing();
+        {
+            const ImGuiStyle &st = ImGui::GetStyle();
+            ImVec4 bg = mixColour(st.Colors[ImGuiCol_WindowBg], st.Colors[ImGuiCol_Header], 0.15f);
+            bg.w = 1.0f;
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, bg);
+            ImGui::PushStyleColor(ImGuiCol_Border, st.Colors[ImGuiCol_Header]);
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 8.0f));
+        }
+        ImGui::BeginChild("##mapgen_style", ImVec2(0.0f, 0.0f),
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY |
+                              ImGuiChildFlags_AlwaysUseWindowPadding |
+                              ImGuiChildFlags_NavFlattened,
+                          ImGuiWindowFlags_NoScrollbar |
+                              ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::PopStyleVar(3);
+        ImGui::PopStyleColor(2);
+
+        pushControlWidth();
+        {
+            MessageArgs args = {};
+            SDL_strlcpy(args.string1, presetLabel(k.preset), sizeof(args.string1));
+            ImGui::TextUnformatted(langGetTextFmt(STR_MAPGEN_STYLE_TITLE, &args));
+        }
+
+        if (!anyShown) {
+            ImGui::TextWrapped("%s", langGetText(STR_MAPGEN_STYLE_NONE));
+        } else {
+            if (ImGui::Button(langGetText(STR_MAPGEN_STYLE_RANDOMIZE))) {
+                randomizeStyle(cfg);
+                mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
+                generated = true;
+            }
+            sameLineIfFits(langGetText(STR_MAPGEN_LOCK_ALL));
+            if (ImGui::Button(langGetText(STR_MAPGEN_LOCK_ALL))) {
+                cfg->locks |= kStyleLocks;
+            }
+            sameLineIfFits(langGetText(STR_MAPGEN_UNLOCK_ALL));
+            if (ImGui::Button(langGetText(STR_MAPGEN_UNLOCK_ALL))) {
+                cfg->locks &= ~kStyleLocks;
+            }
+
+            ImGui::Separator();
+
+            static const langid s_roadNames[MAPGEN_ROADS_COUNT] = {
+                STR_MAPGEN_ROADS_AXES, STR_MAPGEN_ROADS_DIAG,
+                STR_MAPGEN_ROADS_AXES_DIAG, STR_MAPGEN_ROADS_AXES_RING,
+                STR_MAPGEN_ROADS_DIAG_RING, STR_MAPGEN_ROADS_RING,
+            };
+            static const langid s_coreNames[2] = {
+                STR_MAPEDIT_TERR_BUILDING, STR_MAPEDIT_TERR_HALFBUILDING,
+            };
+            static const langid s_rimNames[2] = {
+                STR_MAPGEN_RIM_FOREST, STR_MAPGEN_RIM_GRASS,
+            };
+            static const langid s_yardNames[3] = {
+                STR_MAPGEN_YARD_NONE, STR_MAPGEN_YARD_BUILDING, STR_MAPGEN_YARD_FOREST,
+            };
+            if (styleLeverShown(cfg, MAPGEN_KSTYLE_ROADS)) {
+                styleCombo(cfg, MAPGEN_KSTYLE_ROADS, STR_MAPGEN_STYLE_ROADS,
+                           STR_MAPGEN_STYLE_ROADS_TIP, s_roadNames);
+                lockButton("lk_sroads", &cfg->locks, MAPGEN_LOCK_KS_ROADS);
+            }
+            if (styleLeverShown(cfg, MAPGEN_KSTYLE_SHAPE)) {
+                styleSlider(cfg, MAPGEN_KSTYLE_SHAPE, STR_MAPGEN_STYLE_SHAPE,
+                            STR_MAPGEN_STYLE_SHAPE_TIP);
+                lockButton("lk_sshape", &cfg->locks, MAPGEN_LOCK_KS_SHAPE);
+            }
+            if (styleLeverShown(cfg, MAPGEN_KSTYLE_CUT)) {
+                styleSlider(cfg, MAPGEN_KSTYLE_CUT, STR_MAPGEN_STYLE_CUT,
+                            STR_MAPGEN_STYLE_CUT_TIP);
+                lockButton("lk_scut", &cfg->locks, MAPGEN_LOCK_KS_CUT);
+            }
+            if (styleLeverShown(cfg, MAPGEN_KSTYLE_CORE)) {
+                styleCombo(cfg, MAPGEN_KSTYLE_CORE, STR_MAPGEN_STYLE_CORE,
+                           STR_MAPGEN_STYLE_CORE_TIP, s_coreNames);
+                lockButton("lk_score", &cfg->locks, MAPGEN_LOCK_KS_CORE);
+            }
+            if (styleLeverShown(cfg, MAPGEN_KSTYLE_RIM)) {
+                styleCombo(cfg, MAPGEN_KSTYLE_RIM, STR_MAPGEN_STYLE_RIM,
+                           STR_MAPGEN_STYLE_RIM_TIP, s_rimNames);
+                lockButton("lk_srim", &cfg->locks, MAPGEN_LOCK_KS_RIM);
+            }
+            if (styleLeverShown(cfg, MAPGEN_KSTYLE_YARD)) {
+                styleCombo(cfg, MAPGEN_KSTYLE_YARD, STR_MAPGEN_STYLE_YARD,
+                           STR_MAPGEN_STYLE_YARD_TIP, s_yardNames);
+                lockButton("lk_syard", &cfg->locks, MAPGEN_LOCK_KS_YARD);
+            }
+        }
+
+        /* Matched with the pushControlWidth inside the style panel. */
+        ImGui::PopItemWidth();
+        ImGui::EndChild();
+    }
+
     /* ---- The parameter panel: a box with its own border and
      * background. Randomize, Lock all and Unlock all act only on the
      * controls in it. ---- */
@@ -775,9 +889,6 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         randomizePanel(cfg);
         mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
         generated = true;
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", langGetText(STR_MAPGEN_RANDOMIZE_TIP));
     }
     sameLineIfFits(langGetText(STR_MAPGEN_LOCK_ALL));
     if (ImGui::Button(langGetText(STR_MAPGEN_LOCK_ALL))) {
@@ -1006,123 +1117,6 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     /* Matched with the pushControlWidth inside the panel. */
     ImGui::PopItemWidth();
     ImGui::EndChild();
-
-    /* ---- The style panel, for Map Maker only: the choices the seed
-     * makes for each map of the preset. Each one is From seed or a
-     * value the preset allows. Randomize style, Lock all and Unlock
-     * all act only on the controls in it. ---- */
-    if (cfg->genType == MAPGEN_MAKER) {
-        auto &k = cfg->params.maker;
-        bool anyShown = false;
-        /* A lever the panel does not show cannot change the map: keep
-         * it at From seed, so that the seed does not hold it. */
-        for (int lever = 0; lever < MAPGEN_KSTYLE_COUNT; lever++) {
-            if (styleLeverShown(cfg, lever)) {
-                anyShown = true;
-            } else {
-                k.style[lever] = 0;
-            }
-        }
-
-        ImGui::Spacing();
-        {
-            const ImGuiStyle &st = ImGui::GetStyle();
-            ImVec4 bg = mixColour(st.Colors[ImGuiCol_WindowBg], st.Colors[ImGuiCol_Header], 0.15f);
-            bg.w = 1.0f;
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, bg);
-            ImGui::PushStyleColor(ImGuiCol_Border, st.Colors[ImGuiCol_Header]);
-            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 8.0f));
-        }
-        ImGui::BeginChild("##mapgen_style", ImVec2(0.0f, 0.0f),
-                          ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY |
-                              ImGuiChildFlags_AlwaysUseWindowPadding |
-                              ImGuiChildFlags_NavFlattened,
-                          ImGuiWindowFlags_NoScrollbar |
-                              ImGuiWindowFlags_NoScrollWithMouse);
-        ImGui::PopStyleVar(3);
-        ImGui::PopStyleColor(2);
-
-        pushControlWidth();
-        {
-            MessageArgs args = {};
-            SDL_strlcpy(args.string1, presetLabel(k.preset), sizeof(args.string1));
-            ImGui::TextUnformatted(langGetTextFmt(STR_MAPGEN_STYLE_TITLE, &args));
-        }
-
-        if (!anyShown) {
-            ImGui::TextWrapped("%s", langGetText(STR_MAPGEN_STYLE_NONE));
-        } else {
-            if (ImGui::Button(langGetText(STR_MAPGEN_STYLE_RANDOMIZE))) {
-                randomizeStyle(cfg);
-                mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
-                generated = true;
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", langGetText(STR_MAPGEN_STYLE_RANDOMIZE_TIP));
-            }
-            sameLineIfFits(langGetText(STR_MAPGEN_LOCK_ALL));
-            if (ImGui::Button(langGetText(STR_MAPGEN_LOCK_ALL))) {
-                cfg->locks |= kStyleLocks;
-            }
-            sameLineIfFits(langGetText(STR_MAPGEN_UNLOCK_ALL));
-            if (ImGui::Button(langGetText(STR_MAPGEN_UNLOCK_ALL))) {
-                cfg->locks &= ~kStyleLocks;
-            }
-
-            ImGui::Separator();
-
-            static const langid s_roadNames[MAPGEN_ROADS_COUNT] = {
-                STR_MAPGEN_ROADS_AXES, STR_MAPGEN_ROADS_DIAG,
-                STR_MAPGEN_ROADS_AXES_DIAG, STR_MAPGEN_ROADS_AXES_RING,
-                STR_MAPGEN_ROADS_DIAG_RING, STR_MAPGEN_ROADS_RING,
-            };
-            static const langid s_coreNames[2] = {
-                STR_MAPEDIT_TERR_BUILDING, STR_MAPEDIT_TERR_HALFBUILDING,
-            };
-            static const langid s_rimNames[2] = {
-                STR_MAPGEN_RIM_FOREST, STR_MAPGEN_RIM_GRASS,
-            };
-            static const langid s_yardNames[3] = {
-                STR_MAPGEN_YARD_NONE, STR_MAPGEN_YARD_BUILDING, STR_MAPGEN_YARD_FOREST,
-            };
-            if (styleLeverShown(cfg, MAPGEN_KSTYLE_ROADS)) {
-                styleCombo(cfg, MAPGEN_KSTYLE_ROADS, STR_MAPGEN_STYLE_ROADS,
-                           STR_MAPGEN_STYLE_ROADS_TIP, s_roadNames);
-                lockButton("lk_sroads", &cfg->locks, MAPGEN_LOCK_KS_ROADS);
-            }
-            if (styleLeverShown(cfg, MAPGEN_KSTYLE_SHAPE)) {
-                styleSlider(cfg, MAPGEN_KSTYLE_SHAPE, STR_MAPGEN_STYLE_SHAPE,
-                            STR_MAPGEN_STYLE_SHAPE_TIP);
-                lockButton("lk_sshape", &cfg->locks, MAPGEN_LOCK_KS_SHAPE);
-            }
-            if (styleLeverShown(cfg, MAPGEN_KSTYLE_CUT)) {
-                styleSlider(cfg, MAPGEN_KSTYLE_CUT, STR_MAPGEN_STYLE_CUT,
-                            STR_MAPGEN_STYLE_CUT_TIP);
-                lockButton("lk_scut", &cfg->locks, MAPGEN_LOCK_KS_CUT);
-            }
-            if (styleLeverShown(cfg, MAPGEN_KSTYLE_CORE)) {
-                styleCombo(cfg, MAPGEN_KSTYLE_CORE, STR_MAPGEN_STYLE_CORE,
-                           STR_MAPGEN_STYLE_CORE_TIP, s_coreNames);
-                lockButton("lk_score", &cfg->locks, MAPGEN_LOCK_KS_CORE);
-            }
-            if (styleLeverShown(cfg, MAPGEN_KSTYLE_RIM)) {
-                styleCombo(cfg, MAPGEN_KSTYLE_RIM, STR_MAPGEN_STYLE_RIM,
-                           STR_MAPGEN_STYLE_RIM_TIP, s_rimNames);
-                lockButton("lk_srim", &cfg->locks, MAPGEN_LOCK_KS_RIM);
-            }
-            if (styleLeverShown(cfg, MAPGEN_KSTYLE_YARD)) {
-                styleCombo(cfg, MAPGEN_KSTYLE_YARD, STR_MAPGEN_STYLE_YARD,
-                           STR_MAPGEN_STYLE_YARD_TIP, s_yardNames);
-                lockButton("lk_syard", &cfg->locks, MAPGEN_LOCK_KS_YARD);
-            }
-        }
-
-        /* Matched with the pushControlWidth inside the style panel. */
-        ImGui::PopItemWidth();
-        ImGui::EndChild();
-    }
 
     /* Detect parameter changes (ignore lock-only changes) */
     if (!generated) {
