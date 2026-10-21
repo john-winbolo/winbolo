@@ -427,8 +427,10 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
             cfg->starts = savedStarts;
         }
         /* Map Maker takes its counts from the preset below, so it
-         * does not draw them here. */
-        if (cfg->genType != MAPGEN_MAKER) {
+         * does not draw them here, unless the preset is locked: then
+         * no preset is applied and the counts are drawn as for the
+         * other types. */
+        if (cfg->genType != MAPGEN_MAKER || (lk & MAPGEN_LOCK_K_PRESET)) {
             if (!(lk & MAPGEN_LOCK_BASES))  cfg->bases = 1 + (int)(mapGenXorshift32(&rng) % 16);
             if (!(lk & MAPGEN_LOCK_PILLS))  cfg->pills = 1 + (int)(mapGenXorshift32(&rng) % 16);
             if (!(lk & MAPGEN_LOCK_STARTS)) cfg->starts = 1 + (int)(mapGenXorshift32(&rng) % 16);
