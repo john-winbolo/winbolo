@@ -3586,6 +3586,34 @@
 #define STR_MAPGEN_UNLOCK_ALL                    2996
 #define STR_MAPGEN_RANDOMIZE_TIP                 2997
 #define STR_MAPGEN_PANEL_TITLE                   2998
+#define STR_MAPGEN_STYLE_TITLE                   2999
+#define STR_MAPGEN_STYLE_RANDOMIZE               3000
+#define STR_MAPGEN_STYLE_RANDOMIZE_TIP           3001
+#define STR_MAPGEN_STYLE_NONE                    3002
+#define STR_MAPGEN_STYLE_FROM_SEED               3003
+#define STR_MAPGEN_STYLE_ROADS                   3004
+#define STR_MAPGEN_ROADS_AXES                    3005
+#define STR_MAPGEN_ROADS_DIAG                    3006
+#define STR_MAPGEN_ROADS_AXES_DIAG               3007
+#define STR_MAPGEN_ROADS_AXES_RING               3008
+#define STR_MAPGEN_ROADS_DIAG_RING               3009
+#define STR_MAPGEN_ROADS_RING                    3010
+#define STR_MAPGEN_STYLE_SHAPE                   3011
+#define STR_MAPGEN_STYLE_CUT                     3012
+#define STR_MAPGEN_STYLE_CORE                    3013
+#define STR_MAPGEN_STYLE_RIM                     3014
+#define STR_MAPGEN_RIM_FOREST                    3015
+#define STR_MAPGEN_RIM_GRASS                     3016
+#define STR_MAPGEN_STYLE_YARD                    3017
+#define STR_MAPGEN_YARD_NONE                     3018
+#define STR_MAPGEN_YARD_BUILDING                 3019
+#define STR_MAPGEN_YARD_FOREST                   3020
+#define STR_MAPGEN_STYLE_ROADS_TIP               3021
+#define STR_MAPGEN_STYLE_SHAPE_TIP               3022
+#define STR_MAPGEN_STYLE_CUT_TIP                 3023
+#define STR_MAPGEN_STYLE_CORE_TIP                3024
+#define STR_MAPGEN_STYLE_RIM_TIP                 3025
+#define STR_MAPGEN_STYLE_YARD_TIP                3026
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
