@@ -264,9 +264,11 @@ static int SDLCALL galleryDecodeThread(void *userdata) {
         job->tooLarge = (tooLarge != 0);
     }
     SDL_free(data);
-    SDL_AtomicDecRef(&s_galDecodesRunning);
-    /* Dropped last: after this the job may already be freed. */
+    /* After this the job may already be freed; nothing of it is touched. */
     galleryJobRelease(job);
+    /* Lowered last, so a new decode does not start while this job's frames
+     * are still held. */
+    SDL_AtomicDecRef(&s_galDecodesRunning);
     return 0;
 }
 
@@ -363,7 +365,10 @@ static void galleryPreviewUpdate(const ClipGifMeta *item) {
     if (job != nullptr && SDL_GetAtomicInt(&job->refs) == 1) {
         /* Sole owner now: the worker has written the results and let go. */
         s_gal.job = nullptr;
-        if (SDL_strcmp(job->file, item->gifFile) == 0) {
+        /* A stopped job holds no frames, so it is not taken; the item's own
+         * decode starts after the wait instead. */
+        if (SDL_GetAtomicInt(&job->stop) == 0 &&
+            SDL_strcmp(job->file, item->gifFile) == 0) {
             galleryPreviewTake(job);
         }
         galleryJobFree(job);
@@ -372,6 +377,12 @@ static void galleryPreviewUpdate(const ClipGifMeta *item) {
         /* A new selection: the old item's frames are not shown under it. */
         SDL_strlcpy(s_gal.waitFile, item->gifFile, sizeof(s_gal.waitFile));
         s_gal.waitSinceMs = SDL_GetTicks();
+        /* A decode for another file is not needed now: tell its worker to
+         * stop, so the new item does not wait for the whole decode. */
+        if (s_gal.job != nullptr &&
+            SDL_strcmp(s_gal.job->file, item->gifFile) != 0) {
+            SDL_SetAtomicInt(&s_gal.job->stop, 1);
+        }
         if (SDL_strcmp(s_gal.preview.file, item->gifFile) != 0) {
             galleryPreviewFree();
         }

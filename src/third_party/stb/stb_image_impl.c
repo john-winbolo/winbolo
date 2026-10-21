@@ -71,7 +71,7 @@ stbi_uc *stbiLoadGifCapped(const stbi_uc *buffer, int len, size_t maxBytes,
       return NULL;
    }
 
-   /* About 1.5 KB, so on the heap rather than a worker thread's stack. */
+   /* About 35 KB, so on the heap rather than a worker thread's stack. */
    g = (stbi__gif *)STBI_MALLOC(sizeof(stbi__gif));
    if (g == NULL) {
       return NULL;

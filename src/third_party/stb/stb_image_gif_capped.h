@@ -55,7 +55,9 @@ typedef int (*StbiGifStopFn)(void *user);
  * shown in *delays (ms). Free both with stbi_image_free.
  *
  * The limit counts the frames kept plus STBI_GIF_WORK_FRAMES frames for
- * stb's own buffers, so the decode never holds more than maxBytes.
+ * stb's own buffers, so the decode never holds more than maxBytes, apart
+ * from the copy a realloc may make while a frame is added (for that moment
+ * the old block and the new one both exist).
  *
  * stop may be NULL. When it is not, it is called with stopUser before each
  * frame, and a value other than 0 ends the decode and returns NULL (with
