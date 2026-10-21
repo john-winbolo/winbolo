@@ -69,6 +69,10 @@ typedef struct MakerObjects {
 int makerPresetCount(void);
 const char *makerPresetKey(int preset);
 const char *makerPresetName(int preset);
+/* The outlines a preset's maps use: bit i set means outline i
+ * (MAPGEN_OUTLINE_*, never Varied). An outline of Varied picks one of
+ * these by the seed. Returns 0 for a preset out of range. */
+int makerPresetOutlineSet(int preset);
 
 /* Fill the style values, size and object counts of a preset. Fields
  * not named by the preset (region, seed) are left alone. sizeOut gets

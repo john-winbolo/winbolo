@@ -1315,7 +1315,7 @@ static const LangEntry langTable[] = {
     {2937, "{string1} could not be saved."},
     {2954, "Opening the GIF..."},
     {2955, "This GIF is too large to show here. You can still copy it or save it."},
-    {2956, "Map Maker"},
+    {2956, "In style of a famous map maker"},
     {2957, "Size"},
     {2958, "Full"},
     {2959, "Side of the playable square in tiles. Full uses the whole area."},

@@ -214,7 +214,7 @@ static uint64_t panelLocks(int genType) {
                    MAPGEN_LOCK_F_DETAIL | MAPGEN_LOCK_F_COAST | MAPGEN_LOCK_F_LAYERS |
                    MAPGEN_LOCK_F_RIVERS | MAPGEN_LOCK_F_MINES;
         case MAPGEN_MAKER:
-            return kCountLocks | MAPGEN_LOCK_K_WATER | MAPGEN_LOCK_K_FOREST |
+            return kCountLocks | MAPGEN_LOCK_K_OUTLINE | MAPGEN_LOCK_K_WATER | MAPGEN_LOCK_K_FOREST |
                    MAPGEN_LOCK_K_ROAD | MAPGEN_LOCK_K_BUILDING | MAPGEN_LOCK_K_ISLANDS |
                    MAPGEN_LOCK_K_MINES | MAPGEN_LOCK_K_DETAIL;
         default:
@@ -223,7 +223,7 @@ static uint64_t panelLocks(int genType) {
 }
 
 /* Every lock that has a button for some generator type. Other bits
- * (generator, seed, size, preset, outline, symmetry, style, maze
+ * (generator, seed, size, preset, symmetry, style, maze
  * algorithm and terrains) have no button, so they are cleared and
  * no code reads them. */
 static uint64_t allPanelLocks(void) {
@@ -252,12 +252,13 @@ static void restoreLockedNaturalParams(MapGenConfig *cfg,
 }
 
 /* After a preset is picked: put back the locked panel values. The
- * preset always sets the outline, symmetry and size. */
+ * preset always sets the symmetry and size. */
 static void restoreLockedMakerParams(MapGenConfig *cfg,
                                      const MapGenConfig *saved) {
     uint64_t lk = cfg->locks;
     auto &k = cfg->params.maker;
     const auto &s = saved->params.maker;
+    if (lk & MAPGEN_LOCK_K_OUTLINE)  k.outline = s.outline;
     if (lk & MAPGEN_LOCK_K_WATER)    k.waterPct = s.waterPct;
     if (lk & MAPGEN_LOCK_K_FOREST)   k.forestPct = s.forestPct;
     if (lk & MAPGEN_LOCK_K_ROAD)     k.roadPct = s.roadPct;
@@ -283,7 +284,8 @@ static int bandPick(uint32_t *rng, int centre, int half, int lo, int hi) {
 
 /* The panel's Randomize: a new seed every time, and each unlocked
  * panel value in a small band round the style's own value (the Map
- * Maker preset, the Natural style, or the type's defaults). The band
+ * Maker preset, the Natural style, or the type's defaults). The Map
+ * Maker outline takes one of the preset's own outlines. The band
  * is round the style value, not the current value, so many clicks
  * stay in the style. The generator type, seed format, size and the
  * style choices above the panel do not change. */
@@ -369,6 +371,20 @@ static void randomizePanel(MapGenConfig *cfg) {
     } else if (cfg->genType == MAPGEN_MAKER) {
         auto &k = cfg->params.maker;
         const auto &b = base.params.maker;
+        /* Outline: one of the preset's own outlines, named, never
+         * Varied, so the player sees which one it is. */
+        if (!(lk & MAPGEN_LOCK_K_OUTLINE)) {
+            int set = mapGenPresetOutlineSet(k.preset);
+            int opts[MAPGEN_OUTLINE_COUNT], no = 0;
+            for (int i = 0; i < MAPGEN_OUTLINE_VARIED; i++) {
+                if (set & (1 << i)) opts[no++] = i;
+            }
+            if (no == 1) {
+                k.outline = opts[0];
+            } else if (no > 1) {
+                k.outline = opts[mapGenXorshift32(&rng) % (uint32_t)no];
+            }
+        }
         if (!(lk & MAPGEN_LOCK_K_WATER))    k.waterPct = bandPick(&rng, b.waterPct, 10, 0, 100);
         if (!(lk & MAPGEN_LOCK_K_FOREST))   k.forestPct = bandPick(&rng, b.forestPct, 10, 0, 100);
         if (!(lk & MAPGEN_LOCK_K_ROAD))     k.roadPct = bandPick(&rng, b.roadPct, 10, 0, 100);
@@ -543,18 +559,6 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s", langGetText(STR_MAPGEN_PRESET_TIP));
         }
-
-        const char *s_outlineNames[MAPGEN_OUTLINE_COUNT] = {
-            langGetText(STR_MAPGEN_OUTLINE_BOX),
-            langGetText(STR_MAPGEN_OUTLINE_OCTAGON),
-            langGetText(STR_MAPGEN_OUTLINE_ROUND),
-            langGetText(STR_MAPGEN_OUTLINE_DIAMOND),
-            langGetText(STR_MAPGEN_OUTLINE_CROSS),
-            langGetText(STR_MAPGEN_OUTLINE_CLOVER),
-            langGetText(STR_MAPGEN_OUTLINE_ISLAND),
-            langGetText(STR_MAPGEN_OUTLINE_VARIED),
-        };
-        ImGui::Combo(langGetText(STR_MAPGEN_OUTLINE), &k.outline, s_outlineNames, MAPGEN_OUTLINE_COUNT);
 
         const char *s_msymNames[MAPGEN_MSYM_COUNT] = {
             langGetText(STR_MAPGEN_MSYM_NONE),
@@ -810,6 +814,20 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     } else if (cfg->genType == MAPGEN_MAKER) {
         auto &k = cfg->params.maker;
 
+        /* Outline: in the panel, because Randomize changes it. Varied
+         * lets the seed pick one of the preset's outlines. */
+        const char *s_outlineNames[MAPGEN_OUTLINE_COUNT] = {
+            langGetText(STR_MAPGEN_OUTLINE_BOX),
+            langGetText(STR_MAPGEN_OUTLINE_OCTAGON),
+            langGetText(STR_MAPGEN_OUTLINE_ROUND),
+            langGetText(STR_MAPGEN_OUTLINE_DIAMOND),
+            langGetText(STR_MAPGEN_OUTLINE_CROSS),
+            langGetText(STR_MAPGEN_OUTLINE_CLOVER),
+            langGetText(STR_MAPGEN_OUTLINE_ISLAND),
+            langGetText(STR_MAPGEN_OUTLINE_VARIED),
+        };
+        ImGui::Combo(langGetText(STR_MAPGEN_OUTLINE), &k.outline, s_outlineNames, MAPGEN_OUTLINE_COUNT);
+        lockButton("lk_koutline", &cfg->locks, MAPGEN_LOCK_K_OUTLINE);
         ImGui::SliderInt(langGetText(STR_MAPGEN_WATER_PCT), &k.waterPct, 0, 100);
         lockButton("lk_kwater", &cfg->locks, MAPGEN_LOCK_K_WATER);
         ImGui::SliderInt(langGetText(STR_MAPGEN_FOREST_PCT), &k.forestPct, 0, 100);

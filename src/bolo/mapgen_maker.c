@@ -404,6 +404,11 @@ const char *makerPresetName(int preset) {
     return kPresets[preset].name;
 }
 
+int makerPresetOutlineSet(int preset) {
+    if (preset < 0 || preset >= PRESET_COUNT) return 0;
+    return kPresets[preset].outlineSet & ((1 << OL_VARIED) - 1);
+}
+
 void makerPresetDefaults(int preset, MakerParams *p, int *sizeOut) {
     const Preset *pr;
     if (preset < 0 || preset >= PRESET_COUNT) preset = 0;

@@ -27,6 +27,7 @@
 #include <string.h>
 
 #include "mapgen.h"
+#include "bolo/mapgen_maker.h"
 #include "types.h"
 
 #include "test_harness.h"
@@ -796,5 +797,30 @@ int run_mapgen_maker_hashes(void) {
     bad = checkSeedHashes(&g, kMakerHashes, sizeof(kMakerHashes) / sizeof(kMakerHashes[0]), MAPGEN_MAKER);
     genFree(&g);
     UT_ASSERT_MSG(bad == 0, "%d Map Maker seeds made a different map", bad);
+    return 0;
+}
+
+/* Each preset names the outlines its maps use. Randomize in the Map
+ * Maker panel picks one of them, so no set may be empty or hold
+ * Varied, and a preset out of range gives an empty set. */
+int run_mapgen_maker_outline_set(void) {
+    const int allNamed = (1 << MAPGEN_OUTLINE_VARIED) - 1;
+    int berserkir;
+    for (int p = 0; p < makerPresetCount(); p++) {
+        int set = makerPresetOutlineSet(p);
+        UT_ASSERT_MSG(set != 0, "preset %d has no outlines", p);
+        UT_ASSERT_MSG((set & ~allNamed) == 0, "preset %d has an outline out of range", p);
+        UT_ASSERT(mapGenPresetOutlineSet(p) == set);
+    }
+    UT_ASSERT(makerPresetOutlineSet(-1) == 0);
+    UT_ASSERT(makerPresetOutlineSet(makerPresetCount()) == 0);
+    UT_ASSERT(mapGenPresetOutlineSet(-1) == 0);
+    UT_ASSERT(mapGenPresetOutlineSet(mapGenPresetCount()) == 0);
+
+    berserkir = mapGenPresetFromKey("berserkir");
+    UT_ASSERT(berserkir >= 0);
+    UT_ASSERT(makerPresetOutlineSet(berserkir) ==
+              ((1 << MAPGEN_OUTLINE_OCTAGON) | (1 << MAPGEN_OUTLINE_ROUND) |
+               (1 << MAPGEN_OUTLINE_BOX) | (1 << MAPGEN_OUTLINE_CROSS)));
     return 0;
 }
