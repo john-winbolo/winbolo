@@ -12,6 +12,7 @@
 
 #include "mapgen.h"
 #include "mapgen_maze.h"
+#include "mapgen_maker.h"
 #include "bolo_map.h"
 #include "pillbox.h"
 #include "bases.h"
@@ -127,6 +128,7 @@ void mapGenBuildDisplayName(const MapGenConfig *cfg, char *out, size_t outLen) {
 
     const char *typeName = "Random";
     char subStyle[24] = "";
+    char makerName[24] = "";
     switch (cfg->genType) {
         case MAPGEN_TOURNAMENT: typeName = "Tournament"; break;
         case MAPGEN_NATURAL: {
@@ -143,6 +145,18 @@ void mapGenBuildDisplayName(const MapGenConfig *cfg, char *out, size_t outLen) {
         }
         case MAPGEN_MAZE:    typeName = "Maze";    break;
         case MAPGEN_FRACTAL: typeName = "Fractal"; break;
+        case MAPGEN_MAKER: {
+            /* The preset name without spaces, for example
+             * "BlackLightning_12345678". */
+            const char *src = mapGenPresetName(cfg->params.maker.preset);
+            size_t n = 0;
+            for (; src && *src && n + 1 < sizeof(makerName); src++) {
+                if (*src != ' ') makerName[n++] = *src;
+            }
+            makerName[n] = '\0';
+            typeName = makerName;
+            break;
+        }
         default: break;
     }
 
@@ -157,7 +171,7 @@ void mapGenBuildDisplayName(const MapGenConfig *cfg, char *out, size_t outLen) {
                  typeName, subStyle, cfg->seed);
 }
 
-void mapGenConfigToSeed(const MapGenConfig *cfg, char *out, size_t outLen) {
+static void configToSeedBase(const MapGenConfig *cfg, char *out, size_t outLen) {
     if (cfg->genType == MAPGEN_TOURNAMENT) {
         /* Layout (62 bits used in an 8-byte buf, 2 bits padding):
          *   genType(1) symmetry(3) landMassPct(5) roughness(2)
@@ -261,10 +275,72 @@ void mapGenConfigToSeed(const MapGenConfig *cfg, char *out, size_t outLen) {
         char hex[21];
         bytesToHex(buf, 10, hex);
         snprintf(out, outLen, "F%s", hex);
+    } else if (cfg->genType == MAPGEN_MAKER) {
+        /* Map Maker bit layout (97 bits = 13 bytes, padded):
+         *   preset(5) + outline(3) + symmetry(3) + water(7) + forest(7)
+         *   + road(7) + building(7) + islands(4) + mineDensity(3)
+         *   + detail(4) + bases(5) + pills(5) + starts(5) + seed(32) */
+        uint8_t buf[13];
+        memset(buf, 0, sizeof(buf));
+        BitWriter bw;
+        bwInit(&bw, buf);
+        bwWrite(&bw, (uint32_t)cfg->params.maker.preset, 5);
+        bwWrite(&bw, (uint32_t)cfg->params.maker.outline, 3);
+        bwWrite(&bw, (uint32_t)cfg->params.maker.symmetry, 3);
+        bwWrite(&bw, (uint32_t)cfg->params.maker.waterPct, 7);
+        bwWrite(&bw, (uint32_t)cfg->params.maker.forestPct, 7);
+        bwWrite(&bw, (uint32_t)cfg->params.maker.roadPct, 7);
+        bwWrite(&bw, (uint32_t)cfg->params.maker.buildingPct, 7);
+        bwWrite(&bw, (uint32_t)cfg->params.maker.islands, 4);
+        bwWrite(&bw, (uint32_t)cfg->params.maker.mineDensityPct, 3);
+        bwWrite(&bw, (uint32_t)cfg->params.maker.detail, 4);
+        bwWrite(&bw, (uint32_t)cfg->bases, 5);
+        bwWrite(&bw, (uint32_t)cfg->pills, 5);
+        bwWrite(&bw, (uint32_t)cfg->starts, 5);
+        bwWrite(&bw, cfg->seed, 32);
+
+        char hex[27];
+        bytesToHex(buf, 13, hex);
+        snprintf(out, outLen, "K%s", hex);
     }
 }
 
-bool mapGenSeedToConfig(const char *seedStr, MapGenConfig *cfg) {
+void mapGenConfigToSeed(const MapGenConfig *cfg, char *out, size_t outLen) {
+    MapGenConfig c;
+    if (!out || outLen == 0) return;
+    out[0] = '\0';
+    if (!cfg) return;
+    c = *cfg;
+    if (c.genType == MAPGEN_MAKER) mapGenClampConfig(&c);
+    configToSeedBase(&c, out, outLen);
+    /* Size travels as an optional suffix, so a full size map keeps the
+     * seed it had before the Size control existed. */
+    if (c.size != MAPGEN_SIZE_FULL && out[0] == 'N' && strlen(out) == 29) {
+        /* A Natural seed is 29 characters, so "Z" and two digits would
+         * not fit in the 30 characters of a "rand_" map name. Its last
+         * 5 bits are unused, so a sized Natural seed starts with 'Q',
+         * puts the top 5 bits of the size there and adds one hex digit
+         * for the low 3 bits: 30 characters in all. */
+        uint8_t buf[14];
+        char hex[29];
+        int size = c.size;
+        if (size < MAPGEN_SIZE_MIN) size = MAPGEN_SIZE_MIN;
+        if (size > MAPGEN_SIZE_MAX) size = MAPGEN_SIZE_MAX;
+        if (hexToBytes(out + 1, buf, 14) && outLen >= 31) {
+            buf[13] = (uint8_t)((buf[13] & 0xE0) | ((size >> 3) & 0x1F));
+            bytesToHex(buf, 14, hex);
+            snprintf(out, outLen, "Q%s%X", hex, (unsigned int)(size & 7));
+        }
+    } else if (c.size != MAPGEN_SIZE_FULL && out[0] != '\0') {
+        int size = c.size;
+        size_t len = strlen(out);
+        if (size < MAPGEN_SIZE_MIN) size = MAPGEN_SIZE_MIN;
+        if (size > MAPGEN_SIZE_MAX) size = MAPGEN_SIZE_MAX;
+        if (len + 4 <= outLen) snprintf(out + len, outLen - len, "Z%02X", size);
+    }
+}
+
+static bool seedToConfigBase(const char *seedStr, MapGenConfig *cfg) {
     if (!seedStr || !seedStr[0]) return false;
 
     char prefix = (char)toupper((unsigned char)seedStr[0]);
@@ -418,6 +494,31 @@ bool mapGenSeedToConfig(const char *seedStr, MapGenConfig *cfg) {
         cfg->starts = (int)brRead(&br, 5);
         cfg->seed = brRead(&br, 32);
         return true;
+    } else if (prefix == 'K') {
+        const char *hex = seedStr + 1;
+        if (strlen(hex) != 26) return false;
+        uint8_t buf[13];
+        if (!hexToBytes(hex, buf, 13)) return false;
+
+        BitReader br;
+        brInit(&br, buf, 104);
+        cfg->genType = MAPGEN_MAKER;
+        cfg->params.maker.preset = (int)brRead(&br, 5);
+        cfg->params.maker.outline = (int)brRead(&br, 3);
+        cfg->params.maker.symmetry = (int)brRead(&br, 3);
+        cfg->params.maker.waterPct = (int)brRead(&br, 7);
+        cfg->params.maker.forestPct = (int)brRead(&br, 7);
+        cfg->params.maker.roadPct = (int)brRead(&br, 7);
+        cfg->params.maker.buildingPct = (int)brRead(&br, 7);
+        cfg->params.maker.islands = (int)brRead(&br, 4);
+        cfg->params.maker.mineDensityPct = (int)brRead(&br, 3);
+        cfg->params.maker.detail = (int)brRead(&br, 4);
+        cfg->bases = (int)brRead(&br, 5);
+        cfg->pills = (int)brRead(&br, 5);
+        cfg->starts = (int)brRead(&br, 5);
+        cfg->seed = brRead(&br, 32);
+        mapGenClampConfig(cfg);
+        return true;
     } else {
         /* Plain number: backwards compatible, only update RNG seed */
         char *end = NULL;
@@ -425,6 +526,213 @@ bool mapGenSeedToConfig(const char *seedStr, MapGenConfig *cfg) {
         if (end == seedStr || *end != '\0') return false;
         cfg->seed = (uint32_t)val;
         return true;
+    }
+}
+
+bool mapGenSeedToConfig(const char *seedStr, MapGenConfig *cfg) {
+    char buf[64];
+    char *z;
+    int size = MAPGEN_SIZE_FULL;
+    if (!seedStr || !seedStr[0] || !cfg) return false;
+    if (strlen(seedStr) >= sizeof(buf)) return false;
+    strcpy(buf, seedStr);
+    /* A sized Natural seed: see mapGenConfigToSeed. */
+    if ((buf[0] == 'Q' || buf[0] == 'q') && strlen(buf) == 30) {
+        uint8_t bytes[14];
+        char hex[29], natural[32];
+        int low;
+        for (int i = 1; i < 30; i++) {
+            if (!isxdigit((unsigned char)buf[i])) return false;
+        }
+        low = isdigit((unsigned char)buf[29]) ? buf[29] - '0'
+                                              : toupper((unsigned char)buf[29]) - 'A' + 10;
+        if (low > 7) return false;
+        buf[29] = '\0';
+        if (!hexToBytes(buf + 1, bytes, 14)) return false;
+        size = ((bytes[13] & 0x1F) << 3) | low;
+        bytes[13] &= 0xE0;
+        bytesToHex(bytes, 14, hex);
+        snprintf(natural, sizeof(natural), "N%s", hex);
+        if (!seedToConfigBase(natural, cfg)) return false;
+        if (size < MAPGEN_SIZE_MIN) size = MAPGEN_SIZE_MIN;
+        if (size > MAPGEN_SIZE_MAX) size = MAPGEN_SIZE_MAX;
+        cfg->size = size;
+        return true;
+    }
+    /* An optional "Z" and two hex digits at the end carry the Size.
+     * No seed form uses the letter Z anywhere else. */
+    z = strchr(buf, 'Z');
+    if (!z) z = strchr(buf, 'z');
+    if (z) {
+        unsigned int v;
+        if (strlen(z + 1) != 2) return false;
+        if (!isxdigit((unsigned char)z[1]) || !isxdigit((unsigned char)z[2])) return false;
+        if (sscanf(z + 1, "%2x", &v) != 1) return false;
+        size = (int)v;
+        if (size < MAPGEN_SIZE_MIN) size = MAPGEN_SIZE_MIN;
+        if (size > MAPGEN_SIZE_MAX) size = MAPGEN_SIZE_MAX;
+        *z = '\0';
+    }
+    if (!seedToConfigBase(buf, cfg)) return false;
+    /* A plain number only sets the seed; it keeps the Size it had. */
+    if (z || !isdigit((unsigned char)buf[0])) cfg->size = size;
+    return true;
+}
+
+/*=========================================================
+ * Map Maker presets, Size and the Map Maker adapter
+ *=========================================================*/
+
+int mapGenPresetCount(void) {
+    return makerPresetCount();
+}
+
+const char *mapGenPresetKey(int preset) {
+    return makerPresetKey(preset);
+}
+
+const char *mapGenPresetName(int preset) {
+    return makerPresetName(preset);
+}
+
+int mapGenPresetFromKey(const char *key) {
+    if (!key) return -1;
+    for (int i = 0; i < makerPresetCount(); i++) {
+        const char *k = makerPresetKey(i);
+        size_t j = 0;
+        while (k[j] && key[j] &&
+               tolower((unsigned char)k[j]) == tolower((unsigned char)key[j])) {
+            j++;
+        }
+        if (k[j] == '\0' && key[j] == '\0') return i;
+    }
+    return -1;
+}
+
+void mapGenApplyPreset(int preset, MapGenConfig *cfg) {
+    MakerParams p;
+    int size = MAPGEN_SIZE_FULL;
+    if (!cfg) return;
+    if (preset < 0 || preset >= makerPresetCount()) preset = 0;
+    memset(&p, 0, sizeof(p));
+    makerPresetDefaults(preset, &p, &size);
+    cfg->genType = MAPGEN_MAKER;
+    memset(&cfg->params, 0, sizeof(cfg->params));
+    cfg->params.maker.preset = p.preset;
+    cfg->params.maker.outline = p.outline;
+    cfg->params.maker.symmetry = p.symmetry;
+    cfg->params.maker.waterPct = p.waterPct;
+    cfg->params.maker.forestPct = p.forestPct;
+    cfg->params.maker.roadPct = p.roadPct;
+    cfg->params.maker.buildingPct = p.buildingPct;
+    cfg->params.maker.islands = p.islands;
+    cfg->params.maker.mineDensityPct = p.mineDensityPct;
+    cfg->params.maker.detail = p.detail;
+    cfg->bases = p.bases;
+    cfg->pills = p.pills;
+    cfg->starts = p.starts;
+    cfg->size = size;
+}
+
+static int clampInt(int v, int lo, int hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+void mapGenClampConfig(MapGenConfig *cfg) {
+    if (!cfg) return;
+    cfg->bases = clampInt(cfg->bases, 0, MAX_BASES);
+    cfg->pills = clampInt(cfg->pills, 0, MAX_PILLS);
+    cfg->starts = clampInt(cfg->starts, 0, MAX_STARTS);
+    if (cfg->size != MAPGEN_SIZE_FULL) {
+        cfg->size = clampInt(cfg->size, MAPGEN_SIZE_MIN, MAPGEN_SIZE_MAX);
+    }
+    if (cfg->genType == MAPGEN_MAKER) {
+        cfg->params.maker.preset = clampInt(cfg->params.maker.preset, 0, makerPresetCount() - 1);
+        cfg->params.maker.outline = clampInt(cfg->params.maker.outline, 0, MAPGEN_OUTLINE_COUNT - 1);
+        cfg->params.maker.symmetry = clampInt(cfg->params.maker.symmetry, 0, MAPGEN_MSYM_COUNT - 1);
+        cfg->params.maker.waterPct = clampInt(cfg->params.maker.waterPct, 0, 100);
+        cfg->params.maker.forestPct = clampInt(cfg->params.maker.forestPct, 0, 100);
+        cfg->params.maker.roadPct = clampInt(cfg->params.maker.roadPct, 0, 100);
+        cfg->params.maker.buildingPct = clampInt(cfg->params.maker.buildingPct, 0, 100);
+        cfg->params.maker.islands = clampInt(cfg->params.maker.islands, 1, 8);
+        cfg->params.maker.mineDensityPct = clampInt(cfg->params.maker.mineDensityPct, 0, 5);
+        cfg->params.maker.detail = clampInt(cfg->params.maker.detail, 0, 10);
+    }
+}
+
+void mapGenEffectiveRegion(const MapGenConfig *cfg,
+                           int *x1, int *y1, int *x2, int *y2) {
+    int rx1 = cfg->x1, ry1 = cfg->y1, rx2 = cfg->x2, ry2 = cfg->y2;
+    int w = rx2 - rx1 + 1, h = ry2 - ry1 + 1;
+    int size = cfg->size;
+    if (size != MAPGEN_SIZE_FULL) {
+        size = clampInt(size, MAPGEN_SIZE_MIN, MAPGEN_SIZE_MAX);
+        if (size < w) {
+            rx1 += (w - size) / 2;
+            rx2 = rx1 + size - 1;
+        }
+        if (size < h) {
+            ry1 += (h - size) / 2;
+            ry2 = ry1 + size - 1;
+        }
+    }
+    if (x1) *x1 = rx1;
+    if (y1) *y1 = ry1;
+    if (x2) *x2 = rx2;
+    if (y2) *y2 = ry2;
+}
+
+/* Run the Map Maker generator and add its objects to the lists. */
+static void mapGenMaker(struct mapObj *mp, struct basesObj *bs,
+                        struct pillsObj *pb, struct startsObj *ss,
+                        const MapGenConfig *cfg) {
+    MakerParams p;
+    MakerObjects o;
+    uint8_t (*grid)[256] = (uint8_t (*)[256])malloc(256 * 256);
+    if (!grid) return;
+    memset(&p, 0, sizeof(p));
+    p.x1 = cfg->x1; p.y1 = cfg->y1; p.x2 = cfg->x2; p.y2 = cfg->y2;
+    p.seed = cfg->seed;
+    p.preset = cfg->params.maker.preset;
+    p.outline = cfg->params.maker.outline;
+    p.symmetry = cfg->params.maker.symmetry;
+    p.waterPct = cfg->params.maker.waterPct;
+    p.forestPct = cfg->params.maker.forestPct;
+    p.roadPct = cfg->params.maker.roadPct;
+    p.buildingPct = cfg->params.maker.buildingPct;
+    p.islands = cfg->params.maker.islands;
+    p.mineDensityPct = cfg->params.maker.mineDensityPct;
+    p.detail = cfg->params.maker.detail;
+    p.bases = cfg->bases;
+    p.pills = cfg->pills;
+    p.starts = cfg->starts;
+    for (int x = 0; x < 256; x++) {
+        for (int y = 0; y < 256; y++) grid[x][y] = mp->mapItem[x][y];
+    }
+    makerGenerate(grid, &o, &p);
+    for (int x = cfg->x1; x <= cfg->x2; x++) {
+        for (int y = cfg->y1; y <= cfg->y2; y++) mp->mapItem[x][y] = grid[x][y];
+    }
+    free(grid);
+    for (int i = 0; i < o.numBases && bs->numBases < MAX_BASES; i++) {
+        base *b = &bs->item[bs->numBases];
+        b->x = o.baseX[i]; b->y = o.baseY[i];
+        b->owner = 0xFF; b->armour = 90; b->shells = 90; b->mines = 90;
+        b->refuelTime = 0; b->baseTime = 0; b->justStopped = false;
+        bs->numBases++;
+    }
+    for (int i = 0; i < o.numPills && pb->numPills < MAX_PILLS; i++) {
+        pillbox *pl = &pb->item[pb->numPills];
+        pl->x = o.pillX[i]; pl->y = o.pillY[i];
+        pl->owner = 0xFF; pl->armour = 15; pl->speed = 50;
+        pl->inTank = false; pl->reload = 0; pl->coolDown = 0; pl->justSeen = false;
+        pb->numPills++;
+    }
+    for (int i = 0; i < o.numStarts && ss->numStarts < MAX_STARTS; i++) {
+        start *st = &ss->item[ss->numStarts];
+        st->x = o.startX[i]; st->y = o.startY[i];
+        st->dir = 0;  /* mapGenRun points every start at the land */
+        ss->numStarts++;
     }
 }
 
@@ -3651,13 +3959,29 @@ static void mapGenFractal(struct mapObj *mp, struct basesObj *bs,
 
 void mapGenRun(struct mapObj *mp, struct basesObj *bs,
                struct pillsObj *pb, struct startsObj *ss,
-               const MapGenConfig *cfg) {
-    uint32_t rng = cfg->seed;
+               const MapGenConfig *cfgIn) {
+    MapGenConfig sized = *cfgIn;
+    const MapGenConfig *cfg = &sized;
+    uint32_t rng = cfgIn->seed;
     /* Ensure seed is nonzero for xorshift */
     if (rng == 0) rng = 1;
 
     /* Clear existing objects in the region */
-    clearObjectsInRegion(bs, pb, ss, cfg);
+    clearObjectsInRegion(bs, pb, ss, cfgIn);
+
+    /* Size: generate into a smaller square in the middle of the region
+     * and leave the rest of the region as deep sea. At full size the
+     * region is used as it is. */
+    if (sized.genType == MAPGEN_MAKER) mapGenClampConfig(&sized);
+    mapGenEffectiveRegion(cfgIn, &sized.x1, &sized.y1, &sized.x2, &sized.y2);
+    if (sized.x1 != cfgIn->x1 || sized.y1 != cfgIn->y1 ||
+        sized.x2 != cfgIn->x2 || sized.y2 != cfgIn->y2) {
+        for (int x = cfgIn->x1; x <= cfgIn->x2; x++) {
+            for (int y = cfgIn->y1; y <= cfgIn->y2; y++) {
+                mp->mapItem[x][y] = DEEP_SEA;
+            }
+        }
+    }
 
     /* Dispatch to the appropriate generator */
     switch (cfg->genType) {
@@ -3715,6 +4039,9 @@ void mapGenRun(struct mapObj *mp, struct basesObj *bs,
             break;
         case MAPGEN_FRACTAL:
             mapGenFractal(mp, bs, pb, ss, cfg, &rng);
+            break;
+        case MAPGEN_MAKER:
+            mapGenMaker(mp, bs, pb, ss, cfg);
             break;
         default:
             /* Unknown generator — just clear to deep sea */
@@ -3795,6 +4122,9 @@ MapGenConfig mapGenDefaultConfig(int genType) {
             cfg.bases = 12;
             cfg.pills = 16;
             cfg.starts = 8;
+            break;
+        case MAPGEN_MAKER:
+            mapGenApplyPreset(0, &cfg);
             break;
         default:
             break;

@@ -28,7 +28,19 @@ extern "C" {
 #define MAPGEN_NATURAL    1
 #define MAPGEN_MAZE       2
 #define MAPGEN_FRACTAL    3
-#define MAPGEN_TYPE_COUNT 4
+#define MAPGEN_MAKER      4
+#define MAPGEN_TYPE_COUNT 5
+/* The generator types a plain "-randommap" picks from. The Map Maker
+ * type is left out so that a server started with no type keeps
+ * making the same kinds of map as before it existed. */
+#define MAPGEN_LEGACY_TYPE_COUNT 4
+
+/* Size of the playable area, as the side of a square in tiles,
+ * centred in the region. MAPGEN_SIZE_FULL (0) uses the whole region,
+ * which is what every map did before the Size control existed. */
+#define MAPGEN_SIZE_FULL 0
+#define MAPGEN_SIZE_MIN  24
+#define MAPGEN_SIZE_MAX  215
 
 /* Tournament symmetry modes */
 #define MAPGEN_SYM_4CORNER   0
@@ -96,6 +108,40 @@ extern "C" {
 #define MAPGEN_LOCK_F_LAYERS      (1u << 31)
 #define MAPGEN_LOCK_F_RIVERS      (1ull << 32)
 #define MAPGEN_LOCK_F_MINES       (1ull << 33)
+/* Shared by every generator type */
+#define MAPGEN_LOCK_SIZE          (1ull << 35)
+/* Map Maker-specific (bits 36-46) */
+#define MAPGEN_LOCK_K_PRESET      (1ull << 36)
+#define MAPGEN_LOCK_K_OUTLINE     (1ull << 37)
+#define MAPGEN_LOCK_K_SYMMETRY    (1ull << 38)
+#define MAPGEN_LOCK_K_WATER       (1ull << 39)
+#define MAPGEN_LOCK_K_FOREST      (1ull << 40)
+#define MAPGEN_LOCK_K_ROAD        (1ull << 41)
+#define MAPGEN_LOCK_K_BUILDING    (1ull << 42)
+#define MAPGEN_LOCK_K_ISLANDS     (1ull << 43)
+#define MAPGEN_LOCK_K_MINES       (1ull << 44)
+#define MAPGEN_LOCK_K_DETAIL      (1ull << 45)
+
+/* Map Maker outlines: the shape of the land as a whole. A preset can
+ * stretch the box and round outlines into a wide rectangle or an oval. */
+#define MAPGEN_OUTLINE_BOX      0
+#define MAPGEN_OUTLINE_OCTAGON  1
+#define MAPGEN_OUTLINE_ROUND    2
+#define MAPGEN_OUTLINE_DIAMOND  3
+#define MAPGEN_OUTLINE_CROSS    4
+#define MAPGEN_OUTLINE_CLOVER   5
+#define MAPGEN_OUTLINE_ISLAND   6
+/* The seed picks one of the outlines the preset uses. */
+#define MAPGEN_OUTLINE_VARIED   7
+#define MAPGEN_OUTLINE_COUNT    8
+
+/* Map Maker symmetry. */
+#define MAPGEN_MSYM_NONE     0
+#define MAPGEN_MSYM_MIRROR   1   /* left half mirrored onto the right */
+#define MAPGEN_MSYM_ROTATE2  2   /* half turn */
+#define MAPGEN_MSYM_MIRROR4  3   /* mirrored both ways */
+#define MAPGEN_MSYM_ROTATE4  4   /* quarter turns */
+#define MAPGEN_MSYM_COUNT    5
 
 typedef struct MapGenConfig {
     /* Region to generate into (playable area or selection, pre-normalized) */
@@ -116,6 +162,12 @@ typedef struct MapGenConfig {
     int bases;              /* 0-16, default 16 */
     int pills;              /* 0-16, default 16 */
     int starts;             /* 0-16, default 16 */
+
+    /* Side of the playable square in tiles (MAPGEN_SIZE_MIN to
+     * MAPGEN_SIZE_MAX), or MAPGEN_SIZE_FULL for the whole region.
+     * Shared by every generator type; travels in the seed string as an
+     * optional "Z" suffix so seeds written before it read as full. */
+    int size;
 
     /* Generator-specific parameters */
     union {
@@ -168,6 +220,21 @@ typedef struct MapGenConfig {
             bool lakes;           /* default true — fill closed basins */
             int mineDensityPct;   /* 0-5, default 0 */
         } fractal;
+
+        /* Map Maker: a style taken from a classic map maker, set by a
+         * preset, with every style value open to change. */
+        struct {
+            int preset;           /* MAPGEN_PRESET_* */
+            int outline;          /* MAPGEN_OUTLINE_* */
+            int symmetry;         /* MAPGEN_MSYM_* */
+            int waterPct;         /* 0-100: inner water, moats, river rims */
+            int forestPct;        /* 0-100 */
+            int roadPct;          /* 0-100: roads, and road arena floors */
+            int buildingPct;      /* 0-100: walls and walled base areas */
+            int islands;          /* 1-8: separate land masses */
+            int mineDensityPct;   /* 0-5 */
+            int detail;           /* 0-10: pods, rings and stored fragments */
+        } maker;
     } params;
 } MapGenConfig;
 
@@ -180,9 +247,35 @@ MapGenConfig mapGenDefaultConfig(int genType);
 /* Return default natural params for the given map style. */
 void mapGenNaturalStyleDefaults(int mapStyle, MapGenConfig *cfg);
 
+/* Map Maker presets. Each one sets the style values, the size and the
+ * object counts to match the maps of one classic map maker (or one of
+ * that maker's collections). */
+int mapGenPresetCount(void);
+/* Short key used by "-randommap <key>" (for example "berserkir"). */
+const char *mapGenPresetKey(int preset);
+/* Plain ASCII name used in generated map names (for example "Berserkir"). */
+const char *mapGenPresetName(int preset);
+/* Returns the preset for a key (case is ignored), or -1. */
+int mapGenPresetFromKey(const char *key);
+/* Set cfg to the preset: Map Maker type, the preset's style values,
+ * size and object counts. The seed, locks and region are kept. */
+void mapGenApplyPreset(int preset, MapGenConfig *cfg);
+
+/* Clamp every field of cfg into its range. Used on decoded seeds and
+ * before generation so that no field can index out of range. */
+void mapGenClampConfig(MapGenConfig *cfg);
+
+/* The region a config generates into once Size is applied: a square of
+ * side cfg->size centred in cfg's region, or cfg's region when Size is
+ * MAPGEN_SIZE_FULL or not smaller than the region. */
+void mapGenEffectiveRegion(const MapGenConfig *cfg,
+                           int *x1, int *y1, int *x2, int *y2);
+
 /* Composite seed encoding: packs all config fields into a prefixed hex string.
  * Tournament seeds start with 'T', natural seeds start with 'N'.
- * out must be at least 32 bytes. */
+ * A Size that is not full adds "Z" and two hex digits, except on a
+ * Natural seed, which then starts with 'Q' and gains one digit, so that
+ * every seed fits in 30 characters. out must be at least 32 bytes. */
 void mapGenConfigToSeed(const MapGenConfig *cfg, char *out, size_t outLen);
 
 /* Composite seed decoding: parses a seed string back into a config struct.

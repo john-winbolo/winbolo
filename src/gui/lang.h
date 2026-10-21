@@ -3542,6 +3542,48 @@
 #define STR_CLIPGIF_LOADING                      2954
 #define STR_CLIPGIF_TOO_LARGE                    2955
 
+/* Map Maker random maps: the generator type, the Size control, the
+ * presets named after classic Bolo map makers, and their controls */
+#define STR_MAPGEN_TYPE_MAKER                    2956
+#define STR_MAPGEN_SIZE                          2957
+#define STR_MAPGEN_SIZE_FULL                     2958
+#define STR_MAPGEN_SIZE_TIP                      2959
+#define STR_MAPGEN_PRESET                        2960
+#define STR_MAPGEN_PRESET_TIP                    2961
+#define STR_MAPGEN_OUTLINE                       2962
+#define STR_MAPGEN_OUTLINE_BOX                   2963
+#define STR_MAPGEN_OUTLINE_OCTAGON               2964
+#define STR_MAPGEN_OUTLINE_ROUND                 2965
+#define STR_MAPGEN_OUTLINE_DIAMOND               2966
+#define STR_MAPGEN_OUTLINE_CROSS                 2967
+#define STR_MAPGEN_OUTLINE_CLOVER                2968
+#define STR_MAPGEN_OUTLINE_ISLAND                2969
+#define STR_MAPGEN_OUTLINE_VARIED                2970
+#define STR_MAPGEN_MSYM_NONE                     2971
+#define STR_MAPGEN_MSYM_MIRROR                   2972
+#define STR_MAPGEN_MSYM_ROT2                     2973
+#define STR_MAPGEN_MSYM_MIRROR4                  2974
+#define STR_MAPGEN_MSYM_ROT4                     2975
+#define STR_MAPGEN_WATER_PCT                     2976
+#define STR_MAPGEN_ROAD_PCT                      2977
+#define STR_MAPGEN_ISLANDS                       2978
+#define STR_MAPGEN_DETAIL                        2979
+#define STR_MAPGEN_PRESET_BERSERKIR              2980
+#define STR_MAPGEN_PRESET_SLUGGO_TOURNAMENT      2981
+#define STR_MAPGEN_PRESET_SLUGDEATH              2982
+#define STR_MAPGEN_PRESET_SLUGFEST               2983
+#define STR_MAPGEN_PRESET_SLUGGO_ADVENTUROUS     2984
+#define STR_MAPGEN_PRESET_SLUGGO_SYMMETRIC       2985
+#define STR_MAPGEN_PRESET_STOOGEFEST             2986
+#define STR_MAPGEN_PRESET_BLACK_LIGHTNING        2987
+#define STR_MAPGEN_PRESET_BL_ISLANDS             2988
+#define STR_MAPGEN_PRESET_DEATHHAND              2989
+#define STR_MAPGEN_PRESET_MEGAWATT_TC            2990
+#define STR_MAPGEN_PRESET_MEGAWATT_ISLANDS       2991
+#define STR_MAPGEN_PRESET_MOSH_PIT               2992
+#define STR_MAPGEN_PRESET_PALPATINE              2993
+#define STR_MAPGEN_PRESET_CHEW_TOY               2994
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

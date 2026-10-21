@@ -59,6 +59,8 @@ add_library(bolo_static STATIC
     lobby_script_rows.c
     log.c
     mapgen.c
+    mapgen_fragments.c
+    mapgen_maker.c
     mapgen_maze.c
     message_inbox.c
     messages.c

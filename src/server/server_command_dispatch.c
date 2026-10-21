@@ -1331,7 +1331,9 @@ scriptListDone:
         char seedStr[64];
         memset(seedStr, 0, sizeof(seedStr));
         memcpy(seedStr, p->seed, p->seedLen);
-        MapGenConfig cfg;
+        /* A plain number seed sets only the seed, so start from a
+         * full config rather than from whatever is on the stack. */
+        MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
         if (!mapGenSeedToConfig(seedStr, &cfg)) return CMD_REJECT_INVALID;
         cfg.x1 = MAP_MINE_EDGE_LEFT + 1;
         cfg.y1 = MAP_MINE_EDGE_TOP + 1;
