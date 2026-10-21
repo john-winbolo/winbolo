@@ -6483,6 +6483,7 @@ set(_unit_test_names
     mapgen_maker_room_kinds
     mapgen_maker_hashes
     mapgen_maker_outline_set
+    mapgen_maker_one_land
     dialog_quit
     screencalc_river_road_counts_as_water
     screencalc_river_arms_of_road_centred_cross

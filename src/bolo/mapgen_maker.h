@@ -73,6 +73,11 @@ const char *makerPresetName(int preset);
  * (MAPGEN_OUTLINE_*, never Varied). An outline of Varied picks one of
  * these by the seed. Returns 0 for a preset out of range. */
 int makerPresetOutlineSet(int preset);
+/* 1 if the preset is of the island family (its maps are several
+ * islands), else 0. For the other presets an Islands value above 1
+ * cuts the land into separate pieces with deep channels. Returns 0 for
+ * a preset out of range. */
+int makerPresetIsIsland(int preset);
 
 /* Fill the style values, size and object counts of a preset. Fields
  * not named by the preset (region, seed) are left alone. sizeOut gets

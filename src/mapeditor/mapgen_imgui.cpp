@@ -402,7 +402,14 @@ static void randomizePanel(MapGenConfig *cfg) {
         if (!(lk & MAPGEN_LOCK_K_FOREST))   k.forestPct = bandPick(&rng, b.forestPct, 10, 0, 100);
         if (!(lk & MAPGEN_LOCK_K_ROAD))     k.roadPct = bandPick(&rng, b.roadPct, 10, 0, 100);
         if (!(lk & MAPGEN_LOCK_K_BUILDING)) k.buildingPct = bandPick(&rng, b.buildingPct, 10, 0, 100);
-        if (!(lk & MAPGEN_LOCK_K_ISLANDS))  k.islands = bandPick(&rng, b.islands, 1, 1, 8);
+        /* Islands above 1 cuts the land of a formal or town preset
+         * into separate pieces with deep channels, which none of
+         * their real maps have. Only the island presets get a band. */
+        if (!(lk & MAPGEN_LOCK_K_ISLANDS)) {
+            k.islands = mapGenPresetIsIsland(k.preset)
+                            ? bandPick(&rng, b.islands, 1, 1, 8)
+                            : b.islands;
+        }
         if (!(lk & MAPGEN_LOCK_K_MINES))    k.mineDensityPct = bandPick(&rng, b.mineDensityPct, 1, 0, 5);
         if (!(lk & MAPGEN_LOCK_K_DETAIL))   k.detail = bandPick(&rng, b.detail, 1, 0, 10);
     }

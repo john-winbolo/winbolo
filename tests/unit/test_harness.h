@@ -2761,6 +2761,7 @@ int run_mapgen_size_all_types(void);
 int run_mapgen_maker_room_kinds(void);
 int run_mapgen_maker_hashes(void);
 int run_mapgen_maker_outline_set(void);
+int run_mapgen_maker_one_land(void);
 
 /* What a quit inside a dialog means (test_dialog_quit.c): Cmd+Q, Alt+F4 and
  * the close box end the application; the close request the gamepad's B
