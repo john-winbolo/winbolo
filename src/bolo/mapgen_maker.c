@@ -414,6 +414,70 @@ int makerPresetIsIsland(int preset) {
     return kPresets[preset].family == FAM_ISLAND;
 }
 
+/* 1 if one of the preset's pod kinds has a centre (ring pods). */
+static int presetHasRingPods(const Preset *pr) {
+    return pr->pod1 == POD_RING || pr->pod2 == POD_RING || pr->pod3 == POD_RING;
+}
+
+int makerStyleRange(int preset, int lever, int *lo, int *hi) {
+    const Preset *pr;
+    int a = 0, b = 0, i;
+    if (preset < 0 || preset >= PRESET_COUNT) return 0;
+    pr = &kPresets[preset];
+    switch (lever) {
+    case MAKER_STYLE_ROADS:
+        if (!pr->skelAlt) return 0;
+        a = -1;
+        for (i = 0; i < MAKER_ROADS_COUNT; i++) {
+            if (pr->skelAlt & (1 << i)) {
+                if (a < 0) a = i + 1;
+                b = i + 1;
+            }
+        }
+        break;
+    case MAKER_STYLE_SHAPE:
+        if (pr->aspectVar <= 0) return 0;
+        a = pr->aspect * (100 - pr->aspectVar) / 100;
+        b = pr->aspect * (100 + pr->aspectVar) / 100;
+        break;
+    case MAKER_STYLE_CUT: {
+        int cut = pr->cut > 0 ? pr->cut : 145;
+        if (pr->cutVar <= 0) return 0;
+        a = cut - pr->cutVar;
+        b = cut + pr->cutVar;
+        break;
+    }
+    case MAKER_STYLE_CORE:
+        /* Only ring pods have a centre, so the pick shows only on
+         * presets with ring pods. */
+        if (pr->podCore != 1 || !presetHasRingPods(pr)) return 0;
+        a = 1; b = 2;
+        break;
+    case MAKER_STYLE_RIM:
+        if (pr->rimDrop <= 0) return 0;
+        a = 1; b = 2;
+        break;
+    case MAKER_STYLE_YARD:
+        if (pr->mazeYard <= 0) return 0;
+        a = 1; b = 3;
+        break;
+    default:
+        return 0;
+    }
+    if (lo) *lo = a;
+    if (hi) *hi = b;
+    return 1;
+}
+
+int makerStyleAllowed(int preset, int lever, int value) {
+    int lo, hi;
+    if (value == 0) return 1;
+    if (!makerStyleRange(preset, lever, &lo, &hi)) return 0;
+    if (value < lo || value > hi) return 0;
+    if (lever == MAKER_STYLE_ROADS) return (kPresets[preset].skelAlt & (1 << (value - 1))) != 0;
+    return 1;
+}
+
 void makerPresetDefaults(int preset, MakerParams *p, int *sizeOut) {
     const Preset *pr;
     if (preset < 0 || preset >= PRESET_COUNT) preset = 0;
@@ -463,6 +527,7 @@ typedef struct Ctx {
     int coreT;         /* terrain of pod cores for this map */
     int rimTotal;      /* tiles of rim inside the coast */
     int noForestRim;   /* this seed has no forest rim */
+    int styleUsed[MAKER_STYLE_COUNT];  /* see MakerObjects */
     int n[3];
     int ox[3][MAKER_MAX_OBJECTS], oy[3][MAKER_MAX_OBJECTS];
     /* Hints from fragments and features for each object kind */
@@ -2196,8 +2261,14 @@ static int islandMazeYard(Ctx *c) {
     if (tries == 150) return 0;
     {
         Rect r;
+        /* The seed's wall pick is drawn first, as before, so that a
+         * set lever leaves the rest of the map as it was. */
+        int wallT = rnd(c, 3) ? T_BUILDING : T_FOREST;
+        if (c->p.style[MAKER_STYLE_YARD] == 2) wallT = T_BUILDING;
+        else if (c->p.style[MAKER_STYLE_YARD] == 3) wallT = T_FOREST;
+        else c->styleUsed[MAKER_STYLE_YARD] = (wallT == T_BUILDING) ? 2 : 3;
         r.x1 = x0 - half; r.y1 = y0 - half; r.x2 = x0 + half; r.y2 = y0 + half;
-        if (!roomMaze(c, r, rnd(c, 3) ? T_BUILDING : T_FOREST, L_WALL)) return 0;
+        if (!roomMaze(c, r, wallT, L_WALL)) return 0;
     }
     /* The cell nearest the middle holds the base. */
     x0 = r1odd(x0 - half, x0);
@@ -2377,7 +2448,18 @@ static void paintIsland(Ctx *c) {
     n = (int)(area * c->p.buildingPct / 100.0 / 1500.0 + 0.5);
     if (n > 8) n = 8;
     for (i = 0; i < n; i++) islandStronghold(c);
-    if (pr->mazeYard > 0 && c->p.detail >= 4 && rnd(c, 100) < pr->mazeYard) islandMazeYard(c);
+    if (pr->mazeYard > 0) {
+        /* The seed's pick is drawn only when Detail is 4 or more, as
+         * before. A set lever then takes its place. */
+        int yard = 0;
+        if (c->p.detail >= 4) yard = rnd(c, 100) < pr->mazeYard;
+        c->styleUsed[MAKER_STYLE_YARD] = yard ? 2 : 1;
+        if (c->p.style[MAKER_STYLE_YARD] != 0) {
+            yard = c->p.style[MAKER_STYLE_YARD] >= 2;
+            c->styleUsed[MAKER_STYLE_YARD] = c->p.style[MAKER_STYLE_YARD];
+        }
+        if (yard) islandMazeYard(c);
+    }
     n = (int)(area * c->p.buildingPct / 100.0 / 120.0 + 0.5);
     islandHouses(c, n);
     if (c->p.detail >= 6 && pr->fragSet == MAKER_FRAG_SET_SLUGGO_HOUSE) {
@@ -2809,6 +2891,12 @@ static void sanitize(MakerParams *p) {
     p->bases = clampi(p->bases, 0, MAKER_MAX_OBJECTS);
     p->pills = clampi(p->pills, 0, MAKER_MAX_OBJECTS);
     p->starts = clampi(p->starts, 0, MAKER_MAX_OBJECTS);
+    {
+        int i;
+        for (i = 0; i < MAKER_STYLE_COUNT; i++) {
+            if (!makerStyleAllowed(p->preset, i, p->style[i])) p->style[i] = 0;
+        }
+    }
 }
 
 void makerGenerate(uint8_t grid[256][256], MakerObjects *out, const MakerParams *pin) {
@@ -2853,22 +2941,54 @@ void makerGenerate(uint8_t grid[256][256], MakerObjects *out, const MakerParams 
     availY = c.cy - margin;
     if (availX < 2.0) availX = 2.0;
     if (availY < 2.0) availY = 2.0;
+    /* The seed's style picks. Each one is drawn as before, in the same
+     * order, also when its lever is set; a set lever then replaces the
+     * pick. So a map with every lever "from seed" is the map the seed
+     * always made, and setting one lever leaves the other picks and
+     * the rest of the map as they were. */
     aspect = c.pr->aspect;
     if (c.pr->aspectVar > 0) {
         aspect = (int)(aspect * (1.0 + (rfloat(&c) - 0.5) * 2.0 * c.pr->aspectVar / 100.0));
+        if (c.p.style[MAKER_STYLE_SHAPE]) aspect = c.p.style[MAKER_STYLE_SHAPE];
+        c.styleUsed[MAKER_STYLE_SHAPE] = aspect;
     }
     if (c.sym == SY_ROT4) aspect = 100;
     c.cut = (c.pr->cut > 0 ? c.pr->cut : 145) / 100.0;
-    if (c.pr->cutVar > 0) c.cut += (rfloat(&c) - 0.5) * 2.0 * c.pr->cutVar / 100.0;
+    if (c.pr->cutVar > 0) {
+        c.cut += (rfloat(&c) - 0.5) * 2.0 * c.pr->cutVar / 100.0;
+        if (c.p.style[MAKER_STYLE_CUT]) {
+            c.cut = c.p.style[MAKER_STYLE_CUT] / 100.0;
+            c.styleUsed[MAKER_STYLE_CUT] = c.p.style[MAKER_STYLE_CUT];
+        } else {
+            c.styleUsed[MAKER_STYLE_CUT] = (int)(c.cut * 100.0); /* cut > 0: rounds down */
+        }
+    }
     c.skel = c.pr->skel;
     if (c.pr->skelAlt) {
-        int opts[6], no = 0;
-        for (i = 0; i < 6; i++) if (c.pr->skelAlt & (1 << i)) opts[no++] = kSkelOpts[i];
-        c.skel = (c.pr->skel & ~(SK_AXES | SK_DIAG | SK_RING)) | opts[rnd(&c, no)];
+        int opts[6], no = 0, pick;
+        for (i = 0; i < 6; i++) if (c.pr->skelAlt & (1 << i)) opts[no++] = i;
+        pick = opts[rnd(&c, no)];
+        if (c.p.style[MAKER_STYLE_ROADS]) pick = c.p.style[MAKER_STYLE_ROADS] - 1;
+        c.skel = (c.pr->skel & ~(SK_AXES | SK_DIAG | SK_RING)) | kSkelOpts[pick];
+        c.styleUsed[MAKER_STYLE_ROADS] = pick + 1;
     }
-    if (c.pr->rimDrop > 0) c.noForestRim = rnd(&c, 100) < c.pr->rimDrop;
+    if (c.pr->rimDrop > 0) {
+        c.noForestRim = rnd(&c, 100) < c.pr->rimDrop;
+        if (c.p.style[MAKER_STYLE_RIM]) c.noForestRim = c.p.style[MAKER_STYLE_RIM] == 2;
+        if (makerStyleRange(c.p.preset, MAKER_STYLE_RIM, NULL, NULL)) {
+            c.styleUsed[MAKER_STYLE_RIM] = c.noForestRim ? 2 : 1;
+        }
+    }
     c.coreT = T_BUILDING;
-    if (c.pr->podCore == 2 || (c.pr->podCore == 1 && rnd(&c, 2))) c.coreT = T_HALF;
+    if (c.pr->podCore == 2) {
+        c.coreT = T_HALF;
+    } else if (c.pr->podCore == 1) {
+        if (rnd(&c, 2)) c.coreT = T_HALF;
+        if (c.p.style[MAKER_STYLE_CORE]) c.coreT = (c.p.style[MAKER_STYLE_CORE] == 2) ? T_HALF : T_BUILDING;
+        if (makerStyleRange(c.p.preset, MAKER_STYLE_CORE, NULL, NULL)) {
+            c.styleUsed[MAKER_STYLE_CORE] = (c.coreT == T_HALF) ? 2 : 1;
+        }
+    }
     if (c.p.outline == OL_VARIED) {
         int opts[OL_COUNT], no = 0;
         for (i = 0; i < OL_VARIED; i++) if (c.pr->outlineSet & (1 << i)) opts[no++] = i;
@@ -2897,6 +3017,7 @@ void makerGenerate(uint8_t grid[256][256], MakerObjects *out, const MakerParams 
             grid[c.p.x1 + x][c.p.y1 + y] = (uint8_t)t;
         }
     }
+    memcpy(out->styleUsed, c.styleUsed, sizeof(out->styleUsed));
     out->numStarts = c.n[OBJ_START];
     for (i = 0; i < c.n[OBJ_START]; i++) {
         out->startX[i] = (uint8_t)(c.p.x1 + c.ox[OBJ_START][i]);

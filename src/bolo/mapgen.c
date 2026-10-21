@@ -40,6 +40,22 @@ BOLO_STATIC_ASSERT(MAKER_TERRAIN_HALFBUILDING == HALFBUILDING, maker_halfbuildin
 BOLO_STATIC_ASSERT(MAKER_TERRAIN_BOAT == BOAT, maker_boat);
 BOLO_STATIC_ASSERT(MAKER_TERRAIN_DEEP_SEA == DEEP_SEA, maker_deep_sea);
 BOLO_STATIC_ASSERT(MAKER_TERRAIN_MINE_ADD == MINE_SUBTRACT, maker_mine_add);
+/* The style levers and road layouts have the same numbers here and in
+ * mapgen_maker.h. */
+BOLO_STATIC_ASSERT(MAPGEN_KSTYLE_ROADS == MAKER_STYLE_ROADS, maker_style_roads);
+BOLO_STATIC_ASSERT(MAPGEN_KSTYLE_SHAPE == MAKER_STYLE_SHAPE, maker_style_shape);
+BOLO_STATIC_ASSERT(MAPGEN_KSTYLE_CUT == MAKER_STYLE_CUT, maker_style_cut);
+BOLO_STATIC_ASSERT(MAPGEN_KSTYLE_CORE == MAKER_STYLE_CORE, maker_style_core);
+BOLO_STATIC_ASSERT(MAPGEN_KSTYLE_RIM == MAKER_STYLE_RIM, maker_style_rim);
+BOLO_STATIC_ASSERT(MAPGEN_KSTYLE_YARD == MAKER_STYLE_YARD, maker_style_yard);
+BOLO_STATIC_ASSERT(MAPGEN_KSTYLE_COUNT == MAKER_STYLE_COUNT, maker_style_count);
+BOLO_STATIC_ASSERT(MAPGEN_ROADS_AXES == MAKER_ROADS_AXES, maker_roads_axes);
+BOLO_STATIC_ASSERT(MAPGEN_ROADS_DIAG == MAKER_ROADS_DIAG, maker_roads_diag);
+BOLO_STATIC_ASSERT(MAPGEN_ROADS_AXES_DIAG == MAKER_ROADS_AXES_DIAG, maker_roads_axes_diag);
+BOLO_STATIC_ASSERT(MAPGEN_ROADS_AXES_RING == MAKER_ROADS_AXES_RING, maker_roads_axes_ring);
+BOLO_STATIC_ASSERT(MAPGEN_ROADS_DIAG_RING == MAKER_ROADS_DIAG_RING, maker_roads_diag_ring);
+BOLO_STATIC_ASSERT(MAPGEN_ROADS_RING == MAKER_ROADS_RING, maker_roads_ring);
+BOLO_STATIC_ASSERT(MAPGEN_ROADS_COUNT == MAKER_ROADS_COUNT, maker_roads_count);
 
 static void makerPointStartsToLand(struct mapObj *mp, struct startsObj *ss);
 
@@ -328,6 +344,110 @@ static void configToSeedBase(const MapGenConfig *cfg, char *out, size_t outLen) 
     }
 }
 
+/*---------------------------------------------------------
+ * Map Maker seeds with style levers ('S')
+ *
+ * A 'K' seed is 27 characters and its size suffix takes 3 more, so it
+ * has no room for the style levers. A seed with a lever set starts
+ * with 'S' and holds 130 bits in 26 base 32 characters (0-9 and A-V,
+ * the "extended hex" alphabet; it has no Z, so the size suffix parser
+ * never finds one):
+ *   the 'K' fields in the same order (97 bits), then size(8, 0 for
+ *   Full), roads(3), shape(8), cut(8), core(2), rim(2), yard(2).
+ * A seed with every lever at 0 is still written as 'K', so the seeds
+ * of every map made before the levers do not change.
+ *---------------------------------------------------------*/
+
+#define STYLE_SEED_BITS  130
+#define STYLE_SEED_CHARS 26   /* 5 bits each */
+#define STYLE_SEED_BYTES 17
+
+static const int kStyleBits[MAPGEN_KSTYLE_COUNT] = { 3, 8, 8, 2, 2, 2 };
+
+static bool makerAnyStyle(const MapGenConfig *cfg) {
+    for (int i = 0; i < MAPGEN_KSTYLE_COUNT; i++) {
+        if (cfg->params.maker.style[i] != 0) return true;
+    }
+    return false;
+}
+
+static void makerStyleToSeed(const MapGenConfig *cfg, char *out, size_t outLen) {
+    static const char kB32[] = "0123456789ABCDEFGHIJKLMNOPQRSTUV";
+    uint8_t buf[STYLE_SEED_BYTES];
+    BitWriter bw;
+    BitReader br;
+    if (outLen < STYLE_SEED_CHARS + 2) {
+        out[0] = '\0';
+        return;
+    }
+    memset(buf, 0, sizeof(buf));
+    bwInit(&bw, buf);
+    bwWrite(&bw, (uint32_t)cfg->params.maker.preset, 5);
+    bwWrite(&bw, (uint32_t)cfg->params.maker.outline, 3);
+    bwWrite(&bw, (uint32_t)cfg->params.maker.symmetry, 3);
+    bwWrite(&bw, (uint32_t)cfg->params.maker.waterPct, 7);
+    bwWrite(&bw, (uint32_t)cfg->params.maker.forestPct, 7);
+    bwWrite(&bw, (uint32_t)cfg->params.maker.roadPct, 7);
+    bwWrite(&bw, (uint32_t)cfg->params.maker.buildingPct, 7);
+    bwWrite(&bw, (uint32_t)cfg->params.maker.islands, 4);
+    bwWrite(&bw, (uint32_t)cfg->params.maker.mineDensityPct, 3);
+    bwWrite(&bw, (uint32_t)cfg->params.maker.detail, 4);
+    bwWrite(&bw, (uint32_t)cfg->bases, 5);
+    bwWrite(&bw, (uint32_t)cfg->pills, 5);
+    bwWrite(&bw, (uint32_t)cfg->starts, 5);
+    bwWrite(&bw, cfg->seed, 32);
+    bwWrite(&bw, (uint32_t)(cfg->size == MAPGEN_SIZE_FULL ? 0 : cfg->size), 8);
+    for (int i = 0; i < MAPGEN_KSTYLE_COUNT; i++) {
+        bwWrite(&bw, (uint32_t)cfg->params.maker.style[i], kStyleBits[i]);
+    }
+    brInit(&br, buf, STYLE_SEED_BITS);
+    out[0] = 'S';
+    for (int i = 0; i < STYLE_SEED_CHARS; i++) out[1 + i] = kB32[brRead(&br, 5)];
+    out[1 + STYLE_SEED_CHARS] = '\0';
+}
+
+static bool makerStyleSeedToConfig(const char *seedStr, MapGenConfig *cfg) {
+    uint8_t buf[STYLE_SEED_BYTES];
+    BitWriter bw;
+    BitReader br;
+    int size;
+    if (strlen(seedStr) != 1 + STYLE_SEED_CHARS) return false;
+    memset(buf, 0, sizeof(buf));
+    bwInit(&bw, buf);
+    for (int i = 0; i < STYLE_SEED_CHARS; i++) {
+        int ch = toupper((unsigned char)seedStr[1 + i]), v;
+        if (ch >= '0' && ch <= '9') v = ch - '0';
+        else if (ch >= 'A' && ch <= 'V') v = ch - 'A' + 10;
+        else return false;
+        bwWrite(&bw, (uint32_t)v, 5);
+    }
+    brInit(&br, buf, STYLE_SEED_BITS);
+    cfg->genType = MAPGEN_MAKER;
+    cfg->params.maker.preset = (int)brRead(&br, 5);
+    cfg->params.maker.outline = (int)brRead(&br, 3);
+    cfg->params.maker.symmetry = (int)brRead(&br, 3);
+    cfg->params.maker.waterPct = (int)brRead(&br, 7);
+    cfg->params.maker.forestPct = (int)brRead(&br, 7);
+    cfg->params.maker.roadPct = (int)brRead(&br, 7);
+    cfg->params.maker.buildingPct = (int)brRead(&br, 7);
+    cfg->params.maker.islands = (int)brRead(&br, 4);
+    cfg->params.maker.mineDensityPct = (int)brRead(&br, 3);
+    cfg->params.maker.detail = (int)brRead(&br, 4);
+    cfg->bases = (int)brRead(&br, 5);
+    cfg->pills = (int)brRead(&br, 5);
+    cfg->starts = (int)brRead(&br, 5);
+    cfg->seed = brRead(&br, 32);
+    size = (int)brRead(&br, 8);
+    cfg->size = (size == 0) ? MAPGEN_SIZE_FULL : size;
+    for (int i = 0; i < MAPGEN_KSTYLE_COUNT; i++) {
+        cfg->params.maker.style[i] = (int)brRead(&br, kStyleBits[i]);
+    }
+    /* Size, ranges, and levers the preset does not allow (read as from
+     * seed, the same as the generator does). */
+    mapGenClampConfig(cfg);
+    return true;
+}
+
 void mapGenConfigToSeed(const MapGenConfig *cfg, char *out, size_t outLen) {
     MapGenConfig c;
     if (!out || outLen == 0) return;
@@ -335,6 +455,11 @@ void mapGenConfigToSeed(const MapGenConfig *cfg, char *out, size_t outLen) {
     if (!cfg) return;
     c = *cfg;
     if (c.genType == MAPGEN_MAKER) mapGenClampConfig(&c);
+    if (c.genType == MAPGEN_MAKER && makerAnyStyle(&c)) {
+        /* The size is inside an 'S' seed: no suffix. */
+        makerStyleToSeed(&c, out, outLen);
+        return;
+    }
     configToSeedBase(&c, out, outLen);
     /* Size travels as an optional suffix, so a full size map keeps the
      * seed it had before the Size control existed. */
@@ -545,6 +670,9 @@ static bool seedToConfigBase(const char *seedStr, MapGenConfig *cfg) {
         cfg->pills = (int)brRead(&br, 5);
         cfg->starts = (int)brRead(&br, 5);
         cfg->seed = brRead(&br, 32);
+        /* A 'K' seed has every style lever from seed. Clear the levers
+         * so that values from an earlier config do not stay. */
+        memset(cfg->params.maker.style, 0, sizeof(cfg->params.maker.style));
         mapGenClampConfig(cfg);
         return true;
     } else {
@@ -564,6 +692,8 @@ bool mapGenSeedToConfig(const char *seedStr, MapGenConfig *cfg) {
     if (!seedStr || !seedStr[0] || !cfg) return false;
     if (strlen(seedStr) >= sizeof(buf)) return false;
     strcpy(buf, seedStr);
+    /* A Map Maker seed with style levers holds its own size. */
+    if (buf[0] == 'S' || buf[0] == 's') return makerStyleSeedToConfig(buf, cfg);
     /* A sized Natural seed: see mapGenConfigToSeed. */
     if ((buf[0] == 'Q' || buf[0] == 'q') && strlen(buf) == 30) {
         uint8_t bytes[14];
@@ -631,6 +761,14 @@ int mapGenPresetIsIsland(int preset) {
     return makerPresetIsIsland(preset);
 }
 
+int mapGenStyleRange(int preset, int lever, int *lo, int *hi) {
+    return makerStyleRange(preset, lever, lo, hi);
+}
+
+int mapGenStyleAllowed(int preset, int lever, int value) {
+    return makerStyleAllowed(preset, lever, value);
+}
+
 int mapGenPresetFromKey(const char *key) {
     if (!key) return -1;
     for (int i = 0; i < makerPresetCount(); i++) {
@@ -693,6 +831,11 @@ void mapGenClampConfig(MapGenConfig *cfg) {
         cfg->params.maker.islands = clampInt(cfg->params.maker.islands, 1, 8);
         cfg->params.maker.mineDensityPct = clampInt(cfg->params.maker.mineDensityPct, 0, 5);
         cfg->params.maker.detail = clampInt(cfg->params.maker.detail, 0, 10);
+        for (int i = 0; i < MAPGEN_KSTYLE_COUNT; i++) {
+            if (!makerStyleAllowed(cfg->params.maker.preset, i, cfg->params.maker.style[i])) {
+                cfg->params.maker.style[i] = 0;
+            }
+        }
     }
 }
 
@@ -739,6 +882,7 @@ static void mapGenMaker(struct mapObj *mp, struct basesObj *bs,
     p.islands = cfg->params.maker.islands;
     p.mineDensityPct = cfg->params.maker.mineDensityPct;
     p.detail = cfg->params.maker.detail;
+    for (int i = 0; i < MAPGEN_KSTYLE_COUNT; i++) p.style[i] = cfg->params.maker.style[i];
     p.bases = cfg->bases;
     p.pills = cfg->pills;
     p.starts = cfg->starts;
