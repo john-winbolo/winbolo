@@ -1309,7 +1309,7 @@ static const LangEntry langTable[] = {
     {2940, "How much of the map shows through the tank, pillbox and\nbase grids and the stock bars in full screen. 0% is solid,\nand the slider stops at 90% so they cannot be made invisible."},
     {2941, "The map fills the screen, with the status, build and newswire\npanels over it, and the touch controls when you play by touch.\nOff shows the classic screen. Remembered for next time."},
     {2942, "This device is on mobile data. An Internet game hosted on mobile\ndata will probably not work: mobile networks rarely let other\nplayers reach the device. Wi-Fi is much more likely to work.\n\nHost anyway?"},
-    {2956, "In style of a famous map maker"},
+    {2956, "Famous map maker style"},
     {2957, "Size"},
     {2958, "Full"},
     {2959, "Side of the playable square in tiles. Full uses the whole area."},
