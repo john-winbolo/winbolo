@@ -26,6 +26,23 @@
 #include <ctype.h>
 #include <time.h>
 
+/* Map Maker (mapgen_maker.c) uses its own copy of the terrain codes so
+ * it needs no game headers. Check that the copy matches. */
+BOLO_STATIC_ASSERT(MAKER_TERRAIN_BUILDING == BUILDING, maker_building);
+BOLO_STATIC_ASSERT(MAKER_TERRAIN_RIVER == RIVER, maker_river);
+BOLO_STATIC_ASSERT(MAKER_TERRAIN_SWAMP == SWAMP, maker_swamp);
+BOLO_STATIC_ASSERT(MAKER_TERRAIN_CRATER == CRATER, maker_crater);
+BOLO_STATIC_ASSERT(MAKER_TERRAIN_ROAD == ROAD, maker_road);
+BOLO_STATIC_ASSERT(MAKER_TERRAIN_FOREST == FOREST, maker_forest);
+BOLO_STATIC_ASSERT(MAKER_TERRAIN_RUBBLE == RUBBLE, maker_rubble);
+BOLO_STATIC_ASSERT(MAKER_TERRAIN_GRASS == GRASS, maker_grass);
+BOLO_STATIC_ASSERT(MAKER_TERRAIN_HALFBUILDING == HALFBUILDING, maker_halfbuilding);
+BOLO_STATIC_ASSERT(MAKER_TERRAIN_BOAT == BOAT, maker_boat);
+BOLO_STATIC_ASSERT(MAKER_TERRAIN_DEEP_SEA == DEEP_SEA, maker_deep_sea);
+BOLO_STATIC_ASSERT(MAKER_TERRAIN_MINE_ADD == MINE_SUBTRACT, maker_mine_add);
+
+static void makerPointStartsToLand(struct mapObj *mp, struct startsObj *ss);
+
 /* xorshift32 PRNG — deterministic, platform-independent */
 static uint32_t xorshift32(uint32_t *state) {
     uint32_t x = *state;
@@ -148,8 +165,14 @@ void mapGenBuildDisplayName(const MapGenConfig *cfg, char *out, size_t outLen) {
         case MAPGEN_MAKER: {
             /* The preset name without spaces, for example
              * "BlackLightning_12345678". */
-            const char *src = mapGenPresetName(cfg->params.maker.preset);
+            /* Clamp the preset the same way the generator does, so the
+             * name matches the map that is made. */
+            int preset = cfg->params.maker.preset;
+            const char *src;
             size_t n = 0;
+            if (preset >= makerPresetCount()) preset = makerPresetCount() - 1;
+            if (preset < 0) preset = 0;
+            src = mapGenPresetName(preset);
             for (; src && *src && n + 1 < sizeof(makerName); src++) {
                 if (*src != ' ') makerName[n++] = *src;
             }
@@ -330,6 +353,10 @@ void mapGenConfigToSeed(const MapGenConfig *cfg, char *out, size_t outLen) {
             buf[13] = (uint8_t)((buf[13] & 0xE0) | ((size >> 3) & 0x1F));
             bytesToHex(buf, 14, hex);
             snprintf(out, outLen, "Q%s%X", hex, (unsigned int)(size & 7));
+        } else {
+            /* A seed without its size would make a different map, so
+             * write nothing when the sized seed does not fit. */
+            out[0] = '\0';
         }
     } else if (c.size != MAPGEN_SIZE_FULL && out[0] != '\0') {
         int size = c.size;
@@ -337,6 +364,7 @@ void mapGenConfigToSeed(const MapGenConfig *cfg, char *out, size_t outLen) {
         if (size < MAPGEN_SIZE_MIN) size = MAPGEN_SIZE_MIN;
         if (size > MAPGEN_SIZE_MAX) size = MAPGEN_SIZE_MAX;
         if (len + 4 <= outLen) snprintf(out + len, outLen - len, "Z%02X", size);
+        else out[0] = '\0'; /* the size does not fit: write nothing */
     }
 }
 
@@ -4053,8 +4081,11 @@ void mapGenRun(struct mapObj *mp, struct basesObj *bs,
             break;
     }
 
-    /* Orient all starts toward nearest land */
-    mapGenPointStartsToLand(mp, ss);
+    /* Orient all starts toward nearest land. Map Maker uses an integer
+     * version so its maps are the same on every compiler and CPU; the
+     * older types keep the float version so their maps do not change. */
+    if (cfg->genType == MAPGEN_MAKER) makerPointStartsToLand(mp, ss);
+    else mapGenPointStartsToLand(mp, ss);
 
     /* Every item a generated map produces is live. The generators append to
      * the arrays field by field rather than going through the list calls, so
@@ -4199,6 +4230,62 @@ void mapGenNaturalStyleDefaults(int mapStyle, MapGenConfig *cfg) {
         default:
             break;
     }
+}
+
+/*---------------------------------------------------------
+ * makerPointStartsToLand
+ *   The same as mapGenPointStartsToLand, in integers only. It
+ *   sums the offsets from the start to each land tile within
+ *   the radius and picks the one of the 16 directions that
+ *   points most along that sum. That is the direction nearest
+ *   to the angle the float version rounds.
+ *---------------------------------------------------------*/
+static void makerPointStartsToLand(struct mapObj *mp, struct startsObj *ss) {
+    #define MKPL_RADIUS 30
+    /* sin and cos of d * 22.5 degrees, scaled by 65536. Direction 0
+     * points up (toward smaller y) and the directions go clockwise. */
+    static const int32_t kS[16] = { 0, 25080, 46341, 60547, 65536, 60547, 46341, 25080,
+                                    0, -25080, -46341, -60547, -65536, -60547, -46341, -25080 };
+    static const int32_t kC[16] = { 65536, 60547, 46341, 25080, 0, -25080, -46341, -60547,
+                                    -65536, -60547, -46341, -25080, 0, 25080, 46341, 60547 };
+    int i;
+
+    for (i = 0; i < ss->numStarts; i++) {
+        int sx = ss->item[i].x;
+        int sy = ss->item[i].y;
+        int64_t sumX = 0, sumY = 0;
+        int dx, dy;
+
+        for (dx = -MKPL_RADIUS; dx <= MKPL_RADIUS; dx++) {
+            int nx = sx + dx;
+            if (nx < 0 || nx > 255) continue;
+            for (dy = -MKPL_RADIUS; dy <= MKPL_RADIUS; dy++) {
+                int ny = sy + dy;
+                if (ny < 0 || ny > 255) continue;
+                if (dx * dx + dy * dy > MKPL_RADIUS * MKPL_RADIUS) continue;
+                if (mp->mapItem[nx][ny] != DEEP_SEA) {
+                    sumX += dx;
+                    sumY += dy;
+                }
+            }
+        }
+
+        if (sumX != 0 || sumY != 0) {
+            int d, best = 0;
+            int64_t bestDot = sumX * kS[0] - sumY * kC[0];
+            for (d = 1; d < 16; d++) {
+                int64_t dot = sumX * kS[d] - sumY * kC[d];
+                if (dot > bestDot) {
+                    bestDot = dot;
+                    best = d;
+                }
+            }
+            ss->item[i].dir = startsConvertDir((BYTE)best);
+        } else {
+            ss->item[i].dir = 0;
+        }
+    }
+    #undef MKPL_RADIUS
 }
 
 /*---------------------------------------------------------

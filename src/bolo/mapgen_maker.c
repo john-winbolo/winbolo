@@ -36,20 +36,40 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <float.h>
 
-/* Terrain codes. These match types.h; a unit test checks them. */
-#define T_BUILDING 0
-#define T_RIVER    1
-#define T_SWAMP    2
-#define T_CRATER   3
-#define T_ROAD     4
-#define T_FOREST   5
-#define T_RUBBLE   6
-#define T_GRASS    7
-#define T_HALF     8
-#define T_BOAT     9
-#define T_DEEP     0xFF
-#define T_MINE_ADD 8
+/* The same seed must make the same map on every compiler and CPU, as
+ * the server and each client make the map on their own. So this file
+ * uses no sin, cos, atan2 or other library function whose last bit
+ * can differ between C libraries: angles come from an integer sine
+ * table and the noise is integer value noise. The double arithmetic
+ * that is left is + - * / and sqrt, floor, ceil and fabs, which IEEE
+ * 754 defines to the last bit, as long as the compiler does not fuse
+ * a multiply and an add into one step and does not keep extra
+ * precision. The pragma below and -ffp-contract=off in
+ * src/bolo/CMakeLists.txt stop the fused step; the check below stops
+ * a build that keeps extra precision. */
+#if defined(__clang__)
+#pragma STDC FP_CONTRACT OFF
+#endif
+#if defined(FLT_EVAL_METHOD) && (FLT_EVAL_METHOD == 1 || FLT_EVAL_METHOD == 2)
+#error "mapgen_maker.c needs double arithmetic without extra precision (SSE2 or later on x86)"
+#endif
+
+/* Terrain codes. mapgen.c checks at compile time that these match
+ * types.h. */
+#define T_BUILDING MAKER_TERRAIN_BUILDING
+#define T_RIVER    MAKER_TERRAIN_RIVER
+#define T_SWAMP    MAKER_TERRAIN_SWAMP
+#define T_CRATER   MAKER_TERRAIN_CRATER
+#define T_ROAD     MAKER_TERRAIN_ROAD
+#define T_FOREST   MAKER_TERRAIN_FOREST
+#define T_RUBBLE   MAKER_TERRAIN_RUBBLE
+#define T_GRASS    MAKER_TERRAIN_GRASS
+#define T_HALF     MAKER_TERRAIN_HALFBUILDING
+#define T_BOAT     MAKER_TERRAIN_BOAT
+#define T_DEEP     MAKER_TERRAIN_DEEP_SEA
+#define T_MINE_ADD MAKER_TERRAIN_MINE_ADD
 
 /* These match the MAPGEN_OUTLINE_* and MAPGEN_MSYM_* values in mapgen.h. */
 #define OL_BOX     0
@@ -496,35 +516,90 @@ static uint32_t hash2(int x, int y, uint32_t s) {
     return h;
 }
 
-static double lattice(int x, int y, uint32_t s) {
-    return (double)(hash2(x, y, s) & 0xFFFF) / 65535.0;
+/* Value noise in integers. Positions are 16.16 fixed point, lattice
+ * values and results are 0..65535. */
+static int64_t lattice(int x, int y, uint32_t s) {
+    return (int64_t)(hash2(x, y, s) & 0xFFFF);
 }
 
-static double vnoise(double x, double y, uint32_t s) {
-    int ix = (int)floor(x), iy = (int)floor(y);
-    double fx = x - ix, fy = y - iy;
-    double a, b, cc, d;
-    fx = fx * fx * (3.0 - 2.0 * fx);
-    fy = fy * fy * (3.0 - 2.0 * fy);
-    a = lattice(ix, iy, s);
-    b = lattice(ix + 1, iy, s);
-    cc = lattice(ix, iy + 1, s);
-    d = lattice(ix + 1, iy + 1, s);
-    return (a + (b - a) * fx) * (1.0 - fy) + (cc + (d - cc) * fx) * fy;
+/* Smoothstep of t (0..65536), in 0..65536. */
+static int64_t smooth16(int64_t t) {
+    return (t * t * (3 * 65536 - 2 * t)) >> 32;
 }
 
-/* Fractal noise in 0..1 */
+/* a + (b - a) * t with t in 0..65536; no negative value is shifted. */
+static int64_t lerp16(int64_t a, int64_t b, int64_t t) {
+    return (a * (65536 - t) + b * t) >> 16;
+}
+
+/* The whole part of a 16.16 value, rounded down. */
+static int floor16(int64_t v) {
+    return v >= 0 ? (int)(v / 65536) : -(int)((-v + 65535) / 65536);
+}
+
+static int64_t vnoise(int64_t x, int64_t y, uint32_t s) {
+    int ix = floor16(x), iy = floor16(y);
+    int64_t fx = smooth16(x - (int64_t)ix * 65536);
+    int64_t fy = smooth16(y - (int64_t)iy * 65536);
+    int64_t top = lerp16(lattice(ix, iy, s), lattice(ix + 1, iy, s), fx);
+    int64_t bot = lerp16(lattice(ix, iy + 1, s), lattice(ix + 1, iy + 1, s), fx);
+    return lerp16(top, bot, fy);
+}
+
+/* Fractal noise in 0..1. x and y are turned into 16.16 fixed point
+ * once (a scale by a power of two and floor, both exact), and the rest
+ * is integer arithmetic. */
 static double fbm(double x, double y, uint32_t s, int oct) {
-    double sum = 0.0, amp = 0.5, norm = 0.0;
+    int64_t fx = (int64_t)floor(x * 65536.0), fy = (int64_t)floor(y * 65536.0);
+    int64_t sum = 0, norm = 0, amp = 32768;
     int i;
     for (i = 0; i < oct; i++) {
-        sum += amp * vnoise(x, y, s + (uint32_t)i * 101u);
+        sum += amp * vnoise(fx, fy, s + (uint32_t)i * 101u);
         norm += amp;
-        amp *= 0.5;
-        x *= 2.0;
-        y *= 2.0;
+        amp /= 2;
+        fx *= 2;
+        fy *= 2;
     }
-    return sum / norm;
+    return (double)sum / ((double)norm * 65535.0);
+}
+
+/* Integer sine: angles in 1024ths of a turn, results scaled by 65536.
+ * kSinQ holds the first quarter turn. */
+static const int32_t kSinQ[257] = {
+    0, 402, 804, 1206, 1608, 2010, 2412, 2814, 3216, 3617, 4019, 4420,
+    4821, 5222, 5623, 6023, 6424, 6824, 7224, 7623, 8022, 8421, 8820, 9218,
+    9616, 10014, 10411, 10808, 11204, 11600, 11996, 12391, 12785, 13180, 13573, 13966,
+    14359, 14751, 15143, 15534, 15924, 16314, 16703, 17091, 17479, 17867, 18253, 18639,
+    19024, 19409, 19792, 20175, 20557, 20939, 21320, 21699, 22078, 22457, 22834, 23210,
+    23586, 23961, 24335, 24708, 25080, 25451, 25821, 26190, 26558, 26925, 27291, 27656,
+    28020, 28383, 28745, 29106, 29466, 29824, 30182, 30538, 30893, 31248, 31600, 31952,
+    32303, 32652, 33000, 33347, 33692, 34037, 34380, 34721, 35062, 35401, 35738, 36075,
+    36410, 36744, 37076, 37407, 37736, 38064, 38391, 38716, 39040, 39362, 39683, 40002,
+    40320, 40636, 40951, 41264, 41576, 41886, 42194, 42501, 42806, 43110, 43412, 43713,
+    44011, 44308, 44604, 44898, 45190, 45480, 45769, 46056, 46341, 46624, 46906, 47186,
+    47464, 47741, 48015, 48288, 48559, 48828, 49095, 49361, 49624, 49886, 50146, 50404,
+    50660, 50914, 51166, 51417, 51665, 51911, 52156, 52398, 52639, 52878, 53114, 53349,
+    53581, 53812, 54040, 54267, 54491, 54714, 54934, 55152, 55368, 55582, 55794, 56004,
+    56212, 56418, 56621, 56823, 57022, 57219, 57414, 57607, 57798, 57986, 58172, 58356,
+    58538, 58718, 58896, 59071, 59244, 59415, 59583, 59750, 59914, 60075, 60235, 60392,
+    60547, 60700, 60851, 60999, 61145, 61288, 61429, 61568, 61705, 61839, 61971, 62101,
+    62228, 62353, 62476, 62596, 62714, 62830, 62943, 63054, 63162, 63268, 63372, 63473,
+    63572, 63668, 63763, 63854, 63944, 64031, 64115, 64197, 64277, 64354, 64429, 64501,
+    64571, 64639, 64704, 64766, 64827, 64884, 64940, 64993, 65043, 65091, 65137, 65180,
+    65220, 65259, 65294, 65328, 65358, 65387, 65413, 65436, 65457, 65476, 65492, 65505,
+    65516, 65525, 65531, 65535, 65536
+};
+
+static int32_t isin(int a) {
+    a &= 1023;
+    if (a <= 256) return kSinQ[a];
+    if (a <= 512) return kSinQ[512 - a];
+    if (a <= 768) return -kSinQ[a - 512];
+    return -kSinQ[1024 - a];
+}
+
+static int32_t icos(int a) {
+    return isin(a + 256);
 }
 
 /*---------------------------------------------------------
@@ -1291,12 +1366,7 @@ static void paintPods(Ctx *c, int centreFeature) {
             double R = (cw < ch ? cw : ch) * 0.36;
             int isCentre = fabs(px - c->cx) < 1.0 && fabs(py - c->cy) < 1.0;
             int kind;
-            if (!inb(c, x0, y0) || !inFund(c, x0, y0)) {
-                /* The tile right of the centre line may be the first of
-                 * its group when the width is even. */
-                if (!inb(c, x0, y0)) continue;
-                if (!inFund(c, x0, y0)) continue;
-            }
+            if (!inb(c, x0, y0) || !inFund(c, x0, y0)) continue;
             if (R > 9.0) R = 9.0;
             {
                 double room = c->din[IDX(c, x0, y0)] / 3.0 - c->rimTotal - 1.0;
@@ -1752,7 +1822,9 @@ static void townBlock(Ctx *c, Rect r) {
     case RK_PARK: {
         int i, n = (w * h) / 12;
         for (i = 0; i < n; i++) {
-            put(c, rrange(c, in.x1, in.x2), rrange(c, in.y1, in.y2), T_FOREST, L_BLOCK);
+            int px = rrange(c, in.x1, in.x2);
+            int py = rrange(c, in.y1, in.y2);
+            put(c, px, py, T_FOREST, L_BLOCK);
         }
         break;
     }
@@ -1899,7 +1971,8 @@ static void paintTown(Ctx *c) {
 static void islandLand(Ctx *c) {
     int k = c->p.islands, x, y, i, pass;
     double bx[8], by[8], br[8];
-    double ph = rfloat(c) * 6.2831853;
+    /* The phase in 1024ths of a turn, from one draw as before. */
+    int ph = (int)((xs32(&c->rng) & 0xFFFFFF) >> 14);
     uint32_t s = c->seed * 2246822519u + 5u;
     double ns = (c->ax + c->ay) * 0.18;
     int n = c->W * c->H;
@@ -1909,13 +1982,20 @@ static void islandLand(Ctx *c) {
         bx[0] = 0; by[0] = 0; br[0] = 0.92;
         k = 1;
     } else {
-        double dist = 0.52, r = 0.62 * sin(3.14159265 / k) * 0.92;
+        /* sin(pi / k) scaled by 65536, for k = 2..8 */
+        static const int32_t kSinPiOverK[9] = { 0, 0, 65536, 56756, 46341, 38521, 32768, 28435, 25080 };
+        double dist = 0.52, r = 0.62 * ((double)kSinPiOverK[k > 8 ? 8 : k] / 65536.0) * 0.92;
         if (r > 0.46) r = 0.46;
         for (i = 0; i < k; i++) {
-            double a = ph + 6.2831853 * i / k + (rfloat(c) - 0.5) * 0.5;
-            bx[i] = cos(a) * dist;
-            by[i] = sin(a) * dist;
-            br[i] = r * (0.85 + rfloat(c) * 0.3);
+            /* A jitter of up to 40/1024 of a turn (about 0.25 radians)
+             * either way. */
+            int jit = (int)(((uint64_t)(xs32(&c->rng) & 0xFFFFFF) * 81u) >> 24) - 40;
+            int a = ph + (1024 * i) / k + jit;
+            double rr;
+            bx[i] = (double)icos(a) / 65536.0 * dist;
+            by[i] = (double)isin(a) / 65536.0 * dist;
+            rr = rfloat(c);
+            br[i] = r * (0.85 + rr * 0.3);
         }
     }
     for (y = 0; y < c->H; y++) {
@@ -1976,10 +2056,15 @@ static void islandRiver(Ctx *c) {
         if (landAt(c, x, y) && c->din[IDX(c, x, y)] <= 4) break;
     }
     if (tries == 200) return;
-    /* head toward the centre */
+    /* Head toward the centre: the nearest of the 8 directions, picked
+     * by comparing the two sides against tan(22.5 degrees). */
     {
-        double a = atan2(c->cy - y, c->cx - x);
-        dir = ((int)floor((a + 3.14159265) / (6.2831853 / 8) + 0.5) + 4) % 8;
+        double vx = c->cx - x, vy = c->cy - y;
+        double ax = fabs(vx), ay = fabs(vy);
+        if (ay <= ax * 0.41421356) dir = vx >= 0.0 ? 0 : 4;
+        else if (ax <= ay * 0.41421356) dir = vy > 0.0 ? 2 : 6;
+        else if (vx > 0.0) dir = vy > 0.0 ? 1 : 7;
+        else dir = vy > 0.0 ? 3 : 5;
     }
     len = (int)((c->ax + c->ay) * (0.4 + rfloat(c) * 0.5));
     for (i = 0; i < len; i++) {
@@ -2060,7 +2145,11 @@ static int islandStronghold(Ctx *c) {
     if (side < 2) { put(c, gx, gy + 1, T_ROAD, L_WALL); }
     else { put(c, gx + 1, gy, T_ROAD, L_WALL); }
     addHint(c, OBJ_BASE, x0, y0);
-    addHint(c, OBJ_PILL, x0 + (rnd(c, 2) ? half - 1 : -half + 1), y0 + (rnd(c, 2) ? half - 1 : -half + 1));
+    {
+        int px = x0 + (rnd(c, 2) ? half - 1 : -half + 1);
+        int py = y0 + (rnd(c, 2) ? half - 1 : -half + 1);
+        addHint(c, OBJ_PILL, px, py);
+    }
     return 1;
 }
 

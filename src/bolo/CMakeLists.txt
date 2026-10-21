@@ -130,6 +130,13 @@ endif()
 
 set_target_properties(bolo_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# Map Maker must make the same map from the same seed on every compiler
+# and CPU. Stop GCC and Clang from fusing a multiply and an add into one
+# step there (MSVC does not do this by default).
+if(NOT MSVC)
+    set_source_files_properties(mapgen_maker.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
+
 target_compile_definitions(bolo_static PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
