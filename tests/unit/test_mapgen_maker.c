@@ -933,3 +933,323 @@ int run_mapgen_maker_one_land(void) {
     UT_ASSERT_MSG(bad == 0, "%d of %d maps are more than one piece of land", bad, runs);
     return 0;
 }
+
+/*---------------------------------------------------------
+ * Style levers
+ *
+ * Each lever replaces one choice the seed makes for a map (the road
+ * layout, the shape, the octagon cut, the pod centres, the forest rim
+ * and the maze yard). The seed's draw is still made when a lever is
+ * set, so a lever changes only its own choice. "From seed" (0) on
+ * every lever writes the 'K' seed and makes the map the seed always
+ * made: run_mapgen_maker_hashes checks that against fixed hashes.
+ *---------------------------------------------------------*/
+
+/* The value each lever had on the map of cfg (MakerObjects.styleUsed),
+ * made the way mapGenRun makes it. */
+static void makerStyleUsedOf(const MapGenConfig *cfgIn, int used[MAKER_STYLE_COUNT]) {
+    static uint8_t grid[256][256];
+    MapGenConfig c = *cfgIn;
+    MakerParams p;
+    MakerObjects o;
+    mapGenClampConfig(&c);
+    memset(&p, 0, sizeof(p));
+    mapGenEffectiveRegion(&c, &p.x1, &p.y1, &p.x2, &p.y2);
+    p.seed = c.seed;
+    p.preset = c.params.maker.preset;
+    p.outline = c.params.maker.outline;
+    p.symmetry = c.params.maker.symmetry;
+    p.waterPct = c.params.maker.waterPct;
+    p.forestPct = c.params.maker.forestPct;
+    p.roadPct = c.params.maker.roadPct;
+    p.buildingPct = c.params.maker.buildingPct;
+    p.islands = c.params.maker.islands;
+    p.mineDensityPct = c.params.maker.mineDensityPct;
+    p.detail = c.params.maker.detail;
+    for (int i = 0; i < MAKER_STYLE_COUNT; i++) p.style[i] = c.params.maker.style[i];
+    p.bases = c.bases;
+    p.pills = c.pills;
+    p.starts = c.starts;
+    memset(grid, DEEP_SEA, sizeof(grid));
+    makerGenerate(grid, &o, &p);
+    memcpy(used, o.styleUsed, sizeof(o.styleUsed));
+}
+
+/* The seed of cfg decodes back to the same config. Returns NULL, or
+ * why it does not. */
+static const char *styleSeedRoundTrip(const MapGenConfig *a) {
+    static char why[160];
+    MapGenConfig b = mapGenDefaultConfig(MAPGEN_NATURAL);
+    char seed[64];
+    mapGenConfigToSeed(a, seed, sizeof(seed));
+    if (seed[0] != 'S') {
+        snprintf(why, sizeof(why), "wrote '%s', not an 'S' seed", seed);
+        return why;
+    }
+    if (strlen(seed) > 30) {
+        snprintf(why, sizeof(why), "seed '%s' is too long for a map name", seed);
+        return why;
+    }
+    if (!mapGenSeedToConfig(seed, &b)) {
+        snprintf(why, sizeof(why), "seed '%s' does not decode", seed);
+        return why;
+    }
+    if (b.genType != MAPGEN_MAKER || b.seed != a->seed || b.size != a->size ||
+        b.bases != a->bases || b.pills != a->pills || b.starts != a->starts ||
+        memcmp(&a->params.maker, &b.params.maker, sizeof(a->params.maker)) != 0) {
+        snprintf(why, sizeof(why), "seed '%s' does not give the same config back", seed);
+        return why;
+    }
+    return NULL;
+}
+
+/* Every allowed value of every lever of every preset, at a few seeds:
+ * a valid map, every object reached, one piece of land for the presets
+ * that are not of the island family, the lever used, and a seed that
+ * comes back. A lever the preset does not vary takes no value. */
+int run_mapgen_maker_style_levers(void) {
+    static const uint32_t seeds[] = { 1u, 7919u, 0xC0FFEE11u };
+    GenOut g;
+    int runs = 0;
+    UT_ASSERT(genAlloc(&g));
+    for (int p = 0; p < mapGenPresetCount(); p++) {
+        const char *name = mapGenPresetName(p);
+        for (int L = 0; L < MAPGEN_KSTYLE_COUNT; L++) {
+            int lo, hi;
+            if (!mapGenStyleRange(p, L, &lo, &hi)) {
+                MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_MAKER);
+                char seed[64];
+                UT_ASSERT_MSG(!mapGenStyleAllowed(p, L, 1), "%s: lever %d takes a value", name, L);
+                UT_ASSERT(mapGenStyleAllowed(p, L, 0));
+                mapGenApplyPreset(p, &cfg);
+                cfg.params.maker.style[L] = 1;
+                mapGenConfigToSeed(&cfg, seed, sizeof(seed));
+                UT_ASSERT_MSG(seed[0] == 'K', "%s: lever %d, which it does not vary, wrote '%s'",
+                              name, L, seed);
+                continue;
+            }
+            UT_ASSERT(lo >= 1 && lo <= hi);
+            UT_ASSERT(lo == 1 || !mapGenStyleAllowed(p, L, lo - 1));
+            UT_ASSERT(!mapGenStyleAllowed(p, L, hi + 1));
+            for (int v = lo; v <= hi; v++) {
+                if (!mapGenStyleAllowed(p, L, v)) continue;
+                for (size_t s = 0; s < sizeof(seeds) / sizeof(seeds[0]); s++) {
+                    MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_MAKER);
+                    int used[MAKER_STYLE_COUNT];
+                    const char *why;
+                    int bad;
+                    mapGenApplyPreset(p, &cfg);
+                    setRegion(&cfg);
+                    cfg.seed = seeds[s];
+                    cfg.params.maker.style[L] = v;
+                    genRun(&g, &cfg);
+                    runs++;
+                    UT_ASSERT_MSG(g.bs->numBases <= MAX_BASES && g.pb->numPills <= MAX_PILLS &&
+                                  g.ss->numStarts <= MAX_STARTS, "%s lever %d = %d: too many objects",
+                                  name, L, v);
+                    UT_ASSERT_MSG(g.ss->numStarts > 0 || cfg.starts == 0,
+                                  "%s lever %d = %d seed %u: no starts", name, L, v, cfg.seed);
+                    why = checkInside(&g, &cfg);
+                    UT_ASSERT_MSG(why == NULL, "%s lever %d = %d seed %u: %s", name, L, v, cfg.seed, why);
+                    for (int x = 0; x < 256; x++) {
+                        for (int y = 0; y < 256; y++) {
+                            UT_ASSERT_MSG(terrainValid(g.mp->mapItem[x][y]), "%s lever %d = %d: terrain %d at %d,%d",
+                                          name, L, v, g.mp->mapItem[x][y], x, y);
+                        }
+                    }
+                    bad = unreachableCount(&g, &cfg);
+                    UT_ASSERT_MSG(bad == 0, "%s lever %d = %d seed %u: %d objects cannot be reached",
+                                  name, L, v, cfg.seed, bad);
+                    if (!mapGenPresetIsIsland(p)) {
+                        int n = landPieces(&g, &cfg);
+                        UT_ASSERT_MSG(n == 1, "%s lever %d = %d seed %u: %d pieces of land",
+                                      name, L, v, cfg.seed, n);
+                    }
+                    makerStyleUsedOf(&cfg, used);
+                    UT_ASSERT_MSG(used[L] == v, "%s lever %d = %d seed %u: the map used %d",
+                                  name, L, v, cfg.seed, used[L]);
+                    why = styleSeedRoundTrip(&cfg);
+                    UT_ASSERT_MSG(why == NULL, "%s lever %d = %d: %s", name, L, v, why);
+                }
+            }
+        }
+    }
+    genFree(&g);
+    UT_ASSERT(runs > 0);
+    printf("  %d maps\n", runs);
+    return 0;
+}
+
+/* The 'S' seed: every lever of a preset at its lowest or highest
+ * value, at three sizes, comes back; the letters may be small; a bad
+ * letter or length does not decode; a 'K' seed clears levers set
+ * before; and a lever value the preset does not allow reads as "from
+ * seed". */
+int run_mapgen_maker_style_seed_roundtrip(void) {
+    static const int sizes[] = { MAPGEN_SIZE_FULL, MAPGEN_SIZE_MIN, MAPGEN_SIZE_MAX };
+    int berserkir = mapGenPresetFromKey("berserkir");
+    int slugfest = mapGenPresetFromKey("slugfest");
+    int mosh = mapGenPresetFromKey("mosh-pit");
+    for (int p = 0; p < mapGenPresetCount(); p++) {
+        for (int end = 0; end < 2; end++) {
+            for (size_t s = 0; s < sizeof(sizes) / sizeof(sizes[0]); s++) {
+                MapGenConfig a = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
+                int any = 0;
+                const char *why;
+                mapGenApplyPreset(p, &a);
+                a.seed = 0xFFFFFFFFu - (uint32_t)p * 977u - (uint32_t)end;
+                a.size = sizes[s];
+                if (end) {
+                    a.params.maker.outline = MAPGEN_OUTLINE_COUNT - 1;
+                    a.params.maker.symmetry = MAPGEN_MSYM_COUNT - 1;
+                    a.params.maker.waterPct = 100;
+                    a.params.maker.islands = 8;
+                    a.params.maker.mineDensityPct = 5;
+                    a.params.maker.detail = 10;
+                    a.bases = 16; a.pills = 16; a.starts = 16;
+                }
+                for (int L = 0; L < MAPGEN_KSTYLE_COUNT; L++) {
+                    int lo, hi, v;
+                    if (!mapGenStyleRange(p, L, &lo, &hi)) continue;
+                    v = end ? hi : lo;
+                    while (!mapGenStyleAllowed(p, L, v)) v += end ? -1 : 1;
+                    a.params.maker.style[L] = v;
+                    any = 1;
+                }
+                if (!any) continue;
+                why = styleSeedRoundTrip(&a);
+                UT_ASSERT_MSG(why == NULL, "%s end %d size %d: %s", mapGenPresetName(p), end, a.size, why);
+            }
+        }
+    }
+
+    UT_ASSERT(berserkir >= 0 && slugfest >= 0 && mosh >= 0);
+    {
+        MapGenConfig a = mapGenDefaultConfig(MAPGEN_MAKER), b;
+        char seed[64], other[64], kseed[64];
+        mapGenApplyPreset(berserkir, &a);
+        a.seed = 12345u;
+        a.size = 100;
+        mapGenConfigToSeed(&a, kseed, sizeof(kseed));
+        UT_ASSERT(kseed[0] == 'K');
+        a.params.maker.style[MAPGEN_KSTYLE_ROADS] = 1 + MAPGEN_ROADS_DIAG;
+        a.params.maker.style[MAPGEN_KSTYLE_CORE] = 2;
+        mapGenConfigToSeed(&a, seed, sizeof(seed));
+        UT_ASSERT_MSG(seed[0] == 'S' && strlen(seed) == 27, "wrote '%s'", seed);
+        UT_ASSERT(strchr(seed, 'Z') == NULL);
+
+        /* Small letters. */
+        for (size_t i = 0; i <= strlen(seed); i++) {
+            char ch = seed[i];
+            other[i] = (ch >= 'A' && ch <= 'Z') ? (char)(ch - 'A' + 'a') : ch;
+        }
+        b = mapGenDefaultConfig(MAPGEN_NATURAL);
+        UT_ASSERT(mapGenSeedToConfig(other, &b));
+        UT_ASSERT(b.size == 100 && b.seed == 12345u);
+        UT_ASSERT(memcmp(&a.params.maker, &b.params.maker, sizeof(a.params.maker)) == 0);
+
+        /* A 'K' seed on top clears the levers. */
+        UT_ASSERT(mapGenSeedToConfig(kseed, &b));
+        for (int L = 0; L < MAPGEN_KSTYLE_COUNT; L++) UT_ASSERT(b.params.maker.style[L] == 0);
+        UT_ASSERT(b.size == 100 && b.seed == 12345u);
+
+        /* The server's path: a preset first, then the seed. */
+        b = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
+        mapGenApplyPreset(slugfest, &b);
+        UT_ASSERT(mapGenSeedToConfig(seed, &b));
+        UT_ASSERT(b.size == 100 && b.seed == 12345u);
+        UT_ASSERT(memcmp(&a.params.maker, &b.params.maker, sizeof(a.params.maker)) == 0);
+
+        /* Bad letters and lengths. */
+        strcpy(other, seed);
+        other[5] = 'W';
+        UT_ASSERT(!mapGenSeedToConfig(other, &b));
+        other[5] = 'Z';
+        UT_ASSERT(!mapGenSeedToConfig(other, &b));
+        strcpy(other, seed);
+        other[26] = '\0';
+        UT_ASSERT(!mapGenSeedToConfig(other, &b));
+        strcpy(other, seed);
+        strcat(other, "0");
+        UT_ASSERT(!mapGenSeedToConfig(other, &b));
+    }
+    {
+        /* Slugfest has no pod centre pick: a value set for it reads as
+         * "from seed", and with no other lever set the seed is 'K'. */
+        MapGenConfig a = mapGenDefaultConfig(MAPGEN_MAKER);
+        char seed[64];
+        UT_ASSERT(!mapGenStyleRange(slugfest, MAPGEN_KSTYLE_CORE, NULL, NULL));
+        mapGenApplyPreset(slugfest, &a);
+        a.params.maker.style[MAPGEN_KSTYLE_CORE] = 2;
+        mapGenClampConfig(&a);
+        UT_ASSERT(a.params.maker.style[MAPGEN_KSTYLE_CORE] == 0);
+        a.params.maker.style[MAPGEN_KSTYLE_CORE] = 2;
+        mapGenConfigToSeed(&a, seed, sizeof(seed));
+        UT_ASSERT_MSG(seed[0] == 'K', "wrote '%s'", seed);
+    }
+    /* A road layout between the lowest and highest that the preset
+     * does not allow: Mosh Pit has axes, diagonals and axes with ring. */
+    UT_ASSERT(mapGenStyleAllowed(mosh, MAPGEN_KSTYLE_ROADS, 1 + MAPGEN_ROADS_AXES_RING));
+    UT_ASSERT(!mapGenStyleAllowed(mosh, MAPGEN_KSTYLE_ROADS, 1 + MAPGEN_ROADS_AXES_DIAG));
+    return 0;
+}
+
+/* Setting a lever to the value the seed picked gives the same map, and
+ * the other picks made at the start (road layout, shape, cut, pod
+ * centre and forest rim) do not move when one lever is set to another
+ * value. The cut is left out of the first check: the seed's own cut is
+ * not a whole number. */
+int run_mapgen_maker_style_same_map(void) {
+    static const int early[] = { MAPGEN_KSTYLE_ROADS, MAPGEN_KSTYLE_SHAPE, MAPGEN_KSTYLE_CUT,
+                                 MAPGEN_KSTYLE_CORE, MAPGEN_KSTYLE_RIM };
+    GenOut a, b;
+    int checks = 0;
+    UT_ASSERT(genAlloc(&a) && genAlloc(&b));
+    for (int p = 0; p < mapGenPresetCount(); p++) {
+        const char *name = mapGenPresetName(p);
+        for (uint32_t k = 1; k <= 5; k++) {
+            MapGenConfig base = mapGenDefaultConfig(MAPGEN_MAKER), all;
+            int used[MAKER_STYLE_COUNT];
+            mapGenApplyPreset(p, &base);
+            setRegion(&base);
+            base.seed = k * 2654435761u;
+            if (k == 5) base.params.maker.detail = 10;
+            genRun(&a, &base);
+            makerStyleUsedOf(&base, used);
+            all = base;
+            for (int L = 0; L < MAPGEN_KSTYLE_COUNT; L++) {
+                MapGenConfig one = base;
+                int lo, hi, used2[MAKER_STYLE_COUNT];
+                if (!mapGenStyleRange(p, L, &lo, &hi)) {
+                    UT_ASSERT_MSG(used[L] == 0, "%s: lever %d it does not vary was used", name, L);
+                    continue;
+                }
+                if (L != MAPGEN_KSTYLE_CUT && mapGenStyleAllowed(p, L, used[L])) {
+                    one.params.maker.style[L] = used[L];
+                    all.params.maker.style[L] = used[L];
+                    genRun(&b, &one);
+                    checks++;
+                    UT_ASSERT_MSG(genSame(&a, &b), "%s seed %u: lever %d set to the seed's pick %d moved the map",
+                                  name, base.seed, L, used[L]);
+                }
+                /* Another value: the other early picks stay. */
+                one.params.maker.style[L] = (used[L] == hi) ? lo : hi;
+                if (!mapGenStyleAllowed(p, L, one.params.maker.style[L])) continue;
+                makerStyleUsedOf(&one, used2);
+                for (size_t e = 0; e < sizeof(early) / sizeof(early[0]); e++) {
+                    int j = early[e];
+                    if (j == L) continue;
+                    UT_ASSERT_MSG(used2[j] == used[j], "%s seed %u: lever %d moved the pick of lever %d",
+                                  name, base.seed, L, j);
+                }
+            }
+            genRun(&b, &all);
+            UT_ASSERT_MSG(genSame(&a, &b), "%s seed %u: every lever at the seed's pick moved the map",
+                          name, base.seed);
+        }
+    }
+    genFree(&a);
+    genFree(&b);
+    UT_ASSERT(checks > 0);
+    return 0;
+}
