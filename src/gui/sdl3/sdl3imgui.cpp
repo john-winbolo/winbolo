@@ -6753,15 +6753,18 @@ static void renderSettingsPanel(ClientSim *cs) {
                 s_igForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_LAST;
             ImGui::BeginChild("##sessionPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
-            /* File actions — Save Map reachable on tablet and under a controller
-               (desktop has the menu bar); Leave Game stays tablet-only. */
-            if (uiModeIsTablet() || uiShouldUseControllerMode()) {
+            /* File actions. Save Map is reachable on the touch layout, on a
+               mobile tablet's classic screen and under a controller (the
+               desktop has the menu bar); Leave Game on the touch layout and
+               on mobile, where no menu bar offers it. */
+            const bool mobileRows = uiModeIsTablet() || BOLO_MOBILE;
+            if (mobileRows || uiShouldUseControllerMode()) {
                 if (ImGui::Button(langGetText(STR_MENU_SAVE_MAP), ImVec2(-1, 0))) {
                     windowSaveMap(cs);
                     s_showSettings = false;
                 }
                 imguiHandOnHover();
-                if (uiModeIsTablet()) {
+                if (mobileRows) {
                     if (ImGui::Button(langGetText(STR_MENU_LEAVE_GAME), ImVec2(-1, 0))) {
                         windowNewGame();
                     }
@@ -9489,6 +9492,21 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             else if (s_allianceVisible)    { s_allianceVisible = false;  cancelClosedPanel = true; }
         }
 
+#if defined(__ANDROID__)
+        /* The system Back key arrives as Escape (main_android.c's event
+           filter). When it closed nothing above, it opens Settings, as the
+           gear does; Settings open, the ladder above has just closed it, so
+           Back closes what Back opened. This takes the place of the pause
+           overlay a pad's Escape opens on the desktop: the pad's own Start
+           button still opens that, and a keyboard's Escape on Android means
+           the same as Back. */
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) &&
+            !anyPopup && !cancelClosedPanel && !ImGui::GetIO().WantTextInput &&
+            cs && !clientSimIsInLobby(cs) &&
+            !deckPauseIsOpen() && !sdl3ImguiIsDialogOpen()) {
+            sdl3ImguiShowSettings();
+        }
+#else
         /* Escape opens the pause overlay when a controller is connected and
            nothing else is in the way — mirrors the Start-button trigger so
            keyboard + pad users both have a way in (the menu bar is hidden in
@@ -9501,6 +9519,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             !deckPauseIsOpen() && !sdl3ImguiIsDialogOpen()) {
             deckPauseOpen();
         }
+#endif
     }
 
     /* Smart-ping menu and markers. Drawn before the tablet controls and the

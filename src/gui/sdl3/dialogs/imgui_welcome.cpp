@@ -286,6 +286,21 @@ extern "C" int imguiWelcomeShow(void) {
             }
 #endif
             ImGui_ImplSDL3_ProcessEvent(&ev);
+#if defined(__ANDROID__)
+            /* The system Back key reaches this loop as Escape (main_android.c's
+               event filter). With none of this screen's popups up (the news
+               prompt, the news window, About, each of which closes itself on
+               Escape) there is nothing to cancel, so Back keeps Android's own
+               meaning here and leaves the app: the activity's back handling
+               ends it, and the end reaches this loop as SDL_EVENT_TERMINATING
+               through the quit test below. */
+            if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
+                ev.key.scancode == SDL_SCANCODE_ESCAPE &&
+                !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup) &&
+                !ImGui::GetIO().WantTextInput) {
+                SDL_SendAndroidBackButton();
+            }
+#endif
             /* C cycles the background game's camera to the next tank.
              * Only this dialog takes it: the other pre-game dialogs that
              * draw the same background carry text fields and the key

@@ -254,6 +254,27 @@ static bool SDLCALL androidLifecycleWatch(void *userdata, SDL_Event *ev) {
   return true;
 }
 
+/* The system Back key. SDL is told to keep it (SDL_HINT_ANDROID_TRAP_BACK_BUTTON
+   in main), so instead of ending the activity it arrives as a key event with
+   the AC_BACK scancode. This filter, run on every event before it is queued,
+   turns that key's down and up into Escape: the dialogs, the lobby and ImGui
+   itself already act on Escape as their cancel, so Back cancels the same
+   things with no test of its own anywhere. Two places act on the Escape
+   this makes: the welcome screen, which has nothing to cancel and hands the
+   press back to Android's own back handling (imgui_welcome.cpp), and the
+   in-game Escape ladder, which opens Settings when it closed nothing
+   (sdl3imgui.cpp). A press while the keyboard is up never gets this far:
+   the input method takes it and closes the keyboard. */
+static bool SDLCALL androidBackKeyFilter(void *userdata, SDL_Event *ev) {
+  (void)userdata;
+  if ((ev->type == SDL_EVENT_KEY_DOWN || ev->type == SDL_EVENT_KEY_UP) &&
+      ev->key.scancode == SDL_SCANCODE_AC_BACK) {
+    ev->key.scancode = SDL_SCANCODE_ESCAPE;
+    ev->key.key = SDLK_ESCAPE;
+  }
+  return true;
+}
+
 /* -------------------------------------------------------
  * The solo-game freezes and the background suspend. The pause state, the
  * solo-session test and the hosted-server pause are in
@@ -639,6 +660,12 @@ int main(int argc, char *argv[]) {
      SDL's video start, so it is set before anything of SDL is up. */
   SDL_SetHint(SDL_HINT_ANDROID_BLOCK_ON_PAUSE, "0");
 
+  /* The system Back key comes to this code as a key event rather than
+     ending the activity (see androidBackKeyFilter). The manifest turns off
+     Android 16's predictive back as well, without which the key is never
+     dispatched to the app at this target. */
+  SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
+
   SDL_Init(0);
   androidDropsInstall();
 
@@ -709,6 +736,8 @@ int main(int argc, char *argv[]) {
      event watch (see androidLifecycleWatch). */
   s_resumeEventType = SDL_RegisterEvents(1);
   SDL_AddEventWatch(androidLifecycleWatch, NULL);
+  /* The Back key becomes Escape before anything polls it. */
+  SDL_SetEventFilter(androidBackKeyFilter, NULL);
 
   if (clientMutexCreate() == FALSE) {
     WB_LOG_ERROR(WB_LOG_CAT_PLATFORM, "[Android] Failed to create client mutex");

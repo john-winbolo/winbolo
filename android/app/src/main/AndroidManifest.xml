@@ -7,10 +7,16 @@
     <!-- Voice chat's microphone. Asked for at run time the first time voice
          opens the recording device, not at launch. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <!-- Predictive back off: with it on, which is the default at target 36,
+         Android handles the Back key itself and never dispatches it to the
+         app, so the activity ends from anywhere, a joined game included.
+         Off, the key reaches SDL, which hands it to the game as a key event
+         (main_android.c). -->
     <application
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
+        android:enableOnBackInvokedCallback="false"
         android:hasCode="true">
         <meta-data android:name="io.sentry.dsn" android:value="${sentryDsn}" />
         <!-- The release Sentry files crashes under: WinBolo-Android@<versionName>,
