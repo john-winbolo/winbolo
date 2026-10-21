@@ -2850,3 +2850,5 @@ STR_CLIPGIF_MAP_FMT=Карта: {string1}
 STR_CLIPGIF_PLAYERS_FMT=Игроки: {string1}
 STR_CLIPGIF_NO_DETAILS=Для этого GIF не сохранено сведений.
 STR_CLIPGIF_LENGTH_TIP=Длина GIF в секундах от точки воспроизведения.\nЕё также можно изменить, перетащив метку в конце светлой части шкалы времени.
+STR_CLIPGIF_LOADING=Открытие GIF...
+STR_CLIPGIF_TOO_LARGE=Этот GIF слишком большой, чтобы показать его здесь. Его всё равно можно скопировать или сохранить.

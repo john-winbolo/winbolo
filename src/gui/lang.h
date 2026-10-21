@@ -3553,6 +3553,8 @@
 #define STR_CLIPGIF_PLAYERS_FMT                  2951
 #define STR_CLIPGIF_NO_DETAILS                   2952
 #define STR_CLIPGIF_LENGTH_TIP                   2953
+#define STR_CLIPGIF_LOADING                      2954
+#define STR_CLIPGIF_TOO_LARGE                    2955
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

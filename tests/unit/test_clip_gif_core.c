@@ -30,6 +30,7 @@
 #include <SDL3/SDL.h>
 
 #include "clip_gif_core.h"
+#include "stb_image_gif_capped.h"
 #include "test_harness.h"
 
 #define EXPECT_U32(what, got, want)                                          \
@@ -404,6 +405,223 @@ int run_clip_gif_gallery_scan(void) {
     EXPECT_TRUE("missing dir", clipGifGalleryScan(missing, &items) == 0);
     EXPECT_TRUE("missing dir out", items == NULL);
     EXPECT_TRUE("null dir", clipGifGalleryScan(NULL, &items) == 0);
+
+    return fails ? 1 : 0;
+}
+
+/* ── Text ──────────────────────────────────────────────────────────── */
+
+int run_clip_gif_text_fill(void) {
+    int fails = 0;
+    char out[64];
+
+    /* The value goes where the token is, wherever that is in the text. */
+    clipGifFillString1("Players: {string1}", "Alpha, Bravo", out, sizeof(out));
+    EXPECT_STR("end", out, "Players: Alpha, Bravo");
+    clipGifFillString1("{string1} could not be saved.", "a.gif", out,
+                       sizeof(out));
+    EXPECT_STR("start", out, "a.gif could not be saved.");
+    clipGifFillString1("No token.", "x", out, sizeof(out));
+    EXPECT_STR("no token", out, "No token.");
+    clipGifFillString1("{string1}/{string1}", "ab", out, sizeof(out));
+    EXPECT_STR("twice", out, "ab/ab");
+    clipGifFillString1("{string1}!", NULL, out, sizeof(out));
+    EXPECT_STR("null value", out, "!");
+    clipGifFillString1("{string2} {string1", "x", out, sizeof(out));
+    EXPECT_STR("other tokens kept", out, "{string2} {string1");
+
+    /* A value longer than the lang module's 63-byte slot is kept whole. */
+    char longList[400];
+    char big[512];
+    longList[0] = '\0';
+    for (int i = 0; i < 16; i++) {
+        char name[32];
+        snprintf(name, sizeof(name), "%sPlayer number %02d", i ? ", " : "", i);
+        SDL_strlcat(longList, name, sizeof(longList));
+    }
+    clipGifFillString1("Players: {string1}", longList, big, sizeof(big));
+    EXPECT_TRUE("long value whole",
+                strlen(big) == strlen("Players: ") + strlen(longList));
+
+    /* Cut to fit, on a whole character. "\xC3\xA9" is e with an acute. */
+    clipGifFillString1("ab{string1}", "\xC3\xA9\xC3\xA9", out, 5);
+    EXPECT_STR("cut before a 2-byte char", out, "ab\xC3\xA9");
+    clipGifFillString1("ab{string1}", "\xC3\xA9\xC3\xA9", out, 6);
+    EXPECT_STR("cut inside a 2-byte char", out, "ab\xC3\xA9");
+    /* "\xE2\x82\xAC" is the euro sign, "\xF0\x9F\x98\x80" an emoji. */
+    clipGifFillString1("{string1}", "a\xE2\x82\xAC", out, 4);
+    EXPECT_STR("cut inside a 3-byte char", out, "a");
+    clipGifFillString1("{string1}", "a\xE2\x82\xAC", out, 5);
+    EXPECT_STR("3-byte char fits", out, "a\xE2\x82\xAC");
+    clipGifFillString1("{string1}", "\xF0\x9F\x98\x80z", out, 4);
+    EXPECT_STR("cut inside a 4-byte char", out, "");
+    clipGifFillString1("x{string1}", "yz", out, 2);
+    EXPECT_STR("ASCII cut", out, "x");
+    clipGifFillString1("x", "", out, 1);
+    EXPECT_STR("no room", out, "");
+
+    /* clipGifUtf8CutEnd on its own. */
+    char s[16];
+    SDL_strlcpy(s, "ab\xE2\x82", sizeof(s));
+    clipGifUtf8CutEnd(s, strlen(s));
+    EXPECT_STR("cut tail dropped", s, "ab");
+    SDL_strlcpy(s, "ab\xE2\x82\xAC", sizeof(s));
+    clipGifUtf8CutEnd(s, strlen(s));
+    EXPECT_STR("whole tail kept", s, "ab\xE2\x82\xAC");
+    SDL_strlcpy(s, "abc", sizeof(s));
+    clipGifUtf8CutEnd(s, 2);
+    EXPECT_STR("ended at len", s, "ab");
+
+    /* A name in the metadata that is longer than the field is cut on a whole
+     * character too: 63 bytes of room, and "a" then 31 two-byte characters
+     * fill 63, so the 32nd must be dropped, not cut in two. */
+    char json[512];
+    char name[128];
+    SDL_strlcpy(name, "a", sizeof(name));
+    for (int i = 0; i < 32; i++) {
+        SDL_strlcat(name, "\xC3\xA9", sizeof(name));
+    }
+    snprintf(json, sizeof(json),
+             "{\"created\": 5, \"map\": \"%s\", \"players\": [\"%s\"]}", name,
+             name);
+    ClipGifMeta m;
+    EXPECT_TRUE("long names read", clipGifMetaFromJson(json, strlen(json), &m));
+    EXPECT_TRUE("map cut whole", strlen(m.map) == 63 &&
+                                     (unsigned char)m.map[62] == 0xA9);
+    EXPECT_TRUE("player cut whole",
+                m.playerCount == 1 && strlen(m.players[0]) == 63 &&
+                    (unsigned char)m.players[0][62] == 0xA9);
+
+    return fails ? 1 : 0;
+}
+
+/* ── Preview size limit ───────────────────────────────────────────── */
+
+/* A GIF of `frames` 1 x 1 frames on a w x h logical screen. stb decodes every
+ * frame at the screen's size, so a few bytes stand for any amount of decoded
+ * pixels. Every frame after the first uses dispose mode 3 (restore the frame
+ * before), which reads the frame two back. Returns the byte count, or 0 when
+ * it does not fit in cap. */
+static size_t makeGif(unsigned char *buf, size_t cap, int w, int h, int frames,
+                      int trailer) {
+    static const unsigned char head[] = { 'G', 'I', 'F', '8', '9', 'a' };
+    static const unsigned char table[] = { 0, 0, 0, 255, 255, 255 };
+    static const unsigned char image[] = {
+        0x2C, 0, 0, 0, 0, 1, 0, 1, 0, 0,  /* 1 x 1 at 0,0 */
+        0x02, 0x02, 0x44, 0x01, 0x00 };   /* LZW: clear, colour 0, end */
+    size_t n = 0;
+    if (cap < 32 + (size_t)frames * 24) {
+        return 0;
+    }
+    memcpy(buf, head, sizeof(head));
+    n = sizeof(head);
+    buf[n++] = (unsigned char)(w & 0xFF);
+    buf[n++] = (unsigned char)((w >> 8) & 0xFF);
+    buf[n++] = (unsigned char)(h & 0xFF);
+    buf[n++] = (unsigned char)((h >> 8) & 0xFF);
+    buf[n++] = 0x80;  /* a 2-colour global table */
+    buf[n++] = 0;
+    buf[n++] = 0;
+    memcpy(buf + n, table, sizeof(table));
+    n += sizeof(table);
+    for (int i = 0; i < frames; i++) {
+        /* Graphic control: 10 cs, dispose 3 after the first frame. */
+        buf[n++] = 0x21;
+        buf[n++] = 0xF9;
+        buf[n++] = 4;
+        buf[n++] = (unsigned char)(i > 0 ? 0x0C : 0x00);
+        buf[n++] = 10;
+        buf[n++] = 0;
+        buf[n++] = 0;
+        buf[n++] = 0;
+        memcpy(buf + n, image, sizeof(image));
+        n += sizeof(image);
+    }
+    if (trailer) {
+        buf[n++] = 0x3B;
+    }
+    return n;
+}
+
+int run_clip_gif_preview_cap(void) {
+    int fails = 0;
+
+    /* The size check. */
+    EXPECT_TRUE("fit 1 px", stbiGifFramesFit(1, 1, 1, 4));
+    EXPECT_TRUE("over by 1", !stbiGifFramesFit(1, 1, 1, 3));
+    EXPECT_TRUE("zero w", !stbiGifFramesFit(0, 10, 1, 1000));
+    EXPECT_TRUE("negative h", !stbiGifFramesFit(10, -1, 1, 1000));
+    EXPECT_TRUE("zero frames", !stbiGifFramesFit(10, 10, 0, 1000));
+    EXPECT_TRUE("15 s at 480 px fits",
+                stbiGifFramesFit(480, 270, 150, CLIP_GIF_PREVIEW_MAX_BYTES));
+    EXPECT_TRUE("15 s of a 4K crop does not",
+                !stbiGifFramesFit(3840, 2160, 150, CLIP_GIF_PREVIEW_MAX_BYTES));
+    EXPECT_TRUE("one 4K frame fits",
+                stbiGifFramesFit(3840, 2160, 1, CLIP_GIF_PREVIEW_MAX_BYTES));
+    EXPECT_TRUE("int max sides",
+                !stbiGifFramesFit(0x7FFFFFFF, 0x7FFFFFFF, 150,
+                                  CLIP_GIF_PREVIEW_MAX_BYTES));
+    EXPECT_TRUE("huge frame count",
+                !stbiGifFramesFit(1, 1, (size_t)-1, (size_t)-1));
+    EXPECT_TRUE("whole size_t",
+                stbiGifFramesFit(1, 1, ((size_t)-1) / 4u, (size_t)-1));
+
+    unsigned char gif[1024];
+    int *delays = NULL;
+    int x = 0, y = 0, frames = 0, tooLarge = 0;
+    stbi_uc *px;
+
+    /* 4 x 4, 3 frames: 64 bytes a frame, 192 in all. */
+    size_t len = makeGif(gif, sizeof(gif), 4, 4, 3, 1);
+    EXPECT_TRUE("built", len > 0);
+    px = stbiLoadGifCapped(gif, (int)len, 192, &delays, &x, &y, &frames,
+                           &tooLarge);
+    EXPECT_TRUE("decodes at the limit", px != NULL && !tooLarge);
+    EXPECT_TRUE("size", x == 4 && y == 4 && frames == 3);
+    EXPECT_TRUE("delays", delays != NULL && delays[0] == 100 &&
+                              delays[2] == 100);
+    if (px != NULL) {
+        /* The top left pixel of frame 1 is colour 0: black, opaque. */
+        EXPECT_TRUE("pixel", px[0] == 0 && px[3] == 255);
+        stbi_image_free(px);
+    }
+    if (delays != NULL) {
+        stbi_image_free(delays);
+    }
+
+    delays = NULL;
+    px = stbiLoadGifCapped(gif, (int)len, 191, &delays, &x, &y, &frames,
+                           &tooLarge);
+    EXPECT_TRUE("one byte over", px == NULL && tooLarge && delays == NULL &&
+                                     frames == 0);
+    px = stbiLoadGifCapped(gif, (int)len, 63, NULL, &x, &y, &frames,
+                           &tooLarge);
+    EXPECT_TRUE("first frame over", px == NULL && tooLarge);
+
+    /* A 65535 x 65535 screen is 17 GB a frame: refused before stb is asked
+     * for any of it. */
+    len = makeGif(gif, sizeof(gif), 65535, 65535, 2, 1);
+    px = stbiLoadGifCapped(gif, (int)len, CLIP_GIF_PREVIEW_MAX_BYTES, &delays,
+                           &x, &y, &frames, &tooLarge);
+    EXPECT_TRUE("huge screen", px == NULL && tooLarge);
+
+    /* Cut off after 2 frames, with no end code: the 2 frames are kept. */
+    len = makeGif(gif, sizeof(gif), 4, 4, 2, 0);
+    px = stbiLoadGifCapped(gif, (int)len, 1024, NULL, &x, &y, &frames,
+                           &tooLarge);
+    EXPECT_TRUE("cut off", px != NULL && frames == 2 && !tooLarge);
+    if (px != NULL) {
+        stbi_image_free(px);
+    }
+
+    /* Not a GIF, and no data. */
+    static const unsigned char notGif[] = "This is not a picture at all.";
+    px = stbiLoadGifCapped(notGif, (int)sizeof(notGif), 1024, &delays, &x, &y,
+                           &frames, &tooLarge);
+    EXPECT_TRUE("not a GIF", px == NULL && !tooLarge);
+    px = stbiLoadGifCapped(NULL, 0, 1024, &delays, &x, &y, &frames,
+                           &tooLarge);
+    EXPECT_TRUE("no data", px == NULL && !tooLarge);
 
     return fails ? 1 : 0;
 }

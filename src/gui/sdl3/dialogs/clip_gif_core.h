@@ -141,6 +141,29 @@ void clipGifFormatTime(int64_t createdUnix, char *out, size_t outLen);
 /* createdUnix as local "YYYYMMDD-HHMMSS", for a file name. */
 void clipGifFormatFileStamp(int64_t createdUnix, char *out, size_t outLen);
 
+/* ── Preview ─────────────────────────────────────────────────────────
+ * The most memory the gallery's preview gives the decoded frames of one GIF
+ * (RGBA, 4 bytes a pixel). A 15 s export at the 480 px width is about 78 MB;
+ * a GIF that needs more, such as a long crop of a large view, is not
+ * decoded and the window says it is too large to show. */
+#define CLIP_GIF_PREVIEW_MAX_BYTES ((size_t)256u * 1024u * 1024u)
+
+/* ── Text ────────────────────────────────────────────────────────────
+ * The gallery shows lines longer than the lang module's {string1} slot
+ * (63 bytes), such as the list of players or a file name, so it puts them
+ * into the translated text itself. */
+
+/* Ends s at byte len, and when that cuts a UTF-8 sequence in two, drops the
+ * part of the sequence that is left so the text ends on a whole character.
+ * s must have room for len + 1 bytes. */
+void clipGifUtf8CutEnd(char *s, size_t len);
+
+/* fmt with every "{string1}" in it changed to value, into out (outLen bytes,
+ * always ended with a NUL). Text that does not fit is cut on a whole UTF-8
+ * character. A NULL value is read as "". */
+void clipGifFillString1(const char *fmt, const char *value, char *out,
+                        size_t outLen);
+
 #ifdef __cplusplus
 }  /* extern "C" */
 #endif

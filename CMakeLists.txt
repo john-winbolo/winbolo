@@ -4946,7 +4946,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # WinBolo.net log browser table sort rule (test_wbn_browser_sort.c).
     tests/unit/test_wbn_browser_sort.c
     # Recap clip GIF length and timeline sync, and the GIF gallery's metadata
-    # files and newest-first scan (test_clip_gif_core.c).
+    # files and newest-first scan, the gallery text fill and the capped preview
+    # decode (test_clip_gif_core.c).
     tests/unit/test_clip_gif_core.c
     # Replay camera range: the load's 127,127 default, a highlight jump, a
     # grid that grew and the raw setter all keep the view's far edge at 255
@@ -5829,6 +5830,8 @@ set(_unit_test_names
     clip_gif_meta_roundtrip
     clip_gif_meta_bad
     clip_gif_gallery_scan
+    clip_gif_text_fill
+    clip_gif_preview_cap
     lv_snapshot_index_lookup
     lv_snapshot_index_ten_days
     lv_load_walk_fixtures

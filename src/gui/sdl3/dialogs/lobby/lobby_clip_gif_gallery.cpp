@@ -28,6 +28,7 @@
  *                picks.
  *********************************************************/
 
+#include <climits>  /* INT_MAX */
 #include <cstdio>   /* snprintf / FILENAME_MAX */
 
 #include <SDL3/SDL.h>
@@ -37,12 +38,13 @@
  * defines; lobbyIcons; and through imgui_dialog_utils.h imguiHelpTooltip. */
 #include "lobby_internal.h"
 #include "../clip_gif_clipboard.h"  /* clipGifCopyFileToClipboard */
-#include "stb_image.h"              /* stbi_load_gif_from_memory — the preview's frames */
+#include "stb_image.h"              /* stbi_image_free */
+#include "stb_image_gif_capped.h"   /* stbiLoadGifCapped — the preview's frames, with a memory limit */
 extern "C" {
 #include "imgui_messagebox.h"    /* imguiMessageBoxEx — a save that did not write */
 #include "../../sdl3draw.h"      /* sdl3DrawGetRenderer / sdl3DrawGetWindow — the preview's texture, the dialog's parent */
 #include "../../../ui_mode.h"    /* uiShouldUseControllerMode — no usable native dialog under a controller */
-#include "../../../lang.h"       /* langGetText / langGetTextFmt / STR_CLIPGIF_* */
+#include "../../../lang.h"       /* langGetText / STR_CLIPGIF_* */
 }
 
 #if !defined(__ANDROID__) && BOLO_CLIP_GIF_GALLERY
@@ -53,13 +55,23 @@ static const char *const GALLERY_GIF_TITLE = "GIF";
 /* How long a "Copied." line stays up. */
 static const Uint64 GALLERY_MSG_MS = 3000;
 
+/* How long an item must stay selected before its GIF is decoded, so moving
+ * down the list with the keys or a controller does not decode every file on
+ * the way. */
+static const Uint64 GALLERY_DECODE_DELAY_MS = 150;
+
+/* The players line: every name and the ", " between them. */
+#define GALLERY_PLAYERS_LEN \
+    (CLIP_GIF_META_MAX_PLAYERS * (CLIP_GIF_META_NAME_LEN + 2))
+
 /* The selected GIF, decoded: every frame as RGBA in one block, the time each
  * one is shown, and one streaming texture the current frame is copied into.
  * One texture rather than one per frame, so the GPU holds a single frame
  * however long the clip is. */
 typedef struct ClipGifPreview {
     char         file[CLIP_GIF_META_FILE_LEN] = "";  /* which item this is */
-    bool         failed  = false;   /* the file did not decode */
+    bool         failed   = false;  /* the file did not decode */
+    bool         tooLarge = false;  /* over CLIP_GIF_PREVIEW_MAX_BYTES, not decoded */
     stbi_uc     *pixels  = nullptr; /* frames * w * h * 4 bytes, stbi's */
     int         *delays  = nullptr; /* ms per frame, stbi's */
     int          w       = 0;
@@ -69,6 +81,26 @@ typedef struct ClipGifPreview {
     Uint64       nextAtMs = 0;
     SDL_Texture *tex     = nullptr;
 } ClipGifPreview;
+
+/* One GIF being decoded on a worker thread, so the lobby loop (which ticks
+ * the client's transport) does not stop while a long or large GIF decodes.
+ * Heap-allocated and counted, as ClipGifSaveRequest is: two holders, the
+ * gallery and the worker. The worker writes the results and then drops its
+ * count, so the count falling to 1 tells the gallery the results are there.
+ * When the gallery lets go first (the window closed, or the lobby shut
+ * down), the worker is the last holder and frees the job and its frames. */
+typedef struct ClipGifDecodeJob {
+    SDL_AtomicInt refs;
+    char          path[FILENAME_MAX];            /* the file the worker reads */
+    char          file[CLIP_GIF_META_FILE_LEN];  /* the item it is for */
+    /* Written by the worker before it drops its count. */
+    stbi_uc      *pixels;
+    int          *delays;
+    int           w;
+    int           h;
+    int           frames;
+    bool          tooLarge;
+} ClipGifDecodeJob;
 
 /* One request's slot for the native save dialog's answer, as the export used
  * before the gallery. Heap-allocated and counted, because SDL cannot cancel a
@@ -93,6 +125,18 @@ typedef struct ClipGifGalleryState {
     /* The file to select after the next scan: the GIF just added. */
     char         selectFile[CLIP_GIF_META_FILE_LEN] = "";
     ClipGifPreview preview;
+    /* The decode in progress, or null. At most one runs at a time: a new
+     * selection waits for it to finish and then starts its own, so the
+     * memory held is never more than one decode and one preview. */
+    ClipGifDecodeJob *job = nullptr;
+    /* The item the selection last moved to, and when, for
+     * GALLERY_DECODE_DELAY_MS. */
+    char         waitFile[CLIP_GIF_META_FILE_LEN] = "";
+    Uint64       waitSinceMs = 0;
+    /* <pref folder>/clips, found when the window opens or a GIF is added,
+     * rather than asking SDL for the pref folder every frame. Empty while it
+     * is not known. */
+    char         dir[FILENAME_MAX] = "";
     /* The last copy or add result, as a lang id (0 for none), and until when
      * it shows. msgFile is the {string1} of that line: the file an add could
      * not write. */
@@ -107,24 +151,32 @@ typedef struct ClipGifGalleryState {
 
 static ClipGifGalleryState s_gal;
 
-/* <pref folder>/clips, the same folder the export wrote to under a controller
- * before the gallery. False when SDL has no pref folder. */
-static bool galleryDir(char *out, size_t outLen) {
+/* Finds <pref folder>/clips, the same folder the export wrote to under a
+ * controller before the gallery, and keeps it in s_gal.dir. SDL is asked only
+ * while the folder is not known: SDL_GetPrefPath makes the folder each time
+ * it is called. False when SDL has no pref folder. */
+static bool galleryFindDir(void) {
+    if (s_gal.dir[0] != '\0') {
+        return true;
+    }
     char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
     if (prefDir == NULL) {
         return false;
     }
-    int n = snprintf(out, outLen, "%sclips", prefDir);
+    int n = snprintf(s_gal.dir, sizeof(s_gal.dir), "%sclips", prefDir);
     SDL_free(prefDir);
-    return n > 0 && (size_t)n < outLen;
+    if (n <= 0 || (size_t)n >= sizeof(s_gal.dir)) {
+        s_gal.dir[0] = '\0';
+        return false;
+    }
+    return true;
 }
 
 static bool galleryPath(char *out, size_t outLen, const char *file) {
-    char dir[FILENAME_MAX];
-    if (!galleryDir(dir, sizeof(dir))) {
+    if (s_gal.dir[0] == '\0') {
         return false;
     }
-    int n = snprintf(out, outLen, "%s/%s", dir, file);
+    int n = snprintf(out, outLen, "%s/%s", s_gal.dir, file);
     return n > 0 && (size_t)n < outLen;
 }
 
@@ -160,6 +212,75 @@ static void galleryFreeItems(void) {
     s_gal.selected = -1;
 }
 
+/* ── Decoding the preview ───────────────────────────────────────── */
+
+static void galleryJobFree(ClipGifDecodeJob *job) {
+    if (job->pixels != nullptr) {
+        stbi_image_free(job->pixels);
+    }
+    if (job->delays != nullptr) {
+        stbi_image_free(job->delays);
+    }
+    SDL_free(job);
+}
+
+/* Drops one holder's count, and frees the job when it was the last. */
+static void galleryJobRelease(ClipGifDecodeJob *job) {
+    if (job != nullptr && SDL_AtomicDecRef(&job->refs)) {
+        galleryJobFree(job);
+    }
+}
+
+/* The worker: reads the file and decodes it within the preview's memory
+ * limit. Touches only the job. */
+static int SDLCALL galleryDecodeThread(void *userdata) {
+    ClipGifDecodeJob *job = (ClipGifDecodeJob *)userdata;
+    size_t len = 0;
+    void *data = SDL_LoadFile(job->path, &len);
+    if (data != NULL && len > (size_t)INT_MAX) {
+        job->tooLarge = true;  /* stb takes an int length */
+    } else if (data != NULL && len > 0) {
+        int tooLarge = 0;
+        job->pixels = stbiLoadGifCapped((const stbi_uc *)data, (int)len,
+                                        CLIP_GIF_PREVIEW_MAX_BYTES,
+                                        &job->delays, &job->w, &job->h,
+                                        &job->frames, &tooLarge);
+        job->tooLarge = (tooLarge != 0);
+    }
+    SDL_free(data);
+    /* Dropped last: after this the job may already be freed. */
+    galleryJobRelease(job);
+    return 0;
+}
+
+/* Starts decoding item's GIF. The old preview is let go first, so its frames
+ * and the new ones are not held at the same time. */
+static void galleryStartDecode(const ClipGifMeta *item) {
+    galleryPreviewFree();
+    ClipGifPreview &p = s_gal.preview;
+    ClipGifDecodeJob *job =
+        (ClipGifDecodeJob *)SDL_calloc(1, sizeof(ClipGifDecodeJob));
+    if (job == NULL ||
+        !galleryPath(job->path, sizeof(job->path), item->gifFile)) {
+        SDL_free(job);
+        SDL_strlcpy(p.file, item->gifFile, sizeof(p.file));
+        p.failed = true;
+        return;
+    }
+    SDL_strlcpy(job->file, item->gifFile, sizeof(job->file));
+    SDL_SetAtomicInt(&job->refs, 2);  /* the gallery's and the worker's */
+    s_gal.job = job;
+    SDL_Thread *thread =
+        SDL_CreateThread(galleryDecodeThread, "clipgifdecode", job);
+    if (thread != NULL) {
+        SDL_DetachThread(thread);
+    } else {
+        /* No thread: decode here, as the gallery did before it had one. The
+         * result is picked up the same way, on the next frame. */
+        galleryDecodeThread(job);
+    }
+}
+
 /* Copy frame i of the decoded GIF into the texture. */
 static void galleryPreviewShowFrame(int i) {
     ClipGifPreview &p = s_gal.preview;
@@ -178,56 +299,84 @@ static void galleryPreviewShowFrame(int i) {
     p.nextAtMs = SDL_GetTicks() + (Uint64)delay;
 }
 
-/* Decode item's GIF for the preview. A file that does not decode leaves the
- * preview marked failed, so the window says so instead of trying again every
- * frame. */
-static void galleryPreviewLoad(const ClipGifMeta *item) {
+/* Makes a finished job the preview. The frames move to the preview; what the
+ * preview does not take is freed with the job. A file that did not decode
+ * leaves the preview marked failed or too large, so the window says so
+ * instead of trying again every frame. */
+static void galleryPreviewTake(ClipGifDecodeJob *job) {
     galleryPreviewFree();
     ClipGifPreview &p = s_gal.preview;
-    SDL_strlcpy(p.file, item->gifFile, sizeof(p.file));
-    p.failed = true;
-
-    char path[FILENAME_MAX];
-    if (!galleryPath(path, sizeof(path), item->gifFile)) {
+    SDL_strlcpy(p.file, job->file, sizeof(p.file));
+    if (job->tooLarge) {
+        p.tooLarge = true;
         return;
     }
-    size_t len = 0;
-    void *data = SDL_LoadFile(path, &len);
-    if (data == NULL) {
-        return;
-    }
-    int w = 0, h = 0, frames = 0, comp = 0;
-    int *delays = nullptr;
-    stbi_uc *pixels = nullptr;
-    if (len > 0 && len <= (size_t)0x7fffffff) {
-        pixels = stbi_load_gif_from_memory((const stbi_uc *)data, (int)len,
-                                           &delays, &w, &h, &frames, &comp, 4);
-    }
-    SDL_free(data);
-    if (pixels == nullptr || w <= 0 || h <= 0 || frames <= 0) {
-        if (pixels != nullptr) stbi_image_free(pixels);
-        if (delays != nullptr) stbi_image_free(delays);
+    if (job->pixels == nullptr || job->w <= 0 || job->h <= 0 ||
+        job->frames <= 0) {
+        p.failed = true;
         return;
     }
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
-    SDL_Texture *tex = (renderer != NULL)
-                           ? SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
-                                               SDL_TEXTUREACCESS_STREAMING, w, h)
-                           : NULL;
+    SDL_Texture *tex =
+        (renderer != NULL)
+            ? SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
+                                SDL_TEXTUREACCESS_STREAMING, job->w, job->h)
+            : NULL;
     if (tex == NULL) {
-        stbi_image_free(pixels);
-        if (delays != nullptr) stbi_image_free(delays);
+        p.failed = true;
         return;
     }
-    p.pixels = pixels;
-    p.delays = delays;
-    p.w      = w;
-    p.h      = h;
-    p.frames = frames;
+    p.pixels = job->pixels;
+    p.delays = job->delays;
+    job->pixels = nullptr;
+    job->delays = nullptr;
+    p.w      = job->w;
+    p.h      = job->h;
+    p.frames = job->frames;
     p.tex    = tex;
-    p.failed = false;
     galleryPreviewShowFrame(0);
 }
+
+/* Each frame, for the selected item: takes a decode that has finished, and
+ * starts the item's own once no decode is running and the item has stayed
+ * selected for GALLERY_DECODE_DELAY_MS. */
+static void galleryPreviewUpdate(const ClipGifMeta *item) {
+    ClipGifDecodeJob *job = s_gal.job;
+    if (job != nullptr && SDL_GetAtomicInt(&job->refs) == 1) {
+        /* Sole owner now: the worker has written the results and let go. */
+        s_gal.job = nullptr;
+        if (SDL_strcmp(job->file, item->gifFile) == 0) {
+            galleryPreviewTake(job);
+        }
+        galleryJobFree(job);
+    }
+    if (SDL_strcmp(s_gal.waitFile, item->gifFile) != 0) {
+        /* A new selection: the old item's frames are not shown under it. */
+        SDL_strlcpy(s_gal.waitFile, item->gifFile, sizeof(s_gal.waitFile));
+        s_gal.waitSinceMs = SDL_GetTicks();
+        if (SDL_strcmp(s_gal.preview.file, item->gifFile) != 0) {
+            galleryPreviewFree();
+        }
+        return;
+    }
+    if (s_gal.job != nullptr ||
+        SDL_strcmp(s_gal.preview.file, item->gifFile) == 0) {
+        return;
+    }
+    if (SDL_GetTicks() - s_gal.waitSinceMs >= GALLERY_DECODE_DELAY_MS) {
+        galleryStartDecode(item);
+    }
+}
+
+/* Lets go of the decode in progress, if any; the worker frees it when it
+ * finishes. */
+static void galleryDropJob(void) {
+    galleryJobRelease(s_gal.job);
+    s_gal.job = nullptr;
+    s_gal.waitFile[0] = '\0';
+}
+
+/* ── The list ───────────────────────────────────────────────────── */
 
 /* Read the folder again, and keep (or move to) the selection by file name,
  * since the scan's order is newest first and a new GIF shifts every index. */
@@ -241,9 +390,8 @@ static void galleryRescan(void) {
     s_gal.selectFile[0] = '\0';
     galleryFreeItems();
 
-    char dir[FILENAME_MAX];
-    if (galleryDir(dir, sizeof(dir))) {
-        s_gal.count = clipGifGalleryScan(dir, &s_gal.items);
+    if (galleryFindDir()) {
+        s_gal.count = clipGifGalleryScan(s_gal.dir, &s_gal.items);
     }
     s_gal.selected = (s_gal.count > 0) ? 0 : -1;
     for (int i = 0; keep[0] != '\0' && i < s_gal.count; i++) {
@@ -259,10 +407,11 @@ static void galleryShowMessage(langid id, bool error, const char *file) {
     s_gal.msg        = id;
     s_gal.msgError   = error;
     s_gal.msgUntilMs = SDL_GetTicks() + GALLERY_MSG_MS;
-    SDL_strlcpy(s_gal.msgFile, file ? file : "", sizeof(s_gal.msgFile));
+    SDL_utf8strlcpy(s_gal.msgFile, file ? file : "", sizeof(s_gal.msgFile));
 }
 
 void lobbyClipGifGalleryOpen(void) {
+    galleryFindDir();
     s_gal.open     = true;
     s_gal.focus    = true;
     s_gal.needScan = true;
@@ -273,11 +422,18 @@ void lobbyClipGifGalleryAdd(const void *data, size_t len,
     if (data == NULL || len == 0 || meta == NULL) {
         return;
     }
-    char dir[FILENAME_MAX];
-    if (!galleryDir(dir, sizeof(dir))) {
+    /* The gallery opens whatever happens below, so a GIF that could not be
+     * kept is never dropped without a word. */
+    s_gal.open     = true;
+    s_gal.focus    = true;
+    s_gal.needScan = true;
+    if (!galleryFindDir()) {
+        /* The same words iOS uses when its copy in Documents fails. */
+        galleryShowMessage(STR_CLIPGIF_SAVE_FAILED_IOS, true,
+                           GALLERY_GIF_TITLE);
         return;
     }
-    SDL_CreateDirectory(dir);
+    SDL_CreateDirectory(s_gal.dir);
 
     /* <map>_<mmss>_<date>-<time>.gif, with a number on the end in the rare
      * case two land in the same second, so nothing already in the gallery is
@@ -295,18 +451,19 @@ void lobbyClipGifGalleryAdd(const void *data, size_t len,
             snprintf(file, sizeof(file), "%s_%s_%d.gif",
                      (baseName && baseName[0]) ? baseName : "clip", stamp, n);
         }
-        if (snprintf(path, sizeof(path), "%s/%s", dir, file) >=
-            (int)sizeof(path)) {
+        if (!galleryPath(path, sizeof(path), file)) {
             break;
         }
         SDL_PathInfo info;
         named = !SDL_GetPathInfo(path, &info);
     }
-    s_gal.open  = true;
-    s_gal.focus = true;
-    s_gal.needScan = true;
     if (!named || !galleryWriteBytes(path, data, len)) {
-        /* The same words iOS uses when its copy in Documents fails. */
+        if (named) {
+            /* No file was there before (the name loop checked), so whatever
+             * is there now is this write's part file: remove it, or it would
+             * be listed as a GIF that cannot be opened. */
+            SDL_RemovePath(path);
+        }
         galleryShowMessage(STR_CLIPGIF_SAVE_FAILED_IOS, true,
                            named ? file : GALLERY_GIF_TITLE);
         return;
@@ -406,6 +563,7 @@ void lobbyClipGifGallerySavePoll(void) {
 void lobbyClipGifGalleryShutdown(void) {
     galleryPreviewFree();
     galleryFreeItems();
+    galleryDropJob();
     ClipGifSaveRequest *req = s_gal.saveReq;
     s_gal = ClipGifGalleryState{};
     if (req != NULL && SDL_AtomicDecRef(&req->refs)) {
@@ -456,9 +614,7 @@ static void galleryRenderDetail(float s) {
         return;
     }
     const ClipGifMeta *item = &s_gal.items[s_gal.selected];
-    if (SDL_strcmp(s_gal.preview.file, item->gifFile) != 0) {
-        galleryPreviewLoad(item);
-    }
+    galleryPreviewUpdate(item);
 
     /* Room under the picture for the details and the buttons. */
     const float lineH = ImGui::GetFrameHeightWithSpacing();
@@ -469,7 +625,8 @@ static void galleryRenderDetail(float s) {
     if (maxH < 60.0f * s) maxH = 60.0f * s;
 
     ClipGifPreview &p = s_gal.preview;
-    if (!p.failed && p.tex != nullptr) {
+    const bool mine = (SDL_strcmp(p.file, item->gifFile) == 0);
+    if (mine && p.tex != nullptr) {
         if (p.frames > 1 && SDL_GetTicks() >= p.nextAtMs) {
             galleryPreviewShowFrame((p.frame + 1) % p.frames);
         }
@@ -482,24 +639,29 @@ static void galleryRenderDetail(float s) {
         ImVec2 size((float)p.w * scale, (float)p.h * scale);
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (maxW - size.x) * 0.5f);
         ImGui::Image((ImTextureID)p.tex, size);
-    } else {
+    } else if (mine && p.tooLarge) {
+        ImGui::TextWrapped("%s", langGetText(STR_CLIPGIF_TOO_LARGE));
+    } else if (mine && p.failed) {
         ImGui::TextUnformatted(langGetText(STR_CLIPGIF_OPEN_FAILED));
+    } else {
+        ImGui::TextDisabled("%s", langGetText(STR_CLIPGIF_LOADING));
     }
 
     char when[32];
     clipGifFormatTime(item->createdUnix, when, sizeof(when));
     ImGui::TextUnformatted(when);
     if (item->hasMeta) {
-        MessageArgs args = {};
-        SDL_strlcpy(args.string1, item->map[0] ? item->map : "-",
-                    sizeof(args.string1));
-        ImGui::TextWrapped("%s", langGetTextFmt(STR_CLIPGIF_MAP_FMT, &args));
-        char players[CLIP_GIF_META_MAX_PLAYERS * (CLIP_GIF_META_NAME_LEN + 2)];
+        /* Filled here rather than through langGetTextFmt, whose {string1}
+         * holds 63 bytes: the players line can be 16 names long. */
+        char line[GALLERY_PLAYERS_LEN + 128];
+        clipGifFillString1(langGetText(STR_CLIPGIF_MAP_FMT),
+                           item->map[0] ? item->map : "-", line, sizeof(line));
+        ImGui::TextWrapped("%s", line);
+        char players[GALLERY_PLAYERS_LEN];
         galleryJoinPlayers(item, players, sizeof(players));
-        MessageArgs pargs = {};
-        SDL_strlcpy(pargs.string1, players[0] ? players : "-",
-                    sizeof(pargs.string1));
-        ImGui::TextWrapped("%s", langGetTextFmt(STR_CLIPGIF_PLAYERS_FMT, &pargs));
+        clipGifFillString1(langGetText(STR_CLIPGIF_PLAYERS_FMT),
+                           players[0] ? players : "-", line, sizeof(line));
+        ImGui::TextWrapped("%s", line);
     } else {
         ImGui::TextDisabled("%s", langGetText(STR_CLIPGIF_NO_DETAILS));
     }
@@ -547,15 +709,19 @@ void lobbyClipGifGalleryRender(float s) {
     }
     bool open = true;
     if (ImGui::Begin(title, &open, ImGuiWindowFlags_NoCollapse)) {
-        /* The last copy or add result, for a few seconds. */
+        /* The last copy or add result, for a few seconds. Filled here rather
+         * than through langGetTextFmt, so a long file name is not cut. */
         if (s_gal.msg != 0 && SDL_GetTicks() < s_gal.msgUntilMs) {
-            MessageArgs args = {};
-            SDL_strlcpy(args.string1, s_gal.msgFile, sizeof(args.string1));
-            const char *text = langGetTextFmt(s_gal.msg, &args);
+            char text[CLIP_GIF_META_FILE_LEN + 256];
+            clipGifFillString1(langGetText(s_gal.msg), s_gal.msgFile, text,
+                               sizeof(text));
             if (s_gal.msgError) {
-                ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", text);
+                ImGui::PushStyleColor(ImGuiCol_Text,
+                                      ImVec4(1.0f, 0.45f, 0.4f, 1.0f));
+                ImGui::TextWrapped("%s", text);
+                ImGui::PopStyleColor();
             } else {
-                ImGui::TextUnformatted(text);
+                ImGui::TextWrapped("%s", text);
             }
         }
 
@@ -576,8 +742,7 @@ void lobbyClipGifGalleryRender(float s) {
                     s_gal.selected = i;
                 }
                 if (m->playerCount > 0) {
-                    char players[CLIP_GIF_META_MAX_PLAYERS *
-                                 (CLIP_GIF_META_NAME_LEN + 2)];
+                    char players[GALLERY_PLAYERS_LEN];
                     galleryJoinPlayers(m, players, sizeof(players));
                     ImGui::Indent();
                     ImGui::TextDisabled("%s", players);
@@ -595,10 +760,12 @@ void lobbyClipGifGalleryRender(float s) {
     ImGui::End();
 
     if (!open) {
-        /* Closing lets go of the decoded frames and the texture; the list is
-         * read again the next time the window opens. */
+        /* Closing lets go of the decoded frames, the texture and a decode
+         * still running (its worker frees it when done); the list is read
+         * again the next time the window opens. */
         s_gal.open = false;
         galleryPreviewFree();
+        galleryDropJob();
         galleryFreeItems();
     }
 }

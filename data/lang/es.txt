@@ -2851,3 +2851,5 @@ STR_CLIPGIF_MAP_FMT=Mapa: {string1}
 STR_CLIPGIF_PLAYERS_FMT=Jugadores: {string1}
 STR_CLIPGIF_NO_DETAILS=No se guardaron detalles con este GIF.
 STR_CLIPGIF_LENGTH_TIP=Duración del GIF en segundos, desde el cabezal.\nTambién puedes cambiarla arrastrando la marca al final de la parte clara de la línea de tiempo.
+STR_CLIPGIF_LOADING=Abriendo el GIF...
+STR_CLIPGIF_TOO_LARGE=Este GIF es demasiado grande para mostrarlo aquí. Aún puedes copiarlo o guardarlo.

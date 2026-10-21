@@ -2949,4 +2949,6 @@ STR_CLIPGIF_MAP_FMT=Map: {string1}
 STR_CLIPGIF_PLAYERS_FMT=Players: {string1}
 STR_CLIPGIF_NO_DETAILS=No details were saved with this GIF.
 STR_CLIPGIF_LENGTH_TIP=GIF length in seconds, from the playhead.\nDrag the marker at the end of the bright part of the timeline to change it too.
+STR_CLIPGIF_LOADING=Opening the GIF...
+STR_CLIPGIF_TOO_LARGE=This GIF is too large to show here. You can still copy it or save it.
 

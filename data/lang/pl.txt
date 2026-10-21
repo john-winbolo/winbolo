@@ -2846,3 +2846,5 @@ STR_CLIPGIF_MAP_FMT=Mapa: {string1}
 STR_CLIPGIF_PLAYERS_FMT=Gracze: {string1}
 STR_CLIPGIF_NO_DETAILS=Z tym GIF-em nie zapisano żadnych szczegółów.
 STR_CLIPGIF_LENGTH_TIP=Długość GIF-a w sekundach od głowicy odtwarzania.\nMożesz ją też zmienić, przeciągając znacznik na końcu jasnej części osi czasu.
+STR_CLIPGIF_LOADING=Otwieranie GIF-a...
+STR_CLIPGIF_TOO_LARGE=Ten GIF jest za duży, aby go tu pokazać. Nadal możesz go skopiować lub zapisać.

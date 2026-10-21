@@ -2850,3 +2850,5 @@ STR_CLIPGIF_MAP_FMT=Kaart: {string1}
 STR_CLIPGIF_PLAYERS_FMT=Spelers: {string1}
 STR_CLIPGIF_NO_DETAILS=Er zijn geen details met deze GIF opgeslagen.
 STR_CLIPGIF_LENGTH_TIP=GIF-lengte in seconden, vanaf de afspeelkop.\nSleep de markering aan het eind van het lichte deel van de tijdlijn om die ook te wijzigen.
+STR_CLIPGIF_LOADING=GIF wordt geopend...
+STR_CLIPGIF_TOO_LARGE=Deze GIF is te groot om hier te tonen. Je kunt hem nog steeds kopiëren of opslaan.

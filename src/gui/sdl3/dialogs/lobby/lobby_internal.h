@@ -397,11 +397,14 @@ typedef struct LobbyReelState {
     SDL_Rect lastSlice = { 0, 0, 0, 0 };
 
     /* How long the transport's GIF button records, as the player last set it
-     * with the length field or the marker on the seek bar. Held as asked for,
-     * inside the export's own floor and cap; what is used is this clamped to
-     * the time left after the playhead (clipGifLenClampMs), so seeking back
-     * from near the end gives the longer length back. Goes back to the
-     * default with the rest of the reel, like the crop frame. */
+     * with the length field or the marker on the seek bar. What is used is
+     * this clamped to the time left after the playhead (clipGifLenClampMs).
+     * The field keeps a typed length as asked for, inside the export's own
+     * floor and cap, so seeking back from near the end gives the longer
+     * length back. The marker keeps the length as dragged: it cannot be
+     * dragged past the end of the round, so a drag near the end keeps the
+     * shorter length after a seek back. Goes back to the default with the
+     * rest of the reel, like the crop frame. */
     uint32_t gifLenMs = CLIP_GIF_LEN_DEFAULT_MS;
 #endif
 

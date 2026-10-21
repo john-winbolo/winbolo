@@ -202,7 +202,7 @@ static void lobbyClipGifFillMeta(ClipGifMeta *m, ClientSim *cs,
         m->createdUnix = (int64_t)(now / SDL_NS_PER_SECOND);
     }
     if (mapName && mapName[0]) {
-        SDL_strlcpy(m->map, mapName, sizeof(m->map));
+        SDL_utf8strlcpy(m->map, mapName, sizeof(m->map));
         size_t n = SDL_strlen(m->map);
         if (n > 4 && SDL_strcasecmp(m->map + n - 4, ".map") == 0) {
             m->map[n - 4] = '\0';
@@ -220,8 +220,8 @@ static void lobbyClipGifFillMeta(ClipGifMeta *m, ClientSim *cs,
                 (slot < MAX_TANKS) ? clientSimGetLobbySlot(cs, (BYTE)slot)
                                    : nullptr;
             if (ls && ls->playerName[0]) {
-                SDL_strlcpy(m->players[m->playerCount], ls->playerName,
-                            sizeof(m->players[0]));
+                SDL_utf8strlcpy(m->players[m->playerCount], ls->playerName,
+                                sizeof(m->players[0]));
                 m->playerCount++;
             }
         }
@@ -231,8 +231,8 @@ static void lobbyClipGifFillMeta(ClipGifMeta *m, ClientSim *cs,
                        m->playerCount < CLIP_GIF_META_MAX_PLAYERS; slot++) {
         const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)slot);
         if (ls && ls->connected && ls->playerName[0]) {
-            SDL_strlcpy(m->players[m->playerCount], ls->playerName,
-                        sizeof(m->players[0]));
+            SDL_utf8strlcpy(m->players[m->playerCount], ls->playerName,
+                            sizeof(m->players[0]));
             m->playerCount++;
         }
     }

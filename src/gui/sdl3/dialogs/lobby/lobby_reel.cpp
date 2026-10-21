@@ -581,10 +581,14 @@ static void lobbyReelGifLenMarker(ImVec2 barMin, ImVec2 barMax,
                ImVec2(xe + hitW * 0.5f, barMax.y));
     bool hovered = false, held = false;
     if (!locked) {
+        /* Mouse only: kept out of keyboard and controller navigation, where
+         * activating it would read a mouse position that is not there. The
+         * length field beside the GIF button is how those set the length. */
         ImGuiID id = ImGui::GetID("##reelgiflenmark");
-        if (ImGui::ItemAdd(hit, id)) {
-            ImGui::ButtonBehavior(hit, id, &hovered, &held);
-            if (held) {
+        if (ImGui::ItemAdd(hit, id, nullptr, ImGuiItemFlags_NoNav)) {
+            ImGui::ButtonBehavior(hit, id, &hovered, &held,
+                                  ImGuiButtonFlags_NoNavFocus);
+            if (held && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                 s_reel.gifLenMs = clipGifLenFromTimelineX(
                     ImGui::GetIO().MousePos.x, startMs, totalMs, x0, x1);
             }
