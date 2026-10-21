@@ -627,6 +627,10 @@ int mapGenPresetOutlineSet(int preset) {
     return makerPresetOutlineSet(preset);
 }
 
+int mapGenPresetIsIsland(int preset) {
+    return makerPresetIsIsland(preset);
+}
+
 int mapGenPresetFromKey(const char *key) {
     if (!key) return -1;
     for (int i = 0; i < makerPresetCount(); i++) {

@@ -260,6 +260,10 @@ int mapGenPresetFromKey(const char *key);
 /* The outlines a preset's maps use: bit i set means MAPGEN_OUTLINE_i
  * (never Varied). Returns 0 for a preset out of range. */
 int mapGenPresetOutlineSet(int preset);
+/* 1 if the preset's maps are several islands (the island family),
+ * else 0. For the other presets Islands above 1 splits the land.
+ * Returns 0 for a preset out of range. */
+int mapGenPresetIsIsland(int preset);
 /* Set cfg to the preset: Map Maker type, the preset's style values,
  * size and object counts. The seed, locks and region are kept. */
 void mapGenApplyPreset(int preset, MapGenConfig *cfg);

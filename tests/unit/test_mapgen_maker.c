@@ -824,3 +824,112 @@ int run_mapgen_maker_outline_set(void) {
                (1 << MAPGEN_OUTLINE_BOX) | (1 << MAPGEN_OUTLINE_CROSS)));
     return 0;
 }
+
+/* The number of separate pieces of land: groups of tiles that are not
+ * deep sea, joined side to side, inside the effective region. */
+static int landPieces(const GenOut *g, const MapGenConfig *cfg) {
+    static uint8_t seen[256][256];
+    static int queue[256 * 256];
+    int x1, y1, x2, y2, pieces = 0;
+    mapGenEffectiveRegion(cfg, &x1, &y1, &x2, &y2);
+    memset(seen, 0, sizeof(seen));
+    for (int sx = x1; sx <= x2; sx++) {
+        for (int sy = y1; sy <= y2; sy++) {
+            int head = 0, tail = 0;
+            if (seen[sx][sy] || g->mp->mapItem[sx][sy] == DEEP_SEA) continue;
+            pieces++;
+            seen[sx][sy] = 1;
+            queue[tail++] = (sx << 8) | sy;
+            while (head < tail) {
+                int k = queue[head++], x = k >> 8, y = k & 0xFF;
+                static const int dx[4] = { 1, -1, 0, 0 }, dy[4] = { 0, 0, 1, -1 };
+                for (int d = 0; d < 4; d++) {
+                    int nx = x + dx[d], ny = y + dy[d];
+                    if (!inBox(nx, ny, x1, y1, x2, y2)) continue;
+                    if (seen[nx][ny] || g->mp->mapItem[nx][ny] == DEEP_SEA) continue;
+                    seen[nx][ny] = 1;
+                    queue[tail++] = (nx << 8) | ny;
+                }
+            }
+        }
+    }
+    return pieces;
+}
+
+/* A value moved by d, cut to [lo, hi]. */
+static int bandEdge(int v, int d, int lo, int hi) {
+    v += d;
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+/* The real maps of the presets that are not of the island family are
+ * one piece of land. The map chooser's Randomize moves each Map Maker
+ * value in a band round the preset's value (randomizePanel in
+ * src/mapeditor/mapgen_imgui.cpp): plus or minus 10 for Water, Forest,
+ * Road and Building, plus or minus 1 for Mine density and Detail, and
+ * Islands stays at the preset's value for these presets (Islands 2 or
+ * more cuts deep channels through the land, see cutChannels). Every
+ * named outline of the preset, at the preset's values and at the band
+ * edges, over a set of seeds and two sizes, must give one piece of
+ * land. */
+int run_mapgen_maker_one_land(void) {
+    GenOut g;
+    int bad = 0, runs = 0;
+    UT_ASSERT(mapGenPresetIsIsland(mapGenPresetFromKey("berserkir")) == 0);
+    UT_ASSERT(mapGenPresetIsIsland(mapGenPresetFromKey("bl-islands")) == 1);
+    UT_ASSERT(mapGenPresetIsIsland(-1) == 0);
+    UT_ASSERT(mapGenPresetIsIsland(mapGenPresetCount()) == 0);
+    UT_ASSERT(genAlloc(&g));
+    for (int p = 0; p < mapGenPresetCount(); p++) {
+        static const int sizes[] = { MAPGEN_SIZE_FULL, 64 };
+        /* Signs for Water, Forest, Road, Building, Mines and Detail:
+         * the preset's values, all low, all high, and two mixes. */
+        static const int edges[][6] = {
+            {  0,  0,  0,  0,  0,  0 },
+            { -1, -1, -1, -1, -1, -1 },
+            {  1,  1,  1,  1,  1,  1 },
+            {  1, -1, -1,  1,  1, -1 },
+            { -1,  1,  1, -1, -1,  1 },
+        };
+        int set;
+        if (mapGenPresetIsIsland(p)) continue;
+        set = mapGenPresetOutlineSet(p);
+        UT_ASSERT(set != 0);
+        for (int o = 0; o < MAPGEN_OUTLINE_VARIED; o++) {
+            if (!(set & (1 << o))) continue;
+            for (size_t s = 0; s < sizeof(sizes) / sizeof(sizes[0]); s++) {
+                for (size_t e = 0; e < sizeof(edges) / sizeof(edges[0]); e++) {
+                    for (uint32_t seed = 1; seed <= 6; seed++) {
+                        MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_MAKER);
+                        int n;
+                        mapGenApplyPreset(p, &cfg);
+                        setRegion(&cfg);
+                        {
+                            const int *d = edges[e];
+                            cfg.params.maker.outline = o;
+                            cfg.params.maker.waterPct = bandEdge(cfg.params.maker.waterPct, 10 * d[0], 0, 100);
+                            cfg.params.maker.forestPct = bandEdge(cfg.params.maker.forestPct, 10 * d[1], 0, 100);
+                            cfg.params.maker.roadPct = bandEdge(cfg.params.maker.roadPct, 10 * d[2], 0, 100);
+                            cfg.params.maker.buildingPct = bandEdge(cfg.params.maker.buildingPct, 10 * d[3], 0, 100);
+                            cfg.params.maker.mineDensityPct = bandEdge(cfg.params.maker.mineDensityPct, d[4], 0, 5);
+                            cfg.params.maker.detail = bandEdge(cfg.params.maker.detail, d[5], 0, 10);
+                        }
+                        cfg.size = sizes[s];
+                        cfg.seed = seed * 104729u + 17u;
+                        genRun(&g, &cfg);
+                        n = landPieces(&g, &cfg);
+                        runs++;
+                        if (n != 1) {
+                            bad++;
+                            printf("  %s outline %d size %d edge %u seed %u: %d pieces of land\n",
+                                   mapGenPresetName(p), o, sizes[s], (unsigned)e, cfg.seed, n);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    genFree(&g);
+    UT_ASSERT_MSG(bad == 0, "%d of %d maps are more than one piece of land", bad, runs);
+    return 0;
+}

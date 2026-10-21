@@ -409,6 +409,11 @@ int makerPresetOutlineSet(int preset) {
     return kPresets[preset].outlineSet & ((1 << OL_VARIED) - 1);
 }
 
+int makerPresetIsIsland(int preset) {
+    if (preset < 0 || preset >= PRESET_COUNT) return 0;
+    return kPresets[preset].family == FAM_ISLAND;
+}
+
 void makerPresetDefaults(int preset, MakerParams *p, int *sizeOut) {
     const Preset *pr;
     if (preset < 0 || preset >= PRESET_COUNT) preset = 0;
