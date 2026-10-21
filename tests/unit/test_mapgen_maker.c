@@ -465,3 +465,79 @@ int run_mapgen_size_all_types(void) {
     genFree(&g);
     return 0;
 }
+
+/* Fraction (in percent) of land tiles that match the tile at the
+ * mirror place, left to right, inside the box around the land. Mines
+ * are not counted, as they are not part of the shape. */
+static int mirrorMatchPct(const GenOut *g) {
+    int x1 = 256, y1 = 256, x2 = -1, y2 = -1, same = 0, all = 0;
+    for (int x = 0; x < 256; x++) {
+        for (int y = 0; y < 256; y++) {
+            if (g->mp->mapItem[x][y] == DEEP_SEA) continue;
+            if (x < x1) x1 = x;
+            if (x > x2) x2 = x;
+            if (y < y1) y1 = y;
+            if (y > y2) y2 = y;
+        }
+    }
+    if (x2 < x1) return 100;
+    for (int x = x1; x <= x2; x++) {
+        for (int y = y1; y <= y2; y++) {
+            int a = g->mp->mapItem[x][y], b = g->mp->mapItem[x1 + x2 - x][y];
+            if (a == DEEP_SEA && b == DEEP_SEA) continue;
+            if (a != DEEP_SEA && a >= SWAMP + MINE_SUBTRACT && a <= GRASS + MINE_SUBTRACT) a -= MINE_SUBTRACT;
+            if (b != DEEP_SEA && b >= SWAMP + MINE_SUBTRACT && b <= GRASS + MINE_SUBTRACT) b -= MINE_SUBTRACT;
+            all++;
+            if (a == b) same++;
+        }
+    }
+    return all > 0 ? (same * 100) / all : 100;
+}
+
+/* The room kinds of the town presets (maze, checker, star, pond, house
+ * cluster, hedge), the Slugfest seeds with no forest rim and the island
+ * maze yards: many seeds, each one the same map twice, valid, and every
+ * object can be reached. The Sluggo town maps keep the left to right
+ * match. */
+int run_mapgen_maker_room_kinds(void) {
+    static const char *keys[] = { "sluggo-tournament", "slugdeath", "sluggo-symmetric",
+                                  "slugfest", "bl-islands", "megawatt-islands",
+                                  "sluggo-adventurous" };
+    GenOut a, b;
+    UT_ASSERT(genAlloc(&a) && genAlloc(&b));
+    for (size_t k = 0; k < sizeof(keys) / sizeof(keys[0]); k++) {
+        int p = mapGenPresetFromKey(keys[k]);
+        UT_ASSERT_MSG(p >= 0, "no preset with key %s", keys[k]);
+        for (uint32_t seed = 1; seed <= 24; seed++) {
+            MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_MAKER);
+            int bad;
+            const char *why;
+            mapGenApplyPreset(p, &cfg);
+            setRegion(&cfg);
+            cfg.seed = seed * 104729u;
+            if (seed % 3 == 0) cfg.params.maker.detail = 10;
+            genRun(&a, &cfg);
+            genRun(&b, &cfg);
+            UT_ASSERT_MSG(genSame(&a, &b), "%s seed %u: two runs differ", keys[k], cfg.seed);
+            why = checkInside(&a, &cfg);
+            UT_ASSERT_MSG(why == NULL, "%s seed %u: %s", keys[k], cfg.seed, why);
+            for (int x = 0; x < 256; x++) {
+                for (int y = 0; y < 256; y++) {
+                    UT_ASSERT_MSG(terrainValid(a.mp->mapItem[x][y]),
+                                  "%s: terrain %d at %d,%d", keys[k], a.mp->mapItem[x][y], x, y);
+                }
+            }
+            bad = unreachableCount(&a, &cfg);
+            UT_ASSERT_MSG(bad == 0, "%s seed %u: %d objects cannot be reached", keys[k], cfg.seed, bad);
+            UT_ASSERT_MSG(a.ss->numStarts > 0, "%s seed %u: no starts", keys[k], cfg.seed);
+            if (k < 2) {
+                int m = mirrorMatchPct(&a);
+                UT_ASSERT_MSG(m >= 95, "%s seed %u: only %d%% of tiles match left to right",
+                              keys[k], cfg.seed, m);
+            }
+        }
+    }
+    genFree(&a);
+    genFree(&b);
+    return 0;
+}
