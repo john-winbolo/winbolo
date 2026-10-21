@@ -157,6 +157,8 @@ typedef struct Preset {
     int gateStyle;   /* 0 strip, 1 wedge, 2 strip on the diagonals */
     int outlineSet;  /* outlines the seed picks from when outline is varied */
     int lobes;       /* clover lobes are forest */
+    int rimDrop;     /* percent of seeds with no forest rim (grass to the coast) */
+    int mazeYard;    /* ISLAND: percent of seeds with a walled maze yard */
 } Preset;
 
 static const int kSkelOpts[6] = {
@@ -195,7 +197,7 @@ static const Preset kPresets[] = {
       .skelTerr = T_ROAD, .skelW = 2, .cell = 16,
       .centre = CEN_NONE, .gateTerr = T_ROAD, .gateW = 0,
       .pillMode = PM_JUNCTION, .baseMode = BM_ANY, .startMode = SM_SIDES,
-      .endForest = 6, .blockMin = 10, .blockMax = 22, .fragSet = MAKER_FRAG_SET_SLUGGO_HOUSE,
+      .endForest = 3, .blockMin = 14, .blockMax = 30, .fragSet = MAKER_FRAG_SET_SLUGGO_HOUSE,
       .outlineSet = OS(OL_BOX) },
     /* Sluggo Slugdeath: mirrored four ways, a forest rim, axis and
      * diagonal roads, house blocks and a river fountain at the centre. */
@@ -207,7 +209,7 @@ static const Preset kPresets[] = {
       .skel = SK_AXES | SK_DIAG, .skelTerr = T_ROAD, .skelW = 2, .cell = 16,
       .centre = CEN_FOUNTAIN, .gateTerr = T_ROAD,
       .pillMode = PM_JUNCTION, .baseMode = BM_ANY, .startMode = SM_SEA,
-      .blockMin = 9, .blockMax = 16, .fragSet = MAKER_FRAG_SET_SLUGGO_CENTRE,
+      .blockMin = 12, .blockMax = 22, .fragSet = MAKER_FRAG_SET_SLUGGO_CENTRE,
       .outlineSet = OS(OL_BOX) | OS(OL_ROUND) | OS(OL_DIAMOND) | OS(OL_OCTAGON) },
     /* Sluggo Slugfest: small and compact, a river rim and forest band,
      * grass panels split by road lines, forest diamonds and discs. */
@@ -215,13 +217,13 @@ static const Preset kPresets[] = {
       .size = 64, .aspect = 100, .outline = OL_VARIED, .symmetry = SY_MIRROR4,
       .water = 25, .forest = 30, .road = 40, .building = 5, .islands = 1, .mines = 0, .detail = 6,
       .bases = 13, .pills = 16, .starts = 16,
-      .cut = 145, .riverRim = 1, .forestRim = 3, .track = T_ROAD, .trackW = 1, .floor = T_GRASS,
+      .cut = 145, .riverRim = 1, .forestRim = 2, .track = T_ROAD, .trackW = 1, .floor = T_GRASS,
       .skel = SK_AXES | SK_DIAG | SK_PANEL, .skelTerr = T_ROAD, .skelW = 1, .panel = 10,
       .pod1 = POD_DIAMOND, .pod2 = POD_POND, .pod3 = POD_LAWN, .cell = 14,
       .centre = CEN_ROUND, .gateTerr = T_ROAD, .gateW = 1,
       .pillMode = PM_JUNCTION, .baseMode = BM_ANY, .startMode = SM_SEA,
       .fragSet = MAKER_FRAG_SET_SLUGFEST_PANEL,
-      .skelAlt = 0x3F, .cutVar = 20, .podCore = 1,
+      .skelAlt = 0x3F, .cutVar = 20, .podCore = 1, .rimDrop = 45,
       .outlineSet = OS(OL_ROUND) | OS(OL_BOX) | OS(OL_OCTAGON) | OS(OL_DIAMOND) | OS(OL_CLOVER) },
     /* Sluggo Adventurous: one organic island, no symmetry, a jagged
      * river rim, forest at the coast, lakes, rivers, a thin road
@@ -244,7 +246,7 @@ static const Preset kPresets[] = {
       .skel = SK_AXES, .skelTerr = T_ROAD, .skelW = 2, .cell = 16,
       .centre = CEN_POD, .gateTerr = T_ROAD,
       .pillMode = PM_JUNCTION, .baseMode = BM_ANY, .startMode = SM_SEA,
-      .blockMin = 8, .blockMax = 14, .fragSet = MAKER_FRAG_SET_SLUGGO_HOUSE, .aspectVar = 30,
+      .blockMin = 10, .blockMax = 18, .fragSet = MAKER_FRAG_SET_SLUGGO_HOUSE, .aspectVar = 30,
       .outlineSet = OS(OL_CROSS) | OS(OL_CLOVER) | OS(OL_ROUND) | OS(OL_DIAMOND) },
     /* Sluggo Stoogefest: a road arena with grass panels and big ponds. */
     { .key = "stoogefest", .name = "Sluggo Stoogefest", .family = FAM_FORMAL,
@@ -282,7 +284,7 @@ static const Preset kPresets[] = {
       .riverRim = 1, .forestRim = 2, .track = NO_TERR, .floor = T_GRASS,
       .skelTerr = T_ROAD, .skelW = 1, .cell = 16, .jag = 12,
       .pillMode = PM_NEAR_BASE, .baseMode = BM_ANY, .startMode = SM_SEA,
-      .fragSet = MAKER_FRAG_SET_STRONGHOLD, .aspectVar = 25,
+      .fragSet = MAKER_FRAG_SET_STRONGHOLD, .aspectVar = 25, .mazeYard = 60,
       .outlineSet = OS(OL_ISLAND) },
     /* Deathhand: an octagon road arena with a building rim, forest
      * lines and a deep pond at the centre. */
@@ -428,6 +430,7 @@ typedef struct Ctx {
     double cut;        /* octagon corner cut for this map */
     int coreT;         /* terrain of pod cores for this map */
     int rimTotal;      /* tiles of rim inside the coast */
+    int noForestRim;   /* this seed has no forest rim */
     int n[3];
     int ox[3][MAKER_MAX_OBJECTS], oy[3][MAKER_MAX_OBJECTS];
     /* Hints from fragments and features for each object kind */
@@ -436,6 +439,8 @@ typedef struct Ctx {
     /* Pod centres */
     int npod;
     int podx[96], pody[96], podr[96];
+    /* TOWN: how many rooms of each kind so far, to keep them varied */
+    int roomUsed[16];
 } Ctx;
 
 #define IDX(c, x, y) ((y) * (c)->W + (x))
@@ -990,6 +995,7 @@ static int paintRims(Ctx *c, int floorT, int trackT, int trackW) {
     int rt[4], nr = 0, i;
     if (rr > 4) rr = 4;
     if (fr > 12) fr = 12;
+    if (c->noForestRim) fr = 0;
     if (br > 4) br = 4;
     /* Keep a floor in the middle on small maps. */
     {
@@ -1207,6 +1213,11 @@ static void paintPod(Ctx *c, int kind, int x0, int y0, double R) {
     }
     case POD_DIAMOND: {
         double rd = R * 0.85;
+        if (c->noForestRim) {
+            /* With no forest rim the forest stands in round clumps. */
+            if (R * fk >= 1.5) fillShape(c, x0, y0, 2, R * 0.9 * (fk > 1.0 ? 1.0 : fk), T_FOREST, L_POD, L_FLOOR);
+            break;
+        }
         fillShape(c, x0, y0, 1, rd, T_GRASS, L_POD, L_FLOOR);
         if (rd * fk * 0.7 >= 1.0) fillShape(c, x0, y0, 1, rd * 0.7 * fk, T_FOREST, L_POD, L_POD);
         break;
@@ -1446,66 +1457,285 @@ static void paintFormal(Ctx *c) {
 
 typedef struct Rect { int x1, y1, x2, y2; } Rect;
 
+/* Room kinds of the TOWN family. Sluggo's rooms hold mazes, ponds,
+ * checker fields, forest stars, free forest clumps and rows of small
+ * houses as well as single houses and hedges. */
+#define RK_HOUSES  0   /* a few houses */
+#define RK_HEDGE   1   /* a forest block or a forest ring */
+#define RK_POND    2   /* a pond with a swamp edge and trees round it */
+#define RK_PARK    3   /* single trees */
+#define RK_FRAG    4   /* a stored fragment */
+#define RK_MAZE    5   /* a forest maze with paths one tile wide */
+#define RK_CHECKER 6   /* a forest and grass checker field */
+#define RK_STAR    7   /* a forest star with eight arms */
+#define RK_CLUMPS  8   /* free forest clumps */
+#define RK_CLUSTER 9   /* rows of one small house shape */
+#define RK_COUNT   10
+
+static void roomHouses(Ctx *c, Rect r, int n) {
+    int w = r.x2 - r.x1 + 1, h = r.y2 - r.y1 + 1, i;
+    for (i = 0; i < n; i++) {
+        int hw = rrange(c, 1, w >= 6 ? 3 : 1), hh = rrange(c, 1, h >= 6 ? 2 : 1);
+        int hx, hy, form = rnd(c, 4);
+        if (w - 2 * hw - 2 < 1 || h - 2 * hh - 2 < 1) { hw = 1; hh = 1; }
+        if (w < 4 || h < 4) { hw = 0; hh = 0; }
+        hx = rrange(c, r.x1 + 1 + hw, r.x2 - 1 - hw);
+        hy = rrange(c, r.y1 + 1 + hh, r.y2 - 1 - hh);
+        if (form == 0 || hw == 0) {
+            fillRect(c, hx - hw, hy - hh, hx + hw, hy + hh, T_BUILDING, L_BLOCK);
+        } else if (form == 1) {   /* H */
+            fillRect(c, hx - hw, hy - hh, hx - hw, hy + hh, T_BUILDING, L_BLOCK);
+            fillRect(c, hx + hw, hy - hh, hx + hw, hy + hh, T_BUILDING, L_BLOCK);
+            fillRect(c, hx - hw, hy, hx + hw, hy, T_BUILDING, L_BLOCK);
+        } else if (form == 2) {   /* plus */
+            fillRect(c, hx - hw, hy, hx + hw, hy, T_BUILDING, L_BLOCK);
+            fillRect(c, hx, hy - hh, hx, hy + hh, T_BUILDING, L_BLOCK);
+        } else {                  /* ring with a gap */
+            fillRect(c, hx - hw, hy - hh, hx + hw, hy + hh, T_BUILDING, L_BLOCK);
+            if (hw >= 1 && hh >= 1) {
+                fillRect(c, hx - hw + 1, hy - hh + 1, hx + hw - 1, hy + hh - 1, T_GRASS, L_BLOCK);
+                put(c, hx, hy + hh, T_HALF, L_BLOCK);
+            }
+        }
+    }
+}
+
+/* A maze of forest walls with grass paths one tile wide, made by a
+ * depth-first walk over cells two tiles apart, with a few extra gaps
+ * for loops and a way in on each side. Returns 0 if it does not fit. */
+static int roomMaze(Ctx *c, Rect r, int wallT, int layer) {
+    static const int ddx[4] = { 1, -1, 0, 0 }, ddy[4] = { 0, 0, 1, -1 };
+    int x1 = r.x1, y1 = r.y1, x2 = r.x2, y2 = r.y2;
+    int nx, ny, n, i, sp = 0, cur;
+    int *stack;
+    uint8_t *vis;
+    if ((x2 - x1) & 1) x2--;
+    if ((y2 - y1) & 1) y2--;
+    nx = (x2 - x1) / 2;
+    ny = (y2 - y1) / 2;
+    if (nx < 2 || ny < 2) return 0;
+    n = nx * ny;
+    stack = (int *)malloc((size_t)n * sizeof(int));
+    vis = (uint8_t *)calloc((size_t)n, 1);
+    if (!stack || !vis) {
+        free(stack);
+        free(vis);
+        return 0;
+    }
+    fillRect(c, x1, y1, x2, y2, wallT, layer);
+    cur = rnd(c, n);
+    vis[cur] = 1;
+    stack[sp++] = cur;
+    put(c, x1 + 1 + 2 * (cur % nx), y1 + 1 + 2 * (cur / nx), T_GRASS, layer);
+    while (sp > 0) {
+        int cx, cy, opts[4], no = 0, d;
+        cur = stack[sp - 1];
+        cx = cur % nx;
+        cy = cur / nx;
+        for (d = 0; d < 4; d++) {
+            int qx = cx + ddx[d], qy = cy + ddy[d];
+            if (qx < 0 || qy < 0 || qx >= nx || qy >= ny) continue;
+            if (!vis[qy * nx + qx]) opts[no++] = d;
+        }
+        if (!no) {
+            sp--;
+            continue;
+        }
+        d = opts[rnd(c, no)];
+        {
+            int qx = cx + ddx[d], qy = cy + ddy[d];
+            put(c, x1 + 1 + 2 * cx + ddx[d], y1 + 1 + 2 * cy + ddy[d], T_GRASS, layer);
+            put(c, x1 + 1 + 2 * qx, y1 + 1 + 2 * qy, T_GRASS, layer);
+            vis[qy * nx + qx] = 1;
+            stack[sp++] = qy * nx + qx;
+        }
+    }
+    for (i = 0; i < n / 7; i++) {
+        int cx = rnd(c, nx), cy = rnd(c, ny);
+        if (rnd(c, 2) && cx < nx - 1) put(c, x1 + 2 + 2 * cx, y1 + 1 + 2 * cy, T_GRASS, layer);
+        else if (cy < ny - 1) put(c, x1 + 1 + 2 * cx, y1 + 2 + 2 * cy, T_GRASS, layer);
+    }
+    put(c, x1, y1 + 1 + 2 * rnd(c, ny), T_GRASS, layer);
+    put(c, x2, y1 + 1 + 2 * rnd(c, ny), T_GRASS, layer);
+    put(c, x1 + 1 + 2 * rnd(c, nx), y1, T_GRASS, layer);
+    put(c, x1 + 1 + 2 * rnd(c, nx), y2, T_GRASS, layer);
+    free(stack);
+    free(vis);
+    return 1;
+}
+
+/* Checker field of single forest tiles, in the whole room or in a
+ * diamond inside it. */
+static void roomChecker(Ctx *c, Rect r, int diamond) {
+    double mx = (r.x1 + r.x2) / 2.0, my = (r.y1 + r.y2) / 2.0;
+    double rx = (r.x2 - r.x1) / 2.0 + 0.5, ry = (r.y2 - r.y1) / 2.0 + 0.5;
+    int x, y;
+    for (y = r.y1; y <= r.y2; y++) {
+        for (x = r.x1; x <= r.x2; x++) {
+            if (diamond && fabs(x - mx) / rx + fabs(y - my) / ry > 1.0) continue;
+            if (((x - r.x1) + (y - r.y1)) & 1) continue;
+            put(c, x, y, T_FOREST, L_BLOCK);
+        }
+    }
+}
+
+/* A forest star: a core and eight arms, axis arms three tiles wide. */
+static void roomStar(Ctx *c, Rect r) {
+    double mx = (r.x1 + r.x2) / 2.0, my = (r.y1 + r.y2) / 2.0;
+    double R = ((r.x2 - r.x1) < (r.y2 - r.y1) ? (r.x2 - r.x1) : (r.y2 - r.y1)) / 2.0;
+    /* Thin arms on a small star so that the grass between them shows. */
+    double armA = R >= 6.0 ? 1.01 : 0.51, armD = R >= 7.0 ? 1.01 : 0.51;
+    int x, y;
+    for (y = r.y1; y <= r.y2; y++) {
+        for (x = r.x1; x <= r.x2; x++) {
+            double ax = fabs(x - mx), ay = fabs(y - my);
+            double d = ax > ay ? ax : ay;
+            int on = 0;
+            if (d <= R * 0.22 + 0.5) on = 1;
+            else if (d <= R + 0.01) {
+                if (ax <= armA || ay <= armA || fabs(ax - ay) <= armD) on = 1;
+            }
+            if (on) put(c, x, y, T_FOREST, L_BLOCK);
+        }
+    }
+}
+
+/* Free forest clumps from noise, with a few single trees. cover is
+ * about the part of the room that becomes forest. */
+static void roomClumps(Ctx *c, Rect r, double cover) {
+    uint32_t s = hash2(r.x1, r.y1, c->seed + 977u);
+    double thr = 0.5 + (0.4 - cover) * 0.45;
+    int x, y;
+    for (y = r.y1; y <= r.y2; y++) {
+        for (x = r.x1; x <= r.x2; x++) {
+            double nz = fbm(x / 3.0, y / 3.0, s, 2);
+            if (nz > thr || (hash2(x, y, s + 5u) & 63u) < 2u) put(c, x, y, T_FOREST, L_BLOCK);
+        }
+    }
+}
+
+/* A pond of uneven outline: river, a swamp edge, and forest clumps
+ * round it. */
+static void roomPond(Ctx *c, Rect r) {
+    uint32_t s = hash2(r.x2, r.y2, c->seed + 4441u);
+    double mx = (r.x1 + r.x2) / 2.0, my = (r.y1 + r.y2) / 2.0;
+    double rx = (r.x2 - r.x1) / 2.0, ry = (r.y2 - r.y1) / 2.0;
+    int x, y;
+    if (rx < 2.0 || ry < 2.0) return;
+    for (y = r.y1; y <= r.y2; y++) {
+        for (x = r.x1; x <= r.x2; x++) {
+            double u = (x - mx) / rx, v = (y - my) / ry;
+            double d = sqrt(u * u + v * v) + (fbm(x / 2.5, y / 2.5, s, 2) - 0.5) * 0.9;
+            if (d <= 0.68) put(c, x, y, T_RIVER, L_BLOCK);
+            else if (d <= 0.78) put(c, x, y, T_SWAMP, L_BLOCK);
+            else if (d <= 1.15 && fbm(x / 2.2, y / 2.2, s + 7u, 2) > 0.54) put(c, x, y, T_FOREST, L_BLOCK);
+        }
+    }
+}
+
+/* Rows of one small house shape, or of two shapes in turn. */
+static void roomCluster(Ctx *c, Rect r) {
+    static const struct { int w, h; const char *rows[3]; } kMotif[] = {
+        { 3, 3, { ".B.", "BBB", ".B." } },
+        { 3, 3, { "B.B", "BBB", "B.B" } },
+        { 2, 2, { "BB", "BB", "" } },
+        { 1, 3, { "B", "B", "B" } },
+        { 3, 3, { "BBB", "B.B", "BhB" } },
+        { 3, 2, { "BBB", ".B.", "" } },
+        { 2, 3, { "BB", "BB", "BB" } },
+    };
+    int nm = (int)(sizeof(kMotif) / sizeof(kMotif[0]));
+    int m1 = rnd(c, nm), m2 = rnd(c, 3) ? m1 : rnd(c, nm);
+    int mw = kMotif[m1].w > kMotif[m2].w ? kMotif[m1].w : kMotif[m2].w;
+    int mh = kMotif[m1].h > kMotif[m2].h ? kMotif[m1].h : kMotif[m2].h;
+    int gx = rrange(c, 1, 2), gy = rrange(c, 1, 2);
+    int w = r.x2 - r.x1 + 1, h = r.y2 - r.y1 + 1;
+    int nx = (w + gx) / (mw + gx), ny = (h + gy) / (mh + gy);
+    int ox, oy, i, j, a, b;
+    if (nx < 1 || ny < 1) return;
+    ox = r.x1 + (w - (nx * (mw + gx) - gx)) / 2;
+    oy = r.y1 + (h - (ny * (mh + gy) - gy)) / 2;
+    for (j = 0; j < ny; j++) {
+        for (i = 0; i < nx; i++) {
+            int m = ((i + j) & 1) ? m2 : m1;
+            int px = ox + i * (mw + gx) + (mw - kMotif[m].w) / 2;
+            int py = oy + j * (mh + gy) + (mh - kMotif[m].h) / 2;
+            for (b = 0; b < kMotif[m].h; b++) {
+                for (a = 0; a < kMotif[m].w; a++) {
+                    char ch = kMotif[m].rows[b][a];
+                    if (ch == 'B') put(c, px + a, py + b, T_BUILDING, L_BLOCK);
+                    else if (ch == 'h') put(c, px + a, py + b, T_HALF, L_BLOCK);
+                }
+            }
+        }
+    }
+}
+
+static Rect inset(Rect r, int m) {
+    r.x1 += m; r.y1 += m; r.x2 -= m; r.y2 -= m;
+    return r;
+}
+
 static void townBlock(Ctx *c, Rect r) {
     const Preset *pr = c->pr;
-    int w = r.x2 - r.x1 + 1, h = r.y2 - r.y1 + 1, x, y;
+    int w = r.x2 - r.x1 + 1, h = r.y2 - r.y1 + 1;
     double wh = ratio(c->p.buildingPct, pr->building);
     double wf = ratio(c->p.forestPct, pr->forest);
     double ww = ratio(c->p.waterPct, pr->water);
     double wd = c->p.detail / 10.0;
-    double sum, pick;
-    int kind;
+    double wdp = 0.3 + wd;
+    int square = w * 10 <= h * 16 && h * 10 <= w * 16;
+    int kind, frame;
+    Rect in;
     if (w < 2 || h < 2) {
         fillRect(c, r.x1, r.y1, r.x2, r.y2, T_GRASS, L_BLOCK);
         return;
     }
     fillRect(c, r.x1, r.y1, r.x2, r.y2, T_GRASS, L_BLOCK);
-    /* Weights for houses, hedges, pond, park, fragment */
     {
-        double wt[5];
-        wt[0] = 1.2 * wh;
-        wt[1] = 1.0 * wf;
-        wt[2] = (w >= 6 && h >= 6) ? 0.6 * ww : 0.0;
-        wt[3] = 0.5;
-        wt[4] = (pr->fragSet >= 0) ? 0.8 * wd : 0.0;
-        sum = wt[0] + wt[1] + wt[2] + wt[3] + wt[4];
+        double wt[RK_COUNT], sum = 0.0, pick;
+        wt[RK_HOUSES] = 0.8 * wh;
+        wt[RK_HEDGE] = 0.35 * wf;
+        wt[RK_POND] = (w >= 7 && h >= 7) ? 0.8 * ww : 0.0;
+        wt[RK_PARK] = 0.15;
+        wt[RK_FRAG] = (pr->fragSet >= 0) ? 0.6 * wd : 0.0;
+        wt[RK_MAZE] = (w >= 9 && h >= 9) ? 0.8 * wf * wdp : 0.0;
+        wt[RK_CHECKER] = (w >= 6 && h >= 6) ? 0.5 * wf * wdp : 0.0;
+        wt[RK_STAR] = (w >= 9 && h >= 9 && square) ? 0.6 * wf * wdp : 0.0;
+        wt[RK_CLUMPS] = 0.8 * wf;
+        wt[RK_CLUSTER] = (w >= 6 && h >= 5) ? 0.9 * wh : 0.0;
+        for (kind = 0; kind < RK_COUNT; kind++) {
+            wt[kind] /= 1.0 + c->roomUsed[kind];
+            sum += wt[kind];
+        }
+        if (sum <= 0.0) return;
         pick = rfloat(c) * sum;
-        for (kind = 0; kind < 4; kind++) {
+        for (kind = 0; kind < RK_COUNT - 1; kind++) {
             if (pick < wt[kind]) break;
             pick -= wt[kind];
         }
+        c->roomUsed[kind]++;
     }
+    /* Sluggo often rings a room with a hedge one tile wide. */
+    frame = w >= 8 && h >= 8 && (kind == RK_STAR || rnd(c, 100) < 35 * wf);
+    if (frame) {
+        fillRect(c, r.x1, r.y1, r.x2, r.y2, T_FOREST, L_BLOCK);
+        fillRect(c, r.x1 + 1, r.y1 + 1, r.x2 - 1, r.y2 - 1, T_GRASS, L_BLOCK);
+        /* a gap in the hedge on each side */
+        put(c, (r.x1 + r.x2) / 2, r.y1, T_GRASS, L_BLOCK);
+        put(c, (r.x1 + r.x2) / 2, r.y2, T_GRASS, L_BLOCK);
+        put(c, r.x1, (r.y1 + r.y2) / 2, T_GRASS, L_BLOCK);
+        put(c, r.x2, (r.y1 + r.y2) / 2, T_GRASS, L_BLOCK);
+    }
+    in = inset(r, frame ? 1 : 0);
     switch (kind) {
-    case 0: {   /* houses */
-        int n = 1 + (w * h) / 40, i;
+    case RK_HOUSES: {
+        int n = 1 + (w * h) / 40;
         if (n > 4) n = 4;
-        for (i = 0; i < n; i++) {
-            int hw = rrange(c, 1, w >= 6 ? 3 : 1), hh = rrange(c, 1, h >= 6 ? 2 : 1);
-            int hx, hy, form = rnd(c, 4);
-            if (w - 2 * hw - 2 < 1 || h - 2 * hh - 2 < 1) { hw = 1; hh = 1; }
-            if (w < 4 || h < 4) { hw = 0; hh = 0; }
-            hx = rrange(c, r.x1 + 1 + hw, r.x2 - 1 - hw);
-            hy = rrange(c, r.y1 + 1 + hh, r.y2 - 1 - hh);
-            if (form == 0 || hw == 0) {
-                fillRect(c, hx - hw, hy - hh, hx + hw, hy + hh, T_BUILDING, L_BLOCK);
-            } else if (form == 1) {   /* H */
-                fillRect(c, hx - hw, hy - hh, hx - hw, hy + hh, T_BUILDING, L_BLOCK);
-                fillRect(c, hx + hw, hy - hh, hx + hw, hy + hh, T_BUILDING, L_BLOCK);
-                fillRect(c, hx - hw, hy, hx + hw, hy, T_BUILDING, L_BLOCK);
-            } else if (form == 2) {   /* plus */
-                fillRect(c, hx - hw, hy, hx + hw, hy, T_BUILDING, L_BLOCK);
-                fillRect(c, hx, hy - hh, hx, hy + hh, T_BUILDING, L_BLOCK);
-            } else {                  /* ring with a gap */
-                fillRect(c, hx - hw, hy - hh, hx + hw, hy + hh, T_BUILDING, L_BLOCK);
-                if (hw >= 1 && hh >= 1) {
-                    fillRect(c, hx - hw + 1, hy - hh + 1, hx + hw - 1, hy + hh - 1, T_GRASS, L_BLOCK);
-                    put(c, hx, hy + hh, T_HALF, L_BLOCK);
-                }
-            }
-        }
+        roomHouses(c, in, n);
         break;
     }
-    case 1: {   /* hedges */
+    case RK_HEDGE: {
         int m = (w >= 6 && h >= 6) ? 1 : 0;
         if (rnd(c, 2) && w >= 7 && h >= 7) {
             fillRect(c, r.x1 + m, r.y1 + m, r.x2 - m, r.y2 - m, T_FOREST, L_BLOCK);
@@ -1515,24 +1745,33 @@ static void townBlock(Ctx *c, Rect r) {
         }
         break;
     }
-    case 2: {   /* pond */
-        double rx = (w - 2) / 2.0, ry = (h - 2) / 2.0, mx = (r.x1 + r.x2) / 2.0, my = (r.y1 + r.y2) / 2.0;
-        for (y = r.y1; y <= r.y2; y++) {
-            for (x = r.x1; x <= r.x2; x++) {
-                double u = (x - mx) / rx, v = (y - my) / ry, d = u * u + v * v;
-                if (d <= 0.55) put(c, x, y, T_RIVER, L_BLOCK);
-                else if (d <= 1.0) put(c, x, y, T_SWAMP, L_BLOCK);
-            }
-        }
+    case RK_POND:
+        roomPond(c, inset(in, 1));
+        if (w * h >= 160 && rnd(c, 2)) roomHouses(c, in, 1);
         break;
-    }
-    case 3: {   /* park */
+    case RK_PARK: {
         int i, n = (w * h) / 12;
         for (i = 0; i < n; i++) {
-            put(c, rrange(c, r.x1, r.x2), rrange(c, r.y1, r.y2), T_FOREST, L_BLOCK);
+            put(c, rrange(c, in.x1, in.x2), rrange(c, in.y1, in.y2), T_FOREST, L_BLOCK);
         }
         break;
     }
+    case RK_MAZE:
+        if (!roomMaze(c, inset(in, 1), T_FOREST, L_BLOCK)) roomClumps(c, inset(in, 1), 0.35);
+        break;
+    case RK_CHECKER:
+        roomChecker(c, inset(in, 1), rnd(c, 3) == 0);
+        break;
+    case RK_STAR:
+        roomStar(c, inset(in, 1));
+        break;
+    case RK_CLUMPS:
+        roomClumps(c, inset(in, 1), 0.3 + 0.1 * (wf > 1.0 ? 1.0 : wf));
+        if (rnd(c, 2)) roomHouses(c, in, 1 + (w * h) / 120);
+        break;
+    case RK_CLUSTER:
+        roomCluster(c, inset(in, 1));
+        break;
     default: {  /* fragment */
         const MakerFragment *f = pickFragment(c, pr->fragSet, w, h);
         if (!stampFragment(c, f, (r.x1 + r.x2 + 1) / 2, (r.y1 + r.y2 + 1) / 2, w, h, L_BLOCK)) {
@@ -1825,6 +2064,44 @@ static int islandStronghold(Ctx *c) {
     return 1;
 }
 
+/* The tile at an odd offset from lo that is nearest v (maze cells
+ * sit at odd offsets from the maze's corner). */
+static int r1odd(int lo, int v) {
+    return ((v - lo) & 1) ? v : v + 1;
+}
+
+/* A maze yard: a square maze with building walls and a base in the
+ * middle, as in Black Lightning's Bitter Ends. Returns 1 if made. */
+static int islandMazeYard(Ctx *c) {
+    int tries, x0 = 0, y0 = 0, half = rrange(c, 5, 7);
+    for (tries = 0; tries < 150; tries++) {
+        int ok = 1, dx, dy;
+        x0 = rnd(c, c->W);
+        y0 = rnd(c, c->H);
+        if (!landAt(c, x0, y0) || c->din[IDX(c, x0, y0)] / 3.0 < half + 3.0) continue;
+        for (dy = -half - 1; dy <= half + 1 && ok; dy++) {
+            for (dx = -half - 1; dx <= half + 1 && ok; dx++) {
+                int k;
+                if (!inb(c, x0 + dx, y0 + dy)) { ok = 0; break; }
+                k = IDX(c, x0 + dx, y0 + dy);
+                if (c->layer[k] == L_WALL || c->layer[k] == L_POD || !isLandT(c->t[k])) ok = 0;
+            }
+        }
+        if (ok) break;
+    }
+    if (tries == 150) return 0;
+    {
+        Rect r;
+        r.x1 = x0 - half; r.y1 = y0 - half; r.x2 = x0 + half; r.y2 = y0 + half;
+        if (!roomMaze(c, r, rnd(c, 3) ? T_BUILDING : T_FOREST, L_WALL)) return 0;
+    }
+    /* The cell nearest the middle holds the base. */
+    x0 = r1odd(x0 - half, x0);
+    y0 = r1odd(y0 - half, y0);
+    addHint(c, OBJ_BASE, x0, y0);
+    return 1;
+}
+
 static void islandRoads(Ctx *c) {
     int nodes = 0, i, j, tries;
     int nxs[48], nys[48];
@@ -1944,16 +2221,26 @@ static void paintIsland(Ctx *c) {
     for (y = 0; y < c->H; y++) {
         for (x = 0; x < c->W; x++) if (landAt(c, x, y)) area += 1.0;
     }
-    /* Forest blobs and single trees on the grass */
-    for (y = 0; y < c->H; y++) {
-        for (x = 0; x < c->W; x++) {
-            int k = IDX(c, x, y);
-            double nz;
-            if (c->layer[k] != L_FLOOR) continue;
-            nz = fbm(x / 7.0, y / 7.0, s, 3);
-            if (nz > 1.0 - c->p.forestPct / 100.0 * 0.55) put(c, x, y, T_FOREST, -1);
-            else if ((hash2(x, y, s + 1u) & 1023u) < (uint32_t)(c->p.forestPct * 0.6 * fk > 60 ? 60 : c->p.forestPct * 0.6)) {
-                put(c, x, y, T_FOREST, -1);
+    /* Forest clumps, a mottled band of mixed forest and grass round
+     * each clump, and single trees. The fractal noise mostly stays
+     * between 0.3 and 0.7, so the cut-off is set inside that range. */
+    {
+        double f = c->p.forestPct / 100.0;
+        double thr = 0.5 + (0.5 - f) * 0.35;
+        double band = 0.03 + 0.07 * (f > 1.0 ? 1.0 : f);
+        uint32_t trees = (uint32_t)(c->p.forestPct * 0.6 * fk > 60 ? 60 : c->p.forestPct * 0.6);
+        for (y = 0; y < c->H && c->p.forestPct > 0; y++) {
+            for (x = 0; x < c->W; x++) {
+                int k = IDX(c, x, y);
+                double nz;
+                uint32_t hh;
+                if (c->layer[k] != L_FLOOR) continue;
+                nz = fbm(x / 7.0, y / 7.0, s, 3);
+                hh = hash2(x, y, s + 1u);
+                if (nz > thr) put(c, x, y, T_FOREST, -1);
+                else if (nz > thr - band && (hh & 1u)) put(c, x, y, T_FOREST, -1);
+                else if (((hh >> 1) & 1023u) < trees) put(c, x, y, T_FOREST, -1);
+                else if (((hh >> 11) & 1023u) < 6u) put(c, x, y, ((hh >> 21) & 1u) ? T_SWAMP : T_CRATER, -1);
             }
         }
     }
@@ -1986,6 +2273,7 @@ static void paintIsland(Ctx *c) {
     n = (int)(area * c->p.buildingPct / 100.0 / 1500.0 + 0.5);
     if (n > 8) n = 8;
     for (i = 0; i < n; i++) islandStronghold(c);
+    if (pr->mazeYard > 0 && c->p.detail >= 4 && rnd(c, 100) < pr->mazeYard) islandMazeYard(c);
     n = (int)(area * c->p.buildingPct / 100.0 / 120.0 + 0.5);
     islandHouses(c, n);
     if (c->p.detail >= 6 && pr->fragSet == MAKER_FRAG_SET_SLUGGO_HOUSE) {
@@ -2474,6 +2762,7 @@ void makerGenerate(uint8_t grid[256][256], MakerObjects *out, const MakerParams 
         for (i = 0; i < 6; i++) if (c.pr->skelAlt & (1 << i)) opts[no++] = kSkelOpts[i];
         c.skel = (c.pr->skel & ~(SK_AXES | SK_DIAG | SK_RING)) | opts[rnd(&c, no)];
     }
+    if (c.pr->rimDrop > 0) c.noForestRim = rnd(&c, 100) < c.pr->rimDrop;
     c.coreT = T_BUILDING;
     if (c.pr->podCore == 2 || (c.pr->podCore == 1 && rnd(&c, 2))) c.coreT = T_HALF;
     if (c.p.outline == OL_VARIED) {
