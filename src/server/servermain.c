@@ -680,6 +680,7 @@ void printArgs() {
   fprintf(stderr, "                Map name shown as 'rand_<seed>' in server info.\n");
   fprintf(stderr, "-randommapsize <N> - Side in tiles of the square of land a random map\n");
   fprintf(stderr, "                uses, from 24 to 215, or 0 for the whole map (the default).\n");
+  fprintf(stderr, "                Only with -randommap.\n");
   fprintf(stderr, "-moddir <Dir> - Directory of mods and scenarios this server offers on their\n");
   fprintf(stderr, "                own, independently of any map: .scenario packages and loose\n");
   fprintf(stderr, "                .lua scripts. Read on top of the mods that ship with the\n");
@@ -1856,6 +1857,14 @@ int main(int argc, char **argv) {
     exit(1);
   }
 
+  /* -randommapsize sizes only a random map. With -map, -inbuilt or no
+     map at all it would be ignored, so say so and stop. */
+  if (argExist(argc, argv, "randommapsize") == TRUE &&
+      strncmp(mapName, "-randommap", 10) != 0) {
+    fprintf(stderr, "Error: -randommapsize works only with -randommap\n");
+    exit(1);
+  }
+
   /* Copy tracker settings to file-scope globals for the timer */
   sTrackerUse = trackerUse;
   if (trackerUse) {
@@ -1964,7 +1973,7 @@ int main(int argc, char **argv) {
 #ifdef USING_SDL
         SDL_Quit();
 #endif
-        return 0;
+        return 1;
       }
       hasFixedSeed = true;
     } else if (typeStr[0] != '\0') {
@@ -1990,7 +1999,7 @@ int main(int argc, char **argv) {
 #ifdef USING_SDL
           SDL_Quit();
 #endif
-          return 0;
+          return 1;
         }
         hasFixedSeed = true;
       }
@@ -2010,9 +2019,11 @@ int main(int argc, char **argv) {
     /* -randommapsize overrides the size from the preset or the seed */
     int randomMapSize = -1;
     {
-      int sizeArg = findArg(argc, argv, "randommapsize");
-      if (sizeArg != ARG_NOT_FOUND) {
-        const char *text = sizeArg < argc ? argv[sizeArg] : "";
+      /* argExist, not findArg, so that -randommapsize with no value
+         after it is an error too. */
+      if (argExist(argc, argv, "randommapsize") == TRUE) {
+        int sizeArg = findArg(argc, argv, "randommapsize");
+        const char *text = sizeArg != ARG_NOT_FOUND ? argv[sizeArg] : "";
         char *end = NULL;
         long v = strtol(text, &end, 10);
         if (end == text || *end != '\0' ||
@@ -2022,7 +2033,7 @@ int main(int argc, char **argv) {
 #ifdef USING_SDL
           SDL_Quit();
 #endif
-          return 0;
+          return 1;
         }
         randomMapSize = (int)v;
       }

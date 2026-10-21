@@ -360,7 +360,16 @@ int run_mapgen_size_bounds(void) {
 /* Seeds and map hashes made with the code from before Map Maker and
  * Size were added. Each type is run at three seeds; Tournament also
  * at each symmetry (with three water barriers) and Natural at each
- * style. */
+ * style. The hashes were made with MSVC on Windows x64. Clang 18
+ * (clang-cl, -O2, on Windows x64, with and without AVX2 and fused
+ * multiply-add) gave the same hashes.
+ *
+ * The older types are not built for the same map on every compiler.
+ * They use float arithmetic and atan2f (start directions and the
+ * Tournament start spread in mapgen.c), and mapgen.c is not built with
+ * -ffp-contract=off. If these hashes differ on another platform, look
+ * there first. That was so before Map Maker was added, and this test
+ * does not change it. */
 static const SeedHash kLegacyTournament[] = {
     { "T02B8420000000020", 0x59F8CAA7u },
     { "T02B842181FFDC220", 0x6E91B73Au },
@@ -703,7 +712,10 @@ int run_mapgen_maker_room_kinds(void) {
 /* Map Maker seeds and map hashes. A change here means that a seed made
  * by an older build makes a different map, so change them only on
  * purpose. Each preset is run at its own size and counts at two
- * seeds, and at size 90. */
+ * seeds, and at size 90. The hashes were made with MSVC 19.50 (Visual
+ * Studio 18) on Windows x64. Clang 18 (clang-cl, -O2, on Windows x64,
+ * with and without AVX2 and fused multiply-add) gave the same hashes.
+ * They have not yet been checked on ARM64, macOS or Linux. */
 static const SeedHash kMakerHashes[] = {
     { "K076010AA1422A1040000000080Z46", 0xC3956ADBu },
     { "K076010AA1422A104607FF70880Z46", 0xE6515047u },

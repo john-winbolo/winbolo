@@ -132,7 +132,9 @@ set_target_properties(bolo_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Map Maker must make the same map from the same seed on every compiler
 # and CPU. Stop GCC and Clang from fusing a multiply and an add into one
-# step there (MSVC does not do this by default).
+# step there. MSVC from Visual Studio 2022 (MSVC 19.30, _MSC_VER 1930)
+# on does not fuse them under its default /fp:precise; older MSVC could
+# on ARM64 and with /arch:AVX2, so build with Visual Studio 2022 or later.
 if(NOT MSVC)
     set_source_files_properties(mapgen_maker.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 endif()

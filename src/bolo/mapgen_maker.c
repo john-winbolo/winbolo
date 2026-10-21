@@ -47,8 +47,10 @@
  * 754 defines to the last bit, as long as the compiler does not fuse
  * a multiply and an add into one step and does not keep extra
  * precision. The pragma below and -ffp-contract=off in
- * src/bolo/CMakeLists.txt stop the fused step; the check below stops
- * a build that keeps extra precision. */
+ * src/bolo/CMakeLists.txt stop the fused step on GCC and Clang. MSVC
+ * from Visual Studio 2022 (MSVC 19.30) on does not fuse under its
+ * default /fp:precise; older MSVC could on ARM64 and with /arch:AVX2.
+ * The check below stops a build that keeps extra precision. */
 #if defined(__clang__)
 #pragma STDC FP_CONTRACT OFF
 #endif
@@ -591,7 +593,10 @@ static const int32_t kSinQ[257] = {
 };
 
 static int32_t isin(int a) {
-    a &= 1023;
+    /* a can be negative. The C standard defines the conversion to
+     * unsigned as modulo 2^N, so the mask gives 0..1023 on every
+     * compiler. */
+    a = (int)((unsigned)a & 1023u);
     if (a <= 256) return kSinQ[a];
     if (a <= 512) return kSinQ[512 - a];
     if (a <= 768) return -kSinQ[a - 512];
