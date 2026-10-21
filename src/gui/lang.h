@@ -3541,6 +3541,19 @@
 /* Asked before an Internet game is hosted on mobile data (Yes / No) */
 #define STR_GAMEFRONTERR_HOST_MOBILE_DATA        2942
 
+/* The recap's GIF gallery, and the GIF length beside the replay's GIF button */
+#define STR_CLIPGIF_GALLERY_TITLE                2943
+#define STR_CLIPGIF_GALLERY_EMPTY                2944
+#define STR_CLIPGIF_COPY                         2945
+#define STR_CLIPGIF_SAVE                         2946
+#define STR_CLIPGIF_COPIED                       2947
+#define STR_CLIPGIF_COPY_FAILED                  2948
+#define STR_CLIPGIF_OPEN_FAILED                  2949
+#define STR_CLIPGIF_MAP_FMT                      2950
+#define STR_CLIPGIF_PLAYERS_FMT                  2951
+#define STR_CLIPGIF_NO_DETAILS                   2952
+#define STR_CLIPGIF_LENGTH_TIP                   2953
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

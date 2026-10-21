@@ -2837,3 +2837,16 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=マップが画面全体に表示され、�
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=このデバイスはモバイルデータ通信を使用しています。モバイルデータで\nホストしたインターネットゲームはおそらく動作しません。モバイル回線では\n他のプレイヤーがこのデバイスに接続できることはまれです。Wi-Fi のほうが\nはるかに動作する可能性が高くなります。\n\nそれでもホストしますか？
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=あなたのGIF
+STR_CLIPGIF_GALLERY_EMPTY=まだGIFはありません。リプレイの下のGIFボタンか、クリップのGIFボタンで作成できます。
+STR_CLIPGIF_COPY=クリップボードにコピー
+STR_CLIPGIF_SAVE=ディスクに保存
+STR_CLIPGIF_COPIED=コピーしました。
+STR_CLIPGIF_COPY_FAILED=GIFをコピーできませんでした。
+STR_CLIPGIF_OPEN_FAILED=このGIFを開けませんでした。
+STR_CLIPGIF_MAP_FMT=マップ: {string1}
+STR_CLIPGIF_PLAYERS_FMT=プレイヤー: {string1}
+STR_CLIPGIF_NO_DETAILS=このGIFには詳細が保存されていません。
+STR_CLIPGIF_LENGTH_TIP=再生位置からのGIFの長さ（秒）。\nタイムラインの明るい部分の端にあるマーカーをドラッグしても変更できます。

@@ -729,6 +729,7 @@ else()
         src/gui/sdl3/dialogs/lobby/lobby_rating.cpp
         src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
         src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_clip_gif_gallery.cpp
         src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
         src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
         src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
@@ -1559,7 +1560,10 @@ target_include_directories(WinBoloIOS PRIVATE src/third_party/ImGuiColorTextEdit
 # dialog.
 target_sources(WinBoloIOS PRIVATE
     src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
-    src/third_party/msf_gif/msf_gif_impl.c)
+    src/third_party/msf_gif/msf_gif_impl.c
+    # The GIF length rules the reel's length field and marker use. The GIF
+    # gallery is not in the iOS build (BOLO_CLIP_GIF_GALLERY).
+    src/gui/sdl3/dialogs/clip_gif_core.c)
 bolo_grant_internal_source_access(WinBoloIOS
     src/mapeditor/mapeditor.c
     src/mapeditor/mapeditor_export.c
@@ -1971,7 +1975,7 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
     src/client_frontend/client_frontend_sp.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif_gallery.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/dialogs/wbn_browser_sort.c
     src/gui/sdl3/map_preview_popup.cpp
@@ -2036,6 +2040,10 @@ set(CLIENT_SOURCES
     # GIF encoder for the recap's clip export. Client only — no other target
     # exports clips, and the LogViewer already omits stb_image_write_impl.c.
     src/third_party/msf_gif/msf_gif_impl.c
+    # The clip GIF's length rules and the GIF gallery's metadata files
+    # (tested by test_clip_gif_core.c), and the gallery's clipboard copy.
+    src/gui/sdl3/dialogs/clip_gif_core.c
+    src/gui/sdl3/dialogs/clip_gif_clipboard.c
     src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -4937,6 +4945,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lv_event_list.c
     # WinBolo.net log browser table sort rule (test_wbn_browser_sort.c).
     tests/unit/test_wbn_browser_sort.c
+    # Recap clip GIF length and timeline sync, and the GIF gallery's metadata
+    # files and newest-first scan (test_clip_gif_core.c).
+    tests/unit/test_clip_gif_core.c
     # Replay camera range: the load's 127,127 default, a highlight jump, a
     # grid that grew and the raw setter all keep the view's far edge at 255
     # on a grid wider than half the map (test_lv_camera.c).
@@ -5149,6 +5160,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/logviewer/lv_event_list.c
     # The WinBolo.net log browser's sort rule, for test_wbn_browser_sort.c.
     src/gui/sdl3/dialogs/wbn_browser_sort.c
+    # The recap clip GIF rules, for test_clip_gif_core.c.
+    src/gui/sdl3/dialogs/clip_gif_core.c
 )
 
 if(WB_NETDEBUG)
@@ -5812,6 +5825,10 @@ set(_unit_test_names
     lv_event_list_replay
     lv_event_list_pinned
     wbn_browser_sort
+    clip_gif_len_sync
+    clip_gif_meta_roundtrip
+    clip_gif_meta_bad
+    clip_gif_gallery_scan
     lv_snapshot_index_lookup
     lv_snapshot_index_ten_days
     lv_load_walk_fixtures

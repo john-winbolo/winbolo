@@ -2835,3 +2835,16 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=지도가 화면을 채우고, 상태·건�
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=이 기기는 모바일 데이터를 사용 중입니다. 모바일 데이터로 호스트한\n인터넷 게임은 아마 작동하지 않을 것입니다. 모바일 네트워크에서는 다른\n플레이어가 이 기기에 접속할 수 있는 경우가 드뭅니다. Wi-Fi에서는\n작동할 가능성이 훨씬 높습니다.\n\n그래도 호스트하시겠습니까?
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=내 GIF
+STR_CLIPGIF_GALLERY_EMPTY=아직 GIF가 없습니다. 리플레이 아래의 GIF 버튼이나 클립의 GIF 버튼으로 만드세요.
+STR_CLIPGIF_COPY=클립보드에 복사
+STR_CLIPGIF_SAVE=디스크에 저장
+STR_CLIPGIF_COPIED=복사했습니다.
+STR_CLIPGIF_COPY_FAILED=GIF를 복사할 수 없습니다.
+STR_CLIPGIF_OPEN_FAILED=이 GIF를 열 수 없습니다.
+STR_CLIPGIF_MAP_FMT=맵: {string1}
+STR_CLIPGIF_PLAYERS_FMT=플레이어: {string1}
+STR_CLIPGIF_NO_DETAILS=이 GIF에는 저장된 세부 정보가 없습니다.
+STR_CLIPGIF_LENGTH_TIP=재생 위치부터의 GIF 길이(초).\n타임라인 밝은 부분 끝의 표시를 끌어서 바꿀 수도 있습니다.

@@ -2937,3 +2937,16 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=The map fills the screen, with the status, b
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=This device is on mobile data. An Internet game hosted on mobile\ndata will probably not work: mobile networks rarely let other\nplayers reach the device. Wi-Fi is much more likely to work.\n\nHost anyway?
 
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Your GIFs
+STR_CLIPGIF_GALLERY_EMPTY=No GIFs yet. Make one with the GIF button under the replay, or the GIF button on a clip.
+STR_CLIPGIF_COPY=Copy to clipboard
+STR_CLIPGIF_SAVE=Save to disk
+STR_CLIPGIF_COPIED=Copied.
+STR_CLIPGIF_COPY_FAILED=The GIF could not be copied.
+STR_CLIPGIF_OPEN_FAILED=This GIF could not be opened.
+STR_CLIPGIF_MAP_FMT=Map: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Players: {string1}
+STR_CLIPGIF_NO_DETAILS=No details were saved with this GIF.
+STR_CLIPGIF_LENGTH_TIP=GIF length in seconds, from the playhead.\nDrag the marker at the end of the bright part of the timeline to change it too.
+

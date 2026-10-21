@@ -2837,3 +2837,16 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=La carte remplit l'écran, avec les panneaux
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=Cet appareil utilise les données mobiles. Une partie Internet hébergée\nsur données mobiles ne fonctionnera probablement pas : les réseaux mobiles\nlaissent rarement les autres joueurs joindre l'appareil. Le Wi-Fi a bien\nplus de chances de fonctionner.\n\nHéberger quand même ?
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Vos GIF
+STR_CLIPGIF_GALLERY_EMPTY=Aucun GIF pour l'instant. Créez-en un avec le bouton GIF sous la relecture, ou le bouton GIF d'un clip.
+STR_CLIPGIF_COPY=Copier dans le presse-papiers
+STR_CLIPGIF_SAVE=Enregistrer sur le disque
+STR_CLIPGIF_COPIED=Copié.
+STR_CLIPGIF_COPY_FAILED=Le GIF n'a pas pu être copié.
+STR_CLIPGIF_OPEN_FAILED=Ce GIF n'a pas pu être ouvert.
+STR_CLIPGIF_MAP_FMT=Carte : {string1}
+STR_CLIPGIF_PLAYERS_FMT=Joueurs : {string1}
+STR_CLIPGIF_NO_DETAILS=Aucun détail n'a été enregistré avec ce GIF.
+STR_CLIPGIF_LENGTH_TIP=Durée du GIF en secondes, depuis la tête de lecture.\nFaites glisser le repère au bout de la partie claire de la frise pour la changer aussi.

@@ -530,12 +530,114 @@ void lobbyChatInputAppendTime(uint32_t curMs);
  * transport bar carries the same control the clip rows do, so both are reached
  * from here. */
 bool lobbyClipGifButton(const char *id, bool compact);
-void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName);
+void lobbyClipGifStartFromPlayhead(uint32_t curMs, uint32_t lenMs,
+                                   ClientSim *cs);
 /* Whether an export is running. The crop frame reads it to hold still: the
  * rect is fixed once at msf_gif_begin and every frame of the GIF is that size,
  * so letting it be dragged mid-capture would show a box the recording is not
  * following. */
 bool lobbyClipGifActive(void);
+
+/* The GIF length on the seek bar: a bright band from the playhead to where
+ * the transport's GIF would end, and a marker at its end that can be dragged
+ * to change the length. barMin/barMax are the seek slider's frame. Called
+ * after the slider has been submitted and its own state read, so the marker
+ * is the newer item and wins the hover where the two overlap (the slider is
+ * marked allow-overlap). Added with ItemAdd on a rect of its own rather than
+ * as a placed button, so it moves no cursor and takes no layout room.
+ *
+ * The band starts at the slider's value while it is being dragged, so it
+ * follows the handle, and at the playhead otherwise. */
+static void lobbyReelGifLenMarker(ImVec2 barMin, ImVec2 barMax,
+                                  uint32_t curMs, uint32_t totalMs) {
+    if (totalMs == 0 || barMax.x <= barMin.x) {
+        return;
+    }
+    const ImGuiStyle &sty = ImGui::GetStyle();
+    /* The x range the slider's grab centre moves over, laid out the way
+     * ImGui's slider does it for a float: 2 px in from each end of the frame
+     * and then half the grab, so a time sits at the same x as the grab
+     * would. */
+    const float grabPad = 2.0f;
+    float grabW = sty.GrabMinSize;
+    const float slideW = (barMax.x - barMin.x) - grabPad * 2.0f;
+    if (grabW > slideW) grabW = slideW;
+    const float x0 = barMin.x + grabPad + grabW * 0.5f;
+    const float x1 = barMax.x - grabPad - grabW * 0.5f;
+
+    uint32_t startMs = curMs;
+    if (s_reel.seeking) {
+        startMs = (uint32_t)(s_reel.seekRatio * (float)totalMs);
+    }
+    const uint32_t lenMs = clipGifLenClampMs(s_reel.gifLenMs, startMs, totalMs);
+    const float xs = clipGifTimelineX(startMs, totalMs, x0, x1);
+    const float xe = clipGifTimelineX(startMs + lenMs, totalMs, x0, x1);
+    const bool locked = lobbyClipGifActive();
+
+    /* The marker's hit area: wider than the line drawn, so it is easy to take
+     * hold of. */
+    const float hitW = ImGui::GetTextLineHeight() * 0.6f;
+    ImRect hit(ImVec2(xe - hitW * 0.5f, barMin.y),
+               ImVec2(xe + hitW * 0.5f, barMax.y));
+    bool hovered = false, held = false;
+    if (!locked) {
+        ImGuiID id = ImGui::GetID("##reelgiflenmark");
+        if (ImGui::ItemAdd(hit, id)) {
+            ImGui::ButtonBehavior(hit, id, &hovered, &held);
+            if (held) {
+                s_reel.gifLenMs = clipGifLenFromTimelineX(
+                    ImGui::GetIO().MousePos.x, startMs, totalMs, x0, x1);
+            }
+            if (hovered || held) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+            }
+            if (!held) {
+                imguiHelpTooltip(langGetText(STR_CLIPGIF_LENGTH_TIP));
+            }
+        }
+    }
+
+    /* Drawn over the slider's frame: the band is see-through so the time
+     * label under it still reads. Dimmer while a capture runs, when the
+     * marker does not answer a drag. */
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const float alpha = locked ? 0.45f : 1.0f;
+    ImU32 band = ImGui::GetColorU32(ImGuiCol_SliderGrabActive, 0.30f * alpha);
+    ImU32 mark = ImGui::GetColorU32((hovered || held) ? ImGuiCol_Text
+                                                      : ImGuiCol_SliderGrabActive,
+                                    alpha);
+    dl->AddRectFilled(ImVec2(xs, barMin.y + 1.0f), ImVec2(xe, barMax.y - 1.0f),
+                      band);
+    const float lineW = (hovered || held) ? 3.0f : 2.0f;
+    dl->AddRectFilled(ImVec2(xe - lineW * 0.5f, barMin.y),
+                      ImVec2(xe + lineW * 0.5f, barMax.y), mark);
+    /* A small notch on top, so the marker reads as a handle rather than a
+     * line in the label. */
+    const float tri = ImGui::GetTextLineHeight() * 0.25f;
+    dl->AddTriangleFilled(ImVec2(xe - tri, barMin.y),
+                          ImVec2(xe + tri, barMin.y),
+                          ImVec2(xe, barMin.y + tri), mark);
+}
+
+/* The GIF length field: the same length the marker sets, in seconds. Shows
+ * the length the export will use, so it moves with the marker and with the
+ * time left; what is typed is held as asked for and clamped again when it is
+ * used. ImGui keeps its own text while the field is being typed into, so the
+ * value written into it each frame does not fight the typing. */
+static void lobbyReelGifLenField(uint32_t curMs, uint32_t totalMs) {
+    const uint32_t lenMs = clipGifLenClampMs(s_reel.gifLenMs, curMs, totalMs);
+    float secs = clipGifLenToSeconds(lenMs);
+    ImGui::BeginDisabled(lobbyClipGifActive());
+    ImGui::SetNextItemWidth(ImGui::CalcTextSize("00.0").x +
+                            ImGui::GetStyle().FramePadding.x * 2.0f);
+    if (ImGui::InputFloat("##reelgiflen", &secs, 0.0f, 0.0f, "%.1f")) {
+        /* Clamped to the export's floor and cap only: the time left is
+         * applied where the length is used. */
+        s_reel.gifLenMs = clipGifLenFromSeconds(secs, 0u, 0u);
+    }
+    imguiHelpTooltip(langGetText(STR_CLIPGIF_LENGTH_TIP));
+    ImGui::EndDisabled();
+}
 
 /* The crop control, sitting with the export it crops. Names the frame rather
  * than describing it — the same rule the GIF control's caption follows, and
@@ -1563,8 +1665,22 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
      * it rather than shrinking the transport row. */
     ImGui::SameLine();
     if (lobbyClipGifButton("##reelgif", false) && cs != NULL) {
-        lobbyClipGifStartFromPlayhead(curMs, clientSimGetMapName(cs));
+        lobbyClipGifStartFromPlayhead(
+            curMs, clipGifLenClampMs(s_reel.gifLenMs, curMs, totalMs), cs);
     }
+
+    /* How long that export runs, in seconds; the marker on the seek bar
+     * below sets the same value. */
+    ImGui::SameLine();
+    lobbyReelGifLenField(curMs, totalMs);
+
+#if BOLO_CLIP_GIF_GALLERY
+    /* The GIFs made so far, with copy and save. */
+    ImGui::SameLine();
+    if (lobbyClipGifGalleryButton("##reelgifgallery")) {
+        lobbyClipGifGalleryOpen();
+    }
+#endif
 
     /* Crop frame, next to the export it crops: with it up, that export takes
      * the framed rectangle instead of the whole visible view. */
@@ -1602,12 +1718,24 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
                  curSecs / 60u, curSecs % 60u);
     }
     ImGui::PushItemWidth(-1);
+#if BOLO_RECAP_CLIP_GIF
+    /* The GIF length marker is drawn over this slider and is submitted after
+     * it, so the slider lets it take the hover where the two meet. */
+    ImGui::SetNextItemAllowOverlap();
+#endif
     /* NoRoundToFormat is essential: seekLabel is a pre-rendered string
      * ("01:12 / 04:30"), not a numeric printf format. Without the flag ImGui
      * rounds the dragged value by round-tripping it through that label, which
      * parses back to 0 and pins every seek to the start of the log. */
-    if (ImGui::SliderFloat("##ReelSeek", &s_reel.seekRatio, 0.0f, 1.0f, seekLabel,
-                           ImGuiSliderFlags_NoRoundToFormat)) {
+    const bool seekChanged =
+        ImGui::SliderFloat("##ReelSeek", &s_reel.seekRatio, 0.0f, 1.0f,
+                           seekLabel, ImGuiSliderFlags_NoRoundToFormat);
+#if BOLO_RECAP_CLIP_GIF
+    /* The slider's frame, for the GIF length marker drawn over it below. */
+    const ImVec2 seekMin = ImGui::GetItemRectMin();
+    const ImVec2 seekMax = ImGui::GetItemRectMax();
+#endif
+    if (seekChanged) {
         if (!s_reel.seeking) {
             /* Freeze playback for the scrub instead of letting every applied
              * seek pause and resume it — lvEmbedSeekRatio does that by
@@ -1662,6 +1790,11 @@ static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
         if (s_reel.seekWasPlaying) lvEmbedPlay();
         s_reel.seekWasPlaying = false;
     }
+#if BOLO_RECAP_CLIP_GIF
+    /* After the slider's own state is read above: from here the last item is
+     * the marker, not the slider. */
+    lobbyReelGifLenMarker(seekMin, seekMax, curMs, totalMs);
+#endif
     ImGui::PopItemWidth();
 
 #if BOLO_REEL_SPAWN_VIEWER

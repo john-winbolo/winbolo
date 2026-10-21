@@ -20,12 +20,14 @@
  * Purpose:       The recap's clip export: stepping the reel
  *                across a clip's span and reading each frame
  *                back off the render target at a fixed rate,
- *                the GIF encoder those frames are handed to,
- *                and the native save dialog that writes the
- *                finished bytes out. Also the export button
- *                a clip row and the transport place, and the
- *                progress modal the capture runs under, a
- *                batch of frames per lobby frame.
+ *                and the GIF encoder those frames are handed
+ *                to. The finished bytes go to the GIF gallery
+ *                (lobby_clip_gif_gallery.cpp), which keeps
+ *                them and offers copy and save; on iOS they
+ *                are written into Documents. Also the export
+ *                button a clip row and the transport place,
+ *                and the progress modal the capture runs
+ *                under, a batch of frames per lobby frame.
  *********************************************************/
 
 #include <cstdio>   /* snprintf / FILENAME_MAX — the file's base name and the save paths */
@@ -40,9 +42,8 @@
 #include "lobby_internal.h"
 #include "dialog_footer.h"  /* WBUI cancel styling + CancelKeyPressed — the modal's Cancel */
 extern "C" {
-#include "imgui_messagebox.h"    /* imguiMessageBoxEx / IMGUI_MSG_* — where the file landed, or didn't */
-#include "../../sdl3draw.h"      /* sdl3DrawGetRenderer / sdl3DrawGetWindow — the readback target and the dialog's parent */
-#include "../../../ui_mode.h"    /* uiShouldUseControllerMode — no usable native dialog under a controller */
+#include "imgui_messagebox.h"    /* imguiMessageBoxEx / IMGUI_MSG_* — where the file landed on iOS, or didn't */
+#include "../../sdl3draw.h"      /* sdl3DrawGetRenderer — the readback target */
 #include "../../../lang.h"       /* langGetText / STR_CANCEL */
 }
 
@@ -82,9 +83,6 @@ static const int CLIP_GIF_QUALITY         = 16;  /* the encoder's own default */
  * exports something rather than an empty file. */
 static const int CLIP_GIF_MAX_FRAMES      = 150;
 static const int CLIP_GIF_MIN_FRAMES      = 10;
-/* What the transport's own button captures, having no clip to take a length
- * from: long enough to hold a moment, short enough to still be worth posting. */
-static const uint32_t CLIP_GIF_PLAYHEAD_MS = 5000u;
 /* Frames per lobby frame. Four keeps the longest clip under a second of
  * wall time while leaving the readback stalls small enough to hide. */
 static const int CLIP_GIF_FRAMES_PER_PASS = 4;
@@ -109,6 +107,9 @@ typedef struct ClipGifCapture {
     uint32_t    restoreMs      = 0;  /* where the reel was before we took it */
     bool        restorePlaying = false;
     char        name[96]       = "";  /* <map>_<mmss>, the file's base name */
+    /* When, where and who, for the gallery's metadata file. Filled when the
+     * capture starts, so the names are the ones in the lobby at that time. */
+    ClipGifMeta meta           = {};
 } ClipGifCapture;
 
 static ClipGifCapture s_clipGif = {};
@@ -190,12 +191,60 @@ bool lobbyClipGifActive(void) {
  * centreOnCell splits the two the same way lvEmbedSeekWindowMs does — a clip
  * row names a place as well as a moment, the transport names only a moment and
  * leaves the framing the player set up alone. */
+/* The gallery's metadata for a capture: the time now, the map's name without
+ * its .map, and the names of the round's players (the lobby's named slots
+ * when there is no round summary). */
+static void lobbyClipGifFillMeta(ClipGifMeta *m, ClientSim *cs,
+                                 const char *mapName) {
+    *m = ClipGifMeta{};
+    SDL_Time now = 0;
+    if (SDL_GetCurrentTime(&now)) {
+        m->createdUnix = (int64_t)(now / SDL_NS_PER_SECOND);
+    }
+    if (mapName && mapName[0]) {
+        SDL_strlcpy(m->map, mapName, sizeof(m->map));
+        size_t n = SDL_strlen(m->map);
+        if (n > 4 && SDL_strcasecmp(m->map + n - 4, ".map") == 0) {
+            m->map[n - 4] = '\0';
+        }
+    }
+    if (cs == NULL) {
+        return;
+    }
+    const RoundStatsSummary *st = clientSimGetLastRoundStats(cs);
+    if (st != NULL && st->playerCount > 0) {
+        for (int i = 0; i < st->playerCount && i < MAX_TANKS &&
+                        m->playerCount < CLIP_GIF_META_MAX_PLAYERS; i++) {
+            uint8_t slot = st->players[i].slot;
+            const ClientLobbySlot *ls =
+                (slot < MAX_TANKS) ? clientSimGetLobbySlot(cs, (BYTE)slot)
+                                   : nullptr;
+            if (ls && ls->playerName[0]) {
+                SDL_strlcpy(m->players[m->playerCount], ls->playerName,
+                            sizeof(m->players[0]));
+                m->playerCount++;
+            }
+        }
+        return;
+    }
+    for (int slot = 0; slot < MAX_TANKS &&
+                       m->playerCount < CLIP_GIF_META_MAX_PLAYERS; slot++) {
+        const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)slot);
+        if (ls && ls->connected && ls->playerName[0]) {
+            SDL_strlcpy(m->players[m->playerCount], ls->playerName,
+                        sizeof(m->players[0]));
+            m->playerCount++;
+        }
+    }
+}
+
 static void lobbyClipGifStart(uint32_t startMs, uint32_t durationMs,
                               bool centreOnCell, int mapX, int mapY,
-                              const char *mapName) {
+                              ClientSim *cs) {
     if (s_clipGif.active || !lvEmbedIsActive()) {
         return;
     }
+    const char *mapName = (cs != NULL) ? clientSimGetMapName(cs) : NULL;
 
     lvEmbedGetProgress(&s_clipGif.restoreMs, NULL);
     s_clipGif.restorePlaying = lvEmbedIsPlaying();
@@ -292,6 +341,10 @@ static void lobbyClipGifStart(uint32_t startMs, uint32_t durationMs,
     unsigned secs = (unsigned)(startMs / 1000u);
     lobbyClipGifBaseName(s_clipGif.name, sizeof(s_clipGif.name), mapName,
                          secs / 60u, secs % 60u);
+    lobbyClipGifFillMeta(&s_clipGif.meta, cs, mapName);
+    s_clipGif.meta.durationMs = frames * CLIP_GIF_FRAME_MS;
+    s_clipGif.meta.width      = cropW;
+    s_clipGif.meta.height     = cropH;
     s_clipGif.frame  = 0;
     s_clipGif.total  = (int)frames;
     s_clipGif.failed = false;
@@ -300,15 +353,16 @@ static void lobbyClipGifStart(uint32_t startMs, uint32_t durationMs,
 
 /* A clip row's export: the moment and the place the row names, for as long as
  * the round's scorer decided the clip runs. */
-void lobbyClipGifStartClip(const HighlightWindow *h, const char *mapName) {
-    lobbyClipGifStart(h->startMs, h->durationMs, true, h->mapX, h->mapY,
-                      mapName);
+void lobbyClipGifStartClip(const HighlightWindow *h, ClientSim *cs) {
+    lobbyClipGifStart(h->startMs, h->durationMs, true, h->mapX, h->mapY, cs);
 }
 
-/* The transport's export: a fixed length from wherever the playhead sits, with
- * the view left where the player put it. */
-void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName) {
-    lobbyClipGifStart(curMs, CLIP_GIF_PLAYHEAD_MS, false, 0, 0, mapName);
+/* The transport's export: the length the player set beside the button (the
+ * caller has already clamped it to the time left), from wherever the playhead
+ * sits, with the view left where the player put it. */
+void lobbyClipGifStartFromPlayhead(uint32_t curMs, uint32_t lenMs,
+                                   ClientSim *cs) {
+    lobbyClipGifStart(curMs, lenMs, false, 0, 0, cs);
 }
 
 /* The export control itself: the picture glyph where it loaded, the format's
@@ -392,62 +446,7 @@ static bool lobbyClipGifCaptureFrame(void) {
     return ok;
 }
 
-/* One request's slot for the native save dialog's answer. Heap-allocated and
- * refcounted because SDL cannot cancel a dialog that is already up, so the
- * slot has to be able to outlive the lobby that asked for it.
- *
- * Two holders: the lobby and the dialog callback. The callback drops its
- * reference last, after writing path and ok, so refs falling to 1 is what
- * publishes the answer — and once it has, the lobby is the sole owner and can
- * read and free without further synchronisation. SDL runs the callback on a
- * worker thread on Windows and on the Linux zenity backend. */
-typedef struct ClipGifSaveRequest {
-    SDL_AtomicInt refs;
-    char          path[FILENAME_MAX];
-    int           ok;
-} ClipGifSaveRequest;
-
-/* The finished clip and the picker it is waiting on. The encoder's bytes are
- * owned here from lobbyClipGifSave on, and this is the only thing that frees
- * them: every exit — written, write failed, cancelled, lobby closed — goes
- * through the poll or the abandon below, and msf_gif_free is safe on a zeroed
- * result, so "free then zero" needs no special cases. Kept apart from
- * ClipGifCapture so a reel teardown mid-session can't drop a clip the player
- * is still choosing a name for. */
-typedef struct ClipGifPendingSave {
-    ClipGifSaveRequest *req   = nullptr;
-    MsfGifResult        bytes = {};
-} ClipGifPendingSave;
-
-static ClipGifPendingSave s_clipGifSave = {};
-
-static void SDLCALL lobbyClipGifSaveCallback(void *userdata,
-                                             const char *const *filelist,
-                                             int filter) {
-    ClipGifSaveRequest *st = (ClipGifSaveRequest *)userdata;
-    (void)filter;
-    if (filelist && filelist[0]) {
-        SDL_strlcpy(st->path, filelist[0], sizeof(st->path));
-        /* Not every platform's dialog applies the filter's extension to a name
-         * typed without one, so a name that arrives bare gets it here — the
-         * file has to open as a GIF wherever the player shares it. Matched
-         * case-insensitively so a name already ending .GIF keeps the one it
-         * has. If there is no room for the suffix the path stands as typed;
-         * SDL_strlcat leaves it terminated either way. */
-        size_t len = SDL_strlen(st->path);
-        if (len > 0 &&
-            (len < 4 || SDL_strcasecmp(st->path + len - 4, ".gif") != 0)) {
-            SDL_strlcat(st->path, ".gif", sizeof(st->path));
-        }
-        st->ok = 1;
-    }
-    /* Dropped last: this is what publishes path and ok to the poll, and the
-     * slot must not be touched again after it. */
-    if (SDL_AtomicDecRef(&st->refs)) {
-        SDL_free(st);
-    }
-}
-
+#if defined(__IPHONEOS__)
 static bool lobbyClipGifWriteFile(const char *path, const MsfGifResult *res) {
     SDL_IOStream *io = SDL_IOFromFile(path, "wb");
     if (io == NULL) {
@@ -458,138 +457,66 @@ static bool lobbyClipGifWriteFile(const char *path, const MsfGifResult *res) {
     return ok;
 }
 
-/* Where the bytes go, on the split windowSaveMap uses: no usable native dialog
- * under a controller, so that path names the file itself under the pref dir and
- * reports where it went; the desktop path asks. The report is the path — the
- * box's title is the format name and its icon carries the rest, so neither
- * outcome needs a sentence.
- *
- * Takes the encoder's result by value and owns it from here: the desktop path
- * outlives this call, so the caller cannot free the bytes behind it. */
+/* Where the bytes go. On iOS, as before the gallery, into Documents under
+ * the clip's own name. Everywhere else into the gallery, which keeps the GIF
+ * with its metadata and opens on it, so the player can look at it before
+ * copying it or saving it somewhere of their own. Takes the encoder's result
+ * by value and frees it. */
 static void lobbyClipGifSave(MsfGifResult res) {
-#if defined(__IPHONEOS__)
     /* No save dialog on iOS: the clip goes into Documents under its own name,
        where the Files app shows it, and the box names the file and says where
        to find it; the sandbox path would mean nothing to the player. */
-    {
-        const char *docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
-        char fullPath[FILENAME_MAX];
-        bool ok = false;
-        if (docs != NULL && docs[0] != '\0') {
-            size_t n = SDL_strlen(docs);
-            snprintf(fullPath, sizeof(fullPath), "%s%s%s.gif", docs,
-                     (n > 0 && docs[n - 1] == '/') ? "" : "/", s_clipGif.name);
-            ok = lobbyClipGifWriteFile(fullPath, &res);
-        }
-        msf_gif_free(res);
-        MessageArgs args = {};
-        snprintf(args.string1, sizeof(args.string1), "%s.gif", s_clipGif.name);
-        imguiMessageBoxEx(CLIP_GIF_TITLE,
-                          langGetTextFmt(ok ? STR_CLIPGIF_SAVED_IOS
-                                            : STR_CLIPGIF_SAVE_FAILED_IOS, &args),
-                          ok ? IMGUI_MSG_INFO : IMGUI_MSG_ERROR,
-                          IMGUI_MSG_OK);
-        return;
+    const char *docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+    char fullPath[FILENAME_MAX];
+    bool ok = false;
+    if (docs != NULL && docs[0] != '\0') {
+        size_t n = SDL_strlen(docs);
+        snprintf(fullPath, sizeof(fullPath), "%s%s%s.gif", docs,
+                 (n > 0 && docs[n - 1] == '/') ? "" : "/", s_clipGif.name);
+        ok = lobbyClipGifWriteFile(fullPath, &res);
     }
+    msf_gif_free(res);
+    MessageArgs args = {};
+    snprintf(args.string1, sizeof(args.string1), "%s.gif", s_clipGif.name);
+    imguiMessageBoxEx(CLIP_GIF_TITLE,
+                      langGetTextFmt(ok ? STR_CLIPGIF_SAVED_IOS
+                                        : STR_CLIPGIF_SAVE_FAILED_IOS, &args),
+                      ok ? IMGUI_MSG_INFO : IMGUI_MSG_ERROR,
+                      IMGUI_MSG_OK);
+}
+#else
+static void lobbyClipGifSave(MsfGifResult res) {
+    lobbyClipGifGalleryAdd(res.data, res.dataSize, &s_clipGif.meta,
+                           s_clipGif.name);
+    msf_gif_free(res);
+}
 #endif
-    if (uiShouldUseControllerMode()) {
-        char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
-        if (prefDir == NULL) {
-            msf_gif_free(res);
-            return;
-        }
-        char clipsDir[FILENAME_MAX];
-        snprintf(clipsDir, sizeof(clipsDir), "%sclips", prefDir);
-        SDL_CreateDirectory(clipsDir);
 
-        char fullPath[FILENAME_MAX];
-        snprintf(fullPath, sizeof(fullPath), "%s/%s.gif", clipsDir,
-                 s_clipGif.name);
-        SDL_free(prefDir);
-
-        bool ok = lobbyClipGifWriteFile(fullPath, &res);
-        msf_gif_free(res);
-        imguiMessageBoxEx(CLIP_GIF_TITLE, fullPath,
-                          ok ? IMGUI_MSG_INFO : IMGUI_MSG_ERROR,
-                          IMGUI_MSG_OK);
-        return;
-    }
-
-    /* The picker is shown and returned from immediately. Waiting here would
-     * stop the lobby's event loop, and that loop is what ticks the client
-     * transport (imguiLobbyShow), so a player choosing a folder was dropped by
-     * the server. lobbyClipGifSavePoll picks the answer up on a later frame.
-     *
-     * A second export while one is outstanding is not reachable through the UI
-     * — the picker owns the window — but if it ever were, the newer clip is
-     * released rather than overwriting the record that owns the older one. */
-    if (s_clipGifSave.req != NULL) {
-        msf_gif_free(res);
-        return;
-    }
-
-    ClipGifSaveRequest *req =
-        (ClipGifSaveRequest *)SDL_calloc(1, sizeof(*req));
-    if (req == NULL) {
-        msf_gif_free(res);
-        return;
-    }
-    SDL_SetAtomicInt(&req->refs, 2);  /* the lobby's and the callback's */
-
-    s_clipGifSave.req   = req;
-    s_clipGifSave.bytes = res;
-
-    SDL_DialogFileFilter filters[] = {
-        { "GIF Images", "gif" },
-    };
-    SDL_ShowSaveFileDialog(lobbyClipGifSaveCallback, req,
-                           sdl3DrawGetWindow(), filters, 1, NULL);
-}
-
-/* Write out a clip whose picker has been answered. Called once per frame from
- * the lobby's event loop, above whichever view is on screen, so navigating
- * away from the recap with the picker open still lands the file. */
+/* Called once per frame from the lobby's event loop, above whichever view is
+ * on screen, so a save picker opened from the gallery still writes its file
+ * when the player has navigated away from the recap. */
 void lobbyClipGifSavePoll(void) {
-    ClipGifSaveRequest *req = s_clipGifSave.req;
-    if (req == NULL || SDL_GetAtomicInt(&req->refs) != 1) {
-        return;
-    }
-
-    /* Sole owner now, so the slot reads without further synchronisation. */
-    bool ok = (req->ok != 0);
-    char path[FILENAME_MAX];
-    SDL_strlcpy(path, req->path, sizeof(path));
-    MsfGifResult bytes = s_clipGifSave.bytes;
-
-    s_clipGifSave = ClipGifPendingSave{};
-    SDL_free(req);
-
-    if (ok && !lobbyClipGifWriteFile(path, &bytes)) {
-        /* The player picked the place, so silence would be the only cue that
-         * nothing landed there. */
-        imguiMessageBoxEx(CLIP_GIF_TITLE, path, IMGUI_MSG_ERROR,
-                          IMGUI_MSG_OK);
-    }
-    msf_gif_free(bytes);
+#if BOLO_CLIP_GIF_GALLERY
+    lobbyClipGifGallerySavePoll();
+#endif
 }
 
-/* Leaving the lobby cancels a save the player has not answered: there is no
- * loop left to poll it, and a multi-megabyte clip cannot sit in a static
- * waiting for a picker whose window has gone. The bytes go back to the
- * allocator and the lobby drops its reference to the request slot, which the
- * dialog callback then frees if it has yet to answer. */
+/* Leaving the lobby lets go of the gallery's preview and of a save picker
+ * still waiting: there is no loop left to poll it. */
 void lobbyClipGifSaveAbandon(void) {
-    ClipGifSaveRequest *req = s_clipGifSave.req;
-    msf_gif_free(s_clipGifSave.bytes);
-    s_clipGifSave = ClipGifPendingSave{};
-    if (req != NULL && SDL_AtomicDecRef(&req->refs)) {
-        SDL_free(req);
-    }
+#if BOLO_CLIP_GIF_GALLERY
+    lobbyClipGifGalleryShutdown();
+#endif
 }
 
 /* Drives a capture from the recap's own frames and draws the modal over it.
  * Called once per body render, after the clip rows that arm it. */
 void lobbyClipGifRender(float s) {
+#if BOLO_CLIP_GIF_GALLERY
+    /* The gallery window, when it is open. Here because this is drawn once per
+     * recap body render, the same as the capture's modal below. */
+    lobbyClipGifGalleryRender(s);
+#endif
     if (!s_clipGif.active) {
         return;
     }

@@ -2839,3 +2839,16 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Kartan fyller skärmen, med status-, bygg- o
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=Den här enheten använder mobildata. Ett internetspel som körs över\nmobildata kommer troligen inte att fungera: mobilnät låter sällan andra\nspelare nå enheten. Med wifi är chansen mycket större.\n\nVara värd ändå?
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Dina GIF:ar
+STR_CLIPGIF_GALLERY_EMPTY=Inga GIF:ar än. Skapa en med GIF-knappen under reprisen eller GIF-knappen på ett klipp.
+STR_CLIPGIF_COPY=Kopiera till urklipp
+STR_CLIPGIF_SAVE=Spara på disk
+STR_CLIPGIF_COPIED=Kopierad.
+STR_CLIPGIF_COPY_FAILED=GIF:en kunde inte kopieras.
+STR_CLIPGIF_OPEN_FAILED=Den här GIF:en kunde inte öppnas.
+STR_CLIPGIF_MAP_FMT=Karta: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Spelare: {string1}
+STR_CLIPGIF_NO_DETAILS=Inga detaljer sparades med den här GIF:en.
+STR_CLIPGIF_LENGTH_TIP=GIF-längd i sekunder, från uppspelningspositionen.\nDra markören i slutet av den ljusa delen av tidslinjen för att ändra den också.

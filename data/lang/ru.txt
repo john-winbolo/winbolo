@@ -2837,3 +2837,16 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Карта занимает весь экр�
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=Это устройство использует мобильные данные. Интернет-игра, созданная\nчерез мобильные данные, скорее всего, не заработает: мобильные сети редко\nпозволяют другим игрокам подключиться к устройству. Через Wi-Fi шансов\nнамного больше.\n\nВсё равно создать игру?
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Ваши GIF
+STR_CLIPGIF_GALLERY_EMPTY=GIF пока нет. Создайте его кнопкой GIF под повтором или кнопкой GIF у клипа.
+STR_CLIPGIF_COPY=Копировать в буфер обмена
+STR_CLIPGIF_SAVE=Сохранить на диск
+STR_CLIPGIF_COPIED=Скопировано.
+STR_CLIPGIF_COPY_FAILED=Не удалось скопировать GIF.
+STR_CLIPGIF_OPEN_FAILED=Не удалось открыть этот GIF.
+STR_CLIPGIF_MAP_FMT=Карта: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Игроки: {string1}
+STR_CLIPGIF_NO_DETAILS=Для этого GIF не сохранено сведений.
+STR_CLIPGIF_LENGTH_TIP=Длина GIF в секундах от точки воспроизведения.\nЕё также можно изменить, перетащив метку в конце светлой части шкалы времени.
