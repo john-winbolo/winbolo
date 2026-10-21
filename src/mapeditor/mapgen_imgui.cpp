@@ -851,6 +851,13 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
             static const langid s_yardNames[3] = {
                 STR_MAPGEN_YARD_NONE, STR_MAPGEN_YARD_BUILDING, STR_MAPGEN_YARD_FOREST,
             };
+            static const langid s_wallsNames[2] = {
+                STR_MAPGEN_WALLS_NONE, STR_MAPGEN_WALLS_BUILDING,
+            };
+            static const langid s_middleNames[4] = {
+                STR_MAPGEN_MIDDLE_OPEN, STR_MAPGEN_MIDDLE_PIECES,
+                STR_MAPGEN_MIDDLE_CLUMP, STR_MAPGEN_MIDDLE_BOTH,
+            };
             if (styleLeverShown(cfg, MAPGEN_KSTYLE_ROADS)) {
                 styleCombo(cfg, MAPGEN_KSTYLE_ROADS, STR_MAPGEN_STYLE_ROADS,
                            STR_MAPGEN_STYLE_ROADS_TIP, s_roadNames);
@@ -883,6 +890,16 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
                 styleCombo(cfg, MAPGEN_KSTYLE_YARD, STR_MAPGEN_STYLE_YARD,
                            STR_MAPGEN_STYLE_YARD_TIP, s_yardNames);
                 lockButton("lk_syard", &cfg->locks, MAPGEN_LOCK_KS_YARD);
+            }
+            if (styleLeverShown(cfg, MAPGEN_KSTYLE_WALLS)) {
+                styleCombo(cfg, MAPGEN_KSTYLE_WALLS, STR_MAPGEN_STYLE_WALLS,
+                           STR_MAPGEN_STYLE_WALLS_TIP, s_wallsNames);
+                lockButton("lk_swalls", &cfg->locks, MAPGEN_LOCK_KS_WALLS);
+            }
+            if (styleLeverShown(cfg, MAPGEN_KSTYLE_MIDDLE)) {
+                styleCombo(cfg, MAPGEN_KSTYLE_MIDDLE, STR_MAPGEN_STYLE_MIDDLE,
+                           STR_MAPGEN_STYLE_MIDDLE_TIP, s_middleNames);
+                lockButton("lk_smiddle", &cfg->locks, MAPGEN_LOCK_KS_MIDDLE);
             }
         }
 

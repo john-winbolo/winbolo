@@ -48,6 +48,8 @@ BOLO_STATIC_ASSERT(MAPGEN_KSTYLE_CUT == MAKER_STYLE_CUT, maker_style_cut);
 BOLO_STATIC_ASSERT(MAPGEN_KSTYLE_CORE == MAKER_STYLE_CORE, maker_style_core);
 BOLO_STATIC_ASSERT(MAPGEN_KSTYLE_RIM == MAKER_STYLE_RIM, maker_style_rim);
 BOLO_STATIC_ASSERT(MAPGEN_KSTYLE_YARD == MAKER_STYLE_YARD, maker_style_yard);
+BOLO_STATIC_ASSERT(MAPGEN_KSTYLE_WALLS == MAKER_STYLE_WALLS, maker_style_walls);
+BOLO_STATIC_ASSERT(MAPGEN_KSTYLE_MIDDLE == MAKER_STYLE_MIDDLE, maker_style_middle);
 BOLO_STATIC_ASSERT(MAPGEN_KSTYLE_COUNT == MAKER_STYLE_COUNT, maker_style_count);
 BOLO_STATIC_ASSERT(MAPGEN_ROADS_AXES == MAKER_ROADS_AXES, maker_roads_axes);
 BOLO_STATIC_ASSERT(MAPGEN_ROADS_DIAG == MAKER_ROADS_DIAG, maker_roads_diag);
@@ -349,20 +351,21 @@ static void configToSeedBase(const MapGenConfig *cfg, char *out, size_t outLen) 
  *
  * A 'K' seed is 27 characters and its size suffix takes 3 more, so it
  * has no room for the style levers. A seed with a lever set starts
- * with 'S' and holds 130 bits in 26 base 32 characters (0-9 and A-V,
+ * with 'S' and holds 135 bits in 27 base 32 characters (0-9 and A-V,
  * the "extended hex" alphabet; it has no Z, so the size suffix parser
  * never finds one):
  *   the 'K' fields in the same order (97 bits), then size(8, 0 for
- *   Full), roads(3), shape(8), cut(8), core(2), rim(2), yard(2).
+ *   Full), roads(3), shape(8), cut(8), core(2), rim(2), yard(2),
+ *   walls(2), middle(3).
  * A seed with every lever at 0 is still written as 'K', so the seeds
  * of every map made before the levers do not change.
  *---------------------------------------------------------*/
 
-#define STYLE_SEED_BITS  130
-#define STYLE_SEED_CHARS 26   /* 5 bits each */
+#define STYLE_SEED_BITS  135
+#define STYLE_SEED_CHARS 27   /* 5 bits each */
 #define STYLE_SEED_BYTES 17
 
-static const int kStyleBits[MAPGEN_KSTYLE_COUNT] = { 3, 8, 8, 2, 2, 2 };
+static const int kStyleBits[MAPGEN_KSTYLE_COUNT] = { 3, 8, 8, 2, 2, 2, 2, 3 };
 
 static bool makerAnyStyle(const MapGenConfig *cfg) {
     for (int i = 0; i < MAPGEN_KSTYLE_COUNT; i++) {
