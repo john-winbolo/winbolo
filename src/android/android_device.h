@@ -22,10 +22,32 @@
 #define ANDROID_DEVICE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* The directory main_android.c extracts the asset trees into, under the
+   internal storage directory, and makes the working directory. */
+#define ANDROID_APP_DIR "app"
+
+/*********************************************************
+*NAME:          androidDeviceAppPath
+*PURPOSE:
+*  The absolute path of a shipped file: rel, a path under
+*  the data or brain tree such as data/fonts/X.ttf, under
+*  ANDROID_APP_DIR. For opens that go through SDL
+*  (SDL_IOFromFile, so TTF_OpenFont and the rest), which
+*  resolves a relative path against the internal storage
+*  root, not the working directory, and so misses the
+*  copy and reads the APK's asset instead; that asset is
+*  deflated, and a reader that seeks, as FreeType does,
+*  inflates it again at every seek. Returns false when
+*  there is no internal storage path or the result does
+*  not fit.
+*********************************************************/
+bool androidDeviceAppPath(const char *rel, char *out, size_t cap);
 
 /*********************************************************
 *NAME:          androidDeviceInit

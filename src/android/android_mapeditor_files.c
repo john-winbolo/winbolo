@@ -25,10 +25,7 @@
 #include <string.h>
 
 #include "../mapeditor/mapeditor_mobile_files_platform.h"
-
-/* The directory main_android.c extracts the asset trees into, under the
-   internal storage directory, and makes the working directory. */
-#define ANDROID_APP_DIR "app"
+#include "android_device.h"
 
 bool meMobileFilesPlatformUserDir(char *out, size_t cap) {
   char *pref = SDL_GetPrefPath("WinBolo", "WinBolo");
@@ -45,8 +42,5 @@ bool meMobileFilesPlatformUserDir(char *out, size_t cap) {
 }
 
 bool meMobileFilesPlatformBundledDir(char *out, size_t cap) {
-  const char *base = SDL_GetAndroidInternalStoragePath();
-  if (base == NULL || base[0] == '\0' || cap == 0) return false;
-  snprintf(out, cap, "%s/%s/data/maps", base, ANDROID_APP_DIR);
-  return true;
+  return androidDeviceAppPath("data/maps", out, cap);
 }

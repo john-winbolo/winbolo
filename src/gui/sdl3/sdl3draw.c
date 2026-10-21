@@ -81,6 +81,9 @@
 #include "client_render.h"
 #include "macos_pinch.h"
 #include "safe_insets.h"     /* the black strips beside the touch layout */
+#if defined(__ANDROID__)
+#include "../../android/android_device.h"  /* androidDeviceAppPath: font files */
+#endif
 #include "../lang.h"
 #if defined(WINBOLO_VOICE)
 #include "../voice.h"        /* own mute state and level for the mic indicator */
@@ -1746,8 +1749,18 @@ static void inGameFontPaths(const char **outPrimary, const char **outFallbackK) 
   *outPrimary   = sarasaBuf;
   *outFallbackK = "/data/fonts/SarasaMonoSlabK-Regular.ttf";
 #elif defined(__ANDROID__)
-  *outPrimary   = sarasaRel;
-  *outFallbackK = sarasaKRel;
+  /* Absolute, so SDL opens the extracted file and not the APK's deflated
+     asset, which FreeType's seeking makes very slow (androidDeviceAppPath). */
+  static char sarasaBuf[1024];
+  static char sarasaKBuf[1024];
+  if (!androidDeviceAppPath(sarasaRel, sarasaBuf, sizeof(sarasaBuf))) {
+    SDL_snprintf(sarasaBuf, sizeof(sarasaBuf), "%s", sarasaRel);
+  }
+  if (!androidDeviceAppPath(sarasaKRel, sarasaKBuf, sizeof(sarasaKBuf))) {
+    SDL_snprintf(sarasaKBuf, sizeof(sarasaKBuf), "%s", sarasaKRel);
+  }
+  *outPrimary   = sarasaBuf;
+  *outFallbackK = sarasaKBuf;
 #else
   const char *base = SDL_GetBasePath();
   static char sarasaBuf[1024];
@@ -1768,6 +1781,7 @@ static void openInGameFonts(void) {
   const char *sarasaPath  = NULL;
   const char *sarasaKPath = NULL;
   inGameFontPaths(&sarasaPath, &sarasaKPath);
+  Uint64 started = SDL_GetTicks();
 
   gFontMsg   = TTF_OpenFont(sarasaPath, 13 * gZoomFactor);
   gFontKD    = TTF_OpenFont(sarasaPath, 13 * gZoomFactor);
@@ -1793,6 +1807,9 @@ static void openInGameFonts(void) {
               sarasaKPath);
     }
   }
+
+  WB_LOG_INFO(WB_LOG_CAT_ASSET, "openInGameFonts: opened in %llums",
+              (unsigned long long)(SDL_GetTicks() - started));
 
   /* Push the new font handles into sdl3draw_status's private copies
      (covers both the initial sdl3DrawSetup path and the
@@ -1831,6 +1848,7 @@ static TTF_Font *tabletNewswireFont(int px) {
   if (px < 1) return NULL;
   if (gFontNewswireTouch && gFontNewswireTouchPx == px) return gFontNewswireTouch;
   closeTabletNewswireFont();
+  Uint64 started = SDL_GetTicks();
   const char *sarasaPath  = NULL;
   const char *sarasaKPath = NULL;
   inGameFontPaths(&sarasaPath, &sarasaKPath);
@@ -1843,6 +1861,8 @@ static TTF_Font *tabletNewswireFont(int px) {
       TTF_AddFallbackFont(gFontNewswireTouch, gFallbackFontNewswireTouch);
     }
   }
+  WB_LOG_INFO(WB_LOG_CAT_ASSET, "touch newswire font opened at %dpx in %llums",
+              px, (unsigned long long)(SDL_GetTicks() - started));
   return gFontNewswireTouch;
 }
 
@@ -1861,12 +1881,15 @@ void sdl3DrawSetTabletNewswire(float x, float y, float w, float edge,
 /* The touch layout's newswire, on the slide every hiding newswire shares. */
 static void tabletNewswireDraw(void) {
   if (!gTabletNewswireSet) return;
+  /* Open the face before the slide check, so the two font files are read
+     on the game's first frame and not when the first message slides the
+     strip up: with auto-hide on, the strip is off screen until then. */
+  TTF_Font *font = tabletNewswireFont(gTabletNewswirePx);
   float slide = sdl3DrawNewswireSlideStep();
   if (slide >= 1.0f) return;
-  sdl3DrawNewswireStrip(tabletNewswireFont(gTabletNewswirePx),
-                        gTabletNewswireX, gTabletNewswireY, gTabletNewswireW,
-                        gTabletNewswireEdge, slide, gTabletNewswireText,
-                        gTabletNewswireBack);
+  sdl3DrawNewswireStrip(font, gTabletNewswireX, gTabletNewswireY,
+                        gTabletNewswireW, gTabletNewswireEdge, slide,
+                        gTabletNewswireText, gTabletNewswireBack);
 }
 
 bool sdl3DrawSetup(int zoomFactor) {

@@ -482,8 +482,9 @@ static void windowRunGameTick(ClientSim *cs) {
  * makes the copy again and one whose assets did not leaves it alone. The
  * rest of the internal storage directory is SDL's preferences path:
  * WinBolo.json, the saved maps and the user's own brains live there.
+ * ANDROID_APP_DIR itself is in android_device.h, with the
+ * absolute-path helper the shared code opens files by.
  * ------------------------------------------------------- */
-#define ANDROID_APP_DIR        "app"
 #define ANDROID_ASSET_MANIFEST "asset_manifest.txt"
 #define ANDROID_ASSET_STAMP    "assets_stamp.txt"
 

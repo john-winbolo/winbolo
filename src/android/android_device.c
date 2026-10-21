@@ -94,6 +94,14 @@ bool androidDeviceIsTablet(void) {
   return s_isTablet;
 }
 
+bool androidDeviceAppPath(const char *rel, char *out, size_t cap) {
+  const char *base = SDL_GetAndroidInternalStoragePath();
+  if (base == NULL || base[0] == '\0' || rel == NULL || out == NULL || cap == 0) {
+    return false;
+  }
+  return SDL_snprintf(out, cap, "%s/%s/%s", base, ANDROID_APP_DIR, rel) < (int)cap;
+}
+
 int androidDeviceKeyboardHeight(void) {
   JNIEnv *env;
   jint height;
