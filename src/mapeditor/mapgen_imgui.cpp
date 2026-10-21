@@ -218,12 +218,17 @@ static uint64_t panelLocks(int genType) {
     }
 }
 
-/* Every lock that has a button for some generator type. Other bits
- * (generator, seed, size, bases, pillboxes, starts, preset, symmetry,
- * style, maze algorithm and terrains) have no button, so they are
- * cleared and no code reads them. */
+/* The locks of the Map Maker style panel: one for each style lever. */
+static const uint64_t kStyleLocks =
+    MAPGEN_LOCK_KS_FIRST * ((1ull << MAPGEN_KSTYLE_COUNT) - 1);
+
+/* Every lock that has a button for some generator type, and the locks
+ * of the style panel. Other bits (generator, seed, size, bases,
+ * pillboxes, starts, preset, symmetry, style, maze algorithm and
+ * terrains) have no button, so they are cleared and no code reads
+ * them. */
 static uint64_t allPanelLocks(void) {
-    uint64_t m = 0;
+    uint64_t m = kStyleLocks;
     for (int t = 0; t < MAPGEN_TYPE_COUNT; t++) m |= panelLocks(t);
     return m;
 }
@@ -282,7 +287,8 @@ static void nameVariedOutline(MapGenConfig *cfg) {
 
 /* After a preset is picked: put back the locked panel values. The
  * preset always sets the symmetry, size, bases, pillboxes and
- * starts. */
+ * starts, and sets each style lever to From seed. A locked style
+ * value comes back only if the new preset allows it. */
 static void restoreLockedMakerParams(MapGenConfig *cfg,
                                      const MapGenConfig *saved) {
     uint64_t lk = cfg->locks;
@@ -296,6 +302,12 @@ static void restoreLockedMakerParams(MapGenConfig *cfg,
     if (lk & MAPGEN_LOCK_K_ISLANDS)  k.islands = s.islands;
     if (lk & MAPGEN_LOCK_K_MINES)    k.mineDensityPct = s.mineDensityPct;
     if (lk & MAPGEN_LOCK_K_DETAIL)   k.detail = s.detail;
+    for (int i = 0; i < MAPGEN_KSTYLE_COUNT; i++) {
+        if ((lk & (MAPGEN_LOCK_KS_FIRST << i)) &&
+            mapGenStyleAllowed(k.preset, i, s.style[i])) {
+            k.style[i] = s.style[i];
+        }
+    }
 }
 
 /* --- Randomize --- */
@@ -412,6 +424,109 @@ static void randomizePanel(MapGenConfig *cfg) {
         }
         if (!(lk & MAPGEN_LOCK_K_MINES))    k.mineDensityPct = bandPick(&rng, b.mineDensityPct, 1, 0, 5);
         if (!(lk & MAPGEN_LOCK_K_DETAIL))   k.detail = bandPick(&rng, b.detail, 1, 0, 10);
+    }
+}
+
+/* --- Style panel (Map Maker) --- */
+
+/* True if the style panel shows the lever: the preset varies it, and
+ * with the current values it can change the map. */
+static bool styleLeverShown(const MapGenConfig *cfg, int lever) {
+    const auto &k = cfg->params.maker;
+    if (!mapGenStyleRange(k.preset, lever, nullptr, nullptr)) return false;
+    if (lever == MAPGEN_KSTYLE_SHAPE) {
+        /* Quarter turns make the land square. */
+        return k.symmetry != MAPGEN_MSYM_ROTATE4;
+    }
+    if (lever == MAPGEN_KSTYLE_CUT) {
+        /* Only the octagon has cut corners. */
+        if (k.outline == MAPGEN_OUTLINE_OCTAGON) return true;
+        return k.outline == MAPGEN_OUTLINE_VARIED &&
+               (mapGenPresetOutlineSet(k.preset) & (1 << MAPGEN_OUTLINE_OCTAGON)) != 0;
+    }
+    return true;
+}
+
+/* Randomize style: each unlocked lever that the panel shows takes one
+ * of the values the preset allows (never From seed). The seed and
+ * every other value stay. */
+static void randomizeStyle(MapGenConfig *cfg) {
+    uint32_t rng = uiRngSeed();
+    auto &k = cfg->params.maker;
+    for (int lever = 0; lever < MAPGEN_KSTYLE_COUNT; lever++) {
+        int lo, hi, count = 0, pick;
+        if (cfg->locks & (MAPGEN_LOCK_KS_FIRST << lever)) continue;
+        if (!styleLeverShown(cfg, lever)) continue;
+        if (!mapGenStyleRange(k.preset, lever, &lo, &hi)) continue;
+        for (int v = lo; v <= hi; v++) {
+            if (mapGenStyleAllowed(k.preset, lever, v)) count++;
+        }
+        if (count == 0) continue;
+        pick = (int)(mapGenXorshift32(&rng) % (uint32_t)count);
+        for (int v = lo; v <= hi; v++) {
+            if (!mapGenStyleAllowed(k.preset, lever, v)) continue;
+            if (pick-- == 0) {
+                k.style[lever] = v;
+                break;
+            }
+        }
+    }
+}
+
+/* A style lever with named values: From seed, then each value the
+ * preset allows. names[v - 1] is the name of value v. */
+static void styleCombo(MapGenConfig *cfg, int lever, langid labelId,
+                       langid tipId, const langid *names) {
+    auto &k = cfg->params.maker;
+    int lo, hi;
+    if (!mapGenStyleRange(k.preset, lever, &lo, &hi)) return;
+    int *v = &k.style[lever];
+    const char *fromSeed = langGetText(STR_MAPGEN_STYLE_FROM_SEED);
+    const char *preview = (*v >= lo && *v <= hi) ? langGetText(names[*v - 1]) : fromSeed;
+    if (ImGui::BeginCombo(langGetText(labelId), preview)) {
+        if (ImGui::Selectable(fromSeed, *v == 0)) *v = 0;
+        if (*v == 0) ImGui::SetItemDefaultFocus();
+        for (int i = lo; i <= hi; i++) {
+            if (!mapGenStyleAllowed(k.preset, lever, i)) continue;
+            bool selected = (*v == i);
+            ImGui::PushID(i);
+            if (ImGui::Selectable(langGetText(names[i - 1]), selected)) *v = i;
+            if (selected) ImGui::SetItemDefaultFocus();
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", langGetText(tipId));
+    }
+}
+
+/* A style lever with a range of whole numbers. The stop below the
+ * lowest value stands for From seed, the same as the Size slider's
+ * Full stop. */
+static void styleSlider(MapGenConfig *cfg, int lever, langid labelId, langid tipId) {
+    auto &k = cfg->params.maker;
+    int lo, hi;
+    if (!mapGenStyleRange(k.preset, lever, &lo, &hi)) return;
+    int v = (k.style[lever] == 0) ? lo - 1 : k.style[lever];
+    char fmt[96];
+    if (v < lo) {
+        /* The name is shown as the slider's format: double any '%'. */
+        const char *t = langGetText(STR_MAPGEN_STYLE_FROM_SEED);
+        size_t n = 0;
+        for (; *t && n + 2 < sizeof(fmt); t++) {
+            if (*t == '%') fmt[n++] = '%';
+            fmt[n++] = *t;
+        }
+        fmt[n] = '\0';
+    } else {
+        SDL_snprintf(fmt, sizeof(fmt), "%%d");
+    }
+    if (ImGui::SliderInt(langGetText(labelId), &v, lo - 1, hi, fmt)) {
+        k.style[lever] = (v < lo) ? 0 : v;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", langGetText(tipId));
     }
 }
 
@@ -652,7 +767,7 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     pushControlWidth();
 
     /* A title line so it is clear that the box holds what Randomize
-     * changes. */
+     * values changes. */
     ImGui::TextUnformatted(langGetText(STR_MAPGEN_PANEL_TITLE));
 
     const uint64_t typeLocks = panelLocks(cfg->genType);
@@ -891,6 +1006,123 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     /* Matched with the pushControlWidth inside the panel. */
     ImGui::PopItemWidth();
     ImGui::EndChild();
+
+    /* ---- The style panel, for Map Maker only: the choices the seed
+     * makes for each map of the preset. Each one is From seed or a
+     * value the preset allows. Randomize style, Lock all and Unlock
+     * all act only on the controls in it. ---- */
+    if (cfg->genType == MAPGEN_MAKER) {
+        auto &k = cfg->params.maker;
+        bool anyShown = false;
+        /* A lever the panel does not show cannot change the map: keep
+         * it at From seed, so that the seed does not hold it. */
+        for (int lever = 0; lever < MAPGEN_KSTYLE_COUNT; lever++) {
+            if (styleLeverShown(cfg, lever)) {
+                anyShown = true;
+            } else {
+                k.style[lever] = 0;
+            }
+        }
+
+        ImGui::Spacing();
+        {
+            const ImGuiStyle &st = ImGui::GetStyle();
+            ImVec4 bg = mixColour(st.Colors[ImGuiCol_WindowBg], st.Colors[ImGuiCol_Header], 0.15f);
+            bg.w = 1.0f;
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, bg);
+            ImGui::PushStyleColor(ImGuiCol_Border, st.Colors[ImGuiCol_Header]);
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 8.0f));
+        }
+        ImGui::BeginChild("##mapgen_style", ImVec2(0.0f, 0.0f),
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY |
+                              ImGuiChildFlags_AlwaysUseWindowPadding |
+                              ImGuiChildFlags_NavFlattened,
+                          ImGuiWindowFlags_NoScrollbar |
+                              ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::PopStyleVar(3);
+        ImGui::PopStyleColor(2);
+
+        pushControlWidth();
+        {
+            MessageArgs args = {};
+            SDL_strlcpy(args.string1, presetLabel(k.preset), sizeof(args.string1));
+            ImGui::TextUnformatted(langGetTextFmt(STR_MAPGEN_STYLE_TITLE, &args));
+        }
+
+        if (!anyShown) {
+            ImGui::TextWrapped("%s", langGetText(STR_MAPGEN_STYLE_NONE));
+        } else {
+            if (ImGui::Button(langGetText(STR_MAPGEN_STYLE_RANDOMIZE))) {
+                randomizeStyle(cfg);
+                mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
+                generated = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", langGetText(STR_MAPGEN_STYLE_RANDOMIZE_TIP));
+            }
+            sameLineIfFits(langGetText(STR_MAPGEN_LOCK_ALL));
+            if (ImGui::Button(langGetText(STR_MAPGEN_LOCK_ALL))) {
+                cfg->locks |= kStyleLocks;
+            }
+            sameLineIfFits(langGetText(STR_MAPGEN_UNLOCK_ALL));
+            if (ImGui::Button(langGetText(STR_MAPGEN_UNLOCK_ALL))) {
+                cfg->locks &= ~kStyleLocks;
+            }
+
+            ImGui::Separator();
+
+            static const langid s_roadNames[MAPGEN_ROADS_COUNT] = {
+                STR_MAPGEN_ROADS_AXES, STR_MAPGEN_ROADS_DIAG,
+                STR_MAPGEN_ROADS_AXES_DIAG, STR_MAPGEN_ROADS_AXES_RING,
+                STR_MAPGEN_ROADS_DIAG_RING, STR_MAPGEN_ROADS_RING,
+            };
+            static const langid s_coreNames[2] = {
+                STR_MAPEDIT_TERR_BUILDING, STR_MAPEDIT_TERR_HALFBUILDING,
+            };
+            static const langid s_rimNames[2] = {
+                STR_MAPGEN_RIM_FOREST, STR_MAPGEN_RIM_GRASS,
+            };
+            static const langid s_yardNames[3] = {
+                STR_MAPGEN_YARD_NONE, STR_MAPGEN_YARD_BUILDING, STR_MAPGEN_YARD_FOREST,
+            };
+            if (styleLeverShown(cfg, MAPGEN_KSTYLE_ROADS)) {
+                styleCombo(cfg, MAPGEN_KSTYLE_ROADS, STR_MAPGEN_STYLE_ROADS,
+                           STR_MAPGEN_STYLE_ROADS_TIP, s_roadNames);
+                lockButton("lk_sroads", &cfg->locks, MAPGEN_LOCK_KS_ROADS);
+            }
+            if (styleLeverShown(cfg, MAPGEN_KSTYLE_SHAPE)) {
+                styleSlider(cfg, MAPGEN_KSTYLE_SHAPE, STR_MAPGEN_STYLE_SHAPE,
+                            STR_MAPGEN_STYLE_SHAPE_TIP);
+                lockButton("lk_sshape", &cfg->locks, MAPGEN_LOCK_KS_SHAPE);
+            }
+            if (styleLeverShown(cfg, MAPGEN_KSTYLE_CUT)) {
+                styleSlider(cfg, MAPGEN_KSTYLE_CUT, STR_MAPGEN_STYLE_CUT,
+                            STR_MAPGEN_STYLE_CUT_TIP);
+                lockButton("lk_scut", &cfg->locks, MAPGEN_LOCK_KS_CUT);
+            }
+            if (styleLeverShown(cfg, MAPGEN_KSTYLE_CORE)) {
+                styleCombo(cfg, MAPGEN_KSTYLE_CORE, STR_MAPGEN_STYLE_CORE,
+                           STR_MAPGEN_STYLE_CORE_TIP, s_coreNames);
+                lockButton("lk_score", &cfg->locks, MAPGEN_LOCK_KS_CORE);
+            }
+            if (styleLeverShown(cfg, MAPGEN_KSTYLE_RIM)) {
+                styleCombo(cfg, MAPGEN_KSTYLE_RIM, STR_MAPGEN_STYLE_RIM,
+                           STR_MAPGEN_STYLE_RIM_TIP, s_rimNames);
+                lockButton("lk_srim", &cfg->locks, MAPGEN_LOCK_KS_RIM);
+            }
+            if (styleLeverShown(cfg, MAPGEN_KSTYLE_YARD)) {
+                styleCombo(cfg, MAPGEN_KSTYLE_YARD, STR_MAPGEN_STYLE_YARD,
+                           STR_MAPGEN_STYLE_YARD_TIP, s_yardNames);
+                lockButton("lk_syard", &cfg->locks, MAPGEN_LOCK_KS_YARD);
+            }
+        }
+
+        /* Matched with the pushControlWidth inside the style panel. */
+        ImGui::PopItemWidth();
+        ImGui::EndChild();
+    }
 
     /* Detect parameter changes (ignore lock-only changes) */
     if (!generated) {
