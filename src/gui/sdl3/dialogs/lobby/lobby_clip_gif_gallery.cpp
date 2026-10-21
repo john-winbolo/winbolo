@@ -88,9 +88,11 @@ typedef struct ClipGifPreview {
  * gallery and the worker. The worker writes the results and then drops its
  * count, so the count falling to 1 tells the gallery the results are there.
  * When the gallery lets go first (the window closed, or the lobby shut
- * down), the worker is the last holder and frees the job and its frames. */
+ * down), it sets stop, so the worker ends before the next frame, and the
+ * worker is the last holder and frees the job and its frames. */
 typedef struct ClipGifDecodeJob {
     SDL_AtomicInt refs;
+    SDL_AtomicInt stop;                          /* 1: nobody wants the result */
     char          path[FILENAME_MAX];            /* the file the worker reads */
     char          file[CLIP_GIF_META_FILE_LEN];  /* the item it is for */
     /* Written by the worker before it drops its count. */
@@ -127,7 +129,8 @@ typedef struct ClipGifGalleryState {
     ClipGifPreview preview;
     /* The decode in progress, or null. At most one runs at a time: a new
      * selection waits for it to finish and then starts its own, so the
-     * memory held is never more than one decode and one preview. */
+     * memory held is never more than one decode and one preview. A decode
+     * the gallery let go of still counts (see s_galDecodesRunning). */
     ClipGifDecodeJob *job = nullptr;
     /* The item the selection last moved to, and when, for
      * GALLERY_DECODE_DELAY_MS. */
@@ -214,6 +217,13 @@ static void galleryFreeItems(void) {
 
 /* ── Decoding the preview ───────────────────────────────────────── */
 
+/* The workers that have not yet ended, including one whose job the gallery
+ * let go of when the window closed or the lobby shut down. Outside s_gal so
+ * the shutdown's reset does not clear it. A new decode starts only at 0, so
+ * a window opened again waits for the old worker (told to stop, so it ends
+ * within one frame) and two decodes never run at the same time. */
+static SDL_AtomicInt s_galDecodesRunning;
+
 static void galleryJobFree(ClipGifDecodeJob *job) {
     if (job->pixels != nullptr) {
         stbi_image_free(job->pixels);
@@ -231,12 +241,17 @@ static void galleryJobRelease(ClipGifDecodeJob *job) {
     }
 }
 
+/* The decode's stop function: true once the gallery has let go of the job. */
+static int galleryJobStopped(void *user) {
+    return SDL_GetAtomicInt(&((ClipGifDecodeJob *)user)->stop) != 0;
+}
+
 /* The worker: reads the file and decodes it within the preview's memory
- * limit. Touches only the job. */
+ * limit. Touches only the job (and s_galDecodesRunning). */
 static int SDLCALL galleryDecodeThread(void *userdata) {
     ClipGifDecodeJob *job = (ClipGifDecodeJob *)userdata;
     size_t len = 0;
-    void *data = SDL_LoadFile(job->path, &len);
+    void *data = galleryJobStopped(job) ? NULL : SDL_LoadFile(job->path, &len);
     if (data != NULL && len > (size_t)INT_MAX) {
         job->tooLarge = true;  /* stb takes an int length */
     } else if (data != NULL && len > 0) {
@@ -244,10 +259,12 @@ static int SDLCALL galleryDecodeThread(void *userdata) {
         job->pixels = stbiLoadGifCapped((const stbi_uc *)data, (int)len,
                                         CLIP_GIF_PREVIEW_MAX_BYTES,
                                         &job->delays, &job->w, &job->h,
-                                        &job->frames, &tooLarge);
+                                        &job->frames, &tooLarge,
+                                        galleryJobStopped, job);
         job->tooLarge = (tooLarge != 0);
     }
     SDL_free(data);
+    SDL_AtomicDecRef(&s_galDecodesRunning);
     /* Dropped last: after this the job may already be freed. */
     galleryJobRelease(job);
     return 0;
@@ -270,6 +287,7 @@ static void galleryStartDecode(const ClipGifMeta *item) {
     SDL_strlcpy(job->file, item->gifFile, sizeof(job->file));
     SDL_SetAtomicInt(&job->refs, 2);  /* the gallery's and the worker's */
     s_gal.job = job;
+    SDL_AtomicIncRef(&s_galDecodesRunning);
     SDL_Thread *thread =
         SDL_CreateThread(galleryDecodeThread, "clipgifdecode", job);
     if (thread != NULL) {
@@ -338,8 +356,8 @@ static void galleryPreviewTake(ClipGifDecodeJob *job) {
 }
 
 /* Each frame, for the selected item: takes a decode that has finished, and
- * starts the item's own once no decode is running and the item has stayed
- * selected for GALLERY_DECODE_DELAY_MS. */
+ * starts the item's own once no decode is running (not even one the gallery
+ * let go of) and the item has stayed selected for GALLERY_DECODE_DELAY_MS. */
 static void galleryPreviewUpdate(const ClipGifMeta *item) {
     ClipGifDecodeJob *job = s_gal.job;
     if (job != nullptr && SDL_GetAtomicInt(&job->refs) == 1) {
@@ -360,6 +378,7 @@ static void galleryPreviewUpdate(const ClipGifMeta *item) {
         return;
     }
     if (s_gal.job != nullptr ||
+        SDL_GetAtomicInt(&s_galDecodesRunning) != 0 ||
         SDL_strcmp(s_gal.preview.file, item->gifFile) == 0) {
         return;
     }
@@ -368,9 +387,12 @@ static void galleryPreviewUpdate(const ClipGifMeta *item) {
     }
 }
 
-/* Lets go of the decode in progress, if any; the worker frees it when it
- * finishes. */
+/* Lets go of the decode in progress, if any, and tells its worker to stop
+ * before its next frame; the worker frees the job when it ends. */
 static void galleryDropJob(void) {
+    if (s_gal.job != nullptr) {
+        SDL_SetAtomicInt(&s_gal.job->stop, 1);
+    }
     galleryJobRelease(s_gal.job);
     s_gal.job = nullptr;
     s_gal.waitFile[0] = '\0';
@@ -761,7 +783,8 @@ void lobbyClipGifGalleryRender(float s) {
 
     if (!open) {
         /* Closing lets go of the decoded frames, the texture and a decode
-         * still running (its worker frees it when done); the list is read
+         * still running (its worker stops before its next frame and frees
+         * the job); the list is read
          * again the next time the window opens. */
         s_gal.open = false;
         galleryPreviewFree();

@@ -543,6 +543,65 @@ static size_t makeGif(unsigned char *buf, size_t cap, int w, int h, int frames,
     return n;
 }
 
+/* A 4 x 4 GIF of four 1 x 1 frames on a 4-colour table (black, white, red,
+ * blue) that proves dispose mode 3 restores the frame two back:
+ *   frame 0: black at 0,0 (dispose 0)
+ *   frame 1: white at 0,0 (dispose 2: put back the background, black)
+ *   frame 2: red at 0,0   (dispose 3: put back the frame before, frame 1)
+ *   frame 3: blue at 1,1
+ * Before frame 3, pixel 0,0 is restored from frame 1, so it is white. Mode
+ * 2 would make it black (the background), no disposal would leave it red,
+ * and a read from outside the block would give whatever is there. */
+static size_t makeDisposeGif(unsigned char *buf, size_t cap) {
+    static const unsigned char head[] = {
+        'G', 'I', 'F', '8', '9', 'a', 4, 0, 4, 0,
+        0x81, 0, 0,  /* a 4-colour global table, background 0 */
+        0, 0, 0,  255, 255, 255,  255, 0, 0,  0, 0, 255 };
+    /* Per frame: dispose flags, x, y, and the LZW byte for the colour. With
+     * a code size of 2 the codes are 3 bits, packed low bit first: clear (4),
+     * the colour c, end (5) is 4 | c << 3 | 5 << 6, which is 0x144 + 8 * c,
+     * so the bytes are 0x44 + 8 * c and 0x01. */
+    static const unsigned char frame[4][4] = {
+        { 0x00, 0, 0, 0x44 },   /* black */
+        { 0x08, 0, 0, 0x4C },   /* white, dispose 2 */
+        { 0x0C, 0, 0, 0x54 },   /* red, dispose 3 */
+        { 0x00, 1, 1, 0x5C } }; /* blue at 1,1 */
+    size_t n = 0;
+    if (cap < sizeof(head) + 4 * 23 + 1) {
+        return 0;
+    }
+    memcpy(buf, head, sizeof(head));
+    n = sizeof(head);
+    for (int i = 0; i < 4; i++) {
+        const unsigned char gce[] = { 0x21, 0xF9, 4, frame[i][0], 10, 0, 0, 0 };
+        const unsigned char image[] = {
+            0x2C, frame[i][1], 0, frame[i][2], 0, 1, 0, 1, 0, 0,
+            0x02, 0x02, frame[i][3], 0x01, 0x00 };
+        memcpy(buf + n, gce, sizeof(gce));
+        n += sizeof(gce);
+        memcpy(buf + n, image, sizeof(image));
+        n += sizeof(image);
+    }
+    buf[n++] = 0x3B;
+    return n;
+}
+
+/* A stop function that says stop once it has been asked limit times. */
+typedef struct StopCount {
+    int calls;
+    int limit;
+} StopCount;
+
+static int stopAfter(void *user) {
+    StopCount *c = (StopCount *)user;
+    c->calls++;
+    return c->calls > c->limit;
+}
+
+static int pixelIs(const stbi_uc *p, int r, int g, int b, int a) {
+    return p[0] == r && p[1] == g && p[2] == b && p[3] == a;
+}
+
 int run_clip_gif_preview_cap(void) {
     int fails = 0;
 
@@ -571,11 +630,12 @@ int run_clip_gif_preview_cap(void) {
     int x = 0, y = 0, frames = 0, tooLarge = 0;
     stbi_uc *px;
 
-    /* 4 x 4, 3 frames: 64 bytes a frame, 192 in all. */
+    /* 4 x 4, 3 frames: 64 bytes a frame, and 3 more frames for stb's
+     * working buffers, 384 in all. */
     size_t len = makeGif(gif, sizeof(gif), 4, 4, 3, 1);
     EXPECT_TRUE("built", len > 0);
-    px = stbiLoadGifCapped(gif, (int)len, 192, &delays, &x, &y, &frames,
-                           &tooLarge);
+    px = stbiLoadGifCapped(gif, (int)len, 384, &delays, &x, &y, &frames,
+                           &tooLarge, NULL, NULL);
     EXPECT_TRUE("decodes at the limit", px != NULL && !tooLarge);
     EXPECT_TRUE("size", x == 4 && y == 4 && frames == 3);
     EXPECT_TRUE("delays", delays != NULL && delays[0] == 100 &&
@@ -590,25 +650,39 @@ int run_clip_gif_preview_cap(void) {
     }
 
     delays = NULL;
-    px = stbiLoadGifCapped(gif, (int)len, 191, &delays, &x, &y, &frames,
-                           &tooLarge);
+    px = stbiLoadGifCapped(gif, (int)len, 383, &delays, &x, &y, &frames,
+                           &tooLarge, NULL, NULL);
     EXPECT_TRUE("one byte over", px == NULL && tooLarge && delays == NULL &&
                                      frames == 0);
-    px = stbiLoadGifCapped(gif, (int)len, 63, NULL, &x, &y, &frames,
-                           &tooLarge);
+    px = stbiLoadGifCapped(gif, (int)len, 255, NULL, &x, &y, &frames,
+                           &tooLarge, NULL, NULL);
     EXPECT_TRUE("first frame over", px == NULL && tooLarge);
+
+    /* One frame: the frame (64 bytes) fits in 255, but stb's buffers do
+     * not. */
+    len = makeGif(gif, sizeof(gif), 4, 4, 1, 1);
+    px = stbiLoadGifCapped(gif, (int)len, 255, NULL, &x, &y, &frames,
+                           &tooLarge, NULL, NULL);
+    EXPECT_TRUE("working buffers counted", px == NULL && tooLarge);
+    px = stbiLoadGifCapped(gif, (int)len, 256, NULL, &x, &y, &frames,
+                           &tooLarge, NULL, NULL);
+    EXPECT_TRUE("one frame with buffers fits",
+                px != NULL && frames == 1 && !tooLarge);
+    if (px != NULL) {
+        stbi_image_free(px);
+    }
 
     /* A 65535 x 65535 screen is 17 GB a frame: refused before stb is asked
      * for any of it. */
     len = makeGif(gif, sizeof(gif), 65535, 65535, 2, 1);
     px = stbiLoadGifCapped(gif, (int)len, CLIP_GIF_PREVIEW_MAX_BYTES, &delays,
-                           &x, &y, &frames, &tooLarge);
+                           &x, &y, &frames, &tooLarge, NULL, NULL);
     EXPECT_TRUE("huge screen", px == NULL && tooLarge);
 
     /* Cut off after 2 frames, with no end code: the 2 frames are kept. */
     len = makeGif(gif, sizeof(gif), 4, 4, 2, 0);
     px = stbiLoadGifCapped(gif, (int)len, 1024, NULL, &x, &y, &frames,
-                           &tooLarge);
+                           &tooLarge, NULL, NULL);
     EXPECT_TRUE("cut off", px != NULL && frames == 2 && !tooLarge);
     if (px != NULL) {
         stbi_image_free(px);
@@ -617,11 +691,73 @@ int run_clip_gif_preview_cap(void) {
     /* Not a GIF, and no data. */
     static const unsigned char notGif[] = "This is not a picture at all.";
     px = stbiLoadGifCapped(notGif, (int)sizeof(notGif), 1024, &delays, &x, &y,
-                           &frames, &tooLarge);
+                           &frames, &tooLarge, NULL, NULL);
     EXPECT_TRUE("not a GIF", px == NULL && !tooLarge);
     px = stbiLoadGifCapped(NULL, 0, 1024, &delays, &x, &y, &frames,
-                           &tooLarge);
+                           &tooLarge, NULL, NULL);
     EXPECT_TRUE("no data", px == NULL && !tooLarge);
+
+    /* A PNG header of 7000 x 7000 (stb does not check the CRC when it reads
+     * the size): it is not a GIF, so it is not reported as too large. */
+    static const unsigned char bigPng[] = {
+        0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A,
+        0, 0, 0, 13, 'I', 'H', 'D', 'R',
+        0, 0, 0x1B, 0x58, 0, 0, 0x1B, 0x58,  /* 7000 x 7000 */
+        8, 6, 0, 0, 0,  0, 0, 0, 0,          /* RGBA, 8 bits; the CRC */
+        0, 0, 0, 0, 'I', 'D', 'A', 'T' };   /* stb's size read ends here */
+    int comp = 0;
+    EXPECT_TRUE("PNG size is read",
+                stbi_info_from_memory(bigPng, (int)sizeof(bigPng), &x, &y,
+                                      &comp) && x == 7000 && y == 7000);
+    px = stbiLoadGifCapped(bigPng, (int)sizeof(bigPng), 1024, &delays, &x,
+                           &y, &frames, &tooLarge, NULL, NULL);
+    EXPECT_TRUE("large PNG not too large", px == NULL && !tooLarge);
+
+    /* The stop function: asked before each frame, and a stop ends the decode
+     * with no result and no "too large". */
+    len = makeGif(gif, sizeof(gif), 4, 4, 3, 1);
+    StopCount never = { 0, 1000 };
+    px = stbiLoadGifCapped(gif, (int)len, 1024, NULL, &x, &y, &frames,
+                           &tooLarge, stopAfter, &never);
+    /* 3 frames, and one more ask before the read that finds the end. */
+    EXPECT_TRUE("not stopped", px != NULL && frames == 3 && never.calls == 4);
+    if (px != NULL) {
+        stbi_image_free(px);
+    }
+    StopCount atOnce = { 0, 0 };
+    delays = NULL;
+    px = stbiLoadGifCapped(gif, (int)len, 1024, &delays, &x, &y, &frames,
+                           &tooLarge, stopAfter, &atOnce);
+    EXPECT_TRUE("stopped before the first frame",
+                px == NULL && !tooLarge && frames == 0 && delays == NULL &&
+                    atOnce.calls == 1);
+    StopCount afterTwo = { 0, 2 };
+    px = stbiLoadGifCapped(gif, (int)len, 1024, &delays, &x, &y, &frames,
+                           &tooLarge, stopAfter, &afterTwo);
+    EXPECT_TRUE("stopped after two frames",
+                px == NULL && !tooLarge && frames == 0 && delays == NULL &&
+                    afterTwo.calls == 3);
+
+    /* Dispose mode 3 restores the real frame two back. */
+    len = makeDisposeGif(gif, sizeof(gif));
+    EXPECT_TRUE("dispose GIF built", len > 0);
+    px = stbiLoadGifCapped(gif, (int)len, 1024, NULL, &x, &y, &frames,
+                           &tooLarge, NULL, NULL);
+    EXPECT_TRUE("dispose GIF decodes",
+                px != NULL && x == 4 && y == 4 && frames == 4);
+    if (px != NULL && frames == 4) {
+        /* 64 bytes a frame; pixel 1,0 is 4 bytes in and pixel 1,1 is 20. */
+        EXPECT_TRUE("frame 0 black", pixelIs(px + 0, 0, 0, 0, 255));
+        EXPECT_TRUE("frame 1 white", pixelIs(px + 64, 255, 255, 255, 255));
+        EXPECT_TRUE("frame 2 red", pixelIs(px + 128, 255, 0, 0, 255));
+        EXPECT_TRUE("frame 3 restored from frame 1",
+                    pixelIs(px + 192, 255, 255, 255, 255));
+        EXPECT_TRUE("frame 3 blue", pixelIs(px + 192 + 20, 0, 0, 255, 255));
+        EXPECT_TRUE("frame 3 not drawn", pixelIs(px + 192 + 4, 0, 0, 0, 0));
+    }
+    if (px != NULL) {
+        stbi_image_free(px);
+    }
 
     return fails ? 1 : 0;
 }

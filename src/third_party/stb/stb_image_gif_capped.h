@@ -42,17 +42,32 @@ extern "C" {
  * size of 0 or less. The product is computed so that it cannot overflow. */
 int stbiGifFramesFit(int w, int h, size_t frames, size_t maxBytes);
 
+/* The frames' worth of memory stb's frame reader holds while it decodes, on
+ * top of the frames kept: its current frame (4 bytes a pixel), the
+ * background (4) and the history (1), 2.25 frames, counted as 3. */
+#define STBI_GIF_WORK_FRAMES 3u
+
+/* Asked before each frame is read; a value other than 0 stops the decode. */
+typedef int (*StbiGifStopFn)(void *user);
+
 /* Decodes every frame of the GIF in buffer as RGBA (4 bytes a pixel), one
  * frame after the other in the block returned, with the time each frame is
  * shown in *delays (ms). Free both with stbi_image_free.
  *
- * Returns NULL when the data is not a GIF, has no frame that decodes, or
- * would need more than maxBytes for its frames; *tooLarge is 1 only in the
+ * The limit counts the frames kept plus STBI_GIF_WORK_FRAMES frames for
+ * stb's own buffers, so the decode never holds more than maxBytes.
+ *
+ * stop may be NULL. When it is not, it is called with stopUser before each
+ * frame, and a value other than 0 ends the decode and returns NULL (with
+ * *tooLarge 0), so a decode nobody wants any more ends within one frame.
+ *
+ * Returns NULL when the data is not a GIF, has no frame that decodes, was
+ * stopped, or would need more than maxBytes; *tooLarge is 1 only in the
  * last case. A GIF that is cut off or corrupt after some frames gives the
  * frames before the fault, as stbi_load_gif_from_memory does. */
 stbi_uc *stbiLoadGifCapped(const stbi_uc *buffer, int len, size_t maxBytes,
                            int **delays, int *x, int *y, int *frames,
-                           int *tooLarge);
+                           int *tooLarge, StbiGifStopFn stop, void *stopUser);
 
 #ifdef __cplusplus
 }  /* extern "C" */
