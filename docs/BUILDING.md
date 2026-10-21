@@ -10,9 +10,12 @@ These are downloaded and built by CMake — no manual installation needed:
 - SDL3_ttf (with vendored FreeType/HarfBuzz)
 - Dear ImGui (docking branch)
 - LuaJIT, built with its own build system (`make`, or `msvcbuild.bat` on
-  Windows) — used for bot brains on Windows, Linux, macOS and Android
-- Lua 5.4 — used instead of LuaJIT on iOS and WebAssembly, where JIT
-  compilation is not possible, and when `-DWINBOLO_LUAJIT=OFF` is passed
+  Windows) — used for bot brains on Windows, Linux, macOS, Android and iOS.
+  Android and iOS cross-compile it with that `make` from the NDK's and the
+  SDK's clang (`cmake/bolo_luajit.cmake`); iOS builds the interpreter
+  without the compiler, which the OS does not allow
+- Lua 5.4 — used instead of LuaJIT on WebAssembly, where LuaJIT has no
+  backend, and when `-DWINBOLO_LUAJIT=OFF` is passed
 - zlib
 - cJSON
 - Opus and SpeexDSP (voice chat)
@@ -460,7 +463,7 @@ Note: The WASM builds do not use libcurl (network features use platform stubs).
 
 ### LuaJIT (bot brains)
 
-On by default on Windows, Linux, macOS and Android. To run the brains on
+On by default on Windows, Linux, macOS, Android and iOS. To run the brains on
 Lua 5.4 instead:
 
 ```bash
@@ -469,7 +472,10 @@ cmake -B build -S . -DWINBOLO_LUAJIT=OFF
 
 The two are not guaranteed to give identical bot behaviour: LuaJIT and Lua 5.4
 differ in how they handle numbers and in the order `pairs()` visits a table.
-iOS and WebAssembly always use Lua 5.4.
+iOS runs LuaJIT's interpreter with the JIT compiler left out
+(`LUAJIT_DISABLE_JIT`), since iOS does not let an app run code it wrote at run
+time. WebAssembly always uses Lua 5.4. The Android build has no switch; it
+always builds LuaJIT.
 
 ### Port mapping (UPnP / NAT-PMP)
 

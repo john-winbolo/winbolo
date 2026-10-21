@@ -15,6 +15,7 @@ set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size
 set(PROJ_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 
 include(${PROJ_ROOT}/cmake/bolo_lib.cmake)
+include(${PROJ_ROOT}/cmake/bolo_luajit.cmake)
 
 # ---------------------------------------------------------------------------
 # Dependencies (FetchContent) — same versions as main CMakeLists.txt
@@ -38,11 +39,6 @@ FetchContent_Declare(
 FetchContent_Declare(
     imgui
     URL      https://github.com/ocornut/imgui/archive/refs/tags/v1.92.9b-docking.tar.gz
-    SYSTEM
-)
-FetchContent_Declare(
-    lua
-    URL      https://github.com/walterschell/Lua/archive/refs/tags/v5.4.7.tar.gz
     SYSTEM
 )
 FetchContent_Declare(
@@ -118,7 +114,69 @@ set(ENABLE_CJSON_TEST OFF CACHE BOOL "" FORCE)
 set(ENABLE_CJSON_INSTALL OFF CACHE BOOL "" FORCE)
 set(ENABLE_CJSON_UNINSTALL OFF CACHE BOOL "" FORCE)
 
-FetchContent_MakeAvailable(sdl3 sdl3_ttf imgui lua zlib libmaxminddb cjson)
+FetchContent_MakeAvailable(sdl3 sdl3_ttf imgui zlib libmaxminddb cjson)
+
+# ---------------------------------------------------------------------------
+# LuaJIT, for the bot brains, as the desktop builds run them: the commit the
+# root CMakeLists.txt pins, cross-compiled for this ABI by LuaJIT's own make
+# (cmake/bolo_luajit.cmake) with the NDK's clang, its target triple and
+# sysroot. The compiler stays on: Android lets an app write code and run it.
+# GC64 is LuaJIT's default on both 64-bit ABIs and stays. Gradle configures
+# this file once per ABI, so each ABI's build directory holds its own
+# checkout and archive (under luajit/), and a fresh .cxx builds both again.
+# ---------------------------------------------------------------------------
+
+FetchContent_Declare(
+    luajit_src
+    GIT_REPOSITORY https://github.com/LuaJIT/LuaJIT.git
+    GIT_TAG        ${WINBOLO_LUAJIT_LUAJIT_TAG}
+    # Not GIT_SHALLOW: the pin is a commit, not a tag, and a shallow clone
+    # holds only each branch's tip (the root CMakeLists.txt explains).
+)
+FetchContent_MakeAvailable(luajit_src)
+
+# The host compiler for LuaJIT's build tools, minilua and buildvm, which run
+# on this machine during the build and have to be 64-bit like the target.
+# The NDK toolchain file looks programs up on the host, not in the sysroot,
+# so this is the machine's own cc.
+find_program(WINBOLO_LUAJIT_HOST_CC NAMES cc gcc clang
+             DOC "Host C compiler for LuaJIT's build tools")
+if(NOT WINBOLO_LUAJIT_HOST_CC)
+    message(FATAL_ERROR "LuaJIT needs a host C compiler (cc, gcc or clang) "
+                        "for its build tools")
+endif()
+if(NOT CMAKE_C_COMPILER_TARGET)
+    message(FATAL_ERROR "LuaJIT needs the NDK's target triple "
+                        "(CMAKE_C_COMPILER_TARGET is empty)")
+endif()
+bolo_luajit_cross_build(luajit_ext
+    SOURCE_DIR   "${luajit_src_SOURCE_DIR}"
+    OUTPUT_DIR   "${CMAKE_BINARY_DIR}/luajit"
+    HOST_CC      "${WINBOLO_LUAJIT_HOST_CC}"
+    TARGET_CC    "${CMAKE_C_COMPILER}"
+                 "--target=${CMAKE_C_COMPILER_TARGET}"
+                 "--sysroot=${CMAKE_SYSROOT}"
+    TARGET_AR    "${CMAKE_AR}"
+    TARGET_STRIP "${CMAKE_STRIP}"
+    TARGET_SYS   Linux
+    LIB_VAR      _lj_lib)
+
+add_library(luajit_imported STATIC IMPORTED GLOBAL)
+set_target_properties(luajit_imported PROPERTIES IMPORTED_LOCATION "${_lj_lib}")
+add_dependencies(luajit_imported luajit_ext)
+
+# lua_static, the name the rest of the tree links, presented as the root
+# CMakeLists.txt presents it: the archive with libdl and libm behind it,
+# the WINBOLO_LUAJIT define, and the 5.4-to-5.1 C-API shim force-included
+# into every Lua-touching source. The headers are system includes, as PUC
+# Lua's were through its SYSTEM fetch, so main's -Werror=undef does not
+# read them.
+add_library(lua_static INTERFACE)
+target_link_libraries(lua_static INTERFACE luajit_imported ${CMAKE_DL_LIBS} m)
+target_include_directories(lua_static SYSTEM INTERFACE "${luajit_src_SOURCE_DIR}/src")
+target_compile_definitions(lua_static INTERFACE WINBOLO_LUAJIT)
+target_compile_options(lua_static INTERFACE
+    -include "${PROJ_ROOT}/src/gui/sdl3/luajit_compat.h")
 
 # libplum: UPnP, NAT-PMP and PCP port mapping for an Internet game hosted on
 # the phone. The same repository, tag and switches as the root's
