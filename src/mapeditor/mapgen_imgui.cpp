@@ -371,6 +371,10 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         int savedX1 = cfg->x1, savedY1 = cfg->y1;
         int savedX2 = cfg->x2, savedY2 = cfg->y2;
 
+        /* The first switch to Map Maker takes the size and counts of
+         * its first preset, the same as picking that preset, unless
+         * they are locked. Otherwise they carry over. */
+        bool firstMaker = cfg->genType == MAPGEN_MAKER && !hasSaved[cfg->genType];
         if (hasSaved[cfg->genType]) {
             *cfg = savedConfigs[cfg->genType];
         } else {
@@ -378,10 +382,10 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         }
         cfg->seed = savedSeed;
         cfg->locks = savedLocks;
-        cfg->bases = savedBases;
-        cfg->pills = savedPills;
-        cfg->starts = savedStarts;
-        cfg->size = savedSize;
+        if (!firstMaker || (savedLocks & MAPGEN_LOCK_BASES))  cfg->bases = savedBases;
+        if (!firstMaker || (savedLocks & MAPGEN_LOCK_PILLS))  cfg->pills = savedPills;
+        if (!firstMaker || (savedLocks & MAPGEN_LOCK_STARTS)) cfg->starts = savedStarts;
+        if (!firstMaker || (savedLocks & MAPGEN_LOCK_SIZE))   cfg->size = savedSize;
         cfg->x1 = savedX1; cfg->y1 = savedY1;
         cfg->x2 = savedX2; cfg->y2 = savedY2;
     }
@@ -422,9 +426,13 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
             cfg->pills = savedPills;
             cfg->starts = savedStarts;
         }
-        if (!(lk & MAPGEN_LOCK_BASES))  cfg->bases = 1 + (int)(mapGenXorshift32(&rng) % 16);
-        if (!(lk & MAPGEN_LOCK_PILLS))  cfg->pills = 1 + (int)(mapGenXorshift32(&rng) % 16);
-        if (!(lk & MAPGEN_LOCK_STARTS)) cfg->starts = 1 + (int)(mapGenXorshift32(&rng) % 16);
+        /* Map Maker takes its counts from the preset below, so it
+         * does not draw them here. */
+        if (cfg->genType != MAPGEN_MAKER) {
+            if (!(lk & MAPGEN_LOCK_BASES))  cfg->bases = 1 + (int)(mapGenXorshift32(&rng) % 16);
+            if (!(lk & MAPGEN_LOCK_PILLS))  cfg->pills = 1 + (int)(mapGenXorshift32(&rng) % 16);
+            if (!(lk & MAPGEN_LOCK_STARTS)) cfg->starts = 1 + (int)(mapGenXorshift32(&rng) % 16);
+        }
 
         if (cfg->genType == MAPGEN_TOURNAMENT) {
             auto &t = cfg->params.tournament;
@@ -750,8 +758,9 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         lockButton("lk_kdetail", &cfg->locks, MAPGEN_LOCK_K_DETAIL);
     }
 
-    /* Size, for every generator type. The slider's lowest stop, one
-     * below the smallest square, stands for Full (the whole region). */
+    /* Size, for every generator type. The slider's highest stop, one
+     * above the largest square (MAPGEN_SIZE_MAX + 1), stands for Full
+     * (the whole region). */
     ImGui::Spacing();
     ImGui::Separator();
     {
