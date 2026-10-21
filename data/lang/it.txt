@@ -2769,3 +2769,17 @@ STR_DLGSYSINFO_MEM_BUILDING=Costruzione
 STR_DLGSYSINFO_MEM_RUBBLE=Macerie
 STR_DLGSYSINFO_MEM_SWAMP=Palude
 STR_DLGSYSINFO_MEM_GRASS=Erba
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Le tue GIF
+STR_CLIPGIF_GALLERY_EMPTY=Ancora nessuna GIF. Creane una con il pulsante GIF sotto il replay o con il pulsante GIF di una clip.
+STR_CLIPGIF_COPY=Copia negli appunti
+STR_CLIPGIF_SAVE=Salva su disco
+STR_CLIPGIF_COPIED=Copiata.
+STR_CLIPGIF_COPY_FAILED=Impossibile copiare la GIF.
+STR_CLIPGIF_OPEN_FAILED=Impossibile aprire questa GIF.
+STR_CLIPGIF_MAP_FMT=Mappa: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Giocatori: {string1}
+STR_CLIPGIF_NO_DETAILS=Nessun dettaglio è stato salvato con questa GIF.
+STR_CLIPGIF_LENGTH_TIP=Durata della GIF in secondi, dalla testina di riproduzione.\nPuoi cambiarla anche trascinando l'indicatore alla fine della parte chiara della timeline.
+STR_CLIPGIF_SAVE_FAILED_IOS=Impossibile salvare {string1}.

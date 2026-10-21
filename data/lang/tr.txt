@@ -2767,3 +2767,17 @@ STR_DLGSYSINFO_MEM_BUILDING=İnşaat
 STR_DLGSYSINFO_MEM_RUBBLE=Moloz
 STR_DLGSYSINFO_MEM_SWAMP=Bataklık
 STR_DLGSYSINFO_MEM_GRASS=Çimen
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=GIF'leriniz
+STR_CLIPGIF_GALLERY_EMPTY=Henüz GIF yok. Tekrar oynatmanın altındaki GIF düğmesiyle ya da bir klibin GIF düğmesiyle oluşturun.
+STR_CLIPGIF_COPY=Panoya kopyala
+STR_CLIPGIF_SAVE=Diske kaydet
+STR_CLIPGIF_COPIED=Kopyalandı.
+STR_CLIPGIF_COPY_FAILED=GIF kopyalanamadı.
+STR_CLIPGIF_OPEN_FAILED=Bu GIF açılamadı.
+STR_CLIPGIF_MAP_FMT=Harita: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Oyuncular: {string1}
+STR_CLIPGIF_NO_DETAILS=Bu GIF ile hiçbir ayrıntı kaydedilmedi.
+STR_CLIPGIF_LENGTH_TIP=Oynatma noktasından itibaren saniye cinsinden GIF uzunluğu.\nZaman çizelgesinin parlak kısmının sonundaki işareti sürükleyerek de değiştirebilirsiniz.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} kaydedilemedi.

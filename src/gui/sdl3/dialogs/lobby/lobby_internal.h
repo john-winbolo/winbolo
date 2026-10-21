@@ -75,6 +75,16 @@
 #define BOLO_REEL_SPAWN_VIEWER   1
 #endif
 
+/* BOLO_CLIP_GIF_GALLERY — the recap's GIF gallery: every clip export is kept
+ *   in a "clips" folder under the per-user pref folder with a small metadata
+ *   file beside it, and a window lists them with copy and save. On wherever
+ *   the clip export is; the mobile builds do not build the clip export. */
+#if BOLO_RECAP_CLIP_GIF && !defined(__ANDROID__) && !defined(__IPHONEOS__)
+#define BOLO_CLIP_GIF_GALLERY 1
+#else
+#define BOLO_CLIP_GIF_GALLERY 0
+#endif
+
 /* The types below and the signatures further down name types that come from
  * elsewhere. They are pulled in here rather than left to each source to
  * include first, so this header parses on its own wherever it appears in an
@@ -109,6 +119,12 @@ extern "C" {
 #include "../../../visibility_presets.h"
 #ifdef __cplusplus
 }
+#endif
+#if BOLO_RECAP_CLIP_GIF
+/* CLIP_GIF_LEN_DEFAULT_MS, the GIF length LobbyReelState starts at, and
+ * ClipGifMeta, named by the gallery's declarations below. Carries its own
+ * extern "C" guards. */
+#include "../clip_gif_core.h"
 #endif
 
 /* Sizes shared between the cluster that owns the widget and the ones that
@@ -361,6 +377,14 @@ typedef struct LobbyReelState {
      * exactly the pixels the outline was drawn over rather than re-deriving the
      * mapping and risking a different answer. */
     SDL_Rect lastSlice = { 0, 0, 0, 0 };
+
+    /* How long the transport's GIF button records, as the player last set it
+     * with the length field or the marker on the seek bar. Held as asked for,
+     * inside the export's own floor and cap; what is used is this clamped to
+     * the time left after the playhead (clipGifLenClampMs), so seeking back
+     * from near the end gives the longer length back. Goes back to the
+     * default with the rest of the reel, like the crop frame. */
+    uint32_t gifLenMs = CLIP_GIF_LEN_DEFAULT_MS;
 #endif
 
     /* Where a client that did not record the round stands in getting it from
@@ -760,8 +784,9 @@ void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
 #if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
 void lobbyClipGifReset(void);
 bool lobbyClipGifActive(void);
-void lobbyClipGifStartClip(const HighlightWindow *h, const char *mapName);
-void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName);
+void lobbyClipGifStartClip(const HighlightWindow *h, ClientSim *cs);
+void lobbyClipGifStartFromPlayhead(uint32_t curMs, uint32_t lenMs,
+                                   ClientSim *cs);
 bool lobbyClipGifButton(const char *id, bool compact);
 float lobbyClipGifButtonWidth(void);
 void lobbyClipGifRender(float s);
@@ -771,6 +796,26 @@ void lobbyClipGifRender(float s);
  * abandon releases one still waiting when the lobby session ends. */
 void lobbyClipGifSavePoll(void);
 void lobbyClipGifSaveAbandon(void);
+#endif
+
+/* clipgif gallery (lobby_clip_gif_gallery.cpp) */
+#if !defined(__ANDROID__) && BOLO_CLIP_GIF_GALLERY
+/* Keeps a finished export in the gallery folder, with its metadata, then
+ * opens the gallery on it. Writes the bytes to a file and keeps no
+ * pointer to them, so the caller still frees them. */
+void lobbyClipGifGalleryAdd(const void *data, size_t len,
+                            const ClipGifMeta *meta, const char *baseName);
+void lobbyClipGifGalleryOpen(void);
+/* The gallery window, drawn once per recap body render while it is open. */
+void lobbyClipGifGalleryRender(float s);
+/* A save picker from the gallery that has been answered; with
+ * lobbyClipGifSavePoll in the lobby's event loop. */
+void lobbyClipGifGallerySavePoll(void);
+/* Leaving the lobby: frees the preview's frames and texture and drops a save
+ * picker still waiting. */
+void lobbyClipGifGalleryShutdown(void);
+/* The control that opens the gallery, for the transport row. */
+bool lobbyClipGifGalleryButton(const char *id);
 #endif
 
 /* rating */

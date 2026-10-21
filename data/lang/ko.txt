@@ -2765,3 +2765,17 @@ STR_DLGSYSINFO_MEM_BUILDING=건설
 STR_DLGSYSINFO_MEM_RUBBLE=잔해
 STR_DLGSYSINFO_MEM_SWAMP=늪
 STR_DLGSYSINFO_MEM_GRASS=풀
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=내 GIF
+STR_CLIPGIF_GALLERY_EMPTY=아직 GIF가 없습니다. 리플레이 아래의 GIF 버튼이나 클립의 GIF 버튼으로 만드세요.
+STR_CLIPGIF_COPY=클립보드에 복사
+STR_CLIPGIF_SAVE=디스크에 저장
+STR_CLIPGIF_COPIED=복사했습니다.
+STR_CLIPGIF_COPY_FAILED=GIF를 복사할 수 없습니다.
+STR_CLIPGIF_OPEN_FAILED=이 GIF를 열 수 없습니다.
+STR_CLIPGIF_MAP_FMT=맵: {string1}
+STR_CLIPGIF_PLAYERS_FMT=플레이어: {string1}
+STR_CLIPGIF_NO_DETAILS=이 GIF에는 저장된 세부 정보가 없습니다.
+STR_CLIPGIF_LENGTH_TIP=재생 위치부터의 GIF 길이(초).\n타임라인 밝은 부분 끝의 표시를 끌어서 바꿀 수도 있습니다.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1}을(를) 저장할 수 없습니다.

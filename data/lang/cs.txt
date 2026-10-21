@@ -2765,3 +2765,17 @@ STR_DLGSYSINFO_MEM_BUILDING=Stavba
 STR_DLGSYSINFO_MEM_RUBBLE=Trosky
 STR_DLGSYSINFO_MEM_SWAMP=Bažina
 STR_DLGSYSINFO_MEM_GRASS=Tráva
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Vaše GIFy
+STR_CLIPGIF_GALLERY_EMPTY=Zatím žádné GIFy. Vytvořte jeden tlačítkem GIF pod záznamem nebo tlačítkem GIF u klipu.
+STR_CLIPGIF_COPY=Kopírovat do schránky
+STR_CLIPGIF_SAVE=Uložit na disk
+STR_CLIPGIF_COPIED=Zkopírováno.
+STR_CLIPGIF_COPY_FAILED=GIF se nepodařilo zkopírovat.
+STR_CLIPGIF_OPEN_FAILED=Tento GIF se nepodařilo otevřít.
+STR_CLIPGIF_MAP_FMT=Mapa: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Hráči: {string1}
+STR_CLIPGIF_NO_DETAILS=K tomuto GIFu nebyly uloženy žádné údaje.
+STR_CLIPGIF_LENGTH_TIP=Délka GIFu v sekundách od přehrávací hlavy.\nDélku změníte také tažením značky na konci světlé části časové osy.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} se nepodařilo uložit.

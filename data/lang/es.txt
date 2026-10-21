@@ -2768,3 +2768,17 @@ STR_DLGSYSINFO_MEM_BUILDING=Construcción
 STR_DLGSYSINFO_MEM_RUBBLE=Escombros
 STR_DLGSYSINFO_MEM_SWAMP=Pantano
 STR_DLGSYSINFO_MEM_GRASS=Hierba
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Tus GIF
+STR_CLIPGIF_GALLERY_EMPTY=Aún no hay GIF. Crea uno con el botón GIF bajo la repetición o con el botón GIF de un clip.
+STR_CLIPGIF_COPY=Copiar al portapapeles
+STR_CLIPGIF_SAVE=Guardar en disco
+STR_CLIPGIF_COPIED=Copiado.
+STR_CLIPGIF_COPY_FAILED=No se pudo copiar el GIF.
+STR_CLIPGIF_OPEN_FAILED=No se pudo abrir este GIF.
+STR_CLIPGIF_MAP_FMT=Mapa: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Jugadores: {string1}
+STR_CLIPGIF_NO_DETAILS=No se guardaron detalles con este GIF.
+STR_CLIPGIF_LENGTH_TIP=Duración del GIF en segundos, desde el cabezal.\nTambién puedes cambiarla arrastrando la marca al final de la parte clara de la línea de tiempo.
+STR_CLIPGIF_SAVE_FAILED_IOS=No se pudo guardar {string1}.

@@ -2909,3 +2909,17 @@ STR_SCNTEXT_TITLE=Scenario Text
 STR_SCN_BG_OPACITY_LBL=Background opacity
 STR_SCN_TEXT_OPACITY_LBL=Text opacity
 
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Your GIFs
+STR_CLIPGIF_GALLERY_EMPTY=No GIFs yet. Make one with the GIF button under the replay, or the GIF button on a clip.
+STR_CLIPGIF_COPY=Copy to clipboard
+STR_CLIPGIF_SAVE=Save to disk
+STR_CLIPGIF_COPIED=Copied.
+STR_CLIPGIF_COPY_FAILED=The GIF could not be copied.
+STR_CLIPGIF_OPEN_FAILED=This GIF could not be opened.
+STR_CLIPGIF_MAP_FMT=Map: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Players: {string1}
+STR_CLIPGIF_NO_DETAILS=No details were saved with this GIF.
+STR_CLIPGIF_LENGTH_TIP=GIF length in seconds, from the playhead.\nDrag the marker at the end of the bright part of the timeline to change it too.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} could not be saved.
+

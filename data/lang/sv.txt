@@ -2769,3 +2769,17 @@ STR_DLGSYSINFO_MEM_BUILDING=Byggnation
 STR_DLGSYSINFO_MEM_RUBBLE=Bråte
 STR_DLGSYSINFO_MEM_SWAMP=Träsk
 STR_DLGSYSINFO_MEM_GRASS=Gräs
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Dina GIF:ar
+STR_CLIPGIF_GALLERY_EMPTY=Inga GIF:ar än. Skapa en med GIF-knappen under reprisen eller GIF-knappen på ett klipp.
+STR_CLIPGIF_COPY=Kopiera till urklipp
+STR_CLIPGIF_SAVE=Spara på disk
+STR_CLIPGIF_COPIED=Kopierad.
+STR_CLIPGIF_COPY_FAILED=GIF:en kunde inte kopieras.
+STR_CLIPGIF_OPEN_FAILED=Den här GIF:en kunde inte öppnas.
+STR_CLIPGIF_MAP_FMT=Karta: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Spelare: {string1}
+STR_CLIPGIF_NO_DETAILS=Inga detaljer sparades med den här GIF:en.
+STR_CLIPGIF_LENGTH_TIP=GIF-längd i sekunder, från uppspelningspositionen.\nDra markören i slutet av den ljusa delen av tidslinjen för att ändra den också.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} kunde inte sparas.

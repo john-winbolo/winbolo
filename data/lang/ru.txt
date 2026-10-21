@@ -2767,3 +2767,17 @@ STR_DLGSYSINFO_MEM_BUILDING=Строительство
 STR_DLGSYSINFO_MEM_RUBBLE=Обломки
 STR_DLGSYSINFO_MEM_SWAMP=Болото
 STR_DLGSYSINFO_MEM_GRASS=Трава
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Ваши GIF
+STR_CLIPGIF_GALLERY_EMPTY=GIF пока нет. Создайте его кнопкой GIF под повтором или кнопкой GIF у клипа.
+STR_CLIPGIF_COPY=Копировать в буфер обмена
+STR_CLIPGIF_SAVE=Сохранить на диск
+STR_CLIPGIF_COPIED=Скопировано.
+STR_CLIPGIF_COPY_FAILED=Не удалось скопировать GIF.
+STR_CLIPGIF_OPEN_FAILED=Не удалось открыть этот GIF.
+STR_CLIPGIF_MAP_FMT=Карта: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Игроки: {string1}
+STR_CLIPGIF_NO_DETAILS=Для этого GIF не сохранено сведений.
+STR_CLIPGIF_LENGTH_TIP=Длина GIF в секундах от точки воспроизведения.\nЕё также можно изменить, перетащив метку в конце светлой части шкалы времени.
+STR_CLIPGIF_SAVE_FAILED_IOS=Не удалось сохранить {string1}.

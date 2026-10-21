@@ -3525,6 +3525,21 @@
 #define STR_SCN_BG_OPACITY_LBL                   2907
 #define STR_SCN_TEXT_OPACITY_LBL                 2908
 
+/* The recap's GIF gallery, and the GIF length beside the replay's GIF button */
+#define STR_CLIPGIF_GALLERY_TITLE                2943
+#define STR_CLIPGIF_GALLERY_EMPTY                2944
+#define STR_CLIPGIF_COPY                         2945
+#define STR_CLIPGIF_SAVE                         2946
+#define STR_CLIPGIF_COPIED                       2947
+#define STR_CLIPGIF_COPY_FAILED                  2948
+#define STR_CLIPGIF_OPEN_FAILED                  2949
+#define STR_CLIPGIF_MAP_FMT                      2950
+#define STR_CLIPGIF_PLAYERS_FMT                  2951
+#define STR_CLIPGIF_NO_DETAILS                   2952
+#define STR_CLIPGIF_LENGTH_TIP                   2953
+/* When the gallery cannot write a new GIF (main's iOS string, same id) */
+#define STR_CLIPGIF_SAVE_FAILED_IOS              2937
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

@@ -381,7 +381,7 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
                                          lobbyClipGifButtonWidth());
                     ImGui::PushID(i);
                     if (lobbyClipGifButton("##clipgif", true)) {
-                        lobbyClipGifStartClip(h, clientSimGetMapName(cs));
+                        lobbyClipGifStartClip(h, cs);
                     }
                     ImGui::PopID();
                 }

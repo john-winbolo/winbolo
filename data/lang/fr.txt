@@ -2767,3 +2767,17 @@ STR_DLGSYSINFO_MEM_BUILDING=Construction
 STR_DLGSYSINFO_MEM_RUBBLE=Décombres
 STR_DLGSYSINFO_MEM_SWAMP=Marais
 STR_DLGSYSINFO_MEM_GRASS=Herbe
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Vos GIF
+STR_CLIPGIF_GALLERY_EMPTY=Aucun GIF pour l'instant. Créez-en un avec le bouton GIF sous la relecture, ou le bouton GIF d'un clip.
+STR_CLIPGIF_COPY=Copier dans le presse-papiers
+STR_CLIPGIF_SAVE=Enregistrer sur le disque
+STR_CLIPGIF_COPIED=Copié.
+STR_CLIPGIF_COPY_FAILED=Le GIF n'a pas pu être copié.
+STR_CLIPGIF_OPEN_FAILED=Ce GIF n'a pas pu être ouvert.
+STR_CLIPGIF_MAP_FMT=Carte : {string1}
+STR_CLIPGIF_PLAYERS_FMT=Joueurs : {string1}
+STR_CLIPGIF_NO_DETAILS=Aucun détail n'a été enregistré avec ce GIF.
+STR_CLIPGIF_LENGTH_TIP=Durée du GIF en secondes, depuis la tête de lecture.\nFaites glisser le repère au bout de la partie claire de la frise pour la changer aussi.
+STR_CLIPGIF_SAVE_FAILED_IOS=Impossible d'enregistrer {string1}.
