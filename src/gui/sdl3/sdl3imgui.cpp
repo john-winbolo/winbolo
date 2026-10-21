@@ -1869,20 +1869,25 @@ static void renderSysInfoContent(void) {
             double poolRate = ps.totalThinks > 0
                 ? (double)ps.totalOverruns * 100.0 / (double)ps.totalThinks
                 : 0.0;
-            ImGui::Text("%s: %u (%.2f%%)",
+            ImGui::Text("%s: %u (%.2f%%), peak think=%.2fms",
                         langGetText(STR_DLGSYSINFO_BRAIN_OVERRUNS),
-                        ps.totalOverruns, poolRate);
-            if (ps.totalOverruns > 0) {
-                for (int i = 0; i < MAX_TANKS; i++) {
-                    if (botInfoValid[i] && botInfos[i].overrunCount > 0) {
-                        double rate = botInfos[i].thinkCount > 0
-                            ? (double)botInfos[i].overrunCount * 100.0
-                                  / (double)botInfos[i].thinkCount
-                            : 0.0;
-                        ImGui::Text("  bot[%d]: %u (%.2f%%)", i,
-                                    botInfos[i].overrunCount, rate);
-                    }
-                }
+                        ps.totalOverruns, poolRate, ps.maxThinkMs);
+            /* One row per thinking bot: the last think's wall-clock, the
+             * peak this game, and its overruns against its thinks. The
+             * budget hook stops a think at the target, so a bot that
+             * overruns every tick reads as "last" at the target rather
+             * than above it. */
+            for (int i = 0; i < MAX_TANKS; i++) {
+                if (!botInfoValid[i] || !botInfos[i].hasBrain) continue;
+                double rate = botInfos[i].thinkCount > 0
+                    ? (double)botInfos[i].overrunCount * 100.0
+                          / (double)botInfos[i].thinkCount
+                    : 0.0;
+                ImGui::Text("  bot[%d] %s: last=%.2fms peak=%.2fms, %u/%u (%.2f%%)",
+                            i, botInfos[i].brainName,
+                            botInfos[i].lastThinkMs, botInfos[i].maxThinkMs,
+                            botInfos[i].overrunCount, botInfos[i].thinkCount,
+                            rate);
             }
         }
 
