@@ -9,9 +9,11 @@
 /* ── WinBolo: a GIF decode with a memory limit (stb_image_gif_capped.h) ──
  * In this file because it calls stb's static frame reader. The loop is
  * stbi__load_gif_main's, with these changes: the block size is size_t and is
- * checked against a limit before each frame is added; the logical screen's
- * size is checked before the first frame is read, so a huge screen is not
- * allocated at all; and the frame two back that dispose mode 3 restores is
+ * checked against a limit (which also counts stb's working buffers) before
+ * each frame is added; the file is checked to be a GIF, and its logical
+ * screen's size against the limit, before the first frame is read, so a
+ * huge screen is not allocated at all; a stop function is asked before each
+ * frame; and the frame two back that dispose mode 3 restores is
  * the real one (stbi__load_gif_main points before the start of its block). */
 
 int stbiGifFramesFit(int w, int h, size_t frames, size_t maxBytes) {
@@ -34,7 +36,8 @@ int stbiGifFramesFit(int w, int h, size_t frames, size_t maxBytes) {
 
 stbi_uc *stbiLoadGifCapped(const stbi_uc *buffer, int len, size_t maxBytes,
                            int **delays, int *x, int *y, int *frames,
-                           int *tooLarge) {
+                           int *tooLarge, StbiGifStopFn stop,
+                           void *stopUser) {
    stbi__context s;
    stbi__gif *g;
    stbi_uc *out = NULL;
@@ -52,18 +55,22 @@ stbi_uc *stbiLoadGifCapped(const stbi_uc *buffer, int len, size_t maxBytes,
    if (buffer == NULL || len <= 0) {
       return NULL;
    }
-   if (!stbi_info_from_memory(buffer, len, &w, &h, &comp)) {
-      return NULL;
-   }
-   if (!stbiGifFramesFit(w, h, 1, maxBytes)) {
-      *tooLarge = 1;
-      return NULL;
-   }
-
+   /* The GIF test first, so a file of another kind is "could not be opened"
+    * and never "too large". stbi__gif_info does not rewind when it reads the
+    * header, so the read starts again after it. */
    stbi__start_mem(&s, buffer, len);
    if (!stbi__gif_test(&s)) {
       return NULL;
    }
+   if (!stbi__gif_info(&s, &w, &h, &comp)) {
+      return NULL;
+   }
+   stbi__rewind(&s);
+   if (!stbiGifFramesFit(w, h, 1 + STBI_GIF_WORK_FRAMES, maxBytes)) {
+      *tooLarge = 1;
+      return NULL;
+   }
+
    /* About 1.5 KB, so on the heap rather than a worker thread's stack. */
    g = (stbi__gif *)STBI_MALLOC(sizeof(stbi__gif));
    if (g == NULL) {
@@ -73,16 +80,21 @@ stbi_uc *stbiLoadGifCapped(const stbi_uc *buffer, int len, size_t maxBytes,
 
    for (;;) {
       stbi_uc *two_back = (layers >= 2) ? out + (layers - 2) * stride : NULL;
-      stbi_uc *u = stbi__gif_load_next(&s, g, &comp, 4, two_back);
+      stbi_uc *u;
       stbi_uc *grown;
       int *grownDelays;
+      if (stop != NULL && stop(stopUser)) {
+         goto fail;
+      }
+      u = stbi__gif_load_next(&s, g, &comp, 4, two_back);
       if (u == (stbi_uc *)&s) {
          u = NULL;  /* the end of the GIF */
       }
       if (u == NULL) {
          break;
       }
-      if (!stbiGifFramesFit(g->w, g->h, layers + 1, maxBytes)) {
+      if (!stbiGifFramesFit(g->w, g->h, layers + 1 + STBI_GIF_WORK_FRAMES,
+                            maxBytes)) {
          *tooLarge = 1;
          goto fail;
       }

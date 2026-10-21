@@ -145,7 +145,9 @@ void clipGifFormatFileStamp(int64_t createdUnix, char *out, size_t outLen);
  * The most memory the gallery's preview gives the decoded frames of one GIF
  * (RGBA, 4 bytes a pixel). A 15 s export at the 480 px width is about 78 MB;
  * a GIF that needs more, such as a long crop of a large view, is not
- * decoded and the window says it is too large to show. */
+ * decoded and the window says it is too large to show. The limit also counts
+ * the decoder's own working buffers (STBI_GIF_WORK_FRAMES frames), so the
+ * frames and those buffers together stay within it. */
 #define CLIP_GIF_PREVIEW_MAX_BYTES ((size_t)256u * 1024u * 1024u)
 
 /* ── Text ────────────────────────────────────────────────────────────
