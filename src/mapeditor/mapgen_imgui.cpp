@@ -210,7 +210,7 @@ static uint64_t panelLocks(int genType) {
                    MAPGEN_LOCK_F_DETAIL | MAPGEN_LOCK_F_COAST | MAPGEN_LOCK_F_LAYERS |
                    MAPGEN_LOCK_F_RIVERS | MAPGEN_LOCK_F_MINES;
         case MAPGEN_MAKER:
-            return MAPGEN_LOCK_K_OUTLINE | MAPGEN_LOCK_K_WATER | MAPGEN_LOCK_K_FOREST |
+            return MAPGEN_LOCK_K_WATER | MAPGEN_LOCK_K_FOREST |
                    MAPGEN_LOCK_K_ROAD | MAPGEN_LOCK_K_BUILDING | MAPGEN_LOCK_K_ISLANDS |
                    MAPGEN_LOCK_K_MINES | MAPGEN_LOCK_K_DETAIL;
         default:
@@ -218,8 +218,10 @@ static uint64_t panelLocks(int genType) {
     }
 }
 
-/* The locks of the Map Maker style panel: one for each style lever. */
+/* The locks of the Map Maker style panel: the outline and one for
+ * each style lever. */
 static const uint64_t kStyleLocks =
+    MAPGEN_LOCK_K_OUTLINE |
     MAPGEN_LOCK_KS_FIRST * ((1ull << MAPGEN_KSTYLE_COUNT) - 1);
 
 /* Every lock that has a button for some generator type, and the locks
@@ -404,12 +406,8 @@ static void randomizePanel(MapGenConfig *cfg) {
     } else if (cfg->genType == MAPGEN_MAKER) {
         auto &k = cfg->params.maker;
         const auto &b = base.params.maker;
-        /* Outline: one of the preset's own outlines, named, never
-         * Varied, so the player sees which one it is. */
-        if (!(lk & MAPGEN_LOCK_K_OUTLINE)) {
-            int o = pickPresetOutline(k.preset, &rng);
-            if (o >= 0) k.outline = o;
-        }
+        /* The outline is in the style panel: Randomize style changes
+         * it, not this. */
         if (!(lk & MAPGEN_LOCK_K_WATER))    k.waterPct = bandPick(&rng, b.waterPct, 10, 0, 100);
         if (!(lk & MAPGEN_LOCK_K_FOREST))   k.forestPct = bandPick(&rng, b.forestPct, 10, 0, 100);
         if (!(lk & MAPGEN_LOCK_K_ROAD))     k.roadPct = bandPick(&rng, b.roadPct, 10, 0, 100);
@@ -431,8 +429,9 @@ static void randomizePanel(MapGenConfig *cfg) {
 
 /* --- Style panel (Map Maker) --- */
 
-/* True if the style panel shows the lever: the preset varies it, and
- * with the current values it can change the map. */
+/* True if the style panel shows the lever: the preset varies it.
+ * Shape is not shown for quarter turns, because the symmetry is
+ * above the panels and no Randomize changes it. */
 static bool styleLeverShown(const MapGenConfig *cfg, int lever) {
     const auto &k = cfg->params.maker;
     if (!mapGenStyleRange(k.preset, lever, nullptr, nullptr)) return false;
@@ -440,21 +439,32 @@ static bool styleLeverShown(const MapGenConfig *cfg, int lever) {
         /* Quarter turns make the land square. */
         return k.symmetry != MAPGEN_MSYM_ROTATE4;
     }
-    if (lever == MAPGEN_KSTYLE_CUT) {
-        /* Only the octagon has cut corners. */
-        if (k.outline == MAPGEN_OUTLINE_OCTAGON) return true;
-        return k.outline == MAPGEN_OUTLINE_VARIED &&
-               (mapGenPresetOutlineSet(k.preset) & (1 << MAPGEN_OUTLINE_OCTAGON)) != 0;
-    }
     return true;
 }
 
-/* Randomize style: each unlocked lever that the panel shows takes one
- * of the values the preset allows (never From seed). The seed and
- * every other value stay. */
+/* True if the lever can change the map with the current outline. Only
+ * the octagon has cut corners. The panel still shows Corner cut for
+ * other outlines, greyed out, and keeps its value, so that the panel
+ * does not change shape when the outline changes. */
+static bool styleLeverActive(const MapGenConfig *cfg, int lever) {
+    const auto &k = cfg->params.maker;
+    if (lever != MAPGEN_KSTYLE_CUT) return true;
+    if (k.outline == MAPGEN_OUTLINE_OCTAGON) return true;
+    return k.outline == MAPGEN_OUTLINE_VARIED &&
+           (mapGenPresetOutlineSet(k.preset) & (1 << MAPGEN_OUTLINE_OCTAGON)) != 0;
+}
+
+/* Randomize style: an unlocked outline takes one of the preset's own
+ * outlines (named, never Varied), and each unlocked lever that the
+ * panel shows takes one of the values the preset allows (never From
+ * seed). The seed and every other value stay. */
 static void randomizeStyle(MapGenConfig *cfg) {
     uint32_t rng = uiRngSeed();
     auto &k = cfg->params.maker;
+    if (!(cfg->locks & MAPGEN_LOCK_K_OUTLINE)) {
+        int o = pickPresetOutline(k.preset, &rng);
+        if (o >= 0) k.outline = o;
+    }
     for (int lever = 0; lever < MAPGEN_KSTYLE_COUNT; lever++) {
         int lo, hi, count = 0, pick;
         if (cfg->locks & (MAPGEN_LOCK_KS_FIRST << lever)) continue;
@@ -747,15 +757,10 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
      * all act only on the controls in it. ---- */
     if (cfg->genType == MAPGEN_MAKER) {
         auto &k = cfg->params.maker;
-        bool anyShown = false;
         /* A lever the panel does not show cannot change the map: keep
          * it at From seed, so that the seed does not hold it. */
         for (int lever = 0; lever < MAPGEN_KSTYLE_COUNT; lever++) {
-            if (styleLeverShown(cfg, lever)) {
-                anyShown = true;
-            } else {
-                k.style[lever] = 0;
-            }
+            if (!styleLeverShown(cfg, lever)) k.style[lever] = 0;
         }
 
         ImGui::Spacing();
@@ -785,9 +790,9 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
             ImGui::TextUnformatted(langGetTextFmt(STR_MAPGEN_STYLE_TITLE, &args));
         }
 
-        if (!anyShown) {
-            ImGui::TextWrapped("%s", langGetText(STR_MAPGEN_STYLE_NONE));
-        } else {
+        /* The outline is always in the panel, so the buttons always
+         * show. */
+        {
             if (ImGui::Button(langGetText(STR_MAPGEN_STYLE_RANDOMIZE))) {
                 randomizeStyle(cfg);
                 mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
@@ -803,6 +808,34 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
             }
 
             ImGui::Separator();
+
+            /* Outline: in the style panel, because Randomize style
+             * changes it. The list holds only the named outlines. A
+             * seed the player types can still hold Varied (the seed
+             * picks one of the preset's outlines); then the preview
+             * reads "Varied" until an outline is picked. */
+            const char *s_outlineNames[MAPGEN_OUTLINE_VARIED] = {
+                langGetText(STR_MAPGEN_OUTLINE_BOX),
+                langGetText(STR_MAPGEN_OUTLINE_OCTAGON),
+                langGetText(STR_MAPGEN_OUTLINE_ROUND),
+                langGetText(STR_MAPGEN_OUTLINE_DIAMOND),
+                langGetText(STR_MAPGEN_OUTLINE_CROSS),
+                langGetText(STR_MAPGEN_OUTLINE_CLOVER),
+                langGetText(STR_MAPGEN_OUTLINE_ISLAND),
+            };
+            const char *outlinePreview =
+                (k.outline >= 0 && k.outline < MAPGEN_OUTLINE_VARIED)
+                    ? s_outlineNames[k.outline]
+                    : langGetText(STR_MAPGEN_OUTLINE_VARIED);
+            if (ImGui::BeginCombo(langGetText(STR_MAPGEN_OUTLINE), outlinePreview)) {
+                for (int i = 0; i < MAPGEN_OUTLINE_VARIED; i++) {
+                    bool selected = (i == k.outline);
+                    if (ImGui::Selectable(s_outlineNames[i], selected)) k.outline = i;
+                    if (selected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            lockButton("lk_koutline", &cfg->locks, MAPGEN_LOCK_K_OUTLINE);
 
             static const langid s_roadNames[MAPGEN_ROADS_COUNT] = {
                 STR_MAPGEN_ROADS_AXES, STR_MAPGEN_ROADS_DIAG,
@@ -829,8 +862,11 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
                 lockButton("lk_sshape", &cfg->locks, MAPGEN_LOCK_KS_SHAPE);
             }
             if (styleLeverShown(cfg, MAPGEN_KSTYLE_CUT)) {
+                const bool active = styleLeverActive(cfg, MAPGEN_KSTYLE_CUT);
+                ImGui::BeginDisabled(!active);
                 styleSlider(cfg, MAPGEN_KSTYLE_CUT, STR_MAPGEN_STYLE_CUT,
                             STR_MAPGEN_STYLE_CUT_TIP);
+                ImGui::EndDisabled();
                 lockButton("lk_scut", &cfg->locks, MAPGEN_LOCK_KS_CUT);
             }
             if (styleLeverShown(cfg, MAPGEN_KSTYLE_CORE)) {
@@ -1073,33 +1109,6 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     } else if (cfg->genType == MAPGEN_MAKER) {
         auto &k = cfg->params.maker;
 
-        /* Outline: in the panel, because Randomize changes it. The
-         * list holds only the named outlines. A seed the player types
-         * can still hold Varied (the seed picks one of the preset's
-         * outlines); then the preview reads "Varied" until an outline
-         * is picked. */
-        const char *s_outlineNames[MAPGEN_OUTLINE_VARIED] = {
-            langGetText(STR_MAPGEN_OUTLINE_BOX),
-            langGetText(STR_MAPGEN_OUTLINE_OCTAGON),
-            langGetText(STR_MAPGEN_OUTLINE_ROUND),
-            langGetText(STR_MAPGEN_OUTLINE_DIAMOND),
-            langGetText(STR_MAPGEN_OUTLINE_CROSS),
-            langGetText(STR_MAPGEN_OUTLINE_CLOVER),
-            langGetText(STR_MAPGEN_OUTLINE_ISLAND),
-        };
-        const char *outlinePreview =
-            (k.outline >= 0 && k.outline < MAPGEN_OUTLINE_VARIED)
-                ? s_outlineNames[k.outline]
-                : langGetText(STR_MAPGEN_OUTLINE_VARIED);
-        if (ImGui::BeginCombo(langGetText(STR_MAPGEN_OUTLINE), outlinePreview)) {
-            for (int i = 0; i < MAPGEN_OUTLINE_VARIED; i++) {
-                bool selected = (i == k.outline);
-                if (ImGui::Selectable(s_outlineNames[i], selected)) k.outline = i;
-                if (selected) ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
-        }
-        lockButton("lk_koutline", &cfg->locks, MAPGEN_LOCK_K_OUTLINE);
         ImGui::SliderInt(langGetText(STR_MAPGEN_WATER_PCT), &k.waterPct, 0, 100);
         lockButton("lk_kwater", &cfg->locks, MAPGEN_LOCK_K_WATER);
         ImGui::SliderInt(langGetText(STR_MAPGEN_FOREST_PCT), &k.forestPct, 0, 100);
