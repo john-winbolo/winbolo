@@ -665,7 +665,8 @@ void printArgs() {
   fprintf(stderr, "                Can be used with -map (initial map) or alone (random first map).\n");
   fprintf(stderr, "                Requires lobby mode. Invalid maps are skipped at startup.\n");
   fprintf(stderr, "-randommap    - Generate a random procedural map instead of loading a file.\n");
-  fprintf(stderr, "                -randommap alone generates a fully random map each round.\n");
+  fprintf(stderr, "                -randommap alone generates a fully random map each round,\n");
+  fprintf(stderr, "                of one of the four older types (not Map Maker).\n");
   fprintf(stderr, "                -randommap tournament|natural|maze|fractal — specific generator type.\n");
   fprintf(stderr, "                -randommap <seed> — reproduce a specific map from its seed.\n");
   fprintf(stderr, "                -randommap tournament <seed> — type with specific seed.\n");
@@ -1958,9 +1959,14 @@ int main(int argc, char **argv) {
     if (strcmp(typeStr, "seed") == 0) {
       /* "-randommap seed <seed>" — seed is in seedStr */
       cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
-      if (mapGenSeedToConfig(seedStr, &cfg)) {
-        hasFixedSeed = true;
+      if (!mapGenSeedToConfig(seedStr, &cfg)) {
+        fprintf(stderr, "Error: -randommap seed '%s' is not a valid map seed\n", seedStr);
+#ifdef USING_SDL
+        SDL_Quit();
+#endif
+        return 0;
       }
+      hasFixedSeed = true;
     } else if (typeStr[0] != '\0') {
       /* Type specified */
       int genType = MAPGEN_TOURNAMENT;
@@ -1978,9 +1984,15 @@ int main(int argc, char **argv) {
 
       if (seedStr[0] != '\0') {
         /* Type + seed */
-        if (mapGenSeedToConfig(seedStr, &cfg)) {
-          hasFixedSeed = true;
+        if (!mapGenSeedToConfig(seedStr, &cfg)) {
+          fprintf(stderr, "Error: -randommap %s: '%s' is not a valid map seed\n",
+                  typeStr, seedStr);
+#ifdef USING_SDL
+          SDL_Quit();
+#endif
+          return 0;
         }
+        hasFixedSeed = true;
       }
     } else {
       /* Plain "-randommap" — fully random */
@@ -2000,8 +2012,19 @@ int main(int argc, char **argv) {
     {
       int sizeArg = findArg(argc, argv, "randommapsize");
       if (sizeArg != ARG_NOT_FOUND) {
-        randomMapSize = atoi(argv[sizeArg]);
-        if (randomMapSize < 0) randomMapSize = MAPGEN_SIZE_FULL;
+        const char *text = sizeArg < argc ? argv[sizeArg] : "";
+        char *end = NULL;
+        long v = strtol(text, &end, 10);
+        if (end == text || *end != '\0' ||
+            (v != MAPGEN_SIZE_FULL && (v < MAPGEN_SIZE_MIN || v > MAPGEN_SIZE_MAX))) {
+          fprintf(stderr, "Error: -randommapsize must be %d (the whole map) or from %d to %d, not '%s'\n",
+                  MAPGEN_SIZE_FULL, MAPGEN_SIZE_MIN, MAPGEN_SIZE_MAX, text);
+#ifdef USING_SDL
+          SDL_Quit();
+#endif
+          return 0;
+        }
+        randomMapSize = (int)v;
       }
     }
     if (randomMapSize >= 0) {
