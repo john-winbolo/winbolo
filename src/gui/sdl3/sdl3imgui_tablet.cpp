@@ -218,20 +218,32 @@ static void ensureIconsLoaded(int size) {
  * ------------------------------------------------------- */
 
 /* The window's safe area insets, in the layout's units (the window's points
-   scaled to screenW x screenH). */
+   scaled to screenW x screenH). On Android the insets are the shared reading
+   in safe_insets.h (the cutout and the navigation bar, the one-side rule),
+   the same figures the driver's classic screen and the lobby use; on iOS
+   SDL's window safe area as it is. */
 static void tabletSafeInsets(TabletLayoutConfig *cfg, int screenW, int screenH) {
   cfg->safeTop = cfg->safeBottom = cfg->safeLeft = cfg->safeRight = 0.0f;
   SDL_Window *win = sdl3DrawGetWindow();
   if (!win) return;
-  SDL_Rect safeRect;
   int winW = 0, winH = 0;
   SDL_GetWindowSize(win, &winW, &winH);
-  if (SDL_GetWindowSafeArea(win, &safeRect) && winW > 0 && winH > 0) {
+  if (winW <= 0 || winH <= 0) return;
+#if defined(__ANDROID__)
+  const SafeInsets safe = safeInsetsGet(win);
+  cfg->safeLeft   = safe.left   * (float)screenW / (float)winW;
+  cfg->safeTop    = safe.top    * (float)screenH / (float)winH;
+  cfg->safeRight  = safe.right  * (float)screenW / (float)winW;
+  cfg->safeBottom = safe.bottom * (float)screenH / (float)winH;
+#else
+  SDL_Rect safeRect;
+  if (SDL_GetWindowSafeArea(win, &safeRect)) {
     cfg->safeLeft   = (float)safeRect.x * (float)screenW / (float)winW;
     cfg->safeTop    = (float)safeRect.y * (float)screenH / (float)winH;
     cfg->safeRight  = (float)(winW - safeRect.x - safeRect.w) * (float)screenW / (float)winW;
     cfg->safeBottom = (float)(winH - safeRect.y - safeRect.h) * (float)screenH / (float)winH;
   }
+#endif
 }
 
 void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,

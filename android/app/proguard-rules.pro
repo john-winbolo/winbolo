@@ -2,8 +2,8 @@
 # GetStaticMethodID, so no reference from Java keeps them alive:
 #   WinBoloHttp      the WinBolo.net transport (src/winbolonet/http_jni.c:
 #                    request, and the natives it registers with RegisterNatives)
-#   WinBoloActivity  smallestWidthDp, imeHeightPx, showKeyboardAgain
-#                    (src/android/android_device.c), shareFile
+#   WinBoloActivity  smallestWidthDp, imeHeightPx, showKeyboardAgain,
+#                    safeInsetsPx (src/android/android_device.c), shareFile
 #                    (android_share.c), and the class loader http_jni.c
 #                    falls back to on a worker thread
 #   WinBoloNet       start and kind (src/android/android_netpath.c)

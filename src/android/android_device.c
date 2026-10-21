@@ -25,6 +25,7 @@
 static jclass    s_deviceClass = NULL;   /* global reference */
 static jmethodID s_midImeHeight = NULL;
 static jmethodID s_midShowKeyboard = NULL;
+static jmethodID s_midSafeInsets = NULL;
 static bool      s_isTablet = false;
 
 static bool deviceClearException(JNIEnv *env, const char *what) {
@@ -63,10 +64,13 @@ bool androidDeviceInit(void) {
   midWidth = (*env)->GetStaticMethodID(env, local, "smallestWidthDp", "()I");
   s_midImeHeight = (*env)->GetStaticMethodID(env, local, "imeHeightPx", "()I");
   s_midShowKeyboard = (*env)->GetStaticMethodID(env, local, "showKeyboardAgain", "()V");
-  if (midWidth == NULL || s_midImeHeight == NULL || s_midShowKeyboard == NULL) {
+  s_midSafeInsets = (*env)->GetStaticMethodID(env, local, "safeInsetsPx", "()[I");
+  if (midWidth == NULL || s_midImeHeight == NULL || s_midShowKeyboard == NULL ||
+      s_midSafeInsets == NULL) {
     deviceClearException(env, "method lookup");
     s_midImeHeight = NULL;
     s_midShowKeyboard = NULL;
+    s_midSafeInsets = NULL;
     (*env)->PopLocalFrame(env, NULL);
     return false;
   }
@@ -78,6 +82,7 @@ bool androidDeviceInit(void) {
   if (s_deviceClass == NULL) {
     s_midImeHeight = NULL;
     s_midShowKeyboard = NULL;
+    s_midSafeInsets = NULL;
     return false;
   }
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] smallest width %d dp: %s",
@@ -98,6 +103,29 @@ int androidDeviceKeyboardHeight(void) {
   height = (*env)->CallStaticIntMethod(env, s_deviceClass, s_midImeHeight);
   if (deviceClearException(env, "imeHeightPx")) return 0;
   return (int)height;
+}
+
+bool androidDeviceSafeInsets(int *left, int *top, int *right, int *bottom) {
+  JNIEnv *env;
+  jintArray arr;
+  jint v[4];
+  if (s_deviceClass == NULL || s_midSafeInsets == NULL) return false;
+  env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+  if (env == NULL) return false;
+  arr = (jintArray)(*env)->CallStaticObjectMethod(env, s_deviceClass, s_midSafeInsets);
+  if (deviceClearException(env, "safeInsetsPx") || arr == NULL) return false;
+  if ((*env)->GetArrayLength(env, arr) != 4) {
+    (*env)->DeleteLocalRef(env, arr);
+    return false;
+  }
+  (*env)->GetIntArrayRegion(env, arr, 0, 4, v);
+  (*env)->DeleteLocalRef(env, arr);
+  if (deviceClearException(env, "safeInsetsPx region")) return false;
+  if (left) *left = (int)v[0];
+  if (top) *top = (int)v[1];
+  if (right) *right = (int)v[2];
+  if (bottom) *bottom = (int)v[3];
+  return true;
 }
 
 void androidDeviceShowKeyboard(void) {

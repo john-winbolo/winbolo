@@ -2,11 +2,13 @@ package com.winbolo.android;
 
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Insets;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.DisplayCutout;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.inputmethod.InputMethodManager;
@@ -42,6 +44,16 @@ public class WinBoloActivity extends SDLActivity {
     private static volatile int sImeHeightPx =
         (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) ? 0 : -1;
 
+    /* The safe area's four insets in window pixels, meaning what iOS's safe
+       area means: the display cutout and the navigation bar, nothing else.
+       SDL's own safe area adds the system gesture zones, and in landscape
+       that keeps a 48 dp band along the top of every screen (the
+       notification shade's pull-down) out of the game. Null until the
+       window's insets first arrive; they arrive again on every rotation.
+       Read by native code (android_device.c) on SDL's thread, written on
+       the main thread. */
+    private static volatile int[] sSafeInsetsPx = null;
+
     @Override
     protected String[] getLibraries() {
         return new String[]{
@@ -62,19 +74,59 @@ public class WinBoloActivity extends SDLActivity {
         } else {
             Log.w(TAG, "No WifiManager; multicast lock not acquired");
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            /* The decor view keeps its own handling: the listener only reads
-               the keyboard's inset on the way through. */
-            getWindow().getDecorView().setOnApplyWindowInsetsListener(
-                new View.OnApplyWindowInsetsListener() {
-                    @Override
-                    public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+        /* The decor view keeps its own handling: the listener only reads
+           the keyboard's inset and the safe area on the way through. */
+        getWindow().getDecorView().setOnApplyWindowInsetsListener(
+            new View.OnApplyWindowInsetsListener() {
+                @Override
+                public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                         sImeHeightPx = insets.isVisible(WindowInsets.Type.ime())
                             ? insets.getInsets(WindowInsets.Type.ime()).bottom : 0;
-                        return v.onApplyWindowInsets(insets);
                     }
-                });
+                    sSafeInsetsPx = safeInsetsOf(insets);
+                    return v.onApplyWindowInsets(insets);
+                }
+            });
+    }
+
+    /* The cutout's and the navigation bar's insets, left, top, right,
+       bottom. Android 11 and later name the two inset types; before that
+       the cutout is its own object (Android 9 and later, null on a screen
+       without one) and the navigation bar is the stable inset on the three
+       sides it can sit on, never the top. */
+    @SuppressWarnings("deprecation")
+    private static int[] safeInsetsOf(WindowInsets insets) {
+        int left = 0, top = 0, right = 0, bottom = 0;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Insets safe = insets.getInsets(WindowInsets.Type.displayCutout()
+                                           | WindowInsets.Type.navigationBars());
+            left = safe.left;
+            top = safe.top;
+            right = safe.right;
+            bottom = safe.bottom;
+        } else {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                DisplayCutout cutout = insets.getDisplayCutout();
+                if (cutout != null) {
+                    left = cutout.getSafeInsetLeft();
+                    top = cutout.getSafeInsetTop();
+                    right = cutout.getSafeInsetRight();
+                    bottom = cutout.getSafeInsetBottom();
+                }
+            }
+            left = Math.max(left, insets.getStableInsetLeft());
+            right = Math.max(right, insets.getStableInsetRight());
+            bottom = Math.max(bottom, insets.getStableInsetBottom());
         }
+        return new int[]{ left, top, right, bottom };
+    }
+
+    /* The safe area's insets in window pixels, left, top, right, bottom
+       (see sSafeInsetsPx), or null before the window's insets have
+       arrived. */
+    public static int[] safeInsetsPx() {
+        return sSafeInsetsPx;
     }
 
     /* The configuration's smallest width in dp, the figure Android itself

@@ -1041,7 +1041,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * useTabbedLobby computed above the shared settings panel) --- */
         if (useTabbedLobby) {
             float availW = ImGui::GetContentRegionAvail().x;
-            float btnAreaH = ImGui::GetTextLineHeightWithSpacing() * 2 + 16.0f * s;
+            /* The height each tab's panel leaves for the bottom button row:
+               the spacing after the panel, a Spacing, the Separator and its
+               spacing, a Spacing, then one row of buttons. */
+            float btnAreaH = ImGui::GetFrameHeight()
+                           + 4.0f * ImGui::GetStyle().ItemSpacing.y + 1.0f;
 
             /* Detect new chat messages for unread indicator */
             int chatLen = (int)SDL_strlen(clientSimGetLobbyChatHistory(cs));

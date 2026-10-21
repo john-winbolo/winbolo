@@ -627,15 +627,40 @@ static float        gStatusBasesOrgX = -1, gStatusBasesOrgY = -1;
    to sdl3draw_status.c. */
 
 /* Query safe area insets in renderer coordinates.
-   Returns left/top/right/bottom insets (pixels). */
+   Returns left/top/right/bottom insets (pixels). On Android the insets are
+   the shared reading in safe_insets.h (the cutout and the navigation bar,
+   the one-side rule), the same figures the lobby and the touch controls
+   use; elsewhere SDL's window safe area as it is. */
 static void sdl3GetSafeAreaInsets(float *outLeft, float *outTop,
                                    float *outRight, float *outBottom) {
   float l = 0, t = 0, r = 0, b = 0;
   if (gWindow) {
-    SDL_Rect safeRect;
+    float winL = 0, winT = 0, winR = 0, winB = 0;   /* window points */
+    bool haveInsets = false;
     int winW = 0, winH = 0;
     SDL_GetWindowSize(gWindow, &winW, &winH);
-    if (SDL_GetWindowSafeArea(gWindow, &safeRect) && winW > 0 && winH > 0) {
+#if defined(__ANDROID__)
+    {
+      const SafeInsets safe = safeInsetsGet(gWindow);
+      winL = safe.left;
+      winT = safe.top;
+      winR = safe.right;
+      winB = safe.bottom;
+      haveInsets = true;
+    }
+#else
+    {
+      SDL_Rect safeRect;
+      if (SDL_GetWindowSafeArea(gWindow, &safeRect)) {
+        winL = (float)safeRect.x;
+        winT = (float)safeRect.y;
+        winR = (float)(winW - safeRect.x - safeRect.w);
+        winB = (float)(winH - safeRect.y - safeRect.h);
+        haveInsets = true;
+      }
+    }
+#endif
+    if (haveInsets && winW > 0 && winH > 0) {
       int renW = 0, renH = 0;
       SDL_RendererLogicalPresentation logMode;
       SDL_GetRenderLogicalPresentation(gRenderer, &renW, &renH, &logMode);
@@ -643,10 +668,10 @@ static void sdl3GetSafeAreaInsets(float *outLeft, float *outTop,
         SDL_GetCurrentRenderOutputSize(gRenderer, &renW, &renH);
       }
       if (renW > 0 && renH > 0) {
-        l = (float)safeRect.x * (float)renW / (float)winW;
-        t = (float)safeRect.y * (float)renH / (float)winH;
-        r = (float)(winW - safeRect.x - safeRect.w) * (float)renW / (float)winW;
-        b = (float)(winH - safeRect.y - safeRect.h) * (float)renH / (float)winH;
+        l = winL * (float)renW / (float)winW;
+        t = winT * (float)renH / (float)winH;
+        r = winR * (float)renW / (float)winW;
+        b = winB * (float)renH / (float)winH;
       }
     }
   }

@@ -10,9 +10,12 @@
 *  What the device is, read from WinBoloActivity over JNI:
 *  whether its screen is a tablet's (the configuration's
 *  smallest width, 600 dp and over), which ui_mode.c turns
-*  into the classic screen with the touch controls, and
-*  the height of the on-screen keyboard while it is up,
-*  which the dialogs use to keep a text field above it.
+*  into the classic screen with the touch controls, the
+*  height of the on-screen keyboard while it is up, which
+*  the dialogs use to keep a text field above it, and the
+*  safe area's insets (the display cutout and the
+*  navigation bar), which safe_insets.h hands to every
+*  mobile screen.
 *********************************************************/
 
 #ifndef ANDROID_DEVICE_H
@@ -62,6 +65,21 @@ int androidDeviceKeyboardHeight(void);
 *  Declared for the shared code in dialogs/imgui_touch.h.
 *********************************************************/
 void androidDeviceShowKeyboard(void);
+
+/*********************************************************
+*NAME:          androidDeviceSafeInsets
+*PURPOSE:
+*  The safe area's insets in window pixels, left, top,
+*  right, bottom: the display cutout and the navigation
+*  bar, as WinBoloActivity.safeInsetsPx reads them from
+*  the window's insets, and nothing else; SDL's own safe
+*  area adds the system gesture zones, a 48 dp band along
+*  the top of every landscape screen. Returns false, the
+*  insets untouched, until the window's insets have
+*  arrived. Declared for the shared code in
+*  gui/sdl3/safe_insets.h.
+*********************************************************/
+bool androidDeviceSafeInsets(int *left, int *top, int *right, int *bottom);
 
 #ifdef __cplusplus
 }
