@@ -157,17 +157,27 @@ bool clipGifCopyFileToClipboard(const char *gifPath, void *window) {
 
 #else /* !_WIN32 */
 
-/* What the clipboard callback hands out: the GIF's bytes and the file's
- * file:// address. Freed by the cleanup callback when the clipboard is
- * replaced. */
+/* What the clipboard callback hands out: the GIF's bytes, the file's
+ * file:// address, and on Linux the same address in the form GNOME's file
+ * managers paste as a file. Freed by the cleanup callback when the clipboard
+ * is replaced.
+ *
+ * On macOS SDL turns each MIME type into a system type: "image/gif" becomes
+ * the GIF type and pastes as a picture, but "text/uri-list" has no system
+ * type, so Finder and chat apps do not see a file there. On macOS the copy
+ * therefore pastes the GIF's bytes only. */
 typedef struct {
     void  *bytes;
     size_t len;
     char  *uri;
+    char  *gnome;  /* "copy\nfile://...", NULL when not made */
 } ClipGifClipboardData;
 
 static const char *const CLIP_GIF_MIME_GIF = "image/gif";
 static const char *const CLIP_GIF_MIME_URI = "text/uri-list";
+#if !defined(__APPLE__)
+static const char *const CLIP_GIF_MIME_GNOME = "x-special/gnome-copied-files";
+#endif
 
 static const void *SDLCALL clipDataCallback(void *userdata,
                                             const char *mime_type,
@@ -185,6 +195,12 @@ static const void *SDLCALL clipDataCallback(void *userdata,
         *size = SDL_strlen(d->uri);
         return d->uri;
     }
+#if !defined(__APPLE__)
+    if (SDL_strcmp(mime_type, CLIP_GIF_MIME_GNOME) == 0 && d->gnome != NULL) {
+        *size = SDL_strlen(d->gnome);
+        return d->gnome;
+    }
+#endif
     *size = 0;
     return NULL;
 }
@@ -194,6 +210,7 @@ static void SDLCALL clipCleanupCallback(void *userdata) {
     if (d != NULL) {
         SDL_free(d->bytes);
         SDL_free(d->uri);
+        SDL_free(d->gnome);
         SDL_free(d);
     }
 }
@@ -250,13 +267,34 @@ bool clipGifCopyFileToClipboard(const char *gifPath, void *window) {
         return false;
     }
     d->uri = clipFileUri(gifPath);
+#if !defined(__APPLE__)
+    if (d->uri != NULL) {
+        /* "copy", a newline, and the address without the uri-list's
+         * CRLF. */
+        size_t uriLen = SDL_strlen(d->uri);
+        if (uriLen >= 2) {
+            uriLen -= 2;
+        }
+        d->gnome = (char *)SDL_malloc(5 + uriLen + 1);
+        if (d->gnome != NULL) {
+            SDL_memcpy(d->gnome, "copy\n", 5);
+            SDL_memcpy(d->gnome + 5, d->uri, uriLen);
+            d->gnome[5 + uriLen] = '\0';
+        }
+    }
+#endif
 
-    const char *mimes[2];
+    const char *mimes[3];
     size_t mimeCount = 0;
     mimes[mimeCount++] = CLIP_GIF_MIME_GIF;
     if (d->uri != NULL) {
         mimes[mimeCount++] = CLIP_GIF_MIME_URI;
     }
+#if !defined(__APPLE__)
+    if (d->gnome != NULL) {
+        mimes[mimeCount++] = CLIP_GIF_MIME_GNOME;
+    }
+#endif
     /* From here SDL owns d: when the platform refuses the data, SDL still
      * calls the cleanup the next time the clipboard is set or cleared, so d
      * is not freed here on failure. */

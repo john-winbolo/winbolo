@@ -160,7 +160,7 @@ static void metaString(const cJSON *obj, const char *key, char *out,
     const cJSON *it = cJSON_GetObjectItemCaseSensitive(obj, key);
     out[0] = '\0';
     if (cJSON_IsString(it) && it->valuestring != NULL) {
-        SDL_strlcpy(out, it->valuestring, outLen);
+        SDL_utf8strlcpy(out, it->valuestring, outLen);
     }
 }
 
@@ -199,8 +199,8 @@ bool clipGifMetaFromJson(const char *text, size_t len, ClipGifMeta *out) {
             }
             if (cJSON_IsString(p) && p->valuestring != NULL &&
                 p->valuestring[0] != '\0') {
-                SDL_strlcpy(out->players[out->playerCount], p->valuestring,
-                            sizeof(out->players[0]));
+                SDL_utf8strlcpy(out->players[out->playerCount], p->valuestring,
+                                sizeof(out->players[0]));
                 out->playerCount++;
             }
         }
@@ -384,4 +384,89 @@ void clipGifFormatFileStamp(int64_t createdUnix, char *out, size_t outLen) {
     }
     SDL_snprintf(out, outLen, "%04d%02d%02d-%02d%02d%02d", dt.year, dt.month,
                  dt.day, dt.hour, dt.minute, dt.second);
+}
+
+/* ── Text ──────────────────────────────────────────────────────────── */
+
+/* The length of the UTF-8 sequence that starts with byte c: 1 for ASCII and
+ * for a byte that cannot start a sequence (it is kept as it is), else 2-4. */
+static size_t utf8SeqLen(unsigned char c) {
+    if (c >= 0xF0u && c <= 0xF7u) return 4;
+    if (c >= 0xE0u) return (c <= 0xEFu) ? 3 : 1;
+    if (c >= 0xC0u) return 2;
+    return 1;
+}
+
+void clipGifUtf8CutEnd(char *s, size_t len) {
+    if (s == NULL) {
+        return;
+    }
+    /* Find where the last sequence starts: at most 3 continuation bytes
+     * back. */
+    size_t start = len;
+    size_t back = 0;
+    while (start > 0 && back < 4) {
+        start--;
+        back++;
+        if (((unsigned char)s[start] & 0xC0u) != 0x80u) {
+            break;
+        }
+    }
+    if (start >= len) {
+        s[len] = '\0';
+        return;
+    }
+    unsigned char lead = (unsigned char)s[start];
+    if ((lead & 0xC0u) == 0x80u) {
+        /* Only continuation bytes at the end: not a sequence this can mend,
+         * so it is left as it is. */
+        s[len] = '\0';
+        return;
+    }
+    if (utf8SeqLen(lead) > len - start) {
+        len = start;  /* the last sequence was cut: drop it */
+    }
+    s[len] = '\0';
+}
+
+void clipGifFillString1(const char *fmt, const char *value, char *out,
+                        size_t outLen) {
+    static const char token[] = "{string1}";
+    const size_t tokenLen = sizeof(token) - 1u;
+    if (out == NULL || outLen == 0) {
+        return;
+    }
+    out[0] = '\0';
+    if (fmt == NULL) {
+        return;
+    }
+    if (value == NULL) {
+        value = "";
+    }
+    const size_t room = outLen - 1u;
+    size_t used = 0;
+    bool cut = false;
+    const char *p = fmt;
+    while (*p != '\0' && !cut) {
+        const char *src = p;
+        size_t n = 1;
+        if (SDL_strncmp(p, token, tokenLen) == 0) {
+            src = value;
+            n = SDL_strlen(value);
+            p += tokenLen;
+        } else {
+            p++;
+        }
+        if (n > room - used) {
+            n = room - used;
+            cut = true;
+        }
+        SDL_memcpy(out + used, src, n);
+        used += n;
+    }
+    if (cut) {
+        clipGifUtf8CutEnd(out, used);
+    } else {
+        out[used] = '\0';
+    }
 }

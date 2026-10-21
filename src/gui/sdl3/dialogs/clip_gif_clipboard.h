@@ -23,7 +23,9 @@
  * format that some image programs read.
  * Other platforms: the bytes go on as "image/gif" through
  * SDL_SetClipboardData, with a file:// line as "text/uri-list" for file
- * managers.
+ * managers, and on Linux as "x-special/gnome-copied-files" too, which is
+ * what GNOME's file managers paste as a file. On macOS only the bytes are
+ * of use: SDL has no system type for "text/uri-list" there.
  */
 
 #ifndef CLIP_GIF_CLIPBOARD_H

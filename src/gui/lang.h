@@ -3539,6 +3539,8 @@
 #define STR_CLIPGIF_LENGTH_TIP                   2953
 /* When the gallery cannot write a new GIF (main's iOS string, same id) */
 #define STR_CLIPGIF_SAVE_FAILED_IOS              2937
+#define STR_CLIPGIF_LOADING                      2954
+#define STR_CLIPGIF_TOO_LARGE                    2955
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
