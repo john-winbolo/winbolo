@@ -126,11 +126,13 @@
 #define PM_JUNCTION  2
 #define PM_ANY       3
 #define PM_TRACK     4
+#define PM_CHEW      5   /* inside the middle of the floor, out of range of the safe bases */
 
 #define BM_TRACK 0
 #define BM_CELLS 1
 #define BM_ANY   2
 #define BM_EDGE  3   /* floor tiles next to the inner rim */
+#define BM_CHEW  4   /* safe bases on the track, one group inside, the rest on the track */
 
 #define SM_SEA     0
 #define SM_CORNERS 1
@@ -181,6 +183,9 @@ typedef struct Preset {
     int lobes;       /* clover lobes are forest */
     int rimDrop;     /* percent of seeds with no forest rim (grass to the coast) */
     int mazeYard;    /* ISLAND: percent of seeds with a walled maze yard */
+    int rimWall;     /* percent of seeds with building walls on the axes through the rim */
+    int midPiece;    /* percent of seeds with short building pieces at 45 degrees */
+    int midClump;    /* percent of seeds with a building clump at the centre */
 } Preset;
 
 static const int kSkelOpts[6] = {
@@ -374,20 +379,24 @@ static const Preset kPresets[] = {
       .skelAlt = 0x1F, .cutVar = 15, .podCore = 1,
       .fragSet = -1,
       .outlineSet = OS(OL_OCTAGON) | OS(OL_ROUND) | OS(OL_BOX) },
-    /* Chew Toy: a round arena with a thick forest rim cut by bays on
-     * the diagonals, a grass track, thin lines, bases on the track. */
+    /* Chew Toy: a round road arena with a thick forest rim cut by bays
+     * on the diagonals, a grass track and a grass cross. Building walls
+     * on the axes through the rim, short building pieces at 45 degrees
+     * and a building clump at the centre on some seeds. The pills are
+     * in the middle of the floor; some bases on the track are out of
+     * range of every pill. */
     { .key = "chew-toy", .name = "Chew Toy", .family = FAM_FORMAL,
-      .size = 60, .aspect = 100, .outline = OL_ROUND, .symmetry = SY_ROT4,
+      .size = 59, .aspect = 100, .outline = OL_ROUND, .symmetry = SY_ROT4,
       .water = 0, .forest = 40, .road = 50, .building = 5, .islands = 1, .mines = 0, .detail = 0,
-      .bases = 12, .pills = 16, .starts = 8,
-      .forestRim = 5, .track = T_GRASS, .trackW = 1, .floor = T_ROAD,
-      .skel = SK_AXES, .skelTerr = T_FOREST, .skelW = 1,
+      .bases = 16, .pills = 16, .starts = 8,
+      .forestRim = 6, .track = T_GRASS, .trackW = 1, .floor = T_ROAD,
+      .skel = SK_AXES, .skelTerr = T_GRASS, .skelW = 1,
       .pod1 = POD_LAWN, .pod2 = POD_LAWN, .pod3 = POD_LAWN, .cell = 20,
-      .centre = CEN_NONE, .gateTerr = T_DEEP, .gateW = 3, .gateStyle = 2,
-      .pillMode = PM_NEAR_BASE, .baseMode = BM_TRACK, .startMode = SM_CORNERS,
-      .skelAlt = 0x07,
+      .centre = CEN_NONE, .gateTerr = T_DEEP, .gateW = 2, .gateStyle = 2,
+      .pillMode = PM_CHEW, .baseMode = BM_CHEW, .startMode = SM_CORNERS,
       .fragSet = -1,
-      .outlineSet = OS(OL_ROUND) },
+      .outlineSet = OS(OL_ROUND),
+      .rimWall = 85, .midPiece = 65, .midClump = 30 },
 };
 
 #define PRESET_COUNT ((int)(sizeof(kPresets) / sizeof(kPresets[0])))
@@ -461,6 +470,14 @@ int makerStyleRange(int preset, int lever, int *lo, int *hi) {
         if (pr->mazeYard <= 0) return 0;
         a = 1; b = 3;
         break;
+    case MAKER_STYLE_WALLS:
+        if (pr->rimWall <= 0) return 0;
+        a = 1; b = 2;
+        break;
+    case MAKER_STYLE_MIDDLE:
+        if (pr->midPiece <= 0 && pr->midClump <= 0) return 0;
+        a = 1; b = 4;
+        break;
     default:
         return 0;
     }
@@ -527,6 +544,12 @@ typedef struct Ctx {
     int coreT;         /* terrain of pod cores for this map */
     int rimTotal;      /* tiles of rim inside the coast */
     int noForestRim;   /* this seed has no forest rim */
+    int rimWalls;      /* this seed has building walls on the axes through the rim */
+    int midPieces;     /* this seed has building pieces at 45 degrees */
+    int midClump;      /* this seed has a building clump at the centre */
+    int clumpShape;    /* 0 cross, 1 diamond ring, 2 square ring */
+    int midR3;         /* land radius x 3 (chamfer distance of the centre), 0 if not known */
+    int nSafe;         /* the first nSafe bases are kept out of range of every pill */
     int styleUsed[MAKER_STYLE_COUNT];  /* see MakerObjects */
     int n[3];
     int ox[3][MAKER_MAX_OBJECTS], oy[3][MAKER_MAX_OBJECTS];
@@ -1559,6 +1582,90 @@ static void paintExtras(Ctx *c, int onLayer) {
     }
 }
 
+/*---------------------------------------------------------
+ * Rim walls and buildings near the middle (Chew Toy)
+ *
+ * Integer math only. An offset (i, j), both 0 or more, counts tiles
+ * out from the middle into each quarter of the land: the middle
+ * column, or each of the two middle columns of an even width, is
+ * offset 0.
+ *---------------------------------------------------------*/
+
+/* Write v at offset (i, j) in each quarter, only on the floor. */
+static void putQuarters(Ctx *c, int i, int j, int v, int layer) {
+    int cxl = (c->W - 1) / 2, cyl = (c->H - 1) / 2;
+    int cxr = c->W - 1 - cxl, cyr = c->H - 1 - cyl;
+    int q;
+    for (q = 0; q < 4; q++) {
+        int x = (q & 1) ? cxr + i : cxl - i;
+        int y = (q & 2) ? cyr + j : cyl - j;
+        int L;
+        if (!inb(c, x, y)) continue;
+        L = c->layer[IDX(c, x, y)];
+        if (L != L_FLOOR && L != L_SKEL && L != L_CENTRE) continue;
+        put(c, x, y, v, layer);
+    }
+}
+
+/* One tile of a rim wall: building on the rim, floor on the track. */
+static void rimWallTile(Ctx *c, int x, int y, int floorT) {
+    int L;
+    if (!inb(c, x, y)) return;
+    L = c->layer[IDX(c, x, y)];
+    if (L == L_RIM) put(c, x, y, T_BUILDING, L_WALL);
+    else if (L == L_TRACK) put(c, x, y, floorT, L_FLOOR);
+}
+
+/* A building wall on each axis, from the coast through the rim, with
+ * a gap in the track. The four arms are quarter turns of each other. */
+static void paintRimWalls(Ctx *c, int floorT) {
+    int cxl = (c->W - 1) / 2, cyl = (c->H - 1) / 2;
+    int cxr = c->W - 1 - cxl, cyr = c->H - 1 - cyl;
+    int s;
+    for (s = 0; s <= cyl; s++) {
+        rimWallTile(c, cxl, s, floorT);
+        rimWallTile(c, cxr, c->H - 1 - s, floorT);
+    }
+    for (s = 0; s <= cxl; s++) {
+        rimWallTile(c, c->W - 1 - s, cyl, floorT);
+        rimWallTile(c, s, cyr, floorT);
+    }
+}
+
+/* A building clump at the centre (a cross, or a diamond or square
+ * ring with gaps on the axes and forest inside) and short building
+ * pieces at 45 degrees on the diagonals. Not on a small floor. */
+static void paintMiddle(Ctx *c) {
+    int R = c->midR3 / 3, i, j;
+    if (R < 12) return;
+    if (c->midClump) {
+        int rc = R * 16 / 100;   /* 4 at the preset size */
+        for (j = 0; j <= rc; j++) {
+            for (i = 0; i <= rc; i++) {
+                int hi = i > j ? i : j, lo = i < j ? i : j, on = 0, wood = 0;
+                if (c->clumpShape == 0) {
+                    on = (lo == 0) || (i == 1 && j == 1);
+                } else if (c->clumpShape == 1) {
+                    on = (i + j == rc) && lo >= 1;
+                    wood = (i + j <= rc - 2);
+                } else {
+                    on = (hi == rc) && lo >= 2;
+                    wood = (hi <= rc - 2);
+                }
+                if (on) putQuarters(c, i, j, T_BUILDING, L_WALL);
+                else if (wood) putQuarters(c, i, j, T_FOREST, L_CENTRE);
+            }
+        }
+    }
+    if (c->midPieces) {
+        /* 5 at the preset size, one more to keep clear of a clump */
+        int k = R * 20 / 100 + c->midClump;
+        putQuarters(c, k + 1, k - 1, T_BUILDING, L_WALL);
+        putQuarters(c, k, k, T_BUILDING, L_WALL);
+        putQuarters(c, k - 1, k + 1, T_BUILDING, L_WALL);
+    }
+}
+
 static void paintFormal(Ctx *c) {
     const Preset *pr = c->pr;
     int floorT = floorTerrain(c);
@@ -1591,6 +1698,11 @@ static void paintFormal(Ctx *c) {
     paintPods(c, pr->centre);
     paintCentre(c, pr->centre);
     paintExtras(c, L_FLOOR);
+    if (pr->rimWall > 0 || pr->midPiece > 0 || pr->midClump > 0) {
+        c->midR3 = c->din[IDX(c, (c->W - 1) / 2, (c->H - 1) / 2)];
+        if (c->rimWalls) paintRimWalls(c, floorT);
+        paintMiddle(c);
+    }
     if (pr->gateW > 0) {
         int wedge = 0;
         if (pr->gateStyle == 1) {
@@ -2609,6 +2721,34 @@ static void placeKind(Ctx *c, int kind, int *cand, int ncand, int want,
     }
 }
 
+/* Pills are kept this far from the safe bases: the square of a
+ * distance just over the pill fire distance of 8.5 tiles. */
+#define SAFE_D2 73
+
+/* 1 if the distance r of tile (x, y) from the middle is at least lo
+ * and less than hi hundredths of the land radius (midR3 / 3). */
+static int midBand(const Ctx *c, int x, int y, int lo, int hi) {
+    int64_t dx = 2 * x - (c->W - 1), dy = 2 * y - (c->H - 1);
+    int64_t r6sq = (dx * dx + dy * dy) * 9 * 10000;   /* (6 r)^2 x 100^2 */
+    int64_t R6 = 2 * (int64_t)c->midR3;                 /* 6 R */
+    return r6sq >= (int64_t)lo * lo * R6 * R6 && r6sq < (int64_t)hi * hi * R6 * R6;
+}
+
+/* The square of the distance a pill of a pair keeps from the safe
+ * bases, so that its partner one tile away is still out of range:
+ * (sqrt(73) + 1)^2 rounded up. */
+#define SAFE_PAIR_D2 92
+
+/* 1 if a pill at (x, y) is at least sqrt(d2) tiles from every safe base. */
+static int outOfSafeRange(const Ctx *c, int x, int y, int d2) {
+    int i;
+    for (i = 0; i < c->nSafe; i++) {
+        int dx = x - c->ox[OBJ_BASE][i], dy = y - c->oy[OBJ_BASE][i];
+        if (dx * dx + dy * dy < d2) return 0;
+    }
+    return 1;
+}
+
 static int collect(Ctx *c, int kind, int *cand, int filter) {
     int x, y, n = 0;
     for (y = 0; y < c->H; y++) {
@@ -2657,12 +2797,72 @@ static int collect(Ctx *c, int kind, int *cand, int filter) {
                 break;
             }
             case 8: ok = (L == L_CENTRE) && c->dout[k] >= 3; break;   /* centre pond */
+            case 9:                                                      /* middle ring of the floor */
+                ok = (L == L_FLOOR || L == L_SKEL) && midBand(c, x, y, 25, 45);
+                break;
+            case 10:                                                     /* middle of the floor, safe */
+                ok = (L == L_FLOOR || L == L_SKEL || L == L_CENTRE) && midBand(c, x, y, 10, 68) &&
+                     outOfSafeRange(c, x, y, SAFE_D2);
+                break;
+            case 12:                                                     /* middle of the floor, safe for a pair */
+                ok = (L == L_FLOOR || L == L_SKEL || L == L_CENTRE) && midBand(c, x, y, 10, 68) &&
+                     outOfSafeRange(c, x, y, SAFE_PAIR_D2);
+                break;
+            case 11: ok = outOfSafeRange(c, x, y, SAFE_D2); break;              /* anywhere, safe */
             default: break;
             }
             if (ok) cand[n++] = k;
         }
     }
     return n;
+}
+
+/* Chew Toy bases: one or two groups on the track that no pill may
+ * reach, one group in the middle ring of the floor, the rest on the
+ * track. Integer math only. */
+static void placeMidBases(Ctx *c, int *cand) {
+    int xs[4], ys[4], per, groups, want, nc, md;
+    per = images(c, 1, 2, xs, ys);
+    groups = 1 + rnd(c, 2);
+    nc = collect(c, OBJ_BASE, cand, 1);
+    md = nc * 4 / (5 * c->p.bases);
+    if (md < 2) md = 2;
+    want = per * groups;
+    if (want > c->p.bases) want = c->p.bases;
+    placeKind(c, OBJ_BASE, cand, nc, want, md, 0);
+    c->nSafe = c->n[OBJ_BASE];
+    want = c->p.bases - c->n[OBJ_BASE];
+    if (want > per) want = per;
+    if (want > 0) {
+        nc = collect(c, OBJ_BASE, cand, 9);
+        placeKind(c, OBJ_BASE, cand, nc, want, md, 0);
+    }
+    if (c->n[OBJ_BASE] < c->p.bases) {
+        nc = collect(c, OBJ_BASE, cand, 1);
+        placeKind(c, OBJ_BASE, cand, nc, c->p.bases - c->n[OBJ_BASE], md, 0);
+    }
+}
+
+/* Chew Toy pills: in the middle of the floor, out of range of the
+ * safe bases, in pairs on some seeds. */
+static void placeMidPills(Ctx *c, int *cand) {
+    int xs[4], ys[4], per, pairs, nc, md;
+    per = images(c, 1, 2, xs, ys);
+    pairs = rnd(c, 2);
+    md = c->midR3 / 15;      /* a fifth of the land radius */
+    if (md < 2) md = 2;
+    if (pairs && c->p.pills - c->n[OBJ_PILL] >= 2 * per) {
+        /* The partner of a pair is not checked by the filter, so the
+         * first pill keeps a wider distance from the safe bases. */
+        nc = collect(c, OBJ_PILL, cand, 12);
+        placeKind(c, OBJ_PILL, cand, nc, 2 * per, md, 1);
+    }
+    nc = collect(c, OBJ_PILL, cand, 10);
+    placeKind(c, OBJ_PILL, cand, nc, c->p.pills - c->n[OBJ_PILL], md, 0);
+    if (c->n[OBJ_PILL] < c->p.pills) {
+        nc = collect(c, OBJ_PILL, cand, 11);
+        placeKind(c, OBJ_PILL, cand, nc, c->p.pills - c->n[OBJ_PILL], 1, 0);
+    }
 }
 
 static void placeObjects(Ctx *c) {
@@ -2709,7 +2909,10 @@ static void placeObjects(Ctx *c) {
     }
 
     /* Bases */
-    if (c->p.bases > 0) {
+    if (c->p.bases > 0 && pr->baseMode == BM_CHEW && c->midR3 >= 18) {
+        placeMidBases(c, cand);
+    }
+    if (c->p.bases > c->n[OBJ_BASE]) {
         int filter = 2;
         md = sqrt(landArea / (c->p.bases + 1)) * 0.75;
         switch (pr->baseMode) {
@@ -2722,7 +2925,7 @@ static void placeObjects(Ctx *c) {
         if (filter == 1) {
             md = (double)nc / (c->p.bases > 0 ? c->p.bases : 1) * 0.8;
         }
-        placeKind(c, OBJ_BASE, cand, nc, c->p.bases, md, 0);
+        placeKind(c, OBJ_BASE, cand, nc, c->p.bases - c->n[OBJ_BASE], md, 0);
         if (c->n[OBJ_BASE] < c->p.bases) {
             nc = collect(c, OBJ_BASE, cand, 2);
             placeKind(c, OBJ_BASE, cand, nc, c->p.bases - c->n[OBJ_BASE], 2.0, 0);
@@ -2734,7 +2937,10 @@ static void placeObjects(Ctx *c) {
     }
 
     /* Pills */
-    if (c->p.pills > 0) {
+    if (c->p.pills > 0 && pr->pillMode == PM_CHEW && c->midR3 >= 18) {
+        placeMidPills(c, cand);
+    }
+    if (c->p.pills > c->n[OBJ_PILL]) {
         int pair = pr->pillMode == PM_PAIRS;
         int filter = 2;
         md = sqrt(landArea / (c->p.pills + 1)) * (pair ? 0.9 : 0.6);
@@ -2988,6 +3194,23 @@ void makerGenerate(uint8_t grid[256][256], MakerObjects *out, const MakerParams 
         if (makerStyleRange(c.p.preset, MAKER_STYLE_CORE, NULL, NULL)) {
             c.styleUsed[MAKER_STYLE_CORE] = (c.coreT == T_HALF) ? 2 : 1;
         }
+    }
+    if (c.pr->rimWall > 0) {
+        c.rimWalls = rnd(&c, 100) < c.pr->rimWall;
+        if (c.p.style[MAKER_STYLE_WALLS]) c.rimWalls = c.p.style[MAKER_STYLE_WALLS] == 2;
+        c.styleUsed[MAKER_STYLE_WALLS] = c.rimWalls ? 2 : 1;
+    }
+    if (c.pr->midPiece > 0 || c.pr->midClump > 0) {
+        int v;
+        c.midPieces = rnd(&c, 100) < c.pr->midPiece;
+        c.midClump = rnd(&c, 100) < c.pr->midClump;
+        c.clumpShape = rnd(&c, 3);
+        v = c.p.style[MAKER_STYLE_MIDDLE];
+        if (v) {
+            c.midPieces = (v == 2 || v == 4);
+            c.midClump = (v >= 3);
+        }
+        c.styleUsed[MAKER_STYLE_MIDDLE] = 1 + c.midPieces + 2 * c.midClump;
     }
     if (c.p.outline == OL_VARIED) {
         int opts[OL_COUNT], no = 0;

@@ -760,9 +760,9 @@ static const SeedHash kMakerHashes[] = {
     { "K6F6011B20A2199020000000080Z3E", 0x5627D579u },
     { "K6F6011B20A219902607FF70880Z3E", 0xBD466539u },
     { "K6F6011B20A219902607FF70880Z5A", 0x45D310C9u },
-    { "K728014320A2019040000000080Z3C", 0x34C7504Fu },
-    { "K728014320A201904607FF70880Z3C", 0xA0057F3Fu },
-    { "K728014320A201904607FF70880Z5A", 0xF0533C83u },
+    { "K728014320A2021040000000080Z3B", 0xD19FD14Fu },
+    { "K728014320A202104607FF70880Z3B", 0x8B32F0EBu },
+    { "K728014320A202104607FF70880Z5A", 0x3F6F8A0Bu },
 };
 
 int run_mapgen_maker_hashes(void) {
@@ -938,9 +938,10 @@ int run_mapgen_maker_one_land(void) {
  * Style levers
  *
  * Each lever replaces one choice the seed makes for a map (the road
- * layout, the shape, the octagon cut, the pod centres, the forest rim
- * and the maze yard). The seed's draw is still made when a lever is
- * set, so a lever changes only its own choice. "From seed" (0) on
+ * layout, the shape, the octagon cut, the pod centres, the forest rim,
+ * the maze yard, the rim walls and the buildings near the middle). The
+ * seed's draw is still made when a lever is set, so a lever changes
+ * only its own choice. "From seed" (0) on
  * every lever writes the 'K' seed and makes the map the seed always
  * made: run_mapgen_maker_hashes checks that against fixed hashes.
  *---------------------------------------------------------*/
@@ -1135,7 +1136,7 @@ int run_mapgen_maker_style_seed_roundtrip(void) {
         a.params.maker.style[MAPGEN_KSTYLE_ROADS] = 1 + MAPGEN_ROADS_DIAG;
         a.params.maker.style[MAPGEN_KSTYLE_CORE] = 2;
         mapGenConfigToSeed(&a, seed, sizeof(seed));
-        UT_ASSERT_MSG(seed[0] == 'S' && strlen(seed) == 27, "wrote '%s'", seed);
+        UT_ASSERT_MSG(seed[0] == 'S' && strlen(seed) == 28, "wrote '%s'", seed);
         UT_ASSERT(strchr(seed, 'Z') == NULL);
 
         /* Small letters. */
@@ -1167,7 +1168,7 @@ int run_mapgen_maker_style_seed_roundtrip(void) {
         other[5] = 'Z';
         UT_ASSERT(!mapGenSeedToConfig(other, &b));
         strcpy(other, seed);
-        other[26] = '\0';
+        other[27] = '\0';
         UT_ASSERT(!mapGenSeedToConfig(other, &b));
         strcpy(other, seed);
         strcat(other, "0");
@@ -1251,5 +1252,87 @@ int run_mapgen_maker_style_same_map(void) {
     genFree(&a);
     genFree(&b);
     UT_ASSERT(checks > 0);
+    return 0;
+}
+
+/*---------------------------------------------------------
+ * Chew Toy: bases out of range of the pills, pills away from the rim
+ *
+ * In the real Chew Toy maps, some bases on the track are out of range
+ * of every pill at the start, and the pills stand in the middle of the
+ * floor, not by the forest rim. A pill fires at 8.5 tiles, so a base
+ * is out of range when every pill is at least sqrt(73) tiles away. A
+ * pill is "in the rim" when it is at 0.7 or more of the land radius
+ * from the middle of the land.
+ *---------------------------------------------------------*/
+
+int run_mapgen_maker_chew_toy_safe_bases(void) {
+    GenOut g;
+    int chew = mapGenPresetFromKey("chew-toy"), runs = 0, noSafe = 0, rimMaps = 0;
+    static const int sizes[] = { 0, 48, 90, 160 };   /* 0: the preset's own size */
+    UT_ASSERT(chew >= 0);
+    UT_ASSERT(genAlloc(&g));
+    for (size_t s = 0; s < sizeof(sizes) / sizeof(sizes[0]); s++) {
+        for (int lever = 0; lever < 3; lever++) {
+            for (uint32_t seed = 1; seed <= 60; seed++) {
+                MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_MAKER);
+                int safe = 0, rim = 0, x1 = 256, y1 = 256, x2 = -1, y2 = -1;
+                mapGenApplyPreset(chew, &cfg);
+                setRegion(&cfg);
+                if (sizes[s]) cfg.size = sizes[s];
+                cfg.seed = seed * 7919u + 3u;
+                /* From seed, then every rim wall and middle choice set. */
+                if (lever == 1) {
+                    cfg.params.maker.style[MAPGEN_KSTYLE_WALLS] = 1 + (int)(seed % 2);
+                    cfg.params.maker.style[MAPGEN_KSTYLE_MIDDLE] = 1 + (int)(seed % 4);
+                } else if (lever == 2) {
+                    cfg.params.maker.style[MAPGEN_KSTYLE_WALLS] = 2 - (int)(seed % 2);
+                    cfg.params.maker.style[MAPGEN_KSTYLE_MIDDLE] = 4 - (int)(seed % 4);
+                }
+                genRun(&g, &cfg);
+                runs++;
+                UT_ASSERT(g.pb->numPills > 0 && g.bs->numBases > 0);
+                for (int b = 0; b < g.bs->numBases; b++) {
+                    int ok = 1;
+                    for (int p = 0; p < g.pb->numPills && ok; p++) {
+                        int dx = (int)g.bs->item[b].x - (int)g.pb->item[p].x;
+                        int dy = (int)g.bs->item[b].y - (int)g.pb->item[p].y;
+                        if (dx * dx + dy * dy < 73) ok = 0;
+                    }
+                    safe += ok;
+                }
+                for (int x = 0; x < 256; x++) {
+                    for (int y = 0; y < 256; y++) {
+                        if (g.mp->mapItem[x][y] == DEEP_SEA) continue;
+                        if (x < x1) x1 = x;
+                        if (x > x2) x2 = x;
+                        if (y < y1) y1 = y;
+                        if (y > y2) y2 = y;
+                    }
+                }
+                for (int p = 0; p < g.pb->numPills; p++) {
+                    int dx = 2 * (int)g.pb->item[p].x - (x1 + x2);
+                    int dy = 2 * (int)g.pb->item[p].y - (y1 + y2);
+                    int w = x2 - x1;
+                    if ((dx * dx + dy * dy) * 100 >= 49 * w * w) rim++;
+                }
+                if (safe == 0) {
+                    noSafe++;
+                    printf("  size %d lever set %d seed %u: no base is out of range of the pills\n",
+                           sizes[s], lever, cfg.seed);
+                }
+                if (rim * 4 > g.pb->numPills) {
+                    rimMaps++;
+                    printf("  size %d lever set %d seed %u: %d of %d pills are in the rim\n",
+                           sizes[s], lever, cfg.seed, rim, g.pb->numPills);
+                }
+            }
+        }
+    }
+    genFree(&g);
+    UT_ASSERT_MSG(noSafe == 0, "%d of %d Chew Toy maps have no base out of range of the pills",
+                  noSafe, runs);
+    UT_ASSERT_MSG(rimMaps == 0, "%d of %d Chew Toy maps have more than a quarter of the pills in the rim",
+                  rimMaps, runs);
     return 0;
 }

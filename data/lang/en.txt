@@ -3007,4 +3007,14 @@ STR_MAPGEN_STYLE_CUT_TIP=How much of each corner the octagon cuts off. A larger 
 STR_MAPGEN_STYLE_CORE_TIP=The terrain in the middle of each ring pod. From seed: the seed picks one.
 STR_MAPGEN_STYLE_RIM_TIP=A band of forest round the coast, or grass to the water. From seed: the seed picks one.
 STR_MAPGEN_STYLE_YARD_TIP=A yard of maze walls on one island, if a place for it is found. From seed: the seed picks one.
+STR_MAPGEN_STYLE_WALLS=Rim walls
+STR_MAPGEN_WALLS_NONE=No walls
+STR_MAPGEN_WALLS_BUILDING=Building wall on each axis
+STR_MAPGEN_STYLE_MIDDLE=Middle
+STR_MAPGEN_MIDDLE_OPEN=Open
+STR_MAPGEN_MIDDLE_PIECES=Diagonal pieces
+STR_MAPGEN_MIDDLE_CLUMP=Centre clump
+STR_MAPGEN_MIDDLE_BOTH=Diagonal pieces and centre clump
+STR_MAPGEN_STYLE_WALLS_TIP=A wall of buildings across the forest rim on each axis, which cuts the rim into four pieces. From seed: the seed picks one.
+STR_MAPGEN_STYLE_MIDDLE_TIP=Buildings near the middle of the floor: short pieces at 45 degrees, a clump at the centre, or both. From seed: the seed picks one.
 

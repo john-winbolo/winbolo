@@ -121,7 +121,7 @@ extern "C" {
 #define MAPGEN_LOCK_K_ISLANDS     (1ull << 43)
 #define MAPGEN_LOCK_K_MINES       (1ull << 44)
 #define MAPGEN_LOCK_K_DETAIL      (1ull << 45)
-/* Map Maker style levers (bits 46-51), one per MAPGEN_KSTYLE_* lever:
+/* Map Maker style levers (bits 46-53), one per MAPGEN_KSTYLE_* lever:
  * the lock of lever i is MAPGEN_LOCK_KS_FIRST << i. */
 #define MAPGEN_LOCK_KS_FIRST      (1ull << 46)
 #define MAPGEN_LOCK_KS_ROADS      (1ull << 46)
@@ -130,6 +130,8 @@ extern "C" {
 #define MAPGEN_LOCK_KS_CORE       (1ull << 49)
 #define MAPGEN_LOCK_KS_RIM        (1ull << 50)
 #define MAPGEN_LOCK_KS_YARD       (1ull << 51)
+#define MAPGEN_LOCK_KS_WALLS      (1ull << 52)
+#define MAPGEN_LOCK_KS_MIDDLE     (1ull << 53)
 
 /* Map Maker outlines: the shape of the land as a whole. A preset can
  * stretch the box and round outlines into a wide rectangle or an oval. */
@@ -161,14 +163,20 @@ extern "C" {
  *   CUT:   octagon corner cut x 100; larger values cut smaller corners.
  *   CORE:  pod centres: 1 building, 2 halfbuilding.
  *   RIM:   1 forest rim, 2 no forest rim.
- *   YARD:  walled maze yard: 1 none, 2 building walls, 3 forest walls. */
+ *   YARD:  walled maze yard: 1 none, 2 building walls, 3 forest walls.
+ *   WALLS: building walls on the axes through the forest rim: 1 none,
+ *          2 walls.
+ *   MIDDLE: buildings near the middle: 1 open, 2 short pieces at 45
+ *          degrees on the diagonals, 3 a clump at the centre, 4 both. */
 #define MAPGEN_KSTYLE_ROADS  0
 #define MAPGEN_KSTYLE_SHAPE  1
 #define MAPGEN_KSTYLE_CUT    2
 #define MAPGEN_KSTYLE_CORE   3
 #define MAPGEN_KSTYLE_RIM    4
 #define MAPGEN_KSTYLE_YARD   5
-#define MAPGEN_KSTYLE_COUNT  6
+#define MAPGEN_KSTYLE_WALLS  6
+#define MAPGEN_KSTYLE_MIDDLE 7
+#define MAPGEN_KSTYLE_COUNT  8
 
 #define MAPGEN_ROADS_AXES       0
 #define MAPGEN_ROADS_DIAG       1

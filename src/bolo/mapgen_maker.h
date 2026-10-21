@@ -40,6 +40,28 @@ extern "C" {
 #define MAKER_TERRAIN_DEEP_SEA     0xFF
 #define MAKER_TERRAIN_MINE_ADD     8
 
+/* Style levers. The values of each one, other than 0 (from seed):
+ *   ROADS: 1 + the road layout (MAKER_ROADS_*).
+ *   SHAPE: land width against height, x 100.
+ *   CUT:   octagon corner cut, x 100 (|u| + |v| limit; larger values
+ *          cut smaller corners).
+ *   CORE:  pod centres: 1 building, 2 halfbuilding.
+ *   RIM:   1 forest rim, 2 no forest rim (grass to the coast).
+ *   YARD:  walled maze yard: 1 none, 2 building walls, 3 forest walls.
+ *   WALLS: building walls on the axes through the forest rim: 1 none,
+ *          2 walls.
+ *   MIDDLE: buildings near the middle: 1 open, 2 short pieces at 45
+ *          degrees on the diagonals, 3 a clump at the centre, 4 both. */
+#define MAKER_STYLE_ROADS 0
+#define MAKER_STYLE_SHAPE 1
+#define MAKER_STYLE_CUT   2
+#define MAKER_STYLE_CORE  3
+#define MAKER_STYLE_RIM   4
+#define MAKER_STYLE_YARD  5
+#define MAKER_STYLE_WALLS 6
+#define MAKER_STYLE_MIDDLE 7
+#define MAKER_STYLE_COUNT 8
+
 typedef struct MakerParams {
     /* Region to generate into, already reduced by Size. */
     int x1, y1, x2, y2;
@@ -59,24 +81,8 @@ typedef struct MakerParams {
      * "from seed": the seed picks, as it always did. Any other value
      * is used in place of the seed's pick (see MAKER_STYLE_*). A value
      * the preset does not allow is read as 0. */
-    int style[6];         /* indexed by MAKER_STYLE_* */
+    int style[MAKER_STYLE_COUNT];  /* indexed by MAKER_STYLE_* */
 } MakerParams;
-
-/* Style levers. The values of each one, other than 0 (from seed):
- *   ROADS: 1 + the road layout (MAKER_ROADS_*).
- *   SHAPE: land width against height, x 100.
- *   CUT:   octagon corner cut, x 100 (|u| + |v| limit; larger values
- *          cut smaller corners).
- *   CORE:  pod centres: 1 building, 2 halfbuilding.
- *   RIM:   1 forest rim, 2 no forest rim (grass to the coast).
- *   YARD:  walled maze yard: 1 none, 2 building walls, 3 forest walls. */
-#define MAKER_STYLE_ROADS 0
-#define MAKER_STYLE_SHAPE 1
-#define MAKER_STYLE_CUT   2
-#define MAKER_STYLE_CORE  3
-#define MAKER_STYLE_RIM   4
-#define MAKER_STYLE_YARD  5
-#define MAKER_STYLE_COUNT 6
 
 /* Road layouts (the lines across the floor). */
 #define MAKER_ROADS_AXES       0

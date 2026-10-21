@@ -3614,6 +3614,16 @@
 #define STR_MAPGEN_STYLE_CORE_TIP                3024
 #define STR_MAPGEN_STYLE_RIM_TIP                 3025
 #define STR_MAPGEN_STYLE_YARD_TIP                3026
+#define STR_MAPGEN_STYLE_WALLS                   3027
+#define STR_MAPGEN_WALLS_NONE                    3028
+#define STR_MAPGEN_WALLS_BUILDING                3029
+#define STR_MAPGEN_STYLE_MIDDLE                  3030
+#define STR_MAPGEN_MIDDLE_OPEN                   3031
+#define STR_MAPGEN_MIDDLE_PIECES                 3032
+#define STR_MAPGEN_MIDDLE_CLUMP                  3033
+#define STR_MAPGEN_MIDDLE_BOTH                   3034
+#define STR_MAPGEN_STYLE_WALLS_TIP               3035
+#define STR_MAPGEN_STYLE_MIDDLE_TIP              3036
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
