@@ -2936,7 +2936,7 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=The map fills the screen, with the status, b
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=This device is on mobile data. An Internet game hosted on mobile\ndata will probably not work: mobile networks rarely let other\nplayers reach the device. Wi-Fi is much more likely to work.\n\nHost anyway?
-STR_MAPGEN_TYPE_MAKER=Map Maker
+STR_MAPGEN_TYPE_MAKER=In style of a famous map maker
 STR_MAPGEN_SIZE=Size
 STR_MAPGEN_SIZE_FULL=Full
 STR_MAPGEN_SIZE_TIP=Side of the playable square in tiles. Full uses the whole area.

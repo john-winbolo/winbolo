@@ -623,6 +623,10 @@ const char *mapGenPresetName(int preset) {
     return makerPresetName(preset);
 }
 
+int mapGenPresetOutlineSet(int preset) {
+    return makerPresetOutlineSet(preset);
+}
+
 int mapGenPresetFromKey(const char *key) {
     if (!key) return -1;
     for (int i = 0; i < makerPresetCount(); i++) {
