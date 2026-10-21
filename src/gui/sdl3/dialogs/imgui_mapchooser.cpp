@@ -1601,7 +1601,6 @@ static void initGenConfig(MapChooserState *state) {
     state->genConfig.bases = 16;
     state->genConfig.pills = 16;
     state->genConfig.starts = 16;
-    state->genConfig.locks |= MAPGEN_LOCK_BASES | MAPGEN_LOCK_PILLS | MAPGEN_LOCK_STARTS;
     state->genConfig.seed = (uint32_t)time(NULL) ^ ((uint32_t)SDL_GetTicks() << 16);
     if (state->genConfig.seed == 0) state->genConfig.seed = 1;
     state->genSeedBuf[0] = '\0';
