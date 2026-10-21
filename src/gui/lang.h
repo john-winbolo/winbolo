@@ -3582,6 +3582,10 @@
 #define STR_MAPGEN_PRESET_MOSH_PIT               2992
 #define STR_MAPGEN_PRESET_PALPATINE              2993
 #define STR_MAPGEN_PRESET_CHEW_TOY               2994
+#define STR_MAPGEN_LOCK_ALL                      2995
+#define STR_MAPGEN_UNLOCK_ALL                    2996
+#define STR_MAPGEN_RANDOMIZE_TIP                 2997
+#define STR_MAPGEN_PANEL_TITLE                   2998
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

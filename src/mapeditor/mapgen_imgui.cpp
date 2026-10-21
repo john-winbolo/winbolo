@@ -186,19 +186,53 @@ static void lockButton(const char *id, uint64_t *locks, uint64_t bit) {
     ImGui::PopID();
 }
 
-/* --- Restore-locked helpers --- */
+/* --- Panel locks --- */
 
-static void restoreLockedTournamentParams(MapGenConfig *cfg,
-                                          const MapGenConfig *saved) {
-    uint64_t lk = cfg->locks;
-    auto &t = cfg->params.tournament;
-    const auto &s = saved->params.tournament;
-    if (lk & MAPGEN_LOCK_T_SYMMETRY)  t.symmetryMode = s.symmetryMode;
-    if (lk & MAPGEN_LOCK_T_LANDMASS)  t.landMassPct = s.landMassPct;
-    if (lk & MAPGEN_LOCK_T_ROUGHNESS) t.roughness = s.roughness;
-    if (lk & MAPGEN_LOCK_T_ROADS)     t.includeRoads = s.includeRoads;
-    if (lk & MAPGEN_LOCK_T_WATERBARRIER) t.waterBarrier = s.waterBarrier;
+/* The counts sit in the panel for every generator type. */
+static const uint64_t kCountLocks =
+    MAPGEN_LOCK_BASES | MAPGEN_LOCK_PILLS | MAPGEN_LOCK_STARTS;
+
+/* The locks of the controls inside the parameter panel for one
+ * generator type. Only these locks have a button. The controls above
+ * the panel (generator, seed, size, and each type's style choices)
+ * have no lock: Randomize never changes them. */
+static uint64_t panelLocks(int genType) {
+    switch (genType) {
+        case MAPGEN_TOURNAMENT:
+            return kCountLocks | MAPGEN_LOCK_T_LANDMASS | MAPGEN_LOCK_T_ROUGHNESS |
+                   MAPGEN_LOCK_T_ROADS | MAPGEN_LOCK_T_WATERBARRIER;
+        case MAPGEN_NATURAL:
+            return kCountLocks | MAPGEN_LOCK_N_GRASS | MAPGEN_LOCK_N_FOREST |
+                   MAPGEN_LOCK_N_BUILDING | MAPGEN_LOCK_N_SWAMP | MAPGEN_LOCK_N_RIVER |
+                   MAPGEN_LOCK_N_BOAT | MAPGEN_LOCK_N_MINES | MAPGEN_LOCK_N_RIVERCOUNT |
+                   MAPGEN_LOCK_N_CITYCOUNT | MAPGEN_LOCK_N_MAZECOUNT;
+        case MAPGEN_MAZE:
+            return kCountLocks | MAPGEN_LOCK_M_WALLTHICK | MAPGEN_LOCK_M_CORRIDOR |
+                   MAPGEN_LOCK_M_ENTRIES | MAPGEN_LOCK_M_CITYROOMS;
+        case MAPGEN_FRACTAL:
+            return kCountLocks | MAPGEN_LOCK_F_LAND | MAPGEN_LOCK_F_ROUGHNESS |
+                   MAPGEN_LOCK_F_DETAIL | MAPGEN_LOCK_F_COAST | MAPGEN_LOCK_F_LAYERS |
+                   MAPGEN_LOCK_F_RIVERS | MAPGEN_LOCK_F_MINES;
+        case MAPGEN_MAKER:
+            return kCountLocks | MAPGEN_LOCK_K_WATER | MAPGEN_LOCK_K_FOREST |
+                   MAPGEN_LOCK_K_ROAD | MAPGEN_LOCK_K_BUILDING | MAPGEN_LOCK_K_ISLANDS |
+                   MAPGEN_LOCK_K_MINES | MAPGEN_LOCK_K_DETAIL;
+        default:
+            return kCountLocks;
+    }
 }
+
+/* Every lock that has a button for some generator type. Other bits
+ * (generator, seed, size, preset, outline, symmetry, style, maze
+ * algorithm and terrains) have no button, so they are cleared and
+ * no code reads them. */
+static uint64_t allPanelLocks(void) {
+    uint64_t m = 0;
+    for (int t = 0; t < MAPGEN_TYPE_COUNT; t++) m |= panelLocks(t);
+    return m;
+}
+
+/* --- Restore-locked helpers --- */
 
 static void restoreLockedNaturalParams(MapGenConfig *cfg,
                                        const MapGenConfig *saved) {
@@ -217,41 +251,13 @@ static void restoreLockedNaturalParams(MapGenConfig *cfg,
     if (lk & MAPGEN_LOCK_N_MAZECOUNT)  n.mazeCount = s.mazeCount;
 }
 
-static void restoreLockedMazeParams(MapGenConfig *cfg,
-                                    const MapGenConfig *saved) {
-    uint64_t lk = cfg->locks;
-    auto &m = cfg->params.maze;
-    const auto &s = saved->params.maze;
-    if (lk & MAPGEN_LOCK_M_ALGO)      m.algo = s.algo;
-    if (lk & MAPGEN_LOCK_M_WALLTHICK) m.wallThick = s.wallThick;
-    if (lk & MAPGEN_LOCK_M_CORRIDOR)  m.corridorWidth = s.corridorWidth;
-    if (lk & MAPGEN_LOCK_M_ENTRIES)   m.entries = s.entries;
-    if (lk & MAPGEN_LOCK_M_CITYROOMS) m.cityRooms = s.cityRooms;
-    if (lk & MAPGEN_LOCK_M_WALLTERR)  m.wallTerrain = s.wallTerrain;
-    if (lk & MAPGEN_LOCK_M_CORRTERR)  m.corridorTerrain = s.corridorTerrain;
-}
-
-static void restoreLockedFractalParams(MapGenConfig *cfg,
-                                       const MapGenConfig *saved) {
-    uint64_t lk = cfg->locks;
-    auto &f = cfg->params.fractal;
-    const auto &s = saved->params.fractal;
-    if (lk & MAPGEN_LOCK_F_LAND)      f.landPct = s.landPct;
-    if (lk & MAPGEN_LOCK_F_ROUGHNESS) f.roughness = s.roughness;
-    if (lk & MAPGEN_LOCK_F_DETAIL)    f.detail = s.detail;
-    if (lk & MAPGEN_LOCK_F_COAST)     f.coastJaggedness = s.coastJaggedness;
-    if (lk & MAPGEN_LOCK_F_LAYERS)    f.terrainLayers = s.terrainLayers;
-    if (lk & MAPGEN_LOCK_F_RIVERS)    f.rivers = s.rivers;
-    if (lk & MAPGEN_LOCK_F_MINES)     f.mineDensityPct = s.mineDensityPct;
-}
-
+/* After a preset is picked: put back the locked panel values. The
+ * preset always sets the outline, symmetry and size. */
 static void restoreLockedMakerParams(MapGenConfig *cfg,
                                      const MapGenConfig *saved) {
     uint64_t lk = cfg->locks;
     auto &k = cfg->params.maker;
     const auto &s = saved->params.maker;
-    if (lk & MAPGEN_LOCK_K_OUTLINE)  k.outline = s.outline;
-    if (lk & MAPGEN_LOCK_K_SYMMETRY) k.symmetry = s.symmetry;
     if (lk & MAPGEN_LOCK_K_WATER)    k.waterPct = s.waterPct;
     if (lk & MAPGEN_LOCK_K_FOREST)   k.forestPct = s.forestPct;
     if (lk & MAPGEN_LOCK_K_ROAD)     k.roadPct = s.roadPct;
@@ -262,30 +268,151 @@ static void restoreLockedMakerParams(MapGenConfig *cfg,
     if (lk & MAPGEN_LOCK_BASES)  cfg->bases = saved->bases;
     if (lk & MAPGEN_LOCK_PILLS)  cfg->pills = saved->pills;
     if (lk & MAPGEN_LOCK_STARTS) cfg->starts = saved->starts;
-    if (lk & MAPGEN_LOCK_SIZE)   cfg->size = saved->size;
 }
 
-#ifdef _MSC_VER
-#pragma warning(suppress: 4505)
-#endif
-static void restoreLockedParams(MapGenConfig *cfg,
-                                const MapGenConfig *saved) {
-    uint64_t lk = cfg->locks;
-    if (lk & MAPGEN_LOCK_BASES)  cfg->bases = saved->bases;
-    if (lk & MAPGEN_LOCK_PILLS)  cfg->pills = saved->pills;
-    if (lk & MAPGEN_LOCK_STARTS) cfg->starts = saved->starts;
-    if (lk & MAPGEN_LOCK_SIZE)   cfg->size = saved->size;
+/* --- Randomize --- */
 
-    if (cfg->genType == MAPGEN_TOURNAMENT)
-        restoreLockedTournamentParams(cfg, saved);
-    else if (cfg->genType == MAPGEN_NATURAL)
-        restoreLockedNaturalParams(cfg, saved);
-    else if (cfg->genType == MAPGEN_MAZE)
-        restoreLockedMazeParams(cfg, saved);
-    else if (cfg->genType == MAPGEN_FRACTAL)
-        restoreLockedFractalParams(cfg, saved);
-    else if (cfg->genType == MAPGEN_MAKER)
-        restoreLockedMakerParams(cfg, saved);
+/* A value in [centre - half, centre + half], cut to [lo, hi]. */
+static int bandPick(uint32_t *rng, int centre, int half, int lo, int hi) {
+    int a = centre - half, b = centre + half;
+    if (a < lo) a = lo;
+    if (b > hi) b = hi;
+    if (b < a) return a;
+    return a + (int)(mapGenXorshift32(rng) % (uint32_t)(b - a + 1));
+}
+
+/* The panel's Randomize: a new seed every time, and each unlocked
+ * panel value in a small band round the style's own value (the Map
+ * Maker preset, the Natural style, or the type's defaults). The band
+ * is round the style value, not the current value, so many clicks
+ * stay in the style. The generator type, seed format, size and the
+ * style choices above the panel do not change. */
+static void randomizePanel(MapGenConfig *cfg) {
+    uint64_t now = SDL_GetTicksNS();
+    uint32_t rng = (uint32_t)now ^ (uint32_t)(now >> 32) ^ 0x9E3779B9u;
+    if (rng == 0) rng = 1;
+    uint32_t seed;
+    do {
+        seed = mapGenXorshift32(&rng);
+    } while (seed == 0 || seed == cfg->seed);
+    cfg->seed = seed;
+
+    const uint64_t lk = cfg->locks;
+
+    /* The style values the bands are round. */
+    MapGenConfig base = mapGenDefaultConfig(cfg->genType);
+    if (cfg->genType == MAPGEN_MAKER) {
+        mapGenApplyPreset(cfg->params.maker.preset, &base);
+    } else if (cfg->genType == MAPGEN_NATURAL) {
+        mapGenNaturalStyleDefaults(cfg->params.natural.mapStyle, &base);
+    }
+
+    if (!(lk & MAPGEN_LOCK_BASES))  cfg->bases  = bandPick(&rng, base.bases, 2, 0, 16);
+    if (!(lk & MAPGEN_LOCK_PILLS))  cfg->pills  = bandPick(&rng, base.pills, 2, 0, 16);
+    if (!(lk & MAPGEN_LOCK_STARTS)) cfg->starts = bandPick(&rng, base.starts, 2, 0, 16);
+
+    if (cfg->genType == MAPGEN_TOURNAMENT) {
+        auto &t = cfg->params.tournament;
+        const auto &b = base.params.tournament;
+        if (!(lk & MAPGEN_LOCK_T_LANDMASS))  t.landMassPct = bandPick(&rng, b.landMassPct, 3, 1, 25);
+        if (!(lk & MAPGEN_LOCK_T_ROUGHNESS)) t.roughness = bandPick(&rng, b.roughness, 1, 0, MAPGEN_ROUGH_COUNT - 1);
+        if (!(lk & MAPGEN_LOCK_T_ROADS))     t.includeRoads = (mapGenXorshift32(&rng) & 1) != 0;
+        if (!(lk & MAPGEN_LOCK_T_WATERBARRIER))
+            t.waterBarrier = bandPick(&rng, b.waterBarrier, 1, 0, 5);
+    } else if (cfg->genType == MAPGEN_NATURAL) {
+        auto &n = cfg->params.natural;
+        const auto &b = base.params.natural;
+        int *pcts[] = { &n.grassPct, &n.forestPct, &n.buildingPct, &n.swampPct, &n.riverPct };
+        const int basePcts[] = { b.grassPct, b.forestPct, b.buildingPct, b.swampPct, b.riverPct };
+        const uint64_t pctLocks[] = { MAPGEN_LOCK_N_GRASS, MAPGEN_LOCK_N_FOREST,
+                                      MAPGEN_LOCK_N_BUILDING, MAPGEN_LOCK_N_SWAMP,
+                                      MAPGEN_LOCK_N_RIVER };
+        for (int i = 0; i < 5; i++) {
+            if (!(lk & pctLocks[i])) *pcts[i] = bandPick(&rng, basePcts[i], 10, 0, 100);
+        }
+        /* The five terrain values share 100%: take the excess off the
+         * largest unlocked value, one point at a time. */
+        for (;;) {
+            int total = 0, big = -1;
+            for (int i = 0; i < 5; i++) {
+                total += *pcts[i];
+                if (!(lk & pctLocks[i]) && *pcts[i] > 0 &&
+                    (big < 0 || *pcts[i] > *pcts[big])) big = i;
+            }
+            if (total <= 100 || big < 0) break;
+            (*pcts[big])--;
+        }
+        if (!(lk & MAPGEN_LOCK_N_BOAT))       n.boatPct = bandPick(&rng, b.boatPct, 10, 0, 100);
+        if (!(lk & MAPGEN_LOCK_N_MINES))      n.mineDensityPct = bandPick(&rng, b.mineDensityPct, 1, 0, 5);
+        if (!(lk & MAPGEN_LOCK_N_RIVERCOUNT)) n.riverCount = bandPick(&rng, b.riverCount, 1, 0, 5);
+        if (!(lk & MAPGEN_LOCK_N_CITYCOUNT))  n.cityCount = bandPick(&rng, b.cityCount, 1, 0, 10);
+        if (!(lk & MAPGEN_LOCK_N_MAZECOUNT))  n.mazeCount = bandPick(&rng, b.mazeCount, 1, 0, 5);
+    } else if (cfg->genType == MAPGEN_MAZE) {
+        auto &m = cfg->params.maze;
+        const auto &b = base.params.maze;
+        if (!(lk & MAPGEN_LOCK_M_WALLTHICK)) m.wallThick = bandPick(&rng, b.wallThick, 1, 1, 2);
+        if (!(lk & MAPGEN_LOCK_M_CORRIDOR))  m.corridorWidth = bandPick(&rng, b.corridorWidth, 1, 1, 2);
+        if (!(lk & MAPGEN_LOCK_M_ENTRIES))   m.entries = bandPick(&rng, b.entries, 2, 1, 8);
+        if (!(lk & MAPGEN_LOCK_M_CITYROOMS)) m.cityRooms = bandPick(&rng, b.cityRooms, 1, 0, 5);
+    } else if (cfg->genType == MAPGEN_FRACTAL) {
+        auto &f = cfg->params.fractal;
+        const auto &b = base.params.fractal;
+        if (!(lk & MAPGEN_LOCK_F_LAND))      f.landPct = bandPick(&rng, b.landPct, 10, 5, 80);
+        if (!(lk & MAPGEN_LOCK_F_ROUGHNESS)) f.roughness = bandPick(&rng, b.roughness, 1, 1, 10);
+        if (!(lk & MAPGEN_LOCK_F_DETAIL))    f.detail = bandPick(&rng, b.detail, 1, 1, 5);
+        if (!(lk & MAPGEN_LOCK_F_COAST))     f.coastJaggedness = bandPick(&rng, b.coastJaggedness, 1, 0, 10);
+        if (!(lk & MAPGEN_LOCK_F_LAYERS))    f.terrainLayers = bandPick(&rng, b.terrainLayers, 1, 2, 6);
+        if (!(lk & MAPGEN_LOCK_F_RIVERS))    f.rivers = (mapGenXorshift32(&rng) & 1) != 0;
+        /* Lakes has no lock of its own and follows Rivers. */
+        f.lakes = f.rivers ? (mapGenXorshift32(&rng) & 1) != 0 : false;
+        if (!(lk & MAPGEN_LOCK_F_MINES))     f.mineDensityPct = bandPick(&rng, b.mineDensityPct, 1, 0, 5);
+    } else if (cfg->genType == MAPGEN_MAKER) {
+        auto &k = cfg->params.maker;
+        const auto &b = base.params.maker;
+        if (!(lk & MAPGEN_LOCK_K_WATER))    k.waterPct = bandPick(&rng, b.waterPct, 10, 0, 100);
+        if (!(lk & MAPGEN_LOCK_K_FOREST))   k.forestPct = bandPick(&rng, b.forestPct, 10, 0, 100);
+        if (!(lk & MAPGEN_LOCK_K_ROAD))     k.roadPct = bandPick(&rng, b.roadPct, 10, 0, 100);
+        if (!(lk & MAPGEN_LOCK_K_BUILDING)) k.buildingPct = bandPick(&rng, b.buildingPct, 10, 0, 100);
+        if (!(lk & MAPGEN_LOCK_K_ISLANDS))  k.islands = bandPick(&rng, b.islands, 1, 1, 8);
+        if (!(lk & MAPGEN_LOCK_K_MINES))    k.mineDensityPct = bandPick(&rng, b.mineDensityPct, 1, 0, 5);
+        if (!(lk & MAPGEN_LOCK_K_DETAIL))   k.detail = bandPick(&rng, b.detail, 1, 0, 10);
+    }
+}
+
+/* --- Layout helpers --- */
+
+/* Slider / combo / input widths default to 50% of the available
+ * column width, with the label (rendered to the right of each
+ * widget) getting the other 50%. As the column shrinks, the
+ * widget compresses ahead of the label: we ensure at least
+ * kLabelReserve px is always left for the label text, so once
+ * the panel gets narrow the widget starts losing more pixels
+ * than the label area. Min widget 40 px so sliders don't
+ * collapse to a track-only hairline. The seed InputText has its
+ * own explicit SetNextItemWidth(200) and is not affected. */
+static void pushControlWidth(void) {
+    const float kLabelReserve = 100.0f;
+    const float kWidgetMin    = 40.0f;
+    float availW = ImGui::GetContentRegionAvail().x;
+    float widgetW = availW * 0.5f;
+    if (widgetW > availW - kLabelReserve) {
+        widgetW = availW - kLabelReserve;
+    }
+    if (widgetW < kWidgetMin) widgetW = kWidgetMin;
+    ImGui::PushItemWidth(widgetW);
+}
+
+/* Put the next button on this line if it fits, else on a new line. */
+static void sameLineIfFits(const char *label) {
+    float btnW = ImGui::CalcTextSize(label).x
+               + ImGui::GetStyle().FramePadding.x * 2.0f;
+    ImGui::SameLine();
+    if (ImGui::GetContentRegionAvail().x < btnW) ImGui::NewLine();
+}
+
+static ImVec4 mixColour(ImVec4 a, ImVec4 b, float t) {
+    return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t,
+                  a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
 }
 
 /* --- Main controls function --- */
@@ -295,54 +422,21 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     static char seedBuf[64] = "";
     static bool seedFieldActive = false;
 
+    /* Only the panel locks have buttons. Clear any other bit so that
+     * no old value can hold a control that has no lock button. */
+    cfg->locks &= allPanelLocks();
+
     MapGenConfig prevCfg = *cfg;
 
     if (!seedFieldActive) {
         mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
     }
 
-    /* Slider / combo / input widths default to 50% of the available
-     * column width, with the label (rendered to the right of each
-     * widget) getting the other 50%. As the column shrinks, the
-     * widget compresses ahead of the label: we ensure at least
-     * kLabelReserve px is always left for the label text, so once
-     * the panel gets narrow the widget starts losing more pixels
-     * than the label area. Min widget 40 px so sliders don't
-     * collapse to a track-only hairline. The seed InputText has its
-     * own explicit SetNextItemWidth(200) and is not affected. */
-    {
-        const float kLabelReserve = 100.0f;
-        const float kWidgetMin    = 40.0f;
-        float availW = ImGui::GetContentRegionAvail().x;
-        float widgetW = availW * 0.5f;
-        if (widgetW > availW - kLabelReserve) {
-            widgetW = availW - kLabelReserve;
-        }
-        if (widgetW < kWidgetMin) widgetW = kWidgetMin;
-        ImGui::PushItemWidth(widgetW);
-    }
+    pushControlWidth();
 
-    /* Lock all / Unlock all — bulk toggles for every per-control
-     * lock. "Lock all" sets every MAPGEN_LOCK_* bit EXCEPT the
-     * seed, so Randomize still rolls a fresh seed (otherwise the
-     * button would freeze randomization entirely). Unlock clears
-     * every bit. */
-    {
-        if (ImGui::Button("Lock all")) {
-            cfg->locks = ~0ULL & ~((uint64_t)MAPGEN_LOCK_SEED);
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Except for Seed");
-        }
-        const char *unlockLbl = "Unlock all";
-        float btnW = ImGui::CalcTextSize(unlockLbl).x
-                   + ImGui::GetStyle().FramePadding.x * 2.0f;
-        ImGui::SameLine();
-        if (ImGui::GetContentRegionAvail().x < btnW) ImGui::NewLine();
-        if (ImGui::Button(unlockLbl)) {
-            cfg->locks = 0ULL;
-        }
-    }
+    /* ---- Above the panel: the controls that pick the kind of map
+     * and its size.
+     * They have no lock and Randomize does not change them. ---- */
 
     /* Generator type */
     int prevGenType = cfg->genType;
@@ -354,7 +448,6 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         langGetText(STR_MAPGEN_TYPE_MAKER),
     };
     ImGui::Combo(langGetText(STR_MAPGEN_GENERATOR), &cfg->genType, s_genTypeNames, MAPGEN_TYPE_COUNT);
-    lockButton("lk_gentype", &cfg->locks, MAPGEN_LOCK_GENTYPE);
     if (cfg->genType != prevGenType) {
         static MapGenConfig savedConfigs[MAPGEN_TYPE_COUNT];
         static bool hasSaved[MAPGEN_TYPE_COUNT] = {};
@@ -371,9 +464,9 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         int savedX1 = cfg->x1, savedY1 = cfg->y1;
         int savedX2 = cfg->x2, savedY2 = cfg->y2;
 
-        /* The first switch to Map Maker takes the size and counts of
-         * its first preset, the same as picking that preset, unless
-         * they are locked. Otherwise they carry over. */
+        /* The first switch to Map Maker takes the size of its first
+         * preset, and its counts unless they are locked, the same as
+         * picking that preset. Otherwise they carry over. */
         bool firstMaker = cfg->genType == MAPGEN_MAKER && !hasSaved[cfg->genType];
         if (hasSaved[cfg->genType]) {
             *cfg = savedConfigs[cfg->genType];
@@ -385,136 +478,14 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         if (!firstMaker || (savedLocks & MAPGEN_LOCK_BASES))  cfg->bases = savedBases;
         if (!firstMaker || (savedLocks & MAPGEN_LOCK_PILLS))  cfg->pills = savedPills;
         if (!firstMaker || (savedLocks & MAPGEN_LOCK_STARTS)) cfg->starts = savedStarts;
-        if (!firstMaker || (savedLocks & MAPGEN_LOCK_SIZE))   cfg->size = savedSize;
+        if (!firstMaker) cfg->size = savedSize;
         cfg->x1 = savedX1; cfg->y1 = savedY1;
         cfg->x2 = savedX2; cfg->y2 = savedY2;
     }
 
-    /* Seed */
-    ImGui::Separator();
-    ImGui::SetNextItemWidth(200);
-    if (ImGui::InputText(langGetText(STR_MAPGEN_SEED), seedBuf, sizeof(seedBuf),
-                         ImGuiInputTextFlags_EnterReturnsTrue)) {
-        if (mapGenSeedToConfig(seedBuf, cfg)) {
-            mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
-        }
-    }
-    seedFieldActive = ImGui::IsItemActive();
-    lockButton("lk_seed", &cfg->locks, MAPGEN_LOCK_SEED);
-    /* Randomize and Copy Seed are SameLine'd against the seed input
-     * but flow to a new line when the enclosing region is too narrow
-     * to fit them — e.g. when the chooser's list/preview splitter is
-     * dragged left to give the preview most of the width. */
-    {
-        const char *lbl = langGetText(STR_MAPGEN_RANDOMIZE);
-        float btnW = ImGui::CalcTextSize(lbl).x
-                   + ImGui::GetStyle().FramePadding.x * 2.0f;
-        ImGui::SameLine();
-        if (ImGui::GetContentRegionAvail().x < btnW) ImGui::NewLine();
-    }
-    if (ImGui::Button(langGetText(STR_MAPGEN_RANDOMIZE))) {
-        uint32_t rng = (uint32_t)SDL_GetTicksNS();
-        uint64_t lk = cfg->locks;
-        if (!(lk & MAPGEN_LOCK_SEED))    cfg->seed = rng;
-        int prevType = cfg->genType;
-        if (!(lk & MAPGEN_LOCK_GENTYPE)) cfg->genType = (int)(mapGenXorshift32(&rng) % MAPGEN_TYPE_COUNT);
-        if (cfg->genType != prevType) {
-            int savedBases = cfg->bases, savedPills = cfg->pills, savedStarts = cfg->starts;
-            MapGenConfig fresh = mapGenDefaultConfig(cfg->genType);
-            cfg->params = fresh.params;
-            cfg->bases = savedBases;
-            cfg->pills = savedPills;
-            cfg->starts = savedStarts;
-        }
-        /* Map Maker takes its counts from the preset below, so it
-         * does not draw them here, unless the preset is locked: then
-         * no preset is applied and the counts are drawn as for the
-         * other types. */
-        if (cfg->genType != MAPGEN_MAKER || (lk & MAPGEN_LOCK_K_PRESET)) {
-            if (!(lk & MAPGEN_LOCK_BASES))  cfg->bases = 1 + (int)(mapGenXorshift32(&rng) % 16);
-            if (!(lk & MAPGEN_LOCK_PILLS))  cfg->pills = 1 + (int)(mapGenXorshift32(&rng) % 16);
-            if (!(lk & MAPGEN_LOCK_STARTS)) cfg->starts = 1 + (int)(mapGenXorshift32(&rng) % 16);
-        }
-
-        if (cfg->genType == MAPGEN_TOURNAMENT) {
-            auto &t = cfg->params.tournament;
-            if (!(lk & MAPGEN_LOCK_T_SYMMETRY))  t.symmetryMode = (int)(mapGenXorshift32(&rng) % MAPGEN_SYM_COUNT);
-            if (!(lk & MAPGEN_LOCK_T_LANDMASS))  t.landMassPct = (int)(mapGenXorshift32(&rng) % 25) + 1;
-            if (!(lk & MAPGEN_LOCK_T_ROUGHNESS)) t.roughness = (int)(mapGenXorshift32(&rng) % MAPGEN_ROUGH_COUNT);
-            if (!(lk & MAPGEN_LOCK_T_ROADS))     t.includeRoads = (mapGenXorshift32(&rng) & 1) != 0;
-            if (!(lk & MAPGEN_LOCK_T_WATERBARRIER))
-                t.waterBarrier = (int)(mapGenXorshift32(&rng) % 6);
-        } else if (cfg->genType == MAPGEN_NATURAL) {
-            auto &n = cfg->params.natural;
-            if (!(lk & MAPGEN_LOCK_N_STYLE)) {
-                MapGenConfig saved = *cfg;
-                n.mapStyle = (int)(mapGenXorshift32(&rng) % MAPGEN_STYLE_COUNT);
-                mapGenNaturalStyleDefaults(n.mapStyle, cfg);
-                restoreLockedNaturalParams(cfg, &saved);
-            }
-            if (!(lk & MAPGEN_LOCK_N_GRASS))      n.grassPct = (int)(mapGenXorshift32(&rng) % 60);
-            if (!(lk & MAPGEN_LOCK_N_FOREST))      n.forestPct = (int)(mapGenXorshift32(&rng) % 40);
-            if (!(lk & MAPGEN_LOCK_N_BUILDING))    n.buildingPct = (int)(mapGenXorshift32(&rng) % 15);
-            if (!(lk & MAPGEN_LOCK_N_SWAMP))       n.swampPct = (int)(mapGenXorshift32(&rng) % 20);
-            if (!(lk & MAPGEN_LOCK_N_RIVER))       n.riverPct = (int)(mapGenXorshift32(&rng) % 20);
-            if (!(lk & MAPGEN_LOCK_N_BOAT))        n.boatPct = (int)(mapGenXorshift32(&rng) % 16);
-            if (!(lk & MAPGEN_LOCK_N_MINES))       n.mineDensityPct = (int)(mapGenXorshift32(&rng) % 6);
-            if (!(lk & MAPGEN_LOCK_N_RIVERCOUNT))  n.riverCount = (int)(mapGenXorshift32(&rng) % 6);
-            if (!(lk & MAPGEN_LOCK_N_CITYCOUNT))   n.cityCount = (int)(mapGenXorshift32(&rng) % 11);
-            if (!(lk & MAPGEN_LOCK_N_MAZECOUNT))   n.mazeCount = (int)(mapGenXorshift32(&rng) % 6);
-        } else if (cfg->genType == MAPGEN_MAZE) {
-            auto &m = cfg->params.maze;
-            if (!(lk & MAPGEN_LOCK_M_ALGO))      m.algo = (int)(mapGenXorshift32(&rng) % MAZE_ALGO_COUNT);
-            if (!(lk & MAPGEN_LOCK_M_WALLTHICK))  m.wallThick = 1 + (int)(mapGenXorshift32(&rng) % 2);
-            if (!(lk & MAPGEN_LOCK_M_CORRIDOR))   m.corridorWidth = 1 + (int)(mapGenXorshift32(&rng) % 2);
-            if (!(lk & MAPGEN_LOCK_M_ENTRIES))    m.entries = 1 + (int)(mapGenXorshift32(&rng) % 8);
-            if (!(lk & MAPGEN_LOCK_M_CITYROOMS))  m.cityRooms = (int)(mapGenXorshift32(&rng) % 6);
-            if (!(lk & MAPGEN_LOCK_M_WALLTERR))   m.wallTerrain = s_terrainTypes[mapGenXorshift32(&rng) % NUM_TERRAIN_TYPES].value;
-            if (!(lk & MAPGEN_LOCK_M_CORRTERR))   m.corridorTerrain = s_terrainTypes[mapGenXorshift32(&rng) % NUM_TERRAIN_TYPES].value;
-        } else if (cfg->genType == MAPGEN_FRACTAL) {
-            auto &f = cfg->params.fractal;
-            if (!(lk & MAPGEN_LOCK_F_LAND))      f.landPct = 5 + (int)(mapGenXorshift32(&rng) % 76);
-            if (!(lk & MAPGEN_LOCK_F_ROUGHNESS)) f.roughness = 1 + (int)(mapGenXorshift32(&rng) % 10);
-            if (!(lk & MAPGEN_LOCK_F_DETAIL))    f.detail = 1 + (int)(mapGenXorshift32(&rng) % 5);
-            if (!(lk & MAPGEN_LOCK_F_COAST))     f.coastJaggedness = (int)(mapGenXorshift32(&rng) % 11);
-            if (!(lk & MAPGEN_LOCK_F_LAYERS))    f.terrainLayers = 2 + (int)(mapGenXorshift32(&rng) % 5);
-            if (!(lk & MAPGEN_LOCK_F_RIVERS)) {
-                f.rivers = (mapGenXorshift32(&rng) & 1) != 0;
-            }
-            if (f.rivers) f.lakes = (mapGenXorshift32(&rng) & 1) != 0;
-            if (!f.rivers) f.lakes = false;
-            if (!(lk & MAPGEN_LOCK_F_MINES))     f.mineDensityPct = (int)(mapGenXorshift32(&rng) % 4);
-        } else if (cfg->genType == MAPGEN_MAKER) {
-            /* A new preset brings its own style values, size and
-             * counts; locked values are then put back. The other
-             * values keep the preset's numbers so that the map stays
-             * in that maker's style. */
-            if (!(lk & MAPGEN_LOCK_K_PRESET)) {
-                MapGenConfig saved = *cfg;
-                int preset = (int)(mapGenXorshift32(&rng) % (uint32_t)mapGenPresetCount());
-                mapGenApplyPreset(preset, cfg);
-                restoreLockedMakerParams(cfg, &saved);
-            }
-        }
-        mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
-        generated = true;
-    }
-    {
-        const char *lbl = langGetText(STR_DLGGAMEINFO_COPYSEED);
-        float btnW = ImGui::CalcTextSize(lbl).x
-                   + ImGui::GetStyle().FramePadding.x * 2.0f;
-        ImGui::SameLine();
-        if (ImGui::GetContentRegionAvail().x < btnW) ImGui::NewLine();
-    }
-    if (ImGui::Button(langGetText(STR_DLGGAMEINFO_COPYSEED))) {
-        mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
-        SDL_SetClipboardText(seedBuf);
-    }
-
-    /* Generator-specific controls */
+    /* The style choices of each type. */
     if (cfg->genType == MAPGEN_TOURNAMENT) {
         auto &t = cfg->params.tournament;
-
         const char *s_symModeNames[MAPGEN_SYM_COUNT] = {
             langGetText(STR_MAPGEN_SYM_4CORNER),
             langGetText(STR_MAPGEN_SYM_MIRROR_H),
@@ -523,7 +494,174 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
             langGetText(STR_MAPGEN_SYM_ROT90),
         };
         ImGui::Combo(langGetText(STR_MAPGEN_SYMMETRY), &t.symmetryMode, s_symModeNames, MAPGEN_SYM_COUNT);
-        lockButton("lk_sym", &cfg->locks, MAPGEN_LOCK_T_SYMMETRY);
+
+    } else if (cfg->genType == MAPGEN_NATURAL) {
+        auto &n = cfg->params.natural;
+        /* The style sets the values in the panel, the same as a Map
+         * Maker preset; locked values are then put back. */
+        int prevStyle = n.mapStyle;
+        const char *s_mapStyleNames[MAPGEN_STYLE_COUNT] = {
+            langGetText(STR_MAPGEN_STYLE_OCEAN),
+            langGetText(STR_MAPGEN_STYLE_CONTINENT),
+            langGetText(STR_MAPGEN_STYLE_ISLANDS),
+            langGetText(STR_MAPGEN_STYLE_ARCHIPELAGO),
+            langGetText(STR_MAPGEN_STYLE_INLAND),
+        };
+        ImGui::Combo(langGetText(STR_MAPGEN_MAP_STYLE), &n.mapStyle, s_mapStyleNames, MAPGEN_STYLE_COUNT);
+        if (n.mapStyle != prevStyle) {
+            MapGenConfig saved = *cfg;
+            mapGenNaturalStyleDefaults(n.mapStyle, cfg);
+            restoreLockedNaturalParams(cfg, &saved);
+        }
+
+    } else if (cfg->genType == MAPGEN_MAZE) {
+        auto &m = cfg->params.maze;
+        const char *s_mazeAlgoNames[MAZE_ALGO_COUNT] = {
+            langGetText(STR_MAPEDIT_ALGO_LABYRINTH),
+            langGetText(STR_MAPEDIT_ALGO_OPEN),
+        };
+        ImGui::Combo(langGetText(STR_MAPEDIT_ALGORITHM), &m.algo, s_mazeAlgoNames, MAZE_ALGO_COUNT);
+        terrainCombo(langGetText(STR_MAPEDIT_WALLTERRAIN), &m.wallTerrain);
+        terrainCombo(langGetText(STR_MAPEDIT_CORRIDORTERRAIN), &m.corridorTerrain);
+
+    } else if (cfg->genType == MAPGEN_MAKER) {
+        auto &k = cfg->params.maker;
+
+        int presetCount = mapGenPresetCount();
+        if (ImGui::BeginCombo(langGetText(STR_MAPGEN_PRESET), presetLabel(k.preset))) {
+            for (int i = 0; i < presetCount; i++) {
+                bool selected = (i == k.preset);
+                if (ImGui::Selectable(presetLabel(i), selected) && !selected) {
+                    MapGenConfig saved = *cfg;
+                    mapGenApplyPreset(i, cfg);
+                    restoreLockedMakerParams(cfg, &saved);
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", langGetText(STR_MAPGEN_PRESET_TIP));
+        }
+
+        const char *s_outlineNames[MAPGEN_OUTLINE_COUNT] = {
+            langGetText(STR_MAPGEN_OUTLINE_BOX),
+            langGetText(STR_MAPGEN_OUTLINE_OCTAGON),
+            langGetText(STR_MAPGEN_OUTLINE_ROUND),
+            langGetText(STR_MAPGEN_OUTLINE_DIAMOND),
+            langGetText(STR_MAPGEN_OUTLINE_CROSS),
+            langGetText(STR_MAPGEN_OUTLINE_CLOVER),
+            langGetText(STR_MAPGEN_OUTLINE_ISLAND),
+            langGetText(STR_MAPGEN_OUTLINE_VARIED),
+        };
+        ImGui::Combo(langGetText(STR_MAPGEN_OUTLINE), &k.outline, s_outlineNames, MAPGEN_OUTLINE_COUNT);
+
+        const char *s_msymNames[MAPGEN_MSYM_COUNT] = {
+            langGetText(STR_MAPGEN_MSYM_NONE),
+            langGetText(STR_MAPGEN_MSYM_MIRROR),
+            langGetText(STR_MAPGEN_MSYM_ROT2),
+            langGetText(STR_MAPGEN_MSYM_MIRROR4),
+            langGetText(STR_MAPGEN_MSYM_ROT4),
+        };
+        ImGui::Combo(langGetText(STR_MAPGEN_SYMMETRY), &k.symmetry, s_msymNames, MAPGEN_MSYM_COUNT);
+    }
+
+    /* Size, for every generator type. The slider's highest stop, one
+     * above the largest square (MAPGEN_SIZE_MAX + 1), stands for Full
+     * (the whole region). */
+    {
+        int sizeVal = (cfg->size == MAPGEN_SIZE_FULL) ? MAPGEN_SIZE_MAX + 1 : cfg->size;
+        char sizeFmt[32];
+        if (sizeVal > MAPGEN_SIZE_MAX) {
+            SDL_snprintf(sizeFmt, sizeof(sizeFmt), "%s", langGetText(STR_MAPGEN_SIZE_FULL));
+        } else {
+            SDL_snprintf(sizeFmt, sizeof(sizeFmt), "%%d");
+        }
+        if (ImGui::SliderInt(langGetText(STR_MAPGEN_SIZE), &sizeVal,
+                             MAPGEN_SIZE_MIN, MAPGEN_SIZE_MAX + 1, sizeFmt)) {
+            cfg->size = (sizeVal > MAPGEN_SIZE_MAX) ? MAPGEN_SIZE_FULL : sizeVal;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", langGetText(STR_MAPGEN_SIZE_TIP));
+        }
+    }
+
+    /* Matched with the pushControlWidth above. */
+    ImGui::PopItemWidth();
+
+    /* ---- The parameter panel: a box with its own border and
+     * background. Randomize, Lock all and Unlock all act only on the
+     * controls in it. ---- */
+    ImGui::Spacing();
+    {
+        const ImGuiStyle &st = ImGui::GetStyle();
+        ImVec4 bg = mixColour(st.Colors[ImGuiCol_WindowBg], st.Colors[ImGuiCol_Header], 0.15f);
+        bg.w = 1.0f;
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, bg);
+        ImGui::PushStyleColor(ImGuiCol_Border, st.Colors[ImGuiCol_Header]);
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 8.0f));
+    }
+    ImGui::BeginChild("##mapgen_params", ImVec2(0.0f, 0.0f),
+                      ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY |
+                          ImGuiChildFlags_AlwaysUseWindowPadding |
+                          ImGuiChildFlags_NavFlattened,
+                      ImGuiWindowFlags_NoScrollbar |
+                          ImGuiWindowFlags_NoScrollWithMouse);
+    /* The colours and padding are read when the child starts; pop them
+     * here so the widgets inside keep the normal look. */
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(2);
+
+    pushControlWidth();
+
+    /* A title line so it is clear that the box holds what Randomize
+     * changes. */
+    ImGui::TextUnformatted(langGetText(STR_MAPGEN_PANEL_TITLE));
+
+    const uint64_t typeLocks = panelLocks(cfg->genType);
+    if (ImGui::Button(langGetText(STR_MAPGEN_RANDOMIZE))) {
+        randomizePanel(cfg);
+        mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
+        generated = true;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", langGetText(STR_MAPGEN_RANDOMIZE_TIP));
+    }
+    sameLineIfFits(langGetText(STR_MAPGEN_LOCK_ALL));
+    if (ImGui::Button(langGetText(STR_MAPGEN_LOCK_ALL))) {
+        cfg->locks |= typeLocks;
+    }
+    sameLineIfFits(langGetText(STR_MAPGEN_UNLOCK_ALL));
+    if (ImGui::Button(langGetText(STR_MAPGEN_UNLOCK_ALL))) {
+        cfg->locks &= ~typeLocks;
+    }
+    /* Seed: in the panel, because Randomize always changes it.
+     * It has no lock. */
+    ImGui::SetNextItemWidth(200);
+    if (ImGui::InputText(langGetText(STR_MAPGEN_SEED), seedBuf, sizeof(seedBuf),
+                         ImGuiInputTextFlags_EnterReturnsTrue)) {
+        if (mapGenSeedToConfig(seedBuf, cfg)) {
+            mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
+        }
+    }
+    seedFieldActive = ImGui::IsItemActive();
+    /* Copy Seed flows to a new line when the enclosing region is too
+     * narrow to fit it — e.g. when the chooser's list/preview splitter
+     * is dragged left to give the preview most of the width. */
+    sameLineIfFits(langGetText(STR_DLGGAMEINFO_COPYSEED));
+    if (ImGui::Button(langGetText(STR_DLGGAMEINFO_COPYSEED))) {
+        mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
+        SDL_SetClipboardText(seedBuf);
+    }
+
+    ImGui::Separator();
+
+    /* Generator-specific controls */
+    if (cfg->genType == MAPGEN_TOURNAMENT) {
+        auto &t = cfg->params.tournament;
+
         ImGui::SliderInt(langGetText(STR_MAPGEN_LANDMASS_PCT), &t.landMassPct, 1, 25);
         lockButton("lk_land", &cfg->locks, MAPGEN_LOCK_T_LANDMASS);
         const char *s_roughnessNames[MAPGEN_ROUGH_COUNT] = {
@@ -543,28 +681,11 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     } else if (cfg->genType == MAPGEN_NATURAL) {
         auto &n = cfg->params.natural;
 
-        int prevStyle = n.mapStyle;
-        const char *s_mapStyleNames[MAPGEN_STYLE_COUNT] = {
-            langGetText(STR_MAPGEN_STYLE_OCEAN),
-            langGetText(STR_MAPGEN_STYLE_CONTINENT),
-            langGetText(STR_MAPGEN_STYLE_ISLANDS),
-            langGetText(STR_MAPGEN_STYLE_ARCHIPELAGO),
-            langGetText(STR_MAPGEN_STYLE_INLAND),
-        };
-        ImGui::Combo(langGetText(STR_MAPGEN_MAP_STYLE), &n.mapStyle, s_mapStyleNames, MAPGEN_STYLE_COUNT);
-        lockButton("lk_style", &cfg->locks, MAPGEN_LOCK_N_STYLE);
-        if (n.mapStyle != prevStyle) {
-            MapGenConfig saved = *cfg;
-            mapGenNaturalStyleDefaults(n.mapStyle, cfg);
-            restoreLockedNaturalParams(cfg, &saved);
-        }
-
-        ImGui::Spacing();
         ImGui::TextUnformatted(langGetText(STR_MAPGEN_TERRAIN_MIX));
 
         int *terrainPcts[] = { &n.grassPct, &n.forestPct, &n.buildingPct,
                                &n.swampPct, &n.riverPct };
-        const uint32_t terrainLocks[] = {
+        const uint64_t terrainLocks[] = {
             MAPGEN_LOCK_N_GRASS, MAPGEN_LOCK_N_FOREST, MAPGEN_LOCK_N_BUILDING,
             MAPGEN_LOCK_N_SWAMP, MAPGEN_LOCK_N_RIVER };
         const char *terrainLabels[] = {
@@ -643,13 +764,6 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     } else if (cfg->genType == MAPGEN_MAZE) {
         auto &m = cfg->params.maze;
 
-        const char *s_mazeAlgoNames[MAZE_ALGO_COUNT] = {
-            langGetText(STR_MAPEDIT_ALGO_LABYRINTH),
-            langGetText(STR_MAPEDIT_ALGO_OPEN),
-        };
-        ImGui::Combo(langGetText(STR_MAPEDIT_ALGORITHM), &m.algo, s_mazeAlgoNames, MAZE_ALGO_COUNT);
-        lockButton("lk_malgo", &cfg->locks, MAPGEN_LOCK_M_ALGO);
-
         int wallIdx = m.wallThick - 1;
         ImGui::SliderInt(langGetText(STR_MAPGEN_WALL_THICKNESS), &wallIdx, 0, 1, wallIdx == 0 ? "1" : "2");
         m.wallThick = wallIdx + 1;
@@ -665,12 +779,6 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
 
         ImGui::SliderInt(langGetText(STR_MAPGEN_CITY_ROOMS), &m.cityRooms, 0, 5);
         lockButton("lk_mrooms", &cfg->locks, MAPGEN_LOCK_M_CITYROOMS);
-
-        ImGui::Spacing();
-        terrainCombo(langGetText(STR_MAPEDIT_WALLTERRAIN), &m.wallTerrain);
-        lockButton("lk_mwterr", &cfg->locks, MAPGEN_LOCK_M_WALLTERR);
-        terrainCombo(langGetText(STR_MAPEDIT_CORRIDORTERRAIN), &m.corridorTerrain);
-        lockButton("lk_mcterr", &cfg->locks, MAPGEN_LOCK_M_CORRTERR);
 
     } else if (cfg->genType == MAPGEN_FRACTAL) {
         auto &f = cfg->params.fractal;
@@ -702,48 +810,6 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     } else if (cfg->genType == MAPGEN_MAKER) {
         auto &k = cfg->params.maker;
 
-        int presetCount = mapGenPresetCount();
-        if (ImGui::BeginCombo(langGetText(STR_MAPGEN_PRESET), presetLabel(k.preset))) {
-            for (int i = 0; i < presetCount; i++) {
-                bool selected = (i == k.preset);
-                if (ImGui::Selectable(presetLabel(i), selected) && !selected) {
-                    MapGenConfig saved = *cfg;
-                    mapGenApplyPreset(i, cfg);
-                    restoreLockedMakerParams(cfg, &saved);
-                }
-                if (selected) ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s", langGetText(STR_MAPGEN_PRESET_TIP));
-        }
-        lockButton("lk_kpreset", &cfg->locks, MAPGEN_LOCK_K_PRESET);
-
-        const char *s_outlineNames[MAPGEN_OUTLINE_COUNT] = {
-            langGetText(STR_MAPGEN_OUTLINE_BOX),
-            langGetText(STR_MAPGEN_OUTLINE_OCTAGON),
-            langGetText(STR_MAPGEN_OUTLINE_ROUND),
-            langGetText(STR_MAPGEN_OUTLINE_DIAMOND),
-            langGetText(STR_MAPGEN_OUTLINE_CROSS),
-            langGetText(STR_MAPGEN_OUTLINE_CLOVER),
-            langGetText(STR_MAPGEN_OUTLINE_ISLAND),
-            langGetText(STR_MAPGEN_OUTLINE_VARIED),
-        };
-        ImGui::Combo(langGetText(STR_MAPGEN_OUTLINE), &k.outline, s_outlineNames, MAPGEN_OUTLINE_COUNT);
-        lockButton("lk_koutline", &cfg->locks, MAPGEN_LOCK_K_OUTLINE);
-
-        const char *s_msymNames[MAPGEN_MSYM_COUNT] = {
-            langGetText(STR_MAPGEN_MSYM_NONE),
-            langGetText(STR_MAPGEN_MSYM_MIRROR),
-            langGetText(STR_MAPGEN_MSYM_ROT2),
-            langGetText(STR_MAPGEN_MSYM_MIRROR4),
-            langGetText(STR_MAPGEN_MSYM_ROT4),
-        };
-        ImGui::Combo(langGetText(STR_MAPGEN_SYMMETRY), &k.symmetry, s_msymNames, MAPGEN_MSYM_COUNT);
-        lockButton("lk_ksym", &cfg->locks, MAPGEN_LOCK_K_SYMMETRY);
-
-        ImGui::Spacing();
         ImGui::SliderInt(langGetText(STR_MAPGEN_WATER_PCT), &k.waterPct, 0, 100);
         lockButton("lk_kwater", &cfg->locks, MAPGEN_LOCK_K_WATER);
         ImGui::SliderInt(langGetText(STR_MAPGEN_FOREST_PCT), &k.forestPct, 0, 100);
@@ -760,29 +826,6 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         lockButton("lk_kdetail", &cfg->locks, MAPGEN_LOCK_K_DETAIL);
     }
 
-    /* Size, for every generator type. The slider's highest stop, one
-     * above the largest square (MAPGEN_SIZE_MAX + 1), stands for Full
-     * (the whole region). */
-    ImGui::Spacing();
-    ImGui::Separator();
-    {
-        int sizeVal = (cfg->size == MAPGEN_SIZE_FULL) ? MAPGEN_SIZE_MAX + 1 : cfg->size;
-        char sizeFmt[32];
-        if (sizeVal > MAPGEN_SIZE_MAX) {
-            SDL_snprintf(sizeFmt, sizeof(sizeFmt), "%s", langGetText(STR_MAPGEN_SIZE_FULL));
-        } else {
-            SDL_snprintf(sizeFmt, sizeof(sizeFmt), "%%d");
-        }
-        if (ImGui::SliderInt(langGetText(STR_MAPGEN_SIZE), &sizeVal,
-                             MAPGEN_SIZE_MIN, MAPGEN_SIZE_MAX + 1, sizeFmt)) {
-            cfg->size = (sizeVal > MAPGEN_SIZE_MAX) ? MAPGEN_SIZE_FULL : sizeVal;
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s", langGetText(STR_MAPGEN_SIZE_TIP));
-        }
-        lockButton("lk_size", &cfg->locks, MAPGEN_LOCK_SIZE);
-    }
-
     /* Shared bases/pills/starts */
     ImGui::Spacing();
     ImGui::Separator();
@@ -793,8 +836,9 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     ImGui::SliderInt(langGetText(STR_MAPEDIT_STATS_STARTS), &cfg->starts, 0, 16);
     lockButton("lk_starts", &cfg->locks, MAPGEN_LOCK_STARTS);
 
-    /* Matched with the PushItemWidth at the top of the function. */
+    /* Matched with the pushControlWidth inside the panel. */
     ImGui::PopItemWidth();
+    ImGui::EndChild();
 
     /* Detect parameter changes (ignore lock-only changes) */
     if (!generated) {
