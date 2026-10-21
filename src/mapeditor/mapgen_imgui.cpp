@@ -422,7 +422,9 @@ static void randomizePanel(MapGenConfig *cfg) {
                             ? bandPick(&rng, b.islands, 1, 1, 8)
                             : b.islands;
         }
-        if (!(lk & MAPGEN_LOCK_K_MINES))    k.mineDensityPct = bandPick(&rng, b.mineDensityPct, 1, 0, 5);
+        /* Mines stay at the preset's value: a band round 0 would put
+         * mines on maps whose maker never used them. */
+        if (!(lk & MAPGEN_LOCK_K_MINES))    k.mineDensityPct = b.mineDensityPct;
         if (!(lk & MAPGEN_LOCK_K_DETAIL))   k.detail = bandPick(&rng, b.detail, 1, 0, 10);
     }
 }
