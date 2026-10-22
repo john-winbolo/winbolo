@@ -290,13 +290,27 @@ static void nameVariedOutline(MapGenConfig *cfg) {
 /* After a preset is picked: put back the locked panel values. The
  * preset always sets the symmetry, size, bases, pillboxes and
  * starts, and sets each style lever to From seed. A locked style
- * value comes back only if the new preset allows it. */
+ * value comes back only if the new preset allows it. A locked outline
+ * follows the same rule: it comes back only if it is in the new
+ * preset's outline set. A locked Varied outline never comes back. If
+ * the locked outline does not come back and the preset's outline is
+ * Varied, one named outline from the preset's set is picked here,
+ * because nameVariedOutline leaves a locked outline alone. */
 static void restoreLockedMakerParams(MapGenConfig *cfg,
                                      const MapGenConfig *saved) {
     uint64_t lk = cfg->locks;
     auto &k = cfg->params.maker;
     const auto &s = saved->params.maker;
-    if (lk & MAPGEN_LOCK_K_OUTLINE)  k.outline = s.outline;
+    if (lk & MAPGEN_LOCK_K_OUTLINE) {
+        if (s.outline >= 0 && s.outline < MAPGEN_OUTLINE_VARIED &&
+            (mapGenPresetOutlineSet(k.preset) & (1 << s.outline))) {
+            k.outline = s.outline;
+        } else if (k.outline == MAPGEN_OUTLINE_VARIED) {
+            uint32_t rng = uiRngSeed();
+            int o = pickPresetOutline(k.preset, &rng);
+            if (o >= 0) k.outline = o;
+        }
+    }
     if (lk & MAPGEN_LOCK_K_WATER)    k.waterPct = s.waterPct;
     if (lk & MAPGEN_LOCK_K_FOREST)   k.forestPct = s.forestPct;
     if (lk & MAPGEN_LOCK_K_ROAD)     k.roadPct = s.roadPct;
@@ -380,7 +394,9 @@ static void randomizePanel(MapGenConfig *cfg) {
             (*pcts[big])--;
         }
         if (!(lk & MAPGEN_LOCK_N_BOAT))       n.boatPct = bandPick(&rng, b.boatPct, 10, 0, 100);
-        if (!(lk & MAPGEN_LOCK_N_MINES))      n.mineDensityPct = bandPick(&rng, b.mineDensityPct, 1, 0, 5);
+        /* Mines stay at the style's value: a band round 0 would put
+         * mines on maps whose style never used them. */
+        if (!(lk & MAPGEN_LOCK_N_MINES))      n.mineDensityPct = b.mineDensityPct;
         if (!(lk & MAPGEN_LOCK_N_RIVERCOUNT)) n.riverCount = bandPick(&rng, b.riverCount, 1, 0, 5);
         if (!(lk & MAPGEN_LOCK_N_CITYCOUNT))  n.cityCount = bandPick(&rng, b.cityCount, 1, 0, 10);
         if (!(lk & MAPGEN_LOCK_N_MAZECOUNT))  n.mazeCount = bandPick(&rng, b.mazeCount, 1, 0, 5);
@@ -402,7 +418,9 @@ static void randomizePanel(MapGenConfig *cfg) {
         if (!(lk & MAPGEN_LOCK_F_RIVERS))    f.rivers = (mapGenXorshift32(&rng) & 1) != 0;
         /* Lakes has no lock of its own and follows Rivers. */
         f.lakes = f.rivers ? (mapGenXorshift32(&rng) & 1) != 0 : false;
-        if (!(lk & MAPGEN_LOCK_F_MINES))     f.mineDensityPct = bandPick(&rng, b.mineDensityPct, 1, 0, 5);
+        /* Mines stay at the default value, which is 0: a band round 0
+         * would put mines on half the maps. */
+        if (!(lk & MAPGEN_LOCK_F_MINES))     f.mineDensityPct = b.mineDensityPct;
     } else if (cfg->genType == MAPGEN_MAKER) {
         auto &k = cfg->params.maker;
         const auto &b = base.params.maker;
@@ -508,9 +526,23 @@ static void styleCombo(MapGenConfig *cfg, int lever, langid labelId,
         }
         ImGui::EndCombo();
     }
-    if (ImGui::IsItemHovered()) {
+    /* AllowWhenDisabled: the tooltip still shows if the combo is greyed. */
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::SetTooltip("%s", langGetText(tipId));
     }
+}
+
+/* Copies src into dst for use as an ImGui slider format, doubling every
+ * '%' so the text is shown as written. A character and its doubled '%'
+ * are copied together or not at all, and dst is always NUL-terminated. */
+static void copyFmtEscaped(char *dst, size_t cap, const char *src) {
+    size_t n = 0;
+    if (cap == 0) return;
+    for (; *src && n + 2 < cap; src++) {
+        if (*src == '%') dst[n++] = '%';
+        dst[n++] = *src;
+    }
+    dst[n] = '\0';
 }
 
 /* A style lever with a range of whole numbers. The stop below the
@@ -523,21 +555,16 @@ static void styleSlider(MapGenConfig *cfg, int lever, langid labelId, langid tip
     int v = (k.style[lever] == 0) ? lo - 1 : k.style[lever];
     char fmt[96];
     if (v < lo) {
-        /* The name is shown as the slider's format: double any '%'. */
-        const char *t = langGetText(STR_MAPGEN_STYLE_FROM_SEED);
-        size_t n = 0;
-        for (; *t && n + 2 < sizeof(fmt); t++) {
-            if (*t == '%') fmt[n++] = '%';
-            fmt[n++] = *t;
-        }
-        fmt[n] = '\0';
+        copyFmtEscaped(fmt, sizeof(fmt), langGetText(STR_MAPGEN_STYLE_FROM_SEED));
     } else {
         SDL_snprintf(fmt, sizeof(fmt), "%%d");
     }
     if (ImGui::SliderInt(langGetText(labelId), &v, lo - 1, hi, fmt)) {
         k.style[lever] = (v < lo) ? 0 : v;
     }
-    if (ImGui::IsItemHovered()) {
+    /* AllowWhenDisabled: a greyed slider (Corner cut) still shows its
+     * tooltip, which is when the player needs it. */
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::SetTooltip("%s", langGetText(tipId));
     }
 }
@@ -729,7 +756,8 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         int sizeVal = (cfg->size == MAPGEN_SIZE_FULL) ? MAPGEN_SIZE_MAX + 1 : cfg->size;
         char sizeFmt[32];
         if (sizeVal > MAPGEN_SIZE_MAX) {
-            SDL_snprintf(sizeFmt, sizeof(sizeFmt), "%s", langGetText(STR_MAPGEN_SIZE_FULL));
+            /* The name is shown as the slider's format. */
+            copyFmtEscaped(sizeFmt, sizeof(sizeFmt), langGetText(STR_MAPGEN_SIZE_FULL));
         } else {
             SDL_snprintf(sizeFmt, sizeof(sizeFmt), "%%d");
         }
@@ -758,9 +786,14 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     if (cfg->genType == MAPGEN_MAKER) {
         auto &k = cfg->params.maker;
         /* A lever the panel does not show cannot change the map: keep
-         * it at From seed, so that the seed does not hold it. */
+         * it at From seed, so that the seed does not hold it. A locked
+         * lever keeps its value while it is hidden, so the value is
+         * still there when the lever is shown again. */
         for (int lever = 0; lever < MAPGEN_KSTYLE_COUNT; lever++) {
-            if (!styleLeverShown(cfg, lever)) k.style[lever] = 0;
+            if (!styleLeverShown(cfg, lever) &&
+                !(cfg->locks & (MAPGEN_LOCK_KS_FIRST << lever))) {
+                k.style[lever] = 0;
+            }
         }
 
         ImGui::Spacing();
@@ -900,6 +933,15 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
                 styleCombo(cfg, MAPGEN_KSTYLE_MIDDLE, STR_MAPGEN_STYLE_MIDDLE,
                            STR_MAPGEN_STYLE_MIDDLE_TIP, s_middleNames);
                 lockButton("lk_smiddle", &cfg->locks, MAPGEN_LOCK_KS_MIDDLE);
+            }
+
+            /* Say so when the outline is the only choice in the panel. */
+            int shownLevers = 0;
+            for (int lever = 0; lever < MAPGEN_KSTYLE_COUNT; lever++) {
+                if (styleLeverShown(cfg, lever)) shownLevers++;
+            }
+            if (shownLevers == 0) {
+                ImGui::TextDisabled("%s", langGetText(STR_MAPGEN_STYLE_NONE));
             }
         }
 

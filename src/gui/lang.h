@@ -3598,11 +3598,9 @@
 #define STR_MAPGEN_PRESET_CHEW_TOY               2995
 #define STR_MAPGEN_LOCK_ALL                      2996
 #define STR_MAPGEN_UNLOCK_ALL                    2997
-#define STR_MAPGEN_RANDOMIZE_TIP                 2998
 #define STR_MAPGEN_PANEL_TITLE                   2999
 #define STR_MAPGEN_STYLE_TITLE                   3000
 #define STR_MAPGEN_STYLE_RANDOMIZE               3001
-#define STR_MAPGEN_STYLE_RANDOMIZE_TIP           3002
 #define STR_MAPGEN_STYLE_NONE                    3003
 #define STR_MAPGEN_STYLE_FROM_SEED               3004
 #define STR_MAPGEN_STYLE_ROADS                   3005

@@ -2686,17 +2686,36 @@ static void shuffle(Ctx *c, int *a, int n) {
     }
 }
 
+/* A candidate tile, its squared distance from the centre and its place
+ * in the shuffled order. */
+typedef struct {
+    int idx;
+    double d2;
+    int pos;
+} CandDist;
+
+/* Nearest first; equal distances keep their shuffled order, so the
+ * result is the same on every libc although qsort is not stable. */
+static int candDistCmp(const void *a, const void *b) {
+    const CandDist *p = (const CandDist *)a, *q = (const CandDist *)b;
+    if (p->d2 < q->d2) return -1;
+    if (p->d2 > q->d2) return 1;
+    return (p->pos > q->pos) - (p->pos < q->pos);
+}
+
 /* Place `want` objects of a kind from the candidate tiles. */
 static void placeKind(Ctx *c, int kind, int *cand, int ncand, int want,
                       double minDist, int pair) {
     double md = minDist;
     int i, goal = c->n[kind] + want;
     if (goal > MAKER_MAX_OBJECTS) goal = MAKER_MAX_OBJECTS;
-    /* Hints first: places a fragment or a walled base area asked for. */
+    /* Hints first: places a fragment or a walled base area asked for.
+     * The terrain of a fragment is copied to every symmetry image, so
+     * the object goes on every image of the hint too, or on none. */
     for (i = 0; i < c->nh[kind] && c->n[kind] < goal; i++) {
         int hx = c->hx[kind][i], hy = c->hy[kind][i];
         if (!inb(c, hx, hy)) continue;
-        tryGroup(c, kind, hx, hy, goal - c->n[kind], 1.0, 0, 0);
+        tryGroup(c, kind, hx, hy, goal - c->n[kind], 1.0, 0, c->sym != SY_NONE);
     }
     shuffle(c, cand, ncand);
     while (c->n[kind] < goal && md >= 1.0) {
@@ -2709,17 +2728,18 @@ static void placeKind(Ctx *c, int kind, int *cand, int ncand, int want,
     }
     /* What is left: one at a time, closest to the centre first. */
     if (c->n[kind] < goal) {
-        int j;
-        for (i = 1; i < ncand; i++) {
-            int v = cand[i];
-            double dv = (v % c->W - c->cx) * (v % c->W - c->cx) + (v / c->W - c->cy) * (v / c->W - c->cy);
-            for (j = i - 1; j >= 0; j--) {
-                int u = cand[j];
-                double du = (u % c->W - c->cx) * (u % c->W - c->cx) + (u / c->W - c->cy) * (u / c->W - c->cy);
-                if (du <= dv) break;
-                cand[j + 1] = u;
+        /* Without memory the tiles stay in their shuffled order. */
+        CandDist *cd = ncand > 0 ? (CandDist *)malloc((size_t)ncand * sizeof(CandDist)) : NULL;
+        if (cd) {
+            for (i = 0; i < ncand; i++) {
+                int v = cand[i];
+                cd[i].idx = v;
+                cd[i].d2 = (v % c->W - c->cx) * (v % c->W - c->cx) + (v / c->W - c->cy) * (v / c->W - c->cy);
+                cd[i].pos = i;
             }
-            cand[j + 1] = v;
+            qsort(cd, (size_t)ncand, sizeof(CandDist), candDistCmp);
+            for (i = 0; i < ncand; i++) cand[i] = cd[i].idx;
+            free(cd);
         }
         for (i = 0; i < ncand && c->n[kind] < goal; i++) {
             tryGroup(c, kind, cand[i] % c->W, cand[i] / c->W, 1, 1.0, 0, 0);
@@ -3125,8 +3145,14 @@ static int blocks(int t) {
  * with the same cut made in every symmetry image. */
 static void fixReach(Ctx *c) {
     int n = c->W * c->H, i, kind, guard;
+    /* The 0-1 search below uses q as a ring buffer. It pushes each tile
+     * at most twice (once at some cost, then at most once more when a
+     * cost 0 step lowers that cost by 1), so 2 * n entries always fit,
+     * and the one spare entry keeps a full ring apart from an empty one.
+     * The first search pushes each tile once and uses only n entries. */
+    int cap = 2 * n + 1;
     uint8_t *seen = (uint8_t *)malloc((size_t)n);
-    int *q = (int *)malloc((size_t)n * sizeof(int));
+    int *q = (int *)malloc((size_t)cap * sizeof(int));
     int *dist = (int *)malloc((size_t)n * sizeof(int));
     int *from = (int *)malloc((size_t)n * sizeof(int));
     int sx, sy;
@@ -3166,14 +3192,16 @@ static void fixReach(Ctx *c) {
         {
             int *dq = q, front, back, k, found = -1;
             for (k = 0; k < n; k++) { dist[k] = DBIG; from[k] = -1; }
-            front = n / 2;
-            back = n / 2;
+            front = 0;
+            back = 0;
             dist[IDX(c, tx, ty)] = 0;
-            dq[back++] = IDX(c, tx, ty);
-            while (front < back && found < 0) {
+            dq[back] = IDX(c, tx, ty);
+            back = (back + 1) % cap;
+            while (front != back && found < 0) {
                 int x, y, d;
                 static const int dx[4] = { 1, -1, 0, 0 }, dy[4] = { 0, 0, 1, -1 };
-                k = dq[front++];
+                k = dq[front];
+                front = (front + 1) % cap;
                 if (seen[k]) { found = k; break; }
                 x = k % c->W;
                 y = k / c->W;
@@ -3185,8 +3213,13 @@ static void fixReach(Ctx *c) {
                     if (dist[k] + w < dist[nk]) {
                         dist[nk] = dist[k] + w;
                         from[nk] = k;
-                        if (w == 0 && front > 0) dq[--front] = nk;
-                        else if (back < n) dq[back++] = nk;
+                        if (w == 0) {
+                            front = (front - 1 + cap) % cap;
+                            dq[front] = nk;
+                        } else {
+                            dq[back] = nk;
+                            back = (back + 1) % cap;
+                        }
                     }
                 }
             }
@@ -3378,6 +3411,10 @@ void makerGenerate(uint8_t grid[256][256], MakerObjects *out, const MakerParams 
     if (c.p.y2 > 255) c.p.y2 = 255;
     c.W = c.p.x2 - c.p.x1 + 1;
     c.H = c.p.y2 - c.p.y1 + 1;
+    /* A failed generation gives an all-sea region rather than stale terrain. */
+    for (x = c.p.x1; x <= c.p.x2; x++) {
+        for (y = c.p.y1; y <= c.p.y2; y++) grid[x][y] = T_DEEP;
+    }
     if (c.W < 4 || c.H < 4) return;
     c.pr = &kPresets[c.p.preset];
     c.seed = pin->seed ? pin->seed : 1u;
