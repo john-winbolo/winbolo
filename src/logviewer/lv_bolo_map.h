@@ -319,4 +319,19 @@ bool lv_mapWriteRuns(FILE *fp, map *value);
 *********************************************************/
 int32_t lv_mapPrepareRun(map *value, bmapRun *run, BYTE *xPos, BYTE *yPos);
 
+/*********************************************************
+*NAME:          lv_worldMarkChanged / lv_worldSerial
+*PURPOSE:
+*  A count of the changes to what a picture of the map is
+*  drawn from: the map's squares, the pillboxes, the bases,
+*  and who self and the allies are (which colour a pillbox
+*  or base shows). Every writer of that state calls
+*  lv_worldMarkChanged; a picture kept between frames keys
+*  on lv_worldSerial and rebuilds when it has moved (the
+*  isometric view's map, lv_iso.c). Defined in bolo_map.c,
+*  which every build of the viewer's state links.
+*********************************************************/
+void     lv_worldMarkChanged(void);
+unsigned lv_worldSerial(void);
+
 #endif /* MAP_H */

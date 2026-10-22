@@ -295,6 +295,29 @@ static void diamondAt(const IsoGeomInput *in, int mx, int my, float height,
     project(in, mx,     my + 1, 0, 0, height, &q->px[3], &q->py[3]);
 }
 
+int isoGeomGroundTurns(const IsoGeomInput *in) {
+    int turns = (in != NULL) ? in->groundTurns : 0;
+    return ((turns % 4) + 4) % 4;
+}
+
+/* A ground or roof diamond's corners relisted for a turned map: corner i
+   takes the vertex (i + turns) clockwise from it, so the source rect's
+   top-left, which goes to corner 0, lands one vertex clockwise per quarter
+   turn, where the turned square's old north-west corner is. */
+static void turnDiamond(IsoGeomQuad *q, int turns) {
+    float px[4], py[4];
+    int i;
+    if (turns == 0) return;
+    for (i = 0; i < 4; i++) {
+        px[i] = q->px[i];
+        py[i] = q->py[i];
+    }
+    for (i = 0; i < 4; i++) {
+        q->px[i] = px[(i + turns) & 3];
+        q->py[i] = py[(i + turns) & 3];
+    }
+}
+
 /* An upright rect of w by h screen pixels with its top-left at (x, y). */
 static void rectAt(float x, float y, float w, float h, IsoGeomQuad *q) {
     q->px[0] = x;     q->py[0] = y;
@@ -350,6 +373,7 @@ static void squareTint(const IsoGeomInput *in, int mx, int my,
 
 static bool buildGround(IsoGeomScene *s, const IsoGeomInput *in) {
     const OverviewMap *map = in->map;
+    int turns = isoGeomGroundTurns(in);
     int mx, my;
 
     for (mx = s->minX; mx <= s->maxX; mx++) {
@@ -378,6 +402,7 @@ static bool buildGround(IsoGeomScene *s, const IsoGeomInput *in) {
             q = pushGround(s);
             if (q == NULL) return false;
             diamondAt(in, mx, my, 0.0f, q);
+            turnDiamond(q, turns);
             setSrc(q, ISO_GEOM_TEX_CLASSIC, (float)mapViewPosX[tile],
                    (float)mapViewPosY[tile], TILE_SIZE_X, TILE_SIZE_Y);
             setColour(q, r, g, b, 255);
@@ -523,10 +548,12 @@ static bool buildTall(IsoGeomScene *s, const IsoGeomInput *in,
         } else {
             item->faces = 0;
         }
-        /* The roof: the classic tile lifted by the height. */
+        /* The roof: the classic tile lifted by the height, turned as the
+           ground is so a building's edge faces the way its square does. */
         q = pushStand(s);
         if (q == NULL) return false;
         diamondAt(in, mx, my, (float)height, q);
+        turnDiamond(q, isoGeomGroundTurns(in));
         setSrc(q, ISO_GEOM_TEX_CLASSIC, (float)mapViewPosX[tile],
                (float)mapViewPosY[tile], TILE_SIZE_X, TILE_SIZE_Y);
         setColour(q, r, g, b, 255);

@@ -59,6 +59,7 @@
 #include "../gui/sdl3/tileloader.h"
 #include "../gui/sdl3/map_colours.h"   /* the zoomed-out ground colours */
 #include "lv_iso.h"                     /* the isometric picture's parts */
+#include "lv_bolo_map.h"                /* lv_worldMarkChanged */
 #include "../gui/sdl3/gfx_settings.h"  /* the simplified view setting */
 #include "../gui/sdl3/map_markers.h"   /* the shapes a thing becomes when small */
 #include "../third_party/stb/stb_image.h"
@@ -424,6 +425,9 @@ void lv_drawDirtyScreen(void) {
             lv_drawLast[count][count2] = 10000;
         }
     }
+    /* Whatever made the classic picture stale (a perspective, the team
+       colours, a seek) makes the isometric map stale too. */
+    lv_worldMarkChanged();
 }
 
 float lv_drawGetZoomLevel(void) {
@@ -1492,10 +1496,14 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
             s_tankBarPos[s_tankBarCount].slot = parts->tankPos[i].slot;
             s_tankBarCount++;
             if (!s_tankLabelsInTarget && parts->tankPos[i].name[0] != '\0') {
+                /* The sprite's top left: the name is placed off the tank's
+                   centre square (lvDrawPlaceSquare) and set to the right of
+                   it on the screen after the turn, so it stays to the right
+                   of the tank whichever way the map is turned. */
                 LvTankLabelPos *l = &s_tankLabelPos[s_tankLabelCount++];
                 SDL_strlcpy(l->name, parts->tankPos[i].name, sizeof(l->name));
-                l->x = parts->tankPos[i].x + TILE_SIZE_X + 3;
-                l->y = parts->tankPos[i].y + 2;
+                l->x = parts->tankPos[i].x;
+                l->y = parts->tankPos[i].y;
                 l->tex = -1;
             }
         }
@@ -2060,9 +2068,21 @@ static void lvDrawTankLabelsOverBlit(const SDL_FRect *src, const SDL_FRect *dst)
         SDL_FRect d;
 
         if (!lv_drawTankLabelGet(i, &tex, &tx, &ty, &tw, &th)) continue;
-        lvDrawPlace(src, dst, (float)tx, (float)ty, (float)TILE_SIZE_Y, &d.x, &d.y);
-        d.x = SDL_floorf(d.x);
-        d.y = SDL_floorf(d.y);
+        if (s_isoBlit) {
+            /* The anchor is the sprite's top left: the name goes beside the
+               square round the tank's centre, a tile's height up, and to the
+               right of it on the screen, as the classic picture sets it a
+               tile and three pixels right of the sprite and two down. */
+            float tilePx = (float)TILE_SIZE_X * scale, ax, ay;
+            lvDrawPlaceSquare(src, dst, (float)tx, (float)ty, (float)TILE_SIZE_Y, tilePx,
+                              &ax, &ay);
+            d.x = SDL_floorf(ax + tilePx + 3.0f * scale);
+            d.y = SDL_floorf(ay + 2.0f * scale);
+        } else {
+            lvDrawPlace(src, dst, (float)tx, (float)ty, (float)TILE_SIZE_Y, &d.x, &d.y);
+            d.x = SDL_floorf(d.x);
+            d.y = SDL_floorf(d.y);
+        }
         d.w = (float)tw;
         d.h = (float)th;
         off = SDL_floorf((float)th / (float)LV_TANK_LABEL_PX);
@@ -2439,7 +2459,6 @@ static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst
     float scale, tilePx, pxScale, edge;
     int n, i, pass;
     BYTE zf;
-    BYTE offX = 0, offY = 0;
     SDL_Rect clip, oldClip;
     bool hadClip;
     SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
@@ -2448,9 +2467,24 @@ static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst
     if (!s_pillNumbers) return;
     if (src->w <= 0.0f || src->h <= 0.0f) return;
     lv_clientMutexWaitFor();
-    n = lv_screenPillSpots(spots, MAX_PILLS);
     if (s_isoBlit) {
-        lv_screenGetOffsets(&offX, &offY);
+        /* After the isometric picture, every pillbox on the map: the parts
+           carry each one that stands on a square, with the square it stood
+           on before the turn, which is what lvDrawPlace turns. The classic
+           list keeps only the squares its view shows, and its spots are view
+           squares; here they are map squares, the target being the whole
+           map. */
+        const LvIsoParts *parts = lv_isoParts();
+        n = 0;
+        for (i = 0; i < parts->itemCount && n < MAX_PILLS; i++) {
+            if (parts->items[i].isBase) continue;
+            spots[n].viewX  = parts->items[i].srcX;
+            spots[n].viewY  = parts->items[i].srcY;
+            spots[n].number = lvPillNumber(parts->items[i].number);
+            n++;
+        }
+    } else {
+        n = lv_screenPillSpots(spots, MAX_PILLS);
     }
     lv_clientMutexRelease();
     if (n <= 0) return;
@@ -2482,12 +2516,9 @@ static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst
             char text[LV_PILL_NUMBER_TEXT_MAX];
             LvPillLabelLayout l;
             float left, top;
-            /* The spots are view squares; after the isometric picture the
-               target's pixels are the whole map's, so the view offset goes
-               back on. */
             lvDrawPlaceSquare(src, dst,
-                              (float)((spots[i].viewX + (int)offX) * zf * TILE_SIZE_X),
-                              (float)((spots[i].viewY + (int)offY) * zf * TILE_SIZE_Y),
+                              (float)(spots[i].viewX * zf * TILE_SIZE_X),
+                              (float)(spots[i].viewY * zf * TILE_SIZE_Y),
                               0.0f, tilePx, &left, &top);
 
             if (lvPillNumberText(spots[i].number, text, sizeof(text)) == 0) continue;

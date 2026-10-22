@@ -56,11 +56,23 @@ static size_t  s_runsCap     = 0;
 static int     s_runsCount   = 0;
 static bool    s_mapChanged  = TRUE;
 
+/* The change count the pictures key on: see lv_bolo_map.h. */
+static unsigned s_worldSerial = 0;
+
+void lv_worldMarkChanged(void) {
+  s_worldSerial++;
+}
+
+unsigned lv_worldSerial(void) {
+  return s_worldSerial;
+}
+
 static void lv_mapForgetRuns(void) {
   s_runsMap = NULL;
   s_runsLen = 0;
   s_runsCount = 0;
   s_mapChanged = TRUE;
+  lv_worldMarkChanged();
 }
 
 
@@ -144,6 +156,7 @@ BYTE lv_mapGetPos(map *value, BYTE xValue, BYTE yValue) {
 void lv_mapSetPos(map *value, BYTE xValue, BYTE yValue, BYTE terrain) {
   (*value)->mapItem[xValue][yValue] = terrain;
   s_mapChanged = TRUE;
+  lv_worldMarkChanged();
 }
 
 /*********************************************************

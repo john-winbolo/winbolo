@@ -6233,6 +6233,7 @@ set(_unit_test_names
     isoview_geom_tank_sprite
     isoview_geom_visible_range
     isoview_geom_mine
+    isoview_geom_ground_turns
     map_colours_item_kind
     map_colours_terrain
     map_colours_markers
@@ -7581,6 +7582,7 @@ set(_unit_test_names
     lv_iso_map_tiles
     lv_iso_tanks_and_camera
     lv_iso_rotation
+    lv_iso_map_cache
     lv_tank_status_sums
     lv_tank_bars_sums
     lv_tank_pick_sums

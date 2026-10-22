@@ -31,6 +31,7 @@
 /* Includes */
 #include "lv_global.h"
 #include "lv_bases.h"
+#include "lv_bolo_map.h"   /* lv_worldMarkChanged */
 #include "backend.h"
 #include "lv_players.h"
 #include "lv_messages.h"
@@ -213,6 +214,7 @@ void lv_basesSetNumBases(bases *value, BYTE numBases) {
 
   if (numBases <= MAX_BASES) {
     (*value)->numBases = numBases;
+    lv_worldMarkChanged();
     /* Nothing past the count names a base, so a shorter list must not leave
        the slots it dropped reading as on the map. */
     for (count = numBases; count < MAX_BASES; count++) {
@@ -258,6 +260,7 @@ void lv_basesSetBase(bases *value, base *item, BYTE baseNum) {
     (((*value)->item[baseNum]).owner) = item->owner;
     (((*value)->item[baseNum]).armour) = item->armour;
     (((*value)->item[baseNum]).shells) = item->shells;
+    lv_worldMarkChanged();
     (((*value)->item[baseNum]).mines) = item->mines;
     /* Only ever called to put a real base in the slot, so the slot is on the
        map whatever it held before. */
@@ -338,6 +341,8 @@ void lv_basesGetBase(bases *value, base *item, BYTE baseNum) {
 void lv_basesDeleteBase(bases *value, BYTE x, BYTE y) {
   BYTE count = 0;
   BYTE count2;
+
+  lv_worldMarkChanged();
 
   while (count < (*value)->numBases) {
     if ((*value)->item[count].x == x && (*value)->item[count].y == y) {
@@ -472,6 +477,7 @@ BYTE lv_basesSetOwner(bases *value, BYTE baseNum, BYTE owner, BYTE migrate) {
   if (baseNum >= MAX_BASES) {
     return NEUTRAL;
   }
+  lv_worldMarkChanged();
   returnValue = (*value)->item[baseNum].owner;
   if (migrate == TRUE) {
     (*value)->item[baseNum].owner = owner;
@@ -505,6 +511,7 @@ void lv_basesSetStock(bases *value, BYTE baseNum, BYTE s, BYTE m, BYTE a) {
   (*value)->item[baseNum].shells = s;
   (*value)->item[baseNum].mines = m;
   (*value)->item[baseNum].armour = a;
+  lv_worldMarkChanged();   /* a base with no armour shows as dead */
 }
 
 bool lv_basesChooseView(bases *value, int x, int y) {
@@ -540,6 +547,7 @@ void lv_basesSetBaseNetData(bases *value, BYTE *buff, int len)  {
   BYTE live;                       /* Numbers the blob actually describes */
   int avail;                       /* Records the block's length can hold */
 
+  lv_worldMarkChanged();
   /* The count is a byte read off the recording and item[] holds MAX_BASES,
      so a count past that, or past what the block's own length can describe,
      is a damaged or hostile file. Clamp it before it is stored or walked;

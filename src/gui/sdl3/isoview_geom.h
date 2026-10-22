@@ -72,7 +72,9 @@ typedef enum IsoGeomTex {
    right, bottom, left; a face, a shadow or an upright sprite lists them
    top-left, top-right, bottom-right, bottom-left. The source rect's corners
    map to the same four in the same order, so a tile's top-left texel lands
-   on a diamond's top vertex. The colour multiplies the texels: white draws
+   on a diamond's top vertex; with the ground turned (IsoGeomInput.groundTurns)
+   a ground or roof diamond's corners are listed from the vertex the texel
+   moved to instead. The colour multiplies the texels: white draws
    the sprite as it is, and the fog and face shading are darker values. */
 typedef struct IsoGeomQuad {
     float         px[4], py[4];
@@ -203,6 +205,14 @@ typedef struct IsoGeomInput {
     IsoGeomSheetFn sheet;
     void          *sheetUser;
 
+    /* Quarter turns clockwise the map memory was turned by before it got
+       here, 0..3. The tiles' artwork is turned to match: each ground and
+       roof diamond's corners are listed from the vertex the tile's top-left
+       texel lands on after the turn, one vertex clockwise per quarter, so a
+       road or a river bank faces the way its turned square does. 0 (the
+       memset default) draws the artwork as the sheet has it. */
+    int groundTurns;
+
     /* The overlay's inputs. The item labels are already filtered to the
        squares that show a number. */
     bool  cursorShown, cursorFaint;
@@ -295,6 +305,15 @@ bool isoGeomTankTeam(int frame, IsoTeam *outTeam, bool *outBoat,
  *********************************************************/
 void isoGeomSquareCentre(const IsoGeomInput *in, int mx, int my, float height,
                          float *outX, float *outY);
+
+/*********************************************************
+ * NAME:          isoGeomGroundTurns
+ * PURPOSE:
+ *   The input's quarter-turn count brought into 0..3, so a
+ *   negative or a whole number of full turns reads as the
+ *   turn it amounts to.
+ *********************************************************/
+int  isoGeomGroundTurns(const IsoGeomInput *in);
 
 #ifdef __cplusplus
 }

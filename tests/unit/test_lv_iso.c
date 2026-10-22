@@ -323,3 +323,71 @@ int run_lv_iso_rotation(void) {
     lv_decoderDestroy(lv);
     return 0;
 }
+
+int run_lv_iso_map_cache(void) {
+    static LvIsoParts other;
+    LogViewerState *lv = isoDecoder();
+    unsigned builds;
+    UT_ASSERT_MSG(lv != NULL, "decoder failed to create");
+
+    lv_isoSetRotation(0);
+    lv_isoBuild(&s_parts, 2.0f);
+    builds = lv_isoMapBuilds();
+    UT_ASSERT_MSG(builds > 0, "the first build calculated the map");
+    UT_ASSERT_MSG(s_parts.tile[40][60] == BUILD_SINGLE, "the building is there");
+
+    /* Nothing changed: the next build reuses the map, and the parts still
+       carry it; a different parts block is filled from it too. */
+    lv_isoBuild(&s_parts, 2.0f);
+    UT_ASSERT_MSG(lv_isoMapBuilds() == builds, "no change, no rebuild: %u vs %u",
+                  lv_isoMapBuilds(), builds);
+    UT_ASSERT_MSG(s_parts.tile[40][60] == BUILD_SINGLE, "the kept map is the map");
+    memset(&other, 0, sizeof(other));
+    lv_isoBuild(&other, 2.0f);
+    UT_ASSERT_MSG(lv_isoMapBuilds() == builds, "another block, still no rebuild");
+    UT_ASSERT_MSG(other.tile[40][60] == BUILD_SINGLE && other.tile[50][50] == PILL_EVIL_15,
+                  "the other block carries the kept map");
+
+    /* A map change rebuilds, and the new tile shows. */
+    lv_mapSetPos(&lv->mp, 100, 100, BUILDING);
+    lv_isoBuild(&s_parts, 2.0f);
+    UT_ASSERT_MSG(lv_isoMapBuilds() == builds + 1, "a map change rebuilds: %u vs %u",
+                  lv_isoMapBuilds(), builds + 1);
+    UT_ASSERT_MSG(s_parts.tile[100][100] == BUILD_SINGLE, "the new building: %d",
+                  s_parts.tile[100][100]);
+    builds = lv_isoMapBuilds();
+
+    /* A pillbox change: the pillbox picked up leaves its square's ground. */
+    lv_pillsSetInTank(&lv->pb, 0, true);
+    lv_isoBuild(&s_parts, 2.0f);
+    UT_ASSERT_MSG(lv_isoMapBuilds() == builds + 1, "a pillbox change rebuilds");
+    UT_ASSERT_MSG(s_parts.tile[50][50] == GRASS_TILE, "the pillbox is gone: %d",
+                  s_parts.tile[50][50]);
+    builds = lv_isoMapBuilds();
+
+    /* A base change: no bases leaves the base's square as ground. */
+    lv_basesSetNumBases(&lv->bs, 0);
+    lv_isoBuild(&s_parts, 2.0f);
+    UT_ASSERT_MSG(lv_isoMapBuilds() == builds + 1, "a base change rebuilds");
+    UT_ASSERT_MSG(s_parts.tile[60][70] == GRASS_TILE, "the base is gone: %d",
+                  s_parts.tile[60][70]);
+    builds = lv_isoMapBuilds();
+
+    /* Self changes which pillboxes are good or evil. */
+    lv_playersSetSelf(2);
+    lv_isoBuild(&s_parts, 2.0f);
+    UT_ASSERT_MSG(lv_isoMapBuilds() == builds + 1, "a change of self rebuilds");
+    builds = lv_isoMapBuilds();
+
+    /* A turn rebuilds; the same turn again does not. */
+    lv_isoSetRotation(1);
+    lv_isoBuild(&s_parts, 2.0f);
+    UT_ASSERT_MSG(lv_isoMapBuilds() == builds + 1, "a turn rebuilds");
+    UT_ASSERT_MSG(s_parts.tile[195][40] == BUILD_SINGLE, "the building turned");
+    lv_isoBuild(&s_parts, 2.0f);
+    UT_ASSERT_MSG(lv_isoMapBuilds() == builds + 1, "the same turn does not");
+
+    lv_isoSetRotation(0);
+    lv_decoderDestroy(lv);
+    return 0;
+}

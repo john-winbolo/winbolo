@@ -1239,6 +1239,7 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
  * labels are left to the viewer, which draws its own names, bars and numbers
  * over the blit. */
 #include "../gui/sdl3/isoview.h"
+#include "../gui/sdl3/isoview_geom.h"
 #include "../gui/sdl3/iso_sheet.h"
 #include "../gui/sdl3/gfx_settings.h"
 #include "lv_iso.h"
@@ -1314,6 +1315,10 @@ void lv_drawIsoFrame(const void *partsIn, int w, int h) {
   vp.itemLabels     = items;
   vp.itemLabelCount = n;
 
+  /* The map was turned before it got here, so the tiles' artwork is turned
+     to match, else a road or a river bank faces the way it did before the
+     turn. */
+  vp.groundTurns = parts->rotation;
   isoViewRenderParts(s_isoView, renderer, lv_drawGetTilesTexture(),
                      lv_drawGetSheetScale(), NULL, NULL, gv_isoSheet(renderer),
                      NULL, w, h, &vp, NULL);

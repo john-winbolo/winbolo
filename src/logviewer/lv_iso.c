@@ -172,19 +172,44 @@ static void lvIsoMakeLists(void) {
     s_listsMade = true;
 }
 
+/* The built map, kept between builds. lv_screenCalcSquare over all 65536
+   squares is the dear part of a build, and the map only changes when the
+   replay writes it, so it is calculated again only when the world serial
+   (lv_bolo_map.h) or the rotation differs from the last build's. */
+static unsigned char s_cacheTile[LV_ISO_MAP_SIZE][LV_ISO_MAP_SIZE];
+static unsigned char s_cacheFlags[LV_ISO_MAP_SIZE][LV_ISO_MAP_SIZE];
+static bool          s_cacheValid    = false;
+static unsigned      s_cacheSerial   = 0;
+static int           s_cacheRotation = 0;
+static unsigned      s_mapBuilds     = 0;
+
+unsigned lv_isoMapBuilds(void) {
+    return s_mapBuilds;
+}
+
 static void lvIsoBuildMap(LvIsoParts *out, LogViewerState *lv, int rotation) {
+    unsigned serial = lv_worldSerial();
     int x, y;
-    for (x = 0; x < LV_ISO_MAP_SIZE; x++) {
-        for (y = 0; y < LV_ISO_MAP_SIZE; y++) {
-            int rx, ry;
-            unsigned char flags = LV_ISO_F_LIVE | LV_ISO_F_SIGHT;
-            BYTE tile = lv_screenCalcSquare((BYTE)x, (BYTE)y, 0, 0);
-            if (lv_mapIsMine(&lv->mp, (BYTE)x, (BYTE)y)) flags |= LV_ISO_F_MINE;
-            lv_isoRotateSquare(rotation, x, y, &rx, &ry);
-            out->tile[rx][ry]  = tile;
-            out->flags[rx][ry] = flags;
+
+    if (!s_cacheValid || s_cacheSerial != serial || s_cacheRotation != rotation) {
+        for (x = 0; x < LV_ISO_MAP_SIZE; x++) {
+            for (y = 0; y < LV_ISO_MAP_SIZE; y++) {
+                int rx, ry;
+                unsigned char flags = LV_ISO_F_LIVE | LV_ISO_F_SIGHT;
+                BYTE tile = lv_screenCalcSquare((BYTE)x, (BYTE)y, 0, 0);
+                if (lv_mapIsMine(&lv->mp, (BYTE)x, (BYTE)y)) flags |= LV_ISO_F_MINE;
+                lv_isoRotateSquare(rotation, x, y, &rx, &ry);
+                s_cacheTile[rx][ry]  = tile;
+                s_cacheFlags[rx][ry] = flags;
+            }
         }
+        s_cacheValid    = true;
+        s_cacheSerial   = serial;
+        s_cacheRotation = rotation;
+        s_mapBuilds++;
     }
+    memcpy(out->tile, s_cacheTile, sizeof(out->tile));
+    memcpy(out->flags, s_cacheFlags, sizeof(out->flags));
 }
 
 /* The tanks, as lv_playersMakeScreenTanks makes them for the classic picture
@@ -301,6 +326,8 @@ static void lvIsoBuildItems(LvIsoParts *out, LogViewerState *lv, int rotation) {
         lv_isoRotateSquare(rotation, p.x, p.y, &rx, &ry);
         out->items[out->itemCount].mapX   = (unsigned char)rx;
         out->items[out->itemCount].mapY   = (unsigned char)ry;
+        out->items[out->itemCount].srcX   = p.x;
+        out->items[out->itemCount].srcY   = p.y;
         out->items[out->itemCount].number = (unsigned char)(i - 1);
         out->items[out->itemCount].isBase = false;
         out->itemCount++;
@@ -316,6 +343,8 @@ static void lvIsoBuildItems(LvIsoParts *out, LogViewerState *lv, int rotation) {
         lv_isoRotateSquare(rotation, b.x, b.y, &rx, &ry);
         out->items[out->itemCount].mapX   = (unsigned char)rx;
         out->items[out->itemCount].mapY   = (unsigned char)ry;
+        out->items[out->itemCount].srcX   = b.x;
+        out->items[out->itemCount].srcY   = b.y;
         out->items[out->itemCount].number = (unsigned char)(i - 1);
         out->items[out->itemCount].isBase = true;
         out->itemCount++;

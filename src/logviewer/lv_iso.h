@@ -65,9 +65,12 @@ extern "C" {
 #define LV_ISO_WORLD_PER_SQUARE 256
 #define LV_ISO_WORLD_MAX        (LV_ISO_MAP_SIZE * LV_ISO_WORLD_PER_SQUARE - 1)
 
-/* A pillbox or base number to draw, on the (rotated) square it stands on. */
+/* A pillbox or base number to draw, on the (rotated) square it stands on.
+ * srcX, srcY is the square before the turn, for the viewer's own numbers
+ * over the blit, which it places by turning an unrotated map position. */
 typedef struct LvIsoItemLabel {
     unsigned char mapX, mapY;
+    unsigned char srcX, srcY;
     unsigned char number;   /* from 0, as the views draw it */
     bool          isBase;
 } LvIsoItemLabel;
@@ -136,8 +139,14 @@ float lv_isoScaleForZoom(float zoomStep);
 /* Fill `out` from the viewer's state at the playback time: the map, the
  * lists, the item labels and the camera, all rotated by lv_isoRotation. The
  * camera follows the selected tank when one is selected and in the game, else
- * it sits on the map's centre. Hold the client mutex. */
+ * it sits on the map's centre. Hold the client mutex.
+ *
+ * The map's tiles and flags are kept between builds and calculated again
+ * only when the world has changed (lv_worldSerial, moved by every writer of
+ * the map, the pillboxes, the bases and the alliances) or the rotation has;
+ * lv_isoMapBuilds counts those calculations, for the tests. */
 void lv_isoBuild(LvIsoParts *out, float camScale);
+unsigned lv_isoMapBuilds(void);
 
 /* Where the point `height` game pixels above the unrotated map position
  * (mapX, mapY), in fractional squares, lands on a window where the picture

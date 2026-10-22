@@ -75,6 +75,7 @@ int lv_playersGetSelected(void) {
 
 void lv_playersSetSelf(BYTE pn) {
   myPlayerNum = pn;
+  lv_worldMarkChanged();   /* which pillboxes and bases are good or evil */
 }
 
 /* Show the game as playerNum saw it. A slot with no player in it changes
@@ -84,6 +85,7 @@ void lv_playersSetPerspective(BYTE playerNum) {
     return;
   }
   myPlayerNum = playerNum;
+  lv_worldMarkChanged();
   selectedTank = playerNum; /* the player whose view it is, is the one selected */
   perspectiveOn = TRUE;
   snprintf(perspectiveName, sizeof(perspectiveName), "%s", plrs.item[playerNum].playerName);
@@ -296,6 +298,7 @@ void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE 
     return;
   }
   if (plrs.item[playerNum].inUse == FALSE || override == TRUE) {
+    lv_worldMarkChanged();   /* the allies, and so the pillbox colours */
 
     if (override == FALSE || plrs.item[playerNum].inUse == FALSE) {
       /* onlysetup team if not overridding for rewind */
@@ -809,6 +812,7 @@ void lv_playersLeaveGame(BYTE playerNum, bool announce) {
 
 
   if (playerNum < MAX_TANKS && plrs.item[playerNum].inUse == TRUE) {
+    lv_worldMarkChanged();
     lv_allienceDestroy(&(plrs.item[playerNum].allie));
     count = 0;
     while (count < MAX_TANKS) {
@@ -941,6 +945,7 @@ void lv_playersLeaveAlliance(BYTE playerNum) {
   if (playerNum >= MAX_TANKS) {
     return;
   }
+  lv_worldMarkChanged();
   lv_allienceDestroy(&(plrs.item[playerNum].allie));
   plrs.item[playerNum].allie = lv_allienceCreate();
   count = 0;
@@ -1026,6 +1031,7 @@ void lv_playersAcceptAlliance(BYTE acceptedBy, BYTE newMember) {
 
   allyA = lv_playersGetAlliesBitMap(acceptedBy);
   allyB = lv_playersGetAlliesBitMap(newMember);
+  lv_worldMarkChanged();
 
   count = 0;
   // For all possible tanks..

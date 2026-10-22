@@ -2181,6 +2181,11 @@ int run_isoview_geom_hidden(void);
 int run_isoview_geom_tank_sprite(void);
 int run_isoview_geom_visible_range(void);
 int run_isoview_geom_mine(void);
+/* With the ground turned a quarter (groundTurns), a tile's top-left texel
+ * moves from the diamond's top vertex to the next one clockwise, a roof
+ * turns with its ground, four turns are none, and the count set on the file
+ * adds to the input's. */
+int run_isoview_geom_ground_turns(void);
 
 /* The shared map colours: what a tile number says is standing on a square,
  * the flat colour its ground gets when the square is drawn too small for its
@@ -4393,6 +4398,10 @@ int run_lv_overview_neutral_row(void);
 int run_lv_iso_map_tiles(void);
 int run_lv_iso_tanks_and_camera(void);
 int run_lv_iso_rotation(void);
+/* The parts' map is kept between builds: a build with nothing changed reuses
+ * it, and a change to the map, a pillbox, a base, self or the rotation
+ * calculates it again. */
+int run_lv_iso_map_cache(void);
 /* The log viewer's Tank panel (test_lv_tank_status.c): which tank is the
  * selected one, and the height of a gauge against its cap. */
 int run_lv_tank_status_sums(void);

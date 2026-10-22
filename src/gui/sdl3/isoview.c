@@ -654,6 +654,7 @@ void isoViewRenderParts(IsoView *v, SDL_Renderer *r,
         in.tanks    = parts->tanks;
         in.lgms     = parts->lgms;
         in.bullets  = parts->bullets;
+        in.groundTurns = parts->groundTurns;
         in.animMode = (int)gfxGetAnimSmoothness();
         in.sheetScale   = sheetScale;
         in.smoothShells = gfxGetSmoothShells();

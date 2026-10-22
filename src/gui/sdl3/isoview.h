@@ -131,6 +131,9 @@ typedef struct IsoViewParts {
     /* Whether an item view is on, for the border round the picture. The
        caption that names the view is the host's. */
     bool  itemViewBorder;
+    /* Quarter turns the map was given before it got here, so the ground
+       artwork is turned to match; 0 for the game's own view. */
+    int   groundTurns;
 } IsoViewParts;
 
 /* isoViewRenderOffscreen's render from parts rather than a snapshot: the

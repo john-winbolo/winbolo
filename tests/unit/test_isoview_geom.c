@@ -583,3 +583,83 @@ int run_isoview_geom_mine(void) {
     isoGeomSceneFree(&scene);
     return 0;
 }
+
+/* Whether the quad's corners are the recorded diamond's, each moved on by
+   `turns` vertices clockwise. */
+static bool cornersTurned(const IsoGeomQuad *q, const float *px, const float *py,
+                          int turns) {
+    int i;
+    for (i = 0; i < 4; i++) {
+        if (fabsf(q->px[i] - px[(i + turns) & 3]) > 1e-3f ||
+            fabsf(q->py[i] - py[(i + turns) & 3]) > 1e-3f) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int run_isoview_geom_ground_turns(void) {
+    IsoGeomScene scene;
+    IsoGeomInput in;
+    const IsoGeomQuad *q;
+    const IsoGeomItem *it;
+    float px[4], py[4], rpx[4], rpy[4];
+    int i;
+
+    clearMap();
+    sMap.tile[90][90] = ROAD_SOLID;
+    sMap.tile[91][90] = BUILD_SINGLE;
+    baseInput(&in, 90, 90);
+    isoGeomSceneInit(&scene);
+    UT_ASSERT(isoGeomGroundTurns(&in) == 0);
+    UT_ASSERT(isoGeomBuild(&scene, &in));
+
+    /* Not turned: the corners are top, right, bottom, left. */
+    UT_ASSERT(groundQuadsAt(&scene, 90, 90, &q) == 1);
+    for (i = 0; i < 4; i++) {
+        px[i] = q->px[i];
+        py[i] = q->py[i];
+    }
+    UT_ASSERT(py[0] < py[1] && py[0] < py[3] && py[2] > py[1] && px[1] > px[3]);
+    it = tallItemAt(&scene, 91, 90);
+    UT_ASSERT(it != NULL && it->quadCount == 2);
+    q = &scene.stand[it->quadFirst + it->quadCount - 1];
+    for (i = 0; i < 4; i++) {
+        rpx[i] = q->px[i];
+        rpy[i] = q->py[i];
+    }
+
+    /* A quarter turn: the top-left texel, corner 0, is on the right vertex,
+       and the rest follow it round; the source rect is the same tile. The
+       roof turns with the ground. */
+    in.groundTurns = 1;
+    UT_ASSERT(isoGeomGroundTurns(&in) == 1);
+    UT_ASSERT(isoGeomBuild(&scene, &in));
+    UT_ASSERT(groundQuadsAt(&scene, 90, 90, &q) == 1);
+    UT_ASSERT(fabsf(q->px[0] - px[1]) < 1e-3f && fabsf(q->py[0] - py[1]) < 1e-3f);
+    UT_ASSERT(cornersTurned(q, px, py, 1));
+    UT_ASSERT(fabsf(q->src.x - (float)ROAD_SOLID_X) < 1e-3f &&
+              fabsf(q->src.y - (float)ROAD_SOLID_Y) < 1e-3f);
+    it = tallItemAt(&scene, 91, 90);
+    UT_ASSERT(it != NULL && it->quadCount == 2);
+    UT_ASSERT(cornersTurned(&scene.stand[it->quadFirst + it->quadCount - 1],
+                            rpx, rpy, 1));
+
+    /* Two and three turns go on round; four are none; a turn back is three. */
+    in.groundTurns = 2;
+    UT_ASSERT(isoGeomBuild(&scene, &in));
+    UT_ASSERT(groundQuadsAt(&scene, 90, 90, &q) == 1 && cornersTurned(q, px, py, 2));
+    in.groundTurns = 3;
+    UT_ASSERT(isoGeomBuild(&scene, &in));
+    UT_ASSERT(groundQuadsAt(&scene, 90, 90, &q) == 1 && cornersTurned(q, px, py, 3));
+    in.groundTurns = 4;
+    UT_ASSERT(isoGeomBuild(&scene, &in));
+    UT_ASSERT(groundQuadsAt(&scene, 90, 90, &q) == 1 && cornersTurned(q, px, py, 0));
+    in.groundTurns = -1;
+    UT_ASSERT(isoGeomBuild(&scene, &in));
+    UT_ASSERT(groundQuadsAt(&scene, 90, 90, &q) == 1 && cornersTurned(q, px, py, 3));
+
+
+    isoGeomSceneFree(&scene);
+    return 0;
+}

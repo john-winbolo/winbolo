@@ -32,6 +32,7 @@
 #include "lv_global.h"
 #include "lv_tilenum.h"
 #include "lv_pillbox.h"
+#include "lv_bolo_map.h"   /* lv_worldMarkChanged */
 #include "backend.h"
 #include "lv_players.h"
 #include "lv_messages.h"
@@ -214,6 +215,7 @@ void lv_pillsSetNumPills(pillboxes *value, BYTE numPills) {
 
   if (numPills > 0 && numPills <= MAX_PILLS) {
     (*value)->numPills = numPills;
+    lv_worldMarkChanged();
     /* Nothing past the count names a pillbox, so a shorter list must not
        leave the slots it dropped reading as on the map. */
     for (count = numPills; count < MAX_PILLS; count++) {
@@ -259,6 +261,7 @@ void lv_pillsSetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
     (((*value)->item[pillNum]).armour) = item->armour;
     (((*value)->item[pillNum]).speed) = item->speed;
     (((*value)->item[pillNum]).inTank) = item->inTank;
+    lv_worldMarkChanged();
     /* Only ever called to put a real pillbox in the slot, so the slot is on
        the map whatever it held before. */
     (*value)->active[pillNum] = TRUE;
@@ -370,6 +373,8 @@ void lv_pillsGetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
 void lv_pillsDeletePill(pillboxes *value, BYTE x, BYTE y) {
   BYTE count = 0;
   BYTE count2;
+
+  lv_worldMarkChanged();
   
   while (count < (*value)->numPills) {
     if ((*value)->item[count].x == x && (*value)->item[count].y == y) {
@@ -483,17 +488,20 @@ BYTE lv_pillsGetScreenHealth(pillboxes *value, BYTE xValue, BYTE yValue,
 void lv_pillsSetHealth(pillboxes *value, BYTE pillNum, BYTE health) {
   if (pillNum >= MAX_PILLS) return;
   (*value)->item[pillNum].armour = health;
+  lv_worldMarkChanged();
 }
 
 void lv_pillsSetInTank(pillboxes *value, BYTE pillNum, bool inTank) {
   if (pillNum >= MAX_PILLS) return;
   (*value)->item[pillNum].inTank = inTank;
+  lv_worldMarkChanged();
 }
 
 void lv_pillsSetPos(pillboxes *value, BYTE pillNum, BYTE mx, BYTE my) {
   if (pillNum >= MAX_PILLS) return;
   (*value)->item[pillNum].x = mx;
   (*value)->item[pillNum].y = my;
+  lv_worldMarkChanged();
 }
 
 /*********************************************************
@@ -527,6 +535,7 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
   if (pillNum >= MAX_PILLS) {
     return returnValue;
   }
+  lv_worldMarkChanged();
   returnValue = (*value)->item[pillNum].owner;
   (*value)->item[pillNum].owner = owner;
   /* Where the pillbox is taken, for the events panel's click-to-jump. A
@@ -598,6 +607,7 @@ void lv_pillsSetPillNetData(pillboxes *value, BYTE *buff, BYTE dataLen) {
   BYTE live;                       /* Numbers the blob actually describes */
   BYTE avail;                      /* Records the block's length can hold */
 
+  lv_worldMarkChanged();
   /* The count is a byte read off the recording and item[] holds MAX_PILLS,
      so a count past that, or past what the block's own length can describe,
      is a damaged or hostile file. Clamp it before it is stored or walked;
