@@ -42,6 +42,7 @@ extern "C" {
     void lv_screenEventTeams(int *team, int *otherTeam);
     int lv_screenEventPing(void);
     int lv_screenEventPlayer(void);
+    int lv_screenEventChat(const char **from, const char **note, const char **text);
     int lv_screenBuilderAwayMs(int slot, uint32_t deathMs, uint32_t *awayMs);
 }
 
@@ -157,6 +158,13 @@ void lv_imgui_events_add(int eventType, int kind, int mapX, int mapY,
     lv_screenEventTeams(&e->team, &e->otherTeam);
     e->ping    = lv_screenEventPing();
     e->player  = lv_screenEventPlayer();
+    {
+        /* A chat line keeps its parts for the Chat panel. */
+        const char *from = nullptr, *note = nullptr, *text = nullptr;
+        if (lv_screenEventChat(&from, &note, &text)) {
+            lvEventListSetChat(e, from, note, text);
+        }
+    }
     s_version++;
 
     /* Mark for auto-scroll */

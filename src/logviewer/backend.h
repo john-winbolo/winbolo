@@ -716,6 +716,11 @@ int lv_screenEventPing(void);
 /* The first player the line now being added is about (the actor of
  * lv_messageTagPlayers), 0..15, or -1 for none. */
 int lv_screenEventPlayer(void);
+/* The parts of the line now being added when it is a chat line
+ * (lv_messageTagChat): who sent it, the note on who it went to (NULL for a
+ * line to everyone) and the words. Returns 0, and sets nothing, for any
+ * other line. The text is valid until the next line is added. */
+int lv_screenEventChat(const char **from, const char **note, const char **text);
 /* The palette colour a team is drawn in (the tc[] row of the Team Colours
  * dialog); the neutral colour for a number that is not a team. */
 unsigned char lv_screenTeamColour(int team);

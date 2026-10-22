@@ -43,6 +43,7 @@ extern "C" {
 #define LV_PANEL_SET_COMMENTS   (1u << 9)
 #define LV_PANEL_SET_SCENARIO   (1u << 10)
 #define LV_PANEL_SET_SPEC_BADGE (1u << 11)
+#define LV_PANEL_SET_CHAT       (1u << 12)
 
 /* The parts the desktop overview draws. live is not 0 on the spectator's
  * live feed. Each panel still draws only when its own Windows menu option is
@@ -53,7 +54,7 @@ static inline unsigned lvPanelSetDesktop(int live) {
                    LV_PANEL_SET_OVERVIEW | LV_PANEL_SET_TANK |
                    LV_PANEL_SET_GAME_INFO | LV_PANEL_SET_EVENTS |
                    LV_PANEL_SET_ITEM_INFO | LV_PANEL_SET_COMMENTS |
-                   LV_PANEL_SET_SCENARIO;
+                   LV_PANEL_SET_SCENARIO | LV_PANEL_SET_CHAT;
     if (live) {
         set &= ~LV_PANEL_SET_COMMENTS;
         set |= LV_PANEL_SET_SPEC_BADGE;

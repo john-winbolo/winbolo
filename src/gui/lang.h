@@ -3539,6 +3539,15 @@
 /* Asked before an Internet game is hosted on mobile data (Yes / No) */
 #define STR_GAMEFRONTERR_HOST_MOBILE_DATA        2942
 
+/* The Log Viewer's Chat panel: its title (and Windows menu item), the line
+   it shows before any chat, the note for a line to the sender's team or to
+   one player, and the name of a spectator who chatted. */
+#define STR_LV_WIN_CHAT                          3100
+#define STR_LV_CHAT_NONE                         3101
+#define STR_LV_CHAT_TEAM                         3102
+#define STR_LV_CHAT_TO                           3103
+#define STR_LV_CHAT_SPECTATOR                    3104
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */
