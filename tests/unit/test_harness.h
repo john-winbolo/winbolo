@@ -2155,6 +2155,24 @@ int run_iso_sheet_stock_present(void);
 int run_iso_sheet_fallbacks(void);
 int run_iso_sheet_gutter(void);
 
+/* The isometric view's geometry (test_isoview_geom.c): each standing tile
+ * kind classifies to its height and grass is flat; a 2x2 block shows only
+ * its outer faces and a lone building both; a tank behind a building draws
+ * before it, one in front after, and a builder on a pill's square after the
+ * pill and before the next row; an unseen square is one flat quad in the
+ * fog colour; a hidden square's ground is tinted; a tank is drawn from the
+ * isometric sheet when it holds one and from the turned classic sprite when
+ * not; the ground pass walks isoVisibleRange widened for the tallest roof;
+ * and a mined square is two quads. */
+int run_isoview_geom_tall_kinds(void);
+int run_isoview_geom_faces(void);
+int run_isoview_geom_item_order(void);
+int run_isoview_geom_unseen(void);
+int run_isoview_geom_hidden(void);
+int run_isoview_geom_tank_sprite(void);
+int run_isoview_geom_visible_range(void);
+int run_isoview_geom_mine(void);
+
 /* The shared map colours: what a tile number says is standing on a square,
  * the flat colour its ground gets when the square is drawn too small for its
  * sprite, and the three layers a marker's stroke is built from. */

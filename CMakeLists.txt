@@ -2014,7 +2014,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/ping_marker.c
     src/gui/sdl3/ring_band.c
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/map_colours.c src/gui/sdl3/map_markers.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/iso_project.c src/gui/sdl3/tileloader.c src/gui/sdl3/iso_sheet.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/newswire_slide.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/map_colours.c src/gui/sdl3/map_markers.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/iso_project.c src/gui/sdl3/tileloader.c src/gui/sdl3/iso_sheet.c src/gui/sdl3/isoview_geom.c src/gui/sdl3/isoview.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/newswire_slide.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
     # spectatorRun reads the controller through it for overview pan/zoom. Reads
     # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
@@ -4833,6 +4833,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tileloader.c, which is already here.
     tests/unit/test_iso_sheet.c
     src/gui/sdl3/iso_sheet.c
+    # The isometric view's geometry: the ground diamonds, the standing tiles
+    # with their faces and shadows, the sprites and the overlay anchors, as
+    # arrays of quads sorted by depth. Reads the snapshot's memory and lists
+    # and the projection; no renderer. The drawing half (isoview.c) stays out.
+    tests/unit/test_isoview_geom.c
+    src/gui/sdl3/isoview_geom.c
     src/gui/sdl3/sdl_bmp.c
     # Which of <name>.wav and <name>_0.wav .. <name>_9.wav a source holds,
     # and the compaction that leaves the members which decoded contiguous.
@@ -6195,6 +6201,14 @@ set(_unit_test_names
     iso_sheet_stock_present
     iso_sheet_fallbacks
     iso_sheet_gutter
+    isoview_geom_tall_kinds
+    isoview_geom_faces
+    isoview_geom_item_order
+    isoview_geom_unseen
+    isoview_geom_hidden
+    isoview_geom_tank_sprite
+    isoview_geom_visible_range
+    isoview_geom_mine
     map_colours_item_kind
     map_colours_terrain
     map_colours_markers
