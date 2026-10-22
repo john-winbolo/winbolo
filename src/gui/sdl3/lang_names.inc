@@ -2309,7 +2309,6 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_RULE_DESC_lgm_pill_drop_search", STR_RULE_DESC_lgm_pill_drop_search },
     { "STR_RULE_DESC_lgm_pill_repair_load", STR_RULE_DESC_lgm_pill_repair_load },
     { "STR_RULE_DESC_lgm_return_tolerance", STR_RULE_DESC_lgm_return_tolerance },
-    { "STR_RULE_DESC_man_bless_tile_terrain_speed", STR_RULE_DESC_man_bless_tile_terrain_speed },
     { "STR_RULE_DESC_man_speed_boat", STR_RULE_DESC_man_speed_boat },
     { "STR_RULE_DESC_man_speed_crater", STR_RULE_DESC_man_speed_crater },
     { "STR_RULE_DESC_man_speed_deep_sea", STR_RULE_DESC_man_speed_deep_sea },
@@ -2595,4 +2594,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2582
+#define K_LANG_NAME_TABLE_SIZE  2581

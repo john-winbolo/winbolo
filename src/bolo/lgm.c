@@ -600,25 +600,29 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
 }
 
 /* How far from the tank's centre a builder starts, towards the square he
- * was sent to: a quarter of a square. A shell that hits the tank explodes
- * inside the hull on the side it came from, and the builder dies within
- * MAP_SQUARE_MIDDLE of that. The shell is tested against the hull after its
- * move for the tick, so the burst is up to the shell's speed inside the
- * TANK_HIT_RADIUS circle, and further by the tank's own speed when it is
- * driving at the shooter: with the defaults, between 68 and 112 from the
- * centre. A builder sent out the far side has taken one step by the time a
- * shell is next tested, so he stands LGM_START_OFFSET plus his speed from
- * the centre, 80 on open ground, and 148 from the nearest such burst. That
- * is what makes the tank's body shelter him from a pillbox on the other
- * side, the move players make. Started on the centre, or 16 out, he was
- * inside the blast whichever side he left on. With the default speeds the
- * offset is four walking steps where a builder walks 16 a tick (grass, road,
- * a boat, a base he can use), eight on forest and sixteen on swamp, crater
- * and rubble. He is given it only where he could have walked it: off a boat,
- * or when he can walk on the tank's own square and on each square the move
- * enters, not counting the blessed square of a boat or river road order.
- * See lgmApplyStartOffset. */
-#define LGM_START_OFFSET 64
+ * was sent to: one walking step on grass. He is given it only where he
+ * could have walked it; see lgmApplyStartOffset.
+ *
+ * 16 was chosen to come close to the builder death rate of WinBolo 1.17.
+ * In 1.17 that rate depended on the shell's angle. 1.17 tested a hit with
+ * a 128 box (abs(dx) < 128 and abs(dy) < 128), not a circle. A shell from
+ * straight up, down or the side burst 96 to 128 from the tank's centre. A
+ * shell at 45 degrees met the box corner, about 150 to 181 out. So the
+ * danger to the builder was greatest from straight on and least at 45
+ * degrees. Measured per order on grass under an angry pillbox (a shell
+ * every 6 ticks), 1.17 killed him 44% of the time along an axis, 22% at
+ * 22.5 degrees and 0% at 45 degrees, 22% on average. An offset of 16
+ * gives 27%, an offset of 0 gives 60% and 64 gives 0%. The square behind
+ * the tank is not meant to be a fully safe place: a small chance of death
+ * under heated fire is by design.
+ *
+ * Where the danger is now: a hit bursts 64 to 112 from the tank's centre on
+ * the shooter's side, and the builder dies within MAP_SQUARE_MIDDLE of the
+ * burst. A hit can kill him in his first 2 ticks out when the tank is still
+ * or drives at the shooter. A tank that drives away from the shooter on a
+ * road, a boat or a base keeps pace with him, and the danger lasts as long
+ * as it does. */
+#define LGM_START_OFFSET 16
 
 /*********************************************************
 *NAME:          lgmApplyStartOffset
@@ -913,21 +917,16 @@ void lgmMoveAway(GameSim *sim, lgm *lgman, tank *tnk) {
 
   if (onBoat == TRUE) {
     speed = (BYTE) sim->rules.man_speed_refuel_base;
-  } else if (bmx == (*lgman)->blessX && bmy == (*lgman)->blessY) {
-    speed = (BYTE) sim->rules.man_speed_refuel_base;
-    if (sim->rules.man_bless_tile_terrain_speed) {
-      /* man_bless_tile_terrain_speed: on the square he is going to build
-         on he walks up to its centre at that square's own terrain speed,
-         as he does on every other square. A square that reads 0 (a river,
-         a wall, a live pillbox) keeps the base speed above, so he can
-         never be left standing still on it. */
-      BYTE blessSpeed = mapGetManSpeed(sim, mp, pb, bs, bmx, bmy, (*lgman)->playerNum);
-      if (blessSpeed > 0) {
-        speed = blessSpeed;
-      }
-    }
   } else {
+    /* He crosses every square at its own terrain speed, the square he is
+       going to build on included. That square can read 0: a river under
+       a boat or a road, a half-built wall to repair, a live pillbox. There
+       he walks at the refuelling base speed instead, so he is never left
+       standing still on it. */
     speed = mapGetManSpeed(sim, mp, pb, bs, bmx, bmy, (*lgman)->playerNum);
+    if (speed == 0 && bmx == (*lgman)->blessX && bmy == (*lgman)->blessY) {
+      speed = (BYTE) sim->rules.man_speed_refuel_base;
+    }
   }
 
   utilCalcDistance(&xAdd, &yAdd, angle, speed);

@@ -2206,7 +2206,7 @@ int run_lgm_quit_drops_carried_pill(void);
  * of a seat that was not on the field. */
 int run_lgm_unfield_drops_carried_pill(void);
 
-/* Where a builder starts when he is sent out (test_lgm_start_offset.c): 64
+/* Where a builder starts when he is sent out (test_lgm_start_offset.c): 16
  * world units from the tank's centre towards the square he was sent to,
  * worked out in whole numbers, and on the tank's centre when that square's
  * centre is no further off than that. */
@@ -2301,7 +2301,7 @@ int run_sim_rules_pill_massage_follows(void);
 int run_sim_rules_pill_aim_mac(void);
 int run_sim_rules_tank_collision_mac(void);
 int run_sim_rules_tank_deep_sea_safe(void);
-int run_sim_rules_man_bless_tile_terrain_speed(void);
+int run_lgm_build_square_terrain_speed(void);
 /* pill_shell_cap and pill_max_shells_at_tank through pillsUpdate
  * (test_pill_shell_cap.c). */
 int run_pill_shell_cap_off_is_no_limit(void);
