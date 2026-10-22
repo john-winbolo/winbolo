@@ -727,33 +727,33 @@ static const SeedHash kMakerHashes[] = {
     { "K17678F283221A1080000000080Z5E", 0x167FA25Bu },
     { "K17678F283221A108607FF70880Z5E", 0xBC1FEBDFu },
     { "K17678F283221A108607FF70880Z5A", 0x3DCE9AAFu },
-    { "K1F664F280A219B080000000080Z40", 0x21FE9B51u },
-    { "K1F664F280A219B08607FF70880Z40", 0xFF03C726u },
-    { "K1F664F280A219B08607FF70880Z5A", 0x767318CEu },
-    { "K2608D69E3221A1080000000080Z60", 0x47EAAEEAu },
-    { "K2608D69E3221A108607FF70880Z60", 0x89420E88u },
-    { "K2608D69E3221A108607FF70880Z5A", 0xE2583932u },
-    { "K2F678F233221A1080000000080Z5C", 0x8EF2AB3Bu },
-    { "K2F678F233221A108607FF70880Z5C", 0xE051FB47u },
-    { "K2F678F233221A108607FF70880Z5A", 0x1D476623u },
+    { "K1F664F280A219B080000000080Z40", 0xEE8BBD01u },
+    { "K1F664F280A219B08607FF70880Z40", 0x2FEDD8F6u },
+    { "K1F664F280A219B08607FF70880Z5A", 0xB9EDCEAAu },
+    { "K2608D69E3221A1080000000080Z60", 0x8CE726FEu },
+    { "K2608D69E3221A108607FF70880Z60", 0x60C7F9B4u },
+    { "K2608D69E3221A108607FF70880Z5A", 0xB85137A8u },
+    { "K2F678F233221A1080000000080Z5C", 0xBF439B27u },
+    { "K2F678F233221A108607FF70880Z5C", 0x90ABCDDFu },
+    { "K2F678F233221A108607FF70880Z5A", 0x9A23EA43u },
     { "K37678F37142221080000000080Z56", 0x57E7AD5Fu },
     { "K37678F3714222108607FF70880Z56", 0x0B9B1B9Bu },
     { "K37678F3714222108607FF70880Z5A", 0x03603C4Fu },
-    { "K3F8291B2142158E60000000080Z46", 0x434D44C9u },
-    { "K3F8291B2142158E6607FF70880Z46", 0x6DF4FF7Fu },
-    { "K3F8291B2142158E6607FF70880Z5A", 0x2F0576D0u },
-    { "K46065694506161080000000080Z60", 0x76FACA6Bu },
-    { "K4606569450616108607FF70880Z60", 0x901FC44Au },
-    { "K4606569450616108607FF70880Z5A", 0x6DF1A5D4u },
+    { "K3F8291B2142158E60000000080Z46", 0xE240E7F1u },
+    { "K3F8291B2142158E6607FF70880Z46", 0x30CCCE37u },
+    { "K3F8291B2142158E6607FF70880Z5A", 0xEA53F358u },
+    { "K46065694506161080000000080Z60", 0xEB2E974Bu },
+    { "K4606569450616108607FF70880Z60", 0x24B04261u },
+    { "K4606569450616108607FF70880Z5A", 0xBEB29696u },
     { "K4F83CF3C4620E1060000000080Z40", 0x7D19C3EFu },
     { "K4F83CF3C4620E106607FF70880Z40", 0xD8E16143u },
     { "K4F83CF3C4620E106607FF70880Z5A", 0xD130F51Fu },
     { "K52850F323C2161080000000080Z5C", 0xCA31A013u },
     { "K52850F323C216108607FF70880Z5C", 0x52F1F4F3u },
     { "K52850F323C216108607FF70880Z5A", 0xAF4D3F07u },
-    { "K5E051E14464161080000000080Z64", 0x28283D09u },
-    { "K5E051E1446416108607FF70880Z64", 0x4195DBE2u },
-    { "K5E051E1446416108607FF70880Z5A", 0x8D70FB4Au },
+    { "K5E051E14464161080000000080Z64", 0x3834D47Fu },
+    { "K5E051E1446416108607FF70880Z64", 0x85FDB71Cu },
+    { "K5E051E1446416108607FF70880Z5A", 0x6EF1DD6Fu },
     { "K60628CBC322161080000000080Z50", 0x31217A4Fu },
     { "K60628CBC32216108607FF70880Z50", 0x5032E507u },
     { "K60628CBC32216108607FF70880Z5A", 0xD0A35683u },
@@ -1370,4 +1370,198 @@ int run_mapgen_maker_chew_toy_safe_bases(void) {
 int run_mapgen_maker_deathhand_safe_bases(void) {
     static const int sizes[] = { 0, 56, 90, 160 };
     return checkSafeBases("deathhand", sizes, sizeof(sizes) / sizeof(sizes[0]), false);
+}
+
+/*---------------------------------------------------------
+ * Diagonal roads
+ *
+ * The game joins a road tile only to the road on its four sides. Two
+ * road tiles that touch only at a corner draw as two lone road
+ * squares, so Map Maker puts road on one of the two tiles between
+ * them (joinDiagonalRoads in mapgen_maker.c). It does this only for
+ * roads drawn as lines (tracks, skeleton lines, streets, gates and the
+ * centre ring), which makerSetLineRoadOut reports. Road floors, the
+ * grass lines on them, pods, houses and fragments keep their corners.
+ *---------------------------------------------------------*/
+
+typedef struct {
+    int x1, y1, W, H, sym;
+} DiagFrame;
+
+static int diagTerrain(int t) {
+    if (t >= SWAMP + MINE_SUBTRACT && t <= GRASS + MINE_SUBTRACT) t -= MINE_SUBTRACT;
+    return t;
+}
+
+static bool diagRoad(const GenOut *g, const DiagFrame *f, int x, int y) {
+    if (x < f->x1 || y < f->y1 || x >= f->x1 + f->W || y >= f->y1 + f->H) return false;
+    return diagTerrain(g->mp->mapItem[x][y]) == ROAD;
+}
+
+/* The tile at x, y and its symmetry images, as images() in
+ * mapgen_maker.c makes them, in map coordinates. */
+static int diagImages(const DiagFrame *f, int x, int y, int *xs, int *ys) {
+    int cx[4], cy[4], n = 0, j = 0, W = f->W, H = f->H;
+    int lx = x - f->x1, ly = y - f->y1;
+    cx[n] = lx; cy[n] = ly; n++;
+    switch (f->sym) {
+    case MAPGEN_MSYM_MIRROR:
+        cx[n] = W - 1 - lx; cy[n] = ly; n++;
+        break;
+    case MAPGEN_MSYM_ROTATE2:
+        cx[n] = W - 1 - lx; cy[n] = H - 1 - ly; n++;
+        break;
+    case MAPGEN_MSYM_MIRROR4:
+        cx[n] = W - 1 - lx; cy[n] = ly; n++;
+        cx[n] = lx; cy[n] = H - 1 - ly; n++;
+        cx[n] = W - 1 - lx; cy[n] = H - 1 - ly; n++;
+        break;
+    case MAPGEN_MSYM_ROTATE4:
+        cx[n] = W - 1 - ly; cy[n] = lx; n++;
+        cx[n] = W - 1 - lx; cy[n] = H - 1 - ly; n++;
+        cx[n] = ly; cy[n] = W - 1 - lx; n++;
+        break;
+    default:
+        break;
+    }
+    for (int i = 0; i < n; i++) {
+        bool dup = false;
+        for (int k = 0; k < j; k++) {
+            if (xs[k] == f->x1 + cx[i] && ys[k] == f->y1 + cy[i]) dup = true;
+        }
+        if (!dup) {
+            xs[j] = f->x1 + cx[i];
+            ys[j] = f->y1 + cy[i];
+            j++;
+        }
+    }
+    return j;
+}
+
+static bool diagObjectAt(const GenOut *g, int x, int y) {
+    for (int i = 0; i < g->pb->numPills; i++) {
+        if (g->pb->item[i].x == x && g->pb->item[i].y == y) return true;
+    }
+    for (int i = 0; i < g->bs->numBases; i++) {
+        if (g->bs->item[i].x == x && g->bs->item[i].y == y) return true;
+    }
+    for (int i = 0; i < g->ss->numStarts; i++) {
+        if (g->ss->item[i].x == x && g->ss->item[i].y == y) return true;
+    }
+    return false;
+}
+
+static bool diagInSquare(const GenOut *g, const DiagFrame *f, int x, int y) {
+    for (int oy = -1; oy <= 0; oy++) {
+        for (int ox = -1; ox <= 0; ox++) {
+            if (diagRoad(g, f, x + ox, y + oy) && diagRoad(g, f, x + ox + 1, y + oy) &&
+                diagRoad(g, f, x + ox, y + oy + 1) && diagRoad(g, f, x + ox + 1, y + oy + 1)) return true;
+        }
+    }
+    return false;
+}
+
+/* true when road on x, y and on its images would join the two road
+ * tiles at its sides and nothing more: open land with no object, and
+ * after the fill each image has two road tiles at its sides and is in
+ * no 2x2 square of road. The map is put back as it was. */
+static bool diagCanJoin(GenOut *g, const DiagFrame *f, int x, int y) {
+    int xs[4], ys[4], n = diagImages(f, x, y, xs, ys);
+    uint8_t saved[4];
+    bool ok = true;
+    for (int i = 0; i < n; i++) {
+        int t = diagTerrain(g->mp->mapItem[xs[i]][ys[i]]);
+        if (t != GRASS && t != FOREST && t != SWAMP && t != RUBBLE && t != CRATER) return false;
+        if (diagObjectAt(g, xs[i], ys[i])) return false;
+    }
+    for (int i = 0; i < n; i++) {
+        saved[i] = g->mp->mapItem[xs[i]][ys[i]];
+        g->mp->mapItem[xs[i]][ys[i]] = ROAD;
+    }
+    for (int i = 0; i < n && ok; i++) {
+        int sx = xs[i], sy = ys[i];
+        int sides = diagRoad(g, f, sx - 1, sy) + diagRoad(g, f, sx + 1, sy) +
+                    diagRoad(g, f, sx, sy - 1) + diagRoad(g, f, sx, sy + 1);
+        if (sides != 2 || diagInSquare(g, f, sx, sy)) ok = false;
+    }
+    for (int i = n - 1; i >= 0; i--) g->mp->mapItem[xs[i]][ys[i]] = saved[i];
+    return ok;
+}
+
+/* Over many seeds and two sizes of every preset, no two line road
+ * tiles touch only at a corner while a tile between them could take
+ * road. The pairs left are those where each of the two tiles between
+ * them is water, a building or under an object, or where road on it
+ * (and on its symmetry images) would join a third road tile or make a
+ * 2x2 square of road. The last case holds a pair on a mirror line,
+ * where the image of one tile is the tile next to it. The presets
+ * with diagonal line roads must show joined diagonal steps, so the
+ * check is not empty. */
+int run_mapgen_maker_diag_roads_join(void) {
+    static uint8_t line[256][256];
+    static const char *joinKeys[] = { "slugfest", "sluggo-adventurous", "sluggo-symmetric",
+                                      "bl-islands", "megawatt-islands" };
+    GenOut g;
+    int bad = 0, pairs = 0;
+    int steps[sizeof(joinKeys) / sizeof(joinKeys[0])] = { 0 };
+    UT_ASSERT(genAlloc(&g));
+    makerSetLineRoadOut(line);
+    for (int p = 0; p < mapGenPresetCount(); p++) {
+        static const int sizes[] = { 0, 64 };
+        int keyIdx = -1;
+        for (size_t k = 0; k < sizeof(joinKeys) / sizeof(joinKeys[0]); k++) {
+            if (p == mapGenPresetFromKey(joinKeys[k])) keyIdx = (int)k;
+        }
+        for (size_t s = 0; s < sizeof(sizes) / sizeof(sizes[0]); s++) {
+            for (uint32_t seed = 1; seed <= 24; seed++) {
+                MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_MAKER), c;
+                DiagFrame f;
+                int x2, y2;
+                mapGenApplyPreset(p, &cfg);
+                setRegion(&cfg);
+                if (sizes[s]) cfg.size = sizes[s];
+                cfg.seed = seed * 7919u + 3u;
+                memset(line, 0, sizeof(line));
+                genRun(&g, &cfg);
+                c = cfg;
+                mapGenClampConfig(&c);
+                mapGenEffectiveRegion(&c, &f.x1, &f.y1, &x2, &y2);
+                f.W = x2 - f.x1 + 1;
+                f.H = y2 - f.y1 + 1;
+                f.sym = c.params.maker.symmetry;
+                if (f.sym == MAPGEN_MSYM_ROTATE4 && f.W != f.H) f.sym = MAPGEN_MSYM_MIRROR4;
+                for (int y = f.y1; y < y2; y++) {
+                    for (int x = f.x1; x <= x2; x++) {
+                        if (!line[x][y]) continue;
+                        UT_ASSERT_MSG(diagRoad(&g, &f, x, y), "%s: the line road at %d,%d is not road",
+                                      mapGenPresetName(p), x, y);
+                        for (int d = -1; d <= 1; d += 2) {
+                            int bx = x + d, by = y + 1;
+                            if (bx < f.x1 || bx > x2 || !line[bx][by]) continue;
+                            if (diagRoad(&g, &f, bx, y) || diagRoad(&g, &f, x, by)) {
+                                if (keyIdx >= 0) steps[keyIdx]++;
+                                continue;
+                            }
+                            pairs++;
+                            if (diagCanJoin(&g, &f, bx, y) || diagCanJoin(&g, &f, x, by)) {
+                                bad++;
+                                if (bad <= 10) {
+                                    printf("  %s size %d seed %u: road at %d,%d and %d,%d touch only at a corner\n",
+                                           mapGenPresetName(p), sizes[s], cfg.seed, x, y, bx, by);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    makerSetLineRoadOut(NULL);
+    genFree(&g);
+    printf("  %d pairs of line road tiles touch only at a corner where no fill may go\n", pairs - bad);
+    for (size_t k = 0; k < sizeof(joinKeys) / sizeof(joinKeys[0]); k++) {
+        UT_ASSERT_MSG(steps[k] > 0, "%s has no joined diagonal road steps", joinKeys[k]);
+    }
+    UT_ASSERT_MSG(bad == 0, "%d pairs of line road tiles touch only at a corner and could be joined", bad);
+    return 0;
 }

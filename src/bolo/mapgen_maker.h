@@ -141,6 +141,13 @@ void makerPresetDefaults(int preset, MakerParams *p, int *sizeOut);
 void makerGenerate(uint8_t grid[256][256], MakerObjects *out,
                    const MakerParams *p);
 
+/* For tests: while out is not NULL, makerGenerate also writes
+ * out[x][y] = 1 for each road tile of its region that is drawn as a
+ * line (a track, a skeleton line, a street, a gate or the centre
+ * ring; see joinDiagonalRoads in mapgen_maker.c) and 0 for the other
+ * tiles of the region. NULL, the default, turns it off. */
+void makerSetLineRoadOut(uint8_t (*out)[256]);
+
 /* Stored map fragments (mapgen_fragments.c). */
 typedef struct MakerFragment {
     const char *maker;    /* who drew the original */
