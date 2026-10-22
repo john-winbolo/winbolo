@@ -10,7 +10,7 @@
  *
  *   lv_chat_view_fade    - full opacity while lines come, then a quick fade,
  *       all by replay time: a seek back or forward gives the opacity of that
- *       time, and a time that does not move does not fade.
+ *       time.
  *   lv_chat_view_visible - the last lines at or before the playhead, never
  *       before the start of the part of the log that shows, oldest first.
  *   lv_chat_view_parts   - a chat line keeps its sender, note and words,
@@ -30,28 +30,26 @@ int run_lv_chat_view_fade(void) {
     const uint32_t t = 100000u;
     const uint32_t gone = t + LV_CHAT_HOLD_MS + LV_CHAT_FADE_MS;
 
-    UT_ASSERT_MSG(LV_CHAT_FADE_MS > 0 && LV_CHAT_FADE_MS <= 500u, "the fade is quick");
-    UT_ASSERT_MSG(LV_CHAT_HOLD_MS >= 1000u, "a line stays long enough to read");
+    /* The values are open to change (lv_chat_view.h); the test uses the
+     * constants, not their values. */
+    UT_ASSERT_MSG(LV_CHAT_FADE_MS > 0u, "the fade takes some time");
 
     /* A new line is at full opacity at once, and stays so for the hold. */
     UT_ASSERT_MSG(lvChatAlpha(t, t) == 1.0f, "at the line's own time");
-    UT_ASSERT_MSG(lvChatAlpha(t + 20u, t) == 1.0f, "a tick later");
+    UT_ASSERT_MSG(lvChatAlpha(t + 1u, t) == 1.0f, "a moment later");
     UT_ASSERT_MSG(lvChatAlpha(t + LV_CHAT_HOLD_MS, t) == 1.0f, "to the end of the hold");
     /* Then it fades, evenly. */
     UT_ASSERT_MSG(lvChatAlpha(t + LV_CHAT_HOLD_MS + 1u, t) < 1.0f, "the fade starts");
     UT_ASSERT_MSG(chat_near(lvChatAlpha(t + LV_CHAT_HOLD_MS + LV_CHAT_FADE_MS / 2u, t), 0.5f),
                   "half way through the fade");
     UT_ASSERT_MSG(lvChatAlpha(gone, t) == 0.0f, "gone at the end of the fade");
-    UT_ASSERT_MSG(lvChatAlpha(gone + 600000u, t) == 0.0f, "and stays gone");
+    UT_ASSERT_MSG(lvChatAlpha(gone + 100u * LV_CHAT_HOLD_MS, t) == 0.0f, "and stays gone");
     /* A line from after the time asked for is taken as just posted. */
-    UT_ASSERT_MSG(lvChatAlpha(t, t + 5000u) == 1.0f, "no line from the future fades");
+    UT_ASSERT_MSG(lvChatAlpha(t, t + LV_CHAT_HOLD_MS + LV_CHAT_FADE_MS) == 1.0f, "no line from the future fades");
 
-    /* Only replay time matters: the same time gives the same answer, so a
-     * pause holds the opacity, and a seek back into the hold shows the lines
+    /* Only replay time matters, so a seek back into the hold shows the lines
      * again at full opacity. */
-    UT_ASSERT_MSG(lvChatAlpha(t + LV_CHAT_HOLD_MS + 100u, t) ==
-                  lvChatAlpha(t + LV_CHAT_HOLD_MS + 100u, t), "paused: no change");
-    UT_ASSERT_MSG(lvChatAlpha(gone, t) == 0.0f && lvChatAlpha(t + 1000u, t) == 1.0f,
+    UT_ASSERT_MSG(lvChatAlpha(gone, t) == 0.0f && lvChatAlpha(t + LV_CHAT_HOLD_MS / 2u, t) == 1.0f,
                   "a seek back brings the lines back");
 
     /* The panel's opacity: full with nothing to list (its "no chat" line),

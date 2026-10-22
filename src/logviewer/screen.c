@@ -65,6 +65,7 @@
 #include "lv_event_flash.h"
 #include "lv_dock_clear.h"       /* the middle of the view beside a clear sidebar */
 #include "lv_messages.h"
+#include "bolo/public/client_command.h"  /* CHAT_DEST_IS_TEAM — a team address */
 #include "../gui/lang.h"
 #include "../gui/ping_kinds.h"   /* PING_DISPLAY_MS, pingKindMessageId */
 #include "cJSON.h"               /* scripts.json, read into g_lv->scripts */
@@ -2612,11 +2613,10 @@ void lv_screenProcessLog(unsigned short numEvents) {
         lv_messageTagPlayers(opt1, -1);
         {
           /* The Chat panel's note on who the line went to: the sender's
-             team (a team address, CHAT_DEST_IS_TEAM in client_command.h)
-             or one player. */
+             team (a team address) or one player. */
           char note[FILENAME_MAX];
           const char *rendered;
-          if (opt2 >= 0x81 && opt2 <= 0x90) {
+          if (CHAT_DEST_IS_TEAM(opt2)) {
             rendered = langGetText(STR_LV_CHAT_TEAM);
           } else {
             MessageArgs toArgs = {0};

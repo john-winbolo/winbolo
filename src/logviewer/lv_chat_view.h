@@ -32,12 +32,17 @@
 extern "C" {
 #endif
 
-/* How long the lines stay at full opacity after the newest one, in ms of
- * replay time. */
-#define LV_CHAT_HOLD_MS 8000u
-
-/* How long the fade out takes after that, in ms of replay time. */
-#define LV_CHAT_FADE_MS 250u
+/* The fade after the newest line. The request was a very quick fade after
+ * the messages, and a new message at full opacity at once. These two values
+ * are the first choice, not a fixed rule: change them here, and the panel
+ * and the unit test (tests/unit/test_lv_chat_view.c) follow.
+ *
+ * LV_CHAT_HOLD_MS: how long the lines stay at full opacity after the newest
+ * one, in ms of replay time.
+ * LV_CHAT_FADE_MS: how long the fade out takes after that, in ms of replay
+ * time. It must not be 0. */
+#define LV_CHAT_HOLD_MS 4000u
+#define LV_CHAT_FADE_MS 500u
 
 /* The most lines the panel lists. */
 #define LV_CHAT_MAX_LINES 10
