@@ -3005,6 +3005,8 @@ STR_MAPGEN_MIDDLE_CLUMP=Centre clump
 STR_MAPGEN_MIDDLE_BOTH=Diagonal pieces and centre clump
 STR_MAPGEN_STYLE_WALLS_TIP=A wall of buildings across the forest rim on each axis, which cuts the rim into four pieces. From seed: the seed picks one.
 STR_MAPGEN_STYLE_MIDDLE_TIP=Buildings near the middle of the floor: short pieces at 45 degrees, a clump at the centre, or both. From seed: the seed picks one.
+
+# The Log Viewer's Chat panel
 STR_LV_WIN_CHAT=Chat
 STR_LV_CHAT_NONE=No chat messages yet.
 STR_LV_CHAT_TEAM=(team)

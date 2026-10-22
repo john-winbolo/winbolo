@@ -22,6 +22,11 @@
  * fade. Floating, the whole window fades, title and background too. With
  * the mouse over the panel the lines are at full opacity, so they can be
  * read.
+ *
+ * A floating window that has faded out fully takes no mouse input, so a
+ * click, a drag or the wheel goes to the map under it. When the mouse comes
+ * over its place (and no button is down), it shows again and takes input,
+ * so it can be moved or closed.
  */
 
 #include "imgui_chat.h"
@@ -62,10 +67,17 @@ static unsigned              s_lines_version = 0;
  * opacity is set before it begins, so it takes last frame's answer. */
 static bool s_hovered = false;
 
-/* The end of the lines shown last frame, so the list scrolls to the newest
- * line only when a line comes or goes, and leaves hand scrolling alone in
- * between. */
-static int s_last_end = -1;
+/* The window's place and size last frame. A window that takes no input is
+ * never hovered for ImGui, so its hover test is on this rectangle. */
+static ImVec2 s_rect_min(0.0f, 0.0f);
+static ImVec2 s_rect_max(0.0f, 0.0f);
+static bool   s_have_rect = false;
+
+/* The end and the time of the newest line shown last frame, so the list
+ * scrolls to the newest line only when a chat line comes or goes. Other
+ * events change the list too, but they leave hand scrolling alone. */
+static int      s_last_end = -1;
+static uint32_t s_last_newest_ms = 0;
 
 static void rebuild_lines(void) {
     const unsigned version = lv_imgui_events_version();
@@ -80,7 +92,6 @@ static void rebuild_lines(void) {
         s_lines.push_back(i);
         s_times.push_back(e->timeMs);
     }
-    s_last_end = -1;
 }
 
 /* The colour a sender's name is drawn in: the colour every panel draws the
@@ -114,6 +125,7 @@ static void chat_line(const LvEvent &e) {
 void lv_imgui_chat_window(void) {
     if (!lv_g_show_chat_window) {
         s_hovered = false;
+        s_have_rect = false;
         return;
     }
 
@@ -133,7 +145,9 @@ void lv_imgui_chat_window(void) {
         ImGuiCond cond = to_default ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
         ImVec2 vp = ImGui::GetMainViewport()->Size;
         ImGui::SetNextWindowSize(ImVec2(CHAT_DEFAULT_W, CHAT_DEFAULT_H), cond);
-        /* Low on the left of the map, over the Controls panel's place. */
+        /* Low on the left of the map. Its bottom is 200 px above the bottom
+         * of the view, so it stays above the floating Controls panel, which
+         * sits in the middle at the bottom. */
         float y = vp.y - CHAT_DEFAULT_H - 200.0f;
         if (y < 30.0f) y = 30.0f;
         ImGui::SetNextWindowPos(ImVec2(230.0f, y), cond);
@@ -144,15 +158,45 @@ void lv_imgui_chat_window(void) {
     const bool docked = lv_imgui_dock_window_is_docked("###chat");
     const float baseAlpha = ImGui::GetStyle().Alpha;
     const bool fadeWindow = !docked;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
+    bool shownByRect = false;
     if (fadeWindow) {
-        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
-                            baseAlpha * lvChatShownAlpha(shown, newestMs, nowMs, s_hovered ? 1 : 0));
+        float alpha = lvChatShownAlpha(shown, newestMs, nowMs, s_hovered ? 1 : 0);
+        if (alpha <= 0.0f) {
+            /* Faded out fully. The mouse over its place (with no button
+             * down, so a drag on the map that passes over it does not stop)
+             * shows it again. Else it lets the mouse through to the map. */
+            const ImGuiIO &io = ImGui::GetIO();
+            if (s_have_rect && !io.WantCaptureMouse && !ImGui::IsAnyMouseDown() &&
+                ImGui::IsMouseHoveringRect(s_rect_min, s_rect_max, false)) {
+                alpha = 1.0f;
+                shownByRect = true;
+            } else {
+                flags |= ImGuiWindowFlags_NoInputs;
+            }
+        }
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, baseAlpha * alpha);
     }
 
     char title[128];
     snprintf(title, sizeof(title), "%s###chat", langGetText(STR_LV_WIN_CHAT));
-    const bool open = ImGui::Begin(title, &lv_g_show_chat_window, ImGuiWindowFlags_NoCollapse);
-    s_hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
+    const bool open = ImGui::Begin(title, &lv_g_show_chat_window, flags);
+    {
+        const ImVec2 pos = ImGui::GetWindowPos();
+        const ImVec2 size = ImGui::GetWindowSize();
+        s_rect_min = pos;
+        s_rect_max = ImVec2(pos.x + size.x, pos.y + size.y);
+        s_have_rect = true;
+    }
+    if ((flags & ImGuiWindowFlags_NoInputs) != 0) {
+        s_hovered = false;
+    } else {
+        /* In the frame the rectangle test shows the window again, ImGui does
+         * not yet count it as hovered (it took no input last frame), so the
+         * rectangle test counts too. */
+        s_hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) ||
+                    (shownByRect && ImGui::IsMouseHoveringRect(s_rect_min, s_rect_max, false));
+    }
     if (open) {
         lv_imgui_keep_window_on_screen();
         /* Docked: the frame stays and only the lines fade, by this frame's
@@ -169,10 +213,11 @@ void lv_imgui_chat_window(void) {
                 if (e != nullptr) chat_line(*e);
             }
         }
-        if (end != s_last_end) {
-            /* A line came or went: the newest is at the bottom. */
+        if (end != s_last_end || newestMs != s_last_newest_ms) {
+            /* A chat line came or went: the newest is at the bottom. */
             ImGui::SetScrollHereY(1.0f);
             s_last_end = end;
+            s_last_newest_ms = newestMs;
         }
         if (!fadeWindow) {
             ImGui::PopStyleVar();
