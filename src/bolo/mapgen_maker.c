@@ -126,13 +126,14 @@
 #define PM_JUNCTION  2
 #define PM_ANY       3
 #define PM_TRACK     4
-#define PM_CHEW      5   /* inside the middle of the floor, out of range of the safe bases */
+#define PM_CHEW      5   /* in the middle of the floor, out of range of the safe bases */
 
 #define BM_TRACK 0
 #define BM_CELLS 1
 #define BM_ANY   2
 #define BM_EDGE  3   /* floor tiles next to the inner rim */
 #define BM_CHEW  4   /* safe bases on the track, one group inside, the rest on the track */
+#define BM_GUARD 5   /* safe bases at the edge of the floor, the rest in the middle ring */
 
 #define SM_SEA     0
 #define SM_CORNERS 1
@@ -314,16 +315,18 @@ static const Preset kPresets[] = {
       .fragSet = MAKER_FRAG_SET_STRONGHOLD, .aspectVar = 25, .mazeYard = 60,
       .outlineSet = OS(OL_ISLAND) },
     /* Deathhand: an octagon road arena with a building rim, forest
-     * lines and a deep pond at the centre. */
+     * lines and a deep pond at the centre. As in the real DH- maps,
+     * half the bases stand at the edge of the floor out of range of
+     * every pill, and the pills guard the bases in the middle. */
     { .key = "deathhand", .name = "Deathhand", .family = FAM_FORMAL,
       .size = 64, .aspect = 100, .outline = OL_VARIED, .symmetry = SY_ROT4,
       .water = 15, .forest = 30, .road = 60, .building = 35, .islands = 1, .mines = 0, .detail = 3,
-      .bases = 12, .pills = 16, .starts = 12,
+      .bases = 16, .pills = 16, .starts = 12,
       .cut = 145, .forestRim = 3, .buildRim = 2, .buildOuter = 1, .track = NO_TERR, .floor = T_ROAD,
       .skel = SK_AXES, .skelTerr = T_FOREST, .skelW = 2,
       .pod1 = POD_HEDGE, .pod2 = POD_BLOCK, .pod3 = POD_HEDGE, .cell = 16,
       .centre = CEN_DEEP, .gateTerr = T_BUILDING, .gateW = 2,
-      .pillMode = PM_NEAR_BASE, .baseMode = BM_ANY, .startMode = SM_SEA,
+      .pillMode = PM_CHEW, .baseMode = BM_GUARD, .startMode = SM_SEA,
       .skelAlt = 0x07, .cutVar = 20,
       .fragSet = -1,
       .outlineSet = OS(OL_OCTAGON) | OS(OL_BOX) | OS(OL_ROUND) },
@@ -1698,6 +1701,7 @@ static void paintFormal(Ctx *c) {
     paintPods(c, pr->centre);
     paintCentre(c, pr->centre);
     paintExtras(c, L_FLOOR);
+    if (pr->baseMode == BM_GUARD) c->midR3 = c->din[IDX(c, (c->W - 1) / 2, (c->H - 1) / 2)];
     if (pr->rimWall > 0 || pr->midPiece > 0 || pr->midClump > 0) {
         c->midR3 = c->din[IDX(c, (c->W - 1) / 2, (c->H - 1) / 2)];
         if (c->rimWalls) paintRimWalls(c, floorT);
@@ -2809,6 +2813,12 @@ static int collect(Ctx *c, int kind, int *cand, int filter) {
                      outOfSafeRange(c, x, y, SAFE_PAIR_D2);
                 break;
             case 11: ok = outOfSafeRange(c, x, y, SAFE_D2); break;              /* anywhere, safe */
+            case 13:                                                     /* middle ring of the floor, wide */
+                ok = (L == L_FLOOR || L == L_SKEL) && midBand(c, x, y, 25, 60);
+                break;
+            case 14:                                                     /* outer part of the floor */
+                ok = (L == L_FLOOR || L == L_SKEL) && midBand(c, x, y, 65, 200);
+                break;
             default: break;
             }
             if (ok) cand[n++] = k;
@@ -2843,8 +2853,34 @@ static void placeMidBases(Ctx *c, int *cand) {
     }
 }
 
-/* Chew Toy pills: in the middle of the floor, out of range of the
- * safe bases, in pairs on some seeds. */
+/* The land radius x 3 from which Deathhand has two safe groups of
+ * bases, not one (near size 52). */
+#define GUARD_TWO_R3 66
+
+/* Deathhand bases: two groups at the edge of the floor that no pill
+ * may reach, the rest in the middle ring of the floor where the pills
+ * guard them. Integer math only. */
+static void placeGuardBases(Ctx *c, int *cand) {
+    int xs[4], ys[4], per, want, nc, md;
+    per = images(c, 1, 2, xs, ys);
+    nc = collect(c, OBJ_BASE, cand, 14);
+    md = nc * 2 / (3 * c->p.bases);
+    if (md < 2) md = 2;
+    /* One group on a small floor, where two would leave the pills no
+     * room out of their range. */
+    want = (c->midR3 >= GUARD_TWO_R3 ? 2 : 1) * per;
+    if (want > c->p.bases / 2) want = c->p.bases / 2;
+    if (want < 1) want = 1;
+    placeKind(c, OBJ_BASE, cand, nc, want, md, 0);
+    c->nSafe = c->n[OBJ_BASE];
+    if (c->n[OBJ_BASE] < c->p.bases) {
+        nc = collect(c, OBJ_BASE, cand, 13);
+        placeKind(c, OBJ_BASE, cand, nc, c->p.bases - c->n[OBJ_BASE], md, 0);
+    }
+}
+
+/* Chew Toy and Deathhand pills: in the middle of the floor, out of
+ * range of the safe bases, in pairs on some seeds. */
 static void placeMidPills(Ctx *c, int *cand) {
     int xs[4], ys[4], per, pairs, nc, md;
     per = images(c, 1, 2, xs, ys);
@@ -2911,6 +2947,9 @@ static void placeObjects(Ctx *c) {
     /* Bases */
     if (c->p.bases > 0 && pr->baseMode == BM_CHEW && c->midR3 >= 18) {
         placeMidBases(c, cand);
+    }
+    if (c->p.bases > 0 && pr->baseMode == BM_GUARD && c->midR3 >= 18) {
+        placeGuardBases(c, cand);
     }
     if (c->p.bases > c->n[OBJ_BASE]) {
         int filter = 2;
