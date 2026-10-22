@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- License: PD (public domain). Made by SVG Repo: https://www.svgrepo.com/svg/479073/open-in-new-window-button-1 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="-48 -48 608 608" fill="#000000">
+  <path d="M96,0v416h416V0H96z M472,376H136V40h336V376z"/>
+  <polygon points="40,472 40,296 40,136 40,96 0,96 0,512 416,512 416,472 376,472"/>
+  <polygon points="232.812,312.829 350.671,194.969 350.671,279.766 390.671,279.766 390.671,126.688 237.594,126.688 237.594,166.688 322.39,166.688 204.531,284.547"/>
+</svg>

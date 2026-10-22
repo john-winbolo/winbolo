@@ -228,6 +228,7 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
       end
     end
   end
+  -- Debug only: why the last check refused (read by the TANK_ENGAGE trace).
   if require_reach and not blocked and not reached then return false end
   return not blocked
 end
@@ -384,6 +385,14 @@ local function intentionally_stationary(goal, info, state)
      and (s == "lay_mine" or s == "detonate" or s == "build_boat") then
     return true
   end
+  -- REPOSITION SHOOT (C.STUCK_EXEMPT_REPOSITION_SHOOT, keel false): stopped
+  -- beside our own pill on purpose, firing until it is dead.  The same state
+  -- init.lua's stuck detector already exempts.  stuck_recovery clears the
+  -- window while this is true, so a new one starts when the shooting ends.
+  if C.STUCK_EXEMPT_REPOSITION_SHOOT and goal.kind == "capture_pill"
+     and goal.reposition and s == "reposition_shoot" then
+    return true
+  end
   -- Refueling: once parked ON (or right beside) the refuel base we sit still
   -- while the base tops us up — that's intentional, NOT stuck. (En route to the
   -- base it's still subject to normal stuck recovery.) Without this, the
@@ -405,6 +414,13 @@ local function intentionally_stationary(goal, info, state)
   end
   return false
 end
+
+-- The goals that end with the tank ON their square (see the
+-- C.STUCK_COLLAPSE_ACCUM note in stuck_recovery).  A goal that chases a
+-- tank or stands off from a target is not one of them.
+local COLLAPSE_ACCUM_KINDS = {
+  capture_pill = true, capture_base = true, goto_tile = true,
+}
 
 local function stuck_recovery(state, info, goal)
   local now = state.tick or 0
@@ -507,10 +523,42 @@ local function stuck_recovery(state, info, goal)
       best_d  = cur_d,
       next_mx = pf.next_mx, next_my = pf.next_my,
       since   = now,
+      acc_best = cur_d, acc_since = now,
+      -- The step is the goal's own square: the last square of the drive.
+      -- A land square only: a step onto water keeps the old timing, and
+      -- so does a tank in a boat (checked each think; see the knob note).
+      final_step = goal ~= nil and COLLAPSE_ACCUM_KINDS[goal.kind]
+                   and goal.mx == pf.next_mx and goal.my == pf.next_my
+                   and not U.is_water(U.ttype(goal.mx, goal.my)),
     }
     return
   end
   if cur_d < sp.best_d then sp.best_d = cur_d end
+  -- 2026-10-15: THE LOOKAHEAD COLLAPSE HAS ITS OWN CLOCK
+  -- (C.STUCK_COLLAPSE_ACCUM, keel false).  The window above restarts only
+  -- when the tank gets STUCK_MOVE_WU closer than its best in one think,
+  -- because the line above moves the best every think, and no tank drives
+  -- STUCK_MOVE_WU in one think (full speed is about 16).  So after
+  -- STUCK_LOOKAHEAD_COLLAPSE_TICKS on one path step the collapse turned the
+  -- tank back to its own square even while it drove onto the step.
+  -- pilltag_fort_last_shot seed 555: the guard, at rest one square west of
+  -- his dead pill, drove at it, was turned away 27 thinks later still on his
+  -- square, and circled until the hunter took the pill.  The collapse clock
+  -- (acc_since) restarts each time the tank is STUCK_MOVE_WU closer than at
+  -- the clock's last restart, so the distance driven since then counts;
+  -- swinging back and forth cannot restart it.  The recovery below keeps the
+  -- old window.  Only on the LAST step of a goal that ends on its square
+  -- (COLLAPSE_ACCUM_KINDS: a dead pill, a base, a go-there square), when
+  -- that square is land, and only for a tank on land, not in a boat (read
+  -- each think): an earlier
+  -- version on every step made sea_pills_B/D/E, lead_aim_boat_measured and
+  -- rule_roulette_multiply_off fail, and one on the last step afloat still
+  -- made sea_pills_B and lead_aim_boat_measured fail (attack_tank there
+  -- has the target tank's square as its goal square).
+  if C.STUCK_COLLAPSE_ACCUM and sp.final_step and not info.inboat
+     and (sp.acc_best - cur_d) > STUCK_MOVE_WU then
+    sp.acc_best, sp.acc_since = cur_d, now
+  end
 
   if (now - sp.since) < STUCK_TICKS then return end
 
@@ -1061,9 +1109,12 @@ local function path_lookahead_inner(state, info, nx, ny)
   -- gentler recovery first.
   do
     local sp = state.stuck_progress
-    if sp and (state.tick or 0) - sp.since >= STUCK_LOOKAHEAD_COLLAPSE_TICKS then
+    local since = sp and ((C.STUCK_COLLAPSE_ACCUM and sp.final_step
+                           and not info.inboat and sp.acc_since)
+                          or sp.since)
+    if sp and (state.tick or 0) - since >= STUCK_LOOKAHEAD_COLLAPSE_TICKS then
       sdbg("lookahead: STUCK collapse (%d ticks), return tank tile (%d,%d)",
-           (state.tick or 0) - sp.since, tmx, tmy)
+           (state.tick or 0) - since, tmx, tmy)
       return tmx, tmy
     end
   end
@@ -2697,8 +2748,12 @@ local function attack_pill_steer(state, world, info, goal)
     -- the shell line must pass within SUICIDE_AIM_HIT_HALF_TILES of the pill
     -- centre at this distance (never looser than the old gate, never under
     -- 1 brad). With no shells, or no clear line, it follows the path as before.
+    -- A FINISH RUN (goal._finish_run, attack.lua M.finish_run_update) aims
+    -- the same way, whatever SUICIDE_AIM_AT_PILL says: the clear line to the
+    -- pill is the whole point of the run.
+    local finish = goal._finish_run and true or false
     local aim_mode = false
-    if (goal._ping_suicide or goal._charge_now) and C.SUICIDE_AIM_AT_PILL then
+    if finish or ((goal._ping_suicide or goal._charge_now) and C.SUICIDE_AIM_AT_PILL) then
       fire_w = (shoot_tiles + (C.SUICIDE_AIM_REACH_PAD_TILES or 0.5)) * 256.0
       -- info.tank_angle is the float angle the shell really flies along;
       -- info.direction is its floor (up to 1 brad off).
@@ -2724,9 +2779,13 @@ local function attack_pill_steer(state, world, info, goal)
     -- SUICIDE_HOLD_MARGIN_TILES). Out of aim_mode: the old cruise speed.
     -- Pacing only sets the throttle; it never touches the turn keys or the
     -- fire gate. The CHARGE NOW rush paces exactly the same way.
+    -- A FINISH RUN does not pace: it drives the path at top speed, and once
+    -- aiming it keeps driving in at the pill at cruise speed (it stops only
+    -- against the pillbox, still facing it and firing).
     local cap  = C.NAV_CRUISE_SPEED
     local pace = "off"
-    local ahead = (goal._ping_suicide or goal._charge_now)
+    if finish and not aim_mode then cap, pace = C.NAV_TOP_SPEED, "finish" end
+    local ahead = (goal._ping_suicide or goal._charge_now) and not finish
                   and (C.SUICIDE_PACE_AHEAD_TILES or 0) or 0
     if ahead > 0 then
       local hd
@@ -2781,6 +2840,43 @@ local function attack_pill_steer(state, world, info, goal)
       end
     else
       k, t = nav_turn_speed(mcorr, info.speed, cap, 4)
+      -- FINISH RUN wall: the path finder routes through walls (wall-shoot
+      -- edges), so when the next square of the path is a wall within 3
+      -- squares, turn to it, slow, and shoot it when lined up (the
+      -- tank_combat wall-clear shape).  A tank pushed against a wall square
+      -- straight ahead shoots it too.  Walls the tank will not shoot
+      -- (U.wall_shootable, C.WALL_SHOOT_LIFE_MAX) are left to the path.
+      if finish and not info.inboat and (info.shells or 0) > C.SHELL_RESERVE
+         and U.wall_shootable(info) then
+        local wx_, wy_
+        if nx and nx >= 0 then
+          local ntt = U.ttype(nx, ny)
+          if (ntt == C.T_BUILDING or ntt == C.T_HALFBUILD)
+             and U.wdist(info.tankx, info.tanky, U.m2w(nx), U.m2w(ny)) < 768 then
+            wx_, wy_ = nx, ny
+          end
+        end
+        if not wx_ and info.tank_obstructed then
+          local bx = bit.rshift(info.tankx + U.bsin(info.direction), 8)
+          local by = bit.rshift(info.tanky - U.bcos(info.direction), 8)
+          local btt = U.ttype(bx, by)
+          if btt == C.T_BUILDING or btt == C.T_HALFBUILD then wx_, wy_ = bx, by end
+        end
+        if wx_ then
+          local wcorr = U.adiff(info.direction,
+            U.aim_at(info.tankx, info.tanky, U.m2w(wx_), U.m2w(wy_)))
+          k = bit.band(k, bit.bnot(bit.bor(KEY_FASTER, KEY_TURNLEFT, KEY_TURNRIGHT)))
+          if info.speed > 0 then k = bit.bor(k, KEY_SLOWER) end
+          local h, tp = U.aim_turn_bits(wcorr, 6, 1)
+          k, t = bit.bor(k, h), tp
+          if math.abs(wcorr) < 8 then
+            t = bit.bor(t, KEY_SHOOT)
+            if _G._PRINT2_ENABLED then
+            end
+          end
+          pace = "wall"
+        end
+      end
     end
     keys = bit.bor(keys, k)
     taps = bit.bor(taps, t)
@@ -2790,7 +2886,14 @@ local function attack_pill_steer(state, world, info, goal)
       if shot_clear == nil then
         shot_clear = shot_path_clear(info, world, pill_wx, pill_wy, pmx, pmy)
       end
-      if shot_clear then keys = bit.bor(keys, KEY_SHOOT) end
+      if shot_clear then
+        keys = bit.bor(keys, KEY_SHOOT)
+        if finish then
+          goal._fr_fired = (goal._fr_fired or 0) + 1
+          if _G._PRINT2_ENABLED then
+          end
+        end
+      end
     end
     return keys, taps
   end
@@ -3378,13 +3481,48 @@ local function tank_combat_steer(state, world, info, goal)
     local reach_wu = steps * spd + 64
     _range_ok = U.wdist(info.tankx, info.tanky, pred_wx, pred_wy) <= reach_wu
   end
+  local _gate_why = (not _aim_ok and "aim") or (not _shells_ok and "shells")
+                    or (not _steady_ok and "steady") or (not _range_ok and "range") or nil
   if _aim_ok and _shells_ok and _steady_ok and _range_ok then
     local _clear = shot_path_clear(info, world, pred_wx, pred_wy,
                                    bit.rshift(math.floor(pred_wx), 8),
                                    bit.rshift(math.floor(pred_wy), 8),
                                    nil, nil, nil, nil, km_pn)
+    -- C.TANK_COMBAT_FIRE_CHECK_HEADING: the check above walks the line to the
+    -- AIM POINT, but the shell leaves along the GUN, and the bot fires with the
+    -- gun up to TANK_COMBAT_AIM_GATE_BRADS off that line. Next to a pill the two
+    -- lines can fall on different tiles: heat_pill_F, tank (125.56,125.91),
+    -- aim line 70.05 brads clips (126,126) and is clear, the gun at 68 runs
+    -- flatter through our own pill on (126,125) and hits it. So also walk the
+    -- gun's own line, out to the same distance. When only that line is blocked,
+    -- turn the gun onto the aim line and hold fire; it does not count towards
+    -- stuck-fire, which would send the shell into the pill anyway.
+    local _hdg_blocked = false
+    if _clear and C.TANK_COMBAT_FIRE_CHECK_HEADING then
+      local _ang = info.tank_angle or info.direction
+      local _d   = U.wdist(info.tankx, info.tanky, pred_wx, pred_wy)
+      local _rad = _ang * C.TWO_PI / 256
+      local _hx  = info.tankx + math.sin(_rad) * _d
+      local _hy  = info.tanky - math.cos(_rad) * _d
+      if not shot_path_clear(info, world, _hx, _hy,
+                             bit.rshift(math.floor(_hx), 8),
+                             bit.rshift(math.floor(_hy), 8),
+                             nil, nil, nil, nil, km_pn) then
+        _clear = false
+        _hdg_blocked = true
+        -- The readout above was written before this check ran and says "ok";
+        -- name the gun line and what it ran into instead.
+      end
+    end
     if _clear and not U.fire_hold_block(state, C.FIRE_HOLD_TICKS) then
       keys = bit.bor(keys, KEY_SHOOT)
+      goal._engage_blocked_ticks = 0
+    elseif _hdg_blocked then
+      local _fcorr = U.adiff(info.tank_angle or info.direction,
+                             U.aim_at_f(info.tankx, info.tanky, pred_wx, pred_wy))
+      keys = bit.band(keys, bit.bnot(bit.bor(KEY_TURNLEFT, KEY_TURNRIGHT)))
+      if _fcorr > 0 then keys = bit.bor(keys, KEY_TURNRIGHT)
+      elseif _fcorr < 0 then keys = bit.bor(keys, KEY_TURNLEFT) end
       goal._engage_blocked_ticks = 0
     elseif _stuck_in_place then
       goal._engage_blocked_ticks = (goal._engage_blocked_ticks or 0) + 1
@@ -3398,6 +3536,15 @@ local function tank_combat_steer(state, world, info, goal)
       -- Blocked but we moved this tick — not stuck, reset.
       goal._engage_blocked_ticks = 0
     end
+  elseif C.TANK_COMBAT_STUCK_FIRE_HOLD and _stuck_in_place then
+    -- C.TANK_COMBAT_STUCK_FIRE_HOLD: a tick off the aim, shells, steady or
+    -- range gate while we still sit on the same square keeps the blocked
+    -- count (any aim miss, small or large, and a tick with no shells). A target
+    -- behind a wall at 1-3 squares jitters, so its lead swings the aim off the
+    -- 3-brad gate on most ticks; resetting here kept the count under
+    -- TANK_COMBAT_STUCK_FIRE_TICKS for good and the tank never fired
+    -- (pilltag_human_fort s123 player 2: 10.9 s, max count 15 of 30).
+    -- Moving to a new square or a clear shot still resets it.
   else
     -- Not aimed yet (still turning) or out of shells: don't accrue stuck count.
     goal._engage_blocked_ticks = 0
@@ -4942,6 +5089,23 @@ local function steer_core(state, world, info, goal)
       _approach_brake_active = C.FAST_APPROACH
                                or _approach_sdist_wu < math.max(256, info.speed * C.NAV_BRAKE_MULT_PRECISE)
     end
+    -- 2026-10-15: A GO-THERE ORDER DRIVES ONTO ITS SQUARE AT SPEED
+    -- (C.GOTO_FAST_ARRIVE, keel false).  The ordinary approach brake slows in
+    -- proportion to the distance left to the square's CENTRE, so the last
+    -- square and a half was taken at crawl speed: on pilltag_shoot_built_prize
+    -- (seed 42) the tank crossed the last square in 50 thinks.  A go-there
+    -- order arrives the moment the tank is ON the square, and the park
+    -- branch above brakes it there, so only the stop point matters.  While
+    -- the tank is lined up on the square (the same 12-brad test the attack
+    -- approach uses) and the path's next point is the square itself, hold
+    -- speed and brake the tick the engine stop predictor (cpf.predict_stop)
+    -- says the tank would come to rest at the centre.  Not for a DECOY
+    -- GETAWAY step (it has its own diagonal rule) and not when the path turns.
+    local goto_fast = C.GOTO_FAST_ARRIVE and goal.kind == "goto_tile"
+                      and not goal._getaway and not lookahead_active
+                      and goal.mx and state._steer_lx == goal.mx
+                      and state._steer_ly == goal.my
+                      and abs_corr <= 12 and eff_dist < brake_dist
     -- Throttle-branch diagnostic.  Set by each branch below so the
     -- hud_throttle overlay can show which decision tier fired this
     -- tick + the key inputs that drove it.
@@ -5180,6 +5344,18 @@ local function steer_core(state, world, info, goal)
         elseif info.speed < desired and sdist_wu > 128 then
           keys = bit.bor(keys, KEY_FASTER)
         end
+      end
+    elseif goto_fast then
+      _throttle_branch = "goto_fast"
+      local tcap = (C.TERRAIN_SPEED and C.TERRAIN_SPEED[U.ttype(tmx, tmy)]) or 16
+      local ang_f = info.tank_angle or info.direction
+      local espeed = (info.speed or 0) / 4   -- info.speed is engine speed x4
+      local psx, psy = cpf.predict_stop(info.tankx, info.tanky, ang_f, espeed, tcap)
+      local stop_dist = U.wdist(info.tankx, info.tanky, psx, psy)
+      if stop_dist >= eff_dist or info.speed > turn_max_speed + 4 then
+        keys = bit.bor((bit.band(keys, bit.bnot(KEY_FASTER))), KEY_SLOWER)
+      elseif info.speed < turn_max_speed then
+        keys = bit.bor((bit.band(keys, bit.bnot(KEY_SLOWER))), KEY_FASTER)
       end
     elseif facing_away and C.FACING_AWAY_BRAKE_ENABLED then
       _throttle_branch = "facing_away"

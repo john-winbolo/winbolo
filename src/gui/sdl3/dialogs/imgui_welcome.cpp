@@ -33,7 +33,9 @@
 #include "imgui_nav_outline.h"
 #include "imgui_controller_prompt.h"
 #include "../imgui_steam_nav.h"
-#if !BOLO_MOBILE
+/* The news popup: on iOS too, not on Android, which does not compile
+   imgui_news.cpp. */
+#if !defined(__ANDROID__)
 #include "imgui_news.h"
 #endif
 
@@ -49,6 +51,9 @@ extern "C" {
 }
 
 #include "imgui_about.h"   /* aboutPopupOpen / aboutPopupRender */
+#if defined(__IPHONEOS__)
+#include "../../ios/ios_drops.h"  /* iosDropsWelcomeResult */
+#endif
 #include "imgui_keyboard.h" /* keyboardUpdate */
 
 /* From winbolo.c */
@@ -208,6 +213,18 @@ extern "C" int imguiWelcomeShow(void) {
         logoW = nativeW * 0.75f;
         logoH = nativeH * 0.75f;
         if (s > 1.05f) { logoW *= s; logoH *= s; }
+#if BOLO_MOBILE
+        /* On a phone the scaled logo came out wider than the screen's
+           height, so it is kept to the menu column's width (miniBtnW below)
+           and the menu sits under it. The desktop keeps the wider logo. */
+        {
+            float maxW = 90.0f * s;  /* half the column: room for the rest */
+            if (logoW > maxW) {
+                logoH *= maxW / logoW;
+                logoW = maxW;
+            }
+        }
+#endif
     }
 
     /* Use shared background game */
@@ -237,6 +254,17 @@ extern "C" int imguiWelcomeShow(void) {
                 running = false;
             }
         }
+#if defined(__IPHONEOS__)
+        /* A recording or game link the system handed over, in whichever loop
+         * was running then or at a cold launch (ios_drops.c). */
+        if (running) {
+            int dropped = iosDropsWelcomeResult();
+            if (dropped >= 0) {
+                result = dropped;
+                running = false;
+            }
+        }
+#endif
 
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
@@ -300,6 +328,10 @@ extern "C" int imguiWelcomeShow(void) {
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
+#if defined(__IPHONEOS__)
+            /* Kept by ios_drops.c's watch and acted on above. */
+            if (ev.type == SDL_EVENT_DROP_FILE) continue;
+#endif
             if (dialogHandleUrlDropEvent(&ev)) { result = (int)openInternetManual; running = false; continue; }
             if (dialogHandleQuitEvent(window, &ev)) {
                 result = RESULT_QUIT;
@@ -317,6 +349,22 @@ extern "C" int imguiWelcomeShow(void) {
         /* Query actual window size each frame (handles resize) */
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
+        /* The screen's safe area, in the same window points: zero on the
+           desktop; on a phone the Dynamic Island's band on the left and right
+           in landscape and the home indicator's at the bottom. Everything
+           placed against an edge below sits inside it, or the phone cuts it
+           off: the sign-in block, the version, the social icons, the
+           play/pause button and the logo column all were. */
+        const DialogSafeInsets safe = dialogGetSafeInsets(window);
+        /* How far in from each window edge the corner items sit: the screen's
+           own margin, or the safe inset where that is larger. The inset is
+           the clearance iOS asks for, so it is not added on top of the
+           margin; the sum left a 90-point band beside the Dynamic Island. */
+        const float edgeMargin = 12.0f * s;
+        const float edgeL = SDL_max(safe.left,   edgeMargin);
+        const float edgeT = SDL_max(safe.top,    edgeMargin);
+        const float edgeR = SDL_max(safe.right,  edgeMargin);
+        const float edgeB = SDL_max(safe.bottom, edgeMargin);
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
@@ -330,15 +378,20 @@ extern "C" int imguiWelcomeShow(void) {
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(ImVec2((float)winW, (float)winH));
         ImGui::SetNextWindowBgAlpha(0.0f);
+        /* The corner items sit at the window's bottom edge, so the window
+           padding puts the content a few units past it. Without
+           NoScrollWithMouse a wheel, or a finger dragged on iOS, scrolled
+           the whole screen by that much. */
         ImGui::Begin("##WelcomeBg", nullptr,
                      ImGuiWindowFlags_NoTitleBar |
                      ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoScrollbar |
+                     ImGuiWindowFlags_NoScrollWithMouse |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
         /* Single kick per program run — newsPopupKickFetch is idempotent
          * but the static guard avoids the call entirely once we've kicked. */
         static bool sNewsKicked = false;
@@ -350,7 +403,6 @@ extern "C" int imguiWelcomeShow(void) {
 
         /* Top-right logo + ghost menu column. Logo is purely decorative. */
         {
-            const float restoreMargin = 12.0f * s;
             const float miniBtnW      = 180.0f * s;
 
             if (logoTex && logoW > 0.0f) {
@@ -360,18 +412,19 @@ extern "C" int imguiWelcomeShow(void) {
                  * sides equally — that's the intended look. Only clamp if
                  * the centred position would extend past the window's right
                  * edge entirely. */
-                float restoreX = (float)winW - miniBtnW - restoreMargin
+                float restoreX = (float)winW - edgeR - miniBtnW
                                  + (miniBtnW - logoW) * 0.5f;
-                if (restoreX + logoW > (float)winW)
-                    restoreX = (float)winW - logoW;
-                float restoreY = restoreMargin;
+                if (restoreX + logoW > (float)winW - edgeR)
+                    restoreX = (float)winW - edgeR - logoW;
+                float restoreY = edgeT;
                 ImGui::SetCursorPos(ImVec2(restoreX, restoreY));
                 ImGui::Image((ImTextureID)logoTex, ImVec2(logoW, logoH));
             }
 
             /* Transparent menu buttons below the logo */
-            const float miniBtnH = 30.0f * s;
-            const float miniBtnGap = 4.0f * s;
+            float miniBtnH = 30.0f * s;
+            float miniBtnGap = 4.0f * s;
+            float miniGroupGap = miniBtnH * 0.4f;  /* after the ways to play and after Settings */
 #if BOLO_MOBILE
             const float ghostBtnAlpha = 0.6f;
             const float ghostTextAlpha = 0.9f;
@@ -381,8 +434,8 @@ extern "C" int imguiWelcomeShow(void) {
             const float ghostBtnAlpha = hasBg ? 0.15f : 0.6f;
             const float ghostTextAlpha = hasBg ? 0.75f : 0.9f;
 #endif
-            float logoBottom = (logoTex && logoW > 0.0f) ? restoreMargin + logoH : restoreMargin + 40.0f * s;
-            float btnX = (float)winW - miniBtnW - restoreMargin;
+            float logoBottom = edgeT + ((logoTex && logoW > 0.0f) ? logoH : 40.0f * s);
+            float btnX = (float)winW - edgeR - miniBtnW;
             float btnY = logoBottom + 30.0f * s;
 
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f * s);
@@ -438,8 +491,13 @@ extern "C" int imguiWelcomeShow(void) {
                 /* A browser tab cannot host or find a game on the LAN. */
                 { STR_DLGWELCOME_LOCAL,     RESULT_LAN,          true,             nullptr },
 #endif
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)
+                /* iOS builds the editor, but its touch input is not usable
+                   yet, so the entry is hidden there until it is. */
                 { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    showDesktopTools, nullptr },
+#endif
+                /* Android does not compile the log browser or the reel. */
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
                 { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    showDesktopTools, nullptr },
 #endif
                 { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true,             nullptr },
@@ -447,7 +505,7 @@ extern "C" int imguiWelcomeShow(void) {
                 { fullScreenLabel,          0,                   showFullScreenToggle,
                                                                  "FullScreen" },
 #endif
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
                 { STR_DLGWELCOME_NEWS,      0,                   true,             "News" },
 #endif
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
@@ -456,6 +514,58 @@ extern "C" int imguiWelcomeShow(void) {
 #endif
             };
             int miniCount = sizeof(miniModes) / sizeof(miniModes[0]);
+#ifdef __EMSCRIPTEN__
+            const int lastPlayRow = RESULT_INTERNET;
+#else
+            const int lastPlayRow = RESULT_LAN;
+#endif
+
+#if defined(__IPHONEOS__)
+            /* Fit the column above the social icons and the version label in
+               the bottom-right corner. A tall column on a short screen (an
+               iPad in landscape has eight rows at a larger scale) ran the last
+               buttons in under them. The column's own gaps close up first,
+               then the gap under the logo, then the buttons themselves, down
+               to the height the button text needs. The desktop keeps its
+               fixed spacing. */
+            {
+                const float cornerH = SDL_max(27.5f * s, ImGui::GetTextLineHeight());
+                float limitY = (float)winH - edgeB - cornerH - 8.0f * s;
+                int rows = 0, groups = 0;
+                for (int i = 0; i < miniCount; i++) {
+                    if (!miniModes[i].show) continue;
+                    rows++;
+                    if (miniModes[i].code == lastPlayRow ||
+                        miniModes[i].code == RESULT_SETTINGS) groups++;
+                }
+                float need = rows * miniBtnH + (rows - 1) * miniBtnGap + groups * miniGroupGap;
+                if (rows > 0 && btnY + need > limitY) {
+                    /* The gaps first. */
+                    float gaps = (rows - 1) * miniBtnGap + groups * miniGroupGap;
+                    float over = btnY + need - limitY;
+                    float cut = SDL_min(over, gaps * 0.75f);
+                    if (gaps > 0.0f) {
+                        float f = 1.0f - cut / gaps;
+                        miniBtnGap *= f;
+                        miniGroupGap *= f;
+                    }
+                    over -= cut;
+                    /* Then the space under the logo, keeping a little. */
+                    if (over > 0.0f) {
+                        float logoGap = btnY - logoBottom;
+                        float take = SDL_min(over, SDL_max(0.0f, logoGap - 6.0f * s));
+                        btnY -= take;
+                        over -= take;
+                    }
+                    /* Then the buttons, no lower than the text needs. */
+                    if (over > 0.0f) {
+                        float minH = ImGui::GetTextLineHeight() + 4.0f * s;
+                        float h = miniBtnH - over / (float)rows;
+                        miniBtnH = SDL_max(h, minH);
+                    }
+                }
+            }
+#endif
 
             for (int i = 0; i < miniCount; i++) {
                 if (!miniModes[i].show) continue;
@@ -473,8 +583,8 @@ extern "C" int imguiWelcomeShow(void) {
                     : miniModes[i].rawLabel;
                 SDL_snprintf(miniLabel, sizeof(miniLabel), "%s##mini", labelText);
                 if (ImGui::Button(miniLabel, ImVec2(miniBtnW, miniBtnH))) {
-#if !BOLO_MOBILE
-#if !defined(__EMSCRIPTEN__)
+#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
                     if (miniModes[i].rawLabel &&
                         SDL_strcmp(miniModes[i].rawLabel, "FullScreen") == 0) {
                         /* Move the window, then come back in through the top
@@ -507,7 +617,7 @@ extern "C" int imguiWelcomeShow(void) {
                 if (miniModes[i].code == RESULT_SINGLEPLAYER) {
                     ImGui::SetItemDefaultFocus();
                 }
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
                 /* Unread dot on the News button when fresh items exist. */
                 if (miniModes[i].rawLabel &&
                     SDL_strcmp(miniModes[i].rawLabel, "News") == 0 &&
@@ -527,13 +637,8 @@ extern "C" int imguiWelcomeShow(void) {
                 btnY += miniBtnH + miniBtnGap;
                 /* Small visual gap after the ways to play (Local, or Internet
                    where there is no Local) and after Settings */
-#ifdef __EMSCRIPTEN__
-                const int lastPlayRow = RESULT_INTERNET;
-#else
-                const int lastPlayRow = RESULT_LAN;
-#endif
                 if (miniModes[i].code == lastPlayRow || miniModes[i].code == RESULT_SETTINGS) {
-                    btnY += miniBtnH * 0.4f;
+                    btnY += miniGroupGap;
                 }
             }
 
@@ -545,14 +650,13 @@ extern "C" int imguiWelcomeShow(void) {
          * state + Login/Logout, plus the 1v1 ladder rank when signed in.
          * Reuses the settings dialog's login popup and worker. */
         {
-            const float statusMargin = 12.0f * s;
-            ImGui::SetCursorPos(ImVec2(statusMargin, statusMargin));
+            ImGui::SetCursorPos(ImVec2(edgeL, edgeT));
             ImGui::BeginGroup();
             imguiWinbolonetDrawStatusBlock();
             ImGui::EndGroup();
         }
 
-#if !BOLO_MOBILE
+#if !defined(__ANDROID__)  /* Android does not compile imgui_news.cpp */
         /* Drive the news popup state machine. Renders the consent dialog
          * or the news modal when either is open, otherwise polls the
          * fetch handle and decides whether to auto-open. */
@@ -562,14 +666,13 @@ extern "C" int imguiWelcomeShow(void) {
         /* Play/Pause button — bottom-left */
         if (hasBg) {
             const float ppSize = 30.0f * s;
-            const float ppMargin = 12.0f * s;
 #if BOLO_MOBILE
             const float ppBaseAlpha = 0.7f; /* Touch screens have no hover — keep visible */
 #else
             const float ppBaseAlpha = 0.15f;
 #endif
-            float ppX = ppMargin;
-            float ppY = (float)winH - ppSize - ppMargin;
+            float ppX = edgeL;
+            float ppY = (float)winH - edgeB - ppSize;
 
             ImGui::SetCursorPos(ImVec2(ppX, ppY));
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f * s);
@@ -595,6 +698,9 @@ extern "C" int imguiWelcomeShow(void) {
             ImVec2 ppMax = ImGui::GetItemRectMax();
             float cx = (ppMin.x + ppMax.x) * 0.5f;
             float cy = (ppMin.y + ppMax.y) * 0.5f;
+            /* The map name the background game draws goes to the right of
+               this button, wherever the scale and the safe insets put it. */
+            bgGameSetMapNameAnchor(bg, ppMax.x + 14.0f * s, cy);
             float effectiveAlpha = ppHovered ? 1.0f : ppBaseAlpha;
             ImU32 iconCol = IM_COL32(200, 200, 200, (int)(220 * effectiveAlpha));
             ImDrawList *dl = ImGui::GetWindowDrawList();
@@ -629,15 +735,14 @@ extern "C" int imguiWelcomeShow(void) {
             const float icon   = 27.5f * s;
             const float gap    = 10.0f * s;   /* between adjacent icons         */
             const float pad    = 12.0f * s;   /* between the icons and the text */
-            const float margin = 12.0f * s;
 
             /* Mirror the version label's own placement so the icons tuck just
              * to its left and share its vertical centre. */
             char shortVer[32];
             SDL_snprintf(shortVer, sizeof(shortVer), "v%s", WINBOLO_DISPLAY_VERSION);
             ImVec2 verSize = ImGui::CalcTextSize(shortVer);
-            float verX = (float)winW - verSize.x - margin;
-            float verY = (float)winH - verSize.y - margin;
+            float verX = (float)winW - edgeR - verSize.x;
+            float verY = (float)winH - edgeB - verSize.y;
 
             const int nLinks = 3;
             float rowW  = icon * (float)nLinks + gap * (float)(nLinks - 1);
@@ -686,10 +791,9 @@ extern "C" int imguiWelcomeShow(void) {
             SDL_snprintf(shortVer, sizeof(shortVer), "v%s", WINBOLO_DISPLAY_VERSION);
 
             ImVec2 verSize = ImGui::CalcTextSize(shortVer);
-            const float margin = 12.0f * s;
 
-            ImGui::SetCursorPos(ImVec2((float)winW - verSize.x - margin,
-                                       (float)winH - verSize.y - margin));
+            ImGui::SetCursorPos(ImVec2((float)winW - edgeR - verSize.x,
+                                       (float)winH - edgeB - verSize.y));
             ImVec2 verScreen = ImGui::GetCursorScreenPos();
 
             /* Invisible button captures the click + drives hover state.

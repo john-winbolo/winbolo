@@ -534,29 +534,30 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(MAXMINDDB_BUILD_BINARIES OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(libmaxminddb)
     set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE}" CACHE BOOL "" FORCE)
-
-    # libopus — voice codec, forced static
-    set(BUILD_SHARED_LIBS_SAVE3 "${BUILD_SHARED_LIBS}")
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
-    set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
-    set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
-    set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
-    set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(opus)
-    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE3}" CACHE BOOL "" FORCE)
-
-    # SpeexDSP — the acoustic echo canceller in the voice capture path, forced
-    # static.  Its CMake build declares no test or program targets, so there is
-    # nothing of that kind to switch off; the one option it does carry picks
-    # fixed- over floating-point arithmetic, and every platform we build for
-    # has an FPU.
-    set(BUILD_SHARED_LIBS_SAVE4 "${BUILD_SHARED_LIBS}")
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(USE_FIXED_POINT OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(speexdsp)
-    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE4}" CACHE BOOL "" FORCE)
 endif()
+
+# libopus — voice codec, forced static.  Outside the guard above, as is
+# SpeexDSP below: the iOS target builds voice chat as well.
+set(BUILD_SHARED_LIBS_SAVE3 "${BUILD_SHARED_LIBS}")
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(opus)
+set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE3}" CACHE BOOL "" FORCE)
+
+# SpeexDSP — the acoustic echo canceller in the voice capture path, forced
+# static.  Its CMake build declares no test or program targets, so there is
+# nothing of that kind to switch off; the one option it does carry picks
+# fixed- over floating-point arithmetic, and every platform we build for
+# has an FPU.
+set(BUILD_SHARED_LIBS_SAVE4 "${BUILD_SHARED_LIBS}")
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(USE_FIXED_POINT OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(speexdsp)
+set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE4}" CACHE BOOL "" FORCE)
 
 # cJSON — force static.  Outside the guard above: the iOS target compiles
 # src/common/prefs_doc.c and src/bolo/lobby_bot_pools_json.c and links cjson.
@@ -728,6 +729,7 @@ else()
         src/gui/sdl3/dialogs/lobby/lobby_rating.cpp
         src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
         src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_clip_gif_gallery.cpp
         src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
         src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
         src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
@@ -828,6 +830,53 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     endif()
 endif()
 
+# libplum — automatic UPnP / NAT-PMP / PCP port mapping for hosted servers.
+# When OFF, src/bolo/nat_portmap.c compiles to no-op stubs.
+option(BOLO_PORTMAP "Enable UPnP/NAT-PMP automatic port mapping" ON)
+
+# Fetches libplum and sets HAVE_LIBPLUM. A macro so the fetched variables and
+# HAVE_LIBPLUM land in the caller's scope. Called from both branches below
+# rather than here: the desktop branch adds compile options first (the fuzz
+# build's sanitizers) that plum must also get. Skipped on Emscripten (wasm),
+# where the wrapper compiles to no-op stubs. Built static so no extra shared
+# library ships.
+macro(bolo_fetch_libplum)
+    set(HAVE_LIBPLUM FALSE)
+    if(BOLO_PORTMAP AND NOT EMSCRIPTEN)
+        FetchContent_Declare(
+            libplum
+            GIT_REPOSITORY https://github.com/paullouisageneau/libplum.git
+            GIT_TAG        v0.5.3
+            GIT_SHALLOW    TRUE
+            SYSTEM
+            EXCLUDE_FROM_ALL
+        )
+        set(PLUM_NO_EXAMPLE         ON  CACHE INTERNAL "")
+        set(PLUM_WARNINGS_AS_ERRORS OFF CACHE INTERNAL "")
+        set(BUILD_SHARED_LIBS_SAVE_PLUM "${BUILD_SHARED_LIBS}")
+        set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(libplum)
+        set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE_PLUM}" CACHE BOOL "" FORCE)
+        # PIC so the static lib can also link into shared targets (winbolo_gym).
+        if(TARGET plum)
+            set_target_properties(plum PROPERTIES POSITION_INDEPENDENT_CODE ON)
+            # libplum uses a zero-sized array (C4200) and assignments in
+            # conditions (C4706, also diagnosed during LTCG). Allow these in
+            # the dependency. Older Windows SDK headers also trigger C5105.
+            # Keep this suppression private to plum for all MSVC generators,
+            # including Ninja where the Visual Studio generator's
+            # selected-SDK variable is unavailable.
+            if(MSVC)
+                target_compile_options(plum PRIVATE /wd4200 /wd4706 /wd5105)
+            endif()
+        endif()
+        set(HAVE_LIBPLUM TRUE)
+        message(STATUS "libplum enabled — automatic NAT port mapping")
+    else()
+        message(STATUS "libplum disabled — nat_portmap wrapper compiles to no-ops")
+    endif()
+endmacro()
+
 # ===========================================================================
 # Platform targets: iOS vs Desktop
 # ===========================================================================
@@ -857,7 +906,15 @@ set(IOS_DATA_BMP
     ${CMAKE_SOURCE_DIR}/data/logo.bmp
     ${CMAKE_SOURCE_DIR}/data/base.bmp
     ${CMAKE_SOURCE_DIR}/data/pillbox.bmp
+    # The gunsight image sdl3draw.c decodes, and the themed bot names the
+    # lobby's bot pools read; both are looked up as data/<name>.
+    ${CMAKE_SOURCE_DIR}/data/crosshairs_17x17.png
+    ${CMAKE_SOURCE_DIR}/data/bot_names.json
 )
+# The mods that ship with the build: scenario_host.c lists <base>/data/mods.
+file(GLOB IOS_DATA_MODS "${CMAKE_SOURCE_DIR}/data/mods/*.lua")
+# Country flags for the player list, drawn from the code the server sends.
+file(GLOB IOS_DATA_FLAGS "${CMAKE_SOURCE_DIR}/data/flags/*.svg")
 # Data files that go into the root of the bundle (next to the executable)
 set(IOS_DATA_ROOT
     ${CMAKE_SOURCE_DIR}/data/smalllogo.bmp
@@ -876,7 +933,11 @@ file(GLOB IOS_DATA_FONT
     "${CMAKE_SOURCE_DIR}/data/fonts/*.ttf"
     "${CMAKE_SOURCE_DIR}/data/fonts/*.otf"
 )
-file(GLOB IOS_DATA_MAPS "${CMAKE_SOURCE_DIR}/data/maps/*.map")
+# A scripted map carries its scenario as a .lua beside it, so both go.
+file(GLOB IOS_DATA_MAPS
+    "${CMAKE_SOURCE_DIR}/data/maps/*.map"
+    "${CMAKE_SOURCE_DIR}/data/maps/*.lua"
+)
 file(GLOB IOS_DATA_SOUNDS "${CMAKE_SOURCE_DIR}/data/sounds/*.wav")
 file(GLOB IOS_DATA_SVG "${CMAKE_SOURCE_DIR}/data/svg/*.png" "${CMAKE_SOURCE_DIR}/data/svg/*.svg")
 file(GLOB IOS_DATA_UI "${CMAKE_SOURCE_DIR}/data/ui/*.svg")
@@ -914,7 +975,9 @@ add_subdirectory(brains)
 # server_sim.c + servermessages.c now come from server_sim_static;
 # threads.c comes from threads_static.
 set(IOS_SERVER_SOURCES
-    src/server/server_stubs.c
+    # The port mapping wrapper: libplum when BOLO_PORTMAP is on (see the
+    # libplum link below), its no-op half otherwise.
+    src/bolo/nat_portmap.c
     src/mapeditor/mapgen_imgui.cpp
 )
 
@@ -929,6 +992,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/imgui_steam_nav.cpp
     src/gui/sdl3/sdl3imgui_tablet.cpp
     src/gui/sdl3/sdl3draw.c
+    src/gui/sdl3/newswire_slide.c
     src/gui/sdl3/sdl3draw_status.c
     src/gui/sdl3/tank_label.c
     src/gui/sdl3/mapview.c
@@ -1027,10 +1091,14 @@ file(GLOB IOS_BRAIN_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/GoalHunter/*.lua")
 add_executable(WinBoloIOS MACOSX_BUNDLE
     src/gui/ios/winbolo_ios.m
     src/gui/ios/ios_stubs.c
+    # The pointer over the classic screen: which square a tap on the iPad
+    # points at and builds on.
+    src/gui/sdl3/cursor.c
     src/gui/ios/imgui_ios.cpp
     src/gui/sdl3/gamefront.c
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
+    src/client_frontend/client_frontend_common.c
     src/client_frontend/client_frontend_sp.c
     src/bolo/lobby_bot_pools_json.c
     src/gui/sdl3/dialog_backend.c
@@ -1047,6 +1115,8 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     ${IOS_DATA_ROOT}
     ${IOS_DATA_ROOT_MAPS}
     ${IOS_DATA_MAPS}
+    ${IOS_DATA_MODS}
+    ${IOS_DATA_FLAGS}
     ${IOS_DATA_FONT}
     ${IOS_BRAIN_SCRIPTS}
     ${IOS_DATA_SOUNDS}
@@ -1072,6 +1142,12 @@ set_source_files_properties(${IOS_DATA_FONT} PROPERTIES
 )
 set_source_files_properties(${IOS_DATA_MAPS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/maps"
+)
+set_source_files_properties(${IOS_DATA_MODS} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "data/mods"
+)
+set_source_files_properties(${IOS_DATA_FLAGS} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "data/flags"
 )
 set_source_files_properties(${IOS_BRAIN_SCRIPTS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "Brains/GoalHunter"
@@ -1105,7 +1181,7 @@ set_source_files_properties(${IOS_ASSET_CATALOG} PROPERTIES
 )
 
 # Organize in Xcode sidebar
-source_group("Resources" FILES ${IOS_INFO_PLIST} ${IOS_DATA_BMP} ${IOS_DATA_FONT} ${IOS_DATA_MAPS} ${IOS_DATA_SOUNDS} ${IOS_DATA_SVG} ${IOS_DATA_UI} ${IOS_DATA_UI_PING})
+source_group("Resources" FILES ${IOS_INFO_PLIST} ${IOS_DATA_BMP} ${IOS_DATA_FONT} ${IOS_DATA_MAPS} ${IOS_DATA_MODS} ${IOS_DATA_FLAGS} ${IOS_DATA_SOUNDS} ${IOS_DATA_SVG} ${IOS_DATA_UI} ${IOS_DATA_UI_PING})
 source_group("Brains" FILES ${IOS_BRAIN_SCRIPTS})
 source_group("Bolo Engine" FILES ${IOS_BOLO_SOURCES})
 source_group("Server" FILES ${IOS_SERVER_SOURCES})
@@ -1127,6 +1203,36 @@ set_target_properties(WinBoloIOS PROPERTIES
     XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS "YES"
 )
 
+# The bundle's version, which CMake writes into Info.plist when it configures
+# it (the ${MACOSX_BUNDLE_*} entries there). The App Store reads
+# CFBundleShortVersionString as up to three numbers, so it takes
+# WINBOLO_VERSION, not the display version, which may carry a suffix.
+# CFBundleVersion, the build number, must rise with every upload of the same
+# version: it is the count of commits on HEAD, which rises with each commit
+# and is the same for every build of one commit. It is read when CMake
+# configures, so configure again before building one to upload.
+execute_process(
+    COMMAND git rev-list --count HEAD
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE IOS_BUILD_NUMBER
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+if(NOT IOS_BUILD_NUMBER MATCHES "^[0-9]+$")
+    set(IOS_BUILD_NUMBER "1")
+endif()
+set_target_properties(WinBoloIOS PROPERTIES
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${WINBOLO_VERSION}"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${IOS_BUILD_NUMBER}"
+)
+
+# The privacy manifest the App Store asks for, at the root of the bundle.
+# See the comments in the file for the calls each entry covers.
+set(IOS_PRIVACY_MANIFEST "${CMAKE_SOURCE_DIR}/src/gui/ios/PrivacyInfo.xcprivacy")
+target_sources(WinBoloIOS PRIVATE "${IOS_PRIVACY_MANIFEST}")
+set_source_files_properties("${IOS_PRIVACY_MANIFEST}" PROPERTIES
+    MACOSX_PACKAGE_LOCATION ""
+)
+
 target_include_directories(WinBoloIOS PRIVATE
     src/gui/sdl3
     src/gui/sdl3/dialogs
@@ -1146,12 +1252,139 @@ bolo_grant_internal_source_access(WinBoloIOS
     src/bolo/transport_udp_client.c
     src/gui/sdl3/bg_game.c)
 
-target_link_libraries(WinBoloIOS PRIVATE bolo_static scenario_static server_sim_static bot_brains_static threads_static)
+# server_static is the server runtime the desktop hosts with: the UDP server,
+# server_lifecycle.c and geolookup.c (its stub half, as iOS has no
+# maxminddb). Single player starts and ticks through the same lifecycle.
+# Apple's linker resolves the server_static / server_sim_static cycle
+# without a link group (see SERVER_LINK_GROUP below).
+target_link_libraries(WinBoloIOS PRIVATE bolo_static scenario_static
+    server_static server_sim_static server_round_log_static
+    bot_brains_static threads_static)
+
+# WinBolo.net for iOS: winbolonet_core with http_nsurl.m (NSURLSession) in
+# place of http.c, since iOS has no libcurl, and winbolonet_client and
+# winbolonet_server as on the desktop. server_static calls the server side;
+# a LAN game and single player leave WinBolo.net off, so it registers
+# nothing. The desktop defines these three libraries in the else() branch
+# below, so the names do not collide. tweetnacl.c is in the library here
+# because nothing else in WinBoloIOS signs.
+add_library(winbolonet_core STATIC
+    src/winbolonet/http_nsurl.m
+    src/winbolonet/winbolonetthread.c
+    src/winbolonet/winbolonetevents.c
+    src/winbolonet/winbolonet_core.c
+    src/winbolonet/wbn_bearer.c
+    src/winbolonet/wbn_country_cache.c
+    src/winbolonet/wbn_prefs_sync.c
+    src/winbolonet/wbn_serverlist.c
+    src/winbolonet/wbn_map.c
+    src/third_party/tweetnacl/tweetnacl.c
+)
+set_source_files_properties(src/winbolonet/http_nsurl.m
+    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+# Third-party source: the Xcode defaults warn on its 64-to-32 bit narrowing
+# and on its 16-byte constant written as a 16-character string. The MSVC
+# desktop build turns off its warnings the same way.
+set_source_files_properties(src/third_party/tweetnacl/tweetnacl.c
+    PROPERTIES COMPILE_OPTIONS
+    "-Wno-shorten-64-to-32;-Wno-unterminated-string-initialization")
+target_include_directories(winbolonet_core PRIVATE
+    ${cjson_SOURCE_DIR}
+    src/third_party/tweetnacl
+)
+target_link_libraries(winbolonet_core PRIVATE SDL3::SDL3 "-framework Foundation")
+# Tells http.h, and the code that links this library, that the transport is
+# NSURLSession: http.h then declares httpGetUrlToMemory, which the news image
+# cache uses in place of libcurl.
+target_compile_definitions(winbolonet_core PUBLIC WBN_HTTP_NSURL=1)
+bolo_apply_include_rules(winbolonet_core runtime_only)
+
+add_library(winbolonet_client STATIC
+    src/winbolonet/winbolonet_client.c
+    src/winbolonet/wbn_comments.cpp
+    src/winbolonet/wbn_news.cpp
+    src/winbolonet/wbn_news_parser.cpp
+)
+target_include_directories(winbolonet_client PRIVATE
+    ${cjson_SOURCE_DIR}
+)
+target_link_libraries(winbolonet_client PRIVATE SDL3::SDL3)
+bolo_apply_include_rules(winbolonet_client runtime_only)
+
+add_library(winbolonet_server STATIC
+    src/winbolonet/winbolonet_server.c
+)
+target_include_directories(winbolonet_server PRIVATE
+    ${cjson_SOURCE_DIR}
+)
+target_link_libraries(winbolonet_server PRIVATE SDL3::SDL3)
+target_compile_definitions(winbolonet_server PRIVATE
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
+bolo_apply_include_rules(winbolonet_server runtime_only)
+
+target_link_libraries(WinBoloIOS PRIVATE winbolonet_server winbolonet_client
+    winbolonet_core "-framework Foundation")
+
+# libplum port mapping for an internet game hosted on iOS. Without the
+# multicast entitlement only PCP and NAT-PMP can work (UPnP finds the router
+# by SSDP multicast), and with no routing table on iOS libplum takes the
+# router to be a.b.c.1 on the device's own subnet (net.c).
+bolo_fetch_libplum()
+if(HAVE_LIBPLUM)
+    # Third-party source: the Xcode defaults warn on its ssize_t-to-int
+    # narrowing, as they do on tweetnacl's above.
+    target_compile_options(plum PRIVATE -Wno-shorten-64-to-32)
+    target_compile_definitions(WinBoloIOS PRIVATE BOLO_PORTMAP)
+    target_link_libraries(WinBoloIOS PRIVATE LibPlum::LibPlum)
+endif()
+
+# The WinBolo.net screens that need the libraries above: the news popup with
+# its image cache, and the recap's stars and comments.
+target_sources(WinBoloIOS PRIVATE
+    src/gui/sdl3/dialogs/imgui_news.cpp
+    src/gui/sdl3/news_image_cache.cpp
+    src/gui/sdl3/news_image_budget.cpp
+    src/gui/sdl3/dialogs/imgui_star_rating.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_rating.cpp
+)
+
+# GoalHunter's opt/ build: the same brain with its debug-only logging taken
+# out, which luabrainshandler.c loads in place of the full source whenever
+# brain debug mode is off. The desktop copies it with the rest of the brain
+# folder (cmake/copy_brains.cmake); without it iOS ran the full source, which
+# costs more per think.
+file(GLOB IOS_BRAIN_OPT_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/GoalHunter/opt/*.lua")
+target_sources(WinBoloIOS PRIVATE ${IOS_BRAIN_OPT_SCRIPTS})
+set_source_files_properties(${IOS_BRAIN_OPT_SCRIPTS} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "Brains/GoalHunter/opt"
+)
+source_group("Brains/opt" FILES ${IOS_BRAIN_OPT_SCRIPTS})
+
+# Touch handling every ImGui context needs on iOS: the keyboard without
+# auto-capitalisation or autocorrect, and drag to scroll. Run from
+# dialogDrawNavOutline, so it reaches every dialog and the in-game frame.
+target_sources(WinBoloIOS PRIVATE src/gui/sdl3/dialogs/imgui_touch.cpp)
+# The "Connecting to <host>..." screen gamefront.c shows on iOS while a join
+# waits on the network.
+target_sources(WinBoloIOS PRIVATE src/gui/sdl3/dialogs/imgui_connecting.cpp)
+# The LAN search through the system's Bonjour API (see ios_discovery.m).
+target_sources(WinBoloIOS PRIVATE src/gui/ios/ios_discovery.m)
+set_source_files_properties(src/gui/ios/ios_discovery.m
+    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+# Which network the device is on (NWPathMonitor), for gamefront.c's warning
+# before an Internet game is hosted on mobile data.
+target_sources(WinBoloIOS PRIVATE src/gui/ios/ios_netpath.m)
+set_source_files_properties(src/gui/ios/ios_netpath.m
+    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
     nanosvg stb_image utf8proc zlibstatic minizip cjson
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
     "-framework AVFoundation"
     "-framework GameController"
+    "-framework Network"
 )
 
 target_compile_options(WinBoloIOS PRIVATE -fcommon)
@@ -1203,6 +1436,139 @@ if(HAVE_SENTRY_IOS)
     set_source_files_properties(src/gui/ios/winbolo_ios.m
         PROPERTIES COMPILE_OPTIONS "-fmodules")
 endif()
+
+# Voice chat: the shared runtime in src/client_frontend and the SDL3 device
+# half in src/gui/sdl3/voice.c, which runs unchanged on iOS because it captures
+# and plays through SDL audio streams.  The same definitions as the desktop
+# WinBolo target, echo cancellation included: SDL's CoreAudio driver does not
+# cancel echo, so voiceBackendOsCancelsEcho answers false here and Speex does
+# the work, as it does on macOS.
+target_sources(WinBoloIOS PRIVATE
+    src/client_frontend/voice_core.c
+    src/client_frontend/voice_client.c
+    src/client_frontend/voice_aec.c
+    src/gui/sdl3/voice.c
+    src/gui/sdl3/voice_settings.c)
+target_link_libraries(WinBoloIOS PRIVATE Opus::opus speexdsp)
+target_compile_definitions(WinBoloIOS PRIVATE WINBOLO_VOICE=1 WINBOLO_VOICE_AEC=1)
+
+# The lobby's replay reel and the rounds it plays. The log viewer's decoder,
+# renderer and embedded reel host (lv_embed.c) are the set the web client
+# links (src/wasm/CMakeLists.txt, LOGVIEWER_SOURCES, and its "Never add here"
+# list applies here too), with the desktop's platform drivers in place of
+# the wasm ones, except the dialogs, which have an iOS driver. The modal
+# viewer, logviewer.c, is not built; the WinBolo.net log browser opens a game
+# in the reel instead. Rounds are recorded by server_round_log_static,
+# installed by gameFrontSetupServer for single player as on the desktop, with
+# log.c from bolo_static.
+set(IOS_LOGVIEWER_SOURCES
+    src/logviewer/lv_embed.c
+    src/logviewer/lv_embed_stubs.c
+    src/logviewer/blocks.c
+    src/logviewer/lv_attribution.c
+    src/logviewer/snapshot.c
+    src/logviewer/screen.c
+    src/logviewer/screencalc.c
+    src/logviewer/screentank.c
+    src/logviewer/screenlgm.c
+    src/logviewer/screenbullet.c
+    src/logviewer/spec_seed_load.c
+    src/logviewer/lv_spec_feed.c
+    src/logviewer/players.c
+    src/logviewer/shells.c
+    src/logviewer/allience.c
+    src/logviewer/pillbox.c
+    src/logviewer/bases.c
+    src/logviewer/bolo_map.c
+    src/logviewer/starts.c
+    src/logviewer/labels.c
+    src/logviewer/messages.c
+    src/logviewer/sounddist.c
+    src/logviewer/global.c
+    src/logviewer/util.c
+    src/logviewer/draw.c
+    src/logviewer/game_view_stubs.c
+    src/logviewer/clientmutex.c
+    src/logviewer/dns.c
+    src/logviewer/platform/platform_config.c
+    # platform/platform_dialogs.c runs its file pickers through system() and
+    # popen(), which iOS does not have.
+    src/logviewer/ios/platform_dialogs_ios.c
+)
+target_sources(WinBoloIOS PRIVATE ${IOS_LOGVIEWER_SOURCES})
+source_group("Log Viewer" FILES ${IOS_LOGVIEWER_SOURCES})
+# After src/gui, so a GUI source's "tiles.h" / "positions.h" still resolves
+# to its own; the log viewer's sources reach their copies through their own
+# directory.
+target_include_directories(WinBoloIOS PRIVATE
+    src/logviewer
+    src/logviewer/imgui
+    src/logviewer/platform
+)
+target_link_libraries(WinBoloIOS PRIVATE server_round_log_static)
+# The WinBolo.net log browser ("My Games" and the welcome screen's Log Viewer
+# entry) and the screen that plays a game it downloads in the reel
+# (ios_log_player.cpp, in place of the modal viewer). Its star rating widget
+# is already in the news and ratings block above.
+target_sources(WinBoloIOS PRIVATE
+    src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
+    src/gui/sdl3/dialogs/wbn_browser_sort.c
+    src/gui/ios/ios_log_player.cpp
+    # The live spectator feed in the reel, in place of the modal viewer's
+    # spectatorRun.
+    src/gui/ios/ios_spectator.cpp
+    # The recordings on the phone, listed and played in the reel, in place
+    # of the modal viewer's logViewerRun.
+    src/gui/ios/ios_recordings.cpp
+    # Files and game links the system hands over, kept until the welcome
+    # screen runs, and the access to a file opened in place from another
+    # provider.
+    src/gui/ios/ios_drops.c
+    src/gui/ios/ios_open_url.m
+)
+set_source_files_properties(src/gui/ios/ios_open_url.m
+    PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+
+# The map editor, opened from the welcome screen as on the desktop. The same
+# sources as the desktop's CLIENT_SOURCES list, less mapgen_imgui.cpp (already
+# above, for the lobby) and the macOS menu bar shim: iOS draws the editor's
+# ImGui menu bar instead. The same three T2 grants as the desktop target.
+set(IOS_MAPEDITOR_SOURCES
+    src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp
+    src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c
+    src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c
+    src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c
+    src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c
+    src/mapeditor/mapeditor_export.c
+    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c
+    src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_pack.c
+    src/mapeditor/mapeditor_scenario_imgui.cpp
+    src/mapeditor/mapeditor_scenario_fndesc.c
+    src/mapeditor/mapeditor_scenario_fnscan.c
+    src/mapeditor/mapeditor_wbn_open.cpp
+    # SDL has no file dialogs on iOS; the editor's open and save go here.
+    src/mapeditor/mapeditor_ios_files.cpp
+    src/third_party/ImGuiColorTextEdit/TextEditor.cpp
+    src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
+)
+target_sources(WinBoloIOS PRIVATE ${IOS_MAPEDITOR_SOURCES})
+# File > Open from WinBolo.net, as in the desktop's embedded editor.
+target_compile_definitions(WinBoloIOS PRIVATE MAPEDITOR_WBN_OPEN=1)
+source_group("Map Editor" FILES ${IOS_MAPEDITOR_SOURCES})
+target_include_directories(WinBoloIOS PRIVATE src/third_party/ImGuiColorTextEdit)
+# The recap's clip GIF export and the encoder's one implementation TU. The
+# clip is written into Documents (lobby_clip_gif.cpp), as there is no save
+# dialog.
+target_sources(WinBoloIOS PRIVATE
+    src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
+    src/third_party/msf_gif/msf_gif_impl.c
+    # The GIF length rules the reel's length field and marker use. The GIF
+    # gallery is not in the iOS build (BOLO_CLIP_GIF_GALLERY).
+    src/gui/sdl3/dialogs/clip_gif_core.c)
+bolo_grant_internal_source_access(WinBoloIOS
+    src/mapeditor/mapeditor.c
+    src/mapeditor/mapeditor_export.c
+    src/mapeditor/mapeditor_validate.c)
 
 target_sources(WinBoloIOS PRIVATE src/steam/steam_wrapper_stub.c)
 target_sources(WinBoloIOS PRIVATE src/common/wb_log.c)
@@ -1270,8 +1636,9 @@ endif()
 
 # Voice capture-chain recorder: WAV taps at each stage of the capture chain,
 # the two CSVs, and the WAV injection path (src/client_frontend/voice_debug.c).
-# OFF in every shipping build. The source is on the WinBolo target only, which
-# is the only target that compiles voice_client.c.
+# OFF in every shipping build. The source is on the WinBolo target only; the
+# iOS target also compiles voice_client.c but is configured in the iOS branch
+# above, which never reads this option.
 option(WB_VOICEDEBUG "Build the voice capture-chain recorder" OFF)
 if(WB_VOICEDEBUG)
     add_compile_definitions(WB_VOICEDEBUG=1)
@@ -1306,10 +1673,6 @@ if(WB_FUZZ)
                         -fno-omit-frame-pointer)
     add_link_options(-fsanitize=address)
 endif()
-
-# libplum — automatic UPnP / NAT-PMP / PCP port mapping for hosted servers.
-# When OFF, src/bolo/nat_portmap.c compiles to no-op stubs.
-option(BOLO_PORTMAP "Enable UPnP/NAT-PMP automatic port mapping" ON)
 
 # wb_log compile-time level. Calls below this level expand to ((void)0)
 # and are stripped by the compiler. Empty = wb_log.h decides (DEBUG in
@@ -1502,42 +1865,9 @@ else()
     message(STATUS "Sentry crash reporting disabled")
 endif()
 
-# libplum — UPnP / NAT-PMP / PCP port mapping for hosted servers.
-# Skipped on iOS (mobile) and Emscripten (wasm); the wrapper compiles to
-# no-op stubs there.  Build static so we don't ship an extra shared library.
-set(HAVE_LIBPLUM FALSE)
-if(BOLO_PORTMAP AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
-    FetchContent_Declare(
-        libplum
-        GIT_REPOSITORY https://github.com/paullouisageneau/libplum.git
-        GIT_TAG        v0.5.3
-        GIT_SHALLOW    TRUE
-        SYSTEM
-        EXCLUDE_FROM_ALL
-    )
-    set(PLUM_NO_EXAMPLE         ON  CACHE INTERNAL "")
-    set(PLUM_WARNINGS_AS_ERRORS OFF CACHE INTERNAL "")
-    set(BUILD_SHARED_LIBS_SAVE_PLUM "${BUILD_SHARED_LIBS}")
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(libplum)
-    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE_PLUM}" CACHE BOOL "" FORCE)
-    # PIC so the static lib can also link into shared targets (winbolo_gym).
-    if(TARGET plum)
-        set_target_properties(plum PROPERTIES POSITION_INDEPENDENT_CODE ON)
-        # libplum uses a zero-sized array (C4200) and assignments in conditions
-        # (C4706, also diagnosed during LTCG). Allow these in the dependency.
-        # Older Windows SDK headers also trigger C5105. Keep this suppression
-        # private to plum for all MSVC generators, including Ninja where the
-        # Visual Studio generator's selected-SDK variable is unavailable.
-        if(MSVC)
-            target_compile_options(plum PRIVATE /wd4200 /wd4706 /wd5105)
-        endif()
-    endif()
-    set(HAVE_LIBPLUM TRUE)
-    message(STATUS "libplum enabled — automatic NAT port mapping")
-else()
-    message(STATUS "libplum disabled — nat_portmap wrapper compiles to no-ops")
-endif()
+# libplum — UPnP / NAT-PMP / PCP port mapping for hosted servers
+# (bolo_fetch_libplum, defined before the iOS / desktop split).
+bolo_fetch_libplum()
 
 # ---------------------------------------------------------------------------
 # bolo_static / server_sim_static / server_static — the bulk of the sim
@@ -1567,9 +1897,15 @@ add_subdirectory(brains)
 # are linked together.
 if(MSVC OR APPLE)
     set(SERVER_LINK_GROUP server_static server_sim_static server_round_log_static)
+    set(SERVER_TEST_LINK_GROUP server_static_test server_sim_static server_round_log_static)
 else()
     set(SERVER_LINK_GROUP "$<LINK_GROUP:RESCAN,server_static,server_sim_static,server_round_log_static>")
+    set(SERVER_TEST_LINK_GROUP "$<LINK_GROUP:RESCAN,server_static_test,server_sim_static,server_round_log_static>")
 endif()
+# SERVER_TEST_LINK_GROUP is the same group with the test build of the server
+# library (src/server/CMakeLists.txt): the one compiled with
+# WB_ENABLE_NETIMPAIR=1, which WinBoloUnitTests links so its loopback harness
+# can set the server's clock and count datagrams. Nothing shipped links it.
 
 # ---------------------------------------------------------------------------
 # winbolonet_core / winbolonet_server / winbolonet_client — three static
@@ -1646,8 +1982,9 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
     src/client_frontend/client_frontend_sp.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif_gallery.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
+    src/gui/sdl3/dialogs/wbn_browser_sort.c
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
     src/gui/sdl3/map_preview_view.cpp
@@ -1659,6 +1996,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
+    src/gui/sdl3/news_image_budget.cpp
     # Copies subscribed Workshop items into <prefpath>Workshop. Desktop only:
     # winbolo.c, imgui_steam_nav.cpp and imgui_settings.cpp call it, and the
     # mobile and wasm builds leave those calls out rather than link it.
@@ -1676,7 +2014,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/ping_marker.c
     src/gui/sdl3/ring_band.c
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/map_colours.c src/gui/sdl3/map_markers.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/map_colours.c src/gui/sdl3/map_markers.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/newswire_slide.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
     # spectatorRun reads the controller through it for overview pan/zoom. Reads
     # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
@@ -1690,6 +2028,7 @@ set(CLIENT_SOURCES
     src/client_frontend/voice_core.c
     src/client_frontend/voice_client.c
     src/gui/sdl3/voice.c
+    src/gui/sdl3/voice_settings.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     # The scenario panel: the script buffer and the file handling in C, the
     # manifest its metadata, lobby and rules forms edit, the container that
@@ -1709,6 +2048,10 @@ set(CLIENT_SOURCES
     # GIF encoder for the recap's clip export. Client only — no other target
     # exports clips, and the LogViewer already omits stb_image_write_impl.c.
     src/third_party/msf_gif/msf_gif_impl.c
+    # The clip GIF's length rules and the GIF gallery's metadata files
+    # (tested by test_clip_gif_core.c), and the gallery's clipboard copy.
+    src/gui/sdl3/dialogs/clip_gif_core.c
+    src/gui/sdl3/dialogs/clip_gif_clipboard.c
     src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -1728,6 +2071,9 @@ endif()
 set(LOGVIEWER_LIB_SOURCES
     src/logviewer/logviewer.c
     src/logviewer/lv_embed.c
+    # Alt+Enter in the viewer while it has the game's window: asks the game
+    # for full screen. Client only; the standalone's body is in main.c.
+    src/logviewer/lv_fullscreen_game.c
     src/logviewer/screen.c
     src/logviewer/draw.c
     src/logviewer/sound.c
@@ -1737,6 +2083,9 @@ set(LOGVIEWER_LIB_SOURCES
     # into the decoder. Includes spectator_replay.h, now a dep-free public
     # seam, so it builds into the client like any other decode TU.
     src/logviewer/spec_seed_load.c
+    # The spectator seed and record routing spectatorRun shares with the
+    # embedded spectator.
+    src/logviewer/lv_spec_feed.c
     src/logviewer/blocks.c
     src/logviewer/lv_attribution.c
     src/logviewer/lv_stats.c
@@ -1759,16 +2108,25 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/labels.c
     src/logviewer/messages.c
     src/logviewer/game_settings_blob.c
+    # The map File > Open map at this time in single player writes
+    # (logviewer.c calls it).
+    src/logviewer/lv_spmap.c
     src/logviewer/lv_event_list.c
     src/logviewer/imgui/imgui_context.cpp
     src/logviewer/imgui/imgui_main_menu.cpp
     src/logviewer/imgui/imgui_controls.cpp
     src/logviewer/imgui/imgui_game_info.cpp
     src/logviewer/imgui/imgui_events.cpp
+    src/logviewer/imgui/imgui_event_overlay.cpp
     src/logviewer/imgui/imgui_item_info.cpp
     src/logviewer/imgui/imgui_dialogs.cpp
     src/logviewer/imgui/imgui_game_viewport.cpp
     src/logviewer/imgui/imgui_scenario_panel.cpp
+    src/logviewer/imgui/imgui_dock.cpp
+    src/logviewer/imgui/imgui_hud.cpp
+    src/logviewer/imgui/imgui_overview.cpp
+    src/logviewer/imgui/imgui_tank.cpp
+    src/logviewer/imgui/imgui_lv_icons.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
@@ -1912,14 +2270,15 @@ target_compile_definitions(WinBolo PRIVATE WINBOLO_VOICE=1)
 
 # Acoustic echo cancellation of remote voice out of the microphone
 # (src/client_frontend/voice_aec.c).  This target only: the browser build uses
-# getUserMedia's own canceller and never sees SpeexDSP, and no other target
-# compiles the voice sources at all.
+# getUserMedia's own canceller and never sees SpeexDSP, and the iOS target
+# sets the same three lines in its own block.
 target_sources(WinBolo PRIVATE src/client_frontend/voice_aec.c)
 target_link_libraries(WinBolo PRIVATE speexdsp)
 target_compile_definitions(WinBolo PRIVATE WINBOLO_VOICE_AEC=1)
 
 # The capture-chain recorder (WB_VOICEDEBUG above). This target only: it is
-# called from voice_client.c and winbolo.c, which nothing else compiles.
+# called from voice_client.c and winbolo.c, and the iOS target never defines
+# WB_VOICEDEBUG.
 if(WB_VOICEDEBUG)
     target_sources(WinBolo PRIVATE src/client_frontend/voice_debug.c)
 endif()
@@ -2385,6 +2744,9 @@ list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/game_view_stubs\\.c$")
 # game-view render island's screenTanksGetItem to lv_screenTanksGetItem.
 # The standalone uses bolo_shim.c for that, so drop the adapter from the glob.
 list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/render_island_screentank_adapter\\.c$")
+# lv_fullscreen_game.c is client-only: it calls the game's full screen
+# command. The standalone has no game; its body of the function is in main.c.
+list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/lv_fullscreen_game\\.c$")
 # spectator_drain_stub.c is added explicitly to the LogViewer target below;
 # drop it from the glob so it is listed once. It stubs the spectator_drain.h
 # seam for the standalone (which carries spectatorRun but links no bolo sim).
@@ -2394,6 +2756,10 @@ list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/spectator_drain_stub\\.
 # seam for the standalone (which carries spectatorRun but links no gui-tier
 # gamepad module); the WinBolo client links the real src/gui/sdl3/spectator_input.c.
 list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/spectator_input_stub\\.c$")
+# lv_embed_stubs.c is for clients that embed only the reel (iOS, the web
+# client); the standalone viewer has the real bodies in logviewer.c and its
+# ImGui panels, so the stubs would collide with them.
+list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/lv_embed_stubs\\.c$")
 
 set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_context.cpp
@@ -2401,10 +2767,16 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_controls.cpp
     src/logviewer/imgui/imgui_game_info.cpp
     src/logviewer/imgui/imgui_events.cpp
+    src/logviewer/imgui/imgui_event_overlay.cpp
     src/logviewer/imgui/imgui_item_info.cpp
     src/logviewer/imgui/imgui_dialogs.cpp
     src/logviewer/imgui/imgui_game_viewport.cpp
     src/logviewer/imgui/imgui_scenario_panel.cpp
+    src/logviewer/imgui/imgui_dock.cpp
+    src/logviewer/imgui/imgui_hud.cpp
+    src/logviewer/imgui/imgui_overview.cpp
+    src/logviewer/imgui/imgui_tank.cpp
+    src/logviewer/imgui/imgui_lv_icons.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
@@ -2423,6 +2795,7 @@ set(LOGVIEWER_IMGUI_SOURCES
 # LOGVIEWER_LIB_SOURCES because the WinBolo client already links its own copy.
 set(LOGVIEWER_WBN_BROWSER_SOURCES
     src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
+    src/gui/sdl3/dialogs/wbn_browser_sort.c
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
@@ -3558,6 +3931,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_prefs_roundtrip.c
     tests/unit/test_prefs_doc.c
     tests/unit/test_prefs_api.c
+    tests/unit/test_prefs_merge.c
     src/common/prefs_doc.c
     src/common/prefs.c
     tests/unit/test_join_running_phase.c
@@ -3976,6 +4350,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
+    # Unwrapping linked thumbnails in news bodies for imgui_markdown.
+    tests/unit/test_wbn_news_markdown.cpp
+    # The news image cache's size limit and which images it may evict.
+    tests/unit/test_news_image_budget.cpp
+    # The size the news window draws an image at (header-only maths).
+    tests/unit/test_news_image_fit.cpp
     tests/unit/test_wbn_news_fetch.cpp
     tests/unit/test_wbn_country_cache.c
     tests/unit/test_wbn_prefs_sync.c
@@ -3993,6 +4373,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_bolo_rand.c
     tests/unit/test_pf_corner_cut.c
     tests/unit/test_pf_influence_tail.c
+    # Bench (does nothing unless WB_BENCH=1): the decoy-square blocker step.
+    tests/unit/test_bench_decoy_step.c
     # BrainTest Load Session next/prev-segment lookup. The finder is plain C
     # and ImGui-free precisely so it can be linked here; the rest of the
     # browser (braintest_loadbrowser.cpp) is not part of this target.
@@ -4105,6 +4487,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # comes in with gfx_settings.c above.
     tests/unit/test_fog_roads.c
     tests/unit/test_overview_hud_layout.cpp
+    tests/unit/test_newswire_slide.c
     tests/unit/test_sight.c
     tests/unit/test_sight_shadow.c
     tests/unit/test_sight_shadow_overflow.c
@@ -4121,6 +4504,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_build_harvest_stale.c
     tests/unit/test_lgm_request_valid.c
     tests/unit/test_lgm_quit_pill.c
+    tests/unit/test_lgm_start_offset.c
+    tests/unit/test_lgm_absent_on_shooter_screen.c
+    tests/unit/test_braindbg_round_dir.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
     tests/unit/test_sim_rules.c
@@ -4203,6 +4589,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # client, a joiner arriving on the changed table, a server-only rule
     # publishing nothing, and a new table clamping what the client holds.
     tests/unit/test_loopback_sim_rules.c
+    # A builder walled in behind his own tank while a pillbox shoots at it,
+    # over a lagged link and a clean one.
+    tests/unit/test_lgm_under_fire.c
     # The client's own check of the rules table before it keeps one.
     tests/unit/test_sim_rules_client_check.c
     # The sixteen pillbox pictures against a pill armour cap above 15.
@@ -4376,6 +4765,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # length, strict bsearch sort order, and name round-trips — pins the
     # off-by-one that crashed resolveName's bsearch on startup.
     tests/unit/test_lang_name_table.c
+    # Random map Size control and the Map Maker presets: Size bounds and
+    # seed suffix, same map for the same seed, counts, bounds and reach.
+    tests/unit/test_mapgen_maker.c
     # What a quit inside a dialog means, and where it goes. The same
     # decision is made in eleven dialog poll loops with nothing to check
     # that a new one makes it; telling a real close request from the one
@@ -4409,6 +4801,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tkExplosionUpdate's lgm/tank index pairing over the compacted per-player
     # arrays, plus the small-explosion sweep's off-by-one.
     tests/unit/test_tkexp_lgm_pairing.c
+    # A shell that hits a tank blows up at the hit tank's present position
+    # plus the shell's offset from the rewound hit point, not at the shell,
+    # which a lag-compensated test leaves behind the tank.
+    tests/unit/test_tank_blast_at_tank.c
+    tests/unit/test_teleport_clears_rewind.c
+    tests/unit/test_shell_rewind_rules.c
     tests/unit/test_input_gate.c
     tests/unit/test_input_source.c
     src/gui/sdl3/input_source.c
@@ -4492,12 +4890,19 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp
     src/gui/sdl3/sprite_positions.c
+    # newswire_slide.c qualifies too: stdint and stdbool, and arithmetic on
+    # the times it is given.
+    src/gui/sdl3/newswire_slide.c
     # map_colours.c qualifies on the same footing: its includes are SDL3 for
     # the colour types, tilenum.h and global.h for the tile numbers, and
     # skin_source.h to read a skin's [MapPalette] — whose skin_source.c this
     # target already builds for its own tests — and its functions are a tile
     # number in and a colour out. test_map_colours.c drives it directly.
     src/gui/sdl3/map_colours.c
+    # news_image_budget.cpp qualifies too: it is the news image cache's
+    # eviction rule over URLs, byte counts and frame numbers, with no SDL,
+    # no ImGui and no textures. test_news_image_budget.cpp drives it.
+    src/gui/sdl3/news_image_budget.cpp
     # The threaded news fetcher itself (not just the pure parser): the
     # free-during-fetch lifetime test drives its real worker thread. Its
     # network GET is reached through a test seam, so no libcurl is pulled in
@@ -4553,6 +4958,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Log viewer events panel list: replays after a seek back and pinned
     # lines (test_lv_event_list.c).
     tests/unit/test_lv_event_list.c
+    # WinBolo.net log browser table sort rule (test_wbn_browser_sort.c).
+    tests/unit/test_wbn_browser_sort.c
+    # Recap clip GIF length and timeline sync, and the GIF gallery's metadata
+    # files and newest-first scan, the gallery text fill and the capped preview
+    # decode (test_clip_gif_core.c).
+    tests/unit/test_clip_gif_core.c
     # Replay camera range: the load's 127,127 default, a highlight jump, a
     # grid that grew and the raw setter all keep the view's far edge at 255
     # on a grid wider than half the map (test_lv_camera.c).
@@ -4601,6 +5012,89 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Where the viewer draws a declared region on the overview and the game
     # view (lv_region_rect.h, header only).
     tests/unit/test_lv_region_rect.c
+    # How the viewer's window is shared between the map and the sidebars
+    # (lv_dock_fit.h), and the text the sidebar layout is saved as
+    # (lv_dock_layout.h). Both header only.
+    tests/unit/test_lv_dock_fit.c
+    # Which icon a slot of the viewer's HUD panel shows, how its three grids
+    # are laid out, and its colour sums (lv_hud.h, header only).
+    tests/unit/test_lv_hud.c
+    # The table of the viewer's Overview panel: which team's row a pillbox
+    # or a base is counted in (lv_overview.h, header only).
+    tests/unit/test_lv_overview.c
+    # The viewer's Tank panel: which tank it shows and how tall a gauge is
+    # drawn (lv_tank_status.h, header only).
+    tests/unit/test_lv_tank_status.c
+    # The bars the viewer draws over each tank: where they go, how full
+    # they are and their colours (lv_tank_bars.h, header only).
+    tests/unit/test_lv_tank_bars.c
+    # A click on a tank on the viewer's map: which tank a point is on and
+    # the mark round the selected one (lv_tank_pick.h, header only).
+    tests/unit/test_lv_tank_pick.c
+    # A sidebar of the viewer whose unused part is clear: where its panels
+    # go, the clear part, the map under it and the preference text
+    # (lv_dock_clear.h, header only), and the arrangement a new user starts
+    # with (lv_dock_default.h, header only).
+    tests/unit/test_lv_dock_clear.c
+    # The viewer's text dump of a recording around one tick (lv_dump.c): a
+    # recorded round dumped with the production decoder.
+    tests/unit/test_lv_dump.c
+    # The map the viewer writes for a single-player game (lv_spmap.c): the
+    # owner rules, and a recorded round read back with mapRead.
+    tests/unit/test_lv_spmap.c
+    # A pillbox a tank carries: the getter says so, and the single-player
+    # map leaves it out (pillbox.c, lv_spmap.c).
+    tests/unit/test_lv_pill_carried.c
+    # The map place of a captured or stolen pillbox's line and of a lost
+    # builder's line (pillbox.c, players.c).
+    tests/unit/test_lv_event_places.c
+    # The events panel's kind names and the search that places its "now"
+    # divider (lv_event_kind.h, header only).
+    tests/unit/test_lv_event_kind.c
+    # The event markers of the viewer's seek slider: where a time is on the
+    # slider, which markers become one, and the saved list of chosen kinds
+    # (lv_event_overlay.h, header only).
+    tests/unit/test_lv_event_overlay.c
+    # Which parts of the viewer a frame of the overview draws, for a log
+    # file and for a live feed (lv_panel_set.h, header only).
+    tests/unit/test_lv_panel_set.c
+    # The viewer's playback times as text, to the hundredth of a second, and
+    # the ring flashed on the map round an event's place (lv_time_fmt.h,
+    # lv_event_flash.h, header only).
+    tests/unit/test_lv_time_fmt.c
+    # Where the viewer's map is when a log is first shown: the box round
+    # everything that is not deep sea, and the zoom it is shown at
+    # (lv_first_view.h, header only).
+    tests/unit/test_lv_first_view.c
+    # The schedule of the animation of the viewer's Rewind and Fast Forward:
+    # how many steps, the log time of each and which is due when
+    # (lv_jump_anim.h, header only).
+    tests/unit/test_lv_jump_anim.c
+    # The builder marker over each tank on the viewer's map: where it goes,
+    # the arrow's direction, the countdown and the table of the times a
+    # builder was away (lv_builder_status.h, header only).
+    tests/unit/test_lv_builder_status.c
+    # The number of each pillbox on the viewer's map and in its tooltips:
+    # which pillboxes have one, where it goes, the square under the mouse and
+    # a list of numbers as text (lv_pill_numbers.h, header only).
+    tests/unit/test_lv_pill_numbers.c
+    # Where the items of the log viewer's Controls panel go
+    # (lv_controls_layout.h, header only).
+    tests/unit/test_lv_controls_layout.c
+    # The file name the viewer's Save Log File offers: date, map, the people
+    # by name and the bots as a count
+    # (lv_save_name.h, header only).
+    tests/unit/test_lv_save_name.c
+    # File paths as UTF-8 on every system: what the viewer's file dialogs
+    # give back and how the viewer opens it (lv_utf8_path.h, header only).
+    tests/unit/test_lv_utf8_path.c
+    # Where the round recap's "Spawn in log viewer" looks for the Log
+    # Viewer, the name of the log copy it opens and the argument list
+    # (logviewer_spawn.h, header only).
+    tests/unit/test_logviewer_spawn.c
+    # The quoting around text the macOS and Linux file dialogs give to the
+    # shell and to AppleScript (lv_shell_quote.h, header only).
+    tests/unit/test_lv_shell_quote.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -4673,10 +5167,17 @@ set(WINBOLO_UNITTESTS_SOURCES
     # split out of imgui_game_info.cpp so test_game_settings_blob.c drives
     # the code the Game Information panel runs rather than a copy of it.
     src/logviewer/game_settings_blob.c
+    # The text dump "Log Viewer.exe -dump" writes, for test_lv_dump.c.
+    src/logviewer/lv_dump.c
+    src/logviewer/lv_spmap.c
     # The events panel's line list. Plain C with no ImGui headers, split out
     # of imgui_events.cpp so test_lv_event_list.c drives the code the panel
     # runs.
     src/logviewer/lv_event_list.c
+    # The WinBolo.net log browser's sort rule, for test_wbn_browser_sort.c.
+    src/gui/sdl3/dialogs/wbn_browser_sort.c
+    # The recap clip GIF rules, for test_clip_gif_core.c.
+    src/gui/sdl3/dialogs/clip_gif_core.c
 )
 
 if(WB_NETDEBUG)
@@ -4710,10 +5211,10 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
     # Activate the network-impairment hooks for this target's compilation of
     # transport_udp_client.c (compiled per-target above), so the loopback
-    # tests can drive a seeded lossy path via WB_NETIMPAIR. server_static
-    # owns transport_udp_server.c and is NOT recompiled here, so every
-    # shipping target keeps WB_ENABLE_NETIMPAIR=0; client-endpoint impairment
-    # already covers both directions (impairIn + impairOut).
+    # tests can drive a seeded lossy path via WB_NETIMPAIR. The server side
+    # of the same flag comes from server_static_test, the test build of the
+    # server library this target links (SERVER_TEST_LINK_GROUP); every
+    # shipping target links server_static, which keeps WB_ENABLE_NETIMPAIR=0.
     WB_ENABLE_NETIMPAIR=1
     # Compile the WIRE_CORPUS_TAP calls into this target's per-target
     # transport_udp_common.c (shipping builds leave them out), and point the
@@ -4725,6 +5226,16 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # path. scratch_dir.c adds a pid and the test name beneath it and sweeps
     # its own subtree at exit.
     WB_TEST_SCRATCH_DIR="${CMAKE_BINARY_DIR}/test-scratch"
+    # Where a test that records a .wbv replay of its own run puts the file.
+    # Unlike the scratch root above it is NOT swept at exit and carries no pid:
+    # the whole point is that a person can open the last run in the LogViewer.
+    WB_TEST_REPLAY_DIR="${CMAKE_BINARY_DIR}/replays"
+    # Where a test that records a brain-debug session of its own run puts the
+    # session dir. BrainTest's Load Session browser globs "debug_sessions/*"
+    # relative to its working directory, and that is this same build dir, so a
+    # session written here is one the browser lists. Like the replay dir it is
+    # NOT swept at exit: the point is that a person can step through the run.
+    WB_TEST_DEBUG_SESSION_DIR="${CMAKE_BINARY_DIR}/debug_sessions"
     # Committed v1 .wbv fixture directory: the reader gate loads from here and
     # the on-demand capture (re)writes spectator_v1.wbv into it.
     WB_WBV_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wbv"
@@ -4792,7 +5303,7 @@ target_include_directories(WinBoloUnitTests PRIVATE
 bolo_apply_include_rules(WinBoloUnitTests unittests)
 
 target_link_libraries(WinBoloUnitTests PRIVATE
-    bolo_static scenario_static ${SERVER_LINK_GROUP} bot_brains_static
+    bolo_static scenario_static ${SERVER_TEST_LINK_GROUP} bot_brains_static
     SDL3::SDL3 minizip lua_static cjson utf8proc
     # tileloader.c reads SVG through nanosvg and PNG through stb_image.
     nanosvg stb_image
@@ -4863,6 +5374,14 @@ set(_unit_test_names
     prefs_api_device_identity
     prefs_api_adopt_server
     prefs_api_mark_synced
+    prefs_merge_game_then_viewer
+    prefs_merge_viewer_then_game
+    prefs_merge_fallback
+    prefs_merge_one_write
+    prefs_merge_reset_wins
+    prefs_merge_idle_no_write
+    prefs_merge_missing_retry
+    prefs_merge_adopt_keeps_local
     join_running_phase_not_lobby
     lobby_settings_codec_and_apply
     lobby_settings_scenario_apply
@@ -5149,6 +5668,9 @@ set(_unit_test_names
     wbn_bearer_state
     wbn_rekey_codec
     wbn_news_parse
+    wbn_news_markdown
+    news_image_budget
+    news_image_fit
     wbn_news_free_during_fetch
     wbn_country_cache
     wbn_prefs_parse_get
@@ -5190,6 +5712,7 @@ set(_unit_test_names
     pf_dijkstra_no_solid_corner_cut
     pf_astar_no_solid_corner_cut
     pf_costto_no_solid_corner_cut
+    bench_decoy_step_first
     pf_tail_reaches_radius_and_stops
     pf_tail_blocked_by_wall_and_sea
     pf_tail_neutral_zone_slows
@@ -5317,6 +5840,13 @@ set(_unit_test_names
     lv_same_map_runs
     lv_event_list_replay
     lv_event_list_pinned
+    wbn_browser_sort
+    clip_gif_len_sync
+    clip_gif_meta_roundtrip
+    clip_gif_meta_bad
+    clip_gif_gallery_scan
+    clip_gif_text_fill
+    clip_gif_preview_cap
     lv_snapshot_index_lookup
     lv_snapshot_index_ten_days
     lv_load_walk_fixtures
@@ -5481,6 +6011,8 @@ set(_unit_test_names
     lobby_default_sides_map_change
     lobby_default_sides_map_change_repeated
     lobby_default_sides_same_side_pick_kept
+    lobby_ds_bot_team_naming_pools
+    lobby_ds_bot_start_teams
     starts_side_end_to_end_four_v_twelve
     starts_side_region_sweep
     starts_side_unsided_kept_off_chosen_side
@@ -5569,6 +6101,8 @@ set(_unit_test_names
     view_pill_pos_reveal
     view_pill_update_event_fogged
     view_pill_pos_bot_advantage
+    view_pill_pos_allied
+    view_pill_reveal_full_sync
     tree_hide_enemy
     tree_hide_ally_option
     lgm_visibility_tank_in_trees
@@ -5577,6 +6111,7 @@ set(_unit_test_names
     view_state_bad_claims_degrade
     view_state_invalidation
     view_state_lifecycle
+    view_state_resend
     view_cycle_pick_order
     view_cycle_pick_policy
     view_cycle_pick_direction
@@ -5591,6 +6126,9 @@ set(_unit_test_names
     view_cycle_eligible_mask
     view_cycle_ally_stub
     view_cycle_stale_pill
+    view_cycle_moved_pill
+    view_cycle_ally_follow
+    view_cycle_ally_follow_clientsim
     pill_pos_current_lookups
     pill_pos_current_num_split
     pill_pos_current_duplicate_square
@@ -5620,6 +6158,7 @@ set(_unit_test_names
     fog_road_edges
     fog_road_edge_masks
     overview_hud_layout
+    newswire_slide
     sight
     sight_shadow
     sight_shadow_cost
@@ -5674,10 +6213,25 @@ set(_unit_test_names
     lgm_request_quiet
     lgm_quit_drops_carried_pill
     lgm_unfield_drops_carried_pill
+    position_history_lookup
+    lgm_kill_absent_on_shooter_screen
+    lgm_kill_rewound_position
+    lgm_kill_pill_shell_present
+    lgm_kill_short_history
+    lgm_kill_seen_out_back_in_tank
+    lgm_kill_seen_out_outside_blast
+    lgm_kill_seen_out_pill_shell
+    lgm_kill_seen_out_no_record
+    lgm_kill_seen_out_already_dead
+    lgm_kill_seen_out_tank_hit_blast
+    lgm_kill_seen_out_dead_tank
+    lgm_start_offset
+    braindbg_second_round_new_dir
     lgm_draw_own_matches_wire
     lgm_draw_centre_error_bounds
     jitter_buffer_grow
     shell_projection
+    shell_projection_match
     sim_rules_classic_defaults
     sim_rules_validate_ranges
     sim_rules_copies_follow
@@ -5693,7 +6247,7 @@ set(_unit_test_names
     sim_rules_pill_aim_mac
     sim_rules_tank_collision_mac
     sim_rules_tank_deep_sea_safe
-    sim_rules_man_bless_tile_terrain_speed
+    lgm_build_square_terrain_speed
     pill_shell_cap_off_is_no_limit
     pill_shell_cap_retargets_next_nearest
     pill_shell_cap_holds_then_fires_when_freed
@@ -5740,8 +6294,40 @@ set(_unit_test_names
     ping_kick_defers_teardown
     ping_kick_clears_strikes_on_disconnect
     tkexp_lgm_pairing
+    tank_blast_rewound_hit_at_present_tank
+    tank_blast_kill_starts_at_present_tank
+    tank_blast_zero_rewind_unchanged
+    tank_blast_hit_decision_unchanged
+    tank_blast_builder_on_shooter_screen
+    tank_blast_absent_builder_lives
+    tank_blast_builder_back_in_tank
+    tank_blast_pill_shell_builder_now
+    tank_blast_no_record_builder_now
+    shell_blast_pill_hit_on_shooter_screen
+    teleport_erases_tank_rewind_record
+    teleport_shell_hits_new_place
+    teleport_rewind_refills
+    teleport_builder_rewind_record
+    teleport_parachute_erases_builder_record
+    slot_join_erases_tank_rewind_record
+    slot_join_shell_hits_new_tank
+    slot_join_rewind_refills
+    slot_join_erases_builder_rewind_record
+    slot_refield_erases_rewind_records
+    shell_rewind_pill_shell_tank_present
+    shell_rewind_tank_full_comp
+    shell_rewind_builder_one_less
     loopback_join
     loopback_join_loss
+    # The builder walled in behind his own tank under pillbox fire. The
+    # lagged case was the bug report written as a test: it died every run
+    # until pill shells stopped being rewound, and about one run in three
+    # when he started 16 units out, before the offset first went to 64. At
+    # 16 a hit can still kill him in his first 2 ticks out. The test now runs
+    # on a fixed clock, so its order lands at the same tick every run, outside
+    # that window. The nolag case is its control.
+    lgm_wall_behind_tank_under_fire_lagged
+    lgm_wall_behind_tank_under_fire_nolag
     loopback_password
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
@@ -5868,6 +6454,7 @@ set(_unit_test_names
     spectator_ring_nolog_tick_anchors
     spectator_replay
     spectator_config
+    spectator_delay_pref
     spectator_join
     spectator_roster_publish
     spectator_slot_codec
@@ -5929,11 +6516,29 @@ set(_unit_test_names
     game_settings_blob
     ping_network
     lang_name_table
+    mapgen_size_bounds
+    mapgen_legacy_seed_unchanged
+    mapgen_maker_seed_roundtrip
+    mapgen_maker_deterministic
+    mapgen_maker_valid
+    mapgen_size_all_types
+    mapgen_maker_room_kinds
+    mapgen_maker_hashes
+    mapgen_maker_outline_set
+    mapgen_maker_one_land
+    mapgen_maker_style_levers
+    mapgen_maker_style_seed_roundtrip
+    mapgen_maker_style_same_map
+    mapgen_maker_chew_toy_safe_bases
+    mapgen_maker_deathhand_safe_bases
+    mapgen_maker_diag_roads_join
+    mapgen_maker_objects_symmetric
     dialog_quit
     screencalc_river_road_counts_as_water
     screencalc_river_arms_of_road_centred_cross
     screencalc_river_copies_agree
     mdns_discovery
+    mdns_platform_pairs
     mdns_view_txt_roundtrip
     client_type_matches_platform
     client_type_name_round_trips
@@ -6168,6 +6773,7 @@ set(_unit_test_names
     scenario_lgm_dispatch
     scenario_lgm_recall
     scenario_lgm_kill
+    scenario_lgm_kill_force
     scenario_lgm_parachute
     scenario_lgm_set_carried
     scenario_lgm_kill_record
@@ -6238,6 +6844,7 @@ set(_unit_test_names
     survival_lobby_round_ds_order
     loopback_unfield_tank
     loopback_fine_tank_position
+    loopback_shell_drawn_cull
     lobby_template_return_reconciles
     lobby_template_return_unfields
     lobby_template_reset_reseats
@@ -6569,6 +7176,7 @@ set(_unit_test_names
     scenario_lua_queued_answers_queued
     scenario_lua_shape_raises_refusal_does_not
     scenario_lua_detail_carries_the_number
+    scenario_lua_kill_lgm_force
     scenario_lua_teleport_start_refuses_bad_index
     scenario_lua_spawn_bot_refuses_bad_start
     scenario_lua_game_type_resolves_scripted
@@ -6911,6 +7519,8 @@ set(_unit_test_names
     lv_presentation_marker_visible
     lv_presentation_live_seek
     lv_presentation_live_fast_forward
+    lv_presentation_live_hold
+    lv_presentation_live_segment_reset_drops_hold
     lv_server_tick_recorded
     lv_server_tick_anchors
     lv_server_tick_hostile
@@ -6918,6 +7528,100 @@ set(_unit_test_names
     lv_server_tick_alternating
     lv_server_tick_live_feed
     lv_region_rect_placement
+    lv_dock_fit_sums
+    lv_dock_fit_margins
+    lv_dock_layout_sides
+    lv_dock_layout_tree
+    lv_hud_sums
+    lv_team_sprite_sums
+    lv_team_colour_lookup
+    lv_overview_sums
+    lv_overview_bots
+    lv_overview_row_layout
+    lv_overview_neutral_row
+    lv_tank_status_sums
+    lv_tank_bars_sums
+    lv_tank_pick_sums
+    lv_map_double_click
+    lv_name_header_sums
+    lv_dock_clear_layout
+    lv_dock_clear_rects
+    lv_dock_clear_map
+    lv_dock_clear_prefs
+    lv_dock_default_layout
+    lv_dump_recorded_round
+    lv_spmap_owner_table
+    lv_spmap_reads_back
+    lv_pill_get_in_tank
+    lv_spmap_carried_pill_left_out
+    lv_event_kind_sums
+    lv_event_click_pick
+    lv_event_overlay_slider
+    lv_event_overlay_clusters
+    lv_event_overlay_tip_columns
+    lv_event_overlay_tip_place
+    lv_event_overlay_marker_size
+    lv_event_overlay_choice
+    lv_event_overlay_picture
+    lv_event_overlay_no_sign
+    lv_event_overlay_live_rebuild
+    lv_panel_set_live
+    lv_event_kinds_filter
+    lv_event_kinds_prefs
+    lv_event_marker
+    lv_ping_store
+    lv_ping_marker
+    lv_ping_phase
+    lv_dump_ping
+    lv_time_fmt_sums
+    lv_time_parse_sums
+    lv_event_flash_sums
+    lv_event_flash_arrow
+    lv_event_centre_scroll
+    lv_view_centre_scroll
+    lv_first_view_box
+    lv_first_view_zoom
+    lv_first_view_place
+    lv_event_jump_keeps_place_in_view
+    lv_event_seek_exact
+    lv_event_jump_view
+    lv_event_pill_capture_place
+    lv_event_builder_lost_place
+    lv_builder_status_sums
+    lv_builder_countdown
+    lv_builder_dead_text
+    lv_builder_away_text
+    lv_builder_away_scan
+    lv_builder_trips
+    lv_builder_trips_scan
+    lv_pill_numbers_sums
+    lv_pill_numbers_list
+    lv_pill_numbers_layout
+    lv_pill_numbers_overview
+    lv_controls_top_row
+    lv_controls_bottom_row
+    lv_controls_wheel_step
+    lv_controls_fine_drag
+    lv_zoom_percent
+    lv_fullscreen_key
+    lv_event_scan_returns_to_start
+    lv_save_name_parts
+    lv_save_name_bots
+    lv_save_name_limits
+    lv_save_name_long
+    lv_save_name_roster
+    lv_save_name_scan
+    lv_utf8_path
+    logviewer_spawn_paths
+    logviewer_spawn_names
+    lv_shell_quote
+    lv_kill_tally_seek_back
+    lv_alive_seek_back
+    lv_death_time_seek_back
+    lv_jump_targets
+    lv_jump_anim_lands
+    lv_jump_anim_steps
+    lv_jump_anim_time
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast

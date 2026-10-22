@@ -41,6 +41,10 @@ typedef struct {
      snapshot body carries them, so a restore puts these back. */
   uint16_t kills[MAX_TANKS];
   uint16_t deaths[MAX_TANKS];
+  /* When each slot's tank last died, as playback had it on reaching
+     it. The snapshot body says only that a tank is destroyed, not since
+     when, and the death static over the game view plays from that time. */
+  uint32_t deathTimeMs[MAX_TANKS];
 } snapshotEntry;
 
 /** Snapshot data structure: the entries in time order. A server writes one
@@ -212,5 +216,12 @@ bool lv_snapshotFindByTime(snapshot *value, uint32_t targetTime, size_t *filePos
 * deaths - Returned death tallies (MAX_TANKS)
 *********************************************************/
 bool lv_snapshotGetTallies(snapshot *value, uint32_t time, uint16_t *kills, uint16_t *deaths);
+
+/* The time each slot's tank last died, stored with the snapshot at
+   exactly this time. A new snapshot's times are zero until set. Both take
+   arrays of MAX_TANKS and return FALSE when no snapshot is stored at that
+   time. */
+bool lv_snapshotSetDeathTimes(snapshot *value, uint32_t time, const uint32_t *deathTimeMs);
+bool lv_snapshotGetDeathTimes(snapshot *value, uint32_t time, uint32_t *deathTimeMs);
 
 #endif /* __SNAPSHOT_H */

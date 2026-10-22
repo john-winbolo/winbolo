@@ -206,6 +206,7 @@ void lv_snapshotAdd(snapshot *value, size_t filePos, uint32_t time, BYTE key, BY
   memcpy(e->pTeams, pTeams, MAX_TANKS);
   memcpy(e->kills, kills, sizeof(e->kills));
   memcpy(e->deaths, deaths, sizeof(e->deaths));
+  memset(e->deathTimeMs, 0, sizeof(e->deathTimeMs));
   s->count++;
 }
 
@@ -315,5 +316,40 @@ bool lv_snapshotGetTallies(snapshot *value, uint32_t time, uint16_t *kills, uint
   }
   memcpy(kills, s->items[i].kills, sizeof(s->items[i].kills));
   memcpy(deaths, s->items[i].deaths, sizeof(s->items[i].deaths));
+  return TRUE;
+}
+
+/* The entry at exactly this time, or NULL. */
+static snapshotEntry *lv_snapshotAtTime(snapshot *value, uint32_t time) {
+  snapshot s = *value;
+  int i;
+
+  if (s == NULL) {
+    return NULL;
+  }
+  i = lv_snapshotLowerBound(s, time);
+  if (i >= s->count || s->items[i].time != time) {
+    return NULL;
+  }
+  return &s->items[i];
+}
+
+bool lv_snapshotSetDeathTimes(snapshot *value, uint32_t time, const uint32_t *deathTimeMs) {
+  snapshotEntry *e = lv_snapshotAtTime(value, time);
+
+  if (e == NULL) {
+    return FALSE;
+  }
+  memcpy(e->deathTimeMs, deathTimeMs, sizeof(e->deathTimeMs));
+  return TRUE;
+}
+
+bool lv_snapshotGetDeathTimes(snapshot *value, uint32_t time, uint32_t *deathTimeMs) {
+  snapshotEntry *e = lv_snapshotAtTime(value, time);
+
+  if (e == NULL) {
+    return FALSE;
+  }
+  memcpy(deathTimeMs, e->deathTimeMs, sizeof(e->deathTimeMs));
   return TRUE;
 }

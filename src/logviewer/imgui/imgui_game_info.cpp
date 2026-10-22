@@ -10,9 +10,11 @@
 
 #include "imgui_game_info.h"
 #include "imgui_main_menu.h"
+#include "imgui_dock.h"
 #include "imgui_context.h"
 #include "imgui_comments.h"
 #include "imgui.h"
+#include "imgui_lv_icons.h"
 #include "../../gui/lang.h"
 /* Plain C, no bolo headers — see the note at the top of that header. */
 #include "../game_settings_blob.h"
@@ -38,6 +40,9 @@ extern "C" {
     int lv_screenGetGameSettings(unsigned char *out, int maxLen);
     bool lv_playersIsInUse(unsigned char playerNumber);
     bool lv_screenGetLoggedPlayerName(unsigned char slot, char *dest, size_t destSize);
+    int  lv_screenBotChip(unsigned char slot);
+    void lv_clientMutexWaitFor(void);
+    void lv_clientMutexRelease(void);
 }
 
 /* Game info state */
@@ -530,7 +535,10 @@ static void game_info_draw_scripts(void) {
         simRulesPhrase(ch->index, ch->value, phrase, sizeof(phrase));
 
         MessageArgs args = {};
+        /* A live feed adds to the tick table on the timer thread. */
+        lv_clientMutexWaitFor();
         args.number = (int)lv_screenServerTickAt(ch->ms);
+        lv_clientMutexRelease();
         /* The phrase comes from the translation table, so it can hold
            characters of more than one byte: cut both where a character
            ends. */
@@ -569,6 +577,16 @@ static void game_info_draw_scores(void) {
     ImGui::TableSetupColumn("##score", ImGuiTableColumnFlags_WidthFixed,
                             ImGui::CalcTextSize("-00000000").x);
 
+    /* A bot's row has the game's chip in front of the name. When one row
+     * has it, every player's row keeps the room, so the names line up; with
+     * no bot, and when the picture is not there, no room is kept. */
+    float chipRoom = 0.0f;
+    for (int i = 0; i < MAX_TANKS && chipRoom <= 0.0f; i++) {
+        const LvPresScore *s = lv_screenGetScore(SCN_SCORE_KIND_PLAYER, (BYTE)i);
+        if (s == NULL || !s->valid) continue;
+        chipRoom = lv_bot_chip_width(lv_screenBotChip((unsigned char)i));
+    }
+
     for (int i = 0; i < MAX_TANKS; i++) {
         const LvPresScore *s = lv_screenGetScore(SCN_SCORE_KIND_PLAYER, (BYTE)i);
         if (s == NULL || !s->valid) continue;
@@ -590,6 +608,12 @@ static void game_info_draw_scores(void) {
 
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
+        if (chipRoom > 0.0f) {
+            if (!lv_bot_chip_text(lv_screenBotChip((unsigned char)i))) {
+                ImGui::Dummy(ImVec2(chipRoom, ImGui::GetTextLineHeight()));
+            }
+            ImGui::SameLine(0.0f, lv_bot_chip_gap());
+        }
         ImGui::TextUnformatted(name);
         ImGui::TableSetColumnIndex(1);
         ImGui::TextUnformatted(s->label);
@@ -619,7 +643,11 @@ void lv_imgui_game_info_window(void) {
     }
     
     {
-        ImGuiCond cond = lv_g_reset_window_positions ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+        /* A panel that sat in the dock when the dock was turned off goes
+         * back to its default place, the same as a reset. */
+        bool to_default = lv_g_reset_window_positions ||
+                          lv_imgui_dock_take_float_reset("###gameinfo");
+        ImGuiCond cond = to_default ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
         ImVec2 vp = ImGui::GetMainViewport()->Size;
         /* Tall enough for the settings rows a recorded log adds below the
          * header ones; the user's own size wins once they set one. */
@@ -630,28 +658,7 @@ void lv_imgui_game_info_window(void) {
     char gi_title[128];
     snprintf(gi_title, sizeof(gi_title), "%s###gameinfo", langGetText(STR_LV_WIN_GAMEINFO));
     if (ImGui::Begin(gi_title, &lv_g_show_game_info_window, ImGuiWindowFlags_NoCollapse)) {
-        /* Reposition window relative to right/bottom edge when viewport is resized */
-        float dx, dy;
-        if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
-            ImVec2 pos = ImGui::GetWindowPos();
-            float old_vp_x = ImGui::GetMainViewport()->Size.x - dx;
-            float old_vp_y = ImGui::GetMainViewport()->Size.y - dy;
-            ImVec2 size = ImGui::GetWindowSize();
-            if (pos.x + size.x * 0.5f > old_vp_x * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x + dx, pos.y + dy));
-            else if (pos.y + size.y * 0.5f > old_vp_y * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x, pos.y + dy));
-        }
-        /* Always clamp to keep fully on screen */
-        {
-            ImVec2 pos = ImGui::GetWindowPos();
-            ImVec2 size = ImGui::GetWindowSize();
-            ImVec2 vp = ImGui::GetMainViewport()->Size;
-            ImVec2 new_pos = pos;
-            if (new_pos.x + size.x > vp.x) new_pos.x = vp.x - size.x;
-            if (new_pos.y + size.y > vp.y) new_pos.y = vp.y - size.y;
-            if (new_pos.x < 0) new_pos.x = 0;
-            if (new_pos.y < 0) new_pos.y = 0;
-            if (new_pos.x != pos.x || new_pos.y != pos.y) ImGui::SetWindowPos(new_pos);
-        }
+        lv_imgui_keep_window_on_screen();
 
         /* The lobby settings the recording carries. A loaded file has them
          * from the load-time walk and a live feed picks them up as they

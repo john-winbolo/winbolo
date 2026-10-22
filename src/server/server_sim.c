@@ -425,7 +425,6 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.posHistoryPtr = sim->posHistory;
     sim->sim.lgmPosHistoryPtr = sim->lgmPosHistory;
     sim->sim.lagCompTicks = 0;
-    memset(sim->sim.perPlayerCompTicks, 0, sizeof(sim->sim.perPlayerCompTicks));
 
     botManagerInitInSim(&sim->botMgr, sim, 0);
 

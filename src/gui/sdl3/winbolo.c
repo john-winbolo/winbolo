@@ -56,6 +56,8 @@
 #include "client_render.h"
 #include "client_frontend_tick.h"
 #include "client_frontend_render.h"
+#include "client_frontend_tutorial.h"
+#include "client_frontend_common.h"
 #include "client_sim.h"
 #include "frontend.h"
 #include "tutorial.h"
@@ -75,9 +77,6 @@
 #include "../lang.h"
 #include "../sound.h"
 #include "../voice.h"
-#if defined(WINBOLO_VOICE_AEC)
-#include "voice_aec.h"
-#endif
 #if defined(WB_VOICEDEBUG)
 #include "voice_debug.h"
 #endif
@@ -99,6 +98,9 @@
 #include "tutorial_text.h"
 #include "../../common/sentry_integration.h"
 #include "../../common/crash_handler.h"
+#ifdef _WIN32
+#include "../../logviewer/lv_utf8_path.h"
+#endif
 
 /* humanSim is owned by gamefront.c; declared up here so the timer
  * callback and main game-tick path can pass it to clientSim* wrappers. */
@@ -113,7 +115,6 @@ static void windowEnsureOnScreen(SDL_Window *win);
  * Globals declared by winbolo.h (extern in sdl3imgui.cpp)
  * ------------------------------------------------------- */
 
-void windowStartTutorial(void);
 bool isTutorial = FALSE;
 
 /* The frame rate */
@@ -198,60 +199,17 @@ static bool drawBusy = FALSE;
 /* Are we in a menu or not */
 bool isInMenu = FALSE;
 
-/* Tutorial flag */
-static bool doingTutorial = FALSE;
-
 /* Time to quit */
 static bool winboloQuit = FALSE;
 /* Raised only by windowSetQuitting — see windowIsQuitting below. */
 static bool quitRequested = FALSE;
 static bool finishedLoop = FALSE;
 
-/* Set on SDL_EVENT_WILL_ENTER_BACKGROUND, cleared by
- * windowResumeForeground.  See windowSuspendBackground for details. */
-static bool s_suspended = FALSE;
-
-/* Set while the Steam in-game overlay is open during a single-player
- * game.  Like s_suspended it freezes the local sim, but it is driven by
- * the Steam overlay callback (not SDL background events) and only ever
- * engages in single-player — multiplayer keeps running with the overlay
- * up.  See windowSteamOverlayActivated. */
-static bool s_overlayPaused = FALSE;
-
-/* Set while the "Controller Disconnected" dialog is up during a solo game.
- * Same freeze as s_overlayPaused, driven by the controller-lost handler.
- * Multiplayer keeps running (the dialog still shows).  See
- * windowControllerLostPause. */
-static bool s_controllerLostPaused = FALSE;
-
-/* Set while the controller pause overlay (Start button / Escape) is up during
- * a solo game.  Same freeze as s_overlayPaused, driven by the pause-menu
- * open/close edge.  Multiplayer keeps running (the menu still shows) so a
- * networked player isn't booted for going idle.  See windowDeckPause. */
-static bool s_deckPaused = FALSE;
-
-/* Set while a tutorial message overlay is up.  Same solo freeze as the pause
- * menu, driven by the overlay's open/close edge — so play is suspended and a
- * held turn or dismissing fire press can't leak into the game.  See
- * windowTutorialPause. */
-static bool s_tutorialPaused = FALSE;
-
-/* Set while the native save-map dialog is up during a solo game.  Same freeze
- * as s_overlayPaused, driven by windowSaveMap / windowSaveMapPoll.
- * Multiplayer keeps running — not blocking the main loop on that dialog is the
- * whole point of the poll.  See windowSaveDialogPause. */
-static bool s_saveDialogPaused = FALSE;
-
-/* Mute state captured when each pause path engaged, restored verbatim when it
- * releases.  A pause must hand audio back to whatever it found — not force it
- * unmuted — so it doesn't clobber a user mute or another still-active pause's
- * mute.  One slot per path because the paths can nest. */
-static bool s_suspendPrevMuted        = FALSE;
-static bool s_overlayPrevMuted        = FALSE;
-static bool s_controllerLostPrevMuted = FALSE;
-static bool s_deckPrevMuted           = FALSE;
-static bool s_tutorialPrevMuted       = FALSE;
-static bool s_saveDialogPrevMuted     = FALSE;
+/* The background suspend and the solo-game freezes (the Steam overlay, the
+ * controller-disconnected dialog, the pause menu, a tutorial message and the
+ * native save-map dialog) are held in client_frontend_common.c, one body
+ * with iOS: clientFrontSuspend / clientFrontSoloPause / clientFrontAnyPause.
+ * This driver keeps only its own tick clock, which each release rebases. */
 
 /* Tick counters */
 static DWORD oldTick = 0;
@@ -266,21 +224,10 @@ static bool showAllianceReq = TRUE;
 static SDL_AtomicInt needsRedraw = { 0 };
 static SDL_AtomicInt needsGameTick = { 0 };
 
-/* The ClientSim that drives the visible player-list UI. Registered by
- * gamefront when humanSim is created; cleared on teardown. frontEnd*
- * calls whose cs argument doesn't match this pointer are suppressed,
- * so bot / bg_game / gym ClientSims can't pollute process-global
- * UI state (s_playerName, s_playerEnabled, ...).
- * NULL = no registration yet; calls fall through (bootstrapping). */
-static ClientSim *s_activeUiCs = NULL;
-
 /* Forward declarations */
 static Uint32 SDLCALL windowGameTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
 static Uint32 SDLCALL windowFrameRateTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
-void frontEndTutorialNotePresentedFrame(void);
 static void windowRunGameTick(ClientSim *cs);
-static void tutorialRespawnPoll(void);
-static void windowUpdateServerPause(ClientSim *cs);
 static void windowSteamOverlayActivated(ClientSim *cs, bool active);
 static void windowSaveDialogPause(ClientSim *cs, bool active);
 void windowTutorialPause(ClientSim *cs, bool active);
@@ -338,6 +285,58 @@ static void steamJoinRequested(const char *connect_str) {
   }
 }
 
+#ifdef _WIN32
+/* As <windows.h> has it; see lv_utf8_path.h for why it is written out. */
+__declspec(dllimport) unsigned long __stdcall GetShortPathNameW(const wchar_t *lpszLongPath,
+                                                                wchar_t *lpszShortPath,
+                                                                unsigned long cchBuffer);
+
+#define WINBOLO_CP_ACP 0u                    /* CP_ACP */
+#define WINBOLO_NO_BEST_FIT 0x00000400ul     /* WC_NO_BEST_FIT_CHARS */
+
+/* The -spmap path in a form the game's file code opens. SDL gives argv as
+ * UTF-8, but the game opens the map (mapRead, the map's checksum, a
+ * scenario beside it) with the C library's fopen, which reads a path in the
+ * system's code page. The Log Viewer writes the map in the user's profile
+ * folder, and that folder can have letters outside ASCII. So a path that is
+ * not ASCII is changed to the code page form when every letter is in the
+ * code page, else to the short (8.3) form of the path, which is ASCII when
+ * the volume makes short names. Otherwise the path is given as it is. out
+ * holds the result when it is not utf8 itself. */
+static const char *winboloSpMapPath(const char *utf8, char *out, size_t outSize) {
+  static wchar_t wide[LV_UTF8_PATH_WIDE_MAX];
+  static wchar_t shortWide[LV_UTF8_PATH_WIDE_MAX];
+  const char    *p;
+  unsigned long  shortLen;
+  int            usedDefault = 0;
+  int            n;
+
+  for (p = utf8; *p != '\0' && (unsigned char)*p < 0x80; p++) {
+  }
+  if (*p == '\0' || outSize == 0 || outSize > 0x7FFFFFFFu) {
+    return utf8; /* ASCII is the same in every code page */
+  }
+  if (!lvUtf8ToWide(utf8, wide, LV_UTF8_PATH_WIDE_MAX)) {
+    return utf8; /* not UTF-8: a code page path already */
+  }
+  n = WideCharToMultiByte(WINBOLO_CP_ACP, WINBOLO_NO_BEST_FIT, wide, -1, out, (int)outSize,
+                          NULL, &usedDefault);
+  if (n > 0 && !usedDefault) {
+    return out;
+  }
+  shortLen = GetShortPathNameW(wide, shortWide, LV_UTF8_PATH_WIDE_MAX);
+  if (shortLen > 0 && shortLen < LV_UTF8_PATH_WIDE_MAX) {
+    usedDefault = 0;
+    n = WideCharToMultiByte(WINBOLO_CP_ACP, WINBOLO_NO_BEST_FIT, shortWide, -1, out,
+                            (int)outSize, NULL, &usedDefault);
+    if (n > 0 && !usedDefault) {
+      return out;
+    }
+  }
+  return utf8;
+}
+#endif
+
 /* -------------------------------------------------------
  * main — SDL3 entry point
  * ------------------------------------------------------- */
@@ -346,6 +345,10 @@ int main(int argc, char *argv[]) {
   char connectArg[FILENAME_MAX];
   bool joinedViaSteam = FALSE;
   ClientSim *cs = NULL;
+  bool spMapStart = FALSE;
+#ifdef _WIN32
+  static char spMapPath[FILENAME_MAX];
+#endif
 #if defined(WB_VOICEDEBUG)
   const char *voiceRecordDir = NULL;
   const char *voiceInjectPath = NULL;
@@ -411,6 +414,25 @@ int main(int argc, char *argv[]) {
               "in uploaded maps, now run with the full Lua library and no "
               "memory or time limits. Only run a server this way with content "
               "you trust.\n");
+      continue;
+    }
+    /* "-spmap <file>": open single player on this map file, past the welcome
+     * screen. The Log Viewer's "Open map at this time in single player"
+     * starts the game this way. The file is the launch argument a bare map
+     * name already is; the switch adds only the step past the welcome
+     * screen, which is posted once the front end exists (below). */
+    if (strcmp(argv[i], "-spmap") == 0 || strcmp(argv[i], "--spmap") == 0) {
+      if (i + 1 >= argc) {
+        fprintf(stderr, "-spmap needs a map file\n");
+        continue;
+      }
+#ifdef _WIN32
+      cmdLine = winboloSpMapPath(argv[i + 1], spMapPath, sizeof(spMapPath));
+#else
+      cmdLine = argv[i + 1];
+#endif
+      spMapStart = TRUE;
+      i++;
       continue;
     }
     /* The voice capture-chain recorder. Both switches take a value, and both
@@ -556,6 +578,13 @@ int main(int argc, char *argv[]) {
   }
 #endif
 
+  /* -spmap: the welcome screen takes a posted transition at the top of its
+   * first frame, the way it takes one from the macOS Dock menu, and goes on
+   * to single player as if that button was clicked. */
+  if (spMapStart) {
+    gameFrontRequestTransition(openSetup);
+  }
+
   if (gameFrontStart(cmdLine, &keys, FALSE, &cs) == FALSE) {
     clientMutexDestroy();
     SDL_Quit();
@@ -583,8 +612,7 @@ int main(int argc, char *argv[]) {
   winboloQuit = FALSE;
   while (winboloQuit == FALSE) {
     /* Show lobby dialog if the server uses lobby mode */
-    if (cs && clientSimIsInLobby(cs) &&
-        (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown)) {
+    if (clientFrontInLobbyPhase(cs)) {
       const DialogBackend *db = dialogBackendGet();
       int lobbyResult = db->lobbyShow(cs);
       if (lobbyResult == 0) {
@@ -820,8 +848,7 @@ int main(int argc, char *argv[]) {
         voiceTick(cs);
 
         /* Detect game-over returning to lobby */
-        if (cs && clientSimIsInLobby(cs) &&
-            (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown)) {
+        if (clientFrontInLobbyPhase(cs)) {
           returnToLobby = TRUE;
           done = TRUE;
           /* The render below is skipped, so a tutorial message or scenario
@@ -868,7 +895,7 @@ int main(int argc, char *argv[]) {
           if (ren) SDL_RenderPresent(ren);
         }
         frontEndTutorialNotePresentedFrame();
-        tutorialRespawnPoll();
+        clientFrontTutorialPollRespawn();
         /* Pick up a native save-map dialog the player has answered. The
            dialog is asynchronous precisely so this loop — which is what
            pumps the client transport — keeps running while it is open. */
@@ -924,7 +951,7 @@ int main(int argc, char *argv[]) {
 
     sdl3ImguiCleanup();
     gameFrontEnd(&keys, TRUE, winboloQuit);
-    doingTutorial = FALSE;
+    frontEndTutorialReset();
 
     if (winboloQuit == FALSE) {
       if (gameFrontStart(cmdLine, &keys, TRUE, &cs) == FALSE) {
@@ -1014,8 +1041,7 @@ static void windowRunGameTick(ClientSim *cs) {
      windowSteamOverlayActivated / windowControllerLostPause /
      windowDeckPause / windowSaveDialogPause) resets the wallclock baseline
      so we don't fast-forward the paused interval. */
-  if (s_suspended || s_overlayPaused || s_controllerLostPaused ||
-      s_deckPaused || s_tutorialPaused || s_saveDialogPaused)
+  if (clientFrontAnyPause())
     return;
 
   brainRunning = brainHandlerIsBrainRunning();
@@ -1050,10 +1076,9 @@ static void windowRunGameTick(ClientSim *cs) {
          path opens the overlay and engages the solo freeze, after which
          windowRunGameTick early-outs at the top until the message closes —
          which rebases oldTick so the paused interval isn't fast-forwarded.
-         Without this break the loop spins forever: the old blocking dialog
-         cleared doingTutorial before returning, but the in-loop overlay leaves
-         it set across frames, and oldTick only advances in the branch below. */
-      if (doingTutorial == TRUE) break;
+         Without this break the loop spins forever: the step stays showing
+         across frames, and oldTick only advances in the branch below. */
+      if (clientFrontTutorialStepShowing()) break;
       /* One keys/game/lobby half-step lives in the shared client-frontend tick
        * core (both desktop and web call it); the brain and per-second stat
        * rollover below stay here in the driver. Bot brains tick on the server
@@ -1149,43 +1174,21 @@ bool windowIsQuitting(void) {
  * Suspend / resume — Steam Deck Verified requirement.
  * Driven by SDL_EVENT_WILL_ENTER_BACKGROUND (sleep / home
  * button / overlay) and SDL_EVENT_DID_ENTER_FOREGROUND.
- * s_suspended declared near other main-loop state above.
+ * The suspend state, the solo-session test and the hosted-
+ * server pause gate are in client_frontend_common.c.
  * ------------------------------------------------------- */
-/* True for a local solo session — single-player or the tutorial.  Both run
-   the in-process server with no remote peers, so a pause can safely freeze
-   them.  Multiplayer (a joined client or a listen-server host) is never solo
-   and must keep running. */
-static bool windowIsSoloSession(ClientSim *cs) {
-  return doingTutorial || (cs != NULL && clientSimIsSinglePlayer(cs));
-}
-
-/* Recompute the hosted-server pause gate.  The server tick only freezes for
-   a solo session: a listen-server host must keep serving remote players, so
-   multiplayer never pauses the server even when the host backgrounds the app
-   or opens the overlay. */
-static void windowUpdateServerPause(ClientSim *cs) {
-  gameFrontSetServerPaused(windowIsSoloSession(cs) &&
-                           (s_suspended || s_overlayPaused ||
-                            s_controllerLostPaused || s_deckPaused ||
-                            s_tutorialPaused || s_saveDialogPaused));
-}
 
 void windowSuspendBackground(ClientSim *cs) {
-  /* Pause local sim (windowRunGameTick early-outs on s_suspended) and
-     mute audio.  Network state is left as-is; UDP will time out on its
+  /* Pause local sim (windowRunGameTick early-outs on clientFrontAnyPause)
+     and mute audio.  Network state is left as-is; UDP will time out on its
      own.  In single-player we also freeze the server tick so the world
-     holds; a listen-server host keeps serving (see windowUpdateServerPause).
-     Idempotent — duplicate WILL_ENTER_BACKGROUND events from SDL are safe. */
-  if (s_suspended) return;
-  s_suspended = TRUE;
-  windowUpdateServerPause(cs);
-  s_suspendPrevMuted = soundIsMuted();
-  soundSetMuted(TRUE);
+     holds; a listen-server host keeps serving.  Idempotent — duplicate
+     WILL_ENTER_BACKGROUND events from SDL are safe. */
+  clientFrontSuspend(cs);
 }
 
 void windowResumeForeground(ClientSim *cs) {
-  if (!s_suspended) return;
-  s_suspended = FALSE;
+  if (!clientFrontResumeBegin()) return;
 
   if (cs != NULL && clientSimGetNetType(cs) == netUdp) {
     /* Network game: UDP timeout has almost certainly killed the
@@ -1208,8 +1211,7 @@ void windowResumeForeground(ClientSim *cs) {
     oldTick = SDL_GetTicks();
     ttick = oldTick;
   }
-  windowUpdateServerPause(cs);
-  soundSetMuted(s_suspendPrevMuted);
+  clientFrontResumeEnd(cs);
 }
 
 /* Steam in-game overlay opened/closed.  Solo sessions only (single-player or
@@ -1218,25 +1220,9 @@ void windowResumeForeground(ClientSim *cs) {
    duration in one burst.  Multiplayer is a no-op — a networked game keeps
    running with the overlay open. */
 static void windowSteamOverlayActivated(ClientSim *cs, bool active) {
-  if (active) {
-    /* Only a solo session pauses; multiplayer keeps running. */
-    if (!windowIsSoloSession(cs)) return;
-    if (s_overlayPaused) return;          /* idempotent */
-    s_overlayPaused = TRUE;
-    windowUpdateServerPause(cs);
-    s_overlayPrevMuted = soundIsMuted();
-    soundSetMuted(TRUE);
-  } else {
-    /* Always clear on close — even if the mode changed while the overlay
-       was up — so a stale pause can't freeze a later game. */
-    if (!s_overlayPaused) return;
-    s_overlayPaused = FALSE;
-    windowUpdateServerPause(cs);
-    /* Reset the catch-up baseline, mirroring the single-player branch of
-       windowResumeForeground. */
+  if (clientFrontSoloPause(cs, CLIENT_FRONT_PAUSE_OVERLAY, active)) {
     oldTick = SDL_GetTicks();
     ttick = oldTick;
-    soundSetMuted(s_overlayPrevMuted);
   }
 }
 
@@ -1246,20 +1232,9 @@ static void windowSteamOverlayActivated(ClientSim *cs, bool active) {
    windowSteamOverlayActivated.  Multiplayer is a no-op — the dialog still
    shows but the networked game keeps running. */
 void windowControllerLostPause(ClientSim *cs, bool active) {
-  if (active) {
-    if (!windowIsSoloSession(cs)) return;
-    if (s_controllerLostPaused) return;          /* idempotent */
-    s_controllerLostPaused = TRUE;
-    windowUpdateServerPause(cs);
-    s_controllerLostPrevMuted = soundIsMuted();
-    soundSetMuted(TRUE);
-  } else {
-    if (!s_controllerLostPaused) return;
-    s_controllerLostPaused = FALSE;
-    windowUpdateServerPause(cs);
+  if (clientFrontSoloPause(cs, CLIENT_FRONT_PAUSE_CONTROLLER_LOST, active)) {
     oldTick = SDL_GetTicks();
     ttick = oldTick;
-    soundSetMuted(s_controllerLostPrevMuted);
   }
 }
 
@@ -1269,20 +1244,9 @@ void windowControllerLostPause(ClientSim *cs, bool active) {
    windowControllerLostPause.  Multiplayer is a no-op — the menu still shows but
    the networked game keeps running, so the player isn't booted for idling. */
 void windowDeckPause(ClientSim *cs, bool active) {
-  if (active) {
-    if (!windowIsSoloSession(cs)) return;
-    if (s_deckPaused) return;          /* idempotent */
-    s_deckPaused = TRUE;
-    windowUpdateServerPause(cs);
-    s_deckPrevMuted = soundIsMuted();
-    soundSetMuted(TRUE);
-  } else {
-    if (!s_deckPaused) return;
-    s_deckPaused = FALSE;
-    windowUpdateServerPause(cs);
+  if (clientFrontSoloPause(cs, CLIENT_FRONT_PAUSE_DECK, active)) {
     oldTick = SDL_GetTicks();
     ttick = oldTick;
-    soundSetMuted(s_deckPrevMuted);
   }
 }
 
@@ -1294,20 +1258,9 @@ void windowDeckPause(ClientSim *cs, bool active) {
    the next game tick is one tick out, by which point a tapped button has lifted
    and the input gate has already swallowed everything while the message was up. */
 void windowTutorialPause(ClientSim *cs, bool active) {
-  if (active) {
-    if (!windowIsSoloSession(cs)) return;
-    if (s_tutorialPaused) return;          /* idempotent */
-    s_tutorialPaused = TRUE;
-    windowUpdateServerPause(cs);
-    s_tutorialPrevMuted = soundIsMuted();
-    soundSetMuted(TRUE);
-  } else {
-    if (!s_tutorialPaused) return;
-    s_tutorialPaused = FALSE;
-    windowUpdateServerPause(cs);
+  if (clientFrontSoloPause(cs, CLIENT_FRONT_PAUSE_TUTORIAL, active)) {
     oldTick = SDL_GetTicks();
     ttick = oldTick;
-    soundSetMuted(s_tutorialPrevMuted);
   }
 }
 
@@ -1317,22 +1270,9 @@ void windowTutorialPause(ClientSim *cs, bool active) {
    Multiplayer is a no-op — a networked game must keep running underneath the
    picker, which is exactly what the poll below makes possible. */
 static void windowSaveDialogPause(ClientSim *cs, bool active) {
-  if (active) {
-    if (!windowIsSoloSession(cs)) return;
-    if (s_saveDialogPaused) return;          /* idempotent */
-    s_saveDialogPaused = TRUE;
-    windowUpdateServerPause(cs);
-    s_saveDialogPrevMuted = soundIsMuted();
-    soundSetMuted(TRUE);
-  } else {
-    /* Always clear on close — even if the session changed while the picker
-       was up — so a stale pause can't freeze a later game. */
-    if (!s_saveDialogPaused) return;
-    s_saveDialogPaused = FALSE;
-    windowUpdateServerPause(cs);
+  if (clientFrontSoloPause(cs, CLIENT_FRONT_PAUSE_SAVE_DIALOG, active)) {
     oldTick = SDL_GetTicks();
     ttick = oldTick;
-    soundSetMuted(s_saveDialogPrevMuted);
   }
 }
 
@@ -1776,14 +1716,7 @@ void windowFullScreenChoose(bool on) {
   gameFrontSaveCurrentPrefs();
 }
 
-void windowSmoothScrolling_toggle(void) {
-  smoothScrollingEnabled = !smoothScrollingEnabled;
-  /* Clear any in-progress sub-tile offset so the view snaps cleanly
-     to a tile boundary when toggling off. */
-  if (!smoothScrollingEnabled) {
-    sdl3DrawSetDragOffset(0, 0);
-  }
-}
+/* windowSmoothScrolling_toggle is in client_frontend_common.c. */
 
 void windowSoundEffects_toggle(void) {
   soundEffects = !soundEffects;
@@ -1826,137 +1759,11 @@ void windowSetMasterVolume(int pct) {
   voiceSetMasterVolume((float)pct / 100.0f);
 }
 
-/* -------------------------------------------------------
- * Voice settings — apply a value to the running voice module
- * and clamp it to the range the UI offers, in one place, so
- * the settings dialog and the prefs loader agree.  The voice
- * module itself holds the value; gameFrontPutPrefs reads it
- * back out through the getters below at save time.
- * ------------------------------------------------------- */
-void windowSetVoiceEnabled(bool on) {
-  voiceSetEnabled(on);
-}
+/* The voice settings façade (windowSetVoice* and friends) is in
+ * voice_settings.c, which the iOS client compiles as well. */
 
-bool windowGetVoiceEnabled(void) {
-  return voiceIsEnabled();
-}
-
-void windowSetVoiceMode(int mode) {
-  if (mode < VOICE_MODE_OFF || mode > VOICE_MODE_OPEN) {
-    mode = VOICE_MODE_PTT;
-  }
-  voiceSetMode((VoiceMode)mode);
-}
-
-int windowGetVoiceMode(void) {
-  return (int)voiceGetMode();
-}
-
-void windowSetVoiceMicGain(float gain) {
-  if (gain < 0.0f) gain = 0.0f;
-  if (gain > 4.0f) gain = 4.0f;
-  voiceSetMicGain(gain);
-}
-
-float windowGetVoiceMicGain(void) {
-  return voiceGetMicGain();
-}
-
-void windowSetVoiceVolume(float gain) {
-  if (gain < 0.0f) gain = 0.0f;
-  if (gain > 2.0f) gain = 2.0f;
-  voiceSetOutputVolume(gain);
-}
-
-float windowGetVoiceVolume(void) {
-  return voiceGetOutputVolume();
-}
-
-/* The chosen audio devices, by display name, "" for the system default.
- * Nothing to clamp — the voice module holds the name and truncates it — but
- * they sit with the rest of the façade so gameFrontPutPrefs reads them back
- * the same way as everything else here. */
-void windowSetVoiceRecordingDevice(const char *name) {
-  voiceSetRecordingDevice(name);
-}
-
-const char *windowGetVoiceRecordingDevice(void) {
-  return voiceGetRecordingDevice();
-}
-
-void windowSetVoicePlaybackDevice(const char *name) {
-  voiceSetPlaybackDevice(name);
-}
-
-const char *windowGetVoicePlaybackDevice(void) {
-  return voiceGetPlaybackDevice();
-}
-
-#if defined(WINBOLO_VOICE_AEC)
-/* Echo cancellation of the other players' voices out of this microphone.
- * Same shape as the voice settings above: the canceller module holds the
- * switch and gameFrontPutPrefs reads it back through the getter. */
-void windowSetVoiceEchoCancel(bool on) {
-  voiceAecSetEnabled(on);
-}
-
-bool windowGetVoiceEchoCancel(void) {
-  return voiceAecIsEnabled();
-}
-
-/* Whether a canceller came up at all, which the getter above cannot say -
- * it reports the switch, and the switch is the player's either way. */
-bool windowGetVoiceEchoCancelAvailable(void) {
-  return voiceAecIsAvailable();
-}
-
-/* Whether that canceller is the operating system's rather than ours, which
- * is a different row in Settings: switched off and greyed, because there is
- * nothing here for the player to switch. */
-bool windowGetVoiceEchoCancelPlatform(void) {
-  return voiceAecIsPlatform();
-}
-#endif
-
-/* Tank-label microphone icons are held by the status renderer that
- * draws them; same façade shape as the voice settings above. */
-void windowSetShowTankMicIcons(bool on) {
-  sdl3DrawStatusSetShowMicIcons(on);
-}
-
-bool windowGetShowTankMicIcons(void) {
-  return sdl3DrawStatusGetShowMicIcons();
-}
-
-void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
-  allowNewPlayers = !allowNewPlayers;
-  clientSimSetAllowNewPlayers(cs, allowNewPlayers);
-}
-
-void windowMenuNewswire_toggle(ClientSim *cs) {
-  showNewswireMessages = !showNewswireMessages;
-  if (cs) clientSimShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
-}
-
-void windowMenuAssistant_toggle(ClientSim *cs) {
-  showAssistantMessages = !showAssistantMessages;
-  if (cs) clientSimShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
-}
-
-void windowMenuAI_toggle(ClientSim *cs) {
-  showAIMessages = !showAIMessages;
-  if (cs) clientSimShowMessages(cs, MSG_AI, showAIMessages);
-}
-
-void windowMenuNetwork_toggle(ClientSim *cs) {
-  showNetworkStatusMessages = !showNetworkStatusMessages;
-  if (cs) clientSimShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
-}
-
-void windowMenuNetworkDebug_toggle(ClientSim *cs) {
-  showNetworkDebugMessages = !showNetworkDebugMessages;
-  if (cs) clientSimShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
-}
+/* windowMenuAllowNewPlayers_toggle and the five message toggles are in
+ * client_frontend_common.c, shared with the web and iOS. */
 
 void windowLabelOwnTank_toggle(ClientSim *cs) {
   labelSelf = !labelSelf;
@@ -2106,40 +1913,11 @@ void windowSaveMap(ClientSim *cs) {
       return;
     }
 
-    /* Filename base from the map name, minus any ".map" suffix; fall back
-       to "map" when the name is empty. */
-    const char *mapName = clientSimGetMapName(cs);
-    char base[FILENAME_MAX];
-    if (mapName && mapName[0]) {
-      snprintf(base, sizeof(base), "%s", mapName);
-      size_t blen = strlen(base);
-      if (blen > 4 && strcmp(base + blen - 4, ".map") == 0) {
-        base[blen - 4] = '\0';
-      }
-    } else {
-      snprintf(base, sizeof(base), "map");
-    }
-
-    char ts[32];
-    time_t now = time(NULL);
-    strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", localtime(&now));
-
+    /* The name and the save itself are shared with iOS. */
     char mapsDir[FILENAME_MAX];
     snprintf(mapsDir, sizeof(mapsDir), "%smaps", prefDir);
-    SDL_CreateDirectory(mapsDir);
-
-    char fullPath[FILENAME_MAX];
-    snprintf(fullPath, sizeof(fullPath), "%s/%s_%s.map", mapsDir, base, ts);
-
     SDL_free(prefDir);
-
-    if (clientSaveMap(cs, fullPath) == FALSE) {
-      imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBERR_SAVEMAP),
-                        IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-    } else {
-      imguiMessageBoxEx(langGetText(STR_MENU_SAVE_MAP), fullPath,
-                        IMGUI_MSG_INFO, IMGUI_MSG_OK);
-    }
+    clientFrontSaveMapAutoNamed(cs, mapsDir);
     return;
   }
 
@@ -2186,10 +1964,6 @@ void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
   (void)xPos;
   (void)yPos;
   /* Building selection is handled by sdl3imgui.cpp building selection panel */
-}
-
-void windowStartTutorial(void) {
-  doingTutorial = TRUE;
 }
 
 /* -------------------------------------------------------
@@ -2281,7 +2055,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
 
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
   DWORD tick = SDL_GetTicks();
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   BYTE fullShells, fullMines, fullArmour, fullTrees;
   clientSimGetTankFullStats(cs, &fullShells, &fullMines, &fullArmour, &fullTrees);
   sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees,
@@ -2295,7 +2069,7 @@ void frontEndPlaySound(ClientSim *cs, sndEffects value) {
 
 void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
                           uint16_t gainL, uint16_t gainR) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   if (soundEffects == TRUE) {
     /* The player has turned positional sound off, so every sound plays
        centred; the near/far variant is already chosen. */
@@ -2314,7 +2088,7 @@ void windowPlaySound(sndEffects value) {
 }
 
 void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   /* Redundant with the per-frame render pass, which repaints every pill icon
      from sim state on the render thread (sdl3DrawMainScreen). This callback
      also fires on the server-tick thread, where touching the renderer races
@@ -2325,7 +2099,7 @@ void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
 }
 
 void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   /* See frontEndStatusPillbox — repainted every frame from sim state; skip
      the direct draw when off the render thread. */
   if (!sdl3DrawOnRenderThread()) return;
@@ -2334,7 +2108,7 @@ void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
 }
 
 void frontEndMessages(ClientSim *cs, char *top, char *bottom) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   if (drawBusy == FALSE) {
     DWORD tick = SDL_GetTicks();
     sdl3DrawMessages(0, 0, top, bottom);
@@ -2343,7 +2117,7 @@ void frontEndMessages(ClientSim *cs, char *top, char *bottom) {
 }
 
 void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   if (drawBusy == FALSE) {
     DWORD tick = SDL_GetTicks();
     sdl3DrawKillsDeaths(0, 0, kills, deaths);
@@ -2352,7 +2126,7 @@ void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {
 }
 
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   /* Redundant with the per-frame render pass, which repaints every base icon
      from sim state on the render thread (sdl3DrawMainScreen). This callback
      also fires on the server-tick thread (e.g. base capture / alliance change
@@ -2365,7 +2139,7 @@ void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
 
 void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) {
   DWORD tick = SDL_GetTicks();
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   BYTE fullShells, fullMines, fullArmour;
   clientSimGetBaseFullStats(cs, &fullShells, &fullMines, &fullArmour);
   sdl3DrawStatusBaseBars(0, 0, shells, mines, armour,
@@ -2375,7 +2149,7 @@ void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE a
 
 void frontEndManStatus(ClientSim *cs, bool isDead, TURNTYPE angle) {
   DWORD tick = SDL_GetTicks();
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   clientMutexWaitFor();
   sdl3DrawSetManStatus(0, 0, isDead, angle);
   clientMutexRelease();
@@ -2384,7 +2158,7 @@ void frontEndManStatus(ClientSim *cs, bool isDead, TURNTYPE angle) {
 
 void frontEndManClear(ClientSim *cs) {
   DWORD tick = SDL_GetTicks();
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   clientMutexWaitFor();
   sdl3DrawSetManClear();
   sdl3DrawCopyManStatus(0, 0);
@@ -2412,43 +2186,35 @@ void frontEndAudioReturningToLobby(bool active) {
   soundSetReturningToLobby(active);
 }
 
-void frontEndGameOver(ClientSim *cs) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+/* frontEndGameOver is in client_frontend_common.c; these are this driver's
+   parts of it. Every time-limit game over leaves the game here. */
+bool windowGameOverEndsGame(ClientSim *cs) {
+  (void)cs;
+  return TRUE;
+}
+
+void windowGameOverStopTicks(void) {
   SDL_RemoveTimer(timerFrameID);
   SDL_RemoveTimer(timerGameID);
   timerFrameID = 0;
   timerGameID = 0;
-  imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBTIMELIMIT_END),
-                    IMGUI_MSG_INFO, IMGUI_MSG_OK);
+}
+
+void windowGameOverLeave(void) {
   winboloQuit = TRUE;
 }
 
-void frontEndSetActiveClientSim(struct ClientSim *cs) {
-  if (cs != s_activeUiCs) {
-    for (BYTE i = 0; i < MAX_TANKS; i++) {
-      sdl3ImguiClearPlayer(i);
-    }
-    /* Drop the previous game's newswire/kills text so it doesn't linger on
-       the message surface when the next game starts (it would otherwise stay
-       visible until the first message overwrites it). */
-    sdl3DrawResetCachedText();
-    /* Drop the previous game's latched build target for the same reason: it
-       is the square a click builds at, and it outlives the ClientSim that
-       set it, so without this the first click of the next game is dispatched
-       to a tile chosen in the last one. */
-    buildCursorReset();
-  }
-  s_activeUiCs = cs;
-}
+/* frontEndSetActiveClientSim and the active-sim test the callbacks here make
+   (clientFrontIsActiveUiSim) come from client_frontend_common.c. */
 
 void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   sdl3ImguiClearPlayer((unsigned char)value);
 }
 
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) {
   char cc[3];
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   if (!clientSimIsRunning(cs)) {
     cc[0] = 'X'; cc[1] = 'X'; cc[2] = '\0';
     sdl3ImguiSetPlayer((unsigned char)value, str, cc);
@@ -2467,19 +2233,19 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
 }
 
 void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   if (!clientSimIsRunning(cs)) return;
   sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
 }
 
 void frontEndUpdatePlayerFlags(ClientSim *cs, playerNumbers value,
                                uint8_t clientType, uint8_t clientFlags) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   sdl3ImguiUpdatePlayerFlags((unsigned char)value, clientType, clientFlags);
 }
 
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
 }
 
@@ -2539,159 +2305,14 @@ void frontEndEnableLeaveAllyMenu(bool enabled) {
  * frontEndShowGunsight — auto show/hide gunsight callback
  * ------------------------------------------------------- */
 void frontEndShowGunsight(ClientSim *cs, bool isShown) {
-  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientFrontIsActiveUiSim(cs)) return;
   showGunsight = !isShown;
   clientSimSetGunsight(cs, showGunsight);
 }
 
-/* -------------------------------------------------------
- * frontEndTutorial — tutorial position-triggered messages
- * Uses imguiMessageBoxEx instead of Win32 MessageBoxA.
- * ------------------------------------------------------- */
-/* Step index and render-frame counter are file-static so
- * frontEndTutorialReset() / frontEndTutorialNotePresentedFrame() can
- * touch them. The frame counter gates the intro: the tutorial starts
- * on tick 1, but the first complete frame hasn't been rendered yet, so
- * imguiMessageBoxEx's captureBackbuffer would grab a grey buffer. We
- * require a few presented frames before firing the intro; by then the
- * game screen is on the backbuffer and the modal dims over it. */
-#define TUTORIAL_INTRO_MIN_FRAMES 3
-static int tutorialStepIdx = 0;
-static int tutorialFramesPresented = 0;
-static bool respawn1Shown = false;
-
-/* humanSim lives in gamefront.c; we need it so the tutorial can clear
- * sim->isTutorial on both sims when the final dialog closes, letting
- * the player drive around freely afterwards. */
-extern ClientSim *humanSim;
-
-void frontEndTutorialReset(void) {
-  tutorialStepIdx = 0;
-  tutorialFramesPresented = 0;
-  respawn1Shown = false;
-}
-
-/* Polled once per frame on the main thread (client mutex free on entry).
-   Shows the start-1 respawn message once per tutorial run. The flag is set
-   by the server thread in tankDeath; we take-and-clear it under the mutex,
-   then hand the message to the in-loop overlay, which freezes the sim
-   (windowTutorialPause) while it is up — no direct serverSimSetPaused. */
-static void tutorialRespawnPoll(void) {
-  if (isTutorial != TRUE || respawn1Shown) return;
-  if (tutorialOverlayIsOpen()) return;   /* don't stack on a step message */
-  ServerSim *srv = gameFrontGetServerSim();
-  if (!srv) return;
-  clientMutexWaitFor();
-  bool fire = serverSimTakeTutorialRespawn1(srv);
-  clientMutexRelease();
-  if (!fire) return;
-  respawn1Shown = true;
-  {
-    uint16_t ids[1];
-    ids[0] = STR_TUTORIAL_RESPAWN1;
-    tutorialOverlayShow(ids, 1, NULL);
-  }
-}
-
-/* Called from the main loop immediately after SDL_RenderPresent so we
- * can defer the intro until a real game frame is on screen. */
-void frontEndTutorialNotePresentedFrame(void) {
-  if (tutorialFramesPresented < TUTORIAL_INTRO_MIN_FRAMES) {
-    tutorialFramesPresented++;
-  }
-}
-
-/* Runs from the render path (tutorialOverlayRender) when the player dismisses
-   the last message of the current tutorial step.  Advances the step sequencer
-   and, on the final step, leaves tutorial mode.  The overlay's open/close edge
-   has already lifted the solo freeze (windowTutorialPause) by the time this
-   runs, and the client mutex is free, so sim mutations take it here. */
-static void tutorialStepComplete(void) {
-  bool finalStep = (tutorialStepIdx == tutorialStepCount - 1);
-
-  /* Final step: exit tutorial mode so the player can keep driving.  We clear
-   * the global client flag plus both sims' isTutorial so frontEndTutorial()
-   * no-ops on future ticks and the server stops auto-halting the tank at old
-   * trigger rows.  The game timer keeps running — the old implementation
-   * removed it, locking the player out of movement.  Also persist completion
-   * so the welcome menu stops offering it (re-enable from Settings). */
-  if (finalStep) {
-    isTutorial = FALSE;
-    clientMutexWaitFor();
-    if (humanSim) clientSimSetTutorial(humanSim, false);
-    {
-      ServerSim *srv = gameFrontGetServerSim();
-      if (srv) serverSimSetTutorial(srv, false);
-    }
-    clientMutexRelease();
-    gameFrontSetShowTutorialButton(false);
-  }
-
-  doingTutorial = FALSE;
-  tutorialStepIdx++;
-
-  /* Once the player passes the boat-building step (the tutorialSteps row
-     with pos == 66), respawn at start 1 (the far bank) instead of start 0
-     (out at sea). Found by scanning for the row, not a fixed index, so it
-     survives step-table edits. */
-  {
-    int boatStep = -1;
-    int s;
-    for (s = 0; s < tutorialStepCount; s++) {
-      if (tutorialSteps[s].pos == 66) { boatStep = s; break; }
-    }
-    clientMutexWaitFor();
-    {
-      ServerSim *srv = gameFrontGetServerSim();
-      if (srv && boatStep >= 0) {
-        serverSimSetTutorialStartIdx(srv, (tutorialStepIdx > boatStep) ? 1 : 0);
-      }
-    }
-    clientMutexRelease();
-  }
-}
-
-bool frontEndTutorial(BYTE pos) {
-  int i;
-  int count;
-
-  if (isTutorial != TRUE) {
-    tutorialStepIdx = 0;    /* Reset for the next tutorial run. */
-    return FALSE;
-  }
-  if (tutorialStepIdx >= tutorialStepCount) return FALSE;
-
-  /* A message is already up (or pending this frame): hold the tank but don't
-     re-trigger.  The overlay engages the solo freeze a frame after it opens,
-     after which the game tick stops running entirely; this guards that gap. */
-  if (tutorialOverlayIsOpen()) return TRUE;
-
-  {
-    BYTE stepPos = tutorialSteps[tutorialStepIdx].pos;
-    if (stepPos != TUTORIAL_POS_ANY && stepPos != pos) return FALSE;
-  }
-
-  /* Intro step only: defer until the game has rendered a frame, so the
-   * overlay opens over the map rather than a grey backbuffer. */
-  if (tutorialSteps[tutorialStepIdx].pos == TUTORIAL_POS_ANY &&
-      tutorialFramesPresented < TUTORIAL_INTRO_MIN_FRAMES) {
-    return FALSE;
-  }
-
-  doingTutorial = TRUE;
-  count = 0;
-  for (i = 0; i < TUTORIAL_MAX_MSGS; i++) {
-    if (tutorialSteps[tutorialStepIdx].msgs[i] == 0) break;
-    count++;
-  }
-  /* Hand the step's messages to the in-loop overlay.  Presentation, the solo
-     freeze, and the step-complete bookkeeping (tutorialStepComplete) all run
-     from the render path — this only enqueues, so it is safe to call under the
-     client mutex held by the game tick without blocking the server thread. */
-  tutorialOverlayShow(tutorialSteps[tutorialStepIdx].msgs, count,
-                      tutorialStepComplete);
-  return TRUE;
-}
+/* frontEndTutorial, frontEndTutorialReset and the rest of the tutorial step
+   sequencer come from client_frontend_common.c, the one body the desktop, web
+   and iOS drivers call; see "Platform variants" in docs/ARCHITECTURE.md. */
 
 /* -------------------------------------------------------
  * winboloCC — coin check (Win32-only anti-cheat).

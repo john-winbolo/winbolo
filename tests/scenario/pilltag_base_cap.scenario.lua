@@ -298,7 +298,46 @@ function on_tick(tick)
       game.teleport(1, A.cx + 2, A.cy, 64)
     end
     if c.take and tick >= A.first + c.take then
-      game.give_pill(1, pill)
+      -- give_pill refuses a pill that is in a tank. Seat 0 may have shot his
+      -- standing prize down and picked it up again by now, so first put it
+      -- down dead on his own square, or the nearest one round him that will
+      -- hold a pill (not water, a base or a building): the take below is
+      -- then a fresh one. While his builder is out with it to build it, no
+      -- tank holds it and both are refused, so try again each tick for up
+      -- to two seconds.
+      local pb = game.pill(pill)
+      local why, said = nil, ""
+      if pb ~= nil and pb.in_tank then
+        local from = holder or 0
+        local t0 = game.tank(from)
+        local down = false
+        why = "no tank"
+        if t0 ~= nil then down, why, said = game.drop_pill(from, pill) end
+        for r = 1, 3 do
+          for dy = -r, r do
+            for dx = -r, r do
+              if not down and t0 ~= nil
+                 and (math.abs(dx) == r or math.abs(dy) == r) then
+                down, why, said = game.drop_pill(from, pill, t0.mx + dx,
+                                                 t0.my + dy)
+              end
+            end
+          end
+        end
+        if down then why = nil end
+      end
+      if why == nil then
+        local ok
+        ok, why, said = game.give_pill(1, pill)
+        if ok then why = nil end
+      end
+      if why ~= nil then
+        if tick >= A.first + c.take + 200 then
+          A.fail(string.format("could not give seat 1 the prize: %s %s",
+                               tostring(why), tostring(said)))
+        end
+        return
+      end
       A.step = "take"
       A.take_wait = tick
       return

@@ -399,6 +399,7 @@ typedef struct {
 typedef struct {
     BYTE slot;
     BYTE killer;    /* 0xFF = environmental */
+    bool force;     /* kill him even inside his tank; false leaves him there */
 } ScnOpLgmKill;
 
 typedef struct {

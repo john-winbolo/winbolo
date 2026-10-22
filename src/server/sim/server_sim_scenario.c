@@ -324,6 +324,21 @@ static ScnOpResult scenarioOpTankTeleport(ServerSim *sim,
        does. */
     tankSetOnBoat(t, (pos == DEEP_SEA || pos == RIVER || pos == BOAT));
     tankClearBoatTrail(t);
+    /* The lag-compensation record of this tank holds the last 16 frames of
+       where it was, all of them before the jump. A player's shell tests a
+       tank where it was on the shooter's screen, so for as long as those
+       frames stayed in the record a shell at the old place would hit a tank
+       that is no longer there. Erased, the record says "nothing that old",
+       and the shell test falls back to where the tank is now, until the
+       record has filled again. scenarioTankFor has checked the slot. */
+    posHistoryInit(&sim->posHistory[p->slot]);
+    /* A builder inside the tank went with it, so his record goes too: a
+       frame that had him out beside the old place must not be where a blast
+       looks for him if he steps out again at the new one. A builder who is
+       out did not move. His record is still true and is left alone. */
+    if (sim->sim.lgmen[p->slot] != NULL && sim->sim.lgmen[p->slot]->inTank) {
+        posHistoryInit(&sim->lgmPosHistory[p->slot]);
+    }
     return SCN_OP_OK;
 }
 
@@ -566,7 +581,14 @@ BOLO_STATIC_ASSERT(SCN_NONE == NEUTRAL, scn_none_is_neutral_for_an_unowned_kill)
  *
  * Those reports fire on every builder death with no test of who the killer
  * is, so the arm makes sure a named killer is a player rather than putting a
- * condition inside a path the ordinary death shares. */
+ * condition inside a path the ordinary death shares.
+ *
+ * A man inside his tank is left there unless the script forces the kill.
+ * Forced, he dies as a man does whom a shell blast caught on the shooter's
+ * screen and who has got back in since: through lgmKillInTank, on the tank's
+ * centre, and the tank waits for him to fly in. That path leaves a man alone
+ * whose tank is itself dead, and so does this arm, with the same answer it
+ * gives for a man it cannot kill. */
 static ScnOpResult scenarioOpLgmKill(ServerSim *sim, const ScnOpLgmKill *p) {
     lgm *l = NULL;
     tank *t = NULL;
@@ -575,8 +597,9 @@ static ScnOpResult scenarioOpLgmKill(ServerSim *sim, const ScnOpLgmKill *p) {
     if (r != SCN_OP_OK) {
         return r;
     }
-    /* The two states an explosion cannot kill him in either. */
-    if ((*l)->isDead || (*l)->inTank) {
+    /* The two states an explosion cannot kill him in either. Only the second
+       is one a script can force its way past. */
+    if ((*l)->isDead || ((*l)->inTank && !p->force)) {
         return SCN_OP_ALREADY;
     }
     if (p->killer != SCN_NONE &&
@@ -584,6 +607,10 @@ static ScnOpResult scenarioOpLgmKill(ServerSim *sim, const ScnOpLgmKill *p) {
         return SCN_OP_NO_SUCH_PLAYER;
     }
 
+    if ((*l)->inTank) {
+        return lgmKillInTank(&sim->sim, l, t, p->killer) ? SCN_OP_OK
+                                                         : SCN_OP_ALREADY;
+    }
     lgmKill(&sim->sim, l, t, p->killer);
     return SCN_OP_OK;
 }
@@ -666,6 +693,11 @@ static ScnOpResult scenarioOpLgmParachute(ServerSim *sim,
     (*l)->y = (WORLD)(((WORLD)ey << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
     (*l)->destX = dx;
     (*l)->destY = dy;
+    /* The script moved the builder, so the frames recorded before the move
+       go, as a teleported tank's do. He is dead for the whole flight and the
+       frames say so already; this keeps the one rule for every scripted
+       move. scenarioBuilderFor has checked the slot. */
+    posHistoryInit(&sim->lgmPosHistory[p->slot]);
     return SCN_OP_OK;
 }
 

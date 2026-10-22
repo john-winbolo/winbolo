@@ -122,6 +122,7 @@ struct WbnLoginWork {
     bool steamSilent;   /* isSteam: launch re-auth (true) vs visible button (false) */
     bool isRegister;
     bool success;
+    bool tokenRejected;  /* validate: WinBolo.net said the token is not valid */
     SDL_AtomicInt done;
 };
 
@@ -153,7 +154,7 @@ static int wbnLoginThreadFunc(void *data) {
                                          w->playerNameOut, &w->rankOut, &w->rankTotalOut,
                                          &w->statsOut, w->errorMsg);
     } else if (w->isValidate) {
-        w->success = winbolonetAuthValidate(w->token, w->playerNameOut, &w->rankOut, &w->rankTotalOut, &w->statsOut, w->errorMsg);
+        w->success = winbolonetAuthValidateEx(w->token, w->playerNameOut, &w->rankOut, &w->rankTotalOut, &w->statsOut, w->errorMsg, &w->tokenRejected);
     } else {
         w->success = winbolonetAuthLogin(w->username, w->password, w->tokenOut, w->expiryOut, w->playerNameOut, &w->rankOut, &w->rankTotalOut, &w->statsOut, w->errorMsg);
     }
@@ -390,7 +391,11 @@ static void wbnCheckThread(void) {
             if (!wbnWork.isValidate) {
                 wbnState = WBN_ERROR;
             } else {
-                gameFrontClearWinbolonetToken();
+                /* Only a token WinBolo.net turned down is dropped; one it
+                 * could not be asked about stays for the next check. */
+                if (wbnWork.tokenRejected) {
+                    gameFrontClearWinbolonetToken();
+                }
                 wbnState = WBN_IDLE;
             }
         }
@@ -925,7 +930,7 @@ extern "C" void imguiWinbolonetDrawStatsDialog(void) {
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(dialogFontW(420.0f), 0), ImGuiCond_Appearing);
     /* Translucent panel matching the Local game finder. */
     ImGui::SetNextWindowBgAlpha(0.85f);
 
@@ -1013,11 +1018,12 @@ extern "C" void imguiWinbolonetDrawStatsDialog(void) {
      * Esc closes the dialog rather than signing out. The buttons share a
      * width and are centred as a group, mirroring the standard dialog
      * footer. My Games opens the WBN log browser, which defaults to its
-     * My Games tab; it is gated to the same desktop, non-controller builds
+     * My Games tab; it is gated to the same desktop and iOS, non-controller builds
      * as the welcome screen's Log Viewer entry. */
     const char *signOutLbl = langGetText(STR_DLGWBN_SIGN_OUT);
     const char *closeLbl    = langGetText(STR_OK);
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    /* Android does not compile the log browser or the reel. */
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
     const bool showMyGames  =
         !inputGamepadRealControllerConnected() && !uiModeIsSteamDeck();
     const char *myGamesLbl  = langGetText(STR_DLGWBN_TAB_MYGAMES);

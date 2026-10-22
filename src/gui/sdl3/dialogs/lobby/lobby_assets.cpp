@@ -1151,6 +1151,7 @@ void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         if (s_icons.picture)     { SDL_DestroyTexture(s_icons.picture);     s_icons.picture     = nullptr; }
         if (s_icons.play)        { SDL_DestroyTexture(s_icons.play);        s_icons.play        = nullptr; }
         if (s_icons.pause)       { SDL_DestroyTexture(s_icons.pause);       s_icons.pause       = nullptr; }
+        if (s_icons.openWindow)  { SDL_DestroyTexture(s_icons.openWindow);  s_icons.openWindow  = nullptr; }
         if (s_icons.tankSelf04)  { SDL_DestroyTexture(s_icons.tankSelf04);  s_icons.tankSelf04  = nullptr; }
         if (s_icons.tankEvil04)  { SDL_DestroyTexture(s_icons.tankEvil04);  s_icons.tankEvil04  = nullptr; }
         if (s_icons.tankGood04)  { SDL_DestroyTexture(s_icons.tankGood04);  s_icons.tankGood04  = nullptr; }
@@ -1230,4 +1231,5 @@ void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
     s_icons.picture = loadWhiteIcon(renderer, "data/ui/picture.svg", iconPx);
     s_icons.play    = loadWhiteIcon(renderer, "data/ui/play.svg", iconPx);
     s_icons.pause   = loadWhiteIcon(renderer, "data/ui/pause.svg", iconPx);
+    s_icons.openWindow = loadWhiteIcon(renderer, "data/ui/open_window.svg", iconPx);
 }

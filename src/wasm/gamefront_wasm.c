@@ -230,6 +230,7 @@ unsigned short gameFrontHostingPort             = 27500;
 bool           gameFrontHostingAllowSpec        = TRUE;
 bool           gameFrontHostingScripts          = TRUE;
 int            gameFrontHostingMaxSpec          = 16;
+int            gameFrontHostingSpecDelay        = HOSTING_SPEC_DELAY_DEFAULT_SECS;
 int            gameFrontHostingUploadPolicy     = UPLOAD_POLICY_ALLOW;
 int            gameFrontHostingUploadMaxFiles   = 64;
 int            gameFrontHostingUploadMaxStorage = 8;
@@ -665,6 +666,9 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
   humanSim = clientSimAlloc();
   clientSimCreate(humanSim);
   frontEndSetActiveClientSim(humanSim);
+  /* The web has no desktop game loop to open the game view, so the view's
+     per-game reset runs as the sim is registered. */
+  sdl3ImguiNewGame(humanSim);
 
   if (urlNetType == netUdp) {
     /* ---- UDP multiplayer via new transport ---- */
@@ -767,10 +771,15 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
         bool wrongBefore = (password[0] != '\0');
         if (wasmAskJoinPassword(wrongBefore)) {
           clientSimDisconnect(humanSim);
+          /* Clear the active sim first: the new ClientSim can be allocated
+           * at the same address, and frontEndSetActiveClientSim only resets
+           * the roster and build cursor when the pointer changes. */
+          frontEndSetActiveClientSim(NULL);
           clientSimDestroy(humanSim);
           humanSim = clientSimAlloc();
           clientSimCreate(humanSim);
           frontEndSetActiveClientSim(humanSim);
+          sdl3ImguiNewGame(humanSim);
           clientSimSetMyLastPlayerName(humanSim, gameFrontName);
           continue;
         }
@@ -851,7 +860,9 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
       }
       if (wasmServerSim == NULL) {
         printf("[WASM] Failed to create ServerSim\n");
+        frontEndSetActiveClientSim(NULL);
         clientSimDestroy(humanSim);
+        humanSim = NULL;
         return FALSE;
       }
     }
@@ -936,7 +947,9 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
         wasmScenarioHost = NULL;
         serverSimDestroy(wasmServerSim);
         wasmServerSim = NULL;
+        frontEndSetActiveClientSim(NULL);
         clientSimDestroy(humanSim);
+        humanSim = NULL;
         return FALSE;
       }
     }
@@ -986,7 +999,9 @@ bool gameFrontWasmStart(const char *cmdLine, keyItems *keys,
       serverDedicatedLogUninstall();
       serverSimDestroy(wasmServerSim);
       wasmServerSim = NULL;
+      frontEndSetActiveClientSim(NULL);
       clientSimDestroy(humanSim);
+      humanSim = NULL;
       return FALSE;
     }
     wasmTransportActive = TRUE;
@@ -1334,6 +1349,7 @@ void gameFrontSetHostingScripts(bool allow) {
 }
 
 void gameFrontSetHostingMaxSpec(int maxSpec)         { gameFrontHostingMaxSpec = maxSpec; }
+void gameFrontSetHostingSpecDelay(int seconds)       { gameFrontHostingSpecDelay = seconds; }
 void gameFrontSetHostingUploadPolicy(int policy)     { gameFrontHostingUploadPolicy = policy; }
 void gameFrontSetHostingUploadMaxFiles(int maxFiles) { gameFrontHostingUploadMaxFiles = maxFiles; }
 void gameFrontSetHostingLogging(bool logging)        { gameFrontHostingLogging = logging; }
@@ -1721,7 +1737,7 @@ void gameFrontRequestPlayTutorial(void) {
 void gameFrontSaveWindowSettings(void) {
 }
 
-/* Called every frame by the game frame (sdl3ImguiProcessEvents) and the
+/* Called every frame by the game frame (top of sdl3ImguiPumpAndRender) and the
  * shared dialog loops: push any setting changed this session, debounced.
  * No-op when not signed in or when nothing is sync-dirty. */
 void gameFrontPumpDirty(void) {

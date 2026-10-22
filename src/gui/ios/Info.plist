@@ -12,16 +12,30 @@
     <string>com.winbolo.ios</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>UIFileSharingEnabled</key>
+    <true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <true/>
     <key>CFBundleName</key>
     <string>$(PRODUCT_NAME)</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>UIApplicationSupportsIndirectInputEvents</key>
+    <true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>WinBolo looks for games on your local network and connects to the games you join there.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_winbolo._udp</string>
+    </array>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>WinBolo uses the microphone for voice chat with other players while voice chat is switched on.</string>
     <key>UILaunchScreen</key>
     <dict>
         <key>UIColorName</key>
@@ -38,6 +52,8 @@
     <array>
         <string>UIInterfaceOrientationLandscapeLeft</string>
         <string>UIInterfaceOrientationLandscapeRight</string>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
     </array>
     <key>CFBundleURLTypes</key>
     <array>
@@ -48,6 +64,48 @@
             <array>
                 <string>winbolo</string>
             </array>
+        </dict>
+    </array>
+
+    <!-- Game recordings (.wbv). The Documents directory shows in the Files
+         app and in Finder file sharing as the WinBolo folder, and a .wbv
+         opened from Files, Mail or another app launches WinBolo with it,
+         which the Log Viewer entry plays in the reel before the log
+         browser opens (gamefront.c, ios_log_player.cpp). -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>WinBolo Game Recording</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.winbolo.wbv</string>
+            </array>
+        </dict>
+    </array>
+    <key>UTImportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.winbolo.wbv</string>
+            <key>UTTypeDescription</key>
+            <string>WinBolo Game Recording</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+                <string>public.content</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>wbv</string>
+                </array>
+            </dict>
         </dict>
     </array>
 </dict>

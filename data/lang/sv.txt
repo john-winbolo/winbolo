@@ -951,7 +951,7 @@ STR_MAPGEN_TYPE_NATURAL=Naturlig
 STR_MAPGEN_TYPE_MAZE=Labyrint
 STR_MAPGEN_TYPE_FRACTAL=Fraktal
 STR_MAPGEN_SEED=Seed
-STR_MAPGEN_RANDOMIZE=Slumpa
+STR_MAPGEN_RANDOMIZE=Slumpa värden
 STR_MAPGEN_SYMMETRY=Symmetri
 STR_MAPGEN_SYM_4CORNER=4-hörns-spegling
 STR_MAPGEN_SYM_MIRROR_H=Spegla horisontellt
@@ -991,6 +991,86 @@ STR_MAPGEN_COAST_JAG=Kustojämnhet
 STR_MAPGEN_TERRAIN_LAYERS=Terrängskikt
 STR_MAPGEN_RIVERS=Floder
 STR_MAPGEN_LAKES=Sjöar
+STR_MAPGEN_TYPE_MAKER=Känd kartmakares stil
+STR_MAPGEN_SIZE=Storlek
+STR_MAPGEN_SIZE_FULL=Full
+STR_MAPGEN_SIZE_TIP=Sidan på den spelbara kvadraten i rutor. Full använder hela ytan.
+STR_MAPGEN_PRESET=Förval
+STR_MAPGEN_PRESET_TIP=Kartor i stil med en klassisk Bolo-kartmakare. Ett förval ställer in reglagen nedan; du kan sedan ändra vilket som helst.
+STR_MAPGEN_OUTLINE=Kontur
+STR_MAPGEN_OUTLINE_BOX=Rektangel
+STR_MAPGEN_OUTLINE_OCTAGON=Oktagon
+STR_MAPGEN_OUTLINE_ROUND=Rund
+STR_MAPGEN_OUTLINE_DIAMOND=Romb
+STR_MAPGEN_OUTLINE_CROSS=Kors
+STR_MAPGEN_OUTLINE_CLOVER=Klöver
+STR_MAPGEN_OUTLINE_ISLAND=Ö
+STR_MAPGEN_OUTLINE_VARIED=Blandad
+STR_MAPGEN_MSYM_NONE=Ingen
+STR_MAPGEN_MSYM_MIRROR=Spegla
+STR_MAPGEN_MSYM_ROT2=Halvt varv
+STR_MAPGEN_MSYM_MIRROR4=Spegla åt båda hållen
+STR_MAPGEN_MSYM_ROT4=Kvartsvarv
+STR_MAPGEN_WATER_PCT=Vatten %
+STR_MAPGEN_ROAD_PCT=Väg %
+STR_MAPGEN_ISLANDS=Öar
+STR_MAPGEN_DETAIL=Detaljer
+STR_MAPGEN_PRESET_BERSERKIR=Berserkir
+STR_MAPGEN_PRESET_SLUGGO_TOURNAMENT=Sluggo Tournament
+STR_MAPGEN_PRESET_SLUGDEATH=Sluggo Slugdeath
+STR_MAPGEN_PRESET_SLUGFEST=Sluggo Slugfest
+STR_MAPGEN_PRESET_SLUGGO_ADVENTUROUS=Sluggo Adventurous
+STR_MAPGEN_PRESET_SLUGGO_SYMMETRIC=Sluggo Symmetric
+STR_MAPGEN_PRESET_STOOGEFEST=Sluggo Stoogefest
+STR_MAPGEN_PRESET_BLACK_LIGHTNING=Black Lightning
+STR_MAPGEN_PRESET_BL_ISLANDS=Black Lightning Islands
+STR_MAPGEN_PRESET_DEATHHAND=Deathhand
+STR_MAPGEN_PRESET_MEGAWATT_TC=Megawatt TC
+STR_MAPGEN_PRESET_MEGAWATT_ISLANDS=Megawatt Islands
+STR_MAPGEN_PRESET_MOSH_PIT=Nature Mosh Pit
+STR_MAPGEN_PRESET_PALPATINE=Palpatine
+STR_MAPGEN_PRESET_CHEW_TOY=Chew Toy
+# Map Maker style panel
+STR_MAPGEN_LOCK_ALL=Lås alla
+STR_MAPGEN_UNLOCK_ALL=Lås upp alla
+STR_MAPGEN_PANEL_TITLE=Kartvärden
+STR_MAPGEN_STYLE_TITLE={string1}-stil
+STR_MAPGEN_STYLE_RANDOMIZE=Slumpa stil
+STR_MAPGEN_STYLE_NONE=Seedet gör inga andra val för den här kartmakaren.
+STR_MAPGEN_STYLE_FROM_SEED=Från seed
+STR_MAPGEN_STYLE_ROADS=Vägmönster
+STR_MAPGEN_ROADS_AXES=Kors
+STR_MAPGEN_ROADS_DIAG=Diagonaler
+STR_MAPGEN_ROADS_AXES_DIAG=Kors och diagonaler
+STR_MAPGEN_ROADS_AXES_RING=Kors och ring
+STR_MAPGEN_ROADS_DIAG_RING=Diagonaler och ring
+STR_MAPGEN_ROADS_RING=Ring
+STR_MAPGEN_STYLE_SHAPE=Form
+STR_MAPGEN_STYLE_CUT=Hörnavskärning
+STR_MAPGEN_STYLE_CORE=Podcentrum
+STR_MAPGEN_STYLE_RIM=Kust
+STR_MAPGEN_RIM_FOREST=Skogsrand
+STR_MAPGEN_RIM_GRASS=Gräs till kusten
+STR_MAPGEN_STYLE_YARD=Labyrintgård
+STR_MAPGEN_YARD_NONE=Ingen
+STR_MAPGEN_YARD_BUILDING=Byggnadsmurar
+STR_MAPGEN_YARD_FOREST=Skogsmurar
+STR_MAPGEN_STYLE_ROADS_TIP=Väglinjerna över landmassan. Från seed: seedet väljer ett av mönstren i listan.
+STR_MAPGEN_STYLE_SHAPE_TIP=Landmassans bredd i förhållande till höjden, gånger 100. 100 är fyrkantigt; högre värden är bredare. Från seed: seedet väljer ett värde inom intervallet.
+STR_MAPGEN_STYLE_CUT_TIP=Hur mycket oktagonen skär av varje hörn. Ett högre värde skär av ett mindre hörn. Från seed: seedet väljer ett värde inom intervallet.
+STR_MAPGEN_STYLE_CORE_TIP=Terrängen i mitten av varje ringpod. Från seed: seedet väljer en.
+STR_MAPGEN_STYLE_RIM_TIP=Ett band av skog runt kusten, eller gräs ända till vattnet. Från seed: seedet väljer en.
+STR_MAPGEN_STYLE_YARD_TIP=En gård med labyrintmurar på en ö, om en plats för den hittas. Från seed: seedet väljer en.
+STR_MAPGEN_STYLE_WALLS=Randmurar
+STR_MAPGEN_WALLS_NONE=Inga murar
+STR_MAPGEN_WALLS_BUILDING=Byggnadsmur på varje axel
+STR_MAPGEN_STYLE_MIDDLE=Mitten
+STR_MAPGEN_MIDDLE_OPEN=Öppen
+STR_MAPGEN_MIDDLE_PIECES=Diagonala bitar
+STR_MAPGEN_MIDDLE_CLUMP=Mittklump
+STR_MAPGEN_MIDDLE_BOTH=Diagonala bitar och mittklump
+STR_MAPGEN_STYLE_WALLS_TIP=En mur av byggnader tvärs över skogsranden på varje axel, som delar randen i fyra delar. Från seed: seedet väljer en.
+STR_MAPGEN_STYLE_MIDDLE_TIP=Byggnader nära mitten av golvet: korta bitar i 45 graders vinkel, en klump i centrum, eller båda. Från seed: seedet väljer en.
 
 # Log viewer sim-replay messages
 STR_LV_PLAYER_JOINED={player} gick med i spelet.
@@ -2094,6 +2174,8 @@ STR_DLGSETTINGS_HOSTING_SERVERNAME=Servernamn
 STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=Spelfinnaren visar det här namnet istället för din adress. Upp till 32 tecken (färre med accenttecken eller andra skriftsystem). Lämna det tomt för att visa din adress.
 STR_DLGSETTINGS_HOSTING_SERVERDESC=Beskrivning
 STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=Spelfinnaren visar det här när en spelare pekar på eller väljer ditt spel. Upp till 200 tecken (färre med accenttecken eller andra skriftsystem).
+STR_DLGSETTINGS_HOSTING_SPECDELAY=Åskådarfördröjning (sekunder)
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=Hur många sekunder bakom spelet åskådarna ligger, så att de inte kan avslöja för spelarna var alla är. 0 visar spelet live. Upp till 600.
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Röstchatt
@@ -2563,7 +2645,6 @@ STR_RULE_DESC_pill_base_defend_shape=Hur pill_base_defend_range mäts. 0 är en 
 STR_RULE_DESC_tank_slide_armour_bonus=Extra knuffsteg vid noll pansar, läggs till tank_slide_step i proportion till det pansar som saknades före träffen. Läses bara medan tank_slide_mac är på.
 STR_RULE_DESC_tank_slide_mac=Om en granatträff knuffar en tank på Mac Bolo-sättet. På: knuffen växer när pansaret minskar, med tank_slide_armour_bonus, och tank_slide_step och tank_bump_decay_shift räknas per 40 ms, i en glidning som rör sig varje tick. Av är WinBolo-knuffen, lika vid alla pansarnivåer.
 STR_RULE_DESC_tank_deep_sea_safe=Om en tank utan båt kan köra på djuphav utan att sjunka. Av är det klassiska spelet: djuphav sänker en tank utan båt. En tank som är ute på djuphav utan båt när detta stängs av igen sjunker på nästa tick.
-STR_RULE_DESC_man_bless_tile_terrain_speed=Om byggaren korsar rutan han ska bygga på med farten för dess terräng, som i Mac Bolo. Av är WinBolo-gången: han går till mitten av rutan med basens fart, vilken terräng det än är. En ruta utan gångfart, som en flod, en mur eller en bunker, behåller basens fart. Vägen tillbaka till tanken ändras inte.
 STR_RULE_DESC_pill_aim_iterations=Hur hårt en bunker jobbar för att leda ett rörligt mål.
 STR_RULE_DESC_pill_massage_range=Hur nära en tank måste vara för att en bunker ska sikta med den ursprungliga framåtförutsägelsen i stället för lösaren, som missar en tank som cirklar den. Noll, den klassiska tabellen, är en bunker som alltid leder sitt mål korrekt; 384 är en och en halv ruta, avståndet den gamla kompileringstidsomkopplaren använde.
 STR_RULE_DESC_pill_massage_cosine=Hur rakt mot en nära bunker en tank måste köra för att ändå siktas rätt på, som cosinus för vinkeln mellan dess kurs och linjen till bunkern. Vid ett siktas det slarvigt på varje tank inom pill_massage_range, vid noll på ingen av dem. Gör ingenting medan den regeln är noll.
@@ -2771,3 +2852,86 @@ STR_DLGSYSINFO_MEM_BUILDING=Byggnation
 STR_DLGSYSINFO_MEM_RUBBLE=Bråte
 STR_DLGSYSINFO_MEM_SWAMP=Träsk
 STR_DLGSYSINFO_MEM_GRASS=Gräs
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Tryck för att prata: håll ned mikrofonknappen på spelskärmen
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Dina filer
+STR_MAPEDIT_IOS_BUILTIN=Kartor som följer med WinBolo
+STR_MAPEDIT_IOS_NOFILES=Här finns inget ännu. Filer du sparar, och filer du lägger i WinBolo-mappen i appen Filer, visas här.
+STR_MAPEDIT_IOS_NAME=Namn
+STR_MAPEDIT_IOS_REPLACES=Det finns redan en fil med det här namnet. Om du sparar ersätts den.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Inspelningar
+STR_IOSREC_EMPTY=Inga inspelningar ännu. Omgångar för en spelare spelas in här, och .wbv-filer i WinBolo-mappen i appen Filer visas också här.
+STR_IOSREC_COPY=Kopiera till Filer
+STR_IOSREC_COPIED=Kopierad till WinBolo-mappen i appen Filer.
+STR_IOSREC_OPEN_FAILED=Inspelningen kunde inte öppnas.
+STR_IOSREC_LAST_ROUND=Senaste omgången för en spelare
+STR_IOSREC_COPY_FAILED=Inspelningen kunde inte kopieras till appen Filer.
+STR_DLGCONNECTING_TITLE=Ansluter till {string1}...
+STR_DLGCONNECTING_PING=Frågar servern om dess spel...
+STR_DLGCONNECTING_JOINING=Går med i spelet...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Den inspelningen kunde inte läsas.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Inställning
+STR_DLGLOBBY_DETAILS_COL_VALUE=Värde
+STR_DLGLOBBY_DETAILS_RULES=Regler:
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=Servern bestämmer det här värdet. Det kan inte ändras.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=av {string1} · uppdaterad {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=okänd
+STR_MENU_INFO_OVERLAY=Infoöverlägg
+STR_SCNPANEL_POP_OUT=Lossa
+STR_SCNPANEL_POP_IN=Docka
+STR_SCNPANEL_CLOSE_TITLE=Stäng {string1}?
+STR_SCNPANEL_CLOSE_BODY=Slå på det igen från {string1} > {string2}.
+STR_DLGLOBBY_SCENARIO_REQUIRED=Servern kör alltid det här skriptet. Det kan inte tas bort.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=Servern kör alltid scenariot som finns i den här omgången
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=Servern bestämmer den här listan. Den kan inte ändras.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Om bunkrar siktar som i Mac Bolo. Rörliga, fria stridsvagnar inom ungefär en ruta får bunkern att sikta långt längs deras färdriktning. Stillastående eller blockerade stridsvagnar får ingen förhållning. Ersätter pill_massage_range, pill_massage_cosine och pill_aim_iterations.
+STR_RULE_DESC_tank_collision_mac=Om stridsvagnar använder Mac Bolos riktningsberoende spriterutor och pixelknuffar mot murar, aktiva bunkrar och fientliga baser. Tillåter närmare passager bredvid en bunker för ”pill massage”.
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=Vem en stridsvagns död tillskrivs, frågat vid varje död; en drunkning anger offret om inte ett skript anger stridsvagnen som sänkte den.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} finns i WinBolo-mappen i appen Filer.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} kunde inte sparas.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=Kartan fyller skärmen och kontrollerna ritas ovanpå den.\nAv håller spelvyn kvadratisk, med kontrollerna bredvid.\nSparas till nästa gång.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Hur mycket av kartan som syns genom byggverktygen\ni helskärm. 0% är heltäckande, och reglaget stannar\nvid 90% så de inte kan göras osynliga.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Hur mycket av kartan som syns genom tank-, bunker- och\nbasrutnäten och förrådsstaplarna i helskärm. 0% är heltäckande,\noch reglaget stannar vid 90% så de inte kan göras osynliga.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Kartan fyller skärmen, med status-, bygg- och nyhetspanelerna ovanpå,\noch pekkontrollerna när du spelar med pekskärmen.\nAv visar den klassiska skärmen. Sparas till nästa gång.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=Den här enheten använder mobildata. Ett internetspel som körs över\nmobildata kommer troligen inte att fungera: mobilnät låter sällan andra\nspelare nå enheten. Med wifi är chansen mycket större.\n\nVara värd ändå?
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Dina GIF:ar
+STR_CLIPGIF_GALLERY_EMPTY=Inga GIF:ar än. Skapa en med GIF-knappen under reprisen eller GIF-knappen på ett klipp.
+STR_CLIPGIF_COPY=Kopiera till urklipp
+STR_CLIPGIF_SAVE=Spara på disk
+STR_CLIPGIF_COPIED=Kopierad.
+STR_CLIPGIF_COPY_FAILED=GIF:en kunde inte kopieras.
+STR_CLIPGIF_OPEN_FAILED=Den här GIF:en kunde inte öppnas.
+STR_CLIPGIF_MAP_FMT=Karta: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Spelare: {string1}
+STR_CLIPGIF_NO_DETAILS=Inga detaljer sparades med den här GIF:en.
+STR_CLIPGIF_LENGTH_TIP=GIF-längd i sekunder, från uppspelningspositionen.\nDra markören i slutet av den ljusa delen av tidslinjen för att ändra den också.
+STR_CLIPGIF_LOADING=Öppnar GIF:en...
+STR_CLIPGIF_TOO_LARGE=Den här GIF:en är för stor för att visas här. Du kan fortfarande kopiera eller spara den.
+STR_CLIPGIF_FILTER_NAME=GIF-bilder

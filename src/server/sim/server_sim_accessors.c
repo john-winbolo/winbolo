@@ -1172,6 +1172,22 @@ const char *scriptUploadPolicyWord(ScriptUploadPolicy p) {
     }
 }
 
+uint16_t hostingSpecDelayResolve(const char *word) {
+    char *end = NULL;
+    long secs;
+    if (word == NULL || word[0] == '\0') {
+        return HOSTING_SPEC_DELAY_DEFAULT_SECS;
+    }
+    secs = SDL_strtol(word, &end, 10);
+    if (end == word || *end != '\0' || secs < 0) {
+        return HOSTING_SPEC_DELAY_DEFAULT_SECS;
+    }
+    if (secs > HOSTING_SPEC_DELAY_MAX_SECS) {
+        return HOSTING_SPEC_DELAY_MAX_SECS;
+    }
+    return (uint16_t)secs;
+}
+
 uint16_t serverSimGetViewDecaySecs(const ServerSim *sim, ViewCategory cat) {
     if (sim == NULL) return VIEW_DECAY_DEFAULT_SECS;
     if ((int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) {

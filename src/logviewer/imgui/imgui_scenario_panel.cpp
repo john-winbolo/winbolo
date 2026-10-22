@@ -21,6 +21,7 @@
 
 #include "imgui_scenario_panel.h"
 #include "imgui_main_menu.h"
+#include "imgui_dock.h"
 #include "imgui.h"
 #include "../../gui/lang.h"
 /* Plain C, with nothing but the public scenario_panel.h behind it. */
@@ -138,8 +139,12 @@ void lv_imgui_scenario_panel_window(bool logLoaded) {
     {
         LvScnPanelFit    &fit   = s_fit;
         const ImGuiStyle &style = ImGui::GetStyle();
-        ImGuiCond cond = lv_g_reset_window_positions ? ImGuiCond_Always
-                                                     : ImGuiCond_FirstUseEver;
+        /* A panel that sat in the dock when the dock was turned off goes
+         * back to its default place, the same as a reset. */
+        bool to_default = lv_g_reset_window_positions ||
+                          lv_imgui_dock_take_float_reset("###lvscnpanel");
+        ImGuiCond cond = to_default ? ImGuiCond_Always
+                                    : ImGuiCond_FirstUseEver;
         ImVec2 vp = ImGui::GetMainViewport()->Size;
         float  side;
 
@@ -164,10 +169,15 @@ void lv_imgui_scenario_panel_window(bool logLoaded) {
         }
         ImGui::SetNextWindowSize(ImVec2(side + fit.frame.x, side + fit.frame.y),
                                  cond);
-        ImGui::SetNextWindowSizeConstraints(
-            ImVec2(fit.sideMin + fit.frame.x, fit.sideMin + fit.frame.y),
-            ImVec2(fit.sideMax + fit.frame.x, fit.sideMax + fit.frame.y),
-            lvScnPanelSquare, &fit);
+        /* Floating, the window is held square. In the dock its slot is as
+         * wide as the dock and as tall as the user makes it, so nothing is
+         * held and the square is drawn as big as the slot allows. */
+        if (!lv_imgui_dock_window_is_docked("###lvscnpanel")) {
+            ImGui::SetNextWindowSizeConstraints(
+                ImVec2(fit.sideMin + fit.frame.x, fit.sideMin + fit.frame.y),
+                ImVec2(fit.sideMax + fit.frame.x, fit.sideMax + fit.frame.y),
+                lvScnPanelSquare, &fit);
+        }
     }
 
     char title[128];
@@ -180,9 +190,15 @@ void lv_imgui_scenario_panel_window(bool logLoaded) {
         ImVec2          origin = ImGui::GetCursorScreenPos();
         ImVec2          avail  = ImGui::GetContentRegionAvail();
         float           side   = lvScnPanelMin(avail.x, avail.y);
+        bool            docked = ImGui::IsWindowDocked();
         ScnPanelDrawEnv env;
 
         if (side < 1.0f) side = 1.0f;
+        /* A slot in the dock is seldom square: centre the square across it. */
+        if (docked && avail.x > side) {
+            origin.x += (float)(int)((avail.x - side) * 0.5f);
+            ImGui::SetCursorScreenPos(origin);
+        }
         memset(&env, 0, sizeof(env));
         env.playerName = panelPlayerName;
         env.ctx        = NULL;
@@ -198,8 +214,10 @@ void lv_imgui_scenario_panel_window(bool logLoaded) {
          * back exactly. A side at the viewport's limit and below the one
          * kept is the size constraint shrinking the window to fit a smaller
          * viewport, not the user resizing it, and is not kept: otherwise one
-         * session in a small window would shrink the square for good. */
-        {
+         * session in a small window would shrink the square for good. The
+         * size of a slot in the dock is not the floating window's size, and
+         * is not kept either. */
+        if (!docked) {
             ImVec2 win     = ImGui::GetWindowSize();
             float  kept    = lvScnPanelMin(win.x - s_fit.frame.x,
                                            win.y - s_fit.frame.y);
@@ -246,8 +264,13 @@ void lv_imgui_scenario_status(bool logLoaded) {
        is where the top of the game view starts. */
     const float  height = ImGui::GetFontSize() * 1.5f;
     const ImVec2 size   = font->CalcTextSizeA(height, FLT_MAX, 0.0f, line);
-    const float  px     = vp->Pos.x + (vp->Size.x - size.x) * 0.5f;
-    const float  py     = vp->Pos.y + ImGui::GetFrameHeight() + 4.0f;
+    /* Centred over the map, which is what the sidebars leave of the window,
+       and under the top sidebar when there is one. */
+    int dockL = 0, dockT = 0, dockR = 0;
+    lv_imgui_dock_margins(&dockL, &dockT, &dockR, nullptr);
+    const float  mapW   = vp->Size.x - (float)(dockL + dockR);
+    const float  px     = vp->Pos.x + (float)dockL + (mapW - size.x) * 0.5f;
+    const float  py     = vp->Pos.y + ImGui::GetFrameHeight() + (float)dockT + 4.0f;
     const ImU32  edge   = IM_COL32(0, 0, 0, 255);
     for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {

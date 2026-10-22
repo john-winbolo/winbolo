@@ -27,7 +27,10 @@
  *                the optional crop frame drawn over the
  *                picture, and the render path that blits
  *                the viewer's visible slice and hands
- *                wheel, pinch and drag back to it.
+ *                wheel, pinch and drag back to it. Also
+ *                the "Spawn in log viewer" button, which
+ *                starts the separate Log Viewer program on
+ *                a copy of the round's log.
  *********************************************************/
 
 #include <cstdio>   /* snprintf — the seek slider's elapsed/total label */
@@ -41,13 +44,15 @@
 
 #include "imgui.h"
 #include "imgui_internal.h"  /* IM_PI, ImGui::SetKeyOwner — the buffering ring and the wheel capture */
-/* BOLO_MOBILE / BOLO_REEL_WBN_FETCH[_CURL] / BOLO_RECAP_CLIP_GIF; LobbyReelState
+/* BOLO_LOBBY_REEL / BOLO_REEL_WBN_FETCH[_CURL] / BOLO_RECAP_CLIP_GIF; LobbyReelState
  * and lobbyReel; the lvEmbed* entry points and the non-curl wbRoundLogFetch*
  * transport; lobbyIcons / lobbyLoadStatusIconsOnce; the clip export's entry
  * points; and through imgui_dialog_utils.h imguiHelpTooltip and
  * imguiPush/PopNearestSampling. */
 #include "lobby_internal.h"
+#include "../../wb_theme.h"  /* g_theme / wbThemeColor — the spawn failure line */
 extern "C" {
+#include "../../logviewer_spawn.h"  /* lvSpawnViewerCandidates / lvSpawnCopyName / lvSpawnIsCopyName / lvSpawnArgs */
 #include "client_sim.h"   /* ClientSim / ClientLobbySlot, the round-log getters and CLIENT_ROUND_LOG_*; RoundStatsSummary + ROUND_STATS_LOGKEY_LEN */
 #include "client_net.h"   /* clientSimNetSendRoundLogRequest — the ask that starts a transfer */
 #include "../../sdl3draw.h"      /* sdl3DrawGetWindow / sdl3DrawGetRenderer — what the viewer draws into */
@@ -61,7 +66,7 @@ extern "C" {
 #include "../../../../winbolonet/winbolonet_core.h"   /* winbolonetKeyIsValid — the key is pasted into a request path */
 }
 
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
 /* ── Embedded replay reel ─────────────────────────────────────────
  * The log viewer decodes on its own timer threads and paints the round
  * into an SDL render target; the recap blits the visible slice of that
@@ -310,6 +315,10 @@ void lobbyReelEnd(void) {
     if (s_reel.active) {
         lvEmbedEnd();
     }
+#if BOLO_REEL_SPAWN_VIEWER
+    /* The log copy the spawn button writes out is this round's, not the next. */
+    SDL_free(s_reel.spawnBytes);
+#endif
     /* Everything else goes back to its declared value in one write. The next
      * summary asks for its own round's log and reports nothing about a
      * transfer until it has one, and a crop frame belongs to the clip it was
@@ -521,12 +530,118 @@ void lobbyChatInputAppendTime(uint32_t curMs);
  * transport bar carries the same control the clip rows do, so both are reached
  * from here. */
 bool lobbyClipGifButton(const char *id, bool compact);
-void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName);
+void lobbyClipGifStartFromPlayhead(uint32_t curMs, uint32_t lenMs,
+                                   ClientSim *cs);
 /* Whether an export is running. The crop frame reads it to hold still: the
  * rect is fixed once at msf_gif_begin and every frame of the GIF is that size,
  * so letting it be dragged mid-capture would show a box the recording is not
  * following. */
 bool lobbyClipGifActive(void);
+
+/* The GIF length on the seek bar: a bright band from the playhead to where
+ * the transport's GIF would end, and a marker at its end that can be dragged
+ * to change the length. barMin/barMax are the seek slider's frame. Called
+ * after the slider has been submitted and its own state read, so the marker
+ * is the newer item and wins the hover where the two overlap (the slider is
+ * marked allow-overlap). Added with ItemAdd on a rect of its own rather than
+ * as a placed button, so it moves no cursor and takes no layout room.
+ *
+ * The band starts at the slider's value while it is being dragged, so it
+ * follows the handle, and at the playhead otherwise. */
+static void lobbyReelGifLenMarker(ImVec2 barMin, ImVec2 barMax,
+                                  uint32_t curMs, uint32_t totalMs) {
+    if (totalMs == 0 || barMax.x <= barMin.x) {
+        return;
+    }
+    const ImGuiStyle &sty = ImGui::GetStyle();
+    /* The x range the slider's grab centre moves over, laid out the way
+     * ImGui's slider does it for a float: 2 px in from each end of the frame
+     * and then half the grab, so a time sits at the same x as the grab
+     * would. */
+    const float grabPad = 2.0f;
+    float grabW = sty.GrabMinSize;
+    const float slideW = (barMax.x - barMin.x) - grabPad * 2.0f;
+    if (grabW > slideW) grabW = slideW;
+    const float x0 = barMin.x + grabPad + grabW * 0.5f;
+    const float x1 = barMax.x - grabPad - grabW * 0.5f;
+
+    uint32_t startMs = curMs;
+    if (s_reel.seeking) {
+        startMs = (uint32_t)(s_reel.seekRatio * (float)totalMs);
+    }
+    const uint32_t lenMs = clipGifLenClampMs(s_reel.gifLenMs, startMs, totalMs);
+    const float xs = clipGifTimelineX(startMs, totalMs, x0, x1);
+    const float xe = clipGifTimelineX(startMs + lenMs, totalMs, x0, x1);
+    const bool locked = lobbyClipGifActive();
+
+    /* The marker's hit area: wider than the line drawn, so it is easy to take
+     * hold of. */
+    const float hitW = ImGui::GetTextLineHeight() * 0.6f;
+    ImRect hit(ImVec2(xe - hitW * 0.5f, barMin.y),
+               ImVec2(xe + hitW * 0.5f, barMax.y));
+    bool hovered = false, held = false;
+    if (!locked) {
+        /* Mouse only: kept out of keyboard and controller navigation, where
+         * activating it would read a mouse position that is not there. The
+         * length field beside the GIF button is how those set the length. */
+        ImGuiID id = ImGui::GetID("##reelgiflenmark");
+        if (ImGui::ItemAdd(hit, id, nullptr, ImGuiItemFlags_NoNav)) {
+            ImGui::ButtonBehavior(hit, id, &hovered, &held,
+                                  ImGuiButtonFlags_NoNavFocus);
+            if (held && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                s_reel.gifLenMs = clipGifLenFromTimelineX(
+                    ImGui::GetIO().MousePos.x, startMs, totalMs, x0, x1);
+            }
+            if (hovered || held) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+            }
+            if (!held) {
+                imguiHelpTooltip(langGetText(STR_CLIPGIF_LENGTH_TIP));
+            }
+        }
+    }
+
+    /* Drawn over the slider's frame: the band is see-through so the time
+     * label under it still reads. Dimmer while a capture runs, when the
+     * marker does not answer a drag. */
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const float alpha = locked ? 0.45f : 1.0f;
+    ImU32 band = ImGui::GetColorU32(ImGuiCol_SliderGrabActive, 0.30f * alpha);
+    ImU32 mark = ImGui::GetColorU32((hovered || held) ? ImGuiCol_Text
+                                                      : ImGuiCol_SliderGrabActive,
+                                    alpha);
+    dl->AddRectFilled(ImVec2(xs, barMin.y + 1.0f), ImVec2(xe, barMax.y - 1.0f),
+                      band);
+    const float lineW = (hovered || held) ? 3.0f : 2.0f;
+    dl->AddRectFilled(ImVec2(xe - lineW * 0.5f, barMin.y),
+                      ImVec2(xe + lineW * 0.5f, barMax.y), mark);
+    /* A small notch on top, so the marker reads as a handle rather than a
+     * line in the label. */
+    const float tri = ImGui::GetTextLineHeight() * 0.25f;
+    dl->AddTriangleFilled(ImVec2(xe - tri, barMin.y),
+                          ImVec2(xe + tri, barMin.y),
+                          ImVec2(xe, barMin.y + tri), mark);
+}
+
+/* The GIF length field: the same length the marker sets, in seconds. Shows
+ * the length the export will use, so it moves with the marker and with the
+ * time left; what is typed is held as asked for and clamped again when it is
+ * used. ImGui keeps its own text while the field is being typed into, so the
+ * value written into it each frame does not fight the typing. */
+static void lobbyReelGifLenField(uint32_t curMs, uint32_t totalMs) {
+    const uint32_t lenMs = clipGifLenClampMs(s_reel.gifLenMs, curMs, totalMs);
+    float secs = clipGifLenToSeconds(lenMs);
+    ImGui::BeginDisabled(lobbyClipGifActive());
+    ImGui::SetNextItemWidth(ImGui::CalcTextSize("00.0").x +
+                            ImGui::GetStyle().FramePadding.x * 2.0f);
+    if (ImGui::InputFloat("##reelgiflen", &secs, 0.0f, 0.0f, "%.1f")) {
+        /* Clamped to the export's floor and cap only: the time left is
+         * applied where the length is used. */
+        s_reel.gifLenMs = clipGifLenFromSeconds(secs, 0u, 0u);
+    }
+    imguiHelpTooltip(langGetText(STR_CLIPGIF_LENGTH_TIP));
+    ImGui::EndDisabled();
+}
 
 /* The crop control, sitting with the export it crops. Names the frame rather
  * than describing it — the same rule the GIF control's caption follows, and
@@ -782,6 +897,25 @@ static void lobbyReelDrawTankLabels(ImVec2 imgMin, ImVec2 imgSize,
 #define REEL_WHEEL_STEP 1.0f  /* a mouse notch, the unit the wheel reports in */
 #define REEL_PINCH_STEP 0.15f /* magnification per step; matches the map views */
 
+#if defined(__IPHONEOS__)
+/* Pinch on iOS, from SDL's own pinch gesture events rather than from
+ * input_touch.c's viewport pinch: that one tracks fingers against the game
+ * view's rect and is fed only by the game loop, while the reel sits in the
+ * lobby's and the log player's ImGui loops, which already pan it through
+ * ImGui's touch-driven mouse. Each update's scale less one is banked here,
+ * which is the unit macOSPinchZoomConsume reports in, and the zoom input
+ * takes it on its next hovered frame. */
+static float s_reelTouchPinch = 0.0f;
+
+void lobbyReelPinchEvent(const SDL_Event *ev) {
+    if (ev->type == SDL_EVENT_PINCH_UPDATE && ev->pinch.scale > 0.0f) {
+        s_reelTouchPinch += ev->pinch.scale - 1.0f;
+    } else if (ev->type == SDL_EVENT_PINCH_BEGIN) {
+        s_reelTouchPinch = 0.0f;
+    }
+}
+#endif
+
 static void lobbyReelZoomInput(bool hovered, ImVec2 imgMin) {
     if (!hovered) {
         return;
@@ -822,7 +956,13 @@ static void lobbyReelZoomInput(bool hovered, ImVec2 imgMin) {
     /* Consumed on every hovered frame, gap or not: the accumulator is shared
      * with the other views, so the backlog has to be taken off it either way —
      * what a gap changes is that it is thrown away rather than spent. */
-    const float pinch = macOSPinchZoomConsume();
+    float pinch = macOSPinchZoomConsume();
+#if defined(__IPHONEOS__)
+    /* iOS has no trackpad: the two-finger pinch SDL reports, banked by
+     * lobbyReelPinchEvent, in the same units. */
+    pinch += s_reelTouchPinch;
+    s_reelTouchPinch = 0.0f;
+#endif
     if (pinch != 0.0f && continuing) {
         s_reel.pinchAccum += pinch;
         while (s_reel.pinchAccum >= REEL_PINCH_STEP) {
@@ -835,6 +975,257 @@ static void lobbyReelZoomInput(bool hovered, ImVec2 imgMin) {
         }
     }
 }
+
+static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
+                                  bool transport);
+
+#if BOLO_REEL_SPAWN_VIEWER
+/* ── "Spawn in log viewer" ────────────────────────────────────────
+ * Starts the separate Log Viewer program on this round's log, in a process of
+ * its own that the game does not wait for and does not stop when it closes.
+ *
+ * The viewer is given a copy of the log, written from the bytes the reel was
+ * given, never the game's own file. Those bytes are a complete log: the file
+ * this process recorded is read only after serverDedicatedLogStashCurrentRound
+ * has closed it (logStop) and published it, and a downloaded log is handed
+ * over only once every byte is here. The copy is written and closed before the
+ * process starts. A copy and not the file itself, because single player
+ * records every round to the one name singleplayer.wbv: a viewer holding that
+ * file open would stop the next round from being published there on Windows,
+ * and the next round would replace the file under a viewer on other systems.
+ * A client that joined has no file at all, only the downloaded bytes. */
+
+/* How long a spawn failure stays on the line under the reel. */
+static const Uint64 REEL_SPAWN_MSG_MS = 8000;
+/* How long the button stays off after a viewer was started. */
+static const Uint64 REEL_SPAWN_AGAIN_MS = 4000;
+
+/* Take a copy of the bytes about to go to the viewer embed, which frees its
+ * own buffer. A failed allocation leaves no copy, and the button disabled. */
+static void lobbyReelKeepSpawnCopy(const uint8_t *buf, size_t len) {
+    SDL_free(s_reel.spawnBytes);
+    s_reel.spawnBytes = nullptr;
+    s_reel.spawnLen   = 0;
+    if (buf == nullptr || len == 0) return;
+    s_reel.spawnBytes = (uint8_t *)SDL_malloc(len);
+    if (s_reel.spawnBytes != nullptr) {
+        SDL_memcpy(s_reel.spawnBytes, buf, len);
+        s_reel.spawnLen = len;
+    }
+}
+
+/* The copy names found in the copies folder, for the enumeration below. */
+typedef struct LobbyReelCopyList {
+    char names[64][64];
+    int  count;
+} LobbyReelCopyList;
+
+static SDL_EnumerationResult SDLCALL lobbyReelListCopy(void *userdata,
+                                                       const char *dirname,
+                                                       const char *fname) {
+    (void)dirname;
+    LobbyReelCopyList *list = (LobbyReelCopyList *)userdata;
+    if (lvSpawnIsCopyName(fname) && SDL_strlen(fname) < sizeof(list->names[0]) &&
+        list->count < (int)SDL_arraysize(list->names)) {
+        SDL_strlcpy(list->names[list->count], fname, sizeof(list->names[0]));
+        list->count++;
+    }
+    return SDL_ENUM_CONTINUE;
+}
+
+static int SDLCALL lobbyReelCompareCopy(const void *a, const void *b) {
+    return SDL_strcmp((const char *)a, (const char *)b);
+}
+
+/* Delete the older copies, so that with the one about to be written the
+ * folder holds LV_SPAWN_KEEP_COPIES. The names start with the time, so the
+ * order of the names is the order they were made in. Only names
+ * lvSpawnCopyName makes are touched. A copy a viewer still has open cannot be
+ * deleted on Windows; that one stays, and goes on a later spawn. */
+static void lobbyReelPruneCopies(const char *dir) {
+    static LobbyReelCopyList list; /* 4 KiB: kept off the stack */
+    list.count = 0;
+    if (!SDL_EnumerateDirectory(dir, lobbyReelListCopy, &list)) return;
+    if (list.count < LV_SPAWN_KEEP_COPIES) return;
+    SDL_qsort(list.names, (size_t)list.count, sizeof(list.names[0]),
+              lobbyReelCompareCopy);
+    for (int i = 0; i <= list.count - LV_SPAWN_KEEP_COPIES; i++) {
+        char path[LV_SPAWN_PATH_MAX];
+        SDL_snprintf(path, sizeof(path), "%s%s", dir, list.names[i]);
+        SDL_RemovePath(path);
+    }
+}
+
+/* Write the copy and start the viewer on it. Gives 0 when the viewer started,
+ * else the lang id that says what went wrong. */
+static int lobbyReelSpawnViewer(const char *mapName) {
+    if (s_reel.spawnBytes == nullptr || s_reel.spawnLen == 0) {
+        return STR_DLGLOBBY_REEL_SPAWN_NO_LOG;
+    }
+
+    /* The program first: no copy is written for a viewer that is not there. */
+    char        candidates[LV_SPAWN_CANDIDATES_MAX][LV_SPAWN_PATH_MAX];
+    const char *basePath = SDL_GetBasePath();
+    const int   nCand = lvSpawnViewerCandidates(basePath, LV_SPAWN_OS_THIS,
+                                                candidates,
+                                                LV_SPAWN_CANDIDATES_MAX);
+    const char *exePath = nullptr;
+    for (int i = 0; i < nCand; i++) {
+        SDL_PathInfo info;
+        if (SDL_GetPathInfo(candidates[i], &info) &&
+            info.type == SDL_PATHTYPE_FILE) {
+            exePath = candidates[i];
+            break;
+        }
+    }
+    if (exePath == nullptr) {
+        WB_LOG_INFO(WB_LOG_CAT_GUI, "[REEL] Spawn in log viewer: no Log Viewer "
+                    "beside the game (base path \"%s\")",
+                    basePath ? basePath : "");
+        return STR_DLGLOBBY_REEL_SPAWN_NO_VIEWER;
+    }
+
+    /* The copies folder, in the prefs folder the game already writes to. */
+    char  dir[LV_SPAWN_PATH_MAX];
+    char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir == nullptr) {
+        return STR_DLGLOBBY_REEL_SPAWN_SAVE_FAILED;
+    }
+    const int dirLen = SDL_snprintf(dir, sizeof(dir), "%slogviewer-copies/",
+                                    prefDir);
+    SDL_free(prefDir);
+    if (dirLen <= 0 || (size_t)dirLen >= sizeof(dir) ||
+        !SDL_CreateDirectory(dir)) {
+        return STR_DLGLOBBY_REEL_SPAWN_SAVE_FAILED;
+    }
+    lobbyReelPruneCopies(dir);
+
+    /* A name of its own: the time, the map, and a number when the same second
+     * already has a copy. */
+    SDL_Time     now = 0;
+    SDL_DateTime dt;
+    SDL_zero(dt);
+    if (!SDL_GetCurrentTime(&now) || !SDL_TimeToDateTime(now, &dt, true)) {
+        return STR_DLGLOBBY_REEL_SPAWN_SAVE_FAILED;
+    }
+    char logPath[LV_SPAWN_PATH_MAX];
+    bool named = false;
+    for (unsigned seq = 0; seq < 100 && !named; seq++) {
+        char name[128];
+        if (!lvSpawnCopyName(name, sizeof(name), dt.year, dt.month, dt.day,
+                             dt.hour, dt.minute, dt.second, seq, mapName)) {
+            break;
+        }
+        const int n = SDL_snprintf(logPath, sizeof(logPath), "%s%s", dir, name);
+        if (n <= 0 || (size_t)n >= sizeof(logPath)) break;
+        named = !SDL_GetPathInfo(logPath, NULL);
+    }
+    if (!named || !SDL_SaveFile(logPath, s_reel.spawnBytes, s_reel.spawnLen)) {
+        WB_LOG_INFO(WB_LOG_CAT_GUI, "[REEL] Spawn in log viewer: could not "
+                    "write the log copy: %s", SDL_GetError());
+        return STR_DLGLOBBY_REEL_SPAWN_SAVE_FAILED;
+    }
+
+    /* An argument list and no shell, so the spaces and letters outside ASCII
+     * in either path need no quotes. On macOS the list starts "open", so the
+     * viewer comes to the front (logviewer_spawn.h). In the background: SDL
+     * then does not keep the program tied to the game, and SDL_DestroyProcess
+     * below only lets go of it; it does not stop it. */
+    const char *args[LV_SPAWN_ARGS_MAX];
+    char        bundlePath[LV_SPAWN_PATH_MAX];
+    lvSpawnArgs(LV_SPAWN_OS_THIS, exePath, logPath, bundlePath,
+                sizeof(bundlePath), args);
+    SDL_PropertiesID props = SDL_CreateProperties();
+    SDL_Process     *proc  = nullptr;
+    if (props != 0) {
+        SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER,
+                               (void *)args);
+        SDL_SetBooleanProperty(props, SDL_PROP_PROCESS_CREATE_BACKGROUND_BOOLEAN,
+                               true);
+        proc = SDL_CreateProcessWithProperties(props);
+        SDL_DestroyProperties(props);
+    }
+    if (proc == nullptr) {
+        WB_LOG_INFO(WB_LOG_CAT_GUI, "[REEL] Spawn in log viewer: \"%s\" did not "
+                    "start: %s", exePath, SDL_GetError());
+        SDL_RemovePath(logPath);
+        return STR_DLGLOBBY_REEL_SPAWN_START_FAILED;
+    }
+    SDL_DestroyProcess(proc);
+    WB_LOG_INFO(WB_LOG_CAT_GUI, "[REEL] Spawn in log viewer: started \"%s\" on "
+                "\"%s\"", exePath, logPath);
+    return 0;
+}
+
+/* The button, on the transport row, for a reel that is up. Hidden in tablet
+ * mode, which has no place for a second window. Disabled when there is no
+ * copy of the log to give the viewer, and for a few seconds after a viewer
+ * was started: its window can take a moment to appear, and a press for each
+ * of those moments would start a viewer each. */
+static void lobbyReelSpawnButton(ClientSim *cs) {
+    if (uiModeIsTablet()) return;
+    ImGui::SameLine();
+    const Uint64 nowMs    = SDL_GetTicks();
+    const bool   haveLog  = s_reel.spawnBytes != nullptr;
+    const bool   starting = nowMs < s_reel.spawnAgainAtMs;
+    const bool   disabled = !haveLog || starting;
+    const int tip = !haveLog  ? STR_DLGLOBBY_REEL_SPAWN_NO_LOG
+                    : starting ? STR_DLGLOBBY_REEL_SPAWN_STARTED
+                               : STR_DLGLOBBY_REEL_SPAWN_LV_TIP;
+    const char *tipText = langGetText((langid)tip);
+    /* A glyph the same size as the play/pause one beside it, with the same
+     * hover. When the icon did not load, a text button that says "Log
+     * Viewer", so the feature still works. */
+    SDL_Texture *icon = lobbyIcons()->openWindow;
+    if (disabled) ImGui::BeginDisabled();
+    bool clicked;
+    if (icon) {
+        clicked = ImGui::ImageButton(
+            "##reelspawn", (ImTextureID)icon,
+            ImVec2(ImGui::GetTextLineHeight(), ImGui::GetTextLineHeight()),
+            ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0),
+            ImGui::GetStyleColorVec4(ImGuiCol_Text));
+    } else {
+        clicked = ImGui::Button(langGetText(STR_DLGWELCOME_LOGVIEWER));
+    }
+    if (clicked) {
+        const int failed = lobbyReelSpawnViewer(clientSimGetMapName(cs));
+        s_reel.spawnMsg        = failed ? failed : STR_DLGLOBBY_REEL_SPAWN_STARTED;
+        s_reel.spawnMsgUntilMs = nowMs + REEL_SPAWN_MSG_MS;
+        if (!failed) s_reel.spawnAgainAtMs = nowMs + REEL_SPAWN_AGAIN_MS;
+    }
+    if (disabled) ImGui::EndDisabled();
+    /* imguiHelpTooltip skips a disabled item, and a disabled button is the one
+     * that most needs to say why. */
+    if (disabled) {
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip |
+                                 ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("%s", tipText);
+        }
+    } else {
+        imguiHelpTooltip(tipText);
+    }
+}
+
+/* What the last spawn came to, on a line of its own under the transport row,
+ * until it times out or is closed. A failure is in the colour the lobby's
+ * other refusals use; that the viewer started is in the ordinary colour. */
+static void lobbyReelSpawnMessage(void) {
+    if (s_reel.spawnMsg == 0) return;
+    if (SDL_GetTicks() >= s_reel.spawnMsgUntilMs) {
+        s_reel.spawnMsg = 0;
+        return;
+    }
+    const bool failed = s_reel.spawnMsg != STR_DLGLOBBY_REEL_SPAWN_STARTED;
+    if (failed) ImGui::PushStyleColor(ImGuiCol_Text, wbThemeColor(g_theme->lockBadge));
+    ImGui::TextUnformatted(langGetText((langid)s_reel.spawnMsg));
+    if (failed) ImGui::PopStyleColor();
+    ImGui::SameLine();
+    if (ImGui::SmallButton("X##reelspawnmsg")) {
+        s_reel.spawnMsg = 0;
+    }
+}
+#endif /* BOLO_REEL_SPAWN_VIEWER */
 
 void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
                             float s) {
@@ -977,6 +1368,9 @@ void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
                 uint8_t *buf = (len > 0) ? (uint8_t *)malloc((size_t)len) : NULL;
                 if (buf) {
                     if (SDL_ReadIO(io, buf, (size_t)len) == (size_t)len) {
+#if BOLO_REEL_SPAWN_VIEWER
+                        lobbyReelKeepSpawnCopy(buf, (size_t)len);
+#endif
                         s_reel.active = lvEmbedBegin(sdl3DrawGetWindow(),
                                                     sdl3DrawGetRenderer(),
                                                     buf, (size_t)len,
@@ -1008,6 +1402,9 @@ void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
                 buf = clientSimTakeRoundLog(cs, &len);
             }
             if (buf) {
+#if BOLO_REEL_SPAWN_VIEWER
+                lobbyReelKeepSpawnCopy(buf, len);
+#endif
                 s_reel.active = lvEmbedBegin(sdl3DrawGetWindow(),
                                             sdl3DrawGetRenderer(),
                                             buf, len,
@@ -1033,9 +1430,75 @@ void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
          * or the viewer refused the ones that were. They all read the same to
          * the player, and none of them get better by being tried again. */
         s_reel.loadFailed = !s_reel.active;
+#if BOLO_REEL_SPAWN_VIEWER
+        /* Bytes the viewer refused are no log to offer it again. */
+        if (!s_reel.active) {
+            SDL_free(s_reel.spawnBytes);
+            s_reel.spawnBytes = nullptr;
+            s_reel.spawnLen   = 0;
+        }
+#endif
     }
     if (!s_reel.active) return;
 
+    lobbyReelRenderPlayer(cs, rect, true, true);
+}
+
+/* A reel opened outside the lobby, on a round's bytes handed over whole: the
+ * WinBolo.net log browser on a client with no modal log viewer (iOS) plays a
+ * game through it. Clears whatever reel there was first, so the one decoder
+ * the viewer has is free; the viewer owns zipData from the call on, and frees
+ * it when it refuses it. lobbyReelEnd closes it again. */
+bool lobbyReelOpenStandalone(uint8_t *zipData, size_t zipLen, ImVec2 rect) {
+    lobbyReelEnd();
+    s_reel.tried = true;
+    s_reel.viewW = rect.x;
+    s_reel.viewH = rect.y;
+    s_reel.active = lvEmbedBegin(sdl3DrawGetWindow(), sdl3DrawGetRenderer(),
+                                 zipData, zipLen, (int)rect.x, (int)rect.y);
+    s_reel.loadFailed = !s_reel.active;
+    return s_reel.active;
+}
+
+/* The picture and the transport row of a reel opened by
+ * lobbyReelOpenStandalone, sized to rect. There is no chat to drop the time
+ * into and no round to export a clip of. */
+void lobbyReelRenderStandalone(ImVec2 rect) {
+    if (!s_reel.active) return;
+    lobbyReelRenderPlayer(NULL, rect, false, true);
+}
+
+/* A reel showing the live spectator feed (lv_embed.c's lvEmbedSpec* calls),
+ * for a client with no modal viewer to host it (iOS). Opens with no picture;
+ * the host loads the seed and feeds the records through lvEmbedSpecSeed and
+ * lvEmbedSpecRecord. lobbyReelEnd closes it. */
+bool lobbyReelOpenSpectator(ImVec2 rect) {
+    lobbyReelEnd();
+    s_reel.tried = true;
+    s_reel.viewW = rect.x;
+    s_reel.viewH = rect.y;
+    s_reel.active = lvEmbedSpecBegin(sdl3DrawGetWindow(), sdl3DrawGetRenderer(),
+                                     (int)rect.x, (int)rect.y);
+    s_reel.loadFailed = !s_reel.active;
+    return s_reel.active;
+}
+
+/* The spectator reel's picture with its pan and zoom, and no transport row:
+ * the feed follows the live head, and the play, pause and seek controls drive
+ * the playback timers a live feed does not run on. */
+void lobbyReelRenderSpectator(ImVec2 rect) {
+    if (!s_reel.active) return;
+    lobbyReelRenderPlayer(NULL, rect, false, false);
+}
+
+/* The playing reel itself, sized to rect: the picture with its pan and zoom
+ * input, then the transport row under it. Shared by the lobby's recap and by
+ * a reel opened outside the lobby. chatTime adds the button that drops the
+ * playhead's time into the lobby's chat box. cs names the round's map for a
+ * clip export and may be NULL, which leaves the export button doing nothing.
+ * transport false leaves the transport row out, for the live spectator feed. */
+static void lobbyReelRenderPlayer(ClientSim *cs, ImVec2 rect, bool chatTime,
+                                  bool transport) {
     /* The frame-end hook pauses a reel the recap stopped drawing, which is
      * every frame the panel's Map tab is up. Drawing again undoes that pause
      * — but only when the pause was ours, so a deliberate one survives a
@@ -1145,6 +1608,13 @@ void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
     /* Claim the whole rect whatever the image came out at, so zooming does
      * not shuffle everything below the reel up and down. */
     ImGui::SetCursorPosY(blockTopY + rect.y);
+    if (!transport) {
+        /* ImGui asserts at End() on a cursor moved past the window's content
+           with no item after it; the transport row is that item otherwise. */
+        ImGui::Dummy(ImVec2(0.0f, 0.0f));
+        s_reel.drawn = true;
+        return;
+    }
 
     /* Transport toggle as a glyph: a written caption is the widest thing on
      * this row and its width moves as the label swaps and as the language
@@ -1184,9 +1654,11 @@ void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
     /* Drop where the reel is sitting into the chat box, so the moment can be
      * talked about. Punctuation rather than a lang string, like the zoom
      * buttons: the token it writes is the caption. */
-    ImGui::SameLine();
-    if (ImGui::Button("@")) {
-        lobbyChatInputAppendTime(curMs);
+    if (chatTime) {
+        ImGui::SameLine();
+        if (ImGui::Button("@")) {
+            lobbyChatInputAppendTime(curMs);
+        }
     }
 
 #if BOLO_RECAP_CLIP_GIF
@@ -1196,9 +1668,23 @@ void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
      * off a row. Full height, so it sits level with the two buttons before
      * it rather than shrinking the transport row. */
     ImGui::SameLine();
-    if (lobbyClipGifButton("##reelgif", false)) {
-        lobbyClipGifStartFromPlayhead(curMs, clientSimGetMapName(cs));
+    if (lobbyClipGifButton("##reelgif", false) && cs != NULL) {
+        lobbyClipGifStartFromPlayhead(
+            curMs, clipGifLenClampMs(s_reel.gifLenMs, curMs, totalMs), cs);
     }
+
+    /* How long that export runs, in seconds; the marker on the seek bar
+     * below sets the same value. */
+    ImGui::SameLine();
+    lobbyReelGifLenField(curMs, totalMs);
+
+#if BOLO_CLIP_GIF_GALLERY
+    /* The GIFs made so far, with copy and save. */
+    ImGui::SameLine();
+    if (lobbyClipGifGalleryButton("##reelgifgallery")) {
+        lobbyClipGifGalleryOpen();
+    }
+#endif
 
     /* Crop frame, next to the export it crops: with it up, that export takes
      * the framed rectangle instead of the whole visible view. */
@@ -1206,6 +1692,12 @@ void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
     if (lobbyReelCropButton("##reelcrop")) {
         s_reel.cropOn = !s_reel.cropOn;
     }
+#endif
+
+#if BOLO_REEL_SPAWN_VIEWER
+    /* The round in the separate Log Viewer, with the rest of the reel's own
+     * buttons. */
+    lobbyReelSpawnButton(cs);
 #endif
 
     /* Seek slider shares the transport row with Play/Pause and takes the rest
@@ -1230,12 +1722,24 @@ void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
                  curSecs / 60u, curSecs % 60u);
     }
     ImGui::PushItemWidth(-1);
+#if BOLO_RECAP_CLIP_GIF
+    /* The GIF length marker is drawn over this slider and is submitted after
+     * it, so the slider lets it take the hover where the two meet. */
+    ImGui::SetNextItemAllowOverlap();
+#endif
     /* NoRoundToFormat is essential: seekLabel is a pre-rendered string
      * ("01:12 / 04:30"), not a numeric printf format. Without the flag ImGui
      * rounds the dragged value by round-tripping it through that label, which
      * parses back to 0 and pins every seek to the start of the log. */
-    if (ImGui::SliderFloat("##ReelSeek", &s_reel.seekRatio, 0.0f, 1.0f, seekLabel,
-                           ImGuiSliderFlags_NoRoundToFormat)) {
+    const bool seekChanged =
+        ImGui::SliderFloat("##ReelSeek", &s_reel.seekRatio, 0.0f, 1.0f,
+                           seekLabel, ImGuiSliderFlags_NoRoundToFormat);
+#if BOLO_RECAP_CLIP_GIF
+    /* The slider's frame, for the GIF length marker drawn over it below. */
+    const ImVec2 seekMin = ImGui::GetItemRectMin();
+    const ImVec2 seekMax = ImGui::GetItemRectMax();
+#endif
+    if (seekChanged) {
         if (!s_reel.seeking) {
             /* Freeze playback for the scrub instead of letting every applied
              * seek pause and resume it — lvEmbedSeekRatio does that by
@@ -1290,8 +1794,17 @@ void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
         if (s_reel.seekWasPlaying) lvEmbedPlay();
         s_reel.seekWasPlaying = false;
     }
+#if BOLO_RECAP_CLIP_GIF
+    /* After the slider's own state is read above: from here the last item is
+     * the marker, not the slider. */
+    lobbyReelGifLenMarker(seekMin, seekMax, curMs, totalMs);
+#endif
     ImGui::PopItemWidth();
+
+#if BOLO_REEL_SPAWN_VIEWER
+    lobbyReelSpawnMessage();
+#endif
 
     s_reel.drawn = true;
 }
-#endif /* !BOLO_MOBILE */
+#endif /* BOLO_LOBBY_REEL */

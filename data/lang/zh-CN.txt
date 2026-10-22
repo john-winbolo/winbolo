@@ -951,7 +951,7 @@ STR_MAPGEN_TYPE_NATURAL=自然
 STR_MAPGEN_TYPE_MAZE=迷宫
 STR_MAPGEN_TYPE_FRACTAL=分形
 STR_MAPGEN_SEED=种子
-STR_MAPGEN_RANDOMIZE=随机化
+STR_MAPGEN_RANDOMIZE=随机化数值
 STR_MAPGEN_SYMMETRY=对称性
 STR_MAPGEN_SYM_4CORNER=四角镜像
 STR_MAPGEN_SYM_MIRROR_H=水平镜像
@@ -991,6 +991,86 @@ STR_MAPGEN_COAST_JAG=海岸锯齿度
 STR_MAPGEN_TERRAIN_LAYERS=地形层次
 STR_MAPGEN_RIVERS=河流
 STR_MAPGEN_LAKES=湖泊
+STR_MAPGEN_TYPE_MAKER=知名地图大师风格
+STR_MAPGEN_SIZE=大小
+STR_MAPGEN_SIZE_FULL=全部
+STR_MAPGEN_SIZE_TIP=可玩正方形区域的边长(格)。全部使用整个区域。
+STR_MAPGEN_PRESET=预设
+STR_MAPGEN_PRESET_TIP=仿照经典 Bolo 地图作者风格的地图。预设会设置下面的控件;之后可以修改任何一项。
+STR_MAPGEN_OUTLINE=轮廓
+STR_MAPGEN_OUTLINE_BOX=方形
+STR_MAPGEN_OUTLINE_OCTAGON=八边形
+STR_MAPGEN_OUTLINE_ROUND=圆形
+STR_MAPGEN_OUTLINE_DIAMOND=菱形
+STR_MAPGEN_OUTLINE_CROSS=十字
+STR_MAPGEN_OUTLINE_CLOVER=四叶草
+STR_MAPGEN_OUTLINE_ISLAND=岛屿
+STR_MAPGEN_OUTLINE_VARIED=多样
+STR_MAPGEN_MSYM_NONE=无
+STR_MAPGEN_MSYM_MIRROR=镜像
+STR_MAPGEN_MSYM_ROT2=半圈旋转
+STR_MAPGEN_MSYM_MIRROR4=双向镜像
+STR_MAPGEN_MSYM_ROT4=四分之一旋转
+STR_MAPGEN_WATER_PCT=水 %
+STR_MAPGEN_ROAD_PCT=道路 %
+STR_MAPGEN_ISLANDS=岛屿数
+STR_MAPGEN_DETAIL=细节
+STR_MAPGEN_PRESET_BERSERKIR=Berserkir
+STR_MAPGEN_PRESET_SLUGGO_TOURNAMENT=Sluggo Tournament
+STR_MAPGEN_PRESET_SLUGDEATH=Sluggo Slugdeath
+STR_MAPGEN_PRESET_SLUGFEST=Sluggo Slugfest
+STR_MAPGEN_PRESET_SLUGGO_ADVENTUROUS=Sluggo Adventurous
+STR_MAPGEN_PRESET_SLUGGO_SYMMETRIC=Sluggo Symmetric
+STR_MAPGEN_PRESET_STOOGEFEST=Sluggo Stoogefest
+STR_MAPGEN_PRESET_BLACK_LIGHTNING=Black Lightning
+STR_MAPGEN_PRESET_BL_ISLANDS=Black Lightning Islands
+STR_MAPGEN_PRESET_DEATHHAND=Deathhand
+STR_MAPGEN_PRESET_MEGAWATT_TC=Megawatt TC
+STR_MAPGEN_PRESET_MEGAWATT_ISLANDS=Megawatt Islands
+STR_MAPGEN_PRESET_MOSH_PIT=Nature Mosh Pit
+STR_MAPGEN_PRESET_PALPATINE=Palpatine
+STR_MAPGEN_PRESET_CHEW_TOY=Chew Toy
+# Map Maker style panel
+STR_MAPGEN_LOCK_ALL=全部锁定
+STR_MAPGEN_UNLOCK_ALL=全部解锁
+STR_MAPGEN_PANEL_TITLE=地图数值
+STR_MAPGEN_STYLE_TITLE={string1}风格
+STR_MAPGEN_STYLE_RANDOMIZE=随机化风格
+STR_MAPGEN_STYLE_NONE=种子不会为这位地图大师做出其他选择。
+STR_MAPGEN_STYLE_FROM_SEED=由种子决定
+STR_MAPGEN_STYLE_ROADS=道路布局
+STR_MAPGEN_ROADS_AXES=十字
+STR_MAPGEN_ROADS_DIAG=对角线
+STR_MAPGEN_ROADS_AXES_DIAG=十字和对角线
+STR_MAPGEN_ROADS_AXES_RING=十字和环
+STR_MAPGEN_ROADS_DIAG_RING=对角线和环
+STR_MAPGEN_ROADS_RING=环
+STR_MAPGEN_STYLE_SHAPE=形状
+STR_MAPGEN_STYLE_CUT=切角
+STR_MAPGEN_STYLE_CORE=环中心
+STR_MAPGEN_STYLE_RIM=海岸
+STR_MAPGEN_RIM_FOREST=森林边缘
+STR_MAPGEN_RIM_GRASS=草地直达海岸
+STR_MAPGEN_STYLE_YARD=迷宫庭院
+STR_MAPGEN_YARD_NONE=无
+STR_MAPGEN_YARD_BUILDING=建筑墙
+STR_MAPGEN_YARD_FOREST=森林墙
+STR_MAPGEN_STYLE_ROADS_TIP=穿过陆地的道路线。由种子决定时:种子会从此列表中的布局中选择一种。
+STR_MAPGEN_STYLE_SHAPE_TIP=陆地宽度与高度的比值,乘以 100。100 为正方形;数值越大越宽。由种子决定时:种子会在此范围内选择一个数值。
+STR_MAPGEN_STYLE_CUT_TIP=八边形切去每个角的程度。数值越大,切去的角越小。由种子决定时:种子会在此范围内选择一个数值。
+STR_MAPGEN_STYLE_CORE_TIP=每个环中心的地形。由种子决定时:种子会选择一种。
+STR_MAPGEN_STYLE_RIM_TIP=沿海岸的一圈森林,或一直延伸到水边的草地。由种子决定时:种子会选择一种。
+STR_MAPGEN_STYLE_YARD_TIP=如果能找到合适的位置,就在一座岛上设置一座迷宫墙庭院。由种子决定时:种子会选择一种。
+STR_MAPGEN_STYLE_WALLS=边缘墙
+STR_MAPGEN_WALLS_NONE=无墙
+STR_MAPGEN_WALLS_BUILDING=每条轴上的建筑墙
+STR_MAPGEN_STYLE_MIDDLE=中部
+STR_MAPGEN_MIDDLE_OPEN=空旷
+STR_MAPGEN_MIDDLE_PIECES=对角碎块
+STR_MAPGEN_MIDDLE_CLUMP=中心团块
+STR_MAPGEN_MIDDLE_BOTH=对角碎块和中心团块
+STR_MAPGEN_STYLE_WALLS_TIP=每条轴上横跨森林边缘的一道建筑墙,将边缘分成四段。由种子决定时:种子会选择一种。
+STR_MAPGEN_STYLE_MIDDLE_TIP=地面中部附近的建筑:45 度的短碎块、中心的一团,或两者皆有。由种子决定时:种子会选择一种。
 
 # Log viewer sim-replay messages
 STR_LV_PLAYER_JOINED={player} 加入了游戏。
@@ -2092,6 +2172,8 @@ STR_DLGSETTINGS_HOSTING_SERVERNAME=服务器名称
 STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=游戏查找会显示此名称，而不是你的地址。最多 32 字节（约 10 个中文字符，其他文字可能更少）。留空则显示你的地址。
 STR_DLGSETTINGS_HOSTING_SERVERDESC=描述
 STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=当玩家指向或选中你的游戏时，游戏查找会显示这段内容。最多 200 字节（约 66 个中文字符，其他文字可能更少）。
+STR_DLGSETTINGS_HOSTING_SPECDELAY=观战者延迟（秒）
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=观战者看到的画面会延迟设定的秒数，这样他们就不能把所有人的位置告诉玩家。0 表示实时显示游戏。最多可设为 600。
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=语音
@@ -2559,7 +2641,6 @@ STR_RULE_DESC_pill_base_defend_shape=pill_base_defend_range 的测量方式。0 
 STR_RULE_DESC_tank_slide_armour_bonus=零装甲时额外增加的推动步长；按命中前缺失的装甲比例加到 tank_slide_step 上。仅在 tank_slide_mac 开启时读取。
 STR_RULE_DESC_tank_slide_mac=炮弹命中时是否按 Mac Bolo 的方式推动坦克。开启时，装甲越少推得越远，最多多出 tank_slide_armour_bonus，tank_slide_step 和 tank_bump_decay_shift 按每 40 毫秒计算，滑动每刻都会移动。关闭则是 WinBolo 的推动，任何装甲都一样。
 STR_RULE_DESC_tank_deep_sea_safe=没有船的坦克是否可以在深海中行驶而不沉没。关闭是经典游戏：深海会使没有船的坦克沉没。此项重新关闭时，正处于深海且没有船的坦克会在下一刻沉没。
-STR_RULE_DESC_man_bless_tile_terrain_speed=建造者是否按要建造的那一格的地形速度穿过该格，与 Mac Bolo 相同。关闭则是 WinBolo 的走法：无论地形如何，他都以基地速度走到该格中央。没有行走速度的格子，例如河流、墙或碉堡，保持基地速度。返回坦克的路程不变。
 STR_RULE_DESC_pill_aim_iterations=碉堡为预判移动目标所进行的计算强度。
 STR_RULE_DESC_pill_massage_range=坦克需要多接近，碉堡才会使用原始的前向预测而不是求解器来瞄准；求解器对绕圈的坦克命中率较差。0（经典设定）表示碉堡总能正确预判目标；384 相当于 1.5 格，是旧版编译期开关所用的距离。
 STR_RULE_DESC_pill_massage_cosine=面对近处的碉堡时，坦克仍要被正确瞄准所需的直线程度，以坦克朝向与其到碉堡连线之间夹角的余弦值表示。1 表示对 pill_massage_range 范围内的所有坦克都粗略瞄准，0 表示对其中任何坦克都不粗略瞄准。当 pill_massage_range 为 0 时，此值不起作用。
@@ -2767,3 +2848,86 @@ STR_DLGSYSINFO_MEM_BUILDING=建造
 STR_DLGSYSINFO_MEM_RUBBLE=瓦砾
 STR_DLGSYSINFO_MEM_SWAMP=沼泽
 STR_DLGSYSINFO_MEM_GRASS=草地
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=按键说话：按住游戏画面上的麦克风按钮
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=你的文件
+STR_MAPEDIT_IOS_BUILTIN=WinBolo 自带的地图
+STR_MAPEDIT_IOS_NOFILES=这里还没有内容。你保存的文件，以及放入“文件”App 中 WinBolo 文件夹的文件，都会显示在这里。
+STR_MAPEDIT_IOS_NAME=名称
+STR_MAPEDIT_IOS_REPLACES=已存在同名文件。保存将替换它。
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=录像
+STR_IOSREC_EMPTY=还没有录像。单人回合会录制在这里，放入“文件”App 中 WinBolo 文件夹的 .wbv 文件也会列在这里。
+STR_IOSREC_COPY=复制到“文件”
+STR_IOSREC_COPIED=已复制到“文件”App 中的 WinBolo 文件夹。
+STR_IOSREC_OPEN_FAILED=无法打开此录像。
+STR_IOSREC_LAST_ROUND=上一个单人回合
+STR_IOSREC_COPY_FAILED=无法将录像复制到“文件”App。
+STR_DLGCONNECTING_TITLE=正在连接 {string1}...
+STR_DLGCONNECTING_PING=正在向服务器询问其游戏...
+STR_DLGCONNECTING_JOINING=正在加入游戏...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=无法读取该录像。
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=设置
+STR_DLGLOBBY_DETAILS_COL_VALUE=值
+STR_DLGLOBBY_DETAILS_RULES=规则：
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=此值由服务器设定，无法更改。
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=作者 {string1} · 更新于 {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=未知
+STR_MENU_INFO_OVERLAY=信息叠加层
+STR_SCNPANEL_POP_OUT=弹出
+STR_SCNPANEL_POP_IN=收回
+STR_SCNPANEL_CLOSE_TITLE=关闭{string1}？
+STR_SCNPANEL_CLOSE_BODY=可在 {string1} > {string2} 中重新打开。
+STR_DLGLOBBY_SCENARIO_REQUIRED=服务器总是运行此脚本，无法移除。
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=服务器总是运行本回合的场景
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=此列表由服务器设定，无法更改。
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=碉堡是否使用 Mac Bolo 的瞄准方式。约一格内移动且无遮挡的坦克会让碉堡沿其行进方向远远提前瞄准。停止或被阻挡的坦克不会被提前瞄准。会覆盖 pill_massage_range、pill_massage_cosine 和 pill_aim_iterations。
+STR_RULE_DESC_tank_collision_mac=坦克在墙、运作中的碉堡和敌方基地旁是否使用 Mac Bolo 随方向变化的精灵碰撞框和像素推移。可以为“pill massage”更贴近碉堡通过。
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=坦克被击毁算作谁的战绩，每次击毁时询问；溺水算作受害者自己，除非脚本指明击沉它的坦克。
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} 位于“文件”App 的 WinBolo 文件夹中。
+STR_CLIPGIF_SAVE_FAILED_IOS=无法保存 {string1}。
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=地图铺满屏幕，操作控件绘制在地图上方。\n关闭此项会让游戏视图保持正方形，操作控件位于其旁边。\n下次会记住这个设置。
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=决定全屏时建造工具能透出多少地图内容。\n0% 为不透明，滑块最高只能到 90%，\n因此无法完全透明。
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=决定全屏时坦克、碉堡和基地网格以及库存条能透出\n多少地图内容。0% 为不透明，滑块最高只能到 90%，\n因此无法完全透明。
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=地图占满屏幕，状态、建造和新闻面板显示在其上，\n用触摸游玩时触控按钮也显示在其上。\n关闭则显示经典画面。下次启动时仍会记住。
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=此设备正在使用移动数据。用移动数据主持的互联网游戏很可能无法正常进行：\n移动网络很少允许其他玩家连接到此设备。使用 Wi-Fi 成功的可能性要大得多。\n\n仍要主持吗？
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=你的 GIF
+STR_CLIPGIF_GALLERY_EMPTY=还没有 GIF。用回放下方的 GIF 按钮或片段上的 GIF 按钮制作一个。
+STR_CLIPGIF_COPY=复制到剪贴板
+STR_CLIPGIF_SAVE=保存到磁盘
+STR_CLIPGIF_COPIED=已复制。
+STR_CLIPGIF_COPY_FAILED=无法复制该 GIF。
+STR_CLIPGIF_OPEN_FAILED=无法打开此 GIF。
+STR_CLIPGIF_MAP_FMT=地图：{string1}
+STR_CLIPGIF_PLAYERS_FMT=玩家：{string1}
+STR_CLIPGIF_NO_DETAILS=此 GIF 没有保存详细信息。
+STR_CLIPGIF_LENGTH_TIP=从播放位置起的 GIF 长度（秒）。\n拖动时间轴亮色部分末端的标记也可以更改。
+STR_CLIPGIF_LOADING=正在打开 GIF...
+STR_CLIPGIF_TOO_LARGE=此 GIF 太大，无法在此显示。你仍然可以复制或保存它。
+STR_CLIPGIF_FILTER_NAME=GIF 图像

@@ -817,16 +817,27 @@ static void serverLifecycleStartBrainDebugSession(ServerSim *sim) {
  * lobby and round sequence (serverSimLocalTick). Each runs under the tick
  * mutex, on the tick that crosses its edge, before the sim step it names. */
 
-/* Game ended → finalize this game's recording so the .btr is complete on
- * disk; clearing the flag makes the next game open a fresh dir (the
- * map-rotate restart re-enters running on a later tick). */
+/* Close the recording block the lifecycle opened, if one is open: finalize
+ * the .btr so it is complete on disk, and give back the dir name the
+ * lifecycle set. brainRecordEndGame keeps the name, and a dir still set on
+ * the next round's first running tick reads as one the host named, which
+ * would leave that round recording over this one. Clearing the flag makes
+ * the next round open a fresh block. Called on every way out of the running
+ * state: game over, the empty-server rotate and the empty reset. */
+static void lifecycleCloseBraindbgBlock(void) {
+  if (s_braindbgSessionOpen) {
+    brainRecordEndGame();
+    brainRecordSetSessionDir(NULL);
+    s_braindbgSessionOpen = false;
+  }
+}
+
+/* Game ended → close this game's recording block (the map-rotate restart
+ * re-enters running on a later tick and opens the next one). */
 static void lifecycleBeforeGameOver(ServerSim *sim, void *ctx) {
   (void)sim;
   (void)ctx;
-  if (s_braindbgSessionOpen) {
-    brainRecordEndGame();
-    s_braindbgSessionOpen = false;
-  }
+  lifecycleCloseBraindbgBlock();
 }
 
 /* Countdown finished — game started.  Reset per-client and per-slot
@@ -912,8 +923,21 @@ void serverInstanceTick(ServerSim *sim) {
     /* First running tick of this game → open a fresh recording session
      * (deferred from startup so lobby/countdown time is excluded and the
      * timeline anchors at this game's tick 0). Runs before serverSimBotTick so
-     * DEBUG_SESSION_DIR is set before any bot thinks / brainRecordTick fires. */
-    if (brainRecordIsEnabled() && !s_braindbgSessionOpen) {
+     * DEBUG_SESSION_DIR is set before any bot thinks / brainRecordTick fires.
+     *
+     * A session dir the host already named wins, and the block machinery stays
+     * out of its way entirely. winbolods never sets one before this point —
+     * serverLifecycleOpenBraindbgBlock below is the only caller of
+     * brainRecordSetSessionDir it has, and every way out of the running state
+     * (the game-over hook, the empty-server rotate, the empty reset) and the
+     * low-disk stop clear the dir it set through lifecycleCloseBraindbgBlock
+     * — so this only holds off for a host that picked its own dir, such as a
+     * test recording one run into a named session. Naming the dir means
+     * owning the blocks and the low-disk stop as well; without this the first
+     * running tick renamed the session out from under such a host and its
+     * dir was left empty. */
+    if (brainRecordIsEnabled() && !s_braindbgSessionOpen &&
+        brainRecordGetSessionDir() == NULL) {
       /* First running tick of this game → open recording block 1, unless the
        * disk is already below the floor. */
       if (serverLifecycleFreeDiskBytes() < BRAINDBG_DISK_FLOOR_BYTES) {
@@ -931,9 +955,8 @@ void serverInstanceTick(ServerSim *sim) {
         s_braindbgLastDiskCheckMs = nowMs;
         if (serverLifecycleFreeDiskBytes() < BRAINDBG_DISK_FLOOR_BYTES) {
           fprintf(stderr, "brain_record: LOW DISK (<50 GB free) — stopping recording\n");
-          brainRecordEndGame();
+          lifecycleCloseBraindbgBlock();
           brainRecordSetEnabled(false);
-          s_braindbgSessionOpen = false;
           for (int i = 0; i < MAX_TANKS; i++) {
             if (serverSimIsBot(sim, (BYTE)i)) {
               serverSimBotExecLua(sim, (BYTE)i, "_G._PRINT2_ENABLED=false");
@@ -1031,6 +1054,9 @@ void serverInstanceTick(ServerSim *sim) {
       serverSimCheckAutoClose(sim)) {
     if (serverSimIsMapRotateEnabled(sim)) {
       serverSimConsoleMessage("Server empty - rotating to a new round.");
+      /* This leaves the running state without the game-over hook, so the
+       * recording block is closed here; the new round opens its own. */
+      lifecycleCloseBraindbgBlock();
       serverLifecycleRotateRound(sim);
     } else {
       sim->lobbyEnabled = FALSE;
@@ -1061,6 +1087,8 @@ void serverInstanceTick(ServerSim *sim) {
      * round's parked runners is this path's to make. A parked brain keeps
      * its state table, and the round it remembers is the one ending here. */
     botManagerReleaseParkedRunners(sim);
+    /* The same for the recording block: no game-over hook on this path. */
+    lifecycleCloseBraindbgBlock();
     serverSimResetGameWorld(sim);
     sim->state = serverStateLobby;
     sim->gameLength = sim->originalGameLength;

@@ -9,7 +9,7 @@
 *Purpose:
 *  Renders the tablet-mode ImGui overlay:
 *  - Floating virtual joystick visualization
-*  - Action buttons (fire, mine, gunsight, view toggle)
+*  - Action buttons (fire, mine, gunsight, view toggle, voice talk)
 *  - Vertical build select bar (right side)
 *  - Top bar (players, messages, settings icons)
 *  - Resource bars (tank S/M/A/T + closest base S/M/A)
@@ -40,6 +40,7 @@
 #include "dialogs/imgui_dialog_utils.h"
 
 extern "C" {
+#include "../../common/wb_log.h"
 #include "global.h"
 #include "screentank.h"
 #include "client_sim.h"
@@ -47,13 +48,21 @@ extern "C" {
 #include "client_render.h"  /* clientRenderFrame */
 #include "../gamefront.h"
 #include "../tiles.h"
+#include "../positions.h"  /* STATUS_TANKS_WIDTH/HEIGHT: the status grid frames */
 #include "../ui_mode.h"
 #include "../lang.h"
 #include "input_touch.h"
 #include "sdl3draw.h"
 #include "build_cursor.h"
 #include "scenario_panel_slot.h"
+#include "../clientmutex.h"
+#if defined(WINBOLO_VOICE)
+#include "../voice.h"  /* the talk button: mode, enabled, muted, transmitting */
+#endif
 }
+
+#include "overview_view.h"
+#include "overview_hud_layout.h"
 
 #include "sdl3imgui.h"
 #include "sdl3imgui_tablet.h"
@@ -63,11 +72,112 @@ static bool s_statusDrawerOpen = false;
 /* Static layout config, recomputed each frame */
 static TabletLayoutConfig s_cfg;
 
-/* Message fade state */
-static char s_lastMsgTop[512] = {0};
-static char s_lastMsgBottom[512] = {0};
-static Uint64 s_msgLastChangeTime = 0;
-static bool s_msgTimerInitialized = false;
+/* The touch layout's full screen (sdl3DrawIsTabletMapFullScreen), read once a
+   frame. The map then fills the screen and there is no gray chrome behind the
+   gutters, so the panels drawn there are laid over the map at the desktop
+   full screen HUD's transparency settings: the status grids and the stock
+   bars at the status panel's, the build bar at the builder tools', the
+   newswire at the newswire's. Each panel's pieces and its black backing take
+   separate alphas (sdl3DrawHudPanelAlphas). All six are 1 outside full screen,
+   where the panels look as they always have. */
+struct TabletPanelAlpha {
+  float piece;
+  float backing;
+};
+static bool             s_fullScreen = false;
+static TabletPanelAlpha s_statusAlpha = { 1.0f, 1.0f };
+static TabletPanelAlpha s_buildAlpha  = { 1.0f, 1.0f };
+static TabletPanelAlpha s_newsAlpha   = { 1.0f, 1.0f };
+
+static void tabletPanelAlphasUpdate(void) {
+  s_fullScreen = sdl3DrawIsTabletMapFullScreen();
+  if (!s_fullScreen) {
+    s_statusAlpha = s_buildAlpha = s_newsAlpha = { 1.0f, 1.0f };
+    return;
+  }
+  sdl3DrawHudPanelAlphas(sdl3DrawGetStatusPanelTransparency(),
+                         &s_statusAlpha.piece, &s_statusAlpha.backing);
+  sdl3DrawHudPanelAlphas(sdl3DrawGetBuildPanelTransparency(),
+                         &s_buildAlpha.piece, &s_buildAlpha.backing);
+  sdl3DrawHudPanelAlphas(sdl3DrawGetNewswireTransparency(),
+                         &s_newsAlpha.piece, &s_newsAlpha.backing);
+}
+
+/* The list every touch control is drawn on. ImGui's background list, which
+   is drawn over the game and under every ImGui window, so a dialog is always
+   on top of the controls; the foreground list they used to be on is drawn
+   over every window, dialogs included. */
+static ImDrawList *controlsDrawList(void) {
+  return ImGui::GetBackgroundDrawList();
+}
+
+/* Hand the touch input the rects of the open dialogs, so a finger that comes
+   down on one is the dialog's and not the control under it: every window up
+   last frame that takes input, other than the overlay's own panels, tooltips
+   and ImGui's implicit debug window. One frame behind, which a finger landing
+   cannot tell. */
+static void tabletBlockDialogTouches(const SDL_FRect *extra, int extraCount) {
+  /* "##OverviewInWindow" is the full screen map's own host window on the
+     classic screen, which the controls drive. */
+  static const char *const kOwnWindows[] = {
+    "##BuildBar", "##TankBars", "##BaseBars", "##ScenarioSlot", "Debug##Default",
+    "##OverviewInWindow",
+  };
+  ImGuiContext &g = *ImGui::GetCurrentContext();
+  SDL_FRect rects[16];
+  int n = 0;
+  for (int i = 0; i < extraCount && n < (int)(sizeof(rects) / sizeof(rects[0])); i++) {
+    rects[n++] = extra[i];
+  }
+  for (ImGuiWindow *w : g.Windows) {
+    if (n >= (int)(sizeof(rects) / sizeof(rects[0]))) break;
+    if (!w->WasActive || w->Hidden) continue;
+    if (w->Flags & (ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_NoInputs |
+                    ImGuiWindowFlags_Tooltip)) {
+      continue;
+    }
+    if (w->Size.x <= 0.0f || w->Size.y <= 0.0f) continue;
+    bool own = false;
+    for (const char *name : kOwnWindows) {
+      if (strcmp(w->Name, name) == 0) { own = true; break; }
+    }
+    if (own) continue;
+    rects[n].x = w->Pos.x;
+    rects[n].y = w->Pos.y;
+    rects[n].w = w->Size.x;
+    rects[n].h = w->Size.y;
+    n++;
+  }
+  inputTouchSetBlockedRects(rects, n);
+
+  /* Which windows block, each time the set changes, for checking by eye. */
+  static int lastCount = -1;
+  if (n != lastCount) {
+    lastCount = n;
+    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "tablet: %d dialog rect(s) take touches", n);
+    for (ImGuiWindow *w : g.Windows) {
+      if (!w->WasActive || w->Hidden) continue;
+      WB_LOG_DEBUG(WB_LOG_CAT_GUI, "tablet:   window '%s' flags=0x%x %.0fx%.0f at %.0f,%.0f",
+                   w->Name, (unsigned)w->Flags, w->Size.x, w->Size.y, w->Pos.x, w->Pos.y);
+    }
+  }
+}
+
+static ImU32 scaleAlpha(ImU32 col, float alpha) {
+  int a = (int)((float)((col >> 24) & 0xFF) * alpha);
+  if (a < 0) a = 0;
+  if (a > 255) a = 255;
+  return (col & 0x00FFFFFF) | ((ImU32)a << 24);
+}
+
+/* Scale the alpha of every vertex added to dl since vtxStart, so a panel
+   drawn in colours of its own fades as one piece at its setting. */
+static void scaleDrawListAlphaSince(ImDrawList *dl, int vtxStart, float alpha) {
+  if (alpha >= 1.0f) return;
+  for (int i = vtxStart; i < dl->VtxBuffer.Size; i++) {
+    dl->VtxBuffer[i].col = scaleAlpha(dl->VtxBuffer[i].col, alpha);
+  }
+}
 
 /* Haptic state */
 static bool s_prevFirePressed = false;
@@ -82,6 +192,13 @@ static SDL_Texture *s_iconPlayers  = nullptr;
 static SDL_Texture *s_iconMessages = nullptr;
 static SDL_Texture *s_iconSettings = nullptr;
 static bool s_iconsLoaded = false;
+
+#if defined(WINBOLO_VOICE)
+/* Talk button icons (white SVG masks, loaded on first draw of the button) */
+static SDL_Texture *s_iconMic      = nullptr;
+static SDL_Texture *s_iconMicMuted = nullptr;
+static bool s_micIconsLoaded = false;
+#endif
 
 static void ensureIconsLoaded(int size) {
   if (s_iconsLoaded) return;
@@ -100,6 +217,23 @@ static void ensureIconsLoaded(int size) {
  * Layout configuration
  * ------------------------------------------------------- */
 
+/* The window's safe area insets, in the layout's units (the window's points
+   scaled to screenW x screenH). */
+static void tabletSafeInsets(TabletLayoutConfig *cfg, int screenW, int screenH) {
+  cfg->safeTop = cfg->safeBottom = cfg->safeLeft = cfg->safeRight = 0.0f;
+  SDL_Window *win = sdl3DrawGetWindow();
+  if (!win) return;
+  SDL_Rect safeRect;
+  int winW = 0, winH = 0;
+  SDL_GetWindowSize(win, &winW, &winH);
+  if (SDL_GetWindowSafeArea(win, &safeRect) && winW > 0 && winH > 0) {
+    cfg->safeLeft   = (float)safeRect.x * (float)screenW / (float)winW;
+    cfg->safeTop    = (float)safeRect.y * (float)screenH / (float)winH;
+    cfg->safeRight  = (float)(winW - safeRect.x - safeRect.w) * (float)screenW / (float)winW;
+    cfg->safeBottom = (float)(winH - safeRect.y - safeRect.h) * (float)screenH / (float)winH;
+  }
+}
+
 void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
                            int viewportX, int viewportY, int viewportW, int viewportH,
                            int effectiveZoom) {
@@ -112,22 +246,11 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->effectiveZoom = effectiveZoom;
 
 
-  /* Safe area insets */
-  cfg->safeTop = cfg->safeBottom = cfg->safeLeft = cfg->safeRight = 0.0f;
-  {
-    SDL_Window *win = sdl3DrawGetWindow();
-    if (win) {
-      SDL_Rect safeRect;
-      int winW = 0, winH = 0;
-      SDL_GetWindowSize(win, &winW, &winH);
-      if (SDL_GetWindowSafeArea(win, &safeRect) && winW > 0 && winH > 0) {
-        cfg->safeLeft   = (float)safeRect.x * (float)screenW / (float)winW;
-        cfg->safeTop    = (float)safeRect.y * (float)screenH / (float)winH;
-        cfg->safeRight  = (float)(winW - safeRect.x - safeRect.w) * (float)screenW / (float)winW;
-        cfg->safeBottom = (float)(winH - safeRect.y - safeRect.h) * (float)screenH / (float)winH;
-      }
-    }
-  }
+  tabletSafeInsets(cfg, screenW, screenH);
+  /* The touch input's own stick rule: the left 40% outside the game view. */
+  cfg->joyZoneX = cfg->joyZoneY = cfg->joyZoneW = cfg->joyZoneH = 0.0f;
+  /* The map button at the game view's top left (overviewButtonRect). */
+  cfg->mapBtnX = cfg->mapBtnY = cfg->mapBtnR = 0.0f;
 
   /* Gutters */
   cfg->leftGutter = viewportX;
@@ -156,10 +279,6 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->activeOpacity = 1.0f;
   cfg->topBtnOpacity = 0.6f;
   cfg->joyFadeOutMs = 1000;
-
-  /* Message fade */
-  cfg->msgFadeSeconds = 5.0f;
-  cfg->msgFadeDuration = 1.0f;
 
   /* --- Right-side layout: everything fits in the right gutter --- */
   float gutterLeft = (float)(viewportX + viewportW);  /* left edge of right gutter */
@@ -196,6 +315,37 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->gsDecCenterY = gsRowY;
   cfg->gsIncCenterX = gutterCenterX + cfg->gsIncRadius + gsGap * 0.5f;
   cfg->gsIncCenterY = gsRowY;
+
+  /* Voice talk button — same row as the gunsight pair, in the space between
+     the increase button and the right edge, so it sits above the fire button
+     and below the scroll joystick zone.  Shrunk when that space is narrower
+     than a gunsight button, rather than moved over something else. */
+  {
+    float spaceLeft = cfg->gsIncCenterX + cfg->gsIncRadius + pad;
+    float spaceRight = rightEdge - pad;
+    cfg->talkRadius = cfg->gsIncRadius;
+    if ((spaceRight - spaceLeft) * 0.5f < cfg->talkRadius) {
+      cfg->talkRadius = (spaceRight - spaceLeft) * 0.5f;
+    }
+    if (cfg->talkRadius < 0.0f) cfg->talkRadius = 0.0f;
+    cfg->talkCenterX = spaceRight - cfg->talkRadius;
+    cfg->talkCenterY = gsRowY;
+  }
+#if defined(__IPHONEOS__)
+  /* A narrow gutter (an iPad in the touch layout has about 311 units) leaves
+     the gunsight row too little room, and the talk button came out about a
+     third of a gunsight button's width. There it gets a row of its own, at
+     the right edge just above the gunsight pair, at a gunsight button's
+     size; the scroll joystick zone ends above it (below), so a press on it
+     is the button's and not the joystick's. */
+  bool talkOwnRow = false;
+  if (cfg->talkRadius < cfg->gsIncRadius * 0.75f) {
+    cfg->talkRadius = cfg->gsIncRadius;
+    cfg->talkCenterX = rightEdge - pad - cfg->talkRadius;
+    cfg->talkCenterY = gsRowY - cfg->gsIncRadius - pad - cfg->talkRadius;
+    talkOwnRow = true;
+  }
+#endif
 
   /* Item views / Tank view — vertical stack in gap between viewport edge and
      mine button. Every button is here; tabletViewButtonsApplyPolicies drops
@@ -264,14 +414,17 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->baseBarsY = cfg->tankBarsY + cfg->barsH;
 
   /* --- Status grids (left gutter) --- */
-  cfg->tanksGridX = cfg->safeLeft + 4.0f * pixelScale;
-  cfg->tanksGridY = cfg->safeTop + 4.0f * pixelScale;
-  float availW = (float)cfg->leftGutter - cfg->safeLeft - 8.0f * pixelScale;
-  cfg->statusGridScale = availW / (90.0f * pixelScale);
-  if (cfg->statusGridScale > 2.0f) cfg->statusGridScale = 2.0f;
-  if (cfg->statusGridScale < 0.5f) cfg->statusGridScale = 0.5f;
-  float gridH = 66.0f * pixelScale * cfg->statusGridScale;
-  float gridGap = 4.0f * pixelScale * cfg->statusGridScale;
+  /* The grids themselves are drawn by SDL in sdl3DrawMainScreen, at the
+     status panels' own size for the effective zoom (STATUS_TANKS_WIDTH x
+     STATUS_TANKS_HEIGHT times the zoom), 4 units in from the safe area with
+     4 units between them. The frames drawn here must sit on exactly those
+     rectangles, so the geometry is the same as sdl3draw.c's, not a scaled
+     design-space size. */
+  cfg->tanksGridX = cfg->safeLeft + 4.0f;
+  cfg->tanksGridY = cfg->safeTop + 4.0f;
+  cfg->statusGridScale = 1.0f;
+  float gridH = (float)(STATUS_TANKS_HEIGHT * effectiveZoom);
+  float gridGap = 4.0f;
   cfg->pillsGridX = cfg->tanksGridX;
   cfg->pillsGridY = cfg->tanksGridY + gridH + gridGap;
   cfg->basesGridX = cfg->tanksGridX;
@@ -285,6 +438,22 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   /* --- Scroll joystick — in the gap between build/resource area and gunsight buttons --- */
   float scrollTop = buildRegionTop + buildGridH + pad * 2;
   float scrollBottom = gsRowY - cfg->gsIncRadius - pad * 2;
+#if defined(__IPHONEOS__)
+  if (talkOwnRow) {
+    scrollBottom = cfg->talkCenterY - cfg->talkRadius - pad * 2;
+  }
+  /* The resource bars are a fixed 280 units each, which on a phone ran the
+     base bars down past the scroll joystick zone's top and over the view
+     buttons (iPhone 17 Pro and SE-class screens alike). Shortened so both end
+     a pad above the zone; a screen with the room keeps 280. */
+  {
+    float fit = (scrollTop - pad - buildRegionTop + 16.0f) * 0.5f;
+    if (fit < cfg->barsH) {
+      cfg->barsH = fit;
+      cfg->baseBarsY = cfg->tankBarsY + cfg->barsH;
+    }
+  }
+#endif
   cfg->scrollJoyX = gutterLeft;
   cfg->scrollJoyY = scrollTop;
   cfg->scrollJoyW = gutterW;
@@ -298,6 +467,148 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   scnPanelSlotRect(screenW, screenH, (float)viewportX, (float)viewportY,
                    (float)viewportW, (float)viewportH, pad,
                    &cfg->scnSlotX, &cfg->scnSlotY, &cfg->scnSlotSide);
+}
+
+void tabletLayoutConfigureClassic(TabletLayoutConfig *cfg, int screenW, int screenH,
+                                  float gameX, float gameY, float gameW, float gameH,
+                                  bool mapUp, const OverviewHudLayout *hudIn) {
+  memset(cfg, 0, sizeof(*cfg));
+  cfg->screenW = screenW;
+  cfg->screenH = screenH;
+  cfg->viewportX = (int)gameX;
+  cfg->viewportY = (int)gameY;
+  cfg->viewportW = (int)gameW;
+  cfg->viewportH = (int)gameH;
+  cfg->effectiveZoom = 1;
+  tabletSafeInsets(cfg, screenW, screenH);
+
+  /* Sizes in units of the shorter side over 480, so a control is the same
+     size in either orientation: 2.15 points on a 13-inch iPad, 1.74 on an
+     11-inch. */
+  float u = (float)(screenW < screenH ? screenW : screenH) / 480.0f;
+  float pad = 6.0f * u;
+
+  cfg->idleOpacity   = 0.4f;
+  cfg->activeOpacity = 1.0f;
+  cfg->topBtnOpacity = 0.6f;
+  cfg->joyFadeOutMs  = 1000;
+  cfg->joyOuterRadius = 50.0f * u;
+  cfg->joyInnerRadius = 21.0f * u;
+  cfg->fireRadius  = 34.0f * u;
+  cfg->mineRadius  = 24.0f * u;
+  cfg->gsIncRadius = cfg->gsDecRadius = 18.0f * u;
+  cfg->talkRadius  = 18.0f * u;
+  cfg->pillViewRadius = cfg->baseViewRadius =
+      cfg->allyViewRadius = cfg->tankViewRadius = 18.0f * u;
+  cfg->viewBtnGap = pad;
+  cfg->topBtnSize = 24.0f * u;
+  /* No drawer: the classic screen and the map's HUD have status panels. */
+  cfg->showStatusGrids = true;
+  float side = 2.6f * cfg->joyOuterRadius;
+
+  /* The safe area, and the box each group of controls goes in. */
+  float safeL = cfg->safeLeft;
+  float safeT = cfg->safeTop;
+  float safeR = (float)screenW - cfg->safeRight;
+  float safeB = (float)screenH - cfg->safeBottom;
+  float clusterR = safeR;   /* fire cluster: right and bottom edges */
+  float clusterB = safeB;
+  float topT = safeT;       /* top buttons: top and right edges */
+  float topR = safeR;
+  bool inBand = false;
+  OverviewHudLayout hud;
+  bool haveHud = mapUp && hudIn != nullptr;
+  if (haveHud) hud = *hudIn;
+
+  if (mapUp) {
+    /* The full screen map: the cluster keeps the screen's bottom right corner,
+       over the status column and the newswire, which have nothing to press. */
+  } else {
+    /* The band below the classic screen, when it has room for the fire
+       button, the gunsight row above it and the talk row above that. */
+    float bandT = gameY + gameH;
+    float clusterH = 2.0f * (cfg->fireRadius + cfg->gsIncRadius + cfg->talkRadius) + 4.0f * pad;
+    inBand = (safeB - bandT) >= clusterH;
+    if (inBand) topT = bandT;
+  }
+
+  /* Bottom right: fire, mine to its left, the gunsight pair above them, the
+     talk button above the gunsight increase, and the view buttons in a column
+     to the left of mine, stacked up from fire's row. */
+  cfg->fireCenterX = clusterR - pad - cfg->fireRadius;
+  cfg->fireCenterY = clusterB - pad - cfg->fireRadius;
+  cfg->mineCenterX = cfg->fireCenterX - cfg->fireRadius - pad - cfg->mineRadius;
+  cfg->mineCenterY = cfg->fireCenterY;
+  float gsRowY = cfg->fireCenterY - cfg->fireRadius - pad - cfg->gsIncRadius;
+  cfg->gsDecCenterX = cfg->mineCenterX;
+  cfg->gsDecCenterY = gsRowY;
+  cfg->gsIncCenterX = cfg->fireCenterX;
+  cfg->gsIncCenterY = gsRowY;
+  cfg->talkCenterX = cfg->fireCenterX;
+  cfg->talkCenterY = gsRowY - cfg->gsIncRadius - pad - cfg->talkRadius;
+  float viewX = cfg->mineCenterX - cfg->mineRadius - pad - cfg->pillViewRadius;
+  cfg->pillViewCenterX = cfg->baseViewCenterX =
+      cfg->allyViewCenterX = cfg->tankViewCenterX = viewX;
+  cfg->showPillViewBtn = cfg->showBaseViewBtn = cfg->showAllyViewBtn = true;
+  {
+    float step = cfg->pillViewRadius * 2.0f + cfg->viewBtnGap;
+    cfg->pillViewCenterY = cfg->fireCenterY;
+    cfg->baseViewCenterY = cfg->pillViewCenterY - step;
+    cfg->allyViewCenterY = cfg->baseViewCenterY - step;
+    cfg->tankViewCenterY = cfg->allyViewCenterY - step;
+  }
+
+  /* Top right: messages, players, Settings, left to right, as in the touch
+     layout (its field names have the first two the other way round), and
+     the map button left of them. */
+  cfg->topBtnY = topT + pad;
+  cfg->cogBtnX = topR - pad - cfg->topBtnSize;
+  cfg->msgBtnX = cfg->cogBtnX - pad - cfg->topBtnSize;
+  cfg->playersBtnX = cfg->msgBtnX - pad - cfg->topBtnSize;
+  cfg->mapBtnR = cfg->topBtnSize * 0.5f;
+  cfg->mapBtnX = cfg->playersBtnX - pad - cfg->mapBtnR;
+  cfg->mapBtnY = cfg->topBtnY + cfg->mapBtnR;
+
+  /* The stick. In the band, its left half. Over the classic screen, the
+     corner below the build column's last icon, where the chrome has nothing
+     to press, so choosing what to build still works; over the map, the corner
+     below the build tools and left of the newswire. The stick follows the
+     finger out of either. Its resting ring sits in the zone's bottom left. */
+  if (inBand) {
+    cfg->joyZoneX = safeL;
+    cfg->joyZoneY = topT;
+    cfg->joyZoneW = (safeR - safeL) * 0.5f;
+    cfg->joyZoneH = safeB - topT;
+  } else {
+    float colR, colB;
+    if (haveHud) {
+      colR = gameX + hud.newswireX - pad;
+      colB = gameY + hud.buildY + hud.buildH + pad;
+    } else {
+      colR = gameX + (float)MAIN_OFFSET_X * gameW / (float)SDL3_SCREEN_W;
+      colB = gameY + (float)(BS_MINE_OFFSET_Y + BS_ITEM_SIZE_Y) * gameH /
+             (float)SDL3_SCREEN_H;
+    }
+    cfg->joyZoneX = safeL;
+    cfg->joyZoneW = colR - safeL > side ? colR - safeL : side;
+    cfg->joyZoneY = colB < safeB - side ? colB : safeB - side;
+    cfg->joyZoneH = safeB - cfg->joyZoneY;
+  }
+
+  /* The scroll stick: right of the view buttons and above the talk button,
+     up to a square the size of the stick's, or to the top buttons when they
+     are nearer. Over the map it pans the map, as a drag does. */
+  cfg->scrollJoyOuterRadius = 40.0f * u;
+  cfg->scrollJoyInnerRadius = cfg->scrollJoyOuterRadius * 0.42f;
+  {
+    float bottom = cfg->talkCenterY - cfg->talkRadius - pad;
+    float top = cfg->topBtnY + cfg->topBtnSize + pad;
+    if (bottom - top > side) top = bottom - side;
+    cfg->scrollJoyX = cfg->mineCenterX - cfg->mineRadius;
+    cfg->scrollJoyW = clusterR - cfg->scrollJoyX;
+    cfg->scrollJoyY = top;
+    cfg->scrollJoyH = bottom > top ? bottom - top : 0.0f;
+  }
 }
 
 /* Drop the view buttons whose category the server turned off and stack the
@@ -369,30 +680,47 @@ static void renderTabletBackground(void) {
 
   ImDrawList *dl = ImGui::GetBackgroundDrawList();
 
+  /* In full screen the panels lie over the map. A frame there is the bevel
+     alone, at its panel's piece alpha: the backing under each panel is its
+     own window's background, at the backing alpha, and a black fill here as
+     well would darken the map through it twice. The button groups (top row,
+     fire and mine, gunsight) and the newswire get no frame, since their
+     buttons and the newswire's window carry their own backing. */
+  ImU32 colNone = IM_COL32(0, 0, 0, 0);
+  ImU32 statusLight = scaleAlpha(colLight, s_statusAlpha.piece);
+  ImU32 statusDark  = scaleAlpha(colDark, s_statusAlpha.piece);
+  ImU32 statusFill  = s_fullScreen ? colNone : colBlack;
+  ImU32 buildLight  = scaleAlpha(colLight, s_buildAlpha.piece);
+  ImU32 buildDark   = scaleAlpha(colDark, s_buildAlpha.piece);
+  ImU32 buildFill   = s_fullScreen ? colNone : colBlack;
+
   /* --- Left gutter: status grids (tanks, pills, bases) --- */
   if (c.showStatusGrids) {
-    float gridW = 90.0f * ps * c.statusGridScale;
-    float gridH = 66.0f * ps * c.statusGridScale;
-    float gridPad = 2.0f * ps;
+    /* The grids were drawn by SDL before this list, so the frame's fill is
+       transparent: a black fill here is drawn over them and hides them,
+       which is what the phone showed. The frame is one border wide outside
+       the grid, so it covers no part of it. */
+    float gridW = (float)(STATUS_TANKS_WIDTH * c.effectiveZoom);
+    float gridH = (float)(STATUS_TANKS_HEIGHT * c.effectiveZoom);
 
     drawInsetRect(dl,
-      c.tanksGridX - gridPad - border, c.tanksGridY - gridPad - border,
-      gridW + (gridPad + border) * 2, gridH + (gridPad + border) * 2,
-      border, colLight, colDark, colBlack);
+      c.tanksGridX - border, c.tanksGridY - border,
+      gridW + border * 2, gridH + border * 2,
+      border, statusLight, statusDark, colNone);
 
     drawInsetRect(dl,
-      c.pillsGridX - gridPad - border, c.pillsGridY - gridPad - border,
-      gridW + (gridPad + border) * 2, gridH + (gridPad + border) * 2,
-      border, colLight, colDark, colBlack);
+      c.pillsGridX - border, c.pillsGridY - border,
+      gridW + border * 2, gridH + border * 2,
+      border, statusLight, statusDark, colNone);
 
     drawInsetRect(dl,
-      c.basesGridX - gridPad - border, c.basesGridY - gridPad - border,
-      gridW + (gridPad + border) * 2, gridH + (gridPad + border) * 2,
-      border, colLight, colDark, colBlack);
+      c.basesGridX - border, c.basesGridY - border,
+      gridW + border * 2, gridH + border * 2,
+      border, statusLight, statusDark, colNone);
   }
 
   /* --- Right gutter: top buttons row --- */
-  {
+  if (!s_fullScreen) {
     float rowX = c.playersBtnX - 3.0f * ps;
     float rowY = c.topBtnY - 3.0f * ps;
     float rowW = (c.cogBtnX + c.topBtnSize) - c.playersBtnX + 6.0f * ps;
@@ -408,13 +736,13 @@ static void renderTabletBackground(void) {
     drawInsetRect(dl,
       c.tankBarsX - pad - border, c.tankBarsY - pad - border,
       c.topBtnSize + (pad + border) * 2, c.barsH + (pad + border) * 2,
-      border, colLight, colDark, colBlack);
+      border, statusLight, statusDark, statusFill);
 
     float baseH = c.barsH - 16.0f;
     drawInsetRect(dl,
       c.baseBarsX - pad - border, c.baseBarsY - pad - border,
       c.topBtnSize + (pad + border) * 2, baseH + (pad + border) * 2,
-      border, colLight, colDark, colBlack);
+      border, statusLight, statusDark, statusFill);
   }
 
   /* --- Right gutter: build bar area --- */
@@ -434,11 +762,11 @@ static void renderTabletBackground(void) {
       c.buildBarX - pad - border, c.buildBarY - pad - border,
       gridW + winPadX * 2 + (pad + border) * 2,
       gridH + winPadY * 2 + (pad + border) * 2,
-      border, colLight, colDark, colBlack);
+      border, buildLight, buildDark, buildFill);
   }
 
   /* --- Right gutter: fire/mine button area --- */
-  {
+  if (!s_fullScreen) {
     float pad = 3.0f * ps;
     /* Encompass fire, mine, pill view, and tank view buttons */
     float leftEdge = c.pillViewCenterX - c.pillViewRadius;
@@ -453,7 +781,7 @@ static void renderTabletBackground(void) {
   }
 
   /* --- Right gutter: gunsight +/- buttons --- */
-  {
+  if (!s_fullScreen) {
     float pad = 3.0f * ps;
     float leftEdge = c.gsDecCenterX - c.gsDecRadius;
     float topEdge = c.gsDecCenterY - c.gsDecRadius;
@@ -467,25 +795,16 @@ static void renderTabletBackground(void) {
   }
 
   /* --- Bottom: messages overlay area --- */
-  {
+  if (!s_fullScreen) {
     float pad = 3.0f * ps;
     float msgH = 76.0f * ps;  /* matches renderMessagesOverlay height */
+    /* The bevel alone: the strip SDL draws inside it carries its own
+       backing, and slides away to show the game view under it. */
     drawInsetRect(dl,
       c.msgOverlayX - pad - border, c.msgOverlayY - pad - border,
       c.msgOverlayW + (pad + border) * 2, msgH + (pad + border) * 2,
-      border, colLight, colDark, colBlack);
+      border, colLight, colDark, colNone);
   }
-}
-
-/* -------------------------------------------------------
- * Alpha helper
- * ------------------------------------------------------- */
-
-static ImU32 scaleAlpha(ImU32 col, float alpha) {
-  int a = (int)((float)((col >> 24) & 0xFF) * alpha);
-  if (a < 0) a = 0;
-  if (a > 255) a = 255;
-  return (col & 0x00FFFFFF) | ((ImU32)a << 24);
 }
 
 /* -------------------------------------------------------
@@ -510,7 +829,7 @@ static void renderJoystickOverlay(void) {
 
   if (alpha <= 0.0f) return;
 
-  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  ImDrawList *dl = controlsDrawList();
   dl->AddCircleFilled(ImVec2(ax, ay), s_cfg.joyOuterRadius,
                        scaleAlpha(IM_COL32(200, 200, 200, 80), alpha), 32);
   dl->AddCircle(ImVec2(ax, ay), s_cfg.joyOuterRadius,
@@ -543,7 +862,7 @@ static void renderScrollJoystickOverlay(void) {
 
   /* Draw zone hint (always visible at low opacity) */
   if (s_cfg.scrollJoyH > 10.0f) {
-    ImDrawList *dl = ImGui::GetForegroundDrawList();
+    ImDrawList *dl = controlsDrawList();
     float zoneAlpha = 0.15f;
     float cx = s_cfg.scrollJoyX + s_cfg.scrollJoyW * 0.5f;
     float cy = s_cfg.scrollJoyY + s_cfg.scrollJoyH * 0.5f;
@@ -584,7 +903,7 @@ static void renderScrollJoystickOverlay(void) {
 
   if (alpha <= 0.0f) return;
 
-  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  ImDrawList *dl = controlsDrawList();
   dl->AddCircleFilled(ImVec2(ax, ay), s_cfg.scrollJoyOuterRadius,
                        scaleAlpha(IM_COL32(100, 150, 200, 80), alpha), 32);
   dl->AddCircle(ImVec2(ax, ay), s_cfg.scrollJoyOuterRadius,
@@ -659,7 +978,7 @@ static void processViewportDragScroll(ClientSim *cs) {
  * ------------------------------------------------------- */
 
 static void renderFireMineButtons(void) {
-  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  ImDrawList *dl = controlsDrawList();
   bool fireActive = inputTouchIsButtonHeld(TOUCH_BTN_FIRE);
   bool mineActive = inputTouchIsButtonHeld(TOUCH_BTN_MINE);
 
@@ -748,7 +1067,7 @@ static void renderFireMineButtons(void) {
  * ------------------------------------------------------- */
 
 static void renderGunsightButtons(void) {
-  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  ImDrawList *dl = controlsDrawList();
   bool decActive = inputTouchIsButtonHeld(TOUCH_BTN_GS_DECREASE);
   bool incActive = inputTouchIsButtonHeld(TOUCH_BTN_GS_INCREASE);
 
@@ -774,6 +1093,74 @@ static void renderGunsightButtons(void) {
   ImVec2 incSize = ImGui::CalcTextSize(incLabel);
   dl->AddText(ImVec2(s_cfg.gsIncCenterX - incSize.x * 0.5f, s_cfg.gsIncCenterY - incSize.y * 0.5f),
               scaleAlpha(IM_COL32(255, 255, 255, 220), incAlpha), incLabel);
+}
+
+/* -------------------------------------------------------
+ * Voice talk button
+ * ------------------------------------------------------- */
+
+/* Whether the talk button is on screen: voice is switched on, the chosen
+   mode sends audio, and this connection carries the player's voice to
+   anyone.  That leaves it off in single player, on a server started with
+   voice off, and for a viewer.  What the button does is decided in input.c
+   with the keys it stands in for: held in push-to-talk mode, and the mute
+   toggle in open mic mode. iOS only: a desktop or web client on a small
+   touch screen also takes this layout, and keeps its own talk key there. */
+static bool tabletTalkButtonShown(void) {
+#if defined(WINBOLO_VOICE) && defined(__APPLE__) && TARGET_OS_IOS
+  return s_cfg.talkRadius > 0.0f && voiceIsEnabled() &&
+         voiceGetMode() != VOICE_MODE_OFF && voiceConnectionCarriesVoice();
+#else
+  return false;
+#endif
+}
+
+static void renderTalkButton(void) {
+#if defined(WINBOLO_VOICE)
+  static bool s_prevTalkPressed = false;
+
+  if (!tabletTalkButtonShown()) {
+    s_prevTalkPressed = false;
+    return;
+  }
+
+  ImDrawList *dl = controlsDrawList();
+  float cx = s_cfg.talkCenterX;
+  float cy = s_cfg.talkCenterY;
+  float r = s_cfg.talkRadius;
+  bool held = inputTouchIsButtonHeld(TOUCH_BTN_TALK);
+  bool muted = voiceIsSelfMuted();
+  bool sending = voiceIsTransmitting();
+
+  if (!s_micIconsLoaded) {
+    SDL_Renderer *rend = sdl3DrawGetRenderer();
+    s_micIconsLoaded = true;
+    s_iconMic      = imguiLoadSvgIconWhite(rend, "data/ui/mic.svg", (int)(r * 4.0f));
+    s_iconMicMuted = imguiLoadSvgIconWhite(rend, "data/ui/mic-muted.svg", (int)(r * 4.0f));
+  }
+
+  if (held && !s_prevTalkPressed) {
+    inputTouchTriggerHaptic(0.4f, 20);
+  }
+  s_prevTalkPressed = held;
+
+  float alpha = (held || sending) ? s_cfg.activeOpacity : s_cfg.idleOpacity;
+  /* Green while audio is going out, red outline while the player's own
+     microphone is muted, the plain black and white of the other buttons
+     otherwise. */
+  ImU32 fill = sending ? IM_COL32(30, 130, 50, 200) : IM_COL32(0, 0, 0, 200);
+  ImU32 outline = muted ? IM_COL32(230, 70, 70, 220) : IM_COL32(255, 255, 255, 220);
+  dl->AddCircleFilled(ImVec2(cx, cy), r, scaleAlpha(fill, alpha), 32);
+  dl->AddCircle(ImVec2(cx, cy), r, scaleAlpha(outline, alpha), 32, 2.0f);
+
+  SDL_Texture *icon = muted ? s_iconMicMuted : s_iconMic;
+  if (icon) {
+    float iconHalf = r * 0.6f;
+    dl->AddImage((ImTextureID)icon, ImVec2(cx - iconHalf, cy - iconHalf),
+                 ImVec2(cx + iconHalf, cy + iconHalf), ImVec2(0, 0), ImVec2(1, 1),
+                 scaleAlpha(IM_COL32(255, 255, 255, 255), alpha));
+  }
+#endif
 }
 
 /* -------------------------------------------------------
@@ -819,7 +1206,7 @@ static TouchButtonID tabletSelectedViewButton(ClientSim *cs) {
 }
 
 static void renderViewButtons(ClientSim *cs) {
-  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  ImDrawList *dl = controlsDrawList();
   SDL_Texture *tilesTex = sdl3DrawGetTilesTexture();
   TouchButtonID selectedBtn = tabletSelectedViewButton(cs);
   TabletViewButton btns[4];
@@ -882,12 +1269,18 @@ static void renderBuildSelectBar(ClientSim *cs) {
   ImGui::SetNextWindowSize(ImVec2(winW, winH));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 6));
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(spacing, spacing));
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.5f));
+  /* In full screen the background is the panel's backing over the map, and
+     everything drawn on it below takes the panel's piece alpha. */
+  ImGui::PushStyleColor(ImGuiCol_WindowBg,
+                        ImVec4(0.0f, 0.0f, 0.0f,
+                               s_fullScreen ? s_buildAlpha.backing : 0.5f));
 
   if (ImGui::Begin("##BuildBar", nullptr,
                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
                     ImGuiWindowFlags_NoScrollWithMouse)) {
+    ImDrawList *barDl = ImGui::GetWindowDrawList();
+    int barVtxStart = barDl->VtxBuffer.Size;
 
     buildSelect cur = clientSimGetCurrentBuildSelect(cs);
     const char *ids[] = { "##bsTree", "##bsRoad", "##bsWall", "##bsPill", "##bsMine" };
@@ -967,6 +1360,7 @@ static void renderBuildSelectBar(ClientSim *cs) {
         }
       }
     }
+    scaleDrawListAlphaSince(barDl, barVtxStart, s_buildAlpha.piece);
   }
   ImGui::End();
   ImGui::PopStyleColor();
@@ -978,7 +1372,7 @@ static void renderBuildSelectBar(ClientSim *cs) {
  * ------------------------------------------------------- */
 
 static void renderTopBarButtons(ClientSim *cs) {
-  ImDrawList *dl = ImGui::GetForegroundDrawList();
+  ImDrawList *dl = controlsDrawList();
   float btnSize = s_cfg.topBtnSize;
   float btnY = s_cfg.topBtnY;
   float alpha = s_cfg.topBtnOpacity;
@@ -1090,10 +1484,15 @@ static void renderResourceBars(ClientSim *cs) {
     ImGui::SetNextWindowPos(ImVec2(x, y));
     ImGui::SetNextWindowSize(ImVec2(w, h));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(winPad, winPad));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.5f));
+    /* The stock bars are part of the status panel in full screen, as they
+       are in the desktop HUD's column. */
+    ImGui::PushStyleColor(ImGuiCol_WindowBg,
+                          ImVec4(0.0f, 0.0f, 0.0f,
+                                 s_fullScreen ? s_statusAlpha.backing : 0.5f));
 
     if (ImGui::Begin("##TankBars", nullptr, winFlags)) {
       ImDrawList *dl = ImGui::GetWindowDrawList();
+      int vtxStart = dl->VtxBuffer.Size;
       ImVec2 winPos = ImGui::GetWindowPos();
 
       /* 4 vertical bars: S M A T */
@@ -1117,6 +1516,7 @@ static void renderResourceBars(ClientSim *cs) {
         dl->AddRectFilled(ImVec2(bx, barTop + maxBarH - fillH),
                            ImVec2(bx + barW, barTop + maxBarH), barColor);
       }
+      scaleDrawListAlphaSince(dl, vtxStart, s_statusAlpha.piece);
     }
     ImGui::End();
     ImGui::PopStyleColor();
@@ -1136,10 +1536,13 @@ static void renderResourceBars(ClientSim *cs) {
     ImGui::SetNextWindowPos(ImVec2(x, y));
     ImGui::SetNextWindowSize(ImVec2(w, h));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(winPad, winPad));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, hasBase ? 0.5f : 0.25f));
+    float baseBack = s_fullScreen ? s_statusAlpha.backing : 0.5f;
+    ImGui::PushStyleColor(ImGuiCol_WindowBg,
+                          ImVec4(0.0f, 0.0f, 0.0f, hasBase ? baseBack : baseBack * 0.5f));
 
     if (ImGui::Begin("##BaseBars", nullptr, winFlags)) {
       ImDrawList *dl = ImGui::GetWindowDrawList();
+      int vtxStart = dl->VtxBuffer.Size;
       ImVec2 winPos = ImGui::GetWindowPos();
 
       float maxBarH = h - winPad * 2;
@@ -1162,6 +1565,7 @@ static void renderResourceBars(ClientSim *cs) {
         dl->AddRectFilled(ImVec2(bx, barTop + maxBarH - fillH),
                            ImVec2(bx + barW, barTop + maxBarH), barColor);
       }
+      scaleDrawListAlphaSince(dl, vtxStart, s_statusAlpha.piece);
     }
     ImGui::End();
     ImGui::PopStyleColor();
@@ -1289,117 +1693,27 @@ static void renderStatusDrawer(ClientSim *cs) {
  * Messages overlay (bottom center of viewport)
  * ------------------------------------------------------- */
 
+/* The newswire, along the bottom of the game view's square. SDL draws it
+   (sdl3DrawNewswireStrip), in the classic newswire's fixed-width face, so the
+   scroll moves at one speed and the lines stay in step, and under every ImGui
+   window. It slides on the shared slide (sdl3DrawNewswireSlideStep) that the
+   desktop's full screen map uses: the same hold time and auto-hide setting.
+   This hands the draw where the strip goes, the edge it slides off by (the
+   bottom of the square, or of the screen in full screen, where the map
+   carries on below the square), its size and its alphas; the draw uses them
+   from the next frame. */
 static void renderMessagesOverlay(void) {
-  const char *top = NULL, *bottom = NULL;
-  sdl3DrawGetCachedMessages(&top, &bottom);
-
-  bool hasContent = (top && top[0] != '\0') || (bottom && bottom[0] != '\0');
-  if (!hasContent && !s_msgTimerInitialized) return;
-
-  /* Detect message changes */
-  bool changed = false;
-  if (top && strcmp(top, s_lastMsgTop) != 0) {
-    strncpy(s_lastMsgTop, top, sizeof(s_lastMsgTop) - 1);
-    s_lastMsgTop[sizeof(s_lastMsgTop) - 1] = '\0';
-    changed = true;
-  } else if (!top && s_lastMsgTop[0] != '\0') {
-    s_lastMsgTop[0] = '\0';
-    changed = true;
-  }
-  if (bottom && strcmp(bottom, s_lastMsgBottom) != 0) {
-    strncpy(s_lastMsgBottom, bottom, sizeof(s_lastMsgBottom) - 1);
-    s_lastMsgBottom[sizeof(s_lastMsgBottom) - 1] = '\0';
-    changed = true;
-  } else if (!bottom && s_lastMsgBottom[0] != '\0') {
-    s_lastMsgBottom[0] = '\0';
-    changed = true;
-  }
-
-  if (changed || !s_msgTimerInitialized) {
-    s_msgLastChangeTime = SDL_GetTicks();
-    s_msgTimerInitialized = true;
-  }
-
-  float msgAlpha = 1.0f;
-  if (s_msgTimerInitialized) {
-    float elapsed = (float)(SDL_GetTicks() - s_msgLastChangeTime) / 1000.0f;
-    if (elapsed > s_cfg.msgFadeSeconds) {
-      float fadeProgress = (elapsed - s_cfg.msgFadeSeconds) / s_cfg.msgFadeDuration;
-      msgAlpha = 1.0f - fadeProgress;
-      if (msgAlpha < 0.0f) msgAlpha = 0.0f;
-    }
-  }
-
-  if (msgAlpha <= 0.0f || !hasContent) return;
-
-  float x = s_cfg.msgOverlayX;
-  float y = s_cfg.msgOverlayY;
-  float w = s_cfg.msgOverlayW;
-
-  float fontScale = 1.6f;
-  float lineH = ImGui::GetTextLineHeight() * fontScale;
-  float h = lineH * 2.0f + 12.0f;
-
-  ImGui::SetNextWindowPos(ImVec2(x, y));
-  ImGui::SetNextWindowSize(ImVec2(w, h));
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 4));
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.5f * msgAlpha));
-
-  if (ImGui::Begin("##MsgOverlay", nullptr,
-                    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                    ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoInputs |
-                    ImGuiWindowFlags_NoFocusOnAppearing |
-                    ImGuiWindowFlags_NoBringToFrontOnFocus)) {
-
-    float origScale = ImGui::GetFont()->Scale;
-    ImGui::GetFont()->Scale *= fontScale;
-    ImGui::PushFont(ImGui::GetFont());
-
-    ImU32 textCol = scaleAlpha(IM_COL32(200, 200, 200, 220), msgAlpha);
-    float availW = w - 16.0f;
-    ImVec2 winPos = ImGui::GetWindowPos();
-
-    if (top && top[0] != '\0') {
-      const char *dispTop = top;
-      if (ImGui::CalcTextSize(top).x > availW) {
-        const char *p = top;
-        while (*p) {
-          if (ImGui::CalcTextSize(p).x <= availW) break;
-          if ((*p & 0x80) == 0) p++;
-          else if ((*p & 0xE0) == 0xC0) p += 2;
-          else if ((*p & 0xF0) == 0xE0) p += 3;
-          else p += 4;
-        }
-        dispTop = p;
-      }
-      ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
-        ImVec2(winPos.x + 8, winPos.y + 4), textCol, dispTop);
-    }
-
-    if (bottom && bottom[0] != '\0') {
-      const char *dispBot = bottom;
-      if (ImGui::CalcTextSize(bottom).x > availW) {
-        const char *p = bottom;
-        while (*p) {
-          if (ImGui::CalcTextSize(p).x <= availW) break;
-          if ((*p & 0x80) == 0) p++;
-          else if ((*p & 0xE0) == 0xC0) p += 2;
-          else if ((*p & 0xF0) == 0xE0) p += 3;
-          else p += 4;
-        }
-        dispBot = p;
-      }
-      ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
-        ImVec2(winPos.x + 8, winPos.y + 4 + lineH + 2), textCol, dispBot);
-    }
-
-    ImGui::PopFont();
-    ImGui::GetFont()->Scale = origScale;
-  }
-  ImGui::End();
-  ImGui::PopStyleColor();
-  ImGui::PopStyleVar();
+  float edge = s_fullScreen ? (float)s_cfg.screenH
+                            : (float)(s_cfg.viewportY + s_cfg.viewportH);
+  /* A quarter above the overlay font, which is already sized for reading on
+     the device (applyMainContextUiScale); 1.6 made two newswire lines take
+     a seventh of a phone's screen. */
+  int fontPx = (int)(ImGui::GetFontSize() * 1.25f + 0.5f);
+  float textAlpha = s_fullScreen ? s_newsAlpha.piece : 220.0f / 255.0f;
+  float backAlpha = s_fullScreen ? s_newsAlpha.backing : 0.5f;
+  sdl3DrawSetTabletNewswire(s_cfg.msgOverlayX, s_cfg.msgOverlayY,
+                            s_cfg.msgOverlayW, edge, fontPx, textAlpha,
+                            backAlpha);
 }
 
 /* -------------------------------------------------------
@@ -1427,6 +1741,204 @@ static void handleTapToBuild(ClientSim *cs) {
 }
 
 /* -------------------------------------------------------
+ * Map overview — the in-window map drawn inside the game
+ * view (sdl3draw.c), opened and closed by a button in the
+ * view's top-left corner. One finger drags the map, two
+ * pinch to zoom, a tap builds at the square under it, the
+ * scroll joystick pans and the Tank View button turns
+ * follow back on: the touch forms of the desktop's right
+ * drag, wheel, left click, scroll keys and follow key.
+ * ------------------------------------------------------- */
+
+/* The map button's icon, loaded on first use like the top bar's. */
+static SDL_Texture *s_iconMap = nullptr;
+static bool s_iconMapLoaded = false;
+
+/* Pinch travel not yet turned into a zoom step, as the log of the spacing
+   ratio. One step per 0.15, the threshold the map views use for the macOS
+   trackpad pinch. */
+#define OVERVIEW_PINCH_STEP 0.15f
+static float s_overviewPinchAccum = 0.0f;
+
+/* Scroll joystick pan speed on the map, in view pixels a frame. */
+#define OVERVIEW_JOY_PAN_PX 8.0f
+
+/* Where the map button sits: inside the game view's top-left corner, clear
+   of the scenario panel in the top-right and the newswire along the bottom. */
+static void overviewButtonRect(float *cx, float *cy, float *r) {
+  if (s_cfg.mapBtnR > 0.0f) {  /* the classic screen's, beside the top buttons */
+    *cx = s_cfg.mapBtnX;
+    *cy = s_cfg.mapBtnY;
+    *r  = s_cfg.mapBtnR;
+    return;
+  }
+  float ps = (float)s_cfg.screenH / 480.0f;
+  if (ps < 0.7f) ps = 0.7f;
+  *r  = 14.0f * ps;
+  *cx = (float)s_cfg.viewportX + 6.0f * ps + *r;
+  *cy = (float)s_cfg.viewportY + 6.0f * ps + *r;
+}
+
+/* Only in a running game, and not while the server withholds the overview;
+   the map stays closable whatever happens, so the button stays up while it
+   is open. iOS only: Android and a desktop in the tablet layout have no
+   in-window map to open (sdl3ImguiShowOverviewInWindow does nothing there). */
+static bool overviewButtonShown(ClientSim *cs) {
+#if defined(__APPLE__) && TARGET_OS_IOS
+  if (sdl3DrawIsOverviewInWindow()) return true;
+  return cs != nullptr && clientSimIsRunning(cs) && !clientSimIsInLobby(cs) &&
+         sdl3ImguiIsOverviewOffered();
+#else
+  (void)cs;
+  return false;
+#endif
+}
+
+/* Ahead of the tap handlers below: the button lies inside the game view, so a
+   tap on it is also a viewport tap, and that one is dropped here rather than
+   left to build under the button. */
+static void processOverviewButton(ClientSim *cs) {
+  if (!overviewButtonShown(cs)) return;
+  float cx, cy, r;
+  overviewButtonRect(&cx, &cy, &r);
+  if (inputTouchConsumeTapInRect(cx - r, cy - r, r * 2.0f, r * 2.0f)) {
+    float tx, ty;
+    (void)inputTouchGetViewportTapPos(&tx, &ty);
+    if (sdl3ImguiIsDialogOpen()) return;
+    sdl3ImguiShowOverviewInWindow(!sdl3ImguiIsOverviewInWindowOpen());
+  }
+}
+
+static void renderOverviewButton(ClientSim *cs) {
+  if (!overviewButtonShown(cs)) return;
+  float cx, cy, r;
+  overviewButtonRect(&cx, &cy, &r);
+  if (!s_iconMapLoaded) {
+    s_iconMapLoaded = true;
+    s_iconMap = imguiLoadSvgIconWhite(sdl3DrawGetRenderer(),
+                                      "data/ui/grid-view.svg", (int)(r * 4.0f));
+  }
+  bool on = sdl3DrawIsOverviewInWindow();
+  float alpha = on ? s_cfg.activeOpacity : s_cfg.topBtnOpacity;
+  ImDrawList *dl = controlsDrawList();
+  dl->AddCircleFilled(ImVec2(cx, cy), r, scaleAlpha(IM_COL32(0, 0, 0, 200), alpha), 32);
+  /* Outlined like the view buttons: yellow while the map is up. */
+  ImU32 outline = on ? IM_COL32(255, 255, 100, 220) : IM_COL32(255, 255, 255, 220);
+  dl->AddCircle(ImVec2(cx, cy), r, scaleAlpha(outline, alpha), 32, 2.0f);
+  ImU32 tint = scaleAlpha(IM_COL32(255, 255, 255, 255), alpha);
+  float half = r * 0.6f;
+  if (s_iconMap) {
+    dl->AddImage((ImTextureID)s_iconMap, ImVec2(cx - half, cy - half),
+                 ImVec2(cx + half, cy + half), ImVec2(0, 0), ImVec2(1, 1), tint);
+  } else {
+    /* No icon file: four squares, a map grid. */
+    float gap = half * 0.2f;
+    for (int i = 0; i < 4; i++) {
+      float x0 = (i % 2 == 0) ? cx - half : cx + gap * 0.5f;
+      float y0 = (i < 2) ? cy - half : cy + gap * 0.5f;
+      float side = half - gap * 0.5f;
+      dl->AddRect(ImVec2(x0, y0), ImVec2(x0 + side, y0 + side), tint, 0.0f, 0, 1.5f);
+    }
+  }
+
+  /* The zoom and follow readout for a moment after either changes, beside
+     the button. No keys are passed, so it names no keyboard key. */
+  if (on) {
+    char status[96];
+    float noticeAlpha = 0.0f;
+    OverviewView *view = sdl3DrawOverviewInWindowView();
+    if (view && overviewViewCameraNotice(view, nullptr, status, sizeof(status),
+                                         &noticeAlpha)) {
+      const float pad = 4.0f;
+      ImVec2 textSize = ImGui::CalcTextSize(status);
+      ImVec2 boxMin(cx + r + pad * 2.0f, cy - textSize.y * 0.5f - pad);
+      ImVec2 boxMax(boxMin.x + textSize.x + pad * 2.0f,
+                    boxMin.y + textSize.y + pad * 2.0f);
+      dl->AddRectFilled(boxMin, boxMax,
+                        IM_COL32(0, 0, 0, (int)(160.0f * noticeAlpha)));
+      dl->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad),
+                  IM_COL32(230, 230, 230, (int)(255.0f * noticeAlpha)), status);
+    }
+  }
+}
+
+/* The map's input for this frame, in place of the classic view's tap to build
+   and drag scroll. Every way the camera changes here shows the zoom and follow
+   readout, as the desktop's input does. */
+/* scrollPansMap: the scroll stick pans the map (the touch layout); false on
+   the classic screen's full screen map, where it moves the tank's view as it
+   does over the classic screen (processScrollJoystick). */
+static void processOverviewTouch(ClientSim *cs, bool scrollPansMap) {
+  OverviewView *view = sdl3DrawOverviewInWindowView();
+  OverviewCamera *cam = view ? overviewViewCamera(view) : nullptr;
+  float rx = 0.0f, ry = 0.0f, rw = 0.0f, rh = 0.0f;
+  float tx, ty;
+  if (!cam || !sdl3DrawGetOverviewInWindowRect(&rx, &ry, &rw, &rh)) {
+    /* Nothing drawn yet to map the touch onto, so the tap goes nowhere. */
+    (void)inputTouchGetViewportTapPos(&tx, &ty);
+    return;
+  }
+  int viewW = (int)rw;
+  int viewH = (int)rh;
+  int  zoomBefore   = cam->zoomIndex;
+  bool followBefore = cam->follow;
+
+  /* Negated: dragging right pulls the map right, which is the centre moving
+     left. */
+  float dx, dy;
+  if (inputTouchConsumeViewportDragTravel(&dx, &dy)) {
+    overviewCameraPan(cam, viewW, viewH, -dx, -dy);
+  }
+
+  int scrollX = 0, scrollY = 0;
+  if (scrollPansMap && inputTouchGetScrollDirection(&scrollX, &scrollY)) {
+    overviewCameraPan(cam, viewW, viewH, (float)scrollX * OVERVIEW_JOY_PAN_PX,
+                      (float)scrollY * OVERVIEW_JOY_PAN_PX);
+  }
+
+  /* Spreading the fingers zooms in, about the point between them. */
+  float scale, pcx, pcy;
+  if (inputTouchConsumeViewportPinch(&scale, &pcx, &pcy) && scale > 0.0f) {
+    s_overviewPinchAccum += logf(scale);
+    while (s_overviewPinchAccum >= OVERVIEW_PINCH_STEP) {
+      overviewCameraZoomAt(cam, viewW, viewH, pcx - rx, pcy - ry, 1);
+      s_overviewPinchAccum -= OVERVIEW_PINCH_STEP;
+    }
+    while (s_overviewPinchAccum <= -OVERVIEW_PINCH_STEP) {
+      overviewCameraZoomAt(cam, viewW, viewH, pcx - rx, pcy - ry, -1);
+      s_overviewPinchAccum += OVERVIEW_PINCH_STEP;
+    }
+  }
+
+  /* A tap builds at the square under it, as a left click does on the
+     desktop's map. Dropped under a dialog, as the classic tap is. */
+  if (inputTouchGetViewportTapPos(&tx, &ty) && !sdl3ImguiIsDialogOpen() && cs) {
+    int mx = 0, my = 0;
+    if (overviewCameraScreenToWorld(cam, viewW, viewH, tx - rx, ty - ry, &mx, &my)) {
+      clientMutexWaitFor();
+      clientSimManMoveToMap(cs, (BYTE)mx, (BYTE)my,
+                            clientSimGetCurrentBuildSelect(cs));
+      clientMutexRelease();
+      buildCursorSetTile((BYTE)mx, (BYTE)my);
+    }
+  }
+
+  if (cam->zoomIndex != zoomBefore || cam->follow != followBefore) {
+    overviewViewShowCameraNotice(view);
+  }
+}
+
+/* The Tank View button outside an item view: the map goes back to following
+   the tank, which is what the desktop's follow key does. */
+static void overviewFollowTank(void) {
+  OverviewView *view = sdl3DrawOverviewInWindowView();
+  OverviewCamera *cam = view ? overviewViewCamera(view) : nullptr;
+  if (!cam || cam->follow) return;
+  cam->follow = true;
+  overviewViewShowCameraNotice(view);
+}
+
+/* -------------------------------------------------------
  * Register buttons for hit-testing
  * ------------------------------------------------------- */
 
@@ -1440,6 +1952,10 @@ static void registerTouchButtons(void) {
   int viewBtnCount = tabletViewButtons(viewBtns);
   for (int i = 0; i < viewBtnCount; i++) {
     inputTouchRegisterButton(viewBtns[i].id, viewBtns[i].cx, viewBtns[i].cy, viewBtns[i].r);
+  }
+  if (tabletTalkButtonShown()) {
+    inputTouchRegisterButton(TOUCH_BTN_TALK, s_cfg.talkCenterX, s_cfg.talkCenterY,
+                             s_cfg.talkRadius);
   }
 }
 
@@ -1482,69 +1998,25 @@ static void renderScenarioSlot(ClientSim *cs) {
 }
 
 void sdl3ImguiTabletNewGame(void) {
-  s_lastMsgTop[0] = '\0';
-  s_lastMsgBottom[0] = '\0';
-  s_msgLastChangeTime = 0;
-  s_msgTimerInitialized = false;
   s_prevArmour = 0;
   s_armourInitialized = false;
 }
 
-/* -------------------------------------------------------
- * Main overlay entry point
- * ------------------------------------------------------- */
-
-void sdl3ImguiTabletOverlay(ClientSim *cs) {
-  if (!uiModeIsTablet()) return;
-
-  /* Get viewport bounds from sdl3draw — now in the same coordinate
-     space as ImGui since we override DisplaySize to match. */
-  int vpX, vpY, vpW, vpH, vpZoom;
-  sdl3DrawGetTabletViewport(&vpX, &vpY, &vpW, &vpH, &vpZoom);
-
-  ImGuiIO &io = ImGui::GetIO();
-  int screenW = (int)io.DisplaySize.x;
-  int screenH = (int)io.DisplaySize.y;
-
-  /* Reconfigure layout each frame */
-  tabletLayoutConfigure(&s_cfg, screenW, screenH, vpX, vpY, vpW, vpH, vpZoom);
-  tabletViewButtonsApplyPolicies(&s_cfg, cs);
-
-  /* Draw beveled chrome background behind everything */
-  renderTabletBackground();
-
-  /* Register button positions for touch hit-testing */
-  registerTouchButtons();
-
-  /* Register scroll joystick zone */
-  if (s_cfg.scrollJoyH > 10.0f) {
-    inputTouchSetScrollJoystickZone(s_cfg.scrollJoyX, s_cfg.scrollJoyY,
-                                    s_cfg.scrollJoyW, s_cfg.scrollJoyH);
+/* A buzz when the tank's armour drops. */
+static void tabletDamageHaptic(void) {
+  BYTE shells, mines, armour, trees;
+  sdl3DrawGetCachedTankStats(&shells, &mines, &armour, &trees);
+  if (s_armourInitialized && armour < s_prevArmour) {
+    inputTouchTriggerHaptic(0.3f, 20);
   }
+  s_prevArmour = armour;
+  s_armourInitialized = true;
+}
 
-  /* Update viewport bounds for tap detection */
-  inputTouchSetViewportBounds(vpX, vpY, vpW, vpH, vpZoom);
-
-  /* Process tap-to-build */
-  handleTapToBuild(cs);
-
-  /* Process scrolling (joystick + viewport drag) */
-  processScrollJoystick(cs);
-  processViewportDragScroll(cs);
-
-  /* Damage detection — trigger haptic on armour decrease */
-  {
-    BYTE shells, mines, armour, trees;
-    sdl3DrawGetCachedTankStats(&shells, &mines, &armour, &trees);
-    if (s_armourInitialized && armour < s_prevArmour) {
-      inputTouchTriggerHaptic(0.3f, 20);
-    }
-    s_prevArmour = armour;
-    s_armourInitialized = true;
-  }
-
-  /* Handle view button taps. A tap on the view you are already in is left
-     alone, matching what the pill button has always done. */
+/* The view buttons' taps. A tap on the view you are already in is left
+   alone, matching what the pill button has always done. overviewOn: the
+   in-window map is up, where the tank button makes it follow the tank. */
+static void tabletViewButtonTaps(ClientSim *cs, bool overviewOn) {
   if (inputTouchIsButtonTapped(TOUCH_BTN_PILL_VIEW)) {
     if (clientSimGetViewKind(cs) != VIEW_KIND_PILL) {
       clientSimPillView(cs, 0, 0);
@@ -1563,14 +2035,224 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
   if (inputTouchIsButtonTapped(TOUCH_BTN_TANK_VIEW)) {
     if (clientSimIsInItemView(cs)) {
       clientSimTankView(cs);
+    } else if (overviewOn) {
+      overviewFollowTank();
     }
   }
+}
+
+/* A faint ring where the stick's zone is, while no finger holds it, so the
+   classic screen shows where to put a thumb. The touch layout's zone is the
+   whole left gutter and needs none. */
+static void renderJoystickZoneHint(void) {
+  float ax, ay, tx, ty;
+  bool active;
+  Uint64 releaseTime;
+  inputTouchGetJoystickState(&ax, &ay, &tx, &ty, &active, &releaseTime);
+  if (active || s_cfg.joyZoneW <= 0.0f) return;
+  ImDrawList *dl = controlsDrawList();
+  float inset = s_cfg.joyOuterRadius * 1.15f;
+  ImVec2 c(s_cfg.joyZoneX + inset, s_cfg.joyZoneY + s_cfg.joyZoneH - inset);
+  dl->AddCircle(c, s_cfg.joyOuterRadius, scaleAlpha(IM_COL32(220, 220, 220, 255), s_cfg.idleOpacity * 0.6f), 32, 2.0f);
+  dl->AddCircleFilled(c, s_cfg.joyInnerRadius, scaleAlpha(IM_COL32(220, 220, 220, 255), s_cfg.idleOpacity * 0.4f), 24);
+}
+
+/* A dark round backing under the scroll stick's marker on the classic
+   screen while no finger holds it, at the buttons' idle strength. The marker alone is drawn for the
+   touch layout's gray chrome and cannot be seen over the classic screen's
+   panels or the map's status column. */
+static void renderScrollZoneBacking(void) {
+  if (s_cfg.scrollJoyH <= 10.0f) return;
+  /* While a finger holds the stick, its own rings show where it is. */
+  {
+    float ax, ay, tx, ty;
+    bool active;
+    Uint64 releaseTime;
+    inputTouchGetScrollJoystickState(&ax, &ay, &tx, &ty, &active, &releaseTime);
+    if (active) return;
+  }
+  ImDrawList *dl = controlsDrawList();
+  ImVec2 c(s_cfg.scrollJoyX + s_cfg.scrollJoyW * 0.5f,
+           s_cfg.scrollJoyY + s_cfg.scrollJoyH * 0.5f);
+  float r = s_cfg.scrollJoyOuterRadius;
+  dl->AddCircleFilled(c, r, scaleAlpha(IM_COL32(0, 0, 0, 200), s_cfg.idleOpacity), 32);
+  dl->AddCircle(c, r, scaleAlpha(IM_COL32(255, 255, 255, 220), s_cfg.idleOpacity), 32, 2.0f);
+}
+
+/* The touch controls on the classic screen (the desktop layout), where the
+   platform offers them: the iPad. Laid out and registered every frame of a
+   game, so the touch that brings them back lands on a control rather than
+   the game under it; drawn and read only while the last input was a finger.
+   The classic screen's own chrome does the rest: its build column, status
+   panels and newswire, and taps on the game view, which reach it as SDL's
+   mouse clicks. */
+static void tabletClassicOverlay(ClientSim *cs) {
+  ImGuiIO &io = ImGui::GetIO();
+  int screenW = (int)io.DisplaySize.x;
+  int screenH = (int)io.DisplaySize.y;
+  if (screenW <= 0 || screenH <= 0) return;
+
+  /* The full screen map when it is up, in its own rect; otherwise the
+     classic screen's. */
+  bool mapUp = sdl3DrawIsOverviewInWindow();
+  float gx = 0.0f, gy = 0.0f, gw = 0.0f, gh = 0.0f;
+  if (mapUp) {
+    if (!sdl3DrawGetOverviewInWindowRect(&gx, &gy, &gw, &gh)) mapUp = false;
+  }
+  if (!mapUp) sdl3DrawGetGameRect(&gx, &gy, &gw, &gh, NULL);
+  if (gw <= 0.0f || gh <= 0.0f) return;
+
+  /* The HUD as the map drew it, voice row and all. */
+  OverviewHudLayout hud;
+  bool haveHud = mapUp && sdl3DrawGetOverviewHudLayout(&hud);
+  tabletLayoutConfigureClassic(&s_cfg, screenW, screenH, gx, gy, gw, gh, mapUp,
+                               haveHud ? &hud : nullptr);
+
+  /* Over the map, the build tools are the mouse's, like a dialog: a tap on
+     one reaches the desktop's click, and no finger there pans. The status
+     column and the newswire have nothing to press, and the controls are laid
+     over them, so they are not. */
+  SDL_FRect hudRects[1];
+  int hudCount = 0;
+  if (haveHud) {
+    hudRects[hudCount++] = { gx + hud.buildX, gy + hud.buildY, hud.buildW, hud.buildH };
+  }
+  tabletBlockDialogTouches(hudRects, hudCount);
+  tabletViewButtonsApplyPolicies(&s_cfg, cs);
+  registerTouchButtons();
+  inputTouchSetJoystickZone(s_cfg.joyZoneX, s_cfg.joyZoneY, s_cfg.joyZoneW, s_cfg.joyZoneH);
+  inputTouchSetScrollJoystickZone(s_cfg.scrollJoyX, s_cfg.scrollJoyY,
+                                  s_cfg.scrollJoyW, s_cfg.scrollJoyH);
+  {
+    SDL_FRect ctl[2];
+    int n = 0;
+    ctl[n++] = { s_cfg.playersBtnX, s_cfg.topBtnY,
+                 s_cfg.cogBtnX + s_cfg.topBtnSize - s_cfg.playersBtnX, s_cfg.topBtnSize };
+    if (overviewButtonShown(cs)) {
+      ctl[n++] = { s_cfg.mapBtnX - s_cfg.mapBtnR, s_cfg.mapBtnY - s_cfg.mapBtnR,
+                   s_cfg.mapBtnR * 2.0f, s_cfg.mapBtnR * 2.0f };
+    }
+    inputTouchSetControlRects(ctl, n);
+  }
+  /* The map is the touch input's: drag pans, pinch zooms, a tap builds, as in
+     the touch layout. Over the classic screen there is no touch game view: a
+     tap there is the classic screen's mouse click. */
+  if (mapUp) {
+    inputTouchSetViewportBounds((int)gx, (int)gy, (int)gw, (int)gh, 1);
+  } else {
+    inputTouchSetViewportBounds(0, 0, 0, 0, 1);
+  }
+  inputTouchSetViewportPinchEnabled(mapUp);
+
+  /* The map button first: a tap on it is not a tap on the map. */
+  processOverviewButton(cs);
+  if (mapUp) {
+    processOverviewTouch(cs, false);
+  } else {
+    /* Nothing reads the viewport's taps over the classic screen; clear any. */
+    float tx, ty;
+    (void)inputTouchGetViewportTapPos(&tx, &ty);
+  }
+
+  if (!inputTouchControlsShown()) return;
+
+  tabletDamageHaptic();
+  tabletViewButtonTaps(cs, mapUp);
+  processScrollJoystick(cs);
+
+  /* Drawn at the fade's strength: full while touched, gone a few seconds
+     after the last finger lifts (inputTouchClassicControlsAlpha). */
+  float fade = inputTouchClassicControlsAlpha();
+  if (fade <= 0.0f) return;
+  ImDrawList *dl = controlsDrawList();
+  int vtxStart = dl->VtxBuffer.Size;
+
+  renderJoystickZoneHint();
+  renderJoystickOverlay();
+  renderScrollZoneBacking();
+  renderScrollJoystickOverlay();
+  renderFireMineButtons();
+  renderGunsightButtons();
+  renderTalkButton();
+  renderViewButtons(cs);
+  renderTopBarButtons(cs);
+  renderOverviewButton(cs);
+  scaleDrawListAlphaSince(dl, vtxStart, fade);
+}
+
+/* -------------------------------------------------------
+ * Main overlay entry point
+ * ------------------------------------------------------- */
+
+void sdl3ImguiTabletOverlay(ClientSim *cs) {
+  if (!uiModeIsTablet()) {
+    if (inputTouchClassicControlsOffered()) tabletClassicOverlay(cs);
+    return;
+  }
+
+  /* Get viewport bounds from sdl3draw — now in the same coordinate
+     space as ImGui since we override DisplaySize to match. */
+  int vpX, vpY, vpW, vpH, vpZoom;
+  sdl3DrawGetTabletViewport(&vpX, &vpY, &vpW, &vpH, &vpZoom);
+
+  ImGuiIO &io = ImGui::GetIO();
+  int screenW = (int)io.DisplaySize.x;
+  int screenH = (int)io.DisplaySize.y;
+
+  /* Reconfigure layout each frame */
+  tabletLayoutConfigure(&s_cfg, screenW, screenH, vpX, vpY, vpW, vpH, vpZoom);
+  tabletPanelAlphasUpdate();
+  tabletBlockDialogTouches(nullptr, 0);
+  tabletViewButtonsApplyPolicies(&s_cfg, cs);
+
+  /* Draw beveled chrome background behind everything */
+  renderTabletBackground();
+
+  /* Register button positions for touch hit-testing */
+  registerTouchButtons();
+  inputTouchSetJoystickZone(0.0f, 0.0f, 0.0f, 0.0f);
+
+  /* Register scroll joystick zone */
+  if (s_cfg.scrollJoyH > 10.0f) {
+    inputTouchSetScrollJoystickZone(s_cfg.scrollJoyX, s_cfg.scrollJoyY,
+                                    s_cfg.scrollJoyW, s_cfg.scrollJoyH);
+  }
+
+  /* Update viewport bounds for tap detection */
+  inputTouchSetViewportBounds(vpX, vpY, vpW, vpH, vpZoom);
+
+  /* The map button first: its tap lies inside the game view. */
+  processOverviewButton(cs);
+
+  /* With the map up, the game view's touches drive the map; two fingers on it
+     pinch only then. iOS only, as for the button. */
+#if defined(__APPLE__) && TARGET_OS_IOS
+  bool overviewOn = sdl3DrawIsOverviewInWindow();
+#else
+  bool overviewOn = false;
+#endif
+  inputTouchSetViewportPinchEnabled(overviewOn);
+  if (overviewOn) {
+    processOverviewTouch(cs, true);
+  } else {
+    /* Process tap-to-build */
+    handleTapToBuild(cs);
+
+    /* Process scrolling (joystick + viewport drag) */
+    processScrollJoystick(cs);
+    processViewportDragScroll(cs);
+  }
+
+  tabletDamageHaptic();
+  tabletViewButtonTaps(cs, overviewOn);
 
   renderScenarioSlot(cs);
+  renderOverviewButton(cs);
   renderJoystickOverlay();
   renderScrollJoystickOverlay();
   renderFireMineButtons();
   renderGunsightButtons();
+  renderTalkButton();
   renderViewButtons(cs);
   renderBuildSelectBar(cs);
   renderResourceBars(cs);

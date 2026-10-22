@@ -1,8 +1,8 @@
 # The scenario arenas
 
-A hundred and sixty-seven small maps, each with a scenario script beside it.
+A hundred and seventy-nine small maps, each with a scenario script beside it.
 Most are built to make one bot decision happen on purpose and then say whether
-the bot made it. Thirty-eight check a shipped script instead: the twenty-three
+the bot made it. Thirty-nine check a shipped script instead: the twenty-four
 `pilltag_*` arenas, the seven `rule_roulette_*` arenas, the four `virus_*`
 arenas and the four `survival_pushout*` arenas, which play Survival's own map
 and script. `deep_sea_safe_rule` checks one gameplay rule. The twenty-one `tutorial_*`

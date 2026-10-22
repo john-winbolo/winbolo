@@ -599,6 +599,132 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
   return why;
 }
 
+/* How far from the tank's centre a builder starts, towards the square he
+ * was sent to: one walking step on grass. He is given it only where he
+ * could have walked it; see lgmApplyStartOffset.
+ *
+ * 16 was chosen to come close to the builder death rate of WinBolo 1.17.
+ * In 1.17 that rate depended on the shell's angle. 1.17 tested a hit with
+ * a 128 box (abs(dx) < 128 and abs(dy) < 128), not a circle. A shell from
+ * straight up, down or the side burst 96 to 128 from the tank's centre. A
+ * shell at 45 degrees met the box corner, about 150 to 181 out. So the
+ * danger to the builder was greatest from straight on and least at 45
+ * degrees. Measured per order on grass under an angry pillbox (a shell
+ * every 6 ticks), 1.17 killed him 44% of the time along an axis, 22% at
+ * 22.5 degrees and 0% at 45 degrees, 22% on average. An offset of 16
+ * gives 27%, an offset of 0 gives 60% and 64 gives 0%. The square behind
+ * the tank is not meant to be a fully safe place: a small chance of death
+ * under heated fire is by design.
+ *
+ * Where the danger is now: a hit bursts 64 to 112 from the tank's centre on
+ * the shooter's side, and the builder dies within MAP_SQUARE_MIDDLE of the
+ * burst. A hit can kill him in his first 2 ticks out when the tank is still
+ * or drives at the shooter. A tank that drives away from the shooter on a
+ * road, a boat or a base keeps pace with him, and the danger lasts as long
+ * as it does. */
+#define LGM_START_OFFSET 16
+
+/*********************************************************
+*NAME:          lgmApplyStartOffset
+*AUTHOR:        Andrew Roth
+*CREATION DATE: 12/10/26
+*LAST MODIFIED: 16/10/26
+*PURPOSE:
+*  Moves a builder who has just been put on his tank's
+*  centre LGM_START_OFFSET towards his destination. A
+*  destination no further off than that leaves him on the
+*  tank's centre: he reaches it in his first step anyway,
+*  and standing exactly on it would give lgmMoveAway no
+*  direction to work an angle from. Whole numbers only so
+*  every build walks him the same way.
+*
+*  The move is not made when it would cross into a map
+*  square he could not have stepped onto. A tank can sit
+*  within LGM_START_OFFSET of the edge of a square it can
+*  drive on and a builder cannot walk on, which by default
+*  is deep sea or river. Put down in there, lgmMoveAway
+*  finds no speed under him, moves him nowhere and turns
+*  him back the same tick. Left on the tank he does what he
+*  always did: his step into that square is refused and he
+*  slides along its edge. The squares asked about are the
+*  two lgmMoveAway asks about for one step, in its order:
+*  the one the y part enters, then the one the x part
+*  enters from there.
+*
+*  The blessed square is not counted as walkable here. This
+*  runs before lgmNewPrimaryRequest sets blessX/blessY, so
+*  for a boat order, or a road order on a river square, with
+*  the tank within LGM_START_OFFSET of that square's edge,
+*  the river square has no speed and the offset is refused,
+*  although lgmMoveAway would let him step onto it
+*  (lgmCheckBlessedSquare). He then starts on the tank's
+*  centre as he did before there was an offset. That is the
+*  safe direction: he loses at most the head start, and is
+*  never put somewhere he could not have walked to.
+*
+*  Nor is it made when he cannot walk on the tank's own
+*  square, which is a tank in a river with no boat. He has
+*  no speed there and turns back the same tick, and the
+*  move could lift him over the bank onto land he could not
+*  have reached. He starts on the tank's centre, as he did
+*  before there was an offset.
+*
+*  A tank on a boat is the exception to all of these.
+*  lgmMoveAway lets a builder near his boat walk at base
+*  speed over any square (lgmCheckTankBoat), so no square
+*  is asked about and he always gets the offset.
+*
+*ARGUMENTS:
+*  sim   - Pointer to the game sim structure
+*  lgman - Pointer to the lgm structure, already on the
+*          tank's centre with destX/destY set
+*  tnk   - Pointer to the tank structure
+*********************************************************/
+static void lgmApplyStartOffset(GameSim *sim, lgm *lgman, tank *tnk) {
+  int dx = (int) (*lgman)->destX - (int) (*lgman)->x;
+  int dy = (int) (*lgman)->destY - (int) (*lgman)->y;
+  /* The square of a WORLD distance can pass 2^32, so it alone is held in
+   * 64 bits. */
+  uint64_t distSquared = (uint64_t) ((int64_t) dx * dx) + (uint64_t) ((int64_t) dy * dy);
+  int dist = 0; /* whole part of the square root of distSquared */
+  int bit;
+
+  /* Built one bit at a time from the top, keeping each bit that does not
+   * take the square past distSquared. Both ends are WORLD values, so the
+   * distance is under 2^17 and seventeen bits cover it. */
+  for (bit = 1 << 16; bit != 0; bit >>= 1) {
+    uint64_t trial = (uint64_t) (dist | bit);
+    if (trial * trial <= distSquared) {
+      dist |= bit;
+    }
+  }
+  if (dist > LGM_START_OFFSET) {
+    WORLD newX = (WORLD) ((int) (*lgman)->x + dx * LGM_START_OFFSET / dist);
+    WORLD newY = (WORLD) ((int) (*lgman)->y + dy * LGM_START_OFFSET / dist);
+    BYTE bmx = (BYTE) ((*lgman)->x >> TANK_SHIFT_MAPSIZE);
+    BYTE bmy = (BYTE) ((*lgman)->y >> TANK_SHIFT_MAPSIZE);
+    BYTE newbmx = (BYTE) (newX >> TANK_SHIFT_MAPSIZE);
+    BYTE newbmy = (BYTE) (newY >> TANK_SHIFT_MAPSIZE);
+    bool canWalk = TRUE;
+
+    if (lgmCheckTankBoat(lgman, tnk, (WORLD) sim->rules.lgm_boat_leave_offset) == FALSE) {
+      if (mapGetManSpeed(sim, &sim->mp, &sim->pb, &sim->bs, bmx, bmy, (*lgman)->playerNum) == 0) {
+        canWalk = FALSE;
+      }
+      if (newbmy != bmy && mapGetManSpeed(sim, &sim->mp, &sim->pb, &sim->bs, bmx, newbmy, (*lgman)->playerNum) == 0) {
+        canWalk = FALSE;
+      }
+      if (newbmx != bmx && mapGetManSpeed(sim, &sim->mp, &sim->pb, &sim->bs, newbmx, newbmy, (*lgman)->playerNum) == 0) {
+        canWalk = FALSE;
+      }
+    }
+    if (canWalk == TRUE) {
+      (*lgman)->x = newX;
+      (*lgman)->y = newY;
+    }
+  }
+}
+
 /*********************************************************
 *NAME:          lgmNewPrimaryRequest
 *AUTHOR:        John Morrison
@@ -643,6 +769,10 @@ void lgmNewPrimaryRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE m
       (*lgman)->destX += MAP_SQUARE_MIDDLE;
       (*lgman)->destY += MAP_SQUARE_MIDDLE;
       tankGetWorld(tnk, &((*lgman)->x), &((*lgman)->y));
+      /* Before blessX/blessY are set below on purpose: the blessed river
+       * square of a boat or road order does not count as walkable, so the
+       * offset is refused next to it and he keeps the old start. */
+      lgmApplyStartOffset(sim, lgman, tnk);
       (*lgman)->state = LGM_STATE_GOING;
       (*lgman)->action = action;
       (*lgman)->inTank = FALSE;
@@ -787,21 +917,16 @@ void lgmMoveAway(GameSim *sim, lgm *lgman, tank *tnk) {
 
   if (onBoat == TRUE) {
     speed = (BYTE) sim->rules.man_speed_refuel_base;
-  } else if (bmx == (*lgman)->blessX && bmy == (*lgman)->blessY) {
-    speed = (BYTE) sim->rules.man_speed_refuel_base;
-    if (sim->rules.man_bless_tile_terrain_speed) {
-      /* man_bless_tile_terrain_speed: on the square he is going to build
-         on he walks up to its centre at that square's own terrain speed,
-         as he does on every other square. A square that reads 0 (a river,
-         a wall, a live pillbox) keeps the base speed above, so he can
-         never be left standing still on it. */
-      BYTE blessSpeed = mapGetManSpeed(sim, mp, pb, bs, bmx, bmy, (*lgman)->playerNum);
-      if (blessSpeed > 0) {
-        speed = blessSpeed;
-      }
-    }
   } else {
+    /* He crosses every square at its own terrain speed, the square he is
+       going to build on included. That square can read 0: a river under
+       a boat or a road, a half-built wall to repair, a live pillbox. There
+       he walks at the refuelling base speed instead, so he is never left
+       standing still on it. */
     speed = mapGetManSpeed(sim, mp, pb, bs, bmx, bmy, (*lgman)->playerNum);
+    if (speed == 0 && bmx == (*lgman)->blessX && bmy == (*lgman)->blessY) {
+      speed = (BYTE) sim->rules.man_speed_refuel_base;
+    }
   }
 
   utilCalcDistance(&xAdd, &yAdd, angle, speed);
@@ -1498,11 +1623,14 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 *              DMG_NO_PILL
 *  tnk       - Pointer to the tank
 *********************************************************/
-void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk) {
+/* Whether an explosion at (wx, wy) catches a man at (lgmWorldX, lgmWorldY):
+   within half a square of it on open ground, or on the very square when the
+   explosion is on a wall, a pillbox or a base. The one test every builder
+   death is decided by. */
+static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy) {
   map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
   bases *bs = &sim->bs;
-  bool isServer = sim->isServer;
   BYTE checkMapX;                   /* LGM X Map co-ordinate (from check position) */
   BYTE checkMapY;                   /* LGM Y Map co-ordinate (from check position) */
   bool solid;                       /* Is the map square the lgm on solid or not */
@@ -1510,30 +1638,38 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
   double distance;
   BYTE pos;
   BYTE mx, my;
+  WORLD conv;
+
+  dead = FALSE;
+  /* Map coords from check position — used for hit detection */
+  conv = lgmWorldX;
+  conv >>= 8;
+  checkMapX = (BYTE) conv;
+  checkMapY = (BYTE) ((unsigned int) (lgmWorldY) >> 8);
+  mx = (BYTE) (wx >> 8);
+  my = (BYTE) (wy >> 8);
+
+  utilIsItemInRange(lgmWorldX, lgmWorldY, wx, wy, (WORLD) sim->rules.pill_range, &distance);
+  pos = mapGetPos(mp, mx, my);
+  solid = FALSE;
+  if (pos == BUILDING || pos == HALFBUILDING || pillsExistPos(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE) {
+    solid = TRUE;
+  }
+  if (solid == FALSE && distance <= MAP_SQUARE_MIDDLE) {
+    dead = TRUE;
+  } else if (solid == TRUE && checkMapX == mx && checkMapY == my) {
+    dead = TRUE;
+  }
+  return dead;
+}
+
+void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk) {
+  bool isServer = sim->isServer;
+  bool dead;                        /* Are we dead */
 
 
   if (isServer == TRUE && (*lgman)->isDead == FALSE && (*lgman)->inTank == FALSE) {
-    WORLD conv;
-    dead = FALSE;
-    /* Map coords from check position — used for hit detection */
-    conv = lgmWorldX;
-    conv >>= 8;
-    checkMapX = (BYTE) conv;
-    checkMapY = (BYTE) ((unsigned int) (lgmWorldY) >> 8);
-    mx = (BYTE) (wx >> 8);
-    my = (BYTE) (wy >> 8);
-
-    utilIsItemInRange(lgmWorldX, lgmWorldY, wx, wy, (WORLD) sim->rules.pill_range, &distance);
-    pos = mapGetPos(mp, mx, my);
-    solid = FALSE;
-    if (pos == BUILDING || pos == HALFBUILDING || pillsExistPos(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE) {
-      solid = TRUE;
-    }
-    if (solid == FALSE && distance <= MAP_SQUARE_MIDDLE) {
-      dead = TRUE;
-    } else if (solid == TRUE && checkMapX == mx && checkMapY == my) {
-      dead = TRUE;
-    }
+    dead = lgmBlastCatches(sim, lgmWorldX, lgmWorldY, wx, wy);
 
     if (dead == TRUE) {
       /* The engine's own test says the blast caught him; the host has the
@@ -1732,6 +1868,150 @@ void lgmDeathCheck(GameSim *sim, lgm *lgman, WORLD wx, WORLD wy, BYTE owner, BYT
   if (*lgman == NULL) return;
   lgmDeathCheckAtPosition(sim, lgman, (*lgman)->x, (*lgman)->y, wx, wy, owner,
                           attacker, cause, pill, tnk);
+}
+
+static bool lgmInTankCanBeKilled(GameSim *sim, lgm *lgman, tank *tnk);
+
+/*********************************************************
+*NAME:          lgmDeathCheckSeenOut
+*AUTHOR:        John Morrison
+*CREATION DATE: 13/10/26
+*LAST MODIFIED: 13/10/26
+*PURPOSE:
+*  Like lgmDeathCheckAtPosition, for a man the attacker's
+*  screen showed out of his tank at the supplied position.
+*  The attacker's screen decides, so a man the explosion
+*  caught there dies even if he has got back into his tank
+*  since.
+*
+*  A man who is out now, or dead, goes through
+*  lgmDeathCheckAtPosition unchanged. A man who is in his
+*  tank now dies through lgmKillInTank, on the tank's
+*  centre as it is now.
+*
+*  A man inside a tank that is itself dead is left alone. He
+*  went down with the tank and it has no present place to
+*  put the death at. The shell that has just killed the tank
+*  is no exception: its blast does not kill him a second
+*  time.
+*
+*  The man's place and the explosion's place must be from
+*  the same moment: both as the attacker's screen had them.
+*  A shell that hit a tank is drawn where the tank is now,
+*  but that is not the point to hand in here; the point the
+*  shell reached on the attacker's screen is (shells.c,
+*  shellsBlastTestBuilder).
+*
+*ARGUMENTS:
+*  sim       - Pointer to the game sim structure
+*  lgman     - Pointer to the lgm pointer
+*  lgmWorldX - Where the attacker's screen showed him, X
+*  lgmWorldY - Where the attacker's screen showed him, Y
+*  wx        - X World co ord of the explosion, as the
+*              attacker's screen had it
+*  wy        - Y World co ord of the explosion, likewise
+*  owner     - Who is credited with the kill
+*  attacker  - Who the can_die question names
+*  cause     - The DMG_SRC_* the can_die question is handed
+*  pill      - The pill index whose shell it was, or
+*              DMG_NO_PILL
+*  tnk       - Pointer to the tank
+*********************************************************/
+void lgmDeathCheckSeenOut(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy, BYTE owner, BYTE attacker, BYTE cause, BYTE pill, tank *tnk) {
+  if (*lgman == NULL) return;
+  if ((*lgman)->isDead == TRUE || (*lgman)->inTank == FALSE) {
+    lgmDeathCheckAtPosition(sim, lgman, lgmWorldX, lgmWorldY, wx, wy, owner,
+                            attacker, cause, pill, tnk);
+    return;
+  }
+
+  /* In his tank now. */
+  if (lgmInTankCanBeKilled(sim, lgman, tnk) == FALSE) {
+    return;
+  }
+  if (lgmBlastCatches(sim, lgmWorldX, lgmWorldY, wx, wy) == FALSE) {
+    return;
+  }
+  /* The host has the last word, as it has in lgmDeathCheckAtPosition. Asked
+     before he is touched, so a refusal leaves him in the tank. */
+  if (gameSimCanDie(sim, DIE_KIND_BUILDER, (*lgman)->playerNum, attacker,
+                    cause, pill) == FALSE) {
+    return;
+  }
+
+  lgmKillInTank(sim, lgman, tnk, owner);
+}
+
+/* Can a man who is inside his tank be killed there? Only on the server, and
+   only while the tank is alive: a man inside a dead tank went down with it,
+   and the tank has no present place to put the death at. A tank counts as
+   dead from the hit that killed it (deathWait), before its armour reads so. */
+static bool lgmInTankCanBeKilled(GameSim *sim, lgm *lgman, tank *tnk) {
+  if (lgman == NULL || *lgman == NULL) {
+    return FALSE;
+  }
+  if ((*lgman)->isDead == TRUE || (*lgman)->inTank == FALSE) {
+    return FALSE;
+  }
+  if (sim->isServer == FALSE || tnk == NULL || *tnk == NULL ||
+      tankIsDestroyed(tnk) || (*tnk)->deathWait > 0) {
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/*********************************************************
+*NAME:          lgmKillInTank
+*AUTHOR:        John Morrison
+*CREATION DATE: 13/10/26
+*LAST MODIFIED: 13/10/26
+*PURPOSE:
+*  Kills a man who is inside his tank. He is first put out
+*  of it, standing on the tank's centre as it is now and on
+*  his way back in, and then dies through lgmKill like any
+*  other. So the dying sound and the square the loss is
+*  recorded on are the tank's present square, he flies in
+*  from a random start to where the tank is, and the tank
+*  has no man until he has walked back. He carries nothing:
+*  what he brought back went into the tank when he got in,
+*  and stays there.
+*
+*  This is the one in-tank death path. A shell blast the
+*  attacker's screen caught him in (lgmDeathCheckSeenOut)
+*  and a scenario script that forces the kill both come
+*  through here. The can_die question is the caller's to
+*  ask, before the call.
+*
+*  Returns TRUE if he died. Returns FALSE, with nothing
+*  changed, for a man who is not in his tank or is dead, on
+*  a client, and for a tank that is itself dead or waiting
+*  to come back.
+*
+*ARGUMENTS:
+*  sim    - Pointer to the game sim structure
+*  lgman  - Pointer to the lgm pointer
+*  tnk    - Pointer to the tank
+*  owner  - Who is credited with the kill, or NEUTRAL
+*********************************************************/
+bool lgmKillInTank(GameSim *sim, lgm *lgman, tank *tnk, BYTE owner) {
+  if (lgmInTankCanBeKilled(sim, lgman, tnk) == FALSE) {
+    return FALSE;
+  }
+
+  /* Out of the tank, on its centre, walking back in: the state of a man one
+     step from home. State and action are what the rest of the engine reads a
+     man who is out by. With the state left idle his position reads as square
+     (0,0) (lgmGetMX), and with the action left idle an order given after he
+     lands would start at once from the tank instead of waiting for him to
+     walk back (lgmAddRequest). He was in the tank, so the job he was seen on
+     is over and is no longer held anywhere; a tree harvest stands in for it,
+     the one job that takes nothing from the tank. */
+  tankGetWorld(tnk, &((*lgman)->x), &((*lgman)->y));
+  (*lgman)->inTank = FALSE;
+  (*lgman)->state = LGM_STATE_RETURN;
+  (*lgman)->action = LGM_TREE_REQUEST;
+  lgmKill(sim, lgman, tnk, owner);
+  return TRUE;
 }
 
 /*********************************************************

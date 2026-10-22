@@ -1886,11 +1886,11 @@ bool pillsMoveView(GameSim *sim, pillboxes *value, PlayerBitMap eligible, BYTE *
   returnValue = FALSE;
   found = 0;
   count = 0;
-  oldPill = pillsGetViewPillNum(value, *mx, *my, FALSE, FALSE);
-  oldPill--;
   myPlayerNum = sim->viewPlayer;
+  oldPill = pillsGetWatchPillNum(sim, value, *mx, *my, myPlayerNum);
+  oldPill--;
   while (count < (*value)->numPills) {
-    if (count != oldPill && (*value)->active[count] != FALSE && (eligible & ((PlayerBitMap)1 << count)) != 0 && (playersIsAllie(&sim->plyrs, myPlayerNum, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
+    if (count != oldPill && (eligible & ((PlayerBitMap)1 << count)) != 0 && pillsCanView(sim, value, count, myPlayerNum) == TRUE) {
       if (((yMove == 0 && (xMove < 0 && (*value)->item[count].x < *mx)) || (xMove > 0 && (*value)->item[count].x > *mx)) || ((xMove == 0 && (yMove < 0 && (*value)->item[count].y < *my)) || (yMove > 0 && (*value)->item[count].y > *my))) {
         if (utilIsItemInRange(*mx, *my, (*value)->item[count].x, (*value)->item[count].y, (WORLD) nearest, &dist) == TRUE) {
           nearest = dist;
@@ -1944,23 +1944,18 @@ bool pillsGetNextView(GameSim *sim, pillboxes *value, PlayerBitMap eligible, BYT
 
   /* Find out the previous amount */
   if (prev == TRUE) {
-    count = pillsGetViewPillNum(value, *mx, *my, FALSE, FALSE);
+    count = pillsGetWatchPillNum(sim, value, *mx, *my, playNumber);
     if (count == PILL_NOT_FOUND) {
       count = 0;
     } else {
-      count--;
-      if ((*value)->item[count].armour > 0 && ((*value)->item[count].inTank) == FALSE) {
-        okLoop = TRUE;
-        count++;
-      } else {
-        count = 0;
-      }
+      /* Resume after the pill being watched, wrapping round to it. */
+      okLoop = TRUE;
     }
   }
 
   /* Find the next item */
   while (done == FALSE && count < ((*value)->numPills)) {
-    if ((*value)->active[count] != FALSE && (eligible & ((PlayerBitMap)1 << count)) != 0 && (playersIsAllie(&sim->plyrs, playNumber, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
+    if ((eligible & ((PlayerBitMap)1 << count)) != 0 && pillsCanView(sim, value, count, playNumber) == TRUE) {
       done = TRUE;
       *mx = (*value)->item[count].x;
       *my = (*value)->item[count].y;
@@ -1972,7 +1967,7 @@ bool pillsGetNextView(GameSim *sim, pillboxes *value, PlayerBitMap eligible, BYT
   if (done == FALSE && okLoop == TRUE) {
     count = 0;
     while (done == FALSE && count < ((*value)->numPills)) {
-      if ((*value)->active[count] != FALSE && (eligible & ((PlayerBitMap)1 << count)) != 0 && (playersIsAllie(&sim->plyrs, playNumber, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
+      if ((eligible & ((PlayerBitMap)1 << count)) != 0 && pillsCanView(sim, value, count, playNumber) == TRUE) {
         done = TRUE;
         *mx = (*value)->item[count].x;
         *my = (*value)->item[count].y;
@@ -1995,12 +1990,26 @@ bool pillsCanView(GameSim *sim, pillboxes *value, BYTE pillIdx, BYTE viewPlayer)
 
   returnValue = FALSE;
   if (pillIdx < (*value)->numPills) {
-    if ((*value)->active[pillIdx] != FALSE && (playersIsAllie(&sim->plyrs, viewPlayer, (*value)->item[pillIdx].owner) == TRUE) && ((*value)->item[pillIdx].armour) != 0 && ((*value)->item[pillIdx].inTank) == FALSE) {
+    if ((*value)->active[pillIdx] != FALSE && (playersIsAllie(&sim->plyrs, viewPlayer, (*value)->item[pillIdx].owner) == TRUE) && ((*value)->item[pillIdx].armour) != 0 && ((*value)->item[pillIdx].inTank) == FALSE
+        && (*value)->posStale[pillIdx] != PILL_SQUARE_MOVED) {
       returnValue = TRUE;
     }
   }
 
   return returnValue;
+}
+
+/* The pill a camera on (mx,my) is watching — see internal/pillbox.h. */
+BYTE pillsGetWatchPillNum(GameSim *sim, pillboxes *value, BYTE mx, BYTE my, BYTE viewPlayer) {
+  BYTE count; /* Looping variable */
+
+  for (count = 0; count < (*value)->numPills; count++) {
+    if ((*value)->item[count].x == mx && (*value)->item[count].y == my
+        && pillsCanView(sim, value, count, viewPlayer) == TRUE) {
+      return (BYTE) (count + 1);
+    }
+  }
+  return PILL_NOT_FOUND;
 }
 
 /*********************************************************
@@ -2021,13 +2030,10 @@ bool pillsCanView(GameSim *sim, pillboxes *value, BYTE pillIdx, BYTE viewPlayer)
 bool pillsCheckView(GameSim *sim, pillboxes *value, BYTE mx, BYTE my) {
   BYTE pillNum; /* The pillbox number */
 
-  pillNum = pillsGetViewPillNum(value, mx, my, FALSE, FALSE);
-  if (pillNum == PILL_NOT_FOUND || pillNum == (PILL_NOT_FOUND-1)) {
-    return FALSE;
-  }
-  pillNum--;
-
-  return pillsCanView(sim, value, pillNum, sim->viewPlayer);
+  /* A carried pill, or one that has left this square, leaves a record behind
+   * on it; the lookup passes over those to any pill that can be watched. */
+  pillNum = pillsGetWatchPillNum(sim, value, mx, my, sim->viewPlayer);
+  return (bool) (pillNum != PILL_NOT_FOUND);
 }
 
 /*********************************************************

@@ -1228,7 +1228,6 @@ void serverSimResetGameWorld(ServerSim *sim) {
         posHistoryInit(&sim->lgmPosHistory[i]);
     }
     sim->sim.lagCompTicks = 0;
-    memset(sim->sim.perPlayerCompTicks, 0, sizeof(sim->sim.perPlayerCompTicks));
 
     /* 6. Clear events. The map event count too: a running frame clears it at
        its top but a round that ended with the buffer full would otherwise

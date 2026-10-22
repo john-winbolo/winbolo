@@ -673,6 +673,8 @@
 #define STR_DLGWBN_COL_DATE                 727
 #define STR_DLGWBN_PLAYERS_LBL              728
 #define STR_DLGWBN_NUMPLAYERS_FMT           729
+#define STR_DLGWBN_PLAYERS_OTHERS_FMT       2860
+#define STR_DLGWBN_PLAYERS_OTHER_ONE        2861
 #define STR_DLGWBN_DURATION                 730
 #define STR_DLGWBN_RATING                   731
 #define STR_DLGWBN_DOWNLOADS_FMT            732
@@ -765,6 +767,13 @@
 #define STR_DLGLOBBY_REEL_DISABLED           1940
 #define STR_DLGLOBBY_REEL_NONE               1941
 #define STR_DLGLOBBY_REEL_TOO_LARGE          1942
+/* Lobby "Last round" panel — the reel's "Spawn in log viewer" button. */
+#define STR_DLGLOBBY_REEL_SPAWN_LV_TIP       2910
+#define STR_DLGLOBBY_REEL_SPAWN_NO_LOG       2911
+#define STR_DLGLOBBY_REEL_SPAWN_NO_VIEWER    2912
+#define STR_DLGLOBBY_REEL_SPAWN_SAVE_FAILED  2913
+#define STR_DLGLOBBY_REEL_SPAWN_START_FAILED 2914
+#define STR_DLGLOBBY_REEL_SPAWN_STARTED      2916
 
 /* SetName dialog additions */
 #define STR_DLGSETNAME_WINTITLE             757
@@ -1279,6 +1288,121 @@
 #define STR_LV_WIN_GAMEINFO                 1125
 #define STR_LV_WIN_ITEMINFO                 1126
 #define STR_LV_RESET_WINDOWS                1127
+#define STR_LV_DOCK_ENABLED                 2871
+#define STR_LV_RESET_WINDOWS_DOCK           2872
+#define STR_LV_EVT_FILTER_ALL               2873
+#define STR_LV_EVT_KIND_PILL_CAPTURED       2874
+#define STR_LV_EVT_KIND_PILL_STOLEN         2875
+#define STR_LV_EVT_KIND_BASE_CAPTURED       2876
+#define STR_LV_EVT_KIND_BASE_STOLEN         2877
+#define STR_LV_EVT_KIND_BUILDER_LOST        2878
+#define STR_LV_EVT_KIND_TANK_KILLED         2879
+#define STR_LV_EVT_KIND_PLAYER              2880
+#define STR_LV_EVT_KIND_CHAT                2881
+#define STR_LV_EVT_KIND_GAME                2882
+#define STR_LV_EVT_KIND_HIGHLIGHT           2883
+#define STR_LV_EVT_NOW                      2884
+/* The Log Viewer's HUD panel: its name in the Windows menu and on its title
+   bar, and the tooltip of one icon. string1 of the two tips is the item
+   ("Pillbox #4"); string2 is its owner, or "Neutral" or "Dead". NAME_TEAM
+   joins a player's name to the colour of the player's team. VIEW_AS is the
+   line that names the player whose view the panel shows (string1), and
+   ALL_TEAMS the button beside it that goes back. TIP_REL adds what the item
+   is to that player (string2: own, allied or hostile) to a tip (string1). */
+#define STR_LV_WIN_HUD                      2885
+#define STR_LV_HUD_TIP_OWNER                2886
+#define STR_LV_HUD_TIP_STATE                2887
+#define STR_LV_HUD_NAME_TEAM                2888
+#define STR_LV_HUD_DEAD                     2889
+#define STR_LV_HUD_VIEW_AS                  2890
+#define STR_LV_HUD_ALL_TEAMS                2891
+#define STR_LV_HUD_REL_OWN                  2892
+#define STR_LV_HUD_REL_ALLIED               2917
+#define STR_LV_HUD_REL_HOSTILE              2918
+#define STR_LV_SAVE_NAME_VS                 2893
+#define STR_LV_SAVE_NAME_MORE               2894
+#define STR_LV_SAVE_NAME_BOT                2895
+#define STR_LV_SAVE_NAME_BOTS               2896
+#define STR_LV_SAVE_NAME_LOG                2897
+#define STR_LV_ERR_NO_GAME                  2898
+#define STR_LV_ERR_SAVE_MAP                 2899
+#define STR_LV_ERR_MAP_FOLDER               2900
+#define STR_LV_ERR_START_GAME               2901
+#define STR_LV_ERR_SAVE_LOG                 2902
+#define STR_LV_SAVE_LOG_TITLE               2903
+#define STR_LV_ERR_LOG_GONE                 2904
+#define STR_LV_HUD_TIP_REL                  2800
+#define STR_LV_MENU_OPEN_SP                 2801
+#define STR_LV_MENU_OPEN_SP_TIP             2802
+#define STR_LV_MENU_SAVE_LOG                2803
+#define STR_LV_DOCK_LEFT                    2804
+#define STR_LV_DOCK_TOP                     2805
+#define STR_LV_DOCK_BOTTOM                  2806
+#define STR_LV_DOCK_EMPTY_HINT              2807
+/* The viewer's Overview panel: its name in the Windows menu and its title
+   bar, the name of the row of totals, and the label of a team with more
+   players than there is room to name: the first one (string1) and how many
+   more there are (number). */
+#define STR_LV_WIN_OVERVIEW                 2820
+#define STR_LV_OVERVIEW_TOTAL               2821
+#define STR_LV_OVERVIEW_MORE                2822
+#define STR_LV_OVERVIEW_BAR_PILL            2862
+#define STR_LV_OVERVIEW_BAR_PILLS           2863
+#define STR_LV_OVERVIEW_BAR_BASE            2864
+#define STR_LV_OVERVIEW_BAR_BASES           2865
+/* The viewer's Tank panel: its name, the hint with no tank selected, a
+   gauge as numbers (string1 its name, number what the tank holds, number2
+   the most it can hold), the three states of the builder, the pillboxes the
+   tank carries (number), and the line for a recording with no stocks. */
+#define STR_LV_WIN_TANK                     2823
+#define STR_LV_TANK_HINT                    2824
+#define STR_LV_TANK_STOCK_FMT               2825
+#define STR_LV_TANK_BUILDER_IN              2826
+#define STR_LV_TANK_BUILDER_OUT             2827
+#define STR_LV_TANK_BUILDER_DEAD            2828
+#define STR_LV_TANK_PILLS                   2829
+#define STR_LV_TANK_NO_STOCK                2830
+/* The viewer's Options menu: the two bars over each tank, and the item's
+   tooltip. */
+#define STR_LV_TANK_BARS                    2831
+#define STR_LV_TANK_BARS_TIP                2832
+/* Log viewer Controls panel: what each button does, for its tooltip. {string1} of the two jumps is a number of seconds ("2.5", "12"); KEY_FMT puts a button's shortcut key after its name. */
+#define STR_LV_TIP_BACK_SECS                2833
+#define STR_LV_TIP_FWD_SECS                 2834
+#define STR_LV_TIP_KEY_FMT                  2835
+#define STR_LV_TIP_LIVE                     2836
+/* Log viewer: the X at the end of a panel's name line */
+#define STR_LV_TIP_DESELECT                 2837
+#define STR_LV_TIP_ALL_TEAMS                2838
+/* 2839 was the tooltip of the gear each sidebar had ("Sidebar options"); the
+ * gear is gone and the number is not used again. */
+/* Log viewer: the option of a sidebar, in the Windows menu */
+#define STR_LV_DOCK_TRANSPARENT             2840
+/* Log viewer: the event markers over the seek bar of the Controls panel */
+#define STR_LV_OVERLAY_EVENTS               2841
+#define STR_LV_OVERLAY_TIP                  2842
+#define STR_LV_OVERLAY_COUNT                2843
+#define STR_LV_OVERLAY_MORE                 2844
+/* Log viewer: the builder marker over each tank (Options), and the time left on the Tank panel's builder line */
+#define STR_LV_BUILDER_STATUS               2845
+#define STR_LV_BUILDER_STATUS_TIP           2846
+#define STR_LV_TANK_BUILDER_BACK            2847
+/* Log viewer: the filter of the Events panel, a list of ticked kinds */
+#define STR_LV_EVT_FILTER_SOME              2848
+#define STR_LV_EVT_FILTER_EMPTY             2849
+#define STR_LV_EVT_FILTER_TIP               2850
+/* Log viewer: the zoom of the map as a percentage */
+#define STR_LV_ZOOM_TIP                     2851
+/* Log viewer Options menu: Rewind and Fast Forward go to the new place in a short animation, not a jump */
+#define STR_LV_JUMP_ANIM                    2852
+/* Log viewer: the number of each pillbox on the map (Options), the list of
+   pillbox numbers in a tooltip (string1, "1, 4, 7"), and the Events panel's
+   lines for a pillbox taken, with its number (number) */
+#define STR_LV_PILL_NUMBERS                 2866
+#define STR_LV_PILL_NUMBERS_TIP             2867
+#define STR_LV_PILL_NUMBERS_LIST            2868
+#define STR_LV_MSG_PILL_CAPTURED            2869
+#define STR_LV_MSG_PILL_STOLEN              2870
 
 /* Log viewer dialogs */
 #define STR_LV_ASSIGN_COLOURS_HINT          1128
@@ -1848,6 +1972,8 @@
 #define STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP  2764
 #define STR_DLGSETTINGS_HOSTING_SERVERDESC      2765
 #define STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP  2766
+#define STR_DLGSETTINGS_HOSTING_SPECDELAY       2798
+#define STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP   2799
 
 /* Log viewer Options menu */
 #define STR_LV_HIDE_LOBBY                   1921
@@ -1975,6 +2101,8 @@
 #define STR_LV_SPEC_CONNECTION_LOST         1859
 #define STR_LV_SPEC_BEGINS_NOW              1860
 #define STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT  1861
+/* The File menu of a live game watched from the game: its one item. */
+#define STR_LV_MENU_LEAVE_SPECTATING        2915
 
 /* Volume — slider label and Mac preset submenu items */
 #define STR_MENU_VOLUME                     1402
@@ -2974,8 +3102,7 @@
  * The pill shell cap pair, pill_base_defend_shape and then the Mac Bolo
  * shell push pair came after all of those and took the next free numbers,
  * at the end of the file, and tank_deep_sea_safe took the next free one
- * after those, and man_bless_tile_terrain_speed the next free one after
- * that. The
+ * after those. The
  * order of the block is SIM_RULE_LIST's throughout, which is the order that
  * matters, and a hole in the numbers costs nothing: langTable is searched by
  * id rather than indexed by it. */
@@ -3134,7 +3261,6 @@
 #define STR_RULE_DESC_pill_aim_mac               2711
 #define STR_RULE_DESC_tank_collision_mac         2712
 #define STR_RULE_DESC_tank_deep_sea_safe         2760
-#define STR_RULE_DESC_man_bless_tile_terrain_speed 2762
 
 /* Rule range wording */
 
@@ -3375,6 +3501,144 @@
 #define STR_DLGSYSINFO_MEM_RUBBLE                2795
 #define STR_DLGSYSINFO_MEM_SWAMP                 2796
 #define STR_DLGSYSINFO_MEM_GRASS                 2797
+
+/* Voice settings on a touch screen, where the talk button is the key */
+#define STR_DLGSETTINGS_VOICE_PTT_TOUCH          2919
+
+/* Map editor file picker on iOS, which has no system open or save dialog */
+#define STR_MAPEDIT_IOS_YOURFILES                2920
+#define STR_MAPEDIT_IOS_BUILTIN                  2921
+#define STR_MAPEDIT_IOS_NOFILES                  2922
+#define STR_MAPEDIT_IOS_NAME                     2923
+#define STR_MAPEDIT_IOS_REPLACES                 2924
+
+/* Recordings on the phone (iOS log viewer screen) */
+#define STR_IOSREC_TITLE                         2925
+#define STR_IOSREC_EMPTY                         2926
+#define STR_IOSREC_COPY                          2927
+#define STR_IOSREC_COPIED                        2928
+#define STR_IOSREC_OPEN_FAILED                   2929
+#define STR_IOSREC_LAST_ROUND                    2930
+#define STR_IOSREC_COPY_FAILED                   2931
+
+#define STR_DLGCONNECTING_TITLE                  2932
+#define STR_DLGCONNECTING_PING                   2933
+#define STR_DLGCONNECTING_JOINING                2934
+
+/* The log browser's Open File on iOS, when the picked file cannot be read */
+#define STR_DLGWBN_OPENFILE_FAILED               2935
+
+/* The recap's clip GIF on iOS, saved into the WinBolo folder in Files */
+#define STR_CLIPGIF_SAVED_IOS                    2936
+#define STR_CLIPGIF_SAVE_FAILED_IOS              2937
+
+/* The iOS touch layout's Full Screen choice and its panel tooltips */
+#define STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP          2938
+#define STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP  2939
+#define STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP 2940
+/* The iPad's Full Screen choice: the full screen map or the classic screen */
+#define STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP      2941
+
+/* Asked before an Internet game is hosted on mobile data (Yes / No) */
+#define STR_GAMEFRONTERR_HOST_MOBILE_DATA        2942
+
+/* The recap's GIF gallery, and the GIF length beside the replay's GIF button */
+#define STR_CLIPGIF_GALLERY_TITLE                2943
+#define STR_CLIPGIF_GALLERY_EMPTY                2944
+#define STR_CLIPGIF_COPY                         2945
+#define STR_CLIPGIF_SAVE                         2946
+#define STR_CLIPGIF_COPIED                       2947
+#define STR_CLIPGIF_COPY_FAILED                  2948
+#define STR_CLIPGIF_OPEN_FAILED                  2949
+#define STR_CLIPGIF_MAP_FMT                      2950
+#define STR_CLIPGIF_PLAYERS_FMT                  2951
+#define STR_CLIPGIF_NO_DETAILS                   2952
+#define STR_CLIPGIF_LENGTH_TIP                   2953
+#define STR_CLIPGIF_LOADING                      2954
+#define STR_CLIPGIF_TOO_LARGE                    2955
+#define STR_CLIPGIF_FILTER_NAME                  2956
+
+/* Map Maker random maps: the generator type, the Size control, the
+ * presets named after classic Bolo map makers, and their controls */
+#define STR_MAPGEN_TYPE_MAKER                    2957
+#define STR_MAPGEN_SIZE                          2958
+#define STR_MAPGEN_SIZE_FULL                     2959
+#define STR_MAPGEN_SIZE_TIP                      2960
+#define STR_MAPGEN_PRESET                        2961
+#define STR_MAPGEN_PRESET_TIP                    2962
+#define STR_MAPGEN_OUTLINE                       2963
+#define STR_MAPGEN_OUTLINE_BOX                   2964
+#define STR_MAPGEN_OUTLINE_OCTAGON               2965
+#define STR_MAPGEN_OUTLINE_ROUND                 2966
+#define STR_MAPGEN_OUTLINE_DIAMOND               2967
+#define STR_MAPGEN_OUTLINE_CROSS                 2968
+#define STR_MAPGEN_OUTLINE_CLOVER                2969
+#define STR_MAPGEN_OUTLINE_ISLAND                2970
+#define STR_MAPGEN_OUTLINE_VARIED                2971
+#define STR_MAPGEN_MSYM_NONE                     2972
+#define STR_MAPGEN_MSYM_MIRROR                   2973
+#define STR_MAPGEN_MSYM_ROT2                     2974
+#define STR_MAPGEN_MSYM_MIRROR4                  2975
+#define STR_MAPGEN_MSYM_ROT4                     2976
+#define STR_MAPGEN_WATER_PCT                     2977
+#define STR_MAPGEN_ROAD_PCT                      2978
+#define STR_MAPGEN_ISLANDS                       2979
+#define STR_MAPGEN_DETAIL                        2980
+#define STR_MAPGEN_PRESET_BERSERKIR              2981
+#define STR_MAPGEN_PRESET_SLUGGO_TOURNAMENT      2982
+#define STR_MAPGEN_PRESET_SLUGDEATH              2983
+#define STR_MAPGEN_PRESET_SLUGFEST               2984
+#define STR_MAPGEN_PRESET_SLUGGO_ADVENTUROUS     2985
+#define STR_MAPGEN_PRESET_SLUGGO_SYMMETRIC       2986
+#define STR_MAPGEN_PRESET_STOOGEFEST             2987
+#define STR_MAPGEN_PRESET_BLACK_LIGHTNING        2988
+#define STR_MAPGEN_PRESET_BL_ISLANDS             2989
+#define STR_MAPGEN_PRESET_DEATHHAND              2990
+#define STR_MAPGEN_PRESET_MEGAWATT_TC            2991
+#define STR_MAPGEN_PRESET_MEGAWATT_ISLANDS       2992
+#define STR_MAPGEN_PRESET_MOSH_PIT               2993
+#define STR_MAPGEN_PRESET_PALPATINE              2994
+#define STR_MAPGEN_PRESET_CHEW_TOY               2995
+#define STR_MAPGEN_LOCK_ALL                      2996
+#define STR_MAPGEN_UNLOCK_ALL                    2997
+#define STR_MAPGEN_PANEL_TITLE                   2999
+#define STR_MAPGEN_STYLE_TITLE                   3000
+#define STR_MAPGEN_STYLE_RANDOMIZE               3001
+#define STR_MAPGEN_STYLE_NONE                    3003
+#define STR_MAPGEN_STYLE_FROM_SEED               3004
+#define STR_MAPGEN_STYLE_ROADS                   3005
+#define STR_MAPGEN_ROADS_AXES                    3006
+#define STR_MAPGEN_ROADS_DIAG                    3007
+#define STR_MAPGEN_ROADS_AXES_DIAG               3008
+#define STR_MAPGEN_ROADS_AXES_RING               3009
+#define STR_MAPGEN_ROADS_DIAG_RING               3010
+#define STR_MAPGEN_ROADS_RING                    3011
+#define STR_MAPGEN_STYLE_SHAPE                   3012
+#define STR_MAPGEN_STYLE_CUT                     3013
+#define STR_MAPGEN_STYLE_CORE                    3014
+#define STR_MAPGEN_STYLE_RIM                     3015
+#define STR_MAPGEN_RIM_FOREST                    3016
+#define STR_MAPGEN_RIM_GRASS                     3017
+#define STR_MAPGEN_STYLE_YARD                    3018
+#define STR_MAPGEN_YARD_NONE                     3019
+#define STR_MAPGEN_YARD_BUILDING                 3020
+#define STR_MAPGEN_YARD_FOREST                   3021
+#define STR_MAPGEN_STYLE_ROADS_TIP               3022
+#define STR_MAPGEN_STYLE_SHAPE_TIP               3023
+#define STR_MAPGEN_STYLE_CUT_TIP                 3024
+#define STR_MAPGEN_STYLE_CORE_TIP                3025
+#define STR_MAPGEN_STYLE_RIM_TIP                 3026
+#define STR_MAPGEN_STYLE_YARD_TIP                3027
+#define STR_MAPGEN_STYLE_WALLS                   3028
+#define STR_MAPGEN_WALLS_NONE                    3029
+#define STR_MAPGEN_WALLS_BUILDING                3030
+#define STR_MAPGEN_STYLE_MIDDLE                  3031
+#define STR_MAPGEN_MIDDLE_OPEN                   3032
+#define STR_MAPGEN_MIDDLE_PIECES                 3033
+#define STR_MAPGEN_MIDDLE_CLUMP                  3034
+#define STR_MAPGEN_MIDDLE_BOTH                   3035
+#define STR_MAPGEN_STYLE_WALLS_TIP               3036
+#define STR_MAPGEN_STYLE_MIDDLE_TIP              3037
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

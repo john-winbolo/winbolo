@@ -42,6 +42,29 @@
         }                                                                   \
     } while (0)
 
+/* UT_ASSERT and UT_ASSERT_MSG for a test that has a sim open and one `done:`
+ * label that tears it down: a failure sets rc to 1 and jumps there instead of
+ * returning past the cleanup. The function must declare `int rc = 0`. */
+#define UT_CHECK(cond)                                                      \
+    do {                                                                    \
+        if (!(cond)) {                                                      \
+            fprintf(stderr, "FAIL %s:%d: assertion failed: %s\n",           \
+                    __FILE__, __LINE__, #cond);                             \
+            rc = 1;                                                         \
+            goto done;                                                      \
+        }                                                                   \
+    } while (0)
+
+#define UT_CHECK_MSG(cond, fmt, ...)                                        \
+    do {                                                                    \
+        if (!(cond)) {                                                      \
+            fprintf(stderr, "FAIL %s:%d: %s — " fmt "\n",                   \
+                    __FILE__, __LINE__, #cond, ##__VA_ARGS__);              \
+            rc = 1;                                                         \
+            goto done;                                                      \
+        }                                                                   \
+    } while (0)
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -117,6 +140,14 @@ int run_prefs_api_sync_dirty(void);
 int run_prefs_api_device_identity(void);
 int run_prefs_api_adopt_server(void);
 int run_prefs_api_mark_synced(void);
+int run_prefs_merge_game_then_viewer(void);
+int run_prefs_merge_viewer_then_game(void);
+int run_prefs_merge_fallback(void);
+int run_prefs_merge_one_write(void);
+int run_prefs_merge_reset_wins(void);
+int run_prefs_merge_idle_no_write(void);
+int run_prefs_merge_missing_retry(void);
+int run_prefs_merge_adopt_keeps_local(void);
 int run_join_running_phase_not_lobby(void);
 int run_lobby_settings_codec_and_apply(void);
 /* The scenario the settings event names, onto the ClientSim and back out
@@ -513,6 +544,9 @@ int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
 int run_wbn_rekey_codec(void);
 int run_wbn_news_parse(void);
+int run_wbn_news_markdown(void);
+int run_news_image_budget(void);
+int run_news_image_fit(void);
 
 /* News fetch lifetime regression (test_wbn_news_fetch.cpp): freeing the
  * fetch handle while the worker thread is still parked in the network GET
@@ -582,6 +616,9 @@ int run_bolo_rand_golden_sequence(void);
 int run_pf_dijkstra_no_solid_corner_cut(void);
 int run_pf_astar_no_solid_corner_cut(void);
 int run_pf_costto_no_solid_corner_cut(void);
+/* Bench, a no-op unless WB_BENCH=1 (test_bench_decoy_step.c): the per-think
+ * cost of decoy_getaway's blocker step on the decoy square. */
+int run_bench_decoy_step_first(void);
 int run_pf_tail_reaches_radius_and_stops(void);
 int run_pf_tail_blocked_by_wall_and_sea(void);
 int run_pf_tail_neutral_zone_slows(void);
@@ -642,6 +679,10 @@ int run_spectator_replay(void);
  * -specdelay flow through ServerInstanceConfig into the sim and back via the
  * getters, with seconds->ticks conversion and the no-fallback zero semantics. */
 int run_spectator_config(void);
+/* The desktop host's [HOSTING] "Spectator Delay" preference
+ * (test_spectator_config.c): hostingSpecDelayResolve's range and fallbacks,
+ * and the 30 second default reaching the sim. */
+int run_spectator_delay_pref(void);
 
 /* Spectator JOIN handshake (test_spectator_join.c): a JOIN_FLAG_SPECTATOR
  * join registers a tankless viewer (slot 0xFF, no tank slot), honours the
@@ -1167,6 +1208,8 @@ int run_lobby_default_sides_map_shape(void);
 int run_lobby_default_sides_map_change(void);
 int run_lobby_default_sides_map_change_repeated(void);
 int run_lobby_default_sides_same_side_pick_kept(void);
+int run_lobby_ds_bot_team_naming_pools(void);
+int run_lobby_ds_bot_start_teams(void);
 
 /* Team start sides end to end (test_starts_side_integration.c): lobby
  * reservations, the batch's side table and the spawn scatter put a north
@@ -1393,6 +1436,22 @@ int run_lv_same_map_runs(void);
  * back adds no line twice, and pinned lines stay ahead of the timed ones. */
 int run_lv_event_list_replay(void);
 int run_lv_event_list_pinned(void);
+
+/* WinBolo.net log browser table sort (test_wbn_browser_sort.c): each column's
+ * key in both directions, ties and no sort in the server's order. */
+int run_wbn_browser_sort(void);
+
+/* Recap clip GIF rules (test_clip_gif_core.c): the length field and the seek
+ * bar marker agree and are clamped, the gallery metadata file reads back and
+ * rejects bad text, the gallery scan lists newest first, long lines are cut
+ * on a whole UTF-8 character, and the preview decode keeps to its memory
+ * limit. */
+int run_clip_gif_len_sync(void);
+int run_clip_gif_meta_roundtrip(void);
+int run_clip_gif_meta_bad(void);
+int run_clip_gif_gallery_scan(void);
+int run_clip_gif_text_fill(void);
+int run_clip_gif_preview_cap(void);
 
 /* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
  * an index the size of a ten-day log. */
@@ -1724,6 +1783,11 @@ int run_view_pill_pos_current(void);
 int run_view_pill_pos_reveal(void);
 int run_view_pill_update_event_fogged(void);
 int run_view_pill_pos_bot_advantage(void);
+/* Own and allied pills are always sent current to a human (a bot keeps the
+ * view-area rule); a pill that moved unseen asks for a full sync the tick it
+ * comes back into view. */
+int run_view_pill_pos_allied(void);
+int run_view_pill_reveal_full_sync(void);
 
 /* Server-side tree hide (test_tree_hide.c): serverSimBuildSnapshot ships a
  * tank standing in trees more than MIN_TREEHIDE_DIST from the recipient on
@@ -1753,6 +1817,9 @@ int run_view_state_key_grants_rect(void);
 int run_view_state_bad_claims_degrade(void);
 int run_view_state_invalidation(void);
 int run_view_state_lifecycle(void);
+/* An unchanged item view is reported again once a second, so a view the
+ * server dropped is taken up again; the tank view is never repeated. */
+int run_view_state_resend(void);
 
 /* Server-side ally picking (test_view_state.c): CMD_VIEW_CYCLE asks the server
  * which ally to watch, serverSimPickAlly answers from live state — next and
@@ -1803,6 +1870,17 @@ int run_view_cycle_decay_skip(void);
 int run_view_cycle_eligible_mask(void);
 int run_view_cycle_ally_stub(void);
 int run_view_cycle_stale_pill(void);
+/* A moved pill is stepped over and drops a view parked on it; a carried
+ * pill's record never names the view, and the held index wins on a shared
+ * square. */
+int run_view_cycle_moved_pill(void);
+/* scrollCenterWorld frames a mid-square tank as scrollCenterObject does and
+ * keeps the sub-square part, so the ally view glides. */
+int run_view_cycle_ally_follow(void);
+/* clientSimFollowAllyView on a ClientSim: a stub leaves the camera, Smooth on
+ * follows fineX/fineY, off follows the game pixel, and only a whole-square
+ * change asks for a recalc. */
+int run_view_cycle_ally_follow_clientsim(void);
 
 /* The per-pill position-current flag (test_pill_pos_current.c): the lookups
  * movement, turn rate and shell collision ask pass over a pill whose square
@@ -1986,6 +2064,12 @@ int run_sight_shadow_overflow(void);
  * legible column is refused without writing to the caller's layout. */
 int run_overview_hud_layout(void);
 
+/* Newswire slide (test_newswire_slide.c): it starts off screen, slides up at
+ * the slide rate on a message, holds for the hold time, slides off, stays up
+ * with auto-hide off, lands at once after a long gap with no steps, and never
+ * leaves the 0 to 1 range. */
+int run_newswire_slide(void);
+
 /* Overview dead tank (test_overview_map.c): a tank that is dead and waiting to
  * respawn holds its block on the square it died on — the corner it reads from
  * reveals nothing, the block keeps its tiles and goes on taking terrain
@@ -2141,11 +2225,46 @@ int run_lgm_quit_drops_carried_pill(void);
  * of a seat that was not on the field. */
 int run_lgm_unfield_drops_carried_pill(void);
 
+/* Where a builder starts when he is sent out (test_lgm_start_offset.c): 16
+ * world units from the tank's centre towards the square he was sent to,
+ * worked out in whole numbers, and on the tank's centre when that square's
+ * centre is no further off than that. */
+int run_lgm_start_offset(void);
+
+/* A player's shell against a builder, where the shooter's screen decides
+ * (test_lgm_absent_on_shooter_screen.c): the three answers of
+ * posHistoryLookup; no kill when the frame the shooter saw has the builder
+ * in his tank; the rewound position when he was out on it; a pill's shell
+ * and a history too short for the rewind test him where he is now. The
+ * seen_out cases have him out on the frame the shooter saw and back in his
+ * tank now: a blast of a player's shell where the shooter saw him kills him
+ * on the tank, and nothing else does. */
+int run_position_history_lookup(void);
+int run_lgm_kill_absent_on_shooter_screen(void);
+int run_lgm_kill_rewound_position(void);
+int run_lgm_kill_pill_shell_present(void);
+int run_lgm_kill_short_history(void);
+int run_lgm_kill_seen_out_back_in_tank(void);
+int run_lgm_kill_seen_out_outside_blast(void);
+int run_lgm_kill_seen_out_pill_shell(void);
+int run_lgm_kill_seen_out_no_record(void);
+int run_lgm_kill_seen_out_already_dead(void);
+int run_lgm_kill_seen_out_tank_hit_blast(void);
+int run_lgm_kill_seen_out_dead_tank(void);
+
+/* A -braindebug server records each round into its own session dir
+ * (test_braindbg_round_dir.c): the dir it named is cleared at game over, so
+ * round 2 does not record over round 1. */
+int run_braindbg_second_round_new_dir(void);
+
 /* Adaptive jitter buffer (test_jitter_buffer_grow.c): queue drains under
  * jitter deepen jitterTarget toward MAX, a steadily full queue shrinks it
  * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */
 int run_jitter_buffer_grow(void);
 int run_shell_projection(void);
+/* Projected shells re-anchor on owner and angle, pulled a quarter of the way
+ * toward the fresh projection. */
+int run_shell_projection_match(void);
 
 /* Shared shell list builder (test_screen_bullets_build.c): the classic
  * viewport list with the scroll origin and the overview's whole-map list with
@@ -2201,7 +2320,7 @@ int run_sim_rules_pill_massage_follows(void);
 int run_sim_rules_pill_aim_mac(void);
 int run_sim_rules_tank_collision_mac(void);
 int run_sim_rules_tank_deep_sea_safe(void);
-int run_sim_rules_man_bless_tile_terrain_speed(void);
+int run_lgm_build_square_terrain_speed(void);
 /* pill_shell_cap and pill_max_shells_at_tank through pillsUpdate
  * (test_pill_shell_cap.c). */
 int run_pill_shell_cap_off_is_no_limit(void);
@@ -2274,6 +2393,12 @@ int run_error_smoothing(void);
  * client endpoint. Convergence-bounded, never exact-trace. */
 int run_loopback_join(void);
 int run_loopback_join_loss(void);
+/* The builder walled in behind his own tank while a heated pillbox shoots at
+ * it (test_lgm_under_fire.c). The player expects the tank body to shield the
+ * man; the lagged case is the bug report and failed until pill shells stopped
+ * being rewound, the clean-link case is its control. */
+int run_lgm_wall_behind_tank_under_fire_lagged(void);
+int run_lgm_wall_behind_tank_under_fire_nolag(void);
 int run_loopback_password(void);
 int run_loopback_lobby_running_loss(void);
 /* Quiet-lobby reliable control delivery under loss with no input flowing:
@@ -2654,6 +2779,30 @@ int run_ping_network(void);
  * guards the off-by-one that walked resolveName()'s bsearch off the end. */
 int run_lang_name_table(void);
 
+/* Random map Size control and Map Maker presets (test_mapgen_maker.c):
+ * Size stays in range and centres the land, full-size seeds are written
+ * as before, and every preset is the same for the same seed, keeps its
+ * counts and land inside the region, and lets a tank reach every object. */
+int run_mapgen_size_bounds(void);
+int run_mapgen_legacy_seed_unchanged(void);
+int run_mapgen_maker_seed_roundtrip(void);
+int run_mapgen_maker_deterministic(void);
+int run_mapgen_maker_valid(void);
+int run_mapgen_size_all_types(void);
+int run_mapgen_maker_room_kinds(void);
+int run_mapgen_maker_hashes(void);
+int run_mapgen_maker_outline_set(void);
+int run_mapgen_maker_one_land(void);
+int run_mapgen_maker_style_levers(void);
+int run_mapgen_maker_style_seed_roundtrip(void);
+int run_mapgen_maker_style_same_map(void);
+int run_mapgen_maker_chew_toy_safe_bases(void);
+int run_mapgen_maker_deathhand_safe_bases(void);
+int run_mapgen_maker_diag_roads_join(void);
+/* The bases, pillboxes and starts of every preset with symmetry map
+ * onto themselves under that symmetry. */
+int run_mapgen_maker_objects_symmetric(void);
+
 /* What a quit inside a dialog means (test_dialog_quit.c): Cmd+Q, Alt+F4 and
  * the close box end the application; the close request the gamepad's B
  * button forges only closes the dialog; another window's close request and a
@@ -2677,6 +2826,11 @@ int run_bot_difficulty_names(void);
  * the advertiser builder + browser parse path, asserting the SRV port, the
  * inLobby/locked flags, every TXT field, and two-instance resolution. */
 int run_mdns_discovery(void);
+
+/* The platform advertiser's strings (test_mdns_discovery.c): the instance
+ * label and TXT pairs iOS registers with Bonjour match the raw-socket
+ * advertiser's records and read back to the same server. */
+int run_mdns_platform_pairs(void);
 
 /* The mDNS view TXT key (test_mdns_view_txt.c): the server's visibility
  * rules through the browser's parse seam, and what an absent or
@@ -2730,6 +2884,35 @@ int run_ping_kick_clears_strikes_on_disconnect(void);
  * arrays, and its small-explosion sweep must cover every index
  * (test_tkexp_lgm_pairing.c). */
 int run_tkexp_lgm_pairing(void);
+
+/* A shell that hits a tank blows up at the hit tank's present position plus
+ * the shell's offset from the rewound hit point, not at the shell, which a
+ * lag-compensated test leaves behind the tank (test_tank_blast_at_tank.c). */
+int run_tank_blast_rewound_hit_at_present_tank(void);
+int run_tank_blast_kill_starts_at_present_tank(void);
+int run_tank_blast_zero_rewind_unchanged(void);
+int run_tank_blast_hit_decision_unchanged(void);
+/* Whether that blast kills a builder is decided on the shooter's screen, not
+ * by where it is drawn (the same file). */
+int run_tank_blast_builder_on_shooter_screen(void);
+int run_tank_blast_absent_builder_lives(void);
+int run_tank_blast_builder_back_in_tank(void);
+int run_tank_blast_pill_shell_builder_now(void);
+int run_tank_blast_no_record_builder_now(void);
+int run_shell_blast_pill_hit_on_shooter_screen(void);
+int run_teleport_erases_tank_rewind_record(void);
+int run_teleport_shell_hits_new_place(void);
+int run_teleport_rewind_refills(void);
+int run_teleport_builder_rewind_record(void);
+int run_teleport_parachute_erases_builder_record(void);
+int run_slot_join_erases_tank_rewind_record(void);
+int run_slot_join_shell_hits_new_tank(void);
+int run_slot_join_rewind_refills(void);
+int run_slot_join_erases_builder_rewind_record(void);
+int run_slot_refield_erases_rewind_records(void);
+int run_shell_rewind_pill_shell_tank_present(void);
+int run_shell_rewind_tank_full_comp(void);
+int run_shell_rewind_builder_one_less(void);
 
 /* In-game input gate taxonomy (test_input_gate.c). gameInputSuspended()
  * suspends the polled in-game readers only for blocking surfaces (text
@@ -2990,6 +3173,7 @@ int run_lgm_drop_pill_no_room(void);
 int run_scenario_lgm_dispatch(void);
 int run_scenario_lgm_recall(void);
 int run_scenario_lgm_kill(void);
+int run_scenario_lgm_kill_force(void);
 int run_scenario_lgm_parachute(void);
 int run_scenario_lgm_set_carried(void);
 int run_scenario_lgm_kill_record(void);
@@ -3167,6 +3351,7 @@ int run_survival_lobby_round_full(void);
 int run_survival_lobby_round_ds_order(void);
 int run_loopback_unfield_tank(void);
 int run_loopback_fine_tank_position(void);
+int run_loopback_shell_drawn_cull(void);
 int run_lobby_template_return_reconciles(void);
 int run_lobby_template_return_unfields(void);
 int run_lobby_template_reset_reseats(void);
@@ -3612,6 +3797,7 @@ int run_scenario_lua_add_answers_its_index(void);
 int run_scenario_lua_queued_answers_queued(void);
 int run_scenario_lua_shape_raises_refusal_does_not(void);
 int run_scenario_lua_detail_carries_the_number(void);
+int run_scenario_lua_kill_lgm_force(void);
 int run_scenario_lua_teleport_start_refuses_bad_index(void);
 int run_scenario_lua_spawn_bot_refuses_bad_start(void);
 int run_scenario_lua_game_type_resolves_scripted(void);
@@ -4133,6 +4319,8 @@ int run_lv_presentation_announce_position(void);
 int run_lv_presentation_marker_visible(void);
 int run_lv_presentation_live_seek(void);
 int run_lv_presentation_live_fast_forward(void);
+int run_lv_presentation_live_hold(void);
+int run_lv_presentation_live_segment_reset_drops_hold(void);
 /* The server's game tick at the playhead (test_lv_server_tick.c): a recorded
  * round's tick at end-of-log, hand-written anchors either side of a snapshot
  * and across a new round's run, records of the wrong length, a recording from
@@ -4146,6 +4334,171 @@ int run_lv_server_tick_live_feed(void);
 /* Where the log viewer draws a declared region (test_lv_region_rect.c): at the
  * overview's edges, off it, and on the game view at 2x with a pan. */
 int run_lv_region_rect_placement(void);
+/* How the log viewer's window is shared between the map and the sidebars
+ * (test_lv_dock_fit.c): squares across with and without a sidebar, the limits
+ * on a sidebar's size, the four margins and the map's part of the window;
+ * and the viewer's own text for the sidebar options and for the arrangement
+ * of a sidebar that is off, read back as written and safe on damaged text. */
+int run_lv_dock_fit_sums(void);
+int run_lv_dock_fit_margins(void);
+int run_lv_dock_layout_sides(void);
+int run_lv_dock_layout_tree(void);
+/* The log viewer's HUD panel (test_lv_hud.c): the icon of a base, pillbox and
+ * tank slot, the layout of the three grids, and the grey and colour sums. */
+int run_lv_hud_sums(void);
+/* The pictures of the pillboxes and bases on the log viewer's map
+ * (test_lv_hud.c, lv_team_sprite.h): the game's own tile for a thing nobody
+ * owns, a team's cell of the items sheet for one that is owned. */
+int run_lv_team_sprite_sums(void);
+/* Which palette entry the log viewer draws a team in (test_lv_hud.c,
+ * lv_team_colour.h): the default, the one the Team Colours dialog has, the
+ * Neutral entry for a number that is not a team. */
+int run_lv_team_colour_lookup(void);
+/* The table of the log viewer's Overview panel (test_lv_overview.c): the
+ * rows of the teams, which row a pillbox or a base is counted in, and the
+ * share a count is of the whole. */
+int run_lv_overview_sums(void);
+/* The chip of a bot in the log viewer's panels (test_lv_overview.c,
+ * lv_bot_chip.h): which chip a player has, and where each name of a team's
+ * row starts, so the chip goes in front of the bot's name. */
+int run_lv_overview_bots(void);
+int run_lv_overview_row_layout(void);
+int run_lv_overview_neutral_row(void);
+/* The log viewer's Tank panel (test_lv_tank_status.c): which tank is the
+ * selected one, and the height of a gauge against its cap. */
+int run_lv_tank_status_sums(void);
+/* The bars the log viewer draws over each tank (test_lv_tank_bars.c): their
+ * size and place for a size of map square, the filled part, the colours. */
+int run_lv_tank_bars_sums(void);
+/* A click on a tank on the log viewer's map (test_lv_tank_pick.c): which
+ * tank a point is on, and where the mark round the selected one goes. */
+int run_lv_tank_pick_sums(void);
+/* A double click on a tank on the map: when it turns that tank's view on. */
+int run_lv_map_double_click(void);
+int run_lv_name_header_sums(void);
+/* A sidebar of the log viewer whose unused part is clear
+ * (test_lv_dock_clear.c): the panels packed along it both ways, their
+ * rectangles and the clear one, the map under it, the preference text. */
+int run_lv_dock_clear_layout(void);
+int run_lv_dock_clear_rects(void);
+int run_lv_dock_clear_map(void);
+int run_lv_dock_clear_prefs(void);
+/* The arrangement of the sidebars a new user starts with
+ * (test_lv_dock_clear.c, lv_dock_default.h). */
+int run_lv_dock_default_layout(void);
+/* The log viewer's text dump (test_lv_dump.c): a recorded round dumped
+ * around one tick, a tick the round does not hold, and the event list. */
+int run_lv_dump_recorded_round(void);
+/* The map the log viewer writes for a single-player game (test_lv_spmap.c):
+ * the owner rules, and a recorded round read back with mapRead. */
+int run_lv_spmap_owner_table(void);
+int run_lv_spmap_reads_back(void);
+int run_lv_pill_get_in_tank(void);
+int run_lv_spmap_carried_pill_left_out(void);
+/* The log viewer's events panel (test_lv_event_kind.c): the saved name of
+ * each event kind, and where the "now" divider falls among the lines. */
+int run_lv_event_kind_sums(void);
+int run_lv_event_click_pick(void);
+int run_lv_event_jump_view(void);
+/* The map place of a captured or stolen pillbox's line and of a lost
+ * builder's line (test_lv_event_places.c). */
+int run_lv_event_pill_capture_place(void);
+int run_lv_event_builder_lost_place(void);
+/* The event markers of the log viewer's seek slider
+ * (test_lv_event_overlay.c): where a time is on the slider, which markers
+ * become one, and the saved list of chosen kinds. */
+int run_lv_event_overlay_slider(void);
+int run_lv_event_overlay_clusters(void);
+int run_lv_event_overlay_tip_columns(void);
+int run_lv_event_overlay_tip_place(void);
+int run_lv_event_overlay_marker_size(void);
+int run_lv_event_overlay_choice(void);
+int run_lv_event_overlay_picture(void);
+int run_lv_event_overlay_no_sign(void);
+int run_lv_event_overlay_live_rebuild(void);
+/* Which parts of the viewer a frame of the overview draws, for a log file
+ * and for a live feed (test_lv_panel_set.c). */
+int run_lv_panel_set_live(void);
+/* The one list of ticked kinds of the Controls and Events panels, and the
+ * Events panel's saved choice. */
+int run_lv_event_kinds_filter(void);
+int run_lv_event_kinds_prefs(void);
+/* What the marker of one event is, for the lane, the list of kinds and the
+ * lines of the Events panel. */
+int run_lv_event_marker(void);
+int run_lv_ping_store(void);
+int run_lv_ping_marker(void);
+int run_lv_ping_phase(void);
+int run_lv_dump_ping(void);
+/* The log viewer's playback times as text and the ring flashed round an
+ * event's place (test_lv_time_fmt.c); and a jump to an event stopping on the
+ * event's own tick (test_lv_presentation.c). */
+int run_lv_time_fmt_sums(void);
+int run_lv_time_parse_sums(void);
+int run_lv_event_flash_sums(void);
+int run_lv_event_flash_arrow(void);
+int run_lv_event_centre_scroll(void);
+int run_lv_view_centre_scroll(void);
+int run_lv_first_view_box(void);
+int run_lv_first_view_zoom(void);
+int run_lv_first_view_place(void);
+int run_lv_event_jump_keeps_place_in_view(void);
+int run_lv_event_seek_exact(void);
+/* The builder marker over each tank on the log viewer's map
+ * (test_lv_builder_status.c), and the table of the times a builder was away
+ * as the event scan fills it (test_lv_presentation.c). */
+int run_lv_builder_status_sums(void);
+int run_lv_builder_countdown(void);
+int run_lv_builder_dead_text(void);
+int run_lv_builder_away_text(void);
+int run_lv_builder_away_scan(void);
+int run_lv_builder_trips(void);
+int run_lv_builder_trips_scan(void);
+/* The number of each pillbox on the log viewer's map and in its tooltips
+ * (test_lv_pill_numbers.c). */
+int run_lv_pill_numbers_sums(void);
+int run_lv_pill_numbers_list(void);
+int run_lv_pill_numbers_layout(void);
+int run_lv_pill_numbers_overview(void);
+/* Where the items of the log viewer's Controls panel go
+ * (test_lv_controls_layout.c). */
+int run_lv_controls_top_row(void);
+int run_lv_controls_bottom_row(void);
+int run_lv_controls_wheel_step(void);
+int run_lv_controls_fine_drag(void);
+/* The zoom of the log viewer's map as a percentage. */
+int run_lv_zoom_percent(void);
+int run_lv_fullscreen_key(void);
+/* The decode pass that lists a whole log's events at load
+ * (test_lv_presentation.c): it posts each line once, stores no snapshot, and
+ * leaves the world at the start as the loader did. */
+int run_lv_event_scan_returns_to_start(void);
+/* The file name the viewer's Save Log File offers (test_lv_save_name.c), and
+ * what the event scan keeps for it: the players of the whole log and the map
+ * the lobby chose (test_lv_presentation.c). */
+int run_lv_save_name_parts(void);
+int run_lv_save_name_bots(void);
+int run_lv_save_name_limits(void);
+int run_lv_save_name_long(void);
+int run_lv_save_name_roster(void);
+int run_lv_save_name_scan(void);
+/* File paths as UTF-8 on every system (test_lv_utf8_path.c). */
+int run_lv_utf8_path(void);
+/* Where the recap's "Spawn in log viewer" looks for the Log Viewer, and
+ * the name of the log copy it opens (test_logviewer_spawn.c). */
+int run_logviewer_spawn_paths(void);
+int run_logviewer_spawn_names(void);
+/* Quoting for the shell and AppleScript (test_lv_shell_quote.c). */
+int run_lv_shell_quote(void);
+/* The kill and death tallies go back with a seek (test_lv_presentation.c). */
+int run_lv_kill_tally_seek_back(void);
+/* Whether a tank is alive goes back with a seek (test_lv_presentation.c). */
+int run_lv_alive_seek_back(void);
+int run_lv_death_time_seek_back(void);
+int run_lv_jump_targets(void);
+int run_lv_jump_anim_lands(void);
+int run_lv_jump_anim_steps(void);
+int run_lv_jump_anim_time(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

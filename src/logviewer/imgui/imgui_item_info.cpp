@@ -10,7 +10,9 @@
 
 #include "imgui_item_info.h"
 #include "imgui_main_menu.h"
+#include "imgui_dock.h"
 #include "imgui_context.h"
+#include "imgui_dialogs.h"
 #include "imgui.h"
 #include "../../gui/lang.h"
 #include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
@@ -101,7 +103,11 @@ void lv_imgui_item_info_window(void) {
     }
     
     {
-        ImGuiCond cond = lv_g_reset_window_positions ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+        /* A panel that sat in the dock when the dock was turned off goes
+         * back to its default place, the same as a reset. */
+        bool to_default = lv_g_reset_window_positions ||
+                          lv_imgui_dock_take_float_reset("###iteminfo");
+        ImGuiCond cond = to_default ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
         ImVec2 vp = ImGui::GetMainViewport()->Size;
         ImGui::SetNextWindowSize(ImVec2(280, 150), cond);
         ImGui::SetNextWindowPos(ImVec2(vp.x - 280 - 10, 30 + 180 + 5), cond);
@@ -110,37 +116,18 @@ void lv_imgui_item_info_window(void) {
     char ii_title[128];
     snprintf(ii_title, sizeof(ii_title), "%s###iteminfo", langGetText(STR_LV_WIN_ITEMINFO));
     if (ImGui::Begin(ii_title, &lv_g_show_item_info_window, ImGuiWindowFlags_NoCollapse)) {
-        /* Reposition window relative to right/bottom edge when viewport is resized */
-        float dx, dy;
-        if (lv_imgui_context_get_resize_delta(&dx, &dy)) {
-            ImVec2 pos = ImGui::GetWindowPos();
-            float old_vp_x = ImGui::GetMainViewport()->Size.x - dx;
-            float old_vp_y = ImGui::GetMainViewport()->Size.y - dy;
-            ImVec2 size = ImGui::GetWindowSize();
-            if (pos.x + size.x * 0.5f > old_vp_x * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x + dx, pos.y + dy));
-            else if (pos.y + size.y * 0.5f > old_vp_y * 0.5f) ImGui::SetWindowPos(ImVec2(pos.x, pos.y + dy));
-        }
-        /* Always clamp to keep fully on screen */
-        {
-            ImVec2 pos = ImGui::GetWindowPos();
-            ImVec2 size = ImGui::GetWindowSize();
-            ImVec2 vp = ImGui::GetMainViewport()->Size;
-            ImVec2 new_pos = pos;
-            if (new_pos.x + size.x > vp.x) new_pos.x = vp.x - size.x;
-            if (new_pos.y + size.y > vp.y) new_pos.y = vp.y - size.y;
-            if (new_pos.x < 0) new_pos.x = 0;
-            if (new_pos.y < 0) new_pos.y = 0;
-            if (new_pos.x != pos.x || new_pos.y != pos.y) ImGui::SetWindowPos(new_pos);
-        }
+        lv_imgui_keep_window_on_screen();
 
         if (s_item_type == 0) {
             /* No item selected */
             ImGui::TextUnformatted(langGetText(STR_LV_NO_ITEM_SELECTED));
         } else {
-            /* Item type header */
+            /* Item type header. The number counts from 1, as the game's
+             * own lists of pillboxes and bases do; the item is held by its
+             * place in the list, from 0. */
             {
                 MessageArgs args = {};
-                args.number = s_item_number;
+                args.number = s_item_number + 1;
                 ImGui::TextUnformatted(langGetTextFmt(
                     s_item_type == 1 ? STR_MAPEDIT_INSP_BASE_HASH
                                      : STR_MAPEDIT_INSP_PILL_HASH,
@@ -202,4 +189,44 @@ void lv_imgui_item_info_window(void) {
         }
     }
     ImGui::End();
+}
+
+void lv_imgui_item_info_pill_tooltip(int number, const char *ownerName, int teamColour,
+                                     int armour) {
+    char owner[LANG_MSGARG_STRING_LEN];
+
+    if (number <= 0) return;
+    /* The owner as the HUD panel names one: the player, and the team's
+     * colour after it when the player is in a team. */
+    if (ownerName == nullptr) {
+        snprintf(owner, sizeof(owner), "%s", langGetText(STR_MAPEDIT_OWNER_NEUTRAL));
+    } else {
+        const char *team = (teamColour >= 0) ? lv_imgui_team_colour_name(teamColour) : "";
+        if (team == nullptr || team[0] == '\0') {
+            snprintf(owner, sizeof(owner), "%s", ownerName);
+        } else {
+            MessageArgs args = {};
+            snprintf(args.string1, sizeof(args.string1), "%s", ownerName);
+            snprintf(args.string2, sizeof(args.string2), "%s", team);
+            snprintf(owner, sizeof(owner), "%s", langGetTextFmt(STR_LV_HUD_NAME_TEAM, &args));
+        }
+    }
+
+    if (!ImGui::BeginTooltip()) return;
+    {
+        MessageArgs args = {};
+        args.number = number;
+        ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_INSP_PILL_HASH, &args));
+    }
+    {
+        MessageArgs args = {};
+        snprintf(args.string1, sizeof(args.string1), "%s", owner);
+        ImGui::TextUnformatted(langGetTextFmt(STR_LV_OWNER_LBL, &args));
+    }
+    {
+        MessageArgs args = {};
+        args.number = armour;
+        ImGui::TextUnformatted(langGetTextFmt(STR_LV_ARMOUR_FMT, &args));
+    }
+    ImGui::EndTooltip();
 }

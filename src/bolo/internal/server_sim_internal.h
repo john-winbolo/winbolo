@@ -747,6 +747,13 @@ struct ServerSim {
     BYTE clientKnownPillY[MAX_TANKS][MAX_PILLS];
     bool clientKnownPillValid[MAX_TANKS];
 
+    /* Set when a pill moves while the slot cannot see it, so the square the
+     * slot holds for it is out of date. The tick that brings the pill back
+     * into one of the slot's view areas clears it and asks for a full sync,
+     * so the client is handed the new square at once rather than at the next
+     * FULL_SYNC_INTERVAL. Cleared by every seed. */
+    bool clientPillRevealDue[MAX_TANKS][MAX_PILLS];
+
     /* The pill squares as they stood when the current map was installed — the
      * counterpart of roundStartMapObj, and what a player joining a running
      * game is handed with the round-start terrain. */
