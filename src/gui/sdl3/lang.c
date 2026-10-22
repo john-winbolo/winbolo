@@ -1396,6 +1396,12 @@ static const LangEntry langTable[] = {
     {3034, "Diagonal pieces and centre clump"},
     {3035, "A wall of buildings across the forest rim on each axis, which cuts the rim into four pieces. From seed: the seed picks one."},
     {3036, "Buildings near the middle of the floor: short pieces at 45 degrees, a clump at the centre, or both. From seed: the seed picks one."},
+    /* The Log Viewer's Chat panel */
+    {3100, "Chat"},
+    {3101, "No chat messages yet."},
+    {3102, "(team)"},
+    {3103, "(to {player})"},
+    {3104, "Spectator {number}"},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},

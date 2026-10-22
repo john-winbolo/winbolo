@@ -84,8 +84,11 @@ static const LvDockPanel k_panels[] = {
     { "###iteminfo",   &lv_g_show_item_info_window,      0.0f,               2.0f, false, nullptr },
     { "###events",     &lv_g_show_events_window,         0.0f,               5.0f, true,  nullptr },
     { "###comments",   &lv_g_show_comments_window,       0.0f,               3.0f, false, nullptr },
+    { "###chat",       &lv_g_show_chat_window,           0.0f,               2.0f, false, nullptr },
 };
 #define LV_DOCK_PANEL_COUNT ((int)(sizeof(k_panels) / sizeof(k_panels[0])))
+static_assert(LV_DOCK_PANEL_COUNT == LV_DOCK_CLEAR_PANELS,
+              "k_panels and lvDockClearPanels name the same panels");
 
 static LogViewerState *s_lv = nullptr;
 
