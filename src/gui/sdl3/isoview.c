@@ -65,6 +65,7 @@ extern bool showBaseLabels;
 struct IsoView {
     IsoCamera     cam;
     bool          follow;
+    bool          pointerOnMap;
     float         insetLeft, insetTop, insetRight, insetBottom;
 
     SDL_Texture  *target;
@@ -546,6 +547,10 @@ bool isoViewGetFollow(const IsoView *v) {
     return v ? v->follow : false;
 }
 
+void isoViewSetPointerOnMap(IsoView *v, bool onMap) {
+    if (v) v->pointerOnMap = onMap;
+}
+
 void isoViewSetHudInsets(IsoView *v, float left, float top,
                          float right, float bottom) {
     if (!v) return;
@@ -622,13 +627,14 @@ void isoViewRenderOffscreen(IsoView *v, SDL_Renderer *r,
         in.sheetUser = v;
 
         /* Where a build will land, from the shared build cursor: solid while
-           cursor mode steers it, faint for a target that is only locked
-           in. */
+           cursor mode steers it or the host's pointer is on the picture,
+           faint for a target that is only locked in, the split the classic
+           view and the full screen map make. */
         {
             BYTE bcX = 0, bcY = 0;
             bool cursorMode = buildCursorGetTile(&bcX, &bcY);
             in.cursorShown = cursorMode || buildCursorGetTargetTile(&bcX, &bcY);
-            in.cursorFaint = !cursorMode;
+            in.cursorFaint = !(cursorMode || v->pointerOnMap);
             in.cursorMapX  = bcX;
             in.cursorMapY  = bcY;
         }

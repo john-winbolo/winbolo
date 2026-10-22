@@ -148,6 +148,37 @@ bool isoUnprojectSquare(const IsoCamera *cam, int targetW, int targetH,
     return inX && inY;
 }
 
+bool isoWindowToSquare(const IsoCamera *cam, float rectX, float rectY,
+                       int rectW, int rectH, float winX, float winY,
+                       unsigned char *outMapX, unsigned char *outMapY,
+                       unsigned char *outPixelX, unsigned char *outPixelY) {
+    int mx, my, px, py;
+    if (rectW <= 0 || rectH <= 0) return false;
+    if (winX < rectX || winX >= rectX + (float)rectW ||
+        winY < rectY || winY >= rectY + (float)rectH) {
+        return false;
+    }
+    if (!isoUnprojectSquare(cam, rectW, rectH, winX - rectX, winY - rectY,
+                            &mx, &my, &px, &py)) {
+        return false;
+    }
+    if (outMapX) *outMapX = (unsigned char)mx;
+    if (outMapY) *outMapY = (unsigned char)my;
+    if (outPixelX) *outPixelX = (unsigned char)px;
+    if (outPixelY) *outPixelY = (unsigned char)py;
+    return true;
+}
+
+void isoSquareToWindow(const IsoCamera *cam, float rectX, float rectY,
+                       int rectW, int rectH, int mapX, int mapY,
+                       int pixelX, int pixelY, float height,
+                       float *outWinX, float *outWinY) {
+    float sx = 0.0f, sy = 0.0f;
+    isoProject(cam, rectW, rectH, mapX, mapY, pixelX, pixelY, height, &sx, &sy);
+    if (outWinX) *outWinX = rectX + sx;
+    if (outWinY) *outWinY = rectY + sy;
+}
+
 /* The squares a run from `lo` to `hi` on one ground axis touches, inclusive:
    from the square whose far edge reaches lo to the square whose near edge
    reaches hi. Clamped to the map; false when none of the map is in it. */

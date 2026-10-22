@@ -108,6 +108,39 @@ void isoViewRenderOffscreen(IsoView *v, SDL_Renderer *renderer,
                             const struct OverviewSnapshot *snap,
                             const IsoViewLabels *labels);
 
+/* The parts one render reads, for a host with no OverviewSnapshot: the Log
+   Viewer fills these from its replayed state. Any list may be NULL to draw
+   none of that kind; the item labels are already filtered to the squares
+   that show a number. The camera is the view's own (isoViewCamera) and is
+   not moved: a host that fills parts places it itself. */
+typedef struct IsoViewParts {
+    const struct OverviewMap   *map;
+    const screenTanks          *tanks;
+    const screenLgm            *lgms;
+    const screenBullets        *bullets;
+    const OverviewItemLabel    *itemLabels;
+    int                         itemLabelCount;
+    bool  cursorShown, cursorFaint;
+    int   cursorMapX, cursorMapY;
+    bool  gunsightShown;
+    int   gsMapX, gsMapY, gsPixelX, gsPixelY;
+    const ClientPing           *pings;
+    int                         pingCount;
+    bool  blackout;
+} IsoViewParts;
+
+/* isoViewRenderOffscreen's render from parts rather than a snapshot: the
+   same renderer, textures and labels, the target cleared and filled, the
+   camera left where the host put it. isoViewRenderOffscreen unpacks its
+   snapshot into these and calls this, so there is one render path. */
+void isoViewRenderParts(IsoView *v, SDL_Renderer *renderer,
+                        SDL_Texture *tilesTex, int sheetScale,
+                        SDL_Texture *spritesTex, const SpriteAtlas *sprites,
+                        SDL_Texture *isoTex, SDL_Texture *crosshair,
+                        int w, int h,
+                        const IsoViewParts *parts,
+                        const IsoViewLabels *labels);
+
 SDL_Texture *isoViewGetTexture(const IsoView *v);
 void         isoViewGetSize(const IsoView *v, int *outW, int *outH);
 
@@ -122,6 +155,13 @@ IsoCamera   *isoViewCamera(IsoView *v);
    the tank. */
 void         isoViewSetFollow(IsoView *v, bool follow);
 bool         isoViewGetFollow(const IsoView *v);
+
+/* Whether the host's pointer is over the picture with no panel under it.
+   It decides how the build cursor is drawn: solid while cursor mode steers
+   it or the pointer that put it there is live, faint for a target that is
+   only locked in, the split the classic view and the full screen map make.
+   Off until the host says otherwise. */
+void         isoViewSetPointerOnMap(IsoView *v, bool onMap);
 
 /* View pixels off each edge that the host draws its own panels over. The
    followed point is centred in what is left, so a tank is not followed to

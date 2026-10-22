@@ -107,6 +107,23 @@ bool isoUnprojectSquare(const IsoCamera *cam, int targetW, int targetH,
                         float sx, float sy, int *outMapX, int *outMapY,
                         int *outWorldOffX, int *outWorldOffY);
 
+/* The two above for a target blitted at (rectX, rectY), rectW by rectH, in
+   the coordinates a pointer is reported in: the pointer path's pair, with
+   the map square and the 0..255 pixel inside it in the sim's own byte
+   width. isoWindowToSquare is the square under window point (winX, winY);
+   false, with the outputs untouched, when the point is outside the rect or
+   the ground under it is off the map. isoSquareToWindow is where the point
+   `height` game pixels above (mapX, mapY) plus the pixel lands on the
+   window; a square off the map lands where it would. */
+bool isoWindowToSquare(const IsoCamera *cam, float rectX, float rectY,
+                       int rectW, int rectH, float winX, float winY,
+                       unsigned char *outMapX, unsigned char *outMapY,
+                       unsigned char *outPixelX, unsigned char *outPixelY);
+void isoSquareToWindow(const IsoCamera *cam, float rectX, float rectY,
+                       int rectW, int rectH, int mapX, int mapY,
+                       int pixelX, int pixelY, float height,
+                       float *outWinX, float *outWinY);
+
 /* The inclusive range of map squares whose ground diamond can touch a
    target of targetW by targetH pixels under this camera, clamped to the
    map. It is the bounding range of the squares under the target's four

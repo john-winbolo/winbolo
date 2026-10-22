@@ -78,6 +78,7 @@ extern "C" {
 #include "input_gate.h"
 #include "sdl3draw.h"
 #include "overview_view.h"
+#include "iso_project.h"   /* IsoCamera, for the isometric view's ping surface */
 #include "key_claims.h"     /* keyIsClaimedByGame */
 #include "tileloader.h"
 #include "luabrainshandler.h"
@@ -2783,11 +2784,66 @@ static bool overviewHudRectHit(ImVec2 mouse, float originX, float originY,
            mouse.y >= top  && mouse.y < top + h;
 }
 
+/* The HUD's pointer half, shared by the full screen map and the isometric
+ * view: both have sdl3draw.c blit the three panels over the picture rather
+ * than submit them as ImGui items, so the pointer is hit-tested here against
+ * the backing rectangles of the layout that blit used, at the picture's
+ * origin (rx, ry). The same three hits drive the fade in sdl3draw.c, so a
+ * panel the pointer is resting on comes up solid to be read. `hovered` is
+ * false when a dialog or a vote widget is over the picture there: the pointer
+ * is on that, not on the HUD under it. Returns whether the pointer is on a
+ * panel, which the caller holds back from the ground: a click on a panel must
+ * not build at the map square underneath.
+ *
+ * The build items are the only interactive part of the HUD; a click anywhere
+ * else on it is simply swallowed. Only the sim is told, as the classic
+ * hit-test in sdl3DrawHandleEvent does; sdl3DrawMainScreen reads the
+ * selection back from it on the next frame, so the indent drawn into the HUD
+ * slice follows the new selection. */
+static bool overviewHudPointer(ClientSim *cs, const OverviewHudLayout *hud,
+                               bool haveHud, float rx, float ry,
+                               ImVec2 mouse, bool hovered) {
+    bool overBuild  = false;
+    bool overStatus = false;
+    bool overNews   = false;
+    if (haveHud) {
+        overBuild = overviewHudRectHit(mouse, rx, ry, hud->buildX, hud->buildY,
+                                       hud->buildW, hud->buildH);
+        overStatus = overviewHudRectHit(mouse, rx, ry,
+                                        hud->columnX, hud->columnY,
+                                        hud->columnW, hud->columnH);
+        overNews = overviewHudRectHit(mouse, rx, ry,
+                                      hud->newswireX, hud->newswireY,
+                                      hud->newswireW, hud->newswireH);
+    }
+    sdl3DrawSetHudPanelHover(hovered && overStatus, hovered && overBuild,
+                             hovered && overNews);
+
+    if (hovered && overBuild && cs && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        for (int i = 0; i <= (int)BsMine; i++) {
+            float ix = 0.0f, iy = 0.0f, iw = 0.0f, ih = 0.0f;
+            if (!overviewHudBuildItemRect(hud, i, &ix, &iy, &iw, &ih)) break;
+            if (!overviewHudRectHit(mouse, rx, ry, ix, iy, iw, ih)) continue;
+            buildSelect picked = (buildSelect)i;
+            if (picked != clientSimGetCurrentBuildSelect(cs)) {
+                clientMutexWaitFor();
+                clientSimSetCurrentBuildSelect(cs, picked);
+                clientMutexRelease();
+            }
+            break;
+        }
+    }
+    return overBuild || overStatus || overNews;
+}
+
 /* The input half of the in-window mode: sdl3draw.c has already rendered the
  * map and blitted it to the window this frame, so this only has to put the pan
  * item and the status strip over exactly the rect it blitted to. Submitted at
  * the start of the frame so it sits at the back of the z-order and never takes
- * a click from a panel or dialog on top of it. */
+ * a click from a panel or dialog on top of it. The HUD's hover flags are
+ * cleared by the caller before this, so a frame that never reaches the
+ * hit-test cannot leave a panel stuck faded up under a pointer that has
+ * gone. */
 static void renderOverviewInWindow(ClientSim *cs) {
     if (!sdl3DrawIsOverviewInWindow()) return;
 
@@ -2800,11 +2856,6 @@ static void renderOverviewInWindow(ClientSim *cs) {
     if (!view) return;
     float rx = 0.0f, ry = 0.0f, rw = 0.0f, rh = 0.0f;
     if (!sdl3DrawGetOverviewInWindowRect(&rx, &ry, &rw, &rh)) return;
-
-    /* Cleared here rather than only set below, so a frame that never reaches
-       the hit-test cannot leave a panel stuck faded up under a pointer that
-       has gone. */
-    sdl3DrawSetHudPanelHover(false, false, false);
 
 #if defined(__APPLE__) && TARGET_OS_IOS
     /* The iOS tablet layout draws the map inside its game view, and the tablet
@@ -2852,57 +2903,16 @@ static void renderOverviewInWindow(ClientSim *cs) {
         bool hovered = ImGui::IsItemHovered();
 
         /* The HUD is blitted over the map by sdl3draw.c rather than submitted
-           as ImGui items, so the pan item still spans it. Hit-test the three
-           backing rectangles here and hold the pointer back from the view over
-           them: a click on a panel must not build at the map square
-           underneath, and hovered = false also hands the OS pointer back, so
-           an arrow shows over the chrome instead of the game crosshair. A
-           right-drag that began on the map keeps panning either way — that
-           path keys off the item being active, not hovered. */
+           as ImGui items, so the pan item still spans it. The pointer is held
+           back from the view over the panels: hovered = false also hands the
+           OS pointer back, so an arrow shows over the panels instead of the
+           game crosshair. A right-drag that began on the map keeps panning
+           either way — that path keys off the item being active, not
+           hovered. */
         OverviewHudLayout hud;
-        bool haveHud    = sdl3DrawGetOverviewHudLayout(&hud);
-        bool overBuild  = false;
-        bool overStatus = false;
-        bool overNews   = false;
-        ImVec2 mouse    = ImGui::GetMousePos();
-        if (haveHud) {
-            overBuild = overviewHudRectHit(mouse, rx, ry, hud.buildX, hud.buildY,
-                                           hud.buildW, hud.buildH);
-            overStatus = overviewHudRectHit(mouse, rx, ry,
-                                            hud.columnX, hud.columnY,
-                                            hud.columnW, hud.columnH);
-            overNews = overviewHudRectHit(mouse, rx, ry,
-                                          hud.newswireX, hud.newswireY,
-                                          hud.newswireW, hud.newswireH);
-        }
-        bool overHud = overBuild || overStatus || overNews;
-
-        /* The same three hits drive the fade in sdl3draw.c, so a panel the
-           pointer is resting on comes up solid to be read. Qualified by
-           `hovered`, which is false when a dialog or a vote widget is over the
-           map there: the pointer is on that, not on the HUD under it. */
-        sdl3DrawSetHudPanelHover(hovered && overStatus, hovered && overBuild,
-                                 hovered && overNews);
-
-        /* The build items are the only interactive part of the HUD; a click
-           anywhere else on it is simply swallowed. Only the sim is told, as
-           the classic hit-test in sdl3DrawHandleEvent does; sdl3DrawMainScreen
-           reads the selection back from it on the next frame, so the indent
-           drawn into the HUD slice follows the new selection. */
-        if (overBuild && cs && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-            for (int i = 0; i <= (int)BsMine; i++) {
-                float ix = 0.0f, iy = 0.0f, iw = 0.0f, ih = 0.0f;
-                if (!overviewHudBuildItemRect(&hud, i, &ix, &iy, &iw, &ih)) break;
-                if (!overviewHudRectHit(mouse, rx, ry, ix, iy, iw, ih)) continue;
-                buildSelect picked = (buildSelect)i;
-                if (picked != clientSimGetCurrentBuildSelect(cs)) {
-                    clientMutexWaitFor();
-                    clientSimSetCurrentBuildSelect(cs, picked);
-                    clientMutexRelease();
-                }
-                break;
-            }
-        }
+        bool haveHud = sdl3DrawGetOverviewHudLayout(&hud);
+        ImVec2 mouse = ImGui::GetMousePos();
+        bool overHud = overviewHudPointer(cs, &hud, haveHud, rx, ry, mouse, hovered);
 
         /* The live bindings, fetched each frame — Key Setup can change them
            while the mode is up, and a key bound to an in-game action has to
@@ -2937,6 +2947,43 @@ static void renderOverviewInWindow(ClientSim *cs) {
         overviewDrawCameraNotice(view, &keys, textX, textY, false);
     }
     ImGui::End();
+}
+
+/* The isometric view's input half, the counterpart of renderOverviewInWindow
+ * with the parts that view has no use for left out: there is no pan item,
+ * since the camera follows the tank and the pointer is read against the
+ * picture by sdl3DrawHandleEvent, which an ImGui window over the picture
+ * would hold the events back from. What is left is the HUD, blitted over the
+ * picture the same way and hit-tested here with the same helper, and the
+ * ping surface. "Hovered" is the pointer on the picture with no ImGui window
+ * under it, which is the test sdl3DrawHandleEvent's events have already
+ * passed. */
+static void renderIsoViewInput(ClientSim *cs) {
+    float rx = 0.0f, ry = 0.0f, rw = 0.0f, rh = 0.0f;
+    IsoCamera cam;
+    if (!sdl3DrawGetIsoView(&rx, &ry, &rw, &rh, &cam)) return;
+
+    OverviewHudLayout hud;
+    bool   haveHud = sdl3DrawGetOverviewHudLayout(&hud);
+    ImVec2 mouse   = ImGui::GetMousePos();
+    bool   hovered = !ImGui::GetIO().WantCaptureMouse &&
+                     mouse.x >= rx && mouse.x < rx + rw &&
+                     mouse.y >= ry && mouse.y < ry + rh;
+    bool overHud = overviewHudPointer(cs, &hud, haveHud, rx, ry, mouse, hovered);
+
+    /* What the panels cover off each edge, so a ping's edge bar is kept off
+       them as it is on the full screen map. The newswire's row carries its
+       slide, so a newswire that has slid away covers nothing. */
+    float insetL = 0.0f, insetT = 0.0f, insetR = 0.0f, insetB = 0.0f;
+    if (haveHud) {
+        insetL = hud.buildX + hud.buildW;
+        insetR = rw - hud.columnX;
+        insetB = rh - hud.newswireY;
+        if (insetR < 0.0f) insetR = 0.0f;
+        if (insetB < 0.0f) insetB = 0.0f;
+    }
+    pingOverlaySetIsoSurface(rx, ry, rw, rh, hovered && !overHud, &cam,
+                             insetL, insetT, insetR, insetB);
 }
 
 /* Whether the local player may answer a given vote. Surrender votes are
@@ -5775,7 +5822,10 @@ static void renderScenarioAnnounce(ClientSim *cs) {
         view.x1 = (float)(tvX + tvW);
         view.y1 = (float)(tvY + tvH);
         scnAnnounceAddWindow("##ScenarioSlot", obstacles, &count);
-    } else if (sdl3DrawGetOverviewInWindowRect(&mapX, &mapY, &mapW, &mapH)) {
+    } else if (sdl3DrawGetOverviewInWindowRect(&mapX, &mapY, &mapW, &mapH) ||
+               sdl3DrawGetIsoView(&mapX, &mapY, &mapW, &mapH, nullptr)) {
+        /* The isometric view is the same case: the picture fills the window
+           under the menu bar, with the same HUD panels over it. */
         tankView = false;
         view.x0 = mapX;
         view.y0 = mapY;
@@ -9400,8 +9450,13 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 
     /* First window of the frame, so the full-window map reads as the backdrop
        every panel, overlay and dialog that follows sits on. Submitting it here
-       is not what holds it there — see the reorder inside. */
+       is not what holds it there — see the reorder inside. The HUD's hover
+       flags are cleared first, so a panel is never left faded up by the last
+       frame of a mode that has since gone off, and set again by whichever of
+       the two pictures is up. */
+    sdl3DrawSetHudPanelHover(false, false, false);
     renderOverviewInWindow(cs);
+    renderIsoViewInput(cs);
 
     /* Pause-overlay open trigger: the controller's Menu/☰ button (the bound
        Pause action, default Start). Opens whenever a controller is connected
@@ -9499,12 +9554,14 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
        received ping has to show wherever the game is being played. */
     if (cs && !clientSimIsInLobby(cs)) {
         /* Where a ping chord may land next poll. The overview records its own
-           surface in renderOverviewInWindow, earlier in this frame; this is
-           the classic view's turn. It has no item of its own to hover-test,
+           surface in renderOverviewInWindow, earlier in this frame, and the
+           isometric view its own in renderIsoViewInput; this is the classic
+           view's turn. It has no item of its own to hover-test,
            so "not over a panel" is ImGui's own capture flag — which was
            settled from the previous frame's hit-test, which is exactly the
            frame the next event will be answered against. */
-        if (!sdl3DrawIsOverviewInWindow()) {
+        if (!sdl3DrawIsOverviewInWindow() &&
+            !sdl3DrawGetIsoView(nullptr, nullptr, nullptr, nullptr, nullptr)) {
             pingOverlaySetClassicSurface(!ImGui::GetIO().WantCaptureMouse);
         }
         pingOverlayDraw(cs);

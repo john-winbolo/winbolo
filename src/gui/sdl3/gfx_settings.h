@@ -67,6 +67,16 @@ typedef enum GfxTextureFilter {
     GFX_FILTER_PIXELART = 2
 } GfxTextureFilter;
 
+/* Which picture the main game view is drawn as: the classic top-down view
+   or the isometric view of the same ground (isoview.h). Read by
+   sdl3DrawMainScreen every frame, so a change shows on the next frame with
+   nothing rebuilt. Only the desktop client draws the isometric view; the
+   mobile and web drivers keep the classic one whatever this says. */
+typedef enum GfxViewProjection {
+    GFX_VIEW_CLASSIC   = 0,
+    GFX_VIEW_ISOMETRIC = 1
+} GfxViewProjection;
+
 /* All four are read by the drawing code: tile detail picks the size the
    sheet is built at, animation smoothness and smooth shells decide where a
    sprite is put on screen, and the texture filter sets how the sheet is
@@ -80,6 +90,9 @@ bool              gfxGetSmoothShells(void);
 void              gfxSetSmoothShells(bool v);
 GfxTextureFilter  gfxGetTextureFilter(void);
 void              gfxSetTextureFilter(GfxTextureFilter v);
+/* Defaults to classic; a value outside the enum is stored as classic. */
+GfxViewProjection gfxGetViewProjection(void);
+void              gfxSetViewProjection(GfxViewProjection v);
 
 /* The simplified view: at the zooms where a 16 px sprite is drawn smaller
    than about 8 px, fill each square with its map colour and draw tanks,

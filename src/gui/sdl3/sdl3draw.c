@@ -55,6 +55,7 @@
 #include "newswire_slide.h"
 #include "overview_hud_layout.h"
 #include "overview_view.h"
+#include "isoview.h"
 #include "../clientmutex.h"
 #include "../tiles.h"
 #include "../ui_mode.h"
@@ -238,6 +239,39 @@ static int                gTabletGridsTexH = 0;
 static bool               gOverviewPrepGrids = FALSE;
 static SDL_FRect          gOverviewPrepGridSrc[3];
 static SDL_FRect          gOverviewPrepGridDst[3];
+
+/* The isometric main view (isoview.h), the third picture sdl3DrawMainScreen
+   can draw, picked in Settings (gfxGetViewProjection). It is put on the
+   window the way the full screen map is: a target sized to the window under
+   the menu bar, the HUD panels laid over it, and the frame in the same two
+   halves, so it shares gOverviewSnapshot and every gOverviewPrep* value
+   above. The two modes are never on in the same frame; gOverviewPrepIso says
+   which of them the pending frame belongs to. gIsoRect is where the picture
+   was last blitted, for the overlays that anchor on the game view, and
+   gIsoWasActive lets the frame after the setting is switched off tidy up. */
+static IsoView           *gIsoView        = NULL;
+static bool               gOverviewPrepIso = FALSE;
+static SDL_FRect          gIsoRect        = { 0.0f, 0.0f, 0.0f, 0.0f };
+static float              gIsoCamScale    = 1.0f;
+static bool               gIsoWasActive   = FALSE;
+/* Whether the pointer path has swapped in the game crosshair over the
+   isometric picture, so it is swapped back once when the pointer leaves it.
+   The classic view's cursorMove keeps the same note against its own rect. */
+static bool               gIsoCrosshairOn = FALSE;
+
+/* Whether the isometric view is the main view: the setting says so, the full
+   screen map does not own the window, and this is the desktop layout. The
+   tablet layout draws its controls round a 15x15 square the isometric
+   picture has no place in, and the mobile and web drivers keep the classic
+   view, so none of them take this branch whatever the setting holds. */
+static bool isoViewWanted(void) {
+#if defined(__ANDROID__) || defined(__IPHONEOS__) || defined(__EMSCRIPTEN__)
+  return false;
+#else
+  return gfxGetViewProjection() == GFX_VIEW_ISOMETRIC && !gOverviewInWindow &&
+         !uiModeIsTablet();
+#endif
+}
 
 #if defined(WINBOLO_VOICE)
 /* The microphone indicator's two icons, textured on this window's renderer at
@@ -1150,8 +1184,33 @@ bool sdl3DrawGetOverviewInWindowRect(float *outX, float *outY,
 }
 
 bool sdl3DrawGetOverviewHudLayout(OverviewHudLayout *out) {
-  if (!gOverviewInWindow || !gOverviewHudValid || out == NULL) return false;
+  if ((!gOverviewInWindow && !isoViewWanted()) || !gOverviewHudValid ||
+      out == NULL) {
+    return false;
+  }
   *out = gOverviewHud;
+  return true;
+}
+
+/* Whether the isometric view is the picture on screen and has drawn: the
+   setting asks for it, and a frame has been blitted since. */
+static bool isoViewUp(void) {
+  return isoViewWanted() && gIsoView != NULL &&
+         gIsoRect.w > 0.0f && gIsoRect.h > 0.0f;
+}
+
+bool sdl3DrawIsIsoViewMain(void) {
+  return isoViewWanted();
+}
+
+bool sdl3DrawGetIsoView(float *outX, float *outY, float *outW, float *outH,
+                        IsoCamera *outCam) {
+  if (!isoViewUp()) return false;
+  if (outX) *outX = gIsoRect.x;
+  if (outY) *outY = gIsoRect.y;
+  if (outW) *outW = gIsoRect.w;
+  if (outH) *outH = gIsoRect.h;
+  if (outCam) *outCam = *isoViewCamera(gIsoView);
   return true;
 }
 
@@ -1415,6 +1474,31 @@ bool sdl3DrawGetMainViewGameRect(float *outX, float *outY,
                                  float *outTileW, float *outTileH) {
   float x, y, tw, th;
   if (!gRenderer) return false;
+  if (isoViewWanted() && gIsoRect.w > 0.0f && gIsoRect.h > 0.0f) {
+    /* The isometric picture is the view, and the whole of it. Its rect is
+       in render coordinates; the callers push the answer back through
+       sdl3DrawGameToRenderCoords, so it is handed over in the game
+       coordinates that call maps from, which is the blit arithmetic run
+       backwards while the game render target is in use and the identity
+       otherwise. A square is a diamond here: its size is the diamond's at
+       the camera's scale, in the same coordinates. */
+    float gs = 1.0f;
+    x = gIsoRect.x;
+    y = gIsoRect.y;
+    if (gGameRenderTarget != NULL && gGameDestRect.w > 0 && gGameDestRect.h > 0 &&
+        gGameScale > 0.0f) {
+      gs = gGameScale;
+      x  = (gIsoRect.x - gGameDestRect.x) / gs;
+      y  = (gIsoRect.y - gGameDestRect.y) / gs;
+    }
+    if (outX) *outX = x;
+    if (outY) *outY = y;
+    if (outW) *outW = gIsoRect.w / gs;
+    if (outH) *outH = gIsoRect.h / gs;
+    if (outTileW) *outTileW = (float)ISO_DIAMOND_W * gIsoCamScale / gs;
+    if (outTileH) *outTileH = (float)ISO_DIAMOND_H * gIsoCamScale / gs;
+    return true;
+  }
   if (uiModeIsTablet()) {
     if (gTabletVpZoom <= 0) return false;
     x  = (float)gTabletVpX;
@@ -1435,6 +1519,97 @@ bool sdl3DrawGetMainViewGameRect(float *outX, float *outY,
   if (outTileW) *outTileW = tw;
   if (outTileH) *outTileH = th;
   return true;
+}
+
+/* Whether render point (rx, ry) is on one of the HUD panels blitted over
+   the isometric picture: the same three rectangles the ImGui side hit-tests
+   for the hover fades and the build strip (renderIsoViewInput in
+   sdl3imgui.cpp), read from the layout the last frame drew, newswire slide
+   included, so a click on a panel is never a click on the ground under it. */
+static bool isoHudHit(float rx, float ry) {
+  const OverviewHudLayout *hud = &gOverviewHud;
+  float x = rx - gIsoRect.x;
+  float y = ry - gIsoRect.y;
+  if (!gOverviewHudValid) return false;
+  if (x >= hud->buildX && x < hud->buildX + hud->buildW &&
+      y >= hud->buildY && y < hud->buildY + hud->buildH) {
+    return true;
+  }
+  if (x >= hud->columnX && x < hud->columnX + hud->columnW &&
+      y >= hud->columnY && y < hud->columnY + hud->columnH) {
+    return true;
+  }
+  if (x >= hud->newswireX && x < hud->newswireX + hud->newswireW &&
+      y >= hud->newswireY && y < hud->newswireY + hud->newswireH) {
+    return true;
+  }
+  return false;
+}
+
+/* The pointer path's one hit test over the isometric picture, run for a
+   motion event, for a click and once a frame for the reticle's look, so the
+   three cannot disagree. Window point (winX, winY) is taken into render
+   coordinates, the picture's own. Returns whether it is on the picture with
+   no HUD panel under it; *outOnMap says whether the ground there is on the
+   map, and the square is filled in when it is. */
+static bool isoPointerAt(float winX, float winY, bool *outOnMap,
+                         BYTE *outMapX, BYTE *outMapY) {
+  float rx = winX, ry = winY;
+  if (outOnMap) *outOnMap = false;
+  if (!isoViewUp()) return false;
+  SDL_RenderCoordinatesFromWindow(gRenderer, winX, winY, &rx, &ry);
+  if (rx < gIsoRect.x || rx >= gIsoRect.x + gIsoRect.w ||
+      ry < gIsoRect.y || ry >= gIsoRect.y + gIsoRect.h) {
+    return false;
+  }
+  if (isoHudHit(rx, ry)) return false;
+  if (isoWindowToSquare(isoViewCamera(gIsoView), gIsoRect.x, gIsoRect.y,
+                        (int)gIsoRect.w, (int)gIsoRect.h, rx, ry,
+                        outMapX, outMapY, NULL, NULL)) {
+    if (outOnMap) *outOnMap = true;
+  }
+  return true;
+}
+
+/* Whether the pointer, where it rests now, is on the isometric picture over
+   a map square with no HUD panel and no ImGui window under it: what the
+   isometric drawer draws the build cursor solid for, the way the classic view
+   draws it solid while cursorPos says the pointer is in the view. The same
+   two ImGui tests the scroll follow makes, since a pointer over a dialog is
+   on the dialog. */
+static bool isoPointerLive(void) {
+  float mx = 0.0f, my = 0.0f;
+  bool onMap = false;
+  if (!gWindow || SDL_GetMouseFocus() != gWindow) return false;
+  if (sdl3ImguiWantCaptureMouse() || sdl3ImguiMouseOverWindow()) return false;
+  SDL_GetMouseState(&mx, &my);
+  return isoPointerAt(mx, my, &onMap, NULL, NULL) && onMap;
+}
+
+/* The game crosshair over the picture, the system pointer off it. Set only
+   when that changes, as cursorMove does for the classic rect. */
+static void isoPointerCrosshair(bool onPicture) {
+  if (onPicture == gIsoCrosshairOn) return;
+  cursorSetCursor(!onPicture);
+  gIsoCrosshairOn = onPicture;
+}
+
+/* The pointer at window (winX, winY) over the isometric picture: the shared
+   build cursor follows it onto the square under it, as classicPointerAt moves
+   it over the classic view, and what a click builds at is that latched
+   square. handMoved means what it does there: a focus event that only
+   reports where the pointer is moves nothing. No scroll follow and no
+   anchor: the camera follows the tank and the pointer stays where the hand
+   left it, so the square under a resting hand changes with the picture and
+   the latched one is what the click goes to, as it is in the classic view.
+   The classic cursor state (cursorMove, cursorPos) is left alone: it is
+   measured against the classic rect, which is not on screen. */
+static void isoPointerMoved(float winX, float winY, bool handMoved) {
+  BYTE mx = 0, my = 0;
+  bool onMap = false;
+  bool onPicture = isoPointerAt(winX, winY, &onMap, &mx, &my);
+  isoPointerCrosshair(onPicture);
+  if (onPicture && onMap && handMoved) buildCursorSetTile(mx, my);
 }
 
 /* The pointer at window (winX, winY) over the classic screen: the shared
@@ -1504,8 +1679,14 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
   switch (ev->type) {
     case SDL_EVENT_MOUSE_MOTION:
       /* The classic 15x15 mapping means nothing while the overview owns the
-         window, and the overview drives the shared build cursor itself. */
+         window, and the overview drives the shared build cursor itself. Over
+         the isometric picture the pointer is read against the picture. */
       if (gOverviewInWindow) break;
+      if (isoViewWanted()) {
+        isoPointerMoved(ev->motion.x, ev->motion.y,
+                        ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f);
+        break;
+      }
       classicPointerAt(cs, ev->motion.x, ev->motion.y,
                        ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f);
       break;
@@ -1515,6 +1696,30 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
          cursor — and the build-select hit-test would fire at chrome
          positions that are not on screen in this mode. */
       if (gOverviewInWindow) break;
+      if (isoViewWanted()) {
+        /* Over the isometric picture: a left click on a map square builds at
+           the latched target, for the reason the classic click below does,
+           and a touch press points first as it does there. A click on a HUD
+           panel is the ImGui side's (the build strip) or nothing. The build
+           buttons the classic hit-test below looks for are not on screen. */
+        bool onMap = false;
+        if (ev->button.which == SDL_TOUCH_MOUSEID) {
+          isoPointerMoved(ev->button.x, ev->button.y, true);
+        }
+        if (ev->button.button == SDL_BUTTON_LEFT &&
+            isoPointerAt(ev->button.x, ev->button.y, &onMap, NULL, NULL) &&
+            onMap) {
+          BYTE bx = 0, by = 0;
+          clientMutexWaitFor();
+          if (buildCursorGetTargetTile(&bx, &by)) {
+            clientSimManMoveToMap(cs, bx, by, clientSimGetCurrentBuildSelect(cs));
+          } else {
+            clientSimManMove(cs, clientSimGetCurrentBuildSelect(cs));
+          }
+          clientMutexRelease();
+        }
+        break;
+      }
       /* A finger has no resting position for the view to scroll under, so a
          press it makes (SDL's mouse press from a touch) points at its square
          and builds there at once: the press is also the hand moving to it.
@@ -1575,8 +1780,18 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
     }
     case SDL_EVENT_WINDOW_MOUSE_LEAVE:
       cursorLeaveWindow();
+      gIsoCrosshairOn = FALSE;
       break;
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
+      if (isoViewWanted()) {
+        /* The classic acquire measures the pointer against the classic rect;
+           over the picture the pointer's own path decides the crosshair, from
+           where the pointer is, moving nothing. */
+        float mx = 0.0f, my = 0.0f;
+        SDL_GetMouseState(&mx, &my);
+        isoPointerMoved(mx, my, false);
+        break;
+      }
       cursorAcquireCursor();
       break;
   }
@@ -2207,9 +2422,15 @@ void sdl3DrawCleanup(void) {
      before the renderer does. */
   overviewViewDestroy(gOverviewView);
   gOverviewView = NULL;
+  /* So was the isometric view's target. */
+  isoViewDestroy(gIsoView);
+  gIsoView = NULL;
+  gIsoRect.x = gIsoRect.y = gIsoRect.w = gIsoRect.h = 0.0f;
+  gIsoCrosshairOn = FALSE;
   overviewSnapshotDestroy(gOverviewSnapshot);
   gOverviewSnapshot    = NULL;
   gOverviewPrepPending = FALSE;
+  gOverviewPrepIso     = FALSE;
   itemLabelCacheFlush(&gItemLabelCache);
   if (gRenderer) {
     SDL_DestroyRenderer(gRenderer);
@@ -2789,6 +3010,123 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
   gOverviewPrepInTablet = inTablet;
   if (haveHud) gOverviewPrepHud = hud;
   gOverviewPrepDrawHud = drawHud;
+  gOverviewPrepIso     = FALSE;
+  gOverviewPrepPending = TRUE;
+}
+
+/* The isometric camera's scale for a target w by h pixels: the one that fits
+   the classic view's 15x15 squares with a margin round them. A 15x15 block
+   spans 15 diamond widths by 15 diamond heights at scale 1 (480 by 240
+   pixels), the fit is taken at nine tenths of the target, rounded down to a
+   half so a sprite's pixels land evenly, and never below 1. */
+static float isoViewScaleFor(int w, int h) {
+  float fitW  = (float)w / (15.0f * (float)ISO_DIAMOND_W);
+  float fitH  = (float)h / (15.0f * (float)ISO_DIAMOND_H);
+  float scale = 0.9f * (fitW < fitH ? fitW : fitH);
+  scale = SDL_floorf(scale * 2.0f) / 2.0f;
+  if (scale < 1.0f) scale = 1.0f;
+  return scale;
+}
+
+/* The isometric view's frame, the first half: sdl3DrawOverviewInWindowFrame
+   step for step, for the desktop layout alone (isoViewWanted). The target is
+   the window under the menu bar, so the picture has no empty corners and the
+   squares past the live region are fog; the HUD panels go over it from the
+   same layout; and the drawing waits for sdl3DrawFlushOverviewInWindow, which
+   tells the two frames apart by gOverviewPrepIso. */
+static void sdl3DrawIsoViewFrame(ClientSim *cs, bool showPillLabels,
+                                 bool showBaseLabels) {
+  gOverviewHudValid    = FALSE;
+  gOverviewPrepPending = FALSE;
+
+  int ww = 0, wh = 0;
+  {
+    SDL_RendererLogicalPresentation logMode;
+    SDL_GetRenderLogicalPresentation(gRenderer, &ww, &wh, &logMode);
+    if (ww <= 0 || wh <= 0 || logMode == SDL_LOGICAL_PRESENTATION_DISABLED) {
+      SDL_GetCurrentRenderOutputSize(gRenderer, &ww, &wh);
+    }
+  }
+  float menuBarHeight = uiShouldUseControllerMode() ? 0.0f : (float)MENU_BAR_HEIGHT;
+  int w = ww;
+  int h = (int)((float)wh - menuBarHeight);
+  if (w < 1 || h < 1) return;
+
+  /* The classic draw loads the atlas lazily on its way past; this branch
+     never gets there, so it loads it itself. */
+  sdl3LoadTiles();
+
+  if (!gIsoView) gIsoView = isoViewCreate();
+  if (!gIsoView) return;
+  if (!gOverviewSnapshot) gOverviewSnapshot = overviewSnapshotCreate();
+  if (!gOverviewSnapshot) return;
+
+#if defined(WINBOLO_VOICE)
+  bool  voiceWanted       = voiceIsEnabled() && voiceConnectionCarriesVoice();
+  bool  voiceMuted        = voiceIsSelfMuted();
+  bool  voiceTransmitting = voiceIsTransmitting();
+  float voiceLevel        = voiceGetInputMeter();
+#else
+  bool  voiceWanted       = FALSE;
+  bool  voiceMuted        = FALSE;
+  bool  voiceTransmitting = FALSE;
+  float voiceLevel        = 0.0f;
+#endif
+
+  /* The panels' strips, so the followed tank is centred in the clear part of
+     the picture rather than under the status column. */
+  OverviewHudLayout hud;
+  bool haveHud = overviewHudLayout(w, h, voiceWanted, &hud);
+  if (haveHud) {
+    isoViewSetHudInsets(gIsoView,
+                        hud.buildX + hud.buildW,
+                        0.0f,
+                        (float)w - hud.columnX,
+                        (float)h - hud.newswireY);
+  } else {
+    isoViewSetHudInsets(gIsoView, 0.0f, 0.0f, 0.0f, 0.0f);
+  }
+
+  /* The camera: the scale is worked out from the target every frame, so a
+     window resize or a zoom change needs nothing rebuilt, and it follows the
+     tank. */
+  {
+    IsoCamera *cam = isoViewCamera(gIsoView);
+    cam->scale   = isoViewScaleFor(w, h);
+    gIsoCamScale = cam->scale;
+    isoViewSetFollow(gIsoView, true);
+  }
+
+  /* Whether the pointer is on a square of the picture right now, for the
+     build cursor's solid or faint look. Read against the last frame's rect
+     and camera, which are what the player is pointing at. */
+  isoViewSetPointerOnMap(gIsoView, isoPointerLive());
+
+  /* Everything the render reads from the sim, taken while the lock is held. */
+  clientSimFillOverviewSnapshot(cs, gOverviewSnapshot);
+
+  bool drawHud = haveHud &&
+                 hudSourceRender(cs, showPillLabels, showBaseLabels);
+
+  gOverviewPrepGrids = FALSE;
+  gOverviewPrepHaveLabel =
+      sdl3DrawGetItemViewLabel(cs, gOverviewPrepLabel,
+                               sizeof(gOverviewPrepLabel));
+
+  gOverviewPrepVoiceWanted       = voiceWanted;
+  gOverviewPrepVoiceMuted        = voiceMuted;
+  gOverviewPrepVoiceTransmitting = voiceTransmitting;
+  gOverviewPrepVoiceLevel        = voiceLevel;
+  gOverviewPrepVoiceEveryone     = clientSimGetVoiceEveryone(cs);
+
+  gOverviewPrepW        = w;
+  gOverviewPrepH        = h;
+  gOverviewPrepMenuBar  = menuBarHeight;
+  gOverviewPrepX        = 0.0f;
+  gOverviewPrepInTablet = FALSE;
+  if (haveHud) gOverviewPrepHud = hud;
+  gOverviewPrepDrawHud = drawHud;
+  gOverviewPrepIso     = TRUE;
   gOverviewPrepPending = TRUE;
 }
 
@@ -2796,11 +3134,14 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
    the HUD panels over it, from what the first half prepared. Runs after the
    frame lock is released, so the render's target switches and the flushes
    they force are outside it. Nothing here reads the sim. A no-op when no
-   frame is waiting. */
+   frame is waiting. Serves the isometric view's frame as well, which differs
+   only in the view that renders and the rect that remembers the blit. */
 void sdl3DrawFlushOverviewInWindow(void) {
   if (!gOverviewPrepPending) return;
   gOverviewPrepPending = FALSE;
-  if (!gRenderer || !gOverviewView || !gOverviewSnapshot) return;
+  bool iso = gOverviewPrepIso;
+  if (!gRenderer || !gOverviewSnapshot) return;
+  if (iso ? (gIsoView == NULL) : (gOverviewView == NULL)) return;
 
   int   w             = gOverviewPrepW;
   int   h             = gOverviewPrepH;
@@ -2810,8 +3151,24 @@ void sdl3DrawFlushOverviewInWindow(void) {
   bool  voiceWanted   = gOverviewPrepVoiceWanted;
   OverviewHudLayout hud = gOverviewPrepHud;
 
-  overviewViewRenderOffscreen(gOverviewView, gRenderer, gTilesTex, gSheetScale,
-                              gCrosshairTex, w, h, gOverviewSnapshot, true);
+  if (iso) {
+    /* The caches and faces the classic view's overlay draws with, which are
+       this window's. */
+    IsoViewLabels labels;
+    labels.labelCache     = sdl3DrawGetTankLabelCache();
+    labels.pingNameCache  = sdl3DrawGetPingNameCache();
+    labels.itemLabelCache = &gItemLabelCache;
+    labels.labelFont      = gFontMsg;
+    labels.pillFont       = gFontLabel;
+    labels.baseFont       = gFontTiny;
+    labels.mainZoom       = gZoomFactor;
+    isoViewRenderOffscreen(gIsoView, gRenderer, gTilesTex, gSheetScale,
+                           gSpritesTex, gSpriteAtlas, gIsoTex, gCrosshairTex,
+                           w, h, gOverviewSnapshot, &labels);
+  } else {
+    overviewViewRenderOffscreen(gOverviewView, gRenderer, gTilesTex, gSheetScale,
+                                gCrosshairTex, w, h, gOverviewSnapshot, true);
+  }
 
   if (drawHud) {
     Uint64 now = SDL_GetTicks();
@@ -2842,16 +3199,29 @@ void sdl3DrawFlushOverviewInWindow(void) {
     SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
   }
 
-  SDL_Texture *tex = overviewViewGetTexture(gOverviewView);
+  SDL_Texture *tex = iso ? isoViewGetTexture(gIsoView)
+                         : overviewViewGetTexture(gOverviewView);
   if (tex) {
     SDL_FRect dest = { mapX, menuBarHeight, (float)w, (float)h };
     /* BLENDMODE_NONE for the same reason the classic blit uses it: alpha
        below 255 left in a render target would composite semi-transparent. */
     SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
     SDL_RenderTexture(gRenderer, tex, NULL, &dest);
-    /* Both halves work from this rect: the ImGui side puts its pan item and
-       status strip over exactly these numbers. */
-    gOverviewRect = dest;
+    if (iso) {
+      /* The picture is the game view, so the rect the overlays anchor on
+         (sdl3DrawGetGameRect, the coordinate conversions) is this one, as
+         the classic blit sets it to its own; the scale is what the classic
+         frame's width would be stretched by to span it, which is what the
+         anchors expressed in classic frame pixels want. */
+      int rtW = gGameRTWidth > 0 ? gGameRTWidth : gZoomFactor * SDL3_SCREEN_W;
+      gIsoRect      = dest;
+      gGameDestRect = dest;
+      gGameScale    = rtW > 0 ? dest.w / (float)rtW : 1.0f;
+    } else {
+      /* Both halves work from this rect: the ImGui side puts its pan item
+         and status strip over exactly these numbers. */
+      gOverviewRect = dest;
+    }
   }
 
   /* The touch layout's status grids over its full screen map, at the status
@@ -3135,6 +3505,41 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   if (gOverviewInWindow && (!overviewInTabletView() || tabletMapFull)) {
     sdl3DrawOverviewInWindowFrame(cs, showPillLabels, showBaseLabels);
     return;
+  }
+
+  /* The isometric view, the third picture: its own frame in the full screen
+     map's two halves, and the classic path below is not taken. The setting
+     is read here every frame, so switching it either way shows on the next
+     frame with nothing recreated. The frame after it is switched off drops
+     the rect and the HUD the overlays were anchoring on, and a frame left
+     prepared and not drawn. The view switches nothing else: it changes no
+     cursor and owns no window state. */
+  if (isoViewWanted()) {
+    if (!gIsoWasActive) {
+      /* The classic pointer state is measured against a rect that has just
+         left the screen: its crosshair, in-view flag and scroll anchor go,
+         so the follow does not carry the pointer by the classic sums. */
+      cursorLeaveWindow();
+      gIsoCrosshairOn = FALSE;
+    }
+    gIsoWasActive = TRUE;
+    sdl3DrawIsoViewFrame(cs, showPillLabels, showBaseLabels);
+    return;
+  }
+  if (gIsoWasActive) {
+    gIsoWasActive = FALSE;
+    gIsoRect.x = gIsoRect.y = gIsoRect.w = gIsoRect.h = 0.0f;
+    gOverviewHudValid = FALSE;
+    if (gOverviewPrepIso) gOverviewPrepPending = FALSE;
+    /* The blit rect and scale the isometric flush wrote go too. The classic
+       path writes them again only inside its render-target blit, and a layout
+       with no render target (sdl3DrawSetup skips it on the Deck) would keep
+       the picture's values for good. */
+    gGameDestRect.x = gGameDestRect.y = gGameDestRect.w = gGameDestRect.h = 0.0f;
+    gGameScale = 1.0f;
+    /* The picture's crosshair goes with it; the classic path sets its own
+       on the next motion. */
+    isoPointerCrosshair(false);
   }
 
   sdl3DrawAdaptRenderTarget();
@@ -3783,8 +4188,9 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
 
   /* The in-window overview redraws the whole window from sim state every
      frame, so a full repaint has nothing to add — and the classic chrome it
-     would draw is not part of that mode. */
-  if (gOverviewInWindow) return;
+     would draw is not part of that mode, nor of the isometric view, which
+     repaints the window from the snapshot the same way. */
+  if (gOverviewInWindow || isoViewWanted()) return;
 
   sdl3DrawAdaptRenderTarget();
 
@@ -4384,9 +4790,17 @@ void sdl3DrawNewGame(buildSelect value) {
   /* The full screen map's view keeps its camera spot, follow flag and last
      alive state, and would start the next round parked where the last one
      was left, or playing a respawn for a tank that died as it ended. It is
-     made again on the first full screen frame. */
+     made again on the first full screen frame. The isometric view keeps the
+     same things and is treated the same way. */
   overviewViewDestroy(gOverviewView);
   gOverviewView = NULL;
+  isoViewDestroy(gIsoView);
+  gIsoView = NULL;
+  /* The round's picture is gone with it: the pointer note and the rect
+     would otherwise describe a picture the lobby does not draw, and the
+     next round's first motion over the map would skip the crosshair. */
+  if (gIsoCrosshairOn) isoPointerCrosshair(FALSE);
+  gIsoRect.w = gIsoRect.h = 0.0f;
 }
 
 void sdl3DrawSelectIndentsOff(buildSelect value, int x, int y) {

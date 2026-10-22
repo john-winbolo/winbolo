@@ -56,6 +56,7 @@ static GfxTileDetail     s_tileDetail     = GFX_TILE_DETAIL_CLASSIC;
 static GfxAnimSmoothness s_animSmoothness = GFX_ANIM_CLASSIC;
 static bool              s_smoothShells   = false;
 static GfxTextureFilter  s_textureFilter  = GFX_FILTER_NEAREST;
+static GfxViewProjection s_viewProjection = GFX_VIEW_CLASSIC;
 static bool              s_simplifiedZoomOut     = true;
 static bool              s_simplifiedOverviewOnly = false;
 static FogStyle          s_fogStyle       = FOG_STYLE_DEFAULT;
@@ -97,6 +98,16 @@ void gfxSetTextureFilter(GfxTextureFilter v) {
     s_textureFilter = (GfxTextureFilter)n;
 }
 
+GfxViewProjection gfxGetViewProjection(void) { return s_viewProjection; }
+
+void gfxSetViewProjection(GfxViewProjection v) {
+    int n = (int)v;
+    if (n < (int)GFX_VIEW_CLASSIC || n > (int)GFX_VIEW_ISOMETRIC) {
+        n = (int)GFX_VIEW_CLASSIC;
+    }
+    s_viewProjection = (GfxViewProjection)n;
+}
+
 bool gfxGetSimplifiedZoomOut(void) { return s_simplifiedZoomOut; }
 
 void gfxSetSimplifiedZoomOut(bool v) { s_simplifiedZoomOut = v; }
@@ -110,6 +121,7 @@ void gfxSettingsResetDefaults(void) {
     s_animSmoothness         = GFX_ANIM_CLASSIC;
     s_smoothShells           = false;
     s_textureFilter          = GFX_FILTER_NEAREST;
+    s_viewProjection         = GFX_VIEW_CLASSIC;
     s_simplifiedZoomOut      = true;
     s_simplifiedOverviewOnly = false;
     s_fogStyle               = FOG_STYLE_DEFAULT;

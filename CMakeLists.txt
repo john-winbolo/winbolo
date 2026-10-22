@@ -1002,6 +1002,9 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
     src/gui/sdl3/iso_sheet.c
+    src/gui/sdl3/iso_project.c
+    src/gui/sdl3/isoview_geom.c
+    src/gui/sdl3/isoview.c
     src/gui/sdl3/skin_source.c
     src/gui/sdl3/gfx_settings.c
     src/gui/sdl3/sdl_bmp.c
@@ -4482,6 +4485,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # only the test itself is added here; the setting store it also exercises
     # comes in with gfx_settings.c above.
     tests/unit/test_fog_roads.c
+    # The view projection setting: default, set and get, out of range and
+    # the reset. The store comes in with gfx_settings.c above.
+    tests/unit/test_gfx_view_projection.c
     tests/unit/test_overview_hud_layout.cpp
     tests/unit/test_newswire_slide.c
     tests/unit/test_sight.c
@@ -6163,6 +6169,7 @@ set(_unit_test_names
     overview_fog
     fog_style_looks
     fog_style_setting
+    gfx_view_projection
     fog_road_edges
     fog_road_edge_masks
     overview_hud_layout
@@ -6197,6 +6204,7 @@ set(_unit_test_names
     iso_project_visible_range
     iso_project_depth
     iso_project_facing_frame
+    iso_project_window
     iso_sheet_layout
     iso_sheet_stock_present
     iso_sheet_fallbacks

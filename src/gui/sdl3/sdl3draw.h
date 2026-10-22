@@ -100,7 +100,9 @@ struct OverviewView *sdl3DrawOverviewInWindowView(void);
    the render snapshot and the HUD's source frame and returns. The driver
    calls this after clientMutexRelease and before the ImGui pass to draw the
    map, the window blit and the HUD from what was prepared. A no-op when no
-   frame is waiting, so it is safe to call every frame in every mode. */
+   frame is waiting, so it is safe to call every frame in every mode. The
+   isometric main view (gfxGetViewProjection, isoview.h) is drawn in the same
+   two halves and flushed by this same call. */
 void sdl3DrawFlushOverviewInWindow(void);
 /* Where the overview was last blitted, in renderer coordinates — which are
    ImGui's coordinates in every mode we ship. False when the mode is off or
@@ -108,9 +110,25 @@ void sdl3DrawFlushOverviewInWindow(void);
 bool sdl3DrawGetOverviewInWindowRect(float *outX, float *outY,
                                      float *outW, float *outH);
 /* The HUD geometry the last in-window frame used, so the ImGui side can put
-   its hit-testing on the same rectangles the blit used. False when the mode
-   is off or no HUD was laid out. */
+   its hit-testing on the same rectangles the blit used. False when neither
+   the full screen map nor the isometric view is up, or no HUD was laid
+   out. */
 bool sdl3DrawGetOverviewHudLayout(OverviewHudLayout *out);
+
+/* The isometric main view (gfxGetViewProjection, isoview.h) while it is the
+   picture on screen: where it was last blitted, in renderer coordinates, and
+   the camera it was drawn with, for the overlays and the ping surface that
+   place or read a map square on it through iso_project.h. False when the
+   view is not up or has not drawn yet. Any pointer may be NULL. */
+struct IsoCamera;
+bool sdl3DrawGetIsoView(float *outX, float *outY, float *outW, float *outH,
+                        struct IsoCamera *outCam);
+/* Whether the isometric view is the main view this frame: the setting asks
+   for it, the full screen map does not own the window and this is the
+   desktop layout. True before its first frame has drawn, unlike the above,
+   so the classic pointer plumbing can stand down on the same frame the
+   classic picture does. */
+bool sdl3DrawIsIsoViewMain(void);
 
 /* How see-through each of the full screen map's three HUD panels is drawn:
    the newswire along the bottom, the build items down the left edge and the

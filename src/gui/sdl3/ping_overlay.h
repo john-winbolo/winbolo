@@ -75,7 +75,7 @@ struct OverviewCamera;
  * pointer was on it and not on a panel; a chord press outside that opens
  * nothing. They also tell the drawer which coordinate system a ping's world
  * position converts through — the classic view's offset/sub-position pair,
- * or the overview's camera.
+ * the overview's camera or the isometric view's.
  *
  * Call exactly one of them per frame while a game is up, and
  * pingOverlayClearSurface whenever neither map is on screen.
@@ -94,6 +94,17 @@ void pingOverlaySetOverviewSurface(float x, float y, float w, float h,
                                    bool hoverable,
                                    const struct OverviewCamera *cam,
                                    int viewW, int viewH);
+
+/* The isometric main view filling the game window. (x, y, w, h) is where its
+ * picture was blitted, in the coordinates ImGui reports the mouse in; `cam`
+ * the camera it was drawn with (copied, as the overview's is); the insets
+ * are what the HUD panels cover off each edge, so an edge bar is kept off
+ * them. A ping is anchored on the centre of the square under the press. */
+struct IsoCamera;
+void pingOverlaySetIsoSurface(float x, float y, float w, float h,
+                              bool hoverable, const struct IsoCamera *cam,
+                              float insetL, float insetT,
+                              float insetR, float insetB);
 
 /* No map on screen: the lobby, or a frame that could not draw one. A chord
  * press then opens nothing. */

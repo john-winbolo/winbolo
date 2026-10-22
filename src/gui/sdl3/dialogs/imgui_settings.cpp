@@ -1440,6 +1440,35 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             }
         }
 
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+        /* The main view's picture: the classic top-down view or the
+           isometric one.  Read each frame by the drawer, so a pick shows on
+           the next frame with nothing rebuilt.  Desktop only: the mobile and
+           web drivers draw the classic view whatever the setting says, so
+           they are not offered the choice. */
+        {
+            const char *viewLabels[] = {
+                langGetText(STR_DLGSKIN_VIEW_CLASSIC),
+                langGetText(STR_DLGSKIN_VIEW_ISOMETRIC),
+            };
+            int vpIdx = (int)gfxGetViewProjection();
+            if (vpIdx < 0 || vpIdx > 1) vpIdx = 0;
+
+            ImGui::TextUnformatted(langGetText(STR_DLGSKIN_VIEW));
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
+            if (ImGui::BeginCombo("##viewprojection", viewLabels[vpIdx])) {
+                for (int i = 0; i < 2; i++) {
+                    bool sel = (vpIdx == i);
+                    if (ImGui::Selectable(viewLabels[i], sel) && i != vpIdx) {
+                        gfxSetViewProjection((GfxViewProjection)i);
+                        gameFrontSaveCurrentPrefs();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        }
+#endif  /* !BOLO_MOBILE && !__EMSCRIPTEN__ */
+
         /* Animation smoothness, and the shell override.  Both are read where
            a sprite's screen position is worked out, so a pick shows on the
            next frame with no sheet rebuild.  Neither is greyed by what the

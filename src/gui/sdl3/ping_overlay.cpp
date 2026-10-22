@@ -52,6 +52,7 @@
 
 #include "imgui.h"
 #include "overview_camera.h"   /* the overview's own screen <-> world maths */
+#include "iso_project.h"       /* the isometric view's */
 
 extern "C" {
 #include "sdl3draw.h"
@@ -212,7 +213,8 @@ static bool classicScreenToWorld(struct ClientSim *cs, const PingViewRect *vr,
 typedef enum {
     PING_SURFACE_NONE = 0,
     PING_SURFACE_CLASSIC,
-    PING_SURFACE_OVERVIEW
+    PING_SURFACE_OVERVIEW,
+    PING_SURFACE_ISO
 } PingSurfaceKind;
 
 static struct {
@@ -221,6 +223,8 @@ static struct {
     bool            hoverable;    /* pointer on it, no panel over it */
     OverviewCamera  cam;          /* overview only: last frame's camera */
     int             viewW, viewH; /* overview only: the offscreen's size */
+    IsoCamera       isoCam;       /* isometric only: last frame's camera */
+    float           insetL, insetT, insetR, insetB; /* isometric only: the HUD's edges */
 } s_surface;
 
 void pingOverlayClearSurface(void) {
@@ -264,6 +268,27 @@ void pingOverlaySetOverviewSurface(float x, float y, float w, float h,
     s_surface.viewH     = viewH;
 }
 
+void pingOverlaySetIsoSurface(float x, float y, float w, float h,
+                              bool hoverable, const IsoCamera *cam,
+                              float insetL, float insetT,
+                              float insetR, float insetB) {
+    if (cam == nullptr || w <= 0.0f || h <= 0.0f) {
+        pingOverlayClearSurface();
+        return;
+    }
+    s_surface.kind      = PING_SURFACE_ISO;
+    s_surface.x         = x;
+    s_surface.y         = y;
+    s_surface.w         = w;
+    s_surface.h         = h;
+    s_surface.hoverable = hoverable;
+    s_surface.isoCam    = *cam;
+    s_surface.insetL    = insetL;
+    s_surface.insetT    = insetT;
+    s_surface.insetR    = insetR;
+    s_surface.insetB    = insetB;
+}
+
 /* The ground under a screen point, whichever map is up. False when there is
  * no map, when the pointer was over a panel last frame, when the point is
  * outside the map's rect, or when it is off the map itself. */
@@ -282,6 +307,20 @@ static bool pingSurfaceWorldAt(struct ClientSim *cs, float px, float py,
                                          s_surface.viewW, s_surface.viewH,
                                          px - s_surface.x, py - s_surface.y,
                                          &mapX, &mapY)) {
+            return false;
+        }
+        *outX = (uint16_t)(mapX * 256 + 128);
+        *outY = (uint16_t)(mapY * 256 + 128);
+        return true;
+    }
+    if (s_surface.kind == PING_SURFACE_ISO) {
+        unsigned char mapX = 0, mapY = 0;
+        /* On the square's centre, as the overview's: the picture names
+           squares, and a diamond's sub-square point is nothing the player
+           aimed at. */
+        if (!isoWindowToSquare(&s_surface.isoCam, s_surface.x, s_surface.y,
+                               (int)s_surface.w, (int)s_surface.h, px, py,
+                               &mapX, &mapY, nullptr, nullptr)) {
             return false;
         }
         *outX = (uint16_t)(mapX * 256 + 128);
@@ -635,6 +674,26 @@ static bool pingDrawView(PingDrawView *out) {
         out->scale = scale;
         return true;
     }
+    if (s_surface.kind == PING_SURFACE_ISO) {
+        PingRect r;
+        float scale = sdl3ImguiGetUiScale();
+        if (scale <= 0.0f) scale = 1.0f;
+        /* Kept off the HUD panels the same way; a square is its diamond. */
+        pingRectInset(s_surface.x, s_surface.y, s_surface.w, s_surface.h,
+                      s_surface.insetL, s_surface.insetT,
+                      s_surface.insetR, s_surface.insetB, &r);
+        out->kind  = PING_SURFACE_ISO;
+        out->x     = r.x;
+        out->y     = r.y;
+        out->w     = r.w;
+        out->h     = r.h;
+        out->ox    = s_surface.x;
+        out->oy    = s_surface.y;
+        out->tileW = (float)ISO_DIAMOND_W * s_surface.isoCam.scale;
+        out->tileH = (float)ISO_DIAMOND_H * s_surface.isoCam.scale;
+        out->scale = scale;
+        return true;
+    }
     return false;
 }
 
@@ -652,6 +711,15 @@ static void pingWorldToScreen(struct ClientSim *cs, const PingDrawView *v,
                                     (float)worldY / 256.0f, &sx, &sy);
         *outX = v->ox + sx;
         *outY = v->oy + sy;
+        return;
+    }
+    if (v->kind == PING_SURFACE_ISO) {
+        /* The square and the pixel inside it, as the sim splits a WORLD
+           position, on the ground. */
+        isoSquareToWindow(&s_surface.isoCam, s_surface.x, s_surface.y,
+                          (int)s_surface.w, (int)s_surface.h,
+                          worldX >> 8, worldY >> 8, worldX & 0xFF, worldY & 0xFF,
+                          0.0f, outX, outY);
         return;
     }
     {
@@ -686,6 +754,11 @@ static bool pingPadTargetSquare(struct ClientSim *cs, int *outX, int *outY) {
     if (s_surface.kind == PING_SURFACE_OVERVIEW) {
         *outX = (int)s_surface.cam.cx;
         *outY = (int)s_surface.cam.cy;
+        return true;
+    }
+    if (s_surface.kind == PING_SURFACE_ISO) {
+        *outX = (int)(s_surface.isoCam.centerWX / (float)ISO_WORLD_PER_SQUARE);
+        *outY = (int)(s_surface.isoCam.centerWY / (float)ISO_WORLD_PER_SQUARE);
         return true;
     }
     if (s_surface.kind == PING_SURFACE_CLASSIC && cs != nullptr) {

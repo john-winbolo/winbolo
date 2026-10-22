@@ -1972,8 +1972,11 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
     /* None of the classic pointer plumbing applies while the overview owns
      * the window: the 15x15 cell mapping corresponds to nothing on screen,
      * and the overview drives the shared build cursor from absolute map
-     * coordinates of its own. */
-    if (!sdl3DrawIsOverviewInWindow()) {
+     * coordinates of its own. The isometric view is the same case: its
+     * pointer path in sdl3draw.c reads the pointer against the picture and
+     * moves the build cursor by map square, and carrying the OS pointer by
+     * the classic sums would drag it about a rect that is not on screen. */
+    if (!sdl3DrawIsOverviewInWindow() && !sdl3DrawIsIsoViewMain()) {
       /* Carry the mouse pointer along with the map as the view scrolls, so it
        * stays over the square it was on (and so over the build selection)
        * and a click or a nudge of the mouse doesn't jump the selection to

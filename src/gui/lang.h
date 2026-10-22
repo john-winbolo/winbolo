@@ -3636,6 +3636,10 @@
 #define STR_MAPGEN_MIDDLE_BOTH                   3035
 #define STR_MAPGEN_STYLE_WALLS_TIP               3036
 #define STR_MAPGEN_STYLE_MIDDLE_TIP              3037
+/* Settings dialog, graphics: which picture the main view is drawn as. */
+#define STR_DLGSKIN_VIEW                         3038
+#define STR_DLGSKIN_VIEW_CLASSIC                 3039
+#define STR_DLGSKIN_VIEW_ISOMETRIC               3040
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

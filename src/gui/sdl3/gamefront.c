@@ -4839,6 +4839,13 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     if (v < (int)GFX_ANIM_CLASSIC || v > (int)GFX_ANIM_SMOOTH) v = 0;
     gfxSetAnimSmoothness((GfxAnimSmoothness)v);
   }
+  /* The main view's picture: 0 Classic / 1 Isometric. */
+  prefsGetString("SETTINGS", "ViewProjection", "0", buff, FILENAME_MAX);
+  {
+    int v = atoi(buff);
+    if (v < (int)GFX_VIEW_CLASSIC || v > (int)GFX_VIEW_ISOMETRIC) v = 0;
+    gfxSetViewProjection((GfxViewProjection)v);
+  }
   prefsGetString("SETTINGS", "SmoothShells", "No", buff, FILENAME_MAX);
   gfxSetSmoothShells(YESNO_TO_TRUEFALSE(buff[0]));
   prefsGetString("SETTINGS", "TextureFilter", "0", buff, FILENAME_MAX);
@@ -5620,6 +5627,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("SETTINGS", "TileDetail", buff);
   intToStr((int)gfxGetAnimSmoothness(), buff, sizeof(buff));
   prefsSetString("SETTINGS", "AnimSmoothness", buff);
+  intToStr((int)gfxGetViewProjection(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "ViewProjection", buff);
   prefsSetString("SETTINGS", "SmoothShells", TRUEFALSE_TO_STR(gfxGetSmoothShells()));
   intToStr((int)gfxGetTextureFilter(), buff, sizeof(buff));
   prefsSetString("SETTINGS", "TextureFilter", buff);

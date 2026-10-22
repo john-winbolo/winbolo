@@ -30,6 +30,12 @@
  *
  * facing_frame: a classic stand-in frame advances by two and wraps at 16; an
  * isometric sprite's frame is left alone.
+ *
+ * window: the pointer path's pair over a picture blitted away from the
+ * window's origin. A square and pixel put on the window comes back as the
+ * same square and pixel for a grid round the camera; a point outside the
+ * rect is refused on every side with the outputs untouched; a point inside
+ * the rect over ground past the map's edge, at either corner, is refused.
  */
 
 #include <math.h>
@@ -382,6 +388,118 @@ int run_iso_project_facing_frame(void) {
                       "iso frame %d -> %d", frame, isoFacingFrame(frame, true));
         UT_ASSERT_MSG(isoFacingFrame(frame, false) == (frame + 2) % 16,
                       "classic frame %d -> %d", frame, isoFacingFrame(frame, false));
+    }
+    return 0;
+}
+
+int run_iso_project_window(void) {
+    /* A picture blitted away from the window's origin, with a camera off the
+       map's centre and a scale the host would pick. */
+    const float rx = 40.0f, ry = 24.0f;
+    const int   rw = 800, rh = 600;
+    IsoCamera   cam = { 100.25f * 256.0f, 90.5f * 256.0f, 1.5f };
+    int mx, my, px, py;
+
+    /* Round trip on a grid of squares and pixels: a square projected onto the
+       window comes back as the same square and pixel, and the point lands
+       inside the rect, since the grid is chosen round the camera. */
+    for (mx = 92; mx <= 108; mx += 4) {
+        for (my = 84; my <= 96; my += 3) {
+            for (px = 0; px < 256; px += 85) {
+                for (py = 0; py < 256; py += 127) {
+                    float wx = -1.0f, wy = -1.0f;
+                    unsigned char gx = 0, gy = 0, gpx = 0, gpy = 0;
+                    isoSquareToWindow(&cam, rx, ry, rw, rh, mx, my, px, py,
+                                      0.0f, &wx, &wy);
+                    UT_ASSERT_MSG(wx >= rx && wx < rx + (float)rw &&
+                                  wy >= ry && wy < ry + (float)rh,
+                                  "square (%d,%d) pixel (%d,%d) lands at (%g,%g), "
+                                  "outside the rect", mx, my, px, py, wx, wy);
+                    UT_ASSERT_MSG(isoWindowToSquare(&cam, rx, ry, rw, rh, wx, wy,
+                                                    &gx, &gy, &gpx, &gpy),
+                                  "square (%d,%d) pixel (%d,%d) at (%g,%g) "
+                                  "not found under its own point",
+                                  mx, my, px, py, wx, wy);
+                    UT_ASSERT_MSG(gx == mx && gy == my && gpx == px && gpy == py,
+                                  "square (%d,%d) pixel (%d,%d) came back as "
+                                  "(%u,%u) pixel (%u,%u)", mx, my, px, py,
+                                  gx, gy, gpx, gpy);
+                }
+            }
+        }
+    }
+
+    /* Height moves the window point straight up by the scale. */
+    {
+        float wx0, wy0, wx1, wy1;
+        isoSquareToWindow(&cam, rx, ry, rw, rh, 100, 90, 128, 128, 0.0f, &wx0, &wy0);
+        isoSquareToWindow(&cam, rx, ry, rw, rh, 100, 90, 128, 128, 10.0f, &wx1, &wy1);
+        UT_ASSERT(fabsf(wx1 - wx0) < kExact);
+        UT_ASSERT(fabsf((wy0 - wy1) - 15.0f) < kExact);
+    }
+
+    /* The camera's own point is the middle of the rect. */
+    {
+        float wx, wy;
+        isoSquareToWindow(&cam, rx, ry, rw, rh, 100, 90, 64, 128, 0.0f, &wx, &wy);
+        UT_ASSERT(fabsf(wx - (rx + 400.0f)) < kExact);
+        UT_ASSERT(fabsf(wy - (ry + 300.0f)) < kExact);
+    }
+
+    /* A point outside the rect is refused on every side, and the outputs are
+       left alone; the four corners inside are taken. */
+    {
+        unsigned char gx = 7, gy = 7, gpx = 7, gpy = 7;
+        UT_ASSERT(!isoWindowToSquare(&cam, rx, ry, rw, rh, rx - 0.5f, ry + 300.0f,
+                                     &gx, &gy, &gpx, &gpy));
+        UT_ASSERT(!isoWindowToSquare(&cam, rx, ry, rw, rh, rx + (float)rw, ry + 300.0f,
+                                     &gx, &gy, &gpx, &gpy));
+        UT_ASSERT(!isoWindowToSquare(&cam, rx, ry, rw, rh, rx + 400.0f, ry - 1.0f,
+                                     &gx, &gy, &gpx, &gpy));
+        UT_ASSERT(!isoWindowToSquare(&cam, rx, ry, rw, rh, rx + 400.0f, ry + (float)rh,
+                                     &gx, &gy, &gpx, &gpy));
+        UT_ASSERT(gx == 7 && gy == 7 && gpx == 7 && gpy == 7);
+        UT_ASSERT(isoWindowToSquare(&cam, rx, ry, rw, rh, rx, ry, &gx, &gy, &gpx, &gpy));
+        UT_ASSERT(isoWindowToSquare(&cam, rx, ry, rw, rh, rx + (float)rw - 1.0f,
+                                    ry + (float)rh - 1.0f, &gx, &gy, &gpx, &gpy));
+        /* A rect of no size holds nothing. */
+        UT_ASSERT(!isoWindowToSquare(&cam, rx, ry, 0, rh, rx, ry, &gx, &gy, &gpx, &gpy));
+    }
+
+    /* A camera on the map's north-west corner: the ground past the edge is
+       inside the rect but off the map, and is refused; square 0 itself, a
+       little inside the corner, is found. Off the top-left of the diamond is
+       west of the map (x below 0); off the top-right is north of it. */
+    {
+        IsoCamera corner = { 0.0f, 0.0f, 2.0f };
+        unsigned char gx = 9, gy = 9, gpx = 9, gpy = 9;
+        float wx, wy;
+        /* The origin's projection is the middle of the rect; a step left and
+           up from there along the west axis is off the map. */
+        isoSquareToWindow(&corner, rx, ry, rw, rh, -1, 0, 128, 128, 0.0f, &wx, &wy);
+        UT_ASSERT(!isoWindowToSquare(&corner, rx, ry, rw, rh, wx, wy,
+                                     &gx, &gy, &gpx, &gpy));
+        isoSquareToWindow(&corner, rx, ry, rw, rh, 0, -1, 128, 128, 0.0f, &wx, &wy);
+        UT_ASSERT(!isoWindowToSquare(&corner, rx, ry, rw, rh, wx, wy,
+                                     &gx, &gy, &gpx, &gpy));
+        UT_ASSERT(gx == 9 && gy == 9 && gpx == 9 && gpy == 9);
+        isoSquareToWindow(&corner, rx, ry, rw, rh, 0, 0, 1, 1, 0.0f, &wx, &wy);
+        UT_ASSERT(isoWindowToSquare(&corner, rx, ry, rw, rh, wx, wy,
+                                    &gx, &gy, &gpx, &gpy));
+        UT_ASSERT(gx == 0 && gy == 0 && gpx == 1 && gpy == 1);
+    }
+    /* And the far corner: past square 255 on either axis is off the map. */
+    {
+        IsoCamera far = { 256.0f * 256.0f, 256.0f * 256.0f, 2.0f };
+        unsigned char gx = 0, gy = 0, gpx = 0, gpy = 0;
+        float wx, wy;
+        isoSquareToWindow(&far, rx, ry, rw, rh, 256, 255, 128, 128, 0.0f, &wx, &wy);
+        UT_ASSERT(!isoWindowToSquare(&far, rx, ry, rw, rh, wx, wy, &gx, &gy, &gpx, &gpy));
+        isoSquareToWindow(&far, rx, ry, rw, rh, 255, 256, 128, 128, 0.0f, &wx, &wy);
+        UT_ASSERT(!isoWindowToSquare(&far, rx, ry, rw, rh, wx, wy, &gx, &gy, &gpx, &gpy));
+        isoSquareToWindow(&far, rx, ry, rw, rh, 255, 255, 254, 254, 0.0f, &wx, &wy);
+        UT_ASSERT(isoWindowToSquare(&far, rx, ry, rw, rh, wx, wy, &gx, &gy, &gpx, &gpy));
+        UT_ASSERT(gx == 255 && gy == 255 && gpx == 254 && gpy == 254);
     }
     return 0;
 }

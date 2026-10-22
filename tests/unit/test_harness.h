@@ -1997,6 +1997,12 @@ int run_overview_fog(void);
 int run_fog_style_looks(void);
 int run_fog_style_setting(void);
 
+/* The view projection setting (test_gfx_view_projection.c): a fresh install
+ * draws the classic view, both values survive a set and a get, a value
+ * outside the enum reads as classic, and the reset puts an isometric pick
+ * back. */
+int run_gfx_view_projection(void);
+
 /* The fog line's edge mask (test_fog_roads.c): only a fogged square is banded,
  * only on the sides facing a square in plain sight, so the band marks the fog
  * line on its fogged side; a square at the edge of the grid has fog beyond it
@@ -2138,12 +2144,15 @@ int run_mapview_overlay_item_labels(void);
  * range a target can show covers every square whose diamond overlaps it and
  * clamps to the map; the draw order puts all ground first and then rows by
  * x + y with a square's sprites after its tall tile and before the next
- * row's; and a classic stand-in sprite's frame advances by two, wrapping. */
+ * row's; a classic stand-in sprite's frame advances by two, wrapping; and
+ * the pointer path's pair over a blitted picture round-trips a square and
+ * pixel and refuses a point outside the rect or off the map. */
 int run_iso_project_forward(void);
 int run_iso_project_inverse(void);
 int run_iso_project_visible_range(void);
 int run_iso_project_depth(void);
 int run_iso_project_facing_frame(void);
+int run_iso_project_window(void);
 
 /* The isometric sprite sheet (test_iso_sheet.c): every cell has a rect
  * inside the sheet and no two overlap; the stock art fills every cell; with
