@@ -444,6 +444,9 @@ set(ANDROID_SOURCES
     # as there is no save dialog, and offered through the share sheet.
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
     ${PROJ_ROOT}/src/third_party/msf_gif/msf_gif_impl.c
+    # The GIF length rules the reel's length field and marker use. The GIF
+    # gallery is not in the Android build (BOLO_CLIP_GIF_GALLERY).
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/clip_gif_core.c
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp

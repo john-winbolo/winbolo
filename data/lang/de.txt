@@ -2563,7 +2563,6 @@ STR_RULE_DESC_pill_base_defend_shape=Wie pill_base_defend_range gemessen wird. 0
 STR_RULE_DESC_tank_slide_armour_bonus=Zusätzlicher Stoßschritt bei null Panzerung; wird zu tank_slide_step addiert, im Verhältnis zur Panzerung, die vor dem Treffer fehlte. Wird nur gelesen, solange tank_slide_mac an ist.
 STR_RULE_DESC_tank_slide_mac=Ob ein Granatentreffer einen Panzer wie in Mac Bolo stößt. An: Der Stoß wächst mit sinkender Panzerung um tank_slide_armour_bonus, und tank_slide_step und tank_bump_decay_shift gelten pro 40 ms, in einem Rutschen, das sich jeden Tick bewegt. Aus ist der WinBolo-Stoß, bei jeder Panzerung gleich.
 STR_RULE_DESC_tank_deep_sea_safe=Ob ein Panzer ohne Boot auf Tiefsee fahren kann, ohne zu ertrinken. Aus ist das klassische Spiel: Tiefsee lässt einen Panzer ohne Boot ertrinken. Ein Panzer, der ohne Boot auf Tiefsee ist, wenn dies wieder ausgeschaltet wird, ertrinkt im nächsten Tick.
-STR_RULE_DESC_man_bless_tile_terrain_speed=Ob der Bauarbeiter das Feld, auf dem er bauen wird, mit der Geschwindigkeit seines Geländes überquert, wie in Mac Bolo. Aus ist der WinBolo-Gang: Er geht mit der Basisgeschwindigkeit zur Mitte dieses Feldes, egal welches Gelände es hat. Ein Feld ohne Gehgeschwindigkeit, etwa ein Fluss, eine Mauer oder ein Bunker, behält die Basisgeschwindigkeit. Der Rückweg zum Panzer ändert sich nicht.
 STR_RULE_DESC_pill_aim_iterations=Wie stark sich ein Bunker bemüht, einem beweglichen Ziel vorauszuzielen.
 STR_RULE_DESC_pill_massage_range=Wie nahe ein Panzer sein muss, damit ein Bunker mit der ursprünglichen Vorausberechnung zielt statt mit dem Löser, der einen ihn umkreisenden Panzer verfehlt. Null, die klassische Tabelle, ist ein Bunker, der sein Ziel immer richtig vorausberechnet; 384 ist anderthalb Felder, die Distanz, die der alte Kompilierzeit-Schalter verwendete.
 STR_RULE_DESC_pill_massage_cosine=Wie direkt ein Panzer auf einen nahen Bunker zufahren muss, um trotzdem richtig angezielt zu werden, als Kosinus des Winkels zwischen seiner Fahrtrichtung und der Linie zum Bunker. Bei Eins wird auf jeden Panzer innerhalb von pill_massage_range nachlässig gezielt, bei Null auf keinen von ihnen. Bewirkt nichts, solange diese Regel null ist.
@@ -2847,3 +2846,19 @@ STR_CLIPGIF_SAVED_ANDROID={string1} wurde gespeichert. Wähle als Nächstes eine
 
 # The map editor's file picker on Android, whose Maps folder is the app's own
 STR_MAPEDIT_ANDROID_NOFILES=Hier ist noch nichts. Karten, die du speicherst, hier oder aus einem Spiel, erscheinen hier.
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Deine GIFs
+STR_CLIPGIF_GALLERY_EMPTY=Noch keine GIFs. Erstelle eines mit der GIF-Schaltfläche unter der Wiedergabe oder der GIF-Schaltfläche bei einem Clip.
+STR_CLIPGIF_COPY=In die Zwischenablage kopieren
+STR_CLIPGIF_SAVE=Auf Datenträger speichern
+STR_CLIPGIF_COPIED=Kopiert.
+STR_CLIPGIF_COPY_FAILED=Das GIF konnte nicht kopiert werden.
+STR_CLIPGIF_OPEN_FAILED=Dieses GIF konnte nicht geöffnet werden.
+STR_CLIPGIF_MAP_FMT=Karte: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Spieler: {string1}
+STR_CLIPGIF_NO_DETAILS=Zu diesem GIF wurden keine Details gespeichert.
+STR_CLIPGIF_LENGTH_TIP=GIF-Länge in Sekunden ab dem Abspielkopf.\nDu kannst sie auch ändern, indem du die Markierung am Ende des hellen Teils der Zeitleiste ziehst.
+STR_CLIPGIF_LOADING=GIF wird geöffnet...
+STR_CLIPGIF_TOO_LARGE=Dieses GIF ist zu groß, um es hier anzuzeigen. Du kannst es trotzdem kopieren oder speichern.
+STR_CLIPGIF_FILTER_NAME=GIF-Bilder

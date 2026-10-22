@@ -17,19 +17,32 @@
  *   lgm_wall_behind_tank_under_fire_nolag   — the same script on a clean
  *       link, the single-player control.
  *
- * Both cases assert that the man lives, builds the wall and comes home. Two
- * things make that hold. A pill's shell is no longer tested against the
- * tank, or the man, at the position each held a ping's worth of frames ago,
- * which is what killed him every run on the lagged link: the burst and the
- * kill were decided somewhere he was not. And he now starts LGM_START_OFFSET
- * (64) out towards his square. A shell is tested against the hull after it
- * has moved its 32 units for the tick, so a hit bursts up to 32 units
- * inside the TANK_HIT_RADIUS circle, more by the tank's speed when it is
- * driving at the pill, between 68 and 112 units from the tank's centre on
- * the pill's side. With a 16-unit start he was 32 out on the far side when
- * the first shell could arrive, 103 from the burst in a recorded run and
- * inside MAP_SQUARE_MIDDLE (128), so whether he lived turned on which tick
- * the order landed in; with 64 he is 80 out and 148 from the nearest burst.
+ * Both cases assert that the man lives, builds the wall and comes home. A
+ * pill's shell is no longer tested against the tank, or the man, at the
+ * position each held a ping's worth of frames ago, which is what killed him
+ * every run on the lagged link: the burst and the kill were decided
+ * somewhere he was not.
+ *
+ * He starts LGM_START_OFFSET (16) out towards his square. A shell is tested
+ * against the hull after it has moved its 32 units for the tick, so a hit
+ * bursts up to 32 units inside the TANK_HIT_RADIUS circle, more by the
+ * tank's speed when it is driving at the pill, between 64 and 112 units
+ * from the tank's centre on the pill's side (64 when the tank drives 16 a
+ * tick on a road, a boat or a base, 68 at 12 a tick on grass). The tank
+ * moves, then he steps, then the shells move, so he takes his first step
+ * in the tick he is put out and is 32 out at the first shell test. A hit
+ * can still have him within MAP_SQUARE_MIDDLE (128) of the burst in his
+ * first 2 ticks when the tank is still or drives at the pill, and for as
+ * long as a tank driving away from the pill on a road, a boat or a base
+ * keeps pace with him. The second tick, and each tick of that open window,
+ * kills him only at the nearest burst exactly. WinBolo 1.17 and 2.1 had the
+ * same shape of window. An offset of 64 would keep him clear in all three
+ * cases. The offset is 16 to come close to the builder death rate of
+ * WinBolo 1.17, so the square behind the tank is not meant to be fully safe.
+ * The order lands at a fixed server tick every run: 502 on the lagged
+ * link and 432 on the clean one. At those ticks the nearest burst is 218
+ * from him on the lagged link and 268 on the clean one, so both cases pass.
+ * An order a few frames later can land in the window and kill him.
  *
  * The blast list records every burst with his position as it found him, so
  * a failure says which shell caught him and from how far. If the control
@@ -45,12 +58,16 @@
  *     tank (clientSimGetMyTankMapPos), because that is what a player aims
  *     with. Both runs print the client's square beside the server's so a
  *     failure can be read as a lag problem or an aiming problem.
- *   - Pumps are paced to one 20ms frame of wall clock each
- *     (loopbackHarnessSetPumpInterval), so the delay the impairment layer
- *     holds a datagram for and the delay the server reads off its own ping
- *     measurement are the same number of frames. A free-running pump loop
- *     makes them differ by about tenfold and the link stops being one any
- *     player has.
+ *   - Both cases run on the harness's virtual clock
+ *     (loopbackHarnessUseVirtualClock): one pump is one 20ms frame of a
+ *     counter, not of the wall clock. The impairment layer's delay, the
+ *     client's ping and the server's ping all read that counter, so they are
+ *     the same number of frames, and no pump sleeps. The pump also runs in
+ *     lockstep: each side waits for exactly the datagrams the other has put
+ *     on the wire before it ticks, so the server's recv thread and the
+ *     loopback path cannot move a datagram to another pump. The jitter draws
+ *     come from the seeded bolo_rand stream. Same seed, same script, same
+ *     run, on every machine.
  *   - The world the move happens in IS built by the test: a carved grass
  *     arena, one neutral pillbox, the tank placed and stocked. That is
  *     fixture, not gameplay, and all of it happens before or outside the
@@ -145,7 +162,6 @@
 #define LUF_DISPATCH_GAP  3   /* squares tank-to-pill when the man is sent   */
 #define LUF_WATCH_MAX   130   /* the man's whole trip, with slack           */
 
-#define LUF_PUMP_MS      20   /* one pump = one 20ms frame of wall clock    */
 #define LUF_TRAIL_MAX   LUF_WATCH_MAX /* one man-position sample per watch frame */
 #define LUF_IMPACT_MAX   64   /* shell impacts kept for the printout        */
 
@@ -683,6 +699,11 @@ static int luf_run(const LufConfig *cfg) {
         UT_FAIL("no start on the map has room for a %dx%d strip beside it",
                 LUF_ARENA_W, LUF_ARENA_H);
     }
+    /* From the first pump, the join included: the server tick the order
+     * lands on counts the join's pumps too, so they have to be fixed as
+     * well. Nothing is in an impairment queue yet, so nothing is stranded by
+     * the clock starting at zero. */
+    loopbackHarnessUseVirtualClock(&h, true);
     /* Record from here, BEFORE the client joins: the arena is already carved,
      * so the opening snapshot is the right world, and the join that follows
      * is written as a player-joined event. Started after the join, the file
@@ -696,16 +717,6 @@ static int luf_run(const LufConfig *cfg) {
     if (loopbackHarnessPumpUntil(&h, LUF_CONNECT_MAX, luf_connected, NULL) < 0) {
         LUF_STOP();
         UT_FAIL("client never connected (%s)", cfg->label);
-    }
-
-    /* From here on one pump costs one frame of wall clock, so the impairment
-     * spec's milliseconds and the server's ping arithmetic mean the same
-     * number of frames. The join above ran unpaced: it has no frame clock to
-     * agree with, and pacing it would cost seconds for nothing. The clean
-     * control has no impairment to agree with either, so it stays unpaced
-     * throughout, as every other loopback test is. */
-    if (cfg->impair != NULL) {
-        loopbackHarnessSetPumpInterval(&h, LUF_PUMP_MS);
     }
 
     slot = clientSimGetMyPlayerNum(h.cs);
@@ -1012,7 +1023,7 @@ static int luf_run(const LufConfig *cfg) {
     /* The blast list above says which shell caught him and from how far. A
      * death with no burst within MAP_SQUARE_MIDDLE of where he stood is a
      * kill decided at a position he did not hold, the rewind bug; one with
-     * a burst in reach means the start offset did not put him clear. */
+     * a burst in reach means the tank was hit in his first few ticks out. */
     UT_ASSERT_MSG(!manDied,
                   "%s: the builder was killed walling the square behind his own "
                   "tank (%s) - the tank body was between him and the pillbox "

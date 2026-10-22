@@ -2561,7 +2561,6 @@ STR_RULE_DESC_pill_base_defend_shape=Jak se měří pill_base_defend_range. 0 je
 STR_RULE_DESC_tank_slide_armour_bonus=Krok odstrčení navíc při nulovém pancíři; přičítá se k tank_slide_step úměrně pancíři, který tanku chyběl před zásahem. Čte se jen při zapnutém tank_slide_mac.
 STR_RULE_DESC_tank_slide_mac=Zda zásah střelou odstrčí tank jako v Mac Bolo. Zapnuto: odstrčení roste s ubývajícím pancířem o tank_slide_armour_bonus a tank_slide_step i tank_bump_decay_shift se čtou na 40 ms, v klouzání, které se posouvá každý tick. Vypnuto je odstrčení WinBolo, stejné při jakémkoli pancíři.
 STR_RULE_DESC_tank_deep_sea_safe=Zda tank bez lodi může jet po širém moři, aniž by se utopil. Vypnuto je klasická hra: širé moře utopí tank bez lodi. Tank, který je bez lodi na širém moři, když se toto znovu vypne, se utopí v příštím ticku.
-STR_RULE_DESC_man_bless_tile_terrain_speed=Zda stavitel přejde políčko, na kterém bude stavět, rychlostí jeho terénu, jako v Mac Bolo. Vypnuto je chůze WinBolo: do středu toho políčka jde rychlostí základny, ať je terén jakýkoli. Políčko bez rychlosti chůze, například řeka, zeď nebo bunkr, si rychlost základny ponechá. Cesta zpět k tanku se nemění.
 STR_RULE_DESC_pill_aim_iterations=Jak usilovně se bunkr snaží předvídat pohybující se cíl.
 STR_RULE_DESC_pill_massage_range=Jak blízko musí být tank, aby na něj bunkr zamířil s původní dopřednou předpovědí místo řešitele, kterému uniká tank kroužící kolem něj. Nula, klasická tabulka, znamená bunkr, který svůj cíl vždy zamíří správně; 384 je jedno a půl pole, vzdálenost, kterou používal starý přepínač z doby kompilace.
 STR_RULE_DESC_pill_massage_cosine=Jak přímo na blízký bunkr musí tank jet, aby na něj bylo přesto zamířeno správně, jako kosinus úhlu mezi jeho směrem a přímkou k bunkru. Při jedné se nedbale míří na každý tank uvnitř pill_massage_range, při nule na žádný z nich. Nedělá nic, dokud je toto pravidlo nulové.
@@ -2845,3 +2844,19 @@ STR_CLIPGIF_SAVED_ANDROID={string1} byl uložen. Dále vyberte aplikaci, se kter
 
 # The map editor's file picker on Android, whose Maps folder is the app's own
 STR_MAPEDIT_ANDROID_NOFILES=Zatím tu nic není. Mapy, které uložíte, zde nebo ze hry, se zobrazí zde.
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Vaše GIFy
+STR_CLIPGIF_GALLERY_EMPTY=Zatím žádné GIFy. Vytvořte jeden tlačítkem GIF pod záznamem nebo tlačítkem GIF u klipu.
+STR_CLIPGIF_COPY=Kopírovat do schránky
+STR_CLIPGIF_SAVE=Uložit na disk
+STR_CLIPGIF_COPIED=Zkopírováno.
+STR_CLIPGIF_COPY_FAILED=GIF se nepodařilo zkopírovat.
+STR_CLIPGIF_OPEN_FAILED=Tento GIF se nepodařilo otevřít.
+STR_CLIPGIF_MAP_FMT=Mapa: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Hráči: {string1}
+STR_CLIPGIF_NO_DETAILS=K tomuto GIFu nebyly uloženy žádné údaje.
+STR_CLIPGIF_LENGTH_TIP=Délka GIFu v sekundách od přehrávací hlavy.\nDélku změníte také tažením značky na konci světlé části časové osy.
+STR_CLIPGIF_LOADING=Otevírání GIFu...
+STR_CLIPGIF_TOO_LARGE=Tento GIF je příliš velký, aby se zde zobrazil. Stále ho můžete zkopírovat nebo uložit.
+STR_CLIPGIF_FILTER_NAME=Obrázky GIF

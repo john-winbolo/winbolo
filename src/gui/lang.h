@@ -3101,8 +3101,7 @@
  * The pill shell cap pair, pill_base_defend_shape and then the Mac Bolo
  * shell push pair came after all of those and took the next free numbers,
  * at the end of the file, and tank_deep_sea_safe took the next free one
- * after those, and man_bless_tile_terrain_speed the next free one after
- * that. The
+ * after those. The
  * order of the block is SIM_RULE_LIST's throughout, which is the order that
  * matters, and a hole in the numbers costs nothing: langTable is searched by
  * id rather than indexed by it. */
@@ -3261,7 +3260,6 @@
 #define STR_RULE_DESC_pill_aim_mac               2711
 #define STR_RULE_DESC_tank_collision_mac         2712
 #define STR_RULE_DESC_tank_deep_sea_safe         2760
-#define STR_RULE_DESC_man_bless_tile_terrain_speed 2762
 
 /* Rule range wording */
 
@@ -3541,15 +3539,31 @@
 /* Asked before an Internet game is hosted on mobile data (Yes / No) */
 #define STR_GAMEFRONTERR_HOST_MOBILE_DATA        2942
 
+/* The recap's GIF gallery, and the GIF length beside the replay's GIF button */
+#define STR_CLIPGIF_GALLERY_TITLE                2943
+#define STR_CLIPGIF_GALLERY_EMPTY                2944
+#define STR_CLIPGIF_COPY                         2945
+#define STR_CLIPGIF_SAVE                         2946
+#define STR_CLIPGIF_COPIED                       2947
+#define STR_CLIPGIF_COPY_FAILED                  2948
+#define STR_CLIPGIF_OPEN_FAILED                  2949
+#define STR_CLIPGIF_MAP_FMT                      2950
+#define STR_CLIPGIF_PLAYERS_FMT                  2951
+#define STR_CLIPGIF_NO_DETAILS                   2952
+#define STR_CLIPGIF_LENGTH_TIP                   2953
+#define STR_CLIPGIF_LOADING                      2954
+#define STR_CLIPGIF_TOO_LARGE                    2955
+#define STR_CLIPGIF_FILTER_NAME                  2956
+
 /* The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder */
-#define STR_ANDROIDREC_SHARE                     2943
-#define STR_ANDROIDREC_EMPTY                     2944
+#define STR_ANDROIDREC_SHARE                     2957
+#define STR_ANDROIDREC_EMPTY                     2958
 
 /* The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet */
-#define STR_CLIPGIF_SAVED_ANDROID                2945
+#define STR_CLIPGIF_SAVED_ANDROID                2959
 
 /* The map editor's file picker on Android, whose Maps folder is the app's own */
-#define STR_MAPEDIT_ANDROID_NOFILES              2946
+#define STR_MAPEDIT_ANDROID_NOFILES              2960
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

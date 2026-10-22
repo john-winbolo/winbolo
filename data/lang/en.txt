@@ -2752,7 +2752,6 @@ STR_RULE_DESC_tank_slide_mac=Whether a shell hit pushes a tank the Mac Bolo way.
 STR_RULE_DESC_pill_aim_mac=Whether pillboxes use Mac Bolo aiming. Moving, unobstructed tanks within about one square make the pill aim far along their heading. Stopped or blocked tanks receive no lead. Overrides pill_massage_range, pill_massage_cosine and pill_aim_iterations.
 STR_RULE_DESC_tank_collision_mac=Whether tanks use Mac Bolo's direction-dependent sprite boxes and pixel nudges against walls, live pills and hostile bases. Allows closer passes beside a pill for pill massage.
 STR_RULE_DESC_tank_deep_sea_safe=Whether a tank with no boat can drive over deep sea without drowning. Off is the classic game: deep sea drowns a tank with no boat. A tank that is out on deep sea with no boat when this goes back off drowns on the next tick.
-STR_RULE_DESC_man_bless_tile_terrain_speed=Whether the builder crosses the square he is going to build on at that square's terrain speed, as in Mac Bolo. Off is the WinBolo walk: he walks up to the centre of that square at the refuelling base speed, whatever its terrain. A square with no walking speed, such as a river, a wall or a pillbox, keeps the refuelling base speed. The walk back to the tank does not change.
 
 # Rule range wording
 STR_RULE_RANGE_BETWEEN={string1} to {string2}
@@ -2936,6 +2935,22 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=The map fills the screen, with the status, b
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=This device is on mobile data. An Internet game hosted on mobile\ndata will probably not work: mobile networks rarely let other\nplayers reach the device. Wi-Fi is much more likely to work.\n\nHost anyway?
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Your GIFs
+STR_CLIPGIF_GALLERY_EMPTY=No GIFs yet. Make one with the GIF button under the replay, or the GIF button on a clip.
+STR_CLIPGIF_COPY=Copy to clipboard
+STR_CLIPGIF_SAVE=Save to disk
+STR_CLIPGIF_COPIED=Copied.
+STR_CLIPGIF_COPY_FAILED=The GIF could not be copied.
+STR_CLIPGIF_OPEN_FAILED=This GIF could not be opened.
+STR_CLIPGIF_MAP_FMT=Map: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Players: {string1}
+STR_CLIPGIF_NO_DETAILS=No details were saved with this GIF.
+STR_CLIPGIF_LENGTH_TIP=GIF length in seconds, from the playhead.\nDrag the marker at the end of the bright part of the timeline to change it too.
+STR_CLIPGIF_LOADING=Opening the GIF...
+STR_CLIPGIF_TOO_LARGE=This GIF is too large to show here. You can still copy it or save it.
+STR_CLIPGIF_FILTER_NAME=GIF Images
 STR_ANDROIDREC_SHARE=Share
 STR_ANDROIDREC_EMPTY=No recordings yet. Single-player rounds are recorded here, and .wbv recordings opened from another app are listed here too.
 STR_CLIPGIF_SAVED_ANDROID={string1} has been saved. Choose an app to share it with next.

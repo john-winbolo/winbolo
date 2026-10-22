@@ -353,9 +353,6 @@ int run_sim_rules_classic_defaults(void) {
     /* Deep sea */
     SR_EQ(tank_deep_sea_safe, 0);
 
-    /* Builder walk */
-    SR_EQ(man_bless_tile_terrain_speed, LGM_BLESS_TILE_TERRAIN_SPEED);
-
     return 0;
 }
 
@@ -1306,8 +1303,9 @@ int run_sim_rules_tank_collision_mac(void) {
     return 0;
 }
 
-/* man_bless_tile_terrain_speed: the builder's speed on the square he is
- * going to build on (his blessed square). The test row is grass from
+/* The builder's speed on the square he is going to build on (his blessed
+ * square): that square's own terrain speed, or the refuelling base speed
+ * where the terrain speed is 0. The test row is grass from
  * square 85 to 110, the build square is 100 and the tank waits at 90. ltsStep
  * puts the man at `startX` on the row, facing the centre of square 100, runs
  * one step of the walk out (or of the walk back) and returns how far east he
@@ -1341,7 +1339,7 @@ static int ltsExpect(TURNTYPE angle, int speed) {
     return xAdd;
 }
 
-int run_sim_rules_man_bless_tile_terrain_speed(void) {
+int run_lgm_build_square_terrain_speed(void) {
     ServerSim *sim = ut_make_running_sim("Builder walk");
     GameSim *gs;
     tank t;
@@ -1371,20 +1369,12 @@ int run_sim_rules_man_bless_tile_terrain_speed(void) {
     west = utilCalcAngle(onBless, row, t->x, t->y);
     UT_ASSERT(ltsExpect(east, 16) > 0 && ltsExpect(west, 16) < 0);
 
-    /* A wall going up on swamp. Classic: off, and on the swamp square he
-       is building on he walks at the refuelling base speed. */
+    /* A wall going up on swamp: on the swamp square he is building on he
+       walks at swamp speed, slower than the refuelling base speed. */
     mapSetPos(gs, &gs->mp, 100, 100, SWAMP, FALSE, FALSE);
-    UT_ASSERT(gs->rules.man_bless_tile_terrain_speed == 0);
-    moved = ltsStep(gs, LGM_STATE_GOING, LGM_BUILDING_REQUEST, onBless);
-    UT_ASSERT_MSG(moved == ltsExpect(east, gs->rules.man_speed_refuel_base),
-                  "off: on a swamp build square he moved %d, expected %d",
-                  moved, ltsExpect(east, gs->rules.man_speed_refuel_base));
-
-    /* On: the same step goes at swamp speed. */
-    gs->rules.man_bless_tile_terrain_speed = 1;
     moved = ltsStep(gs, LGM_STATE_GOING, LGM_BUILDING_REQUEST, onBless);
     UT_ASSERT_MSG(moved == ltsExpect(east, gs->rules.man_speed_swamp),
-                  "on: on a swamp build square he moved %d, expected %d",
+                  "on a swamp build square he moved %d, expected %d",
                   moved, ltsExpect(east, gs->rules.man_speed_swamp));
     UT_ASSERT(moved < ltsExpect(east, gs->rules.man_speed_refuel_base));
 
@@ -1392,21 +1382,16 @@ int run_sim_rules_man_bless_tile_terrain_speed(void) {
     gs->rules.man_speed_swamp = 2;
     moved = ltsStep(gs, LGM_STATE_GOING, LGM_BUILDING_REQUEST, onBless);
     UT_ASSERT_MSG(moved == ltsExpect(east, 2),
-                  "on: man_speed_swamp 2 moved him %d, expected %d", moved,
+                  "man_speed_swamp 2 moved him %d, expected %d", moved,
                   ltsExpect(east, 2));
     gs->rules.man_speed_swamp = MAP_MANSPEED_TSWAMP;
 
-    /* Off the build square nothing changes: two squares short, on grass,
-       he walks at grass speed with the rule on or off. */
-    for (i = 0; i <= 1; i++) {
-        gs->rules.man_bless_tile_terrain_speed = i;
-        moved = ltsStep(gs, LGM_STATE_GOING, LGM_BUILDING_REQUEST, offBless);
-        UT_ASSERT_MSG(moved == ltsExpect(eastFar, gs->rules.man_speed_grass),
-                      "rule %d: on grass short of the square he moved %d, "
-                      "expected %d", i, moved,
-                      ltsExpect(eastFar, gs->rules.man_speed_grass));
-    }
-    gs->rules.man_bless_tile_terrain_speed = 1;
+    /* Short of the build square: two squares short, on grass, he walks at
+       grass speed. */
+    moved = ltsStep(gs, LGM_STATE_GOING, LGM_BUILDING_REQUEST, offBless);
+    UT_ASSERT_MSG(moved == ltsExpect(eastFar, gs->rules.man_speed_grass),
+                  "on grass short of the square he moved %d, expected %d",
+                  moved, ltsExpect(eastFar, gs->rules.man_speed_grass));
 
     /* A build square with no walking speed keeps the refuelling base
        speed, so he is never stopped dead: a half-built wall to repair, and
@@ -1415,12 +1400,12 @@ int run_sim_rules_man_bless_tile_terrain_speed(void) {
     mapSetPos(gs, &gs->mp, 100, 100, HALFBUILDING, FALSE, FALSE);
     moved = ltsStep(gs, LGM_STATE_GOING, LGM_BUILDING_REQUEST, onBless);
     UT_ASSERT_MSG(moved == ltsExpect(east, 12),
-                  "on: on a half-built wall he moved %d, expected %d", moved,
+                  "on a half-built wall he moved %d, expected %d", moved,
                   ltsExpect(east, 12));
     mapSetPos(gs, &gs->mp, 100, 100, RIVER, FALSE, FALSE);
     moved = ltsStep(gs, LGM_STATE_GOING, LGM_BOAT_REQUEST, onBless);
     UT_ASSERT_MSG(moved == ltsExpect(east, 12),
-                  "on: on a river for a boat he moved %d, expected %d", moved,
+                  "on a river for a boat he moved %d, expected %d", moved,
                   ltsExpect(east, 12));
     gs->rules.man_speed_refuel_base = MAP_MANSPEED_TREFBASE;
     mapSetPos(gs, &gs->mp, 100, 100, SWAMP, FALSE, FALSE);
@@ -1430,7 +1415,7 @@ int run_sim_rules_man_bless_tile_terrain_speed(void) {
     t->x = (WORLD)(onBless - 64);
     moved = ltsStep(gs, LGM_STATE_GOING, LGM_BUILDING_REQUEST, onBless);
     UT_ASSERT_MSG(moved == ltsExpect(east, gs->rules.man_speed_refuel_base),
-                  "on: leaving a boat he moved %d, expected %d", moved,
+                  "leaving a boat he moved %d, expected %d", moved,
                   ltsExpect(east, gs->rules.man_speed_refuel_base));
     t->onBoat = FALSE;
     t->x = (WORLD)(90 * 256 + 128);
@@ -1439,7 +1424,7 @@ int run_sim_rules_man_bless_tile_terrain_speed(void) {
        square he still goes at the refuelling base speed. */
     moved = ltsStep(gs, LGM_STATE_RETURN, LGM_BUILDING_REQUEST, onBless);
     UT_ASSERT_MSG(moved == ltsExpect(west, gs->rules.man_speed_refuel_base),
-                  "on: the walk back moved %d, expected %d", moved,
+                  "the walk back moved %d, expected %d", moved,
                   ltsExpect(west, gs->rules.man_speed_refuel_base));
 
     serverSimDestroy(sim);
@@ -2294,7 +2279,7 @@ int run_sim_rules_are_classic(void) {
 
     /* The last field, so the walk is not stopping short of the end. */
     simRulesClassic(&r);
-    r.man_bless_tile_terrain_speed = 1;
+    r.tank_deep_sea_safe = 1;
     UT_ASSERT_MSG(!simRulesAreClassic(&r),
                   "a table with its last field moved is reported classic");
 

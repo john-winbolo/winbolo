@@ -29,7 +29,7 @@ document is the stable reference for the rules themselves.
 | `src/braintest/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — dev visualisation tool, not shipped to players. |
 | `src/gym/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — ML training harness, not shipped in player builds. |
 | `brains/` | T1 + T2 + T3 + T4 | Builds `bot_brains_static` (bot brain implementations — GoalHunter, ONNX backends). Compiles under the `sim_owner` profile because brain evaluation reads sim state directly. Not a frontend; every binary that ships bots links the same `bot_brains_static`, so the asymmetric-runtime bug class doesn't apply. Bots should only operate on what the engine provides them and communication via other bots, never directly accessing data from another bot on the same server. |
-| `src/server/` | T1 + T2 + T3 + T4 | Co-owner of the sim alongside `src/bolo/`. Most files compile via four libraries: `server_sim_static` (sim core: `server_sim.c`, `server_command_dispatch.c` and `servermessages.c` in this directory, plus the per-concern translation units under `src/server/sim/` that `server_sim.c` has been split into); `server_static` (dedicated-server runtime on top of it: `transport_udp_server.c`, `server_lifecycle.c`, `geolookup.c`, plus the per-concern translation units under `src/server/udp/` that `transport_udp_server.c` has been split into, plus `server_round_log_static` and `threads_static` PUBLIC-linked); `server_round_log_static` (the round recorder: `server_dedicated_log.c`, `server_dedicated_log_settings.c`, `server_dedicated_log_path.c`, on its own so the web client can link it without the UDP server and lifecycle it stubs); and `threads_static` (the SDL-mutex thread manager — `threads.c` on every platform except Emscripten, where `threads_wasm.c` substitutes no-ops with the same symbol surface: only the page's thread takes the server mutex there, and the bot worker threads never do). `threads_static` is consumed by every binary that ticks a sim, not only the dedicated server: in-process single-player builds (wasm winbolo, WinBoloUnitTests) link it directly; the four dedicated-server binaries get it transitively through `server_static`, and WinBoloIOS and android `main` link it both ways. Two more files are per-target sim runtime that ship inside WinBoloDS with T2 access via `bolo_grant_internal_source_access`: `servermain.c` (owns the dedicated-server `main()` and module globals) and `server_frontend_stubs.c` (stubs the T2 callbacks bolo's sim TUs expect when there is no UI). A third per-target file, `server_args.c` (the `-mod` switches and `-setting` off the command line), includes public headers only, so it takes no grant; WinBoloDS and WinBoloUnitTests each compile it. The replay-log subscriber `server_dedicated_log.c` (with its `server_dedicated_log_path.c` name helper and `server_dedicated_log_settings.c`) is `server_round_log_static` above — built under the `sim_owner` profile, so it keeps its T2 access at the target level rather than through a per-file grant in every binary that links it, the web client's practice game and the iOS client's single-player game included. It carries private state instead of reaching servermain globals, and is installed against the ServerSim bus by each host: `servermain.c` for WinBoloDS and `gameFrontSetupServer` for client-hosted games (the SDL3, iOS and Android clients link `server_static` to host). See "Per-file T2 grants" below for the mechanism. |
+| `src/server/` | T1 + T2 + T3 + T4 | Co-owner of the sim alongside `src/bolo/`. Most files compile via four libraries: `server_sim_static` (sim core: `server_sim.c`, `server_command_dispatch.c` and `servermessages.c` in this directory, plus the per-concern translation units under `src/server/sim/` that `server_sim.c` has been split into); `server_static` (dedicated-server runtime on top of it: `transport_udp_server.c`, `server_lifecycle.c`, `geolookup.c`, plus the per-concern translation units under `src/server/udp/` that `transport_udp_server.c` has been split into, plus `server_round_log_static` and `threads_static` PUBLIC-linked; `server_static_test` is the same source list compiled once more with `WB_ENABLE_NETIMPAIR=1`, linked by WinBoloUnitTests alone, so the loopback harness's server clock and lockstep datagram counts exist in no shipping server); `server_round_log_static` (the round recorder: `server_dedicated_log.c`, `server_dedicated_log_settings.c`, `server_dedicated_log_path.c`, on its own so the web client can link it without the UDP server and lifecycle it stubs); and `threads_static` (the SDL-mutex thread manager — `threads.c` on every platform except Emscripten, where `threads_wasm.c` substitutes no-ops with the same symbol surface: only the page's thread takes the server mutex there, and the bot worker threads never do). `threads_static` is consumed by every binary that ticks a sim, not only the dedicated server: in-process single-player builds (wasm winbolo, WinBoloUnitTests) link it directly; the four dedicated-server binaries get it transitively through `server_static`, and WinBoloIOS and android `main` link it both ways. Two more files are per-target sim runtime that ship inside WinBoloDS with T2 access via `bolo_grant_internal_source_access`: `servermain.c` (owns the dedicated-server `main()` and module globals) and `server_frontend_stubs.c` (stubs the T2 callbacks bolo's sim TUs expect when there is no UI). A third per-target file, `server_args.c` (the `-mod` switches and `-setting` off the command line), includes public headers only, so it takes no grant; WinBoloDS and WinBoloUnitTests each compile it. The replay-log subscriber `server_dedicated_log.c` (with its `server_dedicated_log_path.c` name helper and `server_dedicated_log_settings.c`) is `server_round_log_static` above — built under the `sim_owner` profile, so it keeps its T2 access at the target level rather than through a per-file grant in every binary that links it, the web client's practice game and the iOS client's single-player game included. It carries private state instead of reaching servermain globals, and is installed against the ServerSim bus by each host: `servermain.c` for WinBoloDS and `gameFrontSetupServer` for client-hosted games (the SDL3, iOS and Android clients link `server_static` to host). See "Per-file T2 grants" below for the mechanism. |
 | `src/headless/` | T1 + T3 + T4 | The headless runner. Not the same access as `src/server/` above: WinBoloHeadless is built under the `runtime_only` profile (`cmake/bolo_lib.cmake`), which puts `src/bolo/public/` on the include path and nothing else, so this directory has the desktop client's reach rather than the server's T2. Two things sit outside that. The target's one per-file T2 grant is for `src/bolo/transport_udp_client.c`, which is bolo's own translation unit compiled per-target rather than anything in this directory. And `headless_main.c` includes `../bolo/internal/server_sim_lifecycle.h` by relative path, which include directories cannot stop; a new reach into `internal/` from here wants a T1 accessor instead. |
 | `src/wasm/` | T1 + T3 + T4 | Web build of the desktop client — shares the `src/gui/sdl3/` ImGui UI and the shared sim-driving cores, forking only the driver: a blocking loop in `main` that waits on each browser animation frame through ASYNCIFY, in place of the SDL timer thread. The sim, the draw and the menus all run on the page's thread; bot brain thinks run on the bot worker pool's threads, as on desktop, which is why the build links with `-pthread` and the page must be cross-origin isolated. The menu and its dialogs run their own blocking loops on that same stack between games. Its practice game hosts a `ServerSim` in the page, ticked from that loop through `serverInstanceTick` in `server_stubs_wasm.c`, which runs the shared `serverSimLocalTick` sequence (see "Per-file T2 grants"), and records its rounds through `server_round_log_static`. See "Platform variants: share the logic, fork only the driver". |
 | `src/android/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. The Android client's driver, which shares the `src/gui/sdl3/` ImGui UI and the shared sim-driving cores and keeps only what is Android's own: `main_android.c` is a blocking loop with a wall-clock accumulator in place of the SDL timer thread, which at startup extracts the APK's data and brain trees into the app's files directory and makes it the working directory, so the shared code's relative `data/...` opens work as they do on the desktop; an SDL event watch on the lifecycle events keeps a hosted game's client ticking, without drawing, while the activity is in the background; and the JNI bridges to the Java side of the Android project: the WinBolo.net HTTP transport (`WinBoloHttp`, called from `src/winbolonet/http_jni.c`), the network kind for the mobile-data warning (`WinBoloNet`, `android_netpath.c`), the share sheet a recording or a clip GIF leaves the phone through (`android_share.c`), the phone-or-tablet class and the keyboard's height (`android_device.c`), the link or recording another app hands over (`android_drops.c`), and the microphone permission (`android_voice.c`). `android_frontend.c` keeps the `window*` set and the `frontEnd*` callbacks that draw. See "Platform variants" below. |
@@ -39,7 +39,7 @@ document is the stable reference for the rules themselves.
 | `src/winbolonet/winbolonet_core/` | T1 + T4 | Shared HTTP, async event queue, WBN key storage. Includes `server_sim.h` (T1) only. Linked by every WBN-aware binary. |
 | `src/winbolonet/winbolonet_server/` | T1 + T4 | Server tracker calls (`server/register`, `server/update`, lobby/map/teams/balance). Linked by binaries that run a server: WinBoloDS, WinBoloHeadless, SDL3 client (SP host), WinBoloIOS (SP, LAN and Internet host). |
 | `src/winbolonet/winbolonet_client/` | T4 | User auth, comments. Linked by binaries with a UI: SDL3 client, LogViewer, WinBoloIOS. |
-| `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. Also links sixteen leaf `src/gui/sdl3` files, which keep public-only access rather than borrowing this row's — see "Linked GUI sources" for the list and the rule a file has to meet. |
+| `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. Also links seventeen leaf `src/gui/sdl3` files, which keep public-only access rather than borrowing this row's — see "Linked GUI sources" for the list and the rule a file has to meet. |
 | `tests/`, `tools/` | T1 + T3 + T4 (by default) | Not currently wired through a profile. Tests that legitimately need T2 belong inside `src/bolo/tests/` and link against bolo's own target. |
 
 **The enforced rule of thumb is two-tier**: outside `src/bolo/`, you get
@@ -2330,14 +2330,14 @@ releases with nothing coming off means the review has stopped, and
 the grant needs re-arguing rather than extending.
 
 **Linked GUI sources.** A second, narrower exception rides on the
-same target, and it is not a T2 grant. Sixteen `src/gui/sdl3` files
+same target, and it is not a T2 grant. Seventeen `src/gui/sdl3` files
 are compiled *into* `WinBoloUnitTests`, the only files from a
 renderer directory that are: `skin_source.c`, `tileloader.c`,
 `sdl_bmp.c`, `sound_variants.c`, `sound_mix.c`, `overview_camera.cpp`,
 `overview_fog.cpp`, `overview_hud_layout.cpp`, `sprite_positions.c`,
 `ring_band.c`, `dialogs/dialog_quit.cpp`, `workshop_sync.c`,
-`input_source.c`, `news_image_budget.cpp`, `newswire_slide.c` and
-`gfx_settings.c`.
+`input_source.c`, `news_image_budget.cpp`, `dialogs/clip_gif_core.c`,
+`newswire_slide.c` and `gfx_settings.c`.
 Between them they hold skin lookup, the tile sheet
 builder, the BMP sheet reader, the sound variant naming, the
 effects mixer's step that scales one slot's samples by its left and
@@ -2351,8 +2351,9 @@ is and how solid after a given elapsed time — pure arithmetic, no
 renderer, and the one piece of the smart ping's arrival effect and
 the overview's respawn ring that a test can observe at all.
 `dialogs/dialog_quit.cpp` is the odd one by directory and not by
-rule: it is the only file under `dialogs/` that holds no ImGui, and
-it is there so that `dialogQuitClassify` — what a quit means to
+rule: it is one of the two files under `dialogs/` that hold no ImGui
+(the other is `dialogs/clip_gif_core.c`), and it is there so that
+`dialogQuitClassify` — what a quit means to
 whichever dialog is up — can be driven from a test with hand-built
 events instead of a window (see "Standalone ImGui dialogs" below).
 `workshop_sync.c` holds the Workshop sync, which copies subscribed
@@ -2370,7 +2371,13 @@ many bytes of decoded images it keeps and which of them it may drop,
 worked out from URLs, byte counts and frame numbers. The cache itself,
 which downloads with libcurl and creates the textures, stays out;
 `tests/unit/test_news_image_budget.cpp` drives the rule.
-The first fifteen are each called directly by a test beside them;
+`dialogs/clip_gif_core.c` holds the recap clip GIF's length rules
+(whole 100 ms frames between 1 s and 15 s, held to the replay time
+left, and the seek bar position maths), the gallery's metadata JSON
+file with its write, read and newest-first folder scan, and the UTF-8
+safe text fill. It is plain C over SDL and cJSON, with no ImGui and no
+renderer, and `tests/unit/test_clip_gif_core.c` drives it.
+The first sixteen are each called directly by a test beside them;
 `gfx_settings.c` is here because `tileloader.c` calls it, and is the
 one file on the list no test drives on its own.
 
@@ -2390,12 +2397,12 @@ The alternative, for the geometry files, was moving the maths into
 onto the sim purely to buy testability. Keeping them in the renderer
 and linking the leaf files is the smaller distortion of the two.
 
-**Rests on** each of the sixteen still meeting that rule, so it is
+**Rests on** each of the seventeen still meeting that rule, so it is
 checked per file rather than for the group. One that gains an ImGui
 include, or that opens a renderer or a device of its own, has left
 the category, and the answer is to split the leaf back out — the
 link break is the signal, not a build problem to route around by
-widening the test binary. A seventeenth file joins only on the same
+widening the test binary. An eighteenth file joins only on the same
 test: callable with no display attached, or it does not go in.
 
 Six `src/mapeditor` files ride the same rule from a different
