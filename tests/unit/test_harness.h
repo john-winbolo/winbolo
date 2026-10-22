@@ -2760,6 +2760,30 @@ int run_ping_network(void);
  * guards the off-by-one that walked resolveName()'s bsearch off the end. */
 int run_lang_name_table(void);
 
+/* Random map Size control and Map Maker presets (test_mapgen_maker.c):
+ * Size stays in range and centres the land, full-size seeds are written
+ * as before, and every preset is the same for the same seed, keeps its
+ * counts and land inside the region, and lets a tank reach every object. */
+int run_mapgen_size_bounds(void);
+int run_mapgen_legacy_seed_unchanged(void);
+int run_mapgen_maker_seed_roundtrip(void);
+int run_mapgen_maker_deterministic(void);
+int run_mapgen_maker_valid(void);
+int run_mapgen_size_all_types(void);
+int run_mapgen_maker_room_kinds(void);
+int run_mapgen_maker_hashes(void);
+int run_mapgen_maker_outline_set(void);
+int run_mapgen_maker_one_land(void);
+int run_mapgen_maker_style_levers(void);
+int run_mapgen_maker_style_seed_roundtrip(void);
+int run_mapgen_maker_style_same_map(void);
+int run_mapgen_maker_chew_toy_safe_bases(void);
+int run_mapgen_maker_deathhand_safe_bases(void);
+int run_mapgen_maker_diag_roads_join(void);
+/* The bases, pillboxes and starts of every preset with symmetry map
+ * onto themselves under that symmetry. */
+int run_mapgen_maker_objects_symmetric(void);
+
 /* What a quit inside a dialog means (test_dialog_quit.c): Cmd+Q, Alt+F4 and
  * the close box end the application; the close request the gamepad's B
  * button forges only closes the dialog; another window's close request and a

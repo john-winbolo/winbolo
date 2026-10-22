@@ -665,11 +665,24 @@ void printArgs() {
   fprintf(stderr, "                Can be used with -map (initial map) or alone (random first map).\n");
   fprintf(stderr, "                Requires lobby mode. Invalid maps are skipped at startup.\n");
   fprintf(stderr, "-randommap    - Generate a random procedural map instead of loading a file.\n");
-  fprintf(stderr, "                -randommap alone generates a fully random map each round.\n");
+  fprintf(stderr, "                -randommap alone picks one of the four older types (not Map\n");
+  fprintf(stderr, "                Maker) when the server starts and keeps it for every round,\n");
+  fprintf(stderr, "                with a new seed each round.\n");
   fprintf(stderr, "                -randommap tournament|natural|maze|fractal — specific generator type.\n");
   fprintf(stderr, "                -randommap <seed> — reproduce a specific map from its seed.\n");
   fprintf(stderr, "                -randommap tournament <seed> — type with specific seed.\n");
+  fprintf(stderr, "                -randommap maker — a map in the style of a classic map\n");
+  fprintf(stderr, "                maker; the server picks one of the presets when it starts\n");
+  fprintf(stderr, "                and keeps it for every round, with a new seed each round.\n");
+  fprintf(stderr, "                -randommap <preset> — one Map Maker preset: berserkir,\n");
+  fprintf(stderr, "                sluggo-tournament, slugdeath, slugfest, sluggo-adventurous,\n");
+  fprintf(stderr, "                sluggo-symmetric, stoogefest, black-lightning, bl-islands,\n");
+  fprintf(stderr, "                deathhand, megawatt-tc, megawatt-islands, mosh-pit,\n");
+  fprintf(stderr, "                palpatine or chew-toy.\n");
   fprintf(stderr, "                Map name shown as 'rand_<seed>' in server info.\n");
+  fprintf(stderr, "-randommapsize <N> - Side in tiles of the square of land a random map\n");
+  fprintf(stderr, "                uses, from 24 to 215, or 0 for the whole map (the default).\n");
+  fprintf(stderr, "                Only with -randommap.\n");
   fprintf(stderr, "-moddir <Dir> - Directory of mods and scenarios this server offers on their\n");
   fprintf(stderr, "                own, independently of any map: .scenario packages and loose\n");
   fprintf(stderr, "                .lua scripts. Read on top of the mods that ship with the\n");
@@ -1079,17 +1092,17 @@ static void serverSayOperatorMods(ServerSim *sim) {
   }
 }
 
+/* The index of the value after the flag "-<argname>", or ARG_NOT_FOUND.
+   Case does not matter, as in argExist, so a flag argExist finds also has
+   its value found here. */
 int findArg(int numArgs, char **argv, const char *argname) {
   int returnValue; /* Value to return */
-  char temp[255];
   int count;
 
-  snprintf(temp, sizeof(temp), "-%s", argname);
-  strlower(temp);
   returnValue = ARG_NOT_FOUND;
   count = 0;
   while (returnValue == -1 && count < numArgs) {
-    if (strcmp((char *) argv[count], temp) == 0) {
+    if (argIsFlag((char *) argv[count], argname)) {
       returnValue = count+1;
     }
     count++;
@@ -1188,7 +1201,9 @@ bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, 
       strncpy(lower, arg1, sizeof(lower) - 1);
       lower[sizeof(lower) - 1] = '\0';
       strlower(lower);
-      if (strcmp(lower, "tournament") == 0 || strcmp(lower, "natural") == 0 || strcmp(lower, "maze") == 0) {
+      if (strcmp(lower, "tournament") == 0 || strcmp(lower, "natural") == 0 ||
+          strcmp(lower, "maze") == 0 || strcmp(lower, "fractal") == 0 ||
+          strcmp(lower, "maker") == 0 || mapGenPresetFromKey(lower) >= 0) {
         /* Type specified — check for seed after it */
         snprintf(mapName, 2048, "-randommap %s", lower);
         if (argNum + 1 < numArgs && argv[argNum + 1][0] != '-') {
@@ -1844,6 +1859,14 @@ int main(int argc, char **argv) {
     exit(1);
   }
 
+  /* -randommapsize sizes only a random map. With -map, -inbuilt or no
+     map at all it would be ignored, so say so and stop. */
+  if (argExist(argc, argv, "randommapsize") == TRUE &&
+      strncmp(mapName, "-randommap", 10) != 0) {
+    fprintf(stderr, "Error: -randommapsize works only with -randommap\n");
+    exit(1);
+  }
+
   /* Copy tracker settings to file-scope globals for the timer */
   sTrackerUse = trackerUse;
   if (trackerUse) {
@@ -1947,22 +1970,40 @@ int main(int argc, char **argv) {
     if (strcmp(typeStr, "seed") == 0) {
       /* "-randommap seed <seed>" — seed is in seedStr */
       cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
-      if (mapGenSeedToConfig(seedStr, &cfg)) {
-        hasFixedSeed = true;
+      if (!mapGenSeedToConfig(seedStr, &cfg)) {
+        fprintf(stderr, "Error: -randommap seed '%s' is not a valid map seed\n", seedStr);
+#ifdef USING_SDL
+        SDL_Quit();
+#endif
+        return 1;
       }
+      hasFixedSeed = true;
     } else if (typeStr[0] != '\0') {
       /* Type specified */
       int genType = MAPGEN_TOURNAMENT;
       if (strcmp(typeStr, "natural") == 0) genType = MAPGEN_NATURAL;
       else if (strcmp(typeStr, "maze") == 0) genType = MAPGEN_MAZE;
       else if (strcmp(typeStr, "fractal") == 0) genType = MAPGEN_FRACTAL;
+      else if (strcmp(typeStr, "maker") == 0) genType = MAPGEN_MAKER;
       cfg = mapGenDefaultConfig(genType);
+      if (genType == MAPGEN_MAKER) {
+        /* "maker" alone: the server picks one of the presets */
+        mapGenApplyPreset((int)bolo_rand_below((uint32_t)mapGenPresetCount()), &cfg);
+      } else if (mapGenPresetFromKey(typeStr) >= 0) {
+        mapGenApplyPreset(mapGenPresetFromKey(typeStr), &cfg);
+      }
 
       if (seedStr[0] != '\0') {
         /* Type + seed */
-        if (mapGenSeedToConfig(seedStr, &cfg)) {
-          hasFixedSeed = true;
+        if (!mapGenSeedToConfig(seedStr, &cfg)) {
+          fprintf(stderr, "Error: -randommap %s: '%s' is not a valid map seed\n",
+                  typeStr, seedStr);
+#ifdef USING_SDL
+          SDL_Quit();
+#endif
+          return 1;
         }
+        hasFixedSeed = true;
       }
     } else {
       /* Plain "-randommap" — fully random */
@@ -1975,6 +2016,33 @@ int main(int argc, char **argv) {
       cfg.bases = 16;
       cfg.pills = 16;
       cfg.starts = 16;
+    }
+
+    /* -randommapsize overrides the size from the preset or the seed */
+    int randomMapSize = -1;
+    {
+      /* argExist, not findArg, so that -randommapsize with no value
+         after it is an error too. */
+      if (argExist(argc, argv, "randommapsize") == TRUE) {
+        int sizeArg = findArg(argc, argv, "randommapsize");
+        const char *text = sizeArg != ARG_NOT_FOUND ? argv[sizeArg] : "";
+        char *end = NULL;
+        long v = strtol(text, &end, 10);
+        if (end == text || *end != '\0' ||
+            (v != MAPGEN_SIZE_FULL && (v < MAPGEN_SIZE_MIN || v > MAPGEN_SIZE_MAX))) {
+          fprintf(stderr, "Error: -randommapsize must be %d (the whole map) or from %d to %d, not '%s'\n",
+                  MAPGEN_SIZE_FULL, MAPGEN_SIZE_MIN, MAPGEN_SIZE_MAX, text);
+#ifdef USING_SDL
+          SDL_Quit();
+#endif
+          return 1;
+        }
+        randomMapSize = (int)v;
+      }
+    }
+    if (randomMapSize >= 0) {
+      cfg.size = randomMapSize;
+      mapGenClampConfig(&cfg);
     }
 
     /* Generate a random seed if none was provided */
