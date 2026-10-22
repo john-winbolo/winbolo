@@ -760,9 +760,9 @@ static const SeedHash kMakerHashes[] = {
     { "K6F6011B20A2199020000000080Z3E", 0x5627D579u },
     { "K6F6011B20A219902607FF70880Z3E", 0xBD466539u },
     { "K6F6011B20A219902607FF70880Z5A", 0x45D310C9u },
-    { "K728014320A2021040000000080Z3B", 0xD19FD14Fu },
-    { "K728014320A202104607FF70880Z3B", 0x8B32F0EBu },
-    { "K728014320A202104607FF70880Z5A", 0x3F6F8A0Bu },
+    { "K728014320A2021040000000080Z3B", 0xF3A3298Fu },
+    { "K728014320A202104607FF70880Z3B", 0x1AB5CD7Bu },
+    { "K728014320A202104607FF70880Z5A", 0x82C95BCBu },
 };
 
 int run_mapgen_maker_hashes(void) {
@@ -1269,9 +1269,12 @@ int run_mapgen_maker_style_same_map(void) {
  *---------------------------------------------------------*/
 
 /* sizes: 0 is the preset's own size. */
-static int checkSafeBases(const char *key, const int *sizes, size_t nSizes) {
+/* checkStarts: also check that each start is in a deep channel
+ * through the rim (Chew Toy). */
+static int checkSafeBases(const char *key, const int *sizes, size_t nSizes,
+                          bool checkStarts) {
     GenOut g;
-    int preset = mapGenPresetFromKey(key), runs = 0, noSafe = 0, rimMaps = 0;
+    int preset = mapGenPresetFromKey(key), runs = 0, noSafe = 0, rimMaps = 0, seaStarts = 0;
     UT_ASSERT(preset >= 0);
     UT_ASSERT(genAlloc(&g));
     for (size_t s = 0; s < nSizes; s++) {
@@ -1318,6 +1321,22 @@ static int checkSafeBases(const char *key, const int *sizes, size_t nSizes) {
                     int w = x2 - x1;
                     if ((dx * dx + dy * dy) * 100 >= 49 * w * w) rim++;
                 }
+                /* The starts are in the deep channels through the rim:
+                 * deep sea, next to the land across a side, and inside
+                 * the box of the land. */
+                for (int i = 0; checkStarts && i < g.ss->numStarts; i++) {
+                    int sx = g.ss->item[i].x, sy = g.ss->item[i].y, side = 0;
+                    if (sx > 0 && g.mp->mapItem[sx - 1][sy] != DEEP_SEA) side = 1;
+                    if (sx < 255 && g.mp->mapItem[sx + 1][sy] != DEEP_SEA) side = 1;
+                    if (sy > 0 && g.mp->mapItem[sx][sy - 1] != DEEP_SEA) side = 1;
+                    if (sy < 255 && g.mp->mapItem[sx][sy + 1] != DEEP_SEA) side = 1;
+                    if (g.mp->mapItem[sx][sy] != DEEP_SEA || !side ||
+                        sx <= x1 || sx >= x2 || sy <= y1 || sy >= y2) {
+                        seaStarts++;
+                        printf("  size %d lever set %d seed %u: start %d at (%d, %d) is not in a channel\n",
+                               sizes[s], lever, cfg.seed, i, sx, sy);
+                    }
+                }
                 if (safe == 0) {
                     noSafe++;
                     printf("  %s size %d lever set %d seed %u: no base is out of range of the pills\n",
@@ -1336,17 +1355,19 @@ static int checkSafeBases(const char *key, const int *sizes, size_t nSizes) {
                   noSafe, runs, key);
     UT_ASSERT_MSG(rimMaps == 0, "%d of %d %s maps have more than a quarter of the pills in the rim",
                   rimMaps, runs, key);
+    UT_ASSERT_MSG(seaStarts == 0, "%d %s starts in %d maps are not in a deep channel through the rim",
+                  seaStarts, key, runs);
     return 0;
 }
 
 int run_mapgen_maker_chew_toy_safe_bases(void) {
     static const int sizes[] = { 0, 48, 90, 160 };
-    return checkSafeBases("chew-toy", sizes, sizeof(sizes) / sizeof(sizes[0]));
+    return checkSafeBases("chew-toy", sizes, sizeof(sizes) / sizeof(sizes[0]), true);
 }
 
 /* Deathhand below size 56 has too little floor for the pills to stay
  * out of range of a group of bases, so it is not checked there. */
 int run_mapgen_maker_deathhand_safe_bases(void) {
     static const int sizes[] = { 0, 56, 90, 160 };
-    return checkSafeBases("deathhand", sizes, sizeof(sizes) / sizeof(sizes[0]));
+    return checkSafeBases("deathhand", sizes, sizeof(sizes) / sizeof(sizes[0]), false);
 }

@@ -140,6 +140,7 @@
 #define SM_SIDES   2
 #define SM_POND    3
 #define SM_AXES    4   /* clusters off the ends of the axes */
+#define SM_CHEW    5   /* pairs in the deep channels through the rim, next to the land */
 
 /* Layer of each tile, used to find places for objects. */
 #define L_SEA    0
@@ -153,6 +154,7 @@
 #define L_STREET 8
 #define L_BLOCK  9
 #define L_WALL   10
+#define L_CHAN   11   /* deep channel cut through the rim */
 
 typedef struct Preset {
     const char *key;
@@ -396,7 +398,7 @@ static const Preset kPresets[] = {
       .skel = SK_AXES, .skelTerr = T_GRASS, .skelW = 1,
       .pod1 = POD_LAWN, .pod2 = POD_LAWN, .pod3 = POD_LAWN, .cell = 20,
       .centre = CEN_NONE, .gateTerr = T_DEEP, .gateW = 2, .gateStyle = 2,
-      .pillMode = PM_CHEW, .baseMode = BM_CHEW, .startMode = SM_CORNERS,
+      .pillMode = PM_CHEW, .baseMode = BM_CHEW, .startMode = SM_CHEW,
       .fragSet = -1,
       .outlineSet = OS(OL_ROUND),
       .rimWall = 85, .midPiece = 65, .midClump = 30 },
@@ -1250,7 +1252,7 @@ static void paintGates(Ctx *c, int terr, int w, int wedge, int diag) {
                 double r = c->ay / c->ax, dx = x - c->cx, dy = y - c->cy;
                 double a = fabs(dx * r - dy) / 1.414, b = fabs(dx * r + dy) / 1.414;
                 if (a <= half + 0.5 || b <= half + 0.5) {
-                    if (terr == T_DEEP) put(c, x, y, T_DEEP, L_SEA);
+                    if (terr == T_DEEP) put(c, x, y, T_DEEP, L_CHAN);
                     else if (c->layer[k] != L_RRIM) put(c, x, y, terr, L_RIM);
                 }
             } else if (!diag && (c->layer[k] == L_RIM || c->layer[k] == L_TRACK)) {
@@ -2901,6 +2903,106 @@ static void placeMidPills(Ctx *c, int *cand) {
     }
 }
 
+/* 1 if (x, y) is a free tile of a deep channel cut through the rim,
+ * next to the land across a side, and not on the outer edge of the
+ * cut: the tile one diagonal step away from the middle is channel or
+ * land too. A place for a Chew Toy start. */
+static int chanTile(const Ctx *c, int x, int y) {
+    int k, ox, oy;
+    if (!inb(c, x, y)) return 0;
+    k = IDX(c, x, y);
+    if (c->t[k] != T_DEEP || c->layer[k] != L_CHAN || c->dout[k] != 3 || !tileFree(c, x, y)) return 0;
+    ox = x + (2 * x > c->W - 1 ? 1 : -1);
+    oy = y + (2 * y > c->H - 1 ? 1 : -1);
+    if (!inb(c, ox, oy)) return 0;
+    k = IDX(c, ox, oy);
+    return c->layer[k] == L_CHAN || c->t[k] != T_DEEP;
+}
+
+/* Try to place a start at (px, py), and at (qx, qy) too when qx >= 0,
+ * with the images of both when useSym is set. Every start keeps the
+ * square of a distance of at least md2 from the starts placed before.
+ * Returns the number placed. */
+static int tryChanGroup(Ctx *c, int px, int py, int qx, int qy, int useSym, int md2, int room) {
+    int gx[8], gy[8], g = 0, xs[4], ys[4], n, j, k, pass;
+    for (pass = 0; pass < 2; pass++) {
+        int x = pass ? qx : px, y = pass ? qy : py;
+        if (pass && qx < 0) break;
+        if (!chanTile(c, x, y)) return 0;
+        if (useSym) n = images(c, x, y, xs, ys);
+        else { xs[0] = x; ys[0] = y; n = 1; }
+        for (j = 0; j < n; j++) { gx[g] = xs[j]; gy[g] = ys[j]; g++; }
+    }
+    if (g > room) return 0;
+    for (j = 0; j < g; j++) {
+        if (!chanTile(c, gx[j], gy[j])) return 0;
+        for (k = 0; k < j; k++) {
+            if (gx[k] == gx[j] && gy[k] == gy[j]) return 0;
+        }
+        for (k = 0; k < c->n[OBJ_START]; k++) {
+            int dx = gx[j] - c->ox[OBJ_START][k], dy = gy[j] - c->oy[OBJ_START][k];
+            if (dx * dx + dy * dy < md2) return 0;
+        }
+    }
+    for (j = 0; j < g; j++) commitObj(c, OBJ_START, gx[j], gy[j]);
+    return g;
+}
+
+/* Chew Toy starts: in pairs across a deep channel through the rim,
+ * each start of a pair next to the land on its side of the channel,
+ * at the mouth of the channel as on the real maps. A pair goes to a
+ * channel with no starts first; then the next pairs go one step
+ * further in. A count that pairs do not fill is made up with single
+ * starts, with their images first and then one at a time. Integer
+ * math only. */
+static void placeChannelStarts(Ctx *c, int *cand) {
+    int nc = 0, x, y, i, step, goal = c->n[OBJ_START] + c->p.starts;
+    int far2 = c->midR3 * c->midR3 / 36;    /* (half the land radius)^2 */
+    if (goal > MAKER_MAX_OBJECTS) goal = MAKER_MAX_OBJECTS;
+    for (y = 0; y < c->H; y++) {
+        for (x = 0; x < c->W; x++) {
+            if (chanTile(c, x, y)) cand[nc++] = IDX(c, x, y);
+        }
+    }
+    if (nc == 0) return;
+    /* Shuffle, then put the outer tiles first. Tiles at the same
+     * distance from the middle keep their shuffled order. */
+    shuffle(c, cand, nc);
+    for (i = 1; i < nc; i++) {
+        int v = cand[i], j;
+        int dv = (2 * (v % c->W) - (c->W - 1)) * (2 * (v % c->W) - (c->W - 1)) +
+                 (2 * (v / c->W) - (c->H - 1)) * (2 * (v / c->W) - (c->H - 1));
+        for (j = i - 1; j >= 0; j--) {
+            int u = cand[j];
+            int du = (2 * (u % c->W) - (c->W - 1)) * (2 * (u % c->W) - (c->W - 1)) +
+                     (2 * (u / c->W) - (c->H - 1)) * (2 * (u / c->W) - (c->H - 1));
+            if (du >= dv) break;
+            cand[j + 1] = u;
+        }
+        cand[j + 1] = v;
+    }
+    /* Steps: pairs with images, singles with images, singles alone.
+     * In each step a far spacing first (other channels), then a near
+     * one (the same channel, one tile apart). */
+    for (step = 0; step < 6 && c->n[OBJ_START] < goal; step++) {
+        int md2 = (step % 2) ? 2 : far2, useSym = step < 4;
+        for (i = 0; i < nc && c->n[OBJ_START] < goal; i++) {
+            int px = cand[i] % c->W, py = cand[i] / c->W;
+            if (useSym && !inFund(c, px, py)) continue;
+            if (step < 2) {
+                /* Across the channel: one diagonal step at right
+                 * angles to the line from the middle. */
+                int sx = 2 * px > c->W - 1 ? 1 : -1, sy = 2 * py > c->H - 1 ? 1 : -1;
+                if (!tryChanGroup(c, px, py, px + sx, py - sy, 1, md2, goal - c->n[OBJ_START])) {
+                    tryChanGroup(c, px, py, px - sx, py + sy, 1, md2, goal - c->n[OBJ_START]);
+                }
+            } else {
+                tryChanGroup(c, px, py, -1, -1, useSym, md2, goal - c->n[OBJ_START]);
+            }
+        }
+    }
+}
+
 static void placeObjects(Ctx *c) {
     const Preset *pr = c->pr;
     int n = c->W * c->H, nc, i;
@@ -2910,8 +3012,11 @@ static void placeObjects(Ctx *c) {
     for (i = 0; i < n; i++) if (isLandT(c->t[i])) landArea += 1.0;
 
     /* Starts first so the pond and sea rings are free. */
-    if (c->p.starts > 0) {
-        int mode = pr->startMode;
+    if (c->p.starts > 0 && pr->startMode == SM_CHEW && c->midR3 >= 18) {
+        placeChannelStarts(c, cand);
+    }
+    if (c->p.starts > c->n[OBJ_START]) {
+        int mode = pr->startMode == SM_CHEW ? SM_CORNERS : pr->startMode;
         if (mode == SM_POND) {
             nc = collect(c, OBJ_START, cand, 8);
             if (nc >= c->p.starts) {
