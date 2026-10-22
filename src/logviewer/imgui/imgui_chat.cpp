@@ -73,6 +73,11 @@ static ImVec2 s_rect_min(0.0f, 0.0f);
 static ImVec2 s_rect_max(0.0f, 0.0f);
 static bool   s_have_rect = false;
 
+/* Whether ImGui had the window docked last frame. Two floating panels can be
+ * tabbed together into a floating dock node, which is not a sidebar, so the
+ * sidebar test alone does not see it. */
+static bool s_imgui_docked = false;
+
 /* The end and the time of the newest line shown last frame, so the list
  * scrolls to the newest line only when a chat line comes or goes. Other
  * events change the list too, but they leave hand scrolling alone. */
@@ -126,6 +131,7 @@ void lv_imgui_chat_window(void) {
     if (!lv_g_show_chat_window) {
         s_hovered = false;
         s_have_rect = false;
+        s_imgui_docked = false;
         return;
     }
 
@@ -154,8 +160,9 @@ void lv_imgui_chat_window(void) {
     }
 
     /* Docked or not as of last frame: a floating window fades whole, so its
-     * opacity is set before it begins. */
-    const bool docked = lv_imgui_dock_window_is_docked("###chat");
+     * opacity is set before it begins. Docked is in a sidebar, or in any
+     * ImGui dock node (a floating one too). */
+    const bool docked = lv_imgui_dock_window_is_docked("###chat") || s_imgui_docked;
     const float baseAlpha = ImGui::GetStyle().Alpha;
     const bool fadeWindow = !docked;
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
@@ -163,11 +170,13 @@ void lv_imgui_chat_window(void) {
     if (fadeWindow) {
         float alpha = lvChatShownAlpha(shown, newestMs, nowMs, s_hovered ? 1 : 0);
         if (alpha <= 0.0f) {
-            /* Faded out fully. The mouse over its place (with no button
-             * down, so a drag on the map that passes over it does not stop)
-             * shows it again. Else it lets the mouse through to the map. */
-            const ImGuiIO &io = ImGui::GetIO();
-            if (s_have_rect && !io.WantCaptureMouse && !ImGui::IsAnyMouseDown() &&
+            /* Faded out fully. The mouse over its place shows it again, the
+             * same as for a window that has not faded, also where other
+             * panels are under it. Not with a button down, so a drag on the
+             * map that passes over it goes on, and not while a popup is
+             * open. Else it lets the mouse through to the map. */
+            if (s_have_rect && !ImGui::IsAnyMouseDown() &&
+                !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) &&
                 ImGui::IsMouseHoveringRect(s_rect_min, s_rect_max, false)) {
                 alpha = 1.0f;
                 shownByRect = true;
@@ -187,14 +196,20 @@ void lv_imgui_chat_window(void) {
         s_rect_min = pos;
         s_rect_max = ImVec2(pos.x + size.x, pos.y + size.y);
         s_have_rect = true;
+        s_imgui_docked = ImGui::IsWindowDocked();
     }
     if ((flags & ImGuiWindowFlags_NoInputs) != 0) {
         s_hovered = false;
     } else {
-        /* In the frame the rectangle test shows the window again, ImGui does
-         * not yet count it as hovered (it took no input last frame), so the
-         * rectangle test counts too. */
-        s_hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) ||
+        /* Hovered while an item of the window is active too (the close
+         * button, a resize grip, the scrollbar), and while a button that
+         * went down over it stays down, so a fast drag that leaves the
+         * window does not hide it. In the frame the rectangle test shows the
+         * window again, ImGui does not yet count it as hovered (it took no
+         * input last frame), so the rectangle test counts too. */
+        s_hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows |
+                                           ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) ||
+                    (s_hovered && ImGui::IsAnyMouseDown()) ||
                     (shownByRect && ImGui::IsMouseHoveringRect(s_rect_min, s_rect_max, false));
     }
     if (open) {

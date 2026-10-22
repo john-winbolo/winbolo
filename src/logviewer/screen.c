@@ -65,7 +65,7 @@
 #include "lv_event_flash.h"
 #include "lv_dock_clear.h"       /* the middle of the view beside a clear sidebar */
 #include "lv_messages.h"
-#include "bolo/public/client_command.h"  /* CHAT_DEST_IS_TEAM — a team address */
+#include "client_command.h"   /* CHAT_DEST_IS_TEAM — a team address */
 #include "../gui/lang.h"
 #include "../gui/ping_kinds.h"   /* PING_DISPLAY_MS, pingKindMessageId */
 #include "cJSON.h"               /* scripts.json, read into g_lv->scripts */
