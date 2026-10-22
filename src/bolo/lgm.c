@@ -600,39 +600,28 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
 }
 
 /* How far from the tank's centre a builder starts, towards the square he
- * was sent to: one walking step on grass. A shell that hits the tank
- * explodes inside the hull on the side it came from, and the builder dies
- * within MAP_SQUARE_MIDDLE of that. The shell is tested against the hull
- * after its move for the tick, so the burst is up to the shell's speed
- * inside the TANK_HIT_RADIUS circle, and further by the tank's own speed
- * when it is driving at the shooter: with the defaults, between 64 and 112
- * from the centre (64 when the tank drives 16 a tick on a road, a boat or
- * a base, 68 at 12 a tick on grass). Each tick the tank moves, then the
- * builder steps, then the shells move. A builder sent out the far side from
- * the shooter is put LGM_START_OFFSET out. An order from a player, a bot or
- * a harvested input takes his first step in the same tick, so a hit can
- * kill him in his first 2 ticks when the tank is still or drives at the
- * shooter (the second only at the nearest burst). A tank that drives away
- * from the shooter on a road, a boat or a base keeps pace with him, and its
- * nearest burst can kill him for as long as it does; on grass it falls
- * behind and the window is 2 ticks. A scenario script's order is applied
- * after the shells move, so he takes his first step in the next tick, after
- * the tank has moved again. WinBolo 1.17 and 2.1 started him on the centre.
- * Both gave a still tank 3 ticks, the third only at the nearest burst, and
- * the same open window for a tank that keeps pace. 1.17 hit with a 128 box,
- * and he took his first step one tick after the order. 2.1 had today's
- * order and the 112 circle. So an offset of 16 is close to the
- * long-standing behaviour: 2 ticks now against 3 then. An offset of 64
- * would keep him clear in all three cases. 2.1 rewound a pillbox shell by
- * the target's lag, so its window was longer on a lagged link. A pillbox
- * shell is no longer rewound, so lag does not make the window longer. The
- * offset is kept small so the head start it gives is small: one walking
- * step where a builder walks 16 a tick (grass, road, a boat, a base he can
- * use), two on forest and four on swamp, crater and rubble. He is given it
- * only where he could have walked it: off a boat, or when he can walk on
- * the tank's own square and on each square the move enters, not counting
- * the blessed square of a boat or river road order. See
- * lgmApplyStartOffset. */
+ * was sent to: one walking step on grass. He is given it only where he
+ * could have walked it; see lgmApplyStartOffset.
+ *
+ * 16 was chosen to come close to the builder death rate of WinBolo 1.17.
+ * In 1.17 that rate depended on the shell's angle. 1.17 tested a hit with
+ * a 128 box (abs(dx) < 128 and abs(dy) < 128), not a circle. A shell from
+ * straight up, down or the side burst 96 to 128 from the tank's centre. A
+ * shell at 45 degrees met the box corner, about 150 to 181 out. So the
+ * danger to the builder was greatest from straight on and least at 45
+ * degrees. Measured per order on grass under an angry pillbox (a shell
+ * every 6 ticks), 1.17 killed him 44% of the time along an axis, 22% at
+ * 22.5 degrees and 0% at 45 degrees, 22% on average. An offset of 16
+ * gives 27%, an offset of 0 gives 60% and 64 gives 0%. The square behind
+ * the tank is not meant to be a fully safe place: a small chance of death
+ * under heated fire is by design.
+ *
+ * Where the danger is now: a hit bursts 64 to 112 from the tank's centre on
+ * the shooter's side, and the builder dies within MAP_SQUARE_MIDDLE of the
+ * burst. A hit can kill him in his first 2 ticks out when the tank is still
+ * or drives at the shooter. A tank that drives away from the shooter on a
+ * road, a boat or a base keeps pace with him, and the danger lasts as long
+ * as it does. */
 #define LGM_START_OFFSET 16
 
 /*********************************************************

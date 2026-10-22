@@ -37,7 +37,8 @@
  * keeps pace with him. The second tick, and each tick of that open window,
  * kills him only at the nearest burst exactly. WinBolo 1.17 and 2.1 had the
  * same shape of window. An offset of 64 would keep him clear in all three
- * cases.
+ * cases. The offset is 16 to come close to the builder death rate of
+ * WinBolo 1.17, so the square behind the tank is not meant to be fully safe.
  * The order lands at a fixed server tick every run: 502 on the lagged
  * link and 432 on the clean one. At those ticks the nearest burst is 218
  * from him on the lagged link and 268 on the clean one, so both cases pass.

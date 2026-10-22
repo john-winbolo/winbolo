@@ -6279,7 +6279,11 @@ set(_unit_test_names
     loopback_join_loss
     # The builder walled in behind his own tank under pillbox fire. The
     # lagged case was the bug report written as a test: it died every run
-    # until pill shells stopped being rewound. The nolag case is its control.
+    # until pill shells stopped being rewound, and about one run in three
+    # when he started 16 units out, before the offset first went to 64. At
+    # 16 a hit can still kill him in his first 2 ticks out. The test now runs
+    # on a fixed clock, so its order lands at the same tick every run, outside
+    # that window. The nolag case is its control.
     lgm_wall_behind_tank_under_fire_lagged
     lgm_wall_behind_tank_under_fire_nolag
     loopback_password
