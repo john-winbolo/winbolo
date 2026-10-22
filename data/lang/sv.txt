@@ -2853,3 +2853,4 @@ STR_CLIPGIF_NO_DETAILS=Inga detaljer sparades med den här GIF:en.
 STR_CLIPGIF_LENGTH_TIP=GIF-längd i sekunder, från uppspelningspositionen.\nDra markören i slutet av den ljusa delen av tidslinjen för att ändra den också.
 STR_CLIPGIF_LOADING=Öppnar GIF:en...
 STR_CLIPGIF_TOO_LARGE=Den här GIF:en är för stor för att visas här. Du kan fortfarande kopiera eller spara den.
+STR_CLIPGIF_FILTER_NAME=GIF-bilder

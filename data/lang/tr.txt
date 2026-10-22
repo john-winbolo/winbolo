@@ -2851,3 +2851,4 @@ STR_CLIPGIF_NO_DETAILS=Bu GIF ile hiçbir ayrıntı kaydedilmedi.
 STR_CLIPGIF_LENGTH_TIP=Oynatma noktasından itibaren saniye cinsinden GIF uzunluğu.\nZaman çizelgesinin parlak kısmının sonundaki işareti sürükleyerek de değiştirebilirsiniz.
 STR_CLIPGIF_LOADING=GIF açılıyor...
 STR_CLIPGIF_TOO_LARGE=Bu GIF burada gösterilemeyecek kadar büyük. Yine de kopyalayabilir veya kaydedebilirsiniz.
+STR_CLIPGIF_FILTER_NAME=GIF Resimleri

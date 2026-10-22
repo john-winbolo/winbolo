@@ -2851,3 +2851,4 @@ STR_CLIPGIF_NO_DETAILS=Aucun détail n'a été enregistré avec ce GIF.
 STR_CLIPGIF_LENGTH_TIP=Durée du GIF en secondes, depuis la tête de lecture.\nFaites glisser le repère au bout de la partie claire de la frise pour la changer aussi.
 STR_CLIPGIF_LOADING=Ouverture du GIF...
 STR_CLIPGIF_TOO_LARGE=Ce GIF est trop grand pour être affiché ici. Vous pouvez quand même le copier ou l'enregistrer.
+STR_CLIPGIF_FILTER_NAME=Images GIF

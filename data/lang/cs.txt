@@ -2849,3 +2849,4 @@ STR_CLIPGIF_NO_DETAILS=K tomuto GIFu nebyly uloženy žádné údaje.
 STR_CLIPGIF_LENGTH_TIP=Délka GIFu v sekundách od přehrávací hlavy.\nDélku změníte také tažením značky na konci světlé části časové osy.
 STR_CLIPGIF_LOADING=Otevírání GIFu...
 STR_CLIPGIF_TOO_LARGE=Tento GIF je příliš velký, aby se zde zobrazil. Stále ho můžete zkopírovat nebo uložit.
+STR_CLIPGIF_FILTER_NAME=Obrázky GIF

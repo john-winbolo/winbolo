@@ -2851,3 +2851,4 @@ STR_CLIPGIF_NO_DETAILS=このGIFには詳細が保存されていません。
 STR_CLIPGIF_LENGTH_TIP=再生位置からのGIFの長さ（秒）。\nタイムラインの明るい部分の端にあるマーカーをドラッグしても変更できます。
 STR_CLIPGIF_LOADING=GIFを開いています...
 STR_CLIPGIF_TOO_LARGE=このGIFは大きすぎるため、ここには表示できません。コピーや保存は引き続きできます。
+STR_CLIPGIF_FILTER_NAME=GIF画像

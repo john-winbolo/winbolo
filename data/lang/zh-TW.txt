@@ -2849,3 +2849,4 @@ STR_CLIPGIF_NO_DETAILS=此 GIF 沒有儲存詳細資訊。
 STR_CLIPGIF_LENGTH_TIP=從播放位置起的 GIF 長度（秒）。\n拖曳時間軸亮色部分末端的標記也可以變更。
 STR_CLIPGIF_LOADING=正在開啟 GIF...
 STR_CLIPGIF_TOO_LARGE=此 GIF 太大，無法在此顯示。你仍然可以複製或儲存它。
+STR_CLIPGIF_FILTER_NAME=GIF 圖片
