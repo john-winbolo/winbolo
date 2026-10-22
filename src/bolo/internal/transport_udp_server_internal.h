@@ -241,6 +241,11 @@ typedef struct UdpServerState {
     UdpServerClient clients[MAX_TANKS];
     SpectatorConn   spectators[MAX_SPECTATORS];
     uint32_t tickCount;
+    /* Datagrams put on the wire from the server socket since create. A
+     * loopback test that runs client and server in lockstep compares it with
+     * what its client has read, so it knows when everything sent has arrived.
+     * Read through transportUdpServerWireSentCount. */
+    uint32_t wireSent;
     /* recordSeq of the most recent running-game ring record. Captured every
      * running tick (below), it freezes at the game's last record X when the
      * game ends, since game-over ticks are not recorded — so it is the bar a
@@ -476,6 +481,11 @@ void serverProcessPacket(struct ServerSim *sim, uint8_t *buf, int len,
  * src/server/transport_udp_server.c, which holds the impairment state it
  * reads. */
 void srvSendTo(const uint8_t *buf, int len, const struct sockaddr_in *addr);
+
+/* The server transport's clock: SDL_GetTicks, or the clock a caller set with
+ * transportUdpServerSetClock. The ping measurement and the impairment layer
+ * read it. Owned by src/server/transport_udp_server.c. */
+uint64_t srvNow(void);
 
 /* The outbound per-tick path to a connected player: an inbound input packet
  * applied to the sim, a ping answered with a pong, one client's filtered

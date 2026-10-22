@@ -35,6 +35,10 @@
 #include "../threads.h"                    /* threadsCreate, threadsWaitForMutex,
                                               threadsReleaseMutex */
 
+uint32_t transportUdpServerWireSentCount(void) {
+    return udpServer.wireSent;
+}
+
 void transportUdpServerSetClientPingForTest(BYTE playerNum, uint16_t pingMs) {
     if (playerNum >= MAX_TANKS) return;
     if (!udpServer.clients[playerNum].connected) return;

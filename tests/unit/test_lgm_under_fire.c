@@ -38,9 +38,10 @@
  * kills him only at the nearest burst exactly. WinBolo 1.17 and 2.1 had the
  * same shape of window. An offset of 64 would keep him clear in all three
  * cases.
- * The cases pass because the test's order does not land in it: in the
- * runs made when the offset went back to 16 the nearest burst was 215 from
- * him on the lagged link and 268 on the clean one.
+ * The order lands at a fixed server tick every run: 502 on the lagged
+ * link and 432 on the clean one. At those ticks the nearest burst is 218
+ * from him on the lagged link and 268 on the clean one, so both cases pass.
+ * An order a few frames later can land in the window and kill him.
  *
  * The blast list records every burst with his position as it found him, so
  * a failure says which shell caught him and from how far. If the control
@@ -56,12 +57,16 @@
  *     tank (clientSimGetMyTankMapPos), because that is what a player aims
  *     with. Both runs print the client's square beside the server's so a
  *     failure can be read as a lag problem or an aiming problem.
- *   - Pumps are paced to one 20ms frame of wall clock each
- *     (loopbackHarnessSetPumpInterval), so the delay the impairment layer
- *     holds a datagram for and the delay the server reads off its own ping
- *     measurement are the same number of frames. A free-running pump loop
- *     makes them differ by about tenfold and the link stops being one any
- *     player has.
+ *   - Both cases run on the harness's virtual clock
+ *     (loopbackHarnessUseVirtualClock): one pump is one 20ms frame of a
+ *     counter, not of the wall clock. The impairment layer's delay, the
+ *     client's ping and the server's ping all read that counter, so they are
+ *     the same number of frames, and no pump sleeps. The pump also runs in
+ *     lockstep: each side waits for exactly the datagrams the other has put
+ *     on the wire before it ticks, so the server's recv thread and the
+ *     loopback path cannot move a datagram to another pump. The jitter draws
+ *     come from the seeded bolo_rand stream. Same seed, same script, same
+ *     run, on every machine.
  *   - The world the move happens in IS built by the test: a carved grass
  *     arena, one neutral pillbox, the tank placed and stocked. That is
  *     fixture, not gameplay, and all of it happens before or outside the
@@ -156,7 +161,6 @@
 #define LUF_DISPATCH_GAP  3   /* squares tank-to-pill when the man is sent   */
 #define LUF_WATCH_MAX   130   /* the man's whole trip, with slack           */
 
-#define LUF_PUMP_MS      20   /* one pump = one 20ms frame of wall clock    */
 #define LUF_TRAIL_MAX   LUF_WATCH_MAX /* one man-position sample per watch frame */
 #define LUF_IMPACT_MAX   64   /* shell impacts kept for the printout        */
 
@@ -694,6 +698,11 @@ static int luf_run(const LufConfig *cfg) {
         UT_FAIL("no start on the map has room for a %dx%d strip beside it",
                 LUF_ARENA_W, LUF_ARENA_H);
     }
+    /* From the first pump, the join included: the server tick the order
+     * lands on counts the join's pumps too, so they have to be fixed as
+     * well. Nothing is in an impairment queue yet, so nothing is stranded by
+     * the clock starting at zero. */
+    loopbackHarnessUseVirtualClock(&h, true);
     /* Record from here, BEFORE the client joins: the arena is already carved,
      * so the opening snapshot is the right world, and the join that follows
      * is written as a player-joined event. Started after the join, the file
@@ -707,16 +716,6 @@ static int luf_run(const LufConfig *cfg) {
     if (loopbackHarnessPumpUntil(&h, LUF_CONNECT_MAX, luf_connected, NULL) < 0) {
         LUF_STOP();
         UT_FAIL("client never connected (%s)", cfg->label);
-    }
-
-    /* From here on one pump costs one frame of wall clock, so the impairment
-     * spec's milliseconds and the server's ping arithmetic mean the same
-     * number of frames. The join above ran unpaced: it has no frame clock to
-     * agree with, and pacing it would cost seconds for nothing. The clean
-     * control has no impairment to agree with either, so it stays unpaced
-     * throughout, as every other loopback test is. */
-    if (cfg->impair != NULL) {
-        loopbackHarnessSetPumpInterval(&h, LUF_PUMP_MS);
     }
 
     slot = clientSimGetMyPlayerNum(h.cs);

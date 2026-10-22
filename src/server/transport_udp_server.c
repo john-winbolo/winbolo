@@ -100,10 +100,30 @@ UdpServerState udpServer;
 void srvSendTo(const uint8_t *buf, int len,
                const struct sockaddr_in *addr) {
     if (netImpairEnabled(&srvImpairOut) &&
-        netImpairOffer(&srvImpairOut, buf, len, addr, (uint64_t)SDL_GetTicks())) {
+        netImpairOffer(&srvImpairOut, buf, len, addr, srvNow())) {
         return;
     }
     udpSendTo(udpServer.sock, buf, len, addr);
+    udpServer.wireSent++;
+}
+
+/* The clock a caller can put in place of SDL_GetTicks, and the only one two
+ * things read: the round trip the server measures (the stamp in each PONG and
+ * the echo that subtracts it) and the impairment layer's delivery times. They
+ * have to share a clock for the same reason the client's pair does (see
+ * transportUdpClientSetVirtualClock). A loopback test that advances a counter
+ * one frame per tick then gets a ping measured in frames, which is what the
+ * lag compensation and the channel layer's resend timer are sized from.
+ * Everything else here keeps the wall clock: join rate limit, cookie window,
+ * upload expiry and the once-a-second log lines. */
+static uint64_t (*s_srvClock)(void) = NULL;
+
+void transportUdpServerSetClock(uint64_t (*fn)(void)) {
+    s_srvClock = fn;
+}
+
+uint64_t srvNow(void) {
+    return (s_srvClock != NULL) ? s_srvClock() : (uint64_t)SDL_GetTicks();
 }
 
 unsigned short transportUdpServerGetBoundPort(void) {

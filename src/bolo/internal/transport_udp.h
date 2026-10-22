@@ -655,6 +655,21 @@ bool transportUdpServerHasRecvThread(void);
  * has not been scheduled yet, which the caller cannot tell apart. */
 int transportUdpServerRecvQueuePending(void);
 
+/* Datagrams the recv thread has read since it started; it only goes up. A
+ * loopback test waits for it to reach the number its clients have put on
+ * the wire before it ticks the server. */
+uint32_t transportUdpServerRecvSeenCount(void);
+
+/* Datagrams the server has put on the wire since create; it only goes up.
+ * The other half of the same check, for the server->client leg. */
+uint32_t transportUdpServerWireSentCount(void);
+
+/* Hand the server a clock of the caller's own instead of SDL_GetTicks. The
+ * round trip the server measures and its impairment layer read it, as the
+ * client's pair read transportUdpClientSetVirtualClock's. Process wide.
+ * NULL, the default, restores the wall clock. */
+void transportUdpServerSetClock(uint64_t (*fn)(void));
+
 /* Drain sim events into per-client reliable queues.
  * Call after each serverSimTick() so events aren't lost when
  * multiple ticks run before transportUdpServerSend(). */
@@ -1061,6 +1076,14 @@ int  transportUdpClientTestDropNextLeft(Transport *t);
 void transportUdpClientTestDropNextOut(Transport *t, uint8_t packet_type,
                                        int count);
 int  transportUdpClientTestDropNextOutLeft(Transport *t);
+/* Lockstep for a loopback test. WireSent reads how many datagrams the client
+ * has put on the wire to the server, for the harness to compare with
+ * transportUdpServerRecvSeenCount. ExpectRx hands the client the server's
+ * transportUdpServerWireSentCount: the client's next read then waits for any
+ * of those datagrams still on the way. Single client only, since the server
+ * count is for every peer. 0 turns the wait off. */
+uint32_t transportUdpClientTestWireSent(Transport *t);
+void     transportUdpClientTestExpectRx(Transport *t, uint32_t serverSent);
 /* Hand the client a clock of the caller's own instead of SDL_GetTicks. Two
  * things read it and they have to agree: the impairment layer's delivery
  * times, and the client's own round-trip measurement (the PING stamp and the
@@ -1069,8 +1092,9 @@ int  transportUdpClientTestDropNextOutLeft(Transport *t);
  * tick makes a delay= spec deliver on an exact tick count, cost no real time,
  * and be the round trip the client then measures across it. Process wide, and
  * it covers both directions (impairIn and impairOut) on every client in the
- * process. NULL restores the wall clock. Nothing else moves — join retries,
- * the lobby-alone timer, the command queue and the upload pump keep
+ * process. NULL restores the wall clock. The command queue's resend timer
+ * reads it as well, so a resend costs a fixed number of ticks. Nothing else
+ * moves — join retries, the lobby-alone timer and the upload pump keep
  * SDL_GetTicks. */
 void transportUdpClientSetVirtualClock(uint64_t (*fn)(void));
 #endif
