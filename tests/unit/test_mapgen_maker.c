@@ -745,9 +745,9 @@ static const SeedHash kMakerHashes[] = {
     { "K46065694506161080000000080Z60", 0x76FACA6Bu },
     { "K4606569450616108607FF70880Z60", 0x901FC44Au },
     { "K4606569450616108607FF70880Z5A", 0x6DF1A5D4u },
-    { "K4F83CF3C4620D9060000000080Z40", 0x3DF7FB7Bu },
-    { "K4F83CF3C4620D906607FF70880Z40", 0xF818D643u },
-    { "K4F83CF3C4620D906607FF70880Z5A", 0xFC2748FFu },
+    { "K4F83CF3C4620E1060000000080Z40", 0x7D19C3EFu },
+    { "K4F83CF3C4620E106607FF70880Z40", 0xD8E16143u },
+    { "K4F83CF3C4620E106607FF70880Z5A", 0xD130F51Fu },
     { "K52850F323C2161080000000080Z5C", 0xCA31A013u },
     { "K52850F323C216108607FF70880Z5C", 0x52F1F4F3u },
     { "K52850F323C216108607FF70880Z5A", 0xAF4D3F07u },
@@ -1256,28 +1256,30 @@ int run_mapgen_maker_style_same_map(void) {
 }
 
 /*---------------------------------------------------------
- * Chew Toy: bases out of range of the pills, pills away from the rim
+ * Chew Toy and Deathhand: bases out of range of the pills, pills away
+ * from the rim
  *
- * In the real Chew Toy maps, some bases on the track are out of range
- * of every pill at the start, and the pills stand in the middle of the
- * floor, not by the forest rim. A pill fires at 8.5 tiles, so a base
- * is out of range when every pill is at least sqrt(73) tiles away. A
- * pill is "in the rim" when it is at 0.7 or more of the land radius
- * from the middle of the land.
+ * In the real Chew Toy and DH- maps, some bases at the start are out
+ * of range of every pill, and the pills stand in the middle of the
+ * floor, not by the rim. A pill fires at 8.5 tiles, so a base is out
+ * of range when every pill is at least sqrt(73) tiles away. A pill is
+ * "in the rim" when it is at 0.7 or more of the land radius from the
+ * middle of the land. The rim wall and middle levers are set on some
+ * runs; a preset that does not use them reads them as from seed.
  *---------------------------------------------------------*/
 
-int run_mapgen_maker_chew_toy_safe_bases(void) {
+/* sizes: 0 is the preset's own size. */
+static int checkSafeBases(const char *key, const int *sizes, size_t nSizes) {
     GenOut g;
-    int chew = mapGenPresetFromKey("chew-toy"), runs = 0, noSafe = 0, rimMaps = 0;
-    static const int sizes[] = { 0, 48, 90, 160 };   /* 0: the preset's own size */
-    UT_ASSERT(chew >= 0);
+    int preset = mapGenPresetFromKey(key), runs = 0, noSafe = 0, rimMaps = 0;
+    UT_ASSERT(preset >= 0);
     UT_ASSERT(genAlloc(&g));
-    for (size_t s = 0; s < sizeof(sizes) / sizeof(sizes[0]); s++) {
+    for (size_t s = 0; s < nSizes; s++) {
         for (int lever = 0; lever < 3; lever++) {
             for (uint32_t seed = 1; seed <= 60; seed++) {
                 MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_MAKER);
                 int safe = 0, rim = 0, x1 = 256, y1 = 256, x2 = -1, y2 = -1;
-                mapGenApplyPreset(chew, &cfg);
+                mapGenApplyPreset(preset, &cfg);
                 setRegion(&cfg);
                 if (sizes[s]) cfg.size = sizes[s];
                 cfg.seed = seed * 7919u + 3u;
@@ -1318,21 +1320,33 @@ int run_mapgen_maker_chew_toy_safe_bases(void) {
                 }
                 if (safe == 0) {
                     noSafe++;
-                    printf("  size %d lever set %d seed %u: no base is out of range of the pills\n",
-                           sizes[s], lever, cfg.seed);
+                    printf("  %s size %d lever set %d seed %u: no base is out of range of the pills\n",
+                           key, sizes[s], lever, cfg.seed);
                 }
                 if (rim * 4 > g.pb->numPills) {
                     rimMaps++;
-                    printf("  size %d lever set %d seed %u: %d of %d pills are in the rim\n",
-                           sizes[s], lever, cfg.seed, rim, g.pb->numPills);
+                    printf("  %s size %d lever set %d seed %u: %d of %d pills are in the rim\n",
+                           key, sizes[s], lever, cfg.seed, rim, g.pb->numPills);
                 }
             }
         }
     }
     genFree(&g);
-    UT_ASSERT_MSG(noSafe == 0, "%d of %d Chew Toy maps have no base out of range of the pills",
-                  noSafe, runs);
-    UT_ASSERT_MSG(rimMaps == 0, "%d of %d Chew Toy maps have more than a quarter of the pills in the rim",
-                  rimMaps, runs);
+    UT_ASSERT_MSG(noSafe == 0, "%d of %d %s maps have no base out of range of the pills",
+                  noSafe, runs, key);
+    UT_ASSERT_MSG(rimMaps == 0, "%d of %d %s maps have more than a quarter of the pills in the rim",
+                  rimMaps, runs, key);
     return 0;
+}
+
+int run_mapgen_maker_chew_toy_safe_bases(void) {
+    static const int sizes[] = { 0, 48, 90, 160 };
+    return checkSafeBases("chew-toy", sizes, sizeof(sizes) / sizeof(sizes[0]));
+}
+
+/* Deathhand below size 56 has too little floor for the pills to stay
+ * out of range of a group of bases, so it is not checked there. */
+int run_mapgen_maker_deathhand_safe_bases(void) {
+    static const int sizes[] = { 0, 56, 90, 160 };
+    return checkSafeBases("deathhand", sizes, sizeof(sizes) / sizeof(sizes[0]));
 }

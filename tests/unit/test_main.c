@@ -1329,6 +1329,7 @@ static const UnitTestEntry s_tests[] = {
     { "mapgen_maker_style_seed_roundtrip",       run_mapgen_maker_style_seed_roundtrip       },
     { "mapgen_maker_style_same_map",             run_mapgen_maker_style_same_map             },
     { "mapgen_maker_chew_toy_safe_bases",        run_mapgen_maker_chew_toy_safe_bases        },
+    { "mapgen_maker_deathhand_safe_bases",       run_mapgen_maker_deathhand_safe_bases       },
     { "dialog_quit",                             run_dialog_quit                             },
     { "bot_init_arg_difficulty_token",           run_bot_init_arg_difficulty_token           },
     { "bot_init_arg_mode_tokens",                run_bot_init_arg_mode_tokens                },

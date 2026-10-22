@@ -6488,6 +6488,7 @@ set(_unit_test_names
     mapgen_maker_style_seed_roundtrip
     mapgen_maker_style_same_map
     mapgen_maker_chew_toy_safe_bases
+    mapgen_maker_deathhand_safe_bases
     dialog_quit
     screencalc_river_road_counts_as_water
     screencalc_river_arms_of_road_centred_cross

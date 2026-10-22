@@ -2766,6 +2766,7 @@ int run_mapgen_maker_style_levers(void);
 int run_mapgen_maker_style_seed_roundtrip(void);
 int run_mapgen_maker_style_same_map(void);
 int run_mapgen_maker_chew_toy_safe_bases(void);
+int run_mapgen_maker_deathhand_safe_bases(void);
 
 /* What a quit inside a dialog means (test_dialog_quit.c): Cmd+Q, Alt+F4 and
  * the close box end the application; the close request the gamepad's B
