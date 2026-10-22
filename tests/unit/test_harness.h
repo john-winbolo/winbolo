@@ -1441,6 +1441,18 @@ int run_lv_event_list_pinned(void);
  * key in both directions, ties and no sort in the server's order. */
 int run_wbn_browser_sort(void);
 
+/* Recap clip GIF rules (test_clip_gif_core.c): the length field and the seek
+ * bar marker agree and are clamped, the gallery metadata file reads back and
+ * rejects bad text, the gallery scan lists newest first, long lines are cut
+ * on a whole UTF-8 character, and the preview decode keeps to its memory
+ * limit. */
+int run_clip_gif_len_sync(void);
+int run_clip_gif_meta_roundtrip(void);
+int run_clip_gif_meta_bad(void);
+int run_clip_gif_gallery_scan(void);
+int run_clip_gif_text_fill(void);
+int run_clip_gif_preview_cap(void);
+
 /* Log viewer snapshot index (test_lv_snapshot_index.c): lookups by time and
  * an index the size of a ten-day log. */
 int run_lv_snapshot_index_lookup(void);
@@ -2194,7 +2206,7 @@ int run_lgm_quit_drops_carried_pill(void);
  * of a seat that was not on the field. */
 int run_lgm_unfield_drops_carried_pill(void);
 
-/* Where a builder starts when he is sent out (test_lgm_start_offset.c): 64
+/* Where a builder starts when he is sent out (test_lgm_start_offset.c): 16
  * world units from the tank's centre towards the square he was sent to,
  * worked out in whole numbers, and on the tank's centre when that square's
  * centre is no further off than that. */
@@ -2289,7 +2301,7 @@ int run_sim_rules_pill_massage_follows(void);
 int run_sim_rules_pill_aim_mac(void);
 int run_sim_rules_tank_collision_mac(void);
 int run_sim_rules_tank_deep_sea_safe(void);
-int run_sim_rules_man_bless_tile_terrain_speed(void);
+int run_lgm_build_square_terrain_speed(void);
 /* pill_shell_cap and pill_max_shells_at_tank through pillsUpdate
  * (test_pill_shell_cap.c). */
 int run_pill_shell_cap_off_is_no_limit(void);

@@ -2602,7 +2602,6 @@ STR_RULE_DESC_pill_base_defend_shape=Como pill_base_defend_range é medido. 0 é
 STR_RULE_DESC_tank_slide_armour_bonus=Passo de empurrão extra com blindagem zero, somado a tank_slide_step na proporção da blindagem que faltava antes do impacto. Só é lido enquanto tank_slide_mac está ligado.
 STR_RULE_DESC_tank_slide_mac=Se um impacto de projétil empurra um tanque como no Mac Bolo. Ligado, o empurrão cresce conforme a blindagem cai, em tank_slide_armour_bonus, e tank_slide_step e tank_bump_decay_shift são lidos a cada 40 ms, num deslizamento que anda a cada tick. Desligado é o empurrão do WinBolo, igual com qualquer blindagem.
 STR_RULE_DESC_tank_deep_sea_safe=Se um tanque sem barco pode dirigir em mar profundo sem afundar. Desligado é o jogo clássico: o mar profundo afunda um tanque sem barco. Um tanque que está no mar profundo sem barco quando isso volta a ser desligado afunda no tick seguinte.
-STR_RULE_DESC_man_bless_tile_terrain_speed=Se o construtor atravessa a casa em que vai construir na velocidade do terreno dela, como no Mac Bolo. Desligado é a caminhada do WinBolo: ele anda até o centro dessa casa na velocidade da base, seja qual for o terreno. Uma casa sem velocidade de caminhada, como um rio, um muro ou um bunker, mantém a velocidade da base. A volta ao tanque não muda.
 STR_RULE_DESC_pill_aim_iterations=Quanto esforço um bunker faz para prever um alvo em movimento.
 STR_RULE_DESC_pill_massage_range=A que distância um tanque precisa estar para que um bunker aponte com a previsão linear original em vez do solucionador, que erra um tanque que gira em torno dele. Zero, a tabela clássica, é um bunker que sempre prevê corretamente seu alvo; 384 é uma célula e meia, a distância usada pela antiga chave definida na compilação.
 STR_RULE_DESC_pill_massage_cosine=Com que exatidão um tanque precisa estar dirigindo em direção a um bunker próximo para ainda assim ser bem visado, expresso como o cosseno do ângulo entre sua direção e a linha até o bunker. Um visa de forma imprecisa qualquer tanque dentro de pill_massage_range, zero não visa nenhum deles. Não faz nada enquanto essa regra for zero.
@@ -2876,3 +2875,19 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=O mapa preenche a tela, com os painéis de s
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=Este aparelho está usando dados móveis. Uma partida pela Internet\nhospedada com dados móveis provavelmente não vai funcionar: as redes\nmóveis raramente deixam outros jogadores alcançarem o aparelho. No Wi-Fi\na chance é muito maior.\n\nHospedar mesmo assim?
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Seus GIFs
+STR_CLIPGIF_GALLERY_EMPTY=Nenhum GIF ainda. Crie um com o botão GIF abaixo do replay ou com o botão GIF de um clipe.
+STR_CLIPGIF_COPY=Copiar para a área de transferência
+STR_CLIPGIF_SAVE=Salvar no disco
+STR_CLIPGIF_COPIED=Copiado.
+STR_CLIPGIF_COPY_FAILED=Não foi possível copiar o GIF.
+STR_CLIPGIF_OPEN_FAILED=Não foi possível abrir este GIF.
+STR_CLIPGIF_MAP_FMT=Mapa: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Jogadores: {string1}
+STR_CLIPGIF_NO_DETAILS=Nenhum detalhe foi salvo com este GIF.
+STR_CLIPGIF_LENGTH_TIP=Duração do GIF em segundos, a partir do cursor de reprodução.\nArraste o marcador no fim da parte clara da linha do tempo para mudá-la também.
+STR_CLIPGIF_LOADING=Abrindo o GIF...
+STR_CLIPGIF_TOO_LARGE=Este GIF é grande demais para ser mostrado aqui. Você ainda pode copiá-lo ou salvá-lo.
+STR_CLIPGIF_FILTER_NAME=Imagens GIF

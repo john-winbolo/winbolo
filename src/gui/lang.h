@@ -3101,8 +3101,7 @@
  * The pill shell cap pair, pill_base_defend_shape and then the Mac Bolo
  * shell push pair came after all of those and took the next free numbers,
  * at the end of the file, and tank_deep_sea_safe took the next free one
- * after those, and man_bless_tile_terrain_speed the next free one after
- * that. The
+ * after those. The
  * order of the block is SIM_RULE_LIST's throughout, which is the order that
  * matters, and a hole in the numbers costs nothing: langTable is searched by
  * id rather than indexed by it. */
@@ -3261,7 +3260,6 @@
 #define STR_RULE_DESC_pill_aim_mac               2711
 #define STR_RULE_DESC_tank_collision_mac         2712
 #define STR_RULE_DESC_tank_deep_sea_safe         2760
-#define STR_RULE_DESC_man_bless_tile_terrain_speed 2762
 
 /* Rule range wording */
 
@@ -3541,89 +3539,105 @@
 /* Asked before an Internet game is hosted on mobile data (Yes / No) */
 #define STR_GAMEFRONTERR_HOST_MOBILE_DATA        2942
 
+/* The recap's GIF gallery, and the GIF length beside the replay's GIF button */
+#define STR_CLIPGIF_GALLERY_TITLE                2943
+#define STR_CLIPGIF_GALLERY_EMPTY                2944
+#define STR_CLIPGIF_COPY                         2945
+#define STR_CLIPGIF_SAVE                         2946
+#define STR_CLIPGIF_COPIED                       2947
+#define STR_CLIPGIF_COPY_FAILED                  2948
+#define STR_CLIPGIF_OPEN_FAILED                  2949
+#define STR_CLIPGIF_MAP_FMT                      2950
+#define STR_CLIPGIF_PLAYERS_FMT                  2951
+#define STR_CLIPGIF_NO_DETAILS                   2952
+#define STR_CLIPGIF_LENGTH_TIP                   2953
+#define STR_CLIPGIF_LOADING                      2954
+#define STR_CLIPGIF_TOO_LARGE                    2955
+#define STR_CLIPGIF_FILTER_NAME                  2956
+
 /* Map Maker random maps: the generator type, the Size control, the
  * presets named after classic Bolo map makers, and their controls */
-#define STR_MAPGEN_TYPE_MAKER                    2956
-#define STR_MAPGEN_SIZE                          2957
-#define STR_MAPGEN_SIZE_FULL                     2958
-#define STR_MAPGEN_SIZE_TIP                      2959
-#define STR_MAPGEN_PRESET                        2960
-#define STR_MAPGEN_PRESET_TIP                    2961
-#define STR_MAPGEN_OUTLINE                       2962
-#define STR_MAPGEN_OUTLINE_BOX                   2963
-#define STR_MAPGEN_OUTLINE_OCTAGON               2964
-#define STR_MAPGEN_OUTLINE_ROUND                 2965
-#define STR_MAPGEN_OUTLINE_DIAMOND               2966
-#define STR_MAPGEN_OUTLINE_CROSS                 2967
-#define STR_MAPGEN_OUTLINE_CLOVER                2968
-#define STR_MAPGEN_OUTLINE_ISLAND                2969
-#define STR_MAPGEN_OUTLINE_VARIED                2970
-#define STR_MAPGEN_MSYM_NONE                     2971
-#define STR_MAPGEN_MSYM_MIRROR                   2972
-#define STR_MAPGEN_MSYM_ROT2                     2973
-#define STR_MAPGEN_MSYM_MIRROR4                  2974
-#define STR_MAPGEN_MSYM_ROT4                     2975
-#define STR_MAPGEN_WATER_PCT                     2976
-#define STR_MAPGEN_ROAD_PCT                      2977
-#define STR_MAPGEN_ISLANDS                       2978
-#define STR_MAPGEN_DETAIL                        2979
-#define STR_MAPGEN_PRESET_BERSERKIR              2980
-#define STR_MAPGEN_PRESET_SLUGGO_TOURNAMENT      2981
-#define STR_MAPGEN_PRESET_SLUGDEATH              2982
-#define STR_MAPGEN_PRESET_SLUGFEST               2983
-#define STR_MAPGEN_PRESET_SLUGGO_ADVENTUROUS     2984
-#define STR_MAPGEN_PRESET_SLUGGO_SYMMETRIC       2985
-#define STR_MAPGEN_PRESET_STOOGEFEST             2986
-#define STR_MAPGEN_PRESET_BLACK_LIGHTNING        2987
-#define STR_MAPGEN_PRESET_BL_ISLANDS             2988
-#define STR_MAPGEN_PRESET_DEATHHAND              2989
-#define STR_MAPGEN_PRESET_MEGAWATT_TC            2990
-#define STR_MAPGEN_PRESET_MEGAWATT_ISLANDS       2991
-#define STR_MAPGEN_PRESET_MOSH_PIT               2992
-#define STR_MAPGEN_PRESET_PALPATINE              2993
-#define STR_MAPGEN_PRESET_CHEW_TOY               2994
-#define STR_MAPGEN_LOCK_ALL                      2995
-#define STR_MAPGEN_UNLOCK_ALL                    2996
-#define STR_MAPGEN_RANDOMIZE_TIP                 2997
-#define STR_MAPGEN_PANEL_TITLE                   2998
-#define STR_MAPGEN_STYLE_TITLE                   2999
-#define STR_MAPGEN_STYLE_RANDOMIZE               3000
-#define STR_MAPGEN_STYLE_RANDOMIZE_TIP           3001
-#define STR_MAPGEN_STYLE_NONE                    3002
-#define STR_MAPGEN_STYLE_FROM_SEED               3003
-#define STR_MAPGEN_STYLE_ROADS                   3004
-#define STR_MAPGEN_ROADS_AXES                    3005
-#define STR_MAPGEN_ROADS_DIAG                    3006
-#define STR_MAPGEN_ROADS_AXES_DIAG               3007
-#define STR_MAPGEN_ROADS_AXES_RING               3008
-#define STR_MAPGEN_ROADS_DIAG_RING               3009
-#define STR_MAPGEN_ROADS_RING                    3010
-#define STR_MAPGEN_STYLE_SHAPE                   3011
-#define STR_MAPGEN_STYLE_CUT                     3012
-#define STR_MAPGEN_STYLE_CORE                    3013
-#define STR_MAPGEN_STYLE_RIM                     3014
-#define STR_MAPGEN_RIM_FOREST                    3015
-#define STR_MAPGEN_RIM_GRASS                     3016
-#define STR_MAPGEN_STYLE_YARD                    3017
-#define STR_MAPGEN_YARD_NONE                     3018
-#define STR_MAPGEN_YARD_BUILDING                 3019
-#define STR_MAPGEN_YARD_FOREST                   3020
-#define STR_MAPGEN_STYLE_ROADS_TIP               3021
-#define STR_MAPGEN_STYLE_SHAPE_TIP               3022
-#define STR_MAPGEN_STYLE_CUT_TIP                 3023
-#define STR_MAPGEN_STYLE_CORE_TIP                3024
-#define STR_MAPGEN_STYLE_RIM_TIP                 3025
-#define STR_MAPGEN_STYLE_YARD_TIP                3026
-#define STR_MAPGEN_STYLE_WALLS                   3027
-#define STR_MAPGEN_WALLS_NONE                    3028
-#define STR_MAPGEN_WALLS_BUILDING                3029
-#define STR_MAPGEN_STYLE_MIDDLE                  3030
-#define STR_MAPGEN_MIDDLE_OPEN                   3031
-#define STR_MAPGEN_MIDDLE_PIECES                 3032
-#define STR_MAPGEN_MIDDLE_CLUMP                  3033
-#define STR_MAPGEN_MIDDLE_BOTH                   3034
-#define STR_MAPGEN_STYLE_WALLS_TIP               3035
-#define STR_MAPGEN_STYLE_MIDDLE_TIP              3036
+#define STR_MAPGEN_TYPE_MAKER                    2957
+#define STR_MAPGEN_SIZE                          2958
+#define STR_MAPGEN_SIZE_FULL                     2959
+#define STR_MAPGEN_SIZE_TIP                      2960
+#define STR_MAPGEN_PRESET                        2961
+#define STR_MAPGEN_PRESET_TIP                    2962
+#define STR_MAPGEN_OUTLINE                       2963
+#define STR_MAPGEN_OUTLINE_BOX                   2964
+#define STR_MAPGEN_OUTLINE_OCTAGON               2965
+#define STR_MAPGEN_OUTLINE_ROUND                 2966
+#define STR_MAPGEN_OUTLINE_DIAMOND               2967
+#define STR_MAPGEN_OUTLINE_CROSS                 2968
+#define STR_MAPGEN_OUTLINE_CLOVER                2969
+#define STR_MAPGEN_OUTLINE_ISLAND                2970
+#define STR_MAPGEN_OUTLINE_VARIED                2971
+#define STR_MAPGEN_MSYM_NONE                     2972
+#define STR_MAPGEN_MSYM_MIRROR                   2973
+#define STR_MAPGEN_MSYM_ROT2                     2974
+#define STR_MAPGEN_MSYM_MIRROR4                  2975
+#define STR_MAPGEN_MSYM_ROT4                     2976
+#define STR_MAPGEN_WATER_PCT                     2977
+#define STR_MAPGEN_ROAD_PCT                      2978
+#define STR_MAPGEN_ISLANDS                       2979
+#define STR_MAPGEN_DETAIL                        2980
+#define STR_MAPGEN_PRESET_BERSERKIR              2981
+#define STR_MAPGEN_PRESET_SLUGGO_TOURNAMENT      2982
+#define STR_MAPGEN_PRESET_SLUGDEATH              2983
+#define STR_MAPGEN_PRESET_SLUGFEST               2984
+#define STR_MAPGEN_PRESET_SLUGGO_ADVENTUROUS     2985
+#define STR_MAPGEN_PRESET_SLUGGO_SYMMETRIC       2986
+#define STR_MAPGEN_PRESET_STOOGEFEST             2987
+#define STR_MAPGEN_PRESET_BLACK_LIGHTNING        2988
+#define STR_MAPGEN_PRESET_BL_ISLANDS             2989
+#define STR_MAPGEN_PRESET_DEATHHAND              2990
+#define STR_MAPGEN_PRESET_MEGAWATT_TC            2991
+#define STR_MAPGEN_PRESET_MEGAWATT_ISLANDS       2992
+#define STR_MAPGEN_PRESET_MOSH_PIT               2993
+#define STR_MAPGEN_PRESET_PALPATINE              2994
+#define STR_MAPGEN_PRESET_CHEW_TOY               2995
+#define STR_MAPGEN_LOCK_ALL                      2996
+#define STR_MAPGEN_UNLOCK_ALL                    2997
+#define STR_MAPGEN_RANDOMIZE_TIP                 2998
+#define STR_MAPGEN_PANEL_TITLE                   2999
+#define STR_MAPGEN_STYLE_TITLE                   3000
+#define STR_MAPGEN_STYLE_RANDOMIZE               3001
+#define STR_MAPGEN_STYLE_RANDOMIZE_TIP           3002
+#define STR_MAPGEN_STYLE_NONE                    3003
+#define STR_MAPGEN_STYLE_FROM_SEED               3004
+#define STR_MAPGEN_STYLE_ROADS                   3005
+#define STR_MAPGEN_ROADS_AXES                    3006
+#define STR_MAPGEN_ROADS_DIAG                    3007
+#define STR_MAPGEN_ROADS_AXES_DIAG               3008
+#define STR_MAPGEN_ROADS_AXES_RING               3009
+#define STR_MAPGEN_ROADS_DIAG_RING               3010
+#define STR_MAPGEN_ROADS_RING                    3011
+#define STR_MAPGEN_STYLE_SHAPE                   3012
+#define STR_MAPGEN_STYLE_CUT                     3013
+#define STR_MAPGEN_STYLE_CORE                    3014
+#define STR_MAPGEN_STYLE_RIM                     3015
+#define STR_MAPGEN_RIM_FOREST                    3016
+#define STR_MAPGEN_RIM_GRASS                     3017
+#define STR_MAPGEN_STYLE_YARD                    3018
+#define STR_MAPGEN_YARD_NONE                     3019
+#define STR_MAPGEN_YARD_BUILDING                 3020
+#define STR_MAPGEN_YARD_FOREST                   3021
+#define STR_MAPGEN_STYLE_ROADS_TIP               3022
+#define STR_MAPGEN_STYLE_SHAPE_TIP               3023
+#define STR_MAPGEN_STYLE_CUT_TIP                 3024
+#define STR_MAPGEN_STYLE_CORE_TIP                3025
+#define STR_MAPGEN_STYLE_RIM_TIP                 3026
+#define STR_MAPGEN_STYLE_YARD_TIP                3027
+#define STR_MAPGEN_STYLE_WALLS                   3028
+#define STR_MAPGEN_WALLS_NONE                    3029
+#define STR_MAPGEN_WALLS_BUILDING                3030
+#define STR_MAPGEN_STYLE_MIDDLE                  3031
+#define STR_MAPGEN_MIDDLE_OPEN                   3032
+#define STR_MAPGEN_MIDDLE_PIECES                 3033
+#define STR_MAPGEN_MIDDLE_CLUMP                  3034
+#define STR_MAPGEN_MIDDLE_BOTH                   3035
+#define STR_MAPGEN_STYLE_WALLS_TIP               3036
+#define STR_MAPGEN_STYLE_MIDDLE_TIP              3037
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

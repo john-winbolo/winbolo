@@ -70,8 +70,22 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_BRAINSETTINGS_NONE", STR_BRAINSETTINGS_NONE },
     { "STR_BRAINSETTINGS_TITLE", STR_BRAINSETTINGS_TITLE },
     { "STR_CANCEL", STR_CANCEL },
+    { "STR_CLIPGIF_COPIED", STR_CLIPGIF_COPIED },
+    { "STR_CLIPGIF_COPY", STR_CLIPGIF_COPY },
+    { "STR_CLIPGIF_COPY_FAILED", STR_CLIPGIF_COPY_FAILED },
+    { "STR_CLIPGIF_FILTER_NAME", STR_CLIPGIF_FILTER_NAME },
+    { "STR_CLIPGIF_GALLERY_EMPTY", STR_CLIPGIF_GALLERY_EMPTY },
+    { "STR_CLIPGIF_GALLERY_TITLE", STR_CLIPGIF_GALLERY_TITLE },
+    { "STR_CLIPGIF_LENGTH_TIP", STR_CLIPGIF_LENGTH_TIP },
+    { "STR_CLIPGIF_LOADING", STR_CLIPGIF_LOADING },
+    { "STR_CLIPGIF_MAP_FMT", STR_CLIPGIF_MAP_FMT },
+    { "STR_CLIPGIF_NO_DETAILS", STR_CLIPGIF_NO_DETAILS },
+    { "STR_CLIPGIF_OPEN_FAILED", STR_CLIPGIF_OPEN_FAILED },
+    { "STR_CLIPGIF_PLAYERS_FMT", STR_CLIPGIF_PLAYERS_FMT },
+    { "STR_CLIPGIF_SAVE", STR_CLIPGIF_SAVE },
     { "STR_CLIPGIF_SAVED_IOS", STR_CLIPGIF_SAVED_IOS },
     { "STR_CLIPGIF_SAVE_FAILED_IOS", STR_CLIPGIF_SAVE_FAILED_IOS },
+    { "STR_CLIPGIF_TOO_LARGE", STR_CLIPGIF_TOO_LARGE },
     { "STR_CLOSE", STR_CLOSE },
     { "STR_COMPASS_C", STR_COMPASS_C },
     { "STR_COMPASS_E", STR_COMPASS_E },
@@ -2377,7 +2391,6 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_RULE_DESC_lgm_pill_drop_search", STR_RULE_DESC_lgm_pill_drop_search },
     { "STR_RULE_DESC_lgm_pill_repair_load", STR_RULE_DESC_lgm_pill_repair_load },
     { "STR_RULE_DESC_lgm_return_tolerance", STR_RULE_DESC_lgm_return_tolerance },
-    { "STR_RULE_DESC_man_bless_tile_terrain_speed", STR_RULE_DESC_man_bless_tile_terrain_speed },
     { "STR_RULE_DESC_man_speed_boat", STR_RULE_DESC_man_speed_boat },
     { "STR_RULE_DESC_man_speed_crater", STR_RULE_DESC_man_speed_crater },
     { "STR_RULE_DESC_man_speed_deep_sea", STR_RULE_DESC_man_speed_deep_sea },
@@ -2663,4 +2676,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2650
+#define K_LANG_NAME_TABLE_SIZE  2663

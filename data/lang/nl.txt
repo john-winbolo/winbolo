@@ -2602,7 +2602,6 @@ STR_RULE_DESC_pill_base_defend_shape=Hoe pill_base_defend_range wordt gemeten. 0
 STR_RULE_DESC_tank_slide_armour_bonus=Extra duwstap bij nul pantser, opgeteld bij tank_slide_step naar verhouding van het pantser dat vóór de treffer ontbrak. Wordt alleen gelezen als tank_slide_mac aan staat.
 STR_RULE_DESC_tank_slide_mac=Of een granaattreffer een tank op de Mac Bolo-manier wegduwt. Aan: de duw groeit naarmate het pantser afneemt, met tank_slide_armour_bonus, en tank_slide_step en tank_bump_decay_shift gelden per 40 ms, in een glijpartij die elke tick beweegt. Uit is de WinBolo-duw, gelijk bij elk pantser.
 STR_RULE_DESC_tank_deep_sea_safe=Of een tank zonder boot over open zee kan rijden zonder te zinken. Uit is het klassieke spel: open zee laat een tank zonder boot zinken. Een tank die zonder boot op open zee is wanneer dit weer op Uit gaat, zinkt op de volgende tick.
-STR_RULE_DESC_man_bless_tile_terrain_speed=Of de bouwer het vak waarop hij gaat bouwen oversteekt met de snelheid van het terrein daar, zoals in Mac Bolo. Uit is de WinBolo-loop: hij loopt met de basissnelheid naar het midden van dat vak, welk terrein het ook is. Een vak zonder loopsnelheid, zoals een rivier, een muur of een bunker, houdt de basissnelheid. De terugweg naar de tank verandert niet.
 STR_RULE_DESC_pill_aim_iterations=Hoe hard een bunker werkt om een bewegend doel voor te richten.
 STR_RULE_DESC_pill_massage_range=Hoe dichtbij een tank moet zijn zodat een bunker richt met de oorspronkelijke voorspelling in plaats van de oplosser, die een tank mist die om hem heen cirkelt. Nul, de klassieke tabel, is een bunker die zijn doel altijd goed voorricht; 384 is anderhalve vak, de afstand die de oude compileertijdschakelaar gebruikte.
 STR_RULE_DESC_pill_massage_cosine=Hoe recht op een dichtbije bunker af een tank moet rijden om toch goed geraakt te worden, als de cosinus van de hoek tussen zijn koers en de lijn naar de bunker. Bij één wordt er slordig gericht op elke tank binnen pill_massage_range, bij nul op geen ervan. Doet niets zolang die regel nul is.
@@ -2876,3 +2875,19 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=De kaart vult het scherm, met de status-, bo
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=Dit apparaat gebruikt mobiele data. Een internetspel hosten via mobiele\ndata werkt waarschijnlijk niet: mobiele netwerken laten andere spelers\nzelden bij het apparaat komen. Met wifi is de kans veel groter.\n\nToch hosten?
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Jouw GIF's
+STR_CLIPGIF_GALLERY_EMPTY=Nog geen GIF's. Maak er een met de GIF-knop onder de herhaling, of de GIF-knop bij een clip.
+STR_CLIPGIF_COPY=Naar klembord kopiëren
+STR_CLIPGIF_SAVE=Op schijf opslaan
+STR_CLIPGIF_COPIED=Gekopieerd.
+STR_CLIPGIF_COPY_FAILED=De GIF kon niet worden gekopieerd.
+STR_CLIPGIF_OPEN_FAILED=Deze GIF kon niet worden geopend.
+STR_CLIPGIF_MAP_FMT=Kaart: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Spelers: {string1}
+STR_CLIPGIF_NO_DETAILS=Er zijn geen details met deze GIF opgeslagen.
+STR_CLIPGIF_LENGTH_TIP=GIF-lengte in seconden, vanaf de afspeelkop.\nSleep de markering aan het eind van het lichte deel van de tijdlijn om die ook te wijzigen.
+STR_CLIPGIF_LOADING=GIF wordt geopend...
+STR_CLIPGIF_TOO_LARGE=Deze GIF is te groot om hier te tonen. Je kunt hem nog steeds kopiëren of opslaan.
+STR_CLIPGIF_FILTER_NAME=GIF-afbeeldingen

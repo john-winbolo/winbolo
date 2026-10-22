@@ -729,6 +729,7 @@ else()
         src/gui/sdl3/dialogs/lobby/lobby_rating.cpp
         src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
         src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_clip_gif_gallery.cpp
         src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
         src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
         src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
@@ -1559,7 +1560,10 @@ target_include_directories(WinBoloIOS PRIVATE src/third_party/ImGuiColorTextEdit
 # dialog.
 target_sources(WinBoloIOS PRIVATE
     src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
-    src/third_party/msf_gif/msf_gif_impl.c)
+    src/third_party/msf_gif/msf_gif_impl.c
+    # The GIF length rules the reel's length field and marker use. The GIF
+    # gallery is not in the iOS build (BOLO_CLIP_GIF_GALLERY).
+    src/gui/sdl3/dialogs/clip_gif_core.c)
 bolo_grant_internal_source_access(WinBoloIOS
     src/mapeditor/mapeditor.c
     src/mapeditor/mapeditor_export.c
@@ -1892,9 +1896,15 @@ add_subdirectory(brains)
 # are linked together.
 if(MSVC OR APPLE)
     set(SERVER_LINK_GROUP server_static server_sim_static server_round_log_static)
+    set(SERVER_TEST_LINK_GROUP server_static_test server_sim_static server_round_log_static)
 else()
     set(SERVER_LINK_GROUP "$<LINK_GROUP:RESCAN,server_static,server_sim_static,server_round_log_static>")
+    set(SERVER_TEST_LINK_GROUP "$<LINK_GROUP:RESCAN,server_static_test,server_sim_static,server_round_log_static>")
 endif()
+# SERVER_TEST_LINK_GROUP is the same group with the test build of the server
+# library (src/server/CMakeLists.txt): the one compiled with
+# WB_ENABLE_NETIMPAIR=1, which WinBoloUnitTests links so its loopback harness
+# can set the server's clock and count datagrams. Nothing shipped links it.
 
 # ---------------------------------------------------------------------------
 # winbolonet_core / winbolonet_server / winbolonet_client — three static
@@ -1971,7 +1981,7 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
     src/client_frontend/client_frontend_sp.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif_gallery.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/dialogs/wbn_browser_sort.c
     src/gui/sdl3/map_preview_popup.cpp
@@ -2036,6 +2046,10 @@ set(CLIENT_SOURCES
     # GIF encoder for the recap's clip export. Client only — no other target
     # exports clips, and the LogViewer already omits stb_image_write_impl.c.
     src/third_party/msf_gif/msf_gif_impl.c
+    # The clip GIF's length rules and the GIF gallery's metadata files
+    # (tested by test_clip_gif_core.c), and the gallery's clipboard copy.
+    src/gui/sdl3/dialogs/clip_gif_core.c
+    src/gui/sdl3/dialogs/clip_gif_clipboard.c
     src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -4940,6 +4954,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lv_event_list.c
     # WinBolo.net log browser table sort rule (test_wbn_browser_sort.c).
     tests/unit/test_wbn_browser_sort.c
+    # Recap clip GIF length and timeline sync, and the GIF gallery's metadata
+    # files and newest-first scan, the gallery text fill and the capped preview
+    # decode (test_clip_gif_core.c).
+    tests/unit/test_clip_gif_core.c
     # Replay camera range: the load's 127,127 default, a highlight jump, a
     # grid that grew and the raw setter all keep the view's far edge at 255
     # on a grid wider than half the map (test_lv_camera.c).
@@ -5152,6 +5170,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/logviewer/lv_event_list.c
     # The WinBolo.net log browser's sort rule, for test_wbn_browser_sort.c.
     src/gui/sdl3/dialogs/wbn_browser_sort.c
+    # The recap clip GIF rules, for test_clip_gif_core.c.
+    src/gui/sdl3/dialogs/clip_gif_core.c
 )
 
 if(WB_NETDEBUG)
@@ -5185,10 +5205,10 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
     # Activate the network-impairment hooks for this target's compilation of
     # transport_udp_client.c (compiled per-target above), so the loopback
-    # tests can drive a seeded lossy path via WB_NETIMPAIR. server_static
-    # owns transport_udp_server.c and is NOT recompiled here, so every
-    # shipping target keeps WB_ENABLE_NETIMPAIR=0; client-endpoint impairment
-    # already covers both directions (impairIn + impairOut).
+    # tests can drive a seeded lossy path via WB_NETIMPAIR. The server side
+    # of the same flag comes from server_static_test, the test build of the
+    # server library this target links (SERVER_TEST_LINK_GROUP); every
+    # shipping target links server_static, which keeps WB_ENABLE_NETIMPAIR=0.
     WB_ENABLE_NETIMPAIR=1
     # Compile the WIRE_CORPUS_TAP calls into this target's per-target
     # transport_udp_common.c (shipping builds leave them out), and point the
@@ -5277,7 +5297,7 @@ target_include_directories(WinBoloUnitTests PRIVATE
 bolo_apply_include_rules(WinBoloUnitTests unittests)
 
 target_link_libraries(WinBoloUnitTests PRIVATE
-    bolo_static scenario_static ${SERVER_LINK_GROUP} bot_brains_static
+    bolo_static scenario_static ${SERVER_TEST_LINK_GROUP} bot_brains_static
     SDL3::SDL3 minizip lua_static cjson utf8proc
     # tileloader.c reads SVG through nanosvg and PNG through stb_image.
     nanosvg stb_image
@@ -5815,6 +5835,12 @@ set(_unit_test_names
     lv_event_list_replay
     lv_event_list_pinned
     wbn_browser_sort
+    clip_gif_len_sync
+    clip_gif_meta_roundtrip
+    clip_gif_meta_bad
+    clip_gif_gallery_scan
+    clip_gif_text_fill
+    clip_gif_preview_cap
     lv_snapshot_index_lookup
     lv_snapshot_index_ten_days
     lv_load_walk_fixtures
@@ -6208,7 +6234,7 @@ set(_unit_test_names
     sim_rules_pill_aim_mac
     sim_rules_tank_collision_mac
     sim_rules_tank_deep_sea_safe
-    sim_rules_man_bless_tile_terrain_speed
+    lgm_build_square_terrain_speed
     pill_shell_cap_off_is_no_limit
     pill_shell_cap_retargets_next_nearest
     pill_shell_cap_holds_then_fires_when_freed
@@ -6282,8 +6308,11 @@ set(_unit_test_names
     loopback_join_loss
     # The builder walled in behind his own tank under pillbox fire. The
     # lagged case was the bug report written as a test: it died every run
-    # until pill shells stopped being rewound, and one run in three until he
-    # started 64 units out. The nolag case is its control.
+    # until pill shells stopped being rewound, and about one run in three
+    # when he started 16 units out, before the offset first went to 64. At
+    # 16 a hit can still kill him in his first 2 ticks out. The test now runs
+    # on a fixed clock, so its order lands at the same tick every run, outside
+    # that window. The nolag case is its control.
     lgm_wall_behind_tank_under_fire_lagged
     lgm_wall_behind_tank_under_fire_nolag
     loopback_password
