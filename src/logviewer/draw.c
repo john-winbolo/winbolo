@@ -58,6 +58,7 @@
 #include "../gui/sdl3/sprite_positions.h"
 #include "../gui/sdl3/tileloader.h"
 #include "../gui/sdl3/map_colours.h"   /* the zoomed-out ground colours */
+#include "lv_iso.h"                     /* the isometric picture's parts */
 #include "../gui/sdl3/gfx_settings.h"  /* the simplified view setting */
 #include "../gui/sdl3/map_markers.h"   /* the shapes a thing becomes when small */
 #include "../third_party/stb/stb_image.h"
@@ -148,6 +149,10 @@ static bool         s_pillNumbers = TRUE;
  * against the tanks with these (lv_drawTankAtPoint). */
 static SDL_FRect    s_blitSrc, s_blitDst;
 static bool         s_blitKnown = FALSE;
+/* Whether the last blit was the isometric picture: the overlays then place
+ * their marks by projecting the map position a target point names
+ * (lvDrawPlace) instead of by the blit's scale. */
+static bool         s_isoBlit = FALSE;
 
 /* Used for storing time */
 static uint32_t g_dwFrameTotal = 0;
@@ -511,15 +516,118 @@ static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst
  *
  * Set per blit, not once at creation: the target is recreated on resize
  * (lv_drawResizeTarget) and the correct mode depends on the current zoom. */
-static void lvDrawBlitTargetToWindow(void) {
-    LogViewerState *lv = lv_screenGetState();
+/* Where a point of the target lands on the window. tx, ty are target pixels:
+ * the classic target's, (square - view offset) * 16 plus the pixel; or, after
+ * the isometric picture, whole-map pixels with no view offset. Classic, it is
+ * the blit's scale from src to dst; isometric, the map position the point
+ * names is projected `height` game pixels above the ground. */
+static void lvDrawPlace(const SDL_FRect *src, const SDL_FRect *dst, float tx, float ty,
+                        float height, float *outX, float *outY) {
+    if (s_isoBlit) {
+        lv_isoMapToWindow(lv_isoParts(), dst->x, dst->y, (int)dst->w, (int)dst->h,
+                          tx / (float)TILE_SIZE_X, ty / (float)TILE_SIZE_Y, height,
+                          outX, outY);
+        return;
+    }
+    {
+        float scale = (src->w > 0.0f) ? dst->w / src->w : 1.0f;
+        *outX = dst->x + (tx - src->x) * scale;
+        *outY = dst->y + (ty - src->y) * scale;
+    }
+}
+
+/* The top left of a tilePx square whose middle is the point `height` game
+ * pixels above target point (tx + 8, ty + 8): what the bars, the mark and the
+ * builder marker take. Classic, this is the blit's place of (tx, ty); after
+ * the isometric picture it keeps the mark centred over the upright sprite. */
+static void lvDrawPlaceSquare(const SDL_FRect *src, const SDL_FRect *dst, float tx, float ty,
+                              float height, float tilePx, float *outX, float *outY) {
+    lvDrawPlace(src, dst, tx + (float)TILE_SIZE_X * 0.5f, ty + (float)TILE_SIZE_Y * 0.5f,
+                height, outX, outY);
+    *outX -= tilePx * 0.5f;
+    *outY -= tilePx * 0.5f;
+}
+
+/* The view offset the target's pixels are measured from: the classic view's,
+ * or none after the isometric picture, whose target pixels are the whole
+ * map's. */
+static void lvDrawTargetOffsets(BYTE *offX, BYTE *offY) {
+    if (s_isoBlit) {
+        *offX = 0;
+        *offY = 0;
+    } else {
+        lv_screenGetOffsets(offX, offY);
+    }
+}
+
+/* Where the world goes on the viewer's own window: under the menu bar and
+ * in from the left and top sidebars, as wide and high as the classic picture
+ * at this zoom (lvDrawBlitTargetToWindow). */
+static void lvDrawWindowDstRect(SDL_FRect *dstRect) {
     BYTE zoomFactor = lv_windowGetZoomFactor();
     float pxScale = lvDrawPixelScale();
-    /* The magnification actually applied to the framebuffer. The user picks
-     * g_zoomLevel against a window measured in points; the density folds in on
-     * top so the world keeps its physical size and gains pixels instead of
-     * being stretched by the compositor. */
     float blitZoom = g_zoomLevel * pxScale;
+
+    /* SDL expects client-area coordinates (0,0), not screen coordinates, and
+     * the menu bar offset leaves the top strip to ImGui — which renders its own
+     * geometry at the framebuffer scale, so that offset converts to pixels too.
+     * Floored after scaling: the origin has to be a whole pixel or every pixel
+     * of the world sits on a half-texel. The texture target stays at native
+     * (1x) tile resolution. */
+    dstRect->x = 0.0f;
+    dstRect->y = SDL_floorf(lvDrawMenuBarOffset() * pxScale);
+    if (!g_embedded) {
+        /* The standalone viewer's left and top sidebars push the map in from
+         * the window's corner; the right and bottom ones only bound it. Each
+         * offset is floored on its own so the map's corner is the pixel the
+         * sidebar's edge is drawn at. */
+        int dockL = 0, dockT = 0;
+        /* A sidebar whose unused part is clear takes nothing: the map goes
+         * under it. */
+        lv_imgui_dock_map_margins(&dockL, &dockT, NULL, NULL);
+        dstRect->x += SDL_floorf((float)dockL * pxScale);
+        dstRect->y += SDL_floorf((float)dockT * pxScale);
+    }
+    dstRect->w = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * blitZoom;
+    dstRect->h = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * blitZoom;
+}
+
+/* The isometric picture onto the window where the classic one goes, and the
+ * viewer's overlays over it with their anchors projected (lvDrawPlace). The
+ * src rect is sized so the overlays' scale, dst->w / src->w, is the camera's
+ * scale: a square's width on the window is then TILE_SIZE_X times it, as it
+ * is for the classic blit. */
+static void lvDrawBlitIsoToWindow(void) {
+    SDL_Texture *tex = (SDL_Texture *)lv_drawIsoTexture();
+    const LvIsoParts *parts = lv_isoParts();
+    SDL_FRect srcRect, dstRect;
+    float scale;
+
+    if (tex == NULL || parts == NULL) return;
+    lvDrawWindowDstRect(&dstRect);
+    scale = (parts->camScale > 0.0f) ? parts->camScale : 1.0f;
+    srcRect.x = 0.0f;
+    srcRect.y = 0.0f;
+    srcRect.w = dstRect.w / scale;
+    srcRect.h = dstRect.h / scale;
+
+    SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
+    SDL_RenderTexture(sdlRenderer, tex, NULL, &dstRect);
+    s_isoBlit   = TRUE;
+    s_blitKnown = FALSE;   /* lv_drawTankAtPoint reads the classic blit's places */
+    s_blitSrc = srcRect;
+    s_blitDst = dstRect;
+    lvDrawPillNumbersOverBlit(&srcRect, &dstRect);
+    lvDrawPingsOverBlit(&srcRect, &dstRect);
+    lvDrawTankMarkOverBlit(&srcRect, &dstRect);
+    lvDrawTankBarsOverBlit(&srcRect, &dstRect);
+    lvDrawBuilderStatusOverBlit(&srcRect, &dstRect);
+    lvDrawTankLabelsOverBlit(&srcRect, &dstRect);
+    lvDrawEventFlashOverBlit(&srcRect, &dstRect);
+}
+
+static void lvDrawBlitTargetToWindow(void) {
+    LogViewerState *lv = lv_screenGetState();
     SDL_FRect srcRect, dstRect;
 
     /* Sub-tile pan: the texture target is sized (sizeX+1, sizeY+1) tiles and
@@ -531,33 +639,16 @@ static void lvDrawBlitTargetToWindow(void) {
     srcRect.w = (float)(lv_screenGetSizeX() * TILE_SIZE_X);
     srcRect.h = (float)(lv_screenGetSizeY() * TILE_SIZE_Y);
 
-    /* SDL expects client-area coordinates (0,0), not screen coordinates, and
-     * the menu bar offset leaves the top strip to ImGui — which renders its own
-     * geometry at the framebuffer scale, so that offset converts to pixels too.
-     * Floored after scaling: the origin has to be a whole pixel or every pixel
-     * of the world sits on a half-texel. The texture target stays at native
-     * (1x) tile resolution. */
-    dstRect.x = 0.0f;
-    dstRect.y = SDL_floorf(lvDrawMenuBarOffset() * pxScale);
-    if (!g_embedded) {
-        /* The standalone viewer's left and top sidebars push the map in from
-         * the window's corner; the right and bottom ones only bound it. Each
-         * offset is floored on its own so the map's corner is the pixel the
-         * sidebar's edge is drawn at. */
-        int dockL = 0, dockT = 0;
-        /* A sidebar whose unused part is clear takes nothing: the map goes
-         * under it. */
-        lv_imgui_dock_map_margins(&dockL, &dockT, NULL, NULL);
-        dstRect.x += SDL_floorf((float)dockL * pxScale);
-        dstRect.y += SDL_floorf((float)dockT * pxScale);
-    }
-    dstRect.w = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * blitZoom;
-    dstRect.h = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * blitZoom;
+    lvDrawWindowDstRect(&dstRect);
+    s_isoBlit = FALSE;
+    {
+    float blitZoom = g_zoomLevel * lvDrawPixelScale();
 
     SDL_SetTextureScaleMode(textureTarget,
                             (blitZoom >= 1.0f) ? SDL_SCALEMODE_NEAREST
                                                : SDL_SCALEMODE_LINEAR);
     SDL_RenderTexture(sdlRenderer, textureTarget, &srcRect, &dstRect);
+    }
     s_blitKnown = !lv->gameView;
     if (!lv->gameView) {
         s_blitSrc = srcRect;
@@ -1051,6 +1142,7 @@ static void lvFlushPingNames(void);
 void lv_drawCleanup(void) {
     /* First, while the renderer the names were made on and the font they
        were made from are both still there. */
+    lv_drawIsoTeardown();
     lvFlushRegionNames();
     lvFlushTankLabels();
     lvFlushPingNames();
@@ -1376,6 +1468,40 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
      * lv_drawGameViewSetup/Teardown save and restore its size. */
     if (lv->gameView) {
         lv_drawGameViewFrame(value, mineView, tks, sBullets, lgms);
+        return;
+    }
+
+    /* The isometric picture, in the viewer's own window only: the drawer
+       reads the lists through the shim, which the embedded viewer does not
+       link. The parts are built here, under the client mutex the caller
+       holds; the picture is rendered into the drawer's own target and put on
+       the window where the classic one goes, with the viewer's overlays over
+       it. The classic target is left as it was. */
+    if (lv_isoEnabled() && lv->ownsWindow && !g_embedded) {
+        LvIsoParts *parts = lv_isoParts();
+        SDL_FRect dstRect;
+        int i;
+        lv_isoBuild(parts, lv_isoScaleForZoom(g_zoomLevel) * lvDrawPixelScale());
+        /* The places the overlays read, in whole-map pixels, as lv_drawTanks
+           records them for the classic picture. */
+        s_tankBarCount = 0;
+        s_tankLabelCount = 0;
+        for (i = 0; i < parts->tankPosCount && i < MAX_TANKS; i++) {
+            s_tankBarPos[s_tankBarCount].x = parts->tankPos[i].x + 2;
+            s_tankBarPos[s_tankBarCount].y = parts->tankPos[i].y + 2;
+            s_tankBarPos[s_tankBarCount].slot = parts->tankPos[i].slot;
+            s_tankBarCount++;
+            if (!s_tankLabelsInTarget && parts->tankPos[i].name[0] != '\0') {
+                LvTankLabelPos *l = &s_tankLabelPos[s_tankLabelCount++];
+                SDL_strlcpy(l->name, parts->tankPos[i].name, sizeof(l->name));
+                l->x = parts->tankPos[i].x + TILE_SIZE_X + 3;
+                l->y = parts->tankPos[i].y + 2;
+                l->tex = -1;
+            }
+        }
+        lvDrawWindowDstRect(&dstRect);
+        lv_drawIsoFrame(parts, (int)dstRect.w, (int)dstRect.h);
+        lvDrawBlitIsoToWindow();
         return;
     }
 
@@ -1934,8 +2060,9 @@ static void lvDrawTankLabelsOverBlit(const SDL_FRect *src, const SDL_FRect *dst)
         SDL_FRect d;
 
         if (!lv_drawTankLabelGet(i, &tex, &tx, &ty, &tw, &th)) continue;
-        d.x = SDL_floorf(dst->x + ((float)tx - src->x) * scale);
-        d.y = SDL_floorf(dst->y + ((float)ty - src->y) * scale);
+        lvDrawPlace(src, dst, (float)tx, (float)ty, (float)TILE_SIZE_Y, &d.x, &d.y);
+        d.x = SDL_floorf(d.x);
+        d.y = SDL_floorf(d.y);
         d.w = (float)tw;
         d.h = (float)th;
         off = SDL_floorf((float)th / (float)LV_TANK_LABEL_PX);
@@ -2051,10 +2178,12 @@ static void lvDrawTankBarsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
 
         /* No bars for a tank that is dead: the picture left in the target
            until the next repaint is not a tank that holds anything. */
+        float ax, ay;
+
         if (slot >= MAX_TANKS || !held[slot].alive) continue;
-        bars = lvTankBarsLayout(dst->x + ((float)s_tankBarPos[i].x - src->x) * scale,
-                                dst->y + ((float)s_tankBarPos[i].y - src->y) * scale,
-                                tilePx, pxScale);
+        lvDrawPlaceSquare(src, dst, (float)s_tankBarPos[i].x, (float)s_tankBarPos[i].y,
+                          (float)TILE_SIZE_Y, tilePx, &ax, &ay);
+        bars = lvTankBarsLayout(ax, ay, tilePx, pxScale);
         if (!bars.visible) continue;
 
         armour = held[slot].armour;
@@ -2238,10 +2367,12 @@ static void lvDrawBuilderStatusOverBlit(const SDL_FRect *src, const SDL_FRect *d
         float x, y, rowW, textY;
         int pass;
 
+        float ax, ay;
+
         if (slot >= MAX_TANKS || !b[slot].alive || b[slot].state == LV_BUILDER_IN) continue;
-        m = lvBuilderMarkLayout(dst->x + ((float)s_tankBarPos[i].x - src->x) * scale,
-                                dst->y + ((float)s_tankBarPos[i].y - src->y) * scale,
-                                tilePx, pxScale, barsOn);
+        lvDrawPlaceSquare(src, dst, (float)s_tankBarPos[i].x, (float)s_tankBarPos[i].y,
+                          (float)TILE_SIZE_Y, tilePx, &ax, &ay);
+        m = lvBuilderMarkLayout(ax, ay, tilePx, pxScale, barsOn);
         if (!m.visible) continue;
 
         lvBuilderDeadText(b[slot].hasTime, b[slot].remainMs, b[slot].approx, text,
@@ -2308,6 +2439,7 @@ static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst
     float scale, tilePx, pxScale, edge;
     int n, i, pass;
     BYTE zf;
+    BYTE offX = 0, offY = 0;
     SDL_Rect clip, oldClip;
     bool hadClip;
     SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
@@ -2317,6 +2449,9 @@ static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst
     if (src->w <= 0.0f || src->h <= 0.0f) return;
     lv_clientMutexWaitFor();
     n = lv_screenPillSpots(spots, MAX_PILLS);
+    if (s_isoBlit) {
+        lv_screenGetOffsets(&offX, &offY);
+    }
     lv_clientMutexRelease();
     if (n <= 0) return;
 
@@ -2346,8 +2481,14 @@ static void lvDrawPillNumbersOverBlit(const SDL_FRect *src, const SDL_FRect *dst
         for (i = 0; i < n; i++) {
             char text[LV_PILL_NUMBER_TEXT_MAX];
             LvPillLabelLayout l;
-            float left = dst->x + ((float)(spots[i].viewX * zf * TILE_SIZE_X) - src->x) * scale;
-            float top = dst->y + ((float)(spots[i].viewY * zf * TILE_SIZE_Y) - src->y) * scale;
+            float left, top;
+            /* The spots are view squares; after the isometric picture the
+               target's pixels are the whole map's, so the view offset goes
+               back on. */
+            lvDrawPlaceSquare(src, dst,
+                              (float)((spots[i].viewX + (int)offX) * zf * TILE_SIZE_X),
+                              (float)((spots[i].viewY + (int)offY) * zf * TILE_SIZE_Y),
+                              0.0f, tilePx, &left, &top);
 
             if (lvPillNumberText(spots[i].number, text, sizeof(text)) == 0) continue;
             l = lvPillLabelLayout(left, top, tilePx, pxScale, lvBuilderTextCells(text));
@@ -2391,10 +2532,11 @@ static void lvDrawTankMarkOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
     for (i = 0; i < s_tankBarCount; i++) {
         LvTankMark m;
         SDL_FRect r[8];
+        float ax, ay;
         if (s_tankBarPos[i].slot != (BYTE)selected) continue;
-        m = lvTankMarkLayout(dst->x + ((float)s_tankBarPos[i].x - src->x) * scale,
-                             dst->y + ((float)s_tankBarPos[i].y - src->y) * scale,
-                             tilePx, pxScale);
+        lvDrawPlaceSquare(src, dst, (float)s_tankBarPos[i].x, (float)s_tankBarPos[i].y,
+                          (float)TILE_SIZE_Y, tilePx, &ax, &ay);
+        m = lvTankMarkLayout(ax, ay, tilePx, pxScale);
         /* Each corner: an arm along the top or bottom, and one down or up
            the side. */
         r[0].x = m.x;                  r[0].y = m.y;                    r[0].w = m.arm;   r[0].h = m.thick;
@@ -2680,7 +2822,7 @@ static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
        thread, under the client mutex. Copy them out under the same mutex
        (recursive, as the tank bars above say) and draw from the copy. */
     lv_clientMutexWaitFor();
-    lv_screenGetOffsets(&offX, &offY);
+    lvDrawTargetOffsets(&offX, &offY);
     count = lv_screenGetPings(pings, LV_PING_SHOWN_MAX);
     for (i = 0; i < count; i++) {
         names[i][0] = '\0';
@@ -2711,8 +2853,7 @@ static void lvDrawPingsOverBlit(const SDL_FRect *src, const SDL_FRect *dst) {
            the ping is in, so it goes on the middle of that square. */
         cx = ((float)((int)(wx >> 8) - (int)offX) + 0.5f) * (float)(zoomFactor * TILE_SIZE_X);
         cy = ((float)((int)(wy >> 8) - (int)offY) + 0.5f) * (float)(zoomFactor * TILE_SIZE_Y);
-        cx = dst->x + (cx - src->x) * scale;
-        cy = dst->y + (cy - src->y) * scale;
+        lvDrawPlace(src, dst, cx, cy, 0.0f, &cx, &cy);
         lv_drawOverviewPing(cx, cy, tilePx, kind, sender, names[i], ageMs,
                             lvPingNameFont());
     }
@@ -2745,12 +2886,11 @@ static void lvDrawEventFlashOverBlit(const SDL_FRect *src, const SDL_FRect *dst)
 
     scale = dst->w / src->w;
     zoomFactor = lv_windowGetZoomFactor();
-    lv_screenGetOffsets(&offX, &offY);
+    lvDrawTargetOffsets(&offX, &offY);
     /* The middle of the event's square, in the target and then on screen. */
     cx = ((float)(s_eventFlash.mapX - (int)offX) + 0.5f) * (float)(zoomFactor * TILE_SIZE_X);
     cy = ((float)(s_eventFlash.mapY - (int)offY) + 0.5f) * (float)(zoomFactor * TILE_SIZE_Y);
-    cx = dst->x + (cx - src->x) * scale;
-    cy = dst->y + (cy - src->y) * scale;
+    lvDrawPlace(src, dst, cx, cy, 0.0f, &cx, &cy);
     view.x = (int)dst->x;
     view.y = (int)dst->y;
     view.w = (int)dst->w;
@@ -2821,10 +2961,15 @@ int lv_drawTankAtPoint(float xPoints, float yPoints) {
 *  changed but we need to display the last frame.
 *********************************************************/
 void lv_drawBlitGameTexture(void) {
+    LogViewerState *lv = lv_screenGetState();
     if (!textureTarget || !sdlRenderer) return;
     /* Embedded: the host owns the blit (see lv_drawMainScreen). */
     if (g_embedded) return;
 
+    if (lv_isoEnabled() && lv != NULL && lv->ownsWindow && lv_drawIsoTexture() != NULL) {
+        lvDrawBlitIsoToWindow();
+        return;
+    }
     lvDrawBlitTargetToWindow();
 }
 

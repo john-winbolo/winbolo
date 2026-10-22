@@ -352,7 +352,7 @@ static void isoViewDrawItemLabels(IsoView *v, SDL_Renderer *r,
 
 static void isoViewDrawOverlay(IsoView *v, SDL_Renderer *r,
                                SDL_Texture *crosshair,
-                               const OverviewSnapshot *snap,
+                               const screenTanks *tks,
                                const IsoViewLabels *labels,
                                const OverviewItemLabel *items) {
     const IsoGeomOverlay *ov = &v->scene.overlay;
@@ -383,14 +383,13 @@ static void isoViewDrawOverlay(IsoView *v, SDL_Renderer *r,
     /* Tank names, through the host's cache and face. */
     if (labels != NULL && labels->labelCache != NULL &&
         labels->labelFont != NULL) {
-        const screenTanks *tks = overviewSnapshotTanks(snap);
         int i;
         for (i = 0; tks != NULL && i < ov->tankLabelCount; i++) {
             const IsoGeomAnchor *a = &ov->tankLabels[i];
             BYTE mx, my, px, py, frame, playerNum;
             char name[256];
-            screenTanksGetItem(tks, (BYTE)a->index, &mx, &my, &px, &py, &frame,
-                               &playerNum, name);
+            screenTanksGetItem((screenTanks *)tks, (BYTE)a->index, &mx, &my, &px,
+                               &py, &frame, &playerNum, name);
             if (name[0] == '\0') continue;
             if (a->x > (float)v->targetW || a->y > (float)v->targetH) continue;
             tankLabelDraw(labels->labelCache, r, labels->labelFont, name,
@@ -417,10 +416,8 @@ static void isoViewDrawOverlay(IsoView *v, SDL_Renderer *r,
    the sprites, as the other views draw them. */
 static void isoViewDrawPings(IsoView *v, SDL_Renderer *r,
                              const IsoGeomInput *in,
-                             const OverviewSnapshot *snap,
+                             const ClientPing *pl, int np,
                              const IsoViewLabels *labels) {
-    const ClientPing *pl = overviewSnapshotPings(snap);
-    int    np    = overviewSnapshotPingCount(snap);
     Uint32 nowMs = (Uint32)SDL_GetTicks();
     float  tilePx = (float)TILE_SIZE_X * v->cam.scale;
     PingMarkerLabel label;
@@ -433,7 +430,7 @@ static void isoViewDrawPings(IsoView *v, SDL_Renderer *r,
         label.font  = labels->labelFont;
         label.scale = v->cam.scale / (float)mainZoom;
     }
-    for (i = 0; i < np; i++) {
+    for (i = 0; pl != NULL && i < np; i++) {
         Uint32 ageMs = nowMs - pl[i].recvMs;
         float  sx = 0.0f, sy = 0.0f;
         if (nowMs < pl[i].recvMs || pingDisplayAlpha((int)ageMs) <= 0.0f) continue;
@@ -560,16 +557,14 @@ void isoViewSetHudInsets(IsoView *v, float left, float top,
     v->insetBottom = bottom;
 }
 
-void isoViewRenderOffscreen(IsoView *v, SDL_Renderer *r,
-                            SDL_Texture *tilesTex, int sheetScale,
-                            SDL_Texture *spritesTex, const SpriteAtlas *sprites,
-                            SDL_Texture *isoTex, SDL_Texture *crosshair,
-                            int w, int h,
-                            const OverviewSnapshot *snap,
-                            const IsoViewLabels *labels) {
-    const OverviewMap *om;
+void isoViewRenderParts(IsoView *v, SDL_Renderer *r,
+                        SDL_Texture *tilesTex, int sheetScale,
+                        SDL_Texture *spritesTex, const SpriteAtlas *sprites,
+                        SDL_Texture *isoTex, SDL_Texture *crosshair,
+                        int w, int h,
+                        const IsoViewParts *parts,
+                        const IsoViewLabels *labels) {
     IsoGeomInput in;
-    OverviewItemLabel items[MAX_PILLS + MAX_BASES];
     SDL_BlendMode wasBlend = SDL_BLENDMODE_NONE;
 
     /* The GPU is touched here, so this has to be the render thread. */
@@ -582,10 +577,7 @@ void isoViewRenderOffscreen(IsoView *v, SDL_Renderer *r,
     SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
     SDL_RenderClear(r);
 
-    isoViewFollowTick(v, w, h, snap);
-
-    om = overviewSnapshotMap(snap);
-    if (om != NULL && tilesTex != NULL) {
+    if (parts != NULL && parts->map != NULL && tilesTex != NULL) {
         FogStyle style = gfxGetFogStyle();
         IsoViewBatch *batch;
         int i;
@@ -615,44 +607,27 @@ void isoViewRenderOffscreen(IsoView *v, SDL_Renderer *r,
         in.cam      = v->cam;
         in.targetW  = w;
         in.targetH  = h;
-        in.map      = om;
-        in.tanks    = overviewSnapshotTanks(snap);
-        in.lgms     = overviewSnapshotLgms(snap);
-        in.bullets  = overviewSnapshotBullets(snap);
+        in.map      = parts->map;
+        in.tanks    = parts->tanks;
+        in.lgms     = parts->lgms;
+        in.bullets  = parts->bullets;
         in.animMode = (int)gfxGetAnimSmoothness();
         in.sheetScale   = sheetScale;
         in.smoothShells = gfxGetSmoothShells();
         in.fogWashes = fogLookColour(style, &in.fogR, &in.fogG, &in.fogB) != 0;
         in.sheet     = isoViewSheetLookup;
         in.sheetUser = v;
-
-        /* Where a build will land, from the shared build cursor: solid while
-           cursor mode steers it or the host's pointer is on the picture,
-           faint for a target that is only locked in, the split the classic
-           view and the full screen map make. */
-        {
-            BYTE bcX = 0, bcY = 0;
-            bool cursorMode = buildCursorGetTile(&bcX, &bcY);
-            in.cursorShown = cursorMode || buildCursorGetTargetTile(&bcX, &bcY);
-            in.cursorFaint = !(cursorMode || v->pointerOnMap);
-            in.cursorMapX  = bcX;
-            in.cursorMapY  = bcY;
-        }
-        /* The reticle only when the tank sprite was drawn, for the reason
-           overview_view.cpp gives: it would mark where a hidden tank is. */
-        {
-            BYTE gx = 0, gy = 0, gpx = 0, gpy = 0;
-            in.gunsightShown = crosshair != NULL &&
-                               overviewSnapshotSelfDrawn(snap) &&
-                               overviewSnapshotGunsight(snap, &gx, &gy, &gpx, &gpy);
-            in.gsMapX = gx;
-            in.gsMapY = gy;
-            in.gsPixelX = gpx;
-            in.gsPixelY = gpy;
-        }
-        in.itemLabelCount = isoViewPickItemLabels(snap, items,
-                                                  (int)(MAX_PILLS + MAX_BASES));
-        in.itemLabels = items;
+        in.cursorShown = parts->cursorShown;
+        in.cursorFaint = parts->cursorFaint;
+        in.cursorMapX  = parts->cursorMapX;
+        in.cursorMapY  = parts->cursorMapY;
+        in.gunsightShown = parts->gunsightShown && crosshair != NULL;
+        in.gsMapX   = parts->gsMapX;
+        in.gsMapY   = parts->gsMapY;
+        in.gsPixelX = parts->gsPixelX;
+        in.gsPixelY = parts->gsPixelY;
+        in.itemLabelCount = parts->itemLabels != NULL ? parts->itemLabelCount : 0;
+        in.itemLabels     = parts->itemLabels;
 
         if (isoGeomBuild(&v->scene, &in)) {
             batch = (IsoViewBatch *)SDL_malloc(sizeof(*batch));
@@ -667,7 +642,7 @@ void isoViewRenderOffscreen(IsoView *v, SDL_Renderer *r,
                 isoViewSubmitQuads(v, r, batch, v->scene.ground,
                                    v->scene.groundCount);
                 isoViewBatchFlush(r, batch);
-                isoViewDrawPings(v, r, &in, snap, labels);
+                isoViewDrawPings(v, r, &in, parts->pings, parts->pingCount, labels);
                 for (i = 0; i < v->scene.itemCount; i++) {
                     const IsoGeomItem *it = &v->scene.items[i];
                     isoViewSubmitQuads(v, r, batch,
@@ -677,7 +652,8 @@ void isoViewRenderOffscreen(IsoView *v, SDL_Renderer *r,
                 isoViewBatchFlush(r, batch);
                 SDL_free(batch);
 
-                isoViewDrawOverlay(v, r, crosshair, snap, labels, items);
+                isoViewDrawOverlay(v, r, crosshair, parts->tanks, labels,
+                                   parts->itemLabels);
                 SDL_SetRenderDrawBlendMode(r, wasBlend);
             }
         }
@@ -689,11 +665,65 @@ void isoViewRenderOffscreen(IsoView *v, SDL_Renderer *r,
 
     /* Black over the lot while the sim says the death is in its blackout.
        The static is the host's. */
-    if (overviewSnapshotBlackout(snap)) {
+    if (parts != NULL && parts->blackout) {
         SDL_FRect dst = { 0.0f, 0.0f, (float)w, (float)h };
         SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
         SDL_RenderFillRect(r, &dst);
     }
 
     SDL_SetRenderTarget(r, NULL);
+}
+
+void isoViewRenderOffscreen(IsoView *v, SDL_Renderer *r,
+                            SDL_Texture *tilesTex, int sheetScale,
+                            SDL_Texture *spritesTex, const SpriteAtlas *sprites,
+                            SDL_Texture *isoTex, SDL_Texture *crosshair,
+                            int w, int h,
+                            const OverviewSnapshot *snap,
+                            const IsoViewLabels *labels) {
+    IsoViewParts parts;
+    OverviewItemLabel items[MAX_PILLS + MAX_BASES];
+
+    if (!v || !r || w <= 0 || h <= 0) return;
+
+    isoViewFollowTick(v, w, h, snap);
+
+    memset(&parts, 0, sizeof(parts));
+    parts.map     = overviewSnapshotMap(snap);
+    parts.tanks   = overviewSnapshotTanks(snap);
+    parts.lgms    = overviewSnapshotLgms(snap);
+    parts.bullets = overviewSnapshotBullets(snap);
+    parts.pings     = overviewSnapshotPings(snap);
+    parts.pingCount = overviewSnapshotPingCount(snap);
+    parts.blackout  = overviewSnapshotBlackout(snap);
+
+    /* Where a build will land, from the shared build cursor: solid while
+       cursor mode steers it or the host's pointer is on the picture, faint
+       for a target that is only locked in, the split the classic view and
+       the full screen map make. */
+    {
+        BYTE bcX = 0, bcY = 0;
+        bool cursorMode = buildCursorGetTile(&bcX, &bcY);
+        parts.cursorShown = cursorMode || buildCursorGetTargetTile(&bcX, &bcY);
+        parts.cursorFaint = !(cursorMode || v->pointerOnMap);
+        parts.cursorMapX  = bcX;
+        parts.cursorMapY  = bcY;
+    }
+    /* The reticle only when the tank sprite was drawn, for the reason
+       overview_view.cpp gives: it would mark where a hidden tank is. */
+    {
+        BYTE gx = 0, gy = 0, gpx = 0, gpy = 0;
+        parts.gunsightShown = overviewSnapshotSelfDrawn(snap) &&
+                              overviewSnapshotGunsight(snap, &gx, &gy, &gpx, &gpy);
+        parts.gsMapX = gx;
+        parts.gsMapY = gy;
+        parts.gsPixelX = gpx;
+        parts.gsPixelY = gpy;
+    }
+    parts.itemLabelCount = isoViewPickItemLabels(snap, items,
+                                                 (int)(MAX_PILLS + MAX_BASES));
+    parts.itemLabels = items;
+
+    isoViewRenderParts(v, r, tilesTex, sheetScale, spritesTex, sprites, isoTex,
+                       crosshair, w, h, &parts, labels);
 }

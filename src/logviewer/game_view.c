@@ -1229,3 +1229,103 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
   /* Step 16 — self is restored by the wrapping block in logviewer.c
    * after lv_screenUpdate returns; nothing to do here. */
 }
+
+/* --- The isometric picture ---------------------------------------
+ * The replay drawn through the game's isometric drawer (isoview.c) from the
+ * parts lv_iso.c fills. This is the bolo-side half: it sees the drawer's
+ * types, so it copies the parts' map into an OverviewMap, hands the viewer's
+ * lists over as the game view hands its own (a pointer the shim's accessors
+ * read with the viewer's layout), and keeps the view and its target. The
+ * labels are left to the viewer, which draws its own names, bars and numbers
+ * over the blit. */
+#include "../gui/sdl3/isoview.h"
+#include "../gui/sdl3/iso_sheet.h"
+#include "../gui/sdl3/gfx_settings.h"
+#include "lv_iso.h"
+
+_Static_assert(LV_ISO_F_MINE == OVERVIEW_F_MINE, "mine flag");
+_Static_assert(LV_ISO_F_LIVE == OVERVIEW_F_LIVE, "live flag");
+_Static_assert(LV_ISO_F_SIGHT == OVERVIEW_F_SIGHT, "sight flag");
+_Static_assert(LV_ISO_MAP_SIZE == MAP_ARRAY_SIZE, "map size");
+_Static_assert(LV_ISO_ITEMS_MAX >= MAX_PILLS + MAX_BASES, "item labels");
+
+static IsoView     *s_isoView    = NULL;
+static OverviewMap *s_isoMap     = NULL;
+static SDL_Texture *s_isoSheet   = NULL;
+static bool         s_isoSheetTried = false;
+
+/* The isometric sheet from the stock art at the viewer's sheet scale, tried
+   once; without it the drawer stands the classic sprites up. */
+static SDL_Texture *gv_isoSheet(SDL_Renderer *renderer) {
+  if (!s_isoSheetTried) {
+    SDL_Surface *surf;
+    s_isoSheetTried = true;
+    surf = isoSheetBuild(NULL, lv_drawGetSheetScale(), (int)gfxGetTileDetail());
+    if (surf != NULL) {
+      s_isoSheet = SDL_CreateTextureFromSurface(renderer, surf);
+      SDL_DestroySurface(surf);
+      if (s_isoSheet != NULL) SDL_SetTextureBlendMode(s_isoSheet, SDL_BLENDMODE_BLEND);
+    }
+  }
+  return s_isoSheet;
+}
+
+void lv_drawIsoFrame(const void *partsIn, int w, int h) {
+  const LvIsoParts *parts = (const LvIsoParts *)partsIn;
+  SDL_Renderer *renderer = lv_drawGetSDLRenderer();
+  OverviewItemLabel items[MAX_PILLS + MAX_BASES];
+  IsoViewParts vp;
+  IsoCamera *cam;
+  int i, n;
+
+  if (renderer == NULL || parts == NULL || w <= 0 || h <= 0) return;
+  if (s_isoView == NULL) {
+    s_isoView = isoViewCreate();
+    if (s_isoView == NULL) return;
+    isoViewSetFollow(s_isoView, false);
+  }
+  if (s_isoMap == NULL) {
+    s_isoMap = (OverviewMap *)SDL_calloc(1, sizeof(*s_isoMap));
+    if (s_isoMap == NULL) return;
+  }
+  memcpy(s_isoMap->tile, parts->tile, sizeof(s_isoMap->tile));
+  memcpy(s_isoMap->flags, parts->flags, sizeof(s_isoMap->flags));
+  s_isoMap->seenCount = MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
+
+  n = parts->itemCount;
+  if (n > (int)(MAX_PILLS + MAX_BASES)) n = (int)(MAX_PILLS + MAX_BASES);
+  for (i = 0; i < n; i++) {
+    items[i].mapX   = parts->items[i].mapX;
+    items[i].mapY   = parts->items[i].mapY;
+    items[i].number = parts->items[i].number;
+    items[i].isBase = parts->items[i].isBase;
+  }
+
+  cam = isoViewCamera(s_isoView);
+  cam->centerWX = parts->camWX;
+  cam->centerWY = parts->camWY;
+  cam->scale    = parts->camScale;
+
+  memset(&vp, 0, sizeof(vp));
+  vp.map      = s_isoMap;
+  vp.tanks    = (const screenTanks *)parts->tanks;
+  vp.lgms     = (const screenLgm *)parts->lgms;
+  vp.bullets  = (const screenBullets *)parts->bullets;
+  vp.itemLabels     = items;
+  vp.itemLabelCount = n;
+
+  isoViewRenderParts(s_isoView, renderer, lv_drawGetTilesTexture(),
+                     lv_drawGetSheetScale(), NULL, NULL, gv_isoSheet(renderer),
+                     NULL, w, h, &vp, NULL);
+}
+
+void *lv_drawIsoTexture(void) {
+  return s_isoView ? (void *)isoViewGetTexture(s_isoView) : NULL;
+}
+
+void lv_drawIsoTeardown(void) {
+  if (s_isoView != NULL) { isoViewDestroy(s_isoView); s_isoView = NULL; }
+  if (s_isoMap != NULL) { SDL_free(s_isoMap); s_isoMap = NULL; }
+  if (s_isoSheet != NULL) { SDL_DestroyTexture(s_isoSheet); s_isoSheet = NULL; }
+  s_isoSheetTried = false;
+}

@@ -78,6 +78,16 @@ void lv_drawOverviewPing(float cx, float cy, float tilePx, unsigned char kind,
  * they were made from is closed, and before the renderer goes. */
 void lv_drawOverviewPingsFlush(void);
 
+/* The isometric picture of the replay, drawn through the game's isometric
+ * drawer from the parts lv_iso.c fills (an LvIsoParts, passed as void * for
+ * the reason the frame entry point above gives). lv_drawIsoFrame renders
+ * into a target w by h pixels that lv_drawIsoTexture then hands back (an
+ * SDL_Texture *, NULL before the first frame); lv_drawIsoTeardown frees the
+ * lot, before the renderer goes. */
+void  lv_drawIsoFrame(const void *parts, int w, int h);
+void *lv_drawIsoTexture(void);
+void  lv_drawIsoTeardown(void);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

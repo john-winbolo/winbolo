@@ -4387,6 +4387,12 @@ int run_lv_overview_sums(void);
 int run_lv_overview_bots(void);
 int run_lv_overview_row_layout(void);
 int run_lv_overview_neutral_row(void);
+/* The replay's isometric parts (test_lv_iso.c, lv_iso.c): every square's
+ * tile with the live flags, the tank list and the camera on the selected
+ * tank, and a quarter turn that puts a tank where the turned map puts it. */
+int run_lv_iso_map_tiles(void);
+int run_lv_iso_tanks_and_camera(void);
+int run_lv_iso_rotation(void);
 /* The log viewer's Tank panel (test_lv_tank_status.c): which tank is the
  * selected one, and the height of a gauge against its cap. */
 int run_lv_tank_status_sums(void);

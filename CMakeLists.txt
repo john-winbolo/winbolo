@@ -1490,6 +1490,7 @@ set(IOS_LOGVIEWER_SOURCES
     src/logviewer/global.c
     src/logviewer/util.c
     src/logviewer/draw.c
+    src/logviewer/lv_iso.c
     src/logviewer/game_view_stubs.c
     src/logviewer/clientmutex.c
     src/logviewer/dns.c
@@ -2078,6 +2079,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/lv_fullscreen_game.c
     src/logviewer/screen.c
     src/logviewer/draw.c
+    src/logviewer/lv_iso.c
     src/logviewer/sound.c
     src/logviewer/players.c
     # Logviewer-world spectator seed orchestration (lv_specSeedLoad /
@@ -2787,6 +2789,14 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/gui/sdl3/mapview.c
     src/gui/sdl3/sdl3draw_status.c
     src/gui/sdl3/tank_label.c
+    # The isometric picture of the replay: the drawer, its geometry, the
+    # sprite sheet it reads and the overlay cache it shares with the game.
+    # game_view.c calls the drawer from the parts lv_iso.c fills; bolo_shim.c
+    # carries the game-only symbols the drawer's snapshot entry point names.
+    src/gui/sdl3/isoview.c
+    src/gui/sdl3/isoview_geom.c
+    src/gui/sdl3/iso_sheet.c
+    src/gui/sdl3/mapview_overlay.c
     src/logviewer/bolo_shim.c
     src/logviewer/game_view.c
 )
@@ -5043,6 +5053,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The table of the viewer's Overview panel: which team's row a pillbox
     # or a base is counted in (lv_overview.h, header only).
     tests/unit/test_lv_overview.c
+    # The replay's isometric parts (lv_iso.c): the whole map's tiles with
+    # every square live, the tank list in map coordinates, the camera on the
+    # selected tank, and the quarter turns of the map and its sprites. Reads
+    # the decode subset below and iso_project.c.
+    tests/unit/test_lv_iso.c
+    src/logviewer/lv_iso.c
     # The viewer's Tank panel: which tank it shows and how tall a gauge is
     # drawn (lv_tank_status.h, header only).
     tests/unit/test_lv_tank_status.c
@@ -7562,6 +7578,9 @@ set(_unit_test_names
     lv_overview_bots
     lv_overview_row_layout
     lv_overview_neutral_row
+    lv_iso_map_tiles
+    lv_iso_tanks_and_camera
+    lv_iso_rotation
     lv_tank_status_sums
     lv_tank_bars_sums
     lv_tank_pick_sums

@@ -78,6 +78,7 @@
 #include "imgui/imgui_game_view.h"
 #include "imgui/imgui_logviewer_menu.h"
 #include "game_view.h"
+#include "lv_iso.h"
 
 /* Platform abstraction */
 #include "platform/platform_config.h"
@@ -1754,6 +1755,30 @@ static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
      * Allowed in both the standalone viewer and the embedded
      * "Watch a Log" flow — game-view borrows whichever window is
      * active and restores it on toggle-off. */
+    /* The isometric picture: I turns it on and off in the viewer's own
+     * window, beside the game view's grave key and with the same kind of
+     * control; [ and ] turn the camera a quarter turn either way while it is
+     * on. Not in the game view, which has its own picture, and not while a
+     * text box has the keyboard. */
+    if (allowToggle && sdlEvent.type == SDL_EVENT_KEY_DOWN && g_lv->isLoaded &&
+        g_lv->ownsWindow && !g_lv->gameView && !lv_imgui_want_text_input() &&
+        (sdlEvent.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0) {
+        if (sdlEvent.key.key == SDLK_I) {
+            lv_isoSetEnabled(!lv_isoEnabled());
+            lv_drawDirtyScreen();
+            g_lv->wantScreenUpdate = TRUE;
+            return TRUE;
+        }
+        if (lv_isoEnabled() && (sdlEvent.key.key == SDLK_LEFTBRACKET ||
+                                sdlEvent.key.key == SDLK_RIGHTBRACKET)) {
+            lv_isoSetRotation(lv_isoRotation() +
+                              (sdlEvent.key.key == SDLK_RIGHTBRACKET ? 1 : -1));
+            lv_drawDirtyScreen();
+            g_lv->wantScreenUpdate = TRUE;
+            return TRUE;
+        }
+    }
+
     if (allowToggle && sdlEvent.type == SDL_EVENT_KEY_DOWN &&
         sdlEvent.key.key == SDLK_GRAVE && g_lv->isLoaded) {
         if (!g_lv->gameView) {

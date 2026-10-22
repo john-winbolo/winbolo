@@ -67,3 +67,12 @@ void lv_drawOverviewPing(float cx, float cy, float tilePx, unsigned char kind,
 
 void lv_drawOverviewPingsFlush(void) {
 }
+
+void lv_drawIsoFrame(const void *parts, int w, int h) {
+  (void)parts; (void)w; (void)h;
+}
+void *lv_drawIsoTexture(void) {
+  return 0;
+}
+void lv_drawIsoTeardown(void) {
+}

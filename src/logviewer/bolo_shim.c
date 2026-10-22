@@ -387,3 +387,120 @@ bool sdl3ImguiPlayerIsAlly(unsigned char playerNum) {
 bool sdl3DrawOnRenderThread(void) {
   return true;
 }
+
+
+/* ====================================================================
+ * Part 4 — the isometric drawer's game-only symbols.
+ *
+ * isoview.c is linked for lv_drawIsoFrame (game_view.c), which renders
+ * from parts. Its snapshot entry point, isoViewRenderOffscreen, is never
+ * called here, so the snapshot accessors it reads are abort stubs like
+ * Part 2's; the build cursor has no target in a replay; the texture filter
+ * sum is sdl3draw.c's, which the viewer does not link; and the three
+ * switches are winbolo.c's, fixed here at the values the parts imply.
+ * ==================================================================== */
+
+struct OverviewSnapshot;
+struct OverviewMap;
+struct ClientPing;
+struct OverviewItemLabel;
+
+const struct OverviewMap *overviewSnapshotMap(const struct OverviewSnapshot *s) {
+  (void)s;
+  abort();
+}
+
+const screenTanks *overviewSnapshotTanks(const struct OverviewSnapshot *s) {
+  (void)s;
+  abort();
+}
+
+const screenLgm *overviewSnapshotLgms(const struct OverviewSnapshot *s) {
+  (void)s;
+  abort();
+}
+
+const screenBullets *overviewSnapshotBullets(const struct OverviewSnapshot *s) {
+  (void)s;
+  abort();
+}
+
+bool overviewSnapshotSelfDrawn(const struct OverviewSnapshot *s) {
+  (void)s;
+  abort();
+}
+
+bool overviewSnapshotTankPos(const struct OverviewSnapshot *s, float *mapX, float *mapY) {
+  (void)s; (void)mapX; (void)mapY;
+  abort();
+}
+
+bool overviewSnapshotBlackout(const struct OverviewSnapshot *s) {
+  (void)s;
+  abort();
+}
+
+bool overviewSnapshotGunsight(const struct OverviewSnapshot *s, BYTE *mapX, BYTE *mapY,
+                              BYTE *pixelX, BYTE *pixelY) {
+  (void)s; (void)mapX; (void)mapY; (void)pixelX; (void)pixelY;
+  abort();
+}
+
+bool overviewSnapshotInItemView(const struct OverviewSnapshot *s) {
+  (void)s;
+  abort();
+}
+
+void overviewSnapshotItemViewSquare(const struct OverviewSnapshot *s, int *mapX, int *mapY) {
+  (void)s; (void)mapX; (void)mapY;
+  abort();
+}
+
+bool overviewSnapshotWindowCentre(const struct OverviewSnapshot *s, float *mapX, float *mapY) {
+  (void)s; (void)mapX; (void)mapY;
+  abort();
+}
+
+int overviewSnapshotItemLabelCount(const struct OverviewSnapshot *s) {
+  (void)s;
+  abort();
+}
+
+const struct OverviewItemLabel *overviewSnapshotItemLabels(const struct OverviewSnapshot *s) {
+  (void)s;
+  abort();
+}
+
+const struct ClientPing *overviewSnapshotPings(const struct OverviewSnapshot *s) {
+  (void)s;
+  abort();
+}
+
+int overviewSnapshotPingCount(const struct OverviewSnapshot *s) {
+  (void)s;
+  abort();
+}
+
+bool buildCursorGetTile(BYTE *mapX, BYTE *mapY) {
+  (void)mapX; (void)mapY;
+  return false;
+}
+
+bool buildCursorGetTargetTile(BYTE *mapX, BYTE *mapY) {
+  (void)mapX; (void)mapY;
+  return false;
+}
+
+/* sdl3draw.h's sum, by the GfxTextureFilter values: 0 nearest, 1 linear,
+   2 pixel art. Declared with int to keep this file off the gui headers. */
+int sdl3DrawScaleModeForFilter(int filter) {
+  switch (filter) {
+    case 1:  return 1;   /* SDL_SCALEMODE_LINEAR */
+    case 2:  return 2;   /* SDL_SCALEMODE_PIXELART */
+    default: return 0;   /* SDL_SCALEMODE_NEAREST */
+  }
+}
+
+bool smoothScrollingEnabled = true;
+bool showPillLabels = true;
+bool showBaseLabels = true;

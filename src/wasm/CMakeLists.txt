@@ -375,6 +375,7 @@ set(LOGVIEWER_SOURCES
     # that draw.c calls when LogViewerState::gameView is set — never in an
     # embed, which leaves it FALSE.
     ${SRC_ROOT}/logviewer/draw.c
+    ${SRC_ROOT}/logviewer/lv_iso.c
     ${SRC_ROOT}/logviewer/game_view_stubs.c
     # Platform drivers, wasm variants
     ${SRC_ROOT}/logviewer/wasm/clientmutex_wasm.c
