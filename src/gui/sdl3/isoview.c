@@ -442,6 +442,49 @@ static void isoViewDrawPings(IsoView *v, SDL_Renderer *r,
     }
 }
 
+/* The frame that says an item view is on: overviewViewDrawItemViewBorder
+   in overview_view.cpp, with the same colour, inset and weight, repeated
+   here because that one is file-local to the full screen map. Here too the
+   map goes on being drawn while the view is up, so without it the picture
+   can go dark with nothing to say why. One yellow whatever the kind of view;
+   the caption along the bottom is the host's and names it. Rectangle fills
+   only, at alpha 255, so whatever blend mode the passes above left behind
+   gives the same result. */
+#define ISOVIEW_ITEM_BORDER_INSET 2    /* px from the picture's edge */
+#define ISOVIEW_ITEM_BORDER_DIV   240  /* view height per px of weight */
+#define ISOVIEW_ITEM_BORDER_MIN   2
+#define ISOVIEW_ITEM_BORDER_MAX   6    /* inset + weight stays inside HUD_MARGIN (8) */
+
+static void isoViewDrawItemViewBorder(SDL_Renderer *r, int viewW, int viewH) {
+    int weight = (int)SDL_roundf((float)viewH / (float)ISOVIEW_ITEM_BORDER_DIV);
+    if (weight < ISOVIEW_ITEM_BORDER_MIN) weight = ISOVIEW_ITEM_BORDER_MIN;
+    if (weight > ISOVIEW_ITEM_BORDER_MAX) weight = ISOVIEW_ITEM_BORDER_MAX;
+
+    float inset = (float)ISOVIEW_ITEM_BORDER_INSET;
+    float x = inset;
+    float y = inset;
+    float bw = (float)viewW - 2.0f * inset;
+    float bh = (float)viewH - 2.0f * inset;
+    if (bw <= 0.0f || bh <= 0.0f) return;
+
+    /* A view small enough for the opposite runs to meet is filled solid
+       instead, rather than asking SDL to draw sides of negative height. */
+    float wt   = (float)weight;
+    float half = (bw < bh ? bw : bh) * 0.5f;
+    if (wt > half) wt = half;
+
+    /* The top and bottom runs span the full width and the sides fit between
+       them, so the corners are covered and the rectangle closes. */
+    SDL_FRect runs[4] = {
+        { x,           y,           bw, wt },
+        { x,           y + bh - wt, bw, wt },
+        { x,           y + wt,      wt, bh - 2.0f * wt },
+        { x + bw - wt, y + wt,      wt, bh - 2.0f * wt },
+    };
+    SDL_SetRenderDrawColor(r, 255, 205, 40, 255);
+    SDL_RenderFillRects(r, runs, 4);
+}
+
 /*********************************************************
  * The camera.
  *********************************************************/
@@ -663,6 +706,13 @@ void isoViewRenderParts(IsoView *v, SDL_Renderer *r,
         v->isoTex     = NULL;
     }
 
+    /* The border that says an item view is on. Before the blackout, as on
+       the full screen map, so a death takes it down with the rest of the
+       picture. */
+    if (parts != NULL && parts->itemViewBorder) {
+        isoViewDrawItemViewBorder(r, w, h);
+    }
+
     /* Black over the lot while the sim says the death is in its blackout.
        The static is the host's. */
     if (parts != NULL && parts->blackout) {
@@ -696,6 +746,7 @@ void isoViewRenderOffscreen(IsoView *v, SDL_Renderer *r,
     parts.pings     = overviewSnapshotPings(snap);
     parts.pingCount = overviewSnapshotPingCount(snap);
     parts.blackout  = overviewSnapshotBlackout(snap);
+    parts.itemViewBorder = overviewSnapshotInItemView(snap);
 
     /* Where a build will land, from the shared build cursor: solid while
        cursor mode steers it or the host's pointer is on the picture, faint

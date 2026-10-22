@@ -91,7 +91,8 @@ void     isoViewDestroy(IsoView *v);
    released: nothing in this call touches the ClientSim. NULL draws the
    cleared frame and nothing on it.
 
-   The camera: an item view centres it on the watched square; otherwise it
+   The camera: an item view centres it on the watched square, and draws the
+   full screen map's yellow border round the picture; otherwise the camera
    follows the tank's position, snapped to its square's centre with Smooth
    Scrolling off, until the host moves it through isoViewCamera. The view's
    HUD insets shift the point followed so it lands in the clear part of the
@@ -127,6 +128,9 @@ typedef struct IsoViewParts {
     const ClientPing           *pings;
     int                         pingCount;
     bool  blackout;
+    /* Whether an item view is on, for the border round the picture. The
+       caption that names the view is the host's. */
+    bool  itemViewBorder;
 } IsoViewParts;
 
 /* isoViewRenderOffscreen's render from parts rather than a snapshot: the
