@@ -121,6 +121,10 @@ typedef struct ClipGifGalleryState {
     bool         open      = false;
     bool         focus     = false;  /* bring the window to the front once */
     bool         needScan  = true;
+    /* Set when the open window is drawn, or opened, and cleared by the save
+     * poll each lobby frame. Still clear at the poll means the last frame
+     * did not draw the window (another lobby view was showing). */
+    bool         renderedThisFrame = false;
     ClipGifMeta *items     = nullptr;  /* SDL_malloc'd by the scan */
     int          count     = 0;
     int          selected  = -1;
@@ -251,7 +255,19 @@ static int galleryJobStopped(void *user) {
 static int SDLCALL galleryDecodeThread(void *userdata) {
     ClipGifDecodeJob *job = (ClipGifDecodeJob *)userdata;
     size_t len = 0;
-    void *data = galleryJobStopped(job) ? NULL : SDL_LoadFile(job->path, &len);
+    void *data = NULL;
+    if (!galleryJobStopped(job)) {
+        /* A GIF whose compressed bytes are over the limit cannot decode
+         * within it, so the file is not read. If the size cannot be found,
+         * the load below runs as before. */
+        SDL_PathInfo info;
+        if (SDL_GetPathInfo(job->path, &info) &&
+            info.size > (Uint64)CLIP_GIF_PREVIEW_MAX_BYTES) {
+            job->tooLarge = true;
+        } else {
+            data = SDL_LoadFile(job->path, &len);
+        }
+    }
     if (data != NULL && len > (size_t)INT_MAX) {
         job->tooLarge = true;  /* stb takes an int length */
     } else if (data != NULL && len > 0) {
@@ -448,6 +464,9 @@ void lobbyClipGifGalleryOpen(void) {
     s_gal.open     = true;
     s_gal.focus    = true;
     s_gal.needScan = true;
+    /* The window may first be drawn after the next poll, so the poll must
+     * not count this frame as one the window was missing from. */
+    s_gal.renderedThisFrame = true;
 }
 
 void lobbyClipGifGalleryAdd(const void *data, size_t len,
@@ -460,6 +479,7 @@ void lobbyClipGifGalleryAdd(const void *data, size_t len,
     s_gal.open     = true;
     s_gal.focus    = true;
     s_gal.needScan = true;
+    s_gal.renderedThisFrame = true;  /* as in lobbyClipGifGalleryOpen */
     if (!galleryFindDir()) {
         /* The same words iOS uses when its copy in Documents fails. */
         galleryShowMessage(STR_CLIPGIF_SAVE_FAILED_IOS, true,
@@ -552,14 +572,37 @@ static void galleryStartSave(const char *srcPath) {
     s_gal.saveReq = req;
     SDL_strlcpy(s_gal.saveSrc, srcPath, sizeof(s_gal.saveSrc));
 
-    static const SDL_DialogFileFilter filters[] = {
-        { "GIF Images", "gif" },
-    };
+    /* The name is what the operating system's dialog shows as the file type.
+     * SDL needs the filter array to stay valid until the callback runs, so it
+     * is static, and the name is filled from the lang table on each call. */
+    static SDL_DialogFileFilter filters[1];
+    filters[0].name    = langGetText(STR_CLIPGIF_FILTER_NAME);
+    filters[0].pattern = "gif";
     SDL_ShowSaveFileDialog(gallerySaveCallback, req, sdl3DrawGetWindow(),
                            filters, 1, NULL);
 }
 
+/* Runs once per lobby frame on every view, before that frame is drawn. Lets
+ * go of the decoded frames, the texture, a decode still running and the
+ * list when the open window was not drawn on the last frame, because the
+ * player is on another lobby view. The window stays open and reads the list
+ * again when it is next drawn. Then writes out a save from the gallery
+ * whose picker has been answered. */
 void lobbyClipGifGallerySavePoll(void) {
+    if (s_gal.open && !s_gal.renderedThisFrame) {
+        /* Selects the same GIF after the next scan. */
+        if (s_gal.selectFile[0] == '\0' && s_gal.selected >= 0 &&
+            s_gal.selected < s_gal.count) {
+            SDL_strlcpy(s_gal.selectFile, s_gal.items[s_gal.selected].gifFile,
+                        sizeof(s_gal.selectFile));
+        }
+        galleryPreviewFree();
+        galleryDropJob();
+        galleryFreeItems();
+        s_gal.needScan = true;
+    }
+    s_gal.renderedThisFrame = false;
+
     ClipGifSaveRequest *req = s_gal.saveReq;
     if (req == NULL || SDL_GetAtomicInt(&req->refs) != 1) {
         return;
@@ -727,6 +770,7 @@ void lobbyClipGifGalleryRender(float s) {
     if (!s_gal.open) {
         return;
     }
+    s_gal.renderedThisFrame = true;
     if (s_gal.needScan) {
         galleryRescan();
     }

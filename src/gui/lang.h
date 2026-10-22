@@ -3553,6 +3553,7 @@
 #define STR_CLIPGIF_LENGTH_TIP                   2953
 #define STR_CLIPGIF_LOADING                      2954
 #define STR_CLIPGIF_TOO_LARGE                    2955
+#define STR_CLIPGIF_FILTER_NAME                  2956
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

@@ -1325,6 +1325,7 @@ static const LangEntry langTable[] = {
     {2953, "GIF length in seconds, from the playhead.\nDrag the marker at the end of the bright part of the timeline to change it too."},
     {2954, "Opening the GIF..."},
     {2955, "This GIF is too large to show here. You can still copy it or save it."},
+    {2956, "GIF Images"},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},

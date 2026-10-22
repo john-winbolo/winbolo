@@ -833,7 +833,9 @@ void lobbyClipGifGalleryOpen(void);
 /* The gallery window, drawn once per recap body render while it is open. */
 void lobbyClipGifGalleryRender(float s);
 /* A save picker from the gallery that has been answered; with
- * lobbyClipGifSavePoll in the lobby's event loop. */
+ * lobbyClipGifSavePoll in the lobby's event loop. Also lets go of the
+ * preview, a decode still running and the list when the open window was not
+ * drawn on the last frame; the window stays open. */
 void lobbyClipGifGallerySavePoll(void);
 /* Leaving the lobby: frees the preview's frames and texture and drops a save
  * picker still waiting. */
