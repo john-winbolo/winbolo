@@ -2131,6 +2131,20 @@ int run_mapview_overlay_tank_label_smooth(void);
 int run_mapview_overlay_cursor(void);
 int run_mapview_overlay_item_labels(void);
 
+/* The isometric projection (test_iso_project.c): a square east of the
+ * camera lands a half-width right and a quarter-width down, a square south
+ * mirrors it and height moves a point straight up; the ground position under
+ * a projected point is the position projected, to the world unit; the square
+ * range a target can show covers every square whose diamond overlaps it and
+ * clamps to the map; the draw order puts all ground first and then rows by
+ * x + y with a square's sprites after its tall tile and before the next
+ * row's; and a classic stand-in sprite's frame advances by two, wrapping. */
+int run_iso_project_forward(void);
+int run_iso_project_inverse(void);
+int run_iso_project_visible_range(void);
+int run_iso_project_depth(void);
+int run_iso_project_facing_frame(void);
+
 /* The shared map colours: what a tile number says is standing on a square,
  * the flat colour its ground gets when the square is drawn too small for its
  * sprite, and the three layers a marker's stroke is built from. */

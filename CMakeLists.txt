@@ -2013,7 +2013,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/ping_marker.c
     src/gui/sdl3/ring_band.c
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/map_colours.c src/gui/sdl3/map_markers.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/newswire_slide.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/map_colours.c src/gui/sdl3/map_markers.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/iso_project.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/newswire_slide.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
     # spectatorRun reads the controller through it for overview pan/zoom. Reads
     # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
@@ -2858,6 +2858,7 @@ add_executable(LogViewer
     src/gui/sdl3/ring_band.c
     src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sprite_positions.c
+    src/gui/sdl3/iso_project.c
     src/gui/sdl3/tileloader.c
     src/gui/sdl3/skin_source.c
     src/gui/sdl3/gfx_settings.c
@@ -4488,6 +4489,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_overview_snapshot.c
     tests/unit/test_mapview_sprite_scale.c
     tests/unit/test_mapview_overlay.c
+    tests/unit/test_iso_project.c
     tests/unit/test_map_colours.c
     tests/unit/test_stall_lockout_rebase.c
     # The catch-up loop behind a hitch, driven without a sim through
@@ -4880,10 +4882,16 @@ set(WINBOLO_UNITTESTS_SOURCES
     # GfxAnimSmoothness enum, and its functions are float arithmetic over
     # their arguments. It is the file the log viewer already links on its
     # own for the atlas table.
+    #
+    # iso_project.c qualifies the same way: the isometric view's projection,
+    # its inverse, the square range a target shows and the draw order, with
+    # stdbool and math.h as its only includes. test_iso_project.c exercises
+    # it directly.
     src/gui/sdl3/overview_camera.cpp
     src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp
     src/gui/sdl3/sprite_positions.c
+    src/gui/sdl3/iso_project.c
     # newswire_slide.c qualifies too: stdint and stdbool, and arithmetic on
     # the times it is given.
     src/gui/sdl3/newswire_slide.c
@@ -6171,6 +6179,11 @@ set(_unit_test_names
     mapview_overlay_tank_label_smooth
     mapview_overlay_cursor
     mapview_overlay_item_labels
+    iso_project_forward
+    iso_project_inverse
+    iso_project_visible_range
+    iso_project_depth
+    iso_project_facing_frame
     map_colours_item_kind
     map_colours_terrain
     map_colours_markers

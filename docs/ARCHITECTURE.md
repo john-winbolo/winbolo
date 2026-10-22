@@ -2310,20 +2310,24 @@ releases with nothing coming off means the review has stopped, and
 the grant needs re-arguing rather than extending.
 
 **Linked GUI sources.** A second, narrower exception rides on the
-same target, and it is not a T2 grant. Seventeen `src/gui/sdl3` files
+same target, and it is not a T2 grant. Eighteen `src/gui/sdl3` files
 are compiled *into* `WinBoloUnitTests`, the only files from a
 renderer directory that are: `skin_source.c`, `tileloader.c`,
 `sdl_bmp.c`, `sound_variants.c`, `sound_mix.c`, `overview_camera.cpp`,
 `overview_fog.cpp`, `overview_hud_layout.cpp`, `sprite_positions.c`,
 `ring_band.c`, `dialogs/dialog_quit.cpp`, `workshop_sync.c`,
 `input_source.c`, `news_image_budget.cpp`, `dialogs/clip_gif_core.c`,
-`newswire_slide.c` and `gfx_settings.c`.
+`newswire_slide.c`, `gfx_settings.c` and `iso_project.c`.
 Between them they hold skin lookup, the tile sheet
 builder, the BMP sheet reader, the sound variant naming, the
 effects mixer's step that scales one slot's samples by its left and
 right gains into the mix accumulator, the map
 overview's camera maths, its fog mask, its in-window HUD geometry
 and the sprite placement arithmetic behind `mapview.c`'s drawers.
+`iso_project.c` is the isometric view's projection: where a map
+position lands on screen, what is under a screen point, which squares
+a target can show and the order they draw in, with no renderer behind
+it; `tests/unit/test_iso_project.c` drives it.
 `newswire_slide.c` is when a newswire that hides itself is on screen:
 arithmetic on the times it is given, with no clock and no SDL.
 `ring_band.c` is here for `ringAnimAt`, which is where a closing ring
