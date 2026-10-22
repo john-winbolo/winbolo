@@ -35,9 +35,11 @@
 #include "../threads.h"                    /* threadsCreate, threadsWaitForMutex,
                                               threadsReleaseMutex */
 
+#if WB_ENABLE_NETIMPAIR
 uint32_t transportUdpServerWireSentCount(void) {
     return udpServer.wireSent;
 }
+#endif
 
 void transportUdpServerSetClientPingForTest(BYTE playerNum, uint16_t pingMs) {
     if (playerNum >= MAX_TANKS) return;

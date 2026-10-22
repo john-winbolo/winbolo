@@ -104,7 +104,9 @@ void srvSendTo(const uint8_t *buf, int len,
         return;
     }
     udpSendTo(udpServer.sock, buf, len, addr);
+#if WB_ENABLE_NETIMPAIR
     udpServer.wireSent++;
+#endif
 }
 
 /* The clock a caller can put in place of SDL_GetTicks, and the only one two
@@ -115,7 +117,12 @@ void srvSendTo(const uint8_t *buf, int len,
  * one frame per tick then gets a ping measured in frames, which is what the
  * lag compensation and the channel layer's resend timer are sized from.
  * Everything else here keeps the wall clock: join rate limit, cookie window,
- * upload expiry and the once-a-second log lines. */
+ * upload expiry and the once-a-second log lines.
+ *
+ * Only the test build of this library (server_static_test, compiled with
+ * WB_ENABLE_NETIMPAIR) carries the setter. A shipping server reads
+ * SDL_GetTicks with no pointer to check. */
+#if WB_ENABLE_NETIMPAIR
 static uint64_t (*s_srvClock)(void) = NULL;
 
 void transportUdpServerSetClock(uint64_t (*fn)(void)) {
@@ -125,6 +132,11 @@ void transportUdpServerSetClock(uint64_t (*fn)(void)) {
 uint64_t srvNow(void) {
     return (s_srvClock != NULL) ? s_srvClock() : (uint64_t)SDL_GetTicks();
 }
+#else
+uint64_t srvNow(void) {
+    return (uint64_t)SDL_GetTicks();
+}
+#endif
 
 unsigned short transportUdpServerGetBoundPort(void) {
     return udpServer.boundPort;

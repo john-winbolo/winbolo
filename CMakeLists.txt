@@ -1892,9 +1892,15 @@ add_subdirectory(brains)
 # are linked together.
 if(MSVC OR APPLE)
     set(SERVER_LINK_GROUP server_static server_sim_static server_round_log_static)
+    set(SERVER_TEST_LINK_GROUP server_static_test server_sim_static server_round_log_static)
 else()
     set(SERVER_LINK_GROUP "$<LINK_GROUP:RESCAN,server_static,server_sim_static,server_round_log_static>")
+    set(SERVER_TEST_LINK_GROUP "$<LINK_GROUP:RESCAN,server_static_test,server_sim_static,server_round_log_static>")
 endif()
+# SERVER_TEST_LINK_GROUP is the same group with the test build of the server
+# library (src/server/CMakeLists.txt): the one compiled with
+# WB_ENABLE_NETIMPAIR=1, which WinBoloUnitTests links so its loopback harness
+# can set the server's clock and count datagrams. Nothing shipped links it.
 
 # ---------------------------------------------------------------------------
 # winbolonet_core / winbolonet_server / winbolonet_client — three static
@@ -5182,10 +5188,10 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
     # Activate the network-impairment hooks for this target's compilation of
     # transport_udp_client.c (compiled per-target above), so the loopback
-    # tests can drive a seeded lossy path via WB_NETIMPAIR. server_static
-    # owns transport_udp_server.c and is NOT recompiled here, so every
-    # shipping target keeps WB_ENABLE_NETIMPAIR=0; client-endpoint impairment
-    # already covers both directions (impairIn + impairOut).
+    # tests can drive a seeded lossy path via WB_NETIMPAIR. The server side
+    # of the same flag comes from server_static_test, the test build of the
+    # server library this target links (SERVER_TEST_LINK_GROUP); every
+    # shipping target links server_static, which keeps WB_ENABLE_NETIMPAIR=0.
     WB_ENABLE_NETIMPAIR=1
     # Compile the WIRE_CORPUS_TAP calls into this target's per-target
     # transport_udp_common.c (shipping builds leave them out), and point the
@@ -5274,7 +5280,7 @@ target_include_directories(WinBoloUnitTests PRIVATE
 bolo_apply_include_rules(WinBoloUnitTests unittests)
 
 target_link_libraries(WinBoloUnitTests PRIVATE
-    bolo_static scenario_static ${SERVER_LINK_GROUP} bot_brains_static
+    bolo_static scenario_static ${SERVER_TEST_LINK_GROUP} bot_brains_static
     SDL3::SDL3 minizip lua_static cjson utf8proc
     # tileloader.c reads SVG through nanosvg and PNG through stb_image.
     nanosvg stb_image

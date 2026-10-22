@@ -46,7 +46,9 @@ static SDL_AtomicInt  recvThreadRunning;
 static SDL_Thread    *recvThread = NULL;
 static SOCKET         recvThreadSock = INVALID_SOCKET; /* copy for thread */
 static uint32_t       recvDropCount = 0; /* packets dropped due to full queue */
+#if WB_ENABLE_NETIMPAIR
 static SDL_AtomicInt  recvSeenTotal;     /* every datagram read, queued or not */
+#endif
 
 static int SDLCALL serverRecvThreadFunc(void *userdata) {
     (void)userdata;
@@ -82,7 +84,9 @@ static int SDLCALL serverRecvThreadFunc(void *userdata) {
                                    (struct sockaddr *)&discardAddr, &addrLen);
                 if (ret <= 0) break;
                 recvDropCount++;
+#if WB_ENABLE_NETIMPAIR
                 SDL_AddAtomicInt(&recvSeenTotal, 1);
+#endif
                 if ((recvDropCount & 255) == 1) {
                     fprintf(stderr, "[UDP SERVER] Recv queue full, dropped %u packets\n",
                             recvDropCount);
@@ -98,9 +102,11 @@ static int SDLCALL serverRecvThreadFunc(void *userdata) {
                 if (ret <= 0) break; /* No more data or error */
                 entry->len = ret;
                 SDL_SetAtomicInt(&recvQueueHead, next);
+#if WB_ENABLE_NETIMPAIR
                 /* After the head moves, so a reader that sees the count
                  * also sees the entry in the ring. */
                 SDL_AddAtomicInt(&recvSeenTotal, 1);
+#endif
             }
         }
     }
@@ -115,7 +121,9 @@ void udpServerRecvThreadStart(SOCKET sock) {
     SDL_SetAtomicInt(&recvQueueHead, 0);
     SDL_SetAtomicInt(&recvQueueTail, 0);
     recvDropCount = 0;
+#if WB_ENABLE_NETIMPAIR
     SDL_SetAtomicInt(&recvSeenTotal, 0);
+#endif
     recvThreadSock = sock;
     SDL_SetAtomicInt(&recvThreadRunning, 1);
     recvThread = SDL_CreateThread(serverRecvThreadFunc, "SrvRecv", NULL);
@@ -208,7 +216,9 @@ static void srvDrainImpair(ServerSim *sim) {
     while ((plen = netImpairPop(&srvImpairOut, pbuf, sizeof(pbuf),
                                 &paddr, now)) > 0) {
         udpSendTo(udpServer.sock, pbuf, plen, &paddr);
+#if WB_ENABLE_NETIMPAIR
         udpServer.wireSent++;
+#endif
     }
 
 #if WB_ENABLE_NETIMPAIR
@@ -312,11 +322,14 @@ int transportUdpServerRecvQueuePending(void) {
     return n;
 }
 
+#if WB_ENABLE_NETIMPAIR
 /* Datagrams the recv thread has read off the socket since it started, the
  * ones it had to drop for a full ring included. It only goes up, so a
  * loopback test that knows how many datagrams its clients have put on the
  * wire can wait for this to reach that number before it ticks the server,
- * and know that the drain will see every one of them. */
+ * and know that the drain will see every one of them. Test build only
+ * (server_static_test); a shipping server keeps no such count. */
 uint32_t transportUdpServerRecvSeenCount(void) {
     return (uint32_t)SDL_GetAtomicInt(&recvSeenTotal);
 }
+#endif

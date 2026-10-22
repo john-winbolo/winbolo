@@ -655,6 +655,11 @@ bool transportUdpServerHasRecvThread(void);
  * has not been scheduled yet, which the caller cannot tell apart. */
 int transportUdpServerRecvQueuePending(void);
 
+/* The three below exist only in the test build of the server library
+ * (server_static_test, compiled with WB_ENABLE_NETIMPAIR, which is what
+ * WinBoloUnitTests links). The shipping server_static has no counters and no
+ * clock pointer, so a player's server pays nothing for them. */
+#if WB_ENABLE_NETIMPAIR
 /* Datagrams the recv thread has read since it started; it only goes up. A
  * loopback test waits for it to reach the number its clients have put on
  * the wire before it ticks the server. */
@@ -669,6 +674,7 @@ uint32_t transportUdpServerWireSentCount(void);
  * client's pair read transportUdpClientSetVirtualClock's. Process wide.
  * NULL, the default, restores the wall clock. */
 void transportUdpServerSetClock(uint64_t (*fn)(void));
+#endif
 
 /* Drain sim events into per-client reliable queues.
  * Call after each serverSimTick() so events aren't lost when
