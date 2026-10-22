@@ -3204,6 +3204,121 @@ out:
 }
 
 /*---------------------------------------------------------
+ * Diagonal roads
+ *
+ * The game joins a road tile only to the road on its four sides
+ * (screenCalcRoad in screencalc.c). Two road tiles that touch only at
+ * a corner do not join, and each one draws as a lone road square. The
+ * real maps draw a diagonal road as a staircase 2 tiles wide, where
+ * each tile shares a side with the next. The lines here (diagonal
+ * streets, island roads, a track 1 tile wide round a round outline,
+ * diagonal skeleton lines and gates) step on the diagonal, so this
+ * pass puts road on one of the two tiles between each such pair.
+ *---------------------------------------------------------*/
+
+static int roadAt(const Ctx *c, int x, int y) {
+    return inb(c, x, y) && c->t[IDX(c, x, y)] == T_ROAD;
+}
+
+/* Road drawn as a line: a track, a skeleton line, a street, a gate
+ * (on the rim layer) or the centre ring. A road floor and the grass
+ * lines on it (L_FLOOR), pods, town blocks and walls are not lines,
+ * so their corners stay as they are. */
+static int lineRoad(const Ctx *c, int x, int y) {
+    int L;
+    if (!roadAt(c, x, y)) return 0;
+    L = c->layer[IDX(c, x, y)];
+    return L == L_TRACK || L == L_SKEL || L == L_STREET || L == L_RIM || L == L_CENTRE;
+}
+
+/* 1 if no 2x2 square of road holds the tile at x, y. */
+static int noRoadSquare(const Ctx *c, int x, int y) {
+    int ox, oy;
+    for (oy = -1; oy <= 0; oy++) {
+        for (ox = -1; ox <= 0; ox++) {
+            if (roadAt(c, x + ox, y + oy) && roadAt(c, x + ox + 1, y + oy) &&
+                roadAt(c, x + ox, y + oy + 1) && roadAt(c, x + ox + 1, y + oy + 1)) return 0;
+        }
+    }
+    return 1;
+}
+
+/* Put road on x, y and on each of its symmetry images, when that joins
+ * the two road tiles at its sides and nothing more: the tile is open
+ * land with no object, and after the fill each image has exactly two
+ * road tiles at its sides and is in no 2x2 square of road. So no road
+ * goes on water, buildings or objects, no fill makes a road area wider
+ * or puts a bump on its edge, and an image that falls on the other
+ * tile between the pair (a pair on a mirror line) is refused. Returns
+ * 1 when the road was put; else the map is as it was. */
+static int tryJoin(Ctx *c, int x, int y, int layer) {
+    int xs[4], ys[4], n, i, ok = 1;
+    uint8_t st[4], sl[4];
+    if (!inb(c, x, y)) return 0;
+    n = images(c, x, y, xs, ys);
+    for (i = 0; i < n; i++) {
+        int k = IDX(c, xs[i], ys[i]), t = c->t[k];
+        if (c->obj[k]) return 0;
+        if (t != T_GRASS && t != T_FOREST && t != T_SWAMP && t != T_RUBBLE && t != T_CRATER) return 0;
+    }
+    for (i = 0; i < n; i++) {
+        int k = IDX(c, xs[i], ys[i]);
+        st[i] = c->t[k];
+        sl[i] = c->layer[k];
+        c->t[k] = T_ROAD;
+        c->layer[k] = (uint8_t)layer;
+    }
+    for (i = 0; i < n && ok; i++) {
+        int sx = xs[i], sy = ys[i];
+        int sides = roadAt(c, sx - 1, sy) + roadAt(c, sx + 1, sy) + roadAt(c, sx, sy - 1) + roadAt(c, sx, sy + 1);
+        if (sides != 2 || !noRoadSquare(c, sx, sy)) ok = 0;
+    }
+    if (!ok) {
+        for (i = n - 1; i >= 0; i--) {
+            int k = IDX(c, xs[i], ys[i]);
+            c->t[k] = st[i];
+            c->layer[k] = sl[i];
+        }
+    }
+    return ok;
+}
+
+static uint8_t (*gLineRoadOut)[256];
+
+void makerSetLineRoadOut(uint8_t (*out)[256]) {
+    gLineRoadOut = out;
+}
+
+/* Join each pair of line road tiles that touch only at a corner. Of
+ * the two tiles between them, the first choice is the one that is not
+ * forest, so a road next to a forest rim keeps the rim; when both or
+ * neither are forest, the tile in the upper tile's row. When the first
+ * choice may not take road, the other one. The map is symmetric here,
+ * and each fill goes on every image, so it stays symmetric. No random
+ * numbers. */
+static void joinDiagonalRoads(Ctx *c) {
+    int x, y, d;
+    for (y = 0; y + 1 < c->H; y++) {
+        for (x = 0; x < c->W; x++) {
+            if (!lineRoad(c, x, y)) continue;
+            for (d = 0; d < 2; d++) {
+                int bx = d ? x - 1 : x + 1, by = y + 1, layer = c->layer[IDX(c, x, y)];
+                int upForest, lowForest;
+                if (!lineRoad(c, bx, by)) continue;
+                if (roadAt(c, bx, y) || roadAt(c, x, by)) continue;
+                upForest = c->t[IDX(c, bx, y)] == T_FOREST;
+                lowForest = c->t[IDX(c, x, by)] == T_FOREST;
+                if (upForest && !lowForest) {
+                    if (!tryJoin(c, x, by, layer)) tryJoin(c, bx, y, layer);
+                } else {
+                    if (!tryJoin(c, bx, y, layer)) tryJoin(c, x, by, layer);
+                }
+            }
+        }
+    }
+}
+
+/*---------------------------------------------------------
  * Mines
  *---------------------------------------------------------*/
 
@@ -3375,6 +3490,7 @@ void makerGenerate(uint8_t grid[256][256], MakerObjects *out, const MakerParams 
     computeDistances(&c);
     placeObjects(&c);
     fixReach(&c);
+    joinDiagonalRoads(&c);
     placeMines(&c);
 
     for (y = 0; y < c.H; y++) {
@@ -3382,6 +3498,7 @@ void makerGenerate(uint8_t grid[256][256], MakerObjects *out, const MakerParams 
             int k = IDX(&c, x, y), t = c.t[k];
             if (c.mine[k] && t >= T_SWAMP && t <= T_GRASS) t += T_MINE_ADD;
             grid[c.p.x1 + x][c.p.y1 + y] = (uint8_t)t;
+            if (gLineRoadOut) gLineRoadOut[c.p.x1 + x][c.p.y1 + y] = (uint8_t)lineRoad(&c, x, y);
         }
     }
     memcpy(out->styleUsed, c.styleUsed, sizeof(out->styleUsed));
