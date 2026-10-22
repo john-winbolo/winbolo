@@ -2836,3 +2836,19 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Harita ekranı doldurur; durum, inşa ve hab
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=Bu cihaz mobil veri kullanıyor. Mobil veriyle barındırılan bir İnternet\noyunu büyük olasılıkla çalışmaz: mobil ağlar diğer oyuncuların cihaza\nulaşmasına nadiren izin verir. Wi-Fi ile çalışma olasılığı çok daha yüksektir.\n\nYine de barındırılsın mı?
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=GIF'leriniz
+STR_CLIPGIF_GALLERY_EMPTY=Henüz GIF yok. Tekrar oynatmanın altındaki GIF düğmesiyle ya da bir klibin GIF düğmesiyle oluşturun.
+STR_CLIPGIF_COPY=Panoya kopyala
+STR_CLIPGIF_SAVE=Diske kaydet
+STR_CLIPGIF_COPIED=Kopyalandı.
+STR_CLIPGIF_COPY_FAILED=GIF kopyalanamadı.
+STR_CLIPGIF_OPEN_FAILED=Bu GIF açılamadı.
+STR_CLIPGIF_MAP_FMT=Harita: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Oyuncular: {string1}
+STR_CLIPGIF_NO_DETAILS=Bu GIF ile hiçbir ayrıntı kaydedilmedi.
+STR_CLIPGIF_LENGTH_TIP=Oynatma noktasından itibaren saniye cinsinden GIF uzunluğu.\nZaman çizelgesinin parlak kısmının sonundaki işareti sürükleyerek de değiştirebilirsiniz.
+STR_CLIPGIF_LOADING=GIF açılıyor...
+STR_CLIPGIF_TOO_LARGE=Bu GIF burada gösterilemeyecek kadar büyük. Yine de kopyalayabilir veya kaydedebilirsiniz.
+STR_CLIPGIF_FILTER_NAME=GIF Resimleri

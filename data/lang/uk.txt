@@ -2836,3 +2836,19 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Мапа заповнює весь екра�
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=Цей пристрій використовує мобільні дані. Інтернет-гра, створена через\nмобільні дані, найімовірніше, не працюватиме: мобільні мережі рідко\nдозволяють іншим гравцям під'єднатися до пристрою. Через Wi-Fi шансів\nнабагато більше.\n\nУсе одно створити гру?
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Ваші GIF
+STR_CLIPGIF_GALLERY_EMPTY=GIF поки немає. Створіть його кнопкою GIF під повтором або кнопкою GIF біля кліпу.
+STR_CLIPGIF_COPY=Копіювати в буфер обміну
+STR_CLIPGIF_SAVE=Зберегти на диск
+STR_CLIPGIF_COPIED=Скопійовано.
+STR_CLIPGIF_COPY_FAILED=Не вдалося скопіювати GIF.
+STR_CLIPGIF_OPEN_FAILED=Не вдалося відкрити цей GIF.
+STR_CLIPGIF_MAP_FMT=Мапа: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Гравці: {string1}
+STR_CLIPGIF_NO_DETAILS=Для цього GIF не збережено відомостей.
+STR_CLIPGIF_LENGTH_TIP=Довжина GIF у секундах від точки відтворення.\nЇї також можна змінити, перетягнувши мітку в кінці світлої частини шкали часу.
+STR_CLIPGIF_LOADING=Відкриття GIF...
+STR_CLIPGIF_TOO_LARGE=Цей GIF завеликий, щоб показати його тут. Його все одно можна скопіювати або зберегти.
+STR_CLIPGIF_FILTER_NAME=Зображення GIF

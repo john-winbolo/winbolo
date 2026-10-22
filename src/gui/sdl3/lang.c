@@ -1309,6 +1309,23 @@ static const LangEntry langTable[] = {
     {2940, "How much of the map shows through the tank, pillbox and\nbase grids and the stock bars in full screen. 0% is solid,\nand the slider stops at 90% so they cannot be made invisible."},
     {2941, "The map fills the screen, with the status, build and newswire\npanels over it, and the touch controls when you play by touch.\nOff shows the classic screen. Remembered for next time."},
     {2942, "This device is on mobile data. An Internet game hosted on mobile\ndata will probably not work: mobile networks rarely let other\nplayers reach the device. Wi-Fi is much more likely to work.\n\nHost anyway?"},
+
+    /* The recap's GIF gallery, and the GIF length beside the replay's GIF
+     * button. */
+    {2943, "Your GIFs"},
+    {2944, "No GIFs yet. Make one with the GIF button under the replay, or the GIF button on a clip."},
+    {2945, "Copy to clipboard"},
+    {2946, "Save to disk"},
+    {2947, "Copied."},
+    {2948, "The GIF could not be copied."},
+    {2949, "This GIF could not be opened."},
+    {2950, "Map: {string1}"},
+    {2951, "Players: {string1}"},
+    {2952, "No details were saved with this GIF."},
+    {2953, "GIF length in seconds, from the playhead.\nDrag the marker at the end of the bright part of the timeline to change it too."},
+    {2954, "Opening the GIF..."},
+    {2955, "This GIF is too large to show here. You can still copy it or save it."},
+    {2956, "GIF Images"},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},

@@ -2834,3 +2834,19 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=地图占满屏幕，状态、建造和新�
 
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=此设备正在使用移动数据。用移动数据主持的互联网游戏很可能无法正常进行：\n移动网络很少允许其他玩家连接到此设备。使用 Wi-Fi 成功的可能性要大得多。\n\n仍要主持吗？
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=你的 GIF
+STR_CLIPGIF_GALLERY_EMPTY=还没有 GIF。用回放下方的 GIF 按钮或片段上的 GIF 按钮制作一个。
+STR_CLIPGIF_COPY=复制到剪贴板
+STR_CLIPGIF_SAVE=保存到磁盘
+STR_CLIPGIF_COPIED=已复制。
+STR_CLIPGIF_COPY_FAILED=无法复制该 GIF。
+STR_CLIPGIF_OPEN_FAILED=无法打开此 GIF。
+STR_CLIPGIF_MAP_FMT=地图：{string1}
+STR_CLIPGIF_PLAYERS_FMT=玩家：{string1}
+STR_CLIPGIF_NO_DETAILS=此 GIF 没有保存详细信息。
+STR_CLIPGIF_LENGTH_TIP=从播放位置起的 GIF 长度（秒）。\n拖动时间轴亮色部分末端的标记也可以更改。
+STR_CLIPGIF_LOADING=正在打开 GIF...
+STR_CLIPGIF_TOO_LARGE=此 GIF 太大，无法在此显示。你仍然可以复制或保存它。
+STR_CLIPGIF_FILTER_NAME=GIF 图像
