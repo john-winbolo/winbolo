@@ -271,6 +271,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/mapview_overlay.c
     ${PROJ_ROOT}/src/gui/sdl3/sprite_positions.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3draw.c
+    ${PROJ_ROOT}/src/gui/sdl3/iso_sheet.c
     ${PROJ_ROOT}/src/gui/sdl3/newswire_slide.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3draw_status.c
     ${PROJ_ROOT}/src/gui/sdl3/tank_label.c

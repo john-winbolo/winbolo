@@ -2310,14 +2310,14 @@ releases with nothing coming off means the review has stopped, and
 the grant needs re-arguing rather than extending.
 
 **Linked GUI sources.** A second, narrower exception rides on the
-same target, and it is not a T2 grant. Eighteen `src/gui/sdl3` files
+same target, and it is not a T2 grant. Nineteen `src/gui/sdl3` files
 are compiled *into* `WinBoloUnitTests`, the only files from a
 renderer directory that are: `skin_source.c`, `tileloader.c`,
 `sdl_bmp.c`, `sound_variants.c`, `sound_mix.c`, `overview_camera.cpp`,
 `overview_fog.cpp`, `overview_hud_layout.cpp`, `sprite_positions.c`,
 `ring_band.c`, `dialogs/dialog_quit.cpp`, `workshop_sync.c`,
 `input_source.c`, `news_image_budget.cpp`, `dialogs/clip_gif_core.c`,
-`newswire_slide.c`, `gfx_settings.c` and `iso_project.c`.
+`newswire_slide.c`, `gfx_settings.c`, `iso_project.c` and `iso_sheet.c`.
 Between them they hold skin lookup, the tile sheet
 builder, the BMP sheet reader, the sound variant naming, the
 effects mixer's step that scales one slot's samples by its left and
@@ -2328,6 +2328,12 @@ and the sprite placement arithmetic behind `mapview.c`'s drawers.
 position lands on screen, what is under a screen point, which squares
 a target can show and the order they draw in, with no renderer behind
 it; `tests/unit/test_iso_project.c` drives it.
+`iso_sheet.c` is the isometric sprite sheet: the cell layout, the
+build that reads each sprite through `tileloader.c` and makes the
+wall faces from classic sprites when no file supplies them, and the
+lookup from a sprite's kind, team and frame to its cell. It makes an
+`SDL_Surface` and no texture, so it needs no renderer;
+`tests/unit/test_iso_sheet.c` drives it.
 `newswire_slide.c` is when a newswire that hides itself is on screen:
 arithmetic on the times it is given, with no clock and no SDL.
 `ring_band.c` is here for `ringAnimAt`, which is where a closing ring
@@ -2386,7 +2392,7 @@ checked per file rather than for the group. One that gains an ImGui
 include, or that opens a renderer or a device of its own, has left
 the category, and the answer is to split the leaf back out — the
 link break is the signal, not a build problem to route around by
-widening the test binary. An eighteenth file joins only on the same
+widening the test binary. A twentieth file joins only on the same
 test: callable with no display attached, or it does not go in.
 
 Six `src/mapeditor` files ride the same rule from a different

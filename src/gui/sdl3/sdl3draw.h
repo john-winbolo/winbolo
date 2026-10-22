@@ -84,6 +84,11 @@ int sdl3DrawGetZoomFactor(void);
 SDL_Window *sdl3DrawGetWindow(void);
 SDL_Renderer *sdl3DrawGetRenderer(void);
 SDL_Texture *sdl3DrawGetTilesTexture(void);
+/* The isometric sprite sheet's texture, built beside the tile sheet at the
+   same density and rebuilt with it on a zoom or skin change; iso_sheet.h
+   says where each sprite is on it. NULL until the tiles are loaded, and
+   when the build failed. */
+SDL_Texture *sdl3DrawGetIsoTexture(void);
 
 /* In-window Map Overview mode: the overview fills the game window and the
    classic 15x15 view and chrome are not drawn. */

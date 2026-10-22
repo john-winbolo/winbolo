@@ -1001,6 +1001,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/map_markers.c
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
+    src/gui/sdl3/iso_sheet.c
     src/gui/sdl3/skin_source.c
     src/gui/sdl3/gfx_settings.c
     src/gui/sdl3/sdl_bmp.c
@@ -2013,7 +2014,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/ping_marker.c
     src/gui/sdl3/ring_band.c
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/map_colours.c src/gui/sdl3/map_markers.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/iso_project.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/newswire_slide.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/map_colours.c src/gui/sdl3/map_markers.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/iso_project.c src/gui/sdl3/tileloader.c src/gui/sdl3/iso_sheet.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/newswire_slide.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
     # spectatorRun reads the controller through it for overview pan/zoom. Reads
     # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
@@ -4826,6 +4827,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The texel ring around a sprite slot: clean on the padded atlas the
     # sprite drawers sample, and what the packed sheet has there instead.
     tests/unit/test_sprite_atlas.c
+    # The isometric sprite sheet: where every cell lands, which cells the
+    # stock art fills, the faces made from classic sprites when no file
+    # supplies them, and the texel ring around a cell. Reads the art through
+    # tileloader.c, which is already here.
+    tests/unit/test_iso_sheet.c
+    src/gui/sdl3/iso_sheet.c
     src/gui/sdl3/sdl_bmp.c
     # Which of <name>.wav and <name>_0.wav .. <name>_9.wav a source holds,
     # and the compaction that leaves the members which decoded contiguous.
@@ -6184,6 +6191,10 @@ set(_unit_test_names
     iso_project_visible_range
     iso_project_depth
     iso_project_facing_frame
+    iso_sheet_layout
+    iso_sheet_stock_present
+    iso_sheet_fallbacks
+    iso_sheet_gutter
     map_colours_item_kind
     map_colours_terrain
     map_colours_markers

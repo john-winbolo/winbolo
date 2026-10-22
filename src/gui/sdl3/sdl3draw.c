@@ -60,6 +60,7 @@
 #include "../ui_mode.h"
 #include "../../steam/steam_wrapper.h"
 #include "tileloader.h"
+#include "iso_sheet.h"
 #include "skin_source.h"
 #include "sdl_bmp.h"
 #include "glyphs.h"
@@ -148,6 +149,11 @@ static int           gSheetScale    = 1;  /* atlas scale: sheet is TILE_FILE * g
    sheet, which is what they did before. */
 static SDL_Texture  *gSpritesTex   = NULL;
 static SpriteAtlas  *gSpriteAtlas  = NULL;
+/* The isometric sprites, on a sheet of their own built at gSheetScale beside
+   gTilesTex and dropped with it. iso_sheet.h has the layout and the lookup.
+   Nothing draws from it yet; the isometric view will. NULL is a working
+   state: that view draws the classic sprite for any cell it cannot find. */
+static SDL_Texture  *gIsoTex       = NULL;
 /* Bumped by sdl3DrawReloadTiles, the skin / tile-detail reload, so a caller
    holding its own atlas (bg_game, the lobby map preview) can tell that copy
    is stale. Not bumped by the zoom rebuild: that changes only this
@@ -770,6 +776,25 @@ static bool sdl3LoadTiles(void) {
   SDL_SetTextureBlendMode(gTilesTex, SDL_BLENDMODE_BLEND);
   SDL_SetTextureScaleMode(gTilesTex, gTilesScaleMode);
   sdl3DrawStatusSetAtlas(gTilesTex, gSheetScale);
+
+  /* The isometric sheet, at the same density and from the same skin. Not
+     fatal either: the isometric view draws the classic sprites without it. */
+  SDL_Surface *iso = isoSheetBuild(skinGetActiveSource(), gSheetScale,
+                                   (int)gfxGetTileDetail());
+  if (iso != NULL) {
+    gIsoTex = SDL_CreateTextureFromSurface(gRenderer, iso);
+    SDL_DestroySurface(iso);
+    if (gIsoTex != NULL) {
+      SDL_SetTextureBlendMode(gIsoTex, SDL_BLENDMODE_BLEND);
+      SDL_SetTextureScaleMode(gIsoTex, gTilesScaleMode);
+    } else {
+      WB_LOG_WARN(WB_LOG_CAT_ASSET,
+                  "sdl3LoadTiles: the isometric sheet would not become a "
+                  "texture (%s)", SDL_GetError());
+    }
+  } else {
+    WB_LOG_WARN(WB_LOG_CAT_ASSET, "sdl3LoadTiles: isoSheetBuild failed");
+  }
   return TRUE;
 }
 
@@ -780,6 +805,17 @@ static void sdl3DropSpriteAtlas(void) {
   if (gSpritesTex) { SDL_DestroyTexture(gSpritesTex); gSpritesTex = NULL; }
   tileLoaderFreeSpriteAtlas(gSpriteAtlas);
   gSpriteAtlas = NULL;
+}
+
+/* Drops the isometric sheet's texture. Called beside sdl3DropSpriteAtlas at
+   every site that destroys gTilesTex: it was built from the same skin at the
+   same density, so it goes stale with the sheet. */
+static void sdl3DropIsoTexture(void) {
+  if (gIsoTex) { SDL_DestroyTexture(gIsoTex); gIsoTex = NULL; }
+}
+
+SDL_Texture *sdl3DrawGetIsoTexture(void) {
+  return gIsoTex;
 }
 
 unsigned int sdl3DrawGetTilesGeneration(void) {
@@ -802,6 +838,9 @@ void sdl3DrawSetTilesScaleMode(SDL_ScaleMode mode) {
   }
   if (gSpritesTex != NULL) {
     SDL_SetTextureScaleMode(gSpritesTex, mode);
+  }
+  if (gIsoTex != NULL) {
+    SDL_SetTextureScaleMode(gIsoTex, mode);
   }
 }
 
@@ -827,6 +866,7 @@ static void sdl3DrawAssertTilesSampler(void) {
   /* The sprite atlas is bound by the same draws and clobbered by the same
      ImGui pass, so it needs the same answer. */
   if (gSpritesTex != NULL) SDL_SetTextureScaleMode(gSpritesTex, mode);
+  if (gIsoTex     != NULL) SDL_SetTextureScaleMode(gIsoTex, mode);
 }
 
 /* Rebuilds only the tile atlas in place (for a skin change) by re-reading
@@ -837,6 +877,7 @@ static void sdl3DrawAssertTilesSampler(void) {
 void sdl3DrawReloadTiles(void) {
   if (gTilesTex) { SDL_DestroyTexture(gTilesTex); gTilesTex = NULL; gSheetScale = 1; }
   sdl3DropSpriteAtlas();
+  sdl3DropIsoTexture();
   sdl3DrawStatusSetAtlas(NULL, 1);
   gTilesGeneration++;
   sdl3LoadTiles();
@@ -2157,6 +2198,7 @@ void sdl3DrawCleanup(void) {
     gSheetScale = 1;
   }
   sdl3DropSpriteAtlas();
+  sdl3DropIsoTexture();
   if (gBackgroundTex) {
     SDL_DestroyTexture(gBackgroundTex);
     gBackgroundTex = NULL;
@@ -2229,6 +2271,7 @@ void sdl3DrawReconfigureZoom(int explicitZoom) {
   /* Destroy old resources that are zoom-dependent */
   if (gTilesTex) { SDL_DestroyTexture(gTilesTex); gTilesTex = NULL; gSheetScale = 1; }
   sdl3DropSpriteAtlas();
+  sdl3DropIsoTexture();
   sdl3DrawStatusSetAtlas(NULL, 1);
   tileLoaderCleanup();
   if (gGameRenderTarget) { SDL_DestroyTexture(gGameRenderTarget); gGameRenderTarget = NULL; }

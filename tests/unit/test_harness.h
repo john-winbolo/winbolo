@@ -2145,6 +2145,16 @@ int run_iso_project_visible_range(void);
 int run_iso_project_depth(void);
 int run_iso_project_facing_frame(void);
 
+/* The isometric sprite sheet (test_iso_sheet.c): every cell has a rect
+ * inside the sheet and no two overlap; the stock art fills every cell; with
+ * the art directory missing its iso_ files the faces and band are still
+ * made from the classic sprites while a tank reports absent; and the texel
+ * ring around a cell is a copy of the cell's own edge on all four sides. */
+int run_iso_sheet_layout(void);
+int run_iso_sheet_stock_present(void);
+int run_iso_sheet_fallbacks(void);
+int run_iso_sheet_gutter(void);
+
 /* The shared map colours: what a tile number says is standing on a square,
  * the flat colour its ground gets when the square is drawn too small for its
  * sprite, and the three layers a marker's stroke is built from. */

@@ -1348,6 +1348,94 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
                                    (int)gfxGetTileDetail());
 }
 
+/* The skin's own <name>.svg, rasterized to the slot size.  False on a miss
+ * or a file nanosvg cannot parse. */
+static bool tryLoadSkinSVG(struct SkinSource *skin, const char *name,
+                           int w, int h, unsigned char *out,
+                           NSVGrasterizer *rast) {
+    char rel[SKIN_PATH_MAX];
+    void *buf = NULL;
+    size_t len = 0;
+    bool ok;
+
+    SDL_snprintf(rel, sizeof(rel), "%s.svg", name);
+    if (!skinSourceRead(skin, rel, &buf, &len)) return false;
+    ok = decodeSVG((char *)buf, len, w, h, out, rast);
+    SDL_free(buf);
+    return ok;
+}
+
+/* The skin's own <name>.png, point-sampled to the slot size.  False on a
+ * miss or a file stb_image cannot decode. */
+static bool tryLoadSkinPNG(struct SkinSource *skin, const char *name,
+                           int w, int h, unsigned char *out) {
+    char rel[SKIN_PATH_MAX];
+    void *buf = NULL;
+    size_t len = 0;
+    bool ok;
+
+    SDL_snprintf(rel, sizeof(rel), "%s.png", name);
+    if (!skinSourceRead(skin, rel, &buf, &len)) return false;
+    ok = decodePNG(buf, len, w, h, out);
+    SDL_free(buf);
+    return ok;
+}
+
+bool tileLoaderLoadSprite(struct SkinSource *skin, const char *name, int want,
+                          int w, int h, unsigned char *out,
+                          const char *basePath) {
+    char pathBuf[SKIN_PATH_MAX + 64];
+    NSVGrasterizer *rast;
+    bool loaded = false;
+
+    if (name == NULL || out == NULL || w < 1 || h < 1) return false;
+    if (want < 1) want = 1;
+    if (basePath == NULL) basePath = SDL_GetBasePath();
+    if (basePath == NULL) basePath = "";
+
+    rast = nsvgCreateRasterizer();
+    if (rast == NULL) return false;
+
+    /* The same order as the per-slot loop in tileLoaderBuildSheetFor, step
+       for step, so a skin author sees one answer whichever sheet asks. */
+    if (skin && want >= 2) {
+        SkinInfo info;
+        skinSourceReadIni(skin, &info);
+
+        loaded = tryLoadSkinDensityPNG(skin, name, want, w, h, out);
+        if (!loaded) {
+            int above = skinNearestDensity(skin, name, want, true);
+            if (above > 0) {
+                loaded = tryLoadSkinDensityPNG(skin, name, above, w, h, out);
+            }
+        }
+        if (!loaded && (info.maxPixelDensity == 0 || want <= info.maxPixelDensity)) {
+            loaded = tryLoadSkinSVG(skin, name, w, h, out, rast);
+        }
+        if (!loaded) {
+            int below = skinNearestDensity(skin, name, want, false);
+            if (below > 0) {
+                loaded = tryLoadSkinDensityPNG(skin, name, below, w, h, out);
+            }
+        }
+    }
+
+    if (skin && !loaded) loaded = tryLoadSkinSVG(skin, name, w, h, out, rast);
+    if (skin && !loaded) loaded = tryLoadSkinPNG(skin, name, w, h, out);
+
+    if (!loaded) {
+        SDL_snprintf(pathBuf, sizeof(pathBuf), "%sdata/svg/%s.svg", basePath, name);
+        loaded = tryLoadSVG(pathBuf, w, h, out, rast);
+    }
+    if (!loaded) {
+        SDL_snprintf(pathBuf, sizeof(pathBuf), "%sdata/svg/%s.png", basePath, name);
+        loaded = tryLoadPNG(pathBuf, w, h, out);
+    }
+
+    nsvgDeleteRasterizer(rast);
+    return loaded;
+}
+
 /* ------------------------------------------------------------------ */
 /* The padded copy of the moving sprites                              */
 /* ------------------------------------------------------------------ */

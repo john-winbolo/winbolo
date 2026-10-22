@@ -283,6 +283,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/skin_source.c
     ${SRC_ROOT}/gui/sdl3/gfx_settings.c
     ${SRC_ROOT}/gui/sdl3/sdl3draw.c
+    ${SRC_ROOT}/gui/sdl3/iso_sheet.c
     ${SRC_ROOT}/gui/sdl3/newswire_slide.c
     ${SRC_ROOT}/gui/sdl3/sdl3draw_status.c
     ${SRC_ROOT}/gui/sdl3/tank_label.c

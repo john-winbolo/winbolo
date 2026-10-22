@@ -79,6 +79,29 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize,
                                      int mode);
 
 /*********************************************************
+ * NAME:          tileLoaderLoadSprite
+ * PURPOSE:
+ *   Decodes one sprite by name into `out`, w x h RGBA32
+ *   texels, through the chain tileLoaderBuildSheetFor runs
+ *   for a sheet slot, minus the whole-sheet BMP crops: a
+ *   name that is not on the classic layout has no slot
+ *   there to crop.  `want` is the density to prefer, as
+ *   tileLoaderPickDensity returns it; above 1 the skin's
+ *   @Nx files and SVG come first, with MaxPixelDensity
+ *   honoured.  A NULL skin goes straight to data/svg.
+ *   `basePath` is the directory data/ sits under, NULL for
+ *   SDL_GetBasePath(), which is what the sheet builder
+ *   always uses; a caller whose art is elsewhere, as the
+ *   unit tests' is, names the directory.
+ *   False when nothing supplied the name, leaving `out` as
+ *   it was.  This is how the isometric sheet reads its
+ *   sprites, so the two sheets resolve a name the same way.
+ *********************************************************/
+bool tileLoaderLoadSprite(struct SkinSource *skin, const char *name, int want,
+                          int w, int h, unsigned char *out,
+                          const char *basePath);
+
+/*********************************************************
  * NAME:          tileLoaderCleanup
  * PURPOSE:
  *   Frees any cached state held by the tile loader.
