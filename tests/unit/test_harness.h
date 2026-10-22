@@ -4355,6 +4355,11 @@ int run_lv_event_overlay_live_rebuild(void);
 /* Which parts of the viewer a frame of the overview draws, for a log file
  * and for a live feed (test_lv_panel_set.c). */
 int run_lv_panel_set_live(void);
+/* The Chat panel (test_lv_chat_view.c): the fade by replay time, the lines
+ * it lists at a time, and the parts of a chat line the list keeps. */
+int run_lv_chat_view_fade(void);
+int run_lv_chat_view_visible(void);
+int run_lv_chat_view_parts(void);
 /* The one list of ticked kinds of the Controls and Events panels, and the
  * Events panel's saved choice. */
 int run_lv_event_kinds_filter(void);

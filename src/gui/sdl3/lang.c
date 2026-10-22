@@ -1309,6 +1309,12 @@ static const LangEntry langTable[] = {
     {2940, "How much of the map shows through the tank, pillbox and\nbase grids and the stock bars in full screen. 0% is solid,\nand the slider stops at 90% so they cannot be made invisible."},
     {2941, "The map fills the screen, with the status, build and newswire\npanels over it, and the touch controls when you play by touch.\nOff shows the classic screen. Remembered for next time."},
     {2942, "This device is on mobile data. An Internet game hosted on mobile\ndata will probably not work: mobile networks rarely let other\nplayers reach the device. Wi-Fi is much more likely to work.\n\nHost anyway?"},
+    /* The Log Viewer's Chat panel */
+    {3100, "Chat"},
+    {3101, "No chat messages yet."},
+    {3102, "(team)"},
+    {3103, "(to {player})"},
+    {3104, "Spectator {number}"},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},
