@@ -5219,8 +5219,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             if (ed->genConfig.seed == 0) {
                 ed->genConfig = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
             }
-            /* Full-map: always set bases/pills/starts to 16 and lock them */
-            ed->genConfig.locks |= MAPGEN_LOCK_BASES | MAPGEN_LOCK_PILLS | MAPGEN_LOCK_STARTS;
+            /* Full-map: always set bases/pills/starts to 16 */
             ed->genConfig.bases = 16;
             ed->genConfig.pills = 16;
             ed->genConfig.starts = 16;
