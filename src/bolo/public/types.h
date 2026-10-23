@@ -21,11 +21,14 @@
 #ifndef _TYPES_H
 #define _TYPES_H
 
-/* Ensure this header is isolated from ambient pack state */
-#pragma pack(push, 4)
-
 #include "global.h"
 #include <stddef.h>
+
+/* Ensure this header is isolated from ambient pack state. The includes above
+ * stay outside the push: on Windows global.h is the first include of
+ * windows.h in some translation units, and the SDK rejects being read under
+ * non-default packing. */
+#pragma pack(push, 4)
 /* Defines */
 #define MAX_BASES 16
 

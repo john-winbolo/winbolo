@@ -1244,11 +1244,11 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
 #include "../gui/sdl3/gfx_settings.h"
 #include "lv_iso.h"
 
-_Static_assert(LV_ISO_F_MINE == OVERVIEW_F_MINE, "mine flag");
-_Static_assert(LV_ISO_F_LIVE == OVERVIEW_F_LIVE, "live flag");
-_Static_assert(LV_ISO_F_SIGHT == OVERVIEW_F_SIGHT, "sight flag");
-_Static_assert(LV_ISO_MAP_SIZE == MAP_ARRAY_SIZE, "map size");
-_Static_assert(LV_ISO_ITEMS_MAX >= MAX_PILLS + MAX_BASES, "item labels");
+BOLO_STATIC_ASSERT(LV_ISO_F_MINE == OVERVIEW_F_MINE, lv_iso_mine_flag);
+BOLO_STATIC_ASSERT(LV_ISO_F_LIVE == OVERVIEW_F_LIVE, lv_iso_live_flag);
+BOLO_STATIC_ASSERT(LV_ISO_F_SIGHT == OVERVIEW_F_SIGHT, lv_iso_sight_flag);
+BOLO_STATIC_ASSERT(LV_ISO_MAP_SIZE == MAP_ARRAY_SIZE, lv_iso_map_size);
+BOLO_STATIC_ASSERT(LV_ISO_ITEMS_MAX >= MAX_PILLS + MAX_BASES, lv_iso_item_labels);
 
 static IsoView     *s_isoView    = NULL;
 static OverviewMap *s_isoMap     = NULL;
