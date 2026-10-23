@@ -5403,6 +5403,7 @@ set(_unit_test_names
     log_roundtrip_player_lag
     log_roundtrip_player_lag_recorded
     server_lag_log_due
+    server_overrun_stats_due
     lv_player_lag_read
     lv_lag_track
     lv_lag_ring

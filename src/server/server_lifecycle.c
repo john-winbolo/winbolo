@@ -324,6 +324,11 @@ static const  double kTickAlpha = 0.1;
 static double       s_peakTickMs      = 0.0;
 static unsigned int s_ticksOverBudget = 0;
 
+/* The running frames of the round so far, for the periodic overrun lines
+ * (serverOverrunStatsDue). The reset of the peak above starts it again, at
+ * each round start. */
+static uint32_t     s_roundRunFrames  = 0;
+
 /* Wall-clock cost (ms) of the two serverSimTick calls combined for the
  * most recent tick, plus its EWMA. Same seeding rule as above. */
 static double s_lastSimMs = 0.0;
@@ -360,6 +365,7 @@ void serverLifecycleGetTickPeak(double *outPeakMs,
 void serverLifecycleResetTickPeak(void) {
   s_peakTickMs      = 0.0;
   s_ticksOverBudget = 0;
+  s_roundRunFrames  = 0;
 }
 
 uint32_t serverTickCatchUp(uint32_t nowMs, uint32_t *oldTick, uint32_t *ticks,
@@ -1188,6 +1194,19 @@ void serverInstanceTick(ServerSim *sim) {
   double freq = (double)SDL_GetPerformanceFrequency();
   double tickMs = (double)(tickEnd - tickStart) * 1000.0 / freq;
   serverLifecycleRecordTickMs(tickMs);
+
+  /* The overrun lines, once a minute into the round and then every five
+   * minutes. After the tick's own time is recorded, so the lines include
+   * this frame and the print is not part of the time it reports. Only a
+   * frame that ran the round counts. */
+  if (preTickState == serverStateRunning && sim->state == serverStateRunning) {
+    s_roundRunFrames++;
+    if (serverOverrunStatsDue(s_roundRunFrames)) {
+      threadsWaitForMutex();
+      serverSimPrintOverrunStats(sim, s_roundRunFrames / (1000u / SERVER_TICK_LENGTH));
+      threadsReleaseMutex();
+    }
+  }
 }
 
 void serverInstanceShutdown(ServerSim *sim) {

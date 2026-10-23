@@ -1393,6 +1393,24 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
 void serverSimInformation(ServerSim *sim, bool locked);
 
 /*********************************************************
+ *NAME:          serverSimPrintOverrunStats
+ *PURPOSE:
+ *  Prints the overrun lines of the "info" command to stdout
+ *  while a round runs: the server loop's timing with its
+ *  over-budget count, the bot pool's lines with its total
+ *  overruns, and each bot's [BOT] line with its own
+ *  overruns, under one header line. The text is made by the
+ *  same code "info" uses. Resets no counter, so the values
+ *  "info" prints later in the round are as they were.
+ *
+ *ARGUMENTS:
+ *  sim          - Pointer to the ServerSim
+ *  roundSeconds - Game time of the round so far, in seconds,
+ *                 for the header line
+ *********************************************************/
+void serverSimPrintOverrunStats(ServerSim *sim, uint32_t roundSeconds);
+
+/*********************************************************
  *NAME:          serverSimSaveMap
  *PURPOSE:
  *  Saves the current map state to a file.

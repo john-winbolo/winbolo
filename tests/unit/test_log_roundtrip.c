@@ -35,6 +35,7 @@
 #include "log.h"
 #include "server_sim.h"
 #include "server_sim_internal.h"  /* serverSimLagLogDue, playerPing, statLastRewindTicks */
+#include "server_lifecycle.h"      /* serverOverrunStatsDue */
 #include "game_sim.h"       /* GameSim.tanks — set the stocks a snapshot records */
 #include "tank.h"           /* tankSetShells / tankSetMines / ... */
 #include "unzip.h"
@@ -1044,6 +1045,37 @@ int run_server_lag_log_due(void) {
                                  4 + LAG_LOG_REWIND_STEP, false));
     UT_ASSERT(serverSimLagLogDue(true, 500, 80, 4, 510, 80,
                                  4 - LAG_LOG_REWIND_STEP, false));
+    return 0;
+}
+
+/* When the server prints its overrun lines during a round: at one minute of
+ * game time, then at five, ten, fifteen minutes and so on, and at no other
+ * frame. A frame is 20 ms, 50 a second. */
+int run_server_overrun_stats_due(void) {
+    uint32_t frame;
+    int prints = 0;
+
+    UT_ASSERT(SERVER_TICK_LENGTH == 20);
+    UT_ASSERT(SERVER_OVERRUN_STATS_FIRST_FRAMES == 3000u);
+    UT_ASSERT(SERVER_OVERRUN_STATS_INTERVAL_FRAMES == 15000u);
+    UT_ASSERT(!serverOverrunStatsDue(0));
+    UT_ASSERT(!serverOverrunStatsDue(1));
+    UT_ASSERT(!serverOverrunStatsDue(2999));
+    UT_ASSERT(serverOverrunStatsDue(3000));     /* 1:00 */
+    UT_ASSERT(!serverOverrunStatsDue(3001));
+    UT_ASSERT(!serverOverrunStatsDue(6000));    /* 2:00 */
+    UT_ASSERT(serverOverrunStatsDue(15000));    /* 5:00 */
+    UT_ASSERT(serverOverrunStatsDue(30000));    /* 10:00 */
+    UT_ASSERT(serverOverrunStatsDue(45000));    /* 15:00 */
+    UT_ASSERT(!serverOverrunStatsDue(45001));
+
+    /* Twenty minutes of frames print five times: 1, 5, 10, 15, 20. */
+    for (frame = 1; frame <= 20u * 60u * 50u; frame++) {
+        if (serverOverrunStatsDue(frame)) {
+            prints++;
+        }
+    }
+    UT_ASSERT_MSG(prints == 5, "twenty minutes printed %d times (want 5)", prints);
     return 0;
 }
 

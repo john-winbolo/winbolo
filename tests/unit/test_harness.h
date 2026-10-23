@@ -1262,6 +1262,7 @@ int run_log_roundtrip_map_name_at_round_start(void);
 int run_log_roundtrip_player_lag(void);
 int run_log_roundtrip_player_lag_recorded(void);
 int run_server_lag_log_due(void);
+int run_server_overrun_stats_due(void);
 int run_lv_player_lag_read(void);
 int run_lv_lag_track(void);
 int run_lv_lag_ring(void);

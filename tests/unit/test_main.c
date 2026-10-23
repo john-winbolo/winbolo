@@ -643,6 +643,7 @@ static const UnitTestEntry s_tests[] = {
     { "log_roundtrip_player_lag", run_log_roundtrip_player_lag },
     { "log_roundtrip_player_lag_recorded", run_log_roundtrip_player_lag_recorded },
     { "server_lag_log_due", run_server_lag_log_due },
+    { "server_overrun_stats_due", run_server_overrun_stats_due },
     { "lv_player_lag_read", run_lv_player_lag_read },
     { "lv_lag_track", run_lv_lag_track },
     { "lv_lag_ring", run_lv_lag_ring },
