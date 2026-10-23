@@ -68,7 +68,7 @@ extern "C" {
     void lv_clientMutexRelease(void);
     void lv_screenTankStatusSnapshot(LvTankStatus *out);
     void lv_screenDeselectTank(void);
-    bool lv_screenLagRecorded(void);
+    bool lv_screenLagShown(void);
     void lv_screenPlayerLagSnapshot(int slot, LvPlayerLag *out);
     void lv_screenLagViewSet(int slot);
     int  lv_screenLagViewSlot(void);
@@ -232,7 +232,7 @@ float lv_imgui_tank_dock_height(float dockWidth) {
     if (!tank_text_beside(availW)) {
         h += style.ItemSpacing.y + tank_text_h();
     }
-    if (lv_screenLagRecorded()) {
+    if (lv_screenLagShown()) {
         h += tank_lag_h();
     }
     /* One more: the heights are whole pixels and the text's may not be. */

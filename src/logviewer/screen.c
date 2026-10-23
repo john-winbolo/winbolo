@@ -116,6 +116,12 @@ static int        s_lagViewSlot = -1;     /* the chosen player, -1 for off */
 /* The name the chosen player had when chosen, so a slot that a different
    player later sits in is not taken for the one that was picked. */
 static char       s_lagViewName[PLAYER_NAME_LEN];
+/* The "Player Lag View" preference (LV_LAG_PREF_KEY in lv_lag.h). Off until
+   the menu's preferences turn it on; a load does not change it. While it is
+   off the records are still read, but the panels show none of them, the
+   view stays off, playback notes no history frames and a seek starts its
+   decode where it always did. */
+static bool       s_lagFeature  = FALSE;
 
 /* Drop the records, the history and the view, as every load and close
    does. */
@@ -183,7 +189,7 @@ static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs) {
   if (behindMs != NULL) {
     *behindMs = 0;
   }
-  if (g_lv == NULL || !lv_lagViewPlayerHere()) {
+  if (g_lv == NULL || !s_lagFeature || !lv_lagViewPlayerHere()) {
     return NULL;
   }
   rec = lv_lagTrackAt(&s_lagTracks[s_lagViewSlot], g_lv->timeRunning);
@@ -206,6 +212,22 @@ static const LvLagFrame *lv_lagViewFrame(uint32_t *behindMs) {
 
 bool lv_screenLagRecorded(void) {
   return s_lagAny;
+}
+
+void lv_screenSetLagFeature(int enabled) {
+  s_lagFeature = enabled ? TRUE : FALSE;
+  if (!s_lagFeature) {
+    /* No view stays on, and no old frame is drawn if it is turned on again. */
+    s_lagViewSlot = -1;
+    s_lagViewName[0] = '\0';
+    lv_lagRingClear(&s_lagRing);
+  }
+}
+
+int lv_screenGetLagFeature(void) { return s_lagFeature ? 1 : 0; }
+
+bool lv_screenLagShown(void) {
+  return s_lagFeature && s_lagAny;
 }
 
 bool lv_screenPlayerLagNow(int slot, int *rttMs, int *behindMs) {
@@ -235,7 +257,10 @@ void lv_screenPlayerLagSnapshot(int slot, LvPlayerLag *out) {
   if (g_lv == NULL || g_lv->logLoaded == FALSE) {
     return;
   }
-  out->recorded = s_lagAny;
+  out->recorded = lv_screenLagShown();
+  if (!out->recorded) {
+    return;
+  }
   out->has = lv_screenPlayerLagNow(slot, &out->rttMs, &out->behindMs);
   if (!out->has) {
     return;
@@ -265,7 +290,7 @@ void lv_screenPlayerLagSnapshot(int slot, LvPlayerLag *out) {
 }
 
 void lv_screenLagViewSet(int slot) {
-  if (g_lv == NULL || slot < 0 || slot >= MAX_TANKS || slot >= LV_LAG_SLOTS ||
+  if (g_lv == NULL || !s_lagFeature || slot < 0 || slot >= MAX_TANKS || slot >= LV_LAG_SLOTS ||
       lv_playersIsInUse((BYTE) slot) == FALSE) {
     s_lagViewSlot = -1;
     s_lagViewName[0] = '\0';
@@ -3571,7 +3596,8 @@ bool lv_screenLogTick() {
   unsigned short len = 0;
   /* The tick moves the playhead on, so the lag view's history takes a frame
      at its end. The text dump and the load only read ahead and take none. */
-  const bool lagCapture = (g_lv->isPlaying == TRUE && !s_eventScan && !s_scanGathers);
+  const bool lagCapture = (s_lagFeature && g_lv->isPlaying == TRUE && !s_eventScan &&
+                           !s_scanGathers);
 
   bool process = FALSE;
   s_logTickAtLiveHead = FALSE;
@@ -7286,7 +7312,7 @@ static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
      before the target, so the lag view has its frames when the seek ends,
      whether or not the view is on yet. */
   haveSnap = lv_snapshotFindByTime(&g_lv->snap,
-                                   (s_lagAny && targetTime > LV_LAG_HISTORY_MS)
+                                   (s_lagFeature && s_lagAny && targetTime > LV_LAG_HISTORY_MS)
                                        ? targetTime - LV_LAG_HISTORY_MS : targetTime,
                                    &snapPos, &snapTime, &key, &pTeams);
 

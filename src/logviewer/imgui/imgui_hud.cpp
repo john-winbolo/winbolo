@@ -61,6 +61,7 @@ extern "C" {
     void lv_screenDeselectTank(void);
     bool lv_screenCheckPerspective(void);
     bool lv_screenPlayerLagNow(int slot, int *rttMs, int *behindMs);
+    bool lv_screenLagShown(void);
     void lv_drawDirtyScreen(void);
     void lv_drawTeamPanelColour(int palette, float *r, float *g, float *b);
     SDL_Texture *lv_drawGetTilesTexture(void);
@@ -291,12 +292,12 @@ static void hud_slot_tooltip(int grid, int index, const LvHudSlot &slot) {
         snprintf(tip, sizeof(tip), "%s", langGetTextFmt(STR_LV_HUD_TIP_REL, &args));
     }
     /* A tank's round-trip time after the rest, when the recording has
-     * one for its player at the playhead. */
+     * one for its player at the playhead and the lag display is on. */
     if (grid == HUD_GRID_TANKS && slot.icon != LV_HUD_ICON_NEUTRAL) {
         int rtt = 0;
         bool has;
         lv_clientMutexWaitFor();
-        has = lv_screenPlayerLagNow(index, &rtt, nullptr);
+        has = lv_screenLagShown() && lv_screenPlayerLagNow(index, &rtt, nullptr);
         lv_clientMutexRelease();
         if (has) {
             args = {};

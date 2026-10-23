@@ -815,6 +815,16 @@ bool lv_screenCheckPerspective(void);
  * the client mutex. */
 bool lv_screenLagRecorded(void);
 bool lv_screenPlayerLagNow(int slot, int *rttMs, int *behindMs);
+
+/* The "Player Lag View" preference (LV_LAG_PREF_KEY), off until turned on.
+ * While it is off the viewer shows none of the lag records and the lag view
+ * cannot be turned on; Set to off also turns the view off. Shown is TRUE
+ * when the preference is on and the recording has lag records: the panels
+ * show the lag only then. Recorded and Now above give the records as read,
+ * whatever the preference. */
+void lv_screenSetLagFeature(int enabled);
+int  lv_screenGetLagFeature(void);
+bool lv_screenLagShown(void);
 void lv_screenPlayerLagSnapshot(int slot, LvPlayerLag *out);
 
 /* The lag view ("see what this player saw"): the map draws the other tanks,

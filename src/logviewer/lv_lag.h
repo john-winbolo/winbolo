@@ -52,6 +52,21 @@
 /* The samples the Tank panel's graph shows over the round. */
 #define LV_LAG_GRAPH_SAMPLES 120
 
+/* The preference that turns the viewer's lag display on: the Tank panel's
+   lag line, graph and check box, the View menu item, the round-trip time in
+   the HUD panel's tank tooltip, the banner and the delayed drawing. It is in
+   the LOGVIEWER section of the preferences file, and it is off until set to
+   "Yes". With it off the viewer still reads the lag records, but shows none
+   of them and draws as it did before it read them. */
+#define LV_LAG_PREF_KEY     "Player Lag View"
+#define LV_LAG_PREF_DEFAULT "No"
+
+/* TRUE when the preference's value turns the display on: a value that
+   starts with Y or y. Anything else, an empty value included, is off. */
+static inline bool lv_lagPrefIsOn(const char *val) {
+    return val != NULL && (val[0] == 'Y' || val[0] == 'y');
+}
+
 typedef struct {
     uint32_t ms;       /* playback time the record was read at */
     uint16_t rttMs;    /* round-trip time, ms */

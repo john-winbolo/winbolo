@@ -203,6 +203,11 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     /* On until turned off. */
     lv_platform_config_get_string("LOGVIEWER", "Animate Jumps", "Yes", val, sizeof(val));
     s_jump_anim = !(val[0] == 'N' || val[0] == 'n');
+    /* The lag display (lv_lag.h): off until set to Yes in the file. It has
+       no menu item, so with it off the menus are as they were. */
+    lv_platform_config_get_string("LOGVIEWER", LV_LAG_PREF_KEY, LV_LAG_PREF_DEFAULT, val,
+                                  sizeof(val));
+    lv_screenSetLagFeature(lv_lagPrefIsOn(val) ? 1 : 0);
 }
 
 /* True when the preference was never saved. */
@@ -248,6 +253,8 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Pillbox Numbers",
                                   lv_drawGetPillNumbers() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Animate Jumps", s_jump_anim ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", LV_LAG_PREF_KEY,
+                                  lv_screenGetLagFeature() ? "Yes" : "No");
 }
 
 static void zoom_at_center(int stepIndex) {
@@ -675,11 +682,12 @@ int lv_imgui_main_menu_bar(void) {
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", langGetText(STR_LV_PILL_NUMBERS_TIP));
             }
-            {
+            if (lv_screenGetLagFeature()) {
                 /* The lag view for the selected tank's player: ticked while
                  * it is that player's. A click turns it on for the selected
                  * player, or off when it is on for that player or no tank is
-                 * selected. Only a recording with lag records has it. */
+                 * selected. Only a recording with lag records has it, and
+                 * the item is there only while the lag display is on. */
                 int sel, viewSlot;
                 bool recorded;
                 lv_clientMutexWaitFor();

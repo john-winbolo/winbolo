@@ -1265,6 +1265,7 @@ int run_server_lag_log_due(void);
 int run_lv_player_lag_read(void);
 int run_lv_lag_track(void);
 int run_lv_lag_ring(void);
+int run_lv_lag_feature_default_off(void);
 /* log_Ping's six payload bytes: sender, kind, and two big-endian u16 WORLD
  * coordinates, byte for byte through the writer and back. */
 int run_log_roundtrip_ping(void);

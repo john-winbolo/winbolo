@@ -1548,3 +1548,72 @@ int run_lv_lag_ring(void) {
   UT_ASSERT(lv_lagRingFind(&r, 6u * LV_LAG_ENTRY_MS) == f);
   return 0;
 }
+
+/*
+ * The lag display is off until the "Player Lag View" preference turns it on.
+ * With it off the records are still read, but the panels are told there are
+ * none and the lag view does not turn on for any player. Turned on, the
+ * panels see the records; turned off again, the view goes off with it.
+ */
+int run_lv_lag_feature_default_off(void) {
+  const char *path = "lv_lag_feature.wbv";
+  static const uint8_t rec[4] = {2, 0x01, 0x2C, 5};   /* 300 ms, 5 */
+  LogBuf b;
+  LogViewerState *lv;
+  LvPlayerLag lag;
+  int rtt = -1;
+  int i;
+
+  /* The preference's value: off by default and for anything but Yes. */
+  UT_ASSERT(!lv_lagPrefIsOn(LV_LAG_PREF_DEFAULT));
+  UT_ASSERT(!lv_lagPrefIsOn(""));
+  UT_ASSERT(!lv_lagPrefIsOn(NULL));
+  UT_ASSERT(!lv_lagPrefIsOn("No"));
+  UT_ASSERT(lv_lagPrefIsOn("Yes"));
+  UT_ASSERT(lv_lagPrefIsOn("yes"));
+
+  UT_ASSERT_MSG(lv_screenGetLagFeature() == 0, "the lag display is on before any preference");
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_PlayerLag, rec, 4);
+  putNoEvents(&b, 100);
+  putU8(&b, LOG_QUIT);
+
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic lag log failed to build/load");
+  for (i = 0; i < 80; i++) {
+    lv_screenLogTick();
+  }
+
+  /* Off: the records are read, and nothing shows. */
+  UT_ASSERT_MSG(lv_screenGetLagFeature() == 0, "a load turned the lag display on");
+  UT_ASSERT_MSG(lv_screenLagRecorded(), "the records were not read");
+  UT_ASSERT_MSG(lv_screenPlayerLagNow(2, &rtt, NULL) && rtt == 300,
+                "the record was not read: rtt %d", rtt);
+  UT_ASSERT_MSG(!lv_screenLagShown(), "the panels are told of the records while off");
+  lv_screenPlayerLagSnapshot(2, &lag);
+  UT_ASSERT_MSG(!lag.recorded && !lag.has, "the Tank panel has the lag while off");
+  lv_screenLagViewSet(2);
+  UT_ASSERT_MSG(lv_screenLagViewSlot() == -1, "the lag view turned on while off");
+  UT_ASSERT_MSG(!lv_screenLagViewStatus(NULL, 0, NULL, NULL), "the banner shows while off");
+
+  /* On: the panels see the records. */
+  lv_screenSetLagFeature(1);
+  UT_ASSERT(lv_screenGetLagFeature() == 1);
+  UT_ASSERT_MSG(lv_screenLagShown(), "the panels are not told of the records while on");
+  lv_screenPlayerLagSnapshot(2, &lag);
+  UT_ASSERT_MSG(lag.recorded && lag.has && lag.rttMs == 300,
+                "the Tank panel lacks the lag while on");
+
+  /* Off again: nothing shows, and no view is left on. */
+  lv_screenSetLagFeature(0);
+  UT_ASSERT(!lv_screenLagShown());
+  UT_ASSERT(lv_screenLagViewSlot() == -1);
+
+  lv_decoderDestroy(lv);
+  remove(path);
+  return 0;
+}

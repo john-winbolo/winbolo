@@ -5406,6 +5406,7 @@ set(_unit_test_names
     lv_player_lag_read
     lv_lag_track
     lv_lag_ring
+    lv_lag_feature_default_off
     log_roundtrip_ping
     log_roundtrip_snapshot_tank_stocks
     log_roundtrip_tank_stock_record
