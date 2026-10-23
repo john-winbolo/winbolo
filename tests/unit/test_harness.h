@@ -1278,6 +1278,7 @@ int run_round_start_owners_kept_after_manual_alliance(void);
 
 /* Log replay round-trip (test_log_roundtrip.c). */
 int run_log_roundtrip_basic(void);
+int run_wbv_render_args_and_frame_ticks(void);
 int run_log_roundtrip_snapshot_keeps_chain_synced(void);
 int run_log_roundtrip_lobby_snapshot_is_empty_world(void);
 int run_log_roundtrip_lobby_mode_drops_world_events(void);

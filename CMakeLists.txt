@@ -2971,6 +2971,128 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# WbvRender — draws a round log (.wbv) to PNG frames or raw rgb24 on stdout,
+# with no window, so ffmpeg can make video clips of a game. A console host
+# for the log viewer's embedded reel (lv_embed.c): the decoder and the
+# renderer are the reel's own, the same set the lobby recap and the web
+# client link (IOS_LOGVIEWER_SOURCES above), so there is no second renderer.
+# SDL runs on its offscreen video driver with a software renderer.
+# EXCLUDE_FROM_ALL: built on demand, never part of a normal build.
+#   MSBuild build/WbvRender.vcxproj, then build/WbvRender.exe (docs/TOOLS.md)
+# ---------------------------------------------------------------------------
+# The shared helpers (prefs, logging, md5) the decoder reaches, as the
+# LogViewer target globs them.
+file(GLOB WBV_RENDER_COMMON_SOURCES src/common/*.c)
+if(NOT WIN32)
+    list(FILTER WBV_RENDER_COMMON_SOURCES EXCLUDE REGEX ".*common/util\\.c$")
+endif()
+add_executable(WbvRender EXCLUDE_FROM_ALL
+    src/tools/wbv_render.c
+    src/tools/wbv_render_args.c
+    src/logviewer/lv_embed.c
+    src/logviewer/lv_embed_stubs.c
+    src/logviewer/blocks.c
+    src/logviewer/lv_attribution.c
+    src/logviewer/snapshot.c
+    src/logviewer/screen.c
+    src/logviewer/screencalc.c
+    src/logviewer/screentank.c
+    src/logviewer/screenlgm.c
+    src/logviewer/screenbullet.c
+    src/logviewer/spec_seed_load.c
+    src/logviewer/lv_spec_feed.c
+    src/logviewer/players.c
+    src/logviewer/shells.c
+    src/logviewer/allience.c
+    src/logviewer/pillbox.c
+    src/logviewer/bases.c
+    src/logviewer/bolo_map.c
+    src/logviewer/starts.c
+    src/logviewer/labels.c
+    src/logviewer/messages.c
+    src/logviewer/sounddist.c
+    src/logviewer/global.c
+    src/logviewer/util.c
+    src/logviewer/draw.c
+    src/logviewer/game_view_stubs.c
+    src/logviewer/clientmutex.c
+    src/logviewer/dns.c
+    src/logviewer/spectator_drain_stub.c
+    src/logviewer/platform/platform_config.c
+    src/logviewer/platform/platform_dialogs.c
+    ${WBV_RENDER_COMMON_SOURCES}
+    # The same helpers the standalone viewer compiles in for draw.c and the
+    # decoder; see the LogViewer target above.
+    src/bolo/spectator_replay.c
+    src/bolo/round_stats_derive.c
+    src/bolo/sim_rules.c
+    src/bolo/scenario_panel.c
+    src/gui/sdl3/lang.c
+    src/gui/sdl3/sim_rules_phrase.c
+    src/gui/sdl3/mapview.c
+    src/gui/sdl3/tank_label.c
+    # The game's names that mapview.c and tank_label.c call, answered from
+    # the replay, as in the standalone viewer.
+    src/logviewer/bolo_shim.c
+    src/gui/sdl3/gamefront_stubs.c
+    # The scenario panel's colours, which the map markers are drawn in.
+    src/gui/sdl3/scenario_panel_draw.cpp
+    src/gui/sdl3/ping_icons.c
+    src/gui/sdl3/ping_marker.c
+    src/gui/sdl3/ring_band.c
+    src/gui/sdl3/sdl_bmp.c
+    src/gui/sdl3/sprite_positions.c
+    src/gui/sdl3/tileloader.c
+    src/gui/sdl3/skin_source.c
+    src/gui/sdl3/gfx_settings.c
+    src/gui/sdl3/map_colours.c
+    src/gui/sdl3/map_markers.c
+    src/gui/ui_mode.c
+    src/steam/steam_wrapper_stub.c
+    src/third_party/stb/stb_image_write_impl.c
+)
+target_compile_definitions(WbvRender PRIVATE
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
+    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+    PREFERENCE_FILE="WinBolo.ini"
+)
+target_include_directories(WbvRender PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/logviewer
+    ${CMAKE_SOURCE_DIR}/src/logviewer/imgui
+    ${CMAKE_SOURCE_DIR}/src/logviewer/platform
+    ${CMAKE_SOURCE_DIR}/src/tools
+    ${cjson_SOURCE_DIR}
+)
+bolo_apply_include_rules(WbvRender runtime_only)
+bolo_grant_internal_source_access(WbvRender
+    src/bolo/sim_rules.c)
+target_link_libraries(WbvRender PRIVATE
+    minizip SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends nanosvg stb_image cjson)
+if(WIN32)
+    target_link_libraries(WbvRender PRIVATE ws2_32)
+endif()
+if(MATH_LIB)
+    target_link_libraries(WbvRender PRIVATE ${MATH_LIB})
+endif()
+set_flat_output(WbvRender "${CMAKE_BINARY_DIR}")
+add_custom_command(TARGET WbvRender POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:WbvRender>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:SDL3_ttf::SDL3_ttf>" "$<TARGET_FILE_DIR:WbvRender>"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:WbvRender>/data"
+    COMMENT "Copying SDL3 libraries and data files beside WbvRender"
+)
+
+# ---------------------------------------------------------------------------
 # WinBoloHeadless (headless client for automated testing)
 # ---------------------------------------------------------------------------
 
@@ -5179,6 +5301,14 @@ if(WB_NETDEBUG)
 endif()
 
 add_executable(WinBoloUnitTests ${WINBOLO_UNITTESTS_SOURCES})
+# WbvRender's command line and frame timing: plain C, no SDL.
+target_sources(WinBoloUnitTests PRIVATE
+    src/tools/wbv_render_args.c
+    tests/unit/test_wbv_render_args.c)
+set_source_files_properties(src/tools/wbv_render_args.c
+    tests/unit/test_wbv_render_args.c
+    TARGET_DIRECTORY WinBoloUnitTests
+    PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/src/tools")
 target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
     src/bolo/lobby_bot_pools_json.c
     tests/unit/test_bot_name_pools.c
@@ -5780,6 +5910,7 @@ set(_unit_test_names
     firstjoinhost_off_leaves_host_alone
     firstjoinhost_second_joiner_does_not_displace
     log_roundtrip_basic
+    wbv_render_args_and_frame_ticks
     log_roundtrip_snapshot_keeps_chain_synced
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
