@@ -633,6 +633,7 @@ static const UnitTestEntry s_tests[] = {
     { "no_autolock_stays_open_on_start",           run_no_autolock_stays_open_on_start           },
     { "autolock_released_on_return_to_lobby",      run_autolock_released_on_return_to_lobby      },
     { "log_roundtrip_basic",                     run_log_roundtrip_basic                     },
+    { "wbv_render_args_and_frame_ticks",         run_wbv_render_args_and_frame_ticks         },
     { "log_roundtrip_snapshot_keeps_chain_synced",
                                                  run_log_roundtrip_snapshot_keeps_chain_synced },
     { "log_roundtrip_lobby_snapshot_is_empty_world",

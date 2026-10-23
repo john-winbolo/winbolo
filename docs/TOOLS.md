@@ -9,6 +9,7 @@ binaries (`WinBolo`, `WinBoloDS`, `LogViewer`, `MapEditor`, `WinBoloHeadless`,
 | Tool | What it's for |
 |------|---------------|
 | [`MakeTileTestMap`](#maketiletestmap) | Writes a `.map` exercising the terrain-shape lookups |
+| [`WbvRender`](#wbvrender) | Draws a round log (`.wbv`) to video frames with no window, for ffmpeg |
 | [`tools/dump_lang_en.py`](#toolsdump_lang_enpy) | Regenerates `data/lang/en.txt` and `lang_names.inc` |
 | [`tools/stamp_mod_updated.py`](#toolsstamp_mod_updatedpy) | Keeps the `updated` time of the shipped scenario scripts current |
 | [`tools/validate_lang.py`](#toolsvalidate_langpy) | Checks a translation against the English source |
@@ -69,6 +70,55 @@ editor's map-render math — the scope of the `mapeditor` privileged exception i
 [ARCHITECTURE.md](ARCHITECTURE.md#srcmapeditor). `tools/` is a public-only
 directory (T1 + T3 + T4), so putting it there would have meant a new
 undocumented T2 exception.
+
+## WbvRender
+
+`src/tools/wbv_render.c` — reads a round log (`.wbv`) and writes video frames,
+as PNG files or as raw `rgb24` on stdout, so ffmpeg can make a clip of a game,
+for example a before-and-after pair of a change. It never opens a window: SDL
+runs on its `offscreen` video driver and the log viewer's embedded reel draws
+with a software renderer into memory. The drawing is the viewer's own (the
+same code the lobby recap and its GIF export use), so the frames look like the
+Log Viewer at 1x, tank names included.
+
+```bash
+cmake --build build --target WbvRender      # or MSBuild build/WbvRender.vcxproj
+./build/WbvRender round.wbv -out frames -from 60 -to 70
+ffmpeg -framerate 50 -i frames/frame_%06d.png -c:v libx264 -pix_fmt yuv420p -crf 20 clip.mp4
+```
+
+Or with no files between them (WbvRender prints the frame size on stderr):
+
+```bash
+./build/WbvRender round.wbv -out - -from 60 -to 70 -follow Bob |   ffmpeg -f rawvideo -pixel_format rgb24 -video_size 640x480 -framerate 50          -i - -c:v libx264 -pix_fmt yuv420p -crf 20 clip.mp4
+```
+
+| Option | Meaning |
+|--------|---------|
+| `-out <dir>` / `-out -` | PNG frames `frame_000000.png`, ... in `<dir>`, or raw `rgb24` frames on stdout |
+| `-from <sec>`, `-to <sec>` | The part of the game to draw, from the start of the game (`75`, `75.5` or `1:15.5`); the default is all of it |
+| `-fps <n>` | Frames per second of replay time (default 50, one frame a tick) |
+| `-view x y w h` | A fixed view: the top-left map square and the size in squares |
+| `-follow <player>` | Follow a player, by name or by player number; the players are listed on stderr. With neither `-view` nor `-follow`, the view follows the lowest-numbered player who has a tank |
+| `-size w h` | The view size in squares when there is no `-view` (default 40 by 30, 640x480 pixels) |
+| `-self <name>` | Draw the round from this player's side: allies green, enemies red |
+| `-scale <n>` | Make each pixel `n` by `n` |
+| `-quiet` | No progress lines on stderr |
+
+Things to know:
+
+- **Frame times are replay times.** One log entry is one tick, 20 ms of play,
+  and frame `n` is the tick `n * 50 / fps` after the first frame. The speed of
+  the machine changes how long the run takes, never what a frame shows.
+- **The data folder must be beside the program**, as for the Log Viewer. The
+  build copies `data/` and the SDL libraries next to `WbvRender`.
+- **Preferences are not read.** The frames use the viewer's defaults, so two
+  machines draw the same log the same way.
+- The scenario markers' pulse is the only part of the drawing that follows the
+  wall clock, so a marker can be at a different point of its pulse from one run
+  to the next.
+- `EXCLUDE_FROM_ALL`, so it builds only when named. Its argument parsing and
+  frame timing have a unit test: `WinBoloUnitTests --test wbv_render_args_and_frame_ticks`.
 
 ## tools/dump_lang_en.py
 
