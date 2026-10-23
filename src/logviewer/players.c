@@ -142,6 +142,11 @@ bool lv_playersGetDrawnTankDetails(BYTE slot, BYTE *mx, BYTE *my, BYTE *px, BYTE
   if (slot >= MAX_TANKS) {
     return FALSE;
   }
+  if (lagFrame == NULL) {
+    /* No lag view: the label takes the place it always took. */
+    lv_playersGetTankDetails(slot, mx, my, px, py, frame, onBoat);
+    return TRUE;
+  }
   return playersDrawnTank(slot, mx, my, px, py, frame, onBoat);
 }
 
