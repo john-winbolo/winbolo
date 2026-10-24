@@ -47,14 +47,15 @@ extern "C" {
 #include "../../../lang.h"       /* langGetText / STR_CANCEL */
 }
 
-#if !defined(__ANDROID__) && BOLO_RECAP_CLIP_GIF
+#if BOLO_RECAP_CLIP_GIF
 /* Single-header GIF encoder behind the recap's clip export; the one
  * implementation TU is src/third_party/msf_gif/msf_gif_impl.c. Carries its own
  * extern "C" guards, so it goes outside the block above. */
 #include "../../../../third_party/msf_gif/msf_gif.h"
 #endif
-
-#if !defined(__ANDROID__)
+#if defined(__ANDROID__)
+#include "../../../../android/android_share.h"  /* androidShareFile — the written clip offered to another app */
+#endif
 
 #if BOLO_RECAP_CLIP_GIF
 /* ── Clip GIF export ──────────────────────────────────────────────
@@ -484,6 +485,44 @@ static void lobbyClipGifSave(MsfGifResult res) {
                       ok ? IMGUI_MSG_INFO : IMGUI_MSG_ERROR,
                       IMGUI_MSG_OK);
 }
+#elif defined(__ANDROID__)
+static bool lobbyClipGifWriteFile(const char *path, const MsfGifResult *res) {
+    SDL_IOStream *io = SDL_IOFromFile(path, "wb");
+    if (io == NULL) {
+        return false;
+    }
+    bool ok = (SDL_WriteIO(io, res->data, res->dataSize) == res->dataSize);
+    SDL_CloseIO(io);
+    return ok;
+}
+
+/* No save dialog or gallery on Android: the clip goes into the app's files
+   directory (the pref path) under its own name, the box names the file and
+   says the share sheet comes next, and the share sheet then offers it to
+   another app, which is the only way out of the app's private storage. */
+static void lobbyClipGifSave(MsfGifResult res) {
+    char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    char fullPath[FILENAME_MAX];
+    bool ok = false;
+    if (prefDir != NULL) {
+        snprintf(fullPath, sizeof(fullPath), "%s%s.gif", prefDir, s_clipGif.name);
+        SDL_free(prefDir);
+        ok = lobbyClipGifWriteFile(fullPath, &res);
+    }
+    msf_gif_free(res);
+    MessageArgs args = {};
+    snprintf(args.string1, sizeof(args.string1), "%s.gif", s_clipGif.name);
+    if (ok) {
+        imguiMessageBoxEx(CLIP_GIF_TITLE,
+                          langGetTextFmt(STR_CLIPGIF_SAVED_ANDROID, &args),
+                          IMGUI_MSG_INFO, IMGUI_MSG_OK);
+        androidShareFile(fullPath, "image/gif");
+    } else {
+        imguiMessageBoxEx(CLIP_GIF_TITLE,
+                          langGetTextFmt(STR_CLIPGIF_SAVE_FAILED_IOS, &args),
+                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+    }
+}
 #else
 static void lobbyClipGifSave(MsfGifResult res) {
     lobbyClipGifGalleryAdd(res.data, res.dataSize, &s_clipGif.meta,
@@ -589,4 +628,3 @@ void lobbyClipGifRender(float s) {
     }
 }
 #endif /* BOLO_RECAP_CLIP_GIF */
-#endif /* !__ANDROID__ */

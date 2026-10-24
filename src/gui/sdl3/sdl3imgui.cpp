@@ -35,6 +35,8 @@
 #endif
 #if defined(__APPLE__) && TARGET_OS_IOS
 #include "ios_drops.h"  /* iosDropsForgetLink: a link the game has handled */
+#elif defined(__ANDROID__)
+#include "../../android/android_drops.h"  /* androidDropsForgetLink: the same */
 #endif
 
 /* SDL3 before bolo headers — see note above */
@@ -1475,7 +1477,7 @@ static void mapOverviewClose(void) {
  * the window always fills the screen and the mode is only ever the player's
  * own request. */
 static bool overviewLeavesWindowAlone(SDL_Window *win) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     (void)win;
     return true;
 #else
@@ -1490,7 +1492,7 @@ static bool overviewLeavesWindowAlone(SDL_Window *win) {
  * map button still opens and closes the map either way and leaves the choice
  * alone. */
 static bool tabletFullScreenOffered(void) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     return uiModeIsTablet();
 #else
     return false;
@@ -1505,7 +1507,7 @@ static bool tabletFullScreenOffered(void) {
  * Settings' alone and the map button leaves it as it is
  * (tabletFullScreenOffered). */
 static bool fullScreenFlagIsMapChoice(SDL_Window *win) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     (void)win;
     return !uiModeIsTablet();
 #else
@@ -1560,7 +1562,7 @@ static void overviewInWindowChoose(bool on) {
        geometry when this run never opened it. Only in a game: outside one
        the pop-out is already down and gameFrontShowMapOverview is what the
        next game reads. */
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     const bool hasPopOut = false;  /* iOS has no pop-out to hand back */
 #else
     const bool hasPopOut = true;
@@ -1872,20 +1874,25 @@ static void renderSysInfoContent(void) {
             double poolRate = ps.totalThinks > 0
                 ? (double)ps.totalOverruns * 100.0 / (double)ps.totalThinks
                 : 0.0;
-            ImGui::Text("%s: %u (%.2f%%)",
+            ImGui::Text("%s: %u (%.2f%%), peak think=%.2fms",
                         langGetText(STR_DLGSYSINFO_BRAIN_OVERRUNS),
-                        ps.totalOverruns, poolRate);
-            if (ps.totalOverruns > 0) {
-                for (int i = 0; i < MAX_TANKS; i++) {
-                    if (botInfoValid[i] && botInfos[i].overrunCount > 0) {
-                        double rate = botInfos[i].thinkCount > 0
-                            ? (double)botInfos[i].overrunCount * 100.0
-                                  / (double)botInfos[i].thinkCount
-                            : 0.0;
-                        ImGui::Text("  bot[%d]: %u (%.2f%%)", i,
-                                    botInfos[i].overrunCount, rate);
-                    }
-                }
+                        ps.totalOverruns, poolRate, ps.maxThinkMs);
+            /* One row per thinking bot: the last think's wall-clock, the
+             * peak this game, and its overruns against its thinks. The
+             * budget hook stops a think at the target, so a bot that
+             * overruns every tick reads as "last" at the target rather
+             * than above it. */
+            for (int i = 0; i < MAX_TANKS; i++) {
+                if (!botInfoValid[i] || !botInfos[i].hasBrain) continue;
+                double rate = botInfos[i].thinkCount > 0
+                    ? (double)botInfos[i].overrunCount * 100.0
+                          / (double)botInfos[i].thinkCount
+                    : 0.0;
+                ImGui::Text("  bot[%d] %s: last=%.2fms peak=%.2fms, %u/%u (%.2f%%)",
+                            i, botInfos[i].brainName,
+                            botInfos[i].lastThinkMs, botInfos[i].maxThinkMs,
+                            botInfos[i].overrunCount, botInfos[i].thinkCount,
+                            rate);
             }
         }
 
@@ -1910,7 +1917,7 @@ static void renderSysInfoContent(void) {
  * fits a phone held in landscape and scrolls inside; elsewhere it opens at
  * the given size on first use and is left where the player puts it. */
 static void infoPanelSizeNext(float w, float h) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     if (uiModeIsTablet()) {
         ImGuiViewport *vp = ImGui::GetMainViewport();
         float maxW = vp->Size.x * 0.9f;
@@ -2811,7 +2818,7 @@ static void renderOverviewInWindow(ClientSim *cs) {
        has gone. */
     sdl3DrawSetHudPanelHover(false, false, false);
 
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     /* The iOS tablet layout draws the map inside its game view, and the tablet
        overlay drives it by touch and draws its camera readout
        (sdl3imgui_tablet.cpp). No pan item and no HUD hit-test here: every
@@ -6838,15 +6845,18 @@ static void renderSettingsPanel(ClientSim *cs) {
                 s_igForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_LAST;
             ImGui::BeginChild("##sessionPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
-            /* File actions — Save Map reachable on tablet and under a controller
-               (desktop has the menu bar); Leave Game stays tablet-only. */
-            if (uiModeIsTablet() || uiShouldUseControllerMode()) {
+            /* File actions. Save Map is reachable on the touch layout, on a
+               mobile tablet's classic screen and under a controller (the
+               desktop has the menu bar); Leave Game on the touch layout and
+               on mobile, where no menu bar offers it. */
+            const bool mobileRows = uiModeIsTablet() || BOLO_MOBILE;
+            if (mobileRows || uiShouldUseControllerMode()) {
                 if (ImGui::Button(langGetText(STR_MENU_SAVE_MAP), ImVec2(-1, 0))) {
                     windowSaveMap(cs);
                     s_showSettings = false;
                 }
                 imguiHandOnHover();
-                if (uiModeIsTablet()) {
+                if (mobileRows) {
                     if (ImGui::Button(langGetText(STR_MENU_LEAVE_GAME), ImVec2(-1, 0))) {
                         windowNewGame();
                     }
@@ -6872,7 +6882,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             if (ImGui::Selectable(langGetText(STR_DLGGAMEINFO_TITLE), s_showGameInfo)) { s_showGameInfo = !s_showGameInfo; infoOpened = s_showGameInfo; }
             if (ImGui::Selectable(langGetText(STR_DLGSYSINFO_TITLE),  s_showSysInfo))  { if (!s_showSysInfo) sysInfoGraphReset(); s_showSysInfo = !s_showSysInfo; infoOpened = s_showSysInfo; }
             if (ImGui::Selectable(langGetText(STR_DLGNETINFO_TITLE),  s_showNetInfo))  { if (!s_showNetInfo) pingGraphReset();  s_showNetInfo = !s_showNetInfo; infoOpened = s_showNetInfo; }
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
             /* A phone has no room for Settings and a panel side by side, so
                opening a panel puts Settings away. */
             if (infoOpened && uiModeIsTablet()) s_showSettings = false;
@@ -7758,14 +7768,22 @@ static float desktopWindowFitScale(SDL_Window *window) {
     int w = 0, h = 0;
     SDL_GetWindowSize(window, &w, &h);
     if (w <= 0 || h <= 0) return 1.0f;
-    float fitW = (float)w / (float)SDL3_SCREEN_W;
-    float availH = (float)h - (float)MENU_BAR_HEIGHT;
+    float density = 1.0f;
+#if defined(__ANDROID__)
+    /* An Android window is in pixels, not points: the fit and its cap are
+       measured in points, as dialogComputeScale measures the preference, and
+       the pixels come back in at the end. */
+    density = SDL_GetWindowDisplayScale(window);
+    if (density < 1.0f) density = 1.0f;
+#endif
+    float fitW = (float)w / density / (float)SDL3_SCREEN_W;
+    float availH = (float)h / density - (float)MENU_BAR_HEIGHT;
     float fitH = (availH > 0.0f) ? availH / (float)SDL3_SCREEN_H : fitW;
     float fit = SDL_min(fitW, fitH);
     fit = (float)((int)(fit * 4.0f)) / 4.0f;   /* floor to 0.25 steps */
     if (fit < 1.0f) fit = 1.0f;
     if (fit > 2.0f) fit = 2.0f;   /* cap at the Large preset; never exceed it */
-    return fit;
+    return fit * density;
 }
 
 /* (Re)apply the main ImGui context's font atlas, style, and window minimum
@@ -8516,7 +8534,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 break;
             case SDL_SCANCODE_O:
                 /* Same running-game condition as the File menu item. */
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
                 /* No pop-out on iOS: the overview there is the in-window one,
                    as the File menu offers it. */
                 if (cs != nullptr && clientSimIsRunning(cs))
@@ -8732,6 +8750,9 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                    handled, so the kept copy goes now; otherwise the welcome
                    screen would join it a second time. */
                 iosDropsForgetLink(url);
+#elif defined(__ANDROID__)
+                /* The same for Android's kept link (android_drops.c). */
+                androidDropsForgetLink(url);
 #endif
                 if (cs && clientSimGetNetStatus(cs) == netRunning) {
                     /* In-game: show confirmation popup instead of switching immediately */
@@ -8763,9 +8784,9 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
-#if defined(__APPLE__) && TARGET_OS_IOS
-        /* iOS ends the app with TERMINATING; quit the same way so main gets
-           to save the prefs, as the touch layout's own loop does. */
+#if (defined(__APPLE__) && TARGET_OS_IOS) || defined(__ANDROID__)
+        /* iOS and Android end the app with TERMINATING; quit the same way so
+           main gets to save the prefs, as the touch layout's own loop does. */
         if (ev.type == SDL_EVENT_TERMINATING) {
             windowSetQuitting();
         }
@@ -8795,7 +8816,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
            too, in either layout: its window is always full screen, and the
            flag there is the touch layout's Full Screen choice, which the
            iPad's desktop layout must not set from its window. */
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
         const bool windowOwnsFlag = false;
 #else
         const bool windowOwnsFlag = true;
@@ -9235,9 +9256,7 @@ static void drainInGameNameReject(ClientSim *cs) {
    input gate suspends play and the solo-pause path freezes the sim while a
    message is up. Edge-detect open/close to toggle the freeze exactly once
    each way. Called from both the desktop and the tablet branch of the frame,
-   so the one edge state serves both. Not on Android, which does not compile
-   imgui_tutorial_overlay.cpp or define windowTutorialPause. */
-#if !defined(__ANDROID__)
+   so the one edge state serves both. */
 static void renderTutorialOverlay(ClientSim *cs) {
     /* A scenario's popup (game.popup) waits in the client sim's queue
        until the overlay is free, then takes the overlay like a tutorial
@@ -9260,7 +9279,6 @@ static void renderTutorialOverlay(ClientSim *cs) {
         s_lastTutorialPause = nowTutorialPause;
     }
 }
-#endif
 
 void sdl3ImguiPumpAndRender(ClientSim *cs) {
     /* The preferences' trailing write and the window-settings dirty flag,
@@ -9417,7 +9435,6 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
        neither read nor dismiss it, and its solo pause would hold. Done
        ahead of the lobby seam below, which returns before the overlay's
        own render, and the pause is lifted here for the same reason. */
-#if !defined(__ANDROID__)  /* see renderTutorialOverlay */
     if (cs && clientSimIsRoundOver(cs) && tutorialOverlayIsOpen()) {
         tutorialOverlayClose();
         tutorialOverlayRender(cs);   /* takes the popup off ImGui's stack */
@@ -9426,7 +9443,6 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             s_lastTutorialPause = false;
         }
     }
-#endif
 
     /* In-game lobby (non-blocking host, e.g. the WASM client).
      *
@@ -9495,7 +9511,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                    transportUdpClientDestroy still gets its graceful
                    PACKET_QUIT out over a live socket. */
                 windowLeaveGame();
-#elif defined(__IPHONEOS__)
+#elif BOLO_MOBILE
                 /* The iOS driver's game loop ends on this and goes back to
                    the menu, as it does when a game ends. */
                 windowNewGame();
@@ -9597,6 +9613,21 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             else if (s_allianceVisible)    { s_allianceVisible = false;  cancelClosedPanel = true; }
         }
 
+#if defined(__ANDROID__)
+        /* The system Back key arrives as Escape (main_android.c's event
+           filter). When it closed nothing above, it opens Settings, as the
+           gear does; Settings open, the ladder above has just closed it, so
+           Back closes what Back opened. This takes the place of the pause
+           overlay a pad's Escape opens on the desktop: the pad's own Start
+           button still opens that, and a keyboard's Escape on Android means
+           the same as Back. */
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) &&
+            !anyPopup && !cancelClosedPanel && !ImGui::GetIO().WantTextInput &&
+            cs && !clientSimIsInLobby(cs) &&
+            !deckPauseIsOpen() && !sdl3ImguiIsDialogOpen()) {
+            sdl3ImguiShowSettings();
+        }
+#else
         /* Escape opens the pause overlay when a controller is connected and
            nothing else is in the way — mirrors the Start-button trigger so
            keyboard + pad users both have a way in (the menu bar is hidden in
@@ -9609,6 +9640,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             !deckPauseIsOpen() && !sdl3ImguiIsDialogOpen()) {
             deckPauseOpen();
         }
+#endif
     }
 
     /* Smart-ping menu and markers. Drawn before the tablet controls and the
@@ -9637,14 +9669,13 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
            web client that a small touch screen puts in this layout, where the
            tutorial used to stop on its first message because nothing drew it;
            drawing it there is intended. */
-#if !defined(__ANDROID__)
         renderTutorialOverlay(cs);
-#endif
     } else {
     /* The in-window menu bar: everywhere but macOS, whose menus are native,
-       and iOS, where no app draws a menu bar of its own: the iPad's classic
-       screen has the touch controls' buttons in its place (below). */
-#if !defined(__APPLE__)
+       and iOS and Android, where no app draws a menu bar of its own: the
+       tablets' classic screen has the touch controls' buttons in its place
+       (below). */
+#if !defined(__APPLE__) && !defined(__ANDROID__)
         /* Show the menu bar only when the player's last-used device is the
            keyboard/mouse.  A connected-but-idle controller doesn't hide it,
            and reaching for the mouse/keyboard brings it back; using the
@@ -9686,9 +9717,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                 s_lastDeckPause = nowDeckPause;
             }
         }
-#if !defined(__ANDROID__)  /* see renderTutorialOverlay */
         renderTutorialOverlay(cs);
-#endif
         quickChatRender(cs);
         renderCtrlSendMsg(cs);
 
@@ -10201,19 +10230,17 @@ bool sdl3ImguiIsMapOverviewOpen(void) {
     return false;
 }
 /* The in-window mode is a desktop-window mode, so tablet has nothing to show
- * and nothing to report active. iOS is the exception: it has no pop-out, so
+ * and nothing to report active. Mobile is the exception: it has no pop-out, so
  * the in-window map is its one overview, drawn inside the tablet layout's game
  * view (sdl3draw.c) and opened from the tablet overlay's map button. */
 void sdl3ImguiShowOverviewInWindow(bool active) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     overviewInWindowChoose(active);
 #else
-#if !defined(__ANDROID__)
     if (!uiModeIsTablet()) {
         overviewInWindowChoose(active);
         return;
     }
-#endif
     (void)active;
 #endif
 }
@@ -10232,12 +10259,10 @@ bool sdl3ImguiIsOverviewOffered(void) {
     return !overviewSuppressed();
 }
 bool sdl3ImguiIsOverviewInWindowOpen(void) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if BOLO_MOBILE
     return sdl3DrawIsOverviewInWindow();
 #else
-#if !defined(__ANDROID__)
     if (!uiModeIsTablet()) return sdl3DrawIsOverviewInWindow();
-#endif
     return false;
 #endif
 }

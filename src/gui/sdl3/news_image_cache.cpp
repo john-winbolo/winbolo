@@ -52,8 +52,9 @@
  *********************************************************/
 
 #include <SDL3/SDL.h>
-#if defined(WBN_HTTP_NSURL)
-/* No libcurl on iOS: the fetch goes through the NSURLSession HTTP module. */
+#if defined(WBN_HTTP_NSURL) || defined(WBN_HTTP_JNI)
+/* No libcurl on iOS or Android: the fetch goes through the platform's HTTP
+ * module. */
 extern "C" {
 #include "../../winbolonet/http.h"
 }
@@ -209,7 +210,7 @@ struct DynBuf {
     size_t         capacity = 0;
 };
 
-#if !defined(WBN_HTTP_NSURL)
+#if !defined(WBN_HTTP_NSURL) && !defined(WBN_HTTP_JNI)
 size_t dynWrite(char *ptr, size_t size, size_t nmemb, void *userdata) {
     DynBuf *buf = static_cast<DynBuf *>(userdata);
     size_t incoming = size * nmemb;
@@ -247,7 +248,7 @@ void workerBody(std::string url) {
     bool success = false;
     long httpCode = 0;
 
-#if defined(WBN_HTTP_NSURL)
+#if defined(WBN_HTTP_NSURL) || defined(WBN_HTTP_JNI)
     if (!g_shutdown.load(std::memory_order_acquire)) {
         uint8_t *data = nullptr;
         size_t   size = 0;

@@ -47,7 +47,7 @@ extern "C" {
 #include "../../../lang.h"       /* langGetText / STR_CLIPGIF_* */
 }
 
-#if !defined(__ANDROID__) && BOLO_CLIP_GIF_GALLERY
+#if BOLO_CLIP_GIF_GALLERY
 
 /* The format's name, as the export's own modal and message boxes use it. */
 static const char *const GALLERY_GIF_TITLE = "GIF";
@@ -848,4 +848,4 @@ void lobbyClipGifGalleryRender(float s) {
     }
 }
 
-#endif /* !__ANDROID__ && BOLO_CLIP_GIF_GALLERY */
+#endif /* BOLO_CLIP_GIF_GALLERY */

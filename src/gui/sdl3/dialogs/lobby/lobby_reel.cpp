@@ -897,7 +897,7 @@ static void lobbyReelDrawTankLabels(ImVec2 imgMin, ImVec2 imgSize,
 #define REEL_WHEEL_STEP 1.0f  /* a mouse notch, the unit the wheel reports in */
 #define REEL_PINCH_STEP 0.15f /* magnification per step; matches the map views */
 
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
 /* Pinch on iOS, from SDL's own pinch gesture events rather than from
  * input_touch.c's viewport pinch: that one tracks fingers against the game
  * view's rect and is fed only by the game loop, while the reel sits in the
@@ -957,7 +957,7 @@ static void lobbyReelZoomInput(bool hovered, ImVec2 imgMin) {
      * with the other views, so the backlog has to be taken off it either way —
      * what a gap changes is that it is thrown away rather than spent. */
     float pinch = macOSPinchZoomConsume();
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
     /* iOS has no trackpad: the two-finger pinch SDL reports, banked by
      * lobbyReelPinchEvent, in the same units. */
     pinch += s_reelTouchPinch;

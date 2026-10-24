@@ -117,6 +117,14 @@ static uint16_t pickStringId(uint16_t mid) {
   int i;
   for (i = 0; i < kStringVariantCount; i++) {
     if (kStringVariants[i].desktop != mid) continue;
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+    /* The touch layout's wording first: its controls are on the screen,
+       whatever SDL counts as a gamepad (an Android keyboard with a d-pad is
+       one, and the token in the controller wording then drew a keycap that
+       read "{"). */
+    if (uiModeIsTablet())
+      return kStringVariants[i].touch ? kStringVariants[i].touch : mid;
+#endif
     if (uiShouldUseControllerMode())
       return kStringVariants[i].controller ? kStringVariants[i].controller : mid;
     if (uiModeIsTablet())

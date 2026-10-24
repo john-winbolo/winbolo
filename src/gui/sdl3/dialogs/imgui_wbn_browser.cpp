@@ -1440,11 +1440,12 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                 imguiHandOnHover();
                 ImGui::SameLine();
             }
-#elif defined(__IPHONEOS__)
-            /* SDL's file dialogs are the dummy backend on iOS. Open File
-               hands back to the caller, which shows the recordings screen
-               (ios_recordings.cpp): the recordings in the preferences
-               directory, Documents and Documents/Inbox. */
+#elif BOLO_MOBILE
+            /* SDL's file dialogs are the dummy backend on iOS and Android.
+               Open File hands back to the caller, which shows the recordings
+               screen (mobile_recordings.cpp): the recordings in the
+               preferences directory, and in Documents and Documents/Inbox on
+               iOS or the incoming subdirectory on Android. */
             if (ImGui::Button(langGetText(STR_DLGWBN_OPENFILE))) {
                 /* A download that finished this same frame is already the
                  * result being handed back; it is not written over. */

@@ -1406,6 +1406,11 @@ static const LangEntry langTable[] = {
     {3035, "Diagonal pieces and centre clump"},
     {3036, "A wall of buildings across the forest rim on each axis, which cuts the rim into four pieces. From seed: the seed picks one."},
     {3037, "Buildings near the middle of the floor: short pieces at 45 degrees, a clump at the centre, or both. From seed: the seed picks one."},
+
+    {3038, "Share"},
+    {3039, "No recordings yet. Single-player rounds are recorded here, and .wbv recordings opened from another app are listed here too."},
+    {3040, "{string1} has been saved. Choose an app to share it with next."},
+    {3041, "Nothing here yet. Maps you save, here or from a game, show up here."},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},

@@ -2918,6 +2918,16 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Harita ekranı doldurur; durum, inşa ve hab
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=Bu cihaz mobil veri kullanıyor. Mobil veriyle barındırılan bir İnternet\noyunu büyük olasılıkla çalışmaz: mobil ağlar diğer oyuncuların cihaza\nulaşmasına nadiren izin verir. Wi-Fi ile çalışma olasılığı çok daha yüksektir.\n\nYine de barındırılsın mı?
 
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=Paylaş
+STR_ANDROIDREC_EMPTY=Henüz kayıt yok. Tek oyunculu turlar buraya kaydedilir; başka bir uygulamadan açılan .wbv kayıtları da burada listelenir.
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1} kaydedildi. Şimdi paylaşmak için bir uygulama seç.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Burada henüz bir şey yok. Burada ya da bir oyunda kaydettiğin haritalar burada görünür.
+
 # The recap's GIF gallery, and the GIF length beside the replay's GIF button
 STR_CLIPGIF_GALLERY_TITLE=GIF'leriniz
 STR_CLIPGIF_GALLERY_EMPTY=Henüz GIF yok. Tekrar oynatmanın altındaki GIF düğmesiyle ya da bir klibin GIF düğmesiyle oluşturun.

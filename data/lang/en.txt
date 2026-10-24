@@ -3032,4 +3032,10 @@ STR_MAPGEN_MIDDLE_CLUMP=Centre clump
 STR_MAPGEN_MIDDLE_BOTH=Diagonal pieces and centre clump
 STR_MAPGEN_STYLE_WALLS_TIP=A wall of buildings across the forest rim on each axis, which cuts the rim into four pieces. From seed: the seed picks one.
 STR_MAPGEN_STYLE_MIDDLE_TIP=Buildings near the middle of the floor: short pieces at 45 degrees, a clump at the centre, or both. From seed: the seed picks one.
+STR_ANDROIDREC_SHARE=Share
+STR_ANDROIDREC_EMPTY=No recordings yet. Single-player rounds are recorded here, and .wbv recordings opened from another app are listed here too.
+STR_CLIPGIF_SAVED_ANDROID={string1} has been saved. Choose an app to share it with next.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Nothing here yet. Maps you save, here or from a game, show up here.
 

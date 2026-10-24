@@ -22,6 +22,7 @@
 #endif
 
 #include "ui_mode.h"
+#include "../common/wb_log.h"
 #include "sdl3/input_gamepad.h"
 #include "sdl3/input_source.h"
 
@@ -77,19 +78,23 @@ bool uiModeIsSteamDeckHardware(void) {
 UIMode uiModeDetect(void) {
   UIMode mode = UI_MODE_DESKTOP;
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || (defined(__APPLE__) && (TARGET_OS_IOS || TARGET_OS_TV))
+  /* The mode names predate the phone layout: UI_MODE_TABLET is the touch
+     layout, which every phone runs, and UI_MODE_DESKTOP the classic screen,
+     which a tablet runs with the touch controls over it. */
   mode = UI_MODE_TABLET;
-#elif defined(__APPLE__) && (TARGET_OS_IOS || TARGET_OS_TV)
-  mode = UI_MODE_TABLET;
-#if defined(__IPHONEOS__)
-  /* An iPad always has the desktop layout: the classic screen fits it. Decided
-     here and nowhere else: the Steam Deck and small-touch-screen checks below
-     are for desktop systems, not for an iPad. */
-  if (iosDeviceIsPad()) {
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  /* An iPad or an Android tablet always has the desktop layout: the classic
+     screen fits it. Decided here and nowhere else: the Steam Deck and
+     small-touch-screen checks below are for desktop systems, not for a
+     tablet. */
+  if (uiModeIsMobileTablet()) {
+    WB_LOG_INFO(WB_LOG_CAT_GUI, "uiModeDetect: tablet, the classic screen with the touch controls");
     s_currentMode = UI_MODE_DESKTOP;
     s_initialized = true;
     return s_currentMode;
   }
+  WB_LOG_INFO(WB_LOG_CAT_GUI, "uiModeDetect: phone, the touch layout");
 #endif
 #endif
 

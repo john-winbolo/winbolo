@@ -3640,6 +3640,16 @@
 #define STR_MAPGEN_STYLE_WALLS_TIP               3036
 #define STR_MAPGEN_STYLE_MIDDLE_TIP              3037
 
+/* The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder */
+#define STR_ANDROIDREC_SHARE                     3038
+#define STR_ANDROIDREC_EMPTY                     3039
+
+/* The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet */
+#define STR_CLIPGIF_SAVED_ANDROID                3040
+
+/* The map editor's file picker on Android, whose Maps folder is the app's own */
+#define STR_MAPEDIT_ANDROID_NOFILES              3041
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

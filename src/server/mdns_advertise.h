@@ -76,4 +76,13 @@ typedef struct {
 } MdnsPlatformAdvertiser;
 void mdnsAdvertiseSetPlatform(const MdnsPlatformAdvertiser *advertiser);
 
+/* A platform's hold on incoming multicast while the raw-socket advertiser
+ * has its socket open (Android, whose Wi-Fi driver drops multicast unless
+ * the app holds its multicast lock, which costs battery to hold at other
+ * times). Called with true once the socket has opened and with false as it
+ * closes, on the thread that starts or stops the server; not called for a
+ * platform advertiser. NULL, the default, calls nothing. Set it once at
+ * startup, before a server starts. */
+void mdnsAdvertiseSetMulticastHold(void (*hold)(bool on));
+
 #endif /* MDNS_ADVERTISE_H */

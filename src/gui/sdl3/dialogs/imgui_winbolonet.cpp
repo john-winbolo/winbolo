@@ -1022,8 +1022,7 @@ extern "C" void imguiWinbolonetDrawStatsDialog(void) {
      * as the welcome screen's Log Viewer entry. */
     const char *signOutLbl = langGetText(STR_DLGWBN_SIGN_OUT);
     const char *closeLbl    = langGetText(STR_OK);
-    /* Android does not compile the log browser or the reel. */
-#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+#if !defined(__EMSCRIPTEN__)
     const bool showMyGames  =
         !inputGamepadRealControllerConnected() && !uiModeIsSteamDeck();
     const char *myGamesLbl  = langGetText(STR_DLGWBN_TAB_MYGAMES);
