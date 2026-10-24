@@ -58,6 +58,7 @@
 #include "logviewer.h"
 #include "lv_hud.h"
 #include "lv_team_colour.h"
+#include "lv_team_sprite.h"     /* the colour of a neutral pillbox */
 #include "lv_bot_chip.h"         /* which chip a bot has in the panels */
 #include "lv_overview.h"
 #include "lv_tank_status.h"
@@ -5967,6 +5968,30 @@ unsigned char lv_screenTeamColour(int team) {
   return lvTeamColourEntry(g_lv->tc, team);
 }
 
+/* The palette entry neutral pillboxes are drawn in now, or -1 for the
+   game's red tile (lvNeutralPillEntry in lv_team_sprite.h has the rule):
+   grey when a team in the game is red too. The teams in the game are the
+   teams of the players in it now. It is -1 when the map does not draw team
+   colours (switched off, or a player's perspective on), as the map then
+   shows the game's own red tile. The map, the HUD and every panel ask here,
+   so a neutral pillbox is one colour everywhere. */
+int lv_screenNeutralPillEntry(void) {
+  unsigned char entries[MAX_TANKS];
+  int count = 0;
+  BYTE i;
+  if (g_lv == NULL || !g_lv->useTeamColours || lv_playersHasPerspective()) {
+    return -1;
+  }
+  for (i = 0; i < MAX_TANKS; i++) {
+    BYTE team;
+    if (!lv_playersIsInUse(i)) continue;
+    team = lv_playersGetTeamForOwner(i);
+    if (team == NEUTRAL_TEAM) continue;
+    entries[count++] = lv_screenTeamColour(team);
+  }
+  return lvNeutralPillEntry(entries, count);
+}
+
 void lv_messageAdd(lvEventKind kind, messageType msgType, langid topId,
                    langid bodyId, const MessageArgs *args) {
   lv_messageAddAt(kind, 0, 0, msgType, topId, bodyId, args);
@@ -6394,6 +6419,8 @@ void lv_screenHudSnapshot(LvHudSnapshot *out) {
 
   perspective = lv_playersHasPerspective();
   viewer = lv_playersGetSelf();
+  /* The colour of a neutral pillbox, as the map draws it this frame. */
+  out->neutralPill = (signed char) lv_screenNeutralPillEntry();
   {
     int sel = lv_screenSelectedTank();
     if (sel >= 0) {

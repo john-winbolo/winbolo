@@ -2453,6 +2453,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_hud_sums",                                     run_lv_hud_sums                                     },
     { "lv_team_sprite_sums",                             run_lv_team_sprite_sums                             },
     { "lv_team_colour_lookup",                           run_lv_team_colour_lookup                           },
+    { "lv_neutral_pill_grey",                            run_lv_neutral_pill_grey                            },
     { "lv_overview_sums",                                run_lv_overview_sums                                },
     { "lv_overview_bots",                                run_lv_overview_bots                                },
     { "lv_overview_row_layout",                          run_lv_overview_row_layout                          },

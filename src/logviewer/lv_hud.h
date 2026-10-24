@@ -54,7 +54,9 @@ typedef enum LvHudIcon {
 #define LV_HUD_SHAPE_DISC         0  /* tanks and bases */
 #define LV_HUD_SHAPE_SQUARE       1  /* a pillbox on the map */
 #define LV_HUD_SHAPE_SMALL_SQUARE 2  /* a pillbox carried in a tank */
-#define LV_HUD_SHAPE_COUNT        3
+#define LV_HUD_SHAPE_NEUTRAL_PILL 3  /* a neutral pillbox, drawn grey when a
+                                        team is red (lv_team_sprite.h) */
+#define LV_HUD_SHAPE_COUNT        4
 #define LV_HUD_SHAPE_PAD          1
 
 /* What an owned thing is to the perspective player. */
@@ -113,6 +115,8 @@ typedef struct LvHudSnapshot {
     unsigned char viewerChip;          /* and LvBotChip */
     unsigned char hasSelected;         /* 1 while a tank is selected */
     unsigned char selected;            /* its slot */
+    signed char neutralPill;           /* lv_screenNeutralPillEntry: -1 the game's
+                                          red icon, else the grey entry */
 } LvHudSnapshot;
 
 /* The icon for a base slot. The order is the game's (lv_basesGetAlliancePos):

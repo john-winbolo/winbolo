@@ -161,7 +161,7 @@ static bool hud_game_icon_pos(LvHudGameIcon icon, float *sx, float *sy) {
 /* The icon of one slot, over p0..p1. With a perspective on it is the game's
  * own icon for that player, as it is in the atlas. */
 static void hud_slot_icon(ImDrawList *dl, int grid, const LvHudSlot &slot,
-                          bool perspective, ImVec2 p0, ImVec2 p1) {
+                          bool perspective, int neutralPill, ImVec2 p0, ImVec2 p1) {
     const float iw = (float)STATUS_ITEM_SIZE_X;
     const float ih = (float)STATUS_ITEM_SIZE_Y;
     SDL_Texture *atlas = lv_drawGetTilesTexture();
@@ -185,7 +185,18 @@ static void hud_slot_icon(ImDrawList *dl, int grid, const LvHudSlot &slot,
                   IM_COL32_WHITE);
         break;
     case LV_HUD_ICON_NEUTRAL:
-        if (grid == HUD_GRID_PILLS) {
+        if (grid == HUD_GRID_PILLS && neutralPill >= 0 &&
+            lv_drawGetHudShapesTexture() != nullptr) {
+            /* A team is red: the neutral icon in the grey the map draws a
+             * neutral pillbox in (lv_team_sprite.h). */
+            float r = 0.0f, g = 0.0f, b = 0.0f;
+            float cell = iw + 2.0f * LV_HUD_SHAPE_PAD;
+            lv_drawTeamPanelColour(neutralPill, &r, &g, &b);
+            hud_image(dl, lv_drawGetHudShapesTexture(),
+                      LV_HUD_SHAPE_NEUTRAL_PILL * cell + LV_HUD_SHAPE_PAD,
+                      (float)LV_HUD_SHAPE_PAD, iw, ih, p0, p1,
+                      ImGui::ColorConvertFloat4ToU32(ImVec4(r, g, b, 1.0f)));
+        } else if (grid == HUD_GRID_PILLS) {
             hud_image(dl, atlas, STATUS_PILLBOX_NEUTRAL_X, STATUS_PILLBOX_NEUTRAL_Y,
                       iw, ih, p0, p1, IM_COL32_WHITE);
         } else {
@@ -322,7 +333,7 @@ static void hud_slot_click(int grid, int index) {
 
 /* One grid: its name, the black panel, the tile in the middle and the 16
  * slots. origin is the top left of the name; scale is whole. */
-static void hud_grid(int grid, const LvHudSlot *slots, bool perspective,
+static void hud_grid(int grid, const LvHudSlot *slots, bool perspective, int neutralPill,
                      ImVec2 origin, int scale, int selected) {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const float s = (float)scale;
@@ -366,7 +377,7 @@ static void hud_grid(int grid, const LvHudSlot *slots, bool perspective,
         sdl3StatusItemPos(n + 1, grid, &x, &y);
         ImVec2 q0(p0.x + s * x, p0.y + s * y);
         ImVec2 q1(q0.x + s * STATUS_ITEM_SIZE_X, q0.y + s * STATUS_ITEM_SIZE_Y);
-        hud_slot_icon(dl, grid, slot, perspective, q0, q1);
+        hud_slot_icon(dl, grid, slot, perspective, neutralPill, q0, q1);
         if (n == selected) {
             /* The selected tank: a thin white edge round its cell, as the
              * map has white corners round the tank. */
@@ -490,7 +501,7 @@ void lv_imgui_hud_window(void) {
             } else {
                 at.y += (float)(i * (hud_label_h() + fit.scale * HUD_PANEL_H + hud_gap()));
             }
-            hud_grid(grid, slots, snap.perspective != 0, at, fit.scale,
+            hud_grid(grid, slots, snap.perspective != 0, snap.neutralPill, at, fit.scale,
                      (grid == HUD_GRID_TANKS && snap.hasSelected) ? (int)snap.selected : -1);
         }
 

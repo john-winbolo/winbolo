@@ -355,3 +355,70 @@ int run_lv_team_colour_lookup(void) {
     UT_ASSERT_MSG(lvTeamColourEntry(NULL, 2) == 0, "no table");
     return 0;
 }
+
+/* lv_neutral_pill_grey - a neutral pillbox turns grey while a team in the
+ * game is red, the colour of the game's neutral pillbox (lv_team_sprite.h).
+ * Only the palette's red (11) is close enough; the grey is light grey (10),
+ * or grey (0) when a team has light grey; with no red team nothing changes. */
+int run_lv_neutral_pill_grey(void) {
+    int entry, armour;
+    LvMapItemSprite s;
+
+    /* Only the red entry is too close to the neutral pillbox's red. */
+    for (entry = 0; entry < LV_TEAM_SHEET_ROWS; entry++) {
+        UT_ASSERT_MSG(lvTeamClashesNeutralPill(entry) == (entry == LV_TEAM_PALETTE_RED),
+                      "entry %d clash %d", entry, (int)lvTeamClashesNeutralPill(entry));
+    }
+    /* The table is the items sheet's: red 0xc00000, the two greys. */
+    UT_ASSERT_MSG(lvItemsRowRgb(LV_TEAM_PALETTE_RED) == 0xc00000u, "red row colour");
+    UT_ASSERT_MSG(lvItemsRowRgb(LV_NEUTRAL_PILL_GREY) == 0xa5a5a5u, "light grey row colour");
+    UT_ASSERT_MSG(lvItemsRowRgb(LV_NEUTRAL_PILL_GREY_SPARE) == 0x6f6f6fu, "grey row colour");
+
+    /* No clash: green, blue and yellow teams keep the game's red tile. */
+    {
+        const unsigned char teams[] = { 2, 12, 4 };
+        UT_ASSERT_MSG(lvNeutralPillEntry(teams, 3) == -1, "no red team: no change");
+        UT_ASSERT_MSG(lvNeutralPillEntry(NULL, 0) == -1, "no teams: no change");
+        for (armour = 0; armour <= 15; armour++) {
+            s = lvMapPillSpriteNeutralAs(true, armour, 2, lvNeutralPillEntry(teams, 3));
+            UT_ASSERT_MSG(s.fromAtlas == 1 && s.tile == lvGameHostilePillTile(armour),
+                          "no clash, armour %d: not the game's tile", armour);
+        }
+        s = lvPanelItemSpriteNeutralAs(false, false, 0, lvNeutralPillEntry(teams, 3));
+        UT_ASSERT_MSG(s.fromAtlas == 1 && s.tile == LV_TILE_PILL_EVIL_15, "no clash: panel picture");
+    }
+
+    /* A red team (the default Team 1 green, Team 2 red): light grey. */
+    {
+        const unsigned char teams[] = { 2, 11 };
+        int e = lvNeutralPillEntry(teams, 2);
+        UT_ASSERT_MSG(e == LV_NEUTRAL_PILL_GREY, "red team: entry %d, not light grey", e);
+        for (armour = 0; armour <= 15; armour++) {
+            s = lvMapPillSpriteNeutralAs(true, armour, 0, e);
+            UT_ASSERT_MSG(s.fromAtlas == 0 && s.row == LV_NEUTRAL_PILL_GREY && s.col == armour,
+                          "clash, armour %d: not the grey cell", armour);
+        }
+        /* The panel picture is the same grey cell, at full armour. */
+        s = lvPanelItemSpriteNeutralAs(false, false, 0, e);
+        UT_ASSERT_MSG(s.fromAtlas == 0 && s.row == LV_NEUTRAL_PILL_GREY && s.col == 15,
+                      "clash: panel picture not grey");
+        /* An owned pillbox and every base are not changed. */
+        s = lvMapPillSpriteNeutralAs(false, 15, 11, e);
+        UT_ASSERT_MSG(s.fromAtlas == 0 && s.row == 11, "the red team's own pillbox moved");
+        s = lvPanelItemSpriteNeutralAs(true, false, 0, e);
+        UT_ASSERT_MSG(s.fromAtlas == 1 && s.tile == LV_TILE_BASE_NEUTRAL, "neutral base changed");
+    }
+
+    /* A red team and a light grey team: grey. Both greys taken: another
+       entry no team has and that is not red. */
+    {
+        const unsigned char teams[] = { 11, 10 };
+        const unsigned char full[] = { 11, 10, 0 };
+        int e;
+        UT_ASSERT_MSG(lvNeutralPillEntry(teams, 2) == LV_NEUTRAL_PILL_GREY_SPARE,
+                      "light grey taken: not grey");
+        e = lvNeutralPillEntry(full, 3);
+        UT_ASSERT_MSG(e >= 0 && e != 11 && e != 10 && e != 0, "both greys taken: entry %d", e);
+    }
+    return 0;
+}
