@@ -80,10 +80,13 @@ bool androidNetPathInstall(void) {
     (*env)->PopLocalFrame(env, NULL);
     return false;
   }
+  /* Each lookup clears the NoSuchMethodError it may raise before the next
+     JNI call, which is not allowed with one pending. */
   midStart = (*env)->GetStaticMethodID(env, local, "start", "()Z");
+  if (midStart == NULL) netPathClearException(env, "start lookup");
   s_midKind = (*env)->GetStaticMethodID(env, local, "kind", "()I");
+  if (s_midKind == NULL) netPathClearException(env, "kind lookup");
   if (midStart == NULL || s_midKind == NULL) {
-    netPathClearException(env, "method lookup");
     s_midKind = NULL;
     (*env)->PopLocalFrame(env, NULL);
     return false;

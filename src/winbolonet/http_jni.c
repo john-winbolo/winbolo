@@ -614,7 +614,7 @@ static const JNINativeMethod s_nativeMethods[] = {
 * comes first resolves the class through the activity's
 * class loader, which works on any attached thread.
 *********************************************************/
-static SDL_SpinLock s_classLock = 0;
+static SDL_InitState s_classInit;         /* the one-time binding below */
 static jclass       s_httpClass = NULL;   /* global reference */
 static jmethodID    s_midRequest = NULL;
 
@@ -685,15 +685,15 @@ static bool wbnJniBind(JNIEnv *env) {
   return ok;
 }
 
+/* The class, bound on the first call. The binding loads a class and
+   registers natives, so a second thread arriving meanwhile waits in
+   SDL_ShouldInit rather than spinning on a lock through it; a binding that
+   failed leaves the state uninitialised, so the next call tries again. */
 static jclass wbnJniClass(JNIEnv *env) {
-  jclass cls;
-  SDL_LockSpinlock(&s_classLock);
-  if (s_httpClass == NULL) {
-    (void)wbnJniBind(env);
+  if (SDL_ShouldInit(&s_classInit)) {
+    SDL_SetInitialized(&s_classInit, wbnJniBind(env));
   }
-  cls = s_httpClass;
-  SDL_UnlockSpinlock(&s_classLock);
-  return cls;
+  return s_httpClass;
 }
 
 bool httpAndroidInit(void) {

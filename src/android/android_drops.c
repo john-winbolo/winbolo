@@ -24,21 +24,34 @@
  * screen ran is the one the player asked for last. Written by the natives
  * below on the Java main thread (and by main for a cold launch) and read by
  * the welcome screen on SDL's main thread, so the lock is needed. */
+static SDL_InitState s_dropLockInit;
 static SDL_Mutex *s_dropLock = NULL;
 static char s_dropLog[FILENAME_MAX];
 static char s_dropLink[512];
 
+/* The lock, made on first use: a native below can run before main has
+ * reached androidDropsInstall (a VIEW intent arriving as the activity
+ * starts), and SDL_LockMutex(NULL) locks nothing. SDL's mutexes need no
+ * SDL_Init first. */
+static SDL_Mutex *dropsLock(void) {
+  if (SDL_ShouldInit(&s_dropLockInit)) {
+    s_dropLock = SDL_CreateMutex();
+    SDL_SetInitialized(&s_dropLockInit, true);
+  }
+  return s_dropLock;
+}
+
 static void androidDropsKeepLink(const char *link) {
-  SDL_LockMutex(s_dropLock);
+  SDL_LockMutex(dropsLock());
   SDL_strlcpy(s_dropLink, link, sizeof(s_dropLink));
-  SDL_UnlockMutex(s_dropLock);
+  SDL_UnlockMutex(dropsLock());
   WB_LOG_INFO(WB_LOG_CAT_GUI, "[URL] Kept winbolo:// link for the menu: %s", link);
 }
 
 void androidDropsKeepRecording(const char *path) {
-  SDL_LockMutex(s_dropLock);
+  SDL_LockMutex(dropsLock());
   SDL_strlcpy(s_dropLog, path, sizeof(s_dropLog));
-  SDL_UnlockMutex(s_dropLock);
+  SDL_UnlockMutex(dropsLock());
   WB_LOG_INFO(WB_LOG_CAT_GUI, "Kept recording to play: %s", path);
 }
 
@@ -68,29 +81,27 @@ JNIEXPORT void JNICALL Java_com_winbolo_android_WinBoloActivity_nativeOpenRecord
 }
 
 void androidDropsInstall(void) {
-  if (s_dropLock == NULL) {
-    s_dropLock = SDL_CreateMutex();
-  }
+  (void)dropsLock();
 }
 
 void androidDropsForgetLink(const char *link) {
   if (link == NULL) return;
-  SDL_LockMutex(s_dropLock);
+  SDL_LockMutex(dropsLock());
   if (strcmp(s_dropLink, link) == 0) {
     s_dropLink[0] = '\0';
   }
-  SDL_UnlockMutex(s_dropLock);
+  SDL_UnlockMutex(dropsLock());
 }
 
 int androidDropsWelcomeResult(void) {
   char link[sizeof(s_dropLink)];
   bool haveLog;
 
-  SDL_LockMutex(s_dropLock);
+  SDL_LockMutex(dropsLock());
   SDL_strlcpy(link, s_dropLink, sizeof(link));
   s_dropLink[0] = '\0';
   haveLog = (s_dropLog[0] != '\0');
-  SDL_UnlockMutex(s_dropLock);
+  SDL_UnlockMutex(dropsLock());
 
   if (link[0] != '\0') {
     WB_LOG_INFO(WB_LOG_CAT_GUI, "[URL] Welcome screen taking the kept link: %s", link);
@@ -106,12 +117,12 @@ int androidDropsWelcomeResult(void) {
 
 bool androidDropsTakeLog(char *out, size_t size) {
   bool have;
-  SDL_LockMutex(s_dropLock);
+  SDL_LockMutex(dropsLock());
   have = (s_dropLog[0] != '\0');
   if (have) {
     SDL_strlcpy(out, s_dropLog, size);
     s_dropLog[0] = '\0';
   }
-  SDL_UnlockMutex(s_dropLock);
+  SDL_UnlockMutex(dropsLock());
   return have;
 }
