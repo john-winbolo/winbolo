@@ -27,6 +27,10 @@
  *       classic table and every other part's rules are unchanged.
  *   run_mac_bolo_settings_numbers
  *       the five number settings reach their rules.
+ *   run_mac_bolo_settings_centre_blast
+ *       centre_blast is off by default and leaves tank_hit_blast_centre at
+ *       the classic 0; turned on, it sets the rule to 1 and nothing else
+ *       the mod sets changes.
  *   run_mac_bolo_first_start_lobby_off_uses_mac_pick
  *       first_start_lobby off: across several rounds some opening tank
  *       stands away from its lobby pick, where the Mac Bolo pick put it,
@@ -382,6 +386,26 @@ int run_mac_bolo_settings_defaults_play_old_rules(void) {
     /* A rule the mod never set is still the classic table's. */
     UT_ASSERT(got.start_pill_range == classic.start_pill_range);
     UT_ASSERT(got.tank_wall_glide == classic.tank_wall_glide);
+    /* The centre blast is off by default. */
+    UT_ASSERT(got.tank_hit_blast_centre == 0);
+    return 0;
+}
+
+int run_mac_bolo_settings_centre_blast(void) {
+    static const MlsSetting on[] = { { "centre_blast", 1 } };
+    SimRules got;
+    int      i;
+
+    UT_ASSERT(mlsRulesRound(on, 1, &got) == 0);
+    UT_ASSERT_MSG(got.tank_hit_blast_centre == 1,
+                  "with centre_blast on tank_hit_blast_centre is %d",
+                  (int)got.tank_hit_blast_centre);
+    for (i = 0; i < MLS_RULE_COUNT; i++) {
+        int32_t v = mlsRuleValue(&got, &kMlsRules[i]);
+        UT_ASSERT_MSG(v == kMlsRules[i].mac,
+                      "with centre_blast on %s is %d, the mod always set %d",
+                      kMlsRules[i].name, (int)v, (int)kMlsRules[i].mac);
+    }
     return 0;
 }
 

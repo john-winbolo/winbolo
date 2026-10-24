@@ -771,8 +771,12 @@ void lgmNewPrimaryRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE m
       tankGetWorld(tnk, &((*lgman)->x), &((*lgman)->y));
       /* Before blessX/blessY are set below on purpose: the blessed river
        * square of a boat or road order does not count as walkable, so the
-       * offset is refused next to it and he keeps the old start. */
-      lgmApplyStartOffset(sim, lgman, tnk);
+       * offset is refused next to it and he keeps the old start.
+       * tank_hit_blast_centre starts him on the tank's centre, with no
+       * offset, the same point a shell that hits the tank bursts on. */
+      if (sim->rules.tank_hit_blast_centre == 0) {
+        lgmApplyStartOffset(sim, lgman, tnk);
+      }
       (*lgman)->state = LGM_STATE_GOING;
       (*lgman)->action = action;
       (*lgman)->inTank = FALSE;
@@ -1626,7 +1630,10 @@ void lgmGetScreenCoords(lgm *lgman, BYTE leftPos, BYTE topPos, BYTE *mx, BYTE *m
 /* Whether an explosion at (wx, wy) catches a man at (lgmWorldX, lgmWorldY):
    within half a square of it on open ground, or on the very square when the
    explosion is on a wall, a pillbox or a base. The one test every builder
-   death is decided by. */
+   death is decided by. While sim->lgmBlastSquare is set (a shell that hit a
+   tank, with tank_hit_blast_centre on), "within half a square" on open
+   ground is a square: under half a square on both axes, which reaches
+   further toward the corners than the circle does. */
 static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORLD wx, WORLD wy) {
   map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
@@ -1655,7 +1662,15 @@ static bool lgmBlastCatches(GameSim *sim, WORLD lgmWorldX, WORLD lgmWorldY, WORL
   if (pos == BUILDING || pos == HALFBUILDING || pillsExistPos(pb, mx, my) == TRUE || basesExistPos(bs, mx, my) == TRUE) {
     solid = TRUE;
   }
-  if (solid == FALSE && distance <= MAP_SQUARE_MIDDLE) {
+  if (solid == FALSE && sim->lgmBlastSquare) {
+    int bdx = (int) lgmWorldX - (int) wx;
+    int bdy = (int) lgmWorldY - (int) wy;
+    if (bdx < 0) bdx = -bdx;
+    if (bdy < 0) bdy = -bdy;
+    if (bdx < MAP_SQUARE_MIDDLE && bdy < MAP_SQUARE_MIDDLE) {
+      dead = TRUE;
+    }
+  } else if (solid == FALSE && distance <= MAP_SQUARE_MIDDLE) {
     dead = TRUE;
   } else if (solid == TRUE && checkMapX == mx && checkMapY == my) {
     dead = TRUE;

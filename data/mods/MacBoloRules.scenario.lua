@@ -36,6 +36,14 @@
 -- as a circle of radius 7 with the edge left out, so a pillbox exactly 7
 -- away, or at 5 across and 5 down, stays calm.
 --
+-- Centre blast (off by default). A shell that hits a tank bursts on the
+-- middle of that tank, wherever the shell met the hull, and stays there.
+-- A builder dies to that blast when he is less than half a square from the
+-- tank's middle on both axes, a square rather than a circle, and a builder
+-- who leaves his tank starts on its middle rather than a step out from it.
+-- With it off, the blast goes where the shell met the tank, as in the
+-- default game. tank_hit_blast_centre turns it on.
+--
 -- Starts. The engine tells on_choose_start which start the lobby put the
 -- seat on: the start its player picked by hand, else one on the team's
 -- side, else the engine's own spread of the field. That start is the
@@ -64,8 +72,8 @@
 --
 -- Settings. The host turns each part on or off in the lobby's details
 -- dialog, and sets the numbers a part plays with (scenario.settings below).
--- Every part is on by default, at the numbers above, so a host who changes
--- nothing plays the same game the mod always played.
+-- Every part but the centre blast is on by default, at the numbers above,
+-- so a host who changes nothing plays the same game the mod always played.
 --
 --   pushback            Mac Bolo shell pushback (tank_slide_mac).
 --   push_step           its push at full armour (tank_slide_step, 28).
@@ -79,6 +87,8 @@
 --   pill_aim            pillbox aiming and massage (pill_aim_mac).
 --   base_defence        base defence circle (pill_base_defend_shape).
 --   base_defence_radius its radius (pill_base_defend_range, 7).
+--   centre_blast        the centre blast (tank_hit_blast_centre); off by
+--                       default.
 --   spawn_starts        the Mac Bolo start pick for spawns.
 --   first_start_lobby   "Override first start to what was chosen in lobby".
 --                       On (the default): a tank the lobby has a start
@@ -155,6 +165,10 @@ scenario = {
     { id = "base_defence_radius", label = "Base defence circle radius",
       type = "int", min = 1, max = 30, step = 1, default = 7 },
 
+    -- Centre blast: a shell that hits a tank bursts on the tank's middle.
+    { id = "centre_blast", label = "Shell blasts at the tank's centre",
+      type = "bool", default = false },
+
     -- Starts: the two-pass Mac Bolo pick for spawns.
     { id = "spawn_starts", label = "Mac Bolo spawn starts", type = "bool",
       default = true },
@@ -184,6 +198,7 @@ local SHELL_CAP         = game.setting("shell_cap")
 local TANK_BOXES        = game.setting("tank_boxes")
 local PILL_AIM          = game.setting("pill_aim")
 local BASE_DEFENCE      = game.setting("base_defence")
+local CENTRE_BLAST      = game.setting("centre_blast")
 local SPAWN_STARTS      = game.setting("spawn_starts")
 local FIRST_START_LOBBY = game.setting("first_start_lobby")
 
@@ -225,6 +240,12 @@ if BASE_DEFENCE then
   rules.pill_base_defend_shape = 1
   -- A radius, with the edge left out (7 by default).
   rules.pill_base_defend_range = game.setting("base_defence_radius")
+end
+
+if CENTRE_BLAST then
+  -- The blast on the hit tank's centre, the square builder test round it,
+  -- and builders starting on the tank's centre.
+  rules.tank_hit_blast_centre = 1
 end
 
 scenario.rules = rules

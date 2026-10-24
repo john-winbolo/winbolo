@@ -1411,6 +1411,7 @@ static const LangEntry langTable[] = {
     {3039, "No recordings yet. Single-player rounds are recorded here, and .wbv recordings opened from another app are listed here too."},
     {3040, "{string1} has been saved. Choose an app to share it with next."},
     {3041, "Nothing here yet. Maps you save, here or from a game, show up here."},
+    {3042, "Whether a shell that hits a tank bursts on the tank's centre. On, the blast goes at the middle of the tank that was hit, and a builder dies to it when he is less than half a square from that middle on both axes, a square test. A builder who leaves his tank starts on its middle. Off is the classic game: the blast goes where the shell met the tank, the builder test is a circle, and a builder starts a step out from the tank."},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},

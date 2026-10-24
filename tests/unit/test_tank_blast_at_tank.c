@@ -1303,3 +1303,215 @@ done:
     }
     return 0;
 }
+
+/* ================================================================
+ * The mod rule tank_hit_blast_centre: the blast on the tank's centre and a
+ * square builder test round it.
+ * ================================================================ */
+
+/* Whether the server's own newest explosion (the list the .wbv records) is
+   the one a blast centred on wx, wy makes, as tbtExplosionAt. */
+static bool tbtServerExplosionAt(ServerSim *sim, WORLD wx, WORLD wy) {
+    WORLD      cx = (WORLD)(wx - TANK_SUBTRACT);
+    WORLD      cy = (WORLD)(wy - TANK_SUBTRACT);
+    explosions ex = sim->sim.expl;
+
+    return ex != NULL &&
+           ex->mx == (BYTE)(cx >> TANK_SHIFT_MAPSIZE) &&
+           ex->my == (BYTE)(cy >> TANK_SHIFT_MAPSIZE) &&
+           ex->px == (BYTE)((cx & 0xFF) >> 4) &&
+           ex->py == (BYTE)((cy & 0xFF) >> 4);
+}
+
+/* tbtCheckBlast, and also the server's own explosion and the mine check on
+   the blast point. */
+static int tbtCheckBlastAll(ServerSim *sim, WORLD bx, WORLD by,
+                            uint8_t outcome) {
+    if (tbtCheckBlast(sim, bx, by, outcome) != 0) {
+        return 1;
+    }
+    UT_ASSERT_MSG(tbtServerExplosionAt(sim, bx, by),
+                  "the server's own hit explosion is not centred on the blast "
+                  "point (%u,%u)", (unsigned)bx, (unsigned)by);
+    UT_ASSERT_MSG(sim->sim.minesExplosions != NULL &&
+                      sim->sim.minesExplosions->x ==
+                          (BYTE)(bx >> TANK_SHIFT_MAPSIZE) &&
+                      sim->sim.minesExplosions->y ==
+                          (BYTE)(by >> TANK_SHIFT_MAPSIZE),
+                  "the mine check is not on the blast's square (%u,%u)",
+                  (unsigned)(bx >> TANK_SHIFT_MAPSIZE),
+                  (unsigned)(by >> TANK_SHIFT_MAPSIZE));
+    return 0;
+}
+
+/* Builders round the hit tank's centre for the square test. A builder on
+   open ground dies when he is under half a square (128) from the centre on
+   both axes. The one 110 east and 110 south is inside that square, though
+   he is 155 from the centre and so outside the half-square circle; the one
+   130 east is outside it. */
+#define TBT_SQUARE_DIAG 110
+#define TBT_SQUARE_OUT  130
+
+/* ================================================================
+ * 12. tank_hit_blast_centre with a hit that was not rewound.
+ *
+ * Off (the classic table), the hit bursts at the shell's own point, 96 west
+ * of the centre, and the builders are tested against it. On, the blast, the
+ * hit sound, the explosion sent to the clients and the server's own, and the
+ * mine check are on the tank's centre, and the builders are tested with the
+ * square.
+ * ================================================================ */
+int run_tank_blast_centre_rule_zero_rewind(void) {
+    int pass;
+
+    UT_ASSERT(TBT_SQUARE_DIAG < MAP_SQUARE_MIDDLE);
+    UT_ASSERT(2 * TBT_SQUARE_DIAG * TBT_SQUARE_DIAG >
+              MAP_SQUARE_MIDDLE * MAP_SQUARE_MIDDLE);
+    UT_ASSERT(TBT_SQUARE_OUT >= MAP_SQUARE_MIDDLE);
+
+    for (pass = 0; pass < 2; pass++) {
+        BYTE       lx = 0, ly = 0;
+        ServerSim *sim = tbtSim(&lx, &ly);
+        GameSim   *gs;
+        WORLD      tx, ty, bx, by;
+        int        rc = 0;
+
+        UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
+        gs = &sim->sim;
+        UT_CHECK(gs->rules.tank_hit_blast_centre == 0);
+        gs->rules.tank_hit_blast_centre = pass;
+        tx = tbtMiddle((BYTE)(lx + TBT_AT_TARGET));
+        ty = tbtMiddle(ly);
+        tbtPlace(sim, TBT_TARGET, tx, ty);
+        tbtBuilderOut(sim, TBT_SHOOTER, (WORLD)(tx + TBT_SQUARE_DIAG),
+                      (WORLD)(ty + TBT_SQUARE_DIAG));
+        tbtBuilderOut(sim, TBT_TARGET, (WORLD)(tx + TBT_SQUARE_OUT), ty);
+
+        tbtFire(sim, lx, ly, 0);
+        UT_CHECK(tbtFly(sim) == TBT_HIT_TICK);
+        bx = (pass == 0) ? (WORLD)(tx - TBT_SHELL_STOP_SHORT) : tx;
+        by = ty;
+        if (tbtCheckBlastAll(sim, bx, by, SHELL_OUTCOME_TANK_HIT) != 0) {
+            rc = 1;
+            goto done;
+        }
+        UT_CHECK_MSG(gs->lgmBlastSquare == FALSE,
+                     "the square builder test was left on after the shell");
+        if (pass == 0) {
+            /* Rule off: both builders are far from the shell's own point. */
+            UT_CHECK_MSG(gs->lgmen[TBT_SHOOTER]->isDead == FALSE &&
+                             gs->lgmen[TBT_TARGET]->isDead == FALSE,
+                         "rule off: a builder far from the shell's point was "
+                         "killed");
+        } else {
+            UT_CHECK_MSG(gs->lgmen[TBT_SHOOTER]->isDead == TRUE,
+                         "rule on: a builder 110 by 110 from the tank's "
+                         "centre, inside the square, lived");
+            UT_CHECK_MSG(gs->lgmen[TBT_TARGET]->isDead == FALSE,
+                         "rule on: a builder 130 from the tank's centre, "
+                         "outside the square, was killed");
+        }
+done:
+        tbtEnd(sim);
+        if (rc != 0) {
+            return rc;
+        }
+    }
+    return 0;
+}
+
+/* ================================================================
+ * 13. tank_hit_blast_centre with a rewound hit.
+ *
+ * The tank stood on the lane on the shooter's screen and has gone two hit
+ * radii north since (tbtRewoundHit). The blast and its effects are on the
+ * tank's present centre, not on the carried hull point. A builder the
+ * shooter's screen showed out is tested against the tank's centre as that
+ * screen had it, the rewound place, with the square: the target's builder,
+ * seen 110 by 110 from it, dies though he is far off now, and the shooter's
+ * own builder, seen 130 east of it, lives though he stands 50 from the
+ * present centre now.
+ * ================================================================ */
+int run_tank_blast_centre_rule_rewound(void) {
+    BYTE       lx = 0, ly = 0;
+    ServerSim *sim = tbtSim(&lx, &ly);
+    GameSim   *gs;
+    TbtHit     g;
+    int        rc = 0;
+
+    UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
+    gs = &sim->sim;
+    gs->rules.tank_hit_blast_centre = 1;
+    tbtRewoundHit(sim, lx, ly, &g);
+    tbtBuilder(sim, TBT_TARGET,
+               true, (WORLD)(g.oldX + TBT_SQUARE_DIAG),
+               (WORLD)(g.oldY + TBT_SQUARE_DIAG),
+               true, (WORLD)(g.oldX - TBT_OUT_BLAST - 300), g.oldY);
+    tbtBuilder(sim, TBT_SHOOTER,
+               true, (WORLD)(g.oldX + TBT_SQUARE_OUT), g.oldY,
+               true, g.nowX, (WORLD)(g.nowY + 50));
+
+    tbtFire(sim, lx, ly, TBT_COMP);
+    UT_CHECK(tbtFly(sim) == TBT_HIT_TICK);
+    if (tbtCheckBlastAll(sim, g.nowX, g.nowY, SHELL_OUTCOME_TANK_HIT) != 0) {
+        rc = 1;
+        goto done;
+    }
+    UT_CHECK(gs->lgmBlastSquare == FALSE);
+    UT_CHECK_MSG(gs->lgmen[TBT_TARGET]->isDead == TRUE,
+                 "the shooter's screen showed the builder 110 by 110 from the "
+                 "tank's centre, and he lived");
+    UT_CHECK_MSG(gs->lgmen[TBT_SHOOTER]->isDead == FALSE,
+                 "the shooter's screen showed his own builder 130 from the "
+                 "tank's centre, but he was killed");
+done:
+    tbtEnd(sim);
+    return rc;
+}
+
+/* ================================================================
+ * 14. tank_hit_blast_centre at 0 keeps the default blast.
+ *
+ * The same rewound hit as test 13, with the rule left at its classic 0. The
+ * blast is the hull point carried to the present tank, 96 west of its
+ * centre, as without the rule, and the builder test is the circle round the
+ * shell's own point on the shooter's screen. So the target's builder, seen
+ * 110 by 110 from the tank's old centre, lives (he is far from the seen
+ * blast), and the shooter's builder, seen 100 west of the seen blast, dies.
+ * ================================================================ */
+int run_tank_blast_centre_rule_off_keeps_carry(void) {
+    BYTE       lx = 0, ly = 0;
+    ServerSim *sim = tbtSim(&lx, &ly);
+    GameSim   *gs;
+    TbtHit     g;
+    int        rc = 0;
+
+    UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
+    gs = &sim->sim;
+    UT_CHECK(gs->rules.tank_hit_blast_centre == 0);
+    tbtRewoundHit(sim, lx, ly, &g);
+    tbtBuilder(sim, TBT_TARGET,
+               true, (WORLD)(g.oldX + TBT_SQUARE_DIAG),
+               (WORLD)(g.oldY + TBT_SQUARE_DIAG),
+               true, (WORLD)(g.oldX - TBT_OUT_BLAST - 300), g.oldY);
+    tbtBuilder(sim, TBT_SHOOTER,
+               true, (WORLD)(g.seenX - TBT_IN_BLAST), g.seenY,
+               true, (WORLD)(g.oldX - TBT_OUT_BLAST - 600), g.oldY);
+
+    tbtFire(sim, lx, ly, TBT_COMP);
+    if (tbtCheckRewoundHit(&g, tbtFly(sim), SHELL_OUTCOME_TANK_HIT) != 0 ||
+        tbtCheckBlastAll(sim, g.drawnX, g.drawnY,
+                         SHELL_OUTCOME_TANK_HIT) != 0) {
+        rc = 1;
+        goto done;
+    }
+    UT_CHECK(gs->lgmBlastSquare == FALSE);
+    UT_CHECK_MSG(gs->lgmen[TBT_TARGET]->isDead == FALSE,
+                 "rule off: the builder seen 110 by 110 from the tank's old "
+                 "centre, far from the seen blast, was killed");
+    UT_CHECK_MSG(gs->lgmen[TBT_SHOOTER]->isDead == TRUE,
+                 "rule off: the builder seen 100 from the seen blast lived");
+done:
+    tbtEnd(sim);
+    return rc;
+}

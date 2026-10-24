@@ -141,6 +141,7 @@ int run_sim_rules_codec_roundtrip(void) {
     CTRL_SIM_RULES_U32_FIELDS(SR_CHECK_INT)
     CTRL_SIM_RULES_F32_FIELDS(SR_CHECK_FLT)
     CTRL_SIM_RULES_EXT_U8_FIELDS(SR_CHECK_INT)
+    CTRL_SIM_RULES_EXT3_U8_FIELDS(SR_CHECK_INT)
 
 #undef SR_CHECK_INT
 #undef SR_CHECK_FLT
@@ -168,7 +169,7 @@ int run_sim_rules_codec_roundtrip(void) {
                       "the decoder accepted a truncated base body");
         UT_ASSERT(shortOut.u.simRules.building_life ==
                   CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC);
-        UT_ASSERT(!dec(buf, CTRL_SIM_RULES_EXT2_BODY_LEN + 1, &shortOut));
+        UT_ASSERT(!dec(buf, CTRL_SIM_RULES_EXT3_BODY_LEN + 1, &shortOut));
         UT_ASSERT_MSG(!dec(buf, 0, &shortOut),
                       "the decoder accepted an empty body");
     }
@@ -271,6 +272,35 @@ int run_sim_rules_codec_roundtrip(void) {
         UT_ASSERT(bothOut.u.simRules.tank_collision_mac == 1);
         UT_ASSERT(bothOut.u.simRules.tank_deep_sea_safe == 0);
         UT_ASSERT(bothOut.u.simRules.building_life == 255);
+    }
+
+    /* The third tail. tank_hit_blast_centre on rides after building_life,
+       which comes along at its classic value, so the whole tail goes out;
+       a body that stops short of it reads it off. */
+    {
+        ControlEvent third, thirdOut;
+        size_t       thirdLen = 0;
+
+        srFillCounted(&third);
+        third.u.simRules.building_life = CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC;
+        third.u.simRules.tank_hit_blast_centre = 1;
+        UT_ASSERT(enc(&third, NULL, buf, sizeof(buf), &thirdLen) == ENCODE_OK);
+        UT_ASSERT_MSG(thirdLen == CTRL_SIM_RULES_EXT3_BODY_LEN,
+                      "tank_hit_blast_centre on wrote %u bytes, expected %u",
+                      (unsigned)thirdLen,
+                      (unsigned)CTRL_SIM_RULES_EXT3_BODY_LEN);
+        memset(&thirdOut, 0xAB, sizeof(thirdOut));
+        UT_ASSERT(dec(buf, thirdLen, &thirdOut));
+        UT_ASSERT(thirdOut.u.simRules.tank_hit_blast_centre == 1);
+        UT_ASSERT(thirdOut.u.simRules.building_life ==
+                  CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC);
+        UT_ASSERT(thirdOut.u.simRules.tank_collision_mac == 0);
+        UT_ASSERT(dec(buf, CTRL_SIM_RULES_EXT2_BODY_LEN, &thirdOut));
+        UT_ASSERT(thirdOut.u.simRules.tank_hit_blast_centre == 0);
+
+        third.u.simRules.tank_hit_blast_centre = 0;
+        UT_ASSERT(enc(&third, NULL, buf, sizeof(buf), &thirdLen) == ENCODE_OK);
+        UT_ASSERT(thirdLen == CTRL_SIM_RULES_BASE_BODY_LEN);
     }
 
     /* And a buffer too small to hold the body is refused rather than

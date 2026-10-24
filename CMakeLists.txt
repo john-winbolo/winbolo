@@ -6113,6 +6113,7 @@ set(_unit_test_names
     mac_bolo_settings_defaults_play_old_rules
     mac_bolo_settings_each_part_off
     mac_bolo_settings_numbers
+    mac_bolo_settings_centre_blast
     mac_bolo_first_start_lobby_off_uses_mac_pick
     mac_bolo_spawn_starts_off_engine_picks
     mac_bolo_setting_changed_after_attach
@@ -6310,6 +6311,7 @@ set(_unit_test_names
     lgm_kill_seen_out_tank_hit_blast
     lgm_kill_seen_out_dead_tank
     lgm_start_offset
+    lgm_start_offset_centre_rule
     braindbg_second_round_new_dir
     lgm_draw_own_matches_wire
     lgm_draw_centre_error_bounds
@@ -6380,6 +6382,9 @@ set(_unit_test_names
     tkexp_lgm_pairing
     tank_blast_rewound_hit_at_present_tank
     tank_blast_kill_starts_at_present_tank
+    tank_blast_centre_rule_zero_rewind
+    tank_blast_centre_rule_rewound
+    tank_blast_centre_rule_off_keeps_carry
     tank_blast_zero_rewind_unchanged
     tank_blast_hit_decision_unchanged
     tank_blast_builder_on_shooter_screen

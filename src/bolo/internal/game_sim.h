@@ -398,6 +398,12 @@ struct GameSim {
     uint8_t lagCompTicks;                    /* Set before each player's tankUpdate */
     PosHistory *posHistoryPtr;               /* NULL on client, points to ServerSim.posHistory on server */
     PosHistory *lgmPosHistoryPtr;            /* NULL on client, points to ServerSim.lgmPosHistory on server */
+    /* Server-only, and only while shellsUpdate tests the builders against
+     * a shell that hit a tank with tank_hit_blast_centre on: the blast is
+     * at the tank's centre, and lgmBlastCatches tests a builder on open
+     * ground with a square, |dx| and |dy| both under half a square, in
+     * place of the circle. FALSE at every other moment. */
+    bool lgmBlastSquare;
 
     /* Pre-computed start indices used during the lobby->game batch tank
      * creation. Each slot is a start index in [0, MAX_STARTS); MAX_STARTS

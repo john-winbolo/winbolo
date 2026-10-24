@@ -368,6 +368,10 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
  * tank (shellsCalcCollision). (nowX, nowY) is that carried point; (seenX,
  * seenY) is the shell's own point, where it reached the hull at the tank's
  * old place.
+ * Under the mod rule tank_hit_blast_centre a tank-hit blast is on the tank's
+ * present centre instead, rewound or not. (nowX, nowY) is then that centre,
+ * and (seenX, seenY) is the tank's centre on the shooter's screen: the place
+ * the hit was tested against. The two differ for a rewound hit only.
  *
  * What the shooter's screen showed of the builder is in the builder position
  * history, at the shell's rewind (SHELL_LGM_REWIND_LESS above):
@@ -592,9 +596,17 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 					 * guards *lgman itself, but shellsBlastTestBuilder reads
 					 * playerNum first and lgmDeathCheckAtPosition has no guard at all. */
 					if (lgms && lgms[count] != NULL && *lgms[count] != NULL) {
+						/* tank_hit_blast_centre: a blast on a hit tank's
+						 * centre catches builders in a square round it
+						 * (lgmBlastCatches). Set for this test only. */
+						sim->lgmBlastSquare =
+						    ((shellOutcome == SHELL_OUTCOME_TANK_HIT ||
+						      shellOutcome == SHELL_OUTCOME_TANK_KILL) &&
+						     sim->rules.tank_hit_blast_centre != 0);
 						shellsBlastTestBuilder(sim, position, lgms[count],
 						                       &tk[count], newX, newY,
 						                       seenX, seenY);
+						sim->lgmBlastSquare = FALSE;
 					}
 					count++;
 				}
@@ -803,7 +815,9 @@ static bool shellsMayHit(GameSim *sim, shells shell, BYTE kind, BYTE index) {
 *             (shellsBlastTestBuilder). The same as xValue
 *             except for a rewound tank hit, where it is the
 *             shell's own point, before it is carried to
-*             where the tank is now. May be NULL
+*             where the tank is now. Under the mod rule
+*             tank_hit_blast_centre it is the tank's centre
+*             on the shooter's screen. May be NULL
 *  outSeenY - Y, as outSeenX
 *********************************************************/
 bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome, WORLD *outSeenX, WORLD *outSeenY) {
@@ -958,8 +972,35 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 				 * hit was, so it needs the blast as the shooter's screen had
 				 * it: the shell's own point, where it reached the hull of the
 				 * tank at its old place. That point is kept here, before the
-				 * carry, and handed out through outSeenX and outSeenY. */
-				if (th != TH_MISSED && useRewound) {
+				 * carry, and handed out through outSeenX and outSeenY.
+				 *
+				 * The mod rule tank_hit_blast_centre (classic 0) puts the
+				 * blast on the tank's present centre instead, whatever the
+				 * shell's path and whether the hit was rewound. The builder
+				 * test then uses the tank's centre on the shooter's screen:
+				 * the place the hit was tested against, the rewound place or
+				 * the present one. With the rule at 0 this branch is not
+				 * taken and the carry below is the only change to the
+				 * point. */
+				if (th != TH_MISSED && sim->rules.tank_hit_blast_centre != 0) {
+					WORLD tankNowX = 0, tankNowY = 0;
+
+					/* No NULL check on tk[count]: tankIsTankHit and
+					 * tankIsTankHitAtPosition return TH_MISSED for a NULL
+					 * tank, so a hit means the tank is there. */
+					tankGetWorld(&tk[count], &tankNowX, &tankNowY);
+					seenHitX = useRewound ? hitCheckX : tankNowX;
+					seenHitY = useRewound ? hitCheckY : tankNowY;
+					seenHitSet = TRUE;
+					*xValue = tankNowX;
+					*yValue = tankNowY;
+					conv = *xValue;
+					conv >>= TANK_SHIFT_MAPSIZE;
+					mapX = (BYTE) conv;
+					conv = *yValue;
+					conv >>= TANK_SHIFT_MAPSIZE;
+					mapY = (BYTE) conv;
+				} else if (th != TH_MISSED && useRewound) {
 					WORLD tankNowX = 0, tankNowY = 0;
 					int blastX, blastY;
 

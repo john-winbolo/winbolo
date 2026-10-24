@@ -198,3 +198,33 @@ int run_lgm_start_offset(void) {
     serverSimDestroy(sim);
     return rc;
 }
+
+/* tank_hit_blast_centre: a builder sent out starts on the tank's centre,
+ * with no offset, toward any square. With the rule back off the same order
+ * moves him the 16. */
+int run_lgm_start_offset_centre_rule(void) {
+    ServerSim *sim = ut_make_running_sim("Builder");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+
+    GameSim *gs = &sim->sim;
+    BYTE cx = 0, cy = 0;
+    WORLD midX, midY;
+    int rc = 0;
+
+    UT_ASSERT(gs->tanks[LSO_SLOT] != NULL && gs->lgmen[LSO_SLOT] != NULL);
+    UT_ASSERT(lso_find_centre(gs, &cx, &cy));
+    midX = (WORLD)(((WORLD)cx << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
+    midY = (WORLD)(((WORLD)cy << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
+    mapSetPos(gs, &gs->mp, cx, cy, GRASS, FALSE, FALSE);
+    tankSetOnBoat(&gs->tanks[LSO_SLOT], FALSE);
+
+    gs->rules.tank_hit_blast_centre = 1;
+    if (rc == 0) rc = lso_case(sim, "rule on, east", midX, midY, (BYTE)(cx + LSO_FAR), cy, 0, 0);
+    if (rc == 0) rc = lso_case(sim, "rule on, south-west", midX, midY, (BYTE)(cx - LSO_FAR), (BYTE)(cy + LSO_FAR), 0, 0);
+    if (rc == 0) rc = lso_case(sim, "rule on, 17 east of centre", (WORLD)(midX + 17), midY, cx, cy, 0, 0);
+    gs->rules.tank_hit_blast_centre = 0;
+    if (rc == 0) rc = lso_case(sim, "rule off, east", midX, midY, (BYTE)(cx + LSO_FAR), cy, 16, 0);
+
+    serverSimDestroy(sim);
+    return rc;
+}

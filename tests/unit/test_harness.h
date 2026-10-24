@@ -1226,6 +1226,7 @@ int run_mod_lobby_starts_mac_bolo_keeps_opposite_sides(void);
 int run_mac_bolo_settings_defaults_play_old_rules(void);
 int run_mac_bolo_settings_each_part_off(void);
 int run_mac_bolo_settings_numbers(void);
+int run_mac_bolo_settings_centre_blast(void);
 int run_mac_bolo_first_start_lobby_off_uses_mac_pick(void);
 int run_mac_bolo_spawn_starts_off_engine_picks(void);
 int run_mac_bolo_setting_changed_after_attach(void);
@@ -2881,6 +2882,13 @@ int run_tank_blast_builder_back_in_tank(void);
 int run_tank_blast_pill_shell_builder_now(void);
 int run_tank_blast_no_record_builder_now(void);
 int run_shell_blast_pill_hit_on_shooter_screen(void);
+/* The mod rule tank_hit_blast_centre: the blast on the hit tank's centre, a
+ * square builder test round it (the same file), the default blast kept with
+ * the rule at 0, and a builder sent out starting on the tank's centre. */
+int run_tank_blast_centre_rule_zero_rewind(void);
+int run_tank_blast_centre_rule_rewound(void);
+int run_tank_blast_centre_rule_off_keeps_carry(void);
+int run_lgm_start_offset_centre_rule(void);
 int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
 int run_teleport_rewind_refills(void);

@@ -336,7 +336,9 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
 *             tank is now: the tank's present position plus
 *             the shell's offset from the position the hit
 *             was tested against. A hit that was not
-*             rewound leaves it the shell's own point
+*             rewound leaves it the shell's own point.
+*             Under the mod rule tank_hit_blast_centre it
+*             is set to the hit tank's present centre
 *  yValue   - Y position, as xValue
 *  shell    - The shell, for its angle, owner, boat flag,
 *             lag compensation, firing pill and the
@@ -351,7 +353,9 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
 *             except for a rewound tank hit, where it is the shell's
 *             own point: where it reached the hull of the tank at
 *             the place the hit was tested against, before that
-*             point is carried to where the tank is now. Untouched
+*             point is carried to where the tank is now. Under
+*             tank_hit_blast_centre it is the tank's centre at
+*             the place the hit was tested against. Untouched
 *             when no collision occurs.
 *  outSeenY - Y, as outSeenX
 *********************************************************/

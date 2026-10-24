@@ -1734,7 +1734,8 @@ static bool decodeEntitySyncBody(const uint8_t *buf, size_t len,
  *   [four bytes per F32 entry — the float's own bit pattern, most
  *    significant byte first]
  *   [the optional tail, one byte per rule: the CTRL_SIM_RULES_EXT_U8_FIELDS
- *    entries, then the CTRL_SIM_RULES_EXT2_U8_FIELDS entries, up to the
+ *    entries, then the CTRL_SIM_RULES_EXT2_U8_FIELDS entries, then the
+ *    CTRL_SIM_RULES_EXT3_U8_FIELDS entries, up to the
  *    last one that is not at its classic value; none at all when every
  *    one is classic]
  *
@@ -1745,8 +1746,8 @@ static bool decodeEntitySyncBody(const uint8_t *buf, size_t len,
  * than a stale value — a zero reload interval or a zero armour cap is not a
  * table the game can run on.
  *
- * The tail is one ordered list (control_event.h). A first-list rule is
- * classic at zero; building_life is classic at
+ * The tail is one ordered list (control_event.h). A first-list or
+ * third-list rule is classic at zero; building_life is classic at
  * CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC, and an unfilled zero counts as
  * classic too. So a classic game sends exactly the base body, and a game
  * that changes only building_life sends the whole tail with the first-list
@@ -1755,8 +1756,8 @@ static bool decodeEntitySyncBody(const uint8_t *buf, size_t len,
  * The base is fixed length, so the decoder rejects a body shorter than it,
  * or longer than the base and the whole tail, rather than reading a
  * truncated table. A tail rule the body stops short of reads its classic
- * value: zero for a first-list rule, CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC
- * for building_life. Delivered body-only on CHANNEL_CONTROL, as
+ * value: zero for a first-list or third-list rule,
+ * CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC for building_life. Delivered body-only on CHANNEL_CONTROL, as
  * CTRL_ENTITY_SYNC is: there is no full-packet wrapper or PACKET_* type. */
 
 /* The float rules ride as their bit pattern, so the four bytes are exact
@@ -1787,9 +1788,10 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
     (void)recipient;
     /* How many tail rules go out: up to and including the last one that is
        not at its classic value, so a classic tail is not sent at all. A
-       first-list rule is classic at zero. The second list holds only
-       building_life, classic at CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC, and
-       the zero of an event nobody filled counts as classic too. */
+       first-list or third-list rule is classic at zero. The second list
+       holds only building_life, classic at
+       CTRL_SIM_RULES_BUILDING_LIFE_CLASSIC, and the zero of an event nobody
+       filled counts as classic too. */
     size_t extCount = 0;
     size_t extIdx = 0;
     size_t bodyLen;
@@ -1803,6 +1805,7 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
         extCount = extIdx;
     CTRL_SIM_RULES_EXT_U8_FIELDS(SIM_RULES_EXT_LAST)
     CTRL_SIM_RULES_EXT2_U8_FIELDS(SIM_RULES_EXT2_LAST)
+    CTRL_SIM_RULES_EXT3_U8_FIELDS(SIM_RULES_EXT_LAST)
 #undef SIM_RULES_EXT_LAST
 #undef SIM_RULES_EXT2_LAST
     bodyLen = CTRL_SIM_RULES_BASE_BODY_LEN + extCount;
@@ -1826,6 +1829,7 @@ static EncodeResult encodeSimRulesBody(const ControlEvent *evt,
     if (extIdx++ < extCount) { SIM_RULES_PACK_U8(name) }
     CTRL_SIM_RULES_EXT_U8_FIELDS(SIM_RULES_PACK_EXT_U8)
     CTRL_SIM_RULES_EXT2_U8_FIELDS(SIM_RULES_PACK_EXT_U8)
+    CTRL_SIM_RULES_EXT3_U8_FIELDS(SIM_RULES_PACK_EXT_U8)
 #undef SIM_RULES_PACK_EXT_U8
 
 #undef SIM_RULES_PACK_U8
@@ -1846,7 +1850,7 @@ static bool decodeSimRulesBody(const uint8_t *buf, size_t len,
        last rule it needs to send, and an older sender stops short of the
        rules added after it. Those keep their classic values. */
     if (len < CTRL_SIM_RULES_BASE_BODY_LEN ||
-        len > CTRL_SIM_RULES_EXT2_BODY_LEN) return false;
+        len > CTRL_SIM_RULES_EXT3_BODY_LEN) return false;
     extCount = len - CTRL_SIM_RULES_BASE_BODY_LEN;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_SIM_RULES;
@@ -1869,6 +1873,7 @@ static bool decodeSimRulesBody(const uint8_t *buf, size_t len,
     if (extIdx++ < extCount) { SIM_RULES_UNPACK_U8(name) }
     CTRL_SIM_RULES_EXT_U8_FIELDS(SIM_RULES_UNPACK_EXT_U8)
     CTRL_SIM_RULES_EXT2_U8_FIELDS(SIM_RULES_UNPACK_EXT_U8)
+    CTRL_SIM_RULES_EXT3_U8_FIELDS(SIM_RULES_UNPACK_EXT_U8)
 #undef SIM_RULES_UNPACK_EXT_U8
 
 #undef SIM_RULES_UNPACK_U8

@@ -353,6 +353,9 @@ int run_sim_rules_classic_defaults(void) {
     /* Deep sea */
     SR_EQ(tank_deep_sea_safe, 0);
 
+    /* Tank hit blast */
+    SR_EQ(tank_hit_blast_centre, 0);
+
     return 0;
 }
 
