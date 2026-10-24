@@ -419,16 +419,22 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->buildSpacing = pad;
   float buildBarLeft = cfg->playersBtnX + cfg->topBtnSize + pad;
   float buildAvailW = rightEdge - buildBarLeft - pad;  /* space to right edge */
-  float buildBtnPad = 16.0f;
+  /* A button's padding beyond its icon, both sides counted: across, then
+     down. */
+  float buildBtnPadX = 16.0f;
+  float buildBtnPadY = 16.0f;
 #if defined(__IPHONEOS__) || defined(__ANDROID__)
   /* The buttons are ImGui image buttons, which take the style's frame
      padding on each side, and the touch style sets that from the screen
-     (12 units times its scale), not the 8 a side assumed above: measured
-     short, the bar reached under the gunsight row on a phone. */
-  buildBtnPad = ImGui::GetStyle().FramePadding.y * 2.0f;
+     (12 units across and 8 down, times its scale), not the 8 a side
+     assumed above: measured short, the bar reached under the gunsight row
+     on a phone, and measured with the vertical padding across, its window
+     was narrower than its two columns. */
+  buildBtnPadX = ImGui::GetStyle().FramePadding.x * 2.0f;
+  buildBtnPadY = ImGui::GetStyle().FramePadding.y * 2.0f;
 #endif
   /* Size icons to fit 2 columns + spacing + window padding within available width */
-  float maxIconFromSpace = (buildAvailW - 12.0f - cfg->buildSpacing - buildBtnPad * 2) / 2.0f;
+  float maxIconFromSpace = (buildAvailW - 12.0f - cfg->buildSpacing - buildBtnPadX * 2) / 2.0f;
   cfg->buildIconSize = gutterW * 0.18f;
   if (cfg->buildIconSize < 24.0f * pixelScale) cfg->buildIconSize = 24.0f * pixelScale;
   if (cfg->buildIconSize > 48.0f * pixelScale) cfg->buildIconSize = 48.0f * pixelScale;
@@ -441,14 +447,15 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
     float barTop = cfg->topBtnY + cfg->topBtnSize + pad * 2;
     float gsRowTop = cfg->fireCenterY - cfg->fireRadius - pad - cfg->gsIncRadius * 2.0f;
     float room = gsRowTop - pad * 2 - (2.0f * 20.0f * pixelScale) - pad * 2 - barTop;
-    float fromHeight = (room - 12.0f - cfg->buildSpacing * 2 - buildBtnPad * 3) / 3.0f;
+    float fromHeight = (room - 12.0f - cfg->buildSpacing * 2 - buildBtnPadY * 3) / 3.0f;
     if (fromHeight < 24.0f * pixelScale) fromHeight = 24.0f * pixelScale;
     if (cfg->buildIconSize > fromHeight) cfg->buildIconSize = fromHeight;
   }
 #endif
-  float buildBtnSize = cfg->buildIconSize + buildBtnPad;
-  float buildGridW = buildBtnSize * 2 + cfg->buildSpacing;
-  float buildGridH = buildBtnSize * 3 + cfg->buildSpacing * 2;
+  float buildBtnW = cfg->buildIconSize + buildBtnPadX;
+  float buildBtnH = cfg->buildIconSize + buildBtnPadY;
+  float buildGridW = buildBtnW * 2 + cfg->buildSpacing;
+  float buildGridH = buildBtnH * 3 + cfg->buildSpacing * 2;
 #if defined(__IPHONEOS__) || defined(__ANDROID__)
   /* The bar's window pads the grid by 6 units each side
      (renderBuildSelectBar), so the scroll zone below starts under that. */
@@ -809,16 +816,20 @@ static void renderTabletBackground(void) {
   /* --- Right gutter: build bar area --- */
   {
     float iconSize = c.buildIconSize;
-    float btnPad = 8.0f;
+    float btnPadX = 8.0f;
+    float btnPadY = 8.0f;
 #if defined(__IPHONEOS__) || defined(__ANDROID__)
-    /* The frame padding the image buttons take (tabletLayoutConfigure). */
-    btnPad = ImGui::GetStyle().FramePadding.y;
+    /* The frame padding the image buttons take on each side, across and
+       down (tabletLayoutConfigure). */
+    btnPadX = ImGui::GetStyle().FramePadding.x;
+    btnPadY = ImGui::GetStyle().FramePadding.y;
 #endif
-    float btnSize = iconSize + btnPad * 2;
+    float btnW = iconSize + btnPadX * 2;
+    float btnH = iconSize + btnPadY * 2;
     float spacing = c.buildSpacing;
     int cols = 2, rows = 3;
-    float gridW = btnSize * cols + spacing * (cols - 1);
-    float gridH = btnSize * rows + spacing * (rows - 1);
+    float gridW = btnW * cols + spacing * (cols - 1);
+    float gridH = btnH * rows + spacing * (rows - 1);
     float pad = 3.0f * ps;
     /* Account for ImGui window padding (6px) */
     float winPadX = 6.0f;
@@ -1327,13 +1338,14 @@ static void renderBuildSelectBar(ClientSim *cs) {
 
   ImVec2 framePad = ImGui::GetStyle().FramePadding;
 #if defined(__IPHONEOS__) || defined(__ANDROID__)
-  /* Each image button is its icon plus the frame padding on each side; the
-     window is the grid plus its own 6-unit padding and no more, so it ends
-     where tabletLayoutConfigure measured it to. */
-  btnPad = framePad.y;
-  float btnSize = iconSize + btnPad * 2;
-  float gridW = btnSize * cols + spacing * (cols - 1);
-  float gridH = btnSize * rows + spacing * (rows - 1);
+  /* Each image button is its icon plus the frame padding on each side,
+     across and down; the window is the grid plus its own 6-unit padding
+     and no more, so it ends where tabletLayoutConfigure measured it to. */
+  (void)btnPad;
+  float btnW = iconSize + framePad.x * 2;
+  float btnH = iconSize + framePad.y * 2;
+  float gridW = btnW * cols + spacing * (cols - 1);
+  float gridH = btnH * rows + spacing * (rows - 1);
   float winW = gridW + 12;
   float winH = gridH + 12;
 #else
