@@ -1826,6 +1826,7 @@ static void openInGameFonts(void) {
 static TTF_Font *gFontNewswireTouch         = NULL;
 static TTF_Font *gFallbackFontNewswireTouch = NULL;
 static int       gFontNewswireTouchPx       = 0;
+static int       gFontNewswireTouchFailedPx = 0;  /* size the open last failed at */
 static bool      gTabletNewswireSet   = FALSE;
 static float     gTabletNewswireX     = 0.0f;
 static float     gTabletNewswireY     = 0.0f;
@@ -1842,18 +1843,25 @@ static void closeTabletNewswireFont(void) {
     gFallbackFontNewswireTouch = NULL;
   }
   gFontNewswireTouchPx = 0;
+  gFontNewswireTouchFailedPx = 0;
 }
 
 static TTF_Font *tabletNewswireFont(int px) {
   if (px < 1) return NULL;
   if (gFontNewswireTouch && gFontNewswireTouchPx == px) return gFontNewswireTouch;
+  /* The open failed at this size already: it is called every frame, the
+     strip hidden or not, so it is tried again only when the size changes. */
+  if (gFontNewswireTouchFailedPx == px) return NULL;
   closeTabletNewswireFont();
   Uint64 started = SDL_GetTicks();
   const char *sarasaPath  = NULL;
   const char *sarasaKPath = NULL;
   inGameFontPaths(&sarasaPath, &sarasaKPath);
   gFontNewswireTouch = TTF_OpenFont(sarasaPath, (float)px);
-  if (!gFontNewswireTouch) return NULL;
+  if (!gFontNewswireTouch) {
+    gFontNewswireTouchFailedPx = px;
+    return NULL;
+  }
   gFontNewswireTouchPx = px;
   if (SDL_strcmp(sarasaPath, sarasaKPath) != 0) {
     gFallbackFontNewswireTouch = TTF_OpenFont(sarasaKPath, (float)px);

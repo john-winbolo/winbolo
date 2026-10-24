@@ -1041,11 +1041,19 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * useTabbedLobby computed above the shared settings panel) --- */
         if (useTabbedLobby) {
             float availW = ImGui::GetContentRegionAvail().x;
+#if BOLO_MOBILE
             /* The height each tab's panel leaves for the bottom button row:
                the spacing after the panel, a Spacing, the Separator and its
-               spacing, a Spacing, then one row of buttons. */
+               spacing, a Spacing, then one row of buttons. Two pixels more
+               than that sum, so that a pixel of rounding in any of those
+               heights does not push the button row below the window's
+               bottom edge. */
             float btnAreaH = ImGui::GetFrameHeight()
-                           + 4.0f * ImGui::GetStyle().ItemSpacing.y + 1.0f;
+                           + 4.0f * ImGui::GetStyle().ItemSpacing.y + 1.0f
+                           + 2.0f * s;
+#else
+            float btnAreaH = ImGui::GetTextLineHeightWithSpacing() * 2 + 16.0f * s;
+#endif
 
             /* Detect new chat messages for unread indicator */
             int chatLen = (int)SDL_strlen(clientSimGetLobbyChatHistory(cs));
