@@ -1467,6 +1467,13 @@ int run_lv_event_list_pinned(void);
  * key in both directions, ties and no sort in the server's order. */
 int run_wbn_browser_sort(void);
 
+/* Game browser server version test (test_browser_version.c): the old "M.mr"
+ * and the "M.m.r" forms, with and without a letter suffix, against 1.1.9,
+ * and text that does not parse; and the protocol bytes WINBOLO_VERSION
+ * gives. */
+int run_browser_version_parse(void);
+int run_version_protocol_bytes(void);
+
 /* Recap clip GIF rules (test_clip_gif_core.c): the length field and the seek
  * bar marker agree and are clamped, the gallery metadata file reads back and
  * rejects bad text, the gallery scan lists newest first, long lines are cut

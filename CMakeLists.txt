@@ -1419,6 +1419,8 @@ target_include_directories(winbolonet_server PRIVATE
 )
 target_link_libraries(winbolonet_server PRIVATE SDL3::SDL3)
 target_compile_definitions(winbolonet_server PRIVATE
+    # The "version" field of the server/register post.
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -2044,6 +2046,8 @@ target_include_directories(winbolonet_server PRIVATE
 )
 target_link_libraries(winbolonet_server PRIVATE SDL3::SDL3)
 target_compile_definitions(winbolonet_server PRIVATE
+    # The "version" field of the server/register post.
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -5077,6 +5081,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lv_event_list.c
     # WinBolo.net log browser table sort rule (test_wbn_browser_sort.c).
     tests/unit/test_wbn_browser_sort.c
+    # The game browser's server version test (browser_version.h) and the
+    # protocol bytes from WINBOLO_VERSION (test_browser_version.c).
+    tests/unit/test_browser_version.c
     # Recap clip GIF length and timeline sync, and the GIF gallery's metadata
     # files and newest-first scan, the gallery text fill and the capped preview
     # decode (test_clip_gif_core.c).
@@ -5977,6 +5984,8 @@ set(_unit_test_names
     lv_event_list_replay
     lv_event_list_pinned
     wbn_browser_sort
+    browser_version_parse
+    version_protocol_bytes
     clip_gif_len_sync
     clip_gif_record_mode
     clip_gif_meta_roundtrip
