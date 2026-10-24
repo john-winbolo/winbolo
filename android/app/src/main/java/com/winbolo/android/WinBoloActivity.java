@@ -30,6 +30,22 @@ public class WinBoloActivity extends SDLActivity {
        directory never grows. */
     private static final String INCOMING_DIR = "incoming";
     private static final String INCOMING_RECORDING = "incoming.wbv";
+    /* The name the copy is written under until it is complete, then renamed
+       to INCOMING_RECORDING, so the recordings list never sees half a file.
+       It does not end in .wbv, so the list skips it. */
+    private static final String INCOMING_PARTIAL = "incoming.wbv.part";
+
+    /* A recording is a zip archive: src/bolo/log.c writes it with minizip,
+       and the WBOLOMOV header (LOG_HEADER, src/bolo/public/log.h) is inside
+       its deflated log.dat member. The file itself therefore starts with a
+       zip local file header's signature, which is what a stream must start
+       with to be copied. */
+    private static final byte[] RECORDING_MAGIC = { 'P', 'K', 3, 4 };
+
+    /* The largest recording copied in, the viewer's own read limit
+       (MOBILE_REC_MAX_BYTES, src/gui/mobile/mobile_recordings.cpp): a larger
+       file would be refused there anyway. */
+    private static final long RECORDING_MAX_BYTES = 64L * 1024 * 1024;
 
     /* Held for the life of the activity so the Wi-Fi driver passes incoming
        multicast to the app; without it the LAN search's mDNS replies and the
@@ -222,11 +238,22 @@ public class WinBoloActivity extends SDLActivity {
             nativeOpenLink(uri.toString());
             return;
         }
-        String recording = recordingPathFor(intent);
-        if (recording != null) {
-            Log.i(TAG, "Recording while running: " + recording);
-            nativeOpenRecording(recording);
-        }
+        /* The copy can take seconds for a large file or a slow provider, and
+           onNewIntent runs on the UI thread, so it runs on a thread of its
+           own; the native side is told once the file is complete. A cold
+           launch needs no thread: SDL calls getArguments on its own thread,
+           not the UI thread. */
+        final Intent handed = intent;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String recording = recordingPathFor(handed);
+                if (recording != null) {
+                    Log.i(TAG, "Recording while running: " + recording);
+                    nativeOpenRecording(recording);
+                }
+            }
+        }, "WinBolo recording copy").start();
     }
 
     /* The path native code can open for a VIEW intent's recording, or null
@@ -292,8 +319,13 @@ public class WinBoloActivity extends SDLActivity {
 
     /* Copies the stream behind a content:// URI to
        <files>/incoming/incoming.wbv, removing every earlier copy first, and
-       returns the path, or null when the copy failed. */
-    private String copyRecordingToIncoming(Uri uri) {
+       returns the path, or null when the copy failed. A stream that does
+       not start with RECORDING_MAGIC, or is longer than RECORDING_MAX_BYTES,
+       is refused. The bytes go to INCOMING_PARTIAL and are renamed to the
+       final name only once all of them are written. Synchronized because
+       onNewIntent's thread and getArguments on SDL's thread can both copy,
+       and they share the one file name. */
+    private synchronized String copyRecordingToIncoming(Uri uri) {
         File dir = new File(getFilesDir(), INCOMING_DIR);
         if (!dir.isDirectory() && !dir.mkdirs()) {
             Log.w(TAG, "Could not create " + dir);
@@ -302,32 +334,72 @@ public class WinBoloActivity extends SDLActivity {
         File[] old = dir.listFiles();
         if (old != null) {
             for (File f : old) {
-                if (f.isFile() && isRecordingName(f.getName()) && !f.delete()) {
+                if (f.isFile()
+                    && (isRecordingName(f.getName()) || INCOMING_PARTIAL.equals(f.getName()))
+                    && !f.delete()) {
                     Log.w(TAG, "Could not remove old recording " + f);
                 }
             }
         }
+        File partial = new File(dir, INCOMING_PARTIAL);
         File out = new File(dir, INCOMING_RECORDING);
-        try (InputStream in = getContentResolver().openInputStream(uri);
-             OutputStream os = new FileOutputStream(out)) {
+        boolean complete = false;
+        try (InputStream in = getContentResolver().openInputStream(uri)) {
             if (in == null) {
                 Log.w(TAG, "No stream for " + uri);
                 return null;
             }
             byte[] buf = new byte[65536];
-            long total = 0;
-            int n;
-            while ((n = in.read(buf)) > 0) {
-                os.write(buf, 0, n);
-                total += n;
+            int head = 0;
+            while (head < RECORDING_MAGIC.length) {
+                int n = in.read(buf, head, RECORDING_MAGIC.length - head);
+                if (n < 0) {
+                    break;
+                }
+                head += n;
             }
+            if (head < RECORDING_MAGIC.length || !startsWithRecordingMagic(buf)) {
+                Log.w(TAG, "Not a recording: " + uri);
+                return null;
+            }
+            long total = head;
+            try (OutputStream os = new FileOutputStream(partial)) {
+                os.write(buf, 0, head);
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    total += n;
+                    if (total > RECORDING_MAX_BYTES) {
+                        Log.w(TAG, "Refused " + uri + ": longer than "
+                              + RECORDING_MAX_BYTES + " bytes");
+                        return null;
+                    }
+                    os.write(buf, 0, n);
+                }
+            }
+            if (!partial.renameTo(out)) {
+                Log.w(TAG, "Could not rename " + partial + " to " + out);
+                return null;
+            }
+            complete = true;
             Log.i(TAG, "Copied " + uri + " to " + out + " (" + total + " bytes)");
             return out.getPath();
         } catch (Exception e) {
             Log.w(TAG, "Could not copy " + uri + ": " + e);
-            out.delete();
             return null;
+        } finally {
+            if (!complete) {
+                partial.delete();
+            }
         }
+    }
+
+    private static boolean startsWithRecordingMagic(byte[] buf) {
+        for (int i = 0; i < RECORDING_MAGIC.length; i++) {
+            if (buf[i] != RECORDING_MAGIC[i]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /* Defined in src/android/android_drops.c. */

@@ -45,20 +45,14 @@
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="winbolo"/>
             </intent-filter>
-            <!-- A .wbv recording from another app. Providers report a
-                 recording as application/octet-stream, so that type is taken
-                 whatever the path (a Downloads document URI carries no
-                 name); a file manager that reports no type is matched on
-                 the extension instead. The path is tested in both forms
-                 because pathPattern's glob does not match a name with more
-                 than one dot and pathSuffix is only read from API 31. -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW"/>
-                <category android:name="android.intent.category.DEFAULT"/>
-                <data android:scheme="content"/>
-                <data android:scheme="file"/>
-                <data android:mimeType="application/octet-stream"/>
-            </intent-filter>
+            <!-- A .wbv recording from another app, matched on the extension
+                 whatever type the provider reports. application/octet-stream
+                 is not taken on its own: it would offer WinBolo for every
+                 binary file, so a document URI that carries no name (one
+                 from the Downloads app, say) is not matched. The path is
+                 tested in both forms because pathPattern's glob does not
+                 match a name with more than one dot and pathSuffix is only
+                 read from API 31. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>

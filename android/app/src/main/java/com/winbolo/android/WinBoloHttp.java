@@ -146,7 +146,7 @@ public final class WinBoloHttp {
              * returned: the native request may be freed. */
             transfer.close();
         }
-        Log.i(TAG, method + " " + withoutQuery(url) + " -> " + result + " ("
+        Log.d(TAG, method + " " + withoutQuery(url) + " -> " + result + " ("
               + transfer.received + " bytes, "
               + (SystemClock.elapsedRealtime() - startMs) + " ms)");
         return result;
@@ -251,7 +251,15 @@ public final class WinBoloHttp {
                 if (aborted) return RESULT_STOPPED;
                 HttpURLConnection conn = (HttpURLConnection) target.openConnection();
                 current.set(conn);
+                /* True once the answer's body has been read to its end, so
+                 * the connection can go back to the pool rather than be
+                 * closed. */
+                boolean reusable = false;
                 try {
+                    /* abort() may have run between the check above and
+                     * current.set, when there was no connection for it to
+                     * disconnect. */
+                    if (aborted) return RESULT_STOPPED;
                     conn.setInstanceFollowRedirects(false);
                     conn.setUseCaches(false);
                     conn.setConnectTimeout(connectMs);
@@ -275,6 +283,9 @@ public final class WinBoloHttp {
                     connected = false;
                     conn.connect();
                     connected = true;
+                    /* An abort during the connect may not have stopped it;
+                     * the request must not go out after one. */
+                    if (aborted) return RESULT_STOPPED;
                     if (body != null) {
                         OutputStream out = conn.getOutputStream();
                         out.write(body);
@@ -309,17 +320,18 @@ public final class WinBoloHttp {
                     }
 
                     long expected = conn.getContentLengthLong();
-                    if (!begin(status, expected > 0 ? expected : 0)) {
-                        return RESULT_STOPPED;
-                    }
-                    InputStream in;
+                    /* The error stream is the body only for an error status
+                     * (null when the server sent none). Below 400 the body
+                     * is the input stream, and a failure to open it is a
+                     * transport error, which the outer catch passes on,
+                     * before the native side has been told any status. */
+                    InputStream in = status >= 400 ? conn.getErrorStream()
+                                                   : conn.getInputStream();
                     try {
-                        in = conn.getInputStream();
-                    } catch (IOException e) {
-                        in = conn.getErrorStream();
-                    }
-                    if (in != null) {
-                        try {
+                        if (!begin(status, expected > 0 ? expected : 0)) {
+                            return RESULT_STOPPED;
+                        }
+                        if (in != null) {
                             byte[] buf = new byte[CHUNK_BYTES];
                             int n;
                             while ((n = in.read(buf)) > 0) {
@@ -328,10 +340,15 @@ public final class WinBoloHttp {
                                     return RESULT_STOPPED;
                                 }
                             }
-                        } catch (IOException e) {
-                            if (aborted) return RESULT_STOPPED;
-                            throw e;
-                        } finally {
+                            reusable = true;
+                        }
+                    } catch (IOException e) {
+                        if (aborted) return RESULT_STOPPED;
+                        throw e;
+                    } finally {
+                        /* Closing a stream read to its end is what returns
+                         * the connection to the pool. */
+                        if (in != null) {
                             in.close();
                         }
                     }
@@ -341,7 +358,12 @@ public final class WinBoloHttp {
                     throw e;
                 } finally {
                     current.set(null);
-                    conn.disconnect();
+                    /* Closed after an abort, a failure, a redirect hop or a
+                     * body left unread; kept for the pool after an answer
+                     * read to its end. */
+                    if (!reusable || aborted) {
+                        conn.disconnect();
+                    }
                 }
             }
         }
