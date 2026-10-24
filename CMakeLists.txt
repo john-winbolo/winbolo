@@ -4596,6 +4596,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lgm_request_valid.c
     tests/unit/test_lgm_quit_pill.c
     tests/unit/test_lgm_start_offset.c
+    tests/unit/test_lgm_tree_grew_on_site.c
     tests/unit/test_lgm_absent_on_shooter_screen.c
     tests/unit/test_braindbg_round_dir.c
     tests/unit/test_jitter_buffer_grow.c
@@ -6310,6 +6311,8 @@ set(_unit_test_names
     lgm_kill_seen_out_tank_hit_blast
     lgm_kill_seen_out_dead_tank
     lgm_start_offset
+    lgm_tree_grew_on_site
+    lgm_tree_none_on_site
     braindbg_second_round_new_dir
     lgm_draw_own_matches_wire
     lgm_draw_centre_error_bounds

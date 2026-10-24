@@ -2212,6 +2212,12 @@ int run_lgm_unfield_drops_carried_pill(void);
  * centre is no further off than that. */
 int run_lgm_start_offset(void);
 
+/* A tree grown on the square while the man walks out to build there
+ * (test_lgm_tree_grew_on_site.c): a wall, road or pillbox is not built over
+ * it, the man brings back what the job cost, and with no tree they build. */
+int run_lgm_tree_grew_on_site(void);
+int run_lgm_tree_none_on_site(void);
+
 /* A player's shell against a builder, where the shooter's screen decides
  * (test_lgm_absent_on_shooter_screen.c): the three answers of
  * posHistoryLookup; no kill when the frame the shooter saw has the builder

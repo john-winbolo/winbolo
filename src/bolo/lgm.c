@@ -1289,7 +1289,10 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
     break;
   case LGM_ROAD_REQUEST:
 /* HUH?    minesExpAddItem(mp, bmx, bmy); */
-    if (terrain != BUILDING && terrain != HALFBUILDING && terrain != BOAT && terrain != DEEP_SEA && isPill == FALSE && isBase == FALSE) {
+    /* Forest is refused here, and for the wall and the pillbox below: a tree
+       can grow on the square while he walks to it. Mac Bolo re-checks the job
+       when he arrives and sends him back with what he carried, tree untouched. */
+    if (terrain != FOREST && terrain != BUILDING && terrain != HALFBUILDING && terrain != BOAT && terrain != DEEP_SEA && isPill == FALSE && isBase == FALSE) {
       if (isMine == TRUE) {
         mapSetPos(sim, mp, bmx, bmy, (BYTE) (ROAD+MINE_SUBTRACT), TRUE, FALSE);
       } else {
@@ -1307,7 +1310,7 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
     }
     break;
   case LGM_BUILDING_REQUEST:
-    if (terrain != BUILDING && terrain != RIVER && terrain != BOAT && terrain != DEEP_SEA && isPill == FALSE && isBase == FALSE) {
+    if (terrain != FOREST && terrain != BUILDING && terrain != RIVER && terrain != BOAT && terrain != DEEP_SEA && isPill == FALSE && isBase == FALSE) {
       if (isMine != TRUE) {
         mapSetPos(sim, mp, bmx, bmy, BUILDING, TRUE, FALSE);
         /* Only this branch builds anything — the other one sets off the mine
@@ -1372,7 +1375,7 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
         }
       }
     } else {
-      if (isPill == FALSE && isBase == FALSE && minesExistPos(&sim->mns, &sim->mp, bmx, bmy) == FALSE && terrain != BUILDING && terrain != HALFBUILDING && terrain != RIVER && terrain != BOAT && terrain != DEEP_SEA) {
+      if (isPill == FALSE && isBase == FALSE && minesExistPos(&sim->mns, &sim->mp, bmx, bmy) == FALSE && terrain != FOREST && terrain != BUILDING && terrain != HALFBUILDING && terrain != RIVER && terrain != BOAT && terrain != DEEP_SEA) {
         if (isMine == TRUE) {
           /* Whose mine he set off, read before anything below can take it off
              the field. The can_die question names the layer; nobody is
