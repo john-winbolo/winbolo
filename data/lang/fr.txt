@@ -2917,6 +2917,16 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=La carte remplit l'écran, avec les panneaux
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=Cet appareil utilise les données mobiles. Une partie Internet hébergée\nsur données mobiles ne fonctionnera probablement pas : les réseaux mobiles\nlaissent rarement les autres joueurs joindre l'appareil. Le Wi-Fi a bien\nplus de chances de fonctionner.\n\nHéberger quand même ?
 
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=Partager
+STR_ANDROIDREC_EMPTY=Aucun enregistrement pour l'instant. Les parties en solo sont enregistrées ici, et les enregistrements .wbv ouverts depuis une autre app apparaissent aussi ici.
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1} a été enregistré. Choisissez ensuite une app avec laquelle le partager.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Rien ici pour l'instant. Les cartes que vous enregistrez, ici ou depuis une partie, apparaissent ici.
+
 # The recap's GIF gallery, and the GIF length beside the replay's GIF button
 STR_CLIPGIF_GALLERY_TITLE=Vos GIF
 STR_CLIPGIF_GALLERY_EMPTY=Aucun GIF pour l'instant. Créez-en un avec le bouton GIF sous la relecture, ou le bouton GIF d'un clip.

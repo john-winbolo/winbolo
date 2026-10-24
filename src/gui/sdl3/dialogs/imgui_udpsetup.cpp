@@ -283,7 +283,7 @@ extern "C" int imguiUdpSetupShow(void) {
          * hosting and rejoining being the deliberate choices of the three. */
         bool enterJoin = false;
 #if BOLO_MOBILE || defined(__IPHONEOS__)
-#if defined(__IPHONEOS__)
+#if BOLO_MOBILE
         /* Return is the phone keyboard's "done" key, so on the address and
          * port fields it only closes the field; the name field, last of the
          * four, still joins. Without EnterReturnsTrue, InputText returns true
@@ -380,8 +380,8 @@ extern "C" int imguiUdpSetupShow(void) {
         /* --- Action buttons --- */
         float btnW = 80.0f * s;
 
-#if !defined(__IPHONEOS__)
-        /* New hosts a game. Not on iOS, where the game finder's New Game
+#if !BOLO_MOBILE
+        /* New hosts a game. Not on mobile, where the game finder's New Game
          * on each tab hosts instead. */
         if (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD) {
             ImGui::TextUnformatted(langGetText(STR_DLGTCP_NEWBLURB));

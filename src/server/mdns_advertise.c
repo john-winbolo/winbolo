@@ -43,6 +43,7 @@ void transportUdpServerStartMdnsAdvertiser(unsigned short gamePort) { (void)game
 void transportUdpServerPollMdnsAdvertiser(struct ServerSim *sim) { (void)sim; }
 void transportUdpServerStopMdnsAdvertiser(void) {}
 void mdnsAdvertiseSetPlatform(const MdnsPlatformAdvertiser *advertiser) { (void)advertiser; }
+void mdnsAdvertiseSetMulticastHold(void (*hold)(bool on)) { (void)hold; }
 
 #else /* !__EMSCRIPTEN__ */
 
@@ -91,6 +92,14 @@ static struct {
 
 void mdnsAdvertiseSetPlatform(const MdnsPlatformAdvertiser *advertiser) {
   s_platform = advertiser;
+}
+
+/* The platform's hold on incoming multicast while the socket is open (see
+ * mdns_advertise.h); NULL calls nothing. */
+static void (*s_multicastHold)(bool on) = NULL;
+
+void mdnsAdvertiseSetMulticastHold(void (*hold)(bool on)) {
+  s_multicastHold = hold;
 }
 
 /* Context threaded through mdns_socket_listen to the query callback: the
@@ -596,6 +605,9 @@ void transportUdpServerStartMdnsAdvertiser(unsigned short gamePort) {
                 "mdns: failed to open multicast socket; advertiser not started");
     return;
   }
+  if (s_multicastHold != NULL) {
+    s_multicastHold(true);
+  }
 
   WB_LOG_INFO(WB_LOG_CAT_NET,
               "mdns: advertising %s on %s:%u",
@@ -634,6 +646,9 @@ void transportUdpServerStopMdnsAdvertiser(void) {
   }
   if (s_mdns.sock < 0) {
     return; /* never started / already stopped */
+  }
+  if (s_multicastHold != NULL) {
+    s_multicastHold(false);
   }
   mdns_socket_close(s_mdns.sock);
   s_mdns.sock = -1;

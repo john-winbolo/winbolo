@@ -2917,6 +2917,16 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=De kaart vult het scherm, met de status-, bo
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=Dit apparaat gebruikt mobiele data. Een internetspel hosten via mobiele\ndata werkt waarschijnlijk niet: mobiele netwerken laten andere spelers\nzelden bij het apparaat komen. Met wifi is de kans veel groter.\n\nToch hosten?
 
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=Delen
+STR_ANDROIDREC_EMPTY=Nog geen opnames. Rondes voor één speler worden hier opgenomen, en .wbv-opnames die vanuit een andere app zijn geopend staan hier ook.
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1} is bewaard. Kies nu een app om het mee te delen.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Hier staat nog niets. Kaarten die je bewaart, hier of vanuit een spel, verschijnen hier.
+
 # The recap's GIF gallery, and the GIF length beside the replay's GIF button
 STR_CLIPGIF_GALLERY_TITLE=Jouw GIF's
 STR_CLIPGIF_GALLERY_EMPTY=Nog geen GIF's. Maak er een met de GIF-knop onder de herhaling, of de GIF-knop bij een clip.

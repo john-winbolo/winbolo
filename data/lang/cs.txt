@@ -2915,6 +2915,16 @@ STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Mapa vyplní obrazovku a panely stavu, stav�
 # Asked before an Internet game is hosted on mobile data (Yes / No)
 STR_GAMEFRONTERR_HOST_MOBILE_DATA=Toto zařízení je na mobilních datech. Internetová hra hostovaná přes mobilní\ndata pravděpodobně nebude fungovat: mobilní sítě ostatním hráčům jen zřídka\numožní se k zařízení připojit. S Wi-Fi je mnohem větší šance.\n\nPřesto hostovat?
 
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=Sdílet
+STR_ANDROIDREC_EMPTY=Zatím žádné záznamy. Hry jednoho hráče se nahrávají sem a záznamy .wbv otevřené z jiné aplikace jsou zde také uvedeny.
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1} byl uložen. Dále vyberte aplikaci, se kterou ho chcete sdílet.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Zatím tu nic není. Mapy, které uložíte, zde nebo ze hry, se zobrazí zde.
+
 # The recap's GIF gallery, and the GIF length beside the replay's GIF button
 STR_CLIPGIF_GALLERY_TITLE=Vaše GIFy
 STR_CLIPGIF_GALLERY_EMPTY=Zatím žádné GIFy. Vytvořte jeden tlačítkem GIF pod záznamem nebo tlačítkem GIF u klipu.

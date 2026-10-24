@@ -218,20 +218,32 @@ static void ensureIconsLoaded(int size) {
  * ------------------------------------------------------- */
 
 /* The window's safe area insets, in the layout's units (the window's points
-   scaled to screenW x screenH). */
+   scaled to screenW x screenH). On Android the insets are the shared reading
+   in safe_insets.h (the cutout and the navigation bar, the one-side rule),
+   the same figures the driver's classic screen and the lobby use; on iOS
+   SDL's window safe area as it is. */
 static void tabletSafeInsets(TabletLayoutConfig *cfg, int screenW, int screenH) {
   cfg->safeTop = cfg->safeBottom = cfg->safeLeft = cfg->safeRight = 0.0f;
   SDL_Window *win = sdl3DrawGetWindow();
   if (!win) return;
-  SDL_Rect safeRect;
   int winW = 0, winH = 0;
   SDL_GetWindowSize(win, &winW, &winH);
-  if (SDL_GetWindowSafeArea(win, &safeRect) && winW > 0 && winH > 0) {
+  if (winW <= 0 || winH <= 0) return;
+#if defined(__ANDROID__)
+  const SafeInsets safe = safeInsetsGet(win);
+  cfg->safeLeft   = safe.left   * (float)screenW / (float)winW;
+  cfg->safeTop    = safe.top    * (float)screenH / (float)winH;
+  cfg->safeRight  = safe.right  * (float)screenW / (float)winW;
+  cfg->safeBottom = safe.bottom * (float)screenH / (float)winH;
+#else
+  SDL_Rect safeRect;
+  if (SDL_GetWindowSafeArea(win, &safeRect)) {
     cfg->safeLeft   = (float)safeRect.x * (float)screenW / (float)winW;
     cfg->safeTop    = (float)safeRect.y * (float)screenH / (float)winH;
     cfg->safeRight  = (float)(winW - safeRect.x - safeRect.w) * (float)screenW / (float)winW;
     cfg->safeBottom = (float)(winH - safeRect.y - safeRect.h) * (float)screenH / (float)winH;
   }
+#endif
 }
 
 void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
@@ -305,9 +317,32 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
     cfg->mineCenterX = gutterLeft + pad + cfg->mineRadius;
   }
 
+  /* --- Top bar buttons — spread across gutter --- */
+  cfg->topBtnSize = gutterW * 0.25f;
+  if (cfg->topBtnSize < 30.0f * pixelScale) cfg->topBtnSize = 30.0f * pixelScale;
+  if (cfg->topBtnSize > 52.0f * pixelScale) cfg->topBtnSize = 52.0f * pixelScale;
+  cfg->topBtnY = topEdge + pad;
+
   /* Gunsight +/- — row above fire/mine, as circles */
   cfg->gsIncRadius = gutterW * 0.10f;
   if (cfg->gsIncRadius < 16.0f * pixelScale) cfg->gsIncRadius = 16.0f * pixelScale;
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  /* The gunsight pair, the talk button and the view column take this size,
+     and the column stands on the fire row and reaches up four buttons. The
+     size comes from the gutter's width, and a gutter can be too short for
+     it: Android keeps the top gesture zone clear (about 48 dp) where iOS
+     keeps nothing at the top in landscape, and the column then reached into
+     the resource bars above it. So it is capped by the room between the
+     bars, at 80 reference units for the pair, and the fire row: three
+     steps of a button and a gap, then the tank view's upper half. */
+  {
+    float barsTop = cfg->topBtnY + cfg->topBtnSize + pad * 2;
+    float room = cfg->fireCenterY - barsTop - pad - 80.0f * pixelScale;
+    float fitR = (room - 3.0f * pad) / 7.0f;
+    if (fitR < 16.0f * pixelScale) fitR = 16.0f * pixelScale;
+    if (cfg->gsIncRadius > fitR) cfg->gsIncRadius = fitR;
+  }
+#endif
   cfg->gsDecRadius = cfg->gsIncRadius;
   float gsRowY = cfg->fireCenterY - cfg->fireRadius - pad - cfg->gsIncRadius;
   float gsGap = pad * 2;
@@ -331,7 +366,7 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
     cfg->talkCenterX = spaceRight - cfg->talkRadius;
     cfg->talkCenterY = gsRowY;
   }
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
   /* A narrow gutter (an iPad in the touch layout has about 311 units) leaves
      the gunsight row too little room, and the talk button came out about a
      third of a gunsight button's width. There it gets a row of its own, at
@@ -373,11 +408,7 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
     cfg->tankViewCenterY = cfg->allyViewCenterY - step;
   }
 
-  /* --- Top bar buttons — spread across gutter --- */
-  cfg->topBtnSize = gutterW * 0.25f;
-  if (cfg->topBtnSize < 30.0f * pixelScale) cfg->topBtnSize = 30.0f * pixelScale;
-  if (cfg->topBtnSize > 52.0f * pixelScale) cfg->topBtnSize = 52.0f * pixelScale;
-  cfg->topBtnY = topEdge + pad;
+  /* --- Top bar buttons, across the gutter (sized above) --- */
   float topBtnGap = (gutterW - pad * 2 - cfg->topBtnSize * 3) / 2.0f;
   if (topBtnGap < pad) topBtnGap = pad;
   cfg->playersBtnX = gutterLeft + pad;
@@ -388,16 +419,48 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   cfg->buildSpacing = pad;
   float buildBarLeft = cfg->playersBtnX + cfg->topBtnSize + pad;
   float buildAvailW = rightEdge - buildBarLeft - pad;  /* space to right edge */
-  float buildBtnPad = 16.0f;
+  /* A button's padding beyond its icon, both sides counted: across, then
+     down. */
+  float buildBtnPadX = 16.0f;
+  float buildBtnPadY = 16.0f;
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  /* The buttons are ImGui image buttons, which take the style's frame
+     padding on each side, and the touch style sets that from the screen
+     (12 units across and 8 down, times its scale), not the 8 a side
+     assumed above: measured short, the bar reached under the gunsight row
+     on a phone, and measured with the vertical padding across, its window
+     was narrower than its two columns. */
+  buildBtnPadX = ImGui::GetStyle().FramePadding.x * 2.0f;
+  buildBtnPadY = ImGui::GetStyle().FramePadding.y * 2.0f;
+#endif
   /* Size icons to fit 2 columns + spacing + window padding within available width */
-  float maxIconFromSpace = (buildAvailW - 12.0f - cfg->buildSpacing - buildBtnPad * 2) / 2.0f;
+  float maxIconFromSpace = (buildAvailW - 12.0f - cfg->buildSpacing - buildBtnPadX * 2) / 2.0f;
   cfg->buildIconSize = gutterW * 0.18f;
   if (cfg->buildIconSize < 24.0f * pixelScale) cfg->buildIconSize = 24.0f * pixelScale;
   if (cfg->buildIconSize > 48.0f * pixelScale) cfg->buildIconSize = 48.0f * pixelScale;
   if (cfg->buildIconSize > maxIconFromSpace) cfg->buildIconSize = maxIconFromSpace;
-  float buildBtnSize = cfg->buildIconSize + buildBtnPad;
-  float buildGridW = buildBtnSize * 2 + cfg->buildSpacing;
-  float buildGridH = buildBtnSize * 3 + cfg->buildSpacing * 2;
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  /* And to fit the bar's three rows, with its window padding, above the
+     gunsight row with the scroll stick's smallest zone between, on a short
+     gutter (see the gunsight size above); never below the smallest icon. */
+  {
+    float barTop = cfg->topBtnY + cfg->topBtnSize + pad * 2;
+    float gsRowTop = cfg->fireCenterY - cfg->fireRadius - pad - cfg->gsIncRadius * 2.0f;
+    float room = gsRowTop - pad * 2 - (2.0f * 20.0f * pixelScale) - pad * 2 - barTop;
+    float fromHeight = (room - 12.0f - cfg->buildSpacing * 2 - buildBtnPadY * 3) / 3.0f;
+    if (fromHeight < 24.0f * pixelScale) fromHeight = 24.0f * pixelScale;
+    if (cfg->buildIconSize > fromHeight) cfg->buildIconSize = fromHeight;
+  }
+#endif
+  float buildBtnW = cfg->buildIconSize + buildBtnPadX;
+  float buildBtnH = cfg->buildIconSize + buildBtnPadY;
+  float buildGridW = buildBtnW * 2 + cfg->buildSpacing;
+  float buildGridH = buildBtnH * 3 + cfg->buildSpacing * 2;
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  /* The bar's window pads the grid by 6 units each side
+     (renderBuildSelectBar), so the scroll zone below starts under that. */
+  buildGridH += 12.0f;
+#endif
   cfg->buildBarX = buildBarLeft;
   /* Align top with tank stock bars */
   float buildRegionTop = cfg->topBtnY + cfg->topBtnSize + pad * 2;
@@ -438,7 +501,7 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
   /* --- Scroll joystick — in the gap between build/resource area and gunsight buttons --- */
   float scrollTop = buildRegionTop + buildGridH + pad * 2;
   float scrollBottom = gsRowY - cfg->gsIncRadius - pad * 2;
-#if defined(__IPHONEOS__)
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
   if (talkOwnRow) {
     scrollBottom = cfg->talkCenterY - cfg->talkRadius - pad * 2;
   }
@@ -448,6 +511,11 @@ void tabletLayoutConfigure(TabletLayoutConfig *cfg, int screenW, int screenH,
      a pad above the zone; a screen with the room keeps 280. */
   {
     float fit = (scrollTop - pad - buildRegionTop + 16.0f) * 0.5f;
+    /* And above the view column, which shares the bars' side of the gutter
+       (its size is capped above so that this leaves the bars some height). */
+    float viewTop = cfg->tankViewCenterY - cfg->tankViewRadius;
+    float fitView = (viewTop - pad - buildRegionTop + 16.0f) * 0.5f;
+    if (fitView < fit) fit = fitView;
     if (fit < cfg->barsH) {
       cfg->barsH = fit;
       cfg->baseBarsY = cfg->tankBarsY + cfg->barsH;
@@ -748,12 +816,20 @@ static void renderTabletBackground(void) {
   /* --- Right gutter: build bar area --- */
   {
     float iconSize = c.buildIconSize;
-    float btnPad = 8.0f;
-    float btnSize = iconSize + btnPad * 2;
+    float btnPadX = 8.0f;
+    float btnPadY = 8.0f;
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+    /* The frame padding the image buttons take on each side, across and
+       down (tabletLayoutConfigure). */
+    btnPadX = ImGui::GetStyle().FramePadding.x;
+    btnPadY = ImGui::GetStyle().FramePadding.y;
+#endif
+    float btnW = iconSize + btnPadX * 2;
+    float btnH = iconSize + btnPadY * 2;
     float spacing = c.buildSpacing;
     int cols = 2, rows = 3;
-    float gridW = btnSize * cols + spacing * (cols - 1);
-    float gridH = btnSize * rows + spacing * (rows - 1);
+    float gridW = btnW * cols + spacing * (cols - 1);
+    float gridH = btnH * rows + spacing * (rows - 1);
     float pad = 3.0f * ps;
     /* Account for ImGui window padding (6px) */
     float winPadX = 6.0f;
@@ -1104,10 +1180,11 @@ static void renderGunsightButtons(void) {
    anyone.  That leaves it off in single player, on a server started with
    voice off, and for a viewer.  What the button does is decided in input.c
    with the keys it stands in for: held in push-to-talk mode, and the mute
-   toggle in open mic mode. iOS only: a desktop or web client on a small
-   touch screen also takes this layout, and keeps its own talk key there. */
+   toggle in open mic mode. iOS and Android only: a desktop or web client on
+   a small touch screen also takes this layout, and keeps its own talk key
+   there. */
 static bool tabletTalkButtonShown(void) {
-#if defined(WINBOLO_VOICE) && defined(__APPLE__) && TARGET_OS_IOS
+#if defined(WINBOLO_VOICE) && ((defined(__APPLE__) && TARGET_OS_IOS) || defined(__ANDROID__))
   return s_cfg.talkRadius > 0.0f && voiceIsEnabled() &&
          voiceGetMode() != VOICE_MODE_OFF && voiceConnectionCarriesVoice();
 #else
@@ -1253,18 +1330,31 @@ static void renderBuildSelectBar(ClientSim *cs) {
 
   float iconSize = s_cfg.buildIconSize;
   float btnPad = 8.0f;
-  float btnSize = iconSize + btnPad * 2;
   float spacing = s_cfg.buildSpacing;
   int cols = 2;
   int rows = 3;  /* 5 items in a 2x3 grid (last cell empty) */
-  float gridW = btnSize * cols + spacing * (cols - 1);
-  float gridH = btnSize * rows + spacing * (rows - 1);
   float startX = s_cfg.buildBarX;
   float startY = s_cfg.buildBarY;
 
   ImVec2 framePad = ImGui::GetStyle().FramePadding;
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  /* Each image button is its icon plus the frame padding on each side,
+     across and down; the window is the grid plus its own 6-unit padding
+     and no more, so it ends where tabletLayoutConfigure measured it to. */
+  (void)btnPad;
+  float btnW = iconSize + framePad.x * 2;
+  float btnH = iconSize + framePad.y * 2;
+  float gridW = btnW * cols + spacing * (cols - 1);
+  float gridH = btnH * rows + spacing * (rows - 1);
+  float winW = gridW + 12;
+  float winH = gridH + 12;
+#else
+  float btnSize = iconSize + btnPad * 2;
+  float gridW = btnSize * cols + spacing * (cols - 1);
+  float gridH = btnSize * rows + spacing * (rows - 1);
   float winW = gridW + 12 + framePad.x * 4;  /* account for ImGui frame padding on each button */
   float winH = gridH + 12 + framePad.y * 6;  /* frame padding on each row of buttons */
+#endif
   ImGui::SetNextWindowPos(ImVec2(startX, startY));
   ImGui::SetNextWindowSize(ImVec2(winW, winH));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 6));
@@ -1781,10 +1871,10 @@ static void overviewButtonRect(float *cx, float *cy, float *r) {
 
 /* Only in a running game, and not while the server withholds the overview;
    the map stays closable whatever happens, so the button stays up while it
-   is open. iOS only: Android and a desktop in the tablet layout have no
-   in-window map to open (sdl3ImguiShowOverviewInWindow does nothing there). */
+   is open. Mobile only: a desktop in the tablet layout has no in-window map
+   to open (sdl3ImguiShowOverviewInWindow does nothing there). */
 static bool overviewButtonShown(ClientSim *cs) {
-#if defined(__APPLE__) && TARGET_OS_IOS
+#if (defined(__APPLE__) && TARGET_OS_IOS) || defined(__ANDROID__)
   if (sdl3DrawIsOverviewInWindow()) return true;
   return cs != nullptr && clientSimIsRunning(cs) && !clientSimIsInLobby(cs) &&
          sdl3ImguiIsOverviewOffered();
@@ -2225,8 +2315,8 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
   processOverviewButton(cs);
 
   /* With the map up, the game view's touches drive the map; two fingers on it
-     pinch only then. iOS only, as for the button. */
-#if defined(__APPLE__) && TARGET_OS_IOS
+     pinch only then. Mobile only, as for the button. */
+#if (defined(__APPLE__) && TARGET_OS_IOS) || defined(__ANDROID__)
   bool overviewOn = sdl3DrawIsOverviewInWindow();
 #else
   bool overviewOn = false;

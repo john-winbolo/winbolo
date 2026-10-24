@@ -4,16 +4,16 @@
  */
 
 /*********************************************************
-*Name:          iOS Log Player
-*Filename:      ios_log_player.cpp
+*Name:          Mobile Log Player
+*Filename:      mobile_log_player.cpp
 *Purpose:
-*  logViewerRunFromMemory for the iOS client: plays a game
+*  logViewerRunFromMemory for the mobile clients: plays a game
 *  the WinBolo.net log browser downloaded, full screen, in
 *  the lobby's replay reel.
 *
 *  The desktop opens such a game in the modal log viewer
 *  (src/logviewer/logviewer.c), with its menus, panels and
-*  spectator host. iOS builds only the viewer's embedded
+*  spectator host. iOS and Android build only the viewer's embedded
 *  reel host (lv_embed.c), so the game plays through the
 *  same reel the lobby's recap shows - the picture with pan
 *  and pinch zoom, play and pause, and the seek bar - and this
@@ -24,7 +24,7 @@
 *
 *  The browser on mobile always downloads to memory
 *  (imgui_wbn_browser.cpp). logViewerRun, the file path
-*  entry point, is in ios_recordings.cpp.
+*  entry point, is in mobile_recordings.cpp.
 *********************************************************/
 
 #include <SDL3/SDL.h>
@@ -43,16 +43,12 @@ extern "C" {
 #include "../sdl3/dialogs/imgui_messagebox.h"
 }
 
-/* Declared by gamefront.c, which calls it, without a header of its own. */
-extern "C" void logViewerRunFromMemory(struct SDL_Window *window,
-                                       struct SDL_Renderer *renderer,
-                                       uint8_t *zipData, size_t zipLen,
-                                       bool fromMainMenu);
+#include "mobile_log_player.h"
 
 /* The rect the reel's picture gets inside the screen: everything below the
  * title row and above the transport row the reel draws under it, inside the
  * safe area. */
-static ImVec2 iosLogPlayerViewRect(void) {
+static ImVec2 mobileLogPlayerViewRect(void) {
     const ImGuiStyle &style = ImGui::GetStyle();
     ImVec2 avail = ImGui::GetContentRegionAvail();
     float rowH = ImGui::GetFrameHeightWithSpacing() + style.ItemSpacing.y;
@@ -119,7 +115,7 @@ extern "C" void logViewerRunFromMemory(struct SDL_Window *window,
         ImGui::SetNextWindowPos(ImVec2(insets.left, insets.top));
         ImGui::SetNextWindowSize(ImVec2((float)winW - insets.left - insets.right,
                                         (float)winH - insets.top - insets.bottom));
-        ImGui::Begin("##IosLogPlayer", nullptr,
+        ImGui::Begin("##MobileLogPlayer", nullptr,
                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoScrollbar |
@@ -134,13 +130,13 @@ extern "C" void logViewerRunFromMemory(struct SDL_Window *window,
          * picture has; the reel owns zipData from the call on. */
         if (!opened) {
             opened = true;
-            if (!lobbyReelOpenStandalone(zipData, zipLen, iosLogPlayerViewRect())) {
+            if (!lobbyReelOpenStandalone(zipData, zipLen, mobileLogPlayerViewRect())) {
                 running = false;
             }
             zipData = NULL;
         }
         if (running) {
-            lobbyReelRenderStandalone(iosLogPlayerViewRect());
+            lobbyReelRenderStandalone(mobileLogPlayerViewRect());
         }
 
         ImGui::End();

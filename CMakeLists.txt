@@ -223,9 +223,11 @@ FetchContent_MakeAvailable(sdl3)
 #   system (make / msvcbuild.bat) via ExternalProject at build time. The brains
 #   are written in the Lua 5.1 subset (bit ops via bitcompat), so they run
 #   unchanged on LuaJIT and PUC-Lua alike — no transpile step.
+#   iOS runs LuaJIT too, with the compiler left out (LUAJIT_DISABLE_JIT): the
+#   OS forbids writing code and running it, and the interpreter alone is
+#   allowed and still well ahead of PUC-Lua.
 #   Fallback: PUC-Lua 5.4 (static lib from FetchContent) where LuaJIT cannot run
-#   — Emscripten/WASM (no JIT backend) and iOS (OS forbids JIT) — and whenever
-#   -DWINBOLO_LUAJIT=OFF is passed.
+#   — Emscripten/WASM (no backend) — and whenever -DWINBOLO_LUAJIT=OFF is passed.
 # CAVEAT: LuaJIT's number model and table-iteration order differ from PUC-Lua
 # 5.4, so bot behaviour is NOT guaranteed bit-identical across the two VMs, and
 # cross-VM replay / winbolo.net determinism is not yet validated. Pass
@@ -234,21 +236,24 @@ FetchContent_MakeAvailable(sdl3)
 # links against; under LuaJIT they wrap the built LuaJIT static lib and force-
 # include the C-API compat shim (src/gui/sdl3/luajit_compat.h) into every
 # Lua-touching TU.
-set(WINBOLO_LUAJIT_LUAJIT_TAG   "faaf663340347a78b22ed94c63c24fe090bd9784"
-    CACHE STRING "Pinned LuaJIT (v2.1 branch) commit to build")
+# The pinned commit (WINBOLO_LUAJIT_LUAJIT_TAG) and the cross-build the
+# Android and iOS clients use live in cmake/bolo_luajit.cmake, so the
+# Android project, which has a CMake root of its own, reads the same pin.
+include(cmake/bolo_luajit.cmake)
 
 # Default ON everywhere LuaJIT can build; OFF where it cannot.
-if(EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
+if(EMSCRIPTEN)
     set(_wbn_luajit_default OFF)
 else()
     set(_wbn_luajit_default ON)
 endif()
 option(WINBOLO_LUAJIT "Run bot brains on LuaJIT (Lua 5.1); OFF uses PUC-Lua 5.4" ${_wbn_luajit_default})
 
-# Hard guard: LuaJIT is unusable on WASM (no backend) and iOS (JIT banned), so
-# fall back to PUC-Lua there even if the option was explicitly forced on.
-if(WINBOLO_LUAJIT AND (EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "iOS"))
-    message(WARNING "WINBOLO_LUAJIT is not supported on this platform (WASM/iOS); using PUC-Lua 5.4 instead.")
+# Hard guard: LuaJIT has no WASM backend, so fall back to PUC-Lua there even
+# if the option was explicitly forced on. iOS is not in this guard: it
+# builds LuaJIT's interpreter without the compiler (the iOS branch below).
+if(WINBOLO_LUAJIT AND EMSCRIPTEN)
+    message(WARNING "WINBOLO_LUAJIT is not supported on WASM; using PUC-Lua 5.4 instead.")
     set(WINBOLO_LUAJIT OFF)
 endif()
 
@@ -301,6 +306,21 @@ if(WINBOLO_LUAJIT)
     endif()
 
     # 1. LuaJIT source (no CMakeLists of its own — MakeAvailable only populates).
+    # The two patches mend the macOS hardened-runtime (LUAJIT_ENABLE_OSX_HRT)
+    # path, which only the macOS build compiles. iOS has no JIT and never
+    # allocates mcode, so its checkout stays as upstream wrote it.
+    set(_lj_patch "")
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        set(_lj_patch
+            # Fixes a void-function `return 0;` that breaks macOS hardened-runtime
+            # (LUAJIT_ENABLE_OSX_HRT) builds — see the patch header for details.
+            PATCH_COMMAND  ${CMAKE_COMMAND} -P
+                           "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_fix_osx_hrt_return.cmake"
+            # Fixes a per-thread W^X leak in the same HRT path that SIGBUSes
+            # bot worker threads (2.02 Sentry 24dae975) — see the patch header.
+            COMMAND        ${CMAKE_COMMAND} -P
+                           "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_fix_osx_hrt_thread_leak.cmake")
+    endif()
     FetchContent_Declare(luajit_src
         GIT_REPOSITORY https://github.com/LuaJIT/LuaJIT.git
         GIT_TAG        ${WINBOLO_LUAJIT_LUAJIT_TAG}
@@ -313,14 +333,7 @@ if(WINBOLO_LUAJIT)
         # clean build with "unable to read tree", while incremental builds
         # keep working off the cached _deps checkout and hide it. A full
         # clone is ~11MB and always contains the pin.
-        # Fixes a void-function `return 0;` that breaks macOS hardened-runtime
-        # (LUAJIT_ENABLE_OSX_HRT) builds — see the patch header for details.
-        PATCH_COMMAND  ${CMAKE_COMMAND} -P
-                       "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_fix_osx_hrt_return.cmake"
-        # Fixes a per-thread W^X leak in the same HRT path that SIGBUSes
-        # bot worker threads (2.02 Sentry 24dae975) — see the patch header.
-        COMMAND        ${CMAKE_COMMAND} -P
-                       "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_fix_osx_hrt_thread_leak.cmake")
+        ${_lj_patch})
     FetchContent_MakeAvailable(luajit_src)
     set(_lj_src "${luajit_src_SOURCE_DIR}")
 
@@ -356,6 +369,84 @@ if(WINBOLO_LUAJIT)
                               cmd /c .\\msvcbuild.bat static
             INSTALL_COMMAND   ""
             BUILD_BYPRODUCTS  "${_lj_lib}")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        # iOS runs LuaJIT's interpreter alone: an App Store app may not write
+        # code and then run it, so LUAJIT_DISABLE_JIT leaves the trace
+        # compiler out and no mcode is ever allocated, which is why the
+        # hardened-runtime define the macOS build adds below has no part
+        # here. The library is cross-compiled by LuaJIT's own make through
+        # cmake/bolo_luajit.cmake: TARGET_SYS=iOS picks the Mach-O assembler
+        # syntax and the frame-pointer setting, and the SDK, the deployment
+        # floor and the architecture travel in TARGET_FLAGS, one slice per
+        # architecture, lipo'd as the macOS build does. Under the Xcode
+        # generator the destination picks the device SDK or the Simulator's
+        # when Xcode builds, not when CMake configures, so the build step
+        # reads Xcode's SDKROOT, PLATFORM_NAME, ARCHS and
+        # IPHONEOS_DEPLOYMENT_TARGET and runs on every build (returning at
+        # once when they are what it last built for); the values below are
+        # its fallbacks for a generator that exports none. The Makefile
+        # reads no deployment variable for iOS (only MACOSX_DEPLOYMENT_TARGET,
+        # for Darwin), so the floor is the -m*-version-min compiler flag.
+        # The host tools are compiled by the macOS SDK's clang, named with
+        # that SDK outright: the step runs inside Xcode's environment, where
+        # a bare cc would follow SDKROOT to the iOS SDK and produce tools
+        # this Mac cannot run.
+        set(_lj_xcflags "-DLUAJIT_DISABLE_JIT")
+        if(WINBOLO_LUAJIT_DETERMINISTIC)
+            string(APPEND _lj_xcflags " -DLUAJIT_SECURITY_PRNG=0")
+        endif()
+        execute_process(COMMAND xcrun --sdk macosx --find clang
+                        OUTPUT_VARIABLE _lj_clang
+                        OUTPUT_STRIP_TRAILING_WHITESPACE)
+        execute_process(COMMAND xcrun --sdk macosx --show-sdk-path
+                        OUTPUT_VARIABLE _lj_host_sdk
+                        OUTPUT_STRIP_TRAILING_WHITESPACE)
+        execute_process(COMMAND xcrun --find ar
+                        OUTPUT_VARIABLE _lj_ar
+                        OUTPUT_STRIP_TRAILING_WHITESPACE)
+        execute_process(COMMAND xcrun --find strip
+                        OUTPUT_VARIABLE _lj_strip
+                        OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if(NOT _lj_clang OR NOT _lj_host_sdk OR NOT _lj_ar OR NOT _lj_strip)
+            message(FATAL_ERROR "LuaJIT for iOS: xcrun could not find clang, "
+                                "ar, strip or the macOS SDK")
+        endif()
+        # CMAKE_OSX_SYSROOT is an SDK name (iphoneos, iphonesimulator) under
+        # the Xcode generator and a path under the others.
+        set(_lj_sdk "${CMAKE_OSX_SYSROOT}")
+        if(NOT _lj_sdk)
+            set(_lj_sdk iphoneos)
+        endif()
+        if(NOT IS_ABSOLUTE "${_lj_sdk}")
+            execute_process(COMMAND xcrun --sdk "${_lj_sdk}" --show-sdk-path
+                            OUTPUT_VARIABLE _lj_sdk
+                            OUTPUT_STRIP_TRAILING_WHITESPACE)
+        endif()
+        if(_lj_sdk MATCHES "[Ss]imulator")
+            set(_lj_min_flag "-mios-simulator-version-min")
+        else()
+            set(_lj_min_flag "-miphoneos-version-min")
+        endif()
+        set(_lj_min "${CMAKE_OSX_DEPLOYMENT_TARGET}")
+        if(NOT _lj_min)
+            set(_lj_min "15.0")
+        endif()
+        set(_lj_archs "${CMAKE_OSX_ARCHITECTURES}")
+        if(NOT _lj_archs)
+            set(_lj_archs arm64)
+        endif()
+        bolo_luajit_cross_build(luajit_ext
+            SOURCE_DIR   "${_lj_src}"
+            OUTPUT_DIR   "${CMAKE_BINARY_DIR}/luajit"
+            HOST_CC      "${_lj_clang}" -isysroot "${_lj_host_sdk}"
+            TARGET_CC    "${_lj_clang}"
+            TARGET_AR    "${_lj_ar}"
+            TARGET_STRIP "${_lj_strip}"
+            TARGET_SYS   iOS
+            TARGET_FLAGS -isysroot "${_lj_sdk}" "${_lj_min_flag}=${_lj_min}"
+            XCFLAGS      "${_lj_xcflags}"
+            ARCHES       ${_lj_archs}
+            LIB_VAR      _lj_lib)
     else()
         set(_lj_xcflags "-fPIC")
         if(WINBOLO_LUAJIT_DETERMINISTIC)
@@ -1507,17 +1598,20 @@ target_include_directories(WinBoloIOS PRIVATE
 target_link_libraries(WinBoloIOS PRIVATE server_round_log_static)
 # The WinBolo.net log browser ("My Games" and the welcome screen's Log Viewer
 # entry) and the screen that plays a game it downloads in the reel
-# (ios_log_player.cpp, in place of the modal viewer). Its star rating widget
+# (src/gui/mobile/mobile_log_player.cpp, in place of the modal viewer; the
+# mobile screens are shared with the Android client). Its star rating widget
 # is already in the news and ratings block above.
 target_sources(WinBoloIOS PRIVATE
     src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
     src/gui/sdl3/dialogs/wbn_browser_sort.c
-    src/gui/ios/ios_log_player.cpp
+    src/gui/mobile/mobile_log_player.cpp
     # The live spectator feed in the reel, in place of the modal viewer's
     # spectatorRun.
-    src/gui/ios/ios_spectator.cpp
+    src/gui/mobile/mobile_spectator.cpp
     # The recordings on the phone, listed and played in the reel, in place
-    # of the modal viewer's logViewerRun.
+    # of the modal viewer's logViewerRun; the directories it lists and the
+    # Copy to Files export are the iOS half, ios_recordings.cpp.
+    src/gui/mobile/mobile_recordings.cpp
     src/gui/ios/ios_recordings.cpp
     # Files and game links the system hands over, kept until the welcome
     # screen runs, and the access to a file opened in place from another
@@ -1545,7 +1639,10 @@ set(IOS_MAPEDITOR_SOURCES
     src/mapeditor/mapeditor_scenario_fndesc.c
     src/mapeditor/mapeditor_scenario_fnscan.c
     src/mapeditor/mapeditor_wbn_open.cpp
-    # SDL has no file dialogs on iOS; the editor's open and save go here.
+    # SDL has no file dialogs on iOS; the editor's open and save go through
+    # the picker Android shares, with the Documents folder and the bundle's
+    # maps as its iOS half.
+    src/mapeditor/mapeditor_mobile_files.cpp
     src/mapeditor/mapeditor_ios_files.cpp
     src/third_party/ImGuiColorTextEdit/TextEditor.cpp
     src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp

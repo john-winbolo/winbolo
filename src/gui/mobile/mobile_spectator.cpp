@@ -4,15 +4,15 @@
  */
 
 /*********************************************************
-*Name:          iOS Spectator
-*Filename:      ios_spectator.cpp
+*Name:          Mobile Spectator
+*Filename:      mobile_spectator.cpp
 *Purpose:
-*  spectatorRun for the iOS client: watches a server's live
+*  spectatorRun for the mobile clients: watches a server's live
 *  delayed feed, full screen, in the lobby's replay reel.
 *
 *  The desktop hosts the feed in the modal log viewer
 *  (spectatorRun in src/logviewer/logviewer.c), with its
-*  menus, panels, game view and controller input. iOS builds
+*  menus, panels, game view and controller input. iOS and Android build
 *  only the viewer's embedded reel host, so this is the
 *  smallest version of the same loop around it: pump the
 *  spectator transport, wait for the seed with the same
@@ -51,19 +51,16 @@ extern "C" {
 #include "spectator_drain.h"
 }
 
-/* Declared by gamefront.c, which calls it, without a header of its own. */
-extern "C" bool spectatorRun(struct SDL_Window *window,
-                             struct SDL_Renderer *renderer, void *cs,
-                             const char *serverHost, uint16_t serverPort);
+#include "mobile_spectator.h"
 
 /* Feed silence after which the screen says the connection is lost. A
  * spectator sends no input, so the transport's own timeout never fires; the
  * same 8 seconds the desktop host waits. */
-#define IOS_SPEC_STALL_MS 8000u
+#define MOBILE_SPEC_STALL_MS 8000u
 
 /* The rect the picture gets: everything below the top row, inside the safe
  * area the host window was placed in. */
-static ImVec2 iosSpectatorViewRect(void) {
+static ImVec2 mobileSpectatorViewRect(void) {
     ImVec2 avail = ImGui::GetContentRegionAvail();
     if (avail.x < 1.0f) avail.x = 1.0f;
     if (avail.y < 1.0f) avail.y = 1.0f;
@@ -71,7 +68,7 @@ static ImVec2 iosSpectatorViewRect(void) {
 }
 
 /* The phase as a word for the top row, or NULL when the feed has not said. */
-static const char *iosSpectatorPhaseText(int phase) {
+static const char *mobileSpectatorPhaseText(int phase) {
     switch (phase) {
     case SPEC_PHASE_LOBBY:
     case SPEC_PHASE_COUNTDOWN:
@@ -172,7 +169,7 @@ extern "C" bool spectatorRun(struct SDL_Window *window,
                 lastProgressMs = SDL_GetTicks();
             }
         }
-        if (!connectionLost && SDL_GetTicks() - lastProgressMs > IOS_SPEC_STALL_MS) {
+        if (!connectionLost && SDL_GetTicks() - lastProgressMs > MOBILE_SPEC_STALL_MS) {
             connectionLost = true;
         }
 
@@ -188,7 +185,7 @@ extern "C" bool spectatorRun(struct SDL_Window *window,
         ImGui::SetNextWindowPos(ImVec2(insets.left, insets.top));
         ImGui::SetNextWindowSize(ImVec2((float)winW - insets.left - insets.right,
                                         (float)winH - insets.top - insets.bottom));
-        ImGui::Begin("##IosSpectator", nullptr,
+        ImGui::Begin("##MobileSpectator", nullptr,
                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoScrollbar |
@@ -220,7 +217,7 @@ extern "C" bool spectatorRun(struct SDL_Window *window,
                 status = langGetText(STR_LV_SPEC_CONNECTING);
             }
         } else {
-            status = iosSpectatorPhaseText(lvEmbedSpecPhase());
+            status = mobileSpectatorPhaseText(lvEmbedSpecPhase());
         }
         if (status != NULL) {
             ImGui::SameLine();
@@ -232,7 +229,7 @@ extern "C" bool spectatorRun(struct SDL_Window *window,
          * room the picture has, and takes the seed when the feed has one. */
         if (running && !opened) {
             opened = true;
-            if (!lobbyReelOpenSpectator(iosSpectatorViewRect())) {
+            if (!lobbyReelOpenSpectator(mobileSpectatorViewRect())) {
                 running = false;
             }
         }
@@ -253,7 +250,7 @@ extern "C" bool spectatorRun(struct SDL_Window *window,
             }
         }
         if (running) {
-            lobbyReelRenderSpectator(iosSpectatorViewRect());
+            lobbyReelRenderSpectator(mobileSpectatorViewRect());
         }
 
         ImGui::End();
