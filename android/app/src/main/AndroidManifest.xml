@@ -27,9 +27,13 @@
              reaches onNewIntent; with the default launch mode Android starts
              a second activity instance for a VIEW intent instead, and the
              SDL activity ends the process when that happens. -->
+        <!-- Every configuration change the activity can take without being
+             recreated, SDL's own set: a recreation ends the running game,
+             and a hosted one with it. uiMode is the dark-mode toggle,
+             smallestScreenSize a fold or a multi-window resize. -->
         <activity
             android:name=".WinBoloActivity"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
             android:screenOrientation="sensorLandscape"
             android:windowLayoutInDisplayCutoutMode="shortEdges"
             android:keepScreenOn="true"
