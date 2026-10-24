@@ -74,8 +74,19 @@ set(_lj_make_args
 
 set(_lj_lib    "${LJ_OUTPUT_DIR}/libluajit.a")
 set(_lj_record "${LJ_OUTPUT_DIR}/libluajit.a.built")
+# The record also holds the commit the checkout is at, so that a change to
+# the pinned commit (WINBOLO_LUAJIT_LUAJIT_TAG in bolo_luajit.cmake), which
+# moves the checkout, rebuilds the archive instead of linking the one built
+# from the old commit. The pin itself is not passed to this script, so the
+# commit is read from the checkout. Without git it stays empty and the
+# record compares as before.
+execute_process(COMMAND git -C "${LJ_SOURCE_DIR}" rev-parse HEAD
+                OUTPUT_VARIABLE _lj_revision
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET)
 string(JOIN "\n" _lj_built ${_lj_make_args}
-       "TARGET_FLAGS=${_lj_flags}" "ARCHES=${_lj_arches}")
+       "TARGET_FLAGS=${_lj_flags}" "ARCHES=${_lj_arches}"
+       "REVISION=${_lj_revision}")
 
 if(EXISTS "${_lj_lib}" AND EXISTS "${_lj_record}")
     file(READ "${_lj_record}" _lj_had)

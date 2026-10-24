@@ -247,10 +247,16 @@ Note: The iOS build does not use libcurl (network features use platform stubs).
 - CMake 3.31 or newer from the SDK Manager (`cmake;3.31.6`; the SDK's 3.22.1
   is too old)
 - JDK 17 or newer
+- A POSIX host: macOS, Linux or WSL. The native build cross-compiles LuaJIT
+  with LuaJIT's own Makefile, so on a native Windows host the configure stops
+  with an error
+- A host `make` and a host C compiler (`cc`) on the `PATH`, which
+  `cmake/bolo_luajit.cmake` and `android/app/CMakeLists.txt` look for to build
+  LuaJIT and its build tools
 
-Android Studio installs all of these. The Gradle project is in `android/`; its
-native build is `android/app/CMakeLists.txt`, which builds the same sources as
-the desktop and iOS clients. The APK carries `arm64-v8a` and `x86_64`, runs on
+Android Studio installs all of these except the last two. The Gradle project
+is in `android/`; its native build is `android/app/CMakeLists.txt`, which
+builds the same sources as the desktop and iOS clients. The APK carries `arm64-v8a` and `x86_64`, runs on
 Android 8.0 (API 26) and later, and targets Android 16 (API 36).
 
 The version comes from `cmake/bolo_version.cmake`: `versionName` is
@@ -474,7 +480,9 @@ The two are not guaranteed to give identical bot behaviour: LuaJIT and Lua 5.4
 differ in how they handle numbers and in the order `pairs()` visits a table.
 iOS runs LuaJIT's interpreter with the JIT compiler left out
 (`LUAJIT_DISABLE_JIT`), since iOS does not let an app run code it wrote at run
-time. WebAssembly always uses Lua 5.4. The Android build has no switch; it
+time. An iOS build directory configured before iOS used LuaJIT keeps
+`WINBOLO_LUAJIT` cached as `OFF`; reconfigure it with `-DWINBOLO_LUAJIT=ON`
+or configure a new build directory. WebAssembly always uses Lua 5.4. The Android build has no switch; it
 always builds LuaJIT.
 
 ### Port mapping (UPnP / NAT-PMP)

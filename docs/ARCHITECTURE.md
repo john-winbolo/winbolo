@@ -37,8 +37,8 @@ document is the stable reference for the rules themselves.
 | `src/client_frontend/` | T1 + T3 + T4 | The shared sim-driving cores every client platform calls instead of keeping its own copy: `client_frontend_tick.c` (the alternating keys/game tick step), `client_frontend_connect.c` (the post-connect join/landing wait, as the blocking `clientFrontAwaitJoin` and the per-call `clientFrontAwaitJoinStep` it loops over), `client_frontend_common.c` (the sim-state-guarded `frontEnd*` bodies, the active-sim test `clientFrontIsActiveUiSim` that each driver's guarded callbacks make first, `clientFrontSaveMapAutoNamed` for a player with no file dialog, both declared in `client_frontend_common.h`, and the tutorial step sequencer behind `client_frontend_tutorial.h`), `client_frontend_sp.c` (the single-player lobby seeding). The voice runtime (`voice_*.c`) lives here too and is compiled by the targets that build voice. Not a library — the sources compile directly inside each frontend target (WinBolo, WinBoloIOS, android `main` and wasm `winbolo` take all four cores) under that target's `gui` profile, so they see only `public/`. See "Platform variants: share the logic, fork only the driver". |
 | `src/logviewer/` | T1 + T3 + T4 | Replays recorded games; uses T3 for the playback render path. The standalone `LogViewer` and the wasm log viewer compile `src/bolo/sim_rules.c` from source under a per-file T2 grant, since neither links `bolo_static`; that is the sim's own file rather than anything in this directory (see "Per-file T2 grants"). The lobby's replay reel is the embedded host `lv_embed.c`, which the web client, WinBoloIOS and Android `main` compile with the decoder and renderer but without the modal viewer `logviewer.c`; `lv_embed_stubs.c` stubs what the left-out viewer would provide, for all three. The mobile clients drive the viewer's dialogs through a driver of their own in place of the desktop one that shells out, `src/logviewer/ios/platform_dialogs_ios.c` and `src/logviewer/android/platform_dialogs_android.c`, play a game the WinBolo.net log browser downloads, or a recording on the phone, in the reel through the shared mobile screens `src/gui/mobile/mobile_log_player.cpp` and `mobile_recordings.cpp`, and watch a server's live delayed feed in the reel through `src/gui/mobile/mobile_spectator.cpp`. The recordings screen's platform half, behind `mobile_recordings_platform.h`, is `src/gui/ios/ios_recordings.cpp` on iOS (Documents and its Inbox, Copy to Files) and `src/android/android_recordings.c` on Android (the preferences directory and its incoming subdirectory, the share sheet). What a spectator host does with that feed's seed and records — load the seed, re-seed on a new segment, refresh the roster and phase on a keyframe, move the live head — is `lv_spec_feed.c`, the one body the modal viewer's `spectatorRun` (`logviewer.c`) and the embedded spectator in `lv_embed.c` both call. Those mobile screens reach the reel through `src/gui/sdl3/dialogs/lobby/lobby_reel.h`, the reel's public header, and not through the lobby's own `lobby_internal.h`, which includes it. |
 | `src/winbolonet/winbolonet_core/` | T1 + T4 | Shared HTTP, async event queue, WBN key storage. Includes `server_sim.h` (T1) only. Linked by every WBN-aware binary. |
-| `src/winbolonet/winbolonet_server/` | T1 + T4 | Server tracker calls (`server/register`, `server/update`, lobby/map/teams/balance). Linked by binaries that run a server: WinBoloDS, WinBoloHeadless, SDL3 client (SP host), WinBoloIOS (SP, LAN and Internet host). |
-| `src/winbolonet/winbolonet_client/` | T4 | User auth, comments. Linked by binaries with a UI: SDL3 client, LogViewer, WinBoloIOS. |
+| `src/winbolonet/winbolonet_server/` | T1 + T4 | Server tracker calls (`server/register`, `server/update`, lobby/map/teams/balance). Linked by binaries that run a server: WinBoloDS, WinBoloHeadless, SDL3 client (SP host), WinBoloIOS (SP, LAN and Internet host), Android `main` (SP host, and host of games other players join). |
+| `src/winbolonet/winbolonet_client/` | T4 | User auth, comments. Linked by binaries with a UI: SDL3 client, LogViewer, WinBoloIOS, Android `main`. |
 | `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. Also links seventeen leaf `src/gui/sdl3` files, which keep public-only access rather than borrowing this row's — see "Linked GUI sources" for the list and the rule a file has to meet. |
 | `tests/`, `tools/` | T1 + T3 + T4 (by default) | Not currently wired through a profile. Tests that legitimately need T2 belong inside `src/bolo/tests/` and link against bolo's own target. |
 
@@ -492,7 +492,8 @@ into each frontend target rather than as a separate library:
 - **The tutorial step sequencer** — also in `client_frontend_common.c`,
   with the calls a driver makes each frame (the presented-frame count,
   the respawn poll, whether a step's messages are up) declared in
-  `client_frontend_tutorial.h`. The desktop, web and iOS drivers call it.
+  `client_frontend_tutorial.h`. The desktop, web, iOS and Android drivers call it (the Android
+  driver is `src/android/main_android.c`).
 - **The voice settings** — `src/gui/sdl3/voice_settings.c` holds the one
   body of the `windowSetVoice*` / `windowGetVoice*` functions the dialogs
   and `gamefront.c` call. Not in `src/client_frontend/` because it sits
@@ -2835,7 +2836,7 @@ the target deliberately doesn't link:
   server's tick runs, declared in `internal/server_sim_lifecycle.h`.
   The grant covers those two declarations; the stub reaches no sim
   state of its own.
-- The embedded map editor TUs in WinBolo and WinBoloIOS
+- The embedded map editor TUs in WinBolo, WinBoloIOS and Android `main`
   (`src/mapeditor/mapeditor.c`, `mapeditor_export.c`,
   `mapeditor_validate.c`) — sim-co-owner files from the editor that
   need T2 access regardless of which binary they're compiled into.
