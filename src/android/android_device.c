@@ -26,6 +26,7 @@ static jclass    s_deviceClass = NULL;   /* global reference */
 static jmethodID s_midImeHeight = NULL;
 static jmethodID s_midShowKeyboard = NULL;
 static jmethodID s_midSafeInsets = NULL;
+static jmethodID s_midMulticastHold = NULL;
 static bool      s_isTablet = false;
 
 static bool deviceClearException(JNIEnv *env, const char *what) {
@@ -36,6 +37,19 @@ static bool deviceClearException(JNIEnv *env, const char *what) {
     return true;
   }
   return false;
+}
+
+/* One static method's ID, or NULL with the NoSuchMethodError it raised
+   cleared: another JNI call with that error still pending is not allowed,
+   so each lookup clears its own before the next. */
+static jmethodID deviceStaticMethod(JNIEnv *env, jclass cls, const char *name,
+                                    const char *sig) {
+  jmethodID mid = (*env)->GetStaticMethodID(env, cls, name, sig);
+  if (mid == NULL) {
+    deviceClearException(env, name);
+    WB_LOG_ERROR(WB_LOG_CAT_PLATFORM, "device JNI: method %s not found", name);
+  }
+  return mid;
 }
 
 bool androidDeviceInit(void) {
@@ -61,16 +75,17 @@ bool androidDeviceInit(void) {
     (*env)->PopLocalFrame(env, NULL);
     return false;
   }
-  midWidth = (*env)->GetStaticMethodID(env, local, "smallestWidthDp", "()I");
-  s_midImeHeight = (*env)->GetStaticMethodID(env, local, "imeHeightPx", "()I");
-  s_midShowKeyboard = (*env)->GetStaticMethodID(env, local, "showKeyboardAgain", "()V");
-  s_midSafeInsets = (*env)->GetStaticMethodID(env, local, "safeInsetsPx", "()[I");
+  midWidth = deviceStaticMethod(env, local, "smallestWidthDp", "()I");
+  s_midImeHeight = deviceStaticMethod(env, local, "imeHeightPx", "()I");
+  s_midShowKeyboard = deviceStaticMethod(env, local, "showKeyboardAgain", "()V");
+  s_midSafeInsets = deviceStaticMethod(env, local, "safeInsetsPx", "()[I");
+  s_midMulticastHold = deviceStaticMethod(env, local, "multicastHold", "(Z)V");
   if (midWidth == NULL || s_midImeHeight == NULL || s_midShowKeyboard == NULL ||
-      s_midSafeInsets == NULL) {
-    deviceClearException(env, "method lookup");
+      s_midSafeInsets == NULL || s_midMulticastHold == NULL) {
     s_midImeHeight = NULL;
     s_midShowKeyboard = NULL;
     s_midSafeInsets = NULL;
+    s_midMulticastHold = NULL;
     (*env)->PopLocalFrame(env, NULL);
     return false;
   }
@@ -143,4 +158,14 @@ void androidDeviceShowKeyboard(void) {
   if (env == NULL) return;
   (*env)->CallStaticVoidMethod(env, s_deviceClass, s_midShowKeyboard);
   deviceClearException(env, "showKeyboardAgain");
+}
+
+void androidDeviceMulticastHold(bool on) {
+  JNIEnv *env;
+  if (s_deviceClass == NULL || s_midMulticastHold == NULL) return;
+  env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+  if (env == NULL) return;
+  (*env)->CallStaticVoidMethod(env, s_deviceClass, s_midMulticastHold,
+                               (jboolean)(on ? JNI_TRUE : JNI_FALSE));
+  deviceClearException(env, "multicastHold");
 }

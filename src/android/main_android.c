@@ -33,6 +33,7 @@
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
 #include "../server/threads.h"  /* threadsCreate / threadsDestroy */
+#include "../server/mdns_advertise.h"  /* mdnsAdvertiseSetMulticastHold */
 #include "../gui/draw.h"
 #include "../gui/gamefront.h"
 #include "../gui/input.h"
@@ -158,6 +159,15 @@ static bool paused = FALSE;
 static bool s_hostBackgroundActive = false;
 static bool s_quitInBackground = false;
 #define ANDROID_HOST_SHUTDOWN_HTTP_MS 700
+
+/* A game joined over the network is given up after this long in the
+   background: the server drops a client silent for 20 s, so a return after
+   that would be into a game that can no longer be played; the margin covers
+   the radio coming back. Measured on the wall clock, since SDL_GetTicks
+   does not advance while the device sleeps and the server's clock does.
+   The same check as the iOS driver's. */
+#define ANDROID_BACKGROUND_KEEP_GAME_MS 15000
+static SDL_Time s_backgroundStartNs = 0;
 /* Tick time owed after a long freeze is dropped beyond this: the server
    kept its own time on its thread, and the host's client only has to catch
    up with the present, not replay the gap. */
@@ -319,6 +329,9 @@ void windowSuspendBackground(ClientSim *cs) {
   if (paused) return;
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Entering background, pausing");
   paused = TRUE;
+  if (!SDL_GetCurrentTime(&s_backgroundStartNs)) {
+    s_backgroundStartNs = 0;
+  }
   clientFrontSuspend(cs);
   if (gameFrontHasLocalServer() && !clientFrontIsSoloSession(cs)) {
     s_hostBackgroundActive = true;
@@ -347,10 +360,43 @@ static void androidClearBackgroundPause(ClientSim *cs) {
 }
 
 void windowResumeForeground(ClientSim *cs) {
+  SDL_Time nowNs = 0;
+  Sint64 awayMs;
+
   /* WILL and then DID both post a resume; the second finds nothing paused. */
   if (!paused) return;
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Resuming from background");
   androidClearBackgroundPause(cs);
+
+  /* Single player keeps its game: its server is in this process and was
+     paused with it; a game hosted here for other players kept running. A
+     game joined over the network has the server's 20 s timeout against it
+     (see ANDROID_BACKGROUND_KEEP_GAME_MS). Without a start time the
+     client's own timeout still ends a dead game within ten seconds. */
+  if (cs == NULL || !clientSimHasTransport(cs) || gameFrontGetServerSim() != NULL ||
+      clientSimGetNetType(cs) != netUdp || s_backgroundStartNs == 0 ||
+      !SDL_GetCurrentTime(&nowNs)) {
+    s_backgroundStartNs = 0;
+    return;
+  }
+  awayMs = (Sint64)((nowNs - s_backgroundStartNs) / SDL_NS_PER_MS);
+  s_backgroundStartNs = 0;
+  if (awayMs < ANDROID_BACKGROUND_KEEP_GAME_MS) {
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM,
+                "[Android] Back after %lld ms; keeping the network game",
+                (long long)awayMs);
+    return;
+  }
+  WB_LOG_INFO(WB_LOG_CAT_PLATFORM,
+              "[Android] Back after %lld ms; the server has dropped this client",
+              (long long)awayMs);
+  /* The same path as the lost-connection check in windowRunGameTick. */
+  clientSimConnectionLost(cs);
+  imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                    langGetText(NETERR_LOSTCONNECTION_RETURN_MENU),
+                    IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+  finishedLoop = TRUE;
+  winboloQuit = FALSE;
 }
 
 /* One of the loop's events while paused: the quit, the resume, and a
@@ -745,6 +791,9 @@ int main(int argc, char *argv[]) {
   if (androidDeviceIsTablet()) {
     inputTouchSetClassicControlsOffered(true);
   }
+  /* A hosted game's mDNS advertiser holds the Wi-Fi multicast lock while
+     its socket is open (the LAN search holds it for its browse itself). */
+  mdnsAdvertiseSetMulticastHold(androidDeviceMulticastHold);
 
   /* The move to and from the background reaches the game only through an
      event watch (see androidLifecycleWatch). */

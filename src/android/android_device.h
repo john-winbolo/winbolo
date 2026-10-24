@@ -103,6 +103,21 @@ void androidDeviceShowKeyboard(void);
 *********************************************************/
 bool androidDeviceSafeInsets(int *left, int *top, int *right, int *bottom);
 
+/*********************************************************
+*NAME:          androidDeviceMulticastHold
+*PURPOSE:
+*  Takes (true) or gives back (false) one hold on
+*  incoming multicast, WinBoloActivity.multicastHold: the
+*  Wi-Fi driver drops multicast unless the app holds its
+*  multicast lock, and holding it costs battery, so it is
+*  held only while the LAN search browses or a hosted
+*  game's mDNS advertiser has its socket open. Any
+*  attached thread may call it. Declared for the shared
+*  code in dialogs/imgui_gamebrowser.cpp; the advertiser
+*  reaches it through mdnsAdvertiseSetMulticastHold.
+*********************************************************/
+void androidDeviceMulticastHold(bool on);
+
 #ifdef __cplusplus
 }
 #endif

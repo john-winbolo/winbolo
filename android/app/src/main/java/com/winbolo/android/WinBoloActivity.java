@@ -47,10 +47,15 @@ public class WinBoloActivity extends SDLActivity {
        file would be refused there anyway. */
     private static final long RECORDING_MAX_BYTES = 64L * 1024 * 1024;
 
-    /* Held for the life of the activity so the Wi-Fi driver passes incoming
-       multicast to the app; without it the LAN search's mDNS replies and the
-       hosted game's mDNS queries are dropped before they reach a socket. */
-    private WifiManager.MulticastLock mMulticastLock;
+    /* Held while something needs incoming multicast, which the Wi-Fi driver
+       otherwise drops before it reaches a socket: the LAN search's mDNS
+       browse and a hosted game's mDNS advertiser, which ask through
+       multicastHold (android_device.c). Holding it costs battery, so it is
+       not held at other times. sMulticastHolds counts the holders; the lock
+       is taken at the first and released at the last. Static, so a hold
+       outlives a recreation of the activity. */
+    private static WifiManager.MulticastLock sMulticastLock;
+    private static int sMulticastHolds = 0;
 
     /* The on-screen keyboard's height in pixels while it is up, 0 while it
        is down, from the window's insets; Android 11 and later report them
@@ -82,13 +87,18 @@ public class WinBoloActivity extends SDLActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-        if (wifi != null) {
-            mMulticastLock = wifi.createMulticastLock("WinBolo mDNS");
-            mMulticastLock.setReferenceCounted(false);
-            mMulticastLock.acquire();
-            Log.i(TAG, "Multicast lock acquired: " + mMulticastLock.isHeld());
-        } else {
-            Log.w(TAG, "No WifiManager; multicast lock not acquired");
+        synchronized (WinBoloActivity.class) {
+            if (wifi != null) {
+                sMulticastLock = wifi.createMulticastLock("WinBolo mDNS");
+                sMulticastLock.setReferenceCounted(false);
+                /* A recreation while a browse or an advertiser holds it. */
+                if (sMulticastHolds > 0) {
+                    sMulticastLock.acquire();
+                    Log.i(TAG, "Multicast lock acquired again after recreation");
+                }
+            } else {
+                Log.w(TAG, "No WifiManager; multicast lock not available");
+            }
         }
         /* The decor view keeps its own handling: the listener only reads
            the keyboard's inset and the safe area on the way through. */
@@ -191,14 +201,38 @@ public class WinBoloActivity extends SDLActivity {
 
     @Override
     protected void onDestroy() {
-        if (mMulticastLock != null) {
-            if (mMulticastLock.isHeld()) {
-                mMulticastLock.release();
+        synchronized (WinBoloActivity.class) {
+            if (sMulticastLock != null) {
+                if (sMulticastLock.isHeld()) {
+                    sMulticastLock.release();
+                    Log.i(TAG, "Multicast lock released");
+                }
+                sMulticastLock = null;
             }
-            mMulticastLock = null;
-            Log.i(TAG, "Multicast lock released");
         }
         super.onDestroy();
+    }
+
+    /* Takes or gives back one hold on incoming multicast (see
+       sMulticastLock). Called from native (android_device.c) on SDL's
+       thread for a hosted game's advertiser and on the LAN search's own
+       thread for its mDNS browse. */
+    public static synchronized void multicastHold(boolean on) {
+        if (on) {
+            sMulticastHolds++;
+            if (sMulticastHolds == 1 && sMulticastLock != null && !sMulticastLock.isHeld()) {
+                sMulticastLock.acquire();
+                Log.i(TAG, "Multicast lock acquired");
+            }
+        } else {
+            if (sMulticastHolds > 0) {
+                sMulticastHolds--;
+            }
+            if (sMulticastHolds == 0 && sMulticastLock != null && sMulticastLock.isHeld()) {
+                sMulticastLock.release();
+                Log.i(TAG, "Multicast lock released");
+            }
+        }
     }
 
     /* A cold launch: the winbolo:// link or the recording path reaches

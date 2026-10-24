@@ -72,6 +72,9 @@ extern "C" {
 #include "../map_preview_view.h"
 #include "../map_preview_popup.h"
 #include "../../../bolo/public/client_mappreview.h"
+#if defined(__ANDROID__)
+#include "../../../android/android_device.h"  /* androidDeviceMulticastHold */
+#endif
 
 #ifdef __EMSCRIPTEN__
 /* The web's internet game list (src/wasm/finder_wasm.c). Start hands the
@@ -1503,7 +1506,16 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         static BroadcastCbData mcbd;
                         mcbd.servers = &servers;
                         mcbd.serversMtx = &serversMtx;
+#if defined(__ANDROID__)
+                        /* The Wi-Fi driver drops multicast unless the app
+                         * holds its multicast lock, and holding it costs
+                         * battery, so it is held for the browse alone. */
+                        androidDeviceMulticastHold(true);
+#endif
                         discoveryFindMdnsGamesAsync(broadcastServerCallback, &mcbd);
+#if defined(__ANDROID__)
+                        androidDeviceMulticastHold(false);
+#endif
                         mdnsDone = true;
                     });
                 }
