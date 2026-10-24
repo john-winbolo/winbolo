@@ -25,6 +25,7 @@
 #include "../common/wb_log.h"
 #include "bolo_rand.h"
 #include "client_sim.h"
+#include "server_sim.h"  /* serverSimBotPoolInit / Destroy */
 #include "client_render.h"
 #include "frontend.h"
 #include "client_net.h"
@@ -150,10 +151,13 @@ static bool paused = FALSE;
    a longer one the other players lose the game to their own timeouts.
    Ending the process (onDestroy, TERMINATING) shuts the server
    down through the normal end, with a deadline on its WinBolo.net calls so
-   an unreachable WinBolo.net does not hold onDestroy. */
+   an unreachable WinBolo.net does not hold onDestroy. SDL's onDestroy
+   joins this thread for one second and then tears SDL's Android state
+   down whether or not the thread has finished, so the deadline has to
+   leave the rest of the shutdown room inside that second. */
 static bool s_hostBackgroundActive = false;
 static bool s_quitInBackground = false;
-#define ANDROID_HOST_SHUTDOWN_HTTP_MS 5000
+#define ANDROID_HOST_SHUTDOWN_HTTP_MS 700
 /* Tick time owed after a long freeze is dropped beyond this: the server
    kept its own time on its thread, and the host's client only has to catch
    up with the present, not replay the gap. */
@@ -668,6 +672,15 @@ int main(int argc, char *argv[]) {
   SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
 
   SDL_Init(0);
+  /* The bot worker pool, as the desktop and iOS drivers start it. Without
+     it every brain on a hosted server thinks one after another on the
+     server's tick thread, and the Android thread cap in bot_manager.c
+     never applies. */
+  if (!serverSimBotPoolInit(0)) {
+    WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[Android] serverSimBotPoolInit failed");
+    SDL_Quit();
+    return 1;
+  }
   androidDropsInstall();
 
   /* The one argument a cold launch through a VIEW intent carries (see
@@ -790,6 +803,7 @@ int main(int argc, char *argv[]) {
   if (gameFrontStart(cmdLine, &keys, FALSE, NULL) == FALSE) {
     WB_LOG_ERROR(WB_LOG_CAT_PLATFORM, "[Android] gameFrontStart FAILED");
     clientMutexDestroy();
+    serverSimBotPoolDestroy();
     SDL_Quit();
     threadsDestroy();
     return 1;
@@ -877,6 +891,7 @@ android_game_start:
       sdl3DrawCleanup();
       soundCleanup();
       voiceCleanup();
+      serverSimBotPoolDestroy();
       SDL_Quit();
       threadsDestroy();
       return 0;
@@ -1093,8 +1108,9 @@ android_game_start:
   sdl3ImguiCleanup();
   /* The process is being ended while the game ran in the background: the
      hosted server's shutdown (its WinBolo.net session quit and round-log
-     upload) runs inside onDestroy, which waits for this thread, so its
-     calls get a deadline rather than their full time limits. */
+     upload) runs inside onDestroy, which waits one second for this thread
+     and no longer, so its calls get a deadline inside that second rather
+     than their full time limits. */
   if (s_quitInBackground) {
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Ending in the background; shutting the game down");
     httpSetDeadline(ANDROID_HOST_SHUTDOWN_HTTP_MS);
@@ -1124,6 +1140,7 @@ android_game_start:
   sdl3DrawCleanup();
   soundCleanup();
   voiceCleanup();
+  serverSimBotPoolDestroy();
   SDL_Quit();
   threadsDestroy();
   return 0;

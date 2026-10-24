@@ -244,14 +244,16 @@ void windowRedrawAll(ClientSim *cs) {
 /* No save dialog on Android: the map goes into a Maps folder in the app's
    own storage under a made-up name, and the message box names the file. */
 void windowSaveMap(ClientSim *cs) {
-  const char *pref = SDL_GetPrefPath("WinBolo", "WinBolo");
+  char *pref = SDL_GetPrefPath("WinBolo", "WinBolo");
   char dir[FILENAME_MAX];
   if (!pref || !pref[0]) {
+    SDL_free(pref);
     imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBERR_SAVEMAP),
                       IMGUI_MSG_ERROR, IMGUI_MSG_OK);
     return;
   }
   snprintf(dir, sizeof(dir), "%sMaps", pref);
+  SDL_free(pref);  /* SDL_GetPrefPath allocates; the caller frees it */
   clientFrontSaveMapAutoNamed(cs, dir);
 }
 
@@ -343,20 +345,28 @@ void windowPlaySound(sndEffects value) {
   if (soundEffects == TRUE) soundPlayEffect(value);
 }
 
+/* The three status callbacks also fire from the hosted server's tick on
+   the SDL timer thread, where a renderer call races the main thread's
+   present. The per-frame render pass repaints every icon from sim state,
+   so off the render thread the direct draw is skipped, as the desktop
+   driver does. */
 void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
   if (!clientFrontIsActiveUiSim(cs)) return;
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusPillbox(pillNum, pb, showPillLabels);
   sdl3DrawCopyPillsStatus(0, 0);
 }
 
 void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
   if (!clientFrontIsActiveUiSim(cs)) return;
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusTank(tankNum, ts);
   sdl3DrawCopyTanksStatus(0, 0);
 }
 
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
   if (!clientFrontIsActiveUiSim(cs)) return;
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusBase(baseNum, bs, showBaseLabels);
   sdl3DrawCopyBasesStatus(0, 0);
 }
