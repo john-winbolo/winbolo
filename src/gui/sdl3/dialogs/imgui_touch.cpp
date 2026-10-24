@@ -190,12 +190,16 @@ static void touchDragScroll(void) {
  * pixels; ImGui's units are the renderer's when a logical presentation is
  * set, so it is scaled through the display size. */
 
-/* The window moved up, by ID, and how far, so it can be put back. */
+/* The window moved up, by ID, how far, and the top it was moved to, so it
+ * can be put back. A window whose position is set every frame is back at
+ * its own place by the next frame, and its top no longer matches; it then
+ * has nothing to put back. */
 static ImGuiID s_liftWindowId = 0;
 static float   s_liftAmount = 0.0f;
+static float   s_liftTop = 0.0f;
 
 static void touchLiftRestore(ImGuiWindow *w) {
-    if (w != nullptr && s_liftAmount > 0.0f) {
+    if (w != nullptr && s_liftAmount > 0.0f && w->Pos.y == s_liftTop) {
         ImGui::SetWindowPos(w, ImVec2(w->Pos.x, w->Pos.y + s_liftAmount),
                             ImGuiCond_Always);
     }
@@ -227,12 +231,24 @@ static void touchKeyboardLift(void) {
         s_keyboardDismissed = true;
     }
 
-    const bool typing = g.PlatformImeData.WantVisible && g.ActiveId != 0 &&
-                        g.ActiveIdWindow != nullptr;
-    if (!typing || keyboardPx <= 0) {
-        touchLiftRestore(lifted);
+    /* The lift is undone when the keyboard is down or the text input has
+     * ended, not when the field loses the active ID: a finger pressed on a
+     * button in the lifted window takes the active ID, and the window has to
+     * stay where it is until the finger lifts, so the release lands on that
+     * button. */
+    const ImGuiIO &io = g.IO;
+    const bool inputOn = window != nullptr && SDL_TextInputActive(window) &&
+                         io.WantTextInput;
+    if (!inputOn || keyboardPx <= 0) {
+        if (lifted == nullptr || !io.MouseDown[0]) {
+            touchLiftRestore(lifted);
+        }
         return;
     }
+
+    const bool typing = g.PlatformImeData.WantVisible && g.ActiveId != 0 &&
+                        g.ActiveIdWindow != nullptr;
+    if (!typing) return;
 
     ImGuiWindow *root = g.ActiveIdWindow->RootWindow;
     if (lifted != nullptr && lifted != root) {
@@ -242,17 +258,27 @@ static void touchKeyboardLift(void) {
     int pxW = 0, pxH = 0;
     SDL_GetWindowSizeInPixels(window, &pxW, &pxH);
     if (pxH <= 0) return;
-    const ImGuiIO &io = g.IO;
     const float keyboardTop = io.DisplaySize.y - (float)keyboardPx * io.DisplaySize.y / (float)pxH;
     const float fieldBottom = g.PlatformImeData.InputPos.y +
                               g.PlatformImeData.InputLineHeight +
                               g.Style.FramePadding.y + g.Style.ItemSpacing.y;
     const float overlap = fieldBottom - keyboardTop;
     if (overlap <= 0.0f) return;
+    /* What is already applied is counted only while the window is still at
+     * the top it was moved to; a window placed again by its own code since
+     * then has none, so the amount stays what the window has actually been
+     * moved. */
+    const float applied =
+        (lifted == root && s_liftWindowId == root->ID && root->Pos.y == s_liftTop)
+            ? s_liftAmount
+            : 0.0f;
+    const float before = root->Pos.y;
     ImGui::SetWindowPos(root, ImVec2(root->Pos.x, root->Pos.y - overlap),
                         ImGuiCond_Always);
+    if (root->Pos.y == before) return;
     s_liftWindowId = root->ID;
-    s_liftAmount += overlap;
+    s_liftAmount = applied + (before - root->Pos.y);
+    s_liftTop = root->Pos.y;
 }
 #endif /* __ANDROID__ */
 
