@@ -7930,7 +7930,15 @@ static SDL_Scancode s_keySetupHeldKey = SDL_SCANCODE_UNKNOWN;
    release are dropped too until it comes up: ImGui never saw it go down,
    and the first repeat would reach it as a fresh press and re-arm the row
    after the repeat delay. A non-repeat press of that key means its release
-   went by unseen, so it ends the hold and is treated as a new key. */
+   went by unseen, so it ends the hold and is treated as a new key.
+
+   Only a fresh press is taken as the binding. A repeat that arrives while a
+   row is armed is the key that armed it -- Space or Enter held on a Change
+   button reached through keyboard navigation -- and ImGui saw that key go
+   down, so its release has to reach ImGui: taking the repeat would hold the
+   release back and leave the key down in ImGui, and the next press would not
+   count as one. The repeat is dropped instead, so it does not move the nav
+   cursor either. */
 static bool keySetupTakesKeyEvent(const SDL_Event *ev) {
     if (ev->type != SDL_EVENT_KEY_DOWN && ev->type != SDL_EVENT_KEY_UP) {
         return false;
@@ -7949,6 +7957,9 @@ static bool keySetupTakesKeyEvent(const SDL_Event *ev) {
     if (ev->type == SDL_EVENT_KEY_DOWN &&
         imguiKeySetupIsCapturingInGameKey() &&
         ev->key.windowID == SDL_GetWindowID(s_window)) {
+        if (ev->key.repeat) {
+            return true;
+        }
         imguiKeySetupHandleInGameScancode((int)ev->key.scancode);
         s_keySetupHeldKey = ev->key.scancode;
         return true;
