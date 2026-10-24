@@ -112,8 +112,8 @@ static inline LvMapItemSprite lvMapPillSprite(bool neutral, int armour, int pale
  * away. The nearest other entry, brown (13), is 159 away, so only the red
  * team clashes.
  *
- * The grey is light grey (entry 10, 0xa5a5a5) when no team in the game has
- * it, and grey (entry 0, 0x6f6f6f) when one does. Both are far from the
+ * The grey is grey (entry 0, 0x6f6f6f) when no team in the game has it,
+ * and light grey (entry 10, 0xa5a5a5) when one does. Both are far from the
  * ground and the road, which are dark. If both greys are taken, the first
  * entry no team has and that does not clash is used. */
 
@@ -124,8 +124,8 @@ static inline LvMapItemSprite lvMapPillSprite(bool neutral, int armour, int pale
 #define LV_NEUTRAL_PILL_CLASH_DIST 96
 
 /* The two greys, in the order they are tried. */
-#define LV_NEUTRAL_PILL_GREY       10
-#define LV_NEUTRAL_PILL_GREY_SPARE 0
+#define LV_NEUTRAL_PILL_GREY       0
+#define LV_NEUTRAL_PILL_GREY_SPARE 10
 
 /* The coloured pixels of each row of items.bmp (the pixels that differ from
  * row to row), as 0xRRGGBB. */
