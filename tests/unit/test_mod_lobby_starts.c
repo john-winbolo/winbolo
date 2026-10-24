@@ -21,7 +21,8 @@
  *
  *   run_mac_bolo_settings_defaults_play_old_rules
  *       nothing chosen: the round plays the eleven rules the mod's written
- *       table always set, at the same numbers.
+ *       table always set, at the same numbers, and tank_hit_sets_off_mines
+ *       at 0 from the tank_hit_mines part added after it.
  *   run_mac_bolo_settings_each_part_off
  *       each part turned off on its own: that part's rules are back on the
  *       classic table and every other part's rules are unchanged.
@@ -328,11 +329,13 @@ enum {
     MLS_PART_TANK_BOXES,
     MLS_PART_PILL_AIM,
     MLS_PART_BASE_DEFENCE,
+    MLS_PART_TANK_HIT_MINES,
     MLS_PART_COUNT
 };
 
 static const char *const kMlsPartSetting[MLS_PART_COUNT] = {
     "pushback", "shell_cap", "tank_boxes", "pill_aim", "base_defence",
+    "tank_hit_mines",
 };
 
 /* Every rule the mod sets, the part that sets it, and the value its
@@ -358,6 +361,7 @@ static const MlsRule kMlsRules[] = {
     MLS_RULE(pill_aim_mac,                 MLS_PART_PILL_AIM,     1),
     MLS_RULE(pill_base_defend_shape,       MLS_PART_BASE_DEFENCE, 1),
     MLS_RULE(pill_base_defend_range,       MLS_PART_BASE_DEFENCE, 7),
+    MLS_RULE(tank_hit_sets_off_mines,      MLS_PART_TANK_HIT_MINES, 0),
 };
 
 #define MLS_RULE_COUNT ((int)(sizeof(kMlsRules) / sizeof(kMlsRules[0])))

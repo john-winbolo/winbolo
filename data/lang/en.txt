@@ -2752,6 +2752,7 @@ STR_RULE_DESC_tank_slide_mac=Whether a shell hit pushes a tank the Mac Bolo way.
 STR_RULE_DESC_pill_aim_mac=Whether pillboxes use Mac Bolo aiming. Moving, unobstructed tanks within about one square make the pill aim far along their heading. Stopped or blocked tanks receive no lead. Overrides pill_massage_range, pill_massage_cosine and pill_aim_iterations.
 STR_RULE_DESC_tank_collision_mac=Whether tanks use Mac Bolo's direction-dependent sprite boxes and pixel nudges against walls, live pills and hostile bases. Allows closer passes beside a pill for pill massage.
 STR_RULE_DESC_tank_deep_sea_safe=Whether a tank with no boat can drive over deep sea without drowning. Off is the classic game: deep sea drowns a tank with no boat. A tank that is out on deep sea with no boat when this goes back off drowns on the next tick.
+STR_RULE_DESC_tank_hit_sets_off_mines=Whether a shell that hits a tank sets off a mine on the square it bursts on. On is the classic game: the hit sets off a mine there, so a shot at a tank can set off the mines it has just laid under or behind it. Off leaves those mines alone. A shell that hits a pillbox, a base or the ground, or that runs out, sets off a mine either way.
 
 # Rule range wording
 STR_RULE_RANGE_BETWEEN={string1} to {string2}

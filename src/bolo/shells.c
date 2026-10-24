@@ -583,7 +583,15 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				 * at the true position. Reached once per shell (collision path);
 				 * NULL on the client, which is not authoritative over shell death. */
 				if (sim->callbacks.shellDeath) sim->callbacks.shellDeath(sim->callbacks.ctx, position->fireTick, position->serverFireTick, position->owner, newX, newY, shellOutcome);
-				minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
+				/* With tank_hit_sets_off_mines at 0, a shell that hit a tank
+				 * leaves the mines on its square alone: only a shell that
+				 * hit a pillbox, a base or terrain, or that ran out, sets
+				 * one off. Everything else about the blast is the same. */
+				if (sim->rules.tank_hit_sets_off_mines != 0 ||
+				    (shellOutcome != SHELL_OUTCOME_TANK_HIT &&
+				     shellOutcome != SHELL_OUTCOME_TANK_KILL)) {
+					minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
+				}
 				count = 0;
 				while (count < numTanks) {
 					/* lgms[count] is the ADDRESS of an lgmen[] slot, so it is never

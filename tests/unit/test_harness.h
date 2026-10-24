@@ -2881,6 +2881,12 @@ int run_tank_blast_builder_back_in_tank(void);
 int run_tank_blast_pill_shell_builder_now(void);
 int run_tank_blast_no_record_builder_now(void);
 int run_shell_blast_pill_hit_on_shooter_screen(void);
+/* tank_hit_sets_off_mines: a tank hit sets off the mine on its square with
+ * the rule at 1 and not at 0; a terrain hit and a shell that runs out set
+ * one off either way (test_tank_hit_mines.c). */
+int run_tank_hit_mines_rule_on_sets_off(void);
+int run_tank_hit_mines_rule_off_spares(void);
+int run_tank_hit_mines_rule_off_ground(void);
 int run_teleport_erases_tank_rewind_record(void);
 int run_teleport_shell_hits_new_place(void);
 int run_teleport_rewind_refills(void);

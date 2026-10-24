@@ -1411,6 +1411,7 @@ static const LangEntry langTable[] = {
     {3039, "No recordings yet. Single-player rounds are recorded here, and .wbv recordings opened from another app are listed here too."},
     {3040, "{string1} has been saved. Choose an app to share it with next."},
     {3041, "Nothing here yet. Maps you save, here or from a game, show up here."},
+    {3042, "Whether a shell that hits a tank sets off a mine on the square it bursts on. On is the classic game: the hit sets off a mine there, so a shot at a tank can set off the mines it has just laid under or behind it. Off leaves those mines alone. A shell that hits a pillbox, a base or the ground, or that runs out, sets off a mine either way."},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},

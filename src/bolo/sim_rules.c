@@ -249,6 +249,9 @@ void simRulesClassic(SimRules *out) {
     /* ---- Deep sea ---- */
     out->tank_deep_sea_safe      = 0;
 
+    /* ---- Tank hit mines ---- */
+    out->tank_hit_sets_off_mines = 1;
+
 }
 
 /* ---- Against the classic table -------------------------------------------
@@ -634,7 +637,9 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(pill_aim_mac,              INT,    0,      1) \
     X(tank_collision_mac,        INT,    0,      1)                          \
     /* Deep sea */                                                          \
-    X(tank_deep_sea_safe,        INT,    0,      1)
+    X(tank_deep_sea_safe,        INT,    0,      1)                          \
+    /* Tank hit mines */                                                    \
+    X(tank_hit_sets_off_mines,   INT,    0,      1)
 
 /* The rules a single other rule also caps, as the pairs below hold them.
  * Only a direct field against other_field test is here: where a ceiling is

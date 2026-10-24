@@ -36,6 +36,14 @@
 -- as a circle of radius 7 with the edge left out, so a pillbox exactly 7
 -- away, or at 5 across and 5 down, stays calm.
 --
+-- Tank hits and mines. In WinBolo a shell that hits a tank also sets off
+-- any mine on the square where it bursts, the same as a shell that hits
+-- the ground there. So a tank that lays mines as it runs can have them
+-- set off by the shots of the tank chasing it. In Mac Bolo a shell that
+-- hits a tank does not touch the map square at all; only a shell that
+-- hits the ground or terrain sets off a mine. tank_hit_sets_off_mines at
+-- 0 plays the Mac Bolo way.
+--
 -- Starts. The engine tells on_choose_start which start the lobby put the
 -- seat on: the start its player picked by hand, else one on the team's
 -- side, else the engine's own spread of the field. That start is the
@@ -79,6 +87,8 @@
 --   pill_aim            pillbox aiming and massage (pill_aim_mac).
 --   base_defence        base defence circle (pill_base_defend_shape).
 --   base_defence_radius its radius (pill_base_defend_range, 7).
+--   tank_hit_mines      tank hits do not set off mines
+--                       (tank_hit_sets_off_mines).
 --   spawn_starts        the Mac Bolo start pick for spawns.
 --   first_start_lobby   "Override first start to what was chosen in lobby".
 --                       On (the default): a tank the lobby has a start
@@ -105,12 +115,12 @@
 scenario = {
   name = "Mac Bolo Rules",
   description = "Plays the Mac Bolo shell pushback, pillbox shell cap, " ..
-                "tank clearance, pillbox massage, base defence circle " ..
-                "and spawn starts. Each part can be turned off in the " ..
-                "lobby.",
+                "tank clearance, pillbox massage, base defence circle, " ..
+                "tank hits that do not set off mines and spawn starts. " ..
+                "Each part can be turned off in the lobby.",
   api = 1,
   author = "WinBolo",
-  updated = "2026-10-20T17:19Z",
+  updated = "2026-10-24T22:38Z",
   kind = "mod",
   bound = false,
 
@@ -155,6 +165,11 @@ scenario = {
     { id = "base_defence_radius", label = "Base defence circle radius",
       type = "int", min = 1, max = 30, step = 1, default = 7 },
 
+    -- Tank hits and mines: a shell that hits a tank leaves the mines on
+    -- its square alone.
+    { id = "tank_hit_mines", label = "Tank hits do not set off mines",
+      type = "bool", default = true },
+
     -- Starts: the two-pass Mac Bolo pick for spawns.
     { id = "spawn_starts", label = "Mac Bolo spawn starts", type = "bool",
       default = true },
@@ -184,6 +199,7 @@ local SHELL_CAP         = game.setting("shell_cap")
 local TANK_BOXES        = game.setting("tank_boxes")
 local PILL_AIM          = game.setting("pill_aim")
 local BASE_DEFENCE      = game.setting("base_defence")
+local TANK_HIT_MINES    = game.setting("tank_hit_mines")
 local SPAWN_STARTS      = game.setting("spawn_starts")
 local FIRST_START_LOBBY = game.setting("first_start_lobby")
 
@@ -225,6 +241,12 @@ if BASE_DEFENCE then
   rules.pill_base_defend_shape = 1
   -- A radius, with the edge left out (7 by default).
   rules.pill_base_defend_range = game.setting("base_defence_radius")
+end
+
+if TANK_HIT_MINES then
+  -- 0 leaves the mines under a tank that is hit alone; the classic table
+  -- plays with 1.
+  rules.tank_hit_sets_off_mines = 0
 end
 
 scenario.rules = rules

@@ -4896,6 +4896,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # plus the shell's offset from the rewound hit point, not at the shell,
     # which a lag-compensated test leaves behind the tank.
     tests/unit/test_tank_blast_at_tank.c
+    # tank_hit_sets_off_mines: whether a shell that hits a tank sets off the
+    # mines on its square.
+    tests/unit/test_tank_hit_mines.c
     tests/unit/test_teleport_clears_rewind.c
     tests/unit/test_shell_rewind_rules.c
     tests/unit/test_input_gate.c
@@ -6388,6 +6391,9 @@ set(_unit_test_names
     tank_blast_pill_shell_builder_now
     tank_blast_no_record_builder_now
     shell_blast_pill_hit_on_shooter_screen
+    tank_hit_mines_rule_on_sets_off
+    tank_hit_mines_rule_off_spares
+    tank_hit_mines_rule_off_ground
     teleport_erases_tank_rewind_record
     teleport_shell_hits_new_place
     teleport_rewind_refills
