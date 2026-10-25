@@ -725,7 +725,10 @@ log's stop hook (`serverLifecycleLogRoundEndOverrunStats`, set with
 `logSetStopHook`) writes one more, with the round-end flag, when the round's
 log closes, so a round shorter than 30 seconds still has one. That record
 is the last entry before `LOG_QUIT`. A log that closes without a round
-having run since the last round-end record gets none.
+having run since the last round-end record gets none. When the log closes
+on a frame that is a multiple of 1500, the log holds two records with the
+same frame count: the timed one, and the round-end one with the round-end
+flag. A reader keeps both.
 
 A reader takes the fields it knows and skips the rest by the framed length. A
 record shorter than 44 bytes, or with version 0, is consumed and ignored. A
