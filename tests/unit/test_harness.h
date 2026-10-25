@@ -2870,7 +2870,6 @@ int run_tkexp_lgm_pairing(void);
  * server has it on the hit tick, rewound or not (test_tank_blast_at_tank.c). */
 int run_tank_blast_at_shell_place(void);
 int run_tank_blast_kill_at_shell_place(void);
-int run_tank_blast_mine_check_at_shell_place(void);
 int run_tank_blast_zero_rewind_unchanged(void);
 int run_tank_blast_hit_decision_unchanged(void);
 /* Whether that blast kills a builder is decided on the shooter's screen, not

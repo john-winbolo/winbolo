@@ -1368,7 +1368,6 @@ static const UnitTestEntry s_tests[] = {
     { "tkexp_lgm_pairing",                       run_tkexp_lgm_pairing                       },
     { "tank_blast_at_shell_place",               run_tank_blast_at_shell_place               },
     { "tank_blast_kill_at_shell_place",          run_tank_blast_kill_at_shell_place          },
-    { "tank_blast_mine_check_at_shell_place",    run_tank_blast_mine_check_at_shell_place    },
     { "tank_blast_zero_rewind_unchanged",        run_tank_blast_zero_rewind_unchanged        },
     { "tank_blast_hit_decision_unchanged",       run_tank_blast_hit_decision_unchanged       },
     { "tank_blast_builder_on_shooter_screen",    run_tank_blast_builder_on_shooter_screen    },

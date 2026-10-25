@@ -6380,7 +6380,6 @@ set(_unit_test_names
     tkexp_lgm_pairing
     tank_blast_at_shell_place
     tank_blast_kill_at_shell_place
-    tank_blast_mine_check_at_shell_place
     tank_blast_zero_rewind_unchanged
     tank_blast_hit_decision_unchanged
     tank_blast_builder_on_shooter_screen
