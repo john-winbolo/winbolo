@@ -2035,7 +2035,9 @@ M.PILL_PLACE_TURTLE_SPACING = 2
 --     the base tile is on it). capture_base and attack_base rows for that
 --     base cost x min(2^(d / TURTLE_BASE_DOUBLE_TILES), TURTLE_BASE_MULT_CAP),
 --     applied before the snap floors (IMMINENT capture, steal, close-out
---     still win). No positive tile anywhere = x1. DOUBLE_TILES 0 = off.
+--     still win). The IMMINENT test reads the multiplied cost, so a far dead
+--     base is not IMMINENT for a Turtle2 bot. No positive tile anywhere = x1.
+--     DOUBLE_TILES 0 = off.
 --   * d is cached per base and recomputed every TURTLE_BASE_D_REFRESH_TICKS
 --     (one C distance transform of the influence grid, then one lookup per
 --     base). d stops at the distance where the multiplier reaches the cap

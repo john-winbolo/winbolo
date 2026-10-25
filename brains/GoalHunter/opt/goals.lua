@@ -1567,7 +1567,7 @@ function M.turtle_far_text(d, m, src)
     and "the Chebyshev distance to the nearest friendly base/pill centre (provisional until this base's ring search ends, or the fallback when enemy influence cancels every friendly centre)"
     or "Chebyshev tiles to the nearest tile with influence > 0 (our ground)"
   return string.format(" x turtle_far{d=%s%s,x%.2f}", dtxt, ctr, m), string.format(
-    "|turtle_far:Turtle2 mode bot (mode=turtle2). d=%s%s is %s. x min(2^(%d/%d[TURTLE_BASE_DOUBLE_TILES]), %g[TURTLE_BASE_MULT_CAP]) = x%.2f, applied to the row sum before any snap floor. The search stops at %d tiles, where the multiplier reaches the cap; d is rebuilt every %d ticks by one C distance transform (on an older exe without it, by a Lua ring search spread over thinks)",
+    "|turtle_far:Turtle2 mode bot (mode=turtle2). d=%s%s is %s. x min(2^(%d/%g[TURTLE_BASE_DOUBLE_TILES]), %g[TURTLE_BASE_MULT_CAP]) = x%.2f, applied to the row sum before any snap floor. The search stops at %d tiles, where the multiplier reaches the cap; d is rebuilt every %d ticks by one C distance transform (on an older exe without it, by a Lua ring search spread over thinks)",
     dtxt, ctr, how, d, C.TURTLE_BASE_DOUBLE_TILES or 0, C.TURTLE_BASE_MULT_CAP or 1, m,
     lim, C.TURTLE_BASE_D_REFRESH_TICKS or 50)
 end
