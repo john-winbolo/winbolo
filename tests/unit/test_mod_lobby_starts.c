@@ -106,7 +106,6 @@
 #include "scenario_host.h"         /* scenarioHostAttachMod,
                                     * scenarioHostRegisterScenarioLister */
 #include "scenario_validate.h"     /* scenarioHostScriptCount */
-#include "server_sim_scenario.h"   /* serverSimScenarioApplyLobbyRules */
 #include "sim_rules.h"             /* SimRules, simRulesClassic */
 #include "threads.h"
 #include "test_harness.h"
@@ -564,6 +563,12 @@ int run_mac_bolo_tank_hit_mines_part_with_mines_mod(void) {
     UT_ASSERT(mlsListMinesRound(minesFirst, 2, 1, &v) == 0);
     UT_ASSERT_MSG(v == 1,
                   "Tank Hits Set Off Mines above Mac Bolo Rules, part on: "
+                  "tank_hit_sets_off_mines is %d, wanted 1", (int)v);
+
+    v = -1;
+    UT_ASSERT(mlsListMinesRound(minesFirst, 2, 0, &v) == 0);
+    UT_ASSERT_MSG(v == 1,
+                  "Tank Hits Set Off Mines above Mac Bolo Rules, part off: "
                   "tank_hit_sets_off_mines is %d, wanted 1", (int)v);
     return 0;
 }
