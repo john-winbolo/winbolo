@@ -609,19 +609,26 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
  * straight up, down or the side burst 96 to 128 from the tank's centre. A
  * shell at 45 degrees met the box corner, about 150 to 181 out. So the
  * danger to the builder was greatest from straight on and least at 45
- * degrees. Measured per order on grass under an angry pillbox (a shell
- * every 6 ticks), 1.17 killed him 44% of the time along an axis, 22% at
- * 22.5 degrees and 0% at 45 degrees, 22% on average. An offset of 16
- * gives 27%, an offset of 0 gives 60% and 64 gives 0%. The square behind
- * the tank is not meant to be a fully safe place: a small chance of death
- * under heated fire is by design.
+ * degrees. Measured per order under an angry pillbox (a shell every 6
+ * ticks) with the tank still. The terrain is the tank's own square: that
+ * square sets the builder's speed for his first steps.
+ *   Grass (16 per tick): 1.17 killed him 26% of the time along an axis,
+ *   15% at 22.5 degrees and 0% at 45 degrees. An offset of 16 gives 9%,
+ *   an offset of 0 gives 26% and 64 gives 0%.
+ *   Forest (8 per tick): 1.17 killed him 44% of the time along an axis,
+ *   22% at 22.5 degrees and 0% at 45 degrees, 22% on average. An offset of
+ *   16 gives 27%, an offset of 0 gives 60% and 64 gives 0%.
+ * 16 comes close to the rate of 1.17. The square behind the tank is not
+ * meant to be a fully safe place: a small chance of death under heated fire
+ * is by design.
  *
- * Where the danger is now: a hit bursts 64 to 112 from the tank's centre on
- * the shooter's side, and the builder dies within MAP_SQUARE_MIDDLE of the
- * burst. A hit can kill him in his first 2 ticks out when the tank is still
- * or drives at the shooter. A tank that drives away from the shooter on a
- * road, a boat or a base keeps pace with him, and the danger lasts as long
- * as it does. */
+ * Where the danger is now: a hit bursts 80 to 111 from the centre of a still
+ * tank on the shooter's side, and the builder dies within MAP_SQUARE_MIDDLE
+ * of the burst. So a hit can kill him only while he is 48 or less out: his
+ * first 2 ticks out on grass and his first 4 on forest, when the tank is
+ * still or drives at the shooter. A tank that drives away from the shooter
+ * on a road, a boat or a base keeps pace with him, and the danger lasts as
+ * long as it does. */
 #define LGM_START_OFFSET 16
 
 /*********************************************************
