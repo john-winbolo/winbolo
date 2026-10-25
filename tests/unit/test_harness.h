@@ -1287,11 +1287,13 @@ int run_log_roundtrip_map_name_at_round_start(void);
 int run_log_roundtrip_player_lag(void);
 int run_log_roundtrip_player_lag_recorded(void);
 /* log_OverrunStats: the record through the writer and back, and a recorded
- * round's record at 1:00 and at the round end. */
+ * round's records at 0:30, 1:00 and the round end. */
 int run_log_roundtrip_overrun_stats(void);
 int run_log_roundtrip_overrun_stats_recorded(void);
-/* The same with two thinking bots: both records have each bot's thinks. */
+/* The same with two thinking bots: each record has each bot's thinks. */
 int run_log_roundtrip_overrun_stats_bots(void);
+/* A longer round has a record every 30 seconds, then the round-end one. */
+int run_log_roundtrip_overrun_stats_every_30s(void);
 int run_server_lag_log_due(void);
 int run_server_overrun_stats_due(void);
 int run_lv_player_lag_read(void);

@@ -4,9 +4,10 @@
 """Print the server timing records (log_OverrunStats) of a WinBolo round log.
 
 A round log (.wbv) is a ZIP whose member log.dat holds the recording. The
-server writes a log_OverrunStats record 1 minute into a round, then every 5
-minutes, and one more when the round's log closes. Each holds the numbers the
-server's console prints in its overrun lines. This tool prints each record in
+server writes a log_OverrunStats record every 30 seconds of a round, and one
+more when the round's log closes. Each holds the numbers the server's console
+prints in its overrun lines (the console prints them only at 1:00 and then
+every 5 minutes). This tool prints each record in
 the shape of those lines, with no window. The layout is in
 docs/replay-format.md ("log_OverrunStats payload").
 
