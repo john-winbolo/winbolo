@@ -60,6 +60,17 @@ uint32_t clipGifLenFromSeconds(float secs, uint32_t curMs, uint32_t totalMs);
 /* A length in ms, as the seconds the length field shows. */
 float clipGifLenToSeconds(uint32_t lenMs);
 
+/* ── Recording mode ──────────────────────────────────────────────────
+ * The reel's GIF controls (the GIF button, the length field and marker, the
+ * gallery button, the crop button and frame, and the GIF button on each
+ * highlight row) show only in recording mode, which the movie camera button
+ * on the transport row turns on and off.
+ *
+ * True when the GIF controls show: in recording mode, and also while a
+ * capture is running, so the controls of a GIF that is being made do not go
+ * away until it ends. */
+bool clipGifToolsShown(bool recordMode, bool captureActive);
+
 /* ── Timeline position ───────────────────────────────────────────────
  * The seek bar maps 0..totalMs onto the screen range [x0, x1] (the range
  * the slider's grab centre moves over). These convert between a time and a

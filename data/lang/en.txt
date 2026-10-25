@@ -3057,3 +3057,6 @@ STR_LV_CHAT_TEAM=(team)
 STR_LV_CHAT_TO=(to {player})
 STR_LV_CHAT_SPECTATOR=Spectator {number}
 
+# The replay's recording mode button, which shows the GIF controls
+STR_REEL_RECORD_MODE_TIP=Recording mode: shows the GIF controls
+

@@ -1435,6 +1435,9 @@ static const LangEntry langTable[] = {
     {3102, "(team)"},
     {3103, "(to {player})"},
     {3104, "Spectator {number}"},
+
+
+    {3150, "Recording mode: shows the GIF controls"},
     {1467, "Controller"},
     {1468, "Press a button or pull a trigger..."},
     {1469, "Fire"},

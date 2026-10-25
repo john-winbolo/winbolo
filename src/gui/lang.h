@@ -3687,6 +3687,9 @@
 #define STR_LV_CHAT_TO                           3103
 #define STR_LV_CHAT_SPECTATOR                    3104
 
+/* The replay's recording mode button, which shows the GIF controls */
+#define STR_REEL_RECORD_MODE_TIP                 3150
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

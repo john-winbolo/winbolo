@@ -374,8 +374,12 @@ void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
                  * vertical half, which is what SmallButton does for a caption.
                  * The glyph says what the control produces and the tooltip names
                  * the format; with no icon loaded the format's name is the
-                 * caption, as it was before. */
-                if (lvEmbedIsActive()) {
+                 * caption, as it was before. Shown only in the reel's
+                 * recording mode, like the GIF controls on its transport
+                 * row. */
+                if (lvEmbedIsActive() &&
+                    clipGifToolsShown(lobbyReel()->recordMode,
+                                      lobbyClipGifActive())) {
                     ImGui::SameLine();
                     ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x -
                                          lobbyClipGifButtonWidth());

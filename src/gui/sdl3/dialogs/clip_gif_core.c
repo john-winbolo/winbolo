@@ -77,6 +77,12 @@ float clipGifLenToSeconds(uint32_t lenMs) {
     return (float)lenMs / 1000.0f;
 }
 
+/* ── Recording mode ────────────────────────────────────────────────── */
+
+bool clipGifToolsShown(bool recordMode, bool captureActive) {
+    return recordMode || captureActive;
+}
+
 /* ── Timeline position ─────────────────────────────────────────────── */
 
 float clipGifTimelineX(uint32_t timeMs, uint32_t totalMs, float x0, float x1) {
