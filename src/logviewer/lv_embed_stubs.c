@@ -117,6 +117,19 @@ void lv_imgui_comments_shutdown(void) {
 void lv_imgui_context_shutdown(void) {
 }
 
+#if defined(__APPLE__) && !defined(__IPHONEOS__)
+#include "platform/mac_menubar.h"
+/* ----- macOS menu bar --------------------------------------------------
+ * Reached only through lvHostTeardownCommon(withImGui = true), as above.
+ * On macOS (not iOS) the only build that links this file is WbvRender, which
+ * has no menu bar. The real shim, platform/mac_menubar.mm, calls the
+ * standalone viewer's window and ImGui panel functions, which WbvRender does
+ * not compile, so it cannot be linked there. The guard matches the one
+ * around the call in lv_embed.c. */
+void lv_mac_menubar_uninstall(void) {
+}
+#endif
+
 /* draw.c offsets the game area by the viewer's menu bar height. It reads the
  * offset as 0 whenever draw is in embed mode (lvDrawMenuBarOffset short-
  * circuits on the embedded flag), which is the only mode these builds

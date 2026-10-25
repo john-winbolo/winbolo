@@ -90,7 +90,9 @@ ffmpeg -framerate 50 -i frames/frame_%06d.png -c:v libx264 -pix_fmt yuv420p -crf
 Or with no files between them (WbvRender prints the frame size on stderr):
 
 ```bash
-./build/WbvRender round.wbv -out - -from 60 -to 70 -follow Bob |   ffmpeg -f rawvideo -pixel_format rgb24 -video_size 640x480 -framerate 50          -i - -c:v libx264 -pix_fmt yuv420p -crf 20 clip.mp4
+./build/WbvRender round.wbv -out - -from 60 -to 70 -follow Bob | \
+  ffmpeg -f rawvideo -pixel_format rgb24 -video_size 640x480 -framerate 50 \
+         -i - -c:v libx264 -pix_fmt yuv420p -crf 20 clip.mp4
 ```
 
 | Option | Meaning |
@@ -98,8 +100,8 @@ Or with no files between them (WbvRender prints the frame size on stderr):
 | `-out <dir>` / `-out -` | PNG frames `frame_000000.png`, ... in `<dir>`, or raw `rgb24` frames on stdout |
 | `-from <sec>`, `-to <sec>` | The part of the game to draw, from the start of the game (`75`, `75.5` or `1:15.5`); the default is all of it |
 | `-fps <n>` | Frames per second of replay time (default 50, one frame a tick) |
-| `-view x y w h` | A fixed view: the top-left map square and the size in squares |
-| `-follow <player>` | Follow a player, by name or by player number; the players are listed on stderr. With neither `-view` nor `-follow`, the view follows the lowest-numbered player who has a tank |
+| `-view x y w h` | A fixed view: the top-left map square and the size in squares. The view must stay on the map: `x + w` and `y + h` are 255 or less |
+| `-follow <player>` | Follow a player, by name or by player number; the players are listed on stderr. A name or a number of a player who joins later works from the frame they have a tank. With neither `-view` nor `-follow`, the view follows the lowest-numbered player who has a tank |
 | `-size w h` | The view size in squares when there is no `-view` (default 40 by 30, 640x480 pixels) |
 | `-self <name>` | Draw the round from this player's side: allies green, enemies red |
 | `-scale <n>` | Make each pixel `n` by `n` |
@@ -112,8 +114,10 @@ Things to know:
   the machine changes how long the run takes, never what a frame shows.
 - **The data folder must be beside the program**, as for the Log Viewer. The
   build copies `data/` and the SDL libraries next to `WbvRender`.
-- **Preferences are not read.** The frames use the viewer's defaults, so two
-  machines draw the same log the same way.
+- **Nothing in the frames comes from the preferences.** The preference file is
+  opened for the view size only, and WbvRender replaces that value before the
+  first frame. The frames use the viewer's defaults, so two machines draw the
+  same log the same way.
 - The scenario markers' pulse is the only part of the drawing that follows the
   wall clock, so a marker can be at a different point of its pulse from one run
   to the next.

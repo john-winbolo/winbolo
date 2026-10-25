@@ -3081,6 +3081,15 @@ endif()
 if(MATH_LIB)
     target_link_libraries(WbvRender PRIVATE ${MATH_LIB})
 endif()
+# macOS: lv_embed.c calls macOSPinchZoomInit, so the pinch file and AppKit are
+# linked as for LogViewer. The LogViewer menu bar shim (mac_menubar.mm) is not:
+# it calls the standalone viewer's window and panel functions, which this
+# target does not compile. lv_embed_stubs.c has a no-op
+# lv_mac_menubar_uninstall in its place.
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_sources(WbvRender PRIVATE src/gui/sdl3/macos_pinch.m)
+    target_link_libraries(WbvRender PRIVATE "-framework AppKit")
+endif()
 set_flat_output(WbvRender "${CMAKE_BINARY_DIR}")
 add_custom_command(TARGET WbvRender POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -5910,7 +5919,6 @@ set(_unit_test_names
     firstjoinhost_off_leaves_host_alone
     firstjoinhost_second_joiner_does_not_displace
     log_roundtrip_basic
-    wbv_render_args_and_frame_ticks
     log_roundtrip_snapshot_keeps_chain_synced
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
@@ -5918,6 +5926,7 @@ set(_unit_test_names
     log_roundtrip_ping
     log_roundtrip_snapshot_tank_stocks
     log_roundtrip_tank_stock_record
+    wbv_render_args_and_frame_ticks
     replay_roundtrip_world
     replay_roundtrip_base_migrate
     replay_roundtrip_base_damage

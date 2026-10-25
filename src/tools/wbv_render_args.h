@@ -82,4 +82,8 @@ uint32_t wbvRenderFrameCount(uint32_t durationMs, int fps);
  * milliseconds. Returns false for anything else or a negative time. */
 bool wbvRenderParseSeconds(const char *text, uint32_t *outMs);
 
+/* The player number in a -follow value: the number when the text is all
+ * digits and below maxPlayers, or -1 when it is a name. */
+int wbvRenderFollowNumber(const char *follow, int maxPlayers);
+
 #endif /* WBV_RENDER_ARGS_H */

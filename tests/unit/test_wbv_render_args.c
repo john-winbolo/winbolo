@@ -110,6 +110,53 @@ int run_wbv_render_args_and_frame_ticks(void) {
     UT_ASSERT(err[0] != '\0');
     UT_ASSERT(!parse(&a, err, sizeof(err), 5, "a.wbv", "b.wbv", "-out", "d"));
     UT_ASSERT(err[0] != '\0');
+    UT_ASSERT(!parse(&a, err, sizeof(err), 6, "in.wbv", "-out", "d",
+                     "-fps", "0"));
+    UT_ASSERT(err[0] != '\0');
+    UT_ASSERT(!parse(&a, err, sizeof(err), 6, "in.wbv", "-out", "d",
+                     "-fps", "201"));
+    UT_ASSERT(err[0] != '\0');
+    UT_ASSERT(parse(&a, err, sizeof(err), 6, "in.wbv", "-out", "d",
+                    "-fps", "200") && a.fps == 200);
+    UT_ASSERT(!parse(&a, err, sizeof(err), 12, "in.wbv", "-out", "d",
+                     "-view", "1", "2", "3", "4", "-size", "20", "10"));
+    UT_ASSERT(err[0] != '\0');
+    UT_ASSERT(!parse(&a, err, sizeof(err), 6, "in.wbv", "-out", "d",
+                     "-follow", ""));
+    UT_ASSERT(err[0] != '\0');
+
+    /* A -view must stay on the map: x + w and y + h are 255 or less. The
+     * screen code would otherwise move it back and print nothing. */
+    UT_ASSERT(!parse(&a, err, sizeof(err), 9, "in.wbv", "-out", "d",
+                     "-view", "240", "0", "40", "30"));
+    UT_ASSERT(err[0] != '\0');
+    UT_ASSERT(!parse(&a, err, sizeof(err), 9, "in.wbv", "-out", "d",
+                     "-view", "0", "230", "40", "30"));
+    UT_ASSERT(err[0] != '\0');
+    UT_ASSERT(!parse(&a, err, sizeof(err), 9, "in.wbv", "-out", "d",
+                     "-view", "255", "0", "1", "1"));
+    UT_ASSERT(err[0] != '\0');
+    UT_ASSERT(parse(&a, err, sizeof(err), 9, "in.wbv", "-out", "d",
+                    "-view", "215", "225", "40", "30"));
+    UT_ASSERT(a.viewX == 215 && a.viewY == 225);
+    UT_ASSERT(parse(&a, err, sizeof(err), 9, "in.wbv", "-out", "d",
+                    "-view", "0", "0", "255", "255"));
+
+    /* -follow: all digits below the player count is a player number, and
+     * anything else is a name. WbvRender turns a number into that player's
+     * name on each frame until it finds their tank, so a player who joins
+     * late is still followed. */
+    UT_ASSERT(wbvRenderFollowNumber("3", 16) == 3);
+    UT_ASSERT(wbvRenderFollowNumber("0", 16) == 0);
+    UT_ASSERT(wbvRenderFollowNumber("15", 16) == 15);
+    UT_ASSERT(wbvRenderFollowNumber("07", 16) == 7);
+    UT_ASSERT(wbvRenderFollowNumber("16", 16) == -1);
+    UT_ASSERT(wbvRenderFollowNumber("123456789012", 16) == -1);
+    UT_ASSERT(wbvRenderFollowNumber("Bob", 16) == -1);
+    UT_ASSERT(wbvRenderFollowNumber("3a", 16) == -1);
+    UT_ASSERT(wbvRenderFollowNumber("a3", 16) == -1);
+    UT_ASSERT(wbvRenderFollowNumber("", 16) == -1);
+    UT_ASSERT(wbvRenderFollowNumber(NULL, 16) == -1);
 
     /* Help is a refusal with no reason. */
     UT_ASSERT(!parse(&a, err, sizeof(err), 2, "-h"));

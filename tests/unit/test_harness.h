@@ -1278,7 +1278,6 @@ int run_round_start_owners_kept_after_manual_alliance(void);
 
 /* Log replay round-trip (test_log_roundtrip.c). */
 int run_log_roundtrip_basic(void);
-int run_wbv_render_args_and_frame_ticks(void);
 int run_log_roundtrip_snapshot_keeps_chain_synced(void);
 int run_log_roundtrip_lobby_snapshot_is_empty_world(void);
 int run_log_roundtrip_lobby_mode_drops_world_events(void);
@@ -1295,6 +1294,9 @@ int run_log_roundtrip_snapshot_tank_stocks(void);
 /* log_TankSetStock carries the player and the four values, and is written only
  * when one of them changed since the last record for that tank. */
 int run_log_roundtrip_tank_stock_record(void);
+
+/* WbvRender's command line and frame timing (test_wbv_render_args.c). */
+int run_wbv_render_args_and_frame_ticks(void);
 
 /* Record-and-decode round trip (test_replay_roundtrip.c, on the
  * replay_harness fixture): records a round in which a terrain cell, a base's

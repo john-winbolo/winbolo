@@ -45,9 +45,9 @@
  *   the machine.
  *
  *   ffmpeg, with the frames on a pipe (the size is printed on stderr):
- *     WbvRender round.wbv -out - -from 60 -to 70 -follow Bob |
- *       ffmpeg -f rawvideo -pixel_format rgb24 -video_size 640x480
- *              -framerate 50 -i - -c:v libx264 -pix_fmt yuv420p
+ *     WbvRender round.wbv -out - -from 60 -to 70 -follow Bob | \
+ *       ffmpeg -f rawvideo -pixel_format rgb24 -video_size 640x480 \
+ *              -framerate 50 -i - -c:v libx264 -pix_fmt yuv420p \
  *              -crf 20 clip.mp4
  *   or from PNG frames:
  *     ffmpeg -framerate 50 -i out/frame_%06d.png -c:v libx264
@@ -65,6 +65,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <signal.h>
 #include <sys/stat.h>
 #ifdef _WIN32
 #include <direct.h>
@@ -85,10 +86,6 @@
 #include <SDL3_ttf/SDL_ttf.h>
 
 #include "../third_party/stb/stb_image_write.h"
-
-/* The place of 1.0 in draw.c's zoom table. The reel opens at the widest step,
- * 0.5; the frames are drawn at 1x and scaled here if -scale asks. */
-#define WBV_RENDER_ZOOM_STEP_1X 5
 
 static void printUsage(void) {
     fprintf(stderr,
@@ -171,25 +168,30 @@ static void listPlayers(void) {
 }
 
 /* The name -follow means: the text itself, or the name of that player number
- * when it is all digits and that player is in the game. */
+ * when it is all digits and that player is in the game. A number for a player
+ * who has not joined yet stays as the digits, so the caller asks again on a
+ * later frame. */
 static void followName(const char *follow, char *dest, size_t destLen) {
-    const char *p = follow;
-    int n = 0;
+    int n = wbvRenderFollowNumber(follow, MAX_TANKS);
 
     snprintf(dest, destLen, "%s", follow);
-    while (*p >= '0' && *p <= '9') {
-        n = n * 10 + (*p - '0');
-        if (n >= MAX_TANKS) {
-            return;
-        }
-        p++;
-    }
-    if (*p != '\0' || p == follow) {
-        return;
-    }
-    if (lv_playersIsInUse((BYTE)n)) {
+    if (n >= 0 && lv_playersIsInUse((BYTE)n)) {
         lv_playersGetPlayerName((BYTE)n, dest, destLen);
     }
+}
+
+/* The place of 1.0 in draw.c's zoom table, or -1 when it has none. The reel
+ * opens at the widest step, 0.5; the frames are drawn at 1x and scaled here
+ * if -scale asks. */
+static int zoomStep1x(void) {
+    int i, count = lv_drawGetZoomStepCount();
+
+    for (i = 0; i < count; i++) {
+        if (lv_drawGetZoomStepValue(i) == 1.0f) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 /* With no -view and no -follow: follow the lowest-numbered player who has a
@@ -295,6 +297,7 @@ int main(int argc, char **argv) {
     uint32_t startMs = 0, totalMs = 0, endMs, frames, frame, ticksDone = 0;
     char followTarget[PLAYER_NAME_LEN + 1];
     bool following = false;
+    int zoomIndex;
     int rc = 1;
 
     if (!wbvRenderParseArgs(argc, argv, &args, err, sizeof(err))) {
@@ -365,8 +368,13 @@ int main(int argc, char **argv) {
     }
     lvEmbedPause();
     lvEmbedSetTankLabelsInTexture(true);
+    zoomIndex = zoomStep1x();
+    if (zoomIndex < 0) {
+        fprintf(stderr, "WbvRender: the log viewer has no 1x zoom step\n");
+        goto done;
+    }
     lv_clientMutexWaitFor();
-    lv_drawSetZoomStep(WBV_RENDER_ZOOM_STEP_1X, viewPxW / 2, viewPxH / 2);
+    lv_drawSetZoomStep(zoomIndex, viewPxW / 2, viewPxH / 2);
     lv_clientMutexRelease();
     lvEmbedSetViewportSize(viewPxW, viewPxH);
     if (lv_screenGetSizeX() != args.viewW || lv_screenGetSizeY() != args.viewH) {
@@ -406,13 +414,15 @@ int main(int argc, char **argv) {
     if (args.haveView) {
         setFixedView(args.viewX, args.viewY);
     }
-    if (args.follow != NULL) {
-        followName(args.follow, followTarget, sizeof(followTarget));
-    }
 
     if (args.rawOut) {
 #ifdef _WIN32
         _setmode(_fileno(stdout), _O_BINARY);
+#else
+        /* When the reader stops (ffmpeg quits), a write to the closed pipe
+         * must return short, as it does on Windows, and not end the process
+         * with SIGPIPE. */
+        signal(SIGPIPE, SIG_IGN);
 #endif
     } else if (!makeDir(args.outDir)) {
         fprintf(stderr, "WbvRender: could not make the folder %s: %s\n",
@@ -434,9 +444,11 @@ int main(int argc, char **argv) {
         }
         /* A player who has not joined yet, or is dead, has no tank to
          * follow; keep asking until they have one. After that the camera
-         * stays with them on its own. */
+         * stays with them on its own. A player number is turned into a name
+         * again on each try, so it works from the frame that player joins. */
         if (!args.haveView && !following) {
             if (args.follow != NULL) {
+                followName(args.follow, followTarget, sizeof(followTarget));
                 following = lvEmbedFocusPlayerByName(followTarget);
             } else {
                 following = followFirstTank(followTarget, sizeof(followTarget));

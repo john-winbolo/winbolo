@@ -100,6 +100,23 @@ bool wbvRenderParseSeconds(const char *text, uint32_t *outMs) {
     return true;
 }
 
+int wbvRenderFollowNumber(const char *follow, int maxPlayers) {
+    const char *p = follow;
+    int n = 0;
+
+    if (follow == NULL || follow[0] == '\0') {
+        return -1;
+    }
+    while (*p >= '0' && *p <= '9') {
+        n = n * 10 + (*p - '0');
+        if (n >= maxPlayers) {
+            return -1;
+        }
+        p++;
+    }
+    return *p == '\0' ? n : -1;
+}
+
 uint32_t wbvRenderFrameTicks(uint32_t frame, int fps) {
     if (fps <= 0) {
         return 0;
@@ -202,6 +219,14 @@ bool wbvRenderParseArgs(int argc, char **argv, WbvRenderArgs *out,
                 !parseInt(argv[i + 4], 1, WBV_RENDER_MAX_SQUARES, &out->viewH)) {
                 ARG_FAIL("-view needs x y w h in map squares (x, y 0-255; "
                          "w, h 1-%d)", WBV_RENDER_MAX_SQUARES);
+            }
+            /* The view cannot go past the map edge. The screen code would
+             * move it back and print nothing, so refuse it here. */
+            if (out->viewX + out->viewW > WBV_RENDER_MAX_SQUARES ||
+                out->viewY + out->viewH > WBV_RENDER_MAX_SQUARES) {
+                ARG_FAIL("-view %d %d %d %d goes past the map edge: x + w and "
+                         "y + h must be %d or less", out->viewX, out->viewY,
+                         out->viewW, out->viewH, WBV_RENDER_MAX_SQUARES);
             }
             out->haveView = true;
             i += 4;
