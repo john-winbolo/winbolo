@@ -9229,6 +9229,59 @@ static void renderTutorialOverlay(ClientSim *cs) {
     }
 }
 
+/* Turn SDL text input off on the window with keyboard focus when that
+   window's own ImGui context has no text field in use.
+
+   Every ImGui context we run -- the game's, each pop-out's, the lobby's and
+   the modal dialogs' -- has its own SDL3 backend, and the backend starts text
+   input on whichever window holds keyboard focus, not on the window its
+   context draws in. It stops it again only when that same context's field
+   lets go, and a context destroyed with a field still active (the lobby, when
+   the round starts with the caret in its chat line) never does. The game
+   window is then left in text input for the whole round. That costs nothing
+   on a plain layout, but under an input method it hands every key to the IME
+   first: under a Taiwanese Bopomofo IME each Shift tap flips Chinese/English
+   mode, Chinese mode swallows the letter keys, and Right Shift arrives with
+   the extended flag set (scan code 0xE036), which SDL maps to no key at all,
+   so a player who fires with Right Shift cannot fire.
+
+   Run at the top of the frame, before any context starts its next one, and
+   read each context's WantTextInputNextFrame: EndFrame sets it from the same
+   IME data it hands the backend, so it states the field the backend last
+   acted on. io.WantTextInput would not do -- it is only refreshed by NewFrame,
+   and read for a pop-out between the game's NewFrame and the pop-out's it is a
+   frame old, which cuts off a field the pop-out has just focused. Only the
+   focused window is checked: keys go nowhere else, and a window that takes
+   focus later is put right on that frame. Desktop only -- on the touch
+   layouts text input is the on-screen keyboard, which their own code opens
+   and closes. */
+static void dropStrayTextInput(void) {
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    SDL_Window *focus = SDL_GetKeyboardFocus();
+    if (focus == nullptr || !SDL_TextInputActive(focus)) return;
+
+    ImGuiContext *owner = nullptr;
+    if (focus == s_window) {
+        owner = s_mainImguiCtx;
+    } else {
+        for (int i = 0; i < POPOUT_COUNT; i++) {
+            if (s_popOuts[i]->open && s_popOuts[i]->window == focus) {
+                owner = s_popOuts[i]->imguiCtx;
+                break;
+            }
+        }
+    }
+    /* Not a window this frame draws: leave it to whoever owns it. */
+    if (owner == nullptr) return;
+
+    /* 1 while a field holds the caret; 0, or -1 before the context's first
+       frame ends, when none does. */
+    if (owner->WantTextInputNextFrame != 1) {
+        SDL_StopTextInput(focus);
+    }
+#endif
+}
+
 void sdl3ImguiPumpAndRender(ClientSim *cs) {
     /* The preferences' trailing write and the window-settings dirty flag,
      * once a frame in a game. Here and not in sdl3ImguiProcessEvents because
@@ -9317,6 +9370,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
        target switch lands between whole draws, as theirs does. */
     mapOverviewPanelRenderOffscreen(cs);
 #endif
+
+    /* Ahead of every context's NewFrame this frame; see its comment. */
+    dropStrayTextInput();
 
     /* Build the ImGui frame */
     ImGui_ImplSDLRenderer3_NewFrame();
