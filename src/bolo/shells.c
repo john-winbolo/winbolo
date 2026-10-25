@@ -356,15 +356,16 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
  *     dead): he does not die, even if he has left the tank since.
  * A pillbox's shell is not rewound: it tests the builder where he is now.
  *
- * TWO POINTS are handed in, because the test needs blast and builder from the
- * same moment:
- *   (nowX, nowY)   where the explosion is drawn and heard: the present
- *                  point. It is what shellsUpdate gives the explosion, the
- *                  shell-death event and the mine check.
- *   (seenX, seenY) the blast as the shooter's screen had it.
- * They are the same point for every blast, a tank hit included: a shell that
- * hit a tank explodes at its own place on its path, rewound or not
- * (shellsCalcCollision).
+ * The blast point is handed in twice:
+ *   (nowX, nowY)   where the explosion is drawn and heard. It is what
+ *                  shellsUpdate gives the explosion, the shell-death event
+ *                  and the mine check.
+ *   (seenX, seenY) the blast as the shooter's screen had it. It is kept as
+ *                  its own argument because the shooter's-screen rule
+ *                  names it.
+ * Today (seenX, seenY) is always equal to (nowX, nowY), a tank hit included:
+ * a shell that hit a tank explodes at its own place on its path, rewound or
+ * not (shellsCalcCollision).
  *
  * What the shooter's screen showed of the builder is in the builder position
  * history, at the shell's rewind (SHELL_LGM_REWIND_LESS above):
