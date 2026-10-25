@@ -203,8 +203,8 @@ static void serverSimLogTick(ServerSim *sim) {
 
     /* Each player's network lag, so a viewer can show the round as that
      * player saw it. The RTT is the server's measure; the rewind is the one
-     * the server used for that player's last tank shell input, in 20 ms
-     * entries. Bots are written the same way: their RTT is 0 and their
+     * computed from that player's last input, which a shell fired then would
+     * use, in 20 ms entries. Bots are written the same way: their RTT is 0 and their
      * rewind is what the server used for them. Written in this entry, after
      * the snapshot, so a viewer that starts at a snapshot has every value. */
     if (sim->state == serverStateRunning) {

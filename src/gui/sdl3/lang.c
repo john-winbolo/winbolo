@@ -1098,6 +1098,7 @@ static const LangEntry langTable[] = {
     {2927, "{string1}, {number} ms round trip"},
     {2928, "See What the Selected Player Saw"},
     {2929, "Draw the round as the selected tank's player saw it on their own screen. The recording must hold lag records"},
+    {2930, "Lag: a bot, screen {number} ms behind"},
     /* Log viewer Controls panel: what each button does, for its tooltip. {string1} of the two jumps is a number of seconds ("2.5", "12"); KEY_FMT puts a button's shortcut key after its name. */
     {2833, "Back {string1} seconds"},
     {2834, "Forward {string1} seconds"},

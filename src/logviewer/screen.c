@@ -265,6 +265,7 @@ void lv_screenPlayerLagSnapshot(int slot, LvPlayerLag *out) {
   if (!out->has) {
     return;
   }
+  out->bot = (lv_playersIsBot((BYTE) slot) != FALSE);
   /* The RTT across the whole recording, so a spike shows wherever the
      playhead is. A live feed's end is its head, which moves on. */
   total = g_lv->totalTimeMs;
@@ -7326,6 +7327,10 @@ static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
 
   if (haveSnap) {
     g_lv->timeRunning = snapTime;
+    /* The lag view's frames are of the time before the jump, so they go. A
+       seek back would drop them on the next frame anyway, but a seek forward
+       to a later snapshot would not. */
+    lv_lagRingClear(&s_lagRing);
     lv_logSetPosition(snapPos);
     lv_blocksSetKey(key);
     /* Restore team colours before processing snapshot so that new players

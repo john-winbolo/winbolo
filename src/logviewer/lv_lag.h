@@ -57,7 +57,13 @@
    the HUD panel's tank tooltip, the banner and the delayed drawing. It is in
    the LOGVIEWER section of the preferences file, and it is off until set to
    "Yes". With it off the viewer still reads the lag records, but shows none
-   of them and draws as it did before it read them. */
+   of them and draws as it did before it read them.
+
+   Every host reads it at setup (lvHostSetupCore): the standalone viewer, the
+   game's Log Viewer and spectator view, which read the game's WinBolo.json,
+   the browser build, and the in-game reel. The reel has no Tank panel, HUD
+   panel or View menu, so the view cannot be turned on there; with the
+   setting on, the reel's playback only keeps the history frames. */
 #define LV_LAG_PREF_KEY     "Player Lag View"
 #define LV_LAG_PREF_DEFAULT "No"
 
@@ -227,6 +233,8 @@ static inline const LvLagFrame *lv_lagRingFind(const LvLagRing *r, uint32_t ms) 
 typedef struct {
     bool  recorded;  /* the recording has lag records for some player */
     bool  has;       /* this player has a value at the playhead */
+    bool  bot;       /* a bot drives the tank: it has no round trip, so the
+                        panel shows the rewind only */
     int   rttMs;     /* round-trip time at the playhead */
     int   behindMs;  /* how far behind the present the player's screen was */
     /* The RTT over the recording, LV_LAG_GRAPH_SAMPLES samples spread

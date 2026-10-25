@@ -1039,8 +1039,8 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     break;
   case log_PlayerLag:
     /* One player's lag: the player, the round-trip time in ms as a big-endian
-       u16 and the tank-shell rewind the server used for that player, in 20 ms
-       log entries. A reader takes the bytes it knows and skips the rest by
+       u16 and the rewind computed from that player's last input, which a
+       shell fired then would use, in 20 ms log entries. A reader takes the bytes it knows and skips the rest by
        the framed length, so later fields can follow these four. */
     out[off++] = log_PlayerLag;
     out[off++] = opt1;

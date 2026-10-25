@@ -648,6 +648,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_lag_track", run_lv_lag_track },
     { "lv_lag_ring", run_lv_lag_ring },
     { "lv_lag_feature_default_off", run_lv_lag_feature_default_off },
+    { "lv_lag_view_draw", run_lv_lag_view_draw },
     { "log_roundtrip_ping",                      run_log_roundtrip_ping                      },
     { "log_roundtrip_snapshot_tank_stocks",      run_log_roundtrip_snapshot_tank_stocks      },
     { "log_roundtrip_tank_stock_record",         run_log_roundtrip_tank_stock_record         },

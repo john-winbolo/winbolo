@@ -203,11 +203,8 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     /* On until turned off. */
     lv_platform_config_get_string("LOGVIEWER", "Animate Jumps", "Yes", val, sizeof(val));
     s_jump_anim = !(val[0] == 'N' || val[0] == 'n');
-    /* The lag display (lv_lag.h): off until set to Yes in the file. It has
-       no menu item, so with it off the menus are as they were. */
-    lv_platform_config_get_string("LOGVIEWER", LV_LAG_PREF_KEY, LV_LAG_PREF_DEFAULT, val,
-                                  sizeof(val));
-    lv_screenSetLagFeature(lv_lagPrefIsOn(val) ? 1 : 0);
+    /* The lag display (lv_lag.h) is read in lvHostSetupCore, which every
+       host runs before this. It has no menu item. */
 }
 
 /* True when the preference was never saved. */

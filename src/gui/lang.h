@@ -1372,7 +1372,9 @@
    and its tooltip, the banner over the map while that view is on (string1 the
    player), the banner while the view has no history for the time yet, the
    banner's button, the HUD panel's tank tooltip with the time after it
-   (string1 the tooltip), and the View menu's item and tooltip. */
+   (string1 the tooltip), and the View menu's item and tooltip. LINE_BOT is
+   the Tank panel's line for a bot, which has no round trip (number how far
+   behind the present its screen was). */
 #define STR_LV_LAG_LINE                     2919
 #define STR_LV_LAG_NONE                     2920
 #define STR_LV_LAG_GRAPH_TIP                2921
@@ -1384,6 +1386,7 @@
 #define STR_LV_LAG_HUD_TIP                  2927
 #define STR_LV_LAG_MENU                     2928
 #define STR_LV_LAG_MENU_TIP                 2929
+#define STR_LV_LAG_LINE_BOT                 2930
 /* Log viewer Controls panel: what each button does, for its tooltip. {string1} of the two jumps is a number of seconds ("2.5", "12"); KEY_FMT puts a button's shortcut key after its name. */
 #define STR_LV_TIP_BACK_SECS                2833
 #define STR_LV_TIP_FWD_SECS                 2834

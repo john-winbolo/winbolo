@@ -812,7 +812,11 @@ static void tank_lag(const LvTankStatus &st, const LvPlayerLag &lag, int viewSlo
     const float w = ImGui::GetContentRegionAvail().x;
     MessageArgs args = {};
 
-    if (lag.has) {
+    if (lag.has && lag.bot) {
+        /* A bot has no round trip, so only the rewind is shown. */
+        args.number = lag.behindMs;
+        ImGui::TextUnformatted(langGetTextFmt(STR_LV_LAG_LINE_BOT, &args));
+    } else if (lag.has) {
         args.number = lag.rttMs;
         args.number2 = lag.behindMs;
         ImGui::TextUnformatted(langGetTextFmt(STR_LV_LAG_LINE, &args));
@@ -820,7 +824,8 @@ static void tank_lag(const LvTankStatus &st, const LvPlayerLag &lag, int viewSlo
         ImGui::TextDisabled("%s", langGetText(STR_LV_LAG_NONE));
     }
 
-    if (lag.has && w > 0.0f) {
+    /* The graph is of the round-trip time, which a bot does not have. */
+    if (lag.has && !lag.bot && w > 0.0f) {
         ImVec2 g0 = ImGui::GetCursorScreenPos();
         ImGui::PlotLines("##lag_graph", lag.graph, LV_LAG_GRAPH_SAMPLES, 0, nullptr, 0.0f,
                          lag.graphMax, ImVec2(w, graphH));
@@ -841,13 +846,18 @@ static void tank_lag(const LvTankStatus &st, const LvPlayerLag &lag, int viewSlo
     }
 
     bool on = (viewSlot >= 0 && viewSlot == (int)st.slot);
+    /* With no record for this player yet the view has no rewind to draw, so
+       the box cannot be ticked. A view already on can still be turned off. */
+    const bool noRecord = !lag.has && !on;
+    ImGui::BeginDisabled(noRecord);
     if (ImGui::Checkbox(langGetText(STR_LV_LAG_VIEW), &on)) {
         lv_clientMutexWaitFor();
         lv_screenLagViewSet(on ? (int)st.slot : -1);
         lv_clientMutexRelease();
         lv_drawDirtyScreen();
     }
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::SetTooltip("%s", langGetText(STR_LV_LAG_VIEW_TIP));
     }
 }
