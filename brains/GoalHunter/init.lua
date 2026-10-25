@@ -181,7 +181,8 @@ end
 --
 --   preset= and cfg=  apply either way. They write single values into C, and
 --                     every reader of C reads it live, so a write lands on the
---                     next tick.
+--                     next tick. The one exception is cfg=MODE=, which is
+--                     refused at runtime for the reason mode= is (below).
 --   survivor / horde  (the side words) apply either way too. Each writes its
 --                     C.SIDE_SETTINGS list, and each list writes every setting
 --                     the other side turns on, so a second side word fully
@@ -223,7 +224,11 @@ local function _apply_cfg_tokens(a, source, runtime)
       -- checks the shape. Written into C.MODE RIGHT HERE (not queued into
       -- cfgs) so the level bundle below can read the chosen mode; it is
       -- type-checked and logged like every other override. Precedence:
-      -- level < preset < cfg (a later cfg=MODE= would still win).
+      -- level < preset < cfg (a later cfg=MODE= in the same string still
+      -- wins). At runtime cfg=MODE= is refused too (see the cfgs loop at
+      -- the end of this function): Turtle2 reads C.MODE on every tick, so
+      -- a runtime write would turn the Turtle2 rules on without Turtle's
+      -- bundle, and state.mode (set once at tick 1) would no longer match.
       mname = mname:lower()
       if runtime then
         _cfg_warn_add("[mode] '%s' is unsupported at runtime -- a mode names a whole level bundle and a second bundle cannot unset the first; IGNORED.", tok)
@@ -355,7 +360,12 @@ local function _apply_cfg_tokens(a, source, runtime)
     -- round must start the knob at its default (Pillbox Tag's x10).
     -- (Quiet when the value is the one already there: a script's "put it
     -- back to 1" is the usual last table, and there is nothing to refuse.)
-    if not runtime and C.CFG_RUNTIME_ONLY and C.CFG_RUNTIME_ONLY[name] then
+    if runtime and name == "MODE" then
+      -- Refused for the same reason as mode= above: C.MODE picks a whole
+      -- level bundle, and Turtle2 reads it live, so a runtime write would
+      -- change play without the bundle that goes with it.
+      _cfg_warn_add("[cfg] 'cfg=MODE=%s' is unsupported at runtime -- a mode names a whole level bundle and a second bundle cannot unset the first; IGNORED.", tostring(raw))
+    elseif not runtime and C.CFG_RUNTIME_ONLY and C.CFG_RUNTIME_ONLY[name] then
       if v ~= C[name] then
         _cfg_warn_add("[cfg] '%s'=%s (%s) is round-scoped: only a running brain takes it (game.bot_init), a new brain starts it at its default; IGNORED.",
                       tostring(name), tostring(raw), source)

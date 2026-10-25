@@ -401,6 +401,12 @@ local chip3, det3 = G.turtle_far_text(10, 2 ^ (10 / 8), "centre")
 check("centre-distance d is tagged (centre)", chip3 == " x turtle_far{d=10(centre),x2.38}", chip3)
 check("centre detail says it is the distance to a friendly centre", det3:find("nearest friendly base/pill centre", 1, true) ~= nil, det3)
 check("no term -> empty chip", G.turtle_far_text(nil, 1) == "", G.turtle_far_text(nil, 1))
+-- A cfg token can make DOUBLE_TILES non-integral; the detail must still build
+-- under Lua 5.3+ (string.format %d would raise on 7.5).
+C.TURTLE_BASE_DOUBLE_TILES = 7.5
+local ok_frac, _, det_frac = pcall(G.turtle_far_text, 8, 2 ^ (8 / 7.5))
+check("non-integral DOUBLE_TILES: detail builds and prints 7.5", ok_frac and det_frac:find("/7.5[TURTLE_BASE_DOUBLE_TILES]", 1, true) ~= nil, tostring(det_frac))
+defaults()
 
 print("-- base-run end threshold")
 defaults()

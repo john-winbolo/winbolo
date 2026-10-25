@@ -62,7 +62,7 @@ standard_levels = yes
 # Turtle's.
 [turtle2]
 label = Turtle2
-about = Turtle that stays near its nest: far bases cost more, the base run ends early, no influence tail.
+about = Turtle that stays near its nest: far bases cost more, the base run ends early, and it stays on its own ground.
 levels = easy:Easy:1, medium:Medium:2, hard:Hard:3
 default = hard
 standard_levels = yes
