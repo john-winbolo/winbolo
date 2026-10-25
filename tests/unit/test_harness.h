@@ -2866,15 +2866,15 @@ int run_ping_kick_clears_strikes_on_disconnect(void);
  * (test_tkexp_lgm_pairing.c). */
 int run_tkexp_lgm_pairing(void);
 
-/* A shell that hits a tank blows up at the hit tank's present position plus
- * the shell's offset from the rewound hit point, not at the shell, which a
- * lag-compensated test leaves behind the tank (test_tank_blast_at_tank.c). */
-int run_tank_blast_rewound_hit_at_present_tank(void);
-int run_tank_blast_kill_starts_at_present_tank(void);
+/* A shell that hits a tank explodes at its own place on its path, as the
+ * server has it on the hit tick, rewound or not (test_tank_blast_at_tank.c). */
+int run_tank_blast_at_shell_place(void);
+int run_tank_blast_kill_at_shell_place(void);
+int run_tank_blast_mine_check_at_shell_place(void);
 int run_tank_blast_zero_rewind_unchanged(void);
 int run_tank_blast_hit_decision_unchanged(void);
 /* Whether that blast kills a builder is decided on the shooter's screen, not
- * by where it is drawn (the same file). */
+ * by where he stands now (the same file). */
 int run_tank_blast_builder_on_shooter_screen(void);
 int run_tank_blast_absent_builder_lives(void);
 int run_tank_blast_builder_back_in_tank(void);
