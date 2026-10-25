@@ -2486,6 +2486,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_RULE_DESC_tank_full_shells", STR_RULE_DESC_tank_full_shells },
     { "STR_RULE_DESC_tank_full_trees", STR_RULE_DESC_tank_full_trees },
     { "STR_RULE_DESC_tank_hit_radius", STR_RULE_DESC_tank_hit_radius },
+    { "STR_RULE_DESC_tank_hit_sets_off_mines", STR_RULE_DESC_tank_hit_sets_off_mines },
     { "STR_RULE_DESC_tank_min_move", STR_RULE_DESC_tank_min_move },
     { "STR_RULE_DESC_tank_nudge_amount", STR_RULE_DESC_tank_nudge_amount },
     { "STR_RULE_DESC_tank_nudge_iterations", STR_RULE_DESC_tank_nudge_iterations },
@@ -2697,4 +2698,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  2665
+#define K_LANG_NAME_TABLE_SIZE  2666

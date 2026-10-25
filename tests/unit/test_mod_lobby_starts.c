@@ -21,12 +21,20 @@
  *
  *   run_mac_bolo_settings_defaults_play_old_rules
  *       nothing chosen: the round plays the eleven rules the mod's written
- *       table always set, at the same numbers.
+ *       table always set, at the same numbers, and tank_hit_sets_off_mines
+ *       at 0 from the tank_hit_mines part added after it. 0 is also the
+ *       classic table's value, so that part only matters when another
+ *       script on the list sets 1.
  *   run_mac_bolo_settings_each_part_off
  *       each part turned off on its own: that part's rules are back on the
  *       classic table and every other part's rules are unchanged.
  *   run_mac_bolo_settings_numbers
  *       the five number settings reach their rules.
+ *   run_mac_bolo_tank_hit_mines_part_with_mines_mod
+ *       Mac Bolo Rules and Tank Hits Set Off Mines both on the list. Mac
+ *       Bolo Rules on top: tank_hit_mines on plays 0, off plays 1. Tank
+ *       Hits Set Off Mines on top plays 1. This is the one case where the
+ *       tank_hit_mines part changes the round.
  *   run_mac_bolo_first_start_lobby_off_uses_mac_pick
  *       first_start_lobby off: across several rounds some opening tank
  *       stands away from its lobby pick, where the Mac Bolo pick put it,
@@ -97,6 +105,7 @@
 #include "server/sim/server_sim_shared.h" /* serverSimSetActive */
 #include "scenario_host.h"         /* scenarioHostAttachMod,
                                     * scenarioHostRegisterScenarioLister */
+#include "scenario_validate.h"     /* scenarioHostScriptCount */
 #include "sim_rules.h"             /* SimRules, simRulesClassic */
 #include "threads.h"
 #include "test_harness.h"
@@ -328,11 +337,13 @@ enum {
     MLS_PART_TANK_BOXES,
     MLS_PART_PILL_AIM,
     MLS_PART_BASE_DEFENCE,
+    MLS_PART_TANK_HIT_MINES,
     MLS_PART_COUNT
 };
 
 static const char *const kMlsPartSetting[MLS_PART_COUNT] = {
     "pushback", "shell_cap", "tank_boxes", "pill_aim", "base_defence",
+    "tank_hit_mines",
 };
 
 /* Every rule the mod sets, the part that sets it, and the value its
@@ -358,6 +369,7 @@ static const MlsRule kMlsRules[] = {
     MLS_RULE(pill_aim_mac,                 MLS_PART_PILL_AIM,     1),
     MLS_RULE(pill_base_defend_shape,       MLS_PART_BASE_DEFENCE, 1),
     MLS_RULE(pill_base_defend_range,       MLS_PART_BASE_DEFENCE, 7),
+    MLS_RULE(tank_hit_sets_off_mines,      MLS_PART_TANK_HIT_MINES, 0),
 };
 
 #define MLS_RULE_COUNT ((int)(sizeof(kMlsRules) / sizeof(kMlsRules[0])))
@@ -442,6 +454,122 @@ int run_mac_bolo_settings_numbers(void) {
     UT_ASSERT_MSG(got.pill_base_defend_range == 9,
                   "pill_base_defend_range is %d",
                   (int)got.pill_base_defend_range);
+    return 0;
+}
+
+/* ── Two scripts on the list ──────────────────────────────────────── */
+
+#define MLS_MINES_MOD_FILE "TankHitsSetOffMines.scenario.lua"
+
+/* The ScenarioHost slot scenarioHostFollowMap writes. The cases run one at
+ * a time in a process, so one slot is enough. */
+static ScenarioHost *mlsListSlot;
+
+/* One round with files[0..count-1] on the lobby's list, top first, and the
+ * Mac Bolo Rules part tank_hit_mines set to part. The list goes in through
+ * CMD_SET_SCRIPT_LIST, as the lobby sends it, after a commit of a map that
+ * has no script of its own. The round's tank_hit_sets_off_mines is in *out. */
+static int mlsListMinesRound(const char *const *files, int count, int32_t part,
+                             int32_t *out) {
+    BYTE          emap[6000] = E_MAP;
+    ServerSim    *sim;
+    ClientCommand cmd;
+    char          dir[512];
+    char          mapPath[512];
+    int32_t       got = -1;
+    int           i;
+
+    UT_ASSERT_MSG(mlsModDir(dir, sizeof(dir)),
+                  "SDL cannot say where the executable is");
+    UT_ASSERT(utScratchPath(mapPath, sizeof(mapPath),
+                            "wbtest_mls_mines_list.map"));
+    sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
+                                    gameOpen, false, 0, -1);
+    UT_ASSERT(sim != NULL);
+    serverSimSetActive(sim);
+    serverSimSetLobbyEnabled(sim, true);
+    serverSimAddPlayer(sim, 0, "Host", false);
+    serverSimSetState(sim, serverStateLobby);
+    serverSimSetScenarioDir(sim, dir);
+    scenarioHostRegisterScenarioLister(sim);
+    mlsListSlot = NULL;
+    scenarioHostFollowMap(sim, &mlsListSlot);
+
+    /* The map commit. No file is at mapPath, so the map has no script. */
+    SDL_strlcpy(sim->mapFilePath, mapPath, sizeof(sim->mapFilePath));
+    serverSimScenarioOnMapChanged(sim, mapPath);
+    serverSimScenarioApplyLobbyRules(sim);
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type = CMD_SET_SCRIPT_LIST;
+    cmd.u.setScriptList.count = (uint8_t)count;
+    for (i = 0; i < count; i++) {
+        snprintf(cmd.u.setScriptList.files[i],
+                 sizeof(cmd.u.setScriptList.files[i]), "%s", files[i]);
+    }
+    sim->scenarioPickTick = 0;
+    UT_ASSERT_MSG(mlsApply(sim, 0, &cmd) == CMD_OK,
+                  "the lobby refused the list of %d scripts", count);
+    UT_ASSERT_MSG(serverSimSetScriptSetting(sim, MLS_MOD_FILE,
+                                            "tank_hit_mines", part, &got) &&
+                      got == part,
+                  "setting tank_hit_mines to %d was refused or moved to %d",
+                  (int)part, (int)got);
+
+    /* In place: the map was never written to disk, and serverSimStartGame
+     * would load it again from mapPath. */
+    serverSimSetLobbyEnabled(sim, false);
+    serverSimStartGameInPlace(sim);
+    UT_ASSERT_MSG(mlsListSlot != NULL, "no script was attached for the list");
+    UT_ASSERT_MSG(scenarioHostScriptCount(mlsListSlot) == count,
+                  "the round composed %d scripts, wanted %d",
+                  scenarioHostScriptCount(mlsListSlot), count);
+    UT_ASSERT_MSG(scenarioHostLastError(mlsListSlot)[0] == '\0',
+                  "the round complained: %s",
+                  scenarioHostLastError(mlsListSlot));
+    *out = serverSimGetGameSim(sim)->rules.tank_hit_sets_off_mines;
+
+    scenarioHostDetach(mlsListSlot);
+    mlsListSlot = NULL;
+    serverSimDestroy(sim);
+    return 0;
+}
+
+int run_mac_bolo_tank_hit_mines_part_with_mines_mod(void) {
+    static const char *const macFirst[2]  = { MLS_MOD_FILE,
+                                              MLS_MINES_MOD_FILE };
+    static const char *const minesFirst[2] = { MLS_MINES_MOD_FILE,
+                                               MLS_MOD_FILE };
+    int32_t v = -1;
+
+    /* The rules merge key by key in list order, and the script higher on
+     * the list keeps a rule that both scripts set. Mac Bolo Rules on top
+     * with the part on: its 0 is kept over the 1 below it. */
+    UT_ASSERT(mlsListMinesRound(macFirst, 2, 1, &v) == 0);
+    UT_ASSERT_MSG(v == 0,
+                  "Mac Bolo Rules above Tank Hits Set Off Mines, part on: "
+                  "tank_hit_sets_off_mines is %d, wanted 0", (int)v);
+
+    /* The part off: Mac Bolo Rules sets nothing for the rule, so the 1
+     * below it is what the round plays. */
+    v = -1;
+    UT_ASSERT(mlsListMinesRound(macFirst, 2, 0, &v) == 0);
+    UT_ASSERT_MSG(v == 1,
+                  "Mac Bolo Rules above Tank Hits Set Off Mines, part off: "
+                  "tank_hit_sets_off_mines is %d, wanted 1", (int)v);
+
+    /* Tank Hits Set Off Mines on top: its 1 is kept, part on or not. */
+    v = -1;
+    UT_ASSERT(mlsListMinesRound(minesFirst, 2, 1, &v) == 0);
+    UT_ASSERT_MSG(v == 1,
+                  "Tank Hits Set Off Mines above Mac Bolo Rules, part on: "
+                  "tank_hit_sets_off_mines is %d, wanted 1", (int)v);
+
+    v = -1;
+    UT_ASSERT(mlsListMinesRound(minesFirst, 2, 0, &v) == 0);
+    UT_ASSERT_MSG(v == 1,
+                  "Tank Hits Set Off Mines above Mac Bolo Rules, part off: "
+                  "tank_hit_sets_off_mines is %d, wanted 1", (int)v);
     return 0;
 }
 

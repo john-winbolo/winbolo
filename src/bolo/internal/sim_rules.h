@@ -254,6 +254,10 @@ typedef struct SimRules {
     /* ---- Deep sea ---- appended to preserve rule indices */
     int32_t tank_deep_sea_safe;      /* a tank with no boat floats on deep sea */
 
+    /* ---- Tank hit mines ---- appended to preserve rule indices */
+    int32_t tank_hit_sets_off_mines; /* a shell that hits a tank sets off a
+                                        mine on the square it burst on */
+
 } SimRules;
 
 /*********************************************************
