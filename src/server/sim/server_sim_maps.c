@@ -49,6 +49,15 @@
  * path; defined below, after the reload and preview paths that call it. */
 static void serverSimApplyMapChange(ServerSim *sim, bool mapIsNewer);
 
+/* A generated map has no .map file, so no md5 for WinBolo.net to match.
+   This is the state serverSimInit leaves, which a server that starts on a
+   random map keeps. */
+static void clearMapMd5(ServerSim *sim) {
+    sim->mapMd5Valid = FALSE;
+    sim->mapMd5Hex[0] = '\0';
+    memset(sim->mapMd5, 0, sizeof(sim->mapMd5));
+}
+
 bool serverSimRandomMapRegenerate(ServerSim *sim) {
     BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
     int len;
@@ -130,8 +139,11 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
     snprintf(msg, sizeof(msg), "Random map regenerated, seed: %s", seedStr);
     serverSimConsoleMessage(msg);
 
-    /* Generated, not read — nothing to look beside. */
+    /* Generated, not read — nothing to look beside, and no .map file to
+       hash: a generated map has no md5, the same as a server that starts
+       on a random map. */
     sim->mapFilePath[0] = '\0';
+    clearMapMd5(sim);
 
     /* The round-end regenerate and the map-skip vote, never a host's pick:
        the chooser's random maps come through serverSimReloadRandomMap. */
@@ -1267,6 +1279,10 @@ static void stashCommittedMap(ServerSim *sim) {
     memcpy(sim->previousMapName, sim->mapName, sizeof(sim->previousMapName));
     memcpy(sim->previousMapPath, sim->mapFilePath,
            sizeof(sim->previousMapPath));
+    sim->previousMapMd5Valid = sim->mapMd5Valid;
+    memcpy(sim->previousMapMd5, sim->mapMd5, sizeof(sim->previousMapMd5));
+    memcpy(sim->previousMapMd5Hex, sim->mapMd5Hex,
+           sizeof(sim->previousMapMd5Hex));
     sim->previousSeatsValid =
         serverSimScenarioSeatCounts(sim, sim->previousSeats);
     memcpy(sim->previousScripts, sim->scenarioScripts,
@@ -1601,8 +1617,11 @@ bool serverSimReloadRandomMap(ServerSim *sim, const MapGenConfig *cfg) {
     /* Generated, not read — nothing to look beside. Without this the old
        map's path stays, and the map's own script from beside that old file
        is attached to the generated map. The stash above keeps the old path,
-       so Cancel still puts it back. */
+       so Cancel still puts it back. The old map's md5 goes for the same
+       reason: left in place, WinBolo.net is told the generated map is the
+       old file. The stash keeps the md5 too. */
     sim->mapFilePath[0] = '\0';
+    clearMapMd5(sim);
 
     {
         char seedStr[64];
@@ -1654,10 +1673,12 @@ bool serverSimRevertPreview(ServerSim *sim) {
     mapClampToRules(&sim->sim);
     basesClearMines(&sim->sim);
 
-    /* Reverted to the previous map from its compressed bytes — we no
-     * longer have its .map file to hash, so clear the cached md5. */
-    sim->mapMd5Valid = FALSE;
-    sim->mapMd5Hex[0] = '\0';
+    /* Reverted to the previous map from its compressed bytes. Its md5 was
+     * stashed with it, so the old map reports as itself again; a map that
+     * had none (generated, or read from bytes) gets none back. */
+    sim->mapMd5Valid = sim->previousMapMd5Valid;
+    memcpy(sim->mapMd5, sim->previousMapMd5, sizeof(sim->mapMd5));
+    memcpy(sim->mapMd5Hex, sim->previousMapMd5Hex, sizeof(sim->mapMd5Hex));
 
     memcpy(sim->mapName, sim->previousMapName, sizeof(sim->mapName));
     len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
@@ -1683,6 +1704,8 @@ bool serverSimRevertPreview(ServerSim *sim) {
     sim->previousMapDataLen = 0;
     sim->previousMapName[0] = '\0';
     sim->previousMapPath[0] = '\0';
+    sim->previousMapMd5Valid = FALSE;
+    sim->previousMapMd5Hex[0] = '\0';
 
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
@@ -1712,6 +1735,8 @@ void serverSimCommitPreview(ServerSim *sim) {
     sim->previousMapDataLen = 0;
     sim->previousMapName[0] = '\0';
     sim->previousMapPath[0] = '\0';
+    sim->previousMapMd5Valid = FALSE;
+    sim->previousMapMd5Hex[0] = '\0';
     /* The host keeps the previewed map, so the lobby the old one had is gone
        for good and there is nothing left to put back. */
     sim->previousSeatsValid = false;
