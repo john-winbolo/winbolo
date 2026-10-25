@@ -8,17 +8,19 @@
  * rule tank_hit_sets_off_mines (test_tank_hit_mines.c).
  *
  * When a shell ends, shellsUpdate starts a mine fuse (minesExpAddItem) on the
- * square where it burst. With the rule at 1, the classic table, that is so
- * whatever the shell hit, a tank included: a tank that lays mines as it runs
- * has them set off by the shots of the tank chasing it. With the rule at 0, a
- * shell that hits or kills a tank starts no fuse; a shell that hits terrain,
- * or that runs out, still does.
+ * square where it burst. With the rule at 0, the classic table, a shell that
+ * hits or kills a tank starts no fuse; a shell that hits terrain, or that
+ * runs out, still does. With the rule at 1 a fuse starts whatever the shell
+ * hit, a tank included: a tank that lays mines as it runs has them set off
+ * by the shots of the tank chasing it.
  *
  *   run_tank_hit_mines_rule_on_sets_off   - rule 1: a hit and a kill on a
  *       tank standing on a mine each start a fuse on that square
- *   run_tank_hit_mines_rule_off_spares    - rule 0: the same hit and kill
- *       start no fuse and leave the mine on the map; the hit still does its
- *       damage, is still drawn and still reports a tank hit or kill
+ *   run_tank_hit_mines_rule_off_spares    - the classic table and a new
+ *       round both hold 0; with the round's own value, and again with 0 set,
+ *       the same hit and kill start no fuse and leave the mine on the map;
+ *       the hit still does its damage, is still drawn and still reports a
+ *       tank hit or kill
  *   run_tank_hit_mines_rule_off_ground    - rule 0: a shell that hits a
  *       mined forest square, and one that runs out over a mined road, each
  *       start a fuse on that square
@@ -152,7 +154,8 @@ static void thmLayMine(ServerSim *sim, BYTE mx, BYTE my, BYTE terrain) {
 
 /* One round with the two seats in, a clear lane, the shooter on its first
    square, the target two rows off the lane, the rule set to rule, no mine
-   fuse burning and the shell-death callback recorded. */
+   fuse burning and the shell-death callback recorded. A rule below 0 leaves
+   the round's own value. */
 static ServerSim *thmSim(BYTE *lx, BYTE *ly, int32_t rule) {
     BYTE       emap[6000] = E_MAP;
     ServerSim *sim = serverSimCreateCompressed(emap, E_MAP_LEN, "Everard Island",
@@ -174,7 +177,9 @@ static ServerSim *thmSim(BYTE *lx, BYTE *ly, int32_t rule) {
     thmPlace(sim, THM_SHOOTER, thmMiddle(*lx), thmMiddle(*ly));
     thmPlace(sim, THM_TARGET, thmMiddle((BYTE)(*lx + THM_AT_TARGET)),
              thmMiddle((BYTE)(*ly + 2)));
-    sim->sim.rules.tank_hit_sets_off_mines = rule;
+    if (rule >= 0) {
+        sim->sim.rules.tank_hit_sets_off_mines = rule;
+    }
     minesExpDestroy(&sim->sim.minesExplosions);
     thmDeaths       = 0;
     thmDeathX       = 0;
@@ -247,8 +252,9 @@ static bool thmHasExplosion(ServerSim *sim) {
 }
 
 /* One shell at a target standing on a mined road square, with the rule at
-   rule. kill leaves the target no armour, so the shell kills it. Checks the
-   hit happened as it always does, and whether the fuse started. */
+   rule. A rule below 0 leaves the round's own value, which must be 0. kill
+   leaves the target no armour, so the shell kills it. Checks the hit
+   happened as it always does, and whether the fuse started. */
 static int thmTankCase(int32_t rule, bool kill) {
     BYTE       lx = 0, ly = 0;
     ServerSim *sim = thmSim(&lx, &ly, rule);
@@ -261,6 +267,12 @@ static int thmTankCase(int32_t rule, bool kill) {
 
     UT_ASSERT_MSG(sim != NULL, "setup: no sim, tanks or clear lane");
     gs = &sim->sim;
+    if (rule < 0) {
+        UT_CHECK_MSG(gs->rules.tank_hit_sets_off_mines == 0,
+                     "a new round has tank_hit_sets_off_mines %d",
+                     (int)gs->rules.tank_hit_sets_off_mines);
+        rule = gs->rules.tank_hit_sets_off_mines;
+    }
     mx = (BYTE)(lx + THM_AT_TARGET);
     my = ly;
     thmLayMine(sim, mx, my, ROAD);
@@ -309,24 +321,28 @@ done:
 }
 
 /* ================================================================
- * 1. Rule 1, the classic table: a tank hit sets off the mine.
+ * 1. Rule 1: a tank hit sets off the mine.
  * ================================================================ */
 int run_tank_hit_mines_rule_on_sets_off(void) {
-    SimRules classic;
-
-    simRulesClassic(&classic);
-    UT_ASSERT_MSG(classic.tank_hit_sets_off_mines == 1,
-                  "the classic table has tank_hit_sets_off_mines %d",
-                  (int)classic.tank_hit_sets_off_mines);
     UT_ASSERT(thmTankCase(1, false) == 0);
     UT_ASSERT(thmTankCase(1, true) == 0);
     return 0;
 }
 
 /* ================================================================
- * 2. Rule 0: a tank hit or kill leaves the mine alone.
+ * 2. Rule 0, the classic table: a tank hit or kill leaves the mine alone.
  * ================================================================ */
 int run_tank_hit_mines_rule_off_spares(void) {
+    SimRules classic;
+
+    simRulesClassic(&classic);
+    UT_ASSERT_MSG(classic.tank_hit_sets_off_mines == 0,
+                  "the classic table has tank_hit_sets_off_mines %d",
+                  (int)classic.tank_hit_sets_off_mines);
+    /* The round's own value, with nothing set. */
+    UT_ASSERT(thmTankCase(-1, false) == 0);
+    UT_ASSERT(thmTankCase(-1, true) == 0);
+    /* 0 set by hand. */
     UT_ASSERT(thmTankCase(0, false) == 0);
     UT_ASSERT(thmTankCase(0, true) == 0);
     return 0;

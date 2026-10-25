@@ -250,7 +250,11 @@ void simRulesClassic(SimRules *out) {
     out->tank_deep_sea_safe      = 0;
 
     /* ---- Tank hit mines ---- */
-    out->tank_hit_sets_off_mines = 1;
+    /* 0: a shell that hits a tank leaves the mines on its square alone.
+     * Only a shell that hits a pillbox, a base or terrain, or that runs
+     * out, sets one off. 1 lets a tank hit set them off too. This rule has
+     * no constant of its own. */
+    out->tank_hit_sets_off_mines = 0;
 
 }
 

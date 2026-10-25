@@ -22,7 +22,9 @@
  *   run_mac_bolo_settings_defaults_play_old_rules
  *       nothing chosen: the round plays the eleven rules the mod's written
  *       table always set, at the same numbers, and tank_hit_sets_off_mines
- *       at 0 from the tank_hit_mines part added after it.
+ *       at 0 from the tank_hit_mines part added after it. 0 is also the
+ *       classic table's value, so that part only matters when another
+ *       script on the list sets 1.
  *   run_mac_bolo_settings_each_part_off
  *       each part turned off on its own: that part's rules are back on the
  *       classic table and every other part's rules are unchanged.

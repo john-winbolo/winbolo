@@ -354,7 +354,7 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(tank_deep_sea_safe, 0);
 
     /* Tank hit mines */
-    SR_EQ(tank_hit_sets_off_mines, 1);
+    SR_EQ(tank_hit_sets_off_mines, 0);
 
     return 0;
 }
