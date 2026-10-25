@@ -609,22 +609,26 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
  * straight up, down or the side burst 96 to 127 from the tank's centre. A
  * shell at 45 degrees met the box corner, about 150 to 181 out. So the
  * danger to the builder was greatest from straight on and least at 45
- * degrees. Worked out per order under an angry pillbox (a shell every 6
- * ticks) with the tank still. The 1.17 figures have the builder's first
- * shell test at the tank's centre and his first step one tick after the
- * order. The offset figures have him step in the same tick as the order.
- * The terrain is the square the builder stands on, which sets his speed
- * for each step. For a tank near the middle of its square, that is the
- * tank's own square for his first steps.
+ * degrees. Worked out for the default rules (rules.shell_speed,
+ * rules.tank_hit_radius and rules.pill_attack_min_ticks), per order under
+ * an angry pillbox (a shell every 6 ticks) with the tank still. A game
+ * with changed rules gives other figures. The 1.17 figures have the
+ * builder's first shell test at the tank's centre and his first step one
+ * tick after the order. The offset figures have him step in the same tick
+ * as the order. The terrain is the square the builder stands on, which
+ * sets his speed for each step. For a tank near the middle of its square,
+ * that is the tank's own square for his first steps.
  *   Grass (16 per tick): 1.17 killed him 26% of the time along an axis,
  *   15% at 22.5 degrees and 0% at 45 degrees. An offset of 16 gives 9%,
  *   an offset of 0 gives 26% and 64 gives 0%.
  *   Forest (8 per tick): 1.17 killed him 44% of the time along an axis,
  *   22% at 22.5 degrees and 0% at 45 degrees, 22% on average. An offset of
  *   16 gives 27%, an offset of 0 gives 60% and 64 gives 0%.
- * 16 comes close to the rate of 1.17. The square behind the tank is not
- * meant to be a fully safe place: a small chance of death under heated fire
- * is by design.
+ * Under the same start rule (a step in the order's tick), the 1.17 box
+ * gives 9% on grass and 27% on forest along an axis. That is equal to an
+ * offset of 16, because 1.17's bursts at 96 to 127 are the bursts at 80 to
+ * 111 moved out by 16. The square behind the tank is not meant to be a
+ * fully safe place: a small chance of death under heated fire is by design.
  *
  * Where the danger is now: a hit bursts 80 to 111 from the centre of a still
  * tank on the shooter's side, and the builder dies within MAP_SQUARE_MIDDLE
