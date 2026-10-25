@@ -1269,11 +1269,14 @@ end
 -- deep sea clock leaves them alone until they reach land or SPAWN_GRACE runs
 -- out. The first one's numbers are checked here too.
 -- A pillbox reaching the map in an infected seat's name is one a survivor
--- was still carrying when they turned: their builder out with it, who finishes
--- the job whenever he does, or their tank's cargo put down as it went, which
--- can land after infect has run. Either way it goes to the same survivor
--- their other pillboxes went to. The drop in pass_carried comes through here
--- too, and names the same heir, so it costs nothing.
+-- was still carrying when they turned. There are three ways: their builder
+-- was out with it and finishes the job whenever he does; their tank's cargo
+-- was put down as it went, which can land after infect has run; or
+-- pass_carried could not put it down at all, so it stayed in their tank and
+-- their builder, who can build now that they are infected, places it later.
+-- Each way it goes to the same survivor their other pillboxes went to. The
+-- drop in pass_carried comes through here too, and names the same heir, so
+-- it costs nothing.
 function on_pill_placed(n, p, armour, scripted)
   if over or not running or side[p] ~= INFECTED then
     return
@@ -1521,7 +1524,7 @@ scenario = {
                 "tougher.",
   api         = 1,
   author      = "WinBolo",
-  updated     = "2026-10-17T14:32Z",
+  updated     = "2026-10-25T20:44Z",
   kind        = "scenario",
   game        = "open",
 
