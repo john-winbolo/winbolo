@@ -6954,6 +6954,7 @@ set(_unit_test_names
     lobby_map_keeps_bots_plain
     lobby_map_keeps_bots_scenario
     lobby_map_keeps_bots_map_own_row
+    lobby_random_map_drops_map_own_script
     lobby_map_rotate_holds_seats_again
     scenario_map_rotation_redecides
     lobby_script_keeps_bots_mod
