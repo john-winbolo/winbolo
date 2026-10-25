@@ -594,6 +594,11 @@ struct ServerSim {
     bool         previousMapMd5Valid;
     uint8_t      previousMapMd5[16];
     char         previousMapMd5Hex[33];
+    /* Whether the previous committed map was a random server's generated
+     * map, so cancelling a file preview turns the round-end regenerate back
+     * on. A file preview turns randomMapEnabled off; the config and the
+     * fixed-seed flag are not touched by a preview, so they need no copy. */
+    bool         previousRandomMapEnabled;
 
     /* How many template seats each team held when the preview started,
      * indexed by team id. Cancelling re-seats the template from scratch, so

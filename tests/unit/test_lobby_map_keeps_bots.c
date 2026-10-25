@@ -27,6 +27,9 @@
  *   lobby_random_map_clears_map_md5 — a map read from a file has an md5; a
  *       random preview after it has none, Cancel puts the file's md5 back,
  *       and a round-end regenerate clears it again.
+ *   lobby_cancel_file_preview_keeps_random_map — a random-map server whose
+ *       host previews a file map and cancels is on random maps again, and
+ *       the round-end regenerate makes a new map.
  *   lobby_map_rotate_holds_seats_again — a server that skips the lobby and
  *       rotates maps. A seat the script fielded in one round is held again
  *       in the next, though the template is the same, because nobody is
@@ -727,6 +730,7 @@ int run_lobby_random_map_clears_map_md5(void) {
     ClientCommand cmd;
     MapGenConfig  cfg;
     char          fileMd5[33];
+    bool          regenerated;
 
     UT_ASSERT(mkSetUp());
     ut_brain_stub_arm(true);
@@ -775,12 +779,76 @@ int run_lobby_random_map_clears_map_md5(void) {
     cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
     serverSimEnableRandomMap(sim, &cfg, true);
     threadsWaitForMutex();
-    UT_ASSERT(serverSimRandomMapRegenerate(sim));
+    regenerated = serverSimRandomMapRegenerate(sim);
     threadsReleaseMutex();
+    UT_ASSERT(regenerated);
     UT_ASSERT_MSG(!sim->mapMd5Valid &&
                   serverSimGetMapMd5Hex(sim)[0] == '\0',
                   "the regenerated map kept the md5 \"%s\"",
                   serverSimGetMapMd5Hex(sim));
+
+    mkDestroy(sim);
+    return 0;
+}
+
+/* ── Cancel puts a random server back on random maps ──────────────── */
+
+/* A server on random maps, as -randommap runs one, plays a generated map.
+ * The host previews a file map, which turns random maps off, then cancels.
+ * The generated map is back, so random maps must be on again: left off, the
+ * round-end regenerate never runs and the same map plays every round. */
+int run_lobby_cancel_file_preview_keeps_random_map(void) {
+    ServerSim    *sim;
+    ClientCommand cmd;
+    MapGenConfig  cfg;
+    char          generated[MAP_STR_SIZE];
+    bool          regenerated;
+
+    UT_ASSERT(mkSetUp());
+    ut_brain_stub_arm(true);
+    sim = mkSim();
+    UT_ASSERT(sim != NULL);
+
+    /* The server's generated map. A fixed seed, so the test sets the next
+       round's seed itself below and the new map is sure to differ. */
+    cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
+    cfg.seed = 12345;
+    cfg.x1 = MAP_MINE_EDGE_LEFT + 1;
+    cfg.y1 = MAP_MINE_EDGE_TOP + 1;
+    cfg.x2 = MAP_MINE_EDGE_RIGHT - 1;
+    cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
+    serverSimEnableRandomMap(sim, &cfg, true);
+    threadsWaitForMutex();
+    regenerated = serverSimRandomMapRegenerate(sim);
+    threadsReleaseMutex();
+    UT_ASSERT(regenerated);
+    memcpy(generated, sim->mapName, sizeof(generated));
+
+    /* The host previews a file map: random maps go off for it. */
+    UT_ASSERT(mkSetMap(sim, MK_BIG_MAP) == CMD_OK);
+    UT_ASSERT_MSG(!sim->randomMapEnabled,
+                  "the file preview left random maps on");
+
+    /* Cancel: the generated map is back, and random maps with it. */
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type   = CMD_LOBBY_PREVIEW_CANCEL;
+    cmd.cmdSeq = 1;
+    UT_ASSERT(mkApply(sim, &cmd) == CMD_OK);
+    UT_ASSERT_MSG(strcmp(sim->mapName, generated) == 0,
+                  "cancel put \"%s\" back, expected the generated \"%s\"",
+                  sim->mapName, generated);
+    UT_ASSERT_MSG(sim->randomMapEnabled,
+                  "cancel left random maps off on a random-map server");
+
+    /* The round-end regenerate runs again and makes a new map. */
+    sim->randomMapConfig.seed = 54321;
+    threadsWaitForMutex();
+    regenerated = serverSimRandomMapRegenerate(sim);
+    threadsReleaseMutex();
+    UT_ASSERT_MSG(regenerated,
+                  "the round-end regenerate did not run after the cancel");
+    UT_ASSERT_MSG(strcmp(sim->mapName, generated) != 0,
+                  "the regenerate kept the old map \"%s\"", sim->mapName);
 
     mkDestroy(sim);
     return 0;
