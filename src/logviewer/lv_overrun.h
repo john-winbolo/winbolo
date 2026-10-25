@@ -26,9 +26,9 @@
 #include <string.h>
 #include "overrun_record.h"
 
-/* The most records a track keeps. The server writes one every 30 seconds,
-   so this is over 34 hours of rounds; a file that holds more keeps the first
-   ones. */
+/* The most records a track keeps. The server writes one every 30 seconds
+   of a round and one more at each round end, so this is many hours of
+   rounds; a file that holds more keeps the first ones. */
 #define LV_OVERRUN_TRACK_MAX 4096
 
 /* One record and the playback time it was read at. */
