@@ -27,7 +27,7 @@
  *     -out -         write raw rgb24 frames to stdout, for an ffmpeg pipe
  *     -from <sec>    start this far into the game (default 0)
  *     -to <sec>      stop here (default: the end of the log)
- *     -fps <n>       frames per second of replay time (default 50)
+ *     -fps <n>       frames per second of replay time, 1-200 (default 50)
  *     -view x y w h  a fixed view: top-left map square and size in squares
  *     -follow <p>    follow a player, by name or by player number
  *     -size w h      the view size in squares when not -view (default 40 30)
@@ -94,7 +94,7 @@ static void printUsage(void) {
         "  -out -         write raw rgb24 frames to stdout\n"
         "  -from <sec>    start this far into the game (default 0)\n"
         "  -to <sec>      stop here (default: the end of the log)\n"
-        "  -fps <n>       frames per second of replay time (default 50)\n"
+        "  -fps <n>       frames per second of replay time, 1-200 (default 50)\n"
         "  -view x y w h  fixed view: top-left map square, size in squares\n"
         "  -follow <p>    follow a player, by name or player number\n"
         "  -size w h      view size in squares when not -view (default %d %d)\n"

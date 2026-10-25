@@ -13,7 +13,8 @@
  *  but not logviewer.c (the modal viewer and the spectator
  *  loop), nor the viewer's ImGui panels (imgui_context,
  *  imgui_events, imgui_item_info, imgui_game_info,
- *  imgui_comments, imgui_main_menu), nor sound.c.  In the
+ *  imgui_comments, imgui_main_menu), nor sound.c, nor the
+ *  macOS menu bar shim (platform/mac_menubar.mm).  In the
  *  web build imgui_comments.cpp and imgui_logviewer_menu.cpp
  *  cannot be built at all: they reach WinBolo.net through
  *  http.c, which carries a hard #error under Emscripten
@@ -45,6 +46,7 @@
 #include "imgui/imgui_context.h"
 #include "imgui/imgui_events.h"
 #include "imgui/imgui_main_menu.h"
+#include "platform/mac_menubar.h"
 
 /* Read by draw.c's script-region overlay, which also returns early in embed
  * mode. The real flag lives in imgui_main_menu.cpp, which these builds do not
@@ -118,7 +120,6 @@ void lv_imgui_context_shutdown(void) {
 }
 
 #if defined(__APPLE__) && !defined(__IPHONEOS__)
-#include "platform/mac_menubar.h"
 /* ----- macOS menu bar --------------------------------------------------
  * Reached only through lvHostTeardownCommon(withImGui = true), as above.
  * On macOS (not iOS) the only build that links this file is WbvRender, which

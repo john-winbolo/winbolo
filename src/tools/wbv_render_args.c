@@ -217,8 +217,9 @@ bool wbvRenderParseArgs(int argc, char **argv, WbvRenderArgs *out,
                 !parseInt(argv[i + 2], 0, 255, &out->viewY) ||
                 !parseInt(argv[i + 3], 1, WBV_RENDER_MAX_SQUARES, &out->viewW) ||
                 !parseInt(argv[i + 4], 1, WBV_RENDER_MAX_SQUARES, &out->viewH)) {
-                ARG_FAIL("-view needs x y w h in map squares (x, y 0-255; "
-                         "w, h 1-%d)", WBV_RENDER_MAX_SQUARES);
+                ARG_FAIL("-view needs x y w h in map squares (x, y 0-%d; "
+                         "w, h 1-%d)", WBV_RENDER_MAX_SQUARES - 1,
+                         WBV_RENDER_MAX_SQUARES);
             }
             /* The view cannot go past the map edge. The screen code would
              * move it back and print nothing, so refuse it here. */
