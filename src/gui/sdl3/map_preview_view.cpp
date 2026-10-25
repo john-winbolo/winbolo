@@ -1438,6 +1438,27 @@ extern "C" float mapPreviewViewGetZoom(const MapPreviewView *v) {
     return v ? v->zoomLevel : 1.0f;
 }
 
+/* The touch pinch bank: one for every view, as the trackpad's monitor is,
+   since one finger pair is on the screen at a time. Filled by the dialog
+   loops on a touch screen and emptied by whichever view handles input
+   next; a view that is not hovered drops it on its next frame, as it does
+   the trackpad's, so a gesture aimed elsewhere never arrives as a jump. */
+static float s_touchPinch = 0.0f;
+
+extern "C" void mapPreviewViewTouchPinchEvent(const SDL_Event *ev) {
+    if (ev->type == SDL_EVENT_PINCH_UPDATE && ev->pinch.scale > 0.0f) {
+        s_touchPinch += ev->pinch.scale - 1.0f;
+    } else if (ev->type == SDL_EVENT_PINCH_BEGIN) {
+        s_touchPinch = 0.0f;
+    }
+}
+
+extern "C" float mapPreviewViewTouchPinchConsume(void) {
+    float p = s_touchPinch;
+    s_touchPinch = 0.0f;
+    return p;
+}
+
 extern "C" float mapPreviewViewZoomIn(MapPreviewView *v) {
     if (!v) return 1.0f;
     if (v->zoomIndex < ZOOM_STEP_COUNT - 1) v->zoomIndex++;
@@ -1518,7 +1539,7 @@ extern "C" void mapPreviewViewHandleInput(MapPreviewView *v, bool hovered,
     }
 
     if (opts->pinchZoom) {
-        float pinch = macOSPinchZoomConsume();
+        float pinch = macOSPinchZoomConsume() + mapPreviewViewTouchPinchConsume();
         if (pinch != 0.0f) {
             v->pinchAccum += pinch;
             while (v->pinchAccum > 0.15f) {

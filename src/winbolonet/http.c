@@ -50,6 +50,7 @@
 #include <errno.h>
 #include <time.h>
 #include <curl/curl.h>
+#include <SDL3/SDL_atomic.h>
 #include <SDL3/SDL_thread.h>
 #include <SDL3/SDL_timer.h>
 #include "tweetnacl.h"
@@ -79,6 +80,33 @@ static char wbnHostOverride[FILENAME_MAX]; /* command-line override for WBN host
  * the default. Lets a caller that must not block for long (e.g. shutting a
  * hosted game down) cap the upload without changing it for everyone else. */
 static long s_logUploadTimeoutOverride = 0;
+
+/* httpSetDeadline: the SDL_GetTicks value every request has to be over by,
+ * or 0 for none. Under the spinlock because the worker thread reads it while
+ * another thread sets it. */
+static SDL_SpinLock s_deadlineLock = 0;
+static Uint64       s_deadlineMs   = 0;
+
+/* A request's total limit in milliseconds, cut to the time left before the
+ * deadline. Past it the limit is 1 ms, the shortest curl takes (0 would mean
+ * none), so the request fails at once. */
+static long httpDeadlineCapMs(long ms) {
+  Uint64 deadline;
+  SDL_LockSpinlock(&s_deadlineLock);
+  deadline = s_deadlineMs;
+  SDL_UnlockSpinlock(&s_deadlineLock);
+  if (deadline == 0) {
+    return ms;
+  }
+  Uint64 now = SDL_GetTicks();
+  if (now >= deadline) {
+    return 1L;
+  }
+  if ((Uint64)ms > deadline - now) {
+    return (long)(deadline - now);
+  }
+  return ms;
+}
 
 /* The WinBolo.net worker thread's own easy handle, kept between posts so a
  * queued post costs one round trip rather than a TCP connect plus a TLS
@@ -525,7 +553,7 @@ static int wbn_api_post_impl(const char *endpoint, const char *json_body,
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER,     headers);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  dynWriteCallback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &respBuf);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT,        30L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS,     httpDeadlineCapMs(30000L));
   /* Timeouts must not use signals: these posts also run on the hosted
    * server's tick thread (round-transition server/quit + register), and
    * libcurl's SIGALRM timeout path is only safe on the main thread. */
@@ -715,6 +743,26 @@ void httpSetLogUploadTimeout(long seconds) {
 }
 
 /*********************************************************
+*NAME:          httpSetDeadline / httpClearDeadline
+*PURPOSE:
+* See http.h. Here only requests started after the call are
+* limited, through httpDeadlineCapMs.
+*********************************************************/
+void httpSetDeadline(long msFromNow) {
+  Uint64 now = SDL_GetTicks();
+  SDL_LockSpinlock(&s_deadlineLock);
+  /* At least 1 so a deadline already passed is not read as none. */
+  s_deadlineMs = msFromNow > 0 ? now + (Uint64)msFromNow : (now > 0 ? now : 1);
+  SDL_UnlockSpinlock(&s_deadlineLock);
+}
+
+void httpClearDeadline(void) {
+  SDL_LockSpinlock(&s_deadlineLock);
+  s_deadlineMs = 0;
+  SDL_UnlockSpinlock(&s_deadlineLock);
+}
+
+/*********************************************************
 *NAME:          httpSendLogFile
 *PURPOSE:
 * Uploads a log file to WinBolo.net via HTTP(S) multipart
@@ -782,9 +830,10 @@ bool httpSendLogFile(const char *fileName, char *key, bool wantFeedback) {
   curl_easy_setopt(curl, CURLOPT_MIMEPOST,       mime);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  writeCallback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &ctx);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT,
-                   s_logUploadTimeoutOverride > 0 ? s_logUploadTimeoutOverride
-                                                  : 60L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS,
+                   httpDeadlineCapMs((s_logUploadTimeoutOverride > 0
+                                          ? s_logUploadTimeoutOverride
+                                          : 60L) * 1000L));
   /* Timeouts must not use signals: a hosted game uploads its round log from
    * the server's tick thread at round transitions, and libcurl's SIGALRM
    * timeout path is only safe on the main thread. */
@@ -942,7 +991,8 @@ static int wbn_api_get_impl(const char *path, char **response_out,
   curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &respBuf);
   /* Total time for the request, connect and reply together. */
   curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS,
-                   timeout_ms > 0 ? timeout_ms : WBN_API_GET_TIMEOUT_MS);
+                   httpDeadlineCapMs(timeout_ms > 0 ? timeout_ms
+                                                    : WBN_API_GET_TIMEOUT_MS));
   /* Timeouts must not use signals: this GET is run from worker threads
    * (the map list, the log browser, the news), and libcurl's SIGALRM
    * timeout path is only safe on the main thread. Same as the post and
@@ -1100,7 +1150,7 @@ static int wbn_prefs_request_impl(const char *bearerToken, bool is_put,
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER,     headers);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  dynWriteCallback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &respBuf);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT,        30L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS,     httpDeadlineCapMs(30000L));
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
   if (altIpAddress[0] != '\0') {
     curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
@@ -1221,7 +1271,7 @@ int wbn_api_download_progress(const char *path, const char *dest_path,
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER,     headers);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  fileWriteCallback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA,      fp);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT,        120L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS,     httpDeadlineCapMs(120000L));
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
   if (progressFn || cancel_flag) {
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS,       0L);
@@ -1328,7 +1378,7 @@ int wbn_api_download_to_memory_progress(const char *path,
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER,     headers);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  dynWriteCallback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &respBuf);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT,        120L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS,     httpDeadlineCapMs(120000L));
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
   if (progressFn || cancel_flag) {
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS,       0L);

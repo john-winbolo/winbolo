@@ -93,6 +93,15 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
      * a three-shot order. */
     serverSimShotOrderClear(sim, playerNum);
     serverSimKillCreditForget(sim, playerNum);
+    /* The seat's lag-compensation records still hold where the last
+     * occupant's tank and builder were: nothing writes to them while the
+     * seat is empty. A player's shell tests a tank where it was on the
+     * shooter's screen, so left in place those frames would be tested as
+     * this player's tank until the tick had written over them. Erased, the
+     * records say "nothing that old" and the shell test uses where the tank
+     * and the builder are now. */
+    posHistoryInit(&sim->posHistory[playerNum]);
+    posHistoryInit(&sim->lgmPosHistory[playerNum]);
 
     sim->playerConnected[playerNum] = TRUE;
     sim->hadPlayersEver = TRUE;

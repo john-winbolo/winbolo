@@ -1039,18 +1039,6 @@ static void simRunHalfStep(ServerSim *sim) {
             }
         }
 
-        /* Precompute per-player compensation ticks for pill shell rewind */
-        {
-            BYTE c;
-            for (c = 0; c < MAX_TANKS; c++) {
-                uint16_t pingMs = sim->playerPing[c];
-                uint16_t delayMs = (pingMs / 2) + INTERP_BUFFER_MS;
-                uint8_t ticks = (uint8_t)(delayMs / 20);
-                if (ticks > LAG_COMP_MAX_TICKS) ticks = LAG_COMP_MAX_TICKS;
-                sim->sim.perPlayerCompTicks[c] = ticks;
-            }
-        }
-
         /* Enforce high-ping limits */
         transportUdpServerEnforcePing(sim);
 

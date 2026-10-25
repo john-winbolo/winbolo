@@ -47,9 +47,13 @@ FetchContent_Declare(sdl3_ttf
     GIT_REPOSITORY https://github.com/libsdl-org/SDL_ttf.git
     GIT_TAG        release-3.2.0
 )
+# The same release the desktop and iOS builds pin (CMakeLists.txt). The
+# docking branch head moves, and a reconfigure that fetched a newer one
+# dropped names the shared ImGui code still uses.
 FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        docking
+    GIT_TAG        v1.92.9b-docking
+    GIT_SHALLOW    TRUE
 )
 FetchContent_Declare(lua
     GIT_REPOSITORY https://github.com/walterschell/Lua.git
@@ -279,6 +283,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/skin_source.c
     ${SRC_ROOT}/gui/sdl3/gfx_settings.c
     ${SRC_ROOT}/gui/sdl3/sdl3draw.c
+    ${SRC_ROOT}/gui/sdl3/newswire_slide.c
     ${SRC_ROOT}/gui/sdl3/sdl3draw_status.c
     ${SRC_ROOT}/gui/sdl3/tank_label.c
     ${SRC_ROOT}/gui/sdl3/sdl_bmp.c
@@ -302,8 +307,8 @@ set(GUI_SOURCES
 
 # Log viewer sources — the .wbv decoder, its block-grid renderer and the
 # embedded reel host (lv_embed.c). The modal viewer, the spectator host and
-# every ImGui panel of the viewer's own are left out; lv_stubs_wasm.c (in
-# WASM_SOURCES below) resolves what the decoder still calls back into.
+# every ImGui panel of the viewer's own are left out; lv_embed_stubs.c (listed
+# below) resolves what the decoder still calls back into.
 #
 # Never add here:
 #   logviewer.c, main.c   - the modal viewer / spectator host and the
@@ -332,6 +337,9 @@ set(GUI_SOURCES
 set(LOGVIEWER_SOURCES
     # Host bring-up, replay driver and the embedded reel API
     ${SRC_ROOT}/logviewer/lv_embed.c
+    # No-op bodies for the viewer surface the embed does not compile; shared
+    # with the iOS client
+    ${SRC_ROOT}/logviewer/lv_embed_stubs.c
     # Log container: zip/zlib member access and the snapshot index
     ${SRC_ROOT}/logviewer/blocks.c
     ${SRC_ROOT}/logviewer/lv_attribution.c
@@ -343,6 +351,9 @@ set(LOGVIEWER_SOURCES
     ${SRC_ROOT}/logviewer/screenlgm.c
     ${SRC_ROOT}/logviewer/screenbullet.c
     ${SRC_ROOT}/logviewer/spec_seed_load.c
+    # The spectator seed and record routing lv_embed.c's embedded spectator
+    # calls; nothing in the web client spectates, but lv_embed.c links it.
+    ${SRC_ROOT}/logviewer/lv_spec_feed.c
     # Replayed world model
     ${SRC_ROOT}/logviewer/players.c
     ${SRC_ROOT}/logviewer/shells.c
@@ -376,7 +387,6 @@ set(WASM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/dns_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/server_stubs_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/gui_stubs_wasm.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/lv_stubs_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sound_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/prefs_bridge_wasm.c
     # The recap reel's WinBolo.net round-log source. http.c (libcurl + signing
@@ -414,6 +424,10 @@ set(WASM_SOURCES
     ${SRC_ROOT}/client_frontend/voice_core.c
     ${SRC_ROOT}/client_frontend/voice_client.c
     ${CMAKE_CURRENT_SOURCE_DIR}/voice_wasm.c
+    # The windowSetVoice* / windowGetVoice* settings functions, one body for
+    # the desktop, iOS and the web. WINBOLO_VOICE_AEC is not set here, so its
+    # echo-cancel half stays out.
+    ${SRC_ROOT}/gui/sdl3/voice_settings.c
 )
 
 ###

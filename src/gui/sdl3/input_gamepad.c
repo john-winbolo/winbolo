@@ -91,15 +91,6 @@ float g_gamepadTankSensitivity = 1.0f;
    build cursor is active, independent of map-scroll sensitivity. */
 float g_gamepadBuildCursorSensitivity = 1.0f;
 
-/* DEBUG on-screen readouts (0..1): left-stick deflection magnitude and the
-   tank's actual turn speed this tick (normalised to the fastest seen). */
-float g_dbgStickMag = 0.0f;
-float g_dbgTurnMag  = 0.0f;
-/* DEBUG: right-stick deflection and resulting build-cursor move speed (0..1),
-   set by the build-cursor path in smoothScrollTick. */
-float g_dbgCursorStickMag = 0.0f;
-float g_dbgCursorMoveMag  = 0.0f;
-
 /* --- Path A (Steam Input) state --- */
 
 /* Tracks whether Steam Input was driving the controller last frame.
@@ -650,26 +641,6 @@ static float moveReach(float dist) {
 }
 
 tankButton inputGamepadGetMovement(BYTE tankAngle) {
-  /* DEBUG readouts: left-stick magnitude (0..1) and the tank's actual turn
-     speed this tick, normalised to the fastest turn seen so far (0..1). */
-  {
-    static BYTE  prevAngle = 0;
-    static bool  havePrev  = false;
-    static float maxTurn   = 1.0f;
-    if (havePrev) {
-      int d = (int)tankAngle - (int)prevAngle;
-      if (d > 128) d -= 256; else if (d < -128) d += 256;
-      float ad = (float)(d < 0 ? -d : d);
-      if (ad > maxTurn) maxTurn = ad;
-      float inst = (maxTurn > 0.0f) ? ad / maxTurn : 0.0f;
-      /* Smooth the per-tick (binary 0/1) rotation into a moving average so the
-         readout reflects the actual average turn rate, landing mid-range. */
-      g_dbgTurnMag = 0.85f * g_dbgTurnMag + 0.15f * inst;
-    }
-    prevAngle = tankAngle;
-    havePrev  = true;
-  }
-  g_dbgStickMag = 0.0f;
 
   if (path_a_active()) {
     float x = 0.0f, y = 0.0f;
@@ -689,7 +660,6 @@ tankButton inputGamepadGetMovement(BYTE tankAngle) {
     }
     s_moveWasActive = true;
     float reach = moveReach(dist);
-    g_dbgStickMag = reach;
     tankButton tb = joystickGetAbsoluteSteering()
         ? joystickGetMovementAbsolute(x, y, dist, MOVE_DEADZONE, MOVE_MAX_REACH, tankAngle)
         : joystickGetMovementRelative(x, y, dist, MOVE_DEADZONE, MOVE_MAX_REACH);
@@ -718,7 +688,6 @@ tankButton inputGamepadGetMovement(BYTE tankAngle) {
 
   s_moveWasActive = true;
   float reach = moveReach(dist);
-  g_dbgStickMag = reach;
 
   tankButton tb = joystickGetAbsoluteSteering()
       ? joystickGetMovementAbsolute(x, y, dist, MOVE_DEADZONE, MOVE_MAX_REACH, tankAngle)

@@ -951,7 +951,7 @@ STR_MAPGEN_TYPE_NATURAL=自然
 STR_MAPGEN_TYPE_MAZE=迷路
 STR_MAPGEN_TYPE_FRACTAL=フラクタル
 STR_MAPGEN_SEED=シード
-STR_MAPGEN_RANDOMIZE=ランダム化
+STR_MAPGEN_RANDOMIZE=値をランダム化
 STR_MAPGEN_SYMMETRY=対称性
 STR_MAPGEN_SYM_4CORNER=4コーナーミラー
 STR_MAPGEN_SYM_MIRROR_H=水平ミラー
@@ -991,6 +991,87 @@ STR_MAPGEN_COAST_JAG=海岸の凹凸
 STR_MAPGEN_TERRAIN_LAYERS=地形レイヤー
 STR_MAPGEN_RIVERS=川
 STR_MAPGEN_LAKES=湖
+STR_MAPGEN_TYPE_MAKER=有名マップメーカー風
+STR_MAPGEN_SIZE=サイズ
+STR_MAPGEN_SIZE_FULL=全体
+STR_MAPGEN_SIZE_TIP=プレイ可能な正方形の一辺(タイル数)。全体は領域全部を使います。
+STR_MAPGEN_PRESET=プリセット
+STR_MAPGEN_PRESET_TIP=往年の Bolo マップ作者の作風によるマップ。プリセットは下のコントロールを設定します。その後どれでも変更できます。
+STR_MAPGEN_OUTLINE=外形
+STR_MAPGEN_OUTLINE_BOX=四角
+STR_MAPGEN_OUTLINE_OCTAGON=八角形
+STR_MAPGEN_OUTLINE_ROUND=円形
+STR_MAPGEN_OUTLINE_DIAMOND=ひし形
+STR_MAPGEN_OUTLINE_CROSS=十字
+STR_MAPGEN_OUTLINE_CLOVER=クローバー
+STR_MAPGEN_OUTLINE_ISLAND=島
+STR_MAPGEN_OUTLINE_VARIED=いろいろ
+STR_MAPGEN_MSYM_NONE=なし
+STR_MAPGEN_MSYM_MIRROR=左右反転
+STR_MAPGEN_MSYM_ROT2=半回転
+STR_MAPGEN_MSYM_MIRROR4=上下左右反転
+STR_MAPGEN_MSYM_ROT4=4 回転
+STR_MAPGEN_WATER_PCT=水 %
+STR_MAPGEN_ROAD_PCT=道路 %
+STR_MAPGEN_ISLANDS=島の数
+STR_MAPGEN_DETAIL=細部
+STR_MAPGEN_PRESET_BERSERKIR=Berserkir
+STR_MAPGEN_PRESET_SLUGGO_TOURNAMENT=Sluggo Tournament
+STR_MAPGEN_PRESET_SLUGDEATH=Sluggo Slugdeath
+STR_MAPGEN_PRESET_SLUGFEST=Sluggo Slugfest
+STR_MAPGEN_PRESET_SLUGGO_ADVENTUROUS=Sluggo Adventurous
+STR_MAPGEN_PRESET_SLUGGO_SYMMETRIC=Sluggo Symmetric
+STR_MAPGEN_PRESET_STOOGEFEST=Sluggo Stoogefest
+STR_MAPGEN_PRESET_BLACK_LIGHTNING=Black Lightning
+STR_MAPGEN_PRESET_BL_ISLANDS=Black Lightning Islands
+STR_MAPGEN_PRESET_DEATHHAND=Deathhand
+STR_MAPGEN_PRESET_MEGAWATT_TC=Megawatt TC
+STR_MAPGEN_PRESET_MEGAWATT_ISLANDS=Megawatt Islands
+STR_MAPGEN_PRESET_MOSH_PIT=Nature Mosh Pit
+STR_MAPGEN_PRESET_PALPATINE=Palpatine
+STR_MAPGEN_PRESET_CHEW_TOY=Chew Toy
+
+# Map Maker style panel
+STR_MAPGEN_LOCK_ALL=すべてロック
+STR_MAPGEN_UNLOCK_ALL=すべてロック解除
+STR_MAPGEN_PANEL_TITLE=マップの値
+STR_MAPGEN_STYLE_TITLE={string1}スタイル
+STR_MAPGEN_STYLE_RANDOMIZE=スタイルをランダム化
+STR_MAPGEN_STYLE_NONE=このマップメーカーには、シードが決めるほかの項目はありません。
+STR_MAPGEN_STYLE_FROM_SEED=シードから
+STR_MAPGEN_STYLE_ROADS=道路レイアウト
+STR_MAPGEN_ROADS_AXES=十字
+STR_MAPGEN_ROADS_DIAG=斜め
+STR_MAPGEN_ROADS_AXES_DIAG=十字と斜め
+STR_MAPGEN_ROADS_AXES_RING=十字と輪
+STR_MAPGEN_ROADS_DIAG_RING=斜めと輪
+STR_MAPGEN_ROADS_RING=輪
+STR_MAPGEN_STYLE_SHAPE=形状
+STR_MAPGEN_STYLE_CUT=面取り
+STR_MAPGEN_STYLE_CORE=輪の中心
+STR_MAPGEN_STYLE_RIM=海岸
+STR_MAPGEN_RIM_FOREST=森の縁
+STR_MAPGEN_RIM_GRASS=海岸まで草
+STR_MAPGEN_STYLE_YARD=迷路の庭
+STR_MAPGEN_YARD_NONE=なし
+STR_MAPGEN_YARD_BUILDING=建物の壁
+STR_MAPGEN_YARD_FOREST=森の壁
+STR_MAPGEN_STYLE_ROADS_TIP=陸地を横切る道路の筋。シードから: シードがこのリストにある配置のひとつを選びます。
+STR_MAPGEN_STYLE_SHAPE_TIP=陸地の幅を高さに対する比率で表し、100倍した値です。100は正方形、大きいほど幅広になります。シードから: シードがこの範囲内の値を選びます。
+STR_MAPGEN_STYLE_CUT_TIP=八角形が各角をどれだけ切り落とすかです。値が大きいほど角は小さく切り取られます。シードから: シードがこの範囲内の値を選びます。
+STR_MAPGEN_STYLE_CORE_TIP=各輪の中央にある地形です。シードから: シードが1つ選びます。
+STR_MAPGEN_STYLE_RIM_TIP=海岸を囲む森の帯、または水際までの草地です。シードから: シードが1つ選びます。
+STR_MAPGEN_STYLE_YARD_TIP=置き場所が見つかれば、ひとつの島に迷路の壁の庭を置きます。シードから: シードが1つ選びます。
+STR_MAPGEN_STYLE_WALLS=縁の壁
+STR_MAPGEN_WALLS_NONE=壁なし
+STR_MAPGEN_WALLS_BUILDING=各軸に建物の壁
+STR_MAPGEN_STYLE_MIDDLE=中央
+STR_MAPGEN_MIDDLE_OPEN=開放
+STR_MAPGEN_MIDDLE_PIECES=斜めのピース
+STR_MAPGEN_MIDDLE_CLUMP=中央の塊
+STR_MAPGEN_MIDDLE_BOTH=斜めのピースと中央の塊
+STR_MAPGEN_STYLE_WALLS_TIP=各軸で森の縁を横切る建物の壁があり、縁を4つに分けます。シードから: シードが1つ選びます。
+STR_MAPGEN_STYLE_MIDDLE_TIP=陸地中央付近の建物: 45度の短いピース、中央の塊、またはその両方です。シードから: シードが1つ選びます。
 
 # Log viewer sim-replay messages
 STR_LV_PLAYER_JOINED={player} がゲームに参加しました。
@@ -2563,7 +2644,6 @@ STR_RULE_DESC_pill_base_defend_shape=pill_base_defend_range の測り方。0 は
 STR_RULE_DESC_tank_slide_armour_bonus=装甲ゼロのときに追加される押し出しの歩幅。被弾前に減っていた装甲の割合に応じて tank_slide_step に加算される。tank_slide_mac がオンのときだけ読まれる。
 STR_RULE_DESC_tank_slide_mac=砲弾の命中でタンクを Mac Bolo 式に押し出すかどうか。オンでは装甲が減るほど tank_slide_armour_bonus だけ押し出しが強くなり、tank_slide_step と tank_bump_decay_shift は 40 ms 単位で読まれ、毎ティック動く滑りになる。オフは WinBolo の押し出しで、どの装甲でも同じ。
 STR_RULE_DESC_tank_deep_sea_safe=ボートのないタンクが沈まずに深海を渡れるかどうか。オフは従来のゲームで、深海はボートのないタンクを沈める。これがオフに戻ったときにボートなしで深海に出ているタンクは、次のティックで沈む。
-STR_RULE_DESC_man_bless_tile_terrain_speed=建設先のマスを、そのマスの地形の速度で歩くかどうか。Mac Bolo と同じ。オフは WinBolo の歩き方で、地形に関係なく基地の速度でそのマスの中央まで歩く。川、壁、トーチカなど歩く速度のないマスは基地の速度のまま。タンクへの帰り道は変わらない。
 STR_RULE_DESC_pill_aim_iterations=トーチカが移動する目標を先読みするためにどれだけ計算を重ねるか。
 STR_RULE_DESC_pill_massage_range=トーチカがソルバーではなく従来の前方予測で照準するために、タンクが近づく必要がある距離。ソルバーは旋回するタンクに命中しづらい。0（クラシックの設定）は常に正しく先読みするトーチカを意味し、384は1.5マス分で、かつてのビルド時スイッチが使っていた距離。
 STR_RULE_DESC_pill_massage_cosine=近くのトーチカに対して、それでも正しく照準されるためにタンクがどれだけ直進している必要があるかを、進行方向とトーチカへの直線との角度の余弦（コサイン）で表す。1はpill_massage_range内のすべてのタンクを雑に照準し、0はどのタンクにも雑な照準をしない。pill_massage_rangeが0のときはこの値は何もしない。
@@ -2770,3 +2850,96 @@ STR_DLGSYSINFO_MEM_BUILDING=建設
 STR_DLGSYSINFO_MEM_RUBBLE=瓦礫
 STR_DLGSYSINFO_MEM_SWAMP=沼地
 STR_DLGSYSINFO_MEM_GRASS=草地
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=プッシュ・トゥ・トーク：ゲーム画面のマイクボタンを押し続けてください
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=あなたのファイル
+STR_MAPEDIT_IOS_BUILTIN=WinBolo に付属のマップ
+STR_MAPEDIT_IOS_NOFILES=まだ何もありません。保存したファイルと、「ファイル」アプリの WinBolo フォルダに入れたファイルがここに表示されます。
+STR_MAPEDIT_IOS_NAME=名前
+STR_MAPEDIT_IOS_REPLACES=この名前のファイルは既にあります。保存すると置き換えられます。
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=録画
+STR_IOSREC_EMPTY=まだ録画はありません。シングルプレイのラウンドはここに録画され、「ファイル」アプリの WinBolo フォルダに入れた .wbv ファイルもここに表示されます。
+STR_IOSREC_COPY=「ファイル」にコピー
+STR_IOSREC_COPIED=「ファイル」アプリの WinBolo フォルダにコピーしました。
+STR_IOSREC_OPEN_FAILED=この録画を開けませんでした。
+STR_IOSREC_LAST_ROUND=最後のシングルプレイのラウンド
+STR_IOSREC_COPY_FAILED=録画を「ファイル」アプリにコピーできませんでした。
+STR_DLGCONNECTING_TITLE={string1} に接続中...
+STR_DLGCONNECTING_PING=サーバーにゲームの情報を問い合わせ中...
+STR_DLGCONNECTING_JOINING=ゲームに参加中...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=その録画を読み込めませんでした。
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=設定
+STR_DLGLOBBY_DETAILS_COL_VALUE=値
+STR_DLGLOBBY_DETAILS_RULES=ルール：
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=この値はサーバーが決めています。変更できません。
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=作成者 {string1} · 更新 {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=不明
+STR_MENU_INFO_OVERLAY=情報オーバーレイ
+STR_SCNPANEL_POP_OUT=切り離す
+STR_SCNPANEL_POP_IN=戻す
+STR_SCNPANEL_CLOSE_TITLE={string1} を閉じますか？
+STR_SCNPANEL_CLOSE_BODY={string1} > {string2} から再びオンにできます。
+STR_DLGLOBBY_SCENARIO_REQUIRED=サーバーは常にこのスクリプトを実行します。削除できません。
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=サーバーは常にこのラウンドのシナリオを実行します
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=このリストはサーバーが決めています。変更できません。
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=トーチカが Mac Bolo と同じ照準をするかどうか。約1マス以内にいる、動いていて遮られていないタンクに対しては、その進行方向のずっと先を狙う。止まっている、または塞がれたタンクには先読みしない。pill_massage_range、pill_massage_cosine、pill_aim_iterations より優先される。
+STR_RULE_DESC_tank_collision_mac=タンクが壁、稼働中のトーチカ、敵の基地に対して、Mac Bolo の向きによって変わるスプライトの当たり枠とピクセル単位の押し戻しを使うかどうか。「ピルマッサージ」でトーチカのすぐ横を通れるようになる。
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=タンクの撃破を誰の手柄とするか。撃破のたびに問い合わせる。溺死は、沈めたタンクをスクリプトが指定しない限り犠牲者自身になる。
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} は「ファイル」アプリの WinBolo フォルダにあります。
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} を保存できませんでした。
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=マップが画面全体に表示され、操作ボタンはその上に描画されます。\nオフにするとゲーム画面は正方形のままで、操作ボタンはその横に並びます。\n次回の起動でも記憶されます。
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=フルスクリーンで建設ツールから、マップがどれだけ\n透けて見えるかです。0%で不透明になり、スライダーは\n90%までしか動かないため透明にはなりません。
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=フルスクリーンでタンク・トーチカ・基地のグリッドと在庫バーから、\nマップがどれだけ透けて見えるかです。0%で不透明になり、\nスライダーは90%までしか動かないため透明にはなりません。
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=マップが画面全体に表示され、ステータス・建設・ニュースのパネルがその上に、\nタッチで遊ぶときはタッチ操作も重ねて表示されます。\nオフにするとクラシック画面になります。次回の起動でも記憶されます。
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=このデバイスはモバイルデータ通信を使用しています。モバイルデータで\nホストしたインターネットゲームはおそらく動作しません。モバイル回線では\n他のプレイヤーがこのデバイスに接続できることはまれです。Wi-Fi のほうが\nはるかに動作する可能性が高くなります。\n\nそれでもホストしますか？
+
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=共有
+STR_ANDROIDREC_EMPTY=まだ録画はありません。シングルプレイのラウンドはここに録画され、他のアプリから開いた .wbv 録画もここに表示されます。
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1} を保存しました。次に、共有するアプリを選んでください。
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=まだ何もありません。ここで、またはゲーム中に保存したマップがここに表示されます。
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=あなたのGIF
+STR_CLIPGIF_GALLERY_EMPTY=まだGIFはありません。リプレイの下のGIFボタンか、クリップのGIFボタンで作成できます。
+STR_CLIPGIF_COPY=クリップボードにコピー
+STR_CLIPGIF_SAVE=ディスクに保存
+STR_CLIPGIF_COPIED=コピーしました。
+STR_CLIPGIF_COPY_FAILED=GIFをコピーできませんでした。
+STR_CLIPGIF_OPEN_FAILED=このGIFを開けませんでした。
+STR_CLIPGIF_MAP_FMT=マップ: {string1}
+STR_CLIPGIF_PLAYERS_FMT=プレイヤー: {string1}
+STR_CLIPGIF_NO_DETAILS=このGIFには詳細が保存されていません。
+STR_CLIPGIF_LENGTH_TIP=再生位置からのGIFの長さ（秒）。\nタイムラインの明るい部分の端にあるマーカーをドラッグしても変更できます。
+STR_CLIPGIF_LOADING=GIFを開いています...
+STR_CLIPGIF_TOO_LARGE=このGIFは大きすぎるため、ここには表示できません。コピーや保存は引き続きできます。
+STR_CLIPGIF_FILTER_NAME=GIF画像

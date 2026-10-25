@@ -39,6 +39,7 @@
 #include "logviewer.h"
 #include "lv_host.h"
 #include "lv_lag.h"        /* LV_LAG_PREF_KEY, lv_lagPrefIsOn */
+#include "lv_spec_feed.h"   /* the embedded spectator's seed and records */
 
 #include <SDL3/SDL.h>
 
@@ -370,7 +371,7 @@ bool lvHostSetupCore(SDL_Window *window, SDL_Renderer *renderer,
 void lvHostTeardownCommon(bool withImGui) {
     lv_windowStop(FALSE);
     if (withImGui) {
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(__IPHONEOS__)  /* iOS has no menu bar */
         /* Restore the previously-installed NSMenu (WinBolo's, when embedded;
          * empty stub when standalone since the process is exiting). */
         lv_mac_menubar_uninstall();
@@ -423,6 +424,10 @@ static int s_embedSavedZoomStep = 0;
  * log. Empty when the host named nobody (a spectator has no slot of their own),
  * and the reel then draws exactly as it did before it could be told. */
 static char s_embedSelfName[PLAYER_NAME_LEN];
+
+/* True while the embed is showing the live spectator feed rather than a log:
+ * set from lvEmbedSpecBegin to lvEmbedEnd. */
+static bool s_embedSpectating = false;
 
 bool lvEmbedBegin(SDL_Window *window, SDL_Renderer *renderer,
                   uint8_t *zipData, size_t zipLen, int viewW, int viewH) {
@@ -479,6 +484,14 @@ bool lvEmbedBegin(SDL_Window *window, SDL_Renderer *renderer,
 void lvEmbedEnd(void) {
     if (!s_embedActive) {
         return;
+    }
+    if (s_embedSpectating) {
+        /* Leave live-DVR mode so the stream pump reverts to file playback for
+         * any later session in this process, and drop the seed's control
+         * stash, as spectatorRun does on its way out. */
+        lv_screenSpecSetLiveMode(FALSE);
+        lv_specSeedControlClear();
+        s_embedSpectating = false;
     }
     lvHostTeardownCommon(false);
     /* lv_decoderDestroy rather than the standalone path's bare free(): it
@@ -911,4 +924,85 @@ void lvEmbedStepTicks(int ticks) {
     }
     lv_clientMutexRelease();
     g_lv->wantScreenUpdate = TRUE;
+}
+
+/* --------------------------------------------------------------------------
+ * Embedded spectator — the live delayed feed in the embed, for clients that
+ * build only the reel host (iOS). The modal viewer's spectatorRun does the
+ * same work with its own window and panels; the seed and record routing both
+ * use is lv_spec_feed.c. The host owns the loop: it pumps the transport and
+ * drains the seam (spectator_drain.h), hands the seed and each record over
+ * here, and calls lvEmbedSpecFrame once a frame. Nothing here starts the
+ * playback timers: the feed is advanced by lvEmbedSpecFrame alone, as
+ * spectatorRun's loop advances it, so lvEmbedPlay / lvEmbedPause / the seek
+ * calls are not for a spectating embed.
+ * -------------------------------------------------------------------------- */
+
+/* Bring the host up with no log, waiting for the feed's seed. The picture is
+ * empty (lvEmbedFrameTexture answers false) until lvEmbedSpecSeed loads one. */
+bool lvEmbedSpecBegin(SDL_Window *window, SDL_Renderer *renderer,
+                      int viewW, int viewH) {
+    if (window == NULL || renderer == NULL || g_lv != NULL) {
+        return false;
+    }
+    lv_drawSetEmbedded(1);
+    lv_drawSetEmbedViewport(viewW, viewH);
+    if (lvHostSetupCore(window, renderer, /* fromMainMenu */ true) == FALSE) {
+        lv_drawSetEmbedded(0);
+        return false;
+    }
+    s_embedActive = true;
+    s_embedSpectating = true;
+    g_lv->isSoundsPlaying = FALSE;
+    lv_imgui_events_clear();
+    s_embedSelfName[0] = '\0';
+    s_embedSavedZoomStep = lv_drawGetZoomStepIndex();
+    lv_drawSetZoomStep(0, viewW / 2, viewH / 2);
+    lvEmbedSetViewportSize(viewW, viewH);
+    return true;
+}
+
+/* Load the feed's opening seed and enter live-DVR mode, following the head.
+ * The seed stays the caller's. */
+bool lvEmbedSpecSeed(const uint8_t *seed, uint32_t seedLen) {
+    if (!s_embedActive || !s_embedSpectating || g_lv == NULL) {
+        return false;
+    }
+    if (!lvSpecFeedSeed(seed, seedLen)) {
+        return false;
+    }
+    lv_drawDirtyScreen();
+    g_lv->wantScreenUpdate = TRUE;
+    lv_screenSpecSetLiveMode(TRUE);
+    return true;
+}
+
+/* Hand one drained record to the decoder. False once a new segment failed to
+ * load and there is no decoder left to draw from; the host should leave. The
+ * record's payload stays the caller's. */
+bool lvEmbedSpecRecord(const SpecDrainRecord *rec) {
+    if (!s_embedActive || !s_embedSpectating || g_lv == NULL ||
+        g_lv->isLoaded == FALSE) {
+        return false;
+    }
+    return lvSpecFeedRecord(rec) != LV_SPEC_FEED_LOST;
+}
+
+/* Advance the decoder for this frame — follow-live slams to the head — and
+ * ask for a repaint, as spectatorRun's loop does each frame. */
+void lvEmbedSpecFrame(void) {
+    if (!s_embedActive || !s_embedSpectating || g_lv == NULL ||
+        g_lv->isLoaded == FALSE) {
+        return;
+    }
+    lv_screenSpecFrameUpdate((uint32_t)SDL_GetTicks());
+    g_lv->wantScreenUpdate = TRUE;
+}
+
+/* The feed's game phase, one of spectator_drain.h's SPEC_PHASE_* values. */
+int lvEmbedSpecPhase(void) {
+    if (!s_embedActive || g_lv == NULL) {
+        return SPEC_PHASE_UNKNOWN;
+    }
+    return (int)g_lv->gamePhase;
 }

@@ -305,6 +305,130 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   }
 }
 
+/* A player's shell rewinds its targets to the view that player fired at.
+ * The rewind is measured from the second-newest snapshot his client has
+ * applied, which is the one it draws tanks at. Builders are not drawn at
+ * that one: his client draws every builder, his own and other players',
+ * from the newest snapshot it has applied, which is a snapshot (one game
+ * tick) later. So against any builder the rewind is this much shorter. The
+ * tank test in shellsCalcCollision keeps the full rewind.
+ *
+ * The one tick assumes the newest and second-newest applied snapshots are
+ * one game tick apart. A lost snapshot widens that gap, and the builder
+ * rewind is then one tick too far. That is what every builder rewind was
+ * before this rule, so a lost snapshot makes it no worse than it was.
+ *
+ * It is taken off only a rewind longer than one tick, so it never takes a
+ * rewind down to nothing. Single player sends no view tick and has no ping,
+ * so its rewind is always one and single player is unchanged. A bot is the
+ * same: view tick 0 and ping 0 give (0 + 20) / 20 = 1, so every bot shell is
+ * rewound one tick against tanks and builders, although the bot reads the
+ * server's present state. That is older than this rule and not changed
+ * here. A rewind measured as exactly one, a client on a LAN, also keeps its
+ * one against builders.
+ *
+ * Known small gap: a networked client that has not yet applied two snapshots
+ * sends no view tick the server can use, and the server falls back to its
+ * ping estimate (serverSimComputeLagCompTicks), which is two or more from
+ * 40 ms of ping. The tick is taken off that estimate too, though it was not
+ * measured from a snapshot. This happens when a client joins and again at
+ * the start of each round, because a new round starts the server's tick
+ * count from zero. It lasts until the client has applied two snapshots.
+ *
+ * A pill's shell is not rewound at all. It carries no rewind (owner NEUTRAL,
+ * compensationTicks 0) and tests tanks and builders where they are now. */
+#define SHELL_LGM_REWIND_LESS 1
+
+/* Tests one builder against a shell that has just exploded, and kills him if
+ * the blast caught him. Both places a shell explodes in shellsUpdate, a
+ * collision and the end of its life, come through here, and every builder in
+ * the game is tested, whoever owns him.
+ *
+ * THE RULE. For a shell fired from a player's tank, the shooter's screen
+ * decides whether a builder dies. It makes no difference what the shell hit:
+ * a tank, a pillbox, a wall, the ground, or nothing at the end of its range.
+ *   - The blast caught the builder on the shooter's screen: he dies, even if
+ *     the positions the server holds now say it missed, and even if he has
+ *     got back into his tank since.
+ *   - The blast missed him on the shooter's screen: he does not die, even if
+ *     the positions the server holds now say it caught him.
+ *   - The shooter's screen showed no builder (he was inside his tank, or
+ *     dead): he does not die, even if he has left the tank since.
+ * A pillbox's shell is not rewound: it tests the builder where he is now.
+ *
+ * TWO POINTS are handed in, because the test needs blast and builder from the
+ * same moment:
+ *   (nowX, nowY)   where the explosion is drawn and heard: the present
+ *                  point. It is what shellsUpdate gives the explosion, the
+ *                  shell-death event and the mine check.
+ *   (seenX, seenY) the blast as the shooter's screen had it.
+ * They are the same point for every blast but one. A shell that hit a tank
+ * was tested against where the tank was on the shooter's screen, and its
+ * blast is then carried to where the tank is now so that it is drawn on the
+ * tank (shellsCalcCollision). (nowX, nowY) is that carried point; (seenX,
+ * seenY) is the shell's own point, where it reached the hull at the tank's
+ * old place.
+ *
+ * What the shooter's screen showed of the builder is in the builder position
+ * history, at the shell's rewind (SHELL_LGM_REWIND_LESS above):
+ *   - the record of that frame says he was not out: no test, no kill;
+ *   - the record of that frame has a position: he is tested at that position
+ *     against (seenX, seenY). Both are the shooter's screen. A blast that
+ *     caught him kills him even if he is back in his tank now: he dies on the
+ *     tank, where it is now (lgmDeathCheckSeenOut). A tank that is itself
+ *     dead, as it is when this same shell has just killed it, keeps the
+ *     builder inside it: he went down with the tank and is not killed again;
+ *   - the shell carries no rewind (a pill's shell), or there is no record
+ *     that old yet (the start of a round, a player who has just joined): the
+ *     shooter's screen is not known, so he is tested where he is now against
+ *     (nowX, nowY). Both are the present. In his tank he is not out and
+ *     lives. */
+static void shellsBlastTestBuilder(GameSim *sim, shells shell, lgm *lgman, tank *tnk, WORLD nowX, WORLD nowY, WORLD seenX, WORLD seenY) {
+	BYTE lgmOwner = (*lgman)->playerNum;
+	uint8_t rewindTicks;
+	WORLD lgmHitX = 0, lgmHitY = 0;
+	PosHistoryLookup seen = POS_HISTORY_NO_RECORD;
+
+	if (shell->compensationTicks > 0) {
+		rewindTicks = shell->compensationTicks;
+		/* Any builder: the shooter's client draws builders from the newest
+		 * snapshot, one newer than the one the rewind was measured from. */
+		if (rewindTicks > SHELL_LGM_REWIND_LESS) {
+			rewindTicks -= SHELL_LGM_REWIND_LESS;
+		}
+	} else {
+		/* A pill's shell (owner NEUTRAL, compensationTicks 0) tests the
+		 * builder where he is now. */
+		rewindTicks = 0;
+	}
+
+	if (rewindTicks > 0 && sim->lgmPosHistoryPtr != NULL &&
+	    lgmOwner != NEUTRAL) {
+		seen = posHistoryLookup(&sim->lgmPosHistoryPtr[lgmOwner],
+		                        rewindTicks, &lgmHitX, &lgmHitY);
+	}
+
+	if (seen == POS_HISTORY_ABSENT) {
+		/* The shooter's screen showed no builder: no test, no kill. */
+	} else if (seen == POS_HISTORY_PRESENT) {
+		/* The shooter's screen showed him out, here: against the blast as
+		 * the shooter's screen had it. */
+		lgmDeathCheckSeenOut(sim, lgman,
+		                     lgmHitX, lgmHitY,
+		                     seenX, seenY,
+		                     shell->owner, shell->owner,
+		                     DMG_SRC_SHELL, shell->pill,
+		                     tnk);
+	} else {
+		/* No rewind, or no record as old as the shooter's screen: where he
+		 * is now, against the blast where it is now. */
+		lgmDeathCheck(sim, lgman,
+		              nowX, nowY,
+		              shell->owner, shell->owner,
+		              DMG_SRC_SHELL, shell->pill, tnk);
+	}
+}
+
 /*********************************************************
 *NAME:          shellsUpdate
 *AUTHOR:        John Morrison
@@ -414,7 +538,11 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			}
 			/* Check for colision */
 			uint8_t shellOutcome = SHELL_OUTCOME_IMPACT;
-			if ((shellsCalcCollision(sim, tk, &newX, &newY, position, numTanks, &shellOutcome)) == TRUE)
+			/* The blast as the shooter's screen had it, for the builder test
+			 * only. Differs from newX, newY only after a rewound tank hit. */
+			WORLD seenX = newX;
+			WORLD seenY = newY;
+			if ((shellsCalcCollision(sim, tk, &newX, &newY, position, numTanks, &shellOutcome, &seenX, &seenY)) == TRUE)
 			{
 				/* Get X and Y map co-ords. */
 				conv = newX;
@@ -438,6 +566,14 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				conv <<= TANK_SHIFT_MAPSIZE;
 				conv >>= TANK_SHIFT_PIXELSIZE;
 				spy = (BYTE) conv;
+				/* newX, newY are where the shell ended: the middle of the
+				 * square for a pillbox, base or terrain hit, and for a tank
+				 * hit the point on the hull the shell reached, carried to
+				 * where the tank is now (the shell's own point when the hit
+				 * was not rewound; see shellsCalcCollision). Everything
+				 * below is at that one place, but for one thing: the builder
+				 * test is also handed seenX, seenY, the blast as the
+				 * shooter's screen had it (shellsBlastTestBuilder). */
 				explosionsAddItem(&sim->expl, sx,sy,spx,spy,EXPLOSION_START);
 				/* Debug: record the exact world-pixel hit for BrainTest viz */
 				shellsDebugHitLogAdd((int)newX, (int)newY, 0, position->owner);
@@ -453,42 +589,12 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 					/* lgms[count] is the ADDRESS of an lgmen[] slot, so it is never
 					 * NULL — what can go away is the slot's CONTENTS, when a player is
 					 * removed after the caller snapshotted this array. lgmDeathCheck
-					 * guards *lgman itself, but the lag-comp lookup below reads
+					 * guards *lgman itself, but shellsBlastTestBuilder reads
 					 * playerNum first and lgmDeathCheckAtPosition has no guard at all. */
 					if (lgms && lgms[count] != NULL && *lgms[count] != NULL) {
-						BYTE lgmOwner = (*lgms[count])->playerNum;
-						uint8_t rewindTicks;
-						WORLD lgmHitX = 0, lgmHitY = 0;
-						bool useRewound = FALSE;
-
-						if (position->compensationTicks > 0) {
-							rewindTicks = position->compensationTicks;
-						} else if (sim->isServer && position->owner == NEUTRAL) {
-							rewindTicks = sim->perPlayerCompTicks[lgmOwner];
-						} else {
-							rewindTicks = 0;
-						}
-
-						if (rewindTicks > 0 && sim->lgmPosHistoryPtr != NULL &&
-						    lgmOwner != NEUTRAL &&
-						    posHistoryGet(&sim->lgmPosHistoryPtr[lgmOwner],
-						                  rewindTicks, &lgmHitX, &lgmHitY)) {
-							useRewound = TRUE;
-						}
-
-						if (useRewound) {
-							lgmDeathCheckAtPosition(sim, lgms[count],
-							                        lgmHitX, lgmHitY,
-							                        newX, newY,
-							                        position->owner, position->owner,
-							                        DMG_SRC_SHELL, position->pill,
-							                        &tk[count]);
-						} else {
-							lgmDeathCheck(sim, lgms[count],
-							              newX, newY,
-							              position->owner, position->owner,
-							              DMG_SRC_SHELL, position->pill, &tk[count]);
-						}
+						shellsBlastTestBuilder(sim, position, lgms[count],
+						                       &tk[count], newX, newY,
+						                       seenX, seenY);
 					}
 					count++;
 				}
@@ -540,42 +646,12 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				/* lgms[count] is the ADDRESS of an lgmen[] slot, so it is never
 				 * NULL — what can go away is the slot's CONTENTS, when a player is
 				 * removed after the caller snapshotted this array. lgmDeathCheck
-				 * guards *lgman itself, but the lag-comp lookup below reads
+				 * guards *lgman itself, but shellsBlastTestBuilder reads
 				 * playerNum first and lgmDeathCheckAtPosition has no guard at all. */
 				if (lgms && lgms[count] != NULL && *lgms[count] != NULL) {
-					BYTE lgmOwner = (*lgms[count])->playerNum;
-					uint8_t rewindTicks;
-					WORLD lgmHitX = 0, lgmHitY = 0;
-					bool useRewound = FALSE;
-
-					if (position->compensationTicks > 0) {
-						rewindTicks = position->compensationTicks;
-					} else if (sim->isServer && position->owner == NEUTRAL) {
-						rewindTicks = sim->perPlayerCompTicks[lgmOwner];
-					} else {
-						rewindTicks = 0;
-					}
-
-					if (rewindTicks > 0 && sim->lgmPosHistoryPtr != NULL &&
-					    lgmOwner != NEUTRAL &&
-					    posHistoryGet(&sim->lgmPosHistoryPtr[lgmOwner],
-					                  rewindTicks, &lgmHitX, &lgmHitY)) {
-						useRewound = TRUE;
-					}
-
-					if (useRewound) {
-						lgmDeathCheckAtPosition(sim, lgms[count],
-						                        lgmHitX, lgmHitY,
-						                        position->x, position->y,
-						                        position->owner, position->owner,
-						                        DMG_SRC_SHELL, position->pill,
-						                        &tk[count]);
-					} else {
-						lgmDeathCheck(sim, lgms[count],
-						              position->x, position->y,
-						              position->owner, position->owner,
-						              DMG_SRC_SHELL, position->pill, &tk[count]);
-					}
+					shellsBlastTestBuilder(sim, position, lgms[count],
+					                       &tk[count], position->x, position->y,
+					                       position->x, position->y);
 				}
 				count++;
 			}
@@ -682,27 +758,6 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
   }
 }
 
-/*********************************************************
-*NAME:          shellsCalcCollision
-*AUTHOR:        John Morrison
-*CREATION DATE: 29/12/98
-*LAST MODIFIED: 29/07/00
-*PURPOSE:
-*  Returns whether the collision has occured.
-*  
-*ARGUMENTS:
-*  map      - Pointer to the Map Structure
-*  pb       - Pointer to the pillboxes structure
-*  tk       - Pointer to an array of tank structures
-*  bs       - Pointer to the bases structure
-*  xValue   - X position
-*  yValue   - Y position
-*  shell    - The shell, for its angle, owner, boat flag,
-*             lag compensation, firing pill and the
-*             targets can_hit has already let it pass
-*  numTanks - Number of tanks in the array
-*********************************************************/
-
 /* Whether this shell may hit the tank or pill it has reached, which the host
  * is asked once per shell and target. A target it was let through is noted
  * on the shell and left alone after that, so the question is not put again on
@@ -724,7 +779,37 @@ static bool shellsMayHit(GameSim *sim, shells shell, BYTE kind, BYTE index) {
 	return TRUE;
 }
 
-bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome) {
+/*********************************************************
+*NAME:          shellsCalcCollision
+*AUTHOR:        John Morrison
+*CREATION DATE: 29/12/98
+*LAST MODIFIED: 29/07/00
+*PURPOSE:
+*  Returns whether the collision has occured.
+*  
+*ARGUMENTS:
+*  map      - Pointer to the Map Structure
+*  pb       - Pointer to the pillboxes structure
+*  tk       - Pointer to an array of tank structures
+*  bs       - Pointer to the bases structure
+*  xValue   - X position
+*  yValue   - Y position
+*  shell    - The shell, for its angle, owner, boat flag,
+*             lag compensation, firing pill and the
+*             targets can_hit has already let it pass
+*  numTanks - Number of tanks in the array
+*  outSeenX - On a collision, the X of the blast as the
+*             shooter's screen had it, for the builder test
+*             (shellsBlastTestBuilder). The same as xValue
+*             except for a rewound tank hit, where it is the
+*             shell's own point, before it is carried to
+*             where the tank is now. May be NULL
+*  outSeenY - Y, as outSeenX
+*********************************************************/
+bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, shells shell, BYTE numTanks, uint8_t *outOutcome, WORLD *outSeenX, WORLD *outSeenY) {
+	WORLD seenHitX = 0;   /* A rewound tank hit: the shell's point, on the */
+	WORLD seenHitY = 0;   /* shooter's screen, before it is carried */
+	bool seenHitSet = FALSE;
 	map *mp = &sim->mp;
 	pillboxes *pb = &sim->pb;
 	bases *bs = &sim->bs;
@@ -797,13 +882,17 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 				if (compensationTicks > 0) {
 					/* Player shell: rewind target by shooter's delay */
 					rewindTicks = compensationTicks;
-				} else if (sim->isServer && owner == NEUTRAL) {
-					/* Pill shell: rewind target by the target's own delay */
-					rewindTicks = sim->perPlayerCompTicks[targetPlayer];
 				} else {
+					/* A pill's shell (owner NEUTRAL, compensationTicks 0) tests
+					 * the tank where it is now. */
 					rewindTicks = 0;
 				}
 
+				/* Unlike the builder, a tank the shooter's screen showed as dead
+				 * (posHistoryGet is FALSE for that) is tested where it is now, so
+				 * a shell can hit a tank that has just respawned before the
+				 * shooter saw it. This is on purpose: the case is rare and the
+				 * tank really is there. */
 				if (rewindTicks > 0 && sim->posHistoryPtr != NULL &&
 				    targetPlayer != NEUTRAL &&
 				    posHistoryGet(&sim->posHistoryPtr[targetPlayer],
@@ -831,6 +920,72 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 				} else {
 					th = tankIsTankHit(sim, &(tk[count]), *xValue, *yValue, angle,
 					                   owner, shell->pill);
+				}
+
+				/* A shell that hit a tank blows up ON THE TANK, where the tank
+				 * is now. The hit is decided on the shooter's screen, but the
+				 * blast belongs to the tank: one client's lag must not move an
+				 * explosion away from where the tank is for everybody.
+				 * The test above may have been made against where the
+				 * tank was on the shooter's screen (useRewound), and the shell
+				 * is at that old place, which the tank has since left: 64 to 80
+				 * world units behind a tank at top speed for a 120 ms ping, up
+				 * to 224 at the 14-entry cap. The damage, the knockback and the
+				 * kill record are all at the tank's present position already
+				 * (tankIsTankHitAtPosition), so the effects that follow go there
+				 * too.
+				 *
+				 * WHERE on the tank matters, so it is kept: the blast is the
+				 * point on the hull the shell reached, carried to where the
+				 * tank is now. That is the tank's present position plus the
+				 * offset of the shell from the position the hit was tested
+				 * against. A tank hit on one side still catches a builder on
+				 * that side and spares one leaving on the other.
+				 *
+				 * A hit that was NOT rewound is left exactly where the shell
+				 * is, as it always was: the offset is from the present tank,
+				 * so the sum is the shell's own point and nothing is written.
+				 *
+				 * The hit sound here, the start of a killed tank's explosion
+				 * here, and, through xValue and yValue, everything shellsUpdate
+				 * draws or sounds at the place the shell ended (the hit
+				 * explosion, the shell-death event, the debug hit log) and
+				 * its mine check all use this one point. Whether the shell
+				 * hit is decided above and is not touched by this.
+				 *
+				 * One thing does not use it: whether the blast kills a
+				 * builder. That is decided on the shooter's screen, as the
+				 * hit was, so it needs the blast as the shooter's screen had
+				 * it: the shell's own point, where it reached the hull of the
+				 * tank at its old place. That point is kept here, before the
+				 * carry, and handed out through outSeenX and outSeenY. */
+				if (th != TH_MISSED && useRewound) {
+					WORLD tankNowX = 0, tankNowY = 0;
+					int blastX, blastY;
+
+					seenHitX = *xValue;
+					seenHitY = *yValue;
+					seenHitSet = TRUE;
+					/* No NULL check on tk[count]: tankIsTankHitAtPosition
+					 * returns TH_MISSED for a NULL tank, so a hit means the
+					 * tank is there. */
+					tankGetWorld(&tk[count], &tankNowX, &tankNowY);
+					/* Signed, and held on the map: WORLD is 16 bits unsigned
+					 * and a sum past either edge would wrap to the far side. */
+					blastX = (int) tankNowX + ((int) *xValue - (int) hitCheckX);
+					blastY = (int) tankNowY + ((int) *yValue - (int) hitCheckY);
+					if (blastX < 0) blastX = 0;
+					if (blastX > 0xFFFF) blastX = 0xFFFF;
+					if (blastY < 0) blastY = 0;
+					if (blastY > 0xFFFF) blastY = 0xFFFF;
+					*xValue = (WORLD) blastX;
+					*yValue = (WORLD) blastY;
+					conv = *xValue;
+					conv >>= TANK_SHIFT_MAPSIZE;
+					mapX = (BYTE) conv;
+					conv = *yValue;
+					conv >>= TANK_SHIFT_MAPSIZE;
+					mapY = (BYTE) conv;
 				}
 
 				switch (th) {
@@ -996,6 +1151,13 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, s
 
 	if (returnValue == TRUE && !sim->isServer) {
 		clientSimRecalc((ClientSim *)sim);
+	}
+
+	/* The blast as the shooter's screen had it. Only a rewound tank hit has
+	 * it anywhere but where the effects go. */
+	if (returnValue == TRUE && outSeenX != NULL && outSeenY != NULL) {
+		*outSeenX = (seenHitSet == TRUE) ? seenHitX : *xValue;
+		*outSeenY = (seenHitSet == TRUE) ? seenHitY : *yValue;
 	}
 
 	return returnValue;

@@ -48,9 +48,13 @@ FetchContent_Declare(sdl3_ttf
     GIT_REPOSITORY https://github.com/libsdl-org/SDL_ttf.git
     GIT_TAG        release-3.2.0
 )
+# The same release every other build pins (CMakeLists.txt). The docking
+# branch head moves, so a fresh configure would otherwise compile the shared
+# ImGui code against a different ImGui from the game's.
 FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        docking
+    GIT_TAG        v1.92.9b-docking
+    GIT_SHALLOW    TRUE
 )
 FetchContent_Declare(zlib
     GIT_REPOSITORY https://github.com/madler/zlib.git
@@ -138,6 +142,9 @@ list(FILTER LV_SOURCES EXCLUDE REGEX ".*logviewer/game_view\\.c$")
 # logviewer.c, the one caller of lvGameFullScreenChoose.
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*logviewer/lv_fullscreen_game\\.c$")
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*dns\\.c$")
+# lv_embed_stubs.c belongs to clients that embed only the reel; main_wasm.c
+# and the ImGui panels below define the same functions here.
+list(FILTER LV_SOURCES EXCLUDE REGEX ".*lv_embed_stubs\\.c$")
 
 # Exclude files not needed in LogViewer
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*memoryblock\\.c$")

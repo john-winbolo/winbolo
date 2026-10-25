@@ -1132,7 +1132,7 @@ STR_MAPGEN_TYPE_NATURAL=Natural
 STR_MAPGEN_TYPE_MAZE=Maze
 STR_MAPGEN_TYPE_FRACTAL=Fractal
 STR_MAPGEN_SEED=Seed
-STR_MAPGEN_RANDOMIZE=Randomize
+STR_MAPGEN_RANDOMIZE=Randomize values
 STR_MAPGEN_SYMMETRY=Symmetry
 STR_MAPGEN_SYM_4CORNER=4-Corner Mirror
 STR_MAPGEN_SYM_MIRROR_H=Mirror Horizontal
@@ -2764,7 +2764,6 @@ STR_RULE_DESC_tank_slide_mac=Whether a shell hit pushes a tank the Mac Bolo way.
 STR_RULE_DESC_pill_aim_mac=Whether pillboxes use Mac Bolo aiming. Moving, unobstructed tanks within about one square make the pill aim far along their heading. Stopped or blocked tanks receive no lead. Overrides pill_massage_range, pill_massage_cosine and pill_aim_iterations.
 STR_RULE_DESC_tank_collision_mac=Whether tanks use Mac Bolo's direction-dependent sprite boxes and pixel nudges against walls, live pills and hostile bases. Allows closer passes beside a pill for pill massage.
 STR_RULE_DESC_tank_deep_sea_safe=Whether a tank with no boat can drive over deep sea without drowning. Off is the classic game: deep sea drowns a tank with no boat. A tank that is out on deep sea with no boat when this goes back off drowns on the next tick.
-STR_RULE_DESC_man_bless_tile_terrain_speed=Whether the builder crosses the square he is going to build on at that square's terrain speed, as in Mac Bolo. Off is the WinBolo walk: he walks up to the centre of that square at the refuelling base speed, whatever its terrain. A square with no walking speed, such as a river, a wall or a pillbox, keeps the refuelling base speed. The walk back to the tank does not change.
 
 # Rule range wording
 STR_RULE_RANGE_BETWEEN={string1} to {string2}
@@ -2908,4 +2907,145 @@ STR_DLGSYSINFO_MEM_BUILDING=Building
 STR_DLGSYSINFO_MEM_RUBBLE=Rubble
 STR_DLGSYSINFO_MEM_SWAMP=Swamp
 STR_DLGSYSINFO_MEM_GRASS=Grass
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Push to talk: hold the microphone button on the game screen
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Your files
+STR_MAPEDIT_IOS_BUILTIN=Maps that come with WinBolo
+STR_MAPEDIT_IOS_NOFILES=Nothing here yet. Files you save, and files you put in WinBolo's folder in the Files app, show up here.
+STR_MAPEDIT_IOS_NAME=Name
+STR_MAPEDIT_IOS_REPLACES=A file with this name exists. Saving replaces it.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Recordings
+STR_IOSREC_EMPTY=No recordings yet. Single-player rounds are recorded here, and .wbv files put in the WinBolo folder in the Files app are listed here too.
+STR_IOSREC_COPY=Copy to Files
+STR_IOSREC_COPIED=Copied to the WinBolo folder in the Files app.
+STR_IOSREC_OPEN_FAILED=This recording could not be opened.
+STR_IOSREC_LAST_ROUND=Last single-player round
+STR_IOSREC_COPY_FAILED=The recording could not be copied to the Files app.
+STR_DLGCONNECTING_TITLE=Connecting to {string1}...
+STR_DLGCONNECTING_PING=Asking the server about its game...
+STR_DLGCONNECTING_JOINING=Joining the game...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Could not read that recording.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} is in the WinBolo folder in the Files app.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} could not be saved.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=The map fills the screen and the controls are drawn over it.\nOff keeps the game view square, with the controls beside it.\nRemembered for next time.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=How much of the map shows through the builder tools\nin full screen. 0% is solid, and the slider stops at\n90% so they cannot be made invisible.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=How much of the map shows through the tank, pillbox and\nbase grids and the stock bars in full screen. 0% is solid,\nand the slider stops at 90% so they cannot be made invisible.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=The map fills the screen, with the status, build and newswire\npanels over it, and the touch controls when you play by touch.\nOff shows the classic screen. Remembered for next time.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=This device is on mobile data. An Internet game hosted on mobile\ndata will probably not work: mobile networks rarely let other\nplayers reach the device. Wi-Fi is much more likely to work.\n\nHost anyway?
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Your GIFs
+STR_CLIPGIF_GALLERY_EMPTY=No GIFs yet. Make one with the GIF button under the replay, or the GIF button on a clip.
+STR_CLIPGIF_COPY=Copy to clipboard
+STR_CLIPGIF_SAVE=Save to disk
+STR_CLIPGIF_COPIED=Copied.
+STR_CLIPGIF_COPY_FAILED=The GIF could not be copied.
+STR_CLIPGIF_OPEN_FAILED=This GIF could not be opened.
+STR_CLIPGIF_MAP_FMT=Map: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Players: {string1}
+STR_CLIPGIF_NO_DETAILS=No details were saved with this GIF.
+STR_CLIPGIF_LENGTH_TIP=GIF length in seconds, from the playhead.\nDrag the marker at the end of the bright part of the timeline to change it too.
+STR_CLIPGIF_LOADING=Opening the GIF...
+STR_CLIPGIF_TOO_LARGE=This GIF is too large to show here. You can still copy it or save it.
+STR_CLIPGIF_FILTER_NAME=GIF Images
+STR_MAPGEN_TYPE_MAKER=Famous map maker style
+STR_MAPGEN_SIZE=Size
+STR_MAPGEN_SIZE_FULL=Full
+STR_MAPGEN_SIZE_TIP=Side of the playable square in tiles. Full uses the whole area.
+STR_MAPGEN_PRESET=Preset
+STR_MAPGEN_PRESET_TIP=Maps in the style of a classic Bolo map maker. A preset sets the controls below; you can change any of them after.
+STR_MAPGEN_OUTLINE=Outline
+STR_MAPGEN_OUTLINE_BOX=Box
+STR_MAPGEN_OUTLINE_OCTAGON=Octagon
+STR_MAPGEN_OUTLINE_ROUND=Round
+STR_MAPGEN_OUTLINE_DIAMOND=Diamond
+STR_MAPGEN_OUTLINE_CROSS=Cross
+STR_MAPGEN_OUTLINE_CLOVER=Clover
+STR_MAPGEN_OUTLINE_ISLAND=Island
+STR_MAPGEN_OUTLINE_VARIED=Varied
+STR_MAPGEN_MSYM_NONE=None
+STR_MAPGEN_MSYM_MIRROR=Mirror
+STR_MAPGEN_MSYM_ROT2=Half Turn
+STR_MAPGEN_MSYM_MIRROR4=Mirror Both Ways
+STR_MAPGEN_MSYM_ROT4=Quarter Turns
+STR_MAPGEN_WATER_PCT=Water %
+STR_MAPGEN_ROAD_PCT=Road %
+STR_MAPGEN_ISLANDS=Islands
+STR_MAPGEN_DETAIL=Detail
+STR_MAPGEN_PRESET_BERSERKIR=Berserkir
+STR_MAPGEN_PRESET_SLUGGO_TOURNAMENT=Sluggo Tournament
+STR_MAPGEN_PRESET_SLUGDEATH=Sluggo Slugdeath
+STR_MAPGEN_PRESET_SLUGFEST=Sluggo Slugfest
+STR_MAPGEN_PRESET_SLUGGO_ADVENTUROUS=Sluggo Adventurous
+STR_MAPGEN_PRESET_SLUGGO_SYMMETRIC=Sluggo Symmetric
+STR_MAPGEN_PRESET_STOOGEFEST=Sluggo Stoogefest
+STR_MAPGEN_PRESET_BLACK_LIGHTNING=Black Lightning
+STR_MAPGEN_PRESET_BL_ISLANDS=Black Lightning Islands
+STR_MAPGEN_PRESET_DEATHHAND=Deathhand
+STR_MAPGEN_PRESET_MEGAWATT_TC=Megawatt TC
+STR_MAPGEN_PRESET_MEGAWATT_ISLANDS=Megawatt Islands
+STR_MAPGEN_PRESET_MOSH_PIT=Nature Mosh Pit
+STR_MAPGEN_PRESET_PALPATINE=Palpatine
+STR_MAPGEN_PRESET_CHEW_TOY=Chew Toy
+STR_MAPGEN_LOCK_ALL=Lock all
+STR_MAPGEN_UNLOCK_ALL=Unlock all
+STR_MAPGEN_PANEL_TITLE=Map values
+STR_MAPGEN_STYLE_TITLE={string1} style
+STR_MAPGEN_STYLE_RANDOMIZE=Randomize style
+STR_MAPGEN_STYLE_NONE=The seed makes no other choices for this map maker.
+STR_MAPGEN_STYLE_FROM_SEED=From seed
+STR_MAPGEN_STYLE_ROADS=Road layout
+STR_MAPGEN_ROADS_AXES=Cross
+STR_MAPGEN_ROADS_DIAG=Diagonals
+STR_MAPGEN_ROADS_AXES_DIAG=Cross and diagonals
+STR_MAPGEN_ROADS_AXES_RING=Cross and ring
+STR_MAPGEN_ROADS_DIAG_RING=Diagonals and ring
+STR_MAPGEN_ROADS_RING=Ring
+STR_MAPGEN_STYLE_SHAPE=Shape
+STR_MAPGEN_STYLE_CUT=Corner cut
+STR_MAPGEN_STYLE_CORE=Pod centre
+STR_MAPGEN_STYLE_RIM=Coast
+STR_MAPGEN_RIM_FOREST=Forest rim
+STR_MAPGEN_RIM_GRASS=Grass to the coast
+STR_MAPGEN_STYLE_YARD=Maze yard
+STR_MAPGEN_YARD_NONE=None
+STR_MAPGEN_YARD_BUILDING=Building walls
+STR_MAPGEN_YARD_FOREST=Forest walls
+STR_MAPGEN_STYLE_ROADS_TIP=The lines of road across the land. From seed: the seed picks one of the layouts in this list.
+STR_MAPGEN_STYLE_SHAPE_TIP=The width of the land against its height, x 100. 100 is square; more is wider. From seed: the seed picks a value in this range.
+STR_MAPGEN_STYLE_CUT_TIP=How much of each corner the octagon cuts off. A larger value cuts a smaller corner. From seed: the seed picks a value in this range.
+STR_MAPGEN_STYLE_CORE_TIP=The terrain in the middle of each ring pod. From seed: the seed picks one.
+STR_MAPGEN_STYLE_RIM_TIP=A band of forest round the coast, or grass to the water. From seed: the seed picks one.
+STR_MAPGEN_STYLE_YARD_TIP=A yard of maze walls on one island, if a place for it is found. From seed: the seed picks one.
+STR_MAPGEN_STYLE_WALLS=Rim walls
+STR_MAPGEN_WALLS_NONE=No walls
+STR_MAPGEN_WALLS_BUILDING=Building wall on each axis
+STR_MAPGEN_STYLE_MIDDLE=Middle
+STR_MAPGEN_MIDDLE_OPEN=Open
+STR_MAPGEN_MIDDLE_PIECES=Diagonal pieces
+STR_MAPGEN_MIDDLE_CLUMP=Centre clump
+STR_MAPGEN_MIDDLE_BOTH=Diagonal pieces and centre clump
+STR_MAPGEN_STYLE_WALLS_TIP=A wall of buildings across the forest rim on each axis, which cuts the rim into four pieces. From seed: the seed picks one.
+STR_MAPGEN_STYLE_MIDDLE_TIP=Buildings near the middle of the floor: short pieces at 45 degrees, a clump at the centre, or both. From seed: the seed picks one.
+STR_ANDROIDREC_SHARE=Share
+STR_ANDROIDREC_EMPTY=No recordings yet. Single-player rounds are recorded here, and .wbv recordings opened from another app are listed here too.
+STR_CLIPGIF_SAVED_ANDROID={string1} has been saved. Choose an app to share it with next.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Nothing here yet. Maps you save, here or from a game, show up here.
 

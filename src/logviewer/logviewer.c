@@ -30,6 +30,7 @@
 #include <stdio.h>
 #include "backend.h"
 #include "spectator_drain.h"   /* dep-free seam: drive/drain the spectator feed */
+#include "lv_spec_feed.h"      /* the seed and record handling shared with the embed */
 #include "spectator_input.h"   /* dep-free seam: read the controller for pan/zoom */
 #include "lv_global.h"
 #include "clientmutex.h"
@@ -2705,23 +2706,6 @@ void logViewerRunFromMemory(SDL_Window *window, SDL_Renderer *renderer,
     logViewerRun(window, renderer, NULL, fromMainMenu);
 }
 
-/* Apply a decoded seed/keyframe's lobby roster to the viewer's player table:
- * name every present lobby slot (silently, via the quiet setter — no newswire
- * spam) and adopt the snapshot's phase. The quiet setter touches only inUse +
- * playerName, never a tank position, so a positionless lobby-only slot stays
- * suppressed by the (0,0,0,0) guard in lv_playersMakeScreenTanks and a slot
- * holding a real forward-established tank keeps its position (only its name is
- * re-set to the same value). Safe to call on every keyframe. */
-static void lvSpecApplyRoster(const SpecSeedInfo *sgi) {
-    BYTE i;
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (sgi->lobbyPresent[i]) {
-            lv_playersSetPlayerNameQuiet((BYTE)i, sgi->lobbyName[i]);
-        }
-    }
-    g_lv->gamePhase = sgi->specPhase;
-}
-
 /* Set the borrowed window's title for the live session: host:port, the map name
  * decoded from the current seed, and a phase tag ([Lobby] / [Live] / [Game Over],
  * omitted for an unknown phase). Re-applied on every (re)seed so the map name and
@@ -2902,35 +2886,7 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
         uint8_t *seed = NULL;
         uint32_t seedLen = 0;
         if (specDrainTakeSeed(cs, &seed, &seedLen)) {
-            /* The spectator never receives the lobby-settings packet on the
-             * wire, but the seed's control snapshot carries that same event;
-             * decode it for the synthesized header's map name / game settings.
-             * sgi outlives the load call below, which copies mapName into the
-             * header. Fields the event doesn't carry stay zero (panel defaults). */
-            SpecSeedInfo sgi;
-            LvSpecSeedInfo info;
-            const LvSpecSeedInfo *infoPtr = NULL;
-            if (specSeedDecodeInfo(seed, seedLen, &sgi) && sgi.haveInfo) {
-                memset(&info, 0, sizeof(info));
-                info.mapName          = sgi.mapName;
-                info.gameType         = sgi.gameType;
-                info.allowHiddenMines = sgi.allowHiddenMines;
-                info.ai               = sgi.ai;
-                infoPtr = &info;
-            }
-            /* Phase is populated by the decode walk regardless of haveInfo
-               (specSeedDecodeInfo zeroes sgi first), so read it unconditionally. */
-            g_lv->gamePhase = sgi.specPhase;
-            if (lv_specSeedLoad(infoPtr, seed, seedLen)) {
-                g_lv->isLoaded = TRUE;
-                lv_imgui_events_clear();
-                /* Resolve lobby-chat sender names for players who hold no tank
-                   (and so never appear in the world snapshot): inject the names
-                   the seed's lobby-slot roster carried into the viewer roster.
-                   sgi was zeroed by specSeedDecodeInfo, so absent slots are
-                   simply skipped. Silent (quiet setter) — no newswire spam. */
-                lvSpecApplyRoster(&sgi);
-            }
+            lvSpecFeedSeed(seed, seedLen);
             free(seed);
         }
 
@@ -3112,76 +3068,17 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
          * below drives the decoder forward per follow-live / parked mode. Track the
          * latest record tick so the parked head-time can extrapolate. */
         while (specDrainPopRecord(cs, &rec)) {
-            /* A world reset (new lobby/map) regresses the game tick below the
-               tracked head and arrives as a forced keyframe. Reset the DVR to the
-               new segment — drop the old map's scroll-back range and restart
-               head-time tracking — then re-seed from this keyframe so the decoder
-               re-syncs on a fresh buffer, exactly as on the initial seed. The
-               re-seed rebuilds the live buffer + decoder; lv_screenSpecResetSegment
-               clears the seek index and DVR state the re-seed leaves alone. */
-            if (rec.isKeyframe && lv_screenSpecIsLiveMode() &&
-                lv_screenSpecHeadTick() > 0 &&
-                rec.gameTick < lv_screenSpecHeadTick()) {
-                SpecSeedInfo sgi;
-                LvSpecSeedInfo info;
-                const LvSpecSeedInfo *infoPtr = NULL;
-                lv_screenSpecResetSegment();
-                /* The new segment's keyframe carries its own lobby-settings
-                   control slice, so recover the new map name / settings from it
-                   the same way the initial seed does. */
-                if (specSeedDecodeInfo(rec.payload, rec.payloadLen, &sgi) &&
-                    sgi.haveInfo) {
-                    memset(&info, 0, sizeof(info));
-                    info.mapName          = sgi.mapName;
-                    info.gameType         = sgi.gameType;
-                    info.allowHiddenMines = sgi.allowHiddenMines;
-                    info.ai               = sgi.ai;
-                    infoPtr = &info;
-                }
-                /* New segment's phase (populated regardless of haveInfo). */
-                g_lv->gamePhase = sgi.specPhase;
-                if (!lv_specSeedLoad(infoPtr, rec.payload, rec.payloadLen)) {
-                    /* A failed re-seed left no decoder; exit to a clean teardown
-                       rather than render against a torn-down buffer. */
-                    g_lv->isLoaded = FALSE;
-                } else {
-                    /* Match the initial-seed path: drop the previous segment's
-                       cached overview tiles and stale event feed so a lobby map
-                       change fully redraws to the new map instead of lingering
-                       on the old one. */
-                    lv_drawDirtyScreen();
-                    g_lv->wantScreenUpdate = TRUE;
-                    lv_imgui_events_clear();
-                    /* Refresh lobby-chat sender names + phase from the new
-                       segment's roster (same silent injection as the initial
-                       seed). */
-                    lvSpecApplyRoster(&sgi);
-                    /* Refresh title + map + phase tag for the new segment. */
-                    lvSpecApplyTitle(serverHost, serverPort);
-                }
-            } else {
-                /* A mid-segment keyframe still carries the current control
-                   snapshot, so refresh the lobby roster + phase from it: a
-                   player who joins the lobby while we are already spectating is
-                   named within a keyframe interval instead of waiting for the
-                   next segment re-seed. Silent (quiet setter) — no event spam.
-                   Decode fills roster/phase regardless of return value
-                   (specSeedDecodeInfo zeroes kf first); a non-keyframe forward
-                   record carries no snapshot and is pumped unchanged. */
-                if (rec.isKeyframe) {
-                    SpecSeedInfo kf;
-                    int prevPhase = g_lv->gamePhase;
-                    specSeedDecodeInfo(rec.payload, rec.payloadLen, &kf);
-                    lvSpecApplyRoster(&kf);
-                    /* Only retitle when the phase actually changed, so we don't
-                       SDL_SetWindowTitle on every keyframe. */
-                    if (g_lv->gamePhase != prevPhase) {
-                        lvSpecApplyTitle(serverHost, serverPort);
-                    }
-                }
-                lv_specRecordPump(rec.isKeyframe, rec.payload, rec.payloadLen);
+            /* The routing is lv_spec_feed.c's: a new segment re-seeds, a
+               keyframe refreshes the roster and phase, every record moves the
+               live head. What is left here is the window title, which only
+               this host has. */
+            LvSpecFeedResult fed = lvSpecFeedRecord(&rec);
+            if (fed == LV_SPEC_FEED_RESEEDED || fed == LV_SPEC_FEED_PHASE_CHANGED) {
+                /* Refresh title + map + phase tag for the new segment, or only
+                   when the phase actually changed, so we don't
+                   SDL_SetWindowTitle on every keyframe. */
+                lvSpecApplyTitle(serverHost, serverPort);
             }
-            lv_screenSpecNoteHeadTick(rec.gameTick);
             if (rec.payload != NULL) {
                 free(rec.payload);
             }

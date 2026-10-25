@@ -35,12 +35,19 @@
  * serverSimCreateCompressed. */
 #define LOOPBACK_EMAP_LEN E_MAP_LEN
 
-/* Virtual impairment clock. The transport hands net_impair.c whatever clock
- * transportUdpClientSetVirtualClock installed, and the module is pure — it
- * takes nowMs as a parameter — so a counter the pump advances a fixed amount
- * per tick turns a delay= spec into an exact pump count. Off unless a test
- * asks for it: the bundled impaired tests keep the wall clock and the timing
- * they were written against. */
+/* Virtual clock. Both transports read whatever clock the harness installs
+ * (transportUdpClientSetVirtualClock, transportUdpServerSetClock) for their
+ * impairment layers and their ping measurements, and net_impair.c is pure —
+ * it takes nowMs as a parameter — so a counter the pump advances a fixed
+ * amount per tick turns a delay= spec into an exact pump count and a ping
+ * into a whole number of frames. Off unless a test asks for it: the bundled
+ * impaired tests keep the wall clock and the timing they were written
+ * against.
+ *
+ * With it on the pump also runs in lockstep (loopbackLockstepExpectRx and
+ * loopbackLockstepAwaitServer below): no sleeps, and each side reads exactly
+ * the datagrams the other has put on the wire before it, however late the
+ * server's recv thread or the loopback path delivers them. */
 
 /* Game time in one pump. A pump runs serverInstanceTick once, which advances
  * the sim by one 20ms frame — serverSimTick runs both half-steps inside it —
@@ -49,9 +56,16 @@
  * spec twice the game time it names. */
 #define LOOPBACK_VIRTUAL_STEP_MS 20
 
+/* Longest a lockstep pump waits for the server's recv thread to read what
+ * the client sent. A wait that runs out says so on stderr and writes the
+ * missing datagrams off, so a datagram the OS really did lose costs one wait
+ * rather than one per pump for the rest of the run. */
+#define LOOPBACK_LOCKSTEP_WAIT_MS 1000
+
 #if WB_ENABLE_NETIMPAIR
 static bool     loopbackVirtualClockOn = false;
 static uint64_t loopbackVirtualNowMs   = 0;
+static uint32_t loopbackServerRxLost   = 0;
 
 static uint64_t loopbackVirtualNow(void) {
     return loopbackVirtualNowMs;
@@ -69,6 +83,14 @@ static void loopbackAdvanceVirtualClock(void) {
 #endif
 }
 
+static bool loopbackLockstepOn(void) {
+#if WB_ENABLE_NETIMPAIR
+    return loopbackVirtualClockOn;
+#else
+    return false;
+#endif
+}
+
 void loopbackHarnessUseVirtualClock(LoopbackHarness *h, bool on) {
     (void)h;
 #if WB_ENABLE_NETIMPAIR
@@ -80,12 +102,61 @@ void loopbackHarnessUseVirtualClock(LoopbackHarness *h, bool on) {
          * stamped off the wall clock and would not come due for hours of
          * virtual time. */
         loopbackVirtualNowMs = 0;
+        loopbackServerRxLost = 0;
         transportUdpClientSetVirtualClock(loopbackVirtualNow);
+        transportUdpServerSetClock(loopbackVirtualNow);
     } else {
         transportUdpClientSetVirtualClock(NULL);
+        transportUdpServerSetClock(NULL);
     }
 #else
     (void)on;
+#endif
+}
+
+/* Lockstep, server->client leg: before a client tick, tell the client how
+ * many datagrams the server has put on the wire, so its read waits for any
+ * the loopback path has not delivered yet. The server's count is for every
+ * peer, so this needs the one client; with a second one up it is left off. */
+static void loopbackLockstepExpectRx(LoopbackHarness *h) {
+#if WB_ENABLE_NETIMPAIR
+    if (!loopbackVirtualClockOn || !h->clientUp || h->client2Up) return;
+    transportUdpClientTestExpectRx(&h->cs->transport,
+                                   transportUdpServerWireSentCount());
+#else
+    (void)h;
+#endif
+}
+
+/* Lockstep, client->server leg: before a server tick, wait until the server's
+ * recv thread has read every datagram the clients have put on the wire. The
+ * drain then sees all of them, and none that is merely late slips to the
+ * next tick. */
+static void loopbackLockstepAwaitServer(LoopbackHarness *h) {
+#if WB_ENABLE_NETIMPAIR
+    uint32_t sent = 0;
+    uint64_t giveUpAt;
+
+    if (!h->serverUp || !transportUdpServerHasRecvThread()) return;
+    if (h->clientUp)  sent += transportUdpClientTestWireSent(&h->cs->transport);
+    if (h->client2Up) sent += transportUdpClientTestWireSent(&h->cs2->transport);
+
+    giveUpAt = (uint64_t)SDL_GetTicks() + LOOPBACK_LOCKSTEP_WAIT_MS;
+    while ((int32_t)(transportUdpServerRecvSeenCount() + loopbackServerRxLost
+                     - sent) < 0) {
+        if ((uint64_t)SDL_GetTicks() >= giveUpAt) {
+            uint32_t seen = transportUdpServerRecvSeenCount();
+            fprintf(stderr, "  loopback lockstep: the server read %u of %u "
+                            "client datagrams in %dms; going on without the "
+                            "rest\n", (unsigned)(seen + loopbackServerRxLost),
+                    (unsigned)sent, LOOPBACK_LOCKSTEP_WAIT_MS);
+            loopbackServerRxLost = sent - seen;
+            break;
+        }
+        SDL_DelayNS(100000);   /* 0.1ms: the thread is usually already there */
+    }
+#else
+    (void)h;
 #endif
 }
 
@@ -221,14 +292,22 @@ bool loopbackHarnessAddClient(LoopbackHarness *h, const char *playerName) {
                                      &h->client2Up);
 }
 
-bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
-                          bool lobbyMode, const char *impairSpec,
-                          uint64_t seed) {
+bool loopbackHarnessStartPrepared(LoopbackHarness *h, const char *playerName,
+                                  bool lobbyMode, const char *impairSpec,
+                                  uint64_t seed, LoopbackSimSetup setup,
+                                  void *user) {
     if (h == NULL) return false;
     memset(h, 0, sizeof(*h));
 
     if (!loopbackBringUpServer(h, lobbyMode)) {
         return false;
+    }
+    /* Shape the world before anyone joins, so the joiner's map download
+     * carries the shaped map rather than a stream of map events. */
+    if (setup != NULL) {
+        threadsWaitForMutex();
+        setup(h, user);
+        threadsReleaseMutex();
     }
     if (!loopbackConnectClient(h, playerName, impairSpec, /*spectator*/ false)) {
         return false;
@@ -238,6 +317,13 @@ bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
      * regardless of any randomness consumed during setup above. */
     bolo_srand(seed);
     return true;
+}
+
+bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
+                          bool lobbyMode, const char *impairSpec,
+                          uint64_t seed) {
+    return loopbackHarnessStartPrepared(h, playerName, lobbyMode, impairSpec,
+                                        seed, NULL, NULL);
 }
 
 bool loopbackHarnessStartSpectator(LoopbackHarness *h, const char *playerName,
@@ -319,6 +405,7 @@ static bool loopbackPumpHandshaking(LoopbackHarness *h) {
 void loopbackHarnessPump(LoopbackHarness *h) {
     if (h == NULL) return;
     loopbackAdvanceVirtualClock();
+    loopbackLockstepExpectRx(h);
     if (h->clientUp) clientSimNetTick(h->cs);
     /* Second client (when one was added) ticks in the same phase as the
      * first, before the server: both endpoints' datagrams are then drained
@@ -343,8 +430,13 @@ void loopbackHarnessPump(LoopbackHarness *h) {
      * wait ends almost at once. Once connected the flat yield stands: a
      * steady-state pump is usually carrying nothing, so waiting the cap on
      * every one of them buys nothing and slows the quiet scenario tests
-     * enough to move the timers they are measuring. */
-    if (h->serverUp && loopbackPumpHandshaking(h)) {
+     * enough to move the timers they are measuring.
+     *
+     * Under the virtual clock neither applies: the lockstep wait asks for the
+     * exact count instead, and no pump sleeps. */
+    if (loopbackLockstepOn()) {
+        loopbackLockstepAwaitServer(h);
+    } else if (h->serverUp && loopbackPumpHandshaking(h)) {
         int waited = 0;
         while (waited < LOOPBACK_DELIVER_MAX_MS &&
                transportUdpServerRecvQueuePending() == 0) {
@@ -362,6 +454,7 @@ void loopbackHarnessPumpClientOnly(LoopbackHarness *h, int n) {
     if (h == NULL || n <= 0) return;
     for (i = 0; i < n; i++) {
         loopbackAdvanceVirtualClock();
+        loopbackLockstepExpectRx(h);
         if (h->clientUp) clientSimNetTick(h->cs);
         if (h->client2Up) clientSimNetTick(h->cs2);
         /* No serverInstanceTick, and no SDL_Delay either: the yield in

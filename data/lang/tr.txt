@@ -951,7 +951,7 @@ STR_MAPGEN_TYPE_NATURAL=Doğal
 STR_MAPGEN_TYPE_MAZE=Labirent
 STR_MAPGEN_TYPE_FRACTAL=Fraktal
 STR_MAPGEN_SEED=Tohum
-STR_MAPGEN_RANDOMIZE=Rastgele Oluştur
+STR_MAPGEN_RANDOMIZE=Değerleri Rastgele Oluştur
 STR_MAPGEN_SYMMETRY=Simetri
 STR_MAPGEN_SYM_4CORNER=4-Köşe Ayna
 STR_MAPGEN_SYM_MIRROR_H=Yatay Ayna
@@ -991,6 +991,86 @@ STR_MAPGEN_COAST_JAG=Kıyı Girintili Çıkıntılı Yapısı
 STR_MAPGEN_TERRAIN_LAYERS=Arazi Katmanları
 STR_MAPGEN_RIVERS=Nehirler
 STR_MAPGEN_LAKES=Göller
+STR_MAPGEN_TYPE_MAKER=Ünlü Harita Yapımcısı Tarzı
+STR_MAPGEN_SIZE=Boyut
+STR_MAPGEN_SIZE_FULL=Tam
+STR_MAPGEN_SIZE_TIP=Oynanabilir karenin bir kenarı, kare sayısı olarak. Tam tüm alanı kullanır.
+STR_MAPGEN_PRESET=Hazır ayar
+STR_MAPGEN_PRESET_TIP=Klasik bir Bolo harita yapımcısının tarzında haritalar. Hazır ayar aşağıdaki denetimleri ayarlar; sonra herhangi birini değiştirebilirsiniz.
+STR_MAPGEN_OUTLINE=Dış hat
+STR_MAPGEN_OUTLINE_BOX=Dikdörtgen
+STR_MAPGEN_OUTLINE_OCTAGON=Sekizgen
+STR_MAPGEN_OUTLINE_ROUND=Yuvarlak
+STR_MAPGEN_OUTLINE_DIAMOND=Eşkenar dörtgen
+STR_MAPGEN_OUTLINE_CROSS=Haç
+STR_MAPGEN_OUTLINE_CLOVER=Yonca
+STR_MAPGEN_OUTLINE_ISLAND=Ada
+STR_MAPGEN_OUTLINE_VARIED=Karışık
+STR_MAPGEN_MSYM_NONE=Yok
+STR_MAPGEN_MSYM_MIRROR=Ayna
+STR_MAPGEN_MSYM_ROT2=Yarım tur
+STR_MAPGEN_MSYM_MIRROR4=İki yönde ayna
+STR_MAPGEN_MSYM_ROT4=Çeyrek turlar
+STR_MAPGEN_WATER_PCT=Su %
+STR_MAPGEN_ROAD_PCT=Yol %
+STR_MAPGEN_ISLANDS=Adalar
+STR_MAPGEN_DETAIL=Ayrıntı
+STR_MAPGEN_PRESET_BERSERKIR=Berserkir
+STR_MAPGEN_PRESET_SLUGGO_TOURNAMENT=Sluggo Tournament
+STR_MAPGEN_PRESET_SLUGDEATH=Sluggo Slugdeath
+STR_MAPGEN_PRESET_SLUGFEST=Sluggo Slugfest
+STR_MAPGEN_PRESET_SLUGGO_ADVENTUROUS=Sluggo Adventurous
+STR_MAPGEN_PRESET_SLUGGO_SYMMETRIC=Sluggo Symmetric
+STR_MAPGEN_PRESET_STOOGEFEST=Sluggo Stoogefest
+STR_MAPGEN_PRESET_BLACK_LIGHTNING=Black Lightning
+STR_MAPGEN_PRESET_BL_ISLANDS=Black Lightning Islands
+STR_MAPGEN_PRESET_DEATHHAND=Deathhand
+STR_MAPGEN_PRESET_MEGAWATT_TC=Megawatt TC
+STR_MAPGEN_PRESET_MEGAWATT_ISLANDS=Megawatt Islands
+STR_MAPGEN_PRESET_MOSH_PIT=Nature Mosh Pit
+STR_MAPGEN_PRESET_PALPATINE=Palpatine
+STR_MAPGEN_PRESET_CHEW_TOY=Chew Toy
+# Map Maker style panel
+STR_MAPGEN_LOCK_ALL=Tümünü Kilitle
+STR_MAPGEN_UNLOCK_ALL=Tümünün Kilidini Aç
+STR_MAPGEN_PANEL_TITLE=Harita Değerleri
+STR_MAPGEN_STYLE_TITLE={string1} Tarzı
+STR_MAPGEN_STYLE_RANDOMIZE=Tarzı Rastgele Oluştur
+STR_MAPGEN_STYLE_NONE=Bu harita yapımcısı için tohum başka seçim yapmaz.
+STR_MAPGEN_STYLE_FROM_SEED=Tohumdan
+STR_MAPGEN_STYLE_ROADS=Yol Düzeni
+STR_MAPGEN_ROADS_AXES=Haç
+STR_MAPGEN_ROADS_DIAG=Çaprazlar
+STR_MAPGEN_ROADS_AXES_DIAG=Haç ve Çaprazlar
+STR_MAPGEN_ROADS_AXES_RING=Haç ve Halka
+STR_MAPGEN_ROADS_DIAG_RING=Çaprazlar ve Halka
+STR_MAPGEN_ROADS_RING=Halka
+STR_MAPGEN_STYLE_SHAPE=Şekil
+STR_MAPGEN_STYLE_CUT=Köşe Kesimi
+STR_MAPGEN_STYLE_CORE=Halka Merkezi
+STR_MAPGEN_STYLE_RIM=Kıyı
+STR_MAPGEN_RIM_FOREST=Orman Şeridi
+STR_MAPGEN_RIM_GRASS=Kıyıya Kadar Çimen
+STR_MAPGEN_STYLE_YARD=Labirent Avlusu
+STR_MAPGEN_YARD_NONE=Yok
+STR_MAPGEN_YARD_BUILDING=Bina Duvarları
+STR_MAPGEN_YARD_FOREST=Orman Duvarları
+STR_MAPGEN_STYLE_ROADS_TIP=Kara boyunca uzanan yol çizgileri. Tohumdan: tohum bu listedeki düzenlerden birini seçer.
+STR_MAPGEN_STYLE_SHAPE_TIP=Karanın genişliğinin yüksekliğine oranı, 100 ile çarpılmış. 100 karedir; daha fazlası daha geniştir. Tohumdan: tohum bu aralıkta bir değer seçer.
+STR_MAPGEN_STYLE_CUT_TIP=Sekizgenin her köşeden ne kadar kestiği. Daha büyük bir değer daha küçük bir köşe keser. Tohumdan: tohum bu aralıkta bir değer seçer.
+STR_MAPGEN_STYLE_CORE_TIP=Her halkanın merkezindeki arazi. Tohumdan: tohum birini seçer.
+STR_MAPGEN_STYLE_RIM_TIP=Kıyı boyunca bir orman şeridi, ya da suya kadar çimen. Tohumdan: tohum birini seçer.
+STR_MAPGEN_STYLE_YARD_TIP=Yer bulunursa, bir adada labirent duvarlarından oluşan bir avlu. Tohumdan: tohum birini seçer.
+STR_MAPGEN_STYLE_WALLS=Şerit Duvarları
+STR_MAPGEN_WALLS_NONE=Duvar Yok
+STR_MAPGEN_WALLS_BUILDING=Her Eksende Bina Duvarı
+STR_MAPGEN_STYLE_MIDDLE=Orta
+STR_MAPGEN_MIDDLE_OPEN=Açık
+STR_MAPGEN_MIDDLE_PIECES=Çapraz Parçalar
+STR_MAPGEN_MIDDLE_CLUMP=Merkez Yığını
+STR_MAPGEN_MIDDLE_BOTH=Çapraz Parçalar ve Merkez Yığını
+STR_MAPGEN_STYLE_WALLS_TIP=Her eksende orman şeridini dört parçaya bölen bir bina duvarı. Tohumdan: tohum birini seçer.
+STR_MAPGEN_STYLE_MIDDLE_TIP=Zeminin ortasına yakın binalar: 45 derecelik kısa parçalar, merkezde bir yığın veya ikisi birden. Tohumdan: tohum birini seçer.
 
 # Log viewer sim-replay messages
 STR_LV_PLAYER_JOINED={player} oyuna katıldı.
@@ -2563,7 +2643,6 @@ STR_RULE_DESC_pill_base_defend_shape=pill_base_defend_range'in nasıl ölçüld�
 STR_RULE_DESC_tank_slide_armour_bonus=Sıfır zırhta eklenen fazladan itme adımı; isabetten önce eksik olan zırh oranında tank_slide_step değerine eklenir. Yalnızca tank_slide_mac açıkken okunur.
 STR_RULE_DESC_tank_slide_mac=Bir mermi isabetinin tankı Mac Bolo usulü itip itmeyeceği. Açıkken itme, zırh azaldıkça tank_slide_armour_bonus kadar artar; tank_slide_step ve tank_bump_decay_shift 40 ms başına okunur ve kayma her tik ilerler. Kapalıyken WinBolo itmesidir, her zırh düzeyinde aynıdır.
 STR_RULE_DESC_tank_deep_sea_safe=Teknesi olmayan bir tankın derin denizde boğulmadan sürülebilip sürülemediği. Kapalıyken klasik oyundur: derin deniz, teknesi olmayan bir tankı boğar. Bu tekrar kapatıldığında, derin denizde teknesi olmayan bir tank bir sonraki tikte boğulur.
-STR_RULE_DESC_man_bless_tile_terrain_speed=İnşaatçının inşa edeceği kareyi o karenin arazi hızıyla geçip geçmediği, Mac Bolo'daki gibi. Kapalıyken WinBolo yürüyüşüdür: arazi ne olursa olsun o karenin ortasına üs hızıyla yürür. Nehir, duvar ya da bunker gibi yürüme hızı olmayan bir kare üs hızını korur. Tanka dönüş yolu değişmez.
 STR_RULE_DESC_pill_aim_iterations=Bir bunkerin hareketli bir hedefi önceden yakalamak için ne kadar çalıştığı.
 STR_RULE_DESC_pill_massage_range=Bir bunkerin, etrafında dönen bir tankı ıskalayan çözücü yerine özgün basit öngörüyle nişan alması için bir tankın ne kadar yakın olması gerektiği. Sıfır, klasik değer, hedefini her zaman doğru şekilde önceden yakalayan bir bunkerdir; 384 bir kare buçuktur — eski derleme zamanı anahtarının kullandığı mesafe.
 STR_RULE_DESC_pill_massage_cosine=Yakın bir bunkere doğru bir tankın, yine de doğru nişan alınması için ne kadar dümdüz sürmesi gerektiği — rotası ile bunkere olan çizgi arasındaki açının kosinüsü olarak. Bir, pill_massage_range içindeki her tanka gevşek nişan alır, sıfır ise hiçbirine. Bu kural sıfırken hiçbir şey yapmaz.
@@ -2770,3 +2849,96 @@ STR_DLGSYSINFO_MEM_BUILDING=İnşaat
 STR_DLGSYSINFO_MEM_RUBBLE=Moloz
 STR_DLGSYSINFO_MEM_SWAMP=Bataklık
 STR_DLGSYSINFO_MEM_GRASS=Çimen
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Bas-konuş: oyun ekranındaki mikrofon düğmesini basılı tut
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Dosyaların
+STR_MAPEDIT_IOS_BUILTIN=WinBolo ile gelen haritalar
+STR_MAPEDIT_IOS_NOFILES=Burada henüz bir şey yok. Kaydettiğin dosyalar ve Dosyalar uygulamasında WinBolo klasörüne koyduğun dosyalar burada görünür.
+STR_MAPEDIT_IOS_NAME=Ad
+STR_MAPEDIT_IOS_REPLACES=Bu adla bir dosya zaten var. Kaydetmek onu değiştirir.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Kayıtlar
+STR_IOSREC_EMPTY=Henüz kayıt yok. Tek oyunculu turlar buraya kaydedilir; Dosyalar uygulamasında WinBolo klasörüne konan .wbv dosyaları da burada listelenir.
+STR_IOSREC_COPY=Dosyalar'a kopyala
+STR_IOSREC_COPIED=Dosyalar uygulamasındaki WinBolo klasörüne kopyalandı.
+STR_IOSREC_OPEN_FAILED=Bu kayıt açılamadı.
+STR_IOSREC_LAST_ROUND=Son tek oyunculu tur
+STR_IOSREC_COPY_FAILED=Kayıt Dosyalar uygulamasına kopyalanamadı.
+STR_DLGCONNECTING_TITLE={string1} adresine bağlanılıyor...
+STR_DLGCONNECTING_PING=Sunucuya oyunu soruluyor...
+STR_DLGCONNECTING_JOINING=Oyuna katılınıyor...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Bu kayıt okunamadı.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Ayar
+STR_DLGLOBBY_DETAILS_COL_VALUE=Değer
+STR_DLGLOBBY_DETAILS_RULES=Kurallar:
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=Bu değeri sunucu belirler. Değiştirilemez.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED={string1} tarafından · güncellendi {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=bilinmiyor
+STR_MENU_INFO_OVERLAY=Bilgi katmanı
+STR_SCNPANEL_POP_OUT=Ayır
+STR_SCNPANEL_POP_IN=Yerleştir
+STR_SCNPANEL_CLOSE_TITLE={string1} kapatılsın mı?
+STR_SCNPANEL_CLOSE_BODY={string1} > {string2} üzerinden yeniden aç.
+STR_DLGLOBBY_SCENARIO_REQUIRED=Sunucu bu betiği her zaman çalıştırır. Kaldırılamaz.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=Sunucu her zaman bu turdaki senaryoyu çalıştırır
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=Bu listeyi sunucu belirler. Değiştirilemez.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Bunkerlerin Mac Bolo gibi nişan alıp almadığı. Yaklaşık bir kare içindeki hareket eden, önü açık tanklar bunkerin onların gidiş yönünde çok ileriye nişan almasını sağlar. Duran ya da engellenen tanklara öncü verilmez. pill_massage_range, pill_massage_cosine ve pill_aim_iterations ayarlarını geçersiz kılar.
+STR_RULE_DESC_tank_collision_mac=Tankların duvarlara, etkin bunkerlere ve düşman üslerine karşı Mac Bolo'nun yöne bağlı sprite kutularını ve piksel itmelerini kullanıp kullanmadığı. "Pill massage" için bir bunkerin yanından daha yakın geçişlere izin verir.
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=Bir tankın ölümünün kime yazılacağı, her ölümde sorulur; bir boğulma, bir betik onu batıran tankı belirtmedikçe kurbanı gösterir.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1}, Dosyalar uygulamasındaki WinBolo klasöründe.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} kaydedilemedi.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=Harita ekranı kaplar ve kontroller onun üzerine çizilir.\nKapalıyken oyun görünümü kare kalır, kontroller yanında durur.\nBir sonraki sefer için hatırlanır.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Tam ekranda inşaat araçlarının ardından haritanın\nne kadarı göründüğü. 0% tam opak demektir, kaydırıcı ise\n90% noktasında durur; böylece tamamen görünmez yapılamazlar.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Tam ekranda tank, bunker ve üs ızgaralarının ve stok çubuklarının\nardından haritanın ne kadarı göründüğü. 0% tam opak demektir,\nkaydırıcı ise 90% noktasında durur; böylece tamamen görünmez yapılamazlar.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Harita ekranı doldurur; durum, inşa ve haber panelleri üstünde,\ndokunarak oynadığınızda dokunmatik kontroller de üstünde gösterilir.\nKapalıyken klasik ekran gösterilir. Bir sonraki sefer için hatırlanır.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=Bu cihaz mobil veri kullanıyor. Mobil veriyle barındırılan bir İnternet\noyunu büyük olasılıkla çalışmaz: mobil ağlar diğer oyuncuların cihaza\nulaşmasına nadiren izin verir. Wi-Fi ile çalışma olasılığı çok daha yüksektir.\n\nYine de barındırılsın mı?
+
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=Paylaş
+STR_ANDROIDREC_EMPTY=Henüz kayıt yok. Tek oyunculu turlar buraya kaydedilir; başka bir uygulamadan açılan .wbv kayıtları da burada listelenir.
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1} kaydedildi. Şimdi paylaşmak için bir uygulama seç.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Burada henüz bir şey yok. Burada ya da bir oyunda kaydettiğin haritalar burada görünür.
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=GIF'leriniz
+STR_CLIPGIF_GALLERY_EMPTY=Henüz GIF yok. Tekrar oynatmanın altındaki GIF düğmesiyle ya da bir klibin GIF düğmesiyle oluşturun.
+STR_CLIPGIF_COPY=Panoya kopyala
+STR_CLIPGIF_SAVE=Diske kaydet
+STR_CLIPGIF_COPIED=Kopyalandı.
+STR_CLIPGIF_COPY_FAILED=GIF kopyalanamadı.
+STR_CLIPGIF_OPEN_FAILED=Bu GIF açılamadı.
+STR_CLIPGIF_MAP_FMT=Harita: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Oyuncular: {string1}
+STR_CLIPGIF_NO_DETAILS=Bu GIF ile hiçbir ayrıntı kaydedilmedi.
+STR_CLIPGIF_LENGTH_TIP=Oynatma noktasından itibaren saniye cinsinden GIF uzunluğu.\nZaman çizelgesinin parlak kısmının sonundaki işareti sürükleyerek de değiştirebilirsiniz.
+STR_CLIPGIF_LOADING=GIF açılıyor...
+STR_CLIPGIF_TOO_LARGE=Bu GIF burada gösterilemeyecek kadar büyük. Yine de kopyalayabilir veya kaydedebilirsiniz.
+STR_CLIPGIF_FILTER_NAME=GIF Resimleri

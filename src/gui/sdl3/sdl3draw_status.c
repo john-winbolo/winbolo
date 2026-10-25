@@ -48,6 +48,7 @@
 #include "alliance_enums.h"
 #include "tilenum.h"
 #include "tank_label.h"      /* the shared name + flag / brain-icon drawer */
+#include "newswire_slide.h"  /* newswireSuffixStart */
 
 /* Local copies of constants that sdl3draw.c keeps as file-local
  * #defines. Duplicating them is the simplest way to keep this
@@ -112,17 +113,27 @@ static Uint64 gMsgActivityTick = 0;
 static int  gCachedKills  = 0;
 static int  gCachedDeaths = 0;
 
-/* Cached SDL_ttf textures for the message lines and kills/deaths text */
-static SDL_Texture *gTexMsgTop    = NULL;
-static SDL_Texture *gTexMsgBot    = NULL;
+/* One newswire line's SDL_ttf texture, rebuilt only when the text it shows
+   changes. The classic newswire and the touch layout's keep separate pairs,
+   since they draw at different sizes. */
+typedef struct NewswireLineCache {
+  SDL_Texture *tex;
+  char         str[SDL3_MSG_LEN];
+  int          w, h;
+} NewswireLineCache;
+static NewswireLineCache gMsgLineTop;
+static NewswireLineCache gMsgLineBot;
+static NewswireLineCache gTouchLineTop;
+static NewswireLineCache gTouchLineBot;
+/* The face the touch pair was rendered in: a new one (another size) makes
+   them stale even where the text has not changed. */
+static TTF_Font         *gTouchLineFont = NULL;
+
+/* Cached SDL_ttf textures for the kills/deaths text */
 static SDL_Texture *gTexKills     = NULL;
 static SDL_Texture *gTexDeaths    = NULL;
-static char         gTexMsgTopStr[SDL3_MSG_LEN];
-static char         gTexMsgBotStr[SDL3_MSG_LEN];
 static char         gTexKillsStr[16];
 static char         gTexDeathsStr[16];
-static int          gTexMsgTopW, gTexMsgTopH;
-static int          gTexMsgBotW, gTexMsgBotH;
 static int          gTexKillsW,  gTexKillsH;
 static int          gTexDeathsW, gTexDeathsH;
 
@@ -198,6 +209,102 @@ static void sdl3UpdateTextCache(TTF_Font *font, const char *text,
   SDL_strlcpy(prevStr, text, prevSize);
 }
 
+/* The font and width newswireSuffixFits measures against. */
+typedef struct NewswireMeasure {
+  TTF_Font *font;
+  int       maxW;
+} NewswireMeasure;
+
+/* Whether all n bytes of s fit in the width: TTF_MeasureString reports how
+   many bytes fit, and the suffix fits when that is all of them. */
+static bool newswireSuffixFits(const char *s, size_t n, void *user) {
+  const NewswireMeasure *m = (const NewswireMeasure *)user;
+  size_t fit = 0;
+  if (!TTF_MeasureString(m->font, s, n, m->maxW, NULL, &fit)) return false;
+  return fit == n;
+}
+
+/* Draw one newswire line at (x, y): the rightmost characters of text that fit
+   in maxW, which is how a line scrolling in from the right reads in a box too
+   narrow for all of it. The font is the fixed-width Sarasa Mono, so each
+   character the newswire scrolls by moves the line the same distance and the
+   two lines stay in step. CJK characters there are two cells wide and more
+   than one byte long, so the part shown is found by measuring suffixes, not
+   by counting from the start. An empty text drops the texture. */
+static void newswireLineDraw(TTF_Font *font, const char *text, float x,
+                             float y, float maxW, Uint8 alpha,
+                             NewswireLineCache *c) {
+  SDL_Color white = {200, 200, 200, 255};
+  const char *shown = text;
+  size_t len = SDL_strlen(text);
+  if (len > 0) {
+    size_t fit = 0;
+    TTF_MeasureString(font, text, len, (int)maxW, NULL, &fit);
+    if (fit < len) {
+      NewswireMeasure m = { font, (int)maxW };
+      shown = text + newswireSuffixStart(text, len, newswireSuffixFits, &m);
+      /* The cut is counted in bytes; start on a whole character. */
+      while ((*shown & 0xC0) == 0x80) shown++;
+    }
+  }
+  sdl3UpdateTextCache(font, shown, white, &c->tex, c->str, sizeof(c->str),
+                      &c->w, &c->h);
+  if (c->tex) {
+    SDL_FRect d = { x, y, (float)c->w, (float)c->h };
+    SDL_SetTextureAlphaMod(c->tex, alpha);
+    SDL_RenderTexture(gRenderer, c->tex, NULL, &d);
+    SDL_SetTextureAlphaMod(c->tex, 255);
+  }
+}
+
+static void newswireLineDrop(NewswireLineCache *c) {
+  if (c->tex) { SDL_DestroyTexture(c->tex); c->tex = NULL; }
+  c->str[0] = '\0';
+  c->w = c->h = 0;
+}
+
+/* Whether either line has anything but spaces: once a message has scrolled
+   out the lines are all blank cells, not empty, and a newswire that hides
+   has nothing to show. */
+static bool newswireHasText(void) {
+  for (const char *p = gMsgTop; *p; p++) if (*p != ' ') return true;
+  for (const char *p = gMsgBottom; *p; p++) if (*p != ' ') return true;
+  return false;
+}
+
+void sdl3DrawNewswireStrip(TTF_Font *font, float x, float y, float w,
+                           float edge, float slide, Uint8 textAlpha,
+                           Uint8 backAlpha) {
+  SDL_assert(sdl3DrawOnRenderThread());
+  if (!gRenderer || !font || slide >= 1.0f || edge <= y || w <= 16.0f) return;
+  if (!newswireHasText()) return;
+  if (font != gTouchLineFont) {
+    newswireLineDrop(&gTouchLineTop);
+    newswireLineDrop(&gTouchLineBot);
+    gTouchLineFont = font;
+  }
+
+  float lineH = (float)TTF_GetFontHeight(font);
+  float h     = lineH * 2.0f + 12.0f;
+  float top   = y + slide * (edge - y);
+
+  SDL_Rect clip = { (int)x, (int)y, (int)w, (int)(edge - y) };
+  SDL_SetRenderClipRect(gRenderer, &clip);
+
+  SDL_FRect back = { x, top, w, h };
+  SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_BLEND);
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, backAlpha);
+  SDL_RenderFillRect(gRenderer, &back);
+  SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_NONE);
+
+  newswireLineDraw(font, gMsgTop, x + 8.0f, top + 4.0f, w - 16.0f, textAlpha,
+                   &gTouchLineTop);
+  newswireLineDraw(font, gMsgBottom, x + 8.0f, top + 4.0f + lineH + 2.0f,
+                   w - 16.0f, textAlpha, &gTouchLineBot);
+
+  SDL_SetRenderClipRect(gRenderer, NULL);
+}
+
 /*********************************************************
 *NAME:          sdl3RenderCachedText
 *PURPOSE:
@@ -221,52 +328,12 @@ void sdl3RenderCachedText(void) {
     };
     SDL_SetRenderClipRect(gRenderer, &msgClip);
 
-    if (gMsgTop[0] != '\0') {
-      /* Show only the rightmost characters that fit in the display width. */
-      size_t fitLen = 0;
-      const char *topStr = gMsgTop;
-      size_t topLen = SDL_strlen(gMsgTop);
-      TTF_MeasureString(gFontMsg, gMsgTop, topLen, zf * MESSAGE_BOX_WIDTH, NULL, &fitLen);
-      if (fitLen < topLen) {
-        topStr = gMsgTop + (topLen - fitLen);
-      }
-      sdl3UpdateTextCache(gFontMsg, topStr, white,
-                          &gTexMsgTop, gTexMsgTopStr, sizeof(gTexMsgTopStr),
-                          &gTexMsgTopW, &gTexMsgTopH);
-      if (gTexMsgTop) {
-        SDL_FRect d = { (float)(zf * MESSAGE_TOP_LINE_X),
-                        (float)(zf * MESSAGE_TOP_LINE_Y),
-                        (float)gTexMsgTopW, (float)gTexMsgTopH };
-        SDL_RenderTexture(gRenderer, gTexMsgTop, NULL, &d);
-      }
-    } else {
-      sdl3UpdateTextCache(gFontMsg, "", white,
-                          &gTexMsgTop, gTexMsgTopStr, sizeof(gTexMsgTopStr),
-                          &gTexMsgTopW, &gTexMsgTopH);
-    }
-
-    if (gMsgBottom[0] != '\0') {
-      size_t fitLen = 0;
-      const char *botStr = gMsgBottom;
-      size_t botLen = SDL_strlen(gMsgBottom);
-      TTF_MeasureString(gFontMsg, gMsgBottom, botLen, zf * MESSAGE_BOX_WIDTH, NULL, &fitLen);
-      if (fitLen < botLen) {
-        botStr = gMsgBottom + (botLen - fitLen);
-      }
-      sdl3UpdateTextCache(gFontMsg, botStr, white,
-                          &gTexMsgBot, gTexMsgBotStr, sizeof(gTexMsgBotStr),
-                          &gTexMsgBotW, &gTexMsgBotH);
-      if (gTexMsgBot) {
-        SDL_FRect d = { (float)(zf * MESSAGE_BOTTOM_LINE_X),
-                        (float)(zf * MESSAGE_BOTTOM_LINE_Y),
-                        (float)gTexMsgBotW, (float)gTexMsgBotH };
-        SDL_RenderTexture(gRenderer, gTexMsgBot, NULL, &d);
-      }
-    } else {
-      sdl3UpdateTextCache(gFontMsg, "", white,
-                          &gTexMsgBot, gTexMsgBotStr, sizeof(gTexMsgBotStr),
-                          &gTexMsgBotW, &gTexMsgBotH);
-    }
+    newswireLineDraw(gFontMsg, gMsgTop, (float)(zf * MESSAGE_TOP_LINE_X),
+                     (float)(zf * MESSAGE_TOP_LINE_Y),
+                     (float)(zf * MESSAGE_BOX_WIDTH), 255, &gMsgLineTop);
+    newswireLineDraw(gFontMsg, gMsgBottom, (float)(zf * MESSAGE_BOTTOM_LINE_X),
+                     (float)(zf * MESSAGE_BOTTOM_LINE_Y),
+                     (float)(zf * MESSAGE_BOX_WIDTH), 255, &gMsgLineBot);
 
     SDL_SetRenderClipRect(gRenderer, NULL);
   }
@@ -736,12 +803,12 @@ void sdl3DrawResetCachedText(void) {
   gCachedKills  = 0;
   gCachedDeaths = 0;
   /* Invalidate texture caches so stale text isn't rendered */
-  gTexMsgTopStr[0] = '\0';
-  gTexMsgBotStr[0] = '\0';
   gTexKillsStr[0]  = '\0';
   gTexDeathsStr[0] = '\0';
-  if (gTexMsgTop) { SDL_DestroyTexture(gTexMsgTop); gTexMsgTop = NULL; }
-  if (gTexMsgBot) { SDL_DestroyTexture(gTexMsgBot); gTexMsgBot = NULL; }
+  newswireLineDrop(&gMsgLineTop);
+  newswireLineDrop(&gMsgLineBot);
+  newswireLineDrop(&gTouchLineTop);
+  newswireLineDrop(&gTouchLineBot);
   if (gTexKills)  { SDL_DestroyTexture(gTexKills);  gTexKills  = NULL; }
   if (gTexDeaths) { SDL_DestroyTexture(gTexDeaths); gTexDeaths = NULL; }
 }
@@ -945,12 +1012,12 @@ void sdl3DrawStatusShutdown(void) {
   /* Destroy owned (b)-class texture caches */
   tankLabelCacheFlush(&gLabelCache);
   tankLabelCacheFlush(&gPingNameCache);
-  if (gTexMsgTop) { SDL_DestroyTexture(gTexMsgTop); gTexMsgTop = NULL; }
-  if (gTexMsgBot) { SDL_DestroyTexture(gTexMsgBot); gTexMsgBot = NULL; }
+  newswireLineDrop(&gMsgLineTop);
+  newswireLineDrop(&gMsgLineBot);
+  newswireLineDrop(&gTouchLineTop);
+  newswireLineDrop(&gTouchLineBot);
   if (gTexKills)  { SDL_DestroyTexture(gTexKills);  gTexKills  = NULL; }
   if (gTexDeaths) { SDL_DestroyTexture(gTexDeaths); gTexDeaths = NULL; }
-  gTexMsgTopStr[0] = '\0';
-  gTexMsgBotStr[0] = '\0';
   gTexKillsStr[0]  = '\0';
   gTexDeathsStr[0] = '\0';
 

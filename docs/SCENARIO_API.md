@@ -1757,7 +1757,7 @@ refused with `SCN_OP_BAD_SQUARE`, the same answer as a square off the map.
 |---|---|
 | `game.builder_order(p, action, x, y)` | Sends a builder out to do one of `"trees"`, `"road"`, `"building"`, `"pill"`, `"mine"` or `"boat"` on a square. The engine repairs rather than builds where the square already holds one. |
 | `game.builder_recall(p)` | Calls a builder back to the tank. |
-| `game.kill_lgm(p[, killer])` | Kills a builder. `killer` is a seat. |
+| `game.kill_lgm(p[, killer[, force]])` | Kills a builder. `killer` is a seat. A builder inside his tank is left there and the call is refused, unless `force` is `true`: then he dies on the tank and the tank waits for him to fly back in. A builder inside a dead tank is refused either way. |
 | `game.builder_parachute(p[, x, y])` | Drops a dead builder back in, on a square or at the tank. |
 | `game.set_builder_carried(p[, trees[, mines]])` | What a builder is carrying. A count left out is left alone. |
 
@@ -2503,7 +2503,6 @@ rather than by having no speed.
 | `man_speed_boat` | 16 | 0 to 63 | The cap on a boat. |
 | `man_speed_deep_sea` | 0 | 0 to 63 | The cap in deep sea. |
 | `man_speed_refuel_base` | 16 | 0 to 63 | The cap on a refuelling base. |
-| `man_bless_tile_terrain_speed` | 0 | 0 to 1 | Which speed the builder has on the square he is going to build on, while he walks up to its centre. 0, the classic table, is the WinBolo walk: on that square he always moves at `man_speed_refuel_base`, whatever its terrain, so a wall put up on swamp is reached at full speed. 1 is the Mac Bolo walk: he crosses it at its own cap from this table, as he does every other square, so the last stretch to a wall on swamp goes at `man_speed_swamp`. A square whose cap is 0 (a river under a road or a boat, a wall to repair, a live pillbox) keeps `man_speed_refuel_base`, so he is never left standing still. The man has a build square only for a road on a river, a boat, a wall and a pillbox, so a tree, a plain road or a mine is not changed. Nor is the walk back to the tank, or a man leaving a tank on a boat. |
 
 **Shells.**
 

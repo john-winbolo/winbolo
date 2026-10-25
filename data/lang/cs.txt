@@ -951,7 +951,7 @@ STR_MAPGEN_TYPE_NATURAL=Přírodní
 STR_MAPGEN_TYPE_MAZE=Bludiště
 STR_MAPGEN_TYPE_FRACTAL=Fraktální
 STR_MAPGEN_SEED=Seed
-STR_MAPGEN_RANDOMIZE=Náhodovat
+STR_MAPGEN_RANDOMIZE=Náhodné hodnoty
 STR_MAPGEN_SYMMETRY=Symetrie
 STR_MAPGEN_SYM_4CORNER=Zrcadlení 4-rohové
 STR_MAPGEN_SYM_MIRROR_H=Zrcadlení vodorovné
@@ -991,6 +991,86 @@ STR_MAPGEN_COAST_JAG=Členitost pobřeží
 STR_MAPGEN_TERRAIN_LAYERS=Vrstvy terénu
 STR_MAPGEN_RIVERS=Řeky
 STR_MAPGEN_LAKES=Jezera
+STR_MAPGEN_TYPE_MAKER=Styl slavného tvůrce map
+STR_MAPGEN_SIZE=Velikost
+STR_MAPGEN_SIZE_FULL=Plná
+STR_MAPGEN_SIZE_TIP=Strana hratelného čtverce v polích. Plná používá celou plochu.
+STR_MAPGEN_PRESET=Předvolba
+STR_MAPGEN_PRESET_TIP=Mapy ve stylu klasického tvůrce map pro Bolo. Předvolba nastaví ovládání níže; potom můžete kterékoli změnit.
+STR_MAPGEN_OUTLINE=Obrys
+STR_MAPGEN_OUTLINE_BOX=Obdélník
+STR_MAPGEN_OUTLINE_OCTAGON=Osmiúhelník
+STR_MAPGEN_OUTLINE_ROUND=Kruh
+STR_MAPGEN_OUTLINE_DIAMOND=Kosočtverec
+STR_MAPGEN_OUTLINE_CROSS=Kříž
+STR_MAPGEN_OUTLINE_CLOVER=Čtyřlístek
+STR_MAPGEN_OUTLINE_ISLAND=Ostrov
+STR_MAPGEN_OUTLINE_VARIED=Různý
+STR_MAPGEN_MSYM_NONE=Žádná
+STR_MAPGEN_MSYM_MIRROR=Zrcadlo
+STR_MAPGEN_MSYM_ROT2=Půl otočky
+STR_MAPGEN_MSYM_MIRROR4=Zrcadlo v obou směrech
+STR_MAPGEN_MSYM_ROT4=Čtvrt otočky
+STR_MAPGEN_WATER_PCT=Voda %
+STR_MAPGEN_ROAD_PCT=Silnice %
+STR_MAPGEN_ISLANDS=Ostrovy
+STR_MAPGEN_DETAIL=Podrobnosti
+STR_MAPGEN_PRESET_BERSERKIR=Berserkir
+STR_MAPGEN_PRESET_SLUGGO_TOURNAMENT=Sluggo Tournament
+STR_MAPGEN_PRESET_SLUGDEATH=Sluggo Slugdeath
+STR_MAPGEN_PRESET_SLUGFEST=Sluggo Slugfest
+STR_MAPGEN_PRESET_SLUGGO_ADVENTUROUS=Sluggo Adventurous
+STR_MAPGEN_PRESET_SLUGGO_SYMMETRIC=Sluggo Symmetric
+STR_MAPGEN_PRESET_STOOGEFEST=Sluggo Stoogefest
+STR_MAPGEN_PRESET_BLACK_LIGHTNING=Black Lightning
+STR_MAPGEN_PRESET_BL_ISLANDS=Black Lightning Islands
+STR_MAPGEN_PRESET_DEATHHAND=Deathhand
+STR_MAPGEN_PRESET_MEGAWATT_TC=Megawatt TC
+STR_MAPGEN_PRESET_MEGAWATT_ISLANDS=Megawatt Islands
+STR_MAPGEN_PRESET_MOSH_PIT=Nature Mosh Pit
+STR_MAPGEN_PRESET_PALPATINE=Palpatine
+STR_MAPGEN_PRESET_CHEW_TOY=Chew Toy
+# Map Maker style panel
+STR_MAPGEN_LOCK_ALL=Zamknout vše
+STR_MAPGEN_UNLOCK_ALL=Odemknout vše
+STR_MAPGEN_PANEL_TITLE=Hodnoty mapy
+STR_MAPGEN_STYLE_TITLE=Styl {string1}
+STR_MAPGEN_STYLE_RANDOMIZE=Náhodný styl
+STR_MAPGEN_STYLE_NONE=U tohoto tvůrce map seed nerozhoduje o ničem dalším.
+STR_MAPGEN_STYLE_FROM_SEED=Ze seedu
+STR_MAPGEN_STYLE_ROADS=Uspořádání silnic
+STR_MAPGEN_ROADS_AXES=Kříž
+STR_MAPGEN_ROADS_DIAG=Úhlopříčky
+STR_MAPGEN_ROADS_AXES_DIAG=Kříž a úhlopříčky
+STR_MAPGEN_ROADS_AXES_RING=Kříž a kruh
+STR_MAPGEN_ROADS_DIAG_RING=Úhlopříčky a kruh
+STR_MAPGEN_ROADS_RING=Kruh
+STR_MAPGEN_STYLE_SHAPE=Tvar
+STR_MAPGEN_STYLE_CUT=Seříznutí rohu
+STR_MAPGEN_STYLE_CORE=Střed kroužku
+STR_MAPGEN_STYLE_RIM=Pobřeží
+STR_MAPGEN_RIM_FOREST=Lesní pás
+STR_MAPGEN_RIM_GRASS=Tráva až k pobřeží
+STR_MAPGEN_STYLE_YARD=Dvorek bludiště
+STR_MAPGEN_YARD_NONE=Žádný
+STR_MAPGEN_YARD_BUILDING=Zdi z budov
+STR_MAPGEN_YARD_FOREST=Zdi z lesa
+STR_MAPGEN_STYLE_ROADS_TIP=Linie silnic přes souš. Ze seedu: seed vybere jedno z uspořádání v tomto seznamu.
+STR_MAPGEN_STYLE_SHAPE_TIP=Šířka souše vůči její výšce, × 100. 100 je čtverec; vyšší hodnota je širší. Ze seedu: seed vybere hodnotu z tohoto rozsahu.
+STR_MAPGEN_STYLE_CUT_TIP=Kolik z každého rohu osmiúhelník seřízne. Vyšší hodnota seřízne menší roh. Ze seedu: seed vybere hodnotu z tohoto rozsahu.
+STR_MAPGEN_STYLE_CORE_TIP=Terén uprostřed každého kroužku. Ze seedu: seed vybere jeden.
+STR_MAPGEN_STYLE_RIM_TIP=Pás lesa kolem pobřeží, nebo tráva až k vodě. Ze seedu: seed vybere jeden.
+STR_MAPGEN_STYLE_YARD_TIP=Dvorek z bludišťových zdí na jednom ostrově, pokud se pro něj najde místo. Ze seedu: seed vybere jeden.
+STR_MAPGEN_STYLE_WALLS=Hraniční zdi
+STR_MAPGEN_WALLS_NONE=Žádné zdi
+STR_MAPGEN_WALLS_BUILDING=Zeď z budov na každé ose
+STR_MAPGEN_STYLE_MIDDLE=Střed
+STR_MAPGEN_MIDDLE_OPEN=Otevřený
+STR_MAPGEN_MIDDLE_PIECES=Úhlopříčné kusy
+STR_MAPGEN_MIDDLE_CLUMP=Shluk uprostřed
+STR_MAPGEN_MIDDLE_BOTH=Úhlopříčné kusy a shluk uprostřed
+STR_MAPGEN_STYLE_WALLS_TIP=Zeď z budov přes lesní pás na každé ose, která rozdělí pás na čtyři části. Ze seedu: seed vybere jeden.
+STR_MAPGEN_STYLE_MIDDLE_TIP=Budovy poblíž středu plochy: krátké úseky pod úhlem 45 stupňů, shluk uprostřed, nebo obojí. Ze seedu: seed vybere jeden.
 
 # Log viewer sim-replay messages
 STR_LV_PLAYER_JOINED={player} se připojil ke hře.
@@ -2561,7 +2641,6 @@ STR_RULE_DESC_pill_base_defend_shape=Jak se měří pill_base_defend_range. 0 je
 STR_RULE_DESC_tank_slide_armour_bonus=Krok odstrčení navíc při nulovém pancíři; přičítá se k tank_slide_step úměrně pancíři, který tanku chyběl před zásahem. Čte se jen při zapnutém tank_slide_mac.
 STR_RULE_DESC_tank_slide_mac=Zda zásah střelou odstrčí tank jako v Mac Bolo. Zapnuto: odstrčení roste s ubývajícím pancířem o tank_slide_armour_bonus a tank_slide_step i tank_bump_decay_shift se čtou na 40 ms, v klouzání, které se posouvá každý tick. Vypnuto je odstrčení WinBolo, stejné při jakémkoli pancíři.
 STR_RULE_DESC_tank_deep_sea_safe=Zda tank bez lodi může jet po širém moři, aniž by se utopil. Vypnuto je klasická hra: širé moře utopí tank bez lodi. Tank, který je bez lodi na širém moři, když se toto znovu vypne, se utopí v příštím ticku.
-STR_RULE_DESC_man_bless_tile_terrain_speed=Zda stavitel přejde políčko, na kterém bude stavět, rychlostí jeho terénu, jako v Mac Bolo. Vypnuto je chůze WinBolo: do středu toho políčka jde rychlostí základny, ať je terén jakýkoli. Políčko bez rychlosti chůze, například řeka, zeď nebo bunkr, si rychlost základny ponechá. Cesta zpět k tanku se nemění.
 STR_RULE_DESC_pill_aim_iterations=Jak usilovně se bunkr snaží předvídat pohybující se cíl.
 STR_RULE_DESC_pill_massage_range=Jak blízko musí být tank, aby na něj bunkr zamířil s původní dopřednou předpovědí místo řešitele, kterému uniká tank kroužící kolem něj. Nula, klasická tabulka, znamená bunkr, který svůj cíl vždy zamíří správně; 384 je jedno a půl pole, vzdálenost, kterou používal starý přepínač z doby kompilace.
 STR_RULE_DESC_pill_massage_cosine=Jak přímo na blízký bunkr musí tank jet, aby na něj bylo přesto zamířeno správně, jako kosinus úhlu mezi jeho směrem a přímkou k bunkru. Při jedné se nedbale míří na každý tank uvnitř pill_massage_range, při nule na žádný z nich. Nedělá nic, dokud je toto pravidlo nulové.
@@ -2768,3 +2847,96 @@ STR_DLGSYSINFO_MEM_BUILDING=Stavba
 STR_DLGSYSINFO_MEM_RUBBLE=Trosky
 STR_DLGSYSINFO_MEM_SWAMP=Bažina
 STR_DLGSYSINFO_MEM_GRASS=Tráva
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Mluvení stiskem: podržte tlačítko mikrofonu na herní obrazovce
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Vaše soubory
+STR_MAPEDIT_IOS_BUILTIN=Mapy dodávané s WinBolo
+STR_MAPEDIT_IOS_NOFILES=Zatím tu nic není. Soubory, které uložíte, a soubory, které vložíte do složky WinBolo v aplikaci Soubory, se zobrazí zde.
+STR_MAPEDIT_IOS_NAME=Název
+STR_MAPEDIT_IOS_REPLACES=Soubor s tímto názvem už existuje. Uložením se nahradí.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Záznamy
+STR_IOSREC_EMPTY=Zatím žádné záznamy. Hry jednoho hráče se nahrávají sem a soubory .wbv vložené do složky WinBolo v aplikaci Soubory jsou zde také.
+STR_IOSREC_COPY=Kopírovat do Souborů
+STR_IOSREC_COPIED=Zkopírováno do složky WinBolo v aplikaci Soubory.
+STR_IOSREC_OPEN_FAILED=Tento záznam nelze otevřít.
+STR_IOSREC_LAST_ROUND=Poslední hra jednoho hráče
+STR_IOSREC_COPY_FAILED=Záznam se nepodařilo zkopírovat do aplikace Soubory.
+STR_DLGCONNECTING_TITLE=Připojování k {string1}...
+STR_DLGCONNECTING_PING=Dotaz na hru serveru...
+STR_DLGCONNECTING_JOINING=Připojování ke hře...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Tento záznam nelze přečíst.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Nastavení
+STR_DLGLOBBY_DETAILS_COL_VALUE=Hodnota
+STR_DLGLOBBY_DETAILS_RULES=Pravidla:
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=Tuto hodnotu určuje server. Nelze ji změnit.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=autor {string1} · aktualizováno {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=neznámý
+STR_MENU_INFO_OVERLAY=Informační překryv
+STR_SCNPANEL_POP_OUT=Oddělit
+STR_SCNPANEL_POP_IN=Připojit
+STR_SCNPANEL_CLOSE_TITLE=Zavřít {string1}?
+STR_SCNPANEL_CLOSE_BODY=Znovu jej zapnete v {string1} > {string2}.
+STR_DLGLOBBY_SCENARIO_REQUIRED=Server tento skript spouští vždy. Nelze jej odebrat.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=Server vždy spouští scénář, který je v tomto kole
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=Tento seznam určuje server. Nelze jej změnit.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Zda bunkry míří jako v Mac Bolo. Jedoucí, nezakryté tanky do vzdálenosti asi jednoho pole přimějí bunkr mířit daleko ve směru jejich jízdy. Stojící nebo zablokované tanky předsazení nedostávají. Přepisuje pill_massage_range, pill_massage_cosine a pill_aim_iterations.
+STR_RULE_DESC_tank_collision_mac=Zda tanky používají směrově závislé rámečky spritů a pixelové posuny z Mac Bolo u zdí, aktivních bunkrů a nepřátelských základen. Umožňuje projet blíže kolem bunkru při „pill massage“.
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=Komu se připíše zničení tanku, dotazováno při každém zničení; utonutí uvádí oběť, pokud skript neuvede tank, který jej potopil.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} je ve složce WinBolo v aplikaci Soubory.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} se nepodařilo uložit.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=Mapa vyplní obrazovku a ovládací prvky se kreslí přes ni.\nVypnuto ponechá herní pohled čtvercový s ovládacími prvky vedle něj.\nZapamatuje se pro příště.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Kolik z mapy prosvítá skrz stavební nástroje\nna celé obrazovce. 0% je neprůhledné a posuvník se\nzastaví na 90%, aby nemohly zmizet úplně.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Kolik z mapy prosvítá skrz mřížky tanků, bunkrů a\nzákladen a ukazatele zásob na celé obrazovce. 0% je\nneprůhledné a posuvník se zastaví na 90%, aby nemohly zmizet úplně.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Mapa vyplní obrazovku a panely stavu, stavění a zpráv jsou přes ni,\nspolu s dotykovým ovládáním, když hrajete dotykem.\nVypnuto zobrazí klasickou obrazovku. Zapamatováno pro příště.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=Toto zařízení je na mobilních datech. Internetová hra hostovaná přes mobilní\ndata pravděpodobně nebude fungovat: mobilní sítě ostatním hráčům jen zřídka\numožní se k zařízení připojit. S Wi-Fi je mnohem větší šance.\n\nPřesto hostovat?
+
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=Sdílet
+STR_ANDROIDREC_EMPTY=Zatím žádné záznamy. Hry jednoho hráče se nahrávají sem a záznamy .wbv otevřené z jiné aplikace jsou zde také uvedeny.
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1} byl uložen. Dále vyberte aplikaci, se kterou ho chcete sdílet.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Zatím tu nic není. Mapy, které uložíte, zde nebo ze hry, se zobrazí zde.
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Vaše GIFy
+STR_CLIPGIF_GALLERY_EMPTY=Zatím žádné GIFy. Vytvořte jeden tlačítkem GIF pod záznamem nebo tlačítkem GIF u klipu.
+STR_CLIPGIF_COPY=Kopírovat do schránky
+STR_CLIPGIF_SAVE=Uložit na disk
+STR_CLIPGIF_COPIED=Zkopírováno.
+STR_CLIPGIF_COPY_FAILED=GIF se nepodařilo zkopírovat.
+STR_CLIPGIF_OPEN_FAILED=Tento GIF se nepodařilo otevřít.
+STR_CLIPGIF_MAP_FMT=Mapa: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Hráči: {string1}
+STR_CLIPGIF_NO_DETAILS=K tomuto GIFu nebyly uloženy žádné údaje.
+STR_CLIPGIF_LENGTH_TIP=Délka GIFu v sekundách od přehrávací hlavy.\nDélku změníte také tažením značky na konci světlé části časové osy.
+STR_CLIPGIF_LOADING=Otevírání GIFu...
+STR_CLIPGIF_TOO_LARGE=Tento GIF je příliš velký, aby se zde zobrazil. Stále ho můžete zkopírovat nebo uložit.
+STR_CLIPGIF_FILTER_NAME=Obrázky GIF

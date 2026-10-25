@@ -951,7 +951,7 @@ STR_MAPGEN_TYPE_NATURAL=Natuurlijk
 STR_MAPGEN_TYPE_MAZE=Doolhof
 STR_MAPGEN_TYPE_FRACTAL=Fractaal
 STR_MAPGEN_SEED=Seed
-STR_MAPGEN_RANDOMIZE=Willekeurig genereren
+STR_MAPGEN_RANDOMIZE=Willekeurige waarden genereren
 STR_MAPGEN_SYMMETRY=Symmetrie
 STR_MAPGEN_SYM_4CORNER=4-hoekspiegel
 STR_MAPGEN_SYM_MIRROR_H=Horizontaal spiegelen
@@ -991,6 +991,86 @@ STR_MAPGEN_COAST_JAG=Kustgrilligheid
 STR_MAPGEN_TERRAIN_LAYERS=Terreinlagen
 STR_MAPGEN_RIVERS=Rivieren
 STR_MAPGEN_LAKES=Meren
+STR_MAPGEN_TYPE_MAKER=Stijl van een beroemde kaartmaker
+STR_MAPGEN_SIZE=Grootte
+STR_MAPGEN_SIZE_FULL=Volledig
+STR_MAPGEN_SIZE_TIP=Zijde van het speelbare vierkant in tegels. Volledig gebruikt het hele gebied.
+STR_MAPGEN_PRESET=Voorinstelling
+STR_MAPGEN_PRESET_TIP=Kaarten in de stijl van een klassieke Bolo-kaartmaker. Een voorinstelling zet de regelaars hieronder; daarna kun je elke regelaar aanpassen.
+STR_MAPGEN_OUTLINE=Omtrek
+STR_MAPGEN_OUTLINE_BOX=Rechthoek
+STR_MAPGEN_OUTLINE_OCTAGON=Achthoek
+STR_MAPGEN_OUTLINE_ROUND=Rond
+STR_MAPGEN_OUTLINE_DIAMOND=Ruit
+STR_MAPGEN_OUTLINE_CROSS=Kruis
+STR_MAPGEN_OUTLINE_CLOVER=Klaverblad
+STR_MAPGEN_OUTLINE_ISLAND=Eiland
+STR_MAPGEN_OUTLINE_VARIED=Gemengd
+STR_MAPGEN_MSYM_NONE=Geen
+STR_MAPGEN_MSYM_MIRROR=Spiegelen
+STR_MAPGEN_MSYM_ROT2=Halve draai
+STR_MAPGEN_MSYM_MIRROR4=In beide richtingen spiegelen
+STR_MAPGEN_MSYM_ROT4=Kwartslagen
+STR_MAPGEN_WATER_PCT=Water %
+STR_MAPGEN_ROAD_PCT=Weg %
+STR_MAPGEN_ISLANDS=Eilanden
+STR_MAPGEN_DETAIL=Detail
+STR_MAPGEN_PRESET_BERSERKIR=Berserkir
+STR_MAPGEN_PRESET_SLUGGO_TOURNAMENT=Sluggo Tournament
+STR_MAPGEN_PRESET_SLUGDEATH=Sluggo Slugdeath
+STR_MAPGEN_PRESET_SLUGFEST=Sluggo Slugfest
+STR_MAPGEN_PRESET_SLUGGO_ADVENTUROUS=Sluggo Adventurous
+STR_MAPGEN_PRESET_SLUGGO_SYMMETRIC=Sluggo Symmetric
+STR_MAPGEN_PRESET_STOOGEFEST=Sluggo Stoogefest
+STR_MAPGEN_PRESET_BLACK_LIGHTNING=Black Lightning
+STR_MAPGEN_PRESET_BL_ISLANDS=Black Lightning Islands
+STR_MAPGEN_PRESET_DEATHHAND=Deathhand
+STR_MAPGEN_PRESET_MEGAWATT_TC=Megawatt TC
+STR_MAPGEN_PRESET_MEGAWATT_ISLANDS=Megawatt Islands
+STR_MAPGEN_PRESET_MOSH_PIT=Nature Mosh Pit
+STR_MAPGEN_PRESET_PALPATINE=Palpatine
+STR_MAPGEN_PRESET_CHEW_TOY=Chew Toy
+# Map Maker style panel
+STR_MAPGEN_LOCK_ALL=Alles vergrendelen
+STR_MAPGEN_UNLOCK_ALL=Alles ontgrendelen
+STR_MAPGEN_PANEL_TITLE=Kaartwaarden
+STR_MAPGEN_STYLE_TITLE={string1}-stijl
+STR_MAPGEN_STYLE_RANDOMIZE=Willekeurige stijl genereren
+STR_MAPGEN_STYLE_NONE=De seed maakt geen andere keuzes voor deze kaartmaker.
+STR_MAPGEN_STYLE_FROM_SEED=Uit de seed
+STR_MAPGEN_STYLE_ROADS=Wegindeling
+STR_MAPGEN_ROADS_AXES=Kruis
+STR_MAPGEN_ROADS_DIAG=Diagonalen
+STR_MAPGEN_ROADS_AXES_DIAG=Kruis en diagonalen
+STR_MAPGEN_ROADS_AXES_RING=Kruis en ring
+STR_MAPGEN_ROADS_DIAG_RING=Diagonalen en ring
+STR_MAPGEN_ROADS_RING=Ring
+STR_MAPGEN_STYLE_SHAPE=Vorm
+STR_MAPGEN_STYLE_CUT=Hoekafsnede
+STR_MAPGEN_STYLE_CORE=Midden van het ringveld
+STR_MAPGEN_STYLE_RIM=Kust
+STR_MAPGEN_RIM_FOREST=Bosrand
+STR_MAPGEN_RIM_GRASS=Gras tot aan de kust
+STR_MAPGEN_STYLE_YARD=Doolhoferf
+STR_MAPGEN_YARD_NONE=Geen
+STR_MAPGEN_YARD_BUILDING=Gebouwmuren
+STR_MAPGEN_YARD_FOREST=Bosmuren
+STR_MAPGEN_STYLE_ROADS_TIP=De weglijnen over het land. Uit de seed: de seed kiest een van de indelingen in deze lijst.
+STR_MAPGEN_STYLE_SHAPE_TIP=De breedte van het land ten opzichte van zijn hoogte, × 100. 100 is vierkant; meer is breder. Uit de seed: de seed kiest een waarde binnen dit bereik.
+STR_MAPGEN_STYLE_CUT_TIP=Hoeveel van elke hoek de achthoek afsnijdt. Een grotere waarde snijdt een kleinere hoek af. Uit de seed: de seed kiest een waarde binnen dit bereik.
+STR_MAPGEN_STYLE_CORE_TIP=Het terrein in het midden van elk ringveld. Uit de seed: de seed kiest er één.
+STR_MAPGEN_STYLE_RIM_TIP=Een bosrand rond de kust, of gras tot aan het water. Uit de seed: de seed kiest er één.
+STR_MAPGEN_STYLE_YARD_TIP=Een erf van doolhofmuren op een eiland, als er een plek voor wordt gevonden. Uit de seed: de seed kiest er één.
+STR_MAPGEN_STYLE_WALLS=Randmuren
+STR_MAPGEN_WALLS_NONE=Geen muren
+STR_MAPGEN_WALLS_BUILDING=Gebouwmuur op elke as
+STR_MAPGEN_STYLE_MIDDLE=Midden
+STR_MAPGEN_MIDDLE_OPEN=Open
+STR_MAPGEN_MIDDLE_PIECES=Diagonale stukken
+STR_MAPGEN_MIDDLE_CLUMP=Centrale ophoping
+STR_MAPGEN_MIDDLE_BOTH=Diagonale stukken en centrale ophoping
+STR_MAPGEN_STYLE_WALLS_TIP=Een gebouwmuur dwars over de bosrand op elke as, die de rand in vier stukken verdeelt. Uit de seed: de seed kiest er één.
+STR_MAPGEN_STYLE_MIDDLE_TIP=Gebouwen nabij het midden van het terrein: korte stukken onder 45 graden, een ophoping in het midden, of beide. Uit de seed: de seed kiest er één.
 
 # Log viewer sim-replay messages
 STR_LV_PLAYER_JOINED={player} heeft het spel gejoined.
@@ -2563,7 +2643,6 @@ STR_RULE_DESC_pill_base_defend_shape=Hoe pill_base_defend_range wordt gemeten. 0
 STR_RULE_DESC_tank_slide_armour_bonus=Extra duwstap bij nul pantser, opgeteld bij tank_slide_step naar verhouding van het pantser dat vóór de treffer ontbrak. Wordt alleen gelezen als tank_slide_mac aan staat.
 STR_RULE_DESC_tank_slide_mac=Of een granaattreffer een tank op de Mac Bolo-manier wegduwt. Aan: de duw groeit naarmate het pantser afneemt, met tank_slide_armour_bonus, en tank_slide_step en tank_bump_decay_shift gelden per 40 ms, in een glijpartij die elke tick beweegt. Uit is de WinBolo-duw, gelijk bij elk pantser.
 STR_RULE_DESC_tank_deep_sea_safe=Of een tank zonder boot over open zee kan rijden zonder te zinken. Uit is het klassieke spel: open zee laat een tank zonder boot zinken. Een tank die zonder boot op open zee is wanneer dit weer op Uit gaat, zinkt op de volgende tick.
-STR_RULE_DESC_man_bless_tile_terrain_speed=Of de bouwer het vak waarop hij gaat bouwen oversteekt met de snelheid van het terrein daar, zoals in Mac Bolo. Uit is de WinBolo-loop: hij loopt met de basissnelheid naar het midden van dat vak, welk terrein het ook is. Een vak zonder loopsnelheid, zoals een rivier, een muur of een bunker, houdt de basissnelheid. De terugweg naar de tank verandert niet.
 STR_RULE_DESC_pill_aim_iterations=Hoe hard een bunker werkt om een bewegend doel voor te richten.
 STR_RULE_DESC_pill_massage_range=Hoe dichtbij een tank moet zijn zodat een bunker richt met de oorspronkelijke voorspelling in plaats van de oplosser, die een tank mist die om hem heen cirkelt. Nul, de klassieke tabel, is een bunker die zijn doel altijd goed voorricht; 384 is anderhalve vak, de afstand die de oude compileertijdschakelaar gebruikte.
 STR_RULE_DESC_pill_massage_cosine=Hoe recht op een dichtbije bunker af een tank moet rijden om toch goed geraakt te worden, als de cosinus van de hoek tussen zijn koers en de lijn naar de bunker. Bij één wordt er slordig gericht op elke tank binnen pill_massage_range, bij nul op geen ervan. Doet niets zolang die regel nul is.
@@ -2770,3 +2849,96 @@ STR_DLGSYSINFO_MEM_BUILDING=Bouw
 STR_DLGSYSINFO_MEM_RUBBLE=Puin
 STR_DLGSYSINFO_MEM_SWAMP=Moeras
 STR_DLGSYSINFO_MEM_GRASS=Gras
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Push-to-talk: houd de microfoonknop op het spelscherm ingedrukt
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Je bestanden
+STR_MAPEDIT_IOS_BUILTIN=Kaarten die bij WinBolo horen
+STR_MAPEDIT_IOS_NOFILES=Hier staat nog niets. Bestanden die je bewaart, en bestanden die je in de WinBolo-map in de Bestanden-app zet, verschijnen hier.
+STR_MAPEDIT_IOS_NAME=Naam
+STR_MAPEDIT_IOS_REPLACES=Er bestaat al een bestand met deze naam. Bewaren vervangt het.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Opnames
+STR_IOSREC_EMPTY=Nog geen opnames. Rondes voor één speler worden hier opgenomen, en .wbv-bestanden in de WinBolo-map in de Bestanden-app staan hier ook.
+STR_IOSREC_COPY=Kopieer naar Bestanden
+STR_IOSREC_COPIED=Gekopieerd naar de WinBolo-map in de Bestanden-app.
+STR_IOSREC_OPEN_FAILED=Deze opname kon niet worden geopend.
+STR_IOSREC_LAST_ROUND=Laatste ronde voor één speler
+STR_IOSREC_COPY_FAILED=De opname kon niet naar de Bestanden-app worden gekopieerd.
+STR_DLGCONNECTING_TITLE=Verbinden met {string1}...
+STR_DLGCONNECTING_PING=De server naar zijn spel vragen...
+STR_DLGCONNECTING_JOINING=Deelnemen aan het spel...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Die opname kon niet worden gelezen.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Instelling
+STR_DLGLOBBY_DETAILS_COL_VALUE=Waarde
+STR_DLGLOBBY_DETAILS_RULES=Regels:
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=De server bepaalt deze waarde. Die kan niet worden gewijzigd.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=door {string1} · bijgewerkt {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=onbekend
+STR_MENU_INFO_OVERLAY=Info-overlay
+STR_SCNPANEL_POP_OUT=Losmaken
+STR_SCNPANEL_POP_IN=Vastzetten
+STR_SCNPANEL_CLOSE_TITLE={string1} sluiten?
+STR_SCNPANEL_CLOSE_BODY=Zet het weer aan via {string1} > {string2}.
+STR_DLGLOBBY_SCENARIO_REQUIRED=De server voert dit script altijd uit. Het kan niet worden verwijderd.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=De server voert altijd het scenario van deze ronde uit
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=De server bepaalt deze lijst. Die kan niet worden gewijzigd.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Of bunkers richten zoals in Mac Bolo. Rijdende, vrije tanks binnen ongeveer één vak laten de bunker ver langs hun rijrichting richten. Stilstaande of geblokkeerde tanks krijgen geen voorhouden. Vervangt pill_massage_range, pill_massage_cosine en pill_aim_iterations.
+STR_RULE_DESC_tank_collision_mac=Of tanks de richtingsafhankelijke sprite-vakken en pixelverschuivingen van Mac Bolo gebruiken tegen muren, actieve bunkers en vijandige bases. Maakt dichtere passages langs een bunker mogelijk voor 'pill massage'.
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=Aan wie de dood van een tank wordt toegeschreven, gevraagd bij elke dood; een verdrinking noemt het slachtoffer, tenzij een script de tank noemt die hem liet zinken.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} staat in de WinBolo-map in de Bestanden-app.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} kon niet worden bewaard.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=De kaart vult het scherm en de bedieningselementen worden eroverheen getekend.\nUit houdt de spelweergave vierkant, met de bedieningselementen ernaast.\nWordt onthouden voor de volgende keer.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Hoeveel van de kaart doorschijnt via het bouwgereedschap\nin volledig scherm. 0% is ondoorzichtig, en de schuifregelaar\nstopt bij 90% zodat het niet onzichtbaar kan worden.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Hoeveel van de kaart doorschijnt via de tank-, bunker- en\nbasisrasters en de voorraadbalken in volledig scherm. 0% is ondoorzichtig,\nen de schuifregelaar stopt bij 90% zodat ze niet onzichtbaar kunnen worden.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=De kaart vult het scherm, met de status-, bouw- en nieuwspanelen erover,\nen de aanraakbediening wanneer je met aanraken speelt.\nUit toont het klassieke scherm. Onthouden voor de volgende keer.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=Dit apparaat gebruikt mobiele data. Een internetspel hosten via mobiele\ndata werkt waarschijnlijk niet: mobiele netwerken laten andere spelers\nzelden bij het apparaat komen. Met wifi is de kans veel groter.\n\nToch hosten?
+
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=Delen
+STR_ANDROIDREC_EMPTY=Nog geen opnames. Rondes voor één speler worden hier opgenomen, en .wbv-opnames die vanuit een andere app zijn geopend staan hier ook.
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1} is bewaard. Kies nu een app om het mee te delen.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Hier staat nog niets. Kaarten die je bewaart, hier of vanuit een spel, verschijnen hier.
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Jouw GIF's
+STR_CLIPGIF_GALLERY_EMPTY=Nog geen GIF's. Maak er een met de GIF-knop onder de herhaling, of de GIF-knop bij een clip.
+STR_CLIPGIF_COPY=Naar klembord kopiëren
+STR_CLIPGIF_SAVE=Op schijf opslaan
+STR_CLIPGIF_COPIED=Gekopieerd.
+STR_CLIPGIF_COPY_FAILED=De GIF kon niet worden gekopieerd.
+STR_CLIPGIF_OPEN_FAILED=Deze GIF kon niet worden geopend.
+STR_CLIPGIF_MAP_FMT=Kaart: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Spelers: {string1}
+STR_CLIPGIF_NO_DETAILS=Er zijn geen details met deze GIF opgeslagen.
+STR_CLIPGIF_LENGTH_TIP=GIF-lengte in seconden, vanaf de afspeelkop.\nSleep de markering aan het eind van het lichte deel van de tijdlijn om die ook te wijzigen.
+STR_CLIPGIF_LOADING=GIF wordt geopend...
+STR_CLIPGIF_TOO_LARGE=Deze GIF is te groot om hier te tonen. Je kunt hem nog steeds kopiëren of opslaan.
+STR_CLIPGIF_FILTER_NAME=GIF-afbeeldingen
