@@ -606,12 +606,16 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
  * 16 was chosen to come close to the builder death rate of WinBolo 1.17.
  * In 1.17 that rate depended on the shell's angle. 1.17 tested a hit with
  * a 128 box (abs(dx) < 128 and abs(dy) < 128), not a circle. A shell from
- * straight up, down or the side burst 96 to 128 from the tank's centre. A
+ * straight up, down or the side burst 96 to 127 from the tank's centre. A
  * shell at 45 degrees met the box corner, about 150 to 181 out. So the
  * danger to the builder was greatest from straight on and least at 45
- * degrees. Measured per order under an angry pillbox (a shell every 6
- * ticks) with the tank still. The terrain is the tank's own square: that
- * square sets the builder's speed for his first steps.
+ * degrees. Worked out per order under an angry pillbox (a shell every 6
+ * ticks) with the tank still. The 1.17 figures have the builder's first
+ * shell test at the tank's centre and his first step one tick after the
+ * order. The offset figures have him step in the same tick as the order.
+ * The terrain is the square the builder stands on, which sets his speed
+ * for each step. For a tank near the middle of its square, that is the
+ * tank's own square for his first steps.
  *   Grass (16 per tick): 1.17 killed him 26% of the time along an axis,
  *   15% at 22.5 degrees and 0% at 45 degrees. An offset of 16 gives 9%,
  *   an offset of 0 gives 26% and 64 gives 0%.
