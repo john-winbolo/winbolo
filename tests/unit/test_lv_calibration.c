@@ -1932,7 +1932,8 @@ static int overrunTestPayload(uint8_t *out, int cap, uint32_t frames, uint8_t fl
 /* The viewer reads log_OverrunStats records into a track and gives the last
  * one at or before the playhead. A record shorter than the fixed part, or of
  * version 0, is consumed and ignored, and bytes a later version adds after
- * the bots are skipped. A file with no record says it has none. */
+ * the bots are skipped. A seek back gives the record in effect at the new
+ * place. A file with no record says it has none. */
 int run_lv_overrun_read(void) {
   const char *path = "lv_overrun_read.wbv";
   uint8_t first[OVERRUN_RECORD_MAX_BYTES];
@@ -2014,6 +2015,21 @@ int run_lv_overrun_read(void) {
   UT_ASSERT(now.rec.version == 2);
   UT_ASSERT(now.rec.flags & OVERRUN_RECORD_FLAG_ROUND_END);
   UT_ASSERT(now.rec.botCount == 2 && now.rec.bots[1].peak == 160);
+
+  /* Seek back to 2 s, a frame between the first record (about 1 s) and the
+   * last (about 4 s): the first is in effect again. */
+  lv_screenSeekToTimeMs(2000);
+  lv_screenOverrunNow(&now);
+  UT_ASSERT_MSG(now.has && now.rec.roundFrames == 3000u && now.rec.tickLast == 52,
+                "after a seek back to 2 s: has %d frames %u (want the first, 3000)",
+                (int)now.has, (unsigned)now.rec.roundFrames);
+  /* Seek back to 0.5 s, before the first record: none is in effect, and the
+   * file still has records. */
+  lv_screenSeekToTimeMs(500);
+  lv_screenOverrunNow(&now);
+  UT_ASSERT_MSG(now.recorded && !now.has,
+                "after a seek to before the first record: recorded %d has %d "
+                "(want 1, 0)", (int)now.recorded, (int)now.has);
 
   lv_decoderDestroy(lv);
   remove(path);

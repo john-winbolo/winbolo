@@ -1290,6 +1290,8 @@ int run_log_roundtrip_player_lag_recorded(void);
  * round's record at 1:00 and at the round end. */
 int run_log_roundtrip_overrun_stats(void);
 int run_log_roundtrip_overrun_stats_recorded(void);
+/* The same with two thinking bots: both records have each bot's thinks. */
+int run_log_roundtrip_overrun_stats_bots(void);
 int run_server_lag_log_due(void);
 int run_server_overrun_stats_due(void);
 int run_lv_player_lag_read(void);
@@ -4623,6 +4625,10 @@ int ut_brain_stub_destroys(void);
  * state holds no brain: no libraries are opened and nothing is loaded into
  * it, so a tick still does nothing. Destroyed with the instance. */
 void ut_brain_stub_lua(bool withState);
+/* Make the stub's luaBrainInstanceTick report success (it reports failure by
+ * default), so bots that tick for many frames are not kicked as crashing.
+ * ut_brain_stub_arm turns it off again. */
+void ut_brain_stub_tick_ok(bool ok);
 
 /* The map editor's scenario script file (test_editor_script_file.c): where a
  * script sits beside a map, the round trip Save and re-opening the map make,

@@ -1187,48 +1187,94 @@ static int collectOverruns(const uint8_t *buf, size_t len, size_t pos,
     return -1;
 }
 
-/* A recorded round gets a log_OverrunStats record at 1:00 of the round
- * (frame 3000), from the frame count and call the server loop makes, and
- * one more with the round-end flag when the round's log closes, as the log's
- * last event. */
-int run_log_roundtrip_overrun_stats_recorded(void) {
+/* Records a 3010-frame round, with the frame count and call the server loop
+ * makes, with or without the round log's stop hook, and returns its log.dat
+ * (the caller frees *buf). */
+static bool recordOverrunRound(const char *tag, bool hook, uint8_t **buf, size_t *blen,
+                               int *reports, uint32_t *reportFrame) {
     ReplayHarness h;
     memset(&h, 0, sizeof(h));
-    UT_ASSERT_MSG(replayHarnessStartRecording(&h, "overrunRecorded", "Tester"),
-                  "replayHarnessStartRecording failed");
+    *buf = NULL;
+    *blen = 0;
+    *reports = 0;
+    *reportFrame = 0;
+    if (!replayHarnessStartRecording(&h, tag, "Tester")) {
+        replayHarnessStop(&h);
+        return false;
+    }
     /* What the server's round log sets, and the round start's reset. */
-    logSetStopHook(serverLifecycleLogRoundEndOverrunStats);
+    logSetStopHook(hook ? serverLifecycleLogRoundEndOverrunStats : NULL);
     serverLifecycleResetTickPeak();
-    int reports = 0;
-    uint32_t reportFrame = 0;
     for (uint32_t frame = 1; frame <= 3010u; frame++) {
         /* Two sim steps a 20 ms frame, as serverInstanceTick runs them. */
         replayHarnessTick(&h, 2);
         serverLifecycleRecordTickMs(5.0);
         if (serverLifecycleCountRoundFrame()) {
             serverLifecycleReportOverrunStats(h.sim);
-            reports++;
-            reportFrame = frame;
+            (*reports)++;
+            *reportFrame = frame;
         }
     }
     bool stopped = replayHarnessStopRecording(&h);
     logSetStopHook(NULL);
+    bool extracted = stopped && extractLogDat(h.path, buf, blen);
+    replayHarnessStop(&h);
+    remove(h.path);
+    return extracted;
+}
+
+/* A recorded round gets a log_OverrunStats record at 1:00 of the round
+ * (frame 3000), from the frame count and call the server loop makes, and
+ * one more with the round-end flag when the round's log closes, as the log's
+ * last event. The hook adds only that entry: the same round recorded without
+ * the hook has the same bytes up to its LOG_QUIT. */
+int run_log_roundtrip_overrun_stats_recorded(void) {
+    uint8_t *offBuf = NULL;
+    size_t   offLen = 0;
+    int offReports = 0;
+    uint32_t offFrame = 0;
+    bool offOk = recordOverrunRound("overrunRecordedOff", false, &offBuf, &offLen,
+                                    &offReports, &offFrame);
 
     uint8_t *buf = NULL;
     size_t   blen = 0;
-    bool extracted = stopped && extractLogDat(h.path, &buf, &blen);
+    int reports = 0;
+    uint32_t reportFrame = 0;
+    bool extracted = recordOverrunRound("overrunRecorded", true, &buf, &blen,
+                                        &reports, &reportFrame);
     size_t  blockStart = 0;
     uint8_t version    = 0;
     bool located = extracted && locateSnapshotMarker(buf, blen, &blockStart, &version);
     OverrunRecord recs[8];
     bool lastIsOverrun = false;
     int n = located ? collectOverruns(buf, blen, blockStart, recs, 8, &lastIsOverrun) : -2;
+    OverrunRecord offRecs[8];
+    bool offLastIsOverrun = false;
+    size_t offStart = 0;
+    uint8_t offVersion = 0;
+    bool offLocated = offOk && locateSnapshotMarker(offBuf, offLen, &offStart, &offVersion);
+    int offN = offLocated ? collectOverruns(offBuf, offLen, offStart, offRecs, 8,
+                                            &offLastIsOverrun) : -2;
+    /* Both logs end with the two LOG_QUIT bytes. */
+    bool offEnds = offOk && offLen >= 2 && offBuf[offLen - 2] == LOG_QUIT &&
+                   offBuf[offLen - 1] == LOG_QUIT;
+    size_t offQuit = offEnds ? offLen - 2 : 0;
+    bool samePrefix = offEnds && extracted && blen > offLen &&
+                      memcmp(offBuf, buf, offQuit) == 0;
+    free(offBuf);
     free(buf);
-    replayHarnessStop(&h);
 
-    UT_ASSERT_MSG(stopped, "replayHarnessStopRecording failed");
-    UT_ASSERT_MSG(extracted, "extractLogDat failed");
-    UT_ASSERT_MSG(located, "header parse failed");
+    UT_ASSERT_MSG(offOk, "the round without the hook did not record");
+    UT_ASSERT_MSG(extracted, "the round with the hook did not record");
+    UT_ASSERT_MSG(located && offLocated, "header parse failed");
+    UT_ASSERT_MSG(offEnds, "the log without the hook does not end with LOG_QUIT");
+    UT_ASSERT_MSG(samePrefix,
+                  "the log with the hook does not start with the bytes of the log "
+                  "without it (%u bytes before LOG_QUIT, %u with the hook)",
+                  (unsigned)offQuit, (unsigned)blen);
+    UT_ASSERT_MSG(offReports == 1 && offFrame == 3000u && offN == 1,
+                  "without the hook: %d reports, last at %u, %d records (want 1, 3000, 1)",
+                  offReports, (unsigned)offFrame, offN);
     UT_ASSERT_MSG(reports == 1 && reportFrame == 3000u,
                   "%d reports, the last at frame %u (want 1 at 3000)",
                   reports, (unsigned)reportFrame);
@@ -1247,6 +1293,98 @@ int run_log_roundtrip_overrun_stats_recorded(void) {
     UT_ASSERT(recs[0].version == OVERRUN_RECORD_VERSION);
     /* A human player and no bots. */
     UT_ASSERT(!(recs[0].flags & OVERRUN_RECORD_FLAG_BOTS) && recs[0].botCount == 0);
+    return 0;
+}
+
+/* A recorded round with two bots that think, in a game whose computer tank
+ * setting is "no", as a server started without -ai has: both the 1:00 record
+ * and the round-end record have the bot pool and a part for each bot with
+ * its thinks. The log closes before the bots are removed, as the server's
+ * shutdown does it, so the round-end record keeps their parts. */
+int run_log_roundtrip_overrun_stats_bots(void) {
+    static const BYTE kBots[2] = { 1, 2 };
+    ReplayHarness h;
+    memset(&h, 0, sizeof(h));
+    UT_ASSERT_MSG(replayHarnessStartRecording(&h, "overrunBots", "Tester"),
+                  "replayHarnessStartRecording failed");
+    ut_brain_stub_arm(true);
+    ut_brain_stub_lua(true);
+    ut_brain_stub_tick_ok(true);
+    bool added = true;
+    for (int i = 0; i < 2; i++) {
+        added = added && serverSimCreateBot(h.sim, kBots[i], "brains/GoalHunter/init.lua",
+                                            i == 0 ? "BotA" : "BotB", aiNone, gameOpen,
+                                            false, 0, NULL);
+    }
+    logSetStopHook(serverLifecycleLogRoundEndOverrunStats);
+    serverLifecycleResetTickPeak();
+    int reports = 0;
+    if (added) {
+        for (uint32_t frame = 1; frame <= 3010u; frame++) {
+            /* The bots' think, then two sim steps, as serverInstanceTick
+             * runs a frame. */
+            serverSimBotTick(h.sim, aiNone);
+            replayHarnessTick(&h, 2);
+            serverLifecycleRecordTickMs(5.0);
+            if (serverLifecycleCountRoundFrame()) {
+                serverLifecycleReportOverrunStats(h.sim);
+                reports++;
+            }
+        }
+    }
+    /* The server's shutdown order: the log closes, then the bots go. */
+    bool stopped = replayHarnessStopRecording(&h);
+    serverSimDestroyBots(h.sim);
+    logSetStopHook(NULL);
+    ut_brain_stub_tick_ok(false);
+    ut_brain_stub_lua(false);
+    ut_brain_stub_arm(false);
+
+    uint8_t *buf = NULL;
+    size_t   blen = 0;
+    bool extracted = stopped && extractLogDat(h.path, &buf, &blen);
+    size_t  blockStart = 0;
+    uint8_t version    = 0;
+    bool located = extracted && locateSnapshotMarker(buf, blen, &blockStart, &version);
+    OverrunRecord recs[8];
+    bool lastIsOverrun = false;
+    int n = located ? collectOverruns(buf, blen, blockStart, recs, 8, &lastIsOverrun) : -2;
+    free(buf);
+    replayHarnessStop(&h);
+
+    UT_ASSERT_MSG(added, "a bot was refused");
+    UT_ASSERT_MSG(stopped, "replayHarnessStopRecording failed");
+    UT_ASSERT_MSG(located, "the log did not read");
+    UT_ASSERT_MSG(reports == 1, "%d reports (want 1)", reports);
+    UT_ASSERT_MSG(n == 2, "%d log_OverrunStats records (want 2)", n);
+    UT_ASSERT_MSG(lastIsOverrun, "the round-end record is not the log's last event");
+    for (int r = 0; r < 2; r++) {
+        const OverrunRecord *rec = &recs[r];
+        UT_ASSERT_MSG(rec->roundFrames == (r == 0 ? 3000u : 3010u),
+                      "record %d: frames %u", r, (unsigned)rec->roundFrames);
+        UT_ASSERT_MSG(((rec->flags & OVERRUN_RECORD_FLAG_ROUND_END) != 0) == (r == 1),
+                      "record %d: flags %u", r, (unsigned)rec->flags);
+        UT_ASSERT_MSG(rec->flags & OVERRUN_RECORD_FLAG_BOTS,
+                      "record %d has no bot pool part", r);
+        UT_ASSERT_MSG(rec->activeBots == 2, "record %d: %u active bots (want 2)",
+                      r, (unsigned)rec->activeBots);
+        UT_ASSERT_MSG(rec->totalThinks > 0, "record %d: the pool has no thinks", r);
+        UT_ASSERT_MSG(rec->botCount == 2, "record %d: %u bot parts (want 2)",
+                      r, (unsigned)rec->botCount);
+        uint32_t sum = 0;
+        for (int b = 0; b < 2; b++) {
+            UT_ASSERT_MSG(rec->bots[b].player == kBots[b], "record %d bot %d: player %u",
+                          r, b, (unsigned)rec->bots[b].player);
+            UT_ASSERT_MSG(rec->bots[b].thinks > 0,
+                          "record %d: player %u has no thinks", r,
+                          (unsigned)rec->bots[b].player);
+            sum += rec->bots[b].thinks;
+        }
+        UT_ASSERT_MSG(sum == rec->totalThinks, "record %d: bot thinks %u, pool %u",
+                      r, (unsigned)sum, (unsigned)rec->totalThinks);
+    }
+    /* The round-end record is later, so its bots have thought more. */
+    UT_ASSERT(recs[1].bots[0].thinks > recs[0].bots[0].thinks);
     return 0;
 }
 

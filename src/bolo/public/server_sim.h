@@ -435,7 +435,7 @@ bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
  * bot's registered display name copied via SDL_strlcpy. */
 typedef struct {
     bool     isBot;
-    bool     hasBrain;          /* aiFull with a live brain */
+    bool     hasBrain;          /* the bot has a live brain */
     char     brainName[64];     /* brain identity: basename of the brain
                                  * script path, with .lua stripped and
                                  * "init" replaced by the parent directory

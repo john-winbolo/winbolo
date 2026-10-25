@@ -5885,6 +5885,7 @@ set(_unit_test_names
     log_roundtrip_player_lag_recorded
     log_roundtrip_overrun_stats
     log_roundtrip_overrun_stats_recorded
+    log_roundtrip_overrun_stats_bots
     server_lag_log_due
     server_overrun_stats_due
     lv_player_lag_read

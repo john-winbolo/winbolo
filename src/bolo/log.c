@@ -443,6 +443,10 @@ void logStop() {
       logNumEvents = (unsigned short)(logNumEvents - keptNum);
       logWriteEmpty();
       logWriteEvents(logOldKey);
+      /* logAddEvent also put the hook's events in the spectator buffer.
+       * The tick write empties that buffer when it gives it to the ring;
+       * this entry has no tick write, so empty it here. */
+      logSpectatorAccLen = 0;
       logOldKey = logKey;
     }
   }
