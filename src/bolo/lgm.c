@@ -619,8 +619,8 @@ BYTE lgmRequestRefusal(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY
  * sets his speed for each step. For a tank near the middle of its square,
  * that is the tank's own square for his first steps.
  *   Grass (16 per tick): 1.17 killed him 26% of the time along an axis,
- *   15% at 22.5 degrees and 0% at 45 degrees. An offset of 16 gives 9%,
- *   an offset of 0 gives 26% and 64 gives 0%.
+ *   15% at 22.5 degrees and 0% at 45 degrees, 14% on average. An offset
+ *   of 16 gives 9%, an offset of 0 gives 26% and 64 gives 0%.
  *   Forest (8 per tick): 1.17 killed him 44% of the time along an axis,
  *   22% at 22.5 degrees and 0% at 45 degrees, 22% on average. An offset of
  *   16 gives 27%, an offset of 0 gives 60% and 64 gives 0%.
