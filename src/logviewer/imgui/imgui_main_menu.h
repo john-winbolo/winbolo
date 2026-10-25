@@ -26,6 +26,9 @@ extern bool lv_g_show_events_window;
 extern bool lv_g_show_item_info_window;
 extern bool lv_g_show_comments_window;
 extern bool lv_g_show_scenario_panel_window;
+extern bool lv_g_show_hud_window;
+extern bool lv_g_show_overview_window;
+extern bool lv_g_show_tank_window;
 extern bool lv_g_reset_window_positions;
 
 /* Whether the map outlines the regions the recording's scripts.json
@@ -38,6 +41,13 @@ int lv_imgui_main_menu_bar(void);
 
 /* Initialize menu state from preferences */
 void lv_imgui_main_menu_init(struct LogViewerState *lv);
+
+/* The standalone viewer's defaults for the options a user never set: the
+ * Comments panel shown, Item Information hidden, Tank Bars and Tank Builder
+ * Status on, and every kind of event on the Controls panel's slider. Call
+ * after lv_imgui_main_menu_init and lv_imgui_controls_init. The spectator,
+ * which shares the preferences, does not call it and keeps the old ones. */
+void lv_imgui_main_menu_standalone_defaults(void);
 
 /* Save menu state to preferences */
 void lv_imgui_main_menu_save(void);
@@ -60,6 +70,10 @@ int lv_imgui_get_mode_information(void);
 void lv_imgui_set_mode_information(int isInformation);
 int  lv_imgui_get_tank_centred(void);
 void lv_imgui_toggle_tank_centred(void);
+void lv_imgui_set_tank_centred(int on);
+/* 1 when Options > Animate Rewind and Fast Forward is ticked. */
+int  lv_imgui_get_jump_anim(void);
+void lv_imgui_toggle_jump_anim(void);
 void lv_imgui_toggle_hide_lobby(void);
 /* Whether the loaded recording declares any region, which is when the
    Regions item is enabled; and the item's flip, which repaints the map. */
@@ -74,6 +88,9 @@ void lv_imgui_toggle_dns_lookups(void);
  * reused by the compact-mode popup menu so it shares the desktop File
  * menu flow. */
 void lv_imgui_zoom_at_center(int stepIndex);
+/* The zoom of the map as a percentage, written on the map for a moment
+ * after it changes. Call it once a frame, before the frame is rendered. */
+void lv_imgui_zoom_label(void);
 void lv_imgui_open_wbn_browser(void);
 
 #ifdef __cplusplus

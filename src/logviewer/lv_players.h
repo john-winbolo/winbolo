@@ -84,6 +84,13 @@ typedef struct {
    * is sticky from log_LostMan until the next log_LgmLocation. */
   bool lgmIsOut;
   bool lgmIsDead;
+  /* The square the builder was last named on while he was out and alive,
+   * (0,0) for none. The per-tick wipe (lv_playersLgmZero) keeps it while he
+   * was out in the tick before: the server writes log_LostMan in the middle
+   * of a tick, before that tick's log_LgmLocation, so the wipe has cleared
+   * lgmMapX and lgmMapY by the time the death is read. */
+  BYTE lgmLastMapX;
+  BYTE lgmLastMapY;
   /* Misc */
   bool isChecked;                   /* Is this item checked */
   bool needUpdate;
@@ -141,7 +148,20 @@ void lv_playersDestroy();
 BYTE lv_playersGetSelf();
 
 void lv_playersSetSelf(BYTE pn);
-  
+
+/* The selected tank (the Tank panel's, the map's mark), a slot apart from
+ * "self". -1 is none. See players.c. */
+void lv_playersSetSelected(int slot);
+int lv_playersGetSelected(void);
+
+/* The perspective: the viewer shows the game as the "self" player saw it,
+ * not every team at once. See players.c. */
+void lv_playersSetPerspective(BYTE playerNum);
+void lv_playersClearPerspective(void);
+bool lv_playersHasPerspective(void);
+void lv_playersPerspectiveFollowSelf(void);
+bool lv_playersCheckPerspective(void);
+
 
 /*********************************************************
 *NAME:          lv_playersSetPlayerName
@@ -438,6 +458,13 @@ void lv_playersLgmZero();
 /* Marks the LGM dead for the given slot. Cleared by the next
  * lv_playersUpdateLgm (i.e. the LGM has respawned and is out again). */
 void lv_playersSetLgmDead(BYTE playerNum);
+
+/* The square the builder of the given slot was on in the last tick he was
+ * out of his tank and alive, as long as that is the tick before this one or
+ * this one. (0,0) when there is none: the slot is not in use, or the builder
+ * was in his tank in the tick before. log_LostMan reads it for the place of
+ * the death. */
+void lv_playersGetLgmLastPlace(BYTE playerNum, BYTE *mx, BYTE *my);
 
 /* Reports the camera-display state of an LGM. Both flags are FALSE for
  * unused slots. isOut means a log_LgmLocation arrived in the current

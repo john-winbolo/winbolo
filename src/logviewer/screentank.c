@@ -117,6 +117,7 @@ void lv_screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE p
   (*value).pos[(*value).numTanksScreen].team = team;
   (*value).pos[(*value).numTanksScreen].dir = dir;
   (*value).pos[(*value).numTanksScreen].onBoat = onBoat;
+  (*value).pos[(*value).numTanksScreen].slot = NEUTRAL;
 
   /* Get the tanks names */
   strncpy(((*value).pos[(*value).numTanksScreen].playerName), playerName, PLAYER_NAME_LEN - 1);
@@ -183,4 +184,21 @@ void lv_screenTanksGetSubPixel(screenTanks *value, BYTE itemNum, BYTE *wx, BYTE 
     if (wy) *wy = (*value).pos[itemNum].wy;
     if (angle) *angle = (*value).pos[itemNum].angle;
   }
+}
+
+/* The player slot of the item added last: whose tank it is. */
+void lv_screenTanksSetLastSlot(screenTanks *value, BYTE slot) {
+  if ((*value).numTanksScreen > 0) {
+    (*value).pos[(*value).numTanksScreen - 1].slot = slot;
+  }
+}
+
+/* The player slot of an item, numbered from 1. NEUTRAL when there is no such
+   item or its slot was never given. */
+BYTE lv_screenTanksGetSlot(screenTanks *value, BYTE itemNum) {
+  itemNum--;
+  if (itemNum < (*value).numTanksScreen) {
+    return (*value).pos[itemNum].slot;
+  }
+  return NEUTRAL;
 }

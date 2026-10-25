@@ -50,12 +50,33 @@ void lv_drawGameViewTeardown(void);
  * elide a no-op teardown+setup when the user picks the active zoom. */
 int  lv_drawGameViewGetZoom(void);
 
+/* The pixels of the display one pixel of the game's art is drawn on while
+ * game view is up (the zoom factor times the whole display density), or 0
+ * when game view is inactive. */
+int  lv_drawGameViewPixelZoom(void);
+
 /* Render one game-view frame. Called from lv_drawMainScreen when
  * gameView && ownsWindow. The pointers are the same screen* /
  * screenMines* / screenTanks* / screenBullets* / screenLgm* values
  * lv_drawMainScreen already received from lv_screenUpdate's locals. */
 void lv_drawGameViewFrame(void *screenView, void *mineView,
                           void *tanks, void *bullets, void *lgms);
+
+/* One map ping on the overview map, drawn by the game's own marker
+ * (pingMarkerDraw), so it has the game's icon, colour, flashes, arrival
+ * ring and sender's name. It is here because the game's marker is built on
+ * the game's types, which draw.c cannot include. (cx, cy) is the middle of
+ * the ping's map square on the window and tilePx the side of a square
+ * there, both in pixels; ageMs how long ago on the playback clock the ping
+ * was sent, which is all the animation is worked out from; name the
+ * sender's name and font a TTF_Font to draw it in (NULL: no name). A ping
+ * past its time draws nothing. */
+void lv_drawOverviewPing(float cx, float cy, float tilePx, unsigned char kind,
+                         unsigned char sender, const char *name,
+                         unsigned int ageMs, void *font);
+/* Free the textures of the names lv_drawOverviewPing made. Before the font
+ * they were made from is closed, and before the renderer goes. */
+void lv_drawOverviewPingsFlush(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

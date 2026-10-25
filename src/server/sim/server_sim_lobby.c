@@ -840,6 +840,24 @@ bool serverSimRefreshDefaultTeamSides(ServerSim *sim) {
     return true;
 }
 
+/* Whether an in-use team other than teamId has pool as its bot naming
+ * pool. The lobby keeps two teams off one pool where it can:
+ * serverSimSetTeamMeta moves a team off a pool another team holds, and
+ * serverSimPickTeamNamingPool picks only from the pools no other team
+ * holds. There are two exceptions. Teams 1 and 2 both open on pool 0
+ * (the server's creation and lobby reset defaults). And when every pool
+ * is held, serverSimSetTeamMeta keeps the pool that was asked for. */
+static bool lobbyPoolHeldByOtherTeam(ServerSim *sim, BYTE teamId, int pool) {
+    for (BYTE other = 1; other < MAX_TANKS; other++) {
+        if (other == teamId) continue;
+        const TeamMetadata *ot = serverSimGetTeamMetaMut(sim, other);
+        if (ot && ot->in_use && ot->namingPool == pool) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
                            uint8_t color, uint8_t namingPool,
                            uint8_t startSide,
@@ -879,27 +897,12 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
      * if every pool is taken. */
     {
         int poolCount = lobbyBotPoolCount();
-        bool poolTaken = false;
-        for (BYTE other = 1; other < MAX_TANKS; other++) {
-            if (other == teamId) continue;
-            const TeamMetadata *ot = serverSimGetTeamMetaMut(sim, other);
-            if (ot && ot->in_use && ot->namingPool == namingPool) {
-                poolTaken = true;
-                break;
-            }
-        }
-        if (poolTaken && poolCount > 0) {
+        if (lobbyPoolHeldByOtherTeam(sim, teamId, namingPool) && poolCount > 0) {
             for (int p = 0; p < poolCount; p++) {
-                bool used = false;
-                for (BYTE other = 1; other < MAX_TANKS; other++) {
-                    if (other == teamId) continue;
-                    const TeamMetadata *ot = serverSimGetTeamMetaMut(sim, other);
-                    if (ot && ot->in_use && ot->namingPool == p) {
-                        used = true;
-                        break;
-                    }
+                if (!lobbyPoolHeldByOtherTeam(sim, teamId, p)) {
+                    namingPool = (uint8_t)p;
+                    break;
                 }
-                if (!used) { namingPool = (uint8_t)p; break; }
             }
         }
     }
@@ -927,6 +930,91 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
         serverSimRepickAllLobbyStarts(sim);
     }
     lobbyAutoUnreadyOnChange(sim);
+}
+
+uint8_t serverSimPickTeamNamingPool(ServerSim *sim, BYTE teamId, uint32_t choice) {
+    TeamMetadata *t;
+    int           poolCount = lobbyBotPoolCount();
+    int           freeCount = 0;
+    int           want      = 0;
+    int           p;
+    uint8_t       color;
+    char          name[LOBBY_TEAM_NAME_LEN];
+    uint8_t       nameLen;
+
+    if (sim == NULL || teamId == 0 || teamId >= MAX_TANKS) return 0;
+    t = serverSimGetTeamMetaMut(sim, teamId);
+    if (t == NULL || poolCount <= 0) return 0;
+
+    /* Count the pools no other team holds, then take the one that choice
+     * names. With every pool held, choice names any pool and
+     * serverSimSetTeamMeta keeps it, the same as it does for a host who
+     * asks for a held pool when no pool is free. */
+    for (p = 0; p < poolCount; p++) {
+        if (!lobbyPoolHeldByOtherTeam(sim, teamId, p)) freeCount++;
+    }
+    if (freeCount == 0) {
+        want = (int)(choice % (uint32_t)poolCount);
+    } else {
+        int k = (int)(choice % (uint32_t)freeCount);
+        for (p = 0; p < poolCount; p++) {
+            if (lobbyPoolHeldByOtherTeam(sim, teamId, p)) continue;
+            if (k == 0) { want = p; break; }
+            k--;
+        }
+    }
+
+    /* A team that already has this pool is left as it is. A write that
+     * repeats every field marks the team's side as chosen by the host
+     * (see serverSimSetTeamMeta), and this write is not from the host. */
+    if (t->in_use && t->namingPool == want) return t->namingPool;
+
+    /* Keep the team's colour, side and name. A team not in use yet gets
+     * the colour and "Team N" name the lobby shows for it, the values the
+     * client sends when its first bot is added to such a team. */
+    if (t->in_use) {
+        color = t->color;
+        SDL_strlcpy(name, t->name, sizeof(name));
+    } else {
+        color = (uint8_t)((teamId - 1) & 7);
+        SDL_snprintf(name, sizeof(name), "Team %u", (unsigned)teamId);
+    }
+    nameLen = (uint8_t)SDL_strnlen(name, LOBBY_TEAM_NAME_LEN);
+    serverSimSetTeamMeta(sim, teamId, color, (uint8_t)want, t->startSide,
+                         (const uint8_t *)name, nameLen);
+    return t->namingPool;
+}
+
+void serverSimStartBotTeams(int numBots, int allyTeam,
+                            const int *teamSizes, int numTeamSizes,
+                            int numTeams, int *botTeam) {
+    int i;
+    if (botTeam == NULL || numBots <= 0) return;
+    if (numBots > MAX_TANKS) numBots = MAX_TANKS;
+    for (i = 0; i < numBots; i++) {
+        botTeam[i] = allyTeam;
+    }
+    if (numTeamSizes > 0 && teamSizes != NULL) {
+        /* Contiguous blocks: the first teamSizes[0] bots on team 1, the
+         * next teamSizes[1] on team 2, and so on. Bots past the listed
+         * total keep allyTeam, which is 0 here (-teams overrides
+         * -allybots). */
+        int bot = 0;
+        for (int t = 0; t < numTeamSizes; t++) {
+            for (int k = 0; k < teamSizes[t] && bot < numBots; k++) {
+                botTeam[bot++] = t + 1;
+            }
+        }
+    } else if (numTeams >= 2) {
+        for (i = 0; i < numBots; i++) {
+            botTeam[i] = (i % numTeams) + 1;
+        }
+    }
+    /* A team number past the last team becomes team 1, as
+     * serverSimSetTeamBatch does. */
+    for (i = 0; i < numBots; i++) {
+        if (botTeam[i] >= MAX_TANKS) botTeam[i] = 1;
+    }
 }
 
 void serverSimClearTeamMeta(ServerSim *sim, BYTE teamId) {

@@ -49,6 +49,15 @@ typedef struct {
   uint32_t seekMs;
   int      mapX;
   int      mapY;
+  /* What the panel's filter, markers and clicks need. Zero from the list;
+     the caller of an add sets them on the line the add returns. */
+  int      kind;      /* lvEventKind (lv_event_kind.h) */
+  bool     hasCell;   /* mapX, mapY name a map cell */
+  int      team;      /* the team that did it, or -1 */
+  int      otherTeam; /* the team it was done to, or -1 */
+  int      ping;      /* the kind of ping the line is, or -1 */
+  int      player;    /* the player the line is about, or -1 */
+  bool     awayAdded; /* a lost builder's time away is on the text */
 } LvEvent;
 
 /* Drop every line. */
@@ -56,12 +65,18 @@ void lvEventListClear(void);
 
 /* Add a timed line posted at timeMs, unless this pass of playback already
    gave the list the same line at that time. Lines posted at the same time
-   keep the order they were posted in. */
-void lvEventListAdd(const char *text, uint32_t timeMs, bool showTime);
+   keep the order they were posted in. Returns the new line, valid until the
+   list next changes, or NULL when nothing was added. */
+LvEvent *lvEventListAdd(const char *text, uint32_t timeMs, bool showTime);
 
-/* Add a pinned line. A highlight clip passes seekable with its target. */
-void lvEventListAddPinned(const char *text, bool seekable, uint32_t seekMs,
-                          int mapX, int mapY);
+/* Add a pinned line. A highlight clip passes seekable with its target.
+   Returns the new line as lvEventListAdd does. */
+LvEvent *lvEventListAddPinned(const char *text, bool seekable, uint32_t seekMs,
+                              int mapX, int mapY);
+
+/* Put suffix on the end of line i's text. Returns false, with the line as it
+   was, when i is not a line or there is no memory. */
+bool lvEventListAppendText(int i, const char *suffix);
 
 /* Playback is starting again from a snapshot restore. Lines it posts from
    here are matched against those already held afresh. */
@@ -70,6 +85,8 @@ void lvEventListRewound(void);
 /* Lines in display order: every pinned line, then the timed ones by time. */
 int lvEventListCount(void);
 const LvEvent *lvEventListAt(int i);
+/* Line i to change a field other than its text, or NULL. */
+LvEvent *lvEventListEdit(int i);
 
 /* The pinned lines are [0, pinned count). The timed lines in [fromMs, toMs]
    are [*first, *end). */

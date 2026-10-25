@@ -951,7 +951,7 @@ STR_MAPGEN_TYPE_NATURAL=Природний
 STR_MAPGEN_TYPE_MAZE=Лабіринт
 STR_MAPGEN_TYPE_FRACTAL=Фрактальний
 STR_MAPGEN_SEED=Seed
-STR_MAPGEN_RANDOMIZE=Рандомізувати
+STR_MAPGEN_RANDOMIZE=Рандомізувати значення
 STR_MAPGEN_SYMMETRY=Симетрія
 STR_MAPGEN_SYM_4CORNER=Дзеркало 4 кути
 STR_MAPGEN_SYM_MIRROR_H=Дзеркало горизонтальне
@@ -991,6 +991,86 @@ STR_MAPGEN_COAST_JAG=Зубчастість узбережжя
 STR_MAPGEN_TERRAIN_LAYERS=Шари рельєфу
 STR_MAPGEN_RIVERS=Річки
 STR_MAPGEN_LAKES=Озера
+STR_MAPGEN_TYPE_MAKER=Стиль відомого майстра мап
+STR_MAPGEN_SIZE=Розмір
+STR_MAPGEN_SIZE_FULL=Повний
+STR_MAPGEN_SIZE_TIP=Сторона ігрового квадрата в клітинках. Повний використовує всю область.
+STR_MAPGEN_PRESET=Шаблон
+STR_MAPGEN_PRESET_TIP=Мапи в стилі класичного автора мап Bolo. Шаблон задає налаштування нижче; потім будь-яке з них можна змінити.
+STR_MAPGEN_OUTLINE=Контур
+STR_MAPGEN_OUTLINE_BOX=Прямокутник
+STR_MAPGEN_OUTLINE_OCTAGON=Восьмикутник
+STR_MAPGEN_OUTLINE_ROUND=Коло
+STR_MAPGEN_OUTLINE_DIAMOND=Ромб
+STR_MAPGEN_OUTLINE_CROSS=Хрест
+STR_MAPGEN_OUTLINE_CLOVER=Конюшина
+STR_MAPGEN_OUTLINE_ISLAND=Острів
+STR_MAPGEN_OUTLINE_VARIED=Різний
+STR_MAPGEN_MSYM_NONE=Немає
+STR_MAPGEN_MSYM_MIRROR=Дзеркало
+STR_MAPGEN_MSYM_ROT2=Пів оберту
+STR_MAPGEN_MSYM_MIRROR4=Дзеркало в обидва боки
+STR_MAPGEN_MSYM_ROT4=Чверть оберту
+STR_MAPGEN_WATER_PCT=Вода %
+STR_MAPGEN_ROAD_PCT=Дорога %
+STR_MAPGEN_ISLANDS=Острови
+STR_MAPGEN_DETAIL=Деталі
+STR_MAPGEN_PRESET_BERSERKIR=Berserkir
+STR_MAPGEN_PRESET_SLUGGO_TOURNAMENT=Sluggo Tournament
+STR_MAPGEN_PRESET_SLUGDEATH=Sluggo Slugdeath
+STR_MAPGEN_PRESET_SLUGFEST=Sluggo Slugfest
+STR_MAPGEN_PRESET_SLUGGO_ADVENTUROUS=Sluggo Adventurous
+STR_MAPGEN_PRESET_SLUGGO_SYMMETRIC=Sluggo Symmetric
+STR_MAPGEN_PRESET_STOOGEFEST=Sluggo Stoogefest
+STR_MAPGEN_PRESET_BLACK_LIGHTNING=Black Lightning
+STR_MAPGEN_PRESET_BL_ISLANDS=Black Lightning Islands
+STR_MAPGEN_PRESET_DEATHHAND=Deathhand
+STR_MAPGEN_PRESET_MEGAWATT_TC=Megawatt TC
+STR_MAPGEN_PRESET_MEGAWATT_ISLANDS=Megawatt Islands
+STR_MAPGEN_PRESET_MOSH_PIT=Nature Mosh Pit
+STR_MAPGEN_PRESET_PALPATINE=Palpatine
+STR_MAPGEN_PRESET_CHEW_TOY=Chew Toy
+# Map Maker style panel
+STR_MAPGEN_LOCK_ALL=Заблокувати все
+STR_MAPGEN_UNLOCK_ALL=Розблокувати все
+STR_MAPGEN_PANEL_TITLE=Значення мапи
+STR_MAPGEN_STYLE_TITLE=Стиль {string1}
+STR_MAPGEN_STYLE_RANDOMIZE=Рандомізувати стиль
+STR_MAPGEN_STYLE_NONE=Seed не робить інших виборів для цього майстра мап.
+STR_MAPGEN_STYLE_FROM_SEED=Від seed
+STR_MAPGEN_STYLE_ROADS=Розташування доріг
+STR_MAPGEN_ROADS_AXES=Хрест
+STR_MAPGEN_ROADS_DIAG=Діагоналі
+STR_MAPGEN_ROADS_AXES_DIAG=Хрест і діагоналі
+STR_MAPGEN_ROADS_AXES_RING=Хрест і кільце
+STR_MAPGEN_ROADS_DIAG_RING=Діагоналі і кільце
+STR_MAPGEN_ROADS_RING=Кільце
+STR_MAPGEN_STYLE_SHAPE=Форма
+STR_MAPGEN_STYLE_CUT=Зрізання кута
+STR_MAPGEN_STYLE_CORE=Центр кільця
+STR_MAPGEN_STYLE_RIM=Узбережжя
+STR_MAPGEN_RIM_FOREST=Лісова смуга
+STR_MAPGEN_RIM_GRASS=Трава до узбережжя
+STR_MAPGEN_STYLE_YARD=Лабіринтний двір
+STR_MAPGEN_YARD_NONE=Немає
+STR_MAPGEN_YARD_BUILDING=Стіни з будівель
+STR_MAPGEN_YARD_FOREST=Лісові стіни
+STR_MAPGEN_STYLE_ROADS_TIP=Лінії дороги через сушу. Від seed: seed вибирає одне з розташувань у цьому списку.
+STR_MAPGEN_STYLE_SHAPE_TIP=Ширина суші відносно її висоти, помножена на 100. 100 — квадрат; більше значення означає ширшу форму. Від seed: seed вибирає значення в цьому діапазоні.
+STR_MAPGEN_STYLE_CUT_TIP=Наскільки восьмикутник зрізає кожен кут. Більше значення зрізає менший кут. Від seed: seed вибирає значення в цьому діапазоні.
+STR_MAPGEN_STYLE_CORE_TIP=Рельєф у центрі кожного кільця. Від seed: seed вибирає один варіант.
+STR_MAPGEN_STYLE_RIM_TIP=Смуга лісу навколо узбережжя, або трава аж до води. Від seed: seed вибирає один варіант.
+STR_MAPGEN_STYLE_YARD_TIP=Двір із лабіринтних стін на одному острові, якщо для нього знайдеться місце. Від seed: seed вибирає один варіант.
+STR_MAPGEN_STYLE_WALLS=Стіни по краю
+STR_MAPGEN_WALLS_NONE=Без стін
+STR_MAPGEN_WALLS_BUILDING=Стіна з будівель на кожній осі
+STR_MAPGEN_STYLE_MIDDLE=Середина
+STR_MAPGEN_MIDDLE_OPEN=Відкрито
+STR_MAPGEN_MIDDLE_PIECES=Діагональні частини
+STR_MAPGEN_MIDDLE_CLUMP=Скупчення в центрі
+STR_MAPGEN_MIDDLE_BOTH=Діагональні частини і скупчення в центрі
+STR_MAPGEN_STYLE_WALLS_TIP=Стіна з будівель через лісову смугу на кожній осі, яка розрізає смугу на чотири частини. Від seed: seed вибирає один варіант.
+STR_MAPGEN_STYLE_MIDDLE_TIP=Будівлі біля середини поля: короткі частини під 45 градусів, скупчення в центрі, або і те, і інше. Від seed: seed вибирає один варіант.
 
 # Log viewer sim-replay messages
 STR_LV_PLAYER_JOINED={player} приєднався до гри.
@@ -2094,6 +2174,8 @@ STR_DLGSETTINGS_HOSTING_SERVERNAME=Ім'я сервера
 STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=Пошук гри показує цю назву замість твоєї адреси. До 32 знаків (менше з кирилицею або іншим письмом). Залиш порожнім, щоб показати адресу.
 STR_DLGSETTINGS_HOSTING_SERVERDESC=Опис
 STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=Пошук гри показує його, коли гравець наводиться на твою гру або вибирає її. До 200 знаків (менше з кирилицею або іншим письмом).
+STR_DLGSETTINGS_HOSTING_SPECDELAY=Затримка глядачів (секунди)
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=Скільки секунд позаду гри бачать глядачі, щоб не могли підказати гравцям, де всі знаходяться. 0 показує гру в реальному часі. До 600.
 
 # Voice section of the Display/Sound settings tab
 STR_DLGSETTINGS_VOICE=Голос
@@ -2558,7 +2640,6 @@ STR_RULE_DESC_pill_base_defend_shape=Як вимірюється pill_base_defen
 STR_RULE_DESC_tank_slide_armour_bonus=Додатковий крок відкидання за нульової броні; додається до tank_slide_step пропорційно броні, якої бракувало до влучання. Читається, лише поки ввімкнено tank_slide_mac.
 STR_RULE_DESC_tank_slide_mac=Чи відкидає влучання снаряда танк як у Mac Bolo. Увімкнено: відкидання зростає зі зменшенням броні на tank_slide_armour_bonus, а tank_slide_step і tank_bump_decay_shift рахуються на 40 мс, у ковзанні, що рухається щотіку. Вимкнено — відкидання WinBolo, однакове за будь-якої броні.
 STR_RULE_DESC_tank_deep_sea_safe=Чи може танк без човна їхати по відкритому морю без потоплення. Вимкнено — класична гра: відкрите море топить танк без човна. Танк, що опиниться на відкритому морі без човна, коли це знову вимкнуть, тоне на наступному тіку.
-STR_RULE_DESC_man_bless_tile_terrain_speed=Чи проходить чоловічок клітинку, на якій будуватиме, зі швидкістю її місцевості, як у Mac Bolo. Вимкнено — хода WinBolo: він іде до центру цієї клітинки зі швидкістю бази, хоч би яка там була місцевість. Клітинка без швидкості ходи, наприклад річка, стіна чи бункер, зберігає швидкість бази. Шлях назад до танка не змінюється.
 STR_RULE_DESC_pill_aim_iterations=Як наполегливо бункер намагається випередити рухому ціль.
 STR_RULE_DESC_pill_massage_range=Як близько має бути танк, щоб бункер націлювався за первісним простим прогнозом, а не за розв'язувачем, який не влучає в танк, що кружляє навколо нього. Нуль, класичне значення, — це бункер, який завжди правильно веде ціль; 384 — півтора квадрата, відстань, яку використовував старий перемикач часу компіляції.
 STR_RULE_DESC_pill_massage_cosine=Наскільки прямо на близький бункер має їхати танк, щоб усе одно бути правильно націленим — як косинус кута між його курсом і лінією до бункера. Одиниця цілиться неточно в кожен танк у межах pill_massage_range, нуль — у жоден з них. Нічого не робить, поки це правило рівне нулю.
@@ -2765,3 +2846,96 @@ STR_DLGSYSINFO_MEM_BUILDING=Будівництво
 STR_DLGSYSINFO_MEM_RUBBLE=Руїни
 STR_DLGSYSINFO_MEM_SWAMP=Болото
 STR_DLGSYSINFO_MEM_GRASS=Трава
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Рація: утримуйте кнопку мікрофона на ігровому екрані
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Ваші файли
+STR_MAPEDIT_IOS_BUILTIN=Мапи, що постачаються з WinBolo
+STR_MAPEDIT_IOS_NOFILES=Тут поки нічого немає. Тут з'являться файли, які ви збережете, і файли, які ви покладете в теку WinBolo в застосунку «Файли».
+STR_MAPEDIT_IOS_NAME=Назва
+STR_MAPEDIT_IOS_REPLACES=Файл із такою назвою вже існує. Збереження замінить його.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Записи
+STR_IOSREC_EMPTY=Записів поки немає. Одиночні раунди записуються сюди, а файли .wbv із теки WinBolo в застосунку «Файли» теж показуються тут.
+STR_IOSREC_COPY=Скопіювати у «Файли»
+STR_IOSREC_COPIED=Скопійовано в теку WinBolo в застосунку «Файли».
+STR_IOSREC_OPEN_FAILED=Не вдалося відкрити цей запис.
+STR_IOSREC_LAST_ROUND=Останній одиночний раунд
+STR_IOSREC_COPY_FAILED=Не вдалося скопіювати запис у застосунок «Файли».
+STR_DLGCONNECTING_TITLE=Під'єднання до {string1}...
+STR_DLGCONNECTING_PING=Запит до сервера про його гру...
+STR_DLGCONNECTING_JOINING=Приєднання до гри...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Не вдалося прочитати цей запис.
+
+# Under the rules table of a pick, on a server with Mods/Scenario off.
+STR_DLGLOBBY_DETAILS_COL_SETTING=Параметр
+STR_DLGLOBBY_DETAILS_COL_VALUE=Значення
+STR_DLGLOBBY_DETAILS_RULES=Правила:
+
+# The tooltip on a setting the dedicated server's operator holds.
+STR_DLGLOBBY_DETAILS_SETTING_LOCKED_TIP=Це значення задає сервер. Його не можна змінити.
+
+# The lobby's reload button, for a host editing its map's script.
+STR_DLGLOBBY_SCENARIO_BY_UPDATED=автор {string1} · оновлено {string2}
+STR_DLGLOBBY_SCENARIO_UNKNOWN=невідомо
+STR_MENU_INFO_OVERLAY=Інформаційний шар
+STR_SCNPANEL_POP_OUT=Відкріпити
+STR_SCNPANEL_POP_IN=Закріпити
+STR_SCNPANEL_CLOSE_TITLE=Закрити {string1}?
+STR_SCNPANEL_CLOSE_BODY=Увімкніть знову через {string1} > {string2}.
+STR_DLGLOBBY_SCENARIO_REQUIRED=Сервер завжди запускає цей скрипт. Його не можна прибрати.
+STR_DLGLOBBY_SCENARIO_REQUIRED_SWAP=Сервер завжди запускає сценарій цього раунду
+STR_DLGLOBBY_SCENARIO_LIST_LOCKED=Цей список задає сервер. Його не можна змінити.
+
+# Rule descriptions
+STR_RULE_DESC_pill_aim_mac=Чи цілять бункери як у Mac Bolo. Рухомі танки без перешкод приблизно в межах однієї клітинки змушують бункер цілити далеко вперед за їхнім курсом. Танки, що стоять або заблоковані, упередження не отримують. Замінює pill_massage_range, pill_massage_cosine і pill_aim_iterations.
+STR_RULE_DESC_tank_collision_mac=Чи використовують танки залежні від напрямку рамки спрайтів і піксельні зсуви Mac Bolo біля стін, активних бункерів і ворожих баз. Дає змогу проїжджати ближче до бункера для «pill massage».
+
+# Scenario function descriptions
+STR_SCNFN_DESC_KILL_CREDIT=Кому зараховується загибель танка, питається при кожній загибелі; утоплення вказує жертву, якщо скрипт не назве танк, що її потопив.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} лежить у теці WinBolo в застосунку «Файли».
+STR_CLIPGIF_SAVE_FAILED_IOS=Не вдалося зберегти {string1}.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=Карта заповнює екран, а елементи керування малюються поверх неї.\nВимкнено — ігровий вигляд лишається квадратним, а елементи керування поруч.\nЗапам'ятовується для наступного разу.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=Наскільки карта просвічує крізь інструменти побудови\nна весь екран. 0% означає повну непрозорість, а повзунок\nзупиняється на 90%, тож зробити їх невидимими не можна.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=Наскільки карта просвічує крізь сітки танків, бункерів і баз\nта смужки запасів на весь екран. 0% означає повну непрозорість,\nа повзунок зупиняється на 90%, тож зробити їх невидимими не можна.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=Мапа заповнює весь екран, панелі стану, будівництва та новин\nмалюються поверх неї, а під час гри дотиком — і сенсорне керування.\nВимкнено показує класичний екран. Запам'ятовується на наступний раз.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=Цей пристрій використовує мобільні дані. Інтернет-гра, створена через\nмобільні дані, найімовірніше, не працюватиме: мобільні мережі рідко\nдозволяють іншим гравцям під'єднатися до пристрою. Через Wi-Fi шансів\nнабагато більше.\n\nУсе одно створити гру?
+
+# The recordings screen on Android: the share sheet is its export, and recordings come from games and other apps, not a Files folder
+STR_ANDROIDREC_SHARE=Поділитися
+STR_ANDROIDREC_EMPTY=Записів поки немає. Одиночні раунди записуються сюди, а записи .wbv, відкриті з іншого застосунку, теж показуються тут.
+
+# The recap's clip GIF on Android, saved into the app's storage and then offered to the share sheet
+STR_CLIPGIF_SAVED_ANDROID={string1} збережено. Далі виберіть застосунок, щоб поділитися ним.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Тут поки нічого немає. Тут з'являться карти, які ви збережете тут або з гри.
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Ваші GIF
+STR_CLIPGIF_GALLERY_EMPTY=GIF поки немає. Створіть його кнопкою GIF під повтором або кнопкою GIF біля кліпу.
+STR_CLIPGIF_COPY=Копіювати в буфер обміну
+STR_CLIPGIF_SAVE=Зберегти на диск
+STR_CLIPGIF_COPIED=Скопійовано.
+STR_CLIPGIF_COPY_FAILED=Не вдалося скопіювати GIF.
+STR_CLIPGIF_OPEN_FAILED=Не вдалося відкрити цей GIF.
+STR_CLIPGIF_MAP_FMT=Мапа: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Гравці: {string1}
+STR_CLIPGIF_NO_DETAILS=Для цього GIF не збережено відомостей.
+STR_CLIPGIF_LENGTH_TIP=Довжина GIF у секундах від точки відтворення.\nЇї також можна змінити, перетягнувши мітку в кінці світлої частини шкали часу.
+STR_CLIPGIF_LOADING=Відкриття GIF...
+STR_CLIPGIF_TOO_LARGE=Цей GIF завеликий, щоб показати його тут. Його все одно можна скопіювати або зберегти.
+STR_CLIPGIF_FILTER_NAME=Зображення GIF

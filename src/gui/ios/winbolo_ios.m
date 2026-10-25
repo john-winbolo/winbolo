@@ -10,6 +10,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #import <AVFoundation/AVFoundation.h>
+#import <UIKit/UIKit.h>
 #ifdef HAVE_SENTRY
 @import Sentry;
 #endif
@@ -21,11 +22,14 @@
 
 #include "frontend.h"
 #include "client_sim.h"
+#include "bolo_rand.h"
 #include "client_net.h"
 #include "client_render.h"
 #include "input_packet.h"
 #include "client_frontend_tick.h"
 #include "client_frontend_render.h"
+#include "client_frontend_tutorial.h"
+#include "client_frontend_common.h"
 #include "gui_message.h"
 #include "../../common/wb_log.h"
 #include "server_sim.h"
@@ -36,11 +40,15 @@
 #include "../lang.h"
 #include "../winbolo.h"
 #include "../sound.h"
+#include "../voice.h"
 #include "sdl3draw.h"
 #include "../sdl3/build_cursor.h"
 #include "../sdl3/sdl3imgui.h"
 #include "../sdl3/luabrainshandler.h"
 #include "../sdl3/dialog_backend.h"
+#include "ios_discovery.h"
+#include "ios_netpath.h"
+#include "../../winbolonet/http.h"
 #include "../sdl3/dialogs/imgui_messagebox.h"
 #include "../mobile/touch_input.h"
 #include "../ui_mode.h"
@@ -67,6 +75,15 @@ void iosCrashReportingSetEnabled(bool enabled) {
 }
 
 /* -------------------------------------------------------
+ * iPad: the desktop layout, the classic game screen with the menu bar,
+ * scaled to fit. The phone always runs the touch layout. See uiModeDetect.
+ * ------------------------------------------------------- */
+
+bool iosDeviceIsPad(void) {
+    return [UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad;
+}
+
+/* -------------------------------------------------------
  * Globals (matching winbolo.h externs)
  * ------------------------------------------------------- */
 
@@ -79,6 +96,9 @@ bool backgroundSound = FALSE;
 bool useSoundKeepalive = FALSE;
 int  soundVolume = 50;         /* MENU / Sound Volume — the game sounds */
 int  windowMasterVolume = 100; /* MENU / Master Volume — sounds and voice */
+/* gamefront.c reads and writes this through the prefs on every platform;
+   the desktop defines it in winbolo.c. */
+bool positionalSound = TRUE;
 bool allowNewPlayers = TRUE;
 
 bool showNewswireMessages = TRUE;
@@ -123,17 +143,95 @@ time_t ticks = 0;
 static double gameTickAccum = 0.0;
 static Uint64 lastFrameTime = 0;
 
-/* True when the last shared tick step run was the game half.  The keys/game
-   cadence lives in client_frontend_tick.c and its counter is private, so this
-   is how windowRunGameTick knows which half comes next.  Cleared alongside
-   clientFrontTickReset so a restarted game starts in phase. */
-static bool prevStepWasGameTick = FALSE;
+/* The solo-game freezes (a tutorial message, the pause overlay, the
+   controller-disconnected dialog; the last two are drawn only in the iPad's
+   desktop layout) are held in client_frontend_common.c, one body with the
+   desktop: clientFrontSoloPause and clientFrontAnyPause. */
+
+/* A joined game over UDP survives a stay in the background only while the
+   server still holds the slot. The server drops a client it has heard
+   nothing from for CLIENT_TIMEOUT_TICKS (1000) of its 20 ms ticks, which is
+   20 s (bolo/internal/netpacks.h, transport_udp_server.c); a backgrounded
+   client sends nothing. A stay shorter than this keeps the game, which
+   carries on with the next tick's ping; a longer one goes straight back to
+   the menu on return instead of waiting out the client's own timeout in a
+   game that can no longer be played. The margin covers the time the radio
+   takes to come back. The stay is measured on the wall clock, because
+   SDL_GetTicks does not advance while the device sleeps and the server's
+   clock does. */
+#define IOS_BACKGROUND_KEEP_GAME_MS 15000
+static SDL_Time s_backgroundStartNs = 0;
+
+/* A game this device hosts for other players keeps running in the background
+   for as long as iOS lets the app run: the server ticks on its own timer
+   thread, and the main loop keeps ticking the host's own client, without
+   drawing, so the server does not drop the host after 20 s of silence. iOS
+   gives about 30 s once asked (beginBackgroundTask). With
+   IOS_HOST_BACKGROUND_END_S seconds left the server is shut down, which
+   tells every player the game has ended, and the time is handed back; the
+   host's return then goes to the menu through the check in
+   iosResumeForeground. A return before then carries on. */
+#define IOS_HOST_BACKGROUND_END_S 5.0
+/* The shutdown's WinBolo.net calls (the session's quit, the round-log
+   upload) run on the main thread and wait for their replies, up to 30 s
+   each. In the background they get a deadline this many seconds before the
+   time runs out (httpSetDeadline), so a slow or unreachable WinBolo.net
+   leaves the session open instead of iOS ending the app. */
+#define IOS_HOST_SHUTDOWN_MARGIN_S 1.5
+static UIBackgroundTaskIdentifier s_hostBackgroundTask;
+static bool s_hostBackgroundActive = false;  /* s_hostBackgroundTask is held */
 
 /* -------------------------------------------------------
  * Forward declarations
  * ------------------------------------------------------- */
 extern void sdl3MessageHandler(const char *message, const char *title);
 static void windowRunGameTick(ClientSim *cs);
+static void iosEnterBackground(ClientSim *cs);
+static void iosResumeForeground(ClientSim *cs);
+static void iosClearBackgroundPause(ClientSim *cs);
+static void iosHostBackgroundFrame(ClientSim *cs);
+void windowSuspendBackground(ClientSim *cs);
+
+/* SDL never queues the app lifecycle events (SDL_SendAppEvent hands them to
+   event watches only, so they are handled before iOS's call returns), so
+   the game loop's own event handling never sees them. This watch acts on
+   them while a game is up (s_lifecycleCs). Going to the background is
+   handled here, so the next frame is not drawn. The iPad and the iPhone
+   both stop as soon as the app stops being active (Control Center, the
+   notification shade, Slide Over, Siri), not only once it is in the
+   background: a solo game freezes, a network game carries on without this
+   screen. Coming back posts s_resumeEventType, which wakes
+   the paused loop on the main thread and resumes there, where the resume's
+   message box may run. SDL sends each event twice here; both handlers
+   ignore the second. */
+static ClientSim *s_lifecycleCs = NULL;
+static Uint32 s_resumeEventType = 0;
+
+static bool SDLCALL iosLifecycleWatch(void *userdata, SDL_Event *ev) {
+    (void)userdata;
+    if (s_lifecycleCs == NULL) return true;
+    switch (ev->type) {
+    case SDL_EVENT_WILL_ENTER_BACKGROUND:
+    case SDL_EVENT_DID_ENTER_BACKGROUND:
+        windowSuspendBackground(s_lifecycleCs);
+        break;
+    case SDL_EVENT_WILL_ENTER_FOREGROUND:
+    case SDL_EVENT_DID_ENTER_FOREGROUND:
+        if (s_resumeEventType != 0) {
+            SDL_Event resume;
+            SDL_zero(resume);
+            resume.type = s_resumeEventType;
+            SDL_PushEvent(&resume);
+        }
+        break;
+    default:
+        break;
+    }
+    return true;
+}
+void windowTutorialPause(ClientSim *cs, bool active);
+void windowDeckPause(ClientSim *cs, bool active);
+void windowControllerLostPause(ClientSim *cs, bool active);
 
 /* -------------------------------------------------------
  * SDL message handler
@@ -149,10 +247,36 @@ void sdl3MessageHandler(const char *message, const char *title) {
  * ------------------------------------------------------- */
 int main(int argc, char *argv[]) {
     DWORD tick;
-    (void)argc;
-    (void)argv;
+    /* A winbolo://host:port link on the command line joins that game from a
+       cold start, as it does on the desktop. Any other argument is ignored:
+       the map file the desktop accepts there has no meaning in a bundle. */
+    const char *cmdLine = "";
+    for (int i = 1; i < argc; i++) {
+        if (strncmp(argv[i], "winbolo://", 10) == 0) {
+            cmdLine = argv[i];
+            break;
+        }
+    }
 
-    srand((unsigned int)(time(NULL) ^ getpid()));
+    /* The game's random numbers come from bolo_rand, not the C library's
+       rand(), so it is bolo_rand that needs the seed, as on the desktop.
+       Left unseeded its state is all zero and every draw is 0: every Open
+       respawn took the same start. */
+    bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
+
+    /* The iPad turns to portrait as well as landscape (Info.plist allows it
+       there only). Without the hint SDL keeps a window that is not resizable
+       in the orientation it was created in, and iPadOS then shrinks the
+       landscape app into the portrait screen. Every screen reads the window
+       size each frame, so a turn only changes the size. */
+    if (iosDeviceIsPad()) {
+        SDL_SetHint(SDL_HINT_ORIENTATIONS,
+                    "LandscapeLeft LandscapeRight Portrait PortraitUpsideDown");
+        /* The iPad's classic screen has no menu bar and is played by touch:
+           the touch controls come up when it is touched and go when a key
+           is pressed (input_touch.c). */
+        inputTouchSetClassicControlsOffered(true);
+    }
 
     /* Initialize Sentry crash reporting if the user hasn't opted out */
 #ifdef HAVE_SENTRY
@@ -166,17 +290,77 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
-    /* Configure audio session */
+    /* Configure audio session.
+
+       SDL's CoreAudio backend sets the category itself every time it opens or
+       closes a device, so what is set here only lasts until sound.c opens the
+       game sounds.  With game sounds alone open, SDL picks Playback, mixed with
+       other apps' audio and lowering it.  When voice opens the microphone, SDL
+       moves the session to PlayAndRecord with DefaultToSpeaker (the speaker
+       rather than the earpiece), Bluetooth HFP and A2DP, and AirPlay - the
+       options voice chat needs - and keeps it there, since voice.c never
+       closes the microphone once it has it.  The game sounds pause for a
+       moment while it does so.
+
+       The session is not forced to PlayAndRecord from launch (which the hint
+       SDL_HINT_AUDIO_CATEGORY = "playandrecord" would do): with Bluetooth HFP
+       allowed, a headset that offers both HFP and A2DP is routed over HFP, so
+       a player who never uses voice would hear the game in call quality.
+
+       Set here to the same category and options SDL picks for game sounds,
+       so other apps' audio is not stopped at launch and SDL finds nothing to
+       change when it opens the first device.  Setting the category does not
+       ask for microphone permission; that only happens when voice first opens
+       the microphone, so a player who never turns voice on is never asked. */
     {
         NSError *err = nil;
         AVAudioSession *session = [AVAudioSession sharedInstance];
-        [session setCategory:AVAudioSessionCategoryAmbient error:&err];
+        [session setCategory:AVAudioSessionCategoryPlayback
+                        mode:AVAudioSessionModeDefault
+                     options:AVAudioSessionCategoryOptionMixWithOthers |
+                             AVAudioSessionCategoryOptionDuckOthers
+                       error:&err];
         if (err) WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "AVAudioSession setCategory failed: %s", [[err localizedDescription] UTF8String]);
         [session setActive:YES error:&err];
         if (err) WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "AVAudioSession setActive failed: %s", [[err localizedDescription] UTF8String]);
     }
 
     SDL_Init(0);
+
+    /* Keep a recording or winbolo:// link the system hands over in any loop,
+       and at a cold launch, for the welcome screen (ios_drops.c). Before
+       anything pumps events. */
+    {
+        extern void iosDropsInstall(void);
+        iosDropsInstall();
+    }
+
+    /* Logging is off unless WINBOLO_LOG is set in the environment, as on the
+       desktop; with it set the file lands in the app's preferences
+       directory as winbolo.log. Without this call nothing the WB_LOG
+       macros write reaches the console or a file. */
+    wb_log_init("WinBolo", "WinBolo", "winbolo.log");
+    atexit(wb_log_shutdown);
+
+    /* The bot brain worker pool, sized from the CPU cores as on the
+       desktop. Without it every brain thinks serially on the server tick
+       thread. */
+    if (!serverSimBotPoolInit(0)) {
+        WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[iOS] serverSimBotPoolInit failed");
+        return 1;
+    }
+
+    /* The LAN search browses through Bonjour here: iOS refuses the raw mDNS
+       socket the desktop uses unless the app holds Apple's multicast
+       entitlement. */
+    iosDiscoveryInstall();
+    /* Which network the device is on, so the host is warned before hosting
+       an Internet game on mobile data. */
+    iosNetPathInstall();
+    /* The move to and from the background reaches the game only through an
+       event watch (see iosLifecycleWatch). */
+    s_resumeEventType = SDL_RegisterEvents(1);
+    SDL_AddEventWatch(iosLifecycleWatch, NULL);
 
     /* Change working directory to the app bundle */
     const char *basePath = SDL_GetBasePath();
@@ -191,13 +375,33 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    /* The thread manager's mutex, as the desktop creates it right after the
+       client mutex (winbolo.c). Without it the handle is NULL, SDL_LockMutex
+       does nothing, and the lock the host timer thread and the main thread
+       take around the local server is fictional: each overwrites the owner,
+       and the timer thread died on serverSimApplyCommand's assertion that
+       it held the mutex, at the first bot command of a single-player game. */
+    if (threadsCreate(FALSE) == FALSE) {
+        WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[iOS] Failed to create the threads mutex");
+        clientMutexDestroy();
+        return 1;
+    }
+
     dialogBackendInit();
 
+    /* Voice runs for the life of the process, as on the desktop: it comes up
+       before gameFrontStart, which applies the saved voice settings to it and
+       runs the pre-game dialogs that already expect it.  It opens playback
+       only; the microphone waits until voice is switched on.  A device that
+       will not open is not fatal - voice stays disabled. */
+    voiceInit();
+
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Starting gameFrontStart...");
-    if (gameFrontStart("", &keys, FALSE, NULL) == FALSE) {
+    if (gameFrontStart(cmdLine, &keys, FALSE, NULL) == FALSE) {
         WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[iOS] gameFrontStart FAILED");
         clientMutexDestroy();
         SDL_Quit();
+        threadsDestroy();
         return 1;
     }
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] gameFrontStart OK");
@@ -209,7 +413,6 @@ ios_game_start:
        the lobby, so it covers both the first game and every game reached
        through the goto below. */
     clientFrontTickReset();
-    prevStepWasGameTick = FALSE;
 
     /* Set up ImGui and touch input */
     {
@@ -272,19 +475,32 @@ ios_game_start:
     ClientSim *cs = humanSim;
 
     /* Handle lobby if server uses lobby mode */
-    if (cs && clientSimIsInLobby(cs) &&
-        (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown)) {
+    if (clientFrontInLobbyPhase(cs)) {
         WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Entering lobby");
         sdl3ImguiCleanup();
         const DialogBackend *db = dialogBackendGet();
         int lobbyResult = db->lobbyShow(cs);
+        if (lobbyResult == 0 && !windowIsQuitting()) {
+            /* The player left the lobby rather than quitting: back to the
+               menu, as the desktop does. No tank exists in the lobby, so the
+               game is ended as not played. */
+            WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Left lobby, returning to the menu");
+            gameFrontEnd(&keys, FALSE, FALSE);
+            if (gameFrontStart("", &keys, TRUE, NULL)) {
+                goto ios_game_start;
+            }
+            WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[iOS] gameFrontStart failed after leaving the lobby");
+        }
         if (lobbyResult == 0) {
             WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Left lobby, cleaning up");
             gameFrontEnd(&keys, FALSE, TRUE);
             clientMutexDestroy();
             sdl3DrawCleanup();
             soundCleanup();
+            voiceCleanup();
+            serverSimBotPoolDestroy();
             SDL_Quit();
+            threadsDestroy();
             return 0;
         }
         /* lobbyResult == 1: game started. The UDP transport's
@@ -333,38 +549,49 @@ ios_game_start:
 
     /* Main game loop */
 #define IOS_FRAME_CAP_MS 16
+    bool returnToLobby = FALSE;
+    s_lifecycleCs = cs;
     while (!winboloQuit && !finishedLoop) {
         Uint64 frameCapStart = SDL_GetTicks();
 
         /* Process SDL events */
         {
             SDL_Event ev;
+            if (paused && s_hostBackgroundActive) {
+                iosHostBackgroundFrame(cs);
+                continue;
+            }
             if (paused) {
                 if (SDL_WaitEvent(&ev)) {
                     if (uiModeIsTablet()) {
-                        if (ev.type == SDL_EVENT_FINGER_DOWN || ev.type == SDL_EVENT_FINGER_UP || ev.type == SDL_EVENT_FINGER_MOTION) {
+                        if (ev.type == SDL_EVENT_FINGER_DOWN || ev.type == SDL_EVENT_FINGER_UP || ev.type == SDL_EVENT_FINGER_MOTION ||
+                            ev.type == SDL_EVENT_FINGER_CANCELED) {
                             int tw = 0, th = 0;
                             SDL_Renderer *ren = sdl3DrawGetRenderer();
                             if (ren) { SDL_RendererLogicalPresentation m; SDL_GetRenderLogicalPresentation(ren, &tw, &th, &m); }
                             if (tw <= 0 || th <= 0) SDL_GetWindowSize(sdl3DrawGetWindow(), &tw, &th);
                             inputTouchProcessEvent(&ev, tw, th);
                         }
-                    } else {
-                        touchInputProcessEvent(&ev);
                     }
                     if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                         winboloQuit = TRUE;
-                    } else if (ev.type == SDL_EVENT_WILL_ENTER_FOREGROUND) {
-                        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Resuming from background");
-                        paused = FALSE;
-                        lastFrameTime = SDL_GetTicks();
-                        gameTickAccum = 0.0;
-                        soundSetMuted(FALSE);
+                    } else if (ev.type == s_resumeEventType) {
+                        /* Posted by iosLifecycleWatch on WILL or DID enter
+                           foreground: a short interruption (Control Center,
+                           the notification shade, Slide Over, Siri) comes
+                           back with DID alone. */
+                        iosResumeForeground(cs);
                     }
                 }
                 continue;
             }
-            while (SDL_PollEvent(&ev)) {
+            if (!uiModeIsTablet()) {
+                /* The iPad's desktop layout takes the desktop's event
+                   handling whole: menu shortcuts, the keys that act on a
+                   press, click to build, the wheel and Key Setup's capture.
+                   The move to and from the background is iosLifecycleWatch's. */
+                sdl3ImguiProcessEvents(cs);
+            } else while (SDL_PollEvent(&ev)) {
                 SDL_Event rawEv = ev;
                 /* Convert coordinates to logical presentation space for ImGui */
                 SDL_Renderer *ren = sdl3DrawGetRenderer();
@@ -378,31 +605,16 @@ ios_game_start:
                    tablet mode — ImGui buttons (build bar, etc.) use
                    inputTouchConsumeTapInRect for hit-testing, so the
                    touch system must see every event regardless of
-                   ImGui's WantCaptureMouse state.  Non-tablet mode
-                   still gates on WantCaptureMouse to avoid conflicts
-                   with dialog input. */
-                if (uiModeIsTablet()) {
-                    if (rawEv.type == SDL_EVENT_FINGER_DOWN || rawEv.type == SDL_EVENT_FINGER_UP || rawEv.type == SDL_EVENT_FINGER_MOTION) {
-                        int tw = 0, th = 0;
-                        if (ren) { SDL_RendererLogicalPresentation m; SDL_GetRenderLogicalPresentation(ren, &tw, &th, &m); }
-                        if (tw <= 0 || th <= 0) SDL_GetWindowSize(sdl3DrawGetWindow(), &tw, &th);
-                        inputTouchProcessEvent(&rawEv, tw, th);
-                    }
-                } else if (!sdl3ImguiWantCaptureMouse()) {
-                    touchInputProcessEvent(&ev);
+                   ImGui's WantCaptureMouse state. */
+                if (rawEv.type == SDL_EVENT_FINGER_DOWN || rawEv.type == SDL_EVENT_FINGER_UP || rawEv.type == SDL_EVENT_FINGER_MOTION ||
+                    rawEv.type == SDL_EVENT_FINGER_CANCELED) {
+                    int tw = 0, th = 0;
+                    if (ren) { SDL_RendererLogicalPresentation m; SDL_GetRenderLogicalPresentation(ren, &tw, &th, &m); }
+                    if (tw <= 0 || th <= 0) SDL_GetWindowSize(sdl3DrawGetWindow(), &tw, &th);
+                    inputTouchProcessEvent(&rawEv, tw, th);
                 }
                 if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                     winboloQuit = TRUE;
-                } else if (ev.type == SDL_EVENT_DID_ENTER_BACKGROUND) {
-                    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Entering background, pausing");
-                    paused = TRUE;
-                    soundSetMuted(TRUE);
-                } else if (ev.type == SDL_EVENT_WILL_ENTER_FOREGROUND) {
-                    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Resuming from background");
-                    paused = FALSE;
-                    lastFrameTime = SDL_GetTicks();
-                    gameTickAccum = 0.0;
-                    soundSetMuted(FALSE);
                 }
             }
         }
@@ -415,9 +627,32 @@ ios_game_start:
             gameTickAccum += elapsed;
 
             while (gameTickAccum >= GAME_TICK_LENGTH) {
+                /* A tutorial message is up, or the tick just run queued one:
+                   stop here and drop the owed time, so the interval the
+                   message is up is not fast-forwarded afterwards. */
+                if (clientFrontAnyPause() || clientFrontTutorialStepShowing()) {
+                    gameTickAccum = 0.0;
+                    break;
+                }
                 gameTickAccum -= GAME_TICK_LENGTH;
                 windowRunGameTick(cs);
             }
+        }
+
+        /* Voice encode/decode runs here, on the main thread, beside the game
+           tick, once a frame as on the desktop - the codec state has no lock
+           of its own. */
+        voiceTick(cs);
+
+        /* The round has handed the game back to the lobby (a vote to return,
+           or a game over): leave the loop before drawing, and show the lobby
+           screen from the top, as the desktop does. Drawn here instead, the
+           lobby would go through the game frame's in-game lobby (the web
+           client's), which in the touch layout sizes it in window points
+           inside the frame's larger logical units. */
+        if (clientFrontInLobbyPhase(cs)) {
+            returnToLobby = TRUE;
+            break;
         }
 
         /* Render */
@@ -429,25 +664,24 @@ ios_game_start:
         }
         clientMutexRelease();
         /* The in-window map overview draws from the snapshot the frame above
-           filled, now that the lock is off. Nothing on iOS turns that mode on
-           today — every path that does is compiled out here — but the call is
-           a no-op when no frame is waiting, and leaving it out is how the map
-           would silently stop drawing if one ever did. */
+           filled, now that the lock is off. The tablet overlay's map button
+           turns the mode on, and the map is drawn inside the game view. The
+           call is a no-op when no frame is waiting. */
         sdl3DrawFlushOverviewInWindow();
         dwSysFrame += (SDL_GetTicks() - tick);
 
-        /* Touch overlay (skip in tablet mode — ImGui overlay handles it) */
-        if (!uiModeIsTablet()) {
-            SDL_Renderer *ren = sdl3DrawGetRenderer();
-            if (ren) {
-                touchInputRender(ren);
-            }
-        }
+        /* The touch layout's overlay is drawn by sdl3ImguiPumpAndRender; the
+           desktop layout has none. */
         sdl3ImguiPumpAndRender(cs);
         {
             SDL_Renderer *ren = sdl3DrawGetRenderer();
             if (ren) SDL_RenderPresent(ren);
         }
+        /* Tutorial: count the presented frame (the intro waits for a few)
+           and show the respawn message the server may have flagged. Both do
+           nothing outside the tutorial. */
+        frontEndTutorialNotePresentedFrame();
+        clientFrontTutorialPollRespawn();
 
         /* Cap to 60 FPS */
         {
@@ -458,10 +692,42 @@ ios_game_start:
         }
     }
 
+    s_lifecycleCs = NULL;
+
+    /* A hosted game that ends in the background (a time limit, say) leaves
+       the loop still paused, and nothing else clears the pause: the lobby,
+       the shutdown and the menu would run as if in the background, and the
+       next game's first frame would wait in SDL_WaitEvent. The lifecycle
+       watch does nothing from here on, so clear it now. */
+    if (paused) {
+        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Game ended while in the background; clearing the pause");
+        iosClearBackgroundPause(cs);
+        s_backgroundStartNs = 0;
+    }
+
+    /* Back to the lobby screen: the game and its ClientSim stay, as on the
+       desktop. Not if the player quit in the same frame. */
+    if (returnToLobby && !winboloQuit && !windowIsQuitting()) {
+        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Round over, returning to the lobby");
+        gameFrontSaveTankPrefs(cs);
+        sdl3ImguiCleanup();
+        goto ios_game_start;
+    }
+
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Main loop ended, cleaning up");
+
+    /* Release the remote talkers with the game they belong to - player
+       numbers are handed out afresh next time, so a stale decoder would be
+       fed someone else's voice. */
+    voiceReset();
 
     sdl3ImguiCleanup();
     gameFrontEnd(&keys, TRUE, winboloQuit);
+    /* A step left showing, or its pause, would stop the next game's ticks. */
+    frontEndTutorialReset();
+    windowTutorialPause(NULL, false);
+    windowDeckPause(NULL, false);
+    windowControllerLostPause(NULL, false);
 
     if (!winboloQuit) {
         WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Returning to menu (windowNewGame)");
@@ -475,13 +741,165 @@ ios_game_start:
     clientMutexDestroy();
     sdl3DrawCleanup();
     soundCleanup();
+    voiceCleanup();
+    serverSimBotPoolDestroy();
     SDL_Quit();
+    threadsDestroy();
     return 0;
 }
 
 /* -------------------------------------------------------
+ * iosEnterBackground / iosResumeForeground — pause the game while the app
+ * is in the background, and on return either carry on or, for a joined game
+ * the server has dropped by now, go back to the menu at once
+ * ------------------------------------------------------- */
+/* Ends the background time asked for a hosted game. endGame shuts the
+   server down first, which sends every player the server's shutdown. */
+static void iosHostBackgroundEnd(bool endGame) {
+    if (!s_hostBackgroundActive) return;
+    if (endGame && gameFrontHasLocalServer()) {
+        /* The Simulator reports no limit (DBL_MAX): no deadline there. */
+        double left = [UIApplication sharedApplication].backgroundTimeRemaining;
+        bool limited = (left < 1e9);
+        if (limited) {
+            httpSetDeadline((long)((left - IOS_HOST_SHUTDOWN_MARGIN_S) * 1000.0));
+        }
+        WB_LOG_INFO(WB_LOG_CAT_PLATFORM,
+                    "[iOS] Background time nearly out; ending the hosted game "
+                    "(%.1f s left)", limited ? left : -1.0);
+        gameFrontShutdownServer();
+        if (limited) {
+            httpClearDeadline();
+        }
+        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Hosted game ended");
+    }
+    [[UIApplication sharedApplication] endBackgroundTask:s_hostBackgroundTask];
+    s_hostBackgroundActive = false;
+}
+
+static void iosEnterBackground(ClientSim *cs) {
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Entering background, pausing");
+    paused = TRUE;
+    /* The shared suspend (client_frontend_common.c), as on the desktop: in a
+       solo game the hosted server is paused too, and the sound is muted with
+       the state it had kept for the way back. */
+    clientFrontSuspend(cs);
+    if (!SDL_GetCurrentTime(&s_backgroundStartNs)) {
+        s_backgroundStartNs = 0;
+    }
+    /* Hosting for other players: ask for background time (see
+       IOS_HOST_BACKGROUND_END_S). The expiry handler is the fallback for a
+       loop that did not get round to ending the game itself. */
+    if (!s_hostBackgroundActive &&
+        gameFrontHasLocalServer() && !clientFrontIsSoloSession(cs)) {
+        s_hostBackgroundTask = [[UIApplication sharedApplication]
+            beginBackgroundTaskWithName:@"WinBolo hosted game"
+                      expirationHandler:^{ iosHostBackgroundEnd(true); }];
+        s_hostBackgroundActive = (s_hostBackgroundTask != UIBackgroundTaskInvalid);
+        if (s_hostBackgroundActive) {
+            /* Unlimited while the app is still only resigning active, and
+               always in the Simulator. */
+            double left = [UIApplication sharedApplication].backgroundTimeRemaining;
+            if (left > 1e9) {
+                WB_LOG_INFO(WB_LOG_CAT_PLATFORM,
+                            "[iOS] Hosting: keeping the game running in the background (no limit reported)");
+            } else {
+                WB_LOG_INFO(WB_LOG_CAT_PLATFORM,
+                            "[iOS] Hosting: keeping the game running in the background (%.0f s)",
+                            left);
+            }
+            lastFrameTime = SDL_GetTicks();
+            gameTickAccum = 0.0;
+        }
+    }
+}
+
+/* One frame of a hosted game in the background: the events that matter, and
+   the host's own client ticks so its connection to the server stays alive.
+   Nothing is drawn; iOS ends an app that uses the GPU in the background. */
+static void iosHostBackgroundFrame(ClientSim *cs) {
+    SDL_Event ev;
+    while (SDL_PollEvent(&ev)) {
+        if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
+            winboloQuit = TRUE;
+        } else if (ev.type == s_resumeEventType) {
+            iosResumeForeground(cs);
+        }
+    }
+    if (!paused || winboloQuit) return;
+    /* The Simulator never limits background time (it reports DBL_MAX), so
+       there the game runs on until the host comes back. */
+    if ([UIApplication sharedApplication].backgroundTimeRemaining <
+        IOS_HOST_BACKGROUND_END_S) {
+        iosHostBackgroundEnd(true);
+        return;
+    }
+    Uint64 now = SDL_GetTicks();
+    gameTickAccum += (double)(now - lastFrameTime);
+    lastFrameTime = now;
+    while (gameTickAccum >= GAME_TICK_LENGTH) {
+        gameTickAccum -= GAME_TICK_LENGTH;
+        windowRunGameTick(cs);
+    }
+    SDL_Delay(IOS_FRAME_CAP_MS);
+}
+
+/* Undoes iosEnterBackground: clears the pause, hands any background time
+   back without shutting the server down, and runs the shared resume. Used by
+   iosResumeForeground and by the main loop's exit. */
+static void iosClearBackgroundPause(ClientSim *cs) {
+    paused = FALSE;
+    iosHostBackgroundEnd(false);
+    lastFrameTime = SDL_GetTicks();
+    gameTickAccum = 0.0;
+    /* The shared resume: the server pause is recomputed and the sound put
+       back as the suspend found it, so a pause freeze still up stays muted. */
+    if (clientFrontResumeBegin()) {
+        clientFrontResumeEnd(cs);
+    }
+}
+
+static void iosResumeForeground(ClientSim *cs) {
+    /* WILL and then DID both arrive after a full background; the second
+       finds nothing paused. */
+    if (!paused) return;
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Resuming from background");
+    /* Back in time: the hosted game carries on; hand the time back. */
+    iosClearBackgroundPause(cs);
+
+    /* Single player keeps its game: its server is in this process and was
+       paused with it. With no start time the client's own timeout still
+       ends a dead game within ten seconds. */
+    SDL_Time nowNs = 0;
+    if (cs == NULL || !clientSimHasTransport(cs) || gameFrontGetServerSim() != NULL ||
+        clientSimGetNetType(cs) != netUdp || s_backgroundStartNs == 0 ||
+        !SDL_GetCurrentTime(&nowNs)) {
+        s_backgroundStartNs = 0;
+        return;
+    }
+    Sint64 awayMs = (Sint64)((nowNs - s_backgroundStartNs) / SDL_NS_PER_MS);
+    s_backgroundStartNs = 0;
+    if (awayMs < IOS_BACKGROUND_KEEP_GAME_MS) {
+        WB_LOG_INFO(WB_LOG_CAT_PLATFORM,
+                    "[iOS] Back after %lld ms; keeping the network game",
+                    (long long)awayMs);
+        return;
+    }
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM,
+                "[iOS] Back after %lld ms; the server has dropped this client",
+                (long long)awayMs);
+    /* The same path as the lost-connection check in windowRunGameTick. */
+    clientSimConnectionLost(cs);
+    imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                      langGetText(NETERR_LOSTCONNECTION_RETURN_MENU),
+                      IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+    finishedLoop = TRUE;
+    winboloQuit = FALSE;
+}
+
+/* -------------------------------------------------------
  * windowRunGameTick — one half-step of the shared client tick, plus the
- * driver-side work around it (disconnect check, bot brains, AI, stats)
+ * driver-side work around it (disconnect check, AI, stats)
  * ------------------------------------------------------- */
 static void windowRunGameTick(ClientSim *cs) {
     static bool inBrain = FALSE;
@@ -504,25 +922,6 @@ static void windowRunGameTick(ClientSim *cs) {
         return;
     }
 
-    /* Tick bot brains for a local game.  This binary links no server_static,
-     * so nothing else drives them and the client tick owns them here.
-     * serverSimBotTick queues a keys packet and a game packet per bot, so it
-     * belongs once per full frame, on the half-step that is about to be the
-     * game half: a step that returned false was the keys half (or a lobby
-     * step, which does not advance the cadence), so the next one is the game
-     * half.  Skipped in lobby and countdown for the same reason the shared
-     * step skips them — the server runs no half-steps there, so queued bot
-     * input would only pile up. */
-    if (prevStepWasGameTick == FALSE) {
-        netStatus ns = clientSimGetNetStatus(cs);
-        if (ns != netLobby && ns != netLobbyCountdown) {
-            ServerSim *serverSim = gameFrontGetServerSim();
-            if (serverSim != NULL && serverSimGetNumBots(serverSim) > 0) {
-                serverSimBotTick(serverSim, clientSimGetAiType(cs));
-            }
-        }
-    }
-
     /* One keys/game/lobby half-step lives in the shared client-frontend tick
      * core (desktop and web call the same one); the brain run and the
      * per-second stat rollover below stay here in the driver.  The main loop
@@ -532,9 +931,6 @@ static void windowRunGameTick(ClientSim *cs) {
         t2++;
         ticks++;
         used = TRUE;
-        prevStepWasGameTick = TRUE;
-    } else {
-        prevStepWasGameTick = FALSE;
     }
     dwSysGame += (SDL_GetTicks() - ttick);
 
@@ -605,6 +1001,21 @@ BYTE windowGetZoomFactor(void) { return zoomFactor; }
 void windowZoomChange(BYTE amount, bool fromDragResize) {
     (void)fromDragResize;  /* iOS doesn't use resize detection */
     if (amount == zoomFactor) return;
+    /* The iPad's desktop layout reaches this from the menu bar's Window Size
+       items. docs/ARCHITECTURE.md ("Renderer / window lifetime") forbids
+       recreating the window and renderer for a zoom change: other modules'
+       textures were made on the renderer and would be left pointing at a
+       destroyed one. So the desktop layout reconfigures in place, as the
+       desktop does. The touch layout keeps its rebuild below. */
+    if (!uiModeIsTablet()) {
+        drawBusy = TRUE;
+        clientMutexWaitFor();
+        sdl3DrawReconfigureZoom(amount);
+        clientMutexRelease();
+        drawBusy = FALSE;
+        windowSetZoomFactor(amount);
+        return;
+    }
     drawBusy = TRUE;
     clientMutexWaitFor();
     sdl3ImguiCleanup();
@@ -625,12 +1036,13 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
     frameRate = newFrameRate;
 }
 
-void windowShowGunsight_toggle(void) {
-    showGunsight = !showGunsight;
-    if (humanSim) clientSimSetGunsight(humanSim, showGunsight);
-}
+/* windowShowGunsight_toggle, windowAutomaticScrolling_toggle,
+   windowShowPillLabels_toggle, windowShowBaseLabels_toggle, windowKeyPressed
+   and frontEndRedrawAll come from client_frontend_common.c, the one body
+   every platform calls; see "Platform variants" in docs/ARCHITECTURE.md. */
 
 void windowSoundEffects_toggle(void) { soundEffects = !soundEffects; }
+void windowPositionalSound_toggle(void) { positionalSound = !positionalSound; }
 void windowBackgroundSoundChange_toggle(void) { backgroundSound = !backgroundSound; }
 void windowSoundKeepalive(void) { useSoundKeepalive = !useSoundKeepalive; }
 void windowSetSoundVolume(int pct) {
@@ -644,14 +1056,8 @@ void windowSetMasterVolume(int pct) {
     if (pct > 100) pct = 100;
     windowMasterVolume = pct;
     soundSetMasterVolume(pct);
+    voiceSetMasterVolume((float)pct / 100.0f);
 }
-void windowAutomaticScrolling_toggle(ClientSim *cs) {
-    autoScrollingEnabled = !autoScrollingEnabled;
-    if (cs) clientSimSetAutoScroll(cs, autoScrollingEnabled);
-}
-
-void windowShowPillLabels_toggle(void) { showPillLabels = !showPillLabels; }
-void windowShowBaseLabels_toggle(void) { showBaseLabels = !showBaseLabels; }
 void windowLabelOwnTank_toggle(ClientSim *cs) {
     labelSelf = !labelSelf;
     if (cs) clientSimSetLabelOwnTank(cs, labelSelf);
@@ -667,12 +1073,9 @@ void windowSetTankLabelLen(ClientSim *cs, labelLen newLen) {
     if (cs) clientSimSetLabelTankLabel(cs, labelTank);
 }
 
-void windowMenuAllowNewPlayers_toggle(void) { allowNewPlayers = !allowNewPlayers; }
-void windowMenuNewswire_toggle(ClientSim *cs) { showNewswireMessages = !showNewswireMessages; (void)cs; }
-void windowMenuAssistant_toggle(ClientSim *cs) { showAssistantMessages = !showAssistantMessages; (void)cs; }
-void windowMenuAI_toggle(ClientSim *cs) { showAIMessages = !showAIMessages; (void)cs; }
-void windowMenuNetwork_toggle(ClientSim *cs) { showNetworkStatusMessages = !showNetworkStatusMessages; (void)cs; }
-void windowMenuNetworkDebug_toggle(ClientSim *cs) { showNetworkDebugMessages = !showNetworkDebugMessages; (void)cs; }
+/* windowMenuAllowNewPlayers_toggle and the five message toggles are in
+   client_frontend_common.c: they also tell the running game, which these
+   copies did not. */
 
 void windowNewGame(void) {
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] windowNewGame: leaving game");
@@ -681,15 +1084,18 @@ void windowNewGame(void) {
 }
 void windowQuit(void) {}
 
-void windowShowGameInfo(windowShowRequest req) { (void)req; }
-void windowShowSysInfo(windowShowRequest req) { (void)req; }
-void windowShowNetInfo(windowShowRequest req) { (void)req; }
+/* The Session Info panels, drawn in-window as the web's are. */
+void windowShowGameInfo(windowShowRequest req) { sdl3ImguiShowGameInfo(req == wsrOpen); }
+void windowShowSysInfo(windowShowRequest req) { sdl3ImguiShowSysInfo(req == wsrOpen); }
+void windowShowNetInfo(windowShowRequest req) { sdl3ImguiShowNetInfo(req == wsrOpen); }
 void windowShowSetPlayerName(windowShowRequest req) { (void)req; }
-void windowShowSendMessages(windowShowRequest req) { (void)req; }
-void windowShowSetKeys(windowShowRequest req) { (void)req; }
+void windowShowSendMessages(windowShowRequest req) { sdl3ImguiShowSendMsg(req == wsrOpen); }
+void windowShowSetKeys(windowShowRequest req) { if (req == wsrOpen) sdl3ImguiShowKeySetup(); }
 void windowShowAboutBox(void) {}
 
-bool windowShowAllianceRequest(void) { return FALSE; }
+/* Alliance requests from other players are shown, as on the desktop; FALSE
+   here had them answered "ignored" in every network game. */
+bool windowShowAllianceRequest(void) { return TRUE; }
 void windowDisableSound(void) { soundEffects = FALSE; useSoundKeepalive = FALSE; }
 bool windowGetBackgroundSound(void) { return backgroundSound; }
 
@@ -699,11 +1105,20 @@ void windowRedrawAll(ClientSim *cs) {
     clientMutexRelease();
 }
 
-void windowSaveMap(ClientSim *cs) { (void)cs; }
-
-void windowKeyPressed(ClientSim *cs, int keyCode) {
-    if (keyCode == keys.kiTankView) clientSimTankView(cs);
-    else if (keyCode == keys.kiPillView) clientSimPillView(cs, 0, 0);
+/* No save dialog on iOS: the map goes into Documents under a made-up name,
+   where the Files app and the map editor's Open both find it. */
+void windowSaveMap(ClientSim *cs) {
+    const char *docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+    if (!docs || !docs[0]) {
+        imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBERR_SAVEMAP),
+                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+        return;
+    }
+    char dir[FILENAME_MAX];
+    SDL_strlcpy(dir, docs, sizeof(dir));
+    size_t n = strlen(dir);
+    while (n > 1 && dir[n - 1] == '/') dir[--n] = '\0';
+    clientFrontSaveMapAutoNamed(cs, dir);
 }
 
 void windowButtonAdd(int keyCode) { (void)keyCode; }
@@ -711,36 +1126,82 @@ void windowButtonRemove(int keyCode) { (void)keyCode; }
 void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
     (void)xWin; (void)yWin; (void)xPos; (void)yPos;
 }
-void windowStartTutorial(void) {}
 void windowAllowPlayerNameChange(bool allow) { (void)allow; }
 
-/* Pause hooks driven from sdl3imgui.cpp. All three exist for desktop
-   situations iOS does not have: a Steam Deck pause menu, a lost controller,
-   and the tutorial overlay's solo freeze. The app already stops ticking when
-   it is backgrounded, which is the only pause a phone has. */
-void windowControllerLostPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
-void windowDeckPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
-void windowTutorialPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
+/* The touch layout's Full Screen choice, from Settings. An iOS window always
+   fills the screen, so there is no window to switch: the flag is the choice
+   alone, and with it on the in-window map fills the screen in place of the
+   game view's square (sdl3DrawIsTabletMapFullScreen). Bringing the map up
+   when it is chosen in a game is sdl3imgui.cpp's, after the frame. */
+void windowFullScreenChoose(bool on) {
+    gameFrontFullScreen = on;
+    gameFrontSaveCurrentPrefs();
+}
+
+/* Window geometry hooks sdl3ImguiProcessEvents calls in the iPad's desktop
+   layout. An iOS window always fills the screen: there is no position to
+   remember and no size to correct. */
+
+/* Gray or black bars beside the classic screen in the iPad's desktop
+   layout, from Settings; the web's body. */
+void windowLetterboxBarsGray_toggle(void) {
+    letterboxBarsGray = !letterboxBarsGray;
+    gameFrontSaveCurrentPrefs();
+}
+void windowSaveCurrentPosition(void) {}
+void windowComputeAspectCorrectSize(int actualW, int actualH, int actualX, int actualY,
+                                    int *outW, int *outH, int *outX, int *outY) {
+    *outW = actualW;
+    *outH = actualH;
+    *outX = actualX;
+    *outY = actualY;
+}
+
+/* The move to and from the background, as sdl3ImguiProcessEvents reports it
+   in the iPad's desktop layout; the touch layout's own event loop above does
+   the same on the events it reads. */
+void windowSuspendBackground(ClientSim *cs) {
+    if (paused) return;
+    /* The same as the touch layout's: the time away starts here, for the
+       network game check on the way back. */
+    iosEnterBackground(cs);
+}
+
+void windowResumeForeground(ClientSim *cs) {
+    iosResumeForeground(cs);
+}
+
+/* One solo freeze's open or close edge, through the shared body. Closing
+   drops the owed tick time, so a held key, a held touch or the press that
+   closed the overlay does not run on into the game. */
+static void iosSoloPause(ClientSim *cs, ClientFrontPause which, bool active) {
+    if (clientFrontSoloPause(cs, which, active)) {
+        gameTickAccum = 0.0;
+        lastFrameTime = SDL_GetTicks();
+    }
+}
+
+/* Pause hooks driven from sdl3imgui.cpp: the controller-disconnected dialog
+   and the pause overlay (Escape or a controller's Start), both drawn in the
+   iPad's desktop layout, and the tutorial message overlay, driven by its
+   open/close edge in the render path. Solo games only, as on the desktop. */
+void windowControllerLostPause(ClientSim *cs, bool active) {
+    iosSoloPause(cs, CLIENT_FRONT_PAUSE_CONTROLLER_LOST, active);
+}
+void windowDeckPause(ClientSim *cs, bool active) {
+    iosSoloPause(cs, CLIENT_FRONT_PAUSE_DECK, active);
+}
+void windowTutorialPause(ClientSim *cs, bool active) {
+    iosSoloPause(cs, CLIENT_FRONT_PAUSE_TUTORIAL, active);
+}
 
 /* -------------------------------------------------------
  * Frontend callbacks (matching Android android_frontend.c)
  * ------------------------------------------------------- */
 
-/* The ClientSim that owns the visible player-list UI. Bot, background-game
-   and spectator sims also fire frontEnd* callbacks; registering the human's
-   sim here lets the ones that care tell them apart. */
-static ClientSim *s_activeUiCs = NULL;
-
-void frontEndSetActiveClientSim(ClientSim *cs) {
-    if (cs != s_activeUiCs) {
-        /* Drop the previous game's latched build target: it is the square a
-           tap builds at, and it outlives the ClientSim that set it, so
-           without this the first tap of the next game is dispatched to a
-           tile chosen in the last one. */
-        buildCursorReset();
-    }
-    s_activeUiCs = cs;
-}
+/* frontEndSetActiveClientSim and the active-sim test the callbacks here make
+   (clientFrontIsActiveUiSim) come from client_frontend_common.c, the one body
+   the desktop, web and iOS drivers call. */
 
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
@@ -764,73 +1225,89 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
 }
 
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
-    (void)cs;
     BYTE fullShells, fullMines, fullArmour, fullTrees;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     clientSimGetTankFullStats(cs, &fullShells, &fullMines, &fullArmour, &fullTrees);
     sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees,
                            fullShells, fullMines, fullArmour, fullTrees);
 }
 
 void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) {
-    (void)cs;
     BYTE fullShells, fullMines, fullArmour;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     clientSimGetBaseFullStats(cs, &fullShells, &fullMines, &fullArmour);
     sdl3DrawStatusBaseBars(0, 0, shells, mines, armour,
                            fullShells, fullMines, fullArmour, FALSE);
 }
 
 void frontEndPlaySound(ClientSim *cs, sndEffects value) {
-    (void)cs;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     if (soundEffects) soundPlayEffect(value);
 }
 
 void frontEndPlaySoundPan(ClientSim *cs, sndEffects value,
                           uint16_t gainL, uint16_t gainR) {
-    (void)gainL; (void)gainR;
-    frontEndPlaySound(cs, value);
+    if (!clientFrontIsActiveUiSim(cs)) return;
+    if (soundEffects) {
+        /* The player has turned positional sound off, so every sound plays
+           centred; the near/far variant is already chosen. */
+        if (!positionalSound) {
+            gainL = SOUND_GAIN_UNITY;
+            gainR = SOUND_GAIN_UNITY;
+        }
+        soundPlayEffectPan(value, gainL, gainR);
+    }
 }
 
 void windowPlaySound(sndEffects value) {
     if (soundEffects) soundPlayEffect(value);
 }
 
+/* The three status callbacks also fire from the hosted server's tick on
+   the SDL timer thread, where a renderer call races the main thread's
+   present. The per-frame render pass repaints every icon from sim state,
+   so off the render thread the direct draw is skipped, as the desktop
+   driver does. */
 void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
-    (void)cs;
+    if (!clientFrontIsActiveUiSim(cs)) return;
+    if (!sdl3DrawOnRenderThread()) return;
     sdl3DrawStatusPillbox(pillNum, pb, showPillLabels);
     sdl3DrawCopyPillsStatus(0, 0);
 }
 
 void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
-    (void)cs;
+    if (!clientFrontIsActiveUiSim(cs)) return;
+    if (!sdl3DrawOnRenderThread()) return;
     sdl3DrawStatusTank(tankNum, ts);
     sdl3DrawCopyTanksStatus(0, 0);
 }
 
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
-    (void)cs;
+    if (!clientFrontIsActiveUiSim(cs)) return;
+    if (!sdl3DrawOnRenderThread()) return;
     sdl3DrawStatusBase(baseNum, bs, showBaseLabels);
     sdl3DrawCopyBasesStatus(0, 0);
 }
 
 void frontEndMessages(ClientSim *cs, char *top, char *bottom) {
-    (void)cs;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     if (drawBusy == FALSE) sdl3DrawMessages(0, 0, top, bottom);
 }
 
 void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {
-    (void)cs;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     if (drawBusy == FALSE) sdl3DrawKillsDeaths(0, 0, kills, deaths);
 }
 
 void frontEndManStatus(ClientSim *cs, bool isDead, TURNTYPE angle) {
-    (void)cs;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     clientMutexWaitFor();
     sdl3DrawSetManStatus(0, 0, isDead, angle);
     clientMutexRelease();
 }
 
 void frontEndManClear(ClientSim *cs) {
-    (void)cs;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     clientMutexWaitFor();
     sdl3DrawSetManClear();
     sdl3DrawCopyManStatus(0, 0);
@@ -853,19 +1330,31 @@ void frontEndAudioReturningToLobby(bool active) {
     soundSetReturningToLobby(active);
 }
 
-void frontEndGameOver(ClientSim *cs) {
+/* frontEndGameOver is in client_frontend_common.c; these are this driver's
+   parts of it. As on the desktop, every time-limit game over leaves the game:
+   a single-player round on iOS connects passively, as on the desktop, so the
+   web's test for a practice round that ends in its lobby does not apply. */
+bool windowGameOverEndsGame(ClientSim *cs) {
     (void)cs;
+    return TRUE;
+}
+
+void windowGameOverStopTicks(void) {
+}
+
+void windowGameOverLeave(void) {
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Game over (time limit expired)");
     finishedLoop = TRUE;
 }
 
 void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) {
-    (void)cs;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     sdl3ImguiClearPlayer((unsigned char)value);
 }
 
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) {
     char cc[3];
+    if (!clientFrontIsActiveUiSim(cs)) return;
     if (!clientSimIsRunning(cs)) {
         cc[0] = 'X'; cc[1] = 'X'; cc[2] = '\0';
         sdl3ImguiSetPlayer((unsigned char)value, str, cc);
@@ -879,30 +1368,39 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
 }
 
 void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping) {
+    if (!clientFrontIsActiveUiSim(cs)) return;
     if (!clientSimIsRunning(cs)) return;
     sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
 }
 
-/* Runs off the snapshot path, so it stays cheap. The badge cache is seeded by
-   frontEndSetPlayer above; refreshing it mid-game is desktop-only. */
+/* Runs off the snapshot path, so it stays cheap: the badge cache the player
+   list draws from is updated and nothing is drawn here. */
 void frontEndUpdatePlayerFlags(ClientSim *cs, playerNumbers value,
                                uint8_t clientType, uint8_t clientFlags) {
-    (void)cs; (void)value; (void)clientType; (void)clientFlags;
+    if (!clientFrontIsActiveUiSim(cs)) return;
+    sdl3ImguiUpdatePlayerFlags((unsigned char)value, clientType, clientFlags);
 }
 
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
-    (void)cs;
+    if (!clientFrontIsActiveUiSim(cs)) return;
     sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
 }
 
-void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
+/* The auto-slowdown and auto-hide-gunsight prefs, from gamefront.c, as on
+   the desktop. */
+void frontEndApplyLocalTankPrefs(struct ClientSim *cs) {
+    extern bool useAutoslow;
+    extern bool useAutohide;
+    if (cs == NULL) return;
+    clientSimSetTankAutoSlowdown(cs, useAutoslow);
+    clientSimSetTankAutoHideGunsight(cs, useAutohide);
+}
 
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled) { (void)enabled; }
 
-void frontEndRedrawAll(ClientSim *cs) { windowRedrawAll(cs); }
-
 void frontEndShowGunsight(ClientSim *cs, bool isShown) {
+    if (!clientFrontIsActiveUiSim(cs)) return;
     showGunsight = !isShown;
     clientSimSetGunsight(cs, showGunsight);
 }
@@ -911,12 +1409,9 @@ void frontEndShowAllianceRequest(char *playerName, BYTE playerNum) {
     sdl3ImguiShowAllianceRequest(playerName, playerNum);
 }
 
-bool frontEndTutorial(BYTE pos) {
-    (void)pos;
-    return FALSE;
-}
-
-void frontEndTutorialReset(void) { }
+/* frontEndTutorial and frontEndTutorialReset come from
+   client_frontend_common.c, the tutorial step sequencer every platform
+   calls. */
 
 /* -------------------------------------------------------
  * Misc required symbols
@@ -928,7 +1423,9 @@ int winboloCC(void) { return 0; }
 void *dialogAllianceCreate(void) { return NULL; }
 void dialogAllianceDestroy(void *dlg) { (void)dlg; }
 void dialogAllianceSetName(char *playerName, BYTE playerNum) {
-    (void)playerName; (void)playerNum;
+    if (playerName != NULL) {
+        sdl3ImguiShowAllianceRequest(playerName, playerNum);
+    }
 }
 
 bool winUtilWBSubDirExist(char *subDirName) {

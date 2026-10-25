@@ -628,6 +628,8 @@ STR_DLGWBN_COL_SIZE=Size
 STR_DLGWBN_COL_DATE=Date
 STR_DLGWBN_PLAYERS_LBL=Players: 
 STR_DLGWBN_NUMPLAYERS_FMT={number} player(s)
+STR_DLGWBN_PLAYERS_OTHERS_FMT=+ {number} others
+STR_DLGWBN_PLAYERS_OTHER_ONE=+ 1 other
 STR_DLGWBN_DURATION=Duration: {string1}
 STR_DLGWBN_RATING=Rating: {string1}/10 ({number})
 STR_DLGWBN_DOWNLOADS_FMT=Downloads: {number}
@@ -717,6 +719,14 @@ STR_DLGLOBBY_REEL_DOWNLOADING=Downloading replay... {number}%
 STR_DLGLOBBY_REEL_DISABLED=This server does not share replays
 STR_DLGLOBBY_REEL_NONE=No replay available for this round
 STR_DLGLOBBY_REEL_TOO_LARGE=The round was too long to send
+
+# Lobby "Last round" panel — the reel's "Spawn in log viewer" button.
+STR_DLGLOBBY_REEL_SPAWN_LV_TIP=Open this round in the Log Viewer, in a window of its own
+STR_DLGLOBBY_REEL_SPAWN_NO_LOG=There is no log of this round to open
+STR_DLGLOBBY_REEL_SPAWN_NO_VIEWER=Could not find the Log Viewer beside WinBolo
+STR_DLGLOBBY_REEL_SPAWN_SAVE_FAILED=Could not save a copy of the round's log for the Log Viewer
+STR_DLGLOBBY_REEL_SPAWN_START_FAILED=Could not start the Log Viewer
+STR_DLGLOBBY_REEL_SPAWN_STARTED=Log Viewer started
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Set Player Name
@@ -1122,7 +1132,7 @@ STR_MAPGEN_TYPE_NATURAL=Natural
 STR_MAPGEN_TYPE_MAZE=Maze
 STR_MAPGEN_TYPE_FRACTAL=Fractal
 STR_MAPGEN_SEED=Seed
-STR_MAPGEN_RANDOMIZE=Randomize
+STR_MAPGEN_RANDOMIZE=Randomize values
 STR_MAPGEN_SYMMETRY=Symmetry
 STR_MAPGEN_SYM_4CORNER=4-Corner Mirror
 STR_MAPGEN_SYM_MIRROR_H=Mirror Horizontal
@@ -1209,6 +1219,101 @@ STR_LV_WIN_EVENTS=Events
 STR_LV_WIN_GAMEINFO=Game Information
 STR_LV_WIN_ITEMINFO=Item Information
 STR_LV_RESET_WINDOWS=Reset Window Positions
+STR_LV_DOCK_ENABLED=Right sidebar
+STR_LV_RESET_WINDOWS_DOCK=Reset Window Positions into Dock
+STR_LV_EVT_FILTER_ALL=All events
+STR_LV_EVT_KIND_PILL_CAPTURED=Pillbox captured
+STR_LV_EVT_KIND_PILL_STOLEN=Pillbox stolen
+STR_LV_EVT_KIND_BASE_CAPTURED=Base captured
+STR_LV_EVT_KIND_BASE_STOLEN=Base stolen
+STR_LV_EVT_KIND_BUILDER_LOST=Builder lost
+STR_LV_EVT_KIND_TANK_KILLED=Tank killed
+STR_LV_EVT_KIND_PLAYER=Players and teams
+STR_LV_EVT_KIND_CHAT=Chat and pings
+STR_LV_EVT_KIND_GAME=Game and server
+STR_LV_EVT_KIND_HIGHLIGHT=Highlights
+STR_LV_EVT_NOW=Now
+STR_LV_WIN_HUD=HUD
+STR_LV_HUD_TIP_OWNER={string1} - owner: {string2}
+STR_LV_HUD_TIP_STATE={string1} - {string2}
+STR_LV_HUD_NAME_TEAM={string1} ({string2})
+STR_LV_HUD_DEAD=Dead
+STR_LV_HUD_VIEW_AS=View of {string1}
+STR_LV_HUD_ALL_TEAMS=All teams
+STR_LV_HUD_REL_OWN=own
+STR_LV_HUD_REL_ALLIED=allied
+STR_LV_HUD_REL_HOSTILE=hostile
+STR_LV_SAVE_NAME_VS=vs
+STR_LV_SAVE_NAME_MORE=+ {number} more
+STR_LV_SAVE_NAME_BOT={number} Bot
+STR_LV_SAVE_NAME_BOTS={number} Bots
+STR_LV_SAVE_NAME_LOG=log
+STR_LV_ERR_NO_GAME=Could not find the WinBolo game beside the Log Viewer
+STR_LV_ERR_SAVE_MAP=Error Saving Map File
+STR_LV_ERR_MAP_FOLDER=Could not make the folder for the map file
+STR_LV_ERR_START_GAME=Could not start the WinBolo game
+STR_LV_ERR_SAVE_LOG=Error Saving Log File
+STR_LV_SAVE_LOG_TITLE=Save Log File...
+STR_LV_ERR_LOG_GONE=The log's own file could not be read. It may have been moved or deleted since it was opened.
+STR_LV_HUD_TIP_REL={string1} [{string2}]
+STR_LV_MENU_OPEN_SP=Open map at this time in single player
+STR_LV_MENU_OPEN_SP_TIP=Starts a single-player game on the map as it is at this time. You take the selected player's side: that player's and the allies' pillboxes and bases become yours, and your tank starts where that player's tank is. With no player selected, nothing is yours.
+STR_LV_MENU_SAVE_LOG=Save log file to disk...
+STR_LV_DOCK_LEFT=Left sidebar
+STR_LV_DOCK_TOP=Top sidebar
+STR_LV_DOCK_BOTTOM=Bottom sidebar
+STR_LV_DOCK_EMPTY_HINT=Drag a panel here
+STR_LV_WIN_OVERVIEW=Overview
+STR_LV_OVERVIEW_TOTAL=Total
+STR_LV_OVERVIEW_MORE={string1} +{number}
+STR_LV_OVERVIEW_BAR_PILL=1 pillbox
+STR_LV_OVERVIEW_BAR_PILLS={number} pillboxes
+STR_LV_OVERVIEW_BAR_BASE=1 base
+STR_LV_OVERVIEW_BAR_BASES={number} bases
+STR_LV_WIN_TANK=Tank
+STR_LV_TANK_HINT=Click a tank on the map or in the HUD panel to select it. Double-click a tank on the map to see the game as its player sees it; double-click it again to go back to all teams
+STR_LV_TANK_STOCK_FMT={string1}: {number} / {number2}
+STR_LV_TANK_BUILDER_IN=Builder: in tank
+STR_LV_TANK_BUILDER_OUT=Builder: out
+STR_LV_TANK_BUILDER_DEAD=Builder: dead
+STR_LV_TANK_PILLS=Pillboxes carried: {number}
+STR_LV_TANK_NO_STOCK=This recording does not hold tank resources
+STR_LV_TANK_BARS=Tank Armour and Shells Bars
+STR_LV_TANK_BARS_TIP=Two small bars over each tank: armour on top, shells under it
+STR_LV_TIP_BACK_SECS=Back {string1} seconds
+STR_LV_TIP_FWD_SECS=Forward {string1} seconds
+STR_LV_TIP_KEY_FMT={string1} ({string2})
+STR_LV_TIP_LIVE=Jump to live
+
+# Log viewer: the X at the end of a panel's name line
+STR_LV_TIP_DESELECT=Deselect tank
+STR_LV_TIP_ALL_TEAMS=Back to all teams
+
+# Log viewer: the option of a sidebar, in the Windows menu
+STR_LV_DOCK_TRANSPARENT=Make unused sidebar portions transparent
+
+# Log viewer: the event markers over the seek bar of the Controls panel
+STR_LV_OVERLAY_EVENTS=Overlay events
+STR_LV_OVERLAY_TIP=Show a marker over the seek bar for each event of the ticked kinds
+STR_LV_OVERLAY_COUNT={string1} events
+STR_LV_OVERLAY_MORE=+{string1} more
+STR_LV_BUILDER_STATUS=Tank Builder Status
+STR_LV_BUILDER_STATUS_TIP=Over each tank on the map: an arrow toward its builder when he is out of the tank, and a parachute with the time until the new builder is in the tank when he is dead
+STR_LV_TANK_BUILDER_BACK=Builder: dead, back in {string1}
+
+# Log viewer: the filter of the Events panel, a list of ticked kinds
+STR_LV_EVT_FILTER_SOME={string1} of {string2} events
+STR_LV_EVT_FILTER_EMPTY=No events of the selected kinds
+STR_LV_EVT_FILTER_TIP=Show only the events of the ticked kinds
+
+# Log viewer: the zoom of the map as a percentage
+STR_LV_ZOOM_TIP=Map zoom. 100% is the game's own size. Change it with + and -, the mouse wheel, or Options > Zoom
+STR_LV_JUMP_ANIM=Animate Rewind and Fast Forward
+STR_LV_PILL_NUMBERS=Pillbox Numbers
+STR_LV_PILL_NUMBERS_TIP=The number of each pillbox beside it on the map, the number the game's own pillbox list gives it
+STR_LV_PILL_NUMBERS_LIST=Numbers: {string1}
+STR_LV_MSG_PILL_CAPTURED={player} captured Neutral Pillbox {number}
+STR_LV_MSG_PILL_STOLEN={player} just stole pillbox {number} from {other}
 
 # Log viewer dialogs
 STR_LV_ASSIGN_COLOURS_HINT=Assign colours to each player team:
@@ -1725,6 +1830,8 @@ STR_DLGSETTINGS_HOSTING_SERVERNAME=Server name
 STR_DLGSETTINGS_HOSTING_SERVERNAME_TIP=The game finder shows this name instead of your address. Up to 32 letters (fewer with accented letters or other scripts). Leave it empty to show your address.
 STR_DLGSETTINGS_HOSTING_SERVERDESC=Description
 STR_DLGSETTINGS_HOSTING_SERVERDESC_TIP=The game finder shows this when a player points at or selects your game. Up to 200 letters (fewer with accented letters or other scripts).
+STR_DLGSETTINGS_HOSTING_SPECDELAY=Spectator Delay (seconds)
+STR_DLGSETTINGS_HOSTING_SPECDELAY_TIP=How many seconds behind the game spectators watch, so they cannot tell players where everyone is. 0 shows the game live. Up to 600.
 
 # Log viewer Options menu
 STR_LV_HIDE_LOBBY=Hide Lobby
@@ -1834,6 +1941,9 @@ STR_LV_SPEC_CONNECTING=Connecting...
 STR_LV_SPEC_CONNECTION_LOST=Connection lost
 STR_LV_SPEC_BEGINS_NOW=Spectating begins now
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Spectating {string1}:{number}{string3}
+
+# The File menu of a live game watched from the game: its one item.
+STR_LV_MENU_LEAVE_SPECTATING=Leave spectating
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Volume
@@ -2639,7 +2749,6 @@ STR_RULE_DESC_tank_slide_mac=Whether a shell hit pushes a tank the Mac Bolo way.
 STR_RULE_DESC_pill_aim_mac=Whether pillboxes use Mac Bolo aiming. Moving, unobstructed tanks within about one square make the pill aim far along their heading. Stopped or blocked tanks receive no lead. Overrides pill_massage_range, pill_massage_cosine and pill_aim_iterations.
 STR_RULE_DESC_tank_collision_mac=Whether tanks use Mac Bolo's direction-dependent sprite boxes and pixel nudges against walls, live pills and hostile bases. Allows closer passes beside a pill for pill massage.
 STR_RULE_DESC_tank_deep_sea_safe=Whether a tank with no boat can drive over deep sea without drowning. Off is the classic game: deep sea drowns a tank with no boat. A tank that is out on deep sea with no boat when this goes back off drowns on the next tick.
-STR_RULE_DESC_man_bless_tile_terrain_speed=Whether the builder crosses the square he is going to build on at that square's terrain speed, as in Mac Bolo. Off is the WinBolo walk: he walks up to the centre of that square at the refuelling base speed, whatever its terrain. A square with no walking speed, such as a river, a wall or a pillbox, keeps the refuelling base speed. The walk back to the tank does not change.
 
 # Rule range wording
 STR_RULE_RANGE_BETWEEN={string1} to {string2}
@@ -2786,4 +2895,145 @@ STR_DLGSYSINFO_MEM_GRASS=Grass
 STR_SCNTEXT_TITLE=Scenario Text
 STR_SCN_BG_OPACITY_LBL=Background opacity
 STR_SCN_TEXT_OPACITY_LBL=Text opacity
+
+# Voice settings on a touch screen, where the talk button is the key
+STR_DLGSETTINGS_VOICE_PTT_TOUCH=Push to talk: hold the microphone button on the game screen
+
+# Map editor file picker on iOS, which has no system open or save dialog
+STR_MAPEDIT_IOS_YOURFILES=Your files
+STR_MAPEDIT_IOS_BUILTIN=Maps that come with WinBolo
+STR_MAPEDIT_IOS_NOFILES=Nothing here yet. Files you save, and files you put in WinBolo's folder in the Files app, show up here.
+STR_MAPEDIT_IOS_NAME=Name
+STR_MAPEDIT_IOS_REPLACES=A file with this name exists. Saving replaces it.
+
+# Recordings on the phone (iOS log viewer screen)
+STR_IOSREC_TITLE=Recordings
+STR_IOSREC_EMPTY=No recordings yet. Single-player rounds are recorded here, and .wbv files put in the WinBolo folder in the Files app are listed here too.
+STR_IOSREC_COPY=Copy to Files
+STR_IOSREC_COPIED=Copied to the WinBolo folder in the Files app.
+STR_IOSREC_OPEN_FAILED=This recording could not be opened.
+STR_IOSREC_LAST_ROUND=Last single-player round
+STR_IOSREC_COPY_FAILED=The recording could not be copied to the Files app.
+STR_DLGCONNECTING_TITLE=Connecting to {string1}...
+STR_DLGCONNECTING_PING=Asking the server about its game...
+STR_DLGCONNECTING_JOINING=Joining the game...
+
+# The log browser's Open File on iOS, when the picked file cannot be read
+STR_DLGWBN_OPENFILE_FAILED=Could not read that recording.
+
+# The recap's clip GIF on iOS, saved into the WinBolo folder in Files
+STR_CLIPGIF_SAVED_IOS={string1} is in the WinBolo folder in the Files app.
+STR_CLIPGIF_SAVE_FAILED_IOS={string1} could not be saved.
+
+# The iOS touch layout's Full Screen choice and its panel tooltips
+STR_DLGSETTINGS_FULLSCREEN_TOUCH_TIP=The map fills the screen and the controls are drawn over it.\nOff keeps the game view square, with the controls beside it.\nRemembered for next time.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TOUCH_TIP=How much of the map shows through the builder tools\nin full screen. 0% is solid, and the slider stops at\n90% so they cannot be made invisible.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TOUCH_TIP=How much of the map shows through the tank, pillbox and\nbase grids and the stock bars in full screen. 0% is solid,\nand the slider stops at 90% so they cannot be made invisible.
+
+# The iPad's Full Screen choice: the full screen map or the classic screen
+STR_DLGSETTINGS_FULLSCREEN_IPAD_TIP=The map fills the screen, with the status, build and newswire\npanels over it, and the touch controls when you play by touch.\nOff shows the classic screen. Remembered for next time.
+
+# Asked before an Internet game is hosted on mobile data (Yes / No)
+STR_GAMEFRONTERR_HOST_MOBILE_DATA=This device is on mobile data. An Internet game hosted on mobile\ndata will probably not work: mobile networks rarely let other\nplayers reach the device. Wi-Fi is much more likely to work.\n\nHost anyway?
+
+# The recap's GIF gallery, and the GIF length beside the replay's GIF button
+STR_CLIPGIF_GALLERY_TITLE=Your GIFs
+STR_CLIPGIF_GALLERY_EMPTY=No GIFs yet. Make one with the GIF button under the replay, or the GIF button on a clip.
+STR_CLIPGIF_COPY=Copy to clipboard
+STR_CLIPGIF_SAVE=Save to disk
+STR_CLIPGIF_COPIED=Copied.
+STR_CLIPGIF_COPY_FAILED=The GIF could not be copied.
+STR_CLIPGIF_OPEN_FAILED=This GIF could not be opened.
+STR_CLIPGIF_MAP_FMT=Map: {string1}
+STR_CLIPGIF_PLAYERS_FMT=Players: {string1}
+STR_CLIPGIF_NO_DETAILS=No details were saved with this GIF.
+STR_CLIPGIF_LENGTH_TIP=GIF length in seconds, from the playhead.\nDrag the marker at the end of the bright part of the timeline to change it too.
+STR_CLIPGIF_LOADING=Opening the GIF...
+STR_CLIPGIF_TOO_LARGE=This GIF is too large to show here. You can still copy it or save it.
+STR_CLIPGIF_FILTER_NAME=GIF Images
+STR_MAPGEN_TYPE_MAKER=Famous map maker style
+STR_MAPGEN_SIZE=Size
+STR_MAPGEN_SIZE_FULL=Full
+STR_MAPGEN_SIZE_TIP=Side of the playable square in tiles. Full uses the whole area.
+STR_MAPGEN_PRESET=Preset
+STR_MAPGEN_PRESET_TIP=Maps in the style of a classic Bolo map maker. A preset sets the controls below; you can change any of them after.
+STR_MAPGEN_OUTLINE=Outline
+STR_MAPGEN_OUTLINE_BOX=Box
+STR_MAPGEN_OUTLINE_OCTAGON=Octagon
+STR_MAPGEN_OUTLINE_ROUND=Round
+STR_MAPGEN_OUTLINE_DIAMOND=Diamond
+STR_MAPGEN_OUTLINE_CROSS=Cross
+STR_MAPGEN_OUTLINE_CLOVER=Clover
+STR_MAPGEN_OUTLINE_ISLAND=Island
+STR_MAPGEN_OUTLINE_VARIED=Varied
+STR_MAPGEN_MSYM_NONE=None
+STR_MAPGEN_MSYM_MIRROR=Mirror
+STR_MAPGEN_MSYM_ROT2=Half Turn
+STR_MAPGEN_MSYM_MIRROR4=Mirror Both Ways
+STR_MAPGEN_MSYM_ROT4=Quarter Turns
+STR_MAPGEN_WATER_PCT=Water %
+STR_MAPGEN_ROAD_PCT=Road %
+STR_MAPGEN_ISLANDS=Islands
+STR_MAPGEN_DETAIL=Detail
+STR_MAPGEN_PRESET_BERSERKIR=Berserkir
+STR_MAPGEN_PRESET_SLUGGO_TOURNAMENT=Sluggo Tournament
+STR_MAPGEN_PRESET_SLUGDEATH=Sluggo Slugdeath
+STR_MAPGEN_PRESET_SLUGFEST=Sluggo Slugfest
+STR_MAPGEN_PRESET_SLUGGO_ADVENTUROUS=Sluggo Adventurous
+STR_MAPGEN_PRESET_SLUGGO_SYMMETRIC=Sluggo Symmetric
+STR_MAPGEN_PRESET_STOOGEFEST=Sluggo Stoogefest
+STR_MAPGEN_PRESET_BLACK_LIGHTNING=Black Lightning
+STR_MAPGEN_PRESET_BL_ISLANDS=Black Lightning Islands
+STR_MAPGEN_PRESET_DEATHHAND=Deathhand
+STR_MAPGEN_PRESET_MEGAWATT_TC=Megawatt TC
+STR_MAPGEN_PRESET_MEGAWATT_ISLANDS=Megawatt Islands
+STR_MAPGEN_PRESET_MOSH_PIT=Nature Mosh Pit
+STR_MAPGEN_PRESET_PALPATINE=Palpatine
+STR_MAPGEN_PRESET_CHEW_TOY=Chew Toy
+STR_MAPGEN_LOCK_ALL=Lock all
+STR_MAPGEN_UNLOCK_ALL=Unlock all
+STR_MAPGEN_PANEL_TITLE=Map values
+STR_MAPGEN_STYLE_TITLE={string1} style
+STR_MAPGEN_STYLE_RANDOMIZE=Randomize style
+STR_MAPGEN_STYLE_NONE=The seed makes no other choices for this map maker.
+STR_MAPGEN_STYLE_FROM_SEED=From seed
+STR_MAPGEN_STYLE_ROADS=Road layout
+STR_MAPGEN_ROADS_AXES=Cross
+STR_MAPGEN_ROADS_DIAG=Diagonals
+STR_MAPGEN_ROADS_AXES_DIAG=Cross and diagonals
+STR_MAPGEN_ROADS_AXES_RING=Cross and ring
+STR_MAPGEN_ROADS_DIAG_RING=Diagonals and ring
+STR_MAPGEN_ROADS_RING=Ring
+STR_MAPGEN_STYLE_SHAPE=Shape
+STR_MAPGEN_STYLE_CUT=Corner cut
+STR_MAPGEN_STYLE_CORE=Pod centre
+STR_MAPGEN_STYLE_RIM=Coast
+STR_MAPGEN_RIM_FOREST=Forest rim
+STR_MAPGEN_RIM_GRASS=Grass to the coast
+STR_MAPGEN_STYLE_YARD=Maze yard
+STR_MAPGEN_YARD_NONE=None
+STR_MAPGEN_YARD_BUILDING=Building walls
+STR_MAPGEN_YARD_FOREST=Forest walls
+STR_MAPGEN_STYLE_ROADS_TIP=The lines of road across the land. From seed: the seed picks one of the layouts in this list.
+STR_MAPGEN_STYLE_SHAPE_TIP=The width of the land against its height, x 100. 100 is square; more is wider. From seed: the seed picks a value in this range.
+STR_MAPGEN_STYLE_CUT_TIP=How much of each corner the octagon cuts off. A larger value cuts a smaller corner. From seed: the seed picks a value in this range.
+STR_MAPGEN_STYLE_CORE_TIP=The terrain in the middle of each ring pod. From seed: the seed picks one.
+STR_MAPGEN_STYLE_RIM_TIP=A band of forest round the coast, or grass to the water. From seed: the seed picks one.
+STR_MAPGEN_STYLE_YARD_TIP=A yard of maze walls on one island, if a place for it is found. From seed: the seed picks one.
+STR_MAPGEN_STYLE_WALLS=Rim walls
+STR_MAPGEN_WALLS_NONE=No walls
+STR_MAPGEN_WALLS_BUILDING=Building wall on each axis
+STR_MAPGEN_STYLE_MIDDLE=Middle
+STR_MAPGEN_MIDDLE_OPEN=Open
+STR_MAPGEN_MIDDLE_PIECES=Diagonal pieces
+STR_MAPGEN_MIDDLE_CLUMP=Centre clump
+STR_MAPGEN_MIDDLE_BOTH=Diagonal pieces and centre clump
+STR_MAPGEN_STYLE_WALLS_TIP=A wall of buildings across the forest rim on each axis, which cuts the rim into four pieces. From seed: the seed picks one.
+STR_MAPGEN_STYLE_MIDDLE_TIP=Buildings near the middle of the floor: short pieces at 45 degrees, a clump at the centre, or both. From seed: the seed picks one.
+STR_ANDROIDREC_SHARE=Share
+STR_ANDROIDREC_EMPTY=No recordings yet. Single-player rounds are recorded here, and .wbv recordings opened from another app are listed here too.
+STR_CLIPGIF_SAVED_ANDROID={string1} has been saved. Choose an app to share it with next.
+
+# The map editor's file picker on Android, whose Maps folder is the app's own
+STR_MAPEDIT_ANDROID_NOFILES=Nothing here yet. Maps you save, here or from a game, show up here.
 

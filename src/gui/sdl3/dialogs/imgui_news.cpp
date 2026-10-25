@@ -330,6 +330,12 @@ static void renderConsentDialog(void) {
     ImVec2 vp = ImGui::GetMainViewport()->Size;
     ImGui::SetNextWindowPos(ImVec2(vp.x * 0.5f, vp.y * 0.5f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+    /* A phone's window is small enough for the auto-sized box to run off it,
+     * so it is held inside the window and its text wraps to that width. */
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f),
+                                        ImVec2(vp.x * 0.9f, vp.y * 0.9f));
+#endif
     if (ImGui::BeginPopupModal(title, nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize |
                                ImGuiWindowFlags_NoSavedSettings)) {
@@ -460,15 +466,29 @@ static void renderNewsModal(void) {
     refreshFailedImages();
 
     ImVec2 vp = ImGui::GetMainViewport()->Size;
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+    /* Nearly the whole window on a phone: a fifth of a landscape phone's
+     * height is more than the footer row takes. */
+    ImGui::SetNextWindowSize(ImVec2(vp.x * 0.95f, vp.y * 0.92f),
+                             ImGuiCond_Appearing);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), vp);
+#else
     ImGui::SetNextWindowSize(ImVec2(vp.x * 0.8f, vp.y * 0.8f),
                              ImGuiCond_Appearing);
+#endif
     ImGui::SetNextWindowPos(ImVec2(vp.x * 0.5f, vp.y * 0.5f),
                             ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 
     bool open = true;
-    if (!ImGui::BeginPopupModal(title, &open,
-                                ImGuiWindowFlags_NoCollapse |
-                                ImGuiWindowFlags_NoSavedSettings)) {
+    ImGuiWindowFlags popupFlags = ImGuiWindowFlags_NoCollapse |
+                                  ImGuiWindowFlags_NoSavedSettings;
+#if defined(__ANDROID__) || defined(__IPHONEOS__)
+    /* A finger dragged on the body scrolls the articles (imgui_touch.cpp);
+       without this the drag moved the popup instead, since ImGui takes a
+       drag on a window's background as a move. */
+    popupFlags |= ImGuiWindowFlags_NoMove;
+#endif
+    if (!ImGui::BeginPopupModal(title, &open, popupFlags)) {
         /* ImGui has already torn the popup down (e.g. the title-bar X
          * was clicked on a previous frame and BeginPopupModal flipped
          * `open` to false then auto-dismissed). Finalise our state so
@@ -515,7 +535,14 @@ static void renderNewsModal(void) {
         newsPrefSetAutoShow(s_dontAutoShow ? "dontShow" : "show");
     }
 
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+    /* The touch UI draws larger text than the fixed desktop width allows. */
+    const float closeBtnW = SDL_max(80.0f,
+        ImGui::CalcTextSize(langGetText(STR_CLOSE)).x +
+        ImGui::GetStyle().FramePadding.x * 2.0f);
+#else
     const float closeBtnW = 80.0f;
+#endif
     ImGui::SameLine();
     ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - closeBtnW);
     bool closeClicked = ImGui::Button(langGetText(STR_CLOSE), ImVec2(closeBtnW, 0));

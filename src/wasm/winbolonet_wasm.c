@@ -166,6 +166,13 @@ bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut
   return FALSE;
 }
 
+/* Reports the token as turned down, so callers clear it as they always
+ * have here. */
+bool winbolonetAuthValidateEx(const char *token, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg, bool *tokenRejectedOut) {
+  if (tokenRejectedOut) *tokenRejectedOut = TRUE;
+  return winbolonetAuthValidate(token, playerNameOut, rankOut, rankTotalOut, statsOut, errorMsg);
+}
+
 /* -------------------------------------------------------
  * winbolonet_core.h — country code (no tracker lookup here)
  * ------------------------------------------------------- */

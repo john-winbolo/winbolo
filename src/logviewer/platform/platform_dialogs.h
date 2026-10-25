@@ -32,6 +32,10 @@ void lv_platform_dialogs_shutdown(void);
  * Takes void* to avoid pulling SDL headers into every caller. */
 void lv_platform_dialogs_set_window(void *window);
 
+/* The text given to the two file dialogs is UTF-8, and the path they give
+ * back is UTF-8, on Windows too. Open that path with lvFopenUtf8
+ * (lv_utf8_path.h): on Windows plain fopen does not read UTF-8. */
+
 /* Show an open file dialog
  * title - Dialog title
  * filter_name - Filter name (e.g., "Log Files")

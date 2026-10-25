@@ -18,6 +18,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -54,6 +55,10 @@ static bool s_debounce;
 static unsigned s_intervalMs;
 static uint64_t s_lastChangeMs;
 static bool s_pendingChange;
+/* A debounced write that failed is not tried again before this time, so a
+ * file that cannot be written is not read and parsed on every frame. */
+static uint64_t s_retryAtMs;
+#define PREFS_RETRY_MS 2000u
 
 static bool prefsFileExists(const char *path) {
     FILE *fp = fopen(path, "rb");
@@ -62,11 +67,190 @@ static bool prefsFileExists(const char *path) {
     return true;
 }
 
+/* ---- Merge on save ------------------------------------------------------
+ * More than one program keeps this file: the game, the log viewer, the map
+ * editor. Each loads the whole document when it starts and, left alone,
+ * writes the whole document back, so two of them running at once wipe each
+ * other's changes with the copy they loaded.
+ *
+ * A program that turns merge-on-save on (prefsSetMergeOnSave) instead keeps
+ * a list of the keys it has changed since its last write. To write, it reads
+ * the file again, puts only those keys onto what it read, writes that, and
+ * takes the result as its own document, so what it reads afterwards is what
+ * the other programs last wrote. A set then only marks the document dirty;
+ * prefsFlush (or prefsShutdown) does the one write.
+ *
+ * A file that no longer parses is written from the document in memory, as
+ * without the merge. A file that is gone is first waited for, one flush
+ * long (see prefsWrite), and then written the same way. */
+typedef struct {
+    char *section;
+    char *key;
+} PrefsChangedKey;
+
+static bool s_merge;
+static bool s_mergeWhole;        /* the next write is the whole document */
+static bool s_mergeMissing;      /* the last write found no file and waited */
+static bool s_mergeAdopted;      /* the synced sections were replaced from the
+                                    server: the next write puts all of them
+                                    onto the file, and keeps the file's own
+                                    device-local sections */
+static PrefsChangedKey *s_changed;
+static size_t s_changedCount;
+static size_t s_changedCap;
+
+static void prefsChangedClear(void) {
+    for (size_t i = 0; i < s_changedCount; i++) {
+        free(s_changed[i].section);
+        free(s_changed[i].key);
+    }
+    s_changedCount = 0;
+}
+
+static char *prefsDupString(const char *text) {
+    size_t len = strlen(text) + 1;
+    char *copy = (char *)malloc(len);
+    if (copy) memcpy(copy, text, len);
+    return copy;
+}
+
+/* Note that this program changed [section]/key. When the list cannot grow
+ * the next write falls back to the whole document: nothing of this
+ * program's is lost, which matters more than the other programs' keys. */
+static void prefsChangedNote(const char *section, const char *key) {
+    if (!s_merge || !section || !key) return;
+    for (size_t i = 0; i < s_changedCount; i++) {
+        if (strcmp(s_changed[i].section, section) == 0 &&
+            strcmp(s_changed[i].key, key) == 0) {
+            return;
+        }
+    }
+    if (s_changedCount == s_changedCap) {
+        size_t cap = s_changedCap ? s_changedCap * 2 : 32;
+        PrefsChangedKey *grown =
+            (PrefsChangedKey *)realloc(s_changed, cap * sizeof(*grown));
+        if (!grown) { s_mergeWhole = true; return; }
+        s_changed = grown;
+        s_changedCap = cap;
+    }
+    char *sec = prefsDupString(section);
+    char *k = prefsDupString(key);
+    if (!sec || !k) {
+        free(sec);
+        free(k);
+        s_mergeWhole = true;
+        return;
+    }
+    s_changed[s_changedCount].section = sec;
+    s_changed[s_changedCount].key = k;
+    s_changedCount++;
+}
+
+/* Every write of the document goes through here. 1 ok / 0 fail. */
+static int prefsWrite(void) {
+    if (!g_doc) return 0;
+    if (s_merge && !s_mergeWhole) {
+        /* One open of the file says both whether it is there and what it
+         * holds. A check first and a read after would leave a moment
+         * between them in which the other program's remove() and rename()
+         * can take the file away. */
+        int existed = 0;
+        PrefsDoc *disk = prefsDocLoadFile(g_path, &existed);
+        if (!existed && !s_mergeMissing) {
+            /* No file. The other program may be between taking the old
+             * file away and putting its new one in place, which is a
+             * moment only. Writing the whole document now would put this
+             * program's old copy of the other program's keys over that new
+             * file. So this write is not done: the document stays dirty
+             * and the next flush tries again. A file still gone then is
+             * really gone, and is written whole below. */
+            s_mergeMissing = true;
+            return 0;
+        }
+        if (existed) {
+            s_mergeMissing = false;
+            bool grafted = (disk != NULL);
+            if (grafted && s_mergeAdopted) {
+                /* A server document was adopted: every synced section is
+                 * new, which the list of changed keys cannot say. Those
+                 * sections go onto the file whole. The device-local ones
+                 * (the viewer's layout, the window, the sign-in) stay as
+                 * the file has them, so another program's changes there
+                 * are kept. This program's own changes to them are in the
+                 * list and are put on below. */
+                char *synced = prefsDocSerializeExcluding(
+                    g_doc, kDeviceLocalSections, PREFS_DEVICE_LOCAL_COUNT);
+                grafted = synced != NULL &&
+                          prefsDocAdoptUploadEligible(
+                              disk, synced, kDeviceLocalSections,
+                              PREFS_DEVICE_LOCAL_COUNT) == PREFS_ADOPT_OK;
+                free(synced);
+            }
+            for (size_t i = 0; grafted && i < s_changedCount; i++) {
+                if (!prefsDocCopyKey(disk, g_doc, s_changed[i].section,
+                                     s_changed[i].key)) {
+                    grafted = false;
+                }
+            }
+            if (grafted && !prefsDocIsDirty(disk)) {
+                /* The file already holds every value this program set (a
+                 * save that sets all its keys again, with nothing moved): no
+                 * write. What was read is still taken, so later reads here
+                 * see the other programs' changes. */
+                prefsDocFree(g_doc);
+                g_doc = disk;
+                prefsChangedClear();
+                s_mergeAdopted = false;
+                return 1;
+            }
+            if (grafted) {
+                if (!prefsDocSave(disk, g_path)) {
+                    /* Not written: keep the document and the list as they
+                     * are, so the next flush tries again. */
+                    prefsDocFree(disk);
+                    return 0;
+                }
+                prefsDocFree(g_doc);
+                g_doc = disk;
+                prefsChangedClear();
+                s_mergeAdopted = false;
+                return 1;
+            }
+            /* The file does not parse, or a key could not be copied: write
+             * the document in memory, as without the merge. */
+            prefsDocFree(disk);
+        }
+    }
+    if (!prefsDocSave(g_doc, g_path)) return 0;
+    prefsChangedClear();
+    s_mergeWhole = false;
+    s_mergeMissing = false;
+    s_mergeAdopted = false;
+    return 1;
+}
+
+void prefsSetMergeOnSave(bool on) {
+    s_merge = on;
+    s_mergeWhole = false;
+    s_mergeMissing = false;
+    s_mergeAdopted = false;
+    prefsChangedClear();
+}
+
+bool prefsMergeOnSave(void) {
+    return s_merge;
+}
+
 void prefsInit(const char *jsonPath) {
     /* Re-init: drop any previous document first. */
     prefsDocFree(g_doc);
     g_doc = NULL;
     g_path[0] = '\0';
+    prefsChangedClear();
+    s_retryAtMs = 0;
+    s_mergeWhole = false;
+    s_mergeAdopted = false;
+    s_mergeMissing = false;
 
     if (!jsonPath) {
         return;
@@ -101,10 +285,24 @@ void prefsInit(const char *jsonPath) {
 void prefsShutdown(void) {
     /* Flush a pending debounced change so a clean exit never loses it. */
     if (g_doc && prefsDocIsDirty(g_doc)) {
-        prefsDocSave(g_doc, g_path);
+        /* There is no later flush after this one. A merge write that found
+         * no file and waited is tried once more, at once: the file is back
+         * by then if another program was only replacing it, and if it is
+         * still gone the whole document is written, so nothing of this
+         * program's is lost at exit. */
+        if (!prefsWrite() && s_mergeMissing) {
+            prefsWrite();
+        }
     }
     prefsDocFree(g_doc);
     g_doc = NULL;
+    prefsChangedClear();
+    free(s_changed);
+    s_changed = NULL;
+    s_changedCap = 0;
+    s_mergeWhole = false;
+    s_mergeAdopted = false;
+    s_mergeMissing = false;
 }
 
 unsigned long prefsGetString(const char *section, const char *key,
@@ -136,29 +334,42 @@ int prefsSetString(const char *section, const char *key,
      * already holds must not dirty the document or flag a cloud re-upload.
      * This lets callers flush a whole batch of settings (e.g. closing the
      * Settings dialog) without uploading when nothing actually changed. */
-    if (prefsDocStringEquals(g_doc, section, key, value)) return 1;
+    bool same = prefsDocStringEquals(g_doc, section, key, value);
+    /* Merge-on-save is the exception. The document in memory is this
+     * program's copy, and another program may have changed the key in the
+     * file since. A set of the value the copy already holds is then still
+     * this program saying what the key must be: it is set and noted, so
+     * the next write puts it onto the file. That write costs nothing when
+     * the file holds the value already (prefsWrite). */
+    if (same && !s_merge) return 1;
     if (!prefsDocSetString(g_doc, section, key, value)) return 0;
+    prefsChangedNote(section, key);
 
     /* A change to an upload-eligible section flags the document for cloud
      * re-upload. Changes to device-local sections (auth, device identity
      * and sync bookkeeping) never sync, so they must not set sync-dirty.
      * Write the flag straight to the document so this set is not itself
-     * treated as an upload-eligible change. */
-    if (!prefsSectionIsDeviceLocal(section) && !prefsSyncDirty()) {
+     * treated as an upload-eligible change. A set of the value already held
+     * (merge-on-save only) is no change and flags nothing. */
+    if (!same && !prefsSectionIsDeviceLocal(section) && !prefsSyncDirty()) {
         prefsDocSetString(g_doc, kSecDevice, kKeySyncDirty, "Yes");
+        prefsChangedNote(kSecDevice, kKeySyncDirty);
     }
 
     if (s_debounce) {
         s_pendingChange = true;
         return 1;
     }
-    return prefsDocSave(g_doc, g_path);
+    /* Merge-on-save: the caller's prefsFlush does one write for all the
+     * keys it set, not a read and a write of the file for each. */
+    if (s_merge) return 1;
+    return prefsWrite();
 }
 
 int prefsFlush(void) {
     if (!g_doc) return 1;
     if (!prefsDocIsDirty(g_doc)) return 1;
-    return prefsDocSave(g_doc, g_path);
+    return prefsWrite();
 }
 
 bool prefsIsDirty(void) {
@@ -168,6 +379,7 @@ bool prefsIsDirty(void) {
 void prefsSetAutosaveDebounce(unsigned intervalMs) {
     s_debounce = true;
     s_intervalMs = intervalMs;
+    s_retryAtMs = 0;
 }
 
 bool prefsPumpAutosave(uint64_t nowMs) {
@@ -178,8 +390,12 @@ bool prefsPumpAutosave(uint64_t nowMs) {
         s_lastChangeMs = nowMs;
         s_pendingChange = false;
     }
-    if (nowMs - s_lastChangeMs >= s_intervalMs) {
-        prefsDocSave(g_doc, g_path);
+    if (nowMs - s_lastChangeMs >= s_intervalMs && nowMs >= s_retryAtMs) {
+        if (prefsWrite()) {
+            s_retryAtMs = 0;
+        } else {
+            s_retryAtMs = nowMs + PREFS_RETRY_MS;
+        }
         return true;
     }
     return false;
@@ -204,7 +420,8 @@ bool prefsSyncDirty(void) {
 void prefsClearSyncDirty(void) {
     if (!g_doc) return;
     prefsDocSetString(g_doc, kSecDevice, kKeySyncDirty, "No");
-    prefsDocSave(g_doc, g_path);
+    prefsChangedNote(kSecDevice, kKeySyncDirty);
+    prefsWrite();
 }
 
 int prefsAdoptServerDocument(const char *serverPrefsJson) {
@@ -213,6 +430,10 @@ int prefsAdoptServerDocument(const char *serverPrefsJson) {
                                          kDeviceLocalSections,
                                          PREFS_DEVICE_LOCAL_COUNT);
     if (rc == PREFS_ADOPT_OK) {
+        /* Whole sections were replaced, which a list of changed keys
+         * cannot say: the next write puts every synced section onto the
+         * file (prefsWrite), and leaves the file's device-local ones. */
+        if (s_merge) s_mergeAdopted = true;
         /* Adopting the server doc means the local copy now matches it:
          * drop sync-dirty and persist (the save flushes the grafted
          * sections too). The caller records the server token separately
@@ -239,5 +460,6 @@ void prefsSetLastSyncedUpdatedAt(const char *token) {
     if (!g_doc) return;
     prefsDocSetString(g_doc, kSecDevice, kKeyLastSyncedUpdatedAt,
                       token ? token : "");
-    prefsDocSave(g_doc, g_path);
+    prefsChangedNote(kSecDevice, kKeyLastSyncedUpdatedAt);
+    prefsWrite();
 }

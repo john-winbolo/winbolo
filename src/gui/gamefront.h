@@ -1181,6 +1181,10 @@ extern char           gameFrontHostingScriptUploadDir[FILENAME_MAX];
 extern int            gameFrontHostingScriptUploadMaxFiles;   /* 1-255, default 32 */
 extern int            gameFrontHostingScriptUploadMaxStorage; /* MB, 1-4095, default 64 */
 extern int            gameFrontHostingMaxSpec;         /* 1-32,  default 16 */
+extern int            gameFrontHostingSpecDelay;       /* seconds, 0-600, default 30 */
+                              /* How far behind the game spectators watch;
+                               * 0 = live. Reaches the server as
+                               * ServerInstanceConfig.specDelaySeconds. */
 extern int            gameFrontHostingUploadPolicy;    /* default ALLOW (0) */
 extern int            gameFrontHostingUploadMaxFiles;  /* 1-255, default 64 */
 extern int            gameFrontHostingUploadMaxStorage;/* MB, 1-4095, default 8 */
@@ -1222,6 +1226,7 @@ void gameFrontSetHostingPort(unsigned short port);
 void gameFrontSetHostingAllowSpec(bool allow);
 void gameFrontSetHostingScripts(bool allow);
 void gameFrontSetHostingMaxSpec(int maxSpec);
+void gameFrontSetHostingSpecDelay(int seconds);
 void gameFrontSetHostingUploadPolicy(int policy);
 void gameFrontSetHostingUploadMaxFiles(int maxFiles);
 void gameFrontSetHostingUploadMaxStorage(int maxStorageMb);
@@ -1323,5 +1328,26 @@ void gameFrontRememberVisibility(const VisibilitySettings *v, bool saveCustom);
 void gameFrontRememberGameType(gameType gt);
 void gameFrontRememberAiPolicy(aiType ai);
 void gameFrontRememberHiddenMines(bool hm);
+
+/* The kind of network this device's traffic goes out on. Hosting an
+ * Internet game on mobile data (GAMEFRONT_NET_PATH_CELLULAR) asks the host
+ * first, since other players can rarely reach a device there; the server
+ * starts only if the host says yes. A platform that can tell installs a
+ * query once at startup with gameFrontSetNetPathQuery (iOS reads
+ * NWPathMonitor; Android can read ConnectivityManager). With no query
+ * installed, as on the desktop, the answer is GAMEFRONT_NET_PATH_UNKNOWN,
+ * which asks nothing. The query is called on the main thread and must
+ * return at once, so a platform answers from a value it keeps up to date. */
+typedef enum {
+  GAMEFRONT_NET_PATH_UNKNOWN = 0,
+  GAMEFRONT_NET_PATH_WIFI,
+  GAMEFRONT_NET_PATH_WIRED,
+  GAMEFRONT_NET_PATH_CELLULAR
+} GameFrontNetPath;
+
+typedef GameFrontNetPath (*GameFrontNetPathQuery)(void);
+
+void gameFrontSetNetPathQuery(GameFrontNetPathQuery query);
+GameFrontNetPath gameFrontNetPath(void);
 
 #endif

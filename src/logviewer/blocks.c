@@ -25,6 +25,7 @@
 #include "scripts_record.h"   /* SCRIPTS_RECORD_MEMBER, SCN_RECORD_TEXT_MAX */
 #include "unzip.h"
 #include "ioapi.h"
+#include "lv_utf8_path.h"
 
 /* Initial decompression buffer capacity (256 KB) */
 #define LOG_INITIAL_CAPACITY (256 * 1024)
@@ -49,6 +50,9 @@
 static size_t logMaxSize = LOG_MAX_SIZE;
 
 static uint8_t *ownedZipData = NULL;  /* Zip buffer owned by us (from memory load) */
+static size_t   ownedZipLen  = 0;     /* Its length */
+/* The file the open log was read from; empty when it did not come from one. */
+static char     sourcePath[FILENAME_MAX] = "";
 
 static uint8_t *logData     = NULL;  /* Decompressed log data */
 static size_t   logSize     = 0;     /* Bytes decompressed so far */
@@ -202,6 +206,17 @@ const char *lv_blocksGetScriptsJson(size_t *len) {
   return scriptsJson;
 }
 
+/* The open of a log's file for minizip: its own open (ioapi.c), with
+ * lvFopenUtf8 in the place of fopen. The log is only read. */
+static voidpf ZCALLBACK lv_blocksOpenUtf8(voidpf opaque, const void *filename, int mode) {
+  (void)opaque;
+  if (filename == NULL ||
+      (mode & ZLIB_FILEFUNC_MODE_READWRITEFILTER) != ZLIB_FILEFUNC_MODE_READ) {
+    return NULL;
+  }
+  return lvFopenUtf8((const char *)filename, "rb");
+}
+
 /* Note log.dat's uncompressed size, for the load's progress. */
 static void lv_blocksNoteExpectedSize(void) {
   unz_file_info info;
@@ -213,6 +228,7 @@ static void lv_blocksNoteExpectedSize(void) {
 
 /* Size parameter is ignored -- we buffer the whole file. */
 bool lv_blocksCreate(char *fileName, int size) {
+  zlib_filefunc64_def pathFuncs;
   (void)size;
   logMaxSize  = LOG_MAX_SIZE;   /* the user chose this file */
   blockKey    = 0;
@@ -224,9 +240,15 @@ bool lv_blocksCreate(char *fileName, int size) {
   logFile     = NULL;
   free(ownedZipData);
   ownedZipData = NULL;
+  ownedZipLen  = 0;
+  sourcePath[0] = 0;
   lv_blocksDropScriptsJson();
 
-  logFile = unzOpen(fileName);
+  /* As unzOpen, but for the open of the file itself: the path is UTF-8 when
+   * it comes from the Open File dialog, on Windows too. */
+  fill_fopen64_filefunc(&pathFuncs);
+  pathFuncs.zopen64_file = lv_blocksOpenUtf8;
+  logFile = unzOpen2_64(fileName, &pathFuncs);
   if (logFile == NULL) return FALSE;
 
   if (unzLocateFile(logFile, "log.dat", 0) != UNZ_OK) {
@@ -255,7 +277,26 @@ bool lv_blocksCreate(char *fileName, int size) {
   }
   lv_blocksNoteExpectedSize();
 
+  snprintf(sourcePath, sizeof(sourcePath), "%s", fileName);
   return TRUE;
+}
+
+/* Where the open log's whole file is: its path on disk, or the zip bytes a
+ * memory load handed over. A live stream has neither. */
+int lv_blocksGetSource(const char **path, const uint8_t **data, size_t *len) {
+  if (path != NULL) *path = NULL;
+  if (data != NULL) *data = NULL;
+  if (len != NULL)  *len  = 0;
+  if (sourcePath[0] != 0) {
+    if (path != NULL) *path = sourcePath;
+    return LV_LOG_SOURCE_FILE;
+  }
+  if (ownedZipData != NULL && ownedZipLen > 0) {
+    if (data != NULL) *data = ownedZipData;
+    if (len != NULL)  *len  = ownedZipLen;
+    return LV_LOG_SOURCE_MEMORY;
+  }
+  return LV_LOG_SOURCE_NONE;
 }
 
 /* ---- In-memory zip I/O callbacks for minizip ---- */
@@ -338,6 +379,8 @@ bool lv_blocksCreateFromMemory(uint8_t *zipData, size_t zipLen) {
 
   /* Take ownership of the buffer */
   ownedZipData = zipData;
+  ownedZipLen  = zipLen;
+  sourcePath[0] = 0;
 
   /* Set up memory I/O for minizip */
   s_memReader.data = zipData;
@@ -408,6 +451,8 @@ void lv_blocksBeginStream(void) {
   logData     = NULL;
   free(ownedZipData);
   ownedZipData = NULL;
+  ownedZipLen  = 0;
+  sourcePath[0] = 0;
   logSize     = 0;
   logCapacity = 0;
   logPosition = 0;
@@ -453,6 +498,8 @@ void lv_blocksDestroy() {
   logExpected = 0;
   free(ownedZipData);
   ownedZipData = NULL;
+  ownedZipLen  = 0;
+  sourcePath[0] = 0;
   lv_blocksDropScriptsJson();
 }
 
