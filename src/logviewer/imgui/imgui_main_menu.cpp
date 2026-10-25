@@ -684,18 +684,22 @@ int lv_imgui_main_menu_bar(void) {
                  * it is that player's. A click turns it on for the selected
                  * player, or off when it is on for that player or no tank is
                  * selected. Only a recording with lag records has it, and
-                 * the item is there only while the lag display is on. */
+                 * the item is there only while the lag display is on. As
+                 * with the Tank panel's check box, it can be turned on only
+                 * when the selected player has a record at the playhead; a
+                 * view that is on can always be turned off. */
                 int sel, viewSlot;
-                bool recorded;
+                bool recorded, hasRecord;
                 lv_clientMutexWaitFor();
                 sel = lv_screenSelectedTank();
                 viewSlot = lv_screenLagViewSlot();
                 recorded = lv_screenLagRecorded();
+                hasRecord = (sel >= 0) && lv_screenPlayerLagNow(sel, NULL, NULL);
                 lv_clientMutexRelease();
                 const bool on = (viewSlot >= 0 && viewSlot == sel);
                 if (ImGui::MenuItem(langGetText(STR_LV_LAG_MENU), NULL, on,
                                     s_lv->isLoaded != 0 && recorded &&
-                                        (sel >= 0 || viewSlot >= 0))) {
+                                        (hasRecord || viewSlot >= 0))) {
                     lv_clientMutexWaitFor();
                     lv_screenLagViewSet(on ? -1 : sel);
                     lv_clientMutexRelease();

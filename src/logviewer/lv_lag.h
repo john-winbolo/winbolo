@@ -63,7 +63,9 @@
    game's Log Viewer and spectator view, which read the game's WinBolo.json,
    the browser build, and the in-game reel. The reel has no Tank panel, HUD
    panel or View menu, so the view cannot be turned on there; with the
-   setting on, the reel's playback only keeps the history frames. */
+   setting on, the reel's playback keeps the history frames, and when the
+   recording has lag records each seek of the reel starts its decode 640 ms
+   early. */
 #define LV_LAG_PREF_KEY     "Player Lag View"
 #define LV_LAG_PREF_DEFAULT "No"
 

@@ -219,10 +219,15 @@ static float tank_lag_graph_h(void) {
     return ceilf(ImGui::GetTextLineHeight() * 2.0f);
 }
 
-static float tank_lag_h(void) {
+/* withGraph is FALSE for a bot, which has no round trip to plot. */
+static float tank_lag_h(bool withGraph) {
     const ImGuiStyle &style = ImGui::GetStyle();
-    return style.ItemSpacing.y + ImGui::GetTextLineHeight() + style.ItemSpacing.y +
-           tank_lag_graph_h() + style.ItemSpacing.y + ImGui::GetFrameHeight();
+    float h = style.ItemSpacing.y + ImGui::GetTextLineHeight() + style.ItemSpacing.y +
+              ImGui::GetFrameHeight();
+    if (withGraph) {
+        h += tank_lag_graph_h() + style.ItemSpacing.y;
+    }
+    return h;
 }
 
 float lv_imgui_tank_dock_height(float dockWidth) {
@@ -233,7 +238,8 @@ float lv_imgui_tank_dock_height(float dockWidth) {
         h += style.ItemSpacing.y + tank_text_h();
     }
     if (lv_screenLagShown()) {
-        h += tank_lag_h();
+        /* The dock is sized for the largest section, the one with a graph. */
+        h += tank_lag_h(true);
     }
     /* One more: the heights are whole pixels and the text's may not be. */
     return ceilf(h) + 1.0f + style.WindowPadding.y * 2.0f + ImGui::GetFrameHeight();
@@ -841,7 +847,8 @@ static void tank_lag(const LvTankStatus &st, const LvPlayerLag &lag, int viewSlo
                                             ImVec2(floorf(x) + 0.5f,
                                                    g0.y + graphH - style.FramePadding.y),
                                             IM_COL32(255, 255, 255, 200));
-    } else {
+    } else if (!(lag.has && lag.bot)) {
+        /* No record yet: keep the graph's room so the panel does not move. */
         ImGui::Dummy(ImVec2(w > 0.0f ? w : 1.0f, graphH));
     }
 
@@ -983,7 +990,7 @@ void lv_imgui_tank_window(void) {
             /* The lag section keeps its room under the rest. */
             ImVec2 avail = ImGui::GetContentRegionAvail();
             if (lag.recorded) {
-                avail.y -= tank_lag_h();
+                avail.y -= tank_lag_h(!(lag.has && lag.bot));
             }
             const LvTankRoom room = tank_room(st, avail);
             const LvTankLayout lay = lvTankLayoutPick(&room);

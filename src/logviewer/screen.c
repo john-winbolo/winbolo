@@ -117,7 +117,8 @@ static int        s_lagViewSlot = -1;     /* the chosen player, -1 for off */
    player later sits in is not taken for the one that was picked. */
 static char       s_lagViewName[PLAYER_NAME_LEN];
 /* The "Player Lag View" preference (LV_LAG_PREF_KEY in lv_lag.h). Off until
-   the menu's preferences turn it on; a load does not change it. While it is
+   each host's setup (lvHostSetupCore) reads it from the preferences file, or
+   the menu's preferences change it; a load does not change it. While it is
    off the records are still read, but the panels show none of them, the
    view stays off, playback notes no history frames and a seek starts its
    decode where it always did. */
