@@ -7913,6 +7913,60 @@ static bool turnTapsAccepted(ClientSim *cs) {
     return ns != netLobby && ns != netLobbyCountdown;
 }
 
+/* The key the last in-game Key Setup capture took, while it is still down. */
+static SDL_Scancode s_keySetupHeldKey = SDL_SCANCODE_UNKNOWN;
+
+/* Key Setup's in-game key capture. Returns true when the event belongs to
+   the dialog and nothing else, ImGui included, is to see it.
+
+   It has to come ahead of ImGui. Behind it, ImGui saw the press as well,
+   and Space and Enter are ImGui's keys for pressing the item with keyboard
+   focus -- the row's Change button the player has just used -- so binding
+   either one re-armed the row at once, and every press after that bound it
+   and re-armed it again. The main menu's Key Setup runs its own loop and
+   already captured first, which is why only the in-game one looped.
+
+   The capture ends on the press, so the same key's auto-repeats and its
+   release are dropped too until it comes up: ImGui never saw it go down,
+   and the first repeat would reach it as a fresh press and re-arm the row
+   after the repeat delay. A non-repeat press of that key means its release
+   went by unseen, so it ends the hold and is treated as a new key.
+
+   Only a fresh press is taken as the binding. A repeat that arrives while a
+   row is armed is the key that armed it -- Space or Enter held on a Change
+   button reached through keyboard navigation -- and ImGui saw that key go
+   down, so its release has to reach ImGui: taking the repeat would hold the
+   release back and leave the key down in ImGui, and the next press would not
+   count as one. The repeat is dropped instead, so it does not move the nav
+   cursor either. */
+static bool keySetupTakesKeyEvent(const SDL_Event *ev) {
+    if (ev->type != SDL_EVENT_KEY_DOWN && ev->type != SDL_EVENT_KEY_UP) {
+        return false;
+    }
+    if (s_keySetupHeldKey != SDL_SCANCODE_UNKNOWN &&
+        ev->key.scancode == s_keySetupHeldKey) {
+        if (ev->type == SDL_EVENT_KEY_UP) {
+            s_keySetupHeldKey = SDL_SCANCODE_UNKNOWN;
+            return true;
+        }
+        if (ev->key.repeat) {
+            return true;
+        }
+        s_keySetupHeldKey = SDL_SCANCODE_UNKNOWN;
+    }
+    if (ev->type == SDL_EVENT_KEY_DOWN &&
+        imguiKeySetupIsCapturingInGameKey() &&
+        ev->key.windowID == SDL_GetWindowID(s_window)) {
+        if (ev->key.repeat) {
+            return true;
+        }
+        imguiKeySetupHandleInGameScancode((int)ev->key.scancode);
+        s_keySetupHeldKey = ev->key.scancode;
+        return true;
+    }
+    return false;
+}
+
 void sdl3ImguiProcessEvents(ClientSim *cs) {
     if (!s_window) return;
 #if defined(__APPLE__) && !TARGET_OS_IOS
@@ -7991,6 +8045,12 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         if (!imguiKeySetupIsCapturingInGameKey() &&
             eventBelongsToMainWindow(&rawEv) &&
             pingOverlayHandleEvent(cs, &ev)) {
+            continue;
+        }
+
+        /* Key Setup learning a key: the press is the binding, and not the
+           game's or ImGui's. See keySetupTakesKeyEvent. */
+        if (keySetupTakesKeyEvent(&ev)) {
             continue;
         }
 
@@ -8490,17 +8550,6 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         if (imguiKeySetupIsCapturingInGamePing() &&
             ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
             imguiKeySetupHandleInGamePingMouse((int)ev.button.button)) {
-            continue;
-        }
-
-        /* Key capture for the Key Setup modal — intercept before the
-         * game sees it. State + the actual binding write live in
-         * imgui_keysetup.cpp now; we just feed it the scancode. */
-        if (imguiKeySetupIsCapturingInGameKey() &&
-            ev.type == SDL_EVENT_KEY_DOWN &&
-            ev.key.windowID == SDL_GetWindowID(s_window)) {
-            imguiKeySetupHandleInGameScancode((int)ev.key.scancode);
-            /* Do NOT forward to the game — key was consumed by the dialog. */
             continue;
         }
 
