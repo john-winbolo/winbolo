@@ -2940,3 +2940,4 @@ STR_CLIPGIF_LENGTH_TIP=Délka GIFu v sekundách od přehrávací hlavy.\nDélku 
 STR_CLIPGIF_LOADING=Otevírání GIFu...
 STR_CLIPGIF_TOO_LARGE=Tento GIF je příliš velký, aby se zde zobrazil. Stále ho můžete zkopírovat nebo uložit.
 STR_CLIPGIF_FILTER_NAME=Obrázky GIF
+STR_REEL_RECORD_MODE_TIP=Režim nahrávání: zobrazí ovládání GIFu

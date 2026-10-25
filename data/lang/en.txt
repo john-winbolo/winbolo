@@ -3037,3 +3037,6 @@ STR_CLIPGIF_SAVED_ANDROID={string1} has been saved. Choose an app to share it wi
 # The map editor's file picker on Android, whose Maps folder is the app's own
 STR_MAPEDIT_ANDROID_NOFILES=Nothing here yet. Maps you save, here or from a game, show up here.
 
+# The replay's recording mode button, which shows the GIF controls
+STR_REEL_RECORD_MODE_TIP=Recording mode: shows the GIF controls
+

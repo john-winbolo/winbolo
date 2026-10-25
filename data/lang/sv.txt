@@ -2944,3 +2944,4 @@ STR_CLIPGIF_LENGTH_TIP=GIF-längd i sekunder, från uppspelningspositionen.\nDra
 STR_CLIPGIF_LOADING=Öppnar GIF:en...
 STR_CLIPGIF_TOO_LARGE=Den här GIF:en är för stor för att visas här. Du kan fortfarande kopiera eller spara den.
 STR_CLIPGIF_FILTER_NAME=GIF-bilder
+STR_REEL_RECORD_MODE_TIP=Inspelningsläge: visar GIF-kontrollerna

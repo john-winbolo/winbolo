@@ -1444,9 +1444,10 @@ int run_wbn_browser_sort(void);
 /* Recap clip GIF rules (test_clip_gif_core.c): the length field and the seek
  * bar marker agree and are clamped, the gallery metadata file reads back and
  * rejects bad text, the gallery scan lists newest first, long lines are cut
- * on a whole UTF-8 character, and the preview decode keeps to its memory
- * limit. */
+ * on a whole UTF-8 character, the preview decode keeps to its memory limit,
+ * and the GIF controls show only in recording mode or while a capture runs. */
 int run_clip_gif_len_sync(void);
+int run_clip_gif_record_mode(void);
 int run_clip_gif_meta_roundtrip(void);
 int run_clip_gif_meta_bad(void);
 int run_clip_gif_gallery_scan(void);

@@ -5933,6 +5933,7 @@ set(_unit_test_names
     lv_event_list_pinned
     wbn_browser_sort
     clip_gif_len_sync
+    clip_gif_record_mode
     clip_gif_meta_roundtrip
     clip_gif_meta_bad
     clip_gif_gallery_scan
