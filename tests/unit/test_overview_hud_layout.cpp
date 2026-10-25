@@ -540,6 +540,56 @@ static int hud_layout_voice_absent(void) {
     return 0;
 }
 
+/* A map rect taller than wide (an iPad in portrait, inside its safe area):
+ * the newswire strip takes the width and the column stands on top of it, so
+ * the strip is not cut down to the gap beside the column. Everything stays in
+ * the rect and nothing in the HUD overlaps. */
+static int hud_layout_tall_view_stacks(void) {
+    static const struct { int w, h; } kSizes[] = {
+        { 1032, 1319 }, { 834, 1153 }, { 744, 1080 }
+    };
+
+    for (int s = 0; s < (int)(sizeof(kSizes) / sizeof(kSizes[0])); s++) {
+        for (int v = 0; v < 2; v++) {
+            const int viewW = kSizes[s].w;
+            const int viewH = kSizes[s].h;
+            OverviewHudLayout lay;
+            UT_ASSERT_MSG(overviewHudLayout(viewW, viewH, v != 0, &lay),
+                          "%dx%d should hold a legible column", viewW, viewH);
+            UT_ASSERT_MSG(lay.columnY + lay.columnH <= lay.newswireY + 0.01f,
+                          "at %dx%d the column ends at %.2f, below the newswire "
+                          "strip's top %.2f",
+                          viewW, viewH, (double)(lay.columnY + lay.columnH),
+                          (double)lay.newswireY);
+            UT_ASSERT_MSG(lay.columnY >= 0.0f,
+                          "at %dx%d the column starts at %.2f, above the rect",
+                          viewW, viewH, (double)lay.columnY);
+            UT_ASSERT_MSG(lay.newswireW >= 0.5f * (float)viewW,
+                          "at %dx%d the newswire strip is only %.2f wide",
+                          viewW, viewH, (double)lay.newswireW);
+            UT_ASSERT_MSG(rectInside(lay.newswireX, lay.newswireY,
+                                     lay.newswireW, lay.newswireH,
+                                     0.0f, 0.0f, (float)viewW, (float)viewH),
+                          "at %dx%d the newswire strip leaves the rect", viewW, viewH);
+            UT_ASSERT_MSG(rectsApart(lay.buildX, lay.buildY, lay.buildW, lay.buildH,
+                                     lay.newswireX, lay.newswireY,
+                                     lay.newswireW, lay.newswireH),
+                          "at %dx%d the build strip overlaps the newswire strip",
+                          viewW, viewH);
+            for (int i = 0; i < COLUMN_LEN; i++) {
+                const OverviewHudElement *e = &lay.el[kColumn[i]];
+                if (e->dstW <= 0.0f) continue;
+                UT_ASSERT_MSG(rectInside(e->dstX, e->dstY, e->dstW, e->dstH,
+                                         lay.columnX, lay.columnY,
+                                         lay.columnW, lay.columnH + 0.01f),
+                              "at %dx%d %s is outside the lifted column",
+                              viewW, viewH, kNames[kColumn[i]]);
+            }
+        }
+    }
+    return 0;
+}
+
 /* Every slice is cut from inside the 515x325 classic layout. */
 static int hud_layout_source_rects_in_bounds(void) {
     OverviewHudLayout lay;
@@ -574,5 +624,6 @@ extern "C" int run_overview_hud_layout(void) {
     rc = hud_layout_source_rects_in_bounds(); if (rc) return rc;
     rc = hud_layout_voice_row();              if (rc) return rc;
     rc = hud_layout_voice_absent();           if (rc) return rc;
+    rc = hud_layout_tall_view_stacks();       if (rc) return rc;
     return 0;
 }

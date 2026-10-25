@@ -47,6 +47,39 @@ extern "C" {
  *
  * Renders nothing when port-mapping status is DISABLED. Owns its own
  * popup modal for the detail view; clicking the icon/text opens it. */
+/* The badge's short text for a status, or nullptr when it shows nothing. */
+static const char *lobbyBadgeShortText(ServerPortmapStatus status) {
+    switch (status) {
+        case SERVER_PORTMAP_PENDING:
+            return langGetText(STR_DLGLOBBY_PORTMAP_CHECKING);
+        case SERVER_PORTMAP_SUCCEEDED:
+        case SERVER_PORTMAP_HOLE_PUNCH_OK:
+            return langGetText(STR_DLGLOBBY_PORTMAP_ACCESSIBLE);
+        case SERVER_PORTMAP_SYMMETRIC_NAT:
+        case SERVER_PORTMAP_FAILED:
+            return langGetText(STR_DLGLOBBY_PORTMAP_UNREACHABLE);
+        case SERVER_PORTMAP_DISABLED:
+        default:
+            return nullptr;
+    }
+}
+
+/* The badge's width from its parts; icon is whether one is drawn. */
+static float lobbyBadgeWidthOf(const char *shortText, bool icon, float s) {
+    float iconSize = icon ? 18.0f * s : 0.0f;
+    float spacingX = icon ? ImGui::GetStyle().ItemSpacing.x : 0.0f;
+    return iconSize + spacingX + ImGui::CalcTextSize(shortText).x;
+}
+
+float lobbyConnectivityBadgeWidth(float s) {
+    ServerPortmapInfo pm;
+    serverInstanceGetPortmapInfo(&pm);
+    const char *shortText = lobbyBadgeShortText(pm.status);
+    if (!shortText) return 0.0f;
+    /* Every status with text has an icon once the icons have loaded. */
+    return lobbyBadgeWidthOf(shortText, lobbyIcons()->info != nullptr, s);
+}
+
 void lobbyRenderConnectivityBadge(SDL_Renderer *renderer, float s) {
     ServerPortmapInfo pm;
     serverInstanceGetPortmapInfo(&pm);
@@ -54,7 +87,7 @@ void lobbyRenderConnectivityBadge(SDL_Renderer *renderer, float s) {
     lobbyLoadStatusIconsOnce(renderer, s);
 
     SDL_Texture *icon       = nullptr;
-    const char  *shortText  = nullptr;
+    const char  *shortText  = lobbyBadgeShortText(pm.status);
     ImVec4       color;
     const char  *detailFmt  = nullptr;
 
@@ -63,31 +96,26 @@ void lobbyRenderConnectivityBadge(SDL_Renderer *renderer, float s) {
             return;  /* nothing to show */
         case SERVER_PORTMAP_PENDING:
             icon      = lobbyIcons()->info;
-            shortText = langGetText(STR_DLGLOBBY_PORTMAP_CHECKING);
             color     = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
             detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_PENDING);
             break;
         case SERVER_PORTMAP_SUCCEEDED:
             icon      = lobbyIcons()->success;
-            shortText = langGetText(STR_DLGLOBBY_PORTMAP_ACCESSIBLE);
             color     = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
             detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED);
             break;
         case SERVER_PORTMAP_HOLE_PUNCH_OK:
             icon      = lobbyIcons()->success;
-            shortText = langGetText(STR_DLGLOBBY_PORTMAP_ACCESSIBLE);
             color     = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
             detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH);
             break;
         case SERVER_PORTMAP_SYMMETRIC_NAT:
             icon      = lobbyIcons()->error;
-            shortText = langGetText(STR_DLGLOBBY_PORTMAP_UNREACHABLE);
             color     = ImVec4(0.9f, 0.4f, 0.3f, 1.0f);
             detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC);
             break;
         case SERVER_PORTMAP_FAILED:
             icon      = lobbyIcons()->error;
-            shortText = langGetText(STR_DLGLOBBY_PORTMAP_UNREACHABLE);
             color     = ImVec4(0.9f, 0.4f, 0.3f, 1.0f);
             detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_FAILED);
             break;
@@ -101,9 +129,7 @@ void lobbyRenderConnectivityBadge(SDL_Renderer *renderer, float s) {
      * text length. The caller still SameLine()s us onto the status
      * row; we just absorb the slack on our left. */
     float iconSize    = icon ? 18.0f * s : 0.0f;
-    float spacingX    = icon ? ImGui::GetStyle().ItemSpacing.x : 0.0f;
-    float textW       = ImGui::CalcTextSize(shortText).x;
-    float badgeWidth  = iconSize + spacingX + textW;
+    float badgeWidth  = lobbyBadgeWidthOf(shortText, icon != nullptr, s);
     float availW      = ImGui::GetContentRegionAvail().x;
     if (availW > badgeWidth) {
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - badgeWidth));

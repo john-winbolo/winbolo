@@ -146,22 +146,34 @@ static inline bool guiServerDisplayAddress(ClientSim *cs, char *dispIp,
  *  address is seen (the lookup runs on the existing DNS thread; the request is
  *  a no-op when that thread isn't running).
  *********************************************************/
+/*********************************************************
+ *NAME:          guiServerAddressToken
+ *PURPOSE:
+ *  The text guiServerAddressLink shows, host:port, with the reverse-DNS
+ *  hostname when one has resolved and the raw IP otherwise, so a layout can
+ *  measure it first.
+ *********************************************************/
+static inline void guiServerAddressToken(ClientSim *cs, const char *dispIp,
+                                         unsigned dispPort, char *out,
+                                         size_t outSize) {
+  char host[256];
+  const char *shown = dispIp;
+  if (clientSimGetServerHostname(cs, dispIp, host, sizeof(host))) {
+    shown = host;
+  }
+  SDL_snprintf(out, outSize, "%s:%u", shown, dispPort);
+}
+
 static inline void guiServerAddressLink(ClientSim *cs, const char *dispIp,
                                         unsigned dispPort) {
   /* Kick off (debounced inside ClientSim) the async reverse lookup. */
   clientSimRequestServerHostname(cs, dispIp);
 
   /* Prefer the resolved hostname for both the visible token and the URL. */
-  char host[256];
-  const char *shown = dispIp;
-  if (clientSimGetServerHostname(cs, dispIp, host, sizeof(host))) {
-    shown = host;
-  }
-
   char token[320];
-  SDL_snprintf(token, sizeof(token), "%s:%u", shown, dispPort);
+  guiServerAddressToken(cs, dispIp, dispPort, token, sizeof(token));
   char url[400];
-  SDL_snprintf(url, sizeof(url), "winbolo://%s:%u", shown, dispPort);
+  SDL_snprintf(url, sizeof(url), "winbolo://%s", token);
 
   ImGui::TextUnformatted(token);
   if (ImGui::IsItemHovered()) {

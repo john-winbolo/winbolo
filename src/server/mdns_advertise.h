@@ -31,6 +31,9 @@
 #ifndef MDNS_ADVERTISE_H
 #define MDNS_ADVERTISE_H
 
+#include <stdbool.h>
+#include <stddef.h>
+
 /* ServerSim is opaque here — the poll hook only passes it through to the
  * server getters it reads. The struct tag (not a fresh typedef) is used so
  * this header stays compatible with server_sim.h under C99. */
@@ -49,5 +52,37 @@ void transportUdpServerPollMdnsAdvertiser(struct ServerSim *sim);
 /* Close the mDNS socket and clear state. Safe to call when never started
  * or already stopped. */
 void transportUdpServerStopMdnsAdvertiser(void);
+
+/* A platform's own advertiser, for a system that keeps multicast to itself
+ * (iOS, where raw mDNS sockets need Apple's multicast entitlement but the
+ * system's Bonjour API may register a service). Once one is set, the hooks
+ * above register the service through it instead of opening a socket: the
+ * first poll after start calls start with the instance label (no service
+ * suffix), the game port, the name of the interface the advertised address
+ * belongs to ("" when unknown) and the TXT pairs; later polls call update
+ * with the pairs when they have changed, at most once a second; stop calls
+ * stop. keys and values are count NUL-terminated strings, valid only for
+ * the call. The calls come from the server tick, under the threads mutex.
+ * start returns false when the registration could not be made; the
+ * advertiser then stays off until the next start. NULL restores the
+ * raw-socket advertiser. Set it once at startup, before a server starts. */
+typedef struct {
+  bool (*start)(const char *instance, unsigned short port, const char *ifName,
+                const char *const *keys, const char *const *values,
+                size_t count);
+  void (*update)(const char *const *keys, const char *const *values,
+                 size_t count);
+  void (*stop)(void);
+} MdnsPlatformAdvertiser;
+void mdnsAdvertiseSetPlatform(const MdnsPlatformAdvertiser *advertiser);
+
+/* A platform's hold on incoming multicast while the raw-socket advertiser
+ * has its socket open (Android, whose Wi-Fi driver drops multicast unless
+ * the app holds its multicast lock, which costs battery to hold at other
+ * times). Called with true once the socket has opened and with false as it
+ * closes, on the thread that starts or stops the server; not called for a
+ * platform advertiser. NULL, the default, calls nothing. Set it once at
+ * startup, before a server starts. */
+void mdnsAdvertiseSetMulticastHold(void (*hold)(bool on));
 
 #endif /* MDNS_ADVERTISE_H */

@@ -66,8 +66,11 @@ extern "C" {
 #include "../input_gamepad.h"
 }
 
+/* The window size the browser asks for; a mobile window is the whole screen. */
+#if !BOLO_MOBILE
 static const int DIALOG_W = 1024;
 static const int DIALOG_H = 768;
+#endif
 
 /* ---- Data structures ---- */
 
@@ -845,19 +848,32 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
 
         /* Main panel */
 #if BOLO_MOBILE
-        float panelW = (float)winW * 0.95f;
-        float panelH = (float)winH * 0.95f;
+        /* Each edge the margin or that edge's safe inset, whichever is
+         * larger, so the panel stays clear of the notch and the home bar. */
+        const DialogSafeInsets safe = dialogGetSafeInsets(window);
+        const float mX = (float)winW * DIALOG_EDGE_MARGIN_FRAC;
+        const float mY = (float)winH * DIALOG_EDGE_MARGIN_FRAC;
+        const float edgeL = SDL_max(safe.left, mX);
+        const float edgeR = SDL_max(safe.right, mX);
+        const float edgeT = SDL_max(safe.top, mY);
+        const float edgeB = SDL_max(safe.bottom, mY);
+        float panelW = (float)winW - edgeL - edgeR;
+        float panelH = (float)winH - edgeT - edgeB;
+        const float panelX = edgeL;
+        const float panelY = edgeT;
 #else
         const float margin = 40.0f;
         float panelW = (float)winW - margin * 2.0f;
         float panelH = (float)winH - margin * 2.0f;
         if (panelW < 700.0f) panelW = 700.0f;
         if (panelH < 500.0f) panelH = 500.0f;
-#endif
         if (panelW > (float)winW * 0.98f) panelW = (float)winW * 0.98f;
         if (panelH > (float)winH * 0.98f) panelH = (float)winH * 0.98f;
+        const float panelX = ((float)winW - panelW) * 0.5f;
+        const float panelY = ((float)winH - panelH) * 0.5f;
+#endif
 
-        ImGui::SetNextWindowPos(ImVec2(((float)winW - panelW) * 0.5f, ((float)winH - panelH) * 0.5f));
+        ImGui::SetNextWindowPos(ImVec2(panelX, panelY));
         ImGui::SetNextWindowSize(ImVec2(panelW, panelH));
         ImGui::SetNextWindowBgAlpha(0.90f);
         ImGui::Begin("##WbnBrowser", nullptr,
@@ -1424,6 +1440,22 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                 imguiHandOnHover();
                 ImGui::SameLine();
             }
+#elif BOLO_MOBILE
+            /* SDL's file dialogs are the dummy backend on iOS and Android.
+               Open File hands back to the caller, which shows the recordings
+               screen (mobile_recordings.cpp): the recordings in the
+               preferences directory, and in Documents and Documents/Inbox on
+               iOS or the incoming subdirectory on Android. */
+            if (ImGui::Button(langGetText(STR_DLGWBN_OPENFILE))) {
+                /* A download that finished this same frame is already the
+                 * result being handed back; it is not written over. */
+                if (running) {
+                    finalResult.action = WBN_BROWSER_OPEN_LOCAL;
+                    running = false;
+                }
+            }
+            imguiHandOnHover();
+            ImGui::SameLine();
 #endif
 
             /* Close is affirmative ("done viewing logs"), not a cancel —
@@ -1470,9 +1502,12 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
     if (fetchThread.joinable())    fetchThread.join();
 
     /* Free a memory download that finished but was never consumed by the
-     * loop (closed the same frame it completed). When it is being returned
-     * (PLAY_MEMORY) ownership has passed to the caller, so leave it. */
-    if (downloadResult.memoryData && finalResult.action != WBN_BROWSER_PLAY_MEMORY) {
+     * loop (closed the same frame it completed). Only the buffer handed back
+     * in finalResult belongs to the caller now; any other one, including a
+     * download left over when the result is a file picked on iOS, is freed
+     * here. */
+    if (downloadResult.memoryData &&
+        downloadResult.memoryData != finalResult.memoryData) {
         free(downloadResult.memoryData);
         downloadResult.memoryData = nullptr;
     }

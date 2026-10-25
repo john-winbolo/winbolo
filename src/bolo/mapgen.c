@@ -138,6 +138,9 @@ static void bytesToHex(const uint8_t *bytes, int count, char *out) {
 static bool hexToBytes(const char *hex, uint8_t *bytes, int count) {
     for (int i = 0; i < count; i++) {
         unsigned int v;
+        /* sscanf's %x also takes a sign or leading spaces, so check
+         * both characters are hex digits first. */
+        if (!isxdigit((unsigned char)hex[i * 2]) || !isxdigit((unsigned char)hex[i * 2 + 1])) return false;
         if (sscanf(hex + i * 2, "%2x", &v) != 1) return false;
         bytes[i] = (uint8_t)v;
     }
@@ -702,9 +705,8 @@ bool mapGenSeedToConfig(const char *seedStr, MapGenConfig *cfg) {
         uint8_t bytes[14];
         char hex[29], natural[32];
         int low;
-        for (int i = 1; i < 30; i++) {
-            if (!isxdigit((unsigned char)buf[i])) return false;
-        }
+        /* hexToBytes checks the first 28 digits; this is the size digit. */
+        if (!isxdigit((unsigned char)buf[29])) return false;
         low = isdigit((unsigned char)buf[29]) ? buf[29] - '0'
                                               : toupper((unsigned char)buf[29]) - 'A' + 10;
         if (low > 7) return false;
@@ -871,7 +873,13 @@ static void mapGenMaker(struct mapObj *mp, struct basesObj *bs,
     MakerParams p;
     MakerObjects o;
     uint8_t (*grid)[256] = (uint8_t (*)[256])malloc(256 * 256);
-    if (!grid) return;
+    if (!grid) {
+        /* A failed generation gives an all-sea region rather than stale terrain. */
+        for (int x = cfg->x1; x <= cfg->x2; x++) {
+            for (int y = cfg->y1; y <= cfg->y2; y++) mp->mapItem[x][y] = DEEP_SEA;
+        }
+        return;
+    }
     memset(&p, 0, sizeof(p));
     p.x1 = cfg->x1; p.y1 = cfg->y1; p.x2 = cfg->x2; p.y2 = cfg->y2;
     p.seed = cfg->seed;

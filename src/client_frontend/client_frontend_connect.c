@@ -6,14 +6,10 @@
 #include "client_connect_state.h"  /* CLIENT_CONNECT_* */
 #include "client_net.h"            /* clientSimNetTick, clientSimGetConnectState */
 
-bool clientFrontAwaitJoin(ClientSim *cs, int timeoutTicks) {
-  int waited = 0;
-
-  while (waited < timeoutTicks) {
+ClientFrontJoinStep clientFrontAwaitJoinStep(ClientSim *cs, int *waitedTicks,
+                                             int timeoutTicks) {
+  if (*waitedTicks < timeoutTicks) {
     ClientConnectState js = clientSimGetConnectState(cs);
-    if (js != CLIENT_CONNECT_JOINING && js != CLIENT_CONNECT_DOWNLOADING_MAP) {
-      break;
-    }
     /* Enter the lobby the instant it opens. Lobby-enabled servers deliver
      * CTRL_LOBBY_SETTINGS via sync replay before the map chunks, so inLobby
      * becomes true while the connect state is still DOWNLOADING_MAP. When
@@ -21,12 +17,12 @@ bool clientFrontAwaitJoin(ClientSim *cs, int timeoutTicks) {
      * player's slot is not known yet; it arrives with the server's resent
      * accept. That is why readers of the slot must read it live
      * (gameFrontGetPlayerNum) and not take a copy when this wait returns. */
-    if (clientSimIsInLobby(cs)) {
-      break;
+    if ((js == CLIENT_CONNECT_JOINING || js == CLIENT_CONNECT_DOWNLOADING_MAP) &&
+        !clientSimIsInLobby(cs)) {
+      clientSimNetTick(cs);
+      (*waitedTicks)++;
+      return CLIENT_FRONT_JOIN_WAITING;
     }
-    clientSimNetTick(cs);
-    SDL_Delay(20);
-    waited++;
   }
 
   ClientConnectState finalState = clientSimGetConnectState(cs);
@@ -43,5 +39,25 @@ bool clientFrontAwaitJoin(ClientSim *cs, int timeoutTicks) {
     clientSimSetNetStatus(cs, netLobby);
   }
 
-  return finalState == CLIENT_CONNECT_CONNECTED || inLobby;
+  return (finalState == CLIENT_CONNECT_CONNECTED || inLobby)
+             ? CLIENT_FRONT_JOIN_LANDED
+             : CLIENT_FRONT_JOIN_FAILED;
+}
+
+bool clientFrontAwaitJoin(ClientSim *cs, int timeoutTicks) {
+  int waited = 0;
+  ClientFrontJoinStep step;
+
+  while ((step = clientFrontAwaitJoinStep(cs, &waited, timeoutTicks)) ==
+         CLIENT_FRONT_JOIN_WAITING) {
+#if defined(__IPHONEOS__)
+    /* This wait runs on the main thread for up to its whole timeout. iOS
+     * delivers the app's lifecycle callbacks through the run loop that
+     * pumping events turns, and ends an app that leaves it unserviced too
+     * long; the events gathered stay queued for the caller. */
+    SDL_PumpEvents();
+#endif
+    SDL_Delay(20);
+  }
+  return step == CLIENT_FRONT_JOIN_LANDED;
 }

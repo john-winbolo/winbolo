@@ -372,7 +372,7 @@ void lobbyChatDocsRenderModal(ClientSim *cs) {
  * the render below turns it into something to click.
  * ------------------------------------------------------------------- */
 
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
 /* Match a timestamp token at p. Returns one past its last digit and fills the
  * out-params on a match, NULL otherwise. Minutes are one or two digits,
  * seconds exactly two and under 60. A third seconds digit rejects the whole
@@ -497,7 +497,7 @@ void lobbyRenderChatHistory(const char *blob) {
      * the history on the per-line path; with neither it takes the single
      * blob draw it always did. */
     bool perLine = (lobbyChatDocsCount() > 0);
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
     if (lvEmbedIsActive()) perLine = true;
 #endif
 
@@ -529,7 +529,7 @@ void lobbyRenderChatHistory(const char *blob) {
                     lineEnd++;
                 }
             }
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
             isTime = (blk == NULL) && lobbyChatLineHasTime(p, lineEnd);
 #else
             isTime = false;
@@ -544,7 +544,7 @@ void lobbyRenderChatHistory(const char *blob) {
                 if (blk != NULL) {
                     lobbyRenderChatDocsBlock(p, lineEnd, lineIndex, blk);
                 }
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
                 else {
                     lobbyRenderChatTimeLine(p, lineEnd, lineIndex);
                 }
@@ -634,7 +634,7 @@ void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
     }
 }
 
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
 /* Append the reel's position to the chat box as "@mm:ss ", then take the
  * keyboard focus the way a send does so the player types straight after it.
  * Silently does nothing when the whole token will not fit: half a token in

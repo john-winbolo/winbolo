@@ -296,3 +296,97 @@ int run_mdns_discovery(void) {
   bolo_net_cleanup();
   return 0;
 }
+
+/*
+ * The platform advertiser's strings (mdnsAdvertiseTxtPairs): what iOS hands
+ * to DNSServiceRegister. The instance label is the name the browsers read
+ * the address and port from, the pairs are the builder's own TXT records,
+ * and they read back through discoveryServerFromMdns, the parse the iOS
+ * browser uses, to the server they came from.
+ */
+int run_mdns_platform_pairs(void) {
+  MdnsServerInfo info;
+  mdns_record_t records[MDNS_WINBOLO_RECORD_COUNT];
+  char recScratch[512];
+  char instance[96];
+  const char *keys[MDNS_WINBOLO_TXT_COUNT];
+  const char *values[MDNS_WINBOLO_TXT_COUNT];
+  char scratch[512];
+  size_t count, recCount, i, pair = 0;
+  DiscoveryServer s;
+
+  memset(&info, 0, sizeof(info));
+  info.port = 27510;
+  info.addr.s_addr = inet_addr("192.168.1.20");
+  strncpy(info.mapName, "Everard Island", sizeof(info.mapName) - 1);
+  info.versionMajor = 1;
+  info.versionMinor = 2;
+  info.versionRevision = 3;
+  info.numPlayers = 4;
+  info.numBases = 5;
+  info.numPills = 6;
+  info.password = true;
+  info.lobby = true;
+  strncpy(info.mapMd5Hex, "0123456789abcdef0123456789abcdef", sizeof(info.mapMd5Hex) - 1);
+  info.allowNewPlayers = true;
+  info.timeLimit = 3000;
+  info.numHumans = 3;
+  info.numBots = 1;
+  info.maxPlayers = 12;
+  info.viewPolicies = infoPacketPackViewPolicies(viewPolicyKey, viewPolicyAlways,
+                                                 viewPolicyOff, true, true);
+  info.viewPolicies2 = infoPacketPackViewPolicies2(
+      (uint8_t)overviewWindowClassic, (uint8_t)lineOfSightBuildingsAndTrees, true);
+
+  count = mdnsAdvertiseTxtPairs(&info, instance, sizeof(instance), keys, values,
+                                MDNS_WINBOLO_TXT_COUNT, scratch, sizeof(scratch));
+  UT_ASSERT_MSG(count == MDNS_WINBOLO_TXT_COUNT, "pairs=%u", (unsigned)count);
+  UT_ASSERT_MSG(strcmp(instance, "WinBolo-192-168-1-20-27510") == 0,
+                "instance='%s'", instance);
+
+  /* The same keys and values, in the same order, as the records the
+   * raw-socket advertiser sends. */
+  recCount = mdnsAdvertiseBuildRecords(&info, records, MDNS_WINBOLO_RECORD_COUNT,
+                                       recScratch, sizeof(recScratch));
+  UT_ASSERT(recCount == MDNS_WINBOLO_RECORD_COUNT);
+  for (i = 0; i < recCount; i++) {
+    if (records[i].type != MDNS_RECORDTYPE_TXT) {
+      continue;
+    }
+    UT_ASSERT(pair < count);
+    UT_ASSERT_MSG(strlen(keys[pair]) == records[i].data.txt.key.length &&
+                  memcmp(keys[pair], records[i].data.txt.key.str,
+                         records[i].data.txt.key.length) == 0,
+                  "key %u is '%s'", (unsigned)pair, keys[pair]);
+    UT_ASSERT_MSG(strlen(values[pair]) == records[i].data.txt.value.length &&
+                  memcmp(values[pair], records[i].data.txt.value.str,
+                         records[i].data.txt.value.length) == 0,
+                  "value of '%s' is '%s'", keys[pair], values[pair]);
+    pair++;
+  }
+  UT_ASSERT(pair == count);
+
+  /* Read back the way the iOS browser reads a resolved instance. */
+  memset(&s, 0, sizeof(s));
+  UT_ASSERT(discoveryServerFromMdns("192.168.1.20", 27510, keys, values, count, &s));
+  UT_ASSERT_MSG(strcmp(s.address, "192.168.1.20") == 0, "address='%s'", s.address);
+  UT_ASSERT(s.port == 27510);
+  UT_ASSERT(s.hasRichInfo == true);
+  UT_ASSERT_MSG(strcmp(s.mapName, "Everard Island") == 0, "map='%s'", s.mapName);
+  UT_ASSERT(s.versionMajor == 1 && s.versionMinor == 2 && s.versionRevision == 3);
+  UT_ASSERT(s.numPlayers == 4 && s.numBases == 5 && s.numPills == 6);
+  UT_ASSERT(s.password == true && s.inLobby == true);
+  UT_ASSERT(s.numHumans == 3 && s.numBots == 1 && s.maxPlayers == 12);
+  UT_ASSERT_MSG(s.timeLimit == 3000, "tlim=%d", (int)s.timeLimit);
+  UT_ASSERT(s.hasViewInfo == true && s.pillView == viewPolicyKey &&
+            s.overviewWindow == (uint8_t)overviewWindowClassic);
+
+  /* Too little room for the pairs is a failure, not a short list. */
+  UT_ASSERT(mdnsAdvertiseTxtPairs(&info, instance, sizeof(instance), keys, values,
+                                  MDNS_WINBOLO_TXT_COUNT - 1, scratch,
+                                  sizeof(scratch)) == 0);
+  UT_ASSERT(mdnsAdvertiseTxtPairs(&info, instance, 8, keys, values,
+                                  MDNS_WINBOLO_TXT_COUNT, scratch,
+                                  sizeof(scratch)) == 0);
+  return 0;
+}

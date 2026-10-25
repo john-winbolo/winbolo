@@ -136,6 +136,19 @@ bool winbolonetAuthSteamRegister(const char *steamTicketHex, const char *usernam
 bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg);
 
 /*********************************************************
+*NAME:          winbolonetAuthValidateEx
+*PURPOSE:
+* winbolonetAuthValidate, also telling a token the server
+* turned down from a check that never got an answer.
+* *tokenRejectedOut is TRUE only when WinBolo.net answered
+* and said the token is not valid (HTTP 200 with valid
+* false, or 401 / 403); a caller clears the stored token
+* only then, so a dropped connection does not sign the
+* player out. May be NULL.
+*********************************************************/
+bool winbolonetAuthValidateEx(const char *token, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg, bool *tokenRejectedOut);
+
+/*********************************************************
 *NAME:          winbolonetClientJoinSession
 *PURPOSE:
 * Exchange (apiToken, serverKey) for a server-scoped

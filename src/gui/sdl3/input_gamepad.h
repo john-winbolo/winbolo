@@ -22,11 +22,6 @@
 #include "global.h"
 #include "client_enums.h"  /* tankButton */
 
-/* Set to 1 to enable controller tuning debug: the on-screen stick/turn/
-   build-cursor magnitude overlay and the build_cursor controller.log file.
-   Leave 0 for normal builds. */
-#define WB_CONTROLLER_DEBUG 0
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -171,12 +166,6 @@ extern float g_gamepadTankSensitivity;
 /* Right-stick build-cursor move sensitivity (clamped 0.25..2.0 by UI). Lower =
    finer building: the build cursor moves more slowly per stick deflection. */
 extern float g_gamepadBuildCursorSensitivity;
-
-/* DEBUG on-screen readouts (0..1). */
-extern float g_dbgStickMag;
-extern float g_dbgTurnMag;
-extern float g_dbgCursorStickMag;
-extern float g_dbgCursorMoveMag;
 
 SDL_Gamepad     *inputGamepadGetActiveHandle(void);  /* may be NULL */
 SDL_GamepadType  inputGamepadGetActiveType(void);

@@ -199,6 +199,27 @@ bool httpSendLogFile(const char *fileName, char *key, bool wantFeedback);
 void httpSetLogUploadTimeout(long seconds);
 
 /*********************************************************
+*NAME:          httpSetDeadline / httpClearDeadline
+*PURPOSE:
+* Sets a time by which every WinBolo.net request, on any
+* thread, has to be over, for a shutdown that must finish
+* within a fixed time (an iOS app whose background time is
+* running out). A request started afterwards gets at most
+* the time left, and one started past the deadline fails at
+* once. With NSURLSession (http_nsurl.m) such a request is
+* not sent at all, and a request already waiting is also
+* stopped at the deadline; with libcurl (http.c) only
+* requests started after the call are limited.
+* httpClearDeadline removes the limit.
+*
+*ARGUMENTS:
+* msFromNow - Milliseconds from now; 0 or less means the
+*             deadline has already passed
+*********************************************************/
+void httpSetDeadline(long msFromNow);
+void httpClearDeadline(void);
+
+/*********************************************************
 *NAME:          wbn_api_get
 *PURPOSE:
 * Low-level GET request to a WinBolo.net API endpoint.
@@ -483,5 +504,34 @@ int wbn_api_download_to_memory_cancellable(const char *path,
 * iptoset - Interface to bind to
 *********************************************************/
 void httpSetAltIpAddress(char *iptoset);
+
+#if defined(WBN_HTTP_NSURL) || defined(WBN_HTTP_JNI)
+/*********************************************************
+*NAME:          httpGetUrlToMemory
+*PURPOSE:
+* NSURLSession build (http_nsurl.m) and Android build
+* (http_jni.c) only; WBN_HTTP_NSURL / WBN_HTTP_JNI is
+* defined by that build's winbolonet_core for everything
+* that links it. A plain GET of a full URL: no /api/v1/
+* prefix, no signature and no bearer. Follows redirects.
+* For a caller that would otherwise reach for libcurl
+* directly, such as the news popup's image cache. On a 200
+* answer *data_out / *size_out receive the body (caller
+* frees); otherwise they are left NULL/0. Returns the HTTP
+* status code, or -1 on a transport error, a malformed URL,
+* or a body larger than maxBytes.
+*
+*ARGUMENTS:
+* url        - Full https:// URL (the iOS and Android modules
+*              refuse any other scheme; the desktop's ATS-free
+*              libcurl path is never given one)
+* data_out   - Receives heap-allocated buffer (caller frees)
+* size_out   - Receives buffer size in bytes
+* maxBytes   - Largest response to accept, or 0 for no limit
+* timeout_ms - Total time limit in milliseconds
+*********************************************************/
+int httpGetUrlToMemory(const char *url, uint8_t **data_out, size_t *size_out,
+                       size_t maxBytes, long timeout_ms);
+#endif
 
 #endif /* __HTTP_H */

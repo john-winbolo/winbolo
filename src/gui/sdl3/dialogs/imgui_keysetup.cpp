@@ -497,7 +497,7 @@ static void sensitivityRow(const char *label, float *value,
     if (indent) ImGui::Unindent();
     ImGui::TableSetColumnIndex(1);
     ImGui::PushID(value);
-    ImGui::SetNextItemWidth(180.0f);
+    ImGui::SetNextItemWidth(dialogFontW(180.0f));
     if (ImGui::SliderFloat("##sens", value, vmin, vmax, fmt)) {
         if (*value < vmin) *value = vmin;
         if (*value > vmax) *value = vmax;
@@ -679,7 +679,7 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
             ImGui::Spacing();
             ImGui::TextUnformatted("Tank turn sensitivity");
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(180.0f);
+            ImGui::SetNextItemWidth(dialogFontW(180.0f));
             if (ImGui::SliderFloat("##sitanksens", &g_gamepadTankSensitivity,
                                    0.10f, 1.00f, "%.2f")) {
                 if (g_gamepadTankSensitivity < 0.10f) g_gamepadTankSensitivity = 0.10f;
@@ -687,7 +687,7 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
             }
             ImGui::TextUnformatted("Build cursor sensitivity");
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(180.0f);
+            ImGui::SetNextItemWidth(dialogFontW(180.0f));
             if (ImGui::SliderFloat("##sibuildsens", &g_gamepadBuildCursorSensitivity,
                                    0.25f, 2.00f, "%.2fx")) {
                 if (g_gamepadBuildCursorSensitivity < 0.25f) g_gamepadBuildCursorSensitivity = 0.25f;

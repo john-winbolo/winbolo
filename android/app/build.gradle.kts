@@ -1,5 +1,6 @@
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import java.util.Properties
 import java.util.zip.ZipInputStream
 
@@ -17,6 +18,31 @@ val sentryDsn: String = providers.environmentVariable("SENTRY_DSN").orNull
             .getProperty("sentry.dsn", "")
         else ""
     }
+
+// ---------------------------------------------------------------------------
+// The version, from the same file every other build reads. versionName is
+// WINBOLO_VERSION with WINBOLO_VERSION_SUFFIX appended (the display
+// version; the native build derives the protocol bytes from the numeric part
+// itself). versionCode must rise with every upload of the same version to
+// Play, so it is the count of commits on HEAD, as the iOS build number is:
+// it rises with each commit and is the same for every build of one commit.
+// Without git (a source archive) it falls back to 1.
+// ---------------------------------------------------------------------------
+val versionCmake = rootProject.file("../cmake/bolo_version.cmake").readText()
+fun cmakeSet(name: String): String =
+    Regex("""set\($name\s+"([^"]*)"""").find(versionCmake)?.groupValues?.get(1)
+        ?: throw GradleException("$name not found in cmake/bolo_version.cmake")
+val winboloVersionName: String = cmakeSet("WINBOLO_VERSION") + cmakeSet("WINBOLO_VERSION_SUFFIX")
+val winboloVersionCode: Int = try {
+    val proc = ProcessBuilder("git", "rev-list", "--count", "HEAD")
+        .directory(rootProject.projectDir)
+        .redirectErrorStream(true)
+        .start()
+    val out = proc.inputStream.bufferedReader().readText().trim()
+    if (proc.waitFor() == 0 && out.matches(Regex("\\d+"))) out.toInt() else 1
+} catch (e: Exception) {
+    1
+}
 
 // ---------------------------------------------------------------------------
 // Download SDL3 Java sources (SDLActivity etc.) for the Android build
@@ -81,18 +107,26 @@ tasks.configureEach {
 
 android {
     namespace = "com.winbolo.android"
-    compileSdk = 34
+    compileSdk = 36
     ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "com.winbolo.android"
+        // Android 8.0. Bionic declares getrandom only from API 28, which is
+        // why udp_server_join.c carries a syscall branch for this build.
         minSdk = 26
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        // Android 16: edge-to-edge drawing (the SDL activity handles it and
+        // the driver reads the safe area), and on screens of 600 dp and
+        // wider the system ignores the manifest's orientation lock, so a
+        // tablet turns to portrait and the layout stacks for it.
+        targetSdk = 36
+        versionCode = winboloVersionCode
+        versionName = winboloVersionName
 
-        // Inject the DSN into AndroidManifest's io.sentry.dsn meta-data.
+        // Inject the DSN into AndroidManifest's io.sentry.dsn meta-data, and
+        // the release Sentry files crashes under, from the same version.
         manifestPlaceholders["sentryDsn"] = sentryDsn
+        manifestPlaceholders["sentryRelease"] = "WinBolo-Android@$winboloVersionName"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
@@ -121,6 +155,12 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Read whether or not minification is on, so turning it on cannot
+            // strip the classes native code finds by name (proguard-rules.pro).
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 
@@ -140,41 +180,97 @@ android {
 dependencies {
     implementation("io.sentry:sentry-android:7.18.0")
     implementation("io.sentry:sentry-android-ndk:7.18.0")
+    // FileProvider, which serves a recording or a clip GIF from the app's
+    // private storage to the app the share sheet picks.
+    implementation("androidx.core:core:1.13.1")
 }
 
 // ---------------------------------------------------------------------------
-// Copy game data files into assets/data/ so they are accessible at runtime
-// via SDL_IOFromFile("data/tile.bmp", ...) etc.
-// Excludes large/unneeded files (mmdb, button_*.bmp menu graphics).
+// Copy game data files into assets/data/. At startup the native side copies
+// the data/ and Brains/ asset trees into the app's files directory and makes
+// it the working directory (main_android.c), so the shared code's relative
+// data/... opens and directory listings work as they do on the desktop and
+// in the iOS bundle. The same files the iOS bundle carries (the IOS_DATA_*
+// lists in the root CMakeLists.txt); the country database stays out.
 // ---------------------------------------------------------------------------
 val dataDir = file("../../data")
+val assetsRootDir = file("src/main/assets")
 val assetsDataDir = file("src/main/assets/data")
 
 tasks.register<Copy>("copyGameAssets") {
     from(dataDir) {
         include("*.bmp")
         include("*.png")
+        include("bot_names.json")
         include("fonts/*.ttf")
+        include("fonts/*.otf")
         include("sounds/*.wav")
         include("maps/*.map")
+        include("maps/*.lua")
+        include("mods/*.lua")
         include("flags/*.svg")
         include("svg/*.png")
         include("svg/*.svg")
+        include("ui/*.svg")
+        include("ui/ping/*.svg")
         include("icons/*.png")
         exclude("dbip-country-lite.mmdb")
     }
     into(assetsDataDir)
 }
 
-// Copy brain scripts into assets/brains/ for the background bot game
+// Copy brain scripts into assets/Brains/, the directory name the brain
+// scanner and the menu's background game look in (LUA_BRAINS_DIR), as the
+// iOS bundle spells it. The opt/ build of GoalHunter comes with the glob.
 val brainsDir = file("../../brains")
-val assetsBrainsDir = file("src/main/assets/brains")
+val assetsBrainsDir = file("src/main/assets/Brains")
 
 tasks.register<Copy>("copyBrainAssets") {
+    // An earlier build wrote this tree as assets/brains. On a case-insensitive
+    // host filesystem the copy below would land inside that directory and the
+    // APK would keep the old spelling, which the extracted tree must not, so
+    // the directory is renamed first; File.exists() cannot tell the two apart,
+    // the parent's listing can.
+    doFirst {
+        val parent = assetsBrainsDir.parentFile
+        val stale = parent.list()?.firstOrNull { it == "brains" }
+        if (stale != null) {
+            File(parent, stale).renameTo(assetsBrainsDir)
+        }
+    }
     from(brainsDir) {
         include("GoalHunter/**/*.lua")
     }
     into(assetsBrainsDir)
+}
+
+// The listing the native side extracts from: asset directories cannot be
+// listed through SDL. One relative path per line after a stamp line, a hash
+// of every listed file's path and bytes, so a build whose assets changed
+// refreshes the extracted copy and one whose assets did not leaves it alone.
+tasks.register("writeAssetManifest") {
+    dependsOn("copyGameAssets", "copyBrainAssets", "copyLangAssets", "copyLicenceAssets")
+    val manifest = File(assetsRootDir, "asset_manifest.txt")
+    inputs.files(fileTree(assetsDataDir), fileTree(assetsBrainsDir))
+    outputs.file(manifest)
+    doLast {
+        val digest = MessageDigest.getInstance("SHA-1")
+        val paths = mutableListOf<String>()
+        for (top in listOf("data", "Brains")) {
+            val dir = File(assetsRootDir, top)
+            if (!dir.isDirectory) continue
+            dir.walkTopDown().filter { it.isFile }.forEach { f ->
+                paths += top + "/" + f.relativeTo(dir).invariantSeparatorsPath
+            }
+        }
+        paths.sort()
+        for (p in paths) {
+            digest.update(p.toByteArray())
+            digest.update(File(assetsRootDir, p).readBytes())
+        }
+        val stamp = digest.digest().joinToString("") { "%02x".format(it) }
+        manifest.writeText("stamp $stamp\n" + paths.joinToString("\n") + "\n")
+    }
 }
 
 // Copy language files into assets/data/lang/ so the runtime picker can find them
@@ -209,5 +305,6 @@ tasks.configureEach {
         dependsOn("copyBrainAssets")
         dependsOn("copyLangAssets")
         dependsOn("copyLicenceAssets")
+        dependsOn("writeAssetManifest")
     }
 }

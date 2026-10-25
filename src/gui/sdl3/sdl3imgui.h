@@ -144,6 +144,9 @@ bool sdl3ImguiIsSendMsgOpen(void);
  * always reports closed in tablet mode. */
 bool sdl3ImguiIsMapOverviewOpen(void);
 bool sdl3ImguiIsOverviewInWindowOpen(void);
+/* False while the connected server withholds the map overview from this
+ * player, as last read at the start of the frame. */
+bool sdl3ImguiIsOverviewOffered(void);
 
 /* True while keyboard focus is on a window the player drives the game
  * from: the main window, or the Map Overview pop-out. The other pop-outs

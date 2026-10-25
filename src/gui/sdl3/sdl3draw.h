@@ -121,10 +121,38 @@ void sdl3DrawSetNewswireTransparency(int percent);
 int  sdl3DrawGetNewswireTransparency(void);
 void sdl3DrawSetNewswireAutoHide(bool on);
 bool sdl3DrawGetNewswireAutoHide(void);
+/* Move the newswire's slide on to now and return where it is: 0 fully on
+   screen, 1 fully off the bottom edge (newswire_slide.h). It follows the
+   newest message and the auto-hide setting above. Every newswire that hides
+   itself draws from this one slide: the full screen map's and the touch
+   layout's. Safe to call more than once a frame. */
+float sdl3DrawNewswireSlideStep(void);
+/* Where the touch layout's newswire strip goes (sdl3DrawNewswireStrip): its
+   top-left at rest and its width, the line it slides off by, the font size,
+   and the alphas of its text and its backing, 0 to 1. Set by the tablet
+   overlay each frame; the draw uses the last one set. */
+void sdl3DrawSetTabletNewswire(float x, float y, float w, float edge,
+                               int fontPx, float textAlpha, float backAlpha);
 void sdl3DrawSetBuildPanelTransparency(int percent);
 int  sdl3DrawGetBuildPanelTransparency(void);
 void sdl3DrawSetStatusPanelTransparency(int percent);
 int  sdl3DrawGetStatusPanelTransparency(void);
+
+/* One of the transparency settings above as the two alphas, 0 to 1, a panel
+   is drawn at: its pieces (artwork, text, frame) and the black backing under
+   them. The full screen map's HUD draws at these, and so do the touch
+   layout's panels over its full screen map, so a setting looks the same on
+   both. */
+void sdl3DrawHudPanelAlphas(int transparency, float *pieceAlpha,
+                            float *backingAlpha);
+
+/* The touch layout's full screen (iOS): with the Full Screen choice on
+   (gameFrontFullScreen) and the in-window map up, the map fills the whole
+   screen instead of the game view's square, and the touch controls are drawn
+   over it where they always are. The square is still laid out and still
+   returned by sdl3DrawGetTabletViewport, since the controls and the touch
+   input are placed from it. False on every other platform and layout. */
+bool sdl3DrawIsTabletMapFullScreen(void);
 
 /* Which of the three panels the pointer is resting on. A panel named here
    fades up to solid and holds there until it stops being named, so a panel
@@ -472,6 +500,8 @@ bool sdl3DrawGetItemViewLabel(ClientSim *cs, char *out, size_t outLen);
 *PURPOSE:
 *  Returns the last computed tablet viewport bounds and
 *  effective zoom.  Returns zeros if not in tablet mode.
+*  In the touch layout's full screen it is still the
+*  15x15 view's square, which the map is drawn beyond.
 *********************************************************/
 void sdl3DrawGetTabletViewport(int *x, int *y, int *w, int *h, int *zoom);
 

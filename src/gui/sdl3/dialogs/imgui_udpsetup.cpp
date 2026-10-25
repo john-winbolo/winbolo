@@ -283,6 +283,18 @@ extern "C" int imguiUdpSetupShow(void) {
          * hosting and rejoining being the deliberate choices of the three. */
         bool enterJoin = false;
 #if BOLO_MOBILE || defined(__IPHONEOS__)
+#if BOLO_MOBILE
+        /* Return is the phone keyboard's "done" key, so on the address and
+         * port fields it only closes the field; the name field, last of the
+         * four, still joins. Without EnterReturnsTrue, InputText returns true
+         * on every edit, so the return values of those three fields are
+         * ignored here or the first typed character would start the join. */
+        const ImGuiInputTextFlags enterJoinFlag = ImGuiInputTextFlags_None;
+        const bool addrPortJoin = false;
+#else
+        const ImGuiInputTextFlags enterJoinFlag = ImGuiInputTextFlags_EnterReturnsTrue;
+        const bool addrPortJoin = true;
+#endif
         /* On mobile, labels left, narrow inputs right-aligned on same line */
         float inputW = panelW * 0.225f;
         float labelW = panelW - inputW - 32.0f * s;
@@ -290,24 +302,30 @@ extern "C" int imguiUdpSetupShow(void) {
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_MACHINENAME));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
-        enterJoin |= ImGui::InputText("##address", address, FILENAME_MAX,
-                         ImGuiInputTextFlags_CallbackEdit |
-                         ImGuiInputTextFlags_EnterReturnsTrue,
-                         udpAddressEditCallback, &addrCtx);
+        if (ImGui::InputText("##address", address, FILENAME_MAX,
+                             ImGuiInputTextFlags_CallbackEdit |
+                             enterJoinFlag,
+                             udpAddressEditCallback, &addrCtx) && addrPortJoin) {
+            enterJoin = true;
+        }
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_THEREUDP));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
-        enterJoin |= ImGui::InputText("##targetPort", targetPortBuf, sizeof(targetPortBuf),
-                         ImGuiInputTextFlags_CharsDecimal |
-                         ImGuiInputTextFlags_EnterReturnsTrue);
+        if (ImGui::InputText("##targetPort", targetPortBuf, sizeof(targetPortBuf),
+                             ImGuiInputTextFlags_CharsDecimal |
+                             enterJoinFlag) && addrPortJoin) {
+            enterJoin = true;
+        }
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_USUDP));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
-        enterJoin |= ImGui::InputText("##myPort", myPortBuf, sizeof(myPortBuf),
-                         ImGuiInputTextFlags_CharsDecimal |
-                         ImGuiInputTextFlags_EnterReturnsTrue);
+        if (ImGui::InputText("##myPort", myPortBuf, sizeof(myPortBuf),
+                             ImGuiInputTextFlags_CharsDecimal |
+                             enterJoinFlag) && addrPortJoin) {
+            enterJoin = true;
+        }
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_NAME));
         ImGui::SameLine(labelW);
@@ -362,6 +380,9 @@ extern "C" int imguiUdpSetupShow(void) {
         /* --- Action buttons --- */
         float btnW = 80.0f * s;
 
+#if !BOLO_MOBILE
+        /* New hosts a game. Not on mobile, where the game finder's New Game
+         * on each tab hosts instead. */
         if (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD) {
             ImGui::TextUnformatted(langGetText(STR_DLGTCP_NEWBLURB));
         }
@@ -387,6 +408,7 @@ extern "C" int imguiUdpSetupShow(void) {
             }
         }
         imguiHandOnHover();
+#endif
 
         if (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD) {
             ImGui::TextUnformatted(langGetText(STR_DLGTCP_JOINBLURB));
@@ -447,7 +469,7 @@ extern "C" int imguiUdpSetupShow(void) {
                                 imguiPopupFadeAlpha(&s_fadeUdpErr));
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
-            if (ImGui::Button(langGetText(STR_OK), ImVec2(80, 0))) {
+            if (ImGui::Button(langGetText(STR_OK), ImVec2(dialogFontW(80.0f), 0))) {
                 ImGui::CloseCurrentPopup();
             }
             imguiHandOnHover();

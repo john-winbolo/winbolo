@@ -71,7 +71,14 @@
 
 #include <stdio.h>   /* fopen, fprintf — for brain_error.log writes */
 
-#if defined(WINBOLO_LUAJIT) && defined(__APPLE__) && defined(__aarch64__)
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+/* macOS only: iOS runs LuaJIT as an interpreter with no JIT pages, and its
+   SDK marks pthread_jit_write_protect_np unavailable, so the call below
+   would not compile there. */
+#if defined(WINBOLO_LUAJIT) && defined(__APPLE__) && defined(__aarch64__) && !TARGET_OS_IPHONE
+#define WB_LUAJIT_MACOS_JIT_GUARD 1
 #include <pthread.h>  /* pthread_jit_write_protect_np — see luaBrainInstanceTick */
 #endif
 
@@ -1196,7 +1203,7 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst) {
     return false;
   }
 
-#if defined(WINBOLO_LUAJIT) && defined(__APPLE__) && defined(__aarch64__)
+#if defined(WB_LUAJIT_MACOS_JIT_GUARD)
   /* LuaJIT's hardened-runtime path toggles per-thread JIT write
    * protection; a longjmp out of mcode allocation can leave this thread
    * in write mode, which SIGBUSes the next trace entry (2.02 Sentry

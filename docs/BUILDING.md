@@ -10,9 +10,12 @@ These are downloaded and built by CMake — no manual installation needed:
 - SDL3_ttf (with vendored FreeType/HarfBuzz)
 - Dear ImGui (docking branch)
 - LuaJIT, built with its own build system (`make`, or `msvcbuild.bat` on
-  Windows) — used for bot brains on Windows, Linux, macOS and Android
-- Lua 5.4 — used instead of LuaJIT on iOS and WebAssembly, where JIT
-  compilation is not possible, and when `-DWINBOLO_LUAJIT=OFF` is passed
+  Windows) — used for bot brains on Windows, Linux, macOS, Android and iOS.
+  Android and iOS cross-compile it with that `make` from the NDK's and the
+  SDK's clang (`cmake/bolo_luajit.cmake`); iOS builds the interpreter
+  without the compiler, which the OS does not allow
+- Lua 5.4 — used instead of LuaJIT on WebAssembly, where LuaJIT has no
+  backend, and when `-DWINBOLO_LUAJIT=OFF` is passed
 - zlib
 - cJSON
 - Opus and SpeexDSP (voice chat)
@@ -238,25 +241,101 @@ Note: The iOS build does not use libcurl (network features use platform stubs).
 
 ### Requirements
 
-- Android SDK with platform 34
-- Android NDK 27.0.12077973
-- CMake 3.31 or newer, installed through the SDK Manager
+- Android SDK with platform 36 (`platforms;android-36`) and `platform-tools`
+- Android NDK 27.0.12077973 (`ndk;27.0.12077973`, the version
+  `android/app/build.gradle.kts` pins)
+- CMake 3.31 or newer from the SDK Manager (`cmake;3.31.6`; the SDK's 3.22.1
+  is too old)
 - JDK 17 or newer
+- A POSIX host: macOS, Linux or WSL. The native build cross-compiles LuaJIT
+  with LuaJIT's own Makefile, so on a native Windows host the configure stops
+  with an error
+- A host `make` and a host C compiler (`cc`) on the `PATH`, which
+  `cmake/bolo_luajit.cmake` and `android/app/CMakeLists.txt` look for to build
+  LuaJIT and its build tools
 
-Android Studio installs all of these. The Gradle project is in `android/`; its
-native build is `android/app/CMakeLists.txt`, which builds the same sources as
-the desktop client. The APK is built for `arm64-v8a` and `x86_64`, and runs on
-Android 8.0 (API 26) and later.
+Android Studio installs all of these except the last two. The Gradle project
+is in `android/`; its native build is `android/app/CMakeLists.txt`, which
+builds the same sources as the desktop and iOS clients. The APK carries `arm64-v8a` and `x86_64`, runs on
+Android 8.0 (API 26) and later, and targets Android 16 (API 36).
+
+The version comes from `cmake/bolo_version.cmake`: `versionName` is
+`WINBOLO_VERSION` with `WINBOLO_VERSION_SUFFIX` appended, and `versionCode` is
+the number of commits on `HEAD` (1 without git), which Play needs to rise with
+every upload of the same version. Gradle reads both on every run. The About
+box's commit hash and build date come from the native build's CMake configure
+instead, which Gradle repeats only when a CMake input changes; delete
+`android/app/.cxx` before a build to upload so they match the commit.
 
 ### Build
 
 ```bash
 cd android
-./gradlew assembleDebug
+./gradlew assembleDebug      # both ABIs: app/build/outputs/apk/debug/app-debug.apk
+./gradlew assembleRelease    # unsigned; see below for the crash-reporting DSN
 ```
 
 Or open `android/` in Android Studio. See [Android](#android-1) under release
 builds for the crash-reporting DSN.
+
+#### From WSL
+
+The build runs from a WSL shell against a Linux SDK. Install the packages with
+`sdkmanager` and point the untracked `android/local.properties` at the SDK:
+
+```bash
+sdkmanager "platforms;android-36" "platform-tools" "ndk;27.0.12077973" "cmake;3.31.6"
+echo "sdk.dir=$HOME/Android/Sdk" > android/local.properties
+```
+
+Gradle fetches `build-tools` for the Android Gradle plugin itself. A build for
+one ABI, for a quick emulator install, is
+`./gradlew assembleDebug -Pandroid.injected.build.abi=x86_64`; it writes a
+test-only APK under `android/app/build/intermediates/apk/debug/`, installed
+with `adb install -r -t`.
+
+### Emulator
+
+An AVD from Android Studio's Device Manager (Android 16, x86_64; a Google Play
+image has apps for the share sheet to offer) runs the `x86_64` half of the APK.
+When the emulator is in the Windows SDK and the build is in WSL, run the
+Windows binaries from the WSL shell:
+
+```bash
+pgrep -a adb   # end any Linux adb server first, or adb.exe cannot see the emulator
+SDK=/mnt/c/Users/<you>/AppData/Local/Android/Sdk
+$SDK/emulator/emulator.exe -avd <name> -no-snapshot-load &
+adb="$SDK/platform-tools/adb.exe -s emulator-5554"
+$adb wait-for-device
+$adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+$adb shell am start -n com.winbolo.android/.WinBoloActivity
+$adb logcat -d
+```
+
+What matters when driving it from a shell:
+
+- `-no-snapshot-load`: a restored snapshot has left adbd wedged.
+- `-s emulator-5554` on every adb call; a second device may be attached.
+- adb.exe cannot write to a Linux path: `adb.exe exec-out screencap -p > shot.png`.
+- ImGui buttons do not react to `adb shell input tap`; press one with
+  `adb shell input swipe x y x y 120`.
+- The two-ABI debug APK is about 170 MB. Once the AVD's internal storage is
+  down to Android's low-storage threshold the install fails with
+  `INSTALL_FAILED_INSUFFICIENT_STORAGE`: enlarge the AVD's internal storage in
+  Device Manager, or uninstall the previous build and
+  `adb shell pm trim-caches 4G` first.
+- A debug build logs every category at INFO to logcat; release keeps SDL's
+  default, which hides them.
+- The emulator's NAT passes no multicast, so LAN search and advertising cannot
+  be seen there, and `10.0.2.2` reaches a server in WSL2 over TCP only; a
+  WinBoloDS in WSL is joined by the WSL interface's address.
+
+### WinBolo.net signing key
+
+`src/winbolonet/wbn_signing_key.h` in the repository is a placeholder. Reads
+work, and every signed write (sign-in, a hosted game's `server/register`, the
+round-log upload) is answered 401 until the real key is in the checkout. This
+is the same on every platform.
 
 ## WebAssembly (WASM)
 
@@ -390,7 +469,7 @@ Note: The WASM builds do not use libcurl (network features use platform stubs).
 
 ### LuaJIT (bot brains)
 
-On by default on Windows, Linux, macOS and Android. To run the brains on
+On by default on Windows, Linux, macOS, Android and iOS. To run the brains on
 Lua 5.4 instead:
 
 ```bash
@@ -399,7 +478,12 @@ cmake -B build -S . -DWINBOLO_LUAJIT=OFF
 
 The two are not guaranteed to give identical bot behaviour: LuaJIT and Lua 5.4
 differ in how they handle numbers and in the order `pairs()` visits a table.
-iOS and WebAssembly always use Lua 5.4.
+iOS runs LuaJIT's interpreter with the JIT compiler left out
+(`LUAJIT_DISABLE_JIT`), since iOS does not let an app run code it wrote at run
+time. An iOS build directory configured before iOS used LuaJIT keeps
+`WINBOLO_LUAJIT` cached as `OFF`; reconfigure it with `-DWINBOLO_LUAJIT=ON`
+or configure a new build directory. WebAssembly always uses Lua 5.4. The Android build has no switch; it
+always builds LuaJIT.
 
 ### Port mapping (UPnP / NAT-PMP)
 

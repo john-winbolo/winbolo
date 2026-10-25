@@ -30,6 +30,9 @@
 
 #include <SDL3/SDL.h>
 #include <math.h>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 #include "global.h"
 #include "client_sim.h"
 #include "client_command.h"  /* VIEW_KIND_* — which view a view key drives */
@@ -198,13 +201,32 @@ static bool overviewOwnsScrollKeys(ClientSim *cs) {
 *  as held, so an unbound push-to-talk simply never
 *  transmits.
 *
+*  The talk button of the tablet overlay counts as the key
+*  in push-to-talk mode.  In open mic mode the same button
+*  is the mute toggle instead; see muteMicPoll.
+*
 *ARGUMENTS:
 *  setKeys - Structure that holds the key settings
 *  active  - FALSE when this poll is not reading input
 *********************************************************/
+#if defined(WINBOLO_VOICE)
+/* Whether the tablet overlay's talk button is held. Only the iOS and Android
+ * clients show that button; a desktop or web client in the tablet layout
+ * keeps its keys. */
+static bool inputTalkButtonHeld(void) {
+#if (defined(__APPLE__) && TARGET_OS_IOS) || defined(__ANDROID__)
+  return inputTouchIsButtonHeld(TOUCH_BTN_TALK);
+#else
+  return false;
+#endif
+}
+#endif
+
 void inputPushToTalkPoll(keyItems *setKeys, bool active) {
 #if defined(WINBOLO_VOICE)
-  voiceSetPushToTalkHeld(active && KEY_DOWN(setKeys->kiPushToTalk));
+  bool touchHeld = voiceGetMode() == VOICE_MODE_PTT && inputTalkButtonHeld();
+  voiceSetPushToTalkHeld(active &&
+                         (KEY_DOWN(setKeys->kiPushToTalk) || touchHeld));
 #else
   (void)setKeys;
   (void)active;
@@ -227,6 +249,10 @@ void inputPushToTalkPoll(keyItems *setKeys, bool active) {
 *  down when focus returns.  It stays in-game only: the mute
 *  in the lobby is a checkbox there.
 *
+*  In open mic mode the talk button of the tablet overlay
+*  counts as the mute key, since there is nothing to hold
+*  down to talk in that mode.
+*
 *ARGUMENTS:
 *  setKeys - Structure that holds the key settings
 *  active  - FALSE when this poll is not reading input
@@ -234,7 +260,8 @@ void inputPushToTalkPoll(keyItems *setKeys, bool active) {
 static void muteMicPoll(keyItems *setKeys, bool active) {
 #if defined(WINBOLO_VOICE)
   static bool prevDown = false;
-  bool down = active && KEY_DOWN(setKeys->kiMuteMic);
+  bool touchDown = voiceGetMode() == VOICE_MODE_OPEN && inputTalkButtonHeld();
+  bool down = active && (KEY_DOWN(setKeys->kiMuteMic) || touchDown);
   if (down && !prevDown) {
     voiceSetSelfMuted(!voiceIsSelfMuted());
   }
@@ -472,8 +499,6 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
      build cursor is active the right stick steers the cursor instead
      of scrolling — buildCursorTick handles its own camera follow, so
      the scroll path gets no contribution from the stick that frame. */
-  g_dbgCursorStickMag = 0.0f;
-  g_dbgCursorMoveMag  = 0.0f;
   if (inputGamepadIsConnected()) {
     float fdx = 0.0f, fdy = 0.0f;
     if (inputGamepadGetScrollDirection(&fdx, &fdy)) {
@@ -486,14 +511,6 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
                                : g_gamepadScrollSensitivity;
       int gx = (int)(fdx * (float)step * sens);
       int gy = (int)(fdy * (float)step * sens);
-      if (buildActive) {
-        /* DEBUG: right-stick reach and the resulting cursor move speed
-           (reach * sensitivity), both clamped to 0..1. */
-        float reach = sqrtf(fdx * fdx + fdy * fdy);
-        float mv    = reach * g_gamepadBuildCursorSensitivity;
-        g_dbgCursorStickMag = reach > 1.0f ? 1.0f : reach;
-        g_dbgCursorMoveMag  = mv > 1.0f ? 1.0f : mv;
-      }
       /* Min 1px nudge so deadzone-grazing input still moves. */
       if (gx == 0 && fdx >  0.0f) gx =  1;
       if (gx == 0 && fdx <  0.0f) gx = -1;
@@ -671,7 +688,8 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   if (tb == TNONE && inputGamepadIsConnected()) {
     tb = inputGamepadGetMovement(clientSimGetTank256Dir(cs));
   }
-  if (tb == TNONE && uiModeIsTablet()) {
+  /* Touch: the touch layout, or the touch controls on the classic screen. */
+  if (tb == TNONE && inputTouchControlsShown()) {
     inputTouchSetTankAngle(clientSimGetTank256Dir(cs));
     tb = inputTouchGetMovement();
   }
@@ -976,10 +994,10 @@ void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
 *********************************************************/
 bool inputIsFireKeyPressed(keyItems *setKeys, bool isMenu) {
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
-    return uiModeIsTablet() ? inputTouchIsFirePressed() : FALSE;
+    return inputTouchControlsShown() ? inputTouchIsFirePressed() : FALSE;
   }
   return KEY_DOWN(setKeys->kiShoot)
-      || (uiModeIsTablet() && inputTouchIsFirePressed())
+      || (inputTouchControlsShown() && inputTouchIsFirePressed())
       || (inputGamepadIsConnected() && inputGamepadIsFireHeld());
 }
 
@@ -997,10 +1015,10 @@ bool inputIsFireKeyPressed(keyItems *setKeys, bool isMenu) {
 *********************************************************/
 bool inputIsMineKeyPressed(keyItems *setKeys, bool isMenu) {
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
-    return uiModeIsTablet() ? inputTouchIsMinePressed() : FALSE;
+    return inputTouchControlsShown() ? inputTouchIsMinePressed() : FALSE;
   }
 
-  bool touchMine   = uiModeIsTablet() ? inputTouchIsMinePressed() : false;
+  bool touchMine   = inputTouchControlsShown() ? inputTouchIsMinePressed() : false;
   bool gamepadMine = inputGamepadIsConnected() ? inputGamepadIsMineHeld() : false;
   return KEY_DOWN(setKeys->kiLayMine) || touchMine || gamepadMine;
 }
@@ -1052,7 +1070,7 @@ uint8_t inputConsumeGunsightAdj(void) {
      read them separately. inputTouchGetGunsightChange is consuming, so only
      take it when nothing is already pending — otherwise a wheel bump and a
      button tap in the same tick would drop one of the two. */
-  if (lastGunsightAdj == 0 && uiModeIsTablet()) {
+  if (lastGunsightAdj == 0 && inputTouchControlsShown()) {
     int gs = inputTouchGetGunsightChange();
     if (gs > 0) {
       lastGunsightAdj = 1;

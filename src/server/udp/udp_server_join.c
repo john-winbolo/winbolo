@@ -74,6 +74,9 @@
 #  include <sys/random.h>  /* getrandom */
 #  include <fcntl.h>       /* open, O_RDONLY (/dev/urandom fallback) */
 #  include <unistd.h>      /* read, close */
+#  if defined(__ANDROID__) && __ANDROID_API__ < 28
+#    include <sys/syscall.h> /* SYS_getrandom: Bionic declares getrandom from API 28 */
+#  endif
 #else
 #  include <stdlib.h>      /* arc4random_buf (macOS/BSD) */
 #endif
@@ -224,7 +227,13 @@ static bool serverFillRandomBytes(uint8_t *buf, size_t n) {
                            BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
 #elif defined(__linux__)
     {
+#if defined(__ANDROID__) && __ANDROID_API__ < 28
+        /* Bionic declares getrandom only from API 28; the kernel call is
+         * on every device Android 8 runs on, so make it directly. */
+        ssize_t got = syscall(SYS_getrandom, buf, n, 0);
+#else
         ssize_t got = getrandom(buf, n, 0);
+#endif
         if (got == (ssize_t)n) {
             return true;
         }

@@ -693,7 +693,7 @@ static void lobbyNameJumpToPlayer(ClientSim *cs, int slot) {
          * case: no affordance, nothing moves. */
         if (!ls->playerName[0]) return;
         if (!ImGui::IsItemHovered()) return;
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         ImVec2 rmn = ImGui::GetItemRectMin();
         ImVec2 rmx = ImGui::GetItemRectMax();
@@ -703,7 +703,7 @@ static void lobbyNameJumpToPlayer(ClientSim *cs, int slot) {
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             lvEmbedFocusPlayerByName(ls->playerName);
         }
-#endif /* !BOLO_MOBILE */
+#endif /* BOLO_LOBBY_REEL */
         return;
     }
 
@@ -755,9 +755,9 @@ void lobbyRecapRowJump(ClientSim *cs, int slot, bool isBot) {
     if (slot < 0 || slot >= MAX_TANKS) return;
     const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)slot);
     if (!ls || !ls->playerName[0]) return;
-#if !BOLO_MOBILE
+#if BOLO_LOBBY_REEL
     lvEmbedFocusPlayerByName(ls->playerName);
-#endif /* !BOLO_MOBILE */
+#endif /* BOLO_LOBBY_REEL */
 }
 
 void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
@@ -1342,7 +1342,10 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                  + kSpacingX
                                  + kColGearW;
 #endif
-        const float kColPingW    = 50.0f * s;
+        /* Wide enough for a three-digit ping in the font in use: at a
+         * larger font (the iPad's) 50 points was too narrow and the text
+         * ran under the start dropdown beside it. */
+        const float kColPingW    = ImMax(50.0f * s, ImGui::CalcTextSize("999ms").x);
         const float kColReadyW   = 80.0f * s;
         const float kColXW       = 44.0f * s;
         /* The spacer column exists to hold the start dropdown, so what it
@@ -3393,6 +3396,12 @@ static void renderOwnVoiceConfig(ClientSim *cs, float s, float contentW) {
         /* Which key push to talk is on, and the way to change it — Key Setup
            opens over the lobby, so the commonest reason voice does nothing can
            be fixed without leaving. */
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+        /* On a touch screen the talk button on the game screen is the key. */
+        if (voiceGetMode() == VOICE_MODE_PTT && uiModeIsTablet()) {
+            ImGui::TextWrapped("%s", langGetText(STR_DLGSETTINGS_VOICE_PTT_TOUCH));
+        } else
+#endif
         if (voiceGetMode() == VOICE_MODE_PTT) {
             keyItems pttKeys;
             windowGetKeys(&pttKeys);

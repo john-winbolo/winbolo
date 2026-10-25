@@ -14,6 +14,9 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "imgui_nav_outline.h"
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+#include "imgui_touch.h"
+#endif
 
 /* Promoted once per frame from dialogDrawNavOutline (called near end of
    frame, after the widgets' CancelKeyPressed checks).  So a read during
@@ -29,6 +32,12 @@ extern "C" bool dialogNavWasInsideSubRegionAtFrameStart(void) {
 extern "C" void dialogDrawNavOutline(void) {
     ImGuiContext *g = ImGui::GetCurrentContext();
     if (!g) return;
+
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+    /* Every ImGui frame on iOS passes through here just before Render, so
+     * the touch handling rides along (see imgui_touch.h). */
+    imguiTouchFrame();
+#endif
 
     /* Promote the sub-region snapshot before any early-out below so the
        pre-pop value stays current every frame regardless of nav state. */

@@ -41,6 +41,14 @@ bool discoveryFindMdnsGamesAsync(DiscoveryServerCallback callback, void *userDat
   return false;
 }
 void discoveryAbortMdnsSearch(void) {}
+void discoverySetMdnsBrowser(DiscoveryMdnsBrowser browser) { (void)browser; }
+bool discoveryMdnsAbortRequested(void) { return false; }
+bool discoveryServerFromMdns(const char *address, unsigned short port,
+                             const char *const *keys, const char *const *values,
+                             size_t count, DiscoveryServer *out) {
+  (void)address; (void)port; (void)keys; (void)values; (void)count; (void)out;
+  return false;
+}
 
 #else /* !__EMSCRIPTEN__ */
 
@@ -68,6 +76,17 @@ static SDL_AtomicInt s_mdnsAbort;
 
 void discoveryAbortMdnsSearch(void) {
   SDL_SetAtomicInt(&s_mdnsAbort, 1);
+}
+
+/* The platform's own browser, when it has one (see discovery.h). */
+static DiscoveryMdnsBrowser s_platformBrowser = NULL;
+
+void discoverySetMdnsBrowser(DiscoveryMdnsBrowser browser) {
+  s_platformBrowser = browser;
+}
+
+bool discoveryMdnsAbortRequested(void) {
+  return SDL_GetAtomicInt(&s_mdnsAbort) != 0;
 }
 
 /* True if the record's owner name ends with the _winbolo._udp.local service
@@ -271,6 +290,41 @@ bool discoveryMdnsFillServer(const DiscoveryMdnsResolved *r, DiscoveryServer *ou
   return true;
 }
 
+bool discoveryServerFromMdns(const char *address, unsigned short port,
+                             const char *const *keys, const char *const *values,
+                             size_t count, DiscoveryServer *out) {
+  DiscoveryMdnsResolved r;
+  size_t i;
+
+  if (address == NULL || out == NULL) {
+    return false;
+  }
+  memset(&r, 0, sizeof(r));
+  r.addr.s_addr = inet_addr(address);
+  if (r.addr.s_addr == INADDR_NONE) {
+    return false;
+  }
+  r.haveAddr = true;
+  r.haveSrv = true;
+  r.port = port;
+  for (i = 0; i < count && r.txtCount < DISCOVERY_MDNS_TXT_MAX; i++) {
+    if (keys[i] == NULL || keys[i][0] == '\0') {
+      continue;
+    }
+    SDL_strlcpy(r.txt[r.txtCount].key, keys[i], DISCOVERY_MDNS_KEY_MAX);
+    SDL_strlcpy(r.txt[r.txtCount].value, values[i] ? values[i] : "",
+                DISCOVERY_MDNS_VAL_MAX);
+    r.txtCount++;
+  }
+  if (!discoveryMdnsFillServer(&r, out)) {
+    return false;
+  }
+  if (r.txtCount == 0) {
+    out->hasRichInfo = false;
+  }
+  return true;
+}
+
 bool discoveryFindMdnsGamesAsync(DiscoveryServerCallback callback, void *userData) {
   int sock;
   uint32_t recvbuf[512]; /* 2 KiB, 32-bit aligned for the mdns recv path  */
@@ -281,6 +335,10 @@ bool discoveryFindMdnsGamesAsync(DiscoveryServerCallback callback, void *userDat
 
   /* Clear any pending abort from a prior session. */
   SDL_SetAtomicInt(&s_mdnsAbort, 0);
+
+  if (s_platformBrowser != NULL) {
+    return s_platformBrowser(callback, userData);
+  }
 
   if (bolo_net_init() != 0) {
     WB_LOG_ERROR(WB_LOG_CAT_NET, "discovery: Failed to initialise network for mDNS");

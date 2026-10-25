@@ -31,9 +31,8 @@
                                             * PACKET_HEADER_SIZE, UDP_MAX_PAYLOAD,
                                             * INPUT_PACKET_WIRE_SIZE,
                                             * SNAPSHOT_HEADER_WIRE_SIZE,
-                                            * RELIABLE_EVENT_BUFFER_SIZE, and
-                                            * SDL3/SDL.h for SDL_GetTicks */
-#include "transport_udp_server_internal.h" /* udpServer, srvSendTo, unpackConnId,
+                                            * RELIABLE_EVENT_BUFFER_SIZE */
+#include "transport_udp_server_internal.h" /* udpServer, srvSendTo, unpackConnId, srvNow,
                                             * serverFindClient, serverDrainBulk,
                                             * serverPumpVoice,
                                             * serverServiceMapTransfer,
@@ -169,7 +168,7 @@ void serverHandlePing(const uint8_t *buf, int len,
      * disconnected client keeps receiving pongs and never detects
      * that the server dropped it. */
     {
-        uint32_t now = SDL_GetTicks();
+        uint32_t now = (uint32_t)srvNow();
         int clientIdx = serverFindClient(fromAddr);
         if (clientIdx < 0) return;
 

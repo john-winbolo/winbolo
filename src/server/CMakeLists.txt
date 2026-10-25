@@ -143,7 +143,15 @@ bolo_apply_include_rules(server_round_log_static sim_owner)
 set_target_properties(server_round_log_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(server_round_log_static PUBLIC server_sim_static)
 
-add_library(server_static STATIC EXCLUDE_FROM_ALL
+# The dedicated-server runtime, built twice from one source list.
+# server_static is what every binary that hosts a game links. server_static_test
+# is the same sources compiled with WB_ENABLE_NETIMPAIR=1, for WinBoloUnitTests
+# alone: the loopback harness's server clock and lockstep counters sit behind
+# that flag in transport_udp_server.c, udp_server_recv.c and
+# udp_server_test_hooks.c, and a shipping server does not carry them. The
+# client side gets the flag per target because transport_udp_client.c is
+# compiled per target; this library is not, so it needs a second build.
+set(_server_static_sources
     geolookup.c
     server_console.c
     server_memreport.c
@@ -164,7 +172,6 @@ add_library(server_static STATIC EXCLUDE_FROM_ALL
     udp/udp_server_wbn.c
     mdns_advertise.c
 )
-target_link_libraries(server_static PUBLIC server_round_log_static)
 
 # mdns_advertise.c is the only TU that pulls in the all-static-inline
 # mdns.h; suppress the unused-function noise for that one file rather
@@ -175,61 +182,70 @@ else()
     set_source_files_properties(mdns_advertise.c PROPERTIES COMPILE_OPTIONS "-Wno-unused-function")
 endif()
 
-bolo_apply_include_rules(server_static sim_owner)
+function(wb_add_server_static name)
+    add_library(${name} STATIC EXCLUDE_FROM_ALL ${_server_static_sources})
+    target_link_libraries(${name} PUBLIC server_round_log_static)
 
-set_target_properties(server_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    bolo_apply_include_rules(${name} sim_owner)
 
-target_compile_definitions(server_static PRIVATE
-    WINBOLO_VERSION="${WINBOLO_VERSION}"
-    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
-    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
-    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
-    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
-)
+    set_target_properties(${name} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# geolookup.c is fully #ifdef HAVE_MAXMINDDB-wrapped. Every server_static
-# linker today defines HAVE_MAXMINDDB and links libmaxminddb, so the
-# shared compile picks the real implementation. Gated on the target
-# existing so the lib still builds in projects that omit maxminddb.
-if(TARGET maxminddb)
-    target_compile_definitions(server_static PRIVATE HAVE_MAXMINDDB=1)
-    target_link_libraries(server_static PUBLIC maxminddb)
-endif()
+    target_compile_definitions(${name} PRIVATE
+        WINBOLO_VERSION="${WINBOLO_VERSION}"
+        WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
+        BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+        BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+        BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+    )
 
-# server_sim.c calls transportUdpServerEnforcePing /
-# serverLifecycleGetTickStats / etc.; transport_udp_server.c and
-# server_lifecycle.c call serverSimXyz. The two archives form a cycle
-# that single-pass ld can't resolve. Consumers that link server_static
-# must wrap it with server_sim_static in a $<LINK_GROUP:RESCAN,...>
-# group — see the four desktop binaries (WinBolo, WinBoloDS,
-# WinBoloHeadless, winbolo_gym). PRIVATE so the dep doesn't auto-
-# propagate to consumers in the wrong order: explicit grouping at
-# the consume site is what makes the cycle resolvable.
-target_link_libraries(server_static PRIVATE server_sim_static)
+    # geolookup.c is fully #ifdef HAVE_MAXMINDDB-wrapped. Every server_static
+    # linker today defines HAVE_MAXMINDDB and links libmaxminddb, so the
+    # shared compile picks the real implementation. Gated on the target
+    # existing so the lib still builds in projects that omit maxminddb.
+    if(TARGET maxminddb)
+        target_compile_definitions(${name} PRIVATE HAVE_MAXMINDDB=1)
+        target_link_libraries(${name} PUBLIC maxminddb)
+    endif()
 
-# mdns.h (header-only) include directory for mdns_advertise.c. Not linked
-# under Emscripten — mdns_advertise.c compiles to no-op stubs there (no
-# multicast sockets / getifaddrs in the WASM runtime).
-if(NOT EMSCRIPTEN)
-    target_link_libraries(server_static PRIVATE mdns)
-endif()
+    # server_sim.c calls transportUdpServerEnforcePing /
+    # serverLifecycleGetTickStats / etc.; transport_udp_server.c and
+    # server_lifecycle.c call serverSimXyz. The two archives form a cycle
+    # that single-pass ld can't resolve. Consumers that link server_static
+    # must wrap it with server_sim_static in a $<LINK_GROUP:RESCAN,...>
+    # group — see the four desktop binaries (WinBolo, WinBoloDS,
+    # WinBoloHeadless, winbolo_gym). PRIVATE so the dep doesn't auto-
+    # propagate to consumers in the wrong order: explicit grouping at
+    # the consume site is what makes the cycle resolvable.
+    target_link_libraries(${name} PRIVATE server_sim_static)
 
-# threads_static owns threads.c (and its threads_wasm.c sibling under
-# Emscripten). PUBLIC so consumers of server_static — the four desktop
-# server binaries — get the mutex symbols transitively without naming
-# threads_static themselves.
-target_link_libraries(server_static PUBLIC threads_static)
+    # mdns.h (header-only) include directory for mdns_advertise.c. Not linked
+    # under Emscripten — mdns_advertise.c compiles to no-op stubs there (no
+    # multicast sockets / getifaddrs in the WASM runtime).
+    if(NOT EMSCRIPTEN)
+        target_link_libraries(${name} PRIVATE mdns)
+    endif()
 
-# bcrypt: BCryptGenRandom seeds the address-proof cookie secret in
-# transport_udp_server.c on Windows. PUBLIC so each server_static consumer's
-# link line picks it up after the static lib (mirrors how ws2_32 reaches
-# consumers for the socket calls).
-if(WIN32)
-    target_link_libraries(server_static PUBLIC bcrypt)
-endif()
+    # threads_static owns threads.c (and its threads_wasm.c sibling under
+    # Emscripten). PUBLIC so consumers of server_static — the four desktop
+    # server binaries — get the mutex symbols transitively without naming
+    # threads_static themselves.
+    target_link_libraries(${name} PUBLIC threads_static)
 
-if(EMSCRIPTEN)
-    target_compile_options(server_static PRIVATE -fno-common -include sys/types.h)
-elseif(NOT MSVC)
-    target_compile_options(server_static PRIVATE -fcommon)
-endif()
+    # bcrypt: BCryptGenRandom seeds the address-proof cookie secret in
+    # transport_udp_server.c on Windows. PUBLIC so each server_static consumer's
+    # link line picks it up after the static lib (mirrors how ws2_32 reaches
+    # consumers for the socket calls).
+    if(WIN32)
+        target_link_libraries(${name} PUBLIC bcrypt)
+    endif()
+
+    if(EMSCRIPTEN)
+        target_compile_options(${name} PRIVATE -fno-common -include sys/types.h)
+    elseif(NOT MSVC)
+        target_compile_options(${name} PRIVATE -fcommon)
+    endif()
+endfunction()
+
+wb_add_server_static(server_static)
+wb_add_server_static(server_static_test)
+target_compile_definitions(server_static_test PRIVATE WB_ENABLE_NETIMPAIR=1)

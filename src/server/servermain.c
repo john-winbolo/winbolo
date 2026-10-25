@@ -665,13 +665,15 @@ void printArgs() {
   fprintf(stderr, "                Can be used with -map (initial map) or alone (random first map).\n");
   fprintf(stderr, "                Requires lobby mode. Invalid maps are skipped at startup.\n");
   fprintf(stderr, "-randommap    - Generate a random procedural map instead of loading a file.\n");
-  fprintf(stderr, "                -randommap alone generates a fully random map each round,\n");
-  fprintf(stderr, "                of one of the four older types (not Map Maker).\n");
+  fprintf(stderr, "                -randommap alone picks one of the four older types (not Map\n");
+  fprintf(stderr, "                Maker) when the server starts and keeps it for every round,\n");
+  fprintf(stderr, "                with a new seed each round.\n");
   fprintf(stderr, "                -randommap tournament|natural|maze|fractal — specific generator type.\n");
   fprintf(stderr, "                -randommap <seed> — reproduce a specific map from its seed.\n");
   fprintf(stderr, "                -randommap tournament <seed> — type with specific seed.\n");
   fprintf(stderr, "                -randommap maker — a map in the style of a classic map\n");
-  fprintf(stderr, "                maker; the server picks one of the presets.\n");
+  fprintf(stderr, "                maker; the server picks one of the presets when it starts\n");
+  fprintf(stderr, "                and keeps it for every round, with a new seed each round.\n");
   fprintf(stderr, "                -randommap <preset> — one Map Maker preset: berserkir,\n");
   fprintf(stderr, "                sluggo-tournament, slugdeath, slugfest, sluggo-adventurous,\n");
   fprintf(stderr, "                sluggo-symmetric, stoogefest, black-lightning, bl-islands,\n");
@@ -1090,17 +1092,17 @@ static void serverSayOperatorMods(ServerSim *sim) {
   }
 }
 
+/* The index of the value after the flag "-<argname>", or ARG_NOT_FOUND.
+   Case does not matter, as in argExist, so a flag argExist finds also has
+   its value found here. */
 int findArg(int numArgs, char **argv, const char *argname) {
   int returnValue; /* Value to return */
-  char temp[255];
   int count;
 
-  snprintf(temp, sizeof(temp), "-%s", argname);
-  strlower(temp);
   returnValue = ARG_NOT_FOUND;
   count = 0;
   while (returnValue == -1 && count < numArgs) {
-    if (strcmp((char *) argv[count], temp) == 0) {
+    if (argIsFlag((char *) argv[count], argname)) {
       returnValue = count+1;
     }
     count++;

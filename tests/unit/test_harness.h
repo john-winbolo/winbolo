@@ -2077,6 +2077,12 @@ int run_sight_shadow_overflow(void);
  * legible column is refused without writing to the caller's layout. */
 int run_overview_hud_layout(void);
 
+/* Newswire slide (test_newswire_slide.c): it starts off screen, slides up at
+ * the slide rate on a message, holds for the hold time, slides off, stays up
+ * with auto-hide off, lands at once after a long gap with no steps, and never
+ * leaves the 0 to 1 range. */
+int run_newswire_slide(void);
+
 /* Overview dead tank (test_overview_map.c): a tank that is dead and waiting to
  * respawn holds its block on the square it died on — the corner it reads from
  * reveals nothing, the block keeps its tiles and goes on taking terrain
@@ -2814,6 +2820,9 @@ int run_mapgen_maker_style_same_map(void);
 int run_mapgen_maker_chew_toy_safe_bases(void);
 int run_mapgen_maker_deathhand_safe_bases(void);
 int run_mapgen_maker_diag_roads_join(void);
+/* The bases, pillboxes and starts of every preset with symmetry map
+ * onto themselves under that symmetry. */
+int run_mapgen_maker_objects_symmetric(void);
 
 /* What a quit inside a dialog means (test_dialog_quit.c): Cmd+Q, Alt+F4 and
  * the close box end the application; the close request the gamepad's B
@@ -2838,6 +2847,11 @@ int run_bot_difficulty_names(void);
  * the advertiser builder + browser parse path, asserting the SRV port, the
  * inLobby/locked flags, every TXT field, and two-instance resolution. */
 int run_mdns_discovery(void);
+
+/* The platform advertiser's strings (test_mdns_discovery.c): the instance
+ * label and TXT pairs iOS registers with Bonjour match the raw-socket
+ * advertiser's records and read back to the same server. */
+int run_mdns_platform_pairs(void);
 
 /* The mDNS view TXT key (test_mdns_view_txt.c): the server's visibility
  * rules through the browser's parse seam, and what an absent or

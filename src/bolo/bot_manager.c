@@ -557,7 +557,7 @@ bool botManagerInit(int threads) {
         threads = MAX_TANKS;
     }
 
-#if defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS
+#if (defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS) || defined(__ANDROID__)
     /* Leave headroom for the GPU/rendering thread on small devices:
      * cap at 4 total runners (3 workers + producer). */
     if (threads > 4) {

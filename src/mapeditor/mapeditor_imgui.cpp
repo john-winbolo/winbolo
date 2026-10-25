@@ -42,6 +42,7 @@
 #include "../gui/tiles.h"
 #include "../gui/sdl3/minimap_render.h"
 #include "../gui/sdl3/dialogs/dialog_footer.h"
+#include "../gui/sdl3/dialogs/imgui_touch.h"
 
 static SDL_Renderer *s_meRenderer = nullptr;
 
@@ -218,7 +219,7 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
                            bool fromMainMenu, bool hasSettings,
                            int zoomStepIndex, int zoomStepCount,
                            const float *zoomStepValues) {
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(__IPHONEOS__)  /* macOS menu bar; iOS draws the ImGui one */
     /* No-op on macOS — the native NSMenu shim owns the menu bar. The
      * caller in mapeditor.c does NOT invoke this function on Apple; it
      * calls me_mac_menubar_consume_actions() instead, which is what
@@ -1698,9 +1699,12 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
     ImGui::RadioButton(langGetText(STR_MAPEDIT_TEXT_SYSTEM), fontSource, 1);
 #endif
 
-    /* Shared across font UI and preview cache */
+    /* Shared across font UI and preview cache; system fonts only, which the
+       mobile and web builds leave out. */
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)
     static const char *s_familyNames[FONT_MAX_ENTRIES];
     static int s_numFamilies = 0;
+#endif
 
     if (*fontSource == 0) {
         /* Built-in bitmap font controls */
@@ -2478,6 +2482,7 @@ bool mapEditorImguiImageImportDialog(bool *open, ImageImportConfig *cfg,
  * Stamp Library Panel
  * ------------------------------------------------------- */
 
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)  /* the Import button that uses these */
 /* Static state for stamp import file dialog */
 static bool s_stampImportGotResult = false;
 static char s_stampImportPath[512] = "";
@@ -2490,6 +2495,7 @@ static void stampImportCallback(void *userdata, const char *const *filelist, int
         s_stampImportGotResult = true;
     }
 }
+#endif
 
 static SDL_Texture *stampEnsureTexture(StampEntry *entry, SDL_Renderer *renderer) {
     if (entry->tex) return entry->tex;
@@ -2903,6 +2909,12 @@ void ImGui_OpenPopup(const char *name) {
 }
 
 void mapEditorImguiRender(void) {
+#if defined(__ANDROID__) || defined(__IPHONEOS__)
+    /* The editor's own context gets the touch handling every dialog has
+     * (imgui_touch.h): the on-screen keyboard without auto-capitalisation
+     * for the save name, and a finger dragged to scroll a list. */
+    imguiTouchFrame();
+#endif
     ImGui::Render();
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), s_meRenderer);
 }

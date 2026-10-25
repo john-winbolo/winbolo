@@ -224,7 +224,21 @@ extern "C" int imguiOnboardingShow(void) {
         int seqLen = 0;
         if (!loggedIn) seq[seqLen++] = ONBOARD_STEP_ACCOUNT;
         if (!loggedIn) seq[seqLen++] = ONBOARD_STEP_NAME;
+#if BOLO_MOBILE
+        /* No Keys step on iOS: it binds keyboard keys, and a phone plays by
+         * touch. Signed in, nothing is left, so onboarding is complete. */
+        if (seqLen == 0) {
+            result = 1;
+            gameFrontSetOnboardingComplete();
+            running = false;
+            ImGui::End();   /* ##OnboardingBg */
+            ImGui::EndFrame();
+            dialogFrameCapEnd(frameCapStart);
+            continue;
+        }
+#else
         seq[seqLen++] = ONBOARD_STEP_KEYS;
+#endif
 
         /* Locate the current step in the active sequence; snap it into range
          * if it dropped out (e.g. it was Account but the player just signed

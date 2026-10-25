@@ -720,7 +720,7 @@ int run_mapgen_maker_room_kinds(void) {
 static const SeedHash kMakerHashes[] = {
     { "K076010AA1422A1040000000080Z46", 0xC3956ADBu },
     { "K076010AA1422A104607FF70880Z46", 0xE6515047u },
-    { "K076010AA1422A104607FF70880Z5A", 0x6AD08072u },
+    { "K076010AA1422A104607FF70880Z5A", 0x9475F38Bu },
     { "K08678CA33221A1080000000080Z73", 0x0963FF6Bu },
     { "K08678CA33221A108607FF70880Z73", 0x5F8E6AAFu },
     { "K08678CA33221A108607FF70880Z5A", 0xF88BD54Fu },
@@ -866,9 +866,11 @@ static int bandEdge(int v, int d, int lo, int hi) {
  * one piece of land. The map chooser's Randomize moves each Map Maker
  * value in a band round the preset's value (randomizePanel in
  * src/mapeditor/mapgen_imgui.cpp): plus or minus 10 for Water, Forest,
- * Road and Building, plus or minus 1 for Mine density and Detail, and
- * Islands stays at the preset's value for these presets (Islands 2 or
- * more cuts deep channels through the land, see cutChannels). Every
+ * Road and Building and plus or minus 1 for Detail. Mine density
+ * stays at the preset's value, and Islands stays at the preset's value
+ * for these presets (Islands 2 or more cuts deep channels through the
+ * land, see cutChannels). The test still checks Mine density at the
+ * band edges, which a hand-set value can reach. Every
  * named outline of the preset, at the preset's values and at the band
  * edges, over a set of seeds and two sizes, must give one piece of
  * land. */
@@ -1563,5 +1565,100 @@ int run_mapgen_maker_diag_roads_join(void) {
         UT_ASSERT_MSG(steps[k] > 0, "%s has no joined diagonal road steps", joinKeys[k]);
     }
     UT_ASSERT_MSG(bad == 0, "%d pairs of line road tiles touch only at a corner and could be joined", bad);
+    return 0;
+}
+
+/*---------------------------------------------------------
+ * Symmetric objects
+ *
+ * On a map with symmetry every base, pillbox and start has an object
+ * of the same kind on each of its symmetry images. Fragments and
+ * walled base areas give one tile as a hint for an object, and their
+ * terrain is copied to every image, so the object must go on every
+ * image too.
+ *---------------------------------------------------------*/
+
+/* The number of objects in ox, oy whose symmetry images are not all
+ * in the set. */
+static int symMisses(const DiagFrame *f, const int *ox, const int *oy, int n) {
+    int misses = 0;
+    for (int i = 0; i < n; i++) {
+        int xs[4], ys[4], m = diagImages(f, ox[i], oy[i], xs, ys);
+        bool all = true;
+        for (int k = 0; k < m && all; k++) {
+            bool found = false;
+            for (int j = 0; j < n && !found; j++) {
+                if (ox[j] == xs[k] && oy[j] == ys[k]) found = true;
+            }
+            if (!found) all = false;
+        }
+        if (!all) misses++;
+    }
+    return misses;
+}
+
+/* Every preset with symmetry, at full size and at size 120, over six
+ * seeds. A set that maps onto itself is made of whole groups of
+ * images, so a kind whose count is not a whole number of groups is
+ * not checked. Small sizes are left out: when the symmetric passes
+ * of placeKind run out of room, its last pass places the rest one at
+ * a time (Slugfest at size 64 places 4 of 16 pillboxes that way). */
+int run_mapgen_maker_objects_symmetric(void) {
+    static const char *names[3] = { "bases", "pillboxes", "starts" };
+    static int ox[3][256], oy[3][256];
+    GenOut g;
+    int checked = 0, bad = 0;
+    UT_ASSERT(genAlloc(&g));
+    for (int p = 0; p < mapGenPresetCount(); p++) {
+        static const int sizes[] = { MAPGEN_SIZE_FULL, 120 };
+        for (size_t s = 0; s < sizeof(sizes) / sizeof(sizes[0]); s++) {
+            for (uint32_t seed = 1; seed <= 6; seed++) {
+                MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_MAKER), c;
+                DiagFrame f;
+                int x2, y2, xs[4], ys[4], per, on[3], want[3];
+                mapGenApplyPreset(p, &cfg);
+                if (cfg.params.maker.symmetry == MAPGEN_MSYM_NONE) continue;
+                setRegion(&cfg);
+                cfg.size = sizes[s];
+                cfg.seed = seed * 7919u + 11u;
+                genRun(&g, &cfg);
+                c = cfg;
+                mapGenClampConfig(&c);
+                mapGenEffectiveRegion(&c, &f.x1, &f.y1, &x2, &y2);
+                f.W = x2 - f.x1 + 1;
+                f.H = y2 - f.y1 + 1;
+                f.sym = c.params.maker.symmetry;
+                /* As in makerGenerate: quarter turns need a square. */
+                if (f.sym == MAPGEN_MSYM_ROTATE4 && f.W != f.H) f.sym = MAPGEN_MSYM_MIRROR4;
+                per = diagImages(&f, f.x1, f.y1, xs, ys);
+                on[0] = g.bs->numBases;
+                on[1] = g.pb->numPills;
+                on[2] = g.ss->numStarts;
+                want[0] = c.bases;
+                want[1] = c.pills;
+                want[2] = c.starts;
+                for (int i = 0; i < on[0]; i++) { ox[0][i] = g.bs->item[i].x; oy[0][i] = g.bs->item[i].y; }
+                for (int i = 0; i < on[1]; i++) { ox[1][i] = g.pb->item[i].x; oy[1][i] = g.pb->item[i].y; }
+                for (int i = 0; i < on[2]; i++) { ox[2][i] = g.ss->item[i].x; oy[2][i] = g.ss->item[i].y; }
+                for (int k = 0; k < 3; k++) {
+                    int misses;
+                    if (want[k] % per != 0) continue;
+                    checked++;
+                    misses = symMisses(&f, ox[k], oy[k], on[k]);
+                    if (misses > 0) {
+                        bad++;
+                        if (bad <= 10) {
+                            printf("  %s size %d seed %u: %d of %d %s have no object on an image\n",
+                                   mapGenPresetName(p), sizes[s], cfg.seed, misses, on[k], names[k]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    genFree(&g);
+    UT_ASSERT_MSG(checked > 0, "no preset with symmetry was checked");
+    UT_ASSERT_MSG(bad == 0, "%d of %d object sets do not map onto themselves under the symmetry",
+                  bad, checked);
     return 0;
 }
