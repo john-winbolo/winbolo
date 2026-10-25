@@ -44,6 +44,8 @@
 #include "../../winbolonet/winbolonet_server.h"   /* WbnLobbyInfo, winbolonetSetLobbyInfo, winbolonetSendLobbyUpdate */
 #include "../../common/md5.h"       /* the BMAPBOLO map hash WinBolo.net matches against */
 #include "../../common/wb_log.h"    /* WB_LOG_INFO — the lobby-reset trace */
+#include "log.h"                    /* logAddEvent, logIsRecording — the overrun record */
+#include "overrun_record.h"         /* OverrunRecord — that record's payload */
 
 /* The picks whose file is in the session directory, taken off the list with
  * the rest closing up behind them in order, and then the directory emptied.
@@ -487,9 +489,79 @@ void serverSimPrintOverrunStats(ServerSim *sim, uint32_t roundSeconds) {
         fprintf(stdout, "  %s\n", name);
         serverSimPrintBotTiming(&bi);
     }
-    /* The text log is read while the round runs, so the lines go out now
+    /* The console is read while the round runs, so the lines go out now
        rather than when the buffer next fills. */
     fflush(stdout);
+}
+
+void serverSimLogOverrunStats(ServerSim *sim, uint32_t roundFrames, bool roundEnd) {
+    OverrunRecord rec;
+    BYTE payload[OVERRUN_RECORD_MAX_BYTES];
+    int len;
+    BYTE count;
+    double tickLast = 0.0, tickEwma = 0.0;
+    double simLast = 0.0, simEwma = 0.0;
+    double tickPeak = 0.0;
+    unsigned int tickOverBudget = 0;
+
+    if (sim == NULL || !logIsRecording()) {
+        return;
+    }
+    memset(&rec, 0, sizeof(rec));
+    rec.version = OVERRUN_RECORD_VERSION;
+    rec.flags = roundEnd ? OVERRUN_RECORD_FLAG_ROUND_END : 0;
+    rec.roundFrames = roundFrames;
+
+    /* The same reads serverSimPrintTiming makes. */
+    serverLifecycleGetTickStats(&tickLast, &tickEwma);
+    serverLifecycleGetSimStats(&simLast, &simEwma);
+    serverLifecycleGetTickPeak(&tickPeak, &tickOverBudget);
+    rec.tickLast = overrunRecordTenths(tickLast);
+    rec.tickEwma = overrunRecordTenths(tickEwma);
+    rec.tickPeak = overrunRecordTenths(tickPeak);
+    rec.ticksOverBudget = (uint32_t) tickOverBudget;
+    rec.budgetMs = (uint8_t) SERVER_TICK_LENGTH;
+    rec.simLast = overrunRecordTenths(simLast);
+    rec.simEwma = overrunRecordTenths(simEwma);
+
+    if (botManagerHasAnyBot(sim)) {
+        BotPoolStats ps;
+        botManagerGetPoolStats(sim, &ps);
+        rec.flags |= OVERRUN_RECORD_FLAG_BOTS;
+        rec.workers = (uint8_t) (ps.workerCount < 0 ? 0 : ps.workerCount > 255 ? 255 : ps.workerCount);
+        rec.activeBots = (uint8_t) (ps.activeBots < 0 ? 0 : ps.activeBots > 255 ? 255 : ps.activeBots);
+        rec.targetPerBot = overrunRecordTenths(ps.currentTargetMs);
+        rec.brainLast = overrunRecordTenths(ps.lastBrainPhaseMs);
+        rec.brainEwma = overrunRecordTenths(ps.ewmaBrainPhaseMs);
+        rec.brainPeak = overrunRecordTenths(ps.maxThinkMs);
+        rec.prepLast = overrunRecordTenths(ps.lastSerialMs);
+        rec.prepEwma = overrunRecordTenths(ps.ewmaSerialMs);
+        rec.totalOverruns = ps.totalOverruns;
+        rec.totalThinks = ps.totalThinks;
+    }
+
+    /* Each bot, as serverSimPrintOverrunStats lists them. A bot with no brain
+       has no thinks, and its part says so with zeros. */
+    for (count = 0; count < MAX_TANKS && rec.botCount < OVERRUN_RECORD_MAX_BOTS; count++) {
+        BotInfo bi;
+        OverrunRecordBot *b;
+        if (!sim->playerConnected[count] || !botManagerGetBotInfo(sim, count, &bi)) {
+            continue;
+        }
+        b = &rec.bots[rec.botCount++];
+        b->player = count;
+        if (bi.hasBrain) {
+            b->last = overrunRecordTenths(bi.lastThinkMs);
+            b->peak = overrunRecordTenths(bi.maxThinkMs);
+            b->overruns = bi.overrunCount;
+            b->thinks = bi.thinkCount;
+        }
+    }
+
+    len = overrunRecordEncode(&rec, payload, (int) sizeof(payload));
+    if (len > 0) {
+        logAddEvent(log_OverrunStats, 0, 0, 0, 0, (unsigned short) len, (char *) payload);
+    }
 }
 
 bool serverSimSaveMap(ServerSim *sim, char *fileName) {

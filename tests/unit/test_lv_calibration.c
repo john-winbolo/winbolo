@@ -1896,3 +1896,139 @@ int run_lv_lag_view_draw(void) {
   remove(path);
   return 0;
 }
+
+/* A log_OverrunStats record for the viewer test: frames, flags, one tick
+ * time and two bots, encoded as the server writes it. */
+static int overrunTestPayload(uint8_t *out, int cap, uint32_t frames, uint8_t flags,
+                              uint16_t tickLast) {
+  OverrunRecord rec;
+  memset(&rec, 0, sizeof(rec));
+  rec.flags = flags;
+  rec.roundFrames = frames;
+  rec.tickLast = tickLast;
+  rec.tickEwma = 41;
+  rec.tickPeak = 187;
+  rec.ticksOverBudget = 2;
+  rec.budgetMs = 20;
+  rec.workers = 4;
+  rec.activeBots = 2;
+  rec.targetPerBot = 80;
+  rec.totalOverruns = 3;
+  rec.totalThinks = 1200;
+  rec.botCount = 2;
+  rec.bots[0].player = 1;
+  rec.bots[0].last = 12;
+  rec.bots[0].peak = 95;
+  rec.bots[0].overruns = 1;
+  rec.bots[0].thinks = 600;
+  rec.bots[1].player = 5;
+  rec.bots[1].last = 30;
+  rec.bots[1].peak = 160;
+  rec.bots[1].overruns = 2;
+  rec.bots[1].thinks = 600;
+  return overrunRecordEncode(&rec, out, cap);
+}
+
+/* The viewer reads log_OverrunStats records into a track and gives the last
+ * one at or before the playhead. A record shorter than the fixed part, or of
+ * version 0, is consumed and ignored, and bytes a later version adds after
+ * the bots are skipped. A file with no record says it has none. */
+int run_lv_overrun_read(void) {
+  const char *path = "lv_overrun_read.wbv";
+  uint8_t first[OVERRUN_RECORD_MAX_BYTES];
+  uint8_t last[OVERRUN_RECORD_MAX_BYTES + 4];
+  uint8_t zeroVersion[OVERRUN_RECORD_MAX_BYTES];
+  static const uint8_t shortRec[10] = {1, 0, 0, 0, 0x0B, 0xB8, 0, 0, 0, 0};
+  int firstLen;
+  int lastLen;
+  int zeroLen;
+  LogBuf b;
+  LogViewerState *lv;
+  LvOverrunNow now;
+  int i;
+
+  firstLen = overrunTestPayload(first, (int)sizeof(first), 3000u,
+                                OVERRUN_RECORD_FLAG_BOTS, 52);
+  zeroLen = overrunTestPayload(zeroVersion, (int)sizeof(zeroVersion), 3050u,
+                               OVERRUN_RECORD_FLAG_BOTS, 999);
+  zeroVersion[0] = 0;
+  lastLen = overrunTestPayload(last, (int)sizeof(last), 3100u,
+                               OVERRUN_RECORD_FLAG_BOTS | OVERRUN_RECORD_FLAG_ROUND_END, 77);
+  UT_ASSERT(firstLen == OVERRUN_RECORD_HEAD_BYTES + 2 * OVERRUN_RECORD_BOT_BYTES);
+  UT_ASSERT(zeroLen == firstLen && lastLen == firstLen);
+  /* A later version: its own version byte and four bytes after the bots. */
+  last[0] = 2;
+  memset(last + lastLen, 0xEE, 4);
+  lastLen += 4;
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_OverrunStats, first, (uint16_t)firstLen);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_OverrunStats, shortRec, (uint16_t)sizeof(shortRec));
+  putEventFrame(&b, log_OverrunStats, zeroVersion, (uint16_t)zeroLen);
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_OverrunStats, last, (uint16_t)lastLen);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic overrun log failed to build/load");
+
+  lv_screenOverrunNow(&now);
+  UT_ASSERT_MSG(now.recorded, "the load did not see the records");
+  UT_ASSERT_MSG(!now.has, "a record is in effect before the first one");
+
+  for (i = 0; i < 80; i++) {
+    lv_screenLogTick();
+  }
+  lv_screenOverrunNow(&now);
+  UT_ASSERT_MSG(now.has, "no record after the first one");
+  UT_ASSERT_MSG(now.rec.roundFrames == 3000u && now.rec.tickLast == 52,
+                "after the first record: frames %u tick %u (want 3000, 52)",
+                (unsigned)now.rec.roundFrames, (unsigned)now.rec.tickLast);
+  UT_ASSERT(!(now.rec.flags & OVERRUN_RECORD_FLAG_ROUND_END));
+  UT_ASSERT(now.rec.botCount == 2);
+  UT_ASSERT(now.rec.bots[0].player == 1 && now.rec.bots[0].peak == 95);
+  UT_ASSERT(now.rec.bots[1].player == 5 && now.rec.bots[1].overruns == 2 &&
+            now.rec.bots[1].thinks == 600);
+
+  /* Past the short record and the version 0 one: still the first. */
+  for (i = 0; i < 60; i++) {
+    lv_screenLogTick();
+  }
+  lv_screenOverrunNow(&now);
+  UT_ASSERT_MSG(now.has && now.rec.roundFrames == 3000u,
+                "an ignored record replaced the first: frames %u",
+                (unsigned)now.rec.roundFrames);
+
+  for (i = 0; i < 80; i++) {
+    lv_screenLogTick();
+  }
+  lv_screenOverrunNow(&now);
+  UT_ASSERT_MSG(now.has && now.rec.roundFrames == 3100u && now.rec.tickLast == 77,
+                "after the last record: frames %u tick %u (want 3100, 77)",
+                (unsigned)now.rec.roundFrames, (unsigned)now.rec.tickLast);
+  UT_ASSERT(now.rec.version == 2);
+  UT_ASSERT(now.rec.flags & OVERRUN_RECORD_FLAG_ROUND_END);
+  UT_ASSERT(now.rec.botCount == 2 && now.rec.bots[1].peak == 160);
+
+  lv_decoderDestroy(lv);
+  remove(path);
+
+  /* A file with no record. */
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic plain log failed to build/load");
+  lv_screenOverrunNow(&now);
+  UT_ASSERT_MSG(!now.recorded && !now.has, "a file with no record has one");
+  lv_decoderDestroy(lv);
+  remove(path);
+  return 0;
+}

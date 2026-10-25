@@ -179,7 +179,7 @@ static const char *dumpRecordName(BYTE code) {
     DUMP_REC(RuleSet);          DUMP_REC(ScnPanel);        DUMP_REC(ScnScore);
     DUMP_REC(ScnAnnounce);      DUMP_REC(ScnMarker);       DUMP_REC(ScnHint);
     DUMP_REC(ServerTick);       DUMP_REC(ScnStatus);       DUMP_REC(VoiceEveryone);
-    DUMP_REC(MapName);          DUMP_REC(PlayerLag);
+    DUMP_REC(MapName);          DUMP_REC(PlayerLag);       DUMP_REC(OverrunStats);
 #undef DUMP_REC
     default: return "Unknown";
   }
@@ -345,6 +345,33 @@ static void dumpRecordFields(DumpCtx *c, BYTE code, const BYTE *b, int len) {
                 ((unsigned)b[1] << 8) | b[2], b[3], (unsigned)b[3] * 20u);
       }
       break;
+    /* Times in tenths of a ms. Each bot is botN=last/peak/overruns/thinks. */
+    case log_OverrunStats: {
+      OverrunRecord rec;
+      if (overrunRecordDecode(b, len, &rec)) {
+        fprintf(out, " version=%u round_end=%u round_frames=%u tick_last=%u tick_ewma=%u"
+                " tick_peak=%u over_budget=%u budget_ms=%u sim_last=%u sim_ewma=%u",
+                rec.version, (rec.flags & OVERRUN_RECORD_FLAG_ROUND_END) ? 1u : 0u,
+                (unsigned)rec.roundFrames, rec.tickLast, rec.tickEwma, rec.tickPeak,
+                (unsigned)rec.ticksOverBudget, rec.budgetMs, rec.simLast, rec.simEwma);
+        if (rec.flags & OVERRUN_RECORD_FLAG_BOTS) {
+          fprintf(out, " workers=%u active_bots=%u target=%u brain_last=%u brain_ewma=%u"
+                  " brain_peak=%u prep_last=%u prep_ewma=%u overruns=%u thinks=%u",
+                  rec.workers, rec.activeBots, rec.targetPerBot, rec.brainLast,
+                  rec.brainEwma, rec.brainPeak, rec.prepLast, rec.prepEwma,
+                  (unsigned)rec.totalOverruns, (unsigned)rec.totalThinks);
+        }
+        {
+          int i;
+          for (i = 0; i < (int)rec.botCount; i++) {
+            const OverrunRecordBot *bot = &rec.bots[i];
+            fprintf(out, " bot%u=%u/%u/%u/%u", bot->player, bot->last, bot->peak,
+                    (unsigned)bot->overruns, (unsigned)bot->thinks);
+          }
+        }
+      }
+      break;
+    }
     case log_MessageAll:
       if (len >= 1) {
         fprintf(out, " sender=%u", b[0]);

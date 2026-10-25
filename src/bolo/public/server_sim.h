@@ -1411,6 +1411,25 @@ void serverSimInformation(ServerSim *sim, bool locked);
 void serverSimPrintOverrunStats(ServerSim *sim, uint32_t roundSeconds);
 
 /*********************************************************
+ *NAME:          serverSimLogOverrunStats
+ *PURPOSE:
+ *  Adds a log_OverrunStats record to the round log (.wbv)
+ *  with the numbers serverSimPrintOverrunStats prints: the
+ *  server loop's timing with its over-budget count, the bot
+ *  pool's timing with its total overruns, and each bot's
+ *  timing and overruns (layout in overrun_record.h and
+ *  docs/replay-format.md). Resets no counter. Does nothing
+ *  when no log is open.
+ *
+ *ARGUMENTS:
+ *  sim         - Pointer to the ServerSim
+ *  roundFrames - Running 20 ms server frames of the round so far
+ *  roundEnd    - TRUE for the record written as the round's log
+ *                closes, FALSE for a timed one
+ *********************************************************/
+void serverSimLogOverrunStats(ServerSim *sim, uint32_t roundFrames, bool roundEnd);
+
+/*********************************************************
  *NAME:          serverSimSaveMap
  *PURPOSE:
  *  Saves the current map state to a file.

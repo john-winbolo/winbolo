@@ -168,6 +168,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 69 | `log_VoiceEveryone` | Who a scenario sent the round's voice to: `on:u8`, 1 for every player and 0 for the talker's allies alone. Written when the value changes |
 | 70 | `log_MapName` | Pascal-form name of the map the round is played on. Written when the round starts. A log that opens in the lobby writes its header before the host chooses the map, so the header can name the previous round's map; a reader shows this name in its place |
 | 71 | `log_PlayerLag` | One player's network lag: RTT and the rewind the server used (below) |
+| 72 | `log_OverrunStats` | The server's tick timing and each bot's overruns, as the console's overrun lines print them (below) |
 
 ### `log_GameSettings` payload
 
@@ -656,6 +657,77 @@ takes the four bytes it knows and skips the rest by the framed length, so a
 later version can add fields after these. A record shorter than four bytes is
 consumed and ignored. A viewer made before this record skips it by its framed
 length, the same as any other event it does not know.
+
+### `log_OverrunStats` payload
+
+The server's timing and the bots' overruns: the numbers the server's console
+prints in its overrun lines (`serverSimPrintOverrunStats`,
+`src/server/sim/server_sim_round.c`), and the same as the "info" command's
+timing lines. Built and read by `overrunRecordEncode` and
+`overrunRecordDecode` (`src/bolo/public/overrun_record.h`). Every multi-byte
+field is big-endian. A time is a `u16` in tenths of a millisecond, so 1234 is
+123.4 ms and 65535 (6553.5 ms) is the most it holds; a longer time is
+written as 65535.
+
+A 44-byte fixed part:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Version | `u8`, 1. A later version adds its fields after the ones below |
+| 1 | Flags | Bit 0: round end, written as the round's log closed. Bit 1: the round had bots, so bytes 21–42 hold values |
+| 2–5 | Round frames | `u32`, running 20 ms server frames of the round so far. 3000 is 1:00 |
+| 6–7 | Tick last | `u16` tenths of a ms. The server loop's last frame |
+| 8–9 | Tick EWMA | `u16` tenths of a ms |
+| 10–11 | Tick peak | `u16` tenths of a ms. The worst frame this round |
+| 12–15 | Over budget | `u32`. Frames this round that took the budget or more |
+| 16 | Budget | `u8`, whole ms. 20 |
+| 17–18 | Simulation last | `u16` tenths of a ms. The two simulation steps of the last frame |
+| 19–20 | Simulation EWMA | `u16` tenths of a ms |
+| 21 | Workers | `u8`. Bot pool worker threads; 0 is a single thread |
+| 22 | Active bots | `u8` |
+| 23–24 | Target | `u16` tenths of a ms. The think target for one bot |
+| 25–26 | Brain last | `u16` tenths of a ms. The bot pool's brain phase in the last frame |
+| 27–28 | Brain EWMA | `u16` tenths of a ms |
+| 29–30 | Brain peak | `u16` tenths of a ms. The worst single think in the pool this round |
+| 31–32 | Bot prep last | `u16` tenths of a ms. The pool's work outside the brains |
+| 33–34 | Bot prep EWMA | `u16` tenths of a ms |
+| 35–38 | Total overruns | `u32`. Thinks over the target this round, all bots |
+| 39–42 | Total thinks | `u32`. Thinks this round, all bots |
+| 43 | Bot count | `u8`, 0 to 16. The bot parts that follow |
+
+Then 13 bytes for each bot:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Player | Player slot |
+| 1–2 | Last | `u16` tenths of a ms. The bot's last think |
+| 3–4 | Peak | `u16` tenths of a ms. Its worst think this round |
+| 5–8 | Overruns | `u32`. Its thinks over the target this round |
+| 9–12 | Thinks | `u32`. Its thinks this round |
+
+A bot that has no brain has zeros in its part. So a record is 44 bytes with no
+bots and 252 bytes with 16.
+
+The counts and the peaks start again at each round start; the EWMA and last
+values are the server's running ones. Writing a record resets nothing.
+
+Written by the server (`serverLifecycleReportOverrunStats`,
+`src/server/server_lifecycle.c`) at the same frames the console's overrun
+lines print: at 1:00 of the round (frame 3000), then at every 5 minutes (frame
+15000, 30000 and so on, `serverOverrunStatsDue`). It is written after the
+frame's own time is recorded, so it includes that frame, and it lands in the
+next entry of the log. The round log's stop hook
+(`serverLifecycleLogRoundEndOverrunStats`, set with `logSetStopHook`) writes
+one more, with the round-end flag, when the round's log closes, so a round
+shorter than a minute still has one. That record is the last entry before
+`LOG_QUIT`. A log that closes without a round having run since the last
+round-end record gets none.
+
+A reader takes the fields it knows and skips the rest by the framed length. A
+record shorter than 44 bytes, or with version 0, is consumed and ignored. A
+viewer made before this record skips it by its framed length, the same as any
+other event it does not know. `tools/wbv_overruns.py` prints a file's records
+as text.
 
 ## Snapshot body
 

@@ -51,6 +51,7 @@
 #include "server_lifecycle.h"
 #include "spectator_ring.h"
 #include "log_internal.h"   /* logSetSpectatorRing */
+#include "log.h"            /* logSetStopHook — the round-end overrun record */
 
 /* Round-end log hooks installed by WinBoloDS via
  * serverLifecycleSetRoundLogHooks. NULL on every other binary that
@@ -63,6 +64,9 @@ void serverLifecycleSetRoundLogHooks(void (*stash)(void),
                                      void (*flush)(void)) {
   s_roundLogStash = stash;
   s_roundLogFlush = flush;
+  /* The round log that hands its hooks over here gets the round-end overrun
+     record from logStop. The hook guards itself, so it stays installed. */
+  logSetStopHook(serverLifecycleLogRoundEndOverrunStats);
 }
 
 static void roundLogStash(void) {
@@ -325,9 +329,13 @@ static double       s_peakTickMs      = 0.0;
 static unsigned int s_ticksOverBudget = 0;
 
 /* The running frames of the round so far, for the periodic overrun lines
- * (serverOverrunStatsDue). The reset of the peak above starts it again, at
- * each round start. */
+ * and records (serverOverrunStatsDue). The reset of the peak above starts it
+ * again, at each round start. */
 static uint32_t     s_roundRunFrames  = 0;
+/* TRUE from a round start until the round's log has its round-end overrun
+ * record (serverLifecycleLogRoundEndOverrunStats), so a log that closes later
+ * without a new round, a lobby log say, does not get a second one. */
+static bool         s_overrunEndDue   = FALSE;
 
 /* Wall-clock cost (ms) of the two serverSimTick calls combined for the
  * most recent tick, plus its EWMA. Same seeding rule as above. */
@@ -366,6 +374,25 @@ void serverLifecycleResetTickPeak(void) {
   s_peakTickMs      = 0.0;
   s_ticksOverBudget = 0;
   s_roundRunFrames  = 0;
+  s_overrunEndDue   = TRUE;
+}
+
+bool serverLifecycleCountRoundFrame(void) {
+  s_roundRunFrames++;
+  return serverOverrunStatsDue(s_roundRunFrames);
+}
+
+void serverLifecycleReportOverrunStats(ServerSim *sim) {
+  serverSimPrintOverrunStats(sim, s_roundRunFrames / (1000u / SERVER_TICK_LENGTH));
+  serverSimLogOverrunStats(sim, s_roundRunFrames, FALSE);
+}
+
+void serverLifecycleLogRoundEndOverrunStats(ServerSim *sim) {
+  if (sim == NULL || !s_overrunEndDue || s_roundRunFrames == 0) {
+    return;
+  }
+  s_overrunEndDue = FALSE;
+  serverSimLogOverrunStats(sim, s_roundRunFrames, TRUE);
 }
 
 uint32_t serverTickCatchUp(uint32_t nowMs, uint32_t *oldTick, uint32_t *ticks,
@@ -1223,15 +1250,15 @@ void serverInstanceTick(ServerSim *sim) {
   double tickMs = (double)(tickEnd - tickStart) * 1000.0 / freq;
   serverLifecycleRecordTickMs(tickMs);
 
-  /* The overrun lines, once a minute into the round and then every five
-   * minutes. After the tick's own time is recorded, so the lines include
-   * this frame and the print is not part of the time it reports. Only a
-   * frame that ran the round counts. */
+  /* The overrun lines on the console and the overrun record in the round
+   * log, once a minute into the round and then every five minutes. After the
+   * tick's own time is recorded, so they include this frame and the work is
+   * not part of the time they report. Only a frame that ran the round
+   * counts. */
   if (preTickState == serverStateRunning && sim->state == serverStateRunning) {
-    s_roundRunFrames++;
-    if (serverOverrunStatsDue(s_roundRunFrames)) {
+    if (serverLifecycleCountRoundFrame()) {
       threadsWaitForMutex();
-      serverSimPrintOverrunStats(sim, s_roundRunFrames / (1000u / SERVER_TICK_LENGTH));
+      serverLifecycleReportOverrunStats(sim);
       threadsReleaseMutex();
     }
   }

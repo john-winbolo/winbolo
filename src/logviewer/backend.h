@@ -39,6 +39,7 @@
 #include "lv_save_name.h"   /* LvRosterRow */
 #include "lv_ping_view.h"   /* LvPingShown */
 #include "lv_lag.h"         /* LvPlayerLag */
+#include "lv_overrun.h"     /* LvOverrunNow */
 
 /* Defines */
 
@@ -826,6 +827,12 @@ void lv_screenSetLagFeature(int enabled);
 int  lv_screenGetLagFeature(void);
 bool lv_screenLagShown(void);
 void lv_screenPlayerLagSnapshot(int slot, LvPlayerLag *out);
+
+/* The server's timing and each bot's overruns, from the recording's
+ * log_OverrunStats records: the last record at or before the playhead. Not
+ * part of the lag view, so the "Player Lag View" preference does not hide it.
+ * Hold the client mutex. */
+void lv_screenOverrunNow(LvOverrunNow *out);
 
 /* The lag view ("see what this player saw"): the map draws the other tanks,
  * the builders and the shells as far behind as slot's player's screen was,

@@ -124,8 +124,59 @@ static char       s_lagViewName[PLAYER_NAME_LEN];
    decode where it always did. */
 static bool       s_lagFeature  = FALSE;
 
+/* --- Overrun records ----------------------------------------------------
+ * The server's timing and each bot's overruns, as the recording's
+ * log_OverrunStats records state them (overrun_record.h). Collected the way
+ * the lag records are: by the load's walk and by playback, which on a live
+ * feed is the only collector. Shown whatever the "Player Lag View"
+ * preference says, because they are not part of the lag view. */
+static LvOverrunTrack s_overrunTrack;
+
+/* Take one log_OverrunStats payload of len bytes at ms. */
+static void lv_overrunRecordRead(uint32_t ms, const BYTE *b, int len) {
+  OverrunRecord rec;
+  if (overrunRecordDecode(b, len, &rec)) {
+    lv_overrunTrackAdd(&s_overrunTrack, ms, &rec);
+  }
+}
+
+/* Read the payload at the cursor, evLen bytes, into the track at ms. The
+   caller sets the cursor to the frame's end after. FALSE when the bytes are
+   not there. */
+static bool lv_overrunReadPayload(uint32_t ms, unsigned short evLen) {
+  BYTE b[OVERRUN_RECORD_MAX_BYTES];
+  int want = evLen < (unsigned short) sizeof(b) ? (int) evLen : (int) sizeof(b);
+  if (evLen < OVERRUN_RECORD_HEAD_BYTES) {
+    return TRUE;   /* too short to be one: consumed and ignored */
+  }
+  if (logReadBytes(b, want) != want) {
+    return FALSE;
+  }
+  lv_overrunRecordRead(ms, b, want);
+  return TRUE;
+}
+
+void lv_screenOverrunNow(LvOverrunNow *out) {
+  const LvOverrunEntry *e;
+
+  if (out == NULL) {
+    return;
+  }
+  memset(out, 0, sizeof(*out));
+  if (g_lv == NULL || g_lv->logLoaded == FALSE) {
+    return;
+  }
+  out->recorded = (s_overrunTrack.count > 0);
+  e = lv_overrunTrackAt(&s_overrunTrack, g_lv->timeRunning);
+  if (e != NULL) {
+    out->has = TRUE;
+    out->ms = e->ms;
+    out->rec = e->rec;
+  }
+}
+
 /* Drop the records, the history and the view, as every load and close
-   does. */
+   does. The overrun records go with them. */
 static void lv_lagReset(void) {
   int i;
   for (i = 0; i < LV_LAG_SLOTS; i++) {
@@ -135,6 +186,7 @@ static void lv_lagReset(void) {
   lv_lagRingClear(&s_lagRing);
   s_lagViewSlot = -1;
   s_lagViewName[0] = '\0';
+  lv_overrunTrackClear(&s_overrunTrack);
 }
 
 /* Take one log_PlayerLag payload's first four bytes (the player, the RTT as
@@ -3048,6 +3100,14 @@ void lv_screenProcessLog(unsigned short numEvents) {
         logReadBytes(b, 4);
       }
       break;
+    case log_OverrunStats:
+      /* The server's timing and the bots' overruns. Only a framed file has
+         them, and the frame's length below ends the record wherever the
+         read stopped. */
+      if (isV2) {
+        lv_overrunReadPayload(g_lv->timeRunning, evLen);
+      }
+      break;
     case log_BaseSetOwner:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
@@ -4596,6 +4656,7 @@ typedef struct {
   bool     pres;       /* scenario presentation index; framed files only */
   bool     wt;         /* server tick count and anchors; framed files only */
   bool     lag;        /* log_PlayerLag into the lag tracks; framed files only */
+  bool     overrun;    /* log_OverrunStats into the overrun track; framed files only */
   /* Set by walkScanEvents for the block it read, for the server tick count:
      whether it held log_EntityMasks, and its first four-byte log_ServerTick. */
   bool     masks;
@@ -4646,6 +4707,10 @@ static bool walkScanEvents(LvLoadWalk *w, unsigned short numEvents, uint32_t ms)
         } else {
           lv_lagRecordRead(ms, b);
         }
+      }
+      if (w->overrun && code == log_OverrunStats &&
+          !lv_overrunReadPayload(ms, evLen)) {
+        w->overrun = FALSE;
       }
       if (w->pres &&
           (code == log_ScnPanel || code == log_ScnScore ||
@@ -4737,6 +4802,7 @@ static void lv_walkLoadBegin(void) {
   s_walk.w.pres    = s_walk.w.framed;
   s_walk.w.wt      = s_walk.w.framed;
   s_walk.w.lag     = s_walk.w.framed;
+  s_walk.w.overrun = s_walk.w.framed;
 
   lv_ruleChangesClear();
   lv_presReset();
