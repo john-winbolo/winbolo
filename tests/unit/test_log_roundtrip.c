@@ -1187,17 +1187,21 @@ static int collectOverruns(const uint8_t *buf, size_t len, size_t pos,
     return -1;
 }
 
-/* Records a 3010-frame round, with the frame count and call the server loop
- * makes, with or without the round log's stop hook, and returns its log.dat
- * (the caller frees *buf). */
-static bool recordOverrunRound(const char *tag, bool hook, uint8_t **buf, size_t *blen,
-                               int *reports, uint32_t *reportFrame) {
+/* Records a round of the given frames, with the frame count and call the
+ * server loop makes, with or without the round log's stop hook, and returns
+ * its log.dat (the caller frees *buf). *reports counts the report calls,
+ * *reportFrame is the frame of the last one, and *prints counts the report
+ * frames that also print the console's overrun lines. */
+static bool recordOverrunRound(const char *tag, bool hook, uint32_t frames,
+                               uint8_t **buf, size_t *blen,
+                               int *reports, uint32_t *reportFrame, int *prints) {
     ReplayHarness h;
     memset(&h, 0, sizeof(h));
     *buf = NULL;
     *blen = 0;
     *reports = 0;
     *reportFrame = 0;
+    *prints = 0;
     if (!replayHarnessStartRecording(&h, tag, "Tester")) {
         replayHarnessStop(&h);
         return false;
@@ -1205,7 +1209,7 @@ static bool recordOverrunRound(const char *tag, bool hook, uint8_t **buf, size_t
     /* What the server's round log sets, and the round start's reset. */
     logSetStopHook(hook ? serverLifecycleLogRoundEndOverrunStats : NULL);
     serverLifecycleResetTickPeak();
-    for (uint32_t frame = 1; frame <= 3010u; frame++) {
+    for (uint32_t frame = 1; frame <= frames; frame++) {
         /* Two sim steps a 20 ms frame, as serverInstanceTick runs them. */
         replayHarnessTick(&h, 2);
         serverLifecycleRecordTickMs(5.0);
@@ -1213,6 +1217,9 @@ static bool recordOverrunRound(const char *tag, bool hook, uint8_t **buf, size_t
             serverLifecycleReportOverrunStats(h.sim);
             (*reports)++;
             *reportFrame = frame;
+            if (serverOverrunStatsDue(frame)) {
+                (*prints)++;
+            }
         }
     }
     bool stopped = replayHarnessStopRecording(&h);
@@ -1223,25 +1230,28 @@ static bool recordOverrunRound(const char *tag, bool hook, uint8_t **buf, size_t
     return extracted;
 }
 
-/* A recorded round gets a log_OverrunStats record at 1:00 of the round
- * (frame 3000), from the frame count and call the server loop makes, and
- * one more with the round-end flag when the round's log closes, as the log's
- * last event. The hook adds only that entry: the same round recorded without
- * the hook has the same bytes up to its LOG_QUIT. */
+/* A recorded 3010-frame round gets a log_OverrunStats record at 0:30 and
+ * 1:00 of the round (frames 1500 and 3000), from the frame count and call the
+ * server loop makes, and one more with the round-end flag when the round's
+ * log closes, as the log's last event. The hook adds only that entry: the
+ * same round recorded without the hook has the same bytes up to its
+ * LOG_QUIT. */
 int run_log_roundtrip_overrun_stats_recorded(void) {
     uint8_t *offBuf = NULL;
     size_t   offLen = 0;
     int offReports = 0;
     uint32_t offFrame = 0;
-    bool offOk = recordOverrunRound("overrunRecordedOff", false, &offBuf, &offLen,
-                                    &offReports, &offFrame);
+    int offPrints = 0;
+    bool offOk = recordOverrunRound("overrunRecordedOff", false, 3010u, &offBuf, &offLen,
+                                    &offReports, &offFrame, &offPrints);
 
     uint8_t *buf = NULL;
     size_t   blen = 0;
     int reports = 0;
     uint32_t reportFrame = 0;
-    bool extracted = recordOverrunRound("overrunRecorded", true, &buf, &blen,
-                                        &reports, &reportFrame);
+    int prints = 0;
+    bool extracted = recordOverrunRound("overrunRecorded", true, 3010u, &buf, &blen,
+                                        &reports, &reportFrame, &prints);
     size_t  blockStart = 0;
     uint8_t version    = 0;
     bool located = extracted && locateSnapshotMarker(buf, blen, &blockStart, &version);
@@ -1272,21 +1282,28 @@ int run_log_roundtrip_overrun_stats_recorded(void) {
                   "the log with the hook does not start with the bytes of the log "
                   "without it (%u bytes before LOG_QUIT, %u with the hook)",
                   (unsigned)offQuit, (unsigned)blen);
-    UT_ASSERT_MSG(offReports == 1 && offFrame == 3000u && offN == 1,
-                  "without the hook: %d reports, last at %u, %d records (want 1, 3000, 1)",
+    UT_ASSERT_MSG(offReports == 2 && offFrame == 3000u && offN == 2,
+                  "without the hook: %d reports, last at %u, %d records (want 2, 3000, 2)",
                   offReports, (unsigned)offFrame, offN);
-    UT_ASSERT_MSG(reports == 1 && reportFrame == 3000u,
-                  "%d reports, the last at frame %u (want 1 at 3000)",
+    UT_ASSERT_MSG(reports == 2 && reportFrame == 3000u,
+                  "%d reports, the last at frame %u (want 2, the last at 3000)",
                   reports, (unsigned)reportFrame);
-    UT_ASSERT_MSG(n == 2, "%d log_OverrunStats records (want 2)", n);
-    UT_ASSERT_MSG(recs[0].roundFrames == 3000u &&
+    /* The console prints only at 1:00. */
+    UT_ASSERT_MSG(prints == 1 && offPrints == 1, "%d and %d prints (want 1)",
+                  prints, offPrints);
+    UT_ASSERT_MSG(n == 3, "%d log_OverrunStats records (want 3)", n);
+    UT_ASSERT_MSG(recs[0].roundFrames == 1500u &&
                   !(recs[0].flags & OVERRUN_RECORD_FLAG_ROUND_END),
-                  "first record: frames %u flags %u (want 3000, no round end)",
+                  "first record: frames %u flags %u (want 1500, no round end)",
                   (unsigned)recs[0].roundFrames, (unsigned)recs[0].flags);
-    UT_ASSERT_MSG(recs[1].roundFrames == 3010u &&
-                  (recs[1].flags & OVERRUN_RECORD_FLAG_ROUND_END),
-                  "second record: frames %u flags %u (want 3010, round end)",
+    UT_ASSERT_MSG(recs[1].roundFrames == 3000u &&
+                  !(recs[1].flags & OVERRUN_RECORD_FLAG_ROUND_END),
+                  "second record: frames %u flags %u (want 3000, no round end)",
                   (unsigned)recs[1].roundFrames, (unsigned)recs[1].flags);
+    UT_ASSERT_MSG(recs[2].roundFrames == 3010u &&
+                  (recs[2].flags & OVERRUN_RECORD_FLAG_ROUND_END),
+                  "third record: frames %u flags %u (want 3010, round end)",
+                  (unsigned)recs[2].roundFrames, (unsigned)recs[2].flags);
     UT_ASSERT_MSG(lastIsOverrun, "the round-end record is not the log's last event");
     /* The frame time the loop recorded, 5.0 ms, in tenths. */
     UT_ASSERT(recs[0].tickLast == 50 && recs[0].budgetMs == 20);
@@ -1297,9 +1314,10 @@ int run_log_roundtrip_overrun_stats_recorded(void) {
 }
 
 /* A recorded round with two bots that think, in a game whose computer tank
- * setting is "no", as a server started without -ai has: both the 1:00 record
- * and the round-end record have the bot pool and a part for each bot with
- * its thinks. The log closes before the bots are removed, as the server's
+ * setting is "no", as a server started without -ai has: the 0:30 and 1:00
+ * records and the round-end record have the bot pool and a part for each bot
+ * with its thinks, and the thinks go up from one record to the next because
+ * they count from the round start. The log closes before the bots are removed, as the server's
  * shutdown does it, so the round-end record keeps their parts. */
 int run_log_roundtrip_overrun_stats_bots(void) {
     static const BYTE kBots[2] = { 1, 2 };
@@ -1355,14 +1373,15 @@ int run_log_roundtrip_overrun_stats_bots(void) {
     UT_ASSERT_MSG(added, "a bot was refused");
     UT_ASSERT_MSG(stopped, "replayHarnessStopRecording failed");
     UT_ASSERT_MSG(located, "the log did not read");
-    UT_ASSERT_MSG(reports == 1, "%d reports (want 1)", reports);
-    UT_ASSERT_MSG(n == 2, "%d log_OverrunStats records (want 2)", n);
+    UT_ASSERT_MSG(reports == 2, "%d reports (want 2)", reports);
+    UT_ASSERT_MSG(n == 3, "%d log_OverrunStats records (want 3)", n);
     UT_ASSERT_MSG(lastIsOverrun, "the round-end record is not the log's last event");
-    for (int r = 0; r < 2; r++) {
+    static const uint32_t kFrames[3] = { 1500u, 3000u, 3010u };
+    for (int r = 0; r < 3; r++) {
         const OverrunRecord *rec = &recs[r];
-        UT_ASSERT_MSG(rec->roundFrames == (r == 0 ? 3000u : 3010u),
+        UT_ASSERT_MSG(rec->roundFrames == kFrames[r],
                       "record %d: frames %u", r, (unsigned)rec->roundFrames);
-        UT_ASSERT_MSG(((rec->flags & OVERRUN_RECORD_FLAG_ROUND_END) != 0) == (r == 1),
+        UT_ASSERT_MSG(((rec->flags & OVERRUN_RECORD_FLAG_ROUND_END) != 0) == (r == 2),
                       "record %d: flags %u", r, (unsigned)rec->flags);
         UT_ASSERT_MSG(rec->flags & OVERRUN_RECORD_FLAG_BOTS,
                       "record %d has no bot pool part", r);
@@ -1383,8 +1402,49 @@ int run_log_roundtrip_overrun_stats_bots(void) {
         UT_ASSERT_MSG(sum == rec->totalThinks, "record %d: bot thinks %u, pool %u",
                       r, (unsigned)sum, (unsigned)rec->totalThinks);
     }
-    /* The round-end record is later, so its bots have thought more. */
+    /* Each record is later, so its bots have thought more: the counts are
+     * the round's so far, not those of the last 30 seconds. */
     UT_ASSERT(recs[1].bots[0].thinks > recs[0].bots[0].thinks);
+    UT_ASSERT(recs[2].bots[0].thinks > recs[1].bots[0].thinks);
+    UT_ASSERT(recs[1].totalThinks > recs[0].totalThinks);
+    return 0;
+}
+
+/* A recorded 4510-frame round has a log_OverrunStats record every 30 seconds
+ * of it: at frames 1500, 3000 and 4500, then the round-end record at 4510.
+ * The console prints only at 1:00 (frame 3000). */
+int run_log_roundtrip_overrun_stats_every_30s(void) {
+    uint8_t *buf = NULL;
+    size_t   blen = 0;
+    int reports = 0;
+    uint32_t reportFrame = 0;
+    int prints = 0;
+    bool extracted = recordOverrunRound("overrunEvery30s", true, 4510u, &buf, &blen,
+                                        &reports, &reportFrame, &prints);
+    size_t  blockStart = 0;
+    uint8_t version    = 0;
+    bool located = extracted && locateSnapshotMarker(buf, blen, &blockStart, &version);
+    OverrunRecord recs[8];
+    bool lastIsOverrun = false;
+    int n = located ? collectOverruns(buf, blen, blockStart, recs, 8, &lastIsOverrun) : -2;
+    free(buf);
+
+    UT_ASSERT_MSG(extracted, "the round did not record");
+    UT_ASSERT_MSG(located, "header parse failed");
+    UT_ASSERT_MSG(reports == 3 && reportFrame == 4500u,
+                  "%d reports, the last at frame %u (want 3, the last at 4500)",
+                  reports, (unsigned)reportFrame);
+    UT_ASSERT_MSG(prints == 1, "%d prints (want 1, at 1:00)", prints);
+    UT_ASSERT_MSG(n == 4, "%d log_OverrunStats records (want 4)", n);
+    static const uint32_t kFrames[4] = { 1500u, 3000u, 4500u, 4510u };
+    for (int r = 0; r < 4; r++) {
+        UT_ASSERT_MSG(recs[r].roundFrames == kFrames[r],
+                      "record %d: frames %u (want %u)", r,
+                      (unsigned)recs[r].roundFrames, (unsigned)kFrames[r]);
+        UT_ASSERT_MSG(((recs[r].flags & OVERRUN_RECORD_FLAG_ROUND_END) != 0) == (r == 3),
+                      "record %d: flags %u", r, (unsigned)recs[r].flags);
+    }
+    UT_ASSERT_MSG(lastIsOverrun, "the round-end record is not the log's last event");
     return 0;
 }
 
@@ -1423,7 +1483,9 @@ int run_server_lag_log_due(void) {
 
 /* When the server prints its overrun lines during a round: at one minute of
  * game time, then at five, ten, fifteen minutes and so on, and at no other
- * frame. A frame is 20 ms, 50 a second. */
+ * frame. And when it adds the overrun record to the round log: every 30
+ * seconds, which includes each frame that prints. A frame is 20 ms, 50 a
+ * second. */
 int run_server_overrun_stats_due(void) {
     uint32_t frame;
     int prints = 0;
@@ -1442,13 +1504,37 @@ int run_server_overrun_stats_due(void) {
     UT_ASSERT(serverOverrunStatsDue(45000));    /* 15:00 */
     UT_ASSERT(!serverOverrunStatsDue(45001));
 
-    /* Twenty minutes of frames print five times: 1, 5, 10, 15, 20. */
+    UT_ASSERT(SERVER_OVERRUN_RECORD_INTERVAL_FRAMES == 1500u);
+    UT_ASSERT(!serverOverrunRecordDue(0));
+    UT_ASSERT(!serverOverrunRecordDue(1));
+    UT_ASSERT(!serverOverrunRecordDue(1499));
+    UT_ASSERT(serverOverrunRecordDue(1500));    /* 0:30 */
+    UT_ASSERT(!serverOverrunRecordDue(1501));
+    UT_ASSERT(serverOverrunRecordDue(3000));    /* 1:00 */
+    UT_ASSERT(serverOverrunRecordDue(4500));    /* 1:30 */
+    UT_ASSERT(serverOverrunRecordDue(6000));    /* 2:00 */
+    UT_ASSERT(serverOverrunRecordDue(15000));   /* 5:00 */
+    UT_ASSERT(!serverOverrunRecordDue(15001));
+
+    /* Twenty minutes of frames print five times: 1, 5, 10, 15, 20. They
+     * record forty times, once each 30 seconds, and every frame that prints
+     * also records. */
+    int records = 0;
+    bool printWithoutRecord = false;
     for (frame = 1; frame <= 20u * 60u * 50u; frame++) {
         if (serverOverrunStatsDue(frame)) {
             prints++;
+            if (!serverOverrunRecordDue(frame)) {
+                printWithoutRecord = true;
+            }
+        }
+        if (serverOverrunRecordDue(frame)) {
+            records++;
         }
     }
     UT_ASSERT_MSG(prints == 5, "twenty minutes printed %d times (want 5)", prints);
+    UT_ASSERT_MSG(records == 40, "twenty minutes recorded %d times (want 40)", records);
+    UT_ASSERT_MSG(!printWithoutRecord, "a frame printed with no record");
     return 0;
 }
 

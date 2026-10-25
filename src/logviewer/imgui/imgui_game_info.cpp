@@ -652,8 +652,8 @@ static void game_info_rate(uint32_t part, uint32_t total, char *buf, size_t bufL
 }
 
 /* The server's timing and each bot's overruns at the playhead, from the last
- * log_OverrunStats record at or before it: the numbers the server's console
- * printed in its overrun lines at that time. Draws nothing for a recording
+ * log_OverrunStats record at or before it (one every 30 seconds of the
+ * round): the numbers the server's console prints in its overrun lines. Draws nothing for a recording
  * with no record, which is every recording made before the record existed.
  * Not part of the lag view, so the "Player Lag View" preference does not
  * hide it: it says how the server ran, not what a player saw. */

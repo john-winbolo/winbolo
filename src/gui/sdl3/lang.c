@@ -1115,7 +1115,7 @@ static const LangEntry langTable[] = {
     {3142, "Last ms"},
     {3143, "Peak ms"},
     {3144, "Overruns"},
-    {3145, "No record yet. The server writes the first one at 1:00 of the round"},
+    {3145, "No record yet. The server writes the first one at 0:30 of the round"},
     {3146, "Player {number}"},
     /* Log viewer Controls panel: what each button does, for its tooltip. {string1} of the two jumps is a number of seconds ("2.5", "12"); KEY_FMT puts a button's shortcut key after its name. */
     {2833, "Back {string1} seconds"},
