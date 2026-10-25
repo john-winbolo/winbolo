@@ -25,6 +25,12 @@
  *       mined forest square, and one that runs out over a mined road, each
  *       start a fuse on that square
  *
+ * No case fires at a pillbox or a base. shellsCalcCollision gives a shell
+ * that hits one of them the outcome SHELL_OUTCOME_IMPACT, the same outcome
+ * as a terrain hit, so shellsUpdate takes the same branch for all three and
+ * the forest case above covers it. Only SHELL_OUTCOME_TANK_HIT and
+ * SHELL_OUTCOME_TANK_KILL read the rule.
+ *
  * Every case steps the shell list the way the tick steps it (shellsUpdate
  * over the compacted tank and builder arrays). The shells rewind nothing, so
  * the shell bursts where it is.

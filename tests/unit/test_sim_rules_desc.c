@@ -53,7 +53,7 @@ static const langid srdDescIds[] = {
 #undef SRD_ID_ROW
 
 /* The stretches of ids the descriptions were given, either end of each
- * included. They are five rather than one because the first eleven rules'
+ * included. They are six rather than one because the first eleven rules'
  * numbers were taken by the fog style strings and moved to the end of the
  * file, because the rules the table gained later were numbered on from
  * there, because the pillmassage pair start again past the map editor's
