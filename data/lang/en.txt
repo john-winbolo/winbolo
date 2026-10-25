@@ -2369,9 +2369,6 @@ STR_DLGLOBBY_MODS_TIP_OFF=Mods/Scenario is switched off. These are picked for th
 STR_DLGLOBBY_MODS_TIP_NONE=No mods are loaded for this round.
 STR_DLGLOBBY_MODS_OFF_NOTE=(switched off, will not run)
 STR_SCNPANEL_SETTINGS_TITLE=Scenario Panel
-STR_SCNPANEL_OPACITY_LBL=Opacity
-STR_SCNPANEL_OPACITY_LINE1=Fades what the panel draws.
-STR_SCNPANEL_OPACITY_LINE2=Empty parts of it stay clear.
 STR_MENU_INFO_OVERLAY=Info Overlay
 STR_SCNPANEL_POP_OUT=Pop out
 STR_SCNPANEL_POP_IN=Pop in
@@ -2895,6 +2892,9 @@ STR_DLGSYSINFO_MEM_BUILDING=Building
 STR_DLGSYSINFO_MEM_RUBBLE=Rubble
 STR_DLGSYSINFO_MEM_SWAMP=Swamp
 STR_DLGSYSINFO_MEM_GRASS=Grass
+STR_SCNTEXT_TITLE=Scenario Text
+STR_SCN_BG_OPACITY_LBL=Background opacity
+STR_SCN_TEXT_OPACITY_LBL=Text opacity
 
 # Voice settings on a touch screen, where the talk button is the key
 STR_DLGSETTINGS_VOICE_PTT_TOUCH=Push to talk: hold the microphone button on the game screen
